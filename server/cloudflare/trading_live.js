@@ -8,7 +8,7 @@
 // once its record exists.
 import { aggregate, cmeSession, frontMonth, liveFeedBlocker, loadIntraday } from './market_feed.js';
 import {
-  CONTRACTS, COSTS, INTRADAY_CANDIDATES, INTRADAY_FILTERS, MIN_TRADES, appendTrades, breakdown, candleProblems,
+  CONTRACTS, COSTS, INTRADAY_CANDIDATES, INTRADAY_COMMON_RULES, INTRADAY_FILTERS, MIN_TRADES, appendTrades, breakdown, candleProblems,
   evaluateWalkForward, intradayContext, newPortfolio, readTrades, stepPortfolio, summarize, validateTradeRecord,
 } from './trading_evidence.js';
 
@@ -17,6 +17,10 @@ export const LIVE_PORTFOLIOS = 'live_paper_portfolios';
 export const LIVE_RUNS = 'live_paper_runs';
 export const LIVE_FEED = 'live_paper_feed';
 export const LIVE_BACKTEST = 'live_paper_backtest';
+// Records that never count as forward results but are never thrown away: a closed trade the
+// journal refused, and a position voided because paper trading was stopped while it was open.
+export const LIVE_EXCLUDED = 'live_paper_excluded';
+const EXCLUDED_LIMIT = 500;
 export const RESOLUTION = '5m';
 const ROOT = 'MNQ';
 const RUN_LIMIT = 120;
@@ -49,9 +53,30 @@ export async function readLivePortfolios(storage) {
   });
 }
 
-/** Paper trading on or off, by the owner. Stopping keeps every record. */
+async function exclude(storage, entries) {
+  if (!entries.length) return;
+  const list = (await storage.get(LIVE_EXCLUDED)) || [];
+  await storage.put(LIVE_EXCLUDED, [...list, ...entries].slice(-EXCLUDED_LIMIT));
+}
+
+/**
+ * Paper trading on or off, by the owner. Stopping keeps every record; an open position is
+ * voided at that moment with its reason (it is never closed later at a price from after the
+ * stop). Starting again begins at the newest bar, so the stopped period is never traded.
+ */
 export async function setLivePaper(storage, enabled, now = Date.now()) {
   const state = (await storage.get(LIVE_STATE)) || {};
+  const saved = (await storage.get(LIVE_PORTFOLIOS)) || null;
+  if (saved && (!enabled || !state.enabled)) {
+    const voided = [];
+    for (const pf of Object.values(saved)) {
+      if (!enabled && pf.open) voided.push({ kind: 'voided', at: new Date(now).toISOString(), portfolio: pf.key, strategy: pf.candidate, open: pf.open, reason: 'paper trading was stopped while this position was open; it was not closed at a market price and is not a result' });
+      if (!enabled) { pf.open = null; pf.pending = null; }
+      if (enabled) { pf.last_bar_time = null; pf.pending = null; pf.open = null; }
+    }
+    await exclude(storage, voided);
+    await storage.put(LIVE_PORTFOLIOS, saved);
+  }
   const next = enabled
     ? { ...state, enabled: true, started_at: state.enabled ? state.started_at : new Date(now).toISOString(), stopped_at: null }
     : { ...state, enabled: false, stopped_at: new Date(now).toISOString() };
@@ -73,7 +98,8 @@ export function postTradeReview(t) {
   const hypotheses = [];
   const risk = t.risk_points || 0;
   facts.push(`Entry rule: ${t.signal.why}. Filled at ${t.entry.fill} (bar open ${t.entry.raw}) at ${t.entry.time}.`);
-  facts.push(t.exit.reason === 'target' ? `The target ${t.target} was reached.` : t.exit.reason === 'stop' ? `The stop ${t.stop} was hit.` : `Closed on the time rule at ${t.exit.raw} (flat before the CME daily break).`);
+  facts.push(t.exit.reason === 'target' ? `The target ${t.target} was reached.` : t.exit.reason === 'stop' ? `The stop ${t.stop} was hit.`
+    : t.exit.note ? `Closed at ${t.exit.raw} at ${t.exit.time}: ${t.exit.note}.` : `Closed on the time rule at ${t.exit.raw} (flat before the CME daily break).`);
   facts.push(`Best move in favour ${t.mfe_points} points (${t.mfe_r} R); worst against ${t.mae_points} points (${t.mae_r} R).`);
   const costs = t.costs.spread + t.costs.slippage + t.costs.commissions + t.costs.fees;
   facts.push(`Costs ${r2(costs)} dollars on ${t.qty} ${t.contract}; gross ${t.gross_before_costs}, net ${t.net_pnl}.`);
@@ -82,7 +108,7 @@ export function postTradeReview(t) {
   if (t.result === 'loss' && t.mfe_r < 0.3) hypotheses.push('Price went against the entry almost at once: the setup may have been early or against the larger trend.');
   if (Math.abs(t.gross_before_costs) > 0 && costs >= Math.abs(t.gross_before_costs) * 0.5) hypotheses.push('Costs were half or more of the gross move: a wider stop and target, or NQ instead of MNQ, would change this result.');
   if (t.condition?.volatility === 'high-vol') hypotheses.push('Volatility was high when the signal formed.');
-  return { complied: true, rule_summary: INTRADAY_CANDIDATES[t.strategy]?.rules || '', facts, hypotheses, risk_points: risk, written_at: t.exit.time };
+  return { complied: true, compliance: 'Entered and exited by the engine from the written rules, with no manual change.', rule_summary: INTRADAY_CANDIDATES[t.strategy]?.rules || '', facts, hypotheses, risk_points: risk, written_at: t.exit.time };
 }
 
 const feedOf = (feed) => ({ status: feed.status, provider: feed.provider, provider_symbol: feed.provider_symbol, contract: feed.contract, latency_s: feed.latency_s ?? null, last_bar_time: feed.last_bar_time ?? null });
@@ -129,13 +155,15 @@ export async function liveTick(storage, { fetcher = fetch, now = Date.now(), for
         for (const t of closed) {
           t.review = postTradeReview(t);
           const p = validateTradeRecord(t);
-          if (p.length) rejected.push({ portfolio: t.portfolio, entry: t.entry.time, problems: p });
+          if (p.length) rejected.push({ portfolio: t.portfolio, entry: t.entry.time, problems: p, trade: t });
           else valid.push(t);
         }
         run.journal = await appendTrades(storage, valid);
+        // A closed trade the journal refused is kept with its reason, never silently dropped.
+        await exclude(storage, rejected.map((r) => ({ kind: 'rejected', at: run.at, ...r })));
         await storage.put(LIVE_PORTFOLIOS, Object.fromEntries(portfolios.map((pf) => [pf.key, pf])));
         await storage.put(LIVE_FEED, { ...feedOf(feed), checked_at: feed.checked_at, session, delayed_by_min: feed.delayed_by_min ?? null, note: feed.note, bars: bars.slice(-CHART_BARS) });
-        Object.assign(run, { ok: true, bars: bars.length, last_bar: newest, closed: closed.length, rejected: rejected.length, rejections: rejected.slice(0, 3), open_positions: portfolios.filter((pf) => pf.open).length });
+        Object.assign(run, { ok: true, bars: bars.length, last_bar: newest, closed: closed.length, rejected: rejected.length, rejections: rejected.slice(0, 3).map(({ trade, ...r }) => r), open_positions: portfolios.filter((pf) => pf.open).length });
       }
     }
   } catch (error) {
@@ -218,6 +246,8 @@ export async function liveDashboard(storage, { now = Date.now(), tradovateConnec
     by_session: breakdown(trades, (t) => t.session),
     by_day: breakdown(trades, (t) => String(t.entry.time).slice(0, 10)),
     strategies: Object.entries(INTRADAY_CANDIDATES).map(([id, c]) => ({ id, name: c.name, family: c.family, rules: c.rules })),
+    common_rules: INTRADAY_COMMON_RULES,
+    excluded: ((await storage.get(LIVE_EXCLUDED)) || []).slice(-20).reverse().map(({ trade, open, ...e }) => ({ ...e, strategy: e.strategy || trade?.strategy })),
     portfolios: portfolios.length,
     runs: (runs || []).slice(-10).reverse(),
     backtest: backtest || null,

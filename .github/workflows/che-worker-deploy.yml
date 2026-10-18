@@ -416,6 +416,15 @@ jobs:
           const line = `Paper trading ${report.state?.enabled ? 'ON' : 'OFF'} (${report.account}); feed ${f.status || 'none'} ${f.symbol || ''} ${report.contract || ''}, last bar ${f.last_bar || '-'}${f.error ? `, error: ${f.error}` : ''}; market ${report.session?.state}; signals ${report.counts?.signals ?? 0}, entries ${report.counts?.filled ?? 0}, closed ${report.totals?.trades ?? 0} (${report.totals?.wins ?? 0} won, ${report.totals?.losses ?? 0} lost, net ${report.totals?.net_pnl ?? 0}), open ${(report.positions || []).length}`;
           console.log(`::notice title=Forward paper trading::${line}`);
           summary(`**Forward paper trading (live Worker):** ${line}.`);
+          const bt = report.backtest;
+          if (bt?.ok) {
+            const rows = bt.rows || [];
+            const fmt = (r) => `${r.strategy}/${r.filter}/${r.target_r}R: ${r.trades} trades, win ${r.win_rate ?? '-'}%, ${r.expectancy_r} R, net ${r.net} (out of sample ${r.oos_trades} trades, ${r.oos_expectancy_r ?? '-'} R, folds ${r.folds_positive}/${r.folds})`;
+            console.log(`::notice title=Historical baseline (backtest, not forward evidence)::${bt.data}`);
+            for (const r of rows.slice(0, 5)) console.log(`BEST  ${fmt(r)}`);
+            for (const r of rows.slice(-3)) console.log(`WORST ${fmt(r)}`);
+            summary(`**Historical baseline:** ${bt.data}. Best: ${rows[0] ? fmt(rows[0]) : 'none'}. Worst: ${rows.at(-1) ? fmt(rows.at(-1)) : 'none'}.`);
+          } else if (bt) console.log(`::warning title=Historical baseline::${bt.error || 'not run'}`);
           JS
 
       - name: Check CHE's memory truth through the live Worker (real chat test)

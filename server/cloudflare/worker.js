@@ -60,7 +60,7 @@ import { answerOwnerMemoryQuestion, auditMemoryProvenance, evidenceQuestion, evi
 import { condenseHistory, ownerNotificationPolicy } from './workflow_governor.js';
 import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, nextTradingTickAt, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
 import { evidenceIntent, evidenceReport, evidenceTick } from './trading_evidence_runner.js';
-import { LIVE_STATE, liveBacktest, liveDashboard, liveTick, nextLiveTickAt, setLivePaper } from './trading_live.js';
+import { LIVE_BACKTEST, LIVE_STATE, liveBacktest, liveDashboard, liveTick, nextLiveTickAt, setLivePaper } from './trading_live.js';
 import { liveIntent, liveReply } from './trading_live_chat.js';
 import { sanitizeOwnerText } from './che_errors.js';
 import { CHE_UPDATE_GUIDE, mergeSelfUpdatePr, openSelfUpdatePr, rollbackLastUpdate, selfUpdateGitHubAccess, selfUpdateStatus, workerDeploymentStatus } from './self_update.js';
@@ -3434,6 +3434,9 @@ export class CheState extends DurableObject {
   async tradingProbe() {
     const ensured = await this.ensureLivePaper();
     const run = ensured.enabled ? await liveTick(this.ctx.storage, { force: true }) : { skipped: 'paper trading is off' };
+    // The historical baseline (same rules and fills, delayed 5-minute history), at most twice a day.
+    const previous = await this.ctx.storage.get(LIVE_BACKTEST);
+    if (!previous?.ok || Date.now() - Date.parse(previous.at) > 12 * 3_600_000) await liveBacktest(this.ctx.storage).catch(() => null);
     const d = await this.liveTradingDashboard();
     const brief = (t) => ({ strategy: t.strategy, filter: t.filter, side: t.side, signal: t.signal?.time, entry: t.entry?.time, entry_fill: t.entry?.fill,
       exit: t.exit?.time, exit_fill: t.exit?.fill, reason: t.exit?.reason, net: t.net_pnl, feed: t.data?.feed?.status });
@@ -3448,6 +3451,12 @@ export class CheState extends DurableObject {
       trades: d.trades.slice(0, 10).map(brief),
       signals: d.signals.slice(-10),
       broker: d.broker,
+      backtest: d.backtest ? {
+        at: d.backtest.at, ok: d.backtest.ok, error: d.backtest.error || null, data: d.backtest.data,
+        rows: (d.backtest.rows || []).map((r) => ({ strategy: r.strategy, filter: r.filter, target_r: r.target_r, trades: r.stats.trades,
+          win_rate: r.stats.win_rate, expectancy_r: r.stats.expectancy_r, net: r.stats.net_pnl, oos_trades: r.oos?.trades ?? 0,
+          oos_expectancy_r: r.oos?.expectancy_r ?? null, folds_positive: r.folds_positive, folds: r.folds })),
+      } : null,
     };
   }
 

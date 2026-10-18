@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
 import { aggregate, cmeSession, frontMonth, parseYahooChart } from './market_feed.js';
-import { CONTRACTS, COSTS, fillEntry, exitOn, newPortfolio, readTrades, settleTrade, stepPortfolio, intradayContext } from './trading_evidence.js';
-import { LIVE_PORTFOLIOS, liveDashboard, liveTick, setLivePaper } from './trading_live.js';
+import { CONTRACTS, COSTS, INTRADAY_CANDIDATES, fillEntry, exitOn, newPortfolio, readTrades, settleTrade, stepPortfolio, intradayContext } from './trading_evidence.js';
+import { LIVE_EXCLUDED, LIVE_PORTFOLIOS, liveDashboard, liveTick, setLivePaper } from './trading_live.js';
 import { liveIntent } from './trading_live_chat.js';
 import { evidenceReport } from './trading_evidence_runner.js';
 
@@ -164,6 +164,54 @@ test('the owner\'s Trading Room commands are recognised; other trading talk keep
   };
   for (const [q, kind] of Object.entries(expected)) assert.equal(liveIntent(q)?.kind, kind, q);
   for (const q of ['switch to paper', 'take the trade', 'what is the price of NQ', 'connect NinjaTrader']) assert.equal(liveIntent(q), null, q);
+});
+
+test('review of #339: the bar that creates a fair value gap is not its retest', () => {
+  const bars = [
+    { t: '2026-10-20T13:50:00Z', o: 19998, h: 20001, l: 19994, c: 19999 },
+    { t: '2026-10-20T13:55:00Z', o: 19999, h: 20001, l: 19995, c: 20000 },
+    { t: '2026-10-20T14:00:00Z', o: 20000, h: 20002, l: 19995, c: 20001 },
+    { t: '2026-10-20T14:05:00Z', o: 20001, h: 20020, l: 20000, c: 20018 },
+    { t: '2026-10-20T14:10:00Z', o: 20010, h: 20025, l: 20010, c: 20019 }, // completes the gap 20002–20010 and closes up
+  ];
+  const ctx = intradayContext(bars);
+  assert.equal(INTRADAY_CANDIDATES['fvg-retest-5m'].entry(bars, 4, ctx), null);
+  const retest = [...bars, { t: '2026-10-20T14:15:00Z', o: 20012, h: 20020, l: 20008, c: 20017 }];
+  const sig = INTRADAY_CANDIDATES['fvg-retest-5m'].entry(retest, 5, intradayContext(retest));
+  assert.equal(sig?.side, 'long', 'a later bar that trades into the gap and closes up is the retest');
+});
+
+test('review of #339: a plan whose fill after costs reaches the target is voided, never journalled as a loss', () => {
+  const pf = newPortfolio('pdhl-sweep-5m', 'any', { resolution: '5m', priceSeries: 'test' });
+  const bars = [...DAY1, ...DAY2.slice(0, 1), { t: DAY2[1].t, o: 20025.4, h: 20030, l: 20020, c: 20028 }];
+  const trades = stepPortfolio(pf, bars, intradayContext(bars));
+  assert.equal(trades.length, 0);
+  assert.equal(pf.counts.gap_skipped, 1);
+  assert.equal(pf.open, null);
+});
+
+test('review of #339: stopping voids an open position with its reason; starting again never trades the stopped period', async () => {
+  const storage = memoryStorage();
+  await setLivePaper(storage, true);
+  await liveTick(storage, { force: true, load: feedOf(DAY1), now: after(DAY1) });
+  await liveTick(storage, { force: true, load: feedOf([...DAY1, ...DAY2.slice(0, 2)]), now: after(DAY2.slice(0, 2)) });
+  await setLivePaper(storage, false);
+  const excluded = storage.saved.get(LIVE_EXCLUDED) || [];
+  assert.ok(Object.values(storage.saved.get(LIVE_PORTFOLIOS)).every((pf) => !pf.open), 'no position stays open after a stop');
+  assert.ok(excluded.every((e) => e.kind === 'voided' && /stopped/.test(e.reason)));
+  await setLivePaper(storage, true);
+  const before = (await readTrades(storage, (t) => t.data?.resolution === '5m')).length;
+  const run = await liveTick(storage, { force: true, load: feedOf([...DAY1, ...DAY2]), now: after(DAY2) });
+  assert.equal(run.closed, 0, 'bars from while it was stopped are not traded');
+  assert.equal((await readTrades(storage, (t) => t.data?.resolution === '5m')).length, before);
+});
+
+test('review of #339: questions and negations never switch paper trading; other topics keep their routes', () => {
+  for (const q of ["Don't stop paper trading.", 'Why did you stop paper trading?', 'When did you start paper trading?', 'Which teams won and lost last night?',
+    'Are there any open positions at Apple?', 'Read me the news about trade tariffs today.', 'Which marketing strategy works best for my YouTube channel?']) {
+    assert.equal(liveIntent(q), null, q);
+  }
+  for (const q of ['Explain the last losing trade.', 'Show me where you entered on the chart.', 'How did your paper trades do today?']) assert.ok(liveIntent(q), q);
 });
 
 // Through the real chat route.

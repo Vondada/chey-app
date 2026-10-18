@@ -2,34 +2,29 @@
 // (owner, 2026-10-18). Answers come from the journal and the run log only: a trade is
 // never mentioned before its record exists, and nothing here calls a model.
 const WAKE = /^\s*(?:(?:hey\s+)?(?:che|chay|chey)[,:]?\s+)?/i;
+// Start and stop are commands only: "Don't stop paper trading" and "Why did you stop paper
+// trading?" change nothing (review of #339). Every other kind needs trading words of its own.
 const PATTERNS = [
-  ['stop', /\b(?:stop|pause|turn\s+off|end|halt)\b[\s\S]{0,25}\bpaper[\s-]*trad\w*/i],
-  ['start', /\b(?:start|begin|turn\s+on|resume|run|launch)\b[\s\S]{0,25}\bpaper[\s-]*trad\w*/i],
-  ['why', /\b(?:explain|why)\b[\s\S]{0,40}\b(?:that|the\s+last|last|this|your\s+last)\s+trade\b[\s\S]{0,25}\b(?:lost|lose|won|win|worked|failed)\b|\bwhy\s+did\s+(?:that|the\s+last|your\s+last)\s+trade\s+(?:lose|win|fail|work)\b/i],
-  ['chart', /\bshow\b[\s\S]{0,25}\bchart\b[\s\S]{0,30}\b(?:entered|entry|entries|exit(?:ed)?)\b/i],
-  ['positions', /\b(?:current|open)\s+(?:paper\s+)?positions?\b|\bshow\s+me\s+your\s+positions\b|\bwhat\s+(?:positions|trades)\s+(?:are|do\s+you\s+have)\s+open\b/i],
-  ['winloss', /\bhow\s+many\s+(?:paper\s+)?(?:trades\s+)?(?:have\s+you|did\s+you)\s+(?:won|win|lost)\b|\bwon\s+and\s+lost\b|\bwins?\s+and\s+loss(?:es)?\b/i],
+  ['stop', /^(?:please\s+)?(?:stop|pause|turn\s+off|end|halt)\s+(?:the\s+|your\s+)?paper[\s-]*trad\w*/i],
+  ['start', /^(?:please\s+)?(?:start|begin|turn\s+on|resume|run|launch)\s+(?:the\s+|your\s+)?paper[\s-]*trad\w*/i],
+  ['why', /\b(?:explain|why)\b[\s\S]{0,40}\b(?:that|the\s+last|last|this|your\s+last)\s+trade\b[\s\S]{0,25}\b(?:lost|lose|won|win|worked|failed)\b|\bwhy\s+did\s+(?:that|the\s+last|your\s+last)\s+trade\s+(?:lose|win|fail|work)\b|\bexplain\s+(?:the\s+|your\s+)?last\s+(?:losing|winning)\s+trade\b/i],
+  ['chart', /\bshow\b[\s\S]{0,25}\bchart\b[\s\S]{0,30}\b(?:you\s+)?(?:entered|entry|exited)\b|\bshow\s+me\s+where\s+you\s+(?:entered|exited)\b/i],
+  ['positions', /\b(?:your|my|paper)\s+(?:current\s+|open\s+)?(?:paper\s+)?positions?\b|\bcurrent\s+(?:paper\s+)?positions?\b/i],
+  ['winloss', /\bhow\s+many\s+(?:paper\s+)?trades?\s+(?:have\s+you|did\s+you)\s+(?:won|win|lost)\b|\btrades?\b[\s\S]{0,30}\bwon\s+and\s+lost\b/i],
   ['strategies', /\bwhat\s+strateg(?:y|ies)\s+are\s+you\s+(?:testing|running|using|trading)\b/i],
-  ['compare', /\bcompare\s+(?:your\s+|the\s+|all\s+)?(?:trading\s+)?strateg/i],
-  ['best', /\bwhich\b[\s\S]{0,20}\b(?:ict|smart\s+money|trading)?\s*strateg\w*\b[\s\S]{0,25}\b(?:best|performing|winning|working)\b/i],
-  ['trades', /\b(?:show|list|read|tell)\b[\s\S]{0,20}\b(?:me\s+)?(?:every|all|the|your|live)?\s*(?:live\s+)?(?:nq|mnq|paper)?\s*trades?\b[\s\S]{0,30}\b(?:tonight|today|made|took|placed|you)?/i],
-  ['performance', /\btrading\s+performance\b|\bread\s+me\s+your\s+(?:trading\s+)?(?:results|performance)\b/i],
+  ['compare', /\bcompare\s+(?:all\s+)?your\s+(?:trading\s+|paper\s+)?strateg|\bcompare\s+(?:the\s+)?(?:trading|paper)\s+strateg/i],
+  ['best', /\bwhich\s+(?:ict|smart\s+money|trading|paper)\s+strateg\w*\b[\s\S]{0,25}\b(?:best|performing|winning|working)\b|\bwhich\s+of\s+your\s+(?:trading\s+)?strateg\w*\b[\s\S]{0,25}\b(?:best|performing|winning|working)\b/i],
+  ['trades', /\b(?:show|list|read|tell)\s+me\s+(?:every|all|the|your)?\s*(?:live\s+)?(?:(?:nq|mnq|paper)\s+)+trades?\b|\bevery\s+trade\s+you\s+(?:made|took|placed)\b|\b(?:show|list|read)\s+me\s+(?:all\s+)?(?:the\s+)?trades\s+you\s+(?:made|took|placed)\b/i],
+  ['performance', /\btrading\s+performance\b|\bread\s+me\s+your\s+(?:trading\s+|paper\s+)?(?:results|performance)\b|\bhow\s+did\s+your\s+paper\s+trades?\s+do\b/i],
   ['evidence', /\b(?:show|read)\b[\s\S]{0,15}\btrading\s+evidence\b/i],
-  ['open', /\bopen\b[\s\S]{0,15}\btrading\s+room\b/i],
+  ['open', /^(?:please\s+)?open\s+(?:up\s+)?(?:your\s+|the\s+)?trading\s+room\b/i],
 ];
 
 /** The command in [message], or null. Narrow on purpose: other trading talk keeps its routes. */
 export function liveIntent(message) {
   const text = String(message || '').replace(WAKE, '').trim();
   if (!text || text.length > 160) return null;
-  const tradingWords = /\b(?:paper|trad\w*|positions?|strateg\w*|nq|mnq|ict|trading\s+room|won|lost|entered|entry)\b/i;
-  if (!tradingWords.test(text)) return null;
-  for (const [kind, re] of PATTERNS) {
-    if (!re.test(text)) continue;
-    // "Show me the trades" needs trading context; "show me the trading evidence" is evidence.
-    if (kind === 'trades' && !/\b(?:paper|nq|mnq|tonight|today|made|took|placed|live|every)\b/i.test(text)) continue;
-    return { kind };
-  }
+  for (const [kind, re] of PATTERNS) if (re.test(text)) return { kind };
   return null;
 }
 
