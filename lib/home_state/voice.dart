@@ -262,7 +262,9 @@ extension _CheHomeVoice on _CHEHomeState {
     // Read This can include whole Brain memories or long articles. The Fish and
     // ElevenLabs routes reject a clip above 800 characters; split before
     // prefetch so every part can use them, in the correct order.
-    for (final chunk in cheReadAloudChunks(text)) {
+    // Markdown and technical formatting become natural speech first, so Read
+    // This never reads symbols aloud; the transcript keeps the formatting.
+    for (final chunk in cheReadAloudChunks(cheSpeakableText(text))) {
       turn.add(cheSpokenText(chunk));
     }
     turn.close();
@@ -312,6 +314,11 @@ extension _CheHomeVoice on _CHEHomeState {
     // neither could speak stays silent, with its words and the reason on screen.
     final premiumOnly = !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
     final outcome = CheVoiceTurnOutcome();
+    // One voice for the whole reply (owner, 2026-10-18): the first clip's
+    // voice is locked for every later clip; a failure partway stops the voice
+    // and says why instead of switching to another voice.
+    final voice = CheVoiceTurn((text, {required turn, required index, lock = ''}) =>
+        CheEdgeVoice.speak(text, purpose: purpose, premiumOnly: true, turn: turn, index: index, lock: lock));
     // Clips are prepared ahead of playback, so each silent clip keeps its own
     // reason instead of reading a shared one another clip may have changed.
     final silentReasons = <String, String>{};
@@ -321,7 +328,8 @@ extension _CheHomeVoice on _CHEHomeState {
       ready: _prepareSpeechOutput(),
       synthesize: (text) async {
         if (!premiumOnly) return null;
-        final edge = await CheEdgeVoice.speak(text, purpose: purpose, premiumOnly: true);
+        final made = await voice.synthesize(text);
+        final edge = made.result;
         final edgeClip = edge.clip;
         final engine = edgeClip?.engine ?? 'none';
         if (edge.maryStatus.isNotEmpty) _maryStatus = edge.maryStatus;
@@ -330,7 +338,7 @@ extension _CheHomeVoice on _CHEHomeState {
         if (edgeClip != null && edgeClip.bytes.isNotEmpty) {
           // When Fish spoke, why ElevenLabs did not, for the diagnostics sheet.
           _voiceFailReason = cheMaryReason(edge.maryStatus, engine);
-          return CheVoiceClip(edgeClip.bytes, edgeClip.engine, text: text);
+          return CheVoiceClip(edgeClip.bytes, edgeClip.engine, text: text, index: made.index, tag: edge.tag);
         }
         final why = cheSilentVoiceReason(edge);
         _voiceFailReason = why;
@@ -338,7 +346,15 @@ extension _CheHomeVoice on _CHEHomeState {
         return null;
       },
       play: (clip) async {
+        // A clip after the point where the locked voice failed stays unheard,
+        // so the reply never skips ahead or resumes in pieces.
+        if (voice.stoppedBefore(clip.index)) {
+          playFailure = voice.interruption;
+          return false;
+        }
+        final started = DateTime.now();
         final played = await _playServerVoice(clip, outcome);
+        if (played) outcome.timedClip(DateTime.now().difference(started).inMilliseconds, cheAudioDurationMs(clip.bytes));
         playFailure = played ? null : _voiceFailReason;
         return played;
       },
@@ -350,7 +366,21 @@ extension _CheHomeVoice on _CHEHomeState {
       },
       log: (m) => debugPrint('CHE voice timing: $m'),
       onComplete: (cancelled) async {
-        if (premiumOnly && outcome.chunks > 0) unawaited(CheEdgeVoice.report(outcome.toReport()));
+        if (cancelled) voice.cancel();
+        outcome
+          ..provider = voice.provider
+          ..tags = Map.of(voice.tags)
+          ..fallback = voice.fallback
+          ..interrupted = voice.interrupted
+          ..stopped = cancelled
+          ..retries = voice.retries
+          ..gapsMs = List.of(turn.gapsMs)
+          ..synthMs = List.of(turn.synthMs)
+          ..firstAudioMs = turn.firstPlaybackMs;
+        if (premiumOnly && outcome.chunks > 0) {
+          _lastSpokenReply = outcome.summary();
+          unawaited(CheEdgeVoice.report(outcome.toReport()));
+        }
         await _finishSpeechTurn(turn, speechTurn, localGen);
       },
     );

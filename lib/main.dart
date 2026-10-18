@@ -36,6 +36,8 @@ import 'che_notifications.dart';
 import 'platform/che_platform_client.dart';
 import 'platform/che_platform_screens.dart';
 import 'che_stream_batcher.dart';
+import 'che_spoken_text.dart';
+import 'che_voice_turn.dart';
 import 'che_installed_skill_intent.dart';
 import 'che_request_session.dart';
 import 'che_owner_errors.dart';
@@ -413,6 +415,8 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   int _heldSpeechRestarts = 0;
   Timer? _quickEndTimer;
   String? _lastVoiceEngine;
+  // One line about the last spoken reply: its voice, clips and gaps.
+  String _lastSpokenReply = '';
   // Where CHE's voice plays now ("speaker", "receiver", "bluetooth", ...), as
   // the iPhone last reported it; empty until it does.
   String _audioRouteNow = '';
@@ -670,12 +674,8 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   /// Spoken replies skip code, plugin, update and brain blocks.
   // What the voice reads: no code, no markdown symbols, no line breaks or
   // list bullets (each of those made the voice stop and restart).
-  String _spokenText(String reply) => reply
-      .replaceAll(RegExp(r'```[\s\S]*?(```|$)'), ' ')
-      .replaceAll(RegExp(r'^\s*(?:[-•*]|\d+[.)])\s+', multiLine: true), '')
-      .replaceAll(RegExp(r'[*#>`]+'), '')
-      .replaceAll(RegExp(r'\s+'), ' ')
-      .trim();
+  // Markdown and technical text as natural speech (owner, 2026-10-18).
+  String _spokenText(String reply) => cheSpeakableText(reply);
 
   // Live step lines for the reply being produced ("✓ Nova delivered").
   final List<CheLiveStep> _liveSteps = [];

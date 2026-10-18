@@ -17,12 +17,29 @@ import 'che_speech_pipeline.dart';
 /// words, or empty when the server did not report them. [failure] says why the
 /// phone got no answer at all (no connection, no answer in time, not paired).
 class CheEdgeResult {
-  const CheEdgeResult({this.clip, this.maryStatus = '', this.fishStatus = '', this.failure = ''});
+  const CheEdgeResult({
+    this.clip,
+    this.maryStatus = '',
+    this.fishStatus = '',
+    this.failure = '',
+    this.tag = '',
+    this.fallback = false,
+    this.attempts = 1,
+  });
 
   final CheVoiceClip? clip;
   final String maryStatus;
   final String fishStatus;
   final String failure;
+
+  /// The server's fingerprint of the voice that spoke (provider:hash, no ID).
+  final String tag;
+
+  /// True when the backup voice spoke because the chosen one failed first.
+  final bool fallback;
+
+  /// How many tries the server needed for this clip.
+  final int attempts;
 }
 
 /// The engine label for a clip. A reply without a label is Edge Ava, the voice
@@ -89,6 +106,16 @@ Duration chePremiumVoiceWait(String purpose, {int chars = 0}) {
   if (fish < const Duration(seconds: 7)) fish = const Duration(seconds: 7);
   if (fish > const Duration(seconds: 25)) fish = const Duration(seconds: 25);
   return elevenLabs + fish;
+}
+
+/// How long the phone waits for a clip locked to one provider: the server
+/// tries it at most twice (one short retry after a passing failure) and never
+/// the other voice. Clips after the first are prepared while earlier ones play.
+Duration cheLockedVoiceWait(String lock, String purpose, {int chars = 0}) {
+  if (lock == 'elevenlabs') return const Duration(seconds: 19);
+  final fish = chePremiumVoiceWait(purpose, chars: chars) - const Duration(seconds: 9);
+  final both = fish * 2 + const Duration(seconds: 2);
+  return both > const Duration(seconds: 90) ? const Duration(seconds: 90) : both;
 }
 
 /// Why CHE stayed silent for one clip, in words the owner can read: the phone's
@@ -174,7 +201,16 @@ class CheEdgeVoice {
 
   /// [premiumOnly] asks for ElevenLabs then Fish and no other voice; the
   /// server then answers 204 with both reasons when neither spoke.
-  static Future<CheEdgeResult> speak(String text, {String purpose = 'conversation', bool premiumOnly = false}) async {
+  /// [turn] names the spoken reply, [index] the clip's place in it, and [lock]
+  /// ('elevenlabs' or 'fish') keeps a later clip on the voice the first used.
+  static Future<CheEdgeResult> speak(
+    String text, {
+    String purpose = 'conversation',
+    bool premiumOnly = false,
+    String turn = '',
+    int index = -1,
+    String lock = '',
+  }) async {
     final said = text.trim();
     if (said.isEmpty) return const CheEdgeResult();
     final prefs = await SharedPreferences.getInstance();
@@ -188,7 +224,9 @@ class CheEdgeVoice {
     if (base.trim().isEmpty || token.isEmpty) {
       return const CheEdgeResult(failure: 'this iPhone is not paired with CHE\'s server');
     }
-    final wait = premiumOnly
+    final wait = lock.isNotEmpty
+        ? cheLockedVoiceWait(lock, purpose, chars: said.length)
+        : premiumOnly
         ? chePremiumVoiceWait(purpose, chars: said.length)
         : cheVoiceWait(purpose, everyday: const Duration(seconds: 12), chars: said.length);
     try {
@@ -204,6 +242,9 @@ class CheEdgeVoice {
               'voice': voice,
               if (purpose != 'conversation') 'purpose': purpose,
               if (premiumOnly) 'premium_only': true,
+              if (turn.isNotEmpty) 'turn': turn,
+              if (index >= 0) 'index': index,
+              if (lock.isNotEmpty) 'lock': lock,
             }),
           )
           .timeout(wait);
@@ -222,13 +263,18 @@ class CheEdgeVoice {
       if (!type.contains('audio') && !type.contains('octet-stream')) {
         return CheEdgeResult(failure: 'CHE\'s server sent no audio', maryStatus: maryStatus, fishStatus: fishStatus);
       }
+      final tag = (response.headers['x-che-voice-tag'] ?? '').trim();
       return CheEdgeResult(
         clip: CheVoiceClip(
           response.bodyBytes,
           cheEdgeEngine(response.headers['x-che-voice']),
+          tag: tag,
         ),
         maryStatus: maryStatus,
         fishStatus: fishStatus,
+        tag: tag,
+        fallback: response.headers['x-che-voice-fallback'] == '1',
+        attempts: int.tryParse(response.headers['x-che-voice-attempts'] ?? '') ?? 1,
       );
     } on TimeoutException {
       return CheEdgeResult(failure: 'no voice from CHE\'s server within ${wait.inSeconds} seconds');
@@ -267,6 +313,50 @@ class CheVoiceTurnOutcome {
   int chunks = 0;
   int silent = 0;
 
+  /// The reply's locked voice and how it went, for the report and diagnostics.
+  String provider = '';
+  Map<String, int> tags = const {};
+  bool fallback = false;
+  bool interrupted = false;
+  bool stopped = false;
+  int retries = 0;
+  List<int> gapsMs = const [];
+  List<int> synthMs = const [];
+  int? firstAudioMs;
+
+  /// Wall-clock playback time minus the clip's own length, per played clip:
+  /// the iPhone's setup between clips, as far as it can be measured here.
+  final List<int> overheadMs = [];
+
+  void timedClip(int wallMs, int? audioMs) {
+    if (audioMs == null || audioMs <= 0) return;
+    final over = wallMs - audioMs;
+    overheadMs.add(over < 0 ? 0 : over);
+  }
+
+  /// How many times the voice changed inside this reply. Always 0 since the
+  /// turn lock; a non-zero value is a bug the deploy check can see.
+  int get switches => tags.length > 1 ? tags.length - 1 : 0;
+
+  static int _max(List<int> v) => v.isEmpty ? 0 : v.reduce((a, b) => a > b ? a : b);
+  static int _avg(List<int> v) => v.isEmpty ? 0 : (v.reduce((a, b) => a + b) / v.length).round();
+
+  /// One line for the diagnostics sheet: the voice, clips, and gaps.
+  String summary() {
+    if (chunks == 0) return '—';
+    final voice = provider.isEmpty ? 'no voice' : (provider == 'elevenlabs' ? 'ElevenLabs' : 'Fish Audio');
+    final parts = <String>[
+      '$voice${fallback ? ' (backup, the chosen voice failed first)' : ''}',
+      '${chunks - silent} of $chunks clips spoken',
+      if (switches > 0) 'voice changed $switches times' else 'one voice',
+      if (gapsMs.isNotEmpty) 'longest gap ${_max(gapsMs)} ms',
+      if (overheadMs.isNotEmpty) 'iPhone setup about ${_avg(overheadMs)} ms a clip',
+      if (interrupted) 'stopped partway',
+      if (stopped) 'stopped by you',
+    ];
+    return parts.join(', ');
+  }
+
   void played(String engine) {
     chunks += 1;
     engines[engine] = (engines[engine] ?? 0) + 1;
@@ -285,5 +375,19 @@ class CheVoiceTurnOutcome {
         'silent': silent,
         'engines': engines,
         'reasons': reasons,
+        if (provider.isNotEmpty) 'provider': provider,
+        'tags': tags,
+        'switches': switches,
+        'fallback': fallback ? 1 : 0,
+        'interrupted': interrupted ? 1 : 0,
+        'stopped': stopped ? 1 : 0,
+        'retries': retries,
+        'gaps': gapsMs.length,
+        'gap_max_ms': _max(gapsMs),
+        'gap_avg_ms': _avg(gapsMs),
+        'first_audio_ms': ?firstAudioMs,
+        'synth_max_ms': _max(synthMs),
+        'overhead_max_ms': _max(overheadMs),
+        'overhead_avg_ms': _avg(overheadMs),
       };
 }

@@ -16,12 +16,18 @@ import 'dart:typed_data';
 
 /// One synthesized server-voice clip and the engine that produced it.
 class CheVoiceClip {
-  const CheVoiceClip(this.bytes, this.engine, {this.text = ''});
+  const CheVoiceClip(this.bytes, this.engine, {this.text = '', this.index = -1, this.tag = ''});
   final Uint8List bytes;
   final String engine;
 
   /// The words the clip says (for telling CHE's own voice from the owner's).
   final String text;
+
+  /// Its place in the spoken reply (0 is the first clip), or -1.
+  final int index;
+
+  /// The server's fingerprint of the voice that spoke it (no voice ID).
+  final String tag;
 }
 
 typedef CheSynthesize<A> = Future<A?> Function(String text);
@@ -69,6 +75,12 @@ class CheSpeechPipeline<A> {
 
   /// Silence between the end of one chunk and the start of the next (ms).
   final List<int> gapsMs = [];
+
+  /// Time from the start of the turn to the first playback (ms), or null.
+  int? firstPlaybackMs;
+
+  /// How long each clip took to synthesize (ms), in the order they finished.
+  final List<int> synthMs = [];
 
   bool get cancelled => _cancelled;
   Future<void> get done => _done.future;
@@ -123,6 +135,7 @@ class CheSpeechPipeline<A> {
       _mark('tts ${chunk.index} request started');
       final started = _nowMs;
       chunk.audio = synthesize(chunk.text).then((audio) {
+        synthMs.add(_nowMs - started);
         _mark('tts ${chunk.index} response ${audio == null ? 'failed' : 'received'} '
             'after ${_nowMs - started}ms');
         return audio;
@@ -158,6 +171,7 @@ class CheSpeechPipeline<A> {
           gapsMs.add(gap);
           _mark('gap before chunk ${chunk.index}: ${gap}ms');
         }
+        firstPlaybackMs ??= startMs;
         _mark('playback ${chunk.index} started');
         var played = false;
         if (audio != null) {

@@ -36,3 +36,29 @@ Source: live `main` at `fe18860bb60e15d5313d9cede2766d338c8ff7a0`, `AGENTS.md`, 
 ## Release gates
 
 Worker unit/security tests, Flutter analysis/tests, code review, Worker deployment with live commit verification, SideStore-compatible IPA, actual iPhone voice test and live connection consent where applicable. **Any unmet gate remains an explicit blocker; do not claim this is a fully deployed JARVIS-style assistant until they pass.**
+
+## Speech continuity and one voice per reply (2026-10-18)
+
+Owner request: one voice per response, natural continuous speech, clean spoken text, the chosen voice kept until he changes it, and diagnostics. Same pipeline as before (`lib/che_speech_pipeline.dart` → `/api/voice/edge` → native `playClip`); no second speech system.
+
+Causes found in the code:
+- **Voice switched mid-reply.** Every clip asked "ElevenLabs, else Fish" on its own. One ElevenLabs timeout paused ElevenLabs for two minutes, so the rest of that reply came from Fish. A selected Fish voice fell back to Mary the same way.
+- **Clips over 800 characters went to Fish.** The streaming chunker had no size cap, and ElevenLabs refuses clips over 800 characters.
+- **Clips split mid-phrase.** The chunker released text that ended at "3." or "Dr." while the reply was still streaming, and split after list numbers and abbreviations.
+- **Symbols read aloud.** Read This had no Markdown cleanup; chat replies lost line breaks before cleanup, so headings and list items ran together, and links were read as URLs.
+- **The chosen voice was undone.** The choice lives in the shared `che` record. A long request (chat turn, Office run) that loaded the record before the owner changed voice wrote its older copy back afterwards. The picker also preselected the first listed voice when the saved one was missing from the provider's list.
+
+What changed:
+- **Turn lock.** The phone sends `turn`, `index` and, after the first clip, `lock` (the provider that spoke it). The Worker keeps the turn's voice settings (`voiceTurnFor`), tries only the locked provider, retries once after a passing failure (network, rate limit, slow), and answers 204 with `X-CHE-Voice-Lock` instead of using the other voice. The first clip may still use the allowed backup (`X-CHE-Voice-Fallback: 1`); the whole reply then stays on it. A Fish turn also keeps its first clip's model.
+- **Phone.** `lib/che_voice_turn.dart` assigns the lock, retries a lost server answer once, and stops the reply at the first part the locked voice cannot speak. The rest of the reply is shown in the silent-voice banner with the reason. Stop and barge-in cancel the turn; nothing more is requested.
+- **Chunks.** `cheSentenceEnd` ends a sentence only where a person would stop, and never at the end of text still streaming. Streamed chunks are at most 640 characters and are cut at a phrase break when one sentence is longer. Lists and headings keep their lines.
+- **Spoken text.** `cheSpeakableText` turns headings, list items (numbers kept), tables, links, web addresses (said as the site), inline code, emphasis, arrows and status marks into speech. Chat replies and Read This use it.
+- **Voice choice.** Each change is stamped and kept under `voice_pref_v1`. Every load puts the newest choice back into `che` (`reconcileVoiceChoice`). All voice-change routes and Voice Studio chat use `saveVoiceChoice`.
+- **Diagnostics.** Each clip's log entry has the lock, index, attempts and a voice tag (provider plus a one-way fingerprint of voice, model, speed and settings, never the ID). Each reply's phone report adds provider, tags, switches, fallback, interruption, Stop, retries, gaps (count, max, average), time to first audio, slowest synthesis and the iPhone's per-clip setup time. The Voice diagnostics sheet shows a "Last spoken reply" line.
+
+Not changed, and why:
+- **The native player still prepares each clip after the previous one ends.** A gapless native queue needs a new IPA, and this release is a Shorebird patch. The new "iPhone setup" figure measures that cost on the phone.
+- **ElevenLabs `previous_text` context is not sent.** It could not be confirmed that it is free, and the owner's spending cap applies.
+- **Clip edge silence is not trimmed.** That needs decoding the audio.
+
+Tests: `server/cloudflare/phone_voice.test.mjs`, `test/che_voice_turn_test.dart`, `test/che_spoken_text_test.dart`, and new cases in `test/che_speech_chunker_test.dart`. All are mocked: none of them prove iPhone playback.

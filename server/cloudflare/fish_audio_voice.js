@@ -402,6 +402,9 @@ export async function fishAudioSpeech(env = {}, text, options = {}) {
   // own, never another chunk's. A timeout does not fall back: that would make
   // the owner wait twice. The story keeps its length limit and quality; only
   // the model changes, and the free model is not counted against the cap.
+  // A reply locked to one model (owner, 2026-10-18: one voice per response)
+  // never changes model halfway; the phone reports the interruption instead.
+  if (options.locked) return null;
   if (!EXPRESSIVE_PURPOSES.has(String(options.purpose || '').toLowerCase())) return null;
   if (!EXPRESSIVE_BLOCKED.has(first.why)) return null;
   const fallback = await fishSpeakOnce(env, text, { ...options, model: fishModels(env).everyday });
@@ -421,6 +424,7 @@ async function fishSpeakOnce(env = {}, text, {
   fetcher = fetch,
   now = Date.now(),
   model: modelOverride = '',
+  force = false,
 } = {}) {
   const none = (why) => ({ response: null, why });
   if (!fishAudioReady(env)) return none('not set up');
@@ -445,7 +449,9 @@ async function fishSpeakOnce(env = {}, text, {
     await addUsage(storage, model, { cache_hits: 1 }, now);
     return { response: audioResponse(cached.bytes, cached.type, model, 'hit') };
   }
-  if (paused(model, now)) {
+  // [force] is one bounded retry for a reply already speaking in Fish: a
+  // rest after a slow or failed clip must not switch the voice mid-reply.
+  if (!force && paused(model, now)) {
     return none((state.pausedUntil.get(model) || 0) > now ? state.pauseWhy.get(model) : state.pauseWhy.get('*'));
   }
   if ((state.refused.get(key) || 0) > now) return none('refused text');
