@@ -319,7 +319,7 @@ class CheBrainReplica {
         // every earlier op for its record, as the live path does.
         if (op['type'] == 'put') {
           final id = (op['record'] as Map?)?['id'];
-          _outbox.removeWhere((o) => o['type'] == 'put' && (o['record'] as Map?)?['id'] == id);
+          _outbox.removeWhere((o) => (o['type'] == 'put' && (o['record'] as Map?)?['id'] == id) || (o['type'] == 'delete' && o['id'] == id));
         } else if (op['type'] == 'delete') {
           final id = op['id'];
           _outbox.removeWhere((o) => (o['type'] == 'put' && (o['record'] as Map?)?['id'] == id) || (o['type'] == 'delete' && o['id'] == id));
@@ -604,7 +604,9 @@ class CheBrainReplica {
       },
       'base_rev': existing?.rev,
     };
-    _outbox.removeWhere((o) => o['type'] == 'put' && (o['record'] as Map)['id'] == recordId);
+    // A new put supersedes an earlier put and a pending delete of the same record: the recreate
+    // then reaches the cloud against the live revision instead of racing its own tombstone.
+    _outbox.removeWhere((o) => (o['type'] == 'put' && (o['record'] as Map)['id'] == recordId) || (o['type'] == 'delete' && o['id'] == recordId));
     _outbox.add(op);
     _index(record);
     // Record and op in one write: a cut-off never leaves a record that is pending but never sent.
@@ -639,7 +641,8 @@ class CheBrainReplica {
 
   static String _displayCopy(String body) {
     final collapsed = body.replaceAll(RegExp(r'\s+'), ' ').trim();
-    return collapsed.length > 500 ? collapsed.substring(0, 500) : collapsed;
+    // Trimmed after the cut as the Worker does, so a copy of a copy is the same copy.
+    return collapsed.length > 500 ? collapsed.substring(0, 500).trimRight() : collapsed;
   }
 
   /// The owner's deletion: a tombstone here now, and at the cloud at the next sync.

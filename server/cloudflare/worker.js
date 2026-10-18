@@ -6926,7 +6926,24 @@ export class CheState extends DurableObject {
         // "saved" is true for the Brain as well.
         const brainRow = added.added ? added.record : added.reason === 'duplicate' ? data.memory_records.find((item) => sameDisplayCopy(item.text, memory)) : null;
         if (brainRow) {
-          try { new CheBrainStore(this.ctx.storage).put(ownerMemoryRecord(brainRow, String(body.memory || '').trim()), { origin: 'owner' }); } catch (_) {}
+          const fullText = String(body.memory || '').trim();
+          try {
+            const brain = new CheBrainStore(this.ctx.storage);
+            const current = brain.get(`mem:${brainRow.id}`);
+            if (current && !current.deleted && current.body !== fullText && !fullText.startsWith(current.body)) {
+              // Same first 500 characters, a different text: the list has one row, the Brain keeps both
+              // texts. The second lives under its own id as a twin of the row, so the row's delete
+              // reaches it and no earlier words are overwritten.
+              const twinId = crypto.randomUUID();
+              const put = brain.put(ownerMemoryRecord({ ...brainRow, id: twinId }, fullText), { origin: 'owner' });
+              if (['created', 'updated', 'merged', 'unchanged'].includes(put.outcome)) {
+                brainRow.brain_twins = [...new Set([...(Array.isArray(brainRow.brain_twins) ? brainRow.brain_twins : []), `mem:${twinId}`])].slice(-8);
+                await this.ctx.storage.put('che', data);
+              }
+            } else {
+              brain.put(ownerMemoryRecord(brainRow, fullText), { origin: 'owner' });
+            }
+          } catch (_) {}
         }
         for (const oldMemory of added.replaced || []) {
           const oldVectorId = `memory:${await digest(String(oldMemory).toLowerCase())}`;
@@ -6958,7 +6975,12 @@ export class CheState extends DurableObject {
         // any memory record showing the same words (a twin the phone pushed under its own id).
         try {
           const brain = new CheBrainStore(this.ctx.storage);
-          for (const record of removedRecords) brain.delete(`mem:${record.id}`, { origin: 'owner' });
+          for (const record of removedRecords) {
+            brain.delete(`mem:${record.id}`, { origin: 'owner' });
+            // Twins noted on the row (a phone push or a second text behind the same first 500
+            // characters) go with it, whatever words they show now.
+            for (const twin of Array.isArray(record.brain_twins) ? record.brain_twins : []) brain.delete(String(twin), { origin: 'owner' });
+          }
           brain.deleteMemoriesShowing(String(removed || ''), { origin: 'owner' });
         } catch (_) {}
         if (removed) {

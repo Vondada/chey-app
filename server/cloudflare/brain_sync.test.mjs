@@ -285,6 +285,38 @@ test('a twin that differs only in letter case is deleted with its row, and a dup
   await che.call('/api/memory/add', { method: 'POST', token: che.token, body: { memory: `${head} ending two, with the new gate code left out.` } });
   state = await (await che.call('/api/state', { token: che.token })).json();
   assert.equal(state.memories.length, 1);
-  const whole = await (await che.call(`/api/brain/record?id=mem:${state.memory_records[0].id}`, { token: che.token })).json();
-  assert.match(whole.body, /ending two/, 'the later, fuller text is in the Brain under the row');
+  const row = state.memory_records[0];
+  const whole = await (await che.call(`/api/brain/record?id=mem:${row.id}`, { token: che.token })).json();
+  assert.match(whole.body, /ending one/, 'the first text stays whole under the row: nothing is overwritten');
+  assert.equal(row.brain_twins?.length, 1, 'the second text is a twin of the row');
+  const twin = await (await che.call(`/api/brain/record?id=${row.brain_twins[0]}`, { token: che.token })).json();
+  assert.match(twin.body, /gate code left out/, 'the second text is whole under its own id');
+  assert.equal((await (await che.call('/api/brain/search?q=gate%20code', { token: che.token })).json()).hits.length, 1);
+  // A longer text that merely continues the first is an edit of the row, not a twin.
+  await che.call('/api/memory/add', { method: 'POST', token: che.token, body: { memory: `${head} ending one. And the shop closes at six.` } });
+  const extended = await (await che.call(`/api/brain/record?id=mem:${row.id}`, { token: che.token })).json();
+  assert.match(extended.body, /closes at six/);
+  assert.equal((await che.call('/api/memory/delete', { method: 'POST', token: che.token, body: { index: 0 } })).status, 200);
+  assert.equal((await (await che.call(`/api/brain/record?id=${row.brain_twins[0]}`, { token: che.token })).json()).deleted, true, 'the row\'s delete reaches the twin');
+  assert.equal((await (await che.call('/api/brain/search?q=route%20shop', { token: che.token })).json()).hits.length, 0);
+});
+
+test('a text whose 500th character is a space: two phone pushes, one row, and the row\'s delete reaches both', async (t) => {
+  const che = await owner();
+  if (!che) return t.skip('node:sqlite unavailable');
+  const text = 'word '.repeat(150).trim();
+  for (const [op, id] of [['w1', 'mem:p1'], ['w2', 'mem:p2']]) {
+    const pushed = await (await che.call('/api/brain/push', { method: 'POST', token: che.token, body: { ops: [{ op_id: op, type: 'put', record: { id, kind: 'memory', region: 'Personal Memory', path: 'Memory', title: 'Words', body: text, verification: 'owner_attested', source: { kind: 'memory_record' } } }], device: 'iphone' } })).json();
+    assert.equal(pushed.results[0].outcome, 'created');
+  }
+  let state = await (await che.call('/api/state', { token: che.token })).json();
+  assert.equal(state.memories.length, 1, 'one row for the same words');
+  assert.deepEqual(state.memory_records[0].brain_twins, ['mem:p2']);
+  assert.equal((await che.call('/api/memory/delete', { method: 'POST', token: che.token, body: { index: 0 } })).status, 200);
+  for (const id of ['mem:p1', 'mem:p2']) {
+    assert.equal((await (await che.call(`/api/brain/record?id=${id}`, { token: che.token })).json()).deleted, true, `${id} deleted`);
+  }
+  assert.equal((await (await che.call('/api/brain/search?q=word', { token: che.token })).json()).hits.length, 0);
+  state = await (await che.call('/api/state', { token: che.token })).json();
+  assert.equal(state.memory_records.length, 0);
 });

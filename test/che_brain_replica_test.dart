@@ -326,6 +326,27 @@ void main() {
     await reopened.remember(id: 'mem:b', kind: 'memory', region: 'Personal Memory', body: 'My sister lives in Lisbon.');
     expect(await reopened.forgetMemoriesShowing('My sister lives in Lisbon.'), 2);
     expect(reopened.search('Lisbon'), isEmpty);
+    // The 500th character of the collapsed text is a space: the Memory screen shows the cut copy,
+    // and forgetting by those words must still reach the whole record.
+    final words = List.filled(150, 'word').join(' ');
+    await reopened.remember(id: 'mem:w', kind: 'memory', region: 'Personal Memory', body: words);
+    final shown = words.substring(0, 500).trimRight();
+    expect(await reopened.forgetMemoriesShowing(shown), 1);
+    expect(reopened.search('word'), isEmpty);
+  });
+
+  test('M: a memory remembered again after an offline forget sends one put against the live revision, not a delete', () async {
+    final dir = await freshDir();
+    final brain = CheBrainReplica(directory: dir);
+    await brain.remember(id: 'mem:re', kind: 'memory', region: 'Personal Memory', body: 'First words.');
+    await brain.forget('mem:re');
+    await brain.remember(id: 'mem:re', kind: 'memory', region: 'Personal Memory', body: 'Second words.');
+    expect(brain.pendingOps, 1);
+    expect(brain.get('mem:re')!.deleted, isFalse);
+    final reopened = CheBrainReplica(directory: dir);
+    await reopened.load();
+    expect(reopened.pendingOps, 1, reason: 'the replay keeps the recreate only');
+    expect(reopened.search('Second'), hasLength(1));
   });
 
   test('L: a delete replayed after a put for the same record leaves only the delete, and forgetting by words ignores case', () async {

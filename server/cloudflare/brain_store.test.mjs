@@ -1,9 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  BRAIN_REGIONS, CheBrainStore, RELATIONSHIP_TYPES, VERIFICATION_STATES, assessSignificance, backfillConversations,
-  contentHash, fnv1a32, isSafeText, normalizeLinks, normalizeRecord, projectLegacyState, rememberExchange,
-} from './brain_store.js';
+import { BRAIN_REGIONS, CheBrainStore, RELATIONSHIP_TYPES, VERIFICATION_STATES, assessSignificance, backfillConversations, contentHash, displayCopy, fnv1a32, isSafeText, normalizeLinks, normalizeRecord, projectLegacyState, rememberExchange, sameDisplayCopy } from './brain_store.js';
 
 async function sqlStorage() {
   let DatabaseSync;
@@ -310,4 +307,14 @@ test('the secret gate reads the whole text at once: no false refusal where a win
   assert.equal(isSafeText(clean), true);
   assert.equal(store.put(sample({ id: 'note:clean', body: clean })).outcome, 'created');
   assert.equal(store.put(sample({ id: 'note:src', body: 'A harmless note.', source: { kind: 'test', note: 'the password is hunter2' } })).outcome, 'rejected');
+});
+
+test('the display copy of a display copy is the same copy, even when the cut lands on a space', () => {
+  for (const text of ['word '.repeat(150), `  ${'ab '.repeat(200)}`, 'short', '', 'x'.repeat(700)]) {
+    const once = displayCopy(text);
+    assert.equal(displayCopy(once), once, JSON.stringify(text.slice(0, 20)));
+    assert.ok(once.length <= 500);
+    assert.equal(once, once.trim());
+    assert.ok(sameDisplayCopy(text, once));
+  }
 });

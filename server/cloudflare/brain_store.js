@@ -600,7 +600,9 @@ export function rememberExchange(store, { id, message, reply, at, correction = f
 /** Owner memory rows (data.memory_records) as Personal Memory records with stable ids. */
 /** What data.memories keeps of a memory: its first 500 characters, whitespace collapsed (research_memory clip). */
 export function displayCopy(body) {
-  return String(body || '').replace(/\s+/g, ' ').trim().slice(0, 500);
+  // Trim after the cut as well: a copy whose 500th character was a space must map to itself,
+  // or a twin stored from the cut copy would escape sameDisplayCopy and the Memory screen's delete.
+  return String(body || '').replace(/\s+/g, ' ').trim().slice(0, 500).trim();
 }
 
 /** Two memories are the same entry of the list when their display copies match the way the list dedupes: ignoring case. */

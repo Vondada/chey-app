@@ -15,7 +15,8 @@ const MAX_SOURCES = 6;
 export const SENSITIVE_RE = /password|passcode|security code|social security|credit card|api[_ -]?key|private key|seed phrase|session cookie|fiverr\s+password|auth\s+token/i;
 
 function clip(value, max) {
-  return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
+  // Trimmed after the cut too, so clipping a clipped value changes nothing (the Brain's displayCopy relies on it).
+  return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max).trim();
 }
 
 /** Same gate as /api/memory/add — non-sensitive only. */

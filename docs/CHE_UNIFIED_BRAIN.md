@@ -158,7 +158,7 @@ the Keychain vault and never enter the Brain.
 
 Verified (automated, offline, this PR):
 
-- `server/cloudflare/brain_store.test.mjs` — 17 tests: regions/relationships/labels;
+- `server/cloudflare/brain_store.test.mjs` — 18 tests: regions/relationships/labels;
   fnv1a32 reference values; normalization; significance rules and owner override;
   created/unchanged/merged/updated/conflict/resolve; duplicate op; delete wins and
   re-create after tombstone; secrets rejected; changes paging with tombstones and the
@@ -168,8 +168,9 @@ Verified (automated, offline, this PR):
   past the 500th character refused; a deleted record not resurrected by `put` or by the
   projection; a subset of links is unchanged; the display copy never overwrites a
   phone-authored or fuller memory (flags only); a clean text is never refused at a window
-  cut and source fields are scanned.
-- `server/cloudflare/brain_sync.test.mjs` — 9 tests through the real Worker: owner
+  cut and source fields are scanned; the display copy is idempotent even when the cut lands
+  on a space.
+- `server/cloudflare/brain_sync.test.mjs` — 11 tests through the real Worker: owner
   gate (401 without a device); phone memory → `/api/state` with the same id, duplicate
   op, `/changes`, no conflict from the projection; Memory-screen delete → tombstone,
   clear → all tombstones, deleted memory not searchable; chat exchange kept word for
@@ -180,19 +181,34 @@ Verified (automated, offline, this PR):
   phone memory stays whole through the projection while the memory list shows its display
   copy; a twin pushed under its own id is deleted by the Memory screen and "clear all"
   clears every memory record; a flags-only amendment keeps the author and does not turn the
-  phone's next edit into a conflict.
-- `test/che_brain_replica_test.dart` — 12 tests with an in-memory fake Worker that
+  phone's next edit into a conflict; a case-only twin is deleted with its row and a different
+  text behind the same first 500 characters becomes a twin, never an overwrite; two phone
+  pushes of a text cut on a space leave one row whose delete reaches both.
+- `test/che_brain_replica_test.dart` — 14 tests with an in-memory fake Worker that
   returns the same outcomes: durable write + restart replay; push/pull/ack/digest
   match; failed push drops nothing; delete both ways; conflict with both copies,
   rejected record kept, resolve re-queues; 1 203-record paged pull interrupted and
   resumed from its cursor, long body in a file; queued offline request says it did
   not run; a secret never written and a 1 550-char body kept whole across a restart; a
   replayed op read by its first outcome; a replayed journal queues each op once and only
-  the last put per record; forgetting by words removes every twin; scale on the VM: 10 000 records sync 1.9 s,
+  the last put per record; forgetting by words removes every twin, case and a cut on a space
+  included; a recreate after an offline forget sends one put; scale on the VM: 10 000 records sync 1.9 s,
   search 10 ms, load 1.6 s; 100 000 records (`CHE_BRAIN_SCALE=100000`) sync 26.7 s,
   search 90 ms, load 14.9 s.
-- `run_checks.sh`: Worker 1455/1462 (7 skipped), skills 17/17, dart analyze clean,
-  flutter test +444.
+- `run_checks.sh` (2026-10-18, after review 5): Worker 1817/1824 (7 skipped), dart analyze
+  clean, flutter test +448.
+- Fifth independent review (2026-10-18): two blocking findings, fixed above. A text whose
+  500th collapsed character was a space escaped `sameDisplayCopy` (the copy was trimmed before
+  the cut, so a copy of a copy differed): `displayCopy`, `clip` and the phone's `_displayCopy`
+  now trim after the cut, so the Memory screen's delete reaches such twins. A second online
+  save with the same first 500 characters but a different text overwrote the earlier text in
+  the Brain: it now lives under its own id as a twin noted on the row (`brain_twins`), a text
+  that merely continues the first still edits the row, and the row's delete tombstones every
+  twin noted on it. Also fixed: a memory remembered again on the phone after an offline forget
+  sends one put against the live revision (the recreate supersedes the pending delete).
+- Fourth independent review (2026-10-18): one blocking finding, fixed above (twins of a
+  memory that differed only in letter case, or that the Memory screen listed under a 500-char
+  copy, survived the row's delete; deletion now matches the way the list dedupes).
 - Third independent review (2026-10-18): one blocking finding, fixed above (a memory the
   phone pushed as a twin of an existing display copy had no list row, so the Memory screen's
   delete and "clear all" left it live; now deletion reaches every memory record showing the
