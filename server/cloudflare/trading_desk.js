@@ -26,8 +26,12 @@ export async function readDesk(storage) {
     listed: desk.listed && Array.isArray(desk.listed.names) ? desk.listed : null,
     // The owner's live limits: the most contracts per order and the most dollars at risk on one order.
     risk_limits: validLimits(desk.risk_limits),
+    // When the owner last asked to switch to live; the switch waits for "confirm live trading".
+    live_request_at: Number(desk.live_request_at) || 0,
   };
 }
+
+const LIVE_CONFIRM_MS = 2 * 60_000;
 
 function validLimits(limits) {
   const contracts = Number(limits?.maxContracts);
@@ -124,6 +128,9 @@ export function speakAlert(a) {
 
 export function deskIntent(message) {
   const text = String(message || '').toLowerCase().replace(/[’']/g, "'");
+  if (/\b(?:trading|broker(?:age)?)\s+connections?\b|\bbroker\s+status\b|\b(?:which|what)\s+brokers?\b[\s\S]{0,20}\bconnected\b/.test(text)) return { kind: 'connections' };
+  if (/^\s*(?:yes[,!.]?\s+)?confirm\s+(?:the\s+)?(?:switch\s+to\s+)?live\s+trading\b/.test(text)) return { kind: 'confirm_live' };
+  if (/\b(?:connect|link|set up|setup|add|hook up)\b[\s\S]{0,25}\balpaca\b/.test(text)) return { kind: 'alpaca_setup' };
   if (/\b(?:connect|link|sign in to|log in to|hook up)\b[\s\S]{0,30}\b(?:ninja\s?trader|tradovate|trading account|funded account|broker)\b/.test(text)) return { kind: 'connect' };
   const sw = /\b(?:switch|change|go|flip|move|put|set)\b[\s\S]{0,25}\b(?:to|over to|on|into)\b/.test(text);
   if (sw && /\b(?:live|real)(?:\s+money)?\s+(?:trading|account|mode)\b/.test(text)) return { kind: 'mode', mode: 'live' };
@@ -155,8 +162,35 @@ export async function setMode(storage, mode) {
   const desk = await readDesk(storage);
   const before = desk.mode;
   desk.mode = mode;
+  desk.live_request_at = 0;
   await saveDesk(storage, desk);
   return { before, mode };
+}
+
+// Going live takes two steps (owner directive, issue #344): the first only records the request,
+// so CHE can say which broker, account and limits would trade real money; the switch happens
+// when the owner says "confirm live trading" within two minutes. Nothing promotes to live alone.
+export async function requestLive(storage, now = Date.now()) {
+  const desk = await readDesk(storage);
+  if (desk.mode === 'live') return { already: true, desk };
+  desk.live_request_at = now;
+  await saveDesk(storage, desk);
+  return { desk };
+}
+
+export async function confirmLive(storage, now = Date.now()) {
+  const desk = await readDesk(storage);
+  if (!desk.live_request_at || now - desk.live_request_at > LIVE_CONFIRM_MS) {
+    return { error: 'There is no live switch waiting to be confirmed, sir. Say "switch to live trading" first. Nothing changed.' };
+  }
+  return setMode(storage, 'live');
+}
+
+/** What the owner hears before confirming live: the broker, the exact account and the limits. */
+export function speakLiveRequest(desk, conn) {
+  const account = desk.account.live ? `account ${desk.account.live}` : 'no live account chosen yet';
+  const limits = desk.risk_limits ? `${desk.risk_limits.maxContracts} contract${desk.risk_limits.maxContracts === 1 ? '' : 's'} and $${desk.risk_limits.maxRiskDollars} at risk per order` : 'not set, so no live order could be sent';
+  return `Before I switch to LIVE, sir: that is real money on Tradovate, ${account}. Your live limits: ${limits}.${conn?.connected ? '' : ' NinjaTrader is not connected yet.'} Even on live, I place an order only after you approve that exact order. To switch, say "confirm live trading" within two minutes. Nothing changed yet.`;
 }
 
 // The owner sets the live limits by voice. Nothing live is sent until they exist.

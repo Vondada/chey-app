@@ -51,7 +51,7 @@ import {
 import { activityFeed, creations, findCreations, greeting, suggestions, stalledTasks, decisionsNeeded, nextActions } from './activity.js';
 import { accountSnapshot as marketAccountSnapshot, candles as marketCandles, chartPage as marketChartPage, quote as marketQuote, snapshot as marketSnapshot } from './markets.js';
 import { CALLBACK_PATH as TRADOVATE_CALLBACK, accountBalance, connectLink, listAccounts, connection as brokerConnection, handleCallback as tradovateCallback, renewToken, tradovateConfigured } from './broker_tradovate.js';
-import { MODE_NAME, chooseAccount, deskIntent, rememberListed, deskTick, pendingAlert, readDesk, setMode, setRiskLimits, setSize, skipTrade, speakAlert, speakDeskStatus, takeAnnouncement, takeTrade } from './trading_desk.js';
+import { MODE_NAME, chooseAccount, confirmLive, deskIntent, rememberListed, deskTick, pendingAlert, readDesk, requestLive, setMode, setRiskLimits, setSize, skipTrade, speakAlert, speakDeskStatus, speakLiveRequest, takeAnnouncement, takeTrade } from './trading_desk.js';
 import { externalGrounding } from './external_grounding.js';
 import { answerEvidenceReceipt, cachedResearch, evidenceReferenceFollowup, factKey, forgetKnowledge, invalidateKnowledge, knownAnswer, LAST_ANSWER_EVIDENCE_KEY, ownerFactQuestion, markPureResearch, rememberOwnerFact, researchHit, researchKey } from './knowledge_cache.js';
 import { claimMatcher, disprovenContext, downgradeDisproven, externalCorrection, guardCitations, loadDisproven, newsQuestion, newsResearch, reopenArticles, recheckExternalClaim, recordDisproven, verifiedSourcesContext } from './source_verification.js';
@@ -60,7 +60,9 @@ import { answerOwnerMemoryQuestion, auditMemoryProvenance, evidenceQuestion, evi
 import { condenseHistory, ownerNotificationPolicy } from './workflow_governor.js';
 import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, nextTradingTickAt, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
 import { evidenceIntent, evidenceReport, evidenceTick } from './trading_evidence_runner.js';
-import { LIVE_BACKTEST, LIVE_STATE, liveBacktest, liveDashboard, liveTick, nextLiveTickAt, setLivePaper } from './trading_live.js';
+import { LIVE_BACKTEST, LIVE_STATE, liveBacktest, liveDashboard, livePaperSummary, liveTick, nextLiveTickAt, setLivePaper } from './trading_live.js';
+import { alpacaPaperOrders, alpacaStatus, placeAlpacaPaperOrder, removeAlpacaPaperKeys, saveAlpacaPaperKeys } from './broker_alpaca.js';
+import { speakConnections, tradingConnections } from './trading_connections.js';
 import { liveIntent, liveReply } from './trading_live_chat.js';
 import { cloudDailyLimit, sanitizeOwnerText } from './che_errors.js';
 import { CHE_UPDATE_GUIDE, mergeSelfUpdatePr, openSelfUpdatePr, rollbackLastUpdate, selfUpdateGitHubAccess, selfUpdateStatus, workerDeploymentStatus } from './self_update.js';
@@ -3401,6 +3403,18 @@ export class CheState extends DurableObject {
   // The Trading Room's forward-paper dashboard with the real broker state: Tradovate's
   // OAuth sign-in as stored, FundYourEdge as not connected (Rithmic needs a licence), and
   // live orders disabled. Nothing is assumed about balances or firm rules.
+  // Every trading connection as its own system reports it (issue #344); nothing here changes a mode.
+  async tradingConnectionsView() {
+    const env = this.keyEnv || this.env;
+    const [paper, desk, conn, alpaca] = await Promise.all([
+      livePaperSummary(this.ctx.storage).catch(() => null),
+      readDesk(this.ctx.storage),
+      brokerConnection(this.ctx.storage).catch(() => ({ connected: false })),
+      alpacaStatus(env),
+    ]);
+    return tradingConnections({ paper, desk, tradovate: { configured: tradovateConfigured(env), conn }, alpaca });
+  }
+
   async liveTradingDashboard() {
     const auth = await this.ctx.storage.get('tradovate_auth').catch(() => null);
     const connected = Boolean(auth?.access_token) && Date.now() < Number(auth.expires_at || 0);
@@ -6197,6 +6211,33 @@ export class CheState extends DurableObject {
         if (body.action === 'tick') return json({ ok: true, run: await liveTick(this.ctx.storage, { force: true }) });
         if (body.action === 'backtest') return json(await liveBacktest(this.ctx.storage));
         return json({ detail: 'Unknown action. Use start, stop, tick or backtest.' }, 400);
+      }
+      if (path === '/api/trading/connections' && request.method === 'GET') {
+        if (!ownerDevice) return ownerOnly();
+        const view = await this.tradingConnectionsView();
+        return json({ ...view, speech: speakConnections(view) });
+      }
+      // The Alpaca paper key pair: saved only after Alpaca's paper host accepts it, never returned.
+      if (path === '/api/trading/alpaca/keys' && request.method === 'POST') {
+        if (!ownerDevice) return ownerOnly();
+        if (body.action === 'remove') {
+          if (body.confirm !== true) return json({ ok: false, detail: 'Removing the Alpaca paper keys needs your confirmation, sir. Nothing was removed.' }, 409);
+          const removed = await removeAlpacaPaperKeys(this.ctx.storage);
+          await this.refreshKeyEnv();
+          return json({ ...removed, detail: removed.removed ? 'The Alpaca paper keys are removed, sir.' : 'There were no Alpaca paper keys saved in CHE, sir.' });
+        }
+        const saved = await saveAlpacaPaperKeys(this.ctx.storage, { key_id: body.key_id, secret: body.secret });
+        if (saved.ok) await this.refreshKeyEnv();
+        return json(saved, saved.ok ? 200 : 400);
+      }
+      if (path === '/api/trading/alpaca/orders' && request.method === 'GET') {
+        if (!ownerDevice) return ownerOnly();
+        return json(await alpacaPaperOrders(this.keyEnv || this.env));
+      }
+      if (path === '/api/trading/alpaca/order' && request.method === 'POST') {
+        if (!ownerDevice) return ownerOnly();
+        const placed = await placeAlpacaPaperOrder(this.keyEnv || this.env, this.ctx.storage, body);
+        return json(placed, placed.ok ? 200 : 400);
       }
       if (path === '/api/trading/paper' && request.method === 'GET') {
         const book = await readBook(this.ctx.storage);
@@ -9394,6 +9435,25 @@ export class CheState extends DurableObject {
         const desk = deskIntent(message);
         if (desk) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can use the trading desk.', { source: 'che_trading_desk', ok: false });
+          if (desk.kind === 'connections') {
+            const view = await this.tradingConnectionsView();
+            return ndjsonReply(speakConnections(view), { source: 'che_trading_desk', ok: true, trading_mode: view.mode });
+          }
+          if (desk.kind === 'alpaca_setup') {
+            return ndjsonReply('To connect Alpaca paper trading, sir: on alpaca.markets open your paper account, go to API Keys and generate a paper key; its ID starts with PK. Then open the Trading Room, choose Alpaca, and enter the key ID and secret there. Never say or type them in chat. CHE checks them with Alpaca\'s paper service before saving, and refuses live keys.', { source: 'che_trading_desk', ok: true });
+          }
+          if (desk.kind === 'mode' && desk.mode === 'live') {
+            const asked = await requestLive(this.ctx.storage);
+            if (asked.already) return ndjsonReply('You are already on live trading, sir. Every order still needs your approval of that exact order.', { source: 'che_trading_desk', ok: true, trading_mode: 'live' });
+            return ndjsonReply(speakLiveRequest(asked.desk, await brokerConnection(this.ctx.storage)), { source: 'che_trading_desk', ok: true, trading_mode: asked.desk.mode, live_confirmation_needed: true });
+          }
+          if (desk.kind === 'confirm_live') {
+            const confirmed = await confirmLive(this.ctx.storage);
+            if (confirmed.error) return ndjsonReply(confirmed.error, { source: 'che_trading_desk', ok: false });
+            desk.kind = 'mode';
+            desk.mode = 'live';
+            desk.confirmed = confirmed;
+          }
           if (desk.kind === 'connect') {
             if (!tradovateConfigured(this.keyEnv || this.env)) {
               return ndjsonReply(`To connect NinjaTrader, Tradovate first has to give CHE OAuth app credentials, sir. Ask Tradovate support (or their partner program) to register an OAuth application with this redirect address: ${new URL(request.url).origin}/broker/tradovate/callback. They will give you a client ID and a client secret; save them as the Worker secrets CHE_TRADOVATE_OAUTH_CLIENT_ID and CHE_TRADOVATE_OAUTH_CLIENT_SECRET, then say "connect NinjaTrader" again. Your password never comes to me: you sign in on Tradovate's own page.`, { source: 'che_trading_desk', ok: false });
@@ -9402,7 +9462,7 @@ export class CheState extends DurableObject {
             return ndjsonReply(`Open this link to sign in to NinjaTrader on Tradovate's own page, sir. Your password goes only to Tradovate, never to me. The link works once, for 10 minutes: ${link.url}`, { source: 'che_trading_desk', ok: true });
           }
           if (desk.kind === 'mode') {
-            const changed = await setMode(this.ctx.storage, desk.mode);
+            const changed = desk.confirmed || await setMode(this.ctx.storage, desk.mode);
             const conn = await brokerConnection(this.ctx.storage);
             const note = desk.mode === 'live'
               ? ' Real money now. I will call each entry and place it only when you say "take the trade".'

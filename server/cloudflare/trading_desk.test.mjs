@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { deskIntent, deskTick, readDesk, setMode, setRiskLimits, setSize, speakDeskStatus, takeAnnouncement, takeTrade, skipTrade, pendingAlert, rememberListed, chooseAccount } from './trading_desk.js';
+import { confirmLive, deskIntent, deskTick, readDesk, requestLive, setMode, setRiskLimits, setSize, speakDeskStatus, takeAnnouncement, takeTrade, skipTrade, pendingAlert, rememberListed, chooseAccount } from './trading_desk.js';
 import { connectLink, handleCallback, placeBracket, connection, renewToken, accountBalance, pickAccount } from './broker_tradovate.js';
 
 const store = () => {
@@ -339,4 +339,26 @@ test('a live take with no limits sends nothing and keeps the alert; with limits 
   assert.deepEqual(sent[0].approval, { account: 'LIVE1', contract: 'MES', qty: 1, entry: 5820, stop: 5805, target: 5850, expires_at: Date.parse(sent[0].expires_at) });
   assert.deepEqual(sent[0].limits, LIMITS);
   assert.equal(sent[0].unattended, false);
+});
+
+test('going live takes a request and a confirmation within two minutes; nothing promotes alone', async () => {
+  assert.deepEqual(deskIntent('confirm live trading'), { kind: 'confirm_live' });
+  assert.deepEqual(deskIntent('yes, confirm the switch to live trading'), { kind: 'confirm_live' });
+  assert.deepEqual(deskIntent('what are my trading connections'), { kind: 'connections' });
+  assert.deepEqual(deskIntent('which brokers are connected?'), { kind: 'connections' });
+  assert.deepEqual(deskIntent('connect my Alpaca paper account'), { kind: 'alpaca_setup' });
+  for (const no of ['I never want to confirm live trading without seeing the order first', 'my connection is slow', 'the alpaca at the zoo']) assert.equal(deskIntent(no)?.kind === 'confirm_live' || deskIntent(no)?.kind === 'alpaca_setup', false, no);
+  const s = store();
+  const t0 = Date.parse('2026-10-19T14:00:00Z');
+  assert.match((await confirmLive(s, t0)).error, /no live switch waiting/);
+  assert.equal((await readDesk(s)).mode, 'paper');
+  await requestLive(s, t0);
+  assert.equal((await readDesk(s)).mode, 'paper', 'the request alone changes nothing');
+  assert.match((await confirmLive(s, t0 + 121_000)).error, /no live switch waiting/, 'a stale request expires');
+  await requestLive(s, t0 + 200_000);
+  await setMode(s, 'sim');
+  assert.match((await confirmLive(s, t0 + 201_000)).error, /no live switch waiting/, 'choosing another mode cancels the request');
+  await requestLive(s, t0 + 300_000);
+  assert.deepEqual(await confirmLive(s, t0 + 330_000), { before: 'sim', mode: 'live' });
+  assert.equal((await readDesk(s)).live_request_at, 0);
 });

@@ -2379,8 +2379,12 @@ test('trading desk through chat: switch modes, connect, alerts said first, take 
   const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', CHE_TRADOVATE_OAUTH_CLIENT_ID: '123', CHE_TRADOVATE_OAUTH_CLIENT_SECRET: 'sec' };
   const { chat } = await pairedChat(env, saved);
   const say = async (m) => replyFromNdjson(await (await chat(m)).text());
-  assert.match(await say('CHE, switch to live trading'), /Switched from paper trading.*to your NinjaTrader LIVE account, real money.*take the trade.*not connected yet/s);
+  // Going live takes two steps: the first says the broker, account and limits and changes nothing.
+  assert.match(await say('CHE, switch to live trading'), /^Before I switch to LIVE, sir: that is real money on Tradovate, no live account chosen yet\. Your live limits: not set.*not connected yet.*approve that exact order.*say "confirm live trading" within two minutes\. Nothing changed yet\.$/s);
+  assert.equal(saved.get('trading_desk').mode, 'paper', 'asking to go live does not switch');
+  assert.match(await say('confirm live trading'), /Switched from paper trading.*to your NinjaTrader LIVE account, real money.*take the trade.*not connected yet/s);
   assert.equal(saved.get('trading_desk').mode, 'live');
+  assert.match(await say('confirm live trading'), /no live switch waiting to be confirmed/, 'a second confirm without a new request changes nothing');
   const connect = await say('connect my NinjaTrader account');
   assert.match(connect, /https:\/\/trader\.tradovate\.com\/oauth\?/);
   assert.match(connect, /password goes only to Tradovate/);
@@ -3594,4 +3598,37 @@ test('"what are you doing" about the screen or an attachment is not answered fro
   assert.notEqual(await sourceOf(await chat("What's happening?", { screen_context: { screen: 'Trading', summary: 'live chart' } })), 'che_activity_status');
   assert.notEqual(await sourceOf(await chat('What are you doing?', { screen_context: { screen: 'Trading', summary: 'live chart' } })), 'che_activity_status');
   assert.notEqual(await sourceOf(await chat('What are you doing?', { attachment: { type: 'image', name: 'photo.jpg', data: 'aGk=' } })), 'che_activity_status');
+});
+
+test('trading connections: one view by voice and over HTTP, Alpaca paper keys never echoed, owner only', async () => {
+  const saved = new Map();
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1' };
+  const { chat, api } = await pairedChat(env, saved);
+  const say = async (m) => replyFromNdjson(await (await chat(m)).text());
+  assert.match(await say('what are my trading connections'), /^Your trading connections, sir: 1, CHE Paper: (?:on|off).* 2, Tradovate \(NinjaTrader\): not set up\. 3, Alpaca \(stock paper\): not set up\. 4, FundYourEdge \(Rithmic\): not supported\. Trading mode: PAPER\. Live orders are off\.$/);
+  assert.match(await say('connect my Alpaca account'), /paper key; its ID starts with PK.*Never say or type them in chat.*refuses live keys/);
+  const view = await (await worker.fetch(new Request('https://che.example/api/trading/connections'), env)).json();
+  assert.equal(view.cards, undefined, 'no view without the paired owner');
+  const original = globalThis.fetch;
+  const hosts = [];
+  globalThis.fetch = async (url) => {
+    hosts.push(new URL(String(url)).origin);
+    return new Response(JSON.stringify({ account_number: 'PA1234567', status: 'ACTIVE', currency: 'USD', cash: '100000', buying_power: '200000', equity: '100000', options_approved_level: 2 }), { status: 200 });
+  };
+  try {
+    const refused = await (await api('/api/trading/alpaca/keys', { key_id: 'AKLIVEKEY1234567890', secret: 's'.repeat(40) })).json();
+    assert.match(refused.detail, /LIVE key/);
+    assert.deepEqual(hosts, [], 'a live-shaped key never reaches the network');
+    const ok = await (await api('/api/trading/alpaca/keys', { key_id: 'PKPAPERKEY1234567890', secret: 'p'.repeat(40) })).json();
+    assert.equal(ok.ok, true);
+    assert.equal(ok.key_last4, '7890');
+    assert.doesNotMatch(JSON.stringify(ok), /PKPAPERKEY|pppppppp/, 'the saved pair is never sent back');
+    assert.match(await say('broker status'), /3, Alpaca \(stock paper\): verified\./);
+    assert.ok(hosts.length >= 2 && hosts.every((h) => h === 'https://paper-api.alpaca.markets'), hosts.join());
+    const keep = await (await api('/api/trading/alpaca/keys', { action: 'remove' })).json();
+    assert.match(keep.detail, /needs your confirmation/);
+    assert.match(await say('broker status'), /Alpaca \(stock paper\): verified/, 'keys stay until the owner confirms removal');
+  } finally {
+    globalThis.fetch = original;
+  }
 });
