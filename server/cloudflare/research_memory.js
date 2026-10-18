@@ -29,12 +29,16 @@ function clipWords(value, max) {
 }
 
 /** Same gate as /api/memory/add — non-sensitive only. */
+// A broker API key ID (Alpaca live keys start AK, paper keys PK, then 16-38 capitals or digits).
+// A bare key carries no "secret" word, so it is matched by its shape (review of #348).
+export const BROKER_KEY_RE = /\b[AP]K[A-Z0-9]{16,38}\b/;
+
 export function isSafeMemoryText(text) {
   // The whole collapsed text, not the 500-character display window: a window can cut a word
   // ("pin|nacle") into something the classifier reads as a secret and refuse a clean memory.
   const whole = String(text ?? '').replace(/\s+/g, ' ').trim();
   if (!whole) return false;
-  if (SENSITIVE_RE.test(whole)) return false;
+  if (SENSITIVE_RE.test(whole) || BROKER_KEY_RE.test(whole)) return false;
   if (classifyItem(whole) === 'secret') return false;
   return true;
 }

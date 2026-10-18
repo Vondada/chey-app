@@ -210,6 +210,12 @@ function unrealized(pf, lastClose) {
   return r2(pts * pv);
 }
 
+/** The engine's on/off state and feed label without its trades (for the connections view). */
+export async function livePaperSummary(storage, now = Date.now()) {
+  const [state, feed, portfolios] = await Promise.all([storage.get(LIVE_STATE), storage.get(LIVE_FEED), readLivePortfolios(storage)]);
+  return { state: state || { enabled: false }, feed: feed ? { ...feed, bars: undefined } : null, contract: frontMonth(ROOT, now), portfolios: portfolios.length };
+}
+
 /** Everything the Trading Room shows, from records only. */
 export async function liveDashboard(storage, { now = Date.now(), tradovateConnected = false } = {}) {
   const [state, feed, runs, portfolios, backtest] = await Promise.all([
