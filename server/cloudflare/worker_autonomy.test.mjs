@@ -3611,14 +3611,17 @@ test('trading connections: one view by voice and over HTTP, Alpaca paper keys ne
   assert.equal(view.cards, undefined, 'no view without the paired owner');
   const original = globalThis.fetch;
   const hosts = [];
+  // Only Alpaca's hosts are recorded: background work from earlier turns may call other services.
   globalThis.fetch = async (url) => {
-    hosts.push(new URL(String(url)).origin);
+    const origin = new URL(String(url)).origin;
+    if (/alpaca/i.test(origin)) hosts.push(origin);
+    else return new Response('{}', { status: 404 });
     return new Response(JSON.stringify({ account_number: 'PA1234567', status: 'ACTIVE', currency: 'USD', cash: '100000', buying_power: '200000', equity: '100000', options_approved_level: 2 }), { status: 200 });
   };
   try {
     const refused = await (await api('/api/trading/alpaca/keys', { key_id: 'AKLIVEKEY1234567890', secret: 's'.repeat(40) })).json();
     assert.match(refused.detail, /LIVE key/);
-    assert.deepEqual(hosts, [], 'a live-shaped key never reaches the network');
+    assert.deepEqual(hosts, [], 'a live-shaped key never reaches Alpaca');
     const ok = await (await api('/api/trading/alpaca/keys', { key_id: 'PKPAPERKEY1234567890', secret: 'p'.repeat(40) })).json();
     assert.equal(ok.ok, true);
     assert.equal(ok.key_last4, '7890');
