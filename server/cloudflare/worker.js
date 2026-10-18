@@ -310,7 +310,8 @@ async function bodyOf(request) {
   if (Number(request.headers.get('content-length') || 0) > 20_000_000) throw new Error('too_large');
   const raw = await request.text();
   if (raw.length > 20_000_000) throw new Error('too_large');
-  const body = JSON.parse(raw);
+  // An empty body is an empty request (the phone's "clear all" sends none), not a malformed one.
+  const body = raw.trim() ? JSON.parse(raw) : {};
   if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('invalid_json');
   return body;
 }
@@ -5697,6 +5698,14 @@ export class CheState extends DurableObject {
                     const twin = data.memory_records.find((item) => sameDisplayCopy(item.text, record.body));
                     if (twin) { twin.brain_twins = [...new Set([...(Array.isArray(twin.brain_twins) ? twin.brain_twins : []), record.id])]; stateChanged = true; }
                   }
+                  // The phone gates secrets before writing; when the memory list's gate still refuses,
+                  // the Brain must not keep a memory the Memory screen cannot show or delete: the
+                  // record is tombstoned and the receipt says rejected, never "created".
+                  if (!added.added && added.reason === 'rejected_sensitive_or_empty') {
+                    try { brain.delete(record.id, { origin }); } catch (_) {}
+                    result.outcome = 'rejected';
+                    result.reason = 'rejected_sensitive_or_empty';
+                  }
                 } else if (legacy && ['updated', 'merged'].includes(effective) && !sameDisplayCopy(legacy.text, record.body)) {
                   const before = String(legacy.text || '').toLowerCase();
                   legacy.text = displayCopy(record.body);
@@ -6914,11 +6923,14 @@ export class CheState extends DurableObject {
         return json({ ok: true });
       }
       if (path === '/api/memory/add') {
-        const memory = displayCopy(body.memory);
-        if (!isSafeMemoryText(memory) || !isSafeText(String(body.memory || ''))) {
+        // Gated and added as the whole text: the 500-character window can cut a clean word
+        // ("pin|nacle") into something the classifier reads as a secret.
+        const wholeMemory = String(body.memory || '');
+        const memory = displayCopy(wholeMemory);
+        if (!isSafeMemoryText(wholeMemory) || !isSafeText(wholeMemory)) {
           return json({ detail: 'Choose a non-sensitive memory.' }, 400);
         }
-        const added = addOwnerMemory(data, memory, {
+        const added = addOwnerMemory(data, wholeMemory, {
           source: 'explicit_memory',
           category: 'Memory',
           scope: 'owner',
@@ -6969,10 +6981,12 @@ export class CheState extends DurableObject {
         // that position differ, the words decide; words the list no longer holds are a 404, never a
         // delete of whatever moved into the slot.
         let index = Number(body.index);
-        const words = String(body.text || '').trim().toLowerCase();
-        const at = (i) => String(data.memories[i] ?? '').toLowerCase();
+        // Compared as display copies: a phone that loaded its list from the replica sends the raw
+        // excerpt (newlines, up to 600 characters) of the same memory.
+        const words = displayCopy(String(body.text || '')).toLowerCase();
+        const at = (i) => displayCopy(String(data.memories[i] ?? '')).toLowerCase();
         if (words && (!Number.isInteger(index) || index < 0 || index >= data.memories.length || at(index) !== words)) {
-          index = data.memories.findIndex((item) => String(item).toLowerCase() === words);
+          index = data.memories.findIndex((item) => displayCopy(String(item)).toLowerCase() === words);
           if (index < 0) return json({ detail: 'That memory is no longer in the list.' }, 404);
         }
         if (!Number.isInteger(index) || index < 0 || index >= data.memories.length) {

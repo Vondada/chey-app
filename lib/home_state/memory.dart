@@ -86,11 +86,20 @@ extension _CheHomeMemory on _CHEHomeState {
       return;
     }
     if (memoryRecords.isEmpty) {
-      memoryRecords = _brainReplica.list(region: 'Personal Memory', limit: 2000).map((r) => {
-        'id': r.id.startsWith('mem:') ? r.id.substring(4) : r.id, 'text': r.excerpt, 'title': r.title, 'category': r.path.isEmpty ? 'Memory' : r.path,
-        'source': '${r.source['legacy_source'] ?? r.source['kind'] ?? 'brain'}', 'verification_status': r.verification,
-        'created_at': r.createdAt, 'active': r.source['active'] != false, 'scope': '${r.source['scope'] ?? 'owner'}',
-      }).toList();
+      final rows = <Map<String, dynamic>>[];
+      for (final r in _brainReplica.list(region: 'Personal Memory', limit: 2000)) {
+        // The cloud list never shows an inactive memory, and it knows a memory by the display copy
+        // of its whole body (the excerpt keeps newlines and 600 raw characters), so a delete sent
+        // with these words finds the row there instead of being told it was already gone.
+        if (r.source['active'] == false) continue;
+        final body = r.inlineBody ? r.excerpt : await _brainReplica.bodyOf(r.id);
+        rows.add({
+          'id': r.id.startsWith('mem:') ? r.id.substring(4) : r.id, 'text': CheBrainReplica.displayCopy(body), 'title': r.title, 'category': r.path.isEmpty ? 'Memory' : r.path,
+          'source': '${r.source['legacy_source'] ?? r.source['kind'] ?? 'brain'}', 'verification_status': r.verification,
+          'created_at': r.createdAt, 'active': true, 'scope': '${r.source['scope'] ?? 'owner'}',
+        });
+      }
+      memoryRecords = rows;
       savedMemories = memoryRecords.map((r) => '${r['text']}').toList();
     }
     if (conversationMemories.isEmpty) {
@@ -137,12 +146,14 @@ extension _CheHomeMemory on _CHEHomeState {
     return 'Brain on this phone: $count record${count == 1 ? '' : 's'} · $sync${pending > 0 ? ' · $pending waiting to send' : ''}';
   }
 
-  Future<void> deleteMemory(int index) async {
+  /// [text] is what the owner saw on the row: a background reload can move the list before the
+  /// tap, so the words decide, never the slot alone.
+  Future<void> deleteMemory(int index, {String? text}) async {
     if (!await _ensurePaired()) return;
 
     // By position and by words: if the list moved under the owner's finger (a deferred phone push
     // landed), the Worker deletes the memory with these words or answers 404, never a neighbour.
-    final wanted = index >= 0 && index < savedMemories.length ? savedMemories[index] : '';
+    final wanted = text ?? (index >= 0 && index < savedMemories.length ? savedMemories[index] : '');
     http.Response response;
     try {
       response = await http.post(
@@ -154,12 +165,11 @@ extension _CheHomeMemory on _CHEHomeState {
       // No connection: the deletion is a tombstone in the Brain replica now and
       // reaches the cloud (and CHE's memory list) at the next sync. Every record
       // showing these words goes, so nothing comes back at the next load.
-      final text = index >= 0 && index < savedMemories.length ? savedMemories[index] : '';
-      final record = memoryRecords.where((r) => '${r['text'] ?? ''}' == text).firstOrNull;
+      final record = memoryRecords.where((r) => '${r['text'] ?? ''}' == wanted).firstOrNull;
       if (record != null && '${record['id'] ?? ''}'.isNotEmpty) await _brainReplica.forget('mem:${record['id']}');
-      final gone = await _brainReplica.forgetMemoriesShowing(text);
-      if (index >= 0 && index < savedMemories.length) savedMemories.removeAt(index);
-      memoryRecords.removeWhere((r) => '${r['text'] ?? ''}' == text);
+      final gone = await _brainReplica.forgetMemoriesShowing(wanted);
+      savedMemories.remove(wanted);
+      memoryRecords.removeWhere((r) => '${r['text'] ?? ''}' == wanted);
       if (mounted) _set(() {});
       await speakText(
         gone > 0 || record != null
@@ -186,10 +196,18 @@ extension _CheHomeMemory on _CHEHomeState {
   Future<void> clearAllMemories() async {
     if (!await _ensurePaired()) return;
 
-    final response = await http.post(
-      Uri.parse('$cheAgentBaseUrl/api/memory/clear'),
-      headers: _authHeaders,
-    );
+    http.Response response;
+    try {
+      // The Worker reads a JSON body on every POST; without one it answers 400 and nothing is cleared.
+      response = await http.post(
+        Uri.parse('$cheAgentBaseUrl/api/memory/clear'),
+        headers: _authHeaders,
+        body: jsonEncode({}),
+      );
+    } catch (_) {
+      await speakText('I could not reach the cloud, sir; nothing was cleared.', record: false);
+      return;
+    }
 
     if (response.statusCode == 401) {
       await _clearSecuritySession();
@@ -197,6 +215,12 @@ extension _CheHomeMemory on _CHEHomeState {
     }
 
     await _loadAgentState(silent: true);
+    await speakText(
+      response.statusCode == 200
+          ? 'All memories cleared, sir.'
+          : 'I could not clear the memories, sir; the cloud answered ${response.statusCode}. Nothing was removed.',
+      record: false,
+    );
   }
 
   void openMemoryManager() {
@@ -242,6 +266,7 @@ extension _CheHomeMemory on _CHEHomeState {
                           : ListView.builder(
                               itemCount: savedMemories.length,
                               itemBuilder: (context, index) {
+                                final text = savedMemories[index];
                                 return Card(
                                   color: const Color(0xFF243747),
                                   child: ListTile(
@@ -250,7 +275,7 @@ extension _CheHomeMemory on _CHEHomeState {
                                       color: Color(0xFF34E0B8),
                                     ),
                                     title: Text(
-                                      savedMemories[index],
+                                      text,
                                       style: const TextStyle(
                                         color: Colors.white,
                                       ),
@@ -261,7 +286,7 @@ extension _CheHomeMemory on _CHEHomeState {
                                         color: Colors.redAccent,
                                       ),
                                       onPressed: () async {
-                                        await deleteMemory(index);
+                                        await deleteMemory(index, text: text);
                                         setModalState(() {});
                                       },
                                     ),

@@ -370,3 +370,29 @@ test('a delete pushed from the phone tombstones the row\'s twins too, and a clea
   assert.equal(state.memories.length, 1, 'the clean memory is on the Memory screen');
   assert.equal((await che.call('/api/memory/add', { method: 'POST', token: che.token, body: { memory: 'My card pin is 1234.' } })).status, 400, 'a real secret is still refused');
 });
+
+test('the phone\'s words reach the cloud whole: a multi-line memory is deleted by its raw excerpt, a clean long text is added from the phone, "clear all" without a body clears', async (t) => {
+  const che = await owner();
+  if (!che) return t.skip('node:sqlite unavailable');
+  const multi = 'Line one about the boiler.\nLine two:   the valve sticks.';
+  assert.equal((await che.call('/api/memory/add', { method: 'POST', token: che.token, body: { memory: multi } })).status, 200);
+  // 495 characters of filler, then "x pinnacle": the collapsed 500th character cuts "pin" after a space.
+  const long = `${'ab '.repeat(165)}x pinnacle of the whole trip, worth every step.`;
+  assert.equal(long.slice(497, 500), 'pin');
+  const pushed = await (await che.call('/api/brain/push', { method: 'POST', token: che.token, body: { ops: [{ op_id: 'px1', type: 'put', record: {
+    id: 'mem:22222222-2222-4222-8222-222222222222', kind: 'memory', region: 'Personal Memory', path: 'Memory', title: 'Hike', body: long, verification: 'owner_attested', source: { kind: 'memory_record' },
+  } }], device: 'iphone' } })).json();
+  assert.equal(pushed.results[0].outcome, 'created');
+  let state = await (await che.call('/api/state', { token: che.token })).json();
+  assert.equal(state.memories.length, 2, 'the pushed clean memory has a Memory-screen row');
+  // A phone that loaded its list from the replica sends the raw excerpt (newlines kept) at a stale slot.
+  assert.equal((await che.call('/api/memory/delete', { method: 'POST', token: che.token, body: { index: 5, text: multi } })).status, 200);
+  state = await (await che.call('/api/state', { token: che.token })).json();
+  assert.equal(state.memories.length, 1);
+  assert.equal((await (await che.call('/api/brain/search?q=boiler', { token: che.token })).json()).hits.length, 0);
+  // The phone's "clear all" sends no body at all.
+  assert.equal((await che.call('/api/memory/clear', { method: 'POST', token: che.token })).status, 200);
+  state = await (await che.call('/api/state', { token: che.token })).json();
+  assert.deepEqual(state.memories, []);
+  assert.equal((await (await che.call('/api/brain/search?q=pinnacle', { token: che.token })).json()).hits.length, 0);
+});

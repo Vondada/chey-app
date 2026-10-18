@@ -197,6 +197,27 @@ Verified (automated, offline, this PR):
   search 90 ms, load 14.9 s.
 - `run_checks.sh` (2026-10-18, after review 5): Worker 1817/1824 (7 skipped), dart analyze
   clean, flutter test +448.
+- Seventh independent review (2026-10-18): four blocking findings, fixed above. The Memory
+  list hydrated from the replica used the raw 600-character excerpt, so a delete after an
+  offline start was answered "already gone" while the memory stayed; the list now shows the
+  display copy of the whole body (inactive records skipped) and the Worker compares display
+  copies. A background reload could move the list under the owner's finger and the sheet sent
+  the slot's new words: the row's words are captured when it is built. A clean text whose
+  500-character cut ended on "pin|nacle" was refused as a secret on the add route, and the same
+  text pushed from the phone landed in the Brain with no list row: the whole text is gated
+  (`addOwnerMemory` before the clip), and a pushed memory the list's gate still refuses is
+  tombstoned and reported `rejected`, never "created". "Clear all" sent no body and the 400 was
+  ignored in silence: the phone sends one, the Worker reads an empty body as `{}`, and the
+  outcome is spoken. Noted, not changed: an online re-save racing a pending offline delete;
+  a memory saved offline before "clear all" returning with the push; the 500-char copy of a
+  longer memory re-added as a prefix twin; `rememberExchange` titles gated on the cut;
+  `MAX_MEMORIES=100`; record ids not gated; policy-level refusals ("bowling pin").
+- Sixth independent review (2026-10-18): fixed above. `/api/memory/delete` deletes by the row's
+  words when the index moved and answers 404 when the words are gone; a twin's tombstone reaches
+  every twin on the row; `/api/memory/add` makes a twin only when the text really differs;
+  `attachPlaces` reads ids in chunks of 90 (the Durable Object's bound-parameter limit);
+  `reassess` keeps `updated_at` and the author; `rememberExchange` keeps the owner's turn when
+  the reply trips the gate (`reply_withheld`); the phone speaks a failed delete.
 - Fifth independent review (2026-10-18): two blocking findings, fixed above. A text whose
   500th collapsed character was a space escaped `sameDisplayCopy` (the copy was trimmed before
   the cut, so a copy of a copy differed): `displayCopy`, `clip` and the phone's `_displayCopy`

@@ -60,8 +60,9 @@ function memorySupersessionSlot(text) {
 export function addOwnerMemory(data, text, opts = {}) {
   data.memories = Array.isArray(data.memories) ? data.memories : [];
   data.memory_records = Array.isArray(data.memory_records) ? data.memory_records : [];
+  // The whole text is gated, then clipped: the cut copy can end on a word fragment ("pin").
+  if (!isSafeMemoryText(text)) return { added: false, reason: 'rejected_sensitive_or_empty' };
   const memory = clip(text, 500);
-  if (!isSafeMemoryText(memory)) return { added: false, reason: 'rejected_sensitive_or_empty' };
   const lower = memory.toLowerCase();
   if (data.memories.some((item) => String(item).toLowerCase() === lower)) {
     return { added: false, reason: 'duplicate', memory, replaced: [] };

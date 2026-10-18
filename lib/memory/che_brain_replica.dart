@@ -630,14 +630,14 @@ class CheBrainReplica {
   /// words): each becomes a tombstone here and at the cloud. Returns how many.
   Future<int> forgetMemoriesShowing(String text) async {
     await load();
-    final wanted = _displayCopy(text).toLowerCase();
+    final wanted = displayCopy(text).toLowerCase();
     if (wanted.isEmpty) return 0;
     final ids = <String>[];
     for (final r in _records.values.where((r) => !r.deleted && r.kind == 'memory')) {
       // The excerpt is the first 600 raw characters; a body with much whitespace collapses to
       // fewer than 500, so the display copy must come from the whole body.
       final body = r.inlineBody ? r.excerpt : await bodyOf(r.id);
-      if (_displayCopy(body).toLowerCase() == wanted) ids.add(r.id);
+      if (displayCopy(body).toLowerCase() == wanted) ids.add(r.id);
     }
     for (final id in ids) {
       await forget(id);
@@ -645,7 +645,7 @@ class CheBrainReplica {
     return ids.length;
   }
 
-  static String _displayCopy(String body) {
+  static String displayCopy(String body) {
     final collapsed = body.replaceAll(RegExp(r'\s+'), ' ').trim();
     // Trimmed after the cut as the Worker does, so a copy of a copy is the same copy.
     return collapsed.length > 500 ? collapsed.substring(0, 500).trimRight() : collapsed;

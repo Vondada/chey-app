@@ -416,4 +416,12 @@ void main() {
     expect(await brain.forgetMemoriesShowing(shown.length > 500 ? shown.substring(0, 500).trimRight() : shown), 1);
     expect(brain.search('ab'), isEmpty);
   });
+
+  test('P: the Memory list hydrated from the replica shows the display copy of the whole body, as the cloud does', () async {
+    final body = 'Line one about the boiler.\nLine two:   the valve sticks.  ';
+    expect(CheBrainReplica.displayCopy(body), 'Line one about the boiler. Line two: the valve sticks.');
+    final long = '${'ab ' * 165}x pinnacle of the whole trip, worth every step.';
+    expect(CheBrainReplica.displayCopy(long), long.substring(0, 500).trimRight());
+    expect(CheBrainReplica.displayCopy(CheBrainReplica.displayCopy(long)), CheBrainReplica.displayCopy(long));
+  });
 }
