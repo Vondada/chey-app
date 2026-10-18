@@ -119,7 +119,10 @@ export async function loadIntraday(root = 'MNQ', { fetcher = fetch, now = Date.n
   try {
     const barMs = interval === '5m' ? 300_000 : 60_000;
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(spec.yahoo)}?interval=${interval === '5m' ? '5m' : '1m'}&range=${range}&includePrePost=true`;
-    const res = await fetcher(url, { headers: { 'User-Agent': 'Mozilla/5.0 (CHE paper-trading research)', Accept: 'application/json' }, signal: AbortSignal.timeout(10_000) });
+    const ask = (target) => fetcher(target, { headers: { 'User-Agent': 'Mozilla/5.0 (CHE paper-trading research)', Accept: 'application/json' }, signal: AbortSignal.timeout(10_000) });
+    let res = await ask(url);
+    // Yahoo serves the same chart from a second host; one retry there before giving up.
+    if (!res.ok) res = await ask(url.replace('query1.', 'query2.'));
     if (!res.ok) return { ...base, status: 'UNAVAILABLE', error: `Yahoo answered HTTP ${res.status}`, fetch_ms: Date.now() - started };
     const parsed = parseYahooChart(await res.json(), now, barMs);
     if (parsed.error) return { ...base, status: 'UNAVAILABLE', error: parsed.error, fetch_ms: Date.now() - started };

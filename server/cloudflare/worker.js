@@ -3425,6 +3425,27 @@ export class CheState extends DurableObject {
     return { enabled: true, alarm: alarm || null };
   }
 
+  // Summary for the deploy check: feed, counts, positions and the newest trades, from records.
+  async tradingProbe() {
+    const ensured = await this.ensureLivePaper();
+    const run = ensured.enabled ? await liveTick(this.ctx.storage, { force: true }) : { skipped: 'paper trading is off' };
+    const d = await this.liveTradingDashboard();
+    const brief = (t) => ({ strategy: t.strategy, filter: t.filter, side: t.side, signal: t.signal?.time, entry: t.entry?.time, entry_fill: t.entry?.fill,
+      exit: t.exit?.time, exit_fill: t.exit?.fill, reason: t.exit?.reason, net: t.net_pnl, feed: t.data?.feed?.status });
+    return {
+      ok: Boolean(run.ok || run.skipped),
+      account: d.account, state: d.state, session: d.session, contract: d.contract?.code,
+      feed: d.feed ? { status: d.feed.status, provider: d.feed.provider, symbol: d.feed.provider_symbol, last_bar: d.feed.last_bar_time, latency_s: d.feed.latency_s, error: d.feed.error || null } : null,
+      run: { at: run.at, ok: run.ok, error: run.error || null, bars: run.bars, signals: run.signals || 0, closed: run.closed || 0, skipped: run.skipped || null },
+      counts: d.counts, portfolios: d.portfolios,
+      totals: { trades: d.totals.trades, wins: d.totals.wins, losses: d.totals.losses, flat: d.totals.flat, net_pnl: d.totals.net_pnl, win_rate: d.totals.win_rate },
+      positions: d.positions.map((p) => ({ strategy: p.strategy, filter: p.filter, side: p.side, entry_time: p.entry_time, entry: p.entry, stop: p.stop, target: p.target, unrealized: p.unrealized })),
+      trades: d.trades.slice(0, 10).map(brief),
+      signals: d.signals.slice(-10),
+      broker: d.broker,
+    };
+  }
+
   async tradingTick(opts = {}) {
     const book = await paperTick(this.ctx.storage, opts);
     await renewToken(this.ctx.storage).catch(() => null);
@@ -12148,6 +12169,12 @@ export default {
       return json({ ok: true, top_level: preferredElevenLabsDiagnostics(env), ...status, fish: { top_level: fishAudioDiagnostics(env), ...status.fish } });
     }
     // The deploy check. The route exists only for the per-deploy random token.
+    // The deploy's trading check: arms and runs one forward-paper pass on the owner's CHE and
+    // prints what the records hold (paper only). Exists only for the per-deploy random token.
+    if (path === '/api/trading/probe' && request.method === 'POST') {
+      if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);
+      return json(await env.CHE_STATE.getByName('owner').tradingProbe());
+    }
     if (path === '/api/voice/probe' && request.method === 'POST') {
       if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);
       const owner = env.CHE_STATE.getByName('owner');
