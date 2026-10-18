@@ -212,11 +212,6 @@ class _CheMarketsRoomState extends State<CheMarketsRoom> {
             padding: const EdgeInsets.only(bottom: CheSpace.xxl),
             children: [
               _TickerTape(quotes: _quotes, fmt: _fmt),
-              // CHE's forward paper trading, from its records (owner, 2026-10-18).
-              Padding(
-                padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.md, CheSpace.gutter, 0),
-                child: CheLivePaperPanel(baseUrl: widget.baseUrl, headers: widget.headers, onAsk: widget.onAsk, client: widget.client),
-              ),
               // The live chart fills the room: switch symbols and timeframes
               // by tap, typing or voice; "Read price" speaks the latest price.
               Padding(
@@ -227,6 +222,11 @@ class _CheMarketsRoomState extends State<CheMarketsRoom> {
                   client: widget.client,
                   height: math.max(320.0, MediaQuery.sizeOf(context).height * 0.55),
                 ),
+              ),
+              // CHE's forward paper trading, from its records (owner, 2026-10-18).
+              Padding(
+                padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.md, CheSpace.gutter, 0),
+                child: CheLivePaperPanel(baseUrl: widget.baseUrl, headers: widget.headers, onAsk: widget.onAsk, client: widget.client),
               ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(

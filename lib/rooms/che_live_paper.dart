@@ -73,8 +73,9 @@ class _CheLivePaperPanelState extends State<CheLivePaperPanel> {
       final r = await _http.get(Uri.parse('${widget.baseUrl()}/api/trading/live'), headers: widget.headers()).timeout(const Duration(seconds: 20));
       final j = jsonDecode(utf8.decode(r.bodyBytes));
       if (!mounted) return;
-      if (r.statusCode != 200 || j is! Map) {
-        setState(() => _error = j is Map ? '${j['detail'] ?? 'The Trading Room could not load (${r.statusCode}).'}' : 'The Trading Room could not load.');
+      if (r.statusCode != 200 || j is! Map || j['account'] == null) {
+        // An older CHE server has no paper trading records yet: say so in one quiet line.
+        setState(() => _error = j is Map && j['detail'] != null ? '${j['detail']}' : 'Paper trading records are not available from CHE yet (${r.statusCode}).');
         return;
       }
       setState(() { _d = Map<String, dynamic>.from(j); _error = ''; });
@@ -121,10 +122,11 @@ class _CheLivePaperPanelState extends State<CheLivePaperPanel> {
         child: Container(
           padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(color: _panel, border: Border.all(color: _stroke), borderRadius: BorderRadius.circular(10)),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(label, style: const TextStyle(color: _dim, fontSize: 12)),
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: _dim, fontSize: 12)),
             const SizedBox(height: 2),
-            Text(value, style: TextStyle(color: color ?? Colors.white, fontSize: 18, fontWeight: FontWeight.w800, fontFeatures: const [FontFeature.tabularFigures()])),
+            FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerLeft,
+              child: Text(value, style: TextStyle(color: color ?? Colors.white, fontSize: 18, fontWeight: FontWeight.w800, fontFeatures: const [FontFeature.tabularFigures()]))),
           ]),
         ),
       );
@@ -203,7 +205,7 @@ class _CheLivePaperPanelState extends State<CheLivePaperPanel> {
       if (_status.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 6), child: Text(_status, style: const TextStyle(color: Colors.white, fontSize: 16))),
       const SizedBox(height: 12),
       GridView.count(
-        crossAxisCount: 3, shrinkWrap: true, physics: const NeverScrollableScrollPhysics(), mainAxisSpacing: 8, crossAxisSpacing: 8, childAspectRatio: 1.6,
+        crossAxisCount: 3, shrinkWrap: true, physics: const NeverScrollableScrollPhysics(), mainAxisSpacing: 8, crossAxisSpacing: 8, childAspectRatio: 1.25,
         children: [
           _stat('Closed trades', '$n'),
           _stat('Won / lost', '${totals['wins'] ?? 0} / ${totals['losses'] ?? 0}'),
