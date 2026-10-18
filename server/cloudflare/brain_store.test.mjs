@@ -336,3 +336,36 @@ test('an exchange whose reply names something sensitive keeps the owner\'s words
   assert.equal(rememberExchange(store, { id: 'x2', message: 'my password is hunter2', reply: 'Noted.', at: '2026-10-18T10:01:00.000Z' }).outcome, 'rejected');
   assert.equal(store.get('conv:x2'), null);
 });
+
+test('whole-table answers are scanned once per change, not once per request', async (t) => {
+  const storage = await sqlStorage();
+  if (!storage) return t.skip('node:sqlite unavailable');
+  let scans = 0;
+  const exec = storage.sql.exec;
+  storage.sql.exec = (q, ...p) => { if (/FROM brain_records(?! WHERE (id|seq) )/i.test(q) && !/WHERE id = \?/i.test(q)) scans += 1; return exec(q, ...p); };
+  const store = new CheBrainStore(storage);
+  store.put(sample());
+  const first = { digest: store.digest(), status: store.status() };
+  scans = 0;
+  // A fresh store object per request (as the Worker does) still reuses the answer.
+  const again = new CheBrainStore(storage);
+  assert.deepEqual(again.digest(), first.digest);
+  assert.deepEqual(again.status().by_kind, first.status.by_kind);
+  assert.deepEqual(again.folders(), first.status.regions);
+  assert.equal(scans, 0, 'no table scan while nothing changed');
+  // Any write moves seq, and the next answer is fresh and correct.
+  again.put(sample({ id: 'mem:two', title: 'Dad’s birthday', body: 'Dad’s birthday is in May.' }));
+  const after = new CheBrainStore(storage);
+  assert.equal(after.status().records, 2);
+  assert.equal(after.digest().count, 2);
+  assert.notDeepEqual(after.digest(), first.digest);
+  after.delete('mem:two');
+  assert.equal(new CheBrainStore(storage).status().records, 1);
+  assert.equal(new CheBrainStore(storage).status().tombstones, 1);
+  // Callers may change what they get back without changing the cached answer.
+  const mine = after.status();
+  mine.by_kind.memory = 99;
+  mine.regions[0].count = 99;
+  assert.notEqual(new CheBrainStore(storage).status().by_kind.memory, 99);
+  assert.notEqual(new CheBrainStore(storage).folders()[0].count, 99);
+});
