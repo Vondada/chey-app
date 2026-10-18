@@ -415,6 +415,10 @@ class CheBrainWorkerOrb {
 /// about records that arrived before it did).
 final RegExp cheBrainExternalAi = RegExp(r'^(?:claude|chatgpt|chat\s*gpt|gpt|openai|codex|gemini|google|grok|xai|cursor|copilot|mistral|anthropic|deepseek|llama|meta|perplexity)\b', caseSensitive: false);
 
+/// A name that carries an outside AI anywhere ("Nova (Claude)", "Research by ChatGPT") is a
+/// provider-backed label, not an internal worker's name.
+final RegExp cheBrainMentionsExternalAi = RegExp(r'\b(?:claude|chatgpt|chat\s*gpt|gpt(?:-\d)?|openai|codex|gemini|grok|xai|copilot|mistral|anthropic|deepseek|llama|perplexity)\b', caseSensitive: false);
+
 /// The facets a Brain view can be narrowed by, beyond the category lobes:
 /// verified vs inferred, recent, active vs archived, personal vs shared, a
 /// task outcome, a project. Immutable; equality by value so a view state can
@@ -559,9 +563,9 @@ class CheBrainCommand {
     if (RegExp(r'^(?:back out|go back out|pull back)$').hasMatch(t)) return const CheBrainCommand(CheBrainAction.backOut);
     if (RegExp(r'^(?:zoom out|zoom out a bit|farther|further out|move (?:back|away))$').hasMatch(t)) return const CheBrainCommand(CheBrainAction.zoomOut);
     if (RegExp(r'^(?:zoom in|zoom in a bit|closer|move closer|come closer)$').hasMatch(t)) return const CheBrainCommand(CheBrainAction.zoomIn);
-    if (RegExp(r'^(?:go back|back|previous view|take me back|return to (?:the )?previous view|undo that)$').hasMatch(t)) return const CheBrainCommand(CheBrainAction.back);
+    if (RegExp(r'^(?:go back|back|previous view|take me back|return to (?:the )?previous view)$').hasMatch(t)) return const CheBrainCommand(CheBrainAction.back);
     if (RegExp(r'^(?:fit|fit (?:everything|all|content|the brain|the view)|show everything|show (?:me )?the whole office)$').hasMatch(t)) return const CheBrainCommand(CheBrainAction.fit);
-    if (RegExp(r"^(?:cent(?:er|re) on che|back to che|return to che|go (?:back )?to che|(?:open|show|show me|go to) che['’]?s brain|che['’]?s brain|home)$").hasMatch(t)) return const CheBrainCommand(CheBrainAction.centerChe);
+    if (RegExp(r"^(?:cent(?:er|re) on che|back to che|return to che|go (?:back )?to che|(?:open|show|show me|go to) che['’]?s brain|che['’]?s brain)$").hasMatch(t)) return const CheBrainCommand(CheBrainAction.centerChe);
     if (RegExp(r'^(?:cent(?:er|re) on (?:this|that|the|the selected) memory|focus (?:on )?(?:this|that|the selected) memory|cent(?:er|re) on (?:the )?selection)$').hasMatch(t)) return const CheBrainCommand(CheBrainAction.centerSelected);
     if (RegExp(r'^(?:show|open) (?:all|every) (?:my |your )?memories$|^clear (?:the |all )?filters?$|^remove (?:the |all )?filters?$').hasMatch(t)) return const CheBrainCommand(CheBrainAction.clearFilter);
     // "show verified memories only", "only show failed tasks", "show me the recent ones".
@@ -578,10 +582,11 @@ class CheBrainCommand {
     final find = RegExp(r'^(?:find|show me|locate|where is|search (?:for )?) ?(?:my |your |the )?memor(?:y|ies) (?:about|of|on|for) (.+)$').firstMatch(t);
     if (find != null) return CheBrainCommand(CheBrainAction.find, query: find.group(1)!.trim());
     if (RegExp(r'^(?:open|read) (?:this|that|the) memory$').hasMatch(t)) return const CheBrainCommand(CheBrainAction.openSelected);
-    // "open Atlas's brain", "switch to Knox", "show me Nova's brain": a worker's brain in the same space.
-    final workerBrain = RegExp(r"^(?:open|show|show me|go to|switch to|take me to|enter|view|visit) ([a-z][a-z-]{1,30})(?:['’]s)? brain$|^switch to ([a-z][a-z-]{1,30})$").firstMatch(t);
+    // "open Atlas's brain", "switch to Knox's brain", "show me Nova's brain": a worker's brain in the
+    // same space. Always with the word brain: a bare "switch to X" is the chart's phrase ("switch to Tesla").
+    final workerBrain = RegExp(r"^(?:open|show|show me|go to|switch to|take me to|enter|view|visit) ([a-z][a-z-]{1,30})(?:['’]s)? brain$").firstMatch(t);
     if (workerBrain != null) {
-      final name = (workerBrain.group(1) ?? workerBrain.group(2))!;
+      final name = workerBrain.group(1)!;
       if (!const {'my', 'your', 'the', 'whole', 'entire', 'full', 'her', 'his', 'our', 'che', 'offline', 'live'}.contains(name)) return CheBrainCommand(CheBrainAction.openWorker, worker: name);
     }
     if (RegExp(r'^(?:expand|open) (?:this|that|the) cluster$').hasMatch(t)) return const CheBrainCommand(CheBrainAction.expand);

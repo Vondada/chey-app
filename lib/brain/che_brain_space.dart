@@ -116,7 +116,8 @@ class CheBrainSpaceController {
   final Map<String, TextPainter> labels = {};
 
   TextPainter label(String key, String text, double size, Color color) {
-    final k = '$key|$size';
+    // The text is in the key: a lobe or worker count that changed is never drawn stale.
+    final k = '$key|$size|$text';
     final hit = labels.remove(k);
     if (hit != null) return labels[k] = hit;
     if (labels.length >= 240) labels.remove(labels.keys.first)?.dispose();
@@ -165,31 +166,63 @@ class CheBrainSpaceController {
     _changed();
   }
 
-  List<CheMemoryDot> get _scopedDots => scope == null ? _dots : [for (final d in _dots) if (d.workers.contains(scope)) d];
+  bool _inBrain(CheMemoryDot d, String worker) {
+    final lower = worker.toLowerCase();
+    return d.workers.any((w) => w.toLowerCase() == lower);
+  }
 
-  /// One orb per internal worker with records in the Brain (plus the roster's
-  /// permanent workers, so an idle worker is shown as having no experience yet,
-  /// never invented). Placed on a ring around the brain, top first.
+  List<CheMemoryDot> get _scopedDots => scope == null ? _dots : [for (final d in _dots) if (_inBrain(d, scope!)) d];
+
+  /// The worker a record name stands for, or null when it is not an internal
+  /// worker: the roster decides (temporary provider workers and outside AIs are
+  /// excluded; a name is matched without regard to case); with no roster at
+  /// hand (offline before the first load) the record's own name stands, still
+  /// never an outside AI or the Office's generic fallback names.
+  String? _canonicalWorker(String name, Map<String, String> internal, Set<String> excluded, Map<String, String> seen) {
+    final lower = name.trim().toLowerCase();
+    if (lower.isEmpty || lower == 'office' || lower == 'office agent' || lower.startsWith('http') || excluded.contains(lower) || cheBrainExternalAi.hasMatch(name) || cheBrainMentionsExternalAi.hasMatch(name)) return null;
+    if (internal.isNotEmpty) return internal[lower];
+    // No roster: the first spelling seen stands for every later casing of the name.
+    return seen.putIfAbsent(lower, () => name.trim());
+  }
+
+  /// One orb per internal worker (the roster's permanent workers, so an idle
+  /// worker is shown as having no experience yet, never invented). Experience
+  /// is what the worker did: tasks, skills, notes; never the worker's own
+  /// profile record. Placed on a ring around the brain, top first.
   void _layoutWorkers() {
-    final counts = <String, int>{};
-    final shared = <String, Set<String>>{};
-    for (final d in _dots) {
-      for (final w in d.workers) {
-        counts[w] = (counts[w] ?? 0) + 1;
-        for (final other in d.workers) {
-          if (other != w) shared.putIfAbsent(w, () => {}).add(other);
-        }
-      }
-    }
+    final internal = <String, String>{};
+    final excluded = <String>{};
     final roles = <String, String>{};
     final states = <String, String>{};
     for (final member in _roster) {
       final name = '${member['name'] ?? ''}'.trim();
-      if (name.isEmpty || member['temporary'] == true || cheBrainExternalAi.hasMatch(name)) continue;
+      if (name.isEmpty) continue;
+      if (member['temporary'] == true || cheBrainExternalAi.hasMatch(name)) {
+        excluded.add(name.toLowerCase());
+        continue;
+      }
+      internal[name.toLowerCase()] = name;
       roles[name] = '${member['role'] ?? ''}';
       final live = '${member['runtime_status'] ?? ''}';
       states[name] = live == 'working' || live == 'waiting' ? 'working' : 'idle';
-      counts.putIfAbsent(name, () => 0);
+    }
+    final counts = <String, int>{for (final name in internal.values) name: 0};
+    final shared = <String, Set<String>>{};
+    final seen = <String, String>{};
+    for (final d in _dots) {
+      final mine = <String>{};
+      for (final w in d.workers) {
+        final canonical = _canonicalWorker(w, internal, excluded, seen);
+        if (canonical != null) mine.add(canonical);
+      }
+      for (final w in mine) {
+        counts.putIfAbsent(w, () => 0);
+        if (d.kind != 'worker') counts[w] = counts[w]! + 1;
+        for (final other in mine) {
+          if (other != w) shared.putIfAbsent(w, () => {}).add(other);
+        }
+      }
     }
     final names = counts.keys.toList()..sort((a, b) => counts[b]!.compareTo(counts[a]!) != 0 ? counts[b]!.compareTo(counts[a]!) : a.compareTo(b));
     final n = names.length;
@@ -220,7 +253,7 @@ class CheBrainSpaceController {
   /// Members of a cluster the lens keeps (what its orb's count shows).
   int clusterCount(CheBrainCluster c) => lens.isEmpty ? c.members.length : c.members.where((n) => lens.matches(n.dot, now: clock())).length;
 
-  /// Memories drawn right now (after lobes, filter and lens).
+  /// Memories the category filter and the lens leave (collapsed lobes count their members: they are one tap away).
   int get visibleCount => layout.nodes.where((n) => (filter.isEmpty || filter.contains(n.cluster)) && (lens.isEmpty || lens.matches(n.dot, now: clock()))).length;
 
   CheBrainWorkerOrb? worker(String? name) {
@@ -322,15 +355,44 @@ class CheBrainSpaceController {
     grabbedId = null;
     focusedCluster = null;
     filter.clear();
+    lens = CheBrainLens.none;
     _rebuildForScope();
     flyTo(CheBrainCamera(yaw: math.pi, pitch: .08, distance: overviewDistance));
     _changed();
     if (name == null) return "CHE's brain: ${layout.nodes.length} memories and ${workers.length} worker brain${workers.length == 1 ? '' : 's'}.";
     final orb = worker(name)!;
-    if (layout.nodes.isEmpty) return "$name has no experience recorded yet${orb.role.isNotEmpty ? ' (${orb.role})' : ''}. Nothing is invented here; the brain fills as $name works.";
+    if (orb.records == 0) return "$name has no experience recorded yet${orb.role.isNotEmpty ? ' (${orb.role})' : ''}. Nothing is invented here; the brain fills as $name works.";
     final lobes = layout.clusters.values.map((c) => '${c.name} ${c.members.length}').join('; ');
-    return "$name's brain${orb.role.isNotEmpty ? ', ${orb.role}' : ''}: ${layout.nodes.length} record${layout.nodes.length == 1 ? '' : 's'} in ${layout.clusters.length} lobe${layout.clusters.length == 1 ? '' : 's'}: $lobes."
+    return "$name's brain${orb.role.isNotEmpty ? ', ${orb.role}' : ''}: ${orb.records} record${orb.records == 1 ? '' : 's'} of experience in ${layout.clusters.length} lobe${layout.clusters.length == 1 ? '' : 's'}: $lobes."
         '${orb.collaborators.isNotEmpty ? ' Works with ${(orb.collaborators.toList()..sort()).join(', ')}.' : ''}';
+  }
+
+  /// The top of the Brain system: CHE's brain, no filters, nothing selected, the whole view.
+  String goHome() {
+    _remember();
+    if (scope != null) {
+      scope = null;
+      _rebuildForScope();
+    }
+    filter.clear();
+    lens = CheBrainLens.none;
+    selectedId = null;
+    cardOpen = false;
+    focusedCluster = null;
+    flyTo(CheBrainCamera(yaw: math.pi, pitch: .08, distance: overviewDistance));
+    _changed();
+    return "CHE's brain: ${layout.nodes.length} memories${workers.isNotEmpty ? ' and ${workers.length} worker brain${workers.length == 1 ? '' : 's'}' : ''}.";
+  }
+
+  /// This brain, whole: filters and selection cleared, the camera where it is.
+  String clearView() {
+    _remember();
+    filter.clear();
+    lens = CheBrainLens.none;
+    selectedId = null;
+    cardOpen = false;
+    _changed();
+    return '$brainName: showing all ${layout.nodes.length} ${scope == null ? 'memories' : 'records'}.';
   }
 
   /// Narrows the view by facets; the orbs the lens hides are not drawn, counted or stepped to.
@@ -359,6 +421,7 @@ class CheBrainSpaceController {
   }
 
   String zoomIn() {
+    _remember();
     final to = (_flyT < 1 && _flyTo != null ? _flyTo! : camera).copy();
     to.distance = math.max(0, (to.distance + 1) / 1.6 - 1);
     if (to.distance < .05) to.distance = 0;
@@ -368,6 +431,7 @@ class CheBrainSpaceController {
   }
 
   String zoomOut() {
+    _remember();
     final to = (_flyT < 1 && _flyTo != null ? _flyTo! : camera).copy();
     to.distance = math.min(CheBrainCamera.maxDistance, (to.distance + 1) * 1.6 - 1);
     flyTo(to);
@@ -395,7 +459,7 @@ class CheBrainSpaceController {
     focusedCluster = null;
     flyTo(CheBrainCamera(yaw: camera.yaw, pitch: .08, distance: overviewDistance));
     _changed();
-    return "Centered on CHE: ${layout.nodes.length} memories${workers.isNotEmpty ? ', ${workers.length} worker brains around her' : ''}.";
+    return "Centered on CHE: ${layout.nodes.length} memories${workers.isNotEmpty ? ', ${workers.length} worker brain${workers.length == 1 ? '' : 's'} around her' : ''}.";
   }
 
   String centerOnSelected() {
@@ -1028,7 +1092,7 @@ class _CheBrainSpaceState extends State<CheBrainSpace> with SingleTickerProvider
             builder: (context, _, _) {
               final sel = c.selected;
               return Semantics(
-                label: 'CHE brain space: ${c.layout.nodes.length} real memories in ${c.layout.clusters.length} clusters. '
+                label: '${c.brainName}: ${c.layout.nodes.length} real ${c.scope == null ? 'memories' : 'records'} in ${c.layout.clusters.length} clusters. '
                     '${sel == null ? 'Nothing selected.' : 'Selected: ${sel.dot.title}, ${sel.dot.category}.'}',
                 hint: 'Use the actions to move between memories and clusters, open one, go inside, back out, or show the whole brain.',
                 customSemanticsActions: {

@@ -318,7 +318,23 @@ What changed, and what did not:
   `didUpdateWidget`, so the first dots change after the room opened (the replica finishing
   its load) was missed until a second change; it is now taken in `initState`.
 
-Verified (VM, offline): `test/che_brain_navigation_test.dart` (13: worker orbs with real counts
+Review history (section 5): first independent review (2026-10-18) found five blockers, all
+fixed with regression tests: temporary provider workers, the Office's fallback names, URL
+sources, brand-suffixed names ("Nova (Claude)") and case twins became orbs (the roster now
+decides, case-insensitively, and brand mentions anywhere in a name are excluded); a worker's
+own profile record counted as experience, so "no experience yet" was unreachable (experience
+now excludes the profile, which stays visible); canvas labels were cached without their text
+and drew stale counts; a bare "switch to X" hijacked the chart's phrase on the Brain tab
+("home" and "undo that" were dropped too); the context line's crumbs were invisible to
+VoiceOver (each is now a "Back to …" button, and CHE leads to the top with every filter and the
+selection cleared). Also from that review: zooms are steps Back can undo, a brain switch clears
+the lens as well as the lobe filter, "1 worker brain" is singular, the whole-brain control
+moved into the view panel so the header keeps room for the title on a phone, the space names
+the brain in view, a state notice is read once. Noted, not changed: "show my personal memories"
+now means the Personal lens (it used to mean the Memory lobe); the lens costs about 3 ms per
+frame at 10 000 records on the VM.
+
+Verified (VM, offline): `test/che_brain_navigation_test.dart` (17: worker orbs with real counts
 and connections, outside AIs excluded; a worker brain offline from the same records,
 failures kept; design tokens and chrome unchanged; switcher and same-space worker view;
 context line and crumbs; back across brains with camera; filters by chip and voice; detail

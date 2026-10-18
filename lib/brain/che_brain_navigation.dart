@@ -185,17 +185,21 @@ class CheBrainContextBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = controller;
+    final atTop = c.scope == null && c.filter.isEmpty && c.lens.isEmpty && c.selectedId == null;
+    final clean = c.filter.isEmpty && c.lens.isEmpty && c.selectedId == null;
+    // (label, what it is, what tapping it does: back to that level, with filters and selection below it cleared)
     final crumbs = <(String, String, VoidCallback?)>[
-      ('CHE', "CHE's brain", c.scope == null && c.filter.isEmpty && c.lens.isEmpty && c.selectedId == null ? null : () => onSpeak(c.centerOnChe())),
-      if (c.scope != null) (c.scope!, "${c.scope}'s brain", c.filter.isEmpty && c.lens.isEmpty && c.selectedId == null ? null : () => onSpeak(c.setLens(CheBrainLens.none) + (c.filter.isEmpty ? '' : ' ${c.setFilter(null)}'))),
-      if (c.filter.isNotEmpty) (c.filter.join(', '), '${c.filter.join(', ')} memories only', c.selectedId == null ? null : () { c.deselect(); onSpeak('${c.filter.join(', ')} memories.'); }),
-      if (!c.lens.isEmpty) (c.lens.describe(), 'Filters: ${c.lens.describe()}', c.selectedId == null ? null : () { c.deselect(); onSpeak(c.lens.describe()); }),
+      ('CHE', "CHE's brain", atTop ? null : () => onSpeak(c.goHome())),
+      if (c.scope != null) (c.scope!, "${c.scope}'s brain", clean ? null : () => onSpeak(c.clearView())),
+      if (c.filter.isNotEmpty) (c.filter.join(', '), '${c.filter.join(', ')} memories', c.selectedId == null && c.lens.isEmpty ? null : () { c.deselect(); onSpeak(c.setLens(CheBrainLens.none).replaceFirst('Filters cleared: showing all', '${c.filter.join(', ')} memories only, of')); }),
+      if (!c.lens.isEmpty) (c.lens.describe(), 'Filters: ${c.lens.describe()}', c.selectedId == null ? null : () { c.deselect(); onSpeak('${c.lens.describe()}: ${c.visibleCount} of ${c.layout.nodes.length}.'); }),
       if (c.selected != null) (c.selected!.dot.title, 'Selected memory ${c.selected!.dot.title}', null),
     ];
     final mode = c.mode;
+    // The whole line is one VoiceOver sentence; every crumb that leads somewhere is a button of its own.
     return Semantics(
+      container: true,
       label: 'You are in ${c.describe()}.',
-      excludeSemantics: true,
       child: SizedBox(
         height: 24,
         child: Row(children: [
@@ -205,22 +209,27 @@ class CheBrainContextBar extends StatelessWidget {
               scrollDirection: Axis.horizontal,
               child: Row(children: [
                 for (var i = 0; i < crumbs.length; i++) ...[
-                  if (i > 0) Padding(padding: const EdgeInsets.symmetric(horizontal: 4), child: Text('›', style: CheType.caption.copyWith(color: CheColors.textFaint))),
-                  InkWell(
-                    onTap: crumbs[i].$3,
-                    borderRadius: BorderRadius.circular(6),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
-                      child: Text(
-                        crumbs[i].$1,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: CheType.caption.copyWith(
-                          fontSize: 11,
-                          color: i == crumbs.length - 1 ? CheColors.text : CheColors.textDim,
-                          fontWeight: i == crumbs.length - 1 ? FontWeight.w700 : FontWeight.w500,
-                          decoration: crumbs[i].$3 == null ? null : TextDecoration.underline,
-                          decorationColor: CheColors.textFaint,
+                  if (i > 0) ExcludeSemantics(child: Padding(padding: const EdgeInsets.symmetric(horizontal: 4), child: Text('›', style: CheType.caption.copyWith(color: CheColors.textFaint)))),
+                  Semantics(
+                    button: crumbs[i].$3 != null,
+                    label: crumbs[i].$3 == null ? crumbs[i].$2 : 'Back to ${crumbs[i].$2}',
+                    excludeSemantics: true,
+                    child: InkWell(
+                      onTap: crumbs[i].$3,
+                      borderRadius: BorderRadius.circular(6),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
+                        child: Text(
+                          crumbs[i].$1,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: CheType.caption.copyWith(
+                            fontSize: 11,
+                            color: i == crumbs.length - 1 ? CheColors.text : CheColors.textDim,
+                            fontWeight: i == crumbs.length - 1 ? FontWeight.w700 : FontWeight.w500,
+                            decoration: crumbs[i].$3 == null ? null : TextDecoration.underline,
+                            decorationColor: CheColors.textFaint,
+                          ),
                         ),
                       ),
                     ),
@@ -229,7 +238,7 @@ class CheBrainContextBar extends StatelessWidget {
               ]),
             ),
           ),
-          Text(mode, style: CheType.caption.copyWith(fontSize: 11, color: CheColors.textFaint)),
+          ExcludeSemantics(child: Text(mode, style: CheType.caption.copyWith(fontSize: 11, color: CheColors.textFaint))),
           const SizedBox(width: CheSpace.gutter),
         ]),
       ),
@@ -339,6 +348,7 @@ class CheBrainViewControls extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = controller;
     final pills = <CheBrainPill>[
+      CheBrainPill(label: 'Whole brain', icon: Icons.center_focus_strong_rounded, semanticsLabel: 'Show the whole brain', onTap: () => onSpeak(c.overview())),
       CheBrainPill(label: 'Zoom in', icon: Icons.add_rounded, semanticsLabel: 'Zoom in', onTap: () => onSpeak(c.zoomIn())),
       CheBrainPill(label: 'Zoom out', icon: Icons.remove_rounded, semanticsLabel: 'Zoom out', onTap: () => onSpeak(c.zoomOut())),
       CheBrainPill(label: 'Fit', icon: Icons.fit_screen_outlined, semanticsLabel: 'Fit everything in view', onTap: () => onSpeak(c.fit())),
@@ -374,15 +384,15 @@ class CheBrainStateNotice extends StatelessWidget {
   Widget build(BuildContext context) {
     final color = switch (tone) { CheBrainNoticeTone.quiet => CheColors.textDim, CheBrainNoticeTone.warning => CheColors.warning, CheBrainNoticeTone.error => CheColors.danger };
     return Semantics(
+      container: true,
       liveRegion: false,
       label: text,
-      excludeSemantics: actionLabel == null,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(CheSpace.gutter, 2, CheSpace.gutter, 6),
         child: Row(children: [
-          Icon(icon, size: 14, color: color),
+          ExcludeSemantics(child: Icon(icon, size: 14, color: color)),
           const SizedBox(width: 6),
-          Expanded(child: Text(text, maxLines: 2, overflow: TextOverflow.ellipsis, style: CheType.caption.copyWith(fontSize: 12, color: color))),
+          Expanded(child: ExcludeSemantics(child: Text(text, maxLines: 2, overflow: TextOverflow.ellipsis, style: CheType.caption.copyWith(fontSize: 12, color: color)))),
           if (actionLabel != null && onAction != null) ...[
             const SizedBox(width: 6),
             CheBrainPill(label: actionLabel!, semanticsLabel: actionLabel!, onTap: onAction!),

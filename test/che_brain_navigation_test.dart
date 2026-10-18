@@ -99,6 +99,9 @@ Future<void> _tapPill(WidgetTester tester, String label) async {
   await tester.pump();
 }
 
+/// A worker's experience: every record in his brain except his own profile record.
+int _experienceOf(List<CheMemoryDot> dots, String name) => dots.where((d) => d.workers.contains(name) && d.kind != 'worker').length;
+
 CheBrainSpaceController _controllerOf(WidgetTester tester) => tester.widget<CheBrainSpace>(find.byType(CheBrainSpace)).controller;
 
 double _luminance(Color c) => c.computeLuminance();
@@ -116,7 +119,7 @@ void main() {
       expect(names, containsAll(['Atlas', 'Knox', 'Nova', 'Mira']));
       expect(names.any((n) => n.toLowerCase().startsWith('claude') || n == 'Grok'), isFalse, reason: 'outside AIs and temporary provider workers are not Office brains');
       for (final w in c.workers) {
-        expect(w.records, dots.where((d) => d.workers.contains(w.name)).length, reason: '${w.name} counts its own records only');
+        expect(w.records, _experienceOf(dots, w.name), reason: '${w.name} counts his own experience only, never his profile record');
       }
       final atlas = c.worker('Atlas')!;
       expect(atlas.collaborators, {'Knox'}, reason: 'the shared silver task is the only real connection');
@@ -143,7 +146,7 @@ void main() {
       final c = CheBrainSpaceController(dots, roster: _roster);
       final said = c.setScope('atlas');
       expect(c.scope, 'Atlas');
-      expect(said, startsWith("Atlas's brain, Research / scout: 2 records"));
+      expect(said, startsWith("Atlas's brain, Research / scout: 1 record of experience"));
       expect(said, contains('Works with Knox'));
       expect(c.layout.nodes.map((n) => n.id).toSet(), {'agent:a-atlas', 'task:t2'});
       expect(c.layout.node('task:t2')!.dot.outcome, 'failed', reason: 'a failed attempt stays in the learning history');
@@ -153,6 +156,103 @@ void main() {
       expect(c.setScope(null), startsWith("CHE's brain: "));
       expect(c.layout.nodes.length, dots.length);
       c.dispose();
+    });
+  });
+
+  group('review 1 regressions', () {
+    test('only roster workers become orbs: temporary workers, fallbacks, URLs, brand suffixes and case twins never do', () {
+      final records = _brainRecords()
+        ..addAll([
+          {'id': 'task:h1', 'kind': 'task', 'region': 'Active and Historical Tasks', 'path': 'Historical', 'title': 'Helper task', 'excerpt': 'Task: help.\nStatus: complete.', 'verification': 'unverified_reference', 'created_at': '2026-10-10T10:00:00.000Z', 'source': {'kind': 'team_task', 'agent': 'Helper', 'outcome': 'done'}, 'links': const [], 'places': [{'region': 'Office Agents', 'path': 'Helper'}]},
+          {'id': 'task:h2', 'kind': 'task', 'region': 'Active and Historical Tasks', 'path': 'Historical', 'title': 'Lower-case atlas task', 'excerpt': 'Task: scout.\nStatus: complete.', 'verification': 'unverified_reference', 'created_at': '2026-10-10T10:00:00.000Z', 'source': {'kind': 'team_task', 'agent': 'atlas', 'outcome': 'done'}, 'links': const [], 'places': [{'region': 'Office Agents', 'path': 'atlas'}]},
+          {'id': 'task:h3', 'kind': 'task', 'region': 'Active and Historical Tasks', 'path': 'Historical', 'title': 'Brand task', 'excerpt': 'Task: draft.\nStatus: complete.', 'verification': 'unverified_reference', 'created_at': '2026-10-10T10:00:00.000Z', 'source': {'kind': 'team_task', 'agent': 'Nova (Claude)', 'outcome': 'done'}, 'links': const [], 'places': [{'region': 'Office Agents', 'path': 'Nova (Claude)'}, {'region': 'Office Agents', 'path': 'Research by ChatGPT'}, {'region': 'Office Agents', 'path': 'Office agent'}, {'region': 'Office Agents', 'path': 'https://example.com/report'}]},
+        ]);
+      final dots = cheBuildMemoryDots(
+        savedMemories: const [],
+        memoryNotes: const [
+          {'id': 'live1', 'title': 'Live note without an agent', 'body': 'An agent task note whose only name is a URL source.', 'kind': 'agent_task', 'source': 'https://example.com/x'},
+          {'id': 'live2', 'title': 'Live note by Knox', 'body': 'Knox is paper-trading.', 'kind': 'agent_task', 'agent': 'Knox', 'status': 'running'},
+        ],
+        learnedPersonality: const [],
+        learnedKnowledge: const [],
+        brainRecords: records,
+      );
+      final roster = [..._roster, {'name': 'Helper', 'role': 'Provider worker', 'temporary': true}];
+      final c = CheBrainSpaceController(dots, roster: roster);
+      expect(c.workers.map((w) => w.name).toSet(), {'Atlas', 'Knox', 'Nova', 'Mira'});
+      expect(c.worker('Atlas')!.records, _experienceOf(dots, 'Atlas') + 1, reason: 'the lower-case place counts toward Atlas, not a second orb');
+      expect(c.worker('Nova')!.records, _experienceOf(dots, 'Nova'), reason: '"Nova (Claude)" is not Nova');
+      expect(dots.firstWhere((d) => d.id == 'live1').workers, isEmpty, reason: 'a URL source is not a worker');
+      expect(dots.firstWhere((d) => d.id == 'live2').workers, ['Knox']);
+      expect(c.setScope('atlas'), startsWith("Atlas's brain"));
+      expect(c.layout.nodes.map((n) => n.id), contains('task:h2'));
+      c.dispose();
+      // Without a roster (offline before the first load) the record names stand, still never a fallback or an outside AI.
+      final bare = CheBrainSpaceController(dots);
+      expect(bare.workers.map((w) => w.name).toSet(), {'Atlas', 'Knox', 'Nova', 'Helper'});
+      bare.dispose();
+    });
+
+    test('a worker with only a profile record has no experience yet, and canvas labels follow the counts', () {
+      final records = _brainRecords().where((r) => r['id'] != 'task:t3' && r['id'] != 'task:t2').toList();
+      final dots = cheBuildMemoryDots(savedMemories: const [], memoryNotes: const [], learnedPersonality: const [], learnedKnowledge: const [], brainRecords: records);
+      final c = CheBrainSpaceController(dots, roster: _roster);
+      final knox = c.worker('Knox')!;
+      expect(knox.records, 0);
+      expect(knox.state, 'no experience yet');
+      expect(c.setScope('Knox'), startsWith('Knox has no experience recorded yet (Engineering / Codex jobs)'));
+      expect(c.layout.nodes.map((n) => n.id), ['agent:a-knox'], reason: 'his profile stays visible, it is just not experience');
+      final first = c.label('worker:Knox', 'Knox · 0', 12, Colors.white);
+      final second = c.label('worker:Knox', 'Knox · 6', 12, Colors.white);
+      expect(first.text!.toPlainText(), 'Knox · 0');
+      expect(second.text!.toPlainText(), 'Knox · 6', reason: 'a changed count is never drawn from a stale cache');
+      c.dispose();
+    });
+
+    test('a bare "switch to X", "home" or "undo that" is never a Brain command; the brain forms still are', () {
+      expect(CheBrainCommand.parse('switch to tesla'), isNull);
+      expect(CheBrainCommand.parse('switch to spanish'), isNull);
+      expect(CheBrainCommand.parse('home'), isNull);
+      expect(CheBrainCommand.parse('undo that'), isNull);
+      expect(CheBrainCommand.parse("switch to knox's brain")!.worker, 'knox');
+      expect(CheBrainCommand.parse("open atlas's brain")!.worker, 'atlas');
+      expect(CheBrainCommand.parse("che's brain")!.action, CheBrainAction.centerChe);
+      expect(CheBrainCommand.parse('go back')!.action, CheBrainAction.back);
+    });
+
+    testWidgets('every crumb that leads somewhere is a VoiceOver button, and CHE leads to the top with nothing left set', (tester) async {
+      _useScreen(tester, _phone, dpr: 3);
+      final handle = tester.ensureSemantics();
+      final spoken = <String>[];
+      await tester.pumpWidget(_room(_dots(), spoken: spoken));
+      await tester.pump();
+      final c = _controllerOf(tester);
+      c.setScope('Atlas');
+      c.setFilter('Agents');
+      c.setLens(const CheBrainLens(verified: false));
+      c.select(c.layout.node('task:t2')!);
+      await tester.pump();
+      expect(find.bySemanticsLabel("Back to CHE's brain"), findsOneWidget);
+      expect(find.bySemanticsLabel("Back to Atlas's brain"), findsOneWidget);
+      expect(find.bySemanticsLabel('Back to Agents memories'), findsOneWidget);
+      expect(find.bySemanticsLabel(RegExp(r"^You are in Atlas's brain, Agents memories, Inferred")), findsOneWidget);
+      await tester.tap(find.bySemanticsLabel("Back to Atlas's brain"));
+      await tester.pump();
+      expect(c.scope, 'Atlas');
+      expect(c.filter, isEmpty);
+      expect(c.lens.isEmpty, isTrue);
+      expect(c.selectedId, isNull);
+      expect(spoken.last, startsWith("Atlas's brain: showing all"));
+      c.setLens(const CheBrainLens(verified: false));
+      await tester.pump();
+      await tester.tap(find.bySemanticsLabel("Back to CHE's brain"));
+      await tester.pump();
+      expect(c.scope, isNull);
+      expect(c.lens.isEmpty, isTrue);
+      expect(spoken.last, startsWith("CHE's brain: "));
+      expect(find.bySemanticsLabel("CHE's brain"), findsOneWidget, reason: 'at the top the CHE crumb is a plain label, not a button');
+      handle.dispose();
+      await tester.pumpWidget(const SizedBox());
     });
   });
 
@@ -180,7 +280,7 @@ void main() {
       expect(find.textContaining('Brain constellation', findRichText: true), findsOneWidget);
       expect(find.byType(CheBrainSpace), findsOneWidget);
       expect(find.byKey(const ValueKey('che-brain-canvas')), findsOneWidget);
-      for (final tip in ['Find a memory', 'Filter the brain', 'Show the whole brain', 'Refresh memories']) {
+      for (final tip in ['Find a memory', 'Filter the brain', 'Refresh memories']) {
         expect(find.byTooltip(tip), findsOneWidget, reason: '$tip stays');
       }
       // The new controls sit in the same 44-pt row; no panel is open until asked.
@@ -203,7 +303,7 @@ void main() {
       await tester.pump();
       expect(find.byType(CheBrainSwitcher), findsOneWidget);
       expect(find.widgetWithText(CheBrainPill, 'CHE'), findsOneWidget);
-      final atlasCount = dots.where((d) => d.workers.contains('Atlas')).length;
+      final atlasCount = _experienceOf(dots, 'Atlas');
       expect(find.widgetWithText(CheBrainPill, 'Atlas · $atlasCount'), findsOneWidget);
       expect(find.widgetWithText(CheBrainPill, 'Mira · 0'), findsOneWidget);
       expect(find.textContaining('Claude'), findsNothing);
@@ -217,10 +317,10 @@ void main() {
       expect(tester.widget<CheBrainPill>(find.widgetWithText(CheBrainPill, 'Atlas · $atlasCount')).selected, isTrue);
       // Same widget, same controls, same gestures: nothing about the room changed but its records.
       expect(find.byType(CheBrainSpace), findsOneWidget);
-      for (final tip in ['Find a memory', 'Filter the brain', 'Show the whole brain', 'Hide the brain switcher', 'View controls: zoom, fit, center, inside, back']) {
+      for (final tip in ['Find a memory', 'Filter the brain', 'Hide the brain switcher', 'View controls: zoom, fit, center, inside, back']) {
         expect(find.byTooltip(tip), findsOneWidget);
       }
-      expect(c.layout.nodes.length, atlasCount);
+      expect(c.layout.nodes.length, dots.where((d) => d.workers.contains('Atlas')).length, reason: 'his profile record is shown with his experience');
       // Filters, search and stepping work inside the worker brain exactly as in CHE's.
       expect(c.setFilter('Agents'), startsWith('Showing your Agents memories'));
       expect(c.find('silver momentum'), startsWith('Found it.'));
@@ -410,14 +510,14 @@ void main() {
       expect(c.scope, isNull);
       expect(CheBrainCommand.parse('go back')!.action, CheBrainAction.back);
       expect(CheBrainCommand.parse("open atlas's brain")!.worker, 'atlas');
-      expect(CheBrainCommand.parse('switch to knox')!.worker, 'knox');
+      expect(CheBrainCommand.parse("switch to knox's brain")!.worker, 'knox');
       expect(CheBrainCommand.parse('show me the whole brain')!.action, CheBrainAction.overview, reason: 'existing phrases keep their meaning');
       expect(CheBrainCommand.parse('open my brain')!.action, CheBrainAction.open);
       expect(CheBrainCommand.parse('back out')!.action, CheBrainAction.backOut);
       // The view-controls panel offers the same actions as pills with labels.
       await tester.tap(find.byTooltip('View controls: zoom, fit, center, inside, back'));
       await tester.pump();
-      for (final label in ['Zoom in', 'Zoom out', 'Fit', 'Center on CHE', 'Center on selected', 'Inside', 'Back']) {
+      for (final label in ['Whole brain', 'Zoom in', 'Zoom out', 'Fit', 'Center on CHE', 'Center on selected', 'Inside', 'Back']) {
         expect(find.widgetWithText(CheBrainPill, label), findsOneWidget);
       }
       await _tapPill(tester, 'Zoom in');
@@ -470,8 +570,8 @@ void main() {
       await tester.tap(find.byTooltip('Switch brain: CHE or an Office worker'));
       await tester.pump();
       expect(find.bySemanticsLabel("CHE's brain, the central brain, in view"), findsOneWidget);
-      final atlasCount = _dots().where((d) => d.workers.contains('Atlas')).length;
-      expect(find.bySemanticsLabel("Atlas's brain, Research / scout: $atlasCount records, working"), findsOneWidget);
+      final atlasCount = _experienceOf(_dots(), 'Atlas');
+      expect(find.bySemanticsLabel("Atlas's brain, Research / scout: $atlasCount record${atlasCount == 1 ? '' : 's'}, working"), findsOneWidget);
       expect(find.bySemanticsLabel("Mira's brain, Customer / support copy: 0 records, no experience yet"), findsOneWidget);
       await tester.tap(find.byTooltip('Filter the brain'));
       await tester.pump();

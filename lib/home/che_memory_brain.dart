@@ -93,7 +93,8 @@ List<String> cheBrainWorkersOf(Map<String, dynamic> record) {
   final out = <String>[];
   void add(Object? region, Object? path) {
     final name = '${path ?? ''}'.trim();
-    if ('$region' != 'Office Agents' || name.isEmpty || name == 'Office' || cheBrainExternalAi.hasMatch(name) || out.contains(name)) return;
+    final lower = name.toLowerCase();
+    if ('$region' != 'Office Agents' || name.isEmpty || lower == 'office' || lower == 'office agent' || lower.startsWith('http') || cheBrainExternalAi.hasMatch(name) || cheBrainMentionsExternalAi.hasMatch(name) || out.any((w) => w.toLowerCase() == lower)) return;
     out.add(name);
   }
   add(record['region'], record['path']);
@@ -194,7 +195,7 @@ List<CheMemoryDot> cheBuildMemoryDots({
         kind: kind,
         verification: '${n['verification'] ?? n['verification_status'] ?? (n['verified_at'] != null ? 'verified_source' : 'unverified_reference')}',
         status: category == 'Agents' ? '${n['status'] ?? ''}' : '',
-        workers: category == 'Agents' ? cheBrainWorkersOf({'region': 'Office Agents', 'path': n['agent'] ?? n['source'] ?? ''}) : const [],
+        workers: category == 'Agents' && n['agent'] != null ? cheBrainWorkersOf({'region': 'Office Agents', 'path': n['agent']}) : const [],
       ),
     );
     i++;
@@ -524,7 +525,7 @@ class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom> {
       return CheBrainStateNotice(icon: Icons.error_outline_rounded, text: 'Brain could not load: ${widget.error}', tone: CheBrainNoticeTone.error, actionLabel: widget.onRefresh == null ? null : 'Retry', onAction: widget.onRefresh == null ? null : () => widget.onRefresh!());
     }
     if (widget.loading && total == 0) return const CheBrainStateNotice(icon: Icons.hourglass_empty_rounded, text: 'Loading the Brain…');
-    if (c.scope != null && total == 0) {
+    if (c.scope != null && (c.worker(c.scope)?.records ?? total) == 0) {
       final orb = c.worker(c.scope);
       return CheBrainStateNotice(
         icon: Icons.person_outline_rounded,
@@ -576,9 +577,10 @@ class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom> {
         final shown = _space.visibleCount;
         final c = _space;
         final title = c.scope == null ? 'Brain constellation' : "${c.scope}'s brain";
+        final experience = c.worker(c.scope)?.records ?? total;
         final counter = c.scope == null
-            ? '$total memories${c.workers.isNotEmpty ? ' · ${c.workers.length} worker brains' : ''}'
-            : '$total record${total == 1 ? '' : 's'}';
+            ? '$total memories${c.workers.isNotEmpty ? ' · ${c.workers.length} worker brain${c.workers.length == 1 ? '' : 's'}' : ''}'
+            : '$experience record${experience == 1 ? '' : 's'} of experience';
         final notice = _notice(total, shown);
         return MediaQuery(
           data: media.copyWith(textScaler: chromeScale),
@@ -612,7 +614,6 @@ class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom> {
                     _iconButton(Icons.search_rounded, _panel == _BrainPanel.search ? 'Hide memory search' : 'Find a memory', () => _toggle(_BrainPanel.search), on: _panel == _BrainPanel.search),
                     _iconButton(Icons.tune_rounded, _panel == _BrainPanel.filters ? 'Hide filters' : 'Filter the brain', () => _toggle(_BrainPanel.filters), on: _panel == _BrainPanel.filters || c.filter.isNotEmpty || !c.lens.isEmpty),
                     _iconButton(Icons.hub_outlined, _panel == _BrainPanel.brains ? 'Hide the brain switcher' : 'Switch brain: CHE or an Office worker', () => _toggle(_BrainPanel.brains), on: _panel == _BrainPanel.brains || c.scope != null),
-                    _iconButton(Icons.center_focus_strong_rounded, 'Show the whole brain', () => _say(c.overview())),
                     _iconButton(Icons.zoom_in_map_rounded, _panel == _BrainPanel.view ? 'Hide view controls' : 'View controls: zoom, fit, center, inside, back', () => _toggle(_BrainPanel.view), on: _panel == _BrainPanel.view),
                     if (widget.onRefresh != null) _iconButton(Icons.refresh_rounded, 'Refresh memories', () => widget.onRefresh!()),
                     const SizedBox(width: 4),
