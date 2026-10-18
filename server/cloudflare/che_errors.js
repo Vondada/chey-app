@@ -11,9 +11,13 @@ export const ERROR_CATEGORIES = [
   'owner_action_required',
   'permanent_provider_failure',
   'model_retired',
+  // Too long for every engine CHE can reach (issue #345): not a busy moment to wait out.
+  'message_too_long',
 ];
 
 const OWNER_MESSAGES = {
+  // No "engine" here: the phone hides server text with technical words (lib/che_owner_errors.dart).
+  message_too_long: 'That message is too long for the AI I can reach right now, sir, so I did nothing with it. Please send it in parts.',
   retryable_provider_error: "I couldn't complete that request just now, sir. I have not confirmed that any work is still running.",
   temporary_cloud_unavailable: "I couldn't complete that request just now, sir. I have not confirmed that any work is still running.",
   network_offline: "I lost the network connection, sir. I could not confirm that the request was accepted.",
@@ -79,7 +83,7 @@ export function makeEngineError({
     : 'CHE needs at least one working free AI provider key while Cloudflare is resting.';
   const error = new Error(message);
   error.category = ERROR_CATEGORIES.includes(category) ? category : 'temporary_cloud_unavailable';
-  error.retryable = !['owner_action_required'].includes(error.category);
+  error.retryable = !['owner_action_required', 'message_too_long'].includes(error.category);
   error.quota = Boolean(quota);
   error.diagnostic = String(diagnostic || '').slice(0, 1500);
   error.owner_safe = true;

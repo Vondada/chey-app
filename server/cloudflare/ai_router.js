@@ -379,15 +379,20 @@ export function fitToBudget(input, maxChars) {
   turns = turns.slice(0, -1);
   while (turns.length > 2 && size([...system, ...turns, last]) > maxChars) turns = turns.slice(1);
   const clip = (m, n) => ({ ...m, content: contentText(m.content).slice(0, Math.max(200, n)) });
+  // The newest turn is never cut (issue #345): its end may hold "but don't buy anything yet".
+  // When it cannot fit whole beside a minimal system prompt, the input is marked oversize and
+  // the caller skips this engine for one with more room.
   const lastText = contentText(last?.content);
-  const lastBudget = Math.min(lastText.length, Math.floor(maxChars * 0.35));
-  const turnBudget = Math.floor(maxChars * 0.2);
+  const SYSTEM_FLOOR = 1200;
+  if (lastText.length > maxChars - SYSTEM_FLOOR) return { ...input, oversize: true };
+  const lastBudget = lastText.length;
+  const turnBudget = Math.max(0, Math.min(Math.floor(maxChars * 0.2), maxChars - lastBudget - SYSTEM_FLOOR));
   const turnsSize = size(turns);
-  const fittedTurns = turnsSize > turnBudget ? turns.map((m) => clip(m, Math.floor(turnBudget / Math.max(1, turns.length)))) : turns;
-  const systemBudget = Math.max(1200, maxChars - lastBudget - size(fittedTurns));
+  const fittedTurns = turnsSize <= turnBudget ? turns : turnBudget < 200 ? [] : turns.map((m) => clip(m, Math.floor(turnBudget / Math.max(1, turns.length))));
+  const systemBudget = Math.max(SYSTEM_FLOOR, maxChars - lastBudget - size(fittedTurns));
   const systemSize = Math.max(1, size(system));
   const fittedSystem = system.map((m) => clip(m, Math.floor(systemBudget * (contentText(m.content).length / systemSize))));
-  return { ...input, messages: [...fittedSystem, ...fittedTurns, ...(last ? [clip(last, lastBudget || 200)] : [])] };
+  return { ...input, messages: [...fittedSystem, ...fittedTurns, ...(last ? [last] : [])] };
 }
 
 function compactEngineInput(input) {
@@ -854,7 +859,15 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
         errors.push(`${provider.id}: context budget ${budget} below required ${minInputChars}`);
         continue;
       }
-      if (budget) shaped.input = fitToBudget(shaped.input, budget);
+      if (budget) {
+        const fitted = fitToBudget(shaped.input, budget);
+        if (fitted.oversize) {
+          // Worded so a size skip is never mistaken for a quota or a busy engine.
+          errors.push(`${provider.id}: skipped, the newest message is too long for it (${budget} characters)`);
+          continue;
+        }
+        shaped.input = fitted;
+      }
       const override = modelFor(provider);
       const attemptedModel = override || (strongProviderModel ? provider.strong(env) : provider.fast(env));
       const t0 = Date.now();
@@ -909,6 +922,7 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
         if (error?.status === 413 && !minInputChars) {
           try {
             const smaller = fitToBudget(shaped.input, Math.floor((budget || 16000) / 2));
+            if (smaller.oversize) throw new Error('the newest message does not fit at half size');
             const retry = await callProvider(env, provider, false, smaller, fetcher, '', office);
             await addEstimatedUsage(env, usageStorage, provider.id, retry.usageTokens, now);
             providerLastError.delete(provider.id);
@@ -1045,6 +1059,15 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
   const configured = PROVIDERS.filter((p) => !p.keyless && providerEnabled(env, p)).map((p) => p.id);
   const diagnostic = errors.join(' | ').slice(0, 1500);
   console.log("CHE engine errors:", errors);
+  // Every engine that could answer was too small for the newest message: the owner is told so
+  // plainly (and nothing is queued to retry), instead of hearing that CHE is busy.
+  const tooLong = errors.filter((e) => /newest message is too long for it/.test(e));
+  // Only when size was the sole reason: an engine resting, over its daily share or failing could
+  // still take the message moments later, so that stays the ordinary busy path (review of #349).
+  const otherwise = errors.filter((e) => !/newest message is too long for it/.test(e));
+  if (tooLong.length && !otherwise.length) {
+    throw makeEngineError({ category: 'message_too_long', diagnostic, configured: configured.length > 0 });
+  }
   throw makeEngineError({
     category: errors.some((e) => /offline|network|abort/i.test(e)) ? 'temporary_cloud_unavailable' : 'temporary_cloud_unavailable',
     quota: errors.some((e) => /quota|allowance|4006|neurons|429|budget/.test(e)),

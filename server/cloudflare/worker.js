@@ -1367,6 +1367,8 @@ function sourceExcerpts(grounding) {
 }
 
 export function busyError(error) {
+  // A message too long for every engine is not busy: waiting will not shorten it.
+  if (error?.category === 'message_too_long') return false;
   // Structured router errors (all engines failed) carry a category; their
   // owner-safe message does not contain "busy", so honour the category too.
   return Boolean(error?.quota || error?.busy || [429, 500, 502, 503, 504].includes(error?.status) ||
@@ -3309,7 +3311,9 @@ async function runChatModel(env, { model, systemPrompt, compactPrompt, turns, me
       }
       return { ...answer, response: reply };
     } catch (error) {
-      lastError = error;
+      // A busy or failing engine on an earlier attempt is the truer reason than a later "too long"
+      // from engines that were left (review of #349).
+      if (!(error?.category === 'message_too_long' && lastError && lastError.category !== 'message_too_long')) lastError = error;
       console.error('CHE chat model attempt failed', attempt.model, attempt.system.length, error?.message);
       // Every engine is out of quota: retrying only burns more allowance.
       if (error?.quota) break;
@@ -8035,15 +8039,24 @@ export class CheState extends DurableObject {
         } catch (error) {
           return json({ detail: error.message }, error.status || 403);
         }
-        const rawMessage = String(body.message || '').trim().slice(0, 16000);
+        const rawMessage = String(body.message || '').trim();
         if (!rawMessage) return json({ detail: 'Message required.' }, 400);
+        // A message is never silently cut (issue #345): its last words may be "but don't send it".
+        // One that is too long is refused whole, saying so, and nothing is done with it.
+        const intakeLimit = ownerDevice ? 16000 : 4000;
+        if (rawMessage.length > intakeLimit) {
+          return json({
+            detail: `That message is ${rawMessage.length.toLocaleString('en-US')} characters${ownerDevice ? ', sir,' : ''} more than the ${intakeLimit.toLocaleString('en-US')} I can take at once, so I did nothing with it. Please send it in parts.`,
+            category: 'message_too_long', retryable: false,
+          }, 413);
+        }
         // A broker key said or typed in chat is never kept or sent on to a model (review of #348):
         // the memory filters refuse it by its shape, and CHE says what to do instead.
         if (BROKER_KEY_RE.test(rawMessage)) {
           return ndjsonReply('I did not keep that, sir: it looks like an API key, and keys never go in chat. It may now be exposed, so regenerate it where it came from. A new Alpaca paper key goes in the Trading Room, straight to CHE\'s key store.', { source: 'che_secret_refused', ok: false, model_calls: 0 });
         }
         // A family/guest device never reaches the owner's chat routes below.
-        if (!ownerDevice) return this.guestChat(body, rawMessage.slice(0, 4000), activeTenant);
+        if (!ownerDevice) return this.guestChat(body, rawMessage, activeTenant);
         // Command Center: a plain yes releases a held command (once, fresh);
         // "/name …" runs a catalog command; "run my X workflow" starts a saved
         // workflow. Each runs through this same route and its gates.
@@ -8127,7 +8140,9 @@ export class CheState extends DurableObject {
           return ndjsonReply(checked.text, { source: 'che_source_check', model_calls: 0, verified: checked.ok, recorded: checked.record.length });
         }
         const lastOwner = [...ownerHistory].reverse().find((h) => h && h.role === 'user');
-        const previousText = String(lastOwner?.content || lastOwner?.text || '').slice(0, 2000);
+        // The whole previous turn (up to the intake limit): a correction re-runs it, so its end ("but do
+        // not send anything to Mark until Friday") must survive (review of #349).
+        const previousText = String(lastOwner?.content || lastOwner?.text || '').slice(0, 16000);
         const correction = detectCorrection(rawMessage, previousText);
         let corrections = await loadCorrections(this.ctx.storage).catch(() => []);
         let message = applyCorrections(rawMessage, corrections);
@@ -10704,7 +10719,7 @@ export class CheState extends DurableObject {
         detail: safe,
         category: error?.category || 'temporary_cloud_unavailable',
         retryable: error?.retryable !== false,
-      }, 503);
+      }, error?.category === 'message_too_long' ? 413 : 503);
     }
   }
 
