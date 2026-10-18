@@ -161,7 +161,7 @@ export function assessSignificance(record) {
   else if (verification === 'model_opinion' || verification === 'hypothesis') { score -= 0.1; reasons.push(`a ${verification.replace('_', ' ')}, not a fact`); }
   const kind = record.kind || '';
   if (kind === 'correction') { score += 0.25; reasons.push('a correction of something CHE got wrong'); }
-  if (kind === 'decision' || kind === 'lesson') { score += 0.15; reasons.push(`a ${kind}`); }
+  if (kind === 'decision' || kind === 'lesson') { score += 0.2; reasons.push(`a ${kind}`); }
   const links = Array.isArray(record.links) ? record.links : [];
   if (links.length) { score += Math.min(0.15, links.length * 0.03); reasons.push(`${links.length} relationship${links.length === 1 ? '' : 's'}`); }
   if (links.some((l) => l.type === 'contradicts')) { score += 0.1; reasons.push('contradicts another record'); }
@@ -285,7 +285,7 @@ export class CheBrainStore {
     return rowToRecord(this.rows('SELECT * FROM brain_records WHERE id = ?', String(id || ''))[0]);
   }
 
-  write(record, { rev, origin, deleted = false, now }) {
+  write(record, { rev, origin, deleted = false, now, updatedAt }) {
     const at = now || new Date().toISOString();
     const seq = this.nextSeq();
     const hash = deleted ? '' : contentHash(record);
@@ -294,7 +294,7 @@ export class CheBrainStore {
       record.kind, record.region, record.path, deleted ? '' : record.title, deleted ? '' : record.body,
       JSON.stringify(deleted ? { deleted_at: at } : record.source || {}), record.verification,
       JSON.stringify(deleted ? {} : record.significance || {}), JSON.stringify(deleted ? [] : record.links || []),
-      rev, hash, record.created_at || at, at, clip(origin, 40) || 'cloud', deleted ? 1 : 0, seq,
+      rev, hash, record.created_at || at, updatedAt || at, clip(origin, 40) || 'cloud', deleted ? 1 : 0, seq,
     ];
     if (existing) {
       this.sql.exec('UPDATE brain_records SET kind = ?, region = ?, path = ?, title = ?, body = ?, source = ?, verification = ?, significance = ?, links = ?, rev = ?, hash = ?, created_at = ?, updated_at = ?, origin = ?, deleted = ?, seq = ? WHERE id = ?', ...values, record.id);
@@ -429,6 +429,37 @@ export class CheBrainStore {
       if (this.delete(row.id, { origin, now }).outcome === 'deleted') deleted += 1;
     }
     return deleted;
+  }
+
+  /**
+   * A new significance for a stored record, from the auditor or the owner. Content is untouched; the
+   * revision moves so every replica picks the new score up, but the record keeps its author and its
+   * updated_at: a score is bookkeeping about the record, not activity on it, so the daily review does
+   * not count it and "came from the phone" stays true. Returns 'reassessed' or 'unchanged'.
+   */
+  reassess(id, significance, { origin = 'auditor', now } = {}) {
+    const current = this.get(id);
+    if (!current || current.deleted) return { outcome: 'missing', id };
+    const next = asObject(significance);
+    if (JSON.stringify(next) === JSON.stringify(current.significance || {})) return { outcome: 'unchanged', record: current, rev: current.rev };
+    // The content is the same as at content_rev (as amendSource records), so the phone's next edit of
+    // the text it saw is an update, never a conflict the auditor caused.
+    const source = { ...(current.source || {}), content_rev: Number.isFinite(Number(current.source?.content_rev)) ? Number(current.source.content_rev) : current.rev };
+    const written = this.write(
+      { ...current, significance: next, source, places: this.rows('SELECT region, path FROM brain_places WHERE record_id = ?', id) },
+      { rev: current.rev + 1, origin: current.origin || origin, now, updatedAt: current.updated_at },
+    );
+    return { outcome: 'reassessed', record: this.get(id), rev: written.rev };
+  }
+
+  /** Live records touched at or after [sinceIso], newest first: the day's real activity. */
+  changedSince(sinceIso, { limit = 2000, createdFirst } = {}) {
+    if (!this.init()) return [];
+    const size = Math.max(1, Math.min(Number(limit) || 2000, 5000));
+    // [createdFirst]: records created at or after that instant come before older ones rewritten or
+    // imported, so a bulk import never pushes the day's own records off the page.
+    if (createdFirst) return this.rows('SELECT * FROM brain_records WHERE updated_at >= ? AND deleted = 0 ORDER BY (created_at >= ?) DESC, seq DESC LIMIT ?', String(sinceIso || ''), String(createdFirst), size).map(rowToRecord);
+    return this.rows('SELECT * FROM brain_records WHERE updated_at >= ? AND deleted = 0 ORDER BY seq DESC LIMIT ?', String(sinceIso || ''), size).map(rowToRecord);
   }
 
   /** A record written by CHE herself (not a sync op): created or updated, with the current revision as base. */

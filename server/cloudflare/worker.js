@@ -69,7 +69,7 @@ import { jsRegexFlagProblems } from './flagstaff_code_check.js';
 import { ownToolPermissionProblems } from './flagstaff_reply_check.js';
 import { cachedCodeIndex } from './code_index.js';
 import { CHE_SELF_BRIEF, starredFocus, studyLesson } from './che_self_knowledge.js';
-import { KEY_PROVIDERS, MEMORY_DB, hasStoredMemoryDatabase, memorySetupIntent, memorySetupSteps, removeMemoryDatabase, saveMemoryDatabase, removeKey, storedKeys, withStoredKeys, cachedAnswer, checkAllKeys, fileLetter, forgetAnswer, isLockedDown, listLetters, looksLikeAttack, markLetter, nextLetter, rememberAnswer, resilienceIntent, runScout, saveKey, setLockdown, setupSteps, speakKeyHealth, speakMailboxSummary, speakTech, techItems } from './resilience.js';
+import { KEY_PROVIDERS, MEMORY_DB, hasStoredMemoryDatabase, memorySetupIntent, memorySetupSteps, removeMemoryDatabase, saveMemoryDatabase, removeKey, storedKeys, withStoredKeys, cachedAnswer, checkAllKeys, fileLetter, fileTech, forgetAnswer, isLockedDown, listLetters, looksLikeAttack, markLetter, nextLetter, rememberAnswer, resilienceIntent, runScout, saveKey, setLockdown, setupSteps, speakKeyHealth, speakMailboxSummary, speakTech, techItems } from './resilience.js';
 import { applyCorrections, correctionsContext, detectCorrection, learnCorrection, loadCorrections } from './speech_learning.js';
 import { applyModelReading, asksAboutScreen, interpretOwnerTurn, interpretWithModel } from './speech_intent.js';
 import { replyHijacksOwnerRequest, usageIntent, usageReport, speakUsage } from './usage_tracker.js';
@@ -93,6 +93,7 @@ import { githubWorkshopPieces, workshopAvatar, workshopAvatarIntent, workshopSna
 import { flushOutbox, handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, openMailbox, transcript as flagstaffTranscript, mailboxCode, mailboxLink, postWebMail, readWebMail, rotateMailboxCode } from './web_mailbox.js';
 import { CheLibrary, fetchReadable, libraryContext, libraryIntent } from './library.js';
 import { CheBrainStore, backfillConversations, displayCopy, isSafeText, ownerMemoryRecord, projectLegacyState, rememberExchange, sameDisplayCopy } from './brain_store.js';
+import { brainReviewIntent, latestReview, ownerScore, runBrainMaintenance, speakReview } from './brain_audit.js';
 import { fetchYouTubeKnowledge, mergeCaptionLines, normalizeCaptionLines, youtubeVideoId } from './youtube_learning.js';
 import {
   disconnectGoogle, finishGoogleConnect, googleChatIntent, googleConnectorStates, googleLabel, googleOwnerStep, googleRecheckPending,
@@ -5643,7 +5644,7 @@ export class CheState extends DurableObject {
       // ─── Brain: the one logical Brain the phone replicates ──────────────
       // Reads and writes are the owner's only. /changes and /push are the two
       // halves of the phone's incremental sync; /status gives real counts.
-      if (path.startsWith('/api/brain/') && ['/api/brain/status', '/api/brain/changes', '/api/brain/push', '/api/brain/search', '/api/brain/folders', '/api/brain/record', '/api/brain/conflicts', '/api/brain/conflicts/resolve'].includes(path)) {
+      if (path.startsWith('/api/brain/') && ['/api/brain/status', '/api/brain/changes', '/api/brain/push', '/api/brain/search', '/api/brain/folders', '/api/brain/record', '/api/brain/conflicts', '/api/brain/conflicts/resolve', '/api/brain/review', '/api/brain/score'].includes(path)) {
         if (!ownerDevice) return json({ detail: 'Only the CHE owner can read his brain.' }, 403);
         const brain = new CheBrainStore(this.ctx.storage);
         const q = new URL(request.url).searchParams;
@@ -5748,6 +5749,19 @@ export class CheState extends DurableObject {
         }
         if (path === '/api/brain/conflicts/resolve' && request.method === 'POST') {
           return json(brain.resolveConflict(String(body.id || ''), body.choice === 'incoming' ? 'incoming' : 'current'));
+        }
+        // The next-morning review and the significance audit: computed from Brain records by the
+        // nightly pass, never by a model. "Run" rebuilds today's from what is there now.
+        if (path === '/api/brain/review') {
+          if (request.method === 'POST' && body.run === true) {
+            projectLegacyState(brain, data, { library: library() });
+            const run = runBrainMaintenance(brain);
+            return json({ ...latestReview(brain), run });
+          }
+          return json(latestReview(brain));
+        }
+        if (path === '/api/brain/score' && request.method === 'POST') {
+          return json(ownerScore(brain, String(body.id || ''), body.score, { reason: String(body.reason || '') }));
         }
         return json({ detail: 'Method not allowed.' }, 405);
       }
@@ -8717,10 +8731,18 @@ export class CheState extends DurableObject {
             source: 'che_evidence_receipt', model_calls: 0, retracted: explained.retract.length,
           });
         }
+        // "Read me my brain review": the next-morning review, spoken from its stored
+        // record, every line computed from the day's Brain records. No model.
+        // A question about what the owner himself said ("what have I told you about my brain
+        // review") is his memory question, below, never the review.
+        const memoryQuestion = ownerDevice && !body.attachment ? ownerMemoryQuestion(rawMessage) : null;
+        if (ownerDevice && !body.attachment && !memoryQuestion && brainReviewIntent(rawMessage)) {
+          const latest = latestReview(new CheBrainStore(this.ctx.storage));
+          return ndjsonReply(speakReview(latest), { source: 'che_brain_review', model_calls: 0, review_id: latest.review?.id || null });
+        }
         // What the owner personally said, confirmed, approved or did is
         // answered from owner-attested records only. A model is never asked
         // to fill this in, so it cannot invent a personal memory.
-        const memoryQuestion = ownerDevice && !body.attachment ? ownerMemoryQuestion(rawMessage) : null;
         if (memoryQuestion) {
           const memoryAnswer = answerOwnerMemoryQuestion(data, memoryQuestion, ownerHistory);
           const receipt = answerEvidenceReceipt({ ownerAttested: memoryAnswer.kind === 'owner_attested' });
@@ -10449,6 +10471,9 @@ export class CheState extends DurableObject {
       const brain = new CheBrainStore(this.ctx.storage);
       projectLegacyState(brain, data, { library: new CheLibrary(this.ctx.storage).list() });
       await backfillConversations(brain, this.ctx.storage, { batch: 500 });
+      // Then the significance audit and the next-morning review, from those records alone.
+      const maintenance = runBrainMaintenance(brain);
+      console.log('CHE brain maintenance:', JSON.stringify(maintenance.audit), maintenance.review.written ? 'review written' : maintenance.review.reason);
     } catch (error) { console.error('Brain projection failed:', error?.message || error); }
     if (!data.autonomy) return { status: 'paused' };
     const result = await runNightlyReview(this.env, this.ctx.storage, data, this.env.CHE_STRONG_MODEL || STRONG_MODEL);

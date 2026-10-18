@@ -69,7 +69,7 @@ What each command needs:
 
 | Needs | Commands |
 |---|---|
-| Nothing beyond CHE | che, che-plan, che-research, che-verify, che-memory, che-recover, che-status, yt-ideas, yt-research, yt-script, yt-seo, yt-batch, yt-grow, trade-open, trade-chart, trade-setup, trade-liquidity, trade-backtest, trade-journal, trade-alert, trade-risk (account limits need NinjaTrader), site-build, site-redesign, site-audit, site-publish, app-build, ai-build, all money commands, all client commands, all marketing commands, office-status, office-delegate, warroom, automate, skill-learn, connect, create-3d |
+| Nothing beyond CHE | che, che-plan, che-research, che-verify, che-memory, che-brain-review, che-recover, che-status, yt-ideas, yt-research, yt-script, yt-seo, yt-batch, yt-grow, trade-open, trade-chart, trade-setup, trade-liquidity, trade-backtest, trade-journal, trade-alert, trade-risk (account limits need NinjaTrader), site-build, site-redesign, site-audit, site-publish, app-build, ai-build, all money commands, all client commands, all marketing commands, office-status, office-delegate, warroom, automate, skill-learn, connect, create-3d |
 | GitHub secrets | che-explore, che-build, app-fix, code-review, che-release, iphone-update |
 | Video renderer | yt-video, yt-voice (also a voice key) |
 | Image engine | yt-thumbnail |
@@ -97,7 +97,7 @@ Honest limits:
   - `/budget`: +148 characters;
   - `/che-plan`: +238 characters;
   - `/marketing-plan`: +1,172 characters.
-- **Model calls.** `/trade-chart`, `/che-memory`, `/che-status`, `/lead-crm` and unknown or unavailable commands use 0 model calls.
+- **Model calls.** `/trade-chart`, `/che-memory`, `/che-brain-review`, `/che-status`, `/lead-crm` and unknown or unavailable commands use 0 model calls. `/che-brain-review` reads the stored next-morning review (`brain_audit.js`); a question about what the owner himself said about the review stays an owner-memory question.
 - **Speed.** Suggestion matching takes 6.4 µs per message; search takes 1.1 ms per query.
 - **Routes.** With GitHub, voice, Stripe and Twilio secrets set in the test, 68 of 71 commands reached the handler their catalog entry names. The other 3 (yt-analytics, yt-publish, trade-execute) need an OAuth sign-in and answered "needs setup" with nothing run.
 
