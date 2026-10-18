@@ -415,3 +415,28 @@ test('a clean memory whose 160-character title cut ends on a word fragment still
   assert.ok(!/pin$/.test(record.title), `the title ends on a whole word: ${record.title}`);
   assert.equal((await (await che.call('/api/brain/search?q=pinnacle', { token: che.token })).json()).hits.length, 1);
 });
+
+test('rebuilding the review keeps every task in its worker\'s brain, and the recovery report route answers on a fresh store', async (t) => {
+  const che = await owner();
+  if (!che) return t.skip('node:sqlite unavailable');
+  const fresh = await (await che.call('/api/brain/recovery', { token: che.token })).json();
+  assert.equal(fresh.available, true);
+  assert.match(fresh.note, /No recovery pass has run yet/);
+  const created = await (await che.call('/api/team/create', { method: 'POST', token: che.token, body: { role: 'Product and listings', specialty: 'Listings and pricing' } })).json();
+  const nova = created.partner;
+  assert.equal(nova.name, 'Nova', 'the first internal worker hired is Nova');
+  assert.equal((await che.call('/api/team/assign', { method: 'POST', token: che.token, body: { partner_id: nova.id, task: 'Write the Etsy listing for the brass lamp.' } })).status, 200);
+  const before = await (await che.call('/api/brain/workers', { token: che.token })).json();
+  const novaBefore = before.workers.find((w) => w.name === 'Nova');
+  assert.equal(novaBefore.records >= 2, true, `her hub record and the task: ${JSON.stringify(novaBefore)}`);
+  assert.equal(novaBefore.tasks.live, 1);
+  const run = await (await che.call('/api/brain/review', { method: 'POST', token: che.token, body: { run: true } })).json();
+  assert.ok(run.run);
+  const after = await (await che.call('/api/brain/workers', { token: che.token })).json();
+  const novaAfter = after.workers.find((w) => w.name === 'Nova');
+  assert.equal(novaAfter.tasks.live, 1, 'the rebuild did not move her task out of her brain');
+  assert.equal(novaAfter.records, novaBefore.records);
+  const task = (await (await che.call('/api/brain/search?q=brass%20lamp', { token: che.token })).json()).hits[0];
+  assert.ok(task);
+  assert.equal(task.source.agent, 'Nova');
+});

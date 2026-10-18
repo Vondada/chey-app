@@ -259,3 +259,76 @@ test('a self-handoff is no collaboration; REA targets and features given as obje
   assert.ok(store.get('trade:2026-10-11T00:00:00.000Z'));
   assert.equal(store.get('trade:1'), null);
 });
+
+test('investigations keep their own hashes, a refused REA record keeps a safe outline and is counted, an owner edit survives, and the report says what was withheld', async (t) => {
+  const storage = await sqlStorage();
+  if (!storage) return t.skip('node:sqlite unavailable');
+  const store = new CheBrainStore(storage);
+  const kv = kvStorage();
+  await kv.put(REA_JOBS_KEY, [
+    { id: 'r1', title: 'REA: shop.example', status: 'done', target: { name: 'shop.example' }, created_at: T },
+    { id: 'r2', title: 'REA: bank.example login', status: 'done', target: { host: 'bank.example' }, created_at: T },
+  ]);
+  await kv.put(`${REA_DETAIL_PREFIX}r1`, { id: 'r1', status: 'done', target: { name: 'shop.example' }, summary: 'Checkout uses Stripe.', features: [{ name: 'Checkout', evidence: ['https://shop.example/checkout'] }], created_at: T });
+  await kv.put(`${REA_DETAIL_PREFIX}r2`, { id: 'r2', status: 'done', target: { host: 'bank.example' }, summary: 'Login uses a password field and a session cookie.', features: [{ name: 'Login', evidence: ['https://bank.example/login'] }], created_at: T });
+  const first = await projectInvestigations(store, kv, { now: T });
+  assert.deepEqual(first.rea, { inspected: 2, imported: 2, skipped: 0, refused: 1 });
+  const kept = store.get('rea:r2');
+  assert.ok(kept, 'the refused investigation still has a record');
+  assert.equal(kept.source.redacted, true);
+  assert.doesNotMatch(kept.body, /password|cookie/);
+  assert.match(kept.body, /^Target: bank\.example\. Status: done\.$/m);
+  assert.match(kept.body, /Evidence items: 1\./);
+  assert.match(kept.body, /withheld: sensitive content/);
+  assert.deepEqual(Object.keys(store.meta('investigation_hashes')).sort(), ['rea:r1', 'rea:r2']);
+  // The Office projection prunes its own map and leaves the investigations' alone.
+  projectOfficeExperience(store, officeData(), { now: T });
+  assert.deepEqual(Object.keys(store.meta('investigation_hashes')).sort(), ['rea:r1', 'rea:r2']);
+  // The owner annotates an investigation on the phone: the next pass skips it and keeps his words.
+  const edit = store.apply({ type: 'put', record: { ...store.get('rea:r1'), body: `${store.get('rea:r1').body}\nOwner note: worth copying their checkout flow.` }, base_rev: store.get('rea:r1').rev }, { origin: 'iphone' });
+  assert.equal(edit.outcome, 'updated');
+  const second = await projectInvestigations(store, kv, { now: '2026-10-11T10:00:00.000Z' });
+  assert.deepEqual(second.rea, { inspected: 2, imported: 0, skipped: 2, refused: 0 });
+  assert.match(store.get('rea:r1').body, /Owner note: worth copying/);
+  const report = await recoverHistory(store, kv, officeData(), { now: '2026-10-11T10:00:00.000Z' });
+  const rea = report.sources.find((s) => /REA/.test(s.source));
+  assert.equal(rea.refused, 0, 'already present now');
+  // A fresh store shows the refusal in the report and the audit record.
+  const store2 = new CheBrainStore(await sqlStorage());
+  const fresh = await recoverHistory(store2, kv, officeData(), { now: T });
+  assert.equal(fresh.sources.find((s) => /REA/.test(s.source)).refused, 1);
+  assert.match(store2.get(`audit:recovery:${T.slice(0, 10)}`).body, /1 with details withheld \(sensitive content\)/);
+  assert.match(store2.get(`audit:recovery:${T.slice(0, 10)}`).body, /1 record kept only as a safe outline/);
+});
+
+test('a null handoff or work-log entry never breaks the projection; a handoff note is recorded; last activity is the work\'s own date; the archive step keeps an owner\'s edit', async (t) => {
+  const storage = await sqlStorage();
+  if (!storage) return t.skip('node:sqlite unavailable');
+  const store = new CheBrainStore(storage);
+  const data = officeData();
+  data.team_tasks[1].handoffs = [null, { from_agent_name: 'Atlas', to_agent_name: 'Knox', at: '2026-10-09T09:00:00.000Z', note: 'Knox has the trading harness' }];
+  data.team[1].handoff_history = [null, ...data.team[1].handoff_history];
+  data.agent_work_log = [null, ...data.agent_work_log];
+  const out = projectOfficeExperience(store, data, { now: '2026-10-18T03:00:00.000Z' });
+  assert.equal(out.available, true);
+  const handoff = store.get('handoff:t2:a-atlas:a-knox:2026-10-09T09:00:00.000Z');
+  assert.match(handoff.body, /Reason: Knox has the trading harness/);
+  const brains = workerBrains(store, data);
+  assert.equal(brains.workers.find((w) => w.name === 'Nova').last_activity, T, 'the task\'s own date, not tonight');
+  assert.equal(brains.workers.find((w) => w.name === 'Atlas').last_activity, '2026-10-09T09:00:00.000Z', 'his handoff to Knox is his latest work');
+  // The owner edits a task record; the task then leaves the window: the archive step leaves his words.
+  const t1 = store.get('task:t1');
+  assert.equal(store.apply({ type: 'put', record: { ...t1, body: `${t1.body}\nOwner note: good listing.` }, base_rev: t1.rev }, { origin: 'iphone' }).outcome, 'updated');
+  assert.equal(archiveTasks(store, [data.team_tasks[0]], data, { now: '2026-10-18T04:00:00.000Z' }), 0, 'unchanged content: nothing rewritten');
+  assert.match(store.get('task:t1').body, /Owner note: good listing/);
+  // A task that changed since the projection is archived with its new content.
+  data.team_tasks[0].result = 'Listing written and published.';
+  assert.equal(archiveTasks(store, [data.team_tasks[0]], data, { now: '2026-10-18T04:01:00.000Z' }), 1);
+  assert.match(store.get('task:t1').body, /published/);
+  // Other kinds keep every safe line when redacted.
+  const skill = redactedRecord({ id: 'skill:v', kind: 'skill', region: BRAIN_REGIONS.skills, path: 'Nova', title: 'Vendor login', body: 'Skill: Vendor login.\nSteps: open the portal; enter the password from the vault; download the invoice.\nAssigned: Nova.', source: { kind: 'office_skill' }, verification: 'verified_source' });
+  assert.match(skill.body, /^Skill: Vendor login\.$/m);
+  assert.match(skill.body, /^Assigned: Nova\.$/m);
+  assert.doesNotMatch(skill.body, /password/);
+  assert.match(skill.body, /One line withheld: sensitive content; see the original record\./);
+});

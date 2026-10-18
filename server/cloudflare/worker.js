@@ -5757,7 +5757,7 @@ export class CheState extends DurableObject {
         // nightly pass, never by a model. "Run" rebuilds today's from what is there now.
         if (path === '/api/brain/review') {
           if (request.method === 'POST' && body.run === true) {
-            projectLegacyState(brain, data, { library: library() });
+            projectAll();
             const run = runBrainMaintenance(brain);
             return json({ ...latestReview(brain), run });
           }
@@ -5777,6 +5777,7 @@ export class CheState extends DurableObject {
             const report = await recoverHistory(brain, this.ctx.storage, data, { library: library(), batch: Math.max(50, Math.min(Number(body.batch) || 500, 2000)) });
             return json(report);
           }
+          if (!brain.init()) return json({ available: false, note: 'Brain storage is not available.' });
           return json(brain.meta('recovery_report', null) || { available: true, note: 'No recovery pass has run yet. POST {run:true} to run one.' });
         }
         return json({ detail: 'Method not allowed.' }, 405);

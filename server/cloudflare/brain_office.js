@@ -105,7 +105,7 @@ export function taskRecord(task, index, workLog = null) {
   const owner = index.find(task.partner_id) || index.find(task.partner_name);
   const status = clip(task.status, 30) || 'unknown';
   const outcome = outcomeOf(status);
-  const handoffs = asList(task.handoffs).map((h) => ({
+  const handoffs = asList(task.handoffs).filter(Boolean).map((h) => ({
     from: index.find(h.from_agent_id || h.from_agent_name || h.from),
     to: index.find(h.to_agent_id || h.to_agent_name || h.to),
     at: clip(h.at, 40),
@@ -164,7 +164,7 @@ export function handoffRecord(handoff, taskId, index) {
     path: from.name,
     places: [{ region: BRAIN_REGIONS.agents, path: to.name }],
     title: `${from.name} handed work to ${to.name}`,
-    body: `${from.name} handed ${taskId ? 'a task' : 'work'} to ${to.name}${at ? ` on ${at.slice(0, 10)}` : ''}.${handoff.reason ? ` Reason: ${clip(handoff.reason, 400)}` : ''}`,
+    body: `${from.name} handed ${taskId ? 'a task' : 'work'} to ${to.name}${at ? ` on ${at.slice(0, 10)}` : ''}.${handoff.reason || handoff.note ? ` Reason: ${clip(handoff.reason || handoff.note, 400)}` : ''}`,
     source: { kind: 'handoff', from: from.name, to: to.name, task_id: clip(taskId, 80) },
     verification: 'verified_source',
     links: [
@@ -268,8 +268,15 @@ export function redactedRecord(record) {
   if (!record?.id) return null;
   const source = { ...(record.source || {}), redacted: true };
   const safeTitle = record.title && isSafeText(record.title) ? record.title : `${record.kind || 'record'} ${String(record.id).split(':').pop()}`;
-  const outline = String(record.body || '').split('\n').filter((line) => /^(?:Task|Status|Revisions|Handoffs):/.test(line) && isSafeText(line));
-  const body = [...outline, 'Result withheld: sensitive content; see the task history.'].join('\n');
+  // Every line that is safe on its own stays (a task's text and status, a skill's steps, a
+  // worker's other responsibilities); only the lines that tripped the gate are withheld.
+  const lines = String(record.body || '').split('\n');
+  const kept = lines.filter((line) => line.trim() && isSafeText(line));
+  const withheld = lines.length - kept.length;
+  const notice = record.kind === 'task'
+    ? 'Result withheld: sensitive content; see the task history.'
+    : `${withheld === 1 ? 'One line' : `${withheld} lines`} withheld: sensitive content; see the original record.`;
+  const body = [...kept, notice].join('\n');
   if (!isSafeText(`${safeTitle}\n${body}`)) return null;
   return { ...record, title: safeTitle, body, source };
 }
@@ -320,16 +327,16 @@ export function projectOfficeExperience(store, data = {}, { now } = {}) {
 
   const tasks = asList(data.team_tasks).filter((t) => t?.id);
   const taskIds = new Set(tasks.map((t) => String(t.id)));
-  const workLog = asList(data.agent_work_log);
+  const workLog = asList(data.agent_work_log).filter(Boolean);
   const workByTask = new Map(workLog.filter((e) => e?.task_id).map((e) => [String(e.task_id), e]));
   // The same handoff is known to the task (with its reason) and to both agents' histories: one record, the task's version first.
   const handoffs = new Map();
   for (const task of tasks) {
     consider('team_tasks', taskRecord(task, index, workByTask.get(String(task.id)) || null));
-    for (const h of asList(task.handoffs)) { const record = handoffRecord(h, task.id, index); if (record && !handoffs.has(record.id)) handoffs.set(record.id, record); }
+    for (const h of asList(task.handoffs).filter(Boolean)) { const record = handoffRecord(h, task.id, index); if (record && !handoffs.has(record.id)) handoffs.set(record.id, record); }
   }
   for (const agent of asList(data.team)) {
-    for (const h of asList(agent?.handoff_history)) { const record = handoffRecord(h, h.task_id, index); if (record && !handoffs.has(record.id)) handoffs.set(record.id, record); }
+    for (const h of asList(agent?.handoff_history).filter(Boolean)) { const record = handoffRecord(h, h.task_id, index); if (record && !handoffs.has(record.id)) handoffs.set(record.id, record); }
   }
   for (const record of handoffs.values()) consider('handoffs', record);
   for (const entry of workLog) {
@@ -353,10 +360,16 @@ export function projectOfficeExperience(store, data = {}, { now } = {}) {
 export function archiveTasks(store, tasks, data = {}, { now } = {}) {
   if (!store.init() || !asList(tasks).length) return 0;
   const index = agentIndex(internalWorkers(data));
+  const seen = store.meta('office_hashes', {});
+  const hashes = seen && typeof seen === 'object' ? seen : {};
   let written = 0;
   for (const task of tasks) {
     if (!task?.id) continue;
     const record = taskRecord(task, index);
+    // Already in the Brain unchanged (the projection saw this very content): leave it, so an
+    // owner's edit to the record is never overwritten by the archive step.
+    const candidate = normalizeRecord(record);
+    if (!candidate.error && hashes[candidate.id] === contentHash(candidate) && store.get(candidate.id) && !store.get(candidate.id).deleted) continue;
     let result = store.put(record, { origin: 'cloud', now });
     if (result.outcome === 'rejected') {
       const redacted = redactedRecord(record);
@@ -370,17 +383,28 @@ export function archiveTasks(store, tasks, data = {}, { now } = {}) {
 /** REA investigations and trading evidence runs live in their own storage keys; they become Brain records too. */
 export async function projectInvestigations(store, storage, { now } = {}) {
   if (!store.init() || !storage?.get) return { rea: { inspected: 0, imported: 0 }, trading: { inspected: 0, imported: 0 } };
-  const out = { rea: { inspected: 0, imported: 0, skipped: 0 }, trading: { inspected: 0, imported: 0, skipped: 0 } };
-  const seen = store.meta('office_hashes', {});
+  const out = { rea: { inspected: 0, imported: 0, skipped: 0, refused: 0 }, trading: { inspected: 0, imported: 0, skipped: 0, refused: 0 } };
+  // Their own hash map: the Office projection prunes office_hashes to the ids it saw, which would
+  // forget these and re-write every investigation (over an owner's edit) each run.
+  const seen = store.meta('investigation_hashes', {});
   const hashes = seen && typeof seen === 'object' ? seen : {};
+  const considered = new Set();
   const consider = (bucket, record) => {
     if (!record) return;
     out[bucket].inspected += 1;
     const candidate = normalizeRecord(record);
     if (candidate.error) return;
+    considered.add(candidate.id);
     const hash = contentHash(candidate);
     if (hashes[candidate.id] === hash || store.get(candidate.id)?.deleted) { out[bucket].skipped += 1; hashes[candidate.id] = hash; return; }
-    const result = store.put(record, { origin: 'cloud', now });
+    let result = store.put(record, { origin: 'cloud', now });
+    if (result.outcome === 'rejected') {
+      // An investigation can quote a login page or a token in a URL: the safe outline is kept
+      // under the same id and the refusal is counted, never silent.
+      out[bucket].refused += 1;
+      const redacted = redactedRecord(record);
+      result = redacted ? store.put(redacted, { origin: 'cloud', now }) : result;
+    }
     if (['created', 'updated', 'merged'].includes(result.outcome)) { out[bucket].imported += 1; hashes[candidate.id] = hash; } else if (result.outcome === 'unchanged') { out[bucket].skipped += 1; hashes[candidate.id] = hash; }
   };
   const reaJobs = asList(await storage.get(REA_JOBS_KEY).catch(() => []));
@@ -437,7 +461,7 @@ export async function projectInvestigations(store, storage, { now } = {}) {
       created_at: run?.at || run?.started_at || run?.created_at,
     });
   });
-  store.setMeta('office_hashes', hashes);
+  store.setMeta('investigation_hashes', Object.fromEntries(Object.entries(hashes).filter(([id]) => considered.has(id))));
   return out;
 }
 
@@ -461,7 +485,7 @@ export async function recoverHistory(store, storage, data = {}, { library = [], 
     { source: 'nightly reviews', inspected: asList(data.nightly_reviews).length, note: 'projected as review: records' },
     { source: 'library documents', inspected: asList(library).length, note: 'index cards as lib: records; the texts stay in the library tables' },
     { source: 'conversations (brainmem)', inspected: Number(conversations.added) || 0, note: conversations.done ? `backfill complete; ${conversations.added ?? 0} total added` : `backfill in progress; ${conversations.added ?? 0} added so far`, done: Boolean(conversations.done) },
-    ...Object.entries(office.counts || {}).map(([source, c]) => ({ source, inspected: c.inspected, imported: c.imported, skipped: c.skipped })),
+    ...Object.entries(office.counts || {}).map(([source, c]) => ({ source, inspected: c.inspected, imported: c.imported, skipped: c.skipped, refused: c.refused || 0 })),
     { source: 'REA investigations (rea_jobs + rea_inv:*)', ...investigations.rea },
     { source: 'trading evidence runs (evidence_runs)', ...investigations.trading },
   ];
@@ -483,7 +507,8 @@ export async function recoverHistory(store, storage, data = {}, { library = [], 
     body: [
       `Historical recovery pass on ${day}: ${sources.length} sources inspected, ${office.workers} internal Office workers.`,
       '', 'Imported this pass:',
-      ...sources.map((s) => `- ${s.source}: ${s.inspected} inspected${s.imported != null ? `, ${s.imported} imported, ${s.skipped || 0} already present` : ''}${s.note ? ` (${s.note})` : ''}`),
+      ...sources.map((s) => `- ${s.source}: ${s.inspected} inspected${s.imported != null ? `, ${s.imported} imported, ${s.skipped || 0} already present` : ''}${s.refused ? `, ${s.refused} with details withheld (sensitive content)` : ''}${s.note ? ` (${s.note})` : ''}`),
+      ...(sources.some((s) => s.refused) ? ['', `${sources.reduce((a, s) => a + (s.refused || 0), 0)} record${sources.reduce((a, s) => a + (s.refused || 0), 0) === 1 ? '' : 's'} kept only as a safe outline: a result, summary or note named something sensitive, so that part was withheld and is counted here, not lost in silence.`] : []),
       '', 'Not recoverable from here:',
       ...unavailable.map((u) => `- ${u}`),
     ].join('\n'),
@@ -521,7 +546,9 @@ export function workerBrains(store, data = {}) {
       try { source = JSON.parse(row.source || '{}'); } catch (_) { source = {}; }
       for (const name of [source.from, source.to, ...asList(source.collaborators)]) if (name && name !== worker.name) collaborators.add(name);
     }
-    const last = store.rows('SELECT MAX(r.updated_at) AS at FROM brain_records r JOIN brain_places p ON p.record_id = r.id WHERE r.deleted = 0 AND p.region = ? AND p.path = ?', ...place)[0]?.at || null;
+    // When the worker last did something, from the work records themselves (a task's own date), never
+    // the time the projection wrote them; null when only the hub record exists.
+    const last = store.rows("SELECT MAX(r.created_at) AS at FROM brain_records r JOIN brain_places p ON p.record_id = r.id WHERE r.deleted = 0 AND p.region = ? AND p.path = ? AND r.kind IN ('task', 'collaboration', 'work', 'skill')", ...place)[0]?.at || null;
     return {
       id: `agent:${worker.id}`,
       agent_id: worker.id,
