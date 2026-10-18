@@ -328,6 +328,23 @@ void main() {
     expect(reopened.search('Lisbon'), isEmpty);
   });
 
+  test('L: a delete replayed after a put for the same record leaves only the delete, and forgetting by words ignores case', () async {
+    final dir = await freshDir();
+    final brain = CheBrainReplica(directory: dir);
+    await brain.remember(id: 'note:pd', kind: 'note', region: 'Learned Knowledge', body: 'To be deleted.');
+    await brain.forget('note:pd');
+    expect(brain.pendingOps, 1);
+    // The journal still holds the put line before the delete line; a replay must end with the delete only.
+    final journal = File('${dir.path}/journal.ndjson');
+    expect((await journal.readAsString()).contains('"type":"put"'), isTrue);
+    final reopened = CheBrainReplica(directory: dir);
+    await reopened.load();
+    expect(reopened.pendingOps, 1, reason: 'a replayed delete supersedes the earlier put');
+    expect(reopened.search('deleted'), isEmpty);
+    await reopened.remember(id: 'mem:lc', kind: 'memory', region: 'Personal Memory', body: 'my dog is called rex.');
+    expect(await reopened.forgetMemoriesShowing('My dog is called Rex.'), 1);
+  });
+
   test('F: a queued offline request is a task record that says it did not run', () async {
     final brain = CheBrainReplica(directory: await freshDir());
     final queued = (await brain.queueRemoteRequest('send the report to Claude'))!;

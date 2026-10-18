@@ -92,7 +92,7 @@ import { loadPackedJson, savePackedJson } from './prompt_compaction.js';
 import { githubWorkshopPieces, workshopAvatar, workshopAvatarIntent, workshopSnapshot } from './workshop.js';
 import { flushOutbox, handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, openMailbox, transcript as flagstaffTranscript, mailboxCode, mailboxLink, postWebMail, readWebMail, rotateMailboxCode } from './web_mailbox.js';
 import { CheLibrary, fetchReadable, libraryContext, libraryIntent } from './library.js';
-import { CheBrainStore, backfillConversations, displayCopy, isSafeText, ownerMemoryRecord, projectLegacyState, rememberExchange } from './brain_store.js';
+import { CheBrainStore, backfillConversations, displayCopy, isSafeText, ownerMemoryRecord, projectLegacyState, rememberExchange, sameDisplayCopy } from './brain_store.js';
 import { fetchYouTubeKnowledge, mergeCaptionLines, normalizeCaptionLines, youtubeVideoId } from './youtube_learning.js';
 import {
   disconnectGoogle, finishGoogleConnect, googleChatIntent, googleConnectorStates, googleLabel, googleOwnerStep, googleRecheckPending,
@@ -5690,10 +5690,10 @@ export class CheState extends DurableObject {
                   // The same words already sit in the memory list under another id: the two are twins,
                   // and the Memory screen's delete reaches both (deleteMemoriesShowing). Noted on the row.
                   if (!added.added && added.reason === 'duplicate') {
-                    const twin = data.memory_records.find((item) => displayCopy(item.text) === displayCopy(record.body));
+                    const twin = data.memory_records.find((item) => sameDisplayCopy(item.text, record.body));
                     if (twin) { twin.brain_twins = [...new Set([...(Array.isArray(twin.brain_twins) ? twin.brain_twins : []), record.id])].slice(-8); stateChanged = true; }
                   }
-                } else if (legacy && ['updated', 'merged'].includes(effective) && displayCopy(legacy.text) !== displayCopy(record.body)) {
+                } else if (legacy && ['updated', 'merged'].includes(effective) && !sameDisplayCopy(legacy.text, record.body)) {
                   const before = String(legacy.text || '').toLowerCase();
                   legacy.text = displayCopy(record.body);
                   legacy.title = record.title.slice(0, 160);
@@ -6910,7 +6910,7 @@ export class CheState extends DurableObject {
         return json({ ok: true });
       }
       if (path === '/api/memory/add') {
-        const memory = String(body.memory || '').trim().slice(0, 500);
+        const memory = displayCopy(body.memory);
         if (!isSafeMemoryText(memory) || !isSafeText(String(body.memory || ''))) {
           return json({ detail: 'Choose a non-sensitive memory.' }, 400);
         }
@@ -6921,9 +6921,12 @@ export class CheState extends DurableObject {
           confidence: 1,
         });
         if (added.added || added.replaced?.length) await this.ctx.storage.put('che', data);
-        // The memory list keeps a 500-character display copy; the Brain keeps every word.
-        if (added.added && added.record) {
-          try { new CheBrainStore(this.ctx.storage).put(ownerMemoryRecord(added.record, String(body.memory || '').trim()), { origin: 'owner' }); } catch (_) {}
+        // The memory list keeps a 500-character display copy; the Brain keeps every word. When the
+        // list already has this entry, the Brain still gets the full text under that row's id, so
+        // "saved" is true for the Brain as well.
+        const brainRow = added.added ? added.record : added.reason === 'duplicate' ? data.memory_records.find((item) => sameDisplayCopy(item.text, memory)) : null;
+        if (brainRow) {
+          try { new CheBrainStore(this.ctx.storage).put(ownerMemoryRecord(brainRow, String(body.memory || '').trim()), { origin: 'owner' }); } catch (_) {}
         }
         for (const oldMemory of added.replaced || []) {
           const oldVectorId = `memory:${await digest(String(oldMemory).toLowerCase())}`;

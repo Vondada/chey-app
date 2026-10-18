@@ -338,7 +338,7 @@ export class CheBrainStore {
     const normalized = normalizeRecord(input.record);
     if (normalized.error) return { outcome: 'rejected', reason: normalized.error };
     // Passwords and other secrets never enter the Brain, from either side.
-    if (!isSafeText(`${normalized.title}\n${normalized.body}\n${normalized.path}\n${normalized.kind}\n${JSON.stringify(normalized.source)}\n${JSON.stringify(normalized.links)}`)) {
+    if (!isSafeText(`${normalized.title}\n${normalized.body}\n${normalized.path}\n${normalized.kind}\n${normalized.created_at}\n${JSON.stringify(normalized.places)}\n${JSON.stringify(normalized.source)}\n${JSON.stringify(normalized.links)}`)) {
       return { outcome: 'rejected', reason: 'rejected_sensitive_or_empty', id: normalized.id };
     }
     const current = this.get(normalized.id);
@@ -351,7 +351,8 @@ export class CheBrainStore {
     if (current.deleted) {
       // Only a client that has seen the tombstone (base_rev equal) recreates a deleted record.
       if (baseRev !== current.rev) return { outcome: 'deleted', record: current, rev: current.rev, reason: 'deleted_here' };
-      const written = this.write({ ...normalized, created_at: normalized.created_at }, { rev: current.rev + 1, origin, now });
+      const { content_rev, ...source } = normalized.source;
+      const written = this.write({ ...normalized, source, created_at: normalized.created_at }, { rev: current.rev + 1, origin, now });
       return { outcome: 'created', record: this.get(normalized.id), rev: written.rev };
     }
     const hash = contentHash(normalized);
@@ -398,11 +399,10 @@ export class CheBrainStore {
    */
   deleteMemoriesShowing(text, { origin = 'owner', now } = {}) {
     if (!this.init()) return 0;
-    const wanted = displayCopy(text);
-    if (!wanted) return 0;
+    if (!displayCopy(text)) return 0;
     let deleted = 0;
     for (const row of this.rows("SELECT id, body FROM brain_records WHERE kind = 'memory' AND deleted = 0")) {
-      if (displayCopy(row.body) !== wanted) continue;
+      if (!sameDisplayCopy(row.body, text)) continue;
       if (this.delete(row.id, { origin, now }).outcome === 'deleted') deleted += 1;
     }
     return deleted;
@@ -603,6 +603,11 @@ export function displayCopy(body) {
   return String(body || '').replace(/\s+/g, ' ').trim().slice(0, 500);
 }
 
+/** Two memories are the same entry of the list when their display copies match the way the list dedupes: ignoring case. */
+export function sameDisplayCopy(a, b) {
+  return displayCopy(a).toLowerCase() === displayCopy(b).toLowerCase();
+}
+
 /** An owner memory as a Brain record with its whole text; the memory list keeps only the display copy. */
 export function ownerMemoryRecord(record, fullText) {
   return { ...memoryRecordToBrain(record), body: String(fullText || record.text || '') };
@@ -751,7 +756,7 @@ export function projectLegacyState(store, data = {}, { now, library = [] } = {})
     // record came from the phone, or is simply the fuller text that copy was cut from, the copy never
     // overwrites it; only its active and supersession flags are carried over.
     if (current && candidate.kind === 'memory' && current.kind === 'memory'
-      && (current.origin !== 'cloud' || displayCopy(current.body) === displayCopy(candidate.body))) {
+      && (current.origin !== 'cloud' || sameDisplayCopy(current.body, candidate.body))) {
       const sameFlags = (current.source?.active !== false) === (candidate.source.active !== false)
         && (current.source?.superseded_at || '') === (candidate.source.superseded_at || '');
       const result = sameFlags ? { outcome: 'unchanged' } : store.amendSource(candidate.id, { active: candidate.source.active !== false, superseded_at: candidate.source.superseded_at || '' }, { origin: 'cloud', now });

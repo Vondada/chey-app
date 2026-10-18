@@ -266,3 +266,25 @@ test('a flags-only amendment does not turn the phone\'s next edit into a conflic
   assert.equal(now.body, 'My dog was called Rex; he passed in 2025.');
   assert.equal(now.source.content_rev, undefined, 'a content change clears the content marker');
 });
+
+test('a twin that differs only in letter case is deleted with its row, and a duplicate online add still reaches the Brain whole', async (t) => {
+  const che = await owner();
+  if (!che) return t.skip('node:sqlite unavailable');
+  assert.equal((await che.call('/api/memory/add', { method: 'POST', token: che.token, body: { memory: 'My dog is called Rex.' } })).status, 200);
+  const pushed = await (await che.call('/api/brain/push', { method: 'POST', token: che.token, body: { ops: [{ op_id: 'cc1', type: 'put', record: { id: 'mem:caseTwin', kind: 'memory', region: 'Personal Memory', path: 'Memory', title: 'dog', body: 'my dog is called rex.', verification: 'owner_attested', source: { kind: 'memory_record' } } }], device: 'iphone' } })).json();
+  assert.equal(pushed.results[0].outcome, 'created');
+  let state = await (await che.call('/api/state', { token: che.token })).json();
+  assert.equal(state.memories.length, 1);
+  assert.deepEqual(state.memory_records[0].brain_twins, ['mem:caseTwin']);
+  assert.equal((await che.call('/api/memory/delete', { method: 'POST', token: che.token, body: { index: 0 } })).status, 200);
+  assert.equal((await (await che.call('/api/brain/record?id=mem:caseTwin', { token: che.token })).json()).deleted, true);
+  assert.equal((await (await che.call('/api/brain/search?q=dog%20rex', { token: che.token })).json()).hits.length, 0);
+  // The same first 500 characters, a different tail: the list keeps one row, the Brain the longer text.
+  const head = 'The route to the shop: '.repeat(30);
+  await che.call('/api/memory/add', { method: 'POST', token: che.token, body: { memory: `${head} ending one.` } });
+  await che.call('/api/memory/add', { method: 'POST', token: che.token, body: { memory: `${head} ending two, with the new gate code left out.` } });
+  state = await (await che.call('/api/state', { token: che.token })).json();
+  assert.equal(state.memories.length, 1);
+  const whole = await (await che.call(`/api/brain/record?id=mem:${state.memory_records[0].id}`, { token: che.token })).json();
+  assert.match(whole.body, /ending two/, 'the later, fuller text is in the Brain under the row');
+});

@@ -315,10 +315,14 @@ class CheBrainReplica {
       case 'op':
         final op = Map<String, dynamic>.from(entry['o'] as Map);
         if (_outbox.any((o) => o['op_id'] == op['op_id'])) break;
-        // A later put for the same record supersedes an earlier one, as the live path does.
+        // A later put for the same record supersedes an earlier one, and a delete supersedes
+        // every earlier op for its record, as the live path does.
         if (op['type'] == 'put') {
           final id = (op['record'] as Map?)?['id'];
           _outbox.removeWhere((o) => o['type'] == 'put' && (o['record'] as Map?)?['id'] == id);
+        } else if (op['type'] == 'delete') {
+          final id = op['id'];
+          _outbox.removeWhere((o) => (o['type'] == 'put' && (o['record'] as Map?)?['id'] == id) || (o['type'] == 'delete' && o['id'] == id));
         }
         _outbox.add(op);
         break;
@@ -626,7 +630,7 @@ class CheBrainReplica {
     await load();
     final wanted = _displayCopy(text);
     if (wanted.isEmpty) return 0;
-    final ids = _records.values.where((r) => !r.deleted && r.kind == 'memory' && _displayCopy(r.excerpt) == wanted).map((r) => r.id).toList();
+    final ids = _records.values.where((r) => !r.deleted && r.kind == 'memory' && _displayCopy(r.excerpt).toLowerCase() == wanted.toLowerCase()).map((r) => r.id).toList();
     for (final id in ids) {
       await forget(id);
     }
