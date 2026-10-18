@@ -32,8 +32,16 @@ function dayOf(iso) {
 export function auditSignificance(store, { limit = 500, now = new Date().toISOString() } = {}) {
   if (!store.init()) return { available: false, examined: 0, changed: 0, flagged: [], top: [] };
   const nowMs = Date.parse(now) || Date.now();
-  const records = store.rows('SELECT id FROM brain_records WHERE deleted = 0 ORDER BY seq DESC LIMIT ?', Math.max(1, Math.min(Number(limit) || 500, 5000)))
-    .map((row) => store.get(row.id)).filter(Boolean);
+  const size = Math.max(1, Math.min(Number(limit) || 500, 5000));
+  // A cursor over seq, persisted between nights, so every record is reached in turn; a re-score moves
+  // a record to a new seq and it is seen again only after the rest. Exhausted: start over.
+  const cursor = Number(store.meta('brain_audit_cursor', 0)) || 0;
+  let rows = store.rows('SELECT id, seq FROM brain_records WHERE deleted = 0 AND seq > ? ORDER BY seq ASC LIMIT ?', cursor, size);
+  if (rows.length < size && cursor > 0) rows = rows.concat(store.rows('SELECT id, seq FROM brain_records WHERE deleted = 0 AND seq <= ? ORDER BY seq ASC LIMIT ?', cursor, size - rows.length));
+  const records = rows.map((row) => store.get(row.id)).filter(Boolean);
+  const lastSeq = rows.length ? Math.max(...rows.map((r) => Number(r.seq) || 0)) : 0;
+  const wrapped = rows.length && rows.some((r) => Number(r.seq) <= cursor);
+  store.setMeta('brain_audit_cursor', wrapped || rows.length < size ? 0 : lastSeq);
   let changed = 0;
   const scored = [];
   const flagged = [];
@@ -85,25 +93,32 @@ export function isBookkeeping(record) {
 export function buildDailyReview(store, { now = new Date().toISOString(), since, audit } = {}) {
   if (!store.init()) return { written: false, reason: 'Brain storage is not available.' };
   const nowMs = Date.parse(now) || Date.now();
-  const sinceIso = since || new Date(nowMs - DAY_MS).toISOString();
+  const persisted = !since && store.meta('brain_review_since');
+  const sinceIso = since || persisted || new Date(nowMs - DAY_MS).toISOString();
+  const sinceMs = Date.parse(sinceIso) || (nowMs - DAY_MS);
   const day = dayOf(now);
   const id = `review:brain:${day}`;
   // The Brain's own bookkeeping is never activity: yesterday's computed review, significance audits,
   // the model's nightly review projected from the state blob, and anything the auditor wrote. A
   // review that counted those would write itself again every morning.
-  const activity = store.changedSince(sinceIso).filter((r) => !isBookkeeping(r) && r.id !== id);
+  // A persisted boundary is the last review's own instant: records written in that same millisecond were already counted.
+  const activity = store.changedSince(sinceIso).filter((r) => !isBookkeeping(r) && r.id !== id && (!persisted || r.updated_at > sinceIso));
   if (!activity.length) return { written: false, reason: 'No Brain activity since the last review.', since: sinceIso };
+  const total = Number(store.rows(`SELECT COUNT(*) AS n FROM brain_records WHERE updated_at ${persisted ? '>' : '>='} ? AND deleted = 0 AND kind NOT IN ('daily_review', 'audit') AND origin != 'auditor' AND id NOT LIKE 'review:%' AND id NOT LIKE 'audit:%'`, sinceIso)[0]?.n) || activity.length;
+  const imported = activity.filter((r) => r.kind !== 'task' && r.created_at && (Date.parse(r.created_at) || nowMs) < sinceMs);
+  const fresh = activity.filter((r) => !imported.includes(r));
 
-  const attested = activity.filter((r) => ['owner_attested', 'verified_source'].includes(r.verification));
+  const attested = fresh.filter((r) => ['owner_attested', 'verified_source'].includes(r.verification));
   const conversations = count(attested, (r) => r.kind === 'conversation');
   const corrections = count(attested, (r) => r.kind === 'correction');
   const memories = count(attested, (r) => r.kind === 'memory' && r.origin !== 'auditor');
-  const lessons = count(activity, (r) => r.kind === 'lesson');
+  const lessons = count(fresh, (r) => r.kind === 'lesson');
   const tasks = activity.filter((r) => r.kind === 'task');
   const tasksDone = count(tasks, (r) => ['done', 'completed', 'succeeded', 'success'].includes(String(r.source?.status || '')));
   const tasksFailed = count(tasks, (r) => ['failed', 'error', 'cancelled', 'canceled'].includes(String(r.source?.status || '')));
   const tasksLive = count(tasks, (r) => ['queued', 'running', 'reviewing'].includes(String(r.source?.status || '')));
-  const queued = activity.filter((r) => r.kind === 'queued_request');
+  const queued = activity.filter((r) => r.kind === 'queued_request' && ['queued', ''].includes(String(r.source?.status || '')));
+  const tasksOther = tasks.length - tasksDone - tasksFailed - tasksLive;
   const hypotheses = activity.filter((r) => ['hypothesis', 'model_opinion'].includes(r.verification) && r.kind !== 'daily_review');
   const fromPhone = count(activity, (r) => r.origin && !['cloud', 'auditor', 'owner'].includes(r.origin));
   const openConflicts = store.conflicts().length;
@@ -113,12 +128,13 @@ export function buildDailyReview(store, { now = new Date().toISOString(), since,
   const busiest = Object.entries(regions).sort((a, b) => b[1] - a[1])[0];
 
   const facts = [
-    `${activity.length} Brain record${activity.length === 1 ? '' : 's'} changed since ${sinceIso.slice(0, 16).replace('T', ' ')} UTC.`,
+    `${total} Brain record${total === 1 ? '' : 's'} changed since ${sinceIso.slice(0, 16).replace('T', ' ')} UTC${total > activity.length ? ` (details below from the newest ${activity.length})` : ''}.`,
+    imported.length ? `${imported.length} older record${imported.length === 1 ? '' : 's'} (created before this window) ${imported.length === 1 ? 'was' : 'were'} rewritten or brought in: edits, imports or backfill, not new events.` : '',
     conversations ? `${conversations} conversation${conversations === 1 ? '' : 's'} with the owner kept word for word.` : '',
     corrections ? `${corrections} correction${corrections === 1 ? '' : 's'} from the owner.` : '',
     memories ? `${memories} owner ${memories === 1 ? 'memory' : 'memories'} saved.` : '',
     lessons ? `${lessons} lesson${lessons === 1 ? '' : 's'} recorded.` : '',
-    tasks.length ? `${tasks.length} agent task${tasks.length === 1 ? '' : 's'} touched: ${tasksDone} done, ${tasksFailed} failed, ${tasksLive} still live.` : '',
+    tasks.length ? `${tasks.length} agent task${tasks.length === 1 ? '' : 's'} touched: ${tasksDone} done, ${tasksFailed} failed, ${tasksLive} still live${tasksOther > 0 ? `, ${tasksOther} with another status` : ''}.` : '',
     fromPhone ? `${fromPhone} record${fromPhone === 1 ? '' : 's'} came from the phone.` : '',
     busiest ? `Busiest region: ${busiest[0]} (${busiest[1]}).` : '',
     openConflicts ? `${openConflicts} sync conflict${openConflicts === 1 ? '' : 's'} open.` : 'No sync conflicts open.',
@@ -133,7 +149,7 @@ export function buildDailyReview(store, { now = new Date().toISOString(), since,
   const hypothesisLines = hypotheses.slice(0, 5).map((r) => `${clip(r.title, 90)} (${r.verification.replace(/_/g, ' ')}, not a fact).`);
 
   const recommendations = [];
-  if (openConflicts) recommendations.push(`Settle the ${openConflicts} open conflict${openConflicts === 1 ? '' : 's'}: say "brain conflicts" to hear both copies.`);
+  if (openConflicts) recommendations.push(`Settle the ${openConflicts} open conflict${openConflicts === 1 ? '' : 's'} in the Brain screen's Conflicts list; both copies are kept until you choose.`);
   if (flagged.length) recommendations.push(`${flagged.length} significant record${flagged.length === 1 ? '' : 's'} ${flagged.length === 1 ? 'has' : 'have'} been unverified for over ${VERIFY_AFTER_DAYS} days; the first: ${clip(flagged[0].title, 80)}.`);
   if (queued.length) recommendations.push(`${queued.length} request${queued.length === 1 ? '' : 's'} queued offline ${queued.length === 1 ? 'has' : 'have'} not run; nothing was sent or spent.`);
   if (tasksFailed) recommendations.push(`Read the ${tasksFailed} failed task${tasksFailed === 1 ? '' : 's'} before giving the agents more of the same.`);
@@ -178,6 +194,7 @@ export function buildDailyReview(store, { now = new Date().toISOString(), since,
     links,
     created_at: now,
   }, { origin: 'auditor', now });
+  if (result.outcome !== 'rejected') store.setMeta('brain_review_since', now);
 
   const speech = [
     `Good morning, sir. Your Brain review for ${day}.`,
@@ -232,16 +249,21 @@ export function brainReviewIntent(message) {
   if (/\b(?:build|fix|change|implement|delete|remove|clear|run\s+the\s+review\s+again|regenerate|rebuild|redo|rewrite|code|repo|pull\s+request|pr|website|plan|spending|log|logs|trail)\b/i.test(text)) return false;
   // What the owner himself said or asked is an owner-memory question, answered from his own words, never with the review.
   if (/\b(?:what\s+(?:have|did)\s+i\s+(?:told|tell|say|said|ask|asked|mention)|did\s+i\s+(?:ask|say|tell|mention)|have\s+i\s+(?:asked|said|told|mentioned))\b/i.test(text)) return false;
-  const notAbout = "(?!\\s+(?:of|about|for|on)\\b)";
-  const brainWord = /\b(?:brain|significance|auditor)\b/i.test(text);
-  if (brainWord && /\b(?:review|audit|conclusions?|flag(?:ged)?|verification|learn(?:ed|t)?|happened|find|found)\b/i.test(text)) return true;
-  if (new RegExp(`\\b(?:daily|morning|nightly|night['’]?s|today['’]?s|todays|this\\s+morning['’]?s)\\s+(?:brain\\s+)?(?:review|audit)\\b${notAbout}`, 'i').test(text)) return true;
-  if (new RegExp(`\\b(?:read|give|tell|show)\\s+(?:me\\s+)?(?:my|the|today['’]?s|todays|this\\s+morning['’]?s)\\s+(?:brain\\s+)?(?:review|audit)\\b${notAbout}`, 'i').test(text)) return true;
-  if (/\b(?:what\s+)?did\s+(?:your|the)\s+(?:brain\s+)?(?:audit|review|auditor)\s+(?:find|say|conclude|flag)\b/i.test(text)) return true;
-  if (new RegExp(`\\bwhat(?:['’]s|\\s+is)\\s+(?:in\\s+)?(?:my|the|today['’]?s|todays)\\s+(?:brain\\s+)?review\\b${notAbout}`, 'i').test(text)) return true;
-  if (/\bwhat\s+did\s+you\s+(?:conclude|learn|find)\s+(?:last\s+night|overnight|this\s+morning)\b/i.test(text)) return true;
-  if (/\bwhich\s+records\s+need\s+verification\b|\bis\s+there\s+a\s+(?:brain\s+)?review\s+today\b/i.test(text)) return true;
-  return /^(?:(?:brain|daily|morning)\s+)?review(?:\s+please)?[.!?]?$/i.test(text);
+  // Only a Brain-qualified noun, "your/the audit found", or a sentence that ends at the noun: "the review
+  // John left", "my daily review at 9" and "what did you find about the brain tumor study" are something else.
+  // The sentence ends at the noun (a tail like "John left", "at 9", "from the accountant" makes it something else).
+  const END = "(?:\\s+(?:please|today|now|for\\s+me|this\\s+morning))*[.!?]?\\s*$";
+  const DET = "(?:my|the|today['’]?s|todays|this\\s+morning['’]?s)";
+  if (/\bbrain[\s-]+(?:review|audit|conclusions?)\b/i.test(text)) return true;
+  if (new RegExp(`^(?:(?:brain|daily|morning|significance)\\s+)?(?:review|audit|conclusions)${END}`, 'i').test(text)) return true;
+  if (new RegExp(`\\b(?:read|give|tell|show|hear)\\s+(?:me\\s+)?${DET}\\s+(?:review|audit)${END}`, 'i').test(text)) return true;
+  if (new RegExp(`\\b(?:daily|morning|nightly|night['’]?s|today['’]?s|todays|this\\s+morning['’]?s)\\s+(?:review|audit)${END}`, 'i').test(text)) return true;
+  if (/\b(?:your|the)\s+(?:audit|auditor|review)\s+(?:find|found|say|said|conclude[ds]?|flag(?:ged)?)\b/i.test(text)) return true;
+  if (new RegExp(`\\b(?:review|audit)\\s+(?:of\\s+)?my\\s+brain${END}`, 'i').test(text)) return true;
+  if (new RegExp(`\\b(?:conclusions|what\\s+happened(?:\\s+\\w+)?)\\s+(?:from|in)\\s+(?:my|the|your)\\s+brain${END}`, 'i').test(text)) return true;
+  if (new RegExp(`\\bwhat\\s+did\\s+you\\s+(?:conclude|learn|find)\\s+(?:last\\s+night|overnight|this\\s+morning)${END}`, 'i').test(text)) return true;
+  if (new RegExp(`\\bwhich\\s+records\\s+need\\s+verification\\b|\\bis\\s+there\\s+a\\s+review\\s+today${END}`, 'i').test(text)) return true;
+  return false;
 }
 
 /** The spoken review for the owner, every line from the stored record; honest when there is none. */
@@ -253,9 +275,9 @@ export function speakReview(latest) {
     return match ? match[1].split('\n').filter(Boolean).map((l) => l.replace(/^- /, '')) : [];
   };
   const facts = section('FACT');
-  const inferences = section('INFERENCE').filter((l) => !/^None/.test(l));
-  const hypotheses = section('HYPOTHESIS').filter((l) => !/^None/.test(l));
-  const recommendations = section('RECOMMENDATION').filter((l) => !/^Nothing/.test(l));
+  const inferences = section('INFERENCE').filter((l) => l !== 'None drawn.');
+  const hypotheses = section('HYPOTHESIS').filter((l) => l !== 'None recorded.');
+  const recommendations = section('RECOMMENDATION').filter((l) => l !== 'Nothing to do from the Brain’s side.');
   const interpretation = section('INTERPRETATION');
   const unknown = section('UNKNOWN');
   const day = String(review.title || '').replace(/^Daily review\s*/, '') || review.created_at?.slice(0, 10) || '';
