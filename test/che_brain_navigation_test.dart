@@ -685,7 +685,7 @@ void main() {
     expect(pill, findsOneWidget, reason: 'the pill is not merged into the notice text');
     final node = tester.getSemantics(pill);
     expect(node.getSemanticsData().hasAction(SemanticsAction.tap), isTrue);
-    expect(node.getSemanticsData().hasFlag(SemanticsFlag.isButton), isTrue);
+    expect(node.getSemanticsData().flagsCollection.isButton, isTrue);
     expect(node.label, 'Back to CHE');
     await tester.tap(pill);
     await tester.pump();
