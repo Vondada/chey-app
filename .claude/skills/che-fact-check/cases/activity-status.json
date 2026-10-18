@@ -1,0 +1,9 @@
+{
+  "about": "Status questions went to the language model with no task state, so it could describe work that did not exist. With nothing running, CHE must say so from her records, with no model call.",
+  "owner": true,
+  "model": "I am researching three topics and the coding job is almost finished.",
+  "turns": [
+    { "message": "What are you doing?", "expect": { "route": "che_activity_status", "model_calls": 0, "match": "Nothing is running or queued", "not": "researching|almost finished" } },
+    { "message": "chay what's finished", "expect": { "route": "che_activity_status", "model_calls": 0, "match": "Nothing finished in the last day", "not": "researching|almost finished" } }
+  ]
+}

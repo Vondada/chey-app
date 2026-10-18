@@ -440,3 +440,74 @@ test('rebuilding the review keeps every task in its worker\'s brain, and the rec
   assert.ok(task);
   assert.equal(task.source.agent, 'Nova');
 });
+
+test('a sync pull carries the digest only on its last page, and that digest matches every page pulled', async (t) => {
+  const che = await owner();
+  if (!che) return t.skip('node:sqlite unavailable');
+  for (const text of ['The owner’s car is blue.', 'The owner’s dog is Rex.', 'The owner’s cat is Mia.']) {
+    assert.equal((await che.call('/api/memory/add', { method: 'POST', token: che.token, body: { memory: text } })).status, 200);
+  }
+  let since = 0;
+  let pages = 0;
+  let pulled = 0;
+  let last = null;
+  for (;;) {
+    const page = await (await che.call(`/api/brain/changes?since=${since}&limit=1`, { token: che.token })).json();
+    pages += 1;
+    pulled += page.records.length;
+    since = page.next;
+    if (!page.more) { last = page; break; }
+    assert.equal(page.digest, undefined, 'a middle page skips the whole-table digest');
+  }
+  assert.ok(pages > 2, 'the pull really was paged');
+  assert.equal(last.digest.count, pulled, 'the last page’s digest covers everything pulled');
+});
+
+test('a Brain status read does not re-run the legacy projection more than every ten minutes', async (t) => {
+  const che = await owner();
+  if (!che) return t.skip('node:sqlite unavailable');
+  const first = await (await che.call('/api/brain/status', { token: che.token })).json();
+  const at = first.legacy_projection?.at;
+  assert.ok(at, 'the first status read projects');
+  const second = await (await che.call('/api/brain/status', { token: che.token })).json();
+  assert.equal(second.legacy_projection?.at, at, 'a second read within ten minutes reuses it');
+});
+
+test('when Cloudflare’s free daily allowance is used up, every stateful request says so with the reset time', async (t) => {
+  const sql = await sqlFor();
+  if (!sql) return t.skip('node:sqlite unavailable');
+  const storage = storageFor(new Map(), sql);
+  let refuse = '';
+  const get = storage.get;
+  storage.get = async (key) => { if (refuse) throw new Error(refuse); return get(key); };
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => ({ response: 'ok' }) } };
+  const state = new CheState({ storage, waitUntil: () => {} }, env);
+  env.CHE_STATE = { getByName: () => state };
+  const call = (path) => worker.fetch(new Request(`https://che.example${path}`), env);
+  refuse = 'Exceeded allowed rows read in Durable Objects free tier.';
+  for (const path of ['/api/commands', '/api/brain/status', '/health/engines']) {
+    const res = await call(path);
+    assert.equal(res.status, 503, path);
+    const body = await res.json();
+    assert.equal(body.category, 'cloud_daily_limit', path);
+    assert.match(body.detail, /free daily allowance for rows read is used up/);
+    assert.match(body.detail, /resets at 00:00 UTC/);
+    assert.match(body.resets_at, /T00:00:00\.000Z$/);
+    assert.ok(Number(res.headers.get('Retry-After')) > 0);
+  }
+  // Any other failure keeps the plain message and never claims a quota.
+  refuse = 'SQLITE_BUSY: database is locked';
+  const other = await (await call('/api/commands')).json();
+  assert.notEqual(other.category, 'cloud_daily_limit');
+  assert.doesNotMatch(other.detail, /allowance/);
+  // A refusal of the Durable Object call itself (outside the object's catch) is answered the same way.
+  const refused = { fetch: async () => { throw new Error('Exceeded allowed duration in Durable Objects free tier.'); } };
+  const outside = await worker.fetch(new Request('https://che.example/health/engines'), { ...env, CHE_STATE: { getByName: () => refused } });
+  assert.equal(outside.status, 503);
+  const outsideBody = await outside.json();
+  assert.equal(outsideBody.category, 'cloud_daily_limit');
+  assert.match(outsideBody.detail, /allowance for compute time is used up/);
+  // Anything else still surfaces as Cloudflare's own error, unchanged.
+  const broken = { fetch: async () => { throw new Error('Network connection lost.'); } };
+  await assert.rejects(worker.fetch(new Request('https://che.example/health/engines'), { ...env, CHE_STATE: { getByName: () => broken } }), /Network connection lost/);
+});
