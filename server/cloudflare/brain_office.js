@@ -266,19 +266,37 @@ export function genericRecord(prefix, item, { kind, region, path, titleKeys, bod
  */
 export function redactedRecord(record) {
   if (!record?.id) return null;
-  const source = { ...(record.source || {}), redacted: true };
-  const safeTitle = record.title && isSafeText(record.title) ? record.title : `${record.kind || 'record'} ${String(record.id).split(':').pop()}`;
-  // Every line that is safe on its own stays (a task's text and status, a skill's steps, a
-  // worker's other responsibilities); only the lines that tripped the gate are withheld.
-  const lines = String(record.body || '').split('\n');
-  const kept = lines.filter((line) => line.trim() && isSafeText(line));
-  const withheld = lines.length - kept.length;
-  const notice = record.kind === 'task'
+  const kind = String(record.kind || 'record');
+  // Names and labels in the source (agent, kind_label, collaborators) can be what tripped the gate:
+  // then only the bare keys stay, and the path falls back to the kind.
+  let source = { ...(record.source || {}), redacted: true };
+  if (!isSafeText(JSON.stringify(source))) {
+    source = { ...(source.kind ? { kind: source.kind } : {}), ...(source.agent_id ? { agent_id: source.agent_id } : {}), ...(source.status ? { status: source.status } : {}), ...(source.outcome ? { outcome: source.outcome } : {}), redacted: true, source_withheld: true };
+  }
+  const path = record.path && isSafeText(String(record.path)) ? record.path : kind;
+  const safeTitle = record.title && isSafeText(record.title) ? record.title : `${kind} ${String(record.id).split(':').pop()}`;
+  // A labelled field ("Result: …") and its continuation lines are one unit. When any line of a unit
+  // trips the gate the whole unit is withheld: a value never survives its label ("Password:" on one
+  // line, the password on the next), and a JSON or multi-line result goes as a whole.
+  const units = [];
+  for (const line of String(record.body || '').split('\n')) {
+    if (!units.length || /^[A-Z][A-Za-z'’ ]{0,40}:/.test(line)) units.push([line]); else units[units.length - 1].push(line);
+  }
+  const kept = [];
+  let withheld = 0;
+  for (const unit of units) {
+    const lines = unit.filter((line) => line.trim());
+    if (!lines.length) continue;
+    if (lines.every((line) => isSafeText(line)) && isSafeText(lines.join('\n'))) kept.push(...lines); else withheld += 1;
+  }
+  const notice = kind === 'task'
     ? 'Result withheld: sensitive content; see the task history.'
-    : `${withheld === 1 ? 'One line' : `${withheld} lines`} withheld: sensitive content; see the original record.`;
+    : `${withheld === 1 ? 'One part' : `${withheld} parts`} withheld: sensitive content; see the original record.`;
   const body = [...kept, notice].join('\n');
-  if (!isSafeText(`${safeTitle}\n${body}`)) return null;
-  return { ...record, title: safeTitle, body, source };
+  const places = asList(record.places).filter((place) => place && isSafeText(`${place.region || ''} ${place.path || ''}`));
+  const links = asList(record.links).filter((link) => link && isSafeText(JSON.stringify(link)));
+  if (!isSafeText(`${safeTitle}\n${body}\n${path}\n${JSON.stringify(places)}\n${JSON.stringify(source)}\n${JSON.stringify(links)}`)) return null;
+  return { ...record, title: safeTitle, body, path, source, places, links };
 }
 
 // ─── Projection ────────────────────────────────────────────────────────────
@@ -299,7 +317,7 @@ export function projectOfficeExperience(store, data = {}, { now } = {}) {
   const considered = new Set();
   const consider = (source, record) => {
     if (!record) return;
-    counts[source] = counts[source] || { inspected: 0, imported: 0, skipped: 0, refused: 0 };
+    counts[source] = counts[source] || { inspected: 0, imported: 0, skipped: 0, refused: 0, dropped: 0 };
     counts[source].inspected += 1;
     const candidate = normalizeRecord(record);
     if (candidate.error) return;
@@ -312,9 +330,12 @@ export function projectOfficeExperience(store, data = {}, { now } = {}) {
     if (result.outcome === 'rejected') {
       // The secret gate refused the full record: keep what is safe under the same id and say
       // what was withheld, so the experience is counted as refused, never lost in silence.
-      counts[source].refused += 1;
       const redacted = redactedRecord(record);
       result = redacted ? store.put(redacted, { origin: 'cloud', now }) : result;
+      // Counted as refused only when the outline is really in the Brain; otherwise dropped, said so
+      // in the report, and remembered so the same record is not refused again every pass.
+      if (['created', 'updated', 'merged', 'unchanged'].includes(result.outcome)) counts[source].refused += 1;
+      else { counts[source].dropped += 1; hashes[candidate.id] = hash; }
     }
     if (['created', 'updated', 'merged', 'unchanged'].includes(result.outcome)) {
       hashes[candidate.id] = hash;
@@ -383,7 +404,7 @@ export function archiveTasks(store, tasks, data = {}, { now } = {}) {
 /** REA investigations and trading evidence runs live in their own storage keys; they become Brain records too. */
 export async function projectInvestigations(store, storage, { now } = {}) {
   if (!store.init() || !storage?.get) return { rea: { inspected: 0, imported: 0 }, trading: { inspected: 0, imported: 0 } };
-  const out = { rea: { inspected: 0, imported: 0, skipped: 0, refused: 0 }, trading: { inspected: 0, imported: 0, skipped: 0, refused: 0 } };
+  const out = { rea: { inspected: 0, imported: 0, skipped: 0, refused: 0, dropped: 0 }, trading: { inspected: 0, imported: 0, skipped: 0, refused: 0, dropped: 0 } };
   // Their own hash map: the Office projection prunes office_hashes to the ids it saw, which would
   // forget these and re-write every investigation (over an owner's edit) each run.
   const seen = store.meta('investigation_hashes', {});
@@ -401,9 +422,10 @@ export async function projectInvestigations(store, storage, { now } = {}) {
     if (result.outcome === 'rejected') {
       // An investigation can quote a login page or a token in a URL: the safe outline is kept
       // under the same id and the refusal is counted, never silent.
-      out[bucket].refused += 1;
       const redacted = redactedRecord(record);
       result = redacted ? store.put(redacted, { origin: 'cloud', now }) : result;
+      if (['created', 'updated', 'merged', 'unchanged'].includes(result.outcome)) out[bucket].refused += 1;
+      else { out[bucket].dropped += 1; hashes[candidate.id] = hash; }
     }
     if (['created', 'updated', 'merged'].includes(result.outcome)) { out[bucket].imported += 1; hashes[candidate.id] = hash; } else if (result.outcome === 'unchanged') { out[bucket].skipped += 1; hashes[candidate.id] = hash; }
   };
@@ -412,7 +434,9 @@ export async function projectInvestigations(store, storage, { now } = {}) {
     if (!job?.id) continue;
     const detail = await storage.get(`${REA_DETAIL_PREFIX}${job.id}`).catch(() => null);
     const record = detail && typeof detail === 'object' ? detail : job;
-    const nameOf = (t) => (t && typeof t === 'object' ? t.name || t.host || t.url || '' : t);
+    // A website target is named by its host, never by a URL that may carry a reset token or a session id.
+    const hostOf = (url) => { try { return new URL(String(url)).host; } catch (_) { return ''; } };
+    const nameOf = (t) => (t && typeof t === 'object' ? t.name || t.label || t.host || hostOf(t.url) || '' : t);
     const target = clip(nameOf(record.target) || nameOf(job.target), 120) || 'investigation';
     const label = (x) => (x && typeof x === 'object' ? x.name || x.title || x.label || '' : x);
     const evidence = asList(record.features).flatMap((f) => asList(f?.evidence)).length + asList(record.evidence).length;
@@ -485,7 +509,7 @@ export async function recoverHistory(store, storage, data = {}, { library = [], 
     { source: 'nightly reviews', inspected: asList(data.nightly_reviews).length, note: 'projected as review: records' },
     { source: 'library documents', inspected: asList(library).length, note: 'index cards as lib: records; the texts stay in the library tables' },
     { source: 'conversations (brainmem)', inspected: Number(conversations.added) || 0, note: conversations.done ? `backfill complete; ${conversations.added ?? 0} total added` : `backfill in progress; ${conversations.added ?? 0} added so far`, done: Boolean(conversations.done) },
-    ...Object.entries(office.counts || {}).map(([source, c]) => ({ source, inspected: c.inspected, imported: c.imported, skipped: c.skipped, refused: c.refused || 0 })),
+    ...Object.entries(office.counts || {}).map(([source, c]) => ({ source, inspected: c.inspected, imported: c.imported, skipped: c.skipped, refused: c.refused || 0, dropped: c.dropped || 0 })),
     { source: 'REA investigations (rea_jobs + rea_inv:*)', ...investigations.rea },
     { source: 'trading evidence runs (evidence_runs)', ...investigations.trading },
   ];
@@ -507,8 +531,9 @@ export async function recoverHistory(store, storage, data = {}, { library = [], 
     body: [
       `Historical recovery pass on ${day}: ${sources.length} sources inspected, ${office.workers} internal Office workers.`,
       '', 'Imported this pass:',
-      ...sources.map((s) => `- ${s.source}: ${s.inspected} inspected${s.imported != null ? `, ${s.imported} imported, ${s.skipped || 0} already present` : ''}${s.refused ? `, ${s.refused} with details withheld (sensitive content)` : ''}${s.note ? ` (${s.note})` : ''}`),
+      ...sources.map((s) => `- ${s.source}: ${s.inspected} inspected${s.imported != null ? `, ${s.imported} imported, ${s.skipped || 0} already present` : ''}${s.refused ? `, ${s.refused} with details withheld (sensitive content)` : ''}${s.dropped ? `, ${s.dropped} dropped (not storable even as an outline)` : ''}${s.note ? ` (${s.note})` : ''}`),
       ...(sources.some((s) => s.refused) ? ['', `${sources.reduce((a, s) => a + (s.refused || 0), 0)} record${sources.reduce((a, s) => a + (s.refused || 0), 0) === 1 ? '' : 's'} kept only as a safe outline: a result, summary or note named something sensitive, so that part was withheld and is counted here, not lost in silence.`] : []),
+      ...(sources.some((s) => s.dropped) ? ['', `${sources.reduce((a, s) => a + (s.dropped || 0), 0)} record${sources.reduce((a, s) => a + (s.dropped || 0), 0) === 1 ? '' : 's'} dropped: not even a safe outline could be stored. The original stays in its own history (task list, REA job or trading run); nothing is claimed as kept.`] : []),
       '', 'Not recoverable from here:',
       ...unavailable.map((u) => `- ${u}`),
     ].join('\n'),

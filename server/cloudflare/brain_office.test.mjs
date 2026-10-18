@@ -272,7 +272,7 @@ test('investigations keep their own hashes, a refused REA record keeps a safe ou
   await kv.put(`${REA_DETAIL_PREFIX}r1`, { id: 'r1', status: 'done', target: { name: 'shop.example' }, summary: 'Checkout uses Stripe.', features: [{ name: 'Checkout', evidence: ['https://shop.example/checkout'] }], created_at: T });
   await kv.put(`${REA_DETAIL_PREFIX}r2`, { id: 'r2', status: 'done', target: { host: 'bank.example' }, summary: 'Login uses a password field and a session cookie.', features: [{ name: 'Login', evidence: ['https://bank.example/login'] }], created_at: T });
   const first = await projectInvestigations(store, kv, { now: T });
-  assert.deepEqual(first.rea, { inspected: 2, imported: 2, skipped: 0, refused: 1 });
+  assert.deepEqual(first.rea, { inspected: 2, imported: 2, skipped: 0, refused: 1, dropped: 0 });
   const kept = store.get('rea:r2');
   assert.ok(kept, 'the refused investigation still has a record');
   assert.equal(kept.source.redacted, true);
@@ -288,7 +288,7 @@ test('investigations keep their own hashes, a refused REA record keeps a safe ou
   const edit = store.apply({ type: 'put', record: { ...store.get('rea:r1'), body: `${store.get('rea:r1').body}\nOwner note: worth copying their checkout flow.` }, base_rev: store.get('rea:r1').rev }, { origin: 'iphone' });
   assert.equal(edit.outcome, 'updated');
   const second = await projectInvestigations(store, kv, { now: '2026-10-11T10:00:00.000Z' });
-  assert.deepEqual(second.rea, { inspected: 2, imported: 0, skipped: 2, refused: 0 });
+  assert.deepEqual(second.rea, { inspected: 2, imported: 0, skipped: 2, refused: 0, dropped: 0 });
   assert.match(store.get('rea:r1').body, /Owner note: worth copying/);
   const report = await recoverHistory(store, kv, officeData(), { now: '2026-10-11T10:00:00.000Z' });
   const rea = report.sources.find((s) => /REA/.test(s.source));
@@ -330,5 +330,53 @@ test('a null handoff or work-log entry never breaks the projection; a handoff no
   assert.match(skill.body, /^Skill: Vendor login\.$/m);
   assert.match(skill.body, /^Assigned: Nova\.$/m);
   assert.doesNotMatch(skill.body, /password/);
-  assert.match(skill.body, /One line withheld: sensitive content; see the original record\./);
+  assert.match(skill.body, /One part withheld: sensitive content; see the original record\./);
+});
+
+test('a secret never survives its label: multi-line results, JSON, errors and reviews are withheld as whole fields; names and URLs that trip the gate still leave a stored outline', async (t) => {
+  const index = { find: (key) => (['Nova', 'a-nova'].includes(key) ? { id: 'a-nova', name: 'Nova' } : null) };
+  const cases = [
+    ['result', { result: 'Logged in.\nPassword:\nhunter2\nDownloaded invoice 4471.' }, /hunter2|4471/],
+    ['api key', { result: 'Configured the mailer.\nAPI key:\nsk-live-9f8e7d6c5b4a3210\nSaved to the vault.' }, /sk-live|vault/],
+    ['json', { result: '{\n "password":\n "hunter2"\n}' }, /hunter2/],
+    ['error', { status: 'failed', error: 'Login failed.\nPassword:\nhunter2 was rejected by the portal.' }, /hunter2|portal/],
+    ['review', { review_feedback: 'Good.\nNever paste the password again:\nhunter2 appeared in the log.' }, /hunter2|appeared/],
+  ];
+  for (const [name, extra, secret] of cases) {
+    const outline = redactedRecord(taskRecord({ id: `s-${name}`, partner_id: 'a-nova', task: 'Set up the supplier mailer.', status: 'complete', created_at: T, ...extra }, index));
+    assert.ok(outline, `${name}: an outline is kept`);
+    assert.doesNotMatch(outline.body, secret, `${name}: the value is gone with its label`);
+    assert.match(outline.body, /^Task: Set up the supplier mailer\./m, `${name}: the safe task text stays`);
+    assert.match(outline.body, /Result withheld: sensitive content; see the task history\./);
+  }
+  const storage = await sqlStorage();
+  if (!storage) return t.skip('node:sqlite unavailable');
+  const store = new CheBrainStore(storage);
+  const data = officeData();
+  // The kind label, the partner's name and a reset URL are what trips the gate here, not the body.
+  data.team_tasks.push({ id: 's11', kind: 'api_key_rotation', partner_id: 'a-nova', partner_name: 'Nova', task: 'Rotate the mail credential.', status: 'complete', result: 'Rotated.', created_at: T });
+  data.team_tasks.push({ id: 's12', partner_name: 'Password Vault Bot', task: 'File the receipts.', status: 'complete', result: 'Filed.', created_at: T });
+  const first = projectOfficeExperience(store, data, { now: T });
+  assert.equal(first.counts.team_tasks.refused, 2);
+  assert.equal(first.counts.team_tasks.dropped, 0);
+  for (const id of ['task:s11', 'task:s12']) {
+    const kept = store.get(id);
+    assert.ok(kept && !kept.deleted, `${id} is really in the Brain`);
+    assert.equal(kept.source.redacted, true);
+    assert.doesNotMatch(JSON.stringify(kept), /api_key_rotation|Password Vault/i);
+  }
+  assert.ok(store.rows('SELECT path FROM brain_places WHERE record_id = ?', 'task:s11').some((row) => row.path === 'Nova'), 'Nova keeps the experience');
+  const second = projectOfficeExperience(store, data, { now: T });
+  assert.equal(second.counts.team_tasks.refused, 0, 'not refused again on the next pass');
+  const kv = kvStorage();
+  await kv.put(REA_JOBS_KEY, [{ id: 'r9', status: 'done', target: { kind: 'website', url: 'https://app.example/reset?token=abc123' }, created_at: T }]);
+  const inv = await projectInvestigations(store, kv, { now: T });
+  const rea = store.get('rea:r9');
+  assert.ok(rea && !rea.deleted, 'the investigation is stored');
+  assert.equal(rea.path, 'app.example', 'named by its host, never by the URL');
+  assert.doesNotMatch(JSON.stringify(rea), /abc123/);
+  assert.equal(inv.rea.imported + inv.rea.refused, 1);
+  assert.equal(inv.rea.dropped, 0);
+  const again = await projectInvestigations(store, kv, { now: T });
+  assert.equal(again.rea.refused + again.rea.imported, 0, 'nothing is re-refused or rewritten on the next pass');
 });
