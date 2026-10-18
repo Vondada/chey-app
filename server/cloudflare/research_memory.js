@@ -12,7 +12,7 @@ const MAX_NOTES = Number.POSITIVE_INFINITY; // Brain room: no artificial cap on 
 const MAX_NOTES_SOFT = 50000; // Durable Object safety only
 const MAX_BULLETS = 6;
 const MAX_SOURCES = 6;
-const SENSITIVE_RE = /password|passcode|security code|social security|credit card|api[_ -]?key|private key|seed phrase|session cookie|fiverr\s+password|auth\s+token/i;
+export const SENSITIVE_RE = /password|passcode|security code|social security|credit card|api[_ -]?key|private key|seed phrase|session cookie|fiverr\s+password|auth\s+token/i;
 
 function clip(value, max) {
   return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
@@ -86,7 +86,8 @@ export function addOwnerMemory(data, text, opts = {}) {
     ? Math.max(0, Math.min(1, Number(opts.confidence)))
     : 1;
   const record = {
-    id: cryptoRandomId(),
+    // A memory first saved on the phone keeps the id its Brain record already has.
+    id: clip(opts.id, 80) || cryptoRandomId(),
     text: memory,
     title: clip(opts.title || memory, 160),
     category: clip(opts.category || 'Memory', 60) || 'Memory',
