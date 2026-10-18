@@ -366,16 +366,159 @@ class CheProjected {
 }
 
 /// Spoken / typed Brain commands.
-enum CheBrainAction { open, inside, overview, backOut, filter, clearFilter, find, openSelected, expand, collapse, agentStatus }
+enum CheBrainAction {
+  open, inside, overview, backOut, filter, clearFilter, find, openSelected, expand, collapse, agentStatus,
+  // Navigation (same controller, by touch or by voice).
+  zoomIn, zoomOut, fit, back, centerChe, centerSelected, openWorker, lens,
+}
+
+/// Which brain is in view and what is shown of it: the owner's place in the
+/// Brain system, kept so going back restores it exactly.
+class CheBrainViewState {
+  const CheBrainViewState({required this.scope, required this.lens, required this.filter, required this.selectedId, required this.cardOpen, required this.focusedCluster, required this.camera});
+  final String? scope;
+  final CheBrainLens lens;
+  final Set<String> filter;
+  final String? selectedId;
+  final bool cardOpen;
+  final String? focusedCluster;
+  final CheBrainCamera camera;
+
+  bool sameAs(CheBrainViewState o) =>
+      scope == o.scope && lens == o.lens && selectedId == o.selectedId && focusedCluster == o.focusedCluster &&
+      filter.length == o.filter.length && filter.containsAll(o.filter) &&
+      (camera.distance - o.camera.distance).abs() < .01 && (camera.target - o.camera.target).length < .01;
+}
+
+/// One Office worker's brain as it sits around CHE's: a labelled orb placed on
+/// a ring outside the brain, sized by how much experience it holds. Only
+/// internal workers appear here (never outside AIs), and only real records
+/// count. Tapping it opens that worker's brain in the same space.
+class CheBrainWorkerOrb {
+  const CheBrainWorkerOrb({required this.name, required this.records, required this.position, this.role = '', this.state = '', this.collaborators = const {}});
+  final String name;
+  final int records;
+  final vm.Vector3 position;
+  final String role;
+
+  /// 'working', 'idle', 'no experience yet' or '' when unknown.
+  final String state;
+
+  /// Workers this one shares records with (a task both took part in).
+  final Set<String> collaborators;
+
+  double get radius => .9 + math.min(1.5, math.sqrt(records) * .14);
+}
+
+/// Outside AIs and model providers are never Office worker brains (the Worker
+/// applies the same rule when it places records; this keeps the phone honest
+/// about records that arrived before it did).
+final RegExp cheBrainExternalAi = RegExp(r'^(?:claude|chatgpt|chat\s*gpt|gpt|openai|codex|gemini|google|grok|xai|cursor|copilot|mistral|anthropic|deepseek|llama|meta|perplexity)\b', caseSensitive: false);
+
+/// The facets a Brain view can be narrowed by, beyond the category lobes:
+/// verified vs inferred, recent, active vs archived, personal vs shared, a
+/// task outcome, a project. Immutable; equality by value so a view state can
+/// tell whether it changed.
+class CheBrainLens {
+  const CheBrainLens({this.verified, this.recentDays, this.archived, this.personal, this.status, this.project});
+
+  static const CheBrainLens none = CheBrainLens();
+
+  /// true: owner-attested or source-backed only. false: inferred, hypothesis, unverified or unknown only.
+  final bool? verified;
+
+  /// Only records dated within this many days.
+  final int? recentDays;
+
+  /// true: archived or historical only. false: active only.
+  final bool? archived;
+
+  /// true: the owner's personal memory. false: shared Office knowledge.
+  final bool? personal;
+
+  /// A task outcome: 'done', 'failed' or 'live'.
+  final String? status;
+  final String? project;
+
+  bool get isEmpty => verified == null && recentDays == null && archived == null && personal == null && status == null && project == null;
+  int get count => [verified, recentDays, archived, personal, status, project].where((v) => v != null).length;
+
+  static const Object _keep = Object();
+  CheBrainLens copyWith({Object? verified = _keep, Object? recentDays = _keep, Object? archived = _keep, Object? personal = _keep, Object? status = _keep, Object? project = _keep}) => CheBrainLens(
+        verified: identical(verified, _keep) ? this.verified : verified as bool?,
+        recentDays: identical(recentDays, _keep) ? this.recentDays : recentDays as int?,
+        archived: identical(archived, _keep) ? this.archived : archived as bool?,
+        personal: identical(personal, _keep) ? this.personal : personal as bool?,
+        status: identical(status, _keep) ? this.status : status as String?,
+        project: identical(project, _keep) ? this.project : project as String?,
+      );
+
+  bool matches(CheMemoryDot d, {DateTime? now}) {
+    if (verified != null && d.isVerified != verified) return false;
+    if (recentDays != null) {
+      final at = d.at;
+      if (at == null || (now ?? DateTime.now()).difference(at).inDays > recentDays!) return false;
+    }
+    if (archived != null && d.archived != archived) return false;
+    if (personal != null && d.isPersonal != personal) return false;
+    if (status != null && d.outcome != status) return false;
+    if (project != null && d.project.toLowerCase() != project!.toLowerCase()) return false;
+    return true;
+  }
+
+  /// Short chip labels, in a fixed order.
+  List<String> get labels => [
+        if (verified == true) 'Verified',
+        if (verified == false) 'Inferred',
+        if (recentDays != null) 'Last $recentDays days',
+        if (archived == true) 'Archived',
+        if (archived == false) 'Active',
+        if (personal == true) 'Personal',
+        if (personal == false) 'Shared',
+        if (status == 'done') 'Done tasks',
+        if (status == 'failed') 'Failed tasks',
+        if (status == 'live') 'Live tasks',
+        if (project != null) 'Project: $project',
+      ];
+
+  String describe() => labels.join(', ');
+
+  /// The lens a spoken word asks for: "verified", "recent", "archived", "failed" …
+  static CheBrainLens? fromWord(String word) => switch (word.trim().toLowerCase()) {
+        'verified' || 'confirmed' => const CheBrainLens(verified: true),
+        'inferred' || 'unverified' || 'uncertain' => const CheBrainLens(verified: false),
+        'recent' || 'new' || 'latest' || "this week's" => const CheBrainLens(recentDays: 7),
+        'archived' || 'historical' || 'old' || 'past' => const CheBrainLens(archived: true),
+        'active' || 'current' || 'live' || 'running' => const CheBrainLens(archived: false),
+        'personal' || 'private' || 'my own' => const CheBrainLens(personal: true),
+        'shared' || 'office' => const CheBrainLens(personal: false),
+        'failed' || 'broken' => const CheBrainLens(status: 'failed'),
+        'done' || 'completed' || 'finished' || 'successful' => const CheBrainLens(status: 'done'),
+        _ => null,
+      };
+
+  @override
+  bool operator ==(Object other) =>
+      other is CheBrainLens && other.verified == verified && other.recentDays == recentDays && other.archived == archived && other.personal == personal && other.status == status && other.project == project;
+
+  @override
+  int get hashCode => Object.hash(verified, recentDays, archived, personal, status, project);
+}
 
 class CheBrainCommand {
-  const CheBrainCommand(this.action, {this.category, this.query, this.agent});
+  const CheBrainCommand(this.action, {this.category, this.query, this.agent, this.worker, this.lens});
   final CheBrainAction action;
   final String? category;
   final String? query;
 
   /// One of the Office crew, for "what is Atlas working on".
   final String? agent;
+
+  /// A worker brain to open ("open Atlas's brain").
+  final String? worker;
+
+  /// A facet to show ("show verified memories only").
+  final CheBrainLens? lens;
 
   /// CHE plus the Office roster, matched against live agent-task sources.
   static const List<String> crew = ['che', 'nova', 'atlas', 'mira', 'knox', 'sage', 'lyra', 'iris'];
@@ -413,8 +556,20 @@ class CheBrainCommand {
     if (RegExp(r'^(?:show|see) (?:me )?(?:the |my |your )?(?:whole|entire|full) brain$|^(?:brain )?overview$|^reset (?:the )?(?:brain|view)$').hasMatch(t)) {
       return const CheBrainCommand(CheBrainAction.overview);
     }
-    if (RegExp(r'^(?:back out|zoom out|go back out|pull back)$').hasMatch(t)) return const CheBrainCommand(CheBrainAction.backOut);
-    if (RegExp(r'^(?:show|open) (?:all|every) (?:my |your )?memories$|^clear (?:the )?filter$').hasMatch(t)) return const CheBrainCommand(CheBrainAction.clearFilter);
+    if (RegExp(r'^(?:back out|go back out|pull back)$').hasMatch(t)) return const CheBrainCommand(CheBrainAction.backOut);
+    if (RegExp(r'^(?:zoom out|zoom out a bit|farther|further out|move (?:back|away))$').hasMatch(t)) return const CheBrainCommand(CheBrainAction.zoomOut);
+    if (RegExp(r'^(?:zoom in|zoom in a bit|closer|move closer|come closer)$').hasMatch(t)) return const CheBrainCommand(CheBrainAction.zoomIn);
+    if (RegExp(r'^(?:go back|back|previous view|take me back|return to (?:the )?previous view|undo that)$').hasMatch(t)) return const CheBrainCommand(CheBrainAction.back);
+    if (RegExp(r'^(?:fit|fit (?:everything|all|content|the brain|the view)|show everything|show (?:me )?the whole office)$').hasMatch(t)) return const CheBrainCommand(CheBrainAction.fit);
+    if (RegExp(r"^(?:cent(?:er|re) on che|back to che|return to che|go (?:back )?to che|(?:open|show|show me|go to) che['’]?s brain|che['’]?s brain|home)$").hasMatch(t)) return const CheBrainCommand(CheBrainAction.centerChe);
+    if (RegExp(r'^(?:cent(?:er|re) on (?:this|that|the|the selected) memory|focus (?:on )?(?:this|that|the selected) memory|cent(?:er|re) on (?:the )?selection)$').hasMatch(t)) return const CheBrainCommand(CheBrainAction.centerSelected);
+    if (RegExp(r'^(?:show|open) (?:all|every) (?:my |your )?memories$|^clear (?:the |all )?filters?$|^remove (?:the |all )?filters?$').hasMatch(t)) return const CheBrainCommand(CheBrainAction.clearFilter);
+    // "show verified memories only", "only show failed tasks", "show me the recent ones".
+    final facet = RegExp(r'^(?:show|only show|show only|filter to|filter by) (?:me )?(?:only )?(?:the |my |your )?(verified|confirmed|inferred|unverified|uncertain|recent|new|latest|archived|historical|old|past|active|current|live|running|personal|private|shared|office|failed|broken|done|completed|finished|successful) (?:memories|records|tasks|knowledge|ones|work|items|experience)(?: only)?$').firstMatch(t);
+    if (facet != null) {
+      final lens = CheBrainLens.fromWord(facet.group(1)!);
+      if (lens != null) return CheBrainCommand(CheBrainAction.lens, lens: lens);
+    }
     final cat = RegExp(r'^(?:show|open|filter to|only show) (?:me )?(?:my |your |the )?(.+?) memories$').firstMatch(t);
     if (cat != null) {
       final c = _categoryWords[cat.group(1)!.trim()];
@@ -423,6 +578,12 @@ class CheBrainCommand {
     final find = RegExp(r'^(?:find|show me|locate|where is|search (?:for )?) ?(?:my |your |the )?memor(?:y|ies) (?:about|of|on|for) (.+)$').firstMatch(t);
     if (find != null) return CheBrainCommand(CheBrainAction.find, query: find.group(1)!.trim());
     if (RegExp(r'^(?:open|read) (?:this|that|the) memory$').hasMatch(t)) return const CheBrainCommand(CheBrainAction.openSelected);
+    // "open Atlas's brain", "switch to Knox", "show me Nova's brain": a worker's brain in the same space.
+    final workerBrain = RegExp(r"^(?:open|show|show me|go to|switch to|take me to|enter|view|visit) ([a-z][a-z-]{1,30})(?:['’]s)? brain$|^switch to ([a-z][a-z-]{1,30})$").firstMatch(t);
+    if (workerBrain != null) {
+      final name = (workerBrain.group(1) ?? workerBrain.group(2))!;
+      if (!const {'my', 'your', 'the', 'whole', 'entire', 'full', 'her', 'his', 'our', 'che', 'offline', 'live'}.contains(name)) return CheBrainCommand(CheBrainAction.openWorker, worker: name);
+    }
     if (RegExp(r'^(?:expand|open) (?:this|that|the) cluster$').hasMatch(t)) return const CheBrainCommand(CheBrainAction.expand);
     if (RegExp(r'^collapse (?:this|that|the) cluster$').hasMatch(t)) return const CheBrainCommand(CheBrainAction.collapse);
     // "what is Atlas working on", "show me what Nova is doing", "is Knox

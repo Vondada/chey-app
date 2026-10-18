@@ -261,6 +261,75 @@ labeled so); the production Worker (not deployed from this branch); FTS5 availab
 in the deployed Durable Object (the store falls back to LIKE and `status.full_text_search`
 reports which); the size of a 100 000-record replica on a real device.
 
+## 5. The Brain Room: navigation, worker brains, one design (2026-10-18)
+
+Owner rules: keep the existing dark, teal-centered Brain as the reference for every brain;
+make it easier to navigate, filter, inspect and move between CHE's brain and the Office
+workers' brains; CHE stays visually central; no rainbow dashboard; nothing passive speaks.
+
+What changed, and what did not:
+
+- **Unchanged**: the orb sprites and sizes, the category palette (`cheMemoryCategoryColor`),
+  the background and dust, the connection lines and pulses, the glow, the camera and gestures,
+  the 44-pt header row, the callout and the card's panel style, the voice phrases that
+  existed. With no worker records the overview camera is exactly what it was (distance 17).
+- **Worker brains as orbs around CHE** (`CheBrainSpaceController.workers`,
+  `CheBrainWorkerOrb`): one labelled orb per internal Office worker on a ring outside the
+  brain's shape (radius 11.6, in the Agents color the brain already uses for specialist
+  work), sized by its record count, dim when it has none ("no experience yet", from the
+  roster), a faint spoke to CHE at the center and a line between two workers only when a
+  record sits in both their brains (a shared task, through the record's `places`). The
+  Worker's change feed now carries `places` (`attachPlaces`, batched under the Durable
+  Object's bound-parameter limit) and the phone replica stores them, so offline the same
+  attribution holds. Outside AIs and temporary provider workers never become orbs
+  (`cheBrainExternalAi` on the phone mirrors `EXTERNAL_AI` on the Worker). With worker
+  orbs the overview fits the ring (distance 23); "zoom in" shows the brain alone.
+- **Brain switcher** (`CheBrainSwitcher`): CHE first, then every worker with its count and
+  state, selected = in view, a search field once there are more than eight. Tapping a worker
+  orb does the same. A worker brain is the same `CheBrainSpace` re-laid out from that
+  worker's records only: same lobes, gestures, panels, filters, search and VoiceOver steps.
+- **Context line** (`CheBrainContextBar`): CHE › worker › lobe › filters › selected memory,
+  plus the mode (overview, close up, inside, inspecting); each crumb is a button back to
+  that level; the whole line is one VoiceOver sentence ("You are in Atlas's brain, Agents
+  memories, … selected, close up").
+- **Back** (`goBack`, header button, "go back"): a history of view states (brain, filters,
+  lens, selection, camera) restores the previous place exactly, across brains.
+- **Filters** (`CheBrainFilterPanel`, `CheBrainLens`): the lobe chips as before, plus
+  Verified / Inferred, Last 7 or 30 days, Active / Archived, Done / Failed / Live tasks,
+  Personal / Shared, each a labelled pill with an icon; "Clear all"; the same lens by voice
+  ("show verified memories only", "only show failed tasks"); hidden orbs are not drawn,
+  counted or stepped to; a collapsed lobe shows the count the lens leaves.
+- **Detail** (`_MemoryCard`): worker(s), folder, verification in words with an icon
+  (owner attested, verified against its source, hypothesis, a model's opinion, inferred,
+  unverified, unknown), status (a live task says it is not finished), personal or shared,
+  archived, source, saved time, confidence; actions: read aloud, center on this, open a
+  worker's brain, open in Office, collapse the lobe. Closing it leaves the camera and the
+  selection where they were. Phones: a bottom sheet; from 720 pt wide: a 360-pt side panel
+  so the brain stays in view.
+- **View controls** (`CheBrainViewControls`): zoom in / out, fit, center on CHE, center on
+  selected, inside, back; the same methods by voice ("zoom in", "fit everything", "center
+  on CHE", "center on this memory").
+- **States** (`CheBrainStateNotice`): loading, syncing, offline with the number of changes
+  waiting, a sync error with Retry, a worker with no experience yet ("nothing is
+  invented"), no memories matching the filters (Clear filters), no search result. Muted text
+  in the chrome, never over the orbs, never spoken on its own; CHE answers only what the
+  owner asked ("find …").
+- **Fixed on the way**: the room's change signature was a lazy field first read inside
+  `didUpdateWidget`, so the first dots change after the room opened (the replica finishing
+  its load) was missed until a second change; it is now taken in `initState`.
+
+Verified (VM, offline): `test/che_brain_navigation_test.dart` (13: worker orbs with real counts
+and connections, outside AIs excluded; a worker brain offline from the same records,
+failures kept; design tokens and chrome unchanged; switcher and same-space worker view;
+context line and crumbs; back across brains with camera; filters by chip and voice; detail
+panel words and preserved place; zoom/fit/center by button and voice; bottom sheet vs side
+panel at 440 and 1024 pt; VoiceOver names and WCAG contrast of the Brain's text tokens;
+seven quiet states; 5 013 records: build 63 ms, brain switch 1 ms, filter 1 ms);
+`test/che_brain_space_test.dart` (36, unchanged behavior); `brain_office.test.mjs` (feed
+carries places); `test/che_brain_replica_test.dart` (places survive a restart).
+Not verified: an iPhone (VoiceOver, Reduce Motion, real frame times with the worker ring);
+the production Worker.
+
 ## 4. What remains (later PRs, in order)
 
 1. Relevance/significance auditor as a scheduled pass with owner corrections;
@@ -276,8 +345,9 @@ reports which); the size of a 100 000-record replica on a real device.
 3. Offline skills manifest (`lib/plugins` registry) with "needs connectivity" marks;
    local model readiness test (FoundationModels availability on this device; SmolLM2
    stays unimplemented until a native runtime exists, and is not claimed).
-4. Orb universe folders: dark teal, expand/collapse by region and folder,
-   virtualized and paginated from `list()`/`folders()`; relationship colors by type.
+4. Orb universe folders by region and folder (the lenses and worker brains above cover
+   category, worker, truth, time, state and ownership; region folders and relationship
+   colors by type remain), virtualized and paginated from `list()`/`folders()`.
 5. Brain Status dashboard page from `/api/brain/status` and `replica.status()`.
 6. Agent learning sync (Office agent `memory_refs` as `produced_by_agent` links).
 7. Tests A–T on the acceptance list, with the iPhone ones run on a device and

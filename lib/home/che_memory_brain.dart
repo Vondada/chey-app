@@ -8,6 +8,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../brain/che_brain_navigation.dart';
 import '../brain/che_brain_space.dart';
 import '../brain/che_brain_space_model.dart';
 import '../che_ui/che_theme.dart';
@@ -27,6 +28,14 @@ class CheMemoryDot {
     this.scope = 'general',
     this.importance = 3,
     this.links = const [],
+    this.region = '',
+    this.path = '',
+    this.kind = '',
+    this.verification = '',
+    this.status = '',
+    this.workers = const [],
+    this.project = '',
+    this.archived = false,
   });
 
   final String id;
@@ -44,6 +53,54 @@ class CheMemoryDot {
 
   /// Ids of earlier memories this one builds on (real shared topics).
   final List<String> links;
+
+  /// Brain region and folder, when the memory came from the unified Brain ('' otherwise).
+  final String region;
+  final String path;
+  final String kind;
+
+  /// Fact-check label: owner_attested, verified_source, unverified_reference, hypothesis, model_opinion, inferred, unknown or ''.
+  final String verification;
+
+  /// A task's recorded status ('' for anything that is not a task).
+  final String status;
+
+  /// Internal Office workers whose brains hold this record (real attribution: a task's owner and its handoff partners).
+  final List<String> workers;
+  final String project;
+
+  /// Historical or archived: no longer live work.
+  final bool archived;
+
+  bool get isVerified => verification == 'owner_attested' || verification == 'verified_source';
+
+  /// A task's outcome: 'done', 'failed', 'live' or '' (not a task or unknown).
+  String get outcome => switch (status.toLowerCase()) {
+        'complete' || 'completed' || 'done' || 'succeeded' || 'success' => 'done',
+        'failed' || 'error' || 'cancelled' || 'canceled' => 'failed',
+        'queued' || 'running' || 'reviewing' || 'working' || 'waiting' || 'in_progress' || 'live' => 'live',
+        _ => '',
+      };
+
+  /// The owner's own memory (what he said and what CHE learned about him) as opposed to shared Office knowledge.
+  bool get isPersonal => region.isNotEmpty
+      ? region == 'Personal Memory' || region == 'Conversations and Corrections'
+      : scope == 'owner' && (category == 'Memory' || category == 'About you' || category == 'Conversations' || category == 'Suggestion');
+}
+
+/// Internal Office workers named in a record's places (the Office Agents region), never outside AIs.
+List<String> cheBrainWorkersOf(Map<String, dynamic> record) {
+  final out = <String>[];
+  void add(Object? region, Object? path) {
+    final name = '${path ?? ''}'.trim();
+    if ('$region' != 'Office Agents' || name.isEmpty || name == 'Office' || cheBrainExternalAi.hasMatch(name) || out.contains(name)) return;
+    out.add(name);
+  }
+  add(record['region'], record['path']);
+  for (final place in (record['places'] as List?) ?? const []) {
+    if (place is Map) add(place['region'], place['path']);
+  }
+  return out;
 }
 
 /// Build unlimited dots from Worker memories / notes / learning — never capped.
@@ -82,6 +139,8 @@ List<CheMemoryDot> cheBuildMemoryDots({
         lastVerifiedAt: DateTime.tryParse('${record['last_verified_at'] ?? record['created_at'] ?? ''}'),
         scope: '${record['scope'] ?? 'owner'}',
         importance: ((record['importance'] as num?)?.round() ?? 3).clamp(1, 5),
+        verification: '${record['verification_status'] ?? 'owner_attested'}',
+        kind: 'memory',
       ),
     );
     i++;
@@ -91,7 +150,7 @@ List<CheMemoryDot> cheBuildMemoryDots({
   for (final m in savedMemories) {
     final t = m.trim();
     if (t.isEmpty || structuredTexts.contains(t.toLowerCase())) continue;
-    out.add(CheMemoryDot(id: 'legacy-mem-$i', title: _shortTitle(t), body: t, category: 'Memory', tokens: _tokens(t), source: 'Legacy owner memory', scope: 'owner'));
+    out.add(CheMemoryDot(id: 'legacy-mem-$i', title: _shortTitle(t), body: t, category: 'Memory', tokens: _tokens(t), source: 'Legacy owner memory', scope: 'owner', verification: 'owner_attested', kind: 'memory'));
     i++;
   }
   for (final n in memoryNotes) {
@@ -132,6 +191,10 @@ List<CheMemoryDot> cheBuildMemoryDots({
         lastVerifiedAt: DateTime.tryParse('${n['last_verified_at'] ?? n['verified_at'] ?? n['updated_at'] ?? n['created_at'] ?? ''}'),
         scope: '${n['scope'] ?? n['ownership'] ?? 'general'}',
         importance: ((n['importance'] as num?)?.round() ?? 3).clamp(1, 5),
+        kind: kind,
+        verification: '${n['verification'] ?? n['verification_status'] ?? (n['verified_at'] != null ? 'verified_source' : 'unverified_reference')}',
+        status: category == 'Agents' ? '${n['status'] ?? ''}' : '',
+        workers: category == 'Agents' ? cheBrainWorkersOf({'region': 'Office Agents', 'path': n['agent'] ?? n['source'] ?? ''}) : const [],
       ),
     );
     i++;
@@ -151,6 +214,8 @@ List<CheMemoryDot> cheBuildMemoryDots({
         at: DateTime.tryParse('${p['created_at'] ?? p['at'] ?? ''}'),
         lastVerifiedAt: DateTime.tryParse('${p['updated_at'] ?? p['verified_at'] ?? p['created_at'] ?? ''}'),
         scope: 'owner',
+        verification: 'inferred',
+        kind: 'trait',
       ),
     );
     i++;
@@ -158,13 +223,13 @@ List<CheMemoryDot> cheBuildMemoryDots({
   for (final k in learnedKnowledge) {
     final t = k.trim();
     if (t.isEmpty) continue;
-    out.add(CheMemoryDot(id: 'know-$i', title: _shortTitle(t), body: t, category: 'Knowledge', tokens: _tokens(t), source: 'CHE learned knowledge', scope: 'general'));
+    out.add(CheMemoryDot(id: 'know-$i', title: _shortTitle(t), body: t, category: 'Knowledge', tokens: _tokens(t), source: 'CHE learned knowledge', scope: 'general', verification: 'unverified_reference', kind: 'knowledge'));
     i++;
   }
   for (final s in suggestions) {
     final t = s.trim();
     if (t.isEmpty) continue;
-    out.add(CheMemoryDot(id: 'sug-$i', title: _shortTitle(t), body: t, category: 'Suggestion', tokens: _tokens(t), source: 'CHE planning', scope: 'owner'));
+    out.add(CheMemoryDot(id: 'sug-$i', title: _shortTitle(t), body: t, category: 'Suggestion', tokens: _tokens(t), source: 'CHE planning', scope: 'owner', verification: 'inferred', kind: 'suggestion'));
     i++;
   }
   // Every conversation with the owner is a memory; it links to the earlier
@@ -186,6 +251,8 @@ List<CheMemoryDot> cheBuildMemoryDots({
         scope: 'owner',
         importance: (strength + 2).clamp(1, 5),
         links: [for (final l in (m['links'] as List?) ?? const []) 'conv:$l'],
+        verification: 'owner_attested',
+        kind: 'conversation',
       ),
     );
     i++;
@@ -216,6 +283,11 @@ List<CheMemoryDot> cheBuildMemoryDots({
         ? 'Research'
         : 'Knowledge';
     final score = (r['significance'] is Map) ? ((r['significance'] as Map)['score'] as num?)?.toDouble() : null;
+    final src = r['source'] is Map ? r['source'] as Map : const {};
+    final path = '${r['path'] ?? ''}';
+    final status = '${src['outcome'] ?? src['status'] ?? ''}';
+    final workers = cheBrainWorkersOf(r);
+    final who = '${src['agent'] ?? ''}'.trim();
     out.add(
       CheMemoryDot(
         id: id,
@@ -224,10 +296,18 @@ List<CheMemoryDot> cheBuildMemoryDots({
         category: category,
         tokens: _tokens(body),
         at: DateTime.tryParse('${r['created_at'] ?? ''}'),
-        source: '${r['verification'] ?? 'unknown'}'.replaceAll('_', ' '),
-        scope: 'owner',
+        source: who.isNotEmpty ? who : '${r['verification'] ?? 'unknown'}'.replaceAll('_', ' '),
+        scope: region == 'Personal Memory' || region == 'Conversations and Corrections' ? 'owner' : 'general',
         importance: score == null ? 3 : (1 + (score * 4).round()).clamp(1, 5),
         links: [for (final l in (r['links'] as List?) ?? const []) if (l is Map) '${l['to']}'],
+        region: region,
+        path: path,
+        kind: '${r['kind'] ?? ''}',
+        verification: '${r['verification'] ?? 'unknown'}',
+        status: status,
+        workers: workers,
+        project: region == 'Projects and Proposals' ? path : '${src['project'] ?? ''}',
+        archived: src['archived'] == true || path == 'Historical' || path.toLowerCase().contains('archive'),
       ),
     );
     drawn.add(id);
@@ -312,7 +392,21 @@ Color cheMemoryCategoryColor(String category) => switch (category.toLowerCase())
 };
 
 class CheMemoryBrainRoom extends StatefulWidget {
-  const CheMemoryBrainRoom({super.key, required this.dots, this.brainLinks = const [], this.onReadAloud, this.onRefresh, this.embedded = true, this.active = true, this.onOpenAgent});
+  const CheMemoryBrainRoom({
+    super.key,
+    required this.dots,
+    this.brainLinks = const [],
+    this.onReadAloud,
+    this.onRefresh,
+    this.embedded = true,
+    this.active = true,
+    this.onOpenAgent,
+    this.roster = const [],
+    this.loading = false,
+    this.offline = false,
+    this.pendingSync = 0,
+    this.error,
+  });
 
   final List<CheMemoryDot> dots;
 
@@ -328,23 +422,47 @@ class CheMemoryBrainRoom extends StatefulWidget {
   /// Deep link for live agent orbs: the agent's name. Null hides the button.
   final void Function(String agentName)? onOpenAgent;
 
+  /// The Office roster (`/api/state` team): names, roles and live status of the
+  /// permanent internal workers, so an idle worker's brain is listed as empty
+  /// rather than missing. Temporary and outside-AI entries are ignored.
+  final List<Map<String, dynamic>> roster;
+
+  /// Quiet states shown as muted text in the chrome, never spoken on their own.
+  final bool loading;
+  final bool offline;
+  final int pendingSync;
+  final String? error;
+
   @override
   State<CheMemoryBrainRoom> createState() => _CheMemoryBrainRoomState();
 }
 
-class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom> {
-  late final CheBrainSpaceController _space = CheBrainSpaceController(widget.dots, brainLinks: widget.brainLinks);
-  final _search = TextEditingController();
-  bool _searchOpen = false;
-  bool _filtersOpen = false;
+enum _BrainPanel { none, search, filters, brains, view }
 
-  late int _signature = _sig();
+class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom> {
+  late final CheBrainSpaceController _space;
+  final _search = TextEditingController();
+  _BrainPanel _panel = _BrainPanel.none;
+  String? _lastSearchMiss;
+
+  // Taken in initState, never lazily: a `late` field first read inside
+  // didUpdateWidget would be computed from the new widget and the first change
+  // (the replica finishing its load) would be missed.
+  late int _signature;
+
+  @override
+  void initState() {
+    super.initState();
+    _space = CheBrainSpaceController(widget.dots, brainLinks: widget.brainLinks, roster: widget.roster);
+    _signature = _sig();
+  }
 
   // The hub rebuilds the dot list on every parent rebuild (e.g. while a chat
   // reply streams); re-layout only when the memories actually changed.
   int _sig() => Object.hash(
-    Object.hashAll([for (final d in widget.dots) Object.hash(d.id, d.title, d.body, d.category, d.importance)]),
+    Object.hashAll([for (final d in widget.dots) Object.hash(d.id, d.title, d.body, d.category, d.importance, d.workers.length, d.verification, d.status)]),
     Object.hashAll([for (final l in widget.brainLinks) Object.hash(l['source'], l['target'])]),
+    Object.hashAll([for (final m in widget.roster) Object.hash(m['name'], m['role'], m['runtime_status'], m['temporary'])]),
   );
 
   @override
@@ -353,7 +471,7 @@ class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom> {
     final next = _sig();
     if (next != _signature) {
       _signature = next;
-      _space.update(widget.dots, widget.brainLinks);
+      _space.update(widget.dots, widget.brainLinks, roster: widget.roster);
     }
   }
 
@@ -366,26 +484,22 @@ class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom> {
 
   void _say(String text) => unawaited(widget.onReadAloud?.call(text) ?? Future<void>.value());
 
-  void _toggleSearch() {
+  void _toggle(_BrainPanel panel) {
     HapticFeedback.selectionClick();
-    setState(() {
-      _searchOpen = !_searchOpen;
-      if (_searchOpen) _filtersOpen = false;
-    });
-  }
-
-  void _toggleFilters() {
-    HapticFeedback.selectionClick();
-    setState(() {
-      _filtersOpen = !_filtersOpen;
-      if (_filtersOpen) _searchOpen = false;
-    });
+    setState(() => _panel = _panel == panel ? _BrainPanel.none : panel);
   }
 
   void _find(String query) {
     if (query.trim().isEmpty) return;
     HapticFeedback.selectionClick();
-    _say(_space.find(query));
+    final reply = _space.find(query);
+    setState(() => _lastSearchMiss = reply.startsWith('I could not find') ? query.trim() : null);
+    _say(reply);
+  }
+
+  void _category(String? category) {
+    setState(() {});
+    _say(_space.setFilter(category));
   }
 
   Widget _iconButton(IconData icon, String label, VoidCallback onTap, {bool on = false}) => Semantics(
@@ -402,123 +516,145 @@ class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom> {
     ),
   );
 
+  /// The one quiet state line that applies right now, if any. Order: an error,
+  /// then loading, then an empty brain, then no matches, then sync status.
+  Widget? _notice(int total, int shown) {
+    final c = _space;
+    if (widget.error != null && widget.error!.trim().isNotEmpty) {
+      return CheBrainStateNotice(icon: Icons.error_outline_rounded, text: 'Brain could not load: ${widget.error}', tone: CheBrainNoticeTone.error, actionLabel: widget.onRefresh == null ? null : 'Retry', onAction: widget.onRefresh == null ? null : () => widget.onRefresh!());
+    }
+    if (widget.loading && total == 0) return const CheBrainStateNotice(icon: Icons.hourglass_empty_rounded, text: 'Loading the Brain…');
+    if (c.scope != null && total == 0) {
+      final orb = c.worker(c.scope);
+      return CheBrainStateNotice(
+        icon: Icons.person_outline_rounded,
+        text: '${c.scope} has no experience recorded yet${orb != null && orb.role.isNotEmpty ? ' (${orb.role})' : ''}. The brain fills as ${c.scope} works; nothing is invented.',
+        actionLabel: 'Back to CHE',
+        onAction: () => _say(c.setScope(null)),
+      );
+    }
+    if (total > 0 && shown == 0 && (c.filter.isNotEmpty || !c.lens.isEmpty)) {
+      return CheBrainStateNotice(
+        icon: Icons.filter_alt_off_outlined,
+        text: 'No memories match these filters in ${c.brainName}.',
+        actionLabel: 'Clear filters',
+        onAction: () => _say(c.clearAll()),
+      );
+    }
+    if (_lastSearchMiss != null) {
+      return CheBrainStateNotice(icon: Icons.search_off_rounded, text: 'No memory about "$_lastSearchMiss" in ${c.brainName}.', actionLabel: 'Dismiss', onAction: () => setState(() => _lastSearchMiss = null));
+    }
+    if (widget.offline) {
+      return CheBrainStateNotice(
+        icon: Icons.cloud_off_outlined,
+        text: 'Offline: showing the Brain on this phone${widget.pendingSync > 0 ? ', ${widget.pendingSync} change${widget.pendingSync == 1 ? '' : 's'} waiting to sync' : ''}.',
+        tone: CheBrainNoticeTone.warning,
+      );
+    }
+    if (widget.pendingSync > 0) {
+      return CheBrainStateNotice(icon: Icons.sync_outlined, text: '${widget.pendingSync} change${widget.pendingSync == 1 ? '' : 's'} on this phone waiting to sync; nothing is lost.');
+    }
+    if (widget.loading) return const CheBrainStateNotice(icon: Icons.sync_outlined, text: 'Syncing with the cloud…');
+    return null;
+  }
+
   @override
   Widget build(BuildContext context) {
-    final total = widget.dots.length;
     final counts = <String, int>{};
-    for (final d in widget.dots) {
-      counts[cheBrainCategoryKey(d.category)] = (counts[cheBrainCategoryKey(d.category)] ?? 0) + 1;
+    for (final n in _space.layout.nodes) {
+      counts[n.cluster] = (counts[n.cluster] ?? 0) + 1;
     }
     // The chrome stays compact at any text size; memory text itself (card,
     // VoiceOver, speech) keeps the owner's full size.
     final media = MediaQuery.of(context);
     final chromeScale = media.textScaler.clamp(minScaleFactor: 1.0, maxScaleFactor: 1.2);
     final chrome = ValueListenableBuilder<int>(
-      // Voice filters / search change the chips too.
+      // Voice filters / search / brain switches change the chips too.
       valueListenable: _space.state,
-      builder: (context, _, _) => MediaQuery(
-        data: media.copyWith(textScaler: chromeScale),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            SizedBox(
-              height: 44,
-              child: Row(
-                children: [
-                  const SizedBox(width: CheSpace.gutter),
-                  Expanded(
-                    child: Semantics(
-                      header: true,
-                      label: 'Brain constellation. $total memories, no capacity limit.',
-                      excludeSemantics: true,
-                      child: Text.rich(
-                        TextSpan(
-                          children: [
-                            TextSpan(
-                              text: 'Brain constellation',
-                              style: CheType.label.copyWith(color: Colors.white, fontSize: 15),
-                            ),
-                            TextSpan(text: '  ·  $total memories', style: CheType.caption.copyWith(fontSize: 12)),
-                          ],
-                        ),
-                        maxLines: 1,
-                        softWrap: false,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ),
-                  _iconButton(Icons.search_rounded, _searchOpen ? 'Hide memory search' : 'Find a memory', _toggleSearch, on: _searchOpen),
-                  _iconButton(Icons.tune_rounded, _filtersOpen ? 'Hide category filters' : 'Filter by category', _toggleFilters, on: _filtersOpen || _space.filter.isNotEmpty),
-                  _iconButton(Icons.center_focus_strong_rounded, 'Show the whole brain', () => _say(_space.overview())),
-                  _iconButton(Icons.blur_on_rounded, 'Go inside the brain', () => _say(_space.inside())),
-                  if (widget.onRefresh != null) _iconButton(Icons.refresh_rounded, 'Refresh memories', () => widget.onRefresh!()),
-                  const SizedBox(width: 4),
-                ],
-              ),
-            ),
-            if (_searchOpen)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(CheSpace.gutter, 0, CheSpace.gutter, 6),
-                child: SizedBox(
-                  height: 40,
-                  child: TextField(
-                    controller: _search,
-                    autofocus: true,
-                    textInputAction: TextInputAction.search,
-                    onSubmitted: _find,
-                    style: const TextStyle(fontSize: 14),
-                    decoration: InputDecoration(
-                      isDense: true,
-                      hintText: 'Find a memory, then fly to it',
-                      prefixIcon: const Icon(Icons.search_rounded, size: 18, color: CheColors.accent),
-                      suffixIcon: IconButton(tooltip: 'Fly to the best match', icon: const Icon(Icons.arrow_forward_rounded, size: 18), onPressed: () => _find(_search.text)),
-                      filled: true,
-                      fillColor: CheColors.surfaceHi,
-                      contentPadding: const EdgeInsets.symmetric(vertical: 8),
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(CheRadius.pill), borderSide: BorderSide.none),
-                    ),
-                  ),
-                ),
-              ),
-            if (_filtersOpen)
+      builder: (context, _, _) {
+        final total = _space.layout.nodes.length;
+        final shown = _space.visibleCount;
+        final c = _space;
+        final title = c.scope == null ? 'Brain constellation' : "${c.scope}'s brain";
+        final counter = c.scope == null
+            ? '$total memories${c.workers.isNotEmpty ? ' · ${c.workers.length} worker brains' : ''}'
+            : '$total record${total == 1 ? '' : 's'}';
+        final notice = _notice(total, shown);
+        return MediaQuery(
+          data: media.copyWith(textScaler: chromeScale),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
               SizedBox(
-                height: 38,
-                child: ListView(
-                  scrollDirection: Axis.horizontal,
-                  padding: const EdgeInsets.symmetric(horizontal: CheSpace.gutter),
+                height: 44,
+                child: Row(
                   children: [
-                    for (final category in cheBrainCategories)
-                      Padding(
-                        padding: const EdgeInsets.only(right: 6, bottom: 4),
-                        child: Semantics(
-                          button: true,
-                          selected: _space.filter.contains(category),
-                          label: '$category memories, ${counts[category] ?? 0}${_space.filter.contains(category) ? ', showing only these' : ''}',
-                          excludeSemantics: true,
-                          child: FilterChip(
-                            visualDensity: VisualDensity.compact,
-                            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                            avatar: CircleAvatar(radius: 4, backgroundColor: cheMemoryCategoryColor(category)),
-                            label: Text('$category ${counts[category] ?? 0}', style: const TextStyle(fontSize: 12)),
-                            selected: _space.filter.contains(category),
-                            onSelected: (on) {
-                              HapticFeedback.selectionClick();
-                              setState(() {});
-                              _say(_space.setFilter(on ? category : null));
-                            },
+                    if (c.canGoBack) _iconButton(Icons.arrow_back_rounded, 'Back to the previous view', () => _say(c.goBack())) else const SizedBox(width: CheSpace.gutter),
+                    Expanded(
+                      child: Semantics(
+                        header: true,
+                        label: '$title. $counter, no capacity limit.',
+                        excludeSemantics: true,
+                        child: Text.rich(
+                          TextSpan(
+                            children: [
+                              TextSpan(text: title, style: CheType.label.copyWith(color: Colors.white, fontSize: 15)),
+                              TextSpan(text: '  ·  $counter', style: CheType.caption.copyWith(fontSize: 12)),
+                            ],
                           ),
+                          maxLines: 1,
+                          softWrap: false,
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ),
+                    ),
+                    _iconButton(Icons.search_rounded, _panel == _BrainPanel.search ? 'Hide memory search' : 'Find a memory', () => _toggle(_BrainPanel.search), on: _panel == _BrainPanel.search),
+                    _iconButton(Icons.tune_rounded, _panel == _BrainPanel.filters ? 'Hide filters' : 'Filter the brain', () => _toggle(_BrainPanel.filters), on: _panel == _BrainPanel.filters || c.filter.isNotEmpty || !c.lens.isEmpty),
+                    _iconButton(Icons.hub_outlined, _panel == _BrainPanel.brains ? 'Hide the brain switcher' : 'Switch brain: CHE or an Office worker', () => _toggle(_BrainPanel.brains), on: _panel == _BrainPanel.brains || c.scope != null),
+                    _iconButton(Icons.center_focus_strong_rounded, 'Show the whole brain', () => _say(c.overview())),
+                    _iconButton(Icons.zoom_in_map_rounded, _panel == _BrainPanel.view ? 'Hide view controls' : 'View controls: zoom, fit, center, inside, back', () => _toggle(_BrainPanel.view), on: _panel == _BrainPanel.view),
+                    if (widget.onRefresh != null) _iconButton(Icons.refresh_rounded, 'Refresh memories', () => widget.onRefresh!()),
+                    const SizedBox(width: 4),
                   ],
                 ),
               ),
-          ],
-        ),
-      ),
+              CheBrainContextBar(controller: c, onSpeak: _say),
+              if (_panel == _BrainPanel.search)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(CheSpace.gutter, 2, CheSpace.gutter, 6),
+                  child: SizedBox(
+                    height: 40,
+                    child: TextField(
+                      controller: _search,
+                      autofocus: true,
+                      textInputAction: TextInputAction.search,
+                      onSubmitted: _find,
+                      style: const TextStyle(fontSize: 14),
+                      decoration: InputDecoration(
+                        isDense: true,
+                        hintText: c.scope == null ? 'Find a memory, then fly to it' : "Find in ${c.scope}'s brain",
+                        prefixIcon: const Icon(Icons.search_rounded, size: 18, color: CheColors.accent),
+                        suffixIcon: IconButton(tooltip: 'Fly to the best match', icon: const Icon(Icons.arrow_forward_rounded, size: 18), onPressed: () => _find(_search.text)),
+                        filled: true,
+                        fillColor: CheColors.surfaceHi,
+                        contentPadding: const EdgeInsets.symmetric(vertical: 8),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(CheRadius.pill), borderSide: BorderSide.none),
+                      ),
+                    ),
+                  ),
+                ),
+              if (_panel == _BrainPanel.filters) CheBrainFilterPanel(controller: c, onSpeak: _say, categoryCounts: counts, onCategory: _category),
+              if (_panel == _BrainPanel.brains) CheBrainSwitcher(controller: c, onSpeak: _say),
+              if (_panel == _BrainPanel.view) CheBrainViewControls(controller: c, onSpeak: _say),
+              ?notice,
+            ],
+          ),
+        );
+      },
     );
 
-    final space = widget.dots.isEmpty
+    final space = widget.dots.isEmpty && !widget.loading && _space.scope == null
         ? const Center(
             child: Text(
               'No memories yet.\nSay “remember that …” or let learning notes land.',
