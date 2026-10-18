@@ -10574,18 +10574,8 @@ export class CheState extends DurableObject {
       console.error('CHE request failed', error?.name, error?.message, error?.diagnostic || '');
       // Cloudflare's own daily allowance (Workers Free plan) is said as exactly that, with its reset
       // time, so the owner and the other AIs see the real cause instead of a generic outage.
-      const limit = cloudDailyLimit(error);
-      if (limit) {
-        const response = json({
-          detail: limit.detail,
-          category: 'cloud_daily_limit',
-          cloud_error: limit.cloud_error,
-          resets_at: limit.resets_at,
-          retryable: true,
-        }, 503);
-        response.headers.set('Retry-After', String(limit.retry_after_s));
-        return response;
-      }
+      const limited = cloudLimitResponse(error);
+      if (limited) return limited;
       const safe = error?.owner_safe
         ? String(error.message || '').slice(0, 220)
         : "I couldn't finish that just now, sir. Nothing was saved; please ask me again.";
@@ -12183,93 +12173,121 @@ export class CheState extends DurableObject {
 
 let livePaperNudgedAt = 0;
 
+// Cloudflare's own daily allowance (Workers Free plan) answers 503 with which allowance, the reset
+// time and Retry-After; null for any other error.
+function cloudLimitResponse(error) {
+  const limit = cloudDailyLimit(error);
+  if (!limit) return null;
+  const response = json({
+    detail: limit.detail,
+    category: 'cloud_daily_limit',
+    cloud_error: limit.cloud_error,
+    resets_at: limit.resets_at,
+    retryable: true,
+  }, 503);
+  response.headers.set('Retry-After', String(limit.retry_after_s));
+  return response;
+}
+
 export default {
   async scheduled(event, env, ctx) {
     ctx.waitUntil(env.CHE_STATE.getByName('owner').nightly());
     ctx.waitUntil(env.CHE_STATE.getByName('owner').modelWatch());
   },
   async fetch(request, env, ctx) {
-    const path = new URL(request.url).pathname;
-    // Public read-only update delivery must work from SideStore/Safari, which
-    // cannot attach CHE's paired-device bearer token. There is intentionally
-    // no public upload or mutation route.
-    if (isMobileUpdatePath(path)) {
-      return handleMobileUpdateRequest(request, env);
+    try {
+      return await routeRequest(request, env, ctx);
+    } catch (error) {
+      // A Durable Object call refused on a Cloudflare free-tier limit throws here, outside the
+      // object's own catch; it is answered the same honest way.
+      const limited = cloudLimitResponse(error);
+      if (limited) return limited;
+      throw error;
     }
-    if (path === '/health') {
-      // The deploy check polls /health: it also makes sure the owner's forward paper
-      // trading alarm is armed (at most once every five minutes per Worker instance).
-      if (env.CHE_STATE && ctx?.waitUntil && Date.now() - livePaperNudgedAt > 5 * 60_000) {
-        livePaperNudgedAt = Date.now();
-        ctx.waitUntil(Promise.resolve().then(() => env.CHE_STATE.getByName('owner').ensureLivePaper()).catch(() => null));
-      }
-      return json({ ok: true, agent: 'CHE cloud', ...runtimeVersion(env) });
-    }
-    // Public and secret-free: booleans and status words only. The deploy check
-    // reads it, and the owner's voice diagnostics can show it.
-    if (path === '/api/voice/status' && request.method === 'GET') {
-      const owner = env.CHE_STATE.getByName('owner');
-      await owner.setVoiceSecrets(voiceSecretsFrom(env));
-      const status = await owner.voiceStatus();
-      return json({ ok: true, top_level: preferredElevenLabsDiagnostics(env), ...status, fish: { top_level: fishAudioDiagnostics(env), ...status.fish } });
-    }
-    // The deploy check. The route exists only for the per-deploy random token.
-    // The deploy's trading check: arms and runs one forward-paper pass on the owner's CHE and
-    // prints what the records hold (paper only). Exists only for the per-deploy random token.
-    if (path === '/api/trading/probe' && request.method === 'POST') {
-      if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);
-      return json(await env.CHE_STATE.getByName('owner').tradingProbe());
-    }
-    if (path === '/api/voice/probe' && request.method === 'POST') {
-      if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);
-      const owner = env.CHE_STATE.getByName('owner');
-      await owner.setVoiceSecrets(voiceSecretsFrom(env));
-      return json(await owner.voiceProbe());
-    }
-    // The deploy's memory-truth check: a real authenticated chat test against
-    // an isolated CHE. The route exists only for the per-deploy random token.
-    if (path === '/api/commands/probe' && request.method === 'POST') {
-      if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);
-      const token = /^Bearer (\S+)$/.exec(request.headers.get('Authorization') || '')?.[1] || '';
-      return json(await commandCenterProbe(env, token));
-    }
-    // The opt-in deploy video check (deploy run with video_check): same
-    // per-deploy token; without it the route does not exist.
-    if (path === '/api/video/probe' && request.method === 'POST') {
-      if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);
-      const body = await request.json().catch(() => ({}));
-      const taskId = /^gha_[a-f0-9]{32}$/.test(String(body.task_id || '')) ? String(body.task_id) : '';
-      return json(await env.CHE_STATE.getByName('owner').videoProbe({
-        task_id: taskId, message: String(body.message || '').slice(0, 500), diagnose: body.diagnose === true, reuse: body.reuse === true,
-      }));
-    }
-    // The opt-in deploy REA check (deploy run with rea_check): same token.
-    if (path === '/api/rea/probe' && request.method === 'POST') {
-      if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);
-      const body = await request.json().catch(() => ({}));
-      return json(await env.CHE_STATE.getByName('owner').reaProbe({ message: String(body.message || '').slice(0, 500), allow_build: body.allow_build === true }));
-    }
-    if (path === '/api/memory/probe' && request.method === 'POST') {
-      if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);
-      const token = /^Bearer (\S+)$/.exec(request.headers.get('Authorization') || '')?.[1] || '';
-      return json(await memoryTruthProbe(env, token));
-    }
-    // The live voice settings reach the Durable Object before each voice or key
-    // request, so a secret change is seen without restarting the object.
-    if (['/api/voice/edge', '/api/voice/synthesize', '/api/voice/report',
-      '/api/voice/choices', '/api/voice/choice', '/api/voice/preview', '/api/voice/library',
-      '/api/voice/library/preview', '/api/voice/favorite', '/api/voice/ids', '/api/voice/ids/save',
-      '/api/voice/ids/use', '/api/voice/ids/remove', '/api/keys'].includes(path)) {
-      const owner = env.CHE_STATE.getByName('owner');
-      await owner.setVoiceSecrets(voiceSecretsFrom(env));
-      return owner.fetch(request);
-    }
-    if (path === '/health/engines') return env.CHE_STATE.getByName('owner').fetch(request);
-    if (path === '/live-voice') return liveVoicePage();
-    // CHE in any browser (lost phone, laptop, family invite links).
-    if (path === '/app' || path === '/app/') return webAppPage();
-    // Public live-chart page for the Trading Room (no private data).
-    if (path === '/markets/chart' && request.method === 'GET') return marketChartPage(request.url);
-    return env.CHE_STATE.getByName('owner').fetch(request);
   },
 };
+
+async function routeRequest(request, env, ctx) {
+  const path = new URL(request.url).pathname;
+  // Public read-only update delivery must work from SideStore/Safari, which
+  // cannot attach CHE's paired-device bearer token. There is intentionally
+  // no public upload or mutation route.
+  if (isMobileUpdatePath(path)) {
+    return handleMobileUpdateRequest(request, env);
+  }
+  if (path === '/health') {
+    // The deploy check polls /health: it also makes sure the owner's forward paper
+    // trading alarm is armed (at most once every five minutes per Worker instance).
+    if (env.CHE_STATE && ctx?.waitUntil && Date.now() - livePaperNudgedAt > 5 * 60_000) {
+      livePaperNudgedAt = Date.now();
+      ctx.waitUntil(Promise.resolve().then(() => env.CHE_STATE.getByName('owner').ensureLivePaper()).catch(() => null));
+    }
+    return json({ ok: true, agent: 'CHE cloud', ...runtimeVersion(env) });
+  }
+  // Public and secret-free: booleans and status words only. The deploy check
+  // reads it, and the owner's voice diagnostics can show it.
+  if (path === '/api/voice/status' && request.method === 'GET') {
+    const owner = env.CHE_STATE.getByName('owner');
+    await owner.setVoiceSecrets(voiceSecretsFrom(env));
+    const status = await owner.voiceStatus();
+    return json({ ok: true, top_level: preferredElevenLabsDiagnostics(env), ...status, fish: { top_level: fishAudioDiagnostics(env), ...status.fish } });
+  }
+  // The deploy check. The route exists only for the per-deploy random token.
+  // The deploy's trading check: arms and runs one forward-paper pass on the owner's CHE and
+  // prints what the records hold (paper only). Exists only for the per-deploy random token.
+  if (path === '/api/trading/probe' && request.method === 'POST') {
+    if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);
+    return json(await env.CHE_STATE.getByName('owner').tradingProbe());
+  }
+  if (path === '/api/voice/probe' && request.method === 'POST') {
+    if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);
+    const owner = env.CHE_STATE.getByName('owner');
+    await owner.setVoiceSecrets(voiceSecretsFrom(env));
+    return json(await owner.voiceProbe());
+  }
+  // The deploy's memory-truth check: a real authenticated chat test against
+  // an isolated CHE. The route exists only for the per-deploy random token.
+  if (path === '/api/commands/probe' && request.method === 'POST') {
+    if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);
+    const token = /^Bearer (\S+)$/.exec(request.headers.get('Authorization') || '')?.[1] || '';
+    return json(await commandCenterProbe(env, token));
+  }
+  // The opt-in deploy video check (deploy run with video_check): same
+  // per-deploy token; without it the route does not exist.
+  if (path === '/api/video/probe' && request.method === 'POST') {
+    if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);
+    const body = await request.json().catch(() => ({}));
+    const taskId = /^gha_[a-f0-9]{32}$/.test(String(body.task_id || '')) ? String(body.task_id) : '';
+    return json(await env.CHE_STATE.getByName('owner').videoProbe({
+      task_id: taskId, message: String(body.message || '').slice(0, 500), diagnose: body.diagnose === true, reuse: body.reuse === true,
+    }));
+  }
+  // The opt-in deploy REA check (deploy run with rea_check): same token.
+  if (path === '/api/rea/probe' && request.method === 'POST') {
+    if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);
+    const body = await request.json().catch(() => ({}));
+    return json(await env.CHE_STATE.getByName('owner').reaProbe({ message: String(body.message || '').slice(0, 500), allow_build: body.allow_build === true }));
+  }
+  if (path === '/api/memory/probe' && request.method === 'POST') {
+    if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);
+    const token = /^Bearer (\S+)$/.exec(request.headers.get('Authorization') || '')?.[1] || '';
+    return json(await memoryTruthProbe(env, token));
+  }
+  // The live voice settings reach the Durable Object before each voice or key
+  // request, so a secret change is seen without restarting the object.
+  if (['/api/voice/edge', '/api/voice/synthesize', '/api/voice/report',
+    '/api/voice/choices', '/api/voice/choice', '/api/voice/preview', '/api/voice/library',
+    '/api/voice/library/preview', '/api/voice/favorite', '/api/voice/ids', '/api/voice/ids/save',
+    '/api/voice/ids/use', '/api/voice/ids/remove', '/api/keys'].includes(path)) {
+    const owner = env.CHE_STATE.getByName('owner');
+    await owner.setVoiceSecrets(voiceSecretsFrom(env));
+    return owner.fetch(request);
+  }
+  if (path === '/health/engines') return env.CHE_STATE.getByName('owner').fetch(request);
+  if (path === '/live-voice') return liveVoicePage();
+  // CHE in any browser (lost phone, laptop, family invite links).
+  if (path === '/app' || path === '/app/') return webAppPage();
+  // Public live-chart page for the Trading Room (no private data).
+  if (path === '/markets/chart' && request.method === 'GET') return marketChartPage(request.url);
+  return env.CHE_STATE.getByName('owner').fetch(request);
+}

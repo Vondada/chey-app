@@ -500,4 +500,14 @@ test('when Cloudflare’s free daily allowance is used up, every stateful reques
   const other = await (await call('/api/commands')).json();
   assert.notEqual(other.category, 'cloud_daily_limit');
   assert.doesNotMatch(other.detail, /allowance/);
+  // A refusal of the Durable Object call itself (outside the object's catch) is answered the same way.
+  const refused = { fetch: async () => { throw new Error('Exceeded allowed duration in Durable Objects free tier.'); } };
+  const outside = await worker.fetch(new Request('https://che.example/health/engines'), { ...env, CHE_STATE: { getByName: () => refused } });
+  assert.equal(outside.status, 503);
+  const outsideBody = await outside.json();
+  assert.equal(outsideBody.category, 'cloud_daily_limit');
+  assert.match(outsideBody.detail, /allowance for compute time is used up/);
+  // Anything else still surfaces as Cloudflare's own error, unchanged.
+  const broken = { fetch: async () => { throw new Error('Network connection lost.'); } };
+  await assert.rejects(worker.fetch(new Request('https://che.example/health/engines'), { ...env, CHE_STATE: { getByName: () => broken } }), /Network connection lost/);
 });
