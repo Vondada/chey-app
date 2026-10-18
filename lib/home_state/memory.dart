@@ -18,10 +18,10 @@ extension _CheHomeMemory on _CHEHomeState {
         Uri.parse('$cheAgentBaseUrl/api/memory/add'),
         headers: _authHeaders,
         body: jsonEncode({'memory': clean}),
-      );
+      ).timeout(const Duration(seconds: 30));
     } catch (_) {
-      // No connection: the memory is kept in the Brain replica on the phone and
-      // reaches the cloud at the next sync. It is never dropped.
+      // No connection (or no answer in time): the memory is kept in the Brain replica
+      // on the phone and reaches the cloud at the next sync. It is never dropped.
       final kept = await _brainReplica.remember(kind: 'memory', region: 'Personal Memory', path: 'Memory', body: clean, source: {'kind': 'memory_record'});
       if (mounted) _set(() {});
       return kept == null ? 'refused' : 'saved_offline';
@@ -144,13 +144,21 @@ extension _CheHomeMemory on _CHEHomeState {
       );
     } catch (_) {
       // No connection: the deletion is a tombstone in the Brain replica now and
-      // reaches the cloud (and CHE's memory list) at the next sync.
+      // reaches the cloud (and CHE's memory list) at the next sync. Every record
+      // showing these words goes, so nothing comes back at the next load.
       final text = index >= 0 && index < savedMemories.length ? savedMemories[index] : '';
       final record = memoryRecords.where((r) => '${r['text'] ?? ''}' == text).firstOrNull;
       if (record != null && '${record['id'] ?? ''}'.isNotEmpty) await _brainReplica.forget('mem:${record['id']}');
+      final gone = await _brainReplica.forgetMemoriesShowing(text);
       if (index >= 0 && index < savedMemories.length) savedMemories.removeAt(index);
       memoryRecords.removeWhere((r) => '${r['text'] ?? ''}' == text);
       if (mounted) _set(() {});
+      await speakText(
+        gone > 0 || record != null
+            ? 'Deleted on the phone, sir; the cloud follows when we are back online.'
+            : 'I removed it from this list, sir, but I could not find its record to delete; it may come back at the next load.',
+        record: false,
+      );
       return;
     }
 

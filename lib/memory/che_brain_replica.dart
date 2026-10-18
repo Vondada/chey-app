@@ -314,7 +314,13 @@ class CheBrainReplica {
         break;
       case 'op':
         final op = Map<String, dynamic>.from(entry['o'] as Map);
-        if (!_outbox.any((o) => o['op_id'] == op['op_id'])) _outbox.add(op);
+        if (_outbox.any((o) => o['op_id'] == op['op_id'])) break;
+        // A later put for the same record supersedes an earlier one, as the live path does.
+        if (op['type'] == 'put') {
+          final id = (op['record'] as Map?)?['id'];
+          _outbox.removeWhere((o) => o['type'] == 'put' && (o['record'] as Map?)?['id'] == id);
+        }
+        _outbox.add(op);
         break;
       case 'ack':
         _outbox.removeWhere((op) => op['op_id'] == entry['op_id']);
@@ -613,6 +619,24 @@ class CheBrainReplica {
         verification: 'unknown',
         source: {'kind': 'queued_request', 'status': 'queued', 'reason': reason},
       );
+
+  /// Every live memory record showing [text] (the Memory screen knows memories by their
+  /// words): each becomes a tombstone here and at the cloud. Returns how many.
+  Future<int> forgetMemoriesShowing(String text) async {
+    await load();
+    final wanted = _displayCopy(text);
+    if (wanted.isEmpty) return 0;
+    final ids = _records.values.where((r) => !r.deleted && r.kind == 'memory' && _displayCopy(r.excerpt) == wanted).map((r) => r.id).toList();
+    for (final id in ids) {
+      await forget(id);
+    }
+    return ids.length;
+  }
+
+  static String _displayCopy(String body) {
+    final collapsed = body.replaceAll(RegExp(r'\s+'), ' ').trim();
+    return collapsed.length > 500 ? collapsed.substring(0, 500) : collapsed;
+  }
 
   /// The owner's deletion: a tombstone here now, and at the cloud at the next sync.
   Future<void> forget(String id) async {

@@ -226,3 +226,43 @@ test('a long memory saved on the phone stays whole in the Brain after the projec
   const again = await (await che.call(`/api/brain/record?id=${record.id}`, { token: che.token })).json();
   assert.equal(again.rev, 1, 'a second projection (status) changes nothing');
 });
+
+test('a twin the phone pushed under its own id is deleted by the Memory screen too, and "clear all" clears every memory record', async (t) => {
+  const che = await owner();
+  if (!che) return t.skip('node:sqlite unavailable');
+  const text = `The warehouse routine: ${'count the courier bags, '.repeat(60)}then lock up.`;
+  assert.equal((await che.call('/api/memory/add', { method: 'POST', token: che.token, body: { memory: text } })).status, 200);
+  let state = await (await che.call('/api/state', { token: che.token })).json();
+  assert.equal(state.memories.length, 1);
+  const legacyId = state.memory_records[0].id;
+  const whole = await (await che.call(`/api/brain/record?id=mem:${legacyId}`, { token: che.token })).json();
+  assert.equal(whole.body, text, 'the Brain keeps the whole text of an online save');
+  const pushed = await (await che.call('/api/brain/push', { method: 'POST', token: che.token, body: { ops: [{ op_id: 't1', type: 'put', record: { id: 'mem:full', kind: 'memory', region: 'Personal Memory', path: 'Memory', title: 'Warehouse', body: text, verification: 'owner_attested', source: { kind: 'memory_record' } } }], device: 'iphone' } })).json();
+  assert.equal(pushed.results[0].outcome, 'created');
+  state = await (await che.call('/api/state', { token: che.token })).json();
+  assert.equal(state.memories.length, 1, 'no second row for the same words');
+  assert.deepEqual(state.memory_records[0].brain_twins, ['mem:full']);
+  assert.equal((await che.call('/api/memory/delete', { method: 'POST', token: che.token, body: { index: 0 } })).status, 200);
+  assert.equal((await (await che.call('/api/brain/record?id=mem:full', { token: che.token })).json()).deleted, true, 'the twin is gone too');
+  assert.equal((await (await che.call('/api/brain/search?q=warehouse%20routine%20courier', { token: che.token })).json()).hits.length, 0);
+  await che.call('/api/brain/push', { method: 'POST', token: che.token, body: { ops: [{ op_id: 't2', type: 'put', record: { id: 'mem:only', kind: 'memory', region: 'Personal Memory', path: 'Memory', title: 'Only', body: 'Only on the phone, pushed later.', verification: 'owner_attested', source: { kind: 'memory_record' } } }], device: 'iphone' } });
+  assert.equal((await che.call('/api/memory/clear', { method: 'POST', token: che.token, body: {} })).status, 200);
+  const status = await (await che.call('/api/brain/status', { token: che.token })).json();
+  assert.equal(status.by_kind.memory ?? 0, 0, 'no live memory record survives clear all');
+});
+
+test('a flags-only amendment does not turn the phone\'s next edit into a conflict, and keeps the author', async (t) => {
+  const che = await owner();
+  if (!che) return t.skip('node:sqlite unavailable');
+  const record = { id: 'mem:44444444-4444-4444-8444-444444444444', kind: 'memory', region: 'Personal Memory', path: 'Memory', title: 'Dog', body: 'My dog is called Rex.', verification: 'owner_attested', source: { kind: 'memory_record' } };
+  await che.call('/api/brain/push', { method: 'POST', token: che.token, body: { ops: [{ op_id: 'f1', type: 'put', record }], device: 'iphone' } });
+  await che.call('/api/memory/add', { method: 'POST', token: che.token, body: { memory: 'My dog is called Max.' } });
+  await che.call('/api/brain/changes?since=0', { token: che.token });
+  const amended = await (await che.call(`/api/brain/record?id=${record.id}`, { token: che.token })).json();
+  assert.equal(amended.origin, 'iphone', 'an amendment keeps the author');
+  const edited = await (await che.call('/api/brain/push', { method: 'POST', token: che.token, body: { ops: [{ op_id: 'f2', type: 'put', record: { ...record, body: 'My dog was called Rex; he passed in 2025.' }, base_rev: 1 }], device: 'iphone' } })).json();
+  assert.equal(edited.results[0].outcome, 'updated', 'not a conflict: the content had not changed since rev 1');
+  const now = await (await che.call(`/api/brain/record?id=${record.id}`, { token: che.token })).json();
+  assert.equal(now.body, 'My dog was called Rex; he passed in 2025.');
+  assert.equal(now.source.content_rev, undefined, 'a content change clears the content marker');
+});

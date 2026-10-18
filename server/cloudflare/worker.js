@@ -92,7 +92,7 @@ import { loadPackedJson, savePackedJson } from './prompt_compaction.js';
 import { githubWorkshopPieces, workshopAvatar, workshopAvatarIntent, workshopSnapshot } from './workshop.js';
 import { flushOutbox, handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, openMailbox, transcript as flagstaffTranscript, mailboxCode, mailboxLink, postWebMail, readWebMail, rotateMailboxCode } from './web_mailbox.js';
 import { CheLibrary, fetchReadable, libraryContext, libraryIntent } from './library.js';
-import { CheBrainStore, backfillConversations, projectLegacyState, rememberExchange } from './brain_store.js';
+import { CheBrainStore, backfillConversations, displayCopy, isSafeText, ownerMemoryRecord, projectLegacyState, rememberExchange } from './brain_store.js';
 import { fetchYouTubeKnowledge, mergeCaptionLines, normalizeCaptionLines, youtubeVideoId } from './youtube_learning.js';
 import {
   disconnectGoogle, finishGoogleConnect, googleChatIntent, googleConnectorStates, googleLabel, googleOwnerStep, googleRecheckPending,
@@ -5687,9 +5687,15 @@ export class CheState extends DurableObject {
                 if (!legacy && effective === 'created') {
                   const added = addOwnerMemory(data, record.body, { id: legacyId, source: 'owner_chat', category: record.path || 'Memory', scope: 'owner', confidence: 1, title: record.title });
                   if (added.added) stateChanged = true;
-                } else if (legacy && ['updated', 'merged'].includes(effective) && String(legacy.text || '') !== record.body) {
+                  // The same words already sit in the memory list under another id: the two are twins,
+                  // and the Memory screen's delete reaches both (deleteMemoriesShowing). Noted on the row.
+                  if (!added.added && added.reason === 'duplicate') {
+                    const twin = data.memory_records.find((item) => displayCopy(item.text) === displayCopy(record.body));
+                    if (twin) { twin.brain_twins = [...new Set([...(Array.isArray(twin.brain_twins) ? twin.brain_twins : []), record.id])].slice(-8); stateChanged = true; }
+                  }
+                } else if (legacy && ['updated', 'merged'].includes(effective) && displayCopy(legacy.text) !== displayCopy(record.body)) {
                   const before = String(legacy.text || '').toLowerCase();
-                  legacy.text = record.body.slice(0, 500);
+                  legacy.text = displayCopy(record.body);
                   legacy.title = record.title.slice(0, 160);
                   data.memories = (data.memories || []).map((item) => (String(item).toLowerCase() === before ? legacy.text : item));
                   stateChanged = true;
@@ -6905,7 +6911,7 @@ export class CheState extends DurableObject {
       }
       if (path === '/api/memory/add') {
         const memory = String(body.memory || '').trim().slice(0, 500);
-        if (!isSafeMemoryText(memory)) {
+        if (!isSafeMemoryText(memory) || !isSafeText(String(body.memory || ''))) {
           return json({ detail: 'Choose a non-sensitive memory.' }, 400);
         }
         const added = addOwnerMemory(data, memory, {
@@ -6915,6 +6921,10 @@ export class CheState extends DurableObject {
           confidence: 1,
         });
         if (added.added || added.replaced?.length) await this.ctx.storage.put('che', data);
+        // The memory list keeps a 500-character display copy; the Brain keeps every word.
+        if (added.added && added.record) {
+          try { new CheBrainStore(this.ctx.storage).put(ownerMemoryRecord(added.record, String(body.memory || '').trim()), { origin: 'owner' }); } catch (_) {}
+        }
         for (const oldMemory of added.replaced || []) {
           const oldVectorId = `memory:${await digest(String(oldMemory).toLowerCase())}`;
           this.ctx.waitUntil?.(deleteVectorMemory(this.keyEnv || this.env, oldVectorId));
@@ -6941,8 +6951,13 @@ export class CheState extends DurableObject {
         );
         data.memory_records = (data.memory_records || []).filter((record) => !removedRecords.includes(record));
         await this.ctx.storage.put('che', data);
-        // The owner's deletion reaches every Brain replica as a tombstone.
-        try { const brain = new CheBrainStore(this.ctx.storage); for (const record of removedRecords) brain.delete(`mem:${record.id}`, { origin: 'owner' }); } catch (_) {}
+        // The owner's deletion reaches every Brain replica as a tombstone: the row's own record, and
+        // any memory record showing the same words (a twin the phone pushed under its own id).
+        try {
+          const brain = new CheBrainStore(this.ctx.storage);
+          for (const record of removedRecords) brain.delete(`mem:${record.id}`, { origin: 'owner' });
+          brain.deleteMemoriesShowing(String(removed || ''), { origin: 'owner' });
+        } catch (_) {}
         if (removed) {
           const vectorId = `memory:${await digest(String(removed).toLowerCase())}`;
           this.ctx.waitUntil?.(deleteVectorMemory(this.keyEnv || this.env, vectorId));
@@ -6950,7 +6965,8 @@ export class CheState extends DurableObject {
         return json({ ok: true });
       }
       if (path === '/api/memory/clear') {
-        try { const brain = new CheBrainStore(this.ctx.storage); for (const record of data.memory_records || []) if (record?.id) brain.delete(`mem:${record.id}`, { origin: 'owner' }); } catch (_) {}
+        // "Clear all" clears every memory record in the Brain, whatever id or origin it has.
+        try { const brain = new CheBrainStore(this.ctx.storage); for (const record of data.memory_records || []) if (record?.id) brain.delete(`mem:${record.id}`, { origin: 'owner' }); brain.deleteAllMemories({ origin: 'owner' }); } catch (_) {}
         data.memories = [];
         data.memory_records = [];
         await this.ctx.storage.put('che', data);

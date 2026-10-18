@@ -313,6 +313,21 @@ void main() {
     expect(reopened.pendingOps, 1);
   });
 
+  test('K: replaying two offline edits of the same record queues only the last, and forgetting by words removes every twin', () async {
+    final dir = await freshDir();
+    final brain = CheBrainReplica(directory: dir);
+    await brain.remember(id: 'note:e', kind: 'note', region: 'Learned Knowledge', body: 'Draft one.');
+    await brain.remember(id: 'note:e', kind: 'note', region: 'Learned Knowledge', body: 'Draft two.');
+    expect(brain.pendingOps, 1);
+    final reopened = CheBrainReplica(directory: dir);
+    await reopened.load();
+    expect(reopened.pendingOps, 1, reason: 'a replay keeps only the last put for the record');
+    await reopened.remember(id: 'mem:a', kind: 'memory', region: 'Personal Memory', body: 'My sister  lives in\nLisbon.');
+    await reopened.remember(id: 'mem:b', kind: 'memory', region: 'Personal Memory', body: 'My sister lives in Lisbon.');
+    expect(await reopened.forgetMemoriesShowing('My sister lives in Lisbon.'), 2);
+    expect(reopened.search('Lisbon'), isEmpty);
+  });
+
   test('F: a queued offline request is a task record that says it did not run', () async {
     final brain = CheBrainReplica(directory: await freshDir());
     final queued = (await brain.queueRemoteRequest('send the report to Claude'))!;

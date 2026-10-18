@@ -338,13 +338,14 @@ export class CheBrainStore {
     const normalized = normalizeRecord(input.record);
     if (normalized.error) return { outcome: 'rejected', reason: normalized.error };
     // Passwords and other secrets never enter the Brain, from either side.
-    if (!isSafeText(`${normalized.title}\n${normalized.body}\n${JSON.stringify(normalized.source)}`)) {
+    if (!isSafeText(`${normalized.title}\n${normalized.body}\n${normalized.path}\n${normalized.kind}\n${JSON.stringify(normalized.source)}\n${JSON.stringify(normalized.links)}`)) {
       return { outcome: 'rejected', reason: 'rejected_sensitive_or_empty', id: normalized.id };
     }
     const current = this.get(normalized.id);
     const baseRev = Number.isFinite(Number(input.base_rev)) ? Number(input.base_rev) : null;
     if (!current) {
-      const written = this.write(normalized, { rev: 1, origin, now });
+      const { content_rev, ...source } = normalized.source;
+      const written = this.write({ ...normalized, source }, { rev: 1, origin, now });
       return { outcome: 'created', record: this.get(normalized.id), rev: written.rev };
     }
     if (current.deleted) {
@@ -363,8 +364,12 @@ export class CheBrainStore {
       const written = this.write({ ...normalized, links: mergedLinks, created_at: current.created_at }, { rev: current.rev + 1, origin, now });
       return { outcome: 'merged', record: this.get(normalized.id), rev: written.rev };
     }
-    if (baseRev === current.rev) {
-      const written = this.write({ ...normalized, links: mergedLinks, created_at: current.created_at }, { rev: current.rev + 1, origin, now });
+    // A client whose base is the current revision, or any revision since the content last changed
+    // (later revisions only amended flags or links), edits the content it saw.
+    const contentRev = Number.isFinite(Number(current.source?.content_rev)) ? Number(current.source.content_rev) : current.rev;
+    if (baseRev === current.rev || (baseRev != null && baseRev >= contentRev)) {
+      const { content_rev, ...source } = normalized.source;
+      const written = this.write({ ...normalized, source, links: mergedLinks, created_at: current.created_at }, { rev: current.rev + 1, origin, now });
       return { outcome: 'updated', record: this.get(normalized.id), rev: written.rev };
     }
     // Both sides changed the content since the client last saw it: keep the current copy,
@@ -381,8 +386,36 @@ export class CheBrainStore {
     if (!current || current.deleted) return { outcome: 'missing', id };
     const source = { ...(current.source || {}), ...asObject(patch) };
     if (JSON.stringify(source) === JSON.stringify(current.source || {})) return { outcome: 'unchanged', record: current, rev: current.rev };
-    const written = this.write({ ...current, source, places: this.rows('SELECT region, path FROM brain_places WHERE record_id = ?', id) }, { rev: current.rev + 1, origin, now });
+    // The content is the same as at content_rev, so a client that saw that revision is not behind.
+    source.content_rev = Number.isFinite(Number(current.source?.content_rev)) ? Number(current.source.content_rev) : current.rev;
+    const written = this.write({ ...current, source, places: this.rows('SELECT region, path FROM brain_places WHERE record_id = ?', id) }, { rev: current.rev + 1, origin: current.origin || origin, now });
     return { outcome: 'amended', record: this.get(id), rev: written.rev };
+  }
+
+  /**
+   * The owner deleted a memory on the Memory screen: every live memory record whose display copy
+   * is that text becomes a tombstone, including a twin the phone pushed under its own id.
+   */
+  deleteMemoriesShowing(text, { origin = 'owner', now } = {}) {
+    if (!this.init()) return 0;
+    const wanted = displayCopy(text);
+    if (!wanted) return 0;
+    let deleted = 0;
+    for (const row of this.rows("SELECT id, body FROM brain_records WHERE kind = 'memory' AND deleted = 0")) {
+      if (displayCopy(row.body) !== wanted) continue;
+      if (this.delete(row.id, { origin, now }).outcome === 'deleted') deleted += 1;
+    }
+    return deleted;
+  }
+
+  /** "Clear all memories": every live memory record, whatever its origin. */
+  deleteAllMemories({ origin = 'owner', now } = {}) {
+    if (!this.init()) return 0;
+    let deleted = 0;
+    for (const row of this.rows("SELECT id FROM brain_records WHERE kind = 'memory' AND deleted = 0")) {
+      if (this.delete(row.id, { origin, now }).outcome === 'deleted') deleted += 1;
+    }
+    return deleted;
   }
 
   /** A record written by CHE herself (not a sync op): created or updated, with the current revision as base. */
@@ -566,8 +599,13 @@ export function rememberExchange(store, { id, message, reply, at, correction = f
 
 /** Owner memory rows (data.memory_records) as Personal Memory records with stable ids. */
 /** What data.memories keeps of a memory: its first 500 characters, whitespace collapsed (research_memory clip). */
-function displayCopy(body) {
+export function displayCopy(body) {
   return String(body || '').replace(/\s+/g, ' ').trim().slice(0, 500);
+}
+
+/** An owner memory as a Brain record with its whole text; the memory list keeps only the display copy. */
+export function ownerMemoryRecord(record, fullText) {
+  return { ...memoryRecordToBrain(record), body: String(fullText || record.text || '') };
 }
 
 function memoryRecordToBrain(record) {

@@ -169,7 +169,7 @@ Verified (automated, offline, this PR):
   projection; a subset of links is unchanged; the display copy never overwrites a
   phone-authored or fuller memory (flags only); a clean text is never refused at a window
   cut and source fields are scanned.
-- `server/cloudflare/brain_sync.test.mjs` — 7 tests through the real Worker: owner
+- `server/cloudflare/brain_sync.test.mjs` — 9 tests through the real Worker: owner
   gate (401 without a device); phone memory → `/api/state` with the same id, duplicate
   op, `/changes`, no conflict from the projection; Memory-screen delete → tombstone,
   clear → all tombstones, deleted memory not searchable; chat exchange kept word for
@@ -178,19 +178,29 @@ Verified (automated, offline, this PR):
   the memory's words in `/api/state`, a phone delete removes it and the next projection
   leaves it deleted, a replayed delete answers duplicate/first_outcome deleted; a 3 000-char
   phone memory stays whole through the projection while the memory list shows its display
-  copy.
-- `test/che_brain_replica_test.dart` — 11 tests with an in-memory fake Worker that
+  copy; a twin pushed under its own id is deleted by the Memory screen and "clear all"
+  clears every memory record; a flags-only amendment keeps the author and does not turn the
+  phone's next edit into a conflict.
+- `test/che_brain_replica_test.dart` — 12 tests with an in-memory fake Worker that
   returns the same outcomes: durable write + restart replay; push/pull/ack/digest
   match; failed push drops nothing; delete both ways; conflict with both copies,
   rejected record kept, resolve re-queues; 1 203-record paged pull interrupted and
   resumed from its cursor, long body in a file; queued offline request says it did
   not run; a secret never written and a 1 550-char body kept whole across a restart; a
-  replayed op read by its first outcome; a replayed journal queues each op once; scale on
-  the VM: 10 000 records sync 1.9 s,
+  replayed op read by its first outcome; a replayed journal queues each op once and only
+  the last put per record; forgetting by words removes every twin; scale on the VM: 10 000 records sync 1.9 s,
   search 10 ms, load 1.6 s; 100 000 records (`CHE_BRAIN_SCALE=100000`) sync 26.7 s,
   search 90 ms, load 14.9 s.
 - `run_checks.sh`: Worker 1455/1462 (7 skipped), skills 17/17, dart analyze clean,
   flutter test +444.
+- Third independent review (2026-10-18): one blocking finding, fixed above (a memory the
+  phone pushed as a twin of an existing display copy had no list row, so the Memory screen's
+  delete and "clear all" left it live; now deletion reaches every memory record showing the
+  deleted words and "clear all" clears every memory record), plus the latent re-run of the
+  display-copy overwrite (`amendSource` keeps the author; the push handler stores the
+  collapsed copy), false conflicts after a flags-only amendment (`source.content_rev`),
+  replay dedupe by record, the gate over links/path/kind, the online save keeping the whole
+  text in the Brain, the save timeout and the spoken offline delete.
 - Second independent review (2026-10-18): one blocking finding, fixed above (the legacy
   projection overwrote phone-authored memories with the 500-character display copy), plus
   the false "saved" reply after a refusal, window-cut false refusals, orphaned body files,
