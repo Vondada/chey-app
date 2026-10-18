@@ -9,7 +9,8 @@
 // inside a coding instruction are subject matter, not an owner request to spend
 // or delete. Negated forms ("do not delete") are never gated.
 
-const VOCATIVE = String.raw`(?:(?:hey|hi|ok|okay)\s+(?:chey|che|chay)\s*,?\s*)?`;
+// "CHE, buy it", "hey Chey buy it" and a bare "CHE buy it" all address CHE.
+const VOCATIVE = String.raw`(?:(?:(?:hey|hi|ok|okay)\s+)?(?:chey|che|chay|shay)\b\s*[,:]?\s*)?`;
 const LEAD = String.raw`^(?:${VOCATIVE}(?:(?:please|pls|plz|now|then|also|and|ok|okay|just|to|let's|lets|let\s+us|can you|could you|would you|will you|i want you to|i need you to|i want to|i'd like to|id like to|i am going to|i'm going to|im going to|go ahead and|you should|you must)\s+)*)["'(]?`;
 // Verb forms are written out in full so "delete", "deleting", "pays" and
 // "purchased" all match without matching unrelated words.

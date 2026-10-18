@@ -86,7 +86,7 @@ import { learnedSkillsContext, learnedSkillsIntent, learnSkillIntent, attachment
 import { APPROVED_SKILLS, handleInstalledSkill, installedSkillIntent, installedSkillsContext } from './installed_skills.js';
 import { lastSite, publishSite, saveSite, serveSite, siteBuildIntent, siteEditIntent, sitePreviewIntent, sitePublishIntent, siteUrl, speakSitePublished, speakSiteResult, wantsImmediatePublish, workingHtml, writeSite } from './site_builder.js';
 import { noteJobActivity } from './job_activity.js';
-import { PENDING_OWNER_ACTION_KEY, prohibitedText, PENDING_OWNER_ACTION_MS, gateOwnerAction, grantForKinds, isOwnerYes, peerActionReply, APPS_GRANTED_KEY, PENDING_APP_ACTION_KEY, PENDING_APP_ACTION_MS, gateAppAccess, classifyAppNeed, classifyExplicitAppOpen, classifyAppAccesses } from './owner_action_gate.js';
+import { PENDING_OWNER_ACTION_KEY, prohibitedText, withoutProhibitions, PENDING_OWNER_ACTION_MS, gateOwnerAction, grantForKinds, isOwnerYes, peerActionReply, APPS_GRANTED_KEY, PENDING_APP_ACTION_KEY, PENDING_APP_ACTION_MS, gateAppAccess, classifyAppNeed, classifyExplicitAppOpen, classifyAppAccesses } from './owner_action_gate.js';
 import { asksForCurrentOwnerLocation, changeHistoryIntent, guardClaimedResearchActions, guardGroundedFacts, guardLocationWeatherReply, guardOwnerReply, loadChangeHistory, loadReceipts, OWNER_LOCATION_NOT_VERIFIED, recordReceipt, requestedCodeNames, speakChangeHistory, vagueResearchRequest, verifiedState, verifiedStatusText } from './truth_layer.js';
 import { ENGINEERING_PLAYBOOK_SPOKEN, playbookIntent } from './engineering_playbook.js';
 import { describeSkillsReport, reusableLicense, selectFilesForAgent, skillFromMarkdown, skillImportIntent, skillsReportIntent } from './skill_import.js';
@@ -9942,7 +9942,12 @@ export class CheState extends DurableObject {
 
         // "Check your renderer ... the last verified MP4. Don't render or upload anything yet": a status
         // question with the render forbidden, answered from settings and the media library only.
-        if (videoAsk && /\b(?:render|create|make|generate|produce|start|upload|post|publish|queue)\b/i.test(prohibitedText(message))) {
+        // A question about the renderer itself ("which rendering engines are connected", "the last verified
+        // MP4") with no render asked for at the start of a sentence is a status question too.
+        const renderForbidden = /\b(?:render|create|make|generate|produce|start|upload|post|publish|queue)\b/i.test(prohibitedText(message));
+        const rendererQuestion = /\b(?:which|what)\s+(?:video\s+|render(?:ing)?\s+)+engines?\b|\blast\s+verified\s+(?:mp4|video)\b|\bcheck\s+(?:your|the)\s+(?:actual\s+)?(?:video\s+)?renderer\b/i.test(message)
+          && !/(?:^|[.!?;]\s*)(?:(?:che|chey|chay)[,:]?\s+)?(?:please\s+)?(?:make|create|render|produce|generate|start)\b/i.test(withoutProhibitions(message));
+        if (videoAsk && (renderForbidden || rendererQuestion)) {
           const engine = await probeVideoEngine(this.keyEnv || this.env).catch(() => videoEngineStatus(this.keyEnv || this.env));
           return ndjsonReply(videoStatusSpeech(engine, await listMedia(this.ctx.storage).catch(() => [])),
             { ok: true, video_status: 'status_only', source: 'video_renderer' });

@@ -187,6 +187,17 @@ test('REA: CHE explains her own REA and its latest record without starting an in
     assert.doesNotMatch(out.reply, /Recall, Evidence/i);
     assert.deepEqual(che.saved.get('rea_jobs') || [], [], 'no investigation was started');
   }
+  // The most recent VERIFIED investigation is the newest completed one, not the newest job.
+  const che = await owner({ saved: new Map([['rea_jobs', [
+    { id: 'rea-inv-1', kind: 'investigation', state: 'complete', stage: 'done', target: { label: 'Notion', kind: 'app_name' } },
+    { id: 'rea-npm-2', state: 'failed', command: 'inspect', target: { name: 'left-pad', version: '1.3.0' }, error: 'workflow failed' },
+  ]]]) });
+  const out = await che.say(REA_Q);
+  assert.match(out.reply, /The newest job, rea-npm-2, is failed, so it is not the result below\. Most recent completed job: rea-inv-1\./);
+  assert.match(out.reply, /its evidence is UNVERIFIED\.\nNothing was started\./);
+  assert.equal(che.saved.get('rea_jobs').length, 2, 'nothing new was queued');
+  const none = await (await owner()).say(REA_Q);
+  assert.match(none.reply, /No REA job has completed with evidence yet, so there is no verified investigation to show\. Nothing was started\./);
   // A named app to investigate is still an investigation.
   assert.equal(parseReaRequest('Show me what the REA system finds when you investigate the Notion app.')?.command, 'inspect');
 });
@@ -199,12 +210,34 @@ test('shopping: the owner\'s own plan with every purchase forbidden opens no mon
     assert.doesNotMatch(out.reply, /I need your yes/);
     assert.equal(che.saved.get('che:pending_owner_action') ?? null, null, 'nothing is waiting for a yes');
   }
-  for (const ask of ["Buy three apples but don't pay more than $5.", "I want you to buy three apples, don't pay more than $5.", 'I want to buy three apples.', 'Please buy three apples at Walmart, but do not add a reminder.']) {
+  for (const ask of ["Buy three apples but don't pay more than $5.", "I want you to buy three apples, don't pay more than $5.", 'I want to buy three apples.', 'Please buy three apples at Walmart, but do not add a reminder.',
+    'CHE buy apples online now', 'Buy apples unless they cost more than $5, and do not delete my list.', "I want to buy apples. Actually, don't wait, buy them now.",
+    "I want to buy apples, don't add them to the cart yet, then pay for my Netflix subscription."]) {
     assert.deepEqual(classifyOwnerActions(ask), ['money'], ask);
+  }
+  // Reversed order, an own plan for later, a quoted example: nothing for CHE to spend.
+  for (const plan of ["Don't purchase anything, but I want to buy three apples tomorrow. Explain it back to me.", "I'm going to buy apples later; don't order them.", "If I said 'buy apples', what would you do? Don't buy anything."]) {
+    assert.deepEqual(classifyOwnerActions(plan), [], plan);
   }
   const che = await owner();
   const held = await che.say("Buy three apples at Walmart but don't pay more than $5.");
   assert.equal(held.meta.held_for_owner, true);
+  // A bare wake word before the request is still a request to CHE (it was not held before).
+  for (const ask of ['CHE buy apples online now', 'Chey delete my notes']) {
+    assert.equal((await che.say(ask)).meta.held_for_owner, true, ask);
+  }
+});
+
+test('video: a question about the renderer itself starts nothing even without a "don\'t"; a real request still renders', async () => {
+  requests.length = 0;
+  const che = await owner({ env: { CHE_GITHUB_TOKEN: 'test-token', CHE_GITHUB_REPO: 'Vondada/chey-app' } });
+  const out = await che.say('Can you produce a 30-second animated video right now? Which rendering engines are connected?');
+  assert.equal(out.meta.video_status, 'status_only');
+  assert.equal(requests.filter((r) => r.method !== 'GET').length, 0);
+  // An explicit request goes on to the renderer (offline here, so it reports that it could not).
+  const asked = await che.say('Make a 30-second video about volcanoes.');
+  assert.notEqual(asked.meta.video_status, 'status_only');
+  assert.ok(requests.some((r) => r.method === 'POST' && /dispatches/.test(r.url)), 'the render was dispatched');
 });
 
 test('video: a renderer status question with rendering forbidden starts nothing and names the last verified MP4', async () => {
