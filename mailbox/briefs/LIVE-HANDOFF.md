@@ -1042,6 +1042,12 @@ Owner still owed: the two 17 Oct transcripts (ask him directly); a live free-mod
 
 Do them top to bottom. Mark each one `DONE (PR #, SHA)` or `WIP (branch, next step)` here.
 
+**Owner directives relayed 2026-10-18 (newest first; do not mislabel as implemented):**
+- **#347 CHE cross-platform Creator Studio + original hybrid animation / urban drama** — owner supplied two iPhone videos to ChatGPT; first TOP video is a simple illustrated science explainer with cartoon figures/diagram cutaways (NOT the Claude UI underneath), second a Westview Productions Instagram AI-generated urban serialized drama. Build a copyright-safe ORIGINAL fusion with genuine 30–45s playable 9:16 pilot, voice/captions/recurring cast, platform-specific export and real per-platform OAuth/owner-approved posting only where authorized; audience-growth experiments use real statistics and no bot/spam. Existing YouTube pipeline must be reused, not duplicated; starter issue: https://github.com/Vondada/chey-app/issues/347. Source footage is not stored in public repo; secure media import to CHE requires owner authorization. **Status: ISSUE + FLAGSTAFF DIRECTIVE, NOT BUILT.**
+- **#346 full progressive Coding + Trading Knowledge Atlas** — beginner-to-expert interconnected concepts, analogies, mathematical formulas, tested examples/quizzes, and retrieved facts using existing Library/Brain/code index/trading statistics; phase 1 10 coding + 10 trading cards; do not duplicate engines: https://github.com/Vondada/chey-app/issues/346. **Status: ISSUE + FLAGSTAFF DIRECTIVE, NOT BUILT.**
+- **#345 full-sentence understanding → short intent/workflow compression** — preserve original full utterance, negations/conditions/actor/time/quantities and approval; eliminate silent truncation of late constraints, use existing speech_intent/workflow_governor/ai_router/owner_action_gate and regression tests; actual token measurements: https://github.com/Vondada/chey-app/issues/345. **Status: ISSUE + FLAGSTAFF DIRECTIVE, NOT BUILT.**
+
+
 1. **Trading Room learning engine.** DONE first cut (PR #178, 1ca27c0). Next: intraday futures data once the owner has a feed, and showing the learning in the Trading Room UI.
    - Agents permanently backtest and paper-trade ES, NQ, MES and MNQ, many trades a day, and learn from the results.
    - Show accuracy, P&L and trade counts.
