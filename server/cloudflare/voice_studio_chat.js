@@ -2,7 +2,7 @@
 // action runs against the provider's account and reports its real result. No speech
 // model is called and no credits are spent: previews are the provider's free samples,
 // and a voice is saved only after the account confirms it.
-import { availableVoiceChoices, validateVoiceChoice } from './voice_choices.js';
+import { availableVoiceChoices, saveVoiceChoice, validateVoiceChoice } from './voice_choices.js';
 import { VOICE_NAMED, fetchElevenLibrary, fetchElevenModels, fetchFishModels, filterLibrary, mightBeVoiceRequest, normalizeVoiceRequest, voiceStudioIntent } from './voice_library.js';
 
 export const STUDIO_LAST_KEY = 'voice_studio_last';
@@ -53,7 +53,7 @@ async function remember(ctx, patch) {
 
 async function setChoice(ctx, choice) {
   ctx.data.voice_choice = choice;
-  await ctx.storage.put('che', ctx.data);
+  await saveVoiceChoice(ctx.storage, ctx.data);
 }
 
 async function act(intent, ctx) {
@@ -132,7 +132,7 @@ async function switchProvider(provider, ctx) {
     if (before) ctx.data.voice_choice = before;
     else delete ctx.data.voice_choice;
     delete ctx.data.voice_choice_before_fish;
-    await ctx.storage.put('che', ctx.data);
+    await saveVoiceChoice(ctx.storage, ctx.data);
     return { ok: true, reply: 'Switched back to ElevenLabs, sir. Fish Audio is no longer first.' };
   }
   const choices = await availableVoiceChoices(ctx.env, ctx.fetcher, ctx.data.voice_saved);

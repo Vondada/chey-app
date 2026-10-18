@@ -29,13 +29,100 @@ class CheStreamBatcher {
   }
 }
 
+const _abbreviations = <String>{
+  'mr', 'mrs', 'ms', 'dr', 'prof', 'sr', 'jr', 'st', 'vs', 'mt', 'ft', 'no', 'approx', 'fig', 'gen', 'col',
+  'capt', 'sgt', 'lt', 'rev', 'hon', 'dept', 'univ', 'ave', 'blvd', 'rd', 'est', 'inc', 'ltd', 'co', 'corp',
+  'jan', 'feb', 'mar', 'apr', 'jun', 'jul', 'aug', 'sep', 'sept', 'oct', 'nov', 'dec', 'e.g', 'i.e', 'a.m', 'p.m',
+  'u.s', 'u.k', 'etc', 'al',
+};
+
+final _blockLine = RegExp(r'^\s*(?:#{1,6}\s|[-*•+]\s|\d{1,3}[.)]\s|>|\|)');
+
+/// The end (exclusive) of the first sentence in [text] at or after [from], or
+/// -1 when no sentence is complete yet. A sentence ends at `.`, `!`, `?` or `…`
+/// followed by a space or line break, never inside "Dr. Smith", "e.g. this",
+/// "3.5" or a list number, and never at the very end of streaming text: more
+/// may follow ("3." then "5 dollars"). A finished line of a list, heading or
+/// table, or a line ending in punctuation, also ends a sentence. With [force]
+/// the end of [text] counts as an end.
+int cheSentenceEnd(String text, int from, {bool force = false}) {
+  for (var i = from; i < text.length; i++) {
+    final c = text[i];
+    if (c == '\n') {
+      final lineStart = i == 0 ? 0 : text.lastIndexOf('\n', i - 1) + 1;
+      final line = text.substring(lineStart < from ? from : lineStart, i).trim();
+      if (line.isEmpty) continue;
+      if (_blockLine.hasMatch(line) || RegExp(r'[.!?…:;]["”’)\]*_]*$').hasMatch(line) ||
+          (i + 1 < text.length && (text[i + 1] == '\n' || _blockLine.hasMatch(text.substring(i + 1))))) {
+        return i + 1;
+      }
+      continue;
+    }
+    if (c != '.' && c != '!' && c != '?' && c != '…') continue;
+    var end = i + 1;
+    while (end < text.length && '"”’)]*_'.contains(text[end])) {
+      end++;
+    }
+    if (end >= text.length) {
+      if (force) return text.length;
+      return -1;
+    }
+    if (!RegExp(r'\s').hasMatch(text[end])) continue;
+    // Mid-stream, wait for the next word: "Well... " may go on as "Well... maybe not."
+    if (!force && !RegExp(r'\S').hasMatch(text.substring(end))) return -1;
+    if (c == '.' && !_endsSentence(text, from, i, end)) continue;
+    return end;
+  }
+  return force && text.substring(from).trim().isNotEmpty ? text.length : -1;
+}
+
+bool _endsSentence(String text, int from, int dot, int after) {
+  final lineStart = text.lastIndexOf('\n', dot) + 1;
+  final before = text.substring(lineStart < from ? from : lineStart, dot);
+  // "1." at the start of a line is a list number, not a sentence.
+  if (RegExp(r'^\s*\d{1,3}$').hasMatch(before)) return false;
+  final word = RegExp(r'([A-Za-z][A-Za-z.]*)$').firstMatch(before)?.group(1) ?? '';
+  // "J. Smith": a single capital letter is an initial.
+  if (RegExp(r'^[A-Z]$').hasMatch(word)) return false;
+  if (_abbreviations.contains(word.toLowerCase())) {
+    // "...and so on, etc. Then" ends a sentence; "etc. and" does not.
+    final next = RegExp(r'\S').firstMatch(text.substring(after))?.group(0) ?? '';
+    final ends = word.toLowerCase() == 'etc' && RegExp(r'[A-Z]').hasMatch(next);
+    if (!ends) return false;
+  }
+  // A lowercase word after the stop continues the sentence ("e.g. this").
+  final next = RegExp(r'\S').firstMatch(text.substring(after))?.group(0) ?? '';
+  if (RegExp(r'[a-z]').hasMatch(next)) return false;
+  return true;
+}
+
+/// Where to cut [text] so the first part fits in [limit] characters and ends
+/// at a natural place: the end of a sentence when one is in the last 40%,
+/// else a phrase break (comma, semicolon, colon, dash), else a space; never
+/// in the middle of a word unless the word itself is longer than [limit].
+int chePhraseCut(String text, int limit) {
+  if (text.length <= limit) return text.length;
+  final window = text.substring(0, limit + 1);
+  var sentence = -1;
+  for (var at = cheSentenceEnd(window, 0); at > 0 && at <= limit; at = cheSentenceEnd(window, at)) {
+    sentence = at;
+  }
+  if (sentence >= limit * 0.60) return sentence;
+  final phrase = RegExp(r'(?:[,;:]|\s[-–—])\s').allMatches(window).where((m) => m.end <= limit + 1).toList();
+  if (phrase.isNotEmpty && phrase.last.end - 1 >= limit ~/ 2) return phrase.last.end - 1;
+  final space = window.lastIndexOf(RegExp(r'\s'));
+  if (space >= limit ~/ 2) return space;
+  return limit;
+}
+
 /// Split a complete Read This/assistant reply into whole-word TTS requests.
 /// CHE's preferred ElevenLabs route deliberately declines clips over 800 chars;
 /// without splitting, a long Brain memory silently reverted to the old voice.
 /// Keep a conservative 640-char maximum for fast, affordable synthesis.
 /// The first clip is shorter ([firstMaxChars]), so the voice starts sooner
 /// while the next clips are prepared during playback: Fish's time grows with
-/// the clip's length.
+/// the clip's length. Cuts fall at sentence ends, else phrase breaks, so no
+/// clip stops in the middle of a phrase (owner, 2026-10-18).
 /// This is a pure helper, shared by every call to speakText, not a new router.
 List<String> cheReadAloudChunks(String text, {int maxChars = 640, int firstMaxChars = 240}) {
   if (maxChars < 32) throw ArgumentError.value(maxChars, 'maxChars');
@@ -45,15 +132,7 @@ List<String> cheReadAloudChunks(String text, {int maxChars = 640, int firstMaxCh
   while (true) {
     final limit = chunks.isEmpty && firstMaxChars < maxChars ? firstMaxChars : maxChars;
     if (pending.length <= limit) break;
-    final window = pending.substring(0, limit + 1);
-    var cut = window.lastIndexOf(' ');
-    // Prefer the end of a sentence for natural playback when it is nearby.
-    final sentence = RegExp(r'[.!?]\s').allMatches(window).toList();
-    if (sentence.isNotEmpty) {
-      final at = sentence.last.end - 1;
-      if (at >= limit * 0.60) cut = at;
-    }
-    if (cut < limit ~/ 2) cut = limit;
+    final cut = chePhraseCut(pending, limit);
     final piece = pending.substring(0, cut).trimRight();
     if (piece.isEmpty) break;
     chunks.add(piece);
@@ -66,21 +145,29 @@ List<String> cheReadAloudChunks(String text, {int maxChars = 640, int firstMaxCh
 /// Converts cumulative model text into speech chunks that sound fluent.
 ///
 /// The first complete sentence is released immediately (fast first word).
-/// After that, whole sentences are grouped into larger chunks (about
-/// [targetChars]) so the voice engine reads them in one breath instead of
-/// pausing and re-starting between every sentence. Code fences are never
-/// spoken. Order is never changed and nothing is spoken twice.
+/// The next chunk groups about [secondTargetChars] of whole sentences, and
+/// later ones about [targetChars], so the voice reads them in one breath with
+/// few clip boundaries. A chunk ends only where a sentence or a list, heading
+/// or table line ends, never at the end of text still streaming ("3." may be
+/// "3.5"); none is longer than [maxChars] (ElevenLabs refuses clips over 800
+/// characters, which used to hand that part to another voice). Line breaks are
+/// kept so cheSpeakableText (che_spoken_text.dart) can give lists and headings their pauses. Code
+/// fences are never spoken. Order is never changed and nothing is spoken twice.
 class CheSpeechChunker {
-  CheSpeechChunker({this.targetChars = 240});
+  CheSpeechChunker({this.targetChars = 240, this.secondTargetChars = 160, this.maxChars = 640});
   final int targetChars;
+  final int secondTargetChars;
+  final int maxChars;
 
   String _seen = '';
   String _buffer = '';
   String _pending = '';
   bool _inFence = false;
-  bool _firstSent = false;
+  int _released = 0;
 
   List<String> addCumulative(String value) {
+    // A ~~~ fence is a code fence too; it is handled like ```.
+    value = value.replaceAll('~~~', '```');
     if (!value.startsWith(_seen)) {
       // The text was rewritten (e.g. sanitised). Never re-speak what was
       // already handled; only take text beyond the old length.
@@ -102,7 +189,10 @@ class CheSpeechChunker {
       final fence = rest.indexOf('```');
       if (fence < 0) {
         if (_inFence) {
-          rest = '';
+          // Keep a closing fence that is still arriving one backtick at a time.
+          final keep = rest.endsWith('``') ? 2 : rest.endsWith('`') ? 1 : 0;
+          _buffer = force ? '' : rest.substring(rest.length - keep);
+          return out.toString();
         }
         break;
       }
@@ -124,35 +214,50 @@ class CheSpeechChunker {
     return out.toString();
   }
 
+  static String _tidy(String text) => text
+      .replaceAll(RegExp(r'[ \t]+'), ' ')
+      .replaceAll(RegExp(r' ?\n[\s]*'), '\n')
+      .trim();
+
   List<String> _drain(bool force) {
     final out = <String>[];
     _pending += _speakableFromBuffer(force);
-    final sentence = RegExp(r'(.+?[.!?](?:\s+|$))', dotAll: true);
-    var grouped = '';
-    while (true) {
-      final match = sentence.firstMatch(_pending);
-      if (match == null) break;
-      final chunk = match.group(1)!.replaceAll(RegExp(r'\s+'), ' ').trim();
-      _pending = _pending.substring(match.end);
-      if (chunk.isEmpty) continue;
-      if (!_firstSent) {
-        out.add(chunk);
-        _firstSent = true;
-        continue;
+    while (_pending.trim().isNotEmpty) {
+      final target = _released == 0
+          ? 1
+          : _released == 1
+              ? (secondTargetChars < targetChars ? secondTargetChars : targetChars)
+              : targetChars;
+      var end = 0;
+      var full = false;
+      while (end < target) {
+        final next = cheSentenceEnd(_pending, end);
+        if (next < 0) break;
+        if (next > maxChars && end > 0) {
+          full = true;
+          break;
+        }
+        end = next;
       }
-      grouped = grouped.isEmpty ? chunk : '$grouped $chunk';
-      if (grouped.length >= targetChars) {
-        out.add(grouped);
-        grouped = '';
+      if (end < target && !full) {
+        if (force) {
+          end = _pending.length;
+        } else if (_pending.length > maxChars) {
+          // One sentence longer than a clip: cut it at a phrase break.
+          end = chePhraseCut(_pending, maxChars);
+        } else {
+          break;
+        }
+      }
+      if (end > maxChars) end = chePhraseCut(_pending, maxChars);
+      final piece = _tidy(_pending.substring(0, end));
+      _pending = _pending.substring(end);
+      if (piece.isNotEmpty) {
+        out.add(piece);
+        _released++;
       }
     }
-    // Sentences not yet long enough wait for more text (or the final flush).
-    if (grouped.isNotEmpty) _pending = '$grouped ${_pending.trimLeft()}';
-    if (force) {
-      final tail = _pending.replaceAll(RegExp(r'\s+'), ' ').trim();
-      if (tail.isNotEmpty) out.add(tail);
-      _pending = '';
-    }
+    if (force) _pending = '';
     return out;
   }
 }
