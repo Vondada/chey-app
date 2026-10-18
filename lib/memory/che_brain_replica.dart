@@ -227,6 +227,15 @@ class CheBrainSyncReceipt {
   bool get unreachable => error.isNotEmpty &&
       RegExp(r'SocketException|ClientException|TimeoutException|HandshakeException|Failed host lookup|Connection (?:refused|failed|reset|closed|timed out)|Network is unreachable|connection abort', caseSensitive: false).hasMatch(error);
 
+  /// The quiet line the Brain room shows when the cloud answered but the sync could not use the
+  /// answer (a 401, a 503, a refused op). Null when the sync worked or the cloud was unreachable,
+  /// which the room shows as offline instead.
+  String? get syncNotice {
+    if (ok || unreachable) return null;
+    final status = RegExp(r'\b([45]\d\d)\b').firstMatch(error)?.group(1);
+    return 'the cloud did not accept the sync${status == null ? '' : ' (HTTP $status)'}; this is the copy on your phone.';
+  }
+
   Map<String, dynamic> toJson() => {
         'at': at, 'pushed': pushed, 'acknowledged': acknowledged, 'conflicts': conflicts, 'rejected': rejected,
         'pulled': pulled, 'since': since, 'pending_after': pendingAfter, 'digest_checked': digestChecked,

@@ -368,11 +368,16 @@ test('an explicit request to hear the review wins over talk about it (review of 
   for (const asked of ['did your audit find anything wrong', 'did the audit find anything wrong', 'what did I miss in my morning review',
     'did I miss anything in the brain review', 'I missed the brain review, can you read it', 'read me my brain review but skip the facts',
     'what did the brain review say about my schedule', 'I got the brain review notification, read it', "I heard there's a brain review, read it",
-    "what did yesterday's audit find", 'what did the last audit find']) {
+    "what did yesterday's audit find", 'what did the last audit find', 'thanks, read me my brain review', 'thank you CHE, now the brain review please',
+    'I skipped the brain review, give it to me now', 'read me the brain review, when do you write it?', 'I disagree with that, read me the brain review instead']) {
     assert.equal(brainReviewIntent(asked), true, asked);
   }
   for (const said of ['pause the daily review', "I've read the brain review", "I don't agree with the brain review", 'thanks for the brain review',
-    'how does the brain review work', 'I missed the morning review', 'show me the review John left on Google', 'read me the audit from the accountant']) {
+    'how does the brain review work', 'I missed the morning review', 'show me the review John left on Google', 'read me the audit from the accountant',
+    // Someone else's review or audit, even with "read it" (second review of #337).
+    'find the review in my inbox and read it', 'the doctor sent the review, read it', 'my accountant did the audit, read it',
+    'I got an email with the audit, read it', 'what did the audit committee say', 'what did the last review on Amazon say',
+    'what did the last audit find about my business taxes', 'what did I miss in the last review meeting']) {
     assert.equal(brainReviewIntent(said), false, said);
   }
 });

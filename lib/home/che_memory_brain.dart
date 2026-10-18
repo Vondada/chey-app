@@ -464,7 +464,7 @@ class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom> {
   int _sig() => Object.hash(
     Object.hashAll([for (final d in widget.dots) Object.hash(d.id, d.title, d.body, d.category, d.importance, Object.hashAll(d.workers), d.verification, d.status)]),
     Object.hashAll([for (final l in widget.brainLinks) Object.hash(l['source'], l['target'])]),
-    Object.hashAll([for (final m in widget.roster) Object.hash(m['name'], m['role'], m['runtime_status'], m['temporary'])]),
+    Object.hashAll([for (final m in widget.roster) Object.hash(m['name'], m['role'], m['runtime_status'], m['temporary'], m['retired'])]),
   );
 
   @override

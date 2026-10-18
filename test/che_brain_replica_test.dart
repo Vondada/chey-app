@@ -457,5 +457,10 @@ void main() {
     expect(refused.ok, isFalse);
     expect(refused.unreachable, isFalse, reason: 'the cloud answered; this is not offline');
     expect(CheBrainSyncReceipt(at: '2026-10-18T00:00:00Z').unreachable, isFalse);
+    // The room's error line: only an answer the sync could not use, never offline or success.
+    expect(refused.syncNotice, 'the cloud did not accept the sync (HTTP 401); this is the copy on your phone.');
+    expect(CheBrainSyncReceipt(at: '2026-10-18T00:00:00Z', error: 'Could not sync the Brain (changes answered 503)').syncNotice, contains('(HTTP 503)'));
+    expect(CheBrainSyncReceipt(at: '2026-10-18T00:00:00Z', error: 'SocketException: Failed host lookup: che.example').syncNotice, isNull);
+    expect(CheBrainSyncReceipt(at: '2026-10-18T00:00:00Z').syncNotice, isNull);
   });
 }

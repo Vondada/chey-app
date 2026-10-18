@@ -1850,9 +1850,7 @@ OWNER AGENCY
               roster: team,
               loading: _brainSyncing,
               offline: _brainReplica.lastReceipt?.unreachable == true,
-              error: _brainReplica.lastReceipt?.ok == false && _brainReplica.lastReceipt?.unreachable != true
-                  ? 'Could not sync the Brain (${_brainReplica.lastReceipt!.error.split('\n').first.trim()}). Showing the copy on this phone.'
-                  : null,
+              error: _brainReplica.lastReceipt?.syncNotice,
               pendingSync: _brainReplica.pendingOps,
               onReadAloud: (t) => speakText(t, record: false, readOnDemand: true),
               onRefresh: () => _loadAgentState(silent: true),

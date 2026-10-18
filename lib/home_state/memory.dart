@@ -208,6 +208,18 @@ extension _CheHomeMemory on _CHEHomeState {
         headers: _authHeaders,
         body: jsonEncode({}),
       ).timeout(const Duration(seconds: 30));
+    } on TimeoutException {
+      // The request may have reached the cloud and cleared everything, so CHE reloads and says what
+      // the list shows now instead of claiming nothing was cleared.
+      await _loadAgentState(silent: true);
+      final left = savedMemories.length;
+      await speakText(
+        left == 0
+            ? 'The cloud was slow to answer, sir, but your memory list is now empty, so the clear went through.'
+            : 'I cannot confirm the clear, sir: the cloud was slow to answer, and my list still shows $left ${left == 1 ? 'memory' : 'memories'}.',
+        record: false,
+      );
+      return;
     } catch (_) {
       await speakText('I could not reach the cloud, sir; nothing was cleared.', record: false);
       return;
