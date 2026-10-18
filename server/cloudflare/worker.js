@@ -77,6 +77,7 @@ import { applyModelReading, asksAboutScreen, interpretOwnerTurn, interpretWithMo
 import { replyHijacksOwnerRequest, usageIntent, usageReport, speakUsage } from './usage_tracker.js';
 import { newestStarredIntent, speakNewestStarred, autoImproveScan, chatOnlyResponseIntent, currentTurnActionPolicy, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, inspirationUpgradeContext, listOwnerStarredRepos, readRepoSource, referenceSourceBlock, codingHistoryIntent, repositoryImplementationIntent, repositoryInspectionIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, starredStudyList, studySelectionIntent } from './code_scout.js';
 import { codingHistoryReceipt } from './coding_history.js';
+import { activityReceipt, activityStatusIntent } from './activity_status.js';
 import { webAppPage } from './web_app.js';
 import { learnedSkillsContext, learnedSkillsIntent, learnSkillIntent, attachmentText, condenseSkills, loadLearnedSkills, READ_FOR_SKILLS, redactSensitive, saveLearnedSkills, speakLearned, speakSkillList } from './self_skills.js';
 import { APPROVED_SKILLS, handleInstalledSkill, installedSkillIntent, installedSkillsContext } from './installed_skills.js';
@@ -9145,6 +9146,31 @@ export class CheState extends DurableObject {
             background_job_status: subject.job ? (stale ? 'interrupted' : subject.job.status) : null,
             model_calls: 0,
           });
+        }
+        // "What are you doing?" / "What's finished?": the durable job and mission records and
+        // the latest coding run answer. Beside "coding status", so every route above keeps its turns. A read: nothing is started, written or guessed.
+        // A turn about the screen or an attachment is about that, not the job queue.
+        const activityMode = body.screen_context || body.attachment ? '' : activityStatusIntent(message);
+        if (activityMode) {
+          if (!ownerDevice) return ndjsonReply('Only the CHE owner can read what CHE is working on, sir.', { source: 'che_activity_status', ok: false });
+          const current = await this.loadData();
+          const sessionId = String(await this.ctx.storage.get('che_runtime_last_session') || '').trim();
+          const runtimeAt = String(await this.ctx.storage.get('che_runtime_last_session_at') || '');
+          let runtime = null;
+          // Only a run accepted in the last day is current work; an older one is history.
+          if (sessionId && runtimeAt && Date.now() - Date.parse(runtimeAt) <= 24 * 3_600_000) {
+            let status = await new CheCodingRuntime(this.env).getStatus(sessionId, { acceptedAt: runtimeAt });
+            if (status.status === 200) {
+              // The same pending-resume overlay as "coding status": a resumable run waiting for
+              // capacity is current work, not a finished failure.
+              const pendingResume = await this.ctx.storage.get('che_runtime_resume');
+              if (pendingResume?.session_id === sessionId && resumeAction({ pending: pendingResume, status }) !== 'claimed') {
+                status = { ...status, state: pendingResume.dispatched_at ? 'resuming' : 'waiting_capacity' };
+              }
+              runtime = { sessionId, state: runtimeState(status), stateClass: runtimeStateClass(status), unverified: status.liveness === 'unverified' };
+            } else runtime = { sessionId, unread: true };
+          }
+          return ndjsonReply(activityReceipt({ mode: activityMode, jobs: current.jobs, objectives: current.objectives, runtime, staleMs: jobStaleMs, paused: current.autonomy === false }), { source: 'che_activity_status', model_calls: 0 });
         }
         if (/^\s*(?:che[,:]?\s*)?(?:please\s+)?resume (?:the|my|that) coding job[.!]?\s*$/i.test(message)) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can resume coding jobs.', { source: 'che_coding_resume', ok: false });
