@@ -36,13 +36,13 @@ import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, upscale
 import { githubVideoDiagnosis, mp4Facts } from './github_video_renderer.js';
 import { handleEdgeVoice } from './edge_route.js';
 import { marySecretsFrom, preferredElevenLabsDiagnostics, preferredElevenLabsKeyStatus, preferredElevenLabsLastOutcome, preferredElevenLabsSpeech, withMarySecrets } from './preferred_elevenlabs_voice.js';
-import { availableVoiceChoices, validateVoiceChoice, voiceEnvForSelection } from './voice_choices.js';
+import { availableVoiceChoices, reconcileVoiceChoice, saveVoiceChoice, validateVoiceChoice, voiceEnvForSelection } from './voice_choices.js';
 import { activeVoice, cleanVoiceName, findSaved, seedSaved, suggestProvider, upsertSaved, usableSaved, verifyVoice } from './voice_ids.js';
 import { fetchElevenLibrary, fetchElevenModels, fetchFishModels, fetchFreePreview, filterLibrary, isVoiceId, withFavorite, FAVORITES_LIMIT } from './voice_library.js';
 import { voiceStudioTurn } from './voice_studio_chat.js';
 import { fishAudioDiagnostics, fishAudioKeyStatus, fishAudioSpeech, fishSecretsFrom, readFishUsage } from './fish_audio_voice.js';
 import { cheSpokenText } from './che_pronunciation.js';
-import { premiumVoiceSpeech, premiumVoiceStatuses, readVoiceLog, recordVoiceLog, voiceProbeAuthorized } from './phone_voice.js';
+import { premiumVoiceSpeech, premiumVoiceStatuses, readVoiceLog, recordVoiceLog, voiceProbeAuthorized, VOICE_LOCKS, voiceProviderOf, voiceTurnFor } from './phone_voice.js';
 import { handleVideoLine, videoRequestTopic, videoRequestSeconds } from './video_route.js';
 import {
   YOUTUBE_CALLBACK_PATH, disconnectYouTube, finishYouTubeConnect, startYouTubeConnect,
@@ -51,7 +51,7 @@ import {
 import { activityFeed, creations, findCreations, greeting, suggestions, stalledTasks, decisionsNeeded, nextActions } from './activity.js';
 import { accountSnapshot as marketAccountSnapshot, candles as marketCandles, chartPage as marketChartPage, quote as marketQuote, snapshot as marketSnapshot } from './markets.js';
 import { CALLBACK_PATH as TRADOVATE_CALLBACK, accountBalance, connectLink, listAccounts, connection as brokerConnection, handleCallback as tradovateCallback, renewToken, tradovateConfigured } from './broker_tradovate.js';
-import { MODE_NAME, chooseAccount, deskIntent, rememberListed, deskTick, pendingAlert, readDesk, setMode, setRiskLimits, setSize, skipTrade, speakAlert, speakDeskStatus, takeAnnouncement, takeTrade } from './trading_desk.js';
+import { MODE_NAME, chooseAccount, confirmLive, deskIntent, rememberListed, deskTick, pendingAlert, readDesk, requestLive, setMode, setRiskLimits, setSize, skipTrade, speakAlert, speakDeskStatus, speakLiveRequest, takeAnnouncement, takeTrade } from './trading_desk.js';
 import { externalGrounding } from './external_grounding.js';
 import { answerEvidenceReceipt, cachedResearch, evidenceReferenceFollowup, factKey, forgetKnowledge, invalidateKnowledge, knownAnswer, LAST_ANSWER_EVIDENCE_KEY, ownerFactQuestion, markPureResearch, rememberOwnerFact, researchHit, researchKey } from './knowledge_cache.js';
 import { claimMatcher, disprovenContext, downgradeDisproven, externalCorrection, guardCitations, loadDisproven, newsQuestion, newsResearch, reopenArticles, recheckExternalClaim, recordDisproven, verifiedSourcesContext } from './source_verification.js';
@@ -60,7 +60,9 @@ import { answerOwnerMemoryQuestion, auditMemoryProvenance, evidenceQuestion, evi
 import { condenseHistory, ownerNotificationPolicy } from './workflow_governor.js';
 import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, nextTradingTickAt, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
 import { evidenceIntent, evidenceReport, evidenceTick } from './trading_evidence_runner.js';
-import { LIVE_BACKTEST, LIVE_STATE, liveBacktest, liveDashboard, liveTick, nextLiveTickAt, setLivePaper } from './trading_live.js';
+import { LIVE_BACKTEST, LIVE_STATE, liveBacktest, liveDashboard, livePaperSummary, liveTick, nextLiveTickAt, setLivePaper } from './trading_live.js';
+import { alpacaKeys, alpacaPaperOrders, alpacaStatus, placeAlpacaPaperOrder, removeAlpacaPaperKeys, saveAlpacaPaperKeys } from './broker_alpaca.js';
+import { speakConnections, tradingConnections } from './trading_connections.js';
 import { liveIntent, liveReply } from './trading_live_chat.js';
 import { cloudDailyLimit, sanitizeOwnerText } from './che_errors.js';
 import { CHE_UPDATE_GUIDE, mergeSelfUpdatePr, openSelfUpdatePr, rollbackLastUpdate, selfUpdateGitHubAccess, selfUpdateStatus, workerDeploymentStatus } from './self_update.js';
@@ -159,6 +161,7 @@ import {
   buildAgentTaskNodes,
   buildBrainGraph,
   enrichNoteForBrain,
+  BROKER_KEY_RE,
   isSafeMemoryText,
   listMemoryNotes,
   writeResearchMemoryNote,
@@ -3383,6 +3386,9 @@ export class CheState extends DurableObject {
     data.owner_context = Array.isArray(data.owner_context) ? data.owner_context : [];
     data.memories = Array.isArray(data.memories) ? data.memories : [];
     data.memory_records = Array.isArray(data.memory_records) ? data.memory_records : [];
+    // An older copy of `che` written back by a long request keeps the owner's
+    // newest voice choice, never the one it loaded.
+    await reconcileVoiceChoice(this.ctx.storage, data);
     // Records that did not come from the owner stop counting as his
     // confirmations. Each record is audited once; nothing is deleted.
     if (auditMemoryProvenance(data)) await this.ctx.storage.put('che', data);
@@ -3405,6 +3411,18 @@ export class CheState extends DurableObject {
   // The Trading Room's forward-paper dashboard with the real broker state: Tradovate's
   // OAuth sign-in as stored, FundYourEdge as not connected (Rithmic needs a licence), and
   // live orders disabled. Nothing is assumed about balances or firm rules.
+  // Every trading connection as its own system reports it (issue #344); nothing here changes a mode.
+  async tradingConnectionsView() {
+    const env = this.keyEnv || this.env;
+    const [paper, desk, conn, alpaca] = await Promise.all([
+      livePaperSummary(this.ctx.storage).catch(() => null),
+      readDesk(this.ctx.storage),
+      brokerConnection(this.ctx.storage).catch(() => ({ connected: false })),
+      alpacaStatus(env),
+    ]);
+    return tradingConnections({ paper, desk, tradovate: { configured: tradovateConfigured(env), conn }, alpaca });
+  }
+
   async liveTradingDashboard() {
     const auth = await this.ctx.storage.get('tradovate_auth').catch(() => null);
     const connected = Boolean(auth?.access_token) && Date.now() < Number(auth.expires_at || 0);
@@ -4590,7 +4608,8 @@ export class CheState extends DurableObject {
         const reply = replyFromNdjson(raw);
         // A command the owner ran: its real outcome goes to the run history.
         const slash = parseSlashCommand(message);
-        if (slash) {
+        // A key in a command ("/remember my key PK...") is refused, and its input is not kept either.
+        if (slash && !BROKER_KEY_RE.test(message)) {
           let held = null;
           try { held = JSON.parse(raw); } catch (_) { held = null; }
           const done = raw.split('\n').filter(Boolean).map((line) => { try { return JSON.parse(line); } catch (_) { return null; } }).filter((e) => e?.type === 'done').pop() || {};
@@ -4965,6 +4984,9 @@ export class CheState extends DurableObject {
       const data = (await this.ctx.storage.get('che')) || {
         devices: {}, memories: [], failures: {},
       };
+      // Every request sees the owner's newest voice choice, even after an older copy of
+      // `che` was written back by a long request (review of #338).
+      await reconcileVoiceChoice(this.ctx.storage, data);
       data.projects = Array.isArray(data.projects) ? data.projects : [];
       data.vault_items = Array.isArray(data.vault_items) ? data.vault_items : [];
       data.personality = Array.isArray(data.personality) ? data.personality : [];
@@ -5262,7 +5284,8 @@ export class CheState extends DurableObject {
         const name = cleanVoiceName(body?.name) || check.name || 'Unnamed voice';
         data.voice_saved = upsertSaved(seedSaved(data), { provider, id, name, state: 'verified', reason: '', verified_at: new Date().toISOString() });
         if (body?.use === true) data.voice_choice = { provider, id, name, speed: data.voice_choice?.speed ?? 1 };
-        await this.ctx.storage.put('che', data);
+        if (body?.use === true) await saveVoiceChoice(this.ctx.storage, data);
+        else await this.ctx.storage.put('che', data);
         return json({ ok: true, state: 'verified', saved: data.voice_saved, active: activeVoice(data),
           message: body?.use === true ? `${name} is CHE's voice now.` : `${name} is saved.` });
       }
@@ -5276,7 +5299,7 @@ export class CheState extends DurableObject {
         }
         data.voice_saved = saved;
         data.voice_choice = { provider: entry.provider, id: entry.id, name: entry.name, speed: data.voice_choice?.speed ?? 1 };
-        await this.ctx.storage.put('che', data);
+        await saveVoiceChoice(this.ctx.storage, data);
         return json({ ok: true, active: activeVoice(data), message: `CHE is using ${entry.name} now.` });
       }
       if (path === '/api/voice/ids/remove' && request.method === 'POST') {
@@ -5289,7 +5312,7 @@ export class CheState extends DurableObject {
         if (!entry) return json({ ok: false, detail: 'That voice is not in your saved voices.' }, 404);
         data.voice_saved = saved.filter((s) => !(s.provider === provider && s.id === id));
         if (data.voice_choice?.provider === provider && data.voice_choice?.id === id) delete data.voice_choice;
-        await this.ctx.storage.put('che', data);
+        await saveVoiceChoice(this.ctx.storage, data);
         const back = data.voice_choice ? '' : ' CHE is back on its built-in voice.';
         return json({ ok: true, saved: data.voice_saved, active: activeVoice(data), message: `${entry.name} is removed.${back}` });
       }
@@ -5350,7 +5373,7 @@ export class CheState extends DurableObject {
         if (!chosen) return json({ detail: 'That voice, model or setting is not available on your connected account, or the speed is invalid.' }, 400);
         const listed = choices.options.find((o) => o.provider === chosen.provider && o.id === chosen.id);
         data.voice_choice = { ...chosen, name: listed?.name || '' };
-        await this.ctx.storage.put('che', data);
+        await saveVoiceChoice(this.ctx.storage, data);
         return json({ ok: true, selected: chosen, message: 'CHE will use this voice for Chat and Read This.' });
       }
       if (path === '/api/voice/preview' && request.method === 'POST') {
@@ -5380,7 +5403,13 @@ export class CheState extends DurableObject {
       if (path === '/api/voice/edge' && request.method === 'POST') {
         // The iPhone asks this route first. CHE's voice is ElevenLabs (Mary),
         // then Fish (owner, 2026-10-14), tried here without requiring a new IPA.
-        const selectedVoice = ownerDevice ? data.voice_choice : null;
+        // One voice per response (owner, 2026-10-18): a reply's turn keeps the
+        // voice settings its first clip used, and a locked clip uses only the
+        // provider that spoke the first one.
+        this.voiceTurns ||= new Map();
+        const turn = ownerDevice ? voiceTurnFor(this.voiceTurns, body.turn, data.voice_choice) : null;
+        const lock = VOICE_LOCKS.includes(body.lock) ? body.lock : '';
+        const selectedVoice = ownerDevice ? (turn ? turn.choice : data.voice_choice) : null;
         const voiceEnv = voiceEnvForSelection(this.voiceEnv(), selectedVoice);
         const said = cheSpokenText(body.text);
         const started = Date.now();
@@ -5388,21 +5417,29 @@ export class CheState extends DurableObject {
         // owner's devices may ask for them; everyone else gets the everyday voice.
         const premium = await premiumVoiceSpeech(voiceEnv, said, ownerDevice
           ? { purpose: body.purpose, character: body.character, storage: this.ctx.storage,
-              selectedProvider: selectedVoice?.provider }
-          : { storage: this.ctx.storage });
+              selectedProvider: selectedVoice?.provider, lock, turn }
+          : { storage: this.ctx.storage, lock });
+        const engine = premium?.headers.get('X-CHE-Voice') || 'none';
+        if (turn && !turn.fishModel && voiceProviderOf(engine) === 'fish') turn.fishModel = premium.headers.get('X-CHE-Fish-Model') || '';
         const statuses = premiumVoiceStatuses(voiceEnv);
         await recordVoiceLog(this.ctx.storage, {
           route: 'edge',
           chars: said.length,
-          engine: premium?.headers.get('X-CHE-Voice') || 'none',
+          engine,
           ...statuses,
+          ...(lock ? { lock } : {}),
+          ...(Number.isInteger(body.index) ? { index: body.index } : {}),
+          ...(premium ? { tag: premium.headers.get('X-CHE-Voice-Tag') || '', attempts: Number(premium.headers.get('X-CHE-Voice-Attempts') || 1) } : {}),
+          ...(premium?.headers.get('X-CHE-Voice-Fallback') ? { fallback: 1 } : {}),
           ms: Date.now() - started,
         });
         if (premium) return premium;
         // The phone asks for ElevenLabs and Fish only: no free voice, so it can
-        // stay silent and show why instead of speaking in another voice.
-        if (body.premium_only === true) {
-          return new Response(null, { status: 204, headers: { 'X-CHE-Voice': 'none', 'X-CHE-Mary': statuses.mary, 'X-CHE-Fish': statuses.fish } });
+        // stay silent and show why instead of speaking in another voice. A locked
+        // clip says so, so the phone reports an interruption, not a new voice.
+        if (body.premium_only === true || lock) {
+          return new Response(null, { status: 204, headers: { 'X-CHE-Voice': 'none', 'X-CHE-Mary': statuses.mary, 'X-CHE-Fish': statuses.fish,
+            ...(lock ? { 'X-CHE-Voice-Lock': lock } : {}) } });
         }
         return handleEdgeVoice(request, voiceEnv, { ...body, text: said });
       }
@@ -6201,6 +6238,39 @@ export class CheState extends DurableObject {
         if (body.action === 'tick') return json({ ok: true, run: await liveTick(this.ctx.storage, { force: true }) });
         if (body.action === 'backtest') return json(await liveBacktest(this.ctx.storage));
         return json({ detail: 'Unknown action. Use start, stop, tick or backtest.' }, 400);
+      }
+      const tradingOwnerOnly = () => json({ detail: 'Only the CHE owner can use trading connections.' }, 403);
+      if (path === '/api/trading/connections' && request.method === 'GET') {
+        if (!ownerDevice) return tradingOwnerOnly();
+        const view = await this.tradingConnectionsView();
+        return json({ ...view, speech: speakConnections(view) });
+      }
+      // The Alpaca paper key pair: saved only after Alpaca's paper host accepts it, never returned.
+      if (path === '/api/trading/alpaca/keys' && request.method === 'POST') {
+        if (!ownerDevice) return tradingOwnerOnly();
+        // A Worker secret pair wins over keys saved in CHE, so saving or removing here would not change what CHE uses.
+        const workerPair = Boolean(alpacaKeys(this.env));
+        if (body.action === 'remove') {
+          if (body.confirm !== true) return json({ ok: false, detail: 'Removing the Alpaca paper keys needs your confirmation, sir. Nothing was removed.' }, 409);
+          const removed = await removeAlpacaPaperKeys(this.ctx.storage);
+          await this.refreshKeyEnv();
+          const detail = workerPair ? 'CHE still uses the Alpaca paper keys set as Worker secrets, sir; remove those in Cloudflare to disconnect Alpaca.'
+            : removed.removed ? 'The Alpaca paper keys are removed, sir.' : 'There were no Alpaca paper keys saved in CHE, sir.';
+          return json({ ...removed, detail });
+        }
+        if (workerPair) return json({ ok: false, detail: 'Alpaca paper keys are already set as Worker secrets, sir, and those win, so nothing was saved. Change them in Cloudflare instead.' }, 409);
+        const saved = await saveAlpacaPaperKeys(this.ctx.storage, { key_id: body.key_id, secret: body.secret });
+        if (saved.ok) await this.refreshKeyEnv();
+        return json(saved, saved.ok ? 200 : 400);
+      }
+      if (path === '/api/trading/alpaca/orders' && request.method === 'GET') {
+        if (!ownerDevice) return tradingOwnerOnly();
+        return json(await alpacaPaperOrders(this.keyEnv || this.env));
+      }
+      if (path === '/api/trading/alpaca/order' && request.method === 'POST') {
+        if (!ownerDevice) return tradingOwnerOnly();
+        const placed = await placeAlpacaPaperOrder(this.keyEnv || this.env, this.ctx.storage, body);
+        return json(placed, placed.ok ? 200 : 400);
       }
       if (path === '/api/trading/paper' && request.method === 'GET') {
         const book = await readBook(this.ctx.storage);
@@ -7980,6 +8050,11 @@ export class CheState extends DurableObject {
             category: 'message_too_long', retryable: false,
           }, 413);
         }
+        // A broker key said or typed in chat is never kept or sent on to a model (review of #348):
+        // the memory filters refuse it by its shape, and CHE says what to do instead.
+        if (BROKER_KEY_RE.test(rawMessage)) {
+          return ndjsonReply('I did not keep that, sir: it looks like an API key, and keys never go in chat. It may now be exposed, so regenerate it where it came from. A new Alpaca paper key goes in the Trading Room, straight to CHE\'s key store.', { source: 'che_secret_refused', ok: false, model_calls: 0 });
+        }
         // A family/guest device never reaches the owner's chat routes below.
         if (!ownerDevice) return this.guestChat(body, rawMessage, activeTenant);
         // Command Center: a plain yes releases a held command (once, fresh);
@@ -9409,6 +9484,28 @@ export class CheState extends DurableObject {
         const desk = deskIntent(message);
         if (desk) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can use the trading desk.', { source: 'che_trading_desk', ok: false });
+          if (desk.kind === 'connections') {
+            const view = await this.tradingConnectionsView();
+            return ndjsonReply(speakConnections(view), { source: 'che_trading_desk', ok: true, trading_mode: view.mode });
+          }
+          if (desk.kind === 'alpaca_remove') {
+            return ndjsonReply('To remove the Alpaca paper keys, sir, open the Trading Room, choose Alpaca, then Remove keys; CHE asks you to confirm first. Nothing was removed.', { source: 'che_trading_desk', ok: true });
+          }
+          if (desk.kind === 'alpaca_setup') {
+            return ndjsonReply('To connect Alpaca paper trading, sir: on alpaca.markets open your paper account, go to API Keys and generate a paper key; its ID starts with PK. Then open the Trading Room, choose Alpaca, and enter the key ID and secret there. Never say or type them in chat. CHE checks them with Alpaca\'s paper service before saving, and refuses live keys.', { source: 'che_trading_desk', ok: true });
+          }
+          if (desk.kind === 'mode' && desk.mode === 'live') {
+            const asked = await requestLive(this.ctx.storage);
+            if (asked.already) return ndjsonReply('You are already on live trading, sir. Every order still needs your approval of that exact order.', { source: 'che_trading_desk', ok: true, trading_mode: 'live' });
+            return ndjsonReply(speakLiveRequest(asked.desk, await brokerConnection(this.ctx.storage)), { source: 'che_trading_desk', ok: true, trading_mode: asked.desk.mode, live_confirmation_needed: true });
+          }
+          if (desk.kind === 'confirm_live') {
+            const confirmed = await confirmLive(this.ctx.storage);
+            if (confirmed.error) return ndjsonReply(confirmed.error, { source: 'che_trading_desk', ok: false });
+            desk.kind = 'mode';
+            desk.mode = 'live';
+            desk.confirmed = confirmed;
+          }
           if (desk.kind === 'connect') {
             if (!tradovateConfigured(this.keyEnv || this.env)) {
               return ndjsonReply(`To connect NinjaTrader, Tradovate first has to give CHE OAuth app credentials, sir. Ask Tradovate support (or their partner program) to register an OAuth application with this redirect address: ${new URL(request.url).origin}/broker/tradovate/callback. They will give you a client ID and a client secret; save them as the Worker secrets CHE_TRADOVATE_OAUTH_CLIENT_ID and CHE_TRADOVATE_OAUTH_CLIENT_SECRET, then say "connect NinjaTrader" again. Your password never comes to me: you sign in on Tradovate's own page.`, { source: 'che_trading_desk', ok: false });
@@ -9417,7 +9514,7 @@ export class CheState extends DurableObject {
             return ndjsonReply(`Open this link to sign in to NinjaTrader on Tradovate's own page, sir. Your password goes only to Tradovate, never to me. The link works once, for 10 minutes: ${link.url}`, { source: 'che_trading_desk', ok: true });
           }
           if (desk.kind === 'mode') {
-            const changed = await setMode(this.ctx.storage, desk.mode);
+            const changed = desk.confirmed || await setMode(this.ctx.storage, desk.mode);
             const conn = await brokerConnection(this.ctx.storage);
             const note = desk.mode === 'live'
               ? ' Real money now. I will call each entry and place it only when you say "take the trade".'
