@@ -12,18 +12,30 @@ const MAX_NOTES = Number.POSITIVE_INFINITY; // Brain room: no artificial cap on 
 const MAX_NOTES_SOFT = 50000; // Durable Object safety only
 const MAX_BULLETS = 6;
 const MAX_SOURCES = 6;
-const SENSITIVE_RE = /password|passcode|security code|social security|credit card|api[_ -]?key|private key|seed phrase|session cookie|fiverr\s+password|auth\s+token/i;
+export const SENSITIVE_RE = /password|passcode|security code|social security|credit card|api[_ -]?key|private key|seed phrase|session cookie|fiverr\s+password|auth\s+token/i;
 
 function clip(value, max) {
-  return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
+  // Trimmed after the cut too, so clipping a clipped value changes nothing (the Brain's displayCopy relies on it).
+  return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max).trim();
+}
+
+/** A title cut at a word boundary: a hard cut can end on a fragment ("pin|nacle") the secret gate reads as a key word. */
+function clipWords(value, max) {
+  const text = String(value ?? '').replace(/\s+/g, ' ').trim();
+  if (text.length <= max) return text;
+  const cut = text.slice(0, max);
+  const space = cut.lastIndexOf(' ');
+  return (space > max / 2 ? cut.slice(0, space) : cut).trim();
 }
 
 /** Same gate as /api/memory/add — non-sensitive only. */
 export function isSafeMemoryText(text) {
-  const memory = clip(text, 500);
-  if (!memory) return false;
-  if (SENSITIVE_RE.test(memory)) return false;
-  if (classifyItem(memory) === 'secret') return false;
+  // The whole collapsed text, not the 500-character display window: a window can cut a word
+  // ("pin|nacle") into something the classifier reads as a secret and refuse a clean memory.
+  const whole = String(text ?? '').replace(/\s+/g, ' ').trim();
+  if (!whole) return false;
+  if (SENSITIVE_RE.test(whole)) return false;
+  if (classifyItem(whole) === 'secret') return false;
   return true;
 }
 
@@ -57,8 +69,9 @@ function memorySupersessionSlot(text) {
 export function addOwnerMemory(data, text, opts = {}) {
   data.memories = Array.isArray(data.memories) ? data.memories : [];
   data.memory_records = Array.isArray(data.memory_records) ? data.memory_records : [];
+  // The whole text is gated, then clipped: the cut copy can end on a word fragment ("pin").
+  if (!isSafeMemoryText(text)) return { added: false, reason: 'rejected_sensitive_or_empty' };
   const memory = clip(text, 500);
-  if (!isSafeMemoryText(memory)) return { added: false, reason: 'rejected_sensitive_or_empty' };
   const lower = memory.toLowerCase();
   if (data.memories.some((item) => String(item).toLowerCase() === lower)) {
     return { added: false, reason: 'duplicate', memory, replaced: [] };
@@ -86,9 +99,10 @@ export function addOwnerMemory(data, text, opts = {}) {
     ? Math.max(0, Math.min(1, Number(opts.confidence)))
     : 1;
   const record = {
-    id: cryptoRandomId(),
+    // A memory first saved on the phone keeps the id its Brain record already has.
+    id: clip(opts.id, 80) || cryptoRandomId(),
     text: memory,
-    title: clip(opts.title || memory, 160),
+    title: clipWords(opts.title || memory, 160),
     category: clip(opts.category || 'Memory', 60) || 'Memory',
     // No source means CHE's own code wrote it, not the owner: only the owner's
     // memory paths (chat "remember", the Memory screen, an approved
@@ -447,7 +461,7 @@ export function buildBrainGraph(data = {}, { maxLinksPerNode = 4, minSimilarity 
     const id = `lk-${i}-${hashShort(text)}`;
     nodes.push({
       id,
-      title: clip(text, 160),
+      title: clipWords(text, 160),
       body: text,
       kind: 'learned_knowledge',
       locale: null,

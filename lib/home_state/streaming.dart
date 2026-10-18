@@ -36,10 +36,12 @@ extension _CheHomeStreaming on _CHEHomeState {
 
     // Saved library passages first: the owner asked CHE to remember these.
     final library = await _offlineLibrary.search(userMessage);
+    // Then CHE's own Brain on the phone: memories, conversations and lessons, with their labels.
+    final brainRecall = await _brainReplicaContext(userMessage);
     final local = await CheLocalAI.respond(
       userMessage,
       history: history,
-      memoryContext: [...library, ..._brainContextFor(userMessage)],
+      memoryContext: [...library, ...brainRecall, ..._brainContextFor(userMessage)],
     );
     if ((local == null || local.trim().isEmpty)) {
       final brain = CheLocalBrain();
@@ -50,7 +52,7 @@ extension _CheHomeStreaming on _CHEHomeState {
         localBrainHealth: 'active',
         currentProvider: 'local_brain',
         currentModel: cheDefaultLocalBrainModel.modelId,
-        memory: [...library, ..._brainContextFor(userMessage)].take(8).toList(),
+        memory: [...library, ...brainRecall, ..._brainContextFor(userMessage)].take(8).toList(),
       );
       final generated = await brain.generate(
         prompt: userMessage,

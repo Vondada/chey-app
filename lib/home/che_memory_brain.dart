@@ -56,6 +56,7 @@ List<CheMemoryDot> cheBuildMemoryDots({
   List<Map<String, dynamic>> brainLinks = const [],
   List<String> suggestions = const [],
   List<Map<String, dynamic>> conversationMemories = const [],
+  List<Map<String, dynamic>> brainRecords = const [],
 }) {
   // brainLinks are applied in CheMemoryBrainRoom via cheRelatedMemoryEdges.
 
@@ -187,6 +188,49 @@ List<CheMemoryDot> cheBuildMemoryDots({
         links: [for (final l in (m['links'] as List?) ?? const []) 'conv:$l'],
       ),
     );
+    i++;
+  }
+  // The Brain replica on the phone: the same records with stable ids, so a
+  // record already drawn from the cloud lists is not drawn twice. Offline, this
+  // is where every dot comes from.
+  final drawn = out.map((d) => d.id).toSet();
+  for (final r in brainRecords) {
+    if (r['deleted'] == true) continue;
+    final id = '${r['id'] ?? ''}';
+    if (id.isEmpty) continue;
+    final bare = id.contains(':') ? id.substring(id.indexOf(':') + 1) : id;
+    if (drawn.contains(id) || drawn.contains(bare) || drawn.contains('conv:$bare')) continue;
+    final body = '${r['excerpt'] ?? r['body'] ?? ''}'.trim();
+    if (body.isEmpty) continue;
+    final region = '${r['region'] ?? ''}';
+    final category = region == 'Personal Memory'
+        ? 'Memory'
+        : region == 'Conversations and Corrections'
+        ? 'Conversations'
+        : region == 'Office Agents' || region == 'Active and Historical Tasks'
+        ? 'Agents'
+        : region == 'Experiments and Lessons' || region == 'Daily Audits and Conclusions'
+        ? 'Learning'
+        : region == 'Trading and Market Research' || region == 'YouTube and Media' || region == 'Business and Finance'
+            || region == 'REA Investigations' || region == 'Problems and Opportunities' || region == 'Projects and Proposals'
+        ? 'Research'
+        : 'Knowledge';
+    final score = (r['significance'] is Map) ? ((r['significance'] as Map)['score'] as num?)?.toDouble() : null;
+    out.add(
+      CheMemoryDot(
+        id: id,
+        title: _shortTitle('${r['title'] ?? body}'),
+        body: body,
+        category: category,
+        tokens: _tokens(body),
+        at: DateTime.tryParse('${r['created_at'] ?? ''}'),
+        source: '${r['verification'] ?? 'unknown'}'.replaceAll('_', ' '),
+        scope: 'owner',
+        importance: score == null ? 3 : (1 + (score * 4).round()).clamp(1, 5),
+        links: [for (final l in (r['links'] as List?) ?? const []) if (l is Map) '${l['to']}'],
+      ),
+    );
+    drawn.add(id);
     i++;
   }
   return out;

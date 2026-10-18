@@ -2,34 +2,183 @@ part of '../main.dart';
 
 // Split out of main.dart: _CHEHomeState members (memory).
 extension _CheHomeMemory on _CHEHomeState {
-  Future<void> saveMemory(String memory) async {
-    if (!await _ensurePaired()) return;
+  /// Saves an owner memory and says what really happened: 'saved', 'saved_offline'
+  /// (kept on the phone, reaches the cloud at the next sync), 'refused' (a password or
+  /// key: never kept anywhere but the vault), or 'failed'.
+  Future<String> saveMemory(String memory) async {
+    if (!await _ensurePaired()) return 'failed';
 
     final clean = memory.trim();
-    if (clean.isEmpty) return;
+    if (clean.isEmpty) return 'failed';
+    if (cheBrainTextIsSensitive(clean)) return 'refused';
 
-    final response = await http.post(
-      Uri.parse('$cheAgentBaseUrl/api/memory/add'),
-      headers: _authHeaders,
-      body: jsonEncode({'memory': clean}),
-    );
+    http.Response response;
+    try {
+      response = await http.post(
+        Uri.parse('$cheAgentBaseUrl/api/memory/add'),
+        headers: _authHeaders,
+        body: jsonEncode({'memory': clean}),
+      ).timeout(const Duration(seconds: 30));
+    } catch (_) {
+      // No connection (or no answer in time): the memory is kept in the Brain replica
+      // on the phone and reaches the cloud at the next sync. It is never dropped.
+      final kept = await _brainReplica.remember(kind: 'memory', region: 'Personal Memory', path: 'Memory', body: clean, source: {'kind': 'memory_record'});
+      if (mounted) _set(() {});
+      return kept == null ? 'refused' : 'saved_offline';
+    }
 
     if (response.statusCode == 401) {
       await _clearSecuritySession();
-      return;
+      return 'failed';
     }
+    if (response.statusCode != 200) return response.statusCode == 400 ? 'refused' : 'failed';
 
     await _loadAgentState(silent: true);
+    return 'saved';
   }
 
-  Future<void> deleteMemory(int index) async {
+  /// The spoken outcome of saveMemory, never a "saved" for something that was not.
+  static String memorySaveSpeech(String outcome) => switch (outcome) {
+        'saved' => 'Got it. I saved that securely, sir.',
+        'saved_offline' => 'Got it. I kept that on the phone, sir; it reaches the cloud when we are back online.',
+        'refused' => 'I did not keep that, sir: it looks like a password or a key, and those stay in the vault only.',
+        _ => 'I could not save that, sir. Nothing was kept; please try again.',
+      };
+
+  // ── Brain replica (lib/memory/che_brain_replica.dart) ──────────────────────
+
+  Future<({int status, String body})> _brainGet(Uri uri, Map<String, String> headers) async {
+    final res = await http.get(uri, headers: headers).timeout(const Duration(seconds: 30));
+    return (status: res.statusCode, body: res.body);
+  }
+
+  Future<({int status, String body})> _brainPost(Uri uri, Map<String, String> headers, String body) async {
+    final res = await http.post(uri, headers: headers, body: body).timeout(const Duration(seconds: 30));
+    return (status: res.statusCode, body: res.body);
+  }
+
+  /// Push the phone's changes, pull the cloud's, compare digests. Quiet: the
+  /// receipt is shown in the Brain tab, never spoken on its own.
+  Future<CheBrainSyncReceipt?> _syncBrainReplica() async {
+    if (_deviceToken == null || _deviceToken!.isEmpty || _brainSyncing) return null;
+    _brainSyncing = true;
+    final CheBrainSyncReceipt receipt;
+    try {
+      receipt = await _brainReplica.sync(cheAgentBaseUrl, _authHeaders, get: _brainGet, post: _brainPost);
+      if (mounted) _set(() {});
+    } catch (_) {
+      return null;
+    } finally {
+      _brainSyncing = false;
+    }
+    // Changes the phone pushed can move CHE's memory list (a deferred delete, an edit): reload it
+    // so the Memory screen never shows a list the cloud no longer has. The outbox is empty now,
+    // so the reload's own sync pushes nothing and this does not recurse.
+    if (receipt.acknowledged > 0 && mounted) await _loadAgentState(silent: true);
+    return receipt;
+  }
+
+  /// When the cloud cannot be reached, the lists the rooms read come from the replica.
+  Future<void> _hydrateFromBrainReplica() async {
+    try {
+      await _brainReplica.load();
+    } catch (_) {
+      return;
+    }
+    if (memoryRecords.isEmpty) {
+      final rows = <Map<String, dynamic>>[];
+      for (final r in _brainReplica.list(region: 'Personal Memory', limit: 2000)) {
+        // The cloud list never shows an inactive memory, and it knows a memory by the display copy
+        // of its whole body (the excerpt keeps newlines and 600 raw characters), so a delete sent
+        // with these words finds the row there instead of being told it was already gone.
+        if (r.source['active'] == false) continue;
+        final body = r.inlineBody ? r.excerpt : await _brainReplica.bodyOf(r.id);
+        rows.add({
+          'id': r.id.startsWith('mem:') ? r.id.substring(4) : r.id, 'text': CheBrainReplica.displayCopy(body), 'title': r.title, 'category': r.path.isEmpty ? 'Memory' : r.path,
+          'source': '${r.source['legacy_source'] ?? r.source['kind'] ?? 'brain'}', 'verification_status': r.verification,
+          'created_at': r.createdAt, 'active': true, 'scope': '${r.source['scope'] ?? 'owner'}',
+        });
+      }
+      memoryRecords = rows;
+      savedMemories = memoryRecords.map((r) => '${r['text']}').toList();
+    }
+    if (conversationMemories.isEmpty) {
+      conversationMemories = _brainReplica.list(region: 'Conversations and Corrections', limit: 2000).map((r) => {
+        'id': r.id.startsWith('conv:') ? r.id.substring(5) : r.id, 'at': r.createdAt, 'title': r.title, 'body': r.excerpt,
+        'links': [for (final l in r.links) if ('${l['to']}'.startsWith('conv:')) '${l['to']}'.substring(5)],
+      }).toList();
+    }
+    if (mounted) _set(() {});
+  }
+
+  /// Replica records for the Brain room. Loaded once; before that the list is empty, never
+  /// invented. The first load redraws the room once, so the dots appear without a tap.
+  List<Map<String, dynamic>> _brainReplicaRecords() {
+    if (!_brainLoadKicked) {
+      _brainLoadKicked = true;
+      unawaited(_brainReplica.load().then((_) { if (mounted) _set(() {}); }));
+    }
+    return _brainReplica.recordsJson();
+  }
+
+  /// Recall for the offline answer: the records that share the most words with the question, labeled.
+  Future<List<String>> _brainReplicaContext(String message) async {
+    try {
+      await _brainReplica.load();
+      return _brainReplica.search(message, limit: 4).map((r) => 'BRAIN (${r.region}; ${r.verification.replaceAll('_', ' ')}): ${r.title} — ${r.excerpt}').toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  /// One quiet caption for the Brain tab: real counts and the last sync receipt.
+  String _brainReplicaLine() {
+    final receipt = _brainReplica.lastReceipt;
+    final pending = _brainReplica.pendingOps;
+    final count = _brainReplica.count;
+    final sync = receipt == null
+        ? 'not synced yet'
+        : !receipt.ok
+            ? 'last sync failed, nothing lost'
+            : receipt.digestChecked
+                ? (receipt.digestMatch ? 'in step with the cloud' : 'catching up with the cloud')
+                : 'synced';
+    return 'Brain on this phone: $count record${count == 1 ? '' : 's'} · $sync${pending > 0 ? ' · $pending waiting to send' : ''}';
+  }
+
+  /// [text] is what the owner saw on the row: a background reload can move the list before the
+  /// tap, so the words decide, never the slot alone.
+  Future<void> deleteMemory(int index, {String? text}) async {
     if (!await _ensurePaired()) return;
 
-    final response = await http.post(
-      Uri.parse('$cheAgentBaseUrl/api/memory/delete'),
-      headers: _authHeaders,
-      body: jsonEncode({'index': index}),
-    );
+    // By position and by words: if the list moved under the owner's finger (a deferred phone push
+    // landed), the Worker deletes the memory with these words or answers 404, never a neighbour.
+    final wanted = text ?? (index >= 0 && index < savedMemories.length ? savedMemories[index] : '');
+    http.Response response;
+    try {
+      response = await http.post(
+        Uri.parse('$cheAgentBaseUrl/api/memory/delete'),
+        headers: _authHeaders,
+        body: jsonEncode({'index': index, 'text': wanted}),
+      );
+    } catch (_) {
+      // No connection: the deletion is a tombstone in the Brain replica now and
+      // reaches the cloud (and CHE's memory list) at the next sync. Every record
+      // showing these words goes, so nothing comes back at the next load.
+      final record = memoryRecords.where((r) => '${r['text'] ?? ''}' == wanted).firstOrNull;
+      if (record != null && '${record['id'] ?? ''}'.isNotEmpty) await _brainReplica.forget('mem:${record['id']}');
+      final gone = await _brainReplica.forgetMemoriesShowing(wanted);
+      savedMemories.remove(wanted);
+      memoryRecords.removeWhere((r) => '${r['text'] ?? ''}' == wanted);
+      if (mounted) _set(() {});
+      await speakText(
+        gone > 0 || record != null
+            ? 'Deleted on the phone, sir; the cloud follows when we are back online.'
+            : 'I removed it from this list, sir, but I could not find its record to delete; it may come back at the next load.',
+        record: false,
+      );
+      return;
+    }
 
     if (response.statusCode == 401) {
       await _clearSecuritySession();
@@ -37,15 +186,28 @@ extension _CheHomeMemory on _CHEHomeState {
     }
 
     await _loadAgentState(silent: true);
+    if (response.statusCode == 404) {
+      await speakText('That memory was already gone, sir; I refreshed the list.', record: false);
+    } else if (response.statusCode != 200) {
+      await speakText('I could not delete that memory, sir; the cloud answered ${response.statusCode}. Nothing was removed.', record: false);
+    }
   }
 
   Future<void> clearAllMemories() async {
     if (!await _ensurePaired()) return;
 
-    final response = await http.post(
-      Uri.parse('$cheAgentBaseUrl/api/memory/clear'),
-      headers: _authHeaders,
-    );
+    http.Response response;
+    try {
+      // The Worker reads a JSON body on every POST; without one it answers 400 and nothing is cleared.
+      response = await http.post(
+        Uri.parse('$cheAgentBaseUrl/api/memory/clear'),
+        headers: _authHeaders,
+        body: jsonEncode({}),
+      );
+    } catch (_) {
+      await speakText('I could not reach the cloud, sir; nothing was cleared.', record: false);
+      return;
+    }
 
     if (response.statusCode == 401) {
       await _clearSecuritySession();
@@ -53,6 +215,12 @@ extension _CheHomeMemory on _CHEHomeState {
     }
 
     await _loadAgentState(silent: true);
+    await speakText(
+      response.statusCode == 200
+          ? 'All memories cleared, sir.'
+          : 'I could not clear the memories, sir; the cloud answered ${response.statusCode}. Nothing was removed.',
+      record: false,
+    );
   }
 
   void openMemoryManager() {
@@ -98,6 +266,7 @@ extension _CheHomeMemory on _CHEHomeState {
                           : ListView.builder(
                               itemCount: savedMemories.length,
                               itemBuilder: (context, index) {
+                                final text = savedMemories[index];
                                 return Card(
                                   color: const Color(0xFF243747),
                                   child: ListTile(
@@ -106,7 +275,7 @@ extension _CheHomeMemory on _CHEHomeState {
                                       color: Color(0xFF34E0B8),
                                     ),
                                     title: Text(
-                                      savedMemories[index],
+                                      text,
                                       style: const TextStyle(
                                         color: Colors.white,
                                       ),
@@ -117,7 +286,7 @@ extension _CheHomeMemory on _CHEHomeState {
                                         color: Colors.redAccent,
                                       ),
                                       onPressed: () async {
-                                        await deleteMemory(index);
+                                        await deleteMemory(index, text: text);
                                         setModalState(() {});
                                       },
                                     ),

@@ -92,6 +92,7 @@ import { loadPackedJson, savePackedJson } from './prompt_compaction.js';
 import { githubWorkshopPieces, workshopAvatar, workshopAvatarIntent, workshopSnapshot } from './workshop.js';
 import { flushOutbox, handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, openMailbox, transcript as flagstaffTranscript, mailboxCode, mailboxLink, postWebMail, readWebMail, rotateMailboxCode } from './web_mailbox.js';
 import { CheLibrary, fetchReadable, libraryContext, libraryIntent } from './library.js';
+import { CheBrainStore, backfillConversations, displayCopy, isSafeText, ownerMemoryRecord, projectLegacyState, rememberExchange, sameDisplayCopy } from './brain_store.js';
 import { fetchYouTubeKnowledge, mergeCaptionLines, normalizeCaptionLines, youtubeVideoId } from './youtube_learning.js';
 import {
   disconnectGoogle, finishGoogleConnect, googleChatIntent, googleConnectorStates, googleLabel, googleOwnerStep, googleRecheckPending,
@@ -309,7 +310,8 @@ async function bodyOf(request) {
   if (Number(request.headers.get('content-length') || 0) > 20_000_000) throw new Error('too_large');
   const raw = await request.text();
   if (raw.length > 20_000_000) throw new Error('too_large');
-  const body = JSON.parse(raw);
+  // An empty body is an empty request (the phone's "clear all" sends none), not a malformed one.
+  const body = raw.trim() ? JSON.parse(raw) : {};
   if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('invalid_json');
   return body;
 }
@@ -4510,6 +4512,8 @@ export class CheState extends DurableObject {
         }
         const memory = await recordConversationMemory(this.ctx.storage, { message, reply });
         if (memory) {
+          // The Brain keeps the whole exchange; brainmem keeps its linked summary. Same id.
+          try { rememberExchange(new CheBrainStore(this.ctx.storage), { id: memory.id, message, reply, at: memory.at }); } catch (_) {}
           await storeVectorMemory(this.keyEnv || this.env, {
             external_id: `conversation:${memory.id}`,
             kind: 'conversation',
@@ -5635,6 +5639,118 @@ export class CheState extends DurableObject {
           total: await conversationMemoryCount(this.ctx.storage),
         });
       }
+
+      // ─── Brain: the one logical Brain the phone replicates ──────────────
+      // Reads and writes are the owner's only. /changes and /push are the two
+      // halves of the phone's incremental sync; /status gives real counts.
+      if (path.startsWith('/api/brain/') && ['/api/brain/status', '/api/brain/changes', '/api/brain/push', '/api/brain/search', '/api/brain/folders', '/api/brain/record', '/api/brain/conflicts', '/api/brain/conflicts/resolve'].includes(path)) {
+        if (!ownerDevice) return json({ detail: 'Only the CHE owner can read his brain.' }, 403);
+        const brain = new CheBrainStore(this.ctx.storage);
+        const q = new URL(request.url).searchParams;
+        const library = () => { try { return new CheLibrary(this.ctx.storage).list(); } catch (_) { return []; } };
+        if (path === '/api/brain/status' && request.method === 'GET') {
+          projectLegacyState(brain, data, { library: library() });
+          return json(brain.status());
+        }
+        if (path === '/api/brain/changes' && request.method === 'GET') {
+          // Each sync pull also moves the legacy stores a step further into the Brain: a pull from
+          // the start (since=0) always, any other at most every ten minutes (the projection reads
+          // every legacy row).
+          const lastProjection = Date.parse(brain.status().legacy_projection?.at || '') || 0;
+          if (!Number(q.get('since')) || Date.now() - lastProjection > 10 * 60_000) projectLegacyState(brain, data, { library: library() });
+          await backfillConversations(brain, this.ctx.storage, { batch: 100 }).catch(() => null);
+          return json({ ...brain.changes({ since: q.get('since'), limit: q.get('limit') }), digest: brain.digest() });
+        }
+        if (path === '/api/brain/push' && request.method === 'POST') {
+          const ops = Array.isArray(body.ops) ? body.ops.slice(0, 500) : [];
+          const origin = String(body.device || 'phone').slice(0, 40);
+          const results = [];
+          let stateChanged = false;
+          for (const op of ops) {
+            const result = brain.apply(op, { origin });
+            const record = result.record;
+            const id = String(record?.id || op?.id || op?.record?.id || result.id || '');
+            // A memory the owner saved on the phone is an owner memory everywhere: it joins
+            // CHE's memory list too (same id), an edit there changes its words here, and a
+            // memory he deleted there leaves it. The op decides, not the stored source.
+            if (id.startsWith('mem:') && !['rejected', 'conflict', 'unchanged'].includes(result.outcome)) {
+              const legacyId = id.slice(4);
+              const legacy = data.memory_records.find((item) => item.id === legacyId);
+              const effective = result.outcome === 'duplicate' ? result.first_outcome : result.outcome;
+              if (record?.deleted || effective === 'deleted' || op?.type === 'delete') {
+                if (legacy) {
+                  const texts = new Set(data.memory_records.filter((item) => item.id === legacyId).map((item) => String(item.text || '').toLowerCase()));
+                  // The row's twins (other records behind the same words) go with it, as on the Memory screen.
+                  for (const twin of Array.isArray(legacy.brain_twins) ? legacy.brain_twins : []) {
+                    try { brain.delete(String(twin), { origin }); } catch (_) {}
+                  }
+                  data.memory_records = data.memory_records.filter((item) => item.id !== legacyId);
+                  data.memories = (data.memories || []).filter((item) => !texts.has(String(item).toLowerCase()));
+                  stateChanged = true;
+                }
+              } else if (record && !record.deleted && record.kind === 'memory') {
+                if (!legacy && effective === 'created') {
+                  const added = addOwnerMemory(data, record.body, { id: legacyId, source: 'owner_chat', category: record.path || 'Memory', scope: 'owner', confidence: 1, title: record.title });
+                  if (added.added) stateChanged = true;
+                  // The same words already sit in the memory list under another id: the two are twins,
+                  // and the Memory screen's delete reaches both (deleteMemoriesShowing). Noted on the row.
+                  if (!added.added && added.reason === 'duplicate') {
+                    const twin = data.memory_records.find((item) => sameDisplayCopy(item.text, record.body));
+                    if (twin) { twin.brain_twins = [...new Set([...(Array.isArray(twin.brain_twins) ? twin.brain_twins : []), record.id])]; stateChanged = true; }
+                  }
+                  // The phone gates secrets before writing; when the memory list's gate still refuses,
+                  // the Brain must not keep a memory the Memory screen cannot show or delete: the
+                  // record is tombstoned and the receipt says rejected, never "created".
+                  if (!added.added && added.reason === 'rejected_sensitive_or_empty') {
+                    try { brain.delete(record.id, { origin }); } catch (_) {}
+                    result.outcome = 'rejected';
+                    result.reason = 'rejected_sensitive_or_empty';
+                  }
+                } else if (legacy && ['updated', 'merged'].includes(effective) && !sameDisplayCopy(legacy.text, record.body)) {
+                  const before = String(legacy.text || '').toLowerCase();
+                  legacy.text = displayCopy(record.body);
+                  legacy.title = record.title.slice(0, 160);
+                  data.memories = (data.memories || []).map((item) => (String(item).toLowerCase() === before ? legacy.text : item));
+                  stateChanged = true;
+                }
+              }
+            }
+            results.push({
+              op_id: op?.op_id, id, outcome: result.outcome, rev: result.rev,
+              ...(result.first_outcome ? { first_outcome: result.first_outcome } : {}),
+              ...(result.reason ? { reason: result.reason } : {}), ...(result.conflict_id ? { conflict_id: result.conflict_id } : {}),
+              ...(['conflict', 'deleted', 'duplicate', 'merged', 'updated'].includes(result.outcome) && record ? { record } : {}),
+            });
+          }
+          if (stateChanged) await this.ctx.storage.put('che', data);
+          return json({ results, seq: brain.status().seq, digest: brain.digest() });
+        }
+        if (path === '/api/brain/search' && request.method === 'GET') {
+          return json({ hits: brain.search(q.get('q') || '', { limit: q.get('limit'), region: q.get('region') || '' }) });
+        }
+        if (path === '/api/brain/folders' && request.method === 'GET') {
+          if (q.get('region')) return json(brain.list({ region: q.get('region'), path: q.get('path'), before: q.get('before'), limit: q.get('limit') }));
+          return json({ regions: brain.folders() });
+        }
+        if (path === '/api/brain/record') {
+          const id = q.get('id') || body.id;
+          if (request.method === 'DELETE' || (request.method === 'POST' && body.delete === true)) {
+            return json(brain.delete(String(id || ''), { origin: 'owner' }));
+          }
+          if (request.method === 'POST' && body.record) {
+            return json(brain.apply({ op_id: body.op_id, type: 'put', record: body.record, base_rev: body.base_rev }, { origin: 'owner' }));
+          }
+          const record = brain.get(String(id || ''));
+          return record ? json(record) : json({ detail: 'Not in the Brain.' }, 404);
+        }
+        if (path === '/api/brain/conflicts' && request.method === 'GET') {
+          return json({ conflicts: brain.conflicts({ open: q.get('all') !== '1' }) });
+        }
+        if (path === '/api/brain/conflicts/resolve' && request.method === 'POST') {
+          return json(brain.resolveConflict(String(body.id || ''), body.choice === 'incoming' ? 'incoming' : 'current'));
+        }
+        return json({ detail: 'Method not allowed.' }, 405);
+      }
       if (request.method === 'GET' && path === '/api/state') {
         const capabilityRegistry = runtimeCapabilityRegistry(this.env, data);
         return json({
@@ -6046,6 +6162,7 @@ export class CheState extends DurableObject {
       }
       if (path === '/api/library' && request.method === 'DELETE') {
         const id = new URL(request.url).searchParams.get('id') || body.id;
+        try { new CheBrainStore(this.ctx.storage).delete(`lib:${String(id || '')}`, { origin: 'owner' }); } catch (_) {}
         return json({ ok: new CheLibrary(this.ctx.storage).remove(String(id || '')) });
       }
 
@@ -6806,17 +6923,44 @@ export class CheState extends DurableObject {
         return json({ ok: true });
       }
       if (path === '/api/memory/add') {
-        const memory = String(body.memory || '').trim().slice(0, 500);
-        if (!isSafeMemoryText(memory)) {
+        // Gated and added as the whole text: the 500-character window can cut a clean word
+        // ("pin|nacle") into something the classifier reads as a secret.
+        const wholeMemory = String(body.memory || '');
+        const memory = displayCopy(wholeMemory);
+        if (!isSafeMemoryText(wholeMemory) || !isSafeText(wholeMemory)) {
           return json({ detail: 'Choose a non-sensitive memory.' }, 400);
         }
-        const added = addOwnerMemory(data, memory, {
+        const added = addOwnerMemory(data, wholeMemory, {
           source: 'explicit_memory',
           category: 'Memory',
           scope: 'owner',
           confidence: 1,
         });
         if (added.added || added.replaced?.length) await this.ctx.storage.put('che', data);
+        // The memory list keeps a 500-character display copy; the Brain keeps every word. When the
+        // list already has this entry, the Brain still gets the full text under that row's id, so
+        // "saved" is true for the Brain as well.
+        const brainRow = added.added ? added.record : added.reason === 'duplicate' ? data.memory_records.find((item) => sameDisplayCopy(item.text, memory)) : null;
+        if (brainRow) {
+          const fullText = String(body.memory || '').trim();
+          try {
+            const brain = new CheBrainStore(this.ctx.storage);
+            const current = brain.get(`mem:${brainRow.id}`);
+            if (current && (current.deleted || (current.body !== fullText && !fullText.startsWith(current.body)))) {
+              // Same first 500 characters, a different text: the list has one row, the Brain keeps both
+              // texts. The second lives under its own id as a twin of the row, so the row's delete
+              // reaches it and no earlier words are overwritten.
+              const twinId = crypto.randomUUID();
+              const put = brain.put(ownerMemoryRecord({ ...brainRow, id: twinId }, fullText), { origin: 'owner' });
+              if (['created', 'updated', 'merged', 'unchanged'].includes(put.outcome)) {
+                brainRow.brain_twins = [...new Set([...(Array.isArray(brainRow.brain_twins) ? brainRow.brain_twins : []), `mem:${twinId}`])];
+                await this.ctx.storage.put('che', data);
+              }
+            } else {
+              brain.put(ownerMemoryRecord(brainRow, fullText), { origin: 'owner' });
+            }
+          } catch (_) {}
+        }
         for (const oldMemory of added.replaced || []) {
           const oldVectorId = `memory:${await digest(String(oldMemory).toLowerCase())}`;
           this.ctx.waitUntil?.(deleteVectorMemory(this.keyEnv || this.env, oldVectorId));
@@ -6832,16 +6976,41 @@ export class CheState extends DurableObject {
         return json({ ok: true, vector_memory: vectorMemoryReadiness(this.keyEnv || this.env).configured ? 'syncing' : 'not_configured' });
       }
       if (path === '/api/memory/delete') {
-        const index = Number(body.index);
+        // The phone names the memory by position and by its words. The list can move between the
+        // screen's load and this call (a deferred phone push, another device), so when the words at
+        // that position differ, the words decide; words the list no longer holds are a 404, never a
+        // delete of whatever moved into the slot.
+        let index = Number(body.index);
+        // Compared as display copies: a phone that loaded its list from the replica sends the raw
+        // excerpt (newlines, up to 600 characters) of the same memory.
+        const words = displayCopy(String(body.text || '')).toLowerCase();
+        const at = (i) => displayCopy(String(data.memories[i] ?? '')).toLowerCase();
+        if (words && (!Number.isInteger(index) || index < 0 || index >= data.memories.length || at(index) !== words)) {
+          index = data.memories.findIndex((item) => displayCopy(String(item)).toLowerCase() === words);
+          if (index < 0) return json({ detail: 'That memory is no longer in the list.' }, 404);
+        }
         if (!Number.isInteger(index) || index < 0 || index >= data.memories.length) {
           return json({ detail: 'Memory not found.' }, 400);
         }
         const removed = data.memories[index];
         data.memories.splice(index, 1);
-        data.memory_records = (data.memory_records || []).filter(
-          (record) => String(record.text || '').toLowerCase() !== String(removed || '').toLowerCase(),
+        const removedRecords = (data.memory_records || []).filter(
+          (record) => String(record.text || '').toLowerCase() === String(removed || '').toLowerCase(),
         );
+        data.memory_records = (data.memory_records || []).filter((record) => !removedRecords.includes(record));
         await this.ctx.storage.put('che', data);
+        // The owner's deletion reaches every Brain replica as a tombstone: the row's own record, and
+        // any memory record showing the same words (a twin the phone pushed under its own id).
+        try {
+          const brain = new CheBrainStore(this.ctx.storage);
+          for (const record of removedRecords) {
+            brain.delete(`mem:${record.id}`, { origin: 'owner' });
+            // Twins noted on the row (a phone push or a second text behind the same first 500
+            // characters) go with it, whatever words they show now.
+            for (const twin of Array.isArray(record.brain_twins) ? record.brain_twins : []) brain.delete(String(twin), { origin: 'owner' });
+          }
+          brain.deleteMemoriesShowing(String(removed || ''), { origin: 'owner' });
+        } catch (_) {}
         if (removed) {
           const vectorId = `memory:${await digest(String(removed).toLowerCase())}`;
           this.ctx.waitUntil?.(deleteVectorMemory(this.keyEnv || this.env, vectorId));
@@ -6849,6 +7018,8 @@ export class CheState extends DurableObject {
         return json({ ok: true });
       }
       if (path === '/api/memory/clear') {
+        // "Clear all" clears every memory record in the Brain, whatever id or origin it has.
+        try { const brain = new CheBrainStore(this.ctx.storage); for (const record of data.memory_records || []) if (record?.id) brain.delete(`mem:${record.id}`, { origin: 'owner' }); brain.deleteAllMemories({ origin: 'owner' }); } catch (_) {}
         data.memories = [];
         data.memory_records = [];
         await this.ctx.storage.put('che', data);
@@ -10272,6 +10443,13 @@ export class CheState extends DurableObject {
     const codeScoutAt = Number(await this.ctx.storage.get('code_scout_at')) || 0;
     if (Date.now() - codeScoutAt > 6 * 86400000) await autoImproveScan(this.env, this.ctx.storage, fileLetter, fileTech).catch(() => null);
     const data = await this.loadData();
+    // The Brain catches up on anything the state blob and the older conversation
+    // records hold that it does not: cheap, resumable, and no model is asked.
+    try {
+      const brain = new CheBrainStore(this.ctx.storage);
+      projectLegacyState(brain, data, { library: new CheLibrary(this.ctx.storage).list() });
+      await backfillConversations(brain, this.ctx.storage, { batch: 500 });
+    } catch (error) { console.error('Brain projection failed:', error?.message || error); }
     if (!data.autonomy) return { status: 'paused' };
     const result = await runNightlyReview(this.env, this.ctx.storage, data, this.env.CHE_STRONG_MODEL || STRONG_MODEL);
 

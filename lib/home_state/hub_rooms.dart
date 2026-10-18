@@ -43,6 +43,7 @@ extension _CheHomeHubRooms on _CHEHomeState {
           brainLinks: brainLinks,
           suggestions: suggestions,
           conversationMemories: conversationMemories,
+          brainRecords: _brainReplicaRecords(),
         ),
         brainLinks: brainLinks,
         onReadAloud: (t) => speakText(t, record: false, readOnDemand: true),
@@ -50,7 +51,7 @@ extension _CheHomeHubRooms on _CHEHomeState {
         onOpenAgent: (name) => _openOfficeFloor(agentName: name),
       ),
       ),
-      offline: const CheOfflineBrainPanel(compact: true),
+      offline: CheOfflineBrainPanel(compact: true, replicaLine: _brainReplicaLine()),
     );
   }
 
