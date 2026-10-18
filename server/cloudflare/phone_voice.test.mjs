@@ -263,3 +263,15 @@ test('a rate limit is not retried with force while ElevenLabs rests (review of #
   assert.equal(await premiumVoiceSpeech(env(), 'Part.', { lock: 'elevenlabs', storage: memoryStorage(), ...noWait }), null);
   assert.equal(calls.eleven.length, 1);
 });
+
+test('a connection lost while the audio downloads is not retried: the clip was already made', async () => {
+  const calls = { eleven: 0 };
+  globalThis.fetch = async (url) => {
+    if (!String(url).includes('elevenlabs.io')) throw new Error(`unexpected fetch ${url}`);
+    calls.eleven += 1;
+    const body = new ReadableStream({ start(c) { c.error(new TypeError('network connection lost')); } });
+    return new Response(body, { headers: { 'Content-Type': 'audio/mpeg' } });
+  };
+  assert.equal(await premiumVoiceSpeech(env(), 'Lost part.', { lock: 'elevenlabs', storage: memoryStorage(), ...noWait }), null);
+  assert.equal(calls.eleven, 1);
+});

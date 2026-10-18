@@ -503,6 +503,8 @@ async function fishSpeakOnce(env = {}, text, {
 
 async function synthesize(env, { said, model, voice, bitrate, speed, expressive, storage, fetcher, key, now }) {
   const started = Date.now();
+  // Once Fish has answered, the clip may be made and charged, so a failure after that is not retryable.
+  let answered = false;
   try {
     const response = await fetcher(FISH_TTS_URL, {
       method: 'POST',
@@ -514,6 +516,7 @@ async function synthesize(env, { said, model, voice, bitrate, speed, expressive,
       body: encodeMsgpack(fishRequestBody({ text: said, voice, bitrate, expressive, speed })),
       signal: AbortSignal.timeout(expressive ? EXPRESSIVE_TIMEOUT_MS : conversationTimeoutMs(said.length)),
     });
+    answered = true;
     const ms = Date.now() - started;
     if (!response.ok) {
       // The body classifies the failure. Only Fish's own short message, with
@@ -569,7 +572,7 @@ async function synthesize(env, { said, model, voice, bitrate, speed, expressive,
     pause(model, PAUSE_TIMEOUT_MS, now, 'network');
     record('network', 0, model, now);
     await addUsage(storage, model, { failures: 1 }, now);
-    return { failed: 'network', retryable: error?.name !== 'TimeoutError' };
+    return { failed: 'network', retryable: error?.name !== 'TimeoutError' && !answered };
   }
 }
 

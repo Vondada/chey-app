@@ -200,6 +200,8 @@ async function speakOnce(env, said, fetcher, note = (o) => o) {
   const configuredSpeed = Number(env.CHE_VOICE_SPEED);
   const speed = Number.isFinite(configuredSpeed) && configuredSpeed > 0
     ? Math.min(1.2, Math.max(0.7, configuredSpeed)) : 1.04;
+  // Once ElevenLabs has answered, the clip may be made and billed, so a failure after that is not retryable.
+  let answered = false;
   try {
     const response = await fetcher(
       `https://api.elevenlabs.io/v1/text-to-speech/${voice}?output_format=mp3_44100_128`,
@@ -217,6 +219,7 @@ async function speakOnce(env, said, fetcher, note = (o) => o) {
         signal: AbortSignal.timeout(8000),
       },
     );
+    answered = true;
     if (!response.ok) {
       // ElevenLabs' reason tells "out of credits" from a bad key. It is kept
       // short, with the key and voice ID removed, for Keys and the deploy check.
@@ -251,7 +254,7 @@ async function speakOnce(env, said, fetcher, note = (o) => o) {
     // Timeouts and network errors fall back to the backup voice. Never log keys.
     const timedOut = error?.name === 'TimeoutError';
     const reason = timedOut ? 'No answer within 8 seconds.' : 'Could not reach ElevenLabs.';
-    note(recordFailure(0, 'network', PAUSE_AFTER_TIMEOUT_MS, Date.now(), reason, !timedOut));
+    note(recordFailure(0, 'network', PAUSE_AFTER_TIMEOUT_MS, Date.now(), reason, !timedOut && !answered));
     return null;
   }
 }
