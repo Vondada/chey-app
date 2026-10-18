@@ -12,6 +12,10 @@ extension _CheHomeMemory on _CHEHomeState {
     if (clean.isEmpty) return 'failed';
     if (cheBrainTextIsSensitive(clean)) return 'refused';
 
+    // A change still waiting on the phone (a delete of these very words, say) reaches the cloud
+    // first, so a save made online is never undone when the outbox drains after it.
+    if (_brainReplica.pendingOps > 0) await _syncBrainReplica();
+
     http.Response response;
     try {
       response = await http.post(
@@ -160,7 +164,7 @@ extension _CheHomeMemory on _CHEHomeState {
         Uri.parse('$cheAgentBaseUrl/api/memory/delete'),
         headers: _authHeaders,
         body: jsonEncode({'index': index, 'text': wanted}),
-      );
+      ).timeout(const Duration(seconds: 30));
     } catch (_) {
       // No connection: the deletion is a tombstone in the Brain replica now and
       // reaches the cloud (and CHE's memory list) at the next sync. Every record
@@ -203,7 +207,7 @@ extension _CheHomeMemory on _CHEHomeState {
         Uri.parse('$cheAgentBaseUrl/api/memory/clear'),
         headers: _authHeaders,
         body: jsonEncode({}),
-      );
+      ).timeout(const Duration(seconds: 30));
     } catch (_) {
       await speakText('I could not reach the cloud, sir; nothing was cleared.', record: false);
       return;

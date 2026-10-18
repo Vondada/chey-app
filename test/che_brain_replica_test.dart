@@ -448,4 +448,14 @@ void main() {
     expect(reopened.get('task:shared')!.places.map((p) => p['path']), ['Historical', 'Atlas', 'Knox']);
     expect(reopened.recordsJson().single['places'], hasLength(3));
   });
+
+  test('Q: a receipt tells a lost connection from an answer the sync could not use', () {
+    expect(CheBrainSyncReceipt(at: '2026-10-18T00:00:00Z', error: 'SocketException: Failed host lookup: che.example').unreachable, isTrue);
+    expect(CheBrainSyncReceipt(at: '2026-10-18T00:00:00Z', error: 'TimeoutException after 0:00:30.000000: Future not completed').unreachable, isTrue);
+    expect(CheBrainSyncReceipt(at: '2026-10-18T00:00:00Z', error: 'ClientException: Connection reset by peer').unreachable, isTrue);
+    final refused = CheBrainSyncReceipt(at: '2026-10-18T00:00:00Z', error: 'HTTP 401');
+    expect(refused.ok, isFalse);
+    expect(refused.unreachable, isFalse, reason: 'the cloud answered; this is not offline');
+    expect(CheBrainSyncReceipt(at: '2026-10-18T00:00:00Z').unreachable, isFalse);
+  });
 }

@@ -354,3 +354,12 @@ test('the owner reporting someone else\'s audit is not a request to hear the Bra
     assert.equal(brainReviewIntent(asked), true, asked);
   }
 });
+
+test('talking about the review is not a request to hear it; "what did last night\'s audit find" is', () => {
+  for (const said of ['your brain review was wrong, I had three conversations', 'I disagree with the brain review', 'remember that the brain review runs at 7', 'cancel my morning review', 'I missed the morning review', 'I read the review', 'turn off the daily review', 'stop the daily review', 'when does the brain review run']) {
+    assert.equal(brainReviewIntent(said), false, said);
+  }
+  for (const asked of ['what did last night\'s audit find', 'read me my brain review', 'morning review please', 'what did the nightly review conclude']) {
+    assert.equal(brainReviewIntent(asked), true, asked);
+  }
+});

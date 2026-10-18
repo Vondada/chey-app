@@ -692,4 +692,34 @@ void main() {
     expect(c.scope, isNull, reason: 'the pill really goes back to CHE');
     handle.dispose();
   });
+
+  test('a retired roster entry draws no orb, and a record moving between two workers re-lays the ring out', () {
+    final roster = [..._roster, {'name': 'Ghost', 'role': 'Former researcher', 'retired': true}];
+    final c = CheBrainSpaceController(_dots(), roster: roster);
+    expect(c.workers.map((w) => w.name), isNot(contains('Ghost')));
+    c.dispose();
+  });
+
+  testWidgets('the room re-lays out when a record moves from one worker to another with the same count', (tester) async {
+    _useScreen(tester, _phone, dpr: 3);
+    final before = _dots();
+    await tester.pumpWidget(_room(before));
+    await tester.pump();
+    final knoxBefore = _controllerOf(tester).worker('Knox')!.records;
+    final moved = _brainRecords().map((r) {
+      if (r['id'] != 'task:t1') return r;
+      return {...r, 'places': [for (final p in (r['places'] as List)) if (p is Map && p['path'] == 'Nova') {'region': 'Office Agents', 'path': 'Knox'} else p]};
+    }).toList();
+    final after = cheBuildMemoryDots(
+      savedMemories: const ['Owner prefers voice replies and large text'],
+      memoryNotes: const [],
+      learnedPersonality: const [{'statement': 'Prefers short spoken answers'}],
+      learnedKnowledge: const [],
+      brainRecords: moved,
+    );
+    expect(after.firstWhere((d) => d.id == 'task:t1').workers, contains('Knox'));
+    await tester.pumpWidget(_room(after));
+    await tester.pump();
+    expect(_controllerOf(tester).worker('Knox')!.records, knoxBefore + 1, reason: 'same number of workers, a different one: the ring follows');
+  });
 }

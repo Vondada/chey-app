@@ -258,6 +258,11 @@ export function brainReviewIntent(message) {
   if (/\b(?:build|fix|change|implement|delete|remove|clear|run\s+the\s+review\s+again|regenerate|rebuild|redo|rewrite|code|repo|pull\s+request|pr|website|plan|spending|log|logs|trail)\b/i.test(text)) return false;
   // What the owner himself said or asked is an owner-memory question, answered from his own words, never with the review.
   if (/\b(?:what\s+(?:have|did)\s+i\s+(?:told|tell|say|said|ask|asked|mention)|did\s+i\s+(?:ask|say|tell|mention)|have\s+i\s+(?:asked|said|told|mentioned))\b/i.test(text)) return false;
+  // Talking about the review is not asking to hear it: disagreeing with it, scheduling or cancelling
+  // it, having read or missed it, asking when it runs, or telling CHE something to remember about it.
+  if (/\b(?:disagree|wrong|cancel|turn\s+(?:off|on)|switch\s+(?:off|on)|stop|disable|enable|skip|missed|miss|schedule|reschedule|runs?\s+at|when\s+(?:does|is|will|do)|what\s+time|remember\s+(?:that|this)|note\s+that)\b/i.test(text)) return false;
+  if (/^(?:i|we)\s+(?:read|heard|saw|got|have\s+read)\b/i.test(text)) return false;
+  if (/\bwhat\s+did\s+(?:last\s+night['’]?s|this\s+morning['’]?s|the\s+(?:nightly|morning|daily))\s+(?:audit|review)\s+(?:find|say|conclude|flag)\b/i.test(text)) return true;
   // Only a Brain-qualified noun, "your/the audit found", or a sentence that ends at the noun: "the review
   // John left", "my daily review at 9" and "what did you find about the brain tumor study" are something else.
   // The sentence ends at the noun (a tail like "John left", "at 9", "from the accountant" makes it something else).

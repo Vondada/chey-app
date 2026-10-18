@@ -54,7 +54,7 @@ function agentIndex(workers) {
 
 const DONE = new Set(['done', 'complete', 'completed', 'succeeded', 'success', 'approved', 'merged']);
 const FAILED = new Set(['failed', 'error', 'cancelled', 'canceled', 'rejected', 'dead_letter']);
-const LIVE = new Set(['queued', 'assigned', 'running', 'reviewing', 'waiting', 'working']);
+const LIVE = new Set(['queued', 'assigned', 'running', 'reviewing', 'waiting', 'working', 'blocked']);
 
 function outcomeOf(status) {
   const value = String(status || '').toLowerCase();

@@ -222,6 +222,11 @@ class CheBrainSyncReceipt {
   final String error;
   bool get ok => error.isEmpty;
 
+  /// The cloud could not be reached at all (no connection, DNS, a timeout), as opposed to an
+  /// answer the sync could not use (401, 500, a refused op): only the first means "offline".
+  bool get unreachable => error.isNotEmpty &&
+      RegExp(r'SocketException|ClientException|TimeoutException|HandshakeException|Failed host lookup|Connection (?:refused|failed|reset|closed|timed out)|Network is unreachable|connection abort', caseSensitive: false).hasMatch(error);
+
   Map<String, dynamic> toJson() => {
         'at': at, 'pushed': pushed, 'acknowledged': acknowledged, 'conflicts': conflicts, 'rejected': rejected,
         'pulled': pulled, 'since': since, 'pending_after': pendingAfter, 'digest_checked': digestChecked,
