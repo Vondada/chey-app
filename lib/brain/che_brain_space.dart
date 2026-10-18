@@ -34,14 +34,46 @@ import 'package:vector_math/vector_math.dart' as vm;
 
 import '../che_ui/che_theme.dart';
 import '../home/che_memory_brain.dart' show CheMemoryDot, cheMemoryCategoryColor;
+import 'che_brain_navigation.dart';
 import 'che_brain_space_model.dart';
 
 /// Drives the Brain space: selection, camera flights, clusters, filters.
 class CheBrainSpaceController {
-  CheBrainSpaceController(List<CheMemoryDot> dots, {List<Map<String, dynamic>> brainLinks = const []})
-      : layout = CheBrainLayout.build(dots, brainLinks: brainLinks) {
+  CheBrainSpaceController(List<CheMemoryDot> dots, {List<Map<String, dynamic>> brainLinks = const [], List<Map<String, dynamic>> roster = const []})
+      : _dots = dots,
+        _links = brainLinks,
+        _roster = List<Map<String, dynamic>>.of(roster),
+        layout = CheBrainLayout.build(dots, brainLinks: brainLinks) {
     _wire();
+    _layoutWorkers();
+    camera.distance = overviewDistance;
   }
+
+  List<CheMemoryDot> _dots;
+  List<Map<String, dynamic>> _links;
+  List<Map<String, dynamic>> _roster;
+
+  /// The worker brain in view, or null for CHE's whole brain.
+  String? scope;
+
+  /// Facets narrowing the view (verified, recent, archived, personal, outcome, project).
+  CheBrainLens lens = CheBrainLens.none;
+
+  /// Internal Office workers with a brain around CHE's (CHE's view only).
+  List<CheBrainWorkerOrb> workers = const [];
+
+  /// Where the owner was before each navigation step, newest last.
+  final List<CheBrainViewState> _history = [];
+  static const int maxHistory = 40;
+
+  /// Time source for "recent" (tests pin it).
+  DateTime Function() clock = DateTime.now;
+
+  /// The ring the worker brains sit on, outside the brain's shape.
+  static const double workerRing = 11.6;
+
+  /// How far out "the whole brain" is: the brain alone, or the brain with its ring of worker brains.
+  double get overviewDistance => scope == null && workers.isNotEmpty ? 23 : CheBrainCamera.overview;
 
   /// The Brain room on screen right now (voice commands reach it here).
   static CheBrainSpaceController? current;
@@ -84,7 +116,8 @@ class CheBrainSpaceController {
   final Map<String, TextPainter> labels = {};
 
   TextPainter label(String key, String text, double size, Color color) {
-    final k = '$key|$size';
+    // The text is in the key: a lobe or worker count that changed is never drawn stale.
+    final k = '$key|$size|$text';
     final hit = labels.remove(k);
     if (hit != null) return labels[k] = hit;
     if (labels.length >= 240) labels.remove(labels.keys.first)?.dispose();
@@ -99,11 +132,15 @@ class CheBrainSpaceController {
   CheBrainNode? get selected => selectedId == null ? null : layout.node(selectedId!);
   bool get flying => _flyT < 1;
 
-  void update(List<CheMemoryDot> dots, List<Map<String, dynamic>> brainLinks) {
+  void update(List<CheMemoryDot> dots, List<Map<String, dynamic>> brainLinks, {List<Map<String, dynamic>>? roster}) {
+    _dots = dots;
+    _links = brainLinks;
+    if (roster != null) _roster = roster;
     final before = {for (final n in layout.nodes) n.id};
     final moved = {for (final n in layout.nodes) if (n.moved != null) n.id: n.moved!};
     final expanded = {for (final c in layout.clusters.values) c.name: c.expanded};
-    layout = CheBrainLayout.build(dots, brainLinks: brainLinks);
+    layout = CheBrainLayout.build(_scopedDots, brainLinks: brainLinks);
+    _layoutWorkers();
     for (final n in layout.nodes) {
       n.moved = moved[n.id];
     }
@@ -127,6 +164,311 @@ class CheBrainSpaceController {
       }
     }
     _changed();
+  }
+
+  bool _inBrain(CheMemoryDot d, String worker) {
+    final lower = worker.toLowerCase();
+    return d.workers.any((w) => w.toLowerCase() == lower);
+  }
+
+  List<CheMemoryDot> get _scopedDots => scope == null ? _dots : [for (final d in _dots) if (_inBrain(d, scope!)) d];
+
+  /// The worker a record name stands for, or null when it is not an internal
+  /// worker: the roster decides (temporary provider workers and outside AIs are
+  /// excluded; a name is matched without regard to case); with no roster at
+  /// hand (offline before the first load) the record's own name stands, still
+  /// never an outside AI or the Office's generic fallback names.
+  String? _canonicalWorker(String name, Map<String, String> internal, Set<String> excluded, Map<String, String> seen) {
+    final lower = name.trim().toLowerCase();
+    if (lower.isEmpty || lower == 'che' || lower == 'office' || lower == 'office agent' || lower.startsWith('http') || excluded.contains(lower) || cheBrainExternalAi.hasMatch(name) || cheBrainMentionsExternalAi.hasMatch(name)) return null;
+    if (internal.isNotEmpty) return internal[lower];
+    // No roster: the first spelling seen stands for every later casing of the name.
+    return seen.putIfAbsent(lower, () => name.trim());
+  }
+
+  /// One orb per internal worker (the roster's permanent workers, so an idle
+  /// worker is shown as having no experience yet, never invented). Experience
+  /// is what the worker did: tasks, skills, notes; never the worker's own
+  /// profile record. Placed on a ring around the brain, top first.
+  void _layoutWorkers() {
+    final internal = <String, String>{};
+    final excluded = <String>{};
+    final roles = <String, String>{};
+    final states = <String, String>{};
+    for (final member in _roster) {
+      final name = '${member['name'] ?? ''}'.trim();
+      if (name.isEmpty) continue;
+      if (member['temporary'] == true || cheBrainExternalAi.hasMatch(name)) {
+        excluded.add(name.toLowerCase());
+        continue;
+      }
+      internal[name.toLowerCase()] = name;
+      roles[name] = '${member['role'] ?? ''}';
+      final live = '${member['runtime_status'] ?? ''}';
+      states[name] = live == 'working' || live == 'waiting' ? 'working' : 'idle';
+    }
+    final counts = <String, int>{for (final name in internal.values) name: 0};
+    final shared = <String, Set<String>>{};
+    final seen = <String, String>{};
+    for (final d in _dots) {
+      final mine = <String>{};
+      for (final w in d.workers) {
+        final canonical = _canonicalWorker(w, internal, excluded, seen);
+        if (canonical != null) mine.add(canonical);
+      }
+      for (final w in mine) {
+        counts.putIfAbsent(w, () => 0);
+        if (d.kind != 'worker') counts[w] = counts[w]! + 1;
+        for (final other in mine) {
+          if (other != w) shared.putIfAbsent(w, () => {}).add(other);
+        }
+      }
+    }
+    final names = counts.keys.toList()..sort((a, b) => counts[b]!.compareTo(counts[a]!) != 0 ? counts[b]!.compareTo(counts[a]!) : a.compareTo(b));
+    final n = names.length;
+    workers = [
+      for (var i = 0; i < n; i++)
+        CheBrainWorkerOrb(
+          name: names[i],
+          records: counts[names[i]]!,
+          role: roles[names[i]] ?? '',
+          state: counts[names[i]] == 0 ? 'no experience yet' : states[names[i]] ?? '',
+          collaborators: shared[names[i]] ?? const {},
+          // Evenly around the ring, the first at the top, slightly behind the brain so the ring
+          // never covers it.
+          position: () {
+            final a = -math.pi / 2 + 2 * math.pi * i / n;
+            return vm.Vector3(math.cos(a) * workerRing, math.sin(a) * workerRing * .94, -1.5);
+          }(),
+        ),
+    ];
+  }
+
+  /// Visible = in its expanded lobe, through the category filter and the lens.
+  bool shows(CheBrainNode n) => layout.visible(n, filter) && (lens.isEmpty || lens.matches(n.dot, now: clock()));
+
+  /// A collapsed cluster is drawn when the filter allows it and the lens leaves it a member.
+  bool clusterShown(CheBrainCluster c) => !c.expanded && (filter.isEmpty || filter.contains(c.name)) && (lens.isEmpty || c.members.any((n) => lens.matches(n.dot, now: clock())));
+
+  /// Members of a cluster the lens keeps (what its orb's count shows).
+  int clusterCount(CheBrainCluster c) => lens.isEmpty ? c.members.length : c.members.where((n) => lens.matches(n.dot, now: clock())).length;
+
+  /// Memories the category filter and the lens leave (collapsed lobes count their members: they are one tap away).
+  int get visibleCount => layout.nodes.where((n) => (filter.isEmpty || filter.contains(n.cluster)) && (lens.isEmpty || lens.matches(n.dot, now: clock()))).length;
+
+  CheBrainWorkerOrb? worker(String? name) {
+    if (name == null) return null;
+    final lower = name.toLowerCase();
+    for (final w in workers) {
+      if (w.name.toLowerCase() == lower) return w;
+    }
+    return null;
+  }
+
+  /// The brain in view, as the owner hears it.
+  String get brainName => scope == null ? "CHE's brain" : "$scope's brain";
+
+  /// Where the owner is: brain, lobe, facets, selection, and how close.
+  String describe() {
+    final parts = <String>[brainName];
+    if (filter.isNotEmpty) parts.add('${filter.join(', ')} memories');
+    if (!lens.isEmpty) parts.add(lens.describe());
+    final sel = selected;
+    if (sel != null) parts.add('${sel.dot.title} selected');
+    parts.add(mode);
+    return parts.join(', ');
+  }
+
+  /// 'overview', 'inside', 'inspecting' or 'close up' (from where the camera is heading).
+  String get mode {
+    if (cardOpen) return 'inspecting';
+    final d = _flyT < 1 && _flyTo != null ? _flyTo!.distance : camera.distance;
+    if (d < LayoutRadius.inner) return 'inside';
+    if (d >= overviewDistance - .5) return 'overview';
+    return 'close up';
+  }
+
+  CheBrainViewState snapshot() => CheBrainViewState(
+        scope: scope, lens: lens, filter: {...filter}, selectedId: selectedId, cardOpen: cardOpen, focusedCluster: focusedCluster,
+        camera: (_flyT < 1 && _flyTo != null ? _flyTo! : camera).copy(),
+      );
+
+  void _remember() {
+    final s = snapshot();
+    if (_history.isNotEmpty && _history.last.sameAs(s)) return;
+    _history.add(s);
+    if (_history.length > maxHistory) _history.removeAt(0);
+  }
+
+  bool get canGoBack => _history.isNotEmpty;
+
+  /// Back to where the owner was: the same brain, filters, selection and camera.
+  String goBack() {
+    if (_history.isEmpty) return "Nowhere to go back to: this is the start, CHE's whole brain.";
+    final s = _history.removeLast();
+    if (s.scope != scope) {
+      scope = s.scope;
+      _rebuildForScope();
+    }
+    filter
+      ..clear()
+      ..addAll(s.filter);
+    lens = s.lens;
+    selectedId = layout.node(s.selectedId ?? '') == null ? null : s.selectedId;
+    cardOpen = s.cardOpen && selectedId != null;
+    focusedCluster = s.focusedCluster;
+    if (selectedId != null) layout.clusters[selected!.cluster]?.expanded = true;
+    flyTo(s.camera);
+    _changed();
+    return 'Back to ${describe()}.';
+  }
+
+  void _rebuildForScope() {
+    final expanded = {for (final c in layout.clusters.values) c.name: c.expanded};
+    layout = CheBrainLayout.build(_scopedDots, brainLinks: _links);
+    for (final c in layout.clusters.values) {
+      c.expanded = expanded[c.name] ?? c.expanded;
+    }
+    _wire();
+    _born.clear();
+    pulses.clear();
+  }
+
+  /// Opens a worker's brain in this same space (null: back to CHE's). Same
+  /// lobes, same gestures, same panels; only the records are that worker's.
+  String setScope(String? name) {
+    if (name != null) {
+      final orb = worker(name);
+      if (orb == null) {
+        final known = workers.map((w) => w.name).toList();
+        return known.isEmpty
+            ? 'No Office worker has experience in the Brain yet, sir.'
+            : 'There is no worker brain called $name. The worker brains are: ${known.join(', ')}.';
+      }
+      name = orb.name;
+    }
+    if (name == scope) return name == null ? "You are in CHE's brain." : "You are already in $name's brain.";
+    _remember();
+    scope = name;
+    selectedId = null;
+    cardOpen = false;
+    grabbedId = null;
+    focusedCluster = null;
+    filter.clear();
+    lens = CheBrainLens.none;
+    _rebuildForScope();
+    flyTo(CheBrainCamera(yaw: math.pi, pitch: .08, distance: overviewDistance));
+    _changed();
+    if (name == null) return "CHE's brain: ${layout.nodes.length} memories and ${workers.length} worker brain${workers.length == 1 ? '' : 's'}.";
+    final orb = worker(name)!;
+    if (orb.records == 0) return "$name has no experience recorded yet${orb.role.isNotEmpty ? ' (${orb.role})' : ''}. Nothing is invented here; the brain fills as $name works.";
+    final lobes = layout.clusters.values.map((c) => '${c.name} ${c.members.length}').join('; ');
+    return "$name's brain${orb.role.isNotEmpty ? ', ${orb.role}' : ''}: ${orb.records} record${orb.records == 1 ? '' : 's'} of experience in ${layout.clusters.length} lobe${layout.clusters.length == 1 ? '' : 's'}: $lobes."
+        '${orb.collaborators.isNotEmpty ? ' Works with ${(orb.collaborators.toList()..sort()).join(', ')}.' : ''}';
+  }
+
+  /// The top of the Brain system: CHE's brain, no filters, nothing selected, the whole view.
+  String goHome() {
+    _remember();
+    if (scope != null) {
+      scope = null;
+      _rebuildForScope();
+    }
+    filter.clear();
+    lens = CheBrainLens.none;
+    selectedId = null;
+    cardOpen = false;
+    focusedCluster = null;
+    flyTo(CheBrainCamera(yaw: math.pi, pitch: .08, distance: overviewDistance));
+    _changed();
+    return "CHE's brain: ${layout.nodes.length} memories${workers.isNotEmpty ? ' and ${workers.length} worker brain${workers.length == 1 ? '' : 's'}' : ''}.";
+  }
+
+  /// This brain, whole: filters and selection cleared, the camera where it is.
+  String clearView() {
+    _remember();
+    filter.clear();
+    lens = CheBrainLens.none;
+    selectedId = null;
+    cardOpen = false;
+    _changed();
+    return '$brainName: showing all ${layout.nodes.length} ${scope == null ? 'memories' : 'records'}.';
+  }
+
+  /// Narrows the view by facets; the orbs the lens hides are not drawn, counted or stepped to.
+  String setLens(CheBrainLens next) {
+    if (next == lens) return next.isEmpty ? 'No filters are set.' : 'Already showing ${next.describe()}.';
+    _remember();
+    lens = next;
+    if (selectedId != null && !shows(selected!)) {
+      selectedId = null;
+      cardOpen = false;
+    }
+    _changed();
+    if (next.isEmpty) return 'Filters cleared: showing all ${layout.nodes.length} memories.';
+    final n = visibleCount;
+    return n == 0 ? 'No memories match ${next.describe()} in $brainName.' : 'Showing ${next.describe()}: $n of ${layout.nodes.length}.';
+  }
+
+  String clearAll() {
+    final had = filter.isNotEmpty || !lens.isEmpty;
+    if (!had) return 'No filters are set.';
+    _remember();
+    filter.clear();
+    lens = CheBrainLens.none;
+    _changed();
+    return 'Filters cleared: showing all ${layout.nodes.length} memories.';
+  }
+
+  String zoomIn() {
+    _remember();
+    final to = (_flyT < 1 && _flyTo != null ? _flyTo! : camera).copy();
+    to.distance = math.max(0, (to.distance + 1) / 1.6 - 1);
+    if (to.distance < .05) to.distance = 0;
+    flyTo(to);
+    _changed();
+    return to.distance == 0 ? 'At the center of the brain.' : 'Closer: $mode.';
+  }
+
+  String zoomOut() {
+    _remember();
+    final to = (_flyT < 1 && _flyTo != null ? _flyTo! : camera).copy();
+    to.distance = math.min(CheBrainCamera.maxDistance, (to.distance + 1) * 1.6 - 1);
+    flyTo(to);
+    _changed();
+    return 'Farther out: $mode.';
+  }
+
+  /// Fits everything in view: the brain, and in CHE's view the ring of worker brains.
+  String fit() {
+    _remember();
+    cardOpen = false;
+    flyTo(CheBrainCamera(yaw: math.pi, pitch: .08, distance: overviewDistance));
+    _changed();
+    return scope == null && workers.isNotEmpty
+        ? "Fitted: CHE's brain, ${layout.nodes.length} memories, with ${workers.length} worker brain${workers.length == 1 ? '' : 's'} around it."
+        : 'Fitted: $brainName, ${layout.nodes.length} memories.';
+  }
+
+  /// Back to CHE at the center, from any brain, keeping nothing selected.
+  String centerOnChe() {
+    if (scope != null) return setScope(null);
+    _remember();
+    selectedId = null;
+    cardOpen = false;
+    focusedCluster = null;
+    flyTo(CheBrainCamera(yaw: camera.yaw, pitch: .08, distance: overviewDistance));
+    _changed();
+    return "Centered on CHE: ${layout.nodes.length} memories${workers.isNotEmpty ? ', ${workers.length} worker brain${workers.length == 1 ? '' : 's'} around her' : ''}.";
+  }
+
+  String centerOnSelected() {
+    final node = selected;
+    if (node == null) return 'Nothing is selected. Tap a memory, or say "find my memory about" and a topic.';
+    _remember();
+    flyTo(CheBrainCamera(target: node.position.clone(), yaw: camera.yaw, pitch: camera.pitch, distance: 3.4));
+    _changed();
+    return 'Centered on ${node.dot.title}.';
   }
 
   void _wire() {
@@ -265,6 +607,7 @@ class CheBrainSpaceController {
   // ─── Actions (gestures, buttons and voice all use these) ───────────────
 
   String select(CheBrainNode node, {bool fly = true}) {
+    if (node.id != selectedId) _remember();
     selectedId = node.id;
     final cluster = layout.clusters[node.cluster];
     if (cluster != null && !cluster.expanded) cluster.expanded = true;
@@ -293,13 +636,16 @@ class CheBrainSpaceController {
   }
 
   String overview() {
+    _remember();
     cardOpen = false;
-    flyTo(CheBrainCamera(yaw: math.pi, pitch: .08));
+    flyTo(CheBrainCamera(yaw: math.pi, pitch: .08, distance: overviewDistance));
     _changed();
-    return 'Showing the whole brain: ${layout.nodes.length} memories in ${layout.clusters.length} clusters.';
+    return 'Showing the whole ${scope == null ? 'brain' : "of $scope's brain"}: ${layout.nodes.length} memories in ${layout.clusters.length} clusters'
+        '${scope == null && workers.isNotEmpty ? ', ${workers.length} worker brains around it' : ''}.';
   }
 
   String inside() {
+    _remember();
     cardOpen = false;
     flyTo(CheBrainCamera(yaw: camera.yaw, pitch: 0, distance: 0));
     _changed();
@@ -308,14 +654,18 @@ class CheBrainSpaceController {
 
   String backOut() {
     final d = camera.distance;
-    final next = d < 2 ? 9.0 : d < 12 ? 20.0 : CheBrainCamera.overview;
+    final next = d < 2 ? 9.0 : d < 12 ? 20.0 : overviewDistance;
+    if (next >= overviewDistance) return overview();
+    _remember();
     cardOpen = false;
-    flyTo(CheBrainCamera(target: d >= 12 ? vm.Vector3.zero() : camera.target.clone(), yaw: camera.yaw, pitch: camera.pitch, distance: next));
+    flyTo(CheBrainCamera(target: camera.target.clone(), yaw: camera.yaw, pitch: camera.pitch, distance: next));
     _changed();
-    return next >= CheBrainCamera.overview ? overview() : 'Backing out.';
+    return 'Backing out.';
   }
 
   String setFilter(String? category) {
+    if (category == null && filter.isEmpty) return 'Showing all ${layout.nodes.length} memories.';
+    _remember();
     filter
       ..clear()
       ..addAll([?category]);
@@ -337,6 +687,7 @@ class CheBrainSpaceController {
   String toggleCluster(String name, {bool? expand}) {
     final c = layout.clusters[name];
     if (c == null) return 'There is no $name cluster.';
+    _remember();
     focusedCluster = name;
     c.expanded = expand ?? !c.expanded;
     if (c.expanded) flyTo(CheBrainCamera(target: c.center.clone(), yaw: math.atan2(-c.center.x, c.center.z), pitch: .15, distance: 9));
@@ -380,6 +731,7 @@ class CheBrainSpaceController {
   String? focusedCluster;
 
   String focusCluster(CheBrainCluster cl) {
+    _remember();
     focusedCluster = cl.name;
     selectedId = null;
     cardOpen = false;
@@ -393,11 +745,11 @@ class CheBrainSpaceController {
   String step(int delta) {
     final clusters = [
       for (final cl in layout.clusters.values)
-        if (!cl.expanded && (filter.isEmpty || filter.contains(cl.name))) cl,
+        if (clusterShown(cl)) cl,
     ];
     final nodes = [
       for (final n in layout.nodes)
-        if (layout.visible(n, filter)) n,
+        if (shows(n)) n,
     ]..sort((a, b) => b.dot.importance.compareTo(a.dot.importance) != 0 ? b.dot.importance.compareTo(a.dot.importance) : a.id.compareTo(b.id));
     final stops = <Object>[...clusters, ...nodes];
     if (stops.isEmpty) return 'No memories are visible.';
@@ -421,30 +773,45 @@ class CheBrainSpaceController {
         CheBrainAction.overview => overview(),
         CheBrainAction.backOut => backOut(),
         CheBrainAction.filter => setFilter(command.category),
-        CheBrainAction.clearFilter => setFilter(null),
+        CheBrainAction.clearFilter => clearAll(),
         CheBrainAction.find => find(command.query ?? ''),
         CheBrainAction.openSelected => openSelected(),
         CheBrainAction.expand => _targetCluster == null ? 'Every cluster is already open.' : toggleCluster(_targetCluster!, expand: true),
         CheBrainAction.collapse => _targetCluster == null ? 'No cluster is selected.' : toggleCluster(_targetCluster!, expand: false),
         CheBrainAction.agentStatus => agentStatus(command.agent),
+        CheBrainAction.zoomIn => zoomIn(),
+        CheBrainAction.zoomOut => zoomOut(),
+        CheBrainAction.fit => fit(),
+        CheBrainAction.back => goBack(),
+        CheBrainAction.centerChe => centerOnChe(),
+        CheBrainAction.centerSelected => centerOnSelected(),
+        CheBrainAction.openWorker => setScope(command.worker),
+        CheBrainAction.lens => setLens(command.lens ?? CheBrainLens.none),
       };
 
   // ─── Hit testing ───────────────────────────────────────────────────────
 
   /// The orb or collapsed cluster under a screen point (nearest wins).
-  ({CheBrainNode? node, CheBrainCluster? cluster}) hit(Offset at, Size size) {
+  ({CheBrainNode? node, CheBrainCluster? cluster, CheBrainWorkerOrb? worker}) hit(Offset at, Size size) {
+    // A worker brain on the ring is a big, labelled target too (CHE's view only).
+    if (scope == null) {
+      for (final w in workers) {
+        final p = camera.project(w.position, size, worldRadius: w.radius);
+        if (p != null && (p.offset - at).distance <= math.max(p.radius, 26)) return (node: null, cluster: null, worker: w);
+      }
+    }
     // A collapsed cluster is a big, labelled target: a tap inside its orb
     // always means the cluster.
     for (final c in layout.clusters.values) {
-      if (c.expanded || (filter.isNotEmpty && !filter.contains(c.name))) continue;
+      if (!clusterShown(c)) continue;
       final p = camera.project(c.center, size, worldRadius: _clusterRadius(c));
-      if (p != null && (p.offset - at).distance <= math.max(p.radius, 26)) return (node: null, cluster: c);
+      if (p != null && (p.offset - at).distance <= math.max(p.radius, 26)) return (node: null, cluster: c, worker: null);
     }
     CheBrainNode? best;
     var bestDepth = double.infinity;
     for (var i = 0; i < layout.nodes.length; i++) {
       final n = layout.nodes[i];
-      if (!layout.visible(n, filter)) continue;
+      if (!shows(n)) continue;
       final p = camera.project(livePosition(i), size, worldRadius: n.size);
       if (p == null) continue;
       if ((p.offset - at).distance <= math.max(p.radius * 1.6, 18) && p.depth < bestDepth) {
@@ -452,7 +819,7 @@ class CheBrainSpaceController {
         bestDepth = p.depth;
       }
     }
-    return (node: best, cluster: null);
+    return (node: best, cluster: null, worker: null);
   }
 
   static double _clusterRadius(CheBrainCluster c) => .8 + math.min(2.2, math.sqrt(c.members.length) * .18);
@@ -671,6 +1038,11 @@ class _CheBrainSpaceState extends State<CheBrainSpace> with SingleTickerProvider
 
   void _tap(Offset at) {
     final hit = c.hit(at, _size);
+    if (hit.worker != null) {
+      HapticFeedback.mediumImpact();
+      _say(c.setScope(hit.worker!.name));
+      return;
+    }
     if (hit.cluster != null) {
       HapticFeedback.mediumImpact();
       _say(c.toggleCluster(hit.cluster!.name, expand: true));
@@ -720,7 +1092,7 @@ class _CheBrainSpaceState extends State<CheBrainSpace> with SingleTickerProvider
             builder: (context, _, _) {
               final sel = c.selected;
               return Semantics(
-                label: 'CHE brain space: ${c.layout.nodes.length} real memories in ${c.layout.clusters.length} clusters. '
+                label: '${c.brainName}: ${c.layout.nodes.length} real ${c.scope == null ? 'memories' : 'records'} in ${c.layout.clusters.length} clusters. '
                     '${sel == null ? 'Nothing selected.' : 'Selected: ${sel.dot.title}, ${sel.dot.category}.'}',
                 hint: 'Use the actions to move between memories and clusters, open one, go inside, back out, or show the whole brain.',
                 customSemanticsActions: {
@@ -799,12 +1171,13 @@ class _CheBrainSpaceState extends State<CheBrainSpace> with SingleTickerProvider
           builder: (context, _, _) {
             final sel = c.selected;
             if (!c.cardOpen || sel == null) return const SizedBox.shrink();
-            return Positioned(
-              left: 12,
-              right: 12,
-              bottom: 12 + widget.cardBottomInset,
-              child: _MemoryCard(controller: c, node: sel, onSpeak: _say, onOpenAgent: widget.onOpenAgent),
-            );
+            // Phones: a bottom sheet over the lower part of the space. Wider
+            // screens (tablet, desktop, landscape): a side panel on the right,
+            // so the brain stays in view beside what is being read.
+            final side = _size.width >= cheBrainSidePanelWidth;
+            final card = _MemoryCard(controller: c, node: sel, onSpeak: _say, onOpenAgent: widget.onOpenAgent, side: side);
+            if (side) return Positioned(top: 52, right: 12, bottom: 12 + widget.cardBottomInset, width: 360, child: Align(alignment: Alignment.topRight, child: card));
+            return Positioned(left: 12, right: 12, bottom: 12 + widget.cardBottomInset, child: card);
           },
         ),
       ]);
@@ -913,7 +1286,7 @@ class _LeaderLine extends CustomPainter {
 
 /// The readable card for one memory; surrounding memories stay visible.
 class _MemoryCard extends StatelessWidget {
-  const _MemoryCard({required this.controller, required this.node, required this.onSpeak, this.onOpenAgent});
+  const _MemoryCard({required this.controller, required this.node, required this.onSpeak, this.onOpenAgent, this.side = false});
 
   final CheBrainSpaceController controller;
   final CheBrainNode node;
@@ -922,16 +1295,34 @@ class _MemoryCard extends StatelessWidget {
   /// Deep link for live agent orbs; shown only on Agents cards when set.
   final void Function(String agentName)? onOpenAgent;
 
+  /// Laid out as a side panel (wide screens) instead of a bottom sheet.
+  final bool side;
+
   @override
   Widget build(BuildContext context) {
-    final color = cheMemoryCategoryColor(node.dot.category);
+    final dot = node.dot;
+    final color = cheMemoryCategoryColor(dot.category);
     final related = controller.layout.related(node, limit: 5);
     final cluster = controller.layout.clusters[node.cluster];
-    final maxHeight = MediaQuery.sizeOf(context).height * .42;
-    final at = node.dot.at?.toLocal();
+    final maxHeight = side ? MediaQuery.sizeOf(context).height - 80 : MediaQuery.sizeOf(context).height * .42;
+    final at = dot.at?.toLocal();
+    final verification = cheBrainVerificationLabel(dot.verification);
+    // Every state is words and an icon, never a color alone.
+    final facts = <(IconData, String)>[
+      (verification.$2, verification.$1),
+      if (dot.workers.isNotEmpty) (Icons.badge_outlined, dot.workers.length == 1 ? 'Worker · ${dot.workers.first}' : 'Workers · ${dot.workers.join(', ')}'),
+      if (dot.region.isNotEmpty) (Icons.folder_outlined, 'Folder · ${dot.region}${dot.path.isNotEmpty ? ' / ${dot.path}' : ''}'),
+      if (dot.outcome.isNotEmpty) (dot.outcome == 'failed' ? Icons.error_outline_rounded : dot.outcome == 'done' ? Icons.task_alt_rounded : Icons.timelapse_rounded, 'Status · ${dot.status}${dot.outcome == 'live' ? ' (still live, not finished)' : ''}'),
+      if (dot.project.isNotEmpty) (Icons.account_tree_outlined, 'Project · ${dot.project}'),
+      (dot.isPersonal ? Icons.lock_outline_rounded : Icons.groups_outlined, dot.isPersonal ? 'Personal memory' : 'Shared Office knowledge'),
+      if (dot.archived) (Icons.inventory_2_outlined, 'Archived'),
+      (Icons.source_outlined, 'Source · ${dot.source}'),
+      if (at != null) (Icons.schedule_rounded, 'Saved · ${cheMemoryWhen(at)}'),
+      if (dot.confidence != null) (Icons.percent_rounded, 'Confidence · ${(dot.confidence! * 100).round()}%'),
+    ];
     return Semantics(
       container: true,
-      label: 'Memory card',
+      label: 'Memory card: ${dot.title}. ${dot.category}. ${verification.$1}.',
       child: ConstrainedBox(
         constraints: BoxConstraints(maxHeight: maxHeight),
         child: DecoratedBox(
@@ -947,7 +1338,9 @@ class _MemoryCard extends StatelessWidget {
               Row(children: [
                 Container(width: 8, height: 8, decoration: BoxDecoration(shape: BoxShape.circle, color: color)),
                 const SizedBox(width: 6),
-                Expanded(child: Text(node.dot.category, style: CheType.caption.copyWith(color: color, fontWeight: FontWeight.w700))),
+                Icon(cheMemoryIcon(dot.category), size: 14, color: color),
+                const SizedBox(width: 4),
+                Expanded(child: Text(dot.category, style: CheType.caption.copyWith(color: color, fontWeight: FontWeight.w700))),
                 IconButton(
                   tooltip: 'Close memory',
                   visualDensity: VisualDensity.compact,
@@ -955,18 +1348,30 @@ class _MemoryCard extends StatelessWidget {
                   onPressed: controller.closeCard,
                 ),
               ]),
-              Semantics(header: true, child: Text(node.dot.title, style: CheType.label.copyWith(color: Colors.white, fontSize: 16))),
+              Semantics(header: true, child: Text(dot.title, style: CheType.label.copyWith(color: Colors.white, fontSize: 16))),
               Wrap(spacing: 6, children: [
                 TextButton.icon(
-                  onPressed: () => onSpeak('${node.dot.title}. ${node.dot.body}'),
+                  onPressed: () => onSpeak('${dot.title}. ${dot.body}'),
                   icon: const Icon(Icons.volume_up_rounded, size: 18),
                   label: const Text('Read aloud'),
                 ),
-                if (node.dot.category == 'Agents' && onOpenAgent != null)
+                TextButton.icon(
+                  onPressed: () => onSpeak(controller.centerOnSelected()),
+                  icon: const Icon(Icons.center_focus_weak_rounded, size: 18),
+                  label: const Text('Center on this'),
+                ),
+                for (final worker in dot.workers)
+                  if (controller.scope != worker && controller.worker(worker) != null)
+                    TextButton.icon(
+                      onPressed: () => onSpeak(controller.setScope(worker)),
+                      icon: const Icon(Icons.hub_outlined, size: 18),
+                      label: Text("Open $worker's brain"),
+                    ),
+                if (dot.category == 'Agents' && onOpenAgent != null)
                   TextButton.icon(
-                    onPressed: () => onOpenAgent!(node.dot.source),
+                    onPressed: () => onOpenAgent!(dot.workers.isNotEmpty ? dot.workers.first : dot.source),
                     icon: const Icon(Icons.business_center_rounded, size: 18),
-                    label: Text('Open ${node.dot.source} in Office'),
+                    label: Text('Open ${dot.workers.isNotEmpty ? dot.workers.first : dot.source} in Office'),
                   ),
                 if (cluster != null)
                   TextButton.icon(
@@ -976,16 +1381,17 @@ class _MemoryCard extends StatelessWidget {
                   ),
               ]),
               const SizedBox(height: 6),
-              Text(node.dot.body, style: CheType.body.copyWith(fontSize: 14, height: 1.35)),
+              Text(dot.body, style: CheType.body.copyWith(fontSize: 14, height: 1.35)),
               const SizedBox(height: 8),
-              Text(
-                [
-                  'Source · ${node.dot.source}',
-                  if (at != null) 'Saved · ${at.month}/${at.day}/${at.year}',
-                  if (node.dot.confidence != null) 'Confidence · ${(node.dot.confidence! * 100).round()}%',
-                ].join('   '),
-                style: CheType.caption.copyWith(fontSize: 11),
-              ),
+              for (final (icon, text) in facts)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 3),
+                  child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Icon(icon, size: 13, color: CheColors.textDim),
+                    const SizedBox(width: 6),
+                    Expanded(child: Text(text, style: CheType.caption.copyWith(fontSize: 11))),
+                  ]),
+                ),
               if (related.isNotEmpty) ...[
                 const SizedBox(height: 8),
                 Text('Related', style: CheType.caption.copyWith(fontWeight: FontWeight.w700)),
@@ -994,8 +1400,9 @@ class _MemoryCard extends StatelessWidget {
                   for (final r in related)
                     ActionChip(
                       visualDensity: VisualDensity.compact,
+                      avatar: Icon(cheMemoryIcon(r.dot.category), size: 14, color: cheMemoryCategoryColor(r.dot.category)),
                       label: Text(r.dot.title, style: const TextStyle(fontSize: 12), overflow: TextOverflow.ellipsis),
-                      tooltip: 'Go to related memory ${r.dot.title}',
+                      tooltip: 'Go to related memory ${r.dot.title}, ${r.dot.category}',
                       onPressed: () => onSpeak(controller.select(r)),
                     ),
                 ]),
@@ -1108,7 +1515,7 @@ class CheBrainPainter extends CustomPainter {
     final proj = List<CheProjected?>.filled(n, null);
     for (var i = 0; i < n; i++) {
       final node = layout.nodes[i];
-      if (!layout.visible(node, c.filter)) continue;
+      if (!c.shows(node)) continue;
       proj[i] = cam.project(c.livePosition(i), size, worldRadius: node.size);
     }
 
@@ -1237,7 +1644,7 @@ class CheBrainPainter extends CustomPainter {
 
     // Collapsed clusters: one orb with its name and count.
     for (final cl in layout.clusters.values) {
-      if (cl.expanded || (c.filter.isNotEmpty && !c.filter.contains(cl.name))) continue;
+      if (!c.clusterShown(cl)) continue;
       final p = cam.project(cl.center, size, worldRadius: CheBrainSpaceController._clusterRadius(cl));
       if (p == null) continue;
       final color = cheMemoryCategoryColor(cl.name);
@@ -1247,8 +1654,66 @@ class CheBrainPainter extends CustomPainter {
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1.2
         ..color = color.withValues(alpha: .9));
-      final tp = _label('cluster:${cl.name}', '${cl.name} · ${cl.members.length}', 12, Colors.white);
+      final tp = _label('cluster:${cl.name}', '${cl.name} · ${c.clusterCount(cl)}', 12, Colors.white);
       tp.paint(canvas, p.offset + Offset(-tp.width / 2, r + 4));
+    }
+
+    // The Office around CHE (CHE's view only): one orb per internal worker on
+    // the ring, in the same style as a collapsed lobe, in the Agents color the
+    // brain already uses for specialist work. Lines are real connections: each
+    // worker to CHE at the center, and workers who share records to each other.
+    if (c.scope == null && c.workers.isNotEmpty) {
+      final core = cam.project(vm.Vector3.zero(), size, worldRadius: 0, margin: 2000);
+      final projected = <String, CheProjected>{};
+      for (final w in c.workers) {
+        final p = cam.project(w.position, size, worldRadius: w.radius, margin: 400);
+        if (p != null) projected[w.name] = p;
+      }
+      final spokes = <double>[], ties = <double>[];
+      for (final w in c.workers) {
+        final p = projected[w.name];
+        if (p == null) continue;
+        if (core != null) spokes.addAll([p.offset.dx, p.offset.dy, core.offset.dx, core.offset.dy]);
+        for (final other in w.collaborators) {
+          if (w.name.compareTo(other) >= 0) continue;
+          final q = projected[other];
+          if (q != null) ties.addAll([p.offset.dx, p.offset.dy, q.offset.dx, q.offset.dy]);
+        }
+      }
+      if (spokes.isNotEmpty) {
+        canvas.drawRawPoints(ui.PointMode.lines, Float32List.fromList(spokes), Paint()
+          ..color = const Color(0x3362E3F0)
+          ..strokeWidth = .8);
+      }
+      if (ties.isNotEmpty) {
+        canvas.drawRawPoints(ui.PointMode.lines, Float32List.fromList(ties), Paint()
+          ..color = const Color(0x7AFFB54D)
+          ..strokeWidth = 1.1);
+      }
+      final color = cheMemoryCategoryColor('Agents');
+      for (final w in c.workers) {
+        final p = projected[w.name];
+        if (p == null) continue;
+        final r = math.max(p.radius, 13.0);
+        final dim = w.records == 0 ? .45 : 1.0;
+        canvas.drawCircle(p.offset, r * 1.7, Paint()..shader = ui.Gradient.radial(p.offset, r * 1.7, [color.withValues(alpha: .5 * dim), color.withValues(alpha: 0)]));
+        canvas.drawCircle(p.offset, r, Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.2
+          ..color = color.withValues(alpha: .9 * dim));
+        if (w.state == 'working') {
+          canvas.drawCircle(p.offset, r * .55 * (1 + math.sin(c.time * 2.2) * .08), Paint()..color = color.withValues(alpha: .35));
+        }
+        final tp = _label('worker:${w.name}', '${w.name} · ${w.records}', 12, Colors.white.withValues(alpha: .6 + .4 * dim));
+        tp.paint(canvas, p.offset + Offset(-tp.width / 2, r + 4));
+      }
+      if (cam.distance > 14) {
+        final under = cam.project(vm.Vector3(0, -9.6, 0), size);
+        if (under != null) {
+          final tp = _label('core:che', 'CHE · ${layout.nodes.length}', 12, CheColors.accent.withValues(alpha: .9));
+          tp.paint(canvas, under.offset - Offset(tp.width / 2, 0));
+        }
+      }
     }
 
     // Labels (level of detail): the selected memory, plus the nearest large
@@ -1268,7 +1733,7 @@ class CheBrainPainter extends CustomPainter {
     }
     if (cam.distance > 14) {
       for (final cl in layout.clusters.values) {
-        if (!cl.expanded || (c.filter.isNotEmpty && !c.filter.contains(cl.name))) continue;
+        if (!cl.expanded || (c.filter.isNotEmpty && !c.filter.contains(cl.name)) || c.clusterCount(cl) == 0) continue;
         final p = cam.project(cl.center + vm.Vector3(0, 4.6, 0), size);
         if (p == null) continue;
         final tp = _label('lobe:${cl.name}', cl.name, 11, cheMemoryCategoryColor(cl.name).withValues(alpha: .9));

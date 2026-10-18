@@ -527,7 +527,7 @@ class _CheTwoBrainsViewState extends State<CheTwoBrainsView> {
           tab: _index == 0 ? 'Live' : 'Offline',
           tabs: const ['Live', 'Offline'],
           detail: '${cheBrainPresentations[_index].title}: ${cheBrainPresentations[_index].detail}',
-          controls: const ['Back', 'Live', 'Offline', 'the memory constellation'],
+          controls: const ['Back', 'Live', 'Offline', 'the memory constellation', 'the brain switcher', 'filters', 'view controls'],
         ));
   }
 

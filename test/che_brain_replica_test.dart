@@ -424,4 +424,28 @@ void main() {
     expect(CheBrainReplica.displayCopy(long), long.substring(0, 500).trimRight());
     expect(CheBrainReplica.displayCopy(CheBrainReplica.displayCopy(long)), CheBrainReplica.displayCopy(long));
   });
+
+  test('N: a pulled record keeps every place it sits in across a restart, so worker brains work offline', () async {
+    final dir = await freshDir();
+    final brain = CheBrainReplica(directory: dir);
+    final record = CheBrainRecord.fromJson({
+      'id': 'task:shared', 'kind': 'task', 'region': 'Active and Historical Tasks', 'path': 'Historical', 'title': 'Research silver',
+      'body': 'Task: research silver. Status: failed.', 'source': {'kind': 'team_task', 'agent': 'Atlas', 'outcome': 'failed'},
+      'verification': 'unverified_reference', 'rev': 1, 'seq': 1, 'created_at': '2026-10-09T08:00:00.000Z', 'updated_at': '2026-10-09T09:30:00.000Z', 'origin': 'cloud',
+      'places': [{'region': 'Active and Historical Tasks', 'path': 'Historical'}, {'region': 'Office Agents', 'path': 'Atlas'}, {'region': 'Office Agents', 'path': 'Knox'}, {'region': '', 'path': 'ignored'}],
+    })!;
+    expect(record.places.map((p) => p['path']), ['Historical', 'Atlas', 'Knox']);
+    final json = record.toJson();
+    expect((json['places'] as List).length, 3);
+    final again = CheBrainRecord.fromJson(json)!;
+    expect(again.places, record.places);
+    // Through the journal: written as the sync would write it, read back after a restart.
+    await brain.load();
+    final file = File('${dir.path}/journal.ndjson');
+    await file.writeAsString('${jsonEncode({'t': 'rec', 'r': json})}\n', mode: FileMode.append, flush: true);
+    final reopened = CheBrainReplica(directory: dir);
+    await reopened.load();
+    expect(reopened.get('task:shared')!.places.map((p) => p['path']), ['Historical', 'Atlas', 'Knox']);
+    expect(reopened.recordsJson().single['places'], hasLength(3));
+  });
 }

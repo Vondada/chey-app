@@ -380,3 +380,23 @@ test('a secret never survives its label: multi-line results, JSON, errors and re
   const again = await projectInvestigations(store, kv, { now: T });
   assert.equal(again.rea.refused + again.rea.imported, 0, 'nothing is re-refused or rewritten on the next pass');
 });
+
+test('the change feed carries every place a record sits in, so the phone draws a shared task in both workers\' brains', async (t) => {
+  const storage = await sqlStorage();
+  if (!storage) return t.skip('node:sqlite unavailable');
+  const store = new CheBrainStore(storage);
+  projectOfficeExperience(store, officeData(), { now: T });
+  const feed = store.changes({ since: 0, limit: 500 });
+  const shared = feed.records.find((r) => r.id === 'task:t2');
+  assert.deepEqual(shared.places.map((p) => p.path).sort(), ['Atlas', 'Historical', 'Knox']);
+  assert.deepEqual(shared.places.filter((p) => p.region === BRAIN_REGIONS.agents).map((p) => p.path).sort(), ['Atlas', 'Knox']);
+  const own = feed.records.find((r) => r.id === 'task:t1');
+  assert.deepEqual(own.places.filter((p) => p.region === BRAIN_REGIONS.agents).map((p) => p.path), ['Nova']);
+  const temp = feed.records.find((r) => r.id === 'task:t4');
+  assert.equal(temp.places.some((p) => p.region === BRAIN_REGIONS.agents), false, 'a temporary provider worker has no brain to sit in');
+  for (const r of feed.records) assert.ok(Array.isArray(r.places) && r.places.length >= 1, `${r.id} has places`);
+  // Paging keeps places on every page; a page of one still works.
+  const one = store.changes({ since: 0, limit: 1 });
+  assert.equal(one.records.length, 1);
+  assert.ok(one.records[0].places.length >= 1);
+});

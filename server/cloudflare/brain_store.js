@@ -488,7 +488,30 @@ export class CheBrainStore {
     const rows = this.rows('SELECT * FROM brain_records WHERE seq > ? ORDER BY seq ASC LIMIT ?', from, size + 1);
     const more = rows.length > size;
     const records = rows.slice(0, size).map(rowToRecord);
+    this.attachPlaces(records);
     return { records, next: records.length ? records[records.length - 1].seq : from, more, seq: Number(this.meta('seq', 0)) || 0 };
+  }
+
+  /**
+   * Adds `places` (every region/folder the record sits in) to live records, in batches small enough
+   * for the Durable Object's bound-parameter limit. A record with no stored place keeps its own.
+   */
+  attachPlaces(records) {
+    const live = records.filter((r) => r && !r.deleted);
+    const byId = new Map(live.map((r) => [r.id, []]));
+    const ids = [...byId.keys()];
+    for (let i = 0; i < ids.length; i += 90) {
+      const chunk = ids.slice(i, i + 90);
+      const marks = chunk.map(() => '?').join(',');
+      for (const row of this.sql.exec(`SELECT record_id, region, path FROM brain_places WHERE record_id IN (${marks})`, ...chunk)) {
+        byId.get(row.record_id)?.push({ region: row.region, path: row.path || '' });
+      }
+    }
+    for (const r of live) {
+      const places = byId.get(r.id);
+      r.places = places && places.length ? places : [{ region: r.region, path: r.path }];
+    }
+    return records;
   }
 
   /**

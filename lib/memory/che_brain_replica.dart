@@ -88,12 +88,16 @@ class CheBrainRecord {
     required this.seq,
     required this.pending,
     this.syncNote = '',
+    this.places = const [],
   });
 
   final String id;
   final String kind;
   final String region;
   final String path;
+
+  /// Every region/folder the record sits in (a task shared by two workers is in both brains); empty means its own region/path only.
+  final List<Map<String, dynamic>> places;
   final String title;
   /// The first part of the body; long bodies live in their own file and are read on demand.
   final String excerpt;
@@ -120,8 +124,9 @@ class CheBrainRecord {
     String? title, String? excerpt, int? bodyChars, Map<String, dynamic>? source, String? verification,
     Map<String, dynamic>? significance, List<Map<String, dynamic>>? links, int? rev, String? updatedAt,
     String? origin, bool? deleted, int? seq, bool? pending, String? syncNote, String? region, String? path, String? kind,
+    List<Map<String, dynamic>>? places,
   }) => CheBrainRecord(
-        id: id, kind: kind ?? this.kind, region: region ?? this.region, path: path ?? this.path,
+        id: id, kind: kind ?? this.kind, region: region ?? this.region, path: path ?? this.path, places: places ?? this.places,
         title: title ?? this.title, excerpt: excerpt ?? this.excerpt, bodyChars: bodyChars ?? this.bodyChars,
         source: source ?? this.source, verification: verification ?? this.verification,
         significance: significance ?? this.significance, links: links ?? this.links, rev: rev ?? this.rev,
@@ -135,6 +140,7 @@ class CheBrainRecord {
         'body_chars': bodyChars, 'source': source, 'verification': verification, 'significance': significance,
         'links': links, 'rev': rev, 'created_at': createdAt, 'updated_at': updatedAt, 'origin': origin,
         'deleted': deleted, 'seq': seq, 'pending': pending, if (syncNote.isNotEmpty) 'sync_note': syncNote,
+        if (places.isNotEmpty) 'places': places,
       };
 
   static CheBrainRecord? fromJson(Map<String, dynamic> json, {bool pending = false}) {
@@ -164,6 +170,9 @@ class CheBrainRecord {
       seq: (json['seq'] is num) ? (json['seq'] as num).toInt() : 0,
       pending: json['pending'] == true || pending,
       syncNote: '${json['sync_note'] ?? ''}',
+      places: json['places'] is List
+          ? [for (final p in json['places'] as List) if (p is Map && '${p['region'] ?? ''}'.isNotEmpty) {'region': '${p['region']}', 'path': '${p['path'] ?? ''}'}]
+          : const [],
     );
   }
 

@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'dart:ui' show PictureRecorder;
 
+import 'package:chey/brain/che_brain_navigation.dart';
 import 'package:chey/brain/che_brain_space.dart';
 import 'package:chey/brain/che_brain_space_model.dart';
 import 'package:chey/che_ui/che_agent_chat.dart';
@@ -177,6 +178,9 @@ void main() {
     test('commands', () {
       expect(CheBrainCommand.parse('CHE, open my brain')!.action, CheBrainAction.open);
       expect(CheBrainCommand.parse('Take me inside.')!.action, CheBrainAction.inside);
+      expect(CheBrainCommand.parse('show live tasks')!.lens, const CheBrainLens(status: 'live'), reason: 'the same filter as the Live tasks chip');
+      expect(CheBrainCommand.parse('only show running tasks')!.lens, const CheBrainLens(status: 'live'));
+      expect(CheBrainCommand.parse('show active memories')!.lens, const CheBrainLens(archived: false));
       final f = CheBrainCommand.parse('show my research memories')!;
       expect(f.action, CheBrainAction.filter);
       expect(f.category, 'Research');
@@ -336,14 +340,14 @@ void main() {
       await tester.pumpWidget(_brainScreen(_memories()));
       await tester.pump();
       expect(find.byType(TextField), findsNothing);
-      expect(find.byType(FilterChip), findsNothing);
-      await tester.tap(find.byTooltip('Filter by category'));
+      expect(find.byType(CheBrainPill), findsNothing);
+      await tester.tap(find.byTooltip('Filter the brain'));
       await tester.pump();
-      expect(find.byType(FilterChip), findsWidgets);
+      expect(find.byType(CheBrainPill), findsWidgets);
       expect(find.bySemanticsLabel(RegExp(r'^Memory memories, 3')), findsOneWidget);
       await tester.tap(find.byTooltip('Find a memory'));
       await tester.pump();
-      expect(find.byType(FilterChip), findsNothing);
+      expect(find.byType(CheBrainPill), findsNothing);
       expect(find.byType(TextField), findsOneWidget);
       await tester.pumpWidget(const SizedBox());
     });
