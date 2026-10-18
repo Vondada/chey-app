@@ -48,7 +48,7 @@ extension _CheHomeHubRooms on _CHEHomeState {
         brainLinks: brainLinks,
         roster: team,
         loading: _brainSyncing,
-        offline: _brainReplica.lastReceipt?.ok == false,
+        offline: _brainReplica.lastReceipt?.unreachable == true,
         pendingSync: _brainReplica.pendingOps,
         onReadAloud: (t) => speakText(t, record: false, readOnDemand: true),
         onRefresh: () => _loadAgentState(silent: true),

@@ -258,10 +258,22 @@ export function brainReviewIntent(message) {
   if (/\b(?:build|fix|change|implement|delete|remove|clear|run\s+the\s+review\s+again|regenerate|rebuild|redo|rewrite|code|repo|pull\s+request|pr|website|plan|spending|log|logs|trail)\b/i.test(text)) return false;
   // What the owner himself said or asked is an owner-memory question, answered from his own words, never with the review.
   if (/\b(?:what\s+(?:have|did)\s+i\s+(?:told|tell|say|said|ask|asked|mention)|did\s+i\s+(?:ask|say|tell|mention)|have\s+i\s+(?:asked|said|told|mentioned))\b/i.test(text)) return false;
-  // Talking about the review is not asking to hear it: disagreeing with it, scheduling or cancelling
-  // it, having read or missed it, asking when it runs, or telling CHE something to remember about it.
-  if (/\b(?:disagree|wrong|cancel|turn\s+(?:off|on)|switch\s+(?:off|on)|stop|disable|enable|skip|missed|miss|schedule|reschedule|runs?\s+at|when\s+(?:does|is|will|do)|what\s+time|remember\s+(?:that|this)|note\s+that)\b/i.test(text)) return false;
-  if (/^(?:i|we)\s+(?:read|heard|saw|got|have\s+read)\b/i.test(text)) return false;
+  const NOUN = /\b(?:brain|morning|daily|nightly|night['’]?s|today['’]?s|yesterday['’]?s|last|your|the|my)\s+(?:brain\s+)?(?:review|audit)\b/i;
+  // An explicit request to hear it wins over everything below (review of #337): "did your audit find
+  // anything wrong", "what did I miss in my morning review", "read me my brain review but skip the
+  // facts", "I missed the brain review, can you read it", "what did yesterday's audit find".
+  const asks = /\bread\s+it\b/i.test(text)
+    || /\bwhat\s+did\b[\s\S]{0,40}\b(?:audit|review)\b[\s\S]{0,12}\b(?:find|say|conclude|flag)\b/i.test(text)
+    || /\bwhat\s+did\s+i\s+miss\s+in\b/i.test(text)
+    || /\bdid\s+(?:i\s+miss\s+anything\s+in|(?:your|the)\s+(?:brain\s+)?(?:audit|review)\s+find)\b/i.test(text);
+  if (asks && NOUN.test(text)) return true;
+  // Talking about the review is not asking to hear it: disagreeing with it, pausing, scheduling or
+  // cancelling it, saying it was read, thanking for it, asking how or when it runs, or telling CHE
+  // something to remember about it.
+  if (/\b(?:review|audit)\s+(?:is|was|seems)\s+wrong\b|\b(?:disagree|don['’]?t\s+agree|do\s+not\s+agree)\b/i.test(text)) return false;
+  if (/\b(?:cancel|stop|pause|disable|enable|skip|turn\s+(?:off|on)|switch\s+(?:off|on)|reschedule|schedule|move)\s+(?:my|the|this|tomorrow['’]?s|tonight['’]?s|the\s+next)?\s*(?:brain\s+|daily\s+|nightly\s+|morning\s+)?(?:review|audit)\b/i.test(text)) return false;
+  if (/^(?:i|we)(?:['’]ve|\s+have)?\s+(?:already\s+)?(?:read|heard|seen|saw|got|missed|skipped)\b(?![\s\S]*\bread\s+it\b)/i.test(text) && !/\?\s*$/.test(text)) return false;
+  if (/\b(?:thanks|thank\s+you)\b|\bhow\s+does\b[\s\S]{0,30}\b(?:work|run)\b|\b(?:runs?\s+at|when\s+(?:does|is|will|do)|what\s+time)\b|\b(?:remember\s+(?:that|this)|note\s+that)\b/i.test(text)) return false;
   if (/\bwhat\s+did\s+(?:last\s+night['’]?s|this\s+morning['’]?s|the\s+(?:nightly|morning|daily))\s+(?:audit|review)\s+(?:find|say|conclude|flag)\b/i.test(text)) return true;
   // Only a Brain-qualified noun, "your/the audit found", or a sentence that ends at the noun: "the review
   // John left", "my daily review at 9" and "what did you find about the brain tumor study" are something else.
