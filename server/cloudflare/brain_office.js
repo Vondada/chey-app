@@ -12,7 +12,7 @@
 // changes any model's weights; it gives CHE and her workers something to
 // retrieve before they repeat the same research.
 
-import { BRAIN_REGIONS, CheBrainStore, backfillConversations, contentHash, normalizeRecord, projectLegacyState } from './brain_store.js';
+import { BRAIN_REGIONS, CheBrainStore, backfillConversations, contentHash, isSafeText, normalizeRecord, projectLegacyState } from './brain_store.js';
 import { REA_DETAIL_PREFIX, REA_JOBS_KEY } from './rea_runner.js';
 import { EVIDENCE_RUNS } from './trading_evidence_runner.js';
 
@@ -155,7 +155,7 @@ export function taskRecord(task, index, workLog = null) {
 export function handoffRecord(handoff, taskId, index) {
   const from = index.find(handoff.from_agent_id || handoff.from_agent_name || handoff.from);
   const to = index.find(handoff.to_agent_id || handoff.to_agent_name || handoff.to);
-  if (!from || !to) return null;
+  if (!from || !to || from.id === to.id) return null;
   const at = clip(handoff.at, 40);
   return {
     id: `handoff:${clip(taskId, 80) || 'none'}:${from.id}:${to.id}:${at || 'undated'}`,
@@ -258,6 +258,22 @@ export function genericRecord(prefix, item, { kind, region, path, titleKeys, bod
   };
 }
 
+/**
+ * A record the Brain's secret gate refused, kept without the part that tripped it. The task text
+ * stays when it is safe on its own; the result, error and review are withheld. Same id, same
+ * places and links, so the worker's experience and the task's attribution survive. Null when
+ * even the safe outline cannot be written.
+ */
+export function redactedRecord(record) {
+  if (!record?.id) return null;
+  const source = { ...(record.source || {}), redacted: true };
+  const safeTitle = record.title && isSafeText(record.title) ? record.title : `${record.kind || 'record'} ${String(record.id).split(':').pop()}`;
+  const outline = String(record.body || '').split('\n').filter((line) => /^(?:Task|Status|Revisions|Handoffs):/.test(line) && isSafeText(line));
+  const body = [...outline, 'Result withheld: sensitive content; see the task history.'].join('\n');
+  if (!isSafeText(`${safeTitle}\n${body}`)) return null;
+  return { ...record, title: safeTitle, body, source };
+}
+
 // ─── Projection ────────────────────────────────────────────────────────────
 
 /**
@@ -273,17 +289,26 @@ export function projectOfficeExperience(store, data = {}, { now } = {}) {
   const seen = store.meta('office_hashes', {});
   const hashes = seen && typeof seen === 'object' ? seen : {};
   const counts = {};
+  const considered = new Set();
   const consider = (source, record) => {
     if (!record) return;
-    counts[source] = counts[source] || { inspected: 0, imported: 0, skipped: 0 };
+    counts[source] = counts[source] || { inspected: 0, imported: 0, skipped: 0, refused: 0 };
     counts[source].inspected += 1;
     const candidate = normalizeRecord(record);
     if (candidate.error) return;
+    considered.add(candidate.id);
     const hash = contentHash(candidate);
     if (hashes[candidate.id] === hash) { counts[source].skipped += 1; return; }
     const current = store.get(candidate.id);
     if (current?.deleted) { hashes[candidate.id] = hash; counts[source].skipped += 1; return; }
-    const result = store.put(record, { origin: 'cloud', now });
+    let result = store.put(record, { origin: 'cloud', now });
+    if (result.outcome === 'rejected') {
+      // The secret gate refused the full record: keep what is safe under the same id and say
+      // what was withheld, so the experience is counted as refused, never lost in silence.
+      counts[source].refused += 1;
+      const redacted = redactedRecord(record);
+      result = redacted ? store.put(redacted, { origin: 'cloud', now }) : result;
+    }
     if (['created', 'updated', 'merged', 'unchanged'].includes(result.outcome)) {
       hashes[candidate.id] = hash;
       if (result.outcome === 'unchanged') counts[source].skipped += 1; else counts[source].imported += 1;
@@ -318,7 +343,9 @@ export function projectOfficeExperience(store, data = {}, { now } = {}) {
   for (const objective of asList(data.objectives)) consider('objectives', genericRecord('objective', objective, { kind: 'objective', region: BRAIN_REGIONS.projects, path: 'Objectives', titleKeys: ['title', 'goal', 'objective', 'request'], bodyKeys: ['goal', 'status', 'summary', 'outcome', 'steps'] }));
   for (const meeting of asList(data.meetings)) consider('meetings', genericRecord('meeting', meeting, { kind: 'meeting', region: BRAIN_REGIONS.conversations, path: 'War Room', titleKeys: ['title', 'topic', 'subject'], bodyKeys: ['summary', 'decisions', 'notes', 'status', 'outcome'] }));
 
-  store.setMeta('office_hashes', hashes);
+  // Only the ids still in the state blob keep a hash: a record that scrolled out is never
+  // considered again, so its hash would only grow this row toward the storage limit.
+  store.setMeta('office_hashes', Object.fromEntries(Object.entries(hashes).filter(([id]) => considered.has(id))));
   return { available: true, at: now || new Date().toISOString(), workers: workers.length, counts };
 }
 
@@ -329,7 +356,12 @@ export function archiveTasks(store, tasks, data = {}, { now } = {}) {
   let written = 0;
   for (const task of tasks) {
     if (!task?.id) continue;
-    const result = store.put(taskRecord(task, index), { origin: 'cloud', now });
+    const record = taskRecord(task, index);
+    let result = store.put(record, { origin: 'cloud', now });
+    if (result.outcome === 'rejected') {
+      const redacted = redactedRecord(record);
+      if (redacted) result = store.put(redacted, { origin: 'cloud', now });
+    }
     if (['created', 'updated', 'merged'].includes(result.outcome)) written += 1;
   }
   return written;
@@ -356,7 +388,9 @@ export async function projectInvestigations(store, storage, { now } = {}) {
     if (!job?.id) continue;
     const detail = await storage.get(`${REA_DETAIL_PREFIX}${job.id}`).catch(() => null);
     const record = detail && typeof detail === 'object' ? detail : job;
-    const target = clip(record.target?.name || record.target?.host || record.target || job.target?.name || job.target, 120) || 'investigation';
+    const nameOf = (t) => (t && typeof t === 'object' ? t.name || t.host || t.url || '' : t);
+    const target = clip(nameOf(record.target) || nameOf(job.target), 120) || 'investigation';
+    const label = (x) => (x && typeof x === 'object' ? x.name || x.title || x.label || '' : x);
     const evidence = asList(record.features).flatMap((f) => asList(f?.evidence)).length + asList(record.evidence).length;
     consider('rea', {
       id: `rea:${job.id}`,
@@ -367,8 +401,8 @@ export async function projectInvestigations(store, storage, { now } = {}) {
       body: [
         `Target: ${target}. Status: ${clip(record.status || job.status, 30) || 'unknown'}.`,
         record.summary ? `Summary: ${clip(record.summary, 6000)}` : '',
-        asList(record.features).length ? `Features found: ${asList(record.features).map((f) => clip(f?.name || f?.title || f, 120)).filter(Boolean).slice(0, 40).join('; ')}` : '',
-        asList(record.architecture).length ? `Architecture: ${asList(record.architecture).map((a) => clip(a?.name || a, 120)).filter(Boolean).slice(0, 20).join('; ')}` : '',
+        asList(record.features).length ? `Features found: ${asList(record.features).map((f) => clip(label(f), 120)).filter(Boolean).slice(0, 40).join('; ')}` : '',
+        asList(record.architecture).length ? `Architecture: ${asList(record.architecture).map((a) => clip(label(a), 120)).filter(Boolean).slice(0, 20).join('; ')}` : '',
         `Evidence items: ${evidence}.`,
       ].filter(Boolean).join('\n'),
       source: { kind: 'rea_investigation', status: clip(record.status || job.status, 30), evidence_items: evidence, detail_stored: Boolean(detail) },
@@ -379,7 +413,10 @@ export async function projectInvestigations(store, storage, { now } = {}) {
   }
   const runs = asList(await storage.get(EVIDENCE_RUNS).catch(() => []));
   runs.forEach((run, i) => {
-    const id = clip(run?.id, 80) || `${clip(run?.at || run?.started_at, 40) || i}`;
+    if (!run || typeof run !== 'object') return;
+    // An id-less run is named by its time, never by its index, which shifts when the log is cut.
+    const id = clip(run.id, 80) || clip(run.at || run.started_at || run.created_at, 40);
+    if (!id) return;
     consider('trading', {
       id: `trade:${id}`,
       kind: 'experiment',

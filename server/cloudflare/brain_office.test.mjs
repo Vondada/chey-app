@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { BRAIN_REGIONS, CheBrainStore } from './brain_store.js';
 import {
-  CHE_CORE_ID, archiveTasks, internalWorkers, projectInvestigations, projectOfficeExperience, recoverHistory, taskRecord, workerBrains,
+  CHE_CORE_ID, archiveTasks, handoffRecord, internalWorkers, projectInvestigations, projectOfficeExperience, recoverHistory, redactedRecord, taskRecord, workerBrains,
 } from './brain_office.js';
 import { REA_DETAIL_PREFIX, REA_JOBS_KEY } from './rea_runner.js';
 import { EVIDENCE_RUNS } from './trading_evidence_runner.js';
@@ -196,4 +196,66 @@ test('a task record names every participant and reads failures as failures', () 
   assert.equal(record.source.outcome, 'failed');
   assert.match(record.body, /Handoffs: Atlas → Knox/);
   assert.deepEqual(record.places, [{ region: BRAIN_REGIONS.agents, path: 'Atlas' }, { region: BRAIN_REGIONS.agents, path: 'Knox' }]);
+});
+
+test('a task whose result trips the secret gate keeps a redacted record under its id: counted as refused, never lost, archived too', async (t) => {
+  const storage = await sqlStorage();
+  if (!storage) return t.skip('node:sqlite unavailable');
+  const store = new CheBrainStore(storage);
+  const data = officeData();
+  data.team_tasks.push({ id: 'sec1', partner_id: 'a-nova', partner_name: 'Nova', task: 'Log in to the supplier portal and download the invoice.', status: 'complete', result: 'Logged in with password: hunter2 and downloaded invoice 4471.', created_at: T, updated_at: T });
+  const first = projectOfficeExperience(store, data, { now: T });
+  assert.equal(first.counts.team_tasks.refused, 1);
+  assert.equal(first.counts.team_tasks.inspected, 5);
+  const kept = store.get('task:sec1');
+  assert.ok(kept, 'the task still has a record');
+  assert.equal(kept.source.redacted, true);
+  assert.doesNotMatch(kept.body, /hunter2/);
+  assert.doesNotMatch(kept.body, /invoice 4471/);
+  assert.match(kept.body, /^Task: Log in to the supplier portal and download the invoice\./m, 'the task text itself is safe and stays');
+  assert.match(kept.body, /Status: complete/);
+  assert.match(kept.body, /Result withheld: sensitive content; see the task history\./);
+  assert.equal(kept.source.agent, 'Nova');
+  const brains = workerBrains(store, data);
+  assert.equal(brains.workers.find((w) => w.name === 'Nova').tasks.done, 2, 'the ledger and the brain agree');
+  const second = projectOfficeExperience(store, data, { now: T });
+  assert.equal(second.counts.team_tasks.refused, 0, 'not re-refused every run');
+  assert.equal(second.counts.team_tasks.imported, 0);
+  // Leaving the recent list: the redacted record is archived, not dropped.
+  const store2 = new CheBrainStore(await sqlStorage());
+  assert.equal(archiveTasks(store2, [data.team_tasks[4]], data, { now: T }), 1);
+  assert.equal(store2.get('task:sec1').source.redacted, true);
+  // When the task text itself is sensitive, only the outline is kept.
+  const outline = redactedRecord(taskRecord({ id: 'sec2', partner_id: 'a-knox', task: 'Rotate the api key for the mail service.', status: 'failed', error: 'api key rejected' }, { find: () => null }));
+  assert.equal(outline.title, 'task sec2');
+  assert.doesNotMatch(outline.body, /api key/);
+  assert.match(outline.body, /Status: failed/);
+  // Hashes are kept only for ids still in the state blob.
+  assert.equal(Object.keys(store.meta('office_hashes')).includes('task:sec1'), true);
+  data.team_tasks = data.team_tasks.filter((x) => x.id !== 't1');
+  projectOfficeExperience(store, data, { now: T });
+  assert.equal(Object.keys(store.meta('office_hashes')).includes('task:t1'), false, 'a scrolled-out task no longer holds a hash');
+  assert.ok(store.get('task:t1'), 'its record stays');
+});
+
+test('a self-handoff is no collaboration; REA targets and features given as objects, and a null trading run, do not break the projection', async (t) => {
+  const index = { find: (key) => (key === 'Atlas' || key === 'a-atlas' ? { id: 'a-atlas', name: 'Atlas' } : null) };
+  assert.equal(handoffRecord({ from_agent_name: 'Atlas', to_agent_name: 'Atlas', at: T }, 't9', index), null);
+  const storage = await sqlStorage();
+  if (!storage) return t.skip('node:sqlite unavailable');
+  const store = new CheBrainStore(storage);
+  const kv = kvStorage();
+  await kv.put(REA_JOBS_KEY, [{ id: 'r2', status: 'done', target: { host: 'app.example' }, created_at: T }]);
+  await kv.put(`${REA_DETAIL_PREFIX}r2`, { id: 'r2', status: 'done', target: { host: 'app.example' }, features: [{ title: 'Login' }, { evidence: [] }], architecture: [{ label: 'React' }], created_at: T });
+  await kv.put(EVIDENCE_RUNS, [null, { status: 'complete', at: '2026-10-11T00:00:00.000Z', summary: 'Flat.' }, { id: 'e2', status: 'failed', at: T }]);
+  const inv = await projectInvestigations(store, kv, { now: T });
+  assert.equal(inv.rea.imported, 1);
+  assert.equal(inv.trading.imported, 2, 'the null entry is skipped, the id-less run is named by its time');
+  const rea = store.get('rea:r2');
+  assert.equal(rea.path, 'app.example');
+  assert.doesNotMatch(rea.body, /object Object/);
+  assert.match(rea.body, /Features found: Login/);
+  assert.match(rea.body, /Architecture: React/);
+  assert.ok(store.get('trade:2026-10-11T00:00:00.000Z'));
+  assert.equal(store.get('trade:1'), null);
 });
