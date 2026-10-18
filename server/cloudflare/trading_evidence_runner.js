@@ -112,7 +112,8 @@ const R = (x) => (x == null ? 'not measured' : `${x.toFixed(2)} R`);
 // performed best, and are you becoming more consistently profitable". Every number comes from
 // recorded trades or run logs. Where a number cannot be measured yet, the answer says so.
 export async function evidenceReport(storage, { now = Date.now() } = {}) {
-  const trades = await readTrades(storage, (t) => t.environment === 'paper');
+  // Daily research only; the intraday forward-paper journal has its own report (trading_live.js).
+  const trades = await readTrades(storage, (t) => t.environment === 'paper' && (t.data?.resolution ?? 'daily') === 'daily');
   const portfolios = await readPortfolios(storage);
   const runs = (await storage.get(EVIDENCE_RUNS)) || [];
   const okRuns = runs.filter((r) => r.ok);
