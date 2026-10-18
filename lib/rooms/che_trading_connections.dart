@@ -56,6 +56,13 @@ class _CheTradingConnectionsPanelState extends State<CheTradingConnectionsPanel>
     _load();
   }
 
+  @override
+  void dispose() {
+    // Only a client this panel made is closed; a client handed in belongs to its owner.
+    if (widget.client == null) _http.close();
+    super.dispose();
+  }
+
   Future<void> _load() async {
     try {
       final r = await _http.get(Uri.parse('${widget.baseUrl()}/api/trading/connections'), headers: widget.headers()).timeout(const Duration(seconds: 20));
@@ -153,35 +160,40 @@ class _CheTradingConnectionsPanelState extends State<CheTradingConnectionsPanel>
     final blocked = (c['blocked_by'] as List?)?.map((e) => '$e').toList() ?? const <String>[];
     final data = c['data'] is Map ? Map<String, dynamic>.from(c['data'] as Map) : null;
     final feed = data == null || data['label'] == null ? '' : '${data['label']} data from ${data['source'] ?? 'an unnamed source'}${data['lag_minutes'] == null ? '' : ', about ${data['lag_minutes']} minutes behind'}';
-    return Semantics(
-      container: true,
-      label: '${c['name']}: $word${mode.isEmpty ? '' : ', mode $mode'}. ${feed.isEmpty ? '' : '$feed. '}$detail',
-      excludeSemantics: c['id'] != 'alpaca',
-      child: Container(
-        margin: const EdgeInsets.only(top: 8),
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(color: _panel, border: Border.all(color: _stroke), borderRadius: BorderRadius.circular(10)),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
-            Expanded(child: Text('${c['name']}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16))),
-            if (mode.isNotEmpty) Padding(padding: const EdgeInsets.only(right: 6), child: Text(mode, style: const TextStyle(color: _dim, fontWeight: FontWeight.w700, fontSize: 12))),
-            Text(word, style: TextStyle(color: _tone(state), fontWeight: FontWeight.w800, fontSize: 13)),
+    final link = c['open_account'] != null && blocked.isNotEmpty ? '${c['open_account']}' : '';
+    // One VoiceOver item per card (read once), with the Alpaca buttons reachable on their own.
+    final label = '${c['name']}: $word${mode.isEmpty ? '' : ', mode $mode'}. ${feed.isEmpty ? '' : '$feed. '}$detail'
+        '${blocked.isEmpty ? '' : ' Needs: ${blocked.join('; ')}.'}${link.isEmpty ? '' : ' Open an account at $link.'}';
+    return Container(
+      margin: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(color: _panel, border: Border.all(color: _stroke), borderRadius: BorderRadius.circular(10)),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Semantics(
+          container: true,
+          label: label,
+          excludeSemantics: true,
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              Expanded(child: Text('${c['name']}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16))),
+              if (mode.isNotEmpty) Padding(padding: const EdgeInsets.only(right: 6), child: Text(mode, style: const TextStyle(color: _dim, fontWeight: FontWeight.w700, fontSize: 12))),
+              Text(word, style: TextStyle(color: _tone(state), fontWeight: FontWeight.w800, fontSize: 13)),
+            ]),
+            if (feed.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 4), child: Text(feed, style: const TextStyle(color: _dim, fontSize: 13))),
+            if (detail.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 4), child: Text(detail, style: const TextStyle(color: Colors.white70, fontSize: 14))),
+            for (final b in blocked) Padding(padding: const EdgeInsets.only(top: 2), child: Text('• $b', style: const TextStyle(color: _dim, fontSize: 13))),
+            if (link.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 4), child: SelectableText('Open an account: $link', style: const TextStyle(color: _dim, fontSize: 13))),
           ]),
-          if (feed.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 4), child: Text(feed, style: const TextStyle(color: _dim, fontSize: 13))),
-          if (detail.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 4), child: Text(detail, style: const TextStyle(color: Colors.white70, fontSize: 14))),
-          for (final b in blocked) Padding(padding: const EdgeInsets.only(top: 2), child: Text('• $b', style: const TextStyle(color: _dim, fontSize: 13))),
-          if (c['open_account'] != null && blocked.isNotEmpty)
-            Padding(padding: const EdgeInsets.only(top: 4), child: SelectableText('Open an account: ${c['open_account']}', style: const TextStyle(color: _dim, fontSize: 13))),
-          if (c['id'] == 'alpaca')
-            Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: Wrap(spacing: 8, runSpacing: 8, children: [
-                OutlinedButton(onPressed: _busy ? null : _addAlpacaKeys, child: Text(state == 'not_configured' ? 'Add paper keys' : 'Replace paper keys')),
-                if (state != 'not_configured') TextButton(onPressed: _busy ? null : _removeAlpacaKeys, child: const Text('Remove keys')),
-              ]),
-            ),
-        ]),
-      ),
+        ),
+        if (c['id'] == 'alpaca')
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Wrap(spacing: 8, runSpacing: 8, children: [
+              OutlinedButton(onPressed: _busy ? null : _addAlpacaKeys, child: Text(state == 'not_configured' ? 'Add paper keys' : 'Replace paper keys')),
+              if (state != 'not_configured') TextButton(onPressed: _busy ? null : _removeAlpacaKeys, child: const Text('Remove keys')),
+            ]),
+          ),
+      ]),
     );
   }
 
@@ -204,7 +216,9 @@ class _CheTradingConnectionsPanelState extends State<CheTradingConnectionsPanel>
         ),
       if (_error.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 6), child: Text(_error, style: const TextStyle(color: _dim, fontSize: 13))),
       for (final c in cards) _card(c),
-      if (_status.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 8), child: Text(_status, style: const TextStyle(color: Colors.white70, fontSize: 14))),
+      // The result of an action the owner just took is announced (AGENTS.md: every action is reported).
+      if (_status.isNotEmpty)
+        Padding(padding: const EdgeInsets.only(top: 8), child: Semantics(liveRegion: true, child: Text(_status, style: const TextStyle(color: Colors.white70, fontSize: 14)))),
     ]);
   }
 }

@@ -14,7 +14,7 @@ const alpaca = (reply = () => ({ status: 200, body: {} })) => {
   return {
     calls,
     fetcher: async (url, init = {}) => {
-      calls.push({ url: String(url), method: init.method || 'GET', headers: init.headers, body: init.body ? JSON.parse(init.body) : null });
+      calls.push({ url: String(url), method: init.method || 'GET', headers: init.headers, redirect: init.redirect, body: init.body ? JSON.parse(init.body) : null });
       const { status, body } = reply(String(url), init);
       return new Response(JSON.stringify(body), { status });
     },
@@ -102,4 +102,34 @@ test('trading connections: each card says its real state; nothing reads connecte
   const live = tradingConnections({ desk: { mode: 'live', account: { sim: '', live: 'L1' }, risk_limits: { maxContracts: 1, maxRiskDollars: 100 } }, tradovate: { configured: true, conn: { connected: true } }, alpaca: null });
   assert.equal(live.permissions.live_orders, 'each order needs your approval of that exact order');
   assert.equal(tradingConnections({ desk: { mode: 'live', account: { sim: '', live: 'L1' }, risk_limits: null }, tradovate: { configured: true, conn: { connected: true } } }).permissions.live_orders, 'off');
+});
+
+test('Alpaca: a redirect is never followed, and an unclear order result is looked up, not guessed (review of #348)', async () => {
+  const moved = alpaca(() => ({ status: 302, body: {} }));
+  const status = await alpacaStatus(PAPER, { fetcher: moved.fetcher });
+  assert.equal(status.state, 'refused');
+  assert.match(status.error, /redirected the request elsewhere/);
+  assert.equal(moved.calls.length, 1);
+  assert.equal(moved.calls[0].redirect, 'manual');
+
+  // A 500 on submit, then Alpaca has the order under its request id: CHE reports Alpaca's record.
+  const found = alpaca((url, init) => (init.method === 'POST' ? { status: 500, body: { message: 'internal error' } }
+    : { status: 200, body: { id: 'ord-9', client_order_id: 'order-0500', symbol: 'AAPL', qty: '1', side: 'buy', type: 'market', status: 'accepted' } }));
+  const s = memory();
+  const placed = await placeAlpacaPaperOrder(PAPER, s, { symbol: 'AAPL', qty: 1, side: 'buy', client_order_id: 'order-0500' }, { fetcher: found.fetcher });
+  assert.equal(placed.ok, true);
+  assert.equal(placed.confirmed_after_error, true);
+  assert.equal(placed.receipt.id, 'ord-9');
+  assert.match(found.calls[1].url, /\/v2\/orders:by_client_order_id\?client_order_id=order-0500$/);
+  assert.equal(found.calls.filter((c) => c.method === 'POST').length, 1, 'never sent twice');
+
+  const missing = alpaca((url, init) => (init.method === 'POST' ? { status: 503, body: { message: 'unavailable' } } : { status: 404, body: { message: 'order not found' } }));
+  assert.match((await placeAlpacaPaperOrder(PAPER, memory(), { symbol: 'AAPL', qty: 1, side: 'buy', client_order_id: 'order-0503' }, { fetcher: missing.fetcher })).detail, /no order with this request id, so nothing was placed/);
+
+  let n = 0;
+  const silent = async () => { n += 1; throw new TypeError('fetch failed'); };
+  const unknown = await placeAlpacaPaperOrder(PAPER, memory(), { symbol: 'AAPL', qty: 1, side: 'buy', client_order_id: 'order-0504' }, { fetcher: silent });
+  assert.equal(unknown.ok, false);
+  assert.match(unknown.detail, /cannot confirm whether Alpaca placed that paper order.*will not send it again/);
+  assert.equal(n, 2, 'one submit and one lookup, never a resend');
 });

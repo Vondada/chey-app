@@ -3635,3 +3635,21 @@ test('trading connections: one view by voice and over HTTP, Alpaca paper keys ne
     globalThis.fetch = original;
   }
 });
+
+test('an Alpaca key said in chat is refused and never kept anywhere; a Worker secret pair is not silently overridden (review of #348)', async () => {
+  const saved = new Map();
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => { throw new Error('no model may see a key'); } } };
+  const { chat, api } = await pairedChat(env, saved);
+  const say = async (m) => replyFromNdjson(await (await chat(m)).text());
+  for (const message of ['connect alpaca with key PKTESTKEY1234567890XY and 9fK2abcdefghijklmnopqS3', 'remember my alpaca key is PKTESTKEY1234567890XY']) {
+    assert.match(await say(message), /^I did not keep that, sir: it looks like a broker API key.*regenerate it in Alpaca and enter the new one in the Trading Room/);
+  }
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.doesNotMatch(JSON.stringify([...saved.entries()]), /PKTESTKEY|9fK2abc/, 'the key is in no memory, cache or record');
+  env.CHE_ALPACA_PAPER_KEY_ID = 'PKWORKERSECRET123456';
+  env.CHE_ALPACA_PAPER_SECRET = 's'.repeat(40);
+  const blocked = await api('/api/trading/alpaca/keys', { key_id: 'PKPAPERKEY1234567890', secret: 'p'.repeat(40) });
+  assert.equal(blocked.status, 409);
+  assert.match((await blocked.json()).detail, /already set as Worker secrets.*nothing was saved/);
+  assert.match((await (await api('/api/trading/alpaca/keys', { action: 'remove', confirm: true })).json()).detail, /still uses the Alpaca paper keys set as Worker secrets/);
+});

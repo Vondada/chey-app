@@ -362,3 +362,15 @@ test('going live takes a request and a confirmation within two minutes; nothing 
   assert.deepEqual(await confirmLive(s, t0 + 330_000), { before: 'sim', mode: 'live' });
   assert.equal((await readDesk(s)).live_request_at, 0);
 });
+
+test('trading intents need the whole request: questions and ordinary sentences are not commands (review of #348)', () => {
+  for (const no of ['confirm live trading is disabled', 'confirm live trading hours for the NYSE', 'confirm live trading is still off?',
+    'add alpaca to the list of stocks I watch', 'link me an article about alpaca wool', 'set up a meeting about the alpaca farm',
+    'my trading connection keeps dropping on wifi', 'write an essay about broker status in Europe']) {
+    assert.equal(deskIntent(no), null, no);
+  }
+  assert.deepEqual(deskIntent('confirm live trading.'), { kind: 'confirm_live' });
+  assert.deepEqual(deskIntent('remove my Alpaca keys'), { kind: 'alpaca_remove' });
+  assert.deepEqual(deskIntent('broker status'), { kind: 'connections' });
+  assert.deepEqual(deskIntent('check my trading connections'), { kind: 'connections' });
+});

@@ -42,14 +42,19 @@ async function call(keys, path, { method = 'GET', body = null, fetcher = fetch }
         ...(body ? { 'Content-Type': 'application/json' } : {}),
       },
       ...(body ? { body: JSON.stringify(body) } : {}),
+      // A redirect would carry the key pair (and an order) to another host, so none is followed.
+      redirect: 'manual',
       signal: AbortSignal.timeout(8000),
     });
   } catch (error) {
-    return { ok: false, state: 'unavailable', error: `Alpaca's paper service did not answer (${String(error?.message || error).slice(0, 80)}).` };
+    return { ok: false, unclear: true, state: 'unavailable', error: `Alpaca's paper service did not answer (${String(error?.message || error).slice(0, 80)}).` };
+  }
+  if (response.type === 'opaqueredirect' || (response.status >= 300 && response.status < 400)) {
+    return { ok: false, state: 'refused', error: 'Alpaca\'s paper service redirected the request elsewhere, so CHE did not follow it.' };
   }
   const data = await response.json().catch(() => ({}));
   if (response.ok) return { ok: true, status: response.status, data };
-  return { ok: false, status: response.status, state: response.status === 401 ? 'rejected' : 'unavailable', error: String(data?.message || `Alpaca answered HTTP ${response.status}`).slice(0, 160) };
+  return { ok: false, status: response.status, unclear: response.status >= 500 || response.status === 422, state: response.status === 401 ? 'rejected' : 'unavailable', error: String(data?.message || `Alpaca answered HTTP ${response.status}`).slice(0, 160) };
 }
 
 const money = (value) => (value == null || value === '' || !Number.isFinite(Number(value)) ? null : Number(value));
@@ -166,6 +171,18 @@ export async function placeAlpacaPaperOrder(env, storage, order = {}, { fetcher 
     fetcher,
     body: { symbol, qty: String(qty), side, type, time_in_force: 'day', client_order_id: clientId, ...(type === 'limit' ? { limit_price: String(limit) } : {}) },
   });
+  if (!answer.ok && answer.unclear) {
+    // No answer, a server error or "that request id is taken": the order may exist, so CHE asks
+    // Alpaca for it by its request id and reports only what Alpaca says.
+    const found = await call(keys, `/v2/orders:by_client_order_id?client_order_id=${encodeURIComponent(clientId)}`, { fetcher });
+    if (found.ok && found.data?.id) {
+      const made = { ...receipt(found.data), recorded_at: new Date(now).toISOString() };
+      await storage.put(ORDERS, [...journal, made].slice(-50));
+      return { ok: true, receipt: made, confirmed_after_error: true };
+    }
+    if (found.status === 404) return { ok: false, detail: `Alpaca's paper service did not accept the order: ${answer.error}. Alpaca has no order with this request id, so nothing was placed, sir.` };
+    return { ok: false, unclear: true, detail: `I cannot confirm whether Alpaca placed that paper order, sir (${answer.error}). I will not send it again; ask me for your Alpaca paper orders to check.` };
+  }
   if (!answer.ok) return { ok: false, detail: `Alpaca's paper service did not accept the order: ${answer.error}. Nothing was placed, sir.` };
   const made = { ...receipt(answer.data), recorded_at: new Date(now).toISOString() };
   await storage.put(ORDERS, [...journal, made].slice(-50));

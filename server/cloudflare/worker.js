@@ -61,7 +61,7 @@ import { condenseHistory, ownerNotificationPolicy } from './workflow_governor.js
 import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, nextTradingTickAt, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
 import { evidenceIntent, evidenceReport, evidenceTick } from './trading_evidence_runner.js';
 import { LIVE_BACKTEST, LIVE_STATE, liveBacktest, liveDashboard, livePaperSummary, liveTick, nextLiveTickAt, setLivePaper } from './trading_live.js';
-import { alpacaPaperOrders, alpacaStatus, placeAlpacaPaperOrder, removeAlpacaPaperKeys, saveAlpacaPaperKeys } from './broker_alpaca.js';
+import { alpacaKeys, alpacaPaperOrders, alpacaStatus, placeAlpacaPaperOrder, removeAlpacaPaperKeys, saveAlpacaPaperKeys } from './broker_alpaca.js';
 import { speakConnections, tradingConnections } from './trading_connections.js';
 import { liveIntent, liveReply } from './trading_live_chat.js';
 import { cloudDailyLimit, sanitizeOwnerText } from './che_errors.js';
@@ -161,6 +161,7 @@ import {
   buildAgentTaskNodes,
   buildBrainGraph,
   enrichNoteForBrain,
+  BROKER_KEY_RE,
   isSafeMemoryText,
   listMemoryNotes,
   writeResearchMemoryNote,
@@ -6233,30 +6234,36 @@ export class CheState extends DurableObject {
         if (body.action === 'backtest') return json(await liveBacktest(this.ctx.storage));
         return json({ detail: 'Unknown action. Use start, stop, tick or backtest.' }, 400);
       }
+      const tradingOwnerOnly = () => json({ detail: 'Only the CHE owner can use trading connections.' }, 403);
       if (path === '/api/trading/connections' && request.method === 'GET') {
-        if (!ownerDevice) return ownerOnly();
+        if (!ownerDevice) return tradingOwnerOnly();
         const view = await this.tradingConnectionsView();
         return json({ ...view, speech: speakConnections(view) });
       }
       // The Alpaca paper key pair: saved only after Alpaca's paper host accepts it, never returned.
       if (path === '/api/trading/alpaca/keys' && request.method === 'POST') {
-        if (!ownerDevice) return ownerOnly();
+        if (!ownerDevice) return tradingOwnerOnly();
+        // A Worker secret pair wins over keys saved in CHE, so saving or removing here would not change what CHE uses.
+        const workerPair = Boolean(alpacaKeys(this.env));
         if (body.action === 'remove') {
           if (body.confirm !== true) return json({ ok: false, detail: 'Removing the Alpaca paper keys needs your confirmation, sir. Nothing was removed.' }, 409);
           const removed = await removeAlpacaPaperKeys(this.ctx.storage);
           await this.refreshKeyEnv();
-          return json({ ...removed, detail: removed.removed ? 'The Alpaca paper keys are removed, sir.' : 'There were no Alpaca paper keys saved in CHE, sir.' });
+          const detail = workerPair ? 'CHE still uses the Alpaca paper keys set as Worker secrets, sir; remove those in Cloudflare to disconnect Alpaca.'
+            : removed.removed ? 'The Alpaca paper keys are removed, sir.' : 'There were no Alpaca paper keys saved in CHE, sir.';
+          return json({ ...removed, detail });
         }
+        if (workerPair) return json({ ok: false, detail: 'Alpaca paper keys are already set as Worker secrets, sir, and those win, so nothing was saved. Change them in Cloudflare instead.' }, 409);
         const saved = await saveAlpacaPaperKeys(this.ctx.storage, { key_id: body.key_id, secret: body.secret });
         if (saved.ok) await this.refreshKeyEnv();
         return json(saved, saved.ok ? 200 : 400);
       }
       if (path === '/api/trading/alpaca/orders' && request.method === 'GET') {
-        if (!ownerDevice) return ownerOnly();
+        if (!ownerDevice) return tradingOwnerOnly();
         return json(await alpacaPaperOrders(this.keyEnv || this.env));
       }
       if (path === '/api/trading/alpaca/order' && request.method === 'POST') {
-        if (!ownerDevice) return ownerOnly();
+        if (!ownerDevice) return tradingOwnerOnly();
         const placed = await placeAlpacaPaperOrder(this.keyEnv || this.env, this.ctx.storage, body);
         return json(placed, placed.ok ? 200 : 400);
       }
@@ -8029,6 +8036,11 @@ export class CheState extends DurableObject {
         }
         const rawMessage = String(body.message || '').trim().slice(0, 16000);
         if (!rawMessage) return json({ detail: 'Message required.' }, 400);
+        // A broker key said or typed in chat is never kept or sent on to a model (review of #348):
+        // the memory filters refuse it by its shape, and CHE says what to do instead.
+        if (BROKER_KEY_RE.test(rawMessage)) {
+          return ndjsonReply('I did not keep that, sir: it looks like a broker API key, and keys never go in chat. It may now be exposed, so regenerate it in Alpaca and enter the new one in the Trading Room, where it goes straight to CHE\'s key store.', { source: 'che_secret_refused', ok: false, model_calls: 0 });
+        }
         // A family/guest device never reaches the owner's chat routes below.
         if (!ownerDevice) return this.guestChat(body, rawMessage.slice(0, 4000), activeTenant);
         // Command Center: a plain yes releases a held command (once, fresh);
@@ -9459,6 +9471,9 @@ export class CheState extends DurableObject {
           if (desk.kind === 'connections') {
             const view = await this.tradingConnectionsView();
             return ndjsonReply(speakConnections(view), { source: 'che_trading_desk', ok: true, trading_mode: view.mode });
+          }
+          if (desk.kind === 'alpaca_remove') {
+            return ndjsonReply('To remove the Alpaca paper keys, sir, open the Trading Room, choose Alpaca, then Remove keys; CHE asks you to confirm first. Nothing was removed.', { source: 'che_trading_desk', ok: true });
           }
           if (desk.kind === 'alpaca_setup') {
             return ndjsonReply('To connect Alpaca paper trading, sir: on alpaca.markets open your paper account, go to API Keys and generate a paper key; its ID starts with PK. Then open the Trading Room, choose Alpaca, and enter the key ID and secret there. Never say or type them in chat. CHE checks them with Alpaca\'s paper service before saving, and refuses live keys.', { source: 'che_trading_desk', ok: true });

@@ -128,9 +128,13 @@ export function speakAlert(a) {
 
 export function deskIntent(message) {
   const text = String(message || '').toLowerCase().replace(/[’']/g, "'");
-  if (/\b(?:trading|broker(?:age)?)\s+connections?\b|\bbroker\s+status\b|\b(?:which|what)\s+brokers?\b[\s\S]{0,20}\bconnected\b/.test(text)) return { kind: 'connections' };
-  if (/^\s*(?:yes[,!.]?\s+)?confirm\s+(?:the\s+)?(?:switch\s+to\s+)?live\s+trading\b/.test(text)) return { kind: 'confirm_live' };
-  if (/\b(?:connect|link|set up|setup|add|hook up)\b[\s\S]{0,25}\balpaca\b/.test(text)) return { kind: 'alpaca_setup' };
+  // A request to hear them, not a remark about a connection ("my trading connection keeps dropping").
+  if (/\b(?:what|which|show|list|read|tell me|check)\b[\s\S]{0,25}\b(?:trading|broker(?:age)?)\s+(?:connections?|status)\b|^\s*(?:my\s+)?(?:trading|broker(?:age)?)\s+(?:connections|status)\s*[?.!]*$|\b(?:which|what)\s+brokers?\b[\s\S]{0,20}\bconnected\b/.test(text)) return { kind: 'connections' };
+  // The whole sentence is the confirmation: "confirm live trading is still off?" is a question, not a yes.
+  if (/^\s*(?:yes[,!.]?\s+)?confirm\s+(?:the\s+)?(?:switch\s+to\s+)?live\s+trading(?:\s+(?:please|now))?[\s.!]*$/.test(text)) return { kind: 'confirm_live' };
+  const alpacaTrading = /\balpaca\b/.test(text) && /\b(?:paper|account|keys?|broker|trading)\b/.test(text);
+  if (alpacaTrading && /\b(?:remove|delete|disconnect|unlink|forget)\b/.test(text)) return { kind: 'alpaca_remove' };
+  if (alpacaTrading && /\b(?:connect|link|set up|setup|add|hook up)\b/.test(text)) return { kind: 'alpaca_setup' };
   if (/\b(?:connect|link|sign in to|log in to|hook up)\b[\s\S]{0,30}\b(?:ninja\s?trader|tradovate|trading account|funded account|broker)\b/.test(text)) return { kind: 'connect' };
   const sw = /\b(?:switch|change|go|flip|move|put|set)\b[\s\S]{0,25}\b(?:to|over to|on|into)\b/.test(text);
   if (sw && /\b(?:live|real)(?:\s+money)?\s+(?:trading|account|mode)\b/.test(text)) return { kind: 'mode', mode: 'live' };
