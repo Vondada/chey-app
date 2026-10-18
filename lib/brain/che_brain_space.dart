@@ -198,7 +198,8 @@ class CheBrainSpaceController {
     for (final member in _roster) {
       final name = '${member['name'] ?? ''}'.trim();
       if (name.isEmpty) continue;
-      if (member['temporary'] == true || cheBrainExternalAi.hasMatch(name)) {
+      // A retired worker keeps no orb (the Worker's core record drops retired names too).
+      if (member['temporary'] == true || member['retired'] == true || cheBrainExternalAi.hasMatch(name)) {
         excluded.add(name.toLowerCase());
         continue;
       }

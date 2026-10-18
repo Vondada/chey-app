@@ -400,3 +400,16 @@ test('the change feed carries every place a record sits in, so the phone draws a
   assert.equal(one.records.length, 1);
   assert.ok(one.records[0].places.length >= 1);
 });
+
+test('a blocked task is live work for its worker, not an unknown outcome', async (t) => {
+  const storage = await sqlStorage();
+  if (!storage) return t.skip('node:sqlite unavailable');
+  const store = new CheBrainStore(storage);
+  const data = officeData();
+  const before = workerBrains(store, data).workers.find((w) => w.name === 'Nova').tasks;
+  data.team_tasks.push({ id: 'blk1', partner_id: 'a-nova', partner_name: 'Nova', task: 'Wait for the vendor to answer.', status: 'blocked', created_at: T });
+  projectOfficeExperience(store, data, { now: T });
+  const after = workerBrains(store, data).workers.find((w) => w.name === 'Nova').tasks;
+  assert.equal(after.live, (before.live || 0) + 1, 'blocked counts as live');
+  assert.equal(store.get('task:blk1').source.outcome, 'live');
+});
