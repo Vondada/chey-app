@@ -197,6 +197,14 @@ Verified (automated, offline, this PR):
   search 90 ms, load 14.9 s.
 - `run_checks.sh` (2026-10-18, after review 5): Worker 1817/1824 (7 skipped), dart analyze
   clean, flutter test +448.
+- Eighth (narrow) review of the seventh's fixes (2026-10-18): one more cut of the same class.
+  The 160-character title of a memory ("abc pin|nacle") tripped the Brain's gate for the whole
+  record, so a clean 202-character memory was on the Memory screen but never in the Brain, the
+  replica or offline recall, and the projection re-refused it every run. Titles are now cut at a
+  word boundary (`clipWords` in the store and the memory list; exchange titles too). Noted, not
+  changed: the Memory screen's delete and clear-all POSTs have no timeout; the offline list is
+  newest-first while the cloud list is oldest-first (words decide deletes, so no wrong deletion);
+  a 500-character copy ending on "pin" is withheld from provider context by `filterForProvider`.
 - Seventh independent review (2026-10-18): four blocking findings, fixed above. The Memory
   list hydrated from the replica used the raw 600-character excerpt, so a delete after an
   offline start was answered "already gone" while the memory stayed; the list now shows the

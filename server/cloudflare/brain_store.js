@@ -75,6 +75,19 @@ function clip(value, max) {
 }
 
 /**
+ * A title cut at a word boundary. A hard cut can end on a fragment ("pin|nacle", "secret|ary")
+ * that the secret gate reads as a key word and refuse a clean record whole; a text that is safe
+ * as a whole stays safe when it ends on a whole word.
+ */
+function clipWords(value, max) {
+  const text = String(value ?? '').replace(/\u0000/g, '').trim();
+  if (text.length <= max) return text;
+  const cut = text.slice(0, max);
+  const edge = Math.max(cut.lastIndexOf(' '), cut.lastIndexOf('\n'));
+  return (edge > max / 2 ? cut.slice(0, edge) : cut).trimEnd();
+}
+
+/**
  * The same secret gate as /api/memory/add (the sensitive words and the privacy policy's secret
  * class), run over the whole text at once, so one password anywhere refuses the record and a
  * clean text is never refused because a window cut through a word.
@@ -179,7 +192,7 @@ export function normalizeRecord(input) {
     region,
     path: clip(record.path, 160),
     places: normalizePlaces({ ...record, region }),
-    title: clip(record.title, MAX_TITLE_CHARS) || clip(body.split('\n')[0], 90) || id,
+    title: clipWords(record.title, MAX_TITLE_CHARS) || clipWords(body.split('\n')[0], 90) || id,
     body,
     source: { ...source, ...(rawBody.length > MAX_BODY_CHARS ? { clipped_from_chars: rawBody.length } : {}) },
     verification: VERIFICATIONS.has(record.verification) ? record.verification : 'unknown',
@@ -589,7 +602,7 @@ export function rememberExchange(store, { id, message, reply, at, correction = f
     kind: correction ? 'correction' : 'conversation',
     region: BRAIN_REGIONS.conversations,
     path: correction ? 'Corrections' : `Chat/${day}`,
-    title: said.slice(0, 90),
+    title: clipWords(said, 90),
     body,
     source: { kind: 'owner_chat', brainmem_id: id, full_text: true, ...source },
     verification: 'owner_attested',
@@ -630,7 +643,7 @@ function memoryRecordToBrain(record) {
     kind: 'memory',
     region: BRAIN_REGIONS.personal,
     path: clip(record.category, 60) || 'Memory',
-    title: clip(record.title || record.text, 160),
+    title: clipWords(record.title || record.text, 160),
     body: String(record.text || ''),
     source: { kind: 'memory_record', legacy_source: record.source || '', scope: record.scope || 'owner', confidence: record.confidence ?? null, active: record.active !== false, superseded_at: record.superseded_at || '' },
     verification: VERIFICATIONS.has(record.verification_status) ? record.verification_status : 'unknown',
@@ -669,7 +682,7 @@ function memoryNoteToBrain(note) {
     region: regionForNote(note),
     path: note.kind === 'opportunity' ? 'Opportunities' : 'Research notes',
     places: note.kind === 'opportunity' ? [{ region: BRAIN_REGIONS.learned, path: 'Research notes' }] : [],
-    title: clip(note.title, 160),
+    title: clipWords(note.title, 160),
     body: [...bullets.map((b) => `- ${b}`), ...(sources.length ? ['', `Sources: ${sources.join(' ')}`] : [])].join('\n'),
     source: { kind: 'memory_note', agent: note.agent || note.agent_name || '', task_id: note.task_id || '', urls: sources.slice(0, 10) },
     verification: VERIFICATIONS.has(note.verification_status) ? note.verification_status : 'unverified_research_lead',
@@ -700,7 +713,7 @@ function taskToBrain(task) {
     region: BRAIN_REGIONS.tasks,
     path: live ? 'Active' : 'Historical',
     places: [{ region: BRAIN_REGIONS.agents, path: clip(task.agent_name || task.agent || task.agent_id, 60) || 'Office' }],
-    title: clip(task.task || task.title, 160),
+    title: clipWords(task.task || task.title, 160),
     body: [`Status: ${status}`, task.result ? `Result: ${String(task.result).slice(0, 20_000)}` : '', task.error ? `Error: ${task.error}` : ''].filter(Boolean).join('\n'),
     source: { kind: 'team_task', agent: task.agent_name || task.agent || '', status, kind_label: task.kind || '' },
     verification: 'unverified_reference',
@@ -736,7 +749,7 @@ function libraryDocToBrain(doc) {
     kind: 'library_doc',
     region: BRAIN_REGIONS.learned,
     path: 'Library',
-    title: clip(doc.title, 160) || 'Untitled',
+    title: clipWords(doc.title, 160) || 'Untitled',
     // The text itself stays in the library tables (and the phone's offline library); this is its index card.
     body: `${doc.title || 'Untitled'}
 Source: ${doc.source || 'owner'}

@@ -19,6 +19,15 @@ function clip(value, max) {
   return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max).trim();
 }
 
+/** A title cut at a word boundary: a hard cut can end on a fragment ("pin|nacle") the secret gate reads as a key word. */
+function clipWords(value, max) {
+  const text = String(value ?? '').replace(/\s+/g, ' ').trim();
+  if (text.length <= max) return text;
+  const cut = text.slice(0, max);
+  const space = cut.lastIndexOf(' ');
+  return (space > max / 2 ? cut.slice(0, space) : cut).trim();
+}
+
 /** Same gate as /api/memory/add — non-sensitive only. */
 export function isSafeMemoryText(text) {
   // The whole collapsed text, not the 500-character display window: a window can cut a word
@@ -93,7 +102,7 @@ export function addOwnerMemory(data, text, opts = {}) {
     // A memory first saved on the phone keeps the id its Brain record already has.
     id: clip(opts.id, 80) || cryptoRandomId(),
     text: memory,
-    title: clip(opts.title || memory, 160),
+    title: clipWords(opts.title || memory, 160),
     category: clip(opts.category || 'Memory', 60) || 'Memory',
     // No source means CHE's own code wrote it, not the owner: only the owner's
     // memory paths (chat "remember", the Memory screen, an approved
@@ -452,7 +461,7 @@ export function buildBrainGraph(data = {}, { maxLinksPerNode = 4, minSimilarity 
     const id = `lk-${i}-${hashShort(text)}`;
     nodes.push({
       id,
-      title: clip(text, 160),
+      title: clipWords(text, 160),
       body: text,
       kind: 'learned_knowledge',
       locale: null,

@@ -396,3 +396,19 @@ test('the phone\'s words reach the cloud whole: a multi-line memory is deleted b
   assert.deepEqual(state.memories, []);
   assert.equal((await (await che.call('/api/brain/search?q=pinnacle', { token: che.token })).json()).hits.length, 0);
 });
+
+test('a clean memory whose 160-character title cut ends on a word fragment still enters the Brain whole', async (t) => {
+  const che = await owner();
+  if (!che) return t.skip('node:sqlite unavailable');
+  // 202 clean characters; a hard 160-character title cut would end on "abc pin".
+  const text = `${'ab '.repeat(51)}abc pinnacle of the whole trip, worth every step.`;
+  assert.equal(text.slice(157, 160), 'pin');
+  assert.equal((await che.call('/api/memory/add', { method: 'POST', token: che.token, body: { memory: text } })).status, 200);
+  const state = await (await che.call('/api/state', { token: che.token })).json();
+  assert.equal(state.memories.length, 1);
+  const record = await (await che.call(`/api/brain/record?id=mem:${state.memory_records[0].id}`, { token: che.token })).json();
+  assert.equal(record.deleted, false, 'the Brain holds the memory the list shows');
+  assert.equal(record.body, text);
+  assert.ok(!/pin$/.test(record.title), `the title ends on a whole word: ${record.title}`);
+  assert.equal((await (await che.call('/api/brain/search?q=pinnacle', { token: che.token })).json()).hits.length, 1);
+});
