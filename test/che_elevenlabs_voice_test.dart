@@ -75,7 +75,7 @@ void main() {
     final voice = File('lib/home_state/voice.dart').readAsStringSync();
 
     test('replies ask for ElevenLabs and Fish only, and a silent clip is shown instead', () {
-      expect(voice, contains('CheEdgeVoice.speak(text, purpose: purpose, premiumOnly: true)'));
+      expect(voice, contains('CheEdgeVoice.speak(text, purpose: purpose, premiumOnly: true, turn: turn, index: index, lock: lock)'));
       expect(voice, contains('_staySilent(text, why, outcome)'));
       expect(voice, isNot(contains('synthesizeNeural')));
       expect(voice, isNot(contains('/api/voice/synthesize')));

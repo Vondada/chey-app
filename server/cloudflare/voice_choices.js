@@ -121,3 +121,56 @@ export function voiceEnvForSelection(env, selected) {
   }
   return env;
 }
+
+// The owner's voice choice survives every other write (owner, 2026-10-18: "keep
+// my voice selection until I change it"). It lives inside the shared `che`
+// record, which long requests (a chat turn, an Office run) load early and write
+// back late; a choice saved in between was undone by that older copy, and CHE
+// went back to Mary. Each change is now stamped and also kept under its own
+// key, and every load puts the newest choice back into `che`.
+export const VOICE_PREF_KEY = 'voice_pref_v1';
+
+const voiceFields = (data) => ({
+  choice: data.voice_choice ?? null,
+  before_fish: data.voice_choice_before_fish ?? null,
+});
+
+const sameVoice = (a, b) => JSON.stringify(a.choice ?? null) === JSON.stringify(b.choice ?? null)
+  && JSON.stringify(a.before_fish ?? null) === JSON.stringify(b.before_fish ?? null);
+
+/** Saves a voice change the owner made: `che` and the voice key, both stamped. */
+export async function saveVoiceChoice(storage, data, now = Date.now()) {
+  const at = Math.max(now, Number(data.voice_choice_at || 0) + 1);
+  data.voice_choice_at = at;
+  await storage.put('che', data);
+  await storage.put(VOICE_PREF_KEY, { ...voiceFields(data), at });
+}
+
+/**
+ * Puts the owner's newest voice choice into a freshly loaded `che` record. An
+ * older copy (stamped before the last change) takes the saved choice; a newer
+ * one (its key write failed) refreshes the key. Returns true when `data` changed.
+ */
+export async function reconcileVoiceChoice(storage, data) {
+  let pref;
+  try { pref = await storage.get(VOICE_PREF_KEY); } catch (_) { return false; }
+  const stamp = Number(data.voice_choice_at || 0);
+  const mine = voiceFields(data);
+  try {
+    if (!pref || typeof pref !== 'object') {
+      if (mine.choice || mine.before_fish) await storage.put(VOICE_PREF_KEY, { ...mine, at: stamp || 1 });
+      return false;
+    }
+    const at = Number(pref.at || 0);
+    if (stamp > at || (stamp === at && !sameVoice(pref, mine))) {
+      await storage.put(VOICE_PREF_KEY, { ...mine, at: Math.max(stamp, at) });
+      return false;
+    }
+  } catch (_) { return false; }
+  if (stamp === Number(pref.at || 0)) return false;
+  const copy = (value) => (value ? JSON.parse(JSON.stringify(value)) : null);
+  if (pref.choice) data.voice_choice = copy(pref.choice); else delete data.voice_choice;
+  if (pref.before_fish) data.voice_choice_before_fish = copy(pref.before_fish); else delete data.voice_choice_before_fish;
+  data.voice_choice_at = Number(pref.at || 0);
+  return true;
+}
