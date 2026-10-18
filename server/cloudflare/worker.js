@@ -5651,8 +5651,11 @@ export class CheState extends DurableObject {
           return json(brain.status());
         }
         if (path === '/api/brain/changes' && request.method === 'GET') {
-          // Each sync pull also moves the legacy stores a step further into the Brain.
-          projectLegacyState(brain, data, { library: library() });
+          // Each sync pull also moves the legacy stores a step further into the Brain: the first
+          // pull of a sync always, later pages at most every ten minutes (the projection reads
+          // every legacy row).
+          const lastProjection = Date.parse(brain.status().legacy_projection?.at || '') || 0;
+          if (!Number(q.get('since')) || Date.now() - lastProjection > 10 * 60_000) projectLegacyState(brain, data, { library: library() });
           await backfillConversations(brain, this.ctx.storage, { batch: 100 }).catch(() => null);
           return json({ ...brain.changes({ since: q.get('since'), limit: q.get('limit') }), digest: brain.digest() });
         }
@@ -5664,25 +5667,37 @@ export class CheState extends DurableObject {
           for (const op of ops) {
             const result = brain.apply(op, { origin });
             const record = result.record;
+            const id = String(record?.id || op?.id || op?.record?.id || result.id || '');
             // A memory the owner saved on the phone is an owner memory everywhere: it joins
-            // CHE's memory list too (same id), and a memory he deleted there leaves it.
-            if (record?.id?.startsWith('mem:') && record.source?.kind === 'memory_record') {
-              const legacyId = record.id.slice(4);
-              if (result.outcome === 'created' && !data.memory_records.some((item) => item.id === legacyId)) {
-                const added = addOwnerMemory(data, record.body, { id: legacyId, source: 'owner_chat', category: record.path || 'Memory', scope: 'owner', confidence: 1, title: record.title });
-                if (added.added) stateChanged = true;
-              } else if (result.outcome === 'deleted') {
-                const gone = data.memory_records.filter((item) => item.id === legacyId);
-                if (gone.length) {
-                  const texts = new Set(gone.map((item) => String(item.text || '').toLowerCase()));
+            // CHE's memory list too (same id), an edit there changes its words here, and a
+            // memory he deleted there leaves it. The op decides, not the stored source.
+            if (id.startsWith('mem:') && !['rejected', 'conflict', 'unchanged'].includes(result.outcome)) {
+              const legacyId = id.slice(4);
+              const legacy = data.memory_records.find((item) => item.id === legacyId);
+              const effective = result.outcome === 'duplicate' ? result.first_outcome : result.outcome;
+              if (record?.deleted || effective === 'deleted' || op?.type === 'delete') {
+                if (legacy) {
+                  const texts = new Set(data.memory_records.filter((item) => item.id === legacyId).map((item) => String(item.text || '').toLowerCase()));
                   data.memory_records = data.memory_records.filter((item) => item.id !== legacyId);
                   data.memories = (data.memories || []).filter((item) => !texts.has(String(item).toLowerCase()));
+                  stateChanged = true;
+                }
+              } else if (record && !record.deleted && record.kind === 'memory') {
+                if (!legacy && effective === 'created') {
+                  const added = addOwnerMemory(data, record.body, { id: legacyId, source: 'owner_chat', category: record.path || 'Memory', scope: 'owner', confidence: 1, title: record.title });
+                  if (added.added) stateChanged = true;
+                } else if (legacy && ['updated', 'merged'].includes(effective) && String(legacy.text || '') !== record.body) {
+                  const before = String(legacy.text || '').toLowerCase();
+                  legacy.text = record.body.slice(0, 500);
+                  legacy.title = record.title.slice(0, 160);
+                  data.memories = (data.memories || []).map((item) => (String(item).toLowerCase() === before ? legacy.text : item));
                   stateChanged = true;
                 }
               }
             }
             results.push({
-              op_id: op?.op_id, id: record?.id || op?.id || op?.record?.id || result.id, outcome: result.outcome, rev: result.rev,
+              op_id: op?.op_id, id, outcome: result.outcome, rev: result.rev,
+              ...(result.first_outcome ? { first_outcome: result.first_outcome } : {}),
               ...(result.reason ? { reason: result.reason } : {}), ...(result.conflict_id ? { conflict_id: result.conflict_id } : {}),
               ...(['conflict', 'deleted', 'duplicate', 'merged', 'updated'].includes(result.outcome) && record ? { record } : {}),
             });

@@ -54,8 +54,18 @@ const List<String> cheBrainRelationshipTypes = [
 ];
 
 const int _excerptChars = 600;
-const int _bodyFileThreshold = 2000;
 const int _compactAfterLines = 2000;
+
+/// The same words the Worker refuses (research_memory.js SENSITIVE_RE and the
+/// privacy policy's secret class). A memory that names a password, key or code
+/// is never written to the replica: passwords live only in the Keychain vault.
+final RegExp _sensitive = RegExp(
+  r"password|passcode|security code|social security|credit card|api[_ -]?key|private key|seed phrase|session cookie|auth\s+token|\b(?:secret|token|2fa|otp|ssn|pin)\b",
+  caseSensitive: false,
+);
+
+/// True when [text] must not be kept in the Brain. Checked over the whole text.
+bool cheBrainTextIsSensitive(String text) => _sensitive.hasMatch(text);
 
 class CheBrainRecord {
   CheBrainRecord({
@@ -104,7 +114,7 @@ class CheBrainRecord {
   /// Why the Worker refused or held the last push of this record, if it did.
   final String syncNote;
 
-  bool get inlineBody => bodyChars <= _bodyFileThreshold;
+  bool get inlineBody => bodyChars <= _excerptChars;
 
   CheBrainRecord copyWith({
     String? title, String? excerpt, int? bodyChars, Map<String, dynamic>? source, String? verification,
@@ -336,18 +346,37 @@ class CheBrainReplica {
 
   Future<void> _append(Map<String, dynamic> entry) => _appendMany([entry]);
 
+  // Journal writes and compaction take turns, so an append never lands between
+  // the snapshot rename and the journal truncation.
+  Future<void> _lock = Future.value();
+  Future<T> _locked<T>(Future<T> Function() work) {
+    final next = _lock.then((_) => work());
+    _lock = next.then((_) {}, onError: (_) {});
+    return next;
+  }
+  bool _holdCompaction = false;
+
   /// One flushed write for a batch of journal entries: a sync page costs one disk write, not one per record.
   Future<void> _appendMany(List<Map<String, dynamic>> entries) async {
     if (entries.isEmpty) return;
-    final journal = await _file('journal.ndjson');
-    await journal.writeAsString(entries.map(jsonEncode).map((l) => '$l\n').join(), mode: FileMode.append, flush: true);
-    _journalLines += entries.length;
-    if (_journalLines > _compactAfterLines) await compact();
+    await _locked(() async {
+      final journal = await _file('journal.ndjson');
+      await journal.writeAsString(entries.map(jsonEncode).map((l) => '$l\n').join(), mode: FileMode.append, flush: true);
+      _journalLines += entries.length;
+    });
+    _recordsJson = null;
+    if (_compactionDue && !_holdCompaction) await compact();
   }
+
+  // Compaction rewrites the whole snapshot, so it waits until the journal is as
+  // long as half the records (never below 2000 lines): linear, not quadratic.
+  bool get _compactionDue => _journalLines > _compactAfterLines && _journalLines > _records.length ~/ 2;
 
   /// Rewrites the snapshot from memory and empties the journal. Atomic: the new
   /// snapshot is written beside the old one and renamed over it.
-  Future<void> compact() async {
+  Future<void> compact() => _locked(_compactUnlocked);
+
+  Future<void> _compactUnlocked() async {
     final tmp = await _file('snapshot.tmp');
     final sink = tmp.openWrite();
     for (final record in _records.values) {
@@ -390,6 +419,7 @@ class CheBrainReplica {
   }
 
   void _index(CheBrainRecord record) {
+    _recordsJson = null;
     _records[record.id] = record;
     if (record.deleted) {
       _tokens.remove(record.id);
@@ -399,6 +429,11 @@ class CheBrainReplica {
   }
 
   // ── Reads ──────────────────────────────────────────────────────────────────
+
+  List<Map<String, dynamic>>? _recordsJson;
+
+  /// Every live record as JSON for the Brain room, computed once per change, not per frame.
+  List<Map<String, dynamic>> recordsJson() => _recordsJson ??= records.map((r) => r.toJson()).toList(growable: false);
 
   int get count => _records.values.where((r) => !r.deleted).length;
   int get tombstones => _records.values.where((r) => r.deleted).length;
@@ -510,7 +545,7 @@ class CheBrainReplica {
 
   /// Saves a record the owner made here (a memory, a note, a correction, a
   /// queued request) and queues it for the cloud. Durable before it returns.
-  Future<CheBrainRecord> remember({
+  Future<CheBrainRecord?> remember({
     String? id,
     required String kind,
     required String region,
@@ -521,6 +556,8 @@ class CheBrainReplica {
     Map<String, dynamic> source = const {},
     List<Map<String, dynamic>> links = const [],
   }) async {
+    // Secrets never touch the disk here, not even as a pending record.
+    if (cheBrainTextIsSensitive('${title ?? ''}\n$body')) return null;
     await load();
     final existing = id == null ? null : _records[id];
     final recordId = id ?? _newId(kind == 'memory' ? 'mem' : kind == 'conversation' ? 'conv' : 'phone');
@@ -559,14 +596,14 @@ class CheBrainReplica {
     _outbox.removeWhere((o) => o['type'] == 'put' && (o['record'] as Map)['id'] == recordId);
     _outbox.add(op);
     _index(record);
-    await _append({'t': 'rec', 'r': record.toJson()});
-    await _append({'t': 'op', 'o': op});
+    // Record and op in one write: a cut-off never leaves a record that is pending but never sent.
+    await _appendMany([{'t': 'rec', 'r': record.toJson()}, {'t': 'op', 'o': op}]);
     return record;
   }
 
   /// A request CHE could not run offline. Kept as a task record that says so;
   /// nothing here claims it ran, and no authorization is inferred from it.
-  Future<CheBrainRecord> queueRemoteRequest(String request, {String reason = 'offline'}) => remember(
+  Future<CheBrainRecord?> queueRemoteRequest(String request, {String reason = 'offline'}) => remember(
         kind: 'queued_request',
         region: cheBrainRegions[15],
         path: 'Queued offline',
@@ -591,8 +628,7 @@ class CheBrainReplica {
     _outbox.removeWhere((o) => (o['type'] == 'put' && (o['record'] as Map)['id'] == id) || (o['type'] == 'delete' && o['id'] == id));
     _outbox.add(op);
     _index(tomb);
-    await _append({'t': 'rec', 'r': tomb.toJson()});
-    await _append({'t': 'op', 'o': op});
+    await _appendMany([{'t': 'rec', 'r': tomb.toJson()}, {'t': 'op', 'o': op}]);
   }
 
   Future<void> resolveConflict(String conflictId, {required bool keepLocal}) async {
@@ -600,11 +636,12 @@ class CheBrainReplica {
     if (conflict == null) return;
     if (keepLocal) {
       final local = conflict.local;
-      await remember(
+      final kept = await remember(
         id: conflict.recordId, kind: '${local['kind'] ?? 'note'}', region: '${local['region'] ?? ''}', path: '${local['path'] ?? ''}',
         title: '${local['title'] ?? ''}', body: '${local['body'] ?? local['excerpt'] ?? ''}', verification: '${local['verification'] ?? 'owner_attested'}',
         source: local['source'] is Map ? Map<String, dynamic>.from(local['source'] as Map) : const {},
       );
+      if (kept == null) return;
     }
     _conflicts.removeWhere((c) => c.id == conflictId);
     await _append({'t': 'resolved', 'id': conflictId});
@@ -638,6 +675,7 @@ class CheBrainReplica {
   Future<CheBrainSyncReceipt> sync(String baseUrl, Map<String, String> headers, {required CheBrainGet get, required CheBrainPost post}) async {
     await load();
     final startedAt = DateTime.now().toUtc().toIso8601String();
+    _holdCompaction = true;
     var pushed = 0, acknowledged = 0, conflicts = 0, rejected = 0, pulled = 0;
     int? serverCount;
     var digestChecked = false;
@@ -658,7 +696,8 @@ class CheBrainReplica {
           final op = batch.where((o) => '${o['op_id']}' == opId).firstOrNull;
           if (op == null) continue;
           final id = '${result['id'] ?? (op['record'] is Map ? (op['record'] as Map)['id'] : op['id'])}';
-          final outcome = '${result['outcome']}';
+          // A replayed op answers 'duplicate' with what happened the first time.
+          final outcome = result['outcome'] == 'duplicate' && result['first_outcome'] != null ? '${result['first_outcome']}' : '${result['outcome']}';
           final serverRecord = result['record'] is Map ? Map<String, dynamic>.from(result['record'] as Map) : null;
           final local = _records[id];
           switch (outcome) {
@@ -753,7 +792,11 @@ class CheBrainReplica {
       serverCount: serverCount, localCount: _records.length, error: error,
     );
     lastReceipt = receipt;
-    try { await _append({'t': 'meta', 'since': _since, 'receipt': receipt.toJson()}); } catch (_) {}
+    _holdCompaction = false;
+    try {
+      await _append({'t': 'meta', 'since': _since, 'receipt': receipt.toJson()});
+      if (_compactionDue) await compact();
+    } catch (_) {}
     return receipt;
   }
 }

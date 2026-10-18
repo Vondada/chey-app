@@ -17,8 +17,12 @@ extension _CheHomeMemory on _CHEHomeState {
       );
     } catch (_) {
       // No connection: the memory is kept in the Brain replica on the phone and
-      // reaches the cloud at the next sync. It is never dropped.
-      await _brainReplica.remember(kind: 'memory', region: 'Personal Memory', path: 'Memory', body: clean, source: {'kind': 'memory_record'});
+      // reaches the cloud at the next sync. It is never dropped, and a secret is
+      // never written: the owner hears that it was not kept.
+      final kept = await _brainReplica.remember(kind: 'memory', region: 'Personal Memory', path: 'Memory', body: clean, source: {'kind': 'memory_record'});
+      if (kept == null) {
+        await speakText('I did not keep that, sir: it looks like a password or a key, and those stay in the vault only.', record: false);
+      }
       if (mounted) _set(() {});
       return;
     }
@@ -83,10 +87,14 @@ extension _CheHomeMemory on _CHEHomeState {
     if (mounted) _set(() {});
   }
 
-  /// Replica records for the Brain room. Loaded once; before that the list is empty, never invented.
+  /// Replica records for the Brain room. Loaded once; before that the list is empty, never
+  /// invented. The first load redraws the room once, so the dots appear without a tap.
   List<Map<String, dynamic>> _brainReplicaRecords() {
-    unawaited(_brainReplica.load());
-    return _brainReplica.records.map((r) => r.toJson()).toList();
+    if (!_brainLoadKicked) {
+      _brainLoadKicked = true;
+      unawaited(_brainReplica.load().then((_) { if (mounted) _set(() {}); }));
+    }
+    return _brainReplica.recordsJson();
   }
 
   /// Recall for the offline answer: the records that share the most words with the question, labeled.

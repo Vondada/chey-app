@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   BRAIN_REGIONS, CheBrainStore, RELATIONSHIP_TYPES, VERIFICATION_STATES, assessSignificance, backfillConversations,
-  contentHash, fnv1a32, normalizeLinks, normalizeRecord, projectLegacyState, rememberExchange,
+  contentHash, fnv1a32, isSafeText, normalizeLinks, normalizeRecord, projectLegacyState, rememberExchange,
 } from './brain_store.js';
 
 async function sqlStorage() {
@@ -234,4 +234,46 @@ test('contentHash ignores links and significance, so relationship-only edits mer
   const b = normalizeRecord(sample({ links: [{ type: 'solves', to: 'prob:1' }], significance: { owner_score: 1 } }));
   assert.equal(contentHash(a), contentHash(b));
   assert.notEqual(contentHash(a), contentHash(normalizeRecord(sample({ body: 'changed' }))));
+});
+
+test('a secret anywhere in a long record is refused, not only in its first 500 characters', async (t) => {
+  const storage = await sqlStorage();
+  if (!storage) return t.skip('node:sqlite unavailable');
+  const store = new CheBrainStore(storage);
+  const long = `${'The meeting notes go on and on. '.repeat(40)}By the way the wifi password is hunter2.`;
+  assert.equal(isSafeText(long), false);
+  assert.equal(isSafeText('The meeting notes go on and on. '.repeat(40)), true);
+  const rejected = store.put(sample({ id: 'note:long', body: long }));
+  assert.equal(rejected.outcome, 'rejected');
+  assert.equal(store.get('note:long'), null);
+  assert.equal(rememberExchange(store, { id: 'x', message: 'Remember this', reply: long, at: '2026-10-10T10:00:00.000Z' }).outcome, 'rejected');
+});
+
+test('CHE’s own writes never resurrect a deleted record, and the legacy projection respects the tombstone', async (t) => {
+  const storage = await sqlStorage();
+  if (!storage) return t.skip('node:sqlite unavailable');
+  const store = new CheBrainStore(storage);
+  store.apply({ type: 'put', record: sample({ id: 'mem:r9' }) }, { origin: 'phone' });
+  store.apply({ type: 'delete', id: 'mem:r9' }, { origin: 'phone' });
+  assert.equal(store.put(sample({ id: 'mem:r9' })).outcome, 'deleted');
+  assert.equal(store.get('mem:r9').deleted, true);
+  const data = { memory_records: [{ id: 'r9', text: sample().body, title: 'Mom', category: 'Family', source: 'owner_chat', verification_status: 'owner_attested', created_at: '2026-10-01T00:00:00.000Z', active: true }] };
+  projectLegacyState(store, data);
+  assert.equal(store.get('mem:r9').deleted, true, 'the lingering legacy row does not bring it back');
+  assert.equal(store.search('birthday').length, 0);
+  const again = projectLegacyState(store, data);
+  assert.equal(again.projected, 0);
+});
+
+test('re-sending a subset of a record’s links changes nothing', async (t) => {
+  const storage = await sqlStorage();
+  if (!storage) return t.skip('node:sqlite unavailable');
+  const store = new CheBrainStore(storage);
+  store.put(sample({ id: 'l:1', links: [{ type: 'related_to', to: 'a' }, { type: 'solves', to: 'b' }] }));
+  const rev = store.get('l:1').rev;
+  assert.equal(store.put(sample({ id: 'l:1', links: [{ type: 'solves', to: 'b' }] })).outcome, 'unchanged');
+  assert.equal(store.put(sample({ id: 'l:1', links: [] })).outcome, 'unchanged');
+  assert.equal(store.get('l:1').rev, rev);
+  assert.equal(store.put(sample({ id: 'l:1', links: [{ type: 'tests', to: 'c' }] })).outcome, 'merged');
+  assert.equal(store.get('l:1').links.length, 3);
 });

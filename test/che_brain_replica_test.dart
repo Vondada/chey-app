@@ -14,7 +14,7 @@ import 'package:flutter_test/flutter_test.dart';
 /// exercise the client. Outcomes mirror brain_store.js.
 class FakeWorker {
   final Map<String, Map<String, dynamic>> records = {};
-  final Set<String> ops = {};
+  final Map<String, String> ops = {};
   int seq = 0;
   int pushes = 0;
   bool failPush = false;
@@ -40,32 +40,37 @@ class FakeWorker {
     for (final raw in (payload['ops'] as List).whereType<Map>()) {
       final op = Map<String, dynamic>.from(raw);
       final opId = '${op['op_id']}';
-      if (ops.contains(opId)) {
-        results.add({'op_id': opId, 'outcome': 'duplicate', 'id': op['id'] ?? (op['record'] as Map?)?['id']});
+      if (ops.containsKey(opId)) {
+        final id = '${op['id'] ?? (op['record'] as Map?)?['id']}';
+        results.add({'op_id': opId, 'outcome': 'duplicate', 'first_outcome': ops[opId], 'id': id, 'record': records[id]});
         continue;
       }
-      ops.add(opId);
       if (op['type'] == 'delete') {
         final id = '${op['id']}';
         final current = records[id];
         final stored = _write(current ?? {'id': id, 'kind': 'note', 'region': 'Learned Knowledge', 'path': ''}, rev: ((current?['rev'] as int?) ?? 0) + 1, deleted: true, origin: '${payload['device']}');
+        ops[opId] = 'deleted';
         results.add({'op_id': opId, 'id': id, 'outcome': 'deleted', 'rev': stored['rev'], 'record': stored});
         continue;
       }
       final record = Map<String, dynamic>.from(op['record'] as Map);
       final id = '${record['id']}';
       if (sensitive.contains(id)) {
+        ops[opId] = 'rejected';
         results.add({'op_id': opId, 'id': id, 'outcome': 'rejected', 'reason': 'rejected_sensitive_or_empty'});
         continue;
       }
       final current = records[id];
       if (current == null) {
         final stored = _write(record, rev: 1, origin: '${payload['device']}');
+        ops[opId] = 'created';
         results.add({'op_id': opId, 'id': id, 'outcome': 'created', 'rev': stored['rev']});
       } else if (op['base_rev'] == current['rev']) {
         final stored = _write(record, rev: (current['rev'] as int) + 1, origin: '${payload['device']}');
+        ops[opId] = 'updated';
         results.add({'op_id': opId, 'id': id, 'outcome': 'updated', 'rev': stored['rev'], 'record': stored});
       } else {
+        ops[opId] = 'conflict';
         results.add({'op_id': opId, 'id': id, 'outcome': 'conflict', 'rev': current['rev'], 'conflict_id': '$id@conflict', 'record': current});
       }
     }
@@ -109,7 +114,7 @@ void main() {
   test('A: a memory saved offline is durable, searchable, and queued; a restart replays the journal', () async {
     final dir = await freshDir();
     final brain = CheBrainReplica(directory: dir);
-    final saved = await brain.remember(kind: 'memory', region: 'Personal Memory', path: 'Family', body: 'My sister Ana lives in Lisbon.');
+    final saved = (await brain.remember(kind: 'memory', region: 'Personal Memory', path: 'Family', body: 'My sister Ana lives in Lisbon.'))!;
     expect(saved.pending, isTrue);
     expect(saved.rev, 0);
     expect(brain.pendingOps, 1);
@@ -245,9 +250,59 @@ void main() {
     expect(reopened.since, brain.since);
   });
 
+  test('H: a secret is never written, and a body between 601 and 2000 characters is kept whole', () async {
+    final dir = await freshDir();
+    final worker = FakeWorker();
+    final brain = CheBrainReplica(directory: dir);
+    expect(cheBrainTextIsSensitive('my wifi password is hunter2'), isTrue);
+    expect(cheBrainTextIsSensitive('My sister lives in Lisbon.'), isFalse);
+    final refused = await brain.remember(kind: 'memory', region: 'Personal Memory', body: 'remember my bank password is hunter2');
+    expect(refused, isNull);
+    expect(brain.count, 0);
+    expect(brain.pendingOps, 0);
+    final journal = File('${dir.path}/journal.ndjson');
+    expect(await journal.exists() ? await journal.readAsString() : '', isNot(contains('hunter2')));
+    final medium = 'A sentence of the record body. ' * 50; // ~1 550 chars
+    final saved = await brain.remember(id: 'note:m', kind: 'note', region: 'Learned Knowledge', body: medium);
+    expect(saved!.inlineBody, isFalse);
+    expect(await brain.bodyOf('note:m'), medium.trim());
+    worker.cloudWrite('note:c', title: 'Cloud medium', body: 'Cloud words. ' * 100 + 'lighthouse');
+    await brain.sync('https://che.example', const {}, get: worker.get, post: worker.post);
+    expect((await brain.bodyOf('note:c')).endsWith('lighthouse'), isTrue);
+    final reopened = CheBrainReplica(directory: dir);
+    await reopened.load();
+    expect(await reopened.bodyOf('note:m'), medium.trim());
+  });
+
+  test('I: a replayed op is read by its first outcome, so a conflict answered late is still a conflict here', () async {
+    final dir = await freshDir();
+    final worker = FakeWorker();
+    final brain = CheBrainReplica(directory: dir);
+    await brain.remember(id: 'note:d', kind: 'note', region: 'Learned Knowledge', body: 'First.');
+    await brain.sync('https://che.example', const {}, get: worker.get, post: worker.post);
+    worker.cloudWrite('note:d', title: 'Cloud', body: 'Cloud second.');
+    await brain.remember(id: 'note:d', kind: 'note', region: 'Learned Knowledge', body: 'Phone second.');
+    // The Worker stores the conflict but the answer is lost on the way back.
+    final realPost = worker.post;
+    var calls = 0;
+    Future<({int status, String body})> lossy(Uri u, Map<String, String> h, String b) async {
+      calls += 1;
+      final res = await realPost(u, h, b);
+      return calls == 1 ? (status: 503, body: 'lost') : res;
+    }
+    final first = await brain.sync('https://che.example', const {}, get: worker.get, post: lossy);
+    expect(first.ok, isFalse);
+    expect(brain.pendingOps, 1);
+    final second = await brain.sync('https://che.example', const {}, get: worker.get, post: lossy);
+    expect(second.ok, isTrue);
+    expect(second.conflicts, 1, reason: 'duplicate + first_outcome conflict is a conflict');
+    expect(brain.conflicts.length, 1);
+    expect(brain.conflicts.first.local['body'], 'Phone second.');
+  });
+
   test('F: a queued offline request is a task record that says it did not run', () async {
     final brain = CheBrainReplica(directory: await freshDir());
-    final queued = await brain.queueRemoteRequest('send the report to Claude');
+    final queued = (await brain.queueRemoteRequest('send the report to Claude'))!;
     expect(queued.region, 'Active and Historical Tasks');
     expect(queued.path, 'Queued offline');
     expect(queued.excerpt, startsWith('Queued, not run'));

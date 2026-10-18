@@ -73,6 +73,21 @@ function clip(value, max) {
   return String(value ?? '').replace(/\u0000/g, '').trim().slice(0, max);
 }
 
+/**
+ * The same secret gate as /api/memory/add, over the whole text: isSafeMemoryText reads 500
+ * characters, so a long record is checked window by window (400 wide, 100 overlap), and one
+ * password anywhere refuses the record.
+ */
+export function isSafeText(text) {
+  const value = String(text ?? '');
+  if (!value.trim()) return false;
+  for (let i = 0; i < value.length; i += 300) {
+    if (!isSafeMemoryText(value.slice(i, i + 400))) return false;
+    if (i + 400 >= value.length) break;
+  }
+  return true;
+}
+
 function asObject(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 }
@@ -325,7 +340,7 @@ export class CheBrainStore {
     const normalized = normalizeRecord(input.record);
     if (normalized.error) return { outcome: 'rejected', reason: normalized.error };
     // Passwords and other secrets never enter the Brain, from either side.
-    if (!isSafeMemoryText(`${normalized.title}\n${normalized.body.slice(0, 20_000)}`)) {
+    if (!isSafeText(`${normalized.title}\n${normalized.body}`)) {
       return { outcome: 'rejected', reason: 'rejected_sensitive_or_empty', id: normalized.id };
     }
     const current = this.get(normalized.id);
@@ -344,7 +359,8 @@ export class CheBrainStore {
     const mergedLinks = normalizeLinks([...(current.links || []), ...normalized.links]);
     const linksChanged = !sameLinks(current.links, normalized.links);
     if (hash === current.hash) {
-      if (!linksChanged) return { outcome: 'unchanged', record: current, rev: current.rev };
+      // Links the record already has (the same set, or a subset) change nothing.
+      if (!linksChanged || sameLinks(current.links, mergedLinks)) return { outcome: 'unchanged', record: current, rev: current.rev };
       // Same content, more relationships: the union, from either side.
       const written = this.write({ ...normalized, links: mergedLinks, created_at: current.created_at }, { rev: current.rev + 1, origin, now });
       return { outcome: 'merged', record: this.get(normalized.id), rev: written.rev };
@@ -364,7 +380,8 @@ export class CheBrainStore {
   /** A record written by CHE herself (not a sync op): created or updated, with the current revision as base. */
   put(record, { origin = 'cloud', now } = {}) {
     const current = this.get(asObject(record).id);
-    return this.apply({ type: 'put', record, base_rev: current?.rev ?? null }, { origin, now });
+    // A deleted record stays deleted: only a sync op that saw the tombstone (apply with its rev) recreates one.
+    return this.apply({ type: 'put', record, base_rev: current && !current.deleted ? current.rev : null }, { origin, now });
   }
 
   /** Writes only when the id is new: a fuller live record is never replaced by a legacy projection. */
@@ -676,6 +693,8 @@ export function projectLegacyState(store, data = {}, { now, library = [] } = {})
     if (candidate.error) return;
     const hash = contentHash(candidate);
     if (hashes[candidate.id] === hash) { skipped += 1; return; }
+    // The owner deleted it: the legacy row may linger a little, the deletion wins.
+    if (store.get(candidate.id)?.deleted) { hashes[candidate.id] = hash; skipped += 1; return; }
     const result = store.put(record, { origin: 'cloud', now });
     if (['created', 'updated', 'merged', 'unchanged'].includes(result.outcome)) {
       hashes[candidate.id] = hash;

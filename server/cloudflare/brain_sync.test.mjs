@@ -182,3 +182,27 @@ test('a concurrent edit from the phone is kept as a conflict, never dropped, and
   const digest = (await (await che.call('/api/brain/status', { token: che.token })).json()).digest;
   assert.equal(digest.sum, fnv1a32('note:x:3'), 'one record, so the digest is its own id:rev hash');
 });
+
+test('a memory deleted on the phone leaves CHE’s memory list and stays deleted through the next projection; an edit there changes its words here', async (t) => {
+  const che = await owner();
+  if (!che) return t.skip('node:sqlite unavailable');
+  const record = { id: 'mem:22222222-2222-4222-8222-222222222222', kind: 'memory', region: 'Personal Memory', path: 'Family', title: 'Sister', body: 'My sister is called Ana.', verification: 'owner_attested', source: { kind: 'memory_record' } };
+  await che.call('/api/brain/push', { method: 'POST', token: che.token, body: { ops: [{ op_id: 'c1', type: 'put', record }], device: 'iphone' } });
+  await che.call('/api/brain/changes?since=0', { token: che.token });
+  const edited = await (await che.call('/api/brain/push', { method: 'POST', token: che.token, body: { ops: [{ op_id: 'c2', type: 'put', record: { ...record, body: 'My sister is called Ana and lives in Lisbon.' }, base_rev: (await (await che.call(`/api/brain/record?id=${record.id}`, { token: che.token })).json()).rev }], device: 'iphone' } })).json();
+  assert.equal(edited.results[0].outcome, 'updated');
+  let state = await (await che.call('/api/state', { token: che.token })).json();
+  assert.deepEqual(state.memories, ['My sister is called Ana and lives in Lisbon.'], 'the edit reached the memory list');
+  const deleted = await (await che.call('/api/brain/push', { method: 'POST', token: che.token, body: { ops: [{ op_id: 'c3', type: 'delete', id: record.id }], device: 'iphone' } })).json();
+  assert.equal(deleted.results[0].outcome, 'deleted');
+  state = await (await che.call('/api/state', { token: che.token })).json();
+  assert.deepEqual(state.memories, [], 'the deletion reached the memory list');
+  assert.equal(state.memory_records.length, 0);
+  const changes = await (await che.call('/api/brain/changes?since=0', { token: che.token })).json();
+  const mine = changes.records.find((r) => r.id === record.id);
+  assert.equal(mine.deleted, true, 'the projection after the delete does not bring it back');
+  assert.equal((await (await che.call('/api/brain/search?q=ana%20lisbon', { token: che.token })).json()).hits.length, 0);
+  const replay = await (await che.call('/api/brain/push', { method: 'POST', token: che.token, body: { ops: [{ op_id: 'c3', type: 'delete', id: record.id }], device: 'iphone' } })).json();
+  assert.equal(replay.results[0].outcome, 'duplicate');
+  assert.equal(replay.results[0].first_outcome, 'deleted');
+});

@@ -749,6 +749,7 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   // The phone's replica of CHE's one Brain: offline recall, local writes, sync.
   final CheBrainReplica _brainReplica = CheBrainReplica();
   bool _brainSyncing = false;
+  bool _brainLoadKicked = false;
   final CheKnowledgeCache _knowledge = CheKnowledgeCache();
 
   // Self-development: approved che-update proposals become pull requests.
