@@ -161,7 +161,7 @@ export function assessSignificance(record) {
   else if (verification === 'model_opinion' || verification === 'hypothesis') { score -= 0.1; reasons.push(`a ${verification.replace('_', ' ')}, not a fact`); }
   const kind = record.kind || '';
   if (kind === 'correction') { score += 0.25; reasons.push('a correction of something CHE got wrong'); }
-  if (kind === 'decision' || kind === 'lesson') { score += 0.15; reasons.push(`a ${kind}`); }
+  if (kind === 'decision' || kind === 'lesson') { score += 0.2; reasons.push(`a ${kind}`); }
   const links = Array.isArray(record.links) ? record.links : [];
   if (links.length) { score += Math.min(0.15, links.length * 0.03); reasons.push(`${links.length} relationship${links.length === 1 ? '' : 's'}`); }
   if (links.some((l) => l.type === 'contradicts')) { score += 0.1; reasons.push('contradicts another record'); }
@@ -429,6 +429,26 @@ export class CheBrainStore {
       if (this.delete(row.id, { origin, now }).outcome === 'deleted') deleted += 1;
     }
     return deleted;
+  }
+
+  /**
+   * A new significance for a stored record, from the auditor or the owner. Content is untouched; the
+   * revision moves so every replica picks the new score up. Returns 'reassessed' or 'unchanged'.
+   */
+  reassess(id, significance, { origin = 'auditor', now } = {}) {
+    const current = this.get(id);
+    if (!current || current.deleted) return { outcome: 'missing', id };
+    const next = asObject(significance);
+    if (JSON.stringify(next) === JSON.stringify(current.significance || {})) return { outcome: 'unchanged', record: current, rev: current.rev };
+    const written = this.write({ ...current, significance: next, places: this.rows('SELECT region, path FROM brain_places WHERE record_id = ?', id) }, { rev: current.rev + 1, origin, now });
+    return { outcome: 'reassessed', record: this.get(id), rev: written.rev };
+  }
+
+  /** Live records touched at or after [sinceIso], newest first: the day's real activity. */
+  changedSince(sinceIso, { limit = 2000 } = {}) {
+    if (!this.init()) return [];
+    const size = Math.max(1, Math.min(Number(limit) || 2000, 5000));
+    return this.rows('SELECT * FROM brain_records WHERE updated_at >= ? AND deleted = 0 ORDER BY seq DESC LIMIT ?', String(sinceIso || ''), size).map(rowToRecord);
   }
 
   /** A record written by CHE herself (not a sync op): created or updated, with the current revision as base. */

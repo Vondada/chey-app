@@ -147,6 +147,14 @@ export const COMMANDS = Object.freeze([
     prompt: 'What have I told you about {input}?',
     produces: 'memories', evidence: 'Only owner-attested records; zero model calls.', keywords: ['remember', 'memory', 'recall', 'what did i say', 'confirmed'],
   }),
+  C('che-brain-review', 'intelligence', 'EXPLORE', 'Hear the morning Brain review.', {
+    does: 'Reads the latest daily review computed from your Brain’s own records: facts, inferences with their rules, hypotheses marked as such, recommendations, one interpretation, and what is unknown. Says so when there is none yet.',
+    needs: ['memory'], route: 'che_brain_review', handler: 'brain_audit.brainReviewIntent → latestReview → speakReview',
+    input: null,
+    examples: ['Read me my brain review', 'What did your audit find this morning?'],
+    prompt: 'Read me my brain review',
+    produces: 'review', evidence: 'Every line comes from the stored review record, computed from Brain records; zero model calls.', keywords: ['brain review', 'morning review', 'daily review', 'audit', 'conclusions'],
+  }),
   C('che-recover', 'intelligence', 'BUILD', 'Recover interrupted or failed tasks.', {
     does: 'Resumes the saved coding job or mission step from its checkpoint instead of starting over.',
     needs: ['jobs'], route: 'che_coding_resume', handler: 'recovery_policy.js + objective_graph.recoverNode',
