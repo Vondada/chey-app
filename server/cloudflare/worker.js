@@ -4543,8 +4543,9 @@ export class CheState extends DurableObject {
     // run leaves behind cannot grow it past what storage accepts. Only the per-deploy random token
     // opens this, only the memory check sends it, and never to an object named anything else.
     if (request.method === 'POST' && new URL(request.url).pathname === '/api/memory-probe/reset') {
-      const name = this.ctx.id?.name;
-      if (!isMemoryProbeRequest(request, this.env) || (name && name !== MEMORY_PROBE_OBJECT)) return json({ detail: 'Not found.' }, 404);
+      // Only an object positively named as the test CHE is ever cleared: an unknown name refuses,
+      // so the owner's CHE can never be reached by this route.
+      if (!isMemoryProbeRequest(request, this.env) || this.ctx.id?.name !== MEMORY_PROBE_OBJECT) return json({ detail: 'Not found.' }, 404);
       await this.ctx.storage.deleteAll();
       return json({ ok: true, reset: true });
     }
