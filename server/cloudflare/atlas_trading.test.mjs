@@ -103,11 +103,12 @@ const store = (trades, saved = new Map()) => { for (const t of trades) saved.set
 
 const ICT = ['t-price-action', 't-market-structure', 't-liquidity', 't-fair-value-gaps', 't-order-blocks', 't-premium-discount', 't-session-levels'];
 
-test('twenty trading-lane cards with every field the owner asked for', () => {
-  assert.equal(ATLAS_TRADING_CARDS.length, 20);
+test('twenty-four trading-lane cards with every field the owner asked for', () => {
+  assert.equal(ATLAS_TRADING_CARDS.length, 24);
   assert.deepEqual(ATLAS_TRADING_CARDS.map((c) => c.id), [
-    't-futures', 't-order-types', 't-order-book', 't-stocks', 't-options', 't-price-action', 't-market-structure', 't-liquidity', 't-fair-value-gaps', 't-order-blocks',
-    't-premium-discount', 't-session-levels', 't-opening-range', 't-vwap-bands', 't-journaling', 't-strategy-evaluation', 't-trades-needed', 't-backtesting-pitfalls', 't-monte-carlo', 't-risk-of-ruin',
+    't-futures', 't-order-types', 't-order-book', 't-stocks', 't-options', 't-price-action', 't-volume', 't-market-structure', 't-liquidity', 't-fair-value-gaps', 't-order-blocks',
+    't-premium-discount', 't-session-levels', 't-opening-range', 't-vwap-bands', 't-journaling', 't-performance-analysis', 't-strategy-evaluation', 't-trades-needed', 't-probability',
+    't-backtesting-pitfalls', 't-paper-trading', 't-monte-carlo', 't-risk-of-ruin',
   ]);
   for (const c of ATLAS_TRADING_CARDS) {
     assert.match(c.id, /^t-[a-z-]+$/, c.id);
@@ -129,7 +130,7 @@ test('twenty trading-lane cards with every field the owner asked for', () => {
   }
   // Every trading card, the phase-1 ones too, now states its limitations, and the phone gets them.
   const exported = atlasExport().cards.filter((c) => c.domain === 'trading');
-  assert.equal(exported.length, 30);
+  assert.equal(exported.length, 10 + ATLAS_TRADING_CARDS.length);
   for (const c of exported) assert.ok(c.limitations.length >= 1, `${c.id} limitations exported`);
 });
 
@@ -443,4 +444,84 @@ test('no broker request, no order, no desk or paper-trading change from any atla
   assert.match(evaluated.reply, /Historical backtest, stored 2026-10-18, Yahoo MNQ=F \(DELAYED public data\): 1 portfolio targeting 3R won 30% of their trades \(40\), long and short together; history, not this setup\./);
   assert.match(evaluated.reply, /Broker SIM: no records\.\sLive orders: no records\./);
   assert.ok(MIN_TRADES === 30);
+});
+
+// ─── Volume, probability, paper trading and performance analysis ─────────
+
+test('the new cards\' notes are true of CHE\'s code', () => {
+  const src = (f) => readFileSync(new URL(`./${f}`, import.meta.url), 'utf8');
+  const evidence = src('trading_evidence.js'); const live = src('trading_live.js'); const feed = src('market_feed.js');
+  // Volume: kept per 1-minute bar and summed into 5 minutes; only VWAP uses it, and no strategy does.
+  assert.match(feed, /v: Number\(q\.volume\?\.\[i\]\) \|\| 0/);
+  assert.match(feed, /cur\.v \+= b\.v/);
+  assert.match(evidence, /const w = b\.v > 0 \? b\.v : 1;/, 'the engine\'s VWAP counts a bar with no volume as 1');
+  assert.equal((evidence.match(/\bb\.v\b|\.v\b/g) || []).length, 2, 'no strategy reads volume');
+  // Paper: the costs, the fills and the isolation the card describes.
+  assert.deepEqual(COSTS, { spreadTicks: 1, slippageTicks: 1, commissionPerSide: 1.5, feePerSide: 0.5 });
+  assert.match(atlasCard('t-paper-trading').levels.intermediate, /half a 1-tick spread and 1 tick of slippage.*Commission \$1\.50 and fees \$0\.50 a contract a side/s);
+  assert.match(evidence, /flat by 16:55 New York/);
+  assert.match(evidence, /never invent a fill/);
+  assert.match(evidence, /If one bar touches both, the stop is assumed first/);
+  assert.doesNotMatch(live, /from '\.\/(?:broker_tradovate|trading_desk|fundyouredge)\.js'/, 'the paper engine imports no broker module');
+  assert.match(feed, /export async function loadIntraday\(root = 'MNQ', \{ fetcher = fetch, now = Date\.now\(\), range = '5d', interval = '1m' \} = \{\}\)/);
+  assert.match(live, /const bars = aggregate\(feed\.candles, 5, now\);/);
+  assert.match(evidence, /if \(!\['backtest', 'paper'\]\.includes\(source\)\) throw/);
+  // Performance: the journal records MFE and MAE and the session; the Trading Room breaks results down.
+  for (const field of ['mfe_points', 'mae_points', 'mfe_r', 'mae_r']) assert.match(evidence, new RegExp(`${field}:`));
+  assert.match(live, /by_session: breakdown\(trades, \(t\) => t\.session\)/);
+  assert.match(live, /by_day: breakdown/);
+  // Paper is never permission for a real order.
+  assert.match(atlasCard('t-paper-trading').che_note, /never permission for a real order/);
+  assert.ok(atlasCard('t-paper-trading').limitations.some((l) => /delayed forward-paper data/.test(l)));
+  assert.match(atlasCard('t-volume').limitations[0], /delayed public futures volume may be partial/i);
+});
+
+test('the new lessons answer as concepts, typed, spoken and with "CHE,"', async () => {
+  const che = await owner();
+  for (const [phrase, id, start] of [
+    ['Teach me relative volume.', 't-volume', /^Volume, relative volume and the volume profile, beginner level, sir\./],
+    ['Explain the volume profile.', 't-volume', /^Volume, relative volume and the volume profile, beginner level, sir\./],
+    ['What is a losing streak?', 't-probability', /^Losing streaks and probability, beginner level, sir\. If each trade wins with probability p/],
+    ['Explain conditional probability.', 't-probability', /^Losing streaks and probability, beginner level, sir\./],
+    ['Teach me paper trading.', 't-paper-trading', /^Paper trading and CHE's paper engine, beginner level, sir\. Paper trading means/],
+    ['Explain performance analysis.', 't-performance-analysis', /^Performance analysis, beginner level, sir\./],
+    ['Teach me MAE.', 't-performance-analysis', /^Performance analysis, beginner level, sir\./],
+  ]) {
+    for (const words of variants(phrase)) {
+      const out = await calc(che, words);
+      assert.equal(out.done.atlas_card, id, words);
+      assert.match(out.reply, start, words);
+      assert.match(out.reply, /Worked example: Educational example, made-up numbers, not market data;/);
+    }
+  }
+  const paper = (await che.say('Teach me paper trading like an expert')).reply;
+  assert.match(paper, /paper results are delayed forward-paper data, research only/);
+  assert.match(paper, /A paper result is never permission for a real order/);
+  assert.match((await che.say('Quiz me on losing streaks')).reply, /^Quiz on Losing streaks and probability, sir\. 3 questions:/);
+});
+
+test('counter-cases for the new names: market reads, own records, other meanings and the voice keep their routes', async () => {
+  const che = await owner();
+  // Routes recorded on main (bdb2496) before these cards existed; none may become a lesson.
+  for (const [words, route] of [
+    ["what's the volume on MNQ right now", 'model'], ['show my paper trades', 'model'], ['probability of rain', 'model'], ['what is the probability of rain', 'model'],
+    ['turn up the volume', 'model'], ['CHE, turn up the volume', 'model'], ['show my performance by hour', 'model'], ['show me my performance by hour of the day', 'model'],
+    ["what's my performance by session", 'model'], ['what is my mae', 'model'], ['explain my paper trading results', 'model'], ['what is volume', 'model'],
+    ['what is probability', 'model'], ['walk me through my losing streaks from today', 'model'], ['is paper trading on', 'che_trading_live'], ['start paper trading', 'che_trading_live'],
+  ]) {
+    const out = await che.say(words);
+    assert.equal(out.route, route, words);
+  }
+  // Every new name is a concept phrase, unique across all cards, and never a bare everyday word.
+  for (const id of ['t-volume', 't-probability', 't-paper-trading', 't-performance-analysis']) {
+    for (const name of [atlasCard(id).title, ...atlasCard(id).aliases]) {
+      assert.equal(findAtlasCard(name)?.id, id, name);
+      assert.doesNotMatch(name, /\b(?:my|your|our|i|me|we|you)\b/i, `${name}: no own-data words`);
+      assert.doesNotMatch(name, /\b(?:and|then|also|plus)\s+(?:send|buy|sell|place|order|open|close|start|stop)\b/i, `${name}: no second action`);
+    }
+  }
+  for (const bare of ['volume', 'probability', 'streak', 'performance', 'profile', 'simulated', 'a simulation']) assert.equal(atlasIntent(`what is ${bare}`), null, bare);
+  // "Trading" is a filler word in every topic, so "paper trading" is matched as "paper": the lesson, and nothing longer.
+  assert.equal(atlasIntent('what is paper')?.card?.id, 't-paper-trading');
+  for (const words of ['what is paper made of', 'teach me paper airplanes', 'explain the paper I sent you']) assert.equal(atlasIntent(words), null, words);
 });

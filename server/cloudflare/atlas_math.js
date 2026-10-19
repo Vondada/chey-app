@@ -7,7 +7,7 @@
 // Nothing here reads storage, a clock or the network. The statistics CHE's evidence engine
 // already owns are reused (wilsonInterval, etParts, tradeDayOf from trading_evidence.js; swings
 // from trading_lab.js), and the tests check the rest against independent computations.
-import { etParts, tradeDayOf, wilsonInterval } from './trading_evidence.js';
+import { COSTS, CONTRACTS, etParts, fillEntry, fillExit, sessionOf, settleTrade, tradeDayOf, tradeMins, wilsonInterval } from './trading_evidence.js';
 import { swings } from './trading_lab.js';
 
 // ─── Contract specs: one table ───────────────────────────────────────────
@@ -821,25 +821,29 @@ export function monteCarlo(inputs = {}) {
   if (list.length < 2 || !(Number.isInteger(paths) && paths >= 10 && paths <= 100000) || trades * paths > 5e6) return refuse('monteCarlo', 'at least two trade results and 10 to 100,000 paths are needed', inputs);
   if (!replace && trades !== list.length) return refuse('monteCarlo', 'a reshuffle uses every trade once, so trades must equal the list length', inputs);
   const rand = mulberry32(seed);
-  const finals = []; const dds = [];
+  const finals = []; const dds = []; const runs = [];
   const byStep = Array.from({ length: trades }, () => new Float64Array(paths));
   for (let p = 0; p < paths; p += 1) {
     const order = replace ? null : [...list];
     if (order) for (let i = order.length - 1; i > 0; i -= 1) { const j = Math.floor(rand() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
-    let eq = start; let peak = start; let dd = 0;
+    let eq = start; let peak = start; let dd = 0; let run = 0; let longest = 0;
     for (let k = 0; k < trades; k += 1) {
-      eq += order ? order[k] : list[Math.floor(rand() * list.length)];
+      const x = order ? order[k] : list[Math.floor(rand() * list.length)];
+      eq += x;
       peak = Math.max(peak, eq); dd = Math.max(dd, peak - eq);
+      run = x < 0 ? run + 1 : 0; longest = Math.max(longest, run);
       byStep[k][p] = eq;
     }
-    finals.push(eq); dds.push(dd);
+    finals.push(eq); dds.push(dd); runs.push(longest);
   }
-  finals.sort((a, b) => a - b); dds.sort((a, b) => a - b);
+  finals.sort((a, b) => a - b); dds.sort((a, b) => a - b); runs.sort((a, b) => a - b);
+  // How many paths had a losing streak of each length or longer: the simulation's own losing-streak odds.
+  const streakAtLeast = Array.from({ length: runs[runs.length - 1] + 1 }, (_, k) => runs.filter((r) => r >= k).length / paths);
   const qs = [0.05, 0.25, 0.5, 0.75, 0.95];
   const bands = Object.fromEntries(qs.map((q) => [`p${Math.round(q * 100)}`, byStep.map((col) => percentile(Float64Array.from(col).sort(), q))]));
   const value = { finalP5: percentile(finals, 0.05), finalP50: percentile(finals, 0.5), finalP95: percentile(finals, 0.95), ddP50: percentile(dds, 0.5), ddP95: percentile(dds, 0.95) };
   return done('monteCarlo', {
-    value, values: { ...value, ddMax: dds[dds.length - 1], lossPaths: finals.filter((x) => x < start).length / paths, bands, paths, trades, seed, method: replace ? 'bootstrap, with replacement' : 'reshuffle, without replacement' },
+    value, values: { ...value, ddMax: dds[dds.length - 1], longestLossP50: percentile(runs, 0.5), longestLossP95: percentile(runs, 0.95), streakAtLeast, lossPaths: finals.filter((x) => x < start).length / paths, bands, paths, trades, seed, method: replace ? 'bootstrap, with replacement' : 'reshuffle, without replacement' },
     formula: 'for each path: draw trades from the record, add them up in order, keep the final equity and the largest peak-to-trough fall; report nearest-rank percentiles',
     inputs: { results: list.length, trades, paths, seed, start, replace }, units: 'same as the results',
     assumptions: `Seeded mulberry32 generator, seed ${seed}; trades independent and drawn from the record itself, so the simulation cannot show anything the record did not contain, such as a new regime.`,
@@ -848,6 +852,7 @@ export function monteCarlo(inputs = {}) {
       `final result: 5th percentile ${num(value.finalP5, 2)}, median ${num(value.finalP50, 2)}, 95th percentile ${num(value.finalP95, 2)}`,
       `maximum drawdown: median ${num(value.ddP50, 2)}, 95th percentile ${num(value.ddP95, 2)}, worst path ${num(dds[dds.length - 1], 2)}`,
       `${pct(finals.filter((x) => x < start).length / paths)} of paths ended below the start`,
+      `longest losing streak: median ${percentile(runs, 0.5)}, 95th percentile ${percentile(runs, 0.95)} trades in a row`,
     ],
   });
 }
@@ -889,6 +894,218 @@ export function riskOfRuin(inputs = {}) {
     inputs: { winRate, avgWinR, avgLossR, riskPerTrade, account, ruinAt, trades, paths, seed }, units: 'probability',
     assumptions: 'Fixed dollar risk on every trade, independent trades with one fixed win rate and fixed win and loss sizes, no costs; real results vary more, so treat this as a lower bound.',
     steps,
+  });
+}
+
+// ─── Volume ──────────────────────────────────────────────────────────────
+
+const minuteOfDay = (t) => tradeMins(etParts(t).mins);
+
+/**
+ * Relative volume at the time of day: the latest CME day's volume so far, divided by the average
+ * volume of the `sessions` days before it up to the same clock time (New York, from the 6 p.m. open).
+ */
+export function relativeVolume(inputs = {}) {
+  const { sessions = 10 } = inputs;
+  const rows = (Array.isArray(inputs.bars) ? inputs.bars : []).filter((b) => b && fin(time(b)) && fin(b.v) && b.v >= 0).sort((a, b) => time(a) - time(b));
+  if (!rows.length || !(Number.isInteger(sessions) && sessions >= 1)) return refuse('relativeVolume', 'bars with volume and a number of earlier sessions are needed', { sessions });
+  const days = [...new Set(rows.map((b) => tradeDayOf(b.t)))];
+  const today = days[days.length - 1];
+  const prior = days.slice(0, -1).slice(-sessions);
+  if (!prior.length) return refuse('relativeVolume', 'the bars hold only one session, so there is nothing to compare with', { sessions });
+  const cutoff = minuteOfDay(rows[rows.length - 1].t);
+  const upTo = (day) => rows.filter((b) => tradeDayOf(b.t) === day && minuteOfDay(b.t) <= cutoff).reduce((n, b) => n + b.v, 0);
+  const now = upTo(today);
+  const before = prior.map((d) => ({ day: d, volume: upTo(d) }));
+  const avg = before.reduce((n, d) => n + d.volume, 0) / before.length;
+  if (!(avg > 0)) return refuse('relativeVolume', 'the earlier sessions show no volume up to this time, so the ratio is not defined', { sessions });
+  const rvol = now / avg;
+  return done('relativeVolume', {
+    value: rvol, values: { rvol, today: now, average: avg, prior: before, day: today, upTo: rows[rows.length - 1].t },
+    formula: 'relative volume = volume today up to time t ÷ average volume up to the same time over the N sessions before',
+    inputs: { sessions, bars: rows.length }, units: 'ratio',
+    assumptions: 'Sessions are CME days from 6 p.m. New York; bars are labelled by their start time; delayed public futures volume may be partial, so the ratio is approximate.',
+    steps: [
+      `today ${today}, up to ${rows[rows.length - 1].t}: volume ${num(now)}`,
+      `the same time on the ${plural(before.length, 'session')} before: ${before.map((d) => `${d.day} ${num(d.volume)}`).join(', ')}; average ${num(avg, 2)}`,
+      `relative volume = ${num(now)} ÷ ${num(avg, 2)} = ${num(rvol, 3)}`,
+    ],
+  });
+}
+
+/**
+ * A volume profile from bars, each bar's whole volume put at its close (an approximation: real
+ * volume at price needs trades or ticks). POC is the level with the most volume; the value area
+ * grows from the POC, adding the adjacent level with more volume, until it holds `area` of the total.
+ */
+export function volumeProfile(inputs = {}) {
+  const { step = 1, area = 0.7 } = inputs;
+  const rows = (Array.isArray(inputs.bars) ? inputs.bars : []).filter((b) => b && fin(b.c) && fin(b.v) && b.v > 0);
+  if (!rows.length || !(step > 0) || !(area > 0 && area <= 1)) return refuse('volumeProfile', 'bars with volume, a price step and a value-area share are needed', inputs);
+  const at = new Map();
+  for (const b of rows) {
+    const level = tidy(Math.round(b.c / step) * step);
+    at.set(level, (at.get(level) || 0) + b.v);
+  }
+  const levels = [...at.keys()].sort((a, b) => a - b);
+  const vol = levels.map((l) => at.get(l));
+  const total = vol.reduce((n, v) => n + v, 0);
+  // Ties go to the lower price, so the same bars always give the same POC.
+  let poc = 0;
+  vol.forEach((v, i) => { if (v > vol[poc]) poc = i; });
+  let lo = poc; let hi = poc; let inside = vol[poc];
+  while (inside < area * total - EPS) {
+    const down = lo > 0 ? vol[lo - 1] : -1;
+    const up = hi < levels.length - 1 ? vol[hi + 1] : -1;
+    if (up > down) { hi += 1; inside += up; } else { lo -= 1; inside += down; }
+  }
+  const value = { poc: levels[poc], val: levels[lo], vah: levels[hi], share: inside / total };
+  return done('volumeProfile', {
+    value, values: { ...value, total, levels: levels.map((l, i) => ({ price: l, volume: vol[i] })) },
+    formula: 'volume at each price level = Σ volume of bars closing there;  POC = the level with the most volume;  value area = levels around the POC, adding the larger neighbour first, until ≥ 70% of all volume',
+    inputs: { bars: rows.length, step, area }, units: 'price',
+    assumptions: 'Each bar\'s whole volume is placed at its close, rounded to the step: an approximation of a real volume profile, which needs trade-by-trade data. Delayed public futures volume may be partial.',
+    steps: [
+      `levels: ${levels.length <= 8 ? levels.map((l, i) => `${num(l)} ${num(vol[i])}`).join(', ') : `${levels.length} levels from ${num(levels[0])} to ${num(levels[levels.length - 1])}`}; total ${num(total)}`,
+      `POC = ${num(levels[poc])}, with ${num(vol[poc])}`,
+      `value area ${num(levels[lo])} to ${num(levels[hi])}: ${num(inside)} of ${num(total)} = ${pct(inside / total)}, at least ${pct(area, 0)}`,
+    ],
+  });
+}
+
+// ─── Probability ─────────────────────────────────────────────────────────
+
+// P(no run of k losses in n trades): A(n) = A(n − 1) − p·q^k·A(n − k − 1), from the first run's
+// completion at trade n; A(n) = 1 for n < k and A(k) = 1 − q^k.
+function noRun(n, k, q) {
+  const a = new Float64Array(n + 1);
+  for (let i = 0; i <= n; i += 1) {
+    if (i < k) a[i] = 1;
+    else if (i === k) a[i] = 1 - q ** k;
+    else a[i] = a[i - 1] - (1 - q) * q ** k * a[i - k - 1];
+  }
+  return a[n];
+}
+
+/**
+ * Losing streaks with a fixed loss probability per trade: the chance of the next k trades all
+ * losing, (1 − p)^k; the chance of at least one run of k losses within n trades (exact, by the run
+ * recurrence); and the expected longest losing streak in n trades, exactly (the sum over k of the
+ * chance of a run of at least k) and by Schilling's approximation log_{1/q}(n·p) + γ ÷ ln(1/q) − ½.
+ */
+export function losingStreaks(inputs = {}) {
+  const { trades: n, streak: k } = inputs;
+  const p = fin(inputs.winRate) ? inputs.winRate : 1 - inputs.lossRate;
+  const q = 1 - p;
+  if (!(p > 0 && p < 1) || !(Number.isInteger(n) && n >= 1 && n <= 100000) || !(Number.isInteger(k) && k >= 1)) return refuse('losingStreaks', 'a win rate between 0 and 1, a whole number of trades and a streak length are needed', inputs);
+  const inARow = q ** k;
+  const atLeastOnce = k > n ? 0 : 1 - noRun(n, k, q);
+  let expected = 0;
+  for (let j = 1; j <= n; j += 1) {
+    const chance = 1 - noRun(n, j, q);
+    expected += chance;
+    if (chance < 1e-12) break;
+  }
+  const approx = Math.log(n * p) / Math.log(1 / q) + 0.5772156649 / Math.log(1 / q) - 0.5;
+  return done('losingStreaks', {
+    value: { inARow, atLeastOnce, expectedLongest: expected },
+    values: { inARow, atLeastOnce, expectedLongest: expected, approxLongest: approx, p, q, n, k },
+    formula: 'P(next k all lose) = (1 − p)^k;  P(a run of k within n) = 1 − A(n), A(n) = A(n − 1) − p·q^k·A(n − k − 1);  E[longest] = Σ_k P(run ≥ k) ≈ log_{1/q}(n·p) + γ ÷ ln(1/q) − ½',
+    inputs: { winRate: p, trades: n, streak: k }, units: 'probability and trades',
+    assumptions: 'Independent trades with one fixed win rate; real trades cluster, so streaks can be longer. γ is Euler\'s constant, 0.5772; Schilling\'s approximation is close for long runs of trades, and the exact sum is given beside it.',
+    steps: [
+      `loss rate q = 1 − ${num(p, 4)} = ${num(q, 4)}`,
+      `the next ${k} trades all losing: ${num(q, 4)}^${k} = ${pct(inARow, 2)}`,
+      `at least one run of ${k} losses in ${n} trades: ${pct(atLeastOnce, 2)}`,
+      `expected longest losing streak in ${n} trades: ${num(expected, 2)} exactly; Schilling's approximation log(${num(n * p, 2)}) ÷ log(${num(1 / q, 4)}) + 0.5772 ÷ ${num(Math.log(1 / q), 4)} − 0.5 = ${num(approx, 2)}`,
+    ],
+  });
+}
+
+/** The chance of at least one false "discovery" when m independent groups are each tested at level α, and the Bonferroni level. */
+export function multipleComparisons(inputs = {}) {
+  const { alpha = 0.05, groups: m } = inputs;
+  if (!(alpha > 0 && alpha < 1) || !(Number.isInteger(m) && m >= 1)) return refuse('multipleComparisons', 'a significance level and a whole number of groups are needed', inputs);
+  const familywise = 1 - (1 - alpha) ** m;
+  return done('multipleComparisons', {
+    value: { familywise, bonferroni: alpha / m }, values: { familywise, bonferroni: alpha / m },
+    formula: 'P(at least one false positive) = 1 − (1 − α)^m;  Bonferroni level = α ÷ m',
+    inputs: { alpha, groups: m }, units: 'probability',
+    assumptions: 'Independent tests, each with no real effect; overlapping groups are dependent, which changes the number but not the lesson.',
+    steps: [`1 − (1 − ${alpha})^${m} = ${pct(familywise, 1)} chance that at least one of ${m} groups looks significant by luck`, `to keep that near ${pct(alpha, 0)}, test each group at ${alpha} ÷ ${m} = ${num(alpha / m, 5)}`],
+  });
+}
+
+// ─── Paper trading and performance review ───────────────────────────────
+
+/**
+ * One trade as CHE's paper engine fills it (trading_evidence.js fillEntry, exitOn's fills and
+ * settleTrade): a market entry at the next bar's open, a stop as a market order, a target as a
+ * resting limit, and the assumed costs on both sides.
+ */
+export function paperFill(inputs = {}) {
+  const { symbol = 'MNQ', side = 'long', open, exitReason = 'target', exitPrice, stop, qty = 1 } = inputs;
+  const contract = CONTRACTS[String(symbol).toUpperCase()];
+  if (!contract) return refuse('paperFill', `CHE's paper engine trades ${Object.keys(CONTRACTS).join(' and ')} only`, inputs);
+  if (![open, exitPrice, stop].every(fin) || !['stop', 'target', 'time'].includes(exitReason) || !(Number.isInteger(qty) && qty >= 1)) return refuse('paperFill', 'the next bar\'s open, the stop, the exit price and reason (stop, target or time) and a whole quantity are needed', inputs);
+  const costs = { ...COSTS, ...(inputs.costs || {}) };
+  const entry = fillEntry({ o: open }, contract, costs, side);
+  const exit = fillExit(exitPrice, exitReason, contract, costs, side);
+  const settled = settleTrade({ side, entry, stop }, exit, qty, contract, costs);
+  const c = settled.costs;
+  return done('paperFill', {
+    value: { entryFill: entry.price, exitFill: exit.price, gross: settled.gross_before_costs, net: settled.net_pnl, rNet: settled.r_net },
+    values: { entry, exit, ...settled },
+    formula: 'entry fill = next open ± (half spread + slippage);  stop or time exit = price ∓ (half spread + slippage);  target exit = target ∓ half spread;  net = gross − spread − slippage − commissions − fees',
+    inputs: { symbol: contract.name, side, open, exitReason, exitPrice, stop, qty }, units: '$ and price',
+    assumptions: `CHE's planning costs (trading_evidence.js COSTS): a ${costs.spreadTicks}-tick spread paid half on each side, ${costs.slippageTicks} tick of slippage on market orders, $${costs.commissionPerSide} commission and $${costs.feePerSide} fees per contract per side. These are assumptions, not a broker's fills.`,
+    steps: [
+      `${side} entry: next bar open ${num(open)} ${side === 'short' ? '−' : '+'} half spread ${num(entry.spread, 4)} ${side === 'short' ? '−' : '+'} slippage ${num(entry.slippage, 4)} = ${num(entry.price, 4)}`,
+      `${exitReason} exit at ${num(exitPrice)}: ${exitReason === 'target' ? 'a resting limit, half the spread only' : 'a market order, half the spread and slippage'} = ${num(exit.price, 4)}`,
+      `gross before costs = ${usd(settled.gross_before_costs)}; spread ${usd(c.spread)}, slippage ${usd(c.slippage)}, commissions ${usd(c.commissions)}, fees ${usd(c.fees)}`,
+      `net = ${usd(settled.net_pnl)}; risked ${usd(settled.risk_dollars)}, so ${signedR(settled.r_gross)} gross and ${signedR(settled.r_net)} net`,
+    ],
+  });
+}
+
+const BUCKETS = [['−1R or worse', (r) => r <= -1], ['between −1R and 0', (r) => r > -1 && r < 0], ['0', (r) => r === 0], ['above 0 up to 1R', (r) => r > 0 && r <= 1], ['above 1R up to 2R', (r) => r > 1 && r <= 2], ['above 2R', (r) => r > 2]];
+
+/** A record's R distribution, longest win and loss streaks, average MFE and MAE, and results by New York session. */
+export function performanceBreakdown(inputs = {}) {
+  const rows = (Array.isArray(inputs.trades) ? inputs.trades : []).filter((t) => t && fin(t.r));
+  const { resolution = '5m' } = inputs;
+  if (rows.length < 2) return refuse('performanceBreakdown', 'at least two closed trades are needed', {});
+  const rs = rows.map((t) => t.r);
+  const sorted = [...rs].sort((a, b) => a - b);
+  const median = sorted.length % 2 ? sorted[(sorted.length - 1) / 2] : (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2;
+  const mean = rs.reduce((s, x) => s + x, 0) / rs.length;
+  let win = 0; let loss = 0; let maxWin = 0; let maxLoss = 0;
+  for (const r of rs) {
+    win = r > 0 ? win + 1 : 0; loss = r < 0 ? loss + 1 : 0;
+    maxWin = Math.max(maxWin, win); maxLoss = Math.max(maxLoss, loss);
+  }
+  const buckets = Object.fromEntries(BUCKETS.map(([name, test]) => [name, rs.filter(test).length]));
+  const sessions = {};
+  for (const t of rows) {
+    const key = t.time ? sessionOf(t.time, resolution) : 'unknown';
+    (sessions[key] ||= []).push(t.r);
+  }
+  const bySession = Object.fromEntries(Object.entries(sessions).map(([k, list]) => [k, { trades: list.length, meanR: list.reduce((s, x) => s + x, 0) / list.length }]));
+  const mfe = rows.map((t) => t.mfeR).filter(fin); const mae = rows.map((t) => t.maeR).filter(fin);
+  const avg = (list) => (list.length ? list.reduce((s, x) => s + x, 0) / list.length : null);
+  return done('performanceBreakdown', {
+    value: { meanR: mean, medianR: median, longestWinStreak: maxWin, longestLossStreak: maxLoss },
+    values: { meanR: mean, medianR: median, longestWinStreak: maxWin, longestLossStreak: maxLoss, buckets, bySession, avgMfeR: avg(mfe), avgMaeR: avg(mae), groups: Object.keys(bySession).length },
+    formula: 'mean R = Σ R ÷ n;  median = the middle R;  streak = the longest run of wins or of losses in order;  by session = the same statistics for the trades entered in each New York session',
+    inputs: { trades: rows.length, resolution }, units: 'R',
+    assumptions: 'Trades in time order. Each session group is a smaller sample than the whole, so its numbers are far less certain, and comparing many groups finds differences by luck.',
+    steps: [
+      `${rows.length} trades: mean ${signedR(mean)}, median ${signedR(median)}`,
+      `R distribution: ${Object.entries(buckets).filter(([, n]) => n).map(([k, n]) => `${k} ${n}`).join(', ')}`,
+      `longest winning streak ${maxWin}, longest losing streak ${maxLoss}`,
+      ...(mfe.length ? [`average best move in favour (MFE) ${num(avg(mfe), 2)}R, average worst move against (MAE) ${num(avg(mae), 2)}R`] : []),
+      `by New York session: ${Object.entries(bySession).map(([k, v]) => `${k} ${v.trades} trade${v.trades === 1 ? '' : 's'}, ${signedR(v.meanR)}`).join('; ')}`,
+    ],
   });
 }
 
