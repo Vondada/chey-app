@@ -315,6 +315,8 @@ export async function generateVideo(env, storage, body, fetcher = fetch) {
         prompt: prompt.slice(0, 8000), description: result.description,
         mime_type: 'video/mp4', thumbnail_media_id: thumbId,
         width: result.video_width, height: result.video_height,
+        ...(result.format ? { format: result.format } : {}), ...(result.episode ? { episode: result.episode } : {}),
+        frame_size_verified: result.frame_size_verified === true,
         blob: 'github-artifact', github_filename: 'video.mp4',
       };
       const thumbnailItem = {
@@ -358,7 +360,12 @@ export async function generateVideo(env, storage, body, fetcher = fetch) {
     created_at: now(),
   };
   const engines = [];
-  if (renderTaskId) {
+  // A Creator Studio storyboard is drawn only by CHE's own GitHub renderer;
+  // the other engines would ignore it and make a different video.
+  const storyboard = body.spec && typeof body.spec === 'object' ? JSON.stringify(body.spec) : '';
+  if (storyboard && !renderTaskId) {
+    if (!githubVideoConfigured(env)) return { status: 503, code: 'not_configured', detail: 'A storyboard renders only on the free GitHub renderer, which needs CHE_GITHUB_TOKEN and CHE_GITHUB_REPO on the Worker.' };
+  } else if (renderTaskId) {
     // Finish the exact existing renderer task; never start a second video.
     if (!env.CHE_VIDEO_GEN_URL) return { status: 503, detail: 'Renderer is not configured. The saved task cannot be checked.' };
     engines.push({ id: 'moneyprinter-turbo', run: async () => {
@@ -390,7 +397,7 @@ export async function generateVideo(env, storage, body, fetcher = fetch) {
     engines.push({ id: 'github-actions-offline', run: async () => {
       // One request is one video: the same subject and length asked again
       // within half an hour returns the job already queued.
-      const key = DISPATCH_KEY + await requestKey(`${topic.toLowerCase()}|${seconds}`);
+      const key = DISPATCH_KEY + await requestKey(`${topic.toLowerCase()}|${seconds}${storyboard ? `|${storyboard}` : ''}`);
       const earlier = await storage.get?.(key).catch?.(() => null) ?? null;
       const failed = earlier?.task_id ? (await storage.get?.(DISPATCHED_KEY + earlier.task_id).catch?.(() => null))?.failed : false;
       const recent = earlier?.task_id && Date.now() - Number(earlier.at || 0) < DISPATCH_REUSE_MS && !body.new_job && !failed;
@@ -403,7 +410,7 @@ export async function generateVideo(env, storage, body, fetcher = fetch) {
         await storage.put?.(key, { task_id: retryId, at: Date.now(), topic });
         return { pending: true, task_id: retryId, reused: true };
       }
-      const result = await startGithubVideo(env, topic, seconds, fetcher, { taskId: retryId });
+      const result = await startGithubVideo(env, topic, seconds, fetcher, { taskId: retryId, spec: storyboard });
       if (!result.ok) {
         // An unreachable GitHub may still have queued it: keep the task ID so
         // a retry checks that run instead of starting a second video.
@@ -418,7 +425,7 @@ export async function generateVideo(env, storage, body, fetcher = fetch) {
       return { pending: true, task_id: result.task_id, topic };
     } });
   }
-  if (paidMediaEnabled(env) && env.GEMINI_API_KEY) {
+  if (paidMediaEnabled(env) && env.GEMINI_API_KEY && !storyboard) {
     engines.push({ id: 'gemini-omni-video', run: async () => geminiVideo(env, prompt, fetcher) });
   }
   const errors = [];

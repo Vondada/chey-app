@@ -5,6 +5,7 @@
 
 import { loadCandles } from './trading_lab.js';
 import { chicagoDayKey } from './chicago_time.js';
+import { paperJournalWinRate } from './atlas_trading.js';
 import {
   CANDIDATES, FILTERS, COSTS, MIN_TRADES, candleProblems, causalContext, newPortfolio, stepPortfolio,
   appendTrades, readTrades, summarize, evaluateWalkForward, promotionVerdict, validateTradeRecord,
@@ -125,17 +126,27 @@ export async function evidenceReport(storage, { now = Date.now() } = {}) {
   const open = portfolios.filter((pf) => pf.open).length;
 
   const lines = [];
+  // The evidence pass has no daily trade yet: the paper journal (the one the Knowledge Atlas reads) gives the win rate,
+  // named as such. Its trades are never reported as "no evidence" (issue #346 audit).
+  const journal = trades.length ? null : await paperJournalWinRate(storage);
+  if (journal && (journal.trades || journal.text)) {
+    return [
+      "Paper trades, from CHE's evidence pass (recorded daily research; paper, no real money): none recorded yet.",
+      `Recorded in total: 0 (0 wins, 0 losses, 0 flat). Open now: ${open}.`,
+      journal.text,
+    ].join('\n');
+  }
   if (!runs.length) {
-    return 'No trading evidence has been recorded yet, sir. The first evidence pass has not run. I will report only what is recorded.';
+    return 'No trading evidence has been recorded yet, sir: the first evidence pass has not run, and CHE\'s paper journal has no closed paper trades. I will report only what is recorded.';
   }
 
-  lines.push(`Paper trades, from recorded evidence only (paper, no real money).`);
+  lines.push(`Paper trades, from CHE's evidence pass (recorded daily research; paper, no real money).`);
   lines.push('');
   lines.push(`1. Taken today (${today}): ${takenToday.length}.${takenToday.length ? '' : ' Daily bars are dated by the day a trade entered, and no entry is dated today.'}`);
   lines.push(`   Recorded in total: ${trades.length} (${overall.wins} wins, ${overall.losses} losses, ${overall.flat} flat). Open now: ${open}.`);
 
   lines.push('');
-  lines.push(`2. Measured win rate: ${pct(overall.win_rate)}${overall.win_rate_95ci ? ` (95% range ${pct(overall.win_rate_95ci.low)} to ${pct(overall.win_rate_95ci.high)})` : ''}, from ${overall.trades} trades.`);
+  lines.push(`2. Measured win rate, from CHE's evidence pass: ${pct(overall.win_rate)}${overall.win_rate_95ci ? ` (95% range ${pct(overall.win_rate_95ci.low)} to ${pct(overall.win_rate_95ci.high)})` : ''}, from ${overall.trades} trades.`);
   if (overall.sample !== 'adequate') lines.push(`   Sample is ${overall.sample}: ${MIN_TRADES} trades are the minimum before a rate means anything.`);
   lines.push(`   Net after assumed costs: ${money(overall.net_pnl)}. Costs paid: ${money(overall.costs_paid)}. Profit factor: ${overall.profit_factor ?? (overall.trades ? 'no losing trades' : 'not measured')}.`);
 

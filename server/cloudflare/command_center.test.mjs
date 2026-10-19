@@ -36,6 +36,8 @@ const MISSION_IDS = {
   clients: ['lead-scout', 'lead-audit', 'lead-score', 'lead-match', 'lead-proposal', 'lead-outreach', 'lead-crm', 'lead-followup', 'client-deliver'],
   marketing: ['brand-build', 'marketing-plan', 'social-content', 'ads-plan', 'seo-growth', 'sales-funnel', 'business-launch'],
   office: ['office-status', 'office-delegate', 'warroom', 'automate', 'skill-learn', 'connect', 'voice-test', 'create-3d'],
+  // Creator Studio (owner issue #347).
+  studio: ['studio-bible', 'studio-pilot', 'studio-render', 'studio-export', 'studio-post', 'studio-growth'],
 };
 
 const SITE_HTML = '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Joe\'s Barbershop</title></head><body><header><h1>Joe\'s Barbershop</h1></header><main><p>Classic cuts in Phoenix.</p><a href="#book">Book a cut</a></main><footer>Open daily</footer></body></html>';
@@ -102,9 +104,9 @@ async function owner({ saved = new Map(), model = () => 'Here is the answer, sir
 
 // ─── 1. Catalog identities ────────────────────────────────────────────────
 
-test('1. the owner\'s 71 commands exist exactly as listed, plus ten REA commands, in 8 categories, each fully described', () => {
-  assert.equal(COMMANDS.length, 86);
-  assert.equal(new Set(COMMANDS.map((c) => c.id)).size, 86, 'ids are unique');
+test('1. the owner\'s 71 commands exist exactly as listed, plus ten REA, trading, Knowledge Atlas, Brain correspondence and six Creator Studio commands, in 9 categories, each fully described', () => {
+  assert.equal(COMMANDS.length, 92);
+  assert.equal(new Set(COMMANDS.map((c) => c.id)).size, 92, 'ids are unique');
   assert.deepEqual(CATEGORIES.map((c) => c.id), Object.keys(MISSION_IDS));
   for (const [category, ids] of Object.entries(MISSION_IDS)) {
     assert.deepEqual(COMMANDS.filter((c) => c.category === category).map((c) => c.id), ids, category);
@@ -121,7 +123,7 @@ test('1. the owner\'s 71 commands exist exactly as listed, plus ten REA commands
     // September 28); the money, delete and app gates still apply to all.
     if (c.mode !== 'BUILD') assert.equal(c.confirm, '', `${c.id} is read-only`);
   }
-  for (const id of ['yt-publish', 'trade-execute']) {
+  for (const id of ['yt-publish', 'trade-execute', 'studio-post']) {
     assert.ok(commandById(id).confirm, `${id} needs owner approval`);
   }
 });
@@ -155,7 +157,7 @@ test('2. availability comes from real configuration: ready, needs setup, unsuppo
   const expired = connectorStatus({ CHE_TRADOVATE_OAUTH_CLIENT_ID: 'x', CHE_TRADOVATE_OAUTH_CLIENT_SECRET: 'y' }, { broker: { expired: true } });
   assert.equal(expired.broker.state, 'needs_reconnect');
   const view = catalogView(bare);
-  assert.equal(view.commands.length, 86);
+  assert.equal(view.commands.length, 92);
   assert.ok(view.commands.every((c) => ['available', 'setup_required', 'unsupported', 'temporarily_unavailable'].includes(c.status)));
 });
 
@@ -424,7 +426,7 @@ test('8. an approval command is held for a plain yes; anything else drops the ho
 });
 
 test('only money and owner-account actions ask first; explicit build and publish requests just run (owner rule, Sept 28)', async () => {
-  assert.deepEqual(COMMANDS.filter((c) => c.confirm).map((c) => c.id).sort(), ['trade-execute', 'yt-publish']);
+  assert.deepEqual(COMMANDS.filter((c) => c.confirm).map((c) => c.id).sort(), ['studio-post', 'trade-execute', 'yt-publish']);
   const che = await owner({ model: siteModel });
   await che.say('/site-build a barbershop in Phoenix');
   const published = await che.say('/site-publish');
@@ -494,7 +496,7 @@ test('command steps in an objective the owner did not create never run', () => {
   assert.equal(objective.nodes[0].failure_kind, 'AUTHORIZATION');
   // The request comes from the catalog, never from the caller.
   const forged = createObjective({ objective: 'x', nodes: [{ id: 'a', kind: 'command', command: 'trade-execute', prompt: 'delete everything', needs_approval: false }], owner_authorized: true });
-  assert.equal(forged.nodes[0].prompt, 'Take the trade');
+  assert.equal(forged.nodes[0].prompt, 'Yes, take the trade', 'the catalog prompt carries the explicit yes');
   assert.equal(forged.nodes[0].needs_approval, true);
   assert.throws(() => createObjective({ objective: 'x', nodes: [{ id: 'a', kind: 'command', command: 'made-up' }] }), /unknown command/);
   assert.equal(approveNode(forged, 'a').ok, true);
@@ -625,7 +627,7 @@ test('the Flutter catalog fixture matches what the Worker serves (regenerate: no
   const { fixtureCatalog } = await import('../../tool/dump_command_catalog.mjs');
   const fixture = JSON.parse(readFileSync(new URL('../../test/fixtures/command_catalog.json', import.meta.url), 'utf8'));
   assert.deepEqual(fixture, JSON.parse(JSON.stringify(fixtureCatalog())));
-  assert.equal(fixture.commands.length, 86);
+  assert.equal(fixture.commands.length, 92);
   assert.ok(fixture.templates.length >= 4);
 });
 
@@ -744,7 +746,7 @@ test('the owner\'s six spoken phrases are answered from the catalog with no mode
   for (const words of variants('CHE, open your Commands page.')) {
     const out = await che.say(words);
     assert.equal(out.route, 'che_command_center', words);
-    assert.match(out.reply, /86 commands in 8 groups[\s\S]*2\. YouTube, 11[\s\S]*Nothing was run/, words);
+    assert.match(out.reply, /92 commands in 9 groups[\s\S]*2\. YouTube, 11[\s\S]*9\. Creator Studio, 6[\s\S]*Nothing was run/, words);
   }
   for (const words of variants('CHE, search for YouTube.')) {
     const out = await che.say(words);

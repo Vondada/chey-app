@@ -1871,7 +1871,7 @@ const AUTONOMY = [
     che_component: true,
     id: 'c-recovery', domain: 'coding', title: 'Recovery: resuming after a crash without repeating work', level: 'expert',
     summary: 'Recovering safely means resuming from saved progress and making every retry idempotent, so no side effect happens twice.',
-    aliases: ['recovery', 'job recovery', 'crash recovery', 'recovering from a crash', 'recovery after a crash', 'idempotency', 'idempotent', 'idempotent operations', 'idempotency keys', 'idempotency key', 'safe retries', 'retry safety', 'at least once delivery', 'exactly once delivery', 'dead letter queue', 'dead letters'],
+    aliases: ['job recovery', 'crash recovery', 'recovering from a crash', 'recovery after a crash', 'idempotency', 'idempotent', 'idempotent operations', 'idempotency keys', 'idempotency key', 'safe retries', 'retry safety', 'at least once delivery', 'exactly once delivery', 'dead letter queue', 'dead letters'],
     tags: ['autonomy', 'reliability'], prerequisites: ['c-checkpoints', 'c-model-failover'], related: ['c-databases', 'c-self-repair', 'c-cloudflare-workers'],
     levels: {
       beginner: 'Programs get interrupted: the server restarts, the network drops, a time limit hits. Recovering means picking up where the work stopped, not starting over and not doing anything twice. If a message was already sent before the crash, sending it again on the retry would be a second message, so the program has to remember what it already did.',
@@ -2512,6 +2512,15 @@ const REPO_IN = /^where in (?:che'?s|her) (?:own )?code (?:is|are|does (?:che|sh
 const REPO_HOW = /^how does (?:che|she) (.+)$/;
 const REPO_LEARN = /^(.+?) (?:code|in che'?s (?:own )?code)$/;
 
+// A review drill is about code, so a word the atlas keeps out of lessons as generic ("security") names a
+// coding card here, when exactly one coding card has that word in its name (issue #346 audit).
+function drillCardWord(topic, cards, topicKey, conceptTopic) {
+  const key = topicKey(topic);
+  if (!key || !conceptTopic(topic)) return null;
+  const hits = cards.filter((c) => c.domain === 'coding' && [c.title, ...c.aliases].some((n) => ` ${topicKey(n)} `.includes(` ${key} `)));
+  return hits.length === 1 ? hits[0] : null;
+}
+
 /**
  * The owner's coding-practice request, or null. `t` has been read by knowledge_atlas.js speech()
  * (no wake word, lower case, no end punctuation); `deps` are its matchers, so this module never
@@ -2577,7 +2586,7 @@ export function codingIntent(t, history, { cards, findCard, topicKey, conceptTop
   if (drill || DRILL_ME.test(t)) {
     const topic = String(drill?.[1] || '').trim();
     if (!topic) return { kind: 'coding_drill', index: ctx.what === 'drill' ? ctx.index + 1 : 0 };
-    const found = findCard(topic);
+    const found = findCard(topic) || drillCardWord(topic, cards, topicKey, conceptTopic);
     const list = allDrills(cards);
     const at = found ? list.findIndex((x) => x.card.id === found.id) : -1;
     if (at >= 0) return { kind: 'coding_drill', index: at };

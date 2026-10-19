@@ -1290,6 +1290,14 @@ extension _CheHomeSecurity on _CHEHomeState {
     }
   }
 
+  /// The owner measures the Brain scene on his own phone; results are spoken only when he asks.
+  void _openRenderBench({bool autoRun = false}) {
+    HapticFeedback.selectionClick();
+    Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => CheRenderBenchScreen(onSpeak: (t) => speakText(t, record: false, readOnDemand: true), autoRun: autoRun),
+    ));
+  }
+
   void _openVoiceDiagnostics() {
     showModalBottomSheet<void>(
       context: context,
