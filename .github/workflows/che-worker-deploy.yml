@@ -524,6 +524,47 @@ jobs:
           }
           JS
 
+      - name: Check CHE's Knowledge Atlas through the live Worker
+        run: |
+          node --input-type=module <<'JS'
+          // Live checks on the same isolated test CHE as the memory check (never
+          // the owner's): two lessons, two risk calculations, a quiz answer graded
+          // from the card's formula, real progress counts, an honest strategy
+          // verdict with no journal, and two counter-cases that keep their routes.
+          import { appendFileSync } from 'node:fs';
+          const summary = (line) => appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${line}\n`);
+          let report = null;
+          let lastError = '';
+          for (let attempt = 0; attempt < 5 && !report; attempt++) {
+            try {
+              const response = await fetch('https://chey-app.henryjavoni.workers.dev/api/atlas/probe', {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${process.env.CHE_VOICE_PROBE_TOKEN}` },
+                signal: AbortSignal.timeout(90000),
+              });
+              if (response.ok) report = await response.json();
+              else lastError = `HTTP ${response.status}`;
+            } catch (error) {
+              lastError = error?.name === 'TimeoutError' ? 'no answer within 90 s' : 'network error';
+            }
+            if (!report) await new Promise((resolve) => setTimeout(resolve, 4000));
+          }
+          if (!report) {
+            console.log(`::error title=Knowledge Atlas check did not run::The live Worker did not answer (${lastError}).`);
+            process.exit(1);
+          }
+          for (const step of report.steps || []) {
+            console.log(`${step.pass ? 'PASS' : step.optional ? 'WARN' : 'FAIL'} ${step.name} [${step.route || '-'} | model_calls=${step.model_calls ?? '?'} | ${step.ms} ms] ${String(step.reply || '').replace(/\s+/g, ' ').slice(0, 160)}`);
+          }
+          console.log(`::notice title=Knowledge Atlas::${report.passed}/${report.total} live checks passed`);
+          summary(`**Knowledge Atlas (live Worker):** ${report.passed}/${report.total} live checks passed on the isolated test CHE.`);
+          for (const step of (report.steps || []).filter((s) => !s.pass && s.optional)) console.log(`::warning title=Knowledge Atlas check::${step.name}: ${String(step.reply).slice(0, 200)}`);
+          if (!report.ok) {
+            console.log(`::error title=Knowledge Atlas check failed::${(report.steps || []).filter((s) => !s.pass && !s.optional).map((s) => s.name).join('; ') || report.error || 'see log'}`);
+            process.exit(1);
+          }
+          JS
+
       - name: Render and verify one real video through the live Worker (opt-in)
         if: inputs.video_check
         run: |

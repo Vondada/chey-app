@@ -112,6 +112,54 @@ double _contrast(Color a, Color b) {
 }
 
 void main() {
+  group('Knowledge Atlas in the Brain Room (#346)', () {
+    // The Worker projects each card as a concept_card (curated_lesson) and the owner's study as atlas_progress
+    // (owner_practice) in "Knowledge Atlas/<Coding|Trading>/<card>"; the phone replica hands them over as is.
+    final records = <Map<String, dynamic>>[
+      {'id': 'mem:m1', 'kind': 'memory', 'region': 'Personal Memory', 'path': 'Family', 'title': 'Mom', 'excerpt': 'Mom lives in Phoenix.', 'verification': 'owner_attested', 'created_at': _now, 'source': {'kind': 'memory_record'}, 'links': const []},
+      {'id': 'atlas:recursion', 'kind': 'concept_card', 'region': 'Coding and Development', 'path': 'Knowledge Atlas/Coding/Recursion', 'title': 'Recursion', 'excerpt': 'Recursion is a function that calls itself on a smaller problem.', 'verification': 'curated_lesson', 'created_at': _now, 'source': {'kind': 'knowledge_atlas'}, 'links': [{'type': 'builds_upon', 'to': 'atlas:functions'}]},
+      {'id': 'atlasprog:quiz:recursion:question 1:$_now', 'kind': 'atlas_progress', 'region': 'Coding and Development', 'path': 'Knowledge Atlas/Coding/Recursion', 'title': 'Quiz answer: Recursion, question 1 (correct)', 'excerpt': 'Quiz answer: Recursion, question 1. Result: correct.', 'verification': 'owner_practice', 'created_at': _now, 'source': {'kind': 'atlas_progress'}, 'links': [{'type': 'relevant_to', 'to': 'atlas:recursion'}]},
+    ];
+
+    test('cards and practice are their own lobe, never counted or spoken as memories', () {
+      final dots = cheBuildMemoryDots(savedMemories: const [], memoryNotes: const [], learnedPersonality: const [], learnedKnowledge: const [], brainRecords: records);
+      expect(dots.where((d) => d.category == 'Knowledge Atlas').map((d) => d.id), ['atlas:recursion', 'atlasprog:quiz:recursion:question 1:$_now']);
+      expect(dots.firstWhere((d) => d.id == 'atlas:recursion').scope, 'general', reason: 'a curated card is not the owner\'s');
+      expect(dots.firstWhere((d) => d.id == 'mem:m1').category, 'Memory');
+      final c = CheBrainSpaceController(dots);
+      expect(c.countWords, '1 memory and 2 Knowledge Atlas records');
+      expect(c.clearView(), "CHE's brain: showing all 1 memory and 2 Knowledge Atlas records.");
+      c.dispose();
+      final plain = CheBrainSpaceController(dots.where((d) => d.category != 'Knowledge Atlas').toList());
+      expect(plain.countWords, '1 memories', reason: 'with no atlas records the wording is unchanged');
+      plain.dispose();
+    });
+
+    test('the lobe has a voice route, and says records, not memories', () {
+      for (final words in ['show my atlas lessons', 'CHE, show the knowledge atlas cards', 'show knowledge atlas records', 'show the knowledge atlas memories', 'only show atlas lessons', 'show curated lessons']) {
+        final cmd = CheBrainCommand.parse(words);
+        expect(cmd?.action, CheBrainAction.filter, reason: words);
+        expect(cmd?.category, 'Knowledge Atlas', reason: words);
+      }
+      expect(CheBrainCommand.parse("open atlas's brain")!.worker, 'atlas', reason: 'the bare "atlas" is still the Office worker');
+      expect(CheBrainCommand.parse('show my research memories')!.category, 'Research');
+      expect(CheBrainCommand.parse('show my lessons')?.category, isNot('Knowledge Atlas'), reason: 'a bare "lessons" is not the atlas lobe');
+      final dots = cheBuildMemoryDots(savedMemories: const [], memoryNotes: const [], learnedPersonality: const [], learnedKnowledge: const [], brainRecords: records);
+      final c = CheBrainSpaceController(dots);
+      expect(c.execute(CheBrainCommand.parse('show the knowledge atlas records')!), 'Showing the Knowledge Atlas records, curated lessons and your practice: 2.');
+      c.dispose();
+      final none = CheBrainSpaceController(dots.where((d) => d.category != 'Knowledge Atlas').toList());
+      expect(none.execute(CheBrainCommand.parse('show my atlas lessons')!), 'There are no Knowledge Atlas records yet.');
+      none.dispose();
+    });
+
+    test('the labels say what a card and a practice record are', () {
+      expect(cheBrainVerificationLabel('curated_lesson').$1, 'Curated lesson: teaching content, not your memory');
+      expect(cheBrainVerificationLabel('owner_practice').$1, 'Your practice, measured in chat');
+      expect(cheMemoryCategoryColor('Knowledge Atlas'), isNot(CheColors.accent));
+    });
+  });
+
   group('worker brains from real records', () {
     test('Office test 6/10: internal workers get orbs with real counts and real connections; outside AIs never do', () {
       final dots = _dots();
