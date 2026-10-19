@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
-import { SIM_STRATEGIES, MINUTE_FEEDS, NOT_SIMULATED, minuteFeedFor, strategySimTick, nextStrategySimTickAt, readSimState, storeTrades, readStoredTrades, summarize, profitLabel, leaderboard, setStrategySimPaused, setStrategySimCeiling, assertSpend, closedBars, sessionOf, strategySimView, TICK_MS, MIN_SAMPLE, TRADE_CAP, OOS_SHARE } from './strategy_sim.js';
+import { SIM_STRATEGIES, MINUTE_FEEDS, NOT_SIMULATED, minuteFeedFor, strategySimTick, nextStrategySimTickAt, readSimState, storeTrades, readStoredTrades, summarize, profitLabel, leaderboard, setStrategySimPaused, setStrategySimCeiling, assertSpend, closedBars, sessionOf, strategySimView, TICK_MS, MIN_SAMPLE, TRADE_CAP, OOS_SHARE, HEARTBEAT_MS, STATE_KEY } from './strategy_sim.js';
 import { loadCandles, prepareSession, OPENING_MINUTES, SKILL_IDS, strategyById, readBook } from './trading_lab.js';
 import { ENVIRONMENTS } from './trading_environments.js';
 import { wilsonInterval } from './trading_evidence.js';
@@ -58,8 +58,10 @@ function memStorage(saved = new Map(), alarms = []) {
   };
 }
 
-// Only the BTC loader is used in the hand-built fixtures; the rest report no data.
-const onlyBtc = (candles) => ({ BTCUSDT: async () => ({ candles, status: 'LIVE', source: 'fixture' }) });
+// Every symbol has an explicit loader, so no test reads the shared 60-second cache of trading_lab.js.
+// Only BTC has bars in the hand-built fixtures; the rest report no feed.
+const noFeed = async () => ({ error: 'no feed in this test' });
+const onlyBtc = (candles) => ({ BTCUSDT: async () => ({ candles, status: 'LIVE', source: 'fixture' }), ETHUSDT: noFeed, MNQ: noFeed, NQ: noFeed });
 const noNetwork = async () => { throw new Error('the tests make no network call'); };
 const nowAfter = (bars) => Date.parse(bars[bars.length - 1].t) + TICK_MS;
 
@@ -409,8 +411,9 @@ test('daily spend ceiling is read and enforced at every tick, and it resets each
   assert.equal(reads, 0);
 
   // Yesterday's spend does not count today.
+  // A new handle reads the saved state, as after a restart.
   saved.set('strategy_sim_state', { spend: { ceiling_usd: 0.25, day: '2026-10-18', spent_usd: 0.5 } });
-  const nextDay = await strategySimTick(storage, { now, fetcher: noNetwork, loaders: counting });
+  const nextDay = await strategySimTick(memStorage(saved), { now, fetcher: noNetwork, loaders: counting });
   assert.equal(nextDay.ran, true);
 
   assert.equal(assertSpend({ ceiling_usd: 0, spent_usd: 0 }, 0).allowed, true, 'the default: no spend, no block');
@@ -530,6 +533,107 @@ test('alarm: the minute tick and the hourly learning tick both run, and both sta
     assert.equal(await nextStrategySimTickAt(storage, T0 + 61 * TICK_MS), T0 + 62 * TICK_MS);
     const hourly = Date.parse((await readBook(storage)).last_tick) + 60 * 60_000;
     assert.equal(hourly, T0 + 121 * TICK_MS, 'the next hourly tick is still an hour later');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+// ─── Storage writes, restarts, and GitHub on the minute-only wake-up ─────────
+
+// Quiet flat bars that end before `now`: no signal, so no trade on any strategy. The range (99.5 to 100.5)
+// is exact in binary, so the session VWAP is exactly 100 and does not wobble on rounding.
+function flatBars(now, n = 200) {
+  return Array.from({ length: n }, (_, i) => ({ t: iso(now - (n - i) * TICK_MS), o: 100, h: 100.5, l: 99.5, c: 100, v: 1 }));
+}
+
+// A storage handle that records every key it writes.
+function countingStorage(saved, log) {
+  const base = memStorage(saved);
+  return {
+    ...base,
+    put: async (key, value) => { log.push(key); return base.put(key, value); },
+    delete: async (key) => { log.push(`delete:${key}`); return base.delete(key); },
+  };
+}
+
+test('a simulated day with no trades writes the state at most every 15 minutes, well under 300 writes', async () => {
+  const saved = new Map();
+  const writes = [];
+  const storage = countingStorage(saved, writes);
+  const start = T_START;
+  for (let k = 0; k < 1440; k++) {
+    const now = start + (k + 1) * TICK_MS;
+    const quiet = flatBars(now);
+    const run = await strategySimTick(storage, { now, fetcher: noNetwork, loaders: onlyBtc(quiet) });
+    assert.equal(run.ran, true, `minute ${k}`);
+    assert.equal(run.opened + run.closed, 0, `minute ${k}: no trade`);
+  }
+  const stateWrites = writes.filter((key) => key === STATE_KEY).length;
+  const otherWrites = writes.filter((key) => key !== STATE_KEY).length;
+  const state = await readSimState(storage);
+  assert.equal(state.ticks, 1440);
+  assert.equal(state.trades.stored, 0);
+  assert.equal(otherWrites, 0, 'no trade chunk is written when nothing trades');
+  assert.ok(stateWrites < 300, `state writes in a day: ${stateWrites}`);
+  assert.equal(stateWrites, 1440 / 15, `one heartbeat every ${HEARTBEAT_MS / 60_000} minutes: ${stateWrites}`);
+});
+
+test('a restart replays from the last save and gives the same trades as an uninterrupted run', async () => {
+  const bars = walk(1500, { seed: 13 });
+  const once = new Map();
+  await strategySimTick(memStorage(once), { now: nowAfter(bars), fetcher: noNetwork, loaders: onlyBtc(bars) });
+  const whole = await readStoredTrades(memStorage(once), (await readSimState(memStorage(once))).trades);
+
+  // The first half, then a restart: a new handle reads the last save and replays the rest.
+  const split = new Map();
+  await strategySimTick(memStorage(split), { now: Date.parse(bars[899].t) + TICK_MS, fetcher: noNetwork, loaders: onlyBtc(bars.slice(0, 900)) });
+  await strategySimTick(memStorage(split), { force: true, now: nowAfter(bars), fetcher: noNetwork, loaders: onlyBtc(bars) });
+  const restarted = memStorage(split);
+  const after = await readStoredTrades(restarted, (await readSimState(restarted)).trades);
+  assert.ok(whole.length > 3, `enough trades to compare (${whole.length})`);
+  assert.deepEqual(after.map((t) => t.id), whole.map((t) => t.id), 'no trade repeated or lost');
+  assert.deepEqual(after.map((t) => t.r), whole.map((t) => t.r));
+});
+
+test('minute-only wake-up: no GitHub or model call; an hourly wake-up still checks the mailbox', async () => {
+  const realFetch = globalThis.fetch;
+  const github = [];
+  const models = [];
+  globalThis.fetch = async (input, init) => {
+    const url = String(input?.url || input);
+    if (/api\.github\.com/.test(url)) {
+      github.push(`${init?.method || 'GET'} ${url}`);
+      return new Response(JSON.stringify({ object: { sha: 'abc123' } }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    return worldFetch(url);
+  };
+  try {
+    const saved = new Map();
+    const alarms = [];
+    const storage = memStorage(saved, alarms);
+    const env = {
+      CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', CHE_GITHUB_TOKEN: 'ghp_test_only', CHE_GITHUB_REPO: 'Vondada/chey-app',
+      AI: { run: async (...args) => { models.push(args); return { response: 'unused' }; } },
+    };
+    const state = new CheState({ storage, waitUntil: () => {} }, env);
+    // The hourly and minute passes ran a minute ago, so the next wake-up is minute-only.
+    const earlier = Date.now() - TICK_MS;
+    await state.tradingTick({ now: earlier, force: true });
+    assert.equal((await readBook(storage)).last_tick, iso(earlier));
+
+    github.length = 0;
+    await state.alarm();
+    assert.deepEqual(github, [], 'a minute-only wake-up makes no GitHub request');
+    assert.deepEqual(models, [], 'and no model call');
+    assert.ok(Date.parse((await readSimState(storage)).last_tick) > earlier, 'the minute pass still ran');
+    assert.equal((await readBook(storage)).last_tick, iso(earlier), 'the hourly pass did not run');
+
+    // An hourly wake-up: the hourly pass is due, so the full alarm runs, including the mailbox check.
+    await state.tradingTick({ now: Date.now() - 61 * 60_000, force: true });
+    github.length = 0;
+    await state.alarm();
+    assert.ok(github.length >= 1, 'the hourly wake-up made its requests');
+    assert.ok(github.some((line) => /\/git\/ref\/heads\//.test(line)), `mailbox head checked: ${github.join(', ')}`);
   } finally {
     globalThis.fetch = realFetch;
   }

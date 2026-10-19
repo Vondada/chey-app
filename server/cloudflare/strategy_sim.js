@@ -36,6 +36,9 @@ export const OOS_SHARE = 0.3;
 const WARMUP_BARS = 60;
 const NY_OPEN_MINUTE = 9 * 60 + 30;
 const DUE_SLACK_MS = 5_000;
+// Storage writes: the state is saved when a trade opens or closes, and otherwise at most once per heartbeat.
+// Progress between saves is kept in memory and replayed deterministically after a restart (see readSimState).
+export const HEARTBEAT_MS = 15 * 60_000;
 
 // Costs are assumptions, stated here and in every output. Change them in code, not in a model.
 export const MINUTE_FEEDS = Object.freeze({
@@ -181,6 +184,7 @@ function closeTrade(pos, exit, bar, feed) {
 // Runs every strategy over the bars not yet processed for one symbol. Returns the closed trades.
 function runBars(state, symbol, bars, ctx, feed, status) {
   const closed = [];
+  let opened = 0;
   const sym = state.symbols[symbol];
   const lastT = sym.last_t ? Date.parse(sym.last_t) : -Infinity;
   for (let j = 0; j < bars.length; j++) {
@@ -199,7 +203,7 @@ function runBars(state, symbol, bars, ctx, feed, status) {
         const fill = fillOrder(pend, bar, feed);
         if (fill.expired) state.counts.expired += 1;
         else if (!fill.trade) state.counts.not_filled += 1;
-        else { pos = fill.trade; state.open[key] = pos; }
+        else { pos = fill.trade; state.open[key] = pos; opened += 1; }
       }
       if (pos) {
         const exit = exitOn(pos, bar);
@@ -220,7 +224,7 @@ function runBars(state, symbol, bars, ctx, feed, status) {
     });
     sym.last_t = bar.t;
   }
-  return closed;
+  return { closed, opened };
 }
 
 // ─── State and storage (trades are kept in chunks, under the 128 KiB value limit) ───
@@ -229,7 +233,7 @@ const chunkKey = (n) => `strategy_sim_trades:${n}`;
 
 function freshState() {
   return {
-    version: 1, paused: false, paused_at: null, resumed_at: null, last_tick: null, ticks: 0, last_paused_marker: null,
+    version: 1, paused: false, paused_at: null, resumed_at: null, last_tick: null, saved_at: null, ticks: 0, last_paused_marker: null,
     symbols: {}, open: {}, pending: {},
     counts: { bars: 0, not_filled: 0, expired: 0, errors: 0 },
     trades: { first: 0, last: -1, tail: 0, stored: 0, dropped: 0 },
@@ -237,17 +241,31 @@ function freshState() {
   };
 }
 
+// The live state of each storage object. Between saves the newest progress lives here; a restart reloads
+// the last save and replays the bars after it, which gives the same trades (the replay starts from the
+// saved cursor and every trade is saved the moment it opens or closes, so none is repeated).
+const live = new WeakMap();
+
 export async function readSimState(storage) {
+  if (live.has(storage)) return live.get(storage);
   const base = freshState();
   const saved = await storage.get(STATE_KEY);
   const s = saved && typeof saved === 'object' ? saved : {};
-  return {
+  const state = {
     ...base, ...s,
     symbols: s.symbols || {}, open: s.open || {}, pending: s.pending || {},
     counts: { ...base.counts, ...(s.counts || {}) },
     trades: { ...base.trades, ...(s.trades || {}) },
     spend: { ...base.spend, ...(s.spend || {}) },
   };
+  live.set(storage, state);
+  return state;
+}
+
+// The one place the state is written. Callers decide when a write is needed (see strategySimTick).
+async function saveSimState(storage, state, now = Date.now()) {
+  state.saved_at = iso(now);
+  await storage.put(STATE_KEY, state);
 }
 
 // Appends closed trades. The newest chunk is written in place; a full chunk starts the next one.
@@ -314,15 +332,19 @@ export async function strategySimTick(storage, { fetcher = fetch, now = Date.now
   }
   // Kill switch: checked first, every tick. A paused tick does nothing and records a marker.
   if (state.paused) {
-    state.last_paused_marker = { at: iso(now), note: 'Paused by the owner: no bars read, no trades, no spend.' };
-    await storage.put(STATE_KEY, state);
+    if (!state.last_paused_marker) {
+      state.last_paused_marker = { at: iso(now), note: 'Paused by the owner: no bars read, no trades, no spend.' };
+      await saveSimState(storage, state, now);
+    }
     return { ran: false, paused: true, at: iso(now) };
   }
   state.spend = spendToday(state, now);
   const spendCheck = assertSpend(state.spend, 0);
   if (!spendCheck.allowed) {
-    state.last_paused_marker = { at: iso(now), note: spendCheck.reason };
-    await storage.put(STATE_KEY, state);
+    if (!state.last_paused_marker) {
+      state.last_paused_marker = { at: iso(now), note: spendCheck.reason };
+      await saveSimState(storage, state, now);
+    }
     return { ran: false, blocked: spendCheck.reason, at: iso(now) };
   }
   assertPaperOnly();
@@ -330,6 +352,7 @@ export async function strategySimTick(storage, { fetcher = fetch, now = Date.now
   state.ticks += 1;
   const report = {};
   const closed = [];
+  let opened = 0;
   for (const symbol of Object.keys(MINUTE_FEEDS)) {
     const feed = MINUTE_FEEDS[symbol];
     const load = loaders[symbol] || ((sym) => loadMinuteBars(sym, { fetcher, now }));
@@ -350,14 +373,27 @@ export async function strategySimTick(storage, { fetcher = fetch, now = Date.now
     if (!bars.length) { report[symbol] = { new_bars: 0, status: data.status }; continue; }
     const ctx = { ...prepare(bars), ...prepareSession(bars, (t) => sessionOf(feed.session, t)) };
     const before = sym.bars;
-    const made = runBars(state, symbol, bars, ctx, feed, data.status);
+    const { closed: made, opened: filled } = runBars(state, symbol, bars, ctx, feed, data.status);
     closed.push(...made);
-    report[symbol] = { new_bars: sym.bars - before, status: data.status, closed: made.length };
+    opened += filled;
+    report[symbol] = { new_bars: sym.bars - before, status: data.status, closed: made.length, opened: filled };
   }
-  await storeTrades(storage, state.trades, closed, { cap, chunk });
+  // A trade that opened or closed is saved at once: its chunk first, then the state. Anything else waits for
+  // the heartbeat. A quiet minute therefore costs no write, and the next pass continues from memory.
   state.last_paused_marker = null;
-  await storage.put(STATE_KEY, state);
-  return { ran: true, at: iso(now), closed: closed.length, symbols: report, stored: state.trades.stored, dropped: state.trades.dropped };
+  await storeTrades(storage, state.trades, closed, { cap, chunk });
+  const heartbeat = !state.saved_at || now - Date.parse(state.saved_at) >= HEARTBEAT_MS;
+  const written = opened > 0 || closed.length > 0 || heartbeat;
+  if (written) await saveSimState(storage, state, now);
+  return { ran: true, at: iso(now), closed: closed.length, opened, saved: written, symbols: report, stored: state.trades.stored, dropped: state.trades.dropped };
+}
+
+/** Read only: whether the minute pass is due now, for the alarm's minute-only path. */
+export async function strategySimWake(storage, now = Date.now()) {
+  const state = await readSimState(storage);
+  if (state.paused || !state.last_tick) return { due: false, at: null };
+  const at = Date.parse(state.last_tick) + TICK_MS;
+  return { due: at <= now + DUE_SLACK_MS, at };
 }
 
 /**
@@ -379,7 +415,8 @@ export async function setStrategySimPaused(storage, paused, now = Date.now()) {
   state.paused = Boolean(paused);
   if (paused) state.paused_at = iso(now);
   else state.resumed_at = iso(now);
-  await storage.put(STATE_KEY, state);
+  state.last_paused_marker = null;
+  await saveSimState(storage, state, now);
   return { paused: state.paused, paused_at: state.paused_at, resumed_at: state.resumed_at };
 }
 
@@ -388,7 +425,7 @@ export async function setStrategySimCeiling(storage, usd, now = Date.now()) {
   if (!Number.isFinite(value) || value < 0 || value > 1000) return { ok: false, detail: 'The daily spend ceiling must be a dollar amount from 0 to 1000.' };
   const state = await readSimState(storage);
   state.spend = { ...spendToday(state, now), ceiling_usd: value };
-  await storage.put(STATE_KEY, state);
+  await saveSimState(storage, state, now);
   return { ok: true, ceiling_usd: value, spent_usd: state.spend.spent_usd, day: state.spend.day };
 }
 

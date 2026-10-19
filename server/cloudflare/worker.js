@@ -61,10 +61,11 @@ import { recordReliability, reliabilityIntent, reliabilitySummary, speakReliabil
 import { answerOwnerMemoryQuestion, auditMemoryProvenance, evidenceQuestion, evidenceReferent, evidenceRequestSplit, explainEvidenceFor, findAnswerEvidence, guardOwnerAttributions, guardRememberBlock, latestAnswerEvidence, loadRetractions, memoryPromptContext, ownerFactCorrection, ownerMemoryQuestion, ownerWords, recordAnswerEvidence, recordRetractions, storyRequested } from './memory_provenance.js';
 import { condenseHistory, ownerNotificationPolicy } from './workflow_governor.js';
 import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, nextTradingTickAt, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
-import { nextStrategySimTickAt, setStrategySimCeiling, setStrategySimPaused, strategySimTick, strategySimView } from './strategy_sim.js';
+import { nextStrategySimTickAt, setStrategySimCeiling, setStrategySimPaused, strategySimTick, strategySimView, strategySimWake } from './strategy_sim.js';
 import { evidenceIntent, evidenceReport, evidenceTick } from './trading_evidence_runner.js';
 import { ATLAS_SOURCE, answerAtlas, atlasHiddenAction, atlasIntent, atlasQuizAnswerTurn, atlasPromptContext, atlasResetAsk, atlasResetIntent, projectAtlasToBrain, resetAtlasProgress } from './knowledge_atlas.js';
-import { LIVE_BACKTEST, LIVE_STATE, liveBacktest, liveDashboard, livePaperSummary, liveTick, nextLiveTickAt, setLivePaper } from './trading_live.js';
+import { LIVE_BACKTEST, LIVE_RUNS, LIVE_STATE, liveBacktest, liveDashboard, livePaperSummary, liveTick, nextLiveTickAt, setLivePaper } from './trading_live.js';
+import { cmeSession } from './market_feed.js';
 import { alpacaKeys, alpacaPaperOrders, alpacaStatus, placeAlpacaPaperOrder, removeAlpacaPaperKeys, saveAlpacaPaperKeys } from './broker_alpaca.js';
 import { speakConnections, tradingConnections } from './trading_connections.js';
 import { liveAnswer, liveIntent } from './trading_live_chat.js';
@@ -3575,7 +3576,9 @@ export class CheState extends DurableObject {
     return book;
   }
 
-  async scheduleWork() {
+  // Every time the alarm must wake for, read from storage only (no network). The simulation's minute and the live
+  // tick come back apart from the rest, so a minute-only wake-up can be recognised and rescheduled exactly.
+  async wakeTimes() {
     const data = await this.loadData();
     const times = [];
     if (data.autonomy) {
@@ -3611,11 +3614,37 @@ export class CheState extends DurableObject {
     // Paper trading learns every hour (deterministic, no AI tokens, no money).
     times.push(Math.max(Date.now() + 250, await nextTradingTickAt(this.ctx.storage).catch(() => Date.now() + 3_600_000)));
     const liveAt = await nextLiveTickAt(this.ctx.storage).catch(() => null);
-    if (liveAt) times.push(Math.max(Date.now() + 250, liveAt));
-    // Strategy simulation's next minute (null while the owner has paused it). Same alarm slot, earliest wins.
+    // The simulation's next minute (null while paused or before its first pass). Same alarm slot, earliest wins.
     const simAt = await nextStrategySimTickAt(this.ctx.storage).catch(() => null);
-    if (simAt) times.push(simAt);
+    return { others: times, live: liveAt ? Math.max(Date.now() + 250, liveAt) : null, sim: simAt };
+  }
+
+  async scheduleWork() {
+    const w = await this.wakeTimes();
+    const times = [...w.others, ...(w.live ? [w.live] : []), ...(w.sim ? [w.sim] : [])];
     if (times.length) await this.ctx.storage.setAlarm(Math.min(...times));
+  }
+
+  // The live tick's next run from its last saved run, with the same gap liveTick uses; null while paper trading is off.
+  async liveNextAt(now = Date.now()) {
+    const state = await this.ctx.storage.get(LIVE_STATE);
+    if (!state?.enabled) return null;
+    const runs = (await this.ctx.storage.get(LIVE_RUNS)) || [];
+    const last = runs[runs.length - 1];
+    if (!last?.at) return now;
+    const gap = cmeSession(now).open ? 50_000 : 14 * 60_000;
+    return Date.parse(last.at) + gap;
+  }
+
+  // Minute-only wake-up test: the simulation's minute is due and nothing else is (no hourly, live, job, mailbox or
+  // other timer). Returns the times still to keep, or null when another wake-up is due and the full alarm must run.
+  async minuteOnlyWake(now = Date.now()) {
+    const sim = await strategySimWake(this.ctx.storage, now);
+    if (!sim.due) return null;
+    const w = await this.wakeTimes();
+    const liveNext = await this.liveNextAt(now);
+    const due = [...w.others, ...(liveNext ? [liveNext] : [])].some((t) => t <= now + 5_000);
+    return due ? null : { others: w.others, liveNext };
   }
 
   /**
@@ -11037,6 +11066,17 @@ export class CheState extends DurableObject {
 
   async alarm() {
     await this.refreshKeyEnv();
+    // A minute-only wake-up: the simulation's minute is the only work due. It runs that one pass and makes no
+    // mailbox (GitHub), job, Tradovate, hourly or live call. Those keep their own wake-up times and run on them.
+    const minuteNow = Date.now();
+    const minute = await this.minuteOnlyWake(minuteNow).catch(() => null);
+    if (minute) {
+      await strategySimTick(this.ctx.storage, { now: minuteNow }).catch((error) => console.error('Strategy simulation tick failed:', error?.message || error));
+      const simNext = await nextStrategySimTickAt(this.ctx.storage, Date.now()).catch(() => null);
+      const kept = [...minute.others, ...(minute.liveNext ? [minute.liveNext] : []), ...(simNext ? [simNext] : [])];
+      if (kept.length) await this.ctx.storage.setAlarm(Math.min(...kept));
+      return;
+    }
     // Flagstaff stays responsive even when Office autonomy is paused. Incoming
     // AI messages are advice only and cannot authorize consequential actions.
     await this.processFlagstaffInbox().catch((error) => {
