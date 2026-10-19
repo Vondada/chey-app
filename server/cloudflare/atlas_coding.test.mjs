@@ -440,6 +440,9 @@ test('every review drill\'s bug is real and its fix works; real-fix drills name 
     ['c-debugging.d1', 'it cuts the message silently so the dont at the end is lost', null],
   ]) assert.equal(checkDrill(drill(id), said).correct, want, `${id}: ${said}`);
   assert.equal(checkDrill(drill('c-debugging.d1'), 'it cuts the message silently so the dont at the end is lost').named, true);
+  // A stem is the whole stem: "cut*" never matches "cold", "can" or "car", and "retry*" never "return".
+  for (const words of ['the weather is cold', 'it can wait', 'the car is outside']) assert.equal(drillAnswer(drill('c-debugging.d1'), words), null, words);
+  assert.equal(checkDrill(drill('c-model-failover.d1'), 'it returns the order').hits, 1, '"return" is not "retry"');
 });
 
 test('every repository example names a real path, a symbol in it, and a test that exercises it', () => {
