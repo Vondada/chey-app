@@ -33,7 +33,7 @@ const ORDER_ASK = /\b(?:place|submit|enter|buy|sell|short|go\s+long|go\s+short|t
 /** The command in [message], or null. Narrow on purpose: other trading talk keeps its routes. */
 export function liveIntent(message) {
   const text = String(message || '').replace(WAKE, '').trim();
-  if (text && text.length <= 1200 && ANALYSIS.test(text) && FEED_DETAIL.test(text) && !ORDER_ASK.test(withoutProhibitions(text))
+  if (text && text.length <= 1200 && ANALYSIS.test(text) && FEED_DETAIL.test(text) && !ORDER_ASK.test(withoutProhibitions(text, { only: ORDER_ASK }))
     && !/\b(?:stop|pause|start|begin|resume|turn\s+(?:on|off)|halt|end)\s+(?:the\s+|your\s+)?paper[\s-]*trad/i.test(withoutProhibitions(text))) return { kind: 'analysis' };
   if (!text || text.length > 160) return null;
   for (const [kind, re] of PATTERNS) if (re.test(text)) return { kind };
