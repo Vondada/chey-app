@@ -735,7 +735,9 @@ export function googleChatIntent(message, { last = null } = {}) {
   if (m) return { kind: 'calendar_create', summary: m[1], date: m[2], time: TIME_OF_DAY(m[3], m[4], m[5]?.toLowerCase()) };
   // "Add a meeting with Bob tomorrow at 3pm to my calendar": a new event CHE cannot place without an exact
   // date, so she asks for one. A model would only claim it was added.
-  if (/^(?:add|schedule|put|create|book|set\s+up)\b[\s\S]*\b(?:to|on|in|onto)\s+(?:my\s+|the\s+)?(?:google\s+)?calendar\b/i.test(t)
+  // End at "calendar" for a bare event request. "Add a search button to the calendar screen"
+  // is an app change, not a missing-date Google Calendar event (PR #356 review).
+  if (/^(?:add|schedule|put|create|book|set\s+up)\b[\s\S]*\b(?:to|on|in|onto)\s+(?:my\s+|the\s+)?(?:google\s+)?calendar\s*$/i.test(t)
     || /^(?:add|schedule|create|book|set\s+up)\s+(?:an?\s+|the\s+|my\s+)?(?:calendar\s+)?(?:event|meeting|appointment)\b/i.test(t)) return { kind: 'calendar_incomplete' };
   if (/^(?:list|show|check|see|open|what(?:'s|s| is| are)(?: in)?)\s+(?:me\s+)?(?:(?:my|all my|any|our)\s+)(?:(?:recent|latest|newest)\s+)?(?:google\s+)?drive(?:\s+(?:files|documents|docs))?$/i.test(t)
     || /^what\s+(?:files|documents|docs)\s+(?:are|do i have)\s+(?:in|on)\s+(?:my\s+)?(?:google\s+)?drive$/i.test(t)) return { kind: 'drive_list' };
