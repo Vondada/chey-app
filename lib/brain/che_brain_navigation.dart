@@ -28,6 +28,7 @@ const double cheBrainSidePanelWidth = 720;
       'model_opinion' => ("A model's opinion, not a fact", Icons.psychology_alt_outlined),
       'inferred' => ('Inferred by CHE, not confirmed', Icons.auto_awesome_outlined),
       'unverified_reference' || 'unverified_research_lead' => ('Unverified reference', Icons.help_outline_rounded),
+      'external_correspondence' => ("Outside AI's message: advice, not your words", Icons.forum_outlined),
       '' || 'unknown' => ('Verification unknown', Icons.help_outline_rounded),
       final other => (other.replaceAll('_', ' '), Icons.help_outline_rounded),
     };

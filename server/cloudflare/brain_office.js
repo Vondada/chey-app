@@ -12,9 +12,18 @@
 // changes any model's weights; it gives CHE and her workers something to
 // retrieve before they repeat the same research.
 
-import { BRAIN_REGIONS, CheBrainStore, backfillConversations, contentHash, isSafeText, normalizeRecord, projectLegacyState } from './brain_store.js';
+import {
+  BRAIN_REGIONS, CheBrainStore, OUTSIDE_CORRESPONDENCE_PATH, backfillConversations, clipWords, contentHash, fnv1a32, isSafeText, normalizeRecord,
+  projectLegacyState, relabelFlagstaffExchanges,
+} from './brain_store.js';
+import { hasGitHubMailbox, listMailboxFiles, normalizePeer, readMailboxFile } from './mailbox.js';
+import { withoutProhibitions } from './owner_action_gate.js';
+import { redactSecrets } from './privacy_policy.js';
 import { REA_DETAIL_PREFIX, REA_JOBS_KEY } from './rea_runner.js';
+import { isSafeMemoryText } from './research_memory.js';
+import { redactSensitive } from './self_skills.js';
 import { EVIDENCE_RUNS } from './trading_evidence_runner.js';
+import { readArchive as readFlagstaffArchive } from './web_mailbox.js';
 
 export const CHE_CORE_ID = 'che:core';
 /** Names that belong to outside systems, never to an Office worker brain. */
@@ -501,7 +510,11 @@ export async function recoverHistory(store, storage, data = {}, { library = [], 
   const office = projectOfficeExperience(store, data, { now });
   const investigations = await projectInvestigations(store, storage, { now });
   const conversations = await backfillConversations(store, storage, { batch, now });
-  const flagstaffHead = storage?.get ? await storage.get('flagstaff_mailbox_head').catch(() => null) : null;
+  // Flagstaff replies the backfill once filed as the owner's conversations; the mailbox itself is
+  // imported only when the owner asks (importOutsideCorrespondence), and its last report is read here.
+  const relabeled = relabelFlagstaffExchanges(store, { now });
+  const outside = correspondenceStatus(store);
+  const lastImport = outside.last_import;
   const sources = [
     { source: 'owner memories (data.memory_records)', inspected: asList(data.memory_records).length, note: 'projected as mem: records' },
     { source: 'research notes (data.memory_notes)', inspected: asList(data.memory_notes).length, note: 'projected as note: records' },
@@ -512,14 +525,21 @@ export async function recoverHistory(store, storage, data = {}, { library = [], 
     ...Object.entries(office.counts || {}).map(([source, c]) => ({ source, inspected: c.inspected, imported: c.imported, skipped: c.skipped, refused: c.refused || 0, dropped: c.dropped || 0 })),
     { source: 'REA investigations (rea_jobs + rea_inv:*)', ...investigations.rea },
     { source: 'trading evidence runs (evidence_runs)', ...investigations.trading },
+    ...(lastImport ? [{
+      source: 'Flagstaff mailbox (che-mailbox branch and the board archive)',
+      inspected: lastImport.totals?.messages || 0, imported: (lastImport.totals?.imported || 0) + (lastImport.totals?.updated || 0), skipped: lastImport.totals?.skipped || 0,
+      refused: lastImport.totals?.withheld || 0, dropped: lastImport.totals?.dropped || 0,
+      note: `outside correspondence, never owner memories or Office worker experience; ${outside.messages} in the Brain; counts from the import of ${String(lastImport.at || '').slice(0, 16).replace('T', ' ')} UTC${lastImport.done ? '' : ', not finished'}`,
+    }] : []),
+    ...(outside.exchanges || relabeled ? [{ source: 'Flagstaff replies CHE remembered (brainmem)', inspected: outside.exchanges, note: `labeled outside correspondence${relabeled ? `; ${relabeled} relabeled this pass from the owner's conversations` : ''}` }] : []),
   ];
   const unavailable = [
-    'Flagstaff archives: the conversations with outside AIs live on the che-mailbox branch of the repository and in the Flagstaff board; they are not stored in CHE\'s Worker, so this pass cannot import them. They are outside correspondence, not Office worker experience.' + (flagstaffHead ? ' The mailbox head pointer exists here.' : ''),
+    ...(lastImport ? [] : ['Flagstaff mailbox: not imported yet. The che-mailbox branch is read only when the owner says "import the Flagstaff history"; its messages come in as outside correspondence, never as owner memories or Office worker experience.']),
     'GitHub commits and pull requests: on GitHub, not in CHE\'s storage; coding jobs are recorded from CHE\'s own job records (jobs and the coding runtime).',
     'Conversations before brainmem existed: no copy remains in CHE\'s storage.',
     `Task records older than the recent-list window (${asList(data.team_tasks).length} kept) that were never projected: only their work-log outcome survives (agent_work_log, ${asList(data.agent_work_log).length} entries).`,
   ];
-  const report = { at: now, legacy: { projected: legacy.projected, skipped: legacy.skipped }, workers: office.workers, sources, unavailable, conversations_done: Boolean(conversations.done) };
+  const report = { at: now, legacy: { projected: legacy.projected, skipped: legacy.skipped }, workers: office.workers, sources, unavailable, conversations_done: Boolean(conversations.done), outside_correspondence: { messages: outside.messages, by_sender: outside.by_sender, exchanges: outside.exchanges, relabeled, last_import: lastImport?.at || null } };
   store.setMeta('recovery_report', report);
   const day = now.slice(0, 10);
   store.put({
@@ -542,6 +562,454 @@ export async function recoverHistory(store, storage, data = {}, { library = [], 
     created_at: now,
   }, { origin: 'auditor', now });
   return { available: true, ...report };
+}
+
+// ─── Outside correspondence (Flagstaff) ────────────────────────────────────
+//
+// The Flagstaff mailbox is the che-mailbox branch (mailbox/*.jsonl and mailbox/archive/*.jsonl)
+// plus the web board's locked sessions in CHE's own storage. Every message there becomes one
+// Brain record of outside correspondence: what another AI wrote (or what CHE wrote to it), with
+// its file, message id, sender, recipient and time. It is advice, never an order; never the
+// owner's words, so "what did I tell you" never reads it; and never an Office worker's experience,
+// so it has its own folder, kind and verification label.
+
+export const CORRESPONDENCE_KIND = 'correspondence';
+const CORRESPONDENCE_CURSOR = 'correspondence_cursor';
+const CORRESPONDENCE_REPORT = 'correspondence_import';
+const MAX_MESSAGE_CHARS = 60_000;
+const PEER_LABELS = {
+  claude: 'Claude', chatgpt: 'ChatGPT', codex: 'Codex', gemini: 'Gemini', cursor: 'Cursor', copilot: 'Copilot', grok: 'Grok',
+  opencode: 'OpenCode', che: 'CHE', 'che-autopilot': 'CHE autopilot', flagstaff369: 'the Flagstaff board', unknown: 'an unnamed sender',
+};
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+export function peerLabel(peer) {
+  const id = String(peer || '');
+  return PEER_LABELS[id] || id.replace(/^\w/, (c) => c.toUpperCase()) || 'an unnamed sender';
+}
+
+function spokenDate(iso) {
+  const at = Date.parse(iso);
+  if (!Number.isFinite(at)) return 'an unknown date';
+  const d = new Date(at);
+  return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+}
+
+/**
+ * A message's words with every secret-looking part withheld. Token shapes are scrubbed first
+ * (privacy_policy.redactSecrets); then each sentence that the memory gate refuses
+ * (research_memory.isSafeMemoryText: password, key and code words, broker keys) or that looks like
+ * a token or a private key (self_skills.redactSensitive) is left out, marked and counted. The rest
+ * of the message keeps its words.
+ */
+export function redactCorrespondence(text) {
+  let withheld = 0;
+  const lines = redactSecrets(String(text ?? '').replace(/\u0000/g, '')).split('\n').map((line) => {
+    if (!line.trim()) return '';
+    let dropped = 0;
+    const kept = (line.match(/[^.!?;|]+(?:[.!?;|]+|$)/g) || [line]).filter((sentence) => {
+      if (!sentence.trim()) return true;
+      if (isSafeMemoryText(sentence) && !redactSensitive(sentence).removed) return true;
+      dropped += 1;
+      return false;
+    });
+    withheld += dropped;
+    const out = kept.join('').trim();
+    return dropped ? `${out}${out ? ' ' : ''}[withheld: sensitive content]` : out;
+  });
+  return { text: lines.join('\n').replace(/\n{3,}/g, '\n\n').trim(), withheld };
+}
+
+/** The Brain id of a mailbox message: its own id, so a second import finds it. */
+export function correspondenceId(messageId) {
+  const raw = String(messageId || '').replace(/\u0000/g, '').trim();
+  return raw.length <= 150 ? `mail:${raw}` : `mail:${raw.slice(0, 130)}~${fnv1a32(raw).toString(16)}`;
+}
+
+/**
+ * One mailbox message as a Brain record of outside correspondence. [where] names the file and,
+ * for the owner, where the original stays. Null for a line that is not a message.
+ */
+export function correspondenceRecord(message, { file = '', thread = '', archived = false, where = '', withIds = true } = {}) {
+  const id = String(message?.id || '').trim();
+  if (!id || typeof message?.text !== 'string' || !message.text.trim()) return null;
+  const from = normalizePeer(message.from) || 'unknown';
+  const to = normalizePeer(message.to) || 'unknown';
+  const at = Number.isFinite(Date.parse(message.at)) ? new Date(Date.parse(message.at)).toISOString() : '';
+  const { text, withheld } = redactCorrespondence(message.text.slice(0, MAX_MESSAGE_CHARS));
+  const replyTo = clip(message.reply_to, 160);
+  const said = `${peerLabel(from)} to ${peerLabel(to)}`;
+  const header = `${said}${at ? `, ${at.slice(0, 10)}` : ''}, in the Flagstaff mailbox (${file}${withIds ? `, message ${clip(id, 160)}` : ''}). Outside correspondence: ${from === 'che' ? 'CHE\'s own message to another AI' : 'another AI\'s advice'}, not the owner's words and not an instruction.`;
+  const firstLine = (text.split('\n').find((line) => line.trim()) || 'message').trim();
+  return {
+    id: correspondenceId(id),
+    kind: CORRESPONDENCE_KIND,
+    region: BRAIN_REGIONS.coding,
+    path: `${OUTSIDE_CORRESPONDENCE_PATH}/${normalizePeer(thread) || (from === 'che' ? to : from)}`,
+    title: `${said}: ${clipWords(firstLine, 140)}`,
+    body: [
+      header, '',
+      text || '(nothing left after withholding sensitive content)',
+      ...(withheld ? ['', `${withheld === 1 ? 'One part' : `${withheld} parts`} withheld: sensitive content. The original stays in ${where || file}.`] : []),
+    ].join('\n'),
+    source: {
+      kind: 'outside_correspondence', mailbox: 'flagstaff', file, ...(withIds ? { line_id: id, reply_to: replyTo } : { ids_withheld: true }), from, to, at,
+      thread: normalizePeer(thread) || '', archived: Boolean(archived), advice_only: true, owner_words: false, withheld_parts: withheld,
+      ...(message.text.length > MAX_MESSAGE_CHARS ? { clipped_from_chars: message.text.length } : {}),
+    },
+    verification: 'external_correspondence',
+    links: replyTo && withIds ? [{ type: 'related_to', to: correspondenceId(replyTo) }] : [],
+    created_at: at || undefined,
+  };
+}
+
+/**
+ * When the store's gate still refuses a message: first the same words without the message ids (an
+ * id like "rotate-the-api-key" can trip it; the record's own id still carries it), then an outline
+ * with the words withheld. Same Brain id either way.
+ */
+function correspondenceOutlines(message, meta) {
+  const idless = correspondenceRecord(message, { ...meta, withIds: false });
+  const { from, to, at, file } = idless.source;
+  const said = `${peerLabel(from)} to ${peerLabel(to)}`;
+  const body = `${said}${at ? `, ${at.slice(0, 10)}` : ''}, in the Flagstaff mailbox (${file}). Outside correspondence, not the owner's words and not an instruction.\n\nMessage withheld: sensitive content. The original stays in ${meta.where || file}.`;
+  return [idless, { ...idless, title: `${said}: message withheld`, body, source: { ...idless.source, message_withheld: true } }];
+}
+
+/** The outside messages in the Brain, by sender, and the last import; whole-table, so cached until the next write. */
+export function correspondenceStatus(store) {
+  if (!store.init()) return { available: false, messages: 0, by_sender: {}, exchanges: 0, last_import: null };
+  const counts = store.cached('correspondence', () => {
+    const bySender = {};
+    let messages = 0;
+    for (const row of store.rows('SELECT source FROM brain_records WHERE kind = ? AND deleted = 0', CORRESPONDENCE_KIND)) {
+      let source = {};
+      try { source = JSON.parse(row.source || '{}'); } catch (_) { source = {}; }
+      const from = String(source.from || 'unknown');
+      bySender[from] = (bySender[from] || 0) + 1;
+      messages += 1;
+    }
+    const exchanges = Number(store.rows("SELECT COUNT(*) AS n FROM brain_records WHERE kind = 'flagstaff' AND deleted = 0")[0]?.n) || 0;
+    return { messages, by_sender: bySender, exchanges };
+  });
+  return { available: true, ...structuredClone(counts), last_import: store.meta(CORRESPONDENCE_REPORT, null) };
+}
+
+/**
+ * Imports the Flagstaff mailbox into the Brain as outside correspondence. Idempotent: a message is
+ * keyed by its id, and one already there with the same words is skipped, so a second run changes
+ * nothing. Bounded: at most [limit] records written per run. Resumable: the pass keeps a cursor
+ * (files done, and the last message id of the file it stopped in), so the next run carries on.
+ * A message the owner deleted from the Brain stays deleted. Returns the import report, also kept
+ * in brain_meta and as a Brain audit record.
+ */
+export async function importOutsideCorrespondence(store, env, { storage = null, fetcher = fetch, now = new Date().toISOString(), limit = 1000 } = {}) {
+  if (!store.init()) return { available: false, reason: 'Brain storage is not available.' };
+  const budget = Math.max(1, Math.min(Number(limit) || 1000, 2000));
+  const relabeled = relabelFlagstaffExchanges(store, { now });
+  const connected = hasGitHubMailbox(env);
+  const files = [];
+  const errors = [];
+  const seen = new Set();
+  let written = 0;
+  let stopped = '';
+
+  // One batch of messages from one file: stored hashes are read 90 ids at a time (the Durable
+  // Object's bound-parameter limit). Returns the id it stopped after when the budget ran out.
+  const consider = (messages, meta, stats) => {
+    const items = [];
+    for (const message of messages) {
+      const record = correspondenceRecord(message, meta);
+      if (record) items.push({ message, record }); else stats.not_messages += 1;
+    }
+    const stored = new Map();
+    const ids = items.map((item) => item.record.id);
+    for (let i = 0; i < ids.length; i += 90) {
+      const chunk = ids.slice(i, i + 90);
+      for (const row of store.rows(`SELECT id, hash, deleted FROM brain_records WHERE id IN (${chunk.map(() => '?').join(',')})`, ...chunk)) stored.set(row.id, row);
+    }
+    let last = '';
+    for (const { message, record } of items) {
+      stats.messages += 1;
+      const existing = stored.get(record.id);
+      if (seen.has(record.id) || (meta.fillOnly && existing)) { stats.skipped += 1; last = message.id; continue; }
+      seen.add(record.id);
+      if (existing && Number(existing.deleted) === 1) { stats.deleted_by_owner += 1; last = message.id; continue; }
+      if (existing && existing.hash === contentHash(normalizeRecord(record))) { stats.skipped += 1; last = message.id; continue; }
+      if (written >= budget) { stats.messages -= 1; return { stoppedAfter: last }; }
+      let result = store.put(record, { origin: 'cloud', now });
+      let outline = false;
+      if (result.outcome === 'rejected') {
+        const alternatives = correspondenceOutlines(message, meta);
+        for (let i = 0; i < alternatives.length; i += 1) {
+          result = store.put(alternatives[i], { origin: 'cloud', now });
+          // The second alternative withholds the words: counted as withheld, never as whole.
+          if (result.outcome !== 'rejected') { outline = i === 1; break; }
+        }
+      }
+      last = message.id;
+      if (result.outcome === 'created') stats.imported += 1;
+      else if (result.outcome === 'updated' || result.outcome === 'merged') stats.updated += 1;
+      else if (result.outcome === 'unchanged' || result.outcome === 'deleted') { stats.skipped += 1; continue; }
+      else { stats.dropped += 1; continue; }
+      written += 1;
+      if (outline || record.source.withheld_parts) stats.withheld += 1;
+    }
+    return {};
+  };
+  const blank = (path) => ({ path, lines: 0, messages: 0, imported: 0, updated: 0, skipped: 0, withheld: 0, dropped: 0, not_messages: 0, deleted_by_owner: 0 });
+
+  let listing = null;
+  if (connected) {
+    listing = await listMailboxFiles(env, fetcher).catch((error) => ({ error: `Mailbox read failed (${clip(error?.message || error, 160)}).`, files: [], head: '' }));
+    if (listing.error) errors.push(listing.error);
+  }
+  const head = listing && !listing.error ? listing.head : '';
+  const noBranch = Boolean(listing && !listing.error && !listing.head);
+  let pass = store.meta(CORRESPONDENCE_CURSOR, null);
+  // Nothing moved on the branch since a finished pass: no file is read again.
+  const upToDate = Boolean(head && pass?.done && pass.head === head);
+  if (head && !upToDate) {
+    if (!pass || pass.done || !Array.isArray(pass.files_done)) pass = { head, started_at: now, files_done: [], current: null, done: false };
+    for (const file of listing.files) {
+      if (pass.files_done.includes(file.path)) continue;
+      const read = await readMailboxFile(env, file.path, fetcher, head)
+        .catch((error) => ({ error: `Mailbox read failed (${clip(error?.message || error, 160)}).`, messages: [], lines: 0 }));
+      const stats = blank(file.path);
+      stats.lines = Number(read.lines) || 0;
+      if (read.error) { stats.error = read.error; errors.push(`${file.path}: ${read.error}`); files.push(stats); continue; }
+      // Lines that parse but are not messages (the autopilot's activity log) count as not messages too.
+      stats.not_messages = Math.max(0, stats.lines - read.messages.length);
+      const resumeAt = pass.current?.path === file.path && pass.current.after_id ? read.messages.findIndex((m) => m?.id === pass.current.after_id) : -1;
+      const out = consider(read.messages.slice(resumeAt + 1), { file: file.path, thread: file.thread, archived: file.archive, where: `${file.path} on the che-mailbox branch` }, stats);
+      files.push(stats);
+      if (out.stoppedAfter !== undefined) {
+        pass.current = { path: file.path, after_id: out.stoppedAfter || (resumeAt >= 0 ? pass.current.after_id : '') };
+        stopped = file.path;
+        break;
+      }
+      pass.files_done.push(file.path);
+      pass.current = null;
+      store.setMeta(CORRESPONDENCE_CURSOR, pass);
+    }
+    // A pass is finished only when every file was read in full; its head is the one it started
+    // from, so messages added to an earlier file while it ran are picked up by the next pass.
+    if (!stopped && !errors.length && !listing.more) pass.done = true;
+    store.setMeta(CORRESPONDENCE_CURSOR, pass);
+  }
+  // The web board's locked sessions in CHE's own storage. The GitHub copy of a message wins; these
+  // only add messages GitHub never had (a board used while GitHub was not connected).
+  if (storage && !stopped) {
+    const sessions = await readFlagstaffArchive(storage).catch(() => []);
+    const stats = blank('CHE’s Flagstaff board archive');
+    for (const session of asList(sessions).slice(-200)) {
+      const out = consider(asList(session?.messages).filter(Boolean), { file: `flagstaff_archive/${clip(session?.id, 60)}`, thread: '', archived: true, fillOnly: true, where: 'CHE’s Flagstaff board archive' }, stats);
+      if (out.stoppedAfter !== undefined) { stopped = stats.path; break; }
+    }
+    if (stats.messages || stats.not_messages) files.push(stats);
+  }
+
+  const totals = blank('all');
+  delete totals.path;
+  for (const file of files) for (const key of Object.keys(totals)) totals[key] += Number(file[key]) || 0;
+  const status = correspondenceStatus(store);
+  const report = {
+    available: true, at: now, connected, head, up_to_date: upToDate, no_branch: noBranch,
+    done: connected && !errors.length && (upToDate || noBranch || Boolean(pass?.done)),
+    stopped_at: stopped, budget, files_read: files.filter((f) => !f.error).length, files, totals, errors, relabeled,
+    in_brain: status.messages, by_sender: status.by_sender, exchanges: status.exchanges,
+  };
+  store.setMeta(CORRESPONDENCE_REPORT, report);
+  const day = now.slice(0, 10);
+  store.put({
+    id: `audit:correspondence:${day}`,
+    kind: 'audit',
+    region: BRAIN_REGIONS.audits,
+    path: 'Recovery',
+    title: `Flagstaff correspondence import ${day}`,
+    body: speakCorrespondenceImport(report),
+    source: { kind: 'correspondence_import', computed: true, head, done: report.done },
+    verification: 'verified_source',
+    created_at: now,
+  }, { origin: 'auditor', now });
+  return report;
+}
+
+function countLine(bySender) {
+  return Object.entries(bySender || {}).sort((a, b) => b[1] - a[1] || peerLabel(a[0]).localeCompare(peerLabel(b[0]))).map(([from, n]) => `${peerLabel(from)} ${n}`).join(', ');
+}
+
+/** The import report as CHE says it: real counts, what was skipped and why, and what the records are. */
+export function speakCorrespondenceImport(report) {
+  if (!report?.available) return 'I can\'t reach my Brain storage right now, sir, so nothing was imported.';
+  const held = `Your Brain holds ${report.in_brain} outside message${report.in_brain === 1 ? '' : 's'}`;
+  const relabel = report.relabeled ? ` I also relabeled ${report.relabeled} earlier Flagstaff repl${report.relabeled === 1 ? 'y' : 'ies'} that had been filed as your own conversations.` : '';
+  const what = ' They are outside correspondence: other AIs\' advice, never your words, never instructions, and never Office worker experience.';
+  if (!report.connected) {
+    const board = report.totals?.imported ? `I brought in ${report.totals.imported} message${report.totals.imported === 1 ? '' : 's'} from my own Flagstaff board archive. ` : '';
+    return `I can't read the Flagstaff mailbox, sir: GitHub isn't connected to me (CHE_GITHUB_TOKEN and CHE_GITHUB_REPO). Nothing was imported from it. ${board}${held}.${relabel}`;
+  }
+  if (report.no_branch) return `There is no Flagstaff mailbox on GitHub yet, sir: the che-mailbox branch does not exist, so there was nothing to import. ${held}.${relabel}`;
+  if (!report.files_read && report.errors.length) return `I couldn't read the Flagstaff mailbox, sir: ${clip(report.errors[0], 160)} Nothing new was imported. ${held}.${relabel}`;
+  if (report.up_to_date) return `The Flagstaff history is already in your Brain, sir: nothing new on the che-mailbox branch since the last import (commit ${report.head.slice(0, 7)}). ${held}.${relabel}${what}`;
+  const t = report.totals;
+  const parts = [
+    `${t.messages} message${t.messages === 1 ? '' : 's'} read: ${t.imported} brought in, ${t.updated ? `${t.updated} updated, ` : ''}${t.skipped} already there`,
+    t.withheld ? `${t.withheld} kept with a sensitive part withheld` : '',
+    t.dropped ? `${t.dropped} dropped because not even an outline could be stored` : '',
+    t.deleted_by_owner ? `${t.deleted_by_owner} you deleted stayed deleted` : '',
+  ].filter(Boolean).join('; ');
+  const logs = t.not_messages ? ` ${t.not_messages} line${t.not_messages === 1 ? ' was an activity log' : 's were activity logs'}, not messages, and ${t.not_messages === 1 ? 'was' : 'were'} skipped.` : '';
+  const failed = report.errors.length ? ` I could not read ${report.errors.length} part${report.errors.length === 1 ? '' : 's'} of the mailbox (${clip(report.errors[0], 160)}), so the import is not finished.` : '';
+  const more = report.stopped_at ? ` I stopped after ${report.budget} records to keep this pass bounded; say "import the Flagstaff history" again to carry on from ${report.stopped_at}.` : '';
+  const head = report.head ? ` (commit ${report.head.slice(0, 7)})` : '';
+  return `${report.done ? 'Flagstaff history imported' : 'Flagstaff import, part done'}, sir: I read ${report.files_read} mailbox file${report.files_read === 1 ? '' : 's'}${head}. ${parts}.${logs}${failed}${more} ${held}${report.in_brain ? `: ${countLine(report.by_sender)}` : ''}.${relabel}${what}`;
+}
+
+/** "How many outside messages are in my Brain": counts by sender and the last import, from the records. */
+export function speakCorrespondenceCount(status, { peer = '' } = {}) {
+  if (!status?.available) return 'I can\'t reach my Brain storage right now, sir, so I can\'t count the outside messages.';
+  const last = status.last_import;
+  const when = last?.at ? ` Last import: ${spokenDate(last.at)} at ${last.at.slice(11, 16)} UTC${last.head ? `, commit ${last.head.slice(0, 7)}` : ''}${last.done ? '' : ', not finished'}.` : ' No import has run yet.';
+  if (peer) {
+    const n = Number(status.by_sender?.[peer]) || 0;
+    return `Your Brain holds ${n} message${n === 1 ? '' : 's'} from ${peerLabel(peer)}, sir, out of ${status.messages} outside messages.${when} They are outside correspondence, never your words or instructions.`;
+  }
+  if (!status.messages) return `Your Brain holds no outside messages yet, sir.${when} Say "import the Flagstaff history" to bring the che-mailbox branch in.`;
+  const exchanges = status.exchanges ? ` Plus ${status.exchanges} Flagstaff repl${status.exchanges === 1 ? 'y' : 'ies'} I remembered, labeled the same way.` : '';
+  return `Your Brain holds ${status.messages} outside message${status.messages === 1 ? '' : 's'}, sir: ${countLine(status.by_sender)}.${exchanges}${when} They are outside correspondence from the Flagstaff mailbox: other AIs' advice, never your words or instructions.`;
+}
+
+const TOPIC_STOP = new Set('the a an and or of to in on for about with my your our their this that these those what which is are was were be been it its me you i he she they we che sir please tell told say said write wrote mention mentioned anything something everything any ever mailbox flagstaff message messages'.split(' '));
+
+function topicTerms(topic) {
+  const text = String(topic || '').toLowerCase();
+  return {
+    numbers: [...new Set(text.match(/\d+/g) || [])].slice(0, 4),
+    words: [...new Set((text.match(/[a-z][a-z0-9'’-]{2,}/g) || []).filter((w) => !TOPIC_STOP.has(w)))].slice(0, 8),
+  };
+}
+
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * "What did ChatGPT tell you about #350?": the matching messages, quoted with their source (who to
+ * whom, the date, the mailbox file and message id). Only correspondence records are read, so an
+ * owner memory is never cited here, and these never answer for the owner. No model.
+ */
+export function answerCorrespondenceQuestion(store, { peer = '', direction = 'from', topic = '' } = {}, { limit = 3 } = {}) {
+  const status = correspondenceStatus(store);
+  const who = peer ? peerLabel(peer) : 'the outside AIs';
+  const about = topic ? ` about ${topic}` : '';
+  if (!status.available) return { text: 'I can\'t reach my Brain storage right now, sir, so I won\'t guess what was said.', records: [] };
+  if (!status.messages) return { text: `Your Brain has no outside correspondence yet, sir, so I won't guess what ${who} said${about}. Say "import the Flagstaff history" to bring the che-mailbox branch in.`, records: [] };
+  const sender = direction === 'to' ? 'che' : peer;
+  const rows = sender
+    ? store.rows('SELECT id, body, source, created_at FROM brain_records WHERE kind = ? AND deleted = 0 AND source LIKE ? ORDER BY created_at DESC LIMIT 3000', CORRESPONDENCE_KIND, `%"from":"${sender}"%`)
+    : store.rows('SELECT id, body, source, created_at FROM brain_records WHERE kind = ? AND deleted = 0 ORDER BY created_at DESC LIMIT 3000', CORRESPONDENCE_KIND);
+  const { numbers, words } = topicTerms(topic);
+  const numberRes = numbers.map((n) => new RegExp(`(?<![\\d.])${n}(?!\\d)`));
+  const wordRes = words.map((w) => new RegExp(`\\b${escapeRe(w.length > 4 ? w.replace(/(?:es|s)$/, '') : w)}`, 'i'));
+  const hits = [];
+  for (const row of rows) {
+    let source = {};
+    try { source = JSON.parse(row.source || '{}'); } catch (_) { source = {}; }
+    if (sender && source.from !== sender) continue;
+    if (!sender && source.from === 'che') continue;
+    if (direction === 'to' && peer && source.to !== peer) continue;
+    // The words of the message, without the provenance line the record starts with and the withheld
+    // notice it may end with (the [withheld] marks stay in the quote).
+    const body = String(row.body || '');
+    const text = (body.includes('\n\n') ? body.slice(body.indexOf('\n\n') + 2) : body).replace(/\n\n(?:One part|\d+ parts) withheld: sensitive content\.[^\n]*$/, '');
+    let score = 0;
+    if (numberRes.length) {
+      if (!numberRes.every((re) => re.test(text))) continue;
+      score += numberRes.length * 10;
+    }
+    const matched = wordRes.filter((re) => re.test(text)).length;
+    if (!numberRes.length && wordRes.length && matched < Math.ceil(wordRes.length / 2)) continue;
+    score += matched * 5 + (source.to === 'che' ? 1 : 0);
+    const first = [...numberRes, ...wordRes].map((re) => text.search(re)).filter((i) => i >= 0).sort((a, b) => a - b)[0] ?? 0;
+    hits.push({ id: row.id, source, text, score, first, at: source.at || row.created_at || '' });
+  }
+  hits.sort((a, b) => b.score - a.score || String(b.at).localeCompare(String(a.at)));
+  if (!hits.length) {
+    const n = sender === 'che' ? Number(status.by_sender.che) || 0 : sender ? Number(status.by_sender[sender]) || 0 : status.messages - (Number(status.by_sender.che) || 0);
+    const when = status.last_import?.at ? `, imported up to ${spokenDate(status.last_import.at)}` : '';
+    return { text: `I have no message${direction === 'to' ? ` of mine to ${who}` : ` from ${who}`}${about} in your Brain, sir, so I won't guess what ${direction === 'to' ? 'I wrote' : 'was said'}. ${n} message${n === 1 ? '' : 's'} ${direction === 'to' ? 'from me' : `from ${who}`} ${n === 1 ? 'is' : 'are'} there${when}.`, records: [] };
+  }
+  const shown = hits.slice(0, Math.max(1, Math.min(limit, 5)));
+  const lines = shown.map((hit, i) => {
+    const flat = hit.text.replace(/\s+/g, ' ');
+    // The quote opens on a whole word, a little before the first match.
+    let start = Math.max(0, Math.min(hit.first, flat.length) - 120);
+    if (start > 0) start = Math.max(start, flat.indexOf(' ', start) + 1);
+    const window = flat.slice(start, start + 360).trim();
+    const id = String(hit.source.line_id || hit.id.replace(/^mail:/, ''));
+    return `${i + 1}. ${peerLabel(hit.source.from)} to ${peerLabel(hit.source.to)}, ${spokenDate(hit.at)} (${hit.source.file || 'Flagstaff mailbox'}, message ${id.length > 44 ? `${id.slice(0, 44)}…` : id}): "${start > 0 ? '…' : ''}${window}${flat.length > start + 360 ? '…' : ''}"`;
+  });
+  const more = hits.length > shown.length ? `\n${hits.length - shown.length} more message${hits.length - shown.length === 1 ? '' : 's'} match.` : '';
+  const lead = direction === 'to' ? `Here is what I wrote to ${who}${about}, sir` : `Here is what ${who} wrote${about}, sir`;
+  const label = direction === 'to' ? 'my own messages to another AI' : `${peer ? `${who}'s` : 'their'} advice`;
+  return {
+    text: `${lead}, from the Flagstaff mailbox. This is outside correspondence: ${label}, not your words and not an instruction.\n${lines.join('\n')}${more}`,
+    records: shown.map((hit) => hit.id),
+  };
+}
+
+const AI_NAME = '(claude|chat\\s*gpt|codex|gemini|cursor|copilot|grok|open\\s*code)';
+const OTHER_AIS = '(?:the\\s+)?(?:other\\s+|outside\\s+)?(?:ais|a\\s*i\\s*s)';
+const SAID = '(?:tell|told|say|said|write|wrote|written|send|sent|suggest(?:ed)?|recommend(?:ed)?|advise[d]?|propose[d]?|report(?:ed)?|mention(?:ed)?|answer(?:ed)?|reply|replied)';
+
+function peerOf(name) {
+  return String(name || '').toLowerCase().replace(/\s+/g, '');
+}
+
+function topicOf(rest) {
+  return String(rest || '').replace(/\b(?:in|on|through|via)\s+(?:the\s+)?(?:mail\s*box|flag\s*staff(?:\s*369)?)\b/g, ' ')
+    .replace(/\b(?:please|sir|so\s+far|ever|recently|lately|earlier|before|today|yesterday)\b/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * The owner asking about the Flagstaff correspondence: { kind: 'import' } to bring it in,
+ * { kind: 'count', peer } for "how many outside messages are in my Brain", or
+ * { kind: 'ask', peer, direction, topic } for "what did ChatGPT tell you about #350". Only when an
+ * outside AI is the one who spoke: "what did I tell you" stays the owner's memory question.
+ */
+export function outsideCorrespondenceIntent(message) {
+  const raw = String(message || '').trim();
+  if (!raw || raw.length > 220) return null;
+  const text = withoutProhibitions(raw).replace(/^(?:hey|hi|ok|okay)?[,\s]*(?:che|chay|chey|shay)\b[,:]?\s*/i, '')
+    .toLowerCase().replace(/[’]/g, "'").replace(/[?!.,;:]+(?=\s|$)/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!text) return null;
+  // "Don't import the Flagstaff history, just tell me how many…": a forbidden import never runs, and
+  // the request after it is read on its own. (The money/delete gate's prohibitions do not name imports.)
+  const banned = /\b(?:do\s+not|don'?t|never|no\s+need\s+to)\s+(?:\w+\s+){0,2}?(?:import|bring|pull|recover|archive)\b/.exec(text);
+  if (banned) {
+    const turn = /\s+(?:but|just|only|instead)\s+(?:tell\s+me\s+|say\s+)?/.exec(text.slice(banned.index));
+    const intent = turn ? outsideCorrespondenceIntent(text.slice(banned.index + turn.index + turn[0].length)) : null;
+    return intent?.kind === 'import' ? null : intent;
+  }
+  const MAIL = '(?:flag\\s*staff(?:\\s*369)?|mail\\s*box|outside\\s+(?:correspondence|messages?|mail)|other\\s+ais?\'?\\s+(?:messages?|mail|correspondence)|ai\\s+correspondence)';
+  const verb = '(?:import|bring(?:\\s+in)?|pull(?:\\s+in)?|recover|archive)';
+  if (new RegExp(`^(?:please\\s+)?(?:(?:can|could|would|will)\\s+you\\s+)?(?:now\\s+)?${verb}\\s+(?:in\\s+)?(?:all\\s+)?(?:of\\s+)?(?:the\\s+|my\\s+|your\\s+)?(?:old\\s+|whole\\s+|full\\s+|historical\\s+)?${MAIL}(?:\\s+(?:history|archives?|messages?|correspondence|threads?|mail\\s*box|mail))?(?:\\s+(?:into|in|to)\\s+(?:my|the|your)\\s+brain)?(?:\\s+(?:please|now|sir))?$`).test(text)
+    || /^(?:please\s+)?(?:run|start|do)\s+(?:the\s+|a\s+)?flag\s*staff\s+(?:history\s+)?import(?:\s+(?:again|now|please))?$/.test(text)) {
+    return { kind: 'import' };
+  }
+  // A report request reads the same records as a count.
+  if (new RegExp(`^(?:(?:read|give|tell|show)\\s+(?:me\\s+)?)?(?:the\\s+)?(?:flag\\s*staff|outside\\s+correspondence|mailbox)\\s+import\\s+report$|^how\\s+did\\s+the\\s+flag\\s*staff\\s+import\\s+go$`).test(text)) return { kind: 'count', peer: '' };
+  const count = new RegExp(`^how\\s+(?:many|much)\\s+(?:outside\\s+|external\\s+|flag\\s*staff\\s+|mail\\s*box\\s+|other\\s+ai\\s+|ai\\s+)?(?:messages?|letters?|correspondence|mail)(?:\\s+from\\s+${AI_NAME}|\\s+from\\s+${OTHER_AIS})?\\s+(?:are|is|do\\s+you\\s+have|have\\s+you\\s+(?:got|imported|kept|stored))\\s+(?:there\\s+)?(?:in\\s+)?(?:my|the|your)\\s+brain(?:\\s+now)?$|^how\\s+(?:many|much)\\s+(?:outside|external|flag\\s*staff|other\\s+ai)\\s+(?:messages?|correspondence|mail)\\b.*\\b(?:brain|imported)\\b`).exec(text);
+  if (count) {
+    const named = new RegExp(`\\bfrom\\s+${AI_NAME}\\b`).exec(text);
+    // "How many messages are in my Brain" alone may mean anything; an outside word or a named AI is needed.
+    if (named || /\b(?:outside|external|flag\s*staff|mail\s*box|other\s+ai|ai\s+(?:messages?|correspondence)|correspondence)\b/.test(text)) return { kind: 'count', peer: named ? peerOf(named[1]) : '' };
+  }
+  const ai = new RegExp(`^(?:so\\s+)?(?:what|anything)\\s+(?:did|has|have|had)\\s+(?:${AI_NAME}|${OTHER_AIS})\\s+(?:ever\\s+|actually\\s+)?${SAID}(?:\\s+(?:you|me|che|us|to\\s+you|to\\s+me|to\\s+che))?(?:\\s+(?:in|on|through)\\s+(?:the\\s+)?(?:mail\\s*box|flag\\s*staff(?:\\s*369)?))?(?:\\s+(?:about|regarding|on|concerning|of)\\s+(.+))?$`).exec(text)
+    || new RegExp(`^(?:did|has|have)\\s+(?:${AI_NAME}|${OTHER_AIS})\\s+(?:ever\\s+)?(?:say|said|tell\\s+you|told\\s+you|mention(?:ed)?|write|wrote|written|suggest(?:ed)?)\\s+(?:you\\s+)?(?:anything\\s+)?(?:about\\s+)?(.+)$`).exec(text);
+  if (ai) return { kind: 'ask', peer: ai[1] ? peerOf(ai[1]) : '', direction: 'from', topic: topicOf(ai[2]) };
+  const mine = new RegExp(`^what\\s+(?:did|have)\\s+you\\s+(?:tell|told|say\\s+to|said\\s+to|write\\s+to|wrote\\s+to|written\\s+to|send|sent|ask|asked)\\s+${AI_NAME}(?:\\s+(?:in|on)\\s+(?:the\\s+)?(?:mail\\s*box|flag\\s*staff))?(?:\\s+(?:about|regarding|on|concerning)\\s+(.+))?$`).exec(text);
+  if (mine) return { kind: 'ask', peer: peerOf(mine[1]), direction: 'to', topic: topicOf(mine[2]) };
+  return null;
 }
 
 // ─── Views ─────────────────────────────────────────────────────────────────

@@ -2,8 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { BRAIN_REGIONS, CheBrainStore } from './brain_store.js';
 import {
-  CHE_CORE_ID, archiveTasks, handoffRecord, internalWorkers, projectInvestigations, projectOfficeExperience, recoverHistory, redactedRecord, taskRecord, workerBrains,
+  CHE_CORE_ID, answerCorrespondenceQuestion, archiveTasks, correspondenceStatus, handoffRecord, importOutsideCorrespondence, internalWorkers, outsideCorrespondenceIntent,
+  projectInvestigations, projectOfficeExperience, recoverHistory, redactCorrespondence, redactedRecord, speakCorrespondenceCount, speakCorrespondenceImport, taskRecord, workerBrains,
 } from './brain_office.js';
+import { backfillConversations } from './brain_store.js';
 import { REA_DETAIL_PREFIX, REA_JOBS_KEY } from './rea_runner.js';
 import { EVIDENCE_RUNS } from './trading_evidence_runner.js';
 
@@ -412,4 +414,322 @@ test('a blocked task is live work for its worker, not an unknown outcome', async
   const after = workerBrains(store, data).workers.find((w) => w.name === 'Nova').tasks;
   assert.equal(after.live, (before.live || 0) + 1, 'blocked counts as live');
   assert.equal(store.get('task:blk1').source.outcome, 'live');
+});
+
+// ─── Outside correspondence: the Flagstaff mailbox ───────────────────────────
+
+// Built at run time so no literal token shape sits in the repository.
+const FAKE_TOKEN = ['gh', 'p_', 'Z9'.repeat(18)].join('');
+const HEAD1 = 'a1'.repeat(20);
+const HEAD2 = 'b2'.repeat(20);
+const jsonl = (rows) => `${rows.map((r) => JSON.stringify(r)).join('\n')}\n`;
+const OLD_REPLY = { id: 'old-2', at: '2026-09-30T19:52:40.027Z', from: 'che', to: 'claude', text: 'My coding crew failed on the avatar change. Please look.', reply_to: 'old-1' };
+function flagstaffFiles() {
+  return {
+    'mailbox/README.md': '# Flagstaff\n',
+    'mailbox/archive/claude.jsonl': jsonl([
+      { id: 'old-1', at: '2026-09-30T17:18:33.992Z', from: 'claude', to: 'che', text: 'Hi CHE, this is Claude. This mailbox is our channel.', reply_to: '' },
+      OLD_REPLY,
+    ]),
+    // The same line in the archive and the live file (a trim that lost a race): one record.
+    'mailbox/claude.jsonl': jsonl([
+      OLD_REPLY,
+      { id: 'c-sync', at: '2026-10-18T18:45:00.000Z', from: 'claude', to: 'che', text: 'Done: the Brain sync feed is merged and live. The phone replica pulls in pages of 500.', reply_to: '' },
+      { id: 'c-deploy', at: '2026-10-18T19:00:00.000Z', from: 'claude', to: 'che', text: `Deploy is green. The token is ${FAKE_TOKEN} for the test. Your api key stays in the Worker secrets. Nothing else changed.`, reply_to: '' },
+    ]),
+    'mailbox/chatgpt.jsonl': jsonl([
+      { id: 'chatgpt-issue350', at: '2026-10-18T21:00:00.000Z', from: 'chatgpt', to: 'claude', text: 'I created ONE consolidated GitHub issue #350 with all five exact iPhone utterances. Fix the shopping hold first.', reply_to: '' },
+      { id: 'chatgpt-3500', at: '2026-10-18T22:00:00.000Z', from: 'chatgpt', to: 'che', text: 'The renderer budget is 3500 frames; issue 1350 is unrelated.', reply_to: '' },
+      // Its id names a key: the words are kept, the ids withheld from the text (the record's id keeps it).
+      { id: 'chatgpt-api-key-note', at: '2026-10-18T23:00:00.000Z', from: 'chatgpt', to: 'che', text: 'Rotate it soon.', reply_to: '' },
+      // Clean line by line, refused as a whole ("api" + "key"): only an outline can be kept.
+      { id: 'chatgpt-split', at: '2026-10-18T23:10:00.000Z', from: 'chatgpt', to: 'che', text: 'Check the api\nkey rotation next week', reply_to: '' },
+      { id: 'chatgpt-pw', at: '2026-10-18T23:30:00.000Z', from: 'chatgpt', to: 'che', text: 'password: hunter2', reply_to: '' },
+    ]),
+    // The autopilot's activity log lives beside the threads: lines, not messages.
+    'mailbox/che-autopilot.jsonl': jsonl([{ at: '2026-10-03T21:19:29.743Z', action: 'reviewing', session_id: 'ocr-1', sha: '7aba461', detail: 'CI passed.' }]),
+  };
+}
+
+/** A read-only GitHub that serves [state.files] at [state.head]; every request is recorded. */
+function fakeGitHub(state) {
+  state.calls = state.calls || [];
+  return async (input, init = {}) => {
+    const url = new URL(String(input?.url || input));
+    const method = init.method || 'GET';
+    state.calls.push(`${method} ${url.pathname}${url.search}`);
+    if (url.host !== 'api.github.com') throw new TypeError(`offline: ${url.host}`);
+    const json = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
+    if (method !== 'GET') return json({ message: 'read-only test' }, 405);
+    if (state.fail && state.fail(url)) return json({ message: 'Server Error' }, 500);
+    const path = decodeURIComponent(url.pathname.replace(/^\/repos\/owner\/che/, ''));
+    if (path === '/git/ref/heads/che-mailbox') return json({ object: { sha: state.head } });
+    const dir = /^\/contents\/(mailbox(?:\/archive)?)$/.exec(path);
+    if (dir) {
+      const prefix = `${dir[1]}/`;
+      const names = Object.keys(state.files).filter((k) => k.startsWith(prefix) && !k.slice(prefix.length).includes('/')).map((k) => k.slice(prefix.length));
+      if (!names.length) return json({ message: 'Not Found' }, 404);
+      return json([...names.map((name) => ({ name, type: 'file' })), ...(dir[1] === 'mailbox' ? [{ name: 'archive', type: 'dir' }] : [])]);
+    }
+    const file = /^\/contents\/(.+)$/.exec(path);
+    if (file && state.files[file[1]] != null) return json({ sha: `sha-${file[1]}`, content: Buffer.from(state.files[file[1]]).toString('base64') });
+    return json({ message: 'Not Found' }, 404);
+  };
+}
+const GH_ENV = { CHE_GITHUB_TOKEN: 'test-only', CHE_GITHUB_REPO: 'owner/che' };
+
+test('the Flagstaff mailbox comes in as outside correspondence with its provenance, and a second import gives the same count', async (t) => {
+  const storage = await sqlStorage();
+  if (!storage) return t.skip('node:sqlite unavailable');
+  const store = new CheBrainStore(storage);
+  const gh = { head: HEAD1, files: flagstaffFiles() };
+  const first = await importOutsideCorrespondence(store, GH_ENV, { fetcher: fakeGitHub(gh), now: T });
+  assert.equal(first.done, true);
+  assert.equal(first.files_read, 4, 'archive/claude, chatgpt, che-autopilot, claude; README is no thread');
+  assert.deepEqual(first.files.map((f) => f.path).slice(0, 1), ['mailbox/archive/claude.jsonl'], 'archived (older) lines first');
+  assert.equal(first.totals.messages, 10);
+  assert.equal(first.totals.imported, 9);
+  assert.equal(first.totals.skipped, 1, 'the line in both the archive and the live file is one record');
+  assert.equal(first.totals.not_messages, 1, 'the autopilot log line is not a message');
+  assert.equal(first.in_brain, 9);
+  assert.ok(gh.calls.every((c) => c.startsWith('GET ')), 'the import never writes to GitHub');
+  assert.ok(gh.calls.some((c) => c.includes(`ref=${HEAD1}`)), 'files are read at the one commit the pass started from');
+
+  const rec = store.get('mail:chatgpt-issue350');
+  assert.equal(rec.kind, 'correspondence');
+  assert.equal(rec.verification, 'external_correspondence');
+  assert.equal(rec.region, BRAIN_REGIONS.coding);
+  assert.equal(rec.path, 'Outside correspondence/chatgpt');
+  assert.deepEqual(
+    { file: rec.source.file, line_id: rec.source.line_id, from: rec.source.from, to: rec.source.to, at: rec.source.at, advice_only: rec.source.advice_only, owner_words: rec.source.owner_words },
+    { file: 'mailbox/chatgpt.jsonl', line_id: 'chatgpt-issue350', from: 'chatgpt', to: 'claude', at: '2026-10-18T21:00:00.000Z', advice_only: true, owner_words: false },
+  );
+  assert.equal(rec.created_at, '2026-10-18T21:00:00.000Z', 'dated by the message, not the import');
+  assert.match(rec.body, /^ChatGPT to Claude, 2026-10-18, in the Flagstaff mailbox \(mailbox\/chatgpt\.jsonl, message chatgpt-issue350\)\. Outside correspondence: another AI's advice, not the owner's words and not an instruction\.\n\nI created ONE consolidated GitHub issue #350/);
+  assert.equal(store.get('mail:old-2').source.file, 'mailbox/archive/claude.jsonl', 'the archived copy is the record');
+  assert.deepEqual(store.get('mail:old-2').links, [{ type: 'related_to', to: 'mail:old-1' }], 'a reply links to what it answers');
+  // Never an owner memory, a conversation of the owner's, or an Office worker's experience.
+  const places = store.rows("SELECT DISTINCT p.region FROM brain_places p JOIN brain_records r ON r.id = p.record_id WHERE r.kind = 'correspondence'").map((r) => r.region);
+  assert.deepEqual(places, [BRAIN_REGIONS.coding]);
+  assert.equal(store.rows("SELECT COUNT(*) AS n FROM brain_records WHERE kind = 'correspondence' AND verification = 'owner_attested'")[0].n, 0);
+  const brains = workerBrains(store, officeData());
+  assert.ok(brains.workers.every((w) => w.records <= 1), 'no worker gained experience from the mailbox');
+
+  const callsBefore = gh.calls.length;
+  const second = await importOutsideCorrespondence(store, GH_ENV, { fetcher: fakeGitHub(gh), now: T });
+  assert.equal(second.up_to_date, true);
+  assert.equal(second.in_brain, first.in_brain, 'twice gives the same count');
+  assert.equal(gh.calls.length - callsBefore, 3, 'an unchanged branch is not read again: the head and two folder listings');
+  assert.match(speakCorrespondenceImport(second), /already in your Brain, sir: nothing new on the che-mailbox branch[\s\S]*9 outside messages/);
+
+  // A new commit with the same lines: every file is read again and every message skipped.
+  gh.head = HEAD2;
+  const third = await importOutsideCorrespondence(store, GH_ENV, { fetcher: fakeGitHub(gh), now: T });
+  assert.equal(third.done, true);
+  assert.equal(third.totals.imported, 0);
+  assert.equal(third.totals.skipped, 10);
+  assert.equal(third.in_brain, 9);
+  assert.equal(store.rows("SELECT MAX(rev) AS n FROM brain_records WHERE kind = 'correspondence'")[0].n, 1, 'a repeat rewrites nothing');
+});
+
+test('a long import is bounded and resumable: it stops at its limit, keeps a cursor, and carries on without duplicates', async (t) => {
+  const storage = await sqlStorage();
+  if (!storage) return t.skip('node:sqlite unavailable');
+  const store = new CheBrainStore(storage);
+  const gh = { head: HEAD1, files: flagstaffFiles() };
+  const runs = [];
+  for (let i = 0; i < 8; i += 1) {
+    const run = await importOutsideCorrespondence(store, GH_ENV, { fetcher: fakeGitHub(gh), now: T, limit: 3 });
+    runs.push(run);
+    if (run.done) break;
+  }
+  assert.ok(runs.length >= 3, `bounded runs: ${runs.length}`);
+  assert.ok(runs.every((r) => r.totals.imported + r.totals.updated <= 3), 'never more than the limit written per run');
+  assert.equal(runs[0].done, false);
+  assert.ok(runs[0].stopped_at, 'the first run says where it stopped');
+  assert.match(speakCorrespondenceImport(runs[0]), /stopped after 3 records[\s\S]*again to carry on/);
+  assert.equal(runs.at(-1).done, true);
+  assert.equal(runs.at(-1).in_brain, 9, 'the same nine messages as one unbounded run');
+  assert.equal(store.rows("SELECT COUNT(*) AS n FROM brain_records WHERE kind = 'correspondence'")[0].n, 9, 'no duplicate');
+  // A file that cannot be read leaves the pass unfinished and is read again next time.
+  const fresh = new CheBrainStore(await sqlStorage());
+  const broken = { head: HEAD1, files: flagstaffFiles(), fail: (url) => url.pathname.endsWith('/chatgpt.jsonl') };
+  const partial = await importOutsideCorrespondence(fresh, GH_ENV, { fetcher: fakeGitHub(broken), now: T });
+  assert.equal(partial.done, false);
+  assert.equal(partial.errors.length, 1);
+  assert.match(speakCorrespondenceImport(partial), /could not read 1 part of the mailbox[\s\S]*not finished/);
+  broken.fail = null;
+  const healed = await importOutsideCorrespondence(fresh, GH_ENV, { fetcher: fakeGitHub(broken), now: T });
+  assert.equal(healed.done, true);
+  assert.equal(healed.in_brain, 9);
+  assert.deepEqual(healed.files.map((f) => f.path), ['mailbox/chatgpt.jsonl'], 'only the file that failed is read again');
+});
+
+test('secret-looking parts of a message are withheld and counted; a message the gate still refuses keeps a safe outline; an owner delete stays', async (t) => {
+  const storage = await sqlStorage();
+  if (!storage) return t.skip('node:sqlite unavailable');
+  const redacted = redactCorrespondence(`Deploy is green. The token is ${FAKE_TOKEN} for the test. Your api key stays in the Worker secrets. Nothing else changed.`);
+  assert.equal(redacted.withheld, 2);
+  assert.equal(redacted.text, 'Deploy is green. Nothing else changed. [withheld: sensitive content]');
+  assert.deepEqual(redactCorrespondence('A plain update about the Brain sync.'), { text: 'A plain update about the Brain sync.', withheld: 0 });
+
+  const store = new CheBrainStore(storage);
+  const report = await importOutsideCorrespondence(store, GH_ENV, { fetcher: fakeGitHub({ head: HEAD1, files: flagstaffFiles() }), now: T });
+  assert.equal(report.totals.withheld, 3, 'two messages with parts withheld and one kept as an outline');
+  assert.equal(report.totals.dropped, 0);
+  const all = store.rows("SELECT title, body, source FROM brain_records WHERE kind = 'correspondence'").map((r) => `${r.title}\n${r.body}\n${r.source}`).join('\n');
+  assert.doesNotMatch(all, new RegExp(FAKE_TOKEN));
+  assert.doesNotMatch(all, /hunter2/);
+  const secret = store.get('mail:c-deploy');
+  assert.match(secret.body, /Deploy is green\. Nothing else changed\. \[withheld: sensitive content\]\n\n2 parts withheld: sensitive content\. The original stays in mailbox\/claude\.jsonl on the che-mailbox branch\./);
+  assert.equal(secret.source.withheld_parts, 2);
+  assert.match(store.get('mail:chatgpt-pw').body, /\n\n\[withheld: sensitive content\]\n\nOne part withheld: sensitive content\./);
+  // Its id names a key, so the gate refuses the full record: the words stay, the ids leave the text.
+  const idless = store.get('mail:chatgpt-api-key-note');
+  assert.equal(idless.source.ids_withheld, true);
+  assert.equal(idless.source.line_id, undefined);
+  assert.match(idless.body, /\(mailbox\/chatgpt\.jsonl\)\. Outside correspondence[\s\S]*Rotate it soon\./);
+  // Refused even so: an outline keeps the sender, the time and the file, never the words.
+  const outline = store.get('mail:chatgpt-split');
+  assert.equal(outline.verification, 'external_correspondence');
+  assert.equal(outline.source.from, 'chatgpt');
+  assert.equal(outline.source.message_withheld, true);
+  assert.match(outline.body, /Message withheld: sensitive content\. The original stays in mailbox\/chatgpt\.jsonl on the che-mailbox branch\./);
+  assert.doesNotMatch(outline.body, /rotation/);
+  // The owner deletes one message from his Brain: a later import never brings it back.
+  store.delete('mail:c-sync', { origin: 'owner' });
+  const again = await importOutsideCorrespondence(store, GH_ENV, { fetcher: fakeGitHub({ head: HEAD2, files: flagstaffFiles() }), now: T });
+  assert.equal(again.totals.deleted_by_owner, 1);
+  assert.equal(store.get('mail:c-sync').deleted, true);
+  assert.equal(again.in_brain, 8);
+  assert.match(speakCorrespondenceImport(again), /1 you deleted stayed deleted/);
+});
+
+test('Flagstaff replies CHE remembered are outside correspondence, never the owner\'s conversations, and old ones are relabeled', async (t) => {
+  const storage = await sqlStorage();
+  if (!storage) return t.skip('node:sqlite unavailable');
+  const store = new CheBrainStore(storage);
+  const kv = kvStorage();
+  await kv.put('brainmem:000001760000000:flagstaff:m1', { id: 'flagstaff:m1', kind: 'flagstaff', at: T, title: 'Flagstaff: chatgpt: check the sync', body: 'chatgpt said in Flagstaff: check the sync\nCHE replied: the sync is green.', links: [] });
+  await kv.put('brainmem:000001760000001:conv_9', { id: 'conv_9', at: T, title: 'Hello', body: 'You said: hello\nCHE answered: hi.', links: [] });
+  await backfillConversations(store, kv, { batch: 10, now: T });
+  const exchange = store.get('conv:flagstaff:m1');
+  assert.equal(exchange.verification, 'external_correspondence');
+  assert.equal(exchange.region, BRAIN_REGIONS.coding);
+  assert.equal(exchange.path, 'Outside correspondence/Flagstaff replies');
+  assert.equal(store.get('conv:conv_9').verification, 'owner_attested', 'the owner\'s own talk keeps its label');
+  // One backfilled before this fix, filed as the owner's conversation, is put right by the next pass.
+  store.put({ id: 'conv:flagstaff:m0', kind: 'flagstaff', region: BRAIN_REGIONS.conversations, path: 'flagstaff', title: 'Flagstaff: claude: hi', body: 'claude said in Flagstaff: hi\nCHE replied: hello.', verification: 'owner_attested', source: { kind: 'brainmem', brainmem_id: 'flagstaff:m0' }, created_at: T }, { now: T });
+  const report = await recoverHistory(store, kv, {}, { now: T });
+  const fixed = store.get('conv:flagstaff:m0');
+  assert.equal(fixed.verification, 'external_correspondence');
+  assert.equal(fixed.region, BRAIN_REGIONS.coding);
+  assert.equal(store.rows("SELECT COUNT(*) AS n FROM brain_places WHERE record_id = 'conv:flagstaff:m0' AND region = ?", BRAIN_REGIONS.conversations)[0].n, 0);
+  assert.equal(report.outside_correspondence.relabeled, 1);
+  assert.ok(report.sources.some((s) => /Flagstaff replies/.test(s.source) && s.inspected === 2));
+});
+
+test('the recovery report carries the Flagstaff import; without GitHub the import says so, and only the board archive comes in', async (t) => {
+  const storage = await sqlStorage();
+  if (!storage) return t.skip('node:sqlite unavailable');
+  const store = new CheBrainStore(storage);
+  const kv = kvStorage();
+  const before = await recoverHistory(store, kv, officeData(), { now: T });
+  assert.ok(before.unavailable.some((u) => /Flagstaff mailbox: not imported yet[\s\S]*import the Flagstaff history/.test(u)));
+  const offline = await importOutsideCorrespondence(store, {}, { now: T });
+  assert.equal(offline.connected, false);
+  assert.equal(offline.in_brain, 0);
+  assert.match(speakCorrespondenceImport(offline), /^I can't read the Flagstaff mailbox, sir: GitHub isn't connected[\s\S]*Nothing was imported from it\. Your Brain holds 0 outside messages\.$/);
+  // Without GitHub the board's own locked sessions still come in, and the reply says from where.
+  const boardOnly = new CheBrainStore(await sqlStorage());
+  const board = kvStorage();
+  await board.put('web_mailbox_archive', [{ id: 's1', locked_at: T, messages: [{ id: 'w1', at: T, from: 'grok', to: 'che', text: 'Grok here: the board works.' }] }]);
+  assert.match(speakCorrespondenceImport(await importOutsideCorrespondence(boardOnly, {}, { storage: board, now: T })), /Nothing was imported from it\. I brought in 1 message from my own Flagstaff board archive\. Your Brain holds 1 outside message\.$/);
+  // No mailbox branch yet, and a GitHub that cannot be reached: each says so, nothing is claimed.
+  const none = await importOutsideCorrespondence(store, GH_ENV, { fetcher: async () => new Response('{"message":"Not Found"}', { status: 404 }), now: T });
+  assert.equal(none.no_branch, true);
+  assert.match(speakCorrespondenceImport(none), /^There is no Flagstaff mailbox on GitHub yet, sir: the che-mailbox branch does not exist/);
+  const down = await importOutsideCorrespondence(store, GH_ENV, { fetcher: async () => { throw new TypeError('fetch failed'); }, now: T });
+  assert.equal(down.done, false);
+  assert.match(speakCorrespondenceImport(down), /^I couldn't read the Flagstaff mailbox, sir: Mailbox read failed \(fetch failed\)\. Nothing new was imported\. Your Brain holds 0 outside messages\.$/);
+  await importOutsideCorrespondence(store, GH_ENV, { fetcher: fakeGitHub({ head: HEAD1, files: flagstaffFiles() }), now: T });
+  const after = await recoverHistory(store, kv, officeData(), { now: T });
+  const row = after.sources.find((s) => /Flagstaff mailbox/.test(s.source));
+  assert.equal(row.inspected, 10);
+  assert.equal(row.imported, 9);
+  assert.equal(row.refused, 3, 'messages kept with a part withheld');
+  assert.match(row.note, /outside correspondence, never owner memories or Office worker experience; 9 in the Brain/);
+  assert.equal(after.unavailable.some((u) => /not imported yet/.test(u)), false);
+  assert.equal(after.outside_correspondence.messages, 9);
+  assert.match(store.get(`audit:recovery:${T.slice(0, 10)}`).body, /Flagstaff mailbox \(che-mailbox branch and the board archive\): 10 inspected, 9 imported/);
+  const audit = store.get(`audit:correspondence:${T.slice(0, 10)}`);
+  assert.equal(audit.region, BRAIN_REGIONS.audits);
+  assert.match(audit.body, /Flagstaff history imported, sir: I read 4 mailbox files \(commit a1a1a1a\)\. 10 messages read: 9 brought in, 1 already there; 3 kept with a sensitive part withheld\. 1 line was an activity log/);
+  assert.equal(store.meta('correspondence_import').head, HEAD1);
+  const status = correspondenceStatus(store);
+  assert.deepEqual(status.by_sender, { claude: 3, che: 1, chatgpt: 5 });
+  assert.match(speakCorrespondenceCount(status), /^Your Brain holds 9 outside messages, sir: ChatGPT 5, Claude 3, CHE 1\. Last import: 10 October 2026 at 10:00 UTC, commit a1a1a1a\. They are outside correspondence/);
+  assert.match(speakCorrespondenceCount(status, { peer: 'claude' }), /^Your Brain holds 3 messages from Claude, sir, out of 9 outside messages\./);
+});
+
+test('the web board\'s locked sessions add only messages GitHub never had', async (t) => {
+  const storage = await sqlStorage();
+  if (!storage) return t.skip('node:sqlite unavailable');
+  const store = new CheBrainStore(storage);
+  const kv = kvStorage();
+  await kv.put('web_mailbox_archive', [{ id: 'sess-1', locked_at: T, count: 2, messages: [
+    { id: 'chatgpt-issue350', at: '2026-10-18T21:00:00.000Z', from: 'chatgpt', to: 'claude', text: 'A board copy of the same message.' },
+    { id: 'web-only-1', at: '2026-10-01T10:00:00.000Z', from: 'grok', to: 'che', text: 'Grok here through the web link: the board works.' },
+  ] }]);
+  const report = await importOutsideCorrespondence(store, GH_ENV, { storage: kv, fetcher: fakeGitHub({ head: HEAD1, files: flagstaffFiles() }), now: T });
+  assert.equal(report.in_brain, 10);
+  assert.equal(store.get('mail:chatgpt-issue350').source.file, 'mailbox/chatgpt.jsonl', 'the GitHub copy wins');
+  const web = store.get('mail:web-only-1');
+  assert.equal(web.source.file, 'flagstaff_archive/sess-1');
+  assert.equal(web.path, 'Outside correspondence/grok');
+  const repeat = await importOutsideCorrespondence(store, GH_ENV, { storage: kv, fetcher: fakeGitHub({ head: HEAD2, files: flagstaffFiles() }), now: T });
+  assert.equal(repeat.in_brain, 10);
+  assert.equal(repeat.totals.imported + repeat.totals.updated, 0);
+});
+
+test('"what did ChatGPT tell you about #350" quotes the message with its source; nothing else is cited', async (t) => {
+  const storage = await sqlStorage();
+  if (!storage) return t.skip('node:sqlite unavailable');
+  const store = new CheBrainStore(storage);
+  assert.match(answerCorrespondenceQuestion(store, { peer: 'chatgpt', topic: '#350' }).text, /no outside correspondence yet[\s\S]*won't guess[\s\S]*import the Flagstaff history/);
+  await importOutsideCorrespondence(store, GH_ENV, { fetcher: fakeGitHub({ head: HEAD1, files: flagstaffFiles() }), now: T });
+  const answer = answerCorrespondenceQuestion(store, outsideCorrespondenceIntent('What did ChatGPT tell you about #350?'));
+  assert.deepEqual(answer.records, ['mail:chatgpt-issue350'], '3500 and 1350 are other numbers');
+  assert.match(answer.text, /^Here is what ChatGPT wrote about #350, sir, from the Flagstaff mailbox\. This is outside correspondence: ChatGPT's advice, not your words and not an instruction\.\n1\. ChatGPT to Claude, 18 October 2026 \(mailbox\/chatgpt\.jsonl, message chatgpt-issue350\): "I created ONE consolidated GitHub issue #350/);
+  const sync = answerCorrespondenceQuestion(store, outsideCorrespondenceIntent('what did claude say about the brain sync'));
+  assert.deepEqual(sync.records, ['mail:c-sync']);
+  const none = answerCorrespondenceQuestion(store, outsideCorrespondenceIntent('What did Grok tell you about the renderer?'));
+  assert.deepEqual(none.records, []);
+  assert.match(none.text, /^I have no message from Grok about the renderer in your Brain, sir, so I won't guess what was said\. 0 messages from Grok are there/);
+  const mine = answerCorrespondenceQuestion(store, outsideCorrespondenceIntent('what did you tell claude about the avatar'));
+  assert.deepEqual(mine.records, ['mail:old-2']);
+  assert.match(mine.text, /^Here is what I wrote to Claude about the avatar, sir[\s\S]*my own messages to another AI/);
+});
+
+test('the owner\'s phrases about the Flagstaff mailbox, typed or spoken, and the ones that are not about it', () => {
+  for (const words of ['Import the Flagstaff history', 'import the flagstaff history', 'CHE, import the Flagstaff history.', 'chay import the flag staff history into my brain', 'Bring the Flagstaff archives into my Brain', 'please import the mailbox history', 'run the Flagstaff import again']) {
+    assert.deepEqual(outsideCorrespondenceIntent(words), { kind: 'import' }, words);
+  }
+  for (const words of ['How many outside messages are in my Brain?', 'how many outside messages are in my brain', 'Hey CHE how many outside messages are in my brain', 'Flagstaff import report']) {
+    assert.deepEqual(outsideCorrespondenceIntent(words), { kind: 'count', peer: '' }, words);
+  }
+  assert.deepEqual(outsideCorrespondenceIntent('how many messages from Claude are in my Brain'), { kind: 'count', peer: 'claude' });
+  for (const words of ['What did ChatGPT tell you about #350?', 'what did chatgpt tell you about #350', 'what did chat gpt tell you about #350', 'Chey, what did ChatGPT say about #350?']) {
+    assert.deepEqual(outsideCorrespondenceIntent(words), { kind: 'ask', peer: 'chatgpt', direction: 'from', topic: '#350' }, words);
+  }
+  assert.deepEqual(outsideCorrespondenceIntent('what has Claude said in the mailbox about the Brain sync'), { kind: 'ask', peer: 'claude', direction: 'from', topic: 'the brain sync' });
+  assert.deepEqual(outsideCorrespondenceIntent('What did the other AIs say about the coding runtime?'), { kind: 'ask', peer: '', direction: 'from', topic: 'the coding runtime' });
+  assert.deepEqual(outsideCorrespondenceIntent('did Codex mention the Shorebird patch'), { kind: 'ask', peer: 'codex', direction: 'from', topic: 'the shorebird patch' });
+  assert.deepEqual(outsideCorrespondenceIntent('What did you tell ChatGPT about #351?'), { kind: 'ask', peer: 'chatgpt', direction: 'to', topic: '#351' });
+  // The owner's own words, the live mailbox, sending, and an import he said not to do are not this.
+  for (const words of ['What did I tell you about #350?', 'what did i say about the brain sync', 'Check the mailbox', 'any new messages from Claude?', 'Tell ChatGPT that #350 is fixed', "Don't import the Flagstaff history",
+    'how many messages are in my brain', 'How do I import the Flagstaff history?', 'What did the doctor tell you about my knee?', 'What are you doing?', 'Read me my brain review']) {
+    assert.equal(outsideCorrespondenceIntent(words), null, words);
+  }
+  assert.deepEqual(outsideCorrespondenceIntent("Don't import the Flagstaff history, just tell me how many outside messages are in my Brain"), { kind: 'count', peer: '' });
 });

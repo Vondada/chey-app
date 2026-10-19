@@ -100,7 +100,7 @@ import { flushOutbox, handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, op
 import { CheLibrary, fetchReadable, libraryContext, libraryIntent } from './library.js';
 import { CheBrainStore, backfillConversations, displayCopy, isSafeText, ownerMemoryRecord, projectLegacyState, rememberExchange, sameDisplayCopy } from './brain_store.js';
 import { brainReviewIntent, latestReview, ownerScore, runBrainMaintenance, speakReview } from './brain_audit.js';
-import { archiveTasks, projectOfficeExperience, recoverHistory, workerBrains } from './brain_office.js';
+import { answerCorrespondenceQuestion, archiveTasks, correspondenceStatus, importOutsideCorrespondence, outsideCorrespondenceIntent, projectOfficeExperience, recoverHistory, speakCorrespondenceCount, speakCorrespondenceImport, workerBrains } from './brain_office.js';
 import { fetchYouTubeKnowledge, mergeCaptionLines, normalizeCaptionLines, youtubeVideoId } from './youtube_learning.js';
 import {
   disconnectGoogle, finishGoogleConnect, googleChatIntent, googleConnectorStates, googleLabel, googleOwnerStep, googleRecheckPending,
@@ -4706,6 +4706,10 @@ export class CheState extends DurableObject {
     if (GUEST_OWNER_ACTION.test(message)) {
       return ndjsonReply('Only the CHE owner can do that. Nothing was changed. I can still talk it through with you.', { source: 'che_guest', ok: false, model_calls: 0 });
     }
+    // The Flagstaff correspondence is the owner's: a guest's model has none of it and must not guess it.
+    if (outsideCorrespondenceIntent(message)) {
+      return ndjsonReply('Only the CHE owner can read the outside correspondence in his Brain. Nothing was read or changed.', { source: 'che_guest', ok: false, model_calls: 0 });
+    }
     const history = (Array.isArray(body.history) ? body.history : [])
       .filter((turn) => ['user', 'assistant'].includes(turn?.role) && typeof turn.content === 'string')
       .slice(-10).map((turn) => ({ role: turn.role, content: turn.content.slice(0, 4000) }));
@@ -5906,6 +5910,8 @@ export class CheState extends DurableObject {
         // Historical recovery: everything CHE already holds, into the Brain, resumably; the report says what is where.
         if (path === '/api/brain/recovery') {
           if (request.method === 'POST' && body.run === true) {
+            // The owner asked for a recovery pass, so the Flagstaff mailbox is read too (the nightly pass never reads GitHub).
+            if (body.flagstaff !== false) await importOutsideCorrespondence(brain, this.env, { storage: this.ctx.storage }).catch(() => null);
             const report = await recoverHistory(brain, this.ctx.storage, data, { library: library(), batch: Math.max(50, Math.min(Number(body.batch) || 500, 2000)) });
             return json(report);
           }
@@ -8166,7 +8172,7 @@ export class CheState extends DurableObject {
         // an earlier answer is answered from records further down, in his own
         // words: no interpreter rewrite, clarifying question or model read.
         const memoryRoute = ownerDevice && !body.attachment && (asksForEvidence || Boolean(ownerMemoryQuestion(rawMessage)) ||
-          Boolean(ownerFactCorrection(rawMessage, data.memory_records)));
+          Boolean(ownerFactCorrection(rawMessage, data.memory_records)) || Boolean(outsideCorrespondenceIntent(rawMessage)));
         // Voice Studio: the owner's spoken requests about his voice library are answered
         // from the provider's account, with no model call. Anything else goes on below.
         if (ownerDevice && !body.attachment) {
@@ -8955,6 +8961,33 @@ export class CheState extends DurableObject {
         if (ownerDevice && !body.attachment && !memoryQuestion && brainReviewIntent(rawMessage)) {
           const latest = latestReview(new CheBrainStore(this.ctx.storage));
           return ndjsonReply(speakReview(latest), { source: 'che_brain_review', model_calls: 0, review_id: latest.review?.id || null });
+        }
+        // The Flagstaff mailbox as outside correspondence: "import the Flagstaff history", "how many
+        // outside messages are in my Brain", "what did ChatGPT tell you about #350". Answered from
+        // correspondence records only, each with its file and message id; never the owner's words
+        // (his own "what did I tell you" is the memory question above), never an order. No model.
+        // Guests never reach here: guestChat refuses these.
+        const outside = ownerDevice && !body.attachment && !memoryQuestion ? outsideCorrespondenceIntent(rawMessage) : null;
+        if (outside) {
+          const source = outside.kind === 'import' ? 'che_flagstaff_import' : 'che_outside_correspondence';
+          const brain = new CheBrainStore(this.ctx.storage);
+          if (outside.kind === 'import') {
+            const report = await importOutsideCorrespondence(brain, this.env, { storage: this.ctx.storage });
+            return ndjsonReply(speakCorrespondenceImport(report), {
+              source, model_calls: 0, ok: Boolean(report.available && report.connected && !report.errors?.length),
+              done_import: Boolean(report.done), imported: report.totals?.imported || 0, in_brain: report.in_brain || 0,
+            });
+          }
+          // The receipt names the records, so "how do you know?" says where it came from.
+          if (outside.kind === 'count') {
+            const status = correspondenceStatus(brain);
+            const text = speakCorrespondenceCount(status, { peer: outside.peer });
+            await recordAnswerEvidence(this.ctx.storage, text, { kind: 'tool_result', tools: ['brain/outside_correspondence'] });
+            return ndjsonReply(text, { source, model_calls: 0, in_brain: status.messages || 0 });
+          }
+          const answer = answerCorrespondenceQuestion(brain, outside);
+          await recordAnswerEvidence(this.ctx.storage, answer.text, { kind: answer.records.length ? 'outside_correspondence' : 'none' }, { records: answer.records });
+          return ndjsonReply(answer.text, { source, model_calls: 0, records: answer.records.length, record_ids: answer.records, verification: 'external_correspondence' });
         }
         // What the owner personally said, confirmed, approved or did is
         // answered from owner-attested records only. A model is never asked

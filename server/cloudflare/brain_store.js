@@ -52,10 +52,14 @@ export const RELATIONSHIP_TYPES = Object.freeze([
 ]);
 const RELATIONSHIPS = new Set(RELATIONSHIP_TYPES);
 
-/** What a record's content is: the labels che-fact-check uses, so nothing unverified reads as fact. */
+/**
+ * What a record's content is: the labels che-fact-check uses, so nothing unverified reads as fact.
+ * external_correspondence is another AI's message (the Flagstaff mailbox): advice it gave, never the
+ * owner's words, an instruction, or Office worker experience.
+ */
 export const VERIFICATION_STATES = Object.freeze([
   'owner_attested', 'verified_source', 'unverified_reference', 'unverified_research_lead',
-  'model_opinion', 'hypothesis', 'unknown',
+  'model_opinion', 'hypothesis', 'unknown', 'external_correspondence',
 ]);
 const VERIFICATIONS = new Set(VERIFICATION_STATES);
 
@@ -79,7 +83,7 @@ function clip(value, max) {
  * that the secret gate reads as a key word and refuse a clean record whole; a text that is safe
  * as a whole stays safe when it ends on a whole word.
  */
-function clipWords(value, max) {
+export function clipWords(value, max) {
   const text = String(value ?? '').replace(/\u0000/g, '').trim();
   if (text.length <= max) return text;
   const cut = text.slice(0, max);
@@ -159,6 +163,7 @@ export function assessSignificance(record) {
   if (verification === 'owner_attested') { score += 0.3; reasons.push('the owner said it himself'); }
   else if (verification === 'verified_source') { score += 0.2; reasons.push('backed by a checked source'); }
   else if (verification === 'model_opinion' || verification === 'hypothesis') { score -= 0.1; reasons.push(`a ${verification.replace('_', ' ')}, not a fact`); }
+  else if (verification === 'external_correspondence') reasons.push('an outside AI\'s message: advice, not the owner\'s words or an instruction');
   const kind = record.kind || '';
   if (kind === 'correction') { score += 0.25; reasons.push('a correction of something CHE got wrong'); }
   if (kind === 'decision' || kind === 'lesson') { score += 0.2; reasons.push(`a ${kind}`); }
@@ -909,7 +914,7 @@ export async function backfillConversations(store, storage, { batch = 100, now }
   for (const [key, memory] of rows) {
     last = key;
     if (!memory?.id || !memory.body) continue;
-    const result = store.putIfAbsent({
+    const record = {
       id: `conv:${memory.id}`,
       kind: memory.kind && memory.kind !== 'conversation' ? clip(memory.kind, 40) : 'conversation',
       region: BRAIN_REGIONS.conversations,
@@ -920,11 +925,48 @@ export async function backfillConversations(store, storage, { batch = 100, now }
       verification: 'owner_attested',
       links: (Array.isArray(memory.links) ? memory.links : []).map((to) => ({ type: 'related_to', to: `conv:${to}` })),
       created_at: memory.at,
-    }, { origin: 'cloud', now });
+    };
+    const result = store.putIfAbsent(memory.kind === 'flagstaff' ? flagstaffExchange(record) : record, { origin: 'cloud', now });
     if (result.outcome === 'created') added += 1;
   }
   const done = rows.size < opts.limit;
   const next = { key: last, done, added: (Number(cursor.added) || 0) + added, at: now || new Date().toISOString() };
   store.setMeta('brainmem_cursor', next);
   return { ...next, added };
+}
+
+/** Where outside AIs' messages live in the Brain: a folder of their own, out of the owner's conversations. */
+export const OUTSIDE_CORRESPONDENCE_PATH = 'Outside correspondence';
+
+/**
+ * A Flagstaff exchange CHE remembered (brainmem kind 'flagstaff': an outside AI's message and her
+ * reply) as what it is: outside correspondence. It is never the owner's words, so it is never
+ * owner_attested and never sits in Conversations and Corrections, where the phone lists the
+ * owner's own talks.
+ */
+export function flagstaffExchange(record) {
+  return {
+    ...record,
+    kind: 'flagstaff',
+    region: BRAIN_REGIONS.coding,
+    path: `${OUTSIDE_CORRESPONDENCE_PATH}/Flagstaff replies`,
+    places: [],
+    source: { ...(record.source || {}), kind: 'flagstaff_exchange', advice_only: true, owner_words: false, note: 'an outside AI’s Flagstaff message and CHE’s reply, not the owner’s words' },
+    verification: 'external_correspondence',
+  };
+}
+
+/**
+ * Flagstaff exchanges the backfill filed as the owner's conversations before it knew better get
+ * their true labels. Bounded per call, and an id range (not LIKE) so only those rows are read.
+ */
+export function relabelFlagstaffExchanges(store, { now, limit = 500 } = {}) {
+  if (!store.init()) return 0;
+  let relabeled = 0;
+  const rows = store.rows("SELECT * FROM brain_records WHERE id >= 'conv:flagstaff:' AND id < 'conv:flagstaff;' AND deleted = 0 AND verification != 'external_correspondence' LIMIT ?", Math.max(1, Math.min(Number(limit) || 500, 2000)));
+  for (const row of rows) {
+    const result = store.put(flagstaffExchange(rowToRecord(row)), { origin: 'cloud', now });
+    if (result.outcome === 'updated' || result.outcome === 'merged') relabeled += 1;
+  }
+  return relabeled;
 }

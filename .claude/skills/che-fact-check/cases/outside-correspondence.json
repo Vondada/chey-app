@@ -1,0 +1,11 @@
+{
+  "about": "Questions about what another AI wrote went to the language model, which could invent the message. They are answered from the Brain's outside-correspondence records only (none in this empty replay), and the owner's own \"what did I tell you\" never cites them.",
+  "owner": true,
+  "model": "ChatGPT told me #350 is fixed and merged, sir, and you agreed.",
+  "turns": [
+    { "message": "What did ChatGPT tell you about #350?", "expect": { "route": "che_outside_correspondence", "model_calls": 0, "not": "fixed and merged|you agreed" } },
+    { "message": "what did chatgpt tell you about 350", "expect": { "route": "che_outside_correspondence", "model_calls": 0, "not": "fixed and merged|you agreed" } },
+    { "message": "What did I tell you about #350?", "expect": { "route": "che_memory_provenance", "model_calls": 0, "not": "ChatGPT|fixed and merged" } },
+    { "message": "Import the Flagstaff history", "expect": { "route": "che_flagstaff_import", "model_calls": 0, "not": "fixed and merged" } }
+  ]
+}
