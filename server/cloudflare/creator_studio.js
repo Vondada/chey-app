@@ -353,14 +353,20 @@ const PRONOUN = /\b(?:it|that|this|the (?:video|short|reel|clip|episode|mp4))\b/
 const OBJ = String.raw`(?:(?:the|our|that|this|my)\s+)?(?:pilot(?:\s+(?:episode|video|short|mp4))?|episode(?:\s+one)?|s1\s?e1|video|short|mp4|it)\b`;
 const PARTS = String.raw`(?:script|scenes?|storyboard|shot\s+list|shots|narration|captions?|beat\s+sheet|spec)`;
 const at = (verbs, tail = '') => new RegExp(String.raw`\b(?:${verbs})\s+(?:me\s+)?${OBJ}${tail}`, 'i');
+// The object of a render, export or post ends the request, or is followed only by where, when or a
+// new clause. "Make the pilot funnier", "make it 45 seconds", "make the pilot in Spanish" and
+// "build the pilot storyboard" ask for an edit, which no studio command does (review of #353).
+const PLATFORM_WORD = String.raw`(?:(?:my|our|the)\s+)?(?:you\s?tube|yt|shorts|tik\s?tok|instagram|insta|ig|facebook|fb|reels?|every\s+platform|all\s+(?:the\s+)?platforms)`;
+const END = String.raw`(?=\s*(?:$|[.!?,;:]|(?:right\s+)?now\b|tonight\b|today\b|please\b|again\b|first\b|asap\b|soon\b|then\b|and\b|but\b|so\b|for\s+me\b|on\s+github\b|with\s+the\s+free\s+renderer\b|(?:for|to|on|onto|as)\s+(?:a\s+|an\s+)?${PLATFORM_WORD}\b))`;
+const DEST_END = String.raw`(?=\s*(?:$|[.!?,;:]|(?:right\s+)?now\b|tonight\b|today\b|please\b|then\b|and\b|but\b|(?:to|on|onto)\s+(?:my|our|the)\b|(?:for|to|on|onto|as)\s+(?:a\s+|an\s+)?${PLATFORM_WORD}\b))`;
 // Things a sentence can be about while naming the pilot: CHE's own code and app, an account, another asset.
 const OTHER_THING = /\b(?:code|coding|codebase|tests?|testing|bugs?|fix(?:es|ed|ing)?|debug\w*|screens?|features?|pipelines?|prs?|pull\s+requests?|functions?|class(?:es)?|methods?|modules?|files?|repo(?:sitory)?|commits?|deploy\w*|apps?|api|endpoints?|widgets?|flutter|dart|javascript|python|accounts?|profiles?|logins?|passwords?|thumbnails?|logos?|banners?|posters?|cover\s+(?:art|image|photo)s?|websites?|landing\s+pages?|ads?|adverts?|campaigns?|budgets?|merch\w*|playlists?|trailers?|music|songs?|soundtracks?|voice\s*-?overs?|data|spreadsheets?|csv|json|logs?|databases?)\b/i;
 // Where a post goes ("to my YouTube account") and the growth plan's own tests are not other things.
 const OWN_WORDS = /\b(?:to|on|onto)\s+(?:my|our|the)?\s*(?:[\w-]+\s+){0,2}(?:account|channel|page|profile)s?\b|\b(?:growth|audience|a\/?b|hook)\s+tests?\b/gi;
 // "Don't post it unless I say so": the gate keeps a ban with an exception, but the step is still forbidden now.
-const BANNED_STEP = /\b(?:do\s+not|don['’]?t|never)\s+(?:(?:ever|even|just|go\s+and)\s+)*(post|publish|upload|share|render|export)\b[^.?!;]*/gi;
+const BANNED_STEP = /\b(?:do\s+not|don['’]?t|never)\s+(?:(?:ever|even|just|go\s+and)\s+)*(post|publish|upload|share|render|export)\b[^.?!;,]*/gi;
 // Buying, botting or faking an audience; "get me more views" with real posts is ordinary growth.
-const FAKE_GROWTH = /\b(?:buy|buying|purchas(?:e|ed|ing)|bought|order|pay\s+for)\b[^.?!]{0,30}\b(?:followers|subscribers|subs|views|likes|engagement|comments|plays)\b|\b(?:bots?|botted|fake|purchased|bought)\b[^.?!]{0,20}\b(?:followers|subscribers|subs|views|likes|accounts|engagement|comments|plays)\b/i;
+const FAKE_GROWTH = /\b(?:buy|buying|purchas(?:e|ed|ing)|bought|order|pay\s+for)\b[^.?!]{0,40}\b(?:followers|subscribers|subs|views|likes|engagement|comments|plays)\b|\b(?:bots?|botted|fake|purchased|bought)\b[^.?!]{0,40}\b(?:followers|subscribers|subs|views|likes|accounts|engagement|comments|plays)\b/i;
 const QUESTION = /^(?:did|does|do|is|are|was|were|how|why|what|who|when|can|could|should)\b/i;
 
 function studioContext(history) {
@@ -389,20 +395,21 @@ export function studioChatIntent(message, history = []) {
   if (!series && /\bfor\s+(?:my|a|an|his|her|their)\b/i.test(raw) && !/\b(?:channel|videos?|shorts|reels?|tiktok|series)\b/i.test(raw)) return null;
   if (classifyOwnerActions(raw).length) return null;
   // Verbs are read from what the owner asks for; the subject may sit anywhere ("don't render the pilot, just write the script").
-  const banned = [...raw.matchAll(BANNED_STEP)].map((m) => m[1].toLowerCase());
-  const asked = withoutProhibitions(raw).replace(BANNED_STEP, ' ');
+  const banned = [...raw.matchAll(BANNED_STEP)];
+  // Each clause is read on its own: "don't post it on TikTok, post it to YouTube Shorts" bans one platform, not both.
+  const asked = raw.split(/[.;!?,]+|\bbut\b/i).map((clause) => withoutProhibitions(clause).replace(BANNED_STEP, ' ')).join(' ').replace(/\s+/g, ' ').trim();
   if (OTHER_THING.test(asked.replace(OWN_WORDS, ' '))) return null;
-  const forbidden = `${prohibitedText(raw)} ${banned.join(' ')}`;
+  const forbidden = `${prohibitedText(raw)} ${banned.map((m) => m[1].toLowerCase()).join(' ')}`;
   // Passed on as the platforms' own names, so a held post reads naturally.
   const platforms = platformsIn(asked).map((id) => EXPORT_PROFILES[id].label).join(', ');
   const pilotNamed = /\bpilot\b|\bepisode\b|\bs1\s?e1\b/i.test(raw);
   if (/\b(?:series|show)\s+bible\b|\b(?:who(?:'s| is| are)|tell me about|introduce)\b[^.?!]*\b(?:cast|characters)\b|\bstreet smart explainers?\b[^.?!]*\b(?:about|premise|cast|characters|tone|format)\b/i.test(asked)) {
     return { command: 'studio-bible', input: '' };
   }
-  if (at('post|publish|upload').test(asked) || (platforms && at('share|send|put', String.raw`\s+(?:to|on|onto)\b`).test(asked))) {
+  if (at('post|publish|upload', DEST_END).test(asked) || (platforms && at('share|send|put', String.raw`\s+(?:to|on|onto)\b`).test(asked))) {
     return { command: 'studio-post', input: platforms };
   }
-  if (at('export|package|format|prepare|prep|resize|crop|adapt').test(asked) || new RegExp(String.raw`\b(?:version|cut|export|package)\s+of\s+${OBJ}`, 'i').test(asked)) {
+  if (at('export|package|format|prepare|prep|resize|crop|adapt', END).test(asked) || new RegExp(String.raw`\b(?:version|cut|export|package)\s+of\s+${OBJ}${END}`, 'i').test(asked)) {
     return { command: 'studio-export', input: platforms };
   }
   if (/\b(?:growth|audience)\s+(?:experiments?|plan|tests?)\b/i.test(asked) || at('how(?:\'s| is| are)', String.raw`\s+doing\b`).test(asked)
@@ -418,12 +425,15 @@ export function studioChatIntent(message, history = []) {
     || at('status\\s+of|where(?:\'s| is)|how(?:\'s| is)', String.raw`(?:\s+render(?:ing)?)?\b`).test(asked) && /\b(?:status|where|render)/i.test(asked)) {
     return { command: 'studio-render', input: 'status' };
   }
-  if (at('render|make|produce|create|build|generate|film|shoot|finish', String.raw`(?!\s+(?:about|on|of)\b)`).test(asked)
-    || (pilotNamed && /\b(?:start|kick\s+off|run|queue)\s+(?:the\s+)?(?:pilot\s+)?render(?:ing)?\b/i.test(asked))) {
+  if (at('render|make|produce|create|build|generate|finish', END).test(asked)
+    || (pilotNamed && new RegExp(String.raw`\b(?:start|kick\s+off|run|queue)\s+(?:the\s+)?(?:pilot\s+)?render(?:ing)?${END}`, 'i').test(asked))) {
     return { command: 'studio-render', input: '' };
   }
-  // "Don't post the pilot unless I say so": nothing will be posted, and CHE says so.
-  if (/\b(?:post|publish|upload|share)\b/i.test(forbidden)) return { say: NO_POST_REPLY, ok: true, action: 'no_post' };
+  // "Don't post the pilot unless I say so": nothing will be posted, and CHE says so, naming a platform the ban names.
+  if (/\b(?:post|publish|upload|share)\b/i.test(forbidden)) {
+    const named = platformsIn(banned.map((m) => m[0]).join(' ')).map((id) => EXPORT_PROFILES[id].label);
+    return { say: named.length ? `Understood, sir: I won't post the pilot to ${named.join(' or ')}. Every post still needs your yes. Nothing was posted.` : NO_POST_REPLY, ok: true, action: 'no_post' };
+  }
   // "Don't render the pilot yet": the owner forbade the step, so CHE only reports where it stands.
   if (/\b(?:render|export)\b/i.test(forbidden)) return { command: 'studio-render', input: 'status' };
   return null;

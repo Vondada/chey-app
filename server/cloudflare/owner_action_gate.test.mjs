@@ -101,11 +101,17 @@ test('ordinary questions with the same nouns are not held', () => {
 
 test('paid promotion is money; promoting with no paid word is not (review of #353)', () => {
   for (const text of ['Promote the pilot with a paid ad on TikTok', 'promote the pilot with a paid ad on tiktok', 'Boost the post with $20',
-    'run an ad on TikTok for the pilot', 'CHE, launch a paid campaign', 'Can you promote the video with ad spend?', 'Run ads for my barbershop']) {
+    'run an ad on TikTok for the pilot', 'CHE, launch a paid campaign', 'Can you promote the video with ad spend?', 'Run ads for my barbershop',
+    // Re-review: other money words, the noun form, a budget in the next sentence, and a platform that sells reach.
+    'Boost the post for 20 bucks', 'Promote the pilot for 50 euros', 'boost it with my card', "Let's do a paid promotion for the pilot",
+    'Promote the pilot. Use a $30 budget.', 'promote the pilot on TikTok', 'boost the pilot on Instagram']) {
     assert.deepEqual(classifyOwnerActions(text), ['money'], text);
   }
   for (const text of ['promote the pilot on my channel', 'Promote the pilot on my channel', 'promote my brother to manager', 'boost my productivity',
-    'write an ad for my bakery', 'Plan an ad campaign for my bakery', 'Advertise my bakery on my website', "Don't run any ads", 'start a campaign for my bakery']) {
+    'write an ad for my bakery', 'Plan an ad campaign for my bakery', 'Advertise my bakery on my website', "Don't run any ads", 'start a campaign for my bakery',
+    // Re-review: writing an ad, an ads report or draft, ads that earn money on the owner's own site, a person's promotion.
+    'Run the ads report', 'Create an ad for the pilot', 'Put ads on my website', 'Run ads on my YouTube channel to earn money',
+    'Create a sponsored post draft for my client', 'Promote Sarah to manager in the ad budget sheet', 'promote sarah to manager', "Don't boost the post with money"]) {
     assert.deepEqual(classifyOwnerActions(text), [], text);
   }
 });

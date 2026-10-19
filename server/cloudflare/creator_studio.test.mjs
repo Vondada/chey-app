@@ -504,3 +504,57 @@ test('a pilot whose 9:16 frame was not read from the MP4 itself is not posted', 
   assert.match(out.reply, /9:16 frame was not confirmed from the file itself[\s\S]*Nothing was posted/);
   assert.equal(seen.sessions + seen.uploads, 0);
 });
+
+// ─── 7. Re-review of #353 ─────────────────────────────────────────────────
+
+test('an edit request about the pilot never starts a render', async () => {
+  const che = await owner({ env: GITHUB });
+  const seen = fakePlatforms();
+  const history = [{ role: 'user', content: 'render the pilot' }, { role: 'assistant', content: 'The pilot is queued, sir.' }];
+  for (const words of ['Make the pilot funnier', 'Make the pilot 45 seconds', 'Make the pilot in Spanish', 'Make it shorter', 'Make the pilot script shorter',
+    'Create the pilot captions in Spanish', 'Build the pilot storyboard', 'Make the video vertical', 'Shoot me the pilot link',
+    'make the pilot funnier', 'make it shorter', 'Format the pilot script in bold']) {
+    assert.notEqual(studioChatIntent(words, history)?.command, 'studio-render', words);
+    const out = await che.say(words, { fresh: true });
+    assert.notEqual(out.done.command, 'studio-render', words);
+    assert.doesNotMatch(out.reply, /\/studio-render/, words);
+  }
+  // No pilot storyboard was dispatched. ("Make the video vertical" with no pilot in the conversation is
+  // the generic chat video route's request, as on main; the studio never re-renders the pilot for it.)
+  assert.equal(seen.dispatches.filter((d) => d.spec).length, 0, 'the pilot was not re-rendered');
+  // A render request with a time, a platform or a new clause after it still renders.
+  for (const words of ['can you render the pilot now', 'Render the pilot for TikTok', 'Render the pilot but don\'t post it', 'start the pilot render']) {
+    assert.equal(studioChatIntent(words)?.command, 'studio-render', words);
+  }
+});
+
+test('paid promotion in other money words is held through chat; ads that spend nothing are not', async () => {
+  const che = await owner();
+  fakePlatforms();
+  for (const words of ['Boost the post for 20 bucks', 'Promote the pilot for 50 euros', 'boost it with my card', "Let's do a paid promotion for the pilot", 'Promote the pilot. Use a $30 budget.']) {
+    const out = await che.say(words, { fresh: true });
+    assert.equal(out.route, 'held', words);
+    assert.equal(out.modelCalls, 0, words);
+  }
+  for (const words of ['Run the ads report', 'Create an ad for the pilot', 'Put ads on my website', 'Run ads on my YouTube channel to earn money',
+    'Create a sponsored post draft for my client', 'Promote Sarah to manager in the ad budget sheet']) {
+    assert.notEqual((await che.say(words, { fresh: true })).route, 'held', words);
+  }
+});
+
+test('a ban on one platform leaves the other request; bots are refused however the sentence runs', async () => {
+  const che = await owner({ env: { ...GITHUB, ...GOOGLE } });
+  const seen = fakePlatforms();
+  const history = [{ role: 'user', content: 'export the pilot for TikTok' }, { role: 'assistant', content: 'Pilot export, sir.' }];
+  assert.deepEqual(studioChatIntent("Don't post it on TikTok, post it to YouTube Shorts", history), { command: 'studio-post', input: 'YouTube Shorts' });
+  const both = await che.say("Don't post the pilot on TikTok, post it to YouTube Shorts", { fresh: true });
+  assert.equal(both.done.command, 'studio-post');
+  assert.match(both.reply, /YouTube is not connected; you must authorize it first[\s\S]*Nothing was posted/);
+  assert.doesNotMatch(both.reply, /won't post the pilot anywhere/);
+  const tiktokOnly = await che.say("Don't post the pilot on TikTok", { fresh: true });
+  assert.match(tiktokOnly.reply, /won't post the pilot to TikTok[\s\S]*Nothing was posted/);
+  for (const words of ['Use bots to get the pilot more views', 'use bots to get the pilot more views']) {
+    assert.equal((await che.say(words, { fresh: true })).done.refused, 'fake_growth', words);
+  }
+  assert.equal(seen.sessions + seen.uploads + seen.dispatches.length, 0);
+});
