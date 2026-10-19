@@ -64,6 +64,32 @@ Then, on GitHub:
 - Next: open focused PR for milestone 1 when the owner is ready (or continue: milestone 2 = scripted multi-agent demo via officeGoal + War Room board wiring + orb-tap deep link to the real task; then Phase B typed memory/provenance).
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
+## 2. Current position (Claude, 2026-10-19 04:30 UTC — Atlas #346: #357 and #359 MERGED and LIVE; #358 and #360 in review/fix)
+- **#357 MERGED** as 7825679 (phase 1: 20 cards, /learn, chat lessons, iPhone page). Two independent reviews; every finding was fixed:
+  - Missing-card topics fall through. Cards answer only concept phrases. Domain words are whole-word.
+  - The VWAP note is true; stats are per portfolio with no n=1 range; drawdown is a magnitude.
+  - Read aloud has parity; a held Gmail send is cleared; references are labelled not opened.
+  - Deploy run 39196094102: live commit verified (Worker version b10266ed), memory 12/12, Command Center 5/5 (84 commands). **Shorebird patch: success** (run 39196094127).
+- **#359 MERGED** as 5cbece3 (trading library). It adds 20 t- cards and atlas_math.js:
+  - Calculators: futures risk and size, R:R, options at expiry, VWAP with σ bands at the 9:30 New York anchor, sessions, FVG, BOS/CHOCH, OTE, Wilson and t-intervals, profit factor, drawdown, sample size, seeded Monte Carlo and risk of ruin.
+  - Five provenance labels on every number.
+  - The review recomputed all the math by hand. The deploy and Shorebird checks were still being polled.
+- **#358 (claude/che-atlas-brain)**: Brain projection of the cards (curated_lesson), owner_practice progress, gated reset, retrieval of 600 characters at most.
+  - Three review rounds. All blockers fixed:
+    - ordinary sentences were captured as quiz answers;
+    - "delete my history" deleted atlas progress;
+    - the grader marked correct answers wrong.
+  - Head f2431e9 merges main (#359) and grades word-shown checks by their word. Fourth re-review running; CI polling.
+- **#360 (claude/che-atlas-code)**: coding library (20 c- cards, 42 exercises, 13 drills, 41 repo examples).
+  - The review found blockers, now with the builder:
+    - B1: fuzzy "exact name" means "the deploy" becomes a lesson.
+    - B2: CHE-own-code questions lose che_self_update / che_repository_inspection.
+    - B3: free text after an exercise or drill is graded.
+    - B4: "teach me C" gives Python.
+    - B5: two "real fix" drills describe fixes that never happened.
+  - Head a00bcdc already merges main (#359).
+- **Paused (unchanged; do not merge as is):** #353, #354 (need re-review); #355 and #356 (blockers open; see the section below).
+
 ## 2. Current position (Claude, 2026-10-19 03:10 UTC — OWNER PRIORITY: Knowledge Atlas #346 before the 13:30 UTC New York open; all other batches paused)
 - **Owner priority (2026-10-19 ~03:00 UTC):** finish the Coding + Trading Knowledge Atlas (#346) before 9:30 ET. The owner authorized merging the library changes when green; no trades, spending or bypassed approvals. "Stop working on unrelated features."
   - **#357** (claude/che-knowledge-atlas, phase 1, 20 cards, route, /learn, iPhone page): CI green, in independent review.
