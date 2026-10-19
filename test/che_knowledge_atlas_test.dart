@@ -78,7 +78,9 @@ void main() {
     // The second coding batch: the names moved from the planning and self-repair cards.
     expect(atlas.find('code inspection')?.id, 'c-code-inspection');
     expect(atlas.find('CI validation')?.id, 'c-ci-validation');
-    expect(atlas.find('recovery')?.id, 'c-recovery');
+    expect(atlas.find('job recovery')?.id, 'c-recovery');
+    // A bare "recovery" names no card: it is too general to be the lesson (the same rule as the Worker).
+    expect(atlas.find('recovery'), isNull);
     expect(atlas.find('invariants')?.id, 'c-reasoning');
     // An id is never a topic: "c-python" must not make "C" the Python lesson.
     for (final other in ['c', 'C++', 'C#', 'c programming', 'pythons', 'this python code', 'the python code', 'this js code', 'this dart code', 'that javascript', 'this python']) {
