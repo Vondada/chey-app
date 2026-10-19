@@ -31,7 +31,7 @@ import {
   accountsView, approveProviderPlugin, authorizeProvider, ensureAiState, proposeProviderPlugin,
 } from './provider_registry.js';
 import { discoverKeylessModels, engineStatus, paidAllowed, routedEnv } from './ai_router.js';
-import { capabilityPromptLine, inferTurnCapabilities, runtimeCapabilityRegistry } from './cognitive_capabilities.js';
+import { capabilityPromptLine, creativeWritingAsk, inferTurnCapabilities, marketingAsk, runtimeCapabilityRegistry } from './cognitive_capabilities.js';
 import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, upscaleImage } from './media.js';
 import { probeVideoEngine, videoEngineStatus, videoStatusSpeech } from './video_engine.js';
 import { githubVideoDiagnosis, mp4Facts } from './github_video_renderer.js';
@@ -9830,10 +9830,10 @@ export class CheState extends DurableObject {
         if (/\b(?:fine[- ]?tun(?:e|ing)|train (?:a )?model|lora|adapter tuning|vmware private ai|vmware training|hugging ?face training)\b/i.test(message)) {
           addCapability('fine_tuning');
         }
-        if (/\b(?:book|novel|movie|film|screenplay|script|episode|scene|story|character arc)\b/i.test(message)) {
+        if (creativeWritingAsk(message)) {
           addCapability('creative_writing');
         }
-        if (/\b(?:marketing|social media|instagram|tiktok|facebook|youtube|campaign|content calendar|brand strategy|ad copy)\b/i.test(message)) {
+        if (marketingAsk(message)) {
           addCapability('marketing_social');
         }
 

@@ -16,17 +16,29 @@ function any(value, patterns) {
   return patterns.some((pattern) => pattern.test(value));
 }
 
+// Measured misfires (2026-10-19, 923 owner sentences): each sent an ordinary turn to live research or an
+// Office coworker, and so to the full ~33k-character prompt. Each is removed from the words a rule reads,
+// never added to a rule, so a sentence that also asks for research or a coworker keeps it.
+// The owner telling his own news: "I have good news: my baby was born", "Big news, sir: we closed".
+// "Do you have news about the Fed?" and "any good news today?" still ask for news.
+const OWNER_NEWS = /\b(?:i|we)(?:\s+have|\s*['’]ve|\s+got|\s*['’]ve\s+got|\s+have\s+got|\s+just\s+got)\s+(?:some\s+)?(?:(?:good|great|bad|big|exciting|sad|happy|wonderful|terrible|amazing|fantastic|awesome)\s+)?news\b|^(?:(?:hey\s+)?(?:che|chay|chey|shay)[,\s]+)?(?:some\s+)?(?:good|great|bad|big|exciting|sad|happy|wonderful|terrible|amazing|fantastic|awesome)\s+news\s*(?:[:,!—–-]|(?:sir|che)\b)/g;
+// An algorithm's name is not a request to search: "why does binary search return the wrong index".
+// "search for binary search tutorials" and "look up how binary search works" still search.
+const ALGORITHM_SEARCH = /\b(?:binary|linear|sequential|depth[- ]first|breadth[- ]first)\s+search(?:es|ing)?\b/g;
+
 export function inferTurnCapabilities(message, attachment = null) {
   const value = text(message);
   const found = new Set();
   const add = (...ids) => ids.forEach((id) => found.add(id));
+  const lookup = value.replace(OWNER_NEWS, ' ').replace(ALGORITHM_SEARCH, ' ');
 
-  if (any(value, [
+  if (any(lookup, [
     /\b(latest|current|recent|news|online)\b/,
     // "Today"/"right now" asks about the world ("who is president right
     // now?") unless the sentence is about the owner or CHE ("how are you
-    // doing today?", "what should I eat tonight?").
-    ...(/\b(i|i'm|im|me|my|mine|we|we're|us|our|let's|you|you're|your|yourself)\b/.test(value) ? [] : [/\b(today|tonight|this week|right now)\b/]),
+    // doing today?", "what should I eat tonight?") or is one of his
+    // reminders, alarms or timers ("make a reminder tomorrow at 8, not today").
+    ...(/\b(i|i'm|im|me|my|mine|we|we're|us|our|let's|you|you're|your|yourself|remind|reminders?|alarms?|timers?)\b/.test(value) ? [] : [/\b(today|tonight|this week|right now)\b/]),
     // With a world subject it is a lookup even in a personal sentence.
     /\b(today|tonight|this week|right now)\b[^.?!]{0,60}\b(weather|forecast|news|score|game|price|happen|event|open|closed|traffic|release|announce|election|stock|market|rate|playing|showing)/,
     /\b(weather|forecast|news|score|game|price|happen|event|open|closed|traffic|release|announce|election|stock|market|rate|playing|showing)\w*\b[^.?!]{0,60}\b(today|tonight|this week|right now)\b/,
@@ -86,6 +98,27 @@ export function inferTurnCapabilities(message, attachment = null) {
   ])) add('fine_tuning');
 
   return [...found];
+}
+
+// Story and marketing work for the Office's Story + Script and Marketing + Social partners (worker.js).
+const CREATIVE_WORK = /\b(?:book|novel|movie|film|screenplay|script|episode|scene|story|character arc)\b/i;
+const WRITING_ASK = /\b(?:write|draft|tell|create|make|compose|outline|imagine|invent|narrate|continue)\b/i;
+// A story that is a report being asked about, not writing: "the biggest AI news story on October 15",
+// "is the story about the new garage door code accurate?". With a writing verb it stays story work
+// ("write a news story for my school paper").
+const STORY_AS_REPORT = /\bnews\s+stor(?:y|ies)\b|\b(?:is|was|are|were)\s+(?:the|that|this|these|those)\s+stor(?:y|ies)\b(?=[^.?!]*\b(?:accurate|true|real|correct|right|legit|verified|fake|false)\b)/gi;
+const MARKETING_WORK = /\b(?:marketing|social media|instagram|tiktok|facebook|youtube|campaign|content calendar|brand strategy|ad copy)\b/i;
+// Opening the YouTube app is an app action, not marketing: "teach me recursion and then open youtube".
+// "open YouTube Studio and check my analytics" is still marketing.
+const OPEN_YOUTUBE_APP = /\b(?:open|launch|close)\s+(?:the\s+)?youtube(?:\s+app)?(?=\s*(?:$|[,.;!?]|(?:and|then|for\s+me|please|now)\b))/gi;
+
+export function creativeWritingAsk(message) {
+  const value = String(message || '');
+  return CREATIVE_WORK.test(WRITING_ASK.test(value) ? value : value.replace(STORY_AS_REPORT, ' '));
+}
+
+export function marketingAsk(message) {
+  return MARKETING_WORK.test(String(message || '').replace(OPEN_YOUTUBE_APP, ' '));
 }
 
 const PAID_PROVIDERS = new Set(['openai', 'xai', 'anthropic']);
