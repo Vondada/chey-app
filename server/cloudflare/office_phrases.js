@@ -16,8 +16,11 @@ export function matchOfficePhrase(raw) {
   if (/\bwhat(?:'s|s| is)? (?:happening|going on) in the office\b/.test(t)) return { type: 'happening' };
   if (/\bwhat did (?:they|the office|the team|we) (?:build|ship|finish) today\b/.test(t)) return { type: 'builtToday' };
   if (/\bhow much (?:did we|have we) (?:make|made|earn|earned) today\b/.test(t)) return { type: 'earnedToday' };
-  if (/\b(?:what(?:'s|s| is)\s+stalled|any\s+stalled|what(?:'s|s| is)\s+stuck)\b/.test(t)) return { type: 'stalled' };
+  if (/\b(?:what(?:'s|s| is)\s+stalled|any\s+stalled|what(?:'s|s| is)\s+stuck|is\s+anything\s+(?:stalled|stuck)|anything\s+stuck)\b/.test(t)) return { type: 'stalled' };
   if (/\bread (?:this |the )?office(?: board)?(?: to me)?\b/.test(t)) return { type: 'readOffice' };
+  // "Who is in the office?", "what is the team working on?": the same board (comprehension audit).
+  if (/^who(?:'s|s| is| are)? (?:in|at|working in) the office\b/.test(t)) return { type: 'readOffice' };
+  if (/^what(?:'s|s| is| are) (?:the team|the office|my team|the agents|everyone in the office) (?:working on|doing)(?: right now| now| today)?\s*\??$/.test(t)) return { type: 'happening' };
   const who = t.match(/\bwhat(?:'s|s| is) ([a-z]+) (?:doing|working on)\b/);
   if (who && AGENTS.includes(who[1])) return { type: 'agentStatus', agentId: who[1] };
   if (/^(?:office )?stand down\b|\boffice,? stand down\b/.test(t)) return { type: 'standDown' };

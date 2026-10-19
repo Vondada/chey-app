@@ -11,6 +11,7 @@
 // the authoritative source again and the fresh result replaces the old one.
 
 import { isSafeMemoryText } from './research_memory.js';
+import { withoutProhibitions } from './owner_action_gate.js';
 
 const MAX = 300;
 export const DAY = 86400000;
@@ -60,7 +61,13 @@ export function ownerFactFromStatement(text) {
 
 // "what is my Worker URL?", "do you know my wifi name", "tell me my locker number"
 export function ownerFactQuestion(text) {
-  const m = /^(?:what\s+is|what\s+are|do\s+you\s+know|tell\s+me|remind\s+me\s+(?:of|what)|whats)\s+my\s+([a-z0-9][a-z0-9 '\-]{1,60}?)\s*\??$/i.exec(normalizeQuestion(text));
+  // "Don't guess" and "and where did you get that?" ask how the answer is held, not a different fact
+  // (comprehension audit); the answer from memory says it came from the owner.
+  const asked = normalizeQuestion(withoutProhibitions(text)).replace(/[\s.:]+$/, '')
+    .replace(/\s+(?:and\s+)?(?:where|how)\s+(?:did\s+you\s+(?:get|learn|find|hear)|do\s+you\s+know)\s+(?:that|it|this)$/, '');
+  const m = /^(?:what\s+is|what\s+are|do\s+you\s+know|tell\s+me|remind\s+me\s+(?:of|what)|whats)\s+my\s+([a-z0-9][a-z0-9 '\-]{1,60}?)\s*\??$/i.exec(asked)
+    // "Do you remember what my wife's name is?", "what do you remember about my favorite food?"
+    || /^(?:do\s+you\s+(?:still\s+)?remember|what\s+do\s+you\s+(?:remember|know)\s+about)\s+(?:what\s+)?my\s+([a-z0-9][a-z0-9 '\-]{1,60}?)(?:\s+(?:is|are|was|were))?\s*\??$/i.exec(asked);
   return m ? normalizeQuestion(m[1]) : null;
 }
 
@@ -244,16 +251,23 @@ export async function cachedResearch(storage, question, research, now = Date.now
  * Returns { answer, source, verified_at } or null.
  */
 export async function knownAnswer(storage, message, { now = Date.now(), memories = [] } = {}) {
-  const subject = ownerFactQuestion(message);
-  if (!subject) return null;
-  const record = await recallKnowledge(storage, factKey(subject), { now });
+  const asked = ownerFactQuestion(message);
+  if (!asked) return null;
+  // Speech drops the apostrophe: "my wifes name" is the fact saved as "my wife's name" (comprehension audit).
+  let subject = asked;
+  let record = await recallKnowledge(storage, factKey(subject), { now });
+  const spoken = asked.replace(/\b([a-z]{2,})s(?=\s+[a-z])/g, '$1 s');
+  if (!record && spoken !== asked) {
+    record = await recallKnowledge(storage, factKey(spoken), { now });
+    if (record) subject = spoken;
+  }
   if (!record) return null;
   const words = subject.split(' ').filter((w) => w.length > 1);
   const mentions = (Array.isArray(memories) ? memories : []).map((m) => String(m?.text ?? m ?? '').toLowerCase())
     .filter((text) => words.every((w) => text.includes(w)));
   const newest = mentions[mentions.length - 1];
   if (!newest || !newest.includes(record.answer.toLowerCase())) return null;
-  return { answer: `Your ${subject} is ${record.answer}, sir.`, source: record.source, verified_at: record.verified_at };
+  return { answer: `Your ${subject.replace(/ s\b/g, "'s")} is ${record.answer}, sir.`, source: record.source, verified_at: record.verified_at };
 }
 
 /** "remember that my X is Y" also becomes a verified owner fact. */

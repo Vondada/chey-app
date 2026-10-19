@@ -571,3 +571,203 @@ test('worker location handling runs before generic chat model and guards forecas
   assert.ok(reply > clock);
   assert.ok(source.includes("source: 'location_provenance'"));
 });
+
+test('comprehension audit: a model reply cannot claim it sent, bought, deleted, rendered, traded or opened anything', async () => {
+  const { guardClaimedOwnerActions: guard } = await import('./truth_layer.js');
+  const lie = guard('Done, sir. I sent it and bought it.');
+  assert.equal(lie.text, 'Nothing was sent or bought, sir: I have no record of doing that.');
+  assert.equal(lie.removed.length, 2);
+  for (const claim of ['Your email has been sent to Sarah.', 'I placed a paper trade for 1 MNQ.', 'I started the coding job.', 'I opened YouTube for you.',
+    'I made the 30-second video.', 'I set a reminder for 8am tomorrow.', 'I switched to live trading.', 'I added it to your calendar for Friday.',
+    'I have already sent the email.', 'I closed your MNQ position.', 'Consider it done.', 'I rendered the volcano video.', 'I paid the electric bill.', 'I ordered a pizza.', 'Your video has been rendered.']) {
+    assert.notEqual(guard(claim).removed.length, 0, claim);
+  }
+  // Facts, refusals, conditions, quotes and ordinary chat are kept as written.
+  for (const kept of ['Apple bought Beats in 2014.', 'I have not sent anything yet, sir.', 'Once I have sent it, I will tell you.', 'I can send it once you say yes.',
+    'I would have paid it, but the account is not connected.', 'You said "I sent it" yesterday.', 'I made a note of that.', 'I started learning French last year.',
+    'Done with the analysis: MNQ is up.', 'Paris is the capital of France.', 'Here is a joke: why did the chicken cross the road?',
+    'I paid close attention to your request.', 'I ordered them by date for you.', 'I rendered it as a table below.']) {
+    assert.equal(guard(kept).text, kept, kept);
+  }
+  // Text the owner asked CHE to write in his voice keeps it; CHE's own "Done, sir." around it does not.
+  assert.equal(guard('Here is your text: I bought the tickets, see you at 8.', { message: 'write a text to my wife saying I bought the tickets' }).removed.length, 0);
+  assert.match(guard('Done, sir. I sent it and bought it.', { message: "Draft an email to Mike about Friday's meeting" }).text, /^Nothing was sent or bought, sir/);
+  assert.equal(guard('I bought you flowers.', { message: 'Tell me a story about a robot' }).removed.length, 0);
+});
+
+test('comprehension audit: "what city am I in?" is a location question, and "what changed in your code this week?" reads the change log', async () => {
+  const { changeHistoryIntent } = await import('./truth_layer.js');
+  assert.equal(asksForCurrentOwnerLocation('What city am I in?'), true);
+  assert.equal(asksForCurrentOwnerLocation('what city am i in right now'), true);
+  assert.equal(asksForCurrentOwnerLocation('What city is the Eiffel Tower in?'), false);
+  assert.equal(changeHistoryIntent('What changed in your code this week?'), true);
+  assert.equal(changeHistoryIntent('what changed in the market today'), false);
+});
+
+// Comprehension audit, review of PR #356 (issues #350): the claim guard reads the request before it exempts a reply, and
+// names the common ways of saying an action happened that have no matching verb.
+test('review #356: a draft that also asks CHE to send or post is checked; a plain draft keeps the owner\'s text', async () => {
+  const { guardClaimedOwnerActions: guard } = await import('./truth_layer.js');
+  const mom = 'Sure. I texted your mom that you are on the way and bought the card.';
+  const sent = guard(mom, { message: 'draft a text to mom and send it' });
+  assert.equal(sent.text, 'Sure. Nothing was sent or bought, sir: I have no record of doing that.');
+  assert.equal(sent.removed.length, 1);
+  assert.match(guard('Sure. I posted it to TikTok and bought ads.', { message: 'write a message to mark and post it to tiktok' }).text, /^Sure\. Nothing was uploaded or bought, sir/);
+  // Ordinary drafts (no action verb, or "text" as a noun) keep what the owner asked to be written.
+  assert.equal(guard('Here is your text: I bought the tickets, see you at 8.', { message: 'write a text to my wife saying I bought the tickets' }).removed.length, 0);
+  assert.equal(guard('Here is your post: I bought the ticket.', { message: 'write a post about my trip' }).removed.length, 0);
+});
+
+test('review #356: a story that also asks CHE to send is not exempt; a plain story still is', async () => {
+  const { guardClaimedOwnerActions: guard } = await import('./truth_layer.js');
+  const story = guard('Done, sir. I sent it and bought it.', { message: 'tell me a story and then send sarah the report' });
+  assert.equal(story.text, 'Nothing was sent or bought, sir: I have no record of doing that.');
+  assert.equal(guard('Once upon a time, sir, a robot bought you flowers.', { message: 'tell me a story about a robot' }).removed.length, 0);
+});
+
+test('review #356: a claim with no matching verb is removed, for the request that makes it', async () => {
+  const { guardClaimedOwnerActions: guard } = await import('./truth_layer.js');
+  // A claim about an email, an order or a file is not CHE's own action: the note says CHE cannot confirm it (review of
+  // PR #356, round 2). "I've taken care of the bill" and "pagué" are CHE's own action, so the denial names them.
+  const CANNOT_CONFIRM = 'I cannot confirm that from my record, sir.';
+  const cases = [
+    ["It's been dispatched to Sarah, sir.", 'send sarah the report', CANNOT_CONFIRM],
+    ['Your order went through, sir.', 'send sarah the report', CANNOT_CONFIRM],
+    ["I've taken care of the bill, sir.", 'pay the bill', 'Nothing was paid, sir: I have no record of doing that.'],
+    ['Purchase complete. Confirmation number 4471.', 'buy it', CANNOT_CONFIRM],
+    ['Your notes are gone now, sir.', 'delete my notes', CANNOT_CONFIRM],
+    ['The email is on its way to Sarah.', 'send sarah the report', CANNOT_CONFIRM],
+    ['Listo, señor: pagué la factura.', 'pay the bill', 'Nothing was paid, sir: I have no record of doing that.'],
+  ];
+  for (const [reply, message, note] of cases) {
+    const out = guard(reply, { message });
+    assert.ok(out.removed.length >= 1, reply);
+    assert.equal(out.text, note, reply);
+  }
+  // Facts and ordinary talk with the same nouns stay as written.
+  for (const kept of ['The order form is on the table.', 'Your notes are on the desk, sir.', 'Your order form is on the desk, sir.', 'Listo para la reunión, señor.',
+    'Once the email is on its way, I will tell you.', 'Si no lo he pagado, dímelo.']) {
+    assert.equal(guard(kept, { message: 'pay the bill' }).text, kept, kept);
+  }
+});
+
+// Review of PR #356, blocker 1: the five phrasings, with the request that makes each a lie, and the counter-cases.
+test('review #356: "went out", "is with", "in Sarah\'s inbox", "all set", "done and dusted" and "ya está hecho" are claims for a send', async () => {
+  const { guardClaimedOwnerActions: guard } = await import('./truth_layer.js');
+  const message = 'send sarah the report';
+  // A claim about the email or the report is taken out with the neutral note; "All set" and "Ya está hecho" are CHE's own
+  // completion, so the denial names the request's verb.
+  for (const reply of ["Okay, I'm on it: the email went out.", 'Got it, the report is in Sarah\'s inbox now.']) {
+    const out = guard(reply, { message });
+    assert.ok(out.removed.length >= 1, reply);
+    assert.equal(out.text, 'I cannot confirm that from my record, sir.', reply);
+  }
+  for (const reply of ['All set, sir. The report is with Sarah.', 'It is all done and dusted.', 'Ya está hecho.']) {
+    const out = guard(reply, { message });
+    assert.ok(out.removed.length >= 1, reply);
+    assert.equal(out.text, 'Nothing was sent, sir: I have no record of doing that.', reply);
+  }
+  for (const honest of ['The report did not go out yet.', 'No, it is not with Sarah.', 'The email never went out, sir.', 'It is not all done and dusted yet.']) {
+    assert.equal(guard(honest, { message }).text, honest, honest);
+  }
+});
+
+test('review #356: "All set" and "done and dusted" are not claims when the request asks for no action', async () => {
+  const { guardClaimedOwnerActions: guard } = await import('./truth_layer.js');
+  const status = 'All set, sir. Your meeting is at noon.';
+  assert.equal(guard(status, { message: 'what is on my calendar?' }).text, status);
+  assert.equal(guard('It is all done and dusted, sir.', { message: 'how did the report go?' }).text, 'It is all done and dusted, sir.');
+});
+
+// Review of PR #356, round 2, blocker 2: the denial "Nothing was X" is only for CHE's own action. A thing or a person that went
+// out, is with someone, or is "hecho" on a status question is a claim CHE cannot confirm, or no claim at all.
+test('review #356: the denial names only CHE\'s own action; status, recall and Spanish status replies are not denied', async () => {
+  const { guardClaimedOwnerActions: guard } = await import('./truth_layer.js');
+  assert.equal(guard('The report went out of date last week, sir.', { message: 'how is the report going?' }).text, 'The report went out of date last week, sir.');
+  assert.equal(guard('The report is with errors, sir.', { message: 'how is the report going?' }).text, 'The report is with errors, sir.');
+  assert.equal(guard('The email is with no attachments, sir.', { message: 'how is the report going?' }).text, 'The email is with no attachments, sir.');
+  assert.equal(guard('El café ya está hecho, señor.', { message: 'el café ya está hecho?' }).text, 'El café ya está hecho, señor.');
+  assert.equal(guard('Ya está hecho, señor. Está en la cocina.', { message: '¿está listo el café?' }).text, 'Ya está hecho, señor. Está en la cocina.');
+  assert.equal(guard('The report went out on Monday, sir.', { message: 'did the report go out?' }).text, 'I cannot confirm that from my record, sir.');
+  assert.equal(guard('The email went out last Tuesday, sir.', { message: 'what did I send Ann last week?' }).text, 'I cannot confirm that from my record, sir.');
+  // CHE's own action keeps the denial, with or without a request.
+  assert.equal(guard('I sent it, sir.', { message: 'what did I send Ann last week?' }).text, 'Nothing was sent, sir: I have no record of doing that.');
+  assert.equal(guard('I sent it, sir.').text, 'Nothing was sent, sir: I have no record of doing that.');
+});
+
+// Review of PR #356, round 4: a question mark does not make a claim safe. A claim with a question tag is still checked; only a
+// question that opens with a question or status word is kept. The seven outputs match 98b190a.
+test('review #356: a claim with a question tag is taken out, and a real question is kept', async () => {
+  const { guardClaimedOwnerActions: guard } = await import('./truth_layer.js');
+  const message = 'send sarah the report';
+  const NOTHING_SENT = 'Nothing was sent, sir: I have no record of doing that.';
+  // The affirmation "Yes, I did." affirms the claim the guard just removed, so it is removed with it (review of PR #356, round 5).
+  assert.equal(guard('I sent it? Yes, I did.', { message }).text, NOTHING_SENT);
+  assert.equal(guard('I sent it. Yes, I did.', { message }).text, NOTHING_SENT);
+  assert.equal(guard('I sent it? Sí, lo hice.', { message }).text, NOTHING_SENT);
+  assert.equal(guard('Yes, I did.', { message }).text, 'Yes, I did.');
+  // The affirmation goes only with the sentence just before it (follow-up): a "Yes." after a question is the owner's answer.
+  assert.equal(guard('Your order went through, right? Is the calendar clear? Yes.', { message }).text,
+    'Is the calendar clear? Yes. I cannot confirm that from my record, sir.');
+  assert.equal(guard("I sent it, didn't I?", { message }).text, NOTHING_SENT);
+  assert.equal(guard('I sent Sarah the email, right?', { message }).text, NOTHING_SENT);
+  assert.equal(guard('Your order went through, right?', { message }).text, 'I cannot confirm that from my record, sir.');
+  assert.equal(guard("The email went out, didn't it?", { message }).text, 'I cannot confirm that from my record, sir.');
+  assert.equal(guard('Ya lo mandé, ¿verdad?', { message }).text, NOTHING_SENT);
+  assert.equal(guard('Ya está hecho, ¿verdad?', { message }).text, NOTHING_SENT);
+  // Real questions and an honest answer to one stay as written.
+  assert.equal(guard('All set? Should I send it now, sir?', { message }).text, 'All set? Should I send it now, sir?');
+  assert.equal(guard('Did I send it? I did.', { message }).text, 'Did I send it? I did.');
+  assert.equal(guard('Done, sir. I sent it. Should I send more?', { message }).text, `Should I send more? ${NOTHING_SENT}`);
+});
+
+// Review of PR #356, round 3: a delivery passive on a noun subject is a claim about a thing (the neutral note); a question is
+// not a claim; "ready to go" names no delivery.
+test('review #356: "the email is dispatched", "the report was sent yesterday", "the report got sent" are neutral, and a question is kept', async () => {
+  const { guardClaimedOwnerActions: guard } = await import('./truth_layer.js');
+  const message = 'send sarah the report';
+  for (const reply of ['The email is dispatched, sir.', 'The report was sent yesterday, sir.', 'The report got sent, sir.']) {
+    const out = guard(reply, { message });
+    assert.ok(out.removed.length >= 1, reply);
+    assert.equal(out.text, 'I cannot confirm that from my record, sir.', reply);
+  }
+  assert.equal(guard('All set? Should I send it now, sir?', { message }).text, 'All set? Should I send it now, sir?');
+  assert.equal(guard('The report is ready to go, sir.', { message }).text, 'The report is ready to go, sir.');
+  // Not a delivery: a negated or modal passive is kept.
+  assert.equal(guard('The report was never sent, sir.', { message }).text, 'The report was never sent, sir.');
+  assert.equal(guard('The report will be sent tomorrow, sir.', { message }).text, 'The report will be sent tomorrow, sir.');
+});
+
+// Review of #356, round 3 (B2): a source phrase keeps the sentence only when a record CHE read this turn backs it.
+test('claim guard: "according to your calendar" stays when this turn read a record that backs it, and is neutral without one', async () => {
+  const { guardClaimedOwnerActions } = await import('./truth_layer.js');
+  const message = 'send Sarah the report';
+  const calendar = 'Scheduled for Friday at 3 PM, according to your calendar, sir.';
+  const log = 'Forwarded to Sarah yesterday, sir, per the log.';
+  const records = [JSON.stringify({ calendar: [{ title: 'Dentist', when: 'Friday 3 PM' }] }), JSON.stringify({ log: [{ action: 'forwarded', to: 'Sarah' }] })];
+  assert.equal(guardClaimedOwnerActions(calendar, { message, records }).text, calendar);
+  assert.equal(guardClaimedOwnerActions(log, { message, records }).text, log);
+  assert.equal(guardClaimedOwnerActions(calendar, { message }).text, 'I cannot confirm that from my record, sir.');
+  // A record that does not name the same day and time does not back it.
+  assert.equal(guardClaimedOwnerActions(calendar, { message, records: [JSON.stringify({ calendar: [{ when: 'Monday 9 AM' }] })] }).text, 'I cannot confirm that from my record, sir.');
+  // A record never turns CHE's own unbacked action into a kept one: "from your account" is not a source.
+  assert.equal(guardClaimedOwnerActions('Sent the report to Sarah from your account, sir.', { message, records }).text, 'Nothing was sent, sir: I have no record of doing that.');
+});
+
+test('review #356: draft request does not excuse a fabricated send outside drafted text', async () => {
+  const { guardClaimedOwnerActions: guard } = await import('./truth_layer.js');
+  const message = 'Draft an email to Mike about Friday';
+  const claim = guard('I drafted the email and sent it.', { message });
+  assert.match(claim.text, /Nothing was sent, sir/i);
+  assert.doesNotMatch(claim.text, /and sent it/i);
+  // Genuine written content remains, including a first-person verb in the owner's voice.
+  assert.equal(guard('Here is your text: I bought the tickets, see you at 8.', {
+    message: 'write a text to my wife saying I bought the tickets',
+  }).removed.length, 0);
+  // A false prefatory status report gets checked while the following draft stays intact.
+  const preface = guard('I sent the email. Here is your text: I bought the tickets, see you at 8.', {
+    message: 'write a text to my wife saying I bought the tickets',
+  });
+  assert.doesNotMatch(preface.text, /^I sent the email/i);
+  assert.match(preface.text, /Here is your text: I bought the tickets/i);
+});

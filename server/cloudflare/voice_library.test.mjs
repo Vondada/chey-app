@@ -239,3 +239,17 @@ test('settings are refused, not read as 0 or 1, when the value is null, true or 
   assert.deepEqual(validateElevenSettings({ stability: '0.5' }, flags), { stability: 0.5 });
   assert.deepEqual(validateElevenSettings({ similarity_boost: 0.82 }, flags), { similarity_boost: 0.82 });
 });
+
+test('comprehension audit: "what voice are you using?" reads the saved choice and "switch your voice to Adam" is a switch', async () => {
+  const { mightBeVoiceRequest: might, voiceStudioIntent: intent } = await import('./voice_library.js');
+  for (const text of ['What voice are you using right now?', 'which voice are you using', "CHE, what voice are you using? Don't change it.",
+    "Don't change anything, just tell me which voice you're on.", 'whats your current voice']) {
+    assert.deepEqual(intent(text), { kind: 'current' }, text);
+    assert.equal(might(text), true, text);
+  }
+  assert.deepEqual(intent('Switch your voice to Adam.', { names: ['Adam', 'Mary'] }), { kind: 'use_name', name: 'Adam' });
+  assert.deepEqual(intent('change your voice to Bella', { names: ['Adam', 'Mary'] }), { kind: 'unknown_name', spoken: 'bella' });
+  // Advice and mixed requests keep their routes (readonly_acceptance), and other switches are not voices.
+  for (const text of ['which voice should I choose', 'Which voice did I pick? Switch to Adam instead.']) assert.equal(intent(text)?.kind ?? null, null, text);
+  assert.equal(intent('switch to paper', { names: ['Adam', 'Mary'] }), null);
+});

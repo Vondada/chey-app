@@ -92,3 +92,9 @@ test('paused autonomy is said beside queued work', () => {
   assert.doesNotMatch(activityReceipt({ now: NOW, jobs, paused: false }), /Autonomy is paused/);
   assert.doesNotMatch(activityReceipt({ now: NOW, jobs: [], paused: true }), /Autonomy is paused/);
 });
+
+test('comprehension audit: "is any coding job running right now?" reads the job records', () => {
+  assert.equal(activityStatusIntent('Is any coding job running right now?'), 'active');
+  assert.equal(activityStatusIntent('are there any jobs running'), 'active');
+  assert.equal(activityStatusIntent('Is a job interview running late?'), '');
+});

@@ -846,3 +846,11 @@ test('a fast command or screen reply drops a held payment or app request, so a l
     assert.doesNotMatch(yes.reply, /laptop|spotify/i, `${phrase}: a later yes releases nothing`);
   }
 });
+
+test('comprehension audit: "what commands do you have?" is answered from the catalog', () => {
+  for (const text of ['What commands do you have?', 'which commands are there', 'chey list all your commands']) {
+    assert.deepEqual(readCommandSpeech(text), { kind: 'groups' }, text);
+  }
+  assert.deepEqual(readCommandSpeech('open commands'), { kind: 'open' });
+  assert.equal(readCommandSpeech('what commands should I use for youtube'), null);
+});
