@@ -424,6 +424,10 @@ test('a question is never a build by itself: which/what/how ... could/would ... 
     'Do you think any of those features could improve your app?', 'Tell me which features could improve your app.',
     'Is there a feature that could improve your app?', 'Could any of those features improve your app?', 'Would any of those features improve your app?',
     'Should we add dark mode to your app?', 'How do we fix the login bug in your app?', 'Do you think I should build those features into your app?',
+    // Round 3: and/then clauses inside a question.
+    'Should we add dark mode and fix the login bug in your app?', 'Do you think we should improve your app and fix the login bug?',
+    'Is it worth it to add dark mode and improve your app?', 'Would it be better to refactor your worker and then fix the router?',
+    'Which of those features should I pick and build into your app?',
   ]) {
     assert.equal(currentTurnActionPolicy(text).codingJobAllowed, false, text);
     assert.equal(currentTurnActionPolicy(text).ownerAuthorizedBuild, false, text);
@@ -435,6 +439,10 @@ test('a question is never a build by itself: which/what/how ... could/would ... 
     // (a) imperatives and (b) direct polite requests (review of #356, round 2), and a statement that names the build.
     'Add dark mode to your app.', 'Fix the login bug in your app.', 'Build it into yourself.', 'Could you add dark mode to your app?',
     'Will you add dark mode to your app?', 'Fix the login bug in your app?', 'What I want you to do is build the search feature into your app.',
+    // Round 3 (required): "Do …" and "Have …" orders, "can you just", and unpunctuated voice.
+    'Do it now: fix the login bug in your app.', 'Do the dark mode change in your app.', 'Have your coding team fix the login bug in your app.',
+    'Can you just fix the login bug in your app?', 'do it now fix the login bug in your app', 'have the team fix the login bug in your app',
+    'Could you kindly fix the login bug in your app?',
   ]) {
     assert.equal(currentTurnActionPolicy(text).codingJobAllowed, true, text);
   }

@@ -10832,7 +10832,11 @@ export class CheState extends DurableObject {
         }).text;
         // Nothing on this path sends, buys, deletes, uploads, renders, trades or opens anything (connector
         // actions above only wait for approval), so a model sentence saying it did is removed.
-        const unclaimed = guardClaimedOwnerActions(reply, { message: rawMessage });
+        // This turn's connector, tool and screen results are the only records that can back "according to your calendar".
+        const unclaimed = guardClaimedOwnerActions(reply, {
+          message: rawMessage,
+          records: [body.screen_context, JSON.stringify(skillResults), JSON.stringify(actionResults), JSON.stringify(plugins), JSON.stringify(officeResults)],
+        });
         if (unclaimed.removed.length) console.log('CHE truth layer removed action claims', JSON.stringify(unclaimed.removed).slice(0, 800));
         reply = unclaimed.text;
         // Every link, headline, outlet and date in the reply must match a page

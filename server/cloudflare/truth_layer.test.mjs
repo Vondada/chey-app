@@ -737,3 +737,19 @@ test('review #356: "the email is dispatched", "the report was sent yesterday", "
   assert.equal(guard('The report was never sent, sir.', { message }).text, 'The report was never sent, sir.');
   assert.equal(guard('The report will be sent tomorrow, sir.', { message }).text, 'The report will be sent tomorrow, sir.');
 });
+
+// Review of #356, round 3 (B2): a source phrase keeps the sentence only when a record CHE read this turn backs it.
+test('claim guard: "according to your calendar" stays when this turn read a record that backs it, and is neutral without one', async () => {
+  const { guardClaimedOwnerActions } = await import('./truth_layer.js');
+  const message = 'send Sarah the report';
+  const calendar = 'Scheduled for Friday at 3 PM, according to your calendar, sir.';
+  const log = 'Forwarded to Sarah yesterday, sir, per the log.';
+  const records = [JSON.stringify({ calendar: [{ title: 'Dentist', when: 'Friday 3 PM' }] }), JSON.stringify({ log: [{ action: 'forwarded', to: 'Sarah' }] })];
+  assert.equal(guardClaimedOwnerActions(calendar, { message, records }).text, calendar);
+  assert.equal(guardClaimedOwnerActions(log, { message, records }).text, log);
+  assert.equal(guardClaimedOwnerActions(calendar, { message }).text, 'I cannot confirm that from my record, sir.');
+  // A record that does not name the same day and time does not back it.
+  assert.equal(guardClaimedOwnerActions(calendar, { message, records: [JSON.stringify({ calendar: [{ when: 'Monday 9 AM' }] })] }).text, 'I cannot confirm that from my record, sir.');
+  // A record never turns CHE's own unbacked action into a kept one: "from your account" is not a source.
+  assert.equal(guardClaimedOwnerActions('Sent the report to Sarah from your account, sir.', { message, records }).text, 'Nothing was sent, sir: I have no record of doing that.');
+});

@@ -307,6 +307,10 @@ export function classifyOwnerTurn(text, { lastUser = '', hasHeldAction = false }
   if (GREET_RE.test(s) && words <= 5) return turn('greeting');
   if (THANKS_RE.test(s) && words <= 4) return turn('thanks');
   if (CORRECTION_RE.test(s)) return turn('correction');
+  // "Do it now: fix the login bug in your app" names its own action. "Do it now" is emphasis there, not a reference to
+  // the last request, so the order is never swapped for an earlier one (review of #356, round 3: a dropped order is a failure).
+  const ownAction = s.replace(/^(?:just |please )?do (?:it|this|that)(?: (?:now|right now|today|asap))? (?=\S)/, '');
+  if (ownAction !== s && ACTION_START_RE.test(ownAction)) return turn('action');
   if (REFERENCE_RE.test(s)) return turn('followup', { reference: true });
   const actionLike = ACTION_START_RE.test(s) || ACTION_ANYWHERE_RE.test(s);
   // "why?" and "and the other one?" lean on the last request; a full new question does not.

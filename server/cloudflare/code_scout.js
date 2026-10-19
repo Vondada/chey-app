@@ -152,18 +152,29 @@ export function hypotheticalChange(text) {
 // which" request. Shared with REA (rea_runner.js), so "Should I add those features into yourself?" is not a build there.
 const BUILD_VERB = String.raw`(?:implement|integrate|adapt|apply|install|add|upgrade|update|improve|rewrite|refactor|build|rebuild|change|modify|patch|fix|repair|create|make|start|open|queue|launch|run|resume|continue|retry|recover|finish|merge|ship|redesign|remove|move|restyle|put|study|work\s+on)`;
 const TURN_LEAD = String.raw`^\s*(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:(?:ok(?:ay)?|so|and|now|then|alright|well|great|good|also)[,]?\s+)*(?:(?:for|in)\s+(?:this|the)\s+(?:task|change|update)[,:]?\s*)?`;
-const OPENS_BUILD = new RegExp(String.raw`${TURN_LEAD}(?:(?:please|now|just)\s+|go\s+ahead\s+(?:and\s+)?|i\s+(?:want|need)\s+you\s+to\s+|(?:can|could|would|will)\s+you\s+(?:please\s+)?)?${BUILD_VERB}\b`, 'i');
-// A question by its opening: an auxiliary or modal ("Could any of those…", "Should we…", "Do you think…", "Is there…"),
-// a question word that does not open a statement ("What I want you to do is build…" does), or a request to be told
-// something ("Tell me which…"). "Do not deploy yet" is an order, not a question.
-const ASKS_NOT_ORDERS = new RegExp(String.raw`${TURN_LEAD}(?:(?:do|does|did)\b(?!\s+not\b)|(?:is|are|was|were|am|should|shall|could|would|can|will|may|might|must|has|have|had)\b|(?:how|what|which|who|whom|whose|where|when|why|whether)\b(?!\s+(?:i|we)\s+(?:want|need|would\s+like)\b)|(?:tell|show)\s+(?:me|us)\s+(?:which|what|whether|if|how|why|who|where|when)\b|let\s+me\s+know\s+(?:which|what|whether|if|how)\b|i\s+wonder\b)`, 'i');
+// (a) a sentence that opens with a build imperative; (b) a direct polite request, "just", "please" or "kindly" allowed.
+const ORDER_OPENING = new RegExp(String.raw`${TURN_LEAD}(?:(?:please|now|just|kindly)\s+|go\s+ahead\s+(?:and\s+)?|i\s+(?:want|need)\s+you\s+to\s+)?${BUILD_VERB}\b`, 'i');
+const POLITE_REQUEST = new RegExp(String.raw`${TURN_LEAD}(?:can|could|would|will)\s+you\s+(?:(?:just|please|kindly)\s+)*(?:${BUILD_VERB}|do|have|get)\b`, 'i');
+// "Do it now: fix …", "Do the dark mode change …", "Have your coding team fix …": an order that opens with "do" or a causative.
+const DO_ORDER = new RegExp(String.raw`${TURN_LEAD}(?:(?:please|now|just|kindly)\s+)?(?:do\s+(?:it|that|this|the|so|now|all|those|these)\b|(?:have|get)\s+(?:your|the|my|che['’]?s|our)\s+)`, 'i');
+// A question by its opening. An auxiliary or modal counts only with a subject after it ("Do you think …", "Should we …",
+// "Is it worth …", "Could any of those …"), so "Do it now" and "Have your team …" stay orders. A question word counts
+// unless it opens a statement ("What I want you to do is build …"); so does a request to be told something ("Tell me which …").
+const SUBJECT = String.raw`(?:you|we|i|they|he|she|it|there|this|that|these|those|the|any|anyone|anybody|anything|some|someone|somebody|one|your|my|our|his|her|their|people|y['’]?all|che)\b`;
+const ASKS_NOT_ORDERS = new RegExp(String.raw`${TURN_LEAD}(?:do\s+(?:you|we|i|they|y['’]?all|anyone|anybody|people|che)\b|(?:does|did)\s+${SUBJECT}|(?:have|has|had)\s+(?:you|we|i|they|he|she|it|anyone|anybody|people|che)\b|(?:is|are|was|were|am|should|shall|could|would|can|will|may|might|must)\s+${SUBJECT}|(?:how|what|which|who|whom|whose|where|when|why|whether)\b(?!\s+(?:i|we)\s+(?:want|need|would\s+like)\b)|(?:tell|show)\s+(?:me|us)\s+(?:which|what|whether|if|how|why|who|where|when)\b|let\s+me\s+know\s+(?:which|what|whether|if|how)\b|i\s+wonder\b)`, 'i');
 
 export function questionNotRequest(message) {
   const text = withoutQuotedText(String(message || '').trim());
-  // Sentences, and clauses after "and" or "then": "Tell me about it and fix the bug in your app" has an imperative clause.
-  const parts = text.split(/(?<=[.!?;])\s+|,?\s+(?:and|then|and\s+then)\s+(?=\S)/i).map((part) => part.trim()).filter(Boolean);
-  if (!parts.length || parts.some((part) => OPENS_BUILD.test(part))) return false;
-  return text.split(/(?<=[.!?;])\s+/).some((sentence) => /\?\s*$/.test(sentence) || ASKS_NOT_ORDERS.test(sentence));
+  let asked = false;
+  for (const sentence of text.split(/(?<=[.!?;])\s+/).map((part) => part.trim()).filter(Boolean)) {
+    if (POLITE_REQUEST.test(sentence) || ORDER_OPENING.test(sentence)) return false;
+    // Inside a question, "and/then <build verb>" is part of the question ("Should we add dark mode and fix the login bug?").
+    if (/\?\s*$/.test(sentence) || ASKS_NOT_ORDERS.test(sentence)) { asked = true; continue; }
+    // A statement: an order may open it ("Do it now: fix …") or a later clause ("Tell me about it and fix the bug in your app").
+    if (DO_ORDER.test(sentence)) return false;
+    if (sentence.split(/:\s+|,?\s+(?:and|then|and\s+then)\s+(?=\S)/i).slice(1).some((clause) => ORDER_OPENING.test(clause))) return false;
+  }
+  return asked;
 }
 
 function ownerBuildAuthorization(message) {

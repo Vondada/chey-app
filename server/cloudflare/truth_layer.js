@@ -579,11 +579,24 @@ const AFFIRMATION_ONLY = new RegExp(String.raw`^\s*(?:i\s+(?:did|have|am\s+sure)
 // A past-tense action with no subject: "Sent it.", "Sent the report to Sarah, sir." CHE cannot have made the call by itself,
 // so the claim is taken out and named (blocker 3, PR #356). "Sent items", "Sent from my iPhone" name no action and stay.
 const BARE_ACTION = /^\s*(sent|emailed|texted|forwarded|bought|purchased|ordered|paid|transferred|deleted|uploaded|published|posted|booked|scheduled|sold|subscribed)\s+(?=(?:it|them|that|this|the|a|an|your|my|his|her|their|our|me|him|everything|all|to|for)\b)/i;
-// A record statement names its source or another actor: "according to your calendar", "per the log", "from Sarah",
-// "by the campaign". It reports the owner's record, not an action by CHE, so the bare-action rule never denies it
-// (review of #356, round 2, N1). "by email" and "by the deadline" name a method or a time, not an actor.
+// Who acted, and where the claim comes from (review of #356, rounds 2 and 3). Only a third party named as the one who
+// acted keeps a bare action sentence: the sender of a message ("Sent the 9:14 email from Sarah") or a named actor after
+// "by" ("Paid for by the campaign"). The owner's own instrument ("from your account", "by your email") and a store or an
+// app ("from Amazon", "from the app") never exempt CHE's claim. "by email" and "by the deadline" are a method and a time.
+const SENT_BY_OTHER = /^\s*(?:[Ss]ent|[Ee]mailed|[Tt]exted|[Mm]essaged)\b[^.!?]*?\b(?:e-?mails?|messages?|texts?|letters?|notes?|invit\w*|replies|reply|voicemails?)\s+from\s+(?!(?:Your|My|The|Our)\b)[A-Z][\w'’-]*/;
+const DONE_BY_OTHER = /\bby\s+(?:[A-Z][\w'’-]*|the\s+(?!(?:deadline|end|time|way|morning|evening|afternoon|weekend|close|app|website|site|account|card|phone|iphone|email|inbox|bank|portal|store)\b)[a-z][\w'’-]*|him|them|someone|somebody)\b/;
+// A source phrase ("according to the log", "per the log", "as your calendar shows") keeps the sentence only when a record
+// CHE read this turn backs it. With no such record CHE cannot confirm it: the neutral note, never a denial.
 const NAMES_SOURCE = /\b(?:according\s+to|per\s+(?:the|your|my|our|his|her|their)\b|as\s+(?:shown|listed|recorded|logged|noted)\b|(?:your|the)\s+(?:calendar|log|logs|records?|history|statement|receipt|inbox)\s+(?:shows?|says?|lists?|has)\b)/i;
-const NAMES_ACTOR = /\b(?:from|by)\s+(?:[A-Z][\w'’-]*|(?:the|your|his|her|their|our)\s+(?!(?:deadline|end|time|way|morning|evening|afternoon|weekend|close)\b)[a-z][\w'’-]*|him|them|someone|somebody)\b/;
+// A record backs a sentence when it names every name and number in it ("Friday", "3", "Sarah"). The first word is
+// capitalized only by its place in the sentence, so it is not a name.
+function backedByRecord(sentence, records) {
+  const text = (Array.isArray(records) ? records : [records]).map((record) => String(record ?? '')).join('\n').toLowerCase();
+  if (!text.trim()) return false;
+  const rest = sentence.trim().split(/\s+/).slice(1).join(' ');
+  const facts = (rest.match(/\b(?:[A-Z][a-z][\w'’-]*|\d[\d:.]*)/g) || []).filter((word) => !/^(?:Sir|PM|AM)$/.test(word));
+  return facts.length > 0 && facts.every((fact) => text.includes(fact.toLowerCase()));
+}
 // "Done, sir." / "All done." / "Consider it done." / "Sent." opening a sentence.
 const DONE_RE = /^\s*(?:(?:all|it['’]?s|it\s+is)\s+)?done\b(?!\s+(?:with|by|in|for|on|at|before|after)\b)|\bconsider\s+it\s+done\b|^\s*(?:sent|ordered|bought|booked|scheduled|deleted|uploaded|published|posted|placed)\s*(?:[,.!]|$)/i;
 // A condition, a plan or a question about the action does not claim it: "once I've sent it", "if I had paid".
@@ -765,7 +778,8 @@ function quoted(sentence, index) {
   return ((before.match(/["“”]/g) || []).length % 2 === 1) || /['‘]\s*[^'’]*$/.test(before) && /^[^'’]*['’](?:\s|$|[,.!?])/.test(sentence.slice(index));
 }
 
-export function guardClaimedOwnerActions(reply, { message = '', acted = false } = {}) {
+// `records`: what CHE read this turn (connector, tool and screen results). Only these can back a sentence that names a source.
+export function guardClaimedOwnerActions(reply, { message = '', acted = false, records = [] } = {}) {
   const text = String(reply || '');
   // A story, a role-play or text the owner asked CHE to write may say "I sent it" in its own voice. A request
   // that also asks CHE to act (storyRequested and the draft test both check for one) is not exempt.
@@ -820,10 +834,17 @@ export function guardClaimedOwnerActions(reply, { message = '', acted = false } 
       }
     }
     // Blocker 3 (PR #356): a bare past-tense action is CHE's claim, named for the denial ("Nothing was sent, sir").
+    // A named third party who acted keeps it; a source phrase keeps it only with a record from this turn, and is
+    // otherwise unconfirmed (the neutral note); anything else is CHE's own claim, denied by name.
     const bare = BARE_ACTION.exec(plain);
-    if (!hit && bare && !NAMES_SOURCE.test(plain) && !NAMES_ACTOR.test(plain)) {
-      hit = STRONG_DONE[bare[1].toLowerCase()];
-      claimed.add(hit);
+    if (!hit && bare && !SENT_BY_OTHER.test(plain) && !DONE_BY_OTHER.test(plain)) {
+      if (!NAMES_SOURCE.test(plain)) {
+        hit = STRONG_DONE[bare[1].toLowerCase()];
+        claimed.add(hit);
+      } else if (!backedByRecord(plain, records)) {
+        hit = 'unconfirmed';
+        unconfirmed = true;
+      }
     }
     if (!hit && plain && DONE_RE.test(plain)) hit = 'done';
     if (hit) {

@@ -222,6 +222,12 @@ const NEVER_BUILD = [
   'Would any of those features improve your app?',
   'Should we add dark mode to your app?',
   'How do we fix the login bug in your app?',
+  // Round 3: an "and/then <build verb>" clause inside a question is still part of the question.
+  'Should we add dark mode and fix the login bug in your app?',
+  'Do you think we should improve your app and fix the login bug?',
+  'Is it worth it to add dark mode and improve your app?',
+  'Would it be better to refactor your worker and then fix the router?',
+  'Which of those features should I pick and build into your app?',
 ];
 function assertNoJob(turn, where) {
   assert.equal(turn.codingJobsCreated, 0, `${where}: no job. Reply: ${turn.reply.slice(0, 160)}`);
@@ -240,7 +246,8 @@ for (const say of NEVER_BUILD) {
 }
 
 // The REA path: a question about building the compared features is answered read-only, with no build.
-for (const say of ['Should I add those features into yourself?', 'Do you think I should build those features into yourself?']) {
+for (const say of ['Should I add those features into yourself?', 'Do you think I should build those features into yourself?',
+  'Should I pick those features and add them into yourself?', 'Which of those should I pick and then build them into yourself?']) {
   test(`B1 REA: "${say}" after a comparison is a read-only REA answer with no build, on either route`, async () => {
     for (const route of ['chat', 'change']) {
       const turn = (await owner([{ say: INVESTIGATE }, { say: OWNER_COMPARE }, { say, route }])).at(-1);
@@ -261,6 +268,13 @@ const STILL_BUILDS = [
   ['Could you add dark mode to your app?', ['chat', 'change']],
   ['Can you improve your code so you can create a PR?', ['chat', 'change']],
   ['Could you add those features into yourself?', ['chat']],
+  // Round 3 (required): the owner's real orders, typed and as unpunctuated voice. A dropped order is a failure.
+  ['Do it now: fix the login bug in your app.', ['chat', 'change']],
+  ['Do the dark mode change in your app.', ['chat', 'change']],
+  ['Have your coding team fix the login bug in your app.', ['chat', 'change']],
+  ['Can you just fix the login bug in your app?', ['chat', 'change']],
+  ['do it now fix the login bug in your app', ['chat', 'change']],
+  ['have the team fix the login bug in your app', ['chat', 'change']],
 ];
 for (const [say, routes] of STILL_BUILDS) {
   test(`B1: the build request "${say}" still builds (${routes.join(' and ')})`, async () => {

@@ -415,15 +415,40 @@ for (const [reply, reviewed] of [
 }
 // Review of #356, round 2 (N1): a statement that names its source or another actor is a record, not CHE's claim. Removing it
 // would tell the owner something did not happen when his records say it did.
-for (const record of [
-  'Scheduled for Friday at 3 PM, according to your calendar, sir.',
-  'Forwarded to Sarah yesterday, sir, per the log.',
-  'Sent the 9:14 email from Sarah, sir.',
-  'Paid for by the campaign, sir.',
-]) {
-  test(`claim guard N1: "${record}" names its source and stays as written`, async () => {
+// Round 3 (B2): a third party named as the one who acted keeps the sentence. A source phrase keeps it only when this
+// turn read a record that backs it; with no record it gets the neutral note, never a denial.
+for (const record of ['Sent the 9:14 email from Sarah, sir.', 'Paid for by the campaign, sir.']) {
+  test(`claim guard N1: "${record}" names another actor and stays as written`, async () => {
     const [turn] = await session(['send Sarah the report'], { model: record });
     assert.equal(turn.reply, record);
+  });
+}
+for (const record of ['Scheduled for Friday at 3 PM, according to your calendar, sir.', 'Forwarded to Sarah yesterday, sir, per the log.']) {
+  test(`claim guard N1: "${record}" with no record this turn gets the neutral note, never a denial`, async () => {
+    const [turn] = await session(['send Sarah the report'], { model: record });
+    assert.equal(turn.reply, 'I cannot confirm that from my record, sir.');
+  });
+}
+// Round 3 (B2): the owner's own instrument ("from your account", "by your email") and a store or app ("from Amazon",
+// "from the app") never exempt CHE's own claim. Money and delete claims included.
+const DENIED = (verb) => `Nothing was ${verb}, sir: I have no record of doing that.`;
+const NEUTRAL = 'I cannot confirm that from my record, sir.';
+for (const [reply, reviewed] of [
+  ['Sent the report to Sarah from your account, sir.', DENIED('sent')],
+  ['Sent it from your iPhone, sir.', DENIED('sent')],
+  ['Sent the report to Sarah, sir, according to the log.', NEUTRAL],
+  ['Sent the report to Sarah, sir, per the log.', NEUTRAL],
+  ['Sent the report to Sarah, sir, as your calendar shows.', NEUTRAL],
+  ['Sent the report to Sarah, sir, by your email.', DENIED('sent')],
+  ['Booked the table for Friday from the app, sir.', DENIED('scheduled')],
+  ['Paid the bill from your checking account, sir.', DENIED('paid')],
+  ['Paid the electric bill from your checking account, sir.', DENIED('paid')],
+  ['Ordered the shoes from Amazon, sir.', DENIED('ordered')],
+  ['Deleted the old emails from your inbox, sir.', DENIED('deleted')],
+]) {
+  test(`claim guard B2: "${reply}" is not let through`, async () => {
+    const [turn] = await session(['send Sarah the report'], { model: reply });
+    assert.equal(turn.reply, reviewed);
   });
 }
 // Blocker 3, must stay: an owner's words quoted in a question, a signature, a noun, and a plain statement that names no action by CHE.
