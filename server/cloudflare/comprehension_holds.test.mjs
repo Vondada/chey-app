@@ -316,9 +316,11 @@ test('review #356: "Is the calendar clear? Yes." keeps the "Yes." after a remove
   assert.equal(turn.reply, 'Is the calendar clear? Yes. I cannot confirm that from my record, sir.');
 });
 
-test('review #356: "Ann\'s invoice was paid, sir. The weather is fine today. Yes." keeps the "Yes."', async () => {
+// Blocker 1 (claim guard, PR #356 review): a third-party payment is a claim CHE cannot confirm, so it is taken out. The "Yes."
+// two sentences on is not right after it, so it stays.
+test('review #356: "Ann\'s invoice was paid, sir. The weather is fine today. Yes." takes the payment out and keeps the "Yes."', async () => {
   const [turn] = await session(['send Sarah the report'], { model: "Ann's invoice was paid, sir. The weather is fine today. Yes." });
-  assert.equal(turn.reply, "Ann's invoice was paid, sir. The weather is fine today. Yes.");
+  assert.equal(turn.reply, 'The weather is fine today. Yes. I cannot confirm that from my record, sir.');
 });
 
 test('review #356: "The weather is fine today. Yes." keeps the "Yes." after a removed claim one sentence back', async () => {
@@ -375,5 +377,51 @@ for (const say of ['put in order to finish the report', 'place a call in order t
     assert.equal(turn.meta.held_for_owner, undefined, 'not held for the owner');
     assert.equal(turn.modelCalls, 1, 'the model is reached');
     assert.equal(turn.reply, 'Sure, sir. Here is my answer.');
+  });
+}
+
+// Claim guard, PR #356 review blockers 1 to 3, through /api/chat. Each model reply is checked before the owner hears it.
+// Blocker 1: a payment about someone else (an invoice, a bill or rent) is a claim CHE cannot confirm.
+for (const reply of ["Ann's invoice was paid, sir.", 'The bill was paid, sir.', 'Ann paid her bill, sir.', 'The rent was paid, sir.', 'Your bill was paid, sir.']) {
+  test(`claim guard blocker 1: "${reply}" is taken out, not passed on`, async () => {
+    const [turn] = await session(['send Sarah the report'], { model: reply });
+    assert.equal(turn.reply, 'I cannot confirm that from my record, sir.');
+  });
+}
+// Blocker 2: an affirmation right after a removed claim goes with it, whatever short tail it has.
+const AFFIRMATIONS = [
+  ['I have sent it. Yes, sir.', 'Nothing was sent, sir: I have no record of doing that.'],
+  ['I sent it. Yes, I did, sir.', 'Nothing was sent, sir: I have no record of doing that.'],
+  ['The email went out. Yes, sir.', 'I cannot confirm that from my record, sir.'],
+  ['I sent it. Yes \u2014 I did.', 'Nothing was sent, sir: I have no record of doing that.'],
+  ['I sent it. Yes. Yes, I did.', 'Nothing was sent, sir: I have no record of doing that.'],
+];
+for (const [reply, reviewed] of AFFIRMATIONS) {
+  test(`claim guard blocker 2: "${reply}" leaves only the denial`, async () => {
+    const [turn] = await session(['send Sarah the report'], { model: reply });
+    assert.equal(turn.reply, reviewed);
+  });
+}
+// Blocker 3: a bare past-tense action with no subject is a claim CHE cannot have made by itself.
+for (const [reply, reviewed] of [
+  ['Sent it.', 'Nothing was sent, sir: I have no record of doing that.'],
+  ['Sent the report to Sarah, sir.', 'Nothing was sent, sir: I have no record of doing that.'],
+  ['Booked for Friday, sir.', 'Nothing was scheduled, sir: I have no record of doing that.'],
+]) {
+  test(`claim guard blocker 3: "${reply}" is taken out`, async () => {
+    const [turn] = await session(['send Sarah the report'], { model: reply });
+    assert.equal(turn.reply, reviewed);
+  });
+}
+// Blocker 3, must stay: an owner's words quoted in a question, a signature, a noun, and a plain statement that names no action by CHE.
+for (const honest of [
+  'Did you say "sent it"? I did not hear that, sir.',
+  'Sent from my iPhone is the footer you asked for, sir.',
+  'Sent items are in the folder, sir.',
+  'You asked me to send the report, sir. The report is ready, sir.',
+]) {
+  test(`claim guard blocker 3: "${honest}" stays as written`, async () => {
+    const [turn] = await session(['send Sarah the report'], { model: honest });
+    assert.equal(turn.reply, honest);
   });
 }

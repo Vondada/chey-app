@@ -561,7 +561,7 @@ const WEAK_DONE = {
   opened: 'opened', launched: 'opened', started: 'started', queued: 'started', dispatched: 'started', 'kicked off': 'started', rendered: 'rendered',
   switched: 'changed', changed: 'changed', connected: 'connected', set: 'set', added: 'added', created: 'created',
 };
-const ACTED_ON = String.raw`(?:order|trade|position|payment|purchase|transfer|subscription|email|e-mail|message|text|reminder|alarm|timer|event|meeting|appointment|invite|calendar|cart|draft|video|render|upload|job|task|investigation|build|exam|app|youtube|notes|spotify|account|broker|voice|mode|live|paper|note|file|post)s?`;
+const ACTED_ON = String.raw`(?:order|trade|position|payment|purchase|transfer|subscription|email|e-mail|message|text|reminder|alarm|timer|event|meeting|appointment|invite|calendar|cart|draft|video|render|upload|job|task|investigation|build|exam|app|youtube|notes|spotify|account|broker|voice|mode|live|paper|note|file|post|bill|invoice|rent)s?`;
 const FILLER_ADVERBS = String.raw`(?:(?:just|already|now|also|successfully|gone\s+ahead\s+and|went\s+ahead\s+and)\s+)*`;
 const STRONG_RE = new RegExp(String.raw`\b(?:I|we)(?:['’]ve|\s+have|\s+had)?\s+${FILLER_ADVERBS}(${Object.keys(STRONG_DONE).join('|')})\b`, 'i');
 const WEAK_RE = new RegExp(String.raw`\b(?:I|we)(?:['’]ve|\s+have|\s+had)?\s+${FILLER_ADVERBS}(${Object.keys(WEAK_DONE).join('|').replace(' ', '\\s+')})\b(?:\s+(?:it|that|this|them|you|everything))?(?:\s+(?:up|on|over|off|to|for|in|into))?(?:\s+(?:a|an|the|your|my|one|two|\d+|new|live|paper))?(?:\s+[\w-]+){0,2}?\s+${ACTED_ON}\b`, 'i');
@@ -570,6 +570,15 @@ const PASSIVE_RE = new RegExp(String.raw`\b(?:it|that|this|everything|all\s+of\s
 const MADE_RE = new RegExp(String.raw`\b(?:I|we)(?:['’]ve|\s+have)?\s+${FILLER_ADVERBS}(made)\s+(?:a|an|the|your|one)\s+(?:[\w-]+\s+){0,2}(?:video|render|reminder|event|appointment|order|payment|purchase|reservation|booking|trade)s?\b`, 'i');
 // More of the same claim later in the sentence: "I sent it and bought it".
 const MORE_DONE = new RegExp(String.raw`(?:\band|\bthen|,)\s+(?:also\s+)?(${Object.keys(STRONG_DONE).join('|')})\b`, 'gi');
+// An affirmation of the claim just taken out (blocker 2, PR #356): "Yes.", "Yes, sir.", "Yes, I did, sir.", "Yes — I did.".
+const AFFIRMATION_TAIL = String.raw`(?:i\s+(?:did|have|sent\s+(?:it|them)|am\s+sure)|it\s+did|that\s+is\s+right|that['’]s\s+right|lo\s+hice|lo\s+mand[eé]|es\s+verdad)`;
+const SEP = String.raw`[\s,!.\u2014\u2013-]`;
+const AFFIRMATION_AFTER = new RegExp(String.raw`^\s*(?:yes|yeah|yep|sure|s[ií])(?=${SEP}|$)${SEP}*(?:${AFFIRMATION_TAIL}${SEP}*)?(?:(?:sir|se[ñn]or)[\s!.]*)?$`, 'i');
+// Without "yes", only a plain "I did." or "that is right." counts. "I sent it." is a claim and is counted as one.
+const AFFIRMATION_ONLY = new RegExp(String.raw`^\s*(?:i\s+(?:did|have|am\s+sure)|it\s+did|that\s+is\s+right|that['’]s\s+right|lo\s+hice|es\s+verdad)${SEP}*(?:(?:sir|se[ñn]or)[\s!.]*)?$`, 'i');
+// A past-tense action with no subject: "Sent it.", "Sent the report to Sarah, sir." CHE cannot have made the call by itself,
+// so the claim is taken out and named (blocker 3, PR #356). "Sent items", "Sent from my iPhone" name no action and stay.
+const BARE_ACTION = /^\s*(sent|emailed|texted|forwarded|bought|purchased|ordered|paid|transferred|deleted|uploaded|published|posted|booked|scheduled|sold|subscribed)\s+(?=(?:it|them|that|this|the|a|an|your|my|his|her|their|our|me|him|everything|all|to|for)\b)/i;
 // "Done, sir." / "All done." / "Consider it done." / "Sent." opening a sentence.
 const DONE_RE = /^\s*(?:(?:all|it['’]?s|it\s+is)\s+)?done\b(?!\s+(?:with|by|in|for|on|at|before|after)\b)|\bconsider\s+it\s+done\b|^\s*(?:sent|ordered|bought|booked|scheduled|deleted|uploaded|published|posted|placed)\s*(?:[,.!]|$)/i;
 // A condition, a plan or a question about the action does not claim it: "once I've sent it", "if I had paid".
@@ -606,8 +615,8 @@ const DELIVERY_GAP = String.raw`(?:(?!(?:not|never|no|will|would|can|could|shoul
 const NEG_BEFORE = /\b(?:not|never|no)\s+(?:\S+\s+){0,1}$/i;
 // A thing that is sent, not a person: the noun before a delivery passive ("the email is dispatched", "the report was sent
 // yesterday", "the report got sent"). The verb must be a delivery verb, so "the report is ready to go" is not a claim.
-const DELIVERED_THING = String.raw`(e-?mails?|mails?|messages?|texts?|replies|reply|reports?|files?|notes?|letters?|sms|documents?|packages?|parcels?|orders?|payments?|invoices?|invitations?|gifts?|flowers|tickets?|reminders?|bookings?|reservations?|notices?)`;
-const DELIVERY_VERB = String.raw`(?:sent|dispatched|delivered|mailed|emailed|forwarded|shipped|posted|submitted|placed)`;
+const DELIVERED_THING = String.raw`(e-?mails?|mails?|messages?|texts?|replies|reply|reports?|files?|notes?|letters?|sms|documents?|packages?|parcels?|orders?|payments?|invoices?|invitations?|gifts?|flowers|tickets?|reminders?|bookings?|reservations?|notices?|bills?|rent)`;
+const DELIVERY_VERB = String.raw`(?:sent|dispatched|delivered|mailed|emailed|forwarded|shipped|posted|submitted|placed|paid)`;
 const CLAIM_PHRASES = [
   { re: /\b(?:it|that|this|everything|they)(?:\s+(?:has\s+been|have\s+been|has|have|is|was|were|are)|['’]s(?:\s+been)?|['’]re)\s+(?:now\s+|already\s+|successfully\s+|just\s+)?dispatched\b/i, label: 'sent' },
   { re: /\b(email|e-?mail|message|text|reply|report|file|note|mail|sms|package|parcel|order|gift|flowers|tickets?|payment|bill)\s+(?:is|was|are|were|has\s+been|have\s+been)\s+(?:now\s+|already\s+)?on\s+(?:its|their|the)\s+way\b/i, noun: 1, fallback: 'sent' },
@@ -626,6 +635,9 @@ const CLAIM_PHRASES = [
   // A delivery passive on a thing or a message, with or without "the" ("the email is dispatched", "the report was sent yesterday",
   // "the report got sent"). A claim about someone or something else: the neutral note (review of PR #356, round 3).
   { re: new RegExp(String.raw`\b(?:(?:the|your|my|this|that|its|their|our|these|those)\s+)?${DELIVERED_THING}\s+${DELIVERY_GAP}(?:is|was|are|were|has\s+been|have\s+been|had\s+been|got|gets|get)\s+${DELIVERY_GAP}${DELIVERY_VERB}\b`, 'i'), noun: 1, fallback: 'sent' },
+  // "Ann paid her bill, sir." / "he paid the rent": a payment someone else made, which CHE cannot confirm (blocker 1, PR #356).
+  // Case-sensitive: the subject is a capitalized name or a pronoun, so "I paid" stays with the first-person entries.
+  { re: /\b(?:[A-Z][\w'’-]*|he|she|they|someone|somebody)\s+paid\s+(?:(?:her|his|their|the|my|your|our|its|a)\s+)?(?:[\w'’-]+\s+)?(bills?|invoices?|rent|fees?|charges?|dues)\b/, noun: 1, fallback: 'paid', person: 'third' },
   // "All set, sir" and "It is all done and dusted" are CHE reporting on her own task, so they are claims only when the request
   // asked CHE to act: "what is on my calendar? All set" names nothing done. Removed, they take the request's own verb.
   { re: /^\s*all\s+set\b/i, label: 'done', gated: true, person: 'first' },
@@ -776,7 +788,7 @@ export function guardClaimedOwnerActions(reply, { message = '', acted = false } 
     if (/\?\s*$/.test(plain) && /^(?:¿|(?:all\s+set|done|ready|should|shall|do|does|did|is|are|was|were|can|could|would|will|want|what|which|who|where|when|how|why)\b)/i.test(plain)) { kept.push(sentence); continue; }
     // A bare affirmation right after a removed claim ("I sent it? Yes, I did.") affirms the claim just taken out, so it goes too
     // (review of PR #356, round 5). Only the sentence before counts (follow-up).
-    if (wasRemoved && /^\s*(?:yes|yeah|yep|sure|s[ií])(?=[\s,!.]|$)[\s,!.]*(?:i\s+did|i\s+have|i\s+sent\s+it|lo\s+hice|lo\s+mand[eé]|es\s+verdad)?[\s!.]*$/i.test(plain)) { removed.push(plain); prevRemoved = true; continue; }
+    if (wasRemoved && (AFFIRMATION_AFTER.test(plain) || AFFIRMATION_ONLY.test(plain))) { removed.push(plain); prevRemoved = true; continue; }
     if (drafting && !/\bsir\b/i.test(plain) && !DONE_RE.test(plain)) { kept.push(sentence); continue; }
     for (const re of [STRONG_RE, WEAK_RE, MADE_RE, PASSIVE_RE]) {
       const m = re.exec(plain);
@@ -801,6 +813,12 @@ export function guardClaimedOwnerActions(reply, { message = '', acted = false } 
         for (const label of phrase.first) claimed.add(label);
         if (!phrase.first.length) unconfirmed = true;
       }
+    }
+    // Blocker 3 (PR #356): a bare past-tense action is CHE's claim, named for the denial ("Nothing was sent, sir").
+    const bare = BARE_ACTION.exec(plain);
+    if (!hit && bare) {
+      hit = STRONG_DONE[bare[1].toLowerCase()];
+      claimed.add(hit);
     }
     if (!hit && plain && DONE_RE.test(plain)) hit = 'done';
     if (hit) {
