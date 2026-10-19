@@ -67,8 +67,23 @@ inspired_by, requires_verification, escalated_to, used_by_project, discovered_by
 
 Verification labels (`VERIFICATION_STATES`, the che-fact-check vocabulary):
 owner_attested, verified_source, unverified_reference, unverified_research_lead,
-model_opinion, hypothesis, unknown, external_correspondence (another AI's message: see
+model_opinion, hypothesis, curated_lesson, owner_practice, unknown, external_correspondence (another AI's message: see
 section 6). A model's text is never stored as a fact.
+
+Knowledge Atlas (#346): each card is a `concept_card` record, `curated_lesson`, in
+`Knowledge Atlas/<Coding|Trading>/<card>` (prerequisites are `builds_upon` links, related cards
+`related_to`), projected by `knowledge_atlas.projectAtlasToBrain` from the Brain sync and the first
+atlas turn, keyed by card id and hash (a second run writes nothing). The owner's study (lessons,
+graded quiz answers, corrections, exercises and drills) is `atlas_progress`, `owner_practice`,
+"measured from this chat", in the same card folder (`brain_store.recordLearning`). The Brain Room
+shows both as their own Knowledge Atlas lobe, never as memories. "Reset my progress" tombstones the
+`atlas_progress` records only, after the owner's yes.
+
+Each Worker deploy checks the atlas live (`che-worker-deploy.yml` → "Check CHE's Knowledge Atlas through
+the live Worker", `POST /api/atlas/probe`, the per-deploy token only). It runs on the isolated test CHE of
+the memory check, never the owner's: two lessons, two risk calculations, a quiz answer graded from the
+card's formula, real progress counts, the strategy verdict with no journal, and two counter-cases (a trade
+history question and a held buy). It prints a "Knowledge Atlas" notice that `release_status.mjs` shows.
 
 Significance (`assessSignificance`) is rule-based and explained: every score carries
 its reasons (owner said it, a correction, verified source, relationships, superseded,

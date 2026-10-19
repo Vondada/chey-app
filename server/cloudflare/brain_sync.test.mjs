@@ -5,6 +5,7 @@ import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
 import { fnv1a32 } from './brain_store.js';
 import { replyFromNdjson } from './brain_memory.js';
+import { ATLAS_CARDS } from './knowledge_atlas.js';
 
 const generated = new URL('./.brain_sync.test.generated.mjs', import.meta.url);
 writeFileSync(generated, readFileSync(new URL('./worker.js', import.meta.url), 'utf8').replace(
@@ -87,8 +88,10 @@ test('the Brain endpoints are the owner’s only', async (t) => {
   assert.equal((await che.call('/api/brain/push', { method: 'POST', body: { ops: [] } })).status, 401);
   const status = await (await che.call('/api/brain/status', { token: che.token })).json();
   assert.equal(status.available, true);
-  assert.equal(status.records, 1, 'a fresh Brain holds only CHE herself (che:core)');
+  assert.equal(status.records, 1 + ATLAS_CARDS.length, 'a fresh Brain holds CHE herself (che:core) and the Knowledge Atlas cards (atlas_brain.test.mjs)');
   assert.equal(status.by_kind.core, 1);
+  assert.equal(status.by_kind.concept_card, ATLAS_CARDS.length);
+  assert.equal(status.by_kind.memory, undefined, 'and no memory');
   assert.equal(status.regions.length, 16);
 });
 
@@ -192,8 +195,9 @@ test('a concurrent edit from the phone is kept as a conflict, never dropped, and
   assert.equal(now.rev, 3);
   const digest = (await (await che.call('/api/brain/status', { token: che.token })).json()).digest;
   const core = await (await che.call('/api/brain/record?id=che:core', { token: che.token })).json();
-  assert.equal(digest.count, 2, 'the note and CHE herself');
-  assert.equal(digest.sum, (fnv1a32('note:x:3') + fnv1a32(`che:core:${core.rev}`)) % 4294967296, 'the digest is the sum of id:rev hashes');
+  const cards = (await (await che.call('/api/brain/changes?since=0&limit=1000', { token: che.token })).json()).records.filter((r) => r.kind === 'concept_card');
+  assert.equal(digest.count, 2 + cards.length, 'the note, CHE herself and the Knowledge Atlas cards');
+  assert.equal(digest.sum, [`note:x:3`, `che:core:${core.rev}`, ...cards.map((r) => `${r.id}:${r.rev}`)].reduce((s, x) => (s + fnv1a32(x)) % 4294967296, 0), 'the digest is the sum of id:rev hashes');
 });
 
 test('a memory deleted on the phone leaves CHE’s memory list and stays deleted through the next projection; an edit there changes its words here', async (t) => {
@@ -214,7 +218,7 @@ test('a memory deleted on the phone leaves CHE’s memory list and stays deleted
   const changes = await (await che.call('/api/brain/changes?since=0', { token: che.token })).json();
   const mine = changes.records.find((r) => r.id === record.id);
   assert.equal(mine.deleted, true, 'the projection after the delete does not bring it back');
-  assert.equal((await (await che.call('/api/brain/search?q=ana%20lisbon', { token: che.token })).json()).hits.length, 0);
+  assert.equal((await (await che.call('/api/brain/search?q=ana%20lisbon', { token: che.token })).json()).hits.filter((h) => h.kind !== 'concept_card').length, 0, 'only curated cards that share a word may match');
   const replay = await (await che.call('/api/brain/push', { method: 'POST', token: che.token, body: { ops: [{ op_id: 'c3', type: 'delete', id: record.id }], device: 'iphone' } })).json();
   assert.equal(replay.results[0].outcome, 'duplicate');
   assert.equal(replay.results[0].first_outcome, 'deleted');

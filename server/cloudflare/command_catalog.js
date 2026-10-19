@@ -190,6 +190,16 @@ export const COMMANDS = Object.freeze([
     examples: ['Mission status', 'How are my missions going?'],
     prompt: 'Mission status', produces: 'status', evidence: 'Job and mission records only.', keywords: ['status', 'progress', 'what is running', 'done', 'mission'],
   }),
+  C('learn', 'intelligence', 'EXPLORE', 'Learn coding and trading, beginner to expert.', {
+    title: 'Knowledge Atlas',
+    does: 'Teaches a coding or trading concept from CHE\'s Knowledge Atlas cards: a beginner, intermediate or expert explanation, an analogy, the exact formula, a tested worked example and a short quiz. Trading figures come only from your recorded paper journal and stored backtest. A topic with no card is said plainly, never made up.',
+    needs: [], route: 'che_knowledge_atlas', handler: 'knowledge_atlas.atlasIntent → answerAtlas',
+    input: { name: 'topic', required: false, hint: 'A concept or a request, like recursion or quiz me on expectancy' },
+    examples: ['Teach me recursion', 'Explain expectancy like I\'m a beginner', 'What\'s the formula for VWAP?', 'Quiz me on risk management', 'List the trading cards'],
+    prompt: 'Knowledge Atlas: {input}', produces: 'lesson',
+    evidence: 'The card and revision it came from; trading figures only from journal or backtest records; zero model calls.',
+    cost: 'Free: no AI engine is used.', keywords: ['learn', 'lesson', 'teach me', 'explain', 'formula', 'quiz', 'concept', 'beginner', 'expert', 'atlas'],
+  }),
 
   // ── YouTube ───────────────────────────────────────────────────────────
   C('yt-ideas', 'youtube', 'EXPLORE', 'Research promising video ideas.', {
