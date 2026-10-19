@@ -753,3 +753,21 @@ test('claim guard: "according to your calendar" stays when this turn read a reco
   // A record never turns CHE's own unbacked action into a kept one: "from your account" is not a source.
   assert.equal(guardClaimedOwnerActions('Sent the report to Sarah from your account, sir.', { message, records }).text, 'Nothing was sent, sir: I have no record of doing that.');
 });
+
+test('review #356: draft request does not excuse a fabricated send outside drafted text', async () => {
+  const { guardClaimedOwnerActions: guard } = await import('./truth_layer.js');
+  const message = 'Draft an email to Mike about Friday';
+  const claim = guard('I drafted the email and sent it.', { message });
+  assert.match(claim.text, /Nothing was sent, sir/i);
+  assert.doesNotMatch(claim.text, /and sent it/i);
+  // Genuine written content remains, including a first-person verb in the owner's voice.
+  assert.equal(guard('Here is your text: I bought the tickets, see you at 8.', {
+    message: 'write a text to my wife saying I bought the tickets',
+  }).removed.length, 0);
+  // A false prefatory status report gets checked while the following draft stays intact.
+  const preface = guard('I sent the email. Here is your text: I bought the tickets, see you at 8.', {
+    message: 'write a text to my wife saying I bought the tickets',
+  });
+  assert.doesNotMatch(preface.text, /^I sent the email/i);
+  assert.match(preface.text, /Here is your text: I bought the tickets/i);
+});
