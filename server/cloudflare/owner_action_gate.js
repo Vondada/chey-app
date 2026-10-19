@@ -147,8 +147,9 @@ function onlyOwnPlanMoney(t) {
     if (bans.some(([a, b]) => at >= a && at < b)) continue;
     const part = parts.find(([a, b]) => at >= a && at < b);
     if (!part || !OWN_PLAN_RE.test(t.slice(part[0], part[1]).trim())) return false;
-    // "… and buy apples" carries the plan; "… and can you pay the bill" or "and please pay it" asks CHE.
-    if (!OWN_MONEY_RE.test(c) && !BARE_MONEY_RE.test(c)) return false;
+    // "… and buy apples" carries the plan; "… and can you pay the bill", "and please pay it" or "and pay
+    // the bill for me" / "and buy me a TV" asks CHE.
+    if (!OWN_MONEY_RE.test(c) && !(BARE_MONEY_RE.test(c) && !/\b(?:for\s+(?:me|us)|me|us)\b/i.test(c))) return false;
     own = true;
   }
   return own;

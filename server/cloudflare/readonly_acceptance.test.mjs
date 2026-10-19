@@ -260,7 +260,9 @@ test('shopping: the owner\'s own plan with every purchase forbidden opens no mon
     // Review 3: a request to CHE joined by "and" is not the owner's plan, and "anything else" means one purchase is wanted.
     "I want to buy flowers and can you pay the electric bill, but don't buy anything else", "I want to buy flowers and I want you to pay the bill, don't buy anything else",
     "I want to buy flowers and please pay the electric bill, don't buy anything else", 'i want to buy apples dont buy anything and can you pay my rent',
-    "I want to buy flowers, but don't buy anything else"]) {
+    "I want to buy flowers, but don't buy anything else",
+    // Review 4: "for me" and "buy me" have someone else, CHE, paying.
+    "I want to buy flowers and pay the electric bill for me, don't buy anything", "I want to go to Walmart and buy me a TV, don't order anything online"]) {
     assert.deepEqual(classifyOwnerActions(ask), ['money'], ask);
   }
   for (const ask of ["Don't ask, delete anything older than a week from my notes", "Don't ask me, remove anything older than 30 days"]) {
