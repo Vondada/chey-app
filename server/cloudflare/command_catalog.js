@@ -372,6 +372,14 @@ export const COMMANDS = Object.freeze([
     examples: ['Any trade alerts?'],
     prompt: 'Any trade alerts?', produces: 'alerts', keywords: ['alert', 'notify', 'watch', 'alarm'],
   }),
+  C('trade-sim', 'trading', 'EXPLORE', 'Pause, resume or check the strategy simulation.', {
+    does: 'Pauses or resumes CHE\'s paper strategy simulation (ten rules on minute bars; no money, no model call), or reads its status. Owner only.',
+    needs: ['office'], route: 'che_strategy_sim', handler: 'strategy_sim.strategySimIntent → setStrategySimPaused / strategySimView',
+    input: { name: 'action', required: false, hint: 'pause, resume or status' },
+    examples: ['Pause the strategy simulation', 'Resume the strategy simulation', 'Strategy simulation status'],
+    prompt: 'Strategy simulation {input}', produces: 'simulation status', evidence: 'Stored simulation state and trades only.',
+    keywords: ['strategy simulation', 'simulation', 'pause simulation', 'resume simulation', 'paper strategies'],
+  }),
   C('trade-execute', 'trading', 'BUILD', 'Prepare authorized broker actions with confirmation.', {
     does: 'Places the current desk alert on your selected NinjaTrader account as a bracket order. Live accounts risk real money.',
     confirm: 'Places a real order on your broker account.',
