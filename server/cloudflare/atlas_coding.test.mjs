@@ -806,6 +806,23 @@ test('re-review of #360: word answers, the language name, CHE\'s parts and answe
   }
   // "It's fine" is still not quite.
   assert.equal(checkDrill(drill('c-python.d1'), 'the default list is fine').correct, false);
+  // The same ideas said of the fixed code describe the fix, not the bug: never a "right".
+  for (const [id, words] of [['c-performance.d1', 'the key includes the currency'], ['c-performance.d1', 'the key already has the currency in it'],
+    ['c-binary-search.d1', 'the loop is inclusive and checks the last item'], ['c-databases.d1', 'it uses a parameter so there is no injection'],
+    ['testing.d1', 'it records every failure'], ['c-debugging.d1', 'it refuses the whole message instead of cutting it'],
+    ['http-apis.d1', 'it only retries 5xx and never 400'], ['concurrency.d1', 'for of waits for every callback'],
+    ['c-python.d1', 'the default list is fresh on every call'], ['c-security.d2', 'it already blocks 127.0.0.1 and private addresses'],
+    ['c-security.d1', 'the payment is held because the comma ends the dont'], ['c-model-failover.d1', 'too large is checked first so it is never retried'],
+    ['c-self-repair.d1', 'the gate is protected so an attempt cannot edit it'], ['c-architecture.d1', 'the frame keeps not today and is lossless']]) {
+    assert.notEqual(checkDrill(drill(id), words).correct, true, `${id}: the fixed behaviour is not the bug: ${words}`);
+  }
+  // Every drill names what its fixed code does.
+  for (const { d } of DRILLS) assert.ok(d.contrary instanceof RegExp, `${d.id} has its contrary phrases`);
+  // The bug said plainly is still right.
+  for (const [id, words] of [['c-performance.d1', 'the key ignores the currency'], ['c-self-repair.d1', 'the gate is not protected, an attempt can edit it'],
+    ['c-architecture.d1', 'it drops not today but still says lossless'], ['c-debugging.d1', 'the message is cut silently instead of refused']]) {
+    assert.equal(checkDrill(drill(id), words).correct, true, `${id}: ${words}`);
+  }
 });
 
 test('through /api/chat with SQLite: exercise and drill answers are graded, never learned as speech corrections', { skip: sqlite ? false : 'node:sqlite unavailable' }, async () => {

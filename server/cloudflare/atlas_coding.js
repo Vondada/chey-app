@@ -1134,6 +1134,8 @@ const CRAFT = [
         probe: { calls: [['MNQ', 'USD'], ['MNQ', 'EUR']], buggy: ['MNQ in USD', 'MNQ in USD'], fixed: ['MNQ in USD', 'MNQ in EUR'] },
         finding: 'The cache key is only the symbol, but the answer also depends on the currency, so the second call gets the first call\'s answer. The key must include every input: symbol and currency.',
         concepts: [['currency', 'second argument', 'second input', 'other input', 'both inputs', 'every input', 'all inputs', 'both arguments', 'other argument'], ['key', 'keys', 'keyed']],
+        // What the fixed code does: an answer that says this describes the fix, not the bug, and is not judged.
+        contrary: /(?:includ\w*|has|have|contains?|uses|keyed (?:on|by)|built from|made from) (?:the |both |every |all |its )?(?:currency|inputs|arguments|symbol and (?:the )?currency)/,
       },
     ],
     repo_examples: [
@@ -1434,6 +1436,8 @@ const AUTONOMY = [
         probe: { calls: [['Request too large for model on tokens per minute (TPM): Limit 7000, Requested 10182']], buggy: [{ kind: 'rate_limit', resumable: true }], fixed: [{ kind: 'too_large', resumable: false }] },
         finding: 'The rate-limit rule is checked first and matches "tokens per minute", so a request that is too large is called resumable and retried forever. Check the too-large rule first: retrying the same request can never succeed.',
         concepts: [['order', 'first', 'before', 'too large', 'too big', 'size'], ['retry*', 'resumable', 'forever', 'loop*', 'never succeed*', 'rate limit*', 'tokens per minute']],
+        // What the fixed code does: an answer that says this describes the fix, not the bug, and is not judged.
+        contrary: /(?:too large|too big|size)(?: rule)? is checked first|(?:is|gets) never retried|(?:is|gets) not retried|isnt retried|never retries it/,
       },
     ],
     repo_examples: [
@@ -1520,6 +1524,8 @@ const AUTONOMY = [
         },
         finding: 'The attempt can edit the checkpoint verifier and the failover gate, the code that judges it, so a bad change could approve itself. The judge and its gates must be unsafe paths an attempt can never touch.',
         concepts: [['judge', 'verifier', 'checker', 'gate', 'checkpoint', 'failover', 'itself', 'its own judge', 'own checker'], ['edit*', 'chang*', 'modif*', 'touch*', 'writ*', 'approv*', 'allowed', 'rewrit*']],
+        // What the fixed code does: an answer that says this describes the fix, not the bug, and is not judged.
+        contrary: /(?:gate|judge|verifier|checker|it) (?:is|are) (?:already )?(?:protected|locked|safe|off limits)|(?:attempt|it) (?:can ?not|cant) (?:edit|change|touch|modify|rewrite)/,
       },
     ],
     repo_examples: [
@@ -1554,6 +1560,8 @@ const FIX_DRILLS = {
       probe: { calls: [['No need to ask, pay the electric bill'], ["Don't worry about the cost, buy the AirPods"], ["Don't buy anything"]], buggy: [false, false, false], fixed: [true, true, false] },
       finding: 'The prohibition runs past the comma to the end of the sentence, and any "don\'t" counts, even one that forbids nothing CHE could do. So "No need to ask, pay the electric bill" loses its payment and would be paid without asking. Fail closed: set aside only a ban on a money verb, only up to its clause, and hold when in doubt.',
       concepts: [['comma', 'clause', 'sentence', 'swallow*', 'everything after', 'too much', 'too far', 'runs past', 'whole sentence', 'the rest of'], ['pay', 'payment', 'paid', 'money', 'held', 'hold', 'fail closed', 'without asking', 'bill']],
+      // What the fixed code does: an answer that says this describes the fix, not the bug, and is not judged.
+      contrary: /(?:payment|bill|it) is (?:held|kept|asked about)|(?:comma|clause) ends (?:the )?(?:dont|prohibition|ban)|stops at the comma/,
     },
     {
       id: 'c-security.d2', title: 'A URL check that only knows the word localhost', language: 'javascript',
@@ -1563,6 +1571,8 @@ const FIX_DRILLS = {
       probe: { calls: [['http://169.254.169.254/latest/meta-data/'], ['http://127.0.0.1:8080/admin'], ['https://example.com/']], buggy: [true, true, true], fixed: [false, false, true] },
       finding: 'It refuses only the word localhost, so 127.0.0.1 or the cloud metadata address 169.254.169.254 is fetched. Check the address itself and refuse private, loopback and link-local ranges; resolve names first, and check every redirect again.',
       concepts: [['127', '169', 'metadata', 'private', 'ip', 'ips', 'address*', 'loopback', 'internal', 'link local'], ['localhost', 'only', 'word', 'name', 'string', 'resolv*', 'redirect*', 'hostname']],
+      // What the fixed code does: an answer that says this describes the fix, not the bug, and is not judged.
+      contrary: /(?:already|also) (?:blocks?|refuses?|rejects?|checks?) (?:the )?(?:127|169|private|loopback|ip|resolved|address)|(?:it|check) (?:blocks|rejects) (?:127|169|private|loopback)/,
     },
   ],
   'c-debugging': [
@@ -1581,6 +1591,8 @@ const FIX_DRILLS = {
       probe: { calls: [["Email Mark the plan, but don't send it until Friday", 24], ['Email Mark the plan', 24]], buggy: [{ status: 200, text: 'Email Mark the plan, but' }, { status: 200, text: 'Email Mark the plan' }], fixed: [{ status: 413, text: '' }, { status: 200, text: 'Email Mark the plan' }] },
       finding: 'slice cuts the message silently, so its last words, "don\'t send it until Friday", never reach CHE and she could send it. A message too long to take must be refused whole, saying so, with nothing done.',
       concepts: [['cut*', 'truncat*', 'slice*', 'chop*', 'lost', 'lose*', 'drop*', 'last words', 'the end'], ['silent*', 'don\'t', 'dont', 'refus*', 'reject*', 'whole', '413', 'meaning', 'friday', 'constraint*']],
+      // What the fixed code does: an answer that says this describes the fix, not the bug, and is not judged.
+      contrary: /(?:refuses?|rejects?) (?:the )?(?:whole |entire |long )?(?:message|text)|instead of (?:cutting|truncating|slicing|dropping)/,
     },
   ],
   'c-architecture': [
@@ -1594,6 +1606,8 @@ const FIX_DRILLS = {
       probe: { calls: [['Make a reminder tomorrow at 8, not today'], ['Make a reminder tomorrow at 8']], buggy: [{ compact: 'Make a reminder tomorrow at 8', lossless: true }, { compact: 'Make a reminder tomorrow at 8', lossless: true }], fixed: [{ compact: 'Make a reminder tomorrow at 8', lossless: false }, { compact: 'Make a reminder tomorrow at 8', lossless: true }] },
       finding: 'The short form drops everything after the first comma, here "not today", and still claims to be lossless, so routing on it loses the owner\'s constraint. It must check that every constraint word survived, and fall back to his full words when one did not.',
       concepts: [['not today', 'today', 'constraint*', 'comma', 'drop*', 'lost', 'lose*', 'missing', 'after the first'], ['lossless', 'claim*', 'always true', 'check*', 'full words', 'says', 'lie*', 'pretend*']],
+      // What the fixed code does: an answer that says this describes the fix, not the bug, and is not judged.
+      contrary: /keeps? (?:the )?(?:not today|constraint|every constraint|comma)|(?<!claims? (?:it |that it |to )?)(?<!says? (?:it |that it )?)is (?:really |truly |actually )?lossless|nothing is (?:lost|dropped)|loses nothing|drops nothing/,
     },
   ],
   'c-binary-search': [
@@ -1605,6 +1619,8 @@ const FIX_DRILLS = {
       probe: { calls: [[[1, 3, 5, 7, 9], 9], [[2], 2], [[1, 3, 5, 7, 9], 3], [[1, 3, 5, 7, 9], 5]], buggy: [-1, -1, -1, 2], fixed: [4, 0, 1, 2] },
       finding: 'high is inclusive, so the loop must run while low <= high. With < it stops when one candidate is left without checking it, so 9 at the end, or the only item of a one-item list, is reported missing.',
       concepts: [['<=', 'less than or equal', 'or equal to', 'inclusive', 'off by one', 'boundary', 'low equals high'], ['last item', 'last element', 'last one', 'one item', 'single item', 'one left', 'final item', 'never checks', 'never checked', 'skips', 'missed']],
+      // What the fixed code does: an answer that says this describes the fix, not the bug, and is not judged.
+      contrary: /(?:loop|search|it) (?:is inclusive|checks (?:the )?(?:last|final|only) (?:item|element|one))|runs while low <= high/,
     },
   ],
   'c-databases': [
@@ -1616,6 +1632,8 @@ const FIX_DRILLS = {
       probe: { db: "CREATE TABLE users (name TEXT); INSERT INTO users VALUES ('alice'), ('bob');", calls: [["x' OR '1'='1"], ['alice']], buggy: [[{ name: 'alice' }, { name: 'bob' }], [{ name: 'alice' }]], fixed: [[], [{ name: 'alice' }]] },
       finding: 'The name is pasted into the SQL text, so x\' OR \'1\'=\'1 rewrites the query and returns every user. Pass the value as a parameter with ? so it can only ever be data.',
       concepts: [['inject*', 'sql injection', 'concatenat*', 'glued', 'pasted', 'interpolat*', 'built from text', 'into the sql', 'into the query'], ['parameter*', 'placeholder*', 'question mark', 'bind*', 'prepared', 'every user', 'all users', 'every row', 'escap*']],
+      // What the fixed code does: an answer that says this describes the fix, not the bug, and is not judged.
+      contrary: /(?:it|query|code) (?:already )?uses (?:a |the )?(?:parameter|placeholder|bind)|(?:there is )?no (?:sql )?injection|is (?:safe|parameterized|escaped)/,
     },
   ],
   'c-python': [
@@ -1627,6 +1645,8 @@ const FIX_DRILLS = {
       probe: { calls: [['MNQ'], ['NQ']], buggy: [['MNQ'], ['MNQ', 'NQ']], fixed: [['MNQ'], ['NQ']] },
       finding: 'The default list is made once, when def runs, so every call without a book shares it: the second order\'s book still holds MNQ. Use None as the default and create the list inside.',
       concepts: [['default', 'defaults', 'default argument', 'default list'], ['shared', 'same list', 'once', 'mutable', 'every call', 'reused', 'persists', 'between calls']],
+      // What the fixed code does: an answer that says this describes the fix, not the bug, and is not judged.
+      contrary: /\bfresh\b|gets? (?:its own|a new|a fresh) (?:list|book)|new list (?:on|for|each|every|per)|is ?nt shared|is not shared|never shared/,
     },
   ],
 };
@@ -1671,6 +1691,8 @@ const PHASE1_PRACTICE = {
       probe: { calls: [['broken'], ['correct']], buggy: [0, 0], fixed: [1, 0] },
       finding: 'check compares but never records a failure, so the broken add reports 0 failures: a test that can never fail proves nothing. Record or throw on a mismatch, and break the code on purpose to see the test fail.',
       concepts: [['never fail*', 'cannot fail', 'can\'t fail', 'always pass*', 'proves nothing', 'passes anyway', 'still passes'], ['record*', 'ignor*', 'discard*', 'thrown away', 'return value', 'never push*', 'not pushed', 'failures', 'nothing happens']],
+      // What the fixed code does: an answer that says this describes the fix, not the bug, and is not judged.
+      contrary: /records? (?:every|each|all|the) failures?|(?:can|does|will) fail|throws on (?:a )?mismatch/,
     }],
     repo_examples: [
       at('server/cloudflare/readonly_acceptance.test.mjs', 'owner', 'the /api/chat test harness: a paired phone, a fake model and a fetch that throws, so chat tests are offline and deterministic', 'server/cloudflare/readonly_acceptance.test.mjs', 'coding: the most recent job is read from the run record; a new job is never started'),
@@ -1756,6 +1778,8 @@ const PHASE1_PRACTICE = {
       probe: { calls: [[400], [404], [408], [429], [503]], buggy: [true, true, true, true, true], fixed: [false, false, true, true, true] },
       finding: 'It retries every 4xx answer, but a 400 or 404 is the caller\'s mistake and will fail the same way every time. Retry only 408, 429 and 5xx, with backoff.',
       concepts: [['400', '404', '4xx', 'client error*', 'caller', 'bad request', 'not found', 'every error', 'all errors', 'every 4xx'], ['408', '429', '5xx', '500', '503', 'server error*', 'never succeed*', 'same way', 'pointless', 'fail again']],
+      // What the fixed code does: an answer that says this describes the fix, not the bug, and is not judged.
+      contrary: /only retr\w* (?:408|429|5xx|server)|never retr\w* (?:a |the )?(?:400|404|4xx)|does ?nt retry (?:400|404|4xx)|does not retry (?:400|404|4xx)/,
     }],
   },
   concurrency: {
@@ -1775,6 +1799,8 @@ const PHASE1_PRACTICE = {
       probe: { calls: [[[1, 2, 3]]], buggy: [0], fixed: [6] },
       finding: 'forEach does not wait for async callbacks, so the function returns 0 before any price is added. Use for...of with await, or Promise.all, so the sum is complete before it returns.',
       concepts: [['foreach', 'for each', 'callback*', 'async callback*'], ['doesn\'t wait', 'does not wait', 'doesnt wait', 'not awaited', 'never awaited', 'returns before', 'returns 0', 'returns zero', 'fire and forget', 'promise all', 'for of', 'before the awaits', 'before they finish']],
+      // What the fixed code does: an answer that says this describes the fix, not the bug, and is not judged.
+      contrary: /for(?: |\.+)of (?:waits|awaits)|(?:it|foreach) (?:waits|awaits) for|waits for (?:every|each|all)/,
     }],
     repo_examples: [
       at('server/cloudflare/knowledge_atlas.js', 'loadAtlasRecords', 'reads the paper journal and the stored backtest together with Promise.all', 'server/cloudflare/knowledge_atlas.test.mjs', 'measured lines through /api/chat: the journal and the stored backtest, exactly as recorded'),
@@ -2021,7 +2047,8 @@ export function checkDrill(d, said) {
     else hits += 1;
   }
   if (SAYS_FINE.test(t)) return { correct: false, hits, mentions };
-  if (denied) return { correct: null, hits, mentions };
+  // The same ideas said of the fixed code ("the key includes the currency") are not the bug: never a "right".
+  if (denied || (d.contrary && d.contrary.test(t) && !deniedAt(t, d.contrary))) return { correct: null, hits, mentions };
   return { correct: hits >= d.concepts.length ? true : hits === 0 ? false : null, hits, mentions };
 }
 const EXPLICIT_FINDING = /^(?:(?:so|well|ok|okay|um|uh)[,\s]+)*(?:(?:the|my) (?:bug|problem|issue|mistake|finding|answer|fix) is|it'?s wrong because|it is wrong because|it'?s broken because|what'?s wrong is|the trouble is)\b/;
