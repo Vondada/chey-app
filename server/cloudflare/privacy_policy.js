@@ -168,8 +168,53 @@ export function bundleText(bundle) {
 
 const SECRETISH = /\b(?:sk-[A-Za-z0-9_-]{8,}|xai-[A-Za-z0-9_-]{8,}|hf_[A-Za-z0-9]{8,}|AIza[0-9A-Za-z_-]{10,}|Bearer\s+\S+)/g;
 
+// Password-setting sentences: "my gmail password is hunter2", "my bank password: Blue$tone9",
+// "the wifi password is correct horse battery", "gmail password = x", "the password for netflix is x".
+// Group 1 is everything up to the value (kept); group 2 is the value (redacted). The value runs to
+// the end of its sentence, so a multi-word password is removed whole (fail closed). A sentence that
+// names a password without a value ("how do I reset my password?") does not match.
+export const PASSWORD_PLACEHOLDER = '[password redacted]';
+const PASSWORD_SENTENCE_RE = /((?:\b(?:my|the|your|our|a|his|her)\s+)?(?:[a-z0-9&@._'-]+\s+){0,4}?password(?:\s+for\s+(?:[a-z0-9&@._'-]+\s+){0,4}?)?\s*(?:\b(?:is|was|are)\b|=|:)\s*)(?!(?:in|on|at|stored|saved|kept|not|wrong|expired|changed|reset|locked|needed|required)\b)(\S[^\n]*?)(?=\s*(?:\n|[.!?;](?=\s|$)|$))/gi;
+
+/** Replaces each password value with a placeholder and returns the values it removed. */
+export function redactPasswordSentences(value) {
+  const secrets = [];
+  const text = String(value ?? '').replace(PASSWORD_SENTENCE_RE, (_all, lead, secret) => {
+    secrets.push(String(secret).trim());
+    return `${lead}${PASSWORD_PLACEHOLDER}`;
+  });
+  return { text, secrets, count: secrets.length };
+}
+
+/** Model input with every password value removed from its messages. Applied at the one provider call. */
+export function redactModelInput(input) {
+  if (!input || !Array.isArray(input.messages)) return input;
+  const messages = input.messages.map((message) => {
+    if (!message || typeof message !== 'object') return message;
+    if (typeof message.content === 'string') return { ...message, content: redactPasswordSentences(message.content).text };
+    if (Array.isArray(message.content)) {
+      return { ...message, content: message.content.map((part) => (part && typeof part.text === 'string' ? { ...part, text: redactPasswordSentences(part.text).text } : part)) };
+    }
+    return message;
+  });
+  return { ...input, messages };
+}
+
+export function hasPasswordSentence(value) {
+  return redactPasswordSentences(value).count > 0;
+}
+
 export function redactSecrets(value) {
-  return String(value ?? '').replace(SECRETISH, '[redacted]');
+  return redactPasswordSentences(String(value ?? '').replace(SECRETISH, '[redacted]')).text;
+}
+
+/** Any password value seen in the owner's words is taken out of a reply, if the reply repeats it. */
+export function scrubKnownSecrets(reply, secrets = []) {
+  let out = String(reply ?? '');
+  for (const secret of secrets) {
+    if (secret.length >= 4) out = out.split(secret).join(PASSWORD_PLACEHOLDER);
+  }
+  return out;
 }
 
 export function auditEntry({ provider, model, task, agent = 'CHE', memory = [], withheld = [], ok = true, route = '', latency_ms = null, agent_id = '', thread_id = '' }) {
@@ -191,10 +236,16 @@ export function auditEntry({ provider, model, task, agent = 'CHE', memory = [], 
   };
 }
 
+// Every text field of an audit record goes through the redactor, so a password
+// that reached an older record is removed the next time the log is written.
+export function scrubAuditEntry(entry) {
+  return Object.fromEntries(Object.entries(entry || {}).map(([key, value]) => [key, typeof value === 'string' ? redactSecrets(value) : value]));
+}
+
 export async function appendAudit(storage, entry) {
   if (!storage) return;
-  const list = (await storage.get('ai_audit')) || [];
-  list.unshift(entry);
+  const list = ((await storage.get('ai_audit')) || []).map(scrubAuditEntry);
+  list.unshift(scrubAuditEntry(entry));
   await storage.put('ai_audit', list.slice(0, 300));
 }
 

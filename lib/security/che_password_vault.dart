@@ -47,6 +47,17 @@ class CheVaultCommand {
     if (save != null) {
       return CheVaultCommand('save', site: normalizeSite(save.group(1)!), password: save.group(2)!, username: save.group(3) ?? '');
     }
+    // "my gmail password is hunter2", "my bank password: Blue$tone9", "the password for netflix is x":
+    // stored in the vault here. With no site named it is refused, and nothing is stored.
+    final set = RegExp(
+      r"^(?:(?:my|the|your)\s+)?(?:(.+?)\s+)?password\s*(?:for\s+(.+?)\s+)?(?:is|was|=|:)\s*(\S.*?)\.?$",
+      caseSensitive: false,
+    ).firstMatch(text);
+    if (set != null) {
+      final site = (set.group(1) ?? set.group(2) ?? '').trim();
+      if (site.isEmpty) return const CheVaultCommand('refuse');
+      return CheVaultCommand('save', site: normalizeSite(site), password: set.group(3)!.trim());
+    }
     if (RegExp(r'^(?:what|which)\s+passwords\s+(?:do you have|are saved|did you save)|^(?:list|show)\s+(?:my\s+)?(?:saved\s+)?passwords$|^(?:my\s+)?passwords$', caseSensitive: false).hasMatch(text)) {
       return const CheVaultCommand('list');
     }
@@ -62,6 +73,15 @@ class CheVaultCommand {
     if (delete != null) return CheVaultCommand('delete', site: normalizeSite(delete.group(1)!));
     return null;
   }
+
+  /// Mirrors the Worker's password redactor (server/cloudflare/privacy_policy.js). A sentence that sets a
+  /// password value is kept on this phone and never sent to the Worker, whatever the vault does with it.
+  static final RegExp _passwordSentence = RegExp(
+    r"((?:\b(?:my|the|your|our|a|his|her)\s+)?(?:[a-z0-9&@._'-]+\s+){0,4}?password(?:\s+for\s+(?:[a-z0-9&@._'-]+\s+){0,4}?)?\s*(?:\b(?:is|was|are)\b|=|:)\s*)(?!(?:in|on|at|stored|saved|kept|not|wrong|expired|changed|reset|locked|needed|required)\b)(\S[^\n]*?)(?=\s*(?:\n|[.!?;](?=\s|$)|$))",
+    caseSensitive: false,
+  );
+
+  static bool isPasswordSentence(String raw) => _passwordSentence.hasMatch(raw);
 
   static String normalizeSite(String value) =>
       value.toLowerCase().replaceAll(RegExp(r'^(?:the|my)\s+'), '').replaceFirst(RegExp(r'^(?:https?://)?(?:www\.)?'), '').trim();

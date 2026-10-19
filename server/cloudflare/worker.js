@@ -26,7 +26,7 @@ import {
 } from './ai_layer.js';
 import { promoteManually } from './model_discovery.js';
 import { createProviderEmployee, retireIdleTemporaries, startPairedJob, taskEnvelope } from './office_workforce.js';
-import { fineTuneDisclosure, setProviderPermission } from './privacy_policy.js';
+import { fineTuneDisclosure, hasPasswordSentence, redactPasswordSentences, scrubAuditEntry, scrubKnownSecrets, setProviderPermission } from './privacy_policy.js';
 import {
   accountsView, approveProviderPlugin, authorizeProvider, ensureAiState, proposeProviderPlugin,
 } from './provider_registry.js';
@@ -89,7 +89,7 @@ import { APPROVED_SKILLS, handleInstalledSkill, installedSkillIntent, installedS
 import { lastSite, publishSite, saveSite, serveSite, siteBuildIntent, siteEditIntent, sitePreviewIntent, sitePublishIntent, siteUrl, speakSitePublished, speakSiteResult, wantsImmediatePublish, workingHtml, writeSite } from './site_builder.js';
 import { noteJobActivity } from './job_activity.js';
 import { PENDING_OWNER_ACTION_KEY, forbiddenAction, prohibitionSpans, withoutProhibitions, PENDING_OWNER_ACTION_MS, gateOwnerAction, grantForKinds, isOwnerYes, peerActionReply, APPS_GRANTED_KEY, PENDING_APP_ACTION_KEY, PENDING_APP_ACTION_MS, gateAppAccess, classifyAppNeed, classifyExplicitAppOpen, classifyAppAccesses } from './owner_action_gate.js';
-import { asksForCurrentOwnerLocation, changeHistoryIntent, guardClaimedResearchActions, guardGroundedFacts, guardLocationWeatherReply, guardOwnerReply, loadChangeHistory, loadReceipts, OWNER_LOCATION_NOT_VERIFIED, recordReceipt, requestedCodeNames, speakChangeHistory, vagueResearchRequest, verifiedState, verifiedStatusText } from './truth_layer.js';
+import { asksForCurrentOwnerLocation, changeHistoryIntent, guardClaimedResearchActions, guardGroundedFacts, guardLocationWeatherReply, guardOwnerReply, guardTestRunClaims, loadChangeHistory, loadReceipts, OWNER_LOCATION_NOT_VERIFIED, recordReceipt, requestedCodeNames, speakChangeHistory, TEST_RUN_HONEST_REPLY, testRunRequest, vagueResearchRequest, verifiedState, verifiedStatusText } from './truth_layer.js';
 import { ENGINEERING_PLAYBOOK_SPOKEN, playbookIntent } from './engineering_playbook.js';
 import { describeSkillsReport, reusableLicense, selectFilesForAgent, skillFromMarkdown, skillImportIntent, skillsReportIntent } from './skill_import.js';
 import { describeTopicStudyStart, starredStudyTargets, matchTopicSections, namedRepoStudyIntent, starredLibraryIntent, readTutorial, readmeSections, sectionTutorials, studyBatchIntent, topicBuildRequest, topicTitles, wantsSerialStudy } from './topic_study.js';
@@ -6755,7 +6755,7 @@ export class CheState extends DurableObject {
         return json({ accounts: accountsView(this.env, data) });
       }
       if (path === '/api/ai/audit' && request.method === 'GET') {
-        return json({ calls: ((await this.ctx.storage.get('ai_audit')) || []).slice(0, 100) });
+        return json({ calls: ((await this.ctx.storage.get('ai_audit')) || []).slice(0, 100).map(scrubAuditEntry) });
       }
       const envelopeMatch = /^\/api\/office\/tasks\/([A-Za-z0-9-]{8,64})\/envelope$/.exec(path);
       if (envelopeMatch && request.method === 'GET') {
@@ -8141,6 +8141,28 @@ export class CheState extends DurableObject {
         if (BROKER_KEY_RE.test(rawMessage)) {
           return ndjsonReply('I did not keep that, sir: it looks like an API key, and keys never go in chat. It may now be exposed, so regenerate it where it came from. A new Alpaca paper key goes in the Trading Room, straight to CHE\'s key store.', { source: 'che_secret_refused', ok: false, model_calls: 0 });
         }
+        // Password sentences ("my gmail password is hunter2"): the value is never stored, sent to a model,
+        // written to chat history, memory or the audit log. The iPhone keeps passwords in its Keychain vault
+        // and does not send them; this refuses one that reaches the server anyway, before any write or model call.
+        if (hasPasswordSentence(rawMessage)) {
+          return ndjsonReply('I did not keep that, sir. It looks like a password, and passwords are kept only in the vault on this iPhone, never in chat. Nothing was stored and nothing was sent to a model. To keep it, say "save my gmail password is ..." in the iPhone app; it is then stored in the vault on that phone.', { source: 'che_password_refused', ok: false, model_calls: 0 });
+        }
+        // The app sends the whole chat with every message, so an earlier password is redacted before any
+        // use (model input, memory, audit), and its value is kept out of replies.
+        const knownSecrets = [];
+        if (Array.isArray(body.history)) {
+          body.history = body.history.map((turn) => {
+            if (!turn || typeof turn !== 'object') return turn;
+            const clean = { ...turn };
+            for (const key of ['content', 'text']) {
+              if (typeof clean[key] !== 'string') continue;
+              const scrubbed = redactPasswordSentences(clean[key]);
+              knownSecrets.push(...scrubbed.secrets);
+              clean[key] = scrubbed.text;
+            }
+            return clean;
+          });
+        }
         // A family/guest device never reaches the owner's chat routes below.
         if (!ownerDevice) return this.guestChat(body, rawMessage, activeTenant);
         // Command Center: a plain yes releases a held command (once, fresh);
@@ -8180,6 +8202,11 @@ export class CheState extends DurableObject {
             if (ownerDevice) await this.dropHeldActions();
             const spoken = await this.answerCommandSpeech(request, body, data, said, { ownerDevice });
             if (spoken) return spoken;
+          }
+          // "Run the tests": CHE has no test runner in chat. It says so and runs nothing (no model call).
+          if (testRunRequest(rawMessage)) {
+            if (ownerDevice) await this.dropHeldActions();
+            return ndjsonReply(TEST_RUN_HONEST_REPLY, { source: 'che_tests_not_run', ok: false, model_calls: 0 });
           }
           // "What is on my screen?" with no screen sent: say so, never guess.
           if (!body.attachment && !String(body.screen_context || '').trim() && asksAboutScreen(rawMessage)) {
@@ -10734,6 +10761,16 @@ export class CheState extends DurableObject {
           }, 503);
         }
 
+        // A reply never repeats a password value from the owner's words or history, and a claim that a test
+        // ran, passed or failed, or a count of tests, is replaced by the honest answer unless a real receipt backs it.
+        reply = scrubKnownSecrets(reply, knownSecrets);
+        {
+          const testClaims = guardTestRunClaims(reply, { receipts: await loadReceipts(this.ctx.storage).catch(() => []) });
+          if (testClaims.removed.length) {
+            console.log('CHE test-run claim removed', JSON.stringify(testClaims.removed).slice(0, 600));
+            reply = testClaims.text;
+          }
+        }
         // Truth layer: a model sentence can never promote execution state.
         // Unsupported action claims and owner "homework" are removed and
         // replaced with what the receipts actually show.

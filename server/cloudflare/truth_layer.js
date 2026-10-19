@@ -283,6 +283,58 @@ export function guardOwnerReply(reply, state, ctx = {}) {
   return { text: kept.join('').replace(/\n{3,}/g, '\n\n').trim(), removed, homework };
 }
 
+// ─── Test-run claims ───────────────────────────────────────────────────────
+// CHE has no shell and no test runner in chat, so no test run happens here.
+// The newest CI result is the release status (the checks on CHE's latest pull
+// request, the che-release command). Nothing is invented: no count is given.
+export const TEST_RUN_HONEST_REPLY = 'I can\'t run the test suite from chat, sir, so I have not run any tests and I have no test count to give you. '
+  + 'The newest CI result is in the release status: ask for /che-release and I will read you the checks on the latest pull request.';
+
+// "run the tests", "run the worker tests", "CHE, run the test suite": asked, never run.
+const TEST_RUN_REQUEST = /^(?:(?:please|can you|could you|will you)\s+)?(?:run|start|execute|kick off)\s+(?:(?:all|the|our|my|every)\s+)*(?:(?:worker|server|flutter|dart|unit|full|whole|entire|cloudflare)\s+)*(?:tests?|test suite|test run)$/;
+
+export function testRunRequest(message) {
+  const text = String(message || '').trim().toLowerCase().replace(/[’]/g, '\'')
+    .replace(/^(?:(?:hey|hi|ok|okay)[\s,.!]+)?(?:che|chay|chey|shay)(?![a-z'])[\s,.:;!?-]*/, '')
+    .replace(/[.!?]+$/, '').replace(/\s+/g, ' ').trim();
+  return TEST_RUN_REQUEST.test(text);
+}
+
+// A sentence that says tests were run, passed or failed, or gives a count of tests.
+// "the test file for the vault is test/che_password_vault_test.dart" is not a claim.
+const TEST_RUN_CLAIMS = [
+  /\b(?:I|we|CHE)\s+(?:(?:just|now|already|have|has|had|did|also|finally|then|successfully)\s+)*(?:ran|run|re-?ran|executed|passed|failed)\b[^.!?\n]{0,80}\b(?:tests?|test suite|test run|specs?)\b/i,
+  /\b\d[\d,]*\s+(?:worker\s+|flutter\s+|unit\s+|total\s+)?(?:tests?|specs?)\b[^.!?\n]{0,60}\b(?:passed|passing|failed|failing|green|errors?)\b/i,
+  /\b\d[\d,]*\s+(?:passed|passing|failed|failing)\b[^.!?\n]{0,60}\b(?:tests?|specs?)\b/i,
+  /\b(?:tests?|test suite|specs?)\s+(?:all\s+)?(?:passed|pass|are passing|are green|went green|failed|are failing)\b/i,
+  /\b\d[\d,]*\s+(?:worker\s+|flutter\s+|unit\s+|total\s+)?(?:tests?|test cases|specs?)\b/i,
+];
+const TEST_RECEIPT_KINDS = ['test_run', 'ci_passed'];
+
+// A real receipt for the run: a test_run receipt holding the counts the reply
+// gives, or (for a claim with no numbers) any recent CI pass receipt.
+function testReceiptSupports(sentence, receipts, now) {
+  const recent = (receipts || []).filter((r) => TEST_RECEIPT_KINDS.includes(r?.kind) && now - Date.parse(r.at || 0) <= RECENT_MS);
+  if (!recent.length) return false;
+  const numbers = [...sentence.matchAll(/\d[\d,]*/g)].map((m) => Number(m[0].replace(/,/g, '')));
+  if (!numbers.length) return true;
+  const run = recent.filter((r) => r.kind === 'test_run').at(-1);
+  return Boolean(run) && numbers.every((n) => [run.tests, run.passed, run.failed].map(Number).includes(n));
+}
+
+// A reply that claims a test run, its result or a test count is replaced by the
+// honest answer, unless a real receipt backs it. Ordinary sentences about tests stay.
+export function guardTestRunClaims(reply, { receipts = [], now = Date.now() } = {}) {
+  const removed = [];
+  for (const sentence of splitSentences(reply)) {
+    const plain = sentence.trim();
+    if (!plain || !TEST_RUN_CLAIMS.some((re) => re.test(plain))) continue;
+    if (testReceiptSupports(plain, receipts, now)) continue;
+    removed.push({ rule: 'test_run_claim', sentence: plain });
+  }
+  return removed.length ? { text: TEST_RUN_HONEST_REPLY, removed } : { text: reply, removed };
+}
+
 /**
  * Grounded-fact guard for replies built on a repository inspection: a
  * sentence naming a file that is not in the inspected commit, a pull request

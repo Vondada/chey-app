@@ -19,7 +19,7 @@ import { inferNeeds, isUnhealthy, orderByCapability, pickCatalogModel, recordHea
 import { WORKFLOWS, dedupeEvidence, drainOrder, engineCapacityState, planWorkflow, shouldSwitchEngine } from './workflow_governor.js';
 import { recordReliability } from './reliability_ledger.js';
 import { BUILTIN_PROVIDER_MANIFESTS } from './provider_registry.js';
-import { appendAudit, auditEntry } from './privacy_policy.js';
+import { appendAudit, auditEntry, redactModelInput } from './privacy_policy.js';
 import { storedKeys, withStoredKeys } from './resilience.js';
 import { addTokens } from './usage_tracker.js';
 import { classifyHttpStatus, cooldownMsFor, makeEngineError, parseRetryAfter } from './che_errors.js';
@@ -565,6 +565,8 @@ function isStrongModel(model) {
 }
 
 async function callProvider(env, provider, strongModel, input, fetcher, modelOverride = '', office = null) {
+  // The one provider call: no password value is ever sent to a model, whichever route built the messages.
+  input = redactModelInput(input);
   // Fail fast and hand the baton on: a slow engine gets 12s (20s for strong
   // models) instead of 45s, so one stalled engine can't freeze a reply.
   const controller = new AbortController();

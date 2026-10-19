@@ -351,6 +351,10 @@ extension _CheHomeSend on _CHEHomeState {
             ? 'Deleted your ${command.site} password, sir.'
             : 'There was no ${command.site} password saved, sir.';
         shown = spoken;
+      case 'refuse':
+        spoken = 'I did not keep that, sir. It looks like a password, and passwords are kept only in the vault on this iPhone. '
+            'Say it with the site name, for example "my gmail password is ...", and I will keep it here. Nothing was sent anywhere.';
+        shown = spoken;
       case 'list':
         final sites = await vault.sites();
         spoken = sites.isEmpty
@@ -573,6 +577,12 @@ extension _CheHomeSend on _CHEHomeState {
     if (vaultCommand != null) {
       if (mounted) _set(() => controller.clear());
       await _runVaultCommand(vaultCommand);
+      return;
+    }
+    // A password sentence that is not a vault save is refused here too: it is never sent to the Worker.
+    if (CheVaultCommand.isPasswordSentence(message)) {
+      if (mounted) _set(() => controller.clear());
+      await _runVaultCommand(const CheVaultCommand('refuse'));
       return;
     }
 
