@@ -463,4 +463,60 @@ void main() {
     expect(CheBrainSyncReceipt(at: '2026-10-18T00:00:00Z', error: 'SocketException: Failed host lookup: che.example').syncNotice, isNull);
     expect(CheBrainSyncReceipt(at: '2026-10-18T00:00:00Z').syncNotice, isNull);
   });
+
+  test('R: the four planted secret shapes are refused on the phone, a legacy one a sync brings in is never searched, and ordinary words stay (second review of #354)', () async {
+    final dir = await freshDir();
+    final worker = FakeWorker();
+    final brain = CheBrainReplica(directory: dir);
+    // Built from pieces, so no literal key, code or token sits in the repository.
+    final hexA = ['3f2a9c8e7d6b5a4f', '3e2d1c0b9a8f7e6d'].join();
+    final hexB = ['4f8a1c2e9b7d3f60', 'a5c8e1b4d9f2a7c3'].join();
+    final webhook = ['https://hooks.slack.com/services/', 'T00000000/B00000000/', 'XXXXXXXXXXXXXXXXXXXXXXXX'].join();
+    final groupedCode = ['8F3K', '9LQ2', '7MZP', '4XWD'].join('-');
+    final planted = ['The Fish key is $hexA — rotate it', 'Webhook URL $webhook', 'The backup code is $groupedCode', 'The deploy key is $hexB'];
+    for (final text in planted) {
+      expect(cheBrainTextIsSensitive(text), isTrue, reason: text);
+      expect(await brain.remember(kind: 'memory', region: 'Personal Memory', body: text), isNull, reason: text);
+    }
+    expect(brain.count, 0);
+    for (final clean in ['+0.0125R', '-1.5%', '#350', 'PR 351', 'commit 4acb3d9', 'version v2.3.1', 'Dated 2026-10-18', 'The meeting notes go on and on.']) {
+      expect(cheBrainTextIsSensitive(clean), isFalse, reason: clean);
+    }
+    // The same verdicts as research_memory.test.mjs: a bare Slack token, a 32-hex Twilio auth, link credentials,
+    // a random path, a 13-character hex key, and the kept side: a 12-character and a 40-character commit,
+    // a UUID, a slug, a fragment, and a PR chain.
+    final pass = ['Summer', '2026', '!'].join();
+    final secretsMore = [
+      'Slack ${['xoxb', '1234567890123', '1234567890123', 'AbCdEfGhIjKlMnOpQrStUvWx'].join('-')} is live',
+      'The Twilio auth is ${['a1b2c3d4e5f6a7b8', 'c9d0e1f2a3b4c5d6'].join()}',
+      'Clone https://vondada:$pass@github.com/Vondada/chey-app.git now',
+      'See https://example.com/reset/${['Q7mZ2kP9', 'xL4vN8wR3tY6uB1c'].join()} for the page',
+      'The code is ${['1a2b3c4d5e6f', '7'].join()}',
+      'The recovery code is ${['ABCD', 'EFGH', 'IJKL', 'MNOP'].join('-')}',
+      'credentials vondada:$pass for the test',
+      'Here is the deploy key:\n${'-----BEGIN OPENSSH ' 'PRIVATE KEY-----'}\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmU\n${'-----END OPENSSH ' 'PRIVATE KEY-----'}',
+      'Session ${['eyJhbGciOiJI', 'UzI1NiIsInR5cCI6IkpXVCJ9'].join()}.${['eyJzdWIiOiIx', 'MjM0NTY3ODkwIn0'].join()}.${['SflKxwRJSMeK', 'KF2QT4fwpMeJf36POk6yJV_adQssw5c'].join()}',
+    ];
+    for (final text in secretsMore) {
+      expect(cheBrainTextIsSensitive(text), isTrue, reason: text);
+    }
+    final keptMore = [
+      'commit 1a2b3c4d5e6f and 4acb3d97096606e878e462812571c34d851b704d',
+      'UUID 97d389bb-537b-425e-81c5-908ab17e5ce8 is fine',
+      'Read https://ocw.mit.edu/courses/6-006-introduction-to-algorithms-spring-2020/ now',
+      'See https://github.com/Vondada/chey-app/pull/354#issuecomment-1234567890',
+      'Ship PR-351-READY tonight',
+      'Build v2.3.1-rc1 passed',
+    ];
+    for (final text in keptMore) {
+      expect(cheBrainTextIsSensitive(text), isFalse, reason: text);
+    }
+    // A record from before the gate arrives by sync: it stays in the list, but no search finds its words.
+    worker.cloudWrite('note:legacy', title: 'Legacy key', body: 'The deploy key is $hexB and the rest of the note.');
+    worker.cloudWrite('note:plain', title: 'Plain lunch', body: 'Lunch with the deploy team was good.');
+    await brain.sync('https://che.example', const {}, get: worker.get, post: worker.post);
+    expect(brain.get('note:legacy'), isNotNull);
+    expect(brain.search('deploy key legacy', limit: 10).map((r) => r.id), isNot(contains('note:legacy')));
+    expect(brain.search('lunch deploy team', limit: 10).map((r) => r.id), contains('note:plain'));
+  });
 }

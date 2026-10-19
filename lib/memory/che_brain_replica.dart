@@ -64,8 +64,107 @@ final RegExp _sensitive = RegExp(
   caseSensitive: false,
 );
 
-/// True when [text] must not be kept in the Brain. Checked over the whole text.
-bool cheBrainTextIsSensitive(String text) => _sensitive.hasMatch(text);
+/// True when [text] must not be kept in the Brain or placed in the on-device model's context. Checked
+/// over the whole text: the words the Worker refuses, and the shapes of a secret (below).
+bool cheBrainTextIsSensitive(String text) => _sensitive.hasMatch(text) || cheBrainTextHasSecretShape(text);
+
+// The shapes of a secret, mirrored from research_memory.js (hasSecretShape and BROKER_KEY_RE), so the phone
+// refuses what the Worker refuses (second review of #354). A commit SHA, an id, a date, a version, a trading
+// figure, an address and an ordinary link are not secrets; see the Worker's tests for each case.
+final RegExp _brokerKeyShape = RegExp(r'\b[AP]K[A-Z0-9]{16,38}\b');
+final RegExp _pemShape = RegExp(r'-----BEGIN [A-Z0-9 ]{3,40}-----');
+final RegExp _jwtShape = RegExp(r'\beyJ[A-Za-z0-9_-]{8,}');
+final RegExp _userPassShape = RegExp(r"""(?:^|[\s(])[A-Za-z0-9._%+-]{2,40}:(?=[^\s:/@"'{}\[\],]*[A-Za-z])(?=[^\s:/@"'{}\[\],]*[\d!@#$%^&*+=?~])[^\s:/@"'{}\[\],]{6,}""");
+final RegExp _tokenSplitShape = RegExp(r'[\s"“”,;(){}\[\]<>]+');
+final RegExp _leadPunctShape = RegExp(r'''^[("'“‘[<{]+''');
+final RegExp _trailPunctShape = RegExp(r'''[)"'”’\]>},.;:?]+$''');
+final RegExp _trailingBangShape = RegExp(r'!+$');
+final RegExp _passwordSymbolShape = RegExp(r'[!@#$%^&*+=~?|\\]');
+final RegExp _hexShape = RegExp(r'^[0-9a-f]+$', caseSensitive: false);
+final RegExp _uuidShape = RegExp(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', caseSensitive: false);
+final RegExp _webhookShape = RegExp(r'hooks\.slack\.com/services/|discord(?:app)?\.com/api/webhooks/', caseSensitive: false);
+final RegExp _linkShape = RegExp(r'://|^www\.', caseSensitive: false);
+final RegExp _linkHeadShape = RegExp(r'^(?:[a-z][a-z0-9+.-]*://|www\.)([^/?#]*)', caseSensitive: false);
+final RegExp _pathSplitShape = RegExp(r'[?#]');
+final RegExp _queryPieceSplitShape = RegExp(r'[?&=#]+|%[0-9A-Fa-f]{2}');
+final RegExp _randomRunShape = RegExp(r'^[A-Za-z0-9_]{20,}$');
+final RegExp _groupShape = RegExp(r'^[A-Za-z0-9]+$');
+final RegExp _upperGroupShape = RegExp(r'^[A-Z0-9]+$');
+final RegExp _letterShape = RegExp(r'[A-Za-z]');
+final RegExp _digitShape = RegExp(r'\d');
+final RegExp _upperShape = RegExp(r'[A-Z]');
+final RegExp _lowerShape = RegExp(r'[a-z]');
+final RegExp _switchShape = RegExp(r'[A-Za-z](?=\d)|\d(?=[A-Za-z])');
+final RegExp _datePrefixShape = RegExp(r'^\d{4}-\d{2}-\d{2}');
+final RegExp _versionPrefixShape = RegExp(r'^v?\d+(?:\.\d+)+', caseSensitive: false);
+final RegExp _hashNumberShape = RegExp(r'^#\d+');
+final RegExp _emailShape = RegExp(r'^[\w.+-]+@[\w-]+\.[\w.]+$');
+final RegExp _figureShape = RegExp(r'^[+\-−]?\$?\d+\.\d+(?:R|%)?$');
+final RegExp _rFigureShape = RegExp(r'^[+\-−]\d+R$');
+
+/// True when [text] holds the shape of a password, key, token or private key. Whole text, not a window.
+bool cheBrainTextHasSecretShape(String text) {
+  if (_brokerKeyShape.hasMatch(text) || _pemShape.hasMatch(text) || _jwtShape.hasMatch(text) || _userPassShape.hasMatch(text)) {
+    return true;
+  }
+  for (final piece in text.split(_tokenSplitShape)) {
+    if (piece.isNotEmpty && _secretToken(piece)) return true;
+  }
+  return false;
+}
+
+bool _secretToken(String raw) {
+  final trimmed = raw.replaceFirst(_leadPunctShape, '').replaceFirst(_trailPunctShape, '');
+  if (_webhookShape.hasMatch(trimmed)) return true;
+  if (_linkShape.hasMatch(trimmed)) return _linkHasSecret(trimmed);
+  return _plainSecret(trimmed);
+}
+
+// A commit SHA is 7-12 or exactly 40 hex characters; any other hex run is a key or a token.
+bool _plainSecret(String trimmed) {
+  if (_groupedCode(trimmed)) return true;
+  final token = trimmed.replaceFirst(_trailingBangShape, '');
+  if (token.length < 8 || !_letterShape.hasMatch(token) || !_digitShape.hasMatch(token)) return false;
+  if (_hexShape.hasMatch(token)) return token.length >= 13 && token.length != 40;
+  if (_uuidShape.hasMatch(token) || _emailShape.hasMatch(token)) return false;
+  if (_datePrefixShape.hasMatch(token) || _versionPrefixShape.hasMatch(token) || _hashNumberShape.hasMatch(token)) return false;
+  if (_figureShape.hasMatch(token) || _rFigureShape.hasMatch(token)) return false;
+  final mixedCase = _lowerShape.hasMatch(token) && _upperShape.hasMatch(token);
+  if (_passwordSymbolShape.hasMatch(token) || (mixedCase && trimmed != token)) return true;
+  final switches = _switchShape.allMatches(token).length;
+  return mixedCase && ((token.length >= 12 && switches >= 3) || token.length >= 24);
+}
+
+// Four or more hyphen-separated alphanumeric groups that form a code, whatever their case. Lower-case
+// words joined by hyphens are prose, so a chain needs a digit or capitals.
+bool _groupedCode(String token) {
+  if (_uuidShape.hasMatch(token)) return false;
+  final groups = token.split('-');
+  if (groups.length < 4 || !groups.every(_groupShape.hasMatch)) return false;
+  if (!_letterShape.hasMatch(groups.join())) return false;
+  return groups.any(_digitShape.hasMatch) || groups.every(_upperGroupShape.hasMatch);
+}
+
+// A long run of letters and digits (a key or a token); a hyphen makes a slug words, and a hex run is
+// judged by the hex rule.
+bool _randomRun(String piece) =>
+    _randomRunShape.hasMatch(piece) && _letterShape.hasMatch(piece) && _digitShape.hasMatch(piece) && !_hexShape.hasMatch(piece);
+
+// A link is judged by its parts: its userinfo and query values get the full token check; a path segment
+// is a secret only as a long random run or a hex key. A slug and a percent-encoded word are words.
+bool _linkHasSecret(String link) {
+  final head = _linkHeadShape.firstMatch(link);
+  final authority = head == null ? '' : head.group(1)!;
+  final rest = head == null ? link : link.substring(head.group(0)!.length);
+  final at = authority.lastIndexOf('@');
+  if (at > 0 && authority.substring(0, at).split(':').any((piece) => piece.isNotEmpty && _plainSecret(piece))) return true;
+  final path = rest.split(_pathSplitShape).first;
+  final query = rest.substring(path.length);
+  for (final segment in path.split('/')) {
+    if (_randomRun(segment) || (_hexShape.hasMatch(segment) && _plainSecret(segment))) return true;
+  }
+  return query.split(_queryPieceSplitShape).any((piece) => piece.isNotEmpty && (_randomRun(piece) || _plainSecret(piece)));
+}
 
 class CheBrainRecord {
   CheBrainRecord({
@@ -456,6 +555,10 @@ class CheBrainReplica {
     _recordsJson = null;
     _records[record.id] = record;
     if (record.deleted) {
+      _tokens.remove(record.id);
+    } else if (cheBrainTextIsSensitive('${record.title}\n${record.excerpt}')) {
+      // A record that holds a secret shape (a sync from before the gate) stays in the list, but it is
+      // never indexed: no search finds it, so its words never reach the on-device model (second review of #354).
       _tokens.remove(record.id);
     } else {
       _tokens[record.id] = _tokenize('${record.title} ${record.excerpt}');

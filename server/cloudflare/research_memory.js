@@ -41,13 +41,33 @@ const PEM_RE = /-----BEGIN [A-Z0-9 ]{3,40}-----/;
 const JWT_PIECE_RE = /\beyJ[A-Za-z0-9_-]{8,}/;
 const USER_PASS_RE = /(?:^|[\s(])[A-Za-z0-9._%+-]{2,40}:(?=[^\s:/@"'{}[\],]*[A-Za-z])(?=[^\s:/@"'{}[\],]*[\d!@#$%^&*+=?~])[^\s:/@"'{}[\],]{6,}/;
 const PASSWORD_SYMBOL = /[!@#$%^&*+=~?|\\]/;
-function secretToken(raw) {
-  // Sentence punctuation is not part of a token; a closing "!" is, when the rest already mixes
-  // cases and digits the way a password does ("Summer2026!").
-  const trimmed = raw.replace(/^[("'“‘[<{]+/, '').replace(/[)"'”’\]>},.;:?]+$/, '');
+// A commit SHA is 7-12 or exactly 40 hex characters. Any other hex run is a key or a token (review of
+// #354: a 32-character hex key was read as a SHA). A UUID is an id, not a key.
+const HEX_RE = /^[0-9a-f]+$/i;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// Slack and Discord webhooks carry the secret in the path itself, so the path is the secret.
+const WEBHOOK_RE = /hooks\.slack\.com\/services\/|discord(?:app)?\.com\/api\/webhooks\//i;
+const URL_RE = /:\/\/|^www\./i;
+// Hyphen-separated groups that form a code ("8F3K-9LQ2-7MZP-4XWD"), whatever their case. Lower-case
+// words joined by hyphens ("rotate-the-api-key") are prose, so a chain needs a digit or capitals.
+function groupedCode(token) {
+  if (UUID_RE.test(token)) return false;
+  const groups = token.split('-');
+  if (groups.length < 4 || !groups.every((g) => /^[A-Za-z0-9]+$/.test(g))) return false;
+  if (!/[A-Za-z]/.test(groups.join(''))) return false;
+  return groups.some((g) => /\d/.test(g)) || groups.every((g) => /^[A-Z0-9]+$/.test(g));
+}
+// A long run of letters and digits: a key or a token. A hyphen makes a slug words
+// ("issuecomment-1234567890"), so a slug is not one. A hex run is judged by the hex rule instead.
+function randomRun(piece) {
+  return /^[A-Za-z0-9_]{20,}$/.test(piece) && /[A-Za-z]/.test(piece) && /\d/.test(piece) && !HEX_RE.test(piece);
+}
+function plainSecret(trimmed) {
+  if (groupedCode(trimmed)) return true;
   const token = trimmed.replace(/!+$/, '');
   if (token.length < 8 || !/[A-Za-z]/.test(token) || !/\d/.test(token)) return false;
-  if (/^[0-9a-f]+$/i.test(token) || /:\/\/|^www\./i.test(token) || /^[\w.+-]+@[\w-]+\.[\w.]+$/.test(token)) return false;
+  if (HEX_RE.test(token)) return token.length >= 13 && token.length !== 40;
+  if (UUID_RE.test(token) || /^[\w.+-]+@[\w-]+\.[\w.]+$/.test(token)) return false;
   if (/^\d{4}-\d{2}-\d{2}/.test(token) || /^v?\d+(?:\.\d+)+/i.test(token) || /^#\d+/.test(token)) return false;
   // A trading figure is not a password: a signed decimal with an R or % unit ("+0.0125R", "-1.5%").
   if (/^[+\-−]?\$?\d+\.\d+(?:R|%)?$/.test(token) || /^[+\-−]\d+R$/.test(token)) return false;
@@ -55,6 +75,28 @@ function secretToken(raw) {
   if (PASSWORD_SYMBOL.test(token) || (mixedCase && trimmed !== token)) return true;
   const switches = (token.match(/[A-Za-z](?=\d)|\d(?=[A-Za-z])/g) || []).length;
   return mixedCase && ((token.length >= 12 && switches >= 3) || token.length >= 24);
+}
+// A link is judged by its parts. Its userinfo and query values get the full token check (a password
+// or a code in a link is a secret); a path segment is a secret only as a long random run or a hex key.
+// An ordinary path slug ("6-006-introduction-to-algorithms-2020") and a percent-encoded word are words.
+function linkHasSecret(link) {
+  const head = /^(?:[a-z][a-z0-9+.-]*:\/\/|www\.)([^/?#]*)/i.exec(link);
+  const authority = head ? head[1] : '';
+  const rest = head ? link.slice(head[0].length) : link;
+  const at = authority.lastIndexOf('@');
+  if (at > 0 && authority.slice(0, at).split(':').some((piece) => piece && plainSecret(piece))) return true;
+  const path = rest.split(/[?#]/)[0];
+  const query = rest.slice(path.length);
+  if (path.split('/').some((segment) => randomRun(segment) || (HEX_RE.test(segment) && plainSecret(segment)))) return true;
+  return query.split(/[?&=#]+|%[0-9A-Fa-f]{2}/).some((piece) => Boolean(piece) && (randomRun(piece) || plainSecret(piece)));
+}
+function secretToken(raw) {
+  // Sentence punctuation is not part of a token; a closing "!" is, when the rest already mixes
+  // cases and digits the way a password does ("Summer2026!").
+  const trimmed = raw.replace(/^[("'“‘[<{]+/, '').replace(/[)"'”’\]>},.;:?]+$/, '');
+  if (WEBHOOK_RE.test(trimmed)) return true;
+  if (URL_RE.test(trimmed)) return linkHasSecret(trimmed);
+  return plainSecret(trimmed);
 }
 export function hasSecretShape(text) {
   const value = String(text ?? '');

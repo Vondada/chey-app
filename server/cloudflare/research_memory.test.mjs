@@ -5,6 +5,7 @@ import {
   buildAgentTaskNodes,
   buildBrainGraph,
   distillResearchNote,
+  hasSecretShape,
   isResearchStyleJob,
   isSafeMemoryText,
   listMemoryNotes,
@@ -145,4 +146,60 @@ test('bounded brain graph does not falsely hide an agent behind another agent ba
   assert.equal(nodes.length, 20);
   assert.ok(nodes.some((n) => n.agent === 'Sage' && n.task_id === 'sage-live'));
   assert.ok(nodes.some((n) => n.agent === 'Atlas'));
+});
+
+// ─── Second review of #354: secret shapes ────────────────────────────────────
+// Fixtures are built at run time from pieces, so no literal key, code or token sits in the repository.
+const HEX_KEY_A = ['3f2a9c8e7d6b5a4f', '3e2d1c0b9a8f7e6d'].join(''); // 32 hex characters
+const HEX_KEY_B = ['4f8a1c2e9b7d3f60', 'a5c8e1b4d9f2a7c3'].join(''); // 32 hex characters
+const SLACK_WEBHOOK = ['https://hooks.slack.com/services/', 'T00000000/B00000000/', 'XXXXXXXXXXXXXXXXXXXXXXXX'].join('');
+const PASS = ['Summer', '2026', '!'].join('');
+const GROUPED_CODE = ['8F3K', '9LQ2', '7MZP', '4XWD'].join('-');
+const RANDOM_PATH = ['Q7mZ2kP9', 'xL4vN8wR3tY6uB1c'].join('');
+const BARE_SLACK = ['xoxb', '1234567890123', '1234567890123', 'AbCdEfGhIjKlMnOpQrStUvWx'].join('-');
+const TWILIO_AUTH = ['a1b2c3d4e5f6a7b8', 'c9d0e1f2a3b4c5d6'].join('');
+
+test('secret shapes: long hex keys, webhook and link tokens, grouped codes and bare tokens are withheld (second review of #354)', () => {
+  const secrets = [
+    `The Fish key is ${HEX_KEY_A} — rotate it`,
+    `Webhook URL ${SLACK_WEBHOOK}`,
+    `The backup code is ${GROUPED_CODE}`,
+    `The deploy key is ${HEX_KEY_B}`,
+    `The deploy key is ${HEX_KEY_B.toUpperCase()}`,
+    `The Twilio auth is ${TWILIO_AUTH}`,
+    `Slack ${BARE_SLACK} is live`,
+    `The recovery code is ${['ABCD', 'EFGH', 'IJKL', 'MNOP'].join('-')}`,
+    `The recovery code is ${GROUPED_CODE.toLowerCase()}`,
+    `Hook hooks.slack.com/services/${['T0/B0/', 'XXXXXXXXXXXXXXXXXXXXXXXX'].join('')}`,
+    `Discord ${['https://discord.com/api/webhooks/', '123456789012345678/abcdefGHIJKL'].join('')} is set`,
+    `See https://example.com/reset/${RANDOM_PATH} for the page`,
+    `Open https://example.com/login?pw=${PASS} today`,
+    `Clone https://vondada:${PASS}@github.com/Vondada/chey-app.git now`,
+    `Credentials vondada:${PASS} for the test`,
+    `The code is ${['1a2b3c4d5e6f', '7'].join('')}`,
+    `The commit is ${['4acb3d97096606e878e462812571c34d851b704d', 'e'].join('')}`,
+  ];
+  for (const text of secrets) {
+    assert.equal(isSafeMemoryText(text), false, text);
+    assert.equal(hasSecretShape(text), true, text);
+  }
+});
+
+test('ordinary commits, versions, figures, dates, slugs and links stay safe (second review of #354)', () => {
+  const kept = [
+    '+0.0125R', '-1.5%', '#350', 'PR 351', 'commit 4acb3d9', 'version v2.3.1', 'Build v2.3.1-rc1 passed',
+    'Dated 2026-10-18', 'Deployed at 2026-10-18T21:00:00.000Z.', 'The meeting notes go on and on.',
+    'The commit is 4acb3d970966 and 4acb3d97096606e878e462812571c34d851b704d', 'PR-351-READY tonight',
+    'Next is brain-sync-follow-up-plan today', 'UUID 97d389bb-537b-425e-81c5-908ab17e5ce8 is fine',
+    'See https://github.com/Vondada/chey-app/pull/351?ref=main',
+    'See https://github.com/Vondada/chey-app/pull/354#issuecomment-1234567890',
+    'See https://github.com/Vondada/chey-app/commit/4acb3d97096606e878e462812571c34d851b704d',
+    'Read https://ocw.mit.edu/courses/6-006-introduction-to-algorithms-spring-2020/ now',
+    'See https://en.wikipedia.org/wiki/Amdahl%27s_law',
+    'See https://www.fiverr.com/categories/graphics-design',
+  ];
+  for (const text of kept) {
+    assert.equal(isSafeMemoryText(text), true, text);
+    assert.equal(hasSecretShape(text), false, text);
+  }
 });

@@ -814,3 +814,38 @@ test('"What did ChatGPT say?" alone, right after a live consult, or about a pers
   assert.deepEqual(outsideCorrespondenceIntent('What did ChatGPT say in the mailbox about the logo?', { history: consult }), { kind: 'ask', peer: 'chatgpt', direction: 'from', topic: 'the logo' });
   assert.deepEqual(outsideCorrespondenceIntent('What did Codex say about #350?', { history: consult }), { kind: 'ask', peer: 'codex', direction: 'from', topic: '#350' }, 'another AI than the one consulted');
 });
+
+// ─── Second review of #354: the four planted messages ───────────────────────────
+// Built from pieces, so no literal key, code or token sits in the repository (the same rule as above).
+const PLANTED_HEX_A = ['3f2a9c8e7d6b5a4f', '3e2d1c0b9a8f7e6d'].join(''); // 32 hex characters
+const PLANTED_HEX_B = ['4f8a1c2e9b7d3f60', 'a5c8e1b4d9f2a7c3'].join(''); // 32 hex characters
+const PLANTED_WEBHOOK = ['https://hooks.slack.com/services/', 'T00000000/B00000000/', 'XXXXXXXXXXXXXXXXXXXXXXXX'].join('');
+const PLANTED_GROUPED = ['8F3K', '9LQ2', '7MZP', '4XWD'].join('-');
+const PLANTED = [
+  `The Fish key is ${PLANTED_HEX_A} — rotate it`,
+  `Webhook URL ${PLANTED_WEBHOOK}`,
+  `The backup code is ${PLANTED_GROUPED}`,
+  `The deploy key is ${PLANTED_HEX_B}`,
+];
+
+test('the four planted messages are withheld and counted, never stored whole; ordinary engineering words stay (second review of #354)', async (t) => {
+  for (const text of PLANTED) {
+    assert.equal(isSafeMemoryText(text), false, text.slice(0, 40));
+    assert.equal(isSafeText(text), false, text.slice(0, 40));
+    assert.deepEqual(redactCorrespondence(text), { text: '[withheld: sensitive content]', withheld: 1 }, text.slice(0, 40));
+  }
+  const kept = 'Commit 4acb3d9 and PR 351 fixed #350: +0.0125R and -1.5% on v2.3.1 at 2026-10-18.';
+  assert.deepEqual(redactCorrespondence(kept), { text: kept, withheld: 0 });
+  assert.deepEqual(redactCorrespondence(`Deploy is green. The deploy key is ${PLANTED_HEX_B}. Nothing else changed.`), { text: 'Deploy is green. Nothing else changed. [withheld: sensitive content]', withheld: 1 });
+
+  const storage = await sqlStorage();
+  if (!storage) return t.skip('node:sqlite unavailable');
+  const store = new CheBrainStore(storage);
+  const files = { 'mailbox/chatgpt.jsonl': jsonl(PLANTED.map((text, i) => ({ id: `planted-${i}`, at: T, from: 'chatgpt', to: 'che', text, reply_to: '' }))) };
+  const report = await importOutsideCorrespondence(store, GH_ENV, { fetcher: fakeGitHub({ head: HEAD1, files }), now: T });
+  assert.equal(report.in_brain, 4);
+  assert.equal(report.totals.withheld, 4, 'each planted message is counted as withheld');
+  const stored = store.rows('SELECT title, body, source, links FROM brain_records').map((r) => `${r.title}\n${r.body}\n${r.source}\n${r.links}`).join('\n');
+  for (const piece of [PLANTED_HEX_A, PLANTED_HEX_B, PLANTED_WEBHOOK, PLANTED_GROUPED, 'T00000000/B00000000']) assert.equal(stored.includes(piece), false, piece.slice(0, 12));
+  assert.match(store.get('mail:planted-1').body, /Webhook URL|\[withheld: sensitive content\]/, 'the message is kept as a safe outline');
+});

@@ -266,7 +266,8 @@ extension _CheHomeStreaming on _CHEHomeState {
       'dismissed_suggestions': _commandStore.dismissed.toList(),
       'client_identity_profile': _cheIdentityProfile,
       'client_personality_profile': learnedPersonality,
-      'client_memories': savedMemories,
+      // A memory that holds a secret shape is never sent, even one a replica brought in from before the gate.
+      'client_memories': savedMemories.where((m) => !cheBrainTextIsSensitive(m)).toList(),
       'brain_context': _brainContextFor(userMessage),
       'plugin_instructions': _pluginInstructionsFor(userMessage),
       'plugin_tools': _skillPlugins.tools(),
