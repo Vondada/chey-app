@@ -595,6 +595,12 @@ function nounLabel(word, fallback) {
   for (const [re, label] of NOUN_LABELS) if (re.test(w)) return label;
   return fallback;
 }
+// A delivery noun, then its verb: "the email went out", "the report is in Sarah's inbox". Between them only words that
+// are not a negation or a modal, so "the email never went out" and "the report will be with Sarah" are not claims made now.
+const DELIVERY_NOUN = String.raw`(e-?mails?|mails?|messages?|texts?|replies|reply|reports?|files?|notes?|letters?|sms|documents?)`;
+const DELIVERY_GAP = String.raw`(?:(?!(?:not|never|no|will|would|can|could|should|might|may|shall|if|once|when|unless|until|going)\b)[\w'’-]+\s+){0,2}?`;
+// "not", "never" or "no" right before a generic claim ("it is not all done and dusted") negates it.
+const NEG_BEFORE = /\b(?:not|never|no)\s+(?:\S+\s+){0,1}$/i;
 const CLAIM_PHRASES = [
   { re: /\b(?:it|that|this|everything|they)(?:\s+(?:has\s+been|have\s+been|has|have|is|was|were|are)|['’]s(?:\s+been)?|['’]re)\s+(?:now\s+|already\s+|successfully\s+|just\s+)?dispatched\b/i, label: 'sent' },
   { re: /\b(email|e-?mail|message|text|reply|report|file|note|mail|sms|package|parcel|order|gift|flowers|tickets?|payment|bill)\s+(?:is|was|are|were|has\s+been|have\s+been)\s+(?:now\s+|already\s+)?on\s+(?:its|their|the)\s+way\b/i, noun: 1, fallback: 'sent' },
@@ -603,6 +609,15 @@ const CLAIM_PHRASES = [
   { re: /\b(?:I|we)(?:['’]ve|\s+have)?\s+(?:already\s+|just\s+|now\s+|personally\s+)?taken\s+care\s+of\s+(?:the\s+|your\s+|my\s+)?(\w+)?/i, noun: 1, fallback: 'done' },
   { re: /\b(?:your|my|the|these|those|all\s+(?:of\s+)?(?:your|my|the))\s+(?:[\w'-]+\s+){0,2}?(?:notes?|files?|emails?|messages?|texts?|data|memor(?:y|ies)|history|chats?|drafts?|reminders?|events?|photos?|videos?|contacts?|records?|logs?|skills?)\s+(?:are|is|were|was|have\s+been|has\s+been)\s+(?:now\s+|all\s+|already\s+|finally\s+)?gone\b/i, label: 'deleted' },
   { re: /\beverything\s+(?:is|was|has\s+been|have\s+been)\s+(?:now\s+|already\s+)?gone\b/i, label: 'deleted' },
+  // Comprehension audit, review of PR #356: "Okay, I'm on it: the email went out", "Got it, the report is in Sarah's
+  // inbox", "The report is with Sarah". Each names a delivery, so the claim is removed for any request.
+  { re: new RegExp(String.raw`\b${DELIVERY_NOUN}\s+${DELIVERY_GAP}(?:went|has\s+gone|have\s+gone|had\s+gone)\s+out\b`, 'i'), noun: 1, fallback: 'sent' },
+  { re: new RegExp(String.raw`\b${DELIVERY_NOUN}\s+${DELIVERY_GAP}(?:is|was|are|were|has\s+been|have\s+been)\s+(?:now\s+|already\s+|just\s+)?with\s+(?!(?:the|a|an|my|your|his|her|their|our|its|you|me|us|him|them|it|this|that|these|those|someone|anyone|everyone)\b)[a-z][\w'’-]*`, 'i'), noun: 1, fallback: 'sent' },
+  { re: new RegExp(String.raw`\b${DELIVERY_NOUN}\s+${DELIVERY_GAP}(?:in|into)\s+[\w'’-]+['’]s\s+inbox\b`, 'i'), noun: 1, fallback: 'sent' },
+  // "All set, sir" and "It is all done and dusted" finish a task, so they are claims only when the request asked CHE to
+  // act: "what is on my calendar? All set" names nothing done. Removed, they take the request's own verb (see requestOutcome).
+  { re: /^\s*all\s+set\b/i, label: 'done', gated: true },
+  { re: /\b(?:(?:it['’]?s|it\s+is|it\s+was|that['’]?s|that\s+is|everything['’]?s|everything\s+is)\s+)?(?:all\s+)?(?:now\s+|already\s+)?done\s+and\s+dusted\b/i, label: 'done', gated: true },
   // A receipt number CHE never got: removed, with no verb claimed in the note.
   { re: /\bconfirmation\s+(?:number|no\.?|code|id|#)\s*[:#]?\s*[A-Z0-9-]*\d[A-Z0-9-]*/i, label: null },
 ];
@@ -613,6 +628,8 @@ const SPANISH_CLAIMS = [
   /\b(?:yo\s+)?(pagu[ée]|pagó|transfer[ií]|envié|envió|mandé|mandó|compr[ée]|compró|borr[ée]|borró|elimin[ée]|eliminó|reserv[ée]|reservó|subí|subió)(?![a-záéíóúñ])/i,
   /\b(?:he|has|ha|hemos|han)\s+(?:ya\s+)?(pagado|pagada|transferido|enviado|enviada|mandado|comprado|comprada|borrado|borrada|eliminado|eliminada|reservado|reservada|publicado|publicada|subido|subida)\b/i,
   /\b(?:ya\s+)?(?:est[áa]|estaba|fue|qued[óo])\s+(?:ya\s+)?(enviad[oa]|pagad[oa]|comprad[oa]|borrad[oa]|eliminad[oa]|transferid[oa]|reservad[oa]|publicad[oa])\b/i,
+  // "Ya está hecho" (review of PR #356): the thing is done. The "hecho" is generic, so it takes the request's verb.
+  /\b(?:ya\s+)?(?:est[áa]|qued[óo])\s+(?:ya\s+)?(hech[oa])\b/i,
 ];
 const SPANISH_DONE_START = /^\s*(listo|lista|hecho|hecha|enviado|enviada|comprado|comprada|pagado|pagada|borrado|borrada|eliminado|eliminada)\s*(?:[,.:!]|$)/i;
 function spanishLabel(word) {
@@ -620,20 +637,49 @@ function spanishLabel(word) {
   for (const [re, label] of SPANISH_STEM) if (re.test(w)) return label;
   return 'done';
 }
+// The outcome the owner's request names, in its own word: "send sarah the report" -> "sent", "pay the bill" -> "paid".
+// A generic "All set" or "Ya está hecho" then says what did not happen ("Nothing was sent, sir"). Empty when the
+// request names no action, so the note falls back to "done".
+const REQUEST_OUTCOME = {
+  send: 'sent', sends: 'sent', sending: 'sent', text: 'sent', texts: 'sent', texting: 'sent',
+  post: 'uploaded', posts: 'uploaded', posting: 'uploaded', upload: 'uploaded', uploads: 'uploaded', uploading: 'uploaded',
+  publish: 'uploaded', publishes: 'uploaded', publishing: 'uploaded',
+  buy: 'bought', buys: 'bought', buying: 'bought',
+  pay: 'paid', pays: 'paid', paying: 'paid',
+  order: 'ordered', orders: 'ordered', ordering: 'ordered',
+  delete: 'deleted', deletes: 'deleted', deleting: 'deleted',
+  sell: 'sold', sells: 'sold', selling: 'sold',
+  book: 'scheduled', books: 'scheduled', booking: 'scheduled', schedule: 'scheduled', schedules: 'scheduled', scheduling: 'scheduled',
+};
+function requestOutcome(message) {
+  if (!requestNamesAction(message)) return '';
+  const words = String(message || '').toLowerCase().match(/[a-z]+/g) || [];
+  for (let i = 0; i < words.length; i++) {
+    // "in order to send the report" names no order.
+    if (words[i] === 'order' && /^(?:to|of|by|in|that)$/.test(words[i + 1] || '')) continue;
+    if (REQUEST_OUTCOME[words[i]]) return REQUEST_OUTCOME[words[i]];
+  }
+  return '';
+}
+
 // Every claim in one sentence that has no action verb. Returns null when there is none, otherwise
-// { labels } (labels may be empty for a receipt CHE does not have).
-function phraseClaims(sentence) {
+// { labels } (labels may be empty for a receipt CHE does not have). `actionAsked` gates the generic claims;
+// `outcome` is the request's verb for a generic "done".
+function phraseClaims(sentence, { actionAsked = false, outcome = '' } = {}) {
   const labels = [];
   let found = false;
   for (const claim of CLAIM_PHRASES) {
+    if (claim.gated && !actionAsked) continue;
     const m = claim.re.exec(sentence);
     if (!m || NOT_A_CLAIM.test(sentence.slice(0, m.index)) || quoted(sentence, m.index)) continue;
+    if (claim.gated && NEG_BEFORE.test(sentence.slice(0, m.index))) continue;
     found = true;
     if (claim.label !== null) labels.push(claim.label ?? nounLabel(m[claim.noun] || '', claim.fallback));
   }
   for (const re of SPANISH_CLAIMS) {
     const m = re.exec(sentence);
-    if (!m || /\bno\s+(?:\S+\s+){0,2}$/i.test(sentence.slice(0, m.index)) || quoted(sentence, m.index)) continue;
+    // A question ("¿Ya está hecho?") claims nothing.
+    if (!m || /\bno\s+(?:\S+\s+){0,2}$/i.test(sentence.slice(0, m.index)) || /¿[^?]*$/.test(sentence.slice(0, m.index)) || quoted(sentence, m.index)) continue;
     found = true;
     labels.push(spanishLabel(m[1]));
   }
@@ -644,8 +690,10 @@ function phraseClaims(sentence) {
   }
   if (!found) return null;
   // "Listo, señor: pagué la factura" claims a payment, not just "done": the specific claim is the one named.
+  // A generic "done" takes the request's own verb when there is one.
   const specific = labels.filter((label) => label !== 'done');
-  return { labels: [...new Set(specific.length ? specific : labels)] };
+  const chosen = specific.length ? specific : labels.map((label) => (label === 'done' && outcome ? outcome : label));
+  return { labels: [...new Set(chosen)] };
 }
 
 function quoted(sentence, index) {
@@ -663,6 +711,8 @@ export function guardClaimedOwnerActions(reply, { message = '', acted = false } 
   const removed = [];
   const claimed = new Set();
   const kept = [];
+  const actionAsked = requestNamesAction(message);
+  const outcome = requestOutcome(message);
   for (const sentence of splitSentences(text)) {
     const plain = sentence.trim();
     let hit = null;
@@ -679,7 +729,7 @@ export function guardClaimedOwnerActions(reply, { message = '', acted = false } 
       }
     }
     if (!hit) {
-      const phrase = phraseClaims(plain);
+      const phrase = phraseClaims(plain, { actionAsked, outcome });
       if (phrase) {
         hit = phrase.labels[0] || 'claim';
         for (const label of phrase.labels) claimed.add(label);
@@ -693,7 +743,10 @@ export function guardClaimedOwnerActions(reply, { message = '', acted = false } 
     kept.push(sentence);
   }
   if (!removed.length) return { text, removed };
-  const verbs = [...claimed];
+  // A generic "done" is dropped when a specific claim is named in the same reply: "All set. The report is with Sarah"
+  // says "sent", not "done or sent".
+  const specific = [...claimed].filter((verb) => verb !== 'done');
+  const verbs = specific.length ? specific : [...claimed];
   const list = verbs.length > 1 ? `${verbs.slice(0, -1).join(', ')} or ${verbs[verbs.length - 1]}` : verbs[0];
   const note = list
     ? `Nothing was ${list}, sir: I have no record of doing that.`

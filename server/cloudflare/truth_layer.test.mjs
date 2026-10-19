@@ -647,3 +647,25 @@ test('review #356: a claim with no matching verb is removed, for the request tha
     assert.equal(guard(kept, { message: 'pay the bill' }).text, kept, kept);
   }
 });
+
+// Review of PR #356, blocker 1: the five phrasings, with the request that makes each a lie, and the counter-cases.
+test('review #356: "went out", "is with", "in Sarah\'s inbox", "all set", "done and dusted" and "ya está hecho" are claims for a send', async () => {
+  const { guardClaimedOwnerActions: guard } = await import('./truth_layer.js');
+  const message = 'send sarah the report';
+  for (const reply of ["Okay, I'm on it: the email went out.", 'Got it, the report is in Sarah\'s inbox now.', 'All set, sir. The report is with Sarah.',
+    'It is all done and dusted.', 'Ya está hecho.']) {
+    const out = guard(reply, { message });
+    assert.ok(out.removed.length >= 1, reply);
+    assert.equal(out.text, 'Nothing was sent, sir: I have no record of doing that.', reply);
+  }
+  for (const honest of ['The report did not go out yet.', 'No, it is not with Sarah.', 'The email never went out, sir.', 'It is not all done and dusted yet.']) {
+    assert.equal(guard(honest, { message }).text, honest, honest);
+  }
+});
+
+test('review #356: "All set" and "done and dusted" are not claims when the request asks for no action', async () => {
+  const { guardClaimedOwnerActions: guard } = await import('./truth_layer.js');
+  const status = 'All set, sir. Your meeting is at noon.';
+  assert.equal(guard(status, { message: 'what is on my calendar?' }).text, status);
+  assert.equal(guard('It is all done and dusted, sir.', { message: 'how did the report go?' }).text, 'It is all done and dusted, sir.');
+});

@@ -141,3 +141,49 @@ test('comprehension audit: a plain story keeps its wording, and a plain draft of
   const [draft] = await session(['write a text to my wife saying I bought the tickets'], { model: 'Here is your text: I bought the tickets, see you at 8.' });
   assert.equal(draft.reply, 'Here is your text: I bought the tickets, see you at 8.');
 });
+
+// Review of PR #356, blocker 2 (through /api/chat): an ordinary sentence with sell, sales, set up or register is not held
+// and the model answers it. Money and deletion are the only things CHE asks about first.
+const ORDINARY = ['sell me on this idea', 'how many sales did I make, sell-through?', 'set up my account on the phone', 'register me for the course'];
+for (const say of ORDINARY) {
+  test(`review #356: "${say}" is not held, so the model answers it`, async () => {
+    const [turn] = await session([say], { model: 'Sure, sir. Here is my answer.' });
+    assert.equal(turn.meta.held_for_owner, undefined, 'not held for the owner');
+    assert.equal(turn.modelCalls, 1, 'the model is reached');
+    assert.equal(turn.reply, 'Sure, sir. Here is my answer.');
+    assert.equal(turn.writes, 0);
+    assert.equal(turn.held, null);
+  });
+}
+
+test('review #356: "set up a Notion account" is still held for the owner\'s yes', async () => {
+  const [held] = await session(['set up a Notion account']);
+  assert.equal(held.meta.held_for_owner, true);
+  assert.equal(held.meta.owner_action_kind, 'signup');
+  assert.equal(held.modelCalls, 0);
+  assert.equal(held.writes, 0);
+});
+
+// Review of PR #356, blocker 1 (through /api/chat): the owner asks CHE to send, and the model says it went out. The
+// request makes each claim false, so each is taken out, and the note names the request's own verb.
+const CLAIMS = [
+  ['Okay, I\'m on it: the email went out.', 'email went out'],
+  ['Got it, the report is in Sarah\'s inbox now.', 'in Sarah\'s inbox'],
+  ['All set, sir. The report is with Sarah.', 'with Sarah'],
+  ['It is all done and dusted.', 'all done and dusted'],
+  ['Ya está hecho.', 'hecho'],
+];
+for (const [lie, phrase] of CLAIMS) {
+  test(`review #356: "${lie}" (${phrase}) is taken out for "send Sarah the report"`, async () => {
+    const [turn] = await session(['send Sarah the report'], { model: lie });
+    assert.equal(turn.modelCalls, 1, 'the model answers the request');
+    assert.equal(turn.reply, 'Nothing was sent, sir: I have no record of doing that.');
+  });
+}
+
+test('review #356: an honest sentence with a negation is kept: "did not go out yet", "no, it is not with Sarah"', async () => {
+  for (const honest of ['The report did not go out yet, sir.', 'No, it is not with Sarah, sir.']) {
+    const [turn] = await session(['send Sarah the report'], { model: honest });
+    assert.equal(turn.reply, honest);
+  }
+});

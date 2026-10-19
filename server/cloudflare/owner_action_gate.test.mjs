@@ -223,7 +223,9 @@ test('review #356: sign-up phrasings are held for the owner\'s yes, and REA inve
   assert.deepEqual(classifyOwnerActions('sign me up'), ['signup']);
   assert.deepEqual(classifyOwnerActions('create an account on Notion'), ['signup']);
   assert.deepEqual(classifyOwnerActions('create a Notion account'), ['signup']);
-  assert.deepEqual(classifyOwnerActions('register me for the newsletter'), ['signup']);
+  assert.deepEqual(classifyOwnerActions('register me with Notion'), ['signup']);
+  assert.deepEqual(classifyOwnerActions('set up a Notion account'), ['signup']);
+  assert.deepEqual(classifyOwnerActions('set up an account on Notion'), ['signup']);
   const gate = gateOwnerAction('Investigate the Notion app and sign me up', {});
   assert.equal(gate.allowed, false);
   assert.equal(gate.kind, 'signup');
@@ -254,4 +256,25 @@ test('review #356: the requests the audit keeps are unchanged', () => {
   assert.equal(classifyOwnerAction('CHE, forget that my favorite color is blue'), 'delete');
   assert.deepEqual(classifyOwnerActions("don't forget to buy milk"), []);
   assert.equal(classifyAppNeed('read my last note in Notes'), 'notes');
+});
+
+// Review of PR #356, blocker 2: ordinary sentences with "sell", "sales", "set up" or "register" are not held. Money and
+// deletion are the only things asked first, and a sign-up only when it names a service.
+test('review #356: ordinary talk with sell, sales, set up or register is not held', () => {
+  assert.deepEqual(classifyOwnerActions('sell me on this idea'), []);
+  assert.deepEqual(classifyOwnerActions('how many sales did I make, sell-through?'), []);
+  assert.deepEqual(classifyOwnerActions('set up my account on the phone'), []);
+  assert.deepEqual(classifyOwnerActions('register me for the course'), []);
+  assert.deepEqual(classifyOwnerActions('register me for the newsletter'), []);
+  assert.deepEqual(classifyOwnerActions('how do I set up my printer'), []);
+});
+
+test('review #356: a sale of something the owner has, and the named sign-ups, are still held', () => {
+  assert.equal(classifyOwnerAction('sell it for $500'), 'money');
+  assert.equal(classifyOwnerAction('sell 2 MNQ'), 'money');
+  assert.equal(classifyOwnerAction('sell the car'), 'money');
+  assert.deepEqual(classifyOwnerActions('sell me on this idea and sell my shares'), ['money']);
+  assert.match(gateOwnerAction('sell 2 MNQ').ask, /spend, buy or sell anything/);
+  assert.deepEqual(classifyOwnerActions('sign me up for Notion'), ['signup']);
+  assert.deepEqual(classifyOwnerActions('create an account on Notion'), ['signup']);
 });
