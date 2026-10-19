@@ -152,9 +152,10 @@ const voiceKey = (v) => (v ? `${v.provider}:${v.id}` : '');
 
 // "What voice did it replace?" is answered from this record: the choice before a different voice was
 // chosen. A speed or setting change keeps the voice, so it keeps the record as it was.
+// A null choice is the built-in voice, so moving to or from it is a change too.
 function replacedVoice(earlier, choice, at) {
-  if (earlier?.choice && voiceKey(earlier.choice) !== voiceKey(choice)) return { previous: earlier.choice, replaced_at: at };
-  return earlier?.previous ? { previous: earlier.previous, replaced_at: earlier.replaced_at ?? null } : {};
+  if (earlier && typeof earlier === 'object' && voiceKey(earlier.choice) !== voiceKey(choice)) return { previous: earlier.choice ?? null, replaced_at: at };
+  return earlier && 'previous' in earlier ? { previous: earlier.previous ?? null, replaced_at: earlier.replaced_at ?? null } : {};
 }
 
 /**

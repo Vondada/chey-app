@@ -317,7 +317,8 @@ export function voiceStudioIntent(message, { last = null, names = null } = {}) {
   // "What ElevenLabs voice did I choose for you, and what voice did it replace?": the saved choice, read only.
   if (/^(?:what|which)\b[\s\S]{0,40}\bvoice\b[\s\S]{0,30}\b(?:(?:did|have|had)\s+i\s+(?:\w+\s+)?(?:choose|chosen|pick|picked|select|selected|set)|i\s+(?:\w+\s+)?(?:chose|picked|selected))\b/.test(t)
     || /^(?:what|which)(?:'s|\s+is)\s+(?:your|che's)\s+(?:current\s+|saved\s+)?(?:(?:elevenlabs|eleven labs|fish)\s+)?voice(?:\s+(?:now|right now|currently|set to))?$/.test(t)) {
-    return { kind: 'current' };
+    // "Which voice did I pick? Switch to Adam instead." asks for a change too; the change routes keep it.
+    if (!/(?:^\s*|[.!?;,]\s*|\b(?:and|then|but)\s+)(?:please\s+)?(?:switch|use|change|set|pick|choose|select|turn|go\s+back|put)\b/.test(t.replace(/^[^.!?]*[.!?]/, ''))) return { kind: 'current' };
   }
   if (/^(?:show|list|read|tell me|what are|which are|what)\s+(?:me\s+)?(?:my\s+|the\s+|all\s+|available\s+)?(?:(elevenlabs|eleven labs|fish)\s+)?(?:voice\s+)?(?:library|voices|voice library)(?:\s+(?:voices|library))?$/.test(t)
     || /^(?:what|which)\s+(?:(?:elevenlabs|eleven labs|fish)\s+)?voices\s+(?:do i have|can i use|are there|are available|are on my account)$/.test(t)) {

@@ -553,7 +553,8 @@ export function codingHistoryIntent(message) {
   if (STATUS_PHRASE.test(text)) return true;
   // "Inspect your coding runtime and GitHub. What's your most recent coding job? Give me the job ID":
   // the runtime is where to look, and a job ID exists only in the run's record.
-  if (RECENT_RECORD.test(text) && RECORD_ID_ASK.test(text) && !CODE_SUBJECT.test(text.replace(RUNTIME_PLACE, 'runtime'))) return true;
+  if (RECENT_RECORD.test(text) && RECORD_ID_ASK.test(text) && !CODE_SUBJECT.test(text.replace(RUNTIME_PLACE, 'runtime'))
+    && !/\b(?:why|bug|broken|screen|page|view|ui|widget|dashboard|display(?:s|ed)?|office)\b/i.test(text)) return true;
   if (CODE_SUBJECT.test(text)) return false;
   const coding = CODING.test(text);
   // One particular record, not coding jobs in general.

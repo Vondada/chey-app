@@ -29,24 +29,43 @@ const DELETE_RE = new RegExp(`${LEAD}(?:${STRONG_DELETE}|${WEAK_DELETE})\\b`, 'i
 const NEGATED_RE = /\b(?:do\s+not|don't|dont|never|not|no)\s+$/i;
 
 // Each clause of a compound request ("buy X, then delete Y") is checked on its
-// own, so a verb that opens any clause counts.
+// own, so a verb that opens any clause counts, unless the owner forbade it ("don't buy anything,
+// pay for anything, or order anything").
+const CLAUSE_BREAK = /[.;!?]|\b(?:then|and then|and|also|after that|afterwards)\b|,/g;
 function hasVerb(re, t) {
-  const clauses = t.split(/[.;!?]|\b(?:then|and then|and|also|after that|afterwards)\b|,/);
-  return clauses.some((clause) => {
-    const c = clause.trim();
+  const spans = prohibitionSpans(t);
+  const clauses = [];
+  let start = 0;
+  for (const m of t.matchAll(CLAUSE_BREAK)) { clauses.push([start, m.index]); start = m.index + m[0].length; }
+  clauses.push([start, t.length]);
+  return clauses.some(([from, to]) => {
+    const raw = t.slice(from, to);
+    const c = raw.trim();
     const m = re.exec(c);
-    return Boolean(m) && !NEGATED_RE.test(c.slice(0, m.index));
+    if (!m || NEGATED_RE.test(c.slice(0, m.index))) return false;
+    const at = from + (raw.length - raw.trimStart().length) + m.index + m[0].length - 1;
+    return !spans.some(([a, b]) => at >= a && at < b);
   });
 }
 
 // "Don't place any orders", "do not start a new investigation", "without uploading anything": the
-// owner forbids CHE an action. A prohibition runs to the end of its sentence, or until the turn turns
-// back to a request ("but tell me", "just explain"). "Don't forget to buy" and "never mind" ask for
-// something, so they are not prohibitions.
-const PROHIBITION_START = /\b(?:do\s+not|don['’]?t|never|no\s+need\s+to|without)\s+(?!(?:forget|hesitate|wait|delay|fail|miss|neglect|skip|stop|mind|let\s+me\s+forget)\b)(?:(?:actually|ever|even|just|go\s+and|try\s+to)\s+)*(?=[a-z])/gi;
+// owner forbids CHE an action. Only an action CHE could take counts: "don't worry about the cost",
+// "I don't care", "don't be greedy", "don't forget to buy" and "never mind" forbid nothing (review of
+// #351: "No need to ask, pay the electric bill" must still be held).
+const CHE_VERB = String.raw`(?:buy|purchase|pay|order|spend|check\s*out|subscribe|donate|charge|transfer|wire|withdraw|sell|short|place|submit|enter|trade|execute|start|begin|run|launch|queue|render|make|create|generate|produce|upload|post|publish|share|send|e-?mail|text|message|call|reply|forward|add|put|delete|remove|erase|wipe|clear|cancel|change|modify|edit|touch|alter|update|write|commit|push|merge|deploy|open|navigate|go|drive|book|schedule|set|remind|guess|invent|assume|use|save|store|record|install|download|switch|turn|connect|disconnect|link|investigate|analy[sz]e|inspect|look|search|read|play|retry|rerun|restart|tell|show|ask|contact|notify|ping|approve|confirm|sign|accept|apply|move|copy|rename|close|reset|fill|log|lock|unlock)`;
+const CHE_GERUND = String.raw`(?:buying|purchasing|paying|ordering|spending|subscribing|transferring|withdrawing|selling|shorting|placing|submitting|entering|trading|executing|starting|running|launching|queu(?:e)?ing|rendering|making|creating|generating|producing|uploading|posting|publishing|sharing|sending|e-?mailing|texting|messaging|calling|replying|forwarding|adding|putting|deleting|removing|erasing|wiping|clearing|cancel(?:l)?ing|changing|modifying|editing|touching|altering|updating|writing|committing|pushing|merging|deploying|opening|navigating|going|driving|booking|scheduling|setting|guessing|inventing|assuming|using|saving|storing|recording|installing|downloading|switching|turning|connecting|investigating|analy[sz]ing|inspecting|looking|searching|reading|playing|telling|showing|asking|contacting|notifying|approving|confirming|signing|accepting|applying|moving|copying|renaming|closing|resetting)`;
+const PROHIBITION_START = new RegExp(String.raw`\b(?:(?:do\s+not|don['’]?t|never|no\s+need\s+to)\s+(?:(?:actually|ever|even|just|go\s+and|try\s+to)\s+)*(?=${CHE_VERB}\b)|without\s+(?=${CHE_GERUND}\b))`, 'gi');
+// A prohibition runs to the end of its sentence, or until the turn turns back to a request ("but tell
+// me", "just explain").
 const PROHIBITION_END = /[.;!?\n]|,?\s+(?:but|just|only|instead|rather|then|and\s+then)\b|,?\s+and\s+(?=(?:tell|show|give|explain|read|list|check|analy[sz]e|summari[sz]e|describe|report|what|which|how|why|when|where|whether)\b)/i;
-
+// Unpunctuated speech: "dont purchase anything explain your understanding" turns back at a read verb.
 const READ_TURN = /\s+(?=(?:explain|tell\s+me|show\s+me|give\s+me|analy[sz]e|summari[sz]e|describe|list|read\s+me)\b)/i;
+// A money, order or delete verb after the forbidden one is a new request, unless it continues the
+// forbidden list ("..., or pay for anything", "buy or sell anything"): "Don't pay attention to the price,
+// buy the tickets." Ending a prohibition early only ever holds more, never less.
+const MONEY_STOP = String.raw`(?:buy|purchase|pay|order|spend|check\s*out|subscribe|donate|transfer|wire|withdraw|sell|short|place|submit|enter|trade|execute|delete|remove|erase|wipe)`;
+const NEW_REQUEST = new RegExp(String.raw`(?:,\s*|\s+)(?:please\s+)?${MONEY_STOP}\b`, 'gi');
+const LIST_WORD = /\b(?:or|nor|the|a|an|my|your|this|that|any|no|its|their|our|his|her)\s*,?\s*$/i;
 
 // The [start, end) spans of the turn's prohibitions.
 export function prohibitionSpans(text) {
@@ -54,15 +73,18 @@ export function prohibitionSpans(text) {
   const spans = [];
   for (const match of t.matchAll(PROHIBITION_START)) {
     if (spans.length && match.index < spans[spans.length - 1][1]) continue;
-    // "without" forbids only a gerund: "analyze it without placing orders", not "without delay".
-    if (/^without/i.test(match[0]) && !/^[a-z]+ing\b/i.test(t.slice(match.index + match[0].length))) continue;
     const rest = t.slice(match.index + match[0].length);
-    // Unpunctuated speech: "dont purchase anything explain your understanding" turns back to a request
-    // at the next read verb after the forbidden one.
     const first = /^\S+/.exec(rest)?.[0].length || 0;
     const sentence = PROHIBITION_END.exec(rest);
     const read = READ_TURN.exec(rest.slice(first));
-    const stop = Math.min(sentence ? sentence.index : rest.length, read ? read.index + first : rest.length);
+    let stop = Math.min(sentence ? sentence.index : rest.length, read ? read.index + first : rest.length);
+    for (const next of rest.slice(first, stop).matchAll(NEW_REQUEST)) {
+      const before = rest.slice(0, first + next.index);
+      const item = rest.slice(first + next.index).replace(/^[,\s]+/, '').split(/[,.;!?]/)[0];
+      if (LIST_WORD.test(before) || /\b(?:anything|nothing)\b/i.test(item)) continue;
+      stop = first + next.index;
+      break;
+    }
     spans.push([match.index, match.index + match[0].length + stop]);
   }
   return spans;
@@ -88,18 +110,30 @@ export function prohibitedText(text) {
 
 // "I want to buy three apples tomorrow, but don't purchase anything": the owner's own plan, with the
 // purchase forbidden to CHE, asks her to spend nothing. A purchase aimed at CHE ("buy it but don't pay
-// more than $5", "I want you to buy it") still needs the owner's yes.
-const OWN_PLAN = String.raw`^${VOCATIVE}(?:(?:so|well|and|but|ok|okay|also)\s+)*(?:i\s+(?:want|need|plan|hope|intend|would\s+like)\s+to|i(?:['’]d|d)\s+like\s+to|i\s+am\s+(?:going|planning)\s+to|i(?:['’]m|m)\s+(?:going|planning)\s+to|i\s+will|i['’]ll|i\s+might)\s+(?:go\s+(?:and\s+)?)?`;
-const OWN_MONEY_RE = new RegExp(`${OWN_PLAN}(?:${MONEY_VERB}\\b|${MONEY_ORDER}|${MONEY_TRANSFER})`, 'i');
-const FORBIDDEN_MONEY = new RegExp(`\\b(?:${MONEY_VERB}|carts?|checkout|orders?|ordering|spend|money)\\b`, 'i');
+// more than $5", "I want you to buy it") still needs the owner's yes. A limit on what CHE pays means
+// CHE pays, so it never counts as forbidding the purchase.
+const OWN_PLAN = String.raw`^${VOCATIVE}(?:(?:so|well|and|but|ok|okay|also)\s+)*(?:i\s+(?:want|need|plan|hope|intend|would\s+like)\s+to|i(?:['’]d|d)\s+like\s+to|i\s+am\s+(?:going|planning)\s+to|i(?:['’]m|m)\s+(?:going|planning)\s+to|i\s+will|i['’]ll|i\s+might)\s+`;
+const OWN_PLAN_RE = new RegExp(OWN_PLAN, 'i');
+const FORBIDDEN_VERB = new RegExp(String.raw`(?:^|,\s*(?:or\s+|nor\s+|and\s+)?|\s(?:or|nor|and)\s+)(?:(?:actually|ever|even|just)\s+)*(?:${MONEY_VERB}|order(?:s|ed|ing)?|add\b[^,.;]*\bcarts?)\b(?!\s+(?:more|over|above|beyond|less|under|at\s+most|up\s+to|with|using|via|by|through|\$|\d))`, 'i');
+function forbidsMoney(t) {
+  return prohibitionSpans(t).some(([start, end]) => FORBIDDEN_VERB.test(t.slice(start, end).replace(PROHIBITION_START, '')));
+}
 function onlyOwnPlanMoney(t) {
-  if (!FORBIDDEN_MONEY.test(prohibitedText(t))) return false;
-  const clauses = withoutProhibitions(t).split(/[.;!?]|\b(?:then|and then|and|also|after that|afterwards)\b|,/);
-  return clauses.every((clause) => {
-    const c = clause.trim();
-    const m = MONEY_RE.exec(c);
-    return !m || NEGATED_RE.test(c.slice(0, m.index)) || OWN_MONEY_RE.test(c);
-  });
+  if (!forbidsMoney(t)) return false;
+  let own = false;
+  // "I want to go to Walmart tomorrow and buy apples": the plan carries through its own "and" clauses,
+  // never past a comma or "then" ("I want to buy apples, then pay for my Netflix" asks CHE to pay).
+  for (const part of withoutProhibitions(t).split(/[.;!?,]+|\b(?:and\s+then|then|also|after\s+that|afterwards)\b/)) {
+    const ownPart = OWN_PLAN_RE.test(part.trim());
+    for (const clause of part.split(/\band\b/)) {
+      const c = clause.trim();
+      const m = MONEY_RE.exec(c);
+      if (!m || NEGATED_RE.test(c.slice(0, m.index))) continue;
+      if (!ownPart) return false;
+      own = true;
+    }
+  }
+  return own;
 }
 
 // Every kind of consequential action the text asks for, in a stable order.
@@ -108,8 +142,11 @@ export function classifyOwnerActions(text) {
   const t = String(text || '').replace(/\s+/g, ' ').trim();
   if (!t) return [];
   const kinds = [];
-  if (hasVerb(MONEY_RE, t) && !onlyOwnPlanMoney(t)) kinds.push('money');
-  if (hasVerb(DELETE_RE, t)) kinds.push('delete');
+  // Unpunctuated speech has no clause marks, so what is left once the prohibitions are out is read too:
+  // "dont pay attention to the price buy the tickets".
+  const asked = withoutProhibitions(t);
+  if ((hasVerb(MONEY_RE, t) || hasVerb(MONEY_RE, asked)) && !onlyOwnPlanMoney(t)) kinds.push('money');
+  if (hasVerb(DELETE_RE, t) || hasVerb(DELETE_RE, asked)) kinds.push('delete');
   return kinds;
 }
 

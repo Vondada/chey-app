@@ -104,6 +104,17 @@ test('voice: the saved choice and what it replaced come from the voice record, w
   data.voice_choice = { ...data.voice_choice, speed: 1.1 };
   await saveVoiceChoice(storage, data, Date.parse('2026-10-13T12:00:00Z'));
   assert.equal((await storage.get(VOICE_PREF_KEY)).previous.name, 'Mary');
+  // Going back to the built-in voice and then choosing a new one: the new one replaced the built-in voice.
+  const st = storageFor(new Map());
+  const d2 = { voice_choice: { provider: 'elevenlabs', id: 'adam', name: 'Adam' } };
+  await saveVoiceChoice(st, d2, Date.parse('2026-10-01T12:00:00Z'));
+  delete d2.voice_choice;
+  await saveVoiceChoice(st, d2, Date.parse('2026-10-05T12:00:00Z'));
+  d2.voice_choice = { provider: 'elevenlabs', id: 'bella', name: 'Bella' };
+  await saveVoiceChoice(st, d2, Date.parse('2026-10-10T12:00:00Z'));
+  const rec = await st.get(VOICE_PREF_KEY);
+  assert.equal(rec.previous, null);
+  assert.equal(rec.replaced_at, Date.parse('2026-10-10T12:00:00Z'));
   for (const message of [VOICE_Q, spoken(VOICE_Q)]) {
     requests.length = 0;
     const out = await che.say(message);
@@ -122,7 +133,7 @@ test('voice: with no record of the earlier voice CHE says so instead of guessing
   const out = await che.say(VOICE_Q);
   assert.match(out.reply, /My saved voice is Connie/);
   assert.match(out.reply, /does not record which voice it replaced, so I will not guess/);
-  for (const other of ['which voice should I choose', 'what voice do you think I would choose']) {
+  for (const other of ['which voice should I choose', 'what voice do you think I would choose', 'Which voice did I pick? Switch to Adam instead.']) {
     assert.equal(voiceStudioIntent(other)?.kind ?? null, null, other);
   }
 });
@@ -171,6 +182,12 @@ test('MNQ: the analysis is read from the stored feed and journal; nothing is ord
   assert.deepEqual(fundyouredgeIntent('place an MNQ order'), { kind: 'order' });
   assert.deepEqual(fundyouredgeIntent("Don't analyze it, just place an MNQ buy order."), { kind: 'order' });
   assert.deepEqual(fundyouredgeIntent('place an order on FundYourEdge'), { kind: 'order' });
+  for (const order of ["I don't care, buy 2 MNQ at market", 'No need to analyze, sell MNQ now', "Don't be greedy, buy one MNQ contract at market"]) {
+    assert.deepEqual(fundyouredgeIntent(order), { kind: 'order' }, order);
+  }
+  assert.equal(liveIntent('Analyze MNQ paper trades and the data delay, and then stop paper trading.'), null);
+  // One bar after the daily break: no bar size is guessed across the break.
+  assert.match(marketRead([{ t: '2026-10-16T20:00:00Z', h: 2, l: 1, c: 1.5, v: 1 }, { t: '2026-10-16T21:05:00Z', h: 2, l: 1, c: 1.5, v: 1 }]), /^Last bar: close 1\.50/);
   assert.equal(liveIntent('Analyze MNQ and buy one contract if it looks bullish. Tell me the data source.'), null);
   // The chart analyzer keeps chart reads.
   assert.equal(liveIntent('Analyze the NQ chart'), null);
@@ -198,6 +215,11 @@ test('REA: CHE explains her own REA and its latest record without starting an in
   assert.equal(che.saved.get('rea_jobs').length, 2, 'nothing new was queued');
   const none = await (await owner()).say(REA_Q);
   assert.match(none.reply, /No REA job has completed with evidence yet, so there is no verified investigation to show\. Nothing was started\./);
+  // Comparisons and earlier investigations keep their own REA routes.
+  const earlier = { history: [{ role: 'user', content: 'Investigate the Notion app' }] };
+  assert.equal(parseReaRequest('Use your REA to compare it with yourself and tell me which features you lack', earlier)?.command, 'compare');
+  assert.equal(parseReaRequest("Have your REA look at the Duolingo app and tell me what features we're missing", earlier)?.command, 'compare');
+  assert.notEqual(parseReaRequest('Run your REA on https://github.com/sindresorhus/ky and tell me what it does')?.command, 'status');
   // A named app to investigate is still an investigation.
   assert.equal(parseReaRequest('Show me what the REA system finds when you investigate the Notion app.')?.command, 'inspect');
 });
@@ -219,6 +241,18 @@ test('shopping: the owner\'s own plan with every purchase forbidden opens no mon
   for (const plan of ["Don't purchase anything, but I want to buy three apples tomorrow. Explain it back to me.", "I'm going to buy apples later; don't order them.", "If I said 'buy apples', what would you do? Don't buy anything."]) {
     assert.deepEqual(classifyOwnerActions(plan), [], plan);
   }
+  // Review of #351: a "don't" that forbids CHE nothing, a limit on what CHE pays, and a new request after
+  // a comma are all still held.
+  for (const ask of ["Don't worry about the cost, buy the AirPods", 'No need to ask, pay the electric bill', "I don't care, buy the tickets",
+    'I never shop online, buy me a book', "Don't overthink it, order me a pizza", "I want to buy it but don't pay more than $5",
+    "I'm going to buy groceries, don't spend more than $50", "Don't pay attention to the price, buy the tickets or the passes",
+    'dont pay attention to the price buy the tickets']) {
+    assert.deepEqual(classifyOwnerActions(ask), ['money'], ask);
+  }
+  for (const plan of ["CHE, I want to go to Walmart tomorrow and buy apples, but don't order anything yet", "don't buy anything, pay for anything, or order anything",
+    "Add apples to the grocery list, but don't buy them", "Don't delete the draft; just explain how to delete it"]) {
+    assert.deepEqual(classifyOwnerActions(plan), [], plan);
+  }
   const che = await owner();
   const held = await che.say("Buy three apples at Walmart but don't pay more than $5.");
   assert.equal(held.meta.held_for_owner, true);
@@ -238,6 +272,16 @@ test('video: a question about the renderer itself starts nothing even without a 
   const asked = await che.say('Make a 30-second video about volcanoes.');
   assert.notEqual(asked.meta.video_status, 'status_only');
   assert.ok(requests.some((r) => r.method === 'POST' && /dispatches/.test(r.url)), 'the render was dispatched');
+});
+
+test('video: a request with a limit or a later "don\'t upload" still renders (review of #351)', async () => {
+  for (const ask of ["Make a video about the Mars rover, but don't upload it yet", "Render a 30 second video about bees. Don't publish it.", "Make a video about cats, don't make it longer than a minute"]) {
+    requests.length = 0;
+    const che = await owner({ env: { CHE_GITHUB_TOKEN: 'test-token', CHE_GITHUB_REPO: 'Vondada/chey-app' } });
+    const out = await che.say(ask);
+    assert.notEqual(out.meta.video_status, 'status_only', ask);
+    assert.ok(requests.some((r) => r.method === 'POST' && /dispatches/.test(r.url)), ask);
+  }
 });
 
 test('video: a renderer status question with rendering forbidden starts nothing and names the last verified MP4', async () => {

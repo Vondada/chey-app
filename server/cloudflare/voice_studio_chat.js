@@ -71,8 +71,8 @@ async function currentVoice(ctx) {
   const parts = [`My saved voice is ${voiceName(choice)}${changed ? `; the setting was last changed ${changed}` : ''}.`];
   const before = pref?.before_fish ?? ctx.data.voice_choice_before_fish ?? null;
   if (choice.provider === 'fish' && before?.provider === 'elevenlabs') parts.push(`The ElevenLabs voice kept for when you switch back is ${voiceName(before)}.`);
-  parts.push(pref?.previous
-    ? `It replaced ${voiceName(pref.previous)}${dateOf(pref.replaced_at) ? ` on ${dateOf(pref.replaced_at)}` : ''}.`
+  parts.push(pref && 'previous' in pref
+    ? `It replaced ${pref.previous ? voiceName(pref.previous) : 'my built-in voice'}${dateOf(pref.replaced_at) ? ` on ${dateOf(pref.replaced_at)}` : ''}.`
     : 'My saved setting does not record which voice it replaced, so I will not guess.');
   return { ok: true, reply: `${parts.join(' ')} ${source}` };
 }

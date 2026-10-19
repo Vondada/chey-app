@@ -33,7 +33,8 @@ const ORDER_ASK = /\b(?:place|submit|enter|buy|sell|short|go\s+long|go\s+short|t
 /** The command in [message], or null. Narrow on purpose: other trading talk keeps its routes. */
 export function liveIntent(message) {
   const text = String(message || '').replace(WAKE, '').trim();
-  if (text && text.length <= 1200 && ANALYSIS.test(text) && FEED_DETAIL.test(text) && !ORDER_ASK.test(withoutProhibitions(text))) return { kind: 'analysis' };
+  if (text && text.length <= 1200 && ANALYSIS.test(text) && FEED_DETAIL.test(text) && !ORDER_ASK.test(withoutProhibitions(text))
+    && !/\b(?:stop|pause|start|begin|resume|turn\s+(?:on|off)|halt|end)\s+(?:the\s+|your\s+)?paper[\s-]*trad/i.test(withoutProhibitions(text))) return { kind: 'analysis' };
   if (!text || text.length > 160) return null;
   for (const [kind, re] of PATTERNS) if (re.test(text)) return { kind };
   return null;
@@ -75,9 +76,10 @@ export function marketRead(bars = []) {
   const rows = (Array.isArray(bars) ? bars : []).filter((b) => b && Number.isFinite(b.c) && !Number.isNaN(Date.parse(b.t)));
   if (!rows.length) return 'No price bar is stored yet, so there is no price, structure or VWAP to report.';
   const last = rows[rows.length - 1];
-  const step = rows.length > 1 ? Math.round((Date.parse(last.t) - Date.parse(rows[rows.length - 2].t)) / 60_000) : 0;
-  const parts = [`Last ${step ? `${step}-minute ` : ''}bar: close ${price(last.c)} at ${when(last.t)}.`];
   const session = sessionBars(rows);
+  // The bar size is measured inside the session, never across the daily break.
+  const step = session.length > 1 ? Math.round((Date.parse(last.t) - Date.parse(session[session.length - 2].t)) / 60_000) : 0;
+  const parts = [`Last ${step ? `${step}-minute ` : ''}bar: close ${price(last.c)} at ${when(last.t)}.`];
   const hour = session.slice(-Math.max(4, step ? Math.round(60 / step) : 12));
   if (hour.length >= 4) {
     const half = Math.floor(hour.length / 2);

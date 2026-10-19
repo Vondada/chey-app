@@ -81,10 +81,15 @@ export function parseReaRequest(message, { history = [] } = {}) {
     const verb = explicit[1].toLowerCase();
     return { command: ALIASES[verb] || verb, input: explicit[2].trim() };
   }
+  const natural = parseNaturalRea(text, { history });
+  if (natural) return natural;
   // "Explain what your REA system can do right now, show your most recent verified investigation ... Do not
-  // start a new investigation": CHE's own REA, read only. A named target to investigate keeps the routes below.
+  // start a new investigation": CHE's own REA, read only. Checked last, so a named target, a comparison or
+  // an earlier investigation keeps its own route.
+  const target = identifyTarget(text);
   if (text.length <= 600 && SELF_REA.test(text) && SELF_REA_READ.test(text)
-    && !(INVESTIGATE.test(withoutProhibitions(text)) && identifyTarget(text))) {
+    && !(target && !['app_name', 'private_app'].includes(target.kind))
+    && !(INVESTIGATE.test(withoutProhibitions(text)) && target)) {
     return {
       command: 'status', input: '', natural: true,
       capabilities: /\b(?:can|capab\w*|able|do\s+right\s+now|what\s+(?:is|does)\b)/i.test(text),
@@ -92,6 +97,10 @@ export function parseReaRequest(message, { history = [] } = {}) {
       verified: /\b(?:verified|successful(?:ly)?|succeeded|evidence)\b/i.test(text),
     };
   }
+  return null;
+}
+
+function parseNaturalRea(text, { history = [] } = {}) {
   const npmNatural = text.match(/\b(reverse[- ]engineer|analy[sz]e|inspect|explain|debug|compare)\b[\s\S]{0,80}\b(?:npm package\b|npm:)/i);
   if (npmNatural) return { command: VERBS[npmNatural[1].toLowerCase().replace(/\s+/g, ' ')] || 'inspect', input: text };
   if (text.length > 600) return null;
