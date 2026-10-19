@@ -220,12 +220,13 @@ test('a coding exercise or review-drill answer is recorded as owner practice and
   assert.match((await said('It returns 3.', set)).reply, /^Right, sir: 3\./);
   assert.match((await said('4', set)).reply, /^Not quite, sir/);
   const drill = (await che.say('Give me a review drill', { keep: false })).reply;
-  assert.match((await said("It cuts the message silently, so the don't at the end is lost", drill)).reply, /^Right, sir, that's the bug\./);
+  assert.match((await said("It cuts the message silently, so the don't at the end is lost", drill)).reply, /^You named both key ideas, sir: /);
   const rows = learningRecords(che.brain).filter((r) => ['exercise', 'drill'].includes(r.source.event));
-  assert.deepEqual(rows.map((r) => `${r.source.event}:${r.source.correct}`).sort(), ['drill:true', 'exercise:false', 'exercise:true']);
+  // A review finding is never graded "right": it is recorded as not graded.
+  assert.deepEqual(rows.map((r) => `${r.source.event}:${r.source.correct}`).sort(), ['drill:null', 'exercise:false', 'exercise:true']);
   assert.ok(rows.every((r) => r.verification === 'owner_practice' && /Owner's answer: /.test(r.body)));
   const progress = await che.say('What have I learned so far in the Knowledge Atlas?', { keep: false });
-  assert.match(progress.reply, /3 practice results, 2 correct \(67%\)/, progress.reply);
+  assert.match(progress.reply, /3 practice results, 1 correct of 2 graded \(50%\), 1 not graded/, progress.reply);
 });
 
 test('lessons and graded quiz answers are recorded as owner practice, and read back as real counts', sqlite, async () => {

@@ -338,7 +338,8 @@ test('every review drill\'s bug is real and its fix works; real-fix drills name 
       assert.deepEqual(results, d.probe[label], `${d.id} ${label}`);
     }
     assert.notDeepEqual(d.probe.buggy, d.probe.fixed, `${d.id}: the bug changes behaviour`);
-    assert.equal(checkDrill(d, d.finding).correct, true, `${d.id}: the finding itself passes its own check`);
+    const self = checkDrill(d, d.finding);
+    assert.ok(self.named && self.correct === null, `${d.id}: the finding itself names both key ideas, and is still not graded "right"`);
     assert.equal(d.concepts.length, 2, `${d.id}: two key concepts`);
     assert.equal(checkDrill(d, 'looks fine to me').correct, false, `${d.id}: "looks fine" is not a finding`);
     const pin = d.from || d.pins;
@@ -367,14 +368,15 @@ test('every review drill\'s bug is real and its fix works; real-fix drills name 
   for (const id of ['c-model-failover.d1', 'c-architecture.d1']) {
     assert.equal(DRILLS.find(({ d }) => d.id === id).d.from, undefined, `${id} is illustrative: its rule was in CHE's code from its first commit`);
   }
-  // Drill judging: whole words, both key concepts for "right", and "can't judge" rather than a false right.
+  // Drill judging: whole words; both key concepts are "named", never graded "right"; "can't judge" otherwise.
   const drill = (id) => DRILLS.find(({ d }) => d.id === id).d;
   for (const [id, said, want] of [
     ['testing.d1', 'it records the failures correctly', false], ['testing.d1', 'push it', false], ['http-apis.d1', 'the server is fine', false],
     ['c-databases.d1', 'it returns a string', false], ['c-binary-search.d1', 'nothing is equal', false], ['c-python.d1', 'once upon a time', null],
     ['c-python.d1', 'none of it', false], ['c-security.d1', 'ask about the bill, the rest is fine', false], ['c-self-repair.d1', 'I own it', false],
-    ['c-debugging.d1', 'it cuts the message silently so the dont at the end is lost', true],
+    ['c-debugging.d1', 'it cuts the message silently so the dont at the end is lost', null],
   ]) assert.equal(checkDrill(drill(id), said).correct, want, `${id}: ${said}`);
+  assert.equal(checkDrill(drill('c-debugging.d1'), 'it cuts the message silently so the dont at the end is lost').named, true);
 });
 
 test('every repository example names a real path, a symbol in it, and a test that exercises it', () => {
@@ -599,7 +601,7 @@ test('"give me a review drill" and "drill me on code review": a real CHE bug, ch
   }
   const drill = (await che.say('Give me a review drill')).reply;
   const right = await che.say("It cuts the message silently, so the don't at the end is lost", { history: after(drill) });
-  assert.match(right.reply, /^Right, sir, that's the bug\. slice cuts the message silently/);
+  assert.match(right.reply, /^You named both key ideas, sir: "cuts" and "silently"\. I don't grade review findings automatically, so compare yours with the finding: slice cuts the message silently/);
   assert.match(right.reply, /The fix:\n```javascript\nfunction intake[\s\S]*status: 413/);
   assert.match(right.reply, /pinned by the test "a chat message too long to take is refused whole, saying so; nothing runs \(issue #345\)" in server\/cloudflare\/worker_autonomy\.test\.mjs/);
   const wrong = await che.say('the bug is that the variable names are too short', { history: after(drill) });
@@ -610,7 +612,7 @@ test('"give me a review drill" and "drill me on code review": a real CHE bug, ch
   // The #351 drill, asked for by its card.
   const gate = await che.say('give me a review drill on secure coding');
   assert.match(gate.reply, /The "don't" that swallowed a payment\. Adapted from a real CHE fix: a review finding on PR #351[^\n]*commit f2992a7/);
-  assert.match((await che.say('the prohibition runs past the comma so the payment is not held', { history: after(gate.reply) })).reply, /^Right, sir, that's the bug\./);
+  assert.match((await che.say('the prohibition runs past the comma so the payment is not held', { history: after(gate.reply) })).reply, /^You named both key ideas, sir: /);
 });
 
 test('"where does CHE do checkpoints in its own code?" and "how does CHE recover when a model fails?"', async () => {
@@ -791,12 +793,13 @@ test('re-review of #360: word answers, the language name, CHE\'s parts and answe
   for (const [id, words] of [['c-debugging.d1', 'slice cuts the message silently so the last words are lost'], ['c-databases.d1', 'sql injection, use a parameter'],
     ['testing.d1', 'check does not record failures so the test can never fail']]) {
     assert.ok(drillAnswer(drill(id), words), `${id}: "${words}" is a finding`);
-    assert.equal(checkDrill(drill(id), words).correct, true, `${id}: ${words}`);
+    assert.equal(checkDrill(drill(id), words).named, true, `${id}: ${words}`);
   }
-  // A key concept said the other way round from the finding is not judged: it is never a false "right",
-  // and correct answers phrased that way are never called wrong.
+  // A key concept said the other way round from the finding is not judged, and correct answers phrased
+  // that way are never called wrong.
   assert.equal(checkDrill(drill('c-python.d1'), 'the default is not shared').correct, null);
-  assert.equal(checkDrill(drill('c-python.d1'), 'the default list is shared by every call').correct, true);
+  assert.equal(checkDrill(drill('c-python.d1'), 'the default is not shared').named, false);
+  assert.equal(checkDrill(drill('c-python.d1'), 'the default list is shared by every call').named, true);
   for (const [id, words] of [['c-binary-search.d1', 'it never checks the last item'], ['c-binary-search.d1', 'the loop is not inclusive, so the last item is skipped'],
     ['c-security.d2', 'it does not check 127.0.0.1, only the word localhost'], ['c-performance.d1', 'the cache key does not include the currency'],
     ['c-debugging.d1', 'slice cuts it without refusing'], ['c-security.d1', 'the comma does not end the dont, so the payment is not held'],
@@ -806,7 +809,7 @@ test('re-review of #360: word answers, the language name, CHE\'s parts and answe
   }
   // "It's fine" is still not quite.
   assert.equal(checkDrill(drill('c-python.d1'), 'the default list is fine').correct, false);
-  // The same ideas said of the fixed code describe the fix, not the bug: never a "right".
+  // The same ideas said of the fixed code describe the fix, not the bug: a drill is never graded "right".
   for (const [id, words] of [['c-performance.d1', 'the key includes the currency'], ['c-performance.d1', 'the key already has the currency in it'],
     ['c-binary-search.d1', 'the loop is inclusive and checks the last item'], ['c-databases.d1', 'it uses a parameter so there is no injection'],
     ['testing.d1', 'it records every failure'], ['c-debugging.d1', 'it refuses the whole message instead of cutting it'],
@@ -816,12 +819,13 @@ test('re-review of #360: word answers, the language name, CHE\'s parts and answe
     ['c-self-repair.d1', 'the gate is protected so an attempt cannot edit it'], ['c-architecture.d1', 'the frame keeps not today and is lossless']]) {
     assert.notEqual(checkDrill(drill(id), words).correct, true, `${id}: the fixed behaviour is not the bug: ${words}`);
   }
-  // Every drill names what its fixed code does.
-  for (const { d } of DRILLS) assert.ok(d.contrary instanceof RegExp, `${d.id} has its contrary phrases`);
-  // The bug said plainly is still right.
+  for (const { d } of DRILLS) for (const words of [d.finding, 'it is fine', 'the key includes the currency', 'the loop is inclusive']) {
+    assert.notEqual(checkDrill(d, words).correct, true, `${d.id}: never graded right: ${words}`);
+  }
+  // The bug said plainly names both key ideas.
   for (const [id, words] of [['c-performance.d1', 'the key ignores the currency'], ['c-self-repair.d1', 'the gate is not protected, an attempt can edit it'],
     ['c-architecture.d1', 'it drops not today but still says lossless'], ['c-debugging.d1', 'the message is cut silently instead of refused']]) {
-    assert.equal(checkDrill(drill(id), words).correct, true, `${id}: ${words}`);
+    assert.equal(checkDrill(drill(id), words).named, true, `${id}: ${words}`);
   }
 });
 
@@ -840,7 +844,7 @@ test('through /api/chat with SQLite: exercise and drill answers are graded, neve
   await check('give me a review drill', 'it does not cut anything', 'coding_drill_answer', /^(?:I can't judge that one automatically|Not quite), sir\./);
   await check('give me a review drill on binary search', 'it never checks the last item', 'coding_drill_answer', /^(?:I can't judge that one automatically|Right), sir/);
   await check('give me an exercise on dynamic programming', 'eighty nine not ninety', 'coding_answer', /^Right, sir: 89\./);
-  await check('give me a review drill on concurrency', 'forEach does not wait for the async callbacks', 'coding_drill_answer', /^Right, sir, that's the bug\./);
+  await check('give me a review drill on concurrency', 'forEach does not wait for the async callbacks', 'coding_drill_answer', /^You named both key ideas, sir: /);
   assert.deepEqual(saved.get('speech_corrections') || [], [], 'no speech correction was learned');
   const next = await che.say('what is the weather like in Paris');
   assert.equal(next.route, 'model');
