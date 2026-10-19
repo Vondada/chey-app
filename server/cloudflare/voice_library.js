@@ -4,6 +4,7 @@
 // added to ElevenLabs shows on the next refresh, with no code change or deploy.
 // Keys and raw provider text never leave this module.
 import { elevenLabsRefusalReason } from './preferred_elevenlabs_voice.js';
+import { withoutProhibitions } from './owner_action_gate.js';
 
 export const ELEVEN_API = 'https://api.elevenlabs.io';
 export const FISH_API = 'https://api.fish.audio';
@@ -312,11 +313,18 @@ function matchName(spoken, names = []) {
 // `last` is the list the owner just heard (voice_studio_last); `names` are the
 // voice names currently on the account, read only when a name is spoken.
 export function voiceStudioIntent(message, { last = null, names = null } = {}) {
-  const t = normalizeVoiceRequest(message);
+  let t = normalizeVoiceRequest(message);
   if (!t) return null;
+  // "What voice are you using right now?", "Don't change anything, just tell me which voice you're on":
+  // the saved choice, read only. The turn's own "don't change it" is set aside to read the question.
+  const asked = normalizeVoiceRequest(withoutProhibitions(message).replace(/^[\s,.;:]+/, '')).replace(/^(?:just\s+)?tell\s+me\s+/, '');
+  if (/^(?:what|which)(?:'s|s)?\s+voice\s+(?:are\s+you|you(?:'re|\s+are)|is\s+che)\s+(?:using|on|speaking\s+with|set\s+to)(?:\s+(?:now|right\s+now|currently|today))?$/.test(asked)) return { kind: 'current' };
+  // "Switch your voice to Adam" is "switch to Adam", said about the voice.
+  const aboutVoice = /^(?:switch|change|set)\s+(?:your|the|che's|che)\s+voice\s+to\s+/.test(t);
+  if (aboutVoice) t = t.replace(/^(?:switch|change|set)\s+(?:your|the|che's|che)\s+voice\s+to\s+/, 'switch to ');
   // "What ElevenLabs voice did I choose for you, and what voice did it replace?": the saved choice, read only.
   if (/^(?:what|which)\b[\s\S]{0,40}\bvoice\b[\s\S]{0,30}\b(?:(?:did|have|had)\s+i\s+(?:\w+\s+)?(?:choose|chosen|pick|picked|select|selected|set)|i\s+(?:\w+\s+)?(?:chose|picked|selected))\b/.test(t)
-    || /^(?:what|which)(?:'s|\s+is)\s+(?:your|che's)\s+(?:current\s+|saved\s+)?(?:(?:elevenlabs|eleven labs|fish)\s+)?voice(?:\s+(?:now|right now|currently|set to))?$/.test(t)) {
+    || /^(?:what|which)(?:'s|s|\s+is)\s+(?:your|che's)\s+(?:current\s+|saved\s+)?(?:(?:elevenlabs|eleven labs|fish)\s+)?voice(?:\s+(?:now|right now|currently|set to))?$/.test(t)) {
     // "Which voice did I pick? Switch to Adam instead." asks for a change too; the change routes keep it.
     if (!/(?:[.!?;,]\s*|\b(?:and|then|but)\s+)(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?(?:switch|use|change|set|pick|choose|select|turn|go\s+back|put)\b/.test(t)) return { kind: 'current' };
   }
@@ -358,11 +366,14 @@ export function voiceStudioIntent(message, { last = null, names = null } = {}) {
   if (!names) return { kind: 'needs_names' };
   const match = matchName(named[2], names);
   if (match) return { kind: /^(?:preview|play|hear|test)$/.test(verb) ? 'preview_name' : 'use_name', name: match };
-  if (VOICE_NAMED.test(t)) return { kind: 'unknown_name', spoken: named[2] };
+  if (VOICE_NAMED.test(t) || aboutVoice) return { kind: 'unknown_name', spoken: named[2] };
   return null;
 }
 
 // Whether the message begins like a voice request, so the library is read only then.
 export function mightBeVoiceRequest(message) {
-  return /^(?:use|choose|pick|select|switch|preview|play|hear|test|save|keep|make|set|change|turn|show|list|read|tell|what|which|refresh|reload|check|update)\b/.test(normalizeVoiceRequest(message));
+  const lead = /^(?:use|choose|pick|select|switch|preview|play|hear|test|save|keep|make|set|change|turn|show|list|read|tell|whats?|which|refresh|reload|check|update)\b/;
+  // "Don't change anything, just tell me which voice you're on" leads with its prohibition.
+  return lead.test(normalizeVoiceRequest(message))
+    || lead.test(normalizeVoiceRequest(withoutProhibitions(message).replace(/^[\s,.;:]+/, '')).replace(/^just\s+/, ''));
 }

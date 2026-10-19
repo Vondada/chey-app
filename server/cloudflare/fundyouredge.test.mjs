@@ -22,3 +22,11 @@ test('with an order-capable broker connected, a generic futures order is left to
 test('a FundYourEdge order is refused even when another broker is connected', () => {
   assert.deepEqual(fundyouredgeIntent('place an MNQ order on FundYourEdge', { orderBrokerReady: true }), { kind: 'order' });
 });
+
+test('comprehension audit: a paper trade goes to the paper journal; a live order or a close still gets the refusal', () => {
+  assert.equal(fundyouredgeIntent('Place a paper trade for 1 MNQ long.'), null);
+  assert.equal(fundyouredgeIntent('Place a paper trade, not live.'), null);
+  assert.deepEqual(fundyouredgeIntent('Place a live MNQ order, not paper'), { kind: 'order' });
+  assert.deepEqual(fundyouredgeIntent('place an MNQ order'), { kind: 'order' });
+  assert.deepEqual(fundyouredgeIntent('Close my MNQ position.'), { kind: 'order' });
+});

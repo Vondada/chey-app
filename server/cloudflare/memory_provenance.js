@@ -262,10 +262,34 @@ const STORY_REQUEST = new RegExp([
 ].join('|'));
 const FACTUAL_ASK = /\b(?:fact ?check|research|verify|look up|search|true story|real story|news|history of|actually happened|accurate|sources?|evidence|citations?)\b/;
 
-/** The owner asked for a story, poem or role-play: invented narration is the point. */
+// A verb that asks CHE to act outside the chat: send, post, upload, buy, pay, order, delete, sell, book, schedule,
+// publish, and "text" meaning send. Past forms ("bought the tickets") describe what a draft says, so they do not count.
+const ACTION_REQUEST = /\b(send|sends|sending|post|posts|posting|upload|uploads|uploading|buy|buys|buying|pay|pays|paying|order|orders|ordering|delete|deletes|deleting|sell|sells|selling|book|books|booking|schedule|schedules|scheduling|publish|publishes|publishing|text|texts|texting)\b/g;
+// "a text", "my post", "the order": the word names a thing, so it asks for nothing.
+const NOUN_BEFORE_ACTION = /\b(?:a|an|the|my|your|his|her|our|their|this|that|another|one|some|new|short|quick|long)\s+$/i;
+// "text to my wife", "text saying hi": the word names a message, not a send.
+const TEXT_NOUN_AFTER = /^\s+(?:to|saying|says|about|that|with|for|from|message|messages|reply|replies|back|asking|telling|letting|announcing|in|on|of)\b/i;
+
+/**
+ * True when the owner's request asks CHE to act (send, post, upload, buy, pay, order, delete, sell, book, schedule,
+ * publish or text someone). Words inside quotes are the content to write, not the request, and a noun ("a text",
+ * "my order") asks for nothing. A request with such a verb is never an exemption for claims (comprehension audit,
+ * issue #350: "tell me a story and then send sarah the report" must not turn off the claim guard).
+ */
+export function requestNamesAction(message) {
+  const text = String(message || '').toLowerCase().replace(/[’‘`]/g, "'").replace(/"[^"]*"|“[^”]*”/g, ' ');
+  for (const m of text.matchAll(ACTION_REQUEST)) {
+    if (NOUN_BEFORE_ACTION.test(text.slice(0, m.index))) continue;
+    if (/^text/.test(m[1]) && TEXT_NOUN_AFTER.test(text.slice(m.index + m[0].length))) continue;
+    return true;
+  }
+  return false;
+}
+
+/** The owner asked for a story, poem or role-play: invented narration is the point, unless it also asks CHE to act. */
 export function storyRequested(message) {
   const words = plainWords(message);
-  return STORY_REQUEST.test(words) && !FACTUAL_ASK.test(words);
+  return STORY_REQUEST.test(words) && !FACTUAL_ASK.test(words) && !requestNamesAction(message);
 }
 
 function sentences(text) {

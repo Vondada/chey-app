@@ -8,7 +8,7 @@
 //  - strips unsupported action claims and owner "homework" from
 //    model-generated owner replies before they reach chat or voice.
 
-import { storyRequested } from './memory_provenance.js';
+import { requestNamesAction, storyRequested } from './memory_provenance.js';
 import { isEvidenceRequest } from './recovery_policy.js';
 
 export const RECEIPTS_KEY = 'che_receipts';
@@ -80,7 +80,7 @@ export async function loadChangeHistory(storage) {
 export function changeHistoryIntent(message) {
   const text = String(message || '').trim();
   if (!text || text.length > 120) return false;
-  return /^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:what(?:'s| has| have)?\s+(?:you\s+)?changed(?:\s+(?:lately|recently|in you|about you))?|what\s+did\s+you\s+(?:change|update)(?:\s+(?:lately|recently|in yourself))?|(?:show|read|tell)\s+(?:me\s+)?(?:your\s+|the\s+)?(?:change|update)\s+(?:history|log)|(?:your\s+)?(?:change|update)\s+(?:history|log)|what\s+updates?\s+(?:did\s+you\s+(?:get|make|do)|have\s+you\s+(?:had|made)))[?.!]*$/i.test(text);
+  return /^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:what(?:'s| has| have)?\s+(?:you\s+)?changed(?:\s+(?:lately|recently|in you|about you|in your (?:code|app)))?(?:\s+(?:this week|this month|today|lately|recently))?|what\s+did\s+you\s+(?:change|update)(?:\s+(?:lately|recently|in yourself))?|(?:show|read|tell)\s+(?:me\s+)?(?:your\s+|the\s+)?(?:change|update)\s+(?:history|log)|(?:your\s+)?(?:change|update)\s+(?:history|log)|what\s+updates?\s+(?:did\s+you\s+(?:get|make|do)|have\s+you\s+(?:had|made)))[?.!]*$/i.test(text);
 }
 
 export function speakChangeHistory(list, limit = 5) {
@@ -440,7 +440,9 @@ export function asksForCurrentOwnerLocation(message) {
   return /\bwhere\s+(?:exactly\s+)?(?:am\s+i|i\s+am|i'm)\b(?!\s+(?:going|headed|in\s+life))/.test(text) ||
     /\b(?:do|can|so)\s+you\s+(?:know|see|tell)\s+(?:me\s+)?where\s+i\s+am\b/.test(text) ||
     /\b(?:do\s+)?you\s+(?:know|have|see)\s+my\s+(?:live\s+|current\s+|exact\s+)?(?:location|gps\s+position)\b/.test(text) ||
-    /\b(?:what|where)(?:'s| is)\s+my\s+(?:live\s+|current\s+|exact\s+)?(?:location|gps\s+position)\b/.test(text);
+    /\b(?:what|where)(?:'s| is)\s+my\s+(?:live\s+|current\s+|exact\s+)?(?:location|gps\s+position)\b/.test(text) ||
+    // "What city am I in?", "which town am I in right now?" (comprehension audit).
+    /\b(?:what|which)\s+(?:city|town|state|country|place|neighborhood|street)\s+(?:am\s+i|i(?:'m|\s+am))\s+(?:in|at|on)(?:\s+(?:right\s+now|now|currently))?\s*\??$/.test(text);
 }
 
 export const OWNER_LOCATION_NOT_VERIFIED =
@@ -538,4 +540,349 @@ export function guardClaimedResearchActions(reply, { research = null, tools = []
     };
   }
   return { text, corrected: false };
+}
+
+// A model reply on the chat path can never have sent, bought, deleted, uploaded, rendered, traded or opened
+// anything: those run only through their own routes, which answer with their own records before the model
+// is reached. So "Done, sir. I sent it and bought it." is invented whatever was asked (comprehension audit,
+// issue #350). Each such sentence is taken out and the owner is told plainly that nothing was done.
+// Strong verbs claim an outside effect on their own; weak ones only with what they act on.
+const STRONG_DONE = {
+  sent: 'sent', emailed: 'sent', texted: 'sent', messaged: 'sent', forwarded: 'sent',
+  bought: 'bought', purchased: 'bought', ordered: 'ordered', subscribed: 'bought',
+  paid: 'paid', transferred: 'paid', deleted: 'deleted', erased: 'deleted', wiped: 'deleted',
+  uploaded: 'uploaded', published: 'uploaded', posted: 'uploaded',
+  booked: 'scheduled', scheduled: 'scheduled', sold: 'sold',
+};
+// Ordinary ways of speaking that use the same verbs: "I paid close attention", "I ordered them by date".
+const NOT_AN_ACTION_AFTER = { paid: /^\s+(?:close\s+|careful\s+|special\s+|extra\s+|more\s+)?attention\b/i, ordered: /^\s+(?:[\w-]+\s+){0,3}?(?:by|alphabetically|chronologically|from\s+\w+\s+to)\b/i };
+const WEAK_DONE = {
+  placed: 'placed', executed: 'placed', submitted: 'placed', closed: 'closed', flattened: 'closed', removed: 'deleted', cancelled: 'cancelled', canceled: 'cancelled',
+  opened: 'opened', launched: 'opened', started: 'started', queued: 'started', dispatched: 'started', 'kicked off': 'started', rendered: 'rendered',
+  switched: 'changed', changed: 'changed', connected: 'connected', set: 'set', added: 'added', created: 'created',
+};
+const ACTED_ON = String.raw`(?:order|trade|position|payment|purchase|transfer|subscription|email|e-mail|message|text|reminder|alarm|timer|event|meeting|appointment|invite|calendar|cart|draft|video|render|upload|job|task|investigation|build|exam|app|youtube|notes|spotify|account|broker|voice|mode|live|paper|note|file|post|bill|invoice|rent)s?`;
+const FILLER_ADVERBS = String.raw`(?:(?:just|already|now|also|successfully|gone\s+ahead\s+and|went\s+ahead\s+and)\s+)*`;
+const STRONG_RE = new RegExp(String.raw`\b(?:I|we)(?:['’]ve|\s+have|\s+had)?\s+${FILLER_ADVERBS}(${Object.keys(STRONG_DONE).join('|')})\b`, 'i');
+const WEAK_RE = new RegExp(String.raw`\b(?:I|we)(?:['’]ve|\s+have|\s+had)?\s+${FILLER_ADVERBS}(${Object.keys(WEAK_DONE).join('|').replace(' ', '\\s+')})\b(?:\s+(?:it|that|this|them|you|everything))?(?:\s+(?:up|on|over|off|to|for|in|into))?(?:\s+(?:a|an|the|your|my|one|two|\d+|new|live|paper))?(?:\s+[\w-]+){0,2}?\s+${ACTED_ON}\b`, 'i');
+const PASSIVE_RE = new RegExp(String.raw`\b(?:it|that|this|everything|all\s+of\s+(?:it|them)|your\s+[\w-]+(?:\s+[\w-]+)?|the\s+(?:[\w-]+\s+)?${ACTED_ON})\s+(?:(?:has|have|had)\s+been|is|was|were|are)\s+(?:now\s+|successfully\s+|already\s+)?(${[...Object.keys(STRONG_DONE), 'placed', 'executed', 'submitted', 'removed', 'cancelled', 'canceled', 'rendered', 'closed'].join('|')})\b`, 'i');
+// "I made the video", but never "I made a note of that" (an ordinary way to say "I'll keep it in mind").
+const MADE_RE = new RegExp(String.raw`\b(?:I|we)(?:['’]ve|\s+have)?\s+${FILLER_ADVERBS}(made)\s+(?:a|an|the|your|one)\s+(?:[\w-]+\s+){0,2}(?:video|render|reminder|event|appointment|order|payment|purchase|reservation|booking|trade)s?\b`, 'i');
+// More of the same claim later in the sentence: "I sent it and bought it".
+const MORE_DONE = new RegExp(String.raw`(?:\band|\bthen|,)\s+(?:also\s+)?(${Object.keys(STRONG_DONE).join('|')})\b`, 'gi');
+// An affirmation of the claim just taken out (blocker 2, PR #356): "Yes.", "Yes, sir.", "Yes, I did, sir.", "Yes — I did.".
+const AFFIRMATION_TAIL = String.raw`(?:i\s+(?:did|have|sent\s+(?:it|them)|am\s+sure)|it\s+did|that\s+is\s+right|that['’]s\s+right|lo\s+hice|lo\s+mand[eé]|es\s+verdad)`;
+const SEP = String.raw`[\s,!.\u2014\u2013-]`;
+const AFFIRMATION_AFTER = new RegExp(String.raw`^\s*(?:yes|yeah|yep|sure|s[ií])(?=${SEP}|$)${SEP}*(?:${AFFIRMATION_TAIL}${SEP}*)?(?:(?:sir|se[ñn]or)[\s!.]*)?$`, 'i');
+// Without "yes", only a plain "I did." or "that is right." counts. "I sent it." is a claim and is counted as one.
+const AFFIRMATION_ONLY = new RegExp(String.raw`^\s*(?:i\s+(?:did|have|am\s+sure)|it\s+did|that\s+is\s+right|that['’]s\s+right|lo\s+hice|es\s+verdad)${SEP}*(?:(?:sir|se[ñn]or)[\s!.]*)?$`, 'i');
+// A past-tense action with no subject: "Sent it.", "Sent the report to Sarah, sir." CHE cannot have made the call by itself,
+// so the claim is taken out and named (blocker 3, PR #356). "Sent items", "Sent from my iPhone" name no action and stay.
+const BARE_ACTION = /^\s*(sent|emailed|texted|forwarded|bought|purchased|ordered|paid|transferred|deleted|uploaded|published|posted|booked|scheduled|sold|subscribed)\s+(?=(?:it|them|that|this|the|a|an|your|my|his|her|their|our|me|him|everything|all|to|for)\b)/i;
+// "I drafted the email and sent it" is still a claim about an action, despite the shared subject.
+const COORDINATED_ACTION = new RegExp(String.raw`\b(?:I|we)\b[^.!?\n]{0,100}\b(?:and|then)\s+(?:also\s+)?(${Object.keys(STRONG_DONE).join('|')})\b`, 'i');
+// An identifiable draft body is content for the owner to copy, not a report of CHE's actions.
+const DRAFT_CONTENT_START = /^(?:here(?:'s| is)\s+(?:your|the|a)\s+(?:draft|text|email|post|message|reply)\s*:|(?:draft|subject|to)\s*:|(?:dear|hi|hello|hey)\s+[a-z][^,\n]{0,60}[,:])/i;
+// Who acted, and where the claim comes from (review of #356, rounds 2 and 3). Only a third party named as the one who
+// acted keeps a bare action sentence: the sender of a message ("Sent the 9:14 email from Sarah") or a named actor after
+// "by" ("Paid for by the campaign"). The owner's own instrument ("from your account", "by your email") and a store or an
+// app ("from Amazon", "from the app") never exempt CHE's claim. "by email" and "by the deadline" are a method and a time.
+const SENT_BY_OTHER = /^\s*(?:[Ss]ent|[Ee]mailed|[Tt]exted|[Mm]essaged)\b[^.!?]*?\b(?:e-?mails?|messages?|texts?|letters?|notes?|invit\w*|replies|reply|voicemails?)\s+from\s+(?!(?:Your|My|The|Our)\b)[A-Z][\w'’-]*/;
+const DONE_BY_OTHER = /\bby\s+(?:[A-Z][\w'’-]*|the\s+(?!(?:deadline|end|time|way|morning|evening|afternoon|weekend|close|app|website|site|account|card|phone|iphone|email|inbox|bank|portal|store)\b)[a-z][\w'’-]*|him|them|someone|somebody)\b/;
+// A source phrase ("according to the log", "per the log", "as your calendar shows") keeps the sentence only when a record
+// CHE read this turn backs it. With no such record CHE cannot confirm it: the neutral note, never a denial.
+const NAMES_SOURCE = /\b(?:according\s+to|per\s+(?:the|your|my|our|his|her|their)\b|as\s+(?:shown|listed|recorded|logged|noted)\b|(?:your|the)\s+(?:calendar|log|logs|records?|history|statement|receipt|inbox)\s+(?:shows?|says?|lists?|has)\b)/i;
+// A record backs a sentence when it names every name and number in it ("Friday", "3", "Sarah"). The first word is
+// capitalized only by its place in the sentence, so it is not a name.
+function backedByRecord(sentence, records) {
+  const text = (Array.isArray(records) ? records : [records]).map((record) => String(record ?? '')).join('\n').toLowerCase();
+  if (!text.trim()) return false;
+  const rest = sentence.trim().split(/\s+/).slice(1).join(' ');
+  const facts = (rest.match(/\b(?:[A-Z][a-z][\w'’-]*|\d[\d:.]*)/g) || []).filter((word) => !/^(?:Sir|PM|AM)$/.test(word));
+  return facts.length > 0 && facts.every((fact) => text.includes(fact.toLowerCase()));
+}
+// "Done, sir." / "All done." / "Consider it done." / "Sent." opening a sentence.
+const DONE_RE = /^\s*(?:(?:all|it['’]?s|it\s+is)\s+)?done\b(?!\s+(?:with|by|in|for|on|at|before|after)\b)|\bconsider\s+it\s+done\b|^\s*(?:sent|ordered|bought|booked|scheduled|deleted|uploaded|published|posted|placed)\s*(?:[,.!]|$)/i;
+// A condition, a plan or a question about the action does not claim it: "once I've sent it", "if I had paid".
+const NOT_A_CLAIM = /\b(?:if|once|when|whenever|after|until|unless|whether|before|would|could|should|might|can|will|shall|going\s+to)\b/i;
+// Text the owner asked CHE to write in his voice ("draft a text saying I sent it") may say "I sent it"; only
+// CHE's own words to him around it ("Done, sir.") are checked then. Only when the request asks for no action:
+// "draft a text to mom and send it" is a send, so its reply is checked like any other (comprehension audit, #350).
+const WRITING_REQUEST = /\b(?:write|draft|compose|reword|rephrase|translate|proofread)\b[^.?!]{0,60}\b(?:saying|says|say|telling|tells|letting|announcing|replies|reply|response|post|caption|tweet|letter|message|text|e-?mail|note|speech|toast)\b|\brole.?play|\bpretend\b|\bact\s+as\b/i;
+
+// Claims with no matching verb, in English and Spanish (comprehension audit, issue #350): "It's been dispatched to
+// Sarah", "Your order went through", "I've taken care of the bill", "Purchase complete", "Your notes are gone now",
+// "The email is on its way", "Listo, señor: pagué la factura." Each names what it claims; a null label is removed
+// without adding a verb to CHE's note ("Confirmation number 4471" is a receipt CHE does not have).
+const NOUN_LABELS = [
+  [/^(?:e-?mails?|mails?|messages?|texts?|replies|reply|reports?|files?|notes?|sms)$/, 'sent'],
+  [/^(?:payments?|bills?|invoices?|rent|fees?|charges?|dues|transfers?|transactions?)$/, 'paid'],
+  [/^(?:orders?|packages?|parcels?|shipments?|deliver(?:y|ies))$/, 'ordered'],
+  [/^(?:purchases?|checkouts?|subscriptions?|gifts?|flowers|tickets?)$/, 'bought'],
+  [/^(?:bookings?|reservations?|appointments?|reminders?|events?|meetings?)$/, 'scheduled'],
+];
+function nounLabel(word, fallback) {
+  const w = String(word || '').toLowerCase();
+  for (const [re, label] of NOUN_LABELS) if (re.test(w)) return label;
+  return fallback;
+}
+// Each claim names its person. "first" is CHE's own action ("I've taken care of the bill"), which the note may deny by name.
+// "third" is a claim about someone or something else ("the email went out", "your order went through"). CHE cannot confirm
+// it, so it is taken out with a neutral note: "nothing was sent" would be false for a real email (review of PR #356, round 2).
+// A delivery noun, then its verb: "the email went out", "the report is in Sarah's inbox". Between them only words that
+// are not a negation or a modal, so "the email never went out" and "the report will be with Sarah" are not claims made now.
+const DELIVERY_NOUN = String.raw`(e-?mails?|mails?|messages?|texts?|replies|reply|reports?|files?|notes?|letters?|sms|documents?)`;
+const DELIVERY_GAP = String.raw`(?:(?!(?:not|never|no|will|would|can|could|should|might|may|shall|if|once|when|unless|until|going)\b)[\w'’-]+\s+){0,2}?`;
+// "not", "never" or "no" right before a generic claim ("it is not all done and dusted") negates it.
+const NEG_BEFORE = /\b(?:not|never|no)\s+(?:\S+\s+){0,1}$/i;
+// A thing that is sent, not a person: the noun before a delivery passive ("the email is dispatched", "the report was sent
+// yesterday", "the report got sent"). The verb must be a delivery verb, so "the report is ready to go" is not a claim.
+const DELIVERED_THING = String.raw`(e-?mails?|mails?|messages?|texts?|replies|reply|reports?|files?|notes?|letters?|sms|documents?|packages?|parcels?|orders?|payments?|invoices?|invitations?|gifts?|flowers|tickets?|reminders?|bookings?|reservations?|notices?|bills?|rent)`;
+const DELIVERY_VERB = String.raw`(?:sent|dispatched|delivered|mailed|emailed|forwarded|shipped|posted|submitted|placed|paid)`;
+const CLAIM_PHRASES = [
+  { re: /\b(?:it|that|this|everything|they)(?:\s+(?:has\s+been|have\s+been|has|have|is|was|were|are)|['’]s(?:\s+been)?|['’]re)\s+(?:now\s+|already\s+|successfully\s+|just\s+)?dispatched\b/i, label: 'sent' },
+  { re: /\b(email|e-?mail|message|text|reply|report|file|note|mail|sms|package|parcel|order|gift|flowers|tickets?|payment|bill)\s+(?:is|was|are|were|has\s+been|have\s+been)\s+(?:now\s+|already\s+)?on\s+(?:its|their|the)\s+way\b/i, noun: 1, fallback: 'sent' },
+  { re: /\b(order|payment|purchase|transfer|transaction|checkout|subscription|booking|reservation|reminder|charge)\s+(?:(?:has\s+been|have\s+been|has|have|is|was|are|were|now|already|successfully)\s+)*(?:went\s+through|complete|completed|processed|confirmed|finalized|successful|successfully\s+completed)\b/i, noun: 1, fallback: 'done' },
+  { re: /\b(purchase|order|payment|transaction|checkout|sale)\s+(?:is\s+|was\s+|has\s+been\s+)?(?:now\s+)?(?:complete|completed)\b/i, noun: 1, fallback: 'done' },
+  { re: /\b(?:I|we)(?:['’]ve|\s+have)?\s+(?:already\s+|just\s+|now\s+|personally\s+)?taken\s+care\s+of\s+(?:the\s+|your\s+|my\s+)?(\w+)?/i, noun: 1, fallback: 'done', person: 'first' },
+  { re: /\b(?:your|my|the|these|those|all\s+(?:of\s+)?(?:your|my|the))\s+(?:[\w'-]+\s+){0,2}?(?:notes?|files?|emails?|messages?|texts?|data|memor(?:y|ies)|history|chats?|drafts?|reminders?|events?|photos?|videos?|contacts?|records?|logs?|skills?)\s+(?:are|is|were|was|have\s+been|has\s+been)\s+(?:now\s+|all\s+|already\s+|finally\s+)?gone\b/i, label: 'deleted' },
+  { re: /\beverything\s+(?:is|was|has\s+been|have\s+been)\s+(?:now\s+|already\s+)?gone\b/i, label: 'deleted' },
+  // Comprehension audit, review of PR #356: "Okay, I'm on it: the email went out", "Got it, the report is in Sarah's
+  // inbox", "The report is with Sarah". Each is a claim about a delivery, taken out for any request. The name after "with"
+  // or before "'s inbox" is a person, capitalized ("with Sarah", not "with errors" or "with no attachments"), and
+  // "went out of date" is not a delivery (review of PR #356, round 2).
+  { re: new RegExp(String.raw`\b${DELIVERY_NOUN}\s+${DELIVERY_GAP}(?:went|has\s+gone|have\s+gone|had\s+gone)\s+out\b(?!\s+of\b)`, 'i'), noun: 1, fallback: 'sent' },
+  { re: new RegExp(String.raw`\b${DELIVERY_NOUN}\s+${DELIVERY_GAP}(?:is|was|are|were|has\s+been|have\s+been)\s+(?:now\s+|already\s+|just\s+)?with\s+(?!(?:the|a|an|my|your|his|her|their|our|its|you|me|us|him|them|it|this|that|these|those|someone|anyone|everyone)\b)([A-Za-z][\w'’-]*)`, 'i'), noun: 1, name: 2, fallback: 'sent' },
+  { re: new RegExp(String.raw`\b${DELIVERY_NOUN}\s+${DELIVERY_GAP}(?:in|into)\s+([A-Za-z][\w'’-]*)['’]s\s+inbox\b`, 'i'), noun: 1, name: 2, fallback: 'sent' },
+  // A delivery passive on a thing or a message, with or without "the" ("the email is dispatched", "the report was sent yesterday",
+  // "the report got sent"). A claim about someone or something else: the neutral note (review of PR #356, round 3).
+  { re: new RegExp(String.raw`\b(?:(?:the|your|my|this|that|its|their|our|these|those)\s+)?${DELIVERED_THING}\s+${DELIVERY_GAP}(?:is|was|are|were|has\s+been|have\s+been|had\s+been|got|gets|get)\s+${DELIVERY_GAP}${DELIVERY_VERB}\b`, 'i'), noun: 1, fallback: 'sent' },
+  // "Ann paid her bill, sir." / "he paid the rent": a payment someone else made, which CHE cannot confirm (blocker 1, PR #356).
+  // Case-sensitive: the subject is a capitalized name or a pronoun, so "I paid" stays with the first-person entries.
+  { re: /\b(?:[A-Z][\w'’-]*|he|she|they|someone|somebody)\s+paid\s+(?:(?:her|his|their|the|my|your|our|its|a)\s+)?(?:[\w'’-]+\s+)?(bills?|invoices?|rent|fees?|charges?|dues)\b/, noun: 1, fallback: 'paid', person: 'third' },
+  // "All set, sir" and "It is all done and dusted" are CHE reporting on her own task, so they are claims only when the request
+  // asked CHE to act: "what is on my calendar? All set" names nothing done. Removed, they take the request's own verb.
+  { re: /^\s*all\s+set\b/i, label: 'done', gated: true, person: 'first' },
+  { re: /\b(?:(?:it['’]?s|it\s+is|it\s+was|that['’]?s|that\s+is|everything['’]?s|everything\s+is)\s+)?(?:all\s+)?(?:now\s+|already\s+)?done\s+and\s+dusted\b/i, label: 'done', gated: true, person: 'first' },
+  // A receipt number CHE never got: removed, with no verb claimed in the note.
+  { re: /\bconfirmation\s+(?:number|no\.?|code|id|#)\s*[:#]?\s*[A-Z0-9-]*\d[A-Z0-9-]*/i, label: null },
+];
+// Spanish: the past ("pagué", "envié", "compré", "he pagado", "ha pagado") is a claim, and so are "listo" / "hecho" /
+// "enviado" at the start of a sentence (a generic claim, gated on a request to act). A negation before them ("no lo he
+// pagado") is not a claim.
+const SPANISH_STEM = [[/^(?:pag|transfer)/, 'paid'], [/^(?:env|mand)/, 'sent'], [/^(?:compr)/, 'bought'], [/^(?:borr|elimin)/, 'deleted'], [/^(?:reserv|program)/, 'scheduled'], [/^(?:public|sub)/, 'uploaded']];
+// Each entry names its person: first ("pagué", "he pagado") is CHE's own action; third ("pagó", "ha pagado", "fue enviado")
+// is a claim about someone or something else. "Ya está hecho" is CHE reporting a finished task, so it is a claim only when
+// the request asks CHE to act (review of PR #356, round 2: "¿el café ya está hecho?" is an ordinary question).
+const SPANISH_CLAIMS = [
+  { re: /\b(?:yo\s+)?(pagu[ée]|transfer[ií]|envié|mandé|compr[ée]|borr[ée]|elimin[ée]|reserv[ée]|subí)(?![a-záéíóúñ])/i, person: 'first' },
+  { re: /\b(pagó|transfirió|envió|mandó|compró|borró|eliminó|reservó|subió)(?![a-záéíóúñ])/i, person: 'third' },
+  { re: /\b(?:he|hemos)\s+(?:ya\s+)?(pagado|pagada|transferido|enviado|enviada|mandado|comprado|comprada|borrado|borrada|eliminado|eliminada|reservado|reservada|publicado|publicada|subido|subida)\b/i, person: 'first' },
+  { re: /\b(?:has|ha|han)\s+(?:ya\s+)?(pagado|pagada|transferido|enviado|enviada|mandado|comprado|comprada|borrado|borrada|eliminado|eliminada|reservado|reservada|publicado|publicada|subido|subida)\b/i, person: 'third' },
+  { re: /\b(?:ya\s+)?(?:est[áa]|estaba|fue|qued[óo])\s+(?:ya\s+)?(enviad[oa]|pagad[oa]|comprad[oa]|borrad[oa]|eliminad[oa]|transferid[oa]|reservad[oa]|publicad[oa])\b/i, person: 'third' },
+  { re: /\b(?:ya\s+)?(?:est[áa]|qued[óo])\s+(?:ya\s+)?(hech[oa])\b/i, person: 'first', gated: true },
+];
+const SPANISH_DONE_START = /^\s*(listo|lista|hecho|hecha|enviado|enviada|comprado|comprada|pagado|pagada|borrado|borrada|eliminado|eliminada)\s*(?:[,.:!]|$)/i;
+function spanishLabel(word) {
+  const w = String(word || '').toLowerCase();
+  for (const [re, label] of SPANISH_STEM) if (re.test(w)) return label;
+  return 'done';
+}
+// The outcome the owner's request names, in its own word: "send sarah the report" -> "sent", "pay the bill" -> "paid".
+// A generic "All set" or "Ya está hecho" then says what did not happen ("Nothing was sent, sir"). Empty when the
+// request names no action, so the note falls back to "done".
+const REQUEST_OUTCOME = {
+  send: 'sent', sends: 'sent', sending: 'sent', text: 'sent', texts: 'sent', texting: 'sent',
+  post: 'uploaded', posts: 'uploaded', posting: 'uploaded', upload: 'uploaded', uploads: 'uploaded', uploading: 'uploaded',
+  publish: 'uploaded', publishes: 'uploaded', publishing: 'uploaded',
+  buy: 'bought', buys: 'bought', buying: 'bought',
+  pay: 'paid', pays: 'paid', paying: 'paid',
+  order: 'ordered', orders: 'ordered', ordering: 'ordered',
+  delete: 'deleted', deletes: 'deleted', deleting: 'deleted',
+  sell: 'sold', sells: 'sold', selling: 'sold',
+  book: 'scheduled', books: 'scheduled', booking: 'scheduled', schedule: 'scheduled', schedules: 'scheduled', scheduling: 'scheduled',
+};
+// Spanish action words, accents dropped: "envía el informe a Sarah" asks for the act that "send Sarah the report" does.
+const SPANISH_ACTION = {
+  envia: 'sent', envie: 'sent', enviar: 'sent', enviame: 'sent', enviale: 'sent', manda: 'sent', mande: 'sent', mandar: 'sent', mandame: 'sent',
+  paga: 'paid', pague: 'paid', pagar: 'paid', pagame: 'paid',
+  compra: 'bought', compre: 'bought', comprar: 'bought',
+  borra: 'deleted', borre: 'deleted', borrar: 'deleted', elimina: 'deleted', elimine: 'deleted', eliminar: 'deleted',
+  reserva: 'scheduled', reserve: 'scheduled', reservar: 'scheduled',
+  publica: 'uploaded', publique: 'uploaded', publicar: 'uploaded', sube: 'uploaded', suba: 'uploaded', subir: 'uploaded',
+  vende: 'sold', venda: 'sold', vender: 'sold',
+  ordena: 'ordered', ordene: 'ordered', ordenar: 'ordered',
+};
+// Only the table's own keys count: a plain object would answer for "constructor" or "toString".
+const tableWord = (table, word) => (Object.hasOwn(table, word) ? table[word] : '');
+function foldSpanish(text) {
+  return String(text || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+}
+// What the owner's request asks CHE to do, and the outcome it names: { asked, outcome }. "send sarah the report" asks,
+// with outcome "sent". "what does this text say?" and "¿está listo el café?" ask for nothing. `asked` gates the generic
+// claims; `outcome` is the word a generic "done" takes.
+function requestAction(message) {
+  const words = foldSpanish(message).match(/[a-z]+/g) || [];
+  const asked = requestNamesAction(message) || words.some((w) => tableWord(SPANISH_ACTION, w));
+  let outcome = '';
+  for (let i = 0; asked && i < words.length && !outcome; i++) {
+    // "in order to send the report" names no order.
+    if (words[i] === 'order' && /^(?:to|of|by|in|that)$/.test(words[i + 1] || '')) continue;
+    outcome = tableWord(REQUEST_OUTCOME, words[i]) || tableWord(SPANISH_ACTION, words[i]);
+  }
+  return { asked, outcome };
+}
+
+// Every claim in one sentence, by who makes it. Returns null when there is none, otherwise { first, third }: the labels
+// of CHE's own actions and of claims about someone or something else. A label is missing for a receipt CHE does not have.
+// `asked` gates the generic claims (CHE reporting "All set" or "Ya está hecho" on a request to act); they count as first.
+// `outcome` is the request's verb, which a generic "done" takes.
+function phraseClaims(sentence, { asked = false, outcome = '' } = {}) {
+  const first = [];
+  const third = [];
+  let found = false;
+  const add = (person, label) => {
+    found = true;
+    if (label) (person === 'first' ? first : third).push(label);
+  };
+  for (const claim of CLAIM_PHRASES) {
+    if (claim.gated && !asked) continue;
+    const m = claim.re.exec(sentence);
+    const before = m ? sentence.slice(0, m.index) : '';
+    if (!m || NOT_A_CLAIM.test(before) || quoted(sentence, m.index)) continue;
+    if (claim.gated && NEG_BEFORE.test(before)) continue;
+    // "is with errors", "is with no attachments": a delivery goes to a person, named with a capital letter.
+    if (claim.name && !/^[A-Z]/.test(m[claim.name] || '')) continue;
+    const label = claim.label === null ? null : (claim.label ?? nounLabel(m[claim.noun] || '', claim.fallback));
+    add(claim.person === 'first' ? 'first' : 'third', label);
+  }
+  for (const claim of SPANISH_CLAIMS) {
+    if (claim.gated && !asked) continue;
+    const m = claim.re.exec(sentence);
+    const before = m ? sentence.slice(0, m.index) : '';
+    // A negation ("no lo he pagado") and a question ("¿Ya está hecho?") claim nothing.
+    if (!m || /\bno\s+(?:\S+\s+){0,2}$/i.test(before) || /¿[^?]*$/.test(before) || quoted(sentence, m.index)) continue;
+    add(claim.person, spanishLabel(m[1]));
+  }
+  const start = SPANISH_DONE_START.exec(sentence);
+  if (start && asked && !quoted(sentence, start.index)) add('first', spanishLabel(start[1]));
+  if (!found) return null;
+  // "Listo, señor: pagué la factura" claims a payment, not just "done": the specific claim is the one named.
+  // A generic "done" takes the request's own verb when there is one.
+  const pick = (labels) => {
+    const specific = labels.filter((label) => label !== 'done');
+    const chosen = specific.length ? specific : labels.map((label) => (label === 'done' && outcome ? outcome : label));
+    return [...new Set(chosen)];
+  };
+  return { first: pick(first), third: pick(third) };
+}
+
+function quoted(sentence, index) {
+  const before = sentence.slice(0, index);
+  return ((before.match(/["“”]/g) || []).length % 2 === 1) || /['‘]\s*[^'’]*$/.test(before) && /^[^'’]*['’](?:\s|$|[,.!?])/.test(sentence.slice(index));
+}
+
+// `records`: what CHE read this turn (connector, tool and screen results). Only these can back a sentence that names a source.
+export function guardClaimedOwnerActions(reply, { message = '', acted = false, records = [] } = {}) {
+  const text = String(reply || '');
+  // A story, a role-play or text the owner asked CHE to write may say "I sent it" in its own voice. A request
+  // that also asks CHE to act (storyRequested and the draft test both check for one) is not exempt.
+  if (acted || storyRequested(message)) return { text, removed: [] };
+  // A reply that opens "Done, sir." reports on itself, not a draft, so all of it is checked.
+  const drafting = WRITING_REQUEST.test(String(message || '')) && !requestNamesAction(message) && !DONE_RE.test(text.trim());
+  const removed = [];
+  // CHE's own actions ("I sent it"): the note denies each one by name.
+  const claimed = new Set();
+  // Claims about someone or something else, or a sentence CHE cannot confirm: the note says that, never a denial.
+  let unconfirmed = false;
+  const kept = [];
+  const { asked, outcome } = requestAction(message);
+  // Whether the sentence just before was removed. Only that sentence's affirmation goes with it, so a "Yes." further on is
+  // kept (review of PR #356, follow-up).
+  let prevRemoved = false;
+  let insideDraft = false;
+  for (const sentence of splitSentences(text)) {
+    const plain = sentence.trim();
+    const wasRemoved = prevRemoved;
+    prevRemoved = false;
+    let hit = null;
+    // A question-form sentence claims nothing: "All set? Should I send it now, sir?" asks the owner. Only a question that opens
+    // with a question or status word, or with "¿", is exempt. A claim with a tag ("I sent it, didn't I?", "…, ¿verdad?") is
+    // still checked (review of PR #356, rounds 3 and 4).
+    if (/\?\s*$/.test(plain) && /^(?:¿|(?:all\s+set|done|ready|should|shall|do|does|did|is|are|was|were|can|could|would|will|want|what|which|who|where|when|how|why)\b)/i.test(plain)) { kept.push(sentence); continue; }
+    // A bare affirmation right after a removed claim ("I sent it? Yes, I did.") affirms the claim just taken out, so it goes too
+    // (review of PR #356, round 5). Only the sentence before counts (follow-up).
+    if (wasRemoved && (AFFIRMATION_AFTER.test(plain) || AFFIRMATION_ONLY.test(plain))) { removed.push(plain); prevRemoved = true; continue; }
+    // Only skip action checks inside a recognizable draft, never across the whole reply.
+    // Otherwise "I drafted the email and sent it" falsely passes as a plain draft.
+    if (drafting && DRAFT_CONTENT_START.test(plain)) insideDraft = true;
+    if (insideDraft) { kept.push(sentence); continue; }
+    for (const re of [STRONG_RE, WEAK_RE, MADE_RE, PASSIVE_RE]) {
+      const m = re.exec(plain);
+      const verb = m ? m[1].toLowerCase().replace(/\s+/g, ' ') : '';
+      if (m && !NOT_A_CLAIM.test(plain.slice(0, m.index)) && !quoted(plain, m.index)
+        && !NOT_AN_ACTION_AFTER[verb]?.test(plain.slice(m.index + m[0].length))) {
+        hit = STRONG_DONE[verb] || WEAK_DONE[verb] || 'made';
+        if (re === PASSIVE_RE) {
+          // "It was sent", "your notes were deleted": about a thing, not CHE's own action.
+          unconfirmed = true;
+        } else {
+          claimed.add(hit);
+          for (const more of plain.slice(m.index + m[0].length).matchAll(MORE_DONE)) claimed.add(STRONG_DONE[more[1].toLowerCase()]);
+        }
+        break;
+      }
+    }
+    if (!hit) {
+      const phrase = phraseClaims(plain, { asked, outcome });
+      if (phrase) {
+        hit = phrase.first[0] || phrase.third[0] || 'claim';
+        for (const label of phrase.first) claimed.add(label);
+        if (!phrase.first.length) unconfirmed = true;
+      }
+    }
+    // A shared-subject construction can hide a claim after a harmless first clause.
+    if (!hit) {
+      const coordinated = COORDINATED_ACTION.exec(plain);
+      if (coordinated && !quoted(plain, coordinated.index)) {
+        hit = STRONG_DONE[coordinated[1].toLowerCase()];
+        claimed.add(hit);
+      }
+    }
+    // Blocker 3 (PR #356): a bare past-tense action is CHE's claim, named for the denial ("Nothing was sent, sir").
+    // A named third party who acted keeps it; a source phrase keeps it only with a record from this turn, and is
+    // otherwise unconfirmed (the neutral note); anything else is CHE's own claim, denied by name.
+    const bare = BARE_ACTION.exec(plain);
+    if (!hit && bare && !SENT_BY_OTHER.test(plain) && !DONE_BY_OTHER.test(plain)) {
+      if (!NAMES_SOURCE.test(plain)) {
+        hit = STRONG_DONE[bare[1].toLowerCase()];
+        claimed.add(hit);
+      } else if (!backedByRecord(plain, records)) {
+        hit = 'unconfirmed';
+        unconfirmed = true;
+      }
+    }
+    if (!hit && plain && DONE_RE.test(plain)) hit = 'done';
+    if (hit) {
+      removed.push(plain);
+      prevRemoved = true;
+      continue;
+    }
+    kept.push(sentence);
+  }
+  if (!removed.length) return { text, removed };
+  // A generic "done" is dropped when a specific claim is named in the same reply: "All set. The report is with Sarah"
+  // says "sent", not "done or sent".
+  const specific = [...claimed].filter((verb) => verb !== 'done');
+  const verbs = specific.length ? specific : [...claimed];
+  const list = verbs.length > 1 ? `${verbs.slice(0, -1).join(', ')} or ${verbs[verbs.length - 1]}` : verbs[0];
+  // The denial names only CHE's own action ("I sent it"). A claim about someone or something else, or a generic "done" with no
+  // request for CHE to act, gets a neutral note: CHE cannot confirm it, and "nothing was sent" would be false for a real email.
+  const note = list
+    ? `Nothing was ${list}, sir: I have no record of doing that.`
+    : unconfirmed
+      ? 'I cannot confirm that from my record, sir.'
+      : 'I have no record of doing anything for that, sir, so I will not say it is done.';
+  const rest = kept.join('').replace(/\n{3,}/g, '\n\n').trim();
+  return { text: rest ? `${rest} ${note}` : note, removed };
 }

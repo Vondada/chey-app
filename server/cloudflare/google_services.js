@@ -3,7 +3,7 @@
 // service's permissions, so the owner approves each service on its own screen.
 // It reuses the YouTube module's OAuth client, PKCE, sealed refresh tokens,
 // revoke-on-replace and callback address. Tokens never leave the server.
-import { isOwnerYes } from './owner_action_gate.js';
+import { forbiddenAction, isOwnerYes, prohibitionSpans, withoutProhibitions } from './owner_action_gate.js';
 import {
   ACCESS_SAFETY_MS, AUTH_URL, PENDING_TTL_MS, TOKEN_URL, codeChallenge, googleClientConfig,
   googleErrorMessage, openToken, postForm, randomToken, revokeGrant, sealToken, youtubeAccessToken,
@@ -673,10 +673,10 @@ const NEWEST = /\b(?:newest|latest|most recent)\b/i;
 const ORDINAL_INDEX = { newest: 0, latest: 0, first: 0, top: 0, one: 0, second: 1, two: 1, third: 2, three: 2, fourth: 3, four: 3, fifth: 4, five: 4 };
 const CALENDAR_RANGE = { today: 'today', tonight: 'today', 'this morning': 'today', 'this afternoon': 'today', tomorrow: 'tomorrow', 'this week': 'this week' };
 const LIST_HEAD = /^(?:check|read|show|list|see|get|pull up|look at|look up|scan|open)\s+(?:me\s+)?(?:(?:my|the|any|all of my|all my|all the)\s+)*(?:(?:new|unread|latest|newest|recent|most recent|incoming|important|all)\s+)*(?:e[- ]?mails?|inbox|gmail|mail)\b/i;
-const ASK_HEAD = /^(?:(?:do|did|have)\s+i\s+(?:have|got|receive|get)|have\s+i\s+got|are\s+there|is\s+there|any|anything|what(?:'s| is| are)|how many)\s+(?:(?:any|anything|new|unread|my|the|in|of|latest|newest|recent|incoming|important|more|other)\s+)*(?:e[- ]?mails?|inbox|gmail|mail)\b/i;
+const ASK_HEAD = /^(?:(?:do|did|have)\s+i\s+(?:have|got|receive|get)|have\s+i\s+got|are\s+there|is\s+there|any|anything|what(?:'s|s| is| are)|how many)\s+(?:(?:any|anything|new|unread|my|the|in|of|latest|newest|recent|incoming|important|more|other)\s+)*(?:e[- ]?mails?|inbox|gmail|mail)\b/i;
 const ASK_REST = /^(?:do i have|have i got|did i get|have i received)(?:\s+(?:today|now|yet|any))?$/i;
 const PICK_REST = /^(?:(?:and|then|,)\s+)?(?:(?:tell|give|let|show|read)\s+me\s+)?(?:the\s+)?(?:newest|latest|most recent|first)(?:\s+(?:one|e[- ]?mail|message))?$/i;
-const CALENDAR_HEAD = /^(?:what(?:'s| is| are)|show(?: me)?|check|list|read|tell me|see|do i have|have i got|am i)\s+(?:(?:on|in|free|busy)\s+)?(?:(?:my|our|any)\s+)?(?:google\s+)?(?:calendar|schedule|agenda|appointments?|meetings?|events?)\b/i;
+const CALENDAR_HEAD = /^(?:what(?:'s|s| is| are)|show(?: me)?|check|list|read|tell me|see|do i have|have i got|am i)\s+(?:anything\s+)?(?:(?:on|in|free|busy)\s+)?(?:(?:my|our|any)\s+)?(?:google\s+)?(?:calendar|schedule|agenda|appointments?|meetings?|events?)\b/i;
 const CALENDAR_VERB_HEAD = /^(?:what\s+(?:(?:meetings?|events?|appointments?)\s+)?do\s+i\s+have|what\s+(?:(?:meetings?|events?|appointments?)\s+)?have\s+i\s+got|am\s+i\s+(?:free|busy))\b/i;
 
 // What the owner says in Chat about Gmail, Drive and Calendar, matched
@@ -688,11 +688,16 @@ export function googleChatIntent(message, { last = null } = {}) {
   if (!t) return null;
   let m = t.match(/^(?:send|email|mail)\s+(?:an?\s+)?(?:e-?mail\s+)?to\s+(\S+?)[,;]?\s*(?:saying|that says|with the message|:)\s*(.+)$/i)
     || t.match(/^(?:email|mail)\s+([^\s@]+@\S+?)[,;]?\s*(?:saying|that says|with the message|:)\s*(.+)$/i);
+  // "…saying the invoice is ready, but don't send it yet": the owner wants the words, not a send, and his
+  // "don't send it" must never become the email's last line (comprehension audit).
+  if (m && prohibitionSpans(m[2]).some(([a, b]) => /^(?:send|e-?mail|mail)(?:\s+(?:it|this|that|the\s+(?:e-?mail|message|mail)|anything|yet|now|today|out))*[\s.,;!?]*$/i.test(forbiddenAction(m[2].slice(a, b))))) return null;
   if (m) return { kind: 'gmail_send', to: m[1], body: m[2] };
   // An email request missing its address or text: say so, never let a model claim it was sent.
-  if (/^(?:send|email|mail)\b/i.test(t) && /\be-?mails?\b/i.test(t)) return { kind: 'gmail_incomplete' };
+  // "Can you send emails for me?" asks what CHE can do, so it is answered as a question (comprehension audit).
+  const abilityAsk = /^(?:(?:hey|ok|okay)\s+)?(?:(?:che|chay|chey|shay)\b[,:!.]?\s*)?(?:can|could|are)\s+you\s+(?:able\s+to\s+)?(?:send|write|read)\s+e-?mails(?:\s+(?:for\s+me|on\s+my\s+behalf))?\s*\??$/i.test(String(message || '').trim());
+  if (!abilityAsk && /^(?:send|email|mail)\b/i.test(t) && /\be-?mails?\b/i.test(t)) return { kind: 'gmail_incomplete' };
   // One email in full: "read my latest unread email".
-  if (/^read\s+(?:me\s+)?(?:(?:my|the|a|an)\s+)?(?:(?:latest|newest|most recent|last|first|next|unread|new)\s+)*e[- ]?mail$/i.test(t)) {
+  if (/^read\s+(?:me\s+)?(?:(?:my|the|a|an)\s+)?(?:(?:latest|newest|most recent|last|first|next|unread|new)\s+)*e[- ]?mail(?:\s+(?:out\s+loud|aloud|to\s+me))?$/i.test(t)) {
     return /\b(?:unread|new)\b/i.test(t) ? { kind: 'gmail_read', pick: 'newest' } : { kind: 'gmail_read', pick: 'newest', scope: 'inbox' };
   }
   // A follow-up on the last Gmail list: "read the newest one", "read number two".
@@ -705,8 +710,15 @@ export function googleChatIntent(message, { last = null } = {}) {
     if (!rest || ASK_REST.test(rest) || PICK_REST.test(rest)) return newest ? { kind: 'gmail_list', pick: 'newest' } : { kind: 'gmail_list' };
     // "check my email from Bob" is not built yet: say so, rather than leave it to a model that cannot see the inbox.
     if (/\bmy\b/i.test(listed[0]) && !/\b(?:to|about|for|saying|that|which|with|address|settings|password|account|login|sign|app|apps)\b/i.test(rest)) return { kind: 'gmail_unsupported' };
+    // "Do I have any new emails from Sarah?" asks about the inbox too (comprehension audit).
+    if (/^from\s+[a-z]/i.test(rest)) return { kind: 'gmail_unsupported' };
     return null;
   }
+  // "Tell me if Sarah emailed me today", "did Bob email me": a sender search, not built yet. The turn's own
+  // "don't send anything" is set aside so the question is read.
+  const asked = normalizeGoogleRequest(withoutProhibitions(message).replace(/^[\s,.;]+/, ''));
+  if (/^(?:(?:tell me|let me know|check)\s+)?(?:if|whether)\s+[a-z]+(?:\s+[a-z]+)?\s+(?:e-?mailed|sent\s+me\s+(?:an?\s+)?e-?mail|wrote)\s+(?:to\s+)?me\b/i.test(asked)
+    || /^(?:has|did)\s+[a-z]+(?:\s+[a-z]+)?\s+(?:e-?mail(?:ed)?|sen[dt]\s+me\s+(?:an?\s+)?e-?mail|written)\s+(?:to\s+)?me\b/i.test(asked)) return { kind: 'gmail_unsupported' };
   // Calendar: today, tomorrow or this week, read from the real calendar.
   const calendar = CALENDAR_HEAD.exec(t) || CALENDAR_VERB_HEAD.exec(t);
   if (calendar) {
@@ -714,16 +726,24 @@ export function googleChatIntent(message, { last = null } = {}) {
     if (!rest) return { kind: 'calendar_list', range: 'today' };
     const range = rest.match(/^(?:for\s+)?(today|tonight|tomorrow|this week|this morning|this afternoon)$/i);
     if (range) return { kind: 'calendar_list', range: CALENDAR_RANGE[range[1].toLowerCase()] };
-    if (/^(?:on|for|next|in|this|at)\b/i.test(rest)) return { kind: 'calendar_unsupported' };
+    if (/^(?:on|for|next|in|this|at|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.test(rest)) return { kind: 'calendar_unsupported' };
     return null;
   }
   m = t.match(/^(?:what about|how about|and|what's on|what is on)\s+(today|tonight|tomorrow|this week)$/i);
   if (m && last?.service === 'calendar') return { kind: 'calendar_list', range: CALENDAR_RANGE[m[1].toLowerCase()] };
   m = t.match(/^(?:add|schedule|put|create)\s+(?:an?\s+|the\s+)?(?:event|meeting|appointment|calendar event)?\s*(?:called\s+|titled\s+)?(.+?)\s+on\s+(\d{4}-\d{2}-\d{2})\s+at\s+(\d{1,2}):(\d{2})\s*(am|pm)?$/i);
   if (m) return { kind: 'calendar_create', summary: m[1], date: m[2], time: TIME_OF_DAY(m[3], m[4], m[5]?.toLowerCase()) };
-  if (/^(?:list|show|check|see|open|what(?:'s| is| are)(?: in)?)\s+(?:me\s+)?(?:(?:my|all my|any|our)\s+)(?:(?:recent|latest|newest)\s+)?(?:google\s+)?drive(?:\s+(?:files|documents|docs))?$/i.test(t)
+  // "Add a meeting with Bob tomorrow at 3pm to my calendar": a new event CHE cannot place without an exact
+  // date, so she asks for one. A model would only claim it was added.
+  // A missing-date event may say "calendar Friday at 7", but "calendar screen" is
+  // app-development wording, not a Google event (PR #356 review).
+  if (/^(?:add|schedule|put|create|book|set\s+up)\b[\s\S]*\b(?:to|on|in|onto)\s+(?:my\s+|the\s+)?(?:google\s+)?calendar\b(?!\s+(?:screen|app|page|settings|view|ui|interface|widget|button|tab)\b)/i.test(t)
+    || /^(?:add|schedule|create|book|set\s+up)\s+(?:an?\s+|the\s+|my\s+)?(?:calendar\s+)?(?:event|meeting|appointment)\b/i.test(t)) return { kind: 'calendar_incomplete' };
+  if (/^(?:list|show|check|see|open|what(?:'s|s| is| are)(?: in)?)\s+(?:me\s+)?(?:(?:my|all my|any|our)\s+)(?:(?:recent|latest|newest)\s+)?(?:google\s+)?drive(?:\s+(?:files|documents|docs))?$/i.test(t)
     || /^what\s+(?:files|documents|docs)\s+(?:are|do i have)\s+(?:in|on)\s+(?:my\s+)?(?:google\s+)?drive$/i.test(t)) return { kind: 'drive_list' };
   if (last?.service === 'drive' && /^(?:show|list|read|open)\s+(?:me\s+)?(?:those|these|them|the)\s+(?:files|documents|docs)$/i.test(t)) return { kind: 'drive_list' };
+  // "Find the budget spreadsheet in my Drive": searching Drive by name is not built yet, so CHE says so.
+  if (/^(?:find|search|look\s+(?:for|up|through)|locate|pull\s+up)\b[\s\S]{0,80}\b(?:(?:my|the)\s+(?:google\s+)?drive|google\s+drive)\b/i.test(t)) return { kind: 'drive_unsupported' };
   m = t.match(/^(?:create|make|save|write)\s+(?:me\s+)?(?:(?:a|an|the|new)\s+)?(?:google\s+)?(?:doc|document|drive file|file)\s+(?:called|named|titled)\s+(.+?)\s+(?:with|saying|containing|that says)\s+(?:the\s+(?:words|text|message|phrase)\s+|the\s+)?(.+)$/i);
   if (m) return { kind: 'drive_create', name: m[1].trim(), text: m[2].trim().replace(/^["']|["']$/g, '') };
   if (/^(?:create|make|save|write)\s+(?:me\s+)?(?:(?:a|an|the|new)\s+)?(?:google\s+)?(?:doc|document|drive file|file)\s+(?:called|named|titled)\s+\S/i.test(t)) return { kind: 'drive_incomplete' };
@@ -734,13 +754,22 @@ export function googleChatIntent(message, { last = null } = {}) {
 
 // "Check my YouTube channel": answered from the stored YouTube sign-in, with no model.
 export function youtubeChatIntent(message) {
-  return /^(?:(?:check|show|read|get|list|look at|tell me about)\s+(?:me\s+)?(?:(?:my|the|our)\s+)?(?:youtube|channel)(?:\s+(?:channel|account|status|info|information|details))?|(?:what(?:'s| is)|show|check)\s+(?:(?:my|the)\s+)?(?:youtube\s+)?channel(?:\s+(?:status|info|information|details))?|is\s+(?:my\s+)?youtube\s+(?:connected|linked|working))$/i.test(normalizeGoogleRequest(message));
+  const t = normalizeGoogleRequest(message);
+  // "What are my latest YouTube videos?", "how many subscribers do I have on YouTube", "how is my channel
+  // doing": the same stored sign-in and uploads, which also say what analytics are not connected.
+  if (/^(?:what(?:'s|s| is| are)|show(?: me)?|list|read|tell me)\s+(?:(?:my|our|the)\s+)(?:latest|newest|recent|last)\s+(?:youtube\s+)?(?:videos?|uploads?)(?:\s+on\s+youtube)?$/i.test(t)
+    || /^how\s+many\s+(?:youtube\s+)?(?:subscribers|views|videos|uploads)\s+(?:do\s+i\s+have|have\s+i\s+got|does\s+my\s+(?:youtube\s+)?channel\s+have)(?:\s+on\s+youtube)?$/i.test(t)
+    || /^how(?:'s|s| is)\s+my\s+(?:youtube\s+)?channel\s+doing(?:\s+on\s+youtube)?$/i.test(t)
+    // "Did the moon video upload?": CHE's own uploads say.
+    || /^(?:did|has)\s+(?:the|my|your|that)\s+(?:[\w-]+\s+){0,2}video\s+(?:upload|uploaded|get\s+uploaded|go\s+up|post|posted)(?:\s+(?:to|on)\s+youtube)?(?:\s+yet)?$/i.test(t)) return true;
+  return /^(?:(?:check|show|read|get|list|look at|tell me about)\s+(?:me\s+)?(?:(?:my|the|our)\s+)?(?:youtube|channel)(?:\s+(?:channel|account|status|info|information|details))?|(?:what(?:'s| is)|show|check)\s+(?:(?:my|the)\s+)?(?:youtube\s+)?channel(?:\s+(?:status|info|information|details))?|is\s+(?:my\s+)?youtube\s+(?:connected|linked|working))$/i.test(t);
 }
 
 const SERVICE_FOR_KIND = {
   gmail_list: 'gmail', gmail_send: 'gmail', gmail_read: 'gmail', gmail_unsupported: 'gmail',
   drive_list: 'drive', drive_create: 'drive', drive_incomplete: 'drive',
-  calendar_list: 'calendar', calendar_create: 'calendar', calendar_unsupported: 'calendar',
+  calendar_list: 'calendar', calendar_create: 'calendar', calendar_unsupported: 'calendar', calendar_incomplete: 'calendar',
+  drive_unsupported: 'drive',
   ads_accounts: 'google_ads', ads_report: 'google_ads',
 };
 
@@ -780,6 +809,12 @@ export async function runGoogleIntent(intent, { env = {}, data, fetcher = fetch,
   }
   if (intent.kind === 'drive_incomplete') {
     return { ok: false, text: 'Tell me what the document should say, sir. Nothing was created.' };
+  }
+  if (intent.kind === 'calendar_incomplete') {
+    return { ok: false, text: 'Tell me the event with its exact date and time, sir, for example "add Dentist on 2026-10-21 at 15:00". Nothing was added.' };
+  }
+  if (intent.kind === 'drive_unsupported') {
+    return { ok: false, text: 'I can list your recent Drive files, sir. I cannot search Drive by name yet. Nothing was changed.' };
   }
   const zone = safeTimeZone(env.CHE_TIMEZONE || 'America/Chicago');
   if (intent.kind === 'gmail_list') {

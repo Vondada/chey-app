@@ -81,9 +81,9 @@ import { CHE_SELF_BRIEF, starredFocus, studyLesson } from './che_self_knowledge.
 import { KEY_PROVIDERS, MEMORY_DB, hasStoredMemoryDatabase, memorySetupIntent, memorySetupSteps, removeMemoryDatabase, saveMemoryDatabase, removeKey, storedKeys, withStoredKeys, cachedAnswer, checkAllKeys, fileLetter, fileTech, forgetAnswer, isLockedDown, listLetters, looksLikeAttack, markLetter, nextLetter, rememberAnswer, resilienceIntent, runScout, saveKey, setLockdown, setupSteps, speakKeyHealth, speakMailboxSummary, speakTech, techItems } from './resilience.js';
 import { applyCorrections, correctionsContext, detectCorrection, learnCorrection, loadCorrections } from './speech_learning.js';
 import { applyModelReading, asksAboutScreen, clipKeepingLimits, interpretOwnerTurn, interpretWithModel } from './speech_intent.js';
-import { intentFrame } from './intent_frame.js';
+import { intentFrame, understoodAs } from './intent_frame.js';
 import { replyHijacksOwnerRequest, usageIntent, usageReport, speakUsage } from './usage_tracker.js';
-import { newestStarredIntent, speakNewestStarred, autoImproveScan, chatOnlyResponseIntent, currentTurnActionPolicy, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, inspirationUpgradeContext, listOwnerStarredRepos, readRepoSource, referenceSourceBlock, codingHistoryIntent, repositoryImplementationIntent, repositoryInspectionIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, starredStudyList, studySelectionIntent } from './code_scout.js';
+import { newestStarredIntent, speakNewestStarred, autoImproveScan, chatOnlyResponseIntent, currentTurnActionPolicy, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, inspirationUpgradeContext, listOwnerStarredRepos, readRepoSource, referenceSourceBlock, codingHistoryIntent, hypotheticalChange, repositoryImplementationIntent, repositoryInspectionIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, starredStudyList, studySelectionIntent } from './code_scout.js';
 import { codingHistoryReceipt } from './coding_history.js';
 import { activityReceipt, activityStatusIntent } from './activity_status.js';
 import { webAppPage } from './web_app.js';
@@ -91,8 +91,8 @@ import { learnedSkillsContext, learnedSkillsIntent, learnSkillIntent, attachment
 import { APPROVED_SKILLS, handleInstalledSkill, installedSkillIntent, installedSkillsContext } from './installed_skills.js';
 import { lastSite, publishSite, saveSite, serveSite, siteBuildIntent, siteEditIntent, sitePreviewIntent, sitePublishIntent, siteUrl, speakSitePublished, speakSiteResult, wantsImmediatePublish, workingHtml, writeSite } from './site_builder.js';
 import { noteJobActivity } from './job_activity.js';
-import { PENDING_OWNER_ACTION_KEY, forbiddenAction, prohibitionSpans, withoutProhibitions, PENDING_OWNER_ACTION_MS, gateOwnerAction, grantForKinds, isOwnerYes, peerActionReply, APPS_GRANTED_KEY, PENDING_APP_ACTION_KEY, PENDING_APP_ACTION_MS, gateAppAccess, classifyAppNeed, classifyExplicitAppOpen, classifyAppAccesses } from './owner_action_gate.js';
-import { asksForCurrentOwnerLocation, changeHistoryIntent, guardClaimedResearchActions, guardGroundedFacts, guardLocationWeatherReply, guardOwnerReply, loadChangeHistory, loadReceipts, OWNER_LOCATION_NOT_VERIFIED, recordReceipt, requestedCodeNames, speakChangeHistory, vagueResearchRequest, verifiedState, verifiedStatusText } from './truth_layer.js';
+import { PENDING_OWNER_ACTION_KEY, deskOwnedMoney, forbiddenAction, prohibitionSpans, withoutProhibitions, PENDING_OWNER_ACTION_MS, gateOwnerAction, grantForKinds, isOwnerYes, peerActionReply, APPS_GRANTED_KEY, PENDING_APP_ACTION_KEY, PENDING_APP_ACTION_MS, gateAppAccess, classifyAppNeed, classifyExplicitAppOpen, classifyAppAccesses } from './owner_action_gate.js';
+import { asksForCurrentOwnerLocation, changeHistoryIntent, guardClaimedOwnerActions, guardClaimedResearchActions, guardGroundedFacts, guardLocationWeatherReply, guardOwnerReply, loadChangeHistory, loadReceipts, OWNER_LOCATION_NOT_VERIFIED, recordReceipt, requestedCodeNames, speakChangeHistory, vagueResearchRequest, verifiedState, verifiedStatusText } from './truth_layer.js';
 import { ENGINEERING_PLAYBOOK_SPOKEN, playbookIntent } from './engineering_playbook.js';
 import { describeSkillsReport, reusableLicense, selectFilesForAgent, skillFromMarkdown, skillImportIntent, skillsReportIntent } from './skill_import.js';
 import { describeTopicStudyStart, starredStudyTargets, matchTopicSections, namedRepoStudyIntent, starredLibraryIntent, readTutorial, readmeSections, sectionTutorials, studyBatchIntent, topicBuildRequest, topicTitles, wantsSerialStudy } from './topic_study.js';
@@ -175,7 +175,7 @@ import {
 import { APP_BUILD_KEY, appBuildIntent, appBuildRun, dispatchAppBuild, speakAppBuild } from './app_builds.js';
 import { advanceObjectives, applyMissionEvent, approvalReached, approveNode, awaitingApproval, cancelObjective, createObjective, mutateObjective, replanNode, resolveKnownNodes, retryNode, setObjectivePaused, speakObjective } from './objective_graph.js';
 import { CATEGORIES, COMMANDS, catalogView, commandById, commandStatus, connectorStatus, describeWorkflow, dispatchPrompt, findSavedWorkflow, normalizeSavedWorkflow, parseSlashCommand, readCommandSpeech, searchCommands, speakCommandList, speakUnavailable, suggestCommands, workflowNodes, workflowFromWords } from './command_catalog.js';
-import { handleReaRequest, loadInvestigation, reaInvestigationDetail, reaInvestigations } from './rea_runner.js';
+import { handleReaRequest, loadInvestigation, parseReaRequest, reaInvestigationDetail, reaInvestigations } from './rea_runner.js';
 import { LAST_RESULTS_KEY, loadCatalog, resourceChoice, resourceIntent, resultLinks, searchCatalog, speakResults } from './resource_catalogs.js';
 import { fiveLayerIntent, LAYER_RESULTS_KEY, reasoningLayer, runReasoningLayer, speakFiveLayerResults } from './reasoning_exam.js';
 import { AUTONOMY_EXAM, EXAM_RESULTS_KEY, examIntent, examLevel, gradeLevel, mergeExamResult, speakExamResults, ungradableEngineFailure } from './autonomy_exam.js';
@@ -337,6 +337,16 @@ async function bodyOf(request) {
 }
 
 // Says `text` before an existing streamed reply.
+// Adds fields to a chat answer's done event (or to a one-line JSON answer such as a hold), so the phone
+// gets them with the reply itself. Chat answers are built whole before they are returned.
+async function withDoneFields(response, fields) {
+  const raw = await response.text();
+  const lines = raw.split('\n');
+  const at = lines.map((line) => { try { return JSON.parse(line); } catch (_) { return null; } }).findLastIndex((e) => e && (e.type === 'done' || (lines.filter(Boolean).length === 1 && !e.type)));
+  if (at >= 0) lines[at] = JSON.stringify({ ...JSON.parse(lines[at]), ...fields });
+  return new Response(lines.join('\n'), { status: response.status, headers: response.headers });
+}
+
 function prefixNdjson(response, text) {
   const head = new TextEncoder().encode(JSON.stringify({ type: 'delta', delta: text }) + '\n');
   const body = response.body;
@@ -2561,6 +2571,8 @@ export function selfUpdateChatIntent(message) {
   if (
     /\b(?:check|show|what(?:'s| is)|give me)\b[\s\S]{0,35}\b(?:pr|pull request)\b[\s\S]{0,20}\b(?:status|state|checks?)?\b/i.test(text)
     || /\b(?:pr|pull request)\s+(?:status|state|checks?)\b/i.test(text)
+    // "Is the voice fix merged yet?" asks the pull request's state (comprehension audit).
+    || /^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:is|was|has|did)\s+(?:the|that|my|your)\s+(?:[\w-]+\s+){0,3}(?:been\s+)?merged(?:\s+yet)?\s*\??$/i.test(text)
   ) return { kind: 'status' };
 
   // "Discard that change" / "throw it away": the owner rejects the reviewed
@@ -2577,7 +2589,8 @@ export function selfUpdateChatIntent(message) {
   if (/^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:(?:ok(?:ay)?|yes|yeah|go ahead)[,!.]?\s+)?(?:please\s+)?(?:(?:go ahead and|now)\s+)?(?:merge|ship)\b(?:\s+(?:(?:it|that|this|the|latest|pr|pull request|update|change|code)\b\s*)*)?(?:\s*(?:and|then|&)\s*deploy(?:\s+it)?)?[.!]?\s*$/i.test(text)) {
     return { kind: 'merge' };
   }
-  if (/\b(?:is|did|was|has)\b[\s\S]{0,30}\b(?:deploy(?:ed|ment)?|live|in production)\b|\b(?:deploy(?:ment)?|production)\s+(?:status|check|health)\b|\bverify\s+(?:the\s+)?deploy(?:ment)?\b/i.test(text)) {
+  // "Is live trading on?" asks about the trading mode, not a deployment (comprehension audit).
+  if (/\b(?:is|did|was|has)\b[\s\S]{0,30}\b(?:deploy(?:ed|ment)?|live(?!\s+(?:trading|trades?|account|orders?|mode|feed|data|chart|prices?|stream|market|money|broker))|in production)\b|\b(?:deploy(?:ment)?|production)\s+(?:status|check|health)\b|\bverify\s+(?:the\s+)?deploy(?:ment)?\b/i.test(text)) {
     return { kind: 'deploy-status' };
   }
   return null;
@@ -2930,6 +2943,19 @@ export async function dispatchChange(env, body, memory = null, options = {}) {
       const next = handled.ok && (handled.opened || handled.discarded) && options.advanceStudyBuilds ? await options.advanceStudyBuilds().catch(() => null) : null;
       return json({ message: `${handled.message}${next ? ` ${next}` : ''}`, code_review_passed: false, owner_approval_required: false, self_update_action: command.kind, execution_mode: turnPolicy.mode });
     }
+  }
+  // A question about CHE's own app that reads like a change ("improve your app") is not a build. The phone sends
+  // such turns here, not to /api/chat, so REA answers its read-only follow-ups first. A build is never taken from REA here.
+  if (!turnPolicy.codingJobAllowed && options.rea) {
+    const claimed = await Promise.resolve().then(() => options.rea(request)).catch(() => null);
+    if (claimed?.text) return json({
+      message: claimed.text,
+      source: 'che_rea',
+      ok: claimed.ok !== false,
+      ...(claimed.investigation_id ? { rea_investigation: claimed.investigation_id } : {}),
+      code_review_passed: false,
+      owner_approval_required: false,
+    });
   }
   if (!turnPolicy.codingJobAllowed) {
     if (options.answerChatOnly) {
@@ -4709,6 +4735,12 @@ export class CheState extends DurableObject {
     const probeRun = isChat && isMemoryProbeRequest(request, this.env);
     const sent = isChat ? request.clone().json().catch(() => null) : null;
     let response = await this.handleRequest(request);
+    // Issue #345: a turn with a money or delete hold, or several steps with a "don't", carries how CHE
+    // read it. The phone shows it as quiet text under the reply and never speaks it by itself.
+    if (isChat && response?.ok && OWNER_CHAT_REQUESTS.has(request)) {
+      const understood = understoodAs(String((await sent)?.message || ''));
+      if (understood) response = await withDoneFields(response, { understood_as: understood });
+    }
     // A trade alert the owner has not heard yet is said first, in the reply
     // to whatever he says next (there is no phone push for it yet).
     if (isChat && response?.ok && OWNER_CHAT_REQUESTS.has(request)) {
@@ -4935,10 +4967,10 @@ export class CheState extends DurableObject {
     }
     if (!ownerDevice) return null;
     const view = catalogView(await this.commandConnectors(data));
-    if (said.kind === 'open') {
+    if (said.kind === 'open' || said.kind === 'groups') {
       const ready = view.commands.filter((c) => c.status === 'available').length;
       const setup = view.commands.filter((c) => c.status === 'setup_required').length;
-      return ndjsonReply(`I can't open a page from this connection, sir; the Commands page opens in CHE's iPhone app. It holds ${view.commands.length} commands in ${view.categories.length} groups, ${ready} ready now${setup ? ` and ${setup} needing setup` : ''}: `
+      return ndjsonReply(`${said.kind === 'open' ? 'I can\'t open a page from this connection, sir; the Commands page opens in CHE\'s iPhone app. It holds' : 'I have'} ${view.commands.length} commands in ${view.categories.length} groups${said.kind === 'open' ? '' : ', sir'}, ${ready} ready now${setup ? ` and ${setup} needing setup` : ''}: `
         + `${view.categories.map((g, i) => `${i + 1}. ${g.title}, ${view.commands.filter((c) => c.category === g.id).length}`).join('; ')}. Say "show me five YouTube commands" to hear one group. Nothing was run.`,
         { source: 'che_command_center', ok: true, model_calls: 0 });
     }
@@ -8245,6 +8277,10 @@ export class CheState extends DurableObject {
         advanceStudyBuilds: () => this.advanceStudyBuilds(),
         batchStudies: () => this.batchStudies(),
         answerChatOnly: (message) => this.answerTerminalChatOnly(message),
+        // REA's read-only answers (a comparison, a feature map, a status). A REA build phrase is never claimed here.
+        rea: (message) => (parseReaRequest(message)?.command === 'build'
+          ? null
+          : handleReaRequest(this.ctx.storage, this.keyEnv || this.env, message, { ...this.reaOptions({ history: [], owner: ownerDevice }), codingBlocked: true })),
         ops: { queueJob: async (fields) => { const fresh = await this.loadData(); const queued = enqueueJob(fresh, fields); await this.ctx.storage.put('che', fresh); await this.scheduleWork(); return queued; } },
       });
       if (path === '/api/chat') {
@@ -8527,7 +8563,10 @@ export class CheState extends DurableObject {
           // more in the sentence, keeps the hold.
           const deskTurn = body.attachment ? null : deskIntent(message);
           stockTurn = deskTurn?.kind === 'stock_order' ? deskTurn : null;
-          const ownerGate = gateOwnerAction(message, stockTurn?.paper ? { ...ownerGrant, money: true } : ownerGrant);
+          // The sale and order-object rules of #356 hold every other "sell" and "place the order"; on a turn the desk owns,
+          // money that comes only from those words is the desk's own confirmation (see deskOwnedMoney).
+          const deskOwned = (stockTurn || ['place_unconfirmed', 'take'].includes(deskTurn?.kind)) && deskOwnedMoney(message);
+          const ownerGate = gateOwnerAction(message, stockTurn?.paper || deskOwned ? { ...ownerGrant, money: true } : ownerGrant);
           if (!ownerGate.allowed) {
             await this.ctx.storage.put(PENDING_OWNER_ACTION_KEY, { kinds: ownerGate.kinds, text: message, at: Date.now() });
             // "Reset my progress" names what the yes would delete, and how much (Knowledge Atlas, #346).
@@ -9618,7 +9657,7 @@ export class CheState extends DurableObject {
           }
           return ndjsonReply(activityReceipt({ mode: activityMode, jobs: current.jobs, objectives: current.objectives, runtime, staleMs: jobStaleMs, paused: current.autonomy === false }), { source: 'che_activity_status', model_calls: 0 });
         }
-        if (/^\s*(?:che[,:]?\s*)?(?:please\s+)?resume (?:the|my|that) coding job[.!]?\s*$/i.test(message)) {
+        if (/^\s*(?:che[,:]?\s*)?(?:please\s+)?resume (?:the|my|that)(?: (?:last|previous|saved|failed))? coding job[.!]?\s*$/i.test(message)) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can resume coding jobs.', { source: 'che_coding_resume', ok: false });
           const current = await this.loadData();
           const job = current.jobs.find((item) => item.kind === 'self_development' && item.status === 'queued');
@@ -10006,21 +10045,22 @@ export class CheState extends DurableObject {
               : `I couldn't send that, sir. ${sent.detail}`, { source: 'che_mailbox' });
         }
         if (mail?.kind === 'read') {
+          // An unreachable mailbox is said as that, never as a generic failure (comprehension audit).
           if (mail.peer) {
-            const thread = await readThread(this.env, mail.peer);
+            const thread = await readThread(this.env, mail.peer).catch((error) => ({ messages: [], error: `GitHub did not answer (${String(error?.message || error).slice(0, 80)}).` }));
             const recent = thread.messages.slice(-4);
             return ndjsonReply(thread.error ? `I couldn't open the mailbox, sir. ${thread.error}`
               : recent.length ? `Latest with ${mail.peer}, sir:\n${recent.map((m, i) => `${i + 1}. ${m.from}: ${String(m.text).slice(0, 400)}`).join('\n')}`
                 : `No messages with ${mail.peer} yet, sir.`, { source: 'che_mailbox' });
           }
-          const webAll = (await readWebMail(this.ctx.storage, 40, this.env)).filter((m) => m.from !== 'che').slice(-5);
+          const webAll = (await readWebMail(this.ctx.storage, 40, this.env).catch(() => [])).filter((m) => m.from !== 'che').slice(-5);
           const traps = webAll.filter((m) => looksLikeAttack(m.text));
           for (const m of traps) await fileLetter(this.ctx.storage, { tray: 'security', subject: `Flagstaff message from ${m.from} looks like an attack`, body: 'It asked for secrets or to override you. I did not follow it.', tag: 'security', severity: 'danger' });
           const web = webAll.filter((m) => !looksLikeAttack(m.text));
           const webText = web.length
             ? `Flagstaff 369, latest ${web.length}:\n${web.map((m, i) => `${i + 1}. ${m.from}: ${String(m.text).slice(0, 300)}`).join('\n')}`
             : 'Flagstaff 369 has no new AI messages.';
-          const all = await listThreads(this.env);
+          const all = await listThreads(this.env).catch((error) => ({ threads: [], error: `GitHub did not answer (${String(error?.message || error).slice(0, 80)}).` }));
           return ndjsonReply(`${webText}\n\n${all.error ? `GitHub mailbox unavailable: ${all.error}` : speakThreads(all.threads)}`, { source: 'che_mailbox' });
         }
 
@@ -10028,7 +10068,7 @@ export class CheState extends DurableObject {
           /\b(?:change|update|upgrade|redesign|restyle|modify|fix|add|remove|move|rearrange|rebuild|improve|make)\b[\s\S]{0,120}\b(?:che(?:'s)?|your(?:self| app| ui| interface| code| screen| page| layout| navigation)|the che app|this (?:che )?(?:screen|page))\b/i.test(message) ||
           /\b(?:che(?:'s)?|your)\b[\s\S]{0,80}\b(?:ui|interface|screen|page|layout|navigation|code|app)\b[\s\S]{0,80}\b(?:change|update|redesign|fix|move|add|remove|improve)\b/i.test(message) ||
           /\b(?:add|apply|put|install|merge)\b[\s\S]{0,100}\b(?:this|the)\s+code\b[\s\S]{0,100}\b(?:to|into)\s+(?:che|your app|yourself)\b/i.test(message));
-        if (!chatOnlyEvaluation && selfChangeRequest) {
+        if (!chatOnlyEvaluation && selfChangeRequest && !hypotheticalChange(message)) {
           // Same reviewed pipeline as every other coding route: the proposal
           // is saved for "create the PR" (no code is put in chat unless asked),
           // and failures are classified instead of dumped into chat.
@@ -10258,7 +10298,12 @@ export class CheState extends DurableObject {
         // Video is a tool execution, never a model promise. A queued render is
         // checked, not restarted: one request is one video. The free GitHub
         // renderer is used by default; paid engines stay off unless enabled.
-        const videoAsk = requestedCapabilities.includes('video_generation');
+        // A video only imagined or quoted ("if I said 'make a video about dogs', would you upload it too?")
+        // asks what CHE would do, so nothing renders (comprehension audit, issue #350).
+        const unquotedVideo = message.replace(/(^|\s)['‘"“][^'’"”]{3,200}['’"”](?=[\s,.!?;:]|$)/g, '$1""');
+        const videoImagined = /\bif\s+i\s+(?:said|asked(?:\s+you)?|told\s+you|wanted|were\s+to\s+(?:ask|say))\b/i.test(message)
+          || (unquotedVideo !== message && !inferTurnCapabilities(unquotedVideo).includes('video_generation'));
+        const videoAsk = requestedCapabilities.includes('video_generation') && !videoImagined;
         const priorVideo = await this.ctx.storage.get('che_video_pending');
         const priorAge = priorVideo?.dispatched_at ? Date.now() - Date.parse(priorVideo.dispatched_at) : Infinity;
         // A bare "short" is a trading word too ("my short position").
@@ -10352,6 +10397,17 @@ export class CheState extends DurableObject {
         if (videoAsk && (renderForbidden || (rendererQuestion && !renderAsked))) {
           const engine = await probeVideoEngine(this.keyEnv || this.env).catch(() => videoEngineStatus(this.keyEnv || this.env));
           return ndjsonReply(videoStatusSpeech(engine, await listMedia(this.ctx.storage).catch(() => [])),
+            { ok: true, video_status: 'status_only', source: 'video_renderer' });
+        }
+        // "Is my video done rendering?", "what was the last video you made?", "which rendering engines are
+        // connected?" ask for no new video either (comprehension audit): the renderer and the media library
+        // answer them, never the model, which could only guess. A pending render was checked above.
+        const ownVideoStatus = /\b(?:is|are|has|have)\s+(?:my|the|your|that)\s+(?:[\w-]+\s+){0,2}(?:video|render|clip|mp4)s?\s+(?:done|ready|finished|rendered|complete|made)\b|\b(?:my|the|your)\s+(?:[\w-]+\s+){0,2}video\s+(?:done\s+|still\s+)?rendering\b/i.test(message);
+        const lastVideo = /\b(?:last|latest|most\s+recent|newest)\s+(?:verified\s+)?(?:video|mp4|render)\s+(?:that\s+)?(?:you\s+)?(?:made|rendered|created|produced|finished)\b|\bwhat\s+(?:was|is)\s+(?:the|your)\s+(?:last|latest)\s+video\b/i.test(message);
+        if (!renderAsked && !priorVideo?.task_id && (rendererQuestion || ownVideoStatus || lastVideo)) {
+          const engine = await probeVideoEngine(this.keyEnv || this.env).catch(() => videoEngineStatus(this.keyEnv || this.env));
+          const idle = earlierVideos.length ? '' : 'No video is rendering or queued right now, sir. ';
+          return ndjsonReply(`${idle}${videoStatusSpeech(engine, await listMedia(this.ctx.storage).catch(() => []))}`,
             { ok: true, video_status: 'status_only', source: 'video_renderer' });
         }
 
@@ -10605,9 +10661,8 @@ export class CheState extends DurableObject {
             });
             if (added.added || added.replaced?.length) await this.saveChatData(data);
           }
-          return new Response(JSON.stringify({ type: 'delta', delta: reply }) + '\n', {
-            headers: { 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store' },
-          });
+          // Named like the remember route above, so the phone and the audit see which route kept it.
+          return ndjsonReply(reply, { source: 'che_memory', model_calls: 0 });
         }
         // Preserve supplied conversation state; capacity checks must skip a
         // small engine instead of silently dropping the owner's earlier turns.
@@ -11044,6 +11099,15 @@ export class CheState extends DurableObject {
         reply = guardClaimedResearchActions(reply, {
           research, tools: skillResults, documentRead: Boolean(multimodal?.summary || body.screen_context || pastedText), message: rawMessage,
         }).text;
+        // Nothing on this path sends, buys, deletes, uploads, renders, trades or opens anything (connector
+        // actions above only wait for approval), so a model sentence saying it did is removed.
+        // This turn's connector, tool and screen results are the only records that can back "according to your calendar".
+        const unclaimed = guardClaimedOwnerActions(reply, {
+          message: rawMessage,
+          records: [body.screen_context, JSON.stringify(skillResults), JSON.stringify(actionResults), JSON.stringify(plugins), JSON.stringify(officeResults)],
+        });
+        if (unclaimed.removed.length) console.log('CHE truth layer removed action claims', JSON.stringify(unclaimed.removed).slice(0, 800));
+        reply = unclaimed.text;
         // Every link, headline, outlet and date in the reply must match a page
         // CHE opened this turn; a news answer's events must appear in one.
         // A broken citation is recorded so it is never repeated as fact.

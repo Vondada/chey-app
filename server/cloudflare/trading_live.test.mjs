@@ -340,3 +340,9 @@ test('issue #350 route: the compound question is answered in full from the journ
     globalThis.fetch = realFetch;
   }
 });
+
+test('comprehension audit: the owner\'s own words for paper results read the journal', () => {
+  for (const q of ['How did my paper trades do today?', "What's my paper trading balance?", 'how are my paper trades doing', 'what is my paper p&l']) {
+    assert.equal(liveIntent(q)?.kind, 'performance', q);
+  }
+});

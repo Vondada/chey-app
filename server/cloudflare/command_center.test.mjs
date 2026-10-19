@@ -935,3 +935,11 @@ test('REA workflows wait for real runner evidence, then unblock the dependent co
     assert.equal(che.inputs.length, 0);
   });
 });
+
+test('comprehension audit: "what commands do you have?" is answered from the catalog', () => {
+  for (const text of ['What commands do you have?', 'which commands are there', 'chey list all your commands']) {
+    assert.deepEqual(readCommandSpeech(text), { kind: 'groups' }, text);
+  }
+  assert.deepEqual(readCommandSpeech('open commands'), { kind: 'open' });
+  assert.equal(readCommandSpeech('what commands should I use for youtube'), null);
+});

@@ -727,10 +727,12 @@ test('counter-cases keep their routes: coding jobs, PR review, REA, research, an
   for (const history of [[], after(drill), after(exercise)]) {
     assert.equal(await routes('fix the login bug', history), 'che_self_development');
     assert.equal(await routes("What's the status of my coding job?", history), 'che_coding_history');
-    assert.equal(await routes('Start a coding job to add a dark mode toggle', history), 'model');
+    // "Start a coding job to …" starts a job now (the comprehension audit, #356): a coding route, never a lesson.
+    assert.equal(await routes('Start a coding job to add a dark mode toggle', history), 'che_self_development');
     assert.equal(await routes('review PR 352', history), 'model');
     assert.equal(await routes('research the best python web frameworks', history), 'model');
-    assert.equal(await routes('Investigate the Notion app', history), 'held');
+    // Naming an app to investigate is not using it (#356): REA's read-only investigation, not a hold.
+    assert.equal(await routes('Investigate the Notion app', history), 'che_rea');
     assert.equal(await routes('CHE, explain what your REA system can actually do right now, show your most recent verified investigation, and tell me whether it successfully produced evidence. Do not start a new investigation.', history), 'che_rea');
   }
   for (const words of ['give me an exercise for my back', 'give me a back exercise', 'where do you keep my passwords', 'how do you feel', 'review the code in PR 352 with me', 'Teach me recursion and buy the course']) {

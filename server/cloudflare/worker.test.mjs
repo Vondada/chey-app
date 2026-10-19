@@ -1603,3 +1603,10 @@ test('Flagstaff model calls run one at a time, so a batch cannot fail together',
   assert.equal(peak, 1);
   assert.ok(results.every((r) => r.replied === true));
 });
+
+test('comprehension audit: "is live trading on?" is not a deploy question; "is the voice fix merged yet?" reads the pull request', () => {
+  assert.notEqual(selfUpdateChatIntent('Is live trading on?')?.kind, 'deploy-status');
+  assert.equal(selfUpdateChatIntent('Is the update live?')?.kind, 'deploy-status');
+  assert.equal(selfUpdateChatIntent('Is the voice fix merged yet?')?.kind, 'status');
+  assert.equal(selfUpdateChatIntent('Show me the code for the voice studio.')?.kind, 'show-code', 'the source route takes it first in /api/chat');
+});

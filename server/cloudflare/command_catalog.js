@@ -995,6 +995,8 @@ export function readCommandSpeech(message, history = []) {
   const t = speechText(message);
   if (!t || t.length > 300) return null;
   if (/^(?:open|go to|bring up|take me to|show(?: me)?)\s+(?:the |your |my |che's )?(?:commands?|command (?:center|library))(?: (?:page|screen|tab|list))?$/.test(t)) return { kind: 'open' };
+  // "What commands do you have?": the same groups, read as an answer rather than a page (comprehension audit).
+  if (/^(?:what|which)\s+commands\s+(?:do\s+you\s+have|are\s+there|can\s+(?:i|you)\s+(?:use|run))$|^(?:what|which)\s+are\s+(?:your|the)\s+commands$|^(?:list|tell\s+me)\s+(?:all\s+)?(?:of\s+)?(?:your|the)\s+commands$/.test(t)) return { kind: 'groups' };
   const search = /^(?:search|look)(?: for| up)? (.+)$/.exec(t);
   if (search && GROUP_WORDS[search[1]]) return { kind: 'list', topic: GROUP_WORDS[search[1]], count: 5, readiness: false };
   // "show me five youtube commands (and tell me which are ready)".

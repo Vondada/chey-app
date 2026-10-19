@@ -1009,6 +1009,9 @@ extension _CheHomeSend on _CHEHomeState {
             messages[assistantIndex]['media_url'] = _streamMediaUrl!;
             messages[assistantIndex]['media_type'] = _streamMediaType ?? 'image';
           }
+          if (_streamUnderstoodAs != null) {
+            messages[assistantIndex]['understood_as'] = _streamUnderstoodAs!;
+          }
         }
         _isSending = false;
       });

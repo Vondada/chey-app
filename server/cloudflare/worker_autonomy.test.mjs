@@ -3753,7 +3753,8 @@ test('Alpaca paper stock order by voice: exact read-back, a separate "yes, place
     await o.say('yes place it');
     const sell = o.calls.filter((c) => c.method === 'POST')[1].body;
     assert.deepEqual([sell.symbol, sell.qty, sell.side, sell.type, sell.limit_price], ['MSFT', '5', 'sell', 'limit', '410']);
-    assert.deepEqual([...new Set(o.calls.map((c) => c.origin))], ['https://paper-api.alpaca.markets'], o.calls.map((c) => c.url).join());
+    // Background GitHub mailbox reads are not broker calls; validate the order path only.
+    assert.deepEqual([...new Set(orderCalls(o).map((c) => c.origin))], ['https://paper-api.alpaca.markets'], orderCalls(o).map((c) => c.url).join());
   } finally {
     o.restore();
   }

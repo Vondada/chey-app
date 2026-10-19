@@ -346,6 +346,7 @@ extension _CheHomeStreaming on _CHEHomeState {
     final complete = StringBuffer();
     _streamMediaUrl = null;
     _streamMediaType = null;
+    _streamUnderstoodAs = null;
 
     await for (final line in response.stream
         .transform(utf8.decoder)
@@ -361,6 +362,7 @@ extension _CheHomeStreaming on _CHEHomeState {
       // "delta" events. Always show and speak the actual question instead
       // of silently discarding it and reporting an empty response.
       if (type == null && data['held_for_owner'] == true) {
+        _streamUnderstoodAs = cheUnderstoodAs(data);
         final question = data['message']?.toString() ?? data['reply']?.toString() ?? '';
         if (question.isNotEmpty) {
           complete.write(question);
@@ -428,6 +430,7 @@ extension _CheHomeStreaming on _CHEHomeState {
       }
 
       if (type == 'done') {
+        _streamUnderstoodAs = cheUnderstoodAs(data);
         // "Preview number three": the reply names a free sample from the provider's own
         // library. It is held here and played by send.dart once CHE has finished saying
         // the reply, so the two never talk over each other.

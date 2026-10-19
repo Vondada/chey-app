@@ -178,3 +178,9 @@ test('research action guard prevents imaginary browser and comparison receipts',
   assert.equal(guardClaimedResearchActions('I used the browser tool.', { tools: [{ ok: true, plugin: 'browser', tool: 'search' }] }).corrected, false);
   assert.equal(guardClaimedResearchActions('I compared sources.', { tools: [{ ok: true, plugin: 'research', tool: 'search' }] }).corrected, true);
 });
+
+test('comprehension audit: "read my letters" opens the letters', () => {
+  assert.deepEqual(resilienceIntent('Read my letters.'), { kind: 'mailbox' });
+  assert.deepEqual(resilienceIntent('what letters do I have'), { kind: 'mailbox' });
+  assert.equal(resilienceIntent('read the letters of Abraham Lincoln to me and summarize them'), null);
+});

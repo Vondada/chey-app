@@ -123,6 +123,8 @@ function buildProhibition(text) {
     || /\b(?:read[- ]only|investigate\s+only|inspection\s+only|plan\s+only|planning\s+only|analysis\s+only|review\s+only)\b/i.test(value)
     || /\bnot\s+(?:(?:a|an)\s+)?(?:coding|implementation|self[- ]development)(?:\s+(?:assignment|request|task|job))?\b/i.test(value)
     || /\b(?:no|do\s+not|don['’]?t|never)\s+(?:start|create|run)?\s*(?:(?:a|the)\s+)?(?:coding|implementation|self[- ]development)(?:\s+(?:job|task|process))?\b/i.test(value)
+    // "Don't start a job", "don't start a new one", "don't start anything" (comprehension audit).
+    || /\b(?:do\s+not|don['’]?t|dont|never)\s+(?:start|queue|launch|kick\s+off|open)\s+(?:(?:a|an|the|any)\s+)?(?:new\s+)?(?:job|task|one|anything)\b/i.test(value)
     || /\b(?:do\s+not|don['’]?t|never)\s+(?:fix|repair|implement|change|modify|edit|update|patch)\s+(?:it|anything|(?:the\s+)?(?:source\s+)?code|(?:the\s+)?repo(?:sitory)?|(?:the\s+)?system)(?:\s+yet)?\b/i.test(value)
     || /\bdon['’]?t\s+(?:change|modify|edit|fix)\s+(?:nothing|anything)\b/i.test(value)
     || /\b(?:do\s+not|don['’]?t|never)\b[^.!?\n]{0,120}\b(?:modify|change|edit|write|patch)\s+(?:your\s+)?(?:source\s+)?(?:code|codebase|repo(?:sitory)?)\b/i.test(value);
@@ -135,9 +137,51 @@ function compoundImplementationAuthorization(text) {
   return compound || direct;
 }
 
+// "What would you change in your own code if you could?" asks for an opinion, not a change (comprehension audit).
+export function hypotheticalChange(text) {
+  const value = withoutQuotedText(String(text || '').trim());
+  return /^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:what|how|which|where|why)\s+(?:would|could|might)\s+you\b/i.test(value)
+    || /\bif\s+(?:you\s+could|i\s+(?:asked|told|wanted)\s+you)\b/i.test(value);
+}
+
+// When a turn starts a build (owner rule as decided on the review of #356): a sentence builds only when it is
+// (a) an imperative with a build verb and a target ("Add dark mode to your app.", "Build it into yourself."), or
+// (b) a direct polite request for CHE to do it ("Can / Could / Would / Will you add dark mode to your app?").
+// Every other question never builds: an opinion ("Do you think any of those features could improve your app?"), an
+// evaluation, advice ("Should we add dark mode?"), an explanation ("How do we fix the login bug?") or a "tell me
+// which" request. Shared with REA (rea_runner.js), so "Should I add those features into yourself?" is not a build there.
+const BUILD_VERB = String.raw`(?:implement|integrate|adapt|apply|install|add|upgrade|update|improve|rewrite|refactor|build|rebuild|change|modify|patch|fix|repair|create|make|start|open|queue|launch|run|resume|continue|retry|recover|finish|merge|ship|redesign|remove|move|restyle|put|study|work\s+on)`;
+const TURN_LEAD = String.raw`^\s*(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:(?:ok(?:ay)?|so|and|now|then|alright|well|great|good|also)[,]?\s+)*(?:(?:for|in)\s+(?:this|the)\s+(?:task|change|update)[,:]?\s*)?`;
+// (a) a sentence that opens with a build imperative; (b) a direct polite request, "just", "please" or "kindly" allowed.
+const ORDER_OPENING = new RegExp(String.raw`${TURN_LEAD}(?:(?:please|now|just|kindly)\s+|go\s+ahead\s+(?:and\s+)?|i\s+(?:want|need)\s+you\s+to\s+)?${BUILD_VERB}\b`, 'i');
+const POLITE_REQUEST = new RegExp(String.raw`${TURN_LEAD}(?:can|could|would|will)\s+you\s+(?:(?:just|please|kindly)\s+)*(?:${BUILD_VERB}|do|have|get)\b`, 'i');
+// "Do it now: fix …", "Do the dark mode change …", "Have your coding team fix …": an order that opens with "do" or a causative.
+const DO_ORDER = new RegExp(String.raw`${TURN_LEAD}(?:(?:please|now|just|kindly)\s+)?(?:do\s+(?:it|that|this|the|so|now|all|those|these)\b|(?:have|get)\s+(?:your|the|my|che['’]?s|our)\s+)`, 'i');
+// A question by its opening. An auxiliary or modal counts only with a subject after it ("Do you think …", "Should we …",
+// "Is it worth …", "Could any of those …"), so "Do it now" and "Have your team …" stay orders. A question word counts
+// unless it opens a statement ("What I want you to do is build …"); so does a request to be told something ("Tell me which …").
+const SUBJECT = String.raw`(?:you|we|i|they|he|she|it|there|this|that|these|those|the|any|anyone|anybody|anything|some|someone|somebody|one|your|my|our|his|her|their|people|y['’]?all|che)\b`;
+const ASKS_NOT_ORDERS = new RegExp(String.raw`${TURN_LEAD}(?:do\s+(?:you|we|i|they|y['’]?all|anyone|anybody|people|che)\b|(?:does|did)\s+${SUBJECT}|(?:have|has|had)\s+(?:you|we|i|they|he|she|it|anyone|anybody|people|che)\b|(?:is|are|was|were|am|should|shall|could|would|can|will|may|might|must)\s+${SUBJECT}|(?:how|what|which|who|whom|whose|where|when|why|whether)\b(?!\s+(?:i|we)\s+(?:want|need|would\s+like)\b)|(?:tell|show)\s+(?:me|us)\s+(?:which|what|whether|if|how|why|who|where|when)\b|let\s+me\s+know\s+(?:which|what|whether|if|how)\b|i\s+wonder\b)`, 'i');
+
+export function questionNotRequest(message) {
+  const text = withoutQuotedText(String(message || '').trim());
+  let asked = false;
+  for (const sentence of text.split(/(?<=[.!?;])\s+/).map((part) => part.trim()).filter(Boolean)) {
+    if (POLITE_REQUEST.test(sentence) || ORDER_OPENING.test(sentence)) return false;
+    // Inside a question, "and/then <build verb>" is part of the question ("Should we add dark mode and fix the login bug?").
+    if (/\?\s*$/.test(sentence) || ASKS_NOT_ORDERS.test(sentence)) { asked = true; continue; }
+    // A statement: an order may open it ("Do it now: fix …") or a later clause ("Tell me about it and fix the bug in your app").
+    if (DO_ORDER.test(sentence)) return false;
+    if (sentence.split(/:\s+|,?\s+(?:and|then|and\s+then)\s+(?=\S)/i).slice(1).some((clause) => ORDER_OPENING.test(clause))) return false;
+  }
+  return asked;
+}
+
 function ownerBuildAuthorization(message) {
   const text = withoutQuotedText(String(message || '').trim());
   if (!text || buildProhibition(text)) return false;
+  // A question never builds; only an imperative or a direct polite request does (see questionNotRequest).
+  if (questionNotRequest(text)) return false;
 
   // Direct repository/GitHub follow-ups are owner actions on an existing
   // authorized change, not a new inferred coding request.
@@ -145,6 +189,8 @@ function ownerBuildAuthorization(message) {
     || /^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:(?:please|now)\s+)?(?:merge|ship)\s+(?:it|the\s+(?:pr|pull\s+request|update))\b/i.test(text)
     || /^(?:(?:che|chay|chey|shay)[,:]?\s*)?update\s+che\b/i.test(text)
     || /^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:(?:please|now)\s+)?(?:resume|continue|retry|recover|finish)\s+(?:the\s+|my\s+)?(?:previous\s+|last\s+)?(?:authorized\s+)?(?:coding|implementation|self[- ]development)?\s*(?:job|task|work)\b/i.test(text)
+    // "Start a coding job to fix the login bug" names the job outright (comprehension audit).
+    || /^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:(?:please|now)\s+|go\s+ahead\s+and\s+|i\s+(?:want|need)\s+you\s+to\s+|(?:can|could|would)\s+you\s+)?(?:start|open|queue|kick\s+off|launch|run|create)\s+(?:a\s+|an\s+|the\s+)?(?:new\s+)?coding\s+(?:job|task)\s+(?:to|for|that)\b/i.test(text)
     // "Retry the job" authorizes; "don't retry it, is the job done" forbids and asks.
     || /(?<!\b(?:not|never|don['’]?t|dont|shouldn['’]?t|needn['’]?t|no\s+need\s+to|don['’]?t\s+want\s+(?:you|u)\s+to|hold\s+off\s+on|cancel|skip|without)\s(?:(?:ever|just|even|really|actually|try\s+to|go\s+and|attempt\s+to|the|a|any|that)\s)*)(?<!\b(?:the|a|any|that|of)\s)\b(?:diagnose\s+and\s+recover|reopen\b[\s\S]{0,80}\band\s+recover|retry|recover)\b[\s\S]{0,100}\b(?:failed\s+)?(?:coding\s+|engineering\s+)?job\b/i.test(text)) return true;
 
@@ -160,7 +206,8 @@ function ownerBuildAuthorization(message) {
   const mutationTarget = /\b(?:your|che(?:'s)?|my)\s+(?:own\s+)?(?:code|codebase|repo(?:sitory)?|app|flutter\s+app|ui|interface|worker|system|workflow|architecture|routing|router|pipeline|agent|coding\s+system)\b/i.test(text)
     || /\b(?:into|inside|to)\s+(?:che|the\s+(?:current\s+)?(?:repo(?:sitory)?|codebase))\b/i.test(text);
   const hypothetical = /\b(?:explain|describe|tell\s+me)\b[\s\S]{0,50}\b(?:how|what)\b[\s\S]{0,80}\b(?:would|should|could)\b/i.test(text)
-    || /\b(?:hypothetical|plan\s+only|planning\s+only|proposal\s+only)\b/i.test(text);
+    || /\b(?:hypothetical|plan\s+only|planning\s+only|proposal\s+only)\b/i.test(text)
+    || hypotheticalChange(text);
   if (mutationVerb && mutationTarget && !hypothetical) return true;
   if (/\bmake\b[\s\S]{0,80}\b(?:improvement|improvements)\b[\s\S]{0,80}\b(?:to|in)\s+(?:your|che(?:'s)?)\s+(?:own\s+)?(?:code|app|worker|system|routing|workflow)\b/i.test(text)
     && !hypothetical) return true;
@@ -379,7 +426,7 @@ const RECORD_REF = '(?:(?:(?:the|that|this|my|your|ur|its|her|che[\'’]s)\\s+)?
 const PROHIBITION = `(?:do\\s+not|don['’]?t|never|no\\s+need\\s+to)\\s+(?:(?:actually|ever|just|even|go\\s+and|try\\s+to|attempt\\s+to|under\\s+any\\s+circumstances)\\s+)*(?:${ACTION_VERB}|do\\s+(?:anything|something|any\\s+\\w+|a\\s+thing|more|work)|touch|modify|edit|alter)\\b`;
 // What the prohibition may be about. Anything else after it ("don't retry but do tell mom") is a
 // request riding in the same clause, so the clause is not an aside and the turn is not a question.
-const PROHIBITION_OBJECT = `(?:\\s+(?:(?:or|and|nor)\\s+)?(?:it|that|this|them|anything(?:\\s+else)?|something|more|again|yet|now|please|sir|any\\s+(?:files?|code|changes?)|${RECORD_REF}|(?:the|my|your|ur|its)\\s+(?:code|repo(?:sitory)?|branch|tests?|pr|pull\\s+request|files?|config|settings|workflow|main)|(?:a|an|another|any|new)\\s+(?:(?:new|fresh|second)\\s+)?(?:(?:coding|opencode)\\s+)?(?:jobs?|runs?|sessions?|attempts?|tasks?|builds?|prs?|pull\\s+requests?|branch(?:es)?)))*`;
+const PROHIBITION_OBJECT = `(?:\\s+(?:(?:or|and|nor)\\s+)?(?:it|that|this|them|anything(?:\\s+else)?|something|more|again|yet|now|please|sir|any\\s+(?:files?|code|changes?)|${RECORD_REF}|(?:the|my|your|ur|its)\\s+(?:code|repo(?:sitory)?|branch|tests?|pr|pull\\s+request|files?|config|settings|workflow|main)|(?:a|an|another|any|new)\\s+(?:(?:new|fresh|second)\\s+)?(?:(?:coding|opencode)\\s+)?(?:jobs?|runs?|sessions?|attempts?|tasks?|builds?|prs?|pull\\s+requests?|branch(?:es)?)|(?:a|another|any)\\s+(?:new\\s+|fresh\\s+|second\\s+)?one))*`;
 // "Don't retry it or merge it": a second forbidden action may follow without its own "don't".
 const WHOLE_PROHIBITION = `(?:please\\s+)?${PROHIBITION}${PROHIBITION_OBJECT}(?:\\s*(?:,|and|or|nor)\\s*(?:(?:please\\s+)?${PROHIBITION}|(?:${ACTION_VERB}|touch|modify|edit|alter)\\b)${PROHIBITION_OBJECT})*`;
 // How the turn opens once wake words, "please" and leading "don't change anything," clauses are set aside.
@@ -598,8 +645,12 @@ export function repositoryInspectionIntent(message) {
   if (/\b(?:do\s+not|don['’]t|never)\s+(?:ever\s+)?trace\b/i.test(text)
     || /\b(?:do\s+not|don['’]t|never)\s+(?:access|inspect|read|fetch|use)\b[^.!?\n]{0,60}\b(?:repo(?:sitory)?|codebase|source|code)\b/i.test(text)) return false;
 
-  const directInspection = /^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:please\s+|(?:can|could|will)\s+you\s+)?(?:inspect|find|locate|trace|show|identify|investigate|diagnose|audit|review|examine|verify|analy[sz]e|explain)\b/i.test(text);
+  // "How does your memory code work?" asks how the real source does it, so it is read, not guessed.
+  const directInspection = /^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:please\s+|(?:can|could|will)\s+you\s+)?(?:inspect|find|locate|trace|show|identify|investigate|diagnose|audit|review|examine|verify|analy[sz]e|explain|how\s+(?:does|do|is|are))\b/i.test(text);
   const repoTarget = /\b(?:your|che(?:'s)?)\s+(?:current\s+)?(?:github\s+)?(?:main\s+branch|repo(?:sitory)?|codebase|source|code|routing|router|worker|coding\s+(?:job|pipeline|runtime)|architecture)\b/i.test(text)
+    // "your memory code", "the code for the voice studio": a part of CHE named (comprehension audit).
+    || /\b(?:your|che(?:'s)?)\s+(?:own\s+)?(?:voice\s+studio|memory|brain|router|routing|chat|trading(?:\s+room)?|office|mailbox|command(?:\s+center)?|video|rea|navigator|mic(?:rophone)?|captions?|worker|app|flutter|dart|swift|server|backend|ui|interface|own)\s+(?:source\s+)?code\b/i.test(text)
+    || /\bthe\s+(?:source\s+)?code\s+(?:for|of|behind)\s+(?:the\s+|your\s+|che's\s+)?(?:voice\s+studio|memory|brain|router|routing|chat|trading\s+room|office|war\s+room|mailbox|command\s+center|video\s+(?:line|renderer)|rea|navigator|mic(?:rophone)?|captions?|home\s+screen|settings)\b/i.test(text)
     || /\b(?:current|exact|latest)\s+main\s+(?:branch\s+)?sha\b/i.test(text)
     || /\b(?:coding\s+(?:job|pipeline|runtime)|cloudflare\s+worker|github\s+main)\b/i.test(text);
   const selfDiagnosticSource = /\bself[- ]diagnostic\b[\s\S]{0,260}\b(?:github|main\s+sha|repo(?:sitory)?|source|coding[- ]job|routing|worker)\b/i.test(text);
