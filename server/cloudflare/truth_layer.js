@@ -579,6 +579,10 @@ const AFFIRMATION_ONLY = new RegExp(String.raw`^\s*(?:i\s+(?:did|have|am\s+sure)
 // A past-tense action with no subject: "Sent it.", "Sent the report to Sarah, sir." CHE cannot have made the call by itself,
 // so the claim is taken out and named (blocker 3, PR #356). "Sent items", "Sent from my iPhone" name no action and stay.
 const BARE_ACTION = /^\s*(sent|emailed|texted|forwarded|bought|purchased|ordered|paid|transferred|deleted|uploaded|published|posted|booked|scheduled|sold|subscribed)\s+(?=(?:it|them|that|this|the|a|an|your|my|his|her|their|our|me|him|everything|all|to|for)\b)/i;
+// "I drafted the email and sent it" is still a claim about an action, despite the shared subject.
+const COORDINATED_ACTION = new RegExp(String.raw`\\b(?:I|we)\\b[^.!?\\n]{0,100}\\b(?:and|then)\\s+(?:also\\s+)?(${Object.keys(STRONG_DONE).join('|')})\\b`, 'i');
+// An identifiable draft body is content for the owner to copy, not a report of CHE's actions.
+const DRAFT_CONTENT_START = /^(?:here(?:'s| is)\\s+(?:your|the|a)\\s+(?:draft|text|email|post|message|reply)\\s*:|(?:draft|subject|to)\\s*:|(?:dear|hi|hello|hey)\\s+[a-z][^,\\n]{0,60}[,:])/i;
 // Who acted, and where the claim comes from (review of #356, rounds 2 and 3). Only a third party named as the one who
 // acted keeps a bare action sentence: the sender of a message ("Sent the 9:14 email from Sarah") or a named actor after
 // "by" ("Paid for by the campaign"). The owner's own instrument ("from your account", "by your email") and a store or an
@@ -796,6 +800,7 @@ export function guardClaimedOwnerActions(reply, { message = '', acted = false, r
   // Whether the sentence just before was removed. Only that sentence's affirmation goes with it, so a "Yes." further on is
   // kept (review of PR #356, follow-up).
   let prevRemoved = false;
+  let insideDraft = false;
   for (const sentence of splitSentences(text)) {
     const plain = sentence.trim();
     const wasRemoved = prevRemoved;
@@ -808,7 +813,10 @@ export function guardClaimedOwnerActions(reply, { message = '', acted = false, r
     // A bare affirmation right after a removed claim ("I sent it? Yes, I did.") affirms the claim just taken out, so it goes too
     // (review of PR #356, round 5). Only the sentence before counts (follow-up).
     if (wasRemoved && (AFFIRMATION_AFTER.test(plain) || AFFIRMATION_ONLY.test(plain))) { removed.push(plain); prevRemoved = true; continue; }
-    if (drafting && !/\bsir\b/i.test(plain) && !DONE_RE.test(plain)) { kept.push(sentence); continue; }
+    // Only skip action checks inside a recognizable draft, never across the whole reply.
+    // Otherwise "I drafted the email and sent it" falsely passes as a plain draft.
+    if (drafting && DRAFT_CONTENT_START.test(plain)) insideDraft = true;
+    if (insideDraft) { kept.push(sentence); continue; }
     for (const re of [STRONG_RE, WEAK_RE, MADE_RE, PASSIVE_RE]) {
       const m = re.exec(plain);
       const verb = m ? m[1].toLowerCase().replace(/\s+/g, ' ') : '';
@@ -831,6 +839,14 @@ export function guardClaimedOwnerActions(reply, { message = '', acted = false, r
         hit = phrase.first[0] || phrase.third[0] || 'claim';
         for (const label of phrase.first) claimed.add(label);
         if (!phrase.first.length) unconfirmed = true;
+      }
+    }
+    // A shared-subject construction can hide a claim after a harmless first clause.
+    if (!hit) {
+      const coordinated = COORDINATED_ACTION.exec(plain);
+      if (coordinated && !quoted(plain, coordinated.index)) {
+        hit = STRONG_DONE[coordinated[1].toLowerCase()];
+        claimed.add(hit);
       }
     }
     // Blocker 3 (PR #356): a bare past-tense action is CHE's claim, named for the denial ("Nothing was sent, sir").
