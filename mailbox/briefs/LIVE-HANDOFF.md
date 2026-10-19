@@ -64,6 +64,26 @@ Then, on GitHub:
 - Next: open focused PR for milestone 1 when the owner is ready (or continue: milestone 2 = scripted multi-agent demo via officeGoal + War Room board wiring + orb-tap deep link to the real task; then Phase B typed memory/provenance).
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
+## 2. Current position (Claude, 2026-10-19 08:45 UTC — Atlas #346: #361 and #362 MERGED and LIVE; #360 and #363 in final review; coding gap cards in progress)
+- **#361 MERGED** as 3560898: the Knowledge Atlas deploy probe (`/api/atlas/probe` plus a deploy step).
+  - It runs 11 deterministic checks with 0 model calls, on the isolated test CHE only.
+  - Deploy run 39220967444: **"Knowledge Atlas: 11/11 live checks passed"**. Every deploy now runs it.
+- **#362 MERGED** as e28d8f6: 4 trading cards.
+  - Cards: t-volume (RVOL across DST, POC and 70% value area), t-probability (losing streaks, exact recurrence), t-paper-trading (CHE's real paper engine and costs) and t-performance-analysis (MFE/MAE, sessions).
+  - That makes 34 trading cards. The math was recomputed by the reviewer.
+  - Deploy run 39222505088: live e28d8f6 (Worker 83ff6be2), Atlas 11/11, memory 12/12, Command Center 5/5. Shorebird was in progress at 08:45.
+- **#360 (claude/che-atlas-code, head 3332716)**: the coding library.
+  - All earlier blockers are fixed.
+  - The last change: **review drills are never graded "right"**. Keyword matching can't tell a description of the bug from one of the fix. Naming both key ideas now gives "You named both key ideas… compare with the finding", and the attempt is recorded as not graded.
+  - It merges main (#362), with computed card counts. run_checks exit 0. A final confirmation from the reviewer is pending; then merge.
+- **#363 (claude/che-efficiency, head c318bd6)**: clear work requests (investigate, inspect, resume, remember, teach, quiz, …) skip the reading model.
+  - Measured on 923 sentences with history: reading calls 175 → 98, total model calls −11%.
+  - Money, delete or publish words anywhere in the sentence still get the reading. Approved; CI was running at 08:45; merge when green.
+- **claude/che-atlas-code2** (stacked on #360, in progress): 4 coding gap cards — c-code-inspection, c-reasoning, c-ci-validation and c-recovery.
+- **Not done:**
+  - The cross-lane audit of main after all of these merge.
+  - The final report to the owner before 13:30 UTC.
+
 ## 2. Current position (Claude, 2026-10-19 07:55 UTC — Atlas #346: #357, #359, #358 MERGED and LIVE; iPhone patch published; #360 last fixes in progress)
 - **#358 MERGED** as bdb2496 (Atlas in the Brain). Four review rounds, approved:
   - curated_lesson cards and owner_practice progress;
