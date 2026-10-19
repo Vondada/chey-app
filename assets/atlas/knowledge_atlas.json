@@ -3690,7 +3690,7 @@
     "unit": "events",
     "steps": [
      "Educational example, made-up numbers, not market data",
-     "swing highs at bar 2 (103), bar 7 (104.5); swing lows at bar 4 (99.5), bar 9 (97); each confirmed 1 bars later",
+     "swing highs at bar 2 (103), bar 7 (104.5); swing lows at bar 4 (99.5), bar 9 (97); each confirmed 1 bar later",
      "bar 6 closed at 103.8, above the swing high 103: BOS",
      "bar 8 closed at 98.5, below the swing low 99.5: CHOCH, the first break against the trend",
      "bar 11 closed at 96, below the swing low 97: BOS"
@@ -5463,7 +5463,7 @@
     },
     {
      "q": "How many more trades halve the margin?",
-     "a": "Four times as many."
+     "a": "Four times as many in total."
     },
     {
      "q": "Does a precise win rate prove a positive expectancy?",

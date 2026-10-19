@@ -379,6 +379,13 @@ test('a Monte Carlo of the journal is seeded and repeatable, and refuses with no
   assert.match((await calc(await owner(), 'run a monte carlo on my trades')).reply, /no closed paper trades to simulate/);
 });
 
+test('a journal record the statistics cannot read is reported as unreadable, never a crash or a guess', async () => {
+  const broken = journal([3, -1, 2]).map((t, i) => (i === 1 ? { ...t, costs: undefined } : t));
+  const out = await calc(await owner({ saved: store(broken) }), 'evaluate my strategy');
+  assert.match(out.reply, /I could not read CHE's paper journal just now, sir, so I give no expectancy and no verdict\./);
+  assert.doesNotMatch(out.reply, /Verdict for/);
+});
+
 test('counter-cases keep their routes: orders, the Trading Room\'s analysis, chart reads and measured questions', async () => {
   const bar = (t, h, l, c, v) => ({ t, o: c, h, l, c, v });
   const saved = new Map([[LIVE_FEED, { status: 'DELAYED', provider: 'Yahoo Finance chart (public)', provider_symbol: 'MNQ=F', contract: 'MNQZ6', latency_s: 600,

@@ -525,7 +525,7 @@ export function structureBreaks(inputs = {}) {
       swingLow.broken = true; trend = 'down';
     }
   }
-  const steps = [`swing highs at ${highs.map((x) => `bar ${x.i + 1} (${num(x.price)})`).join(', ') || 'none'}; swing lows at ${lows.map((x) => `bar ${x.i + 1} (${num(x.price)})`).join(', ') || 'none'}; each confirmed ${n} bars later`];
+  const steps = [`swing highs at ${highs.map((x) => `bar ${x.i + 1} (${num(x.price)})`).join(', ') || 'none'}; swing lows at ${lows.map((x) => `bar ${x.i + 1} (${num(x.price)})`).join(', ') || 'none'}; each confirmed ${n} bar${n === 1 ? '' : 's'} later`];
   for (const e of events) steps.push(`bar ${e.bar} closed at ${num(e.close)}, ${e.direction === 'up' ? 'above the swing high' : 'below the swing low'} ${num(e.level)}: ${e.type}${e.type === 'CHOCH' ? ', the first break against the trend' : ''}`);
   if (!events.length) steps.push('no close broke a confirmed swing');
   return done('structureBreaks', {

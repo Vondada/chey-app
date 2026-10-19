@@ -1148,7 +1148,9 @@ export async function loadAtlasRecords(storage) {
   if (!storage) return { paper: [], backtest: null };
   try {
     const [paper, backtest] = await Promise.all([readTrades(storage, (t) => t?.environment === 'paper'), storage.get(LIVE_BACKTEST)]);
-    return { paper: Array.isArray(paper) ? paper : [], backtest: backtest || null };
+    const list = Array.isArray(paper) ? paper : [];
+    if (list.length) summarize(list); // a record the statistics cannot read makes the journal unreadable, never a crash
+    return { paper: list, backtest: backtest || null };
   } catch (_) {
     return { paper: [], backtest: null, unreadable: true };
   }

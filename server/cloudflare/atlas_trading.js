@@ -494,7 +494,7 @@ const CARDS = [
       'Normal approximation, independent trades.'],
     quiz: [
       { q: 'How many trades pin a win rate to ±10 points at 95%, when it is unknown?', a: '97: 1.96² × 0.25 ÷ 0.1² = 96.04, rounded up.', check: { compute: 'tSampleSize', inputs: { margin: 0.1, p: 0.5 }, result: 97, shown: ['97'] } },
-      { q: 'How many more trades halve the margin?', a: 'Four times as many.' },
+      { q: 'How many more trades halve the margin?', a: 'Four times as many in total.' },
       { q: 'Does a precise win rate prove a positive expectancy?', a: 'No. The payoffs vary too, so expectancy needs its own interval.' },
     ],
     misconceptions: ['Thirty trades is not "statistically significant" by itself: it is a floor below which nothing is evidence.'],
@@ -609,7 +609,9 @@ export async function loadTradingRecords(storage) {
       readTrades(storage, (t) => t?.environment === 'paper'), storage.get(LIVE_BACKTEST), storage.get(LIVE_FEED), storage.get(LIVE_STATE),
     ]);
     const desk = await readDesk(storage);
-    return { paper: Array.isArray(paper) ? paper : [], backtest: backtest || null, feed: feed || null, state: state || null, desk };
+    const records = { paper: Array.isArray(paper) ? paper : [], backtest: backtest || null, feed: feed || null, state: state || null, desk };
+    books(records); // a journal record the statistics cannot read makes the journal unreadable, never a crash
+    return records;
   } catch (_) {
     return { ...empty, unreadable: true };
   }
@@ -984,7 +986,7 @@ function evaluateAnswer(intent, records) {
   const near = backtestRows(records).filter((r) => Math.abs(Number(r.target_r) - out.value) <= 0.25);
   if (near.length) lines.push(`${backtestHead(records)}: ${near.length} portfolio${near.length === 1 ? '' : 's'} targeting ${num(out.value)}R won ${span(near.map((r) => r.stats.win_rate), (x) => `${x}%`)} of their trades (${near.map((r) => r.stats.trades).join(', ')}), long and short together; history, not this setup.`);
   lines.push(...brokerLines(records));
-  lines.push(`Verdict: ${verdict}, because ${why}. Criteria: good needs every paper portfolio with at least ${MIN_TRADES} comparable recorded trades to have its Wilson 95% win-rate range wholly above the break-even win rate; bad needs every such portfolio wholly below it, or a stop or target on the wrong side of the entry; anything else is unsupported. Portfolios are never pooled, and the plan's arithmetic is not a forecast.`);
+  lines.push(`Verdict: ${verdict}, because ${why}. Criteria: good needs every paper portfolio with at least ${MIN_TRADES} comparable recorded trades to have its Wilson 95% win-rate range wholly above the break-even win rate; bad needs every such portfolio wholly below it, or a stop or target on the wrong side of the entry; anything else is unsupported. Portfolios are never pooled, and the plan's arithmetic is not a forecast. A verdict is not a recommendation to place the trade.`);
   return { ok: true, lines };
 }
 
