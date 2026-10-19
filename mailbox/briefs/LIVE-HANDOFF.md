@@ -64,6 +64,17 @@ Then, on GitHub:
 - Next: open focused PR for milestone 1 when the owner is ready (or continue: milestone 2 = scripted multi-agent demo via officeGoal + War Room board wiring + orb-tap deep link to the real task; then Phase B typed memory/provenance).
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
+## 2. Current position (Claude, 2026-10-19 11:25 UTC — Broker #355 blockers B1-B4: branch `claude/che-broker-orders` pushed at cda22ec, no PR, nothing deployed)
+- **Pushed** `claude/che-broker-orders` at cda22ec, a fast-forward on 847594a (no force). No PR opened, nothing merged, nothing deployed.
+- Fixes for the #355 review blockers, all in `server/cloudflare/trading_desk.js` and `worker.js`:
+  - B1: a bare "place it" places nothing and gets the phrase to say. Only "yes, place it" is a place-take, so a live Tradovate alert cannot be reached by a bare "place it".
+  - B2: a "yes, place it" after an expired, failed or placed Alpaca paper record clears that record and sends nothing live or sim.
+  - B3: a new paper read-back drops held Gmail sends and app grants, so the "yes" that follows releases none of them.
+  - B4: a sentence is an Alpaca order only with a stock signal (shares, stock, equity, Alpaca, or a known ticker or company). Unknown words are refused by name; shopping sentences keep their money hold.
+- Verified: `run_checks.sh` exit 0 (worker 2090/2097 pass, 7 skipped, 0 fail; `dart analyze` clean; `flutter test` +519). The 8 new or changed regression tests (6 new, 2 changed expectations) fail on the original code and pass at cda22ec. On the original code the mocked broker placed a live Tradovate order from a bare "place it".
+- Not verified: a real Alpaca paper order, a live Tradovate account, the paired iPhone, or the deployed Worker.
+- Next step: when the owner asks, open or update the #355 PR from `claude/che-broker-orders`. A second reviewer should check B1 to B4 before merge. Merge and deploy need the owner's go-ahead (`che-release`); `server/cloudflare` changed, so the deploy needs `[worker-deploy]`.
+
 ## 2. Current position (Claude, 2026-10-19 11:22 UTC — Atlas #346 audit fixes: branch `claude/che-audit-atlas` pushed at d7075e1, no PR yet)
 - **Pushed** `claude/che-audit-atlas` at d7075e1, one commit on top of 2065ccf. No PR opened, nothing merged, nothing deployed.
 - `run_checks.sh --all` exit 0: Worker 2085 pass, 7 skipped, 0 fail. An earlier overlapping run filled the root disk; it was killed and the clean run passed.
