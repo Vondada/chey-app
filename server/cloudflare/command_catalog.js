@@ -345,6 +345,15 @@ export const COMMANDS = Object.freeze([
     examples: ['Take the trade'],
     prompt: 'Take the trade', produces: 'order receipt', evidence: 'The broker\'s order id.', cost: 'Real money on a live account.', keywords: ['execute', 'place order', 'take the trade', 'buy', 'sell'],
   }),
+  // Reads the owner-only connections of #348. It never connects, removes keys or goes live.
+  C('trade-connections', 'trading', 'EXPLORE', 'Read your trading connections and mode.', {
+    does: 'Reads each trading connection as it reports itself: CHE Paper and its data feed, Tradovate (NinjaTrader), Alpaca stock paper and FundYourEdge, plus the trading mode. Changes nothing.',
+    needs: ['office'], route: 'che_trading_desk', handler: 'trading_connections.speakConnections',
+    input: null,
+    examples: ['What are my trading connections?', 'Which brokers are connected?'],
+    prompt: 'What are my trading connections?', produces: 'connections', evidence: 'Each connection\'s stored state and its provider\'s own check; never a key.',
+    keywords: ['connections', 'broker', 'brokers', 'alpaca', 'tradovate', 'connected'],
+  }),
 
   // ── Websites, Apps & AI ───────────────────────────────────────────────
   C('site-build', 'build', 'BUILD', 'Create websites.', {
