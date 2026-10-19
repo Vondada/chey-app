@@ -580,9 +580,9 @@ const AFFIRMATION_ONLY = new RegExp(String.raw`^\s*(?:i\s+(?:did|have|am\s+sure)
 // so the claim is taken out and named (blocker 3, PR #356). "Sent items", "Sent from my iPhone" name no action and stay.
 const BARE_ACTION = /^\s*(sent|emailed|texted|forwarded|bought|purchased|ordered|paid|transferred|deleted|uploaded|published|posted|booked|scheduled|sold|subscribed)\s+(?=(?:it|them|that|this|the|a|an|your|my|his|her|their|our|me|him|everything|all|to|for)\b)/i;
 // "I drafted the email and sent it" is still a claim about an action, despite the shared subject.
-const COORDINATED_ACTION = new RegExp(String.raw`\\b(?:I|we)\\b[^.!?\\n]{0,100}\\b(?:and|then)\\s+(?:also\\s+)?(${Object.keys(STRONG_DONE).join('|')})\\b`, 'i');
+const COORDINATED_ACTION = new RegExp(String.raw`\b(?:I|we)\b[^.!?\n]{0,100}\b(?:and|then)\s+(?:also\s+)?(${Object.keys(STRONG_DONE).join('|')})\b`, 'i');
 // An identifiable draft body is content for the owner to copy, not a report of CHE's actions.
-const DRAFT_CONTENT_START = /^(?:here(?:'s| is)\\s+(?:your|the|a)\\s+(?:draft|text|email|post|message|reply)\\s*:|(?:draft|subject|to)\\s*:|(?:dear|hi|hello|hey)\\s+[a-z][^,\\n]{0,60}[,:])/i;
+const DRAFT_CONTENT_START = /^(?:here(?:'s| is)\s+(?:your|the|a)\s+(?:draft|text|email|post|message|reply)\s*:|(?:draft|subject|to)\s*:|(?:dear|hi|hello|hey)\s+[a-z][^,\n]{0,60}[,:])/i;
 // Who acted, and where the claim comes from (review of #356, rounds 2 and 3). Only a third party named as the one who
 // acted keeps a bare action sentence: the sender of a message ("Sent the 9:14 email from Sarah") or a named actor after
 // "by" ("Paid for by the campaign"). The owner's own instrument ("from your account", "by your email") and a store or an
