@@ -393,10 +393,16 @@ How it gets there (`brain_office.importOutsideCorrespondence`, owner-run only):
 - Bounded (1 000 records written per run, at most 2 000) and resumable: the cursor in
   `brain_meta.correspondence_cursor` keeps the files done and the last message id of the file it
   stopped in; a file that failed is read again next run. A message the owner deleted stays deleted.
-- Redaction: token shapes are scrubbed (`privacy_policy.redactSecrets`); every sentence that
-  `research_memory.isSafeMemoryText` refuses (password, key and code words, broker keys) or that
-  `self_skills.redactSensitive` reads as a token or private key is withheld, marked
-  "[withheld: sensitive content]" and counted. When the store's gate still refuses the record, the
+- Redaction: a private key block is withheld whole (BEGIN to END) and a JWT with every one of its
+  segments wherever they appear, before the text is split into lines; token shapes are scrubbed
+  (`privacy_policy.redactSecrets`, which now knows JWTs and key blocks too); every sentence that
+  `research_memory.isSafeMemoryText` refuses, that `self_skills.redactSensitive` reads as a token
+  (ids and paths excepted) or that hands over access ("credentials", "login", "… gets you in") is
+  withheld, marked "[withheld: sensitive content]" and counted. `isSafeMemoryText` and the Brain's
+  own gate (`brain_store.isSafeText`) now refuse credential shapes for every writer
+  (`research_memory.hasSecretShape`: a key block, a JWT piece, a user:password pair, a
+  password-like token such as "Summer2026!"; a commit, issue, date, version, link, address or
+  plain word is never one). When the store's gate still refuses the record, the
   words are kept without the message ids, and failing that an outline (sender, recipient, time,
   file) is kept and counted; nothing is dropped in silence.
 - Flagstaff replies CHE remembered (`brainmem` kind `flagstaff`) were backfilled as owner-attested
@@ -416,9 +422,23 @@ By voice or typing (Command Center: `/che-flagstaff-import`, `/che-outside-mail`
 | "What did you tell Claude about the avatar?" | `che_outside_correspondence` | CHE's own messages to that AI |
 | "What did I tell you about #350?" | `che_memory_provenance` | The owner's records only; never a mailbox message |
 
+Not this route: a bare "What did ChatGPT say?" (no topic, no mailbox word), any question within a
+few turns of a live "Ask ChatGPT …" about that AI (its answer is the subject), and a name that is
+also a person's (Claude, Gemini, Cursor, Copilot) without an AI cue ("What did Claude say about
+dinner on Friday?"). A quote is reported, never re-asked: an offer in it to act on a "yes" is left
+out and its questions become "[it asked whether to …]". And a "yes" releases only CHE's own whole
+confirmation question ("Just to be sure, do you want me to …? Say yes, or tell me what you mean.",
+`speech_intent.pendingMeaning`); the phone sends a reply's words without its route, so words inside
+a quote or a model's offer never become the owner's request.
+
 Measured on a snapshot of `che-mailbox` (commit c7301eb, 19 Oct): 12 thread files, 747 lines,
-684 messages (63 activity-log lines), all 684 brought in, 189 with a sentence withheld, none
-dropped; 15 GitHub reads, 0.8 s on the VM; the second run 3 reads and no file.
+684 messages (63 activity-log lines), all 684 brought in, 100 with a sentence withheld (after the
+review's rules), none dropped; 15 GitHub reads, 0.8 s on the VM; the second run 3 reads and no file.
+
+Review of #354 (2026-10-19), fixed with regression tests: a quoted "Do you want me to email … ? Say
+yes" became the owner's request on a plain "yes" (it reached the Gmail route); a user:password pair,
+a "… gets you in" sentence, the last line of a key block and a JWT segment were stored whole; "What
+did ChatGPT say?" after a live consult and "What did Claude say about dinner?" took the mailbox route.
 
 Verified (offline): `brain_office.test.mjs` (provenance, two runs same count, a new commit
 re-read with every message skipped, bounded and resumable runs, a failed file read again,

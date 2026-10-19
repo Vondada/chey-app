@@ -8182,7 +8182,7 @@ export class CheState extends DurableObject {
         // an earlier answer is answered from records further down, in his own
         // words: no interpreter rewrite, clarifying question or model read.
         const memoryRoute = ownerDevice && !body.attachment && (asksForEvidence || Boolean(ownerMemoryQuestion(rawMessage)) ||
-          Boolean(ownerFactCorrection(rawMessage, data.memory_records)) || Boolean(outsideCorrespondenceIntent(rawMessage)));
+          Boolean(ownerFactCorrection(rawMessage, data.memory_records)) || Boolean(outsideCorrespondenceIntent(rawMessage, { history: ownerHistory })));
         // Voice Studio: the owner's spoken requests about his voice library are answered
         // from the provider's account, with no model call. Anything else goes on below.
         if (ownerDevice && !body.attachment) {
@@ -8981,7 +8981,7 @@ export class CheState extends DurableObject {
         // correspondence records only, each with its file and message id; never the owner's words
         // (his own "what did I tell you" is the memory question above), never an order. No model.
         // Guests never reach here: guestChat refuses these.
-        const outside = ownerDevice && !body.attachment && !memoryQuestion ? outsideCorrespondenceIntent(rawMessage) : null;
+        const outside = ownerDevice && !body.attachment && !memoryQuestion ? outsideCorrespondenceIntent(rawMessage, { history: ownerHistory }) : null;
         if (outside) {
           const source = outside.kind === 'import' ? 'che_flagstaff_import' : 'che_outside_correspondence';
           const brain = new CheBrainStore(this.ctx.storage);

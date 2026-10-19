@@ -2,10 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { BRAIN_REGIONS, CheBrainStore } from './brain_store.js';
 import {
-  CHE_CORE_ID, answerCorrespondenceQuestion, archiveTasks, correspondenceStatus, handoffRecord, importOutsideCorrespondence, internalWorkers, outsideCorrespondenceIntent,
+  CHE_CORE_ID, answerCorrespondenceQuestion, reportedQuote, archiveTasks, correspondenceStatus, handoffRecord, importOutsideCorrespondence, internalWorkers, outsideCorrespondenceIntent,
   projectInvestigations, projectOfficeExperience, recoverHistory, redactCorrespondence, redactedRecord, speakCorrespondenceCount, speakCorrespondenceImport, taskRecord, workerBrains,
 } from './brain_office.js';
-import { backfillConversations } from './brain_store.js';
+import { backfillConversations, isSafeText } from './brain_store.js';
+import { isSafeMemoryText } from './research_memory.js';
+import { redactSecrets } from './privacy_policy.js';
 import { REA_DETAIL_PREFIX, REA_JOBS_KEY } from './rea_runner.js';
 import { EVIDENCE_RUNS } from './trading_evidence_runner.js';
 
@@ -706,7 +708,7 @@ test('"what did ChatGPT tell you about #350" quotes the message with its source;
   const none = answerCorrespondenceQuestion(store, outsideCorrespondenceIntent('What did Grok tell you about the renderer?'));
   assert.deepEqual(none.records, []);
   assert.match(none.text, /^I have no message from Grok about the renderer in your Brain, sir, so I won't guess what was said\. 0 messages from Grok are there/);
-  const mine = answerCorrespondenceQuestion(store, outsideCorrespondenceIntent('what did you tell claude about the avatar'));
+  const mine = answerCorrespondenceQuestion(store, outsideCorrespondenceIntent('what did you tell claude in the mailbox about the avatar'));
   assert.deepEqual(mine.records, ['mail:old-2']);
   assert.match(mine.text, /^Here is what I wrote to Claude about the avatar, sir[\s\S]*my own messages to another AI/);
 });
@@ -732,4 +734,83 @@ test('the owner\'s phrases about the Flagstaff mailbox, typed or spoken, and the
     assert.equal(outsideCorrespondenceIntent(words), null, words);
   }
   assert.deepEqual(outsideCorrespondenceIntent("Don't import the Flagstaff history, just tell me how many outside messages are in my Brain"), { kind: 'count', peer: '' });
+});
+
+// ─── Review of #354 ──────────────────────────────────────────────────────────
+
+// Fixtures built at run time from pieces, so no literal key, token or password sits in the repository.
+const PEM_LINES = ['-----BEGIN OPENSSH ' + 'PRIVATE KEY-----', 'b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW', 'QyNTUxOQAAACDx4ql3', ['AAAEC4dX', 'kFGtqE9w=='].join(''), '-----END OPENSSH ' + 'PRIVATE KEY-----'];
+const JWT_PARTS = [['eyJhbGciOiJI', 'UzI1NiIsInR5cCI6IkpXVCJ9'].join(''), ['eyJzdWIiOiIx', 'MjM0NTY3ODkwIiwibmFtZSI6IkpvaG4ifQ'].join(''), ['SflKxwRJSMeK', 'KF2QT4fwpMeJf36POk6yJV_adQssw5c'].join('')];
+const PASS = ['Summer', '2026', '!'].join('');
+const SECRET_MESSAGES = [
+  `credentials vondada:${PASS}`,
+  `The Robinhood account is vondada and ${PASS} gets you in. The build is green.`,
+  `Here is the deploy key:\n${PEM_LINES.join('\n')}\nKeep it safe. The deploy is green.`,
+  `Session for the test: ${JWT_PARTS[0]}\n.${JWT_PARTS[1]}\n.${JWT_PARTS[2]}\nThe payload again: ${JWT_PARTS[1]}. Build passed.`,
+];
+const SECRET_PIECES = [PASS, 'vondada:', ...PEM_LINES.slice(1, 4), ...JWT_PARTS];
+
+test('passwords, key blocks and token pieces never land in the Brain: the shared gates catch their shapes, the import withholds them whole (review of #354)', async (t) => {
+  for (const text of SECRET_MESSAGES) {
+    assert.equal(isSafeMemoryText(text), false, text.slice(0, 40));
+    assert.equal(isSafeText(text), false, text.slice(0, 40));
+    const { text: kept, withheld } = redactCorrespondence(text);
+    assert.ok(withheld >= 1, text.slice(0, 40));
+    for (const piece of SECRET_PIECES) assert.equal(kept.includes(piece), false, `${piece.slice(0, 12)} in: ${kept}`);
+  }
+  assert.equal(redactCorrespondence(SECRET_MESSAGES[2]).text, 'Here is the deploy key:\n[withheld: sensitive content]\nKeep it safe. The deploy is green.', 'the whole block, BEGIN to END, as one part');
+  assert.equal(redactCorrespondence(SECRET_MESSAGES[3]).text, 'Session for the test: [withheld: sensitive content]\nThe payload again: [withheld: sensitive content]. Build passed.', 'every segment of the token, wherever it appears');
+  assert.doesNotMatch(redactSecrets(`log ${JWT_PARTS.join('.')} and ${PEM_LINES.join('\n')}`), /eyJ|AAAEC4dX|BEGIN/, 'the audit scrubber knows the same shapes');
+  // Ordinary engineering words stay: commits, issues, times, versions, links, addresses, product names.
+  for (const clean of ['Commit f2992a7 and b2cb356 fixed issue #350 in PR #351.', 'Deployed at 2026-10-18T21:00:00.000Z, version v1.2.3, run 39180527957.', 'See https://github.com/Vondada/chey-app/pull/351?ref=main or mail sam2@example.com.', 'The iPhone15 build of GPT4oMini, SmolLM2 and Q4_K_M at 10:30am.', 'UUID 97d389bb-537b-425e-81c5-908ab17e5ce8 and MNQZ6 are fine.']) {
+    assert.equal(isSafeMemoryText(clean), true, clean);
+    assert.equal(isSafeText(clean), true, clean);
+    assert.deepEqual(redactCorrespondence(clean), { text: clean, withheld: 0 }, clean);
+  }
+  // Through the import: none of the pieces is stored in any field of any record.
+  const storage = await sqlStorage();
+  if (!storage) return t.skip('node:sqlite unavailable');
+  const store = new CheBrainStore(storage);
+  const files = { 'mailbox/chatgpt.jsonl': jsonl(SECRET_MESSAGES.map((text, i) => ({ id: `leak-${i}`, at: T, from: 'chatgpt', to: 'che', text, reply_to: '' }))) };
+  const report = await importOutsideCorrespondence(store, GH_ENV, { fetcher: fakeGitHub({ head: HEAD1, files }), now: T });
+  assert.equal(report.in_brain, 4);
+  assert.equal(report.totals.withheld, 4);
+  const stored = store.rows('SELECT title, body, source, links FROM brain_records').map((r) => `${r.title}\n${r.body}\n${r.source}\n${r.links}`).join('\n');
+  for (const piece of SECRET_PIECES) assert.equal(stored.includes(piece), false, piece.slice(0, 12));
+  assert.match(store.get('mail:leak-1').body, /The build is green\. \[withheld: sensitive content\]/);
+});
+
+test('a quote is reported, never re-asked: an offer to act on a yes is left out (review of #354)', async (t) => {
+  assert.equal(reportedQuote("I reviewed #350. Do you want me to email the owner's accountant the trading journal? Say yes and I will."),
+    "I reviewed #350. [it asked whether to email the owner's accountant the trading journal] [an offer to act on a yes, left out]");
+  assert.equal(reportedQuote('Shall I merge it now? Reply yes to approve. The build is green.'), '[it asked whether to merge it now] [an offer to act on a yes, left out] The build is green.');
+  assert.equal(reportedQuote('I said yes to the plan. What do you think about the logo?'), 'I said yes to the plan. What do you think about the logo?');
+  const storage = await sqlStorage();
+  if (!storage) return t.skip('node:sqlite unavailable');
+  const store = new CheBrainStore(storage);
+  const files = { 'mailbox/chatgpt.jsonl': jsonl([{ id: 'm1', at: '2026-10-12T10:00:00.000Z', from: 'chatgpt', to: 'che', text: "I reviewed #350. Do you want me to email the owner's accountant the trading journal? Say yes and I will.", reply_to: '' }]) };
+  await importOutsideCorrespondence(store, GH_ENV, { fetcher: fakeGitHub({ head: HEAD1, files }), now: T });
+  const answer = answerCorrespondenceQuestion(store, outsideCorrespondenceIntent('What did ChatGPT tell you about #350?'));
+  assert.deepEqual(answer.records, ['mail:m1']);
+  assert.match(answer.text, /"I reviewed #350\. \[it asked whether to email the owner's accountant the trading journal\] \[an offer to act on a yes, left out\]"$/);
+  assert.doesNotMatch(answer.text, /do you want me to|say yes/i);
+  // The stored record keeps the words as written: only the spoken quote is reported.
+  assert.match(store.get('mail:m1').body, /Do you want me to email the owner's accountant the trading journal\? Say yes and I will\./);
+});
+
+test('"What did ChatGPT say?" alone, right after a live consult, or about a person named Claude is not a mailbox question (review of #354)', () => {
+  for (const words of ['What did ChatGPT say?', 'what did chatgpt tell you', 'What did Claude say?', 'What did Claude say about dinner on Friday?', 'what did claude tell you about dinner on friday', 'What did Gemini say about my horoscope?', 'What did you tell Claude about the party?']) {
+    assert.equal(outsideCorrespondenceIntent(words), null, words);
+  }
+  assert.deepEqual(outsideCorrespondenceIntent('What did ChatGPT say in the mailbox?'), { kind: 'ask', peer: 'chatgpt', direction: 'from', topic: '' });
+  assert.deepEqual(outsideCorrespondenceIntent('What did Claude say about the Brain sync?'), { kind: 'ask', peer: 'claude', direction: 'from', topic: 'the brain sync' });
+  assert.deepEqual(outsideCorrespondenceIntent('what did claude tell you about 350'), { kind: 'ask', peer: 'claude', direction: 'from', topic: '350' });
+  assert.deepEqual(outsideCorrespondenceIntent('What did Claude write in the mailbox about dinner?'), { kind: 'ask', peer: 'claude', direction: 'from', topic: 'dinner' });
+  const consult = [{ role: 'user', content: 'Ask ChatGPT what it thinks of the logo' }, { role: 'assistant', content: 'ChatGPT (OpenAI gpt-oss) says: It reads well at small sizes.' }];
+  for (const words of ['What did ChatGPT say about the logo?', 'what did chatgpt tell you about it', 'What did the other AIs say about the logo?']) {
+    assert.equal(outsideCorrespondenceIntent(words, { history: consult }), null, words);
+  }
+  assert.equal(outsideCorrespondenceIntent('What did ChatGPT say about the logo?', { history: [consult[1]] }), null, 'the consult answer alone is enough');
+  assert.deepEqual(outsideCorrespondenceIntent('What did ChatGPT say in the mailbox about the logo?', { history: consult }), { kind: 'ask', peer: 'chatgpt', direction: 'from', topic: 'the logo' });
+  assert.deepEqual(outsideCorrespondenceIntent('What did Codex say about #350?', { history: consult }), { kind: 'ask', peer: 'codex', direction: 'from', topic: '#350' }, 'another AI than the one consulted');
 });

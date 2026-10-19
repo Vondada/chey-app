@@ -166,7 +166,8 @@ export function bundleText(bundle) {
 
 // ─── Audit ─────────────────────────────────────────────────────────────────
 
-const SECRETISH = /\b(?:sk-[A-Za-z0-9_-]{8,}|xai-[A-Za-z0-9_-]{8,}|hf_[A-Za-z0-9]{8,}|AIza[0-9A-Za-z_-]{10,}|Bearer\s+\S+)/g;
+// Key prefixes, a bearer token, a JWT with all its segments, and a private key block whole.
+const SECRETISH = /\b(?:sk-[A-Za-z0-9_-]{8,}|xai-[A-Za-z0-9_-]{8,}|hf_[A-Za-z0-9]{8,}|AIza[0-9A-Za-z_-]{10,}|Bearer\s+\S+|eyJ[A-Za-z0-9_-]{8,}(?:(?:\.|[ \t]*\n\s*\.|\.[ \t]*\n\s*)[A-Za-z0-9_-]{8,}){0,2})|-----BEGIN [A-Z0-9 ]{3,40}-----[\s\S]*?(?:-----END [A-Z0-9 ]{3,40}-----|$)/g;
 
 export function redactSecrets(value) {
   return String(value ?? '').replace(SECRETISH, '[redacted]');

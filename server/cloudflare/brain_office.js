@@ -17,6 +17,7 @@ import {
   projectLegacyState, relabelFlagstaffExchanges,
 } from './brain_store.js';
 import { hasGitHubMailbox, listMailboxFiles, normalizePeer, readMailboxFile } from './mailbox.js';
+import { FREE_ENGINES, consultIntent } from './ai_consult.js';
 import { withoutProhibitions } from './owner_action_gate.js';
 import { redactSecrets } from './privacy_policy.js';
 import { REA_DETAIL_PREFIX, REA_JOBS_KEY } from './rea_runner.js';
@@ -595,27 +596,49 @@ function spokenDate(iso) {
   return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
 }
 
+// Words that hand over access, though no key word is said: "credentials …", "the login is …",
+// "… gets you in". In outside mail a sentence like that is withheld whole.
+const ACCESS_WORDS = /\b(?:credentials?|passphrase|pass\s*word|user\s*name|log\s*-?\s*in|sign\s*-?\s*in|signin)\b|\b(?:gets?|lets?|will\s+get|will\s+let)\s+(?:you|me|him|her|them|us|anyone|someone|che)\s+(?:in|into)\b/i;
+const WITHHELD = '[withheld: sensitive content]';
+
 /**
- * A message's words with every secret-looking part withheld. Token shapes are scrubbed first
- * (privacy_policy.redactSecrets); then each sentence that the memory gate refuses
- * (research_memory.isSafeMemoryText: password, key and code words, broker keys) or that looks like
- * a token or a private key (self_skills.redactSensitive) is left out, marked and counted. The rest
- * of the message keeps its words.
+ * A message's words with every secret-looking part withheld. Multi-line secrets go first and whole:
+ * a private key block from BEGIN to END, and a JWT with every one of its segments wherever they
+ * appear, so no line of one survives the line split. Token shapes are then scrubbed
+ * (privacy_policy.redactSecrets), and each sentence is left out, marked and counted when the memory
+ * gate refuses it (research_memory.isSafeMemoryText: key and code words, broker keys, user:password
+ * pairs, password-like tokens), when it looks like a token or a private key
+ * (self_skills.redactSensitive), or when it hands over access (ACCESS_WORDS). The rest keeps its words.
  */
 export function redactCorrespondence(text) {
   let withheld = 0;
-  const lines = redactSecrets(String(text ?? '').replace(/\u0000/g, '')).split('\n').map((line) => {
+  let value = String(text ?? '').replace(/\u0000/g, '');
+  value = value.replace(/-----BEGIN [A-Z0-9 ]{3,40}-----[\s\S]*?(?:-----END [A-Z0-9 ]{3,40}-----|$)/g, () => { withheld += 1; return WITHHELD; });
+  const segments = new Set();
+  value = value.replace(/\beyJ[A-Za-z0-9_-]{8,}(?:(?:\.|[ \t]*\n\s*\.|\.[ \t]*\n\s*)[A-Za-z0-9_-]{8,}){0,2}/g, (jwt) => {
+    for (const piece of jwt.split(/\s*\.\s*/)) if (piece.length >= 8) segments.add(piece);
+    withheld += 1;
+    return WITHHELD;
+  });
+  for (const piece of segments) value = value.split(piece).join(WITHHELD);
+  const scrubbed = redactSecrets(value);
+  withheld += Math.max(0, (scrubbed.match(/\[redacted\]/g) || []).length - (value.match(/\[redacted\]/g) || []).length);
+  const lines = scrubbed.split('\n').map((line) => {
     if (!line.trim()) return '';
     let dropped = 0;
-    const kept = (line.match(/[^.!?;|]+(?:[.!?;|]+|$)/g) || [line]).filter((sentence) => {
-      if (!sentence.trim()) return true;
-      if (isSafeMemoryText(sentence) && !redactSensitive(sentence).removed) return true;
+    // Sentences end at punctuation followed by a space, so a link, an address or a file name stays whole.
+    const kept = line.split(/(?<=[.!?;|])\s+/).map((sentence) => `${sentence} `).filter((sentence) => {
+      if (!sentence.trim() || sentence.trim() === WITHHELD) return true;
+      // redactSensitive reads any 32-character run as a token; ids and paths are not (a commit, a
+      // message UUID, a file path), and a real token among them still trips isSafeMemoryText.
+      const forTokens = sentence.replace(/\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b|\b[0-9a-f]{7,64}\b/gi, 'id').replace(/(?:[\w.-]+\/)+[\w.-]+/g, 'path');
+      if (isSafeMemoryText(sentence) && !redactSensitive(forTokens).removed && !ACCESS_WORDS.test(sentence)) return true;
       dropped += 1;
       return false;
     });
     withheld += dropped;
     const out = kept.join('').trim();
-    return dropped ? `${out}${out ? ' ' : ''}[withheld: sensitive content]` : out;
+    return dropped ? `${out}${out ? ' ' : ''}${WITHHELD}` : out;
   });
   return { text: lines.join('\n').replace(/\n{3,}/g, '\n\n').trim(), withheld };
 }
@@ -893,11 +916,25 @@ function topicTerms(topic) {
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /**
+ * A quote is reported, never re-asked. An offer inside it to act on a "yes" is left out and a
+ * question the sender put to its reader becomes what it asked, so the owner's next "yes" can only
+ * ever answer CHE's own question, never another AI's.
+ */
+export function reportedQuote(text) {
+  return String(text || '').replace(/\s+/g, ' ')
+    .replace(/[^.!?]*\b(?:say|reply|answer|type|respond|text|write)(?:\s+(?:back|me|with|to\s+me))*\s+["“'‘]?(?:yes|yeah|yep|ok(?:ay)?|confirm|go(?:\s+ahead)?|approved?)\b[^.!?]*[.!?]*/gi, ' [an offer to act on a yes, left out] ')
+    .replace(/\b(?:do|would)\s+you\s+(?:want|like)\s+me\s+to\s+([^?]{1,240})\?/gi, (_, what) => `[it asked whether to ${what.trim()}]`)
+    .replace(/\b(?:shall|should|can|may)\s+i\s+([^?]{1,240})\?/gi, (_, what) => `[it asked whether to ${what.trim()}]`)
+    .replace(/\s{2,}/g, ' ').trim();
+}
+
+/**
  * "What did ChatGPT tell you about #350?": the matching messages, quoted with their source (who to
  * whom, the date, the mailbox file and message id). Only correspondence records are read, so an
  * owner memory is never cited here, and these never answer for the owner. No model.
  */
-export function answerCorrespondenceQuestion(store, { peer = '', direction = 'from', topic = '' } = {}, { limit = 3 } = {}) {
+export function answerCorrespondenceQuestion(store, intent, { limit = 3 } = {}) {
+  const { peer = '', direction = 'from', topic = '' } = intent || {};
   const status = correspondenceStatus(store);
   const who = peer ? peerLabel(peer) : 'the outside AIs';
   const about = topic ? ` about ${topic}` : '';
@@ -929,8 +966,7 @@ export function answerCorrespondenceQuestion(store, { peer = '', direction = 'fr
     const matched = wordRes.filter((re) => re.test(text)).length;
     if (!numberRes.length && wordRes.length && matched < Math.ceil(wordRes.length / 2)) continue;
     score += matched * 5 + (source.to === 'che' ? 1 : 0);
-    const first = [...numberRes, ...wordRes].map((re) => text.search(re)).filter((i) => i >= 0).sort((a, b) => a - b)[0] ?? 0;
-    hits.push({ id: row.id, source, text, score, first, at: source.at || row.created_at || '' });
+    hits.push({ id: row.id, source, text, score, at: source.at || row.created_at || '' });
   }
   hits.sort((a, b) => b.score - a.score || String(b.at).localeCompare(String(a.at)));
   if (!hits.length) {
@@ -940,9 +976,10 @@ export function answerCorrespondenceQuestion(store, { peer = '', direction = 'fr
   }
   const shown = hits.slice(0, Math.max(1, Math.min(limit, 5)));
   const lines = shown.map((hit, i) => {
-    const flat = hit.text.replace(/\s+/g, ' ');
+    const flat = reportedQuote(hit.text);
+    const first = [...numberRes, ...wordRes].map((re) => flat.search(re)).filter((i) => i >= 0).sort((a, b) => a - b)[0] ?? 0;
     // The quote opens on a whole word, a little before the first match.
-    let start = Math.max(0, Math.min(hit.first, flat.length) - 120);
+    let start = Math.max(0, Math.min(first, flat.length) - 120);
     if (start > 0) start = Math.max(start, flat.indexOf(' ', start) + 1);
     const window = flat.slice(start, start + 360).trim();
     const id = String(hit.source.line_id || hit.id.replace(/^mail:/, ''));
@@ -970,13 +1007,45 @@ function topicOf(rest) {
     .replace(/\b(?:please|sir|so\s+far|ever|recently|lately|earlier|before|today|yesterday)\b/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
+// Names of AIs that are also people's names (or ordinary words): with one of them, the question is
+// about the correspondence only with an AI cue, so "what did Claude say about dinner on Friday" is
+// about a person (review of #354).
+const PERSON_NAMES = new Set(['claude', 'gemini', 'cursor', 'copilot']);
+const MAILBOX_WORD = /\b(?:mail\s*box|flag\s*staff|correspondence)\b/;
+const AI_CUE = /\b(?:pr|prs|pull\s+requests?|issues?|code|coding|repo(?:sitory)?|github|branch(?:es)?|commits?|deploy\w*|worker|tests?|bugs?|fix\w*|merg\w*|build\w*|che|brain|app|ais?|models?|prompts?|review\w*|handoffs?|iphone|ios|flutter|shorebird|release\w*|trading|rea)\b|#\d+|\b\d{3,}\b/;
+
+/**
+ * Whether an "ask" reading stands. "What did ChatGPT say?" alone is about the conversation, most
+ * often the answer it just gave through "ask ChatGPT …", so only a topic or the mailbox makes it a
+ * correspondence question; right after a live consult of that AI, its answer is the subject; and a
+ * name that is also a person's needs an AI cue.
+ */
+function standingAsk(intent, text, history) {
+  const mailbox = MAILBOX_WORD.test(text);
+  if (!intent.topic && !mailbox) return null;
+  if (PERSON_NAMES.has(intent.peer) && !mailbox && !AI_CUE.test(intent.topic)) return null;
+  if (!mailbox) {
+    // The last few turns: an "ask ChatGPT …" of the owner's, or the answer it gave ("ChatGPT … says:",
+    // "… is unreachable right now, so … answered instead", "…: couldn't reach it").
+    const label = intent.peer ? FREE_ENGINES[intent.peer]?.label : '';
+    for (const turn of asList(history).slice(-6)) {
+      const said = String(turn?.content || turn?.text || '');
+      const consulted = turn?.role === 'user' ? consultIntent(said) : null;
+      if (consulted && (!intent.peer || consulted.peers.includes(intent.peer))) return null;
+      if (turn?.role === 'assistant' && label && (said.startsWith(`${label} says:`) || said.startsWith(`${label} is unreachable right now`) || said.startsWith(`${label}: couldn't reach it`))) return null;
+    }
+  }
+  return intent;
+}
+
 /**
  * The owner asking about the Flagstaff correspondence: { kind: 'import' } to bring it in,
  * { kind: 'count', peer } for "how many outside messages are in my Brain", or
  * { kind: 'ask', peer, direction, topic } for "what did ChatGPT tell you about #350". Only when an
  * outside AI is the one who spoke: "what did I tell you" stays the owner's memory question.
+ * [history] is the chat so far ({role, content}), to yield to a live consult's answer.
  */
-export function outsideCorrespondenceIntent(message) {
+export function outsideCorrespondenceIntent(message, { history = [] } = {}) {
   const raw = String(message || '').trim();
   if (!raw || raw.length > 220) return null;
   const text = withoutProhibitions(raw).replace(/^(?:hey|hi|ok|okay)?[,\s]*(?:che|chay|chey|shay)\b[,:]?\s*/i, '')
@@ -987,7 +1056,7 @@ export function outsideCorrespondenceIntent(message) {
   const banned = /\b(?:do\s+not|don'?t|never|no\s+need\s+to)\s+(?:\w+\s+){0,2}?(?:import|bring|pull|recover|archive)\b/.exec(text);
   if (banned) {
     const turn = /\s+(?:but|just|only|instead)\s+(?:tell\s+me\s+|say\s+)?/.exec(text.slice(banned.index));
-    const intent = turn ? outsideCorrespondenceIntent(text.slice(banned.index + turn.index + turn[0].length)) : null;
+    const intent = turn ? outsideCorrespondenceIntent(text.slice(banned.index + turn.index + turn[0].length), { history }) : null;
     return intent?.kind === 'import' ? null : intent;
   }
   const MAIL = '(?:flag\\s*staff(?:\\s*369)?|mail\\s*box|outside\\s+(?:correspondence|messages?|mail)|other\\s+ais?\'?\\s+(?:messages?|mail|correspondence)|ai\\s+correspondence)';
@@ -1006,9 +1075,9 @@ export function outsideCorrespondenceIntent(message) {
   }
   const ai = new RegExp(`^(?:so\\s+)?(?:what|anything)\\s+(?:did|has|have|had)\\s+(?:${AI_NAME}|${OTHER_AIS})\\s+(?:ever\\s+|actually\\s+)?${SAID}(?:\\s+(?:you|me|che|us|to\\s+you|to\\s+me|to\\s+che))?(?:\\s+(?:in|on|through)\\s+(?:the\\s+)?(?:mail\\s*box|flag\\s*staff(?:\\s*369)?))?(?:\\s+(?:about|regarding|on|concerning|of)\\s+(.+))?$`).exec(text)
     || new RegExp(`^(?:did|has|have)\\s+(?:${AI_NAME}|${OTHER_AIS})\\s+(?:ever\\s+)?(?:say|said|tell\\s+you|told\\s+you|mention(?:ed)?|write|wrote|written|suggest(?:ed)?)\\s+(?:you\\s+)?(?:anything\\s+)?(?:about\\s+)?(.+)$`).exec(text);
-  if (ai) return { kind: 'ask', peer: ai[1] ? peerOf(ai[1]) : '', direction: 'from', topic: topicOf(ai[2]) };
+  if (ai) return standingAsk({ kind: 'ask', peer: ai[1] ? peerOf(ai[1]) : '', direction: 'from', topic: topicOf(ai[2]) }, text, history);
   const mine = new RegExp(`^what\\s+(?:did|have)\\s+you\\s+(?:tell|told|say\\s+to|said\\s+to|write\\s+to|wrote\\s+to|written\\s+to|send|sent|ask|asked)\\s+${AI_NAME}(?:\\s+(?:in|on)\\s+(?:the\\s+)?(?:mail\\s*box|flag\\s*staff))?(?:\\s+(?:about|regarding|on|concerning)\\s+(.+))?$`).exec(text);
-  if (mine) return { kind: 'ask', peer: peerOf(mine[1]), direction: 'to', topic: topicOf(mine[2]) };
+  if (mine) return standingAsk({ kind: 'ask', peer: peerOf(mine[1]), direction: 'to', topic: topicOf(mine[2]) }, text, history);
   return null;
 }
 

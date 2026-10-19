@@ -14,7 +14,7 @@
 // body is clipped at MAX_BODY_CHARS because a SQLite row in a Durable Object
 // is limited to about two megabytes, and the clip is recorded in its source.
 
-import { SENSITIVE_RE } from './research_memory.js';
+import { SENSITIVE_RE, hasSecretShape } from './research_memory.js';
 import { classifyItem } from './privacy_policy.js';
 
 export const MAX_BODY_CHARS = 1_500_000;
@@ -99,7 +99,7 @@ export function clipWords(value, max) {
 export function isSafeText(text) {
   const value = String(text ?? '').replace(/\s+/g, ' ').trim();
   if (!value) return false;
-  if (SENSITIVE_RE.test(value)) return false;
+  if (SENSITIVE_RE.test(value) || hasSecretShape(value)) return false;
   return classifyItem(value) !== 'secret';
 }
 

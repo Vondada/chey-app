@@ -307,12 +307,16 @@ function findUserTurn(recent, current, kinds) {
   return '';
 }
 
-// "Do you want me to X? Say yes" from CHE's last reply: X is the pending meaning. X is
-// asked whole, so it can be long; it runs to the first question mark.
+// CHE's own confirmation question (applyModelReading), and only as her whole last reply:
+// "Just to be sure, do you want me to X? Say yes, or tell me what you mean." X is the pending
+// meaning; it is asked whole, so it can be long, and runs to the first question mark. The phone
+// sends a reply's words without its route, so a reply that merely contains such words (a quoted
+// mailbox message, a story, a model's offer) never sets up a "yes".
+const CONFIRM_QUESTION = /^just to be sure, do you want me to ([^?]{3,}?)\? say yes, or tell me what you mean\.?$/i;
 function pendingMeaning(recent) {
   for (let i = recent.length - 1; i >= 0; i--) {
     if (recent[i].role !== 'assistant') continue;
-    const m = /do you want me to ([^?]{3,}?)\? say yes/i.exec(recent[i].text);
+    const m = CONFIRM_QUESTION.exec(String(recent[i].text || '').trim());
     return m ? m[1].trim() : '';
   }
   return '';

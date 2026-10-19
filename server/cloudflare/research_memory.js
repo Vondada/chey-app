@@ -33,12 +33,39 @@ function clipWords(value, max) {
 // A bare key carries no "secret" word, so it is matched by its shape (review of #348).
 export const BROKER_KEY_RE = /\b[AP]K[A-Z0-9]{16,38}\b/;
 
+// Credentials no word list catches, found by their shape (review of #354): a private key block, a
+// JWT or a piece of one (base64 JSON starts "eyJ"), a user:password pair, and a token that mixes
+// letters, digits and symbols the way passwords and keys do. A commit SHA, an issue number, a
+// date, a version, a URL, an address or a plain word is never one.
+const PEM_RE = /-----BEGIN [A-Z0-9 ]{3,40}-----/;
+const JWT_PIECE_RE = /\beyJ[A-Za-z0-9_-]{8,}/;
+const USER_PASS_RE = /(?:^|[\s(])[A-Za-z0-9._%+-]{2,40}:(?=[^\s:/@"'{}[\],]*[A-Za-z])(?=[^\s:/@"'{}[\],]*[\d!@#$%^&*+=?~])[^\s:/@"'{}[\],]{6,}/;
+const PASSWORD_SYMBOL = /[!@#$%^&*+=~?|\\]/;
+function secretToken(raw) {
+  // Sentence punctuation is not part of a token; a closing "!" is, when the rest already mixes
+  // cases and digits the way a password does ("Summer2026!").
+  const trimmed = raw.replace(/^[("'“‘[<{]+/, '').replace(/[)"'”’\]>},.;:?]+$/, '');
+  const token = trimmed.replace(/!+$/, '');
+  if (token.length < 8 || !/[A-Za-z]/.test(token) || !/\d/.test(token)) return false;
+  if (/^[0-9a-f]+$/i.test(token) || /:\/\/|^www\./i.test(token) || /^[\w.+-]+@[\w-]+\.[\w.]+$/.test(token)) return false;
+  if (/^\d{4}-\d{2}-\d{2}/.test(token) || /^v?\d+(?:\.\d+)+/i.test(token) || /^#\d+/.test(token)) return false;
+  const mixedCase = /[a-z]/.test(token) && /[A-Z]/.test(token);
+  if (PASSWORD_SYMBOL.test(token) || (mixedCase && trimmed !== token)) return true;
+  const switches = (token.match(/[A-Za-z](?=\d)|\d(?=[A-Za-z])/g) || []).length;
+  return mixedCase && ((token.length >= 12 && switches >= 3) || token.length >= 24);
+}
+export function hasSecretShape(text) {
+  const value = String(text ?? '');
+  if (PEM_RE.test(value) || JWT_PIECE_RE.test(value) || USER_PASS_RE.test(value)) return true;
+  return value.split(/[\s"“”,;(){}[\]<>]+/).some((piece) => piece && secretToken(piece));
+}
+
 export function isSafeMemoryText(text) {
   // The whole collapsed text, not the 500-character display window: a window can cut a word
   // ("pin|nacle") into something the classifier reads as a secret and refuse a clean memory.
   const whole = String(text ?? '').replace(/\s+/g, ' ').trim();
   if (!whole) return false;
-  if (SENSITIVE_RE.test(whole) || BROKER_KEY_RE.test(whole)) return false;
+  if (SENSITIVE_RE.test(whole) || BROKER_KEY_RE.test(whole) || hasSecretShape(whole)) return false;
   if (classifyItem(whole) === 'secret') return false;
   return true;
 }
