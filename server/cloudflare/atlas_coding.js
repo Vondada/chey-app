@@ -1512,7 +1512,7 @@ const AUTONOMY = [
         fixed: lines('// The checker and its gates are out of the attempt\'s reach.', "const allowed = (path) => !/^(?:\\.github\\/|tools\\/che_coding_|server\\/cloudflare\\/coding_failover\\.mjs$)/.test(path);"),
         probe: { calls: [['tools/che_coding_checkpoint.mjs'], ['server/cloudflare/coding_failover.mjs'], ['lib/main.dart']], buggy: [true, true, true], fixed: [false, false, true] },
         from: {
-          what: 'a review fix on PR #328, after which an attempt can no longer change the gate and the checkpoint verifier',
+          what: 'PR #328 (merged as a3be02c); the fix is its review commit 3400cd79, in the PR\'s history, after which an attempt can no longer change the gate and the checkpoint verifier',
           commit: '3400cd79', file: 'server/cloudflare/coding_failover.mjs',
           removed: '/^(?:\\.github\\/|\\.git\\/)/i,', added: '/^tools\\/che_coding_/i,',
           pinned: [{ drill: 'code', diff: 'removed', text: '.github' }, { drill: 'fixed', diff: 'added', text: 'tools\\/che_coding_' }],
@@ -1911,7 +1911,7 @@ const EXPLICIT_ANSWER = /^(?:(?:so|well|ok|okay|um|uh|hmm)[,\s]+)*(?:(?:my|the) 
 // "It's 3", "I think it's 3": an answer only when what follows is a value this exercise expects.
 const VALUE_LEAD = /^(?:(?:so|well|ok|okay|um|uh|hmm)[,\s]+)*(?:i think (?:it'?s|it is)|i'?d say|it'?s|it is|that'?s|that is)\s+(.+?)$/;
 // Voice control and greetings are for the speech, never an answer: "repeat that", "slow down", "huh".
-const VOICE_CONTROL = /^(?:(?:please|can you|could you)\s+)?(?:repeat(?: that| it| the question)?|say (?:that|it) again|slow down|louder|speak up|pause|continue|go on|huh|what|sorry|pardon|excuse me|hang on|one (?:second|moment|sec)|not sure|i'?m not sure|good (?:morning|afternoon|evening|night)|hello|hi|hey|the weather)(?: please)?$/;
+const VOICE_CONTROL = /^(?:(?:please|can you|could you)\s+)?(?:repeat(?: that| it| the question)?|say (?:that|it) again|slow down|louder|speak up|pause|continue|go on|huh|what|sorry|pardon|excuse me|hang on|one (?:second|moment|sec)|not sure|i'?m not sure|good (?:morning|afternoon|evening|night)|hello|hi|hey|the weather|no (?:thanks|thank you|problem|worries))(?: please)?$/;
 const NEGATED = /(?<![a-z])(?:not|never|no|dont|doesnt|isnt|arent|wasnt|werent|wont|cant|cannot|didnt|without)(?![a-z])/;
 const OPTION_FORM = /^(?:the )?(?:option|number|choice|letter)\s+([a-z0-9]+)(?:\s+is\b.*)?$|^(?:the )?(first|second|third|fourth|fifth)(?: one| option| choice)?$/;
 const REVEAL = /^(?:i (?:don'?t|do not) know|idk|no idea|i give up|give up|skip(?: it| this one)?|pass|(?:just )?(?:tell|show|give) me the (?:answer|finding|bug)|tell me|show me|what(?:'s| is|s) the (?:answer|bug|finding)|reveal(?: it| the answer)?|the answer|show the answer|show the finding)$/;
@@ -1992,6 +1992,8 @@ export function checkExercise(x, said) {
 
 // Drill findings are judged by their two key concepts, as whole words ("*" ends a word stem). Both
 // named: right. One: CHE cannot judge it, and says so with the finding. None, or "it's fine": not quite.
+// A concept said the other way round from the finding ("it never checks the last item", "not shared") is
+// also not judged: a correct answer is often phrased that way, so it is never called wrong for it.
 const plain = (s) => ` ${String(s || '').toLowerCase().replace(/[’']/g, '').replace(/[^a-z0-9<=%.\s]+/g, ' ').replace(/\s+/g, ' ').trim()} `;
 const conceptRe = (k) => {
   const w = plain(k).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -2018,7 +2020,8 @@ export function checkDrill(d, said) {
     if (deniedAt(t, conceptRe(k)) !== deniedAt(finding, conceptRe(k))) denied = true;
     else hits += 1;
   }
-  if (SAYS_FINE.test(t) || denied) return { correct: false, hits, mentions };
+  if (SAYS_FINE.test(t)) return { correct: false, hits, mentions };
+  if (denied) return { correct: null, hits, mentions };
   return { correct: hits >= d.concepts.length ? true : hits === 0 ? false : null, hits, mentions };
 }
 const EXPLICIT_FINDING = /^(?:(?:so|well|ok|okay|um|uh)[,\s]+)*(?:(?:the|my) (?:bug|problem|issue|mistake|finding|answer|fix) is|it'?s wrong because|it is wrong because|it'?s broken because|what'?s wrong is|the trouble is)\b/;

@@ -785,15 +785,27 @@ test('re-review of #360: word answers, the language name, CHE\'s parts and answe
   assert.ok(checkExercise(ex('c-checkpoints'), 'the resume limit is reached').correct);
   assert.ok(checkExercise(ex('c-self-repair'), 'yes they are the same').correct);
   assert.equal(checkExercise(ex('c-model-failover'), 'it is not too large').correct, false, 'a denied option is not that option');
+  // A polite "no thanks" on a yes/no exercise is not an answer.
+  for (const words of ['no thanks', 'no problem', 'no thank you', 'no worries']) assert.equal(exerciseAnswer(ex('c-self-repair'), words), null, words);
   const drill = (id) => DRILLS.find(({ d }) => d.id === id).d;
   for (const [id, words] of [['c-debugging.d1', 'slice cuts the message silently so the last words are lost'], ['c-databases.d1', 'sql injection, use a parameter'],
     ['testing.d1', 'check does not record failures so the test can never fail']]) {
     assert.ok(drillAnswer(drill(id), words), `${id}: "${words}" is a finding`);
     assert.equal(checkDrill(drill(id), words).correct, true, `${id}: ${words}`);
   }
-  // A denied key concept is not that concept: "not shared" is the opposite of the finding.
-  assert.equal(checkDrill(drill('c-python.d1'), 'the default is not shared').correct, false);
+  // A key concept said the other way round from the finding is not judged: it is never a false "right",
+  // and correct answers phrased that way are never called wrong.
+  assert.equal(checkDrill(drill('c-python.d1'), 'the default is not shared').correct, null);
   assert.equal(checkDrill(drill('c-python.d1'), 'the default list is shared by every call').correct, true);
+  for (const [id, words] of [['c-binary-search.d1', 'it never checks the last item'], ['c-binary-search.d1', 'the loop is not inclusive, so the last item is skipped'],
+    ['c-security.d2', 'it does not check 127.0.0.1, only the word localhost'], ['c-performance.d1', 'the cache key does not include the currency'],
+    ['c-debugging.d1', 'slice cuts it without refusing'], ['c-security.d1', 'the comma does not end the dont, so the payment is not held'],
+    ['c-architecture.d1', 'the frame is not lossless, it drops not today'], ['c-model-failover.d1', 'too large is not checked first, so it is retried forever'],
+    ['c-python.d1', 'the default list is not fresh, every call shares it']]) {
+    assert.notEqual(checkDrill(drill(id), words).correct, false, `${id}: a correct finding is never called wrong: ${words}`);
+  }
+  // "It's fine" is still not quite.
+  assert.equal(checkDrill(drill('c-python.d1'), 'the default list is fine').correct, false);
 });
 
 test('through /api/chat with SQLite: exercise and drill answers are graded, never learned as speech corrections', { skip: sqlite ? false : 'node:sqlite unavailable' }, async () => {
@@ -807,8 +819,9 @@ test('through /api/chat with SQLite: exercise and drill answers are graded, neve
     assert.equal(out.done.atlas_kind, kind, answer);
     assert.match(out.reply, reply, answer);
   };
-  await check('give me a review drill on python', 'the default is not shared', 'coding_drill_answer', /^Not quite, sir\./);
-  await check('give me a review drill', 'it does not cut anything', 'coding_drill_answer', /^Not quite, sir\./);
+  await check('give me a review drill on python', 'the default is not shared', 'coding_drill_answer', /^I can't judge that one automatically, sir\./);
+  await check('give me a review drill', 'it does not cut anything', 'coding_drill_answer', /^(?:I can't judge that one automatically|Not quite), sir\./);
+  await check('give me a review drill on binary search', 'it never checks the last item', 'coding_drill_answer', /^(?:I can't judge that one automatically|Right), sir/);
   await check('give me an exercise on dynamic programming', 'eighty nine not ninety', 'coding_answer', /^Right, sir: 89\./);
   await check('give me a review drill on concurrency', 'forEach does not wait for the async callbacks', 'coding_drill_answer', /^Right, sir, that's the bug\./);
   assert.deepEqual(saved.get('speech_corrections') || [], [], 'no speech correction was learned');

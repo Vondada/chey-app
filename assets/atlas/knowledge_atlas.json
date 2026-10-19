@@ -4494,7 +4494,7 @@
      "code": "// An attempt may change any file it needs.\nconst allowed = (path) => !/^\\.github\\//.test(path);",
      "finding": "The attempt can edit the checkpoint verifier and the failover gate, the code that judges it, so a bad change could approve itself. The judge and its gates must be unsafe paths an attempt can never touch.",
      "fixed": "// The checker and its gates are out of the attempt's reach.\nconst allowed = (path) => !/^(?:\\.github\\/|tools\\/che_coding_|server\\/cloudflare\\/coding_failover\\.mjs$)/.test(path);",
-     "from": "Adapted from a real CHE fix: a review fix on PR #328, after which an attempt can no longer change the gate and the checkpoint verifier, commit 3400cd79; pinned by \"the coding tools and the gate are unsafe paths: an attempt can never change the code that judges it\" in server/cloudflare/coding_failover.test.mjs"
+     "from": "Adapted from a real CHE fix: PR #328 (merged as a3be02c); the fix is its review commit 3400cd79, in the PR's history, after which an attempt can no longer change the gate and the checkpoint verifier, commit 3400cd79; pinned by \"the coding tools and the gate are unsafe paths: an attempt can never change the code that judges it\" in server/cloudflare/coding_failover.test.mjs"
     }
    ],
    "repo_examples": [
