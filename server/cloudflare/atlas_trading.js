@@ -9,9 +9,9 @@
 // places, prepares or changes an order, the desk or paper trading, and nothing reaches a broker.
 import {
   FUTURES_SPECS, SPEC_SOURCE, VERDICT_RULES, bookFill, candleAnatomy, costInR, expectancyStats, fairValueGaps, futuresRisk,
-  liquiditySweeps, maxDrawdown, monteCarlo, num, openingRange, optionAtExpiry, orderBlock, pct, positionSize, premiumDiscount,
-  rewardRisk, riskOfRuin, sampleSizeForMargin, sessionLevels, specOf, stockShares, strategyVerdict, structureBreaks, usd,
-  vwapBands, winRateInterval,
+  liquiditySweeps, losingStreaks, maxDrawdown, monteCarlo, multipleComparisons, num, openingRange, optionAtExpiry, orderBlock, paperFill,
+  pct, performanceBreakdown, positionSize, premiumDiscount, relativeVolume, rewardRisk, riskOfRuin, sampleSizeForMargin, sessionLevels, specOf,
+  stockShares, strategyVerdict, structureBreaks, usd, volumeProfile, vwapBands, winRateInterval,
 } from './atlas_math.js';
 import { CANDIDATES, INTRADAY_CANDIDATES, MIN_TRADES, readTrades, summarize, tradeDayOf } from './trading_evidence.js';
 import { readDesk } from './trading_desk.js';
@@ -41,6 +41,8 @@ const CALCS = {
   tFuturesRisk: futuresRisk, tPositionSize: positionSize, tRewardRisk: rewardRisk, tStockShares: stockShares, tOption: optionAtExpiry,
   tBookFill: bookFill, tCostInR: costInR, tVwapBands: vwapBands, tOpeningRange: openingRange, tSessionLevels: sessionLevels,
   tCandle: candleAnatomy, tFvg: fairValueGaps, tStructure: structureBreaks, tSweeps: liquiditySweeps, tOrderBlock: orderBlock,
+  tRelVolume: relativeVolume, tVolumeProfile: volumeProfile, tLosingStreaks: losingStreaks, tMultipleComparisons: multipleComparisons,
+  tPaperFill: paperFill, tPerformance: performanceBreakdown,
   tPremiumDiscount: premiumDiscount, tWinRate: winRateInterval, tExpectancy: expectancyStats, tMaxDrawdown: maxDrawdown,
   tSampleSize: sampleSizeForMargin, tMonteCarlo: monteCarlo, tRiskOfRuin: riskOfRuin,
 };
@@ -204,7 +206,7 @@ const CARDS = [
   calcCard({
     id: 't-price-action', domain: 'trading', title: 'Price action, candles and volume', level: 'beginner',
     summary: 'Reading bars directly: the body, the wicks, the range, and volume compared with recent bars.',
-    aliases: ['price action', 'candles and volume', 'candle anatomy', 'candlestick anatomy', 'reading candles', 'candle wicks', 'relative volume', 'rvol', 'volume analysis'],
+    aliases: ['price action', 'candles and volume', 'candle anatomy', 'candlestick anatomy', 'reading candles', 'candle wicks'],
     tags: ['price action', 'volume', 'fundamentals'], prerequisites: ['tick-value'], related: ['t-market-structure', 't-fair-value-gaps', 'vwap'],
     levels: {
       beginner: 'Price action means reading what price did, bar by bar, instead of an indicator. Each candle has an open, a high, a low and a close. The body runs from open to close; the thin wicks show where price went and was pushed back. Volume is how much traded in the bar.',
@@ -224,6 +226,31 @@ const CARDS = [
     misconceptions: ['High volume does not tell you who won: every contract bought was also sold.'],
     limitations: [ICT_LIMIT, 'Delayed public futures volume may not match the exchange total.'],
     sources: [ref('Candlestick chart', 'Wikipedia', 'https://en.wikipedia.org/wiki/Candlestick_chart'), LO_MAMAYSKY_WANG, ref('Trading Price Action Trends', 'Al Brooks')],
+  }),
+  calcCard({
+    id: 't-volume', domain: 'trading', title: 'Volume, relative volume and the volume profile', level: 'intermediate',
+    summary: 'How much traded: per bar, against the same time on earlier days, and at each price.',
+    aliases: ['relative volume', 'rvol', 'volume analysis', 'volume profile', 'volume profiles', 'volume at price', 'point of control', 'value area', 'value area high', 'value area low', 'cumulative volume', 'volume by time of day'],
+    tags: ['volume', 'intraday', 'statistics'], prerequisites: ['t-price-action'], related: ['vwap', 't-vwap-bands', 't-opening-range'],
+    levels: {
+      beginner: 'Volume is how many contracts traded in a bar. A big move on heavy volume had many participants; the same move on light volume had few. Because every session is busiest at the open and close, today\'s volume is best compared with earlier days at the same time of day, not with the whole of yesterday.',
+      intermediate: 'Relative volume = today\'s volume up to now ÷ the average volume up to the same clock time over the last N sessions. 900 contracts by 9:40 against an average of 750 by 9:40 is 1.2, busier than usual. A volume profile adds up volume at each price: the level with the most is the point of control (POC), and the value area is the band around it holding about 70% of the volume.',
+      expert: 'A real profile needs every trade\'s price; from bars CHE can only place each bar\'s volume at its close, an approximation that blurs fast bars. The value area grows from the POC by adding the busier neighbouring level each time, one common convention among several. Futures volume from a delayed public feed may be partial or revised, and the session start (6 p.m. or 9:30) changes every number. High volume shows participation, not direction: every contract bought was also sold.',
+    },
+    analogy: 'Relative volume is like comparing today\'s lunchtime crowd at a restaurant with its usual lunchtime crowd, not with a whole day\'s customers.',
+    che_note: 'CHE\'s paper feed keeps Yahoo\'s delayed MNQ volume on each 1-minute bar and sums it into 5-minute bars (market_feed.js parseYahooChart, aggregate); her VWAP weights by it, and the engine\'s own VWAP counts a bar with no volume as 1 (trading_evidence.js intradayContext). No strategy in CHE\'s engine uses relative volume or a volume profile yet.',
+    compute: 'tRelVolume', inputs: { sessions: 2, bars: [bar('2026-10-14T13:30:00Z', 1, 1, 1, 1, 200), bar('2026-10-14T13:35:00Z', 1, 1, 1, 1, 150), bar('2026-10-14T13:40:00Z', 1, 1, 1, 1, 150), bar('2026-10-14T13:45:00Z', 1, 1, 1, 1, 999), bar('2026-10-15T13:30:00Z', 1, 1, 1, 1, 300), bar('2026-10-15T13:35:00Z', 1, 1, 1, 1, 250), bar('2026-10-15T13:40:00Z', 1, 1, 1, 1, 450), bar('2026-10-15T13:45:00Z', 1, 1, 1, 1, 999), bar('2026-10-16T13:30:00Z', 1, 1, 1, 1, 400), bar('2026-10-16T13:35:00Z', 1, 1, 1, 1, 300), bar('2026-10-16T13:40:00Z', 1, 1, 1, 1, 200)] }, result: 1.2, unit: 'ratio',
+    f: ['Relative volume at the time of day', 'RVOL = V(today, up to t) ÷ average of V(day d, up to t) over the N sessions before', 'relative volume equals today\'s volume up to now, divided by the average volume up to the same time over the sessions before',
+      [['V(today, up to t)', 'volume since the session opened, up to the latest bar', 'contracts'], ['t', 'the clock time of the latest bar, New York', 'time'], ['N', 'how many earlier sessions', 'a count']],
+      'Sessions are CME days from 6 p.m. New York; delayed public volume may be partial.'],
+    quiz: [
+      { q: 'Today traded 1,200 contracts by 10:00; the last five days averaged 800 by 10:00. What is the relative volume?', a: '1.5: 1,200 ÷ 800.' },
+      { q: 'Closes and volumes: 100 for 150, 101 for 400, 102 for 600, 103 for 250, 104 for 100. Where are the POC and the 70% value area?', a: 'POC 102; value area 101 to 103, holding 1,250 of 1,500, or 83.3%.', check: { compute: 'tVolumeProfile', inputs: { step: 1, bars: [{ c: 100, v: 150 }, { c: 101, v: 400 }, { c: 102, v: 600 }, { c: 103, v: 250 }, { c: 104, v: 100 }] }, result: { poc: 102, val: 101, vah: 103 }, shown: ['POC 102', '101 to 103'] } },
+      { q: 'Why compare with the same time on earlier days?', a: 'Volume follows a daily shape, busiest near the open and close, so a whole-day average would mislead early in the session.' },
+    ],
+    misconceptions: ['High volume is not buying pressure: each contract traded has a buyer and a seller.'],
+    limitations: ['Delayed public futures volume may be partial or revised, so relative volume from it is approximate.', 'A profile built from bar closes approximates volume at price; the real one needs trade-by-trade data.'],
+    sources: [ref('Volume (finance)', 'Wikipedia', 'https://en.wikipedia.org/wiki/Volume_(finance)'), ref('Markets in Profile', 'James F. Dalton, Robert B. Dalton and Eric T. Jones'), CHE_CODE('market_feed.js (aggregate)'), CHE_CODE('atlas_math.js (relativeVolume, volumeProfile)')],
   }),
   calcCard({
     id: 't-market-structure', domain: 'trading', title: 'Market structure: BOS and CHOCH', level: 'intermediate',
@@ -428,7 +455,7 @@ const CARDS = [
   calcCard({
     id: 't-journaling', domain: 'trading', title: 'Trade journaling and performance review', level: 'beginner',
     summary: 'Write every trade down, losers included, and review the equity curve and its drawdowns.',
-    aliases: ['journaling', 'trade journal', 'trade journaling', 'performance review', 'performance analysis', 'reviewing trades', 'equity curve', 'drawdown percent'],
+    aliases: ['journaling', 'trade journal', 'trade journaling', 'performance review', 'reviewing trades', 'equity curve', 'drawdown percent'],
     tags: ['process', 'performance', 'statistics'], prerequisites: ['r-multiple', 'drawdown'], related: ['t-strategy-evaluation', 'drawdown', 'expectancy'],
     levels: {
       beginner: 'A trade journal records every trade: the setup, entry, stop, target, exit, size, result and why you took it. Losing trades matter as much as winners. Without a journal, memory keeps the good trades and forgets the bad ones, and nothing can be measured.',
@@ -450,6 +477,33 @@ const CARDS = [
     misconceptions: ['A journal of only the trades you remember is not a record: it is a highlight reel.'],
     limitations: ['A journal measures the past under one set of conditions; the next period can differ.', 'Slicing results into many groups finds patterns that are only chance.'],
     sources: [ref('Drawdown (economics)', 'Wikipedia', 'https://en.wikipedia.org/wiki/Drawdown_(economics)'), PARDO, CHE_CODE('trading_evidence.js (appendTrades)')],
+  }),
+  calcCard({
+    id: 't-performance-analysis', domain: 'trading', title: 'Performance analysis', level: 'expert',
+    summary: 'Reviewing results: expectancy in R per portfolio, the spread of R, MFE and MAE, streaks and time of day.',
+    aliases: ['performance analysis', 'trade performance analysis', 'r distribution', 'distribution of r', 'mae', 'mfe', 'maximum adverse excursion', 'maximum favorable excursion', 'maximum favourable excursion', 'excursion analysis', 'time of day analysis', 'time of day breakdown', 'multiple comparisons', 'multiple comparison problem', 'multiple testing', 'bonferroni correction'],
+    tags: ['performance', 'statistics', 'research'], prerequisites: ['t-journaling', 'expectancy'], related: ['t-journaling', 't-strategy-evaluation', 't-backtesting-pitfalls'],
+    levels: {
+      beginner: 'Performance analysis is reading a record of trades to learn what really happened: what an average trade made in R, how spread out the results were, how long the winning and losing streaks ran, and whether some times of day did better. Each strategy is reviewed on its own record.',
+      intermediate: 'Start with the mean and the median R: a positive mean with a negative median means a few big winners carry many small losers. MFE, the maximum favourable excursion, is how far a trade went your way before it closed; MAE, the maximum adverse excursion, how far it went against you. Trades that reached +1R MFE and still lost suggest the exit, not the entry, needs testing.',
+      expert: 'Slicing by hour, weekday or setup multiplies the comparisons: tested at 5% each, 20 groups give a 1 − 0.95^20 = 64% chance that at least one looks significant by luck alone, which is why a Bonferroni level of 0.05 ÷ 20 = 0.0025 is stricter. Each slice is also a smaller sample. Treat a good-looking slice as a new hypothesis to test forward on fresh trades, never as a finding.',
+    },
+    analogy: 'Reviewing trades by time of day is like a coach studying game film by quarter: useful, but with enough ways to slice the film one quarter will always look special by chance.',
+    che_note: 'CHE\'s journal records each trade\'s MFE and MAE in points and in R, from the highs and lows of the bars while it was open, and the New York session it entered in (trading_evidence.js closeAt, sessionOf). The Trading Room breaks results down by strategy, session and day (trading_live.js liveDashboard). Ask "what is my expectancy" or "evaluate my strategy" for the records, one portfolio at a time.',
+    measured: { metric: 'expectancy', label: 'expectancy' },
+    compute: 'tPerformance', inputs: { resolution: '5m', trades: [{ time: '2026-10-15T13:35:00Z', r: 2, mfeR: 2.5, maeR: 0.6 }, { time: '2026-10-15T14:10:00Z', r: -1, mfeR: 0.5, maeR: 0.6 }, { time: '2026-10-15T14:40:00Z', r: -1, mfeR: 0.5, maeR: 0.6 }, { time: '2026-10-15T15:05:00Z', r: -1, mfeR: 0.5, maeR: 0.6 }, { time: '2026-10-15T17:20:00Z', r: 2.5, mfeR: 3, maeR: 0.6 }, { time: '2026-10-15T18:00:00Z', r: -0.5, mfeR: 0.5, maeR: 0.6 }, { time: '2026-10-16T13:45:00Z', r: 1, mfeR: 1.5, maeR: 0.6 }, { time: '2026-10-16T19:10:00Z', r: -1, mfeR: 0.5, maeR: 0.6 }] },
+    result: { meanR: 0.125, medianR: -0.75, longestWinStreak: 1, longestLossStreak: 3 }, unit: 'R',
+    f: ['R distribution and streaks', 'mean R = Σ R ÷ n;  median R = the middle value;  streak = the longest run of wins or of losses in order;  by session = the same for each New York session', 'the mean R is the sum of the R-multiples divided by the trades, the median is the middle one, and a streak is the longest run of wins or of losses in order',
+      [['R', 'each trade\'s result in R after costs', 'R'], ['n', 'closed trades', 'a count'], ['session', 'the New York session the trade entered in', 'a label']],
+      'Trades in time order; each session group is a smaller sample than the whole.'],
+    quiz: [
+      { q: 'You compare 20 hours of the day, each tested at 5%. What is the chance at least one looks significant by luck?', a: 'About 64.2%: 1 − 0.95^20.', check: { compute: 'tMultipleComparisons', inputs: { alpha: 0.05, groups: 20 }, result: { familywise: 0.641514, bonferroni: 0.0025 }, shown: ['64.2%'] } },
+      { q: 'Results of +3R, −1R, −1R, −1R: what are the mean and the median?', a: 'Mean 0R and median −1R: one winner pays for three losers.', check: { compute: 'tPerformance', inputs: { trades: [{ r: 3 }, { r: -1 }, { r: -1 }, { r: -1 }] }, result: { meanR: 0, medianR: -1, longestLossStreak: 3 }, shown: ['Mean 0R', 'median −1R'] } },
+      { q: 'A losing trade had an MFE of +1.5R. What does that suggest?', a: 'It was well in profit first: test the exit rule, such as a closer target or a break-even stop, on new trades.' },
+    ],
+    misconceptions: ['The best hour in a breakdown is not an edge: with many slices, one will look best by chance.'],
+    limitations: ['Every slice is a smaller sample, and comparing many slices finds differences by luck.', 'MFE and MAE come from bar highs and lows, so moves inside a bar are not seen in order.'],
+    sources: [ref('Multiple comparisons problem', 'Wikipedia', 'https://en.wikipedia.org/wiki/Multiple_comparisons_problem'), ref('Maximum Adverse Excursion', 'John Sweeney'), CHE_CODE('trading_evidence.js (closeAt)'), CHE_CODE('trading_live.js (liveDashboard)')],
   }),
   calcCard({
     id: 't-strategy-evaluation', domain: 'trading', title: 'Strategy evaluation and verdicts', level: 'expert',
@@ -502,6 +556,31 @@ const CARDS = [
     sources: [ref('Sample size determination', 'Wikipedia', 'https://en.wikipedia.org/wiki/Sample_size_determination'), CHE_CODE('atlas_math.js')],
   }),
   calcCard({
+    id: 't-probability', domain: 'trading', title: 'Losing streaks and probability', level: 'intermediate',
+    summary: 'Independent trades, the complement, the chance of losses in a row, and how long the worst streak usually runs.',
+    aliases: ['losing streaks', 'losing streak', 'losing streak probability', 'consecutive losses', 'losses in a row', 'longest losing streak', 'independent events', 'conditional probability', 'gamblers fallacy', 'gambler\'s fallacy', 'complement rule'],
+    tags: ['statistics', 'risk', 'fundamentals'], prerequisites: ['win-rate-ci'], related: ['t-risk-of-ruin', 't-monte-carlo', 'risk-management'],
+    levels: {
+      beginner: 'If each trade wins with probability p, it loses with probability 1 − p: that is the complement. When trades are independent, chances multiply, so the chance of the next N trades all losing is (1 − p)^N. With a 40% win rate, four losses in a row happen 0.6⁴ = 13% of the time, so they are normal, not a sign the strategy broke.',
+      intermediate: 'The chance of a streak somewhere in a long run is far higher than the chance of one starting now. With a 40% win rate, 8 losses in a row start at any given trade only 1.7% of the time, but at least one such run appears in 100 trades about 49% of the time. The longest losing streak in n trades is usually about log base 1/(1 − p) of n·p.',
+      expert: `CHE computes the chance of a run of k losses in n trades exactly with the run recurrence A(n) = A(n − 1) − p(1 − p)^k A(n − k − 1), and the expected longest streak as the sum over k of the chance of a run of at least k; Schilling's approximation log_{1/q}(n·p) + γ ÷ ln(1/q) − ½, with q = 1 − p and γ = 0.5772, is within a few hundredths of it for long runs. The conditional-probability trap: after five losses the next trade is still a loss with probability 1 − p if trades are independent (the gambler's fallacy); and P(win | setup) is not P(setup | win).`,
+    },
+    analogy: 'Losing streaks are like runs of red at a roulette table: rare to start on any given spin, but over a long evening almost certain to show up somewhere.',
+    che_note: 'CHE\'s Monte Carlo of a record also reports each simulated path\'s longest losing streak, and her risk-of-ruin calculator uses the same independence assumption (atlas_math.js monteCarlo, riskOfRuin).',
+    compute: 'tLosingStreaks', inputs: { winRate: 0.4, trades: 10, streak: 4 }, result: { inARow: 0.1296, atLeastOnce: 0.4245157 }, unit: 'probability',
+    f: ['Losing streaks', 'P(next k all lose) = (1 − p)^k;  P(a run of k within n) = 1 − A(n), A(n) = A(n − 1) − p(1 − p)^k A(n − k − 1);  E[longest] ≈ log_{1/q}(n·p) + γ ÷ ln(1/q) − ½', 'the chance of the next k trades all losing is one minus p, to the power k; the chance of such a run somewhere in n trades comes from the run recurrence, and the longest streak is about log base one over q of n times p',
+      [['p', 'win rate per trade', 'a fraction'], ['q = 1 − p', 'loss rate per trade', 'a fraction'], ['k', 'losses in a row', 'a count'], ['n', 'trades in the run', 'a count']],
+      'Independent trades with one fixed win rate; real trades cluster, so streaks can run longer.'],
+    quiz: [
+      { q: 'With a 50% win rate, what is the chance of 5 losses in a row starting now?', a: 'About 3.1%: 0.5⁵ = 1/32.', check: { compute: 'tLosingStreaks', inputs: { winRate: 0.5, trades: 20, streak: 5 }, result: { inARow: 0.03125, atLeastOnce: 0.2498703 }, shown: ['3.1%'] } },
+      { q: 'And the chance of at least one run of 5 losses somewhere in 20 trades?', a: 'About 25%, eight times the chance of one starting now.' },
+      { q: 'After five losses in a row, is the next trade more likely to win?', a: 'No. If trades are independent, the chance is the same as always; thinking otherwise is the gambler\'s fallacy.' },
+    ],
+    misconceptions: ['A long losing streak is not proof a strategy stopped working: in a long run of trades it is expected.'],
+    limitations: ['Assumes independent trades with one fixed win rate; regime changes cluster losses, so real streaks can be longer.', 'The win rate itself is an estimate, so every streak probability inherits its uncertainty.'],
+    sources: [ref('The Longest Run of Heads (College Mathematics Journal, 1990)', 'Mark F. Schilling'), ref('Gambler\'s fallacy', 'Wikipedia', 'https://en.wikipedia.org/wiki/Gambler%27s_fallacy'), ref('Conditional probability', 'Wikipedia', 'https://en.wikipedia.org/wiki/Conditional_probability'), CHE_CODE('atlas_math.js (losingStreaks)')],
+  }),
+  calcCard({
     id: 't-backtesting-pitfalls', domain: 'trading', title: 'Backtesting pitfalls', level: 'expert',
     summary: 'Look-ahead, survivorship, overfitting and missing costs: the ways a backtest lies.',
     aliases: ['backtesting pitfalls', 'backtest pitfalls', 'backtesting mistakes', 'backtest mistakes', 'look ahead bias', 'look-ahead bias', 'lookahead bias', 'survivorship', 'data snooping', 'cost drag', 'repainting'],
@@ -525,6 +604,31 @@ const CARDS = [
     misconceptions: ['A backtest with a high win rate is not evidence until costs, causal data and untouched test data are all in place.'],
     limitations: ['Even a careful backtest is history: it cannot show a regime that has not happened yet.', 'Assumed costs are planning numbers, not a broker\'s schedule.'],
     sources: [BAILEY, ref('Look-ahead bias', 'Wikipedia', 'https://en.wikipedia.org/wiki/Look-ahead_bias'), ref('Overfitting', 'Wikipedia', 'https://en.wikipedia.org/wiki/Overfitting'), PARDO, CHE_CODE('trading_evidence.js (COSTS)')],
+  }),
+  calcCard({
+    id: 't-paper-trading', domain: 'trading', title: 'Paper trading and CHE\'s paper engine', level: 'intermediate',
+    summary: 'Simulated trades on real prices with assumed costs: how CHE\'s paper engine fills, and why paper is not live.',
+    aliases: ['paper trading', 'paper trade', 'paper simulation', 'trade simulation', 'paper engine', 'paper fills', 'paper fill', 'forward paper trading', 'paper versus live', 'paper vs live'],
+    tags: ['paper', 'execution', 'research'], prerequisites: ['t-order-types', 't-futures'], related: ['t-backtesting-pitfalls', 't-journaling', 't-order-book'],
+    levels: {
+      beginner: 'Paper trading means following a strategy\'s rules on real market prices and recording what would have happened, with no money and no broker order. It tests the rules forward, on prices the rules never saw. A paper result is not a live result: nobody filled the order, and nothing was risked.',
+      intermediate: 'In CHE\'s engine a signal is read from a closed 5-minute bar, and the entry is a market order at the next bar\'s open plus half a 1-tick spread and 1 tick of slippage. A stop fills as a market order at the stop, or at the open if price gapped through it; a target is a resting limit that pays only half the spread. If one bar touches both, the stop is assumed first. Commission $1.50 and fees $0.50 a contract a side come off every trade.',
+      expert: 'The bars are Yahoo\'s delayed 1-minute MNQ bars summed to 5 minutes, so paper results are delayed forward-paper data, research only. A plan whose next open is already past its stop or target is skipped, never filled at an invented price; no plan fills across the CME daily break, and positions go flat by 16:55 New York. Each strategy runs in its own isolated portfolio, every closed trade is validated and journalled append-only, and stopping paper trading voids an open position instead of closing it at a later price. Real fills can be worse: queue position, partial fills and fast markets are not modelled.',
+    },
+    analogy: 'Paper trading is like a flight simulator: it uses real instruments and real weather, but no one is in the air, and a perfect landing in it is not a pilot\'s licence.',
+    che_note: 'From the code: trading_evidence.js fillEntry, exitOn, fillExit, settleTrade and stepPortfolio fill and settle each trade with COSTS; trading_live.js liveTick runs every minute while CME is open on market_feed.js loadIntraday bars, journals closed trades with appendTrades, and imports no broker module; newPortfolio refuses any source other than paper or backtest. A paper result is never permission for a real order: a live order still needs the owner\'s explicit yes on the trading desk.',
+    compute: 'tPaperFill', inputs: { symbol: 'MNQ', side: 'long', open: 21000, stop: 20990, exitReason: 'target', exitPrice: 21020, qty: 1 }, result: { entryFill: 21000.375, exitFill: 21019.875, gross: 40, net: 35, rNet: 1.75 }, unit: '$ and price',
+    f: ['A paper fill in CHE\'s engine', 'entry = next open ± (½ spread + slippage);  stop or time exit = price ∓ (½ spread + slippage);  target exit = target ∓ ½ spread;  net = gross − spread − slippage − commissions − fees', 'the entry is the next bar\'s open plus half the spread and the slippage; a stop exit pays both again, a target only half the spread; the net is the gross minus every cost',
+      [['next open', 'the open of the bar after the signal bar', 'price'], ['spread, slippage', '1 tick of spread, half on each side, and 1 tick of slippage on market orders', 'index points'], ['commissions, fees', '$1.50 and $0.50 per contract per side', '$']],
+      'CHE\'s planning costs (trading_evidence.js COSTS), not a broker\'s fills; delayed bars.'],
+    quiz: [
+      { q: 'A long MNQ paper trade enters at a 21,000 open with a 20,990 stop and is stopped out at 20,990. What is the net after CHE\'s costs?', a: '−$25.50: −$20 gross, then $0.50 spread, $1.00 slippage, $3.00 commissions and $1.00 fees.', check: { compute: 'tPaperFill', inputs: { symbol: 'MNQ', side: 'long', open: 21000, stop: 20990, exitReason: 'stop', exitPrice: 20990, qty: 1 }, result: { entryFill: 21000.375, exitFill: 20989.625, gross: -20, net: -25.5, rNet: -1.275 }, shown: ['−$25.50'] } },
+      { q: 'Why does a target exit pay less than a stop exit?', a: 'A target is a resting limit, which cannot fill worse than its price, so only half the spread is charged; a stop is a market order and also pays slippage.' },
+      { q: 'Does a profitable paper record allow CHE to place a real order?', a: 'No. Paper is research on delayed data; a live order still needs the owner\'s explicit yes.' },
+    ],
+    misconceptions: ['A paper profit is not money that a live account would have made: real fills, queue position and delays differ.'],
+    limitations: ['Paper results are delayed forward-paper data with assumed costs, not broker fills; fast markets, partial fills and queue position are not modelled.', 'A paper record is never permission for a live order.'],
+    sources: [ref('Paper trading', 'Wikipedia', 'https://en.wikipedia.org/wiki/Paper_trading'), CHE_CODE('trading_evidence.js (fillEntry, exitOn, settleTrade, stepPortfolio)'), CHE_CODE('trading_live.js (liveTick, setLivePaper)'), CHE_CODE('market_feed.js (loadIntraday, aggregate)')],
   }),
   calcCard({
     id: 't-monte-carlo', domain: 'trading', title: 'Monte Carlo of trade sequences', level: 'expert',
