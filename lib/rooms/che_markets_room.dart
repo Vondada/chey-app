@@ -213,26 +213,46 @@ class _CheMarketsRoomState extends State<CheMarketsRoom> {
             padding: const EdgeInsets.only(bottom: CheSpace.xxl),
             children: [
               _TickerTape(quotes: _quotes, fmt: _fmt),
-              // The live chart fills the room: switch symbols and timeframes
-              // by tap, typing or voice; "Read price" speaks the latest price.
-              Padding(
-                padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.md, CheSpace.gutter, 0),
-                child: CheLiveChartPanel(
-                  baseUrl: widget.baseUrl,
-                  headers: widget.headers,
-                  client: widget.client,
-                  height: math.max(320.0, MediaQuery.sizeOf(context).height * 0.55),
-                ),
-              ),
               // CHE's forward paper trading, from its records (owner, 2026-10-18).
               Padding(
                 padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.md, CheSpace.gutter, 0),
                 child: CheLivePaperPanel(baseUrl: widget.baseUrl, headers: widget.headers, onAsk: widget.onAsk, client: widget.client),
               ),
-              // Every broker connection as its own system reports it (issue #344).
+              // TradingView is opt-in. Never mount a third-party iframe when
+              // the owner opens the Trading Room just to see CHE's own paper chart.
               Padding(
-                padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.md, CheSpace.gutter, 0),
-                child: CheTradingConnectionsPanel(baseUrl: widget.baseUrl, headers: widget.headers, onAsk: widget.onAsk, client: widget.client),
+                padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.sm, CheSpace.gutter, 0),
+                child: ExpansionTile(
+                  key: const PageStorageKey<String>('che-optional-chart'),
+                  initiallyExpanded: false,
+                  title: const Text('Other charts (optional)', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 17)),
+                  subtitle: const Text('TradingView is separate. The CHE paper chart above needs no TradingView sign-in.',
+                      style: TextStyle(color: Color(0xFF8FA4A1), fontSize: 14)),
+                  children: [
+                    CheLiveChartPanel(
+                      baseUrl: widget.baseUrl,
+                      headers: widget.headers,
+                      client: widget.client,
+                      height: math.max(320.0, MediaQuery.sizeOf(context).height * 0.55),
+                    ),
+                  ],
+                ),
+              ),
+              // Broker setup stays available but no longer fills the first screen.
+              Padding(
+                padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.sm, CheSpace.gutter, 0),
+                child: ExpansionTile(
+                  key: const PageStorageKey<String>('che-broker-connections'),
+                  initiallyExpanded: false,
+                  title: const Text('Broker connections', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 17)),
+                  subtitle: const Text('Alpaca paper keys, Tradovate and FundYourEdge status.',
+                      style: TextStyle(color: Color(0xFF8FA4A1), fontSize: 14)),
+                  children: [
+                    CheTradingConnectionsPanel(
+                      baseUrl: widget.baseUrl, headers: widget.headers, onAsk: widget.onAsk, client: widget.client,
+                    ),
+                  ],
+                ),
               ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(
