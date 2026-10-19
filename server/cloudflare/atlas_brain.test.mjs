@@ -548,10 +548,21 @@ test('counter-cases keep their routes: a bare "how am I doing", measured questio
   for (const words of ['reset my thoughts', 'clear the screen']) assert.deepEqual(classifyOwnerActions(words), [], `${words} is still ordinary chat`);
   assert.equal(atlasResetIntent('reset the timer'), null);
   assert.equal(atlasIntent('number 3 is 55'), null, 'an answer needs the quiz it answers');
-  for (const words of ['what should I do next', 'suggest a topic', 'what should I read', 'show my results in trading', "what's my progress", 'what did I learn', 'what have I covered', 'what have I studied', 'what should I study next', 'what have I learned so far', 'show my history']) {
+  for (const words of ['what should I do next', 'suggest a topic', 'what should I read', 'show my results in trading', "what's my progress", 'what did I learn', 'what have I covered', 'what have I studied', 'show my history']) {
     assert.equal(atlasIntent(words), null, `${words}: not about the atlas without an atlas word or an atlas reply just before`);
     assert.notEqual((await che.say(words, { keep: false, history: [] })).route, 'che_knowledge_atlas', words);
   }
+  // Bare progress questions are the owner's study, read from his Brain records and never answered by the model
+  // (issue #346 audit): "what have I learned", "how much have I learned", "what should I study next".
+  for (const words of ['what have I learned so far', 'how much have I learned', 'what should I study next']) {
+    assert.ok(atlasIntent(words), `${words}: a bare progress question is the atlas's`);
+    const out = await che.say(words, { keep: false, history: [] });
+    assert.equal(out.route, 'che_knowledge_atlas', words);
+    assert.equal(out.modelCalls, 0, `${words}: no model call`);
+  }
+  // "What have I learned about …" with any other subject is not the atlas's question.
+  assert.equal(atlasIntent('what have I learned about the apartment lease'), null);
+  assert.notEqual((await che.say('what have I learned about the apartment lease', { keep: false, history: [] })).route, 'che_knowledge_atlas');
 });
 
 // ─── Review of acd7286: ordinary sentences are never answers, corrections or resets ─────

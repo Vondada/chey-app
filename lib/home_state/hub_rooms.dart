@@ -408,6 +408,7 @@ extension _CheHomeHubRooms on _CHEHomeState {
       speaking: _isSpeaking,
       jobs: backgroundJobs,
       onOpenJob: (job) => unawaited(_openJob(job)),
+      seriesPanel: CheSeriesStudioPanel(baseUrl: () => cheAgentBaseUrl, headers: () => _authHeaders, onAsk: _runHubPrompt),
       musicScene: MusicStudioScene(
         active: active,
         musicConnected: musicReady,
