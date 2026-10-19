@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
-import { SIM_STRATEGIES, MINUTE_FEEDS, NOT_SIMULATED, minuteFeedFor, strategySimTick, nextStrategySimTickAt, readSimState, storeTrades, readStoredTrades, summarize, profitLabel, leaderboard, setStrategySimPaused, setStrategySimCeiling, assertSpend, closedBars, sessionOf, strategySimView, TICK_MS, MIN_SAMPLE, TRADE_CAP, OOS_SHARE, HEARTBEAT_MS, STATE_KEY } from './strategy_sim.js';
+import { SIM_STRATEGIES, MINUTE_FEEDS, NOT_SIMULATED, minuteFeedFor, strategySimTick, nextStrategySimTickAt, readSimState, storeTrades, readStoredTrades, summarize, profitLabel, leaderboard, setStrategySimPaused, setStrategySimCeiling, chargeSpend, assertSpend, closedBars, sessionOf, strategySimView, strategySimIntent, speakStrategySim, TICK_MS, MIN_SAMPLE, TRADE_CAP, OOS_SHARE, HEARTBEAT_MS, STATE_KEY } from './strategy_sim.js';
 import { loadCandles, prepareSession, OPENING_MINUTES, SKILL_IDS, strategyById, readBook } from './trading_lab.js';
 import { ENVIRONMENTS } from './trading_environments.js';
 import { wilsonInterval } from './trading_evidence.js';
@@ -51,7 +51,11 @@ function memStorage(saved = new Map(), alarms = []) {
   return {
     saved,
     get: async (key) => (saved.has(key) ? structuredClone(saved.get(key)) : undefined),
-    put: async (key, value) => { saved.set(key, structuredClone(value)); },
+    // Durable Object storage: put(key, value) or put(entries), and the entries form is one atomic write.
+    put: async (key, value) => {
+      if (key !== null && typeof key === 'object') for (const [k, v] of Object.entries(key)) saved.set(k, structuredClone(v));
+      else saved.set(key, structuredClone(value));
+    },
     delete: async (key) => saved.delete(key),
     setAlarm: async (t) => { alarms.push(t); },
     getAlarm: async () => alarms.at(-1) ?? null,
@@ -94,12 +98,15 @@ test('the hourly learning set is unchanged: the intraday rules stay out of SKILL
 });
 
 test('minute bars exist only for Binance crypto and the delayed Yahoo futures; ES and MES have none', () => {
-  assert.deepEqual(Object.keys(MINUTE_FEEDS).sort(), ['BTCUSDT', 'ETHUSDT', 'MNQ', 'NQ']);
+  assert.deepEqual(Object.keys(MINUTE_FEEDS).sort(), ['BTCUSDT', 'ETHUSDT', 'MNQ']);
   assert.equal(minuteFeedFor('ES'), null);
   assert.equal(minuteFeedFor('MES'), null);
   assert.equal(minuteFeedFor('BTCUSDT').kind, 'binance');
-  assert.equal(minuteFeedFor('NQ').kind, 'yahoo');
-  assert.match(NOT_SIMULATED[0].why, /daily only/);
+  assert.equal(minuteFeedFor('MNQ').kind, 'yahoo');
+  // NQ is the same front month as MNQ: one feed per underlying, so it is not a second feed.
+  assert.equal(minuteFeedFor('NQ'), null);
+  assert.match(NOT_SIMULATED.find((x) => x.symbols.includes('ES')).why, /daily only/);
+  assert.match(NOT_SIMULATED.find((x) => x.symbols.includes('NQ')).why, /same Nasdaq-100 front month/);
   assert.match(MINUTE_FEEDS.MNQ.feed, /delayed/);
 });
 
@@ -343,8 +350,8 @@ test('break-even win rate is the average loss over the average win plus loss, af
   assert.ok(Math.abs(s.expectancy_r - 0.8) < 1e-9);
 });
 
-test('the out-of-sample flag uses the newest 30% of the watched time', () => {
-  const symbols = { BTCUSDT: { first_t: iso(T_START), last_t: iso(T_START + 1000 * 60000), bars: 1000 } };
+test('the out-of-sample flag starts at the frozen cut: 70% of the first window is in sample', () => {
+  const symbols = { BTCUSDT: { first_t: iso(T_START), last_t: iso(T_START + 1000 * 60000), oos_from: iso(T_START + 700 * 60000), bars: 1000 } };
   const cut = T_START + (1 - OOS_SHARE) * 1000 * 60000; // minute 700
   const mk = (id, minute) => ({ id, symbol: 'BTCUSDT', strategy: 'channel-20|any|2', r: 1, entry_t: iso(T_START + minute * 60000), exit_t: iso(T_START + (minute + 1) * 60000) });
   const list = [mk('a', 600), mk('b', 699), mk('c', 700), mk('d', 800), mk('e', 900)];
@@ -551,7 +558,11 @@ function countingStorage(saved, log) {
   const base = memStorage(saved);
   return {
     ...base,
-    put: async (key, value) => { log.push(key); return base.put(key, value); },
+    put: async (key, value) => {
+      if (key !== null && typeof key === 'object') for (const k of Object.keys(key)) log.push(k);
+      else log.push(key);
+      return base.put(key, value);
+    },
     delete: async (key) => { log.push(`delete:${key}`); return base.delete(key); },
   };
 }
@@ -639,6 +650,139 @@ test('minute-only wake-up: no GitHub or model call; an hourly wake-up still chec
   }
 });
 
+// ─── Review blockers: pause during a load, one feed per underlying, one atomic write, spend, the frozen cut, intent ───
+
+test('a pause that lands during a feed load stops the pass: no trade opens after the pause', async () => {
+  const bars = flatThen([{ ...BREAK }, FILL, TARGET_BAR, TAIL, TAIL]);
+  const saved = new Map();
+  const storage = memStorage(saved);
+  const loaders = {
+    BTCUSDT: async () => {
+      await setStrategySimPaused(storage, true, nowAfter(bars));
+      return { candles: bars, status: 'LIVE' };
+    },
+    ETHUSDT: noFeed,
+    MNQ: noFeed,
+  };
+  const run = await strategySimTick(storage, { now: nowAfter(bars), fetcher: noNetwork, loaders });
+  assert.equal(run.paused, true);
+  assert.equal(run.opened, 0, 'nothing opened after the pause');
+  const state = await readSimState(storage);
+  assert.deepEqual(state.open, {}, 'no open position');
+  assert.deepEqual(state.pending, {}, 'no pending order');
+  assert.equal(state.trades.stored, 0);
+  assert.equal(state.symbols.BTCUSDT.bars, 0, 'the paused feed was not used');
+  assert.match(state.last_paused_marker.note, /during a pass/);
+});
+
+test('a pause between two feeds keeps what finished before it and reads nothing after it', async () => {
+  const bars = flatThen([{ ...BREAK }, FILL, TARGET_BAR, TAIL, TAIL]);
+  const saved = new Map();
+  const storage = memStorage(saved);
+  let mnqReads = 0;
+  const loaders = {
+    BTCUSDT: async () => ({ candles: bars, status: 'LIVE' }),
+    ETHUSDT: async () => {
+      await setStrategySimPaused(storage, true, nowAfter(bars));
+      return { candles: walk(200, { seed: 5 }), status: 'LIVE' };
+    },
+    MNQ: async () => { mnqReads += 1; return { candles: walk(200, { seed: 6 }), status: 'DELAYED' }; },
+  };
+  const run = await strategySimTick(storage, { now: nowAfter(bars), fetcher: noNetwork, loaders });
+  assert.equal(run.paused, true);
+  assert.equal(mnqReads, 0, 'no feed is read after the pause');
+  const state = await readSimState(storage);
+  assert.ok(state.trades.stored >= 1, 'the BTC trade that closed before the pause is kept');
+  assert.equal(state.symbols.ETHUSDT.bars, 0);
+});
+
+test('MNQ and NQ are one front month: NQ is never read, and identical bars are never counted twice', async () => {
+  const bars = walk(1200, { seed: 17 });
+  const feedMNQ = async () => ({ candles: bars, status: 'DELAYED', source: 'fixture' });
+  const solo = new Map();
+  await strategySimTick(memStorage(solo), { now: nowAfter(bars), fetcher: noNetwork, loaders: { BTCUSDT: noFeed, ETHUSDT: noFeed, MNQ: feedMNQ } });
+  const soloStore = memStorage(solo);
+  const soloTrades = await readStoredTrades(soloStore, (await readSimState(soloStore)).trades);
+  let nqReads = 0;
+  const both = new Map();
+  await strategySimTick(memStorage(both), { now: nowAfter(bars), fetcher: noNetwork, loaders: { BTCUSDT: noFeed, ETHUSDT: noFeed, MNQ: feedMNQ, NQ: async () => { nqReads += 1; return feedMNQ(); } } });
+  const bothStore = memStorage(both);
+  const bothTrades = await readStoredTrades(bothStore, (await readSimState(bothStore)).trades);
+  assert.ok(soloTrades.length > 0, 'the fixture trades');
+  assert.equal(nqReads, 0, 'NQ is never read');
+  assert.equal(bothTrades.length, soloTrades.length, 'the same trades, counted once');
+  assert.ok(bothTrades.every((t) => t.symbol === 'MNQ'));
+});
+
+test('identical MNQ and NQ trades count once: 15 real trades stay "not proven yet" at sample 15', () => {
+  const t0 = T_START;
+  const mk = (symbol, i) => ({ id: `${symbol}-${i}`, symbol, strategy: 'channel-20|any|2', r: 2, entry_t: iso(t0 + (1000 + i) * 60000), exit_t: iso(t0 + (1001 + i) * 60000) });
+  const real = Array.from({ length: 15 }, (_, i) => mk('MNQ', i));
+  const copies = Array.from({ length: 15 }, (_, i) => mk('NQ', i));
+  const window = { first_t: iso(t0), last_t: iso(t0 + 2000 * 60000), oos_from: iso(t0 + 700 * 60000), bars: 1900 };
+  const row = leaderboard([...real, ...copies], { MNQ: window, NQ: window }).find((r) => r.id === 'channel-20|any|2');
+  assert.equal(row.trades, 15, 'the NQ copies add nothing');
+  assert.equal(row.sample_size, 15);
+  assert.equal(row.label, 'not proven yet');
+  assert.ok(row.reasons.some((x) => /sample 15 out-of-sample trades, need 30/.test(x)));
+});
+
+test('the out-of-sample cut is frozen: watching more time does not move a trade between in and out of sample', () => {
+  const t0 = T_START;
+  const mk = (minute) => ({ id: `t${minute}`, symbol: 'MNQ', strategy: 'channel-20|any|2', r: 1, entry_t: iso(t0 + minute * 60000), exit_t: iso(t0 + (minute + 1) * 60000) });
+  const list = [mk(100), mk(600), mk(700), mk(900), mk(1500)];
+  const watched = (last) => ({ MNQ: { first_t: iso(t0), last_t: iso(t0 + last * 60000), oos_from: iso(t0 + 700 * 60000), bars: last } });
+  const counts = [1000, 2000, 5000].map((last) => leaderboard(list, watched(last)).find((r) => r.id === 'channel-20|any|2').sample_size);
+  assert.deepEqual(counts, [3, 3, 3], 'minutes 700, 900 and 1500 are out of sample at every horizon');
+});
+
+test('a closed trade and the state that records it are one storage write, so a restart cannot repeat the close', async () => {
+  const bars = flatThen([{ ...BREAK }, FILL, TARGET_BAR, TAIL, TAIL]);
+  const saved = new Map();
+  const base = memStorage(saved);
+  const calls = [];
+  const storage = { ...base, put: async (key, value) => { calls.push(key !== null && typeof key === 'object' ? Object.keys(key) : [key]); return base.put(key, value); } };
+  await strategySimTick(storage, { now: nowAfter(bars), fetcher: noNetwork, loaders: onlyBtc(bars) });
+  const atomic = calls.find((keys) => keys.includes(STATE_KEY) && keys.some((k) => k.startsWith('strategy_sim_trades:')));
+  assert.ok(atomic, `one write holds the chunk and the state: ${JSON.stringify(calls)}`);
+});
+
+test('spend is charged to the day ledger, and a tick is blocked once the day passes the ceiling', async () => {
+  const bars = walk(120, { seed: 2 });
+  const now = nowAfter(bars);
+  const storage = memStorage(new Map());
+  await setStrategySimCeiling(storage, 0.25, now);
+  assert.equal((await chargeSpend(storage, 0.1, now)).within_ceiling, true);
+  const big = await chargeSpend(storage, 0.5, now);
+  assert.equal(big.spent_usd, 0.6);
+  assert.equal(big.within_ceiling, false);
+  let reads = 0;
+  const blocked = await strategySimTick(storage, { now, fetcher: noNetwork, loaders: { BTCUSDT: async () => { reads += 1; return { candles: bars, status: 'LIVE' }; }, ETHUSDT: noFeed, MNQ: noFeed } });
+  assert.match(blocked.blocked, /daily spend ceiling/);
+  assert.equal(reads, 0, 'no bars read over the ceiling');
+  assert.equal((await chargeSpend(storage, -1, now)).ok, false);
+  assert.equal((await chargeSpend(storage, '1', now)).ok, false);
+});
+
+test('the ceiling accepts only a number: strings, null, booleans and missing values are refused', async () => {
+  const storage = memStorage();
+  for (const bad of ['5', null, true, undefined, NaN, [5]]) assert.equal((await setStrategySimCeiling(storage, bad)).ok, false, `refused ${String(bad)}`);
+  assert.equal((await setStrategySimCeiling(storage, 5)).ok, true);
+});
+
+test('typed and spoken requests: pause and resume need the command or an imperative; a question is a status read', async () => {
+  assert.deepEqual(strategySimIntent('Strategy simulation pause'), { kind: 'pause' });
+  assert.deepEqual(strategySimIntent('strategy simulation resume'), { kind: 'resume' });
+  assert.deepEqual(strategySimIntent("Strategy simulation Joe's Barbershop in Phoenix"), { kind: 'status' });
+  assert.deepEqual(strategySimIntent('Pause the strategy simulation, please'), { kind: 'pause' });
+  assert.deepEqual(strategySimIntent('Resume the strategy simulation'), { kind: 'resume' });
+  assert.deepEqual(strategySimIntent('Is the strategy simulation paused?'), { kind: 'status' });
+  assert.equal(strategySimIntent('backtest bitcoin'), null);
+  const text = speakStrategySim(await strategySimView(memStorage()));
+  assert.match(text, /The strategy simulation is running/);
+  assert.match(text, /profitable: 0 of 10/);
+});
+
 // ─── Owner routes: read and the kill switch are owner-only ───────────────
 
 test('owner routes: a guest is refused, the owner reads, pauses, resumes and sets the ceiling', async () => {
@@ -699,6 +843,6 @@ test('the simulation view says what each minute bar is, and what it is not', asy
   assert.match(byName.MNQ.source, /Yahoo/);
   assert.equal(byName.BTCUSDT.bars, '1-minute bars');
   assert.ok(!view.minute_bars.some((b) => /ES|MES/.test(b.symbol)), 'no ES or MES minute row');
-  assert.match(view.not_simulated[0].why, /daily only/);
+  assert.match(view.not_simulated.find((x) => x.symbols.includes('ES')).why, /daily only/);
   assert.ok(view.notes.some((n) => /Paper only/.test(n)));
 });

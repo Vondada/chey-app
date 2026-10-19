@@ -61,7 +61,7 @@ import { recordReliability, reliabilityIntent, reliabilitySummary, speakReliabil
 import { answerOwnerMemoryQuestion, auditMemoryProvenance, evidenceQuestion, evidenceReferent, evidenceRequestSplit, explainEvidenceFor, findAnswerEvidence, guardOwnerAttributions, guardRememberBlock, latestAnswerEvidence, loadRetractions, memoryPromptContext, ownerFactCorrection, ownerMemoryQuestion, ownerWords, recordAnswerEvidence, recordRetractions, storyRequested } from './memory_provenance.js';
 import { condenseHistory, ownerNotificationPolicy } from './workflow_governor.js';
 import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, nextTradingTickAt, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
-import { nextStrategySimTickAt, setStrategySimCeiling, setStrategySimPaused, strategySimTick, strategySimView, strategySimWake } from './strategy_sim.js';
+import { nextStrategySimTickAt, setStrategySimCeiling, setStrategySimPaused, speakStrategySim, strategySimIntent, strategySimTick, strategySimView, strategySimWake } from './strategy_sim.js';
 import { evidenceIntent, evidenceReport, evidenceTick } from './trading_evidence_runner.js';
 import { ATLAS_SOURCE, answerAtlas, atlasHiddenAction, atlasIntent, atlasQuizAnswerTurn, atlasPromptContext, atlasResetAsk, atlasResetIntent, projectAtlasToBrain, resetAtlasProgress } from './knowledge_atlas.js';
 import { LIVE_BACKTEST, LIVE_RUNS, LIVE_STATE, liveBacktest, liveDashboard, livePaperSummary, liveTick, nextLiveTickAt, setLivePaper } from './trading_live.js';
@@ -9808,6 +9808,20 @@ export class CheState extends DurableObject {
         // The owner's evidence questions are answered from recorded runs only, never from a guess.
         if (evidenceIntent(message)) {
           return ndjsonReply(await evidenceReport(this.ctx.storage), { source: 'che_trading_evidence' });
+        }
+        // Strategy simulation: pause, resume and status by typing, by voice, or through the /trade-sim command. Owner only.
+        const sim = strategySimIntent(message);
+        if (sim) {
+          if (!ownerDevice) return ndjsonReply('Only the CHE owner can control the strategy simulation, sir.', { source: 'che_strategy_sim', ok: false });
+          if (sim.kind === 'pause' || sim.kind === 'resume') {
+            await setStrategySimPaused(this.ctx.storage, sim.kind === 'pause');
+            // Resuming arms the next minute at once, so it does not wait for another wake-up.
+            if (sim.kind === 'resume') await this.scheduleWork();
+          }
+          const lead = sim.kind === 'pause' ? 'Paused the strategy simulation, sir. No bars are read and no trades open until you resume it.'
+            : sim.kind === 'resume' ? 'Resumed the strategy simulation, sir. It runs again on the next minute.' : '';
+          const view = await strategySimView(this.ctx.storage);
+          return ndjsonReply([lead, speakStrategySim(view)].filter(Boolean).join('\n'), { source: 'che_strategy_sim' });
         }
         const trade = tradingIntent(message);
         if (trade) {

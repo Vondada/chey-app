@@ -6,8 +6,9 @@
 //
 // Minute bars, per symbol (MINUTE_FEEDS). Only these have real minute bars:
 //   BTCUSDT, ETHUSDT  Binance public 1-minute candles (trading_lab.js loadCandles, interval 1m). Live.
-//   MNQ, NQ           Yahoo Finance 1-minute bars of the continuous front month (market_feed.js
-//                     loadIntraday, MNQ=F / NQ=F). Delayed CME data: research and paper evidence only.
+//   MNQ               Yahoo Finance 1-minute bars of the continuous front month (market_feed.js
+//                     loadIntraday, MNQ=F). Delayed CME data: research and paper evidence only.
+//                     NQ is the same front month, so it is not simulated again: one feed per underlying.
 //   ES, MES           No minute bars. Stooq (trading_lab.js) is daily only, so they are not simulated.
 // A bar is used only once it has closed and was actually received. Nothing is filled in or invented.
 //
@@ -17,8 +18,8 @@
 // not fill. Inside one bar a stop is checked before a target (the worst case).
 //
 // The rules are trading_lab.js rules (entry, prepare, the skill builder, stats) with fixed
-// parameters, listed in SIM_STRATEGIES. Nothing is fitted here. The out-of-sample flag is a time
-// split: the newest share of the time the engine has watched.
+// parameters, listed in SIM_STRATEGIES. Nothing is fitted here. The out-of-sample window is the
+// newest share of the time watched, cut once per symbol at its first pass and never moved after.
 import { loadCandles, prepare, prepareSession, stats, strategyById } from './trading_lab.js';
 import { loadIntraday } from './market_feed.js';
 import { wilsonInterval } from './trading_evidence.js';
@@ -36,11 +37,13 @@ export const OOS_SHARE = 0.3;
 const WARMUP_BARS = 60;
 const NY_OPEN_MINUTE = 9 * 60 + 30;
 const DUE_SLACK_MS = 5_000;
-// Storage writes: the state is saved when a trade opens or closes, and otherwise at most once per heartbeat.
+// Storage writes: a pass saves when a trade opens or closes, and otherwise at most once per heartbeat.
 // Progress between saves is kept in memory and replayed deterministically after a restart (see readSimState).
 export const HEARTBEAT_MS = 15 * 60_000;
 
 // Costs are assumptions, stated here and in every output. Change them in code, not in a model.
+// One feed per underlying: MNQ stands for the Nasdaq-100 front month. NQ (the same front month) is not a
+// second feed, so the same bars can never count twice.
 export const MINUTE_FEEDS = Object.freeze({
   BTCUSDT: {
     label: 'BTC/USD', kind: 'binance', session: 'utc', feed: 'Binance public 1-minute candles (live)',
@@ -55,14 +58,10 @@ export const MINUTE_FEEDS = Object.freeze({
     feed: 'Yahoo Finance 1-minute bars, MNQ=F, delayed CME data (research only)',
     fee: { perSideUsd: 1 }, slip: { ticks: 1 },
   },
-  NQ: {
-    label: 'E-mini Nasdaq-100 (NQ)', kind: 'yahoo', root: 'NQ', session: 'et', tick: 0.25, pointValue: 20,
-    feed: 'Yahoo Finance 1-minute bars, NQ=F, delayed CME data (research only)',
-    fee: { perSideUsd: 2.5 }, slip: { ticks: 1 },
-  },
 });
 
 export const NOT_SIMULATED = Object.freeze([
+  { symbols: ['NQ'], why: 'NQ is the same Nasdaq-100 front month as MNQ (Yahoo NQ=F and MNQ=F). It is simulated once, as MNQ, so identical bars never count twice.' },
   { symbols: ['ES', 'MES'], why: 'No minute bars in CHE. The stock and futures path (Stooq) is daily only, so these are not simulated.' },
 ]);
 
@@ -91,9 +90,10 @@ const RULES = SIM_STRATEGIES.map((s) => {
 const iso = (ms) => new Date(ms).toISOString();
 const dayOf = (ms) => new Date(ms).toISOString().slice(0, 10);
 const pct = (x) => `${Math.round(x * 10000) / 100}%`;
+const isFeed = (symbol) => Object.prototype.hasOwnProperty.call(MINUTE_FEEDS, symbol);
 
 export function minuteFeedFor(symbol) {
-  return Object.prototype.hasOwnProperty.call(MINUTE_FEEDS, symbol) ? { symbol, ...MINUTE_FEEDS[symbol] } : null;
+  return isFeed(symbol) ? { symbol, ...MINUTE_FEEDS[symbol] } : null;
 }
 
 export function costText(feed) {
@@ -181,20 +181,31 @@ function closeTrade(pos, exit, bar, feed) {
   return { ...pos, exit_t: bar.t, exit_raw: exit.raw, exit: exitPx, exit_reason: exit.reason, r_gross: rGross, r, cost_r: rGross - r };
 }
 
+// The out-of-sample cut, frozen at the symbol's first pass: 70% of that first window is in sample.
+function frozenCut(bars) {
+  const a = Date.parse(bars[WARMUP_BARS].t);
+  const b = Date.parse(bars[bars.length - 1].t);
+  return iso(a + (1 - OOS_SHARE) * (b - a));
+}
+
 // Runs every strategy over the bars not yet processed for one symbol. Returns the closed trades.
-function runBars(state, symbol, bars, ctx, feed, status) {
+// isPaused is checked before each bar and before every open, so a pause stops new trades at once.
+function runBars(state, symbol, bars, ctx, feed, status, isPaused = () => false) {
   const closed = [];
   let opened = 0;
   const sym = state.symbols[symbol];
   const lastT = sym.last_t ? Date.parse(sym.last_t) : -Infinity;
   for (let j = 0; j < bars.length; j++) {
+    if (isPaused()) break;
     const bar = bars[j];
     if (Date.parse(bar.t) <= lastT) continue;
     if (j < WARMUP_BARS) { sym.last_t = bar.t; continue; }
     if (!sym.first_t) sym.first_t = bar.t;
+    if (!sym.oos_from) sym.oos_from = frozenCut(bars);
     sym.bars += 1;
     state.counts.bars += 1;
     SIM_STRATEGIES.forEach((s, k) => {
+      if (isPaused()) return;
       const key = `${s.id}|${symbol}`;
       let pos = state.open[key];
       const pend = state.pending[key];
@@ -227,7 +238,7 @@ function runBars(state, symbol, bars, ctx, feed, status) {
   return { closed, opened };
 }
 
-// ─── State and storage (trades are kept in chunks, under the 128 KiB value limit) ───
+// ─── State and storage (trades are kept in chunks, each well under the storage value limit) ───
 
 const chunkKey = (n) => `strategy_sim_trades:${n}`;
 
@@ -241,9 +252,9 @@ function freshState() {
   };
 }
 
-// The live state of each storage object. Between saves the newest progress lives here; a restart reloads
-// the last save and replays the bars after it, which gives the same trades (the replay starts from the
-// saved cursor and every trade is saved the moment it opens or closes, so none is repeated).
+// The live state of each storage object. Between saves the newest progress lives here. A restart reloads the
+// last save and replays the bars after it: the same trades, because a pass writes its closed trades and the
+// state that records them in one storage write, so a restart never sees a close without its state (no repeat).
 const live = new WeakMap();
 
 export async function readSimState(storage) {
@@ -262,19 +273,21 @@ export async function readSimState(storage) {
   return state;
 }
 
-// The one place the state is written. Callers decide when a write is needed (see strategySimTick).
+// The one place the state is saved on its own. A pass saves through commitSim, which writes the trades with it.
 async function saveSimState(storage, state, now = Date.now()) {
   state.saved_at = iso(now);
   await storage.put(STATE_KEY, state);
 }
 
-// Appends closed trades. The newest chunk is written in place; a full chunk starts the next one.
-// When more than `cap` trades are stored, the oldest chunk is dropped and its trades are counted.
-export async function storeTrades(storage, meta, trades, { cap = TRADE_CAP, chunk = TRADE_CHUNK } = {}) {
+// The trade chunk writes for one pass, computed but not yet written: the newest chunk is appended to, a full chunk
+// starts the next one, and the oldest chunk is dropped when the cap is passed (its trades are counted).
+async function tradeWrites(storage, meta, trades, { cap = TRADE_CAP, chunk = TRADE_CHUNK } = {}) {
+  const puts = {};
+  const deletes = [];
   let current = null;
   for (const t of trades) {
     if (meta.last < meta.first || meta.tail >= chunk) {
-      if (current) await storage.put(chunkKey(meta.last), current);
+      if (current) puts[chunkKey(meta.last)] = current;
       meta.last += 1;
       meta.tail = 0;
       current = [];
@@ -284,14 +297,36 @@ export async function storeTrades(storage, meta, trades, { cap = TRADE_CAP, chun
     meta.tail += 1;
     meta.stored += 1;
   }
-  if (current) await storage.put(chunkKey(meta.last), current);
+  if (current) puts[chunkKey(meta.last)] = current;
   while (meta.stored > cap && meta.last >= meta.first) {
-    const old = (await storage.get(chunkKey(meta.first))) || [];
-    await storage.delete(chunkKey(meta.first));
+    // The oldest chunk may still be a pending write of this pass: count what it holds, then never write it.
+    const key = chunkKey(meta.first);
+    const old = puts[key] || (await storage.get(key)) || [];
+    delete puts[key];
+    deletes.push(key);
     meta.first += 1;
     meta.stored -= old.length;
     meta.dropped += old.length;
   }
+  return { puts, deletes };
+}
+
+// One storage write for a pass: the closed trades' chunks and the state, together and atomically. Chunks that
+// the cap drops are deleted after that write. Without force, a pass with nothing to save writes nothing.
+async function commitSim(storage, state, closed, now, { cap = TRADE_CAP, chunk = TRADE_CHUNK, force = false } = {}) {
+  const { puts, deletes } = await tradeWrites(storage, state.trades, closed, { cap, chunk });
+  if (!force) return false;
+  state.saved_at = iso(now);
+  await storage.put({ ...puts, [STATE_KEY]: state });
+  for (const key of deletes) await storage.delete(key);
+  return true;
+}
+
+// Appends closed trades under the cap, as one write. Kept for callers that only need the trade store.
+export async function storeTrades(storage, meta, trades, opts = {}) {
+  const { puts, deletes } = await tradeWrites(storage, meta, trades, opts);
+  if (Object.keys(puts).length) await storage.put(puts);
+  for (const key of deletes) await storage.delete(key);
   return meta;
 }
 
@@ -316,6 +351,16 @@ export function assertSpend(spend, plannedUsd = 0) {
   return { allowed: true, reason: 'within the daily spend ceiling' };
 }
 
+/** Adds spend to today's ledger and saves it. Nothing calls this yet: no model call exists in this step. */
+export async function chargeSpend(storage, usd, now = Date.now()) {
+  if (typeof usd !== 'number' || !Number.isFinite(usd) || usd < 0) return { ok: false, detail: 'A spend charge must be a non-negative dollar amount.' };
+  const state = await readSimState(storage);
+  state.spend = { ...spendToday(state, now) };
+  state.spend.spent_usd += usd;
+  await saveSimState(storage, state, now);
+  return { ok: true, spent_usd: state.spend.spent_usd, ceiling_usd: state.spend.ceiling_usd, day: state.spend.day, within_ceiling: assertSpend(state.spend, 0).allowed };
+}
+
 // ─── The tick ─────────────────────────────────────────────────────────────
 
 // Paper only: this simulation has no path to an order. Refuses if the environment ever changes.
@@ -330,7 +375,7 @@ export async function strategySimTick(storage, { fetcher = fetch, now = Date.now
   if (!force && state.last_tick && now - Date.parse(state.last_tick) < TICK_MS - DUE_SLACK_MS) {
     return { ran: false, skipped: 'not due', next_at: iso(Date.parse(state.last_tick) + TICK_MS) };
   }
-  // Kill switch: checked first, every tick. A paused tick does nothing and records a marker.
+  // Kill switch: checked here, and again after every await below. A paused tick does nothing and records a marker.
   if (state.paused) {
     if (!state.last_paused_marker) {
       state.last_paused_marker = { at: iso(now), note: 'Paused by the owner: no bars read, no trades, no spend.' };
@@ -350,16 +395,20 @@ export async function strategySimTick(storage, { fetcher = fetch, now = Date.now
   assertPaperOnly();
   state.last_tick = iso(now);
   state.ticks += 1;
+  const halted = () => state.paused;
   const report = {};
   const closed = [];
   let opened = 0;
   for (const symbol of Object.keys(MINUTE_FEEDS)) {
+    if (halted()) break;
     const feed = MINUTE_FEEDS[symbol];
     const load = loaders[symbol] || ((sym) => loadMinuteBars(sym, { fetcher, now }));
     state.symbols[symbol] ||= { first_t: null, last_t: null, bars: 0, feed: null, error: null };
     const sym = state.symbols[symbol];
     let data;
     try { data = await load(symbol); } catch (_) { data = { error: 'the feed did not answer' }; }
+    // The owner may pause while a feed loads: nothing from that feed is used after the pause.
+    if (halted()) break;
     if (data.error) {
       sym.error = String(data.error).slice(0, 160);
       sym.feed = { status: 'UNAVAILABLE', source: feed.feed, last_bar_t: null, delayed_by_min: null };
@@ -373,18 +422,22 @@ export async function strategySimTick(storage, { fetcher = fetch, now = Date.now
     if (!bars.length) { report[symbol] = { new_bars: 0, status: data.status }; continue; }
     const ctx = { ...prepare(bars), ...prepareSession(bars, (t) => sessionOf(feed.session, t)) };
     const before = sym.bars;
-    const { closed: made, opened: filled } = runBars(state, symbol, bars, ctx, feed, data.status);
+    const { closed: made, opened: filled } = runBars(state, symbol, bars, ctx, feed, data.status, halted);
     closed.push(...made);
     opened += filled;
     report[symbol] = { new_bars: sym.bars - before, status: data.status, closed: made.length, opened: filled };
   }
-  // A trade that opened or closed is saved at once: its chunk first, then the state. Anything else waits for
-  // the heartbeat. A quiet minute therefore costs no write, and the next pass continues from memory.
+  if (halted()) {
+    // Paused during this pass: what finished before the pause is saved, and nothing was opened after it.
+    state.last_paused_marker = { at: iso(now), note: 'Paused by the owner during a pass: no bars used and no trade opened after the pause.' };
+    await commitSim(storage, state, closed, now, { cap, chunk, force: true });
+    return { ran: false, paused: true, halted: true, closed: closed.length, opened, at: iso(now) };
+  }
   state.last_paused_marker = null;
-  await storeTrades(storage, state.trades, closed, { cap, chunk });
+  // A trade that opened or closed is saved with the state that records it. Anything else waits for the heartbeat.
   const heartbeat = !state.saved_at || now - Date.parse(state.saved_at) >= HEARTBEAT_MS;
   const written = opened > 0 || closed.length > 0 || heartbeat;
-  if (written) await saveSimState(storage, state, now);
+  await commitSim(storage, state, closed, now, { cap, chunk, force: written });
   return { ran: true, at: iso(now), closed: closed.length, opened, saved: written, symbols: report, stored: state.trades.stored, dropped: state.trades.dropped };
 }
 
@@ -421,23 +474,23 @@ export async function setStrategySimPaused(storage, paused, now = Date.now()) {
 }
 
 export async function setStrategySimCeiling(storage, usd, now = Date.now()) {
-  const value = Number(usd);
-  if (!Number.isFinite(value) || value < 0 || value > 1000) return { ok: false, detail: 'The daily spend ceiling must be a dollar amount from 0 to 1000.' };
+  if (typeof usd !== 'number' || !Number.isFinite(usd) || usd < 0 || usd > 1000) return { ok: false, detail: 'The daily spend ceiling must be a dollar amount from 0 to 1000.' };
   const state = await readSimState(storage);
-  state.spend = { ...spendToday(state, now), ceiling_usd: value };
+  state.spend = { ...spendToday(state, now), ceiling_usd: usd };
   await saveSimState(storage, state, now);
-  return { ok: true, ceiling_usd: value, spent_usd: state.spend.spent_usd, day: state.spend.day };
+  return { ok: true, ceiling_usd: usd, spent_usd: state.spend.spent_usd, day: state.spend.day };
 }
 
 // ─── Leaderboard: every number is computed from the stored trades ──────────
 
-/** Out-of-sample cut per symbol: the newest OOS_SHARE of the time the engine has watched. */
+/** Out-of-sample cut per symbol, frozen at the symbol's first pass. Bars watched later never move it. */
 export function oosCuts(symbols) {
   const cuts = {};
   for (const [symbol, sym] of Object.entries(symbols || {})) {
     const first = Date.parse(sym.first_t || '');
+    const cut = Date.parse(sym.oos_from || '');
     const last = Date.parse(sym.last_t || '');
-    if (Number.isFinite(first) && Number.isFinite(last)) cuts[symbol] = { from: first, to: last, cut: first + (1 - OOS_SHARE) * (last - first) };
+    if (Number.isFinite(first) && Number.isFinite(cut) && Number.isFinite(last)) cuts[symbol] = { from: first, to: last, cut };
   }
   return cuts;
 }
@@ -484,8 +537,10 @@ export function profitLabel(oos) {
 
 export function leaderboard(trades, symbols) {
   const cuts = oosCuts(symbols);
+  // One feed per underlying: a trade on a symbol that is not a minute feed (NQ, the same front month as MNQ) never adds a sample.
+  const counted = trades.filter((t) => isFeed(t.symbol));
   const rows = SIM_STRATEGIES.map((s) => {
-    const mine = trades.filter((t) => t.strategy === s.id);
+    const mine = counted.filter((t) => t.strategy === s.id);
     const oosTrades = mine.filter((t) => isOos(t, cuts));
     const all = summarize(mine);
     const oos = summarize(oosTrades);
@@ -495,7 +550,7 @@ export function leaderboard(trades, symbols) {
       trades: all.n, wins: all.wins, losses: all.losses, win_rate: all.win_rate,
       wilson_95: { low: all.wilson_low, high: all.wilson_high },
       expectancy_r: all.expectancy_r, max_drawdown_r: all.max_drawdown_r,
-      sample_size: oos.n, out_of_sample: { flag: 'newest share of watched time', wins: oos.wins, losses: oos.losses, win_rate: oos.win_rate, wilson_95: { low: oos.wilson_low, high: oos.wilson_high }, expectancy_r: oos.expectancy_r, break_even_win_rate: oos.break_even_win_rate },
+      sample_size: oos.n, out_of_sample: { flag: 'after the frozen cut (70% of the first window is in sample)', wins: oos.wins, losses: oos.losses, win_rate: oos.win_rate, wilson_95: { low: oos.wilson_low, high: oos.wilson_high }, expectancy_r: oos.expectancy_r, break_even_win_rate: oos.break_even_win_rate },
       label: verdict.label, reasons: verdict.reasons,
     };
   });
@@ -529,8 +584,33 @@ export async function strategySimView(storage, { now = Date.now() } = {}) {
       'Paper only. No order, broker or model call. Real money needs your separate approval.',
       'Minute bars only where listed. Stooq daily data is never shown as minute data.',
       'Fills: the open of the next minute plus one slippage unit against us; commissions as listed. A signal with no next minute bar expires unfilled.',
-      'The out-of-sample window is the newest 30% of the time watched. Parameters are fixed, not fitted, in this step.',
+      'The out-of-sample window starts at a frozen cut: 70% of the first window is in sample and every later trade is out of sample. Parameters are fixed, not fitted, in this step.',
       'Profitable needs 30 out-of-sample trades, positive expectancy after costs, and a 95% Wilson lower bound above break-even. Otherwise: not proven yet.',
     ],
   };
+}
+
+// ─── Typed and spoken requests (the /trade-sim command sends "Strategy simulation <action>") ───
+
+// Deterministic. Pause and resume need the command form or an imperative; a question about the simulation is a status read.
+export function strategySimIntent(message) {
+  const text = String(message || '').replace(/[’']/g, "'").trim();
+  if (!/\bstrateg(?:y|ies)\s+simulation\b/i.test(text)) return null;
+  const command = /\bstrateg(?:y|ies)\s+simulation\s+(pause|resume|status)\s*$/i.exec(text);
+  if (command) return { kind: command[1].toLowerCase() };
+  const imperative = /^\s*(?:please\s+)?(pause|stop|halt|freeze|resume|restart|unpause|start)\s+(?:the\s+)?strateg(?:y|ies)\s+simulation\b/i.exec(text);
+  if (imperative) return { kind: /^(?:pause|stop|halt|freeze)$/i.test(imperative[1]) ? 'pause' : 'resume' };
+  return { kind: 'status' };
+}
+
+/** Said aloud and shown as large text: status, minute-bar sources, the leaderboard count and the spend. */
+export function speakStrategySim(view) {
+  const profitable = view.leaderboard.filter((r) => r.label === 'profitable').length;
+  const dropped = view.trades.dropped ? `, ${view.trades.dropped} oldest dropped by the cap` : '';
+  return [
+    `The strategy simulation is ${view.status}. Paper only: no money and no model call.`,
+    `Minute bars: ${view.minute_bars.map((b) => `${b.symbol} ${b.status}`).join(', ')}. ES and MES have no minute bars and are not simulated.`,
+    `${view.trades.stored} trades stored${dropped}. Strategies profitable: ${profitable} of ${view.leaderboard.length}; the rest are not proven yet.`,
+    `Daily spend ceiling $${view.spend.ceiling_usd}; spent today $${view.spend.spent_usd}.`,
+  ].join('\n');
 }
