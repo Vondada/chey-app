@@ -1284,7 +1284,7 @@ const CRAFT = [
         prompt: 'The owner says "inspect your codebase and fix the bug". For CHE, is that a read-only inspection or a build request?',
         solution: { che: 'server/cloudflare/code_scout.js', entry: 'repositoryInspectionIntent' },
         cases: [{ args: ['inspect your codebase and fix the bug'], expected: false }, { args: ['inspect your repository'], expected: true }, { args: ['CHE, trace your router'], expected: true }], ask: 0,
-        options: ['read-only inspection', 'build request'], answer: 'b',
+        options: ['an inspection only', 'a request to change code'], answer: 'b',
         values: ['true', 'false'],
         explain: 'It also asks for a fix, so it is a build: CHE\'s inspection route is read-only and never takes a turn that asks her to change code.',
       },
@@ -1466,7 +1466,7 @@ const CRAFT = [
     },
     quiz: [
       { q: 'What does a green CI result prove?', a: 'That the checks which ran passed on that exact commit; not that it works on the device, and not that it is live.' },
-      { q: 'A pull request shows no checks at all yet. Is it green?', a: 'No. No check has reported, so CI has not started: wait for it.' },
+      { q: 'A pull request shows no checks at all yet. Is it green?', a: 'No. Zero checks reported means CI has yet to start: wait for it.' },
       { q: 'A test that fails 10% of the time on correct code fails 3 runs in a row. How likely is that by luck?', a: '0.001, 1 time in 1,000: 0.1 to the power 3, so treat it as a real failure.', check: { compute: 'flakeStreak', inputs: { p: 0.1, k: 3 }, result: 0.001, shown: ['0.001'] } },
       { q: 'How should you reproduce a CI failure?', a: 'Run the same commands CI runs, on the same commit, on your own machine.' },
     ],
@@ -1844,7 +1844,7 @@ const AUTONOMY = [
         fixed: lines('// The checker and its gates are out of the attempt\'s reach.', "const allowed = (path) => !/^(?:\\.github\\/|tools\\/che_coding_|server\\/cloudflare\\/coding_failover\\.mjs$)/.test(path);"),
         probe: { calls: [['tools/che_coding_checkpoint.mjs'], ['server/cloudflare/coding_failover.mjs'], ['lib/main.dart']], buggy: [true, true, true], fixed: [false, false, true] },
         from: {
-          what: 'a review fix on PR #328, after which an attempt can no longer change the gate and the checkpoint verifier',
+          what: 'PR #328 (merged as a3be02c); the fix is its review commit 3400cd79, in the PR\'s history, after which an attempt can no longer change the gate and the checkpoint verifier',
           commit: '3400cd79', file: 'server/cloudflare/coding_failover.mjs',
           removed: '/^(?:\\.github\\/|\\.git\\/)/i,', added: '/^tools\\/che_coding_/i,',
           pinned: [{ drill: 'code', diff: 'removed', text: '.github' }, { drill: 'fixed', diff: 'added', text: 'tools\\/che_coding_' }],
@@ -2354,7 +2354,7 @@ const EXPLICIT_ANSWER = /^(?:(?:so|well|ok|okay|um|uh|hmm)[,\s]+)*(?:(?:my|the) 
 // "It's 3", "I think it's 3": an answer only when what follows is a value this exercise expects.
 const VALUE_LEAD = /^(?:(?:so|well|ok|okay|um|uh|hmm)[,\s]+)*(?:i think (?:it'?s|it is)|i'?d say|it'?s|it is|that'?s|that is)\s+(.+?)$/;
 // Voice control and greetings are for the speech, never an answer: "repeat that", "slow down", "huh".
-const VOICE_CONTROL = /^(?:(?:please|can you|could you)\s+)?(?:repeat(?: that| it| the question)?|say (?:that|it) again|slow down|louder|speak up|pause|continue|go on|huh|what|sorry|pardon|excuse me|hang on|one (?:second|moment|sec)|not sure|i'?m not sure|good (?:morning|afternoon|evening|night)|hello|hi|hey|the weather)(?: please)?$/;
+const VOICE_CONTROL = /^(?:(?:please|can you|could you)\s+)?(?:repeat(?: that| it| the question)?|say (?:that|it) again|slow down|louder|speak up|pause|continue|go on|huh|what|sorry|pardon|excuse me|hang on|one (?:second|moment|sec)|not sure|i'?m not sure|good (?:morning|afternoon|evening|night)|hello|hi|hey|the weather|no (?:thanks|thank you|problem|worries))(?: please)?$/;
 const NEGATED = /(?<![a-z])(?:not|never|no|dont|doesnt|isnt|arent|wasnt|werent|wont|cant|cannot|didnt|without)(?![a-z])/;
 const OPTION_FORM = /^(?:the )?(?:option|number|choice|letter)\s+([a-z0-9]+)(?:\s+is\b.*)?$|^(?:the )?(first|second|third|fourth|fifth)(?: one| option| choice)?$/;
 const REVEAL = /^(?:i (?:don'?t|do not) know|idk|no idea|i give up|give up|skip(?: it| this one)?|pass|(?:just )?(?:tell|show|give) me the (?:answer|finding|bug)|tell me|show me|what(?:'s| is|s) the (?:answer|bug|finding)|reveal(?: it| the answer)?|the answer|show the answer|show the finding)$/;
@@ -2433,8 +2433,11 @@ export function checkExercise(x, said) {
   return { correct: sameTokens(t, x.answer) || (x.also || []).some((a) => sameTokens(t, a)), heard: t };
 }
 
-// Drill findings are judged by their two key concepts, as whole words ("*" ends a word stem). Both
-// named: right. One: CHE cannot judge it, and says so with the finding. None, or "it's fine": not quite.
+// Drill findings are read for their two key concepts, as whole words ("*" ends a word stem). A review
+// finding is never graded "right": the same words describe the bug and the fixed code ("the key ignores
+// the currency", "the key includes the currency"), so naming both is reported as that and recorded as not
+// graded, with the finding to compare. One, or a concept said the other way round from the finding ("it
+// never checks the last item"): CHE cannot judge it, and says so. None, or "it's fine": not quite.
 const plain = (s) => ` ${String(s || '').toLowerCase().replace(/[’']/g, '').replace(/[^a-z0-9<=%.\s]+/g, ' ').replace(/\s+/g, ' ').trim()} `;
 const conceptRe = (k) => {
   const w = plain(k).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -2447,22 +2450,23 @@ const deniedAt = (text, re) => {
   const m = re.exec(text);
   return m ? NEGATED.test(text.slice(Math.max(0, m.index - 24), m.index).split(' ').slice(-4).join(' ')) : false;
 };
-/** { correct: true | false | null, hits }: null when CHE cannot tell, never a false "right". */
+/** { correct: false | null, named, words, hits }: never true. `named` when both key ideas are said. */
 export function checkDrill(d, said) {
   const t = plain(said);
   const finding = plain(d.finding);
   let hits = 0;
   let mentions = 0;
   let denied = false;
+  const words = [];
   for (const group of d.concepts) {
     const k = group.find((w) => conceptRe(w).test(t));
     if (!k) continue;
     mentions += 1;
     if (deniedAt(t, conceptRe(k)) !== deniedAt(finding, conceptRe(k))) denied = true;
-    else hits += 1;
+    else { hits += 1; words.push(conceptRe(k).exec(t)[0].trim()); }
   }
-  if (SAYS_FINE.test(t) || denied) return { correct: false, hits, mentions };
-  return { correct: hits >= d.concepts.length ? true : hits === 0 ? false : null, hits, mentions };
+  if (SAYS_FINE.test(t) || (hits === 0 && !denied)) return { correct: false, named: false, words, hits, mentions };
+  return { correct: null, named: !denied && hits >= d.concepts.length, words, hits, mentions };
 }
 const EXPLICIT_FINDING = /^(?:(?:so|well|ok|okay|um|uh)[,\s]+)*(?:(?:the|my) (?:bug|problem|issue|mistake|finding|answer|fix) is|it'?s wrong because|it is wrong because|it'?s broken because|what'?s wrong is|the trouble is)\b/;
 const DECLARATIVE = /^(?:it|its|it's|the|this|that|there|nothing|no|they|when|because|since|if|on|after|a|an|one|both|every|each|only)\b/;
@@ -2708,12 +2712,11 @@ export async function answerCoding(intent, { storage = null, cards = [], referen
       const pinned = pin ? `\nIn CHE, the rule is pinned by the test "${pin.test_name}" in ${pin.test}.` : '';
       const tail = `${fenced(d.fixed, d.language)}${pinned}\n${intent.index + 1 < list.length ? 'Say "another drill" for the next one.' : 'That was the last drill.'}\n${sourceLine(dc, `review drill ${intent.index + 1} of ${list.length}, checked`)}`;
       if (intent.reveal) return out(`The bug, sir: ${d.finding}\nThe fix:${tail}`, true, dc);
-      const { correct } = checkDrill(d, intent.said);
+      const { correct, named, words } = checkDrill(d, intent.said);
       const graded = { correct, item_id: d.id || `drill-${intent.index + 1}` };
+      if (named) return { ...out(`You named both key ideas, sir: ${words.map((w) => `"${w}"`).join(' and ')}. I don't grade review findings automatically, so compare yours with the finding: ${d.finding}\nThe fix:${tail}`, true, dc), ...graded };
       if (correct === null) return { ...out(`I can't judge that one automatically, sir. The finding: ${d.finding}\nThe fix:${tail}`, true, dc), ...graded };
-      return correct
-        ? { ...out(`Right, sir, that's the bug. ${d.finding}\nThe fix:${tail}`, true, dc), ...graded }
-        : { ...out(`Not quite, sir. The bug: ${d.finding}\nThe fix:${tail}`, false, dc), ...graded };
+      return { ...out(`Not quite, sir. The bug: ${d.finding}\nThe fix:${tail}`, false, dc), ...graded };
     }
     case 'coding_repo':
       return out(await repoText(c, intent.how, storage));

@@ -220,12 +220,13 @@ test('a coding exercise or review-drill answer is recorded as owner practice and
   assert.match((await said('It returns 3.', set)).reply, /^Right, sir: 3\./);
   assert.match((await said('4', set)).reply, /^Not quite, sir/);
   const drill = (await che.say('Give me a review drill', { keep: false })).reply;
-  assert.match((await said("It cuts the message silently, so the don't at the end is lost", drill)).reply, /^Right, sir, that's the bug\./);
+  assert.match((await said("It cuts the message silently, so the don't at the end is lost", drill)).reply, /^You named both key ideas, sir: /);
   const rows = learningRecords(che.brain).filter((r) => ['exercise', 'drill'].includes(r.source.event));
-  assert.deepEqual(rows.map((r) => `${r.source.event}:${r.source.correct}`).sort(), ['drill:true', 'exercise:false', 'exercise:true']);
+  // A review finding is never graded "right": it is recorded as not graded.
+  assert.deepEqual(rows.map((r) => `${r.source.event}:${r.source.correct}`).sort(), ['drill:null', 'exercise:false', 'exercise:true']);
   assert.ok(rows.every((r) => r.verification === 'owner_practice' && /Owner's answer: /.test(r.body)));
   const progress = await che.say('What have I learned so far in the Knowledge Atlas?', { keep: false });
-  assert.match(progress.reply, /3 practice results, 2 correct \(67%\)/, progress.reply);
+  assert.match(progress.reply, /3 practice results, 1 correct of 2 graded \(50%\), 1 not graded/, progress.reply);
 });
 
 test('lessons and graded quiz answers are recorded as owner practice, and read back as real counts', sqlite, async () => {
@@ -841,4 +842,58 @@ test('a request held from an answer form keeps the owner\'s own words, case and 
   const out = await che.say('Answer 1: delete Report-Q3.PDF from my files.', { keep: false, history: [] });
   assert.equal(out.route, 'held');
   assert.equal((await che.storage.get('che:pending_owner_action'))?.text, 'delete Report-Q3.PDF from my files.');
+});
+
+// ─── The deploy's live Knowledge Atlas check ──────────────────────────────
+
+test('the deploy probe checks the Knowledge Atlas on an isolated CHE, never the owner\'s, and reports no secret', sqlite, async () => {
+  const states = new Map();
+  const storages = new Map();
+  const pending = [];
+  const token = 'p'.repeat(40);
+  const env = {
+    CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', CHE_VOICE_PROBE_TOKEN: token, ELEVENLABS_API_KEY: 'el_secret_value',
+    AI: { run: async () => { modelCalls += 1; return { response: 'Here is the answer, sir.' }; } },
+  };
+  let modelCalls = 0;
+  env.CHE_STATE = { getByName: (name) => {
+    if (!states.has(name)) {
+      storages.set(name, storageFor());
+      states.set(name, new CheState({ storage: storages.get(name), waitUntil: (p) => pending.push(p), id: { name } }, env));
+    }
+    // Match production Durable Object stubs: only fetch() is exposed.
+    return { fetch: (request) => states.get(name).fetch(request) };
+  } };
+  const denied = await worker.fetch(new Request('https://che.example/api/atlas/probe', { method: 'POST' }), env);
+  assert.equal(denied.status, 404, 'no route without the deploy token');
+  const wrong = await worker.fetch(new Request('https://che.example/api/atlas/probe', { method: 'POST', headers: { Authorization: `Bearer ${'q'.repeat(40)}` } }), env);
+  assert.equal(wrong.status, 404);
+  const run = async () => {
+    const res = await worker.fetch(new Request('https://che.example/api/atlas/probe', { method: 'POST', headers: { Authorization: `Bearer ${token}` } }), env);
+    const report = await res.json();
+    while (pending.length) await pending.shift();
+    return report;
+  };
+  const report = await run();
+  assert.equal(report.ok, true, JSON.stringify(report.steps, null, 1));
+  assert.equal(report.passed, report.total);
+  assert.equal(report.total, 11);
+  assert.ok(report.steps.every((s) => s.optional === false), 'no step is optional');
+  assert.deepEqual(report.steps.map((s) => s.route), [
+    'che_knowledge_atlas', 'che_knowledge_atlas', 'che_knowledge_atlas', 'che_knowledge_atlas', 'che_knowledge_atlas', 'che_knowledge_atlas',
+    'che_knowledge_atlas', 'che_knowledge_atlas', 'che_trading_live', 'held', 'che_knowledge_atlas',
+  ]);
+  assert.ok(report.steps.filter((s) => s.route !== 'held').every((s) => s.model_calls === 0), 'no step called a model');
+  assert.equal(modelCalls, 0, 'the whole probe, cleanup included, made no model call');
+  const text = JSON.stringify(report);
+  assert.doesNotMatch(text, /el_secret_value|p{40}|123456|device_token/, 'no secret, token or pair code in the report');
+  // A re-run on the same test CHE (a deploy re-run without the memory reset) passes too, with more answers counted.
+  const again = await run();
+  assert.equal(again.ok, true, JSON.stringify(again.steps.filter((s) => !s.pass), null, 1));
+  assert.equal(modelCalls, 0, 'a second run made no model call either');
+  // The owner's CHE was never asked: its object was never even created.
+  assert.equal(states.has('owner'), false);
+  const probeBrain = new CheBrainStore(storages.get('memory-truth-probe'));
+  assert.ok(learningRecords(probeBrain).filter((r) => r.source.event === 'quiz').length >= 2, 'the practice is on the test CHE');
+  assert.equal(await storages.get('memory-truth-probe').get('che:pending_owner_action'), null, 'the held buy was dropped');
 });
