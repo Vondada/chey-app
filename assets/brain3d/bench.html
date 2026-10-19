@@ -194,6 +194,11 @@
     const format = navigator.gpu.getPreferredCanvasFormat();
     context.configure({ device, format, alphaMode: 'opaque' });
     let lost = false, lostReason = '';
+    // The spec reports an invalid shader, pipeline or submit without throwing: it arrives as an
+    // uncaptured error, or as the validation scope around the setup below. Either one fails the run.
+    let gpuError = '';
+    device.addEventListener('uncapturederror', (e) => { gpuError = gpuError || 'WebGPU error: ' + (e.error && e.error.message || 'uncaptured error'); });
+    device.pushErrorScope('validation');
     device.lost.then((info) => { lost = true; lostReason = info && info.message || 'device lost'; post({ type: 'devicelost', backend: 'webgpu', reason: lostReason }); say('WebGPU device lost; reported and stopped'); });
 
     const shader = device.createShaderModule({ code: `
@@ -230,6 +235,9 @@
     const orbs = device.createRenderPipeline({ layout: pipelineLayout, vertex: { module: shader, entryPoint: 'vsOrb', buffers: [{ arrayStride: 28, stepMode: 'instance', attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x3' }, { shaderLocation: 1, offset: 12, format: 'float32x3' }, { shaderLocation: 2, offset: 24, format: 'float32' }] }] }, fragment: { module: shader, entryPoint: 'fsOrb', targets: [{ format, blend }] }, primitive: { topology: 'triangle-list' } });
     const lines = device.createRenderPipeline({ layout: pipelineLayout, vertex: { module: shader, entryPoint: 'vsLine', buffers: [{ arrayStride: 12, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x3' }] }] }, fragment: { module: shader, entryPoint: 'fsLine', targets: [{ format, blend }] }, primitive: { topology: 'line-list' } });
 
+    const setupError = await device.popErrorScope();
+    if (setupError) return done({ ok: false, backend: 'webgpu', reason: 'WebGPU shader or pipeline invalid: ' + setupError.message });
+
     // Minimal matrix math (column-major), same camera as the WebGL run.
     function perspective(fovy, aspect, near, far) { const f = 1 / Math.tan(fovy / 2), nf = 1 / (near - far); return new Float32Array([f / aspect, 0, 0, 0, 0, f, 0, 0, 0, 0, (far + near) * nf, -1, 0, 0, 2 * far * near * nf, 0]); }
     function lookAt(ex, ey, ez) { let fx = -ex, fy = -ey, fz = -ez; const fl = Math.hypot(fx, fy, fz); fx /= fl; fy /= fl; fz /= fl; let rx = fy * 0 - fz * 1, ry = fz * 0 - fx * 0, rz = fx * 1 - fy * 0; const rl = Math.hypot(rx, ry, rz); rx /= rl; ry /= rl; rz /= rl; const ux = ry * fz - rz * fy, uy = rz * fx - rx * fz, uz = rx * fy - ry * fx; return { view: new Float32Array([rx, ux, -fx, 0, ry, uy, -fy, 0, rz, uz, -fz, 0, -(rx * ex + ry * ey + rz * ez), -(ux * ex + uy * ey + uz * ez), (fx * ex + fy * ey + fz * ez), 1]), right: [rx, ry, rz], up: [ux, uy, uz] }; }
@@ -238,6 +246,7 @@
     say('WebGPU · ' + p.nodes + ' orbs · measuring ' + p.seconds + ' s');
     measure('WebGPU', p.seconds, (t) => {
       if (lost) return;
+      if (gpuError) throw new Error(gpuError);
       const yaw = Math.PI + t * .35;
       const eye = [Math.sin(yaw) * 17, 1.5, Math.cos(yaw) * 17];
       const la = lookAt(eye[0], eye[1], eye[2]);
@@ -254,7 +263,7 @@
       instBuf.destroy(); lineBuf.destroy(); uniform.destroy();
       let adapterInfo = {};
       try { adapterInfo = adapter.info ? { vendor: adapter.info.vendor, architecture: adapter.info.architecture } : {}; } catch (_) {}
-      done({ ok: !lost, backend: 'webgpu', pixelRatio: dpr, nodes: p.nodes, edges: p.edges, deviceLost: lost, lostReason, ...adapterInfo, ...m });
+      done({ ok: !lost && !gpuError, backend: 'webgpu', pixelRatio: dpr, nodes: p.nodes, edges: p.edges, deviceLost: lost, lostReason, ...adapterInfo, ...m, ...(gpuError ? { reason: gpuError } : {}) });
     });
   }
 
@@ -266,7 +275,7 @@
     if (busy) { post({ type: 'error', reason: 'a run is in progress' }); return false; }
     busy = true;
     const data = buildScene(p.nodes, p.edges);
-    const finish = (r) => { busy = false; post({ type: 'result', label: p.label, ...r }); say((r.backend || '?') + (r.ok ? ' · ' + r.fps + ' fps · ' + r.frames + ' frames in ' + r.seconds + ' s' + (r.cadence === 30 ? ' · dropped to 30 fps cadence' : '') : ' · unavailable: ' + r.reason)); };
+    const finish = (r) => { busy = false; post({ type: 'result', label: p.label, ...r }); say((r.backend || '?') + (r.ok ? ' · ' + r.fps + ' fps · ' + r.frames + ' frames in ' + r.seconds + ' s' + (r.cadence === 30 ? ' · dropped to 30 fps cadence' : '') : ' · unavailable: ' + (r.reason || r.lostReason))); };
     const capability = { type: 'capability', webgpu: !!navigator.gpu, webgl2: !!(document.createElement('canvas').getContext('webgl2')), webgl: !!(document.createElement('canvas').getContext('webgl')), reducedMotion, devicePixelRatio: window.devicePixelRatio || 1, userAgent: navigator.userAgent.slice(0, 160) };
     post(capability);
     // A WebGPU error after setup must still reach done(), or busy stays true and every later run is refused.
