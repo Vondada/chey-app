@@ -882,3 +882,19 @@ test('fourth review of #354: the 3- and 6-character code repros are withheld by 
   assert.equal(store.put(record).outcome, 'rejected');
   assert.equal(store.get('note:code-1'), null);
 });
+
+test('fifth review of #354: the hyphen-joined reset-link repro is withheld by the gate, the write path and the correspondence redaction', async (t) => {
+  const HYPHEN_TOKEN = ['Q7mZ2kP9', 'xL4vN8wR3', 'tY6uB1c', '7mZ2kP9xL4vN8wR'].join('-');
+  const text = `Reset link https://example.com/reset/${HYPHEN_TOKEN}`;
+  assert.equal(isSafeMemoryText(text), false, text);
+  assert.equal(isSafeText(text), false, text);
+  const redacted = redactCorrespondence(text);
+  assert.equal(redacted.withheld, 1, text);
+  assert.doesNotMatch(redacted.text, /Q7mZ2kP9/, text);
+  const storage = await sqlStorage();
+  if (!storage) return t.skip('node:sqlite unavailable');
+  const store = new CheBrainStore(storage);
+  const record = { id: 'note:reset-1', kind: 'note', region: BRAIN_REGIONS.personal, path: 'Family', title: 'Reset link', body: text, verification: 'owner_attested', source: { kind: 'note' }, links: [] };
+  assert.equal(store.put(record).outcome, 'rejected');
+  assert.equal(store.get('note:reset-1'), null);
+});

@@ -61,6 +61,12 @@ function groupedCode(token) {
   if (!/[A-Za-z]/.test(groups.join(''))) return false;
   return groups.every((g) => /\d/.test(g)) || groups.every((g) => /^[A-Z0-9]+$/.test(g));
 }
+// A hyphen-joined run of 20 or more characters with capitals, lower-case letters and digits is a random
+// token too (fifth review of #354, owner default): "Q7mZ2kP9-xL4vN8wR3-tY6uB1c-7mZ2kP9xL4vN8wR" is
+// withheld. A lower-case slug ("brain-sync-follow-up-plan") has no capitals and stays kept. Path segments only.
+function hyphenatedRandomRun(piece) {
+  return /^[A-Za-z0-9_-]{20,}$/.test(piece) && piece.includes('-') && /[a-z]/.test(piece) && /[A-Z]/.test(piece) && /\d/.test(piece);
+}
 // A long run of letters and digits: a key or a token. A hyphen makes a slug words
 // ("issuecomment-1234567890"), so a slug is not one. A hex run is judged by the hex rule instead.
 function randomRun(piece) {
@@ -113,7 +119,7 @@ function linkHasSecret(link) {
   const query = rest.slice(path.length);
   const segments = path.split('/');
   const docIds = googleDocSegments(authority, segments);
-  if (segments.some((segment, i) => (randomRun(segment) && !docIds.has(i)) || (HEX_RE.test(segment) && plainSecret(segment)))) return true;
+  if (segments.some((segment, i) => ((randomRun(segment) || hyphenatedRandomRun(segment)) && !docIds.has(i)) || (HEX_RE.test(segment) && plainSecret(segment)))) return true;
   return query.split(/[?&=#]+|%[0-9A-Fa-f]{2}/).some((piece) => Boolean(piece) && (randomRun(piece) || plainSecret(piece)));
 }
 function secretToken(raw) {

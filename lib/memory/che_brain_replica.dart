@@ -88,6 +88,8 @@ final RegExp _linkHeadShape = RegExp(r'^(?:[a-z][a-z0-9+.-]*://|www\.)([^/?#]*)'
 final RegExp _pathSplitShape = RegExp(r'[?#]');
 final RegExp _queryPieceSplitShape = RegExp(r'[?&=#]+|%[0-9A-Fa-f]{2}');
 final RegExp _randomRunShape = RegExp(r'^[A-Za-z0-9_]{20,}$');
+// A hyphen-joined run of 20+ characters with capitals, lower-case letters and digits (fifth review of #354).
+final RegExp _hyphenRunShape = RegExp(r'^[A-Za-z0-9_-]{20,}$');
 final RegExp _groupShape = RegExp(r'^[A-Za-z0-9]{3,8}$');
 final RegExp _googleDocHostShape = RegExp(r'^(?:docs|drive)\.google\.com$', caseSensitive: false);
 // A Google document ID is 28 to 64 letters, digits, hyphens or underscores (fourth review of #354).
@@ -169,6 +171,10 @@ Set<int> _googleDocSegments(String authority, List<String> segments) {
 bool _randomRun(String piece) =>
     _randomRunShape.hasMatch(piece) && _letterShape.hasMatch(piece) && _digitShape.hasMatch(piece) && !_hexShape.hasMatch(piece);
 
+// The hyphen-joined form: a hyphen, capitals, lower-case letters and digits (the same floor as _randomRun).
+bool _hyphenatedRandomRun(String piece) =>
+    _hyphenRunShape.hasMatch(piece) && piece.contains('-') && _lowerShape.hasMatch(piece) && _upperShape.hasMatch(piece) && _digitShape.hasMatch(piece);
+
 // A link is judged by its parts: its userinfo and query values get the full token check; a path segment
 // is a secret only as a long random run or a hex key. A slug and a percent-encoded word are words.
 bool _linkHasSecret(String link) {
@@ -183,7 +189,7 @@ bool _linkHasSecret(String link) {
   final docIds = _googleDocSegments(authority, segments);
   for (var i = 0; i < segments.length; i++) {
     final segment = segments[i];
-    if ((_randomRun(segment) && !docIds.contains(i)) || (_hexShape.hasMatch(segment) && _plainSecret(segment))) return true;
+    if (((_randomRun(segment) || _hyphenatedRandomRun(segment)) && !docIds.contains(i)) || (_hexShape.hasMatch(segment) && _plainSecret(segment))) return true;
   }
   return query.split(_queryPieceSplitShape).any((piece) => piece.isNotEmpty && (_randomRun(piece) || _plainSecret(piece)));
 }

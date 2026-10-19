@@ -552,6 +552,35 @@ void main() {
     expect(brain.count, kept.length);
   });
 
+  test('U: a hyphen-joined mixed-case token in a URL path is withheld on the phone, the same token without hyphens too; lower-case slugs and the approved Google links stay kept (fifth review of #354)', () async {
+    final dir = await freshDir();
+    final brain = CheBrainReplica(directory: dir);
+    // Built from pieces, so no literal token sits in the repository.
+    final hyphenToken = ['Q7mZ2kP9', 'xL4vN8wR3', 'tY6uB1c', '7mZ2kP9xL4vN8wR'].join('-');
+    final sameToken = hyphenToken.replaceAll('-', '');
+    final withheld = [
+      'Reset link https://example.com/reset/$hyphenToken',
+      'Reset link https://example.com/reset/$sameToken',
+    ];
+    for (final text in withheld) {
+      expect(cheBrainTextIsSensitive(text), isTrue, reason: text);
+      expect(await brain.remember(kind: 'memory', region: 'Personal Memory', body: text), isNull, reason: text);
+    }
+    expect(brain.count, 0);
+    final kept = [
+      'Read https://example.com/brain-sync-follow-up-plan now',
+      'Here is the doc https://docs.google.com/document/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit for Monday',
+      'Drive link https://drive.google.com/file/d/1AbCdEfGhIjKlMnOpQrStUvWxYz012345/view',
+      'Sheet https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit#gid=0',
+      'Folder https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz012345',
+    ];
+    for (final text in kept) {
+      expect(cheBrainTextIsSensitive(text), isFalse, reason: text);
+      expect(await brain.remember(kind: 'memory', region: 'Personal Memory', body: text), isNotNull, reason: text);
+    }
+    expect(brain.count, kept.length);
+  });
+
   test('T: the 3- and 6-character code repros, a Stripe-shaped key behind a Google path and a random Google ID are withheld; the two Google document links are kept (fourth review of #354)', () async {
     final dir = await freshDir();
     final brain = CheBrainReplica(directory: dir);

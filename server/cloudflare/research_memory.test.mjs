@@ -236,6 +236,35 @@ test('third review of #354: ordinary hyphenated words and Google document links 
   }
 });
 
+// ─── Fifth review of #354: a hyphen-joined random token in a path is withheld; slugs stay kept ───────
+test('fifth review of #354: a hyphen-joined mixed-case token in a URL path is withheld, the same token without hyphens too; lower-case slugs and the approved Google links stay kept', () => {
+  // Built from pieces, so no literal token sits in the repository.
+  const HYPHEN_TOKEN = ['Q7mZ2kP9', 'xL4vN8wR3', 'tY6uB1c', '7mZ2kP9xL4vN8wR'].join('-');
+  const SAME_TOKEN = HYPHEN_TOKEN.replace(/-/g, '');
+  const DOC_ID = '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms';
+  const DRIVE_ID = '1AbCdEfGhIjKlMnOpQrStUvWxYz012345';
+  const withheld = [
+    `Reset link https://example.com/reset/${HYPHEN_TOKEN}`,
+    `Reset link https://example.com/reset/${SAME_TOKEN}`,
+  ];
+  for (const text of withheld) {
+    assert.equal(isSafeMemoryText(text), false, text);
+    assert.equal(hasSecretShape(text), true, text);
+  }
+  const kept = [
+    'Read https://example.com/brain-sync-follow-up-plan now',
+    'Read https://ocw.mit.edu/courses/6-006-introduction-to-algorithms-spring-2020/ now',
+    `Here is the doc https://docs.google.com/document/d/${DOC_ID}/edit for Monday`,
+    `Drive link https://drive.google.com/file/d/${DRIVE_ID}/view`,
+    `Sheet https://docs.google.com/spreadsheets/d/${DOC_ID}/edit#gid=0`,
+    `Folder https://drive.google.com/drive/folders/${DRIVE_ID}`,
+  ];
+  for (const text of kept) {
+    assert.equal(isSafeMemoryText(text), true, text);
+    assert.equal(hasSecretShape(text), false, text);
+  }
+});
+
 // ─── Fourth review of #354: codes of any group length, and only Google's own document shapes ───────
 test('fourth review of #354: 3- and 6-character code groups are withheld; Google document IDs after their own type are kept; a bare or random ID is withheld', () => {
   const PASS_SYM = ['Summer', '2026', '!'].join('');
