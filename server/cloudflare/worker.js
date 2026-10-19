@@ -45,6 +45,7 @@ import { fishAudioDiagnostics, fishAudioKeyStatus, fishAudioSpeech, fishSecretsF
 import { cheSpokenText } from './che_pronunciation.js';
 import { premiumVoiceSpeech, premiumVoiceStatuses, readVoiceLog, recordVoiceLog, voiceProbeAuthorized, VOICE_LOCKS, voiceProviderOf, voiceTurnFor } from './phone_voice.js';
 import { handleVideoLine, videoRequestTopic, videoRequestSeconds } from './video_route.js';
+import { FAKE_GROWTH_REPLY, runStudioCommand, studioChatIntent, studioPostPreflight, studioView } from './creator_studio.js';
 import {
   YOUTUBE_CALLBACK_PATH, disconnectYouTube, finishYouTubeConnect, startYouTubeConnect,
   youtubeAccessToken, youtubeResultPage, youtubeStatus, youtubeStatusSpeech, youtubeUploads,
@@ -169,7 +170,7 @@ import {
 } from './research_memory.js';
 import { APP_BUILD_KEY, appBuildIntent, appBuildRun, dispatchAppBuild, speakAppBuild } from './app_builds.js';
 import { advanceObjectives, applyMissionEvent, approvalReached, approveNode, awaitingApproval, cancelObjective, createObjective, mutateObjective, replanNode, resolveKnownNodes, retryNode, setObjectivePaused, speakObjective } from './objective_graph.js';
-import { COMMANDS, catalogView, commandById, commandStatus, connectorStatus, describeWorkflow, dispatchPrompt, findSavedWorkflow, normalizeSavedWorkflow, parseSlashCommand, readCommandSpeech, searchCommands, speakCommandList, speakUnavailable, suggestCommands, workflowNodes } from './command_catalog.js';
+import { CATEGORIES, COMMANDS, catalogView, commandById, commandStatus, connectorStatus, describeWorkflow, dispatchPrompt, findSavedWorkflow, normalizeSavedWorkflow, parseSlashCommand, readCommandSpeech, searchCommands, speakCommandList, speakUnavailable, suggestCommands, workflowNodes } from './command_catalog.js';
 import { handleReaRequest, loadInvestigation, reaInvestigationDetail, reaInvestigations } from './rea_runner.js';
 import { LAST_RESULTS_KEY, loadCatalog, resourceChoice, resourceIntent, resultLinks, searchCatalog, speakResults } from './resource_catalogs.js';
 import { fiveLayerIntent, LAYER_RESULTS_KEY, reasoningLayer, runReasoningLayer, speakFiveLayerResults } from './reasoning_exam.js';
@@ -525,7 +526,7 @@ async function commandCenterProbe(env, token) {
   };
   try {
     const catalog = await (await call('/api/commands', {}, device)).json().catch(() => ({}));
-    steps.push({ name: `catalog: ${COMMANDS.length} commands in 8 categories`, pass: catalog.commands?.length === COMMANDS.length && catalog.categories?.length === 8, ms: 0, route: 'catalog', model_calls: 0, reply: `${catalog.commands?.length} commands` });
+    steps.push({ name: `catalog: ${COMMANDS.length} commands in ${CATEGORIES.length} categories`, pass: catalog.commands?.length === COMMANDS.length && catalog.categories?.length === CATEGORIES.length, ms: 0, route: 'catalog', model_calls: 0, reply: `${catalog.commands?.length} commands` });
     await step('unknown command answered honestly, nothing run', '/lead-scot barbers',
       ({ done, reply }) => done.source === 'che_command' && done.ok === false && done.model_calls === 0 && /Nothing was run/.test(reply));
     await step('slash command reaches its existing handler', '/trade-journal',
@@ -4745,10 +4746,15 @@ export class CheState extends DurableObject {
         { source: 'che_command', ok: false, command: command.id, needs_input: true, model_calls: 0 });
     }
     if (command.confirm && !confirmed) {
+      // A studio post that cannot happen (platform not connected, no verified
+      // MP4) says why now instead of asking for a yes it could not use; one
+      // that can names the account, the video and its visibility in the ask.
+      const preflight = command.local === 'studio_post' ? await studioPostPreflight(parsed.input, this.studioContext(request, data)) : null;
+      if (preflight?.blocked) return ndjsonReply(preflight.blocked, { source: 'che_creator_studio', ok: false, studio_action: 'post', command: command.id, platform: preflight.platform || '', model_calls: 0 });
       // The same hold the money/delete gate uses: only a plain yes on the
       // very next turn releases exactly this command, once.
       await this.ctx.storage.put(PENDING_OWNER_ACTION_KEY, { kinds: ['command'], command: command.id, input: parsed.input, text: `/${command.id} ${parsed.input}`.trim(), at: Date.now() });
-      const ask = `/${command.id}: ${command.confirm} Should I go ahead, sir? Say yes to approve.`;
+      const ask = preflight?.ask || `/${command.id}: ${command.confirm} Should I go ahead, sir? Say yes to approve.`;
       return json({ message: ask, reply: ask, held_for_owner: true, owner_action_kind: 'command', command: command.id, code_review_passed: false, owner_approval_required: true });
     }
     if (command.local) return this.runLocalCommand(command, parsed.input, request, data);
@@ -4849,7 +4855,24 @@ export class CheState extends DurableObject {
         : `The video line stopped at ${out.stage || 'an unknown step'}, sir: ${out.error || 'no video link came back'}. Nothing was uploaded.`;
       return ndjsonReply(reply, { source: 'che_video_line', ok: Boolean(out.ok && row?.link), media_url: row?.link || null, model_calls: 0 });
     }
+    if (String(command.local).startsWith('studio_')) {
+      const ctx = this.studioContext(request, data);
+      const out = await runStudioCommand(command.local, input, ctx);
+      if (ctx.changed) {
+        // Only what the studio changed (YouTube token refresh, its upload) is merged into a fresh store.
+        const fresh = await this.loadData();
+        fresh.youtube = data.youtube;
+        fresh.youtube_uploads = data.youtube_uploads;
+        await this.ctx.storage.put('che', fresh);
+      }
+      const { text, ...done } = out;
+      return ndjsonReply(text, { source: 'che_creator_studio', command: command.id, model_calls: 0, ...done });
+    }
     return ndjsonReply(`/${command.id} has no runner, sir. Nothing was run.`, { source: 'che_command', ok: false, model_calls: 0 });
+  }
+
+  studioContext(request, data) {
+    return { env: this.keyEnv || this.env, storage: this.ctx.storage, data, origin: new URL(request.url).origin, fetcher: fetch, changed: false };
   }
 
   // Starts a workflow on CHE's existing objective graph: each step is a
@@ -6239,6 +6262,11 @@ export class CheState extends DurableObject {
         if (body.action === 'tick') return json({ ok: true, run: await liveTick(this.ctx.storage, { force: true }) });
         if (body.action === 'backtest') return json(await liveBacktest(this.ctx.storage));
         return json({ detail: 'Unknown action. Use start, stop, tick or backtest.' }, 400);
+      }
+      // The phone's Studio panel: the same records CHE reads aloud, loaded quietly.
+      if (path === '/api/studio' && request.method === 'GET') {
+        if (!ownerDevice) return json({ detail: 'Only the CHE owner can open the Creator Studio.' }, 403);
+        return json(await studioView(this.studioContext(request, data)));
       }
       const tradingOwnerOnly = () => json({ detail: 'Only the CHE owner can use trading connections.' }, 403);
       if (path === '/api/trading/connections' && request.method === 'GET') {
@@ -8095,6 +8123,16 @@ export class CheState extends DurableObject {
             if (ownerDevice) await this.dropHeldActions();
             const spoken = await this.answerCommandSpeech(request, body, data, said, { ownerDevice });
             if (spoken) return spoken;
+          }
+          // Creator Studio (issue #347): "show the series bible", "render the pilot", "export the
+          // pilot for TikTok", "post it to YouTube Shorts". Each runs its catalog command, so the
+          // spoken and slash forms share one handler and the post keeps its yes.
+          const studio = body.attachment || body.workflow_step ? null : studioChatIntent(rawMessage, body.history);
+          if (studio) {
+            await this.dropHeldActions();
+            if (studio.refuse) return ndjsonReply(FAKE_GROWTH_REPLY, { source: 'che_creator_studio', ok: false, refused: studio.refuse, model_calls: 0 });
+            const command = commandById(studio.command);
+            return this.runSlashCommand(request, body, data, { name: command.id, command, input: studio.input }, { confirmed: false });
           }
           // "What is on my screen?" with no screen sent: say so, never guess.
           if (!body.attachment && !String(body.screen_context || '').trim() && asksAboutScreen(rawMessage)) {

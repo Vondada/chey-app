@@ -43,6 +43,17 @@ Buttons send chat commands through the same chat turn as **Run** (`_runCommandIn
 
 By voice on those pages (`lib/commands/che_rea_voice.dart`): "read this", "number two", "read the features", "feature 2", "select features 1 and 3", "plan selected" / "plan features 1 and 3", "map features", "compare with CHE", "build it" (then a plain "yes" or "no"), "verify", "refresh", "go back".
 
+## Creator Studio (issue #347)
+
+A ninth category, **Creator Studio**, holds six commands over `server/cloudflare/creator_studio.js`: `/studio-bible`, `/studio-pilot`, `/studio-render`, `/studio-export`, `/studio-post` (asks first) and `/studio-growth`. Each answers with no model (`done.source = che_creator_studio`). Spoken forms reach the same commands through `studioChatIntent`: "show the series bible", "write the pilot script", "render the pilot", "is the pilot ready?", "export the pilot for TikTok", "post it to YouTube Shorts" and "show the growth experiments".
+
+- The series bible, the 40-second vertical pilot and its sources are stored as data in that module, with checks: cast, sourced facts, 30 to 45 seconds, 9:16, and none of the reference videos' names or titles.
+- **Render** reuses `media.generateVideo` and the free GitHub renderer. The storyboard is sent as the workflow's `spec` input, and `tools/che_video_render.py` draws still illustrated scenes with burned-in captions, a `captions.srt` file and one narrator voice. It is not animation and has no lip sync. A render counts only when its MP4 passes `mp4Facts`, which checks length, codecs and the frame size read from the file.
+- **Export** checks one platform's profile: aspect, length, CHE's caption-safe zone, title, caption and hashtags. The limits come from CHE's notes and say so.
+- **Post** works only for YouTube Shorts, through the owner's existing YouTube OAuth, and the upload is unlisted. It first names the account, the video and its visibility, and waits for a yes. TikTok, Instagram Reels and Facebook Reels answer "not connected; you must authorize it first" and post nothing.
+- **Growth** reports only YouTube's own counters for a posted pilot. Anything else is "no data".
+- The phone's Creator Studio room shows the same view (`GET /api/studio`, `lib/rooms/che_series_studio.dart`). It loads silently, and its buttons ask CHE in chat.
+
 ## How it works (no second assistant)
 
 | Piece | Where | Reuses |

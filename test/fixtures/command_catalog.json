@@ -40,6 +40,11 @@
    "id": "office",
    "title": "Office & Automation",
    "summary": "The Office crew, integrations, skills and voice."
+  },
+  {
+   "id": "studio",
+   "title": "Creator Studio",
+   "summary": "An original series: bible, pilot, render, export and posting."
   }
  ],
  "commands": [
@@ -916,6 +921,235 @@
    "status": "available",
    "missing": [],
    "optional_missing": []
+  },
+  {
+   "id": "studio-bible",
+   "category": "studio",
+   "title": "Studio Bible",
+   "summary": "Read the original series bible.",
+   "does": "Reads the Street Smart Explainers series bible: premise, recurring cast, tone rules, setting and episode format. All original; nothing from the reference videos.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Show the series bible",
+    "Who is in the cast of Street Smart Explainers?"
+   ],
+   "needs": [],
+   "optional": [],
+   "handler": "creator_studio.SERIES_BIBLE + validateBible",
+   "route": "che_creator_studio",
+   "produces": "series bible",
+   "evidence": "The stored bible and its checks.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "series bible",
+    "cast",
+    "characters",
+    "street smart explainers"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "studio-pilot",
+   "category": "studio",
+   "title": "Studio Pilot",
+   "summary": "Read and check the pilot script.",
+   "does": "Reads the 40-second vertical pilot: scenes, narration, captions, shots, the cast in each shot and its sources, and checks it against the episode format.",
+   "mode": "PLAN",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Write the pilot script",
+    "Read me the pilot scenes"
+   ],
+   "needs": [],
+   "optional": [],
+   "handler": "creator_studio.PILOT + validateEpisode",
+   "route": "che_creator_studio",
+   "produces": "pilot script",
+   "evidence": "The stored pilot spec, its checks and the sources each fact cites.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "pilot",
+    "pilot script",
+    "episode",
+    "storyboard"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "studio-render",
+   "category": "studio",
+   "title": "Studio Render",
+   "summary": "Render the pilot as a vertical MP4.",
+   "does": "Renders the pilot on the free GitHub renderer as a 1080 by 1920 MP4 with burned-in captions, or reports its render status. Only a verified MP4 counts as done.",
+   "mode": "BUILD",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "request",
+    "required": false,
+    "hint": "Say \"status\" to only check it"
+   },
+   "examples": [
+    "Render the pilot",
+    "Is the pilot ready?"
+   ],
+   "needs": [
+    "video_renderer"
+   ],
+   "optional": [],
+   "handler": "creator_studio → media.generateVideo → github_video_renderer.js",
+   "route": "che_creator_studio",
+   "produces": "video",
+   "evidence": "A verified MP4 (length, size and codecs read from the file) in the media library.",
+   "cost": "Free renderer on GitHub Actions; paid narration only if you turned Fish narration on.",
+   "keywords": [
+    "render pilot",
+    "pilot video",
+    "pilot status"
+   ],
+   "status": "setup_required",
+   "missing": [
+    {
+     "id": "video_renderer",
+     "label": "Video renderer",
+     "state": "not_connected",
+     "setup": "Needs CHE_VIDEO_RENDER_URL, or CHE_GITHUB_TOKEN with CHE_GITHUB_REPO for the free GitHub renderer.",
+     "detail": "No video renderer is configured."
+    }
+   ],
+   "optional_missing": []
+  },
+  {
+   "id": "studio-export",
+   "category": "studio",
+   "title": "Studio Export",
+   "summary": "Package the pilot for one platform.",
+   "does": "Builds the pilot package for YouTube Shorts, TikTok, Instagram Reels or Facebook Reels and checks it: aspect, length, caption-safe zone, title, caption and hashtags. Posts nothing.",
+   "mode": "PLAN",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "platform",
+    "required": true,
+    "hint": "YouTube Shorts, TikTok, Instagram Reels or Facebook Reels"
+   },
+   "examples": [
+    "Export the pilot for TikTok",
+    "Package the pilot for Instagram Reels"
+   ],
+   "needs": [],
+   "optional": [
+    "youtube"
+   ],
+   "handler": "creator_studio.exportPackage + EXPORT_PROFILES",
+   "route": "che_creator_studio",
+   "produces": "platform package",
+   "evidence": "The package and each check it passed or failed.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "export",
+    "tiktok",
+    "reels",
+    "shorts",
+    "platform"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": [
+    "youtube"
+   ]
+  },
+  {
+   "id": "studio-post",
+   "category": "studio",
+   "title": "Studio Post",
+   "summary": "Post the pilot to one connected platform.",
+   "does": "Uploads the verified pilot MP4 unlisted to your YouTube channel as a Short. TikTok, Instagram and Facebook are not connected, so CHE says so and posts nothing there.",
+   "mode": "BUILD",
+   "approval": {
+    "required": true,
+    "reason": "Uploads the pilot to the platform you named, unlisted."
+   },
+   "input": {
+    "name": "platform",
+    "required": true,
+    "hint": "The platform, for example YouTube Shorts"
+   },
+   "examples": [
+    "Post the pilot to YouTube Shorts"
+   ],
+   "needs": [],
+   "optional": [
+    "youtube"
+   ],
+   "handler": "creator_studio → youtube_upload.uploadYouTube",
+   "route": "che_creator_studio",
+   "produces": "youtube link",
+   "evidence": "The link YouTube returned for the upload.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "post pilot",
+    "upload pilot",
+    "youtube shorts"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": [
+    "youtube"
+   ]
+  },
+  {
+   "id": "studio-growth",
+   "category": "studio",
+   "title": "Studio Growth",
+   "summary": "Audience-growth plan and real results.",
+   "does": "Reads the growth experiments and the pilot's real numbers from connected platforms. With nothing connected it says no data; it never estimates views.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Show the growth experiments",
+    "How is the pilot doing?"
+   ],
+   "needs": [],
+   "optional": [
+    "youtube"
+   ],
+   "handler": "creator_studio.GROWTH_PLAN + youtube_upload.youtubeVideoStatistics",
+   "route": "che_creator_studio",
+   "produces": "growth report",
+   "evidence": "Only statistics a platform returned.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "audience growth",
+    "growth experiments",
+    "pilot views"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": [
+    "youtube"
+   ]
   },
   {
    "id": "trade-open",
