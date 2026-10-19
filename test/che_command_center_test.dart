@@ -166,6 +166,10 @@ void main() {
       expect(find.text('/$id'), findsOneWidget, reason: id);
     }
     expect(find.text('/yt-ideas'), findsNothing);
+    // Back to the top, where the search field and its results header are: the eleventh trading tile moved
+    // trade-connections below the first screen, so the list was still scrolled down here.
+    await tester.fling(library, const Offset(0, 3000), 3000);
+    await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField).first, 'find website clients');
     await tester.pumpAndSettle();
     expect(find.textContaining('MATCHES FOR "FIND WEBSITE CLIENTS"'), findsOneWidget);
