@@ -78,6 +78,7 @@
    "misconceptions": [
     "const does not freeze a value: it only stops the name being reassigned, and the array or object it holds can still change."
    ],
+   "limitations": [],
    "che_note": "",
    "measured": null,
    "sources": [
@@ -186,6 +187,7 @@
    "misconceptions": [
     "Stopping at i <= length visits one item too many: the last index is length minus 1."
    ],
+   "limitations": [],
    "che_note": "",
    "measured": null,
    "sources": [
@@ -261,6 +263,7 @@
    "misconceptions": [
     "A function that changes a shared variable is not pure, even if it returns the right answer."
    ],
+   "limitations": [],
    "che_note": "",
    "measured": null,
    "sources": [
@@ -347,6 +350,7 @@
    "misconceptions": [
     "Full coverage does not mean correct: a line can run in a test without any assertion checking its result."
    ],
+   "limitations": [],
    "che_note": "CHE's own Worker is checked this way: every module has a *.test.mjs file that runs offline with node --test.",
    "measured": null,
    "sources": [
@@ -450,6 +454,7 @@
    "misconceptions": [
     "O(n) is not always faster than O(n²): Big-O says how time grows, not how long a particular small input takes."
    ],
+   "limitations": [],
    "che_note": "",
    "measured": null,
    "sources": [
@@ -564,6 +569,7 @@
    "misconceptions": [
     "Recursion is not always slower than a loop, but naive recursion that repeats the same subproblem can be exponentially slower."
    ],
+   "limitations": [],
    "che_note": "",
    "measured": null,
    "sources": [
@@ -682,6 +688,7 @@
    "misconceptions": [
     "O(1) on average is not a promise for every single operation: a resize or a crowded bucket can be slow."
    ],
+   "limitations": [],
    "che_note": "",
    "measured": null,
    "sources": [
@@ -799,6 +806,7 @@
    "misconceptions": [
     "O(n log n) does not mean merge sort is always fastest: for small or nearly sorted lists insertion sort can win."
    ],
+   "limitations": [],
    "che_note": "",
    "measured": null,
    "sources": [
@@ -893,6 +901,7 @@
    "misconceptions": [
     "A 200 status does not always mean the work succeeded: some APIs return 200 with an error inside the body, so check the body too."
    ],
+   "limitations": [],
    "che_note": "CHE's phone app talks to her Worker this way: every chat turn is a POST to /api/chat over HTTPS.",
    "measured": null,
    "sources": [
@@ -1024,6 +1033,7 @@
    "misconceptions": [
     "async does not make code run in parallel on its own: JavaScript still runs one piece of code at a time, it just stops waiting idly."
    ],
+   "limitations": [],
    "che_note": "",
    "measured": null,
    "sources": [
@@ -1149,6 +1159,10 @@
    ],
    "misconceptions": [
     "A micro is not a smaller-risk version of the same trade by magic: ten micros carry exactly the risk of one full contract."
+   ],
+   "limitations": [
+    "Specs are CME's and can change: verify against the exchange.",
+    "Profit and loss here is before commissions, fees, spread and slippage."
    ],
    "che_note": "CHE's paper engine uses MNQ with a 0.25-point tick and $2 a point, and NQ with a 0.25-point tick and $20 a point (trading_evidence.js).",
    "measured": null,
@@ -1288,6 +1302,9 @@
    "misconceptions": [
     "The last traded price is not the price you will get: a market buy fills at the ask, which can be above it."
    ],
+   "limitations": [
+    "CHE has no live quote feed; its spread and slippage are planning assumptions, not measured fills."
+   ],
    "che_note": "CHE's paper engine assumes a 1-tick spread, half paid on each side, and 1 tick of slippage per side on market orders. These are planning assumptions, not measured fills (trading_evidence.js).",
    "measured": null,
    "sources": [
@@ -1419,6 +1436,10 @@
    "misconceptions": [
     "A high reward-to-risk plan is not better by itself: a 5R target that is rarely reached can have a worse expectancy than a 1R target."
    ],
+   "limitations": [
+    "R hides position size: two trades of +1R can be very different amounts of money.",
+    "Slippage through a stop can make a loss worse than −1R."
+   ],
    "che_note": "",
    "measured": null,
    "sources": [
@@ -1542,6 +1563,10 @@
    ],
    "misconceptions": [
     "A tight stop is not automatically lower risk: it can mean a bigger size, more stop-outs and more slippage."
+   ],
+   "limitations": [
+    "The stop is assumed to fill at its price; gaps and fast markets fill worse.",
+    "Position size from one trade's stop ignores correlated positions held at the same time."
    ],
    "che_note": "CHE's trading desk sends no live order until you set live risk limits, the most contracts and the most dollars at risk per order, and even then each live order waits for your yes (trading_desk.js).",
    "measured": null,
@@ -1674,6 +1699,10 @@
    ],
    "misconceptions": [
     "A high win rate is not a positive expectancy: what matters is win rate and payoff together."
+   ],
+   "limitations": [
+    "An estimate from past trades: its range must be read with it, and the future can differ.",
+    "Measured after assumed costs; real fills can be worse."
    ],
    "che_note": "",
    "measured": {
@@ -1813,6 +1842,10 @@
    "misconceptions": [
     "A 60% win rate from 10 trades is not \"a 60% strategy\": the honest range runs from about 31% to 83%."
    ],
+   "limitations": [
+    "Assumes independent trades with one fixed win probability, which regime changes break.",
+    "A win rate means nothing without the payoff."
+   ],
    "che_note": "",
    "measured": {
     "metric": "win_rate",
@@ -1945,6 +1978,10 @@
    "misconceptions": [
     "A profit factor above 1 in a backtest is not an edge until it holds out of sample and after costs."
    ],
+   "limitations": [
+    "Ignores the order of trades, so it says nothing about drawdowns.",
+    "A few large trades can move it a lot."
+   ],
    "che_note": "",
    "measured": {
     "metric": "profit_factor",
@@ -2065,6 +2102,10 @@
    ],
    "misconceptions": [
     "A backtest's maximum drawdown is not the worst you will see: it is the worst of one path."
+   ],
+   "limitations": [
+    "One path only: other orders of the same trades can go deeper.",
+    "Closed-trade equity misses the swings while trades are open."
    ],
    "che_note": "",
    "measured": {
@@ -2219,7 +2260,11 @@
    "misconceptions": [
     "VWAP is not a support line that price must respect: it is an average of what already traded."
    ],
-   "che_note": "CHE does not compute VWAP on market data yet: /trade-liquidity marks swing highs and lows only and says so. The numbers on this card are a worked example, not a market reading.",
+   "limitations": [
+    "Bar typical prices approximate trade prices; delayed public bars may have partial volume.",
+    "VWAP describes the session; it does not predict."
+   ],
+   "che_note": "CHE computes VWAP only from bars it has stored, the delayed paper feed, and says their source and time: say \"calculate VWAP from the latest bars\". The numbers on this card are an educational example, not a market reading.",
    "measured": null,
    "sources": [
     {
@@ -2353,6 +2398,10 @@
    "misconceptions": [
     "More backtest variants do not make the best one more trustworthy: they make it more likely to be luck."
    ],
+   "limitations": [
+    "The normal approximation is rough below about 30 trades.",
+    "Correlated trades carry less information than their count suggests."
+   ],
    "che_note": "",
    "measured": {
     "metric": "sample",
@@ -2389,6 +2438,3457 @@
     },
     {
      "title": "CHE source: server/cloudflare/trading_evidence.js",
+     "author": "CHE repository",
+     "url": "",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    }
+   ]
+  },
+  {
+   "id": "t-futures",
+   "domain": "trading",
+   "title": "Index futures: NQ, MNQ, ES and MES",
+   "level": "beginner",
+   "summary": "Contracts on the Nasdaq-100 and S&P 500 indexes: the specs, the trading hours, margin and the quarterly roll.",
+   "revision": 1,
+   "source_kind": "curated",
+   "aliases": [
+    "nq and mnq",
+    "nq mnq",
+    "es and mes",
+    "nq contract",
+    "mnq contract",
+    "es contract",
+    "mes contract",
+    "equity index futures",
+    "e mini futures",
+    "micro e mini",
+    "margin call",
+    "initial margin",
+    "maintenance margin",
+    "contract rollover",
+    "quarterly roll",
+    "cme trading hours"
+   ],
+   "tags": [
+    "futures",
+    "fundamentals",
+    "contract specs"
+   ],
+   "prerequisites": [
+    "tick-value"
+   ],
+   "related": [
+    "risk-management",
+    "t-order-types",
+    "t-session-levels"
+   ],
+   "levels": {
+    "beginner": "A futures contract is an agreement to buy or sell an index at a set price on a future date, traded on an exchange. NQ and its micro MNQ follow the Nasdaq-100; ES and its micro MES follow the S&P 500. Each micro is one tenth of the full contract, so it is the same market with a tenth of the dollars per point.",
+    "intermediate": "Per CME: NQ is $20 a point and MNQ $2; ES is $50 a point and MES $5. All four move in 0.25-point ticks, so a tick is $5.00, $0.50, $12.50 and $1.25. They trade Sunday to Friday from 6 p.m. to 5 p.m. New York time, with a one-hour break each afternoon. Margin is a good-faith deposit, not the price: the exchange sets a minimum and the broker can ask for more.",
+    "expert": "Contracts expire quarterly, in March, June, September and December, and settle in cash; most volume moves to the next contract about a week before expiry, so a chart that splices contracts has a jump at each roll unless it is back-adjusted. Initial margin opens a position and maintenance margin keeps it open; a fall below maintenance brings a margin call or a forced exit. Notional value, index level × point value, is the real exposure, so a small margin controls a large position. Specs, hours and margins change: check the exchange before trading."
+   },
+   "analogy": "A micro and a full contract are like a cup and a jug filled from the same barrel: the water is the same, only how much you carry changes.",
+   "formula": {
+    "name": "Dollar risk of a futures position",
+    "expression": "risk = stop points × point value × contracts",
+    "spoken": "the risk equals the stop distance in points, times the dollars per point, times the number of contracts",
+    "variables": [
+     {
+      "symbol": "stop points",
+      "meaning": "distance from entry to stop",
+      "unit": "index points"
+     },
+     {
+      "symbol": "point value",
+      "meaning": "NQ $20, MNQ $2, ES $50, MES $5 per point per contract (CME)",
+      "unit": "$ per point"
+     },
+     {
+      "symbol": "contracts",
+      "meaning": "how many contracts",
+      "unit": "a count"
+     }
+    ],
+    "assumptions": "The stop fills at its price; gaps and slippage make the real loss bigger. Commissions and fees come on top and are added only when you give them.",
+    "compute": "tFuturesRisk",
+    "example": {
+     "inputs": {
+      "symbol": "MNQ",
+      "contracts": 2,
+      "stopPoints": 12
+     },
+     "result": 48
+    }
+   },
+   "example": {
+    "kind": "numeric",
+    "provenance": "educational example",
+    "inputs": {
+     "symbol": "MNQ",
+     "contracts": 2,
+     "stopPoints": 12
+    },
+    "compute": "tFuturesRisk",
+    "result": 48,
+    "unit": "$",
+    "steps": [
+     "Educational example, made-up numbers, not market data",
+     "12 points ÷ 0.25 = 48 ticks of $0.50",
+     "risk per contract = 12 points × $2.00 a point = $24.00",
+     "total risk = $24.00 × 2 contracts = $48.00",
+     "before commissions and fees: you gave none, so none are assumed"
+    ]
+   },
+   "quiz": [
+    {
+     "q": "What does a 10-point stop risk on 1 NQ?",
+     "a": "$200: 10 points × $20."
+    },
+    {
+     "q": "What does an 8-point stop risk on 3 MES?",
+     "a": "$120: 8 × $5 × 3."
+    },
+    {
+     "q": "Is futures margin the cost of the trade?",
+     "a": "No. It is a good-faith deposit; the profit or loss is points × point value × contracts, and can be far bigger than the margin."
+    }
+   ],
+   "misconceptions": [
+    "A low margin is not a low risk: one NQ at 21,000 controls about $420,000 of the index, whatever the margin."
+   ],
+   "limitations": [
+    "Specs, trading hours and margins are set by CME and the broker and can change: verify against the exchange before trading.",
+    "The calculation assumes the stop fills at its price; fast markets and gaps fill worse."
+   ],
+   "che_note": "CHE's paper engine trades MNQ only, on delayed data, with the specs in trading_evidence.js; the table here also holds NQ, ES and MES. Verify against the exchange; specs can change.",
+   "measured": null,
+   "sources": [
+    {
+     "title": "CME Group: E-mini Nasdaq-100 contract specs",
+     "author": "CME Group",
+     "url": "https://www.cmegroup.com/markets/equities/nasdaq/e-mini-nasdaq-100.contractSpecs.html",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "CME Group: Micro E-mini Nasdaq-100 contract specs",
+     "author": "CME Group",
+     "url": "https://www.cmegroup.com/markets/equities/nasdaq/micro-e-mini-nasdaq-100.contractSpecs.html",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "CME Group: E-mini S&P 500 contract specs",
+     "author": "CME Group",
+     "url": "https://www.cmegroup.com/markets/equities/sp/e-mini-sandp500.contractSpecs.html",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "CME Group: Micro E-mini S&P 500 contract specs",
+     "author": "CME Group",
+     "url": "https://www.cmegroup.com/markets/equities/sp/micro-e-mini-sandp-500.contractSpecs.html",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "Futures contract",
+     "author": "Wikipedia",
+     "url": "https://en.wikipedia.org/wiki/Futures_contract",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "CHE source: server/cloudflare/atlas_math.js",
+     "author": "CHE repository",
+     "url": "",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    }
+   ]
+  },
+  {
+   "id": "t-order-types",
+   "domain": "trading",
+   "title": "Order types and bracket orders",
+   "level": "beginner",
+   "summary": "Market, limit, stop and stop-limit orders, and brackets that attach a stop and a target.",
+   "revision": 1,
+   "source_kind": "curated",
+   "aliases": [
+    "order types",
+    "order type",
+    "types of orders",
+    "market order",
+    "market orders",
+    "limit order",
+    "limit orders",
+    "stop order",
+    "stop orders",
+    "stop limit",
+    "stop limit order",
+    "bracket order",
+    "bracket orders",
+    "oco",
+    "oco order",
+    "one cancels the other"
+   ],
+   "tags": [
+    "execution",
+    "fundamentals"
+   ],
+   "prerequisites": [
+    "bid-ask-spread",
+    "r-multiple"
+   ],
+   "related": [
+    "t-order-book",
+    "risk-management",
+    "t-futures"
+   ],
+   "levels": {
+    "beginner": "A market order fills now at the best price available. A limit order fills only at your price or better, so it may not fill. A stop order waits until price reaches a level, then becomes a market order; it is how a stop-loss gets you out. A bracket sends an entry with a stop and a target attached.",
+    "intermediate": "A stop-limit becomes a limit order when its stop price trades, so it controls the fill price but can be skipped entirely in a fast move, which is dangerous for a protective stop. In a bracket the stop and the target are one-cancels-other (OCO): when one fills, the other is cancelled. The plan's reward-to-risk is the target distance divided by the stop distance.",
+    "expert": "Market and stop orders pay the spread and slippage; limit orders earn the spread but face adverse selection, filling most often when price is about to go through them. Exchanges protect market orders with price bands, and brokers may simulate stop or OCO orders on their own servers, so the order type you choose and where it lives change what happens in a gap or an outage. Test the fill model you assume."
+   },
+   "analogy": "A limit order is like a standing offer on a house at your price: you may get it, or the house sells to someone else. A market order is like paying the asking price today.",
+   "formula": {
+    "name": "Reward-to-risk of a bracket",
+    "expression": "reward ÷ risk = |target − entry| ÷ |entry − stop|;  break-even win rate = risk ÷ (risk + reward)",
+    "spoken": "reward to risk equals the target distance divided by the stop distance, and the break-even win rate equals the risk divided by risk plus reward",
+    "variables": [
+     {
+      "symbol": "entry",
+      "meaning": "the entry price",
+      "unit": "price"
+     },
+     {
+      "symbol": "stop",
+      "meaning": "the protective stop",
+      "unit": "price"
+     },
+     {
+      "symbol": "target",
+      "meaning": "the profit target",
+      "unit": "price"
+     }
+    ],
+    "assumptions": "Fills exactly at entry, stop and target; the trade ends at one of them. Costs and slippage raise the break-even win rate.",
+    "compute": "tRewardRisk",
+    "example": {
+     "inputs": {
+      "symbol": "MNQ",
+      "side": "long",
+      "entry": 18000,
+      "stop": 17990,
+      "target": 18030
+     },
+     "result": 3
+    }
+   },
+   "example": {
+    "kind": "numeric",
+    "provenance": "educational example",
+    "inputs": {
+     "symbol": "MNQ",
+     "side": "long",
+     "entry": 18000,
+     "stop": 17990,
+     "target": 18030
+    },
+    "compute": "tRewardRisk",
+    "result": 3,
+    "unit": "ratio",
+    "steps": [
+     "Educational example, made-up numbers, not market data",
+     "risk = 18,000 − 17,990 = 10 points",
+     "reward = 18,030 − 18,000 = 30 points",
+     "reward to risk = 30 ÷ 10 = 3 to 1",
+     "in dollars on 1 MNQ: risk 10 × $2.00 × 1 = $20.00, reward 30 × $2.00 × 1 = $60.00",
+     "win rate needed to break even before costs = 10 ÷ (10 + 30) = 25.0%"
+    ]
+   },
+   "quiz": [
+    {
+     "q": "A short enters at 100 with a stop at 102 and a target at 94. What is the reward to risk?",
+     "a": "3 to 1: 6 points of reward on 2 points of risk."
+    },
+    {
+     "q": "Which order can be skipped entirely in a fast market, a stop or a stop-limit?",
+     "a": "A stop-limit: once triggered it is a limit order and may not fill."
+    },
+    {
+     "q": "In a bracket, what happens to the target when the stop fills?",
+     "a": "It is cancelled: the stop and target are one-cancels-other."
+    }
+   ],
+   "misconceptions": [
+    "A stop order does not guarantee its price: once triggered it fills at the market, which can be worse."
+   ],
+   "limitations": [
+    "Order behaviour differs by exchange and broker, especially for simulated stops and OCO links; read the broker's rules.",
+    "A 3-to-1 plan says nothing about how often the target is reached."
+   ],
+   "che_note": "Lessons never place or prepare orders. CHE's paper engine enters at the next bar open with a market fill plus assumed slippage (trading_evidence.js).",
+   "measured": null,
+   "sources": [
+    {
+     "title": "Order (exchange)",
+     "author": "Wikipedia",
+     "url": "https://en.wikipedia.org/wiki/Order_(exchange)",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "CME Group: Micro E-mini Nasdaq-100 contract specs",
+     "author": "CME Group",
+     "url": "https://www.cmegroup.com/markets/equities/nasdaq/micro-e-mini-nasdaq-100.contractSpecs.html",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "CHE source: server/cloudflare/atlas_math.js",
+     "author": "CHE repository",
+     "url": "",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    }
+   ]
+  },
+  {
+   "id": "t-order-book",
+   "domain": "trading",
+   "title": "Order book, liquidity and slippage",
+   "level": "intermediate",
+   "summary": "The book lists resting orders at each price; a large market order eats through it and pays slippage.",
+   "revision": 1,
+   "source_kind": "curated",
+   "aliases": [
+    "order book",
+    "order books",
+    "depth of market",
+    "market depth",
+    "level 2",
+    "liquidity and slippage",
+    "market liquidity",
+    "market mechanics",
+    "price impact"
+   ],
+   "tags": [
+    "market structure",
+    "execution",
+    "costs"
+   ],
+   "prerequisites": [
+    "bid-ask-spread"
+   ],
+   "related": [
+    "t-order-types",
+    "bid-ask-spread",
+    "t-backtesting-pitfalls"
+   ],
+   "levels": {
+    "beginner": "The order book is the list of limit orders waiting to buy and sell at each price. Liquidity is how much is waiting near the current price. When you buy with a market order you take the cheapest offers first; if your order is bigger than the first level, the rest fills at worse prices. The difference is slippage.",
+    "intermediate": "A market buy fills level by level: the average fill is the total paid divided by the quantity. Slippage is the average fill minus the best ask, times the point value and the quantity. A thin book, an economic release or the overnight session make each level smaller, so the same order slips more. Limit orders add liquidity; market orders remove it.",
+    "expert": "Visible depth is not the whole book: iceberg orders hide size, and quotes are pulled in milliseconds when price moves, so depth often vanishes exactly when it is needed. Price impact grows with order size relative to the volume traded, roughly with its square root in many studies. A backtest that fills every order at the last price ignores all of this, which flatters fast, small-target strategies the most."
+   },
+   "analogy": "Buying through the book is like buying apples from a row of stalls: the first stall is cheapest, but if you want more than it has you walk to the next, dearer one.",
+   "formula": {
+    "name": "Market order through the book",
+    "expression": "average fill = Σ(price × size taken) ÷ quantity;  slippage = (average fill − best price) × point value × quantity",
+    "spoken": "the average fill is the total paid divided by the quantity, and slippage is the average fill minus the best price, times the point value and the quantity",
+    "variables": [
+     {
+      "symbol": "price, size",
+      "meaning": "each level of the book on the side being hit",
+      "unit": "price and contracts"
+     },
+     {
+      "symbol": "quantity",
+      "meaning": "contracts in the order",
+      "unit": "a count"
+     },
+     {
+      "symbol": "point value",
+      "meaning": "dollars per point per contract",
+      "unit": "$ per point"
+     }
+    ],
+    "assumptions": "The book stays still while the order fills; in practice it moves and hidden orders change the result.",
+    "compute": "tBookFill",
+    "example": {
+     "inputs": {
+      "side": "buy",
+      "qty": 10,
+      "symbol": "MNQ",
+      "levels": [
+       {
+        "price": 21000.25,
+        "size": 4
+       },
+       {
+        "price": 21000.5,
+        "size": 3
+       },
+       {
+        "price": 21000.75,
+        "size": 5
+       }
+      ]
+     },
+     "result": {
+      "avgPrice": 21000.475,
+      "slippagePoints": 0.225,
+      "slippageDollars": 4.5
+     }
+    }
+   },
+   "example": {
+    "kind": "numeric",
+    "provenance": "educational example",
+    "inputs": {
+     "side": "buy",
+     "qty": 10,
+     "symbol": "MNQ",
+     "levels": [
+      {
+       "price": 21000.25,
+       "size": 4
+      },
+      {
+       "price": 21000.5,
+       "size": 3
+      },
+      {
+       "price": 21000.75,
+       "size": 5
+      }
+     ]
+    },
+    "compute": "tBookFill",
+    "result": {
+     "avgPrice": 21000.475,
+     "slippagePoints": 0.225,
+     "slippageDollars": 4.5
+    },
+    "unit": "price and $",
+    "steps": [
+     "Educational example, made-up numbers, not market data",
+     "fills: 4 at 21,000.25, 3 at 21,000.5, 3 at 21,000.75",
+     "average = 210,004.75 ÷ 10 = 21,000.475",
+     "slippage = 0.225 points × $2.00 × 10 = $4.50 against the best price 21,000.25"
+    ]
+   },
+   "quiz": [
+    {
+     "q": "You buy 10 MNQ: 4 fill at 21,000.25, 3 at 21,000.50, 3 at 21,000.75. What is the average fill?",
+     "a": "21,000.475: 210,004.75 ÷ 10."
+    },
+    {
+     "q": "Why does slippage grow around economic releases?",
+     "a": "Resting orders are pulled, so each price level holds less and an order reaches deeper prices."
+    },
+    {
+     "q": "Does a limit order pay the spread?",
+     "a": "No, it waits to be filled at its price, but it may not fill."
+    }
+   ],
+   "misconceptions": [
+    "The best bid and ask are not the price for any size: only for the size shown at that level."
+   ],
+   "limitations": [
+    "Real books change while an order fills, and hidden orders are not shown; the result is a model.",
+    "CHE has no order-book data, so it cannot measure real slippage for the owner's orders."
+   ],
+   "che_note": "CHE has no live order book feed; its paper engine assumes one tick of slippage per side on market orders instead (trading_evidence.js). The book on this card is an educational example.",
+   "measured": null,
+   "sources": [
+    {
+     "title": "Order book",
+     "author": "Wikipedia",
+     "url": "https://en.wikipedia.org/wiki/Order_book",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "Slippage (finance)",
+     "author": "Wikipedia",
+     "url": "https://en.wikipedia.org/wiki/Slippage_(finance)",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "CHE source: server/cloudflare/trading_evidence.js",
+     "author": "CHE repository",
+     "url": "",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    }
+   ]
+  },
+  {
+   "id": "t-stocks",
+   "domain": "trading",
+   "title": "Stocks and share sizing",
+   "level": "beginner",
+   "summary": "A share is a small piece of a company; size a stock trade by the dollars between entry and stop.",
+   "revision": 1,
+   "source_kind": "curated",
+   "aliases": [
+    "stocks",
+    "stock",
+    "shares and stocks",
+    "stock trading",
+    "equity shares",
+    "share sizing",
+    "how many shares",
+    "shares from risk",
+    "stock position size"
+   ],
+   "tags": [
+    "stocks",
+    "risk",
+    "fundamentals"
+   ],
+   "prerequisites": [
+    "risk-management"
+   ],
+   "related": [
+    "t-options",
+    "r-multiple",
+    "risk-management"
+   ],
+   "levels": {
+    "beginner": "A share is a small piece of ownership in a company, and its price moves with what buyers and sellers will pay. A stock trade is sized the same way as a futures trade: decide the most you will lose, place the stop where the idea is wrong, and buy only as many shares as that loss allows.",
+    "intermediate": "Shares = risk budget ÷ (entry − stop), rounded down. Risking $100 with an entry at $50 and a stop at $48 risks $2 a share, so the size is 50 shares, which costs $2,500 to buy: the capital is not the risk. The R-multiple of the result is the gain per share divided by the $2 risked.",
+    "expert": "Stocks gap: news outside trading hours can open the price far beyond the stop, so the planned loss is a minimum, not a maximum. Liquidity varies hugely between large and small companies, and short selling adds borrow costs and the risk of a squeeze. Splits and dividends change historical prices, so a backtest needs adjusted data and must include the companies that were delisted, or it suffers survivorship bias."
+   },
+   "analogy": "Sizing a stock trade is like deciding how many tiles to buy from the size of the room, not from how much money is in your pocket.",
+   "formula": {
+    "name": "Shares from risk",
+    "expression": "shares = floor(risk budget ÷ |entry − stop|)",
+    "spoken": "shares equal the risk budget divided by the distance from entry to stop, rounded down",
+    "variables": [
+     {
+      "symbol": "risk budget",
+      "meaning": "the most you accept losing",
+      "unit": "$"
+     },
+     {
+      "symbol": "entry, stop",
+      "meaning": "the planned entry and stop prices",
+      "unit": "$ per share"
+     }
+    ],
+    "assumptions": "The stop fills at its price; an overnight gap can open far beyond it. Commissions are not included.",
+    "compute": "tStockShares",
+    "example": {
+     "inputs": {
+      "entry": 50,
+      "stop": 48,
+      "riskDollars": 100
+     },
+     "result": 50
+    }
+   },
+   "example": {
+    "kind": "numeric",
+    "provenance": "educational example",
+    "inputs": {
+     "entry": 50,
+     "stop": 48,
+     "riskDollars": 100
+    },
+    "compute": "tStockShares",
+    "result": 50,
+    "unit": "shares",
+    "steps": [
+     "Educational example, made-up numbers, not market data",
+     "risk per share = |50 − 48| = $2.00",
+     "$100.00 ÷ $2.00 = 50, rounded down = 50 shares",
+     "capital to buy them = 50 × $50.00 = $2,500.00; the risk is $100.00, not the whole amount"
+    ]
+   },
+   "quiz": [
+    {
+     "q": "You risk $75 with an entry at $20.00 and a stop at $19.50. How many shares?",
+     "a": "150 shares: $75 ÷ $0.50."
+    },
+    {
+     "q": "Is the money needed to buy the shares the same as the risk?",
+     "a": "No: the risk is shares × the stop distance; the capital is shares × the price."
+    },
+    {
+     "q": "Why is a stock's planned loss a minimum, not a maximum?",
+     "a": "Because the price can gap past the stop overnight or on news."
+    }
+   ],
+   "misconceptions": [
+    "Buying fewer, more expensive shares is not safer by itself: the risk depends on the stop distance times the shares."
+   ],
+   "limitations": [
+    "Gaps, halts and thin trading can make the real loss far bigger than the plan.",
+    "Commissions, borrow fees for shorts and taxes are not included."
+   ],
+   "che_note": "",
+   "measured": null,
+   "sources": [
+    {
+     "title": "Stock",
+     "author": "Wikipedia",
+     "url": "https://en.wikipedia.org/wiki/Stock",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "Survivorship bias",
+     "author": "Wikipedia",
+     "url": "https://en.wikipedia.org/wiki/Survivorship_bias",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "CHE source: server/cloudflare/atlas_math.js",
+     "author": "CHE repository",
+     "url": "",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    }
+   ]
+  },
+  {
+   "id": "t-options",
+   "domain": "trading",
+   "title": "Options basics at expiry",
+   "level": "intermediate",
+   "summary": "Calls and puts: the right to buy or sell at a strike, with a breakeven and a known worst case for the buyer.",
+   "revision": 1,
+   "source_kind": "curated",
+   "aliases": [
+    "options basics",
+    "option basics",
+    "options",
+    "calls and puts",
+    "call options",
+    "call option",
+    "put options",
+    "put option",
+    "option payoff",
+    "options payoff",
+    "option breakeven",
+    "intrinsic value"
+   ],
+   "tags": [
+    "options",
+    "derivatives"
+   ],
+   "prerequisites": [
+    "t-stocks"
+   ],
+   "related": [
+    "t-stocks",
+    "risk-management",
+    "expectancy"
+   ],
+   "levels": {
+    "beginner": "An option is a contract that gives its buyer the right, not the duty, to buy (a call) or sell (a put) a stock at a set price, the strike, until a date. The buyer pays a premium for that right, and that premium is the most the buyer can lose. A standard stock option covers 100 shares.",
+    "intermediate": "At expiry a call is worth max(0, stock − strike) and a put max(0, strike − stock): that is intrinsic value. The buyer of a call breaks even at strike + premium; the buyer of a put at strike − premium. A long call with a $100 strike bought for $3 risks $300 and is worth $1,000 at a stock price of $110, a $700 profit.",
+    "expert": "Before expiry an option also carries time value, which depends on volatility, time left and interest rates, and needs a pricing model such as Black-Scholes and live quotes, which CHE does not have. Sellers collect the premium but take the other side: a short call has unlimited risk, and a short put can lose almost the whole strike. American options can be exercised early, and assignment can arrive without warning."
+   },
+   "analogy": "A call option is like a deposit on a house at a fixed price: if prices rise you buy cheap, and if they fall you walk away and lose only the deposit.",
+   "formula": {
+    "name": "Option payoff at expiry",
+    "expression": "call: intrinsic = max(0, S − K), breakeven = K + premium;  put: intrinsic = max(0, K − S), breakeven = K − premium;  P&L = (intrinsic − premium) × 100 × contracts",
+    "spoken": "a call is worth the stock minus the strike, or zero, and breaks even at the strike plus the premium; a put is worth the strike minus the stock, or zero, and breaks even at the strike minus the premium",
+    "variables": [
+     {
+      "symbol": "S",
+      "meaning": "the stock price at expiry",
+      "unit": "$"
+     },
+     {
+      "symbol": "K",
+      "meaning": "the strike",
+      "unit": "$"
+     },
+     {
+      "symbol": "premium",
+      "meaning": "the price paid per share",
+      "unit": "$"
+     },
+     {
+      "symbol": "100",
+      "meaning": "shares per standard contract",
+      "unit": "shares"
+     }
+    ],
+    "assumptions": "At expiry only, held to expiry, no early exercise, before commissions.",
+    "compute": "tOption",
+    "example": {
+     "inputs": {
+      "type": "call",
+      "position": "long",
+      "strike": 100,
+      "premium": 3,
+      "underlying": 110,
+      "contracts": 1
+     },
+     "result": {
+      "breakeven": 103,
+      "maxLoss": 300,
+      "intrinsic": 10,
+      "pnl": 700,
+      "premiumTotal": 300
+     }
+    }
+   },
+   "example": {
+    "kind": "numeric",
+    "provenance": "educational example",
+    "inputs": {
+     "type": "call",
+     "position": "long",
+     "strike": 100,
+     "premium": 3,
+     "underlying": 110,
+     "contracts": 1
+    },
+    "compute": "tOption",
+    "result": {
+     "breakeven": 103,
+     "maxLoss": 300,
+     "intrinsic": 10,
+     "pnl": 700,
+     "premiumTotal": 300
+    },
+    "unit": "$ and price",
+    "steps": [
+     "Educational example, made-up numbers, not market data",
+     "breakeven at expiry = strike + premium = 100 + 3 = 103",
+     "premium in dollars = 3 × 100 shares × 1 contract = $300.00",
+     "most it can lose = $300.00",
+     "most it can gain = unlimited, because the price can keep rising",
+     "intrinsic value at 110 = max(0, 110 − 100) = 10",
+     "profit or loss at expiry = (10 − 3) × 100 = $700.00"
+    ]
+   },
+   "quiz": [
+    {
+     "q": "A put with a $50 strike costs $2. Where does the buyer break even at expiry?",
+     "a": "$48: the strike minus the premium."
+    },
+    {
+     "q": "What is the most the buyer of a $3 call can lose on one contract?",
+     "a": "$300: the premium times 100 shares."
+    },
+    {
+     "q": "What is the risk of selling a call without owning the stock?",
+     "a": "Unlimited, because the stock can keep rising."
+    }
+   ],
+   "misconceptions": [
+    "An option that expires below its breakeven is not always a total loss: between the strike and the breakeven some premium is recovered."
+   ],
+   "limitations": [
+    "Payoffs at expiry only; before expiry the price depends on volatility and time, which needs a model and live quotes CHE does not have.",
+    "Educational only: CHE does not price, recommend or trade options."
+   ],
+   "che_note": "CHE has no options pricing feed and does not trade options; this card covers payoffs at expiry only.",
+   "measured": null,
+   "sources": [
+    {
+     "title": "Option (finance)",
+     "author": "Wikipedia",
+     "url": "https://en.wikipedia.org/wiki/Option_(finance)",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "Characteristics and Risks of Standardized Options",
+     "author": "The Options Clearing Corporation",
+     "url": "",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "CHE source: server/cloudflare/atlas_math.js",
+     "author": "CHE repository",
+     "url": "",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    }
+   ]
+  },
+  {
+   "id": "t-price-action",
+   "domain": "trading",
+   "title": "Price action, candles and volume",
+   "level": "beginner",
+   "summary": "Reading bars directly: the body, the wicks, the range, and volume compared with recent bars.",
+   "revision": 1,
+   "source_kind": "curated",
+   "aliases": [
+    "price action",
+    "candles and volume",
+    "candle anatomy",
+    "candlestick anatomy",
+    "reading candles",
+    "candle wicks",
+    "relative volume",
+    "rvol",
+    "volume analysis"
+   ],
+   "tags": [
+    "price action",
+    "volume",
+    "fundamentals"
+   ],
+   "prerequisites": [
+    "tick-value"
+   ],
+   "related": [
+    "t-market-structure",
+    "t-fair-value-gaps",
+    "vwap"
+   ],
+   "levels": {
+    "beginner": "Price action means reading what price did, bar by bar, instead of an indicator. Each candle has an open, a high, a low and a close. The body runs from open to close; the thin wicks show where price went and was pushed back. Volume is how much traded in the bar.",
+    "intermediate": "Body = |close − open|; upper wick = high − the higher of open and close; lower wick = the lower of open and close − low. A body that fills most of the range shows one side in control; long wicks show rejection. Relative volume, this bar's volume divided by the average of recent bars, says whether the move had unusual participation.",
+    "expert": "Candle patterns have weak and unstable evidence once costs are counted: studies such as Lo, Mamaysky and Wang find some patterns carry a little information, but far less than chart books suggest, and results depend on the bar size. Futures volume from a delayed public feed may be partial. Treat price action as a description that a rule must turn into a tested hypothesis."
+   },
+   "analogy": "A candle is like a day's weather summary: where the temperature started, how hot and cold it got, and where it ended up.",
+   "formula": {
+    "name": "Candle anatomy and relative volume",
+    "expression": "body = |C − O|;  upper wick = H − max(O, C);  lower wick = min(O, C) − L;  relative volume = V ÷ average prior V",
+    "spoken": "the body is the close minus the open, the wicks are what lies beyond the body, and relative volume is the volume divided by the average of the bars before",
+    "variables": [
+     {
+      "symbol": "O, H, L, C",
+      "meaning": "the bar's open, high, low and close",
+      "unit": "price"
+     },
+     {
+      "symbol": "V",
+      "meaning": "the bar's volume",
+      "unit": "contracts or shares"
+     }
+    ],
+    "assumptions": "One bar of one time frame; a different bar size shows the same move differently.",
+    "compute": "tCandle",
+    "example": {
+     "inputs": {
+      "o": 100,
+      "h": 106,
+      "l": 98,
+      "c": 104,
+      "v": 3000,
+      "priorVolumes": [
+       1000,
+       1500,
+       2000,
+       1500
+      ]
+     },
+     "result": {
+      "range": 8,
+      "body": 4,
+      "upperWick": 2,
+      "lowerWick": 2,
+      "bodyShare": 0.5,
+      "relativeVolume": 2
+     }
+    }
+   },
+   "example": {
+    "kind": "numeric",
+    "provenance": "educational example",
+    "inputs": {
+     "o": 100,
+     "h": 106,
+     "l": 98,
+     "c": 104,
+     "v": 3000,
+     "priorVolumes": [
+      1000,
+      1500,
+      2000,
+      1500
+     ]
+    },
+    "compute": "tCandle",
+    "result": {
+     "range": 8,
+     "body": 4,
+     "upperWick": 2,
+     "lowerWick": 2,
+     "bodyShare": 0.5,
+     "relativeVolume": 2
+    },
+    "unit": "price and ratio",
+    "steps": [
+     "Educational example, made-up numbers, not market data",
+     "range = 106 − 98 = 8",
+     "body = |104 − 100| = 4, 50.0% of the range",
+     "upper wick = 2, lower wick = 2",
+     "relative volume = 3,000 ÷ average 1,500 of the 4 bars before = 2"
+    ]
+   },
+   "quiz": [
+    {
+     "q": "A bar opens at 50, trades from 49 to 55 and closes at 54. How long is its upper wick?",
+     "a": "1 point: 55 − 54."
+    },
+    {
+     "q": "A bar trades 6,000 contracts when the last bars averaged 2,000. What is its relative volume?",
+     "a": "3: 6,000 ÷ 2,000."
+    },
+    {
+     "q": "Is a hammer candle a buy signal on its own?",
+     "a": "No. Without a tested rule and costs it is only a description."
+    }
+   ],
+   "misconceptions": [
+    "High volume does not tell you who won: every contract bought was also sold."
+   ],
+   "limitations": [
+    "A discretionary concept with mixed or limited evidence: definitions differ between teachers, the same chart can be labelled more than one way, and no peer-reviewed study shows it is an edge by itself. CHE treats it as a hypothesis to test on recorded trades, never as a reason to trade.",
+    "Delayed public futures volume may not match the exchange total."
+   ],
+   "che_note": "",
+   "measured": null,
+   "sources": [
+    {
+     "title": "Candlestick chart",
+     "author": "Wikipedia",
+     "url": "https://en.wikipedia.org/wiki/Candlestick_chart",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "Foundations of Technical Analysis (Journal of Finance, 2000)",
+     "author": "Andrew W. Lo, Harry Mamaysky and Jiang Wang",
+     "url": "https://doi.org/10.1111/0022-1082.00265",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "Trading Price Action Trends",
+     "author": "Al Brooks",
+     "url": "",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    }
+   ]
+  },
+  {
+   "id": "t-market-structure",
+   "domain": "trading",
+   "title": "Market structure: BOS and CHOCH",
+   "level": "intermediate",
+   "summary": "Swing highs and lows define a trend; a break of structure continues it, a change of character flips it.",
+   "revision": 1,
+   "source_kind": "curated",
+   "aliases": [
+    "market structure",
+    "bos",
+    "choch",
+    "bos and choch",
+    "bos vs choch",
+    "bos versus choch",
+    "break of structure",
+    "breaks of structure",
+    "change of character",
+    "market structure shift",
+    "mss",
+    "swing highs and lows",
+    "higher highs and higher lows",
+    "structure breaks"
+   ],
+   "tags": [
+    "ict",
+    "smc",
+    "price action"
+   ],
+   "prerequisites": [
+    "t-price-action"
+   ],
+   "related": [
+    "t-liquidity",
+    "t-order-blocks",
+    "t-premium-discount"
+   ],
+   "levels": {
+    "beginner": "Market structure is the pattern of swing highs and swing lows. Higher highs and higher lows make an uptrend; lower highs and lower lows a downtrend. A break of structure (BOS) is price closing past the last swing in the trend's direction. A change of character (CHOCH) is the first close past a swing against the trend.",
+    "intermediate": "The difference is direction against the trend: in an uptrend, a close above the last swing high is a BOS, the trend going on; the first close below the last swing low is a CHOCH, the first sign it may be turning. A swing is only known after the bars beside it close, so every label must wait for that confirmation.",
+    "expert": "Labels depend on choices: how many bars make a swing, whether a wick or only a close counts, and which time frame rules. With a swing size of 1 or 2, noise produces many breaks; with larger sizes, the label arrives late. Defined this way it is a mechanical rule that can be backtested causally, which is the only way to learn whether it adds anything after costs; CHE's sweep-then-structure-shift strategy is one such test."
+   },
+   "analogy": "Structure is like a staircase: a BOS is the next step in the same direction, and a CHOCH is the first step that goes the other way.",
+   "formula": {
+    "name": "Breaks of structure",
+    "expression": "BOS = a close beyond the last confirmed swing in the trend's direction;  CHOCH = the first such close against the trend",
+    "spoken": "a break of structure is a close past the last confirmed swing in the trend's direction, and a change of character is the first such close against the trend",
+    "variables": [
+     {
+      "symbol": "swing high",
+      "meaning": "a high above the n bars on each side, known n bars later",
+      "unit": "price"
+     },
+     {
+      "symbol": "swing low",
+      "meaning": "a low below the n bars on each side, known n bars later",
+      "unit": "price"
+     },
+     {
+      "symbol": "close",
+      "meaning": "the bar's close, which must pass the swing",
+      "unit": "price"
+     }
+    ],
+    "assumptions": "A close, not a wick, counts as a break; the first break, with no trend yet, counts as a BOS that sets the trend.",
+    "compute": "tStructure",
+    "example": {
+     "inputs": {
+      "n": 1,
+      "bars": [
+       {
+        "o": 100,
+        "h": 101,
+        "l": 99,
+        "c": 100
+       },
+       {
+        "o": 100,
+        "h": 103,
+        "l": 100,
+        "c": 102.5
+       },
+       {
+        "o": 102.5,
+        "h": 102,
+        "l": 100.5,
+        "c": 101
+       },
+       {
+        "o": 101,
+        "h": 101.5,
+        "l": 99.5,
+        "c": 100
+       },
+       {
+        "o": 100,
+        "h": 102.5,
+        "l": 100,
+        "c": 102
+       },
+       {
+        "o": 102,
+        "h": 104,
+        "l": 101.5,
+        "c": 103.8
+       },
+       {
+        "o": 103.8,
+        "h": 104.5,
+        "l": 102,
+        "c": 102.5
+       },
+       {
+        "o": 102.5,
+        "h": 103,
+        "l": 98,
+        "c": 98.5
+       },
+       {
+        "o": 98.5,
+        "h": 100,
+        "l": 97,
+        "c": 99.5
+       },
+       {
+        "o": 99.5,
+        "h": 99.8,
+        "l": 97.5,
+        "c": 98
+       },
+       {
+        "o": 98,
+        "h": 98.5,
+        "l": 95.5,
+        "c": 96
+       }
+      ]
+     },
+     "result": {
+      "bos": 2,
+      "choch": 1
+     }
+    }
+   },
+   "example": {
+    "kind": "numeric",
+    "provenance": "educational example",
+    "inputs": {
+     "n": 1,
+     "bars": [
+      {
+       "o": 100,
+       "h": 101,
+       "l": 99,
+       "c": 100
+      },
+      {
+       "o": 100,
+       "h": 103,
+       "l": 100,
+       "c": 102.5
+      },
+      {
+       "o": 102.5,
+       "h": 102,
+       "l": 100.5,
+       "c": 101
+      },
+      {
+       "o": 101,
+       "h": 101.5,
+       "l": 99.5,
+       "c": 100
+      },
+      {
+       "o": 100,
+       "h": 102.5,
+       "l": 100,
+       "c": 102
+      },
+      {
+       "o": 102,
+       "h": 104,
+       "l": 101.5,
+       "c": 103.8
+      },
+      {
+       "o": 103.8,
+       "h": 104.5,
+       "l": 102,
+       "c": 102.5
+      },
+      {
+       "o": 102.5,
+       "h": 103,
+       "l": 98,
+       "c": 98.5
+      },
+      {
+       "o": 98.5,
+       "h": 100,
+       "l": 97,
+       "c": 99.5
+      },
+      {
+       "o": 99.5,
+       "h": 99.8,
+       "l": 97.5,
+       "c": 98
+      },
+      {
+       "o": 98,
+       "h": 98.5,
+       "l": 95.5,
+       "c": 96
+      }
+     ]
+    },
+    "compute": "tStructure",
+    "result": {
+     "bos": 2,
+     "choch": 1
+    },
+    "unit": "events",
+    "steps": [
+     "Educational example, made-up numbers, not market data",
+     "swing highs at bar 2 (103), bar 7 (104.5); swing lows at bar 4 (99.5), bar 9 (97); each confirmed 1 bars later",
+     "bar 6 closed at 103.8, above the swing high 103: BOS",
+     "bar 8 closed at 98.5, below the swing low 99.5: CHOCH, the first break against the trend",
+     "bar 11 closed at 96, below the swing low 97: BOS"
+    ]
+   },
+   "quiz": [
+    {
+     "q": "Price is in an uptrend and closes below the last swing low for the first time. BOS or CHOCH?",
+     "a": "CHOCH: the first break against the trend."
+    },
+    {
+     "q": "Why can a swing high not be labelled on the bar that makes it?",
+     "a": "It needs the next bars to close lower first; labelling earlier uses the future."
+    },
+    {
+     "q": "In a downtrend, a close below the last swing low is what?",
+     "a": "A BOS: structure breaking in the trend's direction."
+    }
+   ],
+   "misconceptions": [
+    "A CHOCH is not a reversal: it is the first break against the trend, and many fail."
+   ],
+   "limitations": [
+    "A discretionary concept with mixed or limited evidence: definitions differ between teachers, the same chart can be labelled more than one way, and no peer-reviewed study shows it is an edge by itself. CHE treats it as a hypothesis to test on recorded trades, never as a reason to trade.",
+    "The swing size and the time frame change every label, so two traders can mark the same chart differently."
+   ],
+   "che_note": "CHE's paper engine tests a liquidity sweep then structure shift strategy (sweep-mss-5m) on delayed MNQ 5-minute bars; ask \"what is my expectancy\" for what the records show.",
+   "measured": null,
+   "sources": [
+    {
+     "title": "ICT and smart money concepts: practitioner teaching, not peer-reviewed research",
+     "author": "Inner Circle Trader (Michael J. Huddleston) and others",
+     "url": "",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "Trading Price Action Trends",
+     "author": "Al Brooks",
+     "url": "",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "CHE source: server/cloudflare/trading_lab.js (swings)",
+     "author": "CHE repository",
+     "url": "",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    }
+   ]
+  },
+  {
+   "id": "t-liquidity",
+   "domain": "trading",
+   "title": "Liquidity pools and sweeps",
+   "level": "intermediate",
+   "summary": "Stops cluster above highs (buy-side) and below lows (sell-side); a sweep runs them and closes back.",
+   "revision": 1,
+   "source_kind": "curated",
+   "aliases": [
+    "liquidity",
+    "liquidity pools",
+    "liquidity pool",
+    "buy side liquidity",
+    "sell side liquidity",
+    "buy-side liquidity",
+    "sell-side liquidity",
+    "liquidity sweep",
+    "liquidity sweeps",
+    "stop hunt",
+    "stop hunts",
+    "stop run",
+    "liquidity grab"
+   ],
+   "tags": [
+    "ict",
+    "smc",
+    "liquidity"
+   ],
+   "prerequisites": [
+    "t-market-structure"
+   ],
+   "related": [
+    "t-session-levels",
+    "t-market-structure",
+    "t-order-book"
+   ],
+   "levels": {
+    "beginner": "In ICT language, liquidity means resting orders, especially stops. Buy-side liquidity sits above swing highs, where shorts have their stops and breakout buyers their entries; sell-side liquidity sits below swing lows. A sweep is price poking past such a level and closing back inside, as if it went to fill those orders.",
+    "intermediate": "Defined on bars: a buy-side sweep of a level is a bar whose high is above it and whose close is below it; a sell-side sweep has a low below it and a close above it. Obvious levels such as the previous day's high and low, equal highs or the Asia range are the ones watched. A close beyond the level instead is a break, not a sweep.",
+    "expert": "Bar data cannot show resting stops: whether orders really sat there is an inference, and a sweep is visible only after the close. Testable rules, such as \"a sweep of the previous day low, then a close back above it\", can be backtested with costs; CHE runs exactly that test (pdhl-sweep-5m) and journals the result. Selection bias is the trap: remembering the sweeps that reversed and forgetting the ones that kept going."
+   },
+   "analogy": "A sweep is like a wave that runs up the beach past the line of shells and slides back: it reached for them, then retreated.",
+   "formula": {
+    "name": "Sweep of a level",
+    "expression": "buy-side sweep: high > level and close < level;  sell-side sweep: low < level and close > level",
+    "spoken": "a buy-side sweep is a bar that trades above the level and closes back below it, and a sell-side sweep trades below it and closes back above it",
+    "variables": [
+     {
+      "symbol": "level",
+      "meaning": "a swing high or low, or a session high or low",
+      "unit": "price"
+     },
+     {
+      "symbol": "high, low, close",
+      "meaning": "the bar's prices",
+      "unit": "price"
+     }
+    ],
+    "assumptions": "Closed bars only; a close beyond the level is a break, not a sweep.",
+    "compute": "tSweeps",
+    "example": {
+     "inputs": {
+      "level": 100,
+      "side": "buy",
+      "bars": [
+       {
+        "o": 99,
+        "h": 99.5,
+        "l": 98,
+        "c": 99
+       },
+       {
+        "o": 99,
+        "h": 100.75,
+        "l": 99,
+        "c": 99.5
+       },
+       {
+        "o": 99.5,
+        "h": 99.8,
+        "l": 97.5,
+        "c": 98
+       }
+      ]
+     },
+     "result": {
+      "sweeps": 1,
+      "firstBar": 2
+     }
+    }
+   },
+   "example": {
+    "kind": "numeric",
+    "provenance": "educational example",
+    "inputs": {
+     "level": 100,
+     "side": "buy",
+     "bars": [
+      {
+       "o": 99,
+       "h": 99.5,
+       "l": 98,
+       "c": 99
+      },
+      {
+       "o": 99,
+       "h": 100.75,
+       "l": 99,
+       "c": 99.5
+      },
+      {
+       "o": 99.5,
+       "h": 99.8,
+       "l": 97.5,
+       "c": 98
+      }
+     ]
+    },
+    "compute": "tSweeps",
+    "result": {
+     "sweeps": 1,
+     "firstBar": 2
+    },
+    "unit": "bars",
+    "steps": [
+     "Educational example, made-up numbers, not market data",
+     "bar 2: traded to 100.75, above 100, and closed back at 99.5: a buy-side sweep"
+    ]
+   },
+   "quiz": [
+    {
+     "q": "Where does buy-side liquidity rest?",
+     "a": "Above swing highs, where short sellers keep their stops."
+    },
+    {
+     "q": "A bar trades to 101 above a 100 high and closes at 99.5. Sweep or break?",
+     "a": "A buy-side sweep: it traded above 100 and closed back below it."
+    },
+    {
+     "q": "Can bar data prove that stops were resting at a level?",
+     "a": "No. It shows what price did, not where orders were."
+    }
+   ],
+   "misconceptions": [
+    "A sweep is not proof of \"smart money\": the same bar is also explained by ordinary buyers and sellers."
+   ],
+   "limitations": [
+    "A discretionary concept with mixed or limited evidence: definitions differ between teachers, the same chart can be labelled more than one way, and no peer-reviewed study shows it is an edge by itself. CHE treats it as a hypothesis to test on recorded trades, never as a reason to trade.",
+    "Resting orders are not visible in bar data, so \"liquidity\" here is a hypothesis about them."
+   ],
+   "che_note": "CHE's paper engine tests three sweep strategies on delayed MNQ 5-minute bars (sweep-mss-5m, sweep-reclaim-5m, pdhl-sweep-5m); their results are in the paper journal, not on this card.",
+   "measured": null,
+   "sources": [
+    {
+     "title": "ICT and smart money concepts: practitioner teaching, not peer-reviewed research",
+     "author": "Inner Circle Trader (Michael J. Huddleston) and others",
+     "url": "",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "CHE source: server/cloudflare/trading_evidence.js (sweep strategies)",
+     "author": "CHE repository",
+     "url": "",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    }
+   ]
+  },
+  {
+   "id": "t-fair-value-gaps",
+   "domain": "trading",
+   "title": "Fair value gaps",
+   "level": "intermediate",
+   "summary": "A three-candle gap where bar 1 and bar 3 do not overlap, left by a fast move.",
+   "revision": 1,
+   "source_kind": "curated",
+   "aliases": [
+    "fair value gap",
+    "fair value gaps",
+    "fvg",
+    "fvgs",
+    "price imbalance",
+    "three candle gap"
+   ],
+   "tags": [
+    "ict",
+    "smc",
+    "price action"
+   ],
+   "prerequisites": [
+    "t-price-action"
+   ],
+   "related": [
+    "t-order-blocks",
+    "t-market-structure",
+    "t-premium-discount"
+   ],
+   "levels": {
+    "beginner": "A fair value gap is a gap inside three candles: in a fast move up, the first candle's high stays below the third candle's low, so the middle candle left a space where price traded only one way. ICT teaching says price often comes back to that space before going on.",
+    "intermediate": "Bullish FVG: high of bar 1 < low of bar 3, and the gap runs from that high to that low. Bearish FVG: low of bar 1 > high of bar 3. A later bar that trades into the gap has touched it; one that trades through its far side has filled it. The midpoint is often called consequent encroachment.",
+    "expert": "Gaps are common on small bar sizes, so most are noise; a minimum size, a time window or a structure filter is needed to make a testable rule. Whether a retest leads to continuation is an empirical question that must be answered after costs on untouched data. CHE's fair value gap retest strategy (fvg-retest-5m) is that test on delayed MNQ bars, with every trade journalled."
+   },
+   "analogy": "A fair value gap is like a stretch of road a car crossed so fast that it left no tyre marks: traders expect it may come back to drive it properly.",
+   "formula": {
+    "name": "Three-bar fair value gap",
+    "expression": "bullish: H₁ < L₃, gap = (H₁, L₃);  bearish: L₁ > H₃, gap = (H₃, L₁)",
+    "spoken": "a bullish gap is where the high of bar 1 is below the low of bar 3, and a bearish gap where the low of bar 1 is above the high of bar 3",
+    "variables": [
+     {
+      "symbol": "H₁, L₁",
+      "meaning": "high and low of the first bar",
+      "unit": "price"
+     },
+     {
+      "symbol": "H₃, L₃",
+      "meaning": "high and low of the third bar",
+      "unit": "price"
+     }
+    ],
+    "assumptions": "Bars in time order on one time frame; touched means a later bar traded into the gap, filled that it traded through the far side.",
+    "compute": "tFvg",
+    "example": {
+     "inputs": {
+      "bars": [
+       {
+        "o": 100,
+        "h": 101,
+        "l": 99,
+        "c": 100.8
+       },
+       {
+        "o": 100.8,
+        "h": 105,
+        "l": 100.5,
+        "c": 104.5
+       },
+       {
+        "o": 104.5,
+        "h": 106,
+        "l": 102,
+        "c": 105.5
+       },
+       {
+        "o": 105.5,
+        "h": 107,
+        "l": 103.5,
+        "c": 106
+       }
+      ]
+     },
+     "result": {
+      "count": 1,
+      "bottom": 101,
+      "top": 102
+     }
+    }
+   },
+   "example": {
+    "kind": "numeric",
+    "provenance": "educational example",
+    "inputs": {
+     "bars": [
+      {
+       "o": 100,
+       "h": 101,
+       "l": 99,
+       "c": 100.8
+      },
+      {
+       "o": 100.8,
+       "h": 105,
+       "l": 100.5,
+       "c": 104.5
+      },
+      {
+       "o": 104.5,
+       "h": 106,
+       "l": 102,
+       "c": 105.5
+      },
+      {
+       "o": 105.5,
+       "h": 107,
+       "l": 103.5,
+       "c": 106
+      }
+     ]
+    },
+    "compute": "tFvg",
+    "result": {
+     "count": 1,
+     "bottom": 101,
+     "top": 102
+    },
+    "unit": "price",
+    "steps": [
+     "Educational example, made-up numbers, not market data",
+     "bars 1 to 3: bullish gap from 101 to 102, 1 point, midpoint 101.5; not touched since"
+    ]
+   },
+   "quiz": [
+    {
+     "q": "Bar 1 has a high of 50 and bar 3 a low of 51.5. Is there a bullish gap, and how big?",
+     "a": "Yes, 1.5 points, from 50 to 51.5."
+    },
+    {
+     "q": "What is the difference between a touched and a filled gap?",
+     "a": "Touched: a later bar traded into it. Filled: a later bar traded through its far side."
+    },
+    {
+     "q": "Does a fair value gap have to be retested?",
+     "a": "No. Many are never revisited; only a tested rule says how often."
+    }
+   ],
+   "misconceptions": [
+    "\"Price must fill the gap\" is a belief, not a law: many gaps stay open."
+   ],
+   "limitations": [
+    "A discretionary concept with mixed or limited evidence: definitions differ between teachers, the same chart can be labelled more than one way, and no peer-reviewed study shows it is an edge by itself. CHE treats it as a hypothesis to test on recorded trades, never as a reason to trade.",
+    "On small bar sizes gaps are frequent, so most carry no information without a filter."
+   ],
+   "che_note": "CHE's paper engine tests a fair value gap retest (fvg-retest-5m) and the Silver Bullet window (silver-bullet-5m) on delayed MNQ 5-minute bars; ask \"what is my expectancy\" for the records.",
+   "measured": null,
+   "sources": [
+    {
+     "title": "ICT and smart money concepts: practitioner teaching, not peer-reviewed research",
+     "author": "Inner Circle Trader (Michael J. Huddleston) and others",
+     "url": "",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "CHE source: server/cloudflare/trading_evidence.js (fvg-retest-5m)",
+     "author": "CHE repository",
+     "url": "",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    }
+   ]
+  },
+  {
+   "id": "t-order-blocks",
+   "domain": "trading",
+   "title": "Order blocks",
+   "level": "expert",
+   "summary": "The last opposite candle before a strong move, treated as a zone where large orders may have sat.",
+   "revision": 1,
+   "source_kind": "curated",
+   "aliases": [
+    "order block",
+    "order blocks",
+    "bullish order block",
+    "bearish order block",
+    "order block mean threshold",
+    "breaker block",
+    "breaker blocks"
+   ],
+   "tags": [
+    "ict",
+    "smc",
+    "price action"
+   ],
+   "prerequisites": [
+    "t-market-structure",
+    "t-fair-value-gaps"
+   ],
+   "related": [
+    "t-fair-value-gaps",
+    "t-liquidity",
+    "t-premium-discount"
+   ],
+   "levels": {
+    "beginner": "An order block, in ICT teaching, is the last down candle before a strong move up (bullish), or the last up candle before a strong move down (bearish). The idea is that big buyers or sellers left orders there, so price may react when it comes back to that candle's range.",
+    "intermediate": "To make it a rule: find a displacement candle whose body is at least a chosen size, then the last opposite-coloured candle before it. Its high and low are the block, and the midpoint is the mean threshold. A block counts more, in the teaching, when the displacement also breaks structure or leaves a fair value gap.",
+    "expert": "There is no single definition: body size, wick or body boundaries, and whether a break of structure is required all change which candle is chosen. A breaker block is a failed block that price closed through. Bar data cannot show the orders the name implies, so \"order block\" is a label on a candle, and only a backtest with fixed rules, causal data and costs can show whether reactions there beat chance. CHE tests one version (order-block-5m)."
+   },
+   "analogy": "An order block is like footprints in front of a shop that suddenly got busy: you guess the crowd started there, but the prints do not prove who came.",
+   "formula": {
+    "name": "Order block zone",
+    "expression": "block = range of the last opposite candle before a displacement;  mean threshold = (H + L) ÷ 2",
+    "spoken": "the order block is the range of the last opposite candle before a displacement candle, and the mean threshold is its high plus its low, divided by 2",
+    "variables": [
+     {
+      "symbol": "displacement",
+      "meaning": "a candle whose body is at least the chosen size",
+      "unit": "points"
+     },
+     {
+      "symbol": "H, L",
+      "meaning": "high and low of the block candle",
+      "unit": "price"
+     }
+    ],
+    "assumptions": "One of several definitions in use; the displacement size is a choice.",
+    "compute": "tOrderBlock",
+    "example": {
+     "inputs": {
+      "minBody": 3,
+      "bars": [
+       {
+        "o": 100,
+        "h": 101,
+        "l": 99,
+        "c": 100.5
+       },
+       {
+        "o": 100.5,
+        "h": 100.8,
+        "l": 98.5,
+        "c": 99
+       },
+       {
+        "o": 99,
+        "h": 104,
+        "l": 98.8,
+        "c": 103.5
+       }
+      ]
+     },
+     "result": {
+      "high": 100.8,
+      "low": 98.5,
+      "mid": 99.65
+     }
+    }
+   },
+   "example": {
+    "kind": "numeric",
+    "provenance": "educational example",
+    "inputs": {
+     "minBody": 3,
+     "bars": [
+      {
+       "o": 100,
+       "h": 101,
+       "l": 99,
+       "c": 100.5
+      },
+      {
+       "o": 100.5,
+       "h": 100.8,
+       "l": 98.5,
+       "c": 99
+      },
+      {
+       "o": 99,
+       "h": 104,
+       "l": 98.8,
+       "c": 103.5
+      }
+     ]
+    },
+    "compute": "tOrderBlock",
+    "result": {
+     "high": 100.8,
+     "low": 98.5,
+     "mid": 99.65
+    },
+    "unit": "price",
+    "steps": [
+     "Educational example, made-up numbers, not market data",
+     "bar 3 is the displacement: body 4.5 points up, at least 3",
+     "the last down candle before it is bar 2: high 100.8, low 98.5",
+     "bullish order block 98.5 to 100.8; mean threshold (100.8 + 98.5) ÷ 2 = 99.65"
+    ]
+   },
+   "quiz": [
+    {
+     "q": "A bullish order block runs from 98.5 to 100.8. What is its mean threshold?",
+     "a": "99.65: (100.8 + 98.5) ÷ 2."
+    },
+    {
+     "q": "Which candle is a bullish order block?",
+     "a": "The last down candle before a strong move up."
+    },
+    {
+     "q": "What is a breaker block?",
+     "a": "A block that failed: price closed through it, and traders then watch it from the other side."
+    }
+   ],
+   "misconceptions": [
+    "An order block is not a record of institutional orders: bar data cannot show who traded."
+   ],
+   "limitations": [
+    "A discretionary concept with mixed or limited evidence: definitions differ between teachers, the same chart can be labelled more than one way, and no peer-reviewed study shows it is an edge by itself. CHE treats it as a hypothesis to test on recorded trades, never as a reason to trade.",
+    "Definitions disagree on the body size, the boundaries and the filters, so results do not transfer between versions."
+   ],
+   "che_note": "CHE's paper engine tests an order block retest (order-block-5m: displacement body at least 1.5 ATR) on delayed MNQ 5-minute bars; the card's example uses a fixed body size instead.",
+   "measured": null,
+   "sources": [
+    {
+     "title": "ICT and smart money concepts: practitioner teaching, not peer-reviewed research",
+     "author": "Inner Circle Trader (Michael J. Huddleston) and others",
+     "url": "",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "CHE source: server/cloudflare/trading_evidence.js (order-block-5m)",
+     "author": "CHE repository",
+     "url": "",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    }
+   ]
+  },
+  {
+   "id": "t-premium-discount",
+   "domain": "trading",
+   "title": "Premium, discount and OTE",
+   "level": "intermediate",
+   "summary": "The halves of a swing leg, and the 62% to 79% retracement zone ICT calls the optimal trade entry.",
+   "revision": 1,
+   "source_kind": "curated",
+   "aliases": [
+    "premium and discount",
+    "premium discount",
+    "premium vs discount",
+    "discount zone",
+    "premium zone",
+    "ote",
+    "optimal trade entry",
+    "ote zone",
+    "fibonacci retracement",
+    "fib retracement",
+    "retracement levels"
+   ],
+   "tags": [
+    "ict",
+    "smc",
+    "levels"
+   ],
+   "prerequisites": [
+    "t-market-structure"
+   ],
+   "related": [
+    "t-fair-value-gaps",
+    "t-order-blocks",
+    "t-market-structure"
+   ],
+   "levels": {
+    "beginner": "Take a swing from a low to a high. The middle is equilibrium. Above it is the premium half, where ICT teaching prefers to sell; below it the discount half, where it prefers to buy. The optimal trade entry (OTE) is a deeper zone: a 62% to 79% pullback of the leg.",
+    "intermediate": "Equilibrium = (low + high) ÷ 2. For a leg up, a retracement of r is high − r × (high − low): on a leg from 100 to 200, 62% is 138, 70.5% is 129.5 and 79% is 121, all in discount. For a leg down the levels are measured up from the low instead.",
+    "expert": "The levels depend completely on which swing high and low you pick, and with hindsight a good-looking pair is easy to find, which is look-ahead bias. Fibonacci ratios have no known physical reason to hold in markets, and studies of retracement levels find little beyond chance once costs are counted. As a testable rule it needs a mechanical swing definition, made only from bars already closed."
+   },
+   "analogy": "Premium and discount are like the two halves of a price tag's range in a market stall: you like to buy in the cheap half and sell in the dear half.",
+   "formula": {
+    "name": "Premium, discount and OTE levels",
+    "expression": "equilibrium = (L + H) ÷ 2;  leg up: level(r) = H − r × (H − L);  leg down: level(r) = L + r × (H − L);  OTE: r = 0.62 to 0.79",
+    "spoken": "equilibrium is the low plus the high, divided by 2; on a leg up each retracement level is the high minus the ratio times the leg, and the OTE zone runs from 62 to 79 percent",
+    "variables": [
+     {
+      "symbol": "L, H",
+      "meaning": "the swing low and swing high of the leg",
+      "unit": "price"
+     },
+     {
+      "symbol": "r",
+      "meaning": "the retracement ratio",
+      "unit": "a fraction"
+     }
+    ],
+    "assumptions": "The swing pair is a judgement, and the ratios are conventions, not measured edges.",
+    "compute": "tPremiumDiscount",
+    "example": {
+     "inputs": {
+      "low": 100,
+      "high": 200,
+      "price": 130,
+      "direction": "up"
+     },
+     "result": {
+      "equilibrium": 150,
+      "ote62": 138,
+      "ote705": 129.5,
+      "ote79": 121,
+      "position": 0.3
+     }
+    }
+   },
+   "example": {
+    "kind": "numeric",
+    "provenance": "educational example",
+    "inputs": {
+     "low": 100,
+     "high": 200,
+     "price": 130,
+     "direction": "up"
+    },
+    "compute": "tPremiumDiscount",
+    "result": {
+     "equilibrium": 150,
+     "ote62": 138,
+     "ote705": 129.5,
+     "ote79": 121,
+     "position": 0.3
+    },
+    "unit": "price",
+    "steps": [
+     "Educational example, made-up numbers, not market data",
+     "leg 100 to 200: 100 points",
+     "equilibrium = (100 + 200) ÷ 2 = 150; above it is premium, below it is discount",
+     "leg up, retracing down from the high: 62% = 138, 70.5% = 129.5, 79% = 121",
+     "130 sits at 30.0% of the leg: discount"
+    ]
+   },
+   "quiz": [
+    {
+     "q": "A leg runs from 2,000 up to 2,100. Where is equilibrium?",
+     "a": "2,050: (2,000 + 2,100) ÷ 2."
+    },
+    {
+     "q": "On that leg, where is the 62% retracement?",
+     "a": "2,038: 2,100 − 0.62 × 100."
+    },
+    {
+     "q": "Price is at 130 on a leg from 100 to 200. Premium or discount?",
+     "a": "Discount: it is below the 150 equilibrium."
+    }
+   ],
+   "misconceptions": [
+    "A retracement level is not support by itself: it is arithmetic on two chosen points."
+   ],
+   "limitations": [
+    "A discretionary concept with mixed or limited evidence: definitions differ between teachers, the same chart can be labelled more than one way, and no peer-reviewed study shows it is an edge by itself. CHE treats it as a hypothesis to test on recorded trades, never as a reason to trade.",
+    "The swing high and low are chosen by judgement; another pair moves every level."
+   ],
+   "che_note": "",
+   "measured": null,
+   "sources": [
+    {
+     "title": "ICT and smart money concepts: practitioner teaching, not peer-reviewed research",
+     "author": "Inner Circle Trader (Michael J. Huddleston) and others",
+     "url": "",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "Fibonacci retracement",
+     "author": "Wikipedia",
+     "url": "https://en.wikipedia.org/wiki/Fibonacci_retracement",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "CHE source: server/cloudflare/atlas_math.js",
+     "author": "CHE repository",
+     "url": "",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    }
+   ]
+  },
+  {
+   "id": "t-session-levels",
+   "domain": "trading",
+   "title": "Session levels: Asia, London, New York",
+   "level": "intermediate",
+   "summary": "Highs and lows of each session and of the previous day, which many traders watch.",
+   "revision": 1,
+   "source_kind": "curated",
+   "aliases": [
+    "session levels",
+    "session highs and lows",
+    "session high and low",
+    "asia session",
+    "asian session",
+    "asia range",
+    "asian range",
+    "london session",
+    "new york session",
+    "previous day high",
+    "previous day low",
+    "previous day high and low",
+    "pdh",
+    "pdl",
+    "pdh and pdl",
+    "killzones",
+    "kill zones"
+   ],
+   "tags": [
+    "ict",
+    "sessions",
+    "levels"
+   ],
+   "prerequisites": [
+    "t-futures"
+   ],
+   "related": [
+    "t-liquidity",
+    "t-opening-range",
+    "vwap"
+   ],
+   "levels": {
+    "beginner": "Index futures trade almost around the clock, so traders split the day into sessions: Asia in the evening, London overnight and New York in the day. The high and low of each session, and the previous day's high and low, are levels many people watch, so price often reacts or runs stops there.",
+    "intermediate": "CHE uses New York time: Asia 8 p.m. to midnight, London 2 to 5 a.m., and New York regular hours 9:30 a.m. to 4 p.m. The CME day runs from 6 p.m. to 5 p.m. the next afternoon, so the previous day high and low come from that whole day. Each level is just the highest high and lowest low of the bars inside the window.",
+    "expert": "These windows are conventions; ICT killzones, exchange sessions and other teachers use different hours, and daylight saving shifts London and New York against each other for a few weeks each year. A level is common knowledge, so any edge from it is quickly competed away; test reactions at it with fixed windows, closed bars and costs before trusting it."
+   },
+   "analogy": "Session levels are like the high-water marks on a pier from each tide: the next tide often reaches for them.",
+   "formula": {
+    "name": "Session high and low",
+    "expression": "session high = max(H) and session low = min(L) of the bars inside the window, New York time",
+    "spoken": "a session's high is the highest high and its low the lowest low of the bars inside its window, in New York time",
+    "variables": [
+     {
+      "symbol": "window",
+      "meaning": "Asia 20:00–24:00, London 02:00–05:00, New York 09:30–16:00, New York time",
+      "unit": "time"
+     },
+     {
+      "symbol": "H, L",
+      "meaning": "each bar's high and low",
+      "unit": "price"
+     }
+    ],
+    "assumptions": "Common conventions, not exchange definitions. The previous day is the CME day from 6 p.m. to 5 p.m. New York time.",
+    "compute": "tSessionLevels",
+    "example": {
+     "inputs": {
+      "bars": [
+       {
+        "t": "2026-10-15T14:00:00Z",
+        "o": 105,
+        "h": 110,
+        "l": 100,
+        "c": 108,
+        "v": 100
+       },
+       {
+        "t": "2026-10-15T18:00:00Z",
+        "o": 108,
+        "h": 112,
+        "l": 105,
+        "c": 106,
+        "v": 100
+       },
+       {
+        "t": "2026-10-16T00:30:00Z",
+        "o": 106,
+        "h": 108,
+        "l": 104,
+        "c": 107,
+        "v": 50
+       },
+       {
+        "t": "2026-10-16T02:00:00Z",
+        "o": 107,
+        "h": 109,
+        "l": 103,
+        "c": 105,
+        "v": 50
+       },
+       {
+        "t": "2026-10-16T07:00:00Z",
+        "o": 105,
+        "h": 111,
+        "l": 106,
+        "c": 110,
+        "v": 80
+       },
+       {
+        "t": "2026-10-16T14:00:00Z",
+        "o": 110,
+        "h": 115,
+        "l": 107,
+        "c": 114,
+        "v": 200
+       },
+       {
+        "t": "2026-10-16T19:00:00Z",
+        "o": 114,
+        "h": 114,
+        "l": 108,
+        "c": 109,
+        "v": 150
+       }
+      ]
+     },
+     "result": {
+      "pdh": 112,
+      "pdl": 100,
+      "asiaHigh": 109,
+      "asiaLow": 103,
+      "londonHigh": 111,
+      "londonLow": 106,
+      "nyHigh": 115,
+      "nyLow": 107
+     }
+    }
+   },
+   "example": {
+    "kind": "numeric",
+    "provenance": "educational example",
+    "inputs": {
+     "bars": [
+      {
+       "t": "2026-10-15T14:00:00Z",
+       "o": 105,
+       "h": 110,
+       "l": 100,
+       "c": 108,
+       "v": 100
+      },
+      {
+       "t": "2026-10-15T18:00:00Z",
+       "o": 108,
+       "h": 112,
+       "l": 105,
+       "c": 106,
+       "v": 100
+      },
+      {
+       "t": "2026-10-16T00:30:00Z",
+       "o": 106,
+       "h": 108,
+       "l": 104,
+       "c": 107,
+       "v": 50
+      },
+      {
+       "t": "2026-10-16T02:00:00Z",
+       "o": 107,
+       "h": 109,
+       "l": 103,
+       "c": 105,
+       "v": 50
+      },
+      {
+       "t": "2026-10-16T07:00:00Z",
+       "o": 105,
+       "h": 111,
+       "l": 106,
+       "c": 110,
+       "v": 80
+      },
+      {
+       "t": "2026-10-16T14:00:00Z",
+       "o": 110,
+       "h": 115,
+       "l": 107,
+       "c": 114,
+       "v": 200
+      },
+      {
+       "t": "2026-10-16T19:00:00Z",
+       "o": 114,
+       "h": 114,
+       "l": 108,
+       "c": 109,
+       "v": 150
+      }
+     ]
+    },
+    "compute": "tSessionLevels",
+    "result": {
+     "pdh": 112,
+     "pdl": 100,
+     "asiaHigh": 109,
+     "asiaLow": 103,
+     "londonHigh": 111,
+     "londonLow": 106,
+     "nyHigh": 115,
+     "nyLow": 107
+    },
+    "unit": "price",
+    "steps": [
+     "Educational example, made-up numbers, not market data",
+     "CME trading day 2026-10-16 (it opens at 6 p.m. New York the evening before)",
+     "Asia: high 109, low 103",
+     "London: high 111, low 106",
+     "New York regular hours: high 115, low 107",
+     "previous day 2026-10-15: high 112, low 100"
+    ]
+   },
+   "quiz": [
+    {
+     "q": "In New York time, when does CHE count the London session?",
+     "a": "From 2 a.m. to 5 a.m."
+    },
+    {
+     "q": "When does the CME trading day for Friday start?",
+     "a": "At 6 p.m. New York time on Thursday."
+    },
+    {
+     "q": "Why do session levels matter to many traders?",
+     "a": "Because so many watch them, orders and stops gather there."
+    }
+   ],
+   "misconceptions": [
+    "Session windows are not official: different traders and tools draw them at different hours."
+   ],
+   "limitations": [
+    "A discretionary concept with mixed or limited evidence: definitions differ between teachers, the same chart can be labelled more than one way, and no peer-reviewed study shows it is an edge by itself. CHE treats it as a hypothesis to test on recorded trades, never as a reason to trade.",
+    "The windows are conventions; a different window gives different levels."
+   ],
+   "che_note": "CHE's paper engine uses the previous CME day high and low in its pdhl-sweep-5m strategy, computed from past bars only (trading_evidence.js).",
+   "measured": null,
+   "sources": [
+    {
+     "title": "ICT and smart money concepts: practitioner teaching, not peer-reviewed research",
+     "author": "Inner Circle Trader (Michael J. Huddleston) and others",
+     "url": "",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "CME Group: Micro E-mini Nasdaq-100 contract specs",
+     "author": "CME Group",
+     "url": "https://www.cmegroup.com/markets/equities/nasdaq/micro-e-mini-nasdaq-100.contractSpecs.html",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "CHE source: server/cloudflare/trading_evidence.js (tradeDayOf, pdhl-sweep-5m)",
+     "author": "CHE repository",
+     "url": "",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    }
+   ]
+  },
+  {
+   "id": "t-opening-range",
+   "domain": "trading",
+   "title": "Opening range",
+   "level": "intermediate",
+   "summary": "The high and low of the first minutes after the 9:30 New York open.",
+   "revision": 1,
+   "source_kind": "curated",
+   "aliases": [
+    "opening range",
+    "opening ranges",
+    "opening range breakout",
+    "initial balance",
+    "first 15 minutes",
+    "first 30 minutes"
+   ],
+   "tags": [
+    "intraday",
+    "levels",
+    "sessions"
+   ],
+   "prerequisites": [
+    "t-session-levels"
+   ],
+   "related": [
+    "vwap",
+    "t-vwap-bands",
+    "t-session-levels"
+   ],
+   "levels": {
+    "beginner": "The opening range is the high and low price of the first few minutes after the New York stock market opens at 9:30 a.m. New York time, often the first 15 or 30 minutes. Traders watch whether price breaks out of that range or falls back inside it.",
+    "intermediate": "It is the highest high and lowest low of the bars that start from 9:30 to 9:30 plus N minutes. With 5-minute bars, a 15-minute range uses the 9:30, 9:35 and 9:40 bars, and it is known only once the 9:40 bar has closed at 9:45. Using it earlier would use data that did not exist yet.",
+    "expert": "The anchor is 9:30 New York time, which is 13:30 UTC in daylight time and 14:30 UTC in standard time, so code must use the time zone, not a fixed UTC hour. Opening range breakout studies date back decades (Crabel, 1990); later work finds the effect varies by market and period and shrinks after costs. Test the window length, the instrument and the exit rules on data the rule never saw."
+   },
+   "analogy": "The opening range is like the first few minutes of a football match: it shows which team is pressing, but it does not decide the score.",
+   "formula": {
+    "name": "Opening range",
+    "expression": "OR high = max(H), OR low = min(L) of bars starting from 9:30 to 9:30 + N minutes, New York time",
+    "spoken": "the opening range high is the highest high and its low the lowest low of the bars that start in the first N minutes after 9:30 New York time",
+    "variables": [
+     {
+      "symbol": "N",
+      "meaning": "minutes in the range",
+      "unit": "minutes"
+     },
+     {
+      "symbol": "H, L",
+      "meaning": "each bar's high and low",
+      "unit": "price"
+     }
+    ],
+    "assumptions": "Bars are labelled by their start time; the range is final only once its window has closed.",
+    "compute": "tOpeningRange",
+    "example": {
+     "inputs": {
+      "minutes": 15,
+      "bars": [
+       {
+        "t": "2026-10-16T13:30:00Z",
+        "o": 100,
+        "h": 101,
+        "l": 99,
+        "c": 100.5,
+        "v": 500
+       },
+       {
+        "t": "2026-10-16T13:35:00Z",
+        "o": 100.5,
+        "h": 102,
+        "l": 100,
+        "c": 101.5,
+        "v": 400
+       },
+       {
+        "t": "2026-10-16T13:40:00Z",
+        "o": 101.5,
+        "h": 101.5,
+        "l": 98.5,
+        "c": 99,
+        "v": 450
+       },
+       {
+        "t": "2026-10-16T13:45:00Z",
+        "o": 99,
+        "h": 104,
+        "l": 99,
+        "c": 103.5,
+        "v": 600
+       }
+      ]
+     },
+     "result": {
+      "high": 102,
+      "low": 98.5,
+      "range": 3.5
+     }
+    }
+   },
+   "example": {
+    "kind": "numeric",
+    "provenance": "educational example",
+    "inputs": {
+     "minutes": 15,
+     "bars": [
+      {
+       "t": "2026-10-16T13:30:00Z",
+       "o": 100,
+       "h": 101,
+       "l": 99,
+       "c": 100.5,
+       "v": 500
+      },
+      {
+       "t": "2026-10-16T13:35:00Z",
+       "o": 100.5,
+       "h": 102,
+       "l": 100,
+       "c": 101.5,
+       "v": 400
+      },
+      {
+       "t": "2026-10-16T13:40:00Z",
+       "o": 101.5,
+       "h": 101.5,
+       "l": 98.5,
+       "c": 99,
+       "v": 450
+      },
+      {
+       "t": "2026-10-16T13:45:00Z",
+       "o": 99,
+       "h": 104,
+       "l": 99,
+       "c": 103.5,
+       "v": 600
+      }
+     ]
+    },
+    "compute": "tOpeningRange",
+    "result": {
+     "high": 102,
+     "low": 98.5,
+     "range": 3.5
+    },
+    "unit": "price",
+    "steps": [
+     "Educational example, made-up numbers, not market data",
+     "session 2026-10-16, open 2026-10-16T13:30:00.000Z (9:30 New York)",
+     "3 bars in the first 15 minutes",
+     "high = 102, low = 98.5, range = 3.5 points"
+    ]
+   },
+   "quiz": [
+    {
+     "q": "With 5-minute bars, which bars make a 15-minute opening range?",
+     "a": "The 9:30, 9:35 and 9:40 bars."
+    },
+    {
+     "q": "In UTC, when is the 9:30 New York open in winter?",
+     "a": "14:30 UTC; in summer it is 13:30 UTC."
+    },
+    {
+     "q": "When is a 15-minute opening range known?",
+     "a": "At 9:45, when the last bar of the window has closed."
+    }
+   ],
+   "misconceptions": [
+    "A break of the opening range is not a signal by itself: many breaks fail and return inside."
+   ],
+   "limitations": [
+    "Evidence for opening range breakouts is mixed and varies by market and period; costs remove much of it.",
+    "A fixed UTC hour is wrong for half the year: the anchor must follow New York daylight saving."
+   ],
+   "che_note": "CHE's paper engine computes a 9:30 to 9:45 opening range from past bars only (trading_evidence.js), and says \"calculate the opening range from the latest bars\" reads it from stored bars.",
+   "measured": null,
+   "sources": [
+    {
+     "title": "Day Trading with Short Term Price Patterns and Opening Range Breakout",
+     "author": "Toby Crabel",
+     "url": "",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "CHE source: server/cloudflare/trading_evidence.js (intradayContext)",
+     "author": "CHE repository",
+     "url": "",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    }
+   ]
+  },
+  {
+   "id": "t-vwap-bands",
+   "domain": "trading",
+   "title": "VWAP deviation bands and anchoring",
+   "level": "expert",
+   "summary": "Bands at 1, 2 and 3 standard deviations around VWAP, anchored at the 9:30 New York open.",
+   "revision": 1,
+   "source_kind": "curated",
+   "aliases": [
+    "vwap bands",
+    "vwap deviation bands",
+    "vwap standard deviation",
+    "vwap standard deviation bands",
+    "vwap sigma bands",
+    "vwap anchoring",
+    "session vwap",
+    "rth vwap"
+   ],
+   "tags": [
+    "indicators",
+    "intraday",
+    "statistics"
+   ],
+   "prerequisites": [
+    "vwap"
+   ],
+   "related": [
+    "vwap",
+    "t-opening-range",
+    "t-session-levels"
+   ],
+   "levels": {
+    "beginner": "VWAP is the volume-weighted average price of the session. Deviation bands are lines drawn above and below it at one, two and three standard deviations, where the standard deviation measures how spread out the session's trading has been around VWAP.",
+    "intermediate": "σ² = Σ volume × (typical price − VWAP)² ÷ Σ volume, so heavy-volume bars count more, like in VWAP itself. Bands are VWAP ± 1σ, 2σ and 3σ. Anchoring decides where the sums start: CHE's session VWAP starts at 9:30 New York time, the regular-hours open, found through the New York time zone so it stays right across daylight saving.",
+    "expert": "Price does not follow a normal distribution, so \"2σ holds 95% of trading\" is only a rough guide, and early in a session σ rests on a few bars. Bar typical prices approximate the trade-by-trade values. A futures VWAP from the 6 p.m. CME open, from 9:30, or from an anchored event are different numbers. Bands describe the session so far; fading or buying them is a hypothesis to test."
+   },
+   "analogy": "VWAP bands are like the lanes on a running track drawn around the average runner: most stay near the middle, but a lane line never stops anyone from crossing it.",
+   "formula": {
+    "name": "VWAP bands",
+    "expression": "VWAP = Σ(TP × V) ÷ ΣV;  σ² = Σ V × (TP − VWAP)² ÷ ΣV;  bands = VWAP ± kσ, k = 1, 2, 3",
+    "spoken": "the variance is the volume-weighted average of the squared distance of each typical price from VWAP, and the bands are VWAP plus or minus one, two and three standard deviations",
+    "variables": [
+     {
+      "symbol": "TP",
+      "meaning": "typical price, (H + L + C) ÷ 3",
+      "unit": "price"
+     },
+     {
+      "symbol": "V",
+      "meaning": "bar volume",
+      "unit": "contracts"
+     },
+     {
+      "symbol": "k",
+      "meaning": "number of standard deviations",
+      "unit": "1, 2 or 3"
+     }
+    ],
+    "assumptions": "Summed from the anchor; bar typical prices approximate trade prices.",
+    "compute": "tVwapBands",
+    "example": {
+     "inputs": {
+      "anchor": "all",
+      "bars": [
+       {
+        "h": 101,
+        "l": 99,
+        "c": 100,
+        "v": 100
+       },
+       {
+        "h": 104,
+        "l": 100,
+        "c": 102,
+        "v": 200
+       },
+       {
+        "h": 103,
+        "l": 98,
+        "c": 99,
+        "v": 100
+       }
+      ]
+     },
+     "result": {
+      "vwap": 101,
+      "sd": 1,
+      "upper1": 102,
+      "lower1": 100,
+      "upper2": 103,
+      "lower2": 99,
+      "upper3": 104,
+      "lower3": 98
+     }
+    }
+   },
+   "example": {
+    "kind": "numeric",
+    "provenance": "educational example",
+    "inputs": {
+     "anchor": "all",
+     "bars": [
+      {
+       "h": 101,
+       "l": 99,
+       "c": 100,
+       "v": 100
+      },
+      {
+       "h": 104,
+       "l": 100,
+       "c": 102,
+       "v": 200
+      },
+      {
+       "h": 103,
+       "l": 98,
+       "c": 99,
+       "v": 100
+      }
+     ]
+    },
+    "compute": "tVwapBands",
+    "result": {
+     "vwap": 101,
+     "sd": 1,
+     "upper1": 102,
+     "lower1": 100,
+     "upper2": 103,
+     "lower2": 99,
+     "upper3": 104,
+     "lower3": 98
+    },
+    "unit": "price",
+    "steps": [
+     "Educational example, made-up numbers, not market data",
+     "typical prices (high + low + close) ÷ 3: 100, 102, 100",
+     "price × volume: 10,000 + 20,400 + 10,000 = 40,400",
+     "volume: 400",
+     "VWAP = 40,400 ÷ 400 = 101",
+     "σ = √(Σ volume × (typical price − VWAP)² ÷ Σ volume) = 1",
+     "bands: 1σ 100 to 102; 2σ 99 to 103; 3σ 98 to 104"
+    ]
+   },
+   "quiz": [
+    {
+     "q": "VWAP is 101 and σ is 1. Where is the upper 2σ band?",
+     "a": "103: 101 + 2 × 1."
+    },
+    {
+     "q": "In daylight time, what UTC time is the 9:30 New York anchor?",
+     "a": "13:30 UTC; in standard time it is 14:30 UTC."
+    },
+    {
+     "q": "Does a touch of the 2σ band mean price will reverse?",
+     "a": "No. The bands describe how spread out trading was; they do not predict."
+    }
+   ],
+   "misconceptions": [
+    "The bands are not a 95% guarantee: market prices have fat tails."
+   ],
+   "limitations": [
+    "Bands early in the session rest on very few bars.",
+    "Delayed public bars may have partial volume, which changes the weighting."
+   ],
+   "che_note": "CHE computes VWAP and its bands only from bars it has stored (the delayed paper feed), with their source and time; with no stored bars it says so and invents no prices.",
+   "measured": null,
+   "sources": [
+    {
+     "title": "Volume-weighted average price",
+     "author": "Wikipedia",
+     "url": "https://en.wikipedia.org/wiki/Volume-weighted_average_price",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "Weighted arithmetic mean: weighted variance",
+     "author": "Wikipedia",
+     "url": "https://en.wikipedia.org/wiki/Weighted_arithmetic_mean",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "CHE source: server/cloudflare/atlas_math.js",
+     "author": "CHE repository",
+     "url": "",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    }
+   ]
+  },
+  {
+   "id": "t-journaling",
+   "domain": "trading",
+   "title": "Trade journaling and performance review",
+   "level": "beginner",
+   "summary": "Write every trade down, losers included, and review the equity curve and its drawdowns.",
+   "revision": 1,
+   "source_kind": "curated",
+   "aliases": [
+    "journaling",
+    "trade journal",
+    "trade journaling",
+    "performance review",
+    "performance analysis",
+    "reviewing trades",
+    "equity curve",
+    "drawdown percent"
+   ],
+   "tags": [
+    "process",
+    "performance",
+    "statistics"
+   ],
+   "prerequisites": [
+    "r-multiple",
+    "drawdown"
+   ],
+   "related": [
+    "t-strategy-evaluation",
+    "drawdown",
+    "expectancy"
+   ],
+   "levels": {
+    "beginner": "A trade journal records every trade: the setup, entry, stop, target, exit, size, result and why you took it. Losing trades matter as much as winners. Without a journal, memory keeps the good trades and forgets the bad ones, and nothing can be measured.",
+    "intermediate": "Record the result in dollars and in R, and the costs. Add the results in order to get the equity curve; the largest fall from a peak is the maximum drawdown, in dollars, and divided by that peak, in percent. Starting from $10,000, results of +200, −150, −250, +300 and −100 fall from a $10,200 peak to $9,800: $400, or 3.92%.",
+    "expert": "A journal is a dataset, so its rules matter: the setup is labelled before the trade, never after; every trade is kept; and the strategy version is recorded, so a rule change starts a new sample. The deepest dollar fall and the deepest percent fall can happen at different points. Review by setup, session and time of day, but beware slicing too finely: with enough slices one will look great by chance."
+   },
+   "analogy": "A journal is like a pilot's logbook: it is filled in after every flight, the bumpy ones too, so problems show up in the record instead of in memory.",
+   "formula": {
+    "name": "Maximum drawdown in dollars and percent",
+    "expression": "MDD = max over t of (peak up to t − equity at t);  MDD% = max over t of (peak − equity) ÷ peak",
+    "spoken": "the maximum drawdown is the largest fall from the highest equity so far, and in percent that fall divided by the peak",
+    "variables": [
+     {
+      "symbol": "equity at t",
+      "meaning": "starting balance plus the results so far",
+      "unit": "$"
+     },
+     {
+      "symbol": "peak",
+      "meaning": "the highest equity up to t",
+      "unit": "$"
+     }
+    ],
+    "assumptions": "Closed trades in time order; open-trade swings can go deeper.",
+    "compute": "tMaxDrawdown",
+    "example": {
+     "inputs": {
+      "pnl": [
+       200,
+       -150,
+       -250,
+       300,
+       -100
+      ],
+      "start": 10000
+     },
+     "result": {
+      "dollars": 400,
+      "percent": 0.039216
+     }
+    }
+   },
+   "example": {
+    "kind": "numeric",
+    "provenance": "educational example",
+    "inputs": {
+     "pnl": [
+      200,
+      -150,
+      -250,
+      300,
+      -100
+     ],
+     "start": 10000
+    },
+    "compute": "tMaxDrawdown",
+    "result": {
+     "dollars": 400,
+     "percent": 0.039216
+    },
+    "unit": "$ and %",
+    "steps": [
+     "Educational example, made-up numbers, not market data",
+     "equity from $10,000.00: 10,200, 10,050, 9,800, 10,100, 10,000",
+     "largest fall: from the peak $10,200.00 to $9,800.00 = $400.00",
+     "largest fall in percent of the peak = 3.92%"
+    ]
+   },
+   "quiz": [
+    {
+     "q": "From $5,000, results are +500, −1,100 and +200. What is the maximum drawdown?",
+     "a": "$1,100: from the $5,500 peak to $4,400, which is 20%."
+    },
+    {
+     "q": "Why must losing trades be journalled too?",
+     "a": "Without them every statistic is biased upward."
+    },
+    {
+     "q": "When should a trade's setup be labelled?",
+     "a": "Before the trade, so the result cannot change the label."
+    }
+   ],
+   "misconceptions": [
+    "A journal of only the trades you remember is not a record: it is a highlight reel."
+   ],
+   "limitations": [
+    "A journal measures the past under one set of conditions; the next period can differ.",
+    "Slicing results into many groups finds patterns that are only chance."
+   ],
+   "che_note": "CHE's paper journal is append-only: losing trades and failed experiments are kept, and a trade the journal refused is stored with its reason (trading_evidence.js, trading_live.js).",
+   "measured": {
+    "metric": "max_drawdown",
+    "label": "maximum drawdown"
+   },
+   "sources": [
+    {
+     "title": "Drawdown (economics)",
+     "author": "Wikipedia",
+     "url": "https://en.wikipedia.org/wiki/Drawdown_(economics)",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "The Evaluation and Optimization of Trading Strategies",
+     "author": "Robert Pardo",
+     "url": "",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "CHE source: server/cloudflare/trading_evidence.js (appendTrades)",
+     "author": "CHE repository",
+     "url": "",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    }
+   ]
+  },
+  {
+   "id": "t-strategy-evaluation",
+   "domain": "trading",
+   "title": "Strategy evaluation and verdicts",
+   "level": "expert",
+   "summary": "Judge a strategy by expectancy with its interval, profit factor and sample size: good, bad or unsupported.",
+   "revision": 1,
+   "source_kind": "curated",
+   "aliases": [
+    "strategy evaluation",
+    "evaluating a strategy",
+    "evaluate a strategy",
+    "strategy evaluation criteria",
+    "judging a strategy",
+    "is my strategy good",
+    "expectancy interval",
+    "expectancy confidence interval",
+    "t interval",
+    "t-interval",
+    "student t interval",
+    "two forms of expectancy"
+   ],
+   "tags": [
+    "statistics",
+    "performance",
+    "research"
+   ],
+   "prerequisites": [
+    "expectancy",
+    "sample-size"
+   ],
+   "related": [
+    "t-journaling",
+    "t-monte-carlo",
+    "t-backtesting-pitfalls"
+   ],
+   "levels": {
+    "beginner": "To judge a strategy, CHE looks at three things together: how much it makes on an average trade (expectancy), how sure that number is (its range), and how many trades it rests on. With too few trades, or a range that still includes zero, the honest verdict is \"unsupported\", not good or bad.",
+    "intermediate": "Expectancy has two equal forms: win rate × average win − loss rate × average loss, and the mean R of all trades. Its 95% range is the mean ± t × s ÷ √n, using Student's t because s is estimated from the same trades. Good needs at least 30 closed trades, a 95% expectancy range wholly above zero, and a profit factor above 1.2 after costs. Bad needs at least 30 trades and either a range wholly below zero, or a mean at or below zero with a profit factor under 1. Anything else is unsupported: too few trades, missing data, or a range that still includes zero.",
+    "expert": "The t-interval assumes independent trades from one unchanging strategy; real trades cluster, regimes change, and R-multiples are skewed, so the range is approximate and too narrow if the rules were tuned on the same data. Forward paper trades are out of sample by construction; backtest trades are not, unless the rules were frozen first. Judge each strategy version on its own: pooling different rules mixes their results."
+   },
+   "analogy": "Judging a strategy is like a doctor reading a test with its margin of error: a single number is not a diagnosis until the margin is narrow enough.",
+   "formula": {
+    "name": "Expectancy and its t-interval",
+    "expression": "E = W × avg win − L × avg loss = mean R;  95% range = mean ± t(0.975, n − 1) × s ÷ √n",
+    "spoken": "expectancy equals the win rate times the average win, minus the loss rate times the average loss, which is the mean R; its range is the mean plus or minus t times the standard deviation, divided by the square root of n",
+    "variables": [
+     {
+      "symbol": "W, L",
+      "meaning": "win rate and loss rate",
+      "unit": "fractions"
+     },
+     {
+      "symbol": "s",
+      "meaning": "sample standard deviation of R",
+      "unit": "R"
+     },
+     {
+      "symbol": "t",
+      "meaning": "Student's t for n − 1 degrees of freedom",
+      "unit": "standard errors"
+     },
+     {
+      "symbol": "n",
+      "meaning": "trades",
+      "unit": "a count"
+     }
+    ],
+    "assumptions": "Independent trades from one unchanging strategy; with few or skewed trades the range is approximate.",
+    "compute": "tExpectancy",
+    "example": {
+     "inputs": {
+      "rs": [
+       2,
+       -1,
+       -1,
+       2,
+       -1,
+       1.5,
+       -1,
+       2
+      ]
+     },
+     "result": {
+      "expectancy": 0.4375,
+      "low": -0.854534,
+      "high": 1.729534
+     }
+    }
+   },
+   "example": {
+    "kind": "numeric",
+    "provenance": "educational example",
+    "inputs": {
+     "rs": [
+      2,
+      -1,
+      -1,
+      2,
+      -1,
+      1.5,
+      -1,
+      2
+     ]
+    },
+    "compute": "tExpectancy",
+    "result": {
+     "expectancy": 0.4375,
+     "low": -0.854534,
+     "high": 1.729534
+    },
+    "unit": "R",
+    "steps": [
+     "Educational example, made-up numbers, not market data",
+     "8 trades: 4 wins, 4 losses",
+     "form 1: W × average win − L × average loss = 0.5 × 1.875 − 0.5 × 1 = +0.44R",
+     "form 2: mean R = 3.5 ÷ 8 = +0.44R; the two forms agree",
+     "s = 1.5454R; t for 7 degrees of freedom = 2.3646",
+     "range = +0.44R ± 2.3646 × 1.5454 ÷ √8 = −0.85R to +1.73R"
+    ]
+   },
+   "quiz": [
+    {
+     "q": "A strategy wins 40% at +2R and loses 60% at −1R. What is its expectancy, both ways?",
+     "a": "+0.2R: 0.4 × 2 − 0.6 × 1, and the mean of the R-multiples is the same."
+    },
+    {
+     "q": "Forty trades, a 95% range of −0.1R to +0.5R, profit factor 1.4. Good, bad or unsupported?",
+     "a": "Unsupported: the range still includes zero."
+    },
+    {
+     "q": "Why use Student's t instead of 1.96 for a small sample?",
+     "a": "The standard deviation is estimated from the same few trades, so the range must be wider."
+    }
+   ],
+   "misconceptions": [
+    "A positive average is not a good strategy until its whole range is above zero on enough trades."
+   ],
+   "limitations": [
+    "The interval assumes independent trades and one fixed strategy; clustering and regime change make it too narrow.",
+    "A verdict on backtest trades is weaker than on forward trades, because the rules may fit the history."
+   ],
+   "che_note": "Ask \"what is my expectancy\" or \"evaluate my strategy\": CHE reads the paper journal and the stored backtest and applies these criteria, with every number labelled by its source.",
+   "measured": {
+    "metric": "expectancy",
+    "label": "expectancy"
+   },
+   "sources": [
+    {
+     "title": "Student's t-distribution",
+     "author": "Wikipedia",
+     "url": "https://en.wikipedia.org/wiki/Student%27s_t-distribution",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "The Evaluation and Optimization of Trading Strategies",
+     "author": "Robert Pardo",
+     "url": "",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "CHE source: server/cloudflare/atlas_math.js (strategyVerdict)",
+     "author": "CHE repository",
+     "url": "",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "CHE source: server/cloudflare/trading_evidence.js (promotionVerdict)",
+     "author": "CHE repository",
+     "url": "",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    }
+   ]
+  },
+  {
+   "id": "t-trades-needed",
+   "domain": "trading",
+   "title": "How many trades you need",
+   "level": "intermediate",
+   "summary": "The sample size that pins a win rate to within a chosen margin, such as plus or minus 5 points.",
+   "revision": 1,
+   "source_kind": "curated",
+   "aliases": [
+    "trades needed",
+    "how many trades do i need",
+    "how many trades",
+    "sample size for win rate",
+    "win rate margin of error",
+    "margin of error",
+    "sample size calculation",
+    "required sample size"
+   ],
+   "tags": [
+    "statistics",
+    "research"
+   ],
+   "prerequisites": [
+    "win-rate-ci"
+   ],
+   "related": [
+    "sample-size",
+    "win-rate-ci",
+    "t-strategy-evaluation"
+   ],
+   "levels": {
+    "beginner": "The more trades you record, the more exactly you know a strategy's win rate. To know it within plus or minus 5 percentage points, about 95% of the time, you need roughly 385 trades; within plus or minus 10 points, about 97. Thirty trades is a minimum, not precision.",
+    "intermediate": "n = z² × p(1 − p) ÷ margin², rounded up, with z = 1.96 for 95%. When the win rate is unknown, p = 0.5 gives the largest n, the safe choice: 1.96² × 0.25 ÷ 0.05² = 384.16, so 385 trades. Halving the margin needs four times the trades.",
+    "expert": "This is the normal approximation for one proportion; near 0% or 100%, or for small n, the Wilson interval is more honest, and the real need is higher when trades are not independent. Precision on the win rate is not precision on expectancy: payoffs vary too, so a strategy can need many more trades to show its mean R is above zero."
+   },
+   "analogy": "It is like a poll before an election: asking 100 people gives a rough idea, and asking 1,000 narrows the margin, but each halving of the margin needs four times the people.",
+   "formula": {
+    "name": "Trades for a win-rate margin",
+    "expression": "n = z² × p(1 − p) ÷ margin², rounded up",
+    "spoken": "n equals z squared, times p times one minus p, divided by the margin squared, rounded up",
+    "variables": [
+     {
+      "symbol": "z",
+      "meaning": "1.96 for 95%",
+      "unit": "standard errors"
+     },
+     {
+      "symbol": "p",
+      "meaning": "the expected win rate, 0.5 if unknown",
+      "unit": "a fraction"
+     },
+     {
+      "symbol": "margin",
+      "meaning": "the half-width you want",
+      "unit": "a fraction, 0.05 for ±5 points"
+     }
+    ],
+    "assumptions": "Normal approximation, independent trades.",
+    "compute": "tSampleSize",
+    "example": {
+     "inputs": {
+      "margin": 0.05,
+      "p": 0.5
+     },
+     "result": 385
+    }
+   },
+   "example": {
+    "kind": "numeric",
+    "provenance": "educational example",
+    "inputs": {
+     "margin": 0.05,
+     "p": 0.5
+    },
+    "compute": "tSampleSize",
+    "result": 385,
+    "unit": "trades",
+    "steps": [
+     "Educational example, made-up numbers, not market data",
+     "n = 1.96² × 0.5 × 0.5 ÷ 0.05² = 384.16",
+     "rounded up: 385 trades for a margin of ±5 percentage points"
+    ]
+   },
+   "quiz": [
+    {
+     "q": "How many trades pin a win rate to ±10 points at 95%, when it is unknown?",
+     "a": "97: 1.96² × 0.25 ÷ 0.1² = 96.04, rounded up."
+    },
+    {
+     "q": "How many more trades halve the margin?",
+     "a": "Four times as many."
+    },
+    {
+     "q": "Does a precise win rate prove a positive expectancy?",
+     "a": "No. The payoffs vary too, so expectancy needs its own interval."
+    }
+   ],
+   "misconceptions": [
+    "Thirty trades is not \"statistically significant\" by itself: it is a floor below which nothing is evidence."
+   ],
+   "limitations": [
+    "The normal approximation is rough near 0% or 100% win rates and for small samples.",
+    "Correlated trades carry less information, so the real need is higher."
+   ],
+   "che_note": "",
+   "measured": null,
+   "sources": [
+    {
+     "title": "Sample size determination",
+     "author": "Wikipedia",
+     "url": "https://en.wikipedia.org/wiki/Sample_size_determination",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "CHE source: server/cloudflare/atlas_math.js",
+     "author": "CHE repository",
+     "url": "",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    }
+   ]
+  },
+  {
+   "id": "t-backtesting-pitfalls",
+   "domain": "trading",
+   "title": "Backtesting pitfalls",
+   "level": "expert",
+   "summary": "Look-ahead, survivorship, overfitting and missing costs: the ways a backtest lies.",
+   "revision": 1,
+   "source_kind": "curated",
+   "aliases": [
+    "backtesting pitfalls",
+    "backtest pitfalls",
+    "backtesting mistakes",
+    "backtest mistakes",
+    "look ahead bias",
+    "look-ahead bias",
+    "lookahead bias",
+    "survivorship",
+    "data snooping",
+    "cost drag",
+    "repainting"
+   ],
+   "tags": [
+    "research",
+    "statistics",
+    "advanced"
+   ],
+   "prerequisites": [
+    "sample-size"
+   ],
+   "related": [
+    "t-strategy-evaluation",
+    "t-monte-carlo",
+    "t-order-book"
+   ],
+   "levels": {
+    "beginner": "A backtest replays rules on old prices. It can look great and still be wrong: if it used information that was not known at the time, tested only markets that survived, was tuned until the past looked good, or left out costs. Each of these makes the past look better than the future will be.",
+    "intermediate": "Costs are the easiest to measure: net expectancy = gross expectancy − round-trip cost ÷ dollars risked. CHE's assumed MNQ round trip is about $5.50 (spread, slippage, commissions and fees); on a $40 risk that is 0.1375R a trade, enough to turn a +0.15R gross edge into +0.0125R.",
+    "expert": "Look-ahead hides in details: a signal on a bar's close filled at that same close, an indicator that repaints, a session high used before the session ended. Survivorship removes delisted stocks and expired contracts. Overfitting grows with every variant tried, so the best backtest of many is mostly selection; Bailey and colleagues estimate this as the probability of backtest overfitting. Freeze the rules, then test once on untouched data."
+   },
+   "analogy": "An overfitted backtest is like a key filed to fit one lock perfectly: it opens that lock and no other.",
+   "formula": {
+    "name": "Cost drag in R",
+    "expression": "net expectancy = gross expectancy − round-trip cost ÷ dollars risked",
+    "spoken": "net expectancy equals gross expectancy minus the round-trip cost divided by the dollars risked per trade",
+    "variables": [
+     {
+      "symbol": "gross expectancy",
+      "meaning": "average R before costs",
+      "unit": "R"
+     },
+     {
+      "symbol": "round-trip cost",
+      "meaning": "spread, slippage, commissions and fees in and out",
+      "unit": "$"
+     },
+     {
+      "symbol": "dollars risked",
+      "meaning": "the 1R of each trade",
+      "unit": "$"
+     }
+    ],
+    "assumptions": "The same cost on every trade; real slippage varies and is worst in fast markets.",
+    "compute": "tCostInR",
+    "example": {
+     "inputs": {
+      "grossR": 0.15,
+      "roundTripCost": 5.5,
+      "riskDollars": 40
+     },
+     "result": {
+      "costR": 0.1375,
+      "netR": 0.0125
+     }
+    }
+   },
+   "example": {
+    "kind": "numeric",
+    "provenance": "educational example",
+    "inputs": {
+     "grossR": 0.15,
+     "roundTripCost": 5.5,
+     "riskDollars": 40
+    },
+    "compute": "tCostInR",
+    "result": {
+     "costR": 0.1375,
+     "netR": 0.0125
+    },
+    "unit": "R",
+    "steps": [
+     "Educational example, made-up numbers, not market data",
+     "cost per trade = $5.50 ÷ $40.00 = 0.1375R",
+     "net = +0.15R − 0.1375R = +0.01R"
+    ]
+   },
+   "quiz": [
+    {
+     "q": "A strategy makes +0.10R gross, risks $20 a trade and pays $5 a round trip. What is the net?",
+     "a": "−0.15R: 0.10 − 5 ÷ 20."
+    },
+    {
+     "q": "A signal uses a bar's close and fills at that same close. What is wrong?",
+     "a": "Look-ahead: the close is known only when the bar ends, so the fill must come after it."
+    },
+    {
+     "q": "You tried 200 variants and kept the best. What should you expect going forward?",
+     "a": "Worse results: the best of many is partly the luckiest."
+    }
+   ],
+   "misconceptions": [
+    "A backtest with a high win rate is not evidence until costs, causal data and untouched test data are all in place."
+   ],
+   "limitations": [
+    "Even a careful backtest is history: it cannot show a regime that has not happened yet.",
+    "Assumed costs are planning numbers, not a broker's schedule."
+   ],
+   "che_note": "CHE's evidence engine computes indicators from past bars only, fills at the next bar open, charges assumed costs on every trade and keeps failed experiments (trading_evidence.js).",
+   "measured": null,
+   "sources": [
+    {
+     "title": "The Probability of Backtest Overfitting",
+     "author": "David H. Bailey, Jonathan M. Borwein, Marcos López de Prado and Qiji Jim Zhu",
+     "url": "",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "Look-ahead bias",
+     "author": "Wikipedia",
+     "url": "https://en.wikipedia.org/wiki/Look-ahead_bias",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "Overfitting",
+     "author": "Wikipedia",
+     "url": "https://en.wikipedia.org/wiki/Overfitting",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "The Evaluation and Optimization of Trading Strategies",
+     "author": "Robert Pardo",
+     "url": "",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "CHE source: server/cloudflare/trading_evidence.js (COSTS)",
+     "author": "CHE repository",
+     "url": "",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    }
+   ]
+  },
+  {
+   "id": "t-monte-carlo",
+   "domain": "trading",
+   "title": "Monte Carlo of trade sequences",
+   "level": "expert",
+   "summary": "Reshuffle or resample recorded trades thousands of times to see the range of equity paths and drawdowns.",
+   "revision": 1,
+   "source_kind": "curated",
+   "aliases": [
+    "monte carlo",
+    "monte carlo simulation",
+    "monte carlo analysis",
+    "trade sequence simulation",
+    "bootstrapping trades",
+    "bootstrap resampling",
+    "resampling trades",
+    "equity path simulation",
+    "drawdown distribution"
+   ],
+   "tags": [
+    "statistics",
+    "risk",
+    "research"
+   ],
+   "prerequisites": [
+    "drawdown",
+    "expectancy"
+   ],
+   "related": [
+    "t-risk-of-ruin",
+    "drawdown",
+    "t-strategy-evaluation"
+   ],
+   "levels": {
+    "beginner": "One backtest shows one order of trades, but the same trades could have come in another order. A Monte Carlo simulation shuffles or redraws the trades thousands of times and shows the spread of results: the typical path, a bad path, and how deep the drawdowns could be.",
+    "intermediate": "Two ways: a reshuffle uses every trade once in a new order, so the final result never changes but the drawdown does; a bootstrap draws trades with replacement, so the final result varies too. Report percentiles, such as the median and the 95th percentile drawdown. A fixed seed makes the run repeatable.",
+    "expert": "The simulation can only recombine what the record holds: it assumes trades are independent and drawn from an unchanging distribution, so it misses streaks caused by regimes and any loss larger than the worst recorded. With few trades it repeats their luck. Use it to size risk against a drawdown you can bear, not to prove an edge; the mean of a bootstrap is the record's own mean."
+   },
+   "analogy": "A Monte Carlo is like shuffling a deck you already hold and dealing it many times: you learn how the hands can fall, but no new cards appear.",
+   "formula": {
+    "name": "Monte Carlo of trade order",
+    "expression": "for each path: draw the trades (reshuffle or with replacement), add them in order, keep the final result and the largest peak-to-trough fall; report percentiles",
+    "spoken": "each path draws the recorded trades in a new order, adds them up and keeps its final result and its largest fall, and the report gives percentiles across all paths",
+    "variables": [
+     {
+      "symbol": "results",
+      "meaning": "the recorded trade results",
+      "unit": "R or $"
+     },
+     {
+      "symbol": "paths",
+      "meaning": "how many simulated sequences",
+      "unit": "a count"
+     },
+     {
+      "symbol": "seed",
+      "meaning": "the generator's starting number",
+      "unit": "a whole number"
+     }
+    ],
+    "assumptions": "Seeded mulberry32 generator; trades independent and drawn from the record itself.",
+    "compute": "tMonteCarlo",
+    "example": {
+     "inputs": {
+      "results": [
+       2,
+       -1,
+       -1,
+       2,
+       -1
+      ],
+      "paths": 200,
+      "seed": 7,
+      "replace": false
+     },
+     "result": {
+      "finalP5": 1,
+      "finalP50": 1,
+      "finalP95": 1
+     }
+    }
+   },
+   "example": {
+    "kind": "numeric",
+    "provenance": "educational example",
+    "inputs": {
+     "results": [
+      2,
+      -1,
+      -1,
+      2,
+      -1
+     ],
+     "paths": 200,
+     "seed": 7,
+     "replace": false
+    },
+    "compute": "tMonteCarlo",
+    "result": {
+     "finalP5": 1,
+     "finalP50": 1,
+     "finalP95": 1
+    },
+    "unit": "R",
+    "steps": [
+     "Educational example, made-up numbers, not market data",
+     "200 paths of 5 trades, reshuffled from 5 results, seed 7",
+     "final result: 5th percentile 1, median 1, 95th percentile 1",
+     "maximum drawdown: median 2, 95th percentile 3, worst path 3",
+     "0.0% of paths ended below the start"
+    ]
+   },
+   "quiz": [
+    {
+     "q": "In a reshuffle of the same five trades, does the final result change between paths?",
+     "a": "No: the same trades add to the same total; only the order, and so the drawdown, changes."
+    },
+    {
+     "q": "What does a fixed seed give you?",
+     "a": "The same simulation every time, so the result can be checked."
+    },
+    {
+     "q": "Can a Monte Carlo show a loss bigger than any recorded trade?",
+     "a": "Not by resampling: it only recombines the trades that were recorded."
+    }
+   ],
+   "misconceptions": [
+    "A Monte Carlo is not new evidence: it reuses the same trades, so it cannot prove an edge."
+   ],
+   "limitations": [
+    "Assumes independent trades from an unchanging distribution; regimes and streaks are missed.",
+    "With a small record it repeats that record's luck."
+   ],
+   "che_note": "Say \"run a Monte Carlo on my trades\": CHE simulates only the closed trades in the paper journal, with a fixed seed, and says when there are too few.",
+   "measured": null,
+   "sources": [
+    {
+     "title": "Monte Carlo method",
+     "author": "Wikipedia",
+     "url": "https://en.wikipedia.org/wiki/Monte_Carlo_method",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "Bootstrapping (statistics)",
+     "author": "Wikipedia",
+     "url": "https://en.wikipedia.org/wiki/Bootstrapping_(statistics)",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "The Mathematics of Money Management",
+     "author": "Ralph Vince",
+     "url": "",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "CHE source: server/cloudflare/atlas_math.js (mulberry32)",
+     "author": "CHE repository",
+     "url": "",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    }
+   ]
+  },
+  {
+   "id": "t-risk-of-ruin",
+   "domain": "trading",
+   "title": "Risk of ruin",
+   "level": "expert",
+   "summary": "The chance that a run of losses takes the account down to a level you cannot trade from.",
+   "revision": 1,
+   "source_kind": "curated",
+   "aliases": [
+    "risk of ruin",
+    "ruin probability",
+    "probability of ruin",
+    "gamblers ruin",
+    "gambler's ruin",
+    "blowing up an account",
+    "chance of ruin"
+   ],
+   "tags": [
+    "risk",
+    "statistics",
+    "advanced"
+   ],
+   "prerequisites": [
+    "t-monte-carlo",
+    "risk-management"
+   ],
+   "related": [
+    "t-monte-carlo",
+    "risk-management",
+    "expectancy"
+   ],
+   "levels": {
+    "beginner": "Risk of ruin is the chance of losing so much that you cannot keep trading. It grows when each trade risks a bigger slice of the account and shrinks when the strategy has a real edge. Even a winning strategy can be ruined by risking too much on each trade.",
+    "intermediate": "For equal wins and losses of one unit, with win rate p above one half and q = 1 − p, the classic gambler's-ruin answer over an endless run is (q ÷ p) raised to the number of units of room. Winning 55% with 10 losses of room gives (0.45 ÷ 0.55)^10, about 13.4%. For other payoffs CHE runs a seeded Monte Carlo.",
+    "expert": "The simulation assumes a fixed dollar risk, independent trades and a known, fixed win rate and payoff, none of which hold exactly: estimation error in the win rate alone can multiply the true risk. Fixed-fraction sizing never reaches zero in theory but suffers the same drawdowns in percent. Set \"ruin\" as the loss limit you would really stop at, not zero, and read the result as a lower bound."
+   },
+   "analogy": "Risk of ruin is like a boat crossing rough water with low sides: even with a good engine, enough big waves in a row will sink it, so you raise the sides by risking less each trade.",
+   "formula": {
+    "name": "Risk of ruin",
+    "expression": "Monte Carlo: ruined paths ÷ all paths;  equal wins and losses: (q ÷ p)^units",
+    "spoken": "the risk of ruin is the share of simulated paths that hit the ruin level, and with equal wins and losses the classic answer is q over p, raised to the units of room",
+    "variables": [
+     {
+      "symbol": "p, q",
+      "meaning": "win rate and loss rate",
+      "unit": "fractions"
+     },
+     {
+      "symbol": "units",
+      "meaning": "(account − ruin level) ÷ risk per trade",
+      "unit": "losing trades of room"
+     },
+     {
+      "symbol": "paths, seed",
+      "meaning": "simulated sequences and the generator's seed",
+      "unit": "counts"
+     }
+    ],
+    "assumptions": "Fixed dollar risk, independent trades, fixed win rate and payoff, no costs; a lower bound on the real risk.",
+    "compute": "tRiskOfRuin",
+    "example": {
+     "inputs": {
+      "winRate": 0.55,
+      "avgWinR": 1,
+      "avgLossR": 1,
+      "riskPerTrade": 100,
+      "account": 1000,
+      "ruinAt": 0,
+      "trades": 300,
+      "paths": 1000,
+      "seed": 7
+     },
+     "result": {
+      "classic": 0.134431
+     }
+    }
+   },
+   "example": {
+    "kind": "numeric",
+    "provenance": "educational example",
+    "inputs": {
+     "winRate": 0.55,
+     "avgWinR": 1,
+     "avgLossR": 1,
+     "riskPerTrade": 100,
+     "account": 1000,
+     "ruinAt": 0,
+     "trades": 300,
+     "paths": 1000,
+     "seed": 7
+    },
+    "compute": "tRiskOfRuin",
+    "result": {
+     "classic": 0.134431
+    },
+    "unit": "probability",
+    "steps": [
+     "Educational example, made-up numbers, not market data",
+     "1,000 paths of up to 300 trades, seed 7: win 55.0% of the time for +1R, lose 45.0% for −1R, $100.00 a trade",
+     "ruin = equity at or below $0.00, starting from $1,000.00: 10 losing trades of room",
+     "130 of 1,000 paths were ruined = 13.00%, give or take 2.08% from simulation noise",
+     "check, gambler's ruin with an endless horizon: (0.45 ÷ 0.55)^10 = 13.44%"
+    ]
+   },
+   "quiz": [
+    {
+     "q": "Win rate 60%, equal wins and losses, 5 units of room: what is the classic risk of ruin?",
+     "a": "About 13.2%: (0.4 ÷ 0.6)^5."
+    },
+    {
+     "q": "What happens to the risk of ruin when you double the risk per trade?",
+     "a": "It rises sharply: the room halves, and the classic formula has the room in the exponent."
+    },
+    {
+     "q": "With a 50% win rate and equal wins and losses, what is the classic risk of ruin over an endless run?",
+     "a": "100%: without an edge, ruin comes eventually."
+    }
+   ],
+   "misconceptions": [
+    "A positive expectancy does not make ruin impossible: oversized risk can still end the account."
+   ],
+   "limitations": [
+    "Assumes a known, fixed win rate and payoff; estimation error alone can make the real risk far higher.",
+    "Costs, slippage and correlated losses are not in the model."
+   ],
+   "che_note": "",
+   "measured": null,
+   "sources": [
+    {
+     "title": "Gambler's ruin",
+     "author": "Wikipedia",
+     "url": "https://en.wikipedia.org/wiki/Gambler%27s_ruin",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "Risk of ruin",
+     "author": "Wikipedia",
+     "url": "https://en.wikipedia.org/wiki/Risk_of_ruin",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "The Mathematics of Money Management",
+     "author": "Ralph Vince",
+     "url": "",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "CHE source: server/cloudflare/atlas_math.js (riskOfRuin)",
      "author": "CHE repository",
      "url": "",
      "license": "reference link only; card text is original",

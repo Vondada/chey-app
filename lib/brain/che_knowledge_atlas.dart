@@ -40,6 +40,7 @@ class CheAtlasCard {
     required this.example,
     required this.quiz,
     required this.misconceptions,
+    this.limitations = const [],
     required this.cheNote,
     required this.measured,
     required this.sources,
@@ -59,6 +60,7 @@ class CheAtlasCard {
   final Map<String, dynamic> example;
   final List<CheAtlasQuestion> quiz;
   final List<String> misconceptions;
+  final List<String> limitations;
   final String cheNote;
   final bool measured;
   final List<String> sources;
@@ -84,6 +86,7 @@ class CheAtlasCard {
         for (final q in (j['quiz'] as List? ?? const []).whereType<Map>()) CheAtlasQuestion('${q['q']}', '${q['a']}'),
       ],
       misconceptions: _strings(j['misconceptions']),
+      limitations: _strings(j['limitations']),
       cheNote: '${j['che_note'] ?? ''}',
       measured: j['measured'] is Map,
       sources: [
@@ -193,6 +196,7 @@ String cheAtlasCardText(CheAtlasCard c, String level) {
   if (level != 'beginner' && c.formula != null) lines.add(c.formulaWords);
   lines.add('Worked example: ${c.exampleWords}');
   if (c.cheNote.isNotEmpty) lines.add('In CHE: ${c.cheNote}');
+  if (c.limitations.isNotEmpty) lines.add('Limitations: ${c.limitations.join(' ')}');
   return lines.join('\n');
 }
 
@@ -547,6 +551,7 @@ class _CheKnowledgeAtlasPageState extends State<CheKnowledgeAtlasPage> {
         ]),
         if (_level == 'expert' && c.misconceptions.isNotEmpty) _section('Common mistake', [Text(c.misconceptions.first, style: _big)]),
         if (c.cheNote.isNotEmpty) _section('In CHE', [Text(c.cheNote, style: _big)]),
+        if (c.limitations.isNotEmpty) _section('Limitations', [for (final l in c.limitations) Text(l, style: _big)]),
         if (c.measured)
           _section('Your recorded numbers', [
             const Text('CHE reads these from her paper journal and stored backtest only, never from this card.', style: _dim),

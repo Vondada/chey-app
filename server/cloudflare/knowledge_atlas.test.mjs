@@ -91,11 +91,11 @@ const sameResult = (actual, expected, eps = 1e-4) => (typeof expected === 'objec
 
 // ─── The cards are well formed ────────────────────────────────────────────
 
-test('ten coding and ten trading cards, each complete from beginner to expert', () => {
+test('ten coding and thirty trading cards, each complete from beginner to expert', () => {
   assert.equal(ATLAS_CARDS.filter((c) => c.domain === 'coding').length, 10);
-  assert.equal(ATLAS_CARDS.filter((c) => c.domain === 'trading').length, 10);
-  assert.equal(new Set(ATLAS_CARDS.map((c) => c.id)).size, 20, 'ids are unique');
-  assert.equal(new Set(ATLAS_CARDS.map((c) => c.title)).size, 20, 'titles are unique');
+  assert.equal(ATLAS_CARDS.filter((c) => c.domain === 'trading').length, 30);
+  assert.equal(new Set(ATLAS_CARDS.map((c) => c.id)).size, 40, 'ids are unique');
+  assert.equal(new Set(ATLAS_CARDS.map((c) => c.title)).size, 40, 'titles are unique');
   for (const c of ATLAS_CARDS) {
     assert.match(c.id, /^[a-z][a-z0-9-]+$/, c.id);
     assert.ok(LEVELS.includes(c.level), `${c.id} level`);
@@ -325,7 +325,7 @@ test('every code example runs and returns exactly what its card says', async () 
 test('the phone\'s bundled atlas matches the cards (regenerate: node tool/dump_knowledge_atlas.mjs)', () => {
   const bundled = JSON.parse(readFileSync(new URL('../../assets/atlas/knowledge_atlas.json', import.meta.url), 'utf8'));
   assert.deepEqual(bundled, JSON.parse(JSON.stringify(atlasExport())));
-  assert.equal(bundled.cards.length, 20);
+  assert.equal(bundled.cards.length, 40);
   assert.ok(bundled.cards.every((c) => c.quiz.every((q) => Object.keys(q).join() === 'q,a')), 'only questions and answers go to the phone');
   assert.match(readFileSync(new URL('../../pubspec.yaml', import.meta.url), 'utf8'), /^\s+- assets\/atlas\/$/m, 'pubspec bundles it');
 });
@@ -402,7 +402,7 @@ test('the owner\'s seven phrasings are answered from the cards with no model, ty
     const out = await lesson(words);
     assert.match(out.reply, /^The formula for VWAP, sir: VWAP equals the sum of typical price times volume, divided by the sum of volume/);
     assert.match(out.reply, /VWAP = 40,400 ÷ 400 = 101/);
-    assert.match(out.reply, /CHE does not compute VWAP on market data yet/, 'the card says what CHE cannot do');
+    assert.match(out.reply, /CHE computes VWAP only from bars it has stored, the delayed paper feed/, 'the card says what CHE can and cannot do');
   }
   for (const words of variants('Quiz me on risk management.')) {
     const out = await lesson(words);
@@ -413,7 +413,7 @@ test('the owner\'s seven phrasings are answered from the cards with no model, ty
   }
   for (const words of variants('List the trading cards.')) {
     const out = await lesson(words);
-    assert.match(out.reply, /^Trading cards in the Knowledge Atlas, sir: 10\.\n1\. Ticks, points and contract value, beginner\.\n2\. Bid, ask and spread, beginner\./);
+    assert.match(out.reply, /^Trading cards in the Knowledge Atlas, sir: 30\.\n1\. Ticks, points and contract value, beginner\.\n2\. Bid, ask and spread, beginner\./);
     const picked = await lesson('number five', [{ role: 'assistant', content: out.reply }]);
     assert.match(picked.reply, /^Expectancy, beginner level, sir\./, 'a spoken number picks from the list just read');
   }
@@ -433,7 +433,7 @@ test('the /learn command is the same lesson route, through the one catalog', asy
   assert.match((await che.say('/learn what\'s the formula for profit factor')).reply, /^The formula for Profit factor, sir: profit factor equals gross profit divided by gross loss/);
   const overview = await che.say('/learn');
   assert.equal(overview.route, 'che_knowledge_atlas');
-  assert.match(overview.reply, /^The Knowledge Atlas has 20 cards, sir: 10 coding and 10 trading/);
+  assert.match(overview.reply, /^The Knowledge Atlas has 40 cards, sir: 10 coding and 30 trading/);
   const unknown = await che.say('/learn string theory');
   assert.equal(unknown.route, 'che_knowledge_atlas');
   assert.match(unknown.reply, /^I don't have a Knowledge Atlas card on "string theory" yet, sir, so I won't make one up\./);
@@ -484,7 +484,7 @@ test('"quiz me" with no topic asks which one; "number" picks then quiz that card
     assert.doesNotMatch(out.reply, /^Quiz on/, 'no topic is guessed');
   }
   const trading = await che.say('Quiz me on trading');
-  assert.match(trading.reply, /^Trading cards in the Knowledge Atlas, for a quiz, sir: 10\./);
+  assert.match(trading.reply, /^Trading cards in the Knowledge Atlas, for a quiz, sir: 30\./);
   const picked = await che.say('number 2', { history: [{ role: 'assistant', content: trading.reply }] });
   assert.match(picked.reply, /^Quiz on Bid, ask and spread, sir\./);
   // Answers only follow a quiz; with none open CHE says so.
@@ -537,9 +537,9 @@ test('measured lines through /api/chat: the journal and the stored backtest, exa
   const s = summarize(trades);
   const out = await che.say('Explain expectancy');
   assert.equal(out.route, 'che_knowledge_atlas');
-  assert.match(out.reply, /Your records, measured from CHE's paper journal: 5 closed paper trades, fewer than the 30 trades needed, so this is anecdote, not evidence\./);
+  assert.match(out.reply, /Your records, measured from CHE's paper journal \(delayed forward-paper data\): 5 closed paper trades, fewer than the 30 trades needed, so this is anecdote, not evidence\./);
   assert.ok(out.reply.includes(`Expectancy +${s.expectancy_r.toFixed(2)}R per trade after assumed costs`), out.reply);
-  assert.match(out.reply, /Latest stored backtest, 2026-10-18, Yahoo MNQ=F, 1200 five-minute bars \(DELAYED public data\): 2 strategy portfolios with 52 trades; expectancy ranged -0\.15R to \+0\.12R across them\. A backtest is history, not a forward result\./);
+  assert.match(out.reply, /Latest stored backtest \(historical backtest\), 2026-10-18, Yahoo MNQ=F, 1200 five-minute bars \(DELAYED public data\): 2 strategy portfolios with 52 trades; expectancy ranged -0\.15R to \+0\.12R across them\. A backtest is history, not a forward result\./);
   const pf = await che.say("What's the formula for profit factor?");
   assert.ok(pf.reply.includes(`Profit factor ${s.profit_factor}.`), pf.reply);
   assert.match(pf.reply, /profit factor ranged 0\.8 to 1\.3 across them/);

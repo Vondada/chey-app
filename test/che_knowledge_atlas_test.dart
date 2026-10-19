@@ -36,10 +36,10 @@ Future<List<String>> open(WidgetTester tester, {double textScale = 1, List<Strin
 }
 
 void main() {
-  test('the bundled cards: ten coding and ten trading, each with three levels and a quiz', () {
+  test('the bundled cards: ten coding and thirty trading, each with three levels and a quiz', () {
     final atlas = bundled();
     expect(atlas.inDomain('coding').length, 10);
-    expect(atlas.inDomain('trading').length, 10);
+    expect(atlas.inDomain('trading').length, 30);
     for (final c in atlas.cards) {
       for (final level in cheAtlasLevels) {
         expect(c.levels[level], isNotEmpty, reason: '${c.id} $level');
@@ -53,25 +53,32 @@ void main() {
     expect(atlas.find('the formula for vwap'), isNull);
     expect(atlas.find('option spreads'), isNull);
     expect(atlas.next(atlas.byId('recursion')!)?.id, 'hash-maps');
-    expect(atlas.next(atlas.byId('sample-size')!), isNull);
+    expect(atlas.next(atlas.byId('sample-size')!)?.id, 't-futures');
+    expect(atlas.next(atlas.byId('t-risk-of-ruin')!), isNull);
+    // Trading cards state their limitations; the ICT ones say their evidence is mixed or limited.
+    for (final c in atlas.inDomain('trading')) {
+      expect(c.limitations, isNotEmpty, reason: c.id);
+    }
+    expect(atlas.byId('t-order-blocks')!.limitations.first, contains('mixed or limited evidence'));
+    expect(cheAtlasCardText(atlas.byId('t-order-blocks')!, 'beginner'), contains('Limitations: A discretionary concept'));
   });
 
   testWidgets('opening is silent; the cards, filters and buttons are on screen', (tester) async {
     final spoken = await open(tester);
     expect(spoken, isEmpty, reason: 'no speech when the page opens');
     expect(find.text('Knowledge Atlas'), findsOneWidget);
-    expect(find.text('All 20'), findsOneWidget);
+    expect(find.text('All 40'), findsOneWidget);
     expect(find.text('Coding 10'), findsOneWidget);
-    expect(find.text('Trading 10'), findsOneWidget);
+    expect(find.text('Trading 30'), findsOneWidget);
     expect(find.text('Read aloud'), findsOneWidget);
     expect(find.text('Speak to CHE'), findsOneWidget);
     expect(find.text('1. Variables and data types'), findsOneWidget);
-    await tester.tap(find.text('Trading 10'));
+    await tester.tap(find.text('Trading 30'));
     await tester.pumpAndSettle();
     expect(find.text('1. Ticks, points and contract value'), findsOneWidget);
     expect(find.text('1. Variables and data types'), findsNothing);
     expect(spoken, isEmpty, reason: 'filtering is quiet');
-    expect(CheScreenAwareness.describe(), startsWith('You are on the Knowledge Atlas, Trading cards view. 10 cards: 1. Ticks, points and contract value'));
+    expect(CheScreenAwareness.describe(), startsWith('You are on the Knowledge Atlas, Trading cards view. 30 cards: 1. Ticks, points and contract value'));
   });
 
   testWidgets('a card by touch: levels, Read aloud of exactly what is shown, and the quiz', (tester) async {
@@ -109,7 +116,7 @@ void main() {
       return reply;
     }
 
-    expect(await hear('list the trading cards'), startsWith('Trading cards: 10. 1. Ticks, points and contract value, beginner.'));
+    expect(await hear('list the trading cards'), startsWith('Trading cards: 30. 1. Ticks, points and contract value, beginner.'));
     expect(await hear('number five'), startsWith('Expectancy, beginner level. Expectancy is what a strategy makes or loses'));
     expect(find.text('Expectancy'), findsOneWidget);
     expect(await hear('give me the expert version'), startsWith('Expectancy, expert level.'));
@@ -121,7 +128,7 @@ void main() {
     expect(await hear('teach me recursion'), startsWith('Recursion, beginner level.'));
     expect(await hear('go deeper'), startsWith('Recursion, intermediate level.'));
     expect(await hear('what can I do here'), startsWith('Your options: 1. Read aloud.'));
-    expect(await hear('go back'), 'Back to the 10 cards.', reason: 'back to the trading list it came from');
+    expect(await hear('go back'), 'Back to the 30 cards.', reason: 'back to the trading list it came from');
     expect(find.text('1. Ticks, points and contract value'), findsOneWidget);
     // Not the page's: Chat answers these as usual.
     expect(await hear('tell me a joke'), isNull);
@@ -134,7 +141,7 @@ void main() {
   testWidgets('recorded trading numbers come from CHE through Chat, never from the card', (tester) async {
     final asked = <String>[];
     await open(tester, asked: asked);
-    await tester.tap(find.text('Trading 10'));
+    await tester.tap(find.text('Trading 30'));
     await tester.pumpAndSettle();
     await tester.scrollUntilVisible(find.text('5. Expectancy'), 200, scrollable: find.byType(Scrollable).first);
     // ensureVisible jumps the list; lay out that frame before tapping at the row's new place.
