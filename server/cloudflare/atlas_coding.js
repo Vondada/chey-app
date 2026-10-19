@@ -1219,6 +1219,8 @@ const CRAFT = [
 
 const AUTONOMY = [
   card({
+    // A part of CHE: "show me the code for" it asks for CHE's own code, which its own routes read.
+    che_component: true,
     id: 'c-agent-planning', domain: 'coding', title: 'Autonomous coding: explore, plan, build', level: 'expert',
     summary: 'A coding agent first decides what the owner allowed, explore, plan or build, then inspects the code before changing it.',
     aliases: ['agent planning', 'autonomous coding', 'coding agents', 'ai coding agents', 'explore plan build', 'explore plan and build', 'planning modes', 'execution modes', 'code inspection'],
@@ -1281,6 +1283,8 @@ const AUTONOMY = [
     ],
   }),
   card({
+    // A part of CHE: "show me the code for" it asks for CHE's own code, which its own routes read.
+    che_component: true,
     id: 'c-checkpoints', domain: 'coding', title: 'Checkpoints and resumable jobs', level: 'expert',
     summary: 'A checkpoint saves only verified progress, so a failed attempt or a restart costs nothing that already worked.',
     aliases: ['checkpoints', 'checkpoint', 'checkpointing', 'checkpoints and resume', 'resumable jobs', 'resumable job', 'resumable work', 'resuming work'],
@@ -1346,6 +1350,8 @@ const AUTONOMY = [
     ],
   }),
   card({
+    // A part of CHE: "show me the code for" it asks for CHE's own code, which its own routes read.
+    che_component: true,
     id: 'c-model-failover', domain: 'coding', title: 'Model failover and recovery', level: 'expert',
     summary: 'When a model fails, classify why first: retrying helps a busy model, never a request that is too large.',
     aliases: ['model failover', 'failover', 'model fallback', 'fallback models', 'model recovery', 'error recovery', 'failure recovery', 'retries and backoff', 'exponential backoff', 'backoff'],
@@ -1444,6 +1450,8 @@ const AUTONOMY = [
     ],
   }),
   card({
+    // A part of CHE: "show me the code for" it asks for CHE's own code, which its own routes read.
+    che_component: true,
     id: 'c-self-repair', domain: 'coding', title: 'Self-repair loops and CI validation', level: 'expert',
     summary: 'A self-repair loop tests a change, reads the real failure, tries a genuinely different fix, and stops within a budget.',
     aliases: ['self repair', 'self repair loops', 'self healing code', 'self correction', 'ci validation', 'reasoning about failures', 'failure analysis', 'repair loops'],
@@ -1503,8 +1511,13 @@ const AUTONOMY = [
         entry: 'allowed',
         fixed: lines('// The checker and its gates are out of the attempt\'s reach.', "const allowed = (path) => !/^(?:\\.github\\/|tools\\/che_coding_|server\\/cloudflare\\/coding_failover\\.mjs$)/.test(path);"),
         probe: { calls: [['tools/che_coding_checkpoint.mjs'], ['server/cloudflare/coding_failover.mjs'], ['lib/main.dart']], buggy: [true, true, true], fixed: [false, false, true] },
-        // Illustrative: the unsafe-path rule was in coding_failover.mjs from its first commit (#328).
-        pins: { test: 'server/cloudflare/coding_failover.test.mjs', test_name: 'the coding tools and the gate are unsafe paths: an attempt can never change the code that judges it' },
+        from: {
+          what: 'a review fix on PR #328, after which an attempt can no longer change the gate and the checkpoint verifier',
+          commit: '3400cd79', file: 'server/cloudflare/coding_failover.mjs',
+          removed: '/^(?:\\.github\\/|\\.git\\/)/i,', added: '/^tools\\/che_coding_/i,',
+          pinned: [{ drill: 'code', diff: 'removed', text: '.github' }, { drill: 'fixed', diff: 'added', text: 'tools\\/che_coding_' }],
+          test: 'server/cloudflare/coding_failover.test.mjs', test_name: 'the coding tools and the gate are unsafe paths: an attempt can never change the code that judges it',
+        },
         finding: 'The attempt can edit the checkpoint verifier and the failover gate, the code that judges it, so a bad change could approve itself. The judge and its gates must be unsafe paths an attempt can never touch.',
         concepts: [['judge', 'verifier', 'checker', 'gate', 'checkpoint', 'failover', 'itself', 'its own judge', 'own checker'], ['edit*', 'chang*', 'modif*', 'touch*', 'writ*', 'approv*', 'allowed', 'rewrit*']],
       },
@@ -1532,6 +1545,7 @@ const FIX_DRILLS = {
       from: {
         what: 'a review finding on PR #351, where the money gate was made to fail closed; the fix and its note are in owner_action_gate.js',
         commit: 'f2992a7', file: 'server/cloudflare/owner_action_gate.js', added: '#351: "No need to ask, pay the electric bill" must still be held',
+        pinned: [{ drill: 'probe', diff: 'added', text: 'No need to ask, pay the electric bill' }],
         test: 'server/cloudflare/readonly_acceptance.test.mjs', test_name: PROHIBITION_TEST,
       },
       code: lines('// Sets the owner\'s "don\'t …" aside, then looks for a money verb in what is left.', 'function needsYes(text) {', "  const asked = text.replace(/\\b(?:don'?t|do not|never|no need to)\\b[^.;!?]*/gi, '');", '  return /\\b(?:buy|pay|order|purchase)\\b/i.test(asked);', '}'),
@@ -1558,6 +1572,7 @@ const FIX_DRILLS = {
         what: 'PR #349, where the owner\'s whole sentence reaches CHE',
         commit: '11c79bb', file: 'server/cloudflare/worker.js',
         removed: "const rawMessage = String(body.message || '').trim().slice(0, 16000);", added: 'if (rawMessage.length > intakeLimit) {',
+        pinned: [{ drill: 'code', diff: 'removed', text: ".trim().slice(0, " }, { drill: 'fixed', diff: 'added', text: '.length > ' }],
         test: 'server/cloudflare/worker_autonomy.test.mjs', test_name: 'a chat message too long to take is refused whole, saying so; nothing runs (issue #345)',
       },
       code: lines('function intake(message, limit) {', '  const text = String(message || \'\').trim().slice(0, limit);   // keep it a manageable size', '  return { status: 200, text };', '}'),
@@ -1625,6 +1640,7 @@ const PHASE1_PRACTICE = {
       prompt: 'In JavaScript, what does typeof null return?',
       solution: { language: 'javascript', code: 'const typeOf = (value) => typeof value;', entry: 'typeOf' },
       cases: [{ args: [null], expected: 'object' }, { args: [7], expected: 'number' }, { args: ['MNQ'], expected: 'string' }], ask: 0, answer: 'object',
+      vocabulary: ['string', 'number', 'object', 'boolean', 'undefined', 'function', 'bigint', 'symbol', 'null'],
       explain: 'A famous quirk kept since the first JavaScript: typeof null is "object", so check for null with === null.',
     }],
   },
@@ -1730,6 +1746,7 @@ const PHASE1_PRACTICE = {
       prompt: 'Using the first digit of a status code, which class is 429 Too Many Requests?',
       solution: { language: 'javascript', code: "const kind = (status) => ['informational', 'success', 'redirect', 'client error', 'server error'][Math.floor(status / 100) - 1];", entry: 'kind' },
       cases: [{ args: [429], expected: 'client error' }, { args: [200], expected: 'success' }, { args: [503], expected: 'server error' }], ask: 0, answer: 'client error', also: ['4xx', 'a 4xx', '4xx client error'],
+      vocabulary: ['informational', 'success', 'redirect', 'redirection', 'client error', 'server error', '1xx', '2xx', '3xx', '4xx', '5xx'],
       explain: 'It starts with 4, a client error; with 408 it is one of the few 4xx answers worth retrying, after a wait.',
     }],
     review_drills: [{
@@ -1782,7 +1799,7 @@ export function withCodingPractice(c) {
 export function codingExport(c) {
   if (!Array.isArray(c.exercises)) return {};
   return {
-    exercises: c.exercises.map((x) => ({ id: x.id, kind: x.kind, prompt: x.prompt, language: x.language, code: shownCode(x), options: x.options || [], answer: answerWords(x), explain: x.explain })),
+    exercises: c.exercises.map((x) => ({ id: x.id, kind: x.kind, topic: x.topics[0], prompt: x.prompt, language: x.language, code: shownCode(x), options: x.options || [], answer: answerWords(x), explain: x.explain })),
     review_drills: c.review_drills.map((d) => ({ id: d.id, title: d.title, language: d.language, code: d.code, finding: d.finding, fixed: d.fixed, from: d.from ? `Adapted from a real CHE fix: ${d.from.what}, commit ${d.from.commit}; pinned by "${d.from.test_name}" in ${d.from.test}` : d.pins ? 'An illustrative drill, not from CHE\'s history' : '' })),
     repo_examples: c.repo_examples.map(({ path, symbol, what, test }) => ({ path, symbol, what, test })),
   };
@@ -1832,7 +1849,8 @@ const NUMBER_WORDS = { zero: 0, oh: 0, one: 1, two: 2, three: 3, four: 4, five: 
 const TENS = { twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90 };
 const ORDINALS = { first: 1, second: 2, third: 3, fourth: 4, fifth: 5 };
 const SPOKEN_LETTERS = { a: 'a', ay: 'a', eh: 'a', b: 'b', be: 'b', bee: 'b', c: 'c', see: 'c', sea: 'c', cee: 'c', d: 'd', de: 'd', dee: 'd', e: 'e' };
-const ANSWER_FILLER = new Set(['and', 'the', 'a', 'an', 'then', 'list', 'array', 'of', 'with', 'is', 'equals', 'comma', 'open', 'close', 'bracket', 'brackets', 'square', 'it', 'its', 'returns', 'return', 'gives', 'string', 'quote', 'quotes']);
+// "string" is not filler: it is itself an answer ("what does typeof 'MNQ' return?").
+const ANSWER_FILLER = new Set(['and', 'the', 'a', 'an', 'then', 'list', 'array', 'of', 'with', 'is', 'equals', 'comma', 'open', 'close', 'bracket', 'brackets', 'square', 'it', 'its', 'returns', 'return', 'gives', 'quote', 'quotes']);
 const NUMERIC = /^-?(?:\d+(?:\.\d+)?|\.\d+)$/;
 
 // "eighty-nine", "minus one", "zero point eight one", ".81", "81%", "1,346,269", "[0, 4, 16]" and
@@ -1882,13 +1900,19 @@ export function bigOClass(text) {
 // form, or a bare value of the kind the exercise expects. Anything else, a question, an action, "never
 // mind", a long sentence, goes on to its usual route, so "what time is it" is never graded.
 const REFUSAL = /(?<![a-z])(?:never ?mind|stop|cancel|forget (?:it|that)|wait|hold on)(?![a-z])/;
+// In a finding, "wait" or "stop" can be the bug itself ("forEach does not wait"): only a sentence that
+// starts with one, or says "never mind", is a refusal.
+const REFUSAL_START = /^(?:never ?mind|stop|cancel|forget (?:it|that)|wait|hold on)\b|(?<![a-z])never ?mind(?![a-z])/;
 const SMALL_TALK = /^(?:yes|yeah|yep|no|nope|ok|okay|sure|thanks|thank you|hello|hi|hey|great|cool|fine)$/;
 const QUESTION = /^(?:what|whats|how|why|when|where|who|which|whose|is|are|am|was|were|can|could|would|should|will|do|does|did|have|has|may|might|shall)\b/;
-const ACTION = /^(?:please |go ahead and |can you |could you |i (?:need|want|have) to |we (?:should|need|must) |let'?s |i'?m going to |i am going to |i will |i'?ll (?!go with))?(?:send|e-?mail|text|call|message|buy|pay|order|book|calculate|compute|analy[sz]e|show|tell|give|open|close|start|go|make|create|add|remove|delete|set|remind|schedule|play|find|search|look|check|run|deploy|merge|commit|push|fix|build|teach|explain|quiz|test|list|read|write|draft|switch|turn|review|investigate|research|get|put|move|save|share|post|upload|cancel)\b/;
+const ACTION = /^(?:please |go ahead and |can you |could you |i (?:need|want|have) to |we (?:should|need|must) |let'?s |i'?m going to |i am going to |i will |i'?ll (?!go with))?(?:send|e-?mail|text|call|message|buy|pay|order|book|calculate|compute|analy[sz]e|show|tell|give|open|close|start|stop|go|make|create|add|remove|delete|set|remind|schedule|play|find|search|look|check|run|deploy|merge|commit|push|fix|build|teach|explain|quiz|test|list|read|write|draft|switch|turn|review|investigate|research|get|put|move|save|share|post|upload|cancel)\b/;
 const PERSONAL_WORDS = /(?<![a-z])(?:i|me|my|we|us|our|you|your|he|she|they|them)(?![a-z])/;
 const EXPLICIT_ANSWER = /^(?:(?:so|well|ok|okay|um|uh|hmm)[,\s]+)*(?:(?:my|the) answer is|my answer|answer|i think the answer is|it returns|it would return|it will return|it prints|it would print|i pick|i choose|i'?ll go with|i go with)\s*[:,]?\s+(.+)$/;
 // "It's 3", "I think it's 3": an answer only when what follows is a value this exercise expects.
-const VALUE_LEAD = /^(?:(?:so|well|ok|okay|um|uh|hmm)[,\s]+)*(?:i think (?:it'?s|it is)|i'?d say|it'?s|it is|that'?s|that is|is it)\s+(.+?)\??$/;
+const VALUE_LEAD = /^(?:(?:so|well|ok|okay|um|uh|hmm)[,\s]+)*(?:i think (?:it'?s|it is)|i'?d say|it'?s|it is|that'?s|that is)\s+(.+?)$/;
+// Voice control and greetings are for the speech, never an answer: "repeat that", "slow down", "huh".
+const VOICE_CONTROL = /^(?:(?:please|can you|could you)\s+)?(?:repeat(?: that| it| the question)?|say (?:that|it) again|slow down|louder|speak up|pause|continue|go on|huh|what|sorry|pardon|excuse me|hang on|one (?:second|moment|sec)|not sure|i'?m not sure|good (?:morning|afternoon|evening|night)|hello|hi|hey|the weather)(?: please)?$/;
+const NEGATED = /(?<![a-z])(?:not|never|no|dont|doesnt|isnt|arent|wasnt|werent|wont|cant|cannot|didnt|without)(?![a-z])/;
 const OPTION_FORM = /^(?:the )?(?:option|number|choice|letter)\s+([a-z0-9]+)(?:\s+is\b.*)?$|^(?:the )?(first|second|third|fourth|fifth)(?: one| option| choice)?$/;
 const REVEAL = /^(?:i (?:don'?t|do not) know|idk|no idea|i give up|give up|skip(?: it| this one)?|pass|(?:just )?(?:tell|show|give) me the (?:answer|finding|bug)|tell me|show me|what(?:'s| is|s) the (?:answer|bug|finding)|reveal(?: it| the answer)?|the answer|show the answer|show the finding)$/;
 const wordCount = (t) => t.split(/\s+/).filter(Boolean).length;
@@ -1924,21 +1948,35 @@ function bareValue(x, v) {
   if (want.every((w) => NUMERIC.test(w))) return said.every((w) => NUMERIC.test(w));
   if (['true', 'false', 'null', 'undefined'].includes(want.join(' '))) return ['true', 'false', 'null', 'undefined', 'none'].includes(said.join(' '));
   if (sameTokens(v, x.answer) || (x.also || []).some((a) => sameTokens(v, a))) return true;
-  return wordCount(v) <= Math.max(2, want.length + 1) && !PERSONAL_WORDS.test(v) && !SMALL_TALK.test(v);
+  // A word answer: only a word this question could be answered with, such as another typeof result.
+  return (x.vocabulary || []).some((w) => sameTokens(v, w));
+}
+
+// "The request is too large", "yes, they are the same": a short statement that names exactly one option.
+function statedOption(x, t) {
+  if (!x.options?.length || NEGATED.test(t.replace(/^no\b/, '')) || /(?<![a-z])(?:i|me|my|we|us|our|you|your)(?![a-z])/.test(t) || wordCount(t) > 12) return null;
+  const said = ` ${answerTokens(t).join(' ')} `;
+  const named = optionValues(x).map((names, i) => (names.some((n) => answerTokens(n).length && said.includes(` ${answerTokens(n).join(' ')} `)) ? i : -1)).filter((i) => i >= 0);
+  return named.length === 1 ? x.options[named[0]] : null;
 }
 
 /** The owner's words as an answer to this exercise, or null when they are not one (then they route as usual). */
 export function exerciseAnswer(x, said) {
-  const t = String(said || '').toLowerCase().replace(/[’‘]/g, "'").replace(/[.!]+$/, '').trim();
-  if (!t || REFUSAL.test(t) || wordCount(t) > 12) return null;
+  const t = String(said || '').toLowerCase().replace(/[’‘]/g, "'").replace(/[.!?]+$/, '').trim();
+  if (!t || REFUSAL.test(t) || VOICE_CONTROL.test(t) || wordCount(t) > 12) return null;
   const explicit = EXPLICIT_ANSWER.exec(t);
-  if (explicit) return ACTION.test(explicit[1]) ? null : explicit[1].replace(/\s*(?:right|correct|i think|sir|please)\??$/, '').trim();
+  if (explicit) return ACTION.test(explicit[1]) ? null : explicit[1].replace(/\s*(?:right|correct|i think|sir|please)$/, '').trim();
+  // A question is never an answer, "is it raining" included; then "it's 3" or "I'd say object".
+  if (QUESTION.test(String(said || '').toLowerCase().trim()) || ACTION.test(t)) return null;
   const lead = VALUE_LEAD.exec(t);
   if (lead) return bareValue(x, lead[1]) ? lead[1] : null;
-  if (QUESTION.test(t) || ACTION.test(t)) return null;
   if (SMALL_TALK.test(t) && !(x.options || []).some((o) => sameTokens(t, o))) return null;
   if (OPTION_FORM.test(t) && (x.options || []).length) return t;
-  return bareValue(x, t) ? t : null;
+  // "Eighty nine, not ninety": the value before "not".
+  const not = /^(.+?),?\s+not\s+(.+)$/.exec(t);
+  if (not && bareValue(x, not[1])) return not[1];
+  if (bareValue(x, t)) return t;
+  return statedOption(x, t);
 }
 
 /** Whether a said answer matches an exercise's stored answer. Deterministic, no model. */
@@ -1960,21 +1998,52 @@ const conceptRe = (k) => {
   return k.endsWith('*') ? new RegExp(`(?<![a-z0-9])${w.slice(0, -2)}[a-z0-9]*`) : new RegExp(`(?<![a-z0-9])${w}(?![a-z0-9])`);
 };
 const SAYS_FINE = /(?<![a-z])(?:nothing(?: is)? wrong|no bugs?|looks (?:fine|ok|okay|good|right|correct)|(?:is|are|seems|works|its|it is) (?:fine|ok|okay|correct|good)|correctly|works fine)(?![a-z])/;
+// Whether a concept word is denied where it is said: "not shared" denies "shared", unless the finding
+// itself says it that way ("never records" in a finding about a check that never records).
+const deniedAt = (text, re) => {
+  const m = re.exec(text);
+  return m ? NEGATED.test(text.slice(Math.max(0, m.index - 24), m.index).split(' ').slice(-4).join(' ')) : false;
+};
 /** { correct: true | false | null, hits }: null when CHE cannot tell, never a false "right". */
 export function checkDrill(d, said) {
   const t = plain(said);
-  const hits = d.concepts.filter((group) => group.some((k) => conceptRe(k).test(t))).length;
-  if (SAYS_FINE.test(t)) return { correct: false, hits };
-  return { correct: hits >= d.concepts.length ? true : hits === 0 ? false : null, hits };
+  const finding = plain(d.finding);
+  let hits = 0;
+  let mentions = 0;
+  let denied = false;
+  for (const group of d.concepts) {
+    const k = group.find((w) => conceptRe(w).test(t));
+    if (!k) continue;
+    mentions += 1;
+    if (deniedAt(t, conceptRe(k)) !== deniedAt(finding, conceptRe(k))) denied = true;
+    else hits += 1;
+  }
+  if (SAYS_FINE.test(t) || denied) return { correct: false, hits, mentions };
+  return { correct: hits >= d.concepts.length ? true : hits === 0 ? false : null, hits, mentions };
 }
 const EXPLICIT_FINDING = /^(?:(?:so|well|ok|okay|um|uh)[,\s]+)*(?:(?:the|my) (?:bug|problem|issue|mistake|finding|answer|fix) is|it'?s wrong because|it is wrong because|it'?s broken because|what'?s wrong is|the trouble is)\b/;
 const DECLARATIVE = /^(?:it|its|it's|the|this|that|there|nothing|no|they|when|because|since|if|on|after|a|an|one|both|every|each|only)\b/;
 /** The owner's words as a drill finding, or null when they are not one. */
 export function drillAnswer(d, said) {
   const t = String(said || '').toLowerCase().replace(/[’‘]/g, "'").trim();
-  if (!t || REFUSAL.test(t) || QUESTION.test(t) || ACTION.test(t) || wordCount(t) > 60) return null;
+  if (!t || REFUSAL_START.test(t) || VOICE_CONTROL.test(t) || QUESTION.test(t) || wordCount(t) > 60) return null;
   if (EXPLICIT_FINDING.test(t)) return t;
-  return DECLARATIVE.test(t) && checkDrill(d, t).hits > 0 ? t : null;
+  // A finding may start with a name from the drill's own code: "slice cuts …", "check never records …".
+  const first = t.split(/[\s,]+/)[0];
+  const named = codeNames(d).has(first);
+  if (!named && ACTION.test(t)) return null;
+  // A finding that names one of the drill's ideas, even to deny it ("it does not cut anything"), is an answer.
+  return (named || DECLARATIVE.test(t)) && checkDrill(d, t).mentions > 0 ? t : null;
+}
+const CODE_NAMES = new WeakMap();
+// The identifiers in a drill's code, and the acronyms in its title ("SQL"), lower case.
+function codeNames(d) {
+  if (!CODE_NAMES.has(d)) {
+    const names = new Set([...String(d.code).matchAll(/[A-Za-z_][A-Za-z0-9_]{2,}/g)].map((m) => m[0].toLowerCase()));
+    for (const m of String(d.title).matchAll(/\b[A-Z]{2,}\b/g)) names.add(m[0].toLowerCase());
+    CODE_NAMES.set(d, names);
+  }
+  return CODE_NAMES.get(d);
 }
 
 const EXERCISE_NOUN = String.raw`(?:exercises?|practice problems?|practice questions?|coding problems?|coding challenges?|programming problems?|programming exercises?)`;
@@ -1987,12 +2056,12 @@ const DRILL_ME = /^(?:drill me(?: on (?:code reviews?|reviewing code))?|(?:(?:le
 const NEXT_ONE = /^(?:another(?: one)?|one more|next(?: one)?|the next one|again|another exercise|next exercise|another drill|next drill|another review drill|next review drill|give me another(?: one)?)$/;
 
 // CHE's own code, asked about by name: "where does CHE do checkpoints in its own code", "where in
-// CHE's code is backoff used", "show me CHE's code for failover", "how does CHE recover when a model
-// fails". Never "where did you deploy it" or "show me your code for …": those have their own routes.
+// CHE's code is backoff used", "/learn checkpoints code", "how does CHE recover when a model fails".
+// "Show me CHE's code for …" reads the live repository on its own route, and "where did you deploy
+// it" or "show me your code for …" keep theirs.
 const OWN_CODE = String.raw`\s+in (?:its|her|che'?s) (?:own )?(?:code|codebase|source code|source|repo|repository)`;
 const REPO_WHERE = new RegExp(String.raw`^where (?:does|is) che (?:do|handle|implement|keep|make|save|use|check|put|have|code)?\s*(.+?)${OWN_CODE}$`);
 const REPO_IN = /^where in (?:che'?s|her) (?:own )?code (?:is|are|does (?:che|she) (?:do|handle)) (.+?)(?: used| handled| done| implemented| kept)?$/;
-const REPO_SHOW = /^(?:show me|give me|read me) (?:che'?s|her) (?:own )?code(?: example)? for (.+)$/;
 const REPO_HOW = /^how does (?:che|she) (.+)$/;
 const REPO_LEARN = /^(.+?) (?:code|in che'?s (?:own )?code)$/;
 
@@ -2069,7 +2138,7 @@ export function codingIntent(t, history, { cards, findCard, topicKey, conceptTop
   }
 
   // CHE's own code, named as such.
-  const where = REPO_WHERE.exec(t) || REPO_IN.exec(t) || REPO_SHOW.exec(t) || (explicit ? REPO_LEARN.exec(t) : null);
+  const where = REPO_WHERE.exec(t) || REPO_IN.exec(t) || (explicit ? REPO_LEARN.exec(t) : null);
   const how = where ? null : REPO_HOW.exec(t);
   const repoTopic = String((where || how)?.[1] || '').trim();
   if (repoTopic) {

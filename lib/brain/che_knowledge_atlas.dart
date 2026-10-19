@@ -28,8 +28,9 @@ class CheAtlasQuestion {
 
 /// A coding exercise (phase 2): the question, any code, numbered options and the checked answer.
 class CheAtlasExercise {
-  const CheAtlasExercise({required this.prompt, required this.code, required this.options, required this.answer, required this.explain});
+  const CheAtlasExercise({required this.prompt, required this.code, required this.options, required this.answer, required this.explain, this.topic = ''});
   final String prompt;
+  final String topic;
   final String code;
   final List<String> options;
   final String answer;
@@ -124,7 +125,7 @@ class CheAtlasCard {
       revision: (j['revision'] as num?)?.toInt() ?? 1,
       exercises: [
         for (final x in (j['exercises'] as List? ?? const []).whereType<Map>())
-          CheAtlasExercise(prompt: '${x['prompt']}', code: '${x['code'] ?? ''}', options: _strings(x['options']), answer: '${x['answer']}', explain: '${x['explain'] ?? ''}'),
+          CheAtlasExercise(prompt: '${x['prompt']}', code: '${x['code'] ?? ''}', options: _strings(x['options']), answer: '${x['answer']}', explain: '${x['explain'] ?? ''}', topic: '${x['topic'] ?? ''}'),
       ],
       drills: [
         for (final d in (j['review_drills'] as List? ?? const []).whereType<Map>())
@@ -207,7 +208,10 @@ class CheKnowledgeAtlas {
         .where((w) => !filler.contains(w))
         .map((w) => w.length > 3 && w.endsWith('s') && !w.endsWith('ss') ? w.substring(0, w.length - 1) : w)
         .toList();
-    return kept.isNotEmpty ? kept.join(' ') : words.where(languages.contains).map((w) => 'lang:$w').join(' ');
+    // Only the language's own name, as in the Worker: never "this python code" or "that javascript".
+    final name = RegExp(r'^(?:the )?([a-z]+)(?: (?:programming|language|programming language))?$').firstMatch(words.join(' '));
+    if (name != null && languages.contains(name.group(1))) return 'lang:${name.group(1)}';
+    return kept.join(' ');
   }
 
   int? numberOf(String w) => int.tryParse(w) ?? numbers[w];
@@ -342,7 +346,8 @@ List<CheAtlasLine> cheAtlasPracticeLines(CheAtlasCard c, String kind, int i, {bo
     if (x.code.isNotEmpty) CheAtlasLine(x.code, CheAtlasLineKind.code),
     if (x.options.isNotEmpty) CheAtlasLine([for (final (n, o) in x.options.indexed) 'Option ${n + 1}: $o.'].join(' ')),
     // The phone shows the answer; only Chat checks one, so it says so instead of pretending.
-    if (!revealed) const CheAtlasLine('Answer by voice in Chat to have it checked, or say "show the answer" to see it here.', CheAtlasLineKind.meta, 'reveal'),
+    // The phone does not check answers, and an exercise opened here is not open in Chat, so it says how.
+    if (!revealed) CheAtlasLine('To have an answer checked, ask for this exercise in Chat: say "give me an exercise on ${x.topic.isEmpty ? c.title : x.topic}". Or say "show the answer" to see it here.', CheAtlasLineKind.meta, 'reveal'),
     if (revealed) CheAtlasLine('Answer: ${x.answer}. ${x.explain}', CheAtlasLineKind.answer),
     const CheAtlasLine('Say "next exercise", "review drill", or "back to the card".', CheAtlasLineKind.meta, 'practice-next'),
   ];

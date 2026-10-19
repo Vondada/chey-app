@@ -72,10 +72,12 @@ void main() {
     expect(atlas.find('recursion in python')?.id, 'recursion');
     expect(atlas.find('binary search')?.id, 'c-binary-search');
     // An id is never a topic: "c-python" must not make "C" the Python lesson.
-    for (final other in ['c', 'C++', 'C#', 'c programming', 'pythons']) {
+    for (final other in ['c', 'C++', 'C#', 'c programming', 'pythons', 'this python code', 'the python code', 'this js code', 'this dart code', 'that javascript', 'this python']) {
       expect(atlas.find(other), isNull, reason: other);
     }
     expect(atlas.find('c-python')?.id, 'c-python', reason: 'an id is still found by its exact spelling');
+    expect(atlas.find('the python language')?.id, 'c-python');
+    expect(atlas.find('python programming')?.id, 'c-python');
     // Trading cards state their limitations, shown and read as part of the card; the ICT ones say their evidence is mixed or limited.
     for (final c in atlas.inDomain('trading')) {
       expect(c.limitations, isNotEmpty, reason: c.id);
@@ -245,7 +247,7 @@ void main() {
     expect(answer, screen(tester).join('\n'));
     final second = await hear('next exercise');
     expect(second, contains('Option 1: 0. Option 2: 1. Option 3: 3. Option 4: 4.'));
-    expect(second, contains('Answer by voice in Chat to have it checked'), reason: 'the phone never pretends to check an answer');
+    expect(second, contains('To have an answer checked, ask for this exercise in Chat: say "give me an exercise on lower bound".'), reason: 'the phone never pretends to check an answer');
     // The practice is the page; the banner only says what changed, and is never the whole exercise.
     expect(find.text('Exercise 2 of 4 shown.'), findsOneWidget);
     expect(find.text(second!), findsNothing);

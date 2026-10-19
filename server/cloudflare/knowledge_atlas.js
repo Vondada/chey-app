@@ -897,9 +897,13 @@ const words = (text) => String(text || '').toLowerCase().replace(/'/g, '').repla
 // Python" is recursion, and "pythons" (stemmed to a plain word) is not the language.
 const LANGUAGE_WORDS = new Set(['python', 'javascript', 'js', 'dart']);
 /** A topic as the matcher compares it: lower case, no punctuation, no filler words, light singulars. */
+// Only the language's own name counts: "python", "the python language", "python programming", never
+// "this python code" or "that javascript", which ask about some code.
+const LANGUAGE_NAME = /^(?:the )?(python|javascript|js|dart)(?: (?:programming|language|programming language))?$/;
 export function topicKey(text) {
-  const kept = words(text).filter((w) => !FILLER.has(w)).map(stemWord);
-  return kept.length ? kept.join(' ') : words(text).filter((w) => LANGUAGE_WORDS.has(w)).map((w) => `lang:${w}`).join(' ');
+  const language = LANGUAGE_NAME.exec(words(text).join(' '));
+  if (language) return `lang:${language[1]}`;
+  return words(text).filter((w) => !FILLER.has(w)).map(stemWord).join(' ');
 }
 // Titles and aliases only: an id such as "c-python" would reduce to "c" and turn "teach me C" into
 // the Python lesson. An id is still found by its exact spelling.
@@ -952,9 +956,13 @@ const conceptTopic = (topic) => !PERSONAL.test(topic) && !NOT_A_CONCEPT.test(top
 // or bug word in it: "teach me deployment", "explain merge vs rebase". Anything else must pass the
 // blocks above, so "the deploy", "the bug in my python code" or "the merge you did" is never a lesson.
 // A trading word never selects a coding card ("the stack in trading", "the database of trades").
+// "The worker", "the checkpoint", "the failover": a part of CHE, which its own routes answer, like an
+// event word. "Teach me checkpoints" or "explain model failover" is the concept.
+const CHE_PART = /^(?:the|this|that|your|che'?s|her)\s+(?:cloudflare\s+)?(?:workers?|checkpoints?|failover|self repair|durable objects?|code index|router|gate|brain|runner|coding runtime)\b/;
 function conceptCard(topic, raw = topic) {
   const exact = EXACT_NAMES.get(exactName(topic));
   if (exact) return exact;
+  if (CHE_PART.test(String(raw || '').toLowerCase())) return null;
   const found = conceptTopic(topic) ? findAtlasCard(topic) : null;
   if (!found || found.domain !== 'coding') return found;
   if (TRADING_WORDS.test(raw)) return null;
@@ -1098,6 +1106,8 @@ export function atlasIntent(message, history = [], { explainLevel = '' } = {}) {
     const topic = String(example[2] || '').trim();
     if (!topic || THIS.test(topic)) return ctx.card ? { kind: 'example', card: ctx.card, code: wantsCode } : null;
     const found = conceptCard(topic);
+    // "Show me the code for checkpoints" asks for CHE's own code, not the card's teaching example.
+    if (found?.che_component && wantsCode) return null;
     return found ? { kind: 'example', card: found, code: wantsCode } : null;
   }
 
@@ -1238,10 +1248,15 @@ export function atlasHiddenAction(message) {
   const raw = String(message || '').replace(RAW_ANSWER_PREFIX, '').trim();
   return raw && raw !== String(message || '').trim() ? raw : answer;
 }
-/** An answer form while an atlas quiz is open: never a speech correction to learn ("number 2 is the bid, not the ask"). */
+/**
+ * An answer while an atlas quiz, exercise or review drill is open: never a speech correction to learn
+ * ("number 2 is the bid, not the ask", "eighty nine not ninety", "the default is not shared").
+ */
 export function atlasQuizAnswerTurn(message, history = []) {
   const ctx = atlasContext(history);
-  return Boolean(ctx.card && ctx.quiz && answerForm(speech(message)));
+  if (ctx.card && ctx.quiz && answerForm(speech(message))) return true;
+  const practice = codingIntent(speech(message), history, { cards: ATLAS_CARDS, findCard: conceptCard, topicKey, conceptTopic });
+  return practice?.kind === 'coding_answer' || practice?.kind === 'coding_drill_answer';
 }
 // A correction names the card, the lesson or a part of it: "the recursion card is wrong", "your lesson on
 // VWAP is wrong, …", "that formula is wrong". "That's wrong, my name is Wes" is about him, not a card.

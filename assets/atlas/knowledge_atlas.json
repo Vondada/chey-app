@@ -196,6 +196,7 @@
     {
      "id": "variables.1",
      "kind": "returns",
+     "topic": "typeof",
      "prompt": "In JavaScript, what does typeof null return?",
      "language": "javascript",
      "code": "const typeOf = (value) => typeof value;",
@@ -305,6 +306,7 @@
     {
      "id": "loops.1",
      "kind": "returns",
+     "topic": "off by one",
      "prompt": "How many times does the body of for (let i = 0; i <= 5; i += 1) run?",
      "language": "javascript",
      "code": "const rounds = (last) => { let count = 0; for (let i = 0; i <= last; i += 1) count += 1; return count; };",
@@ -402,6 +404,7 @@
     {
      "id": "functions.1",
      "kind": "returns",
+     "topic": "closures",
      "prompt": "makeCounter returns a function that adds 1 to a private count and returns it. After const next = makeCounter(), what does the third call to next() return?",
      "language": "javascript",
      "code": "function thirdCall() {\n  const makeCounter = () => { let count = 0; return () => { count += 1; return count; }; };\n  const next = makeCounter();\n  next(); next();\n  return next();\n}",
@@ -640,6 +643,7 @@
     {
      "id": "big-o.1",
      "kind": "big_o",
+     "topic": "nested loops",
      "prompt": "countPairs loops over every pair of items with two nested loops. What is its Big-O?",
      "language": "javascript",
      "code": "function countPairs(list) {\n  let pairs = 0;\n  for (let i = 0; i < list.length; i += 1) for (let j = i + 1; j < list.length; j += 1) pairs += 1;\n  return pairs;\n}",
@@ -656,6 +660,7 @@
     {
      "id": "big-o.2",
      "kind": "returns",
+     "topic": "nested loops",
      "prompt": "With the same two nested loops, what does countPairs([1, 2, 3, 4, 5]) return?",
      "language": "javascript",
      "code": "function countPairs(list) {\n  let pairs = 0;\n  for (let i = 0; i < list.length; i += 1) for (let j = i + 1; j < list.length; j += 1) pairs += 1;\n  return pairs;\n}",
@@ -785,6 +790,7 @@
     {
      "id": "recursion.1",
      "kind": "returns",
+     "topic": "recursion",
      "prompt": "sumDigits(n) returns n when n is below 10, else the last digit plus sumDigits of the rest. What does sumDigits(9045) return?",
      "language": "javascript",
      "code": "function sumDigits(n) { return n < 10 ? n : (n % 10) + sumDigits(Math.floor(n / 10)); }",
@@ -918,6 +924,7 @@
     {
      "id": "hash-maps.1",
      "kind": "returns",
+     "topic": "two sum",
      "prompt": "twoSum returns the indexes of the two numbers that add up to the target, using a Map of value to index. What does twoSum([2, 7, 11, 15], 9) return?",
      "language": "javascript",
      "code": "function twoSum(list, target) {\n  const seen = new Map();\n  for (const [i, x] of list.entries()) {\n    if (seen.has(target - x)) return [seen.get(target - x), i];\n    seen.set(x, i);\n  }\n  return null;\n}",
@@ -928,6 +935,7 @@
     {
      "id": "hash-maps.2",
      "kind": "big_o",
+     "topic": "two sum",
      "prompt": "What is the Big-O of that twoSum with a Map, on n numbers?",
      "language": "javascript",
      "code": "function twoSum(list, target) {\n  const seen = new Map();\n  for (const [i, x] of list.entries()) {\n    if (seen.has(target - x)) return [seen.get(target - x), i];\n    seen.set(x, i);\n  }\n  return null;\n}",
@@ -1073,6 +1081,7 @@
     {
      "id": "sorting.1",
      "kind": "big_o",
+     "topic": "insertion sort",
      "prompt": "Insertion sort on a list that is in reverse order: what is its Big-O?",
      "language": "javascript",
      "code": "function insertionSort(list) {\n  const out = [...list];\n  for (let i = 1; i < out.length; i += 1) {\n    for (let j = i; j > 0 && out[j - 1] > out[j]; j -= 1) [out[j - 1], out[j]] = [out[j], out[j - 1]];\n  }\n  return out;\n}",
@@ -1188,6 +1197,7 @@
     {
      "id": "http-apis.1",
      "kind": "returns",
+     "topic": "status codes",
      "prompt": "Using the first digit of a status code, which class is 429 Too Many Requests?",
      "language": "javascript",
      "code": "const kind = (status) => ['informational', 'success', 'redirect', 'client error', 'server error'][Math.floor(status / 100) - 1];",
@@ -1344,6 +1354,7 @@
     {
      "id": "concurrency.1",
      "kind": "returns",
+     "topic": "event loop",
      "prompt": "This pushes 1, schedules a timer that pushes 2, a promise callback that pushes 3, then pushes 4. After both have run, what is the list?",
      "language": "javascript",
      "code": "out.push(1);\nsetTimeout(() => out.push(2));\nPromise.resolve().then(() => out.push(3));\nout.push(4);",
@@ -1471,6 +1482,7 @@
     {
      "id": "c-python.1",
      "kind": "returns",
+     "topic": "list comprehensions",
      "prompt": "What does this Python print: [n for n in range(10) if n % 3 == 0]?",
      "language": "python",
      "code": "print([n for n in range(10) if n % 3 == 0])",
@@ -1481,6 +1493,7 @@
     {
      "id": "c-python.2",
      "kind": "returns",
+     "topic": "mutable default arguments",
      "prompt": "With def add(item, bucket=[]): bucket.append(item); return bucket, what does add(2) return after add(1) was already called?",
      "language": "python",
      "code": "def add(item, bucket=[]):\n    bucket.append(item)\n    return bucket\n\nadd(1)\nprint(add(2))",
@@ -1610,6 +1623,7 @@
     {
      "id": "c-javascript-typescript.1",
      "kind": "returns",
+     "topic": "array methods",
      "prompt": "What does [1, 2, 3, 4].map((x) => x * 2).filter((x) => x > 4) return?",
      "language": "javascript",
      "code": "[1, 2, 3, 4].map((x) => x * 2).filter((x) => x > 4)",
@@ -1620,6 +1634,7 @@
     {
      "id": "c-javascript-typescript.2",
      "kind": "choice",
+     "topic": "type narrowing",
      "prompt": "In TypeScript, what does label('7') return for: function label(v: string | number) { return typeof v === 'number' ? v + 1 : v + 1; }?",
      "language": "typescript",
      "code": "function label(v: string | number) { return typeof v === 'number' ? v + 1 : v + 1; }",
@@ -1744,6 +1759,7 @@
     {
      "id": "c-dart-flutter.1",
      "kind": "returns",
+     "topic": "null safety",
      "prompt": "In Dart, what does this print: int? stops; print((stops ?? 2) * 3);?",
      "language": "dart",
      "code": "int? stops;\nprint((stops ?? 2) * 3);",
@@ -1906,6 +1922,7 @@
     {
      "id": "c-html-css.1",
      "kind": "returns",
+     "topic": "box model",
      "prompt": "With box-sizing: content-box, how many pixels wide does a box render with width 300, padding 12 and a 4-pixel border?",
      "language": "javascript",
      "code": "const rendered = (width, padding, border) => width + 2 * padding + 2 * border;",
@@ -2041,6 +2058,7 @@
     {
      "id": "c-git.1",
      "kind": "returns",
+     "topic": "git bisect",
      "prompt": "At most how many tests does git bisect need to find the first bad commit among 200 candidates?",
      "language": "javascript",
      "code": "const bisectTests = (n) => { let tests = 0; while (2 ** tests < n) tests += 1; return tests; };",
@@ -2191,6 +2209,7 @@
     {
      "id": "c-data-structures.1",
      "kind": "returns",
+     "topic": "stacks",
      "prompt": "A stack checks brackets. Does isBalanced(\"(]\") return true or false?",
      "language": "javascript",
      "code": "function isBalanced(text) {\n  const stack = [];\n  const pairs = { ')': '(', ']': '[', '}': '{' };\n  for (const ch of text) {\n    if ('([{'.includes(ch)) stack.push(ch);\n    else if (ch in pairs && stack.pop() !== pairs[ch]) return false;\n  }\n  return stack.length === 0;\n}",
@@ -2201,6 +2220,7 @@
     {
      "id": "c-data-structures.2",
      "kind": "big_o",
+     "topic": "heaps",
      "prompt": "Pushing one item onto a binary heap of n items: what is the worst-case Big-O?",
      "language": "javascript",
      "code": "heap.push(x); let i = heap.length - 1;\nwhile (i > 0 && heap[parent(i)] > heap[i]) { swap(i, parent(i)); i = parent(i); }",
@@ -2338,6 +2358,7 @@
     {
      "id": "c-binary-search.1",
      "kind": "returns",
+     "topic": "binary search",
      "prompt": "What does binarySearch([1, 3, 5, 7, 9], 7) return, where binarySearch gives the index of the target or -1?",
      "language": "javascript",
      "code": "function binarySearch(list, target) {\n  let low = 0, high = list.length - 1;\n  while (low <= high) {\n    const mid = low + Math.floor((high - low) / 2);\n    if (list[mid] === target) return mid;\n    if (list[mid] < target) low = mid + 1; else high = mid - 1;\n  }\n  return -1;\n}",
@@ -2348,6 +2369,7 @@
     {
      "id": "c-binary-search.2",
      "kind": "choice",
+     "topic": "lower bound",
      "prompt": "A lower-bound search returns the first index whose value is at least the target. What does lowerBound([1, 2, 2, 2, 5], 2) return?",
      "language": "javascript",
      "code": "function lowerBound(list, target) {\n  let low = 0, high = list.length;          // half-open: the answer is in [low, high)\n  while (low < high) {\n    const mid = low + Math.floor((high - low) / 2);\n    if (list[mid] < target) low = mid + 1; else high = mid;\n  }\n  return low;\n}",
@@ -2363,6 +2385,7 @@
     {
      "id": "c-binary-search.3",
      "kind": "big_o",
+     "topic": "binary search",
      "prompt": "What is the worst-case Big-O of binary search on n sorted items?",
      "language": "javascript",
      "code": "function contains(list, target) {\n  let low = 0, high = list.length - 1;\n  while (low <= high) {\n    const mid = low + Math.floor((high - low) / 2);\n    if (list[mid] === target) return true;\n    if (list[mid] < target) low = mid + 1; else high = mid - 1;\n  }\n  return false;\n}",
@@ -2379,6 +2402,7 @@
     {
      "id": "c-binary-search.4",
      "kind": "returns",
+     "topic": "two pointers",
      "prompt": "Two pointers walk in from both ends of [1, 4, 6, 8, 10, 15]. Which pair adds up to 14?",
      "language": "javascript",
      "code": "function pairWithSum(list, target) {\n  let left = 0, right = list.length - 1;\n  while (left < right) {\n    const sum = list[left] + list[right];\n    if (sum === target) return [list[left], list[right]];\n    if (sum < target) left += 1; else right -= 1;\n  }\n  return null;\n}",
@@ -2519,6 +2543,7 @@
     {
      "id": "c-graph-search.1",
      "kind": "returns",
+     "topic": "bfs",
      "prompt": "In the graph A to B and C, B to D, C to D and E, D to F, E to F, how many hops is the shortest path from A to E?",
      "language": "javascript",
      "code": "function hops(graph, start, goal) {\n  const queue = [[start, 0]];\n  const seen = new Set([start]);\n  while (queue.length) {\n    const [node, d] = queue.shift();\n    if (node === goal) return d;\n    for (const next of graph[node] || []) if (!seen.has(next)) { seen.add(next); queue.push([next, d + 1]); }\n  }\n  return -1;\n}",
@@ -2529,6 +2554,7 @@
     {
      "id": "c-graph-search.2",
      "kind": "choice",
+     "topic": "topological sort",
      "prompt": "Tasks: deploy needs test, test needs build, and build needs nothing. In what order does Kahn's algorithm run them?",
      "language": "javascript",
      "code": "function order(tasks) {\n  const waiting = new Map(Object.entries(tasks).map(([t, deps]) => [t, deps.length]));\n  const queue = Object.keys(tasks).filter((t) => !tasks[t].length);\n  const out = [];\n  while (queue.length) {\n    const t = queue.shift();\n    out.push(t);\n    for (const [u, deps] of Object.entries(tasks)) if (deps.includes(t)) { waiting.set(u, waiting.get(u) - 1); if (!waiting.get(u)) queue.push(u); }\n  }\n  return out.length === waiting.size ? out.join(', ') : 'cycle';\n}",
@@ -2675,6 +2701,7 @@
     {
      "id": "c-dynamic-programming.1",
      "kind": "returns",
+     "topic": "dynamic programming",
      "prompt": "You may climb one or two stairs at a time. How many different ways are there to climb 10 stairs?",
      "language": "javascript",
      "code": "function ways(n) {\n  let a = 1, b = 1;          // ways(0), ways(1)\n  for (let i = 2; i <= n; i += 1) [a, b] = [b, a + b];\n  return b;\n}",
@@ -2685,6 +2712,7 @@
     {
      "id": "c-dynamic-programming.2",
      "kind": "returns",
+     "topic": "edit distance",
      "prompt": "What is the edit distance from \"flaw\" to \"lawn\"?",
      "language": "javascript",
      "code": "function editDistance(a, b) {\n  const row = Array.from({ length: b.length + 1 }, (_, j) => j);\n  for (let i = 1; i <= a.length; i += 1) {\n    let diagonal = row[0];\n    row[0] = i;\n    for (let j = 1; j <= b.length; j += 1) {\n      const above = row[j];\n      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, diagonal + (a[i - 1] === b[j - 1] ? 0 : 1));\n      diagonal = above;\n    }\n  }\n  return row[b.length];\n}",
@@ -2695,6 +2723,7 @@
     {
      "id": "c-dynamic-programming.3",
      "kind": "big_o",
+     "topic": "memoization",
      "prompt": "Fibonacci with a memo, so each fib(k) is worked out once: what is its Big-O in n?",
      "language": "javascript",
      "code": "function fib(n, memo = new Map()) {\n  if (n < 2) return n;\n  if (memo.has(n)) return memo.get(n);\n  const v = fib(n - 1, memo) + fib(n - 2, memo);\n  memo.set(n, v);\n  return v;\n}",
@@ -2872,6 +2901,7 @@
     {
      "id": "c-databases.1",
      "kind": "returns",
+     "topic": "sql",
      "prompt": "With made-up rows (1, 'a'), (2, 'b'), (3, 'a') in a table t(id, tag), what does SELECT COUNT(*) FROM t WHERE tag = 'a' return?",
      "language": "sql",
      "code": "SELECT COUNT(*) FROM t WHERE tag = 'a';",
@@ -2882,6 +2912,7 @@
     {
      "id": "c-databases.2",
      "kind": "returns",
+     "topic": "transactions",
      "prompt": "A table holds one row with balance 100. BEGIN; UPDATE accounts SET balance = 0; ROLLBACK; What does SELECT balance FROM accounts return?",
      "language": "sql",
      "code": "BEGIN;\nUPDATE accounts SET balance = 0;\nROLLBACK;\nSELECT balance FROM accounts;",
@@ -3025,6 +3056,7 @@
     {
      "id": "c-cloudflare-workers.1",
      "kind": "returns",
+     "topic": "fetch handler",
      "prompt": "A Worker returns new Response('not found', { status: 404 }) for any path it does not know. What status does GET /missing get?",
      "language": "javascript",
      "code": "async function statusFor(path) {\n  const worker = { async fetch(request) { const { pathname } = new URL(request.url); return pathname === '/health' ? new Response('ok') : new Response('not found', { status: 404 }); } };\n  return (await worker.fetch(new Request(`https://che.example${path}`))).status;\n}",
@@ -3150,6 +3182,7 @@
     {
      "id": "c-debugging.1",
      "kind": "returns",
+     "topic": "first bad version",
      "prompt": "Versions 1 to 64 and the bug arrived in version 20. Halving the range each time, how many checks does it take to find version 20?",
      "language": "javascript",
      "code": "function checksToFind(n, bad) {\n  let low = 1, high = n, checks = 0;\n  while (low < high) {\n    const mid = low + Math.floor((high - low) / 2);\n    checks += 1;\n    if (mid >= bad) high = mid; else low = mid + 1;\n  }\n  return checks;\n}",
@@ -3453,6 +3486,7 @@
     {
      "id": "c-security.1",
      "kind": "choice",
+     "topic": "ssrf",
      "prompt": "A server fetches URLs for users. Which address must it refuse to fetch?",
      "language": "javascript",
      "code": "function refused(ip) {\n  const [a, b] = ip.split('.').map(Number);\n  return a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);\n}\nconst pick = (options) => options.filter(refused).join(', ');",
@@ -3468,6 +3502,7 @@
     {
      "id": "c-security.2",
      "kind": "returns",
+     "topic": "password strength",
      "prompt": "A random password of 10 characters, each one of 16 hex digits. How many bits of strength is that?",
      "language": "javascript",
      "code": "const bits = (length, alphabet) => length * Math.log2(alphabet);",
@@ -3654,6 +3689,7 @@
     {
      "id": "c-performance.1",
      "kind": "big_o",
+     "topic": "performance",
      "prompt": "Checking whether each of n items has been seen, using a Set: what is the Big-O for all n items?",
      "language": "javascript",
      "code": "function hasDuplicate(items) {\n  const seen = new Set();\n  for (const x of items) { if (seen.has(x)) return true; seen.add(x); }\n  return false;\n}",
@@ -3823,6 +3859,7 @@
     {
      "id": "c-deployment.1",
      "kind": "returns",
+     "topic": "continuous integration",
      "prompt": "Two independent flaky tests each fail 10% of the time. Rounded to two decimals, how often is a correct change all green?",
      "language": "javascript",
      "code": "const allGreen = (p, n) => Math.round((1 - p) ** n * 100) / 100;",
@@ -3956,6 +3993,7 @@
     {
      "id": "c-agent-planning.1",
      "kind": "choice",
+     "topic": "explore plan build",
      "prompt": "CHE hears: \"Inspect the router but do not change anything.\" Which mode does her action policy choose?",
      "language": "javascript",
      "code": "",
@@ -4093,6 +4131,7 @@
     {
      "id": "c-checkpoints.1",
      "kind": "choice",
+     "topic": "resumable work",
      "prompt": "A coding job hit a quota error and has already resumed 3 times. What does CHE's resumeDecision say now?",
      "language": "javascript",
      "code": "",
@@ -4269,6 +4308,7 @@
     {
      "id": "c-model-failover.1",
      "kind": "choice",
+     "topic": "model failover",
      "prompt": "A model answers: \"Request too large for model on tokens per minute (TPM): Limit 7000, Requested 10182\". How does CHE classify it?",
      "language": "javascript",
      "code": "",
@@ -4284,6 +4324,7 @@
     {
      "id": "c-model-failover.2",
      "kind": "returns",
+     "topic": "exponential backoff",
      "prompt": "One of CHE's job retries in worker.js waits backoffMs(attempts, 1 minute, 15-minute cap): 1 minute, doubling each attempt, never more than 15. How many minutes is the wait at attempt 5, counting from 0?",
      "language": "javascript",
      "code": "const waitMinutes = (attempt) => Math.min(15, 1 * 2 ** attempt);",
@@ -4433,6 +4474,7 @@
     {
      "id": "c-self-repair.1",
      "kind": "choice",
+     "topic": "self repair",
      "prompt": "Two proposed fixes edit the same file: one says x = 1 and the other says  X  =  1 with extra spaces and capitals. Does CHE's strategyFingerprint count them as the same strategy?",
      "language": "javascript",
      "code": "",
@@ -4452,7 +4494,7 @@
      "code": "// An attempt may change any file it needs.\nconst allowed = (path) => !/^\\.github\\//.test(path);",
      "finding": "The attempt can edit the checkpoint verifier and the failover gate, the code that judges it, so a bad change could approve itself. The judge and its gates must be unsafe paths an attempt can never touch.",
      "fixed": "// The checker and its gates are out of the attempt's reach.\nconst allowed = (path) => !/^(?:\\.github\\/|tools\\/che_coding_|server\\/cloudflare\\/coding_failover\\.mjs$)/.test(path);",
-     "from": "An illustrative drill, not from CHE's history"
+     "from": "Adapted from a real CHE fix: a review fix on PR #328, after which an attempt can no longer change the gate and the checkpoint verifier, commit 3400cd79; pinned by \"the coding tools and the gate are unsafe paths: an attempt can never change the code that judges it\" in server/cloudflare/coding_failover.test.mjs"
     }
    ],
    "repo_examples": [

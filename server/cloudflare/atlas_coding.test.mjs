@@ -346,8 +346,15 @@ test('every review drill\'s bug is real and its fix works; real-fix drills name 
       assert.ok(existsSync(join(ROOT, pin.test)), `${d.id}: ${pin.test} exists`);
       assert.ok(testNames(pin.test).includes(pin.test_name), `${d.id}: the test "${pin.test_name}" exists`);
     }
-    // "Adapted from a real CHE fix" only when the commit's own diff holds the change.
+    // "Adapted from a real CHE fix" only when the commit's own diff holds the change. The pinned excerpts
+    // (checked here, git or not) tie the drill's own text to the diff's lines.
     if (d.from) {
+      assert.ok(d.from.pinned?.length >= 1, `${d.id}: pins an excerpt of its diff`);
+      for (const p of d.from.pinned) {
+        const field = p.drill === 'probe' ? JSON.stringify(d.probe.calls) : d[p.drill];
+        assert.ok(field.includes(p.text), `${d.id}: its ${p.drill} holds "${p.text}"`);
+        assert.ok(d.from[p.diff].includes(p.text), `${d.id}: the ${p.diff} line holds "${p.text}"`);
+      }
       assert.match(d.from.commit, /^[0-9a-f]{7,40}$/, `${d.id}: names a commit`);
       if (!gitHas(d.from.commit)) { t.diagnostic(`${d.id}: commit ${d.from.commit} is not in this clone (shallow?), so its diff was not checked`); continue; }
       const diff = execFileSync('git', ['show', d.from.commit, '--', d.from.file], { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }).split('\n');
@@ -356,8 +363,8 @@ test('every review drill\'s bug is real and its fix works; real-fix drills name 
     }
   }
   const named = DRILLS.filter(({ d }) => d.from).map(({ d }) => d.from.what);
-  for (const pr of ['#351', '#349']) assert.ok(named.some((w) => w.includes(pr)), `a drill from ${pr}`);
-  for (const id of ['c-model-failover.d1', 'c-architecture.d1', 'c-self-repair.d1']) {
+  for (const pr of ['#351', '#349', '#328']) assert.ok(named.some((w) => w.includes(pr)), `a drill from ${pr}`);
+  for (const id of ['c-model-failover.d1', 'c-architecture.d1']) {
     assert.equal(DRILLS.find(({ d }) => d.id === id).d.from, undefined, `${id} is illustrative: its rule was in CHE's code from its first commit`);
   }
   // Drill judging: whole words, both key concepts for "right", and "can't judge" rather than a false right.
@@ -399,14 +406,17 @@ test('the phone\'s bundled atlas carries the practice fields, and no reference s
   assert.ok(recursion.exercises.length && recursion.repo_examples.length && recursion.limitations.length);
   assert.ok(bundled.cards.filter((c) => c.domain === 'trading').every((c) => !('exercises' in c)), 'trading cards are unchanged');
   for (const c of bundled.cards.filter((x) => x.exercises)) {
-    for (const x of c.exercises) assert.deepEqual(Object.keys(x), ['id', 'kind', 'prompt', 'language', 'code', 'options', 'answer', 'explain']);
+    for (const x of c.exercises) assert.deepEqual(Object.keys(x), ['id', 'kind', 'topic', 'prompt', 'language', 'code', 'options', 'answer', 'explain']);
   }
 });
 
 // ─── Through /api/chat ────────────────────────────────────────────────────
 
-function storageFor(saved) {
+// With `sql`, the Durable Object's SQLite store too, as the Brain uses it (atlas_brain.test.mjs).
+function storageFor(saved, { sql = false } = {}) {
+  const db = sql && sqlite ? new sqlite.DatabaseSync(':memory:') : null;
   return {
+    ...(db ? { sql: { exec: (q, ...p) => { const stmt = db.prepare(q); return /^\s*SELECT/i.test(q) ? stmt.all(...p) : (stmt.run(...p), []); } } } : {}),
     get: async (key) => (Array.isArray(key)
       ? new Map(key.filter((k) => saved.has(k)).map((k) => [k, structuredClone(saved.get(k))]))
       : (saved.has(key) ? structuredClone(saved.get(key)) : undefined)),
@@ -422,14 +432,18 @@ function storageFor(saved) {
   };
 }
 
-async function owner({ saved = new Map() } = {}) {
+async function owner({ saved = new Map(), sql = false, heard = null } = {}) {
   let calls = 0;
   const pending = [];
   const env = {
     CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1',
-    AI: { run: async () => { calls += 1; return { response: 'MODEL ANSWERED' }; } },
+    AI: { run: async (_m, opts = {}) => {
+      calls += 1;
+      heard?.push(String([...(opts.messages || [])].reverse().find((m) => m.role === 'user')?.content || ''));
+      return { response: 'MODEL ANSWERED' };
+    } },
   };
-  const state = new CheState({ storage: storageFor(saved), waitUntil: (p) => pending.push(p) }, env);
+  const state = new CheState({ storage: storageFor(saved, { sql }), waitUntil: (p) => pending.push(p) }, env);
   env.CHE_STATE = { getByName: () => state };
   const send = (path, body, token = '') => worker.fetch(new Request(`https://che.example${path}`, {
     method: 'POST',
@@ -717,7 +731,7 @@ test("review of #360: event words, CHE's own work, C and C++, generic words and 
   }
   assert.equal(await route('calculate VWAP from the latest bars', after(exercise)), await route('calculate VWAP from the latest bars'), 'the trading lane answers it as it would anyway');
   for (const words of ['buy two tickets', 'delete my notes']) assert.equal(await route(words, after(exercise)), 'held', `${words}: held, never graded or lost`);
-  for (const words of ['3', 'it returns 3', 'the answer is three', 'is it 3', 'my answer is 3']) {
+  for (const words of ['3', 'it returns 3', 'the answer is three', 'my answer is 3', "it's 3"]) {
     assert.match((await che.say(words, { history: after(exercise) })).reply, /^Right, sir: 3\./, words);
   }
   const drill = (await che.say('Give me a review drill')).reply;
@@ -731,6 +745,76 @@ test("review of #360: event words, CHE's own work, C and C++, generic words and 
   assert.equal(exerciseAnswer(bs, 'never mind, it returns 3'), null, '"never mind" is never an answer');
   assert.equal(exerciseAnswer(bs, 'my answer is 3'), '3');
   assert.equal(drillAnswer(atlasCard('c-debugging').review_drills[0], 'send the report to Bob on Friday'), null);
+});
+
+test('re-review of #360: word answers, the language name, CHE\'s parts and answer forms', async () => {
+  const che = await owner();
+  const route = async (words, history = []) => (await che.say(words, { history })).route;
+  // Blocker 1: a word-answer exercise grades only its own words; voice control and small talk go on as usual.
+  const ordinary = ['repeat that', 'slow down', 'louder', 'pause', 'continue', 'speak up', 'huh', 'sorry', 'hang on', 'not sure', 'good morning', 'the weather', 'is it raining'];
+  for (const id of ['variables', 'http-apis']) {
+    const x = atlasCard(id).exercises[0];
+    for (const words of ordinary) assert.equal(exerciseAnswer(x, words), null, `${x.id}: ${words}`);
+    const set = (await che.say(`give me an exercise on ${x.topics[0]}`)).reply;
+    assert.match(set, new RegExp(`^Exercise 1 of 1 on ${atlasCard(id).title}`));
+    for (const words of ordinary) assert.notEqual(await route(words, after(set)), 'che_knowledge_atlas', `after ${x.id}: ${words}`);
+  }
+  const typeofEx = atlasCard('variables').exercises[0];
+  assert.match((await che.say('string', { history: after((await che.say('give me an exercise on typeof')).reply) })).reply, /^Not quite, sir\. I heard "string"; the answer is object\./, 'another typeof result is a real, wrong answer');
+  assert.ok(checkExercise(typeofEx, 'object').correct);
+  // Blocker 2: only the language's own name is the language lesson.
+  for (const words of ['explain this python code', 'explain the python code', 'help me understand this python code', 'walk me through the python code',
+    'explain this js code', 'explain this dart code', 'explain that javascript', 'explain this python']) {
+    assert.equal(await route(words), 'model', words);
+  }
+  for (const words of ['teach me python', 'teach me the python language', 'explain javascript', 'teach me python programming']) {
+    assert.equal(await route(words), 'che_knowledge_atlas', words);
+  }
+  // CHE's own parts keep their routes; the concept phrase is the lesson.
+  for (const [words, want] of [
+    ['explain the cloudflare worker', 'che_repository_inspection'], ['show me the code for checkpoints', 'che_self_update'],
+    ['show me the code for failover', 'che_self_update'], ['show me the code for self repair', 'che_self_update'],
+    ['tell me about the checkpoint', 'model'], ['explain the checkpoint', 'model'], ['show me CHEs code for checkpoints', 'che_self_update'],
+  ]) assert.equal(await route(words), want, words);
+  for (const words of ['teach me checkpoints', 'explain model failover', 'where in CHEs code is backoff used', '/learn checkpoints code']) {
+    assert.equal(await route(words), 'che_knowledge_atlas', words);
+  }
+  // Correct sentence answers and code-word findings are taken.
+  const ex = (id) => atlasCard(id).exercises[0];
+  assert.ok(checkExercise(ex('c-model-failover'), 'the request is too large').correct);
+  assert.ok(checkExercise(ex('c-checkpoints'), 'the resume limit is reached').correct);
+  assert.ok(checkExercise(ex('c-self-repair'), 'yes they are the same').correct);
+  assert.equal(checkExercise(ex('c-model-failover'), 'it is not too large').correct, false, 'a denied option is not that option');
+  const drill = (id) => DRILLS.find(({ d }) => d.id === id).d;
+  for (const [id, words] of [['c-debugging.d1', 'slice cuts the message silently so the last words are lost'], ['c-databases.d1', 'sql injection, use a parameter'],
+    ['testing.d1', 'check does not record failures so the test can never fail']]) {
+    assert.ok(drillAnswer(drill(id), words), `${id}: "${words}" is a finding`);
+    assert.equal(checkDrill(drill(id), words).correct, true, `${id}: ${words}`);
+  }
+  // A denied key concept is not that concept: "not shared" is the opposite of the finding.
+  assert.equal(checkDrill(drill('c-python.d1'), 'the default is not shared').correct, false);
+  assert.equal(checkDrill(drill('c-python.d1'), 'the default list is shared by every call').correct, true);
+});
+
+test('through /api/chat with SQLite: exercise and drill answers are graded, never learned as speech corrections', { skip: sqlite ? false : 'node:sqlite unavailable' }, async () => {
+  const heard = [];
+  const saved = new Map();
+  const che = await owner({ saved, sql: true, heard });
+  const check = async (ask, answer, kind, reply) => {
+    const set = (await che.say(ask)).reply;
+    const out = await che.say(answer, { history: [{ role: 'user', content: ask }, { role: 'assistant', content: set }] });
+    assert.equal(out.route, 'che_knowledge_atlas', `${answer} → ${out.route}`);
+    assert.equal(out.done.atlas_kind, kind, answer);
+    assert.match(out.reply, reply, answer);
+  };
+  await check('give me a review drill on python', 'the default is not shared', 'coding_drill_answer', /^Not quite, sir\./);
+  await check('give me a review drill', 'it does not cut anything', 'coding_drill_answer', /^Not quite, sir\./);
+  await check('give me an exercise on dynamic programming', 'eighty nine not ninety', 'coding_answer', /^Right, sir: 89\./);
+  await check('give me a review drill on concurrency', 'forEach does not wait for the async callbacks', 'coding_drill_answer', /^Right, sir, that's the bug\./);
+  assert.deepEqual(saved.get('speech_corrections') || [], [], 'no speech correction was learned');
+  const next = await che.say('what is the weather like in Paris');
+  assert.equal(next.route, 'model');
+  assert.ok(heard.at(-1).endsWith('what is the weather like in Paris'), `the model read his own words: ${heard.at(-1)}`);
 });
 
 test('summary: every language that could run here did', () => {
