@@ -19,6 +19,14 @@ const ASK_CHE = /^(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?|i\s+(?:want
 const SELF_CANCEL = /(?:^|[,.;!?—–-]\s*)(?:(?:actually|wait|no|oh)[,\s]+)*(?:cancel\s+(?:that|it|this|all\s+(?:of\s+)?that)|scratch\s+that|forget\s+(?:it|that)|never\s*mind)(?:\s+(?:please|sir))?\s*[.!]*\s*$/i;
 // A plain request: "buy 3 apples online now", "place a paper trade", "email Sarah the report".
 const IMPERATIVE = /^(?:please\s+)?(?:buy|order|pay|place|sell|send|e-?mail|text|call|message|draft|make|create|add|put|remind|schedule|book|set|find|search|look\s+up|get|give|tell|show|read|open|play|start|stop|cancel|delete|remove|move|copy|save|share|post|publish|upload|download|write|fix|build|run|check|analy[sz]e|research|summari[sz]e|translate|turn|switch|go)\b/i;
+// Work and learning requests that name what they act on: "Investigate the Doodle app", "Inspect the
+// latest main SHA", "Quiz me on option spreads", "Remember that my favorite food is pizza", "connect my
+// Alpaca account". Measured 2026-10-19 on 923 owner sentences after earlier turns: reading-model calls
+// 175 -> 97, and 76 -> 12 of them on turns a deterministic route then answers from the exact words. Not here: verbs that only point
+// at earlier talk or could hide a delete, a publish or a sign-in ("clean up", "clear", "reset",
+// "approve", "star", "sign out", "log in", "take", "apply", "answer"); those keep their reading, and
+// so does a work request that also names money, a delete or a publish.
+const WORK_REQUEST = /^(?:please\s+)?(?:investigate|inspect|audit|implement|debug|diagnose|repair|trace|verify|review|compare|describe|brainstorm|backtest|study|learn|teach|quiz|remember|memori[sz]e|scout|list|prepare|connect|continue|resume|retry|recover|reopen|look\s+(?:at|in|into|through|over)|walk\s+me\s+through|work\s+with)\b/i;
 const STEP_BREAK = /\s*(?:[.;!?]+|\s+then\s+(?=(?:buy|get|go|send|make|add|find|give|tell|show|book|call|text|email|e-mail|draft|place|put|set|check|read|open|play|create|remind)\b)|[,—–]\s*(?:and\s+)?then\b|,?\s+and\s+then\b|,\s+and\b|\s+and\s+(?=(?:buy|get|go|send|make|add|find|give|tell|show|book|call|text|email|e-mail|draft|place|put|set|check|read|open|play|create|remind)\b))\s*/i;
 // Constraints with no verb of their own: "not today", "not live", "not yet".
 const BARE_NOT = /(?:^|[,;]\s*|\bbut\s+)(not\s+(?:yet|now|today|tonight|tomorrow|live|real|this\s+\w+|the\s+\w+|\w+))\b/gi;
@@ -49,6 +57,9 @@ export function intentFrame(input) {
   const ownPlan = OWN_PLAN.test(body) && !/\byou\b/i.test(body.split(/[,.;!?]/)[0]);
   let mode = cancelled ? 'cancel' : MODE[turn.kind] || 'unclear';
   if (mode === 'unclear' && IMPERATIVE.test(body.replace(FILLER, ''))) mode = 'do';
+  // A work request that also names money, a delete or a publish keeps its reading, so the reading's
+  // "Just to be sure…?" still comes first, as before.
+  if (mode === 'unclear' && !turn.consequential && WORK_REQUEST.test(body.replace(FILLER, ''))) mode = 'do';
   if (ownPlan && (mode === 'do' || mode === 'unclear' || mode === 'chat')) mode = 'plan';
   const doNot = uniq([...prohibitedText(text).split('; '), ...[...text.matchAll(BARE_NOT)].map((m) => m[1])]);
   const frame = {
