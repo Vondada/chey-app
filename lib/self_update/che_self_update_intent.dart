@@ -61,8 +61,47 @@ bool cheIsSelfUpdateCommand(String raw) {
   ).hasMatch(text);
 }
 
+/// A question about possible changes is not permission to start coding.
+/// Mirrors the Worker's questionNotRequest policy. Explicit "can you fix..."
+/// requests and separate later implementation commands still authorize work.
+bool _cheQuestionNotCodingAuthorization(String raw) {
+  final text = _cheWithoutQuotedText(raw.trim()).replaceFirst(
+    RegExp(
+      r'^(?:(?:che|chey|chay|shay)[,:]?\s*)?(?:(?:ok(?:ay)?|so|well|and|now|then)[,]?\s+)*',
+      caseSensitive: false,
+    ),
+    '',
+  );
+  // Direct requests with "you" as the actor are orders, even when phrased
+  // politely as questions. "Can you tell me how..." is not such an order.
+  if (RegExp(
+    r'^(?:can|could|would|will)\s+you\s+(?:(?:please|just|kindly)\s+)*(?:implement|integrate|adapt|install|add|upgrade|update|improve|rewrite|refactor|build|change|modify|patch|fix|repair|create|make|start|run|resume|continue|finish)\b',
+    caseSensitive: false,
+  ).hasMatch(text)) return false;
+  if (RegExp(
+    r'^(?:what|which)\s+(?:i|we)\s+(?:want|need|would\s+like)\b',
+    caseSensitive: false,
+  ).hasMatch(text)) return false;
+  final discussion = RegExp(
+    r'^(?:(?:what|which|how|why|where|when|who|whether)\b|'
+    r'(?:do|does|did|have|has|is|are|was|were|should|shall|can|could|would|will|may|might)\s+(?:you|we|i|they|he|she|it|this|that|these|those|any|anyone|anything|the|your|my|our)\b|'
+    r'(?:tell|show)\s+(?:me|us)\s+(?:which|what|whether|how|why|who|where|when)\b|'
+    r'let\s+me\s+know\s+(?:which|what|whether|how|why)\b)',
+    caseSensitive: false,
+  ).hasMatch(text);
+  if (!discussion) return false;
+  // A genuinely new instruction after a completed question is still an order:
+  // "How would you fix it? Now fix the screen in your app."
+  final laterOrder = RegExp(
+    r'(?:[.!?;]\s+|,\s+(?:and|then)\s+)(?:(?:now|please|then|just)\s+)*(?:implement|integrate|adapt|install|add|upgrade|update|improve|rewrite|refactor|build|change|modify|patch|fix|repair|create|make|start|run|resume|continue|finish)\b',
+    caseSensitive: false,
+  ).hasMatch(text);
+  return !laterOrder;
+}
+
 bool cheIsSelfUpdateRequest(String raw) {
   final text = raw.trim();
+  if (_cheQuestionNotCodingAuthorization(text)) return false;
   if (cheIsTerminalChatOnlyRequest(text)) return false;
   if (cheIsRepositoryResearchRequest(text)) return false;
   // Commands about an existing change are not new coding requests.
