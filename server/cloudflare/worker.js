@@ -502,7 +502,7 @@ async function memoryTruthProbe(env, token) {
 // The deploy's Knowledge Atlas check (#346). It runs on the same isolated test CHE as the memory check
 // (never the owner's): a lesson at two depths, two risk calculations, a quiz answer graded from the
 // card's formula, real progress counts, an honest strategy verdict with no journal, and two counter-cases
-// that must keep their own routes. Every step is deterministic: none may be skipped as model-dependent.
+// that must keep their own routes. Every step is deterministic and calls no model: none may be skipped as model-dependent.
 async function atlasProbe(env, token) {
   const probe = env.CHE_STATE.getByName(MEMORY_PROBE_OBJECT);
   const call = (path, body, device = '') => probe.fetch(new Request(`https://che.internal${path}`, {
@@ -545,7 +545,7 @@ async function atlasProbe(env, token) {
       ({ done, reply }) => atlas(done) && done.atlas_kind === 'grade' && /^Quiz finished on Loops and iteration, sir\. Question 3: correct\. You said: 55\./.test(reply)
         && /Graded by the number, recomputed from the card's formula\. Recorded in your Brain as owner practice\./.test(reply),
       { history: [{ role: 'user', content: 'Quiz me on loops' }, { role: 'assistant', content: quiz }] });
-    // The test CHE keeps its records across deploys, so this asks for real counts, not exact ones.
+    // The memory check resets the test CHE earlier in the same deploy, but a re-run keeps its records, so this asks for real counts, not exact ones.
     await step('progress: real counts from the Brain', 'What have I learned so far in the Knowledge Atlas?',
       ({ done, reply }) => {
         const answers = /; (\d+) quiz answers?/.exec(reply);
@@ -556,11 +556,11 @@ async function atlasProbe(env, token) {
       ({ done, reply }) => atlas(done) && /^Your strategy, sir: no recorded trades yet\./.test(reply) && /Verdict: unsupported, because no closed trades\./.test(reply)
         && !/[+−-]?\d+(?:\.\d+)?R\b|win rate \d|\$\d/.test(reply));
     await step('counter-case: "every trade you made" keeps its own route', 'walk me through every trade you made',
-      ({ done }) => done.source !== 'che_knowledge_atlas' && Boolean(done.source));
+      ({ done }) => done.source === 'che_trading_live' && done.model_calls === 0);
     await step('counter-case: a buy is held for the owner\'s yes, nothing runs', 'buy 2 MNQ at market',
       ({ held, done }) => held?.held_for_owner === true && held.owner_action_kind === 'money' && !done.source);
-    // The held buy is dropped, so nothing waits on the test CHE for a later yes.
-    await call('/api/chat', { message: 'no', history: [] }, device).catch(() => null);
+    // A following atlas turn drops the held buy without a model call, so nothing waits on the test CHE for a later yes.
+    await step('the held buy is dropped by the next turn, no model call', 'list the coding cards', ({ done }) => atlas(done));
   } finally {
     await call('/api/security/revoke_self', {}, device).catch(() => null);
   }

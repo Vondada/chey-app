@@ -836,8 +836,9 @@ test('the deploy probe checks the Knowledge Atlas on an isolated CHE, never the 
   const token = 'p'.repeat(40);
   const env = {
     CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', CHE_VOICE_PROBE_TOKEN: token, ELEVENLABS_API_KEY: 'el_secret_value',
-    AI: { run: async () => ({ response: 'Here is the answer, sir.' }) },
+    AI: { run: async () => { modelCalls += 1; return { response: 'Here is the answer, sir.' }; } },
   };
+  let modelCalls = 0;
   env.CHE_STATE = { getByName: (name) => {
     if (!states.has(name)) {
       storages.set(name, storageFor());
@@ -859,24 +860,22 @@ test('the deploy probe checks the Knowledge Atlas on an isolated CHE, never the 
   const report = await run();
   assert.equal(report.ok, true, JSON.stringify(report.steps, null, 1));
   assert.equal(report.passed, report.total);
-  assert.equal(report.total, 10);
+  assert.equal(report.total, 11);
   assert.ok(report.steps.every((s) => s.optional === false), 'no step is optional');
   assert.deepEqual(report.steps.map((s) => s.route), [
     'che_knowledge_atlas', 'che_knowledge_atlas', 'che_knowledge_atlas', 'che_knowledge_atlas', 'che_knowledge_atlas', 'che_knowledge_atlas',
-    'che_knowledge_atlas', 'che_knowledge_atlas', report.steps[8].route, 'held',
+    'che_knowledge_atlas', 'che_knowledge_atlas', 'che_trading_live', 'held', 'che_knowledge_atlas',
   ]);
-  assert.notEqual(report.steps[8].route, 'che_knowledge_atlas');
-  assert.ok(report.steps.slice(0, 8).every((s) => s.model_calls === 0), 'no atlas step called a model');
-  assert.doesNotMatch(JSON.stringify(report), /el_secret_value|p{40}/, 'no secret or token in the report');
-  // The test CHE keeps its records, so the next deploy's check passes too, with more answers counted.
+  assert.ok(report.steps.filter((s) => s.route !== 'held').every((s) => s.model_calls === 0), 'no step called a model');
+  assert.equal(modelCalls, 0, 'the whole probe, cleanup included, made no model call');
+  const text = JSON.stringify(report);
+  assert.doesNotMatch(text, /el_secret_value|p{40}|123456|device_token/, 'no secret, token or pair code in the report');
+  // A re-run on the same test CHE (a deploy re-run without the memory reset) passes too, with more answers counted.
   const again = await run();
   assert.equal(again.ok, true, JSON.stringify(again.steps.filter((s) => !s.pass), null, 1));
-  // The owner's CHE was never asked: no object, or no practice record, memory or held request on it.
-  if (states.has('owner')) {
-    const brain = new CheBrainStore(storages.get('owner'));
-    assert.equal(learningRecords(brain).length, 0);
-    assert.ok(!(await states.get('owner').loadData()).memories?.length);
-  }
+  assert.equal(modelCalls, 0, 'a second run made no model call either');
+  // The owner's CHE was never asked: its object was never even created.
+  assert.equal(states.has('owner'), false);
   const probeBrain = new CheBrainStore(storages.get('memory-truth-probe'));
   assert.ok(learningRecords(probeBrain).filter((r) => r.source.event === 'quiz').length >= 2, 'the practice is on the test CHE');
   assert.equal(await storages.get('memory-truth-probe').get('che:pending_owner_action'), null, 'the held buy was dropped');
