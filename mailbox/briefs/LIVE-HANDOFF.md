@@ -64,6 +64,13 @@ Then, on GitHub:
 - Next: open focused PR for milestone 1 when the owner is ready (or continue: milestone 2 = scripted multi-agent demo via officeGoal + War Room board wiring + orb-tap deep link to the real task; then Phase B typed memory/provenance).
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
+## 2. Current position (Claude, 2026-10-19 14:25 UTC — PR #356 merged with main 733ae88: branch `claude/che-comprehension-audit` at 15c0bc9, not merged into main)
+- **Pushed** merge commit `15c0bc9a036895bbe9614e6d3527c7c6281e9236` (parents 5c1ea3a and origin/main 733ae88), a fast-forward. No merge into main, no deploy. Flutter check run 39266216458.
+- Conflicts resolved: `owner_action_gate.js` MONEY_RE (main's #353 paid promotion and this branch's SALE_VERB, both kept); `worker.js` imports (CATEGORIES and parseReaRequest); `trading_desk.test.mjs` (both appended tests).
+- Semantic conflict with #355 fixed: new `deskOwnedMoney` in `owner_action_gate.js`, used at the desk's exemption point in `worker.js`. Live sells and "place the order" for a desk alert reach the desk again; other money words keep the hold.
+- Tests: targeted 617/617. Full suite exit 0: 2392 tests, 2385 pass, 0 fail, 7 skipped. Catalog: 91.
+- Next: re-review of 15c0bc9.
+
 ## 2. Current position (Claude, 2026-10-19 14:00 UTC — PR #356 review round 3: branch `claude/che-comprehension-audit` pushed at 5c1ea3a, not merged)
 - **Pushed** fast-forward 48f5a58 -> `5c1ea3a1d1110cfa189f97fa37b19cf6a22a1042`. No merge, no deploy. Flutter check dispatched: run 39264688741.
 - B1: and/then clauses inside a question are part of the question (`code_scout.js` questionNotRequest, per sentence; REA uses it too).
