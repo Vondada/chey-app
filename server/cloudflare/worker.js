@@ -89,6 +89,7 @@ import { learnedSkillsContext, learnedSkillsIntent, learnSkillIntent, attachment
 import { APPROVED_SKILLS, handleInstalledSkill, installedSkillIntent, installedSkillsContext } from './installed_skills.js';
 import { lastSite, publishSite, saveSite, serveSite, siteBuildIntent, siteEditIntent, sitePreviewIntent, sitePublishIntent, siteUrl, speakSitePublished, speakSiteResult, wantsImmediatePublish, workingHtml, writeSite } from './site_builder.js';
 import { noteJobActivity } from './job_activity.js';
+import { CODING_CANCEL_SOURCE, cancelQueuedJob, codingCancelIntent, resolveCodingCancel, speakCancelResult, speakUnresolved } from './coding_cancel.js';
 import { PENDING_OWNER_ACTION_KEY, forbiddenAction, prohibitionSpans, withoutProhibitions, PENDING_OWNER_ACTION_MS, gateOwnerAction, grantForKinds, isOwnerYes, peerActionReply, APPS_GRANTED_KEY, PENDING_APP_ACTION_KEY, PENDING_APP_ACTION_MS, gateAppAccess, classifyAppNeed, classifyExplicitAppOpen, classifyAppAccesses } from './owner_action_gate.js';
 import { asksForCurrentOwnerLocation, changeHistoryIntent, guardClaimedResearchActions, guardGroundedFacts, guardLocationWeatherReply, guardOwnerReply, loadChangeHistory, loadReceipts, OWNER_LOCATION_NOT_VERIFIED, recordReceipt, requestedCodeNames, speakChangeHistory, vagueResearchRequest, verifiedState, verifiedStatusText } from './truth_layer.js';
 import { ENGINEERING_PLAYBOOK_SPOKEN, playbookIntent } from './engineering_playbook.js';
@@ -4794,6 +4795,10 @@ export class CheState extends DurableObject {
   // media, code or connections; owner actions are refused with no model call.
   async guestChat(body, message, tenant) {
     if (parseSlashCommand(message)) return ndjsonReply('Only the CHE owner can run commands, sir.', { source: 'che_command', ok: false, model_calls: 0 });
+    // Like POST /api/job/cancel, which a guest device cannot reach: refused, with no model call.
+    if (codingCancelIntent(message)) {
+      return ndjsonReply('Only the CHE owner can cancel coding jobs. Nothing was changed.', { source: CODING_CANCEL_SOURCE, ok: false, model_calls: 0 });
+    }
     if (GUEST_OWNER_ACTION.test(message)) {
       return ndjsonReply('Only the CHE owner can do that. Nothing was changed. I can still talk it through with you.', { source: 'che_guest', ok: false, model_calls: 0 });
     }
@@ -4850,7 +4855,7 @@ export class CheState extends DurableObject {
       const ask = preflight?.ask || `/${command.id}: ${command.confirm} Should I go ahead, sir? Say yes to approve.`;
       return json({ message: ask, reply: ask, held_for_owner: true, owner_action_kind: 'command', command: command.id, code_review_passed: false, owner_approval_required: true });
     }
-    if (command.local) return this.runLocalCommand(command, parsed.input, request, data, parsed.pin || null);
+    if (command.local) return this.runLocalCommand(command, parsed.input, request, data, parsed.pin || null, body);
     const inner = new Request(request.url, {
       method: 'POST', headers: request.headers,
       body: JSON.stringify({ ...body, message: dispatchPrompt(command, parsed.input), command_confirmed: false }),
@@ -4915,8 +4920,13 @@ export class CheState extends DurableObject {
 
   // The few commands with no chat route of their own: thin wrappers over the
   // existing functions, answered from real results only.
-  async runLocalCommand(command, input, request, data, pin = null) {
+  async runLocalCommand(command, input, request, data, pin = null, body = {}) {
     const env = this.keyEnv || this.env;
+    if (command.local === 'coding_cancel') {
+      // Owner only, like POST /api/job/cancel: checked here too, not only by the guest gate in front.
+      if (!OWNER_CHAT_REQUESTS.has(request)) return ndjsonReply('Only the CHE owner can cancel coding jobs. Nothing was changed.', { source: CODING_CANCEL_SOURCE, ok: false, model_calls: 0 });
+      return this.cancelCodingJob(input, Array.isArray(body?.history) ? body.history : []);
+    }
     if (command.local === 'voice_test') {
       const probe = await this.voiceProbe().catch((error) => ({ ok: false, status: 'error', reason: String(error?.message || error).slice(0, 160) }));
       const fish = probe.fish || fishAudioKeyStatus(this.voiceEnv()).status;
@@ -4962,6 +4972,28 @@ export class CheState extends DurableObject {
       return ndjsonReply(text, { source: 'che_creator_studio', command: command.id, model_calls: 0, ...done });
     }
     return ndjsonReply(`/${command.id} has no runner, sir. Nothing was run.`, { source: 'che_command', ok: false, model_calls: 0 });
+  }
+
+  // /che-cancel-job and its spoken forms. The job is found in a fresh copy of the store, cancelled
+  // only if still queued (cancelQueuedJob, shared with POST /api/job/cancel), and read back after
+  // the write: the reply says what the store holds, never what was meant to happen.
+  async cancelCodingJob(input, history = []) {
+    const current = await this.loadData();
+    const target = resolveCodingCancel(input, current.jobs, history);
+    if (target.kind !== 'job') {
+      return ndjsonReply(speakUnresolved(target), {
+        source: CODING_CANCEL_SOURCE, ok: false, cancelled: false, model_calls: 0,
+        ...(Array.isArray(target.jobs) && target.jobs.length ? { choices: target.jobs.slice(0, 9).map((job) => job.id) } : {}),
+      });
+    }
+    const changed = cancelQueuedJob(target.job, { via: 'chat' });
+    if (changed) await this.ctx.storage.put('che', current);
+    const stored = ((await this.loadData()).jobs || []).find((job) => job.id === target.job.id) || null;
+    const cancelled = changed && stored?.status === 'cancelled';
+    return ndjsonReply(speakCancelResult(stored, { changed, id: target.job.id }), {
+      source: CODING_CANCEL_SOURCE, ok: cancelled, cancelled, model_calls: 0,
+      background_job_id: target.job.id, background_job_status: stored?.status || null,
+    });
   }
 
   studioContext(request, data) {
@@ -7652,11 +7684,8 @@ export class CheState extends DurableObject {
         const id = String(body.id || '');
         const job = data.jobs.find((item) => item.id === id);
         if (!job) return json({ detail: 'Background job not found.' }, 404);
-        if (job.status === 'queued') {
-          job.status = 'cancelled';
-          job.updated_at = new Date().toISOString();
-          await this.ctx.storage.put('che', data);
-        }
+        // The same rule as "cancel coding job …" in chat: queued only, the record kept.
+        if (cancelQueuedJob(job, { via: 'api' })) await this.ctx.storage.put('che', data);
         return json({ job });
       }
 
@@ -8216,6 +8245,24 @@ export class CheState extends DurableObject {
             await this.dropHeldActions();
             const started = await this.startCommandWorkflow(data, savedWorkflow, { ownerDevice });
             return ndjsonReply(started.spoken, { source: 'che_command_workflow', ok: started.ok, objective_id: started.objective?.id || null, model_calls: 0 });
+          }
+          // "Cancel that fake commit by Che", "cancel coding job c2987a73", "cancel the last coding
+          // job", or a number from the list CHE just read: the /che-cancel-job command. It runs before
+          // the interpreter, which reads "cancel that …" as dropping a held request, and before the
+          // money/delete gate: cancelling a queued job deletes nothing. A bare "cancel that" while a
+          // payment, delete or app request is held keeps its old meaning: drop that request.
+          const jobCancel = body.attachment || body.workflow_step ? null : codingCancelIntent(rawMessage, body.history);
+          let heldForCancel = null;
+          if (jobCancel?.weak) {
+            try {
+              heldForCancel = (await this.ctx.storage.get(PENDING_OWNER_ACTION_KEY)) || (await this.ctx.storage.get(PENDING_APP_ACTION_KEY)) || null;
+            } catch (_) { heldForCancel = true; }
+          }
+          if (jobCancel && !heldForCancel) {
+            // Like any other turn, it replaces a held request, so a later "yes" releases nothing.
+            await this.dropHeldActions();
+            const command = commandById('che-cancel-job');
+            return this.runSlashCommand(request, body, data, { name: command.id, command, input: jobCancel.input }, { confirmed: false });
           }
           // Spoken requests about CHE's own commands, answered from the
           // catalog with live states and no model (owner, 2026-10-16).

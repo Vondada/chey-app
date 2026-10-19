@@ -421,6 +421,48 @@
    "optional_missing": []
   },
   {
+   "id": "che-cancel-job",
+   "category": "intelligence",
+   "title": "Che Cancel Job",
+   "summary": "Cancel a coding job that has not started.",
+   "does": "Cancels a queued coding job: by its id, or the one CHE last accepted. A running, finished or failed job is left alone and CHE says so. The job record is kept, marked cancelled with who cancelled it and when. Nothing is deleted.",
+   "mode": "BUILD",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "job",
+    "required": false,
+    "hint": "A coding job id, or leave it empty for the job CHE last accepted"
+   },
+   "examples": [
+    "Cancel coding job c2987a73",
+    "Cancel that coding job",
+    "Cancel the last coding job"
+   ],
+   "needs": [
+    "jobs"
+   ],
+   "optional": [],
+   "handler": "coding_cancel.cancelQueuedJob (shared with POST /api/job/cancel)",
+   "route": "che_coding_cancel",
+   "produces": "status",
+   "evidence": "The job record read back after the change: its id and status.",
+   "cost": "Free: no AI engine is used.",
+   "keywords": [
+    "cancel",
+    "cancel job",
+    "coding job",
+    "fake commit",
+    "call off",
+    "abort"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
    "id": "che-status",
    "category": "intelligence",
    "title": "Che Status",

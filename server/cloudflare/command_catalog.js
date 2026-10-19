@@ -164,6 +164,18 @@ export const COMMANDS = Object.freeze([
     prompt: 'Resume the coding job',
     produces: 'status', evidence: 'The job id and the checkpoint it resumed from.', keywords: ['recover', 'resume', 'retry', 'failed', 'interrupted', 'stuck'],
   }),
+  // Owner, 2026-10-19 ("Cancel that fake commit by Che"): the voice and typed route to the
+  // owner-only POST /api/job/cancel. Cancelling a queued job deletes nothing, so it asks nothing first.
+  C('che-cancel-job', 'intelligence', 'BUILD', 'Cancel a coding job that has not started.', {
+    does: 'Cancels a queued coding job: by its id, or the one CHE last accepted. A running, finished or failed job is left alone and CHE says so. The job record is kept, marked cancelled with who cancelled it and when. Nothing is deleted.',
+    needs: ['jobs'], route: 'che_coding_cancel', local: 'coding_cancel', handler: 'coding_cancel.cancelQueuedJob (shared with POST /api/job/cancel)',
+    input: { name: 'job', required: false, hint: 'A coding job id, or leave it empty for the job CHE last accepted' },
+    examples: ['Cancel coding job c2987a73', 'Cancel that coding job', 'Cancel the last coding job'],
+    // Not dispatched (the command runs locally); worded so the money/delete gate never reads it as a delete.
+    prompt: 'Stop queued coding job {input}',
+    produces: 'status', evidence: 'The job record read back after the change: its id and status.',
+    cost: 'Free: no AI engine is used.', keywords: ['cancel', 'cancel job', 'coding job', 'fake commit', 'call off', 'abort'],
+  }),
   C('che-status', 'intelligence', 'EXPLORE', 'Report verified progress and outcomes.', {
     does: 'Reports what is actually running, finished or failed, from CHE\'s own records.',
     needs: ['jobs'], route: 'che_mission_status', handler: 'objective_graph.speakObjective',

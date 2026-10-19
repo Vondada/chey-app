@@ -28,7 +28,8 @@ const { default: worker, CheState } = mod;
 // The owner's list, exactly as given.
 const MISSION_IDS = {
   // 'learn' is the Knowledge Atlas (issue #346), one entry over knowledge_atlas.js.
-  intelligence: ['che', 'che-explore', 'che-plan', 'che-build', 'che-research', 'che-verify', 'che-memory', 'che-brain-review', 'che-recover', 'che-status', 'learn'],
+  // 'che-cancel-job' cancels a queued coding job by voice or typing (owner, 2026-10-19).
+  intelligence: ['che', 'che-explore', 'che-plan', 'che-build', 'che-research', 'che-verify', 'che-memory', 'che-brain-review', 'che-recover', 'che-cancel-job', 'che-status', 'learn'],
   youtube: ['yt-ideas', 'yt-research', 'yt-script', 'yt-video', 'yt-voice', 'yt-thumbnail', 'yt-seo', 'yt-publish', 'yt-batch', 'yt-analytics', 'yt-grow'],
   // trade-connections reads the owner-only connections of #348 (issue #350).
   trading: ['trade-open', 'trade-chart', 'trade-setup', 'trade-liquidity', 'trade-risk', 'trade-backtest', 'trade-journal', 'trade-alert', 'trade-execute', 'trade-connections'],
@@ -105,9 +106,9 @@ async function owner({ saved = new Map(), model = () => 'Here is the answer, sir
 
 // ─── 1. Catalog identities ────────────────────────────────────────────────
 
-test('1. the owner\'s 71 commands exist exactly as listed, plus ten REA and six Creator Studio commands, in 9 categories, each fully described', () => {
-  assert.equal(COMMANDS.length, 90);
-  assert.equal(new Set(COMMANDS.map((c) => c.id)).size, 90, 'ids are unique');
+test('1. the owner\'s 71 commands exist exactly as listed, plus ten REA, six Creator Studio and the coding-job cancel commands, in 9 categories, each fully described', () => {
+  assert.equal(COMMANDS.length, 91);
+  assert.equal(new Set(COMMANDS.map((c) => c.id)).size, 91, 'ids are unique');
   assert.deepEqual(CATEGORIES.map((c) => c.id), Object.keys(MISSION_IDS));
   for (const [category, ids] of Object.entries(MISSION_IDS)) {
     assert.deepEqual(COMMANDS.filter((c) => c.category === category).map((c) => c.id), ids, category);
@@ -158,7 +159,7 @@ test('2. availability comes from real configuration: ready, needs setup, unsuppo
   const expired = connectorStatus({ CHE_TRADOVATE_OAUTH_CLIENT_ID: 'x', CHE_TRADOVATE_OAUTH_CLIENT_SECRET: 'y' }, { broker: { expired: true } });
   assert.equal(expired.broker.state, 'needs_reconnect');
   const view = catalogView(bare);
-  assert.equal(view.commands.length, 90);
+  assert.equal(view.commands.length, 91);
   assert.ok(view.commands.every((c) => ['available', 'setup_required', 'unsupported', 'temporarily_unavailable'].includes(c.status)));
 });
 
@@ -206,6 +207,27 @@ test('3. a slash command and its plain-English request reach the same handler', 
   assert.notEqual((await che.say('Did I ask you for a brain review yesterday?')).route, 'che_brain_review');
   assert.deepEqual(parseSlashCommand('/Trade-Chart  NQ please'), { name: 'trade-chart', command: commandById('trade-chart'), input: 'NQ please' });
   assert.equal(parseSlashCommand('Analyze the NQ chart'), null);
+});
+
+test('/che-cancel-job and its spoken forms reach the coding-job cancel route with no model, no approval and no delete hold', async () => {
+  const c = commandById('che-cancel-job');
+  assert.equal(c.route, 'che_coding_cancel');
+  assert.equal(c.local, 'coding_cancel');
+  assert.equal(c.confirm, '', 'cancelling a queued job deletes nothing and costs nothing, so it does not ask first');
+  assert.equal(commandStatus(c, connectorStatus({ AI: {} })).status, 'available');
+  assert.equal(commandFromWords('cancel job')?.command?.id, 'che-cancel-job', '"run the cancel job command"');
+  const che = await owner();
+  const queued = (id, request) => ({ id, kind: 'self_development', title: `Code: ${request}`, prompt: request, request, status: 'queued', attempts: 0, created_at: new Date().toISOString(), updated_at: new Date().toISOString() });
+  const accepted = [{ role: 'assistant', content: 'I accepted coding job c2987a73, sir. It is queued, not running yet. Ask "coding status" anytime.' }];
+  for (const [said, history] of [['/che-cancel-job c2987a73', []], ['Cancel coding job c2987a73', []], ['cancel job c2987a73', []],
+    ['Cancel that coding job', accepted], ['Cancel the last coding job', accepted], ['Cancel that fake commit by Che', accepted]]) {
+    che.saved.get('che').jobs = [queued('c2987a73-0000-4000-8000-000000000001', 'Which of those features could improve your app?'), queued('5b1e09aa-0000-4000-8000-000000000002', 'Add a dark mode switch')];
+    const out = await che.say(said, { history });
+    assert.equal(out.route, 'che_coding_cancel', said);
+    assert.equal(out.modelCalls, 0, said);
+    assert.match(out.reply, /^I cancelled coding job c2987a73, sir\./, said);
+    assert.deepEqual(che.saved.get('che').jobs.map((j) => j.status), ['cancelled', 'queued'], said);
+  }
 });
 
 test('issue #350: /trade-connections and its plain question read the trading connections on the desk route; no command switches to live or orders', async () => {
@@ -609,7 +631,7 @@ test('the Flutter catalog fixture matches what the Worker serves (regenerate: no
   const { fixtureCatalog } = await import('../../tool/dump_command_catalog.mjs');
   const fixture = JSON.parse(readFileSync(new URL('../../test/fixtures/command_catalog.json', import.meta.url), 'utf8'));
   assert.deepEqual(fixture, JSON.parse(JSON.stringify(fixtureCatalog())));
-  assert.equal(fixture.commands.length, 90);
+  assert.equal(fixture.commands.length, 91);
   assert.ok(fixture.templates.length >= 4);
 });
 
@@ -728,7 +750,7 @@ test('the owner\'s six spoken phrases are answered from the catalog with no mode
   for (const words of variants('CHE, open your Commands page.')) {
     const out = await che.say(words);
     assert.equal(out.route, 'che_command_center', words);
-    assert.match(out.reply, /90 commands in 9 groups[\s\S]*2\. YouTube, 11[\s\S]*9\. Creator Studio, 6[\s\S]*Nothing was run/, words);
+    assert.match(out.reply, /91 commands in 9 groups[\s\S]*1\. Intelligence & Control, 12[\s\S]*2\. YouTube, 11[\s\S]*9\. Creator Studio, 6[\s\S]*Nothing was run/, words);
   }
   for (const words of variants('CHE, search for YouTube.')) {
     const out = await che.say(words);
