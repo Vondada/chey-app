@@ -61,6 +61,7 @@ import { recordReliability, reliabilityIntent, reliabilitySummary, speakReliabil
 import { answerOwnerMemoryQuestion, auditMemoryProvenance, evidenceQuestion, evidenceReferent, evidenceRequestSplit, explainEvidenceFor, findAnswerEvidence, guardOwnerAttributions, guardRememberBlock, latestAnswerEvidence, loadRetractions, memoryPromptContext, ownerFactCorrection, ownerMemoryQuestion, ownerWords, recordAnswerEvidence, recordRetractions, storyRequested } from './memory_provenance.js';
 import { condenseHistory, ownerNotificationPolicy } from './workflow_governor.js';
 import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, nextTradingTickAt, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
+import { nextStrategySimTickAt, setStrategySimCeiling, setStrategySimPaused, strategySimTick, strategySimView } from './strategy_sim.js';
 import { evidenceIntent, evidenceReport, evidenceTick } from './trading_evidence_runner.js';
 import { ATLAS_SOURCE, answerAtlas, atlasHiddenAction, atlasIntent, atlasQuizAnswerTurn, atlasPromptContext, atlasResetAsk, atlasResetIntent, projectAtlasToBrain, resetAtlasProgress } from './knowledge_atlas.js';
 import { LIVE_BACKTEST, LIVE_STATE, liveBacktest, liveDashboard, livePaperSummary, liveTick, nextLiveTickAt, setLivePaper } from './trading_live.js';
@@ -3569,6 +3570,8 @@ export class CheState extends DurableObject {
     await evidenceTick(this.ctx.storage, { now: opts.now, force: opts.force }).catch((error) => console.error('Trading evidence tick failed:', error?.message || error));
     // Forward paper trading on 5-minute NQ/MNQ bars, every minute while it is on and CME is open.
     await liveTick(this.ctx.storage, { now: opts.now }).catch((error) => console.error('Live paper tick failed:', error?.message || error));
+    // Strategy simulation (paper, minute bars): one alarm slot, so it runs here when due and scheduleWork arms its next minute.
+    await strategySimTick(this.ctx.storage, { now: opts.now, force: opts.force }).catch((error) => console.error('Strategy simulation tick failed:', error?.message || error));
     return book;
   }
 
@@ -3609,6 +3612,9 @@ export class CheState extends DurableObject {
     times.push(Math.max(Date.now() + 250, await nextTradingTickAt(this.ctx.storage).catch(() => Date.now() + 3_600_000)));
     const liveAt = await nextLiveTickAt(this.ctx.storage).catch(() => null);
     if (liveAt) times.push(Math.max(Date.now() + 250, liveAt));
+    // Strategy simulation's next minute (null while the owner has paused it). Same alarm slot, earliest wins.
+    const simAt = await nextStrategySimTickAt(this.ctx.storage).catch(() => null);
+    if (simAt) times.push(simAt);
     if (times.length) await this.ctx.storage.setAlarm(Math.min(...times));
   }
 
@@ -6343,6 +6349,32 @@ export class CheState extends DurableObject {
         if (body.action === 'tick') return json({ ok: true, run: await liveTick(this.ctx.storage, { force: true }) });
         if (body.action === 'backtest') return json(await liveBacktest(this.ctx.storage));
         return json({ detail: 'Unknown action. Use start, stop, tick or backtest.' }, 400);
+      }
+      // Strategy simulation (step a): paper minute-bar strategies. Read and the kill switch are owner-only; nothing here orders or spends.
+      const simOwnerOnly = () => json({ detail: 'Only the CHE owner can view or control the strategy simulation.' }, 403);
+      if (path === '/api/trading/sim' && request.method === 'GET') {
+        if (!ownerDevice) return simOwnerOnly();
+        return json(await strategySimView(this.ctx.storage));
+      }
+      if (path === '/api/trading/sim' && request.method === 'POST') {
+        if (!ownerDevice) return simOwnerOnly();
+        if (body.action === 'pause' || body.action === 'resume') {
+          const state = await setStrategySimPaused(this.ctx.storage, body.action === 'pause');
+          // Resuming re-arms the alarm now, so the next minute is not left waiting for some other wake-up.
+          if (body.action === 'resume') await this.scheduleWork();
+          return json({ ok: true, state, view: await strategySimView(this.ctx.storage) });
+        }
+        if (body.action === 'tick') {
+          const run = await strategySimTick(this.ctx.storage, { force: true });
+          // The first pass arms the minute cadence here, so the owner can start it without waiting for the hourly alarm.
+          await this.scheduleWork();
+          return json({ ok: true, run });
+        }
+        if (body.action === 'ceiling') {
+          const result = await setStrategySimCeiling(this.ctx.storage, body.usd);
+          return json(result, result.ok ? 200 : 400);
+        }
+        return json({ detail: 'Unknown action. Use pause, resume, tick or ceiling.' }, 400);
       }
       // The phone's Studio panel: the same records CHE reads aloud, loaded quietly.
       if (path === '/api/studio' && request.method === 'GET') {
