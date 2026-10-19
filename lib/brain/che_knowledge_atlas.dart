@@ -584,6 +584,8 @@ class _CheKnowledgeAtlasPageState extends State<CheKnowledgeAtlasPage> {
         child: Column(children: [
           Expanded(
             child: ListView(
+              // Each view starts at its top: a card opened from far down the list opens at its title.
+              key: ValueKey(card == null ? 'list:$_domain' : 'card:${card.id}'),
               padding: const EdgeInsets.fromLTRB(16, 4, 16, 32),
               children: [
                 Wrap(spacing: 8, runSpacing: 8, children: [

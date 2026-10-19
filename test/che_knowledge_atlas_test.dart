@@ -77,6 +77,8 @@ void main() {
   testWidgets('a card by touch: levels, Read aloud of exactly what is shown, and the quiz', (tester) async {
     final spoken = await open(tester);
     await tester.scrollUntilVisible(find.text('6. Recursion'), 200, scrollable: find.byType(Scrollable).first);
+    // ensureVisible jumps the list; lay out that frame before tapping at the row's new place.
+    await tester.pumpAndSettle();
     await tester.tap(find.text('6. Recursion'));
     await tester.pumpAndSettle();
     final recursion = bundled().byId('recursion')!;
@@ -135,9 +137,13 @@ void main() {
     await tester.tap(find.text('Trading 10'));
     await tester.pumpAndSettle();
     await tester.scrollUntilVisible(find.text('5. Expectancy'), 200, scrollable: find.byType(Scrollable).first);
+    // ensureVisible jumps the list; lay out that frame before tapping at the row's new place.
+    await tester.pumpAndSettle();
     await tester.tap(find.text('5. Expectancy'));
     await tester.pumpAndSettle();
     await tester.scrollUntilVisible(find.text('Ask CHE for my recorded numbers'), 300, scrollable: find.byType(Scrollable).first);
+    // ensureVisible jumps the list; lay out that frame before tapping at the row's new place.
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Ask CHE for my recorded numbers'));
     await tester.pumpAndSettle();
     expect(asked, ['/learn expectancy']);
