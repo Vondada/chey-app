@@ -48,14 +48,16 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 // Slack and Discord webhooks carry the secret in the path itself, so the path is the secret.
 const WEBHOOK_RE = /hooks\.slack\.com\/services\/|discord(?:app)?\.com\/api\/webhooks\//i;
 const URL_RE = /:\/\/|^www\./i;
-// Hyphen-separated groups that form a code ("8F3K-9LQ2-7MZP-4XWD"), whatever their case. Lower-case
-// words joined by hyphens ("rotate-the-api-key") are prose, so a chain needs a digit or capitals.
+// A code is four or more hyphen-separated groups of four or five letters and digits, and each group
+// has a digit or all groups are capitals: "8F3K-9LQ2-7MZP-4XWD", "ABCD-EFGH-IJKL-MNOP". Ordinary
+// words are not codes: "CHE-APP-V2-BETA", "Form-1099-NEC-tax-2025", "iPhone-15-Pro-Max" and
+// "Sprint-12-week-3-retro" have a group that is not four or five characters (third review of #354).
 function groupedCode(token) {
   if (UUID_RE.test(token)) return false;
   const groups = token.split('-');
-  if (groups.length < 4 || !groups.every((g) => /^[A-Za-z0-9]+$/.test(g))) return false;
+  if (groups.length < 4 || !groups.every((g) => /^[A-Za-z0-9]{4,5}$/.test(g))) return false;
   if (!/[A-Za-z]/.test(groups.join(''))) return false;
-  return groups.some((g) => /\d/.test(g)) || groups.every((g) => /^[A-Z0-9]+$/.test(g));
+  return groups.every((g) => /\d/.test(g)) || groups.every((g) => /^[A-Z0-9]+$/.test(g));
 }
 // A long run of letters and digits: a key or a token. A hyphen makes a slug words
 // ("issuecomment-1234567890"), so a slug is not one. A hex run is judged by the hex rule instead.
@@ -76,6 +78,17 @@ function plainSecret(trimmed) {
   const switches = (token.match(/[A-Za-z](?=\d)|\d(?=[A-Za-z])/g) || []).length;
   return mixedCase && ((token.length >= 12 && switches >= 3) || token.length >= 24);
 }
+// A document ID in the path of docs.google.com or drive.google.com ("/d/<id>", "/folders/<id>") is an
+// address, not a credential: it is exempt from the random-run rule only (third review of #354). Its hex rule,
+// and the link's userinfo and query checks, still apply.
+const GOOGLE_DOC_HOST_RE = /^(?:docs|drive)\.google\.com$/i;
+function googleDocSegments(authority, segments) {
+  const ids = new Set();
+  const host = authority.slice(authority.lastIndexOf('@') + 1).split(':')[0];
+  if (!GOOGLE_DOC_HOST_RE.test(host)) return ids;
+  segments.forEach((segment, i) => { if (i > 0 && (segments[i - 1] === 'd' || segments[i - 1] === 'folders')) ids.add(i); });
+  return ids;
+}
 // A link is judged by its parts. Its userinfo and query values get the full token check (a password
 // or a code in a link is a secret); a path segment is a secret only as a long random run or a hex key.
 // An ordinary path slug ("6-006-introduction-to-algorithms-2020") and a percent-encoded word are words.
@@ -87,7 +100,9 @@ function linkHasSecret(link) {
   if (at > 0 && authority.slice(0, at).split(':').some((piece) => piece && plainSecret(piece))) return true;
   const path = rest.split(/[?#]/)[0];
   const query = rest.slice(path.length);
-  if (path.split('/').some((segment) => randomRun(segment) || (HEX_RE.test(segment) && plainSecret(segment)))) return true;
+  const segments = path.split('/');
+  const docIds = googleDocSegments(authority, segments);
+  if (segments.some((segment, i) => (randomRun(segment) && !docIds.has(i)) || (HEX_RE.test(segment) && plainSecret(segment)))) return true;
   return query.split(/[?&=#]+|%[0-9A-Fa-f]{2}/).some((piece) => Boolean(piece) && (randomRun(piece) || plainSecret(piece)));
 }
 function secretToken(raw) {
@@ -100,7 +115,7 @@ function secretToken(raw) {
 }
 export function hasSecretShape(text) {
   const value = String(text ?? '');
-  if (PEM_RE.test(value) || JWT_PIECE_RE.test(value) || USER_PASS_RE.test(value)) return true;
+  if (PEM_RE.test(value) || JWT_PIECE_RE.test(value) || USER_PASS_RE.test(value) || BROKER_KEY_RE.test(value)) return true;
   return value.split(/[\s"“”,;(){}[\]<>]+/).some((piece) => piece && secretToken(piece));
 }
 

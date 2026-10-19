@@ -203,3 +203,35 @@ test('ordinary commits, versions, figures, dates, slugs and links stay safe (sec
     assert.equal(hasSecretShape(text), false, text);
   }
 });
+
+// ─── Third review of #354: the narrower code rule, Google document IDs, the broker key shape ──────
+test('third review of #354: ordinary hyphenated words and Google document links are stored; the withheld codes, broker keys and link credentials stay withheld', () => {
+  const PASS_SYM = ['Summer', '2026', '!'].join('');
+  const PK_KEY = ['PK', 'Z9Y8X7W6V5U4T3S2R1Q'].join('');
+  const DOC_ID = '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms';
+  const DRIVE_ID = '1AbCdEfGhIjKlMnOpQrStUvWxYz012345';
+  const kept = [
+    'Keep the CHE-APP-V2-BETA plan in the drafts folder',
+    'Form-1099-NEC-tax-2025 filed on time',
+    'The iPhone-15-Pro-Max is the phone I want',
+    'Sprint-12-week-3-retro notes are in the folder',
+    `Here is the doc https://docs.google.com/document/d/${DOC_ID}/edit for Monday`,
+    `Drive link https://drive.google.com/file/d/${DRIVE_ID}/view`,
+  ];
+  for (const text of kept) {
+    assert.equal(isSafeMemoryText(text), true, text);
+    assert.equal(hasSecretShape(text), false, text);
+  }
+  const withheld = [
+    `The backup code is ${GROUPED_CODE}`,
+    `The recovery code is ${['ABCD', 'EFGH', 'IJKL', 'MNOP'].join('-')}`,
+    `The recovery code is ${GROUPED_CODE.toLowerCase()}`,
+    `Result: the Alpaca key ${PK_KEY} was printed in the log.`,
+    `Doc https://vondada:${PASS_SYM}@docs.google.com/document/d/${DOC_ID}/edit`,
+    `Doc https://docs.google.com/document/d/${DOC_ID}/edit?pw=${PASS_SYM}`,
+  ];
+  for (const text of withheld) {
+    assert.equal(isSafeMemoryText(text), false, text);
+    assert.equal(hasSecretShape(text), true, text);
+  }
+});

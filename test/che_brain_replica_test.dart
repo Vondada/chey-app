@@ -519,4 +519,36 @@ void main() {
     expect(brain.search('deploy key legacy', limit: 10).map((r) => r.id), isNot(contains('note:legacy')));
     expect(brain.search('lunch deploy team', limit: 10).map((r) => r.id), contains('note:plain'));
   });
+
+  test('S: a broker key and the withheld code shapes are refused; ordinary hyphenated words and Google document links are stored (third review of #354)', () async {
+    final dir = await freshDir();
+    final brain = CheBrainReplica(directory: dir);
+    // Built from pieces, so no literal key or code sits in the repository.
+    final key = ['PK', 'Z9Y8X7W6V5U4T3S2R1Q'].join();
+    final groupedCode = ['8F3K', '9LQ2', '7MZP', '4XWD'].join('-');
+    final refused = [
+      'Result: the Alpaca key $key was printed in the log.',
+      'The backup code is $groupedCode',
+      'The recovery code is ${['ABCD', 'EFGH', 'IJKL', 'MNOP'].join('-')}',
+      'The recovery code is ${groupedCode.toLowerCase()}',
+    ];
+    for (final text in refused) {
+      expect(cheBrainTextIsSensitive(text), isTrue, reason: text);
+      expect(await brain.remember(kind: 'memory', region: 'Personal Memory', body: text), isNull, reason: text);
+    }
+    expect(brain.count, 0);
+    final kept = [
+      'Keep the CHE-APP-V2-BETA plan in the drafts folder',
+      'Form-1099-NEC-tax-2025 filed on time',
+      'The iPhone-15-Pro-Max is the phone I want',
+      'Sprint-12-week-3-retro notes are in the folder',
+      'Here is the doc https://docs.google.com/document/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit for Monday',
+      'Drive link https://drive.google.com/file/d/1AbCdEfGhIjKlMnOpQrStUvWxYz012345/view',
+    ];
+    for (final text in kept) {
+      expect(cheBrainTextIsSensitive(text), isFalse, reason: text);
+      expect(await brain.remember(kind: 'memory', region: 'Personal Memory', body: text), isNotNull, reason: text);
+    }
+    expect(brain.count, kept.length);
+  });
 }

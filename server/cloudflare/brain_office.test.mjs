@@ -849,3 +849,18 @@ test('the four planted messages are withheld and counted, never stored whole; or
   for (const piece of [PLANTED_HEX_A, PLANTED_HEX_B, PLANTED_WEBHOOK, PLANTED_GROUPED, 'T00000000/B00000000']) assert.equal(stored.includes(piece), false, piece.slice(0, 12));
   assert.match(store.get('mail:planted-1').body, /Webhook URL|\[withheld: sensitive content\]/, 'the message is kept as a safe outline');
 });
+
+test('an office task whose result holds a broker key is projected as a safe outline, never with the key (blocker, #354 review)', async (t) => {
+  const storage = await sqlStorage();
+  if (!storage) return t.skip('node:sqlite unavailable');
+  const store = new CheBrainStore(storage);
+  const key = ['PK', 'Z9Y8X7W6V5U4T3S2R1Q'].join('');
+  const data = { team_tasks: [{ id: 'paper-1', task: 'Paper trade result', status: 'complete', result: `the Alpaca key ${key} was printed in the log.`, created_at: T, updated_at: T }] };
+  projectOfficeExperience(store, data, { now: T });
+  const row = store.get('task:paper-1');
+  assert.ok(row, 'the task is kept as a safe outline, not dropped');
+  assert.equal(row.title, 'Paper trade result');
+  assert.match(row.body, /Result withheld: sensitive content/);
+  assert.equal(JSON.stringify(row).includes(key), false, 'the key is in no field of the stored record');
+  assert.deepEqual(store.search(key, { limit: 10 }).map((r) => r.id), []);
+});

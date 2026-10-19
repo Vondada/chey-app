@@ -88,7 +88,8 @@ final RegExp _linkHeadShape = RegExp(r'^(?:[a-z][a-z0-9+.-]*://|www\.)([^/?#]*)'
 final RegExp _pathSplitShape = RegExp(r'[?#]');
 final RegExp _queryPieceSplitShape = RegExp(r'[?&=#]+|%[0-9A-Fa-f]{2}');
 final RegExp _randomRunShape = RegExp(r'^[A-Za-z0-9_]{20,}$');
-final RegExp _groupShape = RegExp(r'^[A-Za-z0-9]+$');
+final RegExp _groupShape = RegExp(r'^[A-Za-z0-9]{4,5}$');
+final RegExp _googleDocHostShape = RegExp(r'^(?:docs|drive)\.google\.com$', caseSensitive: false);
 final RegExp _upperGroupShape = RegExp(r'^[A-Z0-9]+$');
 final RegExp _letterShape = RegExp(r'[A-Za-z]');
 final RegExp _digitShape = RegExp(r'\d');
@@ -135,14 +136,26 @@ bool _plainSecret(String trimmed) {
   return mixedCase && ((token.length >= 12 && switches >= 3) || token.length >= 24);
 }
 
-// Four or more hyphen-separated alphanumeric groups that form a code, whatever their case. Lower-case
-// words joined by hyphens are prose, so a chain needs a digit or capitals.
+// A code is four or more hyphen-separated groups of four or five letters and digits, and each group has
+// a digit or all groups are capitals (the same rule as research_memory.js; third review of #354).
 bool _groupedCode(String token) {
   if (_uuidShape.hasMatch(token)) return false;
   final groups = token.split('-');
   if (groups.length < 4 || !groups.every(_groupShape.hasMatch)) return false;
   if (!_letterShape.hasMatch(groups.join())) return false;
-  return groups.any(_digitShape.hasMatch) || groups.every(_upperGroupShape.hasMatch);
+  return groups.every(_digitShape.hasMatch) || groups.every(_upperGroupShape.hasMatch);
+}
+
+// A document ID in the path of docs.google.com or drive.google.com ("/d/<id>", "/folders/<id>") is exempt
+// from the random-run rule only, as in research_memory.js.
+Set<int> _googleDocSegments(String authority, List<String> segments) {
+  final ids = <int>{};
+  final host = authority.substring(authority.lastIndexOf('@') + 1).split(':').first;
+  if (!_googleDocHostShape.hasMatch(host)) return ids;
+  for (var i = 1; i < segments.length; i++) {
+    if (segments[i - 1] == 'd' || segments[i - 1] == 'folders') ids.add(i);
+  }
+  return ids;
 }
 
 // A long run of letters and digits (a key or a token); a hyphen makes a slug words, and a hex run is
@@ -160,8 +173,11 @@ bool _linkHasSecret(String link) {
   if (at > 0 && authority.substring(0, at).split(':').any((piece) => piece.isNotEmpty && _plainSecret(piece))) return true;
   final path = rest.split(_pathSplitShape).first;
   final query = rest.substring(path.length);
-  for (final segment in path.split('/')) {
-    if (_randomRun(segment) || (_hexShape.hasMatch(segment) && _plainSecret(segment))) return true;
+  final segments = path.split('/');
+  final docIds = _googleDocSegments(authority, segments);
+  for (var i = 0; i < segments.length; i++) {
+    final segment = segments[i];
+    if ((_randomRun(segment) && !docIds.contains(i)) || (_hexShape.hasMatch(segment) && _plainSecret(segment))) return true;
   }
   return query.split(_queryPieceSplitShape).any((piece) => piece.isNotEmpty && (_randomRun(piece) || _plainSecret(piece)));
 }
