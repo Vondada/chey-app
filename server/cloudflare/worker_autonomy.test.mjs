@@ -3672,11 +3672,17 @@ test('an Alpaca key said in chat is refused and never kept anywhere; a Worker se
 // Alpaca PAPER stock orders by voice and typing (issue #344), through /api/chat. Every outbound
 // request is recorded: the only host CHE may reach for an order is Alpaca's paper host.
 const PAPER_KEYS = { CHE_ALPACA_PAPER_KEY_ID: 'PKWORKERPAPER1234567', CHE_ALPACA_PAPER_SECRET: 's'.repeat(40) };
+// Order requests: every call is counted except a GET to api.github.com. That one is CHE's background mailbox read
+// after an owner turn (refreshMailNews reads the GitHub mailbox), not an order. Every POST, and every request to an
+// Alpaca or Tradovate host, is still counted. The full recorded list still prints on failure.
+const orderCalls = (o) => o.calls.filter((c) => !(c.method === 'GET' && c.origin === 'https://api.github.com'));
+const recordedCalls = (o) => JSON.stringify(o.calls.map((c) => ({ method: c.method, url: c.url, origin: c.origin, from: c.from })));
+
 async function stockOwner({ keys = PAPER_KEYS, broker = null } = {}) {
   const saved = new Map();
   const model = { calls: 0 };
   const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', ...keys, AI: { run: async () => { model.calls += 1; throw new Error('no model may answer a broker order'); } } };
-  const { chat } = await pairedChat(env, saved);
+  const { chat, state } = await pairedChat(env, saved);
   const calls = [];
   const original = globalThis.fetch;
   globalThis.fetch = async (url, init = {}) => {
@@ -3688,6 +3694,9 @@ async function stockOwner({ keys = PAPER_KEYS, broker = null } = {}) {
   };
   const say = async (message, extra = {}) => {
     const raw = await (await chat(message, extra)).text();
+    // Each owner turn starts a background mailbox read that the reply does not await (refreshMailNews). Let it finish
+    // inside this turn, so its GitHub GET is never recorded in a later turn's window.
+    await state.mailRefresh;
     const lines = raw.trim().split('\n').map((line) => { try { return JSON.parse(line); } catch (_) { return {}; } });
     return { reply: replyFromNdjson(raw) || lines[0]?.reply || '', done: lines.find((l) => l.type === 'done') || lines[0] || {} };
   };
@@ -3708,10 +3717,10 @@ test('Alpaca paper stock order by voice: exact read-back, a separate "yes, place
     assert.notEqual(asked.done.held_for_owner, true, 'no second, vaguer money question before the read-back');
     assert.equal(asked.reply, 'Alpaca PAPER order, sir, no real money: buy 10 shares of AAPL, market order, good for one trading day. Account: Alpaca PAPER. To send it, say "yes, place it" within two minutes; say "no" to drop it. Nothing has been sent yet.');
     assert.equal(asked.done.order_sent, false);
-    assert.equal(o.calls.length, 0, 'the read-back reaches no broker');
+    assert.equal(orderCalls(o).length, 0, `the read-back reaches no broker; recorded calls: ${recordedCalls(o)}`);
     const bare = await o.say('yes');
     assert.match(bare.reply, /^To send it to Alpaca PAPER, sir, say "yes, place it"\. Say "no" to drop it\. Nothing has been sent yet\.$/);
-    assert.equal(o.calls.length, 0, `a bare yes sends nothing; recorded calls: ${JSON.stringify(o.calls.map((c) => ({ method: c.method, url: c.url, from: c.from })))}`);
+    assert.equal(orderCalls(o).length, 0, `a bare yes sends nothing; recorded calls: ${recordedCalls(o)}`);
     const placed = await o.say('yes, place it');
     assert.equal(placed.done.source, 'che_trading_desk');
     assert.equal(placed.done.order_sent, true);
@@ -3765,7 +3774,7 @@ test('Alpaca paper order: "no", "never mind" and two minutes passing all send no
     desk.stock_order.asked_at -= 121_000;
     o.saved.set('trading_desk', desk);
     assert.equal((await o.say('yes, place it')).reply, 'The Alpaca PAPER order I read back waited more than two minutes, sir, so nothing was sent. Say the order again and I will read it back.');
-    assert.equal(o.calls.length, 0, `nothing reached Alpaca; recorded calls: ${JSON.stringify(o.calls.map((c) => ({ method: c.method, url: c.url, origin: c.origin, from: c.from })))}`);
+    assert.equal(orderCalls(o).length, 0, `nothing reached Alpaca; recorded calls: ${recordedCalls(o)}`);
   } finally {
     o.restore();
   }
@@ -3804,7 +3813,7 @@ test('Alpaca paper order: options, crypto, futures, live and odd orders are refu
     for (const message of ['buy 10 shares of AAPL', 'buy paper towels', 'buy 10 shares of AAPL on Alpaca paper and pay my electric bill']) {
       assert.equal((await o.say(message)).done.held_for_owner, true, message);
     }
-    assert.equal(o.calls.length, 0, `no refusal reaches Alpaca; recorded calls: ${JSON.stringify(o.calls.map((c) => ({ method: c.method, url: c.url, origin: c.origin, from: c.from })))}`);
+    assert.equal(orderCalls(o).length, 0, `no refusal reaches Alpaca; recorded calls: ${recordedCalls(o)}`);
   } finally {
     o.restore();
   }
@@ -3961,7 +3970,7 @@ test('B4 regression: shopping sentences are held as purchases, never read back a
       assert.equal(done.held_for_owner, true, `${message}: a purchase keeps the owner's money hold`);
       assert.equal(o.saved.get('trading_desk')?.stock_order ?? null, null, `${message}: no paper record was made`);
     }
-    assert.equal(o.calls.length, 0, 'nothing reached Alpaca or any broker');
+    assert.equal(orderCalls(o).length, 0, `nothing reached Alpaca or any broker; recorded calls: ${recordedCalls(o)}`);
   } finally {
     o.restore();
   }
@@ -4045,15 +4054,15 @@ test('KEEP: a held delete plus a paper buy is held for both kinds; a following y
     const held = await o.say('delete my old notes and buy 10 shares of AAPL on alpaca paper');
     assert.equal(held.done.held_for_owner, true);
     assert.deepEqual([...(held.done.owner_action_kinds || [])].sort(), ['delete', 'money'], 'held for both kinds');
-    assert.equal(o.calls.length, 0, 'the hold reaches nothing');
+    assert.equal(orderCalls(o).length, 0, `the hold reaches nothing; recorded calls: ${recordedCalls(o)}`);
     const yes = await o.say('yes');
     assert.match(yes.reply, /^Nothing was done, sir\. That request asked me to delete and to buy in one sentence/);
     assert.doesNotMatch(yes.reply, /To remove the Alpaca paper keys|order was sent|Sent to Alpaca/, 'the yes is not routed to the key removal, and claims no order');
-    assert.equal(o.calls.length, 0, 'a yes sends no paper order and deletes nothing');
+    assert.equal(orderCalls(o).length, 0, `a yes sends no paper order and deletes nothing; recorded calls: ${recordedCalls(o)}`);
     assert.equal(yes.done.order_sent, false);
     const placed = await o.say('yes, place it');
     assert.doesNotMatch(placed.reply, /Sent to Alpaca|Placed on|Alpaca's receipt/, 'a following "yes, place it" places nothing');
-    assert.equal(o.calls.length, 0, 'still nothing reaches a broker');
+    assert.equal(orderCalls(o).length, 0, `still nothing reaches a broker; recorded calls: ${recordedCalls(o)}`);
     assert.equal(o.saved.get('trading_desk')?.stock_order ?? null, null, 'no paper record was made');
   } finally {
     o.restore();
