@@ -826,3 +826,58 @@ test('a request held from an answer form keeps the owner\'s own words, case and 
   assert.equal(out.route, 'held');
   assert.equal((await che.storage.get('che:pending_owner_action'))?.text, 'delete Report-Q3.PDF from my files.');
 });
+
+// ─── The deploy's live Knowledge Atlas check ──────────────────────────────
+
+test('the deploy probe checks the Knowledge Atlas on an isolated CHE, never the owner\'s, and reports no secret', sqlite, async () => {
+  const states = new Map();
+  const storages = new Map();
+  const pending = [];
+  const token = 'p'.repeat(40);
+  const env = {
+    CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', CHE_VOICE_PROBE_TOKEN: token, ELEVENLABS_API_KEY: 'el_secret_value',
+    AI: { run: async () => ({ response: 'Here is the answer, sir.' }) },
+  };
+  env.CHE_STATE = { getByName: (name) => {
+    if (!states.has(name)) {
+      storages.set(name, storageFor());
+      states.set(name, new CheState({ storage: storages.get(name), waitUntil: (p) => pending.push(p), id: { name } }, env));
+    }
+    // Match production Durable Object stubs: only fetch() is exposed.
+    return { fetch: (request) => states.get(name).fetch(request) };
+  } };
+  const denied = await worker.fetch(new Request('https://che.example/api/atlas/probe', { method: 'POST' }), env);
+  assert.equal(denied.status, 404, 'no route without the deploy token');
+  const wrong = await worker.fetch(new Request('https://che.example/api/atlas/probe', { method: 'POST', headers: { Authorization: `Bearer ${'q'.repeat(40)}` } }), env);
+  assert.equal(wrong.status, 404);
+  const run = async () => {
+    const res = await worker.fetch(new Request('https://che.example/api/atlas/probe', { method: 'POST', headers: { Authorization: `Bearer ${token}` } }), env);
+    const report = await res.json();
+    while (pending.length) await pending.shift();
+    return report;
+  };
+  const report = await run();
+  assert.equal(report.ok, true, JSON.stringify(report.steps, null, 1));
+  assert.equal(report.passed, report.total);
+  assert.equal(report.total, 10);
+  assert.ok(report.steps.every((s) => s.optional === false), 'no step is optional');
+  assert.deepEqual(report.steps.map((s) => s.route), [
+    'che_knowledge_atlas', 'che_knowledge_atlas', 'che_knowledge_atlas', 'che_knowledge_atlas', 'che_knowledge_atlas', 'che_knowledge_atlas',
+    'che_knowledge_atlas', 'che_knowledge_atlas', report.steps[8].route, 'held',
+  ]);
+  assert.notEqual(report.steps[8].route, 'che_knowledge_atlas');
+  assert.ok(report.steps.slice(0, 8).every((s) => s.model_calls === 0), 'no atlas step called a model');
+  assert.doesNotMatch(JSON.stringify(report), /el_secret_value|p{40}/, 'no secret or token in the report');
+  // The test CHE keeps its records, so the next deploy's check passes too, with more answers counted.
+  const again = await run();
+  assert.equal(again.ok, true, JSON.stringify(again.steps.filter((s) => !s.pass), null, 1));
+  // The owner's CHE was never asked: no object, or no practice record, memory or held request on it.
+  if (states.has('owner')) {
+    const brain = new CheBrainStore(storages.get('owner'));
+    assert.equal(learningRecords(brain).length, 0);
+    assert.ok(!(await states.get('owner').loadData()).memories?.length);
+  }
+  const probeBrain = new CheBrainStore(storages.get('memory-truth-probe'));
+  assert.ok(learningRecords(probeBrain).filter((r) => r.source.event === 'quiz').length >= 2, 'the practice is on the test CHE');
+  assert.equal(await storages.get('memory-truth-probe').get('che:pending_owner_action'), null, 'the held buy was dropped');
+});
