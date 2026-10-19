@@ -53,6 +53,17 @@ export async function storedKeys(storage) {
   return keys && typeof keys === 'object' ? keys : {};
 }
 
+// Merges stored key changes; a null value removes that name.
+export async function setStoredKeys(storage, changes) {
+  const keys = await storedKeys(storage);
+  for (const [name, value] of Object.entries(changes || {})) {
+    if (value == null) delete keys[name];
+    else keys[name] = value;
+  }
+  await storage.put(STORED_KEYS, keys);
+  return keys;
+}
+
 export function withStoredKeys(env, keys) {
   if (!keys || !Object.keys(keys).length) return env;
   const merged = Object.create(env);

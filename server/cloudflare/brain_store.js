@@ -53,11 +53,20 @@ export const RELATIONSHIP_TYPES = Object.freeze([
 const RELATIONSHIPS = new Set(RELATIONSHIP_TYPES);
 
 /** What a record's content is: the labels che-fact-check uses, so nothing unverified reads as fact. */
+// curated_lesson is a Knowledge Atlas card (CHE's own teaching text, tested, not a measured fact and
+// not the owner's memory); owner_practice is his study measured in chat (a lesson read, a quiz answer
+// CHE graded), never something he stated as true.
 export const VERIFICATION_STATES = Object.freeze([
   'owner_attested', 'verified_source', 'unverified_reference', 'unverified_research_lead',
-  'model_opinion', 'hypothesis', 'unknown',
+  'model_opinion', 'hypothesis', 'curated_lesson', 'owner_practice', 'unknown',
 ]);
 const VERIFICATIONS = new Set(VERIFICATION_STATES);
+
+/**
+ * Origins the Worker itself writes with. Any other origin is a device that pushed the record (the phone
+ * names itself in /api/brain/push), so "came from the phone" counts only those.
+ */
+export const WORKER_ORIGINS = Object.freeze(['cloud', 'auditor', 'owner', 'atlas', 'che_memory', 'pgvector']);
 
 /** 32-bit FNV-1a. The phone computes the same number (che_brain_replica.dart), so digests can be compared. */
 export function fnv1a32(text) {
@@ -236,8 +245,12 @@ function rowToRecord(row) {
   };
 }
 
+// storage → { seq, values }: see CheBrainStore.cached().
+const WHOLE_TABLE_CACHE = new WeakMap();
+
 export class CheBrainStore {
   constructor(storage) {
+    this.storage = storage && typeof storage === 'object' ? storage : null;
     this.sql = storage?.sql || null;
     this.ready = false;
     this.fts = false;
@@ -272,6 +285,23 @@ export class CheBrainStore {
 
   setMeta(key, value) {
     this.sql.exec('INSERT INTO brain_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', key, JSON.stringify(value));
+  }
+
+  /**
+   * Whole-table answers (the digest, the counts, the folder tree) kept until the next write.
+   * Every record write goes through write(), which moves `seq`, so an unchanged seq means the
+   * answer is unchanged. Each scan reads every row, and on the Workers Free plan rows read are a
+   * daily allowance shared by the whole account; a sync page used to scan the table eight times.
+   */
+  cached(name, compute) {
+    const seq = Number(this.meta('seq', 0)) || 0;
+    let entry = this.storage ? WHOLE_TABLE_CACHE.get(this.storage) : null;
+    if (!entry || entry.seq !== seq) {
+      entry = { seq, values: new Map() };
+      if (this.storage) WHOLE_TABLE_CACHE.set(this.storage, entry);
+    }
+    if (!entry.values.has(name)) entry.values.set(name, compute());
+    return entry.values.get(name);
   }
 
   nextSeq() {
@@ -520,13 +550,15 @@ export class CheBrainStore {
    */
   digest() {
     if (!this.init()) return { count: 0, sum: 0 };
-    let sum = 0;
-    let count = 0;
-    for (const row of this.sql.exec('SELECT id, rev FROM brain_records')) {
-      sum = (sum + fnv1a32(`${row.id}:${row.rev}`)) % 4294967296;
-      count += 1;
-    }
-    return { count, sum };
+    return { ...this.cached('digest', () => {
+      let sum = 0;
+      let count = 0;
+      for (const row of this.sql.exec('SELECT id, rev FROM brain_records')) {
+        sum = (sum + fnv1a32(`${row.id}:${row.rev}`)) % 4294967296;
+        count += 1;
+      }
+      return { count, sum };
+    }) };
   }
 
   search(question, { limit = 8, region = '' } = {}) {
@@ -564,6 +596,10 @@ export class CheBrainStore {
   /** Every region with its subfolders and live record counts. Regions with nothing still appear. */
   folders() {
     if (!this.init()) return [];
+    return structuredClone(this.cached('folders', () => this.scanFolders()));
+  }
+
+  scanFolders() {
     const counts = new Map();
     for (const row of this.sql.exec('SELECT p.region AS region, p.path AS path, COUNT(*) AS n FROM brain_places p JOIN brain_records r ON r.id = p.record_id WHERE r.deleted = 0 GROUP BY p.region, p.path')) {
       if (!counts.has(row.region)) counts.set(row.region, { total: 0, paths: [] });
@@ -617,14 +653,20 @@ export class CheBrainStore {
   /** Real counts for the Brain Status dashboard; nothing here is estimated. */
   status() {
     if (!this.init()) return { available: false };
-    const total = this.rows('SELECT COUNT(*) AS n FROM brain_records')[0]?.n || 0;
-    const deleted = this.rows('SELECT COUNT(*) AS n FROM brain_records WHERE deleted = 1')[0]?.n || 0;
-    const byKind = {};
-    for (const row of this.sql.exec('SELECT kind, COUNT(*) AS n FROM brain_records WHERE deleted = 0 GROUP BY kind')) byKind[row.kind] = Number(row.n) || 0;
-    const byVerification = {};
-    for (const row of this.sql.exec('SELECT verification, COUNT(*) AS n FROM brain_records WHERE deleted = 0 GROUP BY verification')) byVerification[row.verification || 'unknown'] = Number(row.n) || 0;
+    const { total, deleted, byKind, byVerification, chars } = structuredClone(this.cached('counts', () => {
+      const byKind = {};
+      for (const row of this.sql.exec('SELECT kind, COUNT(*) AS n FROM brain_records WHERE deleted = 0 GROUP BY kind')) byKind[row.kind] = Number(row.n) || 0;
+      const byVerification = {};
+      for (const row of this.sql.exec('SELECT verification, COUNT(*) AS n FROM brain_records WHERE deleted = 0 GROUP BY verification')) byVerification[row.verification || 'unknown'] = Number(row.n) || 0;
+      return {
+        total: this.rows('SELECT COUNT(*) AS n FROM brain_records')[0]?.n || 0,
+        deleted: this.rows('SELECT COUNT(*) AS n FROM brain_records WHERE deleted = 1')[0]?.n || 0,
+        byKind,
+        byVerification,
+        chars: this.rows('SELECT COALESCE(SUM(length(body)), 0) AS n FROM brain_records WHERE deleted = 0')[0]?.n || 0,
+      };
+    }));
     const openConflicts = this.rows("SELECT COUNT(*) AS n FROM brain_conflicts WHERE resolved = ''")[0]?.n || 0;
-    const chars = this.rows('SELECT COALESCE(SUM(length(body)), 0) AS n FROM brain_records WHERE deleted = 0')[0]?.n || 0;
     return {
       available: true,
       records: Number(total) - Number(deleted),
@@ -894,4 +936,89 @@ export async function backfillConversations(store, storage, { batch = 100, now }
   const next = { key: last, done, added: (Number(cursor.added) || 0) + added, at: now || new Date().toISOString() };
   store.setMeta('brainmem_cursor', next);
   return { ...next, added };
+}
+
+// ─── Knowledge Atlas: curated cards and the owner's practice (#346) ─────────
+
+/** The folder a Knowledge Atlas card and its practice records share, e.g. "Knowledge Atlas/Coding/Recursion". */
+export function atlasFolder(card) {
+  const domain = card?.domain === 'trading' ? 'Trading' : 'Coding';
+  return clip(`Knowledge Atlas/${domain}/${String(card?.title || card?.id || '').replace(/\//g, '-')}`, 160);
+}
+
+export const ATLAS_PROGRESS_KIND = 'atlas_progress';
+const PRACTICE_LABEL = { lesson: 'Lesson studied', quiz: 'Quiz answer', correction: 'Card correction', exercise: 'Coding exercise', drill: 'Review drill' };
+const MAX_PROGRESS_READ = 2000;
+
+/**
+ * One step of the owner's study as a Brain record: a lesson read, a quiz answer CHE graded, a
+ * correction he made to a card, or a practice result (an exercise or drill: any other `kind`).
+ * Labelled owner_practice, measured from this chat, so it never reads as something he stated
+ * as fact. The same lesson at the same level on the same day is one record, so asking twice adds
+ * nothing. One write per call, never to a record CHE did not make here.
+ */
+export function recordLearning(store, { card, kind, item_id = '', correct = null, level = '', question = '', answer = '', expected = '', method = '', detail = '' } = {}, { now } = {}) {
+  if (!store?.init?.()) return { outcome: 'rejected', reason: 'Brain storage is not available.' };
+  const cardId = clip(card?.id, 80);
+  const event = clip(kind, 30).toLowerCase().replace(/[^a-z0-9_]+/g, '_');
+  if (!cardId || !event) return { outcome: 'rejected', reason: 'A practice record needs a card and a kind.' };
+  const at = now || new Date().toISOString();
+  const item = clip(item_id, 60);
+  const lvl = clip(level, 20);
+  const id = `atlasprog:${event}:${cardId}:${event === 'lesson' ? `${lvl || 'any'}:${at.slice(0, 10)}` : `${item || 'card'}:${at}`}`;
+  const result = correct === true ? 'correct' : correct === false ? 'not correct' : 'not graded';
+  const label = PRACTICE_LABEL[event] || `Practice (${event.replace(/_/g, ' ')})`;
+  const name = clip(card.title, 120) || cardId;
+  const body = [
+    `${label}: ${name}${event === 'lesson' ? `, ${lvl || 'any'} level` : ''}${item ? `, ${item}` : ''}.`,
+    question ? `Question: ${clip(question, 300)}` : '',
+    answer ? `Owner's answer: ${clip(answer, 300)}` : '',
+    event === 'lesson' ? '' : `Result: ${result}${method ? `, graded by ${clip(method, 60)}` : ''}.`,
+    expected ? `Card's answer: ${clip(expected, 300)}` : '',
+    detail ? clip(detail, 600) : '',
+    // A correction is the owner's own statement about the card; everything else is study CHE measured.
+    event === 'correction'
+      ? 'The owner\'s own statement about this card, as he said it in this chat. The card is unchanged until it is fixed and tested.'
+      : 'Owner practice, measured from this chat: a record of study, not something the owner stated as fact.',
+  ].filter(Boolean).join('\n');
+  const current = store.get(id);
+  if (current && current.kind !== ATLAS_PROGRESS_KIND) return { outcome: 'rejected', reason: 'not an atlas practice record' };
+  return store.put({
+    id,
+    kind: ATLAS_PROGRESS_KIND,
+    region: card.domain === 'trading' ? BRAIN_REGIONS.trading : BRAIN_REGIONS.coding,
+    path: atlasFolder(card),
+    title: `${label}: ${name}${item ? `, ${item}` : ''}${event === 'lesson' ? '' : ` (${result})`}`,
+    body,
+    source: {
+      kind: ATLAS_PROGRESS_KIND, event, card_id: cardId, item_id: item, level: lvl, domain: card.domain === 'trading' ? 'trading' : 'coding',
+      correct: typeof correct === 'boolean' ? correct : null, method: clip(method, 60),
+      provenance: event === 'correction' ? 'the owner\'s statement about this card, in this chat' : 'measured from this chat',
+    },
+    verification: event === 'correction' ? 'owner_attested' : 'owner_practice',
+    links: [{ type: 'relevant_to', to: `atlas:${cardId}` }],
+    created_at: at,
+  }, { origin: 'atlas', now: at });
+}
+
+/** The owner's practice records, newest first (one indexed read). `capped` says the read stopped at its limit. */
+export function learningRecords(store, { domain = '' } = {}) {
+  if (!store?.init?.()) return [];
+  const rows = store.rows('SELECT * FROM brain_records WHERE kind = ? AND deleted = 0 ORDER BY seq DESC LIMIT ?', ATLAS_PROGRESS_KIND, MAX_PROGRESS_READ + 1).map(rowToRecord);
+  const capped = rows.length > MAX_PROGRESS_READ;
+  const kept = rows.slice(0, MAX_PROGRESS_READ);
+  return Object.assign(domain ? kept.filter((r) => r.source?.domain === domain) : kept, { capped });
+}
+
+/**
+ * "Reset my progress": every practice record becomes a tombstone (so the phone's replica drops it
+ * too). Only atlas_progress records are touched; the cards and every other record stay. The caller
+ * runs this only after the owner's yes (owner_action_gate.js).
+ */
+export function resetLearning(store, { domain = '', now } = {}) {
+  let deleted = 0;
+  for (const record of learningRecords(store, { domain })) {
+    if (store.delete(record.id, { origin: 'owner', now }).outcome === 'deleted') deleted += 1;
+  }
+  return deleted;
 }

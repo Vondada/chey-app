@@ -11,9 +11,13 @@ export const ERROR_CATEGORIES = [
   'owner_action_required',
   'permanent_provider_failure',
   'model_retired',
+  // Too long for every engine CHE can reach (issue #345): not a busy moment to wait out.
+  'message_too_long',
 ];
 
 const OWNER_MESSAGES = {
+  // No "engine" here: the phone hides server text with technical words (lib/che_owner_errors.dart).
+  message_too_long: 'That message is too long for the AI I can reach right now, sir, so I did nothing with it. Please send it in parts.',
   retryable_provider_error: "I couldn't complete that request just now, sir. I have not confirmed that any work is still running.",
   temporary_cloud_unavailable: "I couldn't complete that request just now, sir. I have not confirmed that any work is still running.",
   network_offline: "I lost the network connection, sir. I could not confirm that the request was accepted.",
@@ -79,7 +83,7 @@ export function makeEngineError({
     : 'CHE needs at least one working free AI provider key while Cloudflare is resting.';
   const error = new Error(message);
   error.category = ERROR_CATEGORIES.includes(category) ? category : 'temporary_cloud_unavailable';
-  error.retryable = !['owner_action_required'].includes(error.category);
+  error.retryable = !['owner_action_required', 'message_too_long'].includes(error.category);
   error.quota = Boolean(quota);
   error.diagnostic = String(diagnostic || '').slice(0, 1500);
   error.owner_safe = true;
@@ -110,4 +114,37 @@ export function sanitizeOwnerText(text, { truncate = true } = {}) {
     return '';
   }
   return truncate ? raw.slice(0, 280) : raw;
+}
+
+// Cloudflare's daily allowance on the Workers Free plan. Once any one is used up, every
+// operation of that kind fails across the whole account until 00:00 UTC; stored data is kept.
+// Returns what to tell the owner, or null when the error is something else.
+export function cloudDailyLimit(error, now = Date.now()) {
+  const message = String(error?.message || error || '');
+  if (!/\bexceed(?:ed|s|ing)?\b/i.test(message)) return null;
+  // Only Cloudflare's wording: an AI provider's free-tier quota (Gemini's says "free tier" too) is not this.
+  if (!/allowed (?:rows|duration|volume|requests)/i.test(message)
+    && !(/free tier/i.test(message) && /durable object|\bD1\b|\bKV\b|workers|cloudflare/i.test(message))) return null;
+  const kind = /rows? read|read limit/i.test(message) ? 'rows read'
+    : /rows? writ|write limit/i.test(message) ? 'rows written'
+      : /duration/i.test(message) ? 'compute time'
+        : /request|volume/i.test(message) ? 'requests' : '';
+  // Another limit (storage size, say) does not reset at midnight, so it is not claimed to.
+  if (!kind) return null;
+  const reset = new Date(now);
+  reset.setUTCHours(24, 0, 0, 0);
+  let local = '';
+  try { local = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' }).format(reset); } catch (_) { local = ''; }
+  const minutes = Math.max(1, Math.ceil((reset.getTime() - now) / 60_000));
+  const hours = Math.floor(minutes / 60);
+  const span = [hours ? `${hours} hour${hours === 1 ? '' : 's'}` : '', minutes % 60 ? `${minutes % 60} minute${minutes % 60 === 1 ? '' : 's'}` : '']
+    .filter(Boolean).join(' ');
+  return {
+    kind,
+    // The phone shows server text only up to 280 characters (lib/che_owner_errors.dart).
+    detail: `CHE's Cloudflare free daily allowance for ${kind} is used up, so this request stopped, sir; anything already stored is kept. It resets at 00:00 UTC${local ? ` (${local})` : ''}, in about ${span}. A paid plan would lift it; that costs money, so only you can choose it.`,
+    cloud_error: message.replace(/[A-Za-z0-9_-]{32,}/g, '[masked]').slice(0, 240),
+    resets_at: reset.toISOString(),
+    retry_after_s: Math.ceil((reset.getTime() - now) / 1000),
+  };
 }

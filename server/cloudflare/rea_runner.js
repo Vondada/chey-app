@@ -66,6 +66,8 @@ const RECALL = /\bremember (?:that|the) (?:app|website|site|repo(?:sitory)?|pack
 const PRONOUN_TARGET = /\b(?:this|that|the) (?:app|application|website|site|web ?app|repo(?:sitory)?|project|software|tool)\b/i;
 const NOT_REA = /\b(?:seo|audit|summari[sz]e|remember (?:this|that) (?:page|link)|save (?:this|that)|memori[sz]e|my (?:website|site|app)|your (?:own )?(?:code|app|website|repo))\b/i;
 const NO_CODE_CHANGE = /\b(?:do\s+not|don['’]t|never|without)\s+(?:modify\w*|chang\w*|touch\w*|edit\w*|writ\w*|open\w*)\s+(?:your|the|any|a)?\s*(?:code|pull request|pr)\b|\b(?:chat|conversation)[- ]only\b|\banswer (?:only )?in (?:this )?chat\b/i;
+const SELF_REA = /\b(?:your|che['’]?s|the|my)\s+(?:own\s+)?rea\b/i;
+const SELF_REA_READ = /\b(?:what|which|explain|describe|tell|show|list|status|history|latest|last|most\s+recent|recent|capabilit\w*|evidence)\b/i;
 const OWN_AREAS = /^(?:office|workshop|command center|commands?|brain|mailbox|connections?|trading(?: desk)?|studio|che|chey|keys|settings)$/i;
 
 // `REA inspect: npm:semver@7.7.2`, `REA rebuild: a copy of the search box`, `REA status`.
@@ -78,6 +80,25 @@ export function parseReaRequest(message, { history = [] } = {}) {
     const verb = explicit[1].toLowerCase();
     return { command: ALIASES[verb] || verb, input: explicit[2].trim() };
   }
+  const natural = parseNaturalRea(text, { history });
+  if (natural) return natural;
+  // "Explain what your REA system can do right now, show your most recent verified investigation ... Do not
+  // start a new investigation": CHE's own REA, read only. Checked last, so a named target, a comparison or
+  // an earlier investigation keeps its own route.
+  const target = identifyTarget(text);
+  if (text.length <= 600 && SELF_REA.test(text) && SELF_REA_READ.test(text)
+    && !target) {
+    return {
+      command: 'status', input: '', natural: true,
+      capabilities: /\b(?:can|capab\w*|able|do\s+right\s+now|what\s+(?:is|does)\b)/i.test(text),
+      // "your most recent verified investigation": the newest one that finished with evidence, not the newest job.
+      verified: /\b(?:verified|successful(?:ly)?|succeeded|evidence)\b/i.test(text),
+    };
+  }
+  return null;
+}
+
+function parseNaturalRea(text, { history = [] } = {}) {
   const npmNatural = text.match(/\b(reverse[- ]engineer|analy[sz]e|inspect|explain|debug|compare)\b[\s\S]{0,80}\b(?:npm package\b|npm:)/i);
   if (npmNatural) return { command: VERBS[npmNatural[1].toLowerCase().replace(/\s+/g, ' ')] || 'inspect', input: text };
   if (text.length > 600) return null;
@@ -246,11 +267,13 @@ function evidenceAnswer(command, job) {
   ].join('\n');
 }
 
-function statusText(env, jobs) {
+function statusText(env, jobs, { capabilities = true } = {}) {
   const lines = ['REA status.', 'Packages run on GitHub Actions with REA ' + REA_PIN.version + ' (pinned); repositories, pages and listings are read as public data. Nothing runs on the iPhone.', ''];
-  lines.push('Capabilities:');
-  lines.push(list(reaCapabilities(env).map((c) => `${c.label}: ${c.available ? 'available' : 'not available'}${c.needs ? ` (${c.needs})` : ''}`)));
-  lines.push('');
+  if (capabilities) {
+    lines.push('Capabilities:');
+    lines.push(list(reaCapabilities(env).map((c) => `${c.label}: ${c.available ? 'available' : 'not available'}${c.needs ? ` (${c.needs})` : ''}`)));
+    lines.push('');
+  }
   const recent = jobs.slice(-5).reverse();
   lines.push(recent.length ? 'Recent jobs:' : 'No REA jobs yet.');
   if (recent.length) {
@@ -844,13 +867,28 @@ export async function handleReaRequest(storage, env, message, { fetcher = fetch,
 
   if (request.command === 'capabilities') return { ok: true, text: capabilitiesText(env) };
   if (request.command === 'status') {
+    const head = request.capabilities ? `REA is my reverse-engineering and investigation system. ${capabilitiesText(env)}\n\n` : '';
+    if (request.verified) {
+      // The newest job that completed with evidence; a newer pending or failed job is named, not shown as the result.
+      const newest = jobs[jobs.length - 1];
+      const done = [...jobs].reverse().find((j) => j.state === 'complete');
+      const status = statusText(env, jobs, { capabilities: !request.capabilities });
+      if (!done) {
+        return { ok: true, text: `${head}${status}\n\nNo REA job has completed with evidence yet, so there is no verified investigation to show. Nothing was started.`.trim() };
+      }
+      const newer = newest && newest.id !== done.id ? `The newest job, ${newest.id}, is ${newest.state}, so it is not the result below. ` : '';
+      const inv = done.kind === 'investigation' ? await loadInvestigation(storage, done.id) : null;
+      const answer = inv ? investigationAnswer(inv) : done.kind !== 'investigation' && done.summary ? evidenceAnswer(done.command, done)
+        : 'Its evidence record could not be read, so its evidence is UNVERIFIED.';
+      return { ok: true, ...(inv ? { investigation_id: done.id } : {}), text: `${head}${status}\n\n${newer}Most recent completed job: ${done.id}.\n${answer}\nNothing was started.`.trim() };
+    }
     const latest = jobs[jobs.length - 1];
     if (latest?.kind === 'investigation') {
       const inv = await loadInvestigation(storage, latest.id);
-      return { ok: true, investigation_id: latest.id, text: `${statusText(env, jobs)}\n\n${inv ? investigationAnswer(inv) : ''}`.trim() };
+      return { ok: true, investigation_id: latest.id, text: `${head}${statusText(env, jobs)}\n\n${inv ? investigationAnswer(inv) : ''}`.trim() };
     }
     const result = latest?.state === 'complete' ? `\n\n${evidenceAnswer(latest.command, latest)}` : '';
-    return { ok: true, text: `${statusText(env, jobs)}${result}` };
+    return { ok: true, text: `${head}${statusText(env, jobs)}${result}` };
   }
 
   const target = request.command === 'inspect' || request.command === 'discover' || ['explain', 'debug', 'compare', 'rebuild'].includes(request.command)

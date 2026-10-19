@@ -1312,6 +1312,7 @@ extension _CheHomeSecurity on _CHEHomeState {
         fallbackReason: _voiceFailReason.isEmpty ? null : _voiceFailReason,
         maryStatus: _maryStatus,
         fishStatus: _fishStatus,
+        lastSpokenReply: _lastSpokenReply,
       ),
     );
   }

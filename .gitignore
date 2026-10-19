@@ -36,3 +36,5 @@ node_modules/
 server/cloudflare/.dev.vars
 server/cloudflare/.wrangler/
 server/cloudflare/node_modules/
+.replay.*.generated.mjs
+.*.test.generated.mjs

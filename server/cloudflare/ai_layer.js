@@ -167,8 +167,9 @@ export async function handleAiVoiceIntent(env, data, storage, message, history =
     if (expired) ai.pending_confirmation = null;
   }
 
-  // "What AI models do you have?"
-  if (/\b(?:what|which)\b[\s\S]{0,20}\b(?:ai|models?|engines?|providers?)\b[\s\S]{0,30}\b(?:do you have|have you got|are connected|can you use|available)\b/.test(text)) {
+  // "What AI models do you have?" Rendering, video, voice or search engines are other routes' subjects.
+  if (/\b(?:what|which)\b[\s\S]{0,20}\b(?:ai|models?|engines?|providers?)\b[\s\S]{0,30}\b(?:do you have|have you got|are connected|can you use|available)\b/.test(text)
+    && !/\b(?:render(?:ing|er)?|video|animation|image|media|voice|speech|tts|search|game|physics)\s+(?:ai\s+)?(?:engines?|models?|providers?)\b/.test(text)) {
     const connected = registryView(env, data).filter((p) => p.state === 'connected');
     const waiting = registryView(env, data).filter((p) => p.state !== 'connected').map((p) => p.name);
     const lines = connected.map((p) => `${p.name}${p.models ? `, ${p.models} models` : ''}${p.locality === 'local' ? ', local' : ''}`);

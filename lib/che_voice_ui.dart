@@ -126,6 +126,7 @@ class CheVoiceDiagnosticsSheet extends StatelessWidget {
     this.fishStatus = '',
     this.audioRoute = '',
     this.lastPlayback = const {},
+    this.lastSpokenReply = '',
   });
 
   final CheVoiceSnapshot snapshot;
@@ -141,6 +142,8 @@ class CheVoiceDiagnosticsSheet extends StatelessWidget {
   final String audioRoute;
   /// The iPhone's report on the last ElevenLabs or Fish clip.
   final Map<String, dynamic> lastPlayback;
+  /// The last spoken reply: which voice, how many clips, the longest gap.
+  final String lastSpokenReply;
 
   @override
   Widget build(BuildContext context) {
@@ -225,6 +228,7 @@ class CheVoiceDiagnosticsSheet extends StatelessWidget {
             row('iPhone volume', cheIphoneVolumePercent(lastPlayback) == null ? '—' : '${cheIphoneVolumePercent(lastPlayback)}% (the volume buttons)'),
             row('Voice Volume', lastPlayback['volume'] is num ? '${((lastPlayback['volume'] as num) * 100).round()}%' : '—'),
             row('Last clip loudness', _loudnessText()),
+            row('Last spoken reply', lastSpokenReply.isEmpty ? '—' : lastSpokenReply),
             row('Why not spoken', fallbackReason ?? '—'),
             row('Last interruption', snapshot.lastInterruptionReason ?? '—'),
             row(

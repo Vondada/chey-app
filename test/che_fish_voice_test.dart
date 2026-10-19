@@ -72,7 +72,7 @@ void main() {
     test('the purpose reaches the one voice request', () {
       final voice = File('lib/home_state/voice.dart').readAsStringSync();
       final send = File('lib/home_state/send.dart').readAsStringSync();
-      expect(voice, contains('CheEdgeVoice.speak(text, purpose: purpose, premiumOnly: true)'));
+      expect(voice, contains('CheEdgeVoice.speak(text, purpose: purpose, premiumOnly: true, turn: turn, index: index, lock: lock)'));
       expect(send, contains('_openSpeechTurn(purpose: cheVoicePurposeFor(message))'));
     });
   });

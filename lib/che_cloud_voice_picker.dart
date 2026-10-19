@@ -36,6 +36,8 @@ class _CheCloudVoicePickerState extends State<CheCloudVoicePicker> {
   String _elevenState = 'Unavailable';
   String _fishState = 'Unavailable';
   List<Map<String, dynamic>> _voices = [];
+  // The saved voice's name when the provider's list does not include it now.
+  String _savedUnlisted = '';
   String _provider = '';
   String _id = '';
   double _speed = 1.0;
@@ -85,10 +87,18 @@ class _CheCloudVoicePickerState extends State<CheCloudVoicePicker> {
         _fishState = (j['fish'] ?? 'Unavailable').toString();
         final savedProvider = (selected['provider'] ?? '').toString();
         final savedId = (selected['id'] ?? '').toString();
-        final match = options.where((v) => v['provider'] == savedProvider && v['id'] == savedId);
-        final current = match.isNotEmpty ? match.first : (options.isNotEmpty ? options.first : null);
-        _provider = (current?['provider'] ?? '').toString();
-        _id = (current?['id'] ?? '').toString();
+        // The saved voice stays selected until the owner picks another
+        // (owner, 2026-10-18). A voice the provider's list does not show right
+        // now is still his choice; nothing else is preselected in its place.
+        final listed = options.any((v) => v['provider'] == savedProvider && v['id'] == savedId);
+        // With nothing saved yet (CHE's built-in voice), the first listed voice
+        // is offered, as before; saving is still the owner's own step.
+        final first = savedId.isEmpty && options.isNotEmpty ? options.first : null;
+        _provider = first == null ? savedProvider : (first['provider'] ?? '').toString();
+        _id = first == null ? savedId : (first['id'] ?? '').toString();
+        _savedUnlisted = savedId.isNotEmpty && !listed
+            ? ((selected['name'] ?? '').toString().trim().isEmpty ? 'your saved voice' : (selected['name'] ?? '').toString())
+            : '';
         _speed = ((selected['speed'] is num ? selected['speed'] as num : 1).toDouble()).clamp(0.7, 1.2).toDouble();
         _modelId = (selected['model_id'] ?? '').toString();
         _settings = selected['settings'] is Map ? Map<String, dynamic>.from(selected['settings'] as Map) : null;
@@ -254,6 +264,7 @@ class _CheCloudVoicePickerState extends State<CheCloudVoicePicker> {
         throw StateError(j is Map ? (j['detail'] ?? 'Voice change was not saved.').toString() : 'Voice change was not saved.');
       }
       HapticFeedback.selectionClick();
+      if (mounted) setState(() => _savedUnlisted = '');
       _say('Voice saved for CHE Chat and Read This. Test it with Read This.');
     } on Object catch (e) {
       HapticFeedback.heavyImpact();
@@ -326,6 +337,11 @@ class _CheCloudVoicePickerState extends State<CheCloudVoicePicker> {
         if (!_loading && _voices.isEmpty) const Padding(
           padding: EdgeInsets.symmetric(vertical: 14),
           child: Text('No available cloud voices were verified. Check pairing, provider keys, and account access in CHE Connections.', style: TextStyle(color: CheColors.warning)),
+        ),
+        if (_savedUnlisted.isNotEmpty) Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Text('CHE keeps using $_savedUnlisted. It is not in the provider\'s list right now, so it is not shown below.',
+            style: const TextStyle(color: CheColors.textDim)),
         ),
         for (final v in _voices)
           ListTile(

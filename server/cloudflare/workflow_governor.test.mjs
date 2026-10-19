@@ -137,3 +137,21 @@ test('context-rot defense preserves the tail of long recent owner turns', () => 
   assert.equal(out.turns[0].content, long, 'recent owner turns are not clipped at 2,000 characters');
   assert.match(out.turns[0].content, /FINAL CONSTRAINT: never deploy without review\.$/);
 });
+
+test('a long pinned owner sentence keeps its late "don\'t" and the reason it was pinned, with the cut marked (issue #345)', () => {
+  const late = "but don't email Mark until Friday";
+  const sentence = 'Remember that the launch review moved, ' + 'and the notes for the whole team go in the shared folder, '.repeat(8) + late;
+  assert.ok(sentence.length > 300);
+  const history = [
+    { role: 'user', content: sentence },
+    ...Array.from({ length: 12 }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', content: `recent ${i}` })),
+  ];
+  const out = condenseHistory(history, { keep: 12 });
+  const line = out.condensed.split('\n').find((l) => l.startsWith('Owner: '));
+  assert.match(line, /^Owner: Remember that the launch review moved,/);
+  assert.ok(line.endsWith(late), line);
+  assert.match(line, / … \[\d+ characters not shown\] … /);
+  // Older pinned lines that do not fit are counted, not dropped silently.
+  const huge = Array.from({ length: 60 }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', content: `Never do thing number ${i}.` }));
+  assert.match(condenseHistory(huge, { keep: 4, maxCondensedChars: 300 }).condensed, /; \d+ older lines not shown\)/);
+});

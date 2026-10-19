@@ -30,6 +30,7 @@ function storageFor(saved) {
     get: async (key) => (saved.has(key) ? structuredClone(saved.get(key)) : undefined),
     put: async (key, value) => saved.set(key, structuredClone(value)),
     delete: async (key) => saved.delete(key),
+    deleteAll: async () => saved.clear(),
     list: async ({ prefix = '' } = {}) => new Map([...saved.entries()].filter(([k]) => k.startsWith(prefix))),
     setAlarm: async () => {},
     deleteAlarm: async () => {},
@@ -362,7 +363,7 @@ test('deploy check: the live memory probe runs the real chat route in an isolate
   env.CHE_STATE = { getByName: (name) => {
     if (!objects.has(name)) {
       stores.set(name, new Map());
-      objects.set(name, new CheState({ storage: storageFor(stores.get(name)), waitUntil: (p) => waits.push(p) }, env));
+      objects.set(name, new CheState({ id: { name }, storage: storageFor(stores.get(name)), waitUntil: (p) => waits.push(p) }, env));
     }
     return objects.get(name);
   } };
@@ -394,6 +395,19 @@ test('deploy check: the live memory probe runs the real chat route in an isolate
     assert.deepEqual(vectorWrites.filter((url) => /che_memory\?on_conflict/.test(url)), [], 'no test conversation reaches shared vector memory');
     const probe = stores.get('memory-truth-probe').get('che');
     assert.equal(Object.keys(probe.devices || {}).length, 0, 'the test device is revoked afterwards');
+    // The reset clears only the test CHE: the owner's object refuses it even with this deploy's token.
+    stores.get('memory-truth-probe').set('leftover', 1);
+    const reset = (name) => objects.get(name).fetch(new Request('https://che.internal/api/memory-probe/reset', {
+      method: 'POST', headers: { 'X-CHE-Memory-Probe': 'a'.repeat(64) },
+    }));
+    assert.equal((await reset('owner')).status, 404);
+    assert.equal(JSON.stringify([...stores.get('owner').entries()]), ownerBefore, 'the owner object is untouched by a reset');
+    const unnamed = new CheState({ storage: storageFor(new Map([['che', { kept: true }]])) }, env);
+    assert.equal((await unnamed.fetch(new Request('https://che.internal/api/memory-probe/reset', {
+      method: 'POST', headers: { 'X-CHE-Memory-Probe': 'a'.repeat(64) },
+    }))).status, 404, 'an object with no known name refuses');
+    assert.equal((await reset('memory-truth-probe')).status, 200);
+    assert.equal(stores.get('memory-truth-probe').size, 0, 'the test CHE is cleared');
   } finally {
     globalThis.fetch = original;
   }

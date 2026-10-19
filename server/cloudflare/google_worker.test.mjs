@@ -4,6 +4,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
+import { PENDING_GOOGLE_ACTION_KEY } from './google_services.js';
 import { sealToken } from './youtube_connection.js';
 
 globalThis.fetch = async (input) => { throw new TypeError(`fetch failed (offline test: ${new URL(String(input?.url || input)).host})`); };
@@ -183,6 +184,21 @@ test('a yes after a held email runs the send for real, and a failure is reported
   assert.equal(yes.done.source, 'che_google');
   assert.equal(yes.modelCalls, 0);
   assert.match(yes.raw, /The email was not sent, sir\. Google did not answer Gmail\./, 'the offline send is reported as not sent');
+});
+
+test('a Knowledge Atlas lesson between a held email and a yes drops the hold, so the yes sends nothing (PR #357 review)', async () => {
+  const me = await owner();
+  const grant = await liveGrant();
+  me.setData((d) => { d.google_connections = { gmail: grant }; });
+  const held = await me.say('send an email to bob@example.com saying the report is ready');
+  assert.equal(held.done.held, true);
+  const lesson = await me.say('teach me recursion');
+  assert.equal(lesson.done.source, 'che_knowledge_atlas');
+  assert.equal(lesson.modelCalls, 0);
+  assert.equal(me.saved.get(PENDING_GOOGLE_ACTION_KEY), null, 'the lesson replaced the held email');
+  const yes = await me.say('yes');
+  assert.notEqual(yes.done.source, 'che_google', 'a later yes releases nothing');
+  assert.doesNotMatch(yes.raw, /email|bob@example\.com/i);
 });
 
 test('FundYourEdge is reported as not connected, nothing is checked, and no order is prepared', async () => {

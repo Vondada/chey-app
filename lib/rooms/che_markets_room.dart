@@ -16,6 +16,8 @@ import '../che_ui/che_rooms.dart';
 import '../che_ui/che_theme.dart';
 import '../widgets/che_native_scene_world.dart';
 import 'che_live_chart.dart';
+import 'che_live_paper.dart';
+import 'che_trading_connections.dart';
 
 class CheQuote {
   const CheQuote({required this.symbol, required this.name, this.price, this.changePct, required this.status, this.note});
@@ -221,6 +223,16 @@ class _CheMarketsRoomState extends State<CheMarketsRoom> {
                   client: widget.client,
                   height: math.max(320.0, MediaQuery.sizeOf(context).height * 0.55),
                 ),
+              ),
+              // CHE's forward paper trading, from its records (owner, 2026-10-18).
+              Padding(
+                padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.md, CheSpace.gutter, 0),
+                child: CheLivePaperPanel(baseUrl: widget.baseUrl, headers: widget.headers, onAsk: widget.onAsk, client: widget.client),
+              ),
+              // Every broker connection as its own system reports it (issue #344).
+              Padding(
+                padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.md, CheSpace.gutter, 0),
+                child: CheTradingConnectionsPanel(baseUrl: widget.baseUrl, headers: widget.headers, onAsk: widget.onAsk, client: widget.client),
               ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(

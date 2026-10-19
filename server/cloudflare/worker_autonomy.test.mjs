@@ -2379,8 +2379,12 @@ test('trading desk through chat: switch modes, connect, alerts said first, take 
   const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', CHE_TRADOVATE_OAUTH_CLIENT_ID: '123', CHE_TRADOVATE_OAUTH_CLIENT_SECRET: 'sec' };
   const { chat } = await pairedChat(env, saved);
   const say = async (m) => replyFromNdjson(await (await chat(m)).text());
-  assert.match(await say('CHE, switch to live trading'), /Switched from paper trading.*to your NinjaTrader LIVE account, real money.*take the trade.*not connected yet/s);
+  // Going live takes two steps: the first says the broker, account and limits and changes nothing.
+  assert.match(await say('CHE, switch to live trading'), /^Before I switch to LIVE, sir: that is real money on Tradovate, no live account chosen yet\. Your live limits: not set.*not connected yet.*approve that exact order.*say "confirm live trading" within two minutes\. Nothing changed yet\.$/s);
+  assert.equal(saved.get('trading_desk').mode, 'paper', 'asking to go live does not switch');
+  assert.match(await say('confirm live trading'), /Switched from paper trading.*to your NinjaTrader LIVE account, real money.*take the trade.*not connected yet/s);
   assert.equal(saved.get('trading_desk').mode, 'live');
+  assert.match(await say('confirm live trading'), /no live switch waiting to be confirmed/, 'a second confirm without a new request changes nothing');
   const connect = await say('connect my NinjaTrader account');
   assert.match(connect, /https:\/\/trader\.tradovate\.com\/oauth\?/);
   assert.match(connect, /password goes only to Tradovate/);
@@ -3564,5 +3568,174 @@ test('messages for other AIs about a coding run go to the mailbox and consult ro
     }
   } finally {
     restore();
+  }
+});
+
+test('"what are you doing" answers from the job records, starts nothing and calls no model', async () => {
+  const saved = new Map();
+  let modelCalls = 0;
+  const env = { CHE_PAIR_CODE: '123456', CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r', AI: { run: async () => { modelCalls++; return { response: 'I am researching three things.' }; } } };
+  const { chat } = await pairedChat(env, saved);
+  const textOf = async (res) => (await res.text()).trim().split('\n').map((line) => JSON.parse(line)).filter((line) => line.type === 'delta').map((line) => line.delta).join('');
+  const data = saved.get('che');
+  const now = new Date().toISOString();
+  data.jobs = [{ id: 'job-verify01', kind: 'verify_app_build', title: 'Verify iPhone build', status: 'running', created_at: now, updated_at: now }];
+  saved.set('che', data);
+  const before = modelCalls;
+  const reply = await textOf(await chat('What are you doing?'));
+  assert.match(reply, /Running or queued: Verify iPhone build \(running\)\./);
+  assert.doesNotMatch(reply, /researching/);
+  assert.equal(modelCalls, before, 'no model call');
+  assert.equal(saved.get('che').jobs.length, 1, 'nothing started');
+});
+
+test('"what are you doing" about the screen or an attachment is not answered from the job queue (review of #336)', async () => {
+  const saved = new Map();
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => ({ response: 'That chart shows the S&P falling.' }) } };
+  const { chat } = await pairedChat(env, saved);
+  const sourceOf = async (res) => (await res.text()).trim().split('\n').map((line) => JSON.parse(line)).find((line) => line.type === 'done')?.source || 'model';
+  assert.equal(await sourceOf(await chat('What are you doing?')), 'che_activity_status');
+  assert.notEqual(await sourceOf(await chat("What's happening?", { screen_context: { screen: 'Trading', summary: 'live chart' } })), 'che_activity_status');
+  assert.notEqual(await sourceOf(await chat('What are you doing?', { screen_context: { screen: 'Trading', summary: 'live chart' } })), 'che_activity_status');
+  assert.notEqual(await sourceOf(await chat('What are you doing?', { attachment: { type: 'image', name: 'photo.jpg', data: 'aGk=' } })), 'che_activity_status');
+});
+
+test('trading connections: one view by voice and over HTTP, Alpaca paper keys never echoed, owner only', async () => {
+  const saved = new Map();
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1' };
+  const { chat, api } = await pairedChat(env, saved);
+  const say = async (m) => replyFromNdjson(await (await chat(m)).text());
+  assert.match(await say('what are my trading connections'), /^Your trading connections, sir: 1, CHE Paper: (?:on|off).* 2, Tradovate \(NinjaTrader\): not set up\. 3, Alpaca \(stock paper\): not set up\. 4, FundYourEdge \(Rithmic\): not supported\. Trading mode: PAPER\. Live orders are off\.$/);
+  assert.match(await say('connect my Alpaca account'), /paper key; its ID starts with PK.*Never say or type them in chat.*refuses live keys/);
+  const view = await (await worker.fetch(new Request('https://che.example/api/trading/connections'), env)).json();
+  assert.equal(view.cards, undefined, 'no view without the paired owner');
+  const original = globalThis.fetch;
+  const hosts = [];
+  // Only Alpaca's hosts are recorded: background work from earlier turns may call other services.
+  globalThis.fetch = async (url) => {
+    const origin = new URL(String(url)).origin;
+    if (/alpaca/i.test(origin)) hosts.push(origin);
+    else return new Response('{}', { status: 404 });
+    return new Response(JSON.stringify({ account_number: 'PA1234567', status: 'ACTIVE', currency: 'USD', cash: '100000', buying_power: '200000', equity: '100000', options_approved_level: 2 }), { status: 200 });
+  };
+  try {
+    const refused = await (await api('/api/trading/alpaca/keys', { key_id: 'AKLIVEKEY1234567890', secret: 's'.repeat(40) })).json();
+    assert.match(refused.detail, /LIVE key/);
+    assert.deepEqual(hosts, [], 'a live-shaped key never reaches Alpaca');
+    const ok = await (await api('/api/trading/alpaca/keys', { key_id: 'PKPAPERKEY1234567890', secret: 'p'.repeat(40) })).json();
+    assert.equal(ok.ok, true);
+    assert.equal(ok.key_last4, '7890');
+    assert.doesNotMatch(JSON.stringify(ok), /PKPAPERKEY|pppppppp/, 'the saved pair is never sent back');
+    assert.match(await say('broker status'), /3, Alpaca \(stock paper\): verified\./);
+    assert.ok(hosts.length >= 2 && hosts.every((h) => h === 'https://paper-api.alpaca.markets'), hosts.join());
+    const keep = await (await api('/api/trading/alpaca/keys', { action: 'remove' })).json();
+    assert.match(keep.detail, /needs your confirmation/);
+    assert.match(await say('broker status'), /Alpaca \(stock paper\): verified/, 'keys stay until the owner confirms removal');
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('an Alpaca key said in chat is refused and never kept anywhere; a Worker secret pair is not silently overridden (review of #348)', async () => {
+  const saved = new Map();
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => { throw new Error('no model may see a key'); } } };
+  // This harness runs the work CHE does after each reply (memory, command history), so the test
+  // proves the key reaches none of it.
+  const waits = [];
+  const state = new CheState({ storage: storageFor(saved), waitUntil: (p) => waits.push(p) }, env);
+  env.CHE_STATE = { getByName: () => state };
+  const send = (path, body, token = '') => worker.fetch(new Request(`https://che.example${path}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body),
+  }), env);
+  const token = (await (await send('/api/pair', { code: '123456' })).json()).device_token;
+  const chat = (message) => send('/api/chat', { message }, token);
+  const api = (path, body) => send(path, body, token);
+  const say = async (m) => { const r = replyFromNdjson(await (await chat(m)).text()); await Promise.allSettled(waits); return r; };
+  assert.ok((await say('remember that my favourite colour is teal')).length > 0);
+  assert.match(JSON.stringify([...saved.entries()]), /teal/, 'the after-reply work does run in this harness');
+  for (const message of ['connect alpaca with key PKTESTKEY1234567890XY and 9fK2abcdefghijklmnopqS3', 'remember my alpaca key is PKTESTKEY1234567890XY']) {
+    assert.match(await say(message), /^I did not keep that, sir: it looks like an API key, and keys never go in chat\..*regenerate it where it came from\. A new Alpaca paper key goes in the Trading Room/);
+  }
+  // A key inside a slash command is refused too, and the command's input is not kept.
+  assert.match(await say('/remember my key PKTESTKEY1234567890XY'), /^I did not keep that, sir/);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.doesNotMatch(JSON.stringify([...saved.entries()]), /PKTESTKEY|9fK2abc/, 'the key is in no memory, cache or record');
+  env.CHE_ALPACA_PAPER_KEY_ID = 'PKWORKERSECRET123456';
+  env.CHE_ALPACA_PAPER_SECRET = 's'.repeat(40);
+  const blocked = await api('/api/trading/alpaca/keys', { key_id: 'PKPAPERKEY1234567890', secret: 'p'.repeat(40) });
+  assert.equal(blocked.status, 409);
+  assert.match((await blocked.json()).detail, /already set as Worker secrets.*nothing was saved/);
+  assert.match((await (await api('/api/trading/alpaca/keys', { action: 'remove', confirm: true })).json()).detail, /still uses the Alpaca paper keys set as Worker secrets/);
+});
+
+test('a chat message too long to take is refused whole, saying so; nothing runs (issue #345)', async () => {
+  const saved = new Map();
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => { throw new Error('no model may run'); } } };
+  const { chat } = await pairedChat(env, saved);
+  const long = 'Send the draft to Mike. '.repeat(700) + 'But do not send the email yet.';
+  assert.ok(long.length > 16000);
+  const res = await chat(long);
+  assert.equal(res.status, 413);
+  const body = await res.json();
+  assert.equal(body.category, 'message_too_long');
+  assert.match(body.detail, /^That message is [\d,]+ characters, sir, more than the 16,000 I can take at once, so I did nothing with it\. Please send it in parts\.$/);
+  assert.ok(body.detail.length <= 280, 'the phone shows it in full');
+  const ok = await chat('Send the draft to Mike, but do not send the email yet.');
+  assert.equal(ok.status, 200, 'an ordinary message still goes through');
+});
+
+test('when every reachable engine is too small for the message, CHE says so: no "on it", no queued job (review of #349)', async () => {
+  const saved = new Map();
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', GROQ_API_KEY: 'g' };
+  const original = globalThis.fetch;
+  const engines = [];
+  // Only chat requests count (the router may list Groq's models, which sends no message).
+  globalThis.fetch = async (url) => { if (/groq.*\/chat\/completions/.test(String(url))) engines.push(String(url)); return new Response('{}', { status: 404 }); };
+  try {
+    const { chat } = await pairedChat(env, saved);
+    const long = 'Please summarize these meeting notes for me. ' + 'The team reviewed the quarter and agreed on next steps. '.repeat(140) + 'But do not email anyone yet.';
+    assert.ok(long.length > 7000 && long.length < 16000);
+    const res = await chat(long);
+    assert.equal(res.status, 413);
+    const body = await res.json();
+    assert.equal(body.category, 'message_too_long');
+    assert.equal(body.retryable, false);
+    assert.match(body.detail, /^That message is too long for the AI I can reach right now, sir, so I did nothing with it\. Please send it in parts\.$/);
+    assert.doesNotMatch(body.detail, /engine|provider|model/i, 'the phone shows it, not a generic line');
+    assert.deepEqual(engines, [], 'the 8,000-character engine was never sent a cut message');
+    assert.doesNotMatch(JSON.stringify(saved.get('che')?.jobs || []), /summarize these meeting notes/, 'nothing was queued to retry');
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('a correction re-runs the whole previous turn, its last sentence included (review of #349)', async () => {
+  const saved = new Map();
+  const seen = [];
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async (_m, input) => { if (input?.messages) seen.push(String(input.messages.at(-1).content)); return { response: 'Done, sir.' }; } } };
+  const { chat } = await pairedChat(env, saved);
+  const prev = 'Write up the quarterly notes for Mark. ' + 'The numbers look fine and the team did well this quarter. '.repeat(40) + 'But do not email Mark until Friday.';
+  assert.ok(prev.length > 2000);
+  const res = await chat('No, I said Mike not Mark', { history: [{ role: 'user', content: prev }, { role: 'assistant', content: 'Okay sir.' }] });
+  await res.text();
+  const rerun = seen.find((s) => s.includes('quarterly notes')) || '';
+  assert.ok(rerun.length > 2000, `the re-run carried ${rerun.length} characters`);
+  assert.match(rerun, /But do not email Mike until Friday\.$/, 'the late "do not send" survived, corrected');
+});
+
+test('a real outage mixed with size skips is still the busy path, never "too long" (review of #349)', async () => {
+  const saved = new Map();
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', GROQ_API_KEY: 'g', GEMINI_API_KEY: 'm' };
+  const original = globalThis.fetch;
+  globalThis.fetch = async (url) => (/generativelanguage|gemini/.test(String(url)) ? new Response('{"error":"internal"}', { status: 500 }) : new Response('{}', { status: 404 }));
+  try {
+    const { chat } = await pairedChat(env, saved);
+    const long = 'Please summarize these meeting notes for me. ' + 'The team reviewed the quarter and agreed on next steps. '.repeat(140) + 'But do not email anyone yet.';
+    const res = await chat(long);
+    const text = await res.text();
+    assert.notEqual(res.status, 413, 'Gemini could take it once it recovers: not a reason to split the message');
+    assert.doesNotMatch(text, /too long/);
+  } finally {
+    globalThis.fetch = original;
   }
 });

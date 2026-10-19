@@ -3,7 +3,7 @@
 // recent turns, and the turn is sorted into a kind of request. It runs before
 // the owner gates and the reply model. It never approves anything: money and
 // delete holds still run on the words it hands on (owner_action_gate.js).
-import { classifyOwnerActions } from './owner_action_gate.js';
+import { classifyOwnerActions, prohibitedText } from './owner_action_gate.js';
 
 // Names CHE is likely to be asked about. Fuzzy matching only looks at these.
 export const KNOWN_TERMS = [
@@ -77,6 +77,71 @@ export function clip(text, max) {
   const t = String(text || '').replace(/\s+/g, ' ').trim();
   if (t.length <= max) return t;
   return t.slice(0, max).replace(/\s+\S*$/, '').trim();
+}
+
+// What decides whether CHE may act: a "don't" or a condition. Never left out.
+const LIMIT_RE = /\b(?:don['’]?t|do\s+not|never|not|no|without|unless|if|until|till|except|only)\b/i;
+// What bounds a request: a date or time, a number or an amount. Left out last.
+const DETAIL_RE = /\b(?:before|after|today|tonight|tomorrow|(?:mon|tues|wednes|thurs|fri|satur|sun)days?|weekend|(?:jan|febr)uary|march|april|june|july|august|september|october|november|december)\b|\d|[$€£%]/i;
+// A clause ends at punctuation, or where a joining word or a "don't" opens the next one.
+const CLAUSE_BREAK = /(?<=[,;:.!?])\s+|\s+(?=(?:but|and|or|so|unless|except|if|because|when|while|though|although|don['’]?t|do\s+not|never)\b)/i;
+
+// Bounds owner text without losing what limits it (issue #345). The start says what he wants
+// and the end often says "but don't": both stay, and so does every clause with a "don't" or a
+// condition, even past `max` (clauses matching `also` too). Dates and amounts stay unless even
+// they do not fit. What is left out is marked with its size, never dropped silently.
+export function clipKeepingLimits(text, max, also = null) {
+  const t = String(text || '').replace(/\s+/g, ' ').trim();
+  if (t.length <= max) return t;
+  const clauses = [];
+  let at = 0;
+  for (const piece of t.split(CLAUSE_BREAK)) {
+    const prev = clauses[clauses.length - 1];
+    // A lone "but" or "and" belongs to the clause it opens.
+    if (prev && !t.slice(prev[0], prev[1]).includes(' ')) prev[1] = at + piece.length;
+    else clauses.push([at, at + piece.length]);
+    at += piece.length + 1;
+  }
+  const last = clauses.length - 1;
+  // 2: a limit, always kept; 1: a date or an amount; 0: anything else.
+  const rank = clauses.map(([start, end]) => {
+    const part = t.slice(start, end);
+    if (LIMIT_RE.test(part) || (also && also.test(part))) return 2;
+    return DETAIL_RE.test(part) ? 1 : 0;
+  });
+  // The start and the end always stay. Other clauses nearest the end go first, so the start
+  // still reads as he said it; dates and amounts go only if the rest still does not fit.
+  let size = t.length;
+  const shown = clauses.map(() => true);
+  for (const drop of [0, 1]) {
+    for (let i = last - 1; i > 0 && size > max; i--) {
+      if (rank[i] !== drop) continue;
+      shown[i] = false;
+      size -= clauses[i][1] - clauses[i][0] + 1;
+    }
+  }
+  const ranges = clauses.filter((_, i) => shown[i]).map(([start, end]) => [start, end]);
+  if (size > max) {
+    // Still too long: a long start keeps its first words and a long end its last ones.
+    const room = Math.max(40, Math.floor((max - 40) / 2));
+    if (ranges.length === 1) ranges.push([...ranges[0]]);
+    const head = ranges[0];
+    const tail = ranges[ranges.length - 1];
+    if (head[1] - head[0] > room) head[1] = head[0] + clip(t.slice(head[0], head[1]), room).length;
+    // A long end that limits the request keeps its first words, where its "don't" is ("but never
+    // remove the ones I starred" must not become "remove the ones I starred"); any other end keeps its last.
+    const tailIndex = clauses.findIndex(([start]) => start === tail[0]);
+    if (tail[1] - tail[0] > room && rank[tailIndex] === 2) tail[1] = tail[0] + clip(t.slice(tail[0], tail[1]), room).length;
+    else if (tail[1] - tail[0] > room) tail[0] = tail[1] - t.slice(tail[1] - room, tail[1]).replace(/^\S*\s+/, '').length;
+  }
+  let out = t.slice(ranges[0][0], ranges[0][1]);
+  for (let i = 1; i < ranges.length; i++) {
+    const gap = ranges[i][0] - ranges[i - 1][1];
+    out += gap <= 1 ? ' ' : ` … [${gap - 2} characters not shown] … `;
+    out += t.slice(ranges[i][0], ranges[i][1]);
+  }
+  const rest = t.length - ranges[ranges.length - 1][1];
+  return rest > 0 ? `${out} … [${rest} characters not shown]` : out;
 }
 
 function editDistance(a, b) {
@@ -218,11 +283,14 @@ export function classifyOwnerTurn(text, { lastUser = '', hasHeldAction = false }
   return turn('unclear', { confidence: lastUser ? 0.4 : 0.2 });
 }
 
+// The most the chat takes in one message, so any turn the owner sent is read whole here.
+const TURN_MAX = 16000;
+
 function recentTurns(history) {
   const list = Array.isArray(history) ? history.slice(-8) : [];
   return list
-    .map((item) => ({ role: String(item?.role || ''), text: String(item?.content || item?.text || '').slice(0, 2000) }))
-    .filter((item) => item.text.trim());
+    .map((item) => ({ role: String(item?.role || ''), text: clipKeepingLimits(item?.content || item?.text || '', TURN_MAX) }))
+    .filter((item) => item.text);
 }
 
 // The most recent owner turn of the wanted kinds, skipping references and yes/no.
@@ -233,16 +301,18 @@ function findUserTurn(recent, current, kinds) {
     if (item.role !== 'user') continue;
     if (normalizeForKind(item.text) === now) continue;
     const kind = classifyOwnerTurn(item.text);
-    if (kinds.has(kind.kind) && !kind.reference) return clip(item.text, 200);
+    // Whole: "that one" acts on the earlier request, so its last "don't" must come along.
+    if (kinds.has(kind.kind) && !kind.reference) return item.text;
   }
   return '';
 }
 
-// "Do you want me to X? Say yes" from CHE's last reply: X is the pending meaning.
+// "Do you want me to X? Say yes" from CHE's last reply: X is the pending meaning. X is
+// asked whole, so it can be long; it runs to the first question mark.
 function pendingMeaning(recent) {
   for (let i = recent.length - 1; i >= 0; i--) {
     if (recent[i].role !== 'assistant') continue;
-    const m = /do you want me to (.{3,140}?)\? say yes/i.exec(recent[i].text);
+    const m = /do you want me to ([^?]{3,}?)\? say yes/i.exec(recent[i].text);
     return m ? m[1].trim() : '';
   }
   return '';
@@ -309,7 +379,7 @@ export function parseReading(raw) {
   if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) return null;
   return {
     intent,
-    meaning: clip(String(data?.meaning || ''), 400),
+    meaning: clipKeepingLimits(String(data?.meaning || ''), 400),
     confidence,
     clarify: clip(String(data?.clarify || ''), 200),
   };
@@ -335,13 +405,16 @@ export function asksAboutScreen(text) {
 // Asks the reply model only for turns the rules could not read. Cached and capped,
 // and a failure simply means no reading.
 export async function interpretWithModel({ runText, text, history = [], timeoutMs = 4000, now = Date.now() }) {
-  const recent = recentTurns(history).slice(-3).map((item) => ({ role: item.role, text: clip(item.text, 160) }));
+  // The reading model sees at most 600 characters; a longer turn would be read from its start
+  // only, missing a late "don't" (issue #345). It gets no reading, and the full text goes on.
+  if (String(text || '').length > 600) return null;
+  const recent = recentTurns(history).slice(-3).map((item) => ({ role: item.role, text: clipKeepingLimits(item.text, 160) }));
   const key = `${normalizeForKind(text)}|${recent.map((item) => item.text).join('|')}`;
   const cached = readingCache.get(key);
   if (cached && now - cached.at < READING_TTL_MS) return cached.reading;
   const messages = [
     { role: 'system', content: READING_PROMPT },
-    { role: 'user', content: JSON.stringify({ recent, heard: String(text || '').slice(0, 600) }) },
+    { role: 'user', content: JSON.stringify({ recent, heard: String(text || '') }) },
   ];
   let raw;
   try {
@@ -357,6 +430,11 @@ export async function interpretWithModel({ runText, text, history = [], timeoutM
   return reading;
 }
 
+// Lowercase words, with "do not" and "don't" as one word, so a reworded limit still counts.
+function wordSet(text) {
+  return new Set(String(text || '').toLowerCase().replace(/\bdo\s+not\b|\bdon['’]?t\b/g, 'not').match(/[a-z0-9$']+/g) || []);
+}
+
 // Combines a model reading with the rule reading. The model can add a likely meaning
 // or ask a question; it can never approve or mark a turn as a yes.
 export function applyModelReading(interpretation, reading) {
@@ -365,10 +443,16 @@ export function applyModelReading(interpretation, reading) {
   if (COMPLETION_RE.test(reading.meaning) || COMPLETION_RE.test(reading.clarify)) return interpretation;
   const meaningConsequential = classifyOwnerActions(reading.meaning).length > 0 || PUBLISH_RE.test(normalizeForKind(reading.meaning));
   if (meaningConsequential) {
+    // The question names the whole meaning, plus any "don't" of the owner's that the reading
+    // left out, so a yes to it carries his limit (issue #345).
+    const meaning = reading.meaning.replace(/[.!?]+$/, '');
+    const said = wordSet(meaning);
+    const missed = prohibitedText(interpretation.text).split('; ')
+      .filter((limit) => limit && ![...wordSet(limit)].every((word) => said.has(word)));
     return {
       ...interpretation,
       consequential: true,
-      clarify: `Just to be sure, do you want me to ${clip(reading.meaning, 120)}? Say yes, or tell me what you mean.`,
+      clarify: `Just to be sure, do you want me to ${meaning}${missed.length ? `, but ${missed.join(', and ')}` : ''}? Say yes, or tell me what you mean.`,
     };
   }
   if (reading.confidence < 0.5) {

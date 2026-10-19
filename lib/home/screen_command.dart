@@ -18,6 +18,7 @@ enum ScreenOp {
   openConnections,
   changeVoice,
   naturalVoice,
+  openAtlas,
 }
 
 class ScreenCommand {
@@ -70,6 +71,12 @@ ScreenCommand? parseScreenCommand(String raw) {
     r'^(?:show(?: me)?|check)\s+(?:my\s+)?bank\s+(?:transactions?|balance|accounts?)$',
   ).hasMatch(t)) {
     return const ScreenCommand(ScreenOp.openConnections);
+  }
+
+  // The Knowledge Atlas page (issue #346). "Atlas" alone is the Office agent, so the page is
+  // always named in full.
+  if (RegExp(r"^(?:open|show(?: me)?|go to|take me to|bring up)\s+(?:the\s+|my\s+|your\s+|che's\s+)?knowledge atlas(?:\s+(?:page|screen|cards))?$").hasMatch(t)) {
+    return const ScreenCommand(ScreenOp.openAtlas);
   }
 
   // "open commands", "show me the command center", "command library".
