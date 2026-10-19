@@ -67,6 +67,36 @@ test('symbols and voice intents', () => {
   assert.equal(tradingIntent('analyze my CV for typos'), null);
 });
 
+// Speech recognition drops punctuation and often the apostrophe.
+const spoken = (text) => text.replace(/[.,?!]/g, '').replace(/'/g, '').replace(/\s+/g, ' ').toLowerCase();
+
+test('issue #350: NQ and MNQ named on their own are a chart read of NQ prices, never the bitcoin default', () => {
+  for (const q of ['Analyze MNQ.', "What's MNQ doing?", 'MNQ structure', 'Analyze NQ', "What's the trend on NQ?", 'How is NQ looking?',
+    'Break down MNQ for me.', 'Analyze MNQ=F', 'What is NQ=F doing?', "Analyze MNQ. Don't place any orders.", "CHE, what's MNQ doing in the last hour?"]) {
+    for (const said of [q, spoken(q)]) {
+      const intent = tradingIntent(said);
+      assert.equal(intent?.kind, 'analyze', said);
+      assert.equal(resolveSymbol(intent.symbol)?.symbol, 'nq.f', `${said} → ${intent.symbol}`);
+    }
+  }
+  // The Yahoo names the paper feed uses (market_feed.js) are the same NQ prices here.
+  for (const name of ['MNQ=F', 'NQ=F', 'mnq=f']) assert.equal(resolveSymbol(name)?.symbol, 'nq.f', name);
+  assert.equal(resolveSymbol(tradingIntent('backtest MNQ=F').symbol)?.symbol, 'nq.f');
+  // Orders belong to the desk (fundyouredge.js, trading_desk.js): never a chart read.
+  for (const q of ['Buy one MNQ.', 'Analyze MNQ and buy one contract if it looks bullish.', 'Sell two NQ at market', "Don't analyze it, just place an MNQ buy order.",
+    'Short MNQ here', 'Enter long NQ now', 'Take the trade on MNQ', 'Analyze MNQ structure and go long if it holds']) {
+    for (const said of [q, spoken(q)]) assert.equal(tradingIntent(said), null, said);
+  }
+  // Everything else keeps its current route.
+  assert.deepEqual(tradingIntent('Analyze the NQ chart'), { kind: 'analyze', symbol: 'NQ' });
+  assert.deepEqual(tradingIntent('find the swing highs and entry points on ETH'), { kind: 'analyze', symbol: 'ETH' });
+  assert.deepEqual(tradingIntent('backtest bitcoin'), { kind: 'backtest', symbol: 'bitcoin' });
+  assert.equal(tradingIntent('How are my NQ paper trades doing?').kind, 'book');
+  for (const q of ['What is the price of NQ?', 'What are my trading connections?', 'What are you doing tonight?', 'Is the MNQ app structure in the code review?']) {
+    assert.equal(tradingIntent(q), null, q);
+  }
+});
+
 test('paper trading closes, learns and journals without real orders', async () => {
   const m = new Map();
   const storage = { get: async (k) => m.get(k), put: async (k, v) => m.set(k, v) };

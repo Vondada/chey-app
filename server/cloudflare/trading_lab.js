@@ -16,6 +16,8 @@
 //     expectancy in R, max drawdown)
 //   - paper-trades the best strategy per symbol, journals every trade, and
 //     keeps learning which strategy actually works on which market.
+import { withoutProhibitions } from './owner_action_gate.js';
+import { ORDER_ASK } from './trading_live_chat.js';
 
 const UA = { 'User-Agent': 'CHE-trading-lab/1.0', Accept: '*/*' };
 const cache = new Map();
@@ -43,6 +45,8 @@ const NAMES = {
   // so MES uses ES prices and MNQ uses NQ prices; only the dollars per point differ.
   es: 'es.f', mes: 'es.f', 'e-mini s&p': 'es.f', 'micro s&p': 'es.f',
   nq: 'nq.f', mnq: 'nq.f', 'e-mini nasdaq': 'nq.f', 'micro nasdaq': 'nq.f',
+  // Yahoo's names for the same front months, as the paper feed (market_feed.js) reads them.
+  'nq=f': 'nq.f', 'mnq=f': 'nq.f',
 };
 
 /// Dollars per one point, per contract, before commissions and slippage.
@@ -647,19 +651,31 @@ export function speakBook(book) {
 // ─── Voice intents ────────────────────────────────────────────────────────
 
 const SYMBOL_HINT = /\b(?:on|for|of|in|trade|scan|backtest|analy[sz]e|watch)\s+(?:the\s+)?([a-z^&][a-z0-9.^& ]{0,14}?)(?=[\s?.!,]|$)/i;
+// "MNQ", "NQ", "MNQ=F": the Nasdaq futures by name (issue #350). Not "MNQZ6" or a longer word.
+const NASDAQ_FUTURES = /\b(m?nq(?:\s?=\s?f)?)(?![\w=])/i;
+// "Analyze MNQ", "what's MNQ doing", "MNQ structure", "how is NQ looking": a read of the market itself.
+const FUTURES_READ = /\b(?:analy[sz]e|analysis|structure|trend(?:ing)?|price\s+action|break\s+down)\b|\b(?:what|how)(?:'?s|\s+is)\s+(?:the\s+)?m?nq\b[\s\S]{0,12}\b(?:doing|looking|moving)\b/i;
 
 export function tradingIntent(message) {
-  const text = String(message || '').trim();
+  const text = String(message || '').trim().replace(/[’']/g, "'");
   if (/\bhow(?:'s| is| are)\b[\s\S]{0,20}\b(?:trades?|trading|paper)\b|\b(?:trading|paper) (?:report|summary|journal)\b/i.test(text)) return { kind: 'book' };
+  const futures = NASDAQ_FUTURES.exec(text)?.[1].replace(/\s/g, '') || '';
   const pick = () => {
     const m = SYMBOL_HINT.exec(text.replace(/\b(?:swing (?:highs?|lows?)|entry points?|entries|candles?|patterns?|the chart)\b/gi, ' '));
-    return m ? m[1].trim() : '';
+    const hinted = m ? m[1].trim() : '';
+    // "What's MNQ doing in the last hour": a named future wins over a stray word ("last"), not over a known market.
+    return futures && !NAMES[hinted.toLowerCase()] ? futures : hinted;
   };
   if (/\b(?:what (?:have|did) you (?:learn|learned)|trading (?:skills?|lessons?|learning)|learn(?:ed|ing)? (?:about )?trading|new (?:trading )?(?:skills?|strateg(?:y|ies)))\b/i.test(text) && /\b(?:trad|market|futures|stocks?|crypto)/i.test(text)) return { kind: 'learning' };
   if (/\bbacktest/i.test(text) && !/\b(?:code|app|feature|function)\b/i.test(text)) return { kind: 'backtest', symbol: pick() || 'BTCUSDT' };
   if (/\b(?:paper trade|watch)\b[\s\S]{0,30}/i.test(text) && /\b(?:paper|trade|market)\b/i.test(text)) return { kind: 'watch', symbol: pick() };
   if (/\b(?:swing (?:highs?|lows?)|entry points?|entries|candlestick|scan|analy[sz]e)\b/i.test(text) && /\b(?:chart|market|stock|crypto|bitcoin|btc|eth|ethereum|solana|s&p|nasdaq|dow|swing|entry|entries|candlestick|ticker|price action)\b/i.test(text)) {
     return { kind: 'analyze', symbol: pick() || 'BTCUSDT' };
+  }
+  // Journal and feed questions about MNQ are answered earlier, by trading_live_chat.js liveIntent; an
+  // order beside the read ("analyze MNQ and buy one") is the desk's.
+  if (futures && FUTURES_READ.test(text) && !/\b(?:code|app|feature|function)\b/i.test(text) && !ORDER_ASK.test(withoutProhibitions(text))) {
+    return { kind: 'analyze', symbol: pick() };
   }
   return null;
 }

@@ -11,6 +11,7 @@ import {
 } from './command_catalog.js';
 import { advanceObjectives, approveNode, createObjective, retryNode } from './objective_graph.js';
 import { classifyOwnerActions } from './owner_action_gate.js';
+import { deskIntent } from './trading_desk.js';
 
 // Offline, like CI's networked runner and this sandbox alike.
 globalThis.fetch = async (input) => { throw new TypeError(`fetch failed (offline test: ${new URL(String(input?.url || input)).host})`); };
@@ -28,7 +29,8 @@ const { default: worker, CheState } = mod;
 const MISSION_IDS = {
   intelligence: ['che', 'che-explore', 'che-plan', 'che-build', 'che-research', 'che-verify', 'che-memory', 'che-brain-review', 'che-recover', 'che-status'],
   youtube: ['yt-ideas', 'yt-research', 'yt-script', 'yt-video', 'yt-voice', 'yt-thumbnail', 'yt-seo', 'yt-publish', 'yt-batch', 'yt-analytics', 'yt-grow'],
-  trading: ['trade-open', 'trade-chart', 'trade-setup', 'trade-liquidity', 'trade-risk', 'trade-backtest', 'trade-journal', 'trade-alert', 'trade-execute'],
+  // trade-connections reads the owner-only connections of #348 (issue #350).
+  trading: ['trade-open', 'trade-chart', 'trade-setup', 'trade-liquidity', 'trade-risk', 'trade-backtest', 'trade-journal', 'trade-alert', 'trade-execute', 'trade-connections'],
   build: ['site-build', 'site-redesign', 'site-audit', 'site-publish', 'app-build', 'app-fix', 'ai-build', 'code-review', 'che-release', 'iphone-update', 'rea-inspect', 'rea-discover', 'rea-features', 'rea-explain', 'rea-debug', 'rea-compare', 'rea-rebuild', 'rea-build', 'rea-verify', 'rea-status'],
   money: ['money-dashboard', 'cashflow', 'budget', 'expenses', 'invoices', 'money-forecast', 'pricing', 'profit-report'],
   clients: ['lead-scout', 'lead-audit', 'lead-score', 'lead-match', 'lead-proposal', 'lead-outreach', 'lead-crm', 'lead-followup', 'client-deliver'],
@@ -101,8 +103,8 @@ async function owner({ saved = new Map(), model = () => 'Here is the answer, sir
 // ─── 1. Catalog identities ────────────────────────────────────────────────
 
 test('1. the owner\'s 71 commands exist exactly as listed, plus ten REA commands, in 8 categories, each fully described', () => {
-  assert.equal(COMMANDS.length, 82);
-  assert.equal(new Set(COMMANDS.map((c) => c.id)).size, 82, 'ids are unique');
+  assert.equal(COMMANDS.length, 83);
+  assert.equal(new Set(COMMANDS.map((c) => c.id)).size, 83, 'ids are unique');
   assert.deepEqual(CATEGORIES.map((c) => c.id), Object.keys(MISSION_IDS));
   for (const [category, ids] of Object.entries(MISSION_IDS)) {
     assert.deepEqual(COMMANDS.filter((c) => c.category === category).map((c) => c.id), ids, category);
@@ -153,7 +155,7 @@ test('2. availability comes from real configuration: ready, needs setup, unsuppo
   const expired = connectorStatus({ CHE_TRADOVATE_OAUTH_CLIENT_ID: 'x', CHE_TRADOVATE_OAUTH_CLIENT_SECRET: 'y' }, { broker: { expired: true } });
   assert.equal(expired.broker.state, 'needs_reconnect');
   const view = catalogView(bare);
-  assert.equal(view.commands.length, 82);
+  assert.equal(view.commands.length, 83);
   assert.ok(view.commands.every((c) => ['available', 'setup_required', 'unsupported', 'temporarily_unavailable'].includes(c.status)));
 });
 
@@ -201,6 +203,29 @@ test('3. a slash command and its plain-English request reach the same handler', 
   assert.notEqual((await che.say('Did I ask you for a brain review yesterday?')).route, 'che_brain_review');
   assert.deepEqual(parseSlashCommand('/Trade-Chart  NQ please'), { name: 'trade-chart', command: commandById('trade-chart'), input: 'NQ please' });
   assert.equal(parseSlashCommand('Analyze the NQ chart'), null);
+});
+
+test('issue #350: /trade-connections and its plain question read the trading connections on the desk route; no command switches to live or orders', async () => {
+  const c = commandById('trade-connections');
+  assert.equal(c.route, 'che_trading_desk');
+  assert.equal(c.mode, 'EXPLORE');
+  assert.equal(c.confirm, '');
+  assert.equal(commandStatus(c, connectorStatus({ AI: {} })).status, 'available', 'ready with nothing connected: it says what is not set up');
+  const che = await owner();
+  for (const said of ['/trade-connections', 'What are my trading connections?', 'what are my trading connections', 'Which brokers are connected?']) {
+    const out = await che.say(said);
+    assert.equal(out.route, 'che_trading_desk', said);
+    assert.equal(out.modelCalls, 0, said);
+    assert.match(out.reply, /^Your trading connections, sir: 1, CHE Paper: off\. 2, Tradovate \(NinjaTrader\): not set up\. 3, Alpaca \(stock paper\): not set up\. 4, FundYourEdge \(Rithmic\): not supported\. Trading mode: PAPER\. Live orders are off\.$/, said);
+  }
+  assert.notEqual((await che.say('My trading connection keeps dropping.')).route, 'che_trading_desk', 'a remark is not a request to read them');
+  assert.equal((che.saved.get('trading_desk') || { mode: 'paper' }).mode, 'paper', 'reading changed no mode');
+  // Only /trade-execute reaches an order, and it asks first; no catalog request switches to live.
+  for (const cmd of COMMANDS.filter((x) => x.route === 'che_trading_desk')) {
+    const kind = deskIntent(dispatchPrompt(cmd, 'NQ'))?.kind;
+    assert.ok(!['mode', 'confirm_live', 'alpaca_setup', 'alpaca_remove'].includes(kind), `${cmd.id} → ${kind}`);
+    if (kind === 'take') assert.equal(cmd.id, 'trade-execute');
+  }
 });
 
 test('REA aliases are other names for one command, never a second command', async () => {
@@ -581,7 +606,7 @@ test('the Flutter catalog fixture matches what the Worker serves (regenerate: no
   const { fixtureCatalog } = await import('../../tool/dump_command_catalog.mjs');
   const fixture = JSON.parse(readFileSync(new URL('../../test/fixtures/command_catalog.json', import.meta.url), 'utf8'));
   assert.deepEqual(fixture, JSON.parse(JSON.stringify(fixtureCatalog())));
-  assert.equal(fixture.commands.length, 82);
+  assert.equal(fixture.commands.length, 83);
   assert.ok(fixture.templates.length >= 4);
 });
 
@@ -700,7 +725,7 @@ test('the owner\'s six spoken phrases are answered from the catalog with no mode
   for (const words of variants('CHE, open your Commands page.')) {
     const out = await che.say(words);
     assert.equal(out.route, 'che_command_center', words);
-    assert.match(out.reply, /82 commands in 8 groups[\s\S]*2\. YouTube, 11[\s\S]*Nothing was run/, words);
+    assert.match(out.reply, /83 commands in 8 groups[\s\S]*2\. YouTube, 11[\s\S]*Nothing was run/, words);
   }
   for (const words of variants('CHE, search for YouTube.')) {
     const out = await che.say(words);
