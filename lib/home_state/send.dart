@@ -259,10 +259,9 @@ extension _CheHomeSend on _CHEHomeState {
         (source.last['text'] ?? '').trim() == currentMessage.trim()) {
       source.removeLast();
     }
-    final recent = source.length > 14
-        ? source.sublist(source.length - 14)
-        : source;
-    return recent
+    // Earlier names, requirements and approvals remain part of this request.
+    // The Worker selects an engine that can receive the complete history.
+    return source
         .map(
           (item) => {
             'role': item['role'] == 'assistant' ? 'assistant' : 'user',

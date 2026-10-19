@@ -563,6 +563,12 @@ test('owner capability test: repository and autonomy discovery reads source with
     assert.ok(!calls.some((c) => c.url.includes('/search/code')), 'when the pinned archive is unavailable, unpinned GitHub search cannot supply graph evidence');
     assert.ok(calls.every((c) => c.method === 'GET'));
     assert.ok(!(saved.get('che').jobs || []).length);
+    const codeReview = await chat('/code-review War Room');
+    const reviewRaw = await codeReview.text();
+    assert.match(reviewRaw, /che_repository_inspection/);
+    assert.match(replyFromNdjson(reviewRaw), /lib\/agents\/che_war_room_screen\.dart/);
+    assert.equal(aiCalls, 0, 'the slash review reaches the real pinned repository handler');
+    assert.ok(!(saved.get('che').jobs || []).length, 'read-only review needs no coding dispatch');
     const callsBeforeAutonomyDiscovery = calls.length;
     await chat('CHE, find the autonomy and coding-runner implementation in your current codebase. Tell me the exact files/components responsible.');
     assert.ok(calls.slice(callsBeforeAutonomyDiscovery).some((c) => /\/git\/ref\/heads\/main|\/git\/trees\/|\/contents\/(?:lib|server)\//.test(c.url)), 'read-only autonomy discovery should inspect the pinned source');

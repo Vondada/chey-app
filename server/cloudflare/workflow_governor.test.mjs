@@ -104,32 +104,18 @@ test('review fixes: chores and household problems are not war rooms or bug hunts
   assert.equal(selectWorkflow({ text: 'transfer $500 to savings' }), WORKFLOWS.WAR_ROOM);
 });
 
-test('context-rot defense: old turns condense to constraints, decisions, failures and SHAs without AI; recent turns stay verbatim', () => {
+test('history preparation preserves ordinary details, old constraints and original roles', () => {
   const history = [
-    { role: 'user', content: 'Never touch che_browser.dart. The objective is a faster voice reply.' },
-    { role: 'assistant', content: 'Understood. I tried caching the prompt and it failed the latency test.' },
-    { role: 'user', content: 'Nice weather today.' },
-    { role: 'assistant', content: 'It is lovely.' },
-    { role: 'user', content: 'Main is at commit 576bb09, base your work on that head.' },
-    ...Array.from({ length: 12 }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', content: `recent ${i}` })),
+    { role: 'user', content: 'Willo needs delivery Friday, number 42.' },
+    { role: 'assistant', content: 'Not executed; still queued.' },
+    ...Array.from({ length: 60 }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', content: `Never do thing number ${i}.` })),
   ];
-  const out = condenseHistory(history, { keep: 12 });
-  assert.equal(out.turns.length, 12);
-  assert.equal(out.turns[0].content, 'recent 0');
-  assert.equal(out.dropped, 5);
-  assert.match(out.condensed, /Owner: Never touch che_browser\.dart\./);
-  assert.match(out.condensed, /objective is a faster voice reply/);
-  assert.match(out.condensed, /CHE: .*tried caching the prompt and it failed/);
-  assert.match(out.condensed, /576bb09/);
-  assert.doesNotMatch(out.condensed, /weather|lovely/, 'completed small talk is not carried');
-  assert.equal(condenseHistory(history.slice(-4)).condensed, '', 'short conversations are untouched');
-  const huge = Array.from({ length: 60 }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', content: `Never do thing number ${i}.` }));
-  const bounded = condenseHistory(huge, { keep: 4, maxCondensedChars: 300 });
-  assert.ok(bounded.condensed.length < 450);
-  assert.match(bounded.condensed, /thing number 55/, 'the newest constraints win when over budget');
+  const out = condenseHistory(history, { keep: 4, maxCondensedChars: 300 });
+  assert.deepEqual(out.turns, history);
+  assert.equal(out.condensed, '');
+  assert.equal(out.dropped, 0);
   assert.equal(estimateTokens('abcd'.repeat(10)), 10);
 });
-
 
 test('context-rot defense preserves the tail of long recent owner turns', () => {
   const long = 'A'.repeat(2600) + ' FINAL CONSTRAINT: never deploy without review.';
@@ -138,20 +124,10 @@ test('context-rot defense preserves the tail of long recent owner turns', () => 
   assert.match(out.turns[0].content, /FINAL CONSTRAINT: never deploy without review\.$/);
 });
 
-test('a long pinned owner sentence keeps its late "don\'t" and the reason it was pinned, with the cut marked (issue #345)', () => {
-  const late = "but don't email Mark until Friday";
-  const sentence = 'Remember that the launch review moved, ' + 'and the notes for the whole team go in the shared folder, '.repeat(8) + late;
-  assert.ok(sentence.length > 300);
-  const history = [
-    { role: 'user', content: sentence },
-    ...Array.from({ length: 12 }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', content: `recent ${i}` })),
-  ];
+test('old long owner sentences retain their middle, tail and complete original text', () => {
+  const sentence = 'Remember that the launch review moved, ' + 'and the notes go in the shared folder, '.repeat(30) + "but don't email Mark until Friday";
+  const history = [{ role: 'user', content: sentence }, ...Array.from({ length: 12 }, (_, i) => ({ role: 'assistant', content: `recent ${i}` }))];
   const out = condenseHistory(history, { keep: 12 });
-  const line = out.condensed.split('\n').find((l) => l.startsWith('Owner: '));
-  assert.match(line, /^Owner: Remember that the launch review moved,/);
-  assert.ok(line.endsWith(late), line);
-  assert.match(line, / … \[\d+ characters not shown\] … /);
-  // Older pinned lines that do not fit are counted, not dropped silently.
-  const huge = Array.from({ length: 60 }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', content: `Never do thing number ${i}.` }));
-  assert.match(condenseHistory(huge, { keep: 4, maxCondensedChars: 300 }).condensed, /; \d+ older lines not shown\)/);
+  assert.equal(out.turns[0].content, sentence);
+  assert.equal(out.dropped, 0);
 });

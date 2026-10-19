@@ -22,8 +22,8 @@ export function isLikelyCasualChat(message, requestedCapabilities = []) {
 
 /**
  * Build the ordered model attempts for an owner chat turn.
- * preferFast: compact prompt + fast route first (ordinary replies).
- * Otherwise: full quality prompt first (complex/tool-backed turns).
+ * preferFast selects the fast route; every route keeps the same full context.
+ * Retry only a distinct model; the provider router owns provider rotation.
  */
 export function chatModelAttempts({
   preferFast,
@@ -34,18 +34,11 @@ export function chatModelAttempts({
   turns,
 }) {
   const history = Array.isArray(turns) ? turns : [];
-  if (preferFast) {
-    return [
-      { model, system: compactPrompt, turns: history.slice(-6), route: 'fast' },
-      { model, system: systemPrompt, turns: history, route: 'quality' },
-      { model: strongModel, system: compactPrompt, turns: history.slice(-2), route: 'quality' },
-    ];
-  }
-  return [
-    { model, system: systemPrompt, turns: history, route: 'quality' },
-    { model, system: compactPrompt, turns: history.slice(-4), route: 'quality' },
-    { model: strongModel, system: compactPrompt, turns: history.slice(-2), route: 'quality' },
-  ];
+  // A shorter fallback must not change the task or drop earlier approvals.
+  // The router already rotates providers; retry a different model only.
+  const attempts = [{ model, system: systemPrompt, turns: history, route: preferFast ? 'fast' : 'quality' }];
+  if (strongModel && strongModel !== model) attempts.push({ model: strongModel, system: systemPrompt, turns: history, route: 'quality' });
+  return attempts;
 }
 
 /**

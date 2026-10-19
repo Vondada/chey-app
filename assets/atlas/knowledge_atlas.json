@@ -4890,7 +4890,7 @@
     {
      "path": "server/cloudflare/ai_router.js",
      "symbol": "fitToBudget",
-     "what": "the newest turn is never cut to fit; an engine too small for it is marked and skipped",
+     "what": "the complete context is never cut to fit; an engine too small for it is marked and skipped",
      "test": "server/cloudflare/lossless_intake.test.mjs"
     }
    ]

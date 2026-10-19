@@ -1005,7 +1005,9 @@ async function npmRequest(storage, env, jobs, request, { fetcher, now, random })
   const target = { kind: 'npm', name: parsed.name, version: resolved.version, license: resolved.license };
   const cacheKey = `${REA_PIN.version}|npm:${parsed.name}@${parsed.version}|${resolved.integrity}`;
   const earlier = [...jobs].reverse().find((j) => j.cache_key === cacheKey && j.state === 'complete' && j.summary);
-  if (earlier) return { ok: true, reused: earlier.id, text: evidenceAnswer(request.command, { ...earlier, target }) };
+  if (earlier) return { ok: true, job_id: earlier.id, state: 'complete', reused: earlier.id, text: evidenceAnswer(request.command, { ...earlier, target }) };
+  const pending = [...jobs].reverse().find((j) => j.cache_key === cacheKey && j.state === 'queued');
+  if (pending) return { ok: true, job_id: pending.id, state: 'queued', reused: pending.id, text: `REA job ${pending.id} is still queued. No completed evidence has been received; I did not dispatch it again.` };
 
   if (!reaConfigured(env)) {
     return { ok: false, text: 'REA analysis runs on GitHub Actions, and CHE has no GitHub connection (CHE_GITHUB_TOKEN and CHE_GITHUB_REPO). Nothing was run.' };
@@ -1024,7 +1026,7 @@ async function npmRequest(storage, env, jobs, request, { fetcher, now, random })
   await storage.put(REA_JOBS_KEY, [...jobs, job].slice(-JOB_LOG_LIMIT));
   if (!sent.ok) return { ok: false, text: `REA could not start: GitHub did not start the analysis run (status ${sent.status || 'none'}). Nothing was analyzed.` };
   return {
-    ok: true,
+    ok: true, job_id: job.id, state: 'queued',
     text: [
       `REA ${TITLES[request.command] || 'inspection'} started for npm ${target.name} ${target.version} (${target.license}). Job ${job.id}.`,
       'It runs on GitHub Actions. Nothing from the package runs on this phone or on the Worker.',
