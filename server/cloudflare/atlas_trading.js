@@ -13,7 +13,7 @@ import {
   rewardRisk, riskOfRuin, sampleSizeForMargin, sessionLevels, specOf, stockShares, strategyVerdict, structureBreaks, usd,
   vwapBands, winRateInterval,
 } from './atlas_math.js';
-import { MIN_TRADES, readTrades, summarize, tradeDayOf } from './trading_evidence.js';
+import { CANDIDATES, INTRADAY_CANDIDATES, MIN_TRADES, readTrades, summarize, tradeDayOf } from './trading_evidence.js';
 import { readDesk } from './trading_desk.js';
 import { LIVE_BACKTEST, LIVE_FEED, LIVE_STATE } from './trading_live.js';
 import { ORDER_ASK } from './trading_live_chat.js';
@@ -153,7 +153,7 @@ const CARDS = [
     sources: [ref('Order book', 'Wikipedia', 'https://en.wikipedia.org/wiki/Order_book'), ref('Slippage (finance)', 'Wikipedia', 'https://en.wikipedia.org/wiki/Slippage_(finance)'), CHE_CODE('trading_evidence.js')],
   }),
   calcCard({
-    id: 't-stocks', domain: 'trading', title: 'Stocks and share sizing', level: 'beginner',
+    id: 't-stocks', domain: 'trading', title: 'Share sizing for stocks', level: 'beginner',
     summary: 'A share is a small piece of a company; size a stock trade by the dollars between entry and stop.',
     aliases: ['stocks', 'stock', 'shares and stocks', 'stock trading', 'equity shares', 'share sizing', 'how many shares', 'shares from risk', 'stock position size'],
     tags: ['stocks', 'risk', 'fundamentals'], prerequisites: ['risk-management'], related: ['t-options', 'r-multiple', 'risk-management'],
@@ -454,7 +454,7 @@ const CARDS = [
   calcCard({
     id: 't-strategy-evaluation', domain: 'trading', title: 'Strategy evaluation and verdicts', level: 'expert',
     summary: 'Judge a strategy by expectancy with its interval, profit factor and sample size: good, bad or unsupported.',
-    aliases: ['strategy evaluation', 'evaluating a strategy', 'evaluate a strategy', 'strategy evaluation criteria', 'judging a strategy', 'is my strategy good', 'expectancy interval', 'expectancy confidence interval', 't interval', 't-interval', 'student t interval', 'two forms of expectancy'],
+    aliases: ['strategy evaluation', 'evaluating a strategy', 'evaluate a strategy', 'strategy evaluation criteria', 'judging a strategy', 'expectancy interval', 'expectancy confidence interval', 't interval', 't-interval', 'student t interval', 'two forms of expectancy'],
     tags: ['statistics', 'performance', 'research'], prerequisites: ['expectancy', 'sample-size'], related: ['t-journaling', 't-monte-carlo', 't-backtesting-pitfalls'],
     levels: {
       beginner: 'To judge a strategy, CHE looks at three things together: how much it makes on an average trade (expectancy), how sure that number is (its range), and how many trades it rests on. With too few trades, or a range that still includes zero, the honest verdict is "unsupported", not good or bad.',
@@ -478,9 +478,9 @@ const CARDS = [
     sources: [ref('Student\'s t-distribution', 'Wikipedia', 'https://en.wikipedia.org/wiki/Student%27s_t-distribution'), PARDO, CHE_CODE('atlas_math.js (strategyVerdict)'), CHE_CODE('trading_evidence.js (promotionVerdict)')],
   }),
   calcCard({
-    id: 't-trades-needed', domain: 'trading', title: 'How many trades you need', level: 'intermediate',
+    id: 't-trades-needed', domain: 'trading', title: 'Trades needed for a win-rate margin', level: 'intermediate',
     summary: 'The sample size that pins a win rate to within a chosen margin, such as plus or minus 5 points.',
-    aliases: ['trades needed', 'how many trades do i need', 'how many trades', 'sample size for win rate', 'win rate margin of error', 'margin of error', 'sample size calculation', 'required sample size'],
+    aliases: ['trades needed', 'how many trades', 'sample size for win rate', 'win rate margin of error', 'margin of error', 'sample size calculation', 'required sample size'],
     tags: ['statistics', 'research'], prerequisites: ['win-rate-ci'], related: ['sample-size', 'win-rate-ci', 't-strategy-evaluation'],
     levels: {
       beginner: 'The more trades you record, the more exactly you know a strategy\'s win rate. To know it within plus or minus 5 percentage points, about 95% of the time, you need roughly 385 trades; within plus or minus 10 points, about 97. Thirty trades is a minimum, not precision.',
@@ -642,19 +642,43 @@ const span = (values, show) => {
   return lo === hi ? show(lo) : `${show(lo)} to ${show(hi)}`;
 };
 
-/** One line per provenance label for a metric, so every number says where it came from. */
+const strategyName = (id) => INTRADAY_CANDIDATES[id]?.name || CANDIDATES[id]?.name || String(id || 'unnamed strategy');
+/** The paper journal as separate portfolios, largest first: each is its own strategy and its own record. */
+export function books(records) {
+  const groups = new Map();
+  for (const t of records.paper || []) {
+    const key = String(t?.portfolio || '');
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(t);
+  }
+  return [...groups.values()].map((trades) => {
+    const t = trades[0];
+    const bars = t?.data?.resolution === '5m' ? 'five-minute bars' : t?.data?.resolution ? `${t.data.resolution} bars` : 'daily bars';
+    const name = `${strategyName(t?.strategy).replace(/^./, (x) => x.toUpperCase())} on ${t?.contract || t?.symbol || 'MNQ'}, ${bars}${t?.filter && t.filter !== 'any' ? `, ${t.filter} filter` : ''}${Number.isFinite(t?.params?.target_r) ? `, ${t.params.target_r}R target` : ''}`;
+    return { name, trades, s: summarize(trades) };
+  }).sort((a, b) => b.s.trades - a.s.trades || a.name.localeCompare(b.name));
+}
+
+const where = (list, total) => (list.length > 1
+  ? `${total} closed paper trades in ${list.length} separate paper portfolios, each its own strategy, so nothing is pooled`
+  : `${total} closed paper trade${total === 1 ? '' : 's'} in 1 paper portfolio, one strategy`);
+
+/** One line per provenance label for a metric, so every number says where it came from; paper portfolios are never pooled. */
 export function provenanceText(records, metric = 'expectancy') {
   const lines = [];
-  const s = summarize(records.paper || []);
+  const list = books(records);
   if (records.unreadable) lines.push(`${label('paper')}: I could not read CHE's paper journal just now, so I give no numbers from it.`);
-  else if (!s.trades) lines.push(`${label('paper')}: no recorded trades yet in CHE's paper journal.`);
+  else if (!list.length) lines.push(`${label('paper')}: no recorded trades yet in CHE's paper journal.`);
   else {
-    const m = {
-      expectancy: `expectancy ${signedR(s.expectancy_r)} per trade after assumed costs`,
-      win_rate: `win rate ${s.win_rate}%, ${s.wins} wins and ${s.losses} losses`,
-      profit_factor: `profit factor ${s.profit_factor ?? 'not defined, because no trade lost'}`,
-    }[metric] || `net ${usd(s.net_pnl)} after assumed costs`;
-    lines.push(`${label('paper')}, CHE's paper journal: ${s.trades} closed paper trade${s.trades === 1 ? '' : 's'}, ${m}.`);
+    const show = {
+      expectancy: [(s) => `expectancy ${signedR(s.expectancy_r)} per trade after assumed costs`, (s) => s.expectancy_r, signedR, 'expectancy'],
+      win_rate: [(s) => `win rate ${s.win_rate}%, ${s.wins} wins and ${s.losses} losses`, (s) => s.win_rate, (x) => `${x}%`, 'win rate'],
+      profit_factor: [(s) => `profit factor ${s.profit_factor ?? 'not defined, because no trade lost'}`, (s) => s.profit_factor, (x) => `${x}`, 'profit factor'],
+    }[metric] || [(s) => `net ${usd(s.net_pnl)} after assumed costs`, (s) => s.net_pnl, usd, 'net results'];
+    const [line, value, fmt, what] = show;
+    const total = list.reduce((n, b) => n + b.s.trades, 0);
+    const top = list[0];
+    lines.push(`${label('paper')}, CHE's paper journal: ${where(list, total)}. ${list.length > 1 ? 'The largest is' : 'It is'} ${top.name}: ${top.s.trades} trade${top.s.trades === 1 ? '' : 's'}, ${line(top.s)}.${list.length > 1 ? ` Across the ${list.length} portfolios, ${what} ranged ${span(list.map((b) => value(b.s)), fmt)}.` : ''}`);
   }
   const rows = backtestRows(records);
   if (rows.length) {
@@ -748,6 +772,8 @@ const entryOf = (s) => {
   return Number.isFinite(named) ? named : findNum(s, new RegExp(`(?<!\\b(?:stop|loss|target|tp|profit|exit) )\\bat \\$?${N}`));
 };
 
+/** The prices inside a stated trade plan: ", stop 17990", ", target 18030". */
+export const PLAN_PRICES = /(?:[,;]|\band\b)\s+(?:stop|target|take profit|entry|exit)(?: loss)?(?: at| of| is|:)?\s+\$?\d[\d,.]*/g;
 // An order asked for in the turn keeps its own route: "buy 2 MNQ", "place a trade", "and if it's good, buy it".
 const ORDER_VERB = /(?:^|[,.;:!?]\s*|\b(?:and|then|also|now|so)\s+(?:(?:if so|if it is|if it'?s good|if yes|if good)\s*,?\s+)?)(?:please\s+)?(?:place|submit|enter|buy|sell|short|go long|go short|take (?:the|a|this|that|it)\b|open a (?:position|trade)|order(?! (?:blocks?|books?|types?|flow)\b)|prepare|set up|reverse|flatten|close|execute|send)\b/;
 
@@ -830,13 +856,14 @@ export function tradingAtlasIntent(t, { findCard = () => null, cardById = () => 
   if (/\bvwap\b/.test(s) && computeWord.test(s) && fromBars.test(s)) return { kind: 't_vwap', card: BY_ID.get('t-vwap-bands'), explain: /^(?:explain|teach me|tell me about|what is vwap)\b/.test(s) ? cardById('vwap')?.levels?.beginner || '' : '' };
   if (/\bopening range\b/.test(s) && computeWord.test(s) && fromBars.test(s)) return { kind: 't_or', card: BY_ID.get('t-opening-range'), minutes: findNum(s, /\b(\d+)[ -]?minute/) || 15 };
 
-  // Readings of the owner's own records.
+  // Readings of the owner's own records, asked for by name. "My trading performance", "my positions" and "my win rate"
+  // stay with the Trading Room and the evidence report, which hold those records.
   if (/\b(?:confidence interval|confidence range|95% range|wilson(?: interval| range)?|margin of error|error bars?|range)\b[\s\S]{0,30}\b(?:my|our|your) (?:paper )?(?:trading )?win rate\b|\b(?:my|our|your) (?:paper )?win rate'?s? (?:confidence interval|wilson interval|95% range|margin of error)\b/.test(s)) {
     const conf = findNum(s, /\b(80|90|95|98|99) ?(?:%|percent)/);
     return { kind: 't_winrate', card: cardById('win-rate-ci') || BY_ID.get('t-trades-needed'), confidence: Number.isFinite(conf) ? conf / 100 : 0.95 };
   }
   if (/^(?:what(?:'s| is)|whats|tell me|show me|calculate|compute|give me|read me|work out) (?:my|our|your) (?:paper )?(?:trading )?expectancy(?: so far| now| right now| per trade| in r)?$/.test(s)) return { kind: 't_expectancy', card: BY_ID.get('t-strategy-evaluation') };
-  if (/^(?:evaluate|assess|review|grade|rate|judge|score|audit|check) (?:my|our|your) (?:(?:trading|paper|current) )?strateg(?:y|ies)$|^(?:evaluate|assess|review|grade|rate|judge|score|audit|check) (?:my|our|your) (?:trading|paper)(?: trading)? (?:system|results|performance)$|^how good (?:is|are) (?:my|our|your) (?:trading|paper) strateg(?:y|ies)$/.test(s)) return { kind: 't_strategy', card: BY_ID.get('t-strategy-evaluation') };
+  if (/^(?:evaluate|assess|review|grade|rate|judge|score|audit|check) (?:my|our|your) (?:(?:trading|paper|current) )?strateg(?:y|ies)$|^how good (?:is|are) (?:my|our|your) (?:trading|paper) strateg(?:y|ies)$/.test(s)) return { kind: 't_strategy', card: BY_ID.get('t-strategy-evaluation') };
   if (/\bmonte carlo\b/.test(s) && /\b(?:my|our|your) (?:paper )?(?:closed )?trades\b/.test(s) && /^(?:run|do|give me|show me|simulate|calculate|compute|what does a)\b/.test(s)) {
     return { kind: 't_montecarlo', card: BY_ID.get('t-monte-carlo'), seed: findNum(s, /\bseed (\d+)\b/) || 1 };
   }
@@ -856,12 +883,26 @@ function verdictLine(v) {
   return `Verdict: ${v.verdict}, because ${v.reasons.join(', and ')}. Criteria: ${VERDICT_RULES.text}`;
 }
 
-function journalStats(records) {
-  const paper = records.paper || [];
-  const rs = paper.map((t) => t.r_net).filter(Number.isFinite);
-  const s = summarize(paper);
-  const e = rs.length >= 2 ? expectancyStats({ rs }) : null;
-  return { s, e, rs };
+// Every paper portfolio is its own strategy and its own record (as knowledge_atlas.js measuredText
+// reads them), so statistics and verdicts are given one portfolio at a time and never pooled.
+function bookStats(b) {
+  const rs = b.trades.map((t) => t.r_net).filter(Number.isFinite);
+  // Identical results have no spread, so a t-interval of them would be a zero-width range that means nothing.
+  const identical = rs.length >= 2 && rs.every((x) => x === rs[0]);
+  const e = rs.length >= 2 && !identical ? expectancyStats({ rs }) : null;
+  const v = strategyVerdict({ trades: b.s.trades, low: e?.value.low ?? null, high: e?.value.high ?? null, mean: e?.value.expectancy ?? b.s.expectancy_r, profitFactor: b.s.profit_factor });
+  return { ...b, rs, e, identical, v };
+}
+const noRange = (b) => (b.s.trades < 2 ? `too few trades for a range (n = ${b.s.trades})` : `no range: all ${b.s.trades} results are identical, so they show no spread to estimate from`);
+
+function backtestLine(records) {
+  const rows = backtestRows(records);
+  if (!rows.length) return `${label('backtest')}: no stored backtest with trades yet.`;
+  const total = rows.reduce((n, r) => n + r.stats.trades, 0);
+  const best = [...rows].sort((a, b) => b.stats.expectancy_r - a.stats.expectancy_r)[0];
+  const ci = best.stats.expectancy_r_95ci;
+  const range = ci && Number.isFinite(ci.low) && Number.isFinite(ci.high) && best.stats.trades >= 2 ? `a stored 95% range of ${signedR(ci.low)} to ${signedR(ci.high)}` : 'no stored range';
+  return `${backtestHead(records)}: ${rows.length} portfolio${rows.length === 1 ? '' : 's'} with ${total} trades; expectancy ranged ${span(rows.map((r) => r.stats.expectancy_r), signedR)}. The highest, ${best.name || best.strategy}, has ${best.stats.trades} trades and ${range}. A backtest is history, not a forward result, and the best of many portfolios is partly luck.`;
 }
 
 function expectancyAnswer(records, { strategy = false } = {}) {
@@ -870,39 +911,26 @@ function expectancyAnswer(records, { strategy = false } = {}) {
     lines.push(`I could not read CHE's paper journal just now, sir, so I give no expectancy and no verdict.`);
     return lines;
   }
-  const { s, e } = journalStats(records);
-  if (!s.trades) {
+  const list = books(records).map(bookStats);
+  if (!list.length) {
     lines.push(`${strategy ? 'Your strategy' : 'Your expectancy'}, sir: no recorded trades yet. CHE's paper journal (${PROVENANCE.paper}) has no closed paper trades, so there is no measured expectancy.`);
-  } else if (!e) {
-    lines.push(`${strategy ? 'Your strategy' : 'Your expectancy'}, sir, from ${PROVENANCE.paper} in CHE's paper journal: 1 closed paper trade, ${signedR(s.expectancy_r)}. One trade has no range.`);
+    lines.push(`Verdict: unsupported, because no closed trades. Criteria: ${VERDICT_RULES.text}`);
   } else {
-    lines.push(`${strategy ? 'Your strategy, judged on' : 'Your expectancy, from'} ${PROVENANCE.paper} in CHE's paper journal, sir: ${s.trades} closed paper trades, after assumed costs.`);
-    lines.push(`Math: ${stepsText(e)}.`);
+    const total = list.reduce((n, b) => n + b.s.trades, 0);
+    const top = list[0];
+    lines.push(`${strategy ? 'Your strategies, judged' : 'Your expectancy, measured'} one paper portfolio at a time, sir, from ${PROVENANCE.paper} in CHE's paper journal, after assumed costs: ${where(list, total)}.`);
+    lines.push(`${list.length > 1 ? 'The largest is' : 'It is'} ${top.name}, n = ${top.s.trades}. ${top.e ? `Math: ${stepsText(top.e)}.` : `Expectancy ${signedR(top.s.expectancy_r)} per trade; ${noRange(top)}.`}`);
     if (strategy) {
-      const w = winRateInterval({ wins: s.wins, n: s.trades });
-      lines.push(`Win rate ${s.win_rate}%, Wilson 95% range ${pct(w.value.low)} to ${pct(w.value.high)}; profit factor ${s.profit_factor ?? 'not defined, because no trade lost'}; maximum drawdown ${usd(s.max_drawdown)}, or ${s.max_drawdown_r.toFixed(2)}R.`);
+      const w = top.s.trades >= 2 ? winRateInterval({ wins: top.s.wins, n: top.s.trades }) : null;
+      lines.push(`Win rate ${top.s.win_rate}%${w ? `, Wilson 95% range ${pct(w.value.low)} to ${pct(w.value.high)}` : ''}; profit factor ${top.s.profit_factor ?? 'not defined, because no trade lost'}; maximum drawdown ${usd(top.s.max_drawdown)}, or ${Math.abs(top.s.max_drawdown_r).toFixed(2)}R, within that portfolio's own record.`);
     }
+    lines.push(`Verdict for ${top.name}: ${top.v.verdict}, because ${top.v.reasons.join(', and ')}.`);
+    if (list.length > 1) {
+      lines.push(`The other portfolios, each judged on its own: ${list.slice(1, 5).map((b, i) => `${i + 2}. ${b.name}: ${b.s.trades} trade${b.s.trades === 1 ? '' : 's'}, ${signedR(b.s.expectancy_r)} a trade, ${b.v.verdict}`).join('; ')}${list.length > 5 ? `; and ${list.length - 5} more` : ''}.`);
+    }
+    lines.push(`Criteria: ${VERDICT_RULES.text}`);
   }
-  const v = strategyVerdict({ trades: s.trades, low: e?.value.low ?? null, high: e?.value.high ?? null, mean: e?.value.expectancy ?? null, profitFactor: s.profit_factor });
-  lines.push(verdictLine(v));
-  if (strategy && s.trades) {
-    const groups = {};
-    for (const t of records.paper) (groups[`${t.strategy}${t.params?.target_r ? ` at ${t.params.target_r}R` : ''}`] ||= []).push(t);
-    const rows = Object.entries(groups).map(([name, list]) => {
-      const st = summarize(list);
-      const ex = list.length >= 2 ? expectancyStats({ rs: list.map((t) => t.r_net) }) : null;
-      return { name, n: list.length, st, verdict: strategyVerdict({ trades: list.length, low: ex?.value.low ?? null, high: ex?.value.high ?? null, mean: ex?.value.expectancy ?? null, profitFactor: st.profit_factor }).verdict };
-    }).sort((a, b) => b.n - a.n).slice(0, 5);
-    if (rows.length > 1) lines.push(`By strategy, each judged on its own, because pooling different rules mixes them: ${rows.map((r, i) => `${i + 1}. ${r.name}: ${r.n} trades, ${signedR(r.st.expectancy_r)} a trade, ${r.verdict}`).join('; ')}.`);
-  }
-  const rows = backtestRows(records);
-  if (rows.length) {
-    const total = rows.reduce((n, r) => n + r.stats.trades, 0);
-    const best = [...rows].sort((a, b) => b.stats.expectancy_r - a.stats.expectancy_r)[0];
-    lines.push(`${backtestHead(records)}: ${rows.length} portfolios with ${total} trades; expectancy ranged ${span(rows.map((r) => r.stats.expectancy_r), signedR)}. The highest, ${best.name || best.strategy}, has ${best.stats.trades} trades and a stored 95% range of ${signedR(best.stats.expectancy_r_95ci?.low ?? NaN)} to ${signedR(best.stats.expectancy_r_95ci?.high ?? NaN)}. A backtest is history, not a forward result, and the best of many portfolios is partly luck.`.replace(/NaNR/g, 'not stored'));
-  } else {
-    lines.push(`${label('backtest')}: no stored backtest with trades yet.`);
-  }
+  lines.push(backtestLine(records));
   lines.push(...brokerLines(records));
   return lines;
 }
@@ -924,34 +952,39 @@ function evaluateAnswer(intent, records) {
   if (p.feesSaid) lines.push(`Costs: you said ${p.feesSaid}.`);
   else lines.push('Costs: none given, so none are included; real commissions, fees and slippage raise the break-even win rate.');
   const need = out.values.breakevenWinRateAfterCosts ?? out.values.breakevenWinRate;
-  // Comparable records: the same contract and side, planned near the same reward-to-risk.
+  // Comparable records: the same contract and side, planned near the same reward-to-risk, in each portfolio on its own.
   const ratioOf = (t) => {
     const e = t.entry?.raw ?? t.entry?.fill;
     const r = t.side === 'short' ? (e - t.target) / (t.stop - e) : (t.target - e) / (e - t.stop);
     return Number.isFinite(t.params?.target_r) ? t.params.target_r : r;
   };
-  const same = (records.paper || []).filter((t) => (!p.symbol || String(t.contract || t.symbol || '').toUpperCase().startsWith(p.symbol)) && t.side === p.side && Math.abs(ratioOf(t) - out.value) <= 0.25);
-  const wins = same.filter((t) => t.net_pnl > 0).length;
+  const like = (t) => (!p.symbol || String(t.contract || t.symbol || '').toUpperCase().startsWith(p.symbol)) && t.side === p.side && Math.abs(ratioOf(t) - out.value) <= 0.25;
+  const matched = books(records).map((b) => {
+    const same = b.trades.filter(like);
+    const wins = same.filter((t) => t.net_pnl > 0).length;
+    return { name: b.name, n: same.length, wins, w: same.length >= 2 ? winRateInterval({ wins, n: same.length }).value : null };
+  }).filter((b) => b.n).sort((a, b) => b.n - a.n);
+  const setup = `${p.symbol || ''} ${p.side} trades planned near ${num(out.value)} to 1`.trim();
   let verdict = 'unsupported';
   let why = '';
   if (records.unreadable) {
     why = 'I could not read CHE\'s paper journal just now';
     lines.push(`Data: ${why}.`);
-  } else if (!same.length) {
+  } else if (!matched.length) {
     why = 'no recorded trade matches this setup';
-    lines.push(`What the data supports: ${PROVENANCE.paper}: CHE's paper journal has no closed ${p.symbol || ''} ${p.side} trades planned near ${num(out.value)} to 1, so no record shows how often a trade like this reaches its target.`.replace(/\s+/g, ' '));
+    lines.push(`What the data supports: ${PROVENANCE.paper}: CHE's paper journal has no closed ${setup}, so no record shows how often a trade like this reaches its target.`);
   } else {
-    const w = winRateInterval({ wins, n: same.length });
-    lines.push(`What the data supports: ${PROVENANCE.paper}: ${same.length} closed ${p.symbol || ''} ${p.side} paper trades planned near ${num(out.value)} to 1 won ${wins}, a Wilson 95% range of ${pct(w.value.low)} to ${pct(w.value.high)} against the ${pct(need)} needed.`.replace(/\s+/g, ' '));
-    if (same.length < MIN_TRADES) why = `only ${same.length} comparable trades; ${MIN_TRADES} are the minimum`;
-    else if (w.value.low > need) { verdict = 'good'; why = `the whole win-rate range is above the ${pct(need)} break-even`; }
-    else if (w.value.high < need) { verdict = 'bad'; why = `the whole win-rate range is below the ${pct(need)} break-even`; }
-    else why = `the win-rate range includes the ${pct(need)} break-even`;
+    lines.push(`What the data supports, ${PROVENANCE.paper}, one paper portfolio at a time: ${matched.slice(0, 5).map((b, i) => `${i + 1}. ${b.name}: ${b.n} closed ${setup} won ${b.wins}, ${b.w ? `a Wilson 95% range of ${pct(b.w.low)} to ${pct(b.w.high)}` : 'too few for a range'} against the ${pct(need)} needed`).join('; ')}.`);
+    const eligible = matched.filter((b) => b.n >= MIN_TRADES);
+    if (!eligible.length) why = `no portfolio has ${MIN_TRADES} comparable trades; the most is ${matched[0].n}`;
+    else if (eligible.every((b) => b.w.low > need)) { verdict = 'good'; why = `every portfolio with ${MIN_TRADES} or more comparable trades has its whole win-rate range above the ${pct(need)} break-even`; }
+    else if (eligible.every((b) => b.w.high < need)) { verdict = 'bad'; why = `every portfolio with ${MIN_TRADES} or more comparable trades has its whole win-rate range below the ${pct(need)} break-even`; }
+    else why = `the win-rate ranges include the ${pct(need)} break-even, or the portfolios disagree`;
   }
   const near = backtestRows(records).filter((r) => Math.abs(Number(r.target_r) - out.value) <= 0.25);
-  if (near.length) lines.push(`${backtestHead(records)}: ${near.length} portfolio${near.length === 1 ? '' : 's'} targeting ${num(out.value)}R won ${span(near.map((r) => r.stats.win_rate), (x) => `${x}%`)} of ${near.reduce((n, r) => n + r.stats.trades, 0)} trades, long and short together; history, not this setup.`);
+  if (near.length) lines.push(`${backtestHead(records)}: ${near.length} portfolio${near.length === 1 ? '' : 's'} targeting ${num(out.value)}R won ${span(near.map((r) => r.stats.win_rate), (x) => `${x}%`)} of their trades (${near.map((r) => r.stats.trades).join(', ')}), long and short together; history, not this setup.`);
   lines.push(...brokerLines(records));
-  lines.push(`Verdict: ${verdict}, because ${why}. Criteria: good needs at least ${MIN_TRADES} comparable recorded trades whose Wilson 95% win-rate range lies wholly above the break-even win rate; bad needs ${MIN_TRADES} whose range lies wholly below it, or a stop or target on the wrong side of the entry; anything else is unsupported. The plan's arithmetic is not a forecast.`);
+  lines.push(`Verdict: ${verdict}, because ${why}. Criteria: good needs every paper portfolio with at least ${MIN_TRADES} comparable recorded trades to have its Wilson 95% win-rate range wholly above the break-even win rate; bad needs every such portfolio wholly below it, or a stop or target on the wrong side of the entry; anything else is unsupported. Portfolios are never pooled, and the plan's arithmetic is not a forecast.`);
   return { ok: true, lines };
 }
 
@@ -1038,15 +1071,19 @@ export async function answerTradingAtlas(intent, { storage = null } = {}) {
     case 't_or':
       return finish(barsAnswer(intent, records), Boolean(records.feed?.bars?.length), intent.kind === 't_vwap' ? 'vwapBands' : 'openingRange');
     case 't_winrate': {
-      const s = summarize(records.paper || []);
+      const list = books(records);
       const lines = [];
       if (records.unreadable) lines.push('I could not read CHE\'s paper journal just now, sir, so I give no win rate.');
-      else if (!s.trades) lines.push(`No recorded trades yet, sir: CHE's paper journal (${PROVENANCE.paper}) has no closed paper trades, so there is no win rate and no interval.`);
+      else if (!list.length) lines.push(`No recorded trades yet, sir: CHE's paper journal (${PROVENANCE.paper}) has no closed paper trades, so there is no win rate and no interval.`);
       else {
-        const w = winRateInterval({ wins: s.wins, n: s.trades, confidence: intent.confidence });
-        lines.push(`Your win rate's ${Math.round(intent.confidence * 100)}% Wilson interval, sir, from ${PROVENANCE.paper} in CHE's paper journal: ${s.wins} wins in ${s.trades} closed paper trades, ${pct(w.value.low)} to ${pct(w.value.high)}.`);
-        lines.push(`Math: ${stepsText(w)}.`);
-        lines.push(s.trades < MIN_TRADES ? `That is fewer than the ${MIN_TRADES} trades needed, so it is anecdote, not evidence.` : s.trades < 100 ? 'A low sample, still uncertain.' : 'An adequate sample.');
+        const pctLabel = `${Math.round(intent.confidence * 100)}%`;
+        const total = list.reduce((n, b) => n + b.s.trades, 0);
+        const ranged = list.map((b) => ({ ...b, w: b.s.trades >= 2 ? winRateInterval({ wins: b.s.wins, n: b.s.trades, confidence: intent.confidence }) : null }));
+        const top = ranged[0];
+        lines.push(`Your win rate's ${pctLabel} Wilson interval, sir, one paper portfolio at a time, from ${PROVENANCE.paper} in CHE's paper journal: ${where(list, total)}.`);
+        lines.push(ranged.slice(0, 5).map((b, i) => `${i + 1}. ${b.name}: ${b.s.wins} win${b.s.wins === 1 ? '' : 's'} in ${b.s.trades}, ${b.w ? `${pct(b.w.value.low)} to ${pct(b.w.value.high)}` : `too few trades for a range (n = ${b.s.trades})`}`).join('; ') + (ranged.length > 5 ? `; and ${ranged.length - 5} more.` : '.'));
+        if (top.w) lines.push(`Math for ${top.name}: ${stepsText(top.w)}.`);
+        lines.push(top.s.trades < MIN_TRADES ? `The largest has fewer than the ${MIN_TRADES} trades needed, so it is anecdote, not evidence.` : top.s.trades < 100 ? 'The largest is a low sample, still uncertain.' : 'The largest is an adequate sample.');
         lines.push('A win rate means little without the payoff: ask "what is my expectancy" for both together.');
       }
       const rows = backtestRows(records);
@@ -1059,11 +1096,14 @@ export async function answerTradingAtlas(intent, { storage = null } = {}) {
     case 't_strategy':
       return finish(expectancyAnswer(records, { strategy: true }), true, 'strategyVerdict');
     case 't_montecarlo': {
-      const rs = (records.paper || []).map((t) => t.r_net).filter(Number.isFinite);
-      if (rs.length < 2) return finish([`There are ${rs.length ? 'too few' : 'no'} closed paper trades to simulate, sir: CHE's paper journal (${PROVENANCE.paper}) has ${rs.length}. A Monte Carlo only recombines recorded trades, so I won't run it on nothing.`], false, 'monteCarlo');
+      // One portfolio, the largest: a simulation of several strategies' trades mixed together would pool them.
+      const list = books(records);
+      const top = list[0];
+      const rs = (top?.trades || []).map((t) => t.r_net).filter(Number.isFinite);
+      if (rs.length < 2) return finish([`There are ${rs.length ? 'too few' : 'no'} closed paper trades to simulate, sir: ${top ? `your largest paper portfolio, ${top.name}, has ${rs.length}` : `CHE's paper journal (${PROVENANCE.paper}) has none`}. A Monte Carlo only recombines recorded trades, so I won't run it on nothing.`], false, 'monteCarlo');
       const out = monteCarlo({ results: rs, paths: 2000, seed: intent.seed });
       return finish([
-        `Monte Carlo of your ${rs.length} closed paper trades, sir, from ${PROVENANCE.paper}, in R after assumed costs.`,
+        `Monte Carlo of ${top.name}, your largest paper portfolio, ${rs.length} closed trades, sir, from ${PROVENANCE.paper}, in R after assumed costs.${list.length > 1 ? ` The other ${list.length - 1} portfolio${list.length === 2 ? ' is' : 's are'} not pooled into it.` : ''}`,
         `Math: ${stepsText(out)}.`,
         `Assumptions: ${out.assumptions}${rs.length < MIN_TRADES ? ` With fewer than ${MIN_TRADES} trades it repeats their luck.` : ''}`,
       ], true, 'monteCarlo');

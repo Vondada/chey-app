@@ -12,10 +12,11 @@
 
 import { BRAIN_REGIONS } from './brain_store.js';
 import { classifyOwnerActions } from './owner_action_gate.js';
-import { COSTS, CONTRACTS, MIN_TRADES, readTrades, summarize } from './trading_evidence.js';
+import { CANDIDATES, COSTS, CONTRACTS, INTRADAY_CANDIDATES, MIN_TRADES, readTrades, summarize } from './trading_evidence.js';
+import { MODE_NAME, readDesk } from './trading_desk.js';
 import { evidenceIntent } from './trading_evidence_runner.js';
 import { LIVE_BACKTEST } from './trading_live.js';
-import { ATLAS_TRADING_CARDS, PROVENANCE, TRADING_FORMULAS, answerTradingAtlas, isTradingAtlasKind, tradingAtlasIntent, withLimitations } from './atlas_trading.js';
+import { ATLAS_TRADING_CARDS, PLAN_PRICES, PROVENANCE, TRADING_FORMULAS, answerTradingAtlas, isTradingAtlasKind, tradingAtlasIntent, withLimitations } from './atlas_trading.js';
 
 export const ATLAS_VERSION = 1;
 export const LEVELS = Object.freeze(['beginner', 'intermediate', 'expert']);
@@ -197,7 +198,7 @@ const CODING = [
       expert: 'Unit tests check pieces, integration tests check pieces together, and end-to-end tests check the real path a user takes. Property-based tests state an invariant, such as "sorting twice gives the same as sorting once", and try many generated inputs. A test that can never fail proves nothing, so break the code on purpose and make sure a test notices.',
     },
     analogy: 'A test is like a smoke alarm: quiet while everything is fine, loud the moment something burns, and only worth having once you have checked that it really goes off.',
-    che_note: 'CHE\'s own Worker is checked this way: every module has a *.test.mjs file that runs offline with node --test.',
+    che_note: 'CHE\'s own Worker is checked this way: its tests (server/cloudflare/*.test.mjs) run offline with node --test.',
     example: {
       kind: 'code', language: 'javascript',
       explain: 'Two checks on an add function both pass, and the same check catches a broken version that subtracts, so caught is true.',
@@ -421,7 +422,7 @@ const CODING = [
     levels: {
       beginner: 'An API is a menu one program offers another: the requests it accepts and what it sends back. On the web those requests travel over HTTP: an app asks a server for something at an address, and the server answers with a status code and some data.',
       intermediate: 'An HTTP request has a method (GET reads, POST creates or sends, PUT and PATCH change, DELETE removes), a URL with an optional query string, headers such as Content-Type and Authorization, and sometimes a JSON body. The status code\'s first digit says what happened: 2xx success, 3xx redirect, 4xx the caller\'s mistake, 5xx the server\'s failure.',
-      expert: 'GET, PUT and DELETE are idempotent, meaning that repeating them leaves the same result, so they can be retried safely; POST is not, unless the API takes an idempotency key. Retry 429 and 5xx answers with exponential backoff and jitter, never other 4xx ones, and put a timeout on every call. Credentials never belong in a URL, where they end up in logs: they go in a header, over HTTPS.',
+      expert: 'GET, PUT and DELETE are idempotent, meaning that repeating them leaves the same result, so they can be retried safely; POST is not, unless the API takes an idempotency key. Retry 408, 429 and 5xx answers with exponential backoff and jitter, never other 4xx ones, and put a timeout on every call. Credentials never belong in a URL, where they end up in logs: they go in a header, over HTTPS.',
     },
     analogy: 'An API is like a restaurant menu and waiter: you order from the menu in a set way, the kitchen does work you can\'t see, and the waiter brings back your dish or tells you it\'s sold out.',
     che_note: 'CHE\'s phone app talks to her Worker this way: every chat turn is a POST to /api/chat over HTTPS.',
@@ -440,7 +441,7 @@ const CODING = [
     quiz: [
       { q: 'Which status code class means the caller made a mistake?', a: '4xx, such as 404 Not Found or 401 Unauthorized.' },
       { q: 'Which methods are idempotent?', a: 'GET, PUT and DELETE: repeating them gives the same result.' },
-      { q: 'Should a 400 Bad Request be retried?', a: 'No. Fix the request. Retry only 429 and 5xx answers, with backoff.' },
+      { q: 'Should a 400 Bad Request be retried?', a: 'No. Fix the request. Retry only 408, 429 and 5xx answers, with backoff.' },
     ],
     misconceptions: ['A 200 status does not always mean the work succeeded: some APIs return 200 with an error inside the body, so check the body too.'],
     sources: [
@@ -802,7 +803,7 @@ const TRADING = [
       expert: 'On bars the typical price is an approximation; the true VWAP adds up every trade\'s price × size. The session start decides the value, so a futures VWAP from the 6 p.m. open differs from one anchored at the 9:30 New York open, and an anchored VWAP starts from a chosen event instead. Deviation bands use the volume-weighted standard deviation of price around VWAP. VWAP describes, it does not predict: price crossing it is not an edge without tested evidence.',
     },
     analogy: 'VWAP is like the average price per gallon a gas station sold at today, where a truck filling 100 gallons counts for more than a scooter filling one.',
-    che_note: 'CHE computes VWAP only from bars it has stored, the delayed paper feed, and says their source and time: say "calculate VWAP from the latest bars". The numbers on this card are an educational example, not a market reading.',
+    che_note: 'CHE computes a session VWAP from her stored, delayed MNQ bars when you ask for a market read, for example "analyze MNQ with VWAP" (trading_live_chat.js), and the 9:30 New York session VWAP with its bands when you say "calculate VWAP from the latest bars" (atlas_trading.js); /trade-liquidity marks swing highs and lows and does not compute it. The numbers on this card are an educational example, not a market reading.',
     formula: {
       name: 'VWAP', expression: 'VWAP = Σ(TPᵢ × Vᵢ) ÷ ΣVᵢ,  TP = (H + L + C) ÷ 3',
       spoken: 'VWAP equals the sum of typical price times volume, divided by the sum of volume, where typical price is high plus low plus close, divided by 3',
@@ -824,7 +825,7 @@ const TRADING = [
       { q: 'Is a close above VWAP a buy signal?', a: 'Not by itself. VWAP describes the session; only tested evidence turns a rule into an edge.' },
     ],
     misconceptions: ['VWAP is not a support line that price must respect: it is an average of what already traded.'],
-    sources: [ref('Volume-weighted average price', 'Wikipedia', 'https://en.wikipedia.org/wiki/Volume-weighted_average_price'), CHE_CODE('command_catalog.js (/trade-liquidity)')],
+    sources: [ref('Volume-weighted average price', 'Wikipedia', 'https://en.wikipedia.org/wiki/Volume-weighted_average_price'), CHE_CODE('trading_live_chat.js (marketRead)')],
   }),
   card({
     id: 'sample-size', domain: 'trading', title: 'Sample size and out-of-sample testing', level: 'expert',
@@ -907,12 +908,26 @@ export function findAtlasCard(topic) {
   return key ? ALIAS_KEYS.get(key) || null : null;
 }
 
-// A topic with no card still belongs to the atlas when it is about coding or trading: then CHE
-// says the card does not exist yet instead of handing the lesson to a model.
-const CODING_WORDS = /\b(?:code|coding|coder|programs?|programming|programmers?|software|algorithms?|data structures?|python|javascript|typescript|java|dart|flutter|swift|kotlin|rust|golang|sql|databases?|apis?|https?|git|github|compilers?|debugging|debuggers?|linux|bash|regex|regular expressions?|object oriented|oop|inheritance|threads?|docker|kubernetes|cloudflare|durable objects?|react|html|css|web development|frontend|backend|machine learning|neural networks?|llms?|linked lists?|binary trees?|graph algorithms?|dynamic programming|garbage collection|encryption|cryptography|oauth|websockets?|unit tests?|devops)\b/;
-const TRADING_WORDS = /\b(?:trade|trades|trading|traders?|markets?|stocks?|shares|equities|futures|options?|forex|crypto|bitcoin|ethereum|nq|mnq|nasdaq|s&p|spx|spy|qqq|backtests?|backtesting|strateg(?:y|ies)|risk|charts?|candles?|candlesticks?|orders?|brokers?|brokerage|leverage|margin|volatility|atr|ema|sma|moving averages?|rsi|macd|bollinger|fvg|fair value gaps?|order blocks?|liquidity|ict|smart money|scalping|day trading|swing trading|sharpe|sortino|calmar|greeks|delta|gamma|theta|vega|implied volatility|monte carlo|portfolios?|hedging|short selling|dividends?|etfs?|paper trading|live trading)\b/;
+// Whole words only: "trade-offs", "trader-joe's" or "options" inside a longer word never count, so a
+// word that is part of a hyphenated or possessive word is not a domain word.
+const wholeWords = (alternatives) => new RegExp(`(?<![\\w'’-])(?:${alternatives})(?![\\w'’-])`);
+const CODING_WORDS = wholeWords('code|coding|coder|programs?|programming|programmers?|software|algorithms?|data structures?|python|javascript|typescript|java|dart|flutter|swift|kotlin|rust|golang|sql|databases?|apis?|https?|git|github|compilers?|debugging|debuggers?|linux|bash|regex|regular expressions?|object oriented|oop|inheritance|threads?|docker|kubernetes|cloudflare|durable objects?|react|html|css|web development|frontend|backend|machine learning|neural networks?|llms?|linked lists?|binary trees?|graph algorithms?|dynamic programming|garbage collection|encryption|cryptography|oauth|websockets?|unit tests?|devops');
+const TRADING_WORDS = wholeWords('trade|trades|trading|traders?|markets?|stocks?|shares|equities|futures|options?|forex|crypto|bitcoin|ethereum|nq|mnq|nasdaq|s&p|spx|spy|qqq|backtests?|backtesting|strateg(?:y|ies)|risk|charts?|candles?|candlesticks?|orders?|brokers?|brokerage|leverage|margin|volatility|atr|ema|sma|moving averages?|rsi|macd|bollinger|fvg|fair value gaps?|order blocks?|liquidity|ict|smart money|scalping|day trading|swing trading|sharpe|sortino|calmar|greeks|delta|gamma|theta|vega|implied volatility|monte carlo|portfolios?|hedging|short selling|dividends?|etfs?|paper trading|live trading');
 const domainOf = (text) => (TRADING_WORDS.test(text) ? 'trading' : CODING_WORDS.test(text) ? 'coding' : '');
 const BARE_DOMAIN = { coding: 'coding', code: 'coding', programming: 'coding', trading: 'trading', 'the markets': 'trading', markets: 'trading' };
+
+// A lesson is about a concept. These mark a request about the owner's or CHE's own data and work
+// instead ("my trading performance", "every trade you made", "the code you changed in PR 352",
+// "why the deploy failed"), which belongs to the routes that hold those records.
+const PERSONAL = wholeWords("my|mine|your|yours|our|ours|their|theirs|his|her|you|we|i|me|us");
+const NOT_A_CONCEPT = new RegExp(`${wholeWords('why|which|whose|when|where|did|does|made|changed?|changes|changing|failed|fails?|failure|bugs?|errors?|commits?|diffs?|deploy(?:ed|s|ment)?|merged?|branch|pull requests?|pr|job|jobs|today|yesterday|last|latest|recent').source}|#\\d+|\\bpr\\s*\\d+|\\b[\\w-]+\\.(?:js|mjs|cjs|ts|tsx|dart|py|json|ya?ml|md|swift|kt|java|go|rs|html|css)\\b`);
+// A second request in the same sentence ("... and email it to Mark", "... and switch to live
+// trading") is never swallowed by a lesson: the whole turn goes on to the normal routes.
+const SECOND_ACTION = /(?:,|;|\band\b|\bthen\b|\balso\b|\bplus\b)\s+(?:then\s+|also\s+|please\s+|you\s+)?(?:e-?mail|send|text|message|mail|switch|turn|open|close|start|stop|pause|resume|run|launch|deploy|merge|buy|sell|pay|order|delete|remove|book|call|post|upload|publish|place|schedule|remind|save|share|connect|disconnect|cancel|play|make|build|create|write|draft|set|change|move|go|put|add|fix|update|check|look|research|find|search|tell|ask|read)\b/;
+// "for MNQ", "on futures": a contract or market named after a concept does not change the concept.
+const QUALIFIER = /\s+(?:for|on|in|with|of)\s+(?:an?\s+|the\s+|one\s+)?(?:mnq|nq|es|mes|micros?|minis?|e-?minis?|futures?|contracts?|trades?|stocks?|shares|options?|the market|markets?)$/;
+
+const conceptTopic = (topic) => !PERSONAL.test(topic) && !NOT_A_CONCEPT.test(topic);
 
 // "like I'm a beginner", "the expert version", "simply": the depth the owner asked for.
 const LEVEL_PHRASES = [
@@ -951,9 +966,10 @@ export function atlasContext(history = []) {
 const THIS = /^(?:this|that|it|this one|that one|this card|that card|this topic|that topic|the same|the same one)$/;
 
 /**
- * The owner's request to the Knowledge Atlas, or null when it is not one. Anchored to the whole
- * sentence, so "teach me recursion and buy the course" is not a lesson, and a sentence that asks
- * to pay, buy or delete always goes on to the owner's gate.
+ * The owner's request to the Knowledge Atlas, or null when it is not one. A lesson is answered
+ * only when a card names the concept exactly and the sentence asks for nothing else; a topic
+ * with no card goes on to the usual routes unless the atlas itself was asked ("/learn ...",
+ * "... from the knowledge atlas"). A sentence that asks to pay, buy or delete is never a lesson.
  */
 export function atlasIntent(message, history = [], { explainLevel = '' } = {}) {
   const raw = String(message || '');
@@ -964,17 +980,24 @@ export function atlasIntent(message, history = [], { explainLevel = '' } = {}) {
   const ctx = atlasContext(history);
   const preferred = EXPLAIN_LEVEL[explainLevel] || 'beginner';
 
-  // The /learn command's request: everything after the prefix is for the atlas.
-  const explicit = /^knowledge atlas\s*[:,-]?\s*(.*)$/.exec(t);
-  if (explicit) {
-    t = explicit[1].trim();
+  // The atlas asked for by name: the /learn command's request, or "... from the knowledge atlas".
+  const prefixed = /^knowledge atlas\s*[:,-]?\s*(.*)$/.exec(t);
+  const suffixed = prefixed ? null : /^(.+?)\s+(?:from|in|using|with) (?:the |your )?knowledge atlas$/.exec(t);
+  const explicit = Boolean(prefixed || suffixed);
+  if (prefixed) {
+    t = prefixed[1].trim();
     if (!t) return { kind: 'overview' };
+  } else if (suffixed) {
+    t = suffixed[1].trim();
   }
+  // "Teach me recursion and email it to Mark": two requests, so neither is swallowed here.
+  // A trade plan's own prices ("…, stop 17990, target 18030") are not a second request.
+  if (!explicit && SECOND_ACTION.test(t.replace(PLAN_PRICES, ''))) return null;
 
-  if (/^(?:open|show(?: me)?|go to|bring up|read|what(?:'s| is)? in|whats in)\s+(?:the |my |your |che's )?knowledge atlas(?: page)?$/.test(t)) return { kind: 'overview' };
+  if (/^(?:open|use|show(?: me)?|go to|bring up|read|what(?:'s| is)? in|whats in)\s+(?:the |my |your |che's )?knowledge atlas(?: page)?$/.test(t)) return { kind: 'overview' };
 
   // Trading calculations and readings of CHE's own records (atlas_trading.js).
-  const trade = tradingAtlasIntent(t, { findCard: findAtlasCard, cardById: atlasCard });
+  const trade = tradingAtlasIntent(t, { findCard: (x) => (conceptTopic(x) ? findAtlasCard(x) : null), cardById: atlasCard });
   if (trade) return trade;
 
   const list = /^(?:(?:list|show|read|tell|give)(?: me)?|what are) (?:all )?(?:of )?(?:the |your )?(?:(coding|code|programming|trading|all) )?(?:knowledge atlas )?(?:cards|lessons|knowledge atlas topics)(?: (?:in|of|from) (?:the |your )?knowledge atlas)?(?: (?:you have|there are))?$/.exec(t)
@@ -1000,22 +1023,25 @@ export function atlasIntent(message, history = [], { explainLevel = '' } = {}) {
     return /quiz/.test(t) ? { kind: 'no_quiz' } : null;
   }
 
-  const quiz = /^(?:quiz me|test me|give me a quiz|ask me (?:some )?questions|ask me a question)(?: (?:on|about|in|for|with))?(?: (.+))?$/.exec(t);
+  // "Ask me a question" is a quiz only right after a lesson; "quiz me" with no topic asks which one.
+  if (/^ask me (?:a question|some questions|questions)(?: about (?:this|it|that))?$/.test(t)) return ctx.card ? { kind: 'quiz', card: ctx.card } : null;
+  const quiz = /^(?:quiz me|test me|give me a quiz)(?: (?:on|about|in|for|with))?(?: (.+))?$/.exec(t);
   if (quiz) {
     const topic = String(quiz[1] || '').trim();
     if (!topic || /^(?:something|anything)$/.test(topic)) return { kind: 'ask_topic', purpose: 'quiz', domain: '' };
     if (THIS.test(topic)) return ctx.card ? { kind: 'quiz', card: ctx.card } : { kind: 'ask_topic', purpose: 'quiz', domain: '' };
-    return resolveTopic(topic, { kind: 'quiz', explicit: Boolean(explicit) });
+    return resolveTopic(topic, { kind: 'quiz', explicit });
   }
 
-  // The formula, by name or for the card just discussed.
+  // The formula, by name or for the card just discussed. "How do I calculate my position size" asks
+  // for the method, so "my" there names the concept, not a record.
   const formula = /^(?:(?:what(?:'s| is| are)|whats|give me|tell me|show me|read me|say|and)\s+)?(?:the |a )?(?:formula|formulas|equation|math|maths)(?:\s+(?:for|of|behind|in|to))?(?:\s+(.+))?$/.exec(t)
-    || /^how (?:do (?:you|i|we)|to|can i|would i) (?:calculate|compute|work out|measure) (.+)$/.exec(t)
-    || /^how (?:is|are) (.+?) (?:calculated|computed|worked out|measured)$/.exec(t);
+    || /^how (?:do (?:you|i|we)|to|can i|would i|should i) (?:calculate|compute|work out|measure)\s+(?:my\s+|a\s+|an\s+|the\s+)?(.+)$/.exec(t)
+    || /^how (?:is|are) (?:the\s+|a\s+|an\s+)?(.+?) (?:calculated|computed|worked out|measured)$/.exec(t);
   if (formula) {
     const topic = String(formula[1] || '').trim();
     if (!topic || THIS.test(topic)) return ctx.card ? { kind: 'formula', card: ctx.card } : null;
-    return resolveTopic(topic, { kind: 'formula', explicit: Boolean(explicit) });
+    return resolveTopic(topic, { kind: 'formula', explicit });
   }
 
   // A worked example or the code behind it.
@@ -1024,7 +1050,7 @@ export function atlasIntent(message, history = [], { explainLevel = '' } = {}) {
     const wantsCode = /code/.test(example[1]);
     const topic = String(example[2] || '').trim();
     if (!topic || THIS.test(topic)) return ctx.card ? { kind: 'example', card: ctx.card, code: wantsCode } : null;
-    const found = findAtlasCard(topic);
+    const found = conceptTopic(topic) ? findAtlasCard(topic) : null;
     return found ? { kind: 'example', card: found, code: wantsCode } : null;
   }
 
@@ -1032,7 +1058,7 @@ export function atlasIntent(message, history = [], { explainLevel = '' } = {}) {
   const levelOnly = /^(?:(?:give|show|tell|read) me |let'?s (?:do|try|hear) |switch to |go to |now |and )?(?:the |an? )?(beginner|simple|simpler|basic|easy|easier|intermediate|practical|middle|expert|advanced|hard|harder|full|deeper) (?:version|level|explanation|one|take)(?: (?:of|for|on) (.+))?$/.exec(t);
   const nudge = /^(?:go deeper|deeper|more depth|in more depth|more advanced|go more advanced|harder|level up|make it (?:simpler|easier)|simpler|easier|explain (?:it|that) (?:simpler|more simply|more deeply))$/.exec(t);
   if (levelOnly || nudge) {
-    const named = levelOnly?.[2] ? findAtlasCard(levelOnly[2]) : null;
+    const named = levelOnly?.[2] && conceptTopic(levelOnly[2]) ? findAtlasCard(levelOnly[2]) : null;
     const target = named || ctx.card;
     if (!target) return null;
     let level = levelOnly ? LEVEL_WORDS[levelOnly[1]] : '';
@@ -1052,47 +1078,52 @@ export function atlasIntent(message, history = [], { explainLevel = '' } = {}) {
   const teach = /^(?:teach me|help me (?:learn|understand)|i (?:want|would like|'d like|d like|wanna) to (?:learn|understand)|i want to learn about|give me a lesson (?:on|about|in)|lesson on|walk me through|explain to me)(?:\s+(.*))?$/.exec(rest);
   if (teach) {
     const topic = String(teach[1] || '').replace(/\s+to me$/, '').trim();
-    if (!topic || /^(?:something|anything|stuff)$/.test(topic)) return { kind: 'ask_topic', purpose: 'teach', domain: '' };
-    if (THIS.test(topic)) return ctx.card ? { kind: 'teach', card: ctx.card, level: asked || preferred } : { kind: 'ask_topic', purpose: 'teach', domain: '' };
-    return resolveTopic(topic, { kind: 'teach', level: asked || preferred, explicit: Boolean(explicit) });
+    // Only a bare "teach me" asks which topic; "help me understand" or "walk me through" alone
+    // continues the lesson just given, or goes on to the usual routes.
+    if (!topic || /^(?:something|anything|stuff)$/.test(topic)) {
+      if (/^teach me/.test(rest)) return { kind: 'ask_topic', purpose: 'teach', domain: '' };
+      return ctx.card ? { kind: 'teach', card: ctx.card, level: asked || ctx.level || preferred } : null;
+    }
+    if (THIS.test(topic)) return ctx.card ? { kind: 'teach', card: ctx.card, level: asked || preferred } : null;
+    return resolveTopic(topic, { kind: 'teach', level: asked || preferred, explicit });
   }
-  // "Explain X", "what is X", "define X", "tell me about X": a lesson only when a card is named
-  // exactly, or a depth was asked for on a coding or trading topic.
+  // "Explain X", "what is X", "define X", "tell me about X": a lesson only when a card names X.
   const ask = /^(?:explain|define|describe|tell me about)\s+(.+?)(?:\s+to me)?$/.exec(rest);
   const what = ask ? null : /^(?:what(?:'s| is| are)|whats|what does)\s+(?:an? )?(.+?)(?:\s+mean)?$/.exec(rest);
   if (ask || what) {
     const topic = (ask || what)[1];
     // "What is the spread?", "what's my win rate?": a reading of something, not a lesson.
     if (what && !explicit && /^(?:the|my|your|our|his|today'?s|current|this|that)\b/.test(topic)) return null;
-    const found = findAtlasCard(topic);
     // A bare "what is win rate" asks for CHE's measured numbers, which the evidence route answers.
-    if (found && !(what && !asked && evidenceIntent(raw))) return { kind: 'teach', card: found, level: asked || preferred };
-    if (explicit || (asked && !found)) return resolveTopic(topic, { kind: 'teach', level: asked || preferred, explicit });
-    return null;
+    if (what && !asked && !explicit && evidenceIntent(raw)) return null;
+    return resolveTopic(topic, { kind: 'teach', level: asked || preferred, explicit });
   }
   if (explicit) return resolveTopic(t, { kind: 'teach', level: asked || preferred, explicit: true });
   return null;
 }
 
-function resolveTopic(topic, { kind, level = 'beginner', explicit = false }) {
-  const found = findAtlasCard(topic);
+function resolveTopic(rawTopic, { kind, level = 'beginner', explicit = false }) {
+  const topic = rawTopic.replace(QUALIFIER, '').trim();
+  const found = conceptTopic(topic) ? findAtlasCard(topic) : null;
   if (found) return kind === 'teach' ? { kind, card: found, level } : { kind, card: found };
   const purpose = kind === 'quiz' ? 'quiz' : 'teach';
   const domain = domainOf(topic);
-  // "Teach me trading", "teach me how to code": the whole domain, so its cards are offered.
+  // "Quiz me on trading", "/learn coding": the whole domain, so its cards are offered.
   const bare = BARE_DOMAIN[topic.replace(/^the /, '').trim()] || (!topicKey(topic) && domain);
-  if (bare) return { kind: 'ask_topic', purpose, domain: bare };
-  if (domain || explicit) return { kind: 'missing', topic: topic.slice(0, 80), domain };
-  return null;
+  if (bare && (explicit || kind === 'quiz')) return { kind: 'ask_topic', purpose, domain: bare };
+  // No card: the turn goes on to the usual routes, unless the atlas itself was asked.
+  return explicit ? { kind: 'missing', topic: topic.slice(0, 80), domain } : null;
 }
 
 // ─── What CHE says ───────────────────────────────────────────────────────
 
 const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+/** How every card names its references, in Chat and on the phone (che-fact-check: a link is not proof). */
+export const REFERENCES_LABEL = 'Reference links, not opened or checked by CHE';
 const refName = (s) => (s.url || s.title.startsWith('CHE source') ? s.title : `${s.title}, by ${s.author}`);
 const sourceLine = (c) => {
   const refs = c.sources.map(refName).join('; ');
-  return `Source: Knowledge Atlas card "${c.title}" (${DOMAINS[c.domain].toLowerCase()}), curated teaching content checked by CHE's tests, revision ${c.revision}. References: ${refs}.`;
+  return `Source: Knowledge Atlas card "${c.title}" (${DOMAINS[c.domain].toLowerCase()}), curated teaching content, revision ${c.revision}; CHE's tests check its arithmetic and run its code. ${REFERENCES_LABEL}: ${refs}.`;
 };
 const firstAlias = (c) => c.aliases[0];
 const exampleWords = (c) => (c.example.kind === 'code' ? `${c.example.explain} Say "show me the code" to see it.` : `${c.example.steps.join('; ')}.`);
@@ -1123,24 +1154,59 @@ export async function loadAtlasRecords(storage) {
   }
 }
 
-/** The measured line for a trading card, from records only. Empty for a card that cites no statistic. */
+// One paper portfolio's name: its strategy, contract and bar size, as the journal records them.
+function portfolioName(t) {
+  const strategy = INTRADAY_CANDIDATES[t?.strategy]?.name || CANDIDATES[t?.strategy]?.name || String(t?.strategy || 'unnamed strategy');
+  const bars = t?.data?.resolution === '5m' ? 'five-minute bars' : t?.data?.resolution ? `${t.data.resolution} bars` : 'daily bars';
+  return `${cap(strategy)} on ${t?.contract || t?.symbol || 'MNQ'}, ${bars}`;
+}
+
+// A 95% range needs at least two trades; below that the sample is only a number.
+const rangeOr = (s, show) => {
+  if (s.trades < 2) return `too few trades for a range (n = ${s.trades})`;
+  // Identical results have no spread, so the formula gives a zero-width range that means nothing.
+  if (s.low === s.high) return `no range: all ${s.trades} results are identical, so they show no spread to estimate from`;
+  return `95% range ${show(s.low)} to ${show(s.high)}`;
+};
+// A drawdown is a size of loss, spoken as a plain magnitude: never "plus 4R".
+const fmtDepthR = (x) => (x == null ? 'not measured' : `${Math.abs(x).toFixed(2)}R`);
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+/**
+ * The measured line for a trading card, from records only; empty for a card that cites no statistic.
+ * Every paper portfolio is its own strategy and its own record, so figures are given per portfolio
+ * (a range across them, and the largest one in full), never pooled into one account.
+ */
 export function measuredText(c, records = { paper: [], backtest: null }) {
   if (!c?.measured) return '';
   if (records.unreadable) return `Your records: I could not read CHE's paper journal just now, so I give no measured ${c.measured.label}.`;
-  const s = summarize(records.paper || []);
+  const groups = new Map();
+  for (const t of records.paper || []) {
+    const key = String(t?.portfolio || '');
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(t);
+  }
+  const books = [...groups.values()].map((trades) => ({ name: portfolioName(trades[0]), s: summarize(trades) }))
+    .sort((a, b) => b.s.trades - a.s.trades || a.name.localeCompare(b.name));
   const parts = [];
-  if (!s.trades) {
+  if (!books.length) {
     parts.push(`Your records: no recorded data yet. CHE's paper journal has no closed paper trades, so there is no measured ${c.measured.label}.`);
   } else {
-    const ci = s.win_rate_95ci;
+    const total = books.reduce((n, b) => n + b.s.trades, 0);
+    const many = books.length > 1;
+    const top = books[0];
+    const s = top.s;
+    const across = (values, show, what) => (many ? ` Across the ${books.length} portfolios, ${what} ranged ${range(values, show)}.` : '');
     const line = {
-      expectancy: `expectancy ${fmtR(s.expectancy_r)} per trade after assumed costs, 95% range ${fmtR(s.expectancy_r_95ci.low)} to ${fmtR(s.expectancy_r_95ci.high)}`,
-      win_rate: `win rate ${s.win_rate}%, 95% range ${ci.low}% to ${ci.high}%, from ${s.wins} wins and ${s.losses} losses`,
-      profit_factor: `profit factor ${s.profit_factor ?? 'not defined, because no trade lost'}`,
-      max_drawdown: `maximum drawdown ${money(s.max_drawdown)}, or ${fmtR(s.max_drawdown_r)}`,
-      sample: `${s.trades} trades against the ${MIN_TRADES}-trade minimum; expectancy 95% range ${fmtR(s.expectancy_r_95ci.low)} to ${fmtR(s.expectancy_r_95ci.high)}`,
-    }[c.measured.metric];
-    parts.push(`Your records, measured from CHE's paper journal (${PROVENANCE.paper}): ${s.trades} closed paper trade${s.trades === 1 ? '' : 's'}, ${SAMPLE[s.sample]}. ${cap(line)}.`);
+      expectancy: () => `${top.name}: expectancy ${fmtR(s.expectancy_r)} per trade after assumed costs, ${rangeOr({ trades: s.trades, low: s.expectancy_r_95ci.low, high: s.expectancy_r_95ci.high }, fmtR)}.${across(books.map((b) => b.s.expectancy_r), fmtR, 'expectancy')}`,
+      win_rate: () => `${top.name}: win rate ${s.win_rate}%, ${plural(s.wins, 'win')} and ${s.losses} loss${s.losses === 1 ? '' : 'es'}, ${rangeOr({ trades: s.trades, ...(s.win_rate_95ci || {}) }, (x) => `${x}%`)}.${across(books.map((b) => b.s.win_rate), (x) => `${x}%`, 'win rate')}`,
+      profit_factor: () => `${top.name}: profit factor ${s.profit_factor ?? 'not defined, because no trade lost'}.${many && range(books.map((b) => b.s.profit_factor), (x) => `${x}`) ? across(books.map((b) => b.s.profit_factor), (x) => `${x}`, 'profit factor') : ''}`,
+      max_drawdown: () => `${top.name}: maximum drawdown ${money(s.max_drawdown)}, or ${fmtDepthR(s.max_drawdown_r)}, within that portfolio's own record.${across(books.map((b) => b.s.max_drawdown), money, 'maximum drawdown')} None of these is an account balance.`,
+      sample: () => `${books.filter((b) => b.s.trades >= MIN_TRADES).length} of ${plural(books.length, 'portfolio')} reached the ${MIN_TRADES}-trade minimum. ${many ? 'The largest is' : 'It is'} ${top.name}, with ${plural(s.trades, 'closed trade')}: expectancy ${fmtR(s.expectancy_r)}, ${rangeOr({ trades: s.trades, low: s.expectancy_r_95ci.low, high: s.expectancy_r_95ci.high }, fmtR)}.`,
+    }[c.measured.metric]();
+    const lead = c.measured.metric === 'sample' ? '' : many ? 'The largest is ' : 'It is ';
+    const where = many ? `in ${books.length} separate paper portfolios, each its own strategy, so nothing is pooled into one account.` : 'in 1 paper portfolio, one strategy.';
+    parts.push(`Your records, measured from CHE's paper journal (${PROVENANCE.paper}): ${plural(total, 'closed paper trade')} ${where} ${lead}${line} Largest sample: n = ${s.trades}, ${SAMPLE[s.sample]}.`);
   }
   const bt = records.backtest;
   const rows = bt?.ok && Array.isArray(bt.rows) ? bt.rows.filter((r) => Number(r?.stats?.trades) > 0) : [];
@@ -1213,7 +1279,12 @@ export async function answerAtlas(intent, { storage = null } = {}) {
     case 'missing': {
       const trading = intent.domain === 'trading' || TRADING_WORDS.test(String(intent.topic || ''));
       const topic = String(intent.topic || '').replace(/^(?:(?:how |about |the )?to |about |the )/, '');
-      return out(`I don't have a Knowledge Atlas card on "${topic}" yet, sir, so I won't make one up. ${trading ? 'Lessons never place or enable trades: live orders stay disabled, and nothing was changed. ' : ''}The atlas has ${coding} coding and ${total - coding} trading cards so far; say "list the coding cards" or "list the trading cards" to hear them.`, false);
+      // The desk is read, never written: a lesson only reports the mode it found.
+      const desk = trading ? await Promise.resolve(storage && readDesk(storage)).catch(() => null) : null;
+      const mode = !trading ? '' : desk?.mode
+        ? `This lesson changed nothing: you are still on ${MODE_NAME[desk.mode]}. `
+        : 'This lesson changed nothing about your trading. ';
+      return out(`I don't have a Knowledge Atlas card on "${topic}" yet, sir, so I won't make one up. ${mode}The atlas has ${coding} coding and ${total - coding} trading cards so far; say "list the coding cards" or "list the trading cards" to hear them.`, false);
     }
     case 'pick_missing':
       return out(`There is no number ${intent.number} on that list, sir. Say a number from the list, or "teach me" and a name.`, false);
@@ -1272,6 +1343,8 @@ export function atlasExport() {
     generated_from: 'server/cloudflare/knowledge_atlas.js',
     levels: LEVELS,
     domains: DOMAINS,
+    references_label: REFERENCES_LABEL,
+    matching: { filler: [...FILLER], numbers: NUMBER_WORDS },
     cards: ATLAS_CARDS.map((c) => ({
       id: c.id, domain: c.domain, title: c.title, level: c.level, summary: c.summary, revision: c.revision, source_kind: c.source_kind,
       aliases: c.aliases, tags: c.tags, prerequisites: c.prerequisites, related: c.related,

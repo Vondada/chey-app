@@ -191,7 +191,10 @@ test('five provenance labels; broker SIM and live orders say "no records" unless
     backtest: { ok: true, at: '2026-10-18T12:00:00Z', data: 'Yahoo MNQ=F, 1200 five-minute bars (DELAYED public data)', rows: [{ stats: { trades: 12, expectancy_r: -0.1 } }, { stats: { trades: 40, expectancy_r: 0.2 } }] },
     desk: { alerts: [{ mode: 'sim', status: 'placed' }, { mode: 'sim', status: 'failed' }, { mode: 'live', status: 'pending' }] },
   });
-  assert.ok(full.includes(`Delayed forward-paper data, CHE's paper journal: 5 closed paper trades, expectancy +${s.expectancy_r.toFixed(2)}R per trade after assumed costs.`), full);
+  assert.ok(full.includes(`Delayed forward-paper data, CHE's paper journal: 5 closed paper trades in 1 paper portfolio, one strategy. It is Fair value gap retest on MNQ, five-minute bars, 3R target: 5 trades, expectancy +${s.expectancy_r.toFixed(2)}R per trade after assumed costs.`), full);
+  // Two portfolios are two records: the largest is named, and the others only bound a range.
+  const two = provenanceText({ paper: [...trades, ...journal([-1, -1], { strategy: 'sweep-mss-5m', targetR: 2, from: '2026-10-17T14:00:00Z' })] });
+  assert.match(two, /7 closed paper trades in 2 separate paper portfolios, each its own strategy, so nothing is pooled\. The largest is Fair value gap retest on MNQ, five-minute bars, 3R target: 5 trades, .* Across the 2 portfolios, expectancy ranged /);
   assert.ok(full.includes('Historical backtest, stored 2026-10-18, Yahoo MNQ=F, 1200 five-minute bars (DELAYED public data): 2 strategy portfolios with 52 trades; expectancy ranged −0.10R to +0.20R across them.'), full);
   assert.ok(full.includes('Broker SIM: 1 order record on the desk, with no recorded fills or results, so no statistics.'), 'a placed SIM order is counted, a failed one is not');
   assert.ok(full.includes('Live orders: no records.'), 'a pending live alert is not an order');
@@ -288,26 +291,29 @@ test('the win-rate interval and expectancy come from the paper journal, or "no r
   const s = summarize(trades);
   const w = wilsonInterval(s.wins, s.trades);
   const ci = await calc(che, "CHE, what's the confidence interval on my win rate?");
-  assert.ok(ci.reply.includes(`from delayed forward-paper data in CHE's paper journal: ${s.wins} wins in ${s.trades} closed paper trades, ${(100 * w.low).toFixed(1)}% to ${(100 * w.high).toFixed(1)}%.`), ci.reply);
-  assert.match(ci.reply, /fewer than the 30 trades needed, so it is anecdote, not evidence/);
+  assert.match(ci.reply, /^Your win rate's 95% Wilson interval, sir, one paper portfolio at a time, from delayed forward-paper data in CHE's paper journal: 12 closed paper trades in 1 paper portfolio, one strategy\./);
+  assert.ok(ci.reply.includes(`1. Fair value gap retest on MNQ, five-minute bars, 3R target: ${s.wins} wins in ${s.trades}, ${(100 * w.low).toFixed(1)}% to ${(100 * w.high).toFixed(1)}%.`), ci.reply);
+  assert.match(ci.reply, /The largest has fewer than the 30 trades needed, so it is anecdote, not evidence/);
   const e = await calc(che, 'what is my expectancy');
   assert.ok(e.reply.includes(`form 2: mean R = ${num(trades.reduce((a, t) => a + t.r_net, 0), 4)} ÷ ${trades.length} = +${s.expectancy_r.toFixed(2)}R; the two forms agree`), e.reply);
   assert.match(e.reply, /t for 11 degrees of freedom = 2\.201/);
-  assert.match(e.reply, /Verdict: unsupported, because only 12 closed trades; 30 are the minimum/);
+  assert.match(e.reply, /It is Fair value gap retest on MNQ, five-minute bars, 3R target, n = 12\. Math: /);
+  assert.match(e.reply, /Verdict for Fair value gap retest on MNQ, five-minute bars, 3R target: unsupported, because only 12 closed trades; 30 are the minimum/);
 });
 
 test('"Evaluate my strategy": good, bad and unsupported by the written criteria', async () => {
   const strong = journal(Array.from({ length: 40 }, (_, i) => (i % 2 ? 3 : -1)));
   const good = await calc(await owner({ saved: store(strong) }), 'Evaluate my strategy');
-  assert.match(good.reply, /^Your strategy, judged on delayed forward-paper data in CHE's paper journal, sir: 40 closed paper trades, after assumed costs\./);
-  assert.match(good.reply, /Verdict: good, because the 95% expectancy range is above zero and the profit factor 3 is above 1\.2/);
+  assert.match(good.reply, /^Your strategies, judged one paper portfolio at a time, sir, from delayed forward-paper data in CHE's paper journal, after assumed costs: 40 closed paper trades in 1 paper portfolio, one strategy\./);
+  assert.match(good.reply, /Verdict for Fair value gap retest on MNQ, five-minute bars, 3R target: good, because the 95% expectancy range is above zero and the profit factor 3 is above 1\.2/);
+  assert.match(good.reply, /maximum drawdown \$\d+\.\d\d, or \d+\.\d\dR, within that portfolio's own record/, 'a drawdown is a magnitude, never +R');
   const weak = journal(Array.from({ length: 40 }, (_, i) => (i % 4 ? -1 : 1)));
-  assert.match((await calc(await owner({ saved: store(weak) }), 'evaluate my strategy')).reply, /Verdict: bad, because the whole 95% expectancy range is below zero/);
+  assert.match((await calc(await owner({ saved: store(weak) }), 'evaluate my strategy')).reply, /Verdict for Fair value gap retest on MNQ, five-minute bars, 3R target: bad, because the whole 95% expectancy range is below zero/);
   const mixed = journal(Array.from({ length: 40 }, (_, i) => (i % 3 ? -1 : 2.2)));
-  assert.match((await calc(await owner({ saved: store(mixed) }), 'evaluate my strategy')).reply, /Verdict: unsupported, because the 95% expectancy range includes zero/);
+  assert.match((await calc(await owner({ saved: store(mixed) }), 'evaluate my strategy')).reply, /Verdict for Fair value gap retest on MNQ, five-minute bars, 3R target: unsupported, because the 95% expectancy range includes zero/);
   // Two strategies are judged one by one, never pooled into one verdict without saying so.
   const two = store([...strong, ...journal([3, -1, -1], { strategy: 'sweep-mss-5m', targetR: 2, from: '2026-10-17T14:00:00Z' })]);
-  assert.match((await calc(await owner({ saved: two }), 'evaluate my strategy')).reply, /By strategy, each judged on its own.*1\. fvg-retest-5m at 3R: 40 trades, \+1\.00R a trade, good; 2\. sweep-mss-5m at 2R: 3 trades, \+0\.33R a trade, unsupported/s);
+  assert.match((await calc(await owner({ saved: two }), 'evaluate my strategy')).reply, /43 closed paper trades in 2 separate paper portfolios, each its own strategy, so nothing is pooled\..*Verdict for Fair value gap retest on MNQ, five-minute bars, 3R target: good,.*The other portfolios, each judged on its own: 2\. Liquidity sweep then market structure shift on MNQ, five-minute bars, 2R target: 3 trades, \+0\.33R a trade, unsupported\./s);
 });
 
 test('"Is this a good trade": the plan\'s math, what the records support, and an explicit verdict', async () => {
@@ -317,15 +323,15 @@ test('"Is this a good trade": the plan\'s math, what the records support, and an
     assert.match(out.reply, /^Long MNQ at 18,000, stop 17,990, target 18,030, sir\. I placed and prepared no order; this is a calculation\./);
     assert.ok(out.reply.includes('reward to risk = 30 ÷ 10 = 3 to 1; in dollars on 1 MNQ: risk 10 × $2.00 × 1 = $20.00, reward 30 × $2.00 × 1 = $60.00; win rate needed to break even before costs = 10 ÷ (10 + 30) = 25.0%'), out.reply);
     assert.match(out.reply, /CHE's paper journal has no closed MNQ long trades planned near 3 to 1/);
-    assert.match(out.reply, /Verdict: unsupported, because no recorded trade matches this setup\. Criteria: good needs at least 30 comparable recorded trades/);
+    assert.match(out.reply, /Verdict: unsupported, because no recorded trade matches this setup\. Criteria: good needs every paper portfolio with at least 30 comparable recorded trades/);
   }
   const winners = journal(Array.from({ length: 36 }, (_, i) => (i % 2 ? 3 : -1)));
   const good = await calc(await owner({ saved: store(winners) }), 'is this a good trade long mnq at 18000 stop 17990 target 18030');
   const w = wilsonInterval(18, 36);
-  assert.ok(good.reply.includes(`36 closed MNQ long paper trades planned near 3 to 1 won 18, a Wilson 95% range of ${(100 * w.low).toFixed(1)}% to ${(100 * w.high).toFixed(1)}% against the 25.0% needed`), good.reply);
-  assert.match(good.reply, /Verdict: good, because the whole win-rate range is above the 25\.0% break-even/);
+  assert.ok(good.reply.includes(`What the data supports, delayed forward-paper data, one paper portfolio at a time: 1. Fair value gap retest on MNQ, five-minute bars, 3R target: 36 closed MNQ long trades planned near 3 to 1 won 18, a Wilson 95% range of ${(100 * w.low).toFixed(1)}% to ${(100 * w.high).toFixed(1)}% against the 25.0% needed.`), good.reply);
+  assert.match(good.reply, /Verdict: good, because every portfolio with 30 or more comparable trades has its whole win-rate range above the 25\.0% break-even/);
   const losers = journal(Array.from({ length: 40 }, (_, i) => (i % 20 ? -1 : 3)));
-  assert.match((await calc(await owner({ saved: store(losers) }), 'Is this a good trade: long MNQ at 18000, stop 17990, target 18030?')).reply, /Verdict: bad, because the whole win-rate range is below the 25\.0% break-even/);
+  assert.match((await calc(await owner({ saved: store(losers) }), 'Is this a good trade: long MNQ at 18000, stop 17990, target 18030?')).reply, /Verdict: bad, because every portfolio with 30 or more comparable trades has its whole win-rate range below the 25\.0% break-even/);
   // Shorts, other sides and wrong-way stops.
   assert.match((await calc(empty, 'Is this a good trade: long MNQ at 18000, stop 18010, target 18030?')).reply, /Verdict: bad, because for a long the stop must be below the entry/);
   assert.match((await calc(empty, 'CHE, is this a good trade: short 2 NQ at 21000, stop 21020, target 20940?')).reply, /^Short 2 NQ at 21,000, stop 21,020, target 20,940, sir\..*reward to risk = 60 ÷ 20 = 3 to 1; in dollars on 2 NQ: risk 20 × \$20\.00 × 2 = \$800\.00/s);
@@ -334,6 +340,12 @@ test('"Is this a good trade": the plan\'s math, what the records support, and an
 
 test('lessons: order blocks at expert level, a fair value gap quiz, and BOS versus CHOCH', async () => {
   const che = await owner();
+  // A card name inside a sentence about the owner's own things is not a lesson.
+  for (const [lesson, own] of [['teach me about order blocks', 'walk me through my order blocks from today'], ['explain options', 'help me understand my options for the lease'],
+    ['teach me fair value gaps', 'walk me through the fair value gaps you traded today'], ['explain the opening range', 'what was the opening range today'], ['teach me market structure', 'teach me market structure and send it to Mark']]) {
+    assert.equal((await che.say(lesson)).route, 'che_knowledge_atlas', lesson);
+    assert.notEqual((await che.say(own)).route, 'che_knowledge_atlas', own);
+  }
   for (const words of variants('Teach me order blocks at expert level.')) {
     const out = await calc(che, words);
     assert.match(out.reply, /^Order blocks, expert level, sir\. There is no single definition/);
@@ -361,7 +373,7 @@ test('a Monte Carlo of the journal is seeded and repeatable, and refuses with no
   const a = await calc(che, 'Run a Monte Carlo on my trades');
   const b = await calc(che, 'run a monte carlo on my trades');
   assert.equal(a.reply, b.reply, 'the same seed gives the same answer');
-  assert.match(a.reply, /^Monte Carlo of your 8 closed paper trades, sir, from delayed forward-paper data, in R after assumed costs\./);
+  assert.match(a.reply, /^Monte Carlo of Fair value gap retest on MNQ, five-minute bars, 3R target, your largest paper portfolio, 8 closed trades, sir, from delayed forward-paper data, in R after assumed costs\./);
   assert.match(a.reply, /2,000 paths of 8 trades, drawn with replacement from 8 results, seed 1/);
   assert.match(a.reply, /With fewer than 30 trades it repeats their luck\./);
   assert.match((await calc(await owner(), 'run a monte carlo on my trades')).reply, /no closed paper trades to simulate/);
@@ -391,6 +403,11 @@ test('counter-cases keep their routes: orders, the Trading Room\'s analysis, cha
   for (const words of ['How many contracts are open?', 'how many shares of apple do I own', 'is my strategy working', 'Is this a good trade?', "What's my risk on MNQ right now?", 'review my results', 'evaluate my youtube strategy']) {
     assert.notEqual((await che.say(words)).route, 'che_knowledge_atlas', words);
   }
+  // The owner's own trades, positions and performance keep the routes that hold those records.
+  for (const [words, route] of [['show me my positions', 'che_trading_live'], ["what's my trading performance", 'che_trading_live'], ['review my trading performance', 'che_trading_live'],
+    ['how did your paper trades do', 'che_trading_live'], ['which ict strategy is performing best', 'che_trading_live'], ['explain why that trade lost', 'che_trading_live']]) {
+    assert.equal((await che.say(words)).route, route, words);
+  }
   // Pure intent checks: an order, anywhere in the turn, is never an atlas calculation.
   for (const words of ['what is my risk on 2 mnq and then buy them', 'how many mnq contracts can i trade risking $200 with a 10 point stop and place the order', 'evaluate my strategy and then sell everything']) {
     assert.equal(tradingAtlasIntent(spoken(words)), null, words);
@@ -409,14 +426,14 @@ test('no broker request, no order, no desk or paper-trading change from any atla
   for (const words of ['What is my risk on 2 MNQ contracts with a 12 point stop?', 'How many MNQ contracts can I trade risking $200 with a 10 point stop?',
     'Explain VWAP and calculate it from the latest bars', "What's the confidence interval on my win rate?", 'What is my expectancy?', 'Evaluate my strategy',
     'Is this a good trade: long MNQ at 18000, stop 17990, target 18030?', 'Teach me order blocks at expert level', 'quiz me on fair value gaps',
-    "what's the difference between BOS and CHOCH", 'run a monte carlo on my trades', 'teach me to trade the opening range']) {
+    "what's the difference between BOS and CHOCH", 'run a monte carlo on my trades', 'teach me the opening range']) {
     await calc(che, words);
   }
   assert.equal(requests.length, sent, 'no outbound request at all, so none to a broker');
   assert.deepEqual(TRADING_KEYS(saved), before, 'the journal, the desk, paper trading and the backtest are unchanged');
   assert.deepEqual(await readDesk(storageFor(saved)), desk);
   const evaluated = await che.say('Is this a good trade: long MNQ at 18000, stop 17990, target 18030?');
-  assert.match(evaluated.reply, /Historical backtest, stored 2026-10-18, Yahoo MNQ=F \(DELAYED public data\): 1 portfolio targeting 3R won 30% of 40 trades, long and short together; history, not this setup\./);
+  assert.match(evaluated.reply, /Historical backtest, stored 2026-10-18, Yahoo MNQ=F \(DELAYED public data\): 1 portfolio targeting 3R won 30% of their trades \(40\), long and short together; history, not this setup\./);
   assert.match(evaluated.reply, /Broker SIM: no records\.\sLive orders: no records\./);
   assert.ok(MIN_TRADES === 30);
 });
