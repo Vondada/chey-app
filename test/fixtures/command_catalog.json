@@ -457,6 +457,52 @@
    "optional_missing": []
   },
   {
+   "id": "learn",
+   "category": "intelligence",
+   "title": "Knowledge Atlas",
+   "summary": "Learn coding and trading, beginner to expert.",
+   "does": "Teaches a coding or trading concept from CHE's Knowledge Atlas cards: a beginner, intermediate or expert explanation, an analogy, the exact formula, a tested worked example and a short quiz. Trading figures come only from your recorded paper journal and stored backtest. A topic with no card is said plainly, never made up.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "topic",
+    "required": false,
+    "hint": "A concept or a request, like recursion or quiz me on expectancy"
+   },
+   "examples": [
+    "Teach me recursion",
+    "Explain expectancy like I'm a beginner",
+    "What's the formula for VWAP?",
+    "Quiz me on risk management",
+    "List the trading cards"
+   ],
+   "needs": [],
+   "optional": [],
+   "handler": "knowledge_atlas.atlasIntent → answerAtlas",
+   "route": "che_knowledge_atlas",
+   "produces": "lesson",
+   "evidence": "The card and revision it came from; trading figures only from journal or backtest records; zero model calls.",
+   "cost": "Free: no AI engine is used.",
+   "keywords": [
+    "learn",
+    "lesson",
+    "teach me",
+    "explain",
+    "formula",
+    "quiz",
+    "concept",
+    "beginner",
+    "expert",
+    "atlas"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
    "id": "yt-ideas",
    "category": "youtube",
    "title": "Yt Ideas",

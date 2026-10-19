@@ -3,7 +3,7 @@
 **Where:** CHE → **Chat** → **Commands** (top bar, next to Conversations). Or say "open commands". The Back button returns to the same chat.
 
 The page has three tabs:
-- **Library:** all 89 commands (the owner's 71, plus REA, trading and six Creator Studio commands). Search by name ("/trade-chart") or by goal ("find website clients"). Nine category filters, favorites, recently used. Each command has a details page with:
+- **Library:** all 90 commands (the owner's 71, plus REA, trading, the Knowledge Atlas and six Creator Studio commands). Search by name ("/trade-chart") or by goal ("find website clients"). Nine category filters, favorites, recently used. Each command has a details page with:
   - what it can actually do and its live status (Ready, Needs setup, Not supported yet, Unavailable right now);
   - its requirements, with setup steps for anything missing;
   - whether it needs your approval, and its input;
@@ -58,7 +58,7 @@ A ninth category, **Creator Studio**, holds six commands over `server/cloudflare
 
 | Piece | Where | Reuses |
 |---|---|---|
-| Catalog of 89 commands (71 + REA, trading and Creator Studio) | `server/cloudflare/command_catalog.js` | One entry per command. It names the existing handler and chat route it uses, its mode (EXPLORE, PLAN or BUILD), approval, input, connectors, evidence and cost. |
+| Catalog of 90 commands (71 + REA, trading, Knowledge Atlas and Creator Studio) | `server/cloudflare/command_catalog.js` | One entry per command. It names the existing handler and chat route it uses, its mode (EXPLORE, PLAN or BUILD), approval, input, connectors, evidence and cost. |
 | Live status | `connectorStatus()` | Real Worker secrets, the YouTube OAuth state, the NinjaTrader token and `runtimeCapabilityRegistry`. |
 | Running a command | `/name input` in chat | The request goes through the ordinary `/api/chat` route, so every money, delete and app gate, every truth guard and every receipt applies. A command name cannot bypass a permission. |
 | Approval | `confirm` in the catalog | Only `/trade-execute` (real money) and `/yt-publish` (your YouTube channel). Owner rule of September 28: everything else you ask for explicitly just runs, and money and delete gates still ask separately. Held with the same "plain yes on the next turn" hold the money gate uses, or confirmed on the page. In a workflow, an approval step can be approved only once the steps before it are done, so you decide with their results. |
@@ -80,7 +80,7 @@ What each command needs:
 
 | Needs | Commands |
 |---|---|
-| Nothing beyond CHE | che, che-plan, che-research, che-verify, che-memory, che-brain-review, che-recover, che-status, yt-ideas, yt-research, yt-script, yt-seo, yt-batch, yt-grow, trade-open, trade-chart, trade-setup, trade-liquidity, trade-backtest, trade-journal, trade-alert, trade-risk (account limits need NinjaTrader), trade-connections (reads each connection's own state; it never connects, removes keys or goes live), site-build, site-redesign, site-audit, site-publish, app-build, ai-build, all money commands, all client commands, all marketing commands, office-status, office-delegate, warroom, automate, skill-learn, connect, create-3d |
+| Nothing beyond CHE | che, che-plan, learn, che-research, che-verify, che-memory, che-brain-review, che-recover, che-status, yt-ideas, yt-research, yt-script, yt-seo, yt-batch, yt-grow, trade-open, trade-chart, trade-setup, trade-liquidity, trade-backtest, trade-journal, trade-alert, trade-risk (account limits need NinjaTrader), trade-connections (reads each connection's own state; it never connects, removes keys or goes live), site-build, site-redesign, site-audit, site-publish, app-build, ai-build, all money commands, all client commands, all marketing commands, office-status, office-delegate, warroom, automate, skill-learn, connect, create-3d |
 | GitHub secrets | che-explore, che-build, app-fix, code-review, che-release, iphone-update |
 | Video renderer | yt-video, yt-voice (also a voice key) |
 | Image engine | yt-thumbnail |
@@ -93,6 +93,17 @@ Honest limits:
 - `/yt-analytics` has no view or subscriber analytics yet.
 - `/invoices`, `/lead-outreach` and `/lead-followup` draft only; nothing is charged or sent from them.
 - `/automate` designs saved workflows; unattended schedules stay off by the owner's rule.
+
+## Knowledge Atlas (`/learn`, issue #346)
+
+Concept cards for coding and trading: the ten phase-1 cards of each domain in `server/cloudflare/knowledge_atlas.js`, and 24 more trading cards in `atlas_trading.js`: each has a beginner, intermediate and expert explanation, an analogy, the exact formula where one exists, a worked example and a short quiz. The phone bundles the same cards (`assets/atlas/knowledge_atlas.json`, written by `node tool/dump_knowledge_atlas.mjs`), shown in More → Knowledge Atlas, from the Brain's header, or by saying "open the knowledge atlas".
+
+- Say "teach me recursion", "explain expectancy like I'm a beginner", "give me the expert version", "what's the formula for VWAP?", "quiz me on risk management", "quiz answers", "what's next after this?", "list the trading cards" or a number from that list. `/learn <topic or request>` is the same route.
+- Answers are deterministic (`done.source = che_knowledge_atlas`, zero model calls). A coding or trading topic with no card is said plainly and nothing is invented; other subjects keep their usual route.
+- Trading cards that cite statistics read CHE's paper journal and stored backtest only, labelled measured; with none it says "no recorded data yet". Card content is labelled curated. A lesson never reaches the trading desk: "teach me to trade live" changes nothing.
+- Trading cards (`atlas_trading.js`) also state their limitations; the ICT/SMC ones say their evidence is mixed or limited and claim no edge. Their formulas are the calculators in `atlas_math.js` (contract risk and size from one CME spec table, R:R, shares, options at expiry, VWAP with σ bands anchored at 9:30 New York, opening range, session levels, relative volume and a bar-close volume profile, Wilson interval, expectancy with a t-interval, drawdown, R distribution and streaks, multiple comparisons, losing-streak odds, CHE's own paper fill, sample size, seeded Monte Carlo, risk of ruin), and every worked example is labelled an educational example.
+- Calculations from chat show their steps: "what is my risk on 2 MNQ contracts with a 12 point stop?", "how many MNQ contracts can I trade risking $200 with a 10 point stop?", "calculate VWAP from the latest bars" (stored bars only), "what's the confidence interval on my win rate?", "what is my expectancy?", "evaluate my strategy", "is this a good trade: long MNQ at 18000, stop 17990, target 18030?". Each number from a record names its source: educational example, historical backtest, delayed forward-paper data, broker SIM or live orders, and the last two say "no records" when there are none. Paper portfolios are judged one at a time, never pooled; verdicts are good, bad or unsupported by written criteria. Nothing here places or prepares an order; order requests keep the desk and the money gate.
+- Tests: `knowledge_atlas.test.mjs` checks every card's fields and links, recomputes every formula (most against `trading_evidence.js`), runs every code example and asks the lessons through `/api/chat`; `atlas_math.test.mjs` checks each calculator against hand-worked values and brute force; `atlas_trading.test.mjs` asks the calculations through `/api/chat` with their counter-cases; `test/che_knowledge_atlas_test.dart` covers the page.
 
 ## Example workflows (templates)
 

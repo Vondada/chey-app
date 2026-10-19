@@ -387,3 +387,17 @@ test('an explicit request to hear the review wins over talk about it (review of 
     assert.equal(brainReviewIntent(said), false, said);
   }
 });
+
+test('the Worker\'s own writes, the Knowledge Atlas cards among them, never count as "came from the phone"', async (t) => {
+  const storage = await sqlStorage();
+  if (!storage) return t.skip('node:sqlite unavailable');
+  const store = new CheBrainStore(storage);
+  const { projectAtlasToBrain, ATLAS_CARDS } = await import('./knowledge_atlas.js');
+  assert.equal(projectAtlasToBrain(store, { now: '2026-10-16T23:00:00.000Z' }).written, ATLAS_CARDS.length);
+  store.put({ id: 'note:p', kind: 'note', region: BRAIN_REGIONS.learned, path: 'Notes', title: 'From the phone', body: 'A note the owner saved on his iPhone today.', verification: 'owner_attested' }, { origin: 'iphone', now: '2026-10-17T01:00:00.000Z' });
+  const result = buildDailyReview(store, { now: NOW, since: T0 });
+  assert.equal(result.written, true);
+  const review = store.get('review:brain:2026-10-17');
+  assert.match(review.body, /1 record came from the phone\./, 'only the iPhone note');
+  assert.doesNotMatch(review.body, /2\d records came from the phone/);
+});

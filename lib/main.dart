@@ -120,6 +120,7 @@ import 'browser/che_browser.dart' show CheBrowserActions, CheBrowserScreen;
 import 'browser/che_video_voice.dart';
 import 'browser/che_embedded_app_shell.dart' show CheEmbeddedAppAnnouncer;
 import 'brain/che_brain_space.dart' show CheBrainSpaceController;
+import 'brain/che_knowledge_atlas.dart';
 import 'brain/che_brain_space_model.dart' show CheBrainAction, CheBrainCommand;
 import 'conversations/che_conversations_screen.dart';
 import 'browser/che_chat_links.dart';
@@ -1811,6 +1812,23 @@ OWNER AGENCY
     ));
   }
 
+  // The Knowledge Atlas (issue #346): the bundled cards, offline. Read aloud and the owner's
+  // spoken requests speak; "Ask CHE for my recorded numbers" is an ordinary chat turn.
+  void _openKnowledgeAtlas() {
+    HapticFeedback.selectionClick();
+    _composerFocus.unfocus();
+    unawaited(Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => Theme(
+        data: kit.CheTheme.dark(),
+        child: CheKnowledgeAtlasPage(
+          onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
+          onListen: () => unawaited(toggleListening()),
+          onAskChe: (message) async => (await _sendCommandInChat(message)).reply,
+        ),
+      ),
+    )));
+  }
+
   void _openMemoryBrain() {
     HapticFeedback.selectionClick();
     unawaited(_loadAgentState(silent: true));
@@ -1859,6 +1877,7 @@ OWNER AGENCY
             ),
             ),
             offline: const CheOfflineBrainPanel(compact: true),
+            onOpenAtlas: _openKnowledgeAtlas,
           ),
         ),
       ),
@@ -2159,6 +2178,13 @@ OWNER AGENCY
           title: 'Brain',
           subtitle: 'CHE Brain — Live and CHE Brain — Offline',
           onTap: _openMemoryBrain,
+          hue: kit.CheColors.memory,
+        ),
+        CheMoreItem(
+          icon: Icons.school_rounded,
+          title: 'Knowledge Atlas',
+          subtitle: 'Coding and trading, beginner to expert',
+          onTap: _openKnowledgeAtlas,
           hue: kit.CheColors.memory,
         ),
         CheMoreItem(
