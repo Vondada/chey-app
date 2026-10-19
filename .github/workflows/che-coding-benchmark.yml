@@ -1,0 +1,57 @@
+name: CHE coding benchmark (fixture copies, capped)
+
+# Owner-approved benchmark. workflow_dispatch only. Eight deterministic fixture tasks run
+# through the owner-request runtime's own steps, each in a fixture repo under RUNNER_TEMP.
+# This job never pushes, opens, merges or closes a pull request, deploys, or writes to any
+# branch or to the live repository. Provider keys stay in the driver and the call proxy:
+# OpenCode and every step see placeholders. The proxy caps model requests at 60 and refuses
+# the 61st, and the driver stops if a request bypasses the proxy.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: che-coding-benchmark
+  cancel-in-progress: false
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout the branch under test (read only)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install pinned OpenCode
+        run: npm install --global opencode-ai@1.18.34
+
+      - name: Run the eight tasks (cap 60 model calls)
+        env:
+          K_GOOGLE: ${{ secrets.GEMINI_API_KEY }}
+          K_OPENROUTER: ${{ secrets.OPENROUTER_API_KEY }}
+          K_GROQ: ${{ secrets.GROQ_API_KEY }}
+          K_MISTRAL: ${{ secrets.MISTRAL_API_KEY }}
+          K_CEREBRAS: ${{ secrets.CEREBRAS_API_KEY }}
+          K_OPENAI: ${{ secrets.OPENAI_API_KEY }}
+          K_ANTHROPIC: ${{ secrets.ANTHROPIC_API_KEY }}
+          CHE_CODING_FREE_PROVIDERS: ${{ vars.CHE_CODING_FREE_PROVIDERS }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: node tools/che_coding_benchmark_run.mjs
+
+      - name: Upload the benchmark results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: che-coding-benchmark
+          path: ${{ runner.temp }}/che-bench/results
+          retention-days: 30
