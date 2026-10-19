@@ -142,6 +142,8 @@ test('work requests that name what they act on read without the reading model; v
     'Quiz me on option spreads', 'Remember that my favorite color is green', 'study my starred repos', 'connect my Alpaca paper account',
     'list my trading accounts', 'scout Fiverr for AI ad buyers', 'Audit CHE\'s coding runner and fix any faulty workflow you find.',
     'Look at your recent coding executions and tell me what happened.', 'Work with Claude who is already working in the repo',
+    // Restoring what was deleted is not a delete; main read it with no question too.
+    'recover my deleted photos',
   ]) {
     const f = intentFrame(text);
     // worker.js skips the reading model exactly when the frame reads the whole turn as a clear request.
@@ -152,6 +154,9 @@ test('work requests that name what they act on read without the reading model; v
     'clean up the old stuff', 'the thing from before', 'clear my trading history', 'reset my learning progress', 'CHE, approve and ship it',
     'sign out the work laptop', 'star this repo for me', 'Teach me recursion and buy the course', 'Repair the deploy status check',
     'my answer is send it to Bob', 'Take these skills and apply them to yourself',
+    // Money or a delete named after the work verb, as a noun or a gerund (review of #363).
+    'continue with the purchase', 'resume paying the bills', 'prepare the payment for the contractor',
+    'connect my Coinbase and move my bitcoin', 'look into deleting my old account',
   ]) assert.equal(intentFrame(text).mode, 'unclear', text);
 });
 
