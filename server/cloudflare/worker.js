@@ -77,6 +77,7 @@ import { CHE_SELF_BRIEF, starredFocus, studyLesson } from './che_self_knowledge.
 import { KEY_PROVIDERS, MEMORY_DB, hasStoredMemoryDatabase, memorySetupIntent, memorySetupSteps, removeMemoryDatabase, saveMemoryDatabase, removeKey, storedKeys, withStoredKeys, cachedAnswer, checkAllKeys, fileLetter, fileTech, forgetAnswer, isLockedDown, listLetters, looksLikeAttack, markLetter, nextLetter, rememberAnswer, resilienceIntent, runScout, saveKey, setLockdown, setupSteps, speakKeyHealth, speakMailboxSummary, speakTech, techItems } from './resilience.js';
 import { applyCorrections, correctionsContext, detectCorrection, learnCorrection, loadCorrections } from './speech_learning.js';
 import { applyModelReading, asksAboutScreen, interpretOwnerTurn, interpretWithModel } from './speech_intent.js';
+import { intentFrame } from './intent_frame.js';
 import { replyHijacksOwnerRequest, usageIntent, usageReport, speakUsage } from './usage_tracker.js';
 import { newestStarredIntent, speakNewestStarred, autoImproveScan, chatOnlyResponseIntent, currentTurnActionPolicy, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, inspirationUpgradeContext, listOwnerStarredRepos, readRepoSource, referenceSourceBlock, codingHistoryIntent, repositoryImplementationIntent, repositoryInspectionIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, starredStudyList, studySelectionIntent } from './code_scout.js';
 import { codingHistoryReceipt } from './coding_history.js';
@@ -8194,8 +8195,12 @@ export class CheState extends DurableObject {
             ? { kind: 'memory', text: message, passthrough: true }
             : interpretOwnerTurn(message, { history: ownerHistory, hasHeldAction: Boolean(heldPeek) });
         // The reply model reads a vague turn itself; this extra read is only worth
-        // its cost when there is conversation for it to resolve against.
-        if (interpretation.kind === 'unclear' && !interpretation.clarify && !interpretation.passthrough && ownerHistory.length > 0) {
+        // its cost when there is conversation for it to resolve against. A turn whose whole sentence
+        // the frame reads without loss ("CHE, switch to paper trading") is not vague: reading it
+        // again costs a model call and can only rewrite what the owner said (issue #345).
+        const frame = intentFrame(message);
+        const frameReadsIt = frame.lossless && !['unclear', 'followup', 'correction'].includes(frame.mode);
+        if (interpretation.kind === 'unclear' && !frameReadsIt && !interpretation.clarify && !interpretation.passthrough && ownerHistory.length > 0) {
           const reading = await interpretWithModel({
             runText: (messages) => this.runInterpreterText(messages),
             text: message,
