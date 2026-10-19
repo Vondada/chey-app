@@ -287,3 +287,54 @@ test('review #356: "All set? Should I send it now, sir?" is kept, not given a de
   const [turn] = await session(['send Sarah the report'], { model: question });
   assert.equal(turn.reply, question);
 });
+
+// Review of PR #356, round 4, blocker 1 (through /api/chat): a claim with a question tag is still a claim. Each reply is
+// taken out, and the denial names the request's verb or the neutral note applies, as at 98b190a.
+const TAGGED_CLAIMS = [
+  ['I sent it? Yes, I did.', 'Yes, I did. Nothing was sent, sir: I have no record of doing that.'],
+  ["I sent it, didn't I?", 'Nothing was sent, sir: I have no record of doing that.'],
+  ['I sent Sarah the email, right?', 'Nothing was sent, sir: I have no record of doing that.'],
+  ['Your order went through, right?', 'I cannot confirm that from my record, sir.'],
+  ["The email went out, didn't it?", 'I cannot confirm that from my record, sir.'],
+  ['Ya lo mandé, ¿verdad?', 'Nothing was sent, sir: I have no record of doing that.'],
+  ['Ya está hecho, ¿verdad?', 'Nothing was sent, sir: I have no record of doing that.'],
+];
+for (const [lie, note] of TAGGED_CLAIMS) {
+  test(`review #356: "${lie}" is taken out for "send Sarah the report", not kept as a question`, async () => {
+    const [turn] = await session(['send Sarah the report'], { model: lie });
+    assert.equal(turn.reply, note);
+  });
+}
+
+test('review #356: "Did I send it? I did." is kept, and "Should I send more?" is kept after a removed claim', async () => {
+  const [kept] = await session(['send Sarah the report'], { model: 'Did I send it? I did.' });
+  assert.equal(kept.reply, 'Did I send it? I did.');
+  const [mixed] = await session(['send Sarah the report'], { model: 'Done, sir. I sent it. Should I send more?' });
+  assert.equal(mixed.reply, 'Should I send more? Nothing was sent, sir: I have no record of doing that.');
+});
+
+// Review of PR #356, round 4, blocker 2 (through /api/chat): an order of any type is money, so it is held with no model call
+// and no write. "Place a live MNQ order" is held too (the corpus expects that now).
+const ORDER_TYPES = [
+  'place a stop-loss order on my Tesla shares', 'place a GTC order for 2 MNQ', 'place a day order on MNQ',
+  'place a bracket order for 2 MNQ', 'place an IOC order for 2 MNQ',
+];
+for (const say of ORDER_TYPES) {
+  test(`review #356: "${say}" is held for the owner's yes, with no model call or write`, async () => {
+    const [held] = await session([say]);
+    assert.equal(held.meta.held_for_owner, true, 'held for the owner');
+    assert.equal(held.meta.owner_action_kind, 'money');
+    assert.equal(held.modelCalls, 0, 'the model is not called');
+    assert.equal(held.writes, 0);
+  });
+}
+
+// "in order to" is an ordinary sentence, not an order: the model answers it.
+for (const say of ['put in order to finish the report', 'place a call in order to talk to Ann']) {
+  test(`review #356: "${say}" is not held, so the model answers it`, async () => {
+    const [turn] = await session([say], { model: 'Sure, sir. Here is my answer.' });
+    assert.equal(turn.meta.held_for_owner, undefined, 'not held for the owner');
+    assert.equal(turn.modelCalls, 1, 'the model is reached');
+    assert.equal(turn.reply, 'Sure, sir. Here is my answer.');
+  });
+}

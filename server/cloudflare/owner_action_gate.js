@@ -16,9 +16,11 @@ const LEAD = String.raw`^(?:${VOCATIVE}(?:(?:please|pls|plz|now|then|also|and|ok
 // Verb forms are written out in full so "delete", "deleting", "pays" and
 // "purchased" all match without matching unrelated words.
 // An order placed with the broker or a shop: "place an order for pizza", "place sell orders", "put in a sell order",
-// "enter a sell order", "place a limit order". The word "order" is required, so "place a call to Ann" is not held
-// (review of PR #356, round 3).
-const ORDER_OBJECT = String.raw`(?:(?:an?|another|some|\d+|my|the)\s+)?(?:(?:limit|market|sell|buy|stop|short|long|new)\s+)*orders?\b`;
+// "place a stop-loss order", "place a GTC order", "place a bracket order", "place an IOC order". Up to three words may sit
+// between "place" and "order", so an order type outside any list is held too. "in order to" and "in order of" are not orders
+// ("put in order to finish the report"). The word "order" is required, so "place a call to Ann" is not held (review of
+// PR #356, rounds 3 and 4).
+const ORDER_OBJECT = String.raw`(?:(?:an?|another|some|\d+|my|the)\s+)?(?:[\w-]+\s+){0,3}?orders?\b(?!\s+(?:to|of|by|in|that)\b)`;
 const MONEY_VERB = String.raw`(?:bought|buy(?:s|ing)?|purchas(?:e|es|ed|ing)|pay(?:s|ing)?|paid|subscrib(?:e|es|ed|ing)(?:\s+to)?|donat(?:e|es|ed|ing)(?:\s+to)?|charg(?:e|es|ed|ing)|checkout|upgrad(?:e|es|ed|ing)\s+to|renew(?:s|ed|ing)?|top\s+up|sign\s+up\s+for|spend(?:s|ing)?|withdr(?:aw|aws|awing|awn|ew)|cash\s+out|take\s+out\s+(?:\$|\d|money|cash)|make\s+a\s+purchase|place\s+${ORDER_OBJECT}|(?:put|enter|submit)\s+(?:in\s+)?${ORDER_OBJECT}|send(?:s|ing)?\s+(?:money|\$))`;
 // "sell" moves money the other way, so a sale of anything is held like a purchase (comprehension audit, issue #350: "can
 // you open Robinhood and sell my Tesla shares" was answered with no hold). A bare object counts too: "sell Tesla", "sell

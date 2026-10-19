@@ -765,8 +765,10 @@ export function guardClaimedOwnerActions(reply, { message = '', acted = false } 
   for (const sentence of splitSentences(text)) {
     const plain = sentence.trim();
     let hit = null;
-    // A question claims nothing: "All set? Should I send it now, sir?" asks the owner, it does not report (review of PR #356, round 3).
-    if (/\?\s*$/.test(plain)) { kept.push(sentence); continue; }
+    // A question-form sentence claims nothing: "All set? Should I send it now, sir?" asks the owner. Only a question that opens
+    // with a question or status word, or with "¿", is exempt. A claim with a tag ("I sent it, didn't I?", "…, ¿verdad?") is
+    // still checked (review of PR #356, rounds 3 and 4).
+    if (/\?\s*$/.test(plain) && /^(?:¿|(?:all\s+set|done|ready|should|shall|do|does|did|is|are|was|were|can|could|would|will|want|what|which|who|where|when|how|why)\b)/i.test(plain)) { kept.push(sentence); continue; }
     if (drafting && !/\bsir\b/i.test(plain) && !DONE_RE.test(plain)) { kept.push(sentence); continue; }
     for (const re of [STRONG_RE, WEAK_RE, MADE_RE, PASSIVE_RE]) {
       const m = re.exec(plain);

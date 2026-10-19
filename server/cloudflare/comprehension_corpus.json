@@ -152,7 +152,7 @@
     {"d":"trading","say":"Stop paper trading.","route":"che_trading_live","effect":"act"},
     {"d":"trading","say":"Start paper trading.","route":"che_trading_live","effect":"act"},
     {"d":"trading","say":"Don't stop paper trading. How did my paper trades do today?","route":"che_trading_live"},
-    {"d":"trading","say":"Place a live MNQ order, not paper.","route":"che_brokerage"},
+    {"d":"trading","say":"Place a live MNQ order, not paper.","route":"held","effect":"hold:money"},
     {"d":"trading","say":"Switch to paper trading.","route":"che_trading_desk","effect":"act"},
     {"d":"trading","say":"switch to paper","route":"che_trading_desk","effect":"act"},
     {"d":"trading","say":"CHE, go back to paper trading.","route":"che_trading_desk","effect":"act"},

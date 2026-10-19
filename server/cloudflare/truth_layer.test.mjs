@@ -695,6 +695,25 @@ test('review #356: the denial names only CHE\'s own action; status, recall and S
   assert.equal(guard('I sent it, sir.').text, 'Nothing was sent, sir: I have no record of doing that.');
 });
 
+// Review of PR #356, round 4: a question mark does not make a claim safe. A claim with a question tag is still checked; only a
+// question that opens with a question or status word is kept. The seven outputs match 98b190a.
+test('review #356: a claim with a question tag is taken out, and a real question is kept', async () => {
+  const { guardClaimedOwnerActions: guard } = await import('./truth_layer.js');
+  const message = 'send sarah the report';
+  const NOTHING_SENT = 'Nothing was sent, sir: I have no record of doing that.';
+  assert.equal(guard('I sent it? Yes, I did.', { message }).text, `Yes, I did. ${NOTHING_SENT}`);
+  assert.equal(guard("I sent it, didn't I?", { message }).text, NOTHING_SENT);
+  assert.equal(guard('I sent Sarah the email, right?', { message }).text, NOTHING_SENT);
+  assert.equal(guard('Your order went through, right?', { message }).text, 'I cannot confirm that from my record, sir.');
+  assert.equal(guard("The email went out, didn't it?", { message }).text, 'I cannot confirm that from my record, sir.');
+  assert.equal(guard('Ya lo mandé, ¿verdad?', { message }).text, NOTHING_SENT);
+  assert.equal(guard('Ya está hecho, ¿verdad?', { message }).text, NOTHING_SENT);
+  // Real questions and an honest answer to one stay as written.
+  assert.equal(guard('All set? Should I send it now, sir?', { message }).text, 'All set? Should I send it now, sir?');
+  assert.equal(guard('Did I send it? I did.', { message }).text, 'Did I send it? I did.');
+  assert.equal(guard('Done, sir. I sent it. Should I send more?', { message }).text, `Should I send more? ${NOTHING_SENT}`);
+});
+
 // Review of PR #356, round 3: a delivery passive on a noun subject is a claim about a thing (the neutral note); a question is
 // not a claim; "ready to go" names no delivery.
 test('review #356: "the email is dispatched", "the report was sent yesterday", "the report got sent" are neutral, and a question is kept', async () => {

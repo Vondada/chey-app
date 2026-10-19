@@ -312,3 +312,14 @@ test('review #356: sell orders and placed orders are held; explanations and ordi
     assert.deepEqual(classifyOwnerActions(s), [], s);
   }
 });
+
+// Review of PR #356, round 4: an order of any type is money, and "in order to" / "in order of" are not orders.
+test('review #356: every order type is held; "in order to" and a call "in order to" are not', () => {
+  for (const s of ['place a stop-loss order on my Tesla shares', 'place a GTC order for 2 MNQ', 'place a day order on MNQ',
+    'place a bracket order for 2 MNQ', 'place an IOC order for 2 MNQ', 'Place a live MNQ order, not paper.']) {
+    assert.deepEqual(classifyOwnerActions(s), ['money'], s);
+  }
+  for (const s of ['put in order to finish the report', 'place a call in order to talk to Ann']) {
+    assert.deepEqual(classifyOwnerActions(s), [], s);
+  }
+});
