@@ -19,6 +19,7 @@ enum ScreenOp {
   changeVoice,
   naturalVoice,
   openAtlas,
+  openRenderBench,
 }
 
 class ScreenCommand {
@@ -77,6 +78,13 @@ ScreenCommand? parseScreenCommand(String raw) {
   // always named in full.
   if (RegExp(r"^(?:open|show(?: me)?|go to|take me to|bring up)\s+(?:the\s+|my\s+|your\s+|che's\s+)?knowledge atlas(?:\s+(?:page|screen|cards))?$").hasMatch(t)) {
     return const ScreenCommand(ScreenOp.openAtlas);
+  }
+
+  // The rendering benchmark. "run" starts the measurement as the screen opens; it is never
+  // started by opening the screen alone.
+  final bench = RegExp(r'^(open|show(?: me)?|go to|take me to|bring up|run|start|measure)\s+(?:the\s+|my\s+)?(?:rendering|render|graphics) benchmark(?:\s+(?:page|screen))?$').firstMatch(t);
+  if (bench != null) {
+    return ScreenCommand(ScreenOp.openRenderBench, RegExp(r'^(?:run|start|measure)$').hasMatch(bench.group(1)!) ? 'run' : '');
   }
 
   // "open commands", "show me the command center", "command library".

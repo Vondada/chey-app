@@ -258,10 +258,19 @@
     const finish = (r) => { busy = false; post({ type: 'result', label: p.label, ...r }); say((r.backend || '?') + (r.ok ? ' · ' + r.fps + ' fps · ' + r.frames + ' frames in ' + r.seconds + ' s' + (r.cadence === 30 ? ' · dropped to 30 fps cadence' : '') : ' · unavailable: ' + r.reason)); };
     const capability = { type: 'capability', webgpu: !!navigator.gpu, webgl2: !!(document.createElement('canvas').getContext('webgl2')), webgl: !!(document.createElement('canvas').getContext('webgl')), reducedMotion, devicePixelRatio: window.devicePixelRatio || 1, userAgent: navigator.userAgent.slice(0, 160) };
     post(capability);
+    // A WebGPU error after setup must still reach done(), or busy stays true and every later run is refused.
+    const webgpu = (cb) => {
+      let ended = false;
+      const end = (r) => { if (!ended) { ended = true; cb(r); } };
+      runWebGPU(p, data, end).catch((err) => {
+        const reason = 'WebGPU pass failed: ' + (err && err.message || err);
+        if (ended) post({ type: 'error', reason }); else end({ ok: false, backend: 'webgpu', reason });
+      });
+    };
     if (p.backend === 'webgl') return runWebGL(p, data, finish), true;
-    if (p.backend === 'webgpu') return runWebGPU(p, data, finish), true;
+    if (p.backend === 'webgpu') return webgpu(finish), true;
     // auto: WebGPU when the WebView has it, otherwise WebGL; a WebGPU failure falls back to WebGL.
-    runWebGPU(p, data, (r) => { if (r.ok) return finish(r); post({ type: 'fallback', from: 'webgpu', to: 'webgl', reason: r.reason || r.lostReason || 'webgpu failed' }); runWebGL(p, data, finish); });
+    webgpu((r) => { if (r.ok) return finish(r); post({ type: 'fallback', from: 'webgpu', to: 'webgl', reason: r.reason || r.lostReason || 'webgpu failed' }); runWebGL(p, data, finish); });
     return true;
   };
   post({ type: 'ready' });

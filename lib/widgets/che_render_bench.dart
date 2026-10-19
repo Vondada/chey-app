@@ -71,6 +71,7 @@ class CheRenderBenchResult {
     this.pixelRatio,
     this.version,
     this.nodes,
+    this.economySwitches,
   });
 
   final String backend;
@@ -96,6 +97,9 @@ class CheRenderBenchResult {
   final double? pixelRatio;
   final String? version;
   final int? nodes;
+
+  /// How often the frame budget changed level during the native pass (0: it held at full rate).
+  final int? economySwitches;
 
   /// A `result` message from the bench page.
   static CheRenderBenchResult fromPageJson(Map<String, dynamic> j) => CheRenderBenchResult(
@@ -130,6 +134,7 @@ class CheRenderBenchResult {
       if (cpuMsAvg != null) 'canvas work ${cpuMsAvg!.toStringAsFixed(1)} milliseconds average${cpuMsP95 != null ? ', ${cpuMsP95!.toStringAsFixed(1)} at the 95th' : ''}',
       if (rasterMsAvg != null) 'raster ${rasterMsAvg!.toStringAsFixed(1)} milliseconds average${rasterMsP95 != null ? ', ${rasterMsP95!.toStringAsFixed(1)} at the 95th' : ''}',
       if (overBudget != null) '$overBudget frame${overBudget == 1 ? '' : 's'} over the 60-frame budget',
+      if (economySwitches != null) economySwitches == 0 ? 'the frame budget held at full rate' : 'the frame budget changed level $economySwitches time${economySwitches == 1 ? '' : 's'}',
       if (cadence == 30) 'dropped to a 30 frames per second cadence',
       if (version != null && version!.isNotEmpty) version!,
     ];
@@ -200,15 +205,21 @@ class _TimedBrainPainter extends CustomPainter {
 }
 
 class CheRenderBenchScreen extends StatefulWidget {
-  const CheRenderBenchScreen({super.key, this.onSpeak, this.nodes = 2000, this.seconds = 4, this.webView = true});
+  const CheRenderBenchScreen({super.key, this.onSpeak, this.nodes = 2000, this.seconds = 4, this.webView = true, this.autoRun = false});
 
-  /// CHE's voice, used only when the owner taps "Read results aloud".
+  /// Spoken control while this screen is open (run, read the results, copy them). Null when closed.
+  static Future<String?> Function(String words)? voiceHandler;
+
+  /// CHE's voice, used only when the owner taps "Read results aloud" or asks for the results.
   final Future<void> Function(String text)? onSpeak;
   final int nodes;
   final int seconds;
 
   /// False skips the WebView passes (tests; a device without a WebView).
   final bool webView;
+
+  /// True when the owner asked by voice to run the benchmark as the screen opens.
+  final bool autoRun;
 
   @override
   State<CheRenderBenchScreen> createState() => _CheRenderBenchScreenState();
@@ -230,13 +241,36 @@ class _CheRenderBenchScreenState extends State<CheRenderBenchScreen> with Single
   void initState() {
     super.initState();
     _notes.add('Device: ${Platform.operatingSystem} ${Platform.operatingSystemVersion}.');
+    CheRenderBenchScreen.voiceHandler = _voice;
+    if (widget.autoRun) WidgetsBinding.instance.addPostFrameCallback((_) => unawaited(run()));
   }
 
   @override
   void dispose() {
+    if (CheRenderBenchScreen.voiceHandler == _voice) CheRenderBenchScreen.voiceHandler = null;
     _stopNative();
     _space?.dispose();
     super.dispose();
+  }
+
+  /// Spoken run, read and copy while this screen is open. Anything else returns null and goes to Chat.
+  Future<String?> _voice(String words) async {
+    final t = words.trim().toLowerCase().replaceAll(RegExp(r'[.!?]+$'), '');
+    if (RegExp(r'^(?:run|start|measure)(?: the| this| it)?(?: rendering| render| graphics)?(?: benchmark)?(?: again)?$').hasMatch(t)) {
+      if (_running) return 'Already measuring, sir.';
+      unawaited(run());
+      return 'Measuring the Brain scene now, sir. The results appear here when it is done.';
+    }
+    if (RegExp(r'^(?:read|say|tell me)(?: me)?(?: the| my| these)?(?: rendering| benchmark)? results?(?: aloud)?$').hasMatch(t)) {
+      return _results.isEmpty ? 'No results yet, sir. Say run the benchmark first.' : _spokenReport();
+    }
+    if (RegExp(r'^copy(?: the| these| my)?(?: rendering| benchmark)? results?$').hasMatch(t)) {
+      if (_results.isEmpty) return 'No results to copy yet, sir. Say run the benchmark first.';
+      await Clipboard.setData(ClipboardData(text: _spokenReport()));
+      HapticFeedback.selectionClick();
+      return 'Results copied, sir.';
+    }
+    return null;
   }
 
   Future<void> run() async {
@@ -269,14 +303,22 @@ class _CheRenderBenchScreenState extends State<CheRenderBenchScreen> with Single
     _paintMs.clear();
     _timings.clear();
     _space?.dispose();
-    final c = CheBrainSpaceController(cheRenderBenchDots(widget.nodes));
+    // The same range the WebView page accepts, so every pass measures the same scene.
+    final nodes = widget.nodes.clamp(100, 20000).toInt();
+    final c = CheBrainSpaceController(cheRenderBenchDots(nodes));
     for (final cl in c.layout.clusters.values) {
       cl.expanded = true;
     }
     _space = c;
     final reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
     _notes.add(reduceMotion ? 'Reduce Motion is on: the camera orbits anyway for the measurement, then stops.' : 'Camera orbiting for the native pass.');
-    _timingsCallback = (List<FrameTiming> t) => _timings.addAll(t);
+    _timingsCallback = (List<FrameTiming> t) {
+      _timings.addAll(t);
+      // The native pass feeds the same frame budget as the live Brain, so economy can engage here too.
+      for (final f in t) {
+        c.budget.observe(f.totalSpan.inMicroseconds / 1000);
+      }
+    };
     SchedulerBinding.instance.addTimingsCallback(_timingsCallback!);
     _orbit = createTicker((_) => c.camera.rotate(.012, 0))..start();
     setState(() {});
@@ -291,7 +333,7 @@ class _CheRenderBenchScreenState extends State<CheRenderBenchScreen> with Single
     _results.add(CheRenderBenchResult(
       backend: 'native',
       ok: frames > 0,
-      nodes: widget.nodes,
+      nodes: nodes,
       frames: frames,
       seconds: widget.seconds.toDouble(),
       fps: frames / widget.seconds,
@@ -300,6 +342,7 @@ class _CheRenderBenchScreenState extends State<CheRenderBenchScreen> with Single
       rasterMsAvg: raster.isEmpty ? null : avg(raster),
       rasterMsP95: raster.isEmpty ? null : p95(raster),
       overBudget: total.isEmpty ? null : total.where((ms) => ms > 16.7).length,
+      economySwitches: c.budget.switches,
       reason: frames == 0 ? 'no frame was painted' : null,
     ));
     if (_timings.isEmpty) _notes.add('Raster times: not reported here (the engine reports FrameTiming on a device, not in this run).');
@@ -398,7 +441,7 @@ class _CheRenderBenchScreenState extends State<CheRenderBenchScreen> with Single
               Wrap(spacing: 8, runSpacing: 8, children: [
                 FilledButton.icon(onPressed: _running ? null : run, icon: const Icon(Icons.speed_rounded), label: Text(_running ? 'Measuring ${_phase == 'native' ? 'the native painter' : _phase}…' : _results.isEmpty ? 'Run' : 'Run again')),
                 OutlinedButton.icon(
-                  onPressed: _results.isEmpty || widget.onSpeak == null ? null : () => widget.onSpeak!(_spokenReport()),
+                  onPressed: widget.onSpeak == null ? null : () => widget.onSpeak!(_results.isEmpty ? 'No results yet. Press Run first.' : _spokenReport()),
                   icon: const Icon(Icons.volume_up_rounded),
                   label: const Text('Read results aloud'),
                 ),

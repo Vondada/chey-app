@@ -6,6 +6,7 @@ import 'dart:convert';
 import 'dart:ui' show PictureRecorder;
 
 import 'package:chey/brain/che_brain_space.dart';
+import 'package:chey/home/screen_command.dart';
 import 'package:chey/widgets/che_render_bench.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -107,5 +108,31 @@ void main() {
       expect(avg, lessThan(200));
       c.dispose();
     }
+  });
+
+  test('the rendering benchmark has spoken routes: opening only opens, and only "run" starts a measurement', () {
+    expect(parseScreenCommand('open the rendering benchmark')?.op, ScreenOp.openRenderBench);
+    expect(parseScreenCommand('open the rendering benchmark')?.text, '');
+    expect(parseScreenCommand('Run the graphics benchmark.')?.op, ScreenOp.openRenderBench);
+    expect(parseScreenCommand('Run the graphics benchmark.')?.text, 'run');
+    expect(parseScreenCommand('open the commands page')?.op, ScreenOp.openCommands);
+  });
+
+  testWidgets('Read results aloud stays enabled before a run and says so; spoken run/read words are answered only while the screen is open', (tester) async {
+    tester.view.physicalSize = const Size(1320, 2868);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+    final spoken = <String>[];
+    await tester.pumpWidget(MaterialApp(home: CheRenderBenchScreen(onSpeak: (t) async => spoken.add(t), nodes: 600, seconds: 1, webView: false)));
+    await tester.pump();
+    await tester.tap(find.text('Read results aloud'));
+    await tester.pump();
+    expect(spoken.single, 'No results yet. Press Run first.');
+    final handler = CheRenderBenchScreen.voiceHandler;
+    expect(handler, isNotNull, reason: 'the open screen takes its spoken controls');
+    expect(await handler!('read the results'), 'No results yet, sir. Say run the benchmark first.');
+    expect(await handler('what is the weather'), isNull, reason: 'anything else goes on to Chat');
+    await tester.pumpWidget(const SizedBox());
+    expect(CheRenderBenchScreen.voiceHandler, isNull, reason: 'a closed screen takes no spoken control');
   });
 }

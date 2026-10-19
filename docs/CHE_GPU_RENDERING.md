@@ -72,8 +72,14 @@ behind it (`lib/brain/che_frame_budget.dart`, wired in `che_brain_space.dart`):
 Verified: `test/che_frame_budget_test.dart` (entry, alternation, recovery, doubled waits,
 indifference to the middle band and to isolated slow frames) and the controller tick without a
 repaint. **Not verified on an iPhone:** the 20 ms / 12 ms thresholds come from the 60 Hz budget,
-not from device measurements; the owner's benchmark run will show whether economy engages on his
-phone at 2 000 and 10 000 records.
+not from device measurements. The benchmark's native pass feeds the same budget as the live
+Brain, and its result line says whether the level changed ("changed level N times") or held at
+full rate, so the owner's run on his phone at 2 000 and 10 000 records shows whether economy
+engages.
+
+Voice: say "open the rendering benchmark" to open it, or "run the rendering benchmark" to open it
+and start the measurement. While it is open, "run", "read the results" and "copy the results"
+work by voice. Opening it never starts a measurement by itself.
 
 ## 3. Measurements so far
 
@@ -97,8 +103,9 @@ asks for, and only the owner's phone can give it.
 **Pending (owner):** open Settings → Rendering benchmark on the iPhone, press Run, then
 **Copy results** or **Read results aloud**, and paste or dictate them here. The result
 lines name each backend, the frame rate, canvas/JS work per frame, raster time per frame
-(native), frames over budget, whether WebGPU was available (iOS 26 WKWebView exposes
-WebGPU; earlier iOS does not) and every fallback that fired.
+(native), frames over budget, whether WebGPU was available in the WebView and every
+fallback that fired. Whether iOS WKWebView exposes WebGPU is not verified here; the run on the
+phone answers it.
 
 ## 4. Decision rule (set now, applied to the iPhone numbers)
 
