@@ -236,7 +236,7 @@
     const lines = device.createRenderPipeline({ layout: pipelineLayout, vertex: { module: shader, entryPoint: 'vsLine', buffers: [{ arrayStride: 12, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x3' }] }] }, fragment: { module: shader, entryPoint: 'fsLine', targets: [{ format, blend }] }, primitive: { topology: 'line-list' } });
 
     const setupError = await device.popErrorScope();
-    if (setupError) return done({ ok: false, backend: 'webgpu', reason: 'WebGPU shader or pipeline invalid: ' + setupError.message });
+    if (setupError) return done({ ok: false, backend: 'webgpu', reason: 'WebGPU setup failed: ' + setupError.message });
 
     // Minimal matrix math (column-major), same camera as the WebGL run.
     function perspective(fovy, aspect, near, far) { const f = 1 / Math.tan(fovy / 2), nf = 1 / (near - far); return new Float32Array([f / aspect, 0, 0, 0, 0, f, 0, 0, 0, 0, (far + near) * nf, -1, 0, 0, 2 * far * near * nf, 0]); }
@@ -263,7 +263,8 @@
       instBuf.destroy(); lineBuf.destroy(); uniform.destroy();
       let adapterInfo = {};
       try { adapterInfo = adapter.info ? { vendor: adapter.info.vendor, architecture: adapter.info.architecture } : {}; } catch (_) {}
-      done({ ok: !lost && !gpuError, backend: 'webgpu', pixelRatio: dpr, nodes: p.nodes, edges: p.edges, deviceLost: lost, lostReason, ...adapterInfo, ...m, ...(gpuError ? { reason: gpuError } : {}) });
+      // Deferred by one task: an uncaptured error from the last frame's submit is dispatched after this callback.
+      setTimeout(() => done({ ok: !lost && !gpuError, backend: 'webgpu', pixelRatio: dpr, nodes: p.nodes, edges: p.edges, deviceLost: lost, lostReason, ...adapterInfo, ...m, ...(gpuError ? { reason: gpuError } : {}) }), 0);
     });
   }
 
