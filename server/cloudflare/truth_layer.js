@@ -604,6 +604,10 @@ const DELIVERY_NOUN = String.raw`(e-?mails?|mails?|messages?|texts?|replies|repl
 const DELIVERY_GAP = String.raw`(?:(?!(?:not|never|no|will|would|can|could|should|might|may|shall|if|once|when|unless|until|going)\b)[\w'’-]+\s+){0,2}?`;
 // "not", "never" or "no" right before a generic claim ("it is not all done and dusted") negates it.
 const NEG_BEFORE = /\b(?:not|never|no)\s+(?:\S+\s+){0,1}$/i;
+// A thing that is sent, not a person: the noun before a delivery passive ("the email is dispatched", "the report was sent
+// yesterday", "the report got sent"). The verb must be a delivery verb, so "the report is ready to go" is not a claim.
+const DELIVERED_THING = String.raw`(e-?mails?|mails?|messages?|texts?|replies|reply|reports?|files?|notes?|letters?|sms|documents?|packages?|parcels?|orders?|payments?|invoices?|invitations?|gifts?|flowers|tickets?|reminders?|bookings?|reservations?|notices?)`;
+const DELIVERY_VERB = String.raw`(?:sent|dispatched|delivered|mailed|emailed|forwarded|shipped|posted|submitted|placed)`;
 const CLAIM_PHRASES = [
   { re: /\b(?:it|that|this|everything|they)(?:\s+(?:has\s+been|have\s+been|has|have|is|was|were|are)|['’]s(?:\s+been)?|['’]re)\s+(?:now\s+|already\s+|successfully\s+|just\s+)?dispatched\b/i, label: 'sent' },
   { re: /\b(email|e-?mail|message|text|reply|report|file|note|mail|sms|package|parcel|order|gift|flowers|tickets?|payment|bill)\s+(?:is|was|are|were|has\s+been|have\s+been)\s+(?:now\s+|already\s+)?on\s+(?:its|their|the)\s+way\b/i, noun: 1, fallback: 'sent' },
@@ -619,6 +623,9 @@ const CLAIM_PHRASES = [
   { re: new RegExp(String.raw`\b${DELIVERY_NOUN}\s+${DELIVERY_GAP}(?:went|has\s+gone|have\s+gone|had\s+gone)\s+out\b(?!\s+of\b)`, 'i'), noun: 1, fallback: 'sent' },
   { re: new RegExp(String.raw`\b${DELIVERY_NOUN}\s+${DELIVERY_GAP}(?:is|was|are|were|has\s+been|have\s+been)\s+(?:now\s+|already\s+|just\s+)?with\s+(?!(?:the|a|an|my|your|his|her|their|our|its|you|me|us|him|them|it|this|that|these|those|someone|anyone|everyone)\b)([A-Za-z][\w'’-]*)`, 'i'), noun: 1, name: 2, fallback: 'sent' },
   { re: new RegExp(String.raw`\b${DELIVERY_NOUN}\s+${DELIVERY_GAP}(?:in|into)\s+([A-Za-z][\w'’-]*)['’]s\s+inbox\b`, 'i'), noun: 1, name: 2, fallback: 'sent' },
+  // A delivery passive on a thing or a message, with or without "the" ("the email is dispatched", "the report was sent yesterday",
+  // "the report got sent"). A claim about someone or something else: the neutral note (review of PR #356, round 3).
+  { re: new RegExp(String.raw`\b(?:(?:the|your|my|this|that|its|their|our|these|those)\s+)?${DELIVERED_THING}\s+${DELIVERY_GAP}(?:is|was|are|were|has\s+been|have\s+been|had\s+been|got|gets|get)\s+${DELIVERY_GAP}${DELIVERY_VERB}\b`, 'i'), noun: 1, fallback: 'sent' },
   // "All set, sir" and "It is all done and dusted" are CHE reporting on her own task, so they are claims only when the request
   // asked CHE to act: "what is on my calendar? All set" names nothing done. Removed, they take the request's own verb.
   { re: /^\s*all\s+set\b/i, label: 'done', gated: true, person: 'first' },
@@ -758,6 +765,8 @@ export function guardClaimedOwnerActions(reply, { message = '', acted = false } 
   for (const sentence of splitSentences(text)) {
     const plain = sentence.trim();
     let hit = null;
+    // A question claims nothing: "All set? Should I send it now, sir?" asks the owner, it does not report (review of PR #356, round 3).
+    if (/\?\s*$/.test(plain)) { kept.push(sentence); continue; }
     if (drafting && !/\bsir\b/i.test(plain) && !DONE_RE.test(plain)) { kept.push(sentence); continue; }
     for (const re of [STRONG_RE, WEAK_RE, MADE_RE, PASSIVE_RE]) {
       const m = re.exec(plain);

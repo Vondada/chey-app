@@ -694,3 +694,20 @@ test('review #356: the denial names only CHE\'s own action; status, recall and S
   assert.equal(guard('I sent it, sir.', { message: 'what did I send Ann last week?' }).text, 'Nothing was sent, sir: I have no record of doing that.');
   assert.equal(guard('I sent it, sir.').text, 'Nothing was sent, sir: I have no record of doing that.');
 });
+
+// Review of PR #356, round 3: a delivery passive on a noun subject is a claim about a thing (the neutral note); a question is
+// not a claim; "ready to go" names no delivery.
+test('review #356: "the email is dispatched", "the report was sent yesterday", "the report got sent" are neutral, and a question is kept', async () => {
+  const { guardClaimedOwnerActions: guard } = await import('./truth_layer.js');
+  const message = 'send sarah the report';
+  for (const reply of ['The email is dispatched, sir.', 'The report was sent yesterday, sir.', 'The report got sent, sir.']) {
+    const out = guard(reply, { message });
+    assert.ok(out.removed.length >= 1, reply);
+    assert.equal(out.text, 'I cannot confirm that from my record, sir.', reply);
+  }
+  assert.equal(guard('All set? Should I send it now, sir?', { message }).text, 'All set? Should I send it now, sir?');
+  assert.equal(guard('The report is ready to go, sir.', { message }).text, 'The report is ready to go, sir.');
+  // Not a delivery: a negated or modal passive is kept.
+  assert.equal(guard('The report was never sent, sir.', { message }).text, 'The report was never sent, sir.');
+  assert.equal(guard('The report will be sent tomorrow, sir.', { message }).text, 'The report will be sent tomorrow, sir.');
+});

@@ -242,3 +242,48 @@ for (const honest of HONEST) {
     assert.equal(turn.reply, honest);
   });
 }
+
+// Review of PR #356, round 3 (through /api/chat): a sell order or a placed order is money, so CHE asks first and neither
+// the model nor the broker is called. The explanatory forms and ordinary uses of "place" and "put in" are not held.
+const ORDER_HELD = [
+  'sell orders for 2 MNQ at market', 'place sell orders on my Tesla shares', 'sell orders', 'I want to sell orders',
+  'place an order for pizza', 'put in a sell order', 'enter a sell order', 'place orders for lunch', 'place a limit order',
+];
+for (const say of ORDER_HELD) {
+  test(`review #356: "${say}" is held for the owner's yes, with no model call or write`, async () => {
+    const [held] = await session([say]);
+    assert.equal(held.meta.held_for_owner, true, 'held for the owner');
+    assert.equal(held.meta.owner_action_kind, 'money');
+    assert.equal(held.modelCalls, 0, 'the model is not called');
+    assert.equal(held.writes, 0);
+  });
+}
+
+const ORDER_NOT_HELD = ['what is a sell order?', 'explain sell orders on a chart', 'sell me on this idea', 'sell-through', 'sales', 'can you sell things for me?'];
+for (const say of ORDER_NOT_HELD) {
+  test(`review #356: "${say}" is not held, so the model answers it`, async () => {
+    const [turn] = await session([say], { model: 'Sure, sir. Here is my answer.' });
+    assert.equal(turn.meta.held_for_owner, undefined, 'not held for the owner');
+    assert.equal(turn.modelCalls, 1, 'the model is reached');
+    assert.equal(turn.reply, 'Sure, sir. Here is my answer.');
+    assert.equal(turn.writes, 0);
+  });
+}
+
+// Review of PR #356, round 3, should-fix (through /api/chat): a delivery passive on a noun subject is a claim about a thing,
+// so the neutral note replaces it; the denial "Nothing was sent" is not used for it.
+const DELIVERY_PASSIVES = ['The email is dispatched, sir.', 'The report was sent yesterday, sir.', 'The report got sent, sir.'];
+for (const lie of DELIVERY_PASSIVES) {
+  test(`review #356: "${lie}" is taken out with the neutral note for "send Sarah the report"`, async () => {
+    const [turn] = await session(['send Sarah the report'], { model: lie });
+    assert.equal(turn.modelCalls, 1, 'the model answers the request');
+    assert.equal(turn.reply, 'I cannot confirm that from my record, sir.');
+  });
+}
+
+// Review of PR #356, round 3, nit: a question is not a claim.
+test('review #356: "All set? Should I send it now, sir?" is kept, not given a denial', async () => {
+  const question = 'All set? Should I send it now, sir?';
+  const [turn] = await session(['send Sarah the report'], { model: question });
+  assert.equal(turn.reply, question);
+});

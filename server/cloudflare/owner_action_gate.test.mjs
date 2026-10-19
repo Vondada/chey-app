@@ -299,3 +299,16 @@ test('review #356: the money and delete holds the owner rules keep are unchanged
     assert.deepEqual(classifyOwnerActions(s), ['delete'], s);
   }
 });
+
+// Review of PR #356, round 3: a sell order and a placed order are money. The explanatory forms and an ordinary "place" or
+// "put in" are not.
+test('review #356: sell orders and placed orders are held; explanations and ordinary placing are not', () => {
+  for (const s of ['sell orders for 2 MNQ at market', 'place sell orders on my Tesla shares', 'sell orders', 'I want to sell orders',
+    'place an order for pizza', 'put in a sell order', 'enter a sell order', 'place orders for lunch', 'place a limit order']) {
+    assert.deepEqual(classifyOwnerActions(s), ['money'], s);
+  }
+  for (const s of ['what is a sell order?', 'explain sell orders on a chart', 'sell me on this idea', 'sell-through', 'sales',
+    'can you sell things for me?', 'place a call to Ann', 'put in a request for the report', 'sell signals were late']) {
+    assert.deepEqual(classifyOwnerActions(s), [], s);
+  }
+});

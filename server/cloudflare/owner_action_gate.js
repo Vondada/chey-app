@@ -15,13 +15,17 @@ const VOCATIVE = String.raw`(?:(?:(?:hey|hi|ok|okay)\s+(?:chey|che|chay|shay)|(?
 const LEAD = String.raw`^(?:${VOCATIVE}(?:(?:please|pls|plz|now|then|also|and|ok|okay|just|to|let's|lets|let\s+us|can you|could you|would you|will you|i want you to|i need you to|i want to|i'd like to|id like to|i am going to|i'm going to|im going to|go ahead and|you should|you must)\s+)*)["'(]?`;
 // Verb forms are written out in full so "delete", "deleting", "pays" and
 // "purchased" all match without matching unrelated words.
-const MONEY_VERB = String.raw`(?:bought|buy(?:s|ing)?|purchas(?:e|es|ed|ing)|pay(?:s|ing)?|paid|subscrib(?:e|es|ed|ing)(?:\s+to)?|donat(?:e|es|ed|ing)(?:\s+to)?|charg(?:e|es|ed|ing)|checkout|upgrad(?:e|es|ed|ing)\s+to|renew(?:s|ed|ing)?|top\s+up|sign\s+up\s+for|spend(?:s|ing)?|withdr(?:aw|aws|awing|awn|ew)|cash\s+out|take\s+out\s+(?:\$|\d|money|cash)|make\s+a\s+purchase|place\s+an?\s+order|send(?:s|ing)?\s+(?:money|\$))`;
+// An order placed with the broker or a shop: "place an order for pizza", "place sell orders", "put in a sell order",
+// "enter a sell order", "place a limit order". The word "order" is required, so "place a call to Ann" is not held
+// (review of PR #356, round 3).
+const ORDER_OBJECT = String.raw`(?:(?:an?|another|some|\d+|my|the)\s+)?(?:(?:limit|market|sell|buy|stop|short|long|new)\s+)*orders?\b`;
+const MONEY_VERB = String.raw`(?:bought|buy(?:s|ing)?|purchas(?:e|es|ed|ing)|pay(?:s|ing)?|paid|subscrib(?:e|es|ed|ing)(?:\s+to)?|donat(?:e|es|ed|ing)(?:\s+to)?|charg(?:e|es|ed|ing)|checkout|upgrad(?:e|es|ed|ing)\s+to|renew(?:s|ed|ing)?|top\s+up|sign\s+up\s+for|spend(?:s|ing)?|withdr(?:aw|aws|awing|awn|ew)|cash\s+out|take\s+out\s+(?:\$|\d|money|cash)|make\s+a\s+purchase|place\s+${ORDER_OBJECT}|(?:put|enter|submit)\s+(?:in\s+)?${ORDER_OBJECT}|send(?:s|ing)?\s+(?:money|\$))`;
 // "sell" moves money the other way, so a sale of anything is held like a purchase (comprehension audit, issue #350: "can
 // you open Robinhood and sell my Tesla shares" was answered with no hold). A bare object counts too: "sell Tesla", "sell
 // shares", "sell MNQ", "sell out of my position" (review of PR #356, round 2). These name no sale and are not held:
 // "sell me on this idea", "sell-through", "sales", "sell the idea to Ann", and "can you sell things for me?", which asks
 // about CHE's ability and not for an order.
-const SALE_VERB = String.raw`sell(?:s|ing)?\b(?=\s+[\w$'’])(?!\s*-)(?!\s+things?\b)(?!\s+me\s+on\b)(?!\s+(?:(?:the|this|that|a|an|my|your|our|these|those|some|any|all)\s+)?(?:ideas?|concepts?|arguments?|pitch(?:es)?|points?|team|people|signals?|orders?)\b)`;
+const SALE_VERB = String.raw`sell(?:s|ing)?\b(?=\s+[\w$'’])(?!\s*-)(?!\s+things?\b)(?!\s+me\s+on\b)(?!\s+(?:(?:the|this|that|a|an|my|your|our|these|those|some|any|all)\s+)?(?:ideas?|concepts?|arguments?|pitch(?:es)?|points?|team|people|signals?)\b)`;
 const SALE_RE = new RegExp(`\\b${SALE_VERB}`, 'i');
 const MONEY_ORDER = String.raw`order(?:s|ed|ing)?\s+(?:me\s+|us\s+)?(?:a|an|another|more|some|\d|\$|[a-z]+)`;
 const MONEY_TRANSFER = String.raw`(?:transfer(?:s|red|ring)?|wire(?:s|d|ing)?)\s+(?:\$|\d|money|funds|dollars?|to\s)`;
