@@ -79,6 +79,13 @@ class CheBrainSpaceController {
   static CheBrainSpaceController? current;
 
   CheBrainLayout layout;
+
+  /// "40 memories", or "40 memories and 20 Knowledge Atlas records": curated cards are never counted as memories.
+  String get countWords {
+    final atlas = layout.clusters['Knowledge Atlas']?.members.length ?? 0;
+    final memories = layout.nodes.length - atlas;
+    return atlas == 0 ? '${layout.nodes.length} memories' : '$memories memor${memories == 1 ? 'y' : 'ies'} and $atlas Knowledge Atlas record${atlas == 1 ? '' : 's'}';
+  }
   final CheBrainCamera camera = CheBrainCamera();
 
   /// Repaints only (camera, animation).
@@ -382,7 +389,7 @@ class CheBrainSpaceController {
     focusedCluster = null;
     flyTo(CheBrainCamera(yaw: math.pi, pitch: .08, distance: overviewDistance));
     _changed();
-    return "CHE's brain: ${layout.nodes.length} memories${workers.isNotEmpty ? ' and ${workers.length} worker brain${workers.length == 1 ? '' : 's'}' : ''}.";
+    return "CHE's brain: $countWords${workers.isNotEmpty ? ' and ${workers.length} worker brain${workers.length == 1 ? '' : 's'}' : ''}.";
   }
 
   /// This brain, whole: filters and selection cleared, the camera where it is.
@@ -393,7 +400,7 @@ class CheBrainSpaceController {
     selectedId = null;
     cardOpen = false;
     _changed();
-    return '$brainName: showing all ${layout.nodes.length} ${scope == null ? 'memories' : 'records'}.';
+    return '$brainName: showing all ${scope == null ? countWords : '${layout.nodes.length} records'}.';
   }
 
   /// Narrows the view by facets; the orbs the lens hides are not drawn, counted or stepped to.
@@ -672,14 +679,17 @@ class CheBrainSpaceController {
       ..addAll([?category]);
     if (category != null) {
       final c = layout.clusters[category];
+      final what = category == 'Knowledge Atlas' ? 'Knowledge Atlas records' : '$category memories';
       if (c == null) {
         _changed();
-        return 'There are no $category memories yet.';
+        return 'There are no $what yet.';
       }
       c.expanded = true;
       flyTo(CheBrainCamera(target: c.center.clone(), yaw: math.atan2(-c.center.x, c.center.z), pitch: .15, distance: 11));
       _changed();
-      return 'Showing your $category memories: ${c.members.length}.';
+      return category == 'Knowledge Atlas'
+          ? 'Showing the Knowledge Atlas records, curated lessons and your practice: ${c.members.length}.'
+          : 'Showing your $category memories: ${c.members.length}.';
     }
     _changed();
     return 'Showing all ${layout.nodes.length} memories.';
@@ -1093,7 +1103,7 @@ class _CheBrainSpaceState extends State<CheBrainSpace> with SingleTickerProvider
             builder: (context, _, _) {
               final sel = c.selected;
               return Semantics(
-                label: '${c.brainName}: ${c.layout.nodes.length} real ${c.scope == null ? 'memories' : 'records'} in ${c.layout.clusters.length} clusters. '
+                label: '${c.brainName}: ${c.scope == null && c.countWords.contains('Knowledge Atlas') ? 'real ${c.countWords}' : '${c.layout.nodes.length} real ${c.scope == null ? 'memories' : 'records'}'} in ${c.layout.clusters.length} clusters. '
                     '${sel == null ? 'Nothing selected.' : 'Selected: ${sel.dot.title}, ${sel.dot.category}.'}',
                 hint: 'Use the actions to move between memories and clusters, open one, go inside, back out, or show the whole brain.',
                 customSemanticsActions: {

@@ -74,12 +74,19 @@ try { mod = await import(generated.href + '?t=' + Date.now()); } finally { try {
 const { default: worker, CheState } = mod;
 globalThis.fetch = async () => { throw new TypeError('fetch failed (intent_frame tests are offline)'); };
 
+// The listening layer's own prompt: a call that starts with it is a reading-model call.
+const isReading = (input) => /^You are the listening layer for CHE/.test(String(input?.messages?.[0]?.content || ''));
+
 async function owner(model) {
   const saved = new Map();
-  const counter = { calls: 0 };
+  const counter = { calls: 0, readings: 0 };
   const env = {
     CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1',
-    AI: { run: async () => { counter.calls += 1; return { response: model }; } },
+    AI: { run: async (_model, input) => {
+      counter.calls += 1;
+      if (isReading(input)) counter.readings += 1;
+      return { response: typeof model === 'function' ? model(input) : model };
+    } },
   };
   const storage = {
     get: async (k) => (Array.isArray(k) ? new Map(k.filter((x) => saved.has(x)).map((x) => [x, structuredClone(saved.get(x))])) : (saved.has(k) ? structuredClone(saved.get(k)) : undefined)),
@@ -97,6 +104,7 @@ async function owner(model) {
   const history = [{ role: 'user', content: 'How are the markets today?' }, { role: 'assistant', content: 'Markets are mixed, sir.' }];
   return {
     saved,
+    counter,
     say: async (message) => {
       const before = counter.calls;
       const raw = await (await send('/api/chat', { message, history }, token)).text();
@@ -148,4 +156,61 @@ test('through /api/chat: a hold and a multi-step plan carry understood_as; an or
   assert.equal(plan.meta.understood_as, "plan (owner): go to Walmart tomorrow; buy apples | not: don't order anything yet");
   assert.notEqual(plan.meta.held_for_owner, true);
   assert.equal((await che.say('Tell me a joke')).meta.understood_as, undefined);
+});
+
+test('work requests that name what they act on read without the reading model; vague or consequential turns keep it', () => {
+  for (const text of [
+    'Investigate the Doodle app', 'CHE, inspect your latest coding execution history.', 'Inspect the latest main SHA.',
+    'Resume the coding job', 'Retry the failed coding job', 'Diagnose and recover the failed coding job', 'Teach me how binary search works',
+    'Quiz me on option spreads', 'Remember that my favorite color is green', 'study my starred repos', 'connect my Alpaca paper account',
+    'list my trading accounts', 'scout Fiverr for AI ad buyers', 'Audit CHE\'s coding runner and fix any faulty workflow you find.',
+    'Look at your recent coding executions and tell me what happened.', 'Work with Claude who is already working in the repo',
+    // Restoring what was deleted is not a delete; main read it with no question too.
+    'recover my deleted photos',
+  ]) {
+    const f = intentFrame(text);
+    // worker.js skips the reading model exactly when the frame reads the whole turn as a clear request.
+    assert.ok(f.lossless && !['unclear', 'followup', 'correction'].includes(f.mode), `${text}: ${f.mode}`);
+  }
+  // Pointing at earlier talk, or naming a delete, a purchase, a publish or a sign-in: the reading still runs.
+  for (const text of [
+    'clean up the old stuff', 'the thing from before', 'clear my trading history', 'reset my learning progress', 'CHE, approve and ship it',
+    'sign out the work laptop', 'star this repo for me', 'Teach me recursion and buy the course', 'Repair the deploy status check',
+    'my answer is send it to Bob', 'Take these skills and apply them to yourself',
+    // Money or a delete named after the work verb, as a noun or a gerund (review of #363).
+    'continue with the purchase', 'resume paying the bills', 'prepare the payment for the contractor',
+    'connect my Coinbase and move my bitcoin', 'look into deleting my old account',
+  ]) assert.equal(intentFrame(text).mode, 'unclear', text);
+});
+
+test('after earlier turns, a clear work request goes to its own route with no reading-model call', async () => {
+  // A reading model that restates the request, as a real one does. Before 2026-10-19 its restatement was
+  // appended to the owner's words and sent "Resume the coding job" to the code-proposal route and
+  // "Inspect that coding job" to repository inspection; the coding-history question became 3 model calls.
+  const che = await owner((input) => (isReading(input)
+    ? JSON.stringify({ intent: 'action', meaning: JSON.parse(input.messages.at(-1).content).heard, confidence: 0.9, clarify: '' })
+    : 'Understood, sir.'));
+  for (const [message, source, reply] of [
+    ['Resume the coding job', 'che_coding_resume', /no saved coding job waiting to resume/],
+    ['Inspect that coding job.', 'che_coding_history', /No coding job has started yet/],
+    ['CHE, inspect your latest coding execution history.', 'che_coding_history', /No coding job has started yet/],
+    ['Look at your recent coding executions and tell me what happened.', 'che_coding_history', /No coding job has started yet/],
+    ['Remember that my favorite color is green', 'che_memory', /remember that/i],
+  ]) {
+    const out = await che.say(message);
+    assert.equal(out.meta.source, source, message);
+    assert.match(out.reply, reply, message);
+    assert.equal(out.modelCalls, 0, `${message}: no reading and no reply model`);
+  }
+  // The scout topic is the owner's own words, without the reading's "(Likely meaning …)" tail.
+  const scout = await che.say('scout Fiverr for AI ad buyers');
+  assert.match(scout.reply, /Fiverr scout queued for "AI ad buyers"\./);
+  assert.equal(scout.modelCalls, 0);
+  assert.equal(che.counter.readings, 0, 'not one reading-model call for these turns');
+
+  // A work request that also names a purchase keeps its reading, and its "Just to be sure" comes first.
+  const buy = await che.say('Teach me recursion and buy the course');
+  assert.equal(che.counter.readings, 1);
+  assert.match(buy.reply, /^Just to be sure, do you want me to Teach me recursion and buy the course\?/);
+  assert.equal(che.saved.get('che:pending_owner_action') ?? null, null, 'nothing is held or bought before the yes');
 });

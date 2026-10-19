@@ -202,3 +202,16 @@ test('comprehension audit: an app CHE studies or reports on is not an app she us
     assert.deepEqual(classifyAppAccesses(text).required, [app], text);
   }
 });
+
+test('"reset my progress" is a delete; a progress bar, a report, a call or a game score is not (Knowledge Atlas #346)', () => {
+  for (const s of ['reset my progress', 'Reset my progress.', 'reset my learning progress', 'CHE, clear my trading quiz scores', 'clear my quiz scores', 'reset my atlas progress', 'delete my knowledge atlas progress']) {
+    assert.deepEqual(classifyOwnerActions(s), ['delete'], s);
+  }
+  for (const s of [
+    'clear the progress bar when the upload finishes', 'reset the progress spinner after each request', 'drop the progress indicator from the home screen',
+    'reset the score to zero when the game restarts', 'drop scores below 50 from the chart', 'clear the scores on the leaderboard widget',
+    'cancel the progress report', 'cancel my progress call with Mark', 'reset my progress bar', 'reset my thoughts', 'clear the screen',
+  ]) {
+    assert.deepEqual(classifyOwnerActions(s), [], s);
+  }
+});
