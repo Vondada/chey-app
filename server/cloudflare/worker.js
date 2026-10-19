@@ -4389,8 +4389,10 @@ export class CheState extends DurableObject {
         })),
         options.allMail ? Promise.resolve(options.allMail) : readAllMail(this.env).catch(() => ({ messages: [] })),
       ]);
-      const rag = vectorContextText(recall);
-      const remembered = rememberedText(memories, 3000);
+      // An outside AI is never the owner's own request: owner memory reaches this prompt with Google IDs redacted,
+      // whatever the AI asked (eighth review of #354).
+      const rag = redactGoogleIds(vectorContextText(recall));
+      const remembered = redactGoogleIds(rememberedText(memories, 3000));
 
       const collisionClaims = (allMail.messages || [])
         .filter((item) => item?.id !== id && /\b(?:claim|own|ownership|lane|files?)\b/i.test(String(item?.text || '')))
@@ -4487,7 +4489,8 @@ export class CheState extends DurableObject {
       const honesty = (grounded.removed.length ? ' Anything marked [NOT VERIFIED] is a file, link, code quote or job I could not confirm in the repository.' : '') + (codeProblems.length ? ` The code above still has a syntax problem I could not fix in one pass: ${codeProblems[0]}.` : '');
       // Never a bare refusal: when nothing can be pinned, say where to look.
       const searchTerms = [...new Set(incoming.match(/[A-Za-z_$][\w$]{3,}/g) || [])].slice(0, 4).join(', ') || 'the key words of the question';
-      const reply = grounded.text ? `${grounded.text}${honesty}` : `I can't pin the exact line from the source I read. To check it, search the pinned commit for: ${searchTerms}.${honesty}`;
+      // The reply leaves for an outside AI: a Google ID never leaves in it (eighth review of #354).
+      const reply = redactGoogleIds(grounded.text ? `${grounded.text}${honesty}` : `I can't pin the exact line from the source I read. To check it, search the pinned commit for: ${searchTerms}.${honesty}`);
       if (!reply) throw new Error('CHE returned no Flagstaff reply.');
       const posted = await postWebMail(this.ctx.storage, {
         from: 'che',
@@ -9354,12 +9357,14 @@ export class CheState extends DurableObject {
           : casualChat
           ? { status: 'skipped_casual', checked: false, matches: [], detail: 'Skipped for short casual chat latency.' }
           : await retrieveVectorContext(this.keyEnv || this.env, message);
-        const vectorMemoryContext = vectorContextText(vectorRecall);
+        // Owner memory in a model request follows the brain_context rule: Google IDs are redacted unless the owner's
+        // own request is about a Google file (eighth review of #354).
+        const vectorMemoryContext = redactBrainText(vectorContextText(vectorRecall), message);
         // Her own memory: War Room meetings, Flagstaff exchanges and earlier
         // talks with the owner that relate to this message.
         await syncWarRoomMemories(this.ctx.storage, data).catch(() => 0);
         const rememberedContext = ownerDevice
-          ? rememberedText(await recallMemories(this.ctx.storage, message).catch(() => []))
+          ? redactBrainText(rememberedText(await recallMemories(this.ctx.storage, message).catch(() => [])), message)
           : '';
         // CHE User Knowledge Bundle: canonical items from pgvector. The router
         // sends each engine only the data classes it is authorized for.
@@ -10748,9 +10753,9 @@ export class CheState extends DurableObject {
               body.client_identity_profile
                 ? `Client identity supplement (canonical CHE policy above still controls): ${String(body.client_identity_profile).slice(0, 1800)}`
                 : '',
-              memoryPromptContext(ownerDevice ? data : {}),
+              redactBrainText(memoryPromptContext(ownerDevice ? data : {}), message),
               rememberedContext,
-              ownerDevice ? nightlyContext(data) : '',
+              ownerDevice ? redactBrainText(nightlyContext(data), message) : '',
               WORK_POLICY,
               `Autonomy is ${data.autonomy ? 'on' : 'paused'}.`,
               /\b(?:change|update|improve|fix|add|build|modify|upgrade)\b[\s\S]{0,40}\b(?:your(?:self| own)?|the app|che app|your app|your code|your screen)\b/i.test(message)
@@ -10792,7 +10797,7 @@ export class CheState extends DurableObject {
             vectorMemoryContext,
             officeResults,
             skillResults,
-            memories: memoryPromptContext(ownerDevice ? data : {}),
+            memories: redactBrainText(memoryPromptContext(ownerDevice ? data : {}), message),
             remembered: rememberedContext,
           }).replace(/POSTGRES \+ PGVECTOR RAG[\s\S]*?(?=\n(?:Office results|Plugin tool results|Owner memories))/, '')
             // Fast turns carry only the taught skills that fit this message.

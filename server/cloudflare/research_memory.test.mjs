@@ -390,3 +390,57 @@ test('fourth review of #354: 3- and 6-character code groups are withheld; Google
     assert.equal(hasSecretShape(text), false, text);
   }
 });
+
+// ─── Eighth review of #354: functional Google shapes, the about-Google decision, and long-ID redaction ─────────
+test('eighth review of #354: published, multi-account, trailing-slash, view and present links are kept; a random tail, an over-long ID and open?id are withheld', () => {
+  const DOC_ID = '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms';
+  const DRIVE_ID = '1AbCdEfGhIjKlMnOpQrStUvWxYz012345';
+  // A real "publish to the web" ID is about 86 characters.
+  const PUB86 = ['2PACX-1vQ', 'aBcD3eFgH4iJkL5mNoPqRsT6uVwXyZ7aBcD8eFgH9iJkL0mNoPqRsT', 'uVwXyZ1aBcD2eFgH3iJkL'].join('-');
+  assert.equal(PUB86.length, 86);
+  const PUB_LONG = `${PUB86}-${'Qx7Lm2Np9Rt4Vw8Yz3Bc6Df1Gh5Jk0Ln7Mp2Qr9St'}`;
+  assert.ok(PUB_LONG.length > 120);
+  const kept = [
+    `Published https://docs.google.com/document/d/e/${PUB86}/pub now`,
+    `Doc https://docs.google.com/document/u/0/d/${DOC_ID}/edit`,
+    `Folder https://drive.google.com/drive/u/0/folders/${DRIVE_ID}`,
+    `Doc https://docs.google.com/document/d/${DOC_ID}/edit/`,
+    `Sheet https://docs.google.com/spreadsheets/d/${DOC_ID}/view`,
+    `Deck https://docs.google.com/presentation/d/${DOC_ID}/view`,
+    `Deck https://docs.google.com/presentation/d/${DOC_ID}/present`,
+  ];
+  for (const text of kept) {
+    assert.equal(isSafeMemoryText(text), true, text);
+    assert.equal(hasSecretShape(text), false, text);
+  }
+  const withheld = [
+    `Published https://docs.google.com/document/d/e/${PUB86}/pub/${['Q7mZ2kP9', 'xL4vN8wR3tY6uB1c'].join('')}`,
+    `Published https://docs.google.com/document/d/e/${PUB_LONG}/pub now`,
+    `Drive open https://drive.google.com/open?id=${DRIVE_ID}`,
+  ];
+  for (const text of withheld) {
+    assert.equal(isSafeMemoryText(text), false, text);
+    assert.equal(hasSecretShape(text), true, text);
+  }
+  // The redaction is never weaker than the gate: an ID over 64 characters is redacted too.
+  assert.equal(redactGoogleIds(`https://docs.google.com/document/d/e/${PUB86}/pub`), 'https://docs.google.com/document/d/e/[google-id]/pub');
+  assert.equal(redactGoogleIds(`https://drive.google.com/drive/u/0/folders/${DRIVE_ID}`), 'https://drive.google.com/drive/u/0/folders/[google-id]');
+});
+
+test('eighth review of #354: a request is about a Google file only when it names one; the verb "google" is not one', () => {
+  for (const text of ['Can you google how TCP handshakes work?', 'What did Claude say about #350?', 'Open the file', 'Google the weather for me']) {
+    assert.equal(ownerAskedAboutGoogle(text), false, text);
+  }
+  for (const text of ['Open my budget sheet.', 'Read my notes doc', 'What is in my Drive folder?', 'Open the spreadsheet', 'Open the slides', 'Open my Google Doc', 'Show me Google Sheets']) {
+    assert.equal(ownerAskedAboutGoogle(text), true, text);
+  }
+  // A stored record's title words decide it, and a bare "file" or "link" counts only with a Google record on topic.
+  assert.equal(ownerAskedAboutGoogle('budget forecast numbers', { titles: ['Budget forecast'] }), true);
+  assert.equal(ownerAskedAboutGoogle('Open the budget file', { titles: ['Budget forecast'] }), true);
+  assert.equal(ownerAskedAboutGoogle('Open the file', { titles: ['Budget forecast'] }), false);
+  assert.equal(ownerAskedAboutGoogle('budget numbers', { titles: ['Budget forecast'] }), false);
+  const DOC_ID = '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms';
+  const text = `Here is the doc https://docs.google.com/document/d/${DOC_ID}/edit for Monday`;
+  assert.equal(redactBrainText(text, 'Can you google how TCP handshakes work?').includes(DOC_ID), false, 'the verb google does not unlock the ID');
+  assert.equal(redactBrainText(text, 'Open my budget sheet.'), text, 'the owner\'s own Google request keeps the ID');
+});

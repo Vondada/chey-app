@@ -690,4 +690,49 @@ void main() {
     }
     expect(brain.count, kept.length);
   });
+  test('X: functional Google shapes are kept and a random tail is withheld on the phone; a request is about a Google file only when it names one (eighth review of #354)', () async {
+    final dir = await freshDir();
+    final brain = CheBrainReplica(directory: dir);
+    const docId = '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms';
+    const driveId = '1AbCdEfGhIjKlMnOpQrStUvWxYz012345';
+    final pub86 = ['2PACX-1vQ', 'aBcD3eFgH4iJkL5mNoPqRsT6uVwXyZ7aBcD8eFgH9iJkL0mNoPqRsT', 'uVwXyZ1aBcD2eFgH3iJkL'].join('-');
+    expect(pub86.length, 86);
+    final pubLong = '$pub86-Qx7Lm2Np9Rt4Vw8Yz3Bc6Df1Gh5Jk0Ln7Mp2Qr9St';
+    final kept = [
+      'Published https://docs.google.com/document/d/e/$pub86/pub now',
+      'Doc https://docs.google.com/document/u/0/d/$docId/edit',
+      'Folder https://drive.google.com/drive/u/0/folders/$driveId',
+      'Doc https://docs.google.com/document/d/$docId/edit/',
+      'Sheet https://docs.google.com/spreadsheets/d/$docId/view',
+      'Deck https://docs.google.com/presentation/d/$docId/view',
+      'Deck https://docs.google.com/presentation/d/$docId/present',
+    ];
+    for (final text in kept) {
+      expect(cheBrainTextIsSensitive(text), isFalse, reason: text);
+      expect(await brain.remember(kind: 'memory', region: 'Personal Memory', body: text), isNotNull, reason: text);
+    }
+    final withheld = [
+      'Published https://docs.google.com/document/d/e/$pub86/pub/${['Q7mZ2kP9', 'xL4vN8wR3tY6uB1c'].join()}',
+      'Published https://docs.google.com/document/d/e/$pubLong/pub now',
+      'Drive open https://drive.google.com/open?id=$driveId',
+    ];
+    for (final text in withheld) {
+      expect(cheBrainTextIsSensitive(text), isTrue, reason: text);
+      expect(await brain.remember(kind: 'memory', region: 'Personal Memory', body: text), isNull, reason: text);
+    }
+    expect(brain.count, kept.length);
+    expect(cheRedactGoogleIds('https://docs.google.com/document/d/e/$pub86/pub'), 'https://docs.google.com/document/d/e/[google-id]/pub');
+    for (final text in ['Can you google how TCP handshakes work?', 'What did Claude say about #350?', 'Open the file', 'Google the weather for me']) {
+      expect(cheAskedAboutGoogle(text), isFalse, reason: text);
+    }
+    for (final text in ['Open my budget sheet.', 'Read my notes doc', 'What is in my Drive folder?', 'Open the spreadsheet', 'Open the slides', 'Open my Google Doc', 'Show me Google Sheets']) {
+      expect(cheAskedAboutGoogle(text), isTrue, reason: text);
+    }
+    expect(cheAskedAboutGoogle('budget forecast numbers', titles: ['Budget forecast']), isTrue);
+    expect(cheAskedAboutGoogle('Open the budget file', titles: ['Budget forecast']), isTrue);
+    expect(cheAskedAboutGoogle('Open the file', titles: ['Budget forecast']), isFalse);
+    const link = 'Here is the doc https://docs.google.com/document/d/$docId/edit for Monday';
+    expect(cheRedactBrainText(link, 'Can you google how TCP handshakes work?').contains(docId), isFalse);
+    expect(cheRedactBrainText(link, 'Open my budget sheet.'), link);
+  });
 }

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
+import { recallMemories, recordConversationMemory, rememberedText } from './brain_memory.js';
 
 // Import the Worker as a normal temporary ES module. Keeping the generated
 // module beside worker.js lets every relative import resolve naturally and
@@ -1600,4 +1601,76 @@ test('Flagstaff model calls run one at a time, so a batch cannot fail together',
   const results = await Promise.all(messages.map((m) => state.replyToFlagstaffMessage(m)));
   assert.equal(peak, 1);
   assert.ok(results.every((r) => r.replied === true));
+});
+
+// ─── Eighth review of #354: Google IDs never leave in Flagstaff replies or unrelated owner prompts ──────────
+test('eighth review of #354: a Flagstaff reply never carries an owner Google ID, in the prompt or in the posted reply', async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => { throw new TypeError('offline'); };
+  try {
+    const DOC_ID = '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms';
+    const link = `https://docs.google.com/spreadsheets/d/${DOC_ID}/edit`;
+    const saved = new Map();
+    // Durable Object storage: single and batch get, put and delete, and a prefix listing.
+    const storage = {
+      get: async (key) => (Array.isArray(key) ? new Map(key.filter((k) => saved.has(k)).map((k) => [k, saved.get(k)])) : saved.get(key)),
+      put: async (key, value) => {
+        if (key && typeof key === 'object') for (const [k, v] of Object.entries(key)) saved.set(k, structuredClone(v));
+        else saved.set(key, structuredClone(value));
+      },
+      delete: async (key) => (Array.isArray(key) ? key.forEach((k) => saved.delete(k)) : saved.delete(key)),
+      list: async ({ prefix = '', reverse = false, limit = 1000 } = {}) => {
+        const keys = [...saved.keys()].filter((k) => typeof k === 'string' && k.startsWith(prefix)).sort();
+        if (reverse) keys.reverse();
+        return new Map(keys.slice(0, limit).map((k) => [k, saved.get(k)]));
+      },
+      setAlarm: async () => {},
+    };
+    const prompts = [];
+    const env = { AI: { run: async (_model, input) => {
+      prompts.push(JSON.stringify(input?.messages || input));
+      return { response: `The owner keeps the budget sheet at ${link} and updates it monthly.` };
+    } } };
+    const state = new CheState({ storage }, env);
+    await recordConversationMemory(storage, { message: `My budget sheet is ${link}`, reply: 'Noted, sir.' });
+    // The review's probe: the recall itself still carries the raw ID, so the reply path must redact it.
+    const recalled = rememberedText(await recallMemories(storage, 'chatgpt What budget sheet does the owner keep?', { limit: 4 }));
+    assert.ok(recalled.includes(DOC_ID), 'the stored owner talk keeps the link');
+    const result = await state.replyToFlagstaffMessage({ id: 'flagstaff-google-id-1', from: 'chatgpt', to: 'che', text: 'What budget sheet does the owner keep?' });
+    assert.equal(result.replied, true, JSON.stringify(result));
+    assert.ok(prompts.length >= 1, 'the model was asked');
+    assert.ok(prompts.every((p) => !p.includes(DOC_ID)), 'no prompt carries the ID');
+    assert.ok(prompts.some((p) => p.includes('[google-id]')), 'the owner talk reached the prompt with the placeholder');
+    const posted = saved.get('web_mailbox').at(-1);
+    assert.equal(posted.from, 'che');
+    assert.equal(posted.to, 'chatgpt');
+    assert.equal(posted.text.includes(DOC_ID), false, posted.text);
+    assert.match(posted.text, /\[google-id\]/);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test('eighth review of #354: owner memories in the chat prompt carry [google-id] on an unrelated question, and the real ID on the owner\'s own Google request', async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => { throw new TypeError('offline'); };
+  try {
+    const { send, inputs } = await pairedOwner();
+    const DOC_ID = '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms';
+    const link = `https://docs.google.com/spreadsheets/d/${DOC_ID}/edit`;
+    assert.equal((await send('/api/memory/add', { memory: `My budget sheet is ${link}` })).status, 200);
+    const before = inputs.length;
+    await (await send('/api/chat', { message: 'How do TCP handshakes work?' })).text();
+    assert.ok(inputs.length > before, 'the model was asked');
+    const unrelated = JSON.stringify(inputs.slice(before));
+    assert.match(unrelated, /OWNER-STATED MEMORIES \(/);
+    assert.equal(unrelated.includes(DOC_ID), false, 'no raw ID in an unrelated prompt');
+    assert.match(unrelated, /\[google-id\]/);
+    const mark = inputs.length;
+    await (await send('/api/chat', { message: 'Summarize what my budget sheet covers in one sentence.' })).text();
+    assert.ok(inputs.length > mark, 'the model was asked');
+    assert.ok(JSON.stringify(inputs.slice(mark)).includes(DOC_ID), 'the owner\'s own Google request keeps the ID');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
 });

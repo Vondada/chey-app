@@ -157,16 +157,29 @@ bool _groupedCode(String token) {
 // "/": 'ID' is the Google ID and a List is a choice of parts.
 const List<List<Object>> _googleAllowedLinks = [
   ['docs.google.com', ['document', 'd', 'ID', ['edit', 'view']]],
-  ['docs.google.com', ['spreadsheets', 'd', 'ID', 'edit']],
-  ['docs.google.com', ['presentation', 'd', 'ID', 'edit']],
-  ['docs.google.com', ['document', 'd', 'e', 'ID', 'pub']],
+  ['docs.google.com', ['spreadsheets', 'd', 'ID', ['edit', 'view']]],
+  ['docs.google.com', ['presentation', 'd', 'ID', ['edit', 'view', 'present']]],
+  ['docs.google.com', ['document', 'd', 'e', 'PUBID', 'pub']],
   ['drive.google.com', ['file', 'd', 'ID', 'view']],
   ['drive.google.com', ['drive', 'folders', 'ID']],
 ];
 
+// A real "publish to the web" ID ("2PACX-1v…") is about 86 characters: on the pub shape only, a 2PACX- ID of up to
+// 120 characters is accepted. The multi-account form puts /u/<digit>/ after the file kind (eighth review of #354).
+final RegExp _googlePubIdShape = RegExp(r'^2PACX-[A-Za-z0-9_-]{22,114}$');
+final RegExp _singleDigitShape = RegExp(r'^\d$');
+const _googleMultiAccountKinds = {'document', 'spreadsheets', 'presentation', 'drive'};
+
 // The index of the allow-listed ID in the raw path segments, or -1 when the path is not one of those shapes.
+// A trailing slash after the action is allowed.
 int _googleAllowedIdIndex(String host, List<String> rawSegments) {
-  final parts = rawSegments.sublist(1);
+  var parts = rawSegments.sublist(1);
+  if (parts.length > 1 && parts.last.isEmpty) parts = parts.sublist(0, parts.length - 1);
+  var offset = 1;
+  if (parts.length > 3 && _googleMultiAccountKinds.contains(parts[0]) && parts[1] == 'u' && _singleDigitShape.hasMatch(parts[2])) {
+    parts = [parts[0], ...parts.sublist(3)];
+    offset = 3;
+  }
   for (final entry in _googleAllowedLinks) {
     final allowedHost = entry[0] as String;
     final shape = entry[1] as List<Object>;
@@ -177,8 +190,11 @@ int _googleAllowedIdIndex(String host, List<String> rawSegments) {
       final want = shape[k];
       final part = parts[k];
       if (want == 'ID') {
-        idIndex = k + 1;
+        idIndex = k + offset;
         matches = _googleDocIdShape.hasMatch(part);
+      } else if (want == 'PUBID') {
+        idIndex = k + offset;
+        matches = _googleDocIdShape.hasMatch(part) || _googlePubIdShape.hasMatch(part);
       } else if (want is List) {
         matches = want.contains(part);
       } else {
@@ -248,28 +264,51 @@ bool _linkHasSecret(String link) {
 }
 
 // Google document IDs are not repeated in logs, reports or unrelated model requests (owner decision): the ID in a
-// Google link becomes "[google-id]". The link itself stays stored whole.
+// Google link becomes "[google-id]" at any length, so the redaction is never weaker than the gate. The link itself
+// stays stored whole.
 final RegExp _googleLinkTextShape =
     RegExp(r"""https?://(?:docs|drive)\.google\.com/[^\s"'<>()\[\]]*""", caseSensitive: false);
-final RegExp _googleRequestShape = RegExp(r'google|docs\.google\.com|drive\.google\.com', caseSensitive: false);
 final RegExp _tokenCutShape = RegExp(r'[?#]');
-final RegExp _googleIdRunShape = RegExp(r'[A-Za-z0-9_-]{28,64}');
+final RegExp _googleIdPartShape = RegExp(r'^[A-Za-z0-9_-]{28,}$');
+final RegExp _googleIdRunShape = RegExp(r'[A-Za-z0-9_-]{28,}');
 
 String cheRedactGoogleIds(String text) => text.replaceAllMapped(_googleLinkTextShape, (m) {
       final link = m.group(0)!;
       final cut = link.indexOf(_tokenCutShape);
       final head = cut < 0 ? link : link.substring(0, cut);
       final tail = cut < 0 ? '' : link.substring(cut);
-      final redactedHead = head.split('/').map((part) => _googleDocIdShape.hasMatch(part) ? '[google-id]' : part).join('/');
+      final redactedHead = head.split('/').map((part) => _googleIdPartShape.hasMatch(part) ? '[google-id]' : part).join('/');
       return redactedHead + tail.replaceAll(_googleIdRunShape, '[google-id]');
     });
 
+// A request is about a Google file (eighth review of #354), as in research_memory.js: a Google file kind with a
+// possessive or a determiner, a Google product name or link, or every title word of a stored Google record. A bare
+// "file" or "link" counts only with "my" or "the" and a Google record on topic. The verb "google" alone does not.
+final RegExp _googleProductShape =
+    RegExp(r'\bgoogle\s+(?:docs?|sheets?|slides?|drive|forms?)\b|\b(?:docs|drive)\.google\.com\b', caseSensitive: false);
+final RegExp _googleFileKindShape = RegExp(
+    r"\b(?:my|the|our)\s+(?:[\w'’-]+\s+){0,3}?(?:docs?|documents?|sheets?|spreadsheets?|slides?|decks?|presentations?|forms?|folders?|drive)\b",
+    caseSensitive: false);
+final RegExp _googleBareFileShape = RegExp(r"\b(?:my|the)\s+(?:[\w'’-]+\s+){0,3}?(?:files?|links?)\b", caseSensitive: false);
+final RegExp _titleWordShape = RegExp(r'[a-z0-9]+');
+const _titleStopWords = {'the', 'and', 'for', 'with', 'from', 'into', 'your', 'our', 'this', 'that', 'what', 'are'};
+
+Set<String> _wordsOf(String text) => _titleWordShape.allMatches(text.toLowerCase()).map((m) => m.group(0)!).toSet();
+
+List<String> _titleWords(String title) => _wordsOf(title).where((w) => w.length >= 3 && !_titleStopWords.contains(w)).toList();
+
 /// True when the owner's own words are about a Google file, so the ID in it is theirs to use.
-bool cheAskedAboutGoogle(String text) => _googleRequestShape.hasMatch(text);
+bool cheAskedAboutGoogle(String text, {List<String> titles = const []}) {
+  if (_googleProductShape.hasMatch(text) || _googleFileKindShape.hasMatch(text)) return true;
+  final words = _wordsOf(text);
+  final lists = titles.map(_titleWords).where((list) => list.isNotEmpty).toList();
+  if (lists.any((list) => list.every(words.contains))) return true;
+  return _googleBareFileShape.hasMatch(text) && lists.any((list) => list.any(words.contains));
+}
 
 /// Brain text for a log, a report or a model request: IDs are redacted unless the owner's request is about Google.
-String cheRedactBrainText(String text, String ownerMessage) =>
-    cheAskedAboutGoogle(ownerMessage) ? text : cheRedactGoogleIds(text);
+String cheRedactBrainText(String text, String ownerMessage, {List<String> titles = const []}) =>
+    cheAskedAboutGoogle(ownerMessage, titles: titles) ? text : cheRedactGoogleIds(text);
 
 class CheBrainRecord {
   CheBrainRecord({

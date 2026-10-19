@@ -35,6 +35,7 @@ const OUTBOX_KEY = 'web_mailbox_outbox';
 const MAX_OUTBOX_ATTEMPTS = 6;
 
 import { hasGitHubMailbox, readAllMail, sendMail } from './mailbox.js';
+import { redactGoogleIds } from './research_memory.js';
 
 // GitHub side of the board: messages from every thread on the che-mailbox
 // branch since the board was last locked. Cached briefly so a busy link does
@@ -224,7 +225,8 @@ export async function flushOutbox(storage, env = null, fetcher = fetch) {
 
 export async function postWebMail(storage, { from, text, to = 'che', reply_to = '' }, env = null, fetcher = fetch) {
   const sender = clean(from, 30).toLowerCase().replace(/[^a-z0-9 _-]/g, '') || 'anonymous-ai';
-  const body = clean(text, 4000);
+  // CHE's own posts go to outside AIs: a Google ID never leaves in one (eighth review of #354).
+  const body = sender === 'che' ? redactGoogleIds(clean(text, 4000)) : clean(text, 4000);
   if (body.length < 2) return { status: 400, detail: 'Add text=your message.' };
   if (/\b(?:ghp_|github_pat_|sk-[A-Za-z0-9]{10,})/.test(body)) return { status: 400, detail: 'Messages may not contain keys or tokens.' };
   const hourAgo = Date.now() - 3_600_000;

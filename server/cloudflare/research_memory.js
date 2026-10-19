@@ -94,21 +94,34 @@ const GOOGLE_DOC_HOST_RE = /^(?:docs|drive)\.google\.com$/i;
 const GOOGLE_DOC_ID_RE = /^[A-Za-z0-9_-]{28,64}$/;
 const GOOGLE_ALLOWED_LINKS = [
   ['docs.google.com', ['document', 'd', 'ID', ['edit', 'view']]],
-  ['docs.google.com', ['spreadsheets', 'd', 'ID', 'edit']],
-  ['docs.google.com', ['presentation', 'd', 'ID', 'edit']],
-  ['docs.google.com', ['document', 'd', 'e', 'ID', 'pub']],
+  ['docs.google.com', ['spreadsheets', 'd', 'ID', ['edit', 'view']]],
+  ['docs.google.com', ['presentation', 'd', 'ID', ['edit', 'view', 'present']]],
+  ['docs.google.com', ['document', 'd', 'e', 'PUBID', 'pub']],
   ['drive.google.com', ['file', 'd', 'ID', 'view']],
   ['drive.google.com', ['drive', 'folders', 'ID']],
 ];
+// A real "publish to the web" ID ("2PACX-1v…") is about 86 characters. On the /document/d/e/<id>/pub shape
+// only, a 2PACX- ID of up to 120 characters is accepted (eighth review of #354).
+const GOOGLE_PUB_ID_RE = /^2PACX-[A-Za-z0-9_-]{22,114}$/;
+// The multi-account form puts /u/<digit>/ after the file kind: /document/u/0/d/<id>/edit, /drive/u/0/folders/<id>.
+const GOOGLE_MULTI_ACCOUNT_KINDS = new Set(['document', 'spreadsheets', 'presentation', 'drive']);
 // The index of the allow-listed ID in the raw path segments, or -1 when the path is not one of those shapes.
+// A trailing slash after the action is allowed.
 function googleAllowedIdIndex(host, rawSegments) {
-  const parts = rawSegments.slice(1);
+  let parts = rawSegments.slice(1);
+  if (parts.length > 1 && parts[parts.length - 1] === '') parts = parts.slice(0, -1);
+  let offset = 1;
+  if (parts.length > 3 && GOOGLE_MULTI_ACCOUNT_KINDS.has(parts[0]) && parts[1] === 'u' && /^\d$/.test(parts[2])) {
+    parts = [parts[0], ...parts.slice(3)];
+    offset = 3;
+  }
   for (const [allowedHost, shape] of GOOGLE_ALLOWED_LINKS) {
     if (host.toLowerCase() !== allowedHost || parts.length !== shape.length) continue;
     let idIndex = -1;
     const matches = shape.every((want, k) => {
       const part = parts[k];
-      if (want === 'ID') { idIndex = k + 1; return GOOGLE_DOC_ID_RE.test(part); }
+      if (want === 'ID') { idIndex = k + offset; return GOOGLE_DOC_ID_RE.test(part); }
+      if (want === 'PUBID') { idIndex = k + offset; return GOOGLE_DOC_ID_RE.test(part) || GOOGLE_PUB_ID_RE.test(part); }
       if (Array.isArray(want)) return want.includes(part);
       return part === want;
     });
@@ -167,25 +180,41 @@ function linkHasSecret(link) {
   });
 }
 // Google document IDs are not repeated in logs, reports or unrelated model requests (owner decision). In a
-// Google link the ID is replaced by "[google-id]". The link itself stays stored whole.
+// Google link the ID is replaced by "[google-id]" at any length, so the redaction is never weaker than the gate.
+// The link itself stays stored whole.
 const GOOGLE_LINK_TEXT_RE = /https?:\/\/(?:docs|drive)\.google\.com\/[^\s"'<>()[\]]*/gi;
-const GOOGLE_REQUEST_RE = /google|docs\.google\.com|drive\.google\.com/i;
+const GOOGLE_ID_PART_RE = /^[A-Za-z0-9_-]{28,}$/;
 export function redactGoogleIds(text) {
   return String(text ?? '').replace(GOOGLE_LINK_TEXT_RE, (link) => {
     const cut = link.search(/[?#]/);
     const head = cut < 0 ? link : link.slice(0, cut);
     const tail = cut < 0 ? '' : link.slice(cut);
-    return head.split('/').map((part) => (GOOGLE_DOC_ID_RE.test(part) ? '[google-id]' : part)).join('/')
-      + tail.replace(/[A-Za-z0-9_-]{28,64}/g, '[google-id]');
+    return head.split('/').map((part) => (GOOGLE_ID_PART_RE.test(part) ? '[google-id]' : part)).join('/')
+      + tail.replace(/[A-Za-z0-9_-]{28,}/g, '[google-id]');
   });
 }
-// True when the owner's own words are about a Google file, so the ID in it is theirs to use.
-export function ownerAskedAboutGoogle(text) {
-  return GOOGLE_REQUEST_RE.test(String(text ?? ''));
+// A request is about a Google file (eighth review of #354) when it names a Google file kind with a possessive or a
+// determiner ("my budget sheet", "the slides", "my Drive folder"), names Google Docs, Sheets, Slides, Drive or Forms
+// (or holds a Google link), or holds every title word of a stored Google record. A bare "file" or "link" counts
+// only with "my" or "the" and a Google record on topic. The verb "google" alone is not a request about a file.
+const GOOGLE_PRODUCT_RE = /\bgoogle\s+(?:docs?|sheets?|slides?|drive|forms?)\b|\b(?:docs|drive)\.google\.com\b/i;
+const GOOGLE_FILE_KIND_RE = /\b(?:my|the|our)\s+(?:[\w'’-]+\s+){0,3}?(?:docs?|documents?|sheets?|spreadsheets?|slides?|decks?|presentations?|forms?|folders?|drive)\b/i;
+const GOOGLE_BARE_FILE_RE = /\b(?:my|the)\s+(?:[\w'’-]+\s+){0,3}?(?:files?|links?)\b/i;
+const TITLE_STOP_WORDS = new Set(['the', 'and', 'for', 'with', 'from', 'into', 'your', 'our', 'this', 'that', 'what', 'are']);
+function titleWords(title) {
+  return [...new Set(String(title ?? '').toLowerCase().match(/[a-z0-9]+/g) || [])].filter((w) => w.length >= 3 && !TITLE_STOP_WORDS.has(w));
+}
+export function ownerAskedAboutGoogle(text, { titles = [] } = {}) {
+  const value = String(text ?? '');
+  if (GOOGLE_PRODUCT_RE.test(value) || GOOGLE_FILE_KIND_RE.test(value)) return true;
+  const words = new Set(value.toLowerCase().match(/[a-z0-9]+/g) || []);
+  const lists = (Array.isArray(titles) ? titles : []).map(titleWords).filter((list) => list.length);
+  if (lists.some((list) => list.every((w) => words.has(w)))) return true;
+  return GOOGLE_BARE_FILE_RE.test(value) && lists.some((list) => list.some((w) => words.has(w)));
 }
 // Brain text for a log, a report or a model request: IDs are redacted unless the owner's request is about Google.
-export function redactBrainText(text, ownerMessage = '') {
-  return ownerAskedAboutGoogle(ownerMessage) ? String(text ?? '') : redactGoogleIds(text);
+export function redactBrainText(text, ownerMessage = '', { titles = [] } = {}) {
+  return ownerAskedAboutGoogle(ownerMessage, { titles }) ? String(text ?? '') : redactGoogleIds(text);
 }
 function secretToken(raw) {
   // Sentence punctuation is not part of a token; a closing "!" is, when the rest already mixes
