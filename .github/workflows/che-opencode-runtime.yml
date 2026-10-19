@@ -384,6 +384,8 @@ jobs:
           set +e
           # Every error or log text below goes through the shared redactor (coding_failover.mjs
           # redactSecrets) via the trusted copy, before it reaches the log or the job record.
+          # A log window is cut only after redaction, so a key split by the cut leaves no fragment.
+          redact_raw() { node "$CHE_TRUSTED_TOOLS/tools/che_coding_checkpoint.mjs" redact; }
           redact() { node "$CHE_TRUSTED_TOOLS/tools/che_coding_checkpoint.mjs" redact | tr '\n"' '  ' | cut -c1-350; }
           # This free-coding step never receives the capped paid key.
           prompt=$(cat ${RUNNER_TEMP}/che-runtime-prompt.txt)
@@ -467,7 +469,7 @@ jobs:
             { grep -E '"type": ?"error"' ${RUNNER_TEMP}/opencode-events.jsonl 2>/dev/null; cat ${RUNNER_TEMP}/opencode-stderr.log 2>/dev/null; } >${RUNNER_TEMP}/opencode-failure.txt
             failure_kind=$(node "$CHE_TRUSTED_TOOLS/tools/che_coding_checkpoint.mjs" classify --exit "$code" --field kind <${RUNNER_TEMP}/opencode-failure.txt)
             failure_resumable=$(node "$CHE_TRUSTED_TOOLS/tools/che_coding_checkpoint.mjs" classify --exit "$code" --field resumable <${RUNNER_TEMP}/opencode-failure.txt)
-            why=$( { tail -c 4000 ${RUNNER_TEMP}/opencode-stderr.log; grep -iE 'error|quota|rate|denied|invalid|not found' ${RUNNER_TEMP}/opencode-events.jsonl | tail -2; } 2>/dev/null | redact)
+            why=$( { redact_raw < ${RUNNER_TEMP}/opencode-stderr.log | tail -c 4000; grep -iE 'error|quota|rate|denied|invalid|not found' ${RUNNER_TEMP}/opencode-events.jsonl | redact_raw | tail -2; } 2>/dev/null | redact)
             [ "$code" = 124 ] && why="timed out after ${left}s. $why"
             [ "$code" = 75 ] && why="stopped after $(( $(date +%s) - start ))s of the run: this model cannot do the request with this key. $why"
             echo "::warning::$m failed (exit $code): ${why:-no error text}"
@@ -493,7 +495,7 @@ jobs:
             record_attempt "$m" "$code" "$seconds" "$left" "$progress" ${RUNNER_TEMP}/opencode-failure.txt
           done
           # Short, key-free error for CHE's status record.
-          err=$( { tail -c 4000 ${RUNNER_TEMP}/opencode-stderr.log; grep -iE 'error|quota|rate|denied|invalid|not found' ${RUNNER_TEMP}/opencode-events.jsonl | tail -2; } 2>/dev/null | redact)
+          err=$( { redact_raw < ${RUNNER_TEMP}/opencode-stderr.log | tail -c 4000; grep -iE 'error|quota|rate|denied|invalid|not found' ${RUNNER_TEMP}/opencode-events.jsonl | redact_raw | tail -2; } 2>/dev/null | redact)
           echo "failure_kind=${failure_kind:-unknown}" >> "$GITHUB_OUTPUT"
           echo "resumable=${failure_resumable:-false}" >> "$GITHUB_OUTPUT"
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
@@ -516,7 +518,9 @@ jobs:
           FREE_RESUMABLE: ${{ steps.opencode.outputs.resumable }}
         run: |
           set +e
-          # The paid step's error text goes through the same shared redactor as the free step.
+          # The paid step's error text goes through the same shared redactor as the free step,
+          # and its log window is cut only after redaction.
+          redact_raw() { node "$CHE_TRUSTED_TOOLS/tools/che_coding_checkpoint.mjs" redact; }
           redact() { node "$CHE_TRUSTED_TOOLS/tools/che_coding_checkpoint.mjs" redact | tr '\n"' '  ' | cut -c1-350; }
           code=1; used=""; tried=""; failure_kind="${FREE_FAILURE_KIND:-unknown}"; failure_resumable="${FREE_RESUMABLE:-false}"; err=""
           paid_key="$K_PAID_OPENROUTER"; unset K_PAID_OPENROUTER
@@ -544,7 +548,7 @@ jobs:
               { tail -c 4000 ${RUNNER_TEMP}/opencode-stderr.log; grep -iE 'error|quota|rate|denied|invalid|not found' ${RUNNER_TEMP}/opencode-events.jsonl | tail -2; } > ${RUNNER_TEMP}/opencode-failure.txt
               failure_kind=$(node "$CHE_TRUSTED_TOOLS/tools/che_coding_checkpoint.mjs" classify --exit "$code" --field kind < ${RUNNER_TEMP}/opencode-failure.txt)
               failure_resumable=$(node "$CHE_TRUSTED_TOOLS/tools/che_coding_checkpoint.mjs" classify --exit "$code" --field resumable < ${RUNNER_TEMP}/opencode-failure.txt)
-              err=$(tail -c 400 ${RUNNER_TEMP}/opencode-stderr.log | redact)
+              err=$(redact_raw < ${RUNNER_TEMP}/opencode-stderr.log | tail -c 400 | redact)
               if [ "$code" = 0 ]; then break; fi
               echo "::warning::$m failed; checking the next capped model if time remains."
               if [ -n "$(git status --porcelain)" ]; then
