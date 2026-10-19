@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyModelFailure, resumeDecision, resumeAction, newMissionAction, unsafeCodingPaths, progressPrompt, RESUME_LIMIT, RESUME_BACKOFF_MS } from './coding_failover.mjs';
+import { attemptReceipt, classifyModelFailure, resumeDecision, resumeAction, newMissionAction, unsafeCodingPaths, progressPrompt, RESUME_LIMIT, RESUME_BACKOFF_MS } from './coding_failover.mjs';
 
 test('quota, rate limit and timeout are capacity failures that may resume; access and size are not', () => {
   assert.deepEqual(
@@ -92,4 +92,65 @@ test('a new owner mission starts unless a dispatched resume may still be running
   assert.equal(newMissionAction({ pending: { dispatched_at: 'x' }, runAlive: 'alive' }), 'refuse');
   assert.equal(newMissionAction({ pending: { dispatched_at: 'x' }, runAlive: 'unknown' }), 'refuse');
   assert.equal(newMissionAction({ pending: { dispatched_at: 'x' }, runAlive: 'dead' }), 'abandon');
+});
+
+test('each model attempt keeps its own receipt: kind, resumability, time against its cap, and what happened to its edits', () => {
+  const quota = attemptReceipt({ model: 'google/gemini-2.5-pro', exitCode: 75, text: 'You exceeded your current quota', seconds: 3, capSeconds: 120, progress: 'none' });
+  assert.deepEqual(quota, {
+    model: 'google/gemini-2.5-pro', exit_code: 75, kind: 'quota', resumable: true,
+    seconds: 3, cap_seconds: 120, progress: 'none', error: 'You exceeded your current quota',
+  });
+  const tooLarge = attemptReceipt({ model: 'groq/qwen/qwen3.8-27b', exitCode: 1, text: 'ContextOverflowError: Request too large for model', seconds: 9, capSeconds: 120, progress: 'reverted' });
+  assert.equal(tooLarge.kind, 'too_large');
+  assert.equal(tooLarge.resumable, false, 'a too-large request cannot succeed by waiting');
+  assert.equal(tooLarge.progress, 'reverted');
+  const timedOut = attemptReceipt({ model: 'openrouter/qwen/qwen3.8-27b:free', exitCode: 124, text: '', seconds: 120, capSeconds: 120, progress: 'none' });
+  assert.equal(timedOut.kind, 'timeout');
+  assert.equal(timedOut.resumable, true);
+  assert.equal(timedOut.error, '', 'an empty error stays empty, never invented');
+  const delivered = attemptReceipt({ model: 'groq/qwen/qwen3.8-27b', exitCode: 0, text: 'ignored text', seconds: 42, capSeconds: 120, progress: 'delivered' });
+  assert.equal(delivered.kind, 'success');
+  assert.equal(delivered.resumable, false);
+  assert.equal(delivered.error, '', 'a successful attempt carries no error text');
+});
+
+test('a receipt never carries a provider key, is one line, and is bounded in size', () => {
+  const secret = 'gsk_abcdefghijklmnop1234 and sk-or-abcdefghijklmnopqrstu and AIzaSyD-abcdefghijklmnopqrstuvwx';
+  const receipt = attemptReceipt({ model: 'groq/x', exitCode: 1, text: `{\n"message": "invalid ${secret}"\n}${'x'.repeat(900)}`, seconds: 1, capSeconds: 120 });
+  assert.doesNotMatch(receipt.error, /gsk_|sk-or-|AIza/, 'keys are redacted before a receipt is stored');
+  assert.match(receipt.error, /\[key\]/);
+  assert.doesNotMatch(receipt.error, /\n/, 'one line only, so the step output and record stay readable');
+  assert.ok(receipt.error.length <= 300, 'the excerpt is bounded');
+});
+
+// Each of these reached the mailbox record through the receipt's error excerpt on 41f2206.
+// A receipt is stored in git history, so every one of them must come out redacted.
+const LEAK_CASES = [
+  ['an Authorization Bearer header', 'Authorization: Bearer abc.def.GhIjKlMnOpQr123456', 'GhIjKlMnOpQr123456'],
+  ['a lowercase bearer token', 'bearer tokenValue987654321', 'tokenValue987654321'],
+  ['an api_key query parameter', 'https://api.example.com/v1/models?api_key=SUPERSECRET123456789&alt=json', 'SUPERSECRET123456789'],
+  ['a token query parameter', 'https://hooks.example.com/x?token=tok_live_987654321abcdef', 'tok_live_987654321abcdef'],
+  ['an access_token JSON field', '{"access_token":"ya29.a0AfH6SMBx1234567890"}', 'ya29.a0AfH6SMBx1234567890'],
+  ['an xai- key', 'xai-AbCdEf1234567890', 'AbCdEf1234567890'],
+  // Review hardening: header, basic-auth and form forms, and the two the old paid-step sed missed.
+  ['an x-api-key header', 'x-api-key: AbCdEfGh12345678', 'AbCdEfGh12345678'],
+  ['an api-key header', 'api-key: ZyXwVu98765432', 'ZyXwVu98765432'],
+  ['an Authorization Basic header', 'Authorization: Basic dXNlcjpwYXNzd29yZA==', 'dXNlcjpwYXNzd29yZA=='],
+  ['a client_secret form value', 'grant_type=client_credentials&client_secret=s3cr3tValue123456', 's3cr3tValue123456'],
+  ['a bare client_secret value', 'client_secret=s3cr3tValue123456', 's3cr3tValue123456'],
+  ['a password value', 'password=hunter2hunter2', 'hunter2hunter2'],
+  // Built at run time so the file never holds a GitHub-token-shaped string (CHE's edit check refuses one).
+  ['a GitHub token', `token ${'gh'}p_abcdefghijklmnopqrstuvwxyz0123456789 rejected`, 'abcdefghijklmnopqrstuvwxyz0123456789'],
+];
+for (const [label, text, secret] of LEAK_CASES) {
+  test(`the attempt receipt redacts ${label}`, () => {
+    const receipt = attemptReceipt({ model: 'groq/x', exitCode: 1, text, seconds: 1, capSeconds: 120 });
+    assert.equal(receipt.error.includes(secret), false, `the secret must not reach the record: ${receipt.error}`);
+    assert.match(receipt.error, /\[key\]/);
+  });
+}
+
+test('ordinary log text is left alone by the redactor', () => {
+  const plain = 'model timed out after 120s; Basic plan; api key missing; token budget exceeded';
+  assert.equal(attemptReceipt({ model: 'groq/x', exitCode: 1, text: plain }).error, plain);
 });

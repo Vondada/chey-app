@@ -9,6 +9,8 @@
 //   restore   re-apply a saved checkpoint to a fresh checkout of the same base
 //   revert    drop unverified edits, then re-apply the last checkpoint
 //   classify  read a failed attempt's error text (stdin) into a failure kind
+//   receipt   one model attempt's receipt for the job record (failure text on stdin)
+//   redact    print stdin with provider keys, bearer tokens and token fields replaced
 //   unsafe    print the paths the final patch would refuse
 //
 // Only syntax is checked here (node --check for JS, JSON.parse). Tests and review
@@ -20,7 +22,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CHECKPOINT_MAX_BYTES, classifyModelFailure, progressPrompt, unsafeCodingPaths } from '../server/cloudflare/coding_failover.mjs';
+import { CHECKPOINT_MAX_BYTES, attemptReceipt, classifyModelFailure, progressPrompt, redactSecrets, unsafeCodingPaths } from '../server/cloudflare/coding_failover.mjs';
 
 export const CHECKPOINT_PATCH = 'checkpoint.patch';
 export const CHECKPOINT_META = 'checkpoint.json';
@@ -277,6 +279,20 @@ function main(argv) {
       return 0;
     }
     result = verdict;
+  } else if (command === 'redact') {
+    // The runner's shell output passes through the same redactor as the receipts.
+    process.stdout.write(redactSecrets(readFileSync(0, 'utf8')));
+    return 0;
+  } else if (command === 'receipt') {
+    // One model attempt's receipt for the job record. The failure text arrives on stdin (empty on success).
+    result = attemptReceipt({
+      model: argValue(rest, '--model'),
+      exitCode: Number(argValue(rest, '--exit')) || 0,
+      text: readFileSync(0, 'utf8'),
+      seconds: Number(argValue(rest, '--seconds')) || 0,
+      capSeconds: Number(argValue(rest, '--cap')) || 0,
+      progress: argValue(rest, '--progress') || 'none',
+    });
   } else if (command === 'restore') result = restore({ cwd, dir });
   else if (command === 'revert') result = revert({ cwd, dir });
   else if (command === 'unsafe') result = unsafeCodingPaths(rest.filter((arg) => !arg.startsWith('--')));

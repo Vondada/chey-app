@@ -50,6 +50,50 @@ export function classifyModelFailure({ text = '', exitCode = 0 } = {}) {
   return { kind: 'unknown', resumable: false, words: '' };
 }
 
+// One receipt per model attempt, kept in the job record. The record used to keep only the
+// last attempt's error, so an earlier model's quota, size or access failure was lost. `progress`
+// says what happened to the attempt's edits: none, verified (kept as the checkpoint), reverted,
+// unverifiable (could not be reverted) or delivered (a successful attempt's change).
+const RECEIPT_PROGRESS = Object.freeze(['none', 'verified', 'reverted', 'unverifiable', 'delivered']);
+
+// The one redactor for every text CHE's coding runner stores or logs: the receipt here, and each
+// runner shell line that logs or stores error text (the free and paid model steps and the PR step),
+// through `che_coding_checkpoint.mjs redact`. Covers provider keys, bearer and basic authorization,
+// key headers, key-like query and form parameters, and token fields in JSON. Replaces, never reports.
+const SECRET_PATTERNS = Object.freeze([
+  [/\bBearer\s+[A-Za-z0-9._~+\/=-]+/gi, 'Bearer [key]'],
+  [/(\bAuthorization\s*[:=]\s*["']?\s*Basic\s+)[A-Za-z0-9+\/=._-]+/gi, '$1[key]'],
+  [/(\b(?:x-api-key|x-goog-api-key|x-auth-token|api-key|apikey)\s*:\s*["']?)[^\s"',;]+/gi, '$1[key]'],
+  [/\b(?:sk-or-|sk-|sk_live_|sk_test_|xai-|gsk_|csk-|hf_|ghp_|gho_|ghu_|ghs_|ghr_|github_pat_)[A-Za-z0-9_-]{8,}/g, '[key]'],
+  [/\bAIza[0-9A-Za-z_-]{8,}/g, '[key]'],
+  [/\bya29\.[A-Za-z0-9._-]{8,}/g, '[key]'],
+  [/([?&](?:api[_-]?key|key|token|access[_-]?token|refresh[_-]?token|auth|secret|password|client[_-]?secret)=)[^&\s"'<>]+/gi, '$1[key]'],
+  [/(\b(?:client[_-]?secret|password|passwd|secret|api[_-]?key|access[_-]?token|refresh[_-]?token|auth[_-]?token)=)[^&\s"'<>]+/gi, '$1[key]'],
+  [/(\\?"(?:x-api-key|api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret|password|authorization|client[_-]?secret)\\?"\s*:\s*\\?")[^"\\]*/gi, '$1[key]'],
+]);
+
+export function redactSecrets(text) {
+  let out = String(text ?? '');
+  for (const [pattern, replacement] of SECRET_PATTERNS) out = out.replace(pattern, replacement);
+  return out;
+}
+
+export function attemptReceipt({ model = '', exitCode = 0, text = '', seconds = 0, capSeconds = 0, progress = 'none' } = {}) {
+  const code = Number(exitCode) || 0;
+  const verdict = code === 0 ? { kind: 'success', resumable: false } : classifyModelFailure({ text, exitCode: code });
+  const excerpt = code === 0 ? '' : redactSecrets(text).replace(/\s+/g, ' ').trim().slice(0, 300);
+  return {
+    model: String(model || '').slice(0, 120),
+    exit_code: code,
+    kind: verdict.kind,
+    resumable: Boolean(verdict.resumable),
+    seconds: Math.max(0, Math.round(Number(seconds) || 0)),
+    cap_seconds: Math.max(0, Math.round(Number(capSeconds) || 0)),
+    progress: RECEIPT_PROGRESS.includes(progress) ? progress : 'none',
+    error: excerpt,
+  };
+}
+
 // Decide whether a resumable failure gets another run, and when. `resumeCount`
 // is how many resumes already ran for this session.
 export function resumeDecision({ resumable = false, resumeCount = 0, now = Date.now() } = {}) {

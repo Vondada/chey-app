@@ -205,11 +205,11 @@ jobs:
             'OWNER REQUEST:',
             request,
           ].join('\n');
-          fs.writeFileSync('/tmp/che-runtime-prompt.txt', preamble, { mode: 0o600 });
+          fs.writeFileSync(`${process.env.RUNNER_TEMP}/che-runtime-prompt.txt`, preamble, { mode: 0o600 });
           // Defense in depth: deny outbound helper tools and git push inside the
           // coding agent. This is not treated as a sandbox; the hosted runner is
           // still the isolation boundary and receives no writable Git credential.
-          fs.writeFileSync('/tmp/che-opencode-config.json', JSON.stringify({
+          fs.writeFileSync(`${process.env.RUNNER_TEMP}/che-opencode-config.json`, JSON.stringify({
             $schema: 'https://opencode.ai/config.json',
             permission: {
               webfetch: 'deny',
@@ -365,7 +365,7 @@ jobs:
         id: opencode
         shell: bash
         env:
-          OPENCODE_CONFIG: /tmp/che-opencode-config.json
+          OPENCODE_CONFIG: ${{ runner.temp }}/che-opencode-config.json
           FREE_CANDIDATES: ${{ steps.model.outputs.free_candidates }}
           PAID_CANDIDATES: ${{ steps.model.outputs.paid_candidates }}
           CHE_CODING_PAID_FALLBACK: ${{ vars.CHE_CODING_PAID_FALLBACK }}
@@ -382,8 +382,13 @@ jobs:
           BASE_SHA: ${{ inputs.base_sha }}
         run: |
           set +e
+          # Every error or log text below goes through the shared redactor (coding_failover.mjs
+          # redactSecrets) via the trusted copy, before it reaches the log or the job record.
+          # A log window is cut only after redaction, so a key split by the cut leaves no fragment.
+          redact_raw() { node "$CHE_TRUSTED_TOOLS/tools/che_coding_checkpoint.mjs" redact; }
+          redact() { node "$CHE_TRUSTED_TOOLS/tools/che_coding_checkpoint.mjs" redact | tr '\n"' '  ' | cut -c1-350; }
           # This free-coding step never receives the capped paid key.
-          prompt=$(cat /tmp/che-runtime-prompt.txt)
+          prompt=$(cat ${RUNNER_TEMP}/che-runtime-prompt.txt)
           code=1; used=""; tried=""
           start=$(date +%s)
           # Checkpoint tool: untracked files that exist before any attempt are never deleted.
@@ -395,22 +400,27 @@ jobs:
             baseline_failed=1
           fi
           if [ -f "$ckpt/checkpoint.patch" ]; then
-            if node "$CHE_TRUSTED_TOOLS/tools/che_coding_checkpoint.mjs" restore --dir "$ckpt" >/tmp/checkpoint-restore.json; then
-              echo "Restored verified checkpoint: $(head -c 300 /tmp/checkpoint-restore.json)"
+            if node "$CHE_TRUSTED_TOOLS/tools/che_coding_checkpoint.mjs" restore --dir "$ckpt" >${RUNNER_TEMP}/checkpoint-restore.json; then
+              echo "Restored verified checkpoint: $(redact < ${RUNNER_TEMP}/checkpoint-restore.json)"
             else
               echo "::warning::The saved checkpoint no longer applies to this base; starting from the base."
               rm -f "$ckpt/checkpoint.patch" "$ckpt/checkpoint.json"
             fi
           fi
           attempt=1; failure_kind=""; failure_resumable=false
-          redact() { sed -E 's/(AIza|sk-|gsk_|csk-|hf_|sk-or-)[A-Za-z0-9_-]{8,}/[key]/g' | tr '\n"' '  ' | cut -c1-350; }
+          # One receipt per model attempt (coding_failover.mjs attemptReceipt), read by the job record.
+          attempts_file="$RUNNER_TEMP/che-attempts.jsonl"; : > "$attempts_file"
+          record_attempt() { # model exit seconds cap progress failure-text-file
+            node "$CHE_TRUSTED_TOOLS/tools/che_coding_checkpoint.mjs" receipt --model "$1" --exit "$2" --seconds "$3" --cap "$4" --progress "$5" <"$6" >>"$attempts_file" \
+              || echo "::warning::Could not write the receipt for $1."
+          }
           # OpenCode keeps retrying errors that cannot succeed (no quota, no access to the model,
           # a request too large for the key's token limit) until the time budget runs out. An
           # error event naming one of them stops that model at once, so the next one gets the
           # time. Only error events count: file text the agent reads never stops it.
           FATAL='ContextOverflowError|exceeded your current quota|RESOURCE_EXHAUSTED|insufficient_quota|rate.?limit|too many requests|does not exist or you do not have access|Request too large for model|"statusCode": ?(401|403|404|429)'
           fatal_seen() {
-            { grep -E '"type": ?"error"' /tmp/opencode-events.jsonl 2>/dev/null; grep -iE 'error' /tmp/opencode-stderr.log 2>/dev/null; } | grep -qE "$FATAL"
+            { grep -E '"type": ?"error"' ${RUNNER_TEMP}/opencode-events.jsonl 2>/dev/null; grep -iE 'error' ${RUNNER_TEMP}/opencode-stderr.log 2>/dev/null; } | grep -qE "$FATAL"
           }
           for m in $FREE_CANDIDATES; do
             [ -z "$baseline_failed" ] || break
@@ -434,11 +444,12 @@ jobs:
             esac
             used=$m; tried="$tried $m"
             echo "Trying $m"
-            : >/tmp/opencode-events.jsonl; : >/tmp/opencode-stderr.log
+            : >${RUNNER_TEMP}/opencode-events.jsonl; : >${RUNNER_TEMP}/opencode-stderr.log
+            attempt_started=$(date +%s)
             env -u K_GOOGLE -u K_ANTHROPIC -u K_OPENAI -u K_OPENROUTER -u K_GROQ -u K_MISTRAL -u K_CEREBRAS -u K_HF -u K_PAID_OPENROUTER "${kv[@]}" \
               timeout --signal=TERM --kill-after=15s "${left}s" \
               opencode run --format json --auto --model "$m" "$prompt" \
-              >/tmp/opencode-events.jsonl 2>/tmp/opencode-stderr.log &
+              >${RUNNER_TEMP}/opencode-events.jsonl 2>${RUNNER_TEMP}/opencode-stderr.log &
             pid=$!
             stopped=""
             while kill -0 "$pid" 2>/dev/null; do
@@ -448,31 +459,43 @@ jobs:
             wait "$pid"
             code=$?
             [ -n "$stopped" ] && code=75
-            [ "$code" = 0 ] && break
+            seconds=$(( $(date +%s) - attempt_started ))
+            if [ "$code" = 0 ]; then
+              progress=none; [ -n "$(git status --porcelain)" ] && progress=delivered
+              record_attempt "$m" "$code" "$seconds" "$left" "$progress" /dev/null
+              break
+            fi
             # The kind decides whether this session may resume later from its checkpoint.
-            { grep -E '"type": ?"error"' /tmp/opencode-events.jsonl 2>/dev/null; cat /tmp/opencode-stderr.log 2>/dev/null; } >/tmp/opencode-failure.txt
-            failure_kind=$(node "$CHE_TRUSTED_TOOLS/tools/che_coding_checkpoint.mjs" classify --exit "$code" --field kind </tmp/opencode-failure.txt)
-            failure_resumable=$(node "$CHE_TRUSTED_TOOLS/tools/che_coding_checkpoint.mjs" classify --exit "$code" --field resumable </tmp/opencode-failure.txt)
-            why=$( { tail -c 4000 /tmp/opencode-stderr.log; grep -iE 'error|quota|rate|denied|invalid|not found' /tmp/opencode-events.jsonl | tail -2; } 2>/dev/null | redact)
+            { grep -E '"type": ?"error"' ${RUNNER_TEMP}/opencode-events.jsonl 2>/dev/null; cat ${RUNNER_TEMP}/opencode-stderr.log 2>/dev/null; } >${RUNNER_TEMP}/opencode-failure.txt
+            failure_kind=$(node "$CHE_TRUSTED_TOOLS/tools/che_coding_checkpoint.mjs" classify --exit "$code" --field kind <${RUNNER_TEMP}/opencode-failure.txt)
+            failure_resumable=$(node "$CHE_TRUSTED_TOOLS/tools/che_coding_checkpoint.mjs" classify --exit "$code" --field resumable <${RUNNER_TEMP}/opencode-failure.txt)
+            why=$( { redact_raw < ${RUNNER_TEMP}/opencode-stderr.log | tail -c 4000; grep -iE 'error|quota|rate|denied|invalid|not found' ${RUNNER_TEMP}/opencode-events.jsonl | redact_raw | tail -2; } 2>/dev/null | redact)
             [ "$code" = 124 ] && why="timed out after ${left}s. $why"
             [ "$code" = 75 ] && why="stopped after $(( $(date +%s) - start ))s of the run: this model cannot do the request with this key. $why"
             echo "::warning::$m failed (exit $code): ${why:-no error text}"
             # Unverified edits never reach the next model. A verified change stays as the
             # checkpoint the next model continues from; anything else is reverted.
+            progress=none
             if [ -n "$(git status --porcelain)" ]; then
               attempt=$((attempt + 1))
-              if node "$CHE_TRUSTED_TOOLS/tools/che_coding_checkpoint.mjs" advance --dir "$ckpt" --base "$BASE_SHA" --prompt-file /tmp/che-runtime-prompt.txt --attempt "$attempt" >/tmp/checkpoint-verdict.json; then
+              if node "$CHE_TRUSTED_TOOLS/tools/che_coding_checkpoint.mjs" advance --dir "$ckpt" --base "$BASE_SHA" --prompt-file ${RUNNER_TEMP}/che-runtime-prompt.txt --attempt "$attempt" >${RUNNER_TEMP}/checkpoint-verdict.json; then
                 prompt=$(cat "$ckpt/next-prompt.txt")
+                progress=verified
                 echo "::notice::$m left verified progress; the next model continues from it."
               else
                 verdict_rc=$?
-                if [ "$verdict_rc" = 2 ]; then echo "::error::Could not revert unverified edits; no further attempts run."; break; fi
-                echo "::warning::$m left changes that did not verify; reverted to the last checkpoint: $(head -c 300 /tmp/checkpoint-verdict.json)"
+                if [ "$verdict_rc" = 2 ]; then
+                  record_attempt "$m" "$code" "$seconds" "$left" unverifiable ${RUNNER_TEMP}/opencode-failure.txt
+                  echo "::error::Could not revert unverified edits; no further attempts run."; break
+                fi
+                progress=reverted
+                echo "::warning::$m left changes that did not verify; reverted to the last checkpoint: $(redact < ${RUNNER_TEMP}/checkpoint-verdict.json)"
               fi
             fi
+            record_attempt "$m" "$code" "$seconds" "$left" "$progress" ${RUNNER_TEMP}/opencode-failure.txt
           done
           # Short, key-free error for CHE's status record.
-          err=$( { tail -c 4000 /tmp/opencode-stderr.log; grep -iE 'error|quota|rate|denied|invalid|not found' /tmp/opencode-events.jsonl | tail -2; } 2>/dev/null | redact)
+          err=$( { redact_raw < ${RUNNER_TEMP}/opencode-stderr.log | tail -c 4000; grep -iE 'error|quota|rate|denied|invalid|not found' ${RUNNER_TEMP}/opencode-events.jsonl | redact_raw | tail -2; } 2>/dev/null | redact)
           echo "failure_kind=${failure_kind:-unknown}" >> "$GITHUB_OUTPUT"
           echo "resumable=${failure_resumable:-false}" >> "$GITHUB_OUTPUT"
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
@@ -485,7 +508,7 @@ jobs:
         if: steps.guard.outcome == 'success' && steps.model.outcome == 'success' && steps.opencode.outcome == 'success' && steps.opencode.outputs.exit_code != '0' && vars.CHE_CODING_PAID_FALLBACK == 'true'
         shell: bash
         env:
-          OPENCODE_CONFIG: /tmp/che-opencode-config.json
+          OPENCODE_CONFIG: ${{ runner.temp }}/che-opencode-config.json
           PAID_CANDIDATES: ${{ steps.model.outputs.paid_candidates }}
           CHE_CODING_PAID_FALLBACK: ${{ vars.CHE_CODING_PAID_FALLBACK }}
           CHE_CODING_OPENROUTER_NO_BYOK: ${{ vars.CHE_CODING_OPENROUTER_NO_BYOK }}
@@ -495,6 +518,10 @@ jobs:
           FREE_RESUMABLE: ${{ steps.opencode.outputs.resumable }}
         run: |
           set +e
+          # The paid step's error text goes through the same shared redactor as the free step,
+          # and its log window is cut only after redaction.
+          redact_raw() { node "$CHE_TRUSTED_TOOLS/tools/che_coding_checkpoint.mjs" redact; }
+          redact() { node "$CHE_TRUSTED_TOOLS/tools/che_coding_checkpoint.mjs" redact | tr '\n"' '  ' | cut -c1-350; }
           code=1; used=""; tried=""; failure_kind="${FREE_FAILURE_KIND:-unknown}"; failure_resumable="${FREE_RESUMABLE:-false}"; err=""
           paid_key="$K_PAID_OPENROUTER"; unset K_PAID_OPENROUTER
           if [ -z "$PAID_CANDIDATES" ]; then
@@ -506,26 +533,26 @@ jobs:
             if [ -f "$ckpt/next-prompt.txt" ]; then
               prompt=$(cat "$ckpt/next-prompt.txt")
             else
-              prompt=$(cat /tmp/che-runtime-prompt.txt)
+              prompt=$(cat ${RUNNER_TEMP}/che-runtime-prompt.txt)
             fi
             # Both selected models are on the paid allowlist. Each attempt has a
             # bounded clock; the provider-enforced $15/month cap is checked first.
             for m in $PAID_CANDIDATES; do
               used=$m; tried="$tried $m"
               echo "Capped paid LAST fallback: $m"
-              : > /tmp/opencode-events.jsonl; : > /tmp/opencode-stderr.log
+              : > ${RUNNER_TEMP}/opencode-events.jsonl; : > ${RUNNER_TEMP}/opencode-stderr.log
               env -u K_GOOGLE -u K_ANTHROPIC -u K_OPENAI -u K_OPENROUTER -u K_GROQ -u K_MISTRAL -u K_CEREBRAS -u K_HF -u K_PAID_OPENROUTER "OPENROUTER_API_KEY=$paid_key" \
                 timeout --signal=TERM --kill-after=15s 180s opencode run --format json --auto --model "$m" "$prompt" \
-                > /tmp/opencode-events.jsonl 2> /tmp/opencode-stderr.log
+                > ${RUNNER_TEMP}/opencode-events.jsonl 2> ${RUNNER_TEMP}/opencode-stderr.log
               code=$?
-              { tail -c 4000 /tmp/opencode-stderr.log; grep -iE 'error|quota|rate|denied|invalid|not found' /tmp/opencode-events.jsonl | tail -2; } > /tmp/opencode-failure.txt
-              failure_kind=$(node "$CHE_TRUSTED_TOOLS/tools/che_coding_checkpoint.mjs" classify --exit "$code" --field kind < /tmp/opencode-failure.txt)
-              failure_resumable=$(node "$CHE_TRUSTED_TOOLS/tools/che_coding_checkpoint.mjs" classify --exit "$code" --field resumable < /tmp/opencode-failure.txt)
-              err=$(tail -c 400 /tmp/opencode-stderr.log | sed -E 's/(AIza|sk-|gsk_|csk_|hf_|sk-or-)[A-Za-z0-9_-]{8,}/[key]/g' | tr '\n"' '  ' | cut -c1-350)
+              { tail -c 4000 ${RUNNER_TEMP}/opencode-stderr.log; grep -iE 'error|quota|rate|denied|invalid|not found' ${RUNNER_TEMP}/opencode-events.jsonl | tail -2; } > ${RUNNER_TEMP}/opencode-failure.txt
+              failure_kind=$(node "$CHE_TRUSTED_TOOLS/tools/che_coding_checkpoint.mjs" classify --exit "$code" --field kind < ${RUNNER_TEMP}/opencode-failure.txt)
+              failure_resumable=$(node "$CHE_TRUSTED_TOOLS/tools/che_coding_checkpoint.mjs" classify --exit "$code" --field resumable < ${RUNNER_TEMP}/opencode-failure.txt)
+              err=$(redact_raw < ${RUNNER_TEMP}/opencode-stderr.log | tail -c 400 | redact)
               if [ "$code" = 0 ]; then break; fi
               echo "::warning::$m failed; checking the next capped model if time remains."
               if [ -n "$(git status --porcelain)" ]; then
-                if node "$CHE_TRUSTED_TOOLS/tools/che_coding_checkpoint.mjs" advance --dir "$ckpt" --base "$BASE_SHA" --prompt-file /tmp/che-runtime-prompt.txt --attempt 7 > /tmp/checkpoint-verdict.json; then
+                if node "$CHE_TRUSTED_TOOLS/tools/che_coding_checkpoint.mjs" advance --dir "$ckpt" --base "$BASE_SHA" --prompt-file ${RUNNER_TEMP}/che-runtime-prompt.txt --attempt 7 > ${RUNNER_TEMP}/checkpoint-verdict.json; then
                   prompt=$(cat "$ckpt/next-prompt.txt")
                 else
                   rc=$?
@@ -587,6 +614,11 @@ jobs:
             if (/^\d+$/.test(d)) deletions += Number(d);
           }
           const artifactName = `che-opencode-${process.env.JOB_ID}`;
+          // One receipt per model attempt (written by the free loop). The last error alone hides the earlier models.
+          const attemptsFile = `${process.env.RUNNER_TEMP}/che-attempts.jsonl`;
+          const attempts = fs.existsSync(attemptsFile)
+            ? fs.readFileSync(attemptsFile, 'utf8').split('\n').filter(Boolean).slice(0, 12).flatMap((line) => { try { return [JSON.parse(line)]; } catch (_) { return []; } })
+            : [];
           const result = {
             session_id: process.env.JOB_ID,
             runtime: 'opencode',
@@ -607,6 +639,7 @@ jobs:
             patch_artifact: patch ? artifactName : null,
             failure: unsafe.length ? 'unsafe_files' : (process.env.PREFLIGHT_FAILURE || (exitCode !== 0 ? 'opencode_failed' : null)),
             models_tried: String(process.env.TRIED || '').trim().split(/\s+/).filter(Boolean).slice(0, 8),
+            attempts,
             error: exitCode !== 0 ? String(process.env.OPENCODE_ERROR || '').slice(0, 400) : null,
           };
           // Only a blocked session that kept a verified checkpoint can resume, and only for capacity failures.
@@ -619,20 +652,20 @@ jobs:
               result.checkpoint = { meta: JSON.parse(fs.readFileSync(`${checkpointDir}/checkpoint.json`, 'utf8')), patch_b64: patch.toString('base64') };
             }
           }
-          fs.writeFileSync('/tmp/che-runtime-result.json', JSON.stringify(result));
-          if (patch) fs.writeFileSync('/tmp/che-runtime.patch', patch);
+          fs.writeFileSync(`${process.env.RUNNER_TEMP}/che-runtime-result.json`, JSON.stringify(result));
+          if (patch) fs.writeFileSync(`${process.env.RUNNER_TEMP}/che-runtime.patch`, patch);
           fs.appendFileSync(process.env.GITHUB_OUTPUT, `safe=${unsafe.length ? 'false' : 'true'}\n`);
           fs.appendFileSync(process.env.GITHUB_OUTPUT, `has_patch=${patch ? 'true' : 'false'}\n`);
           fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `CHE OpenCode runtime: ${state}; ${files.length} file(s) changed; +${additions}/-${deletions}.\n`);
           NODE
-          rm -f /tmp/opencode-events.jsonl /tmp/opencode-stderr.log
+          rm -f ${RUNNER_TEMP}/opencode-events.jsonl ${RUNNER_TEMP}/opencode-stderr.log
 
       - name: Upload compact runtime result
         if: always() && steps.result.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: che-opencode-result-${{ inputs.job_id }}
-          path: /tmp/che-runtime-result.json
+          path: ${{ runner.temp }}/che-runtime-result.json
           if-no-files-found: error
           retention-days: 3
 
@@ -641,7 +674,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: che-opencode-${{ inputs.job_id }}
-          path: /tmp/che-runtime.patch
+          path: ${{ runner.temp }}/che-runtime.patch
           if-no-files-found: error
           retention-days: 3
 
@@ -687,6 +720,13 @@ jobs:
           TARGET_BRANCH: ${{ inputs.target_branch }}
           REQUEST_B64: ${{ inputs.request_b64 }}
         run: |
+          # The redactor is copied from the checked-out base before the patch is applied, so the
+          # patch can never change the code that redacts the PR error below.
+          trust="$RUNNER_TEMP/che-trusted"; mkdir -p "$trust/tools" "$trust/server/cloudflare"
+          # Without the redactor the PR error text is withheld (fails closed); the PR step itself still runs.
+          { cp tools/che_coding_checkpoint.mjs "$trust/tools/" && cp server/cloudflare/coding_failover.mjs "$trust/server/cloudflare/"; } \
+            || echo "::warning::The shared redactor is not in this base, so GitHub's PR error text is withheld."
+          redact() { node "$trust/tools/che_coding_checkpoint.mjs" redact | tr '\n"' '  ' | cut -c1-350; }
           git apply --index /tmp/che-patch/che-runtime.patch
           git -c user.name="CHE" -c user.email="che-autopilot@users.noreply.github.com" commit -qm "che-auto: ${JOB_ID}" -m "Automated change by CHE's OpenCode runner. [che-auto]"
           git push -q origin "HEAD:refs/heads/${TARGET_BRANCH}"
@@ -694,7 +734,7 @@ jobs:
           body="Automated change by CHE's OpenCode runner (session ${JOB_ID}). che-autopilot reviews and merges it when CI passes."
           if ! url=$(gh pr create --base main --head "$TARGET_BRANCH" --title "$title" --body "$body" --label che-auto 2>/tmp/pr-err.txt) \
              && ! url=$(gh pr create --base main --head "$TARGET_BRANCH" --title "$title" --body "$body" 2>/tmp/pr-err.txt); then
-            echo "::error::Branch ${TARGET_BRANCH} was pushed but GitHub refused to open the PR: $(tr '\n' ' ' </tmp/pr-err.txt | cut -c1-300). CHE_GITHUB_TOKEN needs Pull requests: Read and write."
+            echo "::error::Branch ${TARGET_BRANCH} was pushed but GitHub refused to open the PR: $(redact </tmp/pr-err.txt). CHE_GITHUB_TOKEN needs Pull requests: Read and write."
             exit 1
           fi
           echo "pr_number=${url##*/}" >> "$GITHUB_OUTPUT"
