@@ -45,7 +45,7 @@ import { fishAudioDiagnostics, fishAudioKeyStatus, fishAudioSpeech, fishSecretsF
 import { cheSpokenText } from './che_pronunciation.js';
 import { premiumVoiceSpeech, premiumVoiceStatuses, readVoiceLog, recordVoiceLog, voiceProbeAuthorized, VOICE_LOCKS, voiceProviderOf, voiceTurnFor } from './phone_voice.js';
 import { handleVideoLine, videoRequestTopic, videoRequestSeconds } from './video_route.js';
-import { FAKE_GROWTH_REPLY, runStudioCommand, studioChatIntent, studioPostPreflight, studioView } from './creator_studio.js';
+import { runStudioCommand, studioChatIntent, studioPostPreflight, studioView } from './creator_studio.js';
 import {
   YOUTUBE_CALLBACK_PATH, disconnectYouTube, finishYouTubeConnect, startYouTubeConnect,
   youtubeAccessToken, youtubeResultPage, youtubeStatus, youtubeStatusSpeech, youtubeUploads,
@@ -8140,7 +8140,8 @@ export class CheState extends DurableObject {
           const studio = body.attachment || body.workflow_step ? null : studioChatIntent(rawMessage, body.history);
           if (studio) {
             await this.dropHeldActions();
-            if (studio.refuse) return ndjsonReply(FAKE_GROWTH_REPLY, { source: 'che_creator_studio', ok: false, refused: studio.refuse, model_calls: 0 });
+            // An answer that needs no command: a refused fake audience, or "nothing will be posted".
+            if (studio.say) return ndjsonReply(studio.say, { source: 'che_creator_studio', ok: studio.ok === true, ...(studio.refused ? { refused: studio.refused } : {}), ...(studio.action ? { studio_action: studio.action } : {}), model_calls: 0 });
             const command = commandById(studio.command);
             return this.runSlashCommand(request, body, data, { name: command.id, command, input: studio.input }, { confirmed: false });
           }

@@ -18,7 +18,11 @@ const LEAD = String.raw`^(?:${VOCATIVE}(?:(?:please|pls|plz|now|then|also|and|ok
 const MONEY_VERB = String.raw`(?:bought|buy(?:s|ing)?|purchas(?:e|es|ed|ing)|pay(?:s|ing)?|paid|subscrib(?:e|es|ed|ing)(?:\s+to)?|donat(?:e|es|ed|ing)(?:\s+to)?|charg(?:e|es|ed|ing)|checkout|upgrad(?:e|es|ed|ing)\s+to|renew(?:s|ed|ing)?|top\s+up|sign\s+up\s+for|spend(?:s|ing)?|withdr(?:aw|aws|awing|awn|ew)|cash\s+out|take\s+out\s+(?:\$|\d|money|cash)|make\s+a\s+purchase|place\s+an?\s+order|send(?:s|ing)?\s+(?:money|\$))`;
 const MONEY_ORDER = String.raw`order(?:s|ed|ing)?\s+(?:me\s+|us\s+)?(?:a|an|another|more|some|\d|\$|[a-z]+)`;
 const MONEY_TRANSFER = String.raw`(?:transfer(?:s|red|ring)?|wire(?:s|d|ing)?)\s+(?:\$|\d|money|funds|dollars?|to\s)`;
-const MONEY_RE = new RegExp(`${LEAD}(?:${MONEY_VERB}\\b|${MONEY_ORDER}|${MONEY_TRANSFER})`, 'i');
+// Paid promotion spends money too (review of #353): "promote the pilot with a paid ad", "boost the
+// post with $20", "run an ad on TikTok". Promoting or boosting with no paid word ("promote the pilot
+// on my channel") is ordinary posting and is not held.
+const MONEY_PROMOTION = String.raw`(?:(?:promot|advertis)(?:e|es|ed|ing)|boost(?:s|ed|ing)?|sponsor(?:s|ed|ing)?)\b(?=[^.;!?]{0,60}\b(?:paid|ads?|ad\s+spend|ad\s+budget|budget|sponsored|advertising|campaign|dollars?)\b|[^.;!?]{0,60}\$\s?\d)|(?:run|launch|start|place|create|set\s+up|put|take\s+out)\s+(?:(?:a|an|some|the|my|our|\d+)\s+)?(?:paid\s+(?:ads?|adverts?|advertisements?|promotions?|placements?|posts?|campaigns?|boosts?)|ads?|adverts?|advertisements?|ad\s+campaigns?|sponsored\s+posts?)\b`;
+const MONEY_RE = new RegExp(`${LEAD}(?:${MONEY_VERB}\\b|${MONEY_ORDER}|${MONEY_TRANSFER}|${MONEY_PROMOTION})`, 'i');
 // Strong delete verbs always count. "Order" followed by a bare word is held only
 // when it is not "order of/in/by" (checked below), so "order pizza" is held.
 // Weak verbs (reset, clear, cancel, drop) count only with a data object, so

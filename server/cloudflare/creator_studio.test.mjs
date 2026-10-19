@@ -91,10 +91,10 @@ function tkhd(width, height) {
   v.setUint32(76, width * 65536); v.setUint32(80, height * 65536);
   return box('tkhd', body);
 }
-function mp4({ seconds = 40, width = 1080, height = 1920 } = {}) {
+function mp4({ seconds = 40, width = 1080, height = 1920, header = true } = {}) {
   const mvhd = new Uint8Array(100); const v = new DataView(mvhd.buffer); v.setUint32(12, 1000); v.setUint32(16, seconds * 1000);
-  return concat([box('ftyp', 'isom', new Uint8Array(4)), box('moov', box('mvhd', mvhd),
-    box('trak', tkhd(width, height), box('stsd', 'avc1')), box('trak', tkhd(0, 0), box('stsd', 'mp4a')))]);
+  const track = (w, h, codec) => (header ? box('trak', tkhd(w, h), box('stsd', codec)) : box('trak', box('stsd', codec)));
+  return concat([box('ftyp', 'isom', new Uint8Array(4)), box('moov', box('mvhd', mvhd), track(width, height, 'avc1'), track(0, 0, 'mp4a'))]);
 }
 function storedZip(files) {
   const locals = [], central = []; let offset = 0;
@@ -114,7 +114,7 @@ const png = (() => { const b = new Uint8Array(32); b.set([137, 80, 78, 71, 13, 1
 const json = (value, status = 200, headers = {}) => new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json', ...headers } });
 
 function fakePlatforms({ video = mp4(), views = '1234' } = {}) {
-  const seen = { dispatches: [], uploads: 0, sessions: 0, stats: 0, done: false };
+  const seen = { dispatches: [], uploads: 0, sessions: 0, stats: 0, done: false, busy: false };
   net.calls = [];
   net.route = async (url, options) => {
     if (url.endsWith('/actions/workflows/che-video-render.yml/dispatches')) {
@@ -122,6 +122,7 @@ function fakePlatforms({ video = mp4(), views = '1234' } = {}) {
       return new Response(null, { status: 204 });
     }
     const job = seen.dispatches.at(-1)?.job_id;
+    if (url.includes('/actions/workflows/che-video-render.yml/runs') && seen.busy) return json({ message: 'busy' }, 429);
     if (url.includes('/actions/workflows/che-video-render.yml/runs')) {
       return json({ workflow_runs: job && seen.done ? [{ display_title: `CHE free render ${job}`, status: 'completed', conclusion: 'success', id: 56 }] : [] });
     }
@@ -300,8 +301,8 @@ test('counter-cases keep their own routes', async () => {
   assert.equal(studioChatIntent('the airline pilot was late'), null);
   assert.equal(studioChatIntent('buy the pilot a coffee and delete my notes'), null, 'money and delete requests stay with the owner gates');
   assert.equal(studioChatIntent('Design growth experiments for my barbershop'), null, 'the owner\'s own business is not the series');
-  assert.equal(studioChatIntent('did the pilot get fake views?')?.refuse, undefined, 'a question about fake views is not a request for them');
-  assert.equal(studioChatIntent('buy 500 followers for my TikTok')?.refuse, 'fake_growth');
+  assert.equal(studioChatIntent('did the pilot get fake views?')?.refused, undefined, 'a question about fake views is not a request for them');
+  assert.equal(studioChatIntent('buy 500 followers for my TikTok')?.refused, 'fake_growth');
   assert.equal(studioChatIntent('Show the growth experiments for my channel')?.command, 'studio-growth');
 });
 
@@ -422,4 +423,84 @@ test('without the free renderer the pilot is not started, and the panel view say
   assert.equal(view.pilot.valid, true);
   assert.ok(view.platforms.every((p) => p.connection === 'not_connected' && !p.posted));
   assert.match(view.capability, /not animation, not photoreal and not lip-synced/);
+});
+
+// ─── 6. Review of #353 ────────────────────────────────────────────────────
+
+test('a sentence that only names the pilot keeps its own route: code, tests, screens, thumbnails, accounts', async () => {
+  const che = await owner({ env: GITHUB });
+  const seen = fakePlatforms();
+  for (const words of ['Fix the bug in the pilot render pipeline', 'Write a test for the pilot render code', 'Show me the code for the pilot render',
+    'Build a Flutter screen for the pilot', 'Make a thumbnail for the pilot', 'Create a TikTok account for the pilot',
+    'fix the bug in the pilot render pipeline', 'make a thumbnail for the pilot',
+    // The same overreach on every other studio trigger: bible, export, post, growth, script and status.
+    'Fix the bug in the series bible loader', 'Export the pilot data to a spreadsheet', 'Post the pilot code to GitHub',
+    'Show the stats for the pilot render pipeline', 'Write the pilot script in Python', 'is the pilot render function ready']) {
+    const out = await che.say(words, { fresh: true });
+    assert.notEqual(out.route, 'che_creator_studio', words);
+    assert.doesNotMatch(String(out.done.command || ''), /^studio-/, words);
+    assert.doesNotMatch(out.reply, /\/studio-/, words);
+  }
+  assert.equal(seen.dispatches.length, 0, 'nothing was rendered');
+});
+
+test('growing the audience with real posts is growth, not a refusal; buying or botting it is refused', async () => {
+  const che = await owner();
+  fakePlatforms();
+  for (const words of ['Get me more subscribers on YouTube for the pilot with real posts', 'Get me more views on the pilot', 'get me more views on the pilot']) {
+    const out = await che.say(words, { fresh: true });
+    assert.equal(out.done.command, 'studio-growth', words);
+    assert.equal(out.done.refused, undefined, words);
+    assert.match(out.reply, /audience-growth plan[\s\S]*I never estimate or invent views/, words);
+  }
+  for (const words of ['buy 1000 followers for the pilot', 'use bots to get views on the pilot']) {
+    assert.equal((await che.say(words, { fresh: true })).done.refused, 'fake_growth', words);
+  }
+});
+
+test('paid promotion of the pilot is held for a yes; unpaid promotion is not', async () => {
+  const che = await owner();
+  fakePlatforms();
+  const paid = await che.say('Promote the pilot with a paid ad on TikTok', { fresh: true });
+  assert.equal(paid.route, 'held');
+  assert.equal(paid.modelCalls, 0);
+  const unpaid = await che.say('promote the pilot on my channel', { fresh: true });
+  assert.notEqual(unpaid.route, 'held');
+  assert.notEqual(unpaid.route, 'che_creator_studio');
+});
+
+test('"Don\'t post the pilot unless I say so" confirms nothing will be posted', async () => {
+  const che = await owner({ env: { ...GITHUB, ...GOOGLE } });
+  fakePlatforms();
+  for (const words of ["Don't post the pilot unless I say so", 'dont post the pilot unless i say so', 'Dont post the pilot yet']) {
+    const out = await che.say(words, { fresh: true });
+    assert.equal(out.route, 'che_creator_studio', words);
+    assert.match(out.reply, /won't post the pilot anywhere until you tell me to[\s\S]*Nothing was posted/, words);
+    assert.doesNotMatch(out.reply, /Which platform/, words);
+  }
+  assert.equal(googleCalls().length, 0);
+});
+
+test('a busy GitHub is reported as checking, not queued', async () => {
+  const che = await owner({ env: GITHUB });
+  const seen = fakePlatforms();
+  await che.say('render the pilot');
+  seen.busy = true;
+  const out = await che.say('is the pilot ready');
+  assert.equal(out.done.render_status, 'checking');
+  assert.match(out.reply, /still on GitHub, but GitHub asked me to wait before checking it again/);
+  assert.doesNotMatch(out.reply, /queued/);
+});
+
+test('a pilot whose 9:16 frame was not read from the MP4 itself is not posted', async () => {
+  const che = await owner({ env: { ...GITHUB, ...GOOGLE } });
+  const seen = fakePlatforms({ video: mp4({ header: false }) });
+  await connectYouTube(che);
+  await che.say('render the pilot');
+  seen.done = true;
+  assert.equal((await che.say('is the pilot ready')).done.render_status, 'verified', 'the manifest alone still makes a playable file');
+  const out = await che.say('Post the pilot to YouTube Shorts');
+  assert.equal(out.route, 'che_creator_studio', 'nothing is held');
+  assert.match(out.reply, /9:16 frame was not confirmed from the file itself[\s\S]*Nothing was posted/);
+  assert.equal(seen.sessions + seen.uploads, 0);
 });

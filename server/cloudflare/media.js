@@ -316,6 +316,7 @@ export async function generateVideo(env, storage, body, fetcher = fetch) {
         mime_type: 'video/mp4', thumbnail_media_id: thumbId,
         width: result.video_width, height: result.video_height,
         ...(result.format ? { format: result.format } : {}), ...(result.episode ? { episode: result.episode } : {}),
+        frame_size_verified: result.frame_size_verified === true,
         blob: 'github-artifact', github_filename: 'video.mp4',
       };
       const thumbnailItem = {

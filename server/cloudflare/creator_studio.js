@@ -340,13 +340,27 @@ export function exportPackage(platform, { episode = PILOT, bible = SERIES_BIBLE 
 }
 
 // ─── Natural words ─────────────────────────────────────────────────────────
+// A studio request is a verb acting on the series itself: "render the pilot",
+// "export it for TikTok", "post the pilot to YouTube Shorts". A sentence that
+// only names the pilot while it is about something else (its code, a test, an
+// account, a thumbnail) is not one, and keeps its own route (review of #353).
 
 const SUBJECT = /\b(?:pilot|s1\s?e1|series bible|show bible|street smart explainers?|creator studio|growth experiments?|audience[- ]growth)\b/i;
 // "A pilot", an airline pilot, a pilot program or another show's pilot is not CHE's series.
 const NOT_OURS = /\b(?:a|another|new|your own)\s+pilot\b|\bpilot(?:'s|s)?\s+(?:program|project|study|test|light|scheme|phase|season|license|licence|training|salary|seat)\b|\b(?:flight|plane|airline|aircraft|cockpit|jet|helicopter|airport|drone|co-?pilot|autopilot)\b|\bpilot(?:\s+episode)?\s+of\s+(?!the series|our|my series|street smart)/i;
 const PRONOUN = /\b(?:it|that|this|the (?:video|short|reel|clip|episode|mp4))\b/i;
-// A request to buy or fake an audience; a question about one ("did it get fake views?") is not.
-const FAKE_GROWTH = /\b(?:buy|purchase|order|get me|pay for)\b[^.?!]{0,30}\b(?:followers|subscribers|subs|views|likes|engagement|comments|plays)\b|\b(?:use|run|add|make)\b[^.?!]{0,20}\b(?:bots?|fake (?:followers|subscribers|views|likes|accounts|engagement|comments))\b/i;
+// What a studio verb may act on: the pilot, the episode, its video, or "it" in a studio conversation.
+const OBJ = String.raw`(?:(?:the|our|that|this|my)\s+)?(?:pilot(?:\s+(?:episode|video|short|mp4))?|episode(?:\s+one)?|s1\s?e1|video|short|mp4|it)\b`;
+const PARTS = String.raw`(?:script|scenes?|storyboard|shot\s+list|shots|narration|captions?|beat\s+sheet|spec)`;
+const at = (verbs, tail = '') => new RegExp(String.raw`\b(?:${verbs})\s+(?:me\s+)?${OBJ}${tail}`, 'i');
+// Things a sentence can be about while naming the pilot: CHE's own code and app, an account, another asset.
+const OTHER_THING = /\b(?:code|coding|codebase|tests?|testing|bugs?|fix(?:es|ed|ing)?|debug\w*|screens?|features?|pipelines?|prs?|pull\s+requests?|functions?|class(?:es)?|methods?|modules?|files?|repo(?:sitory)?|commits?|deploy\w*|apps?|api|endpoints?|widgets?|flutter|dart|javascript|python|accounts?|profiles?|logins?|passwords?|thumbnails?|logos?|banners?|posters?|cover\s+(?:art|image|photo)s?|websites?|landing\s+pages?|ads?|adverts?|campaigns?|budgets?|merch\w*|playlists?|trailers?|music|songs?|soundtracks?|voice\s*-?overs?|data|spreadsheets?|csv|json|logs?|databases?)\b/i;
+// Where a post goes ("to my YouTube account") and the growth plan's own tests are not other things.
+const OWN_WORDS = /\b(?:to|on|onto)\s+(?:my|our|the)?\s*(?:[\w-]+\s+){0,2}(?:account|channel|page|profile)s?\b|\b(?:growth|audience|a\/?b|hook)\s+tests?\b/gi;
+// "Don't post it unless I say so": the gate keeps a ban with an exception, but the step is still forbidden now.
+const BANNED_STEP = /\b(?:do\s+not|don['’]?t|never)\s+(?:(?:ever|even|just|go\s+and)\s+)*(post|publish|upload|share|render|export)\b[^.?!;]*/gi;
+// Buying, botting or faking an audience; "get me more views" with real posts is ordinary growth.
+const FAKE_GROWTH = /\b(?:buy|buying|purchas(?:e|ed|ing)|bought|order|pay\s+for)\b[^.?!]{0,30}\b(?:followers|subscribers|subs|views|likes|engagement|comments|plays)\b|\b(?:bots?|botted|fake|purchased|bought)\b[^.?!]{0,20}\b(?:followers|subscribers|subs|views|likes|accounts|engagement|comments|plays)\b/i;
 const QUESTION = /^(?:did|does|do|is|are|was|were|how|why|what|who|when|can|could|should)\b/i;
 
 function studioContext(history) {
@@ -354,11 +368,14 @@ function studioContext(history) {
   return /\b(?:pilot|street smart explainers|series bible|confident, not correct)\b/i.test(recent);
 }
 
+export const FAKE_GROWTH_REPLY = 'I won\'t do that, sir: bought or fake followers, views and engagement break every platform\'s rules and can get the channel removed. I grow the audience only with real posts you approve. Nothing was bought or posted.';
+export const NO_POST_REPLY = 'Understood, sir: I won\'t post the pilot anywhere until you tell me to, and each post still needs your yes. Nothing was posted.';
+
 /**
  * A Creator Studio request in the owner's words, as the catalog command it
- * runs: { command, input } or { refuse } or null. It reads only what the
- * owner asks for (prohibitions removed), and leaves any money or delete
- * request to the owner gates.
+ * runs: { command, input }, or { say } for an answer that needs no command, or
+ * null. It reads only what the owner asks for (prohibitions removed), and
+ * leaves any money or delete request to the owner gates.
  */
 export function studioChatIntent(message, history = []) {
   const raw = String(message || '').replace(/^\W*(?:hey[, ]*)?(?:che|chay|chey|shay)\b[,!:]?\s*/i, '').trim();
@@ -366,43 +383,49 @@ export function studioChatIntent(message, history = []) {
   const series = /\b(?:pilot|s1\s?e1|series bible|show bible|street smart explainers?|creator studio)\b/i.test(raw);
   const subject = SUBJECT.test(raw) || (PRONOUN.test(raw) && studioContext(history));
   const growthWords = /\b(?:followers|subscribers|audience|views|engagement)\b/i.test(raw) && /\b(?:pilot|series|channel|tiktok|reels?|shorts|instagram|youtube)\b/i.test(raw);
-  if (FAKE_GROWTH.test(raw) && !QUESTION.test(raw) && (subject || growthWords)) return { refuse: 'fake_growth' };
+  if (FAKE_GROWTH.test(raw) && !QUESTION.test(raw) && (subject || growthWords)) return { say: FAKE_GROWTH_REPLY, refused: 'fake_growth' };
   if (!subject || NOT_OURS.test(raw)) return null;
   // "Growth experiments for my barbershop" is the owner's own business, not the series.
   if (!series && /\bfor\s+(?:my|a|an|his|her|their)\b/i.test(raw) && !/\b(?:channel|videos?|shorts|reels?|tiktok|series)\b/i.test(raw)) return null;
   if (classifyOwnerActions(raw).length) return null;
   // Verbs are read from what the owner asks for; the subject may sit anywhere ("don't render the pilot, just write the script").
-  const asked = withoutProhibitions(raw);
-  const forbidden = prohibitedText(raw);
+  const banned = [...raw.matchAll(BANNED_STEP)].map((m) => m[1].toLowerCase());
+  const asked = withoutProhibitions(raw).replace(BANNED_STEP, ' ');
+  if (OTHER_THING.test(asked.replace(OWN_WORDS, ' '))) return null;
+  const forbidden = `${prohibitedText(raw)} ${banned.join(' ')}`;
   // Passed on as the platforms' own names, so a held post reads naturally.
   const platforms = platformsIn(asked).map((id) => EXPORT_PROFILES[id].label).join(', ');
-  const ours = /\bpilot\b|\bepisode\b|\bs1\s?e1\b/i.test(raw) || PRONOUN.test(asked);
+  const pilotNamed = /\bpilot\b|\bepisode\b|\bs1\s?e1\b/i.test(raw);
   if (/\b(?:series|show)\s+bible\b|\b(?:who(?:'s| is| are)|tell me about|introduce)\b[^.?!]*\b(?:cast|characters)\b|\bstreet smart explainers?\b[^.?!]*\b(?:about|premise|cast|characters|tone|format)\b/i.test(asked)) {
     return { command: 'studio-bible', input: '' };
   }
-  if (ours && (/\b(?:post|publish|upload)\b/i.test(asked) || (/\b(?:share|send)\b/i.test(asked) && platforms))) {
+  if (at('post|publish|upload').test(asked) || (platforms && at('share|send|put', String.raw`\s+(?:to|on|onto)\b`).test(asked))) {
     return { command: 'studio-post', input: platforms };
   }
-  if (/\b(?:export|package|format|prepare|prep|version|cut|resize|crop)\b/i.test(asked) && platforms) {
+  if (at('export|package|format|prepare|prep|resize|crop|adapt').test(asked) || new RegExp(String.raw`\b(?:version|cut|export|package)\s+of\s+${OBJ}`, 'i').test(asked)) {
     return { command: 'studio-export', input: platforms };
   }
-  if (/\b(?:growth|audience)\s+(?:experiments?|plan|tests?)\b|\bhow (?:is|'s) (?:the )?pilot doing\b|\b(?:views|stats|statistics|analytics|performance|numbers)\b/i.test(asked)) {
+  if (/\b(?:growth|audience)\s+(?:experiments?|plan|tests?)\b/i.test(asked) || at('how(?:\'s| is| are)', String.raw`\s+doing\b`).test(asked)
+    || (pilotNamed && /\b(?:views|stats|statistics|analytics|performance|numbers|subscribers|followers|likes|comments|audience)\b/i.test(asked))) {
     return { command: 'studio-growth', input: '' };
   }
-  if (/\b(?:script|scenes?|storyboard|shot list|shots|narration|captions?|beat sheet|spec)\b/i.test(asked) && ours) {
+  if (pilotNamed && (new RegExp(String.raw`\b(?:write|show|read|give|open|send|draft|tell)\s+(?:me\s+)?(?:(?:the|our|that|this)\s+)?(?:pilot(?:'s)?\s+)?${PARTS}\b`, 'i').test(asked)
+    || /\b(?:write|show|read|give|open|draft)\s+(?:me\s+)?(?:the\s+|our\s+)?pilot(?:\s+episode)?\b(?!\s+render)/i.test(asked)
+    || at('what(?:\'s| is)(?:\\s+in)?', String.raw`(?:\s+about)?\s*[?.!]?\s*$`).test(asked))) {
     return { command: 'studio-pilot', input: '' };
   }
-  if (/\b(?:ready|status|done|finished|rendered yet|progress|where is|how(?:'s| is) the (?:pilot )?render)\b/i.test(asked) && ours) {
+  if (at('is|has', String.raw`\s+(?:render\s+)?(?:ready|done|finished|rendered|rendering)\b`).test(asked) || /\b(?:pilot|render)\s+status\b/i.test(asked)
+    || at('status\\s+of|where(?:\'s| is)|how(?:\'s| is)', String.raw`(?:\s+render(?:ing)?)?\b`).test(asked) && /\b(?:status|where|render)/i.test(asked)) {
     return { command: 'studio-render', input: 'status' };
   }
-  if (/\b(?:render|make|produce|create|build|generate|film|shoot)\b/i.test(asked) && ours) {
+  if (at('render|make|produce|create|build|generate|film|shoot|finish', String.raw`(?!\s+(?:about|on|of)\b)`).test(asked)
+    || (pilotNamed && /\b(?:start|kick\s+off|run|queue)\s+(?:the\s+)?(?:pilot\s+)?render(?:ing)?\b/i.test(asked))) {
     return { command: 'studio-render', input: '' };
   }
-  if (/\b(?:write|show|read|give|tell|what(?:'s| is)|open)\b/i.test(asked) && /\bpilot\b/i.test(raw)) {
-    return { command: 'studio-pilot', input: '' };
-  }
+  // "Don't post the pilot unless I say so": nothing will be posted, and CHE says so.
+  if (/\b(?:post|publish|upload|share)\b/i.test(forbidden)) return { say: NO_POST_REPLY, ok: true, action: 'no_post' };
   // "Don't render the pilot yet": the owner forbade the step, so CHE only reports where it stands.
-  if (/\b(?:render|post|publish|upload|export)\b/i.test(forbidden)) return { command: 'studio-render', input: 'status' };
+  if (/\b(?:render|export)\b/i.test(forbidden)) return { command: 'studio-render', input: 'status' };
   return null;
 }
 
@@ -481,8 +504,10 @@ async function studioRender(input, ctx) {
         text: `The pilot is a verified MP4, sir: "${PILOT.title}", ${receiptWords(r)}. It is in your media library, and nothing was posted.${platformLine(state, yt)}` };
     }
     if (checked.pending) {
-      return { ok: true, studio_action: 'render', render_status: checked.stage === 'running' ? 'rendering' : 'queued', task_id: state.render.task_id,
-        text: `The pilot is ${checked.stage === 'running' ? 'rendering' : 'queued'} on GitHub, sir (task ${state.render.task_id}). No MP4 exists yet, and I did not start a second one.` };
+      const stage = checked.stage === 'running' ? 'rendering' : checked.stage === 'checking' ? 'checking' : 'queued';
+      const where = stage === 'checking' ? 'still on GitHub, but GitHub asked me to wait before checking it again' : `${stage} on GitHub`;
+      return { ok: true, studio_action: 'render', render_status: stage, task_id: state.render.task_id,
+        text: `The pilot is ${where}, sir (task ${state.render.task_id}). No MP4 exists yet, and I did not start a second one.` };
     }
     state.render = { ...state.render, status: 'failed', error: String(checked.detail || 'No verified MP4 was returned.').slice(0, 300) };
     await storage.put(STUDIO_KEY, state);
@@ -571,6 +596,9 @@ export async function studioPostPreflight(input, ctx) {
   if (state.posts?.[id]?.link) return { blocked: `The pilot is already on ${profile.label}, sir: ${state.posts[id].link} (${state.posts[id].visibility || 'unlisted'}). I did not post it again.`, platform: id, duplicate: true };
   const pilot = await verifiedPilot(ctx.storage, state);
   if (!pilot) return { blocked: `The pilot has no verified MP4 yet, sir, so there is nothing to post. Say "render the pilot" first. Nothing was posted.`, platform: id };
+  if (pilot.format !== '9:16' || pilot.frame_size_verified !== true) {
+    return { blocked: `The pilot MP4's vertical 9:16 frame was not confirmed from the file itself, sir, so I won't post it. Say "render the pilot" to make a new one. Nothing was posted.`, platform: id };
+  }
   const out = exportPackage(id);
   if (!out.ok) return { blocked: `The ${profile.label} package does not pass: ${out.errors.join(' ')} Nothing was posted.`, platform: id };
   return {
@@ -645,7 +673,6 @@ export async function runStudioCommand(local, input, ctx) {
   return { ok: false, text: 'That studio command has no runner, sir. Nothing was run.' };
 }
 
-export const FAKE_GROWTH_REPLY = 'I won\'t do that, sir: bought or fake followers, views and engagement break every platform\'s rules and can get the channel removed. I grow the audience only with real posts you approve. Nothing was bought or posted.';
 
 /** What the phone's Studio panel shows; the same records CHE reads aloud. */
 export async function studioView(ctx) {

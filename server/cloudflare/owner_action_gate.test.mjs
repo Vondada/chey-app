@@ -99,6 +99,17 @@ test('ordinary questions with the same nouns are not held', () => {
   }
 });
 
+test('paid promotion is money; promoting with no paid word is not (review of #353)', () => {
+  for (const text of ['Promote the pilot with a paid ad on TikTok', 'promote the pilot with a paid ad on tiktok', 'Boost the post with $20',
+    'run an ad on TikTok for the pilot', 'CHE, launch a paid campaign', 'Can you promote the video with ad spend?', 'Run ads for my barbershop']) {
+    assert.deepEqual(classifyOwnerActions(text), ['money'], text);
+  }
+  for (const text of ['promote the pilot on my channel', 'Promote the pilot on my channel', 'promote my brother to manager', 'boost my productivity',
+    'write an ad for my bakery', 'Plan an ad campaign for my bakery', 'Advertise my bakery on my website', "Don't run any ads", 'start a campaign for my bakery']) {
+    assert.deepEqual(classifyOwnerActions(text), [], text);
+  }
+});
+
 test('withdrawals and cash-outs are money; order with a bare noun is money', () => {
   for (const text of ['withdraw money', 'withdraw $20 from my bank', 'take out $20', 'cash out', 'order pizza']) {
     assert.equal(classifyOwnerAction(text), 'money', text);
