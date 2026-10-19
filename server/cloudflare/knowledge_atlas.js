@@ -1155,7 +1155,15 @@ function portfolioName(t) {
 }
 
 // A 95% range needs at least two trades; below that the sample is only a number.
-const rangeOr = (s, show) => (s.trades >= 2 ? `95% range ${show(s.low)} to ${show(s.high)}` : `too few trades for a range (n = ${s.trades})`);
+const rangeOr = (s, show) => {
+  if (s.trades < 2) return `too few trades for a range (n = ${s.trades})`;
+  // Identical results have no spread, so the formula gives a zero-width range that means nothing.
+  if (s.low === s.high) return `no range: all ${s.trades} results are identical, so they show no spread to estimate from`;
+  return `95% range ${show(s.low)} to ${show(s.high)}`;
+};
+// A drawdown is a size of loss, spoken as a plain magnitude: never "plus 4R".
+const fmtDepthR = (x) => (x == null ? 'not measured' : `${Math.abs(x).toFixed(2)}R`);
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 /**
  * The measured line for a trading card, from records only; empty for a card that cites no statistic.
@@ -1184,12 +1192,14 @@ export function measuredText(c, records = { paper: [], backtest: null }) {
     const across = (values, show, what) => (many ? ` Across the ${books.length} portfolios, ${what} ranged ${range(values, show)}.` : '');
     const line = {
       expectancy: () => `${top.name}: expectancy ${fmtR(s.expectancy_r)} per trade after assumed costs, ${rangeOr({ trades: s.trades, low: s.expectancy_r_95ci.low, high: s.expectancy_r_95ci.high }, fmtR)}.${across(books.map((b) => b.s.expectancy_r), fmtR, 'expectancy')}`,
-      win_rate: () => `${top.name}: win rate ${s.win_rate}%, ${s.wins} wins and ${s.losses} losses, ${rangeOr({ trades: s.trades, ...(s.win_rate_95ci || {}) }, (x) => `${x}%`)}.${across(books.map((b) => b.s.win_rate), (x) => `${x}%`, 'win rate')}`,
+      win_rate: () => `${top.name}: win rate ${s.win_rate}%, ${plural(s.wins, 'win')} and ${s.losses} loss${s.losses === 1 ? '' : 'es'}, ${rangeOr({ trades: s.trades, ...(s.win_rate_95ci || {}) }, (x) => `${x}%`)}.${across(books.map((b) => b.s.win_rate), (x) => `${x}%`, 'win rate')}`,
       profit_factor: () => `${top.name}: profit factor ${s.profit_factor ?? 'not defined, because no trade lost'}.${many && range(books.map((b) => b.s.profit_factor), (x) => `${x}`) ? across(books.map((b) => b.s.profit_factor), (x) => `${x}`, 'profit factor') : ''}`,
-      max_drawdown: () => `${top.name}: maximum drawdown ${money(s.max_drawdown)}, or ${fmtR(s.max_drawdown_r)}, within that portfolio's own record.${across(books.map((b) => b.s.max_drawdown), money, 'maximum drawdown')} None of these is an account balance.`,
-      sample: () => `${books.filter((b) => b.s.trades >= MIN_TRADES).length} of ${books.length} reached the ${MIN_TRADES}-trade minimum. ${top.name} has ${s.trades}: expectancy ${rangeOr({ trades: s.trades, low: s.expectancy_r_95ci.low, high: s.expectancy_r_95ci.high }, fmtR)}.`,
+      max_drawdown: () => `${top.name}: maximum drawdown ${money(s.max_drawdown)}, or ${fmtDepthR(s.max_drawdown_r)}, within that portfolio's own record.${across(books.map((b) => b.s.max_drawdown), money, 'maximum drawdown')} None of these is an account balance.`,
+      sample: () => `${books.filter((b) => b.s.trades >= MIN_TRADES).length} of ${plural(books.length, 'portfolio')} reached the ${MIN_TRADES}-trade minimum. ${many ? 'The largest is' : 'It is'} ${top.name}, with ${plural(s.trades, 'closed trade')}: expectancy ${fmtR(s.expectancy_r)}, ${rangeOr({ trades: s.trades, low: s.expectancy_r_95ci.low, high: s.expectancy_r_95ci.high }, fmtR)}.`,
     }[c.measured.metric]();
-    parts.push(`Your records, measured from CHE's paper journal: ${total} closed paper trade${total === 1 ? '' : 's'} in ${books.length} separate paper portfolio${many ? 's' : ''}, each its own strategy, so nothing is pooled into one account. ${many ? 'The largest is ' : 'It is '}${line} Largest sample: n = ${s.trades}, ${SAMPLE[s.sample]}.`);
+    const lead = c.measured.metric === 'sample' ? '' : many ? 'The largest is ' : 'It is ';
+    const where = many ? `in ${books.length} separate paper portfolios, each its own strategy, so nothing is pooled into one account.` : 'in 1 paper portfolio, one strategy.';
+    parts.push(`Your records, measured from CHE's paper journal: ${plural(total, 'closed paper trade')} ${where} ${lead}${line} Largest sample: n = ${s.trades}, ${SAMPLE[s.sample]}.`);
   }
   const bt = records.backtest;
   const rows = bt?.ok && Array.isArray(bt.rows) ? bt.rows.filter((r) => Number(r?.stats?.trades) > 0) : [];
