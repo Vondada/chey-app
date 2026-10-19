@@ -10,7 +10,8 @@
 // or delete. Negated forms ("do not delete") are never gated.
 
 // "CHE, buy it", "hey Chey buy it" and a bare "CHE buy it" all address CHE.
-const VOCATIVE = String.raw`(?:(?:(?:hey|hi|ok|okay)\s+)?(?:chey|che|chay|shay)\b\s*[,:]?\s*)?`;
+// "Shay" is also a person's name ("Shay paid me back"), so it needs "hey" or a comma.
+const VOCATIVE = String.raw`(?:(?:(?:hey|hi|ok|okay)\s+(?:chey|che|chay|shay)|(?:chey|che|chay)|shay(?=\s*[,:]))\b\s*[,:]?\s*)?`;
 const LEAD = String.raw`^(?:${VOCATIVE}(?:(?:please|pls|plz|now|then|also|and|ok|okay|just|to|let's|lets|let\s+us|can you|could you|would you|will you|i want you to|i need you to|i want to|i'd like to|id like to|i am going to|i'm going to|im going to|go ahead and|you should|you must)\s+)*)["'(]?`;
 // Verb forms are written out in full so "delete", "deleting", "pays" and
 // "purchased" all match without matching unrelated words.
@@ -29,22 +30,20 @@ const DELETE_RE = new RegExp(`${LEAD}(?:${STRONG_DELETE}|${WEAK_DELETE})\\b`, 'i
 const NEGATED_RE = /\b(?:do\s+not|don't|dont|never|not|no)\s+$/i;
 
 // Each clause of a compound request ("buy X, then delete Y") is checked on its
-// own, so a verb that opens any clause counts, unless the owner forbade it ("don't buy anything,
-// pay for anything, or order anything").
+// own, so a verb that opens any clause counts.
 const CLAUSE_BREAK = /[.;!?]|\b(?:then|and then|and|also|after that|afterwards)\b|,/g;
-function hasVerb(re, t) {
-  const spans = prohibitionSpans(t);
+function clausesOf(t) {
   const clauses = [];
   let start = 0;
   for (const m of t.matchAll(CLAUSE_BREAK)) { clauses.push([start, m.index]); start = m.index + m[0].length; }
   clauses.push([start, t.length]);
-  return clauses.some(([from, to]) => {
-    const raw = t.slice(from, to);
-    const c = raw.trim();
+  return clauses;
+}
+function hasVerb(re, t) {
+  return clausesOf(t).some(([from, to]) => {
+    const c = t.slice(from, to).trim();
     const m = re.exec(c);
-    if (!m || NEGATED_RE.test(c.slice(0, m.index))) return false;
-    const at = from + (raw.length - raw.trimStart().length) + m.index + m[0].length - 1;
-    return !spans.some(([a, b]) => at >= a && at < b);
+    return Boolean(m) && !NEGATED_RE.test(c.slice(0, m.index));
   });
 }
 
@@ -63,9 +62,9 @@ const READ_TURN = /\s+(?=(?:explain|tell\s+me|show\s+me|give\s+me|analy[sz]e|sum
 // A money, order or delete verb after the forbidden one is a new request, unless it continues the
 // forbidden list ("..., or pay for anything", "buy or sell anything"): "Don't pay attention to the price,
 // buy the tickets." Ending a prohibition early only ever holds more, never less.
-const MONEY_STOP = String.raw`(?:buy|purchase|pay|order|spend|check\s*out|subscribe|donate|transfer|wire|withdraw|sell|short|place|submit|enter|trade|execute|delete|remove|erase|wipe)`;
+const MONEY_STOP = String.raw`(?:buy|purchase|pay|order|spend|prepare|set\s+up|check\s*out|subscribe|donate|transfer|wire|withdraw|sell|short|place|submit|enter|trade|execute|delete|remove|erase|wipe)`;
 const NEW_REQUEST = new RegExp(String.raw`(?:,\s*|\s+)(?:please\s+)?${MONEY_STOP}\b`, 'gi');
-const LIST_WORD = /\b(?:or|nor|the|a|an|my|your|this|that|any|no|its|their|our|his|her)\s*,?\s*$/i;
+const LIST_WORD = /\b(?:or|nor)\s*,?\s*$/i;
 
 // The [start, end) spans of the turn's prohibitions.
 export function prohibitionSpans(text) {
@@ -80,8 +79,7 @@ export function prohibitionSpans(text) {
     let stop = Math.min(sentence ? sentence.index : rest.length, read ? read.index + first : rest.length);
     for (const next of rest.slice(first, stop).matchAll(NEW_REQUEST)) {
       const before = rest.slice(0, first + next.index);
-      const item = rest.slice(first + next.index).replace(/^[,\s]+/, '').split(/[,.;!?]/)[0];
-      if (LIST_WORD.test(before) || /\b(?:anything|nothing)\b/i.test(item)) continue;
+      if (LIST_WORD.test(before)) continue;
       stop = first + next.index;
       break;
     }
@@ -90,12 +88,20 @@ export function prohibitionSpans(text) {
   return spans;
 }
 
-// The turn with every prohibition taken out, so an action check reads only what the owner asks for.
-export function withoutProhibitions(text) {
+const PROHIBITION_LEAD = /^\s*(?:do\s+not|don['’]?t|never|no\s+need\s+to|without)\s+(?:(?:actually|ever|even|just|go\s+and|try\s+to)\s+)*/i;
+/** What one prohibition forbids, from its first verb on: "place any orders" for "don't place any orders". */
+export function forbiddenAction(span) {
+  return String(span || '').replace(PROHIBITION_LEAD, '');
+}
+
+// The turn with its prohibitions taken out, so an action check reads only what the owner asks for.
+// `only` keeps every prohibition whose forbidden verb is not one the caller checks: "Don't ask me,
+// prepare an MNQ order" forbids asking, not the order.
+export function withoutProhibitions(text, { only = null } = {}) {
   const t = String(text || '');
   let out = '';
   let at = 0;
-  for (const [start, end] of prohibitionSpans(t)) {
+  for (const [start, end] of prohibitionSpans(t).filter(([a, b]) => !only || only.test(forbiddenAction(t.slice(a, b))))) {
     out += `${t.slice(at, start)} `;
     at = end;
   }
@@ -114,24 +120,29 @@ export function prohibitedText(text) {
 // CHE pays, so it never counts as forbidding the purchase.
 const OWN_PLAN = String.raw`^${VOCATIVE}(?:(?:so|well|and|but|ok|okay|also)\s+)*(?:i\s+(?:want|need|plan|hope|intend|would\s+like)\s+to|i(?:['’]d|d)\s+like\s+to|i\s+am\s+(?:going|planning)\s+to|i(?:['’]m|m)\s+(?:going|planning)\s+to|i\s+will|i['’]ll|i\s+might)\s+`;
 const OWN_PLAN_RE = new RegExp(OWN_PLAN, 'i');
-const FORBIDDEN_VERB = new RegExp(String.raw`(?:^|,\s*(?:or\s+|nor\s+|and\s+)?|\s(?:or|nor|and)\s+)(?:(?:actually|ever|even|just)\s+)*(?:${MONEY_VERB}|order(?:s|ed|ing)?|add\b[^,.;]*\bcarts?)\b(?!\s+(?:more|over|above|beyond|less|under|at\s+most|up\s+to|with|using|via|by|through|\$|\d))`, 'i');
-function forbidsMoney(t) {
-  return prohibitionSpans(t).some(([start, end]) => FORBIDDEN_VERB.test(t.slice(start, end).replace(PROHIBITION_START, '')));
-}
+// A ban on every purchase: "don't purchase anything", "don't order anything yet", "don't order them".
+// "Don't buy the extended warranty" or "don't order any drinks" forbids one item, not the purchase.
+const BLANKET_BAN = /\b(?:do\s+not|don['’]?t|never)\s+(?:(?:actually|ever|even|just)\s+)*(?:buy|purchase|pay\s+for|order|spend|check\s*out|place\s+(?:an?\s+|any\s+)?orders?)(?:\s+(?:anything(?:\s+else)?|any\s+(?:orders?|purchases?)|it|them|this|that|yet|now|today|online))*\s*(?=$|[,.;!?]|\s+(?:or|nor|and|but|add|create|explain|just|tell)\b)/gi;
 function onlyOwnPlanMoney(t) {
-  if (!forbidsMoney(t)) return false;
-  let own = false;
+  const bans = [...t.matchAll(BLANKET_BAN)].map((m) => [m.index, m.index + m[0].length]);
+  if (!bans.length) return false;
   // "I want to go to Walmart tomorrow and buy apples": the plan carries through its own "and" clauses,
   // never past a comma or "then" ("I want to buy apples, then pay for my Netflix" asks CHE to pay).
-  for (const part of withoutProhibitions(t).split(/[.;!?,]+|\b(?:and\s+then|then|also|after\s+that|afterwards)\b/)) {
-    const ownPart = OWN_PLAN_RE.test(part.trim());
-    for (const clause of part.split(/\band\b/)) {
-      const c = clause.trim();
-      const m = MONEY_RE.exec(c);
-      if (!m || NEGATED_RE.test(c.slice(0, m.index))) continue;
-      if (!ownPart) return false;
-      own = true;
-    }
+  const parts = [];
+  let start = 0;
+  for (const m of t.matchAll(/[.;!?,]+|\b(?:and\s+then|then|also|after\s+that|afterwards)\b/g)) { parts.push([start, m.index]); start = m.index + m[0].length; }
+  parts.push([start, t.length]);
+  let own = false;
+  for (const [from, to] of clausesOf(t)) {
+    const raw = t.slice(from, to);
+    const c = raw.trim();
+    const m = MONEY_RE.exec(c);
+    if (!m || NEGATED_RE.test(c.slice(0, m.index))) continue;
+    const at = from + (raw.length - raw.trimStart().length) + m.index + m[0].length - 1;
+    if (bans.some(([a, b]) => at >= a && at < b)) continue;
+    const part = parts.find(([a, b]) => at >= a && at < b);
+    if (!part || !OWN_PLAN_RE.test(t.slice(part[0], part[1]).trim())) return false;
+    own = true;
   }
   return own;
 }

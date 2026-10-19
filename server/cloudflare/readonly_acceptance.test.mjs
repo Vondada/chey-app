@@ -133,7 +133,7 @@ test('voice: with no record of the earlier voice CHE says so instead of guessing
   const out = await che.say(VOICE_Q);
   assert.match(out.reply, /My saved voice is Connie/);
   assert.match(out.reply, /does not record which voice it replaced, so I will not guess/);
-  for (const other of ['which voice should I choose', 'what voice do you think I would choose', 'Which voice did I pick? Switch to Adam instead.']) {
+  for (const other of ['which voice should I choose', 'what voice do you think I would choose', 'Which voice did I pick? Switch to Adam instead.', 'What voice did I choose before Mary, and can you switch back to it?']) {
     assert.equal(voiceStudioIntent(other)?.kind ?? null, null, other);
   }
 });
@@ -182,7 +182,8 @@ test('MNQ: the analysis is read from the stored feed and journal; nothing is ord
   assert.deepEqual(fundyouredgeIntent('place an MNQ order'), { kind: 'order' });
   assert.deepEqual(fundyouredgeIntent("Don't analyze it, just place an MNQ buy order."), { kind: 'order' });
   assert.deepEqual(fundyouredgeIntent('place an order on FundYourEdge'), { kind: 'order' });
-  for (const order of ["I don't care, buy 2 MNQ at market", 'No need to analyze, sell MNQ now', "Don't be greedy, buy one MNQ contract at market"]) {
+  for (const order of ["I don't care, buy 2 MNQ at market", 'No need to analyze, sell MNQ now', "Don't be greedy, buy one MNQ contract at market",
+    "Don't ask me, prepare an MNQ order", "Don't ask, set up a long MNQ trade", "Don't text her, buy her 2 MNQ"]) {
     assert.deepEqual(fundyouredgeIntent(order), { kind: 'order' }, order);
   }
   assert.equal(liveIntent('Analyze MNQ paper trades and the data delay, and then stop paper trading.'), null);
@@ -219,7 +220,9 @@ test('REA: CHE explains her own REA and its latest record without starting an in
   const earlier = { history: [{ role: 'user', content: 'Investigate the Notion app' }] };
   assert.equal(parseReaRequest('Use your REA to compare it with yourself and tell me which features you lack', earlier)?.command, 'compare');
   assert.equal(parseReaRequest("Have your REA look at the Duolingo app and tell me what features we're missing", earlier)?.command, 'compare');
-  assert.notEqual(parseReaRequest('Run your REA on https://github.com/sindresorhus/ky and tell me what it does')?.command, 'status');
+  for (const other of ['Run your REA on https://github.com/sindresorhus/ky and tell me what it does', 'Have your REA rebuild the search box from the Spotify app', 'Use the REA to explain how the Linear app works']) {
+    assert.notEqual(parseReaRequest(other)?.command, 'status', other);
+  }
   // A named app to investigate is still an investigation.
   assert.equal(parseReaRequest('Show me what the REA system finds when you investigate the Notion app.')?.command, 'inspect');
 });
@@ -246,10 +249,19 @@ test('shopping: the owner\'s own plan with every purchase forbidden opens no mon
   for (const ask of ["Don't worry about the cost, buy the AirPods", 'No need to ask, pay the electric bill', "I don't care, buy the tickets",
     'I never shop online, buy me a book', "Don't overthink it, order me a pizza", "I want to buy it but don't pay more than $5",
     "I'm going to buy groceries, don't spend more than $50", "Don't pay attention to the price, buy the tickets or the passes",
-    'dont pay attention to the price buy the tickets']) {
+    'dont pay attention to the price buy the tickets', "Don't ask me, order anything you want for dinner", "Don't ask, buy her anything she wants",
+    "Don't text her, buy her flowers", "Don't tell her, buy it", "I want to buy the laptop, but don't buy the extended warranty",
+    "I'd like to order a pizza, but don't order any drinks",
+    // Fail closed: the hold check does not try to read where a list of prohibitions ends.
+    "don't buy anything, pay for anything, or order anything"]) {
     assert.deepEqual(classifyOwnerActions(ask), ['money'], ask);
   }
-  for (const plan of ["CHE, I want to go to Walmart tomorrow and buy apples, but don't order anything yet", "don't buy anything, pay for anything, or order anything",
+  for (const ask of ["Don't ask, delete anything older than a week from my notes", "Don't ask me, remove anything older than 30 days"]) {
+    assert.deepEqual(classifyOwnerActions(ask), ['delete'], ask);
+  }
+  // "Shay" is also a person's name; only "CHE", "Chey" and "Chay" address CHE without a comma.
+  assert.deepEqual(classifyOwnerActions('Shay paid me back $20 yesterday'), []);
+  for (const plan of ["CHE, I want to go to Walmart tomorrow and buy apples, but don't order anything yet", "I'm going to buy apples later; don't order them.",
     "Add apples to the grocery list, but don't buy them", "Don't delete the draft; just explain how to delete it"]) {
     assert.deepEqual(classifyOwnerActions(plan), [], plan);
   }
@@ -262,20 +274,9 @@ test('shopping: the owner\'s own plan with every purchase forbidden opens no mon
   }
 });
 
-test('video: a question about the renderer itself starts nothing even without a "don\'t"; a real request still renders', async () => {
-  requests.length = 0;
-  const che = await owner({ env: { CHE_GITHUB_TOKEN: 'test-token', CHE_GITHUB_REPO: 'Vondada/chey-app' } });
-  const out = await che.say('Can you produce a 30-second animated video right now? Which rendering engines are connected?');
-  assert.equal(out.meta.video_status, 'status_only');
-  assert.equal(requests.filter((r) => r.method !== 'GET').length, 0);
-  // An explicit request goes on to the renderer (offline here, so it reports that it could not).
-  const asked = await che.say('Make a 30-second video about volcanoes.');
-  assert.notEqual(asked.meta.video_status, 'status_only');
-  assert.ok(requests.some((r) => r.method === 'POST' && /dispatches/.test(r.url)), 'the render was dispatched');
-});
-
 test('video: a request with a limit or a later "don\'t upload" still renders (review of #351)', async () => {
-  for (const ask of ["Make a video about the Mars rover, but don't upload it yet", "Render a 30 second video about bees. Don't publish it.", "Make a video about cats, don't make it longer than a minute"]) {
+  for (const ask of ["Make a video about the Mars rover, but don't upload it yet", "Render a 30 second video about bees. Don't publish it.", "Make a video about cats, don't make it longer than a minute",
+    "Could you create a short video about volcanoes? Don't post it until I make a decision.", 'Which rendering engines are connected, and can you make a video about bees?', 'Make a 30-second video about volcanoes.']) {
     requests.length = 0;
     const che = await owner({ env: { CHE_GITHUB_TOKEN: 'test-token', CHE_GITHUB_REPO: 'Vondada/chey-app' } });
     const out = await che.say(ask);

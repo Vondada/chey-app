@@ -6,6 +6,9 @@ import { withoutProhibitions } from './owner_action_gate.js';
 
 const FYE = /\bfund\s*your\s*edge\b|\bfundyouredge\b|\bfye\b/i;
 const ORDER_VERB = /\b(?:prepare|place|submit|enter|buy|sell|set up)\b/i;
+// A prohibition is set aside only when it forbids the order itself ("don't place any orders"), never
+// when it forbids something else ("Don't ask me, prepare an MNQ order").
+const ORDER_FIRST = /^(?:prepare|place|submit|enter|buy|sell|set\s+up|trade|order|execute|short)\b/i;
 const FUTURES = /\b(?:mnq|nq|mes|es|nasdaq|s&p)\b/i;
 
 // orderBrokerReady: a broker that can take orders is connected, so a generic
@@ -13,7 +16,7 @@ const FUTURES = /\b(?:mnq|nq|mes|es|nasdaq|s&p)\b/i;
 export function fundyouredgeIntent(message, { orderBrokerReady = false } = {}) {
   const t = String(message || '').trim().replace(/\s+/g, ' ');
   // "Analyze MNQ. Don't place any orders." forbids an order; only what the owner asks for counts.
-  const asked = withoutProhibitions(t);
+  const asked = withoutProhibitions(t, { only: ORDER_FIRST });
   if (ORDER_VERB.test(asked) && FYE.test(t)) return { kind: 'order' };
   if (!orderBrokerReady && ORDER_VERB.test(asked) && FUTURES.test(t)) return { kind: 'order' };
   if (!FYE.test(t)) return null;

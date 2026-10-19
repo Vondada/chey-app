@@ -33,7 +33,6 @@ import {
   browserFeatures, buildFeatureMap, buildRequestFor, compareWithChe, pickFeatures, planFor, proposeImprovements, verifyBuild,
 } from './rea_features.js';
 import { validateWebSummary } from './rea_web_evidence.js';
-import { withoutProhibitions } from './owner_action_gate.js';
 
 export const REA_WORKFLOW = 'che-rea-analysis.yml';
 export const REA_WORKFLOW_REF = 'main';
@@ -88,8 +87,7 @@ export function parseReaRequest(message, { history = [] } = {}) {
   // an earlier investigation keeps its own route.
   const target = identifyTarget(text);
   if (text.length <= 600 && SELF_REA.test(text) && SELF_REA_READ.test(text)
-    && !(target && !['app_name', 'private_app'].includes(target.kind))
-    && !(INVESTIGATE.test(withoutProhibitions(text)) && target)) {
+    && !target) {
     return {
       command: 'status', input: '', natural: true,
       capabilities: /\b(?:can|capab\w*|able|do\s+right\s+now|what\s+(?:is|does)\b)/i.test(text),
