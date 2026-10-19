@@ -190,6 +190,9 @@ test('MNQ: the analysis is read from the stored feed and journal; nothing is ord
   }
   assert.equal(liveIntent('Analyze MNQ paper trades and the data delay, and then stop paper trading.'), null);
   assert.notEqual(liveIntent('Analyze MNQ with the latest data and reverse my position')?.kind, 'analysis');
+  // Review of #352: a long turn with no trading words is not a positions read, and closing out is an order.
+  assert.equal(liveIntent('My grandmother asked about my positions on the church committee and the school board; help me write her a warm note thanking her for asking and telling her I will see her on Sunday.'), null);
+  assert.equal(liveIntent('Close out everything and show me your positions'), null);
   // One bar after the daily break: no bar size is guessed across the break.
   assert.match(marketRead([{ t: '2026-10-16T20:00:00Z', h: 2, l: 1, c: 1.5, v: 1 }, { t: '2026-10-16T21:05:00Z', h: 2, l: 1, c: 1.5, v: 1 }]), /^Last bar: close 1\.50/);
   assert.equal(liveIntent('Analyze MNQ and buy one contract if it looks bullish. Tell me the data source.'), null);

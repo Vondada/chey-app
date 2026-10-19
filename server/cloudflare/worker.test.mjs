@@ -138,6 +138,51 @@ test('Gemini media understanding sends video MIME and asks for audio plus visual
   assert.match(result.summary, /settings screen/);
 });
 
+// A paired owner phone; `inputs` records what each model call was sent.
+async function pairedOwner() {
+  const saved = new Map();
+  const inputs = [];
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async (_model, input) => { inputs.push(input); return { response: 'Understood, sir.' }; } } };
+  const state = new CheState({ storage: { get: async (key) => saved.get(key), put: async (key, value) => saved.set(key, value), delete: async (key) => saved.delete(key), setAlarm: async () => {} } }, env);
+  env.CHE_STATE = { getByName: () => state };
+  const post = (path, body, token = '') => worker.fetch(new Request(`https://che.example${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: JSON.stringify(body),
+  }), env);
+  const token = (await (await post('/api/pair', { code: '123456' })).json()).device_token;
+  return { send: (path, body) => post(path, body, token), inputs };
+}
+
+test('"do it again" after a long request reaches the model with its late "don\'t" (issue #345)', async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => { throw new TypeError('offline'); };
+  try {
+    const { send, inputs } = await pairedOwner();
+    const late = "but don't email Mark until Friday";
+    const ask = 'Write a short summary of the spring launch review for the whole team with the charts from the dashboard, '
+      + 'and add what changed in the review, '.repeat(6) + late;
+    assert.ok(ask.length > 300);
+    const res = await send('/api/chat', { message: 'do it again', history: [{ role: 'user', content: ask }, { role: 'assistant', content: 'Done, sir.' }] });
+    assert.equal(res.status, 200);
+    await res.text();
+    const last = String(inputs.at(-1)?.messages?.at(-1)?.content || '');
+    assert.ok(last.endsWith(`${late}": do it again`), last.slice(-200));
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test('a long live-voice turn is read to its end: a preference said last is learned whole (issue #345)', async () => {
+  const { send } = await pairedOwner();
+  const turn = 'We went over the launch review and the spring numbers with the whole team. '.repeat(35)
+    + "I prefer that you don't email Mark until Friday.";
+  assert.ok(turn.length > 2500);
+  const out = await (await send('/api/realtime/observe', { message: turn, item_id: 'item-long' })).json();
+  assert.equal(out.learned, true);
+  assert.equal(out.preference, "Preference: that you don't email Mark until Friday");
+});
+
 test('pairing, owner gate, memories, and revocation', async () => {
   const saved = new Map();
   const env = { CHE_PAIR_CODE: '123456', AI: { run: async () => ({ response: 'Hello, sir.' }) } };
