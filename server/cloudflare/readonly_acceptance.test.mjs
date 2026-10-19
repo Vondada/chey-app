@@ -183,10 +183,13 @@ test('MNQ: the analysis is read from the stored feed and journal; nothing is ord
   assert.deepEqual(fundyouredgeIntent("Don't analyze it, just place an MNQ buy order."), { kind: 'order' });
   assert.deepEqual(fundyouredgeIntent('place an order on FundYourEdge'), { kind: 'order' });
   for (const order of ["I don't care, buy 2 MNQ at market", 'No need to analyze, sell MNQ now', "Don't be greedy, buy one MNQ contract at market",
-    "Don't ask me, prepare an MNQ order", "Don't ask, set up a long MNQ trade", "Don't text her, buy her 2 MNQ"]) {
+    "Don't ask me, prepare an MNQ order", "Don't ask, set up a long MNQ trade", "Don't text her, buy her 2 MNQ",
+    // A ban with an exception asks for the exception.
+    "Don't place any orders except one MNQ long at 21000", "Don't sell unless MNQ hits 21500", "Don't buy anything other than 2 MNQ at the open"]) {
     assert.deepEqual(fundyouredgeIntent(order), { kind: 'order' }, order);
   }
   assert.equal(liveIntent('Analyze MNQ paper trades and the data delay, and then stop paper trading.'), null);
+  assert.notEqual(liveIntent('Analyze MNQ with the latest data and reverse my position')?.kind, 'analysis');
   // One bar after the daily break: no bar size is guessed across the break.
   assert.match(marketRead([{ t: '2026-10-16T20:00:00Z', h: 2, l: 1, c: 1.5, v: 1 }, { t: '2026-10-16T21:05:00Z', h: 2, l: 1, c: 1.5, v: 1 }]), /^Last bar: close 1\.50/);
   assert.equal(liveIntent('Analyze MNQ and buy one contract if it looks bullish. Tell me the data source.'), null);
@@ -253,7 +256,13 @@ test('shopping: the owner\'s own plan with every purchase forbidden opens no mon
     "Don't text her, buy her flowers", "Don't tell her, buy it", "I want to buy the laptop, but don't buy the extended warranty",
     "I'd like to order a pizza, but don't order any drinks",
     // Fail closed: the hold check does not try to read where a list of prohibitions ends.
-    "don't buy anything, pay for anything, or order anything"]) {
+    "don't buy anything, pay for anything, or order anything",
+    // Review 3: a request to CHE joined by "and" is not the owner's plan, and "anything else" means one purchase is wanted.
+    "I want to buy flowers and can you pay the electric bill, but don't buy anything else", "I want to buy flowers and I want you to pay the bill, don't buy anything else",
+    "I want to buy flowers and please pay the electric bill, don't buy anything else", 'i want to buy apples dont buy anything and can you pay my rent',
+    "I want to buy flowers, but don't buy anything else",
+    // Review 4: "for me" and "buy me" have someone else, CHE, paying.
+    "I want to buy flowers and pay the electric bill for me, don't buy anything", "I want to go to Walmart and buy me a TV, don't order anything online"]) {
     assert.deepEqual(classifyOwnerActions(ask), ['money'], ask);
   }
   for (const ask of ["Don't ask, delete anything older than a week from my notes", "Don't ask me, remove anything older than 30 days"]) {

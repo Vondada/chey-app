@@ -45,8 +45,9 @@ const ANALYSIS = /\b(?:analy[sz]e|analysis\s+(?:of|on)|break\s+down|assess)\b[\s
 const FEED_DETAIL = /\b(?:paper\s+trades?|vwap|data\s+delay|delay(?:ed)?|time\s*stamps?|data\s+source|(?:the|its)\s+source|latest\s+(?:available\s+)?(?:market\s+)?data)\b/i;
 // An order asked for in the turn belongs to the desk (fundyouredge.js, trading_desk.js); the chart
 // analyzer uses the same test. "Short MNQ" is an order; "short positions" and "short-term" are reads.
-export const ORDER_FIRST = /^(?:place|submit|enter|buy|sell|short|go\s+long|go\s+short|take\s+(?:the|a)\s+trade|open\s+a\s+(?:position|trade)|order|trade|prepare|set\s+up)\b/i;
-const ORDER_ASK = /\b(?:place|submit|enter|buy|sell|go\s+long|go\s+short|take\s+(?:the|a|this|that)\s+trade|open\s+a\s+(?:position|trade))\b|\bshort\b(?![\s-]*(?:term|positions?|trades?|side)\b)/i;
+// "Reverse my position", "flatten" and "close my position" are orders too.
+const ORDER_FIRST = /^(?:place|submit|enter|buy|sell|short|go\s+long|go\s+short|take\s+(?:the|a)\s+trade|open\s+a\s+(?:position|trade)|order|trade|prepare|set\s+up|reverse|flatten|close)\b/i;
+export const ORDER_ASK = /\b(?:place|submit|enter|buy|sell|go\s+long|go\s+short|take\s+(?:the|a|this|that)\s+trade|open\s+a\s+(?:position|trade)|reverse|flatten|close\s+(?:out\s+)?(?:my|the|that|this|all)\s+(?:\w+\s+)?(?:positions?|trades?|longs?|shorts?))\b|\bshort\b(?![\s-]*(?:term|positions?|trades?|side)\b)/i;
 
 /** The command in [message], or null. Narrow on purpose: other trading talk keeps its routes.
  *  A turn that asks several reads gets `kinds`, in the order asked; `kind` is the first. */
