@@ -64,6 +64,16 @@ Then, on GitHub:
 - Next: open focused PR for milestone 1 when the owner is ready (or continue: milestone 2 = scripted multi-agent demo via officeGoal + War Room board wiring + orb-tap deep link to the real task; then Phase B typed memory/provenance).
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
+## 2. Current position (Claude, 2026-10-19 — PR #356 builder: branch `claude/che-comprehension-audit` pushed at df1acec, no PR action, not merged)
+- **Pushed** `claude/che-comprehension-audit` fast-forward c6085c9 -> 46db2f1 (REA compare routing) -> df1acec (claim guard). Head `df1aceccab1d9e1ffaf74e8f4459e9e1e4bfe476`.
+- Routing cause: the owner's "Which of those features could improve your app?" never reached REA. The phone classifier (`lib/self_update/che_self_update_intent.dart` cheSurfaceChange branch) posts it to `/api/change/request`, and `ownerBuildAuthorization` (`code_scout.js`) granted a BUILD from the question. Fixed: `modalQuestion` in `code_scout.js` (a which/what/how question with a modal is not a build); `dispatchChange` in `worker.js` tries REA's read-only answer for non-BUILD turns.
+- Claim guard (review of c6085c9, blockers 1-3) fixed in `truth_layer.js` with exact-reply tests in `comprehension_holds.test.mjs`.
+- Verified: full suite `node --test ./*.test.mjs` exit 0, tests 2238, pass 2231, fail 0, skipped 7 (REA browser tests, no `tools/rea/web`). The 60 s coding_runtime timeout did not recur.
+- Cancel: owner-only `/api/job/cancel` exists (HTTP, queued-only). No voice or typed command and no app button: a gap, not built here.
+- Job `c2987a73`: NOT verified. The Worker host is refused by the sandbox proxy and the status route needs the owner's device token.
+- Not done: the Dart classifier still sends such questions to `/api/change/request` (needs `flutter test`); no PR opened; nothing merged or deployed. Review must be re-run on df1acec.
+- Next: owner or coordinator reviews df1acec; a Dart classifier fix and a catalog cancel command are separate tasks.
+
 ## 2. Current position (Claude, 2026-10-19 11:25 UTC — Broker #355 blockers B1-B4: branch `claude/che-broker-orders` pushed at cda22ec, no PR, nothing deployed)
 - **Pushed** `claude/che-broker-orders` at cda22ec, a fast-forward on 847594a (no force). No PR opened, nothing merged, nothing deployed.
 - Fixes for the #355 review blockers, all in `server/cloudflare/trading_desk.js` and `worker.js`:
