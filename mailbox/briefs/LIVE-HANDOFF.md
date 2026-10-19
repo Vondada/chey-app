@@ -64,6 +64,21 @@ Then, on GitHub:
 - Next: open focused PR for milestone 1 when the owner is ready (or continue: milestone 2 = scripted multi-agent demo via officeGoal + War Room board wiring + orb-tap deep link to the real task; then Phase B typed memory/provenance).
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
+## 2. Current position (Claude, 2026-10-19 ~01:30 UTC — #351 MERGED and LIVE (f2992a7); #352 batch in review; five parallel batches running on the owner's "batch and parallel every assignment")
+- **#351 MERGED** (owner: "Yes merge when green") as f2992a7. Deploy run 39180527957: live commit verified, memory 12/12, Command Center 5/5, voice probe passed.
+  - It fixes the five #350 iPhone tests plus the voice-choice test.
+  - Money/delete holds fail closed. The one exemption: the owner's own plan plus a blanket ban on buying.
+  - Independent review: 4 rounds, approved.
+  - **Owner retest needed** on the iPhone: the six exact sentences.
+- **#352** (claude/che-intent-compact, base main): the #345 compact frame (reading-model calls 98→75 on 358 owner sentences; text compaction only −0.5%, so it is not used to shorten the reply context), lossless text bounds, and trading follow-ups. Review running; merge when green.
+- **Parallel batches (branches; each gets review → PR → merge when green):**
+  - claude/che-knowledge-atlas (#346)
+  - claude/che-creator-studio (#347)
+  - claude/che-comprehension-audit: 300+ turn E2E corpus, collisions fixed, "Understood as"
+  - claude/che-broker-orders (#344 Alpaca paper voice orders with per-order confirm, options level; #342 TradeSea WebView)
+  - claude/che-brain-history (Flagstaff archive into the Brain as outside correspondence; activity-status branch)
+- **Still blocked on the owner:** Tradovate API approval (#344 demo orders); a GPU benchmark run on the iPhone (#335); ElevenLabs credits (the owner's cap).
+
 ## 2. Current position (Claude, 2026-10-19 ~00:15 UTC — #337, #338, #348, #349 MERGED and LIVE; #350 five tests + voice test FIXED on branch, PR #351 open, NOT merged: needs owner merge approval)
 - **Merged and deployed (deploy probes green each time: memory 12/12, Command Center 5/5, live commit verified):**
   - #337 Brain follow-ups: b7a8f73 (Shorebird patch success, run 39174139497).
