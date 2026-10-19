@@ -45,6 +45,15 @@ void main() {
     expect(find.text('PAPER'), findsOneWidget);
     expect(find.text('DELAYED'), findsOneWidget);
     expect(find.textContaining('MNQZ6'), findsOneWidget);
+    expect(find.text('CHE PAPER CHART'), findsOneWidget);
+    expect(find.textContaining('Prices are delayed'), findsOneWidget);
+    expect(find.textContaining('LIVE CME data needs your Tradovate sign-in.'), findsNothing);
+    await tester.tap(find.text('Why are prices delayed?'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('LIVE CME data needs your Tradovate sign-in.'), findsOneWidget);
+    await tester.ensureVisible(find.text('Trade history'));
+    await tester.tap(find.text('Trade history'));
+    await tester.pumpAndSettle();
     expect(find.textContaining('pdhl-sweep-5m'), findsWidgets);
     expect(find.textContaining('not yet evidence'), findsOneWidget);
     expect(asked, isEmpty, reason: 'opening the Trading Room is silent');
