@@ -64,6 +64,14 @@ Then, on GitHub:
 - Next: open focused PR for milestone 1 when the owner is ready (or continue: milestone 2 = scripted multi-agent demo via officeGoal + War Room board wiring + orb-tap deep link to the real task; then Phase B typed memory/provenance).
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
+## 2. Current position (Claude, 2026-10-19 14:00 UTC — PR #356 review round 3: branch `claude/che-comprehension-audit` pushed at 5c1ea3a, not merged)
+- **Pushed** fast-forward 48f5a58 -> `5c1ea3a1d1110cfa189f97fa37b19cf6a22a1042`. No merge, no deploy. Flutter check dispatched: run 39264688741.
+- B1: and/then clauses inside a question are part of the question (`code_scout.js` questionNotRequest, per sentence; REA uses it too).
+- Required: real orders build again ("Do it now: fix ...", "Have your coding team fix ...", "Can you just fix ..."). An auxiliary opens a question only with a subject after it. `speech_intent.js` no longer treats "do it now <own action>" as a reference to the previous request.
+- B2: `truth_layer.js` exempts only a named third party who acted. The owner's own instrument and stores never exempt: "Paid the bill from your checking account" is denied. A source phrase needs a record from this turn (`worker.js` passes screen, skill, action, plugin and office results); otherwise the neutral note.
+- Tests: named files 348/348. Full suite exit 0: 2284 tests, 2277 pass, 0 fail, 7 skipped.
+- Next: re-review of 5c1ea3a. Still open: the Dart classifier; a voice cancel command.
+
 ## 2. Current position (Claude, 2026-10-19 13:45 UTC — PR #356 review round 2: branch `claude/che-comprehension-audit` pushed at 48f5a58, not merged)
 - **Pushed** fast-forward df1acec -> `48f5a58e02ce8b0d72c0925aeff9b7ffd4db23c5`. No merge, no deploy. Flutter check dispatched: run 39261774378.
 - B1: a question never builds (`code_scout.js` questionNotRequest, checked first in ownerBuildAuthorization; `rea_runner.js` turns question-form "add those features into yourself" into a read-only comparison). Builds stay for imperatives and "Can/Could/Would/Will you <verb> ...".
