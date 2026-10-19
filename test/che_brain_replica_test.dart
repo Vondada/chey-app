@@ -551,4 +551,33 @@ void main() {
     }
     expect(brain.count, kept.length);
   });
+
+  test('T: the 3- and 6-character code repros, a Stripe-shaped key behind a Google path and a random Google ID are withheld; the two Google document links are kept (fourth review of #354)', () async {
+    final dir = await freshDir();
+    final brain = CheBrainReplica(directory: dir);
+    // Built from pieces, so no literal key-shaped string sits in the repository (GitHub push protection).
+    final stripeLike = ['sk_live_', '4eC39HqLyjWDarjtT1zdp7dc'].join();
+    final randomId = ['Q7mZ2kP9', 'xL4vN8wR3tY6uB1c'].join();
+    final withheld = [
+      'Backup code ${['ABCDE1', 'FGHIJ2', 'KLMNO3', 'PQRST4'].join('-')} for the account',
+      'Backup code ${['AB1', 'CD2', 'EF3', 'GH4'].join('-')} for the account',
+      'Ship WARN-ERROR-FAIL-DONE tonight',
+      'See https://docs.google.com/d/$stripeLike now',
+      'See https://docs.google.com/document/d/$randomId/edit',
+    ];
+    for (final text in withheld) {
+      expect(cheBrainTextIsSensitive(text), isTrue, reason: text);
+      expect(await brain.remember(kind: 'memory', region: 'Personal Memory', body: text), isNull, reason: text);
+    }
+    expect(brain.count, 0);
+    final kept = [
+      'Here is the doc https://docs.google.com/document/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit for Monday',
+      'Drive link https://drive.google.com/file/d/1AbCdEfGhIjKlMnOpQrStUvWxYz012345/view',
+    ];
+    for (final text in kept) {
+      expect(cheBrainTextIsSensitive(text), isFalse, reason: text);
+      expect(await brain.remember(kind: 'memory', region: 'Personal Memory', body: text), isNotNull, reason: text);
+    }
+    expect(brain.count, kept.length);
+  });
 }

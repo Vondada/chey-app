@@ -864,3 +864,21 @@ test('an office task whose result holds a broker key is projected as a safe outl
   assert.equal(JSON.stringify(row).includes(key), false, 'the key is in no field of the stored record');
   assert.deepEqual(store.search(key, { limit: 10 }).map((r) => r.id), []);
 });
+
+test('fourth review of #354: the 3- and 6-character code repros are withheld by the gate, the write path and the correspondence redaction', async (t) => {
+  // Built from pieces, as the other fixtures are.
+  const repros = [`Backup code ${['ABCDE1', 'FGHIJ2', 'KLMNO3', 'PQRST4'].join('-')} for the account`, `Backup code ${['AB1', 'CD2', 'EF3', 'GH4'].join('-')} for the account`];
+  for (const text of repros) {
+    assert.equal(isSafeMemoryText(text), false, text);
+    assert.equal(isSafeText(text), false, text);
+    const redacted = redactCorrespondence(text);
+    assert.equal(redacted.withheld, 1, text);
+    assert.doesNotMatch(redacted.text, /ABCDE1|AB1-CD2/, text);
+  }
+  const storage = await sqlStorage();
+  if (!storage) return t.skip('node:sqlite unavailable');
+  const store = new CheBrainStore(storage);
+  const record = { id: 'note:code-1', kind: 'note', region: BRAIN_REGIONS.personal, path: 'Family', title: 'Backup code', body: repros[1], verification: 'owner_attested', source: { kind: 'note' }, links: [] };
+  assert.equal(store.put(record).outcome, 'rejected');
+  assert.equal(store.get('note:code-1'), null);
+});

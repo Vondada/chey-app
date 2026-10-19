@@ -48,14 +48,16 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 // Slack and Discord webhooks carry the secret in the path itself, so the path is the secret.
 const WEBHOOK_RE = /hooks\.slack\.com\/services\/|discord(?:app)?\.com\/api\/webhooks\//i;
 const URL_RE = /:\/\/|^www\./i;
-// A code is four or more hyphen-separated groups of four or five letters and digits, and each group
-// has a digit or all groups are capitals: "8F3K-9LQ2-7MZP-4XWD", "ABCD-EFGH-IJKL-MNOP". Ordinary
-// words are not codes: "CHE-APP-V2-BETA", "Form-1099-NEC-tax-2025", "iPhone-15-Pro-Max" and
-// "Sprint-12-week-3-retro" have a group that is not four or five characters (third review of #354).
+// A code is four or more hyphen-separated groups of three to eight letters and digits, and each group
+// has a digit or all groups are capitals: "8F3K-9LQ2-7MZP-4XWD", "ABCDE1-FGHIJ2-KLMNO3-PQRST4",
+// "AB1-CD2-EF3-GH4", "ABCD-EFGH-IJKL-MNOP" (fourth review of #354: the group length is {3,8}, not {4,5}).
+// Ordinary words are not codes: "CHE-APP-V2-BETA" (a two-character group), "Form-1099-NEC-tax-2025" (not
+// every group has a digit, and not all are capitals), "iPhone-15-Pro-Max" and "Sprint-12-week-3-retro"
+// (two-character groups).
 function groupedCode(token) {
   if (UUID_RE.test(token)) return false;
   const groups = token.split('-');
-  if (groups.length < 4 || !groups.every((g) => /^[A-Za-z0-9]{4,5}$/.test(g))) return false;
+  if (groups.length < 4 || !groups.every((g) => /^[A-Za-z0-9]{3,8}$/.test(g))) return false;
   if (!/[A-Za-z]/.test(groups.join(''))) return false;
   return groups.every((g) => /\d/.test(g)) || groups.every((g) => /^[A-Z0-9]+$/.test(g));
 }
@@ -78,15 +80,24 @@ function plainSecret(trimmed) {
   const switches = (token.match(/[A-Za-z](?=\d)|\d(?=[A-Za-z])/g) || []).length;
   return mixedCase && ((token.length >= 12 && switches >= 3) || token.length >= 24);
 }
-// A document ID in the path of docs.google.com or drive.google.com ("/d/<id>", "/folders/<id>") is an
-// address, not a credential: it is exempt from the random-run rule only (third review of #354). Its hex rule,
-// and the link's userinfo and query checks, still apply.
+// A document ID is an address, not a credential, so it is exempt from the random-run rule only, and only
+// in Google's own shapes (fourth review of #354): "/document/d/<id>", "/spreadsheets/d/<id>",
+// "/presentation/d/<id>", "/file/d/<id>", "/forms/d/<id>" and "/drive/folders/<id>", on docs.google.com or
+// drive.google.com, with an ID of 28 to 64 characters. "/d/<secret>" with no type is not exempt. The hex
+// rule and the link's userinfo and query checks still apply.
 const GOOGLE_DOC_HOST_RE = /^(?:docs|drive)\.google\.com$/i;
+const GOOGLE_DOC_TYPES = new Set(['document', 'spreadsheets', 'presentation', 'file', 'forms']);
+const GOOGLE_DOC_ID_RE = /^[A-Za-z0-9_-]{28,64}$/;
 function googleDocSegments(authority, segments) {
   const ids = new Set();
   const host = authority.slice(authority.lastIndexOf('@') + 1).split(':')[0];
   if (!GOOGLE_DOC_HOST_RE.test(host)) return ids;
-  segments.forEach((segment, i) => { if (i > 0 && (segments[i - 1] === 'd' || segments[i - 1] === 'folders')) ids.add(i); });
+  segments.forEach((segment, i) => {
+    if (i < 2 || !GOOGLE_DOC_ID_RE.test(segment)) return;
+    const before = segments[i - 2];
+    const prev = segments[i - 1];
+    if ((prev === 'd' && GOOGLE_DOC_TYPES.has(before)) || (prev === 'folders' && before === 'drive')) ids.add(i);
+  });
   return ids;
 }
 // A link is judged by its parts. Its userinfo and query values get the full token check (a password

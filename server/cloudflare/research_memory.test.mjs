@@ -235,3 +235,41 @@ test('third review of #354: ordinary hyphenated words and Google document links 
     assert.equal(hasSecretShape(text), true, text);
   }
 });
+
+// ─── Fourth review of #354: codes of any group length, and only Google's own document shapes ───────
+test('fourth review of #354: 3- and 6-character code groups are withheld; Google document IDs after their own type are kept; a bare or random ID is withheld', () => {
+  const PASS_SYM = ['Summer', '2026', '!'].join('');
+  const DOC_ID = '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms';
+  const DRIVE_ID = '1AbCdEfGhIjKlMnOpQrStUvWxYz012345';
+  // Built from pieces, so no literal key-shaped string sits in the repository (GitHub push protection).
+  const STRIPE_LIKE = ['sk_live_', '4eC39HqLyjWDarjtT1zdp7dc'].join('');
+  const SIX_GROUP = ['ABCDE1', 'FGHIJ2', 'KLMNO3', 'PQRST4'].join('-');
+  const THREE_GROUP = ['AB1', 'CD2', 'EF3', 'GH4'].join('-');
+  const withheld = [
+    `Backup code ${SIX_GROUP} for the account`,
+    `Backup code ${THREE_GROUP} for the account`,
+    'Ship WARN-ERROR-FAIL-DONE tonight',
+    `See https://docs.google.com/d/${STRIPE_LIKE} now`,
+    `See https://docs.google.com/document/d/${RANDOM_PATH}/edit`,
+    `Doc https://docs.google.com/document/d/${DOC_ID}/edit?pw=${PASS_SYM}`,
+  ];
+  for (const text of withheld) {
+    assert.equal(isSafeMemoryText(text), false, text);
+    assert.equal(hasSecretShape(text), true, text);
+  }
+  const kept = [
+    `Here is the doc https://docs.google.com/document/d/${DOC_ID}/edit for Monday`,
+    `Drive link https://drive.google.com/file/d/${DRIVE_ID}/view`,
+    `Sheet https://docs.google.com/spreadsheets/d/${DOC_ID}/edit#gid=0`,
+    `Folder https://drive.google.com/drive/folders/${DRIVE_ID}`,
+    'Warn-Error-Fail-Done tonight',
+    'Keep the CHE-APP-V2-BETA plan in the drafts folder',
+    'Form-1099-NEC-tax-2025 filed on time',
+    'The iPhone-15-Pro-Max is the phone I want',
+    'Sprint-12-week-3-retro notes are in the folder',
+  ];
+  for (const text of kept) {
+    assert.equal(isSafeMemoryText(text), true, text);
+    assert.equal(hasSecretShape(text), false, text);
+  }
+});

@@ -88,8 +88,11 @@ final RegExp _linkHeadShape = RegExp(r'^(?:[a-z][a-z0-9+.-]*://|www\.)([^/?#]*)'
 final RegExp _pathSplitShape = RegExp(r'[?#]');
 final RegExp _queryPieceSplitShape = RegExp(r'[?&=#]+|%[0-9A-Fa-f]{2}');
 final RegExp _randomRunShape = RegExp(r'^[A-Za-z0-9_]{20,}$');
-final RegExp _groupShape = RegExp(r'^[A-Za-z0-9]{4,5}$');
+final RegExp _groupShape = RegExp(r'^[A-Za-z0-9]{3,8}$');
 final RegExp _googleDocHostShape = RegExp(r'^(?:docs|drive)\.google\.com$', caseSensitive: false);
+// A Google document ID is 28 to 64 letters, digits, hyphens or underscores (fourth review of #354).
+final RegExp _googleDocIdShape = RegExp(r'^[A-Za-z0-9_-]{28,64}$');
+const _googleDocTypes = {'document', 'spreadsheets', 'presentation', 'file', 'forms'};
 final RegExp _upperGroupShape = RegExp(r'^[A-Z0-9]+$');
 final RegExp _letterShape = RegExp(r'[A-Za-z]');
 final RegExp _digitShape = RegExp(r'\d');
@@ -146,14 +149,17 @@ bool _groupedCode(String token) {
   return groups.every(_digitShape.hasMatch) || groups.every(_upperGroupShape.hasMatch);
 }
 
-// A document ID in the path of docs.google.com or drive.google.com ("/d/<id>", "/folders/<id>") is exempt
-// from the random-run rule only, as in research_memory.js.
+// A document ID in Google's own shapes is exempt from the random-run rule only, as in research_memory.js
+// (fourth review of #354: the type must come before "/d/", and the ID must be 28 to 64 characters).
 Set<int> _googleDocSegments(String authority, List<String> segments) {
   final ids = <int>{};
   final host = authority.substring(authority.lastIndexOf('@') + 1).split(':').first;
   if (!_googleDocHostShape.hasMatch(host)) return ids;
-  for (var i = 1; i < segments.length; i++) {
-    if (segments[i - 1] == 'd' || segments[i - 1] == 'folders') ids.add(i);
+  for (var i = 2; i < segments.length; i++) {
+    if (!_googleDocIdShape.hasMatch(segments[i])) continue;
+    final before = segments[i - 2];
+    final prev = segments[i - 1];
+    if ((prev == 'd' && _googleDocTypes.contains(before)) || (prev == 'folders' && before == 'drive')) ids.add(i);
   }
   return ids;
 }
