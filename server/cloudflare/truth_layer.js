@@ -579,6 +579,11 @@ const AFFIRMATION_ONLY = new RegExp(String.raw`^\s*(?:i\s+(?:did|have|am\s+sure)
 // A past-tense action with no subject: "Sent it.", "Sent the report to Sarah, sir." CHE cannot have made the call by itself,
 // so the claim is taken out and named (blocker 3, PR #356). "Sent items", "Sent from my iPhone" name no action and stay.
 const BARE_ACTION = /^\s*(sent|emailed|texted|forwarded|bought|purchased|ordered|paid|transferred|deleted|uploaded|published|posted|booked|scheduled|sold|subscribed)\s+(?=(?:it|them|that|this|the|a|an|your|my|his|her|their|our|me|him|everything|all|to|for)\b)/i;
+// A record statement names its source or another actor: "according to your calendar", "per the log", "from Sarah",
+// "by the campaign". It reports the owner's record, not an action by CHE, so the bare-action rule never denies it
+// (review of #356, round 2, N1). "by email" and "by the deadline" name a method or a time, not an actor.
+const NAMES_SOURCE = /\b(?:according\s+to|per\s+(?:the|your|my|our|his|her|their)\b|as\s+(?:shown|listed|recorded|logged|noted)\b|(?:your|the)\s+(?:calendar|log|logs|records?|history|statement|receipt|inbox)\s+(?:shows?|says?|lists?|has)\b)/i;
+const NAMES_ACTOR = /\b(?:from|by)\s+(?:[A-Z][\w'’-]*|(?:the|your|his|her|their|our)\s+(?!(?:deadline|end|time|way|morning|evening|afternoon|weekend|close)\b)[a-z][\w'’-]*|him|them|someone|somebody)\b/;
 // "Done, sir." / "All done." / "Consider it done." / "Sent." opening a sentence.
 const DONE_RE = /^\s*(?:(?:all|it['’]?s|it\s+is)\s+)?done\b(?!\s+(?:with|by|in|for|on|at|before|after)\b)|\bconsider\s+it\s+done\b|^\s*(?:sent|ordered|bought|booked|scheduled|deleted|uploaded|published|posted|placed)\s*(?:[,.!]|$)/i;
 // A condition, a plan or a question about the action does not claim it: "once I've sent it", "if I had paid".
@@ -816,7 +821,7 @@ export function guardClaimedOwnerActions(reply, { message = '', acted = false } 
     }
     // Blocker 3 (PR #356): a bare past-tense action is CHE's claim, named for the denial ("Nothing was sent, sir").
     const bare = BARE_ACTION.exec(plain);
-    if (!hit && bare) {
+    if (!hit && bare && !NAMES_SOURCE.test(plain) && !NAMES_ACTOR.test(plain)) {
       hit = STRONG_DONE[bare[1].toLowerCase()];
       claimed.add(hit);
     }

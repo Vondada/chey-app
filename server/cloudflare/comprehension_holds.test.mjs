@@ -413,6 +413,19 @@ for (const [reply, reviewed] of [
     assert.equal(turn.reply, reviewed);
   });
 }
+// Review of #356, round 2 (N1): a statement that names its source or another actor is a record, not CHE's claim. Removing it
+// would tell the owner something did not happen when his records say it did.
+for (const record of [
+  'Scheduled for Friday at 3 PM, according to your calendar, sir.',
+  'Forwarded to Sarah yesterday, sir, per the log.',
+  'Sent the 9:14 email from Sarah, sir.',
+  'Paid for by the campaign, sir.',
+]) {
+  test(`claim guard N1: "${record}" names its source and stays as written`, async () => {
+    const [turn] = await session(['send Sarah the report'], { model: record });
+    assert.equal(turn.reply, record);
+  });
+}
 // Blocker 3, must stay: an owner's words quoted in a question, a signature, a noun, and a plain statement that names no action by CHE.
 for (const honest of [
   'Did you say "sent it"? I did not hear that, sir.',

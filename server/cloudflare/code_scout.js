@@ -144,19 +144,33 @@ export function hypotheticalChange(text) {
     || /\bif\s+(?:you\s+could|i\s+(?:asked|told|wanted)\s+you)\b/i.test(value);
 }
 
-// "Which of those features could improve your app?", "what could we change in CHE?": a question with a modal
-// ("could", "would", "should", "might", "may") about a target. A question is never a build by itself (owner rule,
-// REA compare #356): only a sentence that opens with a build imperative is an order, and the explicit checks in
-// ownerBuildAuthorization already take those.
-function modalQuestion(text) {
-  const value = withoutQuotedText(String(text || '').trim());
-  return /^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:(?:so|and|well|ok(?:ay)?)[,]?\s+)?(?:which|what|how)\b[^.!?;]{0,160}\b(?:could|would|should|might|may)\b/i.test(value)
-    && !/(?:^|[.!?;]\s+)(?:please\s+|now\s+)?(?:build|implement|add|fix|update|improve|change|modify|patch|integrate|install|rewrite|refactor|apply)\b/i.test(value);
+// When a turn starts a build (owner rule as decided on the review of #356): a sentence builds only when it is
+// (a) an imperative with a build verb and a target ("Add dark mode to your app.", "Build it into yourself."), or
+// (b) a direct polite request for CHE to do it ("Can / Could / Would / Will you add dark mode to your app?").
+// Every other question never builds: an opinion ("Do you think any of those features could improve your app?"), an
+// evaluation, advice ("Should we add dark mode?"), an explanation ("How do we fix the login bug?") or a "tell me
+// which" request. Shared with REA (rea_runner.js), so "Should I add those features into yourself?" is not a build there.
+const BUILD_VERB = String.raw`(?:implement|integrate|adapt|apply|install|add|upgrade|update|improve|rewrite|refactor|build|rebuild|change|modify|patch|fix|repair|create|make|start|open|queue|launch|run|resume|continue|retry|recover|finish|merge|ship|redesign|remove|move|restyle|put|study|work\s+on)`;
+const TURN_LEAD = String.raw`^\s*(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:(?:ok(?:ay)?|so|and|now|then|alright|well|great|good|also)[,]?\s+)*(?:(?:for|in)\s+(?:this|the)\s+(?:task|change|update)[,:]?\s*)?`;
+const OPENS_BUILD = new RegExp(String.raw`${TURN_LEAD}(?:(?:please|now|just)\s+|go\s+ahead\s+(?:and\s+)?|i\s+(?:want|need)\s+you\s+to\s+|(?:can|could|would|will)\s+you\s+(?:please\s+)?)?${BUILD_VERB}\b`, 'i');
+// A question by its opening: an auxiliary or modal ("Could any of those…", "Should we…", "Do you think…", "Is there…"),
+// a question word that does not open a statement ("What I want you to do is build…" does), or a request to be told
+// something ("Tell me which…"). "Do not deploy yet" is an order, not a question.
+const ASKS_NOT_ORDERS = new RegExp(String.raw`${TURN_LEAD}(?:(?:do|does|did)\b(?!\s+not\b)|(?:is|are|was|were|am|should|shall|could|would|can|will|may|might|must|has|have|had)\b|(?:how|what|which|who|whom|whose|where|when|why|whether)\b(?!\s+(?:i|we)\s+(?:want|need|would\s+like)\b)|(?:tell|show)\s+(?:me|us)\s+(?:which|what|whether|if|how|why|who|where|when)\b|let\s+me\s+know\s+(?:which|what|whether|if|how)\b|i\s+wonder\b)`, 'i');
+
+export function questionNotRequest(message) {
+  const text = withoutQuotedText(String(message || '').trim());
+  // Sentences, and clauses after "and" or "then": "Tell me about it and fix the bug in your app" has an imperative clause.
+  const parts = text.split(/(?<=[.!?;])\s+|,?\s+(?:and|then|and\s+then)\s+(?=\S)/i).map((part) => part.trim()).filter(Boolean);
+  if (!parts.length || parts.some((part) => OPENS_BUILD.test(part))) return false;
+  return text.split(/(?<=[.!?;])\s+/).some((sentence) => /\?\s*$/.test(sentence) || ASKS_NOT_ORDERS.test(sentence));
 }
 
 function ownerBuildAuthorization(message) {
   const text = withoutQuotedText(String(message || '').trim());
   if (!text || buildProhibition(text)) return false;
+  // A question never builds; only an imperative or a direct polite request does (see questionNotRequest).
+  if (questionNotRequest(text)) return false;
 
   // Direct repository/GitHub follow-ups are owner actions on an existing
   // authorized change, not a new inferred coding request.
@@ -173,7 +187,6 @@ function ownerBuildAuthorization(message) {
     || imperativeImplementation(text)
     || compoundImplementationAuthorization(text);
   if (direct) return true;
-  if (modalQuestion(text)) return false;
 
   // Preserve legitimate natural-language BUILD requests that do not begin
   // with the mutation verb ("study X and implement what you learn", "can you

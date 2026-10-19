@@ -34,6 +34,7 @@ import {
 } from './rea_features.js';
 import { validateWebSummary } from './rea_web_evidence.js';
 import { withoutProhibitions } from './owner_action_gate.js';
+import { questionNotRequest } from './code_scout.js';
 
 export const REA_WORKFLOW = 'che-rea-analysis.yml';
 export const REA_WORKFLOW_REF = 'main';
@@ -108,8 +109,12 @@ function parseNaturalRea(text, { history = [] } = {}) {
   if (text.length > 600) return null;
   // Follow-ups about an earlier investigation; handleReaRequest drops them when there is none.
   const named = text.match(BUILD_NAMED);
-  if (RECALL.test(text) || named || BUILD_THOSE.test(text)) {
-    return { command: named || BUILD_THOSE.test(text) ? 'build' : 'recall', input: named ? named[1].trim() : '', natural: true, followup: true };
+  const buildWords = Boolean(named) || BUILD_THOSE.test(text);
+  // "Should I add those features into yourself?" asks; it does not order a build (review of #356, round 2). The
+  // read-only comparison answers it. "Build those into yourself" and "Could you add those into yourself?" still build.
+  if (buildWords && questionNotRequest(text)) return { command: 'compare', input: '', natural: true, followup: true, build_question: true };
+  if (RECALL.test(text) || buildWords) {
+    return { command: buildWords ? 'build' : 'recall', input: named ? named[1].trim() : '', natural: true, followup: true };
   }
   const wantsGap = GAP.test(text);
   // A run the owner forbade ("don't run it") or only imagined ("if I asked you to run REA on Spotify") is not asked for.
@@ -955,7 +960,8 @@ export async function handleReaRequest(storage, env, message, { fetcher = fetch,
     if (!/^[\w.-]+\/[\w.-]+$/.test(String(env.CHE_GITHUB_REPO || '').trim())) return { ok: false, investigation_id: inv.id, text: 'Comparing needs my repository name (CHE_GITHUB_REPO), and it is not set. Nothing was marked missing.' };
     const done = await compareInvestigation(storage, env, inv, fetcher, now);
     await rememberInvestigation(remember, done);
-    return { ok: true, investigation_id: inv.id, text: compareAnswer(done) };
+    const asked = request.build_question ? '\n\nThat was a question, so nothing was built. Say "Build those features into yourself" when you want them built.' : '';
+    return { ok: true, investigation_id: inv.id, text: `${compareAnswer(done)}${asked}` };
   }
   if (request.command === 'rebuild') {
     const wanted = request.input.replace(/rea-[0-9a-f]{8}/, '').match(/\bf\d{1,2}\b/g) || (request.input.replace(/rea-[0-9a-f]{8}/, '').trim() ? [request.input.replace(/rea-[0-9a-f]{8}/, '').trim()] : []);

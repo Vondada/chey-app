@@ -210,3 +210,63 @@ test('cancel: cancelling the unauthorized queued job leaves the authorized queue
   assert.equal(refused.jobs.length, 3, 'no job is lost');
   assert.equal(refused.jobs.find((job) => job.id === AUTHORIZED.id).status, 'queued');
 });
+
+// Review of #356 (round 2), blocker B1. The rule: a sentence starts a build only when it is (a) an imperative with a build
+// verb and a target, or (b) a direct polite request for CHE to do it ("Can / Could / Would / Will you <build verb> ...").
+// Every other question never builds, on /api/change/request, on /api/chat and on the REA path.
+const NEVER_BUILD = [
+  'Do you think any of those features could improve your app?',
+  'Tell me which features could improve your app.',
+  'Is there a feature that could improve your app?',
+  'Could any of those features improve your app?',
+  'Would any of those features improve your app?',
+  'Should we add dark mode to your app?',
+  'How do we fix the login bug in your app?',
+];
+function assertNoJob(turn, where) {
+  assert.equal(turn.codingJobsCreated, 0, `${where}: no job. Reply: ${turn.reply.slice(0, 160)}`);
+  assert.doesNotMatch(turn.reply, /coding job/i, `${where}: no acceptance reply`);
+  assert.deepEqual(turn.repoWrites, [], `${where}: no repository write`);
+}
+for (const say of NEVER_BUILD) {
+  test(`B1: "${say}" never builds, on either route, with or without an investigation on record`, async () => {
+    for (const route of ['chat', 'change']) {
+      const [alone] = await owner([{ say, route }]);
+      assertNoJob(alone, `${route}, no investigation`);
+      const after = await owner([{ say: INVESTIGATE }, { say: OWNER_COMPARE }, { say, route }]);
+      assertNoJob(after.at(-1), `${route}, after an investigation and a comparison`);
+    }
+  });
+}
+
+// The REA path: a question about building the compared features is answered read-only, with no build.
+for (const say of ['Should I add those features into yourself?', 'Do you think I should build those features into yourself?']) {
+  test(`B1 REA: "${say}" after a comparison is a read-only REA answer with no build, on either route`, async () => {
+    for (const route of ['chat', 'change']) {
+      const turn = (await owner([{ say: INVESTIGATE }, { say: OWNER_COMPARE }, { say, route }])).at(-1);
+      assert.equal(turn.source, 'che_rea', `${route}: ${turn.reply.slice(0, 160)}`);
+      assert.match(turn.reply, /nothing was built/i, route);
+      assertNoJob(turn, route);
+    }
+  });
+}
+
+// Each (a) and (b) example still builds. REA builds need the comparison on record and the chat route.
+const STILL_BUILDS = [
+  ['Add dark mode to your app.', ['chat', 'change']],
+  ['Fix the login bug in your app.', ['chat', 'change']],
+  ['Build the search feature into your app.', ['chat', 'change']],
+  ['Build those approved features into yourself.', ['chat']],
+  ['Build it into yourself.', ['chat', 'change']],
+  ['Could you add dark mode to your app?', ['chat', 'change']],
+  ['Can you improve your code so you can create a PR?', ['chat', 'change']],
+  ['Could you add those features into yourself?', ['chat']],
+];
+for (const [say, routes] of STILL_BUILDS) {
+  test(`B1: the build request "${say}" still builds (${routes.join(' and ')})`, async () => {
+    for (const route of routes) {
+      const turn = (await owner([{ say: INVESTIGATE }, { say: OWNER_COMPARE }, { say, route }])).at(-1);
+      assert.equal(turn.codingJobsCreated, 1, `${route}: ${turn.reply.slice(0, 160)}`);
+    }
+  });
+}

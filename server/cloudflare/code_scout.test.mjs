@@ -420,6 +420,10 @@ test('a question is never a build by itself: which/what/how ... could/would ... 
   for (const text of [
     'Which of those features could improve your app?', 'which of those features could improve your app', 'What could improve your app?',
     'Which features would improve your app and which should we add?', 'What could we change in your app?', 'How could your app be improved?',
+    // Review of #356, round 2 (B1): opinions, evaluations, advice, explanations and "tell me which" requests.
+    'Do you think any of those features could improve your app?', 'Tell me which features could improve your app.',
+    'Is there a feature that could improve your app?', 'Could any of those features improve your app?', 'Would any of those features improve your app?',
+    'Should we add dark mode to your app?', 'How do we fix the login bug in your app?', 'Do you think I should build those features into your app?',
   ]) {
     assert.equal(currentTurnActionPolicy(text).codingJobAllowed, false, text);
     assert.equal(currentTurnActionPolicy(text).ownerAuthorizedBuild, false, text);
@@ -428,6 +432,9 @@ test('a question is never a build by itself: which/what/how ... could/would ... 
   for (const text of [
     'Build the search feature into your app.', 'Improve your app with the search feature.', 'Can you improve your code so you can create a PR?',
     'Which features could improve your app? Build the search feature into your app.', 'Implement dark mode in your app.',
+    // (a) imperatives and (b) direct polite requests (review of #356, round 2), and a statement that names the build.
+    'Add dark mode to your app.', 'Fix the login bug in your app.', 'Build it into yourself.', 'Could you add dark mode to your app?',
+    'Will you add dark mode to your app?', 'Fix the login bug in your app?', 'What I want you to do is build the search feature into your app.',
   ]) {
     assert.equal(currentTurnActionPolicy(text).codingJobAllowed, true, text);
   }
