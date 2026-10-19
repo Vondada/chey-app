@@ -142,3 +142,9 @@ test('comprehension audit: spoken calendar questions, sender questions, natural 
   }
   assert.equal(youtubeChatIntent('what are the latest videos about cats'), false);
 });
+
+test('comprehension: app calendar screen changes are not Google event requests', () => {
+  assert.equal(googleChatIntent('Add a search button to the calendar screen in your app'), null);
+  assert.equal(googleChatIntent('Create a dark mode toggle to the calendar settings screen'), null);
+  assert.deepEqual(googleChatIntent('Add a meeting with Bob tomorrow at 3pm to my calendar'), { kind: 'calendar_incomplete' });
+});
