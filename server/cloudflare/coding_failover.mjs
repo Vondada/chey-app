@@ -56,16 +56,20 @@ export function classifyModelFailure({ text = '', exitCode = 0 } = {}) {
 // unverifiable (could not be reverted) or delivered (a successful attempt's change).
 const RECEIPT_PROGRESS = Object.freeze(['none', 'verified', 'reverted', 'unverifiable', 'delivered']);
 
-// The one redactor for everything CHE's coding runner stores or logs: the receipt here, and the
-// runner's shell redact() through `che_coding_checkpoint.mjs redact`. Covers provider keys, bearer
-// tokens, key-like URL query parameters and token fields in JSON. Replaces, never reports, a value.
+// The one redactor for every text CHE's coding runner stores or logs: the receipt here, and each
+// runner shell line that logs or stores error text (the free and paid model steps and the PR step),
+// through `che_coding_checkpoint.mjs redact`. Covers provider keys, bearer and basic authorization,
+// key headers, key-like query and form parameters, and token fields in JSON. Replaces, never reports.
 const SECRET_PATTERNS = Object.freeze([
   [/\bBearer\s+[A-Za-z0-9._~+\/=-]+/gi, 'Bearer [key]'],
+  [/(\bAuthorization\s*[:=]\s*["']?\s*Basic\s+)[A-Za-z0-9+\/=._-]+/gi, '$1[key]'],
+  [/(\b(?:x-api-key|x-goog-api-key|x-auth-token|api-key|apikey)\s*:\s*["']?)[^\s"',;]+/gi, '$1[key]'],
   [/\b(?:sk-or-|sk-|sk_live_|sk_test_|xai-|gsk_|csk-|hf_|ghp_|gho_|ghu_|ghs_|ghr_|github_pat_)[A-Za-z0-9_-]{8,}/g, '[key]'],
   [/\bAIza[0-9A-Za-z_-]{8,}/g, '[key]'],
   [/\bya29\.[A-Za-z0-9._-]{8,}/g, '[key]'],
-  [/([?&](?:api[_-]?key|key|token|access[_-]?token|refresh[_-]?token|auth|secret|password)=)[^&\s"'<>]+/gi, '$1[key]'],
-  [/(\\?"(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret|password|authorization|client[_-]?secret)\\?"\s*:\s*\\?")[^"\\]*/gi, '$1[key]'],
+  [/([?&](?:api[_-]?key|key|token|access[_-]?token|refresh[_-]?token|auth|secret|password|client[_-]?secret)=)[^&\s"'<>]+/gi, '$1[key]'],
+  [/(\b(?:client[_-]?secret|password|passwd|secret|api[_-]?key|access[_-]?token|refresh[_-]?token|auth[_-]?token)=)[^&\s"'<>]+/gi, '$1[key]'],
+  [/(\\?"(?:x-api-key|api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret|password|authorization|client[_-]?secret)\\?"\s*:\s*\\?")[^"\\]*/gi, '$1[key]'],
 ]);
 
 export function redactSecrets(text) {

@@ -521,7 +521,25 @@ test('Codex #327: the record keeps every model the run may try, so the last caus
   assert.match(spoken, /after trying 6 models \(a\/1, a\/2, a\/3, a\/4, a\/5, a\/6\)/);
 });
 
-test('the runner shell redacts each leak case through the same redactor as the receipts', async () => {
+// Every leak form the review found, plus the hardening forms. The paid step and the PR step used
+// their own redaction before; each step's redact() is now run on every case.
+const SHELL_LEAKS = [
+  ['Authorization: Bearer abc.def.GhIjKlMnOpQr123456', 'GhIjKlMnOpQr123456'],
+  ['bearer tokenValue987654321', 'tokenValue987654321'],
+  ['https://api.example.com/v1/models?api_key=SUPERSECRET123456789&alt=json', 'SUPERSECRET123456789'],
+  ['https://hooks.example.com/x?token=tok_live_987654321abcdef', 'tok_live_987654321abcdef'],
+  ['{"access_token":"ya29.a0AfH6SMBx1234567890"}', 'ya29.a0AfH6SMBx1234567890'],
+  ['xai-AbCdEf1234567890', 'AbCdEf1234567890'],
+  ['password=hunter2hunter2', 'hunter2hunter2'],
+  // Built at run time so this file never holds a GitHub-token-shaped string (CHE's edit check refuses one).
+  [`token ${'gh'}p_abcdefghijklmnopqrstuvwxyz0123456789 rejected`, 'abcdefghijklmnopqrstuvwxyz0123456789'],
+  ['x-api-key: AbCdEfGh12345678', 'AbCdEfGh12345678'],
+  ['api-key: ZyXwVu98765432', 'ZyXwVu98765432'],
+  ['Authorization: Basic dXNlcjpwYXNzd29yZA==', 'dXNlcjpwYXNzd29yZA=='],
+  ['client_secret=s3cr3tValue123456', 's3cr3tValue123456'],
+];
+
+test('every runner step that writes error text redacts each leak case through the shared redactor', async () => {
   const { mkdtempSync, copyFileSync, mkdirSync } = await import('node:fs');
   const { tmpdir } = await import('node:os');
   const { join } = await import('node:path');
@@ -532,26 +550,38 @@ test('the runner shell redacts each leak case through the same redactor as the r
   mkdirSync(join(trusted, 'server/cloudflare'), { recursive: true });
   copyFileSync(new URL('../../tools/che_coding_checkpoint.mjs', import.meta.url), join(trusted, 'tools/che_coding_checkpoint.mjs'));
   copyFileSync(new URL('./coding_failover.mjs', import.meta.url), join(trusted, 'server/cloudflare/coding_failover.mjs'));
-  const redactLine = runStepScript('Run OpenCode in the isolated checkout').split('\n').find((line) => /^redact\(\) \{/.test(line));
-  assert.ok(redactLine, 'the runner defines redact() through the shared redactor');
-  assert.match(redactLine, /che_coding_checkpoint\.mjs" redact/);
-  const cases = [
-    ['Authorization: Bearer abc.def.GhIjKlMnOpQr123456', 'GhIjKlMnOpQr123456'],
-    ['bearer tokenValue987654321', 'tokenValue987654321'],
-    ['https://api.example.com/v1/models?api_key=SUPERSECRET123456789&alt=json', 'SUPERSECRET123456789'],
-    ['https://hooks.example.com/x?token=tok_live_987654321abcdef', 'tok_live_987654321abcdef'],
-    ['{"access_token":"ya29.a0AfH6SMBx1234567890"}', 'ya29.a0AfH6SMBx1234567890'],
-    ['xai-AbCdEf1234567890', 'AbCdEf1234567890'],
-  ];
-  for (const [input, secret] of cases) {
-    const res = spawnSync('bash', ['-c', `CHE_TRUSTED_TOOLS='${trusted}'\n${redactLine}\nredact`], {
-      input,
-      encoding: 'utf8',
-      env: { PATH: process.env.PATH, HOME: dir },
-    });
-    assert.equal(res.status, 0, res.stderr);
-    assert.equal(res.stdout.includes(secret), false, `the shell output must not carry ${secret}: ${res.stdout}`);
+  const steps = ['Run OpenCode in the isolated checkout', 'Run capped paid OpenRouter only after free attempts', 'Commit, push and open PR'];
+  for (const step of steps) {
+    const redactLine = runStepScript(step).split('\n').find((line) => /^redact\(\) \{/.test(line));
+    assert.ok(redactLine, `${step} defines redact()`);
+    assert.match(redactLine, /che_coding_checkpoint\.mjs" redact \|/, `${step} uses the shared redactor`);
+    for (const [input, secret] of SHELL_LEAKS) {
+      // The free and paid steps use CHE_TRUSTED_TOOLS; the PR step stages its own copy as $trust.
+      const res = spawnSync('bash', ['-c', `CHE_TRUSTED_TOOLS='${trusted}'; trust='${trusted}'\n${redactLine}\nredact`], {
+        input,
+        encoding: 'utf8',
+        env: { PATH: process.env.PATH, HOME: dir },
+      });
+      assert.equal(res.status, 0, res.stderr);
+      assert.equal(res.stdout.includes(secret), false, `${step} must not carry ${secret}: ${res.stdout}`);
+    }
   }
+});
+
+test('no error or log text in the runtime workflow bypasses the shared redactor', () => {
+  const workflow = readFileSync(new URL('../../.github/workflows/che-opencode-runtime.yml', import.meta.url), 'utf8');
+  const lines = workflow.split('\n');
+  assert.doesNotMatch(workflow, /sed\s+-E?\s*'s\/\(AIza/, 'no inline key-prefix sed redaction remains');
+  assert.doesNotMatch(workflow, /\[key\]/, 'only the shared redactor writes the [key] marker');
+  const definitions = lines.filter((line) => /^\s*redact\(\) \{/.test(line));
+  assert.equal(definitions.length, 3, 'the free step, the paid step and the PR step each define redact()');
+  for (const line of definitions) assert.match(line, /node "\$(?:CHE_TRUSTED_TOOLS|trust)\/tools\/che_coding_checkpoint\.mjs" redact \|/);
+  // Every command substitution that reads a model log, checkpoint verdict or PR error prints redacted text.
+  // A line that only writes one of these files (`2>file`, `>file`) prints nothing; a read is what matters.
+  const reads = (line) => line.replace(/\d?>>?\s*"?[^\s")]+"?/g, '');
+  const readers = lines.filter((line) => /\$\(/.test(line) && /opencode-stderr\.log|opencode-events\.jsonl|checkpoint-verdict\.json|checkpoint-restore\.json|pr-err\.txt/.test(reads(line)));
+  assert.equal(readers.length, 6, `expected the six known readers, found ${readers.length}`);
+  for (const line of readers) assert.match(line, /\bredact\b/, `unredacted text: ${line.trim()}`);
 });
 
 // The runtime job's steps write only under RUNNER_TEMP. A fixed /tmp path is shared with every
@@ -560,6 +590,7 @@ test('the runtime job uses no fixed /tmp path: each test can own its scratch dir
   const workflow = readFileSync(new URL('../../.github/workflows/che-opencode-runtime.yml', import.meta.url), 'utf8');
   const runtime = workflow.slice(workflow.indexOf('\n  runtime:\n'), workflow.indexOf('\n  deliver:\n'));
   assert.ok(runtime.length > 1000, 'the runtime job is found');
-  assert.doesNotMatch(runtime, /\/tmp\//, 'every runtime scratch path comes from RUNNER_TEMP');
+  // /tmp as a word, so `mktemp -p /tmp` or a bare /tmp also fails, not only /tmp/ followed by a name.
+  assert.doesNotMatch(runtime, /(^|[\s"'=:])\/tmp\b/m, 'every runtime scratch path comes from RUNNER_TEMP');
   assert.match(runtime, /OPENCODE_CONFIG: \$\{\{ runner\.temp \}\}\/che-opencode-config\.json/);
 });

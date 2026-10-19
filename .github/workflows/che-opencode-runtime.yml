@@ -382,6 +382,9 @@ jobs:
           BASE_SHA: ${{ inputs.base_sha }}
         run: |
           set +e
+          # Every error or log text below goes through the shared redactor (coding_failover.mjs
+          # redactSecrets) via the trusted copy, before it reaches the log or the job record.
+          redact() { node "$CHE_TRUSTED_TOOLS/tools/che_coding_checkpoint.mjs" redact | tr '\n"' '  ' | cut -c1-350; }
           # This free-coding step never receives the capped paid key.
           prompt=$(cat ${RUNNER_TEMP}/che-runtime-prompt.txt)
           code=1; used=""; tried=""
@@ -396,7 +399,7 @@ jobs:
           fi
           if [ -f "$ckpt/checkpoint.patch" ]; then
             if node "$CHE_TRUSTED_TOOLS/tools/che_coding_checkpoint.mjs" restore --dir "$ckpt" >${RUNNER_TEMP}/checkpoint-restore.json; then
-              echo "Restored verified checkpoint: $(head -c 300 ${RUNNER_TEMP}/checkpoint-restore.json)"
+              echo "Restored verified checkpoint: $(redact < ${RUNNER_TEMP}/checkpoint-restore.json)"
             else
               echo "::warning::The saved checkpoint no longer applies to this base; starting from the base."
               rm -f "$ckpt/checkpoint.patch" "$ckpt/checkpoint.json"
@@ -409,8 +412,6 @@ jobs:
             node "$CHE_TRUSTED_TOOLS/tools/che_coding_checkpoint.mjs" receipt --model "$1" --exit "$2" --seconds "$3" --cap "$4" --progress "$5" <"$6" >>"$attempts_file" \
               || echo "::warning::Could not write the receipt for $1."
           }
-          # The same redactor as the receipts (coding_failover.mjs redactSecrets), through the trusted copy.
-          redact() { node "$CHE_TRUSTED_TOOLS/tools/che_coding_checkpoint.mjs" redact | tr '\n"' '  ' | cut -c1-350; }
           # OpenCode keeps retrying errors that cannot succeed (no quota, no access to the model,
           # a request too large for the key's token limit) until the time budget runs out. An
           # error event naming one of them stops that model at once, so the next one gets the
@@ -486,7 +487,7 @@ jobs:
                   echo "::error::Could not revert unverified edits; no further attempts run."; break
                 fi
                 progress=reverted
-                echo "::warning::$m left changes that did not verify; reverted to the last checkpoint: $(head -c 300 ${RUNNER_TEMP}/checkpoint-verdict.json)"
+                echo "::warning::$m left changes that did not verify; reverted to the last checkpoint: $(redact < ${RUNNER_TEMP}/checkpoint-verdict.json)"
               fi
             fi
             record_attempt "$m" "$code" "$seconds" "$left" "$progress" ${RUNNER_TEMP}/opencode-failure.txt
@@ -515,6 +516,8 @@ jobs:
           FREE_RESUMABLE: ${{ steps.opencode.outputs.resumable }}
         run: |
           set +e
+          # The paid step's error text goes through the same shared redactor as the free step.
+          redact() { node "$CHE_TRUSTED_TOOLS/tools/che_coding_checkpoint.mjs" redact | tr '\n"' '  ' | cut -c1-350; }
           code=1; used=""; tried=""; failure_kind="${FREE_FAILURE_KIND:-unknown}"; failure_resumable="${FREE_RESUMABLE:-false}"; err=""
           paid_key="$K_PAID_OPENROUTER"; unset K_PAID_OPENROUTER
           if [ -z "$PAID_CANDIDATES" ]; then
@@ -541,7 +544,7 @@ jobs:
               { tail -c 4000 ${RUNNER_TEMP}/opencode-stderr.log; grep -iE 'error|quota|rate|denied|invalid|not found' ${RUNNER_TEMP}/opencode-events.jsonl | tail -2; } > ${RUNNER_TEMP}/opencode-failure.txt
               failure_kind=$(node "$CHE_TRUSTED_TOOLS/tools/che_coding_checkpoint.mjs" classify --exit "$code" --field kind < ${RUNNER_TEMP}/opencode-failure.txt)
               failure_resumable=$(node "$CHE_TRUSTED_TOOLS/tools/che_coding_checkpoint.mjs" classify --exit "$code" --field resumable < ${RUNNER_TEMP}/opencode-failure.txt)
-              err=$(tail -c 400 ${RUNNER_TEMP}/opencode-stderr.log | sed -E 's/(AIza|sk-|gsk_|csk_|hf_|sk-or-)[A-Za-z0-9_-]{8,}/[key]/g' | tr '\n"' '  ' | cut -c1-350)
+              err=$(tail -c 400 ${RUNNER_TEMP}/opencode-stderr.log | redact)
               if [ "$code" = 0 ]; then break; fi
               echo "::warning::$m failed; checking the next capped model if time remains."
               if [ -n "$(git status --porcelain)" ]; then
@@ -713,6 +716,13 @@ jobs:
           TARGET_BRANCH: ${{ inputs.target_branch }}
           REQUEST_B64: ${{ inputs.request_b64 }}
         run: |
+          # The redactor is copied from the checked-out base before the patch is applied, so the
+          # patch can never change the code that redacts the PR error below.
+          trust="$RUNNER_TEMP/che-trusted"; mkdir -p "$trust/tools" "$trust/server/cloudflare"
+          # Without the redactor the PR error text is withheld (fails closed); the PR step itself still runs.
+          { cp tools/che_coding_checkpoint.mjs "$trust/tools/" && cp server/cloudflare/coding_failover.mjs "$trust/server/cloudflare/"; } \
+            || echo "::warning::The shared redactor is not in this base, so GitHub's PR error text is withheld."
+          redact() { node "$trust/tools/che_coding_checkpoint.mjs" redact | tr '\n"' '  ' | cut -c1-350; }
           git apply --index /tmp/che-patch/che-runtime.patch
           git -c user.name="CHE" -c user.email="che-autopilot@users.noreply.github.com" commit -qm "che-auto: ${JOB_ID}" -m "Automated change by CHE's OpenCode runner. [che-auto]"
           git push -q origin "HEAD:refs/heads/${TARGET_BRANCH}"
@@ -720,7 +730,7 @@ jobs:
           body="Automated change by CHE's OpenCode runner (session ${JOB_ID}). che-autopilot reviews and merges it when CI passes."
           if ! url=$(gh pr create --base main --head "$TARGET_BRANCH" --title "$title" --body "$body" --label che-auto 2>/tmp/pr-err.txt) \
              && ! url=$(gh pr create --base main --head "$TARGET_BRANCH" --title "$title" --body "$body" 2>/tmp/pr-err.txt); then
-            echo "::error::Branch ${TARGET_BRANCH} was pushed but GitHub refused to open the PR: $(tr '\n' ' ' </tmp/pr-err.txt | cut -c1-300). CHE_GITHUB_TOKEN needs Pull requests: Read and write."
+            echo "::error::Branch ${TARGET_BRANCH} was pushed but GitHub refused to open the PR: $(redact </tmp/pr-err.txt). CHE_GITHUB_TOKEN needs Pull requests: Read and write."
             exit 1
           fi
           echo "pr_number=${url##*/}" >> "$GITHUB_OUTPUT"

@@ -132,6 +132,15 @@ const LEAK_CASES = [
   ['a token query parameter', 'https://hooks.example.com/x?token=tok_live_987654321abcdef', 'tok_live_987654321abcdef'],
   ['an access_token JSON field', '{"access_token":"ya29.a0AfH6SMBx1234567890"}', 'ya29.a0AfH6SMBx1234567890'],
   ['an xai- key', 'xai-AbCdEf1234567890', 'AbCdEf1234567890'],
+  // Review hardening: header, basic-auth and form forms, and the two the old paid-step sed missed.
+  ['an x-api-key header', 'x-api-key: AbCdEfGh12345678', 'AbCdEfGh12345678'],
+  ['an api-key header', 'api-key: ZyXwVu98765432', 'ZyXwVu98765432'],
+  ['an Authorization Basic header', 'Authorization: Basic dXNlcjpwYXNzd29yZA==', 'dXNlcjpwYXNzd29yZA=='],
+  ['a client_secret form value', 'grant_type=client_credentials&client_secret=s3cr3tValue123456', 's3cr3tValue123456'],
+  ['a bare client_secret value', 'client_secret=s3cr3tValue123456', 's3cr3tValue123456'],
+  ['a password value', 'password=hunter2hunter2', 'hunter2hunter2'],
+  // Built at run time so the file never holds a GitHub-token-shaped string (CHE's edit check refuses one).
+  ['a GitHub token', `token ${'gh'}p_abcdefghijklmnopqrstuvwxyz0123456789 rejected`, 'abcdefghijklmnopqrstuvwxyz0123456789'],
 ];
 for (const [label, text, secret] of LEAK_CASES) {
   test(`the attempt receipt redacts ${label}`, () => {
@@ -140,3 +149,8 @@ for (const [label, text, secret] of LEAK_CASES) {
     assert.match(receipt.error, /\[key\]/);
   });
 }
+
+test('ordinary log text is left alone by the redactor', () => {
+  const plain = 'model timed out after 120s; Basic plan; api key missing; token budget exceeded';
+  assert.equal(attemptReceipt({ model: 'groq/x', exitCode: 1, text: plain }).error, plain);
+});
