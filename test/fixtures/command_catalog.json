@@ -1313,6 +1313,43 @@
    "optional_missing": []
   },
   {
+   "id": "trade-connections",
+   "category": "trading",
+   "title": "Trade Connections",
+   "summary": "Read your trading connections and mode.",
+   "does": "Reads each trading connection as it reports itself: CHE Paper and its data feed, Tradovate (NinjaTrader), Alpaca stock paper and FundYourEdge, plus the trading mode. Changes nothing.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "What are my trading connections?",
+    "Which brokers are connected?"
+   ],
+   "needs": [
+    "office"
+   ],
+   "optional": [],
+   "handler": "trading_connections.speakConnections",
+   "route": "che_trading_desk",
+   "produces": "connections",
+   "evidence": "Each connection's stored state and its provider's own check; never a key.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "connections",
+    "broker",
+    "brokers",
+    "alpaca",
+    "tradovate",
+    "connected"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
    "id": "site-build",
    "category": "build",
    "title": "Site Build",

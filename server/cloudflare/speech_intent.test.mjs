@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  applyModelReading, classifyOwnerTurn, clearInterpretationCache, correctSpokenTerms,
+  applyModelReading, classifyOwnerTurn, clearInterpretationCache, clipKeepingLimits, correctSpokenTerms,
   expandSlang, interpretOwnerTurn, interpretWithModel, parseReading, phoneticKey,
 } from './speech_intent.js';
 
@@ -268,4 +268,107 @@ test('no clarifying question ever claims an action happened', () => {
     interpretOwnerTurn('send the build to Sam, actually never mind'),
   ];
   for (const out of cases) if (out.clarify) assert.doesNotMatch(out.clarify, COMPLETION);
+});
+
+// ---- Bounded text never loses the owner's limits (issue #345) -----------
+
+const LATE = "but don't email Mark until Friday";
+const NOT_SHOWN = / … \[(\d+) characters not shown\] … /g;
+// A long request whose last clause holds the limit, and no limit words before it.
+const LONG_ASK = 'Send the weekly report to the whole team with the charts from the dashboard, '
+  + 'and add the summary of what changed in the review, '.repeat(6) + LATE;
+
+test('a bounded owner sentence keeps its start, its late "don\'t", its conditions, dates and amounts, and marks the rest', () => {
+  const long = 'Send the weekly report to the whole team with the charts from the dashboard, '
+    + 'and add the summary of what changed in the review, '.repeat(12)
+    + 'unless Sarah asks for the draft first, attach the $40 invoice from October 3, '
+    + 'and include the slides from the planning session, '.repeat(8) + `${LATE}.`;
+  const out = clipKeepingLimits(long, 300);
+  assert.ok(out.length < 420, `bounded near the limit, got ${out.length}`);
+  assert.match(out, /^Send the weekly report to the whole team/);
+  assert.match(out, /unless Sarah asks for the draft first/);
+  assert.match(out, /\$40 invoice from October 3/);
+  assert.ok(out.endsWith(`${LATE}.`), out);
+  // The marker says exactly how much is not shown: shown text plus hidden counts is the original.
+  const hidden = [...out.matchAll(NOT_SHOWN)].reduce((sum, m) => sum + Number(m[1]), 0);
+  assert.ok(hidden > 0);
+  assert.equal(out.replace(NOT_SHOWN, '  ').length + hidden, long.length);
+  assert.equal(clipKeepingLimits('Send it, but not today.', 300), 'Send it, but not today.', 'short text is untouched');
+});
+
+test('one long unpunctuated sentence keeps its first words and its last ones around a visible marker', () => {
+  const speech = 'okay so ' + 'the launch review notes for the whole team '.repeat(20) + LATE;
+  const out = clipKeepingLimits(speech, 200);
+  assert.ok(out.length <= 260, `got ${out.length}`);
+  assert.match(out, /^okay so the launch review/);
+  assert.ok(out.endsWith(LATE), out);
+  assert.match(out, NOT_SHOWN);
+  // Pasted figures are bounded too: dates and amounts give way before the late limit does.
+  const rows = clipKeepingLimits('row 1, '.repeat(2000) + LATE, 300);
+  assert.ok(rows.length <= 340, `got ${rows.length}`);
+  assert.ok(rows.endsWith(LATE), rows);
+});
+
+test('"do it again" after a long request carries its whole last clause, not the first 200 characters', () => {
+  assert.ok(LONG_ASK.length > 300);
+  const out = interpretOwnerTurn('do it again', { history: [user(LONG_ASK), assistant('Done, sir.')] });
+  assert.equal(out.clarify, null);
+  assert.equal(out.referent, LONG_ASK);
+  assert.ok(out.text.endsWith(`${LATE}": do it again`), out.text);
+});
+
+test('an earlier turn longer than 2,000 characters still reaches the referent with its last words', () => {
+  const huge = 'Send the weekly report to the whole team, ' + 'and add the summary of what changed in the review, '.repeat(50) + LATE;
+  assert.ok(huge.length > 2500);
+  const out = interpretOwnerTurn('fix it', { history: [user(huge), assistant('Got it.')] });
+  assert.match(out.text, /but don't email Mark until Friday": fix it$/);
+});
+
+test('a long consequential reading is asked about whole, so the question names the late limit and a yes keeps it', () => {
+  const owner = 'the old stuff in the shared folder from the spring launch with all the drafts and the duplicate exports, but do not email Mark until Friday';
+  const rule = interpretOwnerTurn(owner);
+  assert.equal(rule.kind, 'unclear');
+  const meaning = 'delete the old drafts and the duplicate exports in the shared spring launch folder, and do not email Mark about it until Friday';
+  assert.ok(meaning.length > 120);
+  const out = applyModelReading(rule, { intent: 'action', meaning, confidence: 0.9, clarify: '' });
+  assert.equal(out.clarify, `Just to be sure, do you want me to ${meaning}? Say yes, or tell me what you mean.`);
+  const yes = interpretOwnerTurn('yes', { history: [user(owner), assistant(out.clarify)] });
+  assert.equal(yes.text, meaning, 'the yes releases the whole meaning, with "until Friday"');
+});
+
+test('a reading that leaves out the owner\'s "don\'t" gets his own words back in the confirmation question', () => {
+  const owner = 'the old stuff in the shared folder from the spring launch with all the drafts, but don\'t email Mark until Friday';
+  const rule = interpretOwnerTurn(owner);
+  assert.equal(rule.kind, 'unclear');
+  const out = applyModelReading(rule, { intent: 'action', meaning: 'delete the old drafts in the shared spring launch folder', confidence: 0.9, clarify: '' });
+  assert.equal(out.clarify, "Just to be sure, do you want me to delete the old drafts in the shared spring launch folder, but don't email Mark until Friday? Say yes, or tell me what you mean.");
+  const yes = interpretOwnerTurn('yes', { history: [user(owner), assistant(out.clarify)] });
+  assert.match(yes.text, /don't email Mark until Friday$/);
+});
+
+test('a model meaning over its bound keeps its late limit, marked', () => {
+  const meaning = 'send the weekly report to the whole team with the charts from the dashboard, '
+    + 'and add the summary of what changed in the review, '.repeat(8) + LATE;
+  const reading = parseReading(JSON.stringify({ intent: 'action', meaning, confidence: 0.9, clarify: '' }));
+  assert.ok(reading.meaning.endsWith(LATE), reading.meaning);
+  assert.match(reading.meaning, NOT_SHOWN);
+});
+
+test('the reading model sees the late "don\'t" of an earlier long turn, not only its first 160 characters', async () => {
+  clearInterpretationCache();
+  let sent = '';
+  await interpretWithModel({
+    runText: async (messages) => { sent = messages[1].content; return '{"intent":"chitchat","meaning":"","confidence":0.9,"clarify":""}'; },
+    text: 'the same as that thing from before',
+    history: [user(LONG_ASK), assistant('Done, sir.')],
+  });
+  assert.match(sent, /but don't email Mark until Friday/);
+});
+
+test('a long limit clause keeps its "don\'t" when the text is bounded (review of #352)', () => {
+  const sent = clipKeepingLimits('Draft the reply to Sarah about the quarterly budget review meeting next week with the updated numbers from finance and do not send it to anyone until I have read the whole thing myself tonight', 160);
+  assert.match(sent, /do not send it/);
+  const starred = clipKeepingLimits('Clean up my old photo albums from the trip and the party but never remove the ones I starred last year', 80);
+  assert.match(starred, /never remove/);
+  assert.match(starred, /characters not shown\]$/, 'what was left out at the end is marked');
 });
