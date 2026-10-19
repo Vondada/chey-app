@@ -236,6 +236,38 @@ test('third review of #354: ordinary hyphenated words and Google document links 
   }
 });
 
+// ─── Sixth review of #354: a password in URL userinfo, and an encoded hyphen in a token ───────────
+test('sixth review of #354: a password in URL userinfo and a percent-encoded hyphen in a query or path token are withheld; the approved kept cases stay kept', () => {
+  // Built from pieces, so no literal token sits in the repository.
+  const ENCODED_TOKEN = ['Q7mZ2kP9', 'xL4vN8wR3', 'tY6uB1c', 'Q7mZ2kP9'].join('%2D');
+  const DOC_ID = '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms';
+  const DRIVE_ID = '1AbCdEfGhIjKlMnOpQrStUvWxYz012345';
+  const withheld = [
+    'Login https://bob:hunter22@example.com/x',
+    `Doc https://bob:hunter22@docs.google.com/document/d/${DOC_ID}/edit`,
+    `Reset https://docs.google.com/reset?code=${ENCODED_TOKEN}`,
+    `Reset https://example.com/reset?code=${ENCODED_TOKEN}`,
+    `Reset https://example.com/reset/${ENCODED_TOKEN}`,
+  ];
+  for (const text of withheld) {
+    assert.equal(isSafeMemoryText(text), false, text);
+    assert.equal(hasSecretShape(text), true, text);
+  }
+  const kept = [
+    'Read https://example.com/brain-sync-follow-up-plan now',
+    `Here is the doc https://docs.google.com/document/d/${DOC_ID}/edit for Monday`,
+    `Drive link https://drive.google.com/file/d/${DRIVE_ID}/view`,
+    `Sheet https://docs.google.com/spreadsheets/d/${DOC_ID}/edit#gid=0`,
+    `Folder https://drive.google.com/drive/folders/${DRIVE_ID}`,
+    'Read https://en.wikipedia.org/wiki/Amdahl%27s_law now',
+    'See https://example.com:8080/path?ref=main now',
+  ];
+  for (const text of kept) {
+    assert.equal(isSafeMemoryText(text), true, text);
+    assert.equal(hasSecretShape(text), false, text);
+  }
+});
+
 // ─── Fifth review of #354: a hyphen-joined random token in a path is withheld; slugs stay kept ───────
 test('fifth review of #354: a hyphen-joined mixed-case token in a URL path is withheld, the same token without hyphens too; lower-case slugs and the approved Google links stay kept', () => {
   // Built from pieces, so no literal token sits in the repository.

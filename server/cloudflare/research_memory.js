@@ -106,6 +106,19 @@ function googleDocSegments(authority, segments) {
   });
   return ids;
 }
+// A password in the userinfo ("https://bob:hunter22@host") is withheld when it is six or more characters
+// with a letter and a digit or a symbol (sixth review of #354). The plain token check missed "hunter22".
+function userinfoPasswordShape(userinfo) {
+  const colon = userinfo.indexOf(':');
+  if (colon < 0) return false;
+  const password = userinfo.slice(colon + 1);
+  return password.length >= 6 && /[A-Za-z]/.test(password) && /[\d\W_]/.test(password);
+}
+// Percent-encoded characters read as the characters they stand for (sixth review of #354). A malformed
+// escape is not a sequence, so it is left alone and cannot throw.
+function decodePercent(text) {
+  return text.replace(/%([0-9A-Fa-f]{2})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+}
 // A link is judged by its parts. Its userinfo and query values get the full token check (a password
 // or a code in a link is a secret); a path segment is a secret only as a long random run or a hex key.
 // An ordinary path slug ("6-006-introduction-to-algorithms-2020") and a percent-encoded word are words.
@@ -115,12 +128,14 @@ function linkHasSecret(link) {
   const rest = head ? link.slice(head[0].length) : link;
   const at = authority.lastIndexOf('@');
   if (at > 0 && authority.slice(0, at).split(':').some((piece) => piece && plainSecret(piece))) return true;
+  if (at > 0 && userinfoPasswordShape(authority.slice(0, at))) return true;
   const path = rest.split(/[?#]/)[0];
   const query = rest.slice(path.length);
-  const segments = path.split('/');
+  // Percent-encoded characters are read first, so an encoded hyphen ("%2D") cannot cut a token apart.
+  const segments = path.split('/').map(decodePercent);
   const docIds = googleDocSegments(authority, segments);
   if (segments.some((segment, i) => ((randomRun(segment) || hyphenatedRandomRun(segment)) && !docIds.has(i)) || (HEX_RE.test(segment) && plainSecret(segment)))) return true;
-  return query.split(/[?&=#]+|%[0-9A-Fa-f]{2}/).some((piece) => Boolean(piece) && (randomRun(piece) || plainSecret(piece)));
+  return decodePercent(query).split(/[?&=#]+/).some((piece) => Boolean(piece) && (randomRun(piece) || plainSecret(piece)));
 }
 function secretToken(raw) {
   // Sentence punctuation is not part of a token; a closing "!" is, when the rest already mixes

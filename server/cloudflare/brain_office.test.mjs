@@ -898,3 +898,21 @@ test('fifth review of #354: the hyphen-joined reset-link repro is withheld by th
   assert.equal(store.put(record).outcome, 'rejected');
   assert.equal(store.get('note:reset-1'), null);
 });
+
+test('sixth review of #354: a password in URL userinfo and an encoded hyphen token are withheld by the gate, the write path and the correspondence redaction', async (t) => {
+  const ENCODED_TOKEN = ['Q7mZ2kP9', 'xL4vN8wR3', 'tY6uB1c', 'Q7mZ2kP9'].join('%2D');
+  const repros = ['Login https://bob:hunter22@example.com/x', `Reset https://docs.google.com/reset?code=${ENCODED_TOKEN}`];
+  for (const text of repros) {
+    assert.equal(isSafeMemoryText(text), false, text);
+    assert.equal(isSafeText(text), false, text);
+    const redacted = redactCorrespondence(text);
+    assert.equal(redacted.withheld, 1, text);
+    assert.doesNotMatch(redacted.text, /hunter22|Q7mZ2kP9/, text);
+  }
+  const storage = await sqlStorage();
+  if (!storage) return t.skip('node:sqlite unavailable');
+  const store = new CheBrainStore(storage);
+  const record = { id: 'note:login-1', kind: 'note', region: BRAIN_REGIONS.personal, path: 'Family', title: 'Login', body: repros[0], verification: 'owner_attested', source: { kind: 'note' }, links: [] };
+  assert.equal(store.put(record).outcome, 'rejected');
+  assert.equal(store.get('note:login-1'), null);
+});

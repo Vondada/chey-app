@@ -552,6 +552,38 @@ void main() {
     expect(brain.count, kept.length);
   });
 
+  test('V: a password in URL userinfo and a percent-encoded hyphen token are withheld on the phone; the approved kept cases stay kept (sixth review of #354)', () async {
+    final dir = await freshDir();
+    final brain = CheBrainReplica(directory: dir);
+    // Built from pieces, so no literal token sits in the repository.
+    final encodedToken = ['Q7mZ2kP9', 'xL4vN8wR3', 'tY6uB1c', 'Q7mZ2kP9'].join('%2D');
+    final withheld = [
+      'Login https://bob:hunter22@example.com/x',
+      'Doc https://bob:hunter22@docs.google.com/document/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit',
+      'Reset https://docs.google.com/reset?code=$encodedToken',
+      'Reset https://example.com/reset?code=$encodedToken',
+      'Reset https://example.com/reset/$encodedToken',
+    ];
+    for (final text in withheld) {
+      expect(cheBrainTextIsSensitive(text), isTrue, reason: text);
+      expect(await brain.remember(kind: 'memory', region: 'Personal Memory', body: text), isNull, reason: text);
+    }
+    expect(brain.count, 0);
+    final kept = [
+      'Read https://example.com/brain-sync-follow-up-plan now',
+      'Here is the doc https://docs.google.com/document/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit for Monday',
+      'Drive link https://drive.google.com/file/d/1AbCdEfGhIjKlMnOpQrStUvWxYz012345/view',
+      'Sheet https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit#gid=0',
+      'Folder https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz012345',
+      'Read https://en.wikipedia.org/wiki/Amdahl%27s_law now',
+    ];
+    for (final text in kept) {
+      expect(cheBrainTextIsSensitive(text), isFalse, reason: text);
+      expect(await brain.remember(kind: 'memory', region: 'Personal Memory', body: text), isNotNull, reason: text);
+    }
+    expect(brain.count, kept.length);
+  });
+
   test('U: a hyphen-joined mixed-case token in a URL path is withheld on the phone, the same token without hyphens too; lower-case slugs and the approved Google links stay kept (fifth review of #354)', () async {
     final dir = await freshDir();
     final brain = CheBrainReplica(directory: dir);

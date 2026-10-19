@@ -86,7 +86,8 @@ final RegExp _webhookShape = RegExp(r'hooks\.slack\.com/services/|discord(?:app)
 final RegExp _linkShape = RegExp(r'://|^www\.', caseSensitive: false);
 final RegExp _linkHeadShape = RegExp(r'^(?:[a-z][a-z0-9+.-]*://|www\.)([^/?#]*)', caseSensitive: false);
 final RegExp _pathSplitShape = RegExp(r'[?#]');
-final RegExp _queryPieceSplitShape = RegExp(r'[?&=#]+|%[0-9A-Fa-f]{2}');
+final RegExp _queryPieceSplitShape = RegExp(r'[?&=#]+');
+final RegExp _percentShape = RegExp(r'%([0-9A-Fa-f]{2})');
 final RegExp _randomRunShape = RegExp(r'^[A-Za-z0-9_]{20,}$');
 // A hyphen-joined run of 20+ characters with capitals, lower-case letters and digits (fifth review of #354).
 final RegExp _hyphenRunShape = RegExp(r'^[A-Za-z0-9_-]{20,}$');
@@ -175,6 +176,19 @@ bool _randomRun(String piece) =>
 bool _hyphenatedRandomRun(String piece) =>
     _hyphenRunShape.hasMatch(piece) && piece.contains('-') && _lowerShape.hasMatch(piece) && _upperShape.hasMatch(piece) && _digitShape.hasMatch(piece);
 
+// A password in the userinfo is withheld when it is six or more characters with a letter and a digit or a
+// symbol (sixth review of #354), as in research_memory.js.
+bool _userinfoPasswordShape(String userinfo) {
+  final colon = userinfo.indexOf(':');
+  if (colon < 0) return false;
+  final password = userinfo.substring(colon + 1);
+  return password.length >= 6 && _letterShape.hasMatch(password) && RegExp(r'[\d\W_]').hasMatch(password);
+}
+
+// Percent-encoded characters read as the characters they stand for (sixth review of #354).
+String _decodePercent(String text) =>
+    text.replaceAllMapped(_percentShape, (m) => String.fromCharCode(int.parse(m.group(1)!, radix: 16)));
+
 // A link is judged by its parts: its userinfo and query values get the full token check; a path segment
 // is a secret only as a long random run or a hex key. A slug and a percent-encoded word are words.
 bool _linkHasSecret(String link) {
@@ -183,15 +197,17 @@ bool _linkHasSecret(String link) {
   final rest = head == null ? link : link.substring(head.group(0)!.length);
   final at = authority.lastIndexOf('@');
   if (at > 0 && authority.substring(0, at).split(':').any((piece) => piece.isNotEmpty && _plainSecret(piece))) return true;
+  if (at > 0 && _userinfoPasswordShape(authority.substring(0, at))) return true;
   final path = rest.split(_pathSplitShape).first;
   final query = rest.substring(path.length);
-  final segments = path.split('/');
+  // Percent-encoded characters are read first, so an encoded hyphen ("%2D") cannot cut a token apart.
+  final segments = path.split('/').map(_decodePercent).toList();
   final docIds = _googleDocSegments(authority, segments);
   for (var i = 0; i < segments.length; i++) {
     final segment = segments[i];
     if (((_randomRun(segment) || _hyphenatedRandomRun(segment)) && !docIds.contains(i)) || (_hexShape.hasMatch(segment) && _plainSecret(segment))) return true;
   }
-  return query.split(_queryPieceSplitShape).any((piece) => piece.isNotEmpty && (_randomRun(piece) || _plainSecret(piece)));
+  return _decodePercent(query).split(_queryPieceSplitShape).any((piece) => piece.isNotEmpty && (_randomRun(piece) || _plainSecret(piece)));
 }
 
 class CheBrainRecord {
