@@ -356,7 +356,7 @@ test('a trading card cites measured numbers only from CHE\'s records, and says s
   const trades = journalTrades([[2, 40], [-1, -20], [-1, -20], [2, 40], [-1, -20]]);
   const s = summarize(trades);
   const text = measuredText(atlasCard('win-rate-ci'), { paper: trades, backtest: null });
-  assert.ok(text.includes(`${s.trades} closed paper trades in 1 separate paper portfolio`) && text.includes(`win rate ${s.win_rate}%`) && text.includes(`${s.win_rate_95ci.low}% to ${s.win_rate_95ci.high}%`), text);
+  assert.ok(text.includes(`${s.trades} closed paper trades in 1 paper portfolio, one strategy.`) && text.includes(`win rate ${s.win_rate}%`) && text.includes(`${s.win_rate_95ci.low}% to ${s.win_rate_95ci.high}%`), text);
   assert.match(text, /It is Fair value gap retest on MNQ, five-minute bars: /, 'the portfolio is named');
   assert.match(text, new RegExp(`Largest sample: n = 5, fewer than the ${MIN_TRADES} trades needed`));
 });
@@ -372,6 +372,8 @@ test('measured figures are per paper portfolio, never one pooled account, and a 
   const ddA = summarize(a).max_drawdown; const ddB = summarize(b).max_drawdown;
   assert.ok(text.includes(`Across the 2 portfolios, maximum drawdown ranged $${Math.min(ddA, ddB).toFixed(2)} to $${Math.max(ddA, ddB).toFixed(2)}.`), text);
   assert.match(text, /None of these is an account balance\./);
+  assert.doesNotMatch(text, /, or \+/, 'a drawdown is a size of loss, never spoken with a plus sign');
+  assert.match(text, /, or \d+\.\d{2}R, within that portfolio's own record\./);
   assert.ok(pooled.max_drawdown > Math.max(ddA, ddB), 'the test portfolios do overlap');
   assert.ok(!text.includes(`$${pooled.max_drawdown.toFixed(2)}`), 'the pooled drawdown is never given');
   // n = 1: the number, its n, and no zero-width range.
@@ -381,6 +383,15 @@ test('measured figures are per paper portfolio, never one pooled account, and a 
   assert.doesNotMatch(single, /95% range/);
   assert.match(single, /Largest sample: n = 1,/);
   assert.match(measuredText(atlasCard('win-rate-ci'), { paper: one, backtest: null }), /too few trades for a range \(n = 1\)/);
+  assert.match(measuredText(atlasCard('win-rate-ci'), { paper: one, backtest: null }), /: win rate 100%, 1 win and 0 losses, /);
+  // The sample card reads as its own sentence, not slotted after "It is".
+  const sample = measuredText(atlasCard('sample-size'), { paper: [...a, ...b], backtest: null });
+  assert.match(sample, new RegExp(`so nothing is pooled into one account\\. 0 of 2 portfolios reached the ${MIN_TRADES}-trade minimum\\. The largest is [^:]+, with 3 closed trades: expectancy [+−]?\\d\\.\\d{2}R, 95% range `), sample);
+  assert.doesNotMatch(sample, /(?:The largest is|It is) \d+ of/);
+  // Identical results have no spread: no zero-width "95% range".
+  const flat = measuredText(atlasCard('expectancy'), { paper: journalTrades([[-1, -20], [-1, -20], [-1, -20], [-1, -20]], { portfolio: 'pf-same' }), backtest: null });
+  assert.match(flat, /no range: all 4 results are identical/, flat);
+  assert.doesNotMatch(flat, /95% range/);
 });
 
 // ─── Through /api/chat ────────────────────────────────────────────────────
@@ -635,7 +646,7 @@ test('measured lines through /api/chat: the journal and the stored backtest, exa
   const s = summarize(trades);
   const out = await che.say('Explain expectancy');
   assert.equal(out.route, 'che_knowledge_atlas');
-  assert.match(out.reply, /Your records, measured from CHE's paper journal: 5 closed paper trades in 1 separate paper portfolio, each its own strategy, so nothing is pooled into one account\./);
+  assert.match(out.reply, /Your records, measured from CHE's paper journal: 5 closed paper trades in 1 paper portfolio, one strategy\./);
   assert.ok(out.reply.includes(`expectancy +${s.expectancy_r.toFixed(2)}R per trade after assumed costs, 95% range ${s.expectancy_r_95ci.low < 0 ? '-' : '+'}${Math.abs(s.expectancy_r_95ci.low).toFixed(2)}R`), out.reply);
   assert.match(out.reply, /Largest sample: n = 5, fewer than the 30 trades needed, so this is anecdote, not evidence\./);
   assert.match(out.reply, /Latest stored backtest, 2026-10-18, Yahoo MNQ=F, 1200 five-minute bars \(DELAYED public data\): 2 strategy portfolios with 52 trades; expectancy ranged -0\.15R to \+0\.12R across them\. A backtest is history, not a forward result\./);
