@@ -53,7 +53,7 @@ import {
 import { activityFeed, creations, findCreations, greeting, suggestions, stalledTasks, decisionsNeeded, nextActions } from './activity.js';
 import { accountSnapshot as marketAccountSnapshot, candles as marketCandles, chartPage as marketChartPage, quote as marketQuote, snapshot as marketSnapshot } from './markets.js';
 import { CALLBACK_PATH as TRADOVATE_CALLBACK, accountBalance, connectLink, listAccounts, connection as brokerConnection, handleCallback as tradovateCallback, renewToken, tradovateConfigured } from './broker_tradovate.js';
-import { MODE_NAME, PLACE_NEEDS_YES, STOCK_ACCOUNT, chooseAccount, clearStockOrder, confirmLive, confirmStockOrder, deskIntent, dropStockOrder, pendingStockOrder, speakStaleStockOrder, rememberListed, deskTick, pendingAlert, readDesk, requestLive, requestStockOrder, setMode, setRiskLimits, setSize, skipTrade, speakAlert, speakDeskStatus, speakLiveRequest, speakStockOrder, speakStockReceipt, speakTakeNeedsYes, takeAnnouncement, takeTrade } from './trading_desk.js';
+import { MODE_NAME, STOCK_ACCOUNT, speakPlaceNeedsYes, chooseAccount, clearStockOrder, confirmLive, confirmStockOrder, deskIntent, dropStockOrder, pendingStockOrder, speakStaleStockOrder, rememberListed, deskTick, pendingAlert, readDesk, requestLive, requestStockOrder, setMode, setRiskLimits, setSize, skipTrade, speakAlert, speakDeskStatus, speakLiveRequest, speakStockOrder, speakStockReceipt, speakTakeNeedsYes, takeAnnouncement, takeTrade } from './trading_desk.js';
 import { externalGrounding } from './external_grounding.js';
 import { answerEvidenceReceipt, cachedResearch, evidenceReferenceFollowup, factKey, forgetKnowledge, invalidateKnowledge, knownAnswer, LAST_ANSWER_EVIDENCE_KEY, ownerFactQuestion, markPureResearch, rememberOwnerFact, researchHit, researchKey } from './knowledge_cache.js';
 import { claimMatcher, disprovenContext, downgradeDisproven, externalCorrection, guardCitations, loadDisproven, newsQuestion, newsResearch, reopenArticles, recheckExternalClaim, recordDisproven, verifiedSourcesContext } from './source_verification.js';
@@ -9714,7 +9714,7 @@ export class CheState extends DurableObject {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can use the trading desk.', { source: 'che_trading_desk', ok: false });
           // B1: a bare "place it" has no yes, so it places nothing; it is answered with the phrase to say.
           if (desk.kind === 'place_unconfirmed') {
-            return ndjsonReply(PLACE_NEEDS_YES, { source: 'che_trading_desk', ok: false, model_calls: 0, order_sent: false });
+            return ndjsonReply(speakPlaceNeedsYes(await readDesk(this.ctx.storage)), { source: 'che_trading_desk', ok: false, model_calls: 0, order_sent: false });
           }
           // A trade phrase with no explicit yes places nothing, live or paper, whatever is waiting (blockers 1 and 2).
           if (desk.kind === 'take_unconfirmed') {
@@ -9812,7 +9812,9 @@ export class CheState extends DurableObject {
             return ndjsonReply(limited.error || `Done, sir: live orders are limited to ${l.maxContracts} contract${l.maxContracts === 1 ? '' : 's'} and $${l.maxRiskDollars} at risk per order.`, { source: 'che_trading_desk', ok: !limited.error });
           }
           if (desk.kind === 'take') {
-            if (!desk.place) return ndjsonReply(speakTakeNeedsYes(await readDesk(this.ctx.storage)), { source: 'che_trading_desk', ok: false, model_calls: 0, order_sent: false });
+            // A live alert is taken only by "yes, take the trade", "yes, place the trade" or "yes, take it" (blocker 1).
+            // Any other yes, such as "yes, place it", is refused here and names the phrase to say; nothing is placed.
+            if (!desk.place || !desk.live) return ndjsonReply(speakTakeNeedsYes(await readDesk(this.ctx.storage)), { source: 'che_trading_desk', ok: false, model_calls: 0, order_sent: false });
             const taken = await takeTrade(this.ctx.storage);
             if (taken.ok) await recordReceipt(this.ctx.storage, { kind: 'trade_placed', key: `trade_placed:${Date.now()}`, detail: taken.reply.slice(0, 300) }).catch(() => null);
             return ndjsonReply(taken.reply, { source: 'che_trading_desk', ok: Boolean(taken.ok) });

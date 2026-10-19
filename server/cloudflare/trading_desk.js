@@ -132,11 +132,13 @@ export function deskIntent(message) {
   const stock = stockOrderIntent(message);
   if (stock) return stock;
   const text = String(message || '').toLowerCase().replace(/[’']/g, "'");
-  // "Yes, place it" is the only place-take: the explicit yes for the Alpaca paper order CHE just read back or,
-  // with none waiting, for the newest live alert. A bare "place it" has no yes in it, so it places nothing
-  // (B1): it is answered with the phrase to say.
+  // "Yes, place it" is the Alpaca paper yes: it confirms the paper order CHE just read back. It is never the live
+  // alert's approval (blocker 1; that is "yes, take the trade"). A bare "place it" has no yes, so it places nothing:
+  // it is answered with the phrase to say.
   const placeIt = /^\s*(yes[,!.]?\s+)?(?:please\s+)?place\s+(?:it|that|the\s+order|that\s+order|the\s+paper\s+order|my\s+order)(?:\s+(?:please|now))?[\s.!]*$/.exec(text);
-  if (placeIt) return placeIt[1] ? { kind: 'take', place: true } : { kind: 'place_unconfirmed' };
+  // live: false. "yes, place it" is the Alpaca paper yes. It takes a live alert only if no paper read-back is
+  // pending, and then it is refused: a live alert is taken only by "yes, take the trade" (see below).
+  if (placeIt) return placeIt[1] ? { kind: 'take', place: true, live: false } : { kind: 'place_unconfirmed' };
   // A no to that order. With nothing waiting it is an ordinary "no" and goes on to its own route.
   if (/^\s*(?:no|nope|no thanks|no thank you|don't|dont|do not)(?:[,!.]?\s+(?:don't|dont|do not)\s+(?:place|send)\s+it)?[\s.!]*$|^\s*(?:no[,!.]?\s+)?(?:don't|dont|do not)\s+(?:place|send)\s+(?:it|that|the order|that order)[\s.!]*$|^\s*(?:no[,!.]?\s+)?(?:drop|cancel)\s+(?:it|that order|the order)[\s.!]*$/.test(text)) return { kind: 'stock_no' };
   if (/\b(?:what|which|show|list|read|tell me|check|any)\b[\s\S]{0,30}\b(?:alpaca(?:\s+paper)?|paper)\s+orders?\b|^\s*(?:my\s+)?alpaca(?:\s+paper)?\s+orders\s*[?.!]*$|\b(?:did|has)\b[\s\S]{0,25}\b(?:alpaca(?:\s+paper)?|paper)\s+orders?\b[\s\S]{0,20}\bfill/.test(text)) return { kind: 'alpaca_orders' };
@@ -160,7 +162,10 @@ export function deskIntent(message) {
   // The only place-take is an explicit yes: "yes, take the trade", "yes, place the trade", "yes, take it". A trade
   // phrase without the yes is never a placement (reviewer blocker 1): "take the trade", "place the trade now",
   // "enter the trade", "send the trade" and "confirm the trade" answer with the phrase to say and place nothing.
-  if (/^\s*yes[,!.]?\s+(?:please\s+)?(?:take|place|enter|send|confirm)\s+(?:the|that|this)\s+trade(?:\s+(?:please|now))?[\s.!]*$|^\s*yes[,!.]?\s+(?:please\s+)?(?:take|enter|send|confirm)\s+it(?:\s+(?:please|now))?[\s.!]*$/.test(text)) return { kind: 'take', place: true };
+  // The live alert's own approval: "yes, take the trade", "yes, place the trade", "yes, take it" (live: true).
+  if (/^\s*yes[,!.]?\s+(?:please\s+)?(?:take|place)\s+(?:the|that|this)\s+trade(?:\s+(?:please|now))?[\s.!]*$|^\s*yes[,!.]?\s+(?:please\s+)?take\s+it(?:\s+(?:please|now))?[\s.!]*$/.test(text)) return { kind: 'take', place: true, live: true };
+  // Other explicit yes phrases ("yes, enter the trade", "yes, send the trade", "yes, confirm the trade") are the paper yes only.
+  if (/^\s*yes[,!.]?\s+(?:please\s+)?(?:enter|send|confirm)\s+(?:the|that|this)\s+trade(?:\s+(?:please|now))?[\s.!]*$|^\s*yes[,!.]?\s+(?:please\s+)?(?:enter|send|confirm)\s+it(?:\s+(?:please|now))?[\s.!]*$/.test(text)) return { kind: 'take', place: true, live: false };
   if (/^\s*(?:yes[,!.]?\s+)?(?:please\s+)?(?:take|place|enter|send|confirm)\s+(?:the|that|this)\s+trade\b|^\s*yes[,!.]?\s+(?:take|enter|send|confirm)\s+it\b/.test(text)) return { kind: 'take_unconfirmed' };
   if (/^\s*(?:no[,!.]?\s+)?skip\s+(?:it|the trade|that trade|this trade)\b|^\s*(?:cancel|pass on)\s+(?:the|that|this)\s+(?:trade|alert)\b/.test(text)) return { kind: 'skip' };
   const limit = /\b(?:set|change|make|put)\b[\s\S]{0,30}\b(?:live\s+)?(?:risk\s+)?limits?\b[\s\S]{0,30}?\b(\d{1,2})\s+contracts?\b[\s\S]{0,30}?\$?(\d{1,6}(?:\.\d+)?)\s*(?:dollars?|usd)?\b/.exec(text);
@@ -519,6 +524,12 @@ export function speakStaleStockOrder(o, { alertOpen = false } = {}) {
 
 /** Spoken when the owner says "place it" without the yes that makes it a placing order (B1). Places nothing. */
 export const PLACE_NEEDS_YES = 'Nothing was placed, sir. To place an order, say "yes, place it" as one sentence, so I know it is your yes.';
+
+/** A bare "place it" (no yes): names the phrase for what is waiting. Places nothing. */
+export function speakPlaceNeedsYes(desk, now = Date.now()) {
+  if (pendingStockOrder(desk, now) || pendingAlert(desk, now)) return speakTakeNeedsYes(desk, now);
+  return PLACE_NEEDS_YES;
+}
 
 /**
  * A trade phrase with no explicit yes ("take the trade", "place the trade now") places nothing, live or paper.

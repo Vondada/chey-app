@@ -437,7 +437,7 @@ test('stock orders: the read-back names the exact order and the account; the rec
   assert.match(speakStockReceipt({ id: 'abc-123', symbol: 'AAPL', qty: 10, filled_qty: 4, filled_avg_price: 231.5, side: 'buy', type: 'market', status: 'partially_filled' }), /Partly filled so far: 4 of 10 at \$231\.50\./);
   assert.match(speakStockReceipt({ id: 'abc-123', symbol: 'AAPL', qty: 10, filled_qty: 10, filled_avg_price: 231.5, side: 'buy', type: 'market', status: 'filled' }), /Filled: 10 at \$231\.50\.$/);
   assert.doesNotMatch(speakStockReceipt({ id: 'x', symbol: 'AAPL', qty: 10, filled_qty: null, side: 'buy', type: 'market', status: 'new' }), /\bFilled\b/);
-  assert.deepEqual(['yes, place it', 'yes place it', 'yes, please place the order'].map((m) => deskIntent(m)), Array(3).fill({ kind: 'take', place: true }));
+  assert.deepEqual(['yes, place it', 'yes place it', 'yes, please place the order'].map((m) => deskIntent(m)), Array(3).fill({ kind: 'take', place: true, live: false }), 'paper-only yes');
   assert.deepEqual(['place it', 'place the order'].map((m) => deskIntent(m)), Array(2).fill({ kind: 'place_unconfirmed' }), 'a bare "place it" has no yes, so it places nothing (B1)');
   assert.deepEqual(['no', "no, don't place it", 'dont place it', 'cancel it', 'drop it'].map((m) => deskIntent(m)?.kind), Array(5).fill('stock_no'));
   assert.equal(deskIntent('yes'), null, 'a bare yes is never an order confirmation by itself');
@@ -449,12 +449,17 @@ test('B1 regression: a bare "place it" is never a place-take; only "yes, place i
   for (const said of ['place it', 'place the order', 'please place it now', 'place my order']) {
     assert.deepEqual(deskIntent(said), { kind: 'place_unconfirmed' }, said);
   }
+  // A paper-only yes: it takes a live alert only through the take refusal in the worker (blocker 1).
   for (const said of ['yes, place it', 'yes place it', 'Yes, please place it.', 'yes, place the order']) {
-    assert.deepEqual(deskIntent(said), { kind: 'take', place: true }, said);
+    assert.deepEqual(deskIntent(said), { kind: 'take', place: true, live: false }, said);
+  }
+  // The live alert's own approval: the only yes phrases that may take a live alert.
+  for (const said of ['yes, take the trade', 'yes, place the trade', 'yes, take it']) {
+    assert.deepEqual(deskIntent(said), { kind: 'take', place: true, live: true }, said);
   }
   // "Take the trade" keeps its own explicit words; it is not a place-take and does not change.
   assert.deepEqual(deskIntent('take the trade'), { kind: 'take_unconfirmed' }, 'a bare take phrase is never a place-take');
-  assert.deepEqual(deskIntent('yes, take the trade'), { kind: 'take', place: true }, 'the explicit yes is the place-take');
+  assert.deepEqual(deskIntent('yes, take the trade'), { kind: 'take', place: true, live: true }, 'the explicit yes is the place-take');
 });
 
 test('B4 regression: shopping sentences and dictionary words are never Alpaca stock orders', () => {
@@ -479,8 +484,12 @@ test('B5 regression: only an explicit yes is a place-take; every trade phrase wi
   for (const said of ['take the trade', 'place the trade now', 'place the trade', 'confirm the trade', 'enter the trade', 'send the trade', 'take the trade now', 'take the trade and pay my bill']) {
     assert.deepEqual(deskIntent(said), { kind: 'take_unconfirmed' }, said);
   }
-  for (const said of ['yes, take the trade', 'yes take the trade', 'yes, place the trade', 'yes, confirm the trade', 'yes, enter the trade', 'yes, send the trade', 'yes, take it', 'yes, place it']) {
-    assert.deepEqual(deskIntent(said), { kind: 'take', place: true }, said);
+  const explicit = {
+    'yes, take the trade': true, 'yes take the trade': true, 'yes, place the trade': true, 'yes, take it': true,
+    'yes, confirm the trade': false, 'yes, enter the trade': false, 'yes, send the trade': false, 'yes, place it': false,
+  };
+  for (const [said, live] of Object.entries(explicit)) {
+    assert.deepEqual(deskIntent(said), { kind: 'take', place: true, live }, said);
   }
 });
 

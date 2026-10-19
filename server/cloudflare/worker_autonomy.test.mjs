@@ -3765,7 +3765,7 @@ test('Alpaca paper order: "no", "never mind" and two minutes passing all send no
     desk.stock_order.asked_at -= 121_000;
     o.saved.set('trading_desk', desk);
     assert.equal((await o.say('yes, place it')).reply, 'The Alpaca PAPER order I read back waited more than two minutes, sir, so nothing was sent. Say the order again and I will read it back.');
-    assert.equal(o.calls.length, 0, 'nothing reached Alpaca');
+    assert.equal(o.calls.length, 0, `nothing reached Alpaca; recorded calls: ${JSON.stringify(o.calls.map((c) => ({ method: c.method, url: c.url, origin: c.origin, from: c.from })))}`);
   } finally {
     o.restore();
   }
@@ -3804,7 +3804,7 @@ test('Alpaca paper order: options, crypto, futures, live and odd orders are refu
     for (const message of ['buy 10 shares of AAPL', 'buy paper towels', 'buy 10 shares of AAPL on Alpaca paper and pay my electric bill']) {
       assert.equal((await o.say(message)).done.held_for_owner, true, message);
     }
-    assert.equal(o.calls.length, 0, 'no refusal reaches Alpaca');
+    assert.equal(o.calls.length, 0, `no refusal reaches Alpaca; recorded calls: ${JSON.stringify(o.calls.map((c) => ({ method: c.method, url: c.url, origin: c.origin, from: c.from })))}`);
   } finally {
     o.restore();
   }
@@ -3854,13 +3854,44 @@ test('B1 regression: a bare "place it" with a live alert pending places nothing;
     o.saved.set('tradovate_auth', tradovateSignedIn());
     for (const said of ['place it', 'place the order']) {
       const { reply, done } = await o.say(said);
-      assert.match(reply, /^Nothing was placed, sir\. To place an order, say "yes, place it"/, said);
+      assert.match(reply, /^Nothing was placed, sir\. To place this trade, say "yes, take the trade"/, said);
       assert.equal(done.order_sent, false, said);
     }
     assert.equal(tradovateCalls(o).length, 0, 'a bare "place it" reaches no broker, live or demo');
     assert.equal(o.saved.get('trading_desk').alerts[0].status, 'pending', 'the live alert stays open, unplaced');
-    await o.say('yes, place it');
+    await o.say('yes, take the trade');
     assert.ok(tradovateCalls(o).some((c) => c.url.startsWith('https://live.tradovateapi.com')), 'the explicit yes is the one that may reach live');
+  } finally {
+    o.restore();
+  }
+});
+
+test('blocker 1: "place it" then "yes, place it" places no live order; so do "yes place it", "yes, place the order" and "yes, place it" in one turn; only "yes, take the trade" reaches placeoso', async () => {
+  const o = await stockOwner({ broker: tradovateAnswers });
+  const placeoso = () => o.calls.filter((c) => c.method === 'POST' && /\/order\/placeoso$/.test(c.url));
+  try {
+    o.saved.set('trading_desk', deskFor('live'));
+    o.saved.set('tradovate_auth', tradovateSignedIn());
+    // The two-turn chain from the review: the bare "place it" is answered, then "yes, place it" is refused.
+    const bare = await o.say('place it');
+    assert.match(bare.reply, /^Nothing was placed, sir\. To place this trade, say "yes, take the trade"/);
+    const chained = await o.say('yes, place it');
+    assert.match(chained.reply, /^Nothing was placed, sir\. To place this trade, say "yes, take the trade"/, 'a paper-only yes is refused while only a live alert is open');
+    assert.equal(chained.done.order_sent, false);
+    assert.equal(placeoso().length, 0, 'the two-turn chain reaches no placeoso');
+    // The other paper-only forms, each as its own turn.
+    for (const said of ['yes place it', 'yes, place the order', 'yes, place it']) {
+      const { reply, done } = await o.say(said);
+      assert.match(reply, /^Nothing was placed, sir\. To place this trade, say "yes, take the trade"/, said);
+      assert.equal(done.order_sent, false, said);
+    }
+    assert.equal(placeoso().length, 0, 'no paper-only yes reaches placeoso');
+    assert.equal(o.saved.get('trading_desk').alerts[0].status, 'pending', 'the live alert stays open');
+    // Only the live approval places it, and once.
+    await o.say('yes, take the trade');
+    assert.equal(placeoso().length, 1, 'the live approval places one order');
+    await o.say('yes, take the trade');
+    assert.equal(placeoso().length, 1, 'a repeated approval places no second order');
   } finally {
     o.restore();
   }
