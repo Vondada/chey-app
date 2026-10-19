@@ -214,6 +214,41 @@ test('review of #339: questions and negations never switch paper trading; other 
   for (const q of ['Explain the last losing trade.', 'Show me where you entered on the chart.', 'How did your paper trades do today?']) assert.ok(liveIntent(q), q);
 });
 
+// Owner issue #350: a long compound read question is answered in full; start and stop stay commands.
+const voiceOf = (text) => text.replace(/[.,?!;]/g, '').replace(/\bDon't\b/gi, 'dont').replace(/\s+/g, ' ').toLowerCase();
+const COMPOUND = "How many paper trades have you won and lost so far, which strategy is performing best, and is paper trading still on? Don't start or stop anything.";
+const LONG_COMPOUND = "CHE, how many paper trades have you won and lost so far today, which of your strategies is performing best right now, and is paper trading still on? Please don't start or stop anything, just read me the answers.";
+
+test('issue #350: a long compound read question names every read it asks; prohibitions, orders and other topics change nothing', () => {
+  assert.ok(LONG_COMPOUND.length > 160);
+  for (const q of [COMPOUND, voiceOf(COMPOUND), LONG_COMPOUND, voiceOf(LONG_COMPOUND)]) {
+    assert.deepEqual(liveIntent(q), { kind: 'winloss', kinds: ['winloss', 'best', 'state'] }, q);
+  }
+  const reads = {
+    "Don't stop paper trading, just tell me how many trades have you won and lost so far.": ['winloss'],
+    'Read me your trading performance since this morning, which of your strategies is performing best, and show me your open positions. Do not stop paper trading and do not place any orders.': ['performance', 'best', 'positions'],
+    'Is paper trading still on?': ['state'],
+    'are you still paper trading': ['state'],
+  };
+  for (const [q, kinds] of Object.entries(reads)) {
+    for (const said of [q, voiceOf(q)]) assert.deepEqual(liveIntent(said)?.kinds || [liveIntent(said)?.kind], kinds, said);
+  }
+  // Start and stop are commands only when the turn opens with them; a long one is still the command.
+  const stop = 'Stop paper trading now, and once it is off tell me how many paper trades have you won and lost so far today and which of your strategies is performing best overall.';
+  assert.ok(stop.length > 160);
+  assert.equal(liveIntent(stop).kind, 'stop');
+  assert.equal(liveIntent(voiceOf(stop)).kind, 'stop');
+  // Orders belong to the desk and other topics keep their own routes, however long the turn.
+  for (const q of [
+    'How many paper trades have you won and lost so far, which strategy is performing best, and then buy two MNQ contracts at market if the best one is long right now.',
+    'Fix the Trading Room screen code so that when I ask how many paper trades have you won and lost so far, you read the totals and which strategy is performing best, then open a pull request.',
+    'Send Claude a message in the mailbox asking how many paper trades have you won and lost so far and which of your strategies is performing best, and tell me when it replies.',
+    'Which strategy works best for my YouTube channel?', 'Is paper trading on NQ profitable for beginners in general?', 'Never stop paper trading.', 'Do not stop paper trading.',
+  ]) {
+    for (const said of [q, voiceOf(q)]) assert.equal(liveIntent(said), null, said);
+  }
+});
+
 // Through the real chat route.
 const generated = new URL('./.trading_live.test.generated.mjs', import.meta.url);
 writeFileSync(generated, readFileSync(new URL('./worker.js', import.meta.url), 'utf8').replace(
@@ -251,6 +286,56 @@ test('route: start, ask and stop by voice, with no model call and no trade claim
     assert.match(stop.text, /Paper trading is off/);
     assert.equal(saved.get('live_paper_state').enabled, false);
     assert.equal(modelCalls, 0);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test('issue #350 route: the compound question is answered in full from the journal, nothing starts or stops, and MNQ reads keep their routes', async () => {
+  const realFetch = globalThis.fetch;
+  const requests = [];
+  globalThis.fetch = async (url) => { requests.push(String(url?.url || url)); throw new TypeError('fetch failed (offline test)'); };
+  try {
+    for (const enabled of [true, false]) {
+      const saved = new Map();
+      let modelCalls = 0;
+      const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => { modelCalls += 1; return { response: 'I won five trades and stopped paper trading.' }; } } };
+      const storage = memoryStorage(saved);
+      const state = new CheState({ storage }, env);
+      env.CHE_STATE = { getByName: () => state };
+      if (enabled) await setLivePaper(storage, true);
+      const send = (path, body, token = '') => worker.fetch(new Request(`https://che.example${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body) }), env);
+      const token = (await (await send('/api/pair', { code: '123456' })).json()).device_token;
+      const ask = async (message) => {
+        const lines = (await (await send('/api/chat', { message }, token)).text()).trim().split('\n').map((l) => JSON.parse(l));
+        return { text: lines.filter((l) => l.type === 'delta').map((l) => l.delta).join(''), done: lines.find((l) => l.type === 'done') };
+      };
+      for (const q of [COMPOUND, voiceOf(COMPOUND), LONG_COMPOUND, voiceOf(LONG_COMPOUND)]) {
+        const out = await ask(q);
+        assert.equal(out.done.source, 'che_trading_live', q);
+        assert.match(out.text, /^No paper trade has closed yet, sir\./, 'won and lost, from the journal');
+        assert.match(out.text, /No forward paper trade has closed yet, so no strategy is ranked, sir\./, 'the best strategy, from the journal');
+        assert.match(out.text, enabled ? /Paper trading is on, sir, since [^.]+ Central\. I did not change it\.$/ : /Paper trading is off, sir\. I did not change it; say start paper trading to turn it on\.$/);
+        assert.equal(out.text.match(/No market data has been read yet/g).length, 1, 'the feed is said once');
+        assert.doesNotMatch(out.text, /five|stopped paper trading/);
+        assert.equal(Boolean(saved.get('live_paper_state')?.enabled), enabled, `${q}: nothing was started or stopped`);
+      }
+      assert.equal(modelCalls, 0);
+      if (!enabled) continue;
+      // Task 1: MNQ by name is the chart analyzer's, on NQ prices; the feed-and-journal read stays here.
+      requests.length = 0;
+      for (const q of ['Analyze MNQ.', "what's mnq doing", 'MNQ structure']) {
+        const out = await ask(q);
+        assert.equal(out.done.source, 'che_trading', q);
+        assert.ok(requests.some((u) => /stooq\.com\/.*[?&]s=nq\.f\b/.test(u)), `${q} read NQ prices`);
+        assert.ok(!requests.some((u) => /binance/.test(u)), `${q} never fell back to bitcoin`);
+      }
+      const feed = await ask('Analyze MNQ using your latest available market data, tell me the data source and whether any paper trades occurred.');
+      assert.equal(feed.done.source, 'che_trading_live');
+      const order = await ask('Analyze MNQ and buy one contract if it looks bullish.');
+      assert.ok(!['che_trading', 'che_trading_live'].includes(order.done?.source), `an order is not a read: ${order.done?.source}`);
+      assert.doesNotMatch(order.text, /placed (?:an|the|your) order|order (?:is |was )?placed/i);
+    }
   } finally {
     globalThis.fetch = realFetch;
   }
