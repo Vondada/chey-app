@@ -105,7 +105,7 @@ import { brainReviewIntent, latestReview, ownerScore, runBrainMaintenance, speak
 import { archiveTasks, projectOfficeExperience, recoverHistory, workerBrains } from './brain_office.js';
 import { fetchYouTubeKnowledge, mergeCaptionLines, normalizeCaptionLines, youtubeVideoId } from './youtube_learning.js';
 import {
-  disconnectGoogle, finishGoogleConnect, googleChatIntent, googleConnectorStates, googleLabel, googleOwnerStep, googleRecheckPending,
+  PENDING_GOOGLE_ACTION_KEY, disconnectGoogle, finishGoogleConnect, googleChatIntent, googleConnectorStates, googleLabel, googleOwnerStep, googleRecheckPending,
   googleTurnContext, youtubeChatIntent,
   googleStates, startGoogleConnect,
 } from './google_services.js';
@@ -8201,10 +8201,12 @@ export class CheState extends DurableObject {
         // delete is never one (atlasIntent), so it still reaches the owner's gate below.
         const atlas = ownerDevice && !body.attachment && !memoryRoute ? atlasIntent(message, ownerHistory, { explainLevel: body.explain_level }) : null;
         if (atlas) {
-          // Like any other turn, a lesson replaces a held request and retires a spoken resource list.
+          // Like any other turn, a lesson replaces a held request (money, delete, app, or a Gmail,
+          // Drive or Calendar write) and retires a spoken resource list, so a later "yes" releases nothing.
           try {
             await this.ctx.storage.put(PENDING_OWNER_ACTION_KEY, null);
             await this.ctx.storage.put(PENDING_APP_ACTION_KEY, null);
+            await this.ctx.storage.put(PENDING_GOOGLE_ACTION_KEY, null);
             await this.ctx.storage.put(LAST_RESULTS_KEY, null);
           } catch (_) {
             return json({ message: 'I could not record that safely, so I did not act. Please say it again.', reply: 'I could not record that safely, so I did not act. Please say it again.', code_review_passed: false, owner_approval_required: true }, 503);

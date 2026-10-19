@@ -35,6 +35,16 @@ Future<List<String>> open(WidgetTester tester, {double textScale = 1, List<Strin
   return spoken;
 }
 
+// The page's content exactly as rendered, line by line in screen order (each line carries its index).
+List<String> screen(WidgetTester tester) {
+  int index(Widget w) => int.parse((w.key! as ValueKey<String>).value.substring('atlas-line-'.length));
+  final lines = tester
+      .widgetList(find.byWidgetPredicate((w) => w.key is ValueKey<String> && (w.key! as ValueKey<String>).value.startsWith('atlas-line-')))
+      .toList()
+    ..sort((a, b) => index(a).compareTo(index(b)));
+  return [for (final w in lines) w is Text ? w.data! : (w as SelectableText).data!];
+}
+
 void main() {
   test('the bundled cards: ten coding and ten trading, each with three levels and a quiz', () {
     final atlas = bundled();
@@ -54,6 +64,23 @@ void main() {
     expect(atlas.find('option spreads'), isNull);
     expect(atlas.next(atlas.byId('recursion')!)?.id, 'hash-maps');
     expect(atlas.next(atlas.byId('sample-size')!), isNull);
+  });
+
+  test('word matching comes from the Worker through the asset, so it cannot drift from knowledge_atlas.js', () {
+    final json = Map<String, dynamic>.from(jsonDecode(File('assets/atlas/knowledge_atlas.json').readAsStringSync()) as Map);
+    final atlas = CheKnowledgeAtlas.fromJson(json);
+    final matching = Map<String, dynamic>.from(json['matching'] as Map);
+    expect(atlas.filler, (matching['filler'] as List).map((w) => '$w').toSet());
+    expect(atlas.filler, containsAll(['the', 'how', 'about', 'python']));
+    expect(atlas.numberOf('five'), 5);
+    expect(atlas.numberOf('twenty'), 20);
+    expect(atlas.referencesLabel, 'Reference links, not opened or checked by CHE');
+    // Every name of every card finds that card, as in the Worker's own alias test.
+    for (final c in atlas.cards) {
+      for (final name in [c.id, c.title, ...c.aliases]) {
+        expect(atlas.find(name)?.id, c.id, reason: name);
+      }
+    }
   });
 
   testWidgets('opening is silent; the cards, filters and buttons are on screen', (tester) async {
@@ -85,12 +112,22 @@ void main() {
     expect(find.text(recursion.levels['beginner']!), findsOneWidget);
     expect(find.text(recursion.analogy), findsOneWidget);
     expect(spoken, isEmpty, reason: 'opening a card is quiet');
+    // Read aloud says what the screen shows, line for line, at every level: the formula and its
+    // assumptions included, read from the rendered widgets, not from the function that builds them.
+    await tester.tap(find.text('Read aloud'));
+    await tester.pumpAndSettle();
+    final beginner = screen(tester);
+    expect(spoken.last, beginner.join('\n'));
+    expect(beginner, containsAll([recursion.analogy, '${recursion.formula!['expression']}', 'Assumptions: ${recursion.formula!['assumptions']}']));
+    expect(beginner.last, startsWith('Reference links, not opened or checked by CHE: '));
     await tester.tap(find.text('Expert'));
     await tester.pumpAndSettle();
     expect(find.text(recursion.levels['expert']!), findsOneWidget);
     await tester.tap(find.text('Read aloud'));
     await tester.pumpAndSettle();
-    expect(spoken, [cheAtlasCardText(recursion, 'expert')]);
+    final expert = screen(tester);
+    expect(spoken.last, expert.join('\n'));
+    expect(expert, containsAll(['Common mistake', recursion.misconceptions.first, recursion.levels['expert']]));
     await tester.tap(find.text('Quiz me'));
     await tester.pumpAndSettle();
     expect(find.text('1. ${recursion.quiz.first.q}'), findsOneWidget);
@@ -98,6 +135,12 @@ void main() {
     await tester.tap(find.text('Show answer 1'));
     await tester.pumpAndSettle();
     expect(find.text('Answer: ${recursion.quiz.first.a}'), findsOneWidget);
+    await tester.tap(find.text('Read aloud'));
+    await tester.pumpAndSettle();
+    expect(spoken.last, screen(tester).join('\n'));
+    expect(spoken.last, contains('Answer: ${recursion.quiz.first.a}'), reason: 'a revealed answer is read');
+    expect(spoken.last, isNot(contains(recursion.quiz[1].a)), reason: 'a hidden answer is not');
+    expect(spoken.length, 3);
   });
 
   testWidgets('every action by voice: list, number, level, formula, quiz, answers, next, back', (tester) async {
@@ -109,18 +152,22 @@ void main() {
       return reply;
     }
 
-    expect(await hear('list the trading cards'), startsWith('Trading cards: 10. 1. Ticks, points and contract value, beginner.'));
-    expect(await hear('number five'), startsWith('Expectancy, beginner level. Expectancy is what a strategy makes or loses'));
-    expect(find.text('Expectancy'), findsOneWidget);
+    expect(await hear('list the trading cards'), startsWith('Trading cards: 10.\n1. Ticks, points and contract value\nTrading, beginner. '));
+    final picked = await hear('number five');
+    expect(picked, startsWith('Expectancy, beginner level.\nTrading, starts at intermediate'));
+    expect(picked, screen(tester).join('\n'), reason: 'the spoken reply is the card now on screen');
+    expect(find.text('Expectancy, beginner level.'), findsOneWidget);
     expect(await hear('give me the expert version'), startsWith('Expectancy, expert level.'));
     expect(await hear("CHE, what's the formula?"), startsWith('The formula for Expectancy: expectancy equals the win rate times the average win'));
-    expect(await hear('quiz me'), startsWith('Quiz on Expectancy. 1. '));
-    expect(await hear('quiz answers'), startsWith('Answers. 1. +0.25R'));
-    expect(find.textContaining('Answer: +0.25R'), findsOneWidget);
+    expect(await hear('quiz me'), startsWith('Quiz on Expectancy.\n1. '));
+    expect(await hear('quiz answers'), contains('Answer: +0.25R'));
+    expect(screen(tester).where((l) => l.startsWith('Answer: +0.25R')), hasLength(1), reason: 'the revealed answer is on the card');
     expect(await hear('whats next'), startsWith('Win rate and its confidence interval, beginner level.'));
     expect(await hear('teach me recursion'), startsWith('Recursion, beginner level.'));
     expect(await hear('go deeper'), startsWith('Recursion, intermediate level.'));
     expect(await hear('what can I do here'), startsWith('Your options: 1. Read aloud.'));
+    expect(await hear('open the knowledge atlas'), 'The Knowledge Atlas is already open.');
+    expect(find.byType(CheKnowledgeAtlasPage), findsOneWidget, reason: 'no second copy of the page');
     expect(await hear('go back'), 'Back to the 10 cards.', reason: 'back to the trading list it came from');
     expect(find.text('1. Ticks, points and contract value'), findsOneWidget);
     // Not the page's: Chat answers these as usual.
