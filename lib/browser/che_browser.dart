@@ -15,6 +15,7 @@ import '../che_app_portal.dart' show cheAppForName, cheIsTradeSeaUrl, cheTradeSe
 import '../security/che_password_vault.dart';
 import '../security/che_vault_auth.dart';
 import 'che_embedded_app_shell.dart';
+import 'che_tradesea_check.dart';
 
 typedef ChePageCallback = Future<void> Function(String title, String url, String pageText);
 
@@ -133,8 +134,11 @@ Uri cheAddressToUri(String input) {
 
 const _fileExtensions = ['.pdf', '.zip', '.dmg', '.pkg', '.ipa', '.apk', '.mp3', '.mp4', '.mov', '.csv', '.xlsx', '.docx', '.pptx'];
 
+/// Shows a page's own pop-up message to the owner; true is "OK".
+typedef ChePageDialog = Future<bool> Function(String site, String message, {required bool confirm});
+
 class _BrowserTab {
-  _BrowserTab(this.url, {required this.onChanged}) {
+  _BrowserTab(this.url, {required this.onChanged, this.onDialog}) {
     _desktopAgent = cheIsTradeSeaUrl(url);
     controller = WebViewController()
       ..setBackgroundColor(const Color(0xFF060B11))
@@ -152,7 +156,24 @@ class _BrowserTab {
         },
         onPageStarted: (u) {
           url = u;
+          // A new page: the earlier one's stop and the check's watch are gone with it.
+          pageStopped = false;
+          tradeSeaWatching = false;
           onChanged();
+        },
+        // TradeSea's load failures, as site names and codes only, for the owner's TradeSea check
+        // (issue #342). iOS ending the page's process leaves it black, so that one is shown too.
+        onWebResourceError: (error) {
+          if (!cheIsTradeSeaHost(url)) return;
+          final type = error.errorType?.name;
+          if (type == 'webContentProcessTerminated') pageStopped = true;
+          _noteIssue(cheTradeSeaPageError(url: error.url ?? url, type: type, code: error.errorCode));
+          onChanged();
+        },
+        onHttpError: (error) {
+          final target = error.response?.uri?.toString() ?? error.request?.uri.toString() ?? url;
+          if (!cheIsTradeSeaHost(url)) return;
+          _noteIssue(cheTradeSeaPageError(url: target, status: error.response?.statusCode));
         },
         onPageFinished: (u) async {
           url = u;
@@ -192,6 +213,18 @@ class _BrowserTab {
           return NavigationDecision.prevent;
         },
       ))
+      // TradeSea's own questions reach the owner (issue #342): without a handler iOS answers every
+      // confirm() with "Cancel" and drops every alert(), silently. Other sites keep that default.
+      ..setOnJavaScriptConfirmDialog((request) async {
+        final ask = onDialog;
+        if (ask == null || !cheIsTradeSeaHost(url)) return false;
+        return ask(cheSafeSite(url), request.message, confirm: true);
+      })
+      ..setOnJavaScriptAlertDialog((request) async {
+        final ask = onDialog;
+        if (ask == null || !cheIsTradeSeaHost(url)) return;
+        await ask(cheSafeSite(url), request.message, confirm: false);
+      })
       // TradeSea gets the full web app (no "download the app" sheet, no
       // native-app embed mode that leaves its trading area empty).
       ..setUserAgent(cheIsTradeSeaUrl(url) ? cheTradeSeaUserAgent : null)
@@ -283,8 +316,19 @@ if(user&&u&&!user.value)set(user,u);set(pw,p);})($u,$p)''');
     await controller.loadRequest(Uri.parse(tradeSea ? cheTradeSeaEmbedUrl(target) : target));
   }
 
+  void _noteIssue(String issue) {
+    siteIssues.add(issue);
+    if (siteIssues.length > 12) siteIssues.removeAt(0);
+  }
+
   bool _desktopAgent = false;
   final VoidCallback onChanged;
+  final ChePageDialog? onDialog;
+  // TradeSea check state (issue #342): failures by site and code, whether iOS stopped the page,
+  // and whether the owner's check is watching this page.
+  final List<String> siteIssues = [];
+  bool pageStopped = false;
+  bool tradeSeaWatching = false;
   late final WebViewController controller;
   String url;
   String title = '';
@@ -493,6 +537,31 @@ if(!best)return '';var label=(best.getAttribute('aria-label')||best.innerText||'
     final w = words.toLowerCase().replaceAll(RegExp(r'[.!?,]+$'), '').trim();
     if (w.isEmpty) return null;
 
+    // A TradeSea pop-up question is answered by voice too.
+    if (_pageQuestion != null) {
+      if (RegExp(r'^(ok|okay|yes|yeah|confirm)$').hasMatch(w)) {
+        Navigator.of(context).pop(true);
+        return 'Answered OK.';
+      }
+      if (RegExp(r'^(cancel|no|nope)$').hasMatch(w)) {
+        Navigator.of(context).pop(false);
+        return 'Answered cancel.';
+      }
+    }
+    // TradeSea by voice (issue #342): the check, a reload, and the Safari view to compare.
+    if (_isTradeSea) {
+      if (RegExp(r"^(check|diagnose|test)( the)? (tradesea|trade sea|chart)$|^why (is|isn'?t) (the )?(chart|tradesea|trade sea)( not)? (blank|black|empty|loading|working|showing)").hasMatch(w)) {
+        return cheTradeSeaSpoken(await _tradeSeaFindings());
+      }
+      if (RegExp(r'^(retry|reload|refresh) (tradesea|trade sea|the chart)$').hasMatch(w)) {
+        await _tab.controller.reload();
+        return 'Reloading TradeSea.';
+      }
+      if (RegExp(r'^(open|show) (tradesea|trade sea|this|it) in (the )?safari( view)?$|^compare in safari( view)?$').hasMatch(w)) {
+        return _openSafariView();
+      }
+    }
+
     if (RegExp(r'^(scroll )?(down|next|more)( please)?$|^scroll down').hasMatch(w)) {
       await _js('window.scrollBy({top: innerHeight*0.8, behavior: "smooth"}); "ok"');
       return 'Scrolled down.';
@@ -651,7 +720,7 @@ if(!best)return '';var label=(best.getAttribute('aria-label')||best.innerText||'
   void _syncAddress() => _address.text = _tabs.isEmpty ? '' : _tab.url;
 
   void _openTab(String url) {
-    _tabs.add(_BrowserTab(url, onChanged: _changed));
+    _tabs.add(_BrowserTab(url, onChanged: _changed, onDialog: _pageDialog));
     _active = _tabs.length - 1;
     _syncAddress();
     setState(() {});
@@ -697,6 +766,106 @@ if(!best)return '';var label=(best.getAttribute('aria-label')||best.innerText||'
   void _snack(String text) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
 
   bool get _isTradeSea => cheIsTradeSeaUrl(_tab.url);
+
+  // ─── TradeSea check (issue #342) ─────────────────────────────────────
+  Completer<bool>? _pageQuestion;
+
+  /// A TradeSea pop-up question, shown and read aloud; the owner answers by touch or by voice.
+  Future<bool> _pageDialog(String site, String message, {required bool confirm}) async {
+    if (!mounted) return false;
+    final answer = Completer<bool>();
+    _pageQuestion = answer;
+    final text = message.trim().isEmpty ? '(no message)' : message.trim();
+    CheEmbeddedAppAnnouncer.say(context, confirm ? '$site asks: $text Say "OK" or "cancel".' : '$site says: $text Say "OK" to close it.');
+    unawaited(showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: Text(confirm ? '$site asks' : '$site says'),
+        content: SingleChildScrollView(child: Text(text, style: const TextStyle(fontSize: 18, height: 1.4))),
+        actions: [
+          if (confirm) TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('OK')),
+        ],
+      ),
+    ).then((value) {
+      if (!answer.isCompleted) answer.complete(value ?? false);
+    }));
+    final result = await answer.future;
+    if (identical(_pageQuestion, answer)) _pageQuestion = null;
+    return confirm ? result : true;
+  }
+
+  /// Runs the owner's TradeSea check: the page probe, then the watch for the next check.
+  Future<List<String>> _tradeSeaFindings() async {
+    final tab = _tab;
+    Map<String, dynamic> probe = const {};
+    try {
+      final decoded = jsonDecode(await _js(cheTradeSeaProbeJs));
+      if (decoded is Map) probe = Map<String, dynamic>.from(decoded);
+    } catch (_) {}
+    if (!tab.tradeSeaWatching) {
+      await _js(cheTradeSeaWatchJs);
+      tab.tradeSeaWatching = true;
+    }
+    if (probe.isEmpty) return ['I could not read the TradeSea page itself; it may still be loading. Say "retry TradeSea", then check again.'];
+    return cheTradeSeaFindings(probe, pageErrors: tab.siteIssues);
+  }
+
+  Future<void> _showTradeSeaCheck() async {
+    final findings = await _tradeSeaFindings();
+    if (!mounted) return;
+    // The owner asked, so the result is said aloud as well as shown in large text.
+    CheEmbeddedAppAnnouncer.say(context, cheTradeSeaSpoken(findings));
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheet) => SafeArea(
+        child: SizedBox(
+          height: MediaQuery.sizeOf(context).height * 0.7,
+          child: Column(children: [
+            Semantics(header: true, child: const ListTile(title: Text('TradeSea check', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800)))),
+            Expanded(
+              child: ListView(padding: const EdgeInsets.fromLTRB(20, 0, 20, 12), children: [
+                for (var i = 0; i < findings.length; i++)
+                  Padding(padding: const EdgeInsets.only(bottom: 10), child: Text('${i + 1}. ${findings[i]}', style: const TextStyle(fontSize: 17, height: 1.4))),
+                const Text('Reads only page structure and site names, never your login, account numbers or page text.', style: TextStyle(color: Colors.white54, fontSize: 14)),
+              ]),
+            ),
+            Wrap(spacing: 10, runSpacing: 8, alignment: WrapAlignment.center, children: [
+              FilledButton.icon(
+                onPressed: () {
+                  Navigator.pop(sheet);
+                  unawaited(_tab.controller.reload());
+                },
+                icon: const Icon(Icons.refresh_rounded),
+                label: const Text('Retry TradeSea'),
+              ),
+              OutlinedButton.icon(
+                onPressed: () {
+                  Navigator.pop(sheet);
+                  unawaited(_openSafariView());
+                },
+                icon: const Icon(Icons.compass_calibration_outlined),
+                label: const Text('Compare in Safari view'),
+              ),
+            ]),
+            const SizedBox(height: 12),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  /// TradeSea in a Safari view inside CHE, to compare: Safari's engine and Safari's own sign-in.
+  Future<String> _openSafariView() async {
+    final opened = await launchUrl(Uri.parse(cheTradeSeaEmbedUrl(_tab.url)), mode: LaunchMode.inAppBrowserView).catchError((_) => false);
+    final said = opened
+        ? 'Opening TradeSea in a Safari view inside CHE, to compare. It uses Safari\'s own sign-in, and I cannot read or drive that view; VoiceOver works there. Close it to come back.'
+        : 'I could not open the Safari view.';
+    if (mounted) CheEmbeddedAppAnnouncer.say(context, said);
+    return said;
+  }
 
   /// Same spirit as Devices → Computer: connect the Windows/Mac companion,
   /// then use authorized windows_action / computer use scoped to TradeSea.
@@ -951,6 +1120,10 @@ if(!best)return '';var label=(best.getAttribute('aria-label')||best.innerText||'
         _setBrowserControls(!_showBrowserControls);
       case 'computer':
         await _showTradeSeaComputer();
+      case 'tradesea_check':
+        await _showTradeSeaCheck();
+      case 'safari_view':
+        await _openSafariView();
       case 'reader':
         await _reader();
       case 'summarize':
@@ -990,6 +1163,10 @@ if(!best)return '';var label=(best.getAttribute('aria-label')||best.innerText||'
       ),
       if (_isTradeSea)
         const PopupMenuItem(value: 'computer', child: ListTile(leading: Icon(Icons.laptop_mac_rounded), title: Text('Computer'))),
+      if (_isTradeSea)
+        const PopupMenuItem(value: 'tradesea_check', child: ListTile(leading: Icon(Icons.fact_check_outlined), title: Text('Check TradeSea'))),
+      if (_isTradeSea)
+        const PopupMenuItem(value: 'safari_view', child: ListTile(leading: Icon(Icons.compass_calibration_outlined), title: Text('Compare in Safari view'))),
       PopupMenuItem(
         value: 'favorite',
         child: ListTile(
@@ -1015,6 +1192,18 @@ if(!best)return '';var label=(best.getAttribute('aria-label')||best.innerText||'
     final keyboardOpen = MediaQuery.viewInsetsOf(context).bottom > 0;
     final page = Column(children: [
       if (_tab.progress < 100) LinearProgressIndicator(value: _tab.progress / 100.0, minHeight: 2),
+      // iOS ended TradeSea's page process: say so on screen with a retry, instead of a black page.
+      if (_isTradeSea && _tab.pageStopped)
+        Semantics(
+          liveRegion: true,
+          child: Material(
+            color: const Color(0xFF3A1F12),
+            child: ListTile(
+              title: const Text('TradeSea stopped: iOS ended the page. Say "retry TradeSea" or press Retry.', style: TextStyle(fontSize: 16)),
+              trailing: TextButton(onPressed: () => _tab.controller.reload(), child: const Text('Retry')),
+            ),
+          ),
+        ),
       Expanded(
         child: IndexedStack(
           index: _active,

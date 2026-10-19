@@ -378,7 +378,7 @@ export const COMMANDS = Object.freeze([
     needs: ['broker'], route: 'che_trading_desk', handler: 'trading_desk.takeTrade → broker_tradovate.placeBracket',
     input: null,
     examples: ['Take the trade'],
-    prompt: 'Take the trade', produces: 'order receipt', evidence: 'The broker\'s order id.', cost: 'Real money on a live account.', keywords: ['execute', 'place order', 'take the trade', 'buy', 'sell'],
+    prompt: 'Yes, take the trade', produces: 'order receipt', evidence: 'The broker\'s order id.', cost: 'Real money on a live account.', keywords: ['execute', 'place order', 'take the trade', 'buy', 'sell'],
   }),
   // Reads the owner-only connections of #348. It never connects, removes keys or goes live.
   C('trade-connections', 'trading', 'EXPLORE', 'Read your trading connections and mode.', {

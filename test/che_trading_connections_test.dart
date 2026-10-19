@@ -11,8 +11,17 @@ Map<String, dynamic> view({String alpaca = 'not_configured'}) => {
       'permissions': {'research': true, 'paper': true, 'sim_orders': 'off', 'live_orders': 'off'},
       'cards': [
         {'id': 'che_paper', 'name': 'CHE Paper', 'state': 'on', 'mode': 'PAPER', 'data': {'source': 'Yahoo Finance chart (public) MNQ=F', 'label': 'DELAYED', 'lag_minutes': 11}, 'detail': '24 isolated paper portfolios.'},
-        {'id': 'tradovate', 'name': 'Tradovate (NinjaTrader)', 'state': 'not_configured', 'mode': 'PAPER', 'blocked_by': ['A funded Tradovate live account with more than \$1,000'], 'open_account': 'https://www.tradovate.com/open-your-trading-account/', 'detail': 'Not set up.'},
-        {'id': 'alpaca', 'name': 'Alpaca (stock paper)', 'state': alpaca, 'mode': 'PAPER', 'detail': alpaca == 'verified' ? 'Paper account ending 6543.' : 'Not set up.'},
+        {
+          'id': 'tradovate', 'name': 'Tradovate (NinjaTrader)', 'state': 'not_configured', 'mode': 'PAPER',
+          'blocked_by': ['A funded Tradovate live account with more than 1,000 dollars in it', 'The CME market-data agreement, signed inside Tradovate'],
+          'blocked_note': 'Until Tradovate approves API access, Tradovate demo and live orders stay blocked in CHE.',
+          'worker_secrets': ['CHE_TRADOVATE_OAUTH_CLIENT_ID', 'CHE_TRADOVATE_OAUTH_CLIENT_SECRET'],
+          'open_account': 'https://www.tradovate.com/open-your-trading-account/', 'detail': 'Not set up.',
+        },
+        {
+          'id': 'alpaca', 'name': 'Alpaca (stock paper)', 'state': alpaca, 'mode': 'PAPER', 'detail': alpaca == 'verified' ? 'Paper account ending 6543.' : 'Not set up.',
+          if (alpaca == 'verified') 'options': {'approved_level': 2, 'trading_level': 2, 'orders': 'off', 'detail': 'Options, read only: Alpaca approved level 2; trading level 2. CHE places no option orders yet.'},
+        },
         {'id': 'fundyouredge', 'name': 'FundYourEdge (Rithmic)', 'state': 'unsupported', 'mode': null, 'detail': 'CHE has no Rithmic connection.'},
       ],
     };
@@ -51,6 +60,7 @@ void main() {
     });
     await tester.pumpWidget(host(client, []));
     await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Add paper keys'));
     await tester.tap(find.text('Add paper keys'));
     await tester.pumpAndSettle();
     await tester.enterText(find.widgetWithText(TextField, 'Paper key ID'), 'PKPAPERKEY1234567890');
@@ -73,11 +83,13 @@ void main() {
     });
     await tester.pumpWidget(host(client, []));
     await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Remove keys'));
     await tester.tap(find.text('Remove keys'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Keep them'));
     await tester.pumpAndSettle();
     expect(posted, isEmpty);
+    await tester.ensureVisible(find.text('Remove keys'));
     await tester.tap(find.text('Remove keys'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Remove'));
@@ -91,5 +103,23 @@ void main() {
     await tester.pumpWidget(host(client, []));
     await tester.pumpAndSettle();
     expect(find.text('Not found.'), findsOneWidget);
+  });
+
+  testWidgets('Tradovate lists its numbered steps and what stays blocked; Alpaca shows its options level, read only (issue #344)', (tester) async {
+    final asked = <String>[];
+    final client = MockClient((r) async => http.Response(jsonEncode(view(alpaca: 'verified')), 200));
+    await tester.pumpWidget(host(client, asked));
+    await tester.pumpAndSettle();
+    expect(find.text('1. A funded Tradovate live account with more than 1,000 dollars in it'), findsOneWidget);
+    expect(find.text('2. The CME market-data agreement, signed inside Tradovate'), findsOneWidget);
+    expect(find.textContaining('demo and live orders stay blocked'), findsOneWidget);
+    expect(find.byWidgetPredicate((w) => w is SelectableText && (w.data ?? '').contains('CHE_TRADOVATE_OAUTH_CLIENT_ID')), findsOneWidget);
+    expect(find.text('Options, read only: Alpaca approved level 2; trading level 2. CHE places no option orders yet.'), findsOneWidget);
+    expect(find.bySemanticsLabel(RegExp(r'Tradovate \(NinjaTrader\): not set up.*Steps: 1\. A funded Tradovate live account')), findsOneWidget);
+    expect(find.bySemanticsLabel(RegExp(r'Alpaca \(stock paper\): verified.*Options, read only: Alpaca approved level 2')), findsOneWidget);
+    expect(asked, isEmpty, reason: 'nothing is read aloud until asked');
+    await tester.ensureVisible(find.text('Read the Tradovate steps'));
+    await tester.tap(find.text('Read the Tradovate steps'));
+    expect(asked, ['What do I need for Tradovate?']);
   });
 }

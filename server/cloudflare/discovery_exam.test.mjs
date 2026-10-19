@@ -12,6 +12,8 @@ const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 function walk(dir, out = []) {
   for (const name of readdirSync(join(ROOT, dir))) {
     const path = join(dir, name);
+    // Dot-files are scratch files another test writes and deletes (creator_studio's generated module); not product code.
+    if (name.startsWith('.')) continue;
     if (/node_modules|\.dart_tool|build$|three\.min\.js$/.test(path)) continue;
     if (statSync(join(ROOT, path)).isDirectory()) walk(path, out);
     else if (/\.(?:dart|m?js|html)$/.test(name)) out.push(relative(ROOT, join(ROOT, path)).replace(/\\/g, '/'));
