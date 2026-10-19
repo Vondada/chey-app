@@ -142,10 +142,22 @@ test('comprehension audit: a plain story keeps its wording, and a plain draft of
   assert.equal(draft.reply, 'Here is your text: I bought the tickets, see you at 8.');
 });
 
-// Review of PR #356, blocker 2 (through /api/chat): an ordinary sentence with sell, sales, set up or register is not held
-// and the model answers it. Money and deletion are the only things CHE asks about first.
-const ORDINARY = ['sell me on this idea', 'how many sales did I make, sell-through?', 'set up my account on the phone', 'register me for the course'];
-for (const say of ORDINARY) {
+// Review of PR #356, round 2, blocker 1 (through /api/chat): a bare "sell" is a sale, so CHE asks first and the model is
+// never called. "sell MNQ" would otherwise reach the broker with no yes.
+const BARE_SELLS = ['sell Tesla', 'sell shares', 'sell everything', 'sell bitcoin now', 'sell $500 of Tesla', 'sell out of my position', 'sell off my shares', 'sell MNQ'];
+for (const say of BARE_SELLS) {
+  test(`review #356: "${say}" is held for the owner's yes, with no model call`, async () => {
+    const [held] = await session([say]);
+    assert.equal(held.meta.held_for_owner, true, 'held for the owner');
+    assert.equal(held.meta.owner_action_kind, 'money');
+    assert.equal(held.modelCalls, 0, 'the model is not called');
+    assert.equal(held.writes, 0);
+  });
+}
+
+// Not sales: an idiom, a figure or a word about the owner's own setup. The model answers each one.
+const NOT_SALES = ['sell me on this idea', 'sell-through was strong last quarter', 'sales were up last quarter', 'sell the idea to Ann', 'set up my account on the phone'];
+for (const say of NOT_SALES) {
   test(`review #356: "${say}" is not held, so the model answers it`, async () => {
     const [turn] = await session([say], { model: 'Sure, sir. Here is my answer.' });
     assert.equal(turn.meta.held_for_owner, undefined, 'not held for the owner');
@@ -156,34 +168,77 @@ for (const say of ORDINARY) {
   });
 }
 
-test('review #356: "set up a Notion account" is still held for the owner\'s yes', async () => {
-  const [held] = await session(['set up a Notion account']);
-  assert.equal(held.meta.held_for_owner, true);
-  assert.equal(held.meta.owner_action_kind, 'signup');
-  assert.equal(held.modelCalls, 0);
-  assert.equal(held.writes, 0);
-});
-
-// Review of PR #356, blocker 1 (through /api/chat): the owner asks CHE to send, and the model says it went out. The
-// request makes each claim false, so each is taken out, and the note names the request's own verb.
-const CLAIMS = [
-  ['Okay, I\'m on it: the email went out.', 'email went out'],
-  ['Got it, the report is in Sarah\'s inbox now.', 'in Sarah\'s inbox'],
-  ['All set, sir. The report is with Sarah.', 'with Sarah'],
-  ['It is all done and dusted.', 'all done and dusted'],
-  ['Ya está hecho.', 'hecho'],
+// Round 2, blocker 3: a registration is one yes, sign-up or money, because the gate cannot tell a free registration from
+// a paid one. A new account is held wherever it is. Each is held with no model call.
+const SIGNUPS = [
+  'register me for the course', 'register me for the newsletter', 'set up an account on Etsy', 'create an account on Etsy',
+  'make me an account on Steam', 'sign me up for Notion', 'create an account on Notion', 'set up a Notion account', 'register me with Notion',
 ];
-for (const [lie, phrase] of CLAIMS) {
-  test(`review #356: "${lie}" (${phrase}) is taken out for "send Sarah the report"`, async () => {
-    const [turn] = await session(['send Sarah the report'], { model: lie });
-    assert.equal(turn.modelCalls, 1, 'the model answers the request');
-    assert.equal(turn.reply, 'Nothing was sent, sir: I have no record of doing that.');
+for (const say of SIGNUPS) {
+  test(`review #356: "${say}" is held for the owner's yes, with no model call`, async () => {
+    const [held] = await session([say]);
+    assert.equal(held.meta.held_for_owner, true, 'held for the owner');
+    assert.equal(held.meta.owner_action_kind, 'signup');
+    assert.equal(held.modelCalls, 0, 'the model is not called');
+    assert.equal(held.writes, 0);
   });
 }
 
-test('review #356: an honest sentence with a negation is kept: "did not go out yet", "no, it is not with Sarah"', async () => {
-  for (const honest of ['The report did not go out yet, sir.', 'No, it is not with Sarah, sir.']) {
+// Round 2, blocker 2 (through /api/chat): a delivery claim about a report or an email, or a generic "done" on a status or
+// recall question, is not CHE's own action. "Nothing was sent" would be false for a real email, so the reply is kept, or the
+// claim is taken out with the neutral note. Each of these replies is a repro from the review.
+const KEPT_REPLIES = [
+  ['how is the report going?', 'The report went out of date last week, sir.'],
+  ['how is the report going?', 'The report is with errors, sir.'],
+  ['how is the report going?', 'The email is with no attachments, sir.'],
+  ['el café ya está hecho?', 'El café ya está hecho, señor.'],
+  ['¿está listo el café?', 'Ya está hecho, señor. Está en la cocina.'],
+];
+for (const [say, reply] of KEPT_REPLIES) {
+  test(`review #356: "${reply}" to "${say}" is kept, not replaced by a denial`, async () => {
+    const [turn] = await session([say], { model: reply });
+    assert.equal(turn.reply, reply);
+  });
+}
+const NEUTRAL_REPLIES = [
+  ['did the report go out?', 'The report went out on Monday, sir.'],
+  ['what did I send Ann last week?', 'The email went out last Tuesday, sir.'],
+];
+for (const [say, reply] of NEUTRAL_REPLIES) {
+  test(`review #356: "${reply}" to "${say}" gets the neutral note, not a denial`, async () => {
+    const [turn] = await session([say], { model: reply });
+    assert.doesNotMatch(turn.reply, /Nothing was/);
+    assert.equal(turn.reply, 'I cannot confirm that from my record, sir.');
+  });
+}
+
+// Round 1 blocker 1, updated for round 2: the owner asks CHE to send, and the model says it went out. A claim about the
+// email or the report is taken out with the neutral note. "All set" and "Ya está hecho" are CHE reporting her own task,
+// so the note denies the request's own verb.
+const CLAIMS = [
+  ['Okay, I\'m on it: the email went out.', 'I cannot confirm that from my record, sir.'],
+  ['Got it, the report is in Sarah\'s inbox now.', 'I cannot confirm that from my record, sir.'],
+  ['All set, sir. The report is with Sarah.', 'Nothing was sent, sir: I have no record of doing that.'],
+  ['It is all done and dusted.', 'Nothing was sent, sir: I have no record of doing that.'],
+  ['Ya está hecho.', 'Nothing was sent, sir: I have no record of doing that.'],
+];
+for (const [lie, note] of CLAIMS) {
+  test(`review #356: "${lie}" is taken out for "send Sarah the report"`, async () => {
+    const [turn] = await session(['send Sarah the report'], { model: lie });
+    assert.equal(turn.modelCalls, 1, 'the model answers the request');
+    assert.equal(turn.reply, note);
+  });
+}
+
+// Honest sentences that the reviewer listed are kept as written.
+const HONEST = [
+  'The report did not go out yet, sir.', 'No, it is not with Sarah, sir.', 'The file is with the accountant, sir.',
+  'The report is with you now, sir.', 'The report never went out, sir.', 'The report will be with Sarah tomorrow, sir.',
+  '¿Ya está hecho, señor?',
+];
+for (const honest of HONEST) {
+  test(`review #356: "${honest}" is kept as written`, async () => {
     const [turn] = await session(['send Sarah the report'], { model: honest });
     assert.equal(turn.reply, honest);
-  }
-});
+  });
+}

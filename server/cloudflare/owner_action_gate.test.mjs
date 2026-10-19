@@ -260,21 +260,42 @@ test('review #356: the requests the audit keeps are unchanged', () => {
 
 // Review of PR #356, blocker 2: ordinary sentences with "sell", "sales", "set up" or "register" are not held. Money and
 // deletion are the only things asked first, and a sign-up only when it names a service.
-test('review #356: ordinary talk with sell, sales, set up or register is not held', () => {
+// Review of PR #356, round 2: a bare "sell" is a sale and is held; these idioms and figures are not.
+test('review #356: ordinary talk with sell, sales or set up is not held', () => {
   assert.deepEqual(classifyOwnerActions('sell me on this idea'), []);
   assert.deepEqual(classifyOwnerActions('how many sales did I make, sell-through?'), []);
+  assert.deepEqual(classifyOwnerActions('sell the idea to Ann'), []);
   assert.deepEqual(classifyOwnerActions('set up my account on the phone'), []);
-  assert.deepEqual(classifyOwnerActions('register me for the course'), []);
-  assert.deepEqual(classifyOwnerActions('register me for the newsletter'), []);
   assert.deepEqual(classifyOwnerActions('how do I set up my printer'), []);
+  assert.deepEqual(classifyOwnerActions('can you sell things for me?'), []);
 });
 
-test('review #356: a sale of something the owner has, and the named sign-ups, are still held', () => {
-  assert.equal(classifyOwnerAction('sell it for $500'), 'money');
-  assert.equal(classifyOwnerAction('sell 2 MNQ'), 'money');
-  assert.equal(classifyOwnerAction('sell the car'), 'money');
+test('review #356: every bare sale is held, including "sell MNQ", and the wording names selling', () => {
+  for (const s of ['sell Tesla', 'sell shares', 'sell everything', 'sell bitcoin now', 'sell $500 of Tesla', 'sell out of my position', 'sell off my shares', 'sell MNQ', 'sell it for $500', 'sell the car']) {
+    assert.equal(classifyOwnerAction(s), 'money', s);
+  }
   assert.deepEqual(classifyOwnerActions('sell me on this idea and sell my shares'), ['money']);
-  assert.match(gateOwnerAction('sell 2 MNQ').ask, /spend, buy or sell anything/);
-  assert.deepEqual(classifyOwnerActions('sign me up for Notion'), ['signup']);
-  assert.deepEqual(classifyOwnerActions('create an account on Notion'), ['signup']);
+  assert.match(gateOwnerAction('sell MNQ').ask, /spend, buy or sell anything/);
+});
+
+// Review of PR #356, round 2: a registration or a new account is one yes, sign-up or money. "Set up my account" names an
+// account the owner already has, so it is not held.
+test('review #356: registrations and new accounts are held for the owner\'s yes', () => {
+  for (const s of ['register me for the course', 'register me for the newsletter', 'register me with Notion', 'set up an account on Etsy',
+    'set up a Notion account', 'create an account on Etsy', 'make me an account on Steam', 'sign me up for Notion', 'create an account on Notion']) {
+    assert.deepEqual(classifyOwnerActions(s), ['signup'], s);
+  }
+  assert.deepEqual(classifyOwnerActions('set up my account on the phone'), []);
+});
+
+// The money and delete holds the owner's rules keep, unchanged by these fixes (the reviewer's lists).
+test('review #356: the money and delete holds the owner rules keep are unchanged', () => {
+  for (const s of ['buy me a coffee', 'pay the electric bill', 'order pizza', 'subscribe to Netflix', 'transfer $50 to Ann', 'top up my phone',
+    'renew my domain', 'upgrade to pro', 'donate to the food bank', 'buy 2 AirPods', 'send $20 to Mark', 'sign up for the gym']) {
+    assert.deepEqual(classifyOwnerActions(s), ['money'], s);
+  }
+  for (const s of ['delete my old emails', 'remove my notes about Ann', 'clear my memory', 'forget that my favorite color is blue',
+    'erase the chat history', 'reset my notes']) {
+    assert.deepEqual(classifyOwnerActions(s), ['delete'], s);
+  }
 });

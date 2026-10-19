@@ -627,13 +627,16 @@ test('review #356: a story that also asks CHE to send is not exempt; a plain sto
 
 test('review #356: a claim with no matching verb is removed, for the request that makes it', async () => {
   const { guardClaimedOwnerActions: guard } = await import('./truth_layer.js');
+  // A claim about an email, an order or a file is not CHE's own action: the note says CHE cannot confirm it (review of
+  // PR #356, round 2). "I've taken care of the bill" and "pagué" are CHE's own action, so the denial names them.
+  const CANNOT_CONFIRM = 'I cannot confirm that from my record, sir.';
   const cases = [
-    ["It's been dispatched to Sarah, sir.", 'send sarah the report', 'Nothing was sent, sir: I have no record of doing that.'],
-    ['Your order went through, sir.', 'send sarah the report', 'Nothing was ordered, sir: I have no record of doing that.'],
+    ["It's been dispatched to Sarah, sir.", 'send sarah the report', CANNOT_CONFIRM],
+    ['Your order went through, sir.', 'send sarah the report', CANNOT_CONFIRM],
     ["I've taken care of the bill, sir.", 'pay the bill', 'Nothing was paid, sir: I have no record of doing that.'],
-    ['Purchase complete. Confirmation number 4471.', 'buy it', 'Nothing was bought, sir: I have no record of doing that.'],
-    ['Your notes are gone now, sir.', 'delete my notes', 'Nothing was deleted, sir: I have no record of doing that.'],
-    ['The email is on its way to Sarah.', 'send sarah the report', 'Nothing was sent, sir: I have no record of doing that.'],
+    ['Purchase complete. Confirmation number 4471.', 'buy it', CANNOT_CONFIRM],
+    ['Your notes are gone now, sir.', 'delete my notes', CANNOT_CONFIRM],
+    ['The email is on its way to Sarah.', 'send sarah the report', CANNOT_CONFIRM],
     ['Listo, señor: pagué la factura.', 'pay the bill', 'Nothing was paid, sir: I have no record of doing that.'],
   ];
   for (const [reply, message, note] of cases) {
@@ -652,8 +655,14 @@ test('review #356: a claim with no matching verb is removed, for the request tha
 test('review #356: "went out", "is with", "in Sarah\'s inbox", "all set", "done and dusted" and "ya está hecho" are claims for a send', async () => {
   const { guardClaimedOwnerActions: guard } = await import('./truth_layer.js');
   const message = 'send sarah the report';
-  for (const reply of ["Okay, I'm on it: the email went out.", 'Got it, the report is in Sarah\'s inbox now.', 'All set, sir. The report is with Sarah.',
-    'It is all done and dusted.', 'Ya está hecho.']) {
+  // A claim about the email or the report is taken out with the neutral note; "All set" and "Ya está hecho" are CHE's own
+  // completion, so the denial names the request's verb.
+  for (const reply of ["Okay, I'm on it: the email went out.", 'Got it, the report is in Sarah\'s inbox now.']) {
+    const out = guard(reply, { message });
+    assert.ok(out.removed.length >= 1, reply);
+    assert.equal(out.text, 'I cannot confirm that from my record, sir.', reply);
+  }
+  for (const reply of ['All set, sir. The report is with Sarah.', 'It is all done and dusted.', 'Ya está hecho.']) {
     const out = guard(reply, { message });
     assert.ok(out.removed.length >= 1, reply);
     assert.equal(out.text, 'Nothing was sent, sir: I have no record of doing that.', reply);
@@ -668,4 +677,20 @@ test('review #356: "All set" and "done and dusted" are not claims when the reque
   const status = 'All set, sir. Your meeting is at noon.';
   assert.equal(guard(status, { message: 'what is on my calendar?' }).text, status);
   assert.equal(guard('It is all done and dusted, sir.', { message: 'how did the report go?' }).text, 'It is all done and dusted, sir.');
+});
+
+// Review of PR #356, round 2, blocker 2: the denial "Nothing was X" is only for CHE's own action. A thing or a person that went
+// out, is with someone, or is "hecho" on a status question is a claim CHE cannot confirm, or no claim at all.
+test('review #356: the denial names only CHE\'s own action; status, recall and Spanish status replies are not denied', async () => {
+  const { guardClaimedOwnerActions: guard } = await import('./truth_layer.js');
+  assert.equal(guard('The report went out of date last week, sir.', { message: 'how is the report going?' }).text, 'The report went out of date last week, sir.');
+  assert.equal(guard('The report is with errors, sir.', { message: 'how is the report going?' }).text, 'The report is with errors, sir.');
+  assert.equal(guard('The email is with no attachments, sir.', { message: 'how is the report going?' }).text, 'The email is with no attachments, sir.');
+  assert.equal(guard('El café ya está hecho, señor.', { message: 'el café ya está hecho?' }).text, 'El café ya está hecho, señor.');
+  assert.equal(guard('Ya está hecho, señor. Está en la cocina.', { message: '¿está listo el café?' }).text, 'Ya está hecho, señor. Está en la cocina.');
+  assert.equal(guard('The report went out on Monday, sir.', { message: 'did the report go out?' }).text, 'I cannot confirm that from my record, sir.');
+  assert.equal(guard('The email went out last Tuesday, sir.', { message: 'what did I send Ann last week?' }).text, 'I cannot confirm that from my record, sir.');
+  // CHE's own action keeps the denial, with or without a request.
+  assert.equal(guard('I sent it, sir.', { message: 'what did I send Ann last week?' }).text, 'Nothing was sent, sir: I have no record of doing that.');
+  assert.equal(guard('I sent it, sir.').text, 'Nothing was sent, sir: I have no record of doing that.');
 });

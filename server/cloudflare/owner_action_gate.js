@@ -16,10 +16,12 @@ const LEAD = String.raw`^(?:${VOCATIVE}(?:(?:please|pls|plz|now|then|also|and|ok
 // Verb forms are written out in full so "delete", "deleting", "pays" and
 // "purchased" all match without matching unrelated words.
 const MONEY_VERB = String.raw`(?:bought|buy(?:s|ing)?|purchas(?:e|es|ed|ing)|pay(?:s|ing)?|paid|subscrib(?:e|es|ed|ing)(?:\s+to)?|donat(?:e|es|ed|ing)(?:\s+to)?|charg(?:e|es|ed|ing)|checkout|upgrad(?:e|es|ed|ing)\s+to|renew(?:s|ed|ing)?|top\s+up|sign\s+up\s+for|spend(?:s|ing)?|withdr(?:aw|aws|awing|awn|ew)|cash\s+out|take\s+out\s+(?:\$|\d|money|cash)|make\s+a\s+purchase|place\s+an?\s+order|send(?:s|ing)?\s+(?:money|\$))`;
-// "sell" moves money the other way, but only when it sells something the owner has: "sell my Tesla shares", "sell it",
-// "sell 2 MNQ" (comprehension audit, issue #350: "can you open Robinhood and sell my Tesla shares" was answered with no
-// hold). "Sell me on this idea", "sell-through" and "sales" name no sale, so they are not held (review of PR #356).
-const SALE_VERB = String.raw`sell(?:s|ing)?\s+(?:(?:it|them|this|that)\b|(?:my|the|your|our|these|those|some|all|any|a|an|\d[\d,.]*)\s+(?!(?:ideas?|concepts?|arguments?|pitch(?:es)?|cases?|points?|stor(?:y|ies)|team|people)\b)[\w'’$-]+)`;
+// "sell" moves money the other way, so a sale of anything is held like a purchase (comprehension audit, issue #350: "can
+// you open Robinhood and sell my Tesla shares" was answered with no hold). A bare object counts too: "sell Tesla", "sell
+// shares", "sell MNQ", "sell out of my position" (review of PR #356, round 2). These name no sale and are not held:
+// "sell me on this idea", "sell-through", "sales", "sell the idea to Ann", and "can you sell things for me?", which asks
+// about CHE's ability and not for an order.
+const SALE_VERB = String.raw`sell(?:s|ing)?\b(?=\s+[\w$'’])(?!\s*-)(?!\s+things?\b)(?!\s+me\s+on\b)(?!\s+(?:(?:the|this|that|a|an|my|your|our|these|those|some|any|all)\s+)?(?:ideas?|concepts?|arguments?|pitch(?:es)?|points?|team|people|signals?|orders?)\b)`;
 const SALE_RE = new RegExp(`\\b${SALE_VERB}`, 'i');
 const MONEY_ORDER = String.raw`order(?:s|ed|ing)?\s+(?:me\s+|us\s+)?(?:a|an|another|more|some|\d|\$|[a-z]+)`;
 const MONEY_TRANSFER = String.raw`(?:transfer(?:s|red|ring)?|wire(?:s|d|ing)?)\s+(?:\$|\d|money|funds|dollars?|to\s)`;
@@ -39,7 +41,11 @@ const NEGATED_RE = /\b(?:do\s+not|don't|dont|never|not|no)\s+$/i;
 // Signing up makes an account and agrees to its terms, in an app or a service. It is held for the owner's yes like a
 // purchase (comprehension audit, issue #350: "Investigate the Notion app and sign me up" was not held). REA reads a
 // listing and never signs up, so an investigation that names the app still only reads it.
-const SIGNUP_RE = new RegExp(`${LEAD}(?:sign\\s+(?:me|us|myself|ourselves)\\s+up|(?:create|make)\\s+(?:me\\s+|us\\s+|my\\s+|our\\s+)?(?:an?\\s+|a\\s+new\\s+)?(?:new\\s+)?(?:[a-z][\\w.-]*\\s+)?account)\\b`, 'i');
+// A new account is held wherever it is ("create an account on Etsy", "set up an account on Etsy"), and so is a registration
+// for anything ("register me for the course"). The gate cannot tell a free registration from a paid one, and a sign-up gives
+// personal data, so the owner decides (review of PR #356, round 2). "Set up my account on the phone" names an account the
+// owner already has, so it is not held.
+const SIGNUP_RE = new RegExp(`${LEAD}(?:sign\\s+(?:me|us|myself|ourselves)\\s+up\\b|(?:create|make)\\s+(?:me\\s+|us\\s+|my\\s+|our\\s+)?(?:an?\\s+|a\\s+new\\s+)?(?:new\\s+)?(?:[a-z][\\w.-]*\\s+)?account\\b|set\\s+up\\s+(?:me\\s+|us\\s+)?(?:an?\\s+|a\\s+new\\s+|new\\s+)(?:[a-z][\\w.-]*\\s+)?account\\b|register\\s+(?:me|us|myself|ourselves)\\s+(?:for|on|with)\\s+[\\w$'’-])`, 'i');
 
 // Each clause of a compound request ("buy X, then delete Y") is checked on its
 // own, so a verb that opens any clause counts.
@@ -246,12 +252,11 @@ const KNOWN_APPS = [
 // Sorted longest first so "google maps" matches before "maps" would.
 const APPS_RE = [...new Set(KNOWN_APPS)].sort((a, b) => b.length - a.length)
   .map((a) => a.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
-// "Set up" and "register" sign someone up only when they name the service: "set up a Notion account", "register me with
-// Notion". "Set up my account on the phone" and "register me for the course" name none, so they are not held (review of
-// PR #356). Only a service in KNOWN_APPS is named: clauses split at every full stop, so a site like "chey-test.com" is
-// not read as one.
+// An account set up with a named service, including one the owner already has ("set up my Notion account"). Only a
+// service in KNOWN_APPS is named: clauses split at every full stop, so a site like "chey-test.com" is not read as one.
+// "Set up my account on the phone" names no service and is not held.
 const SERVICE_NAME = String.raw`(?:${APPS_RE})\b`;
-const SIGNUP_NAMED_RE = new RegExp(`${LEAD}(?:set\\s+up\\s+(?:me\\s+|us\\s+|my\\s+|our\\s+)?(?:an?\\s+|a\\s+new\\s+)?(?:new\\s+)?${SERVICE_NAME}\\s+account\\b|set\\s+up\\s+(?:me\\s+|us\\s+|my\\s+|our\\s+)?(?:an?\\s+|a\\s+new\\s+)?(?:new\\s+)?account\\s+(?:with|on|at)\\s+${SERVICE_NAME}|register\\s+(?:me|us|myself|ourselves)\\s+(?:with|on|at)\\s+${SERVICE_NAME})`, 'i');
+const SIGNUP_NAMED_RE = new RegExp(`${LEAD}(?:set\\s+up\\s+(?:me\\s+|us\\s+|my\\s+|our\\s+)?(?:an?\\s+|a\\s+new\\s+)?(?:new\\s+)?${SERVICE_NAME}\\s+account\\b|set\\s+up\\s+(?:me\\s+|us\\s+|my\\s+|our\\s+)?(?:an?\\s+|a\\s+new\\s+)?(?:new\\s+)?account\\s+(?:with|on|at)\\s+${SERVICE_NAME})`, 'i');
 
 // "open X" as the owner says it: the verb names the app outright, with a
 // clean end after it. No "my" or "the" before the name, so "use my notes to
