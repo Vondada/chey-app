@@ -8348,7 +8348,9 @@ export class CheState extends DurableObject {
         // again costs a model call and can only rewrite what the owner said (issue #345).
         const frame = intentFrame(message);
         const frameReadsIt = frame.lossless && !['unclear', 'followup', 'correction'].includes(frame.mode);
-        if (interpretation.kind === 'unclear' && !frameReadsIt && !interpretation.clarify && !interpretation.passthrough && ownerHistory.length > 0) {
+        // "Reset my knowledge atlas progress" is a delete with a fixed hold: it never needs a reading (issue #346 audit).
+        const deterministicHold = ownerDevice && Boolean(atlasResetIntent(message));
+        if (interpretation.kind === 'unclear' && !frameReadsIt && !interpretation.clarify && !interpretation.passthrough && ownerHistory.length > 0 && !deterministicHold) {
           const reading = await interpretWithModel({
             runText: (messages) => this.runInterpreterText(messages),
             text: message,
