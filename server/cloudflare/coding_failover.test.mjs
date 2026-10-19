@@ -122,3 +122,21 @@ test('a receipt never carries a provider key, is one line, and is bounded in siz
   assert.doesNotMatch(receipt.error, /\n/, 'one line only, so the step output and record stay readable');
   assert.ok(receipt.error.length <= 300, 'the excerpt is bounded');
 });
+
+// Each of these reached the mailbox record through the receipt's error excerpt on 41f2206.
+// A receipt is stored in git history, so every one of them must come out redacted.
+const LEAK_CASES = [
+  ['an Authorization Bearer header', 'Authorization: Bearer abc.def.GhIjKlMnOpQr123456', 'GhIjKlMnOpQr123456'],
+  ['a lowercase bearer token', 'bearer tokenValue987654321', 'tokenValue987654321'],
+  ['an api_key query parameter', 'https://api.example.com/v1/models?api_key=SUPERSECRET123456789&alt=json', 'SUPERSECRET123456789'],
+  ['a token query parameter', 'https://hooks.example.com/x?token=tok_live_987654321abcdef', 'tok_live_987654321abcdef'],
+  ['an access_token JSON field', '{"access_token":"ya29.a0AfH6SMBx1234567890"}', 'ya29.a0AfH6SMBx1234567890'],
+  ['an xai- key', 'xai-AbCdEf1234567890', 'AbCdEf1234567890'],
+];
+for (const [label, text, secret] of LEAK_CASES) {
+  test(`the attempt receipt redacts ${label}`, () => {
+    const receipt = attemptReceipt({ model: 'groq/x', exitCode: 1, text, seconds: 1, capSeconds: 120 });
+    assert.equal(receipt.error.includes(secret), false, `the secret must not reach the record: ${receipt.error}`);
+    assert.match(receipt.error, /\[key\]/);
+  });
+}

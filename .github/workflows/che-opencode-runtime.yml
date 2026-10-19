@@ -409,7 +409,8 @@ jobs:
             node "$CHE_TRUSTED_TOOLS/tools/che_coding_checkpoint.mjs" receipt --model "$1" --exit "$2" --seconds "$3" --cap "$4" --progress "$5" <"$6" >>"$attempts_file" \
               || echo "::warning::Could not write the receipt for $1."
           }
-          redact() { sed -E 's/(AIza|sk-|gsk_|csk-|hf_|sk-or-)[A-Za-z0-9_-]{8,}/[key]/g' | tr '\n"' '  ' | cut -c1-350; }
+          # The same redactor as the receipts (coding_failover.mjs redactSecrets), through the trusted copy.
+          redact() { node "$CHE_TRUSTED_TOOLS/tools/che_coding_checkpoint.mjs" redact | tr '\n"' '  ' | cut -c1-350; }
           # OpenCode keeps retrying errors that cannot succeed (no quota, no access to the model,
           # a request too large for the key's token limit) until the time budget runs out. An
           # error event naming one of them stops that model at once, so the next one gets the

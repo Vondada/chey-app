@@ -55,12 +55,29 @@ export function classifyModelFailure({ text = '', exitCode = 0 } = {}) {
 // says what happened to the attempt's edits: none, verified (kept as the checkpoint), reverted,
 // unverifiable (could not be reverted) or delivered (a successful attempt's change).
 const RECEIPT_PROGRESS = Object.freeze(['none', 'verified', 'reverted', 'unverifiable', 'delivered']);
-const RECEIPT_KEY = /(AIza|sk-|gsk_|csk-|hf_|sk-or-)[A-Za-z0-9_-]{8,}/g;
+
+// The one redactor for everything CHE's coding runner stores or logs: the receipt here, and the
+// runner's shell redact() through `che_coding_checkpoint.mjs redact`. Covers provider keys, bearer
+// tokens, key-like URL query parameters and token fields in JSON. Replaces, never reports, a value.
+const SECRET_PATTERNS = Object.freeze([
+  [/\bBearer\s+[A-Za-z0-9._~+\/=-]+/gi, 'Bearer [key]'],
+  [/\b(?:sk-or-|sk-|sk_live_|sk_test_|xai-|gsk_|csk-|hf_|ghp_|gho_|ghu_|ghs_|ghr_|github_pat_)[A-Za-z0-9_-]{8,}/g, '[key]'],
+  [/\bAIza[0-9A-Za-z_-]{8,}/g, '[key]'],
+  [/\bya29\.[A-Za-z0-9._-]{8,}/g, '[key]'],
+  [/([?&](?:api[_-]?key|key|token|access[_-]?token|refresh[_-]?token|auth|secret|password)=)[^&\s"'<>]+/gi, '$1[key]'],
+  [/(\\?"(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret|password|authorization|client[_-]?secret)\\?"\s*:\s*\\?")[^"\\]*/gi, '$1[key]'],
+]);
+
+export function redactSecrets(text) {
+  let out = String(text ?? '');
+  for (const [pattern, replacement] of SECRET_PATTERNS) out = out.replace(pattern, replacement);
+  return out;
+}
 
 export function attemptReceipt({ model = '', exitCode = 0, text = '', seconds = 0, capSeconds = 0, progress = 'none' } = {}) {
   const code = Number(exitCode) || 0;
   const verdict = code === 0 ? { kind: 'success', resumable: false } : classifyModelFailure({ text, exitCode: code });
-  const excerpt = code === 0 ? '' : String(text || '').replace(RECEIPT_KEY, '[key]').replace(/\s+/g, ' ').trim().slice(0, 300);
+  const excerpt = code === 0 ? '' : redactSecrets(text).replace(/\s+/g, ' ').trim().slice(0, 300);
   return {
     model: String(model || '').slice(0, 120),
     exit_code: code,
