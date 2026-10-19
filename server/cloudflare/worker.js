@@ -76,7 +76,7 @@ import { cachedCodeIndex } from './code_index.js';
 import { CHE_SELF_BRIEF, starredFocus, studyLesson } from './che_self_knowledge.js';
 import { KEY_PROVIDERS, MEMORY_DB, hasStoredMemoryDatabase, memorySetupIntent, memorySetupSteps, removeMemoryDatabase, saveMemoryDatabase, removeKey, storedKeys, withStoredKeys, cachedAnswer, checkAllKeys, fileLetter, fileTech, forgetAnswer, isLockedDown, listLetters, looksLikeAttack, markLetter, nextLetter, rememberAnswer, resilienceIntent, runScout, saveKey, setLockdown, setupSteps, speakKeyHealth, speakMailboxSummary, speakTech, techItems } from './resilience.js';
 import { applyCorrections, correctionsContext, detectCorrection, learnCorrection, loadCorrections } from './speech_learning.js';
-import { applyModelReading, asksAboutScreen, interpretOwnerTurn, interpretWithModel } from './speech_intent.js';
+import { applyModelReading, asksAboutScreen, clipKeepingLimits, interpretOwnerTurn, interpretWithModel } from './speech_intent.js';
 import { intentFrame } from './intent_frame.js';
 import { replyHijacksOwnerRequest, usageIntent, usageReport, speakUsage } from './usage_tracker.js';
 import { newestStarredIntent, speakNewestStarred, autoImproveScan, chatOnlyResponseIntent, currentTurnActionPolicy, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, inspirationUpgradeContext, listOwnerStarredRepos, readRepoSource, referenceSourceBlock, codingHistoryIntent, repositoryImplementationIntent, repositoryInspectionIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, starredStudyList, studySelectionIntent } from './code_scout.js';
@@ -5713,7 +5713,9 @@ export class CheState extends DurableObject {
       }
 
       if (request.method === 'POST' && path === '/api/realtime/observe') {
-        const message = String(body.message || '').trim().slice(0, 2000);
+        // Read whole (issue #345): only a short preference said at its end is kept, so a cut
+        // here would learn from the middle of a sentence and miss a late "don't".
+        const message = String(body.message || '').trim();
         const itemId = String(body.item_id || '').trim().slice(0, 160);
         if (!message) return json({ ok: true, learned: false });
 
@@ -8010,13 +8012,20 @@ export class CheState extends DurableObject {
         } catch (error) {
           return json({ detail: error.message }, error.status || 403);
         }
-        const text = String(body.text || body.message || '').trim().slice(0, 4000);
-        if (!text) return json({ detail: 'Message text required.' }, 400);
+        const sent = String(body.text || body.message || '').trim();
+        if (!sent) return json({ detail: 'Message text required.' }, 400);
+        // Never cut silently (issue #345). Past what the chat takes, a message is refused whole;
+        // the inbox lives in CHE's state record, so a long one keeps about 4,000 characters: its
+        // start, its end and every "don't" and condition, with the cut marked.
+        if (sent.length > 16000) {
+          return json({ detail: `That message is ${sent.length.toLocaleString('en-US')} characters${route.speaker === 'owner' ? ', sir,' : ','} more than the 16,000 I can take at once, so I did nothing with it. Please send it in parts.`, category: 'message_too_long', retryable: false }, 413);
+        }
+        const text = sent.length > 4000 ? clipKeepingLimits(sent, 4000) : sent;
         data.office_inbox = Array.isArray(data.office_inbox) ? data.office_inbox : [];
         data.office_inbox.push({ id: crypto.randomUUID(), from: route.speaker, to: 'che', text, at: new Date().toISOString() });
         data.office_inbox = data.office_inbox.slice(-200);
         await this.ctx.storage.put('che', data);
-        return json({ ok: true, to: 'che' });
+        return json({ ok: true, to: 'che', ...(text === sent ? {} : { shortened: { characters: sent.length, kept: text.length } }) });
       }
       if (path === '/api/change/request' && !ownerDevice) return ownerOnly();
       if (path === '/api/change/request') return dispatchChange(this.env, body, this.ctx.storage, {
