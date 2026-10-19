@@ -74,7 +74,9 @@ async function owner({ env: extra = {} } = {}) {
     return { route: held?.held_for_owner ? 'held' : done.source || (inputs.length > before ? 'model' : 'none'), done, reply, modelCalls: inputs.length - before };
   };
   const get = async (path) => (await send(path, null, token, 'GET')).json();
-  return { say, get, saved, env };
+  // A raw chat body, as the Command Center page sends it (for example its own confirm button).
+  const sendChat = async (body) => (await send('/api/chat', body, token)).json();
+  return { say, get, sendChat, saved, env };
 }
 
 // ── A fake GitHub renderer and YouTube, recording what CHE asked of them ──
@@ -114,7 +116,8 @@ const png = (() => { const b = new Uint8Array(32); b.set([137, 80, 78, 71, 13, 1
 const json = (value, status = 200, headers = {}) => new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json', ...headers } });
 
 function fakePlatforms({ video = mp4(), views = '1234' } = {}) {
-  const seen = { dispatches: [], uploads: 0, sessions: 0, stats: 0, done: false, busy: false };
+  // `statistics` is what YouTube reports for the pilot; a test may change it between turns.
+  const seen = { dispatches: [], uploads: 0, sessions: 0, stats: 0, done: false, busy: false, statistics: { viewCount: views, likeCount: '56', commentCount: '7' } };
   net.calls = [];
   net.route = async (url, options) => {
     if (url.endsWith('/actions/workflows/che-video-render.yml/dispatches')) {
@@ -143,7 +146,7 @@ function fakePlatforms({ video = mp4(), views = '1234' } = {}) {
     }
     if (url.startsWith('https://www.googleapis.com/youtube/v3/videos?part=statistics')) {
       seen.stats += 1;
-      return json({ items: [{ id: 'pilotVid123', statistics: { viewCount: views, likeCount: '56', commentCount: '7' } }] });
+      return json({ items: [{ id: 'pilotVid123', statistics: seen.statistics }] });
     }
     return null;
   };
@@ -557,4 +560,119 @@ test('a ban on one platform leaves the other request; bots are refused however t
     assert.equal((await che.say(words, { fresh: true })).done.refused, 'fake_growth', words);
   }
   assert.equal(seen.sessions + seen.uploads + seen.dispatches.length, 0);
+});
+
+// ─── 8. Blockers and hijacks in the review of #353 (creator_studio.js, worker.js) ───
+
+test('a yes releases only the account and video the ask named: another channel or a re-rendered video is refused, never re-picked', async () => {
+  const che = await owner({ env: { ...GITHUB, ...GOOGLE } });
+  const seen = fakePlatforms();
+  await connectYouTube(che);
+  await che.say('render the pilot');
+  seen.done = true;
+  await che.say('is the pilot ready');
+  const ask = await che.say('post the pilot to YouTube Shorts');
+  assert.equal(ask.route, 'held');
+  assert.match(ask.reply, /Account: YouTube channel "Vondada Test Channel"[\s\S]*Visibility: unlisted/);
+  // The same hold, after CHE has been connected to another channel.
+  const data = che.saved.get('che');
+  che.saved.set('che', { ...data, youtube: { ...data.youtube, channel_id: 'UC_other', channel_title: 'Other Channel' } });
+  const refused = await che.say('yes');
+  assert.equal(refused.route, 'che_creator_studio', 'a refusal is answered by the studio, not the model');
+  assert.match(refused.reply, /YouTube account changed since you asked[\s\S]*"Vondada Test Channel"[\s\S]*"Other Channel"[\s\S]*Nothing was posted/);
+  assert.equal(googleCalls().length, 0, 'no request reached YouTube: no token refresh, no upload');
+  assert.equal(seen.sessions + seen.uploads, 0);
+  const spent = await che.say('yes');
+  assert.notEqual(spent.route, 'che_creator_studio', 'the refused hold is spent: a second yes releases nothing');
+  assert.equal(seen.sessions + seen.uploads, 0);
+  // The owner asks again, and the new ask names the account CHE is connected to now.
+  const again = await che.say('post the pilot to YouTube Shorts');
+  assert.match(again.reply, /Account: YouTube channel "Other Channel"/);
+  assert.equal((await che.say('yes')).route, 'che_creator_studio');
+  assert.equal(seen.uploads, 1);
+  assert.equal(seen.metadata.status.privacyStatus, 'unlisted', 'the verified happy path still uploads unlisted');
+});
+
+test('a yes refuses a pilot video that was rendered again after the ask, and uploads nothing', async () => {
+  const che = await owner({ env: { ...GITHUB, ...GOOGLE } });
+  const seen = fakePlatforms();
+  await connectYouTube(che);
+  await che.say('render the pilot');
+  seen.done = true;
+  await che.say('is the pilot ready');
+  assert.equal((await che.say('post it to YouTube Shorts')).route, 'held');
+  // A new render replaces the verified pilot: a new record and a new render task.
+  const index = che.saved.get('media_index');
+  const video = index.find((item) => item.kind === 'video' && item.verified);
+  video.id = 'rerendered-video-id'; video.render_task_id = 'gha_rerendered';
+  const state = che.saved.get('creator_studio_v1');
+  che.saved.set('creator_studio_v1', { ...state, render: { ...state.render, task_id: 'gha_rerendered' } });
+  const refused = await che.say('yes');
+  assert.equal(refused.route, 'che_creator_studio');
+  assert.match(refused.reply, /pilot video changed since you asked[\s\S]*rendered again[\s\S]*Nothing was posted/);
+  assert.equal(googleCalls().length, 0);
+  assert.equal(seen.uploads + seen.sessions, 0);
+});
+
+test('a studio post confirmed without the ask (the page button, a workflow step) asks first and posts nothing', async () => {
+  const che = await owner({ env: { ...GITHUB, ...GOOGLE } });
+  const seen = fakePlatforms();
+  await connectYouTube(che);
+  await che.say('render the pilot');
+  seen.done = true;
+  await che.say('is the pilot ready');
+  const page = await che.sendChat({ message: '/studio-post YouTube Shorts', command_confirmed: true, history: [] });
+  assert.equal(page.held_for_owner, true);
+  assert.match(page.message, /Post the pilot to YouTube Shorts, sir\? Account: YouTube channel "Vondada Test Channel"/);
+  assert.equal(googleCalls().length, 0, 'nothing reached YouTube');
+  assert.equal((await che.say('yes')).route, 'che_creator_studio');
+  assert.equal(seen.uploads, 1, 'the yes to the named ask posts it, once');
+});
+
+test('a count YouTube does not report is "not reported", never a zero; a real zero still says 0', async () => {
+  const che = await owner({ env: { ...GITHUB, ...GOOGLE } });
+  const seen = fakePlatforms();
+  await connectYouTube(che);
+  await che.say('render the pilot');
+  seen.done = true;
+  await che.say('is the pilot ready');
+  await che.say('post it to YouTube Shorts');
+  assert.equal((await che.say('yes')).route, 'che_creator_studio');
+  seen.statistics = {};
+  const none = await che.say('how is the pilot doing');
+  assert.match(none.reply, /read from YouTube just now: views not reported, likes not reported, comments not reported\./);
+  assert.doesNotMatch(none.reply, /\bno (?:views|likes|comments)\b|\bhidden\b/);
+  seen.statistics = { viewCount: '0', likeCount: '0', commentCount: '0' };
+  const zero = await che.say('how is the pilot doing');
+  assert.match(zero.reply, /read from YouTube just now: 0 views, 0 likes, 0 comments/);
+});
+
+test('the routes other studio words hijacked now reach their own route, as on main', async () => {
+  const che = await owner({ env: { ...GITHUB, ...GOOGLE } });
+  const seen = fakePlatforms();
+  // Email, and the sends and posts to a destination that is not a Studio platform, keep their routes.
+  const mail = await che.say('Email Ann the series bible', { fresh: true });
+  assert.notEqual(mail.route, 'che_creator_studio');
+  assert.match(mail.reply, /Tell me the full address and what the email should say/);
+  for (const words of ['Send the series bible to my accountant', 'Post the pilot to my Slack team', 'Upload the pilot to my Google Drive',
+    'Upload my pilot video to my Dropbox', 'Post the pilot', 'Show my growth experiments for the barbershop']) {
+    const out = await che.say(words, { fresh: true });
+    assert.notEqual(out.route, 'che_creator_studio', words);
+    assert.equal(out.done.command, undefined, words);
+    assert.doesNotMatch(out.reply, /\/studio-|needs the platform|Street Smart Explainers|audience-growth plan/, words);
+    assert.equal(out.modelCalls, 1, `${words}: the model answers, as on main`);
+  }
+  assert.equal(studioChatIntent('Show my growth experiments for the barbershop'), null);
+  assert.equal(studioChatIntent('Email Ann the series bible'), null);
+  assert.equal(studioChatIntent('Send the series bible to my accountant'), null);
+  assert.equal(studioChatIntent('Post the pilot to my Slack team'), null);
+  assert.equal(studioChatIntent('Send the series bible to all my accountants'), null, '"all my" is a person, not a platform');
+  assert.equal(studioChatIntent('Send the series bible to every accountant'), null);
+  // A Studio platform still reaches the post, and its own "for the" pilot still reaches the studio.
+  assert.deepEqual(studioChatIntent('Post the pilot to my YouTube Shorts'), { command: 'studio-post', input: 'YouTube Shorts' });
+  assert.deepEqual(studioChatIntent('Post the pilot for the TikTok'), { command: 'studio-post', input: 'TikTok' });
+  assert.equal(studioChatIntent('Post the pilot to all platforms')?.command, 'studio-post', 'every platform still reaches the post, which refuses more than one');
+  assert.equal(studioChatIntent('Show the growth experiments for the pilot')?.command, 'studio-growth');
+  assert.equal(seen.uploads + seen.sessions + seen.dispatches.length, 0, 'nothing was posted, rendered or sent');
+  assert.equal(googleCalls().length, 0);
 });

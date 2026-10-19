@@ -4821,19 +4821,22 @@ export class CheState extends DurableObject {
       return ndjsonReply(`/${command.id} needs ${command.input.hint.toLowerCase()}, sir. For example: "${command.examples[0] || `/${command.id} …`}". Nothing was run.`,
         { source: 'che_command', ok: false, command: command.id, needs_input: true, model_calls: 0 });
     }
-    if (command.confirm && !confirmed) {
+    // A studio post is held again unless it carries the account and video the owner approved (its pin
+    // from the ask), so a confirmation that names neither (a page button, a workflow step) asks first.
+    if (command.confirm && (!confirmed || (command.local === 'studio_post' && !parsed.pin))) {
       // A studio post that cannot happen (platform not connected, no verified
       // MP4) says why now instead of asking for a yes it could not use; one
       // that can names the account, the video and its visibility in the ask.
       const preflight = command.local === 'studio_post' ? await studioPostPreflight(parsed.input, this.studioContext(request, data)) : null;
       if (preflight?.blocked) return ndjsonReply(preflight.blocked, { source: 'che_creator_studio', ok: false, studio_action: 'post', command: command.id, platform: preflight.platform || '', model_calls: 0 });
       // The same hold the money/delete gate uses: only a plain yes on the
-      // very next turn releases exactly this command, once.
-      await this.ctx.storage.put(PENDING_OWNER_ACTION_KEY, { kinds: ['command'], command: command.id, input: parsed.input, text: `/${command.id} ${parsed.input}`.trim(), at: Date.now() });
+      // very next turn releases exactly this command, once. A studio post keeps
+      // the account and video named in its ask, so the release can check them.
+      await this.ctx.storage.put(PENDING_OWNER_ACTION_KEY, { kinds: ['command'], command: command.id, input: parsed.input, text: `/${command.id} ${parsed.input}`.trim(), at: Date.now(), ...(preflight?.pin ? { pin: preflight.pin } : {}) });
       const ask = preflight?.ask || `/${command.id}: ${command.confirm} Should I go ahead, sir? Say yes to approve.`;
       return json({ message: ask, reply: ask, held_for_owner: true, owner_action_kind: 'command', command: command.id, code_review_passed: false, owner_approval_required: true });
     }
-    if (command.local) return this.runLocalCommand(command, parsed.input, request, data);
+    if (command.local) return this.runLocalCommand(command, parsed.input, request, data, parsed.pin || null);
     const inner = new Request(request.url, {
       method: 'POST', headers: request.headers,
       body: JSON.stringify({ ...body, message: dispatchPrompt(command, parsed.input), command_confirmed: false }),
@@ -4898,7 +4901,7 @@ export class CheState extends DurableObject {
 
   // The few commands with no chat route of their own: thin wrappers over the
   // existing functions, answered from real results only.
-  async runLocalCommand(command, input, request, data) {
+  async runLocalCommand(command, input, request, data, pin = null) {
     const env = this.keyEnv || this.env;
     if (command.local === 'voice_test') {
       const probe = await this.voiceProbe().catch((error) => ({ ok: false, status: 'error', reason: String(error?.message || error).slice(0, 160) }));
@@ -4932,7 +4935,7 @@ export class CheState extends DurableObject {
       return ndjsonReply(reply, { source: 'che_video_line', ok: Boolean(out.ok && row?.link), media_url: row?.link || null, model_calls: 0 });
     }
     if (String(command.local).startsWith('studio_')) {
-      const ctx = this.studioContext(request, data);
+      const ctx = { ...this.studioContext(request, data), pin };
       const out = await runStudioCommand(command.local, input, ctx);
       if (ctx.changed) {
         // Only what the studio changed (YouTube token refresh, its upload) is merged into a fresh store.
@@ -8182,7 +8185,8 @@ export class CheState extends DurableObject {
               await this.ctx.storage.put(PENDING_OWNER_ACTION_KEY, null);
               const command = commandById(held.command);
               if (command && Date.now() - Number(held.at || 0) < PENDING_OWNER_ACTION_MS) {
-                return this.runSlashCommand(request, body, data, { name: command.id, command, input: String(held.input || '') }, { confirmed: true });
+                // The account and video the owner was asked about travel with the yes (held.pin).
+                return this.runSlashCommand(request, body, data, { name: command.id, command, input: String(held.input || ''), pin: held.pin || null }, { confirmed: true });
               }
             }
           }

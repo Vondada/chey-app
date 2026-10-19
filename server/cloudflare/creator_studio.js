@@ -368,6 +368,13 @@ const BANNED_STEP = /\b(?:do\s+not|don['’]?t|never)\s+(?:(?:ever|even|just|go\
 // Buying, botting or faking an audience; "get me more views" with real posts is ordinary growth.
 const FAKE_GROWTH = /\b(?:buy|buying|purchas(?:e|ed|ing)|bought|order|pay\s+for)\b[^.?!]{0,40}\b(?:followers|subscribers|subs|views|likes|engagement|comments|plays)\b|\b(?:bots?|botted|fake|purchased|bought)\b[^.?!]{0,40}\b(?:followers|subscribers|subs|views|likes|accounts|engagement|comments|plays)\b/i;
 const QUESTION = /^(?:did|does|do|is|are|was|were|how|why|what|who|when|can|could|should)\b/i;
+// A sentence that sends something to a person, or to a destination that is not a Studio platform
+// (Gmail, Slack, Drive, Dropbox, a contact), keeps its own route: CHE's other routes answer it (review of #353).
+const MAIL_VERB = /\b(?:e-?mail|mail|dm|message|forward)\b/i;
+const SEND_VERB = /\b(?:post|publish|upload|share|send|put|sync|submit|deliver|transfer)\b/i;
+// The destinations that are Studio's own: a platform, or the owner's own channel or account. "All my accountants" is not one.
+const OWN_OR_PLATFORM = String.raw`(?:you\s?tube|yt|shorts?|tik\s?toks?|instagram|insta|ig|facebook|fb|reels?|(?:every|all|each)\s+(?:the\s+|four\s+)?platforms?|platforms?|channels?|accounts?|pages?|profiles?)`;
+const FOREIGN_DEST = new RegExp(String.raw`\b(?:to|onto|into|for)\s+(?!(?:(?:my|our|the|a|an|his|her|their)\s+)?${OWN_OR_PLATFORM}\b)(?:(?:my|our|the|a|an|his|her|their)\s+)?[a-z]`, 'i');
 
 function studioContext(history) {
   const recent = (Array.isArray(history) ? history : []).slice(-4).map((h) => String(h?.content || h?.text || '')).join(' ');
@@ -392,12 +399,13 @@ export function studioChatIntent(message, history = []) {
   if (FAKE_GROWTH.test(raw) && !QUESTION.test(raw) && (subject || growthWords)) return { say: FAKE_GROWTH_REPLY, refused: 'fake_growth' };
   if (!subject || NOT_OURS.test(raw)) return null;
   // "Growth experiments for my barbershop" is the owner's own business, not the series.
-  if (!series && /\bfor\s+(?:my|a|an|his|her|their)\b/i.test(raw) && !/\b(?:channel|videos?|shorts|reels?|tiktok|series)\b/i.test(raw)) return null;
+  if (!series && /\bfor\s+(?:my|a|an|his|her|their|the)\b/i.test(raw) && !/\b(?:channel|videos?|shorts|reels?|tiktok|series)\b/i.test(raw)) return null;
   if (classifyOwnerActions(raw).length) return null;
   // Verbs are read from what the owner asks for; the subject may sit anywhere ("don't render the pilot, just write the script").
   const banned = [...raw.matchAll(BANNED_STEP)];
   // Each clause is read on its own: "don't post it on TikTok, post it to YouTube Shorts" bans one platform, not both.
   const asked = raw.split(/[.;!?,]+|\bbut\b/i).map((clause) => withoutProhibitions(clause).replace(BANNED_STEP, ' ')).join(' ').replace(/\s+/g, ' ').trim();
+  if (MAIL_VERB.test(raw) || (SEND_VERB.test(asked) && FOREIGN_DEST.test(asked))) return null;
   if (OTHER_THING.test(asked.replace(OWN_WORDS, ' '))) return null;
   const forbidden = `${prohibitedText(raw)} ${banned.map((m) => m[1].toLowerCase()).join(' ')}`;
   // Passed on as the platforms' own names, so a held post reads naturally.
@@ -406,7 +414,8 @@ export function studioChatIntent(message, history = []) {
   if (/\b(?:series|show)\s+bible\b|\b(?:who(?:'s| is| are)|tell me about|introduce)\b[^.?!]*\b(?:cast|characters)\b|\bstreet smart explainers?\b[^.?!]*\b(?:about|premise|cast|characters|tone|format)\b/i.test(asked)) {
     return { command: 'studio-bible', input: '' };
   }
-  if (at('post|publish|upload', DEST_END).test(asked) || (platforms && at('share|send|put', String.raw`\s+(?:to|on|onto)\b`).test(asked))) {
+  // A post needs a Studio platform. "Post the pilot" or "post it to my Slack team" names none, so it is not the studio's.
+  if (platforms && (at('post|publish|upload', DEST_END).test(asked) || at('share|send|put', String.raw`\s+(?:to|on|onto)\b`).test(asked))) {
     return { command: 'studio-post', input: platforms };
   }
   if (at('export|package|format|prepare|prep|resize|crop|adapt', END).test(asked) || new RegExp(String.raw`\b(?:version|cut|export|package)\s+of\s+${OBJ}${END}`, 'i').test(asked)) {
@@ -591,6 +600,34 @@ async function studioExport(input, ctx) {
     text: `Pilot export, sir. ${parts.join(' ')} ${video} The limits come from my notes and were not re-checked with the platforms today. Nothing was posted.` };
 }
 
+/** The video's identity: the record CHE made it from, and its GitHub artifact and size. */
+function videoKey(item) {
+  return { media_id: String(item.id || ''), render_task_id: String(item.render_task_id || ''), github_artifact_id: String(item.github_artifact_id ?? ''), video_bytes: Number(item.video_bytes) || 0 };
+}
+
+/** The account and the exact video the owner approved at the ask. A release must match both. */
+function postPin(platform, yt, pilot) {
+  return { platform, channel_id: String(yt.channel_id || ''), channel_title: String(yt.channel_title || ''), ...videoKey(pilot) };
+}
+
+/**
+ * What changed since the owner's yes-ask, or '' when the same account and the same video are still
+ * connected and rendered. A changed account or video is refused, never re-picked: the owner asks again.
+ */
+function postPinDrift(pin, pre) {
+  const named = (title) => (title ? `"${title}"` : 'an account with no name');
+  if (pin.platform !== pre.platform) return `You approved a post to another platform, sir. Nothing was posted. Ask me again to post the pilot.`;
+  const yt = pre.yt || {};
+  if (!pin.channel_id || String(yt.channel_id || '') !== pin.channel_id) {
+    return `The YouTube account changed since you asked, sir. You approved ${named(pin.channel_title)}, and CHE is now connected to ${named(yt.channel_title)}. I did not post to it. Nothing was posted. Ask me again to post the pilot, and check the account it names.`;
+  }
+  const now = videoKey(pre.pilot);
+  if (now.media_id !== pin.media_id || now.render_task_id !== pin.render_task_id || now.github_artifact_id !== pin.github_artifact_id || now.video_bytes !== pin.video_bytes) {
+    return 'The pilot video changed since you asked, sir: it was rendered again. I did not post it. Nothing was posted. Ask me again to post the pilot, and check the new video it names.';
+  }
+  return '';
+}
+
 /** Why the pilot cannot be posted to this platform now, or the confirmation to ask. Never posts. */
 export async function studioPostPreflight(input, ctx) {
   const platforms = platformsIn(input);
@@ -602,6 +639,7 @@ export async function studioPostPreflight(input, ctx) {
   const yt = await youtubeStatus(ctx.env, ctx.data || {}).catch(() => ({ connected: false }));
   const conn = platformState(id, yt);
   if (conn.state !== 'connected') return { blocked: `${conn.detail} Nothing was posted.`, platform: id, connection: conn.state };
+  if (!yt.channel_id) return { blocked: `I can't tell which YouTube account to post to, sir, so I won't post. Nothing was posted.`, platform: id };
   const state = await loadStudio(ctx.storage);
   if (state.posts?.[id]?.link) return { blocked: `The pilot is already on ${profile.label}, sir: ${state.posts[id].link} (${state.posts[id].visibility || 'unlisted'}). I did not post it again.`, platform: id, duplicate: true };
   const pilot = await verifiedPilot(ctx.storage, state);
@@ -612,7 +650,7 @@ export async function studioPostPreflight(input, ctx) {
   const out = exportPackage(id);
   if (!out.ok) return { blocked: `The ${profile.label} package does not pass: ${out.errors.join(' ')} Nothing was posted.`, platform: id };
   return {
-    platform: id, pilot, out, yt,
+    platform: id, pilot, out, yt, pin: postPin(id, yt, pilot),
     ask: `Post the pilot to ${profile.label}, sir? Account: YouTube channel ${yt.channel_title ? `"${yt.channel_title}"` : '(name not known)'}. Video: "${out.package.title}", ${receiptWords(mediaReceipt(pilot))}. Visibility: ${profile.visibility}, not public; making it public stays your choice on YouTube. Say yes to approve.`,
   };
 }
@@ -620,6 +658,9 @@ export async function studioPostPreflight(input, ctx) {
 async function studioPost(input, ctx) {
   const pre = await studioPostPreflight(input, ctx);
   if (pre.blocked) return { ok: false, studio_action: 'post', platform: pre.platform || '', connection: pre.connection || '', text: pre.blocked };
+  // Only the account and video the owner approved at the ask may be posted: no pin, no post.
+  const drift = ctx.pin ? postPinDrift(ctx.pin, pre) : 'I need the account and video you approved before I post, sir. Ask me again to post the pilot. Nothing was posted.';
+  if (drift) return { ok: false, studio_action: 'post', platform: pre.platform, text: drift };
   const { env, storage, data } = ctx;
   const access = await youtubeAccessToken(env, data, ctx.fetcher);
   if (access.changed) ctx.changed = true;
@@ -654,7 +695,9 @@ async function studioGrowth(ctx) {
       state.measurements = [{ platform: 'youtube_shorts', video_id: yt.video_id, at: Date.now(), ...row.statistics }, ...(state.measurements || [])].slice(0, 50);
       await ctx.storage.put(STUDIO_KEY, state);
       const s = row.statistics;
-      lines.push(`YouTube Shorts, read from YouTube just now: ${s.views ?? 'no'} views, ${s.likes ?? 'hidden'} likes, ${s.comments ?? 'no'} comments.`);
+      // YouTube leaves out a count it does not report (likes hidden, comments off). That is not a zero.
+      const counted = (n, noun) => (Number.isFinite(n) ? `${n} ${noun}` : `${noun} not reported`);
+      lines.push(`YouTube Shorts, read from YouTube just now: ${counted(s.views, 'views')}, ${counted(s.likes, 'likes')}, ${counted(s.comments, 'comments')}.`);
     } else {
       lines.push(`YouTube Shorts: no data; ${stats.error || 'YouTube returned no statistics for the pilot.'}`);
     }
