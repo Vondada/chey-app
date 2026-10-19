@@ -86,25 +86,35 @@ function plainSecret(trimmed) {
   const switches = (token.match(/[A-Za-z](?=\d)|\d(?=[A-Za-z])/g) || []).length;
   return mixedCase && ((token.length >= 12 && switches >= 3) || token.length >= 24);
 }
-// A document ID is an address, not a credential, so it is exempt from the random-run rule only, and only
-// in Google's own shapes (fourth review of #354): "/document/d/<id>", "/spreadsheets/d/<id>",
-// "/presentation/d/<id>", "/file/d/<id>", "/forms/d/<id>" and "/drive/folders/<id>", on docs.google.com or
-// drive.google.com, with an ID of 28 to 64 characters. "/d/<secret>" with no type is not exempt. The hex
-// rule and the link's userinfo and query checks still apply.
+// Google links (owner decisions, seventh round of #354). An ID is exempt from the random-run checks only inside
+// one of the functional shapes below, and only when it is a clean ID of 28 to 64 characters (no encoded
+// characters inside it). Any other Google path with a long ID is withheld. A shape lists the path parts after
+// the leading "/": "ID" is the Google ID and an array is a choice of parts.
 const GOOGLE_DOC_HOST_RE = /^(?:docs|drive)\.google\.com$/i;
-const GOOGLE_DOC_TYPES = new Set(['document', 'spreadsheets', 'presentation', 'file', 'forms']);
 const GOOGLE_DOC_ID_RE = /^[A-Za-z0-9_-]{28,64}$/;
-function googleDocSegments(authority, segments) {
-  const ids = new Set();
-  const host = authority.slice(authority.lastIndexOf('@') + 1).split(':')[0];
-  if (!GOOGLE_DOC_HOST_RE.test(host)) return ids;
-  segments.forEach((segment, i) => {
-    if (i < 2 || !GOOGLE_DOC_ID_RE.test(segment)) return;
-    const before = segments[i - 2];
-    const prev = segments[i - 1];
-    if ((prev === 'd' && GOOGLE_DOC_TYPES.has(before)) || (prev === 'folders' && before === 'drive')) ids.add(i);
-  });
-  return ids;
+const GOOGLE_ALLOWED_LINKS = [
+  ['docs.google.com', ['document', 'd', 'ID', ['edit', 'view']]],
+  ['docs.google.com', ['spreadsheets', 'd', 'ID', 'edit']],
+  ['docs.google.com', ['presentation', 'd', 'ID', 'edit']],
+  ['docs.google.com', ['document', 'd', 'e', 'ID', 'pub']],
+  ['drive.google.com', ['file', 'd', 'ID', 'view']],
+  ['drive.google.com', ['drive', 'folders', 'ID']],
+];
+// The index of the allow-listed ID in the raw path segments, or -1 when the path is not one of those shapes.
+function googleAllowedIdIndex(host, rawSegments) {
+  const parts = rawSegments.slice(1);
+  for (const [allowedHost, shape] of GOOGLE_ALLOWED_LINKS) {
+    if (host.toLowerCase() !== allowedHost || parts.length !== shape.length) continue;
+    let idIndex = -1;
+    const matches = shape.every((want, k) => {
+      const part = parts[k];
+      if (want === 'ID') { idIndex = k + 1; return GOOGLE_DOC_ID_RE.test(part); }
+      if (Array.isArray(want)) return want.includes(part);
+      return part === want;
+    });
+    if (matches) return idIndex;
+  }
+  return -1;
 }
 // A password in the userinfo ("https://bob:hunter22@host") is withheld when it is six or more characters
 // with a letter and a digit or a symbol (sixth review of #354). The plain token check missed "hunter22".
@@ -114,14 +124,15 @@ function userinfoPasswordShape(userinfo) {
   const password = userinfo.slice(colon + 1);
   return password.length >= 6 && /[A-Za-z]/.test(password) && /[\d\W_]/.test(password);
 }
-// Percent-encoded characters read as the characters they stand for (sixth review of #354). A malformed
-// escape is not a sequence, so it is left alone and cannot throw.
+// Percent-encoded characters read as the characters they stand for. A malformed escape is not a sequence,
+// so it is left alone and cannot throw.
 function decodePercent(text) {
   return text.replace(/%([0-9A-Fa-f]{2})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
 }
-// A link is judged by its parts. Its userinfo and query values get the full token check (a password
-// or a code in a link is a secret); a path segment is a secret only as a long random run or a hex key.
-// An ordinary path slug ("6-006-introduction-to-algorithms-2020") and a percent-encoded word are words.
+// A link is judged by its parts. Its userinfo and query values get the full token check (a password or a
+// code in a link is a secret); a path segment is a secret as a long random run, a hex key, or a token that an
+// encoded character joins. An ordinary path slug ("6-006-introduction-to-algorithms-2020") and a percent-encoded
+// word ("Amdahl%27s_law") are words.
 function linkHasSecret(link) {
   const head = /^(?:[a-z][a-z0-9+.-]*:\/\/|www\.)([^/?#]*)/i.exec(link);
   const authority = head ? head[1] : '';
@@ -129,13 +140,52 @@ function linkHasSecret(link) {
   const at = authority.lastIndexOf('@');
   if (at > 0 && authority.slice(0, at).split(':').some((piece) => piece && plainSecret(piece))) return true;
   if (at > 0 && userinfoPasswordShape(authority.slice(0, at))) return true;
+  const host = authority.slice(at + 1).split(':')[0];
   const path = rest.split(/[?#]/)[0];
   const query = rest.slice(path.length);
-  // Percent-encoded characters are read first, so an encoded hyphen ("%2D") cannot cut a token apart.
-  const segments = path.split('/').map(decodePercent);
-  const docIds = googleDocSegments(authority, segments);
-  if (segments.some((segment, i) => ((randomRun(segment) || hyphenatedRandomRun(segment)) && !docIds.has(i)) || (HEX_RE.test(segment) && plainSecret(segment)))) return true;
-  return decodePercent(query).split(/[?&=#]+/).some((piece) => Boolean(piece) && (randomRun(piece) || plainSecret(piece)));
+  // Each raw path segment is decoded, then split on any character outside [A-Za-z0-9_-], so an encoded "%2F"
+  // or "%3F" cannot join the pieces of one token; each piece is then judged.
+  const rawSegments = path.split('/');
+  const allowedId = googleAllowedIdIndex(host, rawSegments);
+  const googleHost = GOOGLE_DOC_HOST_RE.test(host);
+  for (let i = 0; i < rawSegments.length; i++) {
+    if (i === allowedId) continue;
+    const decoded = decodePercent(rawSegments[i]);
+    const pieces = decoded.split(/[^A-Za-z0-9_-]+/).filter(Boolean);
+    if (googleHost && pieces.some((piece) => GOOGLE_DOC_ID_RE.test(piece))) return true;
+    for (const piece of pieces) {
+      if (randomRun(piece) || hyphenatedRandomRun(piece)) return true;
+      if (HEX_RE.test(piece) && plainSecret(piece)) return true;
+    }
+  }
+  // The raw query is split on its delimiters first, so an encoded delimiter ("%26", "%3D", "%3F", "%23") stays
+  // inside its value. Each value is decoded, then judged by the plain rule.
+  return query.split(/[?&=#]+/).some((raw) => {
+    if (!raw) return false;
+    const piece = decodePercent(raw);
+    return randomRun(piece) || plainSecret(piece);
+  });
+}
+// Google document IDs are not repeated in logs, reports or unrelated model requests (owner decision). In a
+// Google link the ID is replaced by "[google-id]". The link itself stays stored whole.
+const GOOGLE_LINK_TEXT_RE = /https?:\/\/(?:docs|drive)\.google\.com\/[^\s"'<>()[\]]*/gi;
+const GOOGLE_REQUEST_RE = /google|docs\.google\.com|drive\.google\.com/i;
+export function redactGoogleIds(text) {
+  return String(text ?? '').replace(GOOGLE_LINK_TEXT_RE, (link) => {
+    const cut = link.search(/[?#]/);
+    const head = cut < 0 ? link : link.slice(0, cut);
+    const tail = cut < 0 ? '' : link.slice(cut);
+    return head.split('/').map((part) => (GOOGLE_DOC_ID_RE.test(part) ? '[google-id]' : part)).join('/')
+      + tail.replace(/[A-Za-z0-9_-]{28,64}/g, '[google-id]');
+  });
+}
+// True when the owner's own words are about a Google file, so the ID in it is theirs to use.
+export function ownerAskedAboutGoogle(text) {
+  return GOOGLE_REQUEST_RE.test(String(text ?? ''));
+}
+// Brain text for a log, a report or a model request: IDs are redacted unless the owner's request is about Google.
+export function redactBrainText(text, ownerMessage = '') {
+  return ownerAskedAboutGoogle(ownerMessage) ? String(text ?? '') : redactGoogleIds(text);
 }
 function secretToken(raw) {
   // Sentence punctuation is not part of a token; a closing "!" is, when the rest already mixes

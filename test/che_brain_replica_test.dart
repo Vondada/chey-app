@@ -552,6 +552,55 @@ void main() {
     expect(brain.count, kept.length);
   });
 
+  test('W: encoded delimiters and encoded slashes cannot split a token on the phone; only the functional Google shapes keep an ID; an unrelated request redacts it (seventh review of #354)', () async {
+    final dir = await freshDir();
+    final brain = CheBrainReplica(directory: dir);
+    // Built from pieces, so no literal token sits in the repository.
+    final token = ['Q7mZ2kP9', 'xL4vN8wR3', 'tY6uB1c', 'Q7mZ2kP9'];
+    const docId = '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms';
+    const driveId = '1AbCdEfGhIjKlMnOpQrStUvWxYz012345';
+    final pubId = ['2PACX-1vQ', 'aBcD3eFgH4iJkL5mNoPqRsT6uVwXyZ7aBcD8eFgH9iJkL0mNoPqRsT'].join('-');
+    final withheld = [
+      'Reset https://example.com/reset?code=${token.join('%26')}',
+      'Reset https://example.com/reset?code=${token.join('%3D')}',
+      'Reset https://example.com/reset?code=${token.join('%3F')}',
+      'Reset https://example.com/reset?code=${token.join('%23')}',
+      'Reset https://docs.google.com/reset?code=${token.join('%26')}',
+      'Reset https://example.com/reset/${['Q7mZ2kP9-xL4vN8wR3-tY6uB1c', '7mZ2kP9xL4vN8wR'].join('%2F')}',
+      'Doc https://docs.google.com/document/d/$docId/copy',
+      'Doc https://docs.google.com/document/d/e/$pubId/pub/Q7mZ2kP9xL4vN8wR3tY6uB1c',
+      'Doc https://docs.google.com/document/d/e/$pubId/pub?pw=Summer2026!',
+    ];
+    for (final text in withheld) {
+      expect(cheBrainTextIsSensitive(text), isTrue, reason: text);
+      expect(await brain.remember(kind: 'memory', region: 'Personal Memory', body: text), isNull, reason: text);
+    }
+    expect(brain.count, 0);
+    final kept = [
+      'Published https://docs.google.com/document/d/e/$pubId/pub now',
+      'Here is the doc https://docs.google.com/document/d/$docId/edit for Monday',
+      'Sheet https://docs.google.com/spreadsheets/d/$docId/edit#gid=0',
+      'Deck https://docs.google.com/presentation/d/$docId/edit',
+      'Drive link https://drive.google.com/file/d/$driveId/view',
+      'Folder https://drive.google.com/drive/folders/$driveId',
+      'Read https://example.com/brain-sync-follow-up-plan now',
+      'Read https://ocw.mit.edu/courses/6-006-introduction-to-algorithms-spring-2020/ now',
+      'Read https://en.wikipedia.org/wiki/Amdahl%27s_law now',
+      'See https://example.com:8080/path?ref=main now',
+    ];
+    for (final text in kept) {
+      expect(cheBrainTextIsSensitive(text), isFalse, reason: text);
+      expect(await brain.remember(kind: 'memory', region: 'Personal Memory', body: text), isNotNull, reason: text);
+    }
+    expect(brain.count, kept.length);
+    // Redaction: an unrelated request sees the placeholder; the owner's own Google request keeps the ID.
+    const link = 'Here is the doc https://docs.google.com/document/d/$docId/edit for Monday';
+    expect(cheRedactBrainText(link, 'What did Claude say about #350?'), 'Here is the doc https://docs.google.com/document/d/[google-id]/edit for Monday');
+    expect(cheRedactBrainText(link, 'Open my Google doc for Monday'), link);
+    expect(cheAskedAboutGoogle('Open my Google doc'), isTrue);
+    expect(cheAskedAboutGoogle('What did Claude say about #350?'), isFalse);
+  });
+
   test('V: a password in URL userinfo and a percent-encoded hyphen token are withheld on the phone; the approved kept cases stay kept (sixth review of #354)', () async {
     final dir = await freshDir();
     final brain = CheBrainReplica(directory: dir);

@@ -135,7 +135,7 @@ extension _CheHomeMemory on _CHEHomeState {
           .search(message, limit: 8)
           .where((r) => !cheBrainTextIsSensitive('${r.title}\n${r.excerpt}'))
           .take(4)
-          .map((r) => 'BRAIN (${r.region}; ${r.verification.replaceAll('_', ' ')}): ${r.title} — ${r.excerpt}')
+          .map((r) => cheRedactBrainText('BRAIN (${r.region}; ${r.verification.replaceAll('_', ' ')}): ${r.title} — ${r.excerpt}', message))
           .toList();
     } catch (_) {
       return const [];

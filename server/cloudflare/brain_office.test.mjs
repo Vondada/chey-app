@@ -6,6 +6,7 @@ import {
   projectInvestigations, projectOfficeExperience, recoverHistory, redactCorrespondence, redactedRecord, speakCorrespondenceCount, speakCorrespondenceImport, taskRecord, workerBrains,
 } from './brain_office.js';
 import { backfillConversations, isSafeText } from './brain_store.js';
+import { correspondenceRecord } from './brain_office.js';
 import { isSafeMemoryText } from './research_memory.js';
 import { redactSecrets } from './privacy_policy.js';
 import { REA_DETAIL_PREFIX, REA_JOBS_KEY } from './rea_runner.js';
@@ -915,4 +916,21 @@ test('sixth review of #354: a password in URL userinfo and an encoded hyphen tok
   const record = { id: 'note:login-1', kind: 'note', region: BRAIN_REGIONS.personal, path: 'Family', title: 'Login', body: repros[0], verification: 'owner_attested', source: { kind: 'note' }, links: [] };
   assert.equal(store.put(record).outcome, 'rejected');
   assert.equal(store.get('note:login-1'), null);
+});
+
+test('seventh review of #354: a correspondence report for an unrelated question shows the Google placeholder; the owner\'s own Google question keeps the ID', async (t) => {
+  const storage = await sqlStorage();
+  if (!storage) return t.skip('node:sqlite unavailable');
+  const store = new CheBrainStore(storage);
+  const DOC_ID = '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms';
+  const body = `Please review #350 at https://docs.google.com/document/d/${DOC_ID}/edit before Monday.`;
+  const record = correspondenceRecord({ id: 'g350', at: T, from: 'claude', to: 'che', text: body, reply_to: '' }, { file: 'mailbox/claude.jsonl', withIds: true });
+  assert.equal(store.put(record, { origin: 'cloud', now: T }).outcome, 'created');
+  // The record itself is stored whole: the link stays usable for the owner.
+  assert.match(store.get(record.id).body, new RegExp(DOC_ID));
+  const unrelated = answerCorrespondenceQuestion(store, { peer: 'claude', direction: 'from', topic: '#350' });
+  assert.match(unrelated.text, /\[google-id\]/, unrelated.text);
+  assert.equal(unrelated.text.includes(DOC_ID), false, 'the ID is not in the report');
+  const own = answerCorrespondenceQuestion(store, { peer: 'claude', direction: 'from', topic: 'my Google doc #350' });
+  assert.ok(own.text.includes(`https://docs.google.com/document/d/${DOC_ID}/edit`), own.text);
 });

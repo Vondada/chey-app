@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { ownerAskedAboutGoogle, redactBrainText, redactGoogleIds } from './research_memory.js';
 import {
   addOwnerMemory,
   buildAgentTaskNodes,
@@ -266,6 +267,61 @@ test('sixth review of #354: a password in URL userinfo and a percent-encoded hyp
     assert.equal(isSafeMemoryText(text), true, text);
     assert.equal(hasSecretShape(text), false, text);
   }
+});
+
+// ─── Seventh review of #354: encoded delimiters, the functional Google shapes, and redaction ─────────
+test('seventh review of #354: encoded delimiters and encoded slashes cannot split a token; only the functional Google shapes keep an ID; the published-doc shape is kept', () => {
+  // Built from pieces, so no literal token sits in the repository.
+  const TOKEN = ['Q7mZ2kP9', 'xL4vN8wR3', 'tY6uB1c', 'Q7mZ2kP9'];
+  const DOC_ID = '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms';
+  const DRIVE_ID = '1AbCdEfGhIjKlMnOpQrStUvWxYz012345';
+  const PUB_ID = ['2PACX-1vQ', 'aBcD3eFgH4iJkL5mNoPqRsT6uVwXyZ7aBcD8eFgH9iJkL0mNoPqRsT'].join('-');
+  const withheld = [
+    `Reset https://example.com/reset?code=${TOKEN.join('%26')}`,
+    `Reset https://example.com/reset?code=${TOKEN.join('%3D')}`,
+    `Reset https://example.com/reset?code=${TOKEN.join('%3F')}`,
+    `Reset https://example.com/reset?code=${TOKEN.join('%23')}`,
+    `Reset https://docs.google.com/reset?code=${TOKEN.join('%26')}`,
+    `Reset https://example.com/reset/${['Q7mZ2kP9-xL4vN8wR3-tY6uB1c', '7mZ2kP9xL4vN8wR'].join('%2F')}`,
+    `Doc https://docs.google.com/document/d/${DOC_ID}/copy`,
+    `Doc https://docs.google.com/document/d/e/${PUB_ID}/pub/Q7mZ2kP9xL4vN8wR3tY6uB1c`,
+    `Doc https://docs.google.com/document/d/e/${PUB_ID}/pub?pw=Summer2026!`,
+  ];
+  for (const text of withheld) {
+    assert.equal(isSafeMemoryText(text), false, text);
+    assert.equal(hasSecretShape(text), true, text);
+  }
+  const kept = [
+    `Published https://docs.google.com/document/d/e/${PUB_ID}/pub now`,
+    `Here is the doc https://docs.google.com/document/d/${DOC_ID}/edit for Monday`,
+    `Sheet https://docs.google.com/spreadsheets/d/${DOC_ID}/edit#gid=0`,
+    `Deck https://docs.google.com/presentation/d/${DOC_ID}/edit`,
+    `Drive link https://drive.google.com/file/d/${DRIVE_ID}/view`,
+    `Folder https://drive.google.com/drive/folders/${DRIVE_ID}`,
+    'Read https://example.com/brain-sync-follow-up-plan now',
+    'Read https://ocw.mit.edu/courses/6-006-introduction-to-algorithms-spring-2020/ now',
+    'Read https://en.wikipedia.org/wiki/Amdahl%27s_law now',
+    'See https://example.com:8080/path?ref=main now',
+  ];
+  for (const text of kept) {
+    assert.equal(isSafeMemoryText(text), true, text);
+    assert.equal(hasSecretShape(text), false, text);
+  }
+});
+
+test('seventh review of #354: a Google ID is redacted for an unrelated request, and kept for the owner\'s own Google request', () => {
+  const DOC_ID = '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms';
+  const DRIVE_ID = '1AbCdEfGhIjKlMnOpQrStUvWxYz012345';
+  const text = `Here is the doc https://docs.google.com/document/d/${DOC_ID}/edit for Monday`;
+  const redacted = 'Here is the doc https://docs.google.com/document/d/[google-id]/edit for Monday';
+  assert.equal(redactGoogleIds(text), redacted);
+  assert.equal(redactBrainText(text, 'What did Claude say about #350?'), redacted, 'an unrelated request sees the placeholder');
+  assert.equal(redactBrainText(text, 'Open my Google doc for Monday'), text, 'the owner\'s own Google request keeps the ID');
+  assert.equal(ownerAskedAboutGoogle('Open my Google doc'), true);
+  assert.equal(ownerAskedAboutGoogle('What did Claude say about #350?'), false);
+  assert.equal(redactGoogleIds(`https://drive.google.com/open?id=${DRIVE_ID}`), 'https://drive.google.com/open?id=[google-id]');
+  // The stored link is not changed by redaction: the gate still reads it as the allowed shape.
+  assert.equal(isSafeMemoryText(text), true);
 });
 
 // ─── Fifth review of #354: a hyphen-joined random token in a path is withheld; slugs stay kept ───────

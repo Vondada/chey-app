@@ -95,7 +95,6 @@ final RegExp _groupShape = RegExp(r'^[A-Za-z0-9]{3,8}$');
 final RegExp _googleDocHostShape = RegExp(r'^(?:docs|drive)\.google\.com$', caseSensitive: false);
 // A Google document ID is 28 to 64 letters, digits, hyphens or underscores (fourth review of #354).
 final RegExp _googleDocIdShape = RegExp(r'^[A-Za-z0-9_-]{28,64}$');
-const _googleDocTypes = {'document', 'spreadsheets', 'presentation', 'file', 'forms'};
 final RegExp _upperGroupShape = RegExp(r'^[A-Z0-9]+$');
 final RegExp _letterShape = RegExp(r'[A-Za-z]');
 final RegExp _digitShape = RegExp(r'\d');
@@ -152,23 +151,62 @@ bool _groupedCode(String token) {
   return groups.every(_digitShape.hasMatch) || groups.every(_upperGroupShape.hasMatch);
 }
 
-// A document ID in Google's own shapes is exempt from the random-run rule only, as in research_memory.js
-// (fourth review of #354: the type must come before "/d/", and the ID must be 28 to 64 characters).
-Set<int> _googleDocSegments(String authority, List<String> segments) {
-  final ids = <int>{};
-  final host = authority.substring(authority.lastIndexOf('@') + 1).split(':').first;
-  if (!_googleDocHostShape.hasMatch(host)) return ids;
-  for (var i = 2; i < segments.length; i++) {
-    if (!_googleDocIdShape.hasMatch(segments[i])) continue;
-    final before = segments[i - 2];
-    final prev = segments[i - 1];
-    if ((prev == 'd' && _googleDocTypes.contains(before)) || (prev == 'folders' && before == 'drive')) ids.add(i);
+// Google links (owner decisions, seventh round of #354), as in research_memory.js. An ID is exempt from the
+// random-run checks only inside one of the functional shapes below, and only when it is a clean ID of 28 to 64
+// characters. Any other Google path with a long ID is withheld. A shape lists the path parts after the leading
+// "/": 'ID' is the Google ID and a List is a choice of parts.
+const List<List<Object>> _googleAllowedLinks = [
+  ['docs.google.com', ['document', 'd', 'ID', ['edit', 'view']]],
+  ['docs.google.com', ['spreadsheets', 'd', 'ID', 'edit']],
+  ['docs.google.com', ['presentation', 'd', 'ID', 'edit']],
+  ['docs.google.com', ['document', 'd', 'e', 'ID', 'pub']],
+  ['drive.google.com', ['file', 'd', 'ID', 'view']],
+  ['drive.google.com', ['drive', 'folders', 'ID']],
+];
+
+// The index of the allow-listed ID in the raw path segments, or -1 when the path is not one of those shapes.
+int _googleAllowedIdIndex(String host, List<String> rawSegments) {
+  final parts = rawSegments.sublist(1);
+  for (final entry in _googleAllowedLinks) {
+    final allowedHost = entry[0] as String;
+    final shape = entry[1] as List<Object>;
+    if (host.toLowerCase() != allowedHost || parts.length != shape.length) continue;
+    var idIndex = -1;
+    var matches = true;
+    for (var k = 0; k < shape.length && matches; k++) {
+      final want = shape[k];
+      final part = parts[k];
+      if (want == 'ID') {
+        idIndex = k + 1;
+        matches = _googleDocIdShape.hasMatch(part);
+      } else if (want is List) {
+        matches = want.contains(part);
+      } else {
+        matches = part == want;
+      }
+    }
+    if (matches) return idIndex;
   }
-  return ids;
+  return -1;
 }
 
-// A long run of letters and digits (a key or a token); a hyphen makes a slug words, and a hex run is
-// judged by the hex rule.
+// A password in the userinfo is withheld when it is six or more characters with a letter and a digit or a
+// symbol (sixth review of #354), as in research_memory.js.
+final RegExp _digitOrSymbolShape = RegExp(r'[\d\W_]');
+bool _userinfoPasswordShape(String userinfo) {
+  final colon = userinfo.indexOf(':');
+  if (colon < 0) return false;
+  final password = userinfo.substring(colon + 1);
+  return password.length >= 6 && _letterShape.hasMatch(password) && _digitOrSymbolShape.hasMatch(password);
+}
+
+// Percent-encoded characters read as the characters they stand for (sixth review of #354).
+String _decodePercent(String text) =>
+    text.replaceAllMapped(_percentShape, (m) => String.fromCharCode(int.parse(m.group(1)!, radix: 16)));
+
+// Any character outside the token alphabet cuts a decoded segment into pieces (seventh review of #354).
+final RegExp _tokenBreakShape = RegExp(r'[^A-Za-z0-9_-]+');
+
 bool _randomRun(String piece) =>
     _randomRunShape.hasMatch(piece) && _letterShape.hasMatch(piece) && _digitShape.hasMatch(piece) && !_hexShape.hasMatch(piece);
 
@@ -176,21 +214,8 @@ bool _randomRun(String piece) =>
 bool _hyphenatedRandomRun(String piece) =>
     _hyphenRunShape.hasMatch(piece) && piece.contains('-') && _lowerShape.hasMatch(piece) && _upperShape.hasMatch(piece) && _digitShape.hasMatch(piece);
 
-// A password in the userinfo is withheld when it is six or more characters with a letter and a digit or a
-// symbol (sixth review of #354), as in research_memory.js.
-bool _userinfoPasswordShape(String userinfo) {
-  final colon = userinfo.indexOf(':');
-  if (colon < 0) return false;
-  final password = userinfo.substring(colon + 1);
-  return password.length >= 6 && _letterShape.hasMatch(password) && RegExp(r'[\d\W_]').hasMatch(password);
-}
-
-// Percent-encoded characters read as the characters they stand for (sixth review of #354).
-String _decodePercent(String text) =>
-    text.replaceAllMapped(_percentShape, (m) => String.fromCharCode(int.parse(m.group(1)!, radix: 16)));
-
-// A link is judged by its parts: its userinfo and query values get the full token check; a path segment
-// is a secret only as a long random run or a hex key. A slug and a percent-encoded word are words.
+// A link is judged by its parts, as in research_memory.js: userinfo and query values get the full token check;
+// a path segment is judged piece by piece after decoding.
 bool _linkHasSecret(String link) {
   final head = _linkHeadShape.firstMatch(link);
   final authority = head == null ? '' : head.group(1)!;
@@ -198,17 +223,53 @@ bool _linkHasSecret(String link) {
   final at = authority.lastIndexOf('@');
   if (at > 0 && authority.substring(0, at).split(':').any((piece) => piece.isNotEmpty && _plainSecret(piece))) return true;
   if (at > 0 && _userinfoPasswordShape(authority.substring(0, at))) return true;
+  final host = authority.substring(at + 1).split(':').first;
   final path = rest.split(_pathSplitShape).first;
   final query = rest.substring(path.length);
-  // Percent-encoded characters are read first, so an encoded hyphen ("%2D") cannot cut a token apart.
-  final segments = path.split('/').map(_decodePercent).toList();
-  final docIds = _googleDocSegments(authority, segments);
-  for (var i = 0; i < segments.length; i++) {
-    final segment = segments[i];
-    if (((_randomRun(segment) || _hyphenatedRandomRun(segment)) && !docIds.contains(i)) || (_hexShape.hasMatch(segment) && _plainSecret(segment))) return true;
+  final rawSegments = path.split('/');
+  final allowedId = _googleAllowedIdIndex(host, rawSegments);
+  final googleHost = _googleDocHostShape.hasMatch(host);
+  for (var i = 0; i < rawSegments.length; i++) {
+    if (i == allowedId) continue;
+    final decoded = _decodePercent(rawSegments[i]);
+    final pieces = decoded.split(_tokenBreakShape).where((p) => p.isNotEmpty).toList();
+    if (googleHost && pieces.any(_googleDocIdShape.hasMatch)) return true;
+    for (final piece in pieces) {
+      if (_randomRun(piece) || _hyphenatedRandomRun(piece)) return true;
+      if (_hexShape.hasMatch(piece) && _plainSecret(piece)) return true;
+    }
   }
-  return _decodePercent(query).split(_queryPieceSplitShape).any((piece) => piece.isNotEmpty && (_randomRun(piece) || _plainSecret(piece)));
+  // The raw query is split on its delimiters first, so an encoded delimiter stays inside its value.
+  return query.split(_queryPieceSplitShape).any((raw) {
+    if (raw.isEmpty) return false;
+    final piece = _decodePercent(raw);
+    return _randomRun(piece) || _plainSecret(piece);
+  });
 }
+
+// Google document IDs are not repeated in logs, reports or unrelated model requests (owner decision): the ID in a
+// Google link becomes "[google-id]". The link itself stays stored whole.
+final RegExp _googleLinkTextShape =
+    RegExp(r"""https?://(?:docs|drive)\.google\.com/[^\s"'<>()\[\]]*""", caseSensitive: false);
+final RegExp _googleRequestShape = RegExp(r'google|docs\.google\.com|drive\.google\.com', caseSensitive: false);
+final RegExp _tokenCutShape = RegExp(r'[?#]');
+final RegExp _googleIdRunShape = RegExp(r'[A-Za-z0-9_-]{28,64}');
+
+String cheRedactGoogleIds(String text) => text.replaceAllMapped(_googleLinkTextShape, (m) {
+      final link = m.group(0)!;
+      final cut = link.indexOf(_tokenCutShape);
+      final head = cut < 0 ? link : link.substring(0, cut);
+      final tail = cut < 0 ? '' : link.substring(cut);
+      final redactedHead = head.split('/').map((part) => _googleDocIdShape.hasMatch(part) ? '[google-id]' : part).join('/');
+      return redactedHead + tail.replaceAll(_googleIdRunShape, '[google-id]');
+    });
+
+/// True when the owner's own words are about a Google file, so the ID in it is theirs to use.
+bool cheAskedAboutGoogle(String text) => _googleRequestShape.hasMatch(text);
+
+/// Brain text for a log, a report or a model request: IDs are redacted unless the owner's request is about Google.
+String cheRedactBrainText(String text, String ownerMessage) =>
+    cheAskedAboutGoogle(ownerMessage) ? text : cheRedactGoogleIds(text);
 
 class CheBrainRecord {
   CheBrainRecord({

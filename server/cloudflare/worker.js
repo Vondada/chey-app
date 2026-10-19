@@ -167,6 +167,8 @@ import {
   enrichNoteForBrain,
   BROKER_KEY_RE,
   isSafeMemoryText,
+  redactBrainText,
+  redactGoogleIds,
   listMemoryNotes,
   writeResearchMemoryNote,
 } from './research_memory.js';
@@ -9957,8 +9959,9 @@ export class CheState extends DurableObject {
         if (asksForCurrentOwnerLocation(message)) {
           return ndjsonReply(OWNER_LOCATION_NOT_VERIFIED, { source: 'location_provenance', live_gps: false });
         }
+        // Brain context reaches the model: a Google document ID in it is redacted unless the owner's request is about Google.
         const brainContext = Array.isArray(body.brain_context)
-          ? body.brain_context.map((item) => String(item)).join('\n\n').slice(0, 9000)
+          ? redactBrainText(body.brain_context.map((item) => String(item)).join('\n\n'), message).slice(0, 9000)
           : '';
 
         const directCredentialRequest =
@@ -10977,7 +10980,7 @@ export class CheState extends DurableObject {
         // brain as a saved memory.
         const ownerTurnsNow = ownerWords(ownerHistory, rawMessage);
         const attribution = guardOwnerAttributions(reply, { records: data.memory_records, ownerTurns: ownerTurnsNow, message: rawMessage });
-        if (attribution.removed.length) console.log('CHE memory truth removed', JSON.stringify(attribution.removed).slice(0, 800));
+        if (attribution.removed.length) console.log('CHE memory truth removed', redactGoogleIds(JSON.stringify(attribution.removed)).slice(0, 800));
         reply = guardRememberBlock(attribution.text, {
           ownerTurns: ownerTurnsNow, retracted: await loadRetractions(this.ctx.storage),
         }).text;
@@ -11090,7 +11093,7 @@ export class CheState extends DurableObject {
       await recoverHistory(brain, this.ctx.storage, data, { library: new CheLibrary(this.ctx.storage).list(), batch: 500 });
       // Then the significance audit and the next-morning review, from those records alone.
       const maintenance = runBrainMaintenance(brain);
-      console.log('CHE brain maintenance:', JSON.stringify(maintenance.audit), maintenance.review.written ? 'review written' : maintenance.review.reason);
+      console.log('CHE brain maintenance:', redactGoogleIds(JSON.stringify(maintenance.audit)), maintenance.review.written ? 'review written' : maintenance.review.reason);
     } catch (error) { console.error('Brain projection failed:', error?.message || error); }
     if (!data.autonomy) return { status: 'paused' };
     const result = await runNightlyReview(this.env, this.ctx.storage, data, this.env.CHE_STRONG_MODEL || STRONG_MODEL);

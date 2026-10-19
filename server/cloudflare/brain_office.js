@@ -21,7 +21,7 @@ import { FREE_ENGINES, consultIntent } from './ai_consult.js';
 import { withoutProhibitions } from './owner_action_gate.js';
 import { redactSecrets } from './privacy_policy.js';
 import { REA_DETAIL_PREFIX, REA_JOBS_KEY } from './rea_runner.js';
-import { isSafeMemoryText } from './research_memory.js';
+import { isSafeMemoryText, redactBrainText } from './research_memory.js';
 import { redactSensitive } from './self_skills.js';
 import { EVIDENCE_RUNS } from './trading_evidence_runner.js';
 import { readArchive as readFlagstaffArchive } from './web_mailbox.js';
@@ -981,7 +981,7 @@ export function answerCorrespondenceQuestion(store, intent, { limit = 3 } = {}) 
     // The quote opens on a whole word, a little before the first match.
     let start = Math.max(0, Math.min(first, flat.length) - 120);
     if (start > 0) start = Math.max(start, flat.indexOf(' ', start) + 1);
-    const window = flat.slice(start, start + 360).trim();
+    const window = redactBrainText(flat.slice(start, start + 360).trim(), topic);
     const id = String(hit.source.line_id || hit.id.replace(/^mail:/, ''));
     return `${i + 1}. ${peerLabel(hit.source.from)} to ${peerLabel(hit.source.to)}, ${spokenDate(hit.at)} (${hit.source.file || 'Flagstaff mailbox'}, message ${id.length > 44 ? `${id.slice(0, 44)}…` : id}): "${start > 0 ? '…' : ''}${window}${flat.length > start + 360 ? '…' : ''}"`;
   });
