@@ -1998,7 +1998,8 @@ export function checkExercise(x, said) {
 const plain = (s) => ` ${String(s || '').toLowerCase().replace(/[’']/g, '').replace(/[^a-z0-9<=%.\s]+/g, ' ').replace(/\s+/g, ' ').trim()} `;
 const conceptRe = (k) => {
   const w = plain(k).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return k.endsWith('*') ? new RegExp(`(?<![a-z0-9])${w.slice(0, -2)}[a-z0-9]*`) : new RegExp(`(?<![a-z0-9])${w}(?![a-z0-9])`);
+  // plain() has already dropped the "*", so the stem is the whole of w: "cut*" is cut, cuts, cutting, never "cold".
+  return k.endsWith('*') ? new RegExp(`(?<![a-z0-9])${w}[a-z0-9]*`) : new RegExp(`(?<![a-z0-9])${w}(?![a-z0-9])`);
 };
 const SAYS_FINE = /(?<![a-z])(?:nothing(?: is)? wrong|no bugs?|looks (?:fine|ok|okay|good|right|correct)|(?:is|are|seems|works|its|it is) (?:fine|ok|okay|correct|good)|correctly|works fine)(?![a-z])/;
 // Whether a concept word is denied where it is said: "not shared" denies "shared", unless the finding
