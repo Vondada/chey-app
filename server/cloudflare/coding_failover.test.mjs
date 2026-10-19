@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyModelFailure, resumeDecision, resumeAction, newMissionAction, unsafeCodingPaths, progressPrompt, RESUME_LIMIT, RESUME_BACKOFF_MS } from './coding_failover.mjs';
+import { attemptReceipt, classifyModelFailure, resumeDecision, resumeAction, newMissionAction, unsafeCodingPaths, progressPrompt, RESUME_LIMIT, RESUME_BACKOFF_MS } from './coding_failover.mjs';
 
 test('quota, rate limit and timeout are capacity failures that may resume; access and size are not', () => {
   assert.deepEqual(
@@ -92,4 +92,33 @@ test('a new owner mission starts unless a dispatched resume may still be running
   assert.equal(newMissionAction({ pending: { dispatched_at: 'x' }, runAlive: 'alive' }), 'refuse');
   assert.equal(newMissionAction({ pending: { dispatched_at: 'x' }, runAlive: 'unknown' }), 'refuse');
   assert.equal(newMissionAction({ pending: { dispatched_at: 'x' }, runAlive: 'dead' }), 'abandon');
+});
+
+test('each model attempt keeps its own receipt: kind, resumability, time against its cap, and what happened to its edits', () => {
+  const quota = attemptReceipt({ model: 'google/gemini-2.5-pro', exitCode: 75, text: 'You exceeded your current quota', seconds: 3, capSeconds: 120, progress: 'none' });
+  assert.deepEqual(quota, {
+    model: 'google/gemini-2.5-pro', exit_code: 75, kind: 'quota', resumable: true,
+    seconds: 3, cap_seconds: 120, progress: 'none', error: 'You exceeded your current quota',
+  });
+  const tooLarge = attemptReceipt({ model: 'groq/qwen/qwen3.8-27b', exitCode: 1, text: 'ContextOverflowError: Request too large for model', seconds: 9, capSeconds: 120, progress: 'reverted' });
+  assert.equal(tooLarge.kind, 'too_large');
+  assert.equal(tooLarge.resumable, false, 'a too-large request cannot succeed by waiting');
+  assert.equal(tooLarge.progress, 'reverted');
+  const timedOut = attemptReceipt({ model: 'openrouter/qwen/qwen3.8-27b:free', exitCode: 124, text: '', seconds: 120, capSeconds: 120, progress: 'none' });
+  assert.equal(timedOut.kind, 'timeout');
+  assert.equal(timedOut.resumable, true);
+  assert.equal(timedOut.error, '', 'an empty error stays empty, never invented');
+  const delivered = attemptReceipt({ model: 'groq/qwen/qwen3.8-27b', exitCode: 0, text: 'ignored text', seconds: 42, capSeconds: 120, progress: 'delivered' });
+  assert.equal(delivered.kind, 'success');
+  assert.equal(delivered.resumable, false);
+  assert.equal(delivered.error, '', 'a successful attempt carries no error text');
+});
+
+test('a receipt never carries a provider key, is one line, and is bounded in size', () => {
+  const secret = 'gsk_abcdefghijklmnop1234 and sk-or-abcdefghijklmnopqrstu and AIzaSyD-abcdefghijklmnopqrstuvwx';
+  const receipt = attemptReceipt({ model: 'groq/x', exitCode: 1, text: `{\n"message": "invalid ${secret}"\n}${'x'.repeat(900)}`, seconds: 1, capSeconds: 120 });
+  assert.doesNotMatch(receipt.error, /gsk_|sk-or-|AIza/, 'keys are redacted before a receipt is stored');
+  assert.match(receipt.error, /\[key\]/);
+  assert.doesNotMatch(receipt.error, /\n/, 'one line only, so the step output and record stay readable');
+  assert.ok(receipt.error.length <= 300, 'the excerpt is bounded');
 });

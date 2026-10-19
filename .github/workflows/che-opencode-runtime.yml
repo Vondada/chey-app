@@ -403,6 +403,12 @@ jobs:
             fi
           fi
           attempt=1; failure_kind=""; failure_resumable=false
+          # One receipt per model attempt (coding_failover.mjs attemptReceipt), read by the job record.
+          attempts_file="$RUNNER_TEMP/che-attempts.jsonl"; : > "$attempts_file"
+          record_attempt() { # model exit seconds cap progress failure-text-file
+            node "$CHE_TRUSTED_TOOLS/tools/che_coding_checkpoint.mjs" receipt --model "$1" --exit "$2" --seconds "$3" --cap "$4" --progress "$5" <"$6" >>"$attempts_file" \
+              || echo "::warning::Could not write the receipt for $1."
+          }
           redact() { sed -E 's/(AIza|sk-|gsk_|csk-|hf_|sk-or-)[A-Za-z0-9_-]{8,}/[key]/g' | tr '\n"' '  ' | cut -c1-350; }
           # OpenCode keeps retrying errors that cannot succeed (no quota, no access to the model,
           # a request too large for the key's token limit) until the time budget runs out. An
@@ -435,6 +441,7 @@ jobs:
             used=$m; tried="$tried $m"
             echo "Trying $m"
             : >/tmp/opencode-events.jsonl; : >/tmp/opencode-stderr.log
+            attempt_started=$(date +%s)
             env -u K_GOOGLE -u K_ANTHROPIC -u K_OPENAI -u K_OPENROUTER -u K_GROQ -u K_MISTRAL -u K_CEREBRAS -u K_HF -u K_PAID_OPENROUTER "${kv[@]}" \
               timeout --signal=TERM --kill-after=15s "${left}s" \
               opencode run --format json --auto --model "$m" "$prompt" \
@@ -448,7 +455,12 @@ jobs:
             wait "$pid"
             code=$?
             [ -n "$stopped" ] && code=75
-            [ "$code" = 0 ] && break
+            seconds=$(( $(date +%s) - attempt_started ))
+            if [ "$code" = 0 ]; then
+              progress=none; [ -n "$(git status --porcelain)" ] && progress=delivered
+              record_attempt "$m" "$code" "$seconds" "$left" "$progress" /dev/null
+              break
+            fi
             # The kind decides whether this session may resume later from its checkpoint.
             { grep -E '"type": ?"error"' /tmp/opencode-events.jsonl 2>/dev/null; cat /tmp/opencode-stderr.log 2>/dev/null; } >/tmp/opencode-failure.txt
             failure_kind=$(node "$CHE_TRUSTED_TOOLS/tools/che_coding_checkpoint.mjs" classify --exit "$code" --field kind </tmp/opencode-failure.txt)
@@ -459,17 +471,24 @@ jobs:
             echo "::warning::$m failed (exit $code): ${why:-no error text}"
             # Unverified edits never reach the next model. A verified change stays as the
             # checkpoint the next model continues from; anything else is reverted.
+            progress=none
             if [ -n "$(git status --porcelain)" ]; then
               attempt=$((attempt + 1))
               if node "$CHE_TRUSTED_TOOLS/tools/che_coding_checkpoint.mjs" advance --dir "$ckpt" --base "$BASE_SHA" --prompt-file /tmp/che-runtime-prompt.txt --attempt "$attempt" >/tmp/checkpoint-verdict.json; then
                 prompt=$(cat "$ckpt/next-prompt.txt")
+                progress=verified
                 echo "::notice::$m left verified progress; the next model continues from it."
               else
                 verdict_rc=$?
-                if [ "$verdict_rc" = 2 ]; then echo "::error::Could not revert unverified edits; no further attempts run."; break; fi
+                if [ "$verdict_rc" = 2 ]; then
+                  record_attempt "$m" "$code" "$seconds" "$left" unverifiable /tmp/opencode-failure.txt
+                  echo "::error::Could not revert unverified edits; no further attempts run."; break
+                fi
+                progress=reverted
                 echo "::warning::$m left changes that did not verify; reverted to the last checkpoint: $(head -c 300 /tmp/checkpoint-verdict.json)"
               fi
             fi
+            record_attempt "$m" "$code" "$seconds" "$left" "$progress" /tmp/opencode-failure.txt
           done
           # Short, key-free error for CHE's status record.
           err=$( { tail -c 4000 /tmp/opencode-stderr.log; grep -iE 'error|quota|rate|denied|invalid|not found' /tmp/opencode-events.jsonl | tail -2; } 2>/dev/null | redact)
@@ -587,6 +606,11 @@ jobs:
             if (/^\d+$/.test(d)) deletions += Number(d);
           }
           const artifactName = `che-opencode-${process.env.JOB_ID}`;
+          // One receipt per model attempt (written by the free loop). The last error alone hides the earlier models.
+          const attemptsFile = `${process.env.RUNNER_TEMP}/che-attempts.jsonl`;
+          const attempts = fs.existsSync(attemptsFile)
+            ? fs.readFileSync(attemptsFile, 'utf8').split('\n').filter(Boolean).slice(0, 12).flatMap((line) => { try { return [JSON.parse(line)]; } catch (_) { return []; } })
+            : [];
           const result = {
             session_id: process.env.JOB_ID,
             runtime: 'opencode',
@@ -607,6 +631,7 @@ jobs:
             patch_artifact: patch ? artifactName : null,
             failure: unsafe.length ? 'unsafe_files' : (process.env.PREFLIGHT_FAILURE || (exitCode !== 0 ? 'opencode_failed' : null)),
             models_tried: String(process.env.TRIED || '').trim().split(/\s+/).filter(Boolean).slice(0, 8),
+            attempts,
             error: exitCode !== 0 ? String(process.env.OPENCODE_ERROR || '').slice(0, 400) : null,
           };
           // Only a blocked session that kept a verified checkpoint can resume, and only for capacity failures.

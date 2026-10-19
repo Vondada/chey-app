@@ -401,6 +401,56 @@ sleep 60
   assert.equal(readFileSync(join(repo, 'edited.txt'), 'utf8').trim(), 'ok', 'file text mentioning an error never stops a working model');
 });
 
+test('every model attempt leaves its own receipt, so an earlier failure is not lost when a later model succeeds', async () => {
+  const { mkdtempSync, writeFileSync, chmodSync, copyFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { spawnSync } = await import('node:child_process');
+  const dir = mkdtempSync(join(tmpdir(), 'che-opencode-'));
+  const bin = join(dir, 'bin');
+  const repo = join(dir, 'repo');
+  spawnSync('mkdir', ['-p', bin, repo]);
+  spawnSync('git', ['init', '-q', repo]);
+  writeFileSync(join(bin, 'opencode'), `#!/usr/bin/env bash
+model=""; while [ $# -gt 0 ]; do [ "$1" = --model ] && model=$2; shift; done
+case "$model" in
+  google/quota) echo '{"type":"error","error":{"name":"APIError","data":{"message":"You exceeded your current quota, please check your plan"}}}';;
+  groq/small) echo '{"type":"error","error":{"name":"ContextOverflowError","data":{"message":"Request too large for model on input tokens per minute (ITPM): Limit 7000, Requested 10182"}}}';;
+  groq/reads) echo '{"type":"tool","part":{"output":"notes"}}'; echo ok > "${repo}/edited.txt"; exit 0;;
+esac
+sleep 60
+`);
+  chmodSync(join(bin, 'opencode'), 0o755);
+  writeFileSync('/tmp/che-runtime-prompt.txt', 'OWNER REQUEST: a tiny change');
+  const trusted = join(dir, 'trusted');
+  spawnSync('mkdir', ['-p', join(trusted, 'tools'), join(trusted, 'server/cloudflare')]);
+  copyFileSync(new URL('../../tools/che_coding_checkpoint.mjs', import.meta.url), join(trusted, 'tools/che_coding_checkpoint.mjs'));
+  copyFileSync(new URL('../../tools/che_coding_paid_gate.mjs', import.meta.url), join(trusted, 'tools/che_coding_paid_gate.mjs'));
+  copyFileSync(new URL('./coding_failover.mjs', import.meta.url), join(trusted, 'server/cloudflare/coding_failover.mjs'));
+  const res = spawnSync('bash', ['-c', runStepScript('Run OpenCode in the isolated checkout')], {
+    cwd: repo,
+    env: { PATH: `${bin}:${process.env.PATH}`, FREE_CANDIDATES: 'google/quota groq/small groq/reads', GITHUB_OUTPUT: join(dir, 'output'), HOME: dir, RUNNER_TEMP: dir, CHE_TRUSTED_TOOLS: trusted, BASE_SHA: 'a'.repeat(40) },
+    encoding: 'utf8',
+    timeout: 60_000,
+  });
+  assert.equal(res.status, 0, res.stderr);
+  const receipts = readFileSync(join(dir, 'che-attempts.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+  assert.deepEqual(receipts.map((r) => [r.model, r.kind, r.resumable, r.exit_code]), [
+    ['google/quota', 'quota', true, 75],
+    ['groq/small', 'too_large', false, 75],
+    ['groq/reads', 'success', false, 0],
+  ], 'the quota and size failures before the working model are kept, not overwritten by its success');
+  assert.match(receipts[0].error, /exceeded your current quota/);
+  assert.equal(receipts[2].progress, 'delivered', 'the successful attempt is recorded with its change');
+  for (const receipt of receipts) {
+    assert.ok(receipt.cap_seconds > 0 && receipt.cap_seconds <= 120, 'each attempt names the time it was allowed');
+    assert.ok(receipt.seconds >= 0 && receipt.seconds < 60, 'each attempt names the time it took');
+  }
+  const workflow = readFileSync(new URL('../../.github/workflows/che-opencode-runtime.yml', import.meta.url), 'utf8');
+  assert.match(workflow, /const attemptsFile = `\$\{process\.env\.RUNNER_TEMP\}\/che-attempts\.jsonl`;/, 'the record reads every attempt');
+  assert.match(workflow, /^\s+attempts,$/m, 'the job record carries the attempts');
+});
+
 test('a blocked coding session turns the run red after its record is posted, never a green wrapper', () => {
   const workflow = readFileSync(new URL('../../.github/workflows/che-opencode-runtime.yml', import.meta.url), 'utf8');
   const publish = workflow.slice(workflow.indexOf('\n  publish:\n'));

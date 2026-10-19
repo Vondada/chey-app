@@ -50,6 +50,29 @@ export function classifyModelFailure({ text = '', exitCode = 0 } = {}) {
   return { kind: 'unknown', resumable: false, words: '' };
 }
 
+// One receipt per model attempt, kept in the job record. The record used to keep only the
+// last attempt's error, so an earlier model's quota, size or access failure was lost. `progress`
+// says what happened to the attempt's edits: none, verified (kept as the checkpoint), reverted,
+// unverifiable (could not be reverted) or delivered (a successful attempt's change).
+const RECEIPT_PROGRESS = Object.freeze(['none', 'verified', 'reverted', 'unverifiable', 'delivered']);
+const RECEIPT_KEY = /(AIza|sk-|gsk_|csk-|hf_|sk-or-)[A-Za-z0-9_-]{8,}/g;
+
+export function attemptReceipt({ model = '', exitCode = 0, text = '', seconds = 0, capSeconds = 0, progress = 'none' } = {}) {
+  const code = Number(exitCode) || 0;
+  const verdict = code === 0 ? { kind: 'success', resumable: false } : classifyModelFailure({ text, exitCode: code });
+  const excerpt = code === 0 ? '' : String(text || '').replace(RECEIPT_KEY, '[key]').replace(/\s+/g, ' ').trim().slice(0, 300);
+  return {
+    model: String(model || '').slice(0, 120),
+    exit_code: code,
+    kind: verdict.kind,
+    resumable: Boolean(verdict.resumable),
+    seconds: Math.max(0, Math.round(Number(seconds) || 0)),
+    cap_seconds: Math.max(0, Math.round(Number(capSeconds) || 0)),
+    progress: RECEIPT_PROGRESS.includes(progress) ? progress : 'none',
+    error: excerpt,
+  };
+}
+
 // Decide whether a resumable failure gets another run, and when. `resumeCount`
 // is how many resumes already ran for this session.
 export function resumeDecision({ resumable = false, resumeCount = 0, now = Date.now() } = {}) {
