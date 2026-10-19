@@ -215,6 +215,49 @@ export function prepare(candles, n = 3) {
   return { lastHigh, lastLow, sma20, sma50, hh20, hh55, ll10, ll20, atr14, rsi2 };
 }
 
+// ─── Intraday context: session VWAP and the opening range (minute bars) ──
+//
+// Used by the minute-bar strategy simulation (strategy_sim.js). sessionOf(time) gives the
+// session a bar belongs to, { id, minute } with minute 0 at that session's open, or null
+// before the session opens. VWAP restarts with each session. The opening range is the
+// first OPENING_MINUTES bars of a session; orFirstBreak marks the first close above it.
+export const OPENING_MINUTES = 15;
+
+export function prepareSession(candles, sessionOf) {
+  const n = candles.length;
+  const sid = new Array(n).fill(null);
+  const vwap = new Array(n).fill(null);
+  const orHigh = new Array(n).fill(null);
+  const orLow = new Array(n).fill(null);
+  const orFirstBreak = new Array(n).fill(false);
+  let cur = null;
+  let pv = 0;
+  let vol = 0;
+  let open = null;
+  let broke = false;
+  for (let i = 0; i < n; i++) {
+    const s = sessionOf(candles[i].t);
+    if (!s) continue;
+    if (s.id !== cur) { cur = s.id; pv = 0; vol = 0; open = { hi: -Infinity, lo: Infinity, n: 0 }; broke = false; }
+    const k = candles[i];
+    const v = Number(k.v) > 0 ? Number(k.v) : 0;
+    pv += ((k.h + k.l + k.c) / 3) * v;
+    vol += v;
+    sid[i] = s.id;
+    vwap[i] = vol > 0 ? pv / vol : null;
+    if (s.minute < OPENING_MINUTES) {
+      open.hi = Math.max(open.hi, k.h);
+      open.lo = Math.min(open.lo, k.l);
+      open.n += 1;
+    } else if (open.n) {
+      orHigh[i] = open.hi;
+      orLow[i] = open.lo;
+      if (!broke && k.c > open.hi) { orFirstBreak[i] = true; broke = true; }
+    }
+  }
+  return { sid, vwap, orHigh, orLow, orFirstBreak };
+}
+
 // ─── Strategies (long-only, rule based, no look-ahead) ───────────────────
 
 export const STRATEGIES = {
@@ -312,6 +355,33 @@ const SIGNALS = {
   },
 };
 
+// Intraday signals for minute bars (strategy_sim.js). Kept out of SIGNALS on purpose: SKILL_IDS
+// and the hourly learnStep stay exactly as they were. skill() reads them through the same builder,
+// so a filter and a target in R work the same way for them.
+const INTRADAY_SIGNALS = {
+  'vwap-reclaim': {
+    name: 'VWAP reclaim',
+    entry(c, i, x) {
+      if (i < 1 || x.sid[i] == null || x.sid[i] !== x.sid[i - 1]) return null;
+      const v = x.vwap[i];
+      const pv = x.vwap[i - 1];
+      if (v == null || pv == null || !(c[i - 1].c < pv && c[i].c > v)) return null;
+      const stop = Math.min(c[i].l, c[i - 1].l);
+      if (stop >= c[i].c) return null;
+      return { entry: c[i].c, stop, why: `closed back above session VWAP ${round(v)}` };
+    },
+  },
+  'opening-range': {
+    name: 'opening range breakout',
+    entry(c, i, x) {
+      if (!x.orFirstBreak[i]) return null;
+      const stop = x.orLow[i];
+      if (stop == null || stop >= c[i].c) return null;
+      return { entry: c[i].c, stop, why: `first close above the opening range high ${round(x.orHigh[i])}` };
+    },
+  },
+};
+
 const FILTERS = {
   any: { name: 'any trend', ok: () => true },
   above50: { name: 'above the 50-day average', ok: (c, i, x) => x.sma50[i] != null && c[i].c > x.sma50[i] },
@@ -325,7 +395,7 @@ export const SKILL_IDS = Object.keys(SIGNALS).flatMap((sig) => Object.keys(FILTE
 
 function skill(id) {
   const [sig, f, r] = String(id || '').split('|');
-  const signal = SIGNALS[sig]; const filter = FILTERS[f]; const R = Number(r);
+  const signal = SIGNALS[sig] || INTRADAY_SIGNALS[sig]; const filter = FILTERS[f]; const R = Number(r);
   if (!signal || !filter || !TARGETS.includes(R)) return null;
   return {
     name: `${signal.name}, ${filter.name}, target ${R}R`,

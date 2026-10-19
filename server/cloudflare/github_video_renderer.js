@@ -113,13 +113,24 @@ async function refusalOf(response, what, env) {
  * only Contents:write. `taskId` lets a caller retry the same job: the run is
  * found by its name, so a retried dispatch is still one video.
  */
-export async function startGithubVideo(env, topic, seconds = 15, fetcher = fetch, { taskId: given = '' } = {}) {
+export async function startGithubVideo(env, topic, seconds = 15, fetcher = fetch, { taskId: given = '', spec = '' } = {}) {
   if (!credentials(env)) return { ok: false, code: 'not_configured', error: 'The free GitHub video renderer needs CHE_GITHUB_TOKEN and CHE_GITHUB_REPO=Vondada/chey-app on the Worker.' };
   const prompt = String(topic || '').trim();
   const duration = Number(seconds);
   if (prompt.length < 3 || prompt.length > 500 || !Number.isInteger(duration) || duration < 5 || duration > 90) {
     return { ok: false, code: 'invalid', error: 'Video topic must be 3-500 characters and duration 5-90 seconds.' };
   }
+  // A Creator Studio storyboard (creator_studio.studioRenderSpec) travels as
+  // one JSON string input; the renderer checks it again before drawing.
+  const storyboard = String(spec || '');
+  if (storyboard) {
+    let parsed = null;
+    try { parsed = JSON.parse(storyboard); } catch (_) { parsed = null; }
+    if (storyboard.length > 16000 || parsed?.v !== 1 || Number(parsed.seconds) !== duration) {
+      return { ok: false, code: 'invalid', error: 'The storyboard is not one the renderer accepts (version 1, at most 16,000 characters, the same length as the video).' };
+    }
+  }
+  const extra = storyboard ? { spec: storyboard } : {};
   const taskId = TASK.test(given) ? given : 'gha_' + crypto.randomUUID().replaceAll('-', '');
   const post = (url, body) => fetcher(url, {
     method: 'POST',
@@ -130,7 +141,7 @@ export async function startGithubVideo(env, topic, seconds = 15, fetcher = fetch
   let response;
   try {
     response = await post('https://api.github.com/repos/' + REPO + '/actions/workflows/' + WORKFLOW + '/dispatches',
-      { ref: 'main', inputs: { job_id: taskId, topic: prompt, seconds: String(duration) } });
+      { ref: 'main', inputs: { job_id: taskId, topic: prompt, seconds: String(duration), ...extra } });
   } catch {
     // The request may or may not have reached GitHub; the status check finds
     // the run by name if it did, so the same task ID is kept.
@@ -145,7 +156,7 @@ export async function startGithubVideo(env, topic, seconds = 15, fetcher = fetch
   let fallback;
   try {
     fallback = await post('https://api.github.com/repos/' + REPO + '/dispatches',
-      { event_type: 'che_video_render', client_payload: { job_id: taskId, topic: prompt, seconds: String(duration) } });
+      { event_type: 'che_video_render', client_payload: { job_id: taskId, topic: prompt, seconds: String(duration), ...extra } });
   } catch {
     return { ok: false, code: 'unreachable', retryable: true, task_id: taskId,
       error: `GitHub refused the video workflow (HTTP ${response.status}), and the repository-dispatch fallback could not be reached.` };
@@ -227,8 +238,13 @@ export async function githubVideoStatus(env, taskId, fetcher = fetch, { dispatch
     const pngView = new DataView(image.buffer, image.byteOffset, image.byteLength);
     const width = png ? pngView.getUint32(16) : 0, height = png ? pngView.getUint32(20) : 0;
     const duration = Number(manifest.duration_seconds);
+    // The frame size the MP4 itself declares wins over the manifest's word.
+    const frameWidth = mp4.width || Number(manifest.video_width) || 0;
+    const frameHeight = mp4.height || Number(manifest.video_height) || 0;
     const problems = [
       !mp4.ok && 'the MP4 is not a playable H.264/AAC file',
+      mp4.width && (mp4.width !== Number(manifest.video_width) || mp4.height !== Number(manifest.video_height)) && `the MP4 is ${mp4.width}x${mp4.height}, not the ${manifest.video_width}x${manifest.video_height} its manifest says`,
+      manifest.format === '9:16' && frameWidth * 16 !== frameHeight * 9 && 'the MP4 is not vertical 9:16',
       mp4.ok && Math.abs(mp4.seconds - duration) > 0.5 && `the MP4 lasts ${mp4.seconds.toFixed(1)} s, not the ${duration} s its manifest says`,
       (!png || width !== 1280 || height !== 720) && 'the thumbnail is not a 1280x720 PNG',
       manifest.status !== 'verified' && 'the renderer did not mark it verified',
@@ -244,7 +260,8 @@ export async function githubVideoStatus(env, taskId, fetcher = fetch, { dispatch
       provider: 'github-actions-offline', artifact_id: artifact.id, run_id: job.id,
       duration_seconds: mp4.seconds, duration_verified: true, video_bytes: video.length,
       video_codec: mp4.video, audio_codec: mp4.audio,
-      video_width: manifest.video_width, video_height: manifest.video_height,
+      video_width: frameWidth, video_height: frameHeight, frame_size_verified: Boolean(mp4.width),
+      format: String(manifest.format || ''), episode: String(manifest.episode || '').slice(0, 8),
       thumbnail_width: width, thumbnail_height: height,
       title: String(manifest.title || '').slice(0,100),
       description: String(manifest.description || '').slice(0,700),
@@ -310,7 +327,28 @@ export function mp4Facts(bytes) {
   const inMoov = moov ? new TextDecoder('latin1').decode(bytes.subarray(moov.at, moov.at + moov.size)) : '';
   const video = /avc1|avc3/.test(inMoov) ? 'h264' : /hvc1|hev1/.test(inMoov) ? 'hevc' : '';
   const audio = /mp4a/.test(inMoov) ? 'aac' : '';
-  return { ok: seconds > 0 && Boolean(video) && Boolean(audio), seconds: Math.round(seconds * 100) / 100, video, audio };
+  // The frame size from the first track header that has one (the video
+  // track; an audio track's tkhd says 0x0). 16.16 fixed point.
+  let width = 0, height = 0;
+  if (moov) {
+    for (let at = moov.at + moov.header; at + 8 <= moov.at + moov.size && !width;) {
+      const size = view.getUint32(at);
+      if (size < 8 || at + size > moov.at + moov.size) break;
+      if (type(at + 4) === 'trak') {
+        const tkhd = find(at + 8, at + size, ['tkhd']);
+        if (tkhd) {
+          const body = tkhd.at + tkhd.header;
+          const offset = bytes[body] === 1 ? 88 : 76;
+          if (body + offset + 8 <= tkhd.at + tkhd.size) {
+            width = view.getUint32(body + offset) >>> 16;
+            height = view.getUint32(body + offset + 4) >>> 16;
+          }
+        }
+      }
+      at += size;
+    }
+  }
+  return { ok: seconds > 0 && Boolean(video) && Boolean(audio), seconds: Math.round(seconds * 100) / 100, video, audio, width, height };
 }
 
 async function downloadArchive(env, artifactId, fetcher) {

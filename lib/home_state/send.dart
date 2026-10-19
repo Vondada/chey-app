@@ -453,6 +453,8 @@ extension _CheHomeSend on _CHEHomeState {
         return 'Opening your CHE voice choices, sir.';
       case ScreenOp.openAtlas:
         return 'Opening the Knowledge Atlas, sir.';
+      case ScreenOp.openRenderBench:
+        return command.text == 'run' ? 'Opening the rendering benchmark and measuring, sir.' : 'Opening the rendering benchmark, sir.';
       case ScreenOp.clearChat:
         messages.clear();
         return 'Chat cleared, sir.';
@@ -556,7 +558,8 @@ extension _CheHomeSend on _CHEHomeState {
         earlyCommand?.op == ScreenOp.openConnections ||
         earlyCommand?.op == ScreenOp.changeVoice ||
         earlyCommand?.op == ScreenOp.naturalVoice ||
-        earlyCommand?.op == ScreenOp.openAtlas;
+        earlyCommand?.op == ScreenOp.openAtlas ||
+        earlyCommand?.op == ScreenOp.openRenderBench;
     if (_isSpeaking && !quickCommandsRoute) {
       await _interruptSpeechAndListen(resumeListening: false);
     }
@@ -583,6 +586,17 @@ extension _CheHomeSend on _CHEHomeState {
     final commandsVoice = CheCommandCenterVoice.handler;
     if (commandsVoice != null && _pendingAttachment == null) {
       final reply = await commandsVoice(message);
+      if (reply != null) {
+        if (mounted) _set(() => controller.clear());
+        if (reply.isNotEmpty) await speakText(reply, record: false);
+        return;
+      }
+    }
+
+    // The rendering benchmark, while it is open, answers run, read and copy.
+    final benchVoice = CheRenderBenchScreen.voiceHandler;
+    if (benchVoice != null && _pendingAttachment == null) {
+      final reply = await benchVoice(message);
       if (reply != null) {
         if (mounted) _set(() => controller.clear());
         if (reply.isNotEmpty) await speakText(reply, record: false);
@@ -631,7 +645,8 @@ extension _CheHomeSend on _CHEHomeState {
       // owner in Chat, so the next local search went to the web/model.
       if (screenCommand.op == ScreenOp.openCommands || screenCommand.op == ScreenOp.searchCommands ||
           screenCommand.op == ScreenOp.openConnections || screenCommand.op == ScreenOp.changeVoice ||
-          screenCommand.op == ScreenOp.naturalVoice || screenCommand.op == ScreenOp.openAtlas) {
+          screenCommand.op == ScreenOp.naturalVoice || screenCommand.op == ScreenOp.openAtlas ||
+          screenCommand.op == ScreenOp.openRenderBench) {
         if (!mounted) return;
         final reply = _applyScreenCommand(screenCommand);
         _set(() {
@@ -649,6 +664,8 @@ extension _CheHomeSend on _CHEHomeState {
           _openNaturalVoicePicker();
         } else if (screenCommand.op == ScreenOp.openAtlas) {
           _openKnowledgeAtlas();
+        } else if (screenCommand.op == ScreenOp.openRenderBench) {
+          _openRenderBench(autoRun: screenCommand.text == 'run');
         } else {
           unawaited(_openCommandCenter(
             search: screenCommand.op == ScreenOp.searchCommands ? screenCommand.text : '',
@@ -665,7 +682,7 @@ extension _CheHomeSend on _CHEHomeState {
             screenCommand.op == ScreenOp.openConnections ||
             screenCommand.op == ScreenOp.changeVoice ||
             screenCommand.op == ScreenOp.naturalVoice ||
-            screenCommand.op == ScreenOp.openAtlas)) {
+            screenCommand.op == ScreenOp.openAtlas || screenCommand.op == ScreenOp.openRenderBench)) {
           await speakText(reply, record: false);
         }
         return;

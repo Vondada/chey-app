@@ -20,6 +20,7 @@ export const CATEGORIES = Object.freeze([
   { id: 'clients', title: 'Client Scouting & Delivery', summary: 'Find lawful leads, propose, follow up and deliver.' },
   { id: 'marketing', title: 'Marketing & Sales', summary: 'Brand, campaigns, content, ads and funnels.' },
   { id: 'office', title: 'Office & Automation', summary: 'The Office crew, integrations, skills and voice.' },
+  { id: 'studio', title: 'Creator Studio', summary: 'An original series: bible, pilot, render, export and posting.' },
 ]);
 
 // What a command may need. `kind` says how it becomes ready:
@@ -268,6 +269,50 @@ export const COMMANDS = Object.freeze([
     prompt: `Recommend 5 concrete experiments to grow my faceless YouTube channel based on these results: {input}. ${NUMBERS_RULE} ${PLAN_RULE}`,
     produces: 'growth plan', keywords: ['grow', 'growth', 'subscribers', 'improve channel'],
   }),
+  // Creator Studio (owner issue #347): the original series and its pilot,
+  // answered from creator_studio.js with no model. Rendering reuses the free
+  // GitHub renderer; posting reuses the owner's YouTube sign-in and asks first.
+  C('studio-bible', 'studio', 'EXPLORE', 'Read the original series bible.', {
+    does: 'Reads the Street Smart Explainers series bible: premise, recurring cast, tone rules, setting and episode format. All original; nothing from the reference videos.',
+    needs: [], route: 'che_creator_studio', local: 'studio_bible', handler: 'creator_studio.SERIES_BIBLE + validateBible',
+    input: null, examples: ['Show the series bible', 'Who is in the cast of Street Smart Explainers?'],
+    prompt: 'Show the series bible.', produces: 'series bible', evidence: 'The stored bible and its checks.', keywords: ['series bible', 'cast', 'characters', 'street smart explainers'],
+  }),
+  C('studio-pilot', 'studio', 'PLAN', 'Read and check the pilot script.', {
+    does: 'Reads the 40-second vertical pilot: scenes, narration, captions, shots, the cast in each shot and its sources, and checks it against the episode format.',
+    needs: [], route: 'che_creator_studio', local: 'studio_pilot', handler: 'creator_studio.PILOT + validateEpisode',
+    input: null, examples: ['Write the pilot script', 'Read me the pilot scenes'],
+    prompt: 'Read me the pilot script.', produces: 'pilot script', evidence: 'The stored pilot spec, its checks and the sources each fact cites.', keywords: ['pilot', 'pilot script', 'episode', 'storyboard'],
+  }),
+  C('studio-render', 'studio', 'BUILD', 'Render the pilot as a vertical MP4.', {
+    does: 'Renders the pilot on the free GitHub renderer as a 1080 by 1920 MP4 with burned-in captions, or reports its render status. Only a verified MP4 counts as done.',
+    needs: ['video_renderer'], route: 'che_creator_studio', local: 'studio_render', handler: 'creator_studio → media.generateVideo → github_video_renderer.js',
+    input: { name: 'request', required: false, hint: 'Say "status" to only check it' },
+    examples: ['Render the pilot', 'Is the pilot ready?'],
+    prompt: 'Render the pilot {input}', produces: 'video', evidence: 'A verified MP4 (length, size and codecs read from the file) in the media library.',
+    cost: 'Free renderer on GitHub Actions; paid narration only if you turned Fish narration on.', keywords: ['render pilot', 'pilot video', 'pilot status'],
+  }),
+  C('studio-export', 'studio', 'PLAN', 'Package the pilot for one platform.', {
+    does: 'Builds the pilot package for YouTube Shorts, TikTok, Instagram Reels or Facebook Reels and checks it: aspect, length, caption-safe zone, title, caption and hashtags. Posts nothing.',
+    needs: [], optional: ['youtube'], route: 'che_creator_studio', local: 'studio_export', handler: 'creator_studio.exportPackage + EXPORT_PROFILES',
+    input: { name: 'platform', required: true, hint: 'YouTube Shorts, TikTok, Instagram Reels or Facebook Reels' },
+    examples: ['Export the pilot for TikTok', 'Package the pilot for Instagram Reels'],
+    prompt: 'Export the pilot for {input}', produces: 'platform package', evidence: 'The package and each check it passed or failed.', keywords: ['export', 'tiktok', 'reels', 'shorts', 'platform'],
+  }),
+  C('studio-post', 'studio', 'BUILD', 'Post the pilot to one connected platform.', {
+    does: 'Uploads the verified pilot MP4 unlisted to your YouTube channel as a Short. TikTok, Instagram and Facebook are not connected, so CHE says so and posts nothing there.',
+    confirm: 'Uploads the pilot to the platform you named, unlisted.',
+    needs: [], optional: ['youtube'], route: 'che_creator_studio', local: 'studio_post', handler: 'creator_studio → youtube_upload.uploadYouTube',
+    input: { name: 'platform', required: true, hint: 'The platform, for example YouTube Shorts' },
+    examples: ['Post the pilot to YouTube Shorts'],
+    prompt: 'Post the pilot to {input}', produces: 'youtube link', evidence: 'The link YouTube returned for the upload.', keywords: ['post pilot', 'upload pilot', 'youtube shorts'],
+  }),
+  C('studio-growth', 'studio', 'EXPLORE', 'Audience-growth plan and real results.', {
+    does: 'Reads the growth experiments and the pilot\'s real numbers from connected platforms. With nothing connected it says no data; it never estimates views.',
+    needs: [], optional: ['youtube'], route: 'che_creator_studio', local: 'studio_growth', handler: 'creator_studio.GROWTH_PLAN + youtube_upload.youtubeVideoStatistics',
+    input: null, examples: ['Show the growth experiments', 'How is the pilot doing?'],
+    prompt: 'Show the growth experiments.', produces: 'growth report', evidence: 'Only statistics a platform returned.', keywords: ['audience growth', 'growth experiments', 'pilot views'],
+  }),
 
   // ── Trading ───────────────────────────────────────────────────────────
   C('trade-open', 'trading', 'EXPLORE', 'New York session market briefing.', {
@@ -327,13 +372,21 @@ export const COMMANDS = Object.freeze([
     examples: ['Any trade alerts?'],
     prompt: 'Any trade alerts?', produces: 'alerts', keywords: ['alert', 'notify', 'watch', 'alarm'],
   }),
+  C('trade-sim', 'trading', 'EXPLORE', 'Pause, resume or check the strategy simulation.', {
+    does: 'Pauses or resumes CHE\'s paper strategy simulation (ten rules on minute bars; no money, no model call), or reads its status. Owner only.',
+    needs: ['office'], route: 'che_strategy_sim', handler: 'strategy_sim.strategySimIntent → setStrategySimPaused / strategySimView',
+    input: { name: 'action', required: false, hint: 'pause, resume or status' },
+    examples: ['Pause the strategy simulation', 'Resume the strategy simulation', 'Strategy simulation status'],
+    prompt: 'Strategy simulation {input}', produces: 'simulation status', evidence: 'Stored simulation state and trades only.',
+    keywords: ['strategy simulation', 'simulation', 'pause simulation', 'resume simulation', 'paper strategies'],
+  }),
   C('trade-execute', 'trading', 'BUILD', 'Prepare authorized broker actions with confirmation.', {
     does: 'Places the current desk alert on your selected NinjaTrader account as a bracket order. Live accounts risk real money.',
     confirm: 'Places a real order on your broker account.',
     needs: ['broker'], route: 'che_trading_desk', handler: 'trading_desk.takeTrade → broker_tradovate.placeBracket',
     input: null,
     examples: ['Take the trade'],
-    prompt: 'Take the trade', produces: 'order receipt', evidence: 'The broker\'s order id.', cost: 'Real money on a live account.', keywords: ['execute', 'place order', 'take the trade', 'buy', 'sell'],
+    prompt: 'Yes, take the trade', produces: 'order receipt', evidence: 'The broker\'s order id.', cost: 'Real money on a live account.', keywords: ['execute', 'place order', 'take the trade', 'buy', 'sell'],
   }),
   // Reads the owner-only connections of #348. It never connects, removes keys or goes live.
   C('trade-connections', 'trading', 'EXPLORE', 'Read your trading connections and mode.', {

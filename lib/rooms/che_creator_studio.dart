@@ -45,6 +45,7 @@ class CheCreatorStudio extends StatefulWidget {
     required this.actions,
     required this.onOpenJob,
     required this.musicScene,
+    this.seriesPanel,
   });
 
   /// CHE is speaking right now (drives the meters).
@@ -57,6 +58,9 @@ class CheCreatorStudio extends StatefulWidget {
 
   /// The existing Music room (playlists, connected audio, car).
   final Widget musicScene;
+
+  /// The original series panel (issue #347): bible, pilot, render and platforms.
+  final Widget? seriesPanel;
 
   @override
   State<CheCreatorStudio> createState() => _CheCreatorStudioState();
@@ -82,8 +86,13 @@ class _CheCreatorStudioState extends State<CheCreatorStudio> with SingleTickerPr
               ? 'The Music room: playlists, connected audio and the car'
               : '${widget.speaking ? 'On air: CHE is speaking' : _rendering ? 'On air: rendering in the cloud' : 'Studio ready, not on air'}. '
                   'Render queue: ${widget.jobs.isEmpty ? 'nothing rendering' : '${widget.jobs.length} jobs, first "${widget.jobs.first['title'] ?? 'Render job'}" ${widget.jobs.first['status'] ?? 'queued'}'}. '
-                  'Create: ${widget.actions.isEmpty ? 'no actions' : [for (final a in widget.actions) '${a.title} (${a.connected ? 'ready' : 'needs ${a.connectorName}'})'].join(', ')}',
-          controls: const ['Studio', 'Music', 'Close rooms'],
+                  'Create: ${widget.actions.isEmpty ? 'no actions' : [for (final a in widget.actions) '${a.title} (${a.connected ? 'ready' : 'needs ${a.connectorName}'})'].join(', ')}'
+                  '${widget.seriesPanel == null ? '' : '. Series panel: the original series, its pilot, its render and each platform\'s state'}',
+          controls: [
+            'Studio', 'Music',
+            if (widget.seriesPanel != null) ...['Read aloud', 'Series bible', 'Pilot script', 'Render pilot', 'Export for every platform', 'Post to YouTube Shorts', 'Growth plan'],
+            'Close rooms',
+          ],
         ));
   }
 
@@ -239,6 +248,12 @@ class _CheCreatorStudioState extends State<CheCreatorStudio> with SingleTickerPr
             ),
           ),
         ),
+        if (widget.seriesPanel != null) ...[
+          const SizedBox(height: CheSpace.lg),
+          Text('SERIES', style: CheType.overline.copyWith(color: _magenta)),
+          const SizedBox(height: CheSpace.xs),
+          widget.seriesPanel!,
+        ],
         const SizedBox(height: CheSpace.lg),
         Text('RENDER QUEUE', style: CheType.overline.copyWith(color: _cyan)),
         const SizedBox(height: CheSpace.xs),

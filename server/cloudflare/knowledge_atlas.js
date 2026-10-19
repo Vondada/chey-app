@@ -694,7 +694,7 @@ const TRADING = [
   card({
     id: 'win-rate-ci', domain: 'trading', title: 'Win rate and its confidence interval', level: 'intermediate',
     summary: 'The share of winning trades, always read with its honest range.',
-    aliases: ['win rate', 'win rates', 'winning percentage', 'hit rate', 'strike rate', 'win rate confidence interval', 'confidence interval', 'confidence intervals', 'wilson interval', 'wilson score interval', 'win rate ci'],
+    aliases: ['win rate', 'win rates', 'winning percentage', 'hit rate', 'strike rate', 'win rate confidence interval', 'win rate uncertainty', 'confidence interval', 'confidence intervals', 'wilson interval', 'wilson score interval', 'win rate ci'],
     tags: ['statistics', 'performance'], prerequisites: ['r-multiple'], related: ['expectancy', 'sample-size', 'profit-factor'],
     levels: {
       beginner: 'Win rate is the share of trades that made money: 12 winners out of 20 trades is 60%. On its own it says little: a 90% win rate loses money if the rare losses are huge, and with only a few trades the rate is mostly luck.',
@@ -959,7 +959,10 @@ const conceptTopic = (topic) => !PERSONAL.test(topic) && !NOT_A_CONCEPT.test(top
 // "The worker", "the checkpoint", "the failover": a part of CHE, which its own routes answer, like an
 // event word. "Teach me checkpoints" or "explain model failover" is the concept.
 const CHE_PART = /^(?:the|this|that|your|che'?s|her)\s+(?:cloudflare\s+)?(?:workers?|checkpoints?|failover|self repair|durable objects?|code index|router|gate|brain|runner|coding runtime)\b/;
+// "The ci checks" and "the required checks" name the owner's own CI runs, which main answers (issue #346 audit).
+const OWN_CI = /^the (?:ci|continuous integration|required|gating|green) (?:checks?|tests?|jobs?|runs?|results?|status|workflows?)$/;
 function conceptCard(topic, raw = topic) {
+  if (OWN_CI.test(String(raw || '').toLowerCase().replace(/[’']/g, '').trim())) return null;
   const exact = EXACT_NAMES.get(exactName(topic));
   if (exact) return exact;
   if (CHE_PART.test(String(raw || '').toLowerCase())) return null;
@@ -1010,6 +1013,9 @@ export function atlasContext(history = []) {
 }
 
 const THIS = /^(?:this|that|it|this one|that one|this card|that card|this topic|that topic|the same|the same one)$/;
+// Names that ask for CHE's own measured numbers ("what is win rate"), not a lesson, even though a card has them as aliases.
+const RECORD_NAMES = new Set([topicKey('win rate')]);
+const lessonNamed = (topic) => conceptTopic(topic) && Boolean(conceptCard(topic, topic)) && !RECORD_NAMES.has(topicKey(topic));
 
 /**
  * The owner's request to the Knowledge Atlas, or null when it is not one. A lesson is answered
@@ -1154,11 +1160,12 @@ export function atlasIntent(message, history = [], { explainLevel = '' } = {}) {
   if (ask || what) {
     const topic = (ask || what)[1];
     // "What is the spread?", "what's my win rate?": a reading of something, not a lesson.
-    if (what && !explicit && /^(?:the|my|your|our|his|today'?s|current|this|that)\b/.test(topic)) return null;
+    if (what && !explicit && /^(?:the|my|your|our|his|today'?s|current|this|that)\b/.test(topic) && !(evidenceIntent(raw) && lessonNamed(topic))) return null;
     // "What is a python" asks about the snake; "what is Python" asks about the language.
     if (what && /^(?:what(?:'s| is| are)|whats)\s+an?\s/.test(rest) && topicKey(topic).startsWith('lang:')) return null;
-    // A bare "what is win rate" asks for CHE's measured numbers, which the evidence route answers.
-    if (what && !asked && !explicit && evidenceIntent(raw)) return null;
+    // A bare "what is win rate" asks for CHE's measured numbers, which the evidence route answers. A named
+    // concept with its own card ("what is a win rate confidence interval") is the lesson, and beats that route.
+    if (what && !asked && !explicit && evidenceIntent(raw) && !lessonNamed(topic)) return null;
     return resolveTopic(topic, { kind: 'teach', level: asked || preferred, explicit });
   }
   if (explicit) return resolveTopic(t, { kind: 'teach', level: asked || preferred, explicit: true });
@@ -1183,6 +1190,10 @@ function resolveTopic(rawTopic, { kind, level = 'beginner', explicit = false }) 
 const DOMAIN_WORD = { coding: 'coding', code: 'coding', programming: 'coding', trading: 'trading' };
 // "… on trading", "… in coding so far": the domain he asks about, taken off the end of the sentence.
 const DOMAIN_TAIL = /^(.+?)(?: (?:on|in|with|at|for|of) (?:the |my )?(coding|code|programming|trading)(?: (?:cards|lessons|side))?)?(?: so far| until now| up to now)?$/;
+// Bare progress questions are always the owner's study (answered from his Brain records, with no model):
+// "what have I learned", "how much have I learned", "what should I study next" (issue #346 audit).
+const BARE_STUDY = /^(?:what have i learned(?: so far| until now| up to now)?|how much have i (?:learned|studied)(?: so far| until now| up to now)?)$/;
+const BARE_STUDY_NEXT = /^what should i study next$/;
 // A sentence about the atlas names it: lessons, cards, a quiz, coding or trading, or learning progress.
 const ATLAS_WORD = /\b(?:knowledge atlas|atlas|lessons?|cards?|quiz(?:zes)?|coding|trading|learning progress|study progress)\b/;
 // Progress questions. Each needs an atlas word, a domain ("how am I doing on trading") or an atlas reply
@@ -1270,9 +1281,10 @@ function learningIntent(t, ctx, raw = '') {
   const domain = DOMAIN_WORD[tail?.[2] || ''] || '';
   // The whole sentence counts: "what have I learned from the knowledge atlas" names it after the prefix is gone.
   const about = Boolean(domain) || ATLAS_WORD.test(speech(raw) || t) || ctx.recent;
-  if (PROGRESS.test(core) && about) return { kind: 'progress', domain };
+  const bare = BARE_STUDY.test(core);
+  if ((PROGRESS.test(core) || bare) && (about || bare)) return { kind: 'progress', domain };
   // Right after a lesson, "what should I learn next" keeps its curriculum meaning: the card after that one.
-  if (STUDY_NEXT.test(core) && about && !(ctx.card && !domain && /\blearn next$/.test(core))) return { kind: 'study_next', domain };
+  if (STUDY_NEXT.test(core) && (about || BARE_STUDY_NEXT.test(core)) && !(ctx.card && !domain && /\blearn next$/.test(core))) return { kind: 'study_next', domain };
   const reply = quizReply(t, ctx, raw);
   if (reply) return { kind: 'grade', card: ctx.card, ...reply };
   const fix = CARD_FIX.exec(t);

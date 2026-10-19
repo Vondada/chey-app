@@ -2,7 +2,7 @@
 
 Pillow and the network are replaced, so this runs anywhere without a key.
 """
-import io, json, os, sys, tempfile, types, unittest, urllib.error
+import io, json, os, shutil, subprocess, sys, tempfile, types, unittest, urllib.error
 from pathlib import Path
 from unittest import mock
 
@@ -154,6 +154,94 @@ class FishNarrationTest(unittest.TestCase):
     def test_che_is_spoken_as_chay(self):
         self.assertEqual(render.spoken("CHE's channel. Che explains."), "Chay's channel. Chay explains.")
         self.assertEqual(render.spoken('Check the cheese.'), 'Check the cheese.')
+
+
+PILOT_SPEC = Path(__file__).resolve().parent / 'fixtures' / 'pilot_render_spec.json'
+
+
+class StoryboardTest(unittest.TestCase):
+    """The Creator Studio pilot storyboard (written by creator_studio.js) as the renderer checks it."""
+
+    def spec(self, **change):
+        data = json.loads(PILOT_SPEC.read_text())
+        data.update(change)
+        return data
+
+    def refused(self, data, words):
+        with self.assertRaises(ValueError) as caught:
+            render.validate_spec(json.dumps(data))
+        self.assertIn(words, str(caught.exception))
+
+    def test_the_pilot_storyboard_is_accepted_as_a_vertical_40_second_episode(self):
+        spec = render.validate_spec(PILOT_SPEC.read_text())
+        self.assertEqual((spec['width'], spec['height'], spec['seconds'], spec['episode']), (1080, 1920, 40, 'S1E1'))
+        self.assertEqual(sum(s['seconds'] for s in spec['scenes']), 40)
+        self.assertTrue(all(s['speaker'] in s['cast'] for s in spec['scenes']))
+        self.assertTrue(all(s['sources'] for s in spec['scenes'] if s['kind'] == 'fact'))
+
+    def test_a_storyboard_that_breaks_the_format_is_refused_before_anything_is_drawn(self):
+        self.refused(self.spec(width=1920, height=1080), '9:16')
+        self.refused(self.spec(seconds=60), '30 to 45 seconds')
+        data = self.spec(); data['scenes'][0]['seconds'] += 1
+        self.refused(data, 'do not add up')
+        data = self.spec(); data['scenes'][0]['speaker'] = 'odette'
+        self.refused(data, 'speaker is not in the shot')
+        data = self.spec(); data['scenes'][2]['sources'] = []
+        self.refused(data, 'fact without a source')
+        data = self.spec(); data['scenes'][1]['cast'] = ['tay', 'stranger']
+        self.refused(data, 'not in the series cast')
+        data = self.spec(); data['layout']['caption'] = [72, 1030, 1200, 1240]
+        self.refused(data, 'outside the frame')
+        data = self.spec(); data['cast'][0]['color'] = 'red; rm -rf /'
+        self.refused(data, 'colors are invalid')
+        self.refused(self.spec(v=2), 'version')
+        with self.assertRaises(ValueError):
+            render.validate_spec('{' + ' ' * 16001 + '}')
+
+    def test_control_characters_are_flattened_and_long_text_is_refused_not_cut(self):
+        data = self.spec(); data['scenes'][0]['caption'] = 'Line\none\x00two'
+        self.assertEqual(render.validate_spec(json.dumps(data))['scenes'][0]['caption'], 'Line one two')
+        data = self.spec(); data['scenes'][0]['narration'] = 'word ' * 120
+        self.refused(data, 'longer than 400')
+
+    def test_captions_file_timing(self):
+        self.assertEqual(render.srt([(0, 1.5, 'One'), (61.25, 3600.004, 'Two')]),
+                         '1\n00:00:00,000 --> 00:00:01,500\nOne\n\n2\n00:01:01,250 --> 01:00:00,004\nTwo\n\n')
+
+
+def _real_renderer_available():
+    probe = subprocess.run([sys.executable, '-c', 'import PIL.Image'], capture_output=True)
+    return probe.returncode == 0 and shutil.which('ffmpeg') and shutil.which('ffprobe')
+
+
+@unittest.skipUnless(_real_renderer_available(), 'needs real Pillow and ffmpeg (CI checks the storyboard only)')
+class StoryboardRenderTest(unittest.TestCase):
+    """A real render of the pilot with Pillow and ffmpeg; Piper is replaced by a tone of the same length."""
+
+    def test_the_pilot_renders_to_a_verified_vertical_mp4_with_captions(self):
+        out = Path(tempfile.mkdtemp()) / 'rendered'
+        script = (
+            'import os, subprocess, sys\n'
+            'from pathlib import Path\n'
+            f'sys.path.insert(0, {str(Path(__file__).resolve().parent)!r})\n'
+            'import che_video_render as r\n'
+            'def tone(text, out, name="narration.wav"):\n'
+            '    wav = out / name\n'
+            '    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", f"sine=frequency=330:duration={max(0.8, len(text.split()) / 2.6):.2f}", str(wav)], check=True)\n'
+            '    return wav\n'
+            'r.piper_narration = tone\n'
+            f'r.render_episode(r.validate_spec(Path({str(PILOT_SPEC)!r}).read_text()), Path({str(out)!r}))\n'
+        )
+        env = {k: v for k, v in os.environ.items() if not k.startswith(('FISH_', 'CHE_FISH'))}
+        subprocess.run([sys.executable, '-c', script], check=True, env=env, capture_output=True)
+        manifest = json.loads((out / 'manifest.json').read_text())
+        self.assertEqual((manifest['video_width'], manifest['video_height'], manifest['format']), (1080, 1920, '9:16'))
+        self.assertAlmostEqual(manifest['duration_seconds'], 40, delta=0.3)
+        self.assertEqual((manifest['voices'], manifest['lip_sync'], manifest['youtube_uploaded']), (1, False, False))
+        self.assertGreater((out / 'video.mp4').stat().st_size, 20000)
+        cues = (out / 'captions.srt').read_text()
+        self.assertIn('Tay swears the shop', cues)
+        self.assertIn('Then check them.', cues.replace('\n', ' '))
 
 
 if __name__ == '__main__':

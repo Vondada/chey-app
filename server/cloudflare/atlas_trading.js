@@ -843,13 +843,28 @@ const N = '(\\d[\\d,]*(?:\\.\\d+)?)';
 const toNum = (s) => (s == null ? NaN : Number(String(s).replace(/,/g, '')));
 const findNum = (text, re) => { const m = re.exec(text); return m ? toNum(m[1]) : NaN; };
 
-function contractsOf(s) {
-  const a = new RegExp(`\\b${N} (?:${SYMBOL.source.slice(3, -3)})(?: futures?)?(?: contracts?)?\\b`).exec(s);
-  if (a) return { contracts: toNum(a[1]), symbol: symbolOf(SYMBOL.exec(a[0].slice(a[1].length))?.[1]) };
-  const b = new RegExp(`\\b${N} contracts? (?:of )?(?:the )?(${SYMBOL.source.slice(3, -3)})\\b`).exec(s);
-  if (b) return { contracts: toNum(b[1]), symbol: symbolOf(b[2]) };
-  return { contracts: NaN, symbol: symbolOf(SYMBOL.exec(s)?.[1]) };
+// A contract count is a whole positive number. "1.5 MNQ", "2.5 MNQ" and "-2 MNQ" are reported as a
+// problem and never changed into 1 or 2 (issue #346 audit): the sizing answers refuse them.
+const COUNT = `(?:^|[^\\w.])(-|−)?${N}`;
+function countOf(sign, text) {
+  const n = toNum(text);
+  if (sign) return { contracts: -n, problem: 'negative' };
+  if (!Number.isInteger(n)) return { contracts: n, problem: 'fraction' };
+  if (n < 1) return { contracts: n, problem: 'zero' };
+  return { contracts: n, problem: '' };
 }
+function contractsOf(s) {
+  const sym = SYMBOL.source.slice(3, -3);
+  const a = new RegExp(`${COUNT} (?:${sym})(?: futures?)?(?: contracts?)?\\b`).exec(s);
+  if (a) return { ...countOf(a[1], a[2]), symbol: symbolOf(SYMBOL.exec(a[0])?.[1]) };
+  const b = new RegExp(`${COUNT} contracts? (?:of )?(?:the )?(${sym})\\b`).exec(s);
+  if (b) return { ...countOf(b[1], b[2]), symbol: symbolOf(b[3]) };
+  const c = new RegExp(`${COUNT} contracts?\\b`).exec(s);
+  if (c) return { ...countOf(c[1], c[2]), symbol: symbolOf(SYMBOL.exec(s)?.[1]) };
+  return { contracts: NaN, problem: '', symbol: symbolOf(SYMBOL.exec(s)?.[1]) };
+}
+/** The refusal intent for a count that is not a whole positive number, or null when the count is fine. */
+const countRefusal = (c, card) => (c.problem ? { kind: 't_count', card, problem: c.problem, count: c.contracts, symbol: c.symbol || '' } : null);
 function stopOf(s) {
   const unit = (u) => (/^tick/.test(u) ? 'stopTicks' : 'stopPoints');
   const a = new RegExp(`\\b${N}[ -]?(points?|pts?|ticks?)(?: wide)? (?:stop|stop loss|stop-loss)\\b`).exec(s);
@@ -884,7 +899,7 @@ export const PLAN_PRICES = /(?:[,;]|\band\b)\s+(?:stop|target|take profit|entry|
 const ORDER_VERB = /(?:^|[,.;:!?]\s*|\b(?:and|then|also|now|so)\s+(?:(?:if so|if it is|if it'?s good|if yes|if good)\s*,?\s+)?)(?:please\s+)?(?:place|submit|enter|buy|sell|short|go long|go short|take (?:the|a|this|that|it)\b|open a (?:position|trade)|order(?! (?:blocks?|books?|types?|flow)\b)|prepare|set up|reverse|flatten|close|execute|send)\b/;
 
 const ASK = '(?:what(?:\'s| is| would be| will be| are)?|whats|how much|how many|calculate|compute|work out|figure out|tell me|give me|show me)';
-const KINDS = new Set(['t_risk', 't_size', 't_shares', 't_option', 't_evaluate', 't_vwap', 't_or', 't_winrate', 't_expectancy', 't_strategy', 't_montecarlo', 't_samplesize', 't_compare']);
+const KINDS = new Set(['t_risk', 't_size', 't_count', 't_shares', 't_option', 't_evaluate', 't_vwap', 't_or', 't_winrate', 't_expectancy', 't_strategy', 't_montecarlo', 't_samplesize', 't_compare']);
 export const isTradingAtlasKind = (kind) => KINDS.has(kind);
 
 /**
@@ -914,19 +929,26 @@ export function tradingAtlasIntent(t, { findCard = () => null, cardById = () => 
   if (evaluate && /\d/.test(evaluate[1] || '')) {
     const plan = evaluate[1] || '';
     const side = /\bshort\b/.test(plan) ? 'short' : 'long';
-    const { contracts, symbol } = contractsOf(plan);
+    const { contracts, symbol, problem } = contractsOf(plan);
+    const refused = countRefusal({ contracts, problem, symbol }, BY_ID.get('t-futures'));
+    if (refused) return refused;
     const entry = entryOf(plan);
     const stop = priceAfter(plan, 'stop(?: loss)?|sl');
     const target = priceAfter(plan, 'target|take profit|tp|profit target|exit');
     return { kind: 't_evaluate', card: BY_ID.get('t-order-types'), plan: { side, symbol: symbol || '', contracts: Number.isInteger(contracts) && contracts > 0 ? contracts : 1, contractsSaid: Number.isInteger(contracts) && contracts > 0, entry, stop, target, ...feesOf(plan) } };
   }
 
-  // "How many MNQ contracts can I trade risking $200 with a 10 point stop?"
-  // A sizing question names a budget or a stop, or asks what the owner can trade: "how many contracts are open" is not one.
+  // "How many MNQ contracts can I trade risking $200 with a 10 point stop?" and "how many MNQ can I risk $200
+  // with a 10 point stop": the largest whole number of contracts in the budget. A sizing question names a
+  // budget or a stop, or asks what the owner can trade: "how many contracts are open" is not one.
   const sizing = (x) => Object.keys(stopOf(x)).length || Object.keys(budgetOf(x)).length || /\b(?:can|could|should|may) i (?:trade|buy|sell|use|afford|risk|take|run|hold)\b/.test(x);
-  if (new RegExp(`^${ASK}\\b`).test(s) && /\bhow many\b/.test(s) && /\bcontracts?\b|\bmicros?\b/.test(s) && sizing(s)) {
-    const { symbol } = contractsOf(s);
-    return { kind: 't_size', card: BY_ID.get('t-futures'), inputs: { symbol, ...stopOf(s), ...budgetOf(s), ...feesOf(s) } };
+  // A contract symbol counts as a sizing question only with a budget or a stop: "how many MNQ trades can I take" is not one.
+  const sized = /\bcontracts?\b|\bmicros?\b/.test(s) || (SYMBOL.test(s) && (Object.keys(stopOf(s)).length || Object.keys(budgetOf(s)).length));
+  if (new RegExp(`^${ASK}\\b`).test(s) && /\bhow many\b/.test(s) && sized && sizing(s)) {
+    const counted = contractsOf(s);
+    const refused = countRefusal(counted, BY_ID.get('t-futures'));
+    if (refused) return refused;
+    return { kind: 't_size', card: BY_ID.get('t-futures'), inputs: { symbol: counted.symbol, ...stopOf(s), ...budgetOf(s), ...feesOf(s) } };
   }
   // "How many shares can I buy risking $100 with an entry at 50 and a stop at 48?"
   if (/\bhow many shares\b/.test(s) && (Object.keys(budgetOf(s)).length || /\bstop\b/.test(s))) {
@@ -937,14 +959,17 @@ export function tradingAtlasIntent(t, { findCard = () => null, cardById = () => 
   }
   // "What is my risk on 2 MNQ contracts with a 12 point stop?"
   if (new RegExp(`^${ASK}\\b`).test(s) && /\b(?:risk|risking|at risk|lose|loss|on the line)\b/.test(s) && SYMBOL.test(s)) {
-    const { contracts, symbol } = contractsOf(s);
+    const counted = contractsOf(s);
     const stops = stopOf(s);
     const entry = entryOf(s);
     const stop = priceAfter(s, 'stop(?: loss)?');
     const prices = !stops.stopPoints && !stops.stopTicks && Number.isFinite(entry) && Number.isFinite(stop) ? { entry, stop } : {};
     // "What's my risk on MNQ right now?" asks about open positions, not a calculation: it needs a stop.
     if (!Object.keys(stops).length && !Object.keys(prices).length) return null;
-    return { kind: 't_risk', card: BY_ID.get('t-futures'), inputs: { symbol, contracts: Number.isInteger(contracts) ? contracts : 1, contractsSaid: Number.isInteger(contracts), ...stops, ...prices, ...feesOf(s) } };
+    const refused = countRefusal(counted, BY_ID.get('t-futures'));
+    if (refused) return refused;
+    const contractsSaid = Number.isInteger(counted.contracts);
+    return { kind: 't_risk', card: BY_ID.get('t-futures'), inputs: { symbol: counted.symbol, contracts: contractsSaid ? counted.contracts : 1, contractsSaid, ...stops, ...prices, ...feesOf(s) } };
   }
   // "What's the breakeven on a long call with a 100 strike and a $3 premium?"
   if (/\b(?:breakeven|break even|max(?:imum)? (?:loss|gain|profit)|most i can (?:lose|make)|intrinsic value|payoff)\b/.test(s) && /\b(?:calls?|puts?)\b/.test(s)) {
@@ -1130,6 +1155,29 @@ function barsAnswer(intent, records) {
   return lines;
 }
 
+/**
+ * CHE's paper-journal win rate, for the evidence route when the evidence pass has recorded no trades: the same
+ * records and portfolios the Knowledge Atlas reads (one portfolio at a time, never pooled). Trades: 0 and
+ * text: null when the journal has no closed trade, so the caller can say so. Records are read, never written.
+ */
+export async function paperJournalWinRate(storage) {
+  const records = await loadTradingRecords(storage);
+  if (records.unreadable) return { trades: 0, text: 'I could not read CHE\'s paper journal just now, sir, so I give no win rate.' };
+  const list = books(records);
+  if (!list.length) return { trades: 0, text: null };
+  const total = list.reduce((n, b) => n + b.s.trades, 0);
+  const top = list[0];
+  const range = top.s.trades >= 2 ? winRateInterval({ wins: top.s.wins, n: top.s.trades, confidence: 0.95 }).value : null;
+  const lines = [`Win rate, sir, from CHE's paper journal (${PROVENANCE.paper}), since the evidence pass has recorded no trades: ${where(list, total)}.`];
+  lines.push(`${list.length > 1 ? 'The largest is' : 'It is'} ${top.name}: ${top.s.wins} win${top.s.wins === 1 ? '' : 's'} in ${top.s.trades}, a win rate of ${top.s.win_rate}%${range ? `, 95% range ${pct(range.low)} to ${pct(range.high)}` : ''}.`);
+  if (list.length > 1) {
+    const rates = list.map((b) => b.s.win_rate);
+    lines.push(`Across the ${list.length} portfolios, the win rate ranged ${Math.min(...rates)}% to ${Math.max(...rates)}%.`);
+  }
+  lines.push(top.s.trades < MIN_TRADES ? `That is fewer than the ${MIN_TRADES} trades needed, so it is anecdote, not evidence.` : 'A win rate means little without the payoff: ask "what is my expectancy" for both together.');
+  return { trades: total, text: lines.join(' ') };
+}
+
 /** The reply to a tradingAtlasIntent result, in knowledge_atlas.js's reply shape. Records are read, never written. */
 export async function answerTradingAtlas(intent, { storage = null } = {}) {
   const c = intent?.card || null;
@@ -1143,8 +1191,10 @@ export async function answerTradingAtlas(intent, { storage = null } = {}) {
       const out = futuresRisk(i);
       if (!out.ok) return finish([`I can't work that out yet, sir: ${out.error}. Say it like "what is my risk on 2 MNQ with a 12 point stop".`], false);
       const extra = out.values.totalWithCosts == null ? '' : `, or ${usd(out.values.totalWithCosts)} with the costs you gave`;
+      // A count the owner did not say is one contract, and the reply says so rather than passing it off as his.
+      const unsaid = i.contractsSaid ? '' : ' You named no number of contracts, so this is for one.';
       return finish([
-        `Your risk on ${out.inputs.contracts} ${out.spec.symbol} contract${out.inputs.contracts === 1 ? '' : 's'} with a ${num(out.values.points)}-point stop is ${usd(out.value)}${extra}, sir. ${NO_ORDER}`,
+        `Your risk on ${out.inputs.contracts} ${out.spec.symbol} contract${out.inputs.contracts === 1 ? '' : 's'} with a ${num(out.values.points)}-point stop is ${usd(out.value)}${extra}, sir.${unsaid} ${NO_ORDER}`,
         `Math: ${stepsText(out)}.`, specLine(out.spec), `Assumptions: ${out.assumptions}`,
       ], true, 'futuresRisk');
     }
@@ -1153,10 +1203,23 @@ export async function answerTradingAtlas(intent, { storage = null } = {}) {
       if (!i.symbol) return finish(['Which contract, sir: MNQ, NQ, ES or MES? Say it like "how many MNQ contracts can I trade risking $200 with a 10 point stop".'], false);
       const out = positionSize(i);
       if (!out.ok) return finish([`I can't size that yet, sir: ${out.error}. Say it like "how many MNQ contracts can I trade risking $200 with a 10 point stop".`], false);
+      const stopSaid = num(out.inputs.stopPoints ?? (out.inputs.stopTicks * out.spec.tick));
+      // Never a contract that is over the budget: when one contract does not fit, the reason is its own risk.
+      const head = out.value
+        ? `${out.value} ${out.spec.symbol} contract${out.value === 1 ? '' : 's'}, sir, risking ${usd(out.values.budget)} with a ${stopSaid}-point stop.`
+        : `No ${out.spec.symbol} contract fits, sir: one contract risks ${usd(out.values.perContract)} with a ${stopSaid}-point stop, more than the ${usd(out.values.budget)} budget.`;
       return finish([
-        `${out.value ? `${out.value} ${out.spec.symbol} contract${out.value === 1 ? '' : 's'}` : `No ${out.spec.symbol} contract fits`}, sir, risking ${usd(out.values.budget)} with a ${num(out.inputs.stopPoints ?? (out.inputs.stopTicks * out.spec.tick))}-point stop. ${NO_ORDER}`,
+        `${head} ${NO_ORDER}`,
         `Math: ${stepsText(out)}.`, specLine(out.spec), `Assumptions: ${out.assumptions}`,
       ], true, 'positionSize');
+    }
+    case 't_count': {
+      // A contract count that is not a whole positive number: nothing is calculated, and the reply says why.
+      const shown = `${intent.count}${intent.symbol ? ` ${intent.symbol}` : ''}`;
+      const why = intent.problem === 'fraction'
+        ? `Contracts are whole numbers, sir, and nothing was calculated for a fraction of a contract (${shown}).`
+        : `Contracts are whole positive numbers, sir, and nothing was calculated for ${shown}.`;
+      return finish([`${why} Say a whole number of contracts, like 1 or 2. I placed and prepared no order.`], false);
     }
     case 't_shares': {
       const out = stockShares(intent.inputs);

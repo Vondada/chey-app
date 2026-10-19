@@ -45,6 +45,7 @@ import { fishAudioDiagnostics, fishAudioKeyStatus, fishAudioSpeech, fishSecretsF
 import { cheSpokenText } from './che_pronunciation.js';
 import { premiumVoiceSpeech, premiumVoiceStatuses, readVoiceLog, recordVoiceLog, voiceProbeAuthorized, VOICE_LOCKS, voiceProviderOf, voiceTurnFor } from './phone_voice.js';
 import { handleVideoLine, videoRequestTopic, videoRequestSeconds } from './video_route.js';
+import { runStudioCommand, studioChatIntent, studioPostPreflight, studioView } from './creator_studio.js';
 import {
   YOUTUBE_CALLBACK_PATH, disconnectYouTube, finishYouTubeConnect, startYouTubeConnect,
   youtubeAccessToken, youtubeResultPage, youtubeStatus, youtubeStatusSpeech, youtubeUploads,
@@ -52,7 +53,7 @@ import {
 import { activityFeed, creations, findCreations, greeting, suggestions, stalledTasks, decisionsNeeded, nextActions } from './activity.js';
 import { accountSnapshot as marketAccountSnapshot, candles as marketCandles, chartPage as marketChartPage, quote as marketQuote, snapshot as marketSnapshot } from './markets.js';
 import { CALLBACK_PATH as TRADOVATE_CALLBACK, accountBalance, connectLink, listAccounts, connection as brokerConnection, handleCallback as tradovateCallback, renewToken, tradovateConfigured } from './broker_tradovate.js';
-import { MODE_NAME, chooseAccount, confirmLive, deskIntent, rememberListed, deskTick, pendingAlert, readDesk, requestLive, setMode, setRiskLimits, setSize, skipTrade, speakAlert, speakDeskStatus, speakLiveRequest, takeAnnouncement, takeTrade } from './trading_desk.js';
+import { MODE_NAME, STOCK_ACCOUNT, speakPlaceNeedsYes, chooseAccount, clearStockOrder, confirmLive, confirmStockOrder, deskIntent, dropStockOrder, pendingStockOrder, speakStaleStockOrder, rememberListed, deskTick, pendingAlert, readDesk, requestLive, requestStockOrder, setMode, setRiskLimits, setSize, skipTrade, speakAlert, speakDeskStatus, speakLiveRequest, speakStockOrder, speakStockReceipt, speakTakeNeedsYes, takeAnnouncement, takeTrade } from './trading_desk.js';
 import { externalGrounding } from './external_grounding.js';
 import { answerEvidenceReceipt, cachedResearch, evidenceReferenceFollowup, factKey, forgetKnowledge, invalidateKnowledge, knownAnswer, LAST_ANSWER_EVIDENCE_KEY, ownerFactQuestion, markPureResearch, rememberOwnerFact, researchHit, researchKey } from './knowledge_cache.js';
 import { claimMatcher, disprovenContext, downgradeDisproven, externalCorrection, guardCitations, loadDisproven, newsQuestion, newsResearch, reopenArticles, recheckExternalClaim, recordDisproven, verifiedSourcesContext } from './source_verification.js';
@@ -60,11 +61,13 @@ import { recordReliability, reliabilityIntent, reliabilitySummary, speakReliabil
 import { answerOwnerMemoryQuestion, auditMemoryProvenance, evidenceQuestion, evidenceReferent, evidenceRequestSplit, explainEvidenceFor, findAnswerEvidence, guardOwnerAttributions, guardRememberBlock, latestAnswerEvidence, loadRetractions, memoryPromptContext, ownerFactCorrection, ownerMemoryQuestion, ownerWords, recordAnswerEvidence, recordRetractions, storyRequested } from './memory_provenance.js';
 import { condenseHistory, ownerNotificationPolicy } from './workflow_governor.js';
 import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, nextTradingTickAt, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
+import { nextStrategySimTickAt, setStrategySimCeiling, setStrategySimPaused, speakStrategySim, strategySimIntent, strategySimTick, strategySimView, strategySimWake } from './strategy_sim.js';
 import { evidenceIntent, evidenceReport, evidenceTick } from './trading_evidence_runner.js';
 import { ATLAS_SOURCE, answerAtlas, atlasHiddenAction, atlasIntent, atlasQuizAnswerTurn, atlasPromptContext, atlasResetAsk, atlasResetIntent, projectAtlasToBrain, resetAtlasProgress } from './knowledge_atlas.js';
-import { LIVE_BACKTEST, LIVE_STATE, liveBacktest, liveDashboard, livePaperSummary, liveTick, nextLiveTickAt, setLivePaper } from './trading_live.js';
-import { alpacaKeys, alpacaPaperOrders, alpacaStatus, placeAlpacaPaperOrder, removeAlpacaPaperKeys, saveAlpacaPaperKeys } from './broker_alpaca.js';
-import { speakConnections, tradingConnections } from './trading_connections.js';
+import { LIVE_BACKTEST, LIVE_RUNS, LIVE_STATE, liveBacktest, liveDashboard, livePaperSummary, liveTick, nextLiveTickAt, setLivePaper } from './trading_live.js';
+import { cmeSession } from './market_feed.js';
+import { alpacaKeys, alpacaPaperOrders, alpacaStatus, liveKeyProblem, placeAlpacaPaperOrder, removeAlpacaPaperKeys, saveAlpacaPaperKeys } from './broker_alpaca.js';
+import { speakConnections, speakTradovateSteps, tradingConnections } from './trading_connections.js';
 import { liveAnswer, liveIntent } from './trading_live_chat.js';
 import { cloudDailyLimit, sanitizeOwnerText } from './che_errors.js';
 import { CHE_UPDATE_GUIDE, mergeSelfUpdatePr, openSelfUpdatePr, rollbackLastUpdate, selfUpdateGitHubAccess, selfUpdateStatus, workerDeploymentStatus } from './self_update.js';
@@ -88,7 +91,7 @@ import { learnedSkillsContext, learnedSkillsIntent, learnSkillIntent, attachment
 import { APPROVED_SKILLS, handleInstalledSkill, installedSkillIntent, installedSkillsContext } from './installed_skills.js';
 import { lastSite, publishSite, saveSite, serveSite, siteBuildIntent, siteEditIntent, sitePreviewIntent, sitePublishIntent, siteUrl, speakSitePublished, speakSiteResult, wantsImmediatePublish, workingHtml, writeSite } from './site_builder.js';
 import { noteJobActivity } from './job_activity.js';
-import { PENDING_OWNER_ACTION_KEY, forbiddenAction, prohibitionSpans, withoutProhibitions, PENDING_OWNER_ACTION_MS, gateOwnerAction, grantForKinds, isOwnerYes, peerActionReply, APPS_GRANTED_KEY, PENDING_APP_ACTION_KEY, PENDING_APP_ACTION_MS, gateAppAccess, classifyAppNeed, classifyExplicitAppOpen, classifyAppAccesses } from './owner_action_gate.js';
+import { PENDING_OWNER_ACTION_KEY, deskOwnedMoney, forbiddenAction, prohibitionSpans, withoutProhibitions, PENDING_OWNER_ACTION_MS, gateOwnerAction, grantForKinds, isOwnerYes, peerActionReply, APPS_GRANTED_KEY, PENDING_APP_ACTION_KEY, PENDING_APP_ACTION_MS, gateAppAccess, classifyAppNeed, classifyExplicitAppOpen, classifyAppAccesses } from './owner_action_gate.js';
 import { asksForCurrentOwnerLocation, changeHistoryIntent, guardClaimedOwnerActions, guardClaimedResearchActions, guardGroundedFacts, guardLocationWeatherReply, guardOwnerReply, loadChangeHistory, loadReceipts, OWNER_LOCATION_NOT_VERIFIED, recordReceipt, requestedCodeNames, speakChangeHistory, vagueResearchRequest, verifiedState, verifiedStatusText } from './truth_layer.js';
 import { ENGINEERING_PLAYBOOK_SPOKEN, playbookIntent } from './engineering_playbook.js';
 import { describeSkillsReport, reusableLicense, selectFilesForAgent, skillFromMarkdown, skillImportIntent, skillsReportIntent } from './skill_import.js';
@@ -171,7 +174,7 @@ import {
 } from './research_memory.js';
 import { APP_BUILD_KEY, appBuildIntent, appBuildRun, dispatchAppBuild, speakAppBuild } from './app_builds.js';
 import { advanceObjectives, applyMissionEvent, approvalReached, approveNode, awaitingApproval, cancelObjective, createObjective, mutateObjective, replanNode, resolveKnownNodes, retryNode, setObjectivePaused, speakObjective } from './objective_graph.js';
-import { COMMANDS, catalogView, commandById, commandStatus, connectorStatus, describeWorkflow, dispatchPrompt, findSavedWorkflow, normalizeSavedWorkflow, parseSlashCommand, readCommandSpeech, searchCommands, speakCommandList, speakUnavailable, suggestCommands, workflowNodes } from './command_catalog.js';
+import { CATEGORIES, COMMANDS, catalogView, commandById, commandStatus, connectorStatus, describeWorkflow, dispatchPrompt, findSavedWorkflow, normalizeSavedWorkflow, parseSlashCommand, readCommandSpeech, searchCommands, speakCommandList, speakUnavailable, suggestCommands, workflowNodes } from './command_catalog.js';
 import { handleReaRequest, loadInvestigation, parseReaRequest, reaInvestigationDetail, reaInvestigations } from './rea_runner.js';
 import { LAST_RESULTS_KEY, loadCatalog, resourceChoice, resourceIntent, resultLinks, searchCatalog, speakResults } from './resource_catalogs.js';
 import { fiveLayerIntent, LAYER_RESULTS_KEY, reasoningLayer, runReasoningLayer, speakFiveLayerResults } from './reasoning_exam.js';
@@ -611,7 +614,7 @@ async function commandCenterProbe(env, token) {
   };
   try {
     const catalog = await (await call('/api/commands', {}, device)).json().catch(() => ({}));
-    steps.push({ name: `catalog: ${COMMANDS.length} commands in 8 categories`, pass: catalog.commands?.length === COMMANDS.length && catalog.categories?.length === 8, ms: 0, route: 'catalog', model_calls: 0, reply: `${catalog.commands?.length} commands` });
+    steps.push({ name: `catalog: ${COMMANDS.length} commands in ${CATEGORIES.length} categories`, pass: catalog.commands?.length === COMMANDS.length && catalog.categories?.length === CATEGORIES.length, ms: 0, route: 'catalog', model_calls: 0, reply: `${catalog.commands?.length} commands` });
     await step('unknown command answered honestly, nothing run', '/lead-scot barbers',
       ({ done, reply }) => done.source === 'che_command' && done.ok === false && done.model_calls === 0 && /Nothing was run/.test(reply));
     await step('slash command reaches its existing handler', '/trade-journal',
@@ -3526,6 +3529,20 @@ export class CheState extends DurableObject {
     return tradingConnections({ paper, desk, tradovate: { configured: tradovateConfigured(env), conn }, alpaca });
   }
 
+  // The owner's Alpaca PAPER stock order by voice or typing (issue #344): read back exactly and kept
+  // for two minutes; only "yes, place it" sends it. Nothing reaches Alpaca on this turn.
+  async stockOrderTurn(intent) {
+    const env = this.keyEnv || this.env;
+    const reply = (text, extra = {}) => ndjsonReply(text, { source: 'che_trading_desk', model_calls: 0, account: STOCK_ACCOUNT, order_sent: false, ...extra });
+    if (intent.refuse) return reply(intent.refuse, { ok: false });
+    const keys = alpacaKeys(env);
+    if (!keys) return reply('Alpaca paper is not set up yet, sir, so I cannot place that order. Say "connect Alpaca" to hear how. Nothing was sent.', { ok: false });
+    const live = liveKeyProblem(keys.id);
+    if (live) return reply(live.replace('so nothing was saved', 'so no order was sent'), { ok: false });
+    const pending = await requestStockOrder(this.ctx.storage, intent.order);
+    return reply(speakStockOrder(pending), { ok: true, confirmation_needed: true });
+  }
+
   async liveTradingDashboard() {
     const auth = await this.ctx.storage.get('tradovate_auth').catch(() => null);
     const connected = Boolean(auth?.access_token) && Date.now() < Number(auth.expires_at || 0);
@@ -3594,10 +3611,14 @@ export class CheState extends DurableObject {
     await evidenceTick(this.ctx.storage, { now: opts.now, force: opts.force }).catch((error) => console.error('Trading evidence tick failed:', error?.message || error));
     // Forward paper trading on 5-minute NQ/MNQ bars, every minute while it is on and CME is open.
     await liveTick(this.ctx.storage, { now: opts.now }).catch((error) => console.error('Live paper tick failed:', error?.message || error));
+    // Strategy simulation (paper, minute bars): one alarm slot, so it runs here when due and scheduleWork arms its next minute.
+    await strategySimTick(this.ctx.storage, { now: opts.now, force: opts.force }).catch((error) => console.error('Strategy simulation tick failed:', error?.message || error));
     return book;
   }
 
-  async scheduleWork() {
+  // Every time the alarm must wake for, read from storage only (no network). The simulation's minute and the live
+  // tick come back apart from the rest, so a minute-only wake-up can be recognised and rescheduled exactly.
+  async wakeTimes() {
     const data = await this.loadData();
     const times = [];
     if (data.autonomy) {
@@ -3633,8 +3654,37 @@ export class CheState extends DurableObject {
     // Paper trading learns every hour (deterministic, no AI tokens, no money).
     times.push(Math.max(Date.now() + 250, await nextTradingTickAt(this.ctx.storage).catch(() => Date.now() + 3_600_000)));
     const liveAt = await nextLiveTickAt(this.ctx.storage).catch(() => null);
-    if (liveAt) times.push(Math.max(Date.now() + 250, liveAt));
+    // The simulation's next minute (null while paused or before its first pass). Same alarm slot, earliest wins.
+    const simAt = await nextStrategySimTickAt(this.ctx.storage).catch(() => null);
+    return { others: times, live: liveAt ? Math.max(Date.now() + 250, liveAt) : null, sim: simAt };
+  }
+
+  async scheduleWork() {
+    const w = await this.wakeTimes();
+    const times = [...w.others, ...(w.live ? [w.live] : []), ...(w.sim ? [w.sim] : [])];
     if (times.length) await this.ctx.storage.setAlarm(Math.min(...times));
+  }
+
+  // The live tick's next run from its last saved run, with the same gap liveTick uses; null while paper trading is off.
+  async liveNextAt(now = Date.now()) {
+    const state = await this.ctx.storage.get(LIVE_STATE);
+    if (!state?.enabled) return null;
+    const runs = (await this.ctx.storage.get(LIVE_RUNS)) || [];
+    const last = runs[runs.length - 1];
+    if (!last?.at) return now;
+    const gap = cmeSession(now).open ? 50_000 : 14 * 60_000;
+    return Date.parse(last.at) + gap;
+  }
+
+  // Minute-only wake-up test: the simulation's minute is due and nothing else is (no hourly, live, job, mailbox or
+  // other timer). Returns the times still to keep, or null when another wake-up is due and the full alarm must run.
+  async minuteOnlyWake(now = Date.now()) {
+    const sim = await strategySimWake(this.ctx.storage, now);
+    if (!sim.due) return null;
+    const w = await this.wakeTimes();
+    const liveNext = await this.liveNextAt(now);
+    const due = [...w.others, ...(liveNext ? [liveNext] : [])].some((t) => t <= now + 5_000);
+    return due ? null : { others: w.others, liveNext };
   }
 
   /**
@@ -4852,14 +4902,22 @@ export class CheState extends DurableObject {
       return ndjsonReply(`/${command.id} needs ${command.input.hint.toLowerCase()}, sir. For example: "${command.examples[0] || `/${command.id} …`}". Nothing was run.`,
         { source: 'che_command', ok: false, command: command.id, needs_input: true, model_calls: 0 });
     }
-    if (command.confirm && !confirmed) {
+    // A studio post is held again unless it carries the account and video the owner approved (its pin
+    // from the ask), so a confirmation that names neither (a page button, a workflow step) asks first.
+    if (command.confirm && (!confirmed || (command.local === 'studio_post' && !parsed.pin))) {
+      // A studio post that cannot happen (platform not connected, no verified
+      // MP4) says why now instead of asking for a yes it could not use; one
+      // that can names the account, the video and its visibility in the ask.
+      const preflight = command.local === 'studio_post' ? await studioPostPreflight(parsed.input, this.studioContext(request, data)) : null;
+      if (preflight?.blocked) return ndjsonReply(preflight.blocked, { source: 'che_creator_studio', ok: false, studio_action: 'post', command: command.id, platform: preflight.platform || '', model_calls: 0 });
       // The same hold the money/delete gate uses: only a plain yes on the
-      // very next turn releases exactly this command, once.
-      await this.ctx.storage.put(PENDING_OWNER_ACTION_KEY, { kinds: ['command'], command: command.id, input: parsed.input, text: `/${command.id} ${parsed.input}`.trim(), at: Date.now() });
-      const ask = `/${command.id}: ${command.confirm} Should I go ahead, sir? Say yes to approve.`;
+      // very next turn releases exactly this command, once. A studio post keeps
+      // the account and video named in its ask, so the release can check them.
+      await this.ctx.storage.put(PENDING_OWNER_ACTION_KEY, { kinds: ['command'], command: command.id, input: parsed.input, text: `/${command.id} ${parsed.input}`.trim(), at: Date.now(), ...(preflight?.pin ? { pin: preflight.pin } : {}) });
+      const ask = preflight?.ask || `/${command.id}: ${command.confirm} Should I go ahead, sir? Say yes to approve.`;
       return json({ message: ask, reply: ask, held_for_owner: true, owner_action_kind: 'command', command: command.id, code_review_passed: false, owner_approval_required: true });
     }
-    if (command.local) return this.runLocalCommand(command, parsed.input, request, data);
+    if (command.local) return this.runLocalCommand(command, parsed.input, request, data, parsed.pin || null);
     const inner = new Request(request.url, {
       method: 'POST', headers: request.headers,
       body: JSON.stringify({ ...body, message: dispatchPrompt(command, parsed.input), command_confirmed: false }),
@@ -4924,7 +4982,7 @@ export class CheState extends DurableObject {
 
   // The few commands with no chat route of their own: thin wrappers over the
   // existing functions, answered from real results only.
-  async runLocalCommand(command, input, request, data) {
+  async runLocalCommand(command, input, request, data, pin = null) {
     const env = this.keyEnv || this.env;
     if (command.local === 'voice_test') {
       const probe = await this.voiceProbe().catch((error) => ({ ok: false, status: 'error', reason: String(error?.message || error).slice(0, 160) }));
@@ -4957,7 +5015,24 @@ export class CheState extends DurableObject {
         : `The video line stopped at ${out.stage || 'an unknown step'}, sir: ${out.error || 'no video link came back'}. Nothing was uploaded.`;
       return ndjsonReply(reply, { source: 'che_video_line', ok: Boolean(out.ok && row?.link), media_url: row?.link || null, model_calls: 0 });
     }
+    if (String(command.local).startsWith('studio_')) {
+      const ctx = { ...this.studioContext(request, data), pin };
+      const out = await runStudioCommand(command.local, input, ctx);
+      if (ctx.changed) {
+        // Only what the studio changed (YouTube token refresh, its upload) is merged into a fresh store.
+        const fresh = await this.loadData();
+        fresh.youtube = data.youtube;
+        fresh.youtube_uploads = data.youtube_uploads;
+        await this.ctx.storage.put('che', fresh);
+      }
+      const { text, ...done } = out;
+      return ndjsonReply(text, { source: 'che_creator_studio', command: command.id, model_calls: 0, ...done });
+    }
     return ndjsonReply(`/${command.id} has no runner, sir. Nothing was run.`, { source: 'che_command', ok: false, model_calls: 0 });
+  }
+
+  studioContext(request, data) {
+    return { env: this.keyEnv || this.env, storage: this.ctx.storage, data, origin: new URL(request.url).origin, fetcher: fetch, changed: false };
   }
 
   // Starts a workflow on CHE's existing objective graph: each step is a
@@ -6349,6 +6424,37 @@ export class CheState extends DurableObject {
         if (body.action === 'tick') return json({ ok: true, run: await liveTick(this.ctx.storage, { force: true }) });
         if (body.action === 'backtest') return json(await liveBacktest(this.ctx.storage));
         return json({ detail: 'Unknown action. Use start, stop, tick or backtest.' }, 400);
+      }
+      // Strategy simulation (step a): paper minute-bar strategies. Read and the kill switch are owner-only; nothing here orders or spends.
+      const simOwnerOnly = () => json({ detail: 'Only the CHE owner can view or control the strategy simulation.' }, 403);
+      if (path === '/api/trading/sim' && request.method === 'GET') {
+        if (!ownerDevice) return simOwnerOnly();
+        return json(await strategySimView(this.ctx.storage));
+      }
+      if (path === '/api/trading/sim' && request.method === 'POST') {
+        if (!ownerDevice) return simOwnerOnly();
+        if (body.action === 'pause' || body.action === 'resume') {
+          const state = await setStrategySimPaused(this.ctx.storage, body.action === 'pause');
+          // Resuming re-arms the alarm now, so the next minute is not left waiting for some other wake-up.
+          if (body.action === 'resume') await this.scheduleWork();
+          return json({ ok: true, state, view: await strategySimView(this.ctx.storage) });
+        }
+        if (body.action === 'tick') {
+          const run = await strategySimTick(this.ctx.storage, { force: true });
+          // The first pass arms the minute cadence here, so the owner can start it without waiting for the hourly alarm.
+          await this.scheduleWork();
+          return json({ ok: true, run });
+        }
+        if (body.action === 'ceiling') {
+          const result = await setStrategySimCeiling(this.ctx.storage, body.usd);
+          return json(result, result.ok ? 200 : 400);
+        }
+        return json({ detail: 'Unknown action. Use pause, resume, tick or ceiling.' }, 400);
+      }
+      // The phone's Studio panel: the same records CHE reads aloud, loaded quietly.
+      if (path === '/api/studio' && request.method === 'GET') {
+        if (!ownerDevice) return json({ detail: 'Only the CHE owner can open the Creator Studio.' }, 403);
+        return json(await studioView(this.studioContext(request, data)));
       }
       const tradingOwnerOnly = () => json({ detail: 'Only the CHE owner can use trading connections.' }, 403);
       if (path === '/api/trading/connections' && request.method === 'GET') {
@@ -8190,7 +8296,8 @@ export class CheState extends DurableObject {
               await this.ctx.storage.put(PENDING_OWNER_ACTION_KEY, null);
               const command = commandById(held.command);
               if (command && Date.now() - Number(held.at || 0) < PENDING_OWNER_ACTION_MS) {
-                return this.runSlashCommand(request, body, data, { name: command.id, command, input: String(held.input || '') }, { confirmed: true });
+                // The account and video the owner was asked about travel with the yes (held.pin).
+                return this.runSlashCommand(request, body, data, { name: command.id, command, input: String(held.input || ''), pin: held.pin || null }, { confirmed: true });
               }
             }
           }
@@ -8216,6 +8323,17 @@ export class CheState extends DurableObject {
             if (ownerDevice) await this.dropHeldActions();
             const spoken = await this.answerCommandSpeech(request, body, data, said, { ownerDevice });
             if (spoken) return spoken;
+          }
+          // Creator Studio (issue #347): "show the series bible", "render the pilot", "export the
+          // pilot for TikTok", "post it to YouTube Shorts". Each runs its catalog command, so the
+          // spoken and slash forms share one handler and the post keeps its yes.
+          const studio = body.attachment || body.workflow_step ? null : studioChatIntent(rawMessage, body.history);
+          if (studio) {
+            await this.dropHeldActions();
+            // An answer that needs no command: a refused fake audience, or "nothing will be posted".
+            if (studio.say) return ndjsonReply(studio.say, { source: 'che_creator_studio', ok: studio.ok === true, ...(studio.refused ? { refused: studio.refused } : {}), ...(studio.action ? { studio_action: studio.action } : {}), model_calls: 0 });
+            const command = commandById(studio.command);
+            return this.runSlashCommand(request, body, data, { name: command.id, command, input: studio.input }, { confirmed: false });
           }
           // "What is on my screen?" with no screen sent: say so, never guess.
           if (!body.attachment && !String(body.screen_context || '').trim() && asksAboutScreen(rawMessage)) {
@@ -8341,7 +8459,12 @@ export class CheState extends DurableObject {
         // again costs a model call and can only rewrite what the owner said (issue #345).
         const frame = intentFrame(message);
         const frameReadsIt = frame.lossless && !['unclear', 'followup', 'correction'].includes(frame.mode);
-        if (interpretation.kind === 'unclear' && !frameReadsIt && !interpretation.clarify && !interpretation.passthrough && ownerHistory.length > 0) {
+        // A broker order, its "yes, place it" or its "no, don't place it" is read by the desk word for
+        // word; a model reading could only blur which order the owner approved.
+        const deskReadsIt = ['take', 'take_unconfirmed', 'place_unconfirmed', 'stock_no', 'stock_order', 'alpaca_orders', 'tradovate_steps'].includes(deskIntent(message)?.kind);
+        // "Reset my knowledge atlas progress" is a delete with a fixed hold: it never needs a reading (issue #346 audit).
+        const deterministicHold = ownerDevice && Boolean(atlasResetIntent(message));
+        if (interpretation.kind === 'unclear' && !frameReadsIt && !deskReadsIt && !interpretation.clarify && !interpretation.passthrough && ownerHistory.length > 0 && !deterministicHold) {
           const reading = await interpretWithModel({
             runText: (messages) => this.runInterpreterText(messages),
             text: message,
@@ -8356,6 +8479,8 @@ export class CheState extends DurableObject {
           try {
             await this.ctx.storage.put(PENDING_OWNER_ACTION_KEY, null);
             await this.ctx.storage.put(PENDING_APP_ACTION_KEY, null);
+            // "Never mind" also drops an Alpaca paper order still waiting for "yes, place it".
+            if (interpretation.kind === 'cancel') await dropStockOrder(this.ctx.storage);
           } catch (_) {
             return json({ message: 'I could not record that safely, so I did not act. Please say it again.', reply: 'I could not record that safely, so I did not act. Please say it again.', code_review_passed: false, owner_approval_required: true }, 503);
           }
@@ -8372,16 +8497,32 @@ export class CheState extends DurableObject {
         // the held request, once; anything else replaces it.
         let ownerGrant = {};
         let heldAction = null;
+        let stockTurn = null;
         try { heldAction = await this.ctx.storage.get(PENDING_OWNER_ACTION_KEY); } catch (_) { heldAction = null; }
         try {
           if (heldAction) {
             await this.ctx.storage.put(PENDING_OWNER_ACTION_KEY, null);
             if (isOwnerYes(message) && Date.now() - Number(heldAction.at || 0) < PENDING_OWNER_ACTION_MS) {
+              // A held request that is both a delete and a purchase is released by no yes: nothing is deleted,
+              // bought or sent, and the owner asks for each part on its own.
+              if (Array.isArray(heldAction.kinds) && heldAction.kinds.includes('delete') && heldAction.kinds.includes('money')) {
+                return ndjsonReply('Nothing was done, sir. That request asked me to delete and to buy in one sentence, and one yes cannot release both. Say the delete on its own, or the purchase on its own. Nothing was deleted and nothing was sent.', { source: 'che_held_action', ok: false, model_calls: 0, order_sent: false });
+              }
               ownerGrant = grantForKinds(heldAction.kinds);
               message = String(heldAction.text || message);
             }
           }
-          const ownerGate = gateOwnerAction(message, ownerGrant);
+          // "Buy 10 shares of AAPL on Alpaca paper" spends no money, and the desk reads that exact order
+          // back and waits for its own "yes, place it", so the money hold does not ask a second, vaguer
+          // question first. Only a whole sentence that is one paper order (or a refusal) qualifies, and
+          // it is answered just below, before any other route. Live or real-money wording, or anything
+          // more in the sentence, keeps the hold.
+          const deskTurn = body.attachment ? null : deskIntent(message);
+          stockTurn = deskTurn?.kind === 'stock_order' ? deskTurn : null;
+          // The sale and order-object rules of #356 hold every other "sell" and "place the order"; on a turn the desk owns,
+          // money that comes only from those words is the desk's own confirmation (see deskOwnedMoney).
+          const deskOwned = (stockTurn || ['place_unconfirmed', 'take'].includes(deskTurn?.kind)) && deskOwnedMoney(message);
+          const ownerGate = gateOwnerAction(message, stockTurn?.paper || deskOwned ? { ...ownerGrant, money: true } : ownerGrant);
           if (!ownerGate.allowed) {
             await this.ctx.storage.put(PENDING_OWNER_ACTION_KEY, { kinds: ownerGate.kinds, text: message, at: Date.now() });
             // "Reset my progress" names what the yes would delete, and how much (Knowledge Atlas, #346).
@@ -8392,6 +8533,18 @@ export class CheState extends DurableObject {
         } catch (_) {
           // Fail closed: if the hold cannot be recorded, nothing gated runs.
           return json({ message: 'I could not record that safely, so I did not act. Please say it again.', reply: 'I could not record that safely, so I did not act. Please say it again.', code_review_passed: false, owner_approval_required: true }, 503);
+        }
+        if (stockTurn && !ownerDevice) return ndjsonReply('Only the CHE owner can use the trading desk.', { source: 'che_trading_desk', ok: false, model_calls: 0 });
+        if (stockTurn) {
+          // B3: a paper order replaces every held request, so the "yes" its read-back waits for can release
+          // none of them: not a money hold, not an app grant, and not a Gmail, Drive or Calendar write.
+          try {
+            await this.dropHeldActions();
+            await this.ctx.storage.put(PENDING_GOOGLE_ACTION_KEY, null);
+          } catch (_) {
+            return json({ message: 'I could not record that safely, so I did not act. Please say it again.', reply: 'I could not record that safely, so I did not act. Please say it again.', code_review_passed: false, owner_approval_required: true }, 503);
+          }
+          return this.stockOrderTurn(stockTurn);
         }
         // "Reset my progress" (Knowledge Atlas, #346) is a delete: it runs only with the owner's yes for it.
         const atlasReset = ownerDevice && ownerGrant.delete === true ? atlasResetIntent(message) : null;
@@ -9650,9 +9803,63 @@ export class CheState extends DurableObject {
             trades_closed: dash.totals.trades, positions_open: dash.positions.length, account: 'PAPER',
           });
         }
+        // A bare "yes" to an Alpaca paper order read back: the order needs its own words, so a yes
+        // meant for something else can never send one.
+        const stockWaiting = !body.attachment && ownerDevice && isOwnerYes(message) ? pendingStockOrder(await readDesk(this.ctx.storage)) : null;
+        if (stockWaiting?.status === 'waiting') {
+          return ndjsonReply(`To send it to ${STOCK_ACCOUNT}, sir, say "yes, place it". Say "no" to drop it. Nothing has been sent yet.`, { source: 'che_trading_desk', ok: true, model_calls: 0, account: STOCK_ACCOUNT, order_sent: false, confirmation_needed: true });
+        }
         const desk = deskIntent(message);
         if (desk) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can use the trading desk.', { source: 'che_trading_desk', ok: false });
+          // B1: a bare "place it" has no yes, so it places nothing; it is answered with the phrase to say.
+          if (desk.kind === 'place_unconfirmed') {
+            return ndjsonReply(speakPlaceNeedsYes(await readDesk(this.ctx.storage)), { source: 'che_trading_desk', ok: false, model_calls: 0, order_sent: false });
+          }
+          // A trade phrase with no explicit yes places nothing, live or paper, whatever is waiting (blockers 1 and 2).
+          if (desk.kind === 'take_unconfirmed') {
+            return ndjsonReply(speakTakeNeedsYes(await readDesk(this.ctx.storage)), { source: 'che_trading_desk', ok: false, model_calls: 0, order_sent: false });
+          }
+          const deskNow = ['take', 'stock_no', 'skip'].includes(desk.kind) ? await readDesk(this.ctx.storage) : null;
+          const stockPending = deskNow ? pendingStockOrder(deskNow) : null;
+          // B2: a "yes, place it" while ANY Alpaca PAPER record exists (placed, failed, unclear, or read back and
+          // waiting past two minutes) belongs to that paper record. It is answered here, on the paper branch,
+          // and never reaches takeTrade, so no live or sim alert is sent from a paper result. The stale record is cleared.
+          if (desk.kind === 'take' && desk.place && deskNow?.stock_order && !stockPending) {
+            const stale = (await clearStockOrder(this.ctx.storage)) || deskNow.stock_order;
+            const alertOpen = Boolean(pendingAlert(await readDesk(this.ctx.storage)));
+            return ndjsonReply(speakStaleStockOrder(stale, { alertOpen }), { source: 'che_trading_desk', ok: false, model_calls: 0, account: STOCK_ACCOUNT, order_sent: false });
+          }
+          if (stockPending && ((desk.kind === 'take' && desk.place) || desk.kind === 'stock_no' || desk.kind === 'skip')) {
+            if (desk.kind !== 'take') {
+              const dropped = await dropStockOrder(this.ctx.storage);
+              return ndjsonReply(dropped?.already
+                ? `That order was already sent to ${STOCK_ACCOUNT}, sir, so it stands. ${speakStockReceipt(dropped.order.receipt)}`
+                : `Dropped, sir. Nothing was sent to ${STOCK_ACCOUNT}.`, { source: 'che_trading_desk', ok: true, model_calls: 0, account: STOCK_ACCOUNT, order_sent: Boolean(dropped?.already) });
+            }
+            const env = this.keyEnv || this.env;
+            const placed = await confirmStockOrder(this.ctx.storage, { place: (order) => placeAlpacaPaperOrder(env, this.ctx.storage, order) });
+            if (placed.ok && !placed.repeated && placed.receipt?.id) {
+              await recordReceipt(this.ctx.storage, { kind: 'paper_order_placed', key: `alpaca_paper:${placed.receipt.id}`, detail: placed.reply.slice(0, 300) }).catch(() => null);
+            }
+            return ndjsonReply(placed.reply, {
+              source: 'che_trading_desk', ok: placed.ok, model_calls: 0, account: STOCK_ACCOUNT, order_sent: placed.ok,
+              ...(placed.receipt ? { order_id: placed.receipt.id, order_status: placed.receipt.status, client_order_id: placed.receipt.client_order_id } : {}),
+              ...(placed.repeated ? { repeated: true } : {}),
+            });
+          }
+          if (desk.kind === 'stock_order') return this.stockOrderTurn(desk);
+          if (desk.kind === 'alpaca_orders') {
+            const listed = await alpacaPaperOrders(this.keyEnv || this.env, { limit: 5 });
+            const text = listed.state === 'not_configured' ? 'Alpaca paper is not set up yet, sir, so there are no orders to read. Say "connect Alpaca" to hear how.'
+              : !listed.ok ? `I could not read your Alpaca paper orders, sir: ${listed.error}`
+                : !listed.orders.length ? `Alpaca reports no orders on your ${STOCK_ACCOUNT} account, sir.`
+                  : `Your latest ${STOCK_ACCOUNT} orders, as Alpaca reports them, sir: ${listed.orders.map((o, i) => `${i + 1}, ${speakStockReceipt(o, { brief: true }).replace(/^Alpaca's receipt: /, '')}`).join(' ')}`;
+            return ndjsonReply(text, { source: 'che_trading_desk', ok: listed.ok, model_calls: 0, account: STOCK_ACCOUNT });
+          }
+          if (desk.kind === 'tradovate_steps') {
+            return ndjsonReply(speakTradovateSteps({ configured: tradovateConfigured(this.keyEnv || this.env), redirect: `${new URL(request.url).origin}/broker/tradovate/callback` }), { source: 'che_trading_desk', ok: true, model_calls: 0 });
+          }
           if (desk.kind === 'connections') {
             const view = await this.tradingConnectionsView();
             return ndjsonReply(speakConnections(view), { source: 'che_trading_desk', ok: true, trading_mode: view.mode });
@@ -9677,7 +9884,7 @@ export class CheState extends DurableObject {
           }
           if (desk.kind === 'connect') {
             if (!tradovateConfigured(this.keyEnv || this.env)) {
-              return ndjsonReply(`To connect NinjaTrader, Tradovate first has to give CHE OAuth app credentials, sir. Ask Tradovate support (or their partner program) to register an OAuth application with this redirect address: ${new URL(request.url).origin}/broker/tradovate/callback. They will give you a client ID and a client secret; save them as the Worker secrets CHE_TRADOVATE_OAUTH_CLIENT_ID and CHE_TRADOVATE_OAUTH_CLIENT_SECRET, then say "connect NinjaTrader" again. Your password never comes to me: you sign in on Tradovate's own page.`, { source: 'che_trading_desk', ok: false });
+              return ndjsonReply(`To connect NinjaTrader, Tradovate first has to approve API access for CHE, sir. ${speakTradovateSteps({ redirect: `${new URL(request.url).origin}/broker/tradovate/callback` }).replace(/^Tradovate requires these steps before CHE can use its API, sir: /, 'Its steps: ')}\nThe two Worker secrets are CHE_TRADOVATE_OAUTH_CLIENT_ID and CHE_TRADOVATE_OAUTH_CLIENT_SECRET; then say "connect NinjaTrader" again. Your password never comes to me: you sign in on Tradovate's own page.`, { source: 'che_trading_desk', ok: false });
             }
             const link = await connectLink(this.ctx.storage, this.keyEnv || this.env, new URL(request.url).origin);
             return ndjsonReply(`Open this link to sign in to NinjaTrader on Tradovate's own page, sir. Your password goes only to Tradovate, never to me. The link works once, for 10 minutes: ${link.url}`, { source: 'che_trading_desk', ok: true });
@@ -9686,7 +9893,7 @@ export class CheState extends DurableObject {
             const changed = desk.confirmed || await setMode(this.ctx.storage, desk.mode);
             const conn = await brokerConnection(this.ctx.storage);
             const note = desk.mode === 'live'
-              ? ' Real money now. I will call each entry and place it only when you say "take the trade".'
+              ? ' Real money now. I will call each entry and place it only when you say "yes, take the trade".'
               : desk.mode === 'sim' ? ' I will place my entries on the simulated account myself and tell you each one.' : ' Nothing goes to NinjaTrader.';
             const chosen = (await readDesk(this.ctx.storage)).account[desk.mode];
             const needs = desk.mode !== 'paper' && !conn.connected ? ' NinjaTrader is not connected yet, so say "connect NinjaTrader" first.'
@@ -9705,6 +9912,9 @@ export class CheState extends DurableObject {
             return ndjsonReply(limited.error || `Done, sir: live orders are limited to ${l.maxContracts} contract${l.maxContracts === 1 ? '' : 's'} and $${l.maxRiskDollars} at risk per order.`, { source: 'che_trading_desk', ok: !limited.error });
           }
           if (desk.kind === 'take') {
+            // A live alert is taken only by "yes, take the trade", "yes, place the trade" or "yes, take it" (blocker 1).
+            // Any other yes, such as "yes, place it", is refused here and names the phrase to say; nothing is placed.
+            if (!desk.place || !desk.live) return ndjsonReply(speakTakeNeedsYes(await readDesk(this.ctx.storage)), { source: 'che_trading_desk', ok: false, model_calls: 0, order_sent: false });
             const taken = await takeTrade(this.ctx.storage);
             if (taken.ok) await recordReceipt(this.ctx.storage, { kind: 'trade_placed', key: `trade_placed:${Date.now()}`, detail: taken.reply.slice(0, 300) }).catch(() => null);
             return ndjsonReply(taken.reply, { source: 'che_trading_desk', ok: Boolean(taken.ok) });
@@ -9738,6 +9948,20 @@ export class CheState extends DurableObject {
         // The owner's evidence questions are answered from recorded runs only, never from a guess.
         if (evidenceIntent(message)) {
           return ndjsonReply(await evidenceReport(this.ctx.storage), { source: 'che_trading_evidence' });
+        }
+        // Strategy simulation: pause, resume and status by typing, by voice, or through the /trade-sim command. Owner only.
+        const sim = strategySimIntent(message);
+        if (sim) {
+          if (!ownerDevice) return ndjsonReply('Only the CHE owner can control the strategy simulation, sir.', { source: 'che_strategy_sim', ok: false });
+          if (sim.kind === 'pause' || sim.kind === 'resume') {
+            await setStrategySimPaused(this.ctx.storage, sim.kind === 'pause');
+            // Resuming arms the next minute at once, so it does not wait for another wake-up.
+            if (sim.kind === 'resume') await this.scheduleWork();
+          }
+          const lead = sim.kind === 'pause' ? 'Paused the strategy simulation, sir. No bars are read and no trades open until you resume it.'
+            : sim.kind === 'resume' ? 'Resumed the strategy simulation, sir. It runs again on the next minute.' : '';
+          const view = await strategySimView(this.ctx.storage);
+          return ndjsonReply([lead, speakStrategySim(view)].filter(Boolean).join('\n'), { source: 'che_strategy_sim' });
         }
         const trade = tradingIntent(message);
         if (trade) {
@@ -11021,6 +11245,17 @@ export class CheState extends DurableObject {
 
   async alarm() {
     await this.refreshKeyEnv();
+    // A minute-only wake-up: the simulation's minute is the only work due. It runs that one pass and makes no
+    // mailbox (GitHub), job, Tradovate, hourly or live call. Those keep their own wake-up times and run on them.
+    const minuteNow = Date.now();
+    const minute = await this.minuteOnlyWake(minuteNow).catch(() => null);
+    if (minute) {
+      await strategySimTick(this.ctx.storage, { now: minuteNow }).catch((error) => console.error('Strategy simulation tick failed:', error?.message || error));
+      const simNext = await nextStrategySimTickAt(this.ctx.storage, Date.now()).catch(() => null);
+      const kept = [...minute.others, ...(minute.liveNext ? [minute.liveNext] : []), ...(simNext ? [simNext] : [])];
+      if (kept.length) await this.ctx.storage.setAlarm(Math.min(...kept));
+      return;
+    }
     // Flagstaff stays responsive even when Office autonomy is paused. Incoming
     // AI messages are advice only and cannot authorize consequential actions.
     await this.processFlagstaffInbox().catch((error) => {

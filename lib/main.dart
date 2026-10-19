@@ -35,6 +35,7 @@ import 'che_speech_pipeline.dart';
 import 'che_notifications.dart';
 import 'platform/che_platform_client.dart';
 import 'platform/che_platform_screens.dart';
+import 'widgets/che_render_bench.dart';
 import 'che_stream_batcher.dart';
 import 'che_spoken_text.dart';
 import 'che_voice_turn.dart';
@@ -109,6 +110,7 @@ import 'rooms/che_markets_room.dart';
 import 'rooms/che_store_room.dart';
 import 'rooms/che_pipeline_room.dart';
 import 'rooms/che_creator_studio.dart';
+import 'rooms/che_series_studio.dart';
 import 'rooms/che_art_studio.dart';
 import 'rooms/che_room_segments.dart';
 import 'rooms/che_theater_room.dart';
@@ -2228,6 +2230,12 @@ OWNER AGENCY
           title: 'Voice diagnostics',
           subtitle: 'Engine, latency, fallbacks',
           onTap: _openVoiceDiagnostics,
+        ),
+        CheMoreItem(
+          icon: Icons.speed_rounded,
+          title: 'Rendering benchmark',
+          subtitle: 'Brain scene: native vs WebGL vs WebGPU on this phone',
+          onTap: _openRenderBench,
         ),
         CheMoreItem(
           icon: Icons.account_circle_outlined,

@@ -927,7 +927,7 @@ test('code inspection, reasoning, CI validation and recovery: lessons reach the 
   for (const [phrase, start] of [
     ['Teach me code inspection', 'Code inspection: reading unfamiliar code before changing it, beginner level, sir.'],
     ['Explain CI validation at an advanced level', 'CI validation: what a green check proves, expert level, sir.'],
-    ['Quiz me on recovery', 'Quiz on Recovery: resuming after a crash without repeating work, sir.'],
+    ['Quiz me on job recovery', 'Quiz on Recovery: resuming after a crash without repeating work, sir.'],
     ['Teach me reasoning about code', 'Reasoning about code: invariants, small cases and evidence, beginner level, sir.'],
     ['What is idempotency?', 'Recovery: resuming after a crash without repeating work, beginner level, sir.'],
     ['Explain invariants', 'Reasoning about code: invariants, small cases and evidence, beginner level, sir.'],
@@ -952,7 +952,7 @@ test('code inspection, reasoning, CI validation and recovery: lessons reach the 
     assert.equal(out.route, 'che_knowledge_atlas', said);
     assert.equal(/^Right, sir/.test(out.reply), ok, `${said}: ${out.reply.slice(0, 80)}`);
   }
-  const drill = await che.say('Give me a review drill on recovery');
+  const drill = await che.say('Give me a review drill on job recovery');
   assert.match(drill.reply, /The retry that stopped blocking its duplicate/);
   const how = await che.say('How does CHE recover interrupted jobs?');
   assert.equal(how.route, 'che_knowledge_atlas');

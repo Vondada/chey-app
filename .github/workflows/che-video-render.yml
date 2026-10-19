@@ -20,6 +20,11 @@ on:
         required: false
         type: string
         default: "15"
+      spec:
+        description: Creator Studio storyboard JSON (optional; vertical episode)
+        required: false
+        type: string
+        default: ""
   push:
     branches: [chatgpt/video-repository-dispatch-fallback]
     paths:
@@ -75,8 +80,11 @@ jobs:
           # Used when Drama 3 cannot be used (for example no Fish API credit).
           CHE_FISH_MODEL: ${{ vars.CHE_FISH_MODEL || secrets.CHE_FISH_MODEL }}
           CHE_FISH_NARRATION: ${{ vars.CHE_FISH_NARRATION }}
+          # A storyboard is read from the environment by name, never pasted
+          # into the command line; the renderer validates it before drawing.
+          CHE_RENDER_SPEC: ${{ github.event.client_payload.spec || inputs.spec || '' }}
         run: |
-          python tools/che_video_render.py --topic "$TOPIC" --seconds "$DURATION" --out rendered
+          python tools/che_video_render.py --topic "$TOPIC" --seconds "$DURATION" --out rendered --spec-env CHE_RENDER_SPEC
       - name: Retain files for authenticated owner preview
         uses: actions/upload-artifact@v4
         with:
@@ -85,6 +93,7 @@ jobs:
             rendered/video.mp4
             rendered/thumbnail.png
             rendered/manifest.json
+            rendered/captions.srt
           if-no-files-found: error
           retention-days: 30
           compression-level: 0

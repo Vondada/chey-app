@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>CHE Brain render benchmark</title>
+<!--
+  CHE Brain scene benchmark (offline; no CDN). Draws a Brain-shaped cloud of
+  orbs with connections, the same scene the native CustomPainter draws, on
+  WebGL (bundled Three.js) or raw WebGPU, for a fixed number of seconds, and
+  reports measured frame times through the BrainBench channel. It is a
+  measurement harness, never the live Brain: the orbs here are benchmark data,
+  not memories, and nothing is stored.
+
+  Safety: the only entry point is window.brainBenchRun(params) with a validated
+  parameter object (no arbitrary JavaScript from the app). WebGPU is used only
+  when navigator.gpu gives an adapter and a device; a lost device or a lost
+  WebGL context is reported and the page falls back. The loop pauses when the
+  page is hidden, caps the pixel ratio, honors prefers-reduced-motion (static
+  camera), and drops to a 30 fps cadence when frames run long.
+-->
+<style>
+  html, body { margin: 0; height: 100%; background: #020506; color: #d8f6ef; font: 13px -apple-system, system-ui, sans-serif; overflow: hidden; }
+  canvas { display: block; width: 100vw; height: 100vh; }
+  #hud { position: fixed; left: 10px; right: 10px; bottom: calc(10px + env(safe-area-inset-bottom, 0px)); background: rgba(7,16,18,.82); border: 1px solid #1b2a2d; border-radius: 12px; padding: 8px 10px; pointer-events: none; }
+  #hud b { color: #34e0b8; }
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<canvas id="gpu" hidden></canvas>
+<div id="hud" aria-live="off"><b>Brain render benchmark</b> · waiting for parameters</div>
+<script src="../office3d/three.min.js"></script>
+<script>
+(function () {
+  'use strict';
+  const hud = document.getElementById('hud');
+  const results = (window.__brainBenchResults = []);
+  const PALETTE = [0x3EE6C9, 0x52E89A, 0x4FB8FF, 0xA77BFF, 0x7CF0FF, 0xC79BFF, 0x6E8CFF, 0x9DF7C9, 0xEAF6FF, 0xFFB54D];
+  const reducedMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+
+  function post(message) {
+    const json = JSON.stringify(message);
+    results.push(message);
+    try { if (window.BrainBench && window.BrainBench.postMessage) window.BrainBench.postMessage(json); } catch (_) {}
+    try { console.log('BRAIN_BENCH ' + json); } catch (_) {}
+  }
+  function say(text) { hud.textContent = text; }
+
+  // ─── Scene data: a brain-shaped cloud, deterministic per node count ───────
+  function mulberry(seed) { let t = seed >>> 0; return () => { t += 0x6D2B79F5; let r = Math.imul(t ^ (t >>> 15), 1 | t); r ^= r + Math.imul(r ^ (r >>> 7), 61 | r); return ((r ^ (r >>> 14)) >>> 0) / 4294967296; }; }
+  const VOLUMES = [[0, 1.2, 0, 8.2, 5.4, 4.6], [1.6, -2.4, 0, 5.2, 2.6, 4.4], [-5.4, -3.9, 0, 2.9, 1.9, 3.4], [-2.2, -6.0, 0, 1.1, 2.6, 1.1]];
+  function inside(x, y, z) {
+    let best = Infinity;
+    for (const [cx, cy, cz, rx, ry, rz] of VOLUMES) { const dx = (x - cx) / rx, dy = (y - cy) / ry, dz = (z - cz) / rz; best = Math.min(best, dx * dx + dy * dy + dz * dz); }
+    return best < .95;
+  }
+  function buildScene(nodes, edges) {
+    const rnd = mulberry(7);
+    const pos = new Float32Array(nodes * 3), col = new Float32Array(nodes * 3), size = new Float32Array(nodes);
+    let i = 0;
+    while (i < nodes) {
+      const x = rnd() * 18 - 9, y = rnd() * 16 - 9, z = rnd() * 10 - 5;
+      if (!inside(x, y, z)) continue;
+      pos[i * 3] = x; pos[i * 3 + 1] = y; pos[i * 3 + 2] = z;
+      const c = PALETTE[i % PALETTE.length];
+      col[i * 3] = ((c >> 16) & 255) / 255; col[i * 3 + 1] = ((c >> 8) & 255) / 255; col[i * 3 + 2] = (c & 255) / 255;
+      size[i] = .16 + (1 + (i % 5)) * .045;
+      i++;
+    }
+    const e = new Uint32Array(edges * 2);
+    for (let k = 0; k < edges; k++) { e[k * 2] = Math.floor(rnd() * nodes); e[k * 2 + 1] = Math.floor(rnd() * nodes); }
+    return { pos, col, size, edges: e };
+  }
+
+  // ─── Validated parameters: the only way in ────────────────────────────────
+  const ALLOWED = { nodes: 'int', edges: 'int', seconds: 'number', backend: 'string', pixelRatioCap: 'number', label: 'string' };
+  function validate(params) {
+    if (!params || typeof params !== 'object' || Array.isArray(params)) return { error: 'params must be an object' };
+    for (const key of Object.keys(params)) {
+      if (!(key in ALLOWED)) return { error: 'unknown parameter: ' + key };
+      const v = params[key], want = ALLOWED[key];
+      if (want === 'int' && !(Number.isInteger(v))) return { error: key + ' must be an integer' };
+      if (want === 'number' && typeof v !== 'number') return { error: key + ' must be a number' };
+      if (want === 'string' && typeof v !== 'string') return { error: key + ' must be a string' };
+    }
+    const nodes = params.nodes ?? 2000, edges = params.edges ?? Math.round(nodes * 1.5), seconds = params.seconds ?? 5;
+    const backend = params.backend ?? 'auto', cap = params.pixelRatioCap ?? 2, label = (params.label ?? '').slice(0, 60);
+    if (nodes < 100 || nodes > 20000) return { error: 'nodes must be 100..20000' };
+    if (edges < 0 || edges > 60000) return { error: 'edges must be 0..60000' };
+    if (!(seconds >= 1 && seconds <= 20)) return { error: 'seconds must be 1..20' };
+    if (!['auto', 'webgl', 'webgpu'].includes(backend)) return { error: 'backend must be auto, webgl or webgpu' };
+    if (!(cap >= 1 && cap <= 3)) return { error: 'pixelRatioCap must be 1..3' };
+    return { nodes, edges, seconds, backend, cap, label };
+  }
+
+  // ─── Measurement loop shared by both backends ─────────────────────────────
+  function measure(name, seconds, draw, onDone) {
+    const times = [];
+    let last = performance.now(), start = last, frames = 0, longRun = 0, cadence = 60, skip = false, raf = 0, paused = document.hidden, pausedMs = 0, pausedAt = 0;
+    function onVisibility() {
+      if (document.hidden) { paused = true; pausedAt = performance.now(); say(name + ' paused: page hidden'); }
+      else if (paused) { paused = false; pausedMs += performance.now() - pausedAt; last = performance.now(); raf = requestAnimationFrame(frame); }
+    }
+    document.addEventListener('visibilitychange', onVisibility);
+    let finished = false;
+    // A failing frame (for example a GPU submit that throws) must end the run with its reason, or busy stays true.
+    function fail(reason) {
+      if (finished) return;
+      finished = true;
+      cancelAnimationFrame(raf);
+      document.removeEventListener('visibilitychange', onVisibility);
+      onDone({ ok: false, reason });
+    }
+    function frame(now) {
+      if (paused || finished) return;
+      const dt = now - last; last = now;
+      if (cadence === 30 && (skip = !skip)) { raf = requestAnimationFrame(frame); return; }
+      const t0 = performance.now();
+      const t = reducedMotion ? 0 : (now - start) / 1000;
+      try { draw(t); } catch (err) { return fail('frame failed: ' + (err && err.message || err)); }
+      times.push(performance.now() - t0 + Math.max(0, dt - (performance.now() - t0)) * 0); // GPU work is async; dt is the honest frame interval
+      frames++;
+      // Adaptive: a second of frames over 20 ms moves the loop to a 30 fps cadence.
+      if (dt > 20) { longRun += dt; if (longRun > 1000 && cadence === 60) { cadence = 30; } } else { longRun = 0; }
+      if (now - start - pausedMs < seconds * 1000) { raf = requestAnimationFrame(frame); return; }
+      if (finished) return;
+      finished = true;
+      document.removeEventListener('visibilitychange', onVisibility);
+      const elapsed = (now - start - pausedMs) / 1000;
+      const intervals = times.length;
+      onDone({ frames, seconds: +elapsed.toFixed(2), fps: +(frames / elapsed).toFixed(1), cadence, cpuMsAvg: +(times.reduce((a, b) => a + b, 0) / Math.max(1, intervals)).toFixed(2), cpuMsP95: +(times.slice().sort((a, b) => a - b)[Math.floor(intervals * .95)] || 0).toFixed(2), reducedMotion });
+    }
+    raf = requestAnimationFrame(frame);
+    return () => cancelAnimationFrame(raf);
+  }
+
+  // ─── WebGL via bundled Three.js ───────────────────────────────────────────
+  function runWebGL(p, data, done) {
+    const canvas = document.getElementById('gl');
+    canvas.hidden = false; document.getElementById('gpu').hidden = true;
+    if (typeof THREE === 'undefined') return done({ ok: false, backend: 'webgl', reason: 'three.min.js did not load' });
+    let renderer;
+    try { renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: false, powerPreference: 'high-performance' }); }
+    catch (err) { return done({ ok: false, backend: 'webgl', reason: 'WebGL unavailable: ' + (err && err.message) }); }
+    const gl = renderer.getContext();
+    const version = gl && gl.getParameter ? (gl.getParameter(gl.VERSION) || '') : '';
+    const dpr = Math.min(window.devicePixelRatio || 1, p.cap);
+    renderer.setPixelRatio(dpr);
+    renderer.setSize(window.innerWidth, window.innerHeight, false);
+    renderer.setClearColor(0x020506, 1);
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, .12, 200);
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(data.pos, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(data.col, 3));
+    const points = new THREE.Points(geo, new THREE.PointsMaterial({ size: .42, vertexColors: true, sizeAttenuation: true, transparent: true, opacity: .9, depthWrite: false }));
+    scene.add(points);
+    const linePos = new Float32Array(data.edges.length * 3);
+    for (let k = 0; k < data.edges.length; k++) { const n = data.edges[k]; linePos[k * 3] = data.pos[n * 3]; linePos[k * 3 + 1] = data.pos[n * 3 + 1]; linePos[k * 3 + 2] = data.pos[n * 3 + 2]; }
+    const lineGeo = new THREE.BufferGeometry(); lineGeo.setAttribute('position', new THREE.BufferAttribute(linePos, 3));
+    scene.add(new THREE.LineSegments(lineGeo, new THREE.LineBasicMaterial({ color: 0x62E3F0, transparent: true, opacity: .29 })));
+    let lost = false;
+    const onLost = (e) => { e.preventDefault(); lost = true; post({ type: 'contextlost', backend: 'webgl' }); say('WebGL context lost; reported and stopped'); };
+    canvas.addEventListener('webglcontextlost', onLost, false);
+    say('WebGL · ' + p.nodes + ' orbs · measuring ' + p.seconds + ' s');
+    const stop = measure('WebGL', p.seconds, (t) => {
+      const yaw = Math.PI + t * .35;
+      camera.position.set(Math.sin(yaw) * 17, 1.5, Math.cos(yaw) * 17); camera.lookAt(0, 0, 0);
+      renderer.render(scene, camera);
+    }, (m) => {
+      canvas.removeEventListener('webglcontextlost', onLost);
+      geo.dispose(); lineGeo.dispose(); renderer.dispose();
+      done({ ok: !lost, backend: 'webgl', version, pixelRatio: dpr, nodes: p.nodes, edges: p.edges, contextLost: lost, ...m });
+    });
+    if (lost) stop();
+  }
+
+  // ─── Raw WebGPU: instanced soft discs + line list, WGSL ───────────────────
+  async function runWebGPU(p, data, done) {
+    if (!navigator.gpu) return done({ ok: false, backend: 'webgpu', reason: 'navigator.gpu is not available in this WebView' });
+    let adapter, device;
+    try {
+      adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+      if (!adapter) return done({ ok: false, backend: 'webgpu', reason: 'no WebGPU adapter' });
+      device = await adapter.requestDevice();
+    } catch (err) { return done({ ok: false, backend: 'webgpu', reason: 'WebGPU device failed: ' + (err && err.message) }); }
+    const canvas = document.getElementById('gpu');
+    canvas.hidden = false; document.getElementById('gl').hidden = true;
+    const dpr = Math.min(window.devicePixelRatio || 1, p.cap);
+    canvas.width = Math.floor(window.innerWidth * dpr); canvas.height = Math.floor(window.innerHeight * dpr);
+    const context = canvas.getContext('webgpu');
+    if (!context) { return done({ ok: false, backend: 'webgpu', reason: 'no webgpu canvas context' }); }
+    const format = navigator.gpu.getPreferredCanvasFormat();
+    context.configure({ device, format, alphaMode: 'opaque' });
+    let lost = false, lostReason = '';
+    // The spec reports an invalid shader, pipeline or submit without throwing: it arrives as an
+    // uncaptured error, or as the validation scope around the setup below. Either one fails the run.
+    let gpuError = '';
+    device.addEventListener('uncapturederror', (e) => { gpuError = gpuError || 'WebGPU error: ' + (e.error && e.error.message || 'uncaptured error'); });
+    device.pushErrorScope('validation');
+    device.lost.then((info) => { lost = true; lostReason = info && info.message || 'device lost'; post({ type: 'devicelost', backend: 'webgpu', reason: lostReason }); say('WebGPU device lost; reported and stopped'); });
+
+    const shader = device.createShaderModule({ code: `
+      struct Camera { mvp : mat4x4<f32>, right : vec4<f32>, up : vec4<f32> };
+      @group(0) @binding(0) var<uniform> cam : Camera;
+      struct Inst { @location(0) pos : vec3<f32>, @location(1) col : vec3<f32>, @location(2) size : f32 };
+      struct VOut { @builtin(position) p : vec4<f32>, @location(0) col : vec3<f32>, @location(1) uv : vec2<f32> };
+      @vertex fn vsOrb(@builtin(vertex_index) vi : u32, inst : Inst) -> VOut {
+        var corners = array<vec2<f32>, 6>(vec2(-1.0,-1.0), vec2(1.0,-1.0), vec2(1.0,1.0), vec2(-1.0,-1.0), vec2(1.0,1.0), vec2(-1.0,1.0));
+        let c = corners[vi];
+        let world = inst.pos + cam.right.xyz * (c.x * inst.size * 1.3) + cam.up.xyz * (c.y * inst.size * 1.3);
+        var o : VOut; o.p = cam.mvp * vec4(world, 1.0); o.col = inst.col; o.uv = c; return o;
+      }
+      @fragment fn fsOrb(i : VOut) -> @location(0) vec4<f32> {
+        let d = length(i.uv); if (d > 1.0) { discard; }
+        let a = (1.0 - d) * (1.0 - d) * 0.9 + 0.1 * (1.0 - step(0.35, d));
+        return vec4(i.col * (0.7 + 0.5 * (1.0 - d)), a);
+      }
+      struct LOut { @builtin(position) p : vec4<f32> };
+      @vertex fn vsLine(@location(0) pos : vec3<f32>) -> LOut { var o : LOut; o.p = cam.mvp * vec4(pos, 1.0); return o; }
+      @fragment fn fsLine() -> @location(0) vec4<f32> { return vec4(0.384, 0.89, 0.94, 0.29); }
+    ` });
+    const blend = { color: { srcFactor: 'src-alpha', dstFactor: 'one', operation: 'add' }, alpha: { srcFactor: 'one', dstFactor: 'one', operation: 'add' } };
+    const uniform = device.createBuffer({ size: 96, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    const layout = device.createBindGroupLayout({ entries: [{ binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform' } }] });
+    const bind = device.createBindGroup({ layout, entries: [{ binding: 0, resource: { buffer: uniform } }] });
+    const pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [layout] });
+    const inst = new Float32Array(p.nodes * 7);
+    for (let i = 0; i < p.nodes; i++) { inst.set([data.pos[i * 3], data.pos[i * 3 + 1], data.pos[i * 3 + 2], data.col[i * 3], data.col[i * 3 + 1], data.col[i * 3 + 2], data.size[i]], i * 7); }
+    const instBuf = device.createBuffer({ size: inst.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST }); device.queue.writeBuffer(instBuf, 0, inst);
+    const linePos = new Float32Array(data.edges.length * 3);
+    for (let k = 0; k < data.edges.length; k++) { const n = data.edges[k]; linePos.set([data.pos[n * 3], data.pos[n * 3 + 1], data.pos[n * 3 + 2]], k * 3); }
+    const lineBuf = device.createBuffer({ size: Math.max(12, linePos.byteLength), usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST }); if (linePos.length) device.queue.writeBuffer(lineBuf, 0, linePos);
+    const orbs = device.createRenderPipeline({ layout: pipelineLayout, vertex: { module: shader, entryPoint: 'vsOrb', buffers: [{ arrayStride: 28, stepMode: 'instance', attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x3' }, { shaderLocation: 1, offset: 12, format: 'float32x3' }, { shaderLocation: 2, offset: 24, format: 'float32' }] }] }, fragment: { module: shader, entryPoint: 'fsOrb', targets: [{ format, blend }] }, primitive: { topology: 'triangle-list' } });
+    const lines = device.createRenderPipeline({ layout: pipelineLayout, vertex: { module: shader, entryPoint: 'vsLine', buffers: [{ arrayStride: 12, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x3' }] }] }, fragment: { module: shader, entryPoint: 'fsLine', targets: [{ format, blend }] }, primitive: { topology: 'line-list' } });
+
+    const setupError = await device.popErrorScope();
+    if (setupError) return done({ ok: false, backend: 'webgpu', reason: 'WebGPU setup failed: ' + setupError.message });
+
+    // Minimal matrix math (column-major), same camera as the WebGL run.
+    function perspective(fovy, aspect, near, far) { const f = 1 / Math.tan(fovy / 2), nf = 1 / (near - far); return new Float32Array([f / aspect, 0, 0, 0, 0, f, 0, 0, 0, 0, (far + near) * nf, -1, 0, 0, 2 * far * near * nf, 0]); }
+    function lookAt(ex, ey, ez) { let fx = -ex, fy = -ey, fz = -ez; const fl = Math.hypot(fx, fy, fz); fx /= fl; fy /= fl; fz /= fl; let rx = fy * 0 - fz * 1, ry = fz * 0 - fx * 0, rz = fx * 1 - fy * 0; const rl = Math.hypot(rx, ry, rz); rx /= rl; ry /= rl; rz /= rl; const ux = ry * fz - rz * fy, uy = rz * fx - rx * fz, uz = rx * fy - ry * fx; return { view: new Float32Array([rx, ux, -fx, 0, ry, uy, -fy, 0, rz, uz, -fz, 0, -(rx * ex + ry * ey + rz * ez), -(ux * ex + uy * ey + uz * ez), (fx * ex + fy * ey + fz * ez), 1]), right: [rx, ry, rz], up: [ux, uy, uz] }; }
+    function mul(a, b) { const o = new Float32Array(16); for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) { let s = 0; for (let k = 0; k < 4; k++) s += a[k * 4 + r] * b[c * 4 + k]; o[c * 4 + r] = s; } return o; }
+    const proj = perspective(Math.PI / 3, canvas.width / canvas.height, .12, 200);
+    say('WebGPU · ' + p.nodes + ' orbs · measuring ' + p.seconds + ' s');
+    measure('WebGPU', p.seconds, (t) => {
+      if (lost) return;
+      if (gpuError) throw new Error(gpuError);
+      const yaw = Math.PI + t * .35;
+      const eye = [Math.sin(yaw) * 17, 1.5, Math.cos(yaw) * 17];
+      const la = lookAt(eye[0], eye[1], eye[2]);
+      const u = new Float32Array(24); u.set(mul(proj, la.view), 0); u.set([la.right[0], la.right[1], la.right[2], 0], 16); u.set([la.up[0], la.up[1], la.up[2], 0], 20);
+      device.queue.writeBuffer(uniform, 0, u);
+      const enc = device.createCommandEncoder();
+      const pass = enc.beginRenderPass({ colorAttachments: [{ view: context.getCurrentTexture().createView(), clearValue: { r: .008, g: .02, b: .024, a: 1 }, loadOp: 'clear', storeOp: 'store' }] });
+      pass.setBindGroup(0, bind);
+      if (linePos.length) { pass.setPipeline(lines); pass.setVertexBuffer(0, lineBuf); pass.draw(data.edges.length); }
+      pass.setPipeline(orbs); pass.setVertexBuffer(0, instBuf); pass.draw(6, p.nodes);
+      pass.end();
+      device.queue.submit([enc.finish()]);
+    }, (m) => {
+      instBuf.destroy(); lineBuf.destroy(); uniform.destroy();
+      let adapterInfo = {};
+      try { adapterInfo = adapter.info ? { vendor: adapter.info.vendor, architecture: adapter.info.architecture } : {}; } catch (_) {}
+      // Deferred by one task: an uncaptured error from the last frame's submit is dispatched after this callback.
+      setTimeout(() => done({ ok: !lost && !gpuError, backend: 'webgpu', pixelRatio: dpr, nodes: p.nodes, edges: p.edges, deviceLost: lost, lostReason, ...adapterInfo, ...m, ...(gpuError ? { reason: gpuError } : {}) }), 0);
+    });
+  }
+
+  // ─── Entry point ──────────────────────────────────────────────────────────
+  let busy = false;
+  window.brainBenchRun = function (params) {
+    const p = validate(params);
+    if (p.error) { post({ type: 'error', reason: p.error }); say('Rejected: ' + p.error); return false; }
+    if (busy) { post({ type: 'error', reason: 'a run is in progress' }); return false; }
+    busy = true;
+    const data = buildScene(p.nodes, p.edges);
+    const finish = (r) => { busy = false; post({ type: 'result', label: p.label, ...r }); say((r.backend || '?') + (r.ok ? ' · ' + r.fps + ' fps · ' + r.frames + ' frames in ' + r.seconds + ' s' + (r.cadence === 30 ? ' · dropped to 30 fps cadence' : '') : ' · unavailable: ' + (r.reason || r.lostReason))); };
+    const capability = { type: 'capability', webgpu: !!navigator.gpu, webgl2: !!(document.createElement('canvas').getContext('webgl2')), webgl: !!(document.createElement('canvas').getContext('webgl')), reducedMotion, devicePixelRatio: window.devicePixelRatio || 1, userAgent: navigator.userAgent.slice(0, 160) };
+    post(capability);
+    // A WebGPU error after setup must still reach done(), or busy stays true and every later run is refused.
+    const webgpu = (cb) => {
+      let ended = false;
+      const end = (r) => { if (!ended) { ended = true; cb(r); } };
+      runWebGPU(p, data, end).catch((err) => {
+        const reason = 'WebGPU pass failed: ' + (err && err.message || err);
+        if (ended) post({ type: 'error', reason }); else end({ ok: false, backend: 'webgpu', reason });
+      });
+    };
+    if (p.backend === 'webgl') return runWebGL(p, data, finish), true;
+    if (p.backend === 'webgpu') return webgpu(finish), true;
+    // auto: WebGPU when the WebView has it, otherwise WebGL; a WebGPU failure falls back to WebGL.
+    webgpu((r) => { if (r.ok) return finish(r); post({ type: 'fallback', from: 'webgpu', to: 'webgl', reason: r.reason || r.lostReason || 'webgpu failed' }); runWebGL(p, data, finish); });
+    return true;
+  };
+  post({ type: 'ready' });
+  say('Brain render benchmark ready');
+})();
+</script>
+</body>
+</html>

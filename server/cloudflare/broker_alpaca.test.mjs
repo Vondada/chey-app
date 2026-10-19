@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ALPACA_PAPER, alpacaPaperOrders, alpacaStatus, placeAlpacaPaperOrder, removeAlpacaPaperKeys, saveAlpacaPaperKeys } from './broker_alpaca.js';
 import { storedKeys } from './resilience.js';
-import { speakConnections, tradingConnections } from './trading_connections.js';
+import { TRADOVATE_PREREQUISITES, alpacaOptions, speakConnections, speakTradovateSteps, tradingConnections } from './trading_connections.js';
 
 const memory = () => {
   const m = new Map();
@@ -132,4 +132,31 @@ test('Alpaca: a redirect is never followed, and an unclear order result is looke
   assert.equal(unknown.ok, false);
   assert.match(unknown.detail, /cannot confirm whether Alpaca placed that paper order.*will not send it again/);
   assert.equal(n, 2, 'one submit and one lookup, never a resend');
+});
+
+test('Alpaca options readiness is read only, exactly as GET /v2/account reports it; Tradovate\'s steps read aloud (issue #344)', async () => {
+  const ok = alpaca(() => ({ status: 200, body: { account_number: 'PA9876543', status: 'ACTIVE', buying_power: '200000', options_approved_level: 3, options_trading_level: 2 } }));
+  const status = await alpacaStatus(PAPER, { fetcher: ok.fetcher });
+  assert.deepEqual([status.account.options_approved_level, status.account.options_trading_level], [3, 2]);
+  assert.deepEqual(ok.calls.map((c) => `${c.method} ${c.url}`), [`GET ${ALPACA_PAPER}/v2/account`], 'one read, nothing placed');
+  const view = tradingConnections({ desk: { mode: 'paper', account: { sim: '', live: '' }, risk_limits: null }, tradovate: { configured: false }, alpaca: status });
+  const card = view.cards.find((c) => c.id === 'alpaca');
+  assert.deepEqual([card.options.approved_level, card.options.trading_level, card.options.orders], [3, 2, 'off']);
+  assert.equal(card.options.detail, 'Options, read only: Alpaca approved level 3 (level 2 plus call and put spreads); trading level 2 (level 1 plus buying calls and puts). CHE places no option orders yet.');
+  assert.match(speakConnections(view), /3, Alpaca \(stock paper\): verified, options level 3, read only\./);
+  assert.match(alpacaOptions({}).detail, /did not report an options level/, 'no level is never read as approved');
+  assert.equal(alpacaOptions({ options_approved_level: 0 }).approved_level, 0);
+  assert.equal(tradingConnections({ desk: view.cards && { mode: 'paper', account: {}, risk_limits: null }, alpaca: { state: 'not_configured' } }).cards[2].options, null);
+
+  const tradovate = view.cards.find((c) => c.id === 'tradovate');
+  assert.deepEqual(tradovate.blocked_by, TRADOVATE_PREREQUISITES);
+  assert.deepEqual(tradovate.worker_secrets, ['CHE_TRADOVATE_OAUTH_CLIENT_ID', 'CHE_TRADOVATE_OAUTH_CLIENT_SECRET']);
+  assert.match(tradovate.blocked_note, /demo and live orders stay blocked/);
+  // Voice-readable: no symbols or secret names in the steps a screen reader or CHE speaks.
+  for (const step of TRADOVATE_PREREQUISITES) assert.doesNotMatch(step, /[_$|•]|CHE_TRADOVATE/, step);
+  const spoken = speakTradovateSteps({ redirect: 'https://che.example/broker/tradovate/callback' });
+  assert.match(spoken, /^Tradovate requires these steps before CHE can use its API, sir: 1, A funded Tradovate live account with more than 1,000 dollars in it\. 2, .* 3, .* 4, .*\. Tradovate registers the app with this redirect address: https:\/\/che\.example\/broker\/tradovate\/callback\. Until Tradovate approves API access/);
+  assert.doesNotMatch(spoken, /deposit now|buy the add-on now|tap/i);
+  const set = tradingConnections({ desk: { mode: 'paper', account: { sim: '', live: '' }, risk_limits: null }, tradovate: { configured: true, conn: { connected: false } } }).cards[1];
+  assert.deepEqual([set.blocked_by, set.blocked_note], [[], undefined], 'once set up, nothing reads as blocked');
 });

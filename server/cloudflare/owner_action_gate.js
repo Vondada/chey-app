@@ -31,7 +31,23 @@ const SALE_VERB = String.raw`sell(?:s|ing)?\b(?=\s+[\w$'’])(?!\s*-)(?!\s+thing
 const SALE_RE = new RegExp(`\\b${SALE_VERB}`, 'i');
 const MONEY_ORDER = String.raw`order(?:s|ed|ing)?\s+(?:me\s+|us\s+)?(?:a|an|another|more|some|\d|\$|[a-z]+)`;
 const MONEY_TRANSFER = String.raw`(?:transfer(?:s|red|ring)?|wire(?:s|d|ing)?)\s+(?:\$|\d|money|funds|dollars?|to\s)`;
-const MONEY_RE = new RegExp(`${LEAD}(?:${MONEY_VERB}\\b|${SALE_VERB}|${MONEY_ORDER}|${MONEY_TRANSFER})`, 'i');
+// Paid promotion spends money too (review of #353). Clause-anchored here: "run an ad on TikTok",
+// "launch a paid campaign", "let's do a paid promotion". An ad CHE writes, an ads report, a sponsored
+// post draft, or ads shown on the owner's own site or channel to earn money spends nothing.
+const AD_DOCUMENT = String.raw`(?:reports?|copy|drafts?|sheets?|spreadsheets?|designs?|scripts?|templates?|mockups?|plans?|ideas?|briefs?|texts?|headlines?|captions?|analytics|stats|results|performance|metrics)`;
+const OWN_PLACE = String.raw`on\s+(?:my|our)\s+(?:[\w-]+\s+){0,2}(?:website|site|channel|blog|page|videos?|app|podcast|newsletter)s?\b`;
+const MONEY_PROMOTION = String.raw`(?:run|launch|start|place|set\s+up|put|take\s+out|do|create|buy|book)\s+(?:(?:a|an|some|the|my|our|\d+)\s+)?paid\s+(?:ads?|adverts?|advertisements?|promotions?|placements?|posts?|campaigns?|boosts?)\b(?!\s+${AD_DOCUMENT}\b)|(?:run|launch|start|place|set\s+up|put|take\s+out)\s+(?:(?:a|an|some|the|my|our|\d+)\s+)?(?:ads?|adverts?|advertisements?|ad\s+campaigns?|sponsored\s+posts?)\b(?!\s+${AD_DOCUMENT}\b)(?!\s+${OWN_PLACE})`;
+// "Promote" or "boost" is paid when the turn names money, a budget, paid placement or a platform that
+// sells reach (Instagram, Facebook, TikTok): "boost the post for 20 bucks", "promote the pilot. Use a
+// $30 budget." Promoting on the owner's own channel, or promoting a person to a job, is not.
+const PROMOTE_RE = new RegExp(`${LEAD}(?:(?:promot|advertis)(?:e|es|ed|ing)|boost(?:s|ed|ing)?|sponsor(?:s|ed|ing)?)\\b`, 'i');
+const PAID_WORDS = /\b(?:paid|ads?|ad\s+spend|ad\s+budget|budget|sponsored|advertising|campaign|dollars?|bucks|euros?|pounds?|quid|card|credit|money|cash|instagram|insta|facebook|fb|tik\s?tok|meta)\b|[$€£]\s?\d/i;
+const NOT_PAID = new RegExp(String.raw`\b(?:ads?|ad\s+(?:budget|spend)|budget|sponsored\s+posts?|campaigns?|advertising)\s+${AD_DOCUMENT}\b|\bpromot(?:e|es|ed|ing)\s+(?:\S+\s+){1,3}?to\s+(?:a\s+|the\s+)?(?:assistant\s+)?(?:manager|lead|team\s+lead|director|supervisor|head|senior|captain|partner|vp|vice\s+president|president|chief|ceo|cto|cfo|coo|officer|foreman|chef|editor|admin|moderator|sergeant|lieutenant|general|principal|associate)\b`, 'gi');
+function paidPromotion(t) {
+  const text = t.replace(NOT_PAID, ' ');
+  return hasVerb(PROMOTE_RE, text) && PAID_WORDS.test(text);
+}
+const MONEY_RE = new RegExp(`${LEAD}(?:${MONEY_VERB}\\b|${SALE_VERB}|${MONEY_ORDER}|${MONEY_TRANSFER}|${MONEY_PROMOTION})`, 'i');
 // Strong delete verbs always count. "Order" followed by a bare word is held only
 // when it is not "order of/in/by" (checked below), so "order pizza" is held.
 // Weak verbs (reset, clear, cancel, drop) count only with a data object, so
@@ -197,7 +213,7 @@ export function classifyOwnerActions(text) {
   // Unpunctuated speech has no clause marks, so what is left once the prohibitions are out is read too:
   // "dont pay attention to the price buy the tickets".
   const asked = withoutProhibitions(t);
-  if ((hasVerb(MONEY_RE, t) || hasVerb(MONEY_RE, asked)) && !onlyOwnPlanMoney(t)) kinds.push('money');
+  if (((hasVerb(MONEY_RE, t) || hasVerb(MONEY_RE, asked)) && !onlyOwnPlanMoney(t)) || paidPromotion(asked)) kinds.push('money');
   if (hasVerb(DELETE_RE, t) || hasVerb(DELETE_RE, asked)) kinds.push('delete');
   if ([SIGNUP_RE, SIGNUP_NAMED_RE].some((re) => hasVerb(re, t) || hasVerb(re, asked))) kinds.push('signup');
   return kinds;
@@ -211,6 +227,18 @@ export function classifyOwnerAction(text) {
 // Decision for one request. `grant` holds the owner's explicit, recent yes per
 // kind (for example { money: true }). The request is allowed only when every
 // kind it contains has a grant. Without one, CHE must ask aloud first.
+// The trading desk owns its own confirmations (#355): a whole-sentence stock order's "sell" (a paper sell is read back
+// and waits for the desk's yes; a live one is refused with nothing sent), and "place the order" / "yes, place the order"
+// for a pending desk alert or paper read-back. Money that comes only from those words is the desk's to confirm, so the
+// gate does not ask a second, vaguer question first. Any other money word in the sentence ("buy 10 shares ... live with
+// real money", "... and buy AirPods") keeps the hold. The worker asks this only for turns the desk itself recognises.
+export function deskOwnedMoney(text) {
+  const t = String(text || '');
+  if (!classifyOwnerActions(t).includes('money')) return false;
+  const rest = t.replace(new RegExp(`\\b${SALE_VERB}`, 'gi'), ' ').replace(/\bplace\s+(?:the|my|this|that)\s+orders?\b/gi, ' ');
+  return !classifyOwnerActions(rest).includes('money');
+}
+
 export function gateOwnerAction(text, grant = {}) {
   const kinds = classifyOwnerActions(text);
   if (!kinds.length) return { allowed: true, kind: '', kinds: [] };
