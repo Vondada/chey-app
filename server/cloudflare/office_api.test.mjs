@@ -215,6 +215,31 @@ test('owner talks only to CHE; agents report only to CHE', async () => {
   assert.deepEqual(inbox.map((m) => `${m.from}->${m.to}`), ['owner->che', 'atlas->che']);
 });
 
+test('a long Office message keeps its start, its late "don\'t" and a visible marker; one too long is refused whole (issue #345)', async () => {
+  const o = await office();
+  const late = "but don't email Mark until Friday";
+  const long = 'CHE, send the weekly report to the whole team with the charts from the dashboard, '
+    + 'and add the summary of what changed in the review, '.repeat(100) + late;
+  assert.ok(long.length > 5000 && long.length < 16000);
+  const res = await o.send('/api/office/messages', 'POST', { from: 'owner', to: 'che', text: long });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.shortened.characters, long.length);
+  const kept = JSON.parse(o.saved.get('che')).office_inbox.at(-1).text;
+  assert.equal(body.shortened.kept, kept.length);
+  assert.ok(kept.length <= 4100, `bounded for CHE's state record, got ${kept.length}`);
+  assert.match(kept, /^CHE, send the weekly report/);
+  assert.match(kept, / … \[\d+ characters not shown\] … /);
+  assert.ok(kept.endsWith(late), 'the late limit is stored');
+  // Short messages are stored exactly as sent.
+  await o.send('/api/office/messages', 'POST', { from: 'owner', to: 'che', text: 'Status please.\nThen rest.' });
+  assert.equal(JSON.parse(o.saved.get('che')).office_inbox.at(-1).text, 'Status please.\nThen rest.');
+  const tooLong = await o.send('/api/office/messages', 'POST', { from: 'owner', to: 'che', text: 'x '.repeat(9000) + late });
+  assert.equal(tooLong.status, 413);
+  assert.match((await tooLong.json()).detail, /did nothing with it/);
+  assert.equal(JSON.parse(o.saved.get('che')).office_inbox.length, 2, 'nothing is stored from a refused message');
+});
+
 test('Office Atlas prefers auto; pinned xai still tags Grok with office/<agent>/<job> thread', async () => {
   const data = { team: [] };
   ensureLaAgenciaRoster(data);

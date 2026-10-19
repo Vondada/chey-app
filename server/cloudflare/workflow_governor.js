@@ -4,6 +4,7 @@
 // provider is chosen. It never performs inference: retrieval and
 // deterministic tools get first refusal (knowledge_cache.js and the chat
 // path), and models are escalation steps. Scores are cheap text/flag checks.
+import { clipKeepingLimits } from './speech_intent.js';
 
 export const WORKFLOWS = Object.freeze({
   INSTANT: 'instant_answer',
@@ -267,7 +268,8 @@ export function condenseHistory(history = [], { keep = 12, maxCondensedChars = 1
       const key = s.toLowerCase();
       if (seen.has(key)) continue;
       seen.add(key);
-      pinned.push(`${turn.role === 'user' ? 'Owner' : 'CHE'}: ${s.slice(0, 300)}`);
+      // A long sentence keeps its start, its late "don't" and what pinned it (issue #345).
+      pinned.push(`${turn.role === 'user' ? 'Owner' : 'CHE'}: ${clipKeepingLimits(s, 300, PINNED)}`);
     }
   }
   // Newest pinned lines win when the block is over budget.
@@ -278,8 +280,10 @@ export function condenseHistory(history = [], { keep = 12, maxCondensedChars = 1
     lines.unshift(line);
     used += line.length + 1;
   }
-  const condensed = lines.length
-    ? `Earlier in this conversation (condensed by CHE; ${older.length} older turns; constraints and decisions still apply):\n${lines.join('\n')}`
+  // Lines left out for the budget are counted, so the reply knows more was said.
+  const omitted = pinned.length - lines.length;
+  const condensed = pinned.length
+    ? `Earlier in this conversation (condensed by CHE; ${older.length} older turns; constraints and decisions still apply${omitted ? `; ${omitted} older lines not shown` : ''}):\n${lines.join('\n')}`
     : '';
   return { turns: recent, condensed, dropped: older.length };
 }
