@@ -122,7 +122,7 @@ export function speakAlert(a) {
   if (a.status === 'placed') return `Trade alert, sir: ${a.why ? `${a.why}. ` : ''}I placed it on ${a.mode === 'live' ? 'your LIVE account' : 'your simulated account'} ${a.result.account}: buy ${a.result.qty} ${a.result.symbol} limit ${a.result.entry}, stop ${a.result.stop}, target ${a.result.target}. Tradovate order ${a.result.order_id}.`;
   if (a.status === 'failed') return `Trade alert, sir: ${describe(a)}. I tried to place it but it failed: ${a.error}`;
   if (a.status === 'info') return `Trade alert, sir (paper only): ${describe(a)}${a.why ? `, because it ${a.why}` : ''}. Say "switch to sim trading" or "switch to live trading" to send entries to NinjaTrader.`;
-  if (a.status === 'pending') return `Trade alert, sir, good entry on your LIVE account${a.account ? ` ${a.account}` : ''}: ${describe(a)}${a.why ? `, because it ${a.why}` : ''}. Real money. Say "take the trade" to place it, or "skip it".`;
+  if (a.status === 'pending') return `Trade alert, sir, good entry on your LIVE account${a.account ? ` ${a.account}` : ''}: ${describe(a)}${a.why ? `, because it ${a.why}` : ''}. Real money. Say "yes, take the trade" to place it, or "skip it".`;
   return '';
 }
 
@@ -157,7 +157,11 @@ export function deskIntent(message) {
   if (sw && /\b(?:sim|simulated|simulation|demo|practice)\s+(?:trading|account|mode)\b/.test(text)) return { kind: 'mode', mode: 'sim' };
   if (sw && /\bpaper\s+(?:trading|mode)\b/.test(text)) return { kind: 'mode', mode: 'paper' };
   if (/\bwhat\b[\s\S]{0,20}\btrading mode\b|\bam i (?:on|in) (?:live|sim|paper|the live|the sim)\b|\bwhich (?:trading )?account am i\b/.test(text)) return { kind: 'status' };
-  if (/^\s*(?:yes[,!.]?\s+)?(?:take|place|enter|send)\s+(?:the|that|this)\s+trade\b|^\s*confirm\s+(?:the|that)\s+trade\b|^\s*yes[,!.]?\s+(?:take|place)\s+it\b/.test(text)) return { kind: 'take' };
+  // The only place-take is an explicit yes: "yes, take the trade", "yes, place the trade", "yes, take it". A trade
+  // phrase without the yes is never a placement (reviewer blocker 1): "take the trade", "place the trade now",
+  // "enter the trade", "send the trade" and "confirm the trade" answer with the phrase to say and place nothing.
+  if (/^\s*yes[,!.]?\s+(?:please\s+)?(?:take|place|enter|send|confirm)\s+(?:the|that|this)\s+trade(?:\s+(?:please|now))?[\s.!]*$|^\s*yes[,!.]?\s+(?:please\s+)?(?:take|enter|send|confirm)\s+it(?:\s+(?:please|now))?[\s.!]*$/.test(text)) return { kind: 'take', place: true };
+  if (/^\s*(?:yes[,!.]?\s+)?(?:please\s+)?(?:take|place|enter|send|confirm)\s+(?:the|that|this)\s+trade\b|^\s*yes[,!.]?\s+(?:take|enter|send|confirm)\s+it\b/.test(text)) return { kind: 'take_unconfirmed' };
   if (/^\s*(?:no[,!.]?\s+)?skip\s+(?:it|the trade|that trade|this trade)\b|^\s*(?:cancel|pass on)\s+(?:the|that|this)\s+(?:trade|alert)\b/.test(text)) return { kind: 'skip' };
   const limit = /\b(?:set|change|make|put)\b[\s\S]{0,30}\b(?:live\s+)?(?:risk\s+)?limits?\b[\s\S]{0,30}?\b(\d{1,2})\s+contracts?\b[\s\S]{0,30}?\$?(\d{1,6}(?:\.\d+)?)\s*(?:dollars?|usd)?\b/.exec(text);
   if (limit) return { kind: 'limits', maxContracts: Number(limit[1]), maxRiskDollars: Number(limit[2]) };
@@ -242,7 +246,7 @@ export function pendingAlert(desk, now = Date.now()) {
   return [...desk.alerts].reverse().find((a) => a.status === 'pending' && now <= Date.parse(a.expires_at)) || null;
 }
 
-/** Owner said "take the trade": place the newest pending alert in the current mode. */
+/** Owner said "yes, take the trade" (an explicit yes): place the newest pending alert in the current mode. */
 export async function takeTrade(storage, { now = Date.now(), place = placeBracket } = {}) {
   const desk = await readDesk(storage);
   const alert = pendingAlert(desk, now);
@@ -506,7 +510,7 @@ export async function clearStockOrder(storage) {
 
 /** The reply to a "yes, place it" that found an old Alpaca paper record. Nothing live is placed in any case. */
 export function speakStaleStockOrder(o, { alertOpen = false } = {}) {
-  const live = alertOpen ? ' A live trade alert is still waiting; say "take the trade" to place it, or "skip it".' : '';
+  const live = alertOpen ? ' A live trade alert is still waiting; say "yes, take the trade" to place it, or "skip it".' : '';
   if (o.status === 'placed') return `That ${STOCK_ACCOUNT} order was already sent, sir, and it stands, once. ${o.receipt ? speakStockReceipt(o.receipt) : ''} Nothing more was sent, and nothing live was placed.${live}`;
   if (o.status === 'placing' || o.status === 'unclear') return `I cannot confirm whether Alpaca placed that paper order, sir. Nothing else was sent, and nothing live was placed.${live} Say "check my Alpaca paper orders" to see its status.`;
   if (o.status === 'failed') return `That ${STOCK_ACCOUNT} order was not sent, sir, and nothing live was placed.${live} Say the order again and I will read it back.`;
@@ -515,6 +519,17 @@ export function speakStaleStockOrder(o, { alertOpen = false } = {}) {
 
 /** Spoken when the owner says "place it" without the yes that makes it a placing order (B1). Places nothing. */
 export const PLACE_NEEDS_YES = 'Nothing was placed, sir. To place an order, say "yes, place it" as one sentence, so I know it is your yes.';
+
+/**
+ * A trade phrase with no explicit yes ("take the trade", "place the trade now") places nothing, live or paper.
+ * It names the phrase for what is waiting: an Alpaca paper read-back owns every yes while it waits (so it is
+ * named first), then a live alert.
+ */
+export function speakTakeNeedsYes(desk, now = Date.now()) {
+  if (pendingStockOrder(desk, now)) return `Nothing was placed, sir. To send the order to ${STOCK_ACCOUNT}, say "yes, place it" as one sentence; say "no" to drop it.`;
+  if (pendingAlert(desk, now)) return 'Nothing was placed, sir. To place this trade, say "yes, take the trade" as one sentence; say "skip it" to pass.';
+  return 'Nothing was placed, sir. There is no open trade alert.';
+}
 
 /**
  * "Yes, place it": sends the order read back within the last two minutes, once. Its request id

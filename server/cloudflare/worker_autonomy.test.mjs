@@ -2394,7 +2394,8 @@ test('trading desk through chat: switch modes, connect, alerts said first, take 
   assert.match(next, /^Trade alert, sir, good entry on your LIVE account: buy 1 MES at 5820.*take the trade[\s\S]*You are on your NinjaTrader LIVE account/);
   assert.doesNotMatch(await say("what's my trading mode"), /Trade alert/, 'said once');
   // No live account chosen: the yes is answered honestly and nothing is placed.
-  assert.match(await say('take the trade'), /Which live account.*Nothing was placed/);
+  assert.match(await say('take the trade'), /^Nothing was placed, sir\. To place this trade, say "yes, take the trade"/, 'a bare take phrase is answered with the phrase to say');
+  assert.match(await say('yes, take the trade'), /Which live account.*Nothing was placed/);
   assert.equal(saved.get('trading_desk').alerts[0].status, 'pending');
   // Reading accounts needs the sign-in; CHE says so instead of guessing.
   assert.match(await say('list my trading accounts'), /could not read your live accounts.*not connected/);
@@ -3679,7 +3680,8 @@ async function stockOwner({ keys = PAPER_KEYS, broker = null } = {}) {
   const calls = [];
   const original = globalThis.fetch;
   globalThis.fetch = async (url, init = {}) => {
-    calls.push({ url: String(url), origin: new URL(String(url)).origin, method: init.method || 'GET', body: init.body ? JSON.parse(init.body) : null, redirect: init.redirect });
+    calls.push({ url: String(url), origin: new URL(String(url)).origin, method: init.method || 'GET', body: init.body ? JSON.parse(init.body) : null, redirect: init.redirect,
+      from: new Error().stack.split('\n').slice(2, 8).map((line) => line.trim()).join(' <- ') });
     const answer = broker ? broker(String(url), init) : null;
     if (answer) return new Response(JSON.stringify(answer.body), { status: answer.status });
     throw new TypeError('fetch failed (offline test)');
@@ -3709,7 +3711,7 @@ test('Alpaca paper stock order by voice: exact read-back, a separate "yes, place
     assert.equal(o.calls.length, 0, 'the read-back reaches no broker');
     const bare = await o.say('yes');
     assert.match(bare.reply, /^To send it to Alpaca PAPER, sir, say "yes, place it"\. Say "no" to drop it\. Nothing has been sent yet\.$/);
-    assert.equal(o.calls.length, 0, 'a bare yes sends nothing');
+    assert.equal(o.calls.length, 0, `a bare yes sends nothing; recorded calls: ${JSON.stringify(o.calls.map((c) => ({ method: c.method, url: c.url, from: c.from })))}`);
     const placed = await o.say('yes, place it');
     assert.equal(placed.done.source, 'che_trading_desk');
     assert.equal(placed.done.order_sent, true);
@@ -3931,6 +3933,122 @@ test('B4 regression: shopping sentences are held as purchases, never read back a
     assert.equal(o.calls.length, 0, 'nothing reached Alpaca or any broker');
   } finally {
     o.restore();
+  }
+});
+
+// Reviewer blockers on PR #355 at cda22ec (B5 to B7 and the KEEP case). Each runs through /api/chat.
+const paperAndTradovate = (url, init) => tradovateAnswers(url) || acceptOrders(url, init);
+
+test('B5 (reviewer blocker 1): a trade phrase with no explicit yes places nothing, live or paper; "yes, take the trade" is the only live approval', async () => {
+  const o = await stockOwner({ broker: tradovateAnswers });
+  try {
+    o.saved.set('trading_desk', deskFor('live'));
+    o.saved.set('tradovate_auth', tradovateSignedIn());
+    for (const said of ['take the trade', 'place the trade now', 'place the trade', 'confirm the trade', 'enter the trade', 'send the trade', 'take the trade now']) {
+      const { reply, done } = await o.say(said);
+      assert.match(reply, /^Nothing was placed, sir\. To place this trade, say "yes, take the trade" as one sentence/, said);
+      assert.equal(done.order_sent, false, said);
+    }
+    assert.equal(o.calls.filter((c) => c.method === 'POST').length, 0, 'no bare trade phrase sends any order, live or demo');
+    assert.equal(o.saved.get('trading_desk').alerts[0].status, 'pending', 'the live alert stays open, unplaced');
+    await o.say('yes, take the trade');
+    assert.ok(tradovateCalls(o).some((c) => c.url.startsWith('https://live.tradovateapi.com') && c.url.endsWith('/order/placeoso')), 'the explicit yes is the one that may reach live');
+  } finally {
+    o.restore();
+  }
+});
+
+test('B6 (reviewer blocker 2): with an Alpaca paper read-back waiting and a live alert open, no trade phrase reaches Tradovate', async () => {
+  const o = await stockOwner({ broker: paperAndTradovate });
+  try {
+    o.saved.set('trading_desk', deskFor('live', { stock_order: stockRecord() }));
+    o.saved.set('tradovate_auth', tradovateSignedIn());
+    for (const said of ['place the trade now', 'take the trade', 'confirm the trade']) {
+      const { reply, done } = await o.say(said);
+      assert.match(reply, /^Nothing was placed, sir\. To send the order to Alpaca PAPER, say "yes, place it"/, said);
+      assert.equal(done.order_sent, false, said);
+    }
+    assert.equal(o.calls.filter((c) => c.method === 'POST').length, 0, 'no POST of any kind: no live order and no paper order');
+    assert.equal(tradovateCalls(o).length, 0, 'nothing reaches Tradovate, live or demo');
+    assert.equal(o.saved.get('trading_desk').alerts[0].status, 'pending', 'the live alert stays open');
+    assert.ok(o.saved.get('trading_desk').stock_order, 'the paper read-back is still waiting');
+  } finally {
+    o.restore();
+  }
+});
+
+test('the rule when an Alpaca paper read-back and a live alert are both pending: the paper read-back takes the yes, and a live alert needs a later explicit yes', async () => {
+  const o = await stockOwner({ broker: paperAndTradovate });
+  try {
+    o.saved.set('trading_desk', deskFor('live', { stock_order: stockRecord() }));
+    o.saved.set('tradovate_auth', tradovateSignedIn());
+    // 1. "yes, place it" sends the paper order, once. The live alert is not touched.
+    const first = await o.say('yes, place it');
+    assert.equal(first.done.order_sent, true);
+    assert.equal(o.calls.filter((c) => c.method === 'POST' && c.url === 'https://paper-api.alpaca.markets/v2/orders').length, 1, 'one paper order');
+    assert.equal(tradovateCalls(o).length, 0, 'the paper yes reaches no Tradovate host');
+    assert.equal(o.saved.get('trading_desk').alerts[0].status, 'pending', 'the live alert is still open');
+    // 2. Within two minutes a yes that follows the placed paper order is its retry: the same order, reported again.
+    const second = await o.say('yes, take the trade');
+    assert.match(second.reply, /^That order was already sent to Alpaca PAPER, sir, once/);
+    assert.equal(o.calls.filter((c) => c.method === 'POST' && c.url === 'https://paper-api.alpaca.markets/v2/orders').length, 1, 'the retry sends no second order');
+    assert.equal(tradovateCalls(o).length, 0, 'the paper record takes the yes, not the live alert');
+    // 3. Once the paper record is past its two minutes, the next yes clears it and still sends nothing live.
+    const d = o.saved.get('trading_desk');
+    o.saved.set('trading_desk', { ...d, stock_order: { ...d.stock_order, asked_at: Date.now() - 3 * 60_000 } });
+    const third = await o.say('yes, take the trade');
+    assert.match(third.reply, /nothing live was placed/i);
+    assert.equal(tradovateCalls(o).length, 0, 'the stale paper record takes the yes, not the live alert');
+    assert.equal(o.saved.get('trading_desk').stock_order ?? null, null, 'the paper record is cleared');
+    // 4. A later explicit yes is the live alert's own approval.
+    await o.say('yes, take the trade');
+    assert.ok(tradovateCalls(o).some((c) => c.url.startsWith('https://live.tradovateapi.com') && c.url.endsWith('/order/placeoso')), 'a later explicit yes places the live alert');
+  } finally {
+    o.restore();
+  }
+});
+
+test('KEEP: a held delete plus a paper buy is held for both kinds; a following yes releases neither, and "yes, place it" places nothing', async () => {
+  const o = await stockOwner({ broker: paperAndTradovate });
+  try {
+    const held = await o.say('delete my old notes and buy 10 shares of AAPL on alpaca paper');
+    assert.equal(held.done.held_for_owner, true);
+    assert.deepEqual([...(held.done.owner_action_kinds || [])].sort(), ['delete', 'money'], 'held for both kinds');
+    assert.equal(o.calls.length, 0, 'the hold reaches nothing');
+    const yes = await o.say('yes');
+    assert.match(yes.reply, /^Nothing was done, sir\. That request asked me to delete and to buy in one sentence/);
+    assert.doesNotMatch(yes.reply, /To remove the Alpaca paper keys|order was sent|Sent to Alpaca/, 'the yes is not routed to the key removal, and claims no order');
+    assert.equal(o.calls.length, 0, 'a yes sends no paper order and deletes nothing');
+    assert.equal(yes.done.order_sent, false);
+    const placed = await o.say('yes, place it');
+    assert.doesNotMatch(placed.reply, /Sent to Alpaca|Placed on|Alpaca's receipt/, 'a following "yes, place it" places nothing');
+    assert.equal(o.calls.length, 0, 'still nothing reaches a broker');
+    assert.equal(o.saved.get('trading_desk')?.stock_order ?? null, null, 'no paper record was made');
+  } finally {
+    o.restore();
+  }
+});
+
+test('the live switch stays off: a bare take phrase never reaches Tradovate in paper or sim mode, and paper refuses even "yes, take the trade"', async () => {
+  for (const mode of ['paper', 'sim']) {
+    const o = await stockOwner({ broker: tradovateAnswers });
+    try {
+      o.saved.set('trading_desk', deskFor(mode));
+      o.saved.set('tradovate_auth', tradovateSignedIn());
+      for (const said of ['take the trade', 'place the trade now']) {
+        const { reply } = await o.say(said);
+        assert.match(reply, /^Nothing was placed, sir\./, `${mode}: ${said}`);
+      }
+      assert.equal(o.calls.filter((c) => c.method === 'POST').length, 0, `${mode}: a bare take phrase sends no order`);
+      if (mode === 'paper') {
+        const { reply } = await o.say('yes, take the trade');
+        assert.match(reply, /You are in paper trading, sir, so nothing goes to NinjaTrader/, 'paper refuses the explicit yes too');
+        assert.equal(o.calls.filter((c) => c.method === 'POST').length, 0, 'paper sends nothing');
+      }
+      assert.equal(o.saved.get('trading_desk').mode, mode, 'no bare or explicit take changes the mode');
+    } finally {
+      o.restore();
+    }
   }
 });
 

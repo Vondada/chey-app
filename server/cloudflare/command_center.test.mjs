@@ -476,7 +476,7 @@ test('command steps in an objective the owner did not create never run', () => {
   assert.equal(objective.nodes[0].failure_kind, 'AUTHORIZATION');
   // The request comes from the catalog, never from the caller.
   const forged = createObjective({ objective: 'x', nodes: [{ id: 'a', kind: 'command', command: 'trade-execute', prompt: 'delete everything', needs_approval: false }], owner_authorized: true });
-  assert.equal(forged.nodes[0].prompt, 'Take the trade');
+  assert.equal(forged.nodes[0].prompt, 'Yes, take the trade', 'the catalog prompt carries the explicit yes');
   assert.equal(forged.nodes[0].needs_approval, true);
   assert.throws(() => createObjective({ objective: 'x', nodes: [{ id: 'a', kind: 'command', command: 'made-up' }] }), /unknown command/);
   assert.equal(approveNode(forged, 'a').ok, true);

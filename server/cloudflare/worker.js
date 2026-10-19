@@ -52,7 +52,7 @@ import {
 import { activityFeed, creations, findCreations, greeting, suggestions, stalledTasks, decisionsNeeded, nextActions } from './activity.js';
 import { accountSnapshot as marketAccountSnapshot, candles as marketCandles, chartPage as marketChartPage, quote as marketQuote, snapshot as marketSnapshot } from './markets.js';
 import { CALLBACK_PATH as TRADOVATE_CALLBACK, accountBalance, connectLink, listAccounts, connection as brokerConnection, handleCallback as tradovateCallback, renewToken, tradovateConfigured } from './broker_tradovate.js';
-import { MODE_NAME, PLACE_NEEDS_YES, STOCK_ACCOUNT, chooseAccount, clearStockOrder, confirmLive, confirmStockOrder, deskIntent, dropStockOrder, pendingStockOrder, speakStaleStockOrder, rememberListed, deskTick, pendingAlert, readDesk, requestLive, requestStockOrder, setMode, setRiskLimits, setSize, skipTrade, speakAlert, speakDeskStatus, speakLiveRequest, speakStockOrder, speakStockReceipt, takeAnnouncement, takeTrade } from './trading_desk.js';
+import { MODE_NAME, PLACE_NEEDS_YES, STOCK_ACCOUNT, chooseAccount, clearStockOrder, confirmLive, confirmStockOrder, deskIntent, dropStockOrder, pendingStockOrder, speakStaleStockOrder, rememberListed, deskTick, pendingAlert, readDesk, requestLive, requestStockOrder, setMode, setRiskLimits, setSize, skipTrade, speakAlert, speakDeskStatus, speakLiveRequest, speakStockOrder, speakStockReceipt, speakTakeNeedsYes, takeAnnouncement, takeTrade } from './trading_desk.js';
 import { externalGrounding } from './external_grounding.js';
 import { answerEvidenceReceipt, cachedResearch, evidenceReferenceFollowup, factKey, forgetKnowledge, invalidateKnowledge, knownAnswer, LAST_ANSWER_EVIDENCE_KEY, ownerFactQuestion, markPureResearch, rememberOwnerFact, researchHit, researchKey } from './knowledge_cache.js';
 import { claimMatcher, disprovenContext, downgradeDisproven, externalCorrection, guardCitations, loadDisproven, newsQuestion, newsResearch, reopenArticles, recheckExternalClaim, recordDisproven, verifiedSourcesContext } from './source_verification.js';
@@ -8361,6 +8361,11 @@ export class CheState extends DurableObject {
           if (heldAction) {
             await this.ctx.storage.put(PENDING_OWNER_ACTION_KEY, null);
             if (isOwnerYes(message) && Date.now() - Number(heldAction.at || 0) < PENDING_OWNER_ACTION_MS) {
+              // A held request that is both a delete and a purchase is released by no yes: nothing is deleted,
+              // bought or sent, and the owner asks for each part on its own.
+              if (Array.isArray(heldAction.kinds) && heldAction.kinds.includes('delete') && heldAction.kinds.includes('money')) {
+                return ndjsonReply('Nothing was done, sir. That request asked me to delete and to buy in one sentence, and one yes cannot release both. Say the delete on its own, or the purchase on its own. Nothing was deleted and nothing was sent.', { source: 'che_held_action', ok: false, model_calls: 0, order_sent: false });
+              }
               ownerGrant = grantForKinds(heldAction.kinds);
               message = String(heldAction.text || message);
             }
@@ -9666,6 +9671,10 @@ export class CheState extends DurableObject {
           if (desk.kind === 'place_unconfirmed') {
             return ndjsonReply(PLACE_NEEDS_YES, { source: 'che_trading_desk', ok: false, model_calls: 0, order_sent: false });
           }
+          // A trade phrase with no explicit yes places nothing, live or paper, whatever is waiting (blockers 1 and 2).
+          if (desk.kind === 'take_unconfirmed') {
+            return ndjsonReply(speakTakeNeedsYes(await readDesk(this.ctx.storage)), { source: 'che_trading_desk', ok: false, model_calls: 0, order_sent: false });
+          }
           const deskNow = ['take', 'stock_no', 'skip'].includes(desk.kind) ? await readDesk(this.ctx.storage) : null;
           const stockPending = deskNow ? pendingStockOrder(deskNow) : null;
           // B2: a "yes, place it" while ANY Alpaca PAPER record exists (placed, failed, unclear, or read back and
@@ -9739,7 +9748,7 @@ export class CheState extends DurableObject {
             const changed = desk.confirmed || await setMode(this.ctx.storage, desk.mode);
             const conn = await brokerConnection(this.ctx.storage);
             const note = desk.mode === 'live'
-              ? ' Real money now. I will call each entry and place it only when you say "take the trade".'
+              ? ' Real money now. I will call each entry and place it only when you say "yes, take the trade".'
               : desk.mode === 'sim' ? ' I will place my entries on the simulated account myself and tell you each one.' : ' Nothing goes to NinjaTrader.';
             const chosen = (await readDesk(this.ctx.storage)).account[desk.mode];
             const needs = desk.mode !== 'paper' && !conn.connected ? ' NinjaTrader is not connected yet, so say "connect NinjaTrader" first.'
@@ -9758,6 +9767,7 @@ export class CheState extends DurableObject {
             return ndjsonReply(limited.error || `Done, sir: live orders are limited to ${l.maxContracts} contract${l.maxContracts === 1 ? '' : 's'} and $${l.maxRiskDollars} at risk per order.`, { source: 'che_trading_desk', ok: !limited.error });
           }
           if (desk.kind === 'take') {
+            if (!desk.place) return ndjsonReply(speakTakeNeedsYes(await readDesk(this.ctx.storage)), { source: 'che_trading_desk', ok: false, model_calls: 0, order_sent: false });
             const taken = await takeTrade(this.ctx.storage);
             if (taken.ok) await recordReceipt(this.ctx.storage, { kind: 'trade_placed', key: `trade_placed:${Date.now()}`, detail: taken.reply.slice(0, 300) }).catch(() => null);
             return ndjsonReply(taken.reply, { source: 'che_trading_desk', ok: Boolean(taken.ok) });

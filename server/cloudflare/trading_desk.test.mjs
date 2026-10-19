@@ -24,7 +24,8 @@ test('voice: switch, connect, take, skip, size, alerts, status', () => {
   assert.deepEqual(deskIntent('go to the simulated account'), { kind: 'mode', mode: 'sim' });
   assert.deepEqual(deskIntent('switch back to paper trading'), { kind: 'mode', mode: 'paper' });
   assert.equal(deskIntent('connect my NinjaTrader account').kind, 'connect');
-  assert.equal(deskIntent('Take the trade').kind, 'take');
+  assert.equal(deskIntent('Take the trade').kind, 'take_unconfirmed', 'a bare take phrase is answered, never placed');
+  assert.equal(deskIntent('Yes, take the trade').kind, 'take');
   assert.equal(deskIntent('yes, place it').kind, 'take');
   assert.equal(deskIntent('skip it').kind, 'skip');
   assert.deepEqual(deskIntent('trade 2 micro contracts'), { kind: 'size', qty: 2, contract: 'micro' });
@@ -71,7 +72,7 @@ test('live mode: nothing is placed until the owner says take the trade; skip and
   const t0 = Date.UTC(2026, 9, 5, 14);
   await deskTick(s, paperBook(), { place, now: t0 });
   assert.deepEqual(placed, [], 'no live order without a yes');
-  assert.match(await takeAnnouncement(s, t0), /LIVE account.*Real money\. Say "take the trade"/);
+  assert.match(await takeAnnouncement(s, t0), /LIVE account.*Real money\. Say "yes, take the trade"/);
   const taken = await takeTrade(s, { place, now: t0 + 60_000 });
   assert.equal(taken.ok, true);
   assert.deepEqual(placed, ['live']);
@@ -452,7 +453,8 @@ test('B1 regression: a bare "place it" is never a place-take; only "yes, place i
     assert.deepEqual(deskIntent(said), { kind: 'take', place: true }, said);
   }
   // "Take the trade" keeps its own explicit words; it is not a place-take and does not change.
-  assert.deepEqual(deskIntent('take the trade'), { kind: 'take' });
+  assert.deepEqual(deskIntent('take the trade'), { kind: 'take_unconfirmed' }, 'a bare take phrase is never a place-take');
+  assert.deepEqual(deskIntent('yes, take the trade'), { kind: 'take', place: true }, 'the explicit yes is the place-take');
 });
 
 test('B4 regression: shopping sentences and dictionary words are never Alpaca stock orders', () => {
@@ -471,6 +473,15 @@ test('B4 regression: shopping sentences and dictionary words are never Alpaca st
   assert.equal(stockOrder('buy 10 shares of aapl on alpaca paper').symbol, 'AAPL');
   assert.equal(stockOrder('buy 10 shares of google on alpaca paper').symbol, 'GOOGL');
   assert.equal(stockOrder('buy 10 shares of AMD on alpaca paper').symbol, 'AMD');
+});
+
+test('B5 regression: only an explicit yes is a place-take; every trade phrase without it is take_unconfirmed', () => {
+  for (const said of ['take the trade', 'place the trade now', 'place the trade', 'confirm the trade', 'enter the trade', 'send the trade', 'take the trade now', 'take the trade and pay my bill']) {
+    assert.deepEqual(deskIntent(said), { kind: 'take_unconfirmed' }, said);
+  }
+  for (const said of ['yes, take the trade', 'yes take the trade', 'yes, place the trade', 'yes, confirm the trade', 'yes, enter the trade', 'yes, send the trade', 'yes, take it', 'yes, place it']) {
+    assert.deepEqual(deskIntent(said), { kind: 'take', place: true }, said);
+  }
 });
 
 test('stock orders: sent once only after the yes within two minutes; expiry, no and failures send nothing more', async () => {
