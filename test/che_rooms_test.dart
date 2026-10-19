@@ -12,6 +12,7 @@ import 'package:chey/che_ui/che_brain.dart';
 import 'package:chey/rooms/che_art_studio.dart';
 import 'package:chey/rooms/che_creator_studio.dart';
 import 'package:chey/rooms/che_markets_room.dart';
+import 'package:chey/rooms/che_live_chart.dart';
 import 'package:chey/self_update/che_update_card.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -112,9 +113,18 @@ void main() {
     ));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 200));
-    // The live chart now fills the top of the room; the quote panels follow it.
+    // CHE's own paper chart is primary. TradingView has no iframe until selected.
+    expect(find.text('Other charts (optional)'), findsOneWidget);
+    expect(find.byType(CheLiveChartPanel), findsNothing);
+    await tester.ensureVisible(find.text('Other charts (optional)'));
+    await tester.tap(find.text('Other charts (optional)'));
+    await tester.pumpAndSettle();
+    expect(find.byType(CheLiveChartPanel), findsOneWidget);
     expect(find.textContaining('E-mini S&P 500 futures'), findsWidgets);
-    // The live paper panel sits under the chart, so the quote panels are further down.
+    await tester.tap(find.text('Other charts (optional)'));
+    await tester.pumpAndSettle();
+    expect(find.byType(CheLiveChartPanel), findsNothing);
+    // The quote panels follow the CHE paper chart and optional charts.
     for (var i = 0; i < 12 && find.text('6123', skipOffstage: false).evaluate().isEmpty; i++) {
       await tester.drag(find.byType(ListView).first, const Offset(0, -300));
       await tester.pump();
@@ -304,7 +314,7 @@ void main() {
     ));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
-    // The live chart sits above the delayed index panels.
+    // The CHE paper chart sits above the delayed index panels.
     for (var i = 0; i < 12 && find.text('2.00', skipOffstage: false).evaluate().isEmpty; i++) {
       await tester.drag(find.byType(ListView).first, const Offset(0, -300));
       await tester.pump();
