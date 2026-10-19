@@ -240,7 +240,7 @@ test('lessons and graded quiz answers are recorded as owner practice, and read b
   assert.match(q1.reply, /^Question 1 on Loops and iteration, sir: correct\./);
   assert.match(q1.reply, /Graded by the card's own answer\./, 'the first clause of the card\'s answer, normalized');
   assert.match(q1.reply, /Question 2: A loop runs i from 0/, 'the next question is read');
-  const q2 = await che.say('my answer is no idea');
+  const q2 = await che.say('my answer is a big number');
   assert.match(q2.reply, /^Question 2 on Loops and iteration, sir: not quite\./, 'a bare answer goes to the next question');
   const answers = learningRecords(che.brain).filter((r) => r.source.event === 'quiz');
   assert.equal(answers.length, 4);
@@ -286,7 +286,8 @@ test('a numbered answer is graded by its number, recomputed; yes-or-no by the wo
       if (!q.check) return;
       const shown = q.check.shown.join(' and ');
       assert.equal(gradeQuizAnswer(c, i, shown).correct, true, `${c.id} q${i + 1}: the card's own shown answer "${shown}" is correct`);
-      assert.equal(gradeQuizAnswer(c, i, 'I think 987654').correct, false, `${c.id} q${i + 1}: a wrong number is not`);
+      // A wrong number is wrong; for a check shown as a word ("sweep") a number is not an answer CHE can judge.
+      assert.equal(gradeQuizAnswer(c, i, 'I think 987654').correct, /\d/.test(shown) ? false : null, `${c.id} q${i + 1}: a wrong number is not`);
     });
   }
   // A check shown as a word is graded by that word, not by the question's own numbers.
@@ -634,7 +635,8 @@ test('review nits: a phone edit of a card is kept, capped counts say so, and a l
 
   const loops = atlasCard('loops');
   assert.equal(gradeQuizAnswer(loops, 2, '55').correct, true);
-  assert.equal(gradeQuizAnswer(loops, 2, '10 or 55 or 100').correct, false, 'the main number must match');
+  assert.equal(gradeQuizAnswer(loops, 2, '10 or 55 or 100').correct, null, 'a list of guesses is never correct');
+  assert.equal(gradeQuizAnswer(loops, 2, '10 and then 55').correct, false, 'the main number must match');
 });
 
 // ─── Re-review of c1ab5c0: the grader judges only what it can, and an answer is never a hidden request ─────
@@ -662,7 +664,7 @@ test('the reviewer\'s right answers are correct; wrong ones are wrong; what CHE 
     ['sorting', 0, 'O of n log n'], ['recursion', 0, 'a base case and a recursive case'], ['expectancy', 2, 'the sample is too small'],
     ['http-apis', 1, 'GET, PUT and DELETE'], ['risk-management', 2, '$100'], ['recursion', 1, 'six'], ['concurrency', 1, 'about one second'],
   ]) assert.equal(g(id, i, a), true, `${id} q${i + 1}: ${a}`);
-  for (const [id, i, a] of [['big-o', 1, 'O of n squared'], ['recursion', 1, '16'], ['risk-management', 2, '$200'], ['r-multiple', 1, '1R'], ['loops', 2, '10 or 55 or 100'], ['concurrency', 1, '3 seconds']]) {
+  for (const [id, i, a] of [['big-o', 1, 'O of n squared'], ['recursion', 1, '16'], ['risk-management', 2, '$200'], ['r-multiple', 1, '1R'], ['concurrency', 1, '3 seconds']]) {
     assert.equal(g(id, i, a), false, `${id} q${i + 1}: ${a}`);
   }
   for (const [id, i, a] of [['win-rate-ci', 0, 'yes'], ['http-apis', 0, '400s'], ['loops', 1, 'n items']]) assert.equal(g(id, i, a), null, `${id} q${i + 1}: ${a} cannot be judged`);
@@ -734,4 +736,76 @@ test('a newer curated card after the owner\'s edit waits as a sync conflict, and
   assert.match(first.text, /Note: you edited this card in your Brain, so I kept your copy\. This lesson reads the newer curated revision \d+, which waits beside your copy as an open sync conflict for you to choose\./);
   const second = await answerAtlas({ kind: 'teach', card: c, level: 'beginner', study: true }, { storage });
   assert.doesNotMatch(second.text, /you edited this card/, 'said once');
+});
+
+// ─── Re-review #3: denials, contrasts and hedges are never graded correct, nor learned as speech fixes ─────
+
+test('across every card, a denial, a contrast or a hedge of the card\'s own answer is never graded correct', () => {
+  let checked = 0;
+  for (const c of ATLAS_CARDS) {
+    c.quiz.forEach((q, i) => {
+      const fc = firstClause(q.a);
+      for (const form of [`not ${fc}`, `${fc}, not ${fc}`, `${fc} or something else`]) {
+        const r = gradeQuizAnswer(c, i, form);
+        assert.notEqual(r.correct, true, `${c.id} question ${i + 1}: "${form}" (${r.method})`);
+        checked += 1;
+      }
+    });
+  }
+  assert.equal(checked, ATLAS_CARDS.reduce((n, c) => n + c.quiz.length, 0) * 3);
+});
+
+test('the reviewer\'s negated, contrastive, hedged, unit and multiplier answers', () => {
+  const g = (id, i, a) => gradeQuizAnswer(atlasCard(id), i, a).correct;
+  const liquidity = 't-liquidity';
+  assert.ok(atlasCard(liquidity), 'the trading lane\'s liquidity card');
+  for (const a of ['sweep', 'a buy-side sweep', 'it is a sweep']) assert.equal(g(liquidity, 1, a), true, a);
+  for (const a of ['not a sweep', "it's a break, not a sweep", 'it is a breakout, not a sweep', 'no sweep, a breakout', 'a sell-side sweep', 'sweep or breakout']) {
+    assert.notEqual(g(liquidity, 1, a), true, a);
+  }
+  assert.equal(g(liquidity, 1, 'a break'), false, 'the other option in the question');
+  for (const [id, i, a] of [
+    ['sorting', 0, 'not O of n log n'], ['big-o', 0, 'not O of n squared'], ['bid-ask-spread', 1, 'not the ask'], ['bid-ask-spread', 1, 'the bid, not the ask'],
+    ['sample-size', 2, 'it is not selection bias'], ['http-apis', 0, 'not 4xx'], ['http-apis', 1, 'only POST, not GET, PUT and DELETE'], ['hash-maps', 0, 'not O of 1'],
+    ['recursion', 0, 'a base case only, no recursive case'], ['testing', 1, 'to prove the test can never catch the bug'],
+    ['recursion', 2, '15 or 177'], ['loops', 2, '10, 55 or 100'],
+  ]) assert.equal(g(id, i, a), null, `${id} q${i + 1}: ${a} is not graded`);
+  assert.equal(g('drawdown', 0, '25 dollars'), false, 'dollars are not percent');
+  assert.equal(g('drawdown', 0, '25 percent'), true);
+  assert.equal(g('risk-management', 2, 'ten thousand'), false, 'ten thousand is 10,000, not 10');
+  assert.equal(g('risk-management', 2, '100 dollars'), true);
+  assert.equal(g('risk-management', 2, '10k'), false);
+  assert.equal(g('vwap', 2, 'not by itself'), true, 'the card\'s own "not" is its answer');
+  assert.equal(g('functions', 1, 'no'), true);
+  assert.equal(g('functions', 1, 'not no'), null);
+});
+
+test('through /api/chat: an "X, not Y" answer is graded as not graded, never learned as a speech correction', sqlite, async () => {
+  const heard = [];
+  const che = await owner({ model: (m) => { heard.push(m); return ''; } });
+  const quiz = await che.say('quiz me on bid ask spread');
+  const contrast = await che.say('number 2 is the bid, not the ask');
+  assert.equal(contrast.done.atlas_kind, 'grade', contrast.reply.slice(0, 80));
+  assert.match(contrast.reply, /^Question 2 on Bid, ask and spread, sir: I can't grade that one automatically\./);
+  for (const words of ["number 2 is it's a break, not a sweep", 'number 3 is it is not selection bias', 'my answer is not O of n squared']) {
+    await che.say(words, { keep: false, history: [{ role: 'assistant', content: quiz.reply }] });
+  }
+  assert.deepEqual((await che.storage.get('speech_corrections')) || [], [], 'no speech correction was learned');
+  const next = await che.say('what is the ask on the MNQ spread right now', { keep: false, history: [] });
+  assert.equal(next.route === 'model' || next.modelCalls > 0, true, next.route);
+  assert.ok(heard.some((m) => m.endsWith('what is the ask on the MNQ spread right now')), `the model read his words: ${heard.slice(-1)}`);
+  assert.ok(!heard.some((m) => /number 2 is the bid/.test(m)), 'never rewritten with the quiz answer');
+  const liquidity = await che.say('quiz me on liquidity', { keep: false, history: [] });
+  const breakout = await che.say('number 2 is no sweep, a breakout', { keep: false, history: [{ role: 'assistant', content: liquidity.reply }] });
+  assert.equal(breakout.done.atlas_kind, 'grade');
+  const rows = learningRecords(che.brain).filter((r) => r.source.event === 'quiz');
+  assert.ok(rows.every((r) => r.source.correct !== true), 'nothing stored as correct');
+  assert.ok(rows.some((r) => r.source.card_id === 't-liquidity' && r.source.correct === null));
+});
+
+test('a request held from an answer form keeps the owner\'s own words, case and all', sqlite, async () => {
+  const che = await owner();
+  const out = await che.say('Answer 1: delete Report-Q3.PDF from my files.', { keep: false, history: [] });
+  assert.equal(out.route, 'held');
+  assert.equal((await che.storage.get('che:pending_owner_action'))?.text, 'delete Report-Q3.PDF from my files.');
 });

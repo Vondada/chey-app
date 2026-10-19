@@ -1192,10 +1192,19 @@ function quizReply(t, ctx, raw) {
  * form. The caller gates the returned words exactly as if the owner had said them bare; '' otherwise.
  * An answer the open quiz is about ("GET, PUT and DELETE") never gets here: the lesson route grades it.
  */
+const RAW_ANSWER_PREFIX = new RegExp(String.raw`^\s*(?:(?:hey|hi|ok|okay)[\s,.!]+)?(?:(?:che|chay|chey|shay)(?![a-z'])[\s,.:;!?-]*)?(?:(?:please|can you|could you|would you|will you)\s+)*(?:(?:(?:(?:my|the)\s+)?answer\s+(?:to\s+|for\s+)?(?:question\s+|number\s+)?${QN}|(?:for\s+)?(?:question|number)\s+${QN})(?:\s*[:,-]\s*|\s+is\s+)|my\s+answer(?:\s+to\s+(?:that|this|this one|the next one))?\s+is\s+)`, 'i');
 export function atlasHiddenAction(message) {
   const form = answerForm(speech(message));
   const answer = String(form?.answer || '').trim();
-  return answer && classifyOwnerActions(answer).length ? answer : '';
+  if (!answer || !classifyOwnerActions(answer).length) return '';
+  // The owner's own words after the prefix, case and all ("delete Report-Q3.PDF"), not the lowercased copy.
+  const raw = String(message || '').replace(RAW_ANSWER_PREFIX, '').trim();
+  return raw && raw !== String(message || '').trim() ? raw : answer;
+}
+/** An answer form while an atlas quiz is open: never a speech correction to learn ("number 2 is the bid, not the ask"). */
+export function atlasQuizAnswerTurn(message, history = []) {
+  const ctx = atlasContext(history);
+  return Boolean(ctx.card && ctx.quiz && answerForm(speech(message)));
 }
 // A correction names the card, the lesson or a part of it: "the recursion card is wrong", "your lesson on
 // VWAP is wrong, …", "that formula is wrong". "That's wrong, my name is Wes" is about him, not a card.
@@ -1240,7 +1249,9 @@ function spokenDigits(text) {
     .replace(/\b(twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)[\s-](one|two|three|four|five|six|seven|eight|nine)\b/g, (_, a, b) => String(NUMBER_VALUES[a] + NUMBER_VALUES[b]))
     .replace(/\b(zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)\b/g, (w) => String(NUMBER_VALUES[w]))
     .replace(/\b(?:minus|negative)\s+(?=[$\d])/g, '-').replace(/\b(?:plus|positive)\s+(?=[$\d])/g, '+')
-    .replace(/(\d)\s+point\s+(\d)/g, '$1.$2').replace(/(\d)\s+percent\b/g, '$1%');
+    .replace(/(\d)\s+point\s+(\d)/g, '$1.$2').replace(/(\d)\s+percent\b/g, '$1%')
+    // "ten thousand", "10k", "2 million", "five hundred": the full value, never the 10, 2 or 5 alone.
+    .replace(/(\d+(?:\.\d+)?)\s*(hundred|thousand|k|million|billion|bn)\b/g, (_, n, u) => String(Number(n) * { hundred: 100, thousand: 1e3, k: 1e3, million: 1e6, billion: 1e9, bn: 1e9 }[u]));
 }
 /** The numbers in an answer: "$0.50" is 0.5, "31%" is 0.31, "+2R" is 2, "50 cents" is 0.5. */
 function answerNumbers(text) {
@@ -1253,12 +1264,14 @@ function answerNumbers(text) {
     // "4xx", "400s" and "log₂" are not a number standing alone; "2R", "6 calls" and "25%" are.
     const after = said.slice(m.index + m[0].length);
     const standalone = Boolean(m[3]) || !/^(?:[a-qs-z]|r[a-z]|\^)/.test(after);
-    out.push({ x: m[3] ? x / 100 : x, raw: x, marked: Boolean(m[3]), standalone });
+    // The unit said with it: percent, dollars (or cents) or R, so "25 dollars" is never 25%.
+    const unit = m[3] === '%' ? '%' : m[3] || /^\s*dollars?\b/.test(after) || /\$\s*$/.test(said.slice(0, m.index + m[1].length + 1)) || m[0].includes('$') ? '$' : /^r\b/.test(after) ? 'r' : '';
+    out.push({ x: m[3] ? x / 100 : x, raw: x, marked: Boolean(m[3]), standalone, unit });
   }
   return out;
 }
 const near = (x, v) => Math.abs(x - v) <= Math.max(0.006, Math.abs(v) * 0.01);
-const yesNo = (text) => (/^\s*(?:yes|yeah|yep|yup|correct|true|it does|they do|it is|right)\b/i.test(text) ? 'yes' : /^\s*(?:no|nope|false|it doesn'?t|it does not|they don'?t|not)\b/i.test(text) ? 'no' : '');
+const yesNo = (text) => (/^\s*not\s+(?:yes|no)\b/i.test(text) ? '' : /^\s*(?:yes|yeah|yep|yup|correct|true|it does|they do|it is|right)\b/i.test(text) ? 'yes' : /^\s*(?:no|nope|false|it doesn'?t|it does not|they don'?t|not)\b/i.test(text) ? 'no' : '');
 const stem5 = (w) => w.replace(/'/g, '').slice(0, 5);
 
 // An answer as the grader compares it: digits for number words, "%" for "percent", one Big-O spelling
@@ -1271,6 +1284,34 @@ function normAnswer(text) {
   s = s.replace(/\bsquared\b/g, '^2').replace(/(\d)\s*percent\b/g, '$1%');
   return s.replace(/\.(?!\d)/g, ' ').replace(/[^a-z0-9%^().\s-]+/g, ' ').replace(/\b(?:a|an|the)\b/g, ' ').replace(/\s+/g, ' ').trim();
 }
+// Words that carry no answer: "it's a sweep", "I think it is the ask".
+const FILL_WORDS = new Set(['a', 'an', 'the', 'it', 'its', 'is', 'was', 'this', 'that', 'i', 'think', 'say', 'would', 'id', 'answer', 'my', 'just', 'one']);
+// The choices a question offers ("Sweep or break?"): the words on each side of its "or".
+function questionOptions(question) {
+  const out = new Set();
+  for (const m of String(question || '').matchAll(/([A-Za-z-]+)\s+or\s+([A-Za-z-]+)/g)) for (const w of answerWords(`${m[1]} ${m[2]}`)) out.add(w);
+  return out;
+}
+const DENY = ['not', 'no', 'never', 'isnt', 'arent', 'wasnt', 'doesnt', 'dont', 'didnt', 'cannot', 'cant', 'wont', 'without', 'nor', 'neither', 'none', 'instead', 'rather'];
+const HEDGE = ['or', 'maybe', 'perhaps', 'either', 'something', 'whatever', 'possibly'];
+const tally = (words, list) => list.reduce((m, w) => (m[w] = words.filter((x) => x === w).length, m), {});
+/**
+ * The answer denies, contrasts or hedges more than the card's own answer does: a "not", "no", "never",
+ * "instead of", "rather than", "or" or "maybe" that the card's text does not have as often. For a yes-or-no
+ * question the leading yes or no is the answer itself and is not counted.
+ */
+function deniesOrHedges(answer, cardText, yesNoQuestion) {
+  const strip = (text) => {
+    const words = normAnswer(text).split(/[^a-z0-9^%()]+/).filter(Boolean);
+    return yesNoQuestion && /^(?:yes|no|yeah|yep|nope)$/.test(words[0] || '') ? words.slice(1) : words;
+  };
+  const said = strip(answer);
+  const card = strip(cardText);
+  const a = tally(said, [...DENY, ...HEDGE]);
+  const b = tally(card, [...DENY, ...HEDGE]);
+  return Object.keys(a).some((w) => a[w] > b[w]);
+}
+
 // The card answer's first clause: up to the first sentence mark, or the first comma that opens an
 // aside ("A string, which is text" -> "A string"). "GET, PUT and DELETE" stays whole.
 export function firstClause(text) {
@@ -1279,7 +1320,9 @@ export function firstClause(text) {
 // Numbers that stand alone: "6 calls", "25%", "$0.50", "+2R", not the 4 of "4xx" or "400s".
 const standaloneNumbers = (text) => answerNumbers(text).filter((n) => n.standalone);
 const startsWithNumber = (text) => /^(?:about|approximately|roughly|around|exactly|only)?\s*[-+−]?\$?\.?\d/.test(spokenDigits(text).trim());
-const sameNumber = (owner, card) => near(owner.x, card.x) || (card.marked && !owner.marked && near(owner.raw / 100, card.x));
+// Units agree when both are said and the same, or when one is not said: "25" can be 25%, "25 dollars" cannot.
+const sameUnit = (a, b) => !a.unit || !b.unit || a.unit === b.unit;
+const sameNumber = (owner, card) => sameUnit(owner, card) && (near(owner.x, card.x) || (card.marked && !owner.marked && near(owner.raw / 100, card.x)));
 
 /**
  * Grades one quiz answer with no model, and says when it cannot. In order: a question with a check by its
@@ -1294,27 +1337,37 @@ export function gradeQuizAnswer(c, index, answer) {
   const first = firstClause(q.a);
   const owner = standaloneNumbers(answer);
   const cardNums = standaloneNumbers(first);
+  const yn = /^(yes|no)\b/i.exec(q.a);
+  // A negation, contrast or hedge the card's own answer does not have ("the bid, not the ask", "not O of
+  // n squared", "sweep or breakout", "15 or 177") is an answer no confident check can read: not graded.
+  if (deniesOrHedges(answer, yn ? q.a : first, Boolean(yn))) return { correct: null, method: 'nothing CHE can check automatically: the answer denies, contrasts or hedges', expected };
   // A check whose shown answer is a word ("sweep", not a number) is graded by that word, never by the
   // incidental numbers of the question ("above 100").
   const shown = q.check?.shown || [];
   if (q.check && shown.length && !shown.some((x) => /\d/.test(x))) {
-    const heard = ` ${normAnswer(answer)} `;
-    // "Not a sweep" or "a break, not a sweep" names the word to deny it.
-    if (!/ (?:not|no|isnt|never|nor) /.test(heard) && shown.every((w) => heard.includes(` ${normAnswer(w)} `))) return { correct: true, method: 'the card\'s own answer', expected };
+    // Correct only when, set aside articles, filler and the card's own words ("buy-side"), the answer is
+    // exactly the shown word: "a sell-side sweep" names the wrong side, "a breakout" the other option.
+    const want = new Set(answerWords(shown.join(' ')));
+    const card = new Set(answerWords(q.a));
+    const words = answerWords(answer).filter((w) => !FILL_WORDS.has(w));
+    const extra = words.filter((w) => !want.has(w) && !card.has(w));
+    if ([...want].every((w) => words.includes(w)) && !extra.length) return { correct: true, method: 'the card\'s own answer', expected };
+    const options = questionOptions(q.q);
+    if (words.length && words.every((w) => options.has(w) && !want.has(w))) return { correct: false, method: 'the other option in the question', expected };
+    return { correct: null, method: 'nothing CHE can check automatically', expected };
   } else if (q.check && FORMULAS[q.check.compute] && owner.length) {
     const result = FORMULAS[q.check.compute](q.check.inputs);
     const want = typeof result === 'object' && result ? Object.values(result) : [result];
     const percent = (q.check.shown || []).some((x) => /%/.test(x));
     // The answer's own main number must match, or for a range its two ends side by side ("31% to 83%"):
     // a list of guesses ("10 or 55 or 100") does not.
-    const nums = owner.map((n) => (percent && !n.marked ? n.raw / 100 : n.x));
+    const nums = owner.map((n) => (percent && n.unit === '$' ? NaN : percent && !n.marked ? n.raw / 100 : n.x));
     const fits = want.length === 1
       ? near(nums[0], want[0])
       : nums.some((_, i) => want.every((v, k) => Number.isFinite(nums[i + k]) && near(nums[i + k], v)));
     const correct = fits || owner.slice(0, Math.max(1, cardNums.length)).every((n, i) => cardNums[i] && sameNumber(n, cardNums[i]));
     return { correct, method: 'the number, recomputed from the card\'s formula', expected };
   }
-  const yn = /^(yes|no)\b/i.exec(q.a);
   if (yn && yesNo(answer)) return { correct: yesNo(answer) === yn[1].toLowerCase(), method: 'the yes or no', expected };
   // A Big-O answer is its complexity: o(n) is not o(n^2), however it was said.
   const bigO = (text) => normAnswer(text).match(/\bo\([^)]*\)/)?.[0] || '';

@@ -61,7 +61,7 @@ import { answerOwnerMemoryQuestion, auditMemoryProvenance, evidenceQuestion, evi
 import { condenseHistory, ownerNotificationPolicy } from './workflow_governor.js';
 import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, nextTradingTickAt, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
 import { evidenceIntent, evidenceReport, evidenceTick } from './trading_evidence_runner.js';
-import { ATLAS_SOURCE, answerAtlas, atlasHiddenAction, atlasIntent, atlasPromptContext, atlasResetAsk, atlasResetIntent, projectAtlasToBrain, resetAtlasProgress } from './knowledge_atlas.js';
+import { ATLAS_SOURCE, answerAtlas, atlasHiddenAction, atlasIntent, atlasQuizAnswerTurn, atlasPromptContext, atlasResetAsk, atlasResetIntent, projectAtlasToBrain, resetAtlasProgress } from './knowledge_atlas.js';
 import { LIVE_BACKTEST, LIVE_STATE, liveBacktest, liveDashboard, livePaperSummary, liveTick, nextLiveTickAt, setLivePaper } from './trading_live.js';
 import { alpacaKeys, alpacaPaperOrders, alpacaStatus, placeAlpacaPaperOrder, removeAlpacaPaperKeys, saveAlpacaPaperKeys } from './broker_alpaca.js';
 import { speakConnections, tradingConnections } from './trading_connections.js';
@@ -8155,7 +8155,9 @@ export class CheState extends DurableObject {
         // The whole previous turn (up to the intake limit): a correction re-runs it, so its end ("but do
         // not send anything to Mark until Friday") must survive (review of #349).
         const previousText = String(lastOwner?.content || lastOwner?.text || '').slice(0, 16000);
-        const correction = detectCorrection(rawMessage, previousText);
+        // An answer to an open Knowledge Atlas quiz ("number 2 is the bid, not the ask") is never a speech
+        // correction: learning it would rewrite the owner's later sentences (#346).
+        const correction = atlasQuizAnswerTurn(rawMessage, ownerHistory) ? null : detectCorrection(rawMessage, previousText);
         let corrections = await loadCorrections(this.ctx.storage).catch(() => []);
         let message = applyCorrections(rawMessage, corrections);
         if (correction && previousText) {
