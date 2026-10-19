@@ -931,6 +931,11 @@ const SECOND_ACTION = /(?:,|;|\band\b|\bthen\b|\balso\b|\bplus\b)\s+(?:then\s+|a
 const QUALIFIER = /\s+(?:for|on|in|with|of)\s+(?:an?\s+|the\s+|one\s+)?(?:mnq|nq|es|mes|micros?|minis?|e-?minis?|futures?|contracts?|trades?|stocks?|shares|options?|the market|markets?)$/;
 
 const conceptTopic = (topic) => !PERSONAL.test(topic) && !NOT_A_CONCEPT.test(topic);
+// A topic that is exactly a card's name (after filler and level words) is that concept, even with a
+// deploy, commit, merge or bug word in it: "teach me deployment", "explain merge vs rebase". The
+// blocks above apply to everything else, and "the bug in my python code" or "the deploy you did"
+// is never a card's exact name.
+const conceptCard = (topic) => findAtlasCard(topic);
 
 // "like I'm a beginner", "the expert version", "simply": the depth the owner asked for.
 const LEVEL_PHRASES = [
@@ -1052,7 +1057,7 @@ export function atlasIntent(message, history = [], { explainLevel = '' } = {}) {
     const wantsCode = /code/.test(example[1]);
     const topic = String(example[2] || '').trim();
     if (!topic || THIS.test(topic)) return ctx.card ? { kind: 'example', card: ctx.card, code: wantsCode } : null;
-    const found = conceptTopic(topic) ? findAtlasCard(topic) : null;
+    const found = conceptCard(topic);
     return found ? { kind: 'example', card: found, code: wantsCode } : null;
   }
 
@@ -1060,7 +1065,7 @@ export function atlasIntent(message, history = [], { explainLevel = '' } = {}) {
   const levelOnly = /^(?:(?:give|show|tell|read) me |let'?s (?:do|try|hear) |switch to |go to |now |and )?(?:the |an? )?(beginner|simple|simpler|basic|easy|easier|intermediate|practical|middle|expert|advanced|hard|harder|full|deeper) (?:version|level|explanation|one|take)(?: (?:of|for|on) (.+))?$/.exec(t);
   const nudge = /^(?:go deeper|deeper|more depth|in more depth|more advanced|go more advanced|harder|level up|make it (?:simpler|easier)|simpler|easier|explain (?:it|that) (?:simpler|more simply|more deeply))$/.exec(t);
   if (levelOnly || nudge) {
-    const named = levelOnly?.[2] && conceptTopic(levelOnly[2]) ? findAtlasCard(levelOnly[2]) : null;
+    const named = levelOnly?.[2] ? conceptCard(levelOnly[2]) : null;
     const target = named || ctx.card;
     if (!target) return null;
     let level = levelOnly ? LEVEL_WORDS[levelOnly[1]] : '';
@@ -1106,7 +1111,7 @@ export function atlasIntent(message, history = [], { explainLevel = '' } = {}) {
 
 function resolveTopic(rawTopic, { kind, level = 'beginner', explicit = false }) {
   const topic = rawTopic.replace(QUALIFIER, '').trim();
-  const found = conceptTopic(topic) ? findAtlasCard(topic) : null;
+  const found = conceptCard(topic);
   if (found) return kind === 'teach' ? { kind, card: found, level } : { kind, card: found };
   const purpose = kind === 'quiz' ? 'quiz' : 'teach';
   const domain = domainOf(topic);

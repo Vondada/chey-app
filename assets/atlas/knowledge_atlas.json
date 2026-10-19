@@ -1922,7 +1922,14 @@
     "git",
     "version control",
     "git basics",
+    "git commit",
+    "git commits",
+    "commits",
     "git branches",
+    "merge vs rebase",
+    "merge versus rebase",
+    "merge and rebase",
+    "git merge",
     "rebase",
     "rebasing",
     "git rebase",
@@ -3032,6 +3039,12 @@
     "debug",
     "debugging code",
     "debugging techniques",
+    "fixing bugs",
+    "bug fixing",
+    "reproduce a bug",
+    "bugs vs errors",
+    "bugs versus errors",
+    "bugs and errors",
     "root cause analysis",
     "how to debug"
    ],
@@ -3049,7 +3062,7 @@
     "testing"
    ],
    "levels": {
-    "beginner": "Debugging is finding out why a program does the wrong thing and fixing it. First make the problem happen again on purpose, the same way every time. Then narrow down where it goes wrong, fix only that part, and check the problem is really gone.",
+    "beginner": "Debugging is finding out why a program does the wrong thing and fixing it. A bug is the mistake in the code; an error is what you see when it goes wrong, such as a crash, an error message or a wrong answer, and one bug can cause many errors. First make the problem happen again on purpose, the same way every time. Then narrow down where it goes wrong, fix only that part, and check the problem is really gone.",
     "intermediate": "Reproduce with the exact input that failed, and turn it into a failing test before touching the code. Locate by halving: compare a good case with a bad one, add a check in the middle, or bisect the history to find the commit that broke it. Read the actual error and the code it points at instead of guessing. Fix the cause, not the symptom, and keep the change small. Prove it: the new test fails before the fix and passes after, and the old tests still pass.",
     "expert": "Form one hypothesis at a time and design the observation that would prove it wrong. Suspect your assumptions first: the input is not what you think, the code running is not the code you read, the cache is stale. Shrink the failing case until every remaining part matters. A bug that comes and goes points to timing, ordering, shared state or the environment, so control those. After the fix, ask what let the bug through and add the regression test that would have caught it."
    },
@@ -3068,6 +3081,10 @@
     }
    },
    "quiz": [
+    {
+     "q": "What is the difference between a bug and an error?",
+     "a": "A bug is the mistake in the code; an error is what you see when it goes wrong, and one bug can cause many errors."
+    },
     {
      "q": "What should you write before changing any code to fix a bug?",
      "a": "A test that reproduces it and fails."
@@ -3661,11 +3678,16 @@
    "revision": 1,
    "source_kind": "curated",
    "aliases": [
+    "deployment",
+    "deploying",
+    "deploy",
     "continuous integration",
     "ci",
     "ci cd",
+    "continuous deployment",
     "staged rollout",
     "staged rollouts",
+    "staged deploy",
     "rollouts",
     "live verification",
     "release process",
@@ -3955,6 +3977,8 @@
     "checkpoint",
     "checkpointing",
     "checkpoints and resume",
+    "resumable jobs",
+    "resumable job",
     "resumable work",
     "resuming work"
    ],
@@ -4089,6 +4113,8 @@
     "model fallback",
     "fallback models",
     "model recovery",
+    "error recovery",
+    "failure recovery",
     "retries and backoff",
     "exponential backoff",
     "backoff"
@@ -4289,6 +4315,7 @@
     "self correction",
     "ci validation",
     "reasoning about failures",
+    "failure analysis",
     "repair loops"
    ],
    "tags": [

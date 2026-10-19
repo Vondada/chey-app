@@ -456,6 +456,39 @@ test('the owner\'s phrasings are answered from the atlas with no model: lessons,
   assert.equal(requests.length, sent, 'no lesson made an outbound request');
 });
 
+test('a card\'s exact name is a lesson even with a merge, deploy, commit or bug word; the owner\'s own work is not', async () => {
+  const che = await owner();
+  for (const [phrase, card] of [
+    ['Teach me merge sort.', 'Sorting and merge sort'],
+    ['Teach me deployment.', 'Deployment: CI, staged rollout and live verification'],
+    ['Explain merge vs rebase.', 'Git: commits, branches, merge, rebase and bisect'],
+    ['What is a git commit?', 'Git: commits, branches, merge, rebase and bisect'],
+    ['Teach me debugging.', 'Debugging: reproduce, locate, fix narrowly, prove'],
+    ['Explain bugs vs errors.', 'Debugging: reproduce, locate, fix narrowly, prove'],
+  ]) {
+    for (const words of [phrase, spoken(phrase)]) {
+      const out = await che.say(words);
+      assert.equal(out.route, 'che_knowledge_atlas', `${words} → ${out.route}`);
+      assert.equal(out.modelCalls, 0, words);
+      assert.ok(out.reply.startsWith(`${card}, beginner level, sir.`), `${words}: ${out.reply.slice(0, 80)}`);
+    }
+  }
+  assert.match((await che.say('explain bugs vs errors')).reply, /A bug is the mistake in the code; an error is what you see when it goes wrong/);
+  // Never a card's exact name: the owner's or CHE's own deploys, merges, commits, fixes and changes.
+  for (const [words, route] of [
+    ['teach me how your last deploy went', 'model'],
+    ['explain the merge you did', 'model'],
+    ['walk me through the commit you made', 'model'],
+    ['help me understand the bug you fixed yesterday', 'model'],
+    ['why the GitHub deploy failed', 'model'],
+    ['explain the code you changed in PR 352', 'model'],
+    ['walk me through your last code change', 'che_read_only'],
+    ['help me understand the bug in my python code', 'model'],
+  ]) {
+    for (const said of [words, `CHE, ${words}`]) assert.equal((await che.say(said)).route, route, said);
+  }
+});
+
 test('"give me a coding exercise on binary search", then answering it: right, wrong, spoken and revealed', async () => {
   const che = await owner();
   const sent = requests.length;

@@ -320,7 +320,7 @@ const LANGUAGES = [
   card({
     id: 'c-git', domain: 'coding', title: 'Git: commits, branches, merge, rebase and bisect', level: 'beginner',
     summary: 'Git records every change as a commit, so you can branch, combine work and find the change that broke something.',
-    aliases: ['git', 'version control', 'git basics', 'git branches', 'rebase', 'rebasing', 'git rebase', 'git bisect', 'bisect', 'git history'],
+    aliases: ['git', 'version control', 'git basics', 'git commit', 'git commits', 'commits', 'git branches', 'merge vs rebase', 'merge versus rebase', 'merge and rebase', 'git merge', 'rebase', 'rebasing', 'git rebase', 'git bisect', 'bisect', 'git history'],
     tags: ['tools', 'engineering'], prerequisites: [], related: ['testing', 'c-debugging', 'c-deployment'],
     levels: {
       beginner: 'Git keeps the history of a project. Each commit is a saved snapshot with a message saying what changed and why. A branch is a separate line of work, so you can try something without disturbing the main version, and bring it back when it is ready.',
@@ -876,10 +876,10 @@ const CRAFT = [
   card({
     id: 'c-debugging', domain: 'coding', title: 'Debugging: reproduce, locate, fix narrowly, prove', level: 'intermediate',
     summary: 'Debugging is a loop: make the bug happen on demand, find where it starts, change only that, and prove it is gone.',
-    aliases: ['debugging', 'debug', 'debugging code', 'debugging techniques', 'root cause analysis', 'how to debug'],
+    aliases: ['debugging', 'debug', 'debugging code', 'debugging techniques', 'fixing bugs', 'bug fixing', 'reproduce a bug', 'bugs vs errors', 'bugs versus errors', 'bugs and errors', 'root cause analysis', 'how to debug'],
     tags: ['engineering', 'quality'], prerequisites: ['testing', 'c-git'], related: ['c-binary-search', 'c-self-repair', 'testing'],
     levels: {
-      beginner: 'Debugging is finding out why a program does the wrong thing and fixing it. First make the problem happen again on purpose, the same way every time. Then narrow down where it goes wrong, fix only that part, and check the problem is really gone.',
+      beginner: 'Debugging is finding out why a program does the wrong thing and fixing it. A bug is the mistake in the code; an error is what you see when it goes wrong, such as a crash, an error message or a wrong answer, and one bug can cause many errors. First make the problem happen again on purpose, the same way every time. Then narrow down where it goes wrong, fix only that part, and check the problem is really gone.',
       intermediate: 'Reproduce with the exact input that failed, and turn it into a failing test before touching the code. Locate by halving: compare a good case with a bad one, add a check in the middle, or bisect the history to find the commit that broke it. Read the actual error and the code it points at instead of guessing. Fix the cause, not the symptom, and keep the change small. Prove it: the new test fails before the fix and passes after, and the old tests still pass.',
       expert: 'Form one hypothesis at a time and design the observation that would prove it wrong. Suspect your assumptions first: the input is not what you think, the code running is not the code you read, the cache is stale. Shrink the failing case until every remaining part matters. A bug that comes and goes points to timing, ordering, shared state or the environment, so control those. After the fix, ask what let the bug through and add the regression test that would have caught it.',
     },
@@ -907,6 +907,7 @@ const CRAFT = [
       expected: { found: 37, checks: 7, failsAt: true, passesBefore: true },
     },
     quiz: [
+      { q: 'What is the difference between a bug and an error?', a: 'A bug is the mistake in the code; an error is what you see when it goes wrong, and one bug can cause many errors.' },
       { q: 'What should you write before changing any code to fix a bug?', a: 'A test that reproduces it and fails.' },
       { q: 'A bug appears only sometimes. What does that usually point to?', a: 'Timing, ordering, shared state or the environment.' },
       { q: 'What proves a fix?', a: 'The new test fails before the fix and passes after, and every old test still passes.' },
@@ -1146,7 +1147,7 @@ const CRAFT = [
   card({
     id: 'c-deployment', domain: 'coding', title: 'Deployment: CI, staged rollout and live verification', level: 'intermediate',
     summary: 'A change is done when CI passes, it is rolled out in stages, and the live system is checked to be running it.',
-    aliases: ['continuous integration', 'ci', 'ci cd', 'staged rollout', 'staged rollouts', 'rollouts', 'live verification', 'release process', 'shipping software'],
+    aliases: ['deployment', 'deploying', 'deploy', 'continuous integration', 'ci', 'ci cd', 'continuous deployment', 'staged rollout', 'staged rollouts', 'staged deploy', 'rollouts', 'live verification', 'release process', 'shipping software'],
     tags: ['engineering', 'operations'], prerequisites: ['testing', 'c-git'], related: ['c-cloudflare-workers', 'c-self-repair', 'sample-size'],
     levels: {
       beginner: 'Deployment is putting a new version of a program where people use it. Before that, an automatic checker called CI runs every test on the change. After it, you check the live version really is the new one and really works, instead of assuming it does.',
@@ -1280,7 +1281,7 @@ const AUTONOMY = [
   card({
     id: 'c-checkpoints', domain: 'coding', title: 'Checkpoints and resumable jobs', level: 'expert',
     summary: 'A checkpoint saves only verified progress, so a failed attempt or a restart costs nothing that already worked.',
-    aliases: ['checkpoints', 'checkpoint', 'checkpointing', 'checkpoints and resume', 'resumable work', 'resuming work'],
+    aliases: ['checkpoints', 'checkpoint', 'checkpointing', 'checkpoints and resume', 'resumable jobs', 'resumable job', 'resumable work', 'resuming work'],
     tags: ['autonomy', 'reliability'], prerequisites: ['c-git', 'c-agent-planning'], related: ['c-model-failover', 'c-self-repair', 'c-git'],
     levels: {
       beginner: 'A checkpoint is a saved point of progress that is known to be good. If CHE\'s coding job is interrupted, or one attempt makes a mess, she goes back to the last checkpoint instead of starting from nothing, and carries on from there.',
@@ -1345,7 +1346,7 @@ const AUTONOMY = [
   card({
     id: 'c-model-failover', domain: 'coding', title: 'Model failover and recovery', level: 'expert',
     summary: 'When a model fails, classify why first: retrying helps a busy model, never a request that is too large.',
-    aliases: ['model failover', 'failover', 'model fallback', 'fallback models', 'model recovery', 'retries and backoff', 'exponential backoff', 'backoff'],
+    aliases: ['model failover', 'failover', 'model fallback', 'fallback models', 'model recovery', 'error recovery', 'failure recovery', 'retries and backoff', 'exponential backoff', 'backoff'],
     tags: ['autonomy', 'reliability', 'ai'], prerequisites: ['http-apis', 'c-checkpoints'], related: ['c-self-repair', 'c-deployment', 'c-checkpoints'],
     levels: {
       beginner: 'AI models sometimes fail: they are busy, out of allowance, or the request is too big for them. CHE does not just try again blindly. She works out why it failed, then waits, moves to another model, or stops and says what went wrong.',
@@ -1441,7 +1442,7 @@ const AUTONOMY = [
   card({
     id: 'c-self-repair', domain: 'coding', title: 'Self-repair loops and CI validation', level: 'expert',
     summary: 'A self-repair loop tests a change, reads the real failure, tries a genuinely different fix, and stops within a budget.',
-    aliases: ['self repair', 'self repair loops', 'self healing code', 'self correction', 'ci validation', 'reasoning about failures', 'repair loops'],
+    aliases: ['self repair', 'self repair loops', 'self healing code', 'self correction', 'ci validation', 'reasoning about failures', 'failure analysis', 'repair loops'],
     tags: ['autonomy', 'testing', 'ai'], prerequisites: ['c-debugging', 'c-checkpoints', 'c-model-failover'], related: ['testing', 'c-deployment', 'c-agent-planning'],
     levels: {
       beginner: 'A self-repair loop is how CHE fixes her own mistakes while coding: she makes a change, runs the tests, and if they fail she reads exactly what failed and tries again. She also knows when to stop, so she never goes round in circles.',
@@ -1955,8 +1956,6 @@ export function codingIntent(t, history, { cards, findCard, topicKey, conceptTop
       return qualified || ctx.card ? { kind: 'coding_practice_list' } : null;
     }
     if (/^(?:this|that|it|this card|this topic)$/.test(topic)) return ctx.card ? { kind: 'coding_exercise', card: ctx.card, index: 0 } : { kind: 'coding_practice_list' };
-    // "An exercise on my code", "on the bug in PR 352": the owner's own work, not a concept.
-    if (!conceptTopic(topic)) return null;
     const key = topicKey(topic);
     for (const c of cards) {
       const at = exercisesOf(c).findIndex((x) => x.topics.some((name) => topicKey(name) === key));
@@ -1964,10 +1963,11 @@ export function codingIntent(t, history, { cards, findCard, topicKey, conceptTop
     }
     const found = findCard(topic);
     if (found && exercisesOf(found).length) return { kind: 'coding_exercise', card: found, index: 0 };
-    // A card with no exercise says so; a topic with no card goes on to the usual routes unless the
-    // atlas was asked by name ("/learn give me a coding exercise on Kubernetes").
-    if (found || explicit) return { kind: 'coding_no_practice', card: found, topic: topic.slice(0, 80) };
-    return null;
+    // A card's exact name is a concept; any other topic must read as one: "an exercise on my code"
+    // or "on the bug in PR 352" is the owner's own work. A topic with no card goes on to the usual
+    // routes unless the atlas was asked by name ("/learn give me a coding exercise on Kubernetes").
+    if (found) return { kind: 'coding_no_practice', card: found, topic: topic.slice(0, 80) };
+    return explicit && conceptTopic(topic) ? { kind: 'coding_no_practice', card: null, topic: topic.slice(0, 80) } : null;
   }
 
   // "Give me a review drill", "review this code with me".
@@ -1975,11 +1975,11 @@ export function codingIntent(t, history, { cards, findCard, topicKey, conceptTop
   if (drill || REVIEW_WITH_ME.test(t)) {
     const topic = String(drill?.[1] || '').trim();
     if (!topic) return { kind: 'coding_drill', index: ctx.what === 'drill' ? ctx.index + 1 : 0 };
-    const found = conceptTopic(topic) ? findCard(topic) : null;
+    const found = findCard(topic);
     const list = allDrills(cards);
     const at = found ? list.findIndex((x) => x.card.id === found.id) : -1;
     if (at >= 0) return { kind: 'coding_drill', index: at };
-    return found || explicit ? { kind: 'coding_no_practice', card: found, topic: topic.slice(0, 80), drill: true } : null;
+    return found || (explicit && conceptTopic(topic)) ? { kind: 'coding_no_practice', card: found, topic: topic.slice(0, 80), drill: true } : null;
   }
 
   // "Where does CHE do checkpoints in its own code?", "how does CHE recover when a model fails?"
@@ -1991,7 +1991,7 @@ export function codingIntent(t, history, { cards, findCard, topicKey, conceptTop
     const asked = cards.find((c) => (c.che_asks || []).some((p) => topicKey(p) === key));
     if (asked) return { kind: 'coding_repo', card: asked, how: Boolean(how) };
     const ownCode = Boolean((where || how)?.[2]) || REPO_SHOW.test(t);
-    const found = (ownCode || where) && conceptTopic(repoTopic) ? findCard(repoTopic) : null;
+    const found = ownCode || where ? findCard(repoTopic) : null;
     if (found?.repo_examples?.length) return { kind: 'coding_repo', card: found, how: Boolean(how) };
   }
   return null;
