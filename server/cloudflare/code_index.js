@@ -173,4 +173,10 @@ export async function loadCodeIndex(storage, env, sha, fetcher = fetch) {
 /** The index for exactly this commit if it is loaded, else null. */
 export function cachedCodeIndex(sha) { return (sha && CACHE.get(sha)) || null; }
 
+/** The index of the commit last indexed, only if it is already in memory: never a download. */
+export async function loadedCodeIndex(storage) {
+  const meta = storage?.get ? await Promise.resolve().then(() => storage.get(META_KEY)).catch(() => null) : null;
+  return cachedCodeIndex(meta?.sha);
+}
+
 export function _clearCodeIndexCache() { CACHE.clear(); }

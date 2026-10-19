@@ -38,8 +38,10 @@ Future<List<String>> open(WidgetTester tester, {double textScale = 1, List<Strin
 void main() {
   test('the bundled cards: ten coding and ten trading, each with three levels and a quiz', () {
     final atlas = bundled();
-    expect(atlas.inDomain('coding').length, 10);
-    expect(atlas.inDomain('trading').length, 10);
+    // Phase 1's cards; the coding (c-) and trading (t-) lanes add theirs with prefixed ids.
+    final phase1 = atlas.cards.where((c) => !RegExp(r'^[ct]-').hasMatch(c.id));
+    expect(phase1.where((c) => c.domain == 'coding').length, 10);
+    expect(phase1.where((c) => c.domain == 'trading').length, 10);
     for (final c in atlas.cards) {
       for (final level in cheAtlasLevels) {
         expect(c.levels[level], isNotEmpty, reason: '${c.id} $level');
@@ -54,19 +56,24 @@ void main() {
     expect(atlas.find('option spreads'), isNull);
     expect(atlas.next(atlas.byId('recursion')!)?.id, 'hash-maps');
     expect(atlas.next(atlas.byId('sample-size')!), isNull);
+    // A language named on its own is the topic; after another topic it is not.
+    expect(atlas.find('python')?.id, 'c-python');
+    expect(atlas.find('recursion in python')?.id, 'recursion');
+    expect(atlas.find('binary search')?.id, 'c-binary-search');
   });
 
   testWidgets('opening is silent; the cards, filters and buttons are on screen', (tester) async {
     final spoken = await open(tester);
+    final atlas = bundled();
     expect(spoken, isEmpty, reason: 'no speech when the page opens');
     expect(find.text('Knowledge Atlas'), findsOneWidget);
-    expect(find.text('All 20'), findsOneWidget);
-    expect(find.text('Coding 10'), findsOneWidget);
-    expect(find.text('Trading 10'), findsOneWidget);
+    expect(find.text('All ${atlas.cards.length}'), findsOneWidget);
+    expect(find.text('Coding ${atlas.inDomain('coding').length}'), findsOneWidget);
+    expect(find.text('Trading ${atlas.inDomain('trading').length}'), findsOneWidget);
     expect(find.text('Read aloud'), findsOneWidget);
     expect(find.text('Speak to CHE'), findsOneWidget);
     expect(find.text('1. Variables and data types'), findsOneWidget);
-    await tester.tap(find.text('Trading 10'));
+    await tester.tap(find.text('Trading ${atlas.inDomain('trading').length}'));
     await tester.pumpAndSettle();
     expect(find.text('1. Ticks, points and contract value'), findsOneWidget);
     expect(find.text('1. Variables and data types'), findsNothing);
@@ -134,7 +141,7 @@ void main() {
   testWidgets('recorded trading numbers come from CHE through Chat, never from the card', (tester) async {
     final asked = <String>[];
     await open(tester, asked: asked);
-    await tester.tap(find.text('Trading 10'));
+    await tester.tap(find.text('Trading ${bundled().inDomain('trading').length}'));
     await tester.pumpAndSettle();
     await tester.scrollUntilVisible(find.text('5. Expectancy'), 200, scrollable: find.byType(Scrollable).first);
     // ensureVisible jumps the list; lay out that frame before tapping at the row's new place.
@@ -148,6 +155,46 @@ void main() {
     await tester.pumpAndSettle();
     expect(asked, ['/learn expectancy']);
     expect(find.text('Your records: no recorded data yet.'), findsOneWidget);
+  });
+
+  testWidgets('coding practice by voice and touch: exercise, answer, next, review drill, and Read aloud parity', (tester) async {
+    final spoken = await open(tester);
+    final say = CheKnowledgeAtlasVoice.handler!;
+    Future<String?> hear(String words) async {
+      final reply = await say(words);
+      await tester.pumpAndSettle();
+      return reply;
+    }
+
+    final card = bundled().byId('c-binary-search')!;
+    expect(card.exercises.length, 4);
+    expect(card.repoExamples.first, startsWith('server/cloudflare/knowledge_atlas.js, binarySearchWorst: '));
+    expect(await hear('teach me binary search'), startsWith('Binary search and two pointers, beginner level.'));
+    expect(spoken, isEmpty, reason: 'voice replies are returned for Chat to speak; the page itself stays quiet');
+    expect(await hear('exercise'), startsWith('Exercise 1 of 4. What does binarySearch([1, 3, 5, 7, 9], 7) return'));
+    expect(await hear('the answer'), startsWith('Answer: 3. Indexes start at 0'));
+    expect(find.textContaining('Answer: 3. Indexes start at 0'), findsWidgets, reason: 'the answer is shown as large text too');
+    expect(await hear('next exercise'), contains('Options: 1. 0. 2. 1. 3. 3. 4. 4.'));
+    expect(await hear('review drill'), startsWith('Review drill 1 of 1: The search that never looks at the last item.'));
+    expect(await hear('tell me the answer'), startsWith('Finding: high is inclusive'));
+    expect(await hear('what can I do here'), endsWith('8. Exercise. 9. Review drill.'));
+    // Read aloud speaks exactly the card text, which now names CHE's own code and the practice.
+    await tester.tap(find.text('Read aloud'));
+    await tester.pumpAndSettle();
+    expect(spoken, [cheAtlasCardText(card, 'beginner')]);
+    expect(spoken.single, contains("In CHE's own code: server/cloudflare/knowledge_atlas.js, binarySearchWorst"));
+    expect(spoken.single, contains('Practice: 4 exercises and 1 review drill.'));
+    // By touch: an answer stays hidden until its button is pressed.
+    final show = find.text('Show the answer to exercise 3');
+    await tester.scrollUntilVisible(show, 300, scrollable: find.byType(Scrollable).first);
+    await tester.pumpAndSettle();
+    expect(find.text(card.exercises[2].answerText), findsNothing);
+    await tester.tap(show);
+    await tester.pumpAndSettle();
+    expect(find.text(card.exercises[2].answerText), findsOneWidget);
+    // A card with no practice says so instead of inventing one.
+    expect(await hear('teach me vwap'), startsWith('VWAP'));
+    expect(await hear('exercise'), startsWith('VWAP'), reason: 'a trading card has no coding exercise');
   });
 
   testWidgets('VoiceOver and large text: buttons are labelled, nothing overflows at 2x', (tester) async {

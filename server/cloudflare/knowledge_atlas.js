@@ -10,6 +10,7 @@
 // it says "no recorded data yet". Lessons never act: nothing here reaches the trading
 // desk, a broker or any other tool.
 
+import { CODING_CARDS, CODING_FORMULAS, LANGUAGE_NAMES, answerCoding, codingExport, codingIntent, isCodingPractice, withCodingPractice } from './atlas_coding.js';
 import { BRAIN_REGIONS } from './brain_store.js';
 import { classifyOwnerActions } from './owner_action_gate.js';
 import { COSTS, CONTRACTS, MIN_TRADES, readTrades, summarize } from './trading_evidence.js';
@@ -33,6 +34,7 @@ const floorLog2 = (n) => { let k = 0; while (2 ** (k + 1) <= n) k += 1; return k
 const fibonacci = (k) => { let a = 0; let b = 1; for (let i = 0; i < k; i += 1) [a, b] = [b, a + b]; return a; };
 
 export const FORMULAS = Object.freeze({
+  ...CODING_FORMULAS,
   triangular: ({ n }) => (n * (n + 1)) / 2,
   binarySearchWorst: ({ n }) => floorLog2(n) + 1,
   fibCalls: ({ n }) => 2 * fibonacci(n + 1) - 1,
@@ -225,8 +227,8 @@ const CODING = [
   card({
     id: 'big-o', domain: 'coding', title: 'Big-O notation', level: 'intermediate',
     summary: 'Big-O describes how the work grows when the input grows.',
-    aliases: ['big o', 'big-o', 'big o notation', 'big-o notation', 'time complexity', 'algorithm complexity', 'algorithmic complexity', 'binary search'],
-    tags: ['algorithms', 'computer science'], prerequisites: ['loops'], related: ['sorting', 'hash-maps', 'recursion'],
+    aliases: ['big o', 'big-o', 'big o notation', 'big-o notation', 'time complexity', 'algorithm complexity', 'algorithmic complexity'],
+    tags: ['algorithms', 'computer science'], prerequisites: ['loops'], related: ['sorting', 'hash-maps', 'recursion', 'c-binary-search'],
     levels: {
       beginner: 'Big-O describes how the work grows when the input grows. O(n) means twice the data takes about twice the time; O(1) means the time stays the same however much data there is; O(n²) means twice the data takes about four times as long.',
       intermediate: 'Count the steps that grow with the input and keep only the fastest-growing term, dropping constants: 3n + 7 is O(n), and two nested loops over n items are O(n²). Binary search halves what is left on every step, so on a sorted list it needs at most the floor of log₂ n, plus 1, comparisons: 10 for a thousand items and 20 for a million.',
@@ -867,7 +869,7 @@ const TRADING = [
 ];
 
 /** Every card, coding first, each domain in curriculum order (the order "what's next" follows). */
-export const ATLAS_CARDS = Object.freeze([...CODING, ...TRADING]);
+export const ATLAS_CARDS = Object.freeze([...CODING.map(withCodingPractice), ...CODING_CARDS, ...TRADING]);
 const BY_ID = new Map(ATLAS_CARDS.map((c) => [c.id, c]));
 export function atlasCard(id) { return BY_ID.get(String(id || '')) || null; }
 const inDomain = (domain) => ATLAS_CARDS.filter((c) => c.domain === domain);
@@ -887,9 +889,12 @@ function speech(message) {
 const FILLER = new Set(['about', 'on', 'in', 'the', 'a', 'an', 'how', 'what', 'to', 'of', 'me', 'some', 'is', 'are', 'works', 'work', 'means', 'mean', 'concept', 'idea', 'basics', 'basic', 'again', 'now', 'today', 'detail', 'step', 'by', 'more', 'please', 'that', 'this', 'with', 'it', 'its', 'and', 'for', 'python', 'javascript', 'js', 'dart', 'code', 'programming', 'trading', 'futures', 'whole', 'topic', 'lesson', 'card']);
 const stemWord = (w) => (w.length > 3 && w.endsWith('s') && !w.endsWith('ss') ? w.slice(0, -1) : w);
 const words = (text) => String(text || '').toLowerCase().replace(/'/g, '').replace(/[^a-z0-9²]+/g, ' ').trim().split(' ').filter(Boolean);
+// "Teach me Python": a language named on its own is the topic; "recursion in Python" is recursion.
+const LANGUAGE_WORDS = new Set(['python', 'javascript', 'js', 'dart']);
 /** A topic as the matcher compares it: lower case, no punctuation, no filler words, light singulars. */
 export function topicKey(text) {
-  return words(text).filter((w) => !FILLER.has(w)).map(stemWord).join(' ');
+  const kept = words(text).filter((w) => !FILLER.has(w)).map(stemWord);
+  return (kept.length ? kept : words(text).filter((w) => LANGUAGE_WORDS.has(w))).join(' ');
 }
 const ALIAS_KEYS = new Map();
 for (const c of ATLAS_CARDS) {
@@ -968,6 +973,10 @@ export function atlasIntent(message, history = [], { explainLevel = '' } = {}) {
     t = explicit[1].trim();
     if (!t) return { kind: 'overview' };
   }
+
+  // Coding practice (phase 2, atlas_coding.js): exercises, review drills and CHE's own code.
+  const practice = codingIntent(t, history, { cards: ATLAS_CARDS, findCard: findAtlasCard, topicKey });
+  if (practice) return practice;
 
   if (/^(?:open|show(?: me)?|go to|bring up|read|what(?:'s| is)? in|whats in)\s+(?:the |my |your |che's )?knowledge atlas(?: page)?$/.test(t)) return { kind: 'overview' };
 
@@ -1187,6 +1196,7 @@ function teachText(c, level, records) {
 
 /** The reply to an atlasIntent result. Deterministic: records are read, no model is called. */
 export async function answerAtlas(intent, { storage = null } = {}) {
+  if (isCodingPractice(intent)) return answerCoding(intent, { storage, cards: ATLAS_CARDS });
   const c = intent?.card || null;
   const total = ATLAS_CARDS.length;
   const coding = inDomain('coding').length;
@@ -1233,7 +1243,8 @@ export async function answerAtlas(intent, { storage = null } = {}) {
     }
     case 'example': {
       if (intent.code && c.example.kind === 'code') {
-        return out(`The ${c.title} example, sir, in JavaScript. ${c.example.explain}\n\n\`\`\`javascript\n${c.example.code}\n\`\`\`\n${sourceLine(c)}`);
+        const lang = c.example.language || 'javascript';
+        return out(`The ${c.title} example, sir, in ${LANGUAGE_NAMES[lang] || lang}. ${c.example.explain}\n\n\`\`\`${lang}\n${c.example.code}\n\`\`\`\n${sourceLine(c)}`);
       }
       const noCode = intent.code && c.example.kind !== 'code' ? ' This card\'s example is a calculation, not code.' : '';
       return out(`Worked example for ${c.title}, sir.${noCode} ${exampleWords(c)}\n${sourceLine(c)}`);
@@ -1268,7 +1279,7 @@ export function atlasExport() {
       id: c.id, domain: c.domain, title: c.title, level: c.level, summary: c.summary, revision: c.revision, source_kind: c.source_kind,
       aliases: c.aliases, tags: c.tags, prerequisites: c.prerequisites, related: c.related,
       levels: c.levels, analogy: c.analogy, formula: c.formula, example: c.example, quiz: c.quiz.map(({ q, a }) => ({ q, a })),
-      misconceptions: c.misconceptions, che_note: c.che_note, measured: c.measured, sources: c.sources,
+      misconceptions: c.misconceptions, che_note: c.che_note, measured: c.measured, sources: c.sources, ...codingExport(c),
     })),
   };
 }

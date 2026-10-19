@@ -91,11 +91,14 @@ const sameResult = (actual, expected, eps = 1e-4) => (typeof expected === 'objec
 
 // ─── The cards are well formed ────────────────────────────────────────────
 
+// Phase 1's cards; the coding (c-) and trading (t-) lanes add theirs with prefixed ids.
+const PHASE1 = ATLAS_CARDS.filter((c) => !/^[ct]-/.test(c.id));
+
 test('ten coding and ten trading cards, each complete from beginner to expert', () => {
-  assert.equal(ATLAS_CARDS.filter((c) => c.domain === 'coding').length, 10);
-  assert.equal(ATLAS_CARDS.filter((c) => c.domain === 'trading').length, 10);
-  assert.equal(new Set(ATLAS_CARDS.map((c) => c.id)).size, 20, 'ids are unique');
-  assert.equal(new Set(ATLAS_CARDS.map((c) => c.title)).size, 20, 'titles are unique');
+  assert.equal(PHASE1.filter((c) => c.domain === 'coding').length, 10);
+  assert.equal(PHASE1.filter((c) => c.domain === 'trading').length, 10);
+  assert.equal(new Set(ATLAS_CARDS.map((c) => c.id)).size, ATLAS_CARDS.length, 'ids are unique');
+  assert.equal(new Set(ATLAS_CARDS.map((c) => c.title)).size, ATLAS_CARDS.length, 'titles are unique');
   for (const c of ATLAS_CARDS) {
     assert.match(c.id, /^[a-z][a-z0-9-]+$/, c.id);
     assert.ok(LEVELS.includes(c.level), `${c.id} level`);
@@ -308,10 +311,10 @@ test('the numbers written in the explanations are the computed ones, and CHE\'s 
 
 test('every code example runs and returns exactly what its card says', async () => {
   const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor;
-  const coded = ATLAS_CARDS.filter((c) => c.example.kind === 'code');
-  assert.equal(coded.length, 10);
+  // Examples in Python, TypeScript, Dart and SQL are run by atlas_coding.test.mjs.
+  const coded = ATLAS_CARDS.filter((c) => c.example.kind === 'code' && c.example.language === 'javascript');
+  assert.ok(coded.length >= 10, `${coded.length} JavaScript examples`);
   for (const c of coded) {
-    assert.equal(c.example.language, 'javascript');
     const result = await new AsyncFunction(c.example.code)();
     assert.deepEqual(result, c.example.expected, c.id);
     // The spoken description cites the very numbers the code returns.
@@ -325,7 +328,7 @@ test('every code example runs and returns exactly what its card says', async () 
 test('the phone\'s bundled atlas matches the cards (regenerate: node tool/dump_knowledge_atlas.mjs)', () => {
   const bundled = JSON.parse(readFileSync(new URL('../../assets/atlas/knowledge_atlas.json', import.meta.url), 'utf8'));
   assert.deepEqual(bundled, JSON.parse(JSON.stringify(atlasExport())));
-  assert.equal(bundled.cards.length, 20);
+  assert.equal(bundled.cards.length, ATLAS_CARDS.length);
   assert.ok(bundled.cards.every((c) => c.quiz.every((q) => Object.keys(q).join() === 'q,a')), 'only questions and answers go to the phone');
   assert.match(readFileSync(new URL('../../pubspec.yaml', import.meta.url), 'utf8'), /^\s+- assets\/atlas\/$/m, 'pubspec bundles it');
 });
@@ -433,7 +436,8 @@ test('the /learn command is the same lesson route, through the one catalog', asy
   assert.match((await che.say('/learn what\'s the formula for profit factor')).reply, /^The formula for Profit factor, sir: profit factor equals gross profit divided by gross loss/);
   const overview = await che.say('/learn');
   assert.equal(overview.route, 'che_knowledge_atlas');
-  assert.match(overview.reply, /^The Knowledge Atlas has 20 cards, sir: 10 coding and 10 trading/);
+  const coding = ATLAS_CARDS.filter((c) => c.domain === 'coding').length;
+  assert.ok(overview.reply.startsWith(`The Knowledge Atlas has ${ATLAS_CARDS.length} cards, sir: ${coding} coding and ${ATLAS_CARDS.length - coding} trading`), overview.reply);
   const unknown = await che.say('/learn string theory');
   assert.equal(unknown.route, 'che_knowledge_atlas');
   assert.match(unknown.reply, /^I don't have a Knowledge Atlas card on "string theory" yet, sir, so I won't make one up\./);

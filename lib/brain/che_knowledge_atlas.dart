@@ -25,6 +25,32 @@ class CheAtlasQuestion {
   final String a;
 }
 
+/// A coding exercise (phase 2): the question, any code, numbered options and the checked answer.
+class CheAtlasExercise {
+  const CheAtlasExercise({required this.prompt, required this.code, required this.options, required this.answer, required this.explain});
+  final String prompt;
+  final String code;
+  final List<String> options;
+  final String answer;
+  final String explain;
+
+  String get text => [
+        prompt,
+        if (options.isNotEmpty) 'Options: ${[for (final (i, o) in options.indexed) '${i + 1}. $o.'].join(' ')}',
+      ].join(' ');
+  String get answerText => 'Answer: $answer. $explain';
+}
+
+/// A review drill: buggy code, what is wrong with it, and the fix.
+class CheAtlasDrill {
+  const CheAtlasDrill({required this.title, required this.code, required this.finding, required this.fixed, required this.from});
+  final String title;
+  final String code;
+  final String finding;
+  final String fixed;
+  final String from;
+}
+
 class CheAtlasCard {
   const CheAtlasCard({
     required this.id,
@@ -44,6 +70,10 @@ class CheAtlasCard {
     required this.measured,
     required this.sources,
     required this.revision,
+    this.limitations = '',
+    this.exercises = const [],
+    this.drills = const [],
+    this.repoExamples = const [],
   });
 
   final String id;
@@ -63,6 +93,12 @@ class CheAtlasCard {
   final bool measured;
   final List<String> sources;
   final int revision;
+  final String limitations;
+  final List<CheAtlasExercise> exercises;
+  final List<CheAtlasDrill> drills;
+
+  /// "path, symbol: what it shows. Tested by test." for each place in CHE's own code.
+  final List<String> repoExamples;
 
   static List<String> _strings(Object? v) => v is List ? v.map((e) => '$e').toList() : const [];
 
@@ -90,7 +126,35 @@ class CheAtlasCard {
         for (final s in (j['sources'] as List? ?? const []).whereType<Map>()) '${s['title']}',
       ],
       revision: (j['revision'] as num?)?.toInt() ?? 1,
+      limitations: '${j['limitations'] ?? ''}',
+      exercises: [
+        for (final x in (j['exercises'] as List? ?? const []).whereType<Map>())
+          CheAtlasExercise(
+            prompt: '${x['prompt']}',
+            code: '${x['code'] ?? ''}',
+            options: _strings(x['options']),
+            answer: '${x['answer']}',
+            explain: '${x['explain'] ?? ''}',
+          ),
+      ],
+      drills: [
+        for (final d in (j['review_drills'] as List? ?? const []).whereType<Map>())
+          CheAtlasDrill(title: '${d['title']}', code: '${d['code']}', finding: '${d['finding']}', fixed: '${d['fixed'] ?? ''}', from: '${d['from'] ?? ''}'),
+      ],
+      repoExamples: [
+        for (final e in (j['repo_examples'] as List? ?? const []).whereType<Map>()) '${e['path']}, ${e['symbol']}: ${e['what']}. Tested by ${e['test']}.',
+      ],
     );
+  }
+
+  /// "Practice: 4 exercises and 1 review drill.", or empty for a card with none.
+  String get practiceWords {
+    if (exercises.isEmpty && drills.isEmpty) return '';
+    final parts = [
+      if (exercises.isNotEmpty) '${exercises.length} exercise${exercises.length == 1 ? '' : 's'}',
+      if (drills.isNotEmpty) '${drills.length} review drill${drills.length == 1 ? '' : 's'}',
+    ];
+    return 'Practice: ${parts.join(' and ')}. Say "exercise" or "review drill" to start one.';
   }
 
   String get domainLabel => domain == 'coding' ? 'Coding' : 'Trading';
@@ -149,7 +213,7 @@ class CheKnowledgeAtlas {
   }
 }
 
-// Same filler words and singulars as knowledge_atlas.js topicKey().
+// Same filler words, singulars and language rule as knowledge_atlas.js topicKey().
 const _filler = {
   'about', 'on', 'in', 'the', 'a', 'an', 'how', 'what', 'to', 'of', 'me', 'some', 'is', 'are', 'works', 'work', 'means', 'mean',
   'concept', 'idea', 'basics', 'basic', 'again', 'now', 'today', 'detail', 'step', 'by', 'more', 'please', 'that', 'this', 'with',
@@ -157,16 +221,17 @@ const _filler = {
   'lesson', 'card',
 };
 
-String cheAtlasTopicKey(String text) => text
-    .toLowerCase()
-    .replaceAll("'", '')
-    .replaceAll('’', '')
-    .replaceAll(RegExp(r'[^a-z0-9²]+'), ' ')
-    .trim()
-    .split(' ')
-    .where((w) => w.isNotEmpty && !_filler.contains(w))
-    .map((w) => w.length > 3 && w.endsWith('s') && !w.endsWith('ss') ? w.substring(0, w.length - 1) : w)
-    .join(' ');
+const _languages = {'python', 'javascript', 'js', 'dart'};
+
+String cheAtlasTopicKey(String text) {
+  final words = text.toLowerCase().replaceAll("'", '').replaceAll('’', '').replaceAll(RegExp(r'[^a-z0-9²]+'), ' ').trim().split(' ').where((w) => w.isNotEmpty);
+  final kept = words
+      .where((w) => !_filler.contains(w))
+      .map((w) => w.length > 3 && w.endsWith('s') && !w.endsWith('ss') ? w.substring(0, w.length - 1) : w)
+      .toList();
+  // "Teach me Python": a language named on its own is the topic.
+  return (kept.isNotEmpty ? kept : words.where(_languages.contains)).join(' ');
+}
 
 /// The owner's words as the page compares them: no wake word, politeness, apostrophes or punctuation.
 String cheAtlasWords(String raw) => raw
@@ -193,6 +258,9 @@ String cheAtlasCardText(CheAtlasCard c, String level) {
   if (level != 'beginner' && c.formula != null) lines.add(c.formulaWords);
   lines.add('Worked example: ${c.exampleWords}');
   if (c.cheNote.isNotEmpty) lines.add('In CHE: ${c.cheNote}');
+  if (c.repoExamples.isNotEmpty) lines.add("In CHE's own code: ${c.repoExamples.join(' ')}");
+  if (c.limitations.isNotEmpty) lines.add('Limitations: ${c.limitations}');
+  if (c.practiceWords.isNotEmpty) lines.add(c.practiceWords);
   return lines.join('\n');
 }
 
@@ -229,6 +297,11 @@ class _CheKnowledgeAtlasPageState extends State<CheKnowledgeAtlasPage> {
   String _level = 'beginner';
   bool _quiz = false;
   final Set<int> _answers = {};
+  // Practice shown on this card: answers and findings stay hidden until asked for.
+  final Set<int> _exerciseAnswers = {};
+  final Set<int> _drillFindings = {};
+  String _practice = '';
+  int _practiceAt = 0;
   String _status = '';
   bool _asking = false;
   Object? _screen;
@@ -247,7 +320,11 @@ class _CheKnowledgeAtlasPageState extends State<CheKnowledgeAtlasPage> {
                   : '${_card!.title}, $_level level${_quiz ? ', quiz open' : ''}',
           controls: _card == null
               ? const ['Back', 'Read aloud', 'Speak to CHE', 'All', 'Coding', 'Trading', 'the cards']
-              : const ['Back', 'Read aloud', 'Speak to CHE', 'Beginner', 'Intermediate', 'Expert', 'Quiz me', 'Next card', 'All cards'],
+              : [
+                  'Back', 'Read aloud', 'Speak to CHE', 'Beginner', 'Intermediate', 'Expert', 'Quiz me', 'Next card', 'All cards',
+                  if (_card!.exercises.isNotEmpty) 'Exercise',
+                  if (_card!.drills.isNotEmpty) 'Review drill',
+                ],
         ));
     if (widget.atlas != null) {
       _atlas = widget.atlas;
@@ -292,9 +369,18 @@ class _CheKnowledgeAtlasPageState extends State<CheKnowledgeAtlasPage> {
       _level = level ?? 'beginner';
       _quiz = false;
       _answers.clear();
+      _exerciseAnswers.clear();
+      _drillFindings.clear();
+      _practice = '';
       _status = '';
     });
   }
+
+  String _exerciseText(CheAtlasCard c, int i) =>
+      'Exercise ${i + 1} of ${c.exercises.length}. ${c.exercises[i].text} Say "the answer" to hear it, or "next exercise".';
+
+  String _drillText(CheAtlasCard c, int i) =>
+      'Review drill ${i + 1} of ${c.drills.length}: ${c.drills[i].title}. What is wrong with this code? It is on screen. Say "the answer" to hear the finding.';
 
   void _setLevel(String level) {
     HapticFeedback.selectionClick();
@@ -369,7 +455,8 @@ class _CheKnowledgeAtlasPageState extends State<CheKnowledgeAtlasPage> {
     if (RegExp(r'^(?:what can i do(?: here)?|read (?:me )?my options|what are my options|options|help)$').hasMatch(t)) {
       return _result(card == null
           ? 'Your options: 1. Read aloud. 2. Coding cards. 3. Trading cards. 4. A number, to open that card. 5. Teach me, and a topic. 6. Go back.'
-          : 'Your options: 1. Read aloud. 2. Beginner, intermediate or expert version. 3. The formula. 4. The example. 5. Quiz me. 6. Next card. 7. Go back.');
+          : 'Your options: 1. Read aloud. 2. Beginner, intermediate or expert version. 3. The formula. 4. The example. 5. Quiz me. 6. Next card. 7. Go back.'
+              '${card.exercises.isNotEmpty ? ' 8. Exercise.' : ''}${card.drills.isNotEmpty ? ' ${card.exercises.isNotEmpty ? 9 : 8}. Review drill.' : ''}');
     }
     if (RegExp(r'^(?:read (?:this|it|that|aloud|the card|this card|the list)|read it (?:to me|aloud)|read aloud|read this aloud)$').hasMatch(t)) {
       final c = card;
@@ -424,6 +511,32 @@ class _CheKnowledgeAtlasPageState extends State<CheKnowledgeAtlasPage> {
       return _result(cheAtlasCardText(card, target));
     }
     if (card == null) return null;
+    // Practice on this card, offline: an exercise or a drill, then its answer when asked.
+    final practice = RegExp(r'^(?:give me |start |do |try )?(?:an? |another |the )?(next )?(?:coding )?(exercise|practice|practice question|review drill|drill)$').firstMatch(t);
+    if (practice != null) {
+      final drill = practice.group(2)!.contains('drill');
+      final total = drill ? card.drills.length : card.exercises.length;
+      if (total == 0) return _result('${card.title} has no ${drill ? 'review drills' : 'exercises'} yet. Say "quiz me" for its quiz.', ok: false);
+      final kind = drill ? 'drill' : 'exercise';
+      final again = practice.group(1) != null || t.contains('another');
+      final at = _practice == kind && again ? _practiceAt + 1 : 0;
+      if (at >= total) return _result('That was the last ${drill ? 'review drill' : 'exercise'} on ${card.title}.', ok: false);
+      setState(() {
+        _practice = kind;
+        _practiceAt = at;
+        _quiz = false;
+      });
+      return _result(drill ? _drillText(card, at) : _exerciseText(card, at));
+    }
+    if (_practice.isNotEmpty && RegExp(r'^(?:(?:show|tell|give|read) me )?(?:the )?(?:answer|finding|bug)$').hasMatch(t)) {
+      final i = _practiceAt;
+      if (_practice == 'drill') {
+        setState(() => _drillFindings.add(i));
+        return _result('Finding: ${card.drills[i].finding}');
+      }
+      setState(() => _exerciseAnswers.add(i));
+      return _result(card.exercises[i].answerText);
+    }
     if (RegExp(r'^(?:what(?:s| is) the |show me the |read me the |the )?(?:formula|equation|math)$').hasMatch(t)) return _result(_formulaText(card));
     if (RegExp(r'^(?:(?:show|read|give) me )?(?:the |an )?(?:worked |code )?example$|^show me the code$').hasMatch(t)) {
       return _result('Worked example: ${card.exampleWords}${card.example['kind'] == 'code' ? ' The code is on screen.' : ''}');
@@ -471,6 +584,13 @@ class _CheKnowledgeAtlasPageState extends State<CheKnowledgeAtlasPage> {
       );
 
   static const _big = TextStyle(fontSize: 18, height: 1.45, color: CheColors.text);
+
+  Widget _code(String code) => Container(
+        margin: const EdgeInsets.only(top: 8, bottom: 4),
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(color: CheColors.surface, border: Border.all(color: CheColors.stroke), borderRadius: BorderRadius.circular(8)),
+        child: SelectableText(code, style: CheType.mono.copyWith(fontSize: 14)),
+      );
   static const _dim = TextStyle(fontSize: 16, height: 1.4, color: CheColors.textDim);
 
   Widget _list() {
@@ -537,16 +657,47 @@ class _CheKnowledgeAtlasPageState extends State<CheKnowledgeAtlasPage> {
           ]),
         _section('Worked example', [
           Text(c.exampleWords, style: _big),
-          if (code.isNotEmpty)
-            Container(
-              margin: const EdgeInsets.only(top: 8),
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(color: CheColors.surface, border: Border.all(color: CheColors.stroke), borderRadius: BorderRadius.circular(8)),
-              child: SelectableText(code, style: CheType.mono.copyWith(fontSize: 14)),
-            ),
+          if (code.isNotEmpty) _code(code),
         ]),
         if (_level == 'expert' && c.misconceptions.isNotEmpty) _section('Common mistake', [Text(c.misconceptions.first, style: _big)]),
         if (c.cheNote.isNotEmpty) _section('In CHE', [Text(c.cheNote, style: _big)]),
+        if (c.repoExamples.isNotEmpty) _section("In CHE's own code", [for (final e in c.repoExamples) Text(e, style: _big)]),
+        if (c.limitations.isNotEmpty) _section('Limitations', [Text(c.limitations, style: _big)]),
+        if (c.exercises.isNotEmpty)
+          _section('Practice', [
+            for (final (i, x) in c.exercises.indexed) ...[
+              Text('${i + 1}. ${x.text}', style: _big),
+              if (x.code.isNotEmpty) _code(x.code),
+              if (_exerciseAnswers.contains(i))
+                Padding(padding: const EdgeInsets.only(left: 12, bottom: 8), child: Text(x.answerText, style: _big.copyWith(color: CheColors.success)))
+              else
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton(
+                    onPressed: () => setState(() => _exerciseAnswers.add(i)),
+                    child: Text('Show the answer to exercise ${i + 1}', style: const TextStyle(fontSize: 16)),
+                  ),
+                ),
+            ],
+          ]),
+        if (c.drills.isNotEmpty)
+          _section('Review drills', [
+            for (final (i, d) in c.drills.indexed) ...[
+              Text('${i + 1}. ${d.title}${d.from.isEmpty ? '' : '. Adapted from ${d.from}'}', style: _big),
+              _code(d.code),
+              if (_drillFindings.contains(i)) ...[
+                Text('Finding: ${d.finding}', style: _big.copyWith(color: CheColors.success)),
+                if (d.fixed.isNotEmpty) _code(d.fixed),
+              ] else
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton(
+                    onPressed: () => setState(() => _drillFindings.add(i)),
+                    child: Text('Show the finding for drill ${i + 1}', style: const TextStyle(fontSize: 16)),
+                  ),
+                ),
+            ],
+          ]),
         if (c.measured)
           _section('Your recorded numbers', [
             const Text('CHE reads these from her paper journal and stored backtest only, never from this card.', style: _dim),
