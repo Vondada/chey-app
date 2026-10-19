@@ -592,15 +592,21 @@ export async function strategySimView(storage, { now = Date.now() } = {}) {
 
 // ─── Typed and spoken requests (the /trade-sim command sends "Strategy simulation <action>") ───
 
-// Deterministic. Pause and resume need the command form or an imperative; a question about the simulation is a status read.
+// Deterministic, so the owner can say it as well as type it. Pause and resume need the command form or an imperative
+// ("pause the strategy simulation", "stop the simulation", "resume the simulation"); a question about it is a status read
+// ("how is the simulation doing", "simulation status"). "Simulation" alone counts only in those forms, never in the desk's
+// simulated account, mode or trading ("switch to simulation mode" stays the desk's) and never for "a simulation" in general.
 export function strategySimIntent(message) {
   const text = String(message || '').replace(/[’']/g, "'").trim();
-  if (!/\bstrateg(?:y|ies)\s+simulation\b/i.test(text)) return null;
+  if (!/\bsimulation\b/i.test(text)) return null;
+  if (/\bsimulat(?:ion|ed)\s+(?:trading|account|accounts|mode)\b|\bbroker\s+simulation\b/i.test(text)) return null;
   const command = /\bstrateg(?:y|ies)\s+simulation\s+(pause|resume|status)\s*$/i.exec(text);
   if (command) return { kind: command[1].toLowerCase() };
-  const imperative = /^\s*(?:please\s+)?(pause|stop|halt|freeze|resume|restart|unpause|start)\s+(?:the\s+)?strateg(?:y|ies)\s+simulation\b/i.exec(text);
+  const imperative = /^\s*(?:(?:hey\s+)?che[,\s]+)?(?:please\s+)?(pause|stop|halt|freeze|resume|restart|unpause|start|continue)\s+(?:the\s+|my\s+)?(?:strateg(?:y|ies)\s+|paper\s+)?simulation\b/i.exec(text);
   if (imperative) return { kind: /^(?:pause|stop|halt|freeze)$/i.test(imperative[1]) ? 'pause' : 'resume' };
-  return { kind: 'status' };
+  if (/\bstrateg(?:y|ies)\s+simulation\b/i.test(text)) return { kind: 'status' };
+  const status = /\bsimulation\s+(?:status|report|results|leaderboard)\b|\bstatus\s+of\s+(?:the|my)\s+simulation\b|\b(?:how(?:'s|\s+is)|what(?:'s|\s+is))\s+(?:the|my)\s+(?:paper\s+)?simulation\b/i;
+  return status.test(text) ? { kind: 'status' } : null;
 }
 
 /** Said aloud and shown as large text: status, minute-bar sources, the leaderboard count and the spend. */

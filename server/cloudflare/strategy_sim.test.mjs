@@ -778,6 +778,18 @@ test('typed and spoken requests: pause and resume need the command or an imperat
   assert.deepEqual(strategySimIntent('Resume the strategy simulation'), { kind: 'resume' });
   assert.deepEqual(strategySimIntent('Is the strategy simulation paused?'), { kind: 'status' });
   assert.equal(strategySimIntent('backtest bitcoin'), null);
+  // Plain speech, with no slash command.
+  for (const [words, kind] of [
+    ['stop the simulation', 'pause'], ['Stop the simulation.', 'pause'], ['CHE, pause the simulation', 'pause'],
+    ['resume the simulation', 'resume'], ['start the strategy simulation', 'resume'], ['continue the simulation', 'resume'],
+    ['how is the simulation doing?', 'status'], ["how's the simulation", 'status'], ['simulation status', 'status'],
+    ['what is my simulation doing', 'status'], ['status of the simulation', 'status'],
+  ]) assert.deepEqual(strategySimIntent(words), { kind }, words);
+  // Not the simulation: trading, the desk's simulated account or mode, and a simulation in general.
+  for (const words of ['pause trading', 'stop trading for today', 'switch to simulation mode', 'use my simulation account',
+    'run a Monte Carlo simulation on my trades', 'what is a simulation', 'start a simulation of the opening range']) {
+    assert.equal(strategySimIntent(words), null, words);
+  }
   const text = speakStrategySim(await strategySimView(memStorage()));
   assert.match(text, /The strategy simulation is running/);
   assert.match(text, /profitable: 0 of 10/);

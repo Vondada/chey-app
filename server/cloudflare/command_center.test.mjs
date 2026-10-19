@@ -287,6 +287,27 @@ test('/trade-sim pauses, resumes and reports the strategy simulation through its
   assert.equal((await che.get('/api/trading/sim')).status, 'running');
 });
 
+test('the strategy simulation answers plain speech, owner only, with no model call, and leaves trading and desk phrases alone', async () => {
+  const che = await owner({ model: siteModel, env: READY_ENV });
+  const said = async (words, status) => {
+    const out = await che.say(words);
+    assert.equal(out.route, 'che_strategy_sim', `${words} → ${out.route}`);
+    assert.equal(out.modelCalls, 0, words);
+    assert.equal((await che.get('/api/trading/sim')).status, status, words);
+    return out;
+  };
+  await said('Pause the strategy simulation', 'paused');
+  await said('Resume the simulation', 'running');
+  await said('Stop the simulation', 'paused');
+  assert.match((await said('How is the simulation doing?', 'paused')).reply, /is paused/);
+  await said('Simulation status', 'paused');
+  await said('Start the strategy simulation', 'running');
+  for (const words of ['Pause trading', 'Switch to simulation mode', 'Run a Monte Carlo simulation on my last 50 trades', 'Buy 10 shares of AAPL on Alpaca paper']) {
+    assert.notEqual((await che.say(words)).route, 'che_strategy_sim', words);
+  }
+  assert.equal((await che.get('/api/trading/sim')).status, 'running', 'none of those changed it');
+});
+
 test('a guest device cannot pause the strategy simulation through /trade-sim', async () => {
   const che = await owner();
   const tenant = await che.post('/api/platform/tenants', { name: 'Guest', role: 'family' });
@@ -295,6 +316,9 @@ test('a guest device cannot pause the strategy simulation through /trade-sim', a
   const res = await che.send('/api/chat', { message: '/trade-sim pause', history: [] }, guestToken);
   assert.match(replyFromNdjson(await res.text()), /Only the CHE owner can run commands/);
   assert.equal((await che.get('/api/trading/sim')).status, 'running', 'the refused guest did not pause it');
+  const spoken = await che.send('/api/chat', { message: 'Stop the simulation', history: [] }, guestToken);
+  await spoken.text();
+  assert.equal((await che.get('/api/trading/sim')).status, 'running', 'plain speech from a guest does not pause it either');
 });
 
 // ─── 4–5. Contextual suggestions ──────────────────────────────────────────
