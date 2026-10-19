@@ -289,6 +289,10 @@ test('a numbered answer is graded by its number, recomputed; yes-or-no by the wo
       assert.equal(gradeQuizAnswer(c, i, 'I think 987654').correct, false, `${c.id} q${i + 1}: a wrong number is not`);
     });
   }
+  // A check shown as a word is graded by that word, not by the question's own numbers.
+  const liquidity = atlasCard('t-liquidity');
+  assert.equal(gradeQuizAnswer(liquidity, 1, 'a buy-side sweep').correct, true);
+  assert.notEqual(gradeQuizAnswer(liquidity, 1, 'it traded above 100').correct, true, 'the question\'s own number is not the answer');
   const variables = atlasCard('variables');
   assert.equal(gradeQuizAnswer(variables, 1, 'yes they both see it').correct, true);
   assert.equal(gradeQuizAnswer(variables, 1, 'no').correct, false);
