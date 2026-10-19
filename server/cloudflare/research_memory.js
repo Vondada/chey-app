@@ -49,6 +49,8 @@ function secretToken(raw) {
   if (token.length < 8 || !/[A-Za-z]/.test(token) || !/\d/.test(token)) return false;
   if (/^[0-9a-f]+$/i.test(token) || /:\/\/|^www\./i.test(token) || /^[\w.+-]+@[\w-]+\.[\w.]+$/.test(token)) return false;
   if (/^\d{4}-\d{2}-\d{2}/.test(token) || /^v?\d+(?:\.\d+)+/i.test(token) || /^#\d+/.test(token)) return false;
+  // A trading figure is not a password: a signed decimal with an R or % unit ("+0.0125R", "-1.5%").
+  if (/^[+\-−]?\$?\d+\.\d+(?:R|%)?$/.test(token) || /^[+\-−]\d+R$/.test(token)) return false;
   const mixedCase = /[a-z]/.test(token) && /[A-Z]/.test(token);
   if (PASSWORD_SYMBOL.test(token) || (mixedCase && trimmed !== token)) return true;
   const switches = (token.match(/[A-Za-z](?=\d)|\d(?=[A-Za-z])/g) || []).length;
