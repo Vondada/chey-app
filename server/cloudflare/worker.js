@@ -61,6 +61,7 @@ import { answerOwnerMemoryQuestion, auditMemoryProvenance, evidenceQuestion, evi
 import { condenseHistory, ownerNotificationPolicy } from './workflow_governor.js';
 import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, nextTradingTickAt, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
 import { evidenceIntent, evidenceReport, evidenceTick } from './trading_evidence_runner.js';
+import { ATLAS_SOURCE, answerAtlas, atlasIntent } from './knowledge_atlas.js';
 import { LIVE_BACKTEST, LIVE_STATE, liveBacktest, liveDashboard, livePaperSummary, liveTick, nextLiveTickAt, setLivePaper } from './trading_live.js';
 import { alpacaKeys, alpacaPaperOrders, alpacaStatus, placeAlpacaPaperOrder, removeAlpacaPaperKeys, saveAlpacaPaperKeys } from './broker_alpaca.js';
 import { speakConnections, tradingConnections } from './trading_connections.js';
@@ -8183,6 +8184,23 @@ export class CheState extends DurableObject {
             return ndjsonReply(studio.reply, { source: 'che_voice_studio', ok: studio.ok, model_calls: 0,
               ...(studio.preview ? { voice_preview: studio.preview } : {}) });
           }
+        }
+        // Knowledge Atlas lessons (issue #346): "teach me recursion", "quiz me on risk management",
+        // "what's the formula for VWAP". Answered from the curated cards and CHE's own trade records
+        // with no model, before the interpreter can rewrite them; a sentence that asks to pay, buy or
+        // delete is never one (atlasIntent), so it still reaches the owner's gate below.
+        const atlas = ownerDevice && !body.attachment && !memoryRoute ? atlasIntent(message, ownerHistory, { explainLevel: body.explain_level }) : null;
+        if (atlas) {
+          // Like any other turn, a lesson replaces a held request and retires a spoken resource list.
+          try {
+            await this.ctx.storage.put(PENDING_OWNER_ACTION_KEY, null);
+            await this.ctx.storage.put(PENDING_APP_ACTION_KEY, null);
+            await this.ctx.storage.put(LAST_RESULTS_KEY, null);
+          } catch (_) {
+            return json({ message: 'I could not record that safely, so I did not act. Please say it again.', reply: 'I could not record that safely, so I did not act. Please say it again.', code_review_passed: false, owner_approval_required: true }, 503);
+          }
+          const lesson = await answerAtlas(atlas, { storage: this.ctx.storage });
+          return ndjsonReply(lesson.text, { source: ATLAS_SOURCE, ok: lesson.ok, atlas_kind: lesson.kind, atlas_card: lesson.card_id || null, model_calls: 0 });
         }
         // Gmail, Drive, Calendar and YouTube requests are read as written. A model
         // read here would be slow, and it could invent a meaning the owner did not mean.

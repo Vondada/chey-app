@@ -505,10 +505,13 @@ class _ChePlatformDevicesScreenState extends State<ChePlatformDevicesScreen> {
 }
 
 class CheTwoBrainsView extends StatefulWidget {
-  const CheTwoBrainsView({super.key, required this.live, required this.offline});
+  const CheTwoBrainsView({super.key, required this.live, required this.offline, this.onOpenAtlas});
 
   final Widget live;
   final Widget offline;
+
+  /// Opens the Knowledge Atlas, the Brain's lesson cards (issue #346), when the app provides it.
+  final VoidCallback? onOpenAtlas;
 
   @override
   State<CheTwoBrainsView> createState() => _CheTwoBrainsViewState();
@@ -527,7 +530,7 @@ class _CheTwoBrainsViewState extends State<CheTwoBrainsView> {
           tab: _index == 0 ? 'Live' : 'Offline',
           tabs: const ['Live', 'Offline'],
           detail: '${cheBrainPresentations[_index].title}: ${cheBrainPresentations[_index].detail}',
-          controls: const ['Back', 'Live', 'Offline', 'the memory constellation', 'the brain switcher', 'filters', 'view controls'],
+          controls: ['Back', 'Live', 'Offline', 'the memory constellation', 'the brain switcher', 'filters', 'view controls', if (widget.onOpenAtlas != null) 'Knowledge Atlas'],
         ));
   }
 
@@ -565,6 +568,12 @@ class _CheTwoBrainsViewState extends State<CheTwoBrainsView> {
                     ),
                   ),
                 ),
+                if (widget.onOpenAtlas != null)
+                  IconButton(
+                    tooltip: 'Open the Knowledge Atlas',
+                    onPressed: widget.onOpenAtlas,
+                    icon: const Icon(Icons.school_rounded, color: CheColors.textDim),
+                  ),
                 for (var i = 0; i < cheBrainPresentations.length; i++)
                   Padding(
                     padding: const EdgeInsets.only(left: 6),

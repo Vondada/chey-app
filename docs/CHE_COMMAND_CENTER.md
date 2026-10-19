@@ -69,7 +69,7 @@ What each command needs:
 
 | Needs | Commands |
 |---|---|
-| Nothing beyond CHE | che, che-plan, che-research, che-verify, che-memory, che-brain-review, che-recover, che-status, yt-ideas, yt-research, yt-script, yt-seo, yt-batch, yt-grow, trade-open, trade-chart, trade-setup, trade-liquidity, trade-backtest, trade-journal, trade-alert, trade-risk (account limits need NinjaTrader), site-build, site-redesign, site-audit, site-publish, app-build, ai-build, all money commands, all client commands, all marketing commands, office-status, office-delegate, warroom, automate, skill-learn, connect, create-3d |
+| Nothing beyond CHE | che, che-plan, learn, che-research, che-verify, che-memory, che-brain-review, che-recover, che-status, yt-ideas, yt-research, yt-script, yt-seo, yt-batch, yt-grow, trade-open, trade-chart, trade-setup, trade-liquidity, trade-backtest, trade-journal, trade-alert, trade-risk (account limits need NinjaTrader), site-build, site-redesign, site-audit, site-publish, app-build, ai-build, all money commands, all client commands, all marketing commands, office-status, office-delegate, warroom, automate, skill-learn, connect, create-3d |
 | GitHub secrets | che-explore, che-build, app-fix, code-review, che-release, iphone-update |
 | Video renderer | yt-video, yt-voice (also a voice key) |
 | Image engine | yt-thumbnail |
@@ -82,6 +82,15 @@ Honest limits:
 - `/yt-analytics` has no view or subscriber analytics yet.
 - `/invoices`, `/lead-outreach` and `/lead-followup` draft only; nothing is charged or sent from them.
 - `/automate` designs saved workflows; unattended schedules stay off by the owner's rule.
+
+## Knowledge Atlas (`/learn`, issue #346)
+
+Twenty concept cards, 10 coding and 10 trading, in `server/cloudflare/knowledge_atlas.js`: each has a beginner, intermediate and expert explanation, an analogy, the exact formula where one exists, a worked example and a short quiz. The phone bundles the same cards (`assets/atlas/knowledge_atlas.json`, written by `node tool/dump_knowledge_atlas.mjs`), shown in More → Knowledge Atlas, from the Brain's header, or by saying "open the knowledge atlas".
+
+- Say "teach me recursion", "explain expectancy like I'm a beginner", "give me the expert version", "what's the formula for VWAP?", "quiz me on risk management", "quiz answers", "what's next after this?", "list the trading cards" or a number from that list. `/learn <topic or request>` is the same route.
+- Answers are deterministic (`done.source = che_knowledge_atlas`, zero model calls). A coding or trading topic with no card is said plainly and nothing is invented; other subjects keep their usual route.
+- Trading cards that cite statistics read CHE's paper journal and stored backtest only, labelled measured; with none it says "no recorded data yet". Card content is labelled curated. A lesson never reaches the trading desk: "teach me to trade live" changes nothing.
+- Tests: `knowledge_atlas.test.mjs` checks every card's fields and links, recomputes every formula (most against `trading_evidence.js`), runs every code example and asks the lessons through `/api/chat`; `test/che_knowledge_atlas_test.dart` covers the page.
 
 ## Example workflows (templates)
 
