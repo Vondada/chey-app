@@ -46,7 +46,7 @@ List<String> screen(WidgetTester tester) {
 }
 
 void main() {
-  test('the bundled cards: ten coding and ten trading, each with three levels and a quiz', () {
+  test('the bundled cards: ten coding and thirty trading, each with three levels and a quiz', () {
     final atlas = bundled();
     // Phase 1's cards; the coding (c-) and trading (t-) lanes add theirs with prefixed ids.
     final phase1 = atlas.cards.where((c) => !RegExp(r'^[ct]-').hasMatch(c.id));
@@ -65,11 +65,20 @@ void main() {
     expect(atlas.find('the formula for vwap'), isNull);
     expect(atlas.find('option spreads'), isNull);
     expect(atlas.next(atlas.byId('recursion')!)?.id, 'hash-maps');
-    expect(atlas.next(atlas.byId('sample-size')!), isNull);
+    expect(atlas.next(atlas.byId('sample-size')!)?.id, 't-futures');
+    expect(atlas.next(atlas.byId('t-risk-of-ruin')!), isNull);
     // A language said on its own is the topic; after another topic it is not.
     expect(atlas.find('python')?.id, 'c-python');
     expect(atlas.find('recursion in python')?.id, 'recursion');
     expect(atlas.find('binary search')?.id, 'c-binary-search');
+    // Trading cards state their limitations, shown and read as part of the card; the ICT ones say their evidence is mixed or limited.
+    for (final c in atlas.inDomain('trading')) {
+      expect(c.limitations, isNotEmpty, reason: c.id);
+    }
+    final blocks = atlas.byId('t-order-blocks')!;
+    expect(blocks.limitations.first, contains('mixed or limited evidence'));
+    final lines = cheAtlasCardLines(atlas, blocks, 'beginner').map((l) => l.text).toList();
+    expect(lines, containsAllInOrder(['Limitations', blocks.limitations.first]));
   });
 
   test('word matching comes from the Worker through the asset, so it cannot drift from knowledge_atlas.js', () {
@@ -107,7 +116,7 @@ void main() {
     expect(find.text('1. Ticks, points and contract value'), findsOneWidget);
     expect(find.text('1. Variables and data types'), findsNothing);
     expect(spoken, isEmpty, reason: 'filtering is quiet');
-    expect(CheScreenAwareness.describe(), startsWith('You are on the Knowledge Atlas, Trading cards view. 10 cards: 1. Ticks, points and contract value'));
+    expect(CheScreenAwareness.describe(), startsWith('You are on the Knowledge Atlas, Trading cards view. 30 cards: 1. Ticks, points and contract value'));
   });
 
   testWidgets('a card by touch: levels, Read aloud of exactly what is shown, and the quiz', (tester) async {
@@ -161,7 +170,7 @@ void main() {
       return reply;
     }
 
-    expect(await hear('list the trading cards'), startsWith('Trading cards: 10.\n1. Ticks, points and contract value\nTrading, beginner. '));
+    expect(await hear('list the trading cards'), startsWith('Trading cards: 30.\n1. Ticks, points and contract value\nTrading, beginner. '));
     final picked = await hear('number five');
     expect(picked, startsWith('Expectancy, beginner level.\nTrading, starts at intermediate'));
     expect(picked, screen(tester).join('\n'), reason: 'the spoken reply is the card now on screen');
@@ -177,7 +186,7 @@ void main() {
     expect(await hear('what can I do here'), startsWith('Your options: 1. Read aloud.'));
     expect(await hear('open the knowledge atlas'), 'The Knowledge Atlas is already open.');
     expect(find.byType(CheKnowledgeAtlasPage), findsOneWidget, reason: 'no second copy of the page');
-    expect(await hear('go back'), 'Back to the 10 cards.', reason: 'back to the trading list it came from');
+    expect(await hear('go back'), 'Back to the 30 cards.', reason: 'back to the trading list it came from');
     expect(find.text('1. Ticks, points and contract value'), findsOneWidget);
     // Not the page's: Chat answers these as usual.
     expect(await hear('tell me a joke'), isNull);

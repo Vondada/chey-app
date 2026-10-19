@@ -61,11 +61,11 @@ class CheAtlasCard {
     required this.example,
     required this.quiz,
     required this.misconceptions,
+    this.limitations = const [],
     required this.cheNote,
     required this.measured,
     required this.sources,
     required this.revision,
-    this.limitations = '',
     this.exercises = const [],
     this.drills = const [],
     this.repoExamples = const [],
@@ -84,11 +84,11 @@ class CheAtlasCard {
   final Map<String, dynamic> example;
   final List<CheAtlasQuestion> quiz;
   final List<String> misconceptions;
+  final List<String> limitations;
   final String cheNote;
   final bool measured;
   final List<String> sources;
   final int revision;
-  final String limitations;
   final List<CheAtlasExercise> exercises;
   final List<CheAtlasDrill> drills;
 
@@ -115,13 +115,13 @@ class CheAtlasCard {
         for (final q in (j['quiz'] as List? ?? const []).whereType<Map>()) CheAtlasQuestion('${q['q']}', '${q['a']}'),
       ],
       misconceptions: _strings(j['misconceptions']),
+      limitations: _strings(j['limitations']),
       cheNote: '${j['che_note'] ?? ''}',
       measured: j['measured'] is Map,
       sources: [
         for (final s in (j['sources'] as List? ?? const []).whereType<Map>()) '${s['title']}',
       ],
       revision: (j['revision'] as num?)?.toInt() ?? 1,
-      limitations: '${j['limitations'] ?? ''}',
       exercises: [
         for (final x in (j['exercises'] as List? ?? const []).whereType<Map>())
           CheAtlasExercise(prompt: '${x['prompt']}', code: '${x['code'] ?? ''}', options: _strings(x['options']), answer: '${x['answer']}', explain: '${x['explain'] ?? ''}'),
@@ -304,7 +304,7 @@ List<CheAtlasLine> cheAtlasCardLines(CheKnowledgeAtlas atlas, CheAtlasCard c, St
     ],
     if (c.limitations.isNotEmpty) ...[
       const CheAtlasLine('Limitations', CheAtlasLineKind.heading),
-      CheAtlasLine(c.limitations),
+      for (final l in c.limitations) CheAtlasLine(l),
     ],
     if (c.practiceWords.isNotEmpty) ...[
       const CheAtlasLine('Practice', CheAtlasLineKind.heading),

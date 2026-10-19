@@ -48,9 +48,11 @@ export const CODING_FORMULAS = Object.freeze({
   passwordBits: ({ length, alphabet }) => length * Math.log2(alphabet),
 });
 
+// Limitations are written as one paragraph here and stored as a list, the shape every atlas card shares.
+const asList = (l) => (Array.isArray(l) ? l : l ? [l] : []);
 const card = (c) => Object.freeze({
   revision: 1, source_kind: 'curated', formula: null, che_note: '', measured: null, misconceptions: [],
-  limitations: '', exercises: [], review_drills: [], repo_examples: [], che_asks: [], ...c,
+  exercises: [], review_drills: [], repo_examples: [], che_asks: [], ...c, limitations: asList(c.limitations),
 });
 
 // A repository example: a real path and symbol, what it shows, and the test that runs it.
@@ -1760,14 +1762,13 @@ export const CODING_CARDS = Object.freeze([...LANGUAGES, ...ALGORITHMS, ...CRAFT
 /** A phase-1 coding card with its exercises, drills and repository examples added. */
 export function withCodingPractice(c) {
   const extra = PHASE1_PRACTICE[c.id];
-  return extra ? Object.freeze({ limitations: '', exercises: [], review_drills: [], repo_examples: [], che_asks: [], ...c, ...extra }) : c;
+  return extra ? Object.freeze({ exercises: [], review_drills: [], repo_examples: [], che_asks: [], ...c, ...extra, limitations: asList(extra.limitations ?? c.limitations) }) : c;
 }
 
 /** The practice fields the phone gets, only for cards that have them. */
 export function codingExport(c) {
   if (!Array.isArray(c.exercises)) return {};
   return {
-    limitations: c.limitations,
     exercises: c.exercises.map((x) => ({ id: x.id, kind: x.kind, prompt: x.prompt, language: x.language, code: shownCode(x), options: x.options || [], answer: answerWords(x), explain: x.explain })),
     review_drills: c.review_drills.map((d) => ({ id: d.id, title: d.title, language: d.language, code: d.code, finding: d.finding, fixed: d.fixed, from: d.from ? `${d.from.what}; pinned by "${d.from.test_name}" in ${d.from.test}` : '' })),
     repo_examples: c.repo_examples.map(({ path, symbol, what, test }) => ({ path, symbol, what, test })),

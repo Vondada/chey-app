@@ -121,7 +121,7 @@ test('every coding card is complete: levels, analogy, example, quiz, limits, sou
     assert.match(c.analogy, /\blike\b/, `${c.id} analogy`);
     assert.ok(c.quiz.length >= 3 && c.quiz.every((q) => q.q.endsWith('?') && q.a.length >= 3), `${c.id} quiz`);
     assert.ok(c.misconceptions.length >= 1, `${c.id} misconception`);
-    assert.ok(c.limitations.length >= 40, `${c.id} states its limitations`);
+    assert.ok(c.limitations.join(' ').length >= 40, `${c.id} states its limitations`);
     assert.ok(c.sources.length >= 2 || c.sources.some((s) => s.url), `${c.id} sources`);
     assert.ok(c.exercises.length + c.review_drills.length >= 1, `${c.id} has practice`);
     if (!OVERVIEWS.has(c.id)) assert.ok(c.repo_examples.length >= 1, `${c.id} points into CHE's own code`);
@@ -364,7 +364,7 @@ test('the phone\'s bundled atlas carries the practice fields, and no reference s
   const bundled = JSON.parse(read('assets/atlas/knowledge_atlas.json'));
   assert.deepEqual(bundled, json(atlasExport()));
   const recursion = bundled.cards.find((c) => c.id === 'c-checkpoints');
-  assert.ok(recursion.exercises.length && recursion.repo_examples.length && recursion.limitations);
+  assert.ok(recursion.exercises.length && recursion.repo_examples.length && recursion.limitations.length);
   assert.ok(bundled.cards.filter((c) => c.domain === 'trading').every((c) => !('exercises' in c)), 'trading cards are unchanged');
   for (const c of bundled.cards.filter((x) => x.exercises)) {
     for (const x of c.exercises) assert.deepEqual(Object.keys(x), ['id', 'kind', 'prompt', 'language', 'code', 'options', 'answer', 'explain']);

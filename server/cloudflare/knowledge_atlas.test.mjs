@@ -99,6 +99,8 @@ test('ten coding and ten trading cards, each complete from beginner to expert', 
   assert.equal(PHASE1.filter((c) => c.domain === 'trading').length, 10);
   assert.equal(new Set(ATLAS_CARDS.map((c) => c.id)).size, ATLAS_CARDS.length, 'ids are unique');
   assert.equal(new Set(ATLAS_CARDS.map((c) => c.title)).size, ATLAS_CARDS.length, 'titles are unique');
+  assert.equal(ATLAS_CARDS.filter((c) => c.domain === 'coding').length, 30, 'phase 1 and the coding lane');
+  assert.equal(ATLAS_CARDS.filter((c) => c.domain === 'trading').length, 30, 'phase 1 and the trading lane');
   for (const c of ATLAS_CARDS) {
     assert.match(c.id, /^[a-z][a-z0-9-]+$/, c.id);
     assert.ok(LEVELS.includes(c.level), `${c.id} level`);
@@ -451,7 +453,7 @@ test('the owner\'s seven phrasings are answered from the cards with no model, ty
   }
   for (const words of variants('List the trading cards.')) {
     const out = await lesson(words);
-    assert.match(out.reply, /^Trading cards in the Knowledge Atlas, sir: 10\.\n1\. Ticks, points and contract value, beginner\.\n2\. Bid, ask and spread, beginner\./);
+    assert.match(out.reply, /^Trading cards in the Knowledge Atlas, sir: 30\.\n1\. Ticks, points and contract value, beginner\.\n2\. Bid, ask and spread, beginner\./);
     const picked = await lesson('number five', [{ role: 'assistant', content: out.reply }]);
     assert.match(picked.reply, /^Expectancy, beginner level, sir\./, 'a spoken number picks from the list just read');
   }
@@ -597,7 +599,7 @@ test('"quiz me" with no topic asks which one; "number" picks then quiz that card
     assert.doesNotMatch(out.reply, /^Quiz on/, 'no topic is guessed');
   }
   const trading = await che.say('Quiz me on trading');
-  assert.match(trading.reply, /^Trading cards in the Knowledge Atlas, for a quiz, sir: 10\./);
+  assert.match(trading.reply, /^Trading cards in the Knowledge Atlas, for a quiz, sir: 30\./);
   const picked = await che.say('number 2', { history: [{ role: 'assistant', content: trading.reply }] });
   assert.match(picked.reply, /^Quiz on Bid, ask and spread, sir\./);
   // Answers only follow a quiz; with none open CHE says so.
@@ -650,10 +652,10 @@ test('measured lines through /api/chat: the journal and the stored backtest, exa
   const s = summarize(trades);
   const out = await che.say('Explain expectancy');
   assert.equal(out.route, 'che_knowledge_atlas');
-  assert.match(out.reply, /Your records, measured from CHE's paper journal: 5 closed paper trades in 1 paper portfolio, one strategy\./);
+  assert.match(out.reply, /Your records, measured from CHE's paper journal \(delayed forward-paper data\): 5 closed paper trades in 1 paper portfolio, one strategy\./);
   assert.ok(out.reply.includes(`expectancy +${s.expectancy_r.toFixed(2)}R per trade after assumed costs, 95% range ${s.expectancy_r_95ci.low < 0 ? '-' : '+'}${Math.abs(s.expectancy_r_95ci.low).toFixed(2)}R`), out.reply);
   assert.match(out.reply, /Largest sample: n = 5, fewer than the 30 trades needed, so this is anecdote, not evidence\./);
-  assert.match(out.reply, /Latest stored backtest, 2026-10-18, Yahoo MNQ=F, 1200 five-minute bars \(DELAYED public data\): 2 strategy portfolios with 52 trades; expectancy ranged -0\.15R to \+0\.12R across them\. A backtest is history, not a forward result\./);
+  assert.match(out.reply, /Latest stored backtest \(historical backtest\), 2026-10-18, Yahoo MNQ=F, 1200 five-minute bars \(DELAYED public data\): 2 strategy portfolios with 52 trades; expectancy ranged -0\.15R to \+0\.12R across them\. A backtest is history, not a forward result\./);
   const pf = await che.say("What's the formula for profit factor?");
   assert.ok(pf.reply.includes(`profit factor ${s.profit_factor}.`), pf.reply);
   assert.match(pf.reply, /profit factor ranged 0\.8 to 1\.3 across them/);
