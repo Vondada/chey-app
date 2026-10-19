@@ -869,7 +869,12 @@ async function pickedCandidate(storage, message, history) {
 export async function handleReaRequest(storage, env, message, { fetcher = fetch, now = Date.now(), random, history = [], build = null, jobLookup = null, remember = null, owner = true, codingBlocked = false } = {}) {
   const picked = await pickedCandidate(storage, message, history).catch(() => '');
   if (picked) message = `Investigate ${picked}`;
-  const request = parseReaRequest(message, { history });
+  const explicitRetry = /^(?:(?:che|chay)[,:]?\s+)?rea\s+retry\s*:?\s+(npm:[^\s]+)\s*[.!]?$/i.exec(String(message).trim());
+  const request = parseReaRequest(explicitRetry ? `REA inspect: ${explicitRetry[1]}` : message, { history });
+  if (explicitRetry && request) {
+    if (!owner) return { ok: false, text: 'Only the owner can retry a failed REA run.' };
+    request.retry = true;
+  }
   if (!request) return null;
   const jobs = await refreshReaJobs(storage, env, now, fetcher);
   const hasInvestigations = jobs.some((j) => j.kind === 'investigation');
@@ -1020,8 +1025,8 @@ async function npmRequest(storage, env, jobs, request, { fetcher, now, random })
   const earlier = [...jobs].reverse().find((j) => j.cache_key === cacheKey);
   if (earlier?.state === 'complete' && earlier.summary) return { ok: true, job_id: earlier.id, state: 'complete', reused: earlier.id, text: evidenceAnswer(request.command, { ...earlier, target }) };
   if (earlier && ['queued', 'running'].includes(earlier.state)) return { ok: true, job_id: earlier.id, state: earlier.state, reused: earlier.id, text: `REA job ${earlier.id} is still ${earlier.state}. No completed evidence has been received; I did not dispatch it again.` };
-  if (earlier) return { ok: false, job_id: earlier.id, state: 'failed', reused: earlier.id,
-    text: `REA job ${earlier.id} failed: ${earlier.error || 'No validated completed evidence exists.'} No new run was dispatched.` };
+  if (earlier && !request.retry) return { ok: false, job_id: earlier.id, state: earlier.state === 'stalled' ? 'stalled' : 'failed', reused: earlier.id,
+    text: `REA job ${earlier.id} failed: ${earlier.error || 'No validated completed evidence exists.'} No new run was dispatched. To authorize another attempt, say REA retry: npm:${target.name}@${target.version}.` };
 
   if (!reaConfigured(env)) {
     return { ok: false, text: 'REA analysis runs on GitHub Actions, and CHE has no GitHub connection (CHE_GITHUB_TOKEN and CHE_GITHUB_REPO). Nothing was run.' };
@@ -1029,6 +1034,7 @@ async function npmRequest(storage, env, jobs, request, { fetcher, now, random })
   const job = {
     id: newJobId(random), command: request.command, target, integrity: resolved.integrity, cache_key: cacheKey,
     state: 'queued', created_at: new Date(now).toISOString(), updated_at: new Date(now).toISOString(),
+    ...(request.retry && earlier ? { retry_of: earlier.id, original_job_id: earlier.original_job_id || earlier.id } : {}),
   };
   const sent = await gh(env, 'POST', `/actions/workflows/${encodeURIComponent(REA_WORKFLOW)}/dispatches`, {
     ref: REA_WORKFLOW_REF,

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, unlinkSync } from 'node:fs';
 import { executeWithReceipt, guardExecutionClaims, isExecutionReceipt } from './truth_layer.js';
 import { runPluginTool } from './plugin_runtime.js';
+import vm from 'node:vm';
 const generated = new URL('./.execution_truth.test.generated.mjs', import.meta.url);
 writeFileSync(generated, readFileSync(new URL('./worker.js', import.meta.url), 'utf8').replace(
   "import { DurableObject } from 'cloudflare:workers';",
@@ -201,5 +202,50 @@ test('real plugin GET preserves its receipt; exceptions contain no secrets', asy
   const failed = await executeWithReceipt({ tool: 'github', operation: 'GET', request_id: 'owner-request', source: 'github', run: async () => { throw Error('secret=DO_NOT_PRINT'); } });
   assert.equal(failed.receipt.status, 'unavailable');
   assert.doesNotMatch(JSON.stringify(failed.receipt), /DO_NOT_PRINT/);
+});
+
+test('browser live voice uses guarded input, queues chat, and ignores provider output', async () => {
+  const page = await worker.fetch(new Request('https://che.example/live-voice'), {});
+  const html = await page.text();
+  const script = /<script>([\s\S]*?)<\/script>/.exec(html)[1];
+  const nodes = new Map();
+  const node = (id) => { if (!nodes.has(id)) nodes.set(id, { textContent: '', addEventListener() {} }); return nodes.get(id); };
+  let posts = 0;
+  let resolveFirst;
+  const first = new Promise((resolve) => { resolveFirst = resolve; });
+  const context = vm.createContext({
+    document: { getElementById: node, createElement: () => ({ pause() {}, async play() {} }) },
+    location: { hash: '#token=owner' }, URLSearchParams,
+    navigator: { mediaDevices: { getUserMedia: async () => ({ getTracks: () => [{}] }) } },
+    RTCPeerConnection: class {
+      addTrack() {} createDataChannel() { return {}; } async createOffer() { return { sdp: 'offer' }; }
+      async setLocalDescription() {} async setRemoteDescription() {}
+    },
+    fetch: async (url, init) => {
+      if (url === '/api/live/token') {
+        assert.equal(JSON.parse(init.body).guarded_output, true);
+        return Response.json({ value: 'ephemeral', guarded_output: true });
+      }
+      if (url === '/api/chat') {
+        posts++;
+        if (posts === 1) await first;
+        return new Response(JSON.stringify({ type: 'delta', delta: 'Verified chat reply.' }) + '\n');
+      }
+      if (url === '/api/voice/edge') return new Response(null, { status: 204 });
+      return new Response('answer');
+    },
+  });
+  vm.runInContext(script, context);
+  await vm.runInContext('connect()', context);
+  const event = (value) => vm.runInContext(`dc.onmessage({data:${JSON.stringify(JSON.stringify(value))}})`, context);
+  event({ type: 'response.output_audio_transcript.done', transcript: 'PR #356 is unmerged. John Doe.' });
+  assert.equal(posts, 0);
+  for (const id of ['one', 'two']) event({ type: 'conversation.item.input_audio_transcription.completed', item_id: id, transcript: `Read checkpoint ${id}` });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(posts, 1);
+  resolveFirst();
+  await vm.runInContext('turns', context);
+  assert.equal(posts, 2);
+  assert.equal(node('reply').textContent, 'Verified chat reply.');
 });
 

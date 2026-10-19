@@ -1148,13 +1148,19 @@ extension _CheHomeSecurity on _CHEHomeState {
     }
   }
 
-  void _onRealtimeUserTranscript(String text, String? itemId) {
+  Future<void> _onRealtimeUserTranscript(String text, String? itemId) async {
     final clean = text.trim();
     if (clean.isEmpty || !mounted) return;
 
     // Use the same intake, authorization, streaming guard and TTS as typing.
+    // A typed/local turn can already own the HTTP request. Keep these exact
+    // words in this queued callback until it releases the composer.
+    while (mounted && _isSending) {
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    }
+    if (!mounted) return;
     controller.text = clean;
-    unawaited(sendMessage(fromVoice: true));
+    await sendMessage(fromVoice: true);
   }
 
   void _onRealtimeAssistantTranscript(

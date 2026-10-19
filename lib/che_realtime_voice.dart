@@ -7,7 +7,7 @@ import 'package:http/http.dart' as http;
 import 'che_voice_state.dart';
 
 typedef CheRealtimeSnapshotCallback = void Function(CheVoiceSnapshot snapshot);
-typedef CheRealtimeUserTranscriptCallback = void Function(String text, String? itemId);
+typedef CheRealtimeUserTranscriptCallback = FutureOr<void> Function(String text, String? itemId);
 typedef CheRealtimeAssistantTranscriptCallback = void Function(
   String text,
   bool isFinal,
@@ -61,6 +61,7 @@ class CheRealtimeVoiceEngine {
   bool _disposed = false;
   bool _connected = false;
   bool _handlingTool = false;
+  Future<void> _pendingUserTurns = Future<void>.value();
   String? _activeResponseId;
   String _assistantTranscript = '';
   bool _assistantFinalDelivered = false;
@@ -302,7 +303,9 @@ class CheRealtimeVoiceEngine {
     lastServerEvent = type;
     // Provider-generated words, audio and tool calls never reach UI or TTS.
     if (guardedOutput && (type.startsWith('response.') ||
-        type == 'output_audio_buffer.started')) return;
+        type == 'output_audio_buffer.started')) {
+      return;
+    }
 
     switch (type) {
       case 'session.created':
@@ -346,7 +349,7 @@ class CheRealtimeVoiceEngine {
           unawaited(_standDown());
           return;
         }
-        onUserTranscript(text, itemId);
+        unawaited(_enqueueUserTurn(text, itemId));
         _emitSnapshot();
         return;
 
@@ -499,11 +502,23 @@ class CheRealtimeVoiceEngine {
     }
   }
 
+  Future<void> _enqueueUserTurn(String text, String? itemId) {
+    final next = _pendingUserTurns.then((_) async {
+      if (!_disposed) await onUserTranscript(text, itemId);
+    });
+    _pendingUserTurns = next.catchError((Object error) {
+      lastError = error.toString();
+      state.reportError(lastError!);
+      _emitSnapshot();
+    });
+    return _pendingUserTurns;
+  }
+
   Future<void> sendText(String text) async {
     final clean = text.trim();
     if (!_connected || clean.isEmpty) return;
 
-    onUserTranscript(clean, null);
+    await _enqueueUserTurn(clean, null);
   }
 
   Future<void> cancelActiveResponse([String reason = 'owner interruption']) async {
