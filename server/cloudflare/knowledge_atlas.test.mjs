@@ -242,11 +242,11 @@ test('coding formulas match brute force: sums, binary search, Fibonacci calls, m
 });
 
 // Closed trades the way CHE's journal holds them, for the statistics checks.
-function journalTrades(rows, { from = '2026-10-15T14:00:00Z' } = {}) {
+function journalTrades(rows, { from = '2026-10-15T14:00:00Z', portfolio = 'atlas-test', strategy = 'fvg-retest-5m' } = {}) {
   return rows.map(([r, pnl], i) => {
     const time = new Date(Date.parse(from) + i * 300_000).toISOString();
     return {
-      environment: 'paper', source: 'paper', portfolio: 'atlas-test', strategy: 'fvg-retest-5m', side: 'long', session: 'mid-morning',
+      environment: 'paper', source: 'paper', portfolio, strategy, contract: 'MNQ', side: 'long', session: 'mid-morning',
       entry: { time, fill: 21000, raw: 21000 }, exit: { time, reason: r > 0 ? 'target' : 'stop', fill: 21000 + r * 10 },
       stop: 20990, target: 21020, qty: 1, net_pnl: pnl, r_net: r,
       costs: { spread: 0.5, slippage: 1, commissions: 3, fees: 1 }, data: { resolution: '5m', label: 'DELAYED' },
@@ -359,8 +359,42 @@ test('a trading card cites measured numbers only from CHE\'s records, and says s
   const trades = journalTrades([[2, 40], [-1, -20], [-1, -20], [2, 40], [-1, -20]]);
   const s = summarize(trades);
   const text = measuredText(atlasCard('win-rate-ci'), { paper: trades, backtest: null });
-  assert.ok(text.includes(`${s.trades} closed paper trades`) && text.includes(`Win rate ${s.win_rate}%`) && text.includes(`${s.win_rate_95ci.low}% to ${s.win_rate_95ci.high}%`), text);
-  assert.match(text, new RegExp(`fewer than the ${MIN_TRADES} trades needed`));
+  assert.ok(text.includes(`${s.trades} closed paper trades in 1 paper portfolio, one strategy.`) && text.includes(`win rate ${s.win_rate}%`) && text.includes(`${s.win_rate_95ci.low}% to ${s.win_rate_95ci.high}%`), text);
+  assert.match(text, /It is Fair value gap retest on MNQ, five-minute bars: /, 'the portfolio is named');
+  assert.match(text, new RegExp(`Largest sample: n = 5, fewer than the ${MIN_TRADES} trades needed`));
+});
+
+test('measured figures are per paper portfolio, never one pooled account, and a single trade gets no range', () => {
+  // Two separate portfolios whose losses fall at the same time: pooled, they would show one deeper
+  // drawdown that no real account had.
+  const a = journalTrades([[2, 100], [-1, -60], [-1, -60]], { portfolio: 'pf-a', strategy: 'fvg-retest-5m' });
+  const b = journalTrades([[2, 80], [-1, -50], [-1, -50]], { portfolio: 'pf-b', strategy: 'sweep-mss-5m' });
+  const pooled = summarize([...a, ...b].sort((x, y) => x.entry.time.localeCompare(y.entry.time)));
+  const text = measuredText(atlasCard('drawdown'), { paper: [...a, ...b], backtest: null });
+  assert.match(text, /6 closed paper trades in 2 separate paper portfolios, each its own strategy, so nothing is pooled into one account\./);
+  const ddA = summarize(a).max_drawdown; const ddB = summarize(b).max_drawdown;
+  assert.ok(text.includes(`Across the 2 portfolios, maximum drawdown ranged $${Math.min(ddA, ddB).toFixed(2)} to $${Math.max(ddA, ddB).toFixed(2)}.`), text);
+  assert.match(text, /None of these is an account balance\./);
+  assert.doesNotMatch(text, /, or \+/, 'a drawdown is a size of loss, never spoken with a plus sign');
+  assert.match(text, /, or \d+\.\d{2}R, within that portfolio's own record\./);
+  assert.ok(pooled.max_drawdown > Math.max(ddA, ddB), 'the test portfolios do overlap');
+  assert.ok(!text.includes(`$${pooled.max_drawdown.toFixed(2)}`), 'the pooled drawdown is never given');
+  // n = 1: the number, its n, and no zero-width range.
+  const one = journalTrades([[1.5, 30]], { portfolio: 'pf-one' });
+  const single = measuredText(atlasCard('expectancy'), { paper: one, backtest: null });
+  assert.match(single, /expectancy \+1\.50R per trade after assumed costs, too few trades for a range \(n = 1\)\./);
+  assert.doesNotMatch(single, /95% range/);
+  assert.match(single, /Largest sample: n = 1,/);
+  assert.match(measuredText(atlasCard('win-rate-ci'), { paper: one, backtest: null }), /too few trades for a range \(n = 1\)/);
+  assert.match(measuredText(atlasCard('win-rate-ci'), { paper: one, backtest: null }), /: win rate 100%, 1 win and 0 losses, /);
+  // The sample card reads as its own sentence, not slotted after "It is".
+  const sample = measuredText(atlasCard('sample-size'), { paper: [...a, ...b], backtest: null });
+  assert.match(sample, new RegExp(`so nothing is pooled into one account\\. 0 of 2 portfolios reached the ${MIN_TRADES}-trade minimum\\. The largest is [^:]+, with 3 closed trades: expectancy [+−]?\\d\\.\\d{2}R, 95% range `), sample);
+  assert.doesNotMatch(sample, /(?:The largest is|It is) \d+ of/);
+  // Identical results have no spread: no zero-width "95% range".
+  const flat = measuredText(atlasCard('expectancy'), { paper: journalTrades([[-1, -20], [-1, -20], [-1, -20], [-1, -20]], { portfolio: 'pf-same' }), backtest: null });
+  assert.match(flat, /no range: all 4 results are identical/, flat);
+  assert.doesNotMatch(flat, /95% range/);
 });
 
 // ─── Through /api/chat ────────────────────────────────────────────────────
@@ -405,7 +439,8 @@ test('the owner\'s seven phrasings are answered from the cards with no model, ty
     const out = await lesson(words);
     assert.match(out.reply, /^The formula for VWAP, sir: VWAP equals the sum of typical price times volume, divided by the sum of volume/);
     assert.match(out.reply, /VWAP = 40,400 ÷ 400 = 101/);
-    assert.match(out.reply, /CHE does not compute VWAP on market data yet/, 'the card says what CHE cannot do');
+    assert.match(out.reply, /CHE computes a session VWAP from her stored, delayed MNQ bars when you ask for a market read/, 'the card says what CHE really computes');
+    assert.match(out.reply, /Reference links, not opened or checked by CHE: /);
   }
   for (const words of variants('Quiz me on risk management.')) {
     const out = await lesson(words);
@@ -444,38 +479,112 @@ test('the /learn command is the same lesson route, through the one catalog', asy
   assert.equal(unknown.done.ok, false);
 });
 
-test('a coding or trading topic with no card is said plainly; other subjects keep their usual route', async () => {
+test('a topic with no card goes on to the usual routes; the atlas says "no card" only when it is asked by name', async () => {
   const che = await owner();
-  for (const words of variants('Teach me Kubernetes.')) {
-    const out = await che.say(words);
-    assert.equal(out.route, 'che_knowledge_atlas', words);
-    assert.equal(out.modelCalls, 0);
-    assert.match(out.reply, /^I don't have a Knowledge Atlas card on "kubernetes" yet, sir, so I won't make one up\./);
-  }
-  const options = await che.say('Quiz me on option spreads');
-  assert.match(options.reply, /no Knowledge Atlas card on "option spreads"|card on "option spreads" yet/, 'option spreads are not the bid-ask spread');
-  // Not coding or trading: the atlas does not claim it, and the conversation goes on as before.
-  for (const words of ['Teach me how to cook pasta', 'Teach me quantum chromodynamics', 'What is the capital of France?']) {
+  for (const words of [...variants('Teach me Kubernetes.'), 'Quiz me on option spreads', 'Teach me how to cook pasta', 'Teach me quantum chromodynamics', 'What is the capital of France?']) {
     const out = await che.say(words);
     assert.equal(out.route, 'model', words);
   }
-});
-
-test('"teach me to trade live" is a lesson request: it never enables trading or touches the desk', async () => {
-  const che = await owner();
-  for (const words of [...variants('Teach me to trade live.'), 'Teach me how to switch to live trading', 'teach me how to place a live order']) {
+  for (const words of ['/learn Kubernetes', 'Teach me Kubernetes from the knowledge atlas', 'Knowledge Atlas: kubernetes']) {
     const out = await che.say(words);
     assert.equal(out.route, 'che_knowledge_atlas', words);
-    assert.equal(out.modelCalls, 0);
-    assert.match(out.reply, /Lessons never place or enable trades: live orders stay disabled, and nothing was changed\./, words);
+    assert.equal(out.modelCalls, 0, words);
+    assert.match(out.reply, /^I don't have a Knowledge Atlas card on "kubernetes" yet, sir, so I won't make one up\./, words);
+  }
+  assert.match((await che.say('/learn option spreads')).reply, /card on "option spreads" yet/, 'option spreads are not the bid-ask spread');
+});
+
+// Owner turns that main routes elsewhere (PR #357 review): each must keep its route, never an atlas reply.
+const NOT_LESSONS = [
+  ['walk me through every trade you made', 'che_trading_live'],
+  ['help me understand which strategy is performing best on MNQ', 'che_trading_live'],
+  ['walk me through your trading performance', 'che_trading_live'],
+  ['help me understand my trading performance', 'che_trading_live'],
+  ['walk me through your last code change', 'che_read_only'],
+  ['teach me to trade live and switch to live trading', 'che_trading_desk'],
+  ['help me understand the bug in my python code'],
+  ['help me understand why the GitHub deploy failed'],
+  ['teach me how your coding job works'],
+  ['walk me through the code you changed in PR 352'],
+  ['how do i calculate the average of a list in python'],
+  ["explain the stock market like I'm a beginner"],
+  ['explain machine learning in simple terms'],
+  ['help me understand our YouTube strategy'],
+  ['walk me through my Amazon orders'],
+  ['help me understand my options for the apartment lease'],
+  ['help me understand the profit margin of my business'],
+  ['walk me through my design portfolio'],
+  ['I want to understand the threads on my Reddit post'],
+  ['help me understand the API bill from OpenAI'],
+  ['explain to me the risk of skipping my flu shot'],
+  ['help me understand the delta between the two contracts I signed'],
+  ['Walk me through the trade-offs of a system-wide architecture redesign for the voice pipeline'],
+  ['teach me python and email it to Mark'],
+  ['teach me recursion and email it to Mark'],
+  ['ask me a question'],
+  ['help me understand'],
+];
+
+test('owner turns about his own or CHE\'s data and work, or with a second request, are never lessons', async () => {
+  for (const [words, route] of NOT_LESSONS) {
+    for (const said of [words, spoken(words)]) {
+      const che = await owner();
+      const out = await che.say(said);
+      assert.notEqual(out.route, 'che_knowledge_atlas', `${said}: ${out.reply.slice(0, 100)}`);
+      assert.doesNotMatch(out.reply, /Knowledge Atlas card|Lessons never place/, said);
+      if (route) assert.equal(out.route, route, said);
+    }
+    assert.equal(atlasIntent(words), null, words);
+  }
+  // Whole words only: "trade-offs" and "trader joe's" are not trading.
+  assert.equal(atlasIntent('/learn the trade-offs of microservices'), null);
+  const tradeoffs = atlasIntent('Knowledge Atlas: the trade-offs of microservices');
+  assert.equal(tradeoffs.kind, 'missing');
+  assert.equal(tradeoffs.domain, '', 'a hyphenated word is not a domain word');
+  assert.equal(atlasIntent("Knowledge Atlas: trader-joe's coupons").domain, '');
+});
+
+test('a method question names its card even with "my": "how do I calculate my position size for MNQ"', async () => {
+  const che = await owner();
+  for (const words of ['how do I calculate my position size for MNQ', 'How do I calculate my position size for MNQ?', 'how do you calculate position size']) {
+    const out = await che.say(words);
+    assert.equal(out.route, 'che_knowledge_atlas', words);
+    assert.match(out.reply, /^The formula for Risk management and position sizing, sir: contracts equal the risk budget divided by the stop distance times the point value, rounded down\./, words);
+  }
+  // A lesson right before still lets "help me understand" or "ask me a question" continue it.
+  const taught = (await che.say('teach me recursion')).reply;
+  const history = [{ role: 'assistant', content: taught }];
+  assert.match((await che.say('help me understand', { history })).reply, /^Recursion, beginner level, sir\./);
+  assert.match((await che.say('ask me a question', { history })).reply, /^Quiz on Recursion, sir\./);
+});
+
+test('"teach me to trade live" is not a lesson and changes nothing; the atlas, asked by name, reports the real desk mode', async () => {
+  const che = await owner();
+  for (const words of [...variants('Teach me to trade live.'), 'teach me how to place a live order']) {
+    const out = await che.say(words);
+    assert.notEqual(out.route, 'che_knowledge_atlas', words);
     const desk = await readDesk(storageFor(che.saved));
     assert.equal(desk.mode, 'paper', words);
     assert.equal(desk.live_request_at, 0, `${words}: no live switch was even requested`);
   }
-  // The real desk request keeps its own two-step route.
-  const live = await che.say('Switch to live trading');
-  assert.equal(live.route, 'che_trading_desk');
-  assert.equal((await readDesk(storageFor(che.saved))).mode, 'paper', 'still waits for "confirm live trading"');
+  // A sentence that names the switch reaches the desk's own two-step gate, exactly as on main:
+  // it asks for "confirm live trading" and changes nothing yet.
+  const howTo = await che.say('Teach me how to switch to live trading');
+  assert.equal(howTo.route, 'che_trading_desk');
+  assert.match(howTo.reply, /say "confirm live trading" within two minutes\. Nothing changed yet\./);
+  assert.equal((await readDesk(storageFor(che.saved))).mode, 'paper');
+  const paper = await che.say('/learn how to trade live');
+  assert.equal(paper.route, 'che_knowledge_atlas');
+  assert.match(paper.reply, /This lesson changed nothing: you are still on paper trading \(CHE's own journal, no account\)\./);
+  assert.doesNotMatch(paper.reply, /live orders stay disabled/);
+  // On live, the same lesson says live, and the desk is untouched by it.
+  assert.equal((await che.say('Switch to live trading')).route, 'che_trading_desk');
+  assert.equal((await che.say('confirm live trading')).route, 'che_trading_desk');
+  const before = await readDesk(storageFor(che.saved));
+  assert.equal(before.mode, 'live', 'the desk itself switched, after its own confirmation');
+  const live = await che.say('/learn trade live');
+  assert.match(live.reply, /This lesson changed nothing: you are still on your NinjaTrader LIVE account, real money\./);
+  assert.deepEqual(await readDesk(storageFor(che.saved)), before, 'the lesson read the desk and wrote nothing');
 });
 
 test('"quiz me" with no topic asks which one; "number" picks then quiz that card', async () => {
@@ -541,16 +650,17 @@ test('measured lines through /api/chat: the journal and the stored backtest, exa
   const s = summarize(trades);
   const out = await che.say('Explain expectancy');
   assert.equal(out.route, 'che_knowledge_atlas');
-  assert.match(out.reply, /Your records, measured from CHE's paper journal: 5 closed paper trades, fewer than the 30 trades needed, so this is anecdote, not evidence\./);
-  assert.ok(out.reply.includes(`Expectancy +${s.expectancy_r.toFixed(2)}R per trade after assumed costs`), out.reply);
+  assert.match(out.reply, /Your records, measured from CHE's paper journal: 5 closed paper trades in 1 paper portfolio, one strategy\./);
+  assert.ok(out.reply.includes(`expectancy +${s.expectancy_r.toFixed(2)}R per trade after assumed costs, 95% range ${s.expectancy_r_95ci.low < 0 ? '-' : '+'}${Math.abs(s.expectancy_r_95ci.low).toFixed(2)}R`), out.reply);
+  assert.match(out.reply, /Largest sample: n = 5, fewer than the 30 trades needed, so this is anecdote, not evidence\./);
   assert.match(out.reply, /Latest stored backtest, 2026-10-18, Yahoo MNQ=F, 1200 five-minute bars \(DELAYED public data\): 2 strategy portfolios with 52 trades; expectancy ranged -0\.15R to \+0\.12R across them\. A backtest is history, not a forward result\./);
   const pf = await che.say("What's the formula for profit factor?");
-  assert.ok(pf.reply.includes(`Profit factor ${s.profit_factor}.`), pf.reply);
+  assert.ok(pf.reply.includes(`profit factor ${s.profit_factor}.`), pf.reply);
   assert.match(pf.reply, /profit factor ranged 0\.8 to 1\.3 across them/);
   const dd = await che.say('Teach me maximum drawdown like an expert');
   assert.match(dd.reply, /^Maximum drawdown, expert level, sir\./);
-  assert.ok(dd.reply.includes(`Maximum drawdown $${s.max_drawdown.toFixed(2)}`), dd.reply);
-  assert.equal((await che.say('Teach me VWAP')).reply.includes('Your records'), false, 'VWAP cites no record because CHE computes none');
+  assert.ok(dd.reply.includes(`maximum drawdown $${s.max_drawdown.toFixed(2)}`) && dd.reply.includes('None of these is an account balance.'), dd.reply);
+  assert.equal((await che.say('Teach me VWAP')).reply.includes('Your records'), false, 'the VWAP card cites no journal statistic');
 });
 
 test('a guest device gets no lesson from the owner\'s records', async () => {

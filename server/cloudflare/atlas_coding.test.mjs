@@ -450,7 +450,8 @@ test('the owner\'s phrasings are answered from the atlas with no model: lessons,
   assert.match(code.reply, /^The Python example, sir, in Python\./, 'the example names its own language');
   assert.match(code.reply, /```python\nimport json/);
   assert.match((await lesson('Teach me recursion in Python')).reply, /^Recursion, beginner level/, 'a language after the topic still names the topic');
-  assert.match((await lesson('explain merge vs rebase')).reply, /^Git: commits, branches, merge, rebase and bisect, beginner level/);
+  assert.match((await lesson('explain git rebase')).reply, /^Git: commits, branches, merge, rebase and bisect, beginner level/);
+  assert.match((await lesson('teach me Cloudflare Workers')).reply, /^Cloudflare Workers and Durable Objects, beginner level/);
   assert.match((await lesson('what is a durable object')).reply, /^Cloudflare Workers and Durable Objects, beginner level/);
   assert.equal(requests.length, sent, 'no lesson made an outbound request');
 });
@@ -500,7 +501,10 @@ test('"give me a coding exercise on binary search", then answering it: right, wr
   const git = list.reply.split('\n').find((l) => l.includes('Git: commits'));
   const picked = await che.say(git.split('.')[0], { history: after(list.reply) });
   assert.match(picked.reply, /^Exercise 1 of 1 on Git: commits, branches, merge, rebase and bisect, sir/, 'a spoken number picks from the list');
-  const none = await che.say('give me a coding exercise on kubernetes');
+  // A topic with no card goes on to the usual routes, unless the atlas itself is asked.
+  assert.equal((await che.say('give me a coding exercise on kubernetes')).route, 'model');
+  const none = await che.say('/learn give me a coding exercise on kubernetes');
+  assert.equal(none.route, 'che_knowledge_atlas');
   assert.match(none.reply, /^I don't have a coding exercise on "kubernetes" yet, sir, so I won't make one up\./);
   assert.equal(requests.length, sent, 'no outbound request');
 });
@@ -586,6 +590,24 @@ test('counter-cases keep their routes: coding jobs, PR review, REA, research, an
     assert.notEqual(await routes(words), 'che_knowledge_atlas', words);
   }
   assert.equal(atlasIntent('give me a coding exercise on binary search and pay for the course'), null, 'money words still reach the gate');
+  // The concept rule of #357 holds for the coding cards: the owner's own code, bugs, changes and
+  // bills, a "why", a PR number or a second request are never taken by a lesson or a practice.
+  for (const [words, route] of [
+    ['help me understand the bug in my python code', 'model'],
+    ['walk me through your last code change', 'che_read_only'],
+    ['how do i calculate the average of a list in python', 'model'],
+    ['explain why the git push failed', 'model'],
+    ['help me understand our Cloudflare bill', 'model'],
+    ['explain the bug in my binary search', 'model'],
+    ['give me an exercise on my code', 'model'],
+    ['where did you change the router', 'model'],
+    ['where does che do checkpoints for PR 352', 'model'],
+    ['how did you recover from the last failed deploy', 'model'],
+    ['give me a coding exercise on recursion and email it to Mark', 'model'],
+  ]) assert.equal(await routes(words), route, words);
+  for (const words of ['explain git', 'teach me Cloudflare Workers', 'explain dynamic programming', 'quiz me on secure coding']) {
+    assert.equal(await routes(words), 'che_knowledge_atlas', words);
+  }
   assert.equal(findAtlasCard('binary search')?.id, 'c-binary-search');
   assert.equal(findAtlasCard('graph theory'), null);
 });

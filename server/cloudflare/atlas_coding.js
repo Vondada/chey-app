@@ -320,7 +320,7 @@ const LANGUAGES = [
   card({
     id: 'c-git', domain: 'coding', title: 'Git: commits, branches, merge, rebase and bisect', level: 'beginner',
     summary: 'Git records every change as a commit, so you can branch, combine work and find the change that broke something.',
-    aliases: ['git', 'version control', 'git basics', 'commits', 'git branches', 'merge vs rebase', 'merge versus rebase', 'merge and rebase', 'rebase', 'git rebase', 'git merge', 'git bisect', 'bisect'],
+    aliases: ['git', 'version control', 'git basics', 'git branches', 'rebase', 'rebasing', 'git rebase', 'git bisect', 'bisect', 'git history'],
     tags: ['tools', 'engineering'], prerequisites: [], related: ['testing', 'c-debugging', 'c-deployment'],
     levels: {
       beginner: 'Git keeps the history of a project. Each commit is a saved snapshot with a message saying what changed and why. A branch is a separate line of work, so you can try something without disturbing the main version, and bring it back when it is ready.',
@@ -876,7 +876,7 @@ const CRAFT = [
   card({
     id: 'c-debugging', domain: 'coding', title: 'Debugging: reproduce, locate, fix narrowly, prove', level: 'intermediate',
     summary: 'Debugging is a loop: make the bug happen on demand, find where it starts, change only that, and prove it is gone.',
-    aliases: ['debugging', 'debug', 'debugging code', 'fixing bugs', 'bug fixing', 'reproduce a bug', 'root cause analysis', 'how to debug'],
+    aliases: ['debugging', 'debug', 'debugging code', 'debugging techniques', 'root cause analysis', 'how to debug'],
     tags: ['engineering', 'quality'], prerequisites: ['testing', 'c-git'], related: ['c-binary-search', 'c-self-repair', 'testing'],
     levels: {
       beginner: 'Debugging is finding out why a program does the wrong thing and fixing it. First make the problem happen again on purpose, the same way every time. Then narrow down where it goes wrong, fix only that part, and check the problem is really gone.',
@@ -1064,7 +1064,7 @@ const CRAFT = [
     ],
   }),
   card({
-    id: 'c-performance', domain: 'coding', title: 'Performance: complexity, caching and I/O', level: 'expert',
+    id: 'c-performance', domain: 'coding', title: 'Performance: complexity, caching and input/output', level: 'expert',
     summary: 'Fast code does less work: a better algorithm, a cached answer, or fewer and larger trips to slow storage.',
     aliases: ['software performance', 'code performance', 'performance optimization', 'performance optimisation', 'caching', 'cache', 'profiling', 'latency', 'speeding up code'],
     tags: ['engineering', 'performance'], prerequisites: ['big-o', 'hash-maps'], related: ['c-cloudflare-workers', 'c-databases', 'concurrency'],
@@ -1146,7 +1146,7 @@ const CRAFT = [
   card({
     id: 'c-deployment', domain: 'coding', title: 'Deployment: CI, staged rollout and live verification', level: 'intermediate',
     summary: 'A change is done when CI passes, it is rolled out in stages, and the live system is checked to be running it.',
-    aliases: ['deployment', 'deploying', 'deploy', 'continuous integration', 'ci', 'ci cd', 'continuous deployment', 'staged rollout', 'staged deploy', 'live verification', 'release process'],
+    aliases: ['continuous integration', 'ci', 'ci cd', 'staged rollout', 'staged rollouts', 'rollouts', 'live verification', 'release process', 'shipping software'],
     tags: ['engineering', 'operations'], prerequisites: ['testing', 'c-git'], related: ['c-cloudflare-workers', 'c-self-repair', 'sample-size'],
     levels: {
       beginner: 'Deployment is putting a new version of a program where people use it. Before that, an automatic checker called CI runs every test on the change. After it, you check the live version really is the new one and really works, instead of assuming it does.',
@@ -1280,7 +1280,7 @@ const AUTONOMY = [
   card({
     id: 'c-checkpoints', domain: 'coding', title: 'Checkpoints and resumable jobs', level: 'expert',
     summary: 'A checkpoint saves only verified progress, so a failed attempt or a restart costs nothing that already worked.',
-    aliases: ['checkpoints', 'checkpoint', 'resumable jobs', 'resumable job', 'resuming jobs', 'job checkpoints', 'checkpoints and resume'],
+    aliases: ['checkpoints', 'checkpoint', 'checkpointing', 'checkpoints and resume', 'resumable work', 'resuming work'],
     tags: ['autonomy', 'reliability'], prerequisites: ['c-git', 'c-agent-planning'], related: ['c-model-failover', 'c-self-repair', 'c-git'],
     levels: {
       beginner: 'A checkpoint is a saved point of progress that is known to be good. If CHE\'s coding job is interrupted, or one attempt makes a mess, she goes back to the last checkpoint instead of starting from nothing, and carries on from there.',
@@ -1321,7 +1321,7 @@ const AUTONOMY = [
     limitations: 'The checker verifies syntax only; tests and review still run on the final change. The example models the idea; the real runner works on git patches.',
     exercises: [
       {
-        id: 'c-checkpoints.1', kind: 'choice', topics: ['resumable jobs', 'resume', 'resuming jobs', 'checkpoints'], language: 'javascript',
+        id: 'c-checkpoints.1', kind: 'choice', topics: ['resumable work', 'resume', 'resuming work', 'checkpoints'], language: 'javascript',
         prompt: 'A coding job hit a quota error and has already resumed 3 times. What does CHE\'s resumeDecision say now?',
         solution: { che: 'server/cloudflare/coding_failover.mjs', entry: 'resumeDecision', pick: 'reason' },
         cases: [{ args: [{ resumable: true, resumeCount: 3 }], expected: 'limit_reached' }, { args: [{ resumable: true, resumeCount: 0 }], expected: 'capacity' }, { args: [{ resumable: false, resumeCount: 0 }], expected: 'not_capacity' }], ask: 0,
@@ -1345,7 +1345,7 @@ const AUTONOMY = [
   card({
     id: 'c-model-failover', domain: 'coding', title: 'Model failover and recovery', level: 'expert',
     summary: 'When a model fails, classify why first: retrying helps a busy model, never a request that is too large.',
-    aliases: ['model failover', 'failover', 'model fallback', 'fallback models', 'error recovery', 'failure recovery', 'retries and backoff', 'exponential backoff', 'backoff'],
+    aliases: ['model failover', 'failover', 'model fallback', 'fallback models', 'model recovery', 'retries and backoff', 'exponential backoff', 'backoff'],
     tags: ['autonomy', 'reliability', 'ai'], prerequisites: ['http-apis', 'c-checkpoints'], related: ['c-self-repair', 'c-deployment', 'c-checkpoints'],
     levels: {
       beginner: 'AI models sometimes fail: they are busy, out of allowance, or the request is too big for them. CHE does not just try again blindly. She works out why it failed, then waits, moves to another model, or stops and says what went wrong.',
@@ -1441,7 +1441,7 @@ const AUTONOMY = [
   card({
     id: 'c-self-repair', domain: 'coding', title: 'Self-repair loops and CI validation', level: 'expert',
     summary: 'A self-repair loop tests a change, reads the real failure, tries a genuinely different fix, and stops within a budget.',
-    aliases: ['self repair', 'self repair loops', 'self healing code', 'self correction', 'ci validation', 'reasoning about failures', 'failure analysis', 'repair loops'],
+    aliases: ['self repair', 'self repair loops', 'self healing code', 'self correction', 'ci validation', 'reasoning about failures', 'repair loops'],
     tags: ['autonomy', 'testing', 'ai'], prerequisites: ['c-debugging', 'c-checkpoints', 'c-model-failover'], related: ['testing', 'c-deployment', 'c-agent-planning'],
     levels: {
       beginner: 'A self-repair loop is how CHE fixes her own mistakes while coding: she makes a change, runs the tests, and if they fail she reads exactly what failed and tries again. She also knows when to stop, so she never goes round in circles.',
@@ -1714,15 +1714,15 @@ const PHASE1_PRACTICE = {
       prompt: 'Using the first digit of a status code, which class is 429 Too Many Requests?',
       solution: { language: 'javascript', code: "const kind = (status) => ['informational', 'success', 'redirect', 'client error', 'server error'][Math.floor(status / 100) - 1];", entry: 'kind' },
       cases: [{ args: [429], expected: 'client error' }, { args: [200], expected: 'success' }, { args: [503], expected: 'server error' }], ask: 0, answer: 'client error',
-      explain: 'It starts with 4, a client error; it is the one 4xx answer worth retrying, after a wait.',
+      explain: 'It starts with 4, a client error; with 408 it is one of the few 4xx answers worth retrying, after a wait.',
     }],
     review_drills: [{
       id: 'http-apis.d1', title: 'Retrying the caller\'s own mistakes', language: 'javascript',
       code: 'const shouldRetry = (status) => status >= 400;', entry: 'shouldRetry',
-      fixed: 'const shouldRetry = (status) => status === 429 || status >= 500;   // busy or broken server only',
-      probe: { calls: [[400], [404], [429], [503]], buggy: [true, true, true, true], fixed: [false, false, true, true] },
-      finding: 'It retries every 4xx answer, but a 400 or 404 is the caller\'s mistake and will fail the same way every time. Retry only 429 and 5xx, with backoff.',
-      keywords: [['400', '404', '4xx', 'client error', 'caller', 'bad request', 'not found', 'every error', 'all errors', 'same way'], ['429', '5xx', '500', 'server', 'never succeed', 'pointless', 'backoff']], min: 1,
+      fixed: 'const shouldRetry = (status) => status === 408 || status === 429 || status >= 500;   // a timeout, too many requests, or the server',
+      probe: { calls: [[400], [404], [408], [429], [503]], buggy: [true, true, true, true, true], fixed: [false, false, true, true, true] },
+      finding: 'It retries every 4xx answer, but a 400 or 404 is the caller\'s mistake and will fail the same way every time. Retry only 408, 429 and 5xx, with backoff.',
+      keywords: [['400', '404', '4xx', 'client error', 'caller', 'bad request', 'not found', 'every error', 'all errors', 'same way'], ['408', '429', '5xx', '500', 'server', 'never succeed', 'pointless', 'backoff']], min: 1,
     }],
   },
   concurrency: {
@@ -1918,7 +1918,7 @@ const REPO_HOW = new RegExp(String.raw`^how (?:does|do) (?:che|you|she) (.+?)(${
  * (no wake word, lower case, no end punctuation); `deps` are its matchers, so this module never
  * imports it. A sentence that starts a new request is never taken as an answer.
  */
-export function codingIntent(t, history, { cards, findCard, topicKey }) {
+export function codingIntent(t, history, { cards, findCard, topicKey, conceptTopic = () => true, explicit = false }) {
   const ctx = practiceContext(history, cards);
   const exercisesOf = (c) => c?.exercises || [];
 
@@ -1955,6 +1955,8 @@ export function codingIntent(t, history, { cards, findCard, topicKey }) {
       return qualified || ctx.card ? { kind: 'coding_practice_list' } : null;
     }
     if (/^(?:this|that|it|this card|this topic)$/.test(topic)) return ctx.card ? { kind: 'coding_exercise', card: ctx.card, index: 0 } : { kind: 'coding_practice_list' };
+    // "An exercise on my code", "on the bug in PR 352": the owner's own work, not a concept.
+    if (!conceptTopic(topic)) return null;
     const key = topicKey(topic);
     for (const c of cards) {
       const at = exercisesOf(c).findIndex((x) => x.topics.some((name) => topicKey(name) === key));
@@ -1962,8 +1964,9 @@ export function codingIntent(t, history, { cards, findCard, topicKey }) {
     }
     const found = findCard(topic);
     if (found && exercisesOf(found).length) return { kind: 'coding_exercise', card: found, index: 0 };
-    // "An exercise for my back" is not a coding request: only a named card or "coding exercise" is.
-    if (found || qualified) return { kind: 'coding_no_practice', card: found, topic: topic.slice(0, 80) };
+    // A card with no exercise says so; a topic with no card goes on to the usual routes unless the
+    // atlas was asked by name ("/learn give me a coding exercise on Kubernetes").
+    if (found || explicit) return { kind: 'coding_no_practice', card: found, topic: topic.slice(0, 80) };
     return null;
   }
 
@@ -1972,10 +1975,11 @@ export function codingIntent(t, history, { cards, findCard, topicKey }) {
   if (drill || REVIEW_WITH_ME.test(t)) {
     const topic = String(drill?.[1] || '').trim();
     if (!topic) return { kind: 'coding_drill', index: ctx.what === 'drill' ? ctx.index + 1 : 0 };
-    const found = findCard(topic);
+    const found = conceptTopic(topic) ? findCard(topic) : null;
     const list = allDrills(cards);
     const at = found ? list.findIndex((x) => x.card.id === found.id) : -1;
-    return at >= 0 ? { kind: 'coding_drill', index: at } : { kind: 'coding_no_practice', card: found, topic: topic.slice(0, 80), drill: true };
+    if (at >= 0) return { kind: 'coding_drill', index: at };
+    return found || explicit ? { kind: 'coding_no_practice', card: found, topic: topic.slice(0, 80), drill: true } : null;
   }
 
   // "Where does CHE do checkpoints in its own code?", "how does CHE recover when a model fails?"
@@ -1986,8 +1990,8 @@ export function codingIntent(t, history, { cards, findCard, topicKey }) {
     const key = topicKey(repoTopic);
     const asked = cards.find((c) => (c.che_asks || []).some((p) => topicKey(p) === key));
     if (asked) return { kind: 'coding_repo', card: asked, how: Boolean(how) };
-    const explicit = Boolean((where || how)?.[2]) || REPO_SHOW.test(t);
-    const found = explicit || where ? findCard(repoTopic) : null;
+    const ownCode = Boolean((where || how)?.[2]) || REPO_SHOW.test(t);
+    const found = (ownCode || where) && conceptTopic(repoTopic) ? findCard(repoTopic) : null;
     if (found?.repo_examples?.length) return { kind: 'coding_repo', card: found, how: Boolean(how) };
   }
   return null;
@@ -1996,7 +2000,9 @@ export function codingIntent(t, history, { cards, findCard, topicKey }) {
 // ─── What CHE says ───────────────────────────────────────────────────────
 
 const refName = (s) => (s.url || s.title.startsWith('CHE source') ? s.title : `${s.title}, by ${s.author}`);
-const sourceLine = (c, mark) => `Source: Knowledge Atlas card "${c.title}" (coding), ${mark}. Curated teaching content; ${mark.startsWith('exercise') ? 'the answer is checked against a reference solution that CHE\'s tests run' : mark.startsWith('review drill') ? 'the bug and its fix are both run by CHE\'s tests' : 'each path and name is checked against the repository by CHE\'s tests'}. References: ${c.sources.map(refName).join('; ')}.`;
+// knowledge_atlas.js passes its REFERENCES_LABEL, so every card names its links the same way.
+let referencesLabel = 'Reference links, not opened or checked by CHE';
+const sourceLine = (c, mark) => `Source: Knowledge Atlas card "${c.title}" (coding), ${mark}. Curated teaching content; ${mark.startsWith('exercise') ? 'the answer is checked against a reference solution that CHE\'s tests run' : mark.startsWith('review drill') ? 'the bug and its fix are both run by CHE\'s tests' : 'each path and name is checked against the repository by CHE\'s tests'}. ${referencesLabel}: ${c.sources.map(refName).join('; ')}.`;
 const FENCE = { javascript: 'javascript', typescript: 'typescript', python: 'python', dart: 'dart', sql: 'sql' };
 const fenced = (code, language) => (code ? `\n\`\`\`${FENCE[language] || ''}\n${code}\n\`\`\`` : '');
 export const LANGUAGE_NAMES = Object.freeze({ javascript: 'JavaScript', typescript: 'TypeScript', python: 'Python', dart: 'Dart', sql: 'SQL' });
@@ -2060,7 +2066,8 @@ async function repoText(c, how, storage) {
 }
 
 /** CHE's reply to a codingIntent result. Deterministic: no model, no network, nothing run. */
-export async function answerCoding(intent, { storage = null, cards = [] } = {}) {
+export async function answerCoding(intent, { storage = null, cards = [], referencesLabel: label = '' } = {}) {
+  if (label) referencesLabel = label;
   const out = (text, ok = true, c = intent?.card) => ({ ok, text: text.replace(/−/g, '-'), card_id: c?.id || '', kind: intent?.kind || '' });
   const c = intent?.card || null;
   switch (intent?.kind) {

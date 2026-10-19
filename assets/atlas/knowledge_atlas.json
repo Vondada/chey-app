@@ -10,6 +10,94 @@
   "coding": "Coding",
   "trading": "Trading"
  },
+ "references_label": "Reference links, not opened or checked by CHE",
+ "matching": {
+  "filler": [
+   "about",
+   "on",
+   "in",
+   "the",
+   "a",
+   "an",
+   "how",
+   "what",
+   "to",
+   "of",
+   "me",
+   "some",
+   "is",
+   "are",
+   "works",
+   "work",
+   "means",
+   "mean",
+   "concept",
+   "idea",
+   "basics",
+   "basic",
+   "again",
+   "now",
+   "today",
+   "detail",
+   "step",
+   "by",
+   "more",
+   "please",
+   "that",
+   "this",
+   "with",
+   "it",
+   "its",
+   "and",
+   "for",
+   "python",
+   "javascript",
+   "js",
+   "dart",
+   "code",
+   "programming",
+   "trading",
+   "futures",
+   "whole",
+   "topic",
+   "lesson",
+   "card"
+  ],
+  "numbers": {
+   "one": 1,
+   "two": 2,
+   "three": 3,
+   "four": 4,
+   "for": 4,
+   "five": 5,
+   "six": 6,
+   "seven": 7,
+   "eight": 8,
+   "nine": 9,
+   "ten": 10,
+   "eleven": 11,
+   "twelve": 12,
+   "thirteen": 13,
+   "fourteen": 14,
+   "fifteen": 15,
+   "sixteen": 16,
+   "seventeen": 17,
+   "eighteen": 18,
+   "nineteen": 19,
+   "twenty": 20,
+   "first": 1,
+   "second": 2,
+   "third": 3,
+   "fourth": 4,
+   "fifth": 5
+  },
+  "languages": [
+   "python",
+   "javascript",
+   "js",
+   "dart"
+  ]
+ },
  "cards": [
   {
    "id": "variables",
@@ -392,7 +480,7 @@
    "misconceptions": [
     "Full coverage does not mean correct: a line can run in a test without any assertion checking its result."
    ],
-   "che_note": "CHE's own Worker is checked this way: every module has a *.test.mjs file that runs offline with node --test.",
+   "che_note": "CHE's own Worker is checked this way: its tests (server/cloudflare/*.test.mjs) run offline with node --test.",
    "measured": null,
    "sources": [
     {
@@ -1037,7 +1125,7 @@
    "levels": {
     "beginner": "An API is a menu one program offers another: the requests it accepts and what it sends back. On the web those requests travel over HTTP: an app asks a server for something at an address, and the server answers with a status code and some data.",
     "intermediate": "An HTTP request has a method (GET reads, POST creates or sends, PUT and PATCH change, DELETE removes), a URL with an optional query string, headers such as Content-Type and Authorization, and sometimes a JSON body. The status code's first digit says what happened: 2xx success, 3xx redirect, 4xx the caller's mistake, 5xx the server's failure.",
-    "expert": "GET, PUT and DELETE are idempotent, meaning that repeating them leaves the same result, so they can be retried safely; POST is not, unless the API takes an idempotency key. Retry 429 and 5xx answers with exponential backoff and jitter, never other 4xx ones, and put a timeout on every call. Credentials never belong in a URL, where they end up in logs: they go in a header, over HTTPS."
+    "expert": "GET, PUT and DELETE are idempotent, meaning that repeating them leaves the same result, so they can be retried safely; POST is not, unless the API takes an idempotency key. Retry 408, 429 and 5xx answers with exponential backoff and jitter, never other 4xx ones, and put a timeout on every call. Credentials never belong in a URL, where they end up in logs: they go in a header, over HTTPS."
    },
    "analogy": "An API is like a restaurant menu and waiter: you order from the menu in a set way, the kitchen does work you can't see, and the waiter brings back your dish or tells you it's sold out.",
    "formula": null,
@@ -1064,7 +1152,7 @@
     },
     {
      "q": "Should a 400 Bad Request be retried?",
-     "a": "No. Fix the request. Retry only 429 and 5xx answers, with backoff."
+     "a": "No. Fix the request. Retry only 408, 429 and 5xx answers, with backoff."
     }
    ],
    "misconceptions": [
@@ -1105,7 +1193,7 @@
      "code": "const kind = (status) => ['informational', 'success', 'redirect', 'client error', 'server error'][Math.floor(status / 100) - 1];",
      "options": [],
      "answer": "client error",
-     "explain": "It starts with 4, a client error; it is the one 4xx answer worth retrying, after a wait."
+     "explain": "It starts with 4, a client error; with 408 it is one of the few 4xx answers worth retrying, after a wait."
     }
    ],
    "review_drills": [
@@ -1114,8 +1202,8 @@
      "title": "Retrying the caller's own mistakes",
      "language": "javascript",
      "code": "const shouldRetry = (status) => status >= 400;",
-     "finding": "It retries every 4xx answer, but a 400 or 404 is the caller's mistake and will fail the same way every time. Retry only 429 and 5xx, with backoff.",
-     "fixed": "const shouldRetry = (status) => status === 429 || status >= 500;   // busy or broken server only",
+     "finding": "It retries every 4xx answer, but a 400 or 404 is the caller's mistake and will fail the same way every time. Retry only 408, 429 and 5xx, with backoff.",
+     "fixed": "const shouldRetry = (status) => status === 408 || status === 429 || status >= 500;   // a timeout, too many requests, or the server",
      "from": ""
     }
    ],
@@ -1834,16 +1922,13 @@
     "git",
     "version control",
     "git basics",
-    "commits",
     "git branches",
-    "merge vs rebase",
-    "merge versus rebase",
-    "merge and rebase",
     "rebase",
+    "rebasing",
     "git rebase",
-    "git merge",
     "git bisect",
-    "bisect"
+    "bisect",
+    "git history"
    ],
    "tags": [
     "tools",
@@ -2946,9 +3031,7 @@
     "debugging",
     "debug",
     "debugging code",
-    "fixing bugs",
-    "bug fixing",
-    "reproduce a bug",
+    "debugging techniques",
     "root cause analysis",
     "how to debug"
    ],
@@ -3403,7 +3486,7 @@
   {
    "id": "c-performance",
    "domain": "coding",
-   "title": "Performance: complexity, caching and I/O",
+   "title": "Performance: complexity, caching and input/output",
    "level": "expert",
    "summary": "Fast code does less work: a better algorithm, a cached answer, or fewer and larger trips to slow storage.",
    "revision": 1,
@@ -3578,17 +3661,15 @@
    "revision": 1,
    "source_kind": "curated",
    "aliases": [
-    "deployment",
-    "deploying",
-    "deploy",
     "continuous integration",
     "ci",
     "ci cd",
-    "continuous deployment",
     "staged rollout",
-    "staged deploy",
+    "staged rollouts",
+    "rollouts",
     "live verification",
-    "release process"
+    "release process",
+    "shipping software"
    ],
    "tags": [
     "engineering",
@@ -3872,11 +3953,10 @@
    "aliases": [
     "checkpoints",
     "checkpoint",
-    "resumable jobs",
-    "resumable job",
-    "resuming jobs",
-    "job checkpoints",
-    "checkpoints and resume"
+    "checkpointing",
+    "checkpoints and resume",
+    "resumable work",
+    "resuming work"
    ],
    "tags": [
     "autonomy",
@@ -4008,8 +4088,7 @@
     "failover",
     "model fallback",
     "fallback models",
-    "error recovery",
-    "failure recovery",
+    "model recovery",
     "retries and backoff",
     "exponential backoff",
     "backoff"
@@ -4210,7 +4289,6 @@
     "self correction",
     "ci validation",
     "reasoning about failures",
-    "failure analysis",
     "repair loops"
    ],
    "tags": [
@@ -5508,7 +5586,7 @@
    "misconceptions": [
     "VWAP is not a support line that price must respect: it is an average of what already traded."
    ],
-   "che_note": "CHE does not compute VWAP on market data yet: /trade-liquidity marks swing highs and lows only and says so. The numbers on this card are a worked example, not a market reading.",
+   "che_note": "CHE computes a session VWAP from her stored, delayed MNQ bars when you ask for a market read, for example \"analyze MNQ with VWAP\" (trading_live_chat.js); /trade-liquidity marks swing highs and lows and does not compute it. The numbers on this card are a worked example, not a market reading.",
    "measured": null,
    "sources": [
     {
@@ -5519,7 +5597,7 @@
      "text_scope": "own-words summary"
     },
     {
-     "title": "CHE source: server/cloudflare/command_catalog.js (/trade-liquidity)",
+     "title": "CHE source: server/cloudflare/trading_live_chat.js (marketRead)",
      "author": "CHE repository",
      "url": "",
      "license": "reference link only; card text is original",
