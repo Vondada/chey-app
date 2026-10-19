@@ -5,10 +5,14 @@ import { withoutProhibitions } from './owner_action_gate.js';
 
 const WAKE = /^\s*(?:(?:hey\s+)?(?:che|chay|chey)[,:]?\s+)?/i;
 // Start and stop are commands only: "Don't stop paper trading" and "Why did you stop paper
-// trading?" change nothing (review of #339). Every other kind needs trading words of its own.
-const PATTERNS = [
+// trading?" change nothing (review of #339). They count only when the turn opens with them.
+const COMMANDS = [
   ['stop', /^(?:please\s+)?(?:stop|pause|turn\s+off|end|halt)\s+(?:the\s+|your\s+)?paper[\s-]*trad\w*/i],
   ['start', /^(?:please\s+)?(?:start|begin|turn\s+on|resume|run|launch)\s+(?:the\s+|your\s+)?paper[\s-]*trad\w*/i],
+];
+// Every read needs trading words of its own. One question can ask several (issue #350), and each
+// one asked is answered, in the order asked.
+const READS = [
   ['why', /\b(?:explain|why)\b[\s\S]{0,40}\b(?:that|the\s+last|last|this|your\s+last)\s+trade\b[\s\S]{0,25}\b(?:lost|lose|won|win|worked|failed)\b|\bwhy\s+did\s+(?:that|the\s+last|your\s+last)\s+trade\s+(?:lose|win|fail|work)\b|\bexplain\s+(?:the\s+|your\s+)?last\s+(?:losing|winning)\s+trade\b/i],
   ['chart', /\bshow\b[\s\S]{0,25}\bchart\b[\s\S]{0,30}\b(?:you\s+)?(?:entered|entry|exited)\b|\bshow\s+me\s+where\s+you\s+(?:entered|exited)\b/i],
   ['positions', /\b(?:your|my|paper)\s+(?:current\s+|open\s+)?(?:paper\s+)?positions?\b|\bcurrent\s+(?:paper\s+)?positions?\b/i],
@@ -20,7 +24,18 @@ const PATTERNS = [
   ['performance', /\btrading\s+performance\b|\bread\s+me\s+your\s+(?:trading\s+|paper\s+)?(?:results|performance)\b|\bhow\s+did\s+your\s+paper\s+trades?\s+do\b/i],
   ['evidence', /\b(?:show|read)\b[\s\S]{0,15}\btrading\s+evidence\b/i],
   ['open', /^(?:please\s+)?open\s+(?:up\s+)?(?:your\s+|the\s+)?trading\s+room\b/i],
+  // "Is paper trading still on?" reads the switch and never flips it. "Is paper trading on NQ
+  // profitable?" is not about the switch.
+  ['state', /\b(?:is|are)\s+(?:the\s+|your\s+)?paper[\s-]*trading\s+(?:still\s+)?(?:on|off|running|active|enabled)(?=\s*(?:[?.!,;]|$)|\s+(?:still|now|right\s+now|today|and|or|dont|don't|do\s+not|please)\b)|\bare\s+you\s+still\s+paper[\s-]*trading\b/i],
 ];
+// "Which strategy is performing best" says no market of its own, so it counts only in a turn that
+// does ("... paper trades ..."); "which strategy works best for my YouTube channel" is not trading.
+const PLAIN_BEST = /\bwhich\s+strateg(?:y|ies)\b[\s\S]{0,25}\b(?:best|performing|winning|working)\b/i;
+const TRADING_WORDS = /\bpaper[\s-]*trad\w*|\b(?:m?nq|ict)\b|\btrading\s+room\b/i;
+// Another topic that mentions trading belongs to its own route: a code change, a message to send.
+const OTHER_TOPIC = /\b(?:code|coding|feature|function|bug|fix|button|pull\s+request|commit|deploy|send|e-?mail|mailbox|youtube|video|website)\b|\b(?:ask|tell)\s+(?:claude|chatgpt|codex|gemini|cursor|copilot|grok)\b/i;
+// The 160-character cap of #339 dropped long compound questions; this only bounds the scan.
+const MAX_TURN = 1200;
 
 // "Analyze MNQ using your latest data ... and whether any paper trades occurred. Don't place any orders":
 // a read of the feed and the journal. An order asked for in the same turn belongs to the desk.
@@ -28,15 +43,29 @@ const ANALYSIS = /\b(?:analy[sz]e|analysis\s+(?:of|on)|break\s+down|assess)\b[\s
 // "Analyze the NQ chart" is the chart analyzer's (trading_lab); a read that asks about the feed or the
 // paper journal itself is answered here.
 const FEED_DETAIL = /\b(?:paper\s+trades?|vwap|data\s+delay|delay(?:ed)?|time\s*stamps?|data\s+source|(?:the|its)\s+source|latest\s+(?:available\s+)?(?:market\s+)?data)\b/i;
-const ORDER_ASK = /\b(?:place|submit|enter|buy|sell|short|go\s+long|go\s+short|take\s+(?:the|a)\s+trade|open\s+a\s+(?:position|trade))\b/i;
+// An order asked for in the turn belongs to the desk (fundyouredge.js, trading_desk.js); the chart
+// analyzer uses the same test. "Short MNQ" is an order; "short positions" and "short-term" are reads.
+export const ORDER_ASK = /\b(?:place|submit|enter|buy|sell|go\s+long|go\s+short|take\s+(?:the|a|this|that)\s+trade|open\s+a\s+(?:position|trade))\b|\bshort\b(?![\s-]*(?:term|positions?|trades?|side)\b)/i;
 
-/** The command in [message], or null. Narrow on purpose: other trading talk keeps its routes. */
+/** The command in [message], or null. Narrow on purpose: other trading talk keeps its routes.
+ *  A turn that asks several reads gets `kinds`, in the order asked; `kind` is the first. */
 export function liveIntent(message) {
   const text = String(message || '').replace(WAKE, '').trim();
-  if (text && text.length <= 1200 && ANALYSIS.test(text) && FEED_DETAIL.test(text) && !ORDER_ASK.test(withoutProhibitions(text))) return { kind: 'analysis' };
-  if (!text || text.length > 160) return null;
-  for (const [kind, re] of PATTERNS) if (re.test(text)) return { kind };
-  return null;
+  if (!text || text.length > MAX_TURN) return null;
+  // Only what the owner asks for counts: "don't start or stop anything" and "don't place any orders" ask nothing.
+  const asked = withoutProhibitions(text);
+  if (ORDER_ASK.test(asked)) return null;
+  if (ANALYSIS.test(text) && FEED_DETAIL.test(text)) return { kind: 'analysis' };
+  if (OTHER_TOPIC.test(asked)) return null;
+  const command = COMMANDS.find(([, re]) => re.test(asked))?.[0];
+  const found = READS.map(([kind, re]) => [kind, text.search(re)]);
+  if (TRADING_WORDS.test(text)) found.push(['best', text.search(PLAIN_BEST)]);
+  const reads = [...new Set(found.filter(([, at]) => at >= 0).sort((a, b) => a[1] - b[1]).map(([kind]) => kind))]
+    // After a start or stop the reply itself says whether paper trading is on.
+    .filter((kind) => !command || !['state', 'open'].includes(kind));
+  const kinds = command ? [command, ...reads] : reads;
+  if (!kinds.length) return null;
+  return kinds.length === 1 ? { kind: kinds[0] } : { kind: kinds[0], kinds };
 }
 
 const money = (x) => (x == null ? 'not measured' : `${x < 0 ? 'minus ' : ''}$${Math.abs(x).toFixed(2)}`);
@@ -149,7 +178,26 @@ export function liveReply(kind, d, extra = {}) {
       return `I placed no order, sir. ${feedLine(d)} ${marketRead(d.bars)} Paper trading is ${d.state.enabled ? 'on' : 'off'}: ${d.counts.signals} signals, ${d.counts.filled} entries, ${t.trades} closed (${t.wins} won, ${t.losses} lost), ${d.positions.length} open. This is a read of recorded data, not a forecast.`;
     case 'open':
       return `Opening the Trading Room, sir. ${d.state.enabled ? 'Paper trading is on.' : 'Paper trading is off; say start paper trading to begin.'} ${feedLine(d)}`;
+    case 'state':
+      return d.state.enabled
+        ? `Paper trading is on, sir${d.state.started_at ? `, since ${when(d.state.started_at)}` : ''}. I did not change it.`
+        : `Paper trading is off, sir${d.state.stopped_at ? `, since ${when(d.state.stopped_at)}` : ''}. I did not change it; say start paper trading to turn it on.`;
     default:
       return feedLine(d);
   }
+}
+
+/** One spoken answer to every read the turn asked, in order. The feed is said once and a repeated
+ *  answer is dropped, so a compound question does not read the same line twice. */
+export function liveAnswer(intent, d, extra = {}) {
+  const feed = feedLine(d);
+  const said = [];
+  const parts = [];
+  for (const kind of intent.kinds || [intent.kind]) {
+    const reply = liveReply(kind, d, extra);
+    if (said.includes(reply)) continue;
+    said.push(reply);
+    parts.push(parts.some((p) => p.includes(feed)) ? reply.replace(feed, '').replace(/\s{2,}/g, ' ').trim() : reply);
+  }
+  return parts.join(' ');
 }

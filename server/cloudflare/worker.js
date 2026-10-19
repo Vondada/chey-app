@@ -64,7 +64,7 @@ import { evidenceIntent, evidenceReport, evidenceTick } from './trading_evidence
 import { LIVE_BACKTEST, LIVE_STATE, liveBacktest, liveDashboard, livePaperSummary, liveTick, nextLiveTickAt, setLivePaper } from './trading_live.js';
 import { alpacaKeys, alpacaPaperOrders, alpacaStatus, placeAlpacaPaperOrder, removeAlpacaPaperKeys, saveAlpacaPaperKeys } from './broker_alpaca.js';
 import { speakConnections, tradingConnections } from './trading_connections.js';
-import { liveIntent, liveReply } from './trading_live_chat.js';
+import { liveAnswer, liveIntent } from './trading_live_chat.js';
 import { cloudDailyLimit, sanitizeOwnerText } from './che_errors.js';
 import { CHE_UPDATE_GUIDE, mergeSelfUpdatePr, openSelfUpdatePr, rollbackLastUpdate, selfUpdateGitHubAccess, selfUpdateStatus, workerDeploymentStatus } from './self_update.js';
 import { FAILURE_CLASS, backoffMs, classifyFailure, idempotencyKey, ownerEngineeringMessage, stableHash, stripOwnerHomework } from './recovery_policy.js';
@@ -9476,8 +9476,9 @@ export class CheState extends DurableObject {
             if (state.enabled) { await liveTick(this.ctx.storage, { force: true }).catch(() => null); await this.scheduleWork(); }
           }
           const dash = await this.liveTradingDashboard();
-          const opens = ['open', 'chart', 'trades', 'positions'].includes(live.kind);
-          return ndjsonReply(liveReply(live.kind, dash, { message, already }), {
+          const opens = (live.kinds || [live.kind]).some((kind) => ['open', 'chart', 'trades', 'positions'].includes(kind));
+          // A compound question ("won and lost, which strategy is best, is it still on?") gets every part.
+          return ndjsonReply(liveAnswer(live, dash, { message, already }), {
             source: 'che_trading_live', model_calls: 0, ...(opens ? { open_screen: 'trading_room' } : {}),
             trades_closed: dash.totals.trades, positions_open: dash.positions.length, account: 'PAPER',
           });
