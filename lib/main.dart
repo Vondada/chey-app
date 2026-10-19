@@ -108,6 +108,7 @@ import 'rooms/che_markets_room.dart';
 import 'rooms/che_store_room.dart';
 import 'rooms/che_pipeline_room.dart';
 import 'rooms/che_creator_studio.dart';
+import 'rooms/che_series_studio.dart';
 import 'rooms/che_art_studio.dart';
 import 'rooms/che_room_segments.dart';
 import 'rooms/che_theater_room.dart';
