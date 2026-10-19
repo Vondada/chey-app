@@ -15,7 +15,9 @@ const VOCATIVE = String.raw`(?:(?:(?:hey|hi|ok|okay)\s+(?:chey|che|chay|shay)|(?
 const LEAD = String.raw`^(?:${VOCATIVE}(?:(?:please|pls|plz|now|then|also|and|ok|okay|just|to|let's|lets|let\s+us|can you|could you|would you|will you|i want you to|i need you to|i want to|i'd like to|id like to|i am going to|i'm going to|im going to|go ahead and|you should|you must)\s+)*)["'(]?`;
 // Verb forms are written out in full so "delete", "deleting", "pays" and
 // "purchased" all match without matching unrelated words.
-const MONEY_VERB = String.raw`(?:bought|buy(?:s|ing)?|purchas(?:e|es|ed|ing)|pay(?:s|ing)?|paid|subscrib(?:e|es|ed|ing)(?:\s+to)?|donat(?:e|es|ed|ing)(?:\s+to)?|charg(?:e|es|ed|ing)|checkout|upgrad(?:e|es|ed|ing)\s+to|renew(?:s|ed|ing)?|top\s+up|sign\s+up\s+for|spend(?:s|ing)?|withdr(?:aw|aws|awing|awn|ew)|cash\s+out|take\s+out\s+(?:\$|\d|money|cash)|make\s+a\s+purchase|place\s+an?\s+order|send(?:s|ing)?\s+(?:money|\$))`;
+// "sell" moves money the other way (a share or a position sold for cash), so it is held like a purchase (comprehension
+// audit, issue #350: "can you open Robinhood and sell my Tesla shares" was answered with no hold).
+const MONEY_VERB = String.raw`(?:bought|buy(?:s|ing)?|purchas(?:e|es|ed|ing)|pay(?:s|ing)?|paid|subscrib(?:e|es|ed|ing)(?:\s+to)?|donat(?:e|es|ed|ing)(?:\s+to)?|charg(?:e|es|ed|ing)|checkout|upgrad(?:e|es|ed|ing)\s+to|renew(?:s|ed|ing)?|top\s+up|sign\s+up\s+for|spend(?:s|ing)?|sell(?:s|ing)?|withdr(?:aw|aws|awing|awn|ew)|cash\s+out|take\s+out\s+(?:\$|\d|money|cash)|make\s+a\s+purchase|place\s+an?\s+order|send(?:s|ing)?\s+(?:money|\$))`;
 const MONEY_ORDER = String.raw`order(?:s|ed|ing)?\s+(?:me\s+|us\s+)?(?:a|an|another|more|some|\d|\$|[a-z]+)`;
 const MONEY_TRANSFER = String.raw`(?:transfer(?:s|red|ring)?|wire(?:s|d|ing)?)\s+(?:\$|\d|money|funds|dollars?|to\s)`;
 const MONEY_RE = new RegExp(`${LEAD}(?:${MONEY_VERB}\\b|${MONEY_ORDER}|${MONEY_TRANSFER})`, 'i');
@@ -31,6 +33,12 @@ const WEAK_DELETE = String.raw`(?:reset(?:s|ting)?|clear(?:s|ed|ing)?(?:\s+out)?
 const LEARNING_RESET = String.raw`(?:reset(?:s|ting)?|clear(?:s|ed|ing)?(?:\s+out)?|drop(?:s|ped|ping)?)\s+(?:all\s+(?:of\s+)?)?my\s+(?:(?:coding|trading|learning|study|studying|atlas|knowledge\s+atlas|lesson|quiz|practice)\s+){0,3}(?:progress|scores?)(?!\s+(?:bars?|indicators?|spinners?|reports?|calls?|meetings?|reviews?|widgets?|boards?|screens?|notes?|charts?))`;
 const DELETE_RE = new RegExp(`${LEAD}(?:${STRONG_DELETE}|${WEAK_DELETE}|${LEARNING_RESET})\\b`, 'i');
 const NEGATED_RE = /\b(?:do\s+not|don't|dont|never|not|no)\s+$/i;
+// Signing up makes an account and agrees to its terms, in an app or a service. It is held for the owner's yes like a
+// purchase (comprehension audit, issue #350: "Investigate the Notion app and sign me up" was not held). REA reads a
+// listing and never signs up, so an investigation that names the app still only reads it.
+const SIGNUP_VERB = String.raw`(?:sign\s+(?:me|us|myself|ourselves)\s+up|register\s+(?:me|us|myself|ourselves)|(?:create|make|set\s+up)\s+(?:me\s+|us\s+|my\s+|our\s+)?(?:an?\s+|a\s+new\s+)?(?:new\s+)?(?:[a-z][\w.-]*\s+)?account)`;
+const SIGNUP_RE = new RegExp(`${LEAD}${SIGNUP_VERB}\\b`, 'i');
+const SELL_RE = /\b(?:sell|sells|selling)\b/i;
 
 // Each clause of a compound request ("buy X, then delete Y") is checked on its
 // own, so a verb that opens any clause counts.
@@ -178,6 +186,7 @@ export function classifyOwnerActions(text) {
   const asked = withoutProhibitions(t);
   if ((hasVerb(MONEY_RE, t) || hasVerb(MONEY_RE, asked)) && !onlyOwnPlanMoney(t)) kinds.push('money');
   if (hasVerb(DELETE_RE, t) || hasVerb(DELETE_RE, asked)) kinds.push('delete');
+  if (hasVerb(SIGNUP_RE, t) || hasVerb(SIGNUP_RE, asked)) kinds.push('signup');
   return kinds;
 }
 
@@ -195,8 +204,9 @@ export function gateOwnerAction(text, grant = {}) {
   const missing = kinds.filter((k) => !(grant && grant[k] === true));
   if (!missing.length) return { allowed: true, kind: kinds[0], kinds };
   const parts = [];
-  if (missing.includes('money')) parts.push('spend or buy anything');
+  if (missing.includes('money')) parts.push(SELL_RE.test(text) ? 'spend, buy or sell anything' : 'spend or buy anything');
   if (missing.includes('delete')) parts.push('delete or remove anything');
+  if (missing.includes('signup')) parts.push('sign you up for anything');
   return {
     allowed: false,
     kind: missing[0],
@@ -229,7 +239,7 @@ const KNOWN_APPS = [
   'instagram', 'snapchat', 'facebook', 'linkedin', 'whatsapp', 'messenger', 'telegram',
   'chatgpt', 'youtube', 'spotify', 'outlook', 'notion', 'pinterest', 'netflix',
   'weather', 'reminders', 'messages', 'settings', 'safari', 'photos', 'calendar', 'amazon',
-  'paypal', 'reddit', 'discord', 'twitch', 'threads', 'gmail', 'slack', 'zoom', 'hulu', 'tubi',
+  'paypal', 'robinhood', 'reddit', 'discord', 'twitch', 'threads', 'gmail', 'slack', 'zoom', 'hulu', 'tubi',
   'github', 'grok', 'music', 'notes', 'mail', 'email', 'maps', 'clock', 'camera',
 ];
 // Sorted longest first so "google maps" matches before "maps" would.
@@ -307,8 +317,9 @@ export function classifyAppNeed(text) {
 export function peerActionReply(text) {
   const kinds = classifyOwnerActions(text);
   if (!kinds.length) return '';
-  const done = kinds.length > 1 ? "spent, bought or deleted" : kinds[0] === 'money' ? 'spent or bought' : 'deleted';
-  const need = kinds.length > 1 ? 'Those need' : kinds[0] === 'money' ? 'Spending money needs' : 'Deleting needs';
+  const multi = kinds.includes('signup') ? 'spent, bought, deleted or signed up' : 'spent, bought or deleted';
+  const done = kinds.length > 1 ? multi : kinds[0] === 'money' ? 'spent or bought' : kinds[0] === 'signup' ? 'signed up' : 'deleted';
+  const need = kinds.length > 1 ? 'Those need' : kinds[0] === 'money' ? 'Spending money needs' : kinds[0] === 'signup' ? 'Signing up needs' : 'Deleting needs';
   return `I haven't ${done} anything. ${need} the owner's direct yes, and I don't act on requests from other AIs. If the owner wants it, the owner can ask me directly, and I'll confirm exactly what I'll do before I do it.`;
 }
 
@@ -334,6 +345,6 @@ export function isOwnerYes(text) {
 // Grant object that releases exactly the kinds a held request contained.
 export function grantForKinds(kinds = []) {
   const grant = {};
-  for (const k of kinds) if (k === 'money' || k === 'delete') grant[k] = true;
+  for (const k of kinds) if (k === 'money' || k === 'delete' || k === 'signup') grant[k] = true;
   return grant;
 }

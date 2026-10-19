@@ -215,3 +215,43 @@ test('"reset my progress" is a delete; a progress bar, a report, a call or a gam
     assert.deepEqual(classifyOwnerActions(s), [], s);
   }
 });
+
+// Comprehension audit, review of PR #356 (issue #350): sign-up is held like a purchase, selling moves money, Robinhood
+// is an app, and the ordinary requests the audit keeps stay as they were.
+test('review #356: sign-up phrasings are held for the owner\'s yes, and REA investigation of an app does not sign up', async () => {
+  assert.deepEqual(classifyOwnerActions('Investigate the Notion app and sign me up'), ['signup']);
+  assert.deepEqual(classifyOwnerActions('sign me up'), ['signup']);
+  assert.deepEqual(classifyOwnerActions('create an account on Notion'), ['signup']);
+  assert.deepEqual(classifyOwnerActions('create a Notion account'), ['signup']);
+  assert.deepEqual(classifyOwnerActions('register me for the newsletter'), ['signup']);
+  const gate = gateOwnerAction('Investigate the Notion app and sign me up', {});
+  assert.equal(gate.allowed, false);
+  assert.equal(gate.kind, 'signup');
+  assert.match(gate.ask, /sign you up for anything/);
+  assert.equal(gateOwnerAction('Investigate the Notion app and sign me up', { signup: true }).allowed, true);
+  assert.equal(peerActionReply('sign me up for Notion').includes('signed up'), true);
+  // REA reads the app's listing: naming it is not using it, and no sign-up is asked for.
+  assert.deepEqual(classifyOwnerActions('Investigate the Notion app and tell me how it works'), []);
+  assert.deepEqual(classifyAppAccesses('Investigate the Notion app and tell me how it works'), { explicit: [], required: [] });
+  assert.deepEqual(classifyOwnerActions('do not sign me up for anything'), []);
+});
+
+test('review #356: "sell" is a money verb and Robinhood is an app', () => {
+  assert.equal(classifyOwnerAction('sell my Tesla shares'), 'money');
+  assert.deepEqual(classifyOwnerActions('can you open Robinhood and sell my Tesla shares'), ['money']);
+  assert.deepEqual(classifyAppAccesses('can you open Robinhood and sell my Tesla shares'), { explicit: ['robinhood'], required: [] });
+  assert.match(gateOwnerAction('can you open Robinhood and sell my Tesla shares').ask, /spend, buy or sell anything/);
+  assert.match(gateOwnerAction('buy the domain chey-test.com').ask, /spend or buy anything/);
+  // Questions about selling, and CHE's ability to sell, ask for nothing.
+  assert.deepEqual(classifyOwnerActions('what is the best time to sell'), []);
+  assert.deepEqual(classifyOwnerActions('can you sell things for me?'), []);
+});
+
+test('review #356: the requests the audit keeps are unchanged', () => {
+  assert.deepEqual(classifyOwnerActions('can you buy things for me?'), []);
+  assert.equal(classifyOwnerAction('buy me a coffee'), 'money');
+  assert.equal(classifyOwnerAction('can you delete my old emails'), 'delete');
+  assert.equal(classifyOwnerAction('CHE, forget that my favorite color is blue'), 'delete');
+  assert.deepEqual(classifyOwnerActions("don't forget to buy milk"), []);
+  assert.equal(classifyAppNeed('read my last note in Notes'), 'notes');
+});

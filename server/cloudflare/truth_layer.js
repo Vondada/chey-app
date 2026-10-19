@@ -8,7 +8,7 @@
 //  - strips unsupported action claims and owner "homework" from
 //    model-generated owner replies before they reach chat or voice.
 
-import { storyRequested } from './memory_provenance.js';
+import { requestNamesAction, storyRequested } from './memory_provenance.js';
 import { isEvidenceRequest } from './recovery_policy.js';
 
 export const RECEIPTS_KEY = 'che_receipts';
@@ -575,8 +575,78 @@ const DONE_RE = /^\s*(?:(?:all|it['’]?s|it\s+is)\s+)?done\b(?!\s+(?:with|by|in
 // A condition, a plan or a question about the action does not claim it: "once I've sent it", "if I had paid".
 const NOT_A_CLAIM = /\b(?:if|once|when|whenever|after|until|unless|whether|before|would|could|should|might|can|will|shall|going\s+to)\b/i;
 // Text the owner asked CHE to write in his voice ("draft a text saying I sent it") may say "I sent it"; only
-// CHE's own words to him around it ("Done, sir.") are checked then.
+// CHE's own words to him around it ("Done, sir.") are checked then. Only when the request asks for no action:
+// "draft a text to mom and send it" is a send, so its reply is checked like any other (comprehension audit, #350).
 const WRITING_REQUEST = /\b(?:write|draft|compose|reword|rephrase|translate|proofread)\b[^.?!]{0,60}\b(?:saying|says|say|telling|tells|letting|announcing|replies|reply|response|post|caption|tweet|letter|message|text|e-?mail|note|speech|toast)\b|\brole.?play|\bpretend\b|\bact\s+as\b/i;
+
+// Claims with no matching verb, in English and Spanish (comprehension audit, issue #350): "It's been dispatched to
+// Sarah", "Your order went through", "I've taken care of the bill", "Purchase complete", "Your notes are gone now",
+// "The email is on its way", "Listo, señor: pagué la factura." Each names what it claims; a null label is removed
+// without adding a verb to CHE's note ("Confirmation number 4471" is a receipt CHE does not have).
+const NOUN_LABELS = [
+  [/^(?:e-?mails?|mails?|messages?|texts?|replies|reply|reports?|files?|notes?|sms)$/, 'sent'],
+  [/^(?:payments?|bills?|invoices?|rent|fees?|charges?|dues|transfers?|transactions?)$/, 'paid'],
+  [/^(?:orders?|packages?|parcels?|shipments?|deliver(?:y|ies))$/, 'ordered'],
+  [/^(?:purchases?|checkouts?|subscriptions?|gifts?|flowers|tickets?)$/, 'bought'],
+  [/^(?:bookings?|reservations?|appointments?|reminders?|events?|meetings?)$/, 'scheduled'],
+];
+function nounLabel(word, fallback) {
+  const w = String(word || '').toLowerCase();
+  for (const [re, label] of NOUN_LABELS) if (re.test(w)) return label;
+  return fallback;
+}
+const CLAIM_PHRASES = [
+  { re: /\b(?:it|that|this|everything|they)(?:\s+(?:has\s+been|have\s+been|has|have|is|was|were|are)|['’]s(?:\s+been)?|['’]re)\s+(?:now\s+|already\s+|successfully\s+|just\s+)?dispatched\b/i, label: 'sent' },
+  { re: /\b(email|e-?mail|message|text|reply|report|file|note|mail|sms|package|parcel|order|gift|flowers|tickets?|payment|bill)\s+(?:is|was|are|were|has\s+been|have\s+been)\s+(?:now\s+|already\s+)?on\s+(?:its|their|the)\s+way\b/i, noun: 1, fallback: 'sent' },
+  { re: /\b(order|payment|purchase|transfer|transaction|checkout|subscription|booking|reservation|reminder|charge)\s+(?:(?:has\s+been|have\s+been|has|have|is|was|are|were|now|already|successfully)\s+)*(?:went\s+through|complete|completed|processed|confirmed|finalized|successful|successfully\s+completed)\b/i, noun: 1, fallback: 'done' },
+  { re: /\b(purchase|order|payment|transaction|checkout|sale)\s+(?:is\s+|was\s+|has\s+been\s+)?(?:now\s+)?(?:complete|completed)\b/i, noun: 1, fallback: 'done' },
+  { re: /\b(?:I|we)(?:['’]ve|\s+have)?\s+(?:already\s+|just\s+|now\s+|personally\s+)?taken\s+care\s+of\s+(?:the\s+|your\s+|my\s+)?(\w+)?/i, noun: 1, fallback: 'done' },
+  { re: /\b(?:your|my|the|these|those|all\s+(?:of\s+)?(?:your|my|the))\s+(?:[\w'-]+\s+){0,2}?(?:notes?|files?|emails?|messages?|texts?|data|memor(?:y|ies)|history|chats?|drafts?|reminders?|events?|photos?|videos?|contacts?|records?|logs?|skills?)\s+(?:are|is|were|was|have\s+been|has\s+been)\s+(?:now\s+|all\s+|already\s+|finally\s+)?gone\b/i, label: 'deleted' },
+  { re: /\beverything\s+(?:is|was|has\s+been|have\s+been)\s+(?:now\s+|already\s+)?gone\b/i, label: 'deleted' },
+  // A receipt number CHE never got: removed, with no verb claimed in the note.
+  { re: /\bconfirmation\s+(?:number|no\.?|code|id|#)\s*[:#]?\s*[A-Z0-9-]*\d[A-Z0-9-]*/i, label: null },
+];
+// Spanish: the first-person past ("pagué", "envié", "compré") and the perfect ("he pagado") are claims, and so are
+// "listo" / "hecho" / "enviado" at the start of a sentence. A negation before them ("no lo he pagado") is not.
+const SPANISH_STEM = [[/^(?:pag|transfer)/, 'paid'], [/^(?:env|mand)/, 'sent'], [/^(?:compr)/, 'bought'], [/^(?:borr|elimin)/, 'deleted'], [/^(?:reserv|program)/, 'scheduled'], [/^(?:public|sub)/, 'uploaded']];
+const SPANISH_CLAIMS = [
+  /\b(?:yo\s+)?(pagu[ée]|pagó|transfer[ií]|envié|envió|mandé|mandó|compr[ée]|compró|borr[ée]|borró|elimin[ée]|eliminó|reserv[ée]|reservó|subí|subió)(?![a-záéíóúñ])/i,
+  /\b(?:he|has|ha|hemos|han)\s+(?:ya\s+)?(pagado|pagada|transferido|enviado|enviada|mandado|comprado|comprada|borrado|borrada|eliminado|eliminada|reservado|reservada|publicado|publicada|subido|subida)\b/i,
+  /\b(?:ya\s+)?(?:est[áa]|estaba|fue|qued[óo])\s+(?:ya\s+)?(enviad[oa]|pagad[oa]|comprad[oa]|borrad[oa]|eliminad[oa]|transferid[oa]|reservad[oa]|publicad[oa])\b/i,
+];
+const SPANISH_DONE_START = /^\s*(listo|lista|hecho|hecha|enviado|enviada|comprado|comprada|pagado|pagada|borrado|borrada|eliminado|eliminada)\s*(?:[,.:!]|$)/i;
+function spanishLabel(word) {
+  const w = String(word || '').toLowerCase();
+  for (const [re, label] of SPANISH_STEM) if (re.test(w)) return label;
+  return 'done';
+}
+// Every claim in one sentence that has no action verb. Returns null when there is none, otherwise
+// { labels } (labels may be empty for a receipt CHE does not have).
+function phraseClaims(sentence) {
+  const labels = [];
+  let found = false;
+  for (const claim of CLAIM_PHRASES) {
+    const m = claim.re.exec(sentence);
+    if (!m || NOT_A_CLAIM.test(sentence.slice(0, m.index)) || quoted(sentence, m.index)) continue;
+    found = true;
+    if (claim.label !== null) labels.push(claim.label ?? nounLabel(m[claim.noun] || '', claim.fallback));
+  }
+  for (const re of SPANISH_CLAIMS) {
+    const m = re.exec(sentence);
+    if (!m || /\bno\s+(?:\S+\s+){0,2}$/i.test(sentence.slice(0, m.index)) || quoted(sentence, m.index)) continue;
+    found = true;
+    labels.push(spanishLabel(m[1]));
+  }
+  const start = SPANISH_DONE_START.exec(sentence);
+  if (start && !quoted(sentence, start.index)) {
+    found = true;
+    labels.push(spanishLabel(start[1]));
+  }
+  if (!found) return null;
+  // "Listo, señor: pagué la factura" claims a payment, not just "done": the specific claim is the one named.
+  const specific = labels.filter((label) => label !== 'done');
+  return { labels: [...new Set(specific.length ? specific : labels)] };
+}
 
 function quoted(sentence, index) {
   const before = sentence.slice(0, index);
@@ -585,10 +655,11 @@ function quoted(sentence, index) {
 
 export function guardClaimedOwnerActions(reply, { message = '', acted = false } = {}) {
   const text = String(reply || '');
-  // A story, a role-play or text the owner asked CHE to write may say "I sent it" in its own voice.
+  // A story, a role-play or text the owner asked CHE to write may say "I sent it" in its own voice. A request
+  // that also asks CHE to act (storyRequested and the draft test both check for one) is not exempt.
   if (acted || storyRequested(message)) return { text, removed: [] };
   // A reply that opens "Done, sir." reports on itself, not a draft, so all of it is checked.
-  const drafting = WRITING_REQUEST.test(String(message || '')) && !DONE_RE.test(text.trim());
+  const drafting = WRITING_REQUEST.test(String(message || '')) && !requestNamesAction(message) && !DONE_RE.test(text.trim());
   const removed = [];
   const claimed = new Set();
   const kept = [];
@@ -605,6 +676,13 @@ export function guardClaimedOwnerActions(reply, { message = '', acted = false } 
         claimed.add(hit);
         for (const more of plain.slice(m.index + m[0].length).matchAll(MORE_DONE)) claimed.add(STRONG_DONE[more[1].toLowerCase()]);
         break;
+      }
+    }
+    if (!hit) {
+      const phrase = phraseClaims(plain);
+      if (phrase) {
+        hit = phrase.labels[0] || 'claim';
+        for (const label of phrase.labels) claimed.add(label);
       }
     }
     if (!hit && plain && DONE_RE.test(plain)) hit = 'done';

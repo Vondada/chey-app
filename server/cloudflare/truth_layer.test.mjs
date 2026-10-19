@@ -603,3 +603,47 @@ test('comprehension audit: "what city am I in?" is a location question, and "wha
   assert.equal(changeHistoryIntent('What changed in your code this week?'), true);
   assert.equal(changeHistoryIntent('what changed in the market today'), false);
 });
+
+// Comprehension audit, review of PR #356 (issues #350): the claim guard reads the request before it exempts a reply, and
+// names the common ways of saying an action happened that have no matching verb.
+test('review #356: a draft that also asks CHE to send or post is checked; a plain draft keeps the owner\'s text', async () => {
+  const { guardClaimedOwnerActions: guard } = await import('./truth_layer.js');
+  const mom = 'Sure. I texted your mom that you are on the way and bought the card.';
+  const sent = guard(mom, { message: 'draft a text to mom and send it' });
+  assert.equal(sent.text, 'Sure. Nothing was sent or bought, sir: I have no record of doing that.');
+  assert.equal(sent.removed.length, 1);
+  assert.match(guard('Sure. I posted it to TikTok and bought ads.', { message: 'write a message to mark and post it to tiktok' }).text, /^Sure\. Nothing was uploaded or bought, sir/);
+  // Ordinary drafts (no action verb, or "text" as a noun) keep what the owner asked to be written.
+  assert.equal(guard('Here is your text: I bought the tickets, see you at 8.', { message: 'write a text to my wife saying I bought the tickets' }).removed.length, 0);
+  assert.equal(guard('Here is your post: I bought the ticket.', { message: 'write a post about my trip' }).removed.length, 0);
+});
+
+test('review #356: a story that also asks CHE to send is not exempt; a plain story still is', async () => {
+  const { guardClaimedOwnerActions: guard } = await import('./truth_layer.js');
+  const story = guard('Done, sir. I sent it and bought it.', { message: 'tell me a story and then send sarah the report' });
+  assert.equal(story.text, 'Nothing was sent or bought, sir: I have no record of doing that.');
+  assert.equal(guard('Once upon a time, sir, a robot bought you flowers.', { message: 'tell me a story about a robot' }).removed.length, 0);
+});
+
+test('review #356: a claim with no matching verb is removed, for the request that makes it', async () => {
+  const { guardClaimedOwnerActions: guard } = await import('./truth_layer.js');
+  const cases = [
+    ["It's been dispatched to Sarah, sir.", 'send sarah the report', 'Nothing was sent, sir: I have no record of doing that.'],
+    ['Your order went through, sir.', 'send sarah the report', 'Nothing was ordered, sir: I have no record of doing that.'],
+    ["I've taken care of the bill, sir.", 'pay the bill', 'Nothing was paid, sir: I have no record of doing that.'],
+    ['Purchase complete. Confirmation number 4471.', 'buy it', 'Nothing was bought, sir: I have no record of doing that.'],
+    ['Your notes are gone now, sir.', 'delete my notes', 'Nothing was deleted, sir: I have no record of doing that.'],
+    ['The email is on its way to Sarah.', 'send sarah the report', 'Nothing was sent, sir: I have no record of doing that.'],
+    ['Listo, señor: pagué la factura.', 'pay the bill', 'Nothing was paid, sir: I have no record of doing that.'],
+  ];
+  for (const [reply, message, note] of cases) {
+    const out = guard(reply, { message });
+    assert.ok(out.removed.length >= 1, reply);
+    assert.equal(out.text, note, reply);
+  }
+  // Facts and ordinary talk with the same nouns stay as written.
+  for (const kept of ['The order form is on the table.', 'Your notes are on the desk, sir.', 'Your order form is on the desk, sir.', 'Listo para la reunión, señor.',
+    'Once the email is on its way, I will tell you.', 'Si no lo he pagado, dímelo.']) {
+    assert.equal(guard(kept, { message: 'pay the bill' }).text, kept, kept);
+  }
+});

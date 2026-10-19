@@ -279,6 +279,7 @@ function verbFor(text) {
   const t = normalizeForKind(text);
   if (/\b(delete|remove|erase|wipe|trash|discard|uninstall)\b/.test(t)) return 'delete';
   if (/\b(buy|purchase|pay|order|subscribe|donate|transfer)\b/.test(t)) return 'pay for';
+  if (/\b(sell|sells|selling)\b/.test(t)) return 'sell';
   if (/\bmerge\b/.test(t)) return 'merge';
   if (/\bdeploy\b/.test(t)) return 'deploy';
   if (/\bpublish\b/.test(t)) return 'publish';
@@ -297,6 +298,9 @@ export function classifyOwnerTurn(text, { lastUser = '', hasHeldAction = false }
   // Cancel is checked before no: "never mind" and "forget it" call the request off.
   const shape = cancelShape(raw);
   if (shape === 'cancel') return turn('cancel');
+  // With an action held, a turn that opens with a cancel calls it off whatever follows. "Actually no, yes" or
+  // "never mind. Yes." must never hand the "yes" on as a release (comprehension audit, issue #350).
+  if (shape?.rest && hasHeldAction) return turn('cancel');
   if (shape?.rest) return { ...classifyOwnerTurn(shape.rest, { lastUser, hasHeldAction }), rest: shape.rest };
   if (CANCEL_RE.test(s) && !NOT_A_CANCEL_RE.test(s)) return turn('cancel');
   if (NO_RE.test(s)) return turn('no');
