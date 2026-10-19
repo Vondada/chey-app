@@ -64,6 +64,22 @@ Then, on GitHub:
 - Next: open focused PR for milestone 1 when the owner is ready (or continue: milestone 2 = scripted multi-agent demo via officeGoal + War Room board wiring + orb-tap deep link to the real task; then Phase B typed memory/provenance).
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
+## 2. Current position (Claude, 2026-10-19 07:55 UTC — Atlas #346: #357, #359, #358 MERGED and LIVE; iPhone patch published; #360 last fixes in progress)
+- **#358 MERGED** as bdb2496 (Atlas in the Brain). Four review rounds, approved:
+  - curated_lesson cards and owner_practice progress;
+  - a gated, named reset;
+  - grading that is honest about denial, hedges and units ("not graded", never false);
+  - quiz answers never learned as speech corrections;
+  - retrieval of 600 characters at most.
+  - Deploy run 39201004996: live commit bdb24967d5e1 verified, Command Center 5/5. **Shorebird success** (run 39201005227); it covers #357, #358 and #359. #359's own Shorebird run was cancelled, superseded by the newer run.
+- **#360 (claude/che-atlas-code, head b830c3c)** merges main and records exercise and drill results as owner practice.
+  - Re-review: the original B1–B5 are fixed. Three left, with the builder:
+    1. Word-answer exercises grade "repeat that" and other voice-control words.
+    2. "explain this python code" gives the Python lesson.
+    3. "X not Y" exercise answers are learned as speech corrections.
+- **claude/che-atlas-probe** (in progress): /api/atlas/probe plus a deploy step, so each deploy runs live atlas checks on the isolated probe CHE.
+- A session rate limit paused all agents from about 05:00 to 07:50 UTC.
+
 ## 2. Current position (Claude, 2026-10-19 04:30 UTC — Atlas #346: #357 and #359 MERGED and LIVE; #358 and #360 in review/fix)
 - **#357 MERGED** as 7825679 (phase 1: 20 cards, /learn, chat lessons, iPhone page). Two independent reviews; every finding was fixed:
   - Missing-card topics fall through. Cards answer only concept phrases. Domain words are whole-word.
