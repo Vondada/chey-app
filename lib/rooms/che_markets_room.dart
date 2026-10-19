@@ -255,6 +255,15 @@ class _CheMarketsRoomState extends State<CheMarketsRoom> {
                 ),
               ),
               Padding(
+                padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.sm, CheSpace.gutter, 0),
+                child: ExpansionTile(
+                  key: const PageStorageKey<String>('che-market-tools'),
+                  initiallyExpanded: false,
+                  title: const Text('Market research & tools', style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w800)),
+                  subtitle: const Text('Indexes, older charts, the 3D room and research commands.',
+                      style: TextStyle(color: Color(0xFF8FA4A1), fontSize: 14)),
+                  children: [
+              Padding(
                 padding: const EdgeInsets.fromLTRB(
                   CheSpace.gutter,
                   CheSpace.md,
@@ -421,6 +430,9 @@ class _CheMarketsRoomState extends State<CheMarketsRoom> {
                     style: CheType.caption,
                   ),
                 ]),
+              ),
+                  ],
+                ),
               ),
             ],
           ),
