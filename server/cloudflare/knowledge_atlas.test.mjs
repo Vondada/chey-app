@@ -13,6 +13,7 @@ import { commandById, dispatchPrompt } from './command_catalog.js';
 import {
   ATLAS_CARDS, FORMULAS, LEVELS, answerAtlas, atlasBrainRecord, atlasCard, atlasExport, atlasIntent, findAtlasCard, measuredText, topicKey,
 } from './knowledge_atlas.js';
+import { ATLAS_TRADING_CARDS } from './atlas_trading.js';
 import { COSTS, CONTRACTS, MIN_TRADES, settleTrade, summarize, wilsonInterval } from './trading_evidence.js';
 import { readDesk } from './trading_desk.js';
 import { LIVE_BACKTEST } from './trading_live.js';
@@ -85,17 +86,22 @@ async function owner({ saved = new Map() } = {}) {
 const spoken = (text) => text.replace(/[.,?!]/g, '').replace(/'/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
 const variants = (phrase) => [phrase, spoken(phrase), `CHE, ${phrase}`, `hey che ${spoken(phrase)}`];
 const close = (a, b, eps = 1e-4) => Math.abs(a - b) <= eps;
+// Counts follow the cards: ten phase-1 cards in each domain, plus each lane's own cards.
+const CODING_N = ATLAS_CARDS.filter((c) => c.domain === 'coding').length;
+const TRADING_N = ATLAS_CARDS.filter((c) => c.domain === 'trading').length;
+const ALL_N = ATLAS_CARDS.length;
 const sameResult = (actual, expected, eps = 1e-4) => (typeof expected === 'object' && expected !== null
   ? Object.keys(expected).every((k) => close(actual[k], expected[k], eps))
   : close(actual, expected, eps));
 
 // ─── The cards are well formed ────────────────────────────────────────────
 
-test('ten coding and thirty trading cards, each complete from beginner to expert', () => {
-  assert.equal(ATLAS_CARDS.filter((c) => c.domain === 'coding').length, 10);
-  assert.equal(ATLAS_CARDS.filter((c) => c.domain === 'trading').length, 30);
-  assert.equal(new Set(ATLAS_CARDS.map((c) => c.id)).size, 40, 'ids are unique');
-  assert.equal(new Set(ATLAS_CARDS.map((c) => c.title)).size, 40, 'titles are unique');
+test('every coding and trading card is complete from beginner to expert', () => {
+  assert.ok(CODING_N >= 10, 'the ten phase-1 coding cards at least');
+  assert.equal(TRADING_N, 10 + ATLAS_TRADING_CARDS.length, 'the ten phase-1 trading cards and the trading lane\'s');
+  assert.equal(CODING_N + TRADING_N, ALL_N);
+  assert.equal(new Set(ATLAS_CARDS.map((c) => c.id)).size, ALL_N, 'ids are unique');
+  assert.equal(new Set(ATLAS_CARDS.map((c) => c.title)).size, ALL_N, 'titles are unique');
   for (const c of ATLAS_CARDS) {
     assert.match(c.id, /^[a-z][a-z0-9-]+$/, c.id);
     assert.ok(LEVELS.includes(c.level), `${c.id} level`);
@@ -325,7 +331,7 @@ test('every code example runs and returns exactly what its card says', async () 
 test('the phone\'s bundled atlas matches the cards (regenerate: node tool/dump_knowledge_atlas.mjs)', () => {
   const bundled = JSON.parse(readFileSync(new URL('../../assets/atlas/knowledge_atlas.json', import.meta.url), 'utf8'));
   assert.deepEqual(bundled, JSON.parse(JSON.stringify(atlasExport())));
-  assert.equal(bundled.cards.length, 40);
+  assert.equal(bundled.cards.length, ALL_N);
   assert.ok(bundled.cards.every((c) => c.quiz.every((q) => Object.keys(q).join() === 'q,a')), 'only questions and answers go to the phone');
   assert.match(readFileSync(new URL('../../pubspec.yaml', import.meta.url), 'utf8'), /^\s+- assets\/atlas\/$/m, 'pubspec bundles it');
 });
@@ -448,7 +454,7 @@ test('the owner\'s seven phrasings are answered from the cards with no model, ty
   }
   for (const words of variants('List the trading cards.')) {
     const out = await lesson(words);
-    assert.match(out.reply, /^Trading cards in the Knowledge Atlas, sir: 30\.\n1\. Ticks, points and contract value, beginner\.\n2\. Bid, ask and spread, beginner\./);
+    assert.match(out.reply, new RegExp(`^Trading cards in the Knowledge Atlas, sir: ${TRADING_N}\\.\\n1\\. Ticks, points and contract value, beginner\\.\\n2\\. Bid, ask and spread, beginner\\.`));
     const picked = await lesson('number five', [{ role: 'assistant', content: out.reply }]);
     assert.match(picked.reply, /^Expectancy, beginner level, sir\./, 'a spoken number picks from the list just read');
   }
@@ -468,7 +474,7 @@ test('the /learn command is the same lesson route, through the one catalog', asy
   assert.match((await che.say('/learn what\'s the formula for profit factor')).reply, /^The formula for Profit factor, sir: profit factor equals gross profit divided by gross loss/);
   const overview = await che.say('/learn');
   assert.equal(overview.route, 'che_knowledge_atlas');
-  assert.match(overview.reply, /^The Knowledge Atlas has 40 cards, sir: 10 coding and 30 trading/);
+  assert.match(overview.reply, new RegExp(`^The Knowledge Atlas has ${ALL_N} cards, sir: ${CODING_N} coding and ${TRADING_N} trading`));
   const unknown = await che.say('/learn string theory');
   assert.equal(unknown.route, 'che_knowledge_atlas');
   assert.match(unknown.reply, /^I don't have a Knowledge Atlas card on "string theory" yet, sir, so I won't make one up\./);
@@ -593,7 +599,7 @@ test('"quiz me" with no topic asks which one; "number" picks then quiz that card
     assert.doesNotMatch(out.reply, /^Quiz on/, 'no topic is guessed');
   }
   const trading = await che.say('Quiz me on trading');
-  assert.match(trading.reply, /^Trading cards in the Knowledge Atlas, for a quiz, sir: 30\./);
+  assert.match(trading.reply, new RegExp(`^Trading cards in the Knowledge Atlas, for a quiz, sir: ${TRADING_N}\\.`));
   const picked = await che.say('number 2', { history: [{ role: 'assistant', content: trading.reply }] });
   assert.match(picked.reply, /^Quiz on Bid, ask and spread, sir\./);
   // Answers only follow a quiz; with none open CHE says so.
