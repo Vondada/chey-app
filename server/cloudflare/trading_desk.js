@@ -9,6 +9,7 @@
 //          costs money is confirmed first).
 
 import { placeBracket, tick } from './broker_tradovate.js';
+import { withoutProhibitions } from './owner_action_gate.js';
 
 const DESK = 'trading_desk';
 const ALERT_HOURS = 20; // a daily-bar entry is good until the next session
@@ -138,6 +139,13 @@ export function deskIntent(message) {
   // "Connect Alpaca", "how do I connect alpaca?": the sentence ends at Alpaca, so it means the broker.
   if (/\b(?:connect|link|set up|setup|hook up)\b[\s\S]{0,20}\balpaca[\s?.!]*$/.test(text)) return { kind: 'alpaca_setup' };
   if (/\b(?:connect|link|sign in to|log in to|hook up)\b[\s\S]{0,30}\b(?:ninja\s?trader|tradovate|trading account|funded account|broker)\b/.test(text)) return { kind: 'connect' };
+  // "Switch to paper", "go back to paper", "go live", "turn on live trading": the same switches, said
+  // shorter (comprehension audit). "Don't go live yet" asks nothing; going live still takes the confirmation.
+  const asked = withoutProhibitions(text);
+  if (/^\s*(?:(?:hey\s+)?(?:che|chey|chay)[,\s]+)?(?:please\s+|ok\s+|okay\s+|now\s+)?(?:switch|change|go|flip|move)(?:\s+(?:back|over))*\s+to\s+paper(?:\s+(?:trading|mode|account))?(?:\s+(?:now|please))?[\s.!]*$/.test(asked)) return { kind: 'mode', mode: 'paper' };
+  if (/^\s*(?:(?:hey\s+)?(?:che|chey|chay)[,\s]+)?(?:please\s+|ok\s+|okay\s+|now\s+|let's\s+)?(?:go\s+live|turn\s+on\s+live(?:\s+(?:trading|mode))?|(?:start|enable)\s+live\s+trading|switch\s+to\s+live)\b/.test(asked)) return { kind: 'mode', mode: 'live' };
+  // "Is live trading on?", "are we trading live or paper right now?": the mode, read only.
+  if (/\bis\s+live\s+trading\s+(?:on|off|enabled|active|turned\s+on)\b|\b(?:are\s+we|am\s+i|are\s+you)\s+(?:trading\s+)?(?:live|on\s+live|paper|on\s+paper)(?:\s+or\s+(?:on\s+)?(?:paper|live|sim))?(?:\s+(?:trading|right\s+now|now|today))*\s*[?.!]*$/.test(text)) return { kind: 'status' };
   const sw = /\b(?:switch|change|go|flip|move|put|set)\b[\s\S]{0,25}\b(?:to|over to|on|into)\b/.test(text);
   if (sw && /\b(?:live|real)(?:\s+money)?\s+(?:trading|account|mode)\b/.test(text)) return { kind: 'mode', mode: 'live' };
   if (sw && /\b(?:sim|simulated|simulation|demo|practice)\s+(?:trading|account|mode)\b/.test(text)) return { kind: 'mode', mode: 'sim' };

@@ -111,3 +111,15 @@ test('a route never stores the prompt in the ledger', async () => {
   await routeText(env({ AI: { run: async () => ({ response: 'ok' }) } }), '@cf/x', { messages: [{ role: 'user', content: 'my secret code word is pineapple-77' }] }, async () => ok('ok'), s);
   assert.equal(JSON.stringify(s.m.get('che_reliability_ledger')).includes('pineapple'), false);
 });
+
+test('comprehension audit: "do you remember my wife\'s name" and its spoken form find the saved fact', async () => {
+  const s = store();
+  await rememberOwnerFact(s, "my wife's name is Maria", 1000);
+  const memories = ["my wife's name is Maria"];
+  for (const asked of ["Do you remember what my wife's name is?", 'chay do you remember my wifes name', "What do you remember about my wife's name? Don't guess.",
+    "CHE, what's my wife's name, and where did you get that?"]) {
+    const known = await knownAnswer(s, asked, { now: 2000, memories });
+    assert.equal(known?.answer, "Your wife's name is Maria, sir.", asked);
+  }
+  assert.equal(await knownAnswer(s, 'do you remember my birthday party plans for next week and the guest list and the venue', { now: 2000, memories }), null);
+});

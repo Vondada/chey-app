@@ -376,3 +376,17 @@ test('trading intents need the whole request: questions and ordinary sentences a
   assert.deepEqual(deskIntent('connect alpaca'), { kind: 'alpaca_setup' });
   assert.deepEqual(deskIntent('how do I connect Alpaca?'), { kind: 'alpaca_setup' });
 });
+
+test('comprehension audit: short mode switches and mode questions reach the desk; going live still waits for the confirmation', () => {
+  assert.deepEqual(deskIntent('switch to paper'), { kind: 'mode', mode: 'paper' });
+  assert.deepEqual(deskIntent('che, go back to paper trading.'), { kind: 'mode', mode: 'paper' });
+  for (const text of ['go live on trading.', "turn on live trading but don't place any orders.", 'switch to live trading.']) {
+    assert.deepEqual(deskIntent(text), { kind: 'mode', mode: 'live' }, text);
+  }
+  for (const text of ['is live trading on?', 'are we trading live or paper right now?', 'am i on live']) {
+    assert.deepEqual(deskIntent(text), { kind: 'status' }, text);
+  }
+  for (const text of ["don't go live yet, just tell me what it takes.", 'should i go live', 'go to paper towels aisle']) {
+    assert.equal(deskIntent(text), null, text);
+  }
+});

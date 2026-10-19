@@ -116,3 +116,29 @@ test('everyday Drive, Calendar and Gmail wordings reach the real integration', (
   assert.deepEqual(googleChatIntent('read my latest email'), { kind: 'gmail_read', pick: 'newest', scope: 'inbox' });
   assert.deepEqual(googleChatIntent('read my newest unread email'), { kind: 'gmail_read', pick: 'newest' });
 });
+
+test('comprehension audit: spoken calendar questions, sender questions, natural event adds and Drive search have their own honest answers', () => {
+  assert.deepEqual(googleChatIntent('whats on my calendar today'), { kind: 'calendar_list', range: 'today' });
+  assert.deepEqual(googleChatIntent('Do I have anything on my calendar Friday?'), { kind: 'calendar_unsupported' });
+  for (const text of ['Do I have any new emails from Sarah?', "Don't send anything, just tell me if Sarah emailed me today.", 'did bob email me']) {
+    assert.deepEqual(googleChatIntent(text), { kind: 'gmail_unsupported' }, text);
+  }
+  for (const text of ['Add a meeting with Bob tomorrow at 3pm to my calendar.', 'Put dinner with Maria on my calendar Friday at 7.']) {
+    assert.deepEqual(googleChatIntent(text), { kind: 'calendar_incomplete' }, text);
+  }
+  assert.equal(googleChatIntent('add Dentist on 2026-10-21 at 15:00')?.kind, 'calendar_create');
+  for (const text of ['Find the budget spreadsheet in my Drive.', 'search my drive for the tax return']) {
+    assert.deepEqual(googleChatIntent(text), { kind: 'drive_unsupported' }, text);
+  }
+  assert.deepEqual(googleChatIntent('Read my last email out loud.'), { kind: 'gmail_read', pick: 'newest', scope: 'inbox' });
+  // "Can you send emails for me?" asks what CHE can do; a send the owner forbade is not a send, and his
+  // "don't send it" never becomes the email's last line.
+  assert.equal(googleChatIntent('Can you send emails for me?'), null);
+  assert.equal(googleChatIntent("Email bob@example.com saying the invoice is ready, but don't send it yet."), null);
+  assert.deepEqual(googleChatIntent("email bob@example.com saying please don't send the invoice twice"),
+    { kind: 'gmail_send', to: 'bob@example.com', body: "please don't send the invoice twice" });
+  for (const text of ['What are my latest YouTube videos?', 'How many subscribers do I have on YouTube?', 'how is my youtube channel doing', 'Did the moon video upload?']) {
+    assert.equal(youtubeChatIntent(text), true, text);
+  }
+  assert.equal(youtubeChatIntent('what are the latest videos about cats'), false);
+});

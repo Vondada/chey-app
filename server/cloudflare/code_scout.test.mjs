@@ -395,3 +395,22 @@ test('quoted and historical implementation instructions never grant current BUIL
     assert.equal(p.codingJobAllowed, false, message);
   }
 });
+
+test('comprehension audit: an opinion question never starts a job, "start a coding job" does, and named parts of CHE are read from source', async () => {
+  const { codingHistoryIntent, hypotheticalChange } = await import('./code_scout.js');
+  for (const text of ["What would you change in your own code if you could? Don't start a job.", 'What would you change in your own code if you could?', 'How would you improve your app?']) {
+    assert.equal(currentTurnActionPolicy(text).codingJobAllowed, false, text);
+    assert.equal(hypotheticalChange(text), true, text);
+  }
+  assert.equal(currentTurnActionPolicy('Start a coding job to fix the login bug.').codingJobAllowed, true);
+  assert.equal(currentTurnActionPolicy("Don't start a coding job to fix the login bug yet.").codingJobAllowed, false);
+  assert.equal(currentTurnActionPolicy('Fix the bug where the mic stays on after I stop talking.').codingJobAllowed, true);
+  assert.equal(codingHistoryIntent("What's your most recent coding job? Don't start a new one."), true);
+  for (const text of ['Show me the code for the voice studio.', 'How does your memory code work?', 'How does your voice studio code handle errors?']) {
+    assert.equal(repositoryInspectionIntent(text), true, text);
+  }
+  for (const text of ['show me the code for the gate', 'what is my gate code', 'How does the stock market work?', 'show me the code', 'how is your day',
+    'Show me your pairing code', 'Find your promo code']) {
+    assert.equal(repositoryInspectionIntent(text), false, text);
+  }
+});

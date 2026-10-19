@@ -220,3 +220,15 @@ test('native binaries and runtime capture are reported as not available, not as 
   assert.equal(on.static_javascript, true);
   assert.equal(on.native_binaries, false, 'still no Ghidra host');
 });
+
+test('comprehension audit: "run your REA on the Notion app" investigates; "your most recent REA investigation" reads the record', async () => {
+  const { parseReaRequest: parse } = await import('./rea_runner.js');
+  assert.equal(parse('Run your REA on the Notion app.')?.command, 'inspect');
+  assert.equal(parse('Investigate the left-pad npm package with REA.')?.command, 'inspect');
+  for (const text of ['Show me your most recent REA investigation.', 'what did your last rea investigation find', "Don't run your REA on Notion, just tell me what it can do"]) {
+    assert.equal(parse(text)?.command, 'status', text);
+  }
+  // Imagined or forbidden runs start nothing; a comparison keeps its own route.
+  assert.equal(parse("If I asked you to run REA on Spotify, what would happen? Don't run it."), null);
+  assert.equal(parse("Have your REA look at the Duolingo app and tell me what features we're missing", { history: [{ role: 'user', content: 'Investigate the Notion app' }] })?.command, 'compare');
+});

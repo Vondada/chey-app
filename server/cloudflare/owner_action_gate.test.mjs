@@ -179,3 +179,26 @@ test('compound requests track explicit opens and independent ungranted apps', ()
   assert.deepEqual(classifyAppAccesses('open the Notes app and read the latest in Spotify'),
     { explicit: ['notes'], required: ['spotify'] });
 });
+
+test('comprehension audit: a question about what CHE can do is not a purchase; a named one still is', () => {
+  for (const ask of ['Can you buy things for me?', 'Could you pay my bills if I asked?', 'can you buy stuff online', 'Can you delete things?',
+    'could you pay my rent if i asked you to', 'Can you order something for me', 'can you delete my emails if i asked']) {
+    assert.deepEqual(classifyOwnerActions(ask), [], ask);
+  }
+  for (const ask of ['Can you buy me a coffee?', 'Could you pay my electric bill?', 'Can you buy things for me? Buy me a coffee.',
+    'Can you buy anything for me right now, like a coffee?', 'Can you order me something', 'Pay my rent if I asked you to yesterday']) {
+    assert.deepEqual(classifyOwnerActions(ask), ['money'], ask);
+  }
+});
+
+test('comprehension audit: an app CHE studies or reports on is not an app she uses', () => {
+  for (const text of ['How many subscribers do I have on YouTube?', 'Run your REA on the Notion app.', 'Investigate the Notion app',
+    "If I asked you to run REA on Spotify, what would happen? Don't run it.", 'How much watch time do I have on YouTube?']) {
+    assert.deepEqual(classifyAppAccesses(text), { explicit: [], required: [] }, text);
+  }
+  // Opening, playing, posting or reading inside the app still needs the owner's permission.
+  for (const [text, app] of [['Read my last note in Notes.', 'notes'], ["what's on spotify", 'spotify'], ['play my liked songs on Spotify', 'spotify'],
+    ['watch my latest videos on YouTube', 'youtube'], ['post this on youtube', 'youtube'], ['analyze my notes in Notes', 'notes'], ['check my comments on youtube', 'youtube']]) {
+    assert.deepEqual(classifyAppAccesses(text).required, [app], text);
+  }
+});

@@ -126,3 +126,26 @@ test('"Buy 2 apples at Walmart—actually, cancel that" drops it: no hold, nothi
   assert.notEqual(out.meta.held_for_owner, true);
   assert.equal(che.saved.get('che:pending_owner_action') ?? null, null);
 });
+
+test('"Understood as": only a held or multi-step turn with a "don\'t" carries it, and only when nothing is lost', async () => {
+  const { understoodAs } = await import('./intent_frame.js');
+  assert.equal(understoodAs('CHE, buy 3 apples online now'), 'do: buy 3 apples online now | needs yes: money');
+  assert.equal(understoodAs('Delete my last note.'), 'do: Delete my last note | needs yes: delete');
+  assert.equal(understoodAs('Forget that my favorite color is blue.'), 'do: Forget that my favorite color is blue | needs yes: delete');
+  assert.equal(understoodAs("CHE, I want to go to Walmart tomorrow and buy apples, but don't order anything yet"),
+    "plan (owner): go to Walmart tomorrow; buy apples | not: don't order anything yet");
+  for (const plain of ["What's the weather?", 'Tell me a joke', "Send a draft to Mike but don't send the email yet", 'Buy 2 apples at Walmart—actually, cancel that']) {
+    assert.equal(understoodAs(plain), '', plain);
+  }
+});
+
+test('through /api/chat: a hold and a multi-step plan carry understood_as; an ordinary turn does not', async () => {
+  const che = await owner('Okay, sir.');
+  const held = await che.say('CHE, buy 3 apples online now');
+  assert.equal(held.meta.held_for_owner, true);
+  assert.equal(held.meta.understood_as, 'do: buy 3 apples online now | needs yes: money');
+  const plan = await che.say("CHE, I want to go to Walmart tomorrow and buy apples, but don't order anything yet");
+  assert.equal(plan.meta.understood_as, "plan (owner): go to Walmart tomorrow; buy apples | not: don't order anything yet");
+  assert.notEqual(plan.meta.held_for_owner, true);
+  assert.equal((await che.say('Tell me a joke')).meta.understood_as, undefined);
+});

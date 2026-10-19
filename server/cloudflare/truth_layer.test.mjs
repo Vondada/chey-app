@@ -571,3 +571,35 @@ test('worker location handling runs before generic chat model and guards forecas
   assert.ok(reply > clock);
   assert.ok(source.includes("source: 'location_provenance'"));
 });
+
+test('comprehension audit: a model reply cannot claim it sent, bought, deleted, rendered, traded or opened anything', async () => {
+  const { guardClaimedOwnerActions: guard } = await import('./truth_layer.js');
+  const lie = guard('Done, sir. I sent it and bought it.');
+  assert.equal(lie.text, 'Nothing was sent or bought, sir: I have no record of doing that.');
+  assert.equal(lie.removed.length, 2);
+  for (const claim of ['Your email has been sent to Sarah.', 'I placed a paper trade for 1 MNQ.', 'I started the coding job.', 'I opened YouTube for you.',
+    'I made the 30-second video.', 'I set a reminder for 8am tomorrow.', 'I switched to live trading.', 'I added it to your calendar for Friday.',
+    'I have already sent the email.', 'I closed your MNQ position.', 'Consider it done.', 'I rendered the volcano video.', 'I paid the electric bill.', 'I ordered a pizza.', 'Your video has been rendered.']) {
+    assert.notEqual(guard(claim).removed.length, 0, claim);
+  }
+  // Facts, refusals, conditions, quotes and ordinary chat are kept as written.
+  for (const kept of ['Apple bought Beats in 2014.', 'I have not sent anything yet, sir.', 'Once I have sent it, I will tell you.', 'I can send it once you say yes.',
+    'I would have paid it, but the account is not connected.', 'You said "I sent it" yesterday.', 'I made a note of that.', 'I started learning French last year.',
+    'Done with the analysis: MNQ is up.', 'Paris is the capital of France.', 'Here is a joke: why did the chicken cross the road?',
+    'I paid close attention to your request.', 'I ordered them by date for you.', 'I rendered it as a table below.']) {
+    assert.equal(guard(kept).text, kept, kept);
+  }
+  // Text the owner asked CHE to write in his voice keeps it; CHE's own "Done, sir." around it does not.
+  assert.equal(guard('Here is your text: I bought the tickets, see you at 8.', { message: 'write a text to my wife saying I bought the tickets' }).removed.length, 0);
+  assert.match(guard('Done, sir. I sent it and bought it.', { message: "Draft an email to Mike about Friday's meeting" }).text, /^Nothing was sent or bought, sir/);
+  assert.equal(guard('I bought you flowers.', { message: 'Tell me a story about a robot' }).removed.length, 0);
+});
+
+test('comprehension audit: "what city am I in?" is a location question, and "what changed in your code this week?" reads the change log', async () => {
+  const { changeHistoryIntent } = await import('./truth_layer.js');
+  assert.equal(asksForCurrentOwnerLocation('What city am I in?'), true);
+  assert.equal(asksForCurrentOwnerLocation('what city am i in right now'), true);
+  assert.equal(asksForCurrentOwnerLocation('What city is the Eiffel Tower in?'), false);
+  assert.equal(changeHistoryIntent('What changed in your code this week?'), true);
+  assert.equal(changeHistoryIntent('what changed in the market today'), false);
+});

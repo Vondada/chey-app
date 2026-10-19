@@ -372,3 +372,23 @@ test('a long limit clause keeps its "don\'t" when the text is bounded (review of
   assert.match(starred, /never remove/);
   assert.match(starred, /characters not shown\]$/, 'what was left out at the end is marked');
 });
+
+test('comprehension audit: a cancel calls off only what it points back to', () => {
+  // "Forget that X" asks CHE to forget a memory (a delete the gate holds), and "don't forget" asks her to remember.
+  for (const text of ['Forget that my favorite color is blue.', 'forget that i park on level 3', "Don't forget that my mom's birthday is June 3rd.", 'dont forget it']) {
+    assert.notEqual(interpretOwnerTurn(text).kind, 'cancel', text);
+  }
+  // A leading cancel drops the earlier thing; the new question is what is read and routed.
+  const next = interpretOwnerTurn("Never mind that, what's my favorite food?");
+  assert.equal(next.text, "what's my favorite food?");
+  assert.equal(next.clarify, null);
+  assert.equal(interpretOwnerTurn('forget it, just tell me the weather').text, 'just tell me the weather');
+  assert.equal(interpretOwnerTurn("never mind the weather, what's on my calendar?").text, "what's on my calendar?");
+  assert.equal(interpretOwnerTurn('never mind whats my favorite food').text, 'whats my favorite food');
+  assert.equal(interpretOwnerTurn('never mind the weather').clarify, 'Okay, I have dropped that.');
+  // Still cancelled: alone, at the end, or mid-turn.
+  for (const text of ['never mind', 'Forget that.', 'oh forget that', 'scratch that', 'Remember that I hate mushrooms. Actually, cancel that.',
+    'Buy 2 apples at Walmart—actually, cancel that', 'Pay my rent, actually never mind.', 'Buy apples, actually no, buy oranges']) {
+    assert.equal(interpretOwnerTurn(text).clarify, 'Okay, I have dropped that.', text);
+  }
+});

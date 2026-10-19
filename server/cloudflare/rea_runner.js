@@ -33,6 +33,7 @@ import {
   browserFeatures, buildFeatureMap, buildRequestFor, compareWithChe, pickFeatures, planFor, proposeImprovements, verifyBuild,
 } from './rea_features.js';
 import { validateWebSummary } from './rea_web_evidence.js';
+import { withoutProhibitions } from './owner_action_gate.js';
 
 export const REA_WORKFLOW = 'che-rea-analysis.yml';
 export const REA_WORKFLOW_REF = 'main';
@@ -48,7 +49,7 @@ const STALLED_AFTER_MS = 2 * 60 * 60_000;
 const VERIFIED_STATES = ['passed', 'failed'];
 const VERIFY_RECHECK_MS = 2 * 60_000;
 
-const VERBS = { inspect: 'inspect', 'reverse engineer': 'inspect', 'reverse-engineer': 'inspect', analyze: 'inspect', analyse: 'inspect', explain: 'explain', debug: 'debug', compare: 'compare' };
+const VERBS = { inspect: 'inspect', investigate: 'inspect', 'reverse engineer': 'inspect', 'reverse-engineer': 'inspect', analyze: 'inspect', analyse: 'inspect', explain: 'explain', debug: 'debug', compare: 'compare' };
 const TITLES = { inspect: 'inspection', explain: 'explanation', debug: 'debug review', compare: 'comparison', rebuild: 'rebuild plan' };
 
 export function reaConfigured(env = {}) {
@@ -66,7 +67,10 @@ const RECALL = /\bremember (?:that|the) (?:app|website|site|repo(?:sitory)?|pack
 const PRONOUN_TARGET = /\b(?:this|that|the) (?:app|application|website|site|web ?app|repo(?:sitory)?|project|software|tool)\b/i;
 const NOT_REA = /\b(?:seo|audit|summari[sz]e|remember (?:this|that) (?:page|link)|save (?:this|that)|memori[sz]e|my (?:website|site|app)|your (?:own )?(?:code|app|website|repo))\b/i;
 const NO_CODE_CHANGE = /\b(?:do\s+not|don['’]t|never|without)\s+(?:modify\w*|chang\w*|touch\w*|edit\w*|writ\w*|open\w*)\s+(?:your|the|any|a)?\s*(?:code|pull request|pr)\b|\b(?:chat|conversation)[- ]only\b|\banswer (?:only )?in (?:this )?chat\b/i;
-const SELF_REA = /\b(?:your|che['’]?s|the|my)\s+(?:own\s+)?rea\b/i;
+// "Your most recent REA investigation", "your last REA run": CHE's own REA with a word between (comprehension audit).
+const SELF_REA = /\b(?:your|che['’]?s|the|my)\s+(?:(?:own|most\s+recent|latest|last|recent|newest|previous)\s+)*rea\b/i;
+// "Run your REA on the Notion app": an investigation asked for by naming REA itself.
+const RUN_REA = /\b(?:run|use|point|aim)\s+(?:your\s+|the\s+|my\s+)?rea\b[\s\S]{0,20}\b(?:on|at|against|over)\b/i;
 const SELF_REA_READ = /\b(?:what|which|explain|describe|tell|show|list|status|history|latest|last|most\s+recent|recent|capabilit\w*|evidence)\b/i;
 const OWN_AREAS = /^(?:office|workshop|command center|commands?|brain|mailbox|connections?|trading(?: desk)?|studio|che|chey|keys|settings)$/i;
 
@@ -99,7 +103,7 @@ export function parseReaRequest(message, { history = [] } = {}) {
 }
 
 function parseNaturalRea(text, { history = [] } = {}) {
-  const npmNatural = text.match(/\b(reverse[- ]engineer|analy[sz]e|inspect|explain|debug|compare)\b[\s\S]{0,80}\b(?:npm package\b|npm:)/i);
+  const npmNatural = text.match(/\b(reverse[- ]engineer|analy[sz]e|inspect|investigate|explain|debug|compare)\b[\s\S]{0,80}\b(?:npm package\b|npm:)/i);
   if (npmNatural) return { command: VERBS[npmNatural[1].toLowerCase().replace(/\s+/g, ' ')] || 'inspect', input: text };
   if (text.length > 600) return null;
   // Follow-ups about an earlier investigation; handleReaRequest drops them when there is none.
@@ -108,11 +112,14 @@ function parseNaturalRea(text, { history = [] } = {}) {
     return { command: named || BUILD_THOSE.test(text) ? 'build' : 'recall', input: named ? named[1].trim() : '', natural: true, followup: true };
   }
   const wantsGap = GAP.test(text);
-  const investigating = INVESTIGATE.test(text) || HOW_IT_WORKS.test(text);
+  // A run the owner forbade ("don't run it") or only imagined ("if I asked you to run REA on Spotify") is not asked for.
+  // A comparison ("… and tell me what features we're missing") keeps its own route.
+  const runAsked = !wantsGap && RUN_REA.test(withoutProhibitions(text)) && !/\bif\s+i\s+(?:asked|told|wanted)\b/i.test(text);
+  const investigating = INVESTIGATE.test(text) || HOW_IT_WORKS.test(text) || runAsked;
   if (!investigating) return wantsGap ? { command: 'compare', input: '', natural: true, followup: true } : null;
   if (NOT_REA.test(text)) return null;
   const target = identifyTarget(text);
-  const strongCue = wantsGap || HOW_IT_WORKS.test(text) || /\breverse[- ]engineer/i.test(text);
+  const strongCue = wantsGap || HOW_IT_WORKS.test(text) || /\breverse[- ]engineer/i.test(text) || runAsked;
   const kindWord = /\b(?:app|application|website|site|web ?app|repo(?:sitory)?|software|project)\b/i.test(text);
   if (target && target.kind !== 'app_name' && target.kind !== 'private_app') return { command: 'inspect', input: text, natural: true, gap: wantsGap };
   if (target && (target.kind === 'private_app' || ((kindWord || strongCue) && !OWN_AREAS.test(target.name)))) {

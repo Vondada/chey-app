@@ -78,6 +78,7 @@ import 'che_ui/che_plugins.dart'
     show ChePluginOfferCard, ChePluginRegistry, ChePluginsScreen, chePluginAuthoringGuide;
 import 'che_ui/che_theme.dart' as kit;
 import 'che_ui/che_ui_preferences.dart';
+import 'che_ui/che_understood_as.dart' show CheUnderstoodAs, cheUnderstoodAs;
 import 'che_ui/che_transitions.dart';
 import 'che_ui/che_widgets.dart' as kit show CheBackground;
 import 'che_ui/che_agents.dart' show CheAgent, CheAgentStatusLabel;
@@ -906,6 +907,8 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   Map<String, String>? _pendingAttachment;
   String? _streamMediaUrl;
   String? _streamMediaType;
+  // How CHE read a held or multi-step turn (issue #345), shown quietly under the reply.
+  String? _streamUnderstoodAs;
   final ImagePicker _imagePicker = ImagePicker();
 
   List<String> savedMemories = [];

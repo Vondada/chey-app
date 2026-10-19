@@ -86,6 +86,8 @@ extension _CheHomeUi on _CHEHomeState {
       text.replaceAll(RegExp(r'```che-plugin[\s\S]*?(```|$)'), '').trim(),
     );
     final extras = <Widget>[
+      if (!isLiveReply && (item['understood_as'] ?? '').isNotEmpty)
+        CheUnderstoodAs(text: item['understood_as']!),
       if (!isLiveReply)
         for (final proposal in CheUpdateProposal.findInText(text))
           CheUpdateCard(

@@ -80,7 +80,7 @@ export async function loadChangeHistory(storage) {
 export function changeHistoryIntent(message) {
   const text = String(message || '').trim();
   if (!text || text.length > 120) return false;
-  return /^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:what(?:'s| has| have)?\s+(?:you\s+)?changed(?:\s+(?:lately|recently|in you|about you))?|what\s+did\s+you\s+(?:change|update)(?:\s+(?:lately|recently|in yourself))?|(?:show|read|tell)\s+(?:me\s+)?(?:your\s+|the\s+)?(?:change|update)\s+(?:history|log)|(?:your\s+)?(?:change|update)\s+(?:history|log)|what\s+updates?\s+(?:did\s+you\s+(?:get|make|do)|have\s+you\s+(?:had|made)))[?.!]*$/i.test(text);
+  return /^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:what(?:'s| has| have)?\s+(?:you\s+)?changed(?:\s+(?:lately|recently|in you|about you|in your (?:code|app)))?(?:\s+(?:this week|this month|today|lately|recently))?|what\s+did\s+you\s+(?:change|update)(?:\s+(?:lately|recently|in yourself))?|(?:show|read|tell)\s+(?:me\s+)?(?:your\s+|the\s+)?(?:change|update)\s+(?:history|log)|(?:your\s+)?(?:change|update)\s+(?:history|log)|what\s+updates?\s+(?:did\s+you\s+(?:get|make|do)|have\s+you\s+(?:had|made)))[?.!]*$/i.test(text);
 }
 
 export function speakChangeHistory(list, limit = 5) {
@@ -440,7 +440,9 @@ export function asksForCurrentOwnerLocation(message) {
   return /\bwhere\s+(?:exactly\s+)?(?:am\s+i|i\s+am|i'm)\b(?!\s+(?:going|headed|in\s+life))/.test(text) ||
     /\b(?:do|can|so)\s+you\s+(?:know|see|tell)\s+(?:me\s+)?where\s+i\s+am\b/.test(text) ||
     /\b(?:do\s+)?you\s+(?:know|have|see)\s+my\s+(?:live\s+|current\s+|exact\s+)?(?:location|gps\s+position)\b/.test(text) ||
-    /\b(?:what|where)(?:'s| is)\s+my\s+(?:live\s+|current\s+|exact\s+)?(?:location|gps\s+position)\b/.test(text);
+    /\b(?:what|where)(?:'s| is)\s+my\s+(?:live\s+|current\s+|exact\s+)?(?:location|gps\s+position)\b/.test(text) ||
+    // "What city am I in?", "which town am I in right now?" (comprehension audit).
+    /\b(?:what|which)\s+(?:city|town|state|country|place|neighborhood|street)\s+(?:am\s+i|i(?:'m|\s+am))\s+(?:in|at|on)(?:\s+(?:right\s+now|now|currently))?\s*\??$/.test(text);
 }
 
 export const OWNER_LOCATION_NOT_VERIFIED =
@@ -538,4 +540,86 @@ export function guardClaimedResearchActions(reply, { research = null, tools = []
     };
   }
   return { text, corrected: false };
+}
+
+// A model reply on the chat path can never have sent, bought, deleted, uploaded, rendered, traded or opened
+// anything: those run only through their own routes, which answer with their own records before the model
+// is reached. So "Done, sir. I sent it and bought it." is invented whatever was asked (comprehension audit,
+// issue #350). Each such sentence is taken out and the owner is told plainly that nothing was done.
+// Strong verbs claim an outside effect on their own; weak ones only with what they act on.
+const STRONG_DONE = {
+  sent: 'sent', emailed: 'sent', texted: 'sent', messaged: 'sent', forwarded: 'sent',
+  bought: 'bought', purchased: 'bought', ordered: 'ordered', subscribed: 'bought',
+  paid: 'paid', transferred: 'paid', deleted: 'deleted', erased: 'deleted', wiped: 'deleted',
+  uploaded: 'uploaded', published: 'uploaded', posted: 'uploaded',
+  booked: 'scheduled', scheduled: 'scheduled', sold: 'sold',
+};
+// Ordinary ways of speaking that use the same verbs: "I paid close attention", "I ordered them by date".
+const NOT_AN_ACTION_AFTER = { paid: /^\s+(?:close\s+|careful\s+|special\s+|extra\s+|more\s+)?attention\b/i, ordered: /^\s+(?:[\w-]+\s+){0,3}?(?:by|alphabetically|chronologically|from\s+\w+\s+to)\b/i };
+const WEAK_DONE = {
+  placed: 'placed', executed: 'placed', submitted: 'placed', closed: 'closed', flattened: 'closed', removed: 'deleted', cancelled: 'cancelled', canceled: 'cancelled',
+  opened: 'opened', launched: 'opened', started: 'started', queued: 'started', dispatched: 'started', 'kicked off': 'started', rendered: 'rendered',
+  switched: 'changed', changed: 'changed', connected: 'connected', set: 'set', added: 'added', created: 'created',
+};
+const ACTED_ON = String.raw`(?:order|trade|position|payment|purchase|transfer|subscription|email|e-mail|message|text|reminder|alarm|timer|event|meeting|appointment|invite|calendar|cart|draft|video|render|upload|job|task|investigation|build|exam|app|youtube|notes|spotify|account|broker|voice|mode|live|paper|note|file|post)s?`;
+const FILLER_ADVERBS = String.raw`(?:(?:just|already|now|also|successfully|gone\s+ahead\s+and|went\s+ahead\s+and)\s+)*`;
+const STRONG_RE = new RegExp(String.raw`\b(?:I|we)(?:['’]ve|\s+have|\s+had)?\s+${FILLER_ADVERBS}(${Object.keys(STRONG_DONE).join('|')})\b`, 'i');
+const WEAK_RE = new RegExp(String.raw`\b(?:I|we)(?:['’]ve|\s+have|\s+had)?\s+${FILLER_ADVERBS}(${Object.keys(WEAK_DONE).join('|').replace(' ', '\\s+')})\b(?:\s+(?:it|that|this|them|you|everything))?(?:\s+(?:up|on|over|off|to|for|in|into))?(?:\s+(?:a|an|the|your|my|one|two|\d+|new|live|paper))?(?:\s+[\w-]+){0,2}?\s+${ACTED_ON}\b`, 'i');
+const PASSIVE_RE = new RegExp(String.raw`\b(?:it|that|this|everything|all\s+of\s+(?:it|them)|your\s+[\w-]+(?:\s+[\w-]+)?|the\s+(?:[\w-]+\s+)?${ACTED_ON})\s+(?:(?:has|have|had)\s+been|is|was|were|are)\s+(?:now\s+|successfully\s+|already\s+)?(${[...Object.keys(STRONG_DONE), 'placed', 'executed', 'submitted', 'removed', 'cancelled', 'canceled', 'rendered', 'closed'].join('|')})\b`, 'i');
+// "I made the video", but never "I made a note of that" (an ordinary way to say "I'll keep it in mind").
+const MADE_RE = new RegExp(String.raw`\b(?:I|we)(?:['’]ve|\s+have)?\s+${FILLER_ADVERBS}(made)\s+(?:a|an|the|your|one)\s+(?:[\w-]+\s+){0,2}(?:video|render|reminder|event|appointment|order|payment|purchase|reservation|booking|trade)s?\b`, 'i');
+// More of the same claim later in the sentence: "I sent it and bought it".
+const MORE_DONE = new RegExp(String.raw`(?:\band|\bthen|,)\s+(?:also\s+)?(${Object.keys(STRONG_DONE).join('|')})\b`, 'gi');
+// "Done, sir." / "All done." / "Consider it done." / "Sent." opening a sentence.
+const DONE_RE = /^\s*(?:(?:all|it['’]?s|it\s+is)\s+)?done\b(?!\s+(?:with|by|in|for|on|at|before|after)\b)|\bconsider\s+it\s+done\b|^\s*(?:sent|ordered|bought|booked|scheduled|deleted|uploaded|published|posted|placed)\s*(?:[,.!]|$)/i;
+// A condition, a plan or a question about the action does not claim it: "once I've sent it", "if I had paid".
+const NOT_A_CLAIM = /\b(?:if|once|when|whenever|after|until|unless|whether|before|would|could|should|might|can|will|shall|going\s+to)\b/i;
+// Text the owner asked CHE to write in his voice ("draft a text saying I sent it") may say "I sent it"; only
+// CHE's own words to him around it ("Done, sir.") are checked then.
+const WRITING_REQUEST = /\b(?:write|draft|compose|reword|rephrase|translate|proofread)\b[^.?!]{0,60}\b(?:saying|says|say|telling|tells|letting|announcing|replies|reply|response|post|caption|tweet|letter|message|text|e-?mail|note|speech|toast)\b|\brole.?play|\bpretend\b|\bact\s+as\b/i;
+
+function quoted(sentence, index) {
+  const before = sentence.slice(0, index);
+  return ((before.match(/["“”]/g) || []).length % 2 === 1) || /['‘]\s*[^'’]*$/.test(before) && /^[^'’]*['’](?:\s|$|[,.!?])/.test(sentence.slice(index));
+}
+
+export function guardClaimedOwnerActions(reply, { message = '', acted = false } = {}) {
+  const text = String(reply || '');
+  // A story, a role-play or text the owner asked CHE to write may say "I sent it" in its own voice.
+  if (acted || storyRequested(message)) return { text, removed: [] };
+  // A reply that opens "Done, sir." reports on itself, not a draft, so all of it is checked.
+  const drafting = WRITING_REQUEST.test(String(message || '')) && !DONE_RE.test(text.trim());
+  const removed = [];
+  const claimed = new Set();
+  const kept = [];
+  for (const sentence of splitSentences(text)) {
+    const plain = sentence.trim();
+    let hit = null;
+    if (drafting && !/\bsir\b/i.test(plain) && !DONE_RE.test(plain)) { kept.push(sentence); continue; }
+    for (const re of [STRONG_RE, WEAK_RE, MADE_RE, PASSIVE_RE]) {
+      const m = re.exec(plain);
+      const verb = m ? m[1].toLowerCase().replace(/\s+/g, ' ') : '';
+      if (m && !NOT_A_CLAIM.test(plain.slice(0, m.index)) && !quoted(plain, m.index)
+        && !NOT_AN_ACTION_AFTER[verb]?.test(plain.slice(m.index + m[0].length))) {
+        hit = STRONG_DONE[verb] || WEAK_DONE[verb] || 'made';
+        claimed.add(hit);
+        for (const more of plain.slice(m.index + m[0].length).matchAll(MORE_DONE)) claimed.add(STRONG_DONE[more[1].toLowerCase()]);
+        break;
+      }
+    }
+    if (!hit && plain && DONE_RE.test(plain)) hit = 'done';
+    if (hit) {
+      removed.push(plain);
+      continue;
+    }
+    kept.push(sentence);
+  }
+  if (!removed.length) return { text, removed };
+  const verbs = [...claimed];
+  const list = verbs.length > 1 ? `${verbs.slice(0, -1).join(', ')} or ${verbs[verbs.length - 1]}` : verbs[0];
+  const note = list
+    ? `Nothing was ${list}, sir: I have no record of doing that.`
+    : 'I have no record of doing anything for that, sir, so I will not say it is done.';
+  const rest = kept.join('').replace(/\n{3,}/g, '\n\n').trim();
+  return { text: rest ? `${rest} ${note}` : note, removed };
 }

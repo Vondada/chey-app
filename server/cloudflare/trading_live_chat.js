@@ -21,7 +21,8 @@ const READS = [
   ['compare', /\bcompare\s+(?:all\s+)?your\s+(?:trading\s+|paper\s+)?strateg|\bcompare\s+(?:the\s+)?(?:trading|paper)\s+strateg/i],
   ['best', /\bwhich\s+(?:ict|smart\s+money|trading|paper)\s+strateg\w*\b[\s\S]{0,25}\b(?:best|performing|winning|working)\b|\bwhich\s+of\s+your\s+(?:trading\s+)?strateg\w*\b[\s\S]{0,25}\b(?:best|performing|winning|working)\b/i],
   ['trades', /\b(?:show|list|read|tell)\s+me\s+(?:every|all|the|your)?\s*(?:live\s+)?(?:(?:nq|mnq|paper)\s+)+trades?\b|\bevery\s+trade\s+you\s+(?:made|took|placed)\b|\b(?:show|list|read)\s+me\s+(?:all\s+)?(?:the\s+)?trades\s+you\s+(?:made|took|placed)\b/i],
-  ['performance', /\btrading\s+performance\b|\bread\s+me\s+your\s+(?:trading\s+|paper\s+)?(?:results|performance)\b|\bhow\s+did\s+your\s+paper\s+trades?\s+do\b/i],
+  // "How did my paper trades do today?", "what's my paper trading balance?" (comprehension audit).
+  ['performance', /\btrading\s+performance\b|\bread\s+me\s+your\s+(?:trading\s+|paper\s+)?(?:results|performance)\b|\bhow\s+(?:did|are|have)\s+(?:your|my|the)\s+paper\s+trades?\s+(?:do|doing|done|going|gone)\b|\bpaper[\s-]*trad\w*\s+(?:balance|results|profit|p\s*&\s*l|pnl)\b|\bpaper\s+(?:balance|p\s*&\s*l|pnl)\b/i],
   ['evidence', /\b(?:show|read)\b[\s\S]{0,15}\btrading\s+evidence\b/i],
   ['open', /^(?:please\s+)?open\s+(?:up\s+)?(?:your\s+|the\s+)?trading\s+room\b/i],
   // "Is paper trading still on?" reads the switch and never flips it. "Is paper trading on NQ

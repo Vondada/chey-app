@@ -39,11 +39,20 @@ function clausesOf(t) {
   clauses.push([start, t.length]);
   return clauses;
 }
+// A question about what CHE is able to do asks her to do nothing (comprehension audit): "Can you buy things
+// for me?" names no purchase, and "Could you pay my bills if I asked?" waits for an ask that has not come.
+// "Can you buy me a coffee?" and "Could you pay my electric bill?" name one, so they are still held.
+const ABILITY_ASK_RE = new RegExp(String.raw`^${VOCATIVE}(?:can|could|would|will)\s+you\s+(?:ever\s+|actually\s+|really\s+|even\s+)?(?:${MONEY_VERB}|${STRONG_DELETE}|order)\s+(?:things|stuff|anything|something|items|products)(?:\s+(?:for\s+(?:me|us)|online|on\s+my\s+behalf|by\s+yourself|yourself))*$`, 'i');
+const IF_I_ASKED_RE = new RegExp(String.raw`^${VOCATIVE}(?:can|could|would|will)\s+you\b[^?]*\bif\s+i\s+(?:asked|told|wanted|said)(?:\s+(?:you|you\s+to|to|so))?$`, 'i');
+function abilityQuestion(clause) {
+  const c = clause.replace(/[\s?.!]+$/, '');
+  return ABILITY_ASK_RE.test(c) || IF_I_ASKED_RE.test(c);
+}
 function hasVerb(re, t) {
   return clausesOf(t).some(([from, to]) => {
     const c = t.slice(from, to).trim();
     const m = re.exec(c);
-    return Boolean(m) && !NEGATED_RE.test(c.slice(0, m.index));
+    return Boolean(m) && !NEGATED_RE.test(c.slice(0, m.index)) && !abilityQuestion(c);
   });
 }
 
@@ -247,6 +256,18 @@ const APP_NAMED_OPEN_RE = new RegExp(
     APPS_RE + ')\\s+app(?=$|[.,!?;]|\\s+(?:and|to|now|please)\\b)', 'i',
 );
 
+// Naming an app is not using it when the app is what CHE studies or reports on (comprehension audit): REA
+// reads an app's public listing and code ("run your REA on the Notion app", "investigate the Spotify app"),
+// and channel numbers come from CHE's own YouTube connection ("how many subscribers do I have on YouTube").
+// Anything that would open, play or read inside the app still needs the owner's permission.
+const STUDIED_APP_RE = /\b(?:rea|reverse[- ]engineer\w*|investigat\w*|analy[sz]\w*|inspect\w*|stud(?:y|ying|ied)|compar\w*)\b/i;
+const CHANNEL_STATS_RE = /\b(?:subscribers?|views|uploads?|channel|analytics|watch\s+time)\b/i;
+const USES_APP_RE = /\b(?:open|launch|play|go\s+to|watch(?!\s+time)|use|show\s+me|read|post|upload|comment|like)\b/i;
+function studiesApp(clause, app, named) {
+  if (named ? STUDIED_APP_RE.test(clause) : /\b(?:rea|reverse[- ]engineer\w*)\b/i.test(clause)) return true;
+  return app === 'youtube' && CHANNEL_STATS_RE.test(clause) && !USES_APP_RE.test(clause);
+}
+
 // Classify each clause independently. A single explicit open must never
 // bypass another app mentioned later in the same owner request.
 export function classifyAppAccesses(text) {
@@ -263,6 +284,7 @@ export function classifyAppAccesses(text) {
     const named = APP_NAMED_RE.exec(clause);
     const implicit = named ? named[0].toLowerCase().replace(/\s+app$/, '')
       : (APP_IN_RE.exec(clause)?.[1]?.toLowerCase() || '');
+    if (implicit && !openApp && studiesApp(clause, implicit, Boolean(named))) continue;
     if (implicit && implicit !== openApp && !required.includes(implicit)) required.push(implicit);
   }
   return { explicit, required: required.filter((app) => !explicit.includes(app)) };
