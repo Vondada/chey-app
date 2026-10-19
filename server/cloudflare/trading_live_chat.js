@@ -28,7 +28,7 @@ const ANALYSIS = /\b(?:analy[sz]e|analysis\s+(?:of|on)|break\s+down|assess)\b[\s
 // "Analyze the NQ chart" is the chart analyzer's (trading_lab); a read that asks about the feed or the
 // paper journal itself is answered here.
 const FEED_DETAIL = /\b(?:paper\s+trades?|vwap|data\s+delay|delay(?:ed)?|time\s*stamps?|data\s+source|(?:the|its)\s+source|latest\s+(?:available\s+)?(?:market\s+)?data)\b/i;
-const ORDER_ASK = /\b(?:place|submit|enter|buy|sell|short|go\s+long|go\s+short|take\s+(?:the|a)\s+trade|open\s+a\s+(?:position|trade))\b/i;
+const ORDER_ASK = /\b(?:place|submit|enter|buy|sell|short|go\s+long|go\s+short|take\s+(?:the|a)\s+trade|open\s+a\s+(?:position|trade)|reverse|flatten|close\s+(?:out\s+)?(?:my|the|that|this|all)\s+(?:\w+\s+)?(?:positions?|trades?|longs?|shorts?))\b/i;
 
 /** The command in [message], or null. Narrow on purpose: other trading talk keeps its routes. */
 export function liveIntent(message) {

@@ -73,6 +73,9 @@ export function prohibitionSpans(text) {
   for (const match of t.matchAll(PROHIBITION_START)) {
     if (spans.length && match.index < spans[spans.length - 1][1]) continue;
     const rest = t.slice(match.index + match[0].length);
+    // "Don't place any orders except one MNQ long", "don't sell unless MNQ hits 21500": a ban with an
+    // exception asks for the exception, so it is not set aside (review of #351).
+    if (/\b(?:except|unless|other\s+than|apart\s+from|aside\s+from|besides|but\s+only|save\s+for)\b/i.test(rest.split(/[.;!?\n]/)[0])) continue;
     const first = /^\S+/.exec(rest)?.[0].length || 0;
     const sentence = PROHIBITION_END.exec(rest);
     const read = READ_TURN.exec(rest.slice(first));
@@ -120,9 +123,11 @@ export function prohibitedText(text) {
 // CHE pays, so it never counts as forbidding the purchase.
 const OWN_PLAN = String.raw`^${VOCATIVE}(?:(?:so|well|and|but|ok|okay|also)\s+)*(?:i\s+(?:want|need|plan|hope|intend|would\s+like)\s+to|i(?:['’]d|d)\s+like\s+to|i\s+am\s+(?:going|planning)\s+to|i(?:['’]m|m)\s+(?:going|planning)\s+to|i\s+will|i['’]ll|i\s+might)\s+`;
 const OWN_PLAN_RE = new RegExp(OWN_PLAN, 'i');
+const OWN_MONEY_RE = new RegExp(`${OWN_PLAN}(?:${MONEY_VERB}\\b|${MONEY_ORDER}|${MONEY_TRANSFER})`, 'i');
+const BARE_MONEY_RE = new RegExp(`^(?:${MONEY_VERB}\\b|${MONEY_ORDER}|${MONEY_TRANSFER})`, 'i');
 // A ban on every purchase: "don't purchase anything", "don't order anything yet", "don't order them".
 // "Don't buy the extended warranty" or "don't order any drinks" forbids one item, not the purchase.
-const BLANKET_BAN = /\b(?:do\s+not|don['’]?t|never)\s+(?:(?:actually|ever|even|just)\s+)*(?:buy|purchase|pay\s+for|order|spend|check\s*out|place\s+(?:an?\s+|any\s+)?orders?)(?:\s+(?:anything(?:\s+else)?|any\s+(?:orders?|purchases?)|it|them|this|that|yet|now|today|online))*\s*(?=$|[,.;!?]|\s+(?:or|nor|and|but|add|create|explain|just|tell)\b)/gi;
+const BLANKET_BAN = /\b(?:do\s+not|don['’]?t|never)\s+(?:(?:actually|ever|even|just)\s+)*(?:buy|purchase|pay\s+for|order|spend|check\s*out|place\s+(?:an?\s+|any\s+)?orders?)(?:\s+(?:anything(?!\s+else)|any\s+(?:orders?|purchases?)|it|them|this|that|yet|now|today|online))*\s*(?=$|[,.;!?]|\s+(?:or|nor|and|but|add|create|explain|just|tell)\b)/gi;
 function onlyOwnPlanMoney(t) {
   const bans = [...t.matchAll(BLANKET_BAN)].map((m) => [m.index, m.index + m[0].length]);
   if (!bans.length) return false;
@@ -142,6 +147,8 @@ function onlyOwnPlanMoney(t) {
     if (bans.some(([a, b]) => at >= a && at < b)) continue;
     const part = parts.find(([a, b]) => at >= a && at < b);
     if (!part || !OWN_PLAN_RE.test(t.slice(part[0], part[1]).trim())) return false;
+    // "… and buy apples" carries the plan; "… and can you pay the bill" or "and please pay it" asks CHE.
+    if (!OWN_MONEY_RE.test(c) && !BARE_MONEY_RE.test(c)) return false;
     own = true;
   }
   return own;
