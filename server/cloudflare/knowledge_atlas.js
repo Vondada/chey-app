@@ -892,16 +892,19 @@ function speech(message) {
 const FILLER = new Set(['about', 'on', 'in', 'the', 'a', 'an', 'how', 'what', 'to', 'of', 'me', 'some', 'is', 'are', 'works', 'work', 'means', 'mean', 'concept', 'idea', 'basics', 'basic', 'again', 'now', 'today', 'detail', 'step', 'by', 'more', 'please', 'that', 'this', 'with', 'it', 'its', 'and', 'for', 'python', 'javascript', 'js', 'dart', 'code', 'programming', 'trading', 'futures', 'whole', 'topic', 'lesson', 'card']);
 const stemWord = (w) => (w.length > 3 && w.endsWith('s') && !w.endsWith('ss') ? w.slice(0, -1) : w);
 const words = (text) => String(text || '').toLowerCase().replace(/'/g, '').replace(/[^a-z0-9²]+/g, ' ').trim().split(' ').filter(Boolean);
-// "Teach me Python": a language named on its own is the topic; "recursion in Python" is recursion.
+// "Teach me Python": a language said on its own, exactly, is the topic ("lang:python"); "recursion in
+// Python" is recursion, and "pythons" (stemmed to a plain word) is not the language.
 const LANGUAGE_WORDS = new Set(['python', 'javascript', 'js', 'dart']);
 /** A topic as the matcher compares it: lower case, no punctuation, no filler words, light singulars. */
 export function topicKey(text) {
   const kept = words(text).filter((w) => !FILLER.has(w)).map(stemWord);
-  return (kept.length ? kept : words(text).filter((w) => LANGUAGE_WORDS.has(w))).join(' ');
+  return kept.length ? kept.join(' ') : words(text).filter((w) => LANGUAGE_WORDS.has(w)).map((w) => `lang:${w}`).join(' ');
 }
+// Titles and aliases only: an id such as "c-python" would reduce to "c" and turn "teach me C" into
+// the Python lesson. An id is still found by its exact spelling.
 const ALIAS_KEYS = new Map();
 for (const c of ATLAS_CARDS) {
-  for (const name of [c.id, c.title, ...c.aliases]) {
+  for (const name of [c.title, ...c.aliases]) {
     const key = topicKey(name);
     if (key && !ALIAS_KEYS.has(key)) ALIAS_KEYS.set(key, c);
   }
@@ -910,8 +913,19 @@ for (const c of ATLAS_CARDS) {
 /** The card a topic names exactly (after filler words are set aside), or null. Never a near guess. */
 export function findAtlasCard(topic) {
   const key = topicKey(topic);
-  return key ? ALIAS_KEYS.get(key) || null : null;
+  return (key ? ALIAS_KEYS.get(key) : null) || BY_ID.get(String(topic || '').trim().toLowerCase()) || null;
 }
+
+// A card's own name, letter for letter: only case, punctuation and a leading "a" or "an" are set aside,
+// so "the deploy" or "my commit" is never an exact name.
+const exactName = (text) => String(text || '').toLowerCase().replace(/[’']/g, '').replace(/[^a-z0-9²+#]+/g, ' ').trim().replace(/^(?:an?) /, '');
+const EXACT_NAMES = new Map();
+for (const c of ATLAS_CARDS) {
+  for (const name of [c.title, ...c.aliases]) if (!EXACT_NAMES.has(exactName(name))) EXACT_NAMES.set(exactName(name), c);
+}
+// Words with common senses outside code: a near match on one of them names a coding card only beside
+// a coding word ("code performance", "caching in python"), never on its own ("explain performance").
+const GENERIC_WORDS = new Set(['inspection', 'performance', 'security', 'architecture', 'profiling', 'latency', 'cache', 'caching', 'stack', 'queue', 'dict', 'dynamic', 'module', 'resumable', 'resuming', 'indentation', 'widget']);
 
 // Whole words only: "trade-offs", "trader-joe's" or "options" inside a longer word never count, so a
 // word that is part of a hyphenated or possessive word is not a domain word.
@@ -933,11 +947,18 @@ const SECOND_ACTION = /(?:,|;|\band\b|\bthen\b|\balso\b|\bplus\b)\s+(?:then\s+|a
 const QUALIFIER = /\s+(?:for|on|in|with|of)\s+(?:an?\s+|the\s+|one\s+)?(?:mnq|nq|es|mes|micros?|minis?|e-?minis?|futures?|contracts?|trades?|stocks?|shares|options?|the market|markets?)$/;
 
 const conceptTopic = (topic) => !PERSONAL.test(topic) && !NOT_A_CONCEPT.test(topic);
-// A topic that is exactly a card's name (after filler and level words) is that concept, even with a
-// deploy, commit, merge or bug word in it: "teach me deployment", "explain merge vs rebase". The
-// blocks above apply to everything else, and "the bug in my python code" or "the deploy you did"
-// is never a card's exact name.
-const conceptCard = (topic) => findAtlasCard(topic);
+// A topic that is exactly a card's title or alias is that concept, even with a deploy, commit, merge
+// or bug word in it: "teach me deployment", "explain merge vs rebase". Anything else must pass the
+// blocks above, so "the deploy", "the bug in my python code" or "the merge you did" is never a lesson.
+// A trading word never selects a coding card ("the stack in trading", "the database of trades").
+function conceptCard(topic, raw = topic) {
+  const exact = EXACT_NAMES.get(exactName(topic));
+  if (exact) return exact;
+  const found = conceptTopic(topic) ? findAtlasCard(topic) : null;
+  if (!found || found.domain !== 'coding') return found;
+  if (TRADING_WORDS.test(raw)) return null;
+  return GENERIC_WORDS.has(topicKey(topic)) && !CODING_WORDS.test(raw) ? null : found;
+}
 
 // "like I'm a beginner", "the expert version", "simply": the depth the owner asked for.
 const LEVEL_PHRASES = [
@@ -1005,7 +1026,7 @@ export function atlasIntent(message, history = [], { explainLevel = '' } = {}) {
   if (!explicit && SECOND_ACTION.test(t.replace(PLAN_PRICES, ''))) return null;
 
   // Coding practice (phase 2, atlas_coding.js): exercises, review drills and CHE's own code.
-  const practice = codingIntent(t, history, { cards: ATLAS_CARDS, findCard: findAtlasCard, topicKey, conceptTopic, explicit });
+  const practice = codingIntent(t, history, { cards: ATLAS_CARDS, findCard: conceptCard, topicKey, conceptTopic, explicit });
   if (practice) return practice;
 
   if (/^(?:open|use|show(?: me)?|go to|bring up|read|what(?:'s| is)? in|whats in)\s+(?:the |my |your |che's )?knowledge atlas(?: page)?$/.test(t)) return { kind: 'overview' };
@@ -1108,6 +1129,8 @@ export function atlasIntent(message, history = [], { explainLevel = '' } = {}) {
     const topic = (ask || what)[1];
     // "What is the spread?", "what's my win rate?": a reading of something, not a lesson.
     if (what && !explicit && /^(?:the|my|your|our|his|today'?s|current|this|that)\b/.test(topic)) return null;
+    // "What is a python" asks about the snake; "what is Python" asks about the language.
+    if (what && /^(?:what(?:'s| is| are)|whats)\s+an?\s/.test(rest) && topicKey(topic).startsWith('lang:')) return null;
     // A bare "what is win rate" asks for CHE's measured numbers, which the evidence route answers.
     if (what && !asked && !explicit && evidenceIntent(raw)) return null;
     return resolveTopic(topic, { kind: 'teach', level: asked || preferred, explicit });
@@ -1118,7 +1141,7 @@ export function atlasIntent(message, history = [], { explainLevel = '' } = {}) {
 
 function resolveTopic(rawTopic, { kind, level = 'beginner', explicit = false }) {
   const topic = rawTopic.replace(QUALIFIER, '').trim();
-  const found = conceptCard(topic);
+  const found = conceptCard(topic, rawTopic);
   if (found) return kind === 'teach' ? { kind, card: found, level } : { kind, card: found };
   const purpose = kind === 'quiz' ? 'quiz' : 'teach';
   const domain = domainOf(topic);

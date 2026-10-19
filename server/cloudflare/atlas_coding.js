@@ -66,7 +66,7 @@ const LANGUAGES = [
   card({
     id: 'c-python', domain: 'coding', title: 'Python', level: 'beginner',
     summary: 'Python is a readable language where indentation is the structure and lists and dicts do most of the work.',
-    aliases: ['python', 'python programming', 'list comprehensions', 'list comprehension', 'python indentation', 'mutable default arguments', 'python dicts'],
+    aliases: ['python', 'python programming', 'list comprehensions', 'list comprehension', 'python indentation', 'mutable default arguments', 'python dictionaries and lists'],
     tags: ['languages', 'python'], prerequisites: ['variables', 'loops', 'functions'], related: ['c-javascript-typescript', 'hash-maps', 'c-dynamic-programming'],
     levels: {
       beginner: 'Python reads almost like English. Indentation is not decoration: the lines indented under an if, a for or a def are its body. A list holds items in order, like [1, 2, 3], and a dict maps keys to values, like {"MNQ": 2}. You run a file with python3 and it executes top to bottom.',
@@ -189,7 +189,7 @@ const LANGUAGES = [
   card({
     id: 'c-dart-flutter', domain: 'coding', title: 'Dart and Flutter', level: 'intermediate',
     summary: 'Flutter builds CHE\'s iPhone app from widgets in Dart: the screen is a function of the current state.',
-    aliases: ['dart', 'flutter', 'dart and flutter', 'flutter widgets', 'widgets', 'stateful widgets', 'setstate', 'set state', 'null safety', 'flutter state'],
+    aliases: ['dart', 'flutter', 'dart and flutter', 'flutter widgets', 'stateful widgets', 'setstate', 'set state', 'null safety', 'flutter state'],
     tags: ['languages', 'dart', 'flutter', 'mobile'], prerequisites: ['functions', 'concurrency'], related: ['c-javascript-typescript', 'c-html-css'],
     levels: {
       beginner: 'Dart is the language and Flutter is the toolkit CHE\'s iPhone app is built with. Everything on screen is a widget: a button, some text, a column of other widgets. You describe what the screen should look like for the current state, and Flutter draws it and redraws it when the state changes.',
@@ -197,7 +197,7 @@ const LANGUAGES = [
       expert: 'build must stay cheap and free of side effects, because Flutter may call it often; start work in initState and release it in dispose. Widgets are immutable descriptions; the framework diffs them against its element tree and reuses what it can, which is why stable keys matter in lists. Shared state is lifted up or passed down with InheritedWidget-based tools. Accessibility is part of the widget tree: Semantics labels, headers and live regions are what VoiceOver reads, so a blind user can use every control.',
     },
     analogy: 'A Flutter screen is like a scoreboard that is repainted from the score: you never move the digits by hand, you change the score and the board redraws itself.',
-    che_note: 'Every CHE screen gives VoiceOver a label for each button and announces results in a live region; the Knowledge Atlas page (lib/brain/che_knowledge_atlas.dart) speaks only when the owner asks it to.',
+    che_note: 'The owner\'s rule is that every CHE screen gives VoiceOver a label for each button. The Knowledge Atlas page (lib/brain/che_knowledge_atlas.dart) shows each result the owner asked for in a live-region banner and speaks only when he asks it to.',
     example: {
       kind: 'code', language: 'dart',
       explain: 'Two increments rebuild the description twice, "Count: 1" then "Count: 2"; a missing nickname falls back to "sir" with ??; the awaited future gives 21000; and a collection-for keeps the even numbers 0, 2 and 4.',
@@ -322,7 +322,7 @@ const LANGUAGES = [
   card({
     id: 'c-git', domain: 'coding', title: 'Git: commits, branches, merge, rebase and bisect', level: 'beginner',
     summary: 'Git records every change as a commit, so you can branch, combine work and find the change that broke something.',
-    aliases: ['git', 'version control', 'git basics', 'git commit', 'git commits', 'commits', 'git branches', 'merge vs rebase', 'merge versus rebase', 'merge and rebase', 'git merge', 'rebase', 'rebasing', 'git rebase', 'git bisect', 'bisect', 'git history'],
+    aliases: ['git', 'version control', 'git basics', 'git commit', 'git commits', 'git branches', 'merge vs rebase', 'merge versus rebase', 'merge and rebase', 'git merge', 'git rebase', 'git bisect', 'git history'],
     tags: ['tools', 'engineering'], prerequisites: [], related: ['testing', 'c-debugging', 'c-deployment'],
     levels: {
       beginner: 'Git keeps the history of a project. Each commit is a saved snapshot with a message saying what changed and why. A branch is a separate line of work, so you can try something without disturbing the main version, and bring it back when it is ready.',
@@ -389,7 +389,7 @@ const ALGORITHMS = [
   card({
     id: 'c-data-structures', domain: 'coding', title: 'Data structures: arrays, lists, stacks, queues, trees, heaps and graphs', level: 'intermediate',
     summary: 'A data structure is a way of arranging data so the operations you need most are fast.',
-    aliases: ['data structures', 'data structure', 'arrays', 'linked lists', 'linked list', 'stacks', 'queues', 'stacks and queues', 'binary trees', 'binary tree', 'binary heaps', 'binary heap', 'priority queues', 'priority queue', 'min heap', 'graph data structure'],
+    aliases: ['data structures', 'data structure', 'arrays', 'linked lists', 'linked list', 'stacks and queues', 'stack data structure', 'queue data structure', 'binary trees', 'binary tree', 'binary heaps', 'binary heap', 'priority queues', 'priority queue', 'min heap', 'graph data structure'],
     tags: ['data structures', 'computer science'], prerequisites: ['variables', 'big-o'], related: ['hash-maps', 'c-graph-search', 'c-binary-search'],
     levels: {
       beginner: 'A data structure is a way of arranging data. An array is a row of numbered boxes. A stack is a pile of plates: the last one on is the first one off. A queue is a line at a shop: first in, first out. A tree branches from one root, like folders inside folders, and a graph is any set of points joined by lines, like a map of roads.',
@@ -646,7 +646,7 @@ const ALGORITHMS = [
       expert: 'Define the state, the recurrence and the base cases; the cost is the number of states times the work per state. Edit distance has a state for every prefix pair: d(i, j) = min(d(i − 1, j) + 1, d(i, j − 1) + 1, d(i − 1, j − 1) + [aᵢ ≠ bⱼ]), so O(mn) time, and since each row needs only the row before it, O(n) memory. Many problems become shortest paths over a graph of states. When subproblems do not overlap, plain divide and conquer is enough.',
     },
     analogy: 'Dynamic programming is like a student who writes each times-table answer in a notebook: the next time 7 × 8 comes up, they read it instead of adding 7 eight times.',
-    che_note: 'CHE corrects misheard tech names, such as "Showbird" to "Shorebird", by edit distance: speech_intent.js editDistance keeps one row of the table.',
+    che_note: 'When a misheard tech name has no fixed alias, CHE picks the closest known name by edit distance, for example "cloudflair" to Cloudflare (speech_intent.js editDistance, one row of the table). Names it already knows, such as "Showbird" for Shorebird, come from a fixed alias table instead.',
     formula: {
       name: 'Edit distance recurrence', expression: 'd(i, j) = min(d(i−1, j) + 1, d(i, j−1) + 1, d(i−1, j−1) + [aᵢ ≠ bⱼ]);  d(i, 0) = i, d(0, j) = j',
       spoken: 'the edit distance of two prefixes is the smallest of a deletion plus one, an insertion plus one, or the diagonal plus one when the letters differ',
@@ -658,7 +658,7 @@ const ALGORITHMS = [
     },
     example: {
       kind: 'code', language: 'javascript',
-      explain: 'Memoized, ways(30) is 1346269 and takes only 59 calls, where naive recursion would take millions; "kitten" to "sitting" is 3 edits, and "showbird" to "shorebird" is 2.',
+      explain: 'Memoized, ways(30) is 1346269 and takes only 59 calls, where naive recursion would take millions; "kitten" to "sitting" is 3 edits, and "cloudflair" to "cloudflare" is 2.',
       code: lines(
         'const memo = new Map();',
         'let calls = 0;',
@@ -684,9 +684,9 @@ const ALGORITHMS = [
         '  return row[b.length];',
         '}',
         'const stairs = ways(30);',
-        "return { stairs, calls, kitten: editDistance('kitten', 'sitting'), shorebird: editDistance('showbird', 'shorebird') };",
+        "return { stairs, calls, kitten: editDistance('kitten', 'sitting'), cloudflare: editDistance('cloudflair', 'cloudflare') };",
       ),
-      expected: { stairs: 1346269, calls: 59, kitten: 3, shorebird: 2 },
+      expected: { stairs: 1346269, calls: 59, kitten: 3, cloudflare: 2 },
     },
     quiz: [
       { q: 'What two properties make a problem suit dynamic programming?', a: 'Overlapping subproblems, and a best answer built from best answers to smaller pieces.' },
@@ -721,7 +721,7 @@ const ALGORITHMS = [
       },
     ],
     repo_examples: [
-      at('server/cloudflare/speech_intent.js', 'editDistance', 'one-row edit distance that corrects misheard tech names from context', 'server/cloudflare/speech_intent.test.mjs', '"Showbird" next to build words is corrected to Shorebird and the change is reported'),
+      at('server/cloudflare/speech_intent.js', 'editDistance', 'one-row edit distance that picks the closest known tech name when no fixed alias exists', 'server/cloudflare/speech_intent.test.mjs', 'a sound-alike tech name is fixed from context when no exact alias exists'),
       at('server/cloudflare/speech_learning.js', 'distance', 'the full edit-distance table, used to tell which earlier word the owner meant in "I meant …"', 'server/cloudflare/speech_learning.test.mjs'),
     ],
     sources: [
@@ -745,7 +745,7 @@ const CRAFT = [
     levels: {
       beginner: 'A database stores information in tables, like a spreadsheet with strict columns, and answers questions about it. SQL is the language for asking: SELECT symbol, pnl FROM trades WHERE symbol = \'MNQ\' reads the matching rows. The database keeps the data safe even if the program crashes.',
       intermediate: 'Without an index, a query reads every row, O(n). An index is a sorted structure, usually a B-tree, on one or more columns, so a lookup takes O(log n) page reads; it costs space and makes every write a little slower. A transaction groups changes so they all happen or none do: BEGIN, the changes, then COMMIT, or ROLLBACK to undo them. GROUP BY with COUNT or SUM summarises rows.',
-      expert: 'ACID means atomic, consistent, isolated and durable. Isolation levels trade safety for concurrency, and the classic anomalies are lost updates and phantom reads. A B-tree with a fan-out of a few hundred reaches millions of rows in three or four levels. EXPLAIN QUERY PLAN shows whether an index is used. Always pass values as parameters, never by building SQL from text, which prevents injection. A Cloudflare Durable Object can hold a private SQLite database, reached through ctx.storage.sql, and because one object handles its requests one at a time and holds new input while a storage call runs, its own reads and writes do not race each other.',
+      expert: 'ACID means atomic, consistent, isolated and durable. Isolation levels trade safety for concurrency; the classic anomalies are dirty reads, non-repeatable reads, phantom reads and lost updates. A B-tree with a fan-out of a few hundred reaches millions of rows in three or four levels. EXPLAIN QUERY PLAN shows whether an index is used. Always pass values as parameters, never by building SQL from text, which prevents injection. A Cloudflare Durable Object can hold a private SQLite database, reached through ctx.storage.sql, and because one object handles its requests one at a time and holds new input while a storage call runs, its own reads and writes do not race each other.',
     },
     analogy: 'An index is like the index at the back of a book: instead of reading every page to find "margin", you look it up and go straight to page 212.',
     che_note: 'CHE\'s Brain keeps its records in a Durable Object\'s SQLite storage: brain_store.js creates the brain_records table with indexes on seq and on (kind, deleted).',
@@ -938,7 +938,7 @@ const CRAFT = [
   card({
     id: 'c-architecture', domain: 'coding', title: 'Software architecture: modules, boundaries, one owner per behaviour', level: 'expert',
     summary: 'Architecture is deciding which part of a system owns each decision, so every rule lives in exactly one place.',
-    aliases: ['software architecture', 'code architecture', 'system design', 'modules', 'modularity', 'module boundaries', 'separation of concerns', 'single responsibility', 'one owner per behaviour', 'one owner per behavior'],
+    aliases: ['software architecture', 'code architecture', 'system design', 'code modules', 'modularity', 'module boundaries', 'separation of concerns', 'single responsibility', 'one owner per behaviour', 'one owner per behavior'],
     tags: ['engineering', 'design'], prerequisites: ['functions', 'testing'], related: ['c-debugging', 'c-agent-planning', 'c-security'],
     levels: {
       beginner: 'Architecture is how a program is divided into parts and how those parts talk to each other. Good architecture gives each part one clear job, so when something needs to change, you know exactly where to go, and changing one part does not break the others.',
@@ -1008,7 +1008,7 @@ const CRAFT = [
     },
     example: {
       kind: 'code', language: 'javascript',
-      explain: 'Validation keeps "MNQ" and rejects "MNQ; DROP TABLE"; gluing text into SQL lets x\' OR \'1\'=\'1 match every row, while a parameter keeps it plain data; and the cloud metadata address 169.254.169.254 is private, so a server must refuse to fetch it.',
+      explain: 'Validation keeps "MNQ" and rejects "MNQ; DROP TABLE"; gluing text into SQL lets x\' OR \'1\'=\'1 match every row, while a parameter keeps it plain data; and the cloud metadata address 169.254.169.254 is link-local, not public, so a server must refuse to fetch it.',
       code: lines(
         "// 1. Validation: accept only what you expect.",
         'const symbol = (s) => (/^[A-Z]{1,5}$/.test(s) ? s : null);',
@@ -1069,7 +1069,7 @@ const CRAFT = [
   card({
     id: 'c-performance', domain: 'coding', title: 'Performance: complexity, caching and input/output', level: 'expert',
     summary: 'Fast code does less work: a better algorithm, a cached answer, or fewer and larger trips to slow storage.',
-    aliases: ['software performance', 'code performance', 'performance optimization', 'performance optimisation', 'caching', 'cache', 'profiling', 'latency', 'speeding up code'],
+    aliases: ['software performance', 'code performance', 'performance optimization', 'performance optimisation', 'code caching', 'caching in code', 'code profiling', 'network latency', 'speeding up code'],
     tags: ['engineering', 'performance'], prerequisites: ['big-o', 'hash-maps'], related: ['c-cloudflare-workers', 'c-databases', 'concurrency'],
     levels: {
       beginner: 'Making code fast is mostly about doing less work. Pick a smarter method, remember answers you already worked out so you do not redo them, and ask slow things such as the network or a disk as few times as you can.',
@@ -1133,7 +1133,7 @@ const CRAFT = [
         fixed: lines('const cache = new Map();', 'function priceIn(symbol, currency) {', '  const key = `${symbol}|${currency}`;', '  if (cache.has(key)) return cache.get(key);', "  const value = `${symbol} in ${currency}`;", '  cache.set(key, value);', '  return value;', '}'),
         probe: { calls: [['MNQ', 'USD'], ['MNQ', 'EUR']], buggy: ['MNQ in USD', 'MNQ in USD'], fixed: ['MNQ in USD', 'MNQ in EUR'] },
         finding: 'The cache key is only the symbol, but the answer also depends on the currency, so the second call gets the first call\'s answer. The key must include every input: symbol and currency.',
-        keywords: [['currency', 'second argument', 'second input', 'other input', 'both inputs', 'every input', 'all inputs'], ['key', 'cache']], min: 2,
+        concepts: [['currency', 'second argument', 'second input', 'other input', 'both inputs', 'every input', 'all inputs', 'both arguments', 'other argument'], ['key', 'keys', 'keyed']],
       },
     ],
     repo_examples: [
@@ -1149,7 +1149,7 @@ const CRAFT = [
   card({
     id: 'c-deployment', domain: 'coding', title: 'Deployment: CI, staged rollout and live verification', level: 'intermediate',
     summary: 'A change is done when CI passes, it is rolled out in stages, and the live system is checked to be running it.',
-    aliases: ['deployment', 'deploying', 'deploy', 'continuous integration', 'ci', 'ci cd', 'continuous deployment', 'staged rollout', 'staged rollouts', 'staged deploy', 'rollouts', 'live verification', 'release process', 'shipping software'],
+    aliases: ['deployment', 'deploying', 'continuous integration', 'ci cd', 'continuous deployment', 'staged rollout', 'staged rollouts', 'staged deploy', 'live verification', 'release process', 'shipping software'],
     tags: ['engineering', 'operations'], prerequisites: ['testing', 'c-git'], related: ['c-cloudflare-workers', 'c-self-repair', 'sample-size'],
     levels: {
       beginner: 'Deployment is putting a new version of a program where people use it. Before that, an automatic checker called CI runs every test on the change. After it, you check the live version really is the new one and really works, instead of assuming it does.',
@@ -1369,7 +1369,7 @@ const AUTONOMY = [
     },
     example: {
       kind: 'code', language: 'javascript',
-      explain: 'The first model\'s request is too large, so CHE moves on instead of retrying it; the second is rate limited, so she moves on again; the third answers. The backoff doubles from 1 minute to 2, 4, 8 and 16, then stops at the 30-minute ceiling.',
+      explain: 'The first model\'s request is too large, so CHE moves on instead of retrying it; the second is rate limited, so she moves on again; the third answers. With backoffMs\'s defaults the wait doubles from 1 minute to 2, 4, 8 and 16, then stops at the 30-minute ceiling.',
       code: lines(
         'const classify = (text) => {',
         "  if (/request too large|context length/i.test(text)) return 'too_large';   // first: retrying cannot fix it",
@@ -1405,27 +1405,29 @@ const AUTONOMY = [
         prompt: 'A model answers: "Request too large for model on tokens per minute (TPM): Limit 7000, Requested 10182". How does CHE classify it?',
         solution: { che: 'server/cloudflare/coding_failover.mjs', entry: 'classifyModelFailure', pick: 'kind', wrap: 'text' },
         cases: [{ args: ['Request too large for model on tokens per minute (TPM): Limit 7000, Requested 10182'], expected: 'too_large' }, { args: ['429 Too Many Requests'], expected: 'rate_limit' }, { args: ['You exceeded your current quota'], expected: 'quota' }], ask: 0,
-        options: ['rate_limit', 'too_large', 'quota', 'timeout'], answer: 'b',
+        options: ['rate limit', 'too large', 'quota', 'timeout'], answer: 'b',
+        values: ['rate_limit', 'too_large', 'quota', 'timeout'],
         explain: 'It names tokens per minute, but the request itself is too big for that model, so waiting cannot help.',
       },
       {
         id: 'c-model-failover.2', kind: 'returns', topics: ['exponential backoff', 'backoff', 'retries and backoff'], language: 'javascript',
-        prompt: 'CHE\'s backoff starts at 1 minute, doubles each attempt and is capped at 30 minutes. How many minutes is the wait at attempt 5, counting from 0?',
-        solution: { language: 'javascript', code: 'const waitMinutes = (attempt) => Math.min(30, 1 * 2 ** attempt);', entry: 'waitMinutes' },
-        cases: [{ args: [5], expected: 30 }, { args: [0], expected: 1 }, { args: [3], expected: 8 }], ask: 0, answer: '30',
-        explain: '2 to the 5th is 32 minutes, which is over the 30-minute cap, so the wait is 30.',
+        prompt: 'One of CHE\'s job retries in worker.js waits backoffMs(attempts, 1 minute, 15-minute cap): 1 minute, doubling each attempt, never more than 15. How many minutes is the wait at attempt 5, counting from 0?',
+        solution: { language: 'javascript', code: 'const waitMinutes = (attempt) => Math.min(15, 1 * 2 ** attempt);', entry: 'waitMinutes' },
+        cases: [{ args: [5], expected: 15 }, { args: [0], expected: 1 }, { args: [3], expected: 8 }], ask: 0, answer: '15',
+        explain: '2 to the 5th is 32 minutes, which is over the 15-minute cap, so the wait is 15.',
       },
     ],
     review_drills: [
       {
         id: 'c-model-failover.d1', title: 'The size error that looked like a rate limit', language: 'javascript',
-        from: { what: 'CHE coding failover rules (#328)', test: 'server/cloudflare/coding_failover.test.mjs', test_name: 'a Groq request-too-large error is too_large even though it names tokens per minute' },
+        // Illustrative: coding_failover.mjs checked "too large" first from its first commit (#328).
+        pins: { test: 'server/cloudflare/coding_failover.test.mjs', test_name: 'a Groq request-too-large error is too_large even though it names tokens per minute' },
         code: lines('function classify(text) {', "  if (/rate.?limit|tokens per minute|\\b429\\b/i.test(text)) return { kind: 'rate_limit', resumable: true };", "  if (/request too large/i.test(text)) return { kind: 'too_large', resumable: false };", "  return { kind: 'unknown', resumable: false };", '}'),
         entry: 'classify',
         fixed: lines('function classify(text) {', "  if (/request too large/i.test(text)) return { kind: 'too_large', resumable: false };   // first", "  if (/rate.?limit|\\b429\\b/i.test(text)) return { kind: 'rate_limit', resumable: true };", "  return { kind: 'unknown', resumable: false };", '}'),
         probe: { calls: [['Request too large for model on tokens per minute (TPM): Limit 7000, Requested 10182']], buggy: [{ kind: 'rate_limit', resumable: true }], fixed: [{ kind: 'too_large', resumable: false }] },
         finding: 'The rate-limit rule is checked first and matches "tokens per minute", so a request that is too large is called resumable and retried forever. Check the too-large rule first: retrying the same request can never succeed.',
-        keywords: [['order', 'first', 'before', 'too large', 'too big', 'size'], ['retry', 'retried', 'resumable', 'forever', 'loop', 'never succeed', 'rate limit']], min: 2,
+        concepts: [['order', 'first', 'before', 'too large', 'too big', 'size'], ['retry*', 'resumable', 'forever', 'loop*', 'never succeed*', 'rate limit*', 'tokens per minute']],
       },
     ],
     repo_examples: [
@@ -1501,9 +1503,10 @@ const AUTONOMY = [
         entry: 'allowed',
         fixed: lines('// The checker and its gates are out of the attempt\'s reach.', "const allowed = (path) => !/^(?:\\.github\\/|tools\\/che_coding_|server\\/cloudflare\\/coding_failover\\.mjs$)/.test(path);"),
         probe: { calls: [['tools/che_coding_checkpoint.mjs'], ['server/cloudflare/coding_failover.mjs'], ['lib/main.dart']], buggy: [true, true, true], fixed: [false, false, true] },
-        from: { what: 'CHE coding failover rules (#328)', test: 'server/cloudflare/coding_failover.test.mjs', test_name: 'the coding tools and the gate are unsafe paths: an attempt can never change the code that judges it' },
+        // Illustrative: the unsafe-path rule was in coding_failover.mjs from its first commit (#328).
+        pins: { test: 'server/cloudflare/coding_failover.test.mjs', test_name: 'the coding tools and the gate are unsafe paths: an attempt can never change the code that judges it' },
         finding: 'The attempt can edit the checkpoint verifier and the failover gate, the code that judges it, so a bad change could approve itself. The judge and its gates must be unsafe paths an attempt can never touch.',
-        keywords: [['judge', 'verifier', 'checker', 'gate', 'checkpoint', 'failover', 'itself', 'own'], ['edit', 'change', 'modify', 'touch', 'write', 'approve', 'allowed']], min: 2,
+        concepts: [['judge', 'verifier', 'checker', 'gate', 'checkpoint', 'failover', 'itself', 'its own judge', 'own checker'], ['edit*', 'chang*', 'modif*', 'touch*', 'writ*', 'approv*', 'allowed', 'rewrit*']],
       },
     ],
     repo_examples: [
@@ -1526,13 +1529,17 @@ const FIX_DRILLS = {
   'c-security': [
     {
       id: 'c-security.d1', title: 'The "don\'t" that swallowed a payment', language: 'javascript',
-      from: { what: 'PR #351, where the money gate was made to fail closed', test: 'server/cloudflare/readonly_acceptance.test.mjs', test_name: PROHIBITION_TEST },
+      from: {
+        what: 'a review finding on PR #351, where the money gate was made to fail closed; the fix and its note are in owner_action_gate.js',
+        commit: 'f2992a7', file: 'server/cloudflare/owner_action_gate.js', added: '#351: "No need to ask, pay the electric bill" must still be held',
+        test: 'server/cloudflare/readonly_acceptance.test.mjs', test_name: PROHIBITION_TEST,
+      },
       code: lines('// Sets the owner\'s "don\'t …" aside, then looks for a money verb in what is left.', 'function needsYes(text) {', "  const asked = text.replace(/\\b(?:don'?t|do not|never|no need to)\\b[^.;!?]*/gi, '');", '  return /\\b(?:buy|pay|order|purchase)\\b/i.test(asked);', '}'),
       entry: 'needsYes',
       fixed: lines('function needsYes(text) {', '  // Only a ban on a money verb is set aside, and only to the end of its own clause.', "  const asked = text.replace(/\\b(?:don'?t|do not|never)\\s+(?:buy|pay|order|purchase)\\b[^,.;!?]*/gi, '');", '  return /\\b(?:buy|pay|order|purchase)\\b/i.test(asked);', '}'),
       probe: { calls: [['No need to ask, pay the electric bill'], ["Don't worry about the cost, buy the AirPods"], ["Don't buy anything"]], buggy: [false, false, false], fixed: [true, true, false] },
       finding: 'The prohibition runs past the comma to the end of the sentence, and any "don\'t" counts, even one that forbids nothing CHE could do. So "No need to ask, pay the electric bill" loses its payment and would be paid without asking. Fail closed: set aside only a ban on a money verb, only up to its clause, and hold when in doubt.',
-      keywords: [['comma', 'clause', 'sentence', 'swallow', 'whole rest', 'the rest', 'everything after', 'too much'], ['pay', 'payment', 'money', 'held', 'hold', 'ask', 'fail closed', 'without asking', 'bill']], min: 2,
+      concepts: [['comma', 'clause', 'sentence', 'swallow*', 'everything after', 'too much', 'too far', 'runs past', 'whole sentence', 'the rest of'], ['pay', 'payment', 'paid', 'money', 'held', 'hold', 'fail closed', 'without asking', 'bill']],
     },
     {
       id: 'c-security.d2', title: 'A URL check that only knows the word localhost', language: 'javascript',
@@ -1541,31 +1548,37 @@ const FIX_DRILLS = {
       fixed: lines('function mayFetch(url) {', '  const host = new URL(url).hostname;', "  if (host === 'localhost' || host.endsWith('.localhost')) return false;", '  const v4 = host.match(/^(\\d+)\\.(\\d+)\\.\\d+\\.\\d+$/);', '  if (!v4) return true;   // a name: resolve it and check the address too, as CHE\'s publicDns does', '  const [a, b] = v4.slice(1).map(Number);', '  return !(a === 0 || a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168));', '}'),
       probe: { calls: [['http://169.254.169.254/latest/meta-data/'], ['http://127.0.0.1:8080/admin'], ['https://example.com/']], buggy: [true, true, true], fixed: [false, false, true] },
       finding: 'It refuses only the word localhost, so 127.0.0.1 or the cloud metadata address 169.254.169.254 is fetched. Check the address itself and refuse private, loopback and link-local ranges; resolve names first, and check every redirect again.',
-      keywords: [['127', '169', 'metadata', 'private', 'ip address', 'the ip', 'an ip', 'address', 'loopback', 'internal', 'resolve', 'redirect', 'link local']], min: 1,
+      concepts: [['127', '169', 'metadata', 'private', 'ip', 'ips', 'address*', 'loopback', 'internal', 'link local'], ['localhost', 'only', 'word', 'name', 'string', 'resolv*', 'redirect*', 'hostname']],
     },
   ],
   'c-debugging': [
     {
       id: 'c-debugging.d1', title: 'The message that was cut to fit', language: 'javascript',
-      from: { what: 'PR #349, where the owner\'s whole sentence reaches CHE', test: 'server/cloudflare/worker_autonomy.test.mjs', test_name: 'a chat message too long to take is refused whole, saying so; nothing runs (issue #345)' },
+      from: {
+        what: 'PR #349, where the owner\'s whole sentence reaches CHE',
+        commit: '11c79bb', file: 'server/cloudflare/worker.js',
+        removed: "const rawMessage = String(body.message || '').trim().slice(0, 16000);", added: 'if (rawMessage.length > intakeLimit) {',
+        test: 'server/cloudflare/worker_autonomy.test.mjs', test_name: 'a chat message too long to take is refused whole, saying so; nothing runs (issue #345)',
+      },
       code: lines('function intake(message, limit) {', '  const text = String(message || \'\').trim().slice(0, limit);   // keep it a manageable size', '  return { status: 200, text };', '}'),
       entry: 'intake',
       fixed: lines('function intake(message, limit) {', '  const text = String(message || \'\').trim();', "  if (text.length > limit) return { status: 413, text: '' };   // refused whole, and CHE says so", '  return { status: 200, text };', '}'),
       probe: { calls: [["Email Mark the plan, but don't send it until Friday", 24], ['Email Mark the plan', 24]], buggy: [{ status: 200, text: 'Email Mark the plan, but' }, { status: 200, text: 'Email Mark the plan' }], fixed: [{ status: 413, text: '' }, { status: 200, text: 'Email Mark the plan' }] },
       finding: 'slice cuts the message silently, so its last words, "don\'t send it until Friday", never reach CHE and she could send it. A message too long to take must be refused whole, saying so, with nothing done.',
-      keywords: [['cut', 'truncat', 'slice', 'chop', 'lost', 'lose', 'drop', 'last words', 'the end'], ['silent', "don't", 'dont', 'refuse', 'reject', 'whole', '413', 'meaning', 'send', 'friday']], min: 2,
+      concepts: [['cut*', 'truncat*', 'slice*', 'chop*', 'lost', 'lose*', 'drop*', 'last words', 'the end'], ['silent*', 'don\'t', 'dont', 'refus*', 'reject*', 'whole', '413', 'meaning', 'friday', 'constraint*']],
     },
   ],
   'c-architecture': [
     {
       id: 'c-architecture.d1', title: 'A short form that claimed it lost nothing', language: 'javascript',
-      from: { what: 'PR #352, where the compact intent frame says when it would lose words', test: 'server/cloudflare/intent_frame.test.mjs', test_name: 'a frame that would drop a constraint says so, and the full words are used' },
+      // Illustrative: intent_frame.js had its loss check from its first commit (#352).
+      pins: { test: 'server/cloudflare/intent_frame.test.mjs', test_name: 'a frame that would drop a constraint says so, and the full words are used' },
       code: lines('// A short form of the owner\'s turn, used for routing instead of his words.', 'function frame(text) {', '  const compact = text.split(/,\\s*|\\s+but\\s+/)[0];', '  return { compact, lossless: true };', '}'),
       entry: 'frame',
       fixed: lines('function frame(text) {', '  const compact = text.split(/,\\s*|\\s+but\\s+/)[0];', "  const critical = text.match(/\\b(?:not|don'?t|never|today|tomorrow|\\d+)\\b/gi) || [];", '  const missing = critical.filter((w) => !compact.toLowerCase().includes(w.toLowerCase()));', '  return { compact, lossless: missing.length === 0 };   // not lossless: route on the full words', '}'),
       probe: { calls: [['Make a reminder tomorrow at 8, not today'], ['Make a reminder tomorrow at 8']], buggy: [{ compact: 'Make a reminder tomorrow at 8', lossless: true }, { compact: 'Make a reminder tomorrow at 8', lossless: true }], fixed: [{ compact: 'Make a reminder tomorrow at 8', lossless: false }, { compact: 'Make a reminder tomorrow at 8', lossless: true }] },
       finding: 'The short form drops everything after the first comma, here "not today", and still claims to be lossless, so routing on it loses the owner\'s constraint. It must check that every constraint word survived, and fall back to his full words when one did not.',
-      keywords: [['not today', 'today', 'constraint', 'comma', 'drop', 'lost', 'lose', 'missing', 'after the'], ['lossless', 'claim', 'always true', 'check', 'full words', 'says', 'lies']], min: 2,
+      concepts: [['not today', 'today', 'constraint*', 'comma', 'drop*', 'lost', 'lose*', 'missing', 'after the first'], ['lossless', 'claim*', 'always true', 'check*', 'full words', 'says', 'lie*', 'pretend*']],
     },
   ],
   'c-binary-search': [
@@ -1576,7 +1589,7 @@ const FIX_DRILLS = {
       fixed: lines('function search(list, target) {', '  let low = 0, high = list.length - 1;', '  while (low <= high) {                 // high is inclusive, so low === high is still a candidate', '    const mid = low + Math.floor((high - low) / 2);', '    if (list[mid] === target) return mid;', '    if (list[mid] < target) low = mid + 1; else high = mid - 1;', '  }', '  return -1;', '}'),
       probe: { calls: [[[1, 3, 5, 7, 9], 9], [[2], 2], [[1, 3, 5, 7, 9], 3], [[1, 3, 5, 7, 9], 5]], buggy: [-1, -1, -1, 2], fixed: [4, 0, 1, 2] },
       finding: 'high is inclusive, so the loop must run while low <= high. With < it stops when one candidate is left without checking it, so 9 at the end, or the only item of a one-item list, is reported missing.',
-      keywords: [['<=', 'less than or equal', 'or equal', 'equal', 'inclusive', 'off by one', 'off-by-one', 'one item', 'last item', 'last element', 'last one', 'boundary', 'one left']], min: 1,
+      concepts: [['<=', 'less than or equal', 'or equal to', 'inclusive', 'off by one', 'boundary', 'low equals high'], ['last item', 'last element', 'last one', 'one item', 'single item', 'one left', 'final item', 'never checks', 'never checked', 'skips', 'missed']],
     },
   ],
   'c-databases': [
@@ -1587,7 +1600,7 @@ const FIX_DRILLS = {
       fixed: lines('function findUser(db, name) {', "  return db.prepare('SELECT name FROM users WHERE name = ?').all(name);   // the value travels separately", '}'),
       probe: { db: "CREATE TABLE users (name TEXT); INSERT INTO users VALUES ('alice'), ('bob');", calls: [["x' OR '1'='1"], ['alice']], buggy: [[{ name: 'alice' }, { name: 'bob' }], [{ name: 'alice' }]], fixed: [[], [{ name: 'alice' }]] },
       finding: 'The name is pasted into the SQL text, so x\' OR \'1\'=\'1 rewrites the query and returns every user. Pass the value as a parameter with ? so it can only ever be data.',
-      keywords: [['inject', 'injection', 'parameter', 'placeholder', 'question mark', 'concatenat', 'glued', 'pasted', 'string', 'escape', 'every user', 'all users', 'every row']], min: 1,
+      concepts: [['inject*', 'sql injection', 'concatenat*', 'glued', 'pasted', 'interpolat*', 'built from text', 'into the sql', 'into the query'], ['parameter*', 'placeholder*', 'question mark', 'bind*', 'prepared', 'every user', 'all users', 'every row', 'escap*']],
     },
   ],
   'c-python': [
@@ -1598,7 +1611,7 @@ const FIX_DRILLS = {
       fixed: lines('def add_order(order, book=None):', '    book = [] if book is None else book', '    book.append(order)', '    return book'),
       probe: { calls: [['MNQ'], ['NQ']], buggy: [['MNQ'], ['MNQ', 'NQ']], fixed: [['MNQ'], ['NQ']] },
       finding: 'The default list is made once, when def runs, so every call without a book shares it: the second order\'s book still holds MNQ. Use None as the default and create the list inside.',
-      keywords: [['default', 'shared', 'same list', 'once', 'mutable', 'none']], min: 1,
+      concepts: [['default', 'defaults', 'default argument', 'default list'], ['shared', 'same list', 'once', 'mutable', 'every call', 'reused', 'persists', 'between calls']],
     },
   ],
 };
@@ -1641,7 +1654,7 @@ const PHASE1_PRACTICE = {
       fixed: lines('function failuresFor(kind) {', "  const add = kind === 'broken' ? (a, b) => a - b : (a, b) => a + b;", '  const failures = [];', '  const check = (name, actual, expected) => { if (actual !== expected) failures.push(name); };', "  check('adds two numbers', add(2, 3), 5);", '  return failures.length;', '}'),
       probe: { calls: [['broken'], ['correct']], buggy: [0, 0], fixed: [1, 0] },
       finding: 'check compares but never records a failure, so the broken add reports 0 failures: a test that can never fail proves nothing. Record or throw on a mismatch, and break the code on purpose to see the test fail.',
-      keywords: [['never fail', 'cannot fail', "can't fail", 'never record', 'not recorded', 'record', 'ignored', 'ignores', 'discard', 'thrown away', 'return value', 'always pass', 'never push', 'not pushed', 'push', 'failures']], min: 1,
+      concepts: [['never fail*', 'cannot fail', 'can\'t fail', 'always pass*', 'proves nothing', 'passes anyway', 'still passes'], ['record*', 'ignor*', 'discard*', 'thrown away', 'return value', 'never push*', 'not pushed', 'failures', 'nothing happens']],
     }],
     repo_examples: [
       at('server/cloudflare/readonly_acceptance.test.mjs', 'owner', 'the /api/chat test harness: a paired phone, a fake model and a fetch that throws, so chat tests are offline and deterministic', 'server/cloudflare/readonly_acceptance.test.mjs', 'coding: the most recent job is read from the run record; a new job is never started'),
@@ -1716,7 +1729,7 @@ const PHASE1_PRACTICE = {
       id: 'http-apis.1', kind: 'returns', topics: ['status codes', 'http status codes'], language: 'javascript',
       prompt: 'Using the first digit of a status code, which class is 429 Too Many Requests?',
       solution: { language: 'javascript', code: "const kind = (status) => ['informational', 'success', 'redirect', 'client error', 'server error'][Math.floor(status / 100) - 1];", entry: 'kind' },
-      cases: [{ args: [429], expected: 'client error' }, { args: [200], expected: 'success' }, { args: [503], expected: 'server error' }], ask: 0, answer: 'client error',
+      cases: [{ args: [429], expected: 'client error' }, { args: [200], expected: 'success' }, { args: [503], expected: 'server error' }], ask: 0, answer: 'client error', also: ['4xx', 'a 4xx', '4xx client error'],
       explain: 'It starts with 4, a client error; with 408 it is one of the few 4xx answers worth retrying, after a wait.',
     }],
     review_drills: [{
@@ -1725,7 +1738,7 @@ const PHASE1_PRACTICE = {
       fixed: 'const shouldRetry = (status) => status === 408 || status === 429 || status >= 500;   // a timeout, too many requests, or the server',
       probe: { calls: [[400], [404], [408], [429], [503]], buggy: [true, true, true, true, true], fixed: [false, false, true, true, true] },
       finding: 'It retries every 4xx answer, but a 400 or 404 is the caller\'s mistake and will fail the same way every time. Retry only 408, 429 and 5xx, with backoff.',
-      keywords: [['400', '404', '4xx', 'client error', 'caller', 'bad request', 'not found', 'every error', 'all errors', 'same way'], ['408', '429', '5xx', '500', 'server', 'never succeed', 'pointless', 'backoff']], min: 1,
+      concepts: [['400', '404', '4xx', 'client error*', 'caller', 'bad request', 'not found', 'every error', 'all errors', 'every 4xx'], ['408', '429', '5xx', '500', '503', 'server error*', 'never succeed*', 'same way', 'pointless', 'fail again']],
     }],
   },
   concurrency: {
@@ -1744,7 +1757,7 @@ const PHASE1_PRACTICE = {
       fixed: lines('async function total(prices) {', '  let sum = 0;', '  for (const p of prices) sum += await p;   // each await finishes before the next', '  return sum;', '}'),
       probe: { calls: [[[1, 2, 3]]], buggy: [0], fixed: [6] },
       finding: 'forEach does not wait for async callbacks, so the function returns 0 before any price is added. Use for...of with await, or Promise.all, so the sum is complete before it returns.',
-      keywords: [['foreach', 'for each', "doesn't wait", 'does not wait', 'doesnt wait', 'not awaited', 'never awaited', 'returns before', 'returns 0', 'returns zero', 'before the', 'fire and forget', 'promise all', 'for of']], min: 1,
+      concepts: [['foreach', 'for each', 'callback*', 'async callback*'], ['doesn\'t wait', 'does not wait', 'doesnt wait', 'not awaited', 'never awaited', 'returns before', 'returns 0', 'returns zero', 'fire and forget', 'promise all', 'for of', 'before the awaits', 'before they finish']],
     }],
     repo_examples: [
       at('server/cloudflare/knowledge_atlas.js', 'loadAtlasRecords', 'reads the paper journal and the stored backtest together with Promise.all', 'server/cloudflare/knowledge_atlas.test.mjs', 'measured lines through /api/chat: the journal and the stored backtest, exactly as recorded'),
@@ -1770,7 +1783,7 @@ export function codingExport(c) {
   if (!Array.isArray(c.exercises)) return {};
   return {
     exercises: c.exercises.map((x) => ({ id: x.id, kind: x.kind, prompt: x.prompt, language: x.language, code: shownCode(x), options: x.options || [], answer: answerWords(x), explain: x.explain })),
-    review_drills: c.review_drills.map((d) => ({ id: d.id, title: d.title, language: d.language, code: d.code, finding: d.finding, fixed: d.fixed, from: d.from ? `${d.from.what}; pinned by "${d.from.test_name}" in ${d.from.test}` : '' })),
+    review_drills: c.review_drills.map((d) => ({ id: d.id, title: d.title, language: d.language, code: d.code, finding: d.finding, fixed: d.fixed, from: d.from ? `Adapted from a real CHE fix: ${d.from.what}, commit ${d.from.commit}; pinned by "${d.from.test_name}" in ${d.from.test}` : d.pins ? 'An illustrative drill, not from CHE\'s history' : '' })),
     repo_examples: c.repo_examples.map(({ path, symbol, what, test }) => ({ path, symbol, what, test })),
   };
 }
@@ -1785,7 +1798,7 @@ const choiceIndex = (x) => LETTERS.indexOf(String(x.answer));
 const shownCode = (x) => x.code || x.solution?.code || '';
 /** The answer as CHE says it. */
 function answerWords(x) {
-  if (x.kind === 'choice') return `${choiceIndex(x) + 1}, ${x.options[choiceIndex(x)]}`;
+  if (x.kind === 'choice') return `option ${choiceIndex(x) + 1}, ${x.options[choiceIndex(x)]}`;
   return String(x.answer);
 }
 
@@ -1820,10 +1833,12 @@ const TENS = { twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy:
 const ORDINALS = { first: 1, second: 2, third: 3, fourth: 4, fifth: 5 };
 const SPOKEN_LETTERS = { a: 'a', ay: 'a', eh: 'a', b: 'b', be: 'b', bee: 'b', c: 'c', see: 'c', sea: 'c', cee: 'c', d: 'd', de: 'd', dee: 'd', e: 'e' };
 const ANSWER_FILLER = new Set(['and', 'the', 'a', 'an', 'then', 'list', 'array', 'of', 'with', 'is', 'equals', 'comma', 'open', 'close', 'bracket', 'brackets', 'square', 'it', 'its', 'returns', 'return', 'gives', 'string', 'quote', 'quotes']);
+const NUMERIC = /^-?(?:\d+(?:\.\d+)?|\.\d+)$/;
 
-// "eighty nine", "minus one", "zero point eight one", "1,346,269" and "[0, 4, 16]" all become plain tokens.
+// "eighty-nine", "minus one", "zero point eight one", ".81", "81%", "1,346,269", "[0, 4, 16]" and
+// "too_large" all become plain tokens: numbers as numbers, an underscore read as a space.
 export function answerTokens(text) {
-  const raw = String(text ?? '').toLowerCase().replace(/[’']/g, '').replace(/(\d),(?=\d{3}\b)/g, '$1')
+  const raw = String(text ?? '').toLowerCase().replace(/[’']/g, '').replace(/_/g, ' ').replace(/([a-z])-(?=[a-z])/g, '$1 ').replace(/(\d),(?=\d{3}\b)/g, '$1')
     .replace(/[[\](){}",;:]/g, ' ').replace(/\s+/g, ' ').trim().split(' ').filter(Boolean);
   const out = [];
   let sign = 1;
@@ -1834,18 +1849,21 @@ export function answerTokens(text) {
     let n = null;
     if (w in TENS) { n = TENS[w]; if (raw[i + 1] in NUMBER_WORDS && NUMBER_WORDS[raw[i + 1]] < 10) { n += NUMBER_WORDS[raw[i + 1]]; i += 1; } }
     else if (w in NUMBER_WORDS) n = NUMBER_WORDS[w];
-    else if (/^-?\d+(?:\.\d+)?$/.test(w)) n = Number(w);
+    else if (NUMERIC.test(w)) n = Number(w);
+    else if (/^-?\d+(?:\.\d+)?%$/.test(w)) n = Number(w.slice(0, -1)) / 100;
     if (n !== null && raw[i + 1] === 'hundred') { n *= 100; i += 1; }
     if (n !== null && raw[i + 1] === 'point') {
       let digits = '';
       while (raw[i + 2] in NUMBER_WORDS && NUMBER_WORDS[raw[i + 2]] < 10) { digits += NUMBER_WORDS[raw[i + 2]]; i += 1; }
       if (digits) { n = Number(`${n}.${digits}`); i += 1; }
     }
+    if (n !== null && raw[i + 1] === 'percent') { n /= 100; i += 1; }
     if (n !== null) { out.push(String(sign * n)); sign = 1; continue; }
     out.push(w);
   }
   return out;
 }
+const sameTokens = (a, b) => { const x = answerTokens(a); return x.length > 0 && x.join(' ') === answerTokens(b).join(' '); };
 
 /** A Big-O class from what the owner said: "O(log n)", "o of n squared", "linear". Empty when none. */
 export function bigOClass(text) {
@@ -1860,78 +1878,144 @@ export function bigOClass(text) {
   return '';
 }
 
-const ANSWER_LEAD = /^(?:(?:so|well|ok|okay|um|uh|hmm|i think|i guess|i believe|maybe|probably|my answer is|the answer is|answer|my answer|i'?d say|it'?s|its|it is|is it|it returns|it would return|it will return|returns|that'?s|that is|option|letter|choice|number|the|i pick|i choose|i'?ll go with)\s*[:,]?\s+)+/;
-const ANSWER_TAIL = /\s*(?:right|correct|i think|maybe|sir|please)$/;
-const cleanAnswer = (t) => String(t || '').toLowerCase().replace(/[’‘]/g, "'").replace(/[.!?]+$/, '').trim().replace(ANSWER_LEAD, '').replace(ANSWER_TAIL, '').trim();
+// What counts as an answer, the same discipline as the Brain's quiz grader (#358): an explicit answer
+// form, or a bare value of the kind the exercise expects. Anything else, a question, an action, "never
+// mind", a long sentence, goes on to its usual route, so "what time is it" is never graded.
+const REFUSAL = /(?<![a-z])(?:never ?mind|stop|cancel|forget (?:it|that)|wait|hold on)(?![a-z])/;
+const SMALL_TALK = /^(?:yes|yeah|yep|no|nope|ok|okay|sure|thanks|thank you|hello|hi|hey|great|cool|fine)$/;
+const QUESTION = /^(?:what|whats|how|why|when|where|who|which|whose|is|are|am|was|were|can|could|would|should|will|do|does|did|have|has|may|might|shall)\b/;
+const ACTION = /^(?:please |go ahead and |can you |could you |i (?:need|want|have) to |we (?:should|need|must) |let'?s |i'?m going to |i am going to |i will |i'?ll (?!go with))?(?:send|e-?mail|text|call|message|buy|pay|order|book|calculate|compute|analy[sz]e|show|tell|give|open|close|start|go|make|create|add|remove|delete|set|remind|schedule|play|find|search|look|check|run|deploy|merge|commit|push|fix|build|teach|explain|quiz|test|list|read|write|draft|switch|turn|review|investigate|research|get|put|move|save|share|post|upload|cancel)\b/;
+const PERSONAL_WORDS = /(?<![a-z])(?:i|me|my|we|us|our|you|your|he|she|they|them)(?![a-z])/;
+const EXPLICIT_ANSWER = /^(?:(?:so|well|ok|okay|um|uh|hmm)[,\s]+)*(?:(?:my|the) answer is|my answer|answer|i think the answer is|it returns|it would return|it will return|it prints|it would print|i pick|i choose|i'?ll go with|i go with)\s*[:,]?\s+(.+)$/;
+// "It's 3", "I think it's 3": an answer only when what follows is a value this exercise expects.
+const VALUE_LEAD = /^(?:(?:so|well|ok|okay|um|uh|hmm)[,\s]+)*(?:i think (?:it'?s|it is)|i'?d say|it'?s|it is|that'?s|that is|is it)\s+(.+?)\??$/;
+const OPTION_FORM = /^(?:the )?(?:option|number|choice|letter)\s+([a-z0-9]+)(?:\s+is\b.*)?$|^(?:the )?(first|second|third|fourth|fifth)(?: one| option| choice)?$/;
+const REVEAL = /^(?:i (?:don'?t|do not) know|idk|no idea|i give up|give up|skip(?: it| this one)?|pass|(?:just )?(?:tell|show|give) me the (?:answer|finding|bug)|tell me|show me|what(?:'s| is|s) the (?:answer|bug|finding)|reveal(?: it| the answer)?|the answer|show the answer|show the finding)$/;
+const wordCount = (t) => t.split(/\s+/).filter(Boolean).length;
+const optionValues = (x) => (x.options || []).map((o, i) => (x.values ? [o, x.values[i]] : [o]));
 
-// A sentence that starts a new request is never taken as an answer.
-const NEW_REQUEST = /^(?:teach|explain|quiz|test me|list|show me (?:the|my|your)|open|close|go |start|stop|fix|build|make|create|send|email|e-mail|text |call|message|deploy|merge|push|commit|buy|pay|order|delete|remove|research|search|look up|find|investigate|analy[sz]e|review (?:pr|pull|the pr)|tell me about|what(?:'s| is|s) (?:next|the formula|my|the status|on)|whats next|give me (?:the|a quiz|an? (?:coding |code )?(?:exercise|drill|review|example|lesson))|another|next|read|play|remind|schedule|cancel|switch|turn|set |hey|hello|thanks|thank you|where (?:does|do|is)|how (?:does|do))\b/;
-const REVEAL = /^(?:i (?:don'?t|do not) know|idk|no idea|i give up|give up|skip(?: it| this one)?|pass|tell me|show me|(?:just )?(?:tell|show|give) me the (?:answer|finding|bug)|what(?:'s| is|s) the (?:answer|bug|finding)|reveal(?: it| the answer)?|the answer)$/;
-const answerShaped = (t, max) => t.length > 0 && t.length <= max && !NEW_REQUEST.test(t);
-
-/** Whether a said answer matches an exercise's stored answer. Deterministic, no model. */
-export function checkExercise(x, said) {
-  const t = cleanAnswer(said);
-  if (x.kind === 'big_o') {
-    const want = bigOClass(x.answer);
-    const picked = optionPicked(x, t);
-    return { correct: (picked !== null ? bigOClass(x.options[picked]) : bigOClass(t)) === want, heard: t };
-  }
-  if (x.kind === 'choice') return { correct: optionPicked(x, t) === choiceIndex(x), heard: t };
-  return { correct: answerTokens(t).join(' ') === answerTokens(x.answer).join(' ') && answerTokens(t).length > 0, heard: t };
-}
-
-// The option the owner picked: a value or option text said exactly, else "2", "two", "the second", "b".
+// The option the owner picked: "option 2", "number two", "the second one" and "b" are the second
+// option; otherwise the option whose text or value he said ("too large", "limit reached", "1").
 function optionPicked(x, t) {
   const options = x.options || [];
-  const said = answerTokens(t).join(' ');
-  const byValue = options.findIndex((o, i) => answerTokens(o).join(' ') === said || (x.values && answerTokens(x.values[i]).join(' ') === said) || (x.kind === 'big_o' && bigOClass(o) && bigOClass(o) === bigOClass(t)));
+  const asNumber = (w) => (/^\d+$/.test(w) ? Number(w) : NUMBER_WORDS[w] ?? ORDINALS[w] ?? (w in SPOKEN_LETTERS ? LETTERS.indexOf(SPOKEN_LETTERS[w]) + 1 : null));
+  const form = OPTION_FORM.exec(t);
+  if (form) {
+    const n = asNumber(form[1] || form[2]);
+    return n >= 1 && n <= options.length ? n - 1 : null;
+  }
+  const byValue = optionValues(x).findIndex((names) => names.some((name) => sameTokens(t, name) || (x.kind === 'big_o' && bigOClass(name) && bigOClass(name) === bigOClass(t))));
   if (byValue >= 0) return byValue;
-  const word = t.replace(/^(?:the )/, '').replace(/\s+(?:one|option)$/, '');
-  if (word in ORDINALS && ORDINALS[word] <= options.length) return ORDINALS[word] - 1;
-  if (word in SPOKEN_LETTERS && LETTERS.indexOf(SPOKEN_LETTERS[word]) < options.length) return LETTERS.indexOf(SPOKEN_LETTERS[word]);
-  const n = /^\d$/.test(word) ? Number(word) : NUMBER_WORDS[word];
+  if (t in SPOKEN_LETTERS && LETTERS.indexOf(SPOKEN_LETTERS[t]) < options.length) return LETTERS.indexOf(SPOKEN_LETTERS[t]);
+  // A bare number is an option number only when no option is itself a number.
+  const numericOptions = options.some((o) => NUMERIC.test(String(o).trim()));
+  const n = !numericOptions ? asNumber(t) : null;
   return n >= 1 && n <= options.length ? n - 1 : null;
 }
 
-const plain = (s) => String(s || '').toLowerCase().replace(/[’']/g, '').replace(/[^a-z0-9<=.\s-]+/g, ' ').replace(/\s+/g, ' ').trim();
-/** A drill answer is right when it names enough of the finding's key ideas. */
+// A bare value of the kind this exercise expects: a number, a list, a quoted string, O(…), an option.
+function bareValue(x, v) {
+  if (x.kind === 'big_o') return Boolean(bigOClass(v)) || optionPicked(x, v) !== null;
+  if (x.kind === 'choice') return optionPicked(x, v) !== null;
+  const want = answerTokens(x.answer);
+  const said = answerTokens(v);
+  if (!said.length) return false;
+  if (/^["“'].+["”']$/.test(v.trim())) return true;
+  if (want.every((w) => NUMERIC.test(w))) return said.every((w) => NUMERIC.test(w));
+  if (['true', 'false', 'null', 'undefined'].includes(want.join(' '))) return ['true', 'false', 'null', 'undefined', 'none'].includes(said.join(' '));
+  if (sameTokens(v, x.answer) || (x.also || []).some((a) => sameTokens(v, a))) return true;
+  return wordCount(v) <= Math.max(2, want.length + 1) && !PERSONAL_WORDS.test(v) && !SMALL_TALK.test(v);
+}
+
+/** The owner's words as an answer to this exercise, or null when they are not one (then they route as usual). */
+export function exerciseAnswer(x, said) {
+  const t = String(said || '').toLowerCase().replace(/[’‘]/g, "'").replace(/[.!]+$/, '').trim();
+  if (!t || REFUSAL.test(t) || wordCount(t) > 12) return null;
+  const explicit = EXPLICIT_ANSWER.exec(t);
+  if (explicit) return ACTION.test(explicit[1]) ? null : explicit[1].replace(/\s*(?:right|correct|i think|sir|please)\??$/, '').trim();
+  const lead = VALUE_LEAD.exec(t);
+  if (lead) return bareValue(x, lead[1]) ? lead[1] : null;
+  if (QUESTION.test(t) || ACTION.test(t)) return null;
+  if (SMALL_TALK.test(t) && !(x.options || []).some((o) => sameTokens(t, o))) return null;
+  if (OPTION_FORM.test(t) && (x.options || []).length) return t;
+  return bareValue(x, t) ? t : null;
+}
+
+/** Whether a said answer matches an exercise's stored answer. Deterministic, no model. */
+export function checkExercise(x, said) {
+  const t = exerciseAnswer(x, said) ?? String(said || '').toLowerCase().trim();
+  if (x.kind === 'big_o') {
+    const picked = optionPicked(x, t);
+    return { correct: (picked !== null ? bigOClass(x.options[picked]) : bigOClass(t)) === bigOClass(x.answer), heard: t };
+  }
+  if (x.kind === 'choice') return { correct: optionPicked(x, t) === choiceIndex(x), heard: t };
+  return { correct: sameTokens(t, x.answer) || (x.also || []).some((a) => sameTokens(t, a)), heard: t };
+}
+
+// Drill findings are judged by their two key concepts, as whole words ("*" ends a word stem). Both
+// named: right. One: CHE cannot judge it, and says so with the finding. None, or "it's fine": not quite.
+const plain = (s) => ` ${String(s || '').toLowerCase().replace(/[’']/g, '').replace(/[^a-z0-9<=%.\s]+/g, ' ').replace(/\s+/g, ' ').trim()} `;
+const conceptRe = (k) => {
+  const w = plain(k).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return k.endsWith('*') ? new RegExp(`(?<![a-z0-9])${w.slice(0, -2)}[a-z0-9]*`) : new RegExp(`(?<![a-z0-9])${w}(?![a-z0-9])`);
+};
+const SAYS_FINE = /(?<![a-z])(?:nothing(?: is)? wrong|no bugs?|looks (?:fine|ok|okay|good|right|correct)|(?:is|are|seems|works|its|it is) (?:fine|ok|okay|correct|good)|correctly|works fine)(?![a-z])/;
+/** { correct: true | false | null, hits }: null when CHE cannot tell, never a false "right". */
 export function checkDrill(d, said) {
-  const t = ` ${plain(said)} `;
-  const hits = d.keywords.filter((group) => group.some((k) => t.includes(plain(k))));
-  return { correct: hits.length >= d.min, hits: hits.length };
+  const t = plain(said);
+  const hits = d.concepts.filter((group) => group.some((k) => conceptRe(k).test(t))).length;
+  if (SAYS_FINE.test(t)) return { correct: false, hits };
+  return { correct: hits >= d.concepts.length ? true : hits === 0 ? false : null, hits };
+}
+const EXPLICIT_FINDING = /^(?:(?:so|well|ok|okay|um|uh)[,\s]+)*(?:(?:the|my) (?:bug|problem|issue|mistake|finding|answer|fix) is|it'?s wrong because|it is wrong because|it'?s broken because|what'?s wrong is|the trouble is)\b/;
+const DECLARATIVE = /^(?:it|its|it's|the|this|that|there|nothing|no|they|when|because|since|if|on|after|a|an|one|both|every|each|only)\b/;
+/** The owner's words as a drill finding, or null when they are not one. */
+export function drillAnswer(d, said) {
+  const t = String(said || '').toLowerCase().replace(/[’‘]/g, "'").trim();
+  if (!t || REFUSAL.test(t) || QUESTION.test(t) || ACTION.test(t) || wordCount(t) > 60) return null;
+  if (EXPLICIT_FINDING.test(t)) return t;
+  return DECLARATIVE.test(t) && checkDrill(d, t).hits > 0 ? t : null;
 }
 
 const EXERCISE_NOUN = String.raw`(?:exercises?|practice problems?|practice questions?|coding problems?|coding challenges?|programming problems?|programming exercises?)`;
 const ASK_LEAD = String.raw`(?:(?:give me|i want|i would like|i'd like|id like|let's do|lets do|let me (?:try|do)|can i (?:have|get|try)|try|do|start|set me|ask me|show me|teach me with)\s+)?`;
 const EXERCISE_ASK = new RegExp(String.raw`^${ASK_LEAD}(?:an?|another|one more|a new|some|the next)?\s*(coding |programming |code |practice )?${EXERCISE_NOUN}(?:\s+(?:on|about|in|for|with|using))?(?:\s+(.+))?$`);
 const EXERCISE_TOPIC_FIRST = new RegExp(String.raw`^${ASK_LEAD}(?:an?|another|one more|a new|some)\s+(.+?)\s+${EXERCISE_NOUN}$`);
+// Drills need a drill word: "review this code" is a request about real code, for the usual routes.
 const DRILL_ASK = /^(?:(?:give me|i want|let's do|lets do|start|do|try|run|can (?:i|we) (?:have|do|get))\s+)?(?:an?|another|one more|a new|the next|some)?\s*(?:code |coding )?review drills?(?:\s+(?:on|about|for|in|with))?(?:\s+(.+))?$/;
-const REVIEW_WITH_ME = /^(?:(?:let'?s|lets|can we|could we) )?(?:review|do a code review(?: of)?) (?:this|some|a bit of|a piece of|a little|a) ?code(?: (?:with me|together))?$|^review (?:this|some) code with me$|^(?:let'?s|lets|can we) do a code review(?: drill)?(?: together)?$/;
+const DRILL_ME = /^(?:drill me(?: on (?:code reviews?|reviewing code))?|(?:(?:let'?s|lets) do |give me |start |i want )?(?:some )?(?:code review|reviewing code) practice|practice (?:code review|reviewing code))$/;
 const NEXT_ONE = /^(?:another(?: one)?|one more|next(?: one)?|the next one|again|another exercise|next exercise|another drill|next drill|another review drill|next review drill|give me another(?: one)?)$/;
 
-const OWN_CODE = String.raw`(?:\s+in (?:its|her|your|che'?s|the) own (?:code|codebase|source code|source|repo|repository)|\s+in (?:its|her|your|che'?s) (?:code|codebase|source code|source|repo|repository))`;
-const REPO_WHERE = new RegExp(String.raw`^where (?:does|do|is|are|did) (?:che|you|she) (?:do|handle|implement|keep|make|run|save|take|write|use|check|test|put|have|code)?\s*(.+?)(${OWN_CODE})?$`);
-const REPO_SHOW = new RegExp(String.raw`^(?:show me|where is|where's|wheres|point me to) (?:che'?s|your|her) (?:own )?code for (.+)$`);
-const REPO_HOW = new RegExp(String.raw`^how (?:does|do) (?:che|you|she) (.+?)(${OWN_CODE})?$`);
+// CHE's own code, asked about by name: "where does CHE do checkpoints in its own code", "where in
+// CHE's code is backoff used", "show me CHE's code for failover", "how does CHE recover when a model
+// fails". Never "where did you deploy it" or "show me your code for …": those have their own routes.
+const OWN_CODE = String.raw`\s+in (?:its|her|che'?s) (?:own )?(?:code|codebase|source code|source|repo|repository)`;
+const REPO_WHERE = new RegExp(String.raw`^where (?:does|is) che (?:do|handle|implement|keep|make|save|use|check|put|have|code)?\s*(.+?)${OWN_CODE}$`);
+const REPO_IN = /^where in (?:che'?s|her) (?:own )?code (?:is|are|does (?:che|she) (?:do|handle)) (.+?)(?: used| handled| done| implemented| kept)?$/;
+const REPO_SHOW = /^(?:show me|give me|read me) (?:che'?s|her) (?:own )?code(?: example)? for (.+)$/;
+const REPO_HOW = /^how does (?:che|she) (.+)$/;
+const REPO_LEARN = /^(.+?) (?:code|in che'?s (?:own )?code)$/;
 
 /**
  * The owner's coding-practice request, or null. `t` has been read by knowledge_atlas.js speech()
  * (no wake word, lower case, no end punctuation); `deps` are its matchers, so this module never
- * imports it. A sentence that starts a new request is never taken as an answer.
+ * imports it. `findCard` is the atlas's concept rule: a card's exact name, or a concept topic.
  */
 export function codingIntent(t, history, { cards, findCard, topicKey, conceptTopic = () => true, explicit = false }) {
   const ctx = practiceContext(history, cards);
   const exercisesOf = (c) => c?.exercises || [];
 
-  // An answer to the exercise or drill CHE just set.
+  // An answer to the exercise or drill CHE just set, in an answer form; anything else routes as usual.
   if (ctx.card && ctx.open) {
     if (REVEAL.test(t)) return ctx.what === 'exercise' ? { kind: 'coding_answer', card: ctx.card, index: ctx.index, said: '', reveal: true } : { kind: 'coding_drill_answer', index: ctx.index, said: '', reveal: true };
-    if (ctx.what === 'exercise' && answerShaped(t, 80)) return { kind: 'coding_answer', card: ctx.card, index: ctx.index, said: t };
-    // "Fix the comparison" right after a drill answers it; "fix the login bug" names none of its ideas.
-    const drill = ctx.what === 'drill' ? allDrills(cards)[ctx.index]?.drill : null;
-    if (drill && (answerShaped(t, 400) || (t.length <= 400 && !/^(?:teach|explain|quiz|list|tell me about)\b/.test(t) && checkDrill(drill, t).hits > 0))) {
-      return { kind: 'coding_drill_answer', index: ctx.index, said: t };
+    if (ctx.what === 'exercise') {
+      const x = exercisesOf(ctx.card)[ctx.index];
+      const said = x ? exerciseAnswer(x, t) : null;
+      if (said !== null) return { kind: 'coding_answer', card: ctx.card, index: ctx.index, said };
+    } else {
+      const d = allDrills(cards)[ctx.index]?.drill;
+      const said = d ? drillAnswer(d, t) : null;
+      if (said !== null) return { kind: 'coding_drill_answer', index: ctx.index, said };
     }
   }
   if (ctx.card && NEXT_ONE.test(t)) {
@@ -1951,29 +2035,30 @@ export function codingIntent(t, history, { cards, findCard, topicKey, conceptTop
     const topicFirst = !EXERCISE_ASK.test(t);
     // "A coding exercise" is a coding request; "a back exercise" is not, unless a card is named.
     const qualified = !topicFirst && Boolean(ask[1]);
-    const topic = String((topicFirst ? ask[1] : ask[2]) || '').replace(/^(?:the |a |an )/, '').trim();
+    const topic = String((topicFirst ? ask[1] : ask[2]) || '').replace(/^(?:a |an )/, '').trim();
     if (!topic || /^(?:something|anything|any topic)$/.test(topic)) {
       if (ctx.card && exercisesOf(ctx.card).length && !qualified) return { kind: 'coding_exercise', card: ctx.card, index: 0 };
       return qualified || ctx.card ? { kind: 'coding_practice_list' } : null;
     }
     if (/^(?:this|that|it|this card|this topic)$/.test(topic)) return ctx.card ? { kind: 'coding_exercise', card: ctx.card, index: 0 } : { kind: 'coding_practice_list' };
-    const key = topicKey(topic);
-    for (const c of cards) {
-      const at = exercisesOf(c).findIndex((x) => x.topics.some((name) => topicKey(name) === key));
-      if (at >= 0) return { kind: 'coding_exercise', card: c, index: at };
+    if (conceptTopic(topic)) {
+      const key = topicKey(topic);
+      for (const c of cards) {
+        const at = exercisesOf(c).findIndex((x) => x.topics.some((name) => topicKey(name) === key));
+        if (at >= 0) return { kind: 'coding_exercise', card: c, index: at };
+      }
     }
+    // The atlas's concept rule: a card's exact name, or a concept ("an exercise on my code" is neither).
     const found = findCard(topic);
     if (found && exercisesOf(found).length) return { kind: 'coding_exercise', card: found, index: 0 };
-    // A card's exact name is a concept; any other topic must read as one: "an exercise on my code"
-    // or "on the bug in PR 352" is the owner's own work. A topic with no card goes on to the usual
-    // routes unless the atlas was asked by name ("/learn give me a coding exercise on Kubernetes").
     if (found) return { kind: 'coding_no_practice', card: found, topic: topic.slice(0, 80) };
+    // A topic with no card goes on to the usual routes unless the atlas was asked by name.
     return explicit && conceptTopic(topic) ? { kind: 'coding_no_practice', card: null, topic: topic.slice(0, 80) } : null;
   }
 
-  // "Give me a review drill", "review this code with me".
+  // "Give me a review drill", "drill me on code review", "code review practice".
   const drill = DRILL_ASK.exec(t);
-  if (drill || REVIEW_WITH_ME.test(t)) {
+  if (drill || DRILL_ME.test(t)) {
     const topic = String(drill?.[1] || '').trim();
     if (!topic) return { kind: 'coding_drill', index: ctx.what === 'drill' ? ctx.index + 1 : 0 };
     const found = findCard(topic);
@@ -1983,17 +2068,16 @@ export function codingIntent(t, history, { cards, findCard, topicKey, conceptTop
     return found || (explicit && conceptTopic(topic)) ? { kind: 'coding_no_practice', card: found, topic: topic.slice(0, 80), drill: true } : null;
   }
 
-  // "Where does CHE do checkpoints in its own code?", "how does CHE recover when a model fails?"
-  const where = REPO_WHERE.exec(t) || REPO_SHOW.exec(t);
+  // CHE's own code, named as such.
+  const where = REPO_WHERE.exec(t) || REPO_IN.exec(t) || REPO_SHOW.exec(t) || (explicit ? REPO_LEARN.exec(t) : null);
   const how = where ? null : REPO_HOW.exec(t);
   const repoTopic = String((where || how)?.[1] || '').trim();
   if (repoTopic) {
     const key = topicKey(repoTopic);
     const asked = cards.find((c) => (c.che_asks || []).some((p) => topicKey(p) === key));
     if (asked) return { kind: 'coding_repo', card: asked, how: Boolean(how) };
-    const ownCode = Boolean((where || how)?.[2]) || REPO_SHOW.test(t);
-    const found = ownCode || where ? findCard(repoTopic) : null;
-    if (found?.repo_examples?.length) return { kind: 'coding_repo', card: found, how: Boolean(how) };
+    const found = where ? findCard(repoTopic) : null;
+    if (found?.repo_examples?.length) return { kind: 'coding_repo', card: found, how: false };
   }
   return null;
 }
@@ -2013,7 +2097,7 @@ function exerciseText(c, i) {
   const total = c.exercises.length;
   const parts = [`Exercise ${i + 1} of ${total} on ${c.title}, sir, in ${LANGUAGE_NAMES[x.language] || x.language}. ${x.prompt}${fenced(shownCode(x), x.language)}`];
   if (x.solution?.che) parts.push(`The function is CHE's own ${x.solution.entry}, in ${x.solution.che}.`);
-  if (x.options?.length) parts.push(`Options:\n${x.options.map((o, n) => `${n + 1}. ${o}.`).join('\n')}\nSay a number or the answer itself.`);
+  if (x.options?.length) parts.push(`${x.options.map((o, n) => `Option ${n + 1}: ${o}.`).join('\n')}\nSay "option" and its number, or the answer itself.`);
   else parts.push(x.kind === 'big_o' ? 'Say the Big-O, for example "O of n".' : 'Say what it returns.');
   parts.push('Or say "tell me the answer".');
   parts.push(sourceLine(c, `exercise ${i + 1} of ${total}, open`));
@@ -2022,7 +2106,8 @@ function exerciseText(c, i) {
 
 function drillText(list, i) {
   const { card: c, drill: d } = list[i];
-  const origin = d.from ? ` Adapted from a real CHE fix: ${d.from.what}.` : ' A classic bug, written for practice.';
+  const origin = d.from ? ` Adapted from a real CHE fix: ${d.from.what}, commit ${d.from.commit}.`
+    : d.pins ? ' An illustrative drill, not from CHE\'s history: CHE\'s own code had this rule from the start.' : ' A classic bug, written for practice.';
   return [
     `Review drill ${i + 1} of ${list.length}, sir: ${d.title}.${origin} What's wrong with this ${LANGUAGE_NAMES[d.language] || d.language}?${fenced(d.code, d.language)}`,
     'Say what you think is wrong, or "tell me the answer".',
@@ -2105,10 +2190,12 @@ export async function answerCoding(intent, { storage = null, cards = [], referen
     case 'coding_drill_answer': {
       const list = allDrills(cards);
       const { card: dc, drill: d } = list[intent.index];
-      const pinned = d.from ? `\nIn CHE, the fix is pinned by the test "${d.from.test_name}" in ${d.from.test}.` : '';
+      const pin = d.from || d.pins;
+      const pinned = pin ? `\nIn CHE, the rule is pinned by the test "${pin.test_name}" in ${pin.test}.` : '';
       const tail = `${fenced(d.fixed, d.language)}${pinned}\n${intent.index + 1 < list.length ? 'Say "another drill" for the next one.' : 'That was the last drill.'}\n${sourceLine(dc, `review drill ${intent.index + 1} of ${list.length}, checked`)}`;
       if (intent.reveal) return out(`The bug, sir: ${d.finding}\nThe fix:${tail}`, true, dc);
       const { correct } = checkDrill(d, intent.said);
+      if (correct === null) return out(`I can't judge that one automatically, sir. The finding: ${d.finding}\nThe fix:${tail}`, true, dc);
       return correct
         ? out(`Right, sir, that's the bug. ${d.finding}\nThe fix:${tail}`, true, dc)
         : out(`Not quite, sir. The bug: ${d.finding}\nThe fix:${tail}`, false, dc);

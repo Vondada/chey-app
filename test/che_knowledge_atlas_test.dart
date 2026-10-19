@@ -71,6 +71,11 @@ void main() {
     expect(atlas.find('python')?.id, 'c-python');
     expect(atlas.find('recursion in python')?.id, 'recursion');
     expect(atlas.find('binary search')?.id, 'c-binary-search');
+    // An id is never a topic: "c-python" must not make "C" the Python lesson.
+    for (final other in ['c', 'C++', 'C#', 'c programming', 'pythons']) {
+      expect(atlas.find(other), isNull, reason: other);
+    }
+    expect(atlas.find('c-python')?.id, 'c-python', reason: 'an id is still found by its exact spelling');
     // Trading cards state their limitations, shown and read as part of the card; the ICT ones say their evidence is mixed or limited.
     for (final c in atlas.inDomain('trading')) {
       expect(c.limitations, isNotEmpty, reason: c.id);
@@ -238,15 +243,28 @@ void main() {
     final answer = await hear('the answer');
     expect(answer, contains('Answer: 3. Indexes start at 0'));
     expect(answer, screen(tester).join('\n'));
-    expect(await hear('next exercise'), contains('Options: 1. 0. 2. 1. 3. 3. 4. 4.'));
+    final second = await hear('next exercise');
+    expect(second, contains('Option 1: 0. Option 2: 1. Option 3: 3. Option 4: 4.'));
+    expect(second, contains('Answer by voice in Chat to have it checked'), reason: 'the phone never pretends to check an answer');
+    // The practice is the page; the banner only says what changed, and is never the whole exercise.
+    expect(find.text('Exercise 2 of 4 shown.'), findsOneWidget);
+    expect(find.text(second!), findsNothing);
     final drill = await hear('review drill');
-    expect(drill, startsWith('Review drill 1 of 1 on Binary search and two pointers.\nThe search that never looks at the last item.'));
-    expect(await hear('tell me the answer'), contains('Finding: high is inclusive'));
+    expect(drill, startsWith('Review drill 1 of 1 on Binary search and two pointers.\nThe search that never looks at the last item. What is wrong with this code?'));
+    expect(await hear('show the finding'), contains('Finding: high is inclusive'));
+    expect(find.text('Finding shown.'), findsOneWidget);
     expect(spoken, isEmpty, reason: 'voice replies are returned for Chat to speak; the page itself stays quiet');
+    expect(await hear('back to the card'), startsWith('Binary search and two pointers, beginner level.'), reason: 'back to the card, not the list');
+    // "Quiz me" from an open exercise shows the quiz, not the exercise.
+    await hear('exercise');
+    expect(await hear('quiz me'), startsWith('Quiz on Binary search and two pointers.'));
+    expect(screen(tester).first, 'Quiz on Binary search and two pointers.');
+    expect(await hear('go back'), startsWith('Back to the'));
+    await hear('teach me binary search');
     // By touch: Read aloud says exactly the practice on screen, and "Show the answer" reveals it.
-    expect(await hear('go back'), startsWith('Binary search and two pointers, beginner level.'), reason: 'back to the card, not the list');
     await tester.tap(find.text('Exercise'));
     await tester.pumpAndSettle();
+    expect(find.text('Exercise 1 of 4 shown.'), findsOneWidget, reason: 'a short status, not the exercise');
     await tester.tap(find.text('Read aloud'));
     await tester.pumpAndSettle();
     expect(spoken.single, screen(tester).join('\n'));

@@ -162,7 +162,8 @@ class CheKnowledgeAtlas {
         numbers = numbers ?? const <String, int>{},
         languages = languages ?? const <String>{} {
     for (final c in cards) {
-      for (final name in [c.id, c.title, ...c.aliases]) {
+      // Titles and aliases only, as in the Worker: an id such as "c-python" would reduce to "c".
+      for (final name in [c.title, ...c.aliases]) {
         final key = topicKey(name);
         if (key.isNotEmpty) _byKey.putIfAbsent(key, () => c);
       }
@@ -199,14 +200,14 @@ class CheKnowledgeAtlas {
       CheKnowledgeAtlas.fromJson(Map<String, dynamic>.from(jsonDecode(await rootBundle.loadString(asset)) as Map));
 
   /// A topic as the Worker's topicKey() compares it: no punctuation, no filler words, light singulars;
-  /// a language said on its own ("Python") is the topic.
+  /// a language said on its own, exactly ("Python"), is the topic ("lang:python").
   String topicKey(String text) {
     final words = text.toLowerCase().replaceAll("'", '').replaceAll('’', '').replaceAll(RegExp(r'[^a-z0-9²]+'), ' ').trim().split(' ').where((w) => w.isNotEmpty);
     final kept = words
         .where((w) => !filler.contains(w))
         .map((w) => w.length > 3 && w.endsWith('s') && !w.endsWith('ss') ? w.substring(0, w.length - 1) : w)
         .toList();
-    return (kept.isNotEmpty ? kept : words.where(languages.contains)).join(' ');
+    return kept.isNotEmpty ? kept.join(' ') : words.where(languages.contains).map((w) => 'lang:$w').join(' ');
   }
 
   int? numberOf(String w) => int.tryParse(w) ?? numbers[w];
@@ -223,7 +224,7 @@ class CheKnowledgeAtlas {
   /// The card a topic names exactly, the same rule as the Worker's; never a near guess.
   CheAtlasCard? find(String topic) {
     final key = topicKey(topic);
-    return key.isEmpty ? null : _byKey[key];
+    return (key.isEmpty ? null : _byKey[key]) ?? byId(topic.trim().toLowerCase());
   }
 
   /// The next card in its domain's curriculum order, or null after the last.
@@ -325,13 +326,13 @@ List<CheAtlasLine> cheAtlasPracticeLines(CheAtlasCard c, String kind, int i, {bo
     final d = c.drills[i];
     return [
       CheAtlasLine('Review drill ${i + 1} of ${c.drills.length} on ${c.title}.', CheAtlasLineKind.title, 'levels'),
-      CheAtlasLine('${d.title}.${d.from.isEmpty ? '' : ' Adapted from ${d.from}.'} What is wrong with this code?'),
+      CheAtlasLine('${d.title}.${d.from.isEmpty ? '' : ' ${d.from}.'} What is wrong with this code?'),
       CheAtlasLine(d.code, CheAtlasLineKind.code, revealed ? '' : 'reveal'),
       if (revealed) ...[
         CheAtlasLine('Finding: ${d.finding}', CheAtlasLineKind.answer),
         if (d.fixed.isNotEmpty) CheAtlasLine(d.fixed, CheAtlasLineKind.code),
       ],
-      const CheAtlasLine('Say "next review drill", "exercise", or "go back" for the card.', CheAtlasLineKind.meta, 'practice-next'),
+      const CheAtlasLine('Say "next review drill", "exercise", or "back to the card".', CheAtlasLineKind.meta, 'practice-next'),
     ];
   }
   final x = c.exercises[i];
@@ -339,10 +340,11 @@ List<CheAtlasLine> cheAtlasPracticeLines(CheAtlasCard c, String kind, int i, {bo
     CheAtlasLine('Exercise ${i + 1} of ${c.exercises.length} on ${c.title}.', CheAtlasLineKind.title, 'levels'),
     CheAtlasLine(x.prompt),
     if (x.code.isNotEmpty) CheAtlasLine(x.code, CheAtlasLineKind.code),
-    if (x.options.isNotEmpty) CheAtlasLine('Options: ${[for (final (n, o) in x.options.indexed) '${n + 1}. $o.'].join(' ')}', CheAtlasLineKind.body, revealed ? '' : 'reveal'),
-    if (x.options.isEmpty && !revealed) const CheAtlasLine('Say your answer to CHE in Chat to have it checked, or "the answer" to see it here.', CheAtlasLineKind.meta, 'reveal'),
+    if (x.options.isNotEmpty) CheAtlasLine([for (final (n, o) in x.options.indexed) 'Option ${n + 1}: $o.'].join(' ')),
+    // The phone shows the answer; only Chat checks one, so it says so instead of pretending.
+    if (!revealed) const CheAtlasLine('Answer by voice in Chat to have it checked, or say "show the answer" to see it here.', CheAtlasLineKind.meta, 'reveal'),
     if (revealed) CheAtlasLine('Answer: ${x.answer}. ${x.explain}', CheAtlasLineKind.answer),
-    const CheAtlasLine('Say "next exercise", "review drill", or "go back" for the card.', CheAtlasLineKind.meta, 'practice-next'),
+    const CheAtlasLine('Say "next exercise", "review drill", or "back to the card".', CheAtlasLineKind.meta, 'practice-next'),
   ];
 }
 
@@ -490,7 +492,15 @@ class _CheKnowledgeAtlasPageState extends State<CheKnowledgeAtlasPage> {
       _practiceRevealed = false;
       _quiz = false;
     });
-    return _result(cheAtlasSpoken(_lines));
+    // The practice itself is the page; the banner only says what changed, so it is not read twice.
+    _result('${name[0].toUpperCase()}${name.substring(1)} ${at + 1} of $total shown.');
+    return cheAtlasSpoken(_lines);
+  }
+
+  String _reveal() {
+    setState(() => _practiceRevealed = true);
+    _result(_practice == 'drill' ? 'Finding shown.' : 'Answer shown.');
+    return cheAtlasSpoken(_lines);
   }
 
   void _setLevel(String level) {
@@ -627,8 +637,9 @@ class _CheKnowledgeAtlasPageState extends State<CheKnowledgeAtlasPage> {
     if (practice != null) {
       return _startPractice(card, practice.group(2)!.contains('drill') ? 'drill' : 'exercise', next: practice.group(1) != null || t.contains('another'));
     }
-    if (_practice.isNotEmpty && RegExp(r'^(?:(?:show|tell|give|read) me )?(?:the )?(?:answer|finding|bug)$').hasMatch(t)) {
-      setState(() => _practiceRevealed = true);
+    if (_practice.isNotEmpty && RegExp(r'^(?:(?:show|tell|give|read) me |show )?(?:the )?(?:answer|finding|bug)$').hasMatch(t)) return _reveal();
+    if (_practice.isNotEmpty && RegExp(r'^(?:back to the card|go back to the card|the card)$').hasMatch(t)) {
+      setState(() => _practice = '');
       return _result(cheAtlasSpoken(_lines));
     }
     if (RegExp(r'^(?:what(?:s| is) the |show me the |read me the |the )?(?:formula|equation|math)$').hasMatch(t)) return _result(_formulaText(card));
@@ -638,6 +649,7 @@ class _CheKnowledgeAtlasPageState extends State<CheKnowledgeAtlasPage> {
     if (RegExp(r'^(?:quiz me|start the quiz|quiz|quiz me on (?:this|it|this card|that))$').hasMatch(t)) {
       setState(() {
         _quiz = true;
+        _practice = '';
         _answers.clear();
       });
       return _result(cheAtlasSpoken(_lines));
@@ -645,6 +657,7 @@ class _CheKnowledgeAtlasPageState extends State<CheKnowledgeAtlasPage> {
     if (RegExp(r'^(?:(?:show|read|give) me )?(?:the )?(?:quiz )?answers?$').hasMatch(t)) {
       setState(() {
         _quiz = true;
+        _practice = '';
         _answers.addAll(List.generate(card.quiz.length, (i) => i));
       });
       return _result(cheAtlasSpoken(_lines));
@@ -726,7 +739,7 @@ class _CheKnowledgeAtlasPageState extends State<CheKnowledgeAtlasPage> {
       return [
         Align(
           alignment: Alignment.centerLeft,
-          child: TextButton(onPressed: () => setState(() => _practiceRevealed = true), child: Text(_practice == 'drill' ? 'Show the finding' : 'Show the answer', style: const TextStyle(fontSize: 16))),
+          child: TextButton(onPressed: _reveal, child: Text(_practice == 'drill' ? 'Show the finding' : 'Show the answer', style: const TextStyle(fontSize: 16))),
         ),
       ];
     }

@@ -1387,7 +1387,7 @@
     "list comprehension",
     "python indentation",
     "mutable default arguments",
-    "python dicts"
+    "python dictionaries and lists"
    ],
    "tags": [
     "languages",
@@ -1629,7 +1629,7 @@
       "\"7\"",
       "an error"
      ],
-     "answer": "2, 71",
+     "answer": "option 2, 71",
      "explain": "v is the string \"7\", so + joins text: \"7\" + 1 is \"71\". Only the number branch adds."
     }
    ],
@@ -1649,7 +1649,6 @@
     "flutter",
     "dart and flutter",
     "flutter widgets",
-    "widgets",
     "stateful widgets",
     "setstate",
     "set state",
@@ -1716,7 +1715,7 @@
    "limitations": [
     "The Dart example is plain Dart that models Flutter's rebuild idea; real widgets need the Flutter framework and a widget test (CHE's are in test/). Navigation, animation and platform channels are not covered."
    ],
-   "che_note": "Every CHE screen gives VoiceOver a label for each button and announces results in a live region; the Knowledge Atlas page (lib/brain/che_knowledge_atlas.dart) speaks only when the owner asks it to.",
+   "che_note": "The owner's rule is that every CHE screen gives VoiceOver a label for each button. The Knowledge Atlas page (lib/brain/che_knowledge_atlas.dart) shows each result the owner asked for in a live-region banner and speaks only when he asks it to.",
    "measured": null,
    "sources": [
     {
@@ -1932,17 +1931,13 @@
     "git basics",
     "git commit",
     "git commits",
-    "commits",
     "git branches",
     "merge vs rebase",
     "merge versus rebase",
     "merge and rebase",
     "git merge",
-    "rebase",
-    "rebasing",
     "git rebase",
     "git bisect",
-    "bisect",
     "git history"
    ],
    "tags": [
@@ -2078,9 +2073,9 @@
     "arrays",
     "linked lists",
     "linked list",
-    "stacks",
-    "queues",
     "stacks and queues",
+    "stack data structure",
+    "queue data structure",
     "binary trees",
     "binary tree",
     "binary heaps",
@@ -2362,7 +2357,7 @@
       "3",
       "4"
      ],
-     "answer": "2, 1",
+     "answer": "option 2, 1",
      "explain": "The first 2 is at index 1. A plain binary search could stop at any of the three 2s; lower bound always finds the first."
     },
     {
@@ -2543,7 +2538,7 @@
       "test, build, deploy",
       "there is a cycle"
      ],
-     "answer": "2, build, test, deploy",
+     "answer": "option 2, build, test, deploy",
      "explain": "build depends on nothing, so it goes first; that frees test, which frees deploy."
     }
    ],
@@ -2622,13 +2617,13 @@
    "example": {
     "kind": "code",
     "language": "javascript",
-    "explain": "Memoized, ways(30) is 1346269 and takes only 59 calls, where naive recursion would take millions; \"kitten\" to \"sitting\" is 3 edits, and \"showbird\" to \"shorebird\" is 2.",
-    "code": "const memo = new Map();\nlet calls = 0;\nfunction ways(n) {                     // ways(n) = ways(n - 1) + ways(n - 2)\n  calls += 1;\n  if (n <= 1) return 1;\n  if (memo.has(n)) return memo.get(n);\n  const answer = ways(n - 1) + ways(n - 2);\n  memo.set(n, answer);\n  return answer;\n}\nfunction editDistance(a, b) {          // bottom-up, one row of the table\n  const row = Array.from({ length: b.length + 1 }, (_, j) => j);\n  for (let i = 1; i <= a.length; i += 1) {\n    let diagonal = row[0];\n    row[0] = i;\n    for (let j = 1; j <= b.length; j += 1) {\n      const above = row[j];\n      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, diagonal + (a[i - 1] === b[j - 1] ? 0 : 1));\n      diagonal = above;\n    }\n  }\n  return row[b.length];\n}\nconst stairs = ways(30);\nreturn { stairs, calls, kitten: editDistance('kitten', 'sitting'), shorebird: editDistance('showbird', 'shorebird') };",
+    "explain": "Memoized, ways(30) is 1346269 and takes only 59 calls, where naive recursion would take millions; \"kitten\" to \"sitting\" is 3 edits, and \"cloudflair\" to \"cloudflare\" is 2.",
+    "code": "const memo = new Map();\nlet calls = 0;\nfunction ways(n) {                     // ways(n) = ways(n - 1) + ways(n - 2)\n  calls += 1;\n  if (n <= 1) return 1;\n  if (memo.has(n)) return memo.get(n);\n  const answer = ways(n - 1) + ways(n - 2);\n  memo.set(n, answer);\n  return answer;\n}\nfunction editDistance(a, b) {          // bottom-up, one row of the table\n  const row = Array.from({ length: b.length + 1 }, (_, j) => j);\n  for (let i = 1; i <= a.length; i += 1) {\n    let diagonal = row[0];\n    row[0] = i;\n    for (let j = 1; j <= b.length; j += 1) {\n      const above = row[j];\n      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, diagonal + (a[i - 1] === b[j - 1] ? 0 : 1));\n      diagonal = above;\n    }\n  }\n  return row[b.length];\n}\nconst stairs = ways(30);\nreturn { stairs, calls, kitten: editDistance('kitten', 'sitting'), cloudflare: editDistance('cloudflair', 'cloudflare') };",
     "expected": {
      "stairs": 1346269,
      "calls": 59,
      "kitten": 3,
-     "shorebird": 2
+     "cloudflare": 2
     }
    },
    "quiz": [
@@ -2651,7 +2646,7 @@
    "limitations": [
     "Classic one- and two-dimensional problems only; knapsack, interval and bitmask dynamic programming are not covered."
    ],
-   "che_note": "CHE corrects misheard tech names, such as \"Showbird\" to \"Shorebird\", by edit distance: speech_intent.js editDistance keeps one row of the table.",
+   "che_note": "When a misheard tech name has no fixed alias, CHE picks the closest known name by edit distance, for example \"cloudflair\" to Cloudflare (speech_intent.js editDistance, one row of the table). Names it already knows, such as \"Showbird\" for Shorebird, come from a fixed alias table instead.",
    "measured": null,
    "sources": [
     {
@@ -2719,7 +2714,7 @@
     {
      "path": "server/cloudflare/speech_intent.js",
      "symbol": "editDistance",
-     "what": "one-row edit distance that corrects misheard tech names from context",
+     "what": "one-row edit distance that picks the closest known tech name when no fixed alias exists",
      "test": "server/cloudflare/speech_intent.test.mjs"
     },
     {
@@ -2771,7 +2766,7 @@
    "levels": {
     "beginner": "A database stores information in tables, like a spreadsheet with strict columns, and answers questions about it. SQL is the language for asking: SELECT symbol, pnl FROM trades WHERE symbol = 'MNQ' reads the matching rows. The database keeps the data safe even if the program crashes.",
     "intermediate": "Without an index, a query reads every row, O(n). An index is a sorted structure, usually a B-tree, on one or more columns, so a lookup takes O(log n) page reads; it costs space and makes every write a little slower. A transaction groups changes so they all happen or none do: BEGIN, the changes, then COMMIT, or ROLLBACK to undo them. GROUP BY with COUNT or SUM summarises rows.",
-    "expert": "ACID means atomic, consistent, isolated and durable. Isolation levels trade safety for concurrency, and the classic anomalies are lost updates and phantom reads. A B-tree with a fan-out of a few hundred reaches millions of rows in three or four levels. EXPLAIN QUERY PLAN shows whether an index is used. Always pass values as parameters, never by building SQL from text, which prevents injection. A Cloudflare Durable Object can hold a private SQLite database, reached through ctx.storage.sql, and because one object handles its requests one at a time and holds new input while a storage call runs, its own reads and writes do not race each other."
+    "expert": "ACID means atomic, consistent, isolated and durable. Isolation levels trade safety for concurrency; the classic anomalies are dirty reads, non-repeatable reads, phantom reads and lost updates. A B-tree with a fan-out of a few hundred reaches millions of rows in three or four levels. EXPLAIN QUERY PLAN shows whether an index is used. Always pass values as parameters, never by building SQL from text, which prevents injection. A Cloudflare Durable Object can hold a private SQLite database, reached through ctx.storage.sql, and because one object handles its requests one at a time and holds new input while a storage call runs, its own reads and writes do not race each other."
    },
    "analogy": "An index is like the index at the back of a book: instead of reading every page to find \"margin\", you look it up and go straight to page 212.",
    "formula": {
@@ -3171,7 +3166,7 @@
      "code": "function intake(message, limit) {\n  const text = String(message || '').trim().slice(0, limit);   // keep it a manageable size\n  return { status: 200, text };\n}",
      "finding": "slice cuts the message silently, so its last words, \"don't send it until Friday\", never reach CHE and she could send it. A message too long to take must be refused whole, saying so, with nothing done.",
      "fixed": "function intake(message, limit) {\n  const text = String(message || '').trim();\n  if (text.length > limit) return { status: 413, text: '' };   // refused whole, and CHE says so\n  return { status: 200, text };\n}",
-     "from": "PR #349, where the owner's whole sentence reaches CHE; pinned by \"a chat message too long to take is refused whole, saying so; nothing runs (issue #345)\" in server/cloudflare/worker_autonomy.test.mjs"
+     "from": "Adapted from a real CHE fix: PR #349, where the owner's whole sentence reaches CHE, commit 11c79bb; pinned by \"a chat message too long to take is refused whole, saying so; nothing runs (issue #345)\" in server/cloudflare/worker_autonomy.test.mjs"
     }
    ],
    "repo_examples": [
@@ -3201,7 +3196,7 @@
     "software architecture",
     "code architecture",
     "system design",
-    "modules",
+    "code modules",
     "modularity",
     "module boundaries",
     "separation of concerns",
@@ -3297,7 +3292,7 @@
      "code": "// A short form of the owner's turn, used for routing instead of his words.\nfunction frame(text) {\n  const compact = text.split(/,\\s*|\\s+but\\s+/)[0];\n  return { compact, lossless: true };\n}",
      "finding": "The short form drops everything after the first comma, here \"not today\", and still claims to be lossless, so routing on it loses the owner's constraint. It must check that every constraint word survived, and fall back to his full words when one did not.",
      "fixed": "function frame(text) {\n  const compact = text.split(/,\\s*|\\s+but\\s+/)[0];\n  const critical = text.match(/\\b(?:not|don'?t|never|today|tomorrow|\\d+)\\b/gi) || [];\n  const missing = critical.filter((w) => !compact.toLowerCase().includes(w.toLowerCase()));\n  return { compact, lossless: missing.length === 0 };   // not lossless: route on the full words\n}",
-     "from": "PR #352, where the compact intent frame says when it would lose words; pinned by \"a frame that would drop a constraint says so, and the full words are used\" in server/cloudflare/intent_frame.test.mjs"
+     "from": "An illustrative drill, not from CHE's history"
     }
    ],
    "repo_examples": [
@@ -3391,7 +3386,7 @@
    "example": {
     "kind": "code",
     "language": "javascript",
-    "explain": "Validation keeps \"MNQ\" and rejects \"MNQ; DROP TABLE\"; gluing text into SQL lets x' OR '1'='1 match every row, while a parameter keeps it plain data; and the cloud metadata address 169.254.169.254 is private, so a server must refuse to fetch it.",
+    "explain": "Validation keeps \"MNQ\" and rejects \"MNQ; DROP TABLE\"; gluing text into SQL lets x' OR '1'='1 match every row, while a parameter keeps it plain data; and the cloud metadata address 169.254.169.254 is link-local, not public, so a server must refuse to fetch it.",
     "code": "// 1. Validation: accept only what you expect.\nconst symbol = (s) => (/^[A-Z]{1,5}$/.test(s) ? s : null);\n// 2. Injection: never build SQL from text; send the value separately.\nconst unsafe = (name) => `SELECT * FROM users WHERE name = '${name}'`;\nconst safe = (name) => ({ sql: 'SELECT * FROM users WHERE name = ?', params: [name] });\nconst attack = \"x' OR '1'='1\";\n// 3. SSRF: a server that fetches URLs for others must refuse private addresses.\nconst privateIPv4 = (ip) => {\n  const [a, b] = ip.split('.').map(Number);\n  return a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);\n};\nreturn {\n  valid: symbol('MNQ'), rejected: symbol('MNQ; DROP TABLE'),\n  injected: unsafe(attack), parameterized: safe(attack).sql,\n  metadata: privateIPv4('169.254.169.254'), publicSite: privateIPv4('104.16.132.229'),\n};",
     "expected": {
      "valid": "MNQ",
@@ -3467,7 +3462,7 @@
       "169.254.169.254",
       "1.1.1.1"
      ],
-     "answer": "3, 169.254.169.254",
+     "answer": "option 3, 169.254.169.254",
      "explain": "169.254.169.254 is link-local, the address cloud servers use for their metadata service; the others are public."
     },
     {
@@ -3489,7 +3484,7 @@
      "code": "// Sets the owner's \"don't …\" aside, then looks for a money verb in what is left.\nfunction needsYes(text) {\n  const asked = text.replace(/\\b(?:don'?t|do not|never|no need to)\\b[^.;!?]*/gi, '');\n  return /\\b(?:buy|pay|order|purchase)\\b/i.test(asked);\n}",
      "finding": "The prohibition runs past the comma to the end of the sentence, and any \"don't\" counts, even one that forbids nothing CHE could do. So \"No need to ask, pay the electric bill\" loses its payment and would be paid without asking. Fail closed: set aside only a ban on a money verb, only up to its clause, and hold when in doubt.",
      "fixed": "function needsYes(text) {\n  // Only a ban on a money verb is set aside, and only to the end of its own clause.\n  const asked = text.replace(/\\b(?:don'?t|do not|never)\\s+(?:buy|pay|order|purchase)\\b[^,.;!?]*/gi, '');\n  return /\\b(?:buy|pay|order|purchase)\\b/i.test(asked);\n}",
-     "from": "PR #351, where the money gate was made to fail closed; pinned by \"shopping: the owner's own plan with every purchase forbidden opens no money hold; a purchase for CHE still does\" in server/cloudflare/readonly_acceptance.test.mjs"
+     "from": "Adapted from a real CHE fix: a review finding on PR #351, where the money gate was made to fail closed; the fix and its note are in owner_action_gate.js, commit f2992a7; pinned by \"shopping: the owner's own plan with every purchase forbidden opens no money hold; a purchase for CHE still does\" in server/cloudflare/readonly_acceptance.test.mjs"
     },
     {
      "id": "c-security.d2",
@@ -3541,10 +3536,10 @@
     "code performance",
     "performance optimization",
     "performance optimisation",
-    "caching",
-    "cache",
-    "profiling",
-    "latency",
+    "code caching",
+    "caching in code",
+    "code profiling",
+    "network latency",
     "speeding up code"
    ],
    "tags": [
@@ -3710,15 +3705,12 @@
    "aliases": [
     "deployment",
     "deploying",
-    "deploy",
     "continuous integration",
-    "ci",
     "ci cd",
     "continuous deployment",
     "staged rollout",
     "staged rollouts",
     "staged deploy",
-    "rollouts",
     "live verification",
     "release process",
     "shipping software"
@@ -3972,7 +3964,7 @@
       "PLAN",
       "BUILD"
      ],
-     "answer": "1, EXPLORE",
+     "answer": "option 1, EXPLORE",
      "explain": "The \"do not change anything\" makes it read-only investigation, which is EXPLORE."
     }
    ],
@@ -4109,7 +4101,7 @@
       "stop: the resume limit is reached",
       "stop: it is not a capacity failure"
      ],
-     "answer": "2, stop: the resume limit is reached",
+     "answer": "option 2, stop: the resume limit is reached",
      "explain": "Resumes are bounded at 3 (RESUME_LIMIT); after that the job goes to CHE's own coding team instead of looping."
     }
    ],
@@ -4210,7 +4202,7 @@
    "example": {
     "kind": "code",
     "language": "javascript",
-    "explain": "The first model's request is too large, so CHE moves on instead of retrying it; the second is rate limited, so she moves on again; the third answers. The backoff doubles from 1 minute to 2, 4, 8 and 16, then stops at the 30-minute ceiling.",
+    "explain": "The first model's request is too large, so CHE moves on instead of retrying it; the second is rate limited, so she moves on again; the third answers. With backoffMs's defaults the wait doubles from 1 minute to 2, 4, 8 and 16, then stops at the 30-minute ceiling.",
     "code": "const classify = (text) => {\n  if (/request too large|context length/i.test(text)) return 'too_large';   // first: retrying cannot fix it\n  if (/rate limit|\\b429\\b/i.test(text)) return 'rate_limit';\n  if (/quota/i.test(text)) return 'quota';\n  return 'unknown';\n};\nconst models = [\n  { name: 'free-a', error: 'Request too large for model on tokens per minute (TPM)' },\n  { name: 'free-b', error: '429 rate limit reached' },\n  { name: 'free-c', error: null },\n];\nconst log = [];\nfor (const m of models) {\n  if (!m.error) { log.push(`${m.name} answered`); break; }\n  log.push(`${m.name}: ${classify(m.error)}, next model`);\n}\nconst backoffMinutes = [0, 1, 2, 3, 4, 5].map((attempt) => Math.min(30, 1 * 2 ** attempt));\nreturn { log, backoffMinutes };",
     "expected": {
      "log": [
@@ -4281,23 +4273,23 @@
      "language": "javascript",
      "code": "",
      "options": [
-      "rate_limit",
-      "too_large",
+      "rate limit",
+      "too large",
       "quota",
       "timeout"
      ],
-     "answer": "2, too_large",
+     "answer": "option 2, too large",
      "explain": "It names tokens per minute, but the request itself is too big for that model, so waiting cannot help."
     },
     {
      "id": "c-model-failover.2",
      "kind": "returns",
-     "prompt": "CHE's backoff starts at 1 minute, doubles each attempt and is capped at 30 minutes. How many minutes is the wait at attempt 5, counting from 0?",
+     "prompt": "One of CHE's job retries in worker.js waits backoffMs(attempts, 1 minute, 15-minute cap): 1 minute, doubling each attempt, never more than 15. How many minutes is the wait at attempt 5, counting from 0?",
      "language": "javascript",
-     "code": "const waitMinutes = (attempt) => Math.min(30, 1 * 2 ** attempt);",
+     "code": "const waitMinutes = (attempt) => Math.min(15, 1 * 2 ** attempt);",
      "options": [],
-     "answer": "30",
-     "explain": "2 to the 5th is 32 minutes, which is over the 30-minute cap, so the wait is 30."
+     "answer": "15",
+     "explain": "2 to the 5th is 32 minutes, which is over the 15-minute cap, so the wait is 15."
     }
    ],
    "review_drills": [
@@ -4308,7 +4300,7 @@
      "code": "function classify(text) {\n  if (/rate.?limit|tokens per minute|\\b429\\b/i.test(text)) return { kind: 'rate_limit', resumable: true };\n  if (/request too large/i.test(text)) return { kind: 'too_large', resumable: false };\n  return { kind: 'unknown', resumable: false };\n}",
      "finding": "The rate-limit rule is checked first and matches \"tokens per minute\", so a request that is too large is called resumable and retried forever. Check the too-large rule first: retrying the same request can never succeed.",
      "fixed": "function classify(text) {\n  if (/request too large/i.test(text)) return { kind: 'too_large', resumable: false };   // first\n  if (/rate.?limit|\\b429\\b/i.test(text)) return { kind: 'rate_limit', resumable: true };\n  return { kind: 'unknown', resumable: false };\n}",
-     "from": "CHE coding failover rules (#328); pinned by \"a Groq request-too-large error is too_large even though it names tokens per minute\" in server/cloudflare/coding_failover.test.mjs"
+     "from": "An illustrative drill, not from CHE's history"
     }
    ],
    "repo_examples": [
@@ -4448,7 +4440,7 @@
       "yes",
       "no"
      ],
-     "answer": "1, yes",
+     "answer": "option 1, yes",
      "explain": "Whitespace, case and quote style never make a strategy new, so the second is rejected without a run."
     }
    ],
@@ -4460,7 +4452,7 @@
      "code": "// An attempt may change any file it needs.\nconst allowed = (path) => !/^\\.github\\//.test(path);",
      "finding": "The attempt can edit the checkpoint verifier and the failover gate, the code that judges it, so a bad change could approve itself. The judge and its gates must be unsafe paths an attempt can never touch.",
      "fixed": "// The checker and its gates are out of the attempt's reach.\nconst allowed = (path) => !/^(?:\\.github\\/|tools\\/che_coding_|server\\/cloudflare\\/coding_failover\\.mjs$)/.test(path);",
-     "from": "CHE coding failover rules (#328); pinned by \"the coding tools and the gate are unsafe paths: an attempt can never change the code that judges it\" in server/cloudflare/coding_failover.test.mjs"
+     "from": "An illustrative drill, not from CHE's history"
     }
    ],
    "repo_examples": [

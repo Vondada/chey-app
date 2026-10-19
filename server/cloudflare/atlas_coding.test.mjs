@@ -6,14 +6,13 @@
 // real /api/chat, typed, as unpunctuated speech and with "CHE," in front, and the coding,
 // REA and research requests that are not lessons keep their own routes.
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
-import { stripTypeScriptTypes } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { CODING_CARDS, CODING_FORMULAS, answerTokens, bigOClass, checkDrill, checkExercise, excerptFrom } from './atlas_coding.js';
+import { CODING_CARDS, CODING_FORMULAS, answerTokens, bigOClass, checkDrill, checkExercise, drillAnswer, excerptFrom, exerciseAnswer } from './atlas_coding.js';
 import { replyFromNdjson } from './brain_memory.js';
 import { loadCodeIndex, makeIndex, _clearCodeIndexCache } from './code_index.js';
 import { currentTurnActionPolicy } from './code_scout.js';
@@ -56,6 +55,8 @@ const json = (v) => JSON.parse(JSON.stringify(v));
 const has = (cmd) => spawnSync(cmd, ['--version'], { encoding: 'utf8' }).status === 0;
 const HAS_PYTHON = has('python3');
 const HAS_DART = has('dart');
+// Node 22.13+ strips TypeScript types; on an older Node the TypeScript runs are skipped with a note.
+const { stripTypeScriptTypes = null } = await import('node:module');
 let sqlite = null;
 try { sqlite = await import('node:sqlite'); } catch (_) { sqlite = null; }
 
@@ -107,7 +108,7 @@ async function solve(x, args) {
   if (s.language === 'sql') return sqlValue(s.program);
   return (await jsFunction(s.code, s.entry, s.language))(...structuredClone(args));
 }
-const canRun = (language) => ({ python: HAS_PYTHON, dart: HAS_DART, sql: Boolean(sqlite) }[language] ?? true);
+const canRun = (language) => ({ python: HAS_PYTHON, dart: HAS_DART, sql: Boolean(sqlite), typescript: Boolean(stripTypeScriptTypes) }[language] ?? true);
 
 // ─── The cards are complete ───────────────────────────────────────────────
 
@@ -286,7 +287,7 @@ function measuredClass(steps) {
 
 test('chat checks answers deterministically: values, spoken numbers, option numbers and Big-O words', () => {
   for (const { x } of EXERCISES) {
-    const right = x.kind === 'choice' ? String('abcde'.indexOf(x.answer) + 1) : x.answer;
+    const right = x.kind === 'choice' ? `option ${'abcde'.indexOf(x.answer) + 1}` : x.answer;
     assert.ok(checkExercise(x, right).correct, `${x.id}: "${right}" is right`);
     assert.ok(checkExercise(x, `I think it's ${right}`).correct, `${x.id}: with a lead-in`);
     for (const [i, option] of (x.options || []).entries()) {
@@ -298,7 +299,16 @@ test('chat checks answers deterministically: values, spoken numbers, option numb
   const bs = atlasCard('c-binary-search').exercises;
   for (const said of ['3', 'three', 'it returns 3', 'the answer is three']) assert.ok(checkExercise(bs[0], said).correct, said);
   for (const said of ['4', 'minus one', '-1']) assert.equal(checkExercise(bs[0], said).correct, false, said);
-  for (const said of ['b', 'option 2', 'two', 'the second one', '1']) assert.ok(checkExercise(bs[1], said).correct, said);
+  // "Option N", "number N", "the Nth one" and a letter are the Nth option; a bare value is that value.
+  for (const said of ['b', 'option 2', 'number two', 'the second one', '1', 'one']) assert.ok(checkExercise(bs[1], said).correct, said);
+  for (const said of ['option one', 'number one', 'the first one', 'a', '0']) assert.equal(checkExercise(bs[1], said).correct, false, said);
+  const failover = atlasCard('c-model-failover').exercises[0];
+  for (const said of ['too large', 'too_large', 'option 2', 'two']) assert.ok(checkExercise(failover, said).correct, said);
+  assert.ok(checkExercise(atlasCard('c-checkpoints').exercises[0], 'limit reached').correct, 'a value said with spaces');
+  for (const [id, said] of [['c-dynamic-programming', 'eighty-nine'], ['c-deployment', '.81'], ['c-deployment', '81%'], ['c-deployment', '81 percent']]) {
+    assert.ok(checkExercise(atlasCard(id).exercises[0], said).correct, `${id}: ${said}`);
+  }
+  assert.ok(checkExercise(atlasCard('http-apis').exercises[0], '4xx').correct);
   for (const said of ['O(log n)', 'o of log n', 'big o of log n', 'log n', 'logarithmic', '2']) assert.ok(checkExercise(bs[2], said).correct, said);
   for (const said of ['O(n)', 'linear', 'n squared']) assert.equal(checkExercise(bs[2], said).correct, false, said);
   assert.deepEqual(answerTokens('zero point eight one'), ['0.81']);
@@ -308,7 +318,8 @@ test('chat checks answers deterministically: values, spoken numbers, option numb
 });
 
 test('every review drill\'s bug is real and its fix works; real-fix drills name a test that exists', async (t) => {
-  assert.ok(DRILLS.filter(({ d }) => d.from).length >= 5, 'at least five drills come from real CHE fixes');
+  assert.ok(DRILLS.filter(({ d }) => d.from).length >= 2, 'drills from real CHE fixes');
+  const gitHas = (sha) => { try { execFileSync('git', ['cat-file', '-e', `${sha}^{commit}`], { cwd: ROOT, stdio: 'ignore' }); return true; } catch (_) { return false; } };
   for (const { d } of DRILLS) {
     for (const [label, code] of [['buggy', d.code], ['fixed', d.fixed]]) {
       let results;
@@ -327,15 +338,36 @@ test('every review drill\'s bug is real and its fix works; real-fix drills name 
       assert.deepEqual(results, d.probe[label], `${d.id} ${label}`);
     }
     assert.notDeepEqual(d.probe.buggy, d.probe.fixed, `${d.id}: the bug changes behaviour`);
-    assert.ok(checkDrill(d, d.finding).correct, `${d.id}: the finding itself passes its own check`);
+    assert.equal(checkDrill(d, d.finding).correct, true, `${d.id}: the finding itself passes its own check`);
+    assert.equal(d.concepts.length, 2, `${d.id}: two key concepts`);
     assert.equal(checkDrill(d, 'looks fine to me').correct, false, `${d.id}: "looks fine" is not a finding`);
+    const pin = d.from || d.pins;
+    if (pin) {
+      assert.ok(existsSync(join(ROOT, pin.test)), `${d.id}: ${pin.test} exists`);
+      assert.ok(testNames(pin.test).includes(pin.test_name), `${d.id}: the test "${pin.test_name}" exists`);
+    }
+    // "Adapted from a real CHE fix" only when the commit's own diff holds the change.
     if (d.from) {
-      assert.ok(existsSync(join(ROOT, d.from.test)), `${d.id}: ${d.from.test} exists`);
-      assert.ok(testNames(d.from.test).includes(d.from.test_name), `${d.id}: the test "${d.from.test_name}" exists`);
+      assert.match(d.from.commit, /^[0-9a-f]{7,40}$/, `${d.id}: names a commit`);
+      if (!gitHas(d.from.commit)) { t.diagnostic(`${d.id}: commit ${d.from.commit} is not in this clone (shallow?), so its diff was not checked`); continue; }
+      const diff = execFileSync('git', ['show', d.from.commit, '--', d.from.file], { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }).split('\n');
+      assert.ok(diff.some((l) => l.startsWith('+') && l.includes(d.from.added)), `${d.id}: ${d.from.commit} adds "${d.from.added}"`);
+      if (d.from.removed) assert.ok(diff.some((l) => l.startsWith('-') && l.includes(d.from.removed)), `${d.id}: ${d.from.commit} removes "${d.from.removed}"`);
     }
   }
   const named = DRILLS.filter(({ d }) => d.from).map(({ d }) => d.from.what);
-  for (const pr of ['#351', '#349', '#352']) assert.ok(named.some((w) => w.includes(pr)), `a drill from ${pr}`);
+  for (const pr of ['#351', '#349']) assert.ok(named.some((w) => w.includes(pr)), `a drill from ${pr}`);
+  for (const id of ['c-model-failover.d1', 'c-architecture.d1', 'c-self-repair.d1']) {
+    assert.equal(DRILLS.find(({ d }) => d.id === id).d.from, undefined, `${id} is illustrative: its rule was in CHE's code from its first commit`);
+  }
+  // Drill judging: whole words, both key concepts for "right", and "can't judge" rather than a false right.
+  const drill = (id) => DRILLS.find(({ d }) => d.id === id).d;
+  for (const [id, said, want] of [
+    ['testing.d1', 'it records the failures correctly', false], ['testing.d1', 'push it', false], ['http-apis.d1', 'the server is fine', false],
+    ['c-databases.d1', 'it returns a string', false], ['c-binary-search.d1', 'nothing is equal', false], ['c-python.d1', 'once upon a time', null],
+    ['c-python.d1', 'none of it', false], ['c-security.d1', 'ask about the bill, the rest is fine', false], ['c-self-repair.d1', 'I own it', false],
+    ['c-debugging.d1', 'it cuts the message silently so the dont at the end is lost', true],
+  ]) assert.equal(checkDrill(drill(id), said).correct, want, `${id}: ${said}`);
 });
 
 test('every repository example names a real path, a symbol in it, and a test that exercises it', () => {
@@ -518,9 +550,9 @@ test('"give me a coding exercise on binary search", then answering it: right, wr
   assert.notEqual((await che.say('3', { history: after(checked) })).route, 'che_knowledge_atlas');
   const second = await che.say('another exercise', { history: after(checked) });
   assert.match(second.reply, /^Exercise 2 of 4 on Binary search and two pointers, sir\. |^Exercise 2 of 4 on Binary search and two pointers, sir, in JavaScript\. A lower-bound search/);
-  assert.match(second.reply, /Options:\n1\. 0\.\n2\. 1\.\n3\. 3\.\n4\. 4\./, 'options are read as a numbered list');
+  assert.match(second.reply, /Option 1: 0\.\nOption 2: 1\.\nOption 3: 3\.\nOption 4: 4\./, 'options are read as a numbered list');
   for (const words of ['1', 'number two', 'option b', 'the second one']) {
-    assert.match((await che.say(words, { history: after(second.reply) })).reply, /^Right, sir: 2, 1\./, words);
+    assert.match((await che.say(words, { history: after(second.reply) })).reply, /^Right, sir: option 2, 1\./, words);
   }
   const third = (await che.say('next exercise', { history: after((await che.say('1', { history: after(second.reply) })).reply) })).reply;
   assert.match(third, /^Exercise 3 of 4 .* What is the worst-case Big-O of binary search/);
@@ -542,9 +574,9 @@ test('"give me a coding exercise on binary search", then answering it: right, wr
   assert.equal(requests.length, sent, 'no outbound request');
 });
 
-test('"review this code with me" and "give me a review drill": a real CHE bug, checked by its key ideas', async () => {
+test('"give me a review drill" and "drill me on code review": a real CHE bug, checked by its key ideas', async () => {
   const che = await owner();
-  for (const words of [...variants('Review this code with me.'), ...variants('Give me a review drill.')]) {
+  for (const words of [...variants('Give me a review drill.'), ...variants('Drill me on code review.')]) {
     const out = await che.say(words);
     assert.equal(out.route, 'che_knowledge_atlas', words);
     assert.equal(out.modelCalls, 0);
@@ -556,14 +588,14 @@ test('"review this code with me" and "give me a review drill": a real CHE bug, c
   assert.match(right.reply, /^Right, sir, that's the bug\. slice cuts the message silently/);
   assert.match(right.reply, /The fix:\n```javascript\nfunction intake[\s\S]*status: 413/);
   assert.match(right.reply, /pinned by the test "a chat message too long to take is refused whole, saying so; nothing runs \(issue #345\)" in server\/cloudflare\/worker_autonomy\.test\.mjs/);
-  const wrong = await che.say('the variable names are too short', { history: after(drill) });
+  const wrong = await che.say('the bug is that the variable names are too short', { history: after(drill) });
   assert.match(wrong.reply, /^Not quite, sir\. The bug: slice cuts/);
   assert.match((await che.say('tell me the answer', { history: after(drill) })).reply, /^The bug, sir: slice cuts/);
   const next = await che.say('another drill', { history: after(right.reply) });
   assert.match(next.reply, /^Review drill 2 of \d+, sir: /);
   // The #351 drill, asked for by its card.
   const gate = await che.say('give me a review drill on secure coding');
-  assert.match(gate.reply, /The "don't" that swallowed a payment\. Adapted from a real CHE fix: PR #351/);
+  assert.match(gate.reply, /The "don't" that swallowed a payment\. Adapted from a real CHE fix: a review finding on PR #351[^\n]*commit f2992a7/);
   assert.match((await che.say('the prohibition runs past the comma so the payment is not held', { history: after(gate.reply) })).reply, /^Right, sir, that's the bug\./);
 });
 
@@ -584,7 +616,7 @@ test('"where does CHE do checkpoints in its own code?" and "how does CHE recover
     assert.match(out.reply, /^CHE classifies each failed coding attempt once \(coding_failover\.mjs classifyModelFailure\)/);
     assert.match(out.reply, /server\/cloudflare\/coding_failover\.mjs, classifyModelFailure: /);
   }
-  assert.match((await che.say('how do you recover when the model fails')).reply, /^CHE classifies each failed coding attempt once/);
+  assert.notEqual((await che.say('how do you recover when the model fails')).route, 'che_knowledge_atlas', '"you" questions keep their usual routes');
   assert.match((await che.say('Where does CHE do binary search in its own code?')).reply, /^In CHE's own code, sir, Binary search and two pointers is in 1 place:\n1\. server\/cloudflare\/knowledge_atlas\.js, binarySearchWorst/);
   // With the index for a commit in memory, a short excerpt is quoted, labelled with its path and SHA.
   const saved = new Map();
@@ -643,6 +675,62 @@ test('counter-cases keep their routes: coding jobs, PR review, REA, research, an
   }
   assert.equal(findAtlasCard('binary search')?.id, 'c-binary-search');
   assert.equal(findAtlasCard('graph theory'), null);
+});
+
+test("review of #360: event words, CHE's own work, C and C++, generic words and ordinary sentences keep main's routes", async () => {
+  const che = await owner();
+  const route = async (words, history = []) => (await che.say(words, { history })).route;
+  const turns = async (...words) => {
+    let history = [];
+    let last = null;
+    for (const w of words) { last = await che.say(w, { history }); history = after(last.reply); }
+    return last.route;
+  };
+  // B1: "the deploy" or "the commits" is never a card's exact name.
+  for (const [words, want] of [
+    ['explain the deploy', 'model'], ['tell me about the deployment', 'model'], ['walk me through the deployment', 'model'],
+    ['tell me about the CI', 'model'], ['show me the code for the deploy', 'che_self_update'], ['show me the code for the commit', 'che_self_update'],
+    ['what is the code for the deployment', 'che_self_update'],
+  ]) assert.equal(await route(words), want, words);
+  assert.equal(await turns('why did the deploy fail', 'walk me through the deployment'), 'model');
+  assert.equal(await turns('review PR 360', 'explain the commits'), 'model');
+  // B2: CHE's own deploys, commits and code keep their routes; a drill needs a drill word.
+  for (const [words, want] of [
+    ['where did you deploy it', 'che_self_update'], ['where did you deploy', 'che_self_update'], ['where did you commit that', 'model'],
+    ['show me your code for checkpoints', 'che_repository_inspection'], ['review this code', 'model'], ['can we review this code', 'model'],
+    ['lets review some code', 'model'],
+  ]) assert.equal(await route(words), want, words);
+  // B4 and S4: no card is C, C++ or C#, and a word with an everyday sense is not a coding lesson.
+  for (const words of ['teach me C', 'teach me C++', 'explain C#', 'what is c++', 'teach me c programming', 'tell me about the inspection',
+    'tell me about profiling', 'explain performance', 'what is security', 'what is a python', 'tell me about pythons',
+    'explain the stack in trading', 'explain latency in trading', 'explain the database of trades']) {
+    assert.equal(await route(words), 'model', words);
+  }
+  for (const words of ['explain code performance', 'teach me software security', 'explain stacks and queues', 'teach me Python']) {
+    assert.equal(await route(words), 'che_knowledge_atlas', words);
+  }
+  // B3: after an exercise or a drill, only an answer is graded; anything else goes on as usual.
+  const exercise = (await che.say('Give me a coding exercise on binary search')).reply;
+  for (const words of ['what time is it', 'how is the weather today', 'I need to go to the store', 'never mind', 'yes', 'two tickets please',
+    'no one told me', 'I think we should stop', 'its raining outside']) {
+    assert.notEqual(await route(words, after(exercise)), 'che_knowledge_atlas', `after an exercise: ${words}`);
+  }
+  assert.equal(await route('calculate VWAP from the latest bars', after(exercise)), await route('calculate VWAP from the latest bars'), 'the trading lane answers it as it would anyway');
+  for (const words of ['buy two tickets', 'delete my notes']) assert.equal(await route(words, after(exercise)), 'held', `${words}: held, never graded or lost`);
+  for (const words of ['3', 'it returns 3', 'the answer is three', 'is it 3', 'my answer is 3']) {
+    assert.match((await che.say(words, { history: after(exercise) })).reply, /^Right, sir: 3\./, words);
+  }
+  const drill = (await che.say('Give me a review drill')).reply;
+  for (const words of ['what time is it', 'never mind', 'send the report to Bob on Friday']) {
+    assert.notEqual(await route(words, after(drill)), 'che_knowledge_atlas', `after a drill: ${words}`);
+  }
+  assert.match((await che.say('the bug is that the end of the message is lost', { history: after(drill) })).reply, /^I can't judge that one automatically, sir\. The finding: /);
+  // The answer forms themselves, without chat.
+  const bs = atlasCard('c-binary-search').exercises[0];
+  assert.equal(exerciseAnswer(bs, 'what time is it'), null);
+  assert.equal(exerciseAnswer(bs, 'never mind, it returns 3'), null, '"never mind" is never an answer');
+  assert.equal(exerciseAnswer(bs, 'my answer is 3'), '3');
+  assert.equal(drillAnswer(atlasCard('c-debugging').review_drills[0], 'send the report to Bob on Friday'), null);
 });
 
 test('summary: every language that could run here did', () => {
