@@ -237,6 +237,9 @@ class _CheRenderBenchScreenState extends State<CheRenderBenchScreen> with Single
   bool _running = false;
   WebViewController? _web;
 
+  /// The last spoken reply, shown as large text so nothing is only spoken.
+  String? _reply;
+
   @override
   void initState() {
     super.initState();
@@ -257,20 +260,32 @@ class _CheRenderBenchScreenState extends State<CheRenderBenchScreen> with Single
   Future<String?> _voice(String words) async {
     final t = words.trim().toLowerCase().replaceAll(RegExp(r'[.!?]+$'), '');
     if (RegExp(r'^(?:run|start|measure)(?: the| this| it)?(?: rendering| render| graphics)?(?: benchmark)?(?: again)?$').hasMatch(t)) {
-      if (_running) return 'Already measuring, sir.';
+      if (_running) return _say('Already measuring, sir.');
       unawaited(run());
-      return 'Measuring the Brain scene now, sir. The results appear here when it is done.';
+      return _say('Measuring the Brain scene now, sir. The results appear here when it is done.');
     }
     if (RegExp(r'^(?:read|say|tell me)(?: me)?(?: the| my| these)?(?: rendering| benchmark)? results?(?: aloud)?$').hasMatch(t)) {
-      return _results.isEmpty ? 'No results yet, sir. Say run the benchmark first.' : _spokenReport();
+      return _say(_results.isEmpty ? 'No results yet, sir. Say run the benchmark first.' : _spokenReport());
     }
     if (RegExp(r'^copy(?: the| these| my)?(?: rendering| benchmark)? results?$').hasMatch(t)) {
-      if (_results.isEmpty) return 'No results to copy yet, sir. Say run the benchmark first.';
+      if (_results.isEmpty) return _say('No results to copy yet, sir. Say run the benchmark first.');
       await Clipboard.setData(ClipboardData(text: _spokenReport()));
       HapticFeedback.selectionClick();
-      return 'Results copied, sir.';
+      return _say('Results copied, sir.');
     }
     return null;
+  }
+
+  /// Shows a reply as large text on screen and returns it for speaking.
+  String _say(String text) {
+    if (mounted) setState(() => _reply = text);
+    return text;
+  }
+
+  /// The Read button: the same text is shown as large text and spoken.
+  void _readAloud() {
+    final text = _results.isEmpty ? 'No results yet. Press Run first.' : _spokenReport();
+    unawaited(widget.onSpeak!(_say(text)));
   }
 
   Future<void> run() async {
@@ -441,7 +456,7 @@ class _CheRenderBenchScreenState extends State<CheRenderBenchScreen> with Single
               Wrap(spacing: 8, runSpacing: 8, children: [
                 FilledButton.icon(onPressed: _running ? null : run, icon: const Icon(Icons.speed_rounded), label: Text(_running ? 'Measuring ${_phase == 'native' ? 'the native painter' : _phase}…' : _results.isEmpty ? 'Run' : 'Run again')),
                 OutlinedButton.icon(
-                  onPressed: widget.onSpeak == null ? null : () => widget.onSpeak!(_results.isEmpty ? 'No results yet. Press Run first.' : _spokenReport()),
+                  onPressed: widget.onSpeak == null ? null : _readAloud,
                   icon: const Icon(Icons.volume_up_rounded),
                   label: const Text('Read results aloud'),
                 ),
@@ -456,6 +471,10 @@ class _CheRenderBenchScreenState extends State<CheRenderBenchScreen> with Single
                   label: const Text('Copy results'),
                 ),
               ]),
+              if (_reply != null) ...[
+                const SizedBox(height: 12),
+                Text(_reply!, key: const Key('bench_reply'), style: CheType.headline.copyWith(fontSize: 20, height: 1.3)),
+              ],
               const SizedBox(height: 16),
               for (final r in _results)
                 Padding(

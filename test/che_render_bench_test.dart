@@ -128,9 +128,12 @@ void main() {
     await tester.tap(find.text('Read results aloud'));
     await tester.pump();
     expect(spoken.single, 'No results yet. Press Run first.');
+    expect(find.text('No results yet. Press Run first.'), findsOneWidget, reason: 'the Read reply is shown as large text too');
     final handler = CheRenderBenchScreen.voiceHandler;
     expect(handler, isNotNull, reason: 'the open screen takes its spoken controls');
     expect(await handler!('read the results'), 'No results yet, sir. Say run the benchmark first.');
+    await tester.pump();
+    expect(find.text('No results yet, sir. Say run the benchmark first.'), findsOneWidget, reason: 'a spoken reply is also shown as large text');
     expect(await handler('what is the weather'), isNull, reason: 'anything else goes on to Chat');
     await tester.pumpWidget(const SizedBox());
     expect(CheRenderBenchScreen.voiceHandler, isNull, reason: 'a closed screen takes no spoken control');
