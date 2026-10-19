@@ -33,6 +33,7 @@ import {
 import { discoverKeylessModels, engineStatus, paidAllowed, routedEnv } from './ai_router.js';
 import { capabilityPromptLine, inferTurnCapabilities, runtimeCapabilityRegistry } from './cognitive_capabilities.js';
 import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, upscaleImage } from './media.js';
+import { probeVideoEngine, videoEngineStatus, videoStatusSpeech } from './video_engine.js';
 import { githubVideoDiagnosis, mp4Facts } from './github_video_renderer.js';
 import { handleEdgeVoice } from './edge_route.js';
 import { marySecretsFrom, preferredElevenLabsDiagnostics, preferredElevenLabsKeyStatus, preferredElevenLabsLastOutcome, preferredElevenLabsSpeech, withMarySecrets } from './preferred_elevenlabs_voice.js';
@@ -85,7 +86,7 @@ import { learnedSkillsContext, learnedSkillsIntent, learnSkillIntent, attachment
 import { APPROVED_SKILLS, handleInstalledSkill, installedSkillIntent, installedSkillsContext } from './installed_skills.js';
 import { lastSite, publishSite, saveSite, serveSite, siteBuildIntent, siteEditIntent, sitePreviewIntent, sitePublishIntent, siteUrl, speakSitePublished, speakSiteResult, wantsImmediatePublish, workingHtml, writeSite } from './site_builder.js';
 import { noteJobActivity } from './job_activity.js';
-import { PENDING_OWNER_ACTION_KEY, PENDING_OWNER_ACTION_MS, gateOwnerAction, grantForKinds, isOwnerYes, peerActionReply, APPS_GRANTED_KEY, PENDING_APP_ACTION_KEY, PENDING_APP_ACTION_MS, gateAppAccess, classifyAppNeed, classifyExplicitAppOpen, classifyAppAccesses } from './owner_action_gate.js';
+import { PENDING_OWNER_ACTION_KEY, forbiddenAction, prohibitionSpans, withoutProhibitions, PENDING_OWNER_ACTION_MS, gateOwnerAction, grantForKinds, isOwnerYes, peerActionReply, APPS_GRANTED_KEY, PENDING_APP_ACTION_KEY, PENDING_APP_ACTION_MS, gateAppAccess, classifyAppNeed, classifyExplicitAppOpen, classifyAppAccesses } from './owner_action_gate.js';
 import { asksForCurrentOwnerLocation, changeHistoryIntent, guardClaimedResearchActions, guardGroundedFacts, guardLocationWeatherReply, guardOwnerReply, loadChangeHistory, loadReceipts, OWNER_LOCATION_NOT_VERIFIED, recordReceipt, requestedCodeNames, speakChangeHistory, vagueResearchRequest, verifiedState, verifiedStatusText } from './truth_layer.js';
 import { ENGINEERING_PLAYBOOK_SPOKEN, playbookIntent } from './engineering_playbook.js';
 import { describeSkillsReport, reusableLicense, selectFilesForAgent, skillFromMarkdown, skillImportIntent, skillsReportIntent } from './skill_import.js';
@@ -9937,6 +9938,23 @@ export class CheState extends DurableObject {
               { ok: false, video_status: checked.stage || 'failed', task_id: priorVideo.task_id, source: 'video_renderer' });
           }
           earlierFailure = `The earlier render failed (${checked.detail || 'no valid MP4'}), so I started a new one. `;
+        }
+
+        // "Check your renderer ... the last verified MP4. Don't render or upload anything yet": a status
+        // question with the render forbidden, answered from settings and the media library only.
+        // A question about the renderer itself ("which rendering engines are connected", "the last verified
+        // MP4") with no render asked for at the start of a sentence is a status question too.
+        // "Don't upload it yet" or "don't make it longer than a minute" still asks for the video; only a
+        // prohibition whose own verb is the render forbids it. A renderer question with no render asked
+        // for ("can you make a video about bees?" asks for one) is a status question too.
+        const RENDER_VERB = /^(?:render|create|make|generate|produce|start|queue)\w*\b(?!\s+it\s+(?:longer|shorter|more|less|over|under)\b)/i;
+        const renderForbidden = prohibitionSpans(message).some(([a, b]) => RENDER_VERB.test(forbiddenAction(message.slice(a, b))));
+        const renderAsked = /(?:^|[.!?;]\s*|,\s*(?:and\s+)?|\band\s+)(?:(?:hey\s+)?(?:che|chey|chay)[,:]?\s+)?(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?|i\s+(?:want|need|would\s+like|['’]d\s+like)\s+(?:you\s+to\s+)?)?(?:make|create|render|produce|generate|start)\b/i.test(withoutProhibitions(message));
+        const rendererQuestion = /\b(?:which|what)\s+(?:video\s+|render(?:ing)?\s+)+engines?\b|\blast\s+verified\s+(?:mp4|video)\b|\bcheck\s+(?:your|the)\s+(?:actual\s+)?(?:video\s+)?renderer\b/i.test(message);
+        if (videoAsk && (renderForbidden || (rendererQuestion && !renderAsked))) {
+          const engine = await probeVideoEngine(this.keyEnv || this.env).catch(() => videoEngineStatus(this.keyEnv || this.env));
+          return ndjsonReply(videoStatusSpeech(engine, await listMedia(this.ctx.storage).catch(() => [])),
+            { ok: true, video_status: 'status_only', source: 'video_renderer' });
         }
 
         let videoGeneration = null;

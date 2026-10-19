@@ -142,8 +142,20 @@ const sameVoice = (a, b) => JSON.stringify(a.choice ?? null) === JSON.stringify(
 export async function saveVoiceChoice(storage, data, now = Date.now()) {
   const at = Math.max(now, Number(data.voice_choice_at || 0) + 1);
   data.voice_choice_at = at;
+  let earlier = null;
+  try { earlier = await storage.get(VOICE_PREF_KEY); } catch (_) { earlier = null; }
   await storage.put('che', data);
-  await storage.put(VOICE_PREF_KEY, { ...voiceFields(data), at });
+  await storage.put(VOICE_PREF_KEY, { ...voiceFields(data), ...replacedVoice(earlier, data.voice_choice, at), at });
+}
+
+const voiceKey = (v) => (v ? `${v.provider}:${v.id}` : '');
+
+// "What voice did it replace?" is answered from this record: the choice before a different voice was
+// chosen. A speed or setting change keeps the voice, so it keeps the record as it was.
+// A null choice is the built-in voice, so moving to or from it is a change too.
+function replacedVoice(earlier, choice, at) {
+  if (earlier && typeof earlier === 'object' && voiceKey(earlier.choice) !== voiceKey(choice)) return { previous: earlier.choice ?? null, replaced_at: at };
+  return earlier && 'previous' in earlier ? { previous: earlier.previous ?? null, replaced_at: earlier.replaced_at ?? null } : {};
 }
 
 /**
@@ -163,7 +175,7 @@ export async function reconcileVoiceChoice(storage, data) {
     }
     const at = Number(pref.at || 0);
     if (stamp > at || (stamp === at && !sameVoice(pref, mine))) {
-      await storage.put(VOICE_PREF_KEY, { ...mine, at: Math.max(stamp, at) });
+      await storage.put(VOICE_PREF_KEY, { ...mine, ...replacedVoice(pref, mine.choice, Math.max(stamp, at)), at: Math.max(stamp, at) });
       return false;
     }
   } catch (_) { return false; }

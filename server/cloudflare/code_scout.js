@@ -361,6 +361,9 @@ const CODE_SUBJECT = new RegExp([
   /\b[\w-]+\.(?:js|mjs|cjs|ts|tsx|dart|py|json|ya?ml|md)\b/.source,
 ].join('|'), 'i');
 const CODING = /\b(?:coding|opencode|self[- ]development)\b/i;
+const RECENT_RECORD = /\b(?:most\s+recent|latest|last|newest|current)\s+(?:coding|opencode|self[- ]development)\s+(?:jobs?|runs?|sessions?)\b/i;
+const RECORD_ID_ASK = /\b(?:job|run)\s+ids?\b/i;
+const RUNTIME_PLACE = /\b(?:coding|opencode)\s+(?:runtime|runner|pipeline)\b/gi;
 // A coding run, job or session: the record a history question is about.
 const WORK = '(?:coding|opencode|self[- ]development)\\s+(?:jobs?|runs?|sessions?|attempts?|executions?|tasks?|work)';
 // One particular record, not coding jobs in general ("what states can a coding job be in").
@@ -373,7 +376,7 @@ const STATUS_PHRASE = new RegExp(`^\\s*(?:${WAKE})?(?:(?:what(?:'s|’s| is)\\s+
 const RECORD_REF = '(?:(?:(?:the|that|this|my|your|ur|its|her|che[\'’]s)\\s+)?(?:(?:last|latest|recent|newest|previous|current|most\\s+recent|failed)\\s+)?(?:coding|opencode|self[- ]development)\\s+(?:jobs?|runs?|sessions?|attempts?|executions?|tasks?|runner|work)|(?:the|that|this|its)\\s+(?:(?:last|latest|previous|failed)\\s+)?(?:job|run|session|attempt|execution))';
 // "Don't change anything," "never retry it": a prohibition on CHE's own actions, which a read-only answer
 // honors by itself. "Don't forget to remind me" and "don't let it happen again" ask for something.
-const PROHIBITION = `(?:do\\s+not|don['’]t|never|no\\s+need\\s+to)\\s+(?:(?:actually|ever|just|even|go\\s+and|try\\s+to|attempt\\s+to|under\\s+any\\s+circumstances)\\s+)*(?:${ACTION_VERB}|do\\s+(?:anything|something|any\\s+\\w+|a\\s+thing|more|work)|touch|modify|edit|alter)\\b`;
+const PROHIBITION = `(?:do\\s+not|don['’]?t|never|no\\s+need\\s+to)\\s+(?:(?:actually|ever|just|even|go\\s+and|try\\s+to|attempt\\s+to|under\\s+any\\s+circumstances)\\s+)*(?:${ACTION_VERB}|do\\s+(?:anything|something|any\\s+\\w+|a\\s+thing|more|work)|touch|modify|edit|alter)\\b`;
 // What the prohibition may be about. Anything else after it ("don't retry but do tell mom") is a
 // request riding in the same clause, so the clause is not an aside and the turn is not a question.
 const PROHIBITION_OBJECT = `(?:\\s+(?:(?:or|and|nor)\\s+)?(?:it|that|this|them|anything(?:\\s+else)?|something|more|again|yet|now|please|sir|any\\s+(?:files?|code|changes?)|${RECORD_REF}|(?:the|my|your|ur|its)\\s+(?:code|repo(?:sitory)?|branch|tests?|pr|pull\\s+request|files?|config|settings|workflow|main)|(?:a|an|another|any|new)\\s+(?:(?:new|fresh|second)\\s+)?(?:(?:coding|opencode)\\s+)?(?:jobs?|runs?|sessions?|attempts?|tasks?|builds?|prs?|pull\\s+requests?|branch(?:es)?)))*`;
@@ -548,6 +551,10 @@ export function codingHistoryIntent(message) {
   if (CHANGE_INSTRUCTION.test(active) || trailingAction(active)) return false;
   if (OTHER_SUBJECT.test(text) || PEER_TALK.test(text)) return false;
   if (STATUS_PHRASE.test(text)) return true;
+  // "Inspect your coding runtime and GitHub. What's your most recent coding job? Give me the job ID":
+  // the runtime is where to look, and a job ID exists only in the run's record.
+  if (RECENT_RECORD.test(text) && RECORD_ID_ASK.test(text) && !CODE_SUBJECT.test(text.replace(RUNTIME_PLACE, 'runtime'))
+    && !/\b(?:why|bug|broken|screen|page|view|ui|widget|dashboard|display(?:s|ed)?|office)\b/i.test(text)) return true;
   if (CODE_SUBJECT.test(text)) return false;
   const coding = CODING.test(text);
   // One particular record, not coding jobs in general.
