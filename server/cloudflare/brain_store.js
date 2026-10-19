@@ -62,6 +62,12 @@ export const VERIFICATION_STATES = Object.freeze([
 ]);
 const VERIFICATIONS = new Set(VERIFICATION_STATES);
 
+/**
+ * Origins the Worker itself writes with. Any other origin is a device that pushed the record (the phone
+ * names itself in /api/brain/push), so "came from the phone" counts only those.
+ */
+export const WORKER_ORIGINS = Object.freeze(['cloud', 'auditor', 'owner', 'atlas', 'che_memory', 'pgvector']);
+
 /** 32-bit FNV-1a. The phone computes the same number (che_brain_replica.dart), so digests can be compared. */
 export function fnv1a32(text) {
   let hash = 0x811c9dc5;

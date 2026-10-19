@@ -555,8 +555,6 @@ class CheBrainCommand {
     'atlas lessons': 'Knowledge Atlas',
     'atlas card': 'Knowledge Atlas',
     'atlas cards': 'Knowledge Atlas',
-    'lesson': 'Knowledge Atlas',
-    'lessons': 'Knowledge Atlas',
     'curated lessons': 'Knowledge Atlas',
     'practice': 'Knowledge Atlas',
   };
@@ -594,8 +592,9 @@ class CheBrainCommand {
       final c = _categoryWords[cat.group(1)!.trim()];
       if (c != null) return CheBrainCommand(CheBrainAction.filter, category: c);
     }
-    // "show my lessons", "show the knowledge atlas cards": the atlas lobe by its own words.
-    final atlasLobe = RegExp(r'^(?:show|open|filter to|only show) (?:me )?(?:my |your |the )?(?:lessons|knowledge atlas (?:lobe|group)|atlas (?:cards|lessons)|curated lessons)$').firstMatch(t);
+    // "show the knowledge atlas cards", "show my atlas lessons": the atlas lobe by its own words. A bare
+    // "lessons" stays with the Learning lobe, where CHE's own lessons live.
+    final atlasLobe = RegExp(r'^(?:show|open|filter to|only show) (?:me )?(?:my |your |the )?(?:knowledge atlas (?:lobe|group)|atlas (?:cards|lessons)|curated lessons)$').firstMatch(t);
     if (atlasLobe != null) return const CheBrainCommand(CheBrainAction.filter, category: 'Knowledge Atlas');
     final find = RegExp(r'^(?:find|show me|locate|where is|search (?:for )?) ?(?:my |your |the )?memor(?:y|ies) (?:about|of|on|for) (.+)$').firstMatch(t);
     if (find != null) return CheBrainCommand(CheBrainAction.find, query: find.group(1)!.trim());

@@ -61,7 +61,7 @@ import { answerOwnerMemoryQuestion, auditMemoryProvenance, evidenceQuestion, evi
 import { condenseHistory, ownerNotificationPolicy } from './workflow_governor.js';
 import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, nextTradingTickAt, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
 import { evidenceIntent, evidenceReport, evidenceTick } from './trading_evidence_runner.js';
-import { ATLAS_SOURCE, answerAtlas, atlasIntent, atlasPromptContext, atlasResetAsk, atlasResetIntent, projectAtlasToBrain, resetAtlasProgress } from './knowledge_atlas.js';
+import { ATLAS_SOURCE, answerAtlas, atlasHiddenAction, atlasIntent, atlasPromptContext, atlasResetAsk, atlasResetIntent, projectAtlasToBrain, resetAtlasProgress } from './knowledge_atlas.js';
 import { LIVE_BACKTEST, LIVE_STATE, liveBacktest, liveDashboard, livePaperSummary, liveTick, nextLiveTickAt, setLivePaper } from './trading_live.js';
 import { alpacaKeys, alpacaPaperOrders, alpacaStatus, placeAlpacaPaperOrder, removeAlpacaPaperKeys, saveAlpacaPaperKeys } from './broker_alpaca.js';
 import { speakConnections, tradingConnections } from './trading_connections.js';
@@ -8250,6 +8250,10 @@ export class CheState extends DurableObject {
           return json({ message: question, reply: question, clarification: true, held_for_owner: false, code_review_passed: false, owner_approval_required: false });
         }
         message = interpretation.text;
+        // "Answer 1: delete my notes", "my answer is buy two calls": a money or delete request in a quiz-answer
+        // form (#346) is gated, and on a yes run, exactly as the bare sentence would be.
+        const hiddenAction = atlasHiddenAction(message);
+        if (hiddenAction) message = hiddenAction;
 
         // Owner rule: money and delete/remove need an explicit yes. The hold is
         // enforced here in code. A plain yes on the next turn releases exactly

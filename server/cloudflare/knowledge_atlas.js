@@ -979,7 +979,9 @@ const THIS = /^(?:this|that|it|this one|that one|this card|that card|this topic|
 export function atlasIntent(message, history = [], { explainLevel = '' } = {}) {
   const raw = String(message || '');
   if (!raw.trim() || raw.length > 400) return null;
-  if (classifyOwnerActions(raw).length) return null;
+  // A money or delete sentence goes on to the owner's gate, unless it answers the open quiz in the card's
+  // own words ("number 2 is GET, PUT and DELETE"); "number 2 is delete my notes" still goes to the gate.
+  if (classifyOwnerActions(raw).length && !quizReply(speech(raw), atlasContext(history), raw)) return null;
   let t = speech(raw);
   if (!t) return null;
   const ctx = atlasContext(history);
@@ -996,7 +998,7 @@ export function atlasIntent(message, history = [], { explainLevel = '' } = {}) {
     t = suffixed[1].trim();
   }
   // "Teach me recursion and email it to Mark": two requests, so neither is swallowed here.
-  if (!explicit && SECOND_ACTION.test(t)) return null;
+  if (!explicit && SECOND_ACTION.test(t) && !quizReply(t, ctx, raw)) return null;
 
   if (/^(?:open|use|show(?: me)?|go to|bring up|read|what(?:'s| is)? in|whats in)\s+(?:the |my |your |che's )?knowledge atlas(?: page)?$/.test(t)) return { kind: 'overview' };
 
@@ -1143,11 +1145,50 @@ const NEXT_ANSWER = /^my answer(?: to (?:that|this|this one|the next one))? is\s
 const ANSWER_ACTION = /\b(?:e-?mail|send|text|message|mail|buy|sell|pay|purchase|delete|remove|erase|remember|forget|open|switch|book|schedule|remind|post|upload|publish|transfer|deploy|merge|subscribe|cancel)\b/;
 const ANSWER_QUESTION = /^(?:is|are|was|were|do|does|did|can|could|would|will|should|what|who|where|when|why|how|which)\b/;
 const ANSWER_PERSONAL = /^(?:my|mine|your|our|his|her|their|i|i'm|im|we|you|me)\b/;
-function quizAnswer(answer, raw) {
+// Words that join an answer and say nothing ("GET, PUT and DELETE").
+const JOINERS = new Set(['and', 'or', 'of', 'to', 'is', 'it', 'in', 'on', 'at', 'for', 'with', 'that', 'this', 'its', 'be', 'are', 'was', 'then', 'so']);
+const answerWords = (text) => normAnswer(text).split(/[^a-z0-9^%()]+/).filter((w) => w && !JOINERS.has(w));
+// Every word of the answer is in the question or the card's answer: "you pay the ask" for "which price do
+// you pay?", "GET, PUT and DELETE" for the HTTP methods. Then a pay or delete word is the lesson, not a request.
+function cardContent(answer, q) {
+  if (!q) return false;
+  const known = new Set(answerWords(`${q.q} ${q.a}`));
+  const said = answerWords(answer);
+  return said.length > 0 && said.every((w) => known.has(w));
+}
+function quizAnswer(answer, raw, q = null) {
   const a = String(answer || '').trim();
   if (!a || a.split(/\s+/).length > 12 || /\?\s*$/.test(String(raw || ''))) return null;
-  if (ANSWER_ACTION.test(a) || ANSWER_QUESTION.test(a) || ANSWER_PERSONAL.test(a) || classifyOwnerActions(a).length) return null;
+  if (ANSWER_QUESTION.test(a)) return null;
+  if ((ANSWER_ACTION.test(a) || ANSWER_PERSONAL.test(a) || classifyOwnerActions(a).length) && !cardContent(a, q)) return null;
   return a.slice(0, 300);
+}
+/** The explicit answer form in a sentence ("number 2 is …", "my answer is …"), with its question number when it has one. */
+function answerForm(t) {
+  const numbered = NUMBERED_ANSWER.exec(t);
+  if (numbered) return { number: numberOf(numbered[1] || numbered[2]), answer: numbered[3] };
+  const next = NEXT_ANSWER.exec(t);
+  return next ? { number: 0, answer: next[1] } : null;
+}
+/** A gradeable answer to the open quiz: { index, answer }, or null. */
+function quizReply(t, ctx, raw) {
+  if (!ctx.card || !ctx.quiz) return null;
+  const form = answerForm(t);
+  if (!form) return null;
+  const index = form.number ? form.number - 1 : ctx.quizAt;
+  const answer = quizAnswer(form.answer, raw, ctx.card.quiz[index]);
+  return answer ? { index, answer } : null;
+}
+
+/**
+ * "Answer 1: delete my notes", "my answer is buy two calls": a money or delete request inside an answer
+ * form. The caller gates the returned words exactly as if the owner had said them bare; '' otherwise.
+ * An answer the open quiz is about ("GET, PUT and DELETE") never gets here: the lesson route grades it.
+ */
+export function atlasHiddenAction(message) {
+  const form = answerForm(speech(message));
+  const answer = String(form?.answer || '').trim();
+  return answer && classifyOwnerActions(answer).length ? answer : '';
 }
 // A correction names the card, the lesson or a part of it: "the recursion card is wrong", "your lesson on
 // VWAP is wrong, …", "that formula is wrong". "That's wrong, my name is Wes" is about him, not a card.
@@ -1164,13 +1205,8 @@ function learningIntent(t, ctx, raw = '') {
   if (PROGRESS.test(core) && about) return { kind: 'progress', domain };
   // Right after a lesson, "what should I learn next" keeps its curriculum meaning: the card after that one.
   if (STUDY_NEXT.test(core) && about && !(ctx.card && !domain && /\blearn next$/.test(core))) return { kind: 'study_next', domain };
-  if (ctx.card && ctx.quiz) {
-    const numbered = NUMBERED_ANSWER.exec(t);
-    const next = numbered ? null : NEXT_ANSWER.exec(t);
-    const answer = quizAnswer(numbered ? numbered[3] : next?.[1], raw);
-    if (numbered && answer) return { kind: 'grade', card: ctx.card, index: numberOf(numbered[1] || numbered[2]) - 1, answer };
-    if (next && answer) return { kind: 'grade', card: ctx.card, index: ctx.quizAt, answer };
-  }
+  const reply = quizReply(t, ctx, raw);
+  if (reply) return { kind: 'grade', card: ctx.card, ...reply };
   const fix = CARD_FIX.exec(t);
   if (fix && !MEMORY_STATEMENT.test(fix[3] || '')) {
     const named = String(fix[1] || fix[2] || '').trim();
@@ -1202,11 +1238,15 @@ function spokenDigits(text) {
 /** The numbers in an answer: "$0.50" is 0.5, "31%" is 0.31, "+2R" is 2, "50 cents" is 0.5. */
 function answerNumbers(text) {
   const out = [];
-  for (const m of spokenDigits(text).matchAll(/([-+−]?)\$?(\d+(?:,\d{3})*(?:\.\d+)?|\.\d+)\s*(%|cents?\b)?/g)) {
+  const said = spokenDigits(text);
+  for (const m of said.matchAll(/([-+−]?)\$?(\d+(?:,\d{3})*(?:\.\d+)?|\.\d+)(?:\s*(%|cents?\b))?/g)) {
     let x = Number(m[2].replace(/,/g, ''));
     if (!Number.isFinite(x)) continue;
     if (m[1] === '-' || m[1] === '−') x = -x;
-    out.push({ x: m[3] ? x / 100 : x, raw: x, marked: Boolean(m[3]) });
+    // "4xx", "400s" and "log₂" are not a number standing alone; "2R", "6 calls" and "25%" are.
+    const after = said.slice(m.index + m[0].length);
+    const standalone = Boolean(m[3]) || !/^(?:[a-qs-z]|r[a-z]|\^)/.test(after);
+    out.push({ x: m[3] ? x / 100 : x, raw: x, marked: Boolean(m[3]), standalone });
   }
   return out;
 }
@@ -1214,30 +1254,77 @@ const near = (x, v) => Math.abs(x - v) <= Math.max(0.006, Math.abs(v) * 0.01);
 const yesNo = (text) => (/^\s*(?:yes|yeah|yep|yup|correct|true|it does|they do|it is|right)\b/i.test(text) ? 'yes' : /^\s*(?:no|nope|false|it doesn'?t|it does not|they don'?t|not)\b/i.test(text) ? 'no' : '');
 const stem5 = (w) => w.replace(/'/g, '').slice(0, 5);
 
+// An answer as the grader compares it: digits for number words, "%" for "percent", one Big-O spelling
+// ("O of n squared", "O(n^2)" and "O(n²)" are all o(n^2); "n log n" is nlogn inside it), lower case, no
+// articles and no punctuation that carries no meaning.
+function normAnswer(text) {
+  let s = spokenDigits(text).replace(/[’']/g, '').replace(/²/g, '^2').replace(/³/g, '^3');
+  s = s.replace(/\b(?:big\s+)?o\s+of\s+((?:(?:n|1|log|squared|cubed|times|\^\d)\b\s*)+)/g, (_, inner) => `o(${inner.trim()})`);
+  s = s.replace(/\bo\s*\(([^)]*)\)/g, (_, inner) => `o(${inner.replace(/\bsquared\b/g, '^2').replace(/\bcubed\b/g, '^3').replace(/\btimes\b/g, '').replace(/[\s*·×]+/g, '')})`);
+  s = s.replace(/\bsquared\b/g, '^2').replace(/(\d)\s*percent\b/g, '$1%');
+  return s.replace(/\.(?!\d)/g, ' ').replace(/[^a-z0-9%^().\s-]+/g, ' ').replace(/\b(?:a|an|the)\b/g, ' ').replace(/\s+/g, ' ').trim();
+}
+// The card answer's first clause: up to the first sentence mark, or the first comma that opens an
+// aside ("A string, which is text" -> "A string"). "GET, PUT and DELETE" stays whole.
+export function firstClause(text) {
+  return String(text || '').split(/[.;:!?](?=\s|$)|,\s+(?=(?:which|because|from|such|so|if|one|before|in|constant|but|even|where|when|unless|with|plus|then|the|a|an)\b)/)[0].trim();
+}
+// Numbers that stand alone: "6 calls", "25%", "$0.50", "+2R", not the 4 of "4xx" or "400s".
+const standaloneNumbers = (text) => answerNumbers(text).filter((n) => n.standalone);
+const startsWithNumber = (text) => /^(?:about|approximately|roughly|around|exactly|only)?\s*[-+−]?\$?\.?\d/.test(spokenDigits(text).trim());
+const sameNumber = (owner, card) => near(owner.x, card.x) || (card.marked && !owner.marked && near(owner.raw / 100, card.x));
+
 /**
- * Grades one quiz answer with no model. A question with a check is graded by its number, recomputed
- * from the card's formula; a yes-or-no question by the yes or no; any other by the key words of the
- * card's own answer (half of them, at least one), which is a rough check and is said to be one.
+ * Grades one quiz answer with no model, and says when it cannot. In order: a question with a check by its
+ * number, recomputed from the card's formula; a yes-or-no question by the yes or no; a number in the card
+ * answer's first clause; the first clause itself (normalized); then the card answer's key words, when it
+ * has at least two. `correct` is null when none of these can judge: never a "not correct" CHE cannot back.
  */
 export function gradeQuizAnswer(c, index, answer) {
   const q = c?.quiz?.[index];
   if (!q) return null;
-  if (q.check && FORMULAS[q.check.compute]) {
+  const expected = q.a;
+  const first = firstClause(q.a);
+  const owner = standaloneNumbers(answer);
+  const cardNums = standaloneNumbers(first);
+  if (q.check && FORMULAS[q.check.compute] && owner.length) {
     const result = FORMULAS[q.check.compute](q.check.inputs);
     const want = typeof result === 'object' && result ? Object.values(result) : [result];
     const percent = (q.check.shown || []).some((x) => /%/.test(x));
-    // The answer's own main number (or the first two, for a range) must match: a list of guesses does not.
-    const nums = answerNumbers(answer).map((n) => (percent && !n.marked ? n.raw / 100 : n.x)).slice(0, want.length);
-    const correct = want.every((v) => nums.some((x) => near(x, v)));
-    return { correct, method: 'the number, recomputed from the card\'s formula', expected: q.a };
+    // The answer's own main number must match, or for a range its two ends side by side ("31% to 83%"):
+    // a list of guesses ("10 or 55 or 100") does not.
+    const nums = owner.map((n) => (percent && !n.marked ? n.raw / 100 : n.x));
+    const fits = want.length === 1
+      ? near(nums[0], want[0])
+      : nums.some((_, i) => want.every((v, k) => Number.isFinite(nums[i + k]) && near(nums[i + k], v)));
+    const correct = fits || owner.slice(0, Math.max(1, cardNums.length)).every((n, i) => cardNums[i] && sameNumber(n, cardNums[i]));
+    return { correct, method: 'the number, recomputed from the card\'s formula', expected };
   }
   const yn = /^(yes|no)\b/i.exec(q.a);
-  if (yn && yesNo(answer)) return { correct: yesNo(answer) === yn[1].toLowerCase(), method: 'the yes or no', expected: q.a };
+  if (yn && yesNo(answer)) return { correct: yesNo(answer) === yn[1].toLowerCase(), method: 'the yes or no', expected };
+  // A Big-O answer is its complexity: o(n) is not o(n^2), however it was said.
+  const bigO = (text) => normAnswer(text).match(/\bo\([^)]*\)/)?.[0] || '';
+  if (bigO(first) && bigO(answer)) return { correct: bigO(first) === bigO(answer), method: 'the Big-O in the card\'s answer', expected };
+  if (cardNums.length && owner.length) {
+    if (cardNums.some((n) => sameNumber(owner[0], n))) return { correct: true, method: 'the number in the card\'s answer', expected };
+    // A different number is wrong when the card's answer is a number, or when his answer is just a number.
+    if (startsWithNumber(first) || answerWords(answer).length <= 2) return { correct: false, method: 'the number in the card\'s answer', expected };
+  }
+  const said = ` ${normAnswer(answer)} `;
+  const want = normAnswer(first);
+  if (want && (said.includes(` ${want} `) || (` ${want} `.includes(said) && said.trim().length >= 0.6 * want.length))) {
+    return { correct: true, method: 'the card\'s own answer', expected };
+  }
   const keys = [...new Set(queryTerms(q.a).filter((w) => w.length >= 4 && !/^(?:yes|because|which|that|only|than|more|less|each|every|once|also)$/.test(w)).map(stem5))];
-  const said = new Set(queryTerms(spokenDigits(answer)).map(stem5));
-  const hits = keys.filter((k) => said.has(k));
-  const need = Math.max(1, Math.ceil(keys.length / 2));
-  return { correct: hits.length >= need, method: `key words of the card's answer (${hits.length} of ${keys.length}), a rough check`, expected: q.a };
+  if (keys.length < 2) return { correct: null, method: 'nothing CHE can check automatically', expected };
+  const heard = new Set(queryTerms(normAnswer(answer)).map(stem5));
+  const hits = keys.filter((k) => heard.has(k));
+  const need = Math.max(2, Math.ceil(keys.length / 3));
+  const method = `key words of the card's answer (${hits.length} of ${keys.length}), a rough check`;
+  if (hits.length >= need) return { correct: true, method, expected };
+  // A real answer (two words or more) with none of the card's words is wrong; a one-word answer or a partial
+  // match is one CHE cannot judge, so it is recorded as not graded.
+  return { correct: hits.length === 0 && keys.length >= 3 && answerWords(answer).length >= 2 ? false : null, method, expected };
 }
 
 // The Brain store for a storage with SQL (the Durable Object); null in plain key-value tests.
@@ -1276,7 +1363,10 @@ export function progressText(records, domain = '') {
   const score = (list) => {
     const marked = list.filter((r) => typeof r.source?.correct === 'boolean');
     const right = marked.filter((r) => r.source.correct).length;
-    return marked.length ? `${right} correct (${Math.round((100 * right) / marked.length)}%)` : 'none graded';
+    const pct = marked.length ? Math.round((100 * right) / marked.length) : 0;
+    // An answer CHE could not grade is "not graded", never counted as wrong.
+    if (!marked.length) return 'none graded';
+    return marked.length === list.length ? `${right} correct (${pct}%)` : `${right} correct of ${marked.length} graded (${pct}%), ${list.length - marked.length} not graded`;
   };
   const studied = new Set(lessons.map((r) => r.source.card_id));
   const total = domain ? inDomain(domain).length : ATLAS_CARDS.length;
@@ -1322,6 +1412,21 @@ function studyNextText(records, domain) {
   const other = !domain && !studied.size ? inDomain(card.domain === 'coding' ? 'trading' : 'coding')[0] : null;
   const also = other ? ` For ${other.domain}, the first card is ${other.title}.` : '';
   return { text: `Next for you, sir: ${card.title}, ${card.level} level. ${card.summary} ${why}${also} Say "teach me ${firstAlias(card)}" to start it.\n${sourceLine(card)}`, card };
+}
+
+/**
+ * Said once per newer curated revision of a card the owner edited in his Brain: his copy was kept, and this
+ * curated version waits beside it as an open sync conflict. '' when there is none, or it was already said.
+ */
+function editedCardNote(brain, c) {
+  try {
+    const open = brain.rows("SELECT id FROM brain_conflicts WHERE record_id = ? AND resolved = '' ORDER BY at DESC LIMIT 1", `atlas:${c.id}`)[0];
+    if (!open) return '';
+    const said = brain.meta('atlas_conflicts_said', {}) || {};
+    if (said[open.id]) return '';
+    brain.setMeta('atlas_conflicts_said', { ...said, [open.id]: new Date().toISOString() });
+    return `Note: you edited this card in your Brain, so I kept your copy. This lesson reads the newer curated revision ${c.revision}, which waits beside your copy as an open sync conflict for you to choose.`;
+  } catch (_) { return ''; }
 }
 
 /** What the delete hold says for "reset my progress": the target and how many records it would remove. */
@@ -1537,7 +1642,8 @@ export async function answerAtlas(intent, { storage = null, now } = {}) {
       const level = LEVELS.includes(intent.level) ? intent.level : 'beginner';
       // A study is recorded only for an explicit lesson request, never for a definition or a reading.
       if (intent.study) practice({ kind: 'lesson', level });
-      return out(teachText(c, level, records));
+      const kept = brain ? editedCardNote(brain, c) : '';
+      return out(kept ? `${teachText(c, level, records)}\n${kept}` : teachText(c, level, records));
     }
     case 'formula': {
       if (!c.formula) {
@@ -1585,8 +1691,12 @@ export async function answerAtlas(intent, { storage = null, now } = {}) {
       // The last answer closes the quiz: its reply does not start "Question N on", so nothing after it is graded.
       const head = next ? `Question ${intent.index + 1} on ${c.title}, sir: ` : `Quiz finished on ${c.title}, sir. Question ${intent.index + 1}: `;
       return out([
-        `${head}${grade.correct ? 'correct' : 'not quite'}. You said: ${intent.answer}. The card's answer: ${q.a}`,
-        `Graded by ${grade.method}. ${saved ? 'Recorded in your Brain as owner practice.' : 'I could not record it in the Brain just now, so it is not in your progress.'}`,
+        grade.correct === null
+          ? `${head}I can't grade that one automatically. You said: ${intent.answer}. The card's answer is: ${q.a}`
+          : `${head}${grade.correct ? 'correct' : 'not quite'}. You said: ${intent.answer}. The card's answer: ${q.a}`,
+        grade.correct === null
+          ? `${saved ? 'Recorded in your Brain as not graded, never as wrong.' : 'I could not record it in the Brain just now, so it is not in your progress.'}`
+          : `Graded by ${grade.method}. ${saved ? 'Recorded in your Brain as owner practice.' : 'I could not record it in the Brain just now, so it is not in your progress.'}`,
         next ? `Question ${intent.index + 2}: ${next.q} Say "my answer is" and your answer.` : 'That was the last question. Say "how am I doing" for your scores.',
         sourceLine(c),
       ].join('\n'));
@@ -1669,7 +1779,9 @@ export function projectAtlasToBrain(store, { now } = {}) {
   const meta = store.meta('atlas_projection', null);
   const before = meta && typeof meta.hashes === 'object' && meta.hashes ? meta.hashes : {};
   const hashes = { ...before };
-  let written = 0; let unchanged = 0; let skipped = 0; let removed = 0;
+  // The revision the atlas itself last wrote of each card: the base for an update after an owner edit.
+  const revs = { ...(meta && typeof meta.revs === 'object' && meta.revs ? meta.revs : {}) };
+  let written = 0; let unchanged = 0; let skipped = 0; let removed = 0; let conflicts = 0;
   const live = new Set();
   for (const c of ATLAS_CARDS) {
     const record = atlasBrainRecord(c);
@@ -1678,11 +1790,18 @@ export function projectAtlasToBrain(store, { now } = {}) {
     if (hashes[record.id] === hash) { unchanged += 1; continue; }
     if (written >= MAX_PROJECTION_WRITES) { skipped += 1; continue; }
     const current = store.get(record.id);
-    // Deleted by the owner, edited by him on the phone, or not the atlas's at all: left as it is.
-    if (current && (current.deleted || current.source?.kind !== 'knowledge_atlas' || (current.origin && current.origin !== 'atlas'))) { hashes[record.id] = hash; skipped += 1; continue; }
-    const result = store.put(record, { origin: 'atlas', now });
+    // Deleted by the owner, or not the atlas's at all: left as it is.
+    if (current && (current.deleted || current.source?.kind !== 'knowledge_atlas')) { hashes[record.id] = hash; skipped += 1; continue; }
+    // Edited by him on the phone: his copy stays, and the newer curated card waits beside it as a sync
+    // conflict (brain_store's own conflict record, which he can resolve), never as a silent overwrite.
+    const edited = current && current.origin && current.origin !== 'atlas';
+    const result = edited
+      ? store.apply({ type: 'put', record, base_rev: Number(revs[record.id]) || 0 }, { origin: 'atlas', now })
+      : store.put(record, { origin: 'atlas', now });
+    if (result.outcome === 'conflict') { hashes[record.id] = hash; conflicts += 1; continue; }
     if (!['created', 'updated', 'merged', 'unchanged'].includes(result.outcome)) { skipped += 1; continue; }
     hashes[record.id] = hash;
+    if (!edited && result.rev) revs[record.id] = result.rev;
     if (result.outcome === 'unchanged') unchanged += 1; else written += 1;
   }
   for (const id of Object.keys(hashes)) {
@@ -1694,9 +1813,9 @@ export function projectAtlasToBrain(store, { now } = {}) {
     delete hashes[id];
   }
   if (JSON.stringify(hashes) !== JSON.stringify(before)) {
-    store.setMeta('atlas_projection', { at: now || new Date().toISOString(), version: ATLAS_VERSION, cards: ATLAS_CARDS.length, written, removed, hashes });
+    store.setMeta('atlas_projection', { at: now || new Date().toISOString(), version: ATLAS_VERSION, cards: ATLAS_CARDS.length, written, removed, conflicts, hashes, revs });
   }
-  return { available: true, written, unchanged, skipped, removed };
+  return { available: true, written, unchanged, skipped, removed, conflicts };
 }
 
 // ─── A few relevant cards for the language model ──────────────────────────

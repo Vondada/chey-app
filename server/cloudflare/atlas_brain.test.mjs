@@ -10,8 +10,8 @@ import test from 'node:test';
 import { replyFromNdjson } from './brain_memory.js';
 import { BRAIN_REGIONS, CheBrainStore, VERIFICATION_STATES, learningRecords, recordLearning } from './brain_store.js';
 import {
-  ATLAS_CARDS, ATLAS_PROMPT_MAX, atlasBrainRecord, atlasCard, atlasIntent, atlasPromptContext, atlasRelevantCards, atlasResetIntent,
-  gradeQuizAnswer, nextToStudy, progressText, projectAtlasToBrain, recordAtlasPractice,
+  ATLAS_CARDS, ATLAS_PROMPT_MAX, answerAtlas, atlasBrainRecord, atlasCard, atlasIntent, atlasPromptContext, atlasRelevantCards, atlasResetIntent,
+  firstClause, gradeQuizAnswer, nextToStudy, progressText, projectAtlasToBrain, recordAtlasPractice,
 } from './knowledge_atlas.js';
 import { classifyOwnerActions } from './owner_action_gate.js';
 
@@ -238,7 +238,7 @@ test('lessons and graded quiz answers are recorded as owner practice, and read b
   assert.notEqual(after.done.atlas_kind, 'grade', 'a finished quiz grades nothing more');
   const q1 = await che.say('number one is a condition that eventually becomes false', { history: [{ role: 'assistant', content: quiz.reply }] });
   assert.match(q1.reply, /^Question 1 on Loops and iteration, sir: correct\./);
-  assert.match(q1.reply, /key words of the card's answer \(\d+ of \d+\), a rough check/, 'a key-word grade says it is rough');
+  assert.match(q1.reply, /Graded by the card's own answer\./, 'the first clause of the card\'s answer, normalized');
   assert.match(q1.reply, /Question 2: A loop runs i from 0/, 'the next question is read');
   const q2 = await che.say('my answer is no idea');
   assert.match(q2.reply, /^Question 2 on Loops and iteration, sir: not quite\./, 'a bare answer goes to the next question');
@@ -630,4 +630,103 @@ test('review nits: a phone edit of a card is kept, capped counts say so, and a l
   const loops = atlasCard('loops');
   assert.equal(gradeQuizAnswer(loops, 2, '55').correct, true);
   assert.equal(gradeQuizAnswer(loops, 2, '10 or 55 or 100').correct, false, 'the main number must match');
+});
+
+// ─── Re-review of c1ab5c0: the grader judges only what it can, and an answer is never a hidden request ─────
+
+test('every quiz question in the atlas passes with its own answer: never graded wrong (all cards, every lane)', () => {
+  let checked = 0;
+  for (const c of ATLAS_CARDS) {
+    c.quiz.forEach((q, i) => {
+      // The card's own answer, its first sentence, and its first clause (independently: up to the first mark).
+      for (const form of [q.a, q.a.split(/[.;:!?](?=\s|$)/)[0], firstClause(q.a), q.a.split(/[.;:!?](?=\s|$)|,\s/)[0]]) {
+        const r = gradeQuizAnswer(c, i, form);
+        assert.notEqual(r.correct, false, `${c.id} question ${i + 1}: "${form}" is the card's own answer (${r.method})`);
+        checked += 1;
+      }
+    });
+  }
+  assert.ok(checked >= ATLAS_CARDS.length * 3 * 4, `${checked} answers graded`);
+});
+
+test('the reviewer\'s right answers are correct; wrong ones are wrong; what CHE cannot judge is not graded', () => {
+  const g = (id, i, a) => gradeQuizAnswer(atlasCard(id), i, a).correct;
+  for (const [id, i, a] of [
+    ['bid-ask-spread', 1, 'the ask'], ['bid-ask-spread', 1, 'you pay the ask'], ['drawdown', 0, '25%'], ['drawdown', 0, '25 percent'], ['drawdown', 0, '0.25'],
+    ['drawdown', 1, '33.3%'], ['tick-value', 2, 'ten'], ['big-o', 0, 'O of n squared'], ['big-o', 0, 'O(n^2)'], ['big-o', 0, 'O(n²)'], ['big-o', 1, 'O of n'],
+    ['sorting', 0, 'O of n log n'], ['recursion', 0, 'a base case and a recursive case'], ['expectancy', 2, 'the sample is too small'],
+    ['http-apis', 1, 'GET, PUT and DELETE'], ['risk-management', 2, '$100'], ['recursion', 1, 'six'], ['concurrency', 1, 'about one second'],
+  ]) assert.equal(g(id, i, a), true, `${id} q${i + 1}: ${a}`);
+  for (const [id, i, a] of [['big-o', 1, 'O of n squared'], ['recursion', 1, '16'], ['risk-management', 2, '$200'], ['r-multiple', 1, '1R'], ['loops', 2, '10 or 55 or 100'], ['concurrency', 1, '3 seconds']]) {
+    assert.equal(g(id, i, a), false, `${id} q${i + 1}: ${a}`);
+  }
+  for (const [id, i, a] of [['win-rate-ci', 0, 'yes'], ['http-apis', 0, '400s'], ['loops', 1, 'n items']]) assert.equal(g(id, i, a), null, `${id} q${i + 1}: ${a} cannot be judged`);
+});
+
+test('through /api/chat: a right answer is recorded correct, an ungradeable one as not graded, never as wrong', sqlite, async () => {
+  const che = await owner();
+  const quiz = await che.say('quiz me on bid ask spread');
+  assert.match(quiz.reply, /^Quiz on Bid, ask and spread, sir\./);
+  const right = await che.say('number 2 is the ask');
+  assert.match(right.reply, /^Question 2 on Bid, ask and spread, sir: correct\./);
+  const progress = await che.say('how am I doing', { keep: false });
+  assert.match(progress.reply, /1 quiz answer, 1 correct \(100%\)/);
+  const wilson = await che.say('quiz me on win rate confidence interval', { keep: false, history: [] });
+  const cannot = await che.say('number 1 is yes', { keep: false, history: [{ role: 'assistant', content: wilson.reply }] });
+  assert.match(cannot.reply, /^Question 1 on Win rate and its confidence interval, sir: I can't grade that one automatically\. You said: yes\. The card's answer is: /);
+  assert.match(cannot.reply, /Recorded in your Brain as not graded, never as wrong\./);
+  const rows = learningRecords(che.brain).filter((r) => r.source.event === 'quiz');
+  assert.deepEqual(rows.map((r) => r.source.correct), [null, true]);
+  assert.match((await che.say('how am I doing on trading', { keep: false })).reply, /2 quiz answers, 1 correct of 1 graded \(100%\), 1 not graded/);
+  const exp = await che.say('quiz me on expectancy', { keep: false, history: [] });
+  const small = await che.say('my answer is the sample is too small', { keep: false, history: [{ role: 'assistant', content: `Question 2 on Expectancy, sir: correct.\n${exp.reply.split('\n').pop()}` }] });
+  assert.match(small.reply, /^Quiz finished on Expectancy, sir\. Question 3: correct\./);
+});
+
+test('an answer in the card\'s own words is graded, never held; a real request in an answer form is held like the bare sentence', sqlite, async () => {
+  const che = await owner();
+  const http = await che.say('quiz me on http and apis', { keep: false, history: [] });
+  const after = (reply) => [{ role: 'assistant', content: reply }];
+  const methods = await che.say('number 2 is GET, PUT and DELETE', { keep: false, history: after(http.reply) });
+  assert.equal(methods.done.atlas_kind, 'grade', `${methods.route}: ${methods.reply.slice(0, 80)}`);
+  assert.match(methods.reply, /: correct\./);
+  const ask = await che.say('quiz me on bid ask spread', { keep: false, history: [] });
+  const pay = await che.say('number 2 is you pay the ask', { keep: false, history: after(ask.reply) });
+  assert.match(pay.reply, /^Question 2 on Bid, ask and spread, sir: correct\./);
+  // Real requests: held for a yes, in a quiz or not, and the held words are the bare request.
+  const cases = [
+    ['number 2 is delete my notes', http.reply, 'delete my notes'], ['my answer is buy two calls', ask.reply, 'buy two calls'],
+    ['answer 1: delete my notes', '', 'delete my notes'], ['my answer is delete my notes', '', 'delete my notes'],
+    ['number 2 is buy two calls', '', 'buy two calls'], ['answer 1 is pay my electric bill', '', 'pay my electric bill'],
+  ];
+  for (const [words, reply, bare] of cases) {
+    const out = await che.say(words, { keep: false, history: reply ? after(reply) : [] });
+    assert.equal(out.route, 'held', `${words} → ${out.route}: ${out.reply.slice(0, 80)}`);
+    assert.equal((await che.storage.get('che:pending_owner_action'))?.text, bare, `${words}: the yes would run "${bare}"`);
+    await che.say('no', { keep: false, history: [] });
+  }
+  assert.equal(learningRecords(che.brain).filter((r) => r.source.event === 'quiz').length, 2, 'only the two real answers were graded');
+});
+
+test('a newer curated card after the owner\'s edit waits as a sync conflict, and the lesson says so once', sqlite, async () => {
+  const storage = storageFor();
+  const store = new CheBrainStore(storage);
+  projectAtlasToBrain(store);
+  const c = atlasCard('recursion');
+  const mine = store.get('atlas:recursion');
+  store.apply({ type: 'put', record: { ...mine, body: 'The owner rewrote this card on his phone.' }, base_rev: mine.rev }, { origin: 'iphone' });
+  // A newer curated revision: the remembered hash no longer matches the card.
+  const meta = store.meta('atlas_projection');
+  store.setMeta('atlas_projection', { ...meta, hashes: { ...meta.hashes, 'atlas:recursion': 'older-revision' } });
+  const run = projectAtlasToBrain(store);
+  assert.equal(run.conflicts, 1);
+  assert.equal(store.get('atlas:recursion').body, 'The owner rewrote this card on his phone.', 'his copy is kept');
+  const open = store.conflicts().filter((x) => x.record_id === 'atlas:recursion');
+  assert.equal(open.length, 1, 'the curated card waits beside it');
+  assert.equal(open[0].incoming.body, atlasBrainRecord(c).body);
+  assert.equal(projectAtlasToBrain(store).conflicts, 0, 'and is not filed again');
+  const first = await answerAtlas({ kind: 'teach', card: c, level: 'beginner', study: true }, { storage });
+  assert.match(first.text, /Note: you edited this card in your Brain, so I kept your copy\. This lesson reads the newer curated revision \d+, which waits beside your copy as an open sync conflict for you to choose\./);
+  const second = await answerAtlas({ kind: 'teach', card: c, level: 'beginner', study: true }, { storage });
+  assert.doesNotMatch(second.text, /you edited this card/, 'said once');
 });
