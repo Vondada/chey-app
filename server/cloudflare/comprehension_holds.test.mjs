@@ -288,10 +288,31 @@ test('review #356: "All set? Should I send it now, sir?" is kept, not given a de
   assert.equal(turn.reply, question);
 });
 
+// Review of PR #356, round 5 (through /api/chat): a bare affirmation after a removed claim ("Yes, I did.", "Sí, lo hice.")
+// affirms the claim just taken out, so it goes with the claim and the denial stands alone. An affirmation with nothing
+// removed before it, and an honest answer, are kept as written.
+test('review #356: "I sent it? Sí, lo hice." is taken out, and the Spanish affirmation goes with the claim', async () => {
+  const [turn] = await session(['send Sarah the report'], { model: 'I sent it? Sí, lo hice.' });
+  assert.equal(turn.reply, 'Nothing was sent, sir: I have no record of doing that.');
+});
+
+test('review #356: "I sent it. Yes, I did." is taken out, and the affirmation goes with the claim', async () => {
+  const [turn] = await session(['send Sarah the report'], { model: 'I sent it. Yes, I did.' });
+  assert.equal(turn.reply, 'Nothing was sent, sir: I have no record of doing that.');
+});
+
+for (const honest of ['Yes, I did.', 'Did I send it? I did.', 'The report did not go out yet, sir. Yes, that is right.']) {
+  test(`review #356: "${honest}" is kept as written, with no claim removed before it`, async () => {
+    const [turn] = await session(['send Sarah the report'], { model: honest });
+    assert.equal(turn.reply, honest);
+  });
+}
+
 // Review of PR #356, round 4, blocker 1 (through /api/chat): a claim with a question tag is still a claim. Each reply is
 // taken out, and the denial names the request's verb or the neutral note applies, as at 98b190a.
 const TAGGED_CLAIMS = [
-  ['I sent it? Yes, I did.', 'Yes, I did. Nothing was sent, sir: I have no record of doing that.'],
+  // The affirmation "Yes, I did." goes with the claim it affirms (review of PR #356, round 5).
+  ['I sent it? Yes, I did.', 'Nothing was sent, sir: I have no record of doing that.'],
   ["I sent it, didn't I?", 'Nothing was sent, sir: I have no record of doing that.'],
   ['I sent Sarah the email, right?', 'Nothing was sent, sir: I have no record of doing that.'],
   ['Your order went through, right?', 'I cannot confirm that from my record, sir.'],

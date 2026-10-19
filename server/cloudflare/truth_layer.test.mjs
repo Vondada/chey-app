@@ -701,7 +701,11 @@ test('review #356: a claim with a question tag is taken out, and a real question
   const { guardClaimedOwnerActions: guard } = await import('./truth_layer.js');
   const message = 'send sarah the report';
   const NOTHING_SENT = 'Nothing was sent, sir: I have no record of doing that.';
-  assert.equal(guard('I sent it? Yes, I did.', { message }).text, `Yes, I did. ${NOTHING_SENT}`);
+  // The affirmation "Yes, I did." affirms the claim the guard just removed, so it is removed with it (review of PR #356, round 5).
+  assert.equal(guard('I sent it? Yes, I did.', { message }).text, NOTHING_SENT);
+  assert.equal(guard('I sent it. Yes, I did.', { message }).text, NOTHING_SENT);
+  assert.equal(guard('I sent it? Sí, lo hice.', { message }).text, NOTHING_SENT);
+  assert.equal(guard('Yes, I did.', { message }).text, 'Yes, I did.');
   assert.equal(guard("I sent it, didn't I?", { message }).text, NOTHING_SENT);
   assert.equal(guard('I sent Sarah the email, right?', { message }).text, NOTHING_SENT);
   assert.equal(guard('Your order went through, right?', { message }).text, 'I cannot confirm that from my record, sir.');

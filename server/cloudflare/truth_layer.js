@@ -769,6 +769,9 @@ export function guardClaimedOwnerActions(reply, { message = '', acted = false } 
     // with a question or status word, or with "¿", is exempt. A claim with a tag ("I sent it, didn't I?", "…, ¿verdad?") is
     // still checked (review of PR #356, rounds 3 and 4).
     if (/\?\s*$/.test(plain) && /^(?:¿|(?:all\s+set|done|ready|should|shall|do|does|did|is|are|was|were|can|could|would|will|want|what|which|who|where|when|how|why)\b)/i.test(plain)) { kept.push(sentence); continue; }
+    // A bare affirmation after a removed claim ("I sent it? Yes, I did.") affirms the claim just taken out, so it goes too
+    // (review of PR #356, round 5).
+    if (removed.length && /^\s*(?:yes|yeah|yep|sure|s[ií])(?=[\s,!.]|$)[\s,!.]*(?:i\s+did|i\s+have|i\s+sent\s+it|lo\s+hice|lo\s+mand[eé]|es\s+verdad)?[\s!.]*$/i.test(plain)) { removed.push(plain); continue; }
     if (drafting && !/\bsir\b/i.test(plain) && !DONE_RE.test(plain)) { kept.push(sentence); continue; }
     for (const re of [STRONG_RE, WEAK_RE, MADE_RE, PASSIVE_RE]) {
       const m = re.exec(plain);
