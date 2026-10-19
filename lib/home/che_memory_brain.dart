@@ -272,7 +272,12 @@ List<CheMemoryDot> cheBuildMemoryDots({
     final body = '${r['excerpt'] ?? r['body'] ?? ''}'.trim();
     if (body.isEmpty) continue;
     final region = '${r['region'] ?? ''}';
-    final category = region == 'Personal Memory'
+    final kind = '${r['kind'] ?? ''}';
+    // Knowledge Atlas cards (curated lessons) and the owner's practice on them are their own group.
+    final atlas = kind == 'concept_card' || kind == 'atlas_progress' || '${r['path'] ?? ''}'.startsWith('Knowledge Atlas/');
+    final category = atlas
+        ? 'Knowledge Atlas'
+        : region == 'Personal Memory'
         ? 'Memory'
         : region == 'Conversations and Corrections'
         ? 'Conversations'
@@ -299,7 +304,7 @@ List<CheMemoryDot> cheBuildMemoryDots({
         tokens: _tokens(body),
         at: DateTime.tryParse('${r['created_at'] ?? ''}'),
         source: who.isNotEmpty ? who : '${r['verification'] ?? 'unknown'}'.replaceAll('_', ' '),
-        scope: region == 'Personal Memory' || region == 'Conversations and Corrections' ? 'owner' : 'general',
+        scope: !atlas && (region == 'Personal Memory' || region == 'Conversations and Corrections') ? 'owner' : 'general',
         importance: score == null ? 3 : (1 + (score * 4).round()).clamp(1, 5),
         links: [for (final l in (r['links'] as List?) ?? const []) if (l is Map) '${l['to']}'],
         region: region,
@@ -390,6 +395,7 @@ Color cheMemoryCategoryColor(String category) => switch (category.toLowerCase())
   'suggestion' => const Color(0xFF9DF7C9),
   'translation' => const Color(0xFFEAF6FF),
   'agents' => const Color(0xFFFFB54D),
+  'knowledge atlas' => const Color(0xFF8FE3FF),
   _ => CheColors.accent,
 };
 

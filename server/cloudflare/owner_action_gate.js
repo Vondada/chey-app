@@ -26,7 +26,10 @@ const MONEY_RE = new RegExp(`${LEAD}(?:${MONEY_VERB}\\b|${MONEY_ORDER}|${MONEY_T
 const DATA_OBJECT = String.raw`(?:notes?|files?|data|history|memor(?:y|ies)|skills?|keys?|accounts?|saved|learned|everything|all|settings|lists?|chats?|messages?|changes?|subscriptions?|orders?|bookings?|meetings?|appointments?|apps?|jobs?|queue|cache|logs?|records?|photos?|videos?|contacts?|emails?|drafts?|events?|reminders?)`;
 const STRONG_DELETE = String.raw`(?:delet(?:e|es|ed|ing)|remov(?:e|es|ed|ing)|eras(?:e|es|ed|ing)|wip(?:e|es|ed|ing)|forget(?:s|ting)?|discard(?:s|ed|ing)?|trash(?:es|ed|ing)?|uninstall(?:s|ed|ing)?|unpublish(?:es|ed|ing)?|revok(?:e|es|ed|ing)|get\s+rid\s+of|throw\s+away)`;
 const WEAK_DELETE = String.raw`(?:reset(?:s|ting)?|clear(?:s|ed|ing)?(?:\s+out)?|cancel(?:s|ed|ling|ing)?|drop(?:s|ped|ping)?)(?:\s+[\w'$]+){0,4}?\s+${DATA_OBJECT}`;
-const DELETE_RE = new RegExp(`${LEAD}(?:${STRONG_DELETE}|${WEAK_DELETE})\\b`, 'i');
+// The owner's own learning progress ("reset my progress", "clear my trading quiz scores", Knowledge Atlas
+// #346). Only "my … progress/scores", never a progress bar, spinner, report or call, or a game's score.
+const LEARNING_RESET = String.raw`(?:reset(?:s|ting)?|clear(?:s|ed|ing)?(?:\s+out)?|drop(?:s|ped|ping)?)\s+(?:all\s+(?:of\s+)?)?my\s+(?:(?:coding|trading|learning|study|studying|atlas|knowledge\s+atlas|lesson|quiz|practice)\s+){0,3}(?:progress|scores?)(?!\s+(?:bars?|indicators?|spinners?|reports?|calls?|meetings?|reviews?|widgets?|boards?|screens?|notes?|charts?))`;
+const DELETE_RE = new RegExp(`${LEAD}(?:${STRONG_DELETE}|${WEAK_DELETE}|${LEARNING_RESET})\\b`, 'i');
 const NEGATED_RE = /\b(?:do\s+not|don't|dont|never|not|no)\s+$/i;
 
 // Each clause of a compound request ("buy X, then delete Y") is checked on its
