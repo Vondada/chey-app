@@ -878,11 +878,11 @@ test('end-to-end: "make one small real improvement" → recover → review → a
     if (method === 'POST' && path === '/git/trees') return reply({ sha: 't1' }, 201);
     if (method === 'POST' && path === '/git/commits') return reply({ sha: 'c1' }, 201);
     if (method === 'POST' && path === '/git/refs') return reply({}, 201);
-    if (method === 'POST' && path === '/pulls') return reply({ number: 77, html_url: 'https://github.com/o/r/pull/77', head: { sha: 'h77' } }, 201);
+    if (method === 'POST' && path === '/pulls') return reply({ number: 77, html_url: 'https://github.com/o/r/pull/77', head: { sha: 'dddddddddddddddddddddddddddddddddddddddd' } }, 201);
     if (method === 'GET' && path.startsWith('/pulls?state=all')) return reply([]);
-    if (method === 'GET' && path === '/pulls/77') return reply({ number: 77, html_url: 'u77', state: 'open', merged: false, draft: true, mergeable: true, mergeable_state: 'clean', node_id: 'N', title: 'CHE update: x', head: { sha: 'h77', ref: 'che/update-x' }, base: { sha: 'base1' } });
+    if (method === 'GET' && path === '/pulls/77') return reply({ number: 77, html_url: 'u77', state: 'open', merged: false, draft: true, mergeable: true, mergeable_state: 'clean', node_id: 'N', title: 'CHE update: x', head: { sha: 'dddddddddddddddddddddddddddddddddddddddd', ref: 'che/update-x' }, base: { sha: 'base1' } });
     if (method === 'GET' && path.startsWith('/pulls/77/files')) return reply([{ filename: 'server/cloudflare/worker.js' }]);
-    if (method === 'GET' && path.startsWith('/commits/h77/check-runs')) return reply({ check_runs: [{ name: 'Worker tests', status: ciDone ? 'completed' : 'in_progress', conclusion: ciDone ? 'success' : null }] });
+    if (method === 'GET' && path.startsWith('/commits/dddddddddddddddddddddddddddddddddddddddd/check-runs')) return reply({ check_runs: [{ name: 'Worker tests', status: ciDone ? 'completed' : 'in_progress', conclusion: ciDone ? 'success' : null }] });
     if (method === 'PUT' && path === '/pulls/77/merge') return reply({ sha: 'merge0000001abc' });
     if (method === 'GET' && path.startsWith('/actions/runs')) return reply({ workflow_runs: [{ name: 'Deploy CHE Worker', status: 'completed', conclusion: 'success', html_url: 'run' }] });
     return reply({ message: `unexpected ${method} ${path}` }, 500);
@@ -916,7 +916,7 @@ test('end-to-end: "make one small real improvement" → recover → review → a
     const data = saved.get('che'); data.jobs = data.jobs.map((j) => (j.id === job.id ? job : j)); saved.set('che', data);
     await state.processJobs();
     const merge = calls.find((c) => c.method === 'PUT');
-    assert.equal(merge.body.sha, 'h77');
+    assert.equal(merge.body.sha, 'dddddddddddddddddddddddddddddddddddddddd');
     assert.match(merge.body.commit_title, /\[worker-deploy\]/);
     // 5. Deployment truth is verified before anyone calls it deployed.
     const verify = saved.get('che').jobs.find((j) => j.kind === 'verify_deploy');
@@ -983,11 +983,11 @@ test('one-button "Update CHE": one approval → PR → merge after CI → verifi
     if (method === 'POST' && path === '/git/trees') return reply({ sha: 't1' }, 201);
     if (method === 'POST' && path === '/git/commits') return reply({ sha: 'c1' }, 201);
     if (method === 'POST' && path === '/git/refs') return reply({}, 201);
-    if (method === 'POST' && path === '/pulls') return reply({ number: 77, html_url: 'https://github.com/o/r/pull/77', head: { sha: 'h77' } }, 201);
+    if (method === 'POST' && path === '/pulls') return reply({ number: 77, html_url: 'https://github.com/o/r/pull/77', head: { sha: 'dddddddddddddddddddddddddddddddddddddddd' } }, 201);
     if (method === 'GET' && path.startsWith('/pulls?state=all')) return reply([]);
-    if (method === 'GET' && path === '/pulls/77') return reply({ number: 77, html_url: 'u77', state: 'open', merged: false, draft: true, mergeable: true, mergeable_state: 'clean', node_id: 'N', title: 'CHE update: x', head: { sha: 'h77', ref: 'che/update-x' }, base: { sha: 'base1' } });
+    if (method === 'GET' && path === '/pulls/77') return reply({ number: 77, html_url: 'u77', state: 'open', merged: false, draft: true, mergeable: true, mergeable_state: 'clean', node_id: 'N', title: 'CHE update: x', head: { sha: 'dddddddddddddddddddddddddddddddddddddddd', ref: 'che/update-x' }, base: { sha: 'base1' } });
     if (method === 'GET' && path.startsWith('/pulls/77/files')) return reply([{ filename: 'server/cloudflare/worker.js' }]);
-    if (method === 'GET' && path.startsWith('/commits/h77/check-runs')) return reply({ check_runs: [{ name: 'Worker tests', status: ciDone ? 'completed' : 'in_progress', conclusion: ciDone ? 'success' : null }] });
+    if (method === 'GET' && path.startsWith('/commits/dddddddddddddddddddddddddddddddddddddddd/check-runs')) return reply({ check_runs: [{ name: 'Worker tests', status: ciDone ? 'completed' : 'in_progress', conclusion: ciDone ? 'success' : null }] });
     if (method === 'PUT' && path === '/pulls/77/merge') return reply({ sha: 'merge0000001abc' });
     if (method === 'GET' && path.startsWith('/actions/runs')) return reply({ workflow_runs: [{ name: 'Deploy CHE Worker', status: 'completed', conclusion: 'success', html_url: 'run' }] });
     return reply({ message: `unexpected ${method} ${path}` }, 500);
@@ -1022,7 +1022,7 @@ test('one-button "Update CHE": one approval → PR → merge after CI → verifi
     const data = saved.get('che'); data.jobs = data.jobs.map((j) => (j.id === job.id ? job : j)); saved.set('che', data);
     await state.processJobs();
     const merge = calls.find((c) => c.method === 'PUT');
-    assert.equal(merge.body.sha, 'h77');
+    assert.equal(merge.body.sha, 'dddddddddddddddddddddddddddddddddddddddd');
     assert.match(merge.body.commit_title, /\[worker-deploy\]/);
     // 5. Deployment truth is verified before anyone calls it deployed.
     const verify = saved.get('che').jobs.find((j) => j.kind === 'verify_deploy');
@@ -1423,8 +1423,8 @@ test('merge with a change-caused CI failure is refused and CHE starts the repair
     const path = String(url).replace('https://api.github.com/repos/o/r', '');
     const reply = (d, s = 200) => new Response(JSON.stringify(d), { status: s });
     if ((init.method || 'GET') === 'PUT') { merged = true; return reply({ sha: 'x' }); }
-    if (path === '/pulls/5') return reply({ number: 5, html_url: 'u5', state: 'open', merged: false, draft: false, mergeable: true, head: { sha: 'h5', ref: 'che/update-a' }, base: { sha: 'b5' } });
-    if (path.startsWith('/commits/h5/check-runs')) return reply({ check_runs: [{ name: 'Worker tests', status: 'completed', conclusion: 'failure' }] });
+    if (path === '/pulls/5') return reply({ number: 5, html_url: 'u5', state: 'open', merged: false, draft: false, mergeable: true, head: { sha: 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee', ref: 'che/update-a' }, base: { sha: 'b5' } });
+    if (path.startsWith('/commits/eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee/check-runs')) return reply({ check_runs: [{ name: 'Worker tests', status: 'completed', conclusion: 'failure' }] });
     if (path.startsWith('/commits/b5/check-runs')) return reply({ check_runs: [{ name: 'Worker tests', status: 'completed', conclusion: 'success' }] });
     return reply({}, 404);
   };

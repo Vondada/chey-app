@@ -70,7 +70,9 @@ class CheRealtimeVoiceEngine {
   String? lastServerEvent;
   String? lastError;
 
-  bool get connected => _connected && state.audioVerified;
+  /// Realtime supplies input transcripts only. All replies use /api/chat.
+  bool get guardedOutput => true;
+  bool get connected => _connected && state.sessionReady;
 
   Future<void> initialize() async {
     if (_rendererReady) return;
@@ -147,6 +149,10 @@ class CheRealtimeVoiceEngine {
       };
 
       pc.onTrack = (event) {
+        if (guardedOutput) {
+          event.track.enabled = false;
+          return;
+        }
         if (event.streams.isNotEmpty) {
           _remoteRenderer.srcObject = event.streams.first;
         }
@@ -162,7 +168,7 @@ class CheRealtimeVoiceEngine {
         RTCDataChannelInit()..ordered = true,
       );
       _events = channel;
-      channel.onMessage = _handleMessage;
+      channel.onMessage = handleServerEvent;
       channel.onDataChannelState = (channelState) {
         state.connectionChanged('data:${channelState.name}');
         _emitSnapshot();
@@ -199,28 +205,7 @@ class CheRealtimeVoiceEngine {
         ),
       );
 
-      _send({
-        'type': 'response.create',
-        'event_id': _eventId('health'),
-        'response': {
-          'instructions':
-              'The owner just woke you. Reply in three words or fewer, naturally.',
-        },
-      });
-
-      await _audioStarted!.future.timeout(
-        const Duration(seconds: 8),
-        onTimeout: () => throw TimeoutException(
-          'OpenAI Realtime connected but returned no audio.',
-        ),
-      );
-
-      await _verifyInboundAudio();
-      // Re-assert speaker route after audio is verified — some iOS builds fall
-      // back to the earpiece after WebRTC renegotiation.
-      try {
-        await Helper.setSpeakerphoneOnButPreferBluetooth();
-      } catch (_) {}
+      if (!guardedOutput) await _verifyInboundAudio();
       _connected = true;
       state.realtimeReady();
       _emitSnapshot();
@@ -242,7 +227,7 @@ class CheRealtimeVoiceEngine {
             'Authorization': 'Bearer $deviceToken',
             'Content-Type': 'application/json',
           },
-          body: '{}',
+          body: jsonEncode({'guarded_output': true}),
         )
         .timeout(const Duration(seconds: 15));
 
@@ -254,6 +239,10 @@ class CheRealtimeVoiceEngine {
       throw StateError(
         decoded['detail']?.toString() ?? 'Realtime session token failed.',
       );
+    }
+
+    if (decoded['guarded_output'] != true) {
+      throw StateError('Server did not confirm guarded voice output.');
     }
 
     final value = decoded['value']?.toString() ??
@@ -299,7 +288,7 @@ class CheRealtimeVoiceEngine {
     );
   }
 
-  void _handleMessage(RTCDataChannelMessage message) {
+  void handleServerEvent(RTCDataChannelMessage message) {
     if (message.isBinary || message.text.isEmpty) return;
 
     Map<String, dynamic> event;
@@ -311,6 +300,9 @@ class CheRealtimeVoiceEngine {
 
     final type = event['type']?.toString() ?? '';
     lastServerEvent = type;
+    // Provider-generated words, audio and tool calls never reach UI or TTS.
+    if (guardedOutput && (type.startsWith('response.') ||
+        type == 'output_audio_buffer.started')) return;
 
     switch (type) {
       case 'session.created':
@@ -511,23 +503,7 @@ class CheRealtimeVoiceEngine {
     final clean = text.trim();
     if (!_connected || clean.isEmpty) return;
 
-    _send({
-      'type': 'conversation.item.create',
-      'event_id': _eventId('text'),
-      'item': {
-        'type': 'message',
-        'role': 'user',
-        'content': [
-          {'type': 'input_text', 'text': clean},
-        ],
-      },
-    });
-    state.userSpeechStopped();
-    _emitSnapshot();
-    _send({
-      'type': 'response.create',
-      'event_id': _eventId('respond'),
-    });
+    onUserTranscript(clean, null);
   }
 
   Future<void> cancelActiveResponse([String reason = 'owner interruption']) async {

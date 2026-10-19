@@ -47,6 +47,35 @@ test('provider failure hands the complete conversation to the replacement, witho
   assert.deepEqual(input, before);
 });
 
+test('actual HTTP 413 skips that provider once and preserves every instruction on fallback', async () => {
+  resetRouterForTests();
+  const messages = [{ role: 'system', content: 'Never spend money. Never delete data.' }, ...history(),
+    { role: 'user', content: 'PR #356; job rea-0a1b3c4d; unfinished: verify Willo; correction: old summary was false.' }];
+  const calls = [];
+  const out = await routeText({ GROQ_API_KEY: 'g', MISTRAL_API_KEY: 'm', CHE_GROQ_INPUT_CHARS: '60000', CHE_DISABLE_KEYLESS_AI: '1' }, '@cf/x', { messages }, async (url, init) => {
+    calls.push({ url: String(url), messages: JSON.parse(init.body).messages });
+    if (String(url).includes('groq')) return new Response('payload too large', { status: 413 });
+    return new Response(JSON.stringify({ choices: [{ message: { content: 'Ready.' } }] }));
+  });
+  assert.ok(out.response || out.choices);
+  assert.equal(calls.filter((c) => c.url.includes('groq')).length, 1);
+  assert.ok(calls.length >= 2);
+  for (const call of calls) assert.deepEqual(call.messages, messages);
+});
+
+test('all actual 413 failures terminate with message_too_long, never a truncated retry', async () => {
+  resetRouterForTests();
+  const input = { messages: [{ role: 'user', content: 'Preserve every character and PR #356.' }] };
+  let calls = 0;
+  await assert.rejects(routeText({ GROQ_API_KEY: 'g', CHE_DISABLE_KEYLESS_AI: '1' }, '@cf/x', input, async (_url, init) => {
+    if (!init?.body) return new Response('{"data":[]}'); // catalogue GET, not a generation retry
+    calls++;
+    assert.deepEqual(JSON.parse(init.body).messages, input.messages);
+    return new Response('too large', { status: 413 });
+  }), (error) => error.category === 'message_too_long');
+  assert.equal(calls, 1, 'no identical retry, no refresh-loop reattempt');
+});
+
 import { createObjective, recordNodeOutcome, nodeContext, condenseObjective } from './objective_graph.js';
 
 test('job receipts, dependency context and completed state preserve the full result and mission tail', () => {

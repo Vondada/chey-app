@@ -1017,10 +1017,11 @@ async function npmRequest(storage, env, jobs, request, { fetcher, now, random })
   if (!resolved.ok) return { ok: false, text: resolved.reason };
   const target = { kind: 'npm', name: parsed.name, version: resolved.version, license: resolved.license };
   const cacheKey = `${REA_PIN.version}|npm:${parsed.name}@${parsed.version}|${resolved.integrity}`;
-  const earlier = [...jobs].reverse().find((j) => j.cache_key === cacheKey && j.state === 'complete' && j.summary);
-  if (earlier) return { ok: true, job_id: earlier.id, state: 'complete', reused: earlier.id, text: evidenceAnswer(request.command, { ...earlier, target }) };
-  const pending = [...jobs].reverse().find((j) => j.cache_key === cacheKey && j.state === 'queued');
-  if (pending) return { ok: true, job_id: pending.id, state: 'queued', reused: pending.id, text: `REA job ${pending.id} is still queued. No completed evidence has been received; I did not dispatch it again.` };
+  const earlier = [...jobs].reverse().find((j) => j.cache_key === cacheKey);
+  if (earlier?.state === 'complete' && earlier.summary) return { ok: true, job_id: earlier.id, state: 'complete', reused: earlier.id, text: evidenceAnswer(request.command, { ...earlier, target }) };
+  if (earlier && ['queued', 'running'].includes(earlier.state)) return { ok: true, job_id: earlier.id, state: earlier.state, reused: earlier.id, text: `REA job ${earlier.id} is still ${earlier.state}. No completed evidence has been received; I did not dispatch it again.` };
+  if (earlier) return { ok: false, job_id: earlier.id, state: 'failed', reused: earlier.id,
+    text: `REA job ${earlier.id} failed: ${earlier.error || 'No validated completed evidence exists.'} No new run was dispatched.` };
 
   if (!reaConfigured(env)) {
     return { ok: false, text: 'REA analysis runs on GitHub Actions, and CHE has no GitHub connection (CHE_GITHUB_TOKEN and CHE_GITHUB_REPO). Nothing was run.' };
@@ -1037,7 +1038,7 @@ async function npmRequest(storage, env, jobs, request, { fetcher, now, random })
     Object.assign(job, { state: 'failed', error: `GitHub did not start the run (status ${sent.status || 'none'}).` });
   }
   await storage.put(REA_JOBS_KEY, [...jobs, job].slice(-JOB_LOG_LIMIT));
-  if (!sent.ok) return { ok: false, text: `REA could not start: GitHub did not start the analysis run (status ${sent.status || 'none'}). Nothing was analyzed.` };
+  if (!sent.ok) return { ok: false, job_id: job.id, state: 'failed', text: `REA job ${job.id} could not start: GitHub did not start the analysis run (status ${sent.status || 'none'}). Nothing was analyzed.` };
   return {
     ok: true, job_id: job.id, state: 'queued',
     text: [

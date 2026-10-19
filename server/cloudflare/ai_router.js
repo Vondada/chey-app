@@ -715,6 +715,11 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
   // Answer or fail before the app's 75s timeout: stop trying new engines at 40s.
   const DEADLINE_MS = Number(env.CHE_ROUTER_DEADLINE_MS) || 40000;
 
+  const capacityRejected = new Set();
+  const recordCapacityFailure = (id) => {
+    capacityRejected.add(id.split(':')[0]);
+    errors.push(`${id}: skipped, the complete context is too long for it (HTTP 413)`);
+  };
   const tryCloudflare = async () => {
     if (needs.local_only) return null;
     if (avoid.has('cloudflare')) { errors.push('cloudflare: skipped after an unusable answer'); return null; }
@@ -742,7 +747,9 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
         used = shaped;
         return out && typeof out === 'object' ? { ...out, engine: out.engine || 'cloudflare', model: out.model || model } : out;
       } catch (error) {
-        if (isQuotaError(error)) {
+        if (error?.status === 413) {
+          recordCapacityFailure('cloudflare');
+        } else if (isQuotaError(error)) {
           cloudflareExhaustedUntil = now + 30 * 60 * 1000;
           errors.push('cloudflare: quota used up');
           noteHealth('cloudflare', { ok: false, quota: true, error: 'quota' });
@@ -784,6 +791,7 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
 
   const tryProviders = async (keyless = true) => {
     for (const provider of providerOrder()) {
+      if (capacityRejected.has(provider.id.split(':')[0])) continue;
       if (Date.now() - started > DEADLINE_MS) { errors.push('deadline reached; stopped trying engines'); break; }
       if (!providerEnabled(env, provider)) continue;
       if (provider.keyless && !keyless) continue;
@@ -830,6 +838,10 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
         used = shaped;
         return called.result;
       } catch (error) {
+        if (error?.status === 413) {
+          recordCapacityFailure(provider.id);
+          continue;
+        }
         noteHealth(provider.id, {
           ok: false,
           status: error?.status || 0,
@@ -856,7 +868,9 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
               used = shaped;
               return retry.result;
             }
-          } catch (_) { /* continue through the normal fallback rotation */ }
+          } catch (retryError) {
+            if (retryError?.status === 413) { recordCapacityFailure(provider.id); continue; }
+          }
         }
         // Odd reply (tool call / empty): same engine, plain chat model.
         if (provider.alt && (error?.status === 400 || /no text|tool/i.test(String(error?.message || '')))) {
@@ -867,20 +881,9 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
             noteHealth(provider.id, { ok: true, latencyMs: Date.now() - t0 });
             used = shaped;
             return retry.result;
-          } catch (_) { /* fall through */ }
-        }
-        // Too large: retry once at half size on the same engine.
-        if (error?.status === 413 && !minInputChars) {
-          try {
-            const smaller = fitToBudget(shaped.input, Math.floor((budget || 16000) / 2));
-            if (smaller.oversize) throw new Error('the complete context does not fit at half size');
-            const retry = await callProvider(env, provider, false, smaller, fetcher, '', office);
-            await addEstimatedUsage(env, usageStorage, provider.id, retry.usageTokens, now);
-            providerLastError.delete(provider.id);
-            noteHealth(provider.id, { ok: true, latencyMs: Date.now() - t0 });
-            used = shaped;
-            return retry.result;
-          } catch (_) { /* fall through to normal failure handling */ }
+          } catch (retryError) {
+            if (retryError?.status === 413) { recordCapacityFailure(provider.id); continue; }
+          }
         }
         const busy = error?.status === 429;
         // 5xx: do not spend the latency budget retrying the same sick engine.
@@ -903,6 +906,7 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
             used = shaped;
             return retry.result;
           } catch (retryError) {
+            if (retryError?.status === 413) { recordCapacityFailure(provider.id); continue; }
             const combinedError = `${String(error?.message || error)}; fast retry: ${String(retryError?.message || retryError)}`.slice(0, 700);
             providerLastError.set(provider.id, combinedError);
             errors.push(`${provider.id}: ${combinedError}`);

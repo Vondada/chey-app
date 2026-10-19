@@ -45,6 +45,32 @@ const b64encode = (text) => {
 };
 const b64decode = (value) => new TextDecoder().decode(Uint8Array.from(atob(String(value || '').replace(/\s+/g, '')), (c) => c.charCodeAt(0)));
 
+// Read-only, pinned to the branch head retrieved now. Do not create a missing
+// branch and do not promote the prose in the file to verified release facts.
+export async function readLiveHandoff(env, fetcher = fetch) {
+  if (!repoOf(env)) return { status: 503, detail: 'GitHub credentials or repository are unavailable.' };
+  try {
+    const head = await gh(env, 'GET', `/git/ref/heads/${MAILBOX_BRANCH}`, null, fetcher);
+    const sha = head.data?.object?.sha;
+    if (!head.ok) return { status: head.status, detail: `Mailbox head lookup failed (HTTP ${head.status}).` };
+    if (!/^[a-f0-9]{40}$/i.test(sha || '')) return { status: 502, detail: 'Invalid mailbox head.' };
+    const path = 'mailbox/briefs/LIVE-HANDOFF.md';
+    const found = await gh(env, 'GET', `/contents/${path}?ref=${sha}`, null, fetcher);
+    if (!found.ok) return { status: found.status, detail: `Live handoff lookup failed (HTTP ${found.status}).` };
+    if (found.data?.path !== path || found.data?.encoding !== 'base64' || !found.data?.content || !/^[a-f0-9]{40}$/i.test(found.data?.sha || '')) {
+      return { status: 502, detail: 'GitHub did not return a valid handoff file.' };
+    }
+    const text = b64decode(found.data.content);
+    if (!text.trim()) return { status: 502, detail: 'Live handoff is empty.' };
+    const start = /^## 2\. Current position[^\n]*$/mi.exec(text);
+    const following = start ? text.slice(start.index) : '';
+    const next = following.indexOf('\n## ', 1);
+    const checkpoint = next < 0 ? following : following.slice(0, next);
+    return { status: 200, branch: MAILBOX_BRANCH, head_sha: sha, blob_sha: found.data.sha, path, text, checkpoint,
+      source: `https://github.com/${repoOf(env)}/blob/${sha}/${path}` };
+  } catch (_) { return { status: 503, detail: 'Live GitHub handoff could not be retrieved.' }; }
+}
+
 // The Contents API returns no inline content for files over 1 MB. The blob API
 // returns the same bytes at any size, so it is the fallback. Null means the bytes
 // could not be read; callers must refuse to write rather than treat it as empty.

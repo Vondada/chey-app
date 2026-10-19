@@ -92,7 +92,7 @@ import { APPROVED_SKILLS, handleInstalledSkill, installedSkillIntent, installedS
 import { lastSite, publishSite, saveSite, serveSite, siteBuildIntent, siteEditIntent, sitePreviewIntent, sitePublishIntent, siteUrl, speakSitePublished, speakSiteResult, wantsImmediatePublish, workingHtml, writeSite } from './site_builder.js';
 import { noteJobActivity } from './job_activity.js';
 import { PENDING_OWNER_ACTION_KEY, deskOwnedMoney, forbiddenAction, prohibitionSpans, withoutProhibitions, PENDING_OWNER_ACTION_MS, gateOwnerAction, grantForKinds, isOwnerYes, peerActionReply, APPS_GRANTED_KEY, PENDING_APP_ACTION_KEY, PENDING_APP_ACTION_MS, gateAppAccess, classifyAppNeed, classifyExplicitAppOpen, classifyAppAccesses } from './owner_action_gate.js';
-import { asksForCurrentOwnerLocation, changeHistoryIntent, guardClaimedOwnerActions, guardClaimedResearchActions, guardGroundedFacts, guardLocationWeatherReply, guardOwnerReply, loadChangeHistory, loadReceipts, OWNER_LOCATION_NOT_VERIFIED, recordReceipt, requestedCodeNames, speakChangeHistory, vagueResearchRequest, verifiedState, verifiedStatusText } from './truth_layer.js';
+import { asksForCurrentOwnerLocation, executeWithReceipt, guardExecutionClaims, changeHistoryIntent, guardClaimedOwnerActions, guardClaimedResearchActions, guardGroundedFacts, guardLocationWeatherReply, guardOwnerReply, loadChangeHistory, loadReceipts, OWNER_LOCATION_NOT_VERIFIED, recordReceipt, requestedCodeNames, speakChangeHistory, vagueResearchRequest, verifiedState, verifiedStatusText } from './truth_layer.js';
 import { ENGINEERING_PLAYBOOK_SPOKEN, playbookIntent } from './engineering_playbook.js';
 import { describeSkillsReport, reusableLicense, selectFilesForAgent, skillFromMarkdown, skillImportIntent, skillsReportIntent } from './skill_import.js';
 import { describeTopicStudyStart, starredStudyTargets, matchTopicSections, namedRepoStudyIntent, starredLibraryIntent, readTutorial, readmeSections, sectionTutorials, studyBatchIntent, topicBuildRequest, topicTitles, wantsSerialStudy } from './topic_study.js';
@@ -115,7 +115,7 @@ import {
 import { fundyouredgeReply } from './fundyouredge.js';
 import { CheCodingRuntime, codingRuntimeEnabled, ownerRequiresMergeApproval, recoverableRuntimeFailure, runtimeState, runtimeStateClass, speakRuntimeStatus } from './coding_runtime.js';
 import { newMissionAction, RESUME_LIMIT, resumeAction, resumeDecision } from './coding_failover.mjs';
-import { handoffIntent, latestHandoff, unseenReplies, relayText, listThreads, mailboxHead, mailboxIntent, readAllMail, readThread, sendMail, speakThreads } from './mailbox.js';
+import { handoffIntent, readLiveHandoff, latestHandoff, unseenReplies, relayText, listThreads, mailboxHead, mailboxIntent, readAllMail, readThread, sendMail, speakThreads } from './mailbox.js';
 import { officeToday, ownerDayKey, ownerTimeZone } from './office_board.js';
 import { LA_AGENCIA_ROLES, agentActionGuard, ensureLaAgenciaRoster, isLaAgenciaAgent, officeToolBlocker, splitGoal } from './office_company.js';
 import {
@@ -5810,9 +5810,12 @@ export class CheState extends DurableObject {
       }
 
       if (request.method === 'POST' && path === '/api/live/token') {
+        // Older clients play provider audio before any execution check. Keep
+        // their existing guarded native/HTTP voice fallback, never raw audio.
         if (!this.env.CHE_OPENAI_API_KEY || !paidAllowed(this.env)) {
           return json({ detail: 'Live voice is not available right now, sir. I am listening the normal way.' }, 503);
         }
+        if (body.guarded_output !== true) return json({ detail: 'This voice client must use the guarded chat voice path.' }, 409);
 
         const memories = Array.isArray(data.memories) ? data.memories.slice(-30) : [];
         const learnedPreferences = Array.isArray(data.preference_memory)
@@ -5823,7 +5826,7 @@ export class CheState extends DurableObject {
           session: {
             type: 'realtime',
             model: String(this.env.CHE_OPENAI_REALTIME_MODEL || 'gpt-realtime-2.1'),
-            output_modalities: ['audio'],
+            output_modalities: ['text'],
             instructions: [
               'You are CHE — Cognitive Horizon Engine, the owner’s private conversational AI.',
               'The voice session is already active. Never ask the owner to say “Hey [assistant name]”, “Ok [assistant name]”, or any generic wake phrase. CHE/Chay wake detection is handled by the iPhone client before you receive the turn.',
@@ -5884,7 +5887,7 @@ export class CheState extends DurableObject {
                 turn_detection: {
                   type: 'semantic_vad',
                   eagerness: 'low',
-                  create_response: true,
+                  create_response: false,
                   interrupt_response: true,
                 },
               },
@@ -5915,6 +5918,7 @@ export class CheState extends DurableObject {
           ...live,
           model: sessionConfig.session.model,
           voice: sessionConfig.session.audio.output.voice,
+          guarded_output: true,
         });
       }
 
@@ -8693,6 +8697,42 @@ export class CheState extends DurableObject {
         const turnActionPolicy = currentTurnActionPolicy(message);
         const chatOnlyEvaluation = turnActionPolicy.terminalChatOnly;
 
+        // Existing GitHub and mailbox readers supply facts; the model never
+        // interprets release state. Read-only questions authorize no mutation.
+        const readQuestion = /^(?:(?:che|please)[,:]?\s+)*(?:was|is|has|did|what|show|check|verify|look up|read|tell)\b/i.test(message);
+        const prNumbers = readQuestion ? [...new Set([...message.matchAll(/\b(?:PR|pull request)\s*#?\s*(\d+)\b/gi)].map((m) => Number(m[1])))] : [];
+        const handoffRead = /\b(?:handoff|LIVE-HANDOFF\.md)\b/i.test(message)
+          && /^(?:(?:che|please)[,:]?\s+)*(?:what|where|show|read|retrieve|fetch|verify|check|give|tell)\b/i.test(message);
+        if (prNumbers.length || handoffRead) {
+          if (!ownerDevice) return ownerOnly();
+          if (prNumbers.length > 10) return ndjsonReply('I can verify up to ten pull requests in one lookup. No lookup was executed.', { source: 'che_github_verification', ok: false });
+          const request_id = crypto.randomUUID();
+          const requests = [...prNumbers.map((number) => ({ operation: `pulls/${number}`, number })), ...(handoffRead ? [{ operation: 'read_live_handoff' }] : [])];
+          const answers = [];
+          const receipts = [];
+          for (const lookup of requests) {
+            const { number, operation } = lookup;
+            const source = `https://api.github.com/repos/${this.env.CHE_GITHUB_REPO || 'unconfigured'}/${number ? operation : 'git/ref/heads/che-mailbox'}`;
+            const { result, receipt } = await executeWithReceipt({
+              tool: 'github', operation, source, request_id,
+              run: () => number ? selfUpdateStatus(this.env, number) : readLiveHandoff(this.env),
+              verify: (value) => value?.status === 200,
+              response: (value) => { const { text: _sourceText, ...record } = value; return record; },
+            });
+            receipts.push(receipt);
+            await recordReceipt(this.ctx.storage, { ...receipt, key: `execution:${receipt.invocation_id}` });
+            if (receipt.status !== 'success') {
+              answers.push(`I could not verify ${number ? `PR #${number}` : 'the live handoff'} from GitHub. ${result?.detail || receipt.error} No repository status is established by an old memory or model response.`);
+            } else if (number) {
+              answers.push(`GitHub reports PR #${result.number} is ${result.state}.${result.merge_commit_sha ? ` Merge commit: ${result.merge_commit_sha}.` : ''} Head commit: ${result.head_sha}. CI: ${result.ci}. This lookup does not establish production deployment or iPhone delivery.`);
+            } else {
+              // Preserve source text exactly without endorsing its assertions.
+              answers.push(`Retrieved ${result.path} from ${result.branch} at ${result.head_sha}. This is recorded handoff text, not independently verified release status; live GitHub records override it.\n${result.checkpoint && result.checkpoint.length <= 24000 ? result.checkpoint : `No bounded Current position section was available; read the pinned source: ${result.source}`}`);
+            }
+          }
+          return ndjsonReply(answers.join('\n'), { source: handoffRead ? 'che_live_handoff' : 'che_github_verification', ok: receipts.every((r) => r.status === 'success'), execution_receipts: receipts, request_id });
+        }
+
         const directRepositoryInspection = repositoryInspectionIntent(message);
         const recentRepositoryEvidenceRequest = [...ownerHistory]
           .reverse()
@@ -10528,6 +10568,7 @@ export class CheState extends DurableObject {
           ? body.plugin_tools.filter((item) => item && typeof item === 'object').slice(0, 30)
           : [];
         const skillResults = [];
+        const executionRequestId = crypto.randomUUID();
         // Only spend an AI call on tool planning when the message plausibly
         // needs one of the installed tools (saves ~1-2s on ordinary chat).
         const toolWords = new Set(pluginTools.flatMap((tool) => `${tool.plugin || ''} ${tool.plugin_name || ''} ${tool.name || ''} ${tool.description || ''}`
@@ -10538,7 +10579,7 @@ export class CheState extends DurableObject {
         for (let round = 0; round < 2 && pluginTools.length && toolsLikelyNeeded; round++) {
           const choice = await planPluginCall(this.env, this.env.CHE_FAST_MODEL || FAST_MODEL, message, pluginTools, skillResults);
           if (!choice) break;
-          const outcome = await runPluginTool(choice.tool, choice.params, choice.tool.permissions);
+          const outcome = await runPluginTool(choice.tool, choice.params, choice.tool.permissions, fetch, executionRequestId);
           skillResults.push({
             plugin: String(choice.tool.plugin_name || choice.tool.plugin || ''),
             tool: String(choice.tool.name || ''),
@@ -10546,7 +10587,9 @@ export class CheState extends DurableObject {
             ok: Boolean(outcome.ok),
             data: outcome.data ?? null,
             error: outcome.error || '',
+            execution_receipt: outcome.execution_receipt,
           });
+          await recordReceipt(this.ctx.storage, { ...outcome.execution_receipt, key: `execution:${outcome.execution_receipt.invocation_id}` });
           if (!outcome.ok) break;
         }
         const pluginInstructions = Array.isArray(body.plugin_instructions)
@@ -11162,7 +11205,7 @@ export class CheState extends DurableObject {
           })),
         ];
         // Final owner-facing boundary: keep internal provider/model failover chatter out of chat and TTS.
-        reply = sanitizeOwnerText(reply, { truncate: false });
+        reply = guardExecutionClaims(sanitizeOwnerText(reply, { truncate: false }), { message: rawMessage, receipts: skillResults.map((r) => r.execution_receipt) }).text;
         // This answer's own receipt, keyed to its text, for "how do you know that?".
         await recordAnswerEvidence(this.ctx.storage, reply, answerReceipt, { attributions_removed: attribution.removed.length });
         // Sentence-sized deltas: the Flutter client paints/speaks the first
@@ -11173,6 +11216,8 @@ export class CheState extends DurableObject {
             type: 'done',
             model,
             route: needsStrongModel ? 'quality' : 'fast',
+            request_id: executionRequestId,
+            execution_receipts: skillResults.map((r) => r.execution_receipt),
             // What the source check did: articles opened by research, pages
             // backing the reply, sentences removed as unverifiable.
             news_articles: Array.isArray(research?.articles) ? research.articles.filter((a) => a.ok).length : 0,

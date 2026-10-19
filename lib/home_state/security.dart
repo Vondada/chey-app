@@ -1152,37 +1152,9 @@ extension _CheHomeSecurity on _CHEHomeState {
     final clean = text.trim();
     if (clean.isEmpty || !mounted) return;
 
-    _set(() {
-      final assistantIndex = _realtimeAssistantIndex;
-      if (assistantIndex != null &&
-          assistantIndex >= 0 &&
-          assistantIndex < messages.length) {
-        messages.insert(assistantIndex, {'role': 'user', 'text': clean});
-        _realtimeAssistantIndex = assistantIndex + 1;
-      } else {
-        messages.add({'role': 'user', 'text': clean});
-      }
-    });
-    _scrollToBottom();
-
-    unawaited(_controlAutonomy(clean));
-    unawaited(_observeRealtimeTurn(clean, itemId));
-  }
-
-  Future<void> _observeRealtimeTurn(String message, String? itemId) async {
-    if (_deviceToken == null || cheAgentBaseUrl.isEmpty) return;
-    try {
-      await http
-          .post(
-            Uri.parse('$cheAgentBaseUrl/api/realtime/observe'),
-            headers: _authHeaders,
-            body: jsonEncode({
-              'message': message,
-              'item_id': itemId,
-            }),
-          )
-          .timeout(const Duration(seconds: 8));
-    } catch (_) {}
+    // Use the same intake, authorization, streaming guard and TTS as typing.
+    controller.text = clean;
+    unawaited(sendMessage(fromVoice: true));
   }
 
   void _onRealtimeAssistantTranscript(

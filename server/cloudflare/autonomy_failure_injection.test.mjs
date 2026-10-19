@@ -607,7 +607,7 @@ function fakeRepo({ head = 'base2', fileShas = {}, existingBranch = false, prs =
     if (method === 'GET' && path.startsWith('/pulls?state=all')) return reply(prs);
     if (method === 'POST' && path === '/pulls') {
       if (failPr) return reply({ message: 'A pull request already exists' }, failPr);
-      return reply({ number: 9, html_url: 'u9', head: { sha: 'h9' } }, 201);
+      return reply({ number: 9, html_url: 'u9', head: { sha: 'cccccccccccccccccccccccccccccccccccccccc' } }, 201);
     }
     if (method === 'GET' && /^\/pulls\/\d+$/.test(path)) return reply(pr);
     if (method === 'GET' && /^\/pulls\/\d+\/files/.test(path)) return reply([{ filename: 'server/cloudflare/worker.js' }]);
@@ -661,45 +661,45 @@ test('GitHub network failure while opening a PR is temporary (class B), never a 
   assert.equal(out.retryable, true);
 });
 
-const OPEN_PR = (extra = {}) => ({ number: 9, html_url: 'u9', state: 'open', merged: false, draft: true, mergeable: true, mergeable_state: 'clean', node_id: 'N', title: 'CHE update: x', head: { sha: 'h9', ref: 'che/update-abc' }, base: { sha: 'b9' }, ...extra });
+const OPEN_PR = (extra = {}) => ({ number: 9, html_url: 'u9', state: 'open', merged: false, draft: true, mergeable: true, mergeable_state: 'clean', node_id: 'N', title: 'CHE update: x', head: { sha: 'cccccccccccccccccccccccccccccccccccccccc', ref: 'che/update-abc' }, base: { sha: 'b9' }, ...extra });
 
 test('CI classification: a check that also fails on base is pre-existing, not this change', async () => {
   const { fetcher } = fakeRepo({ pr: OPEN_PR(), checks: {
-    h9: [{ name: 'Workers Builds: chey-app', status: 'completed', conclusion: 'failure' }, { name: 'analyze', status: 'completed', conclusion: 'success' }],
+    cccccccccccccccccccccccccccccccccccccccc: [{ name: 'Workers Builds: chey-app', status: 'completed', conclusion: 'failure' }, { name: 'analyze', status: 'completed', conclusion: 'success' }],
     b9: [{ name: 'Workers Builds: chey-app', status: 'completed', conclusion: 'failure' }],
   } });
   const status = await selfUpdateStatus(E, 9, fetcher);
   assert.equal(status.ci, 'passed');
   assert.deepEqual(status.preexisting_failed_checks, ['Workers Builds: chey-app']);
-  const { fetcher: f2 } = fakeRepo({ pr: OPEN_PR(), checks: { h9: [{ name: 'Worker tests', status: 'completed', conclusion: 'failure' }] } });
+  const { fetcher: f2 } = fakeRepo({ pr: OPEN_PR(), checks: { cccccccccccccccccccccccccccccccccccccccc: [{ name: 'Worker tests', status: 'completed', conclusion: 'failure' }] } });
   const broken = await selfUpdateStatus(E, 9, f2);
   assert.equal(broken.ci, 'failed');
   assert.deepEqual(broken.failure_classes, ['tests']);
 });
 
 test('merge requires CI, a CHE branch, no conflict, and pins the checked head; Worker merges trigger deploy', async () => {
-  const green = { h9: [{ name: 'analyze', status: 'completed', conclusion: 'success' }] };
+  const green = { cccccccccccccccccccccccccccccccccccccccc: [{ name: 'analyze', status: 'completed', conclusion: 'success' }] };
   const { calls, fetcher } = fakeRepo({ pr: OPEN_PR(), checks: green });
   const merged = await mergeSelfUpdatePr(E, 9, fetcher);
   assert.equal(merged.status, 200, merged.detail);
   const put = calls.find((c) => c.method === 'PUT');
-  assert.equal(put.body.sha, 'h9');
+  assert.equal(put.body.sha, 'cccccccccccccccccccccccccccccccccccccccc');
   assert.match(put.body.commit_title, /\[worker-deploy\]$/);
   assert.equal(merged.worker_deploy, true);
 
-  const running = await mergeSelfUpdatePr(E, 9, fakeRepo({ pr: OPEN_PR(), checks: { h9: [{ name: 'analyze', status: 'in_progress' }] } }).fetcher);
+  const running = await mergeSelfUpdatePr(E, 9, fakeRepo({ pr: OPEN_PR(), checks: { cccccccccccccccccccccccccccccccccccccccc: [{ name: 'analyze', status: 'in_progress' }] } }).fetcher);
   assert.equal(running.retryable, true);
   // No check has reported yet: that is CI not started, never a pass. Nothing is merged.
-  const unstarted = fakeRepo({ pr: OPEN_PR(), checks: { h9: [] } });
+  const unstarted = fakeRepo({ pr: OPEN_PR(), checks: { cccccccccccccccccccccccccccccccccccccccc: [] } });
   const early = await mergeSelfUpdatePr(E, 9, unstarted.fetcher);
   assert.equal(early.status, 409);
   assert.equal(early.retryable, true);
   assert.match(early.detail, /^CI is still running/, 'the spoken merge path queues the merge-after-CI job');
   assert.equal(early.ci, undefined, 'not reported as a CI failure, so no repair starts');
   assert.ok(!unstarted.calls.some((c) => c.method === 'PUT'), 'nothing merged before any check reported');
-  const red = await mergeSelfUpdatePr(E, 9, fakeRepo({ pr: OPEN_PR(), checks: { h9: [{ name: 'Worker tests', status: 'completed', conclusion: 'failure' }] } }).fetcher);
+  const red = await mergeSelfUpdatePr(E, 9, fakeRepo({ pr: OPEN_PR(), checks: { cccccccccccccccccccccccccccccccccccccccc: [{ name: 'Worker tests', status: 'completed', conclusion: 'failure' }] } }).fetcher);
   assert.equal(red.status, 409);
-  const foreign = await mergeSelfUpdatePr(E, 9, fakeRepo({ pr: OPEN_PR({ head: { sha: 'h9', ref: 'feature/human' } }), checks: green }).fetcher);
+  const foreign = await mergeSelfUpdatePr(E, 9, fakeRepo({ pr: OPEN_PR({ head: { sha: 'cccccccccccccccccccccccccccccccccccccccc', ref: 'feature/human' } }), checks: green }).fetcher);
   assert.equal(foreign.status, 403);
   const conflict = await mergeSelfUpdatePr(E, 9, fakeRepo({ pr: OPEN_PR({ mergeable: false, mergeable_state: 'dirty' }), checks: green }).fetcher);
   assert.equal(conflict.merge_conflict, true);
