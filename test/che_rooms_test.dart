@@ -124,6 +124,10 @@ void main() {
     await tester.tap(find.text('Other charts (optional)'));
     await tester.pumpAndSettle();
     expect(find.byType(CheLiveChartPanel), findsNothing);
+    // Secondary market research stays out of the way until requested.
+    await tester.ensureVisible(find.text('Market research & tools'));
+    await tester.tap(find.text('Market research & tools'));
+    await tester.pumpAndSettle();
     // The quote panels follow the CHE paper chart and optional charts.
     for (var i = 0; i < 12 && find.text('6123', skipOffstage: false).evaluate().isEmpty; i++) {
       await tester.drag(find.byType(ListView).first, const Offset(0, -300));
@@ -315,6 +319,9 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
     // The CHE paper chart sits above the delayed index panels.
+    await tester.ensureVisible(find.text('Market research & tools'));
+    await tester.tap(find.text('Market research & tools'));
+    await tester.pumpAndSettle();
     for (var i = 0; i < 12 && find.text('2.00', skipOffstage: false).evaluate().isEmpty; i++) {
       await tester.drag(find.byType(ListView).first, const Offset(0, -300));
       await tester.pump();
