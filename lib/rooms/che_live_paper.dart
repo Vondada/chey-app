@@ -52,6 +52,7 @@ class _CheLivePaperPanelState extends State<CheLivePaperPanel> {
   String _error = '';
   String _status = '';
   bool _busy = false;
+  bool _showFeedDetails = false;
   Timer? _timer;
   final Set<String> _open = {};
 
@@ -160,31 +161,48 @@ class _CheLivePaperPanelState extends State<CheLivePaperPanel> {
     final backtest = d['backtest'] is Map ? Map<String, dynamic>.from(d['backtest'] as Map) : null;
 
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      Row(children: [
-        const Expanded(child: Text('LIVE PAPER TRADING', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w900, letterSpacing: 1.2))),
-        _badge('PAPER', _up, label: 'Account: paper only, no real money'),
-        const SizedBox(width: 6),
-        _badge(status, statusColor, label: 'Market data: $status'),
-      ]),
+      const Text('CHE PAPER CHART', style: TextStyle(color: Colors.white, fontSize: 21, fontWeight: FontWeight.w900)),
       const SizedBox(height: 6),
+      Wrap(spacing: 8, runSpacing: 6, crossAxisAlignment: WrapCrossAlignment.center, children: [
+        _badge('PAPER', _up, label: 'Simulated trades; no real money'),
+        _badge(status, statusColor, label: 'Market data: $status'),
+        Text('Engine ${enabled ? 'running' : 'stopped'}', style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w700)),
+      ]),
+      const SizedBox(height: 8),
       Semantics(
         liveRegion: false,
         child: Text(
-          '${feed['provider_symbol'] ?? 'MNQ'} · $contract · ${feed['provider'] ?? 'no feed yet'} · last bar ${_clock(feed['last_bar_time'])}'
-          '${lagMin == null ? '' : ' (about $lagMin min old)'} · market $session · engine ${enabled ? 'ON' : 'OFF'}',
-          style: const TextStyle(color: _dim, fontSize: 14),
+          '${feed['provider_symbol'] ?? 'MNQ'} · $contract · 5-minute candles\n'
+          'Last closed bar: ${_clock(feed['last_bar_time'])}${lagMin == null ? '' : ' · about $lagMin min old'}\n'
+          'Source: ${feed['provider'] ?? 'not connected'} · market $session',
+          style: const TextStyle(color: Colors.white70, fontSize: 15, height: 1.45),
         ),
       ),
-      if (status != 'LIVE') Padding(
-        padding: const EdgeInsets.only(top: 4),
-        child: Text('${d['feed_blocker'] ?? ''}${feed['error'] != null ? ' Last error: ${feed['error']}.' : ''}', style: const TextStyle(color: _gold, fontSize: 13)),
-      ),
+      if (status != 'LIVE') ...[
+        const SizedBox(height: 8),
+        const Text(
+          'Prices are delayed. The chart and paper fills update from recorded bars, not a live CME quote.',
+          style: TextStyle(color: _gold, fontSize: 15, fontWeight: FontWeight.w700, height: 1.35),
+        ),
+        TextButton.icon(
+          onPressed: () => setState(() => _showFeedDetails = !_showFeedDetails),
+          icon: Icon(_showFeedDetails ? Icons.expand_less : Icons.info_outline),
+          label: Text(_showFeedDetails ? 'Hide live-feed requirements' : 'Why are prices delayed?'),
+        ),
+        if (_showFeedDetails)
+          Text('${d['feed_blocker'] ?? 'A real-time market-data subscription and verified broker feed are required.'}'
+            '${feed['error'] == null ? '' : ' Last error: ${feed['error']}.'}',
+            style: const TextStyle(color: _dim, fontSize: 14, height: 1.4)),
+      ],
+      const SizedBox(height: 4),
+      Text('Chart refreshes every ${widget.refresh.inSeconds} seconds when open; new candles appear only when the source supplies a closed bar.',
+        style: const TextStyle(color: _dim, fontSize: 13)),
       const SizedBox(height: 10),
       Semantics(
         label: 'Candlestick chart of ${feed['provider_symbol'] ?? 'MNQ'} five-minute bars with paper entries, exits, stops and targets marked. '
             '${positions.isEmpty ? 'No open position.' : '${positions.length} open positions.'} Ask CHE "show the chart where you entered" to hear the levels.',
         excludeSemantics: true,
-        child: SizedBox(height: 260, child: CustomPaint(painter: _PaperChartPainter(d))),
+        child: SizedBox(height: math.max(300.0, MediaQuery.sizeOf(context).height * 0.36), child: CustomPaint(painter: _PaperChartPainter(d))),
       ),
       const SizedBox(height: 10),
       Wrap(spacing: 8, runSpacing: 8, children: [
@@ -205,17 +223,29 @@ class _CheLivePaperPanelState extends State<CheLivePaperPanel> {
       if (_status.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 6), child: Text(_status, style: const TextStyle(color: Colors.white, fontSize: 16))),
       const SizedBox(height: 12),
       GridView.count(
-        crossAxisCount: 3, shrinkWrap: true, physics: const NeverScrollableScrollPhysics(), mainAxisSpacing: 8, crossAxisSpacing: 8, childAspectRatio: 1.25,
+        crossAxisCount: 2, shrinkWrap: true, physics: const NeverScrollableScrollPhysics(),
+        mainAxisSpacing: 8, crossAxisSpacing: 8, childAspectRatio: 2.0,
         children: [
           _stat('Closed trades', '$n'),
-          _stat('Won / lost', '${totals['wins'] ?? 0} / ${totals['losses'] ?? 0}'),
           _stat('Win rate', totals['win_rate'] == null ? '—' : '${totals['win_rate']}%'),
           _stat('Net after costs', _money(totals['net_pnl']), color: (_num(totals['net_pnl']) ?? 0) >= 0 ? _up : _down),
-          _stat('Profit factor', '${totals['profit_factor'] ?? '—'}'),
-          _stat('Expectancy', totals['expectancy_r'] == null ? '—' : '${totals['expectancy_r']} R'),
-          _stat('Max drawdown', _money(totals['max_drawdown'])),
           _stat('Open now', '${positions.length}'),
-          _stat('Signals', '${counts['signals'] ?? 0}'),
+        ],
+      ),
+      ExpansionTile(
+        title: const Text('More performance numbers', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700)),
+        children: [
+          GridView.count(
+            crossAxisCount: 2, shrinkWrap: true, physics: const NeverScrollableScrollPhysics(),
+            mainAxisSpacing: 8, crossAxisSpacing: 8, childAspectRatio: 2.0,
+            children: [
+              _stat('Won / lost', '${totals['wins'] ?? 0} / ${totals['losses'] ?? 0}'),
+              _stat('Profit factor', '${totals['profit_factor'] ?? '—'}'),
+              _stat('Expectancy', totals['expectancy_r'] == null ? '—' : '${totals['expectancy_r']} R'),
+              _stat('Max drawdown', _money(totals['max_drawdown'])),
+              _stat('Signals', '${counts['signals'] ?? 0}'),
+            ],
+          ),
         ],
       ),
       if (n < minTrades) Padding(
@@ -237,6 +267,10 @@ class _CheLivePaperPanelState extends State<CheLivePaperPanel> {
             trailing: Text(_money(p['unrealized']), style: TextStyle(color: (_num(p['unrealized']) ?? 0) >= 0 ? _up : _down, fontWeight: FontWeight.w800)),
           ),
         ),
+      ExpansionTile(
+        title: const Text('Strategies', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800)),
+        subtitle: const Text('Review forward-paper strategy results', style: TextStyle(color: _dim, fontSize: 14)),
+        children: [
       const SizedBox(height: 12),
       const Text('Strategies (forward paper)', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800)),
       if (ranking.isEmpty) const Padding(padding: EdgeInsets.symmetric(vertical: 6), child: Text('No strategy has closed a trade yet.', style: TextStyle(color: _dim))),
@@ -253,10 +287,22 @@ class _CheLivePaperPanelState extends State<CheLivePaperPanel> {
             ]),
           ),
         ),
+        ],
+      ),
+      ExpansionTile(
+        title: const Text('Trade history', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800)),
+        subtitle: Text('$n closed trades · select a trade for its receipt', style: const TextStyle(color: _dim, fontSize: 14)),
+        children: [
       const SizedBox(height: 12),
       Text('Trade history (${trades.length})', style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800)),
       if (trades.isEmpty) const Padding(padding: EdgeInsets.symmetric(vertical: 6), child: Text('No paper trade has closed yet. Each one appears here with its receipt the moment it is recorded.', style: TextStyle(color: _dim))),
       for (final t in trades.take(60)) _tradeTile(t),
+        ],
+      ),
+      ExpansionTile(
+        title: const Text('Broker status and backtests', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800)),
+        subtitle: const Text('Connections, requirements and historical tests', style: TextStyle(color: _dim, fontSize: 14)),
+        children: [
       const SizedBox(height: 12),
       const Text('Broker and accounts', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800)),
       Text(
@@ -273,6 +319,8 @@ class _CheLivePaperPanelState extends State<CheLivePaperPanel> {
           Text('${row['name']} · ${row['filter']} · ${row['target_r']}R: ${(row['stats'] as Map?)?['trades'] ?? 0} trades, ${(row['stats'] as Map?)?['expectancy_r'] ?? '—'} R each, net ${_money((row['stats'] as Map?)?['net_pnl'])}',
               style: const TextStyle(color: _dim, fontSize: 13)),
       ],
+        ],
+      ),
       const SizedBox(height: 6),
       Text('${d['isolation'] ?? ''}', style: const TextStyle(color: _dim, fontSize: 12)),
     ]);
