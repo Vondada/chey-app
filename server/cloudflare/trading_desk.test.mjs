@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { confirmLive, deskIntent, deskTick, readDesk, requestLive, setMode, setRiskLimits, setSize, speakDeskStatus, takeAnnouncement, takeTrade, skipTrade, pendingAlert, rememberListed, chooseAccount } from './trading_desk.js';
+import { confirmLive, confirmStockOrder, deskIntent, deskTick, dropStockOrder, readDesk, requestLive, requestStockOrder, setMode, setRiskLimits, setSize, speakDeskStatus, speakStockOrder, speakStockReceipt, stockOrderIntent, takeAnnouncement, takeTrade, skipTrade, pendingAlert, rememberListed, chooseAccount } from './trading_desk.js';
 import { connectLink, handleCallback, placeBracket, connection, renewToken, accountBalance, pickAccount } from './broker_tradovate.js';
 
 const store = () => {
@@ -375,4 +375,108 @@ test('trading intents need the whole request: questions and ordinary sentences a
   assert.deepEqual(deskIntent('check my trading connections'), { kind: 'connections' });
   assert.deepEqual(deskIntent('connect alpaca'), { kind: 'alpaca_setup' });
   assert.deepEqual(deskIntent('how do I connect Alpaca?'), { kind: 'alpaca_setup' });
+});
+
+// ─── Alpaca PAPER stock orders by voice (issue #344) ────────────────────
+
+const stockOrder = (message) => stockOrderIntent(message)?.order;
+
+test('stock orders: the owner\'s phrasings and their unpunctuated voice forms read as one exact order', () => {
+  const aapl = { symbol: 'AAPL', name: '', side: 'buy', qty: 10, type: 'market', limit_price: null };
+  for (const said of ['buy 10 shares of AAPL on Alpaca paper', 'Buy 10 shares of AAPL on Alpaca paper.', 'buy 10 shares of aapl on alpaca paper', 'CHE, buy 10 AAPL in my Alpaca paper account', 'I want to buy 10 shares of AAPL on alpaca paper at market', 'buy 10 shares of a a p l on alpaca paper', "buy 10 shares of AAPL on Alpaca paper but don't place it yet", 'buy ten shares of aapl on alpaca paper and just read it back']) {
+    assert.deepEqual(stockOrder(said), aapl, said);
+  }
+  const msft = { symbol: 'MSFT', name: '', side: 'sell', qty: 5, type: 'limit', limit_price: 410 };
+  for (const said of ['sell 5 MSFT paper at limit 410', 'sell 5 msft paper at limit 410', 'Sell 5 shares of MSFT on Alpaca paper with a limit of $410', 'sell five msft on alpaca paper limit price 410 dollars']) {
+    assert.deepEqual(stockOrder(said), msft, said);
+  }
+  assert.deepEqual(stockOrder('buy ten shares of apple on alpaca paper'), { ...aapl, name: 'Apple' }, 'a company name said aloud is read back with its ticker');
+  assert.equal(stockOrder('buy a hundred shares of TSLA on alpaca paper').qty, 100);
+  assert.equal(stockOrder('buy 1 share of BRK.B on alpaca paper').symbol, 'BRK.B');
+  assert.equal(stockOrder('sell 10 shares of CL on alpaca paper').symbol, 'CL', 'CL with shares is Colgate, not crude oil');
+  assert.equal(stockOrderIntent('buy 10 shares of AAPL on Alpaca paper').paper, true);
+  assert.deepEqual(deskIntent('buy 10 shares of AAPL on Alpaca paper').kind, 'stock_order');
+});
+
+test('stock orders: options, crypto, futures, live, fractions and stops are refused with the reason; other buys keep their routes', () => {
+  for (const [said, why, paper] of [
+    ['buy 1 AAPL call on alpaca paper', /option orders/, true],
+    ['buy 2 SPY 450 puts expiring friday on alpaca paper', /option orders/, true],
+    ['buy 1 AAPL261218C00250000 on alpaca paper', /option orders/, true],
+    ['buy 1 bitcoin on alpaca paper', /not crypto/, true],
+    ['buy 0.1 BTC on alpaca paper', /not crypto/, true],
+    ['buy 2 MNQ on alpaca paper', /does not trade futures/, true],
+    ['buy 1 ES contract on alpaca paper', /does not trade futures/, true],
+    ['buy 10 shares of AAPL on alpaca live', /only to your Alpaca PAPER account/, false],
+    ['buy 10 shares of AAPL on my alpaca account with real money', /only to your Alpaca PAPER account/, false],
+    ['buy 0.5 shares of AAPL on alpaca paper', /whole shares only/, true],
+    ['buy 5000 shares of AAPL on alpaca paper', /1 to 1,000 shares/, true],
+    ['buy 10 shares of AAPL on alpaca paper with a stop at 180', /market or limit orders for one trading day only/, true],
+    ['buy 10 shares of AAPL on alpaca paper and pay my electric bill', /not all of it \("and pay my electric bill"\)/, false],
+    ['buy 1 bitcoin on alpaca paper and then pay rent', /not crypto/, false],
+    ['buy some apple on alpaca', /How many shares of which stock/, false],
+    ['buy 10 shares of it on alpaca paper', /not all of it/, false],
+  ]) {
+    const intent = stockOrderIntent(said);
+    assert.match(intent.refuse, why, said);
+    assert.match(intent.refuse, /Nothing was sent\.$/, said);
+    assert.equal(intent.order, undefined, said);
+    assert.equal(intent.paper, paper, `${said}: only a turn that cannot be real money skips the money hold`);
+  }
+  for (const other of ['buy 10 shares of AAPL', 'buy paper towels', 'buy 10 paper towels', 'paper trade Apple', 'what is alpaca paper trading?', 'sell my old couch', 'yes', 'buy the tickets']) {
+    assert.equal(stockOrderIntent(other), null, other);
+  }
+});
+
+test('stock orders: the read-back names the exact order and the account; the receipt says a fill only when it records one', () => {
+  assert.equal(speakStockOrder({ order: { symbol: 'MSFT', name: '', side: 'sell', qty: 5, type: 'limit', limit_price: 410 } }),
+    'Alpaca PAPER order, sir, no real money: sell 5 shares of MSFT, limit order at $410.00, good for one trading day. Account: Alpaca PAPER. To send it, say "yes, place it" within two minutes; say "no" to drop it. Nothing has been sent yet.');
+  assert.doesNotMatch(speakStockOrder({ order: stockOrder('buy 1 share of AAPL on alpaca paper') }), /do you want me to/i, 'the read-back is not a plain yes question');
+  assert.match(speakStockReceipt({ id: 'abc-123', symbol: 'AAPL', qty: 10, filled_qty: 0, side: 'buy', type: 'market', status: 'accepted' }), /status accepted\. No fill yet/);
+  assert.match(speakStockReceipt({ id: 'abc-123', symbol: 'AAPL', qty: 10, filled_qty: 4, filled_avg_price: 231.5, side: 'buy', type: 'market', status: 'partially_filled' }), /Partly filled so far: 4 of 10 at \$231\.50\./);
+  assert.match(speakStockReceipt({ id: 'abc-123', symbol: 'AAPL', qty: 10, filled_qty: 10, filled_avg_price: 231.5, side: 'buy', type: 'market', status: 'filled' }), /Filled: 10 at \$231\.50\.$/);
+  assert.doesNotMatch(speakStockReceipt({ id: 'x', symbol: 'AAPL', qty: 10, filled_qty: null, side: 'buy', type: 'market', status: 'new' }), /\bFilled\b/);
+  assert.deepEqual(['yes, place it', 'yes place it', 'place it', 'place the order'].map((m) => deskIntent(m)), Array(4).fill({ kind: 'take', place: true }));
+  assert.deepEqual(['no', "no, don't place it", 'dont place it', 'cancel it', 'drop it'].map((m) => deskIntent(m)?.kind), Array(5).fill('stock_no'));
+  assert.equal(deskIntent('yes'), null, 'a bare yes is never an order confirmation by itself');
+  for (const m of ['check my Alpaca paper orders', 'what are my alpaca paper orders', 'did my paper order fill?']) assert.equal(deskIntent(m)?.kind, 'alpaca_orders', m);
+  for (const m of ['what do I need for Tradovate?', 'tradovate steps', 'how do I get Tradovate API access']) assert.equal(deskIntent(m)?.kind, 'tradovate_steps', m);
+});
+
+test('stock orders: sent once only after the yes within two minutes; expiry, no and failures send nothing more', async () => {
+  const s = store();
+  const t0 = Date.parse('2026-10-19T14:30:00Z');
+  const sent = [];
+  const place = async (o) => { sent.push(o); return { ok: true, receipt: { id: 'ord-0042', client_order_id: o.client_order_id, symbol: o.symbol, qty: o.qty, filled_qty: 0, side: o.side, type: o.type, status: 'accepted' } }; };
+  assert.match((await confirmStockOrder(s, { now: t0, place })).reply, /no Alpaca paper order waiting/);
+  const pending = await requestStockOrder(s, stockOrder('buy 10 shares of AAPL on alpaca paper'), t0);
+  assert.match(pending.client_order_id, /^che-[0-9a-f-]{36}$/);
+  assert.equal(sent.length, 0, 'the read-back sends nothing');
+  const placed = await confirmStockOrder(s, { now: t0 + 60_000, place });
+  assert.equal(placed.ok, true);
+  assert.match(placed.reply, /^Sent to Alpaca PAPER, sir: buy 10 shares of AAPL, market order, good for one trading day\. Alpaca's receipt: order ending 0042/);
+  assert.deepEqual(sent, [{ ...pending.order, client_order_id: pending.client_order_id }]);
+  const again = await confirmStockOrder(s, { now: t0 + 61_000, place });
+  assert.equal(again.repeated, true);
+  assert.equal(sent.length, 1, 'a second yes is the same order, never a second one');
+  assert.match((await dropStockOrder(s, t0 + 62_000)) && (await confirmStockOrder(s, { now: t0 + 63_000, place })).reply, /already sent/, 'a no after it was sent leaves the record');
+
+  await requestStockOrder(s, stockOrder('sell 5 MSFT paper at limit 410'), t0);
+  assert.match((await confirmStockOrder(s, { now: t0 + 121_000, place })).reply, /no Alpaca paper order waiting/, 'two minutes and the order is gone');
+  await requestStockOrder(s, stockOrder('sell 5 MSFT paper at limit 410'), t0);
+  assert.equal((await dropStockOrder(s, t0 + 1000)).dropped, true);
+  assert.match((await confirmStockOrder(s, { now: t0 + 2000, place })).reply, /no Alpaca paper order waiting/);
+  assert.equal(sent.length, 1);
+
+  // A refusal from Alpaca is said as Alpaca said it, and a yes again does not resend it.
+  const refusing = async () => ({ ok: false, detail: 'Alpaca\'s paper service did not accept the order: insufficient buying power. Nothing was placed, sir.' });
+  await requestStockOrder(s, stockOrder('buy 900 shares of NVDA on alpaca paper'), t0);
+  assert.match((await confirmStockOrder(s, { now: t0 + 1000, place: refusing })).reply, /insufficient buying power\. Nothing was placed/);
+  let calls = 0;
+  assert.match((await confirmStockOrder(s, { now: t0 + 2000, place: async () => { calls += 1; return { ok: true }; } })).reply, /insufficient buying power.*Ask me again for a new order/);
+  assert.equal(calls, 0);
+  // The desk's other state survives the stock order.
+  await setMode(s, 'sim');
+  assert.equal((await readDesk(s)).mode, 'sim');
+  assert.equal((await readDesk(s)).stock_order.status, 'failed');
 });

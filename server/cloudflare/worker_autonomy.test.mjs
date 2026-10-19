@@ -3626,7 +3626,7 @@ test('trading connections: one view by voice and over HTTP, Alpaca paper keys ne
     assert.equal(ok.ok, true);
     assert.equal(ok.key_last4, '7890');
     assert.doesNotMatch(JSON.stringify(ok), /PKPAPERKEY|pppppppp/, 'the saved pair is never sent back');
-    assert.match(await say('broker status'), /3, Alpaca \(stock paper\): verified\./);
+    assert.match(await say('broker status'), /3, Alpaca \(stock paper\): verified, options level 2, read only\./);
     assert.ok(hosts.length >= 2 && hosts.every((h) => h === 'https://paper-api.alpaca.markets'), hosts.join());
     const keep = await (await api('/api/trading/alpaca/keys', { action: 'remove' })).json();
     assert.match(keep.detail, /needs your confirmation/);
@@ -3666,6 +3666,184 @@ test('an Alpaca key said in chat is refused and never kept anywhere; a Worker se
   assert.equal(blocked.status, 409);
   assert.match((await blocked.json()).detail, /already set as Worker secrets.*nothing was saved/);
   assert.match((await (await api('/api/trading/alpaca/keys', { action: 'remove', confirm: true })).json()).detail, /still uses the Alpaca paper keys set as Worker secrets/);
+});
+
+// Alpaca PAPER stock orders by voice and typing (issue #344), through /api/chat. Every outbound
+// request is recorded: the only host CHE may reach for an order is Alpaca's paper host.
+const PAPER_KEYS = { CHE_ALPACA_PAPER_KEY_ID: 'PKWORKERPAPER1234567', CHE_ALPACA_PAPER_SECRET: 's'.repeat(40) };
+async function stockOwner({ keys = PAPER_KEYS, broker = null } = {}) {
+  const saved = new Map();
+  const model = { calls: 0 };
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', ...keys, AI: { run: async () => { model.calls += 1; throw new Error('no model may answer a broker order'); } } };
+  const { chat } = await pairedChat(env, saved);
+  const calls = [];
+  const original = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push({ url: String(url), origin: new URL(String(url)).origin, method: init.method || 'GET', body: init.body ? JSON.parse(init.body) : null, redirect: init.redirect });
+    const answer = broker ? broker(String(url), init) : null;
+    if (answer) return new Response(JSON.stringify(answer.body), { status: answer.status });
+    throw new TypeError('fetch failed (offline test)');
+  };
+  const say = async (message, extra = {}) => {
+    const raw = await (await chat(message, extra)).text();
+    const lines = raw.trim().split('\n').map((line) => { try { return JSON.parse(line); } catch (_) { return {}; } });
+    return { reply: replyFromNdjson(raw) || lines[0]?.reply || '', done: lines.find((l) => l.type === 'done') || lines[0] || {} };
+  };
+  return { say, saved, calls, model, restore: () => { globalThis.fetch = original; } };
+}
+const acceptOrders = (url, init = {}) => {
+  if (url.includes('/v2/orders?status=all')) return { status: 200, body: [{ id: 'b1f2c3d4-0000-4000-8000-00000000a0a1', symbol: 'AAPL', qty: '10', filled_qty: '10', filled_avg_price: '231.5', side: 'buy', type: 'market', status: 'filled' }] };
+  if (init.method !== 'POST') return null;
+  const o = JSON.parse(init.body);
+  return { status: 200, body: { id: 'b1f2c3d4-0000-4000-8000-00000000a0a1', client_order_id: o.client_order_id, symbol: o.symbol, qty: o.qty, filled_qty: '0', side: o.side, type: o.type, limit_price: o.limit_price || null, status: 'accepted', submitted_at: '2026-10-19T14:31:00Z' } };
+};
+
+test('Alpaca paper stock order by voice: exact read-back, a separate "yes, place it", one order, Alpaca\'s receipt, paper host only (issue #344)', async () => {
+  const o = await stockOwner({ broker: acceptOrders });
+  try {
+    const asked = await o.say('buy 10 shares of AAPL on Alpaca paper');
+    assert.equal(asked.done.source, 'che_trading_desk');
+    assert.notEqual(asked.done.held_for_owner, true, 'no second, vaguer money question before the read-back');
+    assert.equal(asked.reply, 'Alpaca PAPER order, sir, no real money: buy 10 shares of AAPL, market order, good for one trading day. Account: Alpaca PAPER. To send it, say "yes, place it" within two minutes; say "no" to drop it. Nothing has been sent yet.');
+    assert.equal(asked.done.order_sent, false);
+    assert.equal(o.calls.length, 0, 'the read-back reaches no broker');
+    const bare = await o.say('yes');
+    assert.match(bare.reply, /^To send it to Alpaca PAPER, sir, say "yes, place it"\. Say "no" to drop it\. Nothing has been sent yet\.$/);
+    assert.equal(o.calls.length, 0, 'a bare yes sends nothing');
+    const placed = await o.say('yes, place it');
+    assert.equal(placed.done.source, 'che_trading_desk');
+    assert.equal(placed.done.order_sent, true);
+    assert.equal(placed.reply, 'Sent to Alpaca PAPER, sir: buy 10 shares of AAPL, market order, good for one trading day. Alpaca\'s receipt: order ending a0a1, buy 10 AAPL market, status accepted. No fill yet; say "check my Alpaca paper orders" to hear its status later.');
+    assert.doesNotMatch(placed.reply, /\bfilled\b/i, 'no fill is claimed without one on the receipt');
+    const posts = o.calls.filter((c) => c.method === 'POST');
+    assert.equal(posts.length, 1);
+    assert.equal(posts[0].url, 'https://paper-api.alpaca.markets/v2/orders');
+    assert.match(posts[0].body.client_order_id, /^che-[0-9a-f-]{36}$/);
+    assert.deepEqual({ ...posts[0].body, client_order_id: 'id' }, { symbol: 'AAPL', qty: '10', side: 'buy', type: 'market', time_in_force: 'day', client_order_id: 'id' });
+    assert.equal(posts[0].redirect, 'manual');
+    // The phone retries the same "yes" (a dropped reply): the same order, reported again, never sent twice.
+    const retried = await o.say('yes place it');
+    assert.match(retried.reply, /^That order was already sent to Alpaca PAPER, sir, once\. Alpaca's receipt: order ending a0a1/);
+    assert.equal(retried.done.repeated, true);
+    assert.equal(o.calls.filter((c) => c.method === 'POST').length, 1, 'a retried yes is the same order');
+    assert.ok((o.saved.get('che_receipts') || []).some((r) => r.kind === 'paper_order_placed' && r.key === 'alpaca_paper:b1f2c3d4-0000-4000-8000-00000000a0a1'), 'the receipt is recorded');
+    // The fill is said once Alpaca's own order record shows it.
+    assert.equal((await o.say('check my Alpaca paper orders')).reply, 'Your latest Alpaca PAPER orders, as Alpaca reports them, sir: 1, order ending a0a1, buy 10 AAPL market, status filled. Filled: 10 at $231.50.');
+
+    // Unpunctuated speech, a limit order and a sell.
+    const limit = await o.say('sell 5 msft paper at limit 410');
+    assert.match(limit.reply, /^Alpaca PAPER order, sir, no real money: sell 5 shares of MSFT, limit order at \$410\.00, good for one trading day\. Account: Alpaca PAPER\./);
+    await o.say('yes place it');
+    const sell = o.calls.filter((c) => c.method === 'POST')[1].body;
+    assert.deepEqual([sell.symbol, sell.qty, sell.side, sell.type, sell.limit_price], ['MSFT', '5', 'sell', 'limit', '410']);
+    assert.deepEqual([...new Set(o.calls.map((c) => c.origin))], ['https://paper-api.alpaca.markets'], o.calls.map((c) => c.url).join());
+  } finally {
+    o.restore();
+  }
+});
+
+test('Alpaca paper order: "no", "never mind" and two minutes passing all send nothing; Alpaca not set up says so (issue #344)', async () => {
+  const o = await stockOwner({ broker: acceptOrders });
+  try {
+    await o.say('Buy ten shares of Apple on Alpaca paper.');
+    assert.equal(o.saved.get('trading_desk').stock_order.order.symbol, 'AAPL');
+    assert.equal((await o.say('no')).reply, 'Dropped, sir. Nothing was sent to Alpaca PAPER.');
+    assert.doesNotMatch((await o.say('yes, place it')).reply, /^Sent/);
+    assert.match((await o.say('buy 3 shares of NVDA on alpaca paper')).reply, /buy 3 shares of NVDA, market order/);
+    assert.match((await o.say('never mind')).reply, /dropped that/i);
+    assert.doesNotMatch((await o.say('yes, place it')).reply, /^Sent/);
+    // The phone sends the conversation; the owner's own words still decide, with no model reading them.
+    const history = [{ role: 'user', content: 'buy 2 shares of AMD on alpaca paper' }, { role: 'assistant', content: 'Alpaca PAPER order, sir, no real money: buy 2 shares of AMD, market order.' }];
+    await o.say('buy 2 shares of AMD on alpaca paper', { history: history.slice(0, 0) });
+    const before = o.model.calls;
+    assert.equal((await o.say("no, don't place it", { history })).reply, 'Dropped, sir. Nothing was sent to Alpaca PAPER.');
+    assert.equal(o.model.calls, before, 'no model reads a no to a broker order');
+    await o.say('buy 1 share of TSLA on alpaca paper');
+    const desk = o.saved.get('trading_desk');
+    desk.stock_order.asked_at -= 121_000;
+    o.saved.set('trading_desk', desk);
+    assert.equal((await o.say('yes, place it')).reply, 'The Alpaca PAPER order I read back waited more than two minutes, sir, so nothing was sent. Say the order again and I will read it back.');
+    assert.equal(o.calls.length, 0, 'nothing reached Alpaca');
+  } finally {
+    o.restore();
+  }
+  const none = await stockOwner({ keys: {} });
+  try {
+    assert.equal((await none.say('buy 10 shares of AAPL on Alpaca paper')).reply, 'Alpaca paper is not set up yet, sir, so I cannot place that order. Say "connect Alpaca" to hear how. Nothing was sent.');
+    assert.equal(none.saved.get('trading_desk')?.stock_order ?? null, null);
+  } finally {
+    none.restore();
+  }
+});
+
+test('Alpaca paper order: options, crypto, futures, live and odd orders are refused plainly; real purchases keep the money hold (issue #344)', async () => {
+  const o = await stockOwner({ broker: acceptOrders });
+  try {
+    for (const [message, why] of [
+      ['buy 1 AAPL call on Alpaca paper', /^CHE does not place option orders yet, sir/],
+      ['buy 2 spy 450 puts on alpaca paper', /^CHE does not place option orders yet, sir/],
+      ['buy 1 bitcoin on Alpaca paper', /^CHE sends only stock orders to Alpaca paper, sir, not crypto\. Nothing was sent\.$/],
+      ['buy 2 MNQ on alpaca paper', /^Alpaca does not trade futures, sir\..*Tradovate demo orders stay blocked until Tradovate approves API access\. Nothing was sent\.$/],
+      ['sell 5 MSFT on my live Alpaca account', /^CHE sends Alpaca orders only to your Alpaca PAPER account, sir\. Live Alpaca trading is not built/],
+      ['buy 0.5 shares of AAPL on alpaca paper', /whole shares only/],
+      ['buy 5000 shares of AAPL on alpaca paper', /^Choose 1 to 1,000 shares, sir\. Nothing was sent\.$/],
+      ['buy 10 shares of AAPL on alpaca paper with a stop at 180', /market or limit orders for one trading day only/],
+    ]) {
+      const { reply, done } = await o.say(message);
+      assert.match(reply, why, message);
+      assert.equal(done.source, 'che_trading_desk', message);
+      assert.equal(done.order_sent, false, message);
+    }
+    // Live wording keeps the owner's money hold; his yes then hears the refusal, and nothing is sent.
+    const live = await o.say('buy 10 shares of AAPL on Alpaca live with real money');
+    assert.equal(live.done.held_for_owner, true);
+    assert.match((await o.say('yes')).reply, /^CHE sends Alpaca orders only to your Alpaca PAPER account/);
+    // Not a paper order, or more than one request: the money hold asks first, exactly as before.
+    for (const message of ['buy 10 shares of AAPL', 'buy paper towels', 'buy 10 shares of AAPL on Alpaca paper and pay my electric bill']) {
+      assert.equal((await o.say(message)).done.held_for_owner, true, message);
+    }
+    assert.equal(o.calls.length, 0, 'no refusal reaches Alpaca');
+  } finally {
+    o.restore();
+  }
+});
+
+test('Alpaca paper order: a yes after an interrupted send reuses the same request id, which Alpaca accepts once (issue #344)', async () => {
+  const posts = [];
+  const o = await stockOwner({
+    broker: (url, init = {}) => {
+      if (init.method === 'POST') { posts.push(JSON.parse(init.body).client_order_id); return { status: 422, body: { message: 'client_order_id must be unique' } }; }
+      if (url.includes('orders:by_client_order_id')) return { status: 200, body: { id: 'b1f2c3d4-0000-4000-8000-00000000beef', client_order_id: posts[0], symbol: 'AAPL', qty: '2', filled_qty: '2', filled_avg_price: '231.5', side: 'buy', type: 'market', status: 'filled' } };
+      return null;
+    },
+  });
+  try {
+    await o.say('buy 2 shares of AAPL on alpaca paper');
+    const desk = o.saved.get('trading_desk');
+    const id = desk.stock_order.client_order_id;
+    desk.stock_order.status = 'placing'; // the earlier request was cut off after claiming the order
+    o.saved.set('trading_desk', desk);
+    const { reply } = await o.say('yes, place it');
+    assert.deepEqual(posts, [id], 'the same request id, so Alpaca cannot make a second order');
+    assert.match(reply, /order ending beef, buy 2 AAPL market, status filled\. Filled: 2 at \$231\.50\.$/, 'a fill is said because the receipt records it');
+    assert.deepEqual([...new Set(o.calls.map((c) => c.origin))], ['https://paper-api.alpaca.markets']);
+  } finally {
+    o.restore();
+  }
+});
+
+test('trading connections by voice: the Alpaca options level is read only, and Tradovate\'s steps are read as a numbered list (issue #344)', async () => {
+  const o = await stockOwner({ broker: (url) => (url.endsWith('/v2/account') ? { status: 200, body: { account_number: 'PA1234567', status: 'ACTIVE', buying_power: '200000', options_approved_level: 2, options_trading_level: 1 } } : null) });
+  try {
+    assert.match((await o.say('what are my trading connections')).reply, /3, Alpaca \(stock paper\): verified, options level 2, read only\./);
+    const steps = await o.say('what do I need for Tradovate?');
+    assert.match(steps.reply, /^Tradovate requires these steps before CHE can use its API, sir: 1, A funded Tradovate live account with more than 1,000 dollars in it\. 2, The CME market-data agreement, signed inside Tradovate\. 3, Tradovate's paid API Access add-on, which does not include real-time CME data\. 4, An OAuth app that Tradovate registers for CHE;/);
+    assert.match(steps.reply, /Tradovate demo and live orders stay blocked in CHE\. CHE never deposits money, buys the add-on or signs an agreement for you/);
+    assert.doesNotMatch(steps.reply, /tap|click here/i);
+    assert.match((await o.say('tradovate steps')).reply, /^Tradovate requires these steps/);
+  } finally {
+    o.restore();
+  }
 });
 
 test('a chat message too long to take is refused whole, saying so; nothing runs (issue #345)', async () => {
