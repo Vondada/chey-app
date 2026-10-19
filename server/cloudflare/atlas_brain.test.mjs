@@ -293,6 +293,7 @@ test('a numbered answer is graded by its number, recomputed; yes-or-no by the wo
   const liquidity = atlasCard('t-liquidity');
   assert.equal(gradeQuizAnswer(liquidity, 1, 'a buy-side sweep').correct, true);
   assert.notEqual(gradeQuizAnswer(liquidity, 1, 'it traded above 100').correct, true, 'the question\'s own number is not the answer');
+  for (const denied of ['not a sweep', 'it\'s a break, not a sweep', 'no sweep, a break']) assert.notEqual(gradeQuizAnswer(liquidity, 1, denied).correct, true, denied);
   const variables = atlasCard('variables');
   assert.equal(gradeQuizAnswer(variables, 1, 'yes they both see it').correct, true);
   assert.equal(gradeQuizAnswer(variables, 1, 'no').correct, false);

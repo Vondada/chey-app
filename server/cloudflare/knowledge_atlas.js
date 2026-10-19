@@ -1299,7 +1299,8 @@ export function gradeQuizAnswer(c, index, answer) {
   const shown = q.check?.shown || [];
   if (q.check && shown.length && !shown.some((x) => /\d/.test(x))) {
     const heard = ` ${normAnswer(answer)} `;
-    if (shown.every((w) => heard.includes(` ${normAnswer(w)} `))) return { correct: true, method: 'the card\'s own answer', expected };
+    // "Not a sweep" or "a break, not a sweep" names the word to deny it.
+    if (!/ (?:not|no|isnt|never|nor) /.test(heard) && shown.every((w) => heard.includes(` ${normAnswer(w)} `))) return { correct: true, method: 'the card\'s own answer', expected };
   } else if (q.check && FORMULAS[q.check.compute] && owner.length) {
     const result = FORMULAS[q.check.compute](q.check.inputs);
     const want = typeof result === 'object' && result ? Object.values(result) : [result];
