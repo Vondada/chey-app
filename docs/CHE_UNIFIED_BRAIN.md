@@ -78,6 +78,12 @@ graded quiz answers, corrections, exercises and drills) is `atlas_progress`, `ow
 shows both as their own Knowledge Atlas lobe, never as memories. "Reset my progress" tombstones the
 `atlas_progress` records only, after the owner's yes.
 
+Each Worker deploy checks the atlas live (`che-worker-deploy.yml` → "Check CHE's Knowledge Atlas through
+the live Worker", `POST /api/atlas/probe`, the per-deploy token only). It runs on the isolated test CHE of
+the memory check, never the owner's: two lessons, two risk calculations, a quiz answer graded from the
+card's formula, real progress counts, the strategy verdict with no journal, and two counter-cases (a trade
+history question and a held buy). It prints a "Knowledge Atlas" notice that `release_status.mjs` shows.
+
 Significance (`assessSignificance`) is rule-based and explained: every score carries
 its reasons (owner said it, a correction, verified source, relationships, superseded,
 very short). An owner score (`significance.owner_score`) always wins. No model is
