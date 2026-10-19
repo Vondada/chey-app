@@ -414,3 +414,21 @@ test('comprehension audit: an opinion question never starts a job, "start a codi
     assert.equal(repositoryInspectionIntent(text), false, text);
   }
 });
+
+test('a question is never a build by itself: which/what/how ... could/would ... about CHE\'s app is answered, and a build imperative still builds', () => {
+  // The owner's exact question reached a coding job from the phone (REA compare, #356). Questions name no build.
+  for (const text of [
+    'Which of those features could improve your app?', 'which of those features could improve your app', 'What could improve your app?',
+    'Which features would improve your app and which should we add?', 'What could we change in your app?', 'How could your app be improved?',
+  ]) {
+    assert.equal(currentTurnActionPolicy(text).codingJobAllowed, false, text);
+    assert.equal(currentTurnActionPolicy(text).ownerAuthorizedBuild, false, text);
+  }
+  // A build needs an imperative and a target. These keep building, as before.
+  for (const text of [
+    'Build the search feature into your app.', 'Improve your app with the search feature.', 'Can you improve your code so you can create a PR?',
+    'Which features could improve your app? Build the search feature into your app.', 'Implement dark mode in your app.',
+  ]) {
+    assert.equal(currentTurnActionPolicy(text).codingJobAllowed, true, text);
+  }
+});

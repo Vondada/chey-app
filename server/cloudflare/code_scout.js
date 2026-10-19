@@ -144,6 +144,16 @@ export function hypotheticalChange(text) {
     || /\bif\s+(?:you\s+could|i\s+(?:asked|told|wanted)\s+you)\b/i.test(value);
 }
 
+// "Which of those features could improve your app?", "what could we change in CHE?": a question with a modal
+// ("could", "would", "should", "might", "may") about a target. A question is never a build by itself (owner rule,
+// REA compare #356): only a sentence that opens with a build imperative is an order, and the explicit checks in
+// ownerBuildAuthorization already take those.
+function modalQuestion(text) {
+  const value = withoutQuotedText(String(text || '').trim());
+  return /^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:(?:so|and|well|ok(?:ay)?)[,]?\s+)?(?:which|what|how)\b[^.!?;]{0,160}\b(?:could|would|should|might|may)\b/i.test(value)
+    && !/(?:^|[.!?;]\s+)(?:please\s+|now\s+)?(?:build|implement|add|fix|update|improve|change|modify|patch|integrate|install|rewrite|refactor|apply)\b/i.test(value);
+}
+
 function ownerBuildAuthorization(message) {
   const text = withoutQuotedText(String(message || '').trim());
   if (!text || buildProhibition(text)) return false;
@@ -163,6 +173,7 @@ function ownerBuildAuthorization(message) {
     || imperativeImplementation(text)
     || compoundImplementationAuthorization(text);
   if (direct) return true;
+  if (modalQuestion(text)) return false;
 
   // Preserve legitimate natural-language BUILD requests that do not begin
   // with the mutation verb ("study X and implement what you learn", "can you

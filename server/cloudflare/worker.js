@@ -172,7 +172,7 @@ import {
 import { APP_BUILD_KEY, appBuildIntent, appBuildRun, dispatchAppBuild, speakAppBuild } from './app_builds.js';
 import { advanceObjectives, applyMissionEvent, approvalReached, approveNode, awaitingApproval, cancelObjective, createObjective, mutateObjective, replanNode, resolveKnownNodes, retryNode, setObjectivePaused, speakObjective } from './objective_graph.js';
 import { COMMANDS, catalogView, commandById, commandStatus, connectorStatus, describeWorkflow, dispatchPrompt, findSavedWorkflow, normalizeSavedWorkflow, parseSlashCommand, readCommandSpeech, searchCommands, speakCommandList, speakUnavailable, suggestCommands, workflowNodes } from './command_catalog.js';
-import { handleReaRequest, loadInvestigation, reaInvestigationDetail, reaInvestigations } from './rea_runner.js';
+import { handleReaRequest, loadInvestigation, parseReaRequest, reaInvestigationDetail, reaInvestigations } from './rea_runner.js';
 import { LAST_RESULTS_KEY, loadCatalog, resourceChoice, resourceIntent, resultLinks, searchCatalog, speakResults } from './resource_catalogs.js';
 import { fiveLayerIntent, LAYER_RESULTS_KEY, reasoningLayer, runReasoningLayer, speakFiveLayerResults } from './reasoning_exam.js';
 import { AUTONOMY_EXAM, EXAM_RESULTS_KEY, examIntent, examLevel, gradeLevel, mergeExamResult, speakExamResults, ungradableEngineFailure } from './autonomy_exam.js';
@@ -2934,6 +2934,19 @@ export async function dispatchChange(env, body, memory = null, options = {}) {
       const next = handled.ok && (handled.opened || handled.discarded) && options.advanceStudyBuilds ? await options.advanceStudyBuilds().catch(() => null) : null;
       return json({ message: `${handled.message}${next ? ` ${next}` : ''}`, code_review_passed: false, owner_approval_required: false, self_update_action: command.kind, execution_mode: turnPolicy.mode });
     }
+  }
+  // A question about CHE's own app that reads like a change ("improve your app") is not a build. The phone sends
+  // such turns here, not to /api/chat, so REA answers its read-only follow-ups first. A build is never taken from REA here.
+  if (!turnPolicy.codingJobAllowed && options.rea) {
+    const claimed = await Promise.resolve().then(() => options.rea(request)).catch(() => null);
+    if (claimed?.text) return json({
+      message: claimed.text,
+      source: 'che_rea',
+      ok: claimed.ok !== false,
+      ...(claimed.investigation_id ? { rea_investigation: claimed.investigation_id } : {}),
+      code_review_passed: false,
+      owner_approval_required: false,
+    });
   }
   if (!turnPolicy.codingJobAllowed) {
     if (options.answerChatOnly) {
@@ -8134,6 +8147,10 @@ export class CheState extends DurableObject {
         advanceStudyBuilds: () => this.advanceStudyBuilds(),
         batchStudies: () => this.batchStudies(),
         answerChatOnly: (message) => this.answerTerminalChatOnly(message),
+        // REA's read-only answers (a comparison, a feature map, a status). A REA build phrase is never claimed here.
+        rea: (message) => (parseReaRequest(message)?.command === 'build'
+          ? null
+          : handleReaRequest(this.ctx.storage, this.keyEnv || this.env, message, { ...this.reaOptions({ history: [], owner: ownerDevice }), codingBlocked: true })),
         ops: { queueJob: async (fields) => { const fresh = await this.loadData(); const queued = enqueueJob(fresh, fields); await this.ctx.storage.put('che', fresh); await this.scheduleWork(); return queued; } },
       });
       if (path === '/api/chat') {
