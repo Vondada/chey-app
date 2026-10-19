@@ -2179,8 +2179,10 @@ export async function answerCoding(intent, { storage = null, cards = [], referen
       const tail = `${more} "teach me ${c.aliases[0]}" for the lesson.\n${sourceLine(c, `exercise ${intent.index + 1} of ${total}, checked`)}`;
       if (intent.reveal) return out(`The answer, sir: ${answerWords(x)}. ${x.explain}\n${tail}`);
       const { correct, heard } = checkExercise(x, intent.said);
-      if (correct) return out(`Right, sir: ${answerWords(x)}. ${x.explain}\n${tail}`);
-      return out(`Not quite, sir. I heard "${heard}"; the answer is ${answerWords(x)}. ${x.explain}\n${tail}`, false);
+      // `correct` and `item_id` let the atlas record the result in the Brain as owner practice.
+      const graded = { correct: Boolean(correct), item_id: x.id || `exercise-${intent.index + 1}` };
+      if (correct) return { ...out(`Right, sir: ${answerWords(x)}. ${x.explain}\n${tail}`), ...graded };
+      return { ...out(`Not quite, sir. I heard "${heard}"; the answer is ${answerWords(x)}. ${x.explain}\n${tail}`, false), ...graded };
     }
     case 'coding_drill': {
       const list = allDrills(cards);
@@ -2195,10 +2197,11 @@ export async function answerCoding(intent, { storage = null, cards = [], referen
       const tail = `${fenced(d.fixed, d.language)}${pinned}\n${intent.index + 1 < list.length ? 'Say "another drill" for the next one.' : 'That was the last drill.'}\n${sourceLine(dc, `review drill ${intent.index + 1} of ${list.length}, checked`)}`;
       if (intent.reveal) return out(`The bug, sir: ${d.finding}\nThe fix:${tail}`, true, dc);
       const { correct } = checkDrill(d, intent.said);
-      if (correct === null) return out(`I can't judge that one automatically, sir. The finding: ${d.finding}\nThe fix:${tail}`, true, dc);
+      const graded = { correct, item_id: d.id || `drill-${intent.index + 1}` };
+      if (correct === null) return { ...out(`I can't judge that one automatically, sir. The finding: ${d.finding}\nThe fix:${tail}`, true, dc), ...graded };
       return correct
-        ? out(`Right, sir, that's the bug. ${d.finding}\nThe fix:${tail}`, true, dc)
-        : out(`Not quite, sir. The bug: ${d.finding}\nThe fix:${tail}`, false, dc);
+        ? { ...out(`Right, sir, that's the bug. ${d.finding}\nThe fix:${tail}`, true, dc), ...graded }
+        : { ...out(`Not quite, sir. The bug: ${d.finding}\nThe fix:${tail}`, false, dc), ...graded };
     }
     case 'coding_repo':
       return out(await repoText(c, intent.how, storage));

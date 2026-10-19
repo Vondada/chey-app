@@ -11,7 +11,7 @@
 // RECOMMENDATION (what the counts suggest doing), INTERPRETATION (one plain
 // reading, marked as such), UNKNOWN (what the Brain cannot tell).
 
-import { BRAIN_REGIONS, assessSignificance } from './brain_store.js';
+import { BRAIN_REGIONS, WORKER_ORIGINS, assessSignificance } from './brain_store.js';
 
 const DAY_MS = 24 * 3600_000;
 const VERIFY_AFTER_DAYS = 14;
@@ -129,7 +129,8 @@ export function buildDailyReview(store, { now = new Date().toISOString(), since,
   const queued = activity.filter((r) => r.kind === 'queued_request' && ['queued', ''].includes(String(r.source?.status || '')));
   const tasksOther = tasks.length - tasksDone - tasksFailed - tasksLive;
   const hypotheses = activity.filter((r) => ['hypothesis', 'model_opinion'].includes(r.verification) && r.kind !== 'daily_review');
-  const fromPhone = count(activity, (r) => r.origin && !['cloud', 'auditor', 'owner'].includes(r.origin));
+  // The Worker's own writes (the cloud, the auditor, the owner's Worker actions, the Knowledge Atlas) are not the phone's.
+  const fromPhone = count(activity, (r) => r.origin && !WORKER_ORIGINS.includes(r.origin));
   const openConflicts = store.conflicts().length;
   const flagged = Array.isArray(audit?.flagged) ? audit.flagged : [];
   const regions = {};
