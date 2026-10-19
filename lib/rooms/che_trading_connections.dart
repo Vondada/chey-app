@@ -161,9 +161,16 @@ class _CheTradingConnectionsPanelState extends State<CheTradingConnectionsPanel>
     final data = c['data'] is Map ? Map<String, dynamic>.from(c['data'] as Map) : null;
     final feed = data == null || data['label'] == null ? '' : '${data['label']} data from ${data['source'] ?? 'an unnamed source'}${data['lag_minutes'] == null ? '' : ', about ${data['lag_minutes']} minutes behind'}';
     final link = c['open_account'] != null && blocked.isNotEmpty ? '${c['open_account']}' : '';
+    // Tradovate's own steps, numbered as CHE reads them aloud, and what stays blocked meanwhile.
+    final note = '${c['blocked_note'] ?? ''}';
+    final secrets = (c['worker_secrets'] as List?)?.map((e) => '$e').toList() ?? const <String>[];
+    // Alpaca's options level, read only, exactly as Alpaca reported it.
+    final options = c['options'] is Map ? '${(c['options'] as Map)['detail'] ?? ''}' : '';
+    final steps = [for (var i = 0; i < blocked.length; i++) '${i + 1}. ${blocked[i]}'];
     // One VoiceOver item per card (read once), with the Alpaca buttons reachable on their own.
     final label = '${c['name']}: $word${mode.isEmpty ? '' : ', mode $mode'}. ${feed.isEmpty ? '' : '$feed. '}$detail'
-        '${blocked.isEmpty ? '' : ' Needs: ${blocked.join('; ')}.'}${link.isEmpty ? '' : ' Open an account at $link.'}';
+        '${options.isEmpty ? '' : ' $options'}'
+        '${blocked.isEmpty ? '' : ' Steps: ${steps.join(' ')}'}${note.isEmpty ? '' : ' $note'}${link.isEmpty ? '' : ' Open an account at $link.'}';
     return Container(
       margin: const EdgeInsets.only(top: 8),
       padding: const EdgeInsets.all(12),
@@ -181,10 +188,18 @@ class _CheTradingConnectionsPanelState extends State<CheTradingConnectionsPanel>
             ]),
             if (feed.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 4), child: Text(feed, style: const TextStyle(color: _dim, fontSize: 13))),
             if (detail.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 4), child: Text(detail, style: const TextStyle(color: Colors.white70, fontSize: 14))),
-            for (final b in blocked) Padding(padding: const EdgeInsets.only(top: 2), child: Text('• $b', style: const TextStyle(color: _dim, fontSize: 13))),
+            if (options.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 4), child: Text(options, style: const TextStyle(color: Colors.white70, fontSize: 14))),
+            for (final step in steps) Padding(padding: const EdgeInsets.only(top: 2), child: Text(step, style: const TextStyle(color: _dim, fontSize: 13))),
+            if (note.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 4), child: Text(note, style: const TextStyle(color: _dim, fontSize: 13))),
+            if (secrets.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 4), child: SelectableText('Worker secret names: ${secrets.join(', ')}', style: const TextStyle(color: _dim, fontSize: 12))),
             if (link.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 4), child: SelectableText('Open an account: $link', style: const TextStyle(color: _dim, fontSize: 13))),
           ]),
         ),
+        if (c['id'] == 'tradovate' && steps.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: TextButton(onPressed: () => widget.onAsk('What do I need for Tradovate?'), child: const Text('Read the Tradovate steps')),
+          ),
         if (c['id'] == 'alpaca')
           Padding(
             padding: const EdgeInsets.only(top: 8),
