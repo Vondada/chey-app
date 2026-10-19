@@ -97,7 +97,7 @@ const sameResult = (actual, expected, eps = 1e-4) => (typeof expected === 'objec
 // ─── The cards are well formed ────────────────────────────────────────────
 
 test('every coding and trading card is complete from beginner to expert', () => {
-  assert.ok(CODING_N >= 10, 'the ten phase-1 coding cards at least');
+  assert.equal(CODING_N, 10 + ATLAS_CARDS.filter((c) => c.id.startsWith('c-')).length, 'the ten phase-1 coding cards and the coding lane\'s');
   assert.equal(TRADING_N, 10 + ATLAS_TRADING_CARDS.length, 'the ten phase-1 trading cards and the trading lane\'s');
   assert.equal(CODING_N + TRADING_N, ALL_N);
   assert.equal(new Set(ATLAS_CARDS.map((c) => c.id)).size, ALL_N, 'ids are unique');
@@ -314,10 +314,10 @@ test('the numbers written in the explanations are the computed ones, and CHE\'s 
 
 test('every code example runs and returns exactly what its card says', async () => {
   const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor;
-  const coded = ATLAS_CARDS.filter((c) => c.example.kind === 'code');
-  assert.equal(coded.length, 10);
+  // Examples in Python, TypeScript, Dart and SQL are run by atlas_coding.test.mjs.
+  const coded = ATLAS_CARDS.filter((c) => c.example.kind === 'code' && c.example.language === 'javascript');
+  assert.ok(coded.length >= 10, `${coded.length} JavaScript examples`);
   for (const c of coded) {
-    assert.equal(c.example.language, 'javascript');
     const result = await new AsyncFunction(c.example.code)();
     assert.deepEqual(result, c.example.expected, c.id);
     // The spoken description cites the very numbers the code returns.

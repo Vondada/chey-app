@@ -131,7 +131,8 @@ test('the cards enter the Brain once, as curated lessons in Knowledge Atlas fold
     assert.equal(r.kind, 'concept_card', c.id);
     assert.equal(r.verification, 'curated_lesson', `${c.id}: a curated lesson, not owner_attested and not verified_source`);
     assert.equal(r.region, c.domain === 'coding' ? BRAIN_REGIONS.coding : BRAIN_REGIONS.trading);
-    assert.equal(r.path, `Knowledge Atlas/${c.domain === 'coding' ? 'Coding' : 'Trading'}/${c.title}`);
+    // A slash in a title ("input/output") would open a subfolder, so the folder spells it with a dash.
+    assert.equal(r.path, `Knowledge Atlas/${c.domain === 'coding' ? 'Coding' : 'Trading'}/${c.title.replace(/\//g, '-')}`);
     assert.equal(r.source.kind, 'knowledge_atlas');
     assert.match(r.source.provenance, /curated teaching content, not the owner's words/);
     assert.deepEqual(r.links.filter((l) => l.type === 'builds_upon').map((l) => l.to).sort(), c.prerequisites.map((p) => `atlas:${p}`).sort(), `${c.id} prerequisites are edges`);
@@ -153,7 +154,7 @@ test('the cards enter the Brain once, as curated lessons in Knowledge Atlas fold
   assert.equal(after.by_verification.curated_lesson, ATLAS_CARDS.length);
   assert.equal(after.by_verification.owner_attested, before.by_verification.owner_attested, 'no card reads as something the owner said');
   const folders = after.regions.find((r) => r.region === BRAIN_REGIONS.coding).folders.map((f) => f.path);
-  assert.ok(coding.every((c) => folders.includes(`Knowledge Atlas/Coding/${c.title}`)));
+  assert.ok(coding.every((c) => folders.includes(`Knowledge Atlas/Coding/${c.title.replace(/\//g, '-')}`)));
   for (const r of mine) {
     const now = store.get(r.id);
     assert.deepEqual([now.rev, now.hash, now.body, now.verification, now.origin], [r.rev, r.hash, r.body, r.verification, r.origin], `${r.id} untouched`);
@@ -210,6 +211,22 @@ test('with nothing studied, "what have I learned so far" says no lessons recorde
     assert.doesNotMatch(out.reply, /\d+ (?:lessons?|quiz answers?) studied|correct \(/, 'no invented count');
   }
   assert.equal(learningRecords(che.brain).length, 0, 'asking records nothing');
+});
+
+test('a coding exercise or review-drill answer is recorded as owner practice and counted in progress', sqlite, async () => {
+  const che = await owner();
+  const said = async (words, reply) => che.say(words, { history: [{ role: 'user', content: 'earlier' }, { role: 'assistant', content: reply }], keep: false });
+  const set = (await che.say('Give me a coding exercise on binary search', { keep: false })).reply;
+  assert.match((await said('It returns 3.', set)).reply, /^Right, sir: 3\./);
+  assert.match((await said('4', set)).reply, /^Not quite, sir/);
+  const drill = (await che.say('Give me a review drill', { keep: false })).reply;
+  assert.match((await said("It cuts the message silently, so the don't at the end is lost", drill)).reply, /^You named both key ideas, sir: /);
+  const rows = learningRecords(che.brain).filter((r) => ['exercise', 'drill'].includes(r.source.event));
+  // A review finding is never graded "right": it is recorded as not graded.
+  assert.deepEqual(rows.map((r) => `${r.source.event}:${r.source.correct}`).sort(), ['drill:null', 'exercise:false', 'exercise:true']);
+  assert.ok(rows.every((r) => r.verification === 'owner_practice' && /Owner's answer: /.test(r.body)));
+  const progress = await che.say('What have I learned so far in the Knowledge Atlas?', { keep: false });
+  assert.match(progress.reply, /3 practice results, 1 correct of 2 graded \(50%\), 1 not graded/, progress.reply);
 });
 
 test('lessons and graded quiz answers are recorded as owner practice, and read back as real counts', sqlite, async () => {

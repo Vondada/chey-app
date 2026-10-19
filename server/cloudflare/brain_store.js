@@ -947,7 +947,7 @@ export function atlasFolder(card) {
 }
 
 export const ATLAS_PROGRESS_KIND = 'atlas_progress';
-const PRACTICE_LABEL = { lesson: 'Lesson studied', quiz: 'Quiz answer', correction: 'Card correction' };
+const PRACTICE_LABEL = { lesson: 'Lesson studied', quiz: 'Quiz answer', correction: 'Card correction', exercise: 'Coding exercise', drill: 'Review drill' };
 const MAX_PROGRESS_READ = 2000;
 
 /**

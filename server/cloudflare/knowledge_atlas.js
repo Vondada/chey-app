@@ -10,6 +10,7 @@
 // it says "no recorded data yet". Lessons never act: nothing here reaches the trading
 // desk, a broker or any other tool.
 
+import { CODING_CARDS, CODING_FORMULAS, LANGUAGE_NAMES, answerCoding, codingExport, codingIntent, isCodingPractice, withCodingPractice } from './atlas_coding.js';
 import { BRAIN_REGIONS, CheBrainStore, atlasFolder, contentHash, fnv1a32, learningRecords, normalizeRecord, recordLearning, resetLearning } from './brain_store.js';
 import { queryTerms } from './library.js';
 import { classifyOwnerActions } from './owner_action_gate.js';
@@ -36,6 +37,7 @@ const floorLog2 = (n) => { let k = 0; while (2 ** (k + 1) <= n) k += 1; return k
 const fibonacci = (k) => { let a = 0; let b = 1; for (let i = 0; i < k; i += 1) [a, b] = [b, a + b]; return a; };
 
 export const FORMULAS = Object.freeze({
+  ...CODING_FORMULAS,
   triangular: ({ n }) => (n * (n + 1)) / 2,
   binarySearchWorst: ({ n }) => floorLog2(n) + 1,
   fibCalls: ({ n }) => 2 * fibonacci(n + 1) - 1,
@@ -229,8 +231,8 @@ const CODING = [
   card({
     id: 'big-o', domain: 'coding', title: 'Big-O notation', level: 'intermediate',
     summary: 'Big-O describes how the work grows when the input grows.',
-    aliases: ['big o', 'big-o', 'big o notation', 'big-o notation', 'time complexity', 'algorithm complexity', 'algorithmic complexity', 'binary search'],
-    tags: ['algorithms', 'computer science'], prerequisites: ['loops'], related: ['sorting', 'hash-maps', 'recursion'],
+    aliases: ['big o', 'big-o', 'big o notation', 'big-o notation', 'time complexity', 'algorithm complexity', 'algorithmic complexity'],
+    tags: ['algorithms', 'computer science'], prerequisites: ['loops'], related: ['sorting', 'hash-maps', 'recursion', 'c-binary-search'],
     levels: {
       beginner: 'Big-O describes how the work grows when the input grows. O(n) means twice the data takes about twice the time; O(1) means the time stays the same however much data there is; O(n²) means twice the data takes about four times as long.',
       intermediate: 'Count the steps that grow with the input and keep only the fastest-growing term, dropping constants: 3n + 7 is O(n), and two nested loops over n items are O(n²). Binary search halves what is left on every step, so on a sorted list it needs at most the floor of log₂ n, plus 1, comparisons: 10 for a thousand items and 20 for a million.',
@@ -871,7 +873,7 @@ const TRADING = [
 ];
 
 /** Every card, coding first, each domain in curriculum order (the order "what's next" follows). */
-export const ATLAS_CARDS = Object.freeze([...CODING, ...TRADING.map(withLimitations), ...ATLAS_TRADING_CARDS]);
+export const ATLAS_CARDS = Object.freeze([...CODING.map(withCodingPractice), ...CODING_CARDS, ...TRADING.map(withLimitations), ...ATLAS_TRADING_CARDS]);
 const BY_ID = new Map(ATLAS_CARDS.map((c) => [c.id, c]));
 export function atlasCard(id) { return BY_ID.get(String(id || '')) || null; }
 const inDomain = (domain) => ATLAS_CARDS.filter((c) => c.domain === domain);
@@ -891,13 +893,23 @@ function speech(message) {
 const FILLER = new Set(['about', 'on', 'in', 'the', 'a', 'an', 'how', 'what', 'to', 'of', 'me', 'some', 'is', 'are', 'works', 'work', 'means', 'mean', 'concept', 'idea', 'basics', 'basic', 'again', 'now', 'today', 'detail', 'step', 'by', 'more', 'please', 'that', 'this', 'with', 'it', 'its', 'and', 'for', 'python', 'javascript', 'js', 'dart', 'code', 'programming', 'trading', 'futures', 'whole', 'topic', 'lesson', 'card']);
 const stemWord = (w) => (w.length > 3 && w.endsWith('s') && !w.endsWith('ss') ? w.slice(0, -1) : w);
 const words = (text) => String(text || '').toLowerCase().replace(/'/g, '').replace(/[^a-z0-9²]+/g, ' ').trim().split(' ').filter(Boolean);
+// "Teach me Python": a language said on its own, exactly, is the topic ("lang:python"); "recursion in
+// Python" is recursion, and "pythons" (stemmed to a plain word) is not the language.
+const LANGUAGE_WORDS = new Set(['python', 'javascript', 'js', 'dart']);
 /** A topic as the matcher compares it: lower case, no punctuation, no filler words, light singulars. */
+// Only the language's own name counts: "python", "the python language", "python programming", never
+// "this python code" or "that javascript", which ask about some code.
+const LANGUAGE_NAME = /^(?:the )?(python|javascript|js|dart)(?: (?:programming|language|programming language))?$/;
 export function topicKey(text) {
+  const language = LANGUAGE_NAME.exec(words(text).join(' '));
+  if (language) return `lang:${language[1]}`;
   return words(text).filter((w) => !FILLER.has(w)).map(stemWord).join(' ');
 }
+// Titles and aliases only: an id such as "c-python" would reduce to "c" and turn "teach me C" into
+// the Python lesson. An id is still found by its exact spelling.
 const ALIAS_KEYS = new Map();
 for (const c of ATLAS_CARDS) {
-  for (const name of [c.id, c.title, ...c.aliases]) {
+  for (const name of [c.title, ...c.aliases]) {
     const key = topicKey(name);
     if (key && !ALIAS_KEYS.has(key)) ALIAS_KEYS.set(key, c);
   }
@@ -906,8 +918,19 @@ for (const c of ATLAS_CARDS) {
 /** The card a topic names exactly (after filler words are set aside), or null. Never a near guess. */
 export function findAtlasCard(topic) {
   const key = topicKey(topic);
-  return key ? ALIAS_KEYS.get(key) || null : null;
+  return (key ? ALIAS_KEYS.get(key) : null) || BY_ID.get(String(topic || '').trim().toLowerCase()) || null;
 }
+
+// A card's own name, letter for letter: only case, punctuation and a leading "a" or "an" are set aside,
+// so "the deploy" or "my commit" is never an exact name.
+const exactName = (text) => String(text || '').toLowerCase().replace(/[’']/g, '').replace(/[^a-z0-9²+#]+/g, ' ').trim().replace(/^(?:an?) /, '');
+const EXACT_NAMES = new Map();
+for (const c of ATLAS_CARDS) {
+  for (const name of [c.title, ...c.aliases]) if (!EXACT_NAMES.has(exactName(name))) EXACT_NAMES.set(exactName(name), c);
+}
+// Words with common senses outside code: a near match on one of them names a coding card only beside
+// a coding word ("code performance", "caching in python"), never on its own ("explain performance").
+const GENERIC_WORDS = new Set(['inspection', 'performance', 'security', 'architecture', 'profiling', 'latency', 'cache', 'caching', 'stack', 'queue', 'dict', 'dynamic', 'module', 'resumable', 'resuming', 'indentation', 'widget']);
 
 // Whole words only: "trade-offs", "trader-joe's" or "options" inside a longer word never count, so a
 // word that is part of a hyphenated or possessive word is not a domain word.
@@ -929,6 +952,22 @@ const SECOND_ACTION = /(?:,|;|\band\b|\bthen\b|\balso\b|\bplus\b)\s+(?:then\s+|a
 const QUALIFIER = /\s+(?:for|on|in|with|of)\s+(?:an?\s+|the\s+|one\s+)?(?:mnq|nq|es|mes|micros?|minis?|e-?minis?|futures?|contracts?|trades?|stocks?|shares|options?|the market|markets?)$/;
 
 const conceptTopic = (topic) => !PERSONAL.test(topic) && !NOT_A_CONCEPT.test(topic);
+// A topic that is exactly a card's title or alias is that concept, even with a deploy, commit, merge
+// or bug word in it: "teach me deployment", "explain merge vs rebase". Anything else must pass the
+// blocks above, so "the deploy", "the bug in my python code" or "the merge you did" is never a lesson.
+// A trading word never selects a coding card ("the stack in trading", "the database of trades").
+// "The worker", "the checkpoint", "the failover": a part of CHE, which its own routes answer, like an
+// event word. "Teach me checkpoints" or "explain model failover" is the concept.
+const CHE_PART = /^(?:the|this|that|your|che'?s|her)\s+(?:cloudflare\s+)?(?:workers?|checkpoints?|failover|self repair|durable objects?|code index|router|gate|brain|runner|coding runtime)\b/;
+function conceptCard(topic, raw = topic) {
+  const exact = EXACT_NAMES.get(exactName(topic));
+  if (exact) return exact;
+  if (CHE_PART.test(String(raw || '').toLowerCase())) return null;
+  const found = conceptTopic(topic) ? findAtlasCard(topic) : null;
+  if (!found || found.domain !== 'coding') return found;
+  if (TRADING_WORDS.test(raw)) return null;
+  return GENERIC_WORDS.has(topicKey(topic)) && !CODING_WORDS.test(raw) ? null : found;
+}
 
 // "like I'm a beginner", "the expert version", "simply": the depth the owner asked for.
 const LEVEL_PHRASES = [
@@ -1003,6 +1042,10 @@ export function atlasIntent(message, history = [], { explainLevel = '' } = {}) {
   // A trade plan's own prices ("…, stop 17990, target 18030") are not a second request.
   if (!explicit && SECOND_ACTION.test(t.replace(PLAN_PRICES, '')) && !quizReply(t, ctx, raw)) return null;
 
+  // Coding practice (phase 2, atlas_coding.js): exercises, review drills and CHE's own code.
+  const practice = codingIntent(t, history, { cards: ATLAS_CARDS, findCard: conceptCard, topicKey, conceptTopic, explicit });
+  if (practice) return practice;
+
   if (/^(?:open|use|show(?: me)?|go to|bring up|read|what(?:'s| is)? in|whats in)\s+(?:the |my |your |che's )?knowledge atlas(?: page)?$/.test(t)) return { kind: 'overview' };
 
   // Trading calculations and readings of CHE's own records (atlas_trading.js).
@@ -1062,7 +1105,9 @@ export function atlasIntent(message, history = [], { explainLevel = '' } = {}) {
     const wantsCode = /code/.test(example[1]);
     const topic = String(example[2] || '').trim();
     if (!topic || THIS.test(topic)) return ctx.card ? { kind: 'example', card: ctx.card, code: wantsCode } : null;
-    const found = conceptTopic(topic) ? findAtlasCard(topic) : null;
+    const found = conceptCard(topic);
+    // "Show me the code for checkpoints" asks for CHE's own code, not the card's teaching example.
+    if (found?.che_component && wantsCode) return null;
     return found ? { kind: 'example', card: found, code: wantsCode } : null;
   }
 
@@ -1070,7 +1115,7 @@ export function atlasIntent(message, history = [], { explainLevel = '' } = {}) {
   const levelOnly = /^(?:(?:give|show|tell|read) me |let'?s (?:do|try|hear) |switch to |go to |now |and )?(?:the |an? )?(beginner|simple|simpler|basic|easy|easier|intermediate|practical|middle|expert|advanced|hard|harder|full|deeper) (?:version|level|explanation|one|take)(?: (?:of|for|on) (.+))?$/.exec(t);
   const nudge = /^(?:go deeper|deeper|more depth|in more depth|more advanced|go more advanced|harder|level up|make it (?:simpler|easier)|simpler|easier|explain (?:it|that) (?:simpler|more simply|more deeply))$/.exec(t);
   if (levelOnly || nudge) {
-    const named = levelOnly?.[2] && conceptTopic(levelOnly[2]) ? findAtlasCard(levelOnly[2]) : null;
+    const named = levelOnly?.[2] ? conceptCard(levelOnly[2]) : null;
     const target = named || ctx.card;
     if (!target) return null;
     let level = levelOnly ? LEVEL_WORDS[levelOnly[1]] : '';
@@ -1110,6 +1155,8 @@ export function atlasIntent(message, history = [], { explainLevel = '' } = {}) {
     const topic = (ask || what)[1];
     // "What is the spread?", "what's my win rate?": a reading of something, not a lesson.
     if (what && !explicit && /^(?:the|my|your|our|his|today'?s|current|this|that)\b/.test(topic)) return null;
+    // "What is a python" asks about the snake; "what is Python" asks about the language.
+    if (what && /^(?:what(?:'s| is| are)|whats)\s+an?\s/.test(rest) && topicKey(topic).startsWith('lang:')) return null;
     // A bare "what is win rate" asks for CHE's measured numbers, which the evidence route answers.
     if (what && !asked && !explicit && evidenceIntent(raw)) return null;
     return resolveTopic(topic, { kind: 'teach', level: asked || preferred, explicit });
@@ -1120,7 +1167,7 @@ export function atlasIntent(message, history = [], { explainLevel = '' } = {}) {
 
 function resolveTopic(rawTopic, { kind, level = 'beginner', explicit = false }) {
   const topic = rawTopic.replace(QUALIFIER, '').trim();
-  const found = conceptTopic(topic) ? findAtlasCard(topic) : null;
+  const found = conceptCard(topic, rawTopic);
   if (found) return kind === 'teach' ? { kind, card: found, level } : { kind, card: found };
   const purpose = kind === 'quiz' ? 'quiz' : 'teach';
   const domain = domainOf(topic);
@@ -1201,10 +1248,15 @@ export function atlasHiddenAction(message) {
   const raw = String(message || '').replace(RAW_ANSWER_PREFIX, '').trim();
   return raw && raw !== String(message || '').trim() ? raw : answer;
 }
-/** An answer form while an atlas quiz is open: never a speech correction to learn ("number 2 is the bid, not the ask"). */
+/**
+ * An answer while an atlas quiz, exercise or review drill is open: never a speech correction to learn
+ * ("number 2 is the bid, not the ask", "eighty nine not ninety", "the default is not shared").
+ */
 export function atlasQuizAnswerTurn(message, history = []) {
   const ctx = atlasContext(history);
-  return Boolean(ctx.card && ctx.quiz && answerForm(speech(message)));
+  if (ctx.card && ctx.quiz && answerForm(speech(message))) return true;
+  const practice = codingIntent(speech(message), history, { cards: ATLAS_CARDS, findCard: conceptCard, topicKey, conceptTopic });
+  return practice?.kind === 'coding_answer' || practice?.kind === 'coding_drill_answer';
 }
 // A correction names the card, the lesson or a part of it: "the recursion card is wrong", "your lesson on
 // VWAP is wrong, …", "that formula is wrong". "That's wrong, my name is Wes" is about him, not a card.
@@ -1674,6 +1726,17 @@ function teachText(c, level, records) {
 
 /** The reply to an atlasIntent result. Deterministic: records are read, no model is called. */
 export async function answerAtlas(intent, { storage = null, now } = {}) {
+  if (isCodingPractice(intent)) {
+    const reply = await answerCoding(intent, { storage, cards: ATLAS_CARDS, referencesLabel: REFERENCES_LABEL });
+    // A graded exercise or review-drill answer is owner practice, recorded like a quiz answer; a revealed
+    // answer was not attempted, so it records nothing.
+    if (reply && 'correct' in reply && reply.card_id && !intent.reveal) {
+      try {
+        recordAtlasPractice(storage, { card_id: reply.card_id, item_id: reply.item_id, kind: intent.kind === 'coding_answer' ? 'exercise' : 'drill', correct: reply.correct, answer: String(intent.said || '') }, { now });
+      } catch (_) { /* the answer still stands */ }
+    }
+    return reply;
+  }
   if (isTradingAtlasKind(intent?.kind)) return answerTradingAtlas(intent, { storage });
   const c = intent?.card || null;
   // The Brain holds the cards as curated reference and the owner's practice; the first atlas turn
@@ -1740,7 +1803,8 @@ export async function answerAtlas(intent, { storage = null, now } = {}) {
     }
     case 'example': {
       if (intent.code && c.example.kind === 'code') {
-        return out(`The ${c.title} example, sir, in JavaScript. ${c.example.explain}\n\n\`\`\`javascript\n${c.example.code}\n\`\`\`\n${sourceLine(c)}`);
+        const lang = c.example.language || 'javascript';
+        return out(`The ${c.title} example, sir, in ${LANGUAGE_NAMES[lang] || lang}. ${c.example.explain}\n\n\`\`\`${lang}\n${c.example.code}\n\`\`\`\n${sourceLine(c)}`);
       }
       const noCode = intent.code && c.example.kind !== 'code' ? ' This card\'s example is a calculation, not code.' : '';
       return out(`Worked example for ${c.title}, sir.${noCode} ${exampleWords(c)}\n${sourceLine(c)}`);
@@ -1806,12 +1870,12 @@ export function atlasExport() {
     levels: LEVELS,
     domains: DOMAINS,
     references_label: REFERENCES_LABEL,
-    matching: { filler: [...FILLER], numbers: NUMBER_WORDS },
+    matching: { filler: [...FILLER], numbers: NUMBER_WORDS, languages: [...LANGUAGE_WORDS] },
     cards: ATLAS_CARDS.map((c) => ({
       id: c.id, domain: c.domain, title: c.title, level: c.level, summary: c.summary, revision: c.revision, source_kind: c.source_kind,
       aliases: c.aliases, tags: c.tags, prerequisites: c.prerequisites, related: c.related,
       levels: c.levels, analogy: c.analogy, formula: c.formula, example: c.example, quiz: c.quiz.map(({ q, a }) => ({ q, a })),
-      misconceptions: c.misconceptions, limitations: c.limitations || [], che_note: c.che_note, measured: c.measured, sources: c.sources,
+      misconceptions: c.misconceptions, limitations: c.limitations || [], che_note: c.che_note, measured: c.measured, sources: c.sources, ...codingExport(c),
     })),
   };
 }

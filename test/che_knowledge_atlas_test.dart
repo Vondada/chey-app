@@ -53,7 +53,7 @@ void main() {
 
   test('the bundled cards: every coding and trading card has three levels and a quiz', () {
     final atlas = bundled();
-    expect(codingN, greaterThanOrEqualTo(10));
+    expect(codingN, 10 + atlas.cards.where((c) => c.id.startsWith('c-')).length);
     expect(tradingN, 10 + atlas.cards.where((c) => c.id.startsWith('t-')).length);
     expect(codingN + tradingN, allN);
     for (final c in atlas.cards) {
@@ -71,6 +71,17 @@ void main() {
     expect(atlas.next(atlas.byId('recursion')!)?.id, 'hash-maps');
     expect(atlas.next(atlas.byId('sample-size')!)?.id, 't-futures');
     expect(atlas.next(atlas.byId('t-risk-of-ruin')!), isNull);
+    // A language said on its own is the topic; after another topic it is not.
+    expect(atlas.find('python')?.id, 'c-python');
+    expect(atlas.find('recursion in python')?.id, 'recursion');
+    expect(atlas.find('binary search')?.id, 'c-binary-search');
+    // An id is never a topic: "c-python" must not make "C" the Python lesson.
+    for (final other in ['c', 'C++', 'C#', 'c programming', 'pythons', 'this python code', 'the python code', 'this js code', 'this dart code', 'that javascript', 'this python']) {
+      expect(atlas.find(other), isNull, reason: other);
+    }
+    expect(atlas.find('c-python')?.id, 'c-python', reason: 'an id is still found by its exact spelling');
+    expect(atlas.find('the python language')?.id, 'c-python');
+    expect(atlas.find('python programming')?.id, 'c-python');
     // Trading cards state their limitations, shown and read as part of the card; the ICT ones say their evidence is mixed or limited.
     for (final c in atlas.inDomain('trading')) {
       expect(c.limitations, isNotEmpty, reason: c.id);
@@ -90,6 +101,7 @@ void main() {
     expect(atlas.numberOf('five'), 5);
     expect(atlas.numberOf('twenty'), 20);
     expect(atlas.referencesLabel, 'Reference links, not opened or checked by CHE');
+    expect(atlas.languages, (matching['languages'] as List).map((w) => '$w').toSet());
     // Every name of every card finds that card, as in the Worker's own alias test.
     for (final c in atlas.cards) {
       for (final name in [c.id, c.title, ...c.aliases]) {
@@ -210,6 +222,66 @@ void main() {
     await tester.pumpAndSettle();
     expect(asked, ['/learn expectancy']);
     expect(find.text('Your records: no recorded data yet.'), findsOneWidget);
+  });
+
+  testWidgets('coding practice by voice and touch: exercise, answer, next, review drill, with Read aloud parity', (tester) async {
+    final spoken = await open(tester);
+    final say = CheKnowledgeAtlasVoice.handler!;
+    Future<String?> hear(String words) async {
+      final reply = await say(words);
+      await tester.pumpAndSettle();
+      return reply;
+    }
+
+    final card = bundled().byId('c-binary-search')!;
+    expect(card.exercises.length, 4);
+    expect(card.repoExamples.first, startsWith('server/cloudflare/knowledge_atlas.js, binarySearchWorst: '));
+    final lesson = await hear('teach me binary search');
+    expect(lesson, startsWith('Binary search and two pointers, beginner level.'));
+    expect(lesson, contains("In CHE's own code\nserver/cloudflare/knowledge_atlas.js, binarySearchWorst"));
+    expect(lesson, contains('Practice: 4 exercises and 1 review drill.'));
+    final first = await hear('exercise');
+    expect(first, startsWith('Exercise 1 of 4 on Binary search and two pointers.\nWhat does binarySearch([1, 3, 5, 7, 9], 7) return'));
+    expect(first, screen(tester).join('\n'), reason: 'the spoken exercise is the screen');
+    expect(first, isNot(contains('Answer:')), reason: 'the answer waits until asked');
+    final answer = await hear('the answer');
+    expect(answer, contains('Answer: 3. Indexes start at 0'));
+    expect(answer, screen(tester).join('\n'));
+    final second = await hear('next exercise');
+    expect(second, contains('Option 1: 0. Option 2: 1. Option 3: 3. Option 4: 4.'));
+    expect(second, contains('To have an answer checked, ask for this exercise in Chat: say "give me an exercise on lower bound".'), reason: 'the phone never pretends to check an answer');
+    // The practice is the page; the banner only says what changed, and is never the whole exercise.
+    expect(find.text('Exercise 2 of 4 shown.'), findsOneWidget);
+    expect(find.text(second!), findsNothing);
+    final drill = await hear('review drill');
+    expect(drill, startsWith('Review drill 1 of 1 on Binary search and two pointers.\nThe search that never looks at the last item. What is wrong with this code?'));
+    expect(await hear('show the finding'), contains('Finding: high is inclusive'));
+    expect(find.text('Finding shown.'), findsOneWidget);
+    expect(spoken, isEmpty, reason: 'voice replies are returned for Chat to speak; the page itself stays quiet');
+    expect(await hear('back to the card'), startsWith('Binary search and two pointers, beginner level.'), reason: 'back to the card, not the list');
+    // "Quiz me" from an open exercise shows the quiz, not the exercise.
+    await hear('exercise');
+    expect(await hear('quiz me'), startsWith('Quiz on Binary search and two pointers.'));
+    expect(screen(tester).first, 'Quiz on Binary search and two pointers.');
+    expect(await hear('go back'), startsWith('Back to the'));
+    await hear('teach me binary search');
+    // By touch: Read aloud says exactly the practice on screen, and "Show the answer" reveals it.
+    await tester.tap(find.text('Exercise'));
+    await tester.pumpAndSettle();
+    expect(find.text('Exercise 1 of 4 shown.'), findsOneWidget, reason: 'a short status, not the exercise');
+    await tester.tap(find.text('Read aloud'));
+    await tester.pumpAndSettle();
+    expect(spoken.single, screen(tester).join('\n'));
+    // The result banner can cover the bottom of the card; bring the button into view first.
+    await tester.ensureVisible(find.text('Show the answer'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Show the answer'));
+    await tester.pumpAndSettle();
+    expect(screen(tester), contains(startsWith('Answer: 3.')));
+    expect(await hear('what can I do here'), endsWith('8. Exercise. 9. Review drill.'));
+    // A card with no practice says so instead of inventing one.
+    expect(await hear('teach me vwap'), startsWith('VWAP, beginner level.'));
+    expect(await hear('exercise'), 'VWAP has no exercises yet. Say "quiz me" for its quiz.');
   });
 
   testWidgets('VoiceOver and large text: buttons are labelled, nothing overflows at 2x', (tester) async {
