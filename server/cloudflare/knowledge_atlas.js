@@ -1307,8 +1307,12 @@ function deniesOrHedges(answer, cardText, yesNoQuestion) {
   };
   const said = strip(answer);
   const card = strip(cardText);
-  const a = tally(said, [...DENY, ...HEDGE]);
-  const b = tally(card, [...DENY, ...HEDGE]);
+  // "No, it does not" to a question whose answer is no: its denials repeat the no, so only hedges count.
+  const agreesNo = yesNoQuestion && /^no\b/i.test(String(cardText).trim()) && /^(?:no|nope)$/.test(normAnswer(answer).split(/[^a-z]+/).filter(Boolean)[0] || '')
+    && !/\bnot (?:no|yes)\b/.test(normAnswer(answer)); // "no, not no" denies the no itself
+  const words = agreesNo ? HEDGE : [...DENY, ...HEDGE];
+  const a = tally(said, words);
+  const b = tally(card, words);
   return Object.keys(a).some((w) => a[w] > b[w]);
 }
 

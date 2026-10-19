@@ -641,6 +641,23 @@ test('review nits: a phone edit of a card is kept, capped counts say so, and a l
 
 // ─── Re-review of c1ab5c0: the grader judges only what it can, and an answer is never a hidden request ─────
 
+test('a no answer may repeat its no: "no, it doesn\'t" is right where the card says no, and wrong where it says yes', () => {
+  let checked = 0;
+  for (const c of ATLAS_CARDS) {
+    c.quiz.forEach((q, i) => {
+      if (/^no\b/i.test(q.a)) {
+        checked++;
+        assert.equal(gradeQuizAnswer(c, i, "no, it doesn't").correct, true, `${c.id} q${i + 1}`);
+        assert.equal(gradeQuizAnswer(c, i, 'no, it does not').correct, true, `${c.id} q${i + 1}`);
+        assert.equal(gradeQuizAnswer(c, i, 'yes').correct, false, `${c.id} q${i + 1}`);
+        assert.equal(gradeQuizAnswer(c, i, 'no, or maybe yes').correct, null, `${c.id} q${i + 1}: a hedge is still not graded`);
+      }
+      if (/^yes\b/i.test(q.a)) assert.notEqual(gradeQuizAnswer(c, i, 'no, it does not').correct, true, `${c.id} q${i + 1}`);
+    });
+  }
+  assert.ok(checked >= 5, 'the atlas has questions whose answer is no');
+});
+
 test('every quiz question in the atlas passes with its own answer: never graded wrong (all cards, every lane)', () => {
   let checked = 0;
   for (const c of ATLAS_CARDS) {
