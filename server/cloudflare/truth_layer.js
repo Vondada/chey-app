@@ -10,6 +10,7 @@
 
 import { requestNamesAction, storyRequested } from './memory_provenance.js';
 import { isEvidenceRequest } from './recovery_policy.js';
+import { savePackedJson } from './prompt_compaction.js';
 
 export const RECEIPTS_KEY = 'che_receipts';
 // Only execution code owns these objects. JSON from a model, client, memory or
@@ -71,6 +72,14 @@ export async function recordReceipt(storage, receipt) {
   if (!Array.isArray(list)) list = [];
   if (receipt.key && list.some((item) => item.key === receipt.key)) return list.find((item) => item.key === receipt.key);
   const entry = { ...receipt, at: receipt.at || new Date().toISOString() };
+  if (entry.kind === 'tool_execution' && entry.invocation_id) {
+    // Keep the authoritative result losslessly in existing packed storage.
+    // Repeating a large lookup must not overflow the bounded receipt index.
+    const key = `execution_receipt:${entry.invocation_id}`;
+    await savePackedJson(storage, key, entry);
+    entry.response_ref = key;
+    delete entry.verified_response;
+  }
   list.push(entry);
   try { await storage.put(RECEIPTS_KEY, list.slice(-300)); } catch (_) {}
   if (CHANGE_EVENTS.has(entry.kind) && Number(entry.number) > 0) await recordChange(storage, entry);

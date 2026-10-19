@@ -4,6 +4,7 @@ import { readFileSync, writeFileSync, unlinkSync } from 'node:fs';
 import { executeWithReceipt, guardExecutionClaims, isExecutionReceipt } from './truth_layer.js';
 import { runPluginTool } from './plugin_runtime.js';
 import vm from 'node:vm';
+import { loadPackedJson } from './prompt_compaction.js';
 const generated = new URL('./.execution_truth.test.generated.mjs', import.meta.url);
 writeFileSync(generated, readFileSync(new URL('./worker.js', import.meta.url), 'utf8').replace(
   "import { DurableObject } from 'cloudflare:workers';",
@@ -146,6 +147,10 @@ test('successful real boundary lookup overrides old memory and survives restart'
     assert.equal(r.status, 'success');
     assert.equal(r.request_id, out.meta.request_id);
     assert.ok(r.invocation_id && r.source && r.at && r.verified_response);
+    const index = che.saved.get('che_receipts').find((item) => item.invocation_id === r.invocation_id);
+    const persisted = await loadPackedJson(storageFor(che.saved), index.response_ref);
+    assert.deepEqual(persisted.verified_response, r.verified_response);
+    assert.equal(persisted.request_id, r.request_id);
     che.restart();
   }
 });
