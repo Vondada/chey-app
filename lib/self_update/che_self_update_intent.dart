@@ -77,11 +77,11 @@ bool _cheQuestionNotCodingAuthorization(String raw) {
   if (RegExp(
     r'^(?:can|could|would|will)\s+you\s+(?:(?:please|just|kindly)\s+)*(?:implement|integrate|adapt|install|add|upgrade|update|improve|rewrite|refactor|build|change|modify|patch|fix|repair|create|make|start|run|resume|continue|finish)\b',
     caseSensitive: false,
-  ).hasMatch(text)) return false;
+  ).hasMatch(text)) { return false; }
   if (RegExp(
     r'^(?:what|which)\s+(?:i|we)\s+(?:want|need|would\s+like)\b',
     caseSensitive: false,
-  ).hasMatch(text)) return false;
+  ).hasMatch(text)) { return false; }
   final discussion = RegExp(
     r'^(?:(?:what|which|how|why|where|when|who|whether)\b|'
     r'(?:do|does|did|have|has|is|are|was|were|should|shall|can|could|would|will|may|might)\s+(?:you|we|i|they|he|she|it|this|that|these|those|any|anyone|anything|the|your|my|our)\b|'
@@ -89,7 +89,7 @@ bool _cheQuestionNotCodingAuthorization(String raw) {
     r'let\s+me\s+know\s+(?:which|what|whether|how|why)\b)',
     caseSensitive: false,
   ).hasMatch(text);
-  if (!discussion) return false;
+  if (!discussion) { return false; }
   // A genuinely new instruction after a completed question is still an order:
   // "How would you fix it? Now fix the screen in your app."
   final laterOrder = RegExp(
