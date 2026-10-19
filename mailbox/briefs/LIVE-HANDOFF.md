@@ -64,7 +64,18 @@ Then, on GitHub:
 - Next: open focused PR for milestone 1 when the owner is ready (or continue: milestone 2 = scripted multi-agent demo via officeGoal + War Room board wiring + orb-tap deep link to the real task; then Phase B typed memory/provenance).
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
-## 2. Current position (Claude, 2026-10-19 00:35 UTC — #351 (f2992a7) and #352 (5be544d) MERGED and LIVE; five parallel batches running on the owner's "batch and parallel every assignment")
+## 2. Current position (Claude, 2026-10-19 03:10 UTC — OWNER PRIORITY: Knowledge Atlas #346 before the 13:30 UTC New York open; all other batches paused)
+- **Owner priority (2026-10-19 ~03:00 UTC):** finish the Coding + Trading Knowledge Atlas (#346) before 9:30 ET. The owner authorized merging the library changes when green; no trades, spending or bypassed approvals. "Stop working on unrelated features."
+  - **#357** (claude/che-knowledge-atlas, phase 1, 20 cards, route, /learn, iPhone page): CI green, in independent review.
+  - **Phase-2 lanes**, built on #357:
+    - claude/che-atlas-trade: trading cards + atlas_math.js calculators + provenance labels
+    - claude/che-atlas-code: coding cards with real CHE repo examples, exercises, review drills
+    - claude/che-atlas-brain: Brain projection, learning progress, ≤600-character relevant retrieval
+- **Paused, unmerged, safe** (resume after the Atlas):
+  - #353 Studio: WIP 24564c3, both review rounds fixed, needs re-review.
+  - #354 Brain history: WIP bcee186, all four findings fixed, needs re-review. Its dart analyze failure was only missing `flutter pub get`.
+  - #355 broker: 20527e3; blockers B1–B3 open, including a paper "place it" that can reach Tradovate LIVE once Tradovate is configured. **Do not merge as is.**
+  - #356 comprehension audit: 5f5914e; blockers 1–4 open. **Do not merge as is.**
 - **#351 MERGED** (owner: "Yes merge when green") as f2992a7. Deploy run 39180527957: live commit verified, memory 12/12, Command Center 5/5, voice probe passed.
   - It fixes the five #350 iPhone tests plus the voice-choice test.
   - Money/delete holds fail closed. The one exemption: the owner's own plan plus a blanket ban on buying.
