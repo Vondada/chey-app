@@ -46,6 +46,7 @@ const FEED_DETAIL = /\b(?:paper\s+trades?|vwap|data\s+delay|delay(?:ed)?|time\s*
 // An order asked for in the turn belongs to the desk (fundyouredge.js, trading_desk.js); the chart
 // analyzer uses the same test. "Short MNQ" is an order; "short positions" and "short-term" are reads.
 // "Reverse my position", "flatten" and "close my position" are orders too.
+const LATER_COMMAND = /(?:[,.;!?]\s*|\b(?:and|then|also|now)\s+)(?:please\s+)?(?:stop|pause|turn\s+off|halt|end|start|begin|turn\s+on|resume|launch)\s+(?:the\s+|your\s+)?paper[\s-]*trad/i;
 const ORDER_FIRST = /^(?:place|submit|enter|buy|sell|short|go\s+long|go\s+short|take\s+(?:the|a)\s+trade|open\s+a\s+(?:position|trade)|order|trade|prepare|set\s+up|reverse|flatten|close)\b/i;
 export const ORDER_ASK = /\b(?:place|submit|enter|buy|sell|go\s+long|go\s+short|take\s+(?:the|a|this|that)\s+trade|open\s+a\s+(?:position|trade)|reverse|flatten|close\s+(?:out\s+)?(?:my|the|that|this|all)\s+(?:\w+\s+)?(?:positions?|trades?|longs?|shorts?))\b|\bshort\b(?![\s-]*(?:term|positions?|trades?|side)\b)/i;
 
@@ -60,7 +61,9 @@ export function liveIntent(message) {
   const asked = withoutProhibitions(text);
   if (ORDER_ASK.test(withoutProhibitions(text, { only: ORDER_FIRST }))) return null;
   const command = COMMANDS.find(([, re]) => re.test(asked))?.[0];
-  // "Analyze MNQ … and then stop paper trading" is a command too, so the analysis alone does not answer it.
+  // "Analyze MNQ … and then stop paper trading": a start or stop later in the turn is a command these
+  // reads cannot carry out, so the turn goes on to the routes that can ("why did you stop" is a read).
+  if (!command && LATER_COMMAND.test(asked)) return null;
   if (!command && ANALYSIS.test(text) && FEED_DETAIL.test(text)) return { kind: 'analysis' };
   if (OTHER_TOPIC.test(asked)) return null;
   const found = READS.map(([kind, re]) => [kind, text.search(re)]);
