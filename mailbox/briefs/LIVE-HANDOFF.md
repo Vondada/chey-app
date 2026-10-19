@@ -64,7 +64,7 @@ Then, on GitHub:
 - Next: open focused PR for milestone 1 when the owner is ready (or continue: milestone 2 = scripted multi-agent demo via officeGoal + War Room board wiring + orb-tap deep link to the real task; then Phase B typed memory/provenance).
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
-## 2. Current position (Claude, 2026-10-19 ~02:30 UTC — #351 (f2992a7) and #352 (5be544d) MERGED and LIVE; five parallel batches running on the owner's "batch and parallel every assignment")
+## 2. Current position (Claude, 2026-10-19 00:35 UTC — #351 (f2992a7) and #352 (5be544d) MERGED and LIVE; five parallel batches running on the owner's "batch and parallel every assignment")
 - **#351 MERGED** (owner: "Yes merge when green") as f2992a7. Deploy run 39180527957: live commit verified, memory 12/12, Command Center 5/5, voice probe passed.
   - It fixes the five #350 iPhone tests plus the voice-choice test.
   - Money/delete holds fail closed. The one exemption: the owner's own plan plus a blanket ban on buying.
