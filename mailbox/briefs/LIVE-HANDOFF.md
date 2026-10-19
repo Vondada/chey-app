@@ -64,6 +64,13 @@ Then, on GitHub:
 - Next: open focused PR for milestone 1 when the owner is ready (or continue: milestone 2 = scripted multi-agent demo via officeGoal + War Room board wiring + orb-tap deep link to the real task; then Phase B typed memory/provenance).
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
+## 2. Current position (Claude, 2026-10-19 13:45 UTC — PR #356 review round 2: branch `claude/che-comprehension-audit` pushed at 48f5a58, not merged)
+- **Pushed** fast-forward df1acec -> `48f5a58e02ce8b0d72c0925aeff9b7ffd4db23c5`. No merge, no deploy. Flutter check dispatched: run 39261774378.
+- B1: a question never builds (`code_scout.js` questionNotRequest, checked first in ownerBuildAuthorization; `rea_runner.js` turns question-form "add those features into yourself" into a read-only comparison). Builds stay for imperatives and "Can/Could/Would/Will you <verb> ...".
+- N1: the bare-action claim rule (`truth_layer.js`) no longer denies a record that names its source or another actor ("according to your calendar", "per the log", "from Sarah", "by the campaign").
+- Tests: listed files 323/323. Full suite 2259 tests, 2251 pass, 1 fail, 7 skipped, exit 1. The one failure is the known load-sensitive `coding_runtime.test.mjs:353` (PR #369); it passes alone, 23/23.
+- Next: re-review of 48f5a58. Still open: the Dart classifier fix; a voice cancel command for queued coding jobs.
+
 ## 2. Current position (Claude, 2026-10-19 — PR #356 builder: branch `claude/che-comprehension-audit` pushed at df1acec, no PR action, not merged)
 - **Pushed** `claude/che-comprehension-audit` fast-forward c6085c9 -> 46db2f1 (REA compare routing) -> df1acec (claim guard). Head `df1aceccab1d9e1ffaf74e8f4459e9e1e4bfe476`.
 - Routing cause: the owner's "Which of those features could improve your app?" never reached REA. The phone classifier (`lib/self_update/che_self_update_intent.dart` cheSurfaceChange branch) posts it to `/api/change/request`, and `ownerBuildAuthorization` (`code_scout.js`) granted a BUILD from the question. Fixed: `modalQuestion` in `code_scout.js` (a which/what/how question with a modal is not a build); `dispatchChange` in `worker.js` tries REA's read-only answer for non-BUILD turns.
