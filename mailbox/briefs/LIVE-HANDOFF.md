@@ -64,6 +64,13 @@ Then, on GitHub:
 - Next: open focused PR for milestone 1 when the owner is ready (or continue: milestone 2 = scripted multi-agent demo via officeGoal + War Room board wiring + orb-tap deep link to the real task; then Phase B typed memory/provenance).
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
+## 2. Current position (Claude, 2026-10-19 11:22 UTC — Atlas #346 audit fixes: branch `claude/che-audit-atlas` pushed at d7075e1, no PR yet)
+- **Pushed** `claude/che-audit-atlas` at d7075e1, one commit on top of 2065ccf. No PR opened, nothing merged, nothing deployed.
+- `run_checks.sh --all` exit 0: Worker 2085 pass, 7 skipped, 0 fail. An earlier overlapping run filled the root disk; it was killed and the clean run passed.
+- Nine audit defects fixed, each with a test in `server/cloudflare/atlas_audit.test.mjs`: contract sizing answer; "no contract fits"; whole-number refusal for fractions and negatives; bare progress questions go to the Brain; lesson beats evidence for "win rate uncertainty"; evidence win rate falls back to the paper journal; drill by generic word; bare "recovery" alias removed and "ci checks" is not a lesson; reset hold makes no model call.
+- Still open: "risking $25 with a 20 point stop" with no symbol and no "how many" still goes to the model; "how many MNQ can I trade" with no budget or stop still goes to the evidence route; "what did I learn" needs an atlas word.
+- Next: open the PR when the owner asks. Merge and deploy need the owner's authorization (che-release).
+
 ## 2. Current position (Claude, 2026-10-19 08:45 UTC — Atlas #346: #361 and #362 MERGED and LIVE; #360 and #363 in final review; coding gap cards in progress)
 - **#361 MERGED** as 3560898: the Knowledge Atlas deploy probe (`/api/atlas/probe` plus a deploy step).
   - It runs 11 deterministic checks with 0 model calls, on the isolated test CHE only.
