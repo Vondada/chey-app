@@ -364,3 +364,11 @@ test('the reading model sees the late "don\'t" of an earlier long turn, not only
   });
   assert.match(sent, /but don't email Mark until Friday/);
 });
+
+test('a long limit clause keeps its "don\'t" when the text is bounded (review of #352)', () => {
+  const sent = clipKeepingLimits('Draft the reply to Sarah about the quarterly budget review meeting next week with the updated numbers from finance and do not send it to anyone until I have read the whole thing myself tonight', 160);
+  assert.match(sent, /do not send it/);
+  const starred = clipKeepingLimits('Clean up my old photo albums from the trip and the party but never remove the ones I starred last year', 80);
+  assert.match(starred, /never remove/);
+  assert.match(starred, /characters not shown\]$/, 'what was left out at the end is marked');
+});

@@ -128,7 +128,11 @@ export function clipKeepingLimits(text, max, also = null) {
     const head = ranges[0];
     const tail = ranges[ranges.length - 1];
     if (head[1] - head[0] > room) head[1] = head[0] + clip(t.slice(head[0], head[1]), room).length;
-    if (tail[1] - tail[0] > room) tail[0] = tail[1] - t.slice(tail[1] - room, tail[1]).replace(/^\S*\s+/, '').length;
+    // A long end that limits the request keeps its first words, where its "don't" is ("but never
+    // remove the ones I starred" must not become "remove the ones I starred"); any other end keeps its last.
+    const tailIndex = clauses.findIndex(([start]) => start === tail[0]);
+    if (tail[1] - tail[0] > room && rank[tailIndex] === 2) tail[1] = tail[0] + clip(t.slice(tail[0], tail[1]), room).length;
+    else if (tail[1] - tail[0] > room) tail[0] = tail[1] - t.slice(tail[1] - room, tail[1]).replace(/^\S*\s+/, '').length;
   }
   let out = t.slice(ranges[0][0], ranges[0][1]);
   for (let i = 1; i < ranges.length; i++) {
@@ -136,7 +140,8 @@ export function clipKeepingLimits(text, max, also = null) {
     out += gap <= 1 ? ' ' : ` … [${gap - 2} characters not shown] … `;
     out += t.slice(ranges[i][0], ranges[i][1]);
   }
-  return out;
+  const rest = t.length - ranges[ranges.length - 1][1];
+  return rest > 0 ? `${out} … [${rest} characters not shown]` : out;
 }
 
 function editDistance(a, b) {

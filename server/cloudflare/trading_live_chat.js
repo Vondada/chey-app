@@ -48,7 +48,7 @@ const FEED_DETAIL = /\b(?:paper\s+trades?|vwap|data\s+delay|delay(?:ed)?|time\s*
 // "Reverse my position", "flatten" and "close my position" are orders too.
 const LATER_COMMAND = /(?:[,.;!?]\s*|\b(?:and|then|also|now)\s+)(?:please\s+)?(?:stop|pause|turn\s+off|halt|end|start|begin|turn\s+on|resume|launch)\s+(?:the\s+|your\s+)?paper[\s-]*trad/i;
 const ORDER_FIRST = /^(?:place|submit|enter|buy|sell|short|go\s+long|go\s+short|take\s+(?:the|a)\s+trade|open\s+a\s+(?:position|trade)|order|trade|prepare|set\s+up|reverse|flatten|close)\b/i;
-export const ORDER_ASK = /\b(?:place|submit|enter|buy|sell|go\s+long|go\s+short|take\s+(?:the|a|this|that)\s+trade|open\s+a\s+(?:position|trade)|reverse|flatten|close\s+(?:out\s+)?(?:my|the|that|this|all)\s+(?:\w+\s+)?(?:positions?|trades?|longs?|shorts?))\b|\bshort\b(?![\s-]*(?:term|positions?|trades?|side)\b)/i;
+export const ORDER_ASK = /\b(?:place|submit|enter|buy|sell|go\s+long|go\s+short|take\s+(?:the|a|this|that)\s+trade|open\s+a\s+(?:position|trade)|reverse|flatten|close\s+(?:out\s+)?(?:my|the|that|this|all)\s+(?:\w+\s+)?(?:positions?|trades?|longs?|shorts?)|close\s+(?:out\s+)?everything|close\s+out)\b|\bshort\b(?![\s-]*(?:term|positions?|trades?|side)\b)/i;
 
 /** The command in [message], or null. Narrow on purpose: other trading talk keeps its routes.
  *  A turn that asks several reads gets `kinds`, in the order asked; `kind` is the first. */
@@ -66,6 +66,9 @@ export function liveIntent(message) {
   if (!command && LATER_COMMAND.test(asked)) return null;
   if (!command && ANALYSIS.test(text) && FEED_DETAIL.test(text)) return { kind: 'analysis' };
   if (OTHER_TOPIC.test(asked)) return null;
+  // A long turn needs trading words of its own: "my positions on the church committee … help me write
+  // her a note" is not about paper trades (review of #352). Short questions keep the plain reads.
+  if (!command && text.length > 160 && !TRADING_WORDS.test(text) && !/\btrad(?:e|es|ing)\b/i.test(text)) return null;
   const found = READS.map(([kind, re]) => [kind, text.search(re)]);
   if (TRADING_WORDS.test(text)) found.push(['best', text.search(PLAIN_BEST)]);
   const reads = [...new Set(found.filter(([, at]) => at >= 0).sort((a, b) => a[1] - b[1]).map(([kind]) => kind))]
