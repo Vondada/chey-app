@@ -11,14 +11,14 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { CODING_CARDS, CODING_FORMULAS, answerTokens, bigOClass, checkDrill, checkExercise, drillAnswer, excerptFrom, exerciseAnswer } from './atlas_coding.js';
 import { replyFromNdjson } from './brain_memory.js';
 import { loadCodeIndex, makeIndex, _clearCodeIndexCache } from './code_index.js';
 import { currentTurnActionPolicy } from './code_scout.js';
 import { RESUME_BACKOFF_MS, RESUME_LIMIT } from './coding_failover.mjs';
 import { ATLAS_CARDS, FORMULAS, LEVELS, atlasCard, atlasExport, atlasIntent, findAtlasCard } from './knowledge_atlas.js';
-import { backoffMs, strategyFingerprint } from './recovery_policy.js';
+import { backoffMs, idempotencyKey, strategyFingerprint } from './recovery_policy.js';
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const read = (path) => readFileSync(join(ROOT, path), 'utf8');
@@ -203,6 +203,16 @@ test('coding formulas match brute force, simulation or CHE\'s own code', () => {
     }
     assert.ok(Math.abs(CODING_FORMULAS.ciGreen({ p, n }) - green) < 1e-12, `ci ${p} ${n}`);
   }
+  // A flake k times in a row: enumerate every pass/fail outcome of k runs and keep the all-fail one.
+  for (const [p, k] of [[0.1, 3], [0.05, 2], [0.3, 5], [0.5, 1]]) {
+    let allFail = 0;
+    for (let mask = 0; mask < 2 ** k; mask += 1) {
+      let prob = 1;
+      for (let i = 0; i < k; i += 1) prob *= (mask >> i) & 1 ? p : 1 - p;
+      if (mask === 2 ** k - 1) allFail += prob;
+    }
+    assert.ok(Math.abs(CODING_FORMULAS.flakeStreak({ p, k }) - allFail) < 1e-12, `flake ${p} ${k}`);
+  }
   // Backoff: CHE's own recovery_policy.backoffMs.
   for (let attempt = 0; attempt <= 8; attempt += 1) {
     assert.equal(CODING_FORMULAS.backoff({ attempt, base: 60_000, cap: 30 * 60_000 }), backoffMs(attempt), `attempt ${attempt}`);
@@ -223,6 +233,59 @@ test('CHE\'s notes and examples agree with her own code: failover constants and 
   assert.deepEqual(turns.map((t) => currentTurnActionPolicy(t).mode), example.expected.map((e) => e.mode));
   // The failover example's backoff is CHE's own, in minutes.
   assert.deepEqual(atlasCard('c-model-failover').example.expected.backoffMinutes, [0, 1, 2, 3, 4, 5].map((a) => backoffMs(a) / 60_000));
+});
+
+test('the inspection, reasoning, CI and recovery cards agree with CHE\'s own code, skills and workflows', async () => {
+  // Code inspection: her two entry points, as the trace defines them.
+  assert.ok(read('server/cloudflare/self_development.js').includes("const ENTRY_POINTS = new Set(['lib/main.dart', 'server/cloudflare/worker.js']);"));
+  assert.match(atlasCard('c-code-inspection').levels.intermediate, /lib\/main\.dart on the phone and server\/cloudflare\/worker\.js on the server/);
+  // Reasoning: the che-debug order and its rule, word for word from the skill.
+  const debug = read('.claude/skills/che-debug/SKILL.md');
+  assert.ok(debug.includes('Order: **reproduce → locate → fix narrowly → prove → review.** Do not edit before the defect is reproduced.'));
+  assert.ok(debug.includes('It counts as reproduced only when the output shows the wrong behavior.'));
+  assert.ok(atlasCard('c-reasoning').che_note.includes('reproduce, locate, fix narrowly, prove, review'));
+  // CI: the exercise's checks are CHE's real job names, and its verdicts are release_status.mjs's own.
+  const ci = atlasCard('c-ci-validation');
+  const workflow = read('.github/workflows/flutter-check.yml');
+  assert.match(workflow, /^  analyze:$/m);
+  assert.match(workflow, /^    name: Worker syntax and unit tests$/m);
+  assert.ok(read('.claude/skills/che-release/scripts/release_status.mjs').includes("const NON_GATING = new Set(['Workers Builds: chey-app']);"));
+  const { releaseStatus } = await import(pathToFileURL(join(ROOT, '.claude/skills/che-release/scripts/release_status.mjs')).href);
+  const SHA = 'c'.repeat(40);
+  for (const c of ci.exercises[0].cases) {
+    const fetcher = async (url) => {
+      if (String(url).endsWith('/commits/main')) return new Response(SHA);
+      if (String(url).includes(`/commits/${SHA}/check-runs`)) return Response.json({ check_runs: c.args[0] });
+      return new Response('{}', { status: 404 });
+    };
+    assert.equal((await releaseStatus({ sha: SHA, fetcher, token: '' })).checks.verdict, c.expected, JSON.stringify(c.args[0]));
+  }
+  // The deploy's live check, as the card's note describes it.
+  const deploy = read('.github/workflows/che-worker-deploy.yml');
+  assert.ok(deploy.includes('- name: Verify live deployed commit'));
+  assert.ok(deploy.includes('const expected = process.env.EXPECTED_TAG.slice(0, 12);') && deploy.includes('health.version_tag === expected'));
+  assert.ok(ci.che_note.includes('"Verify live deployed commit"') && ci.che_note.includes('first 12 characters'));
+  // run_checks.sh and summarize_tap.mjs say what the card says they say.
+  assert.ok(read('.claude/skills/che-debug/scripts/run_checks.sh').includes('NOT RUN here (no flutter/dart on PATH)'));
+  assert.ok(read('.claude/skills/che-debug/scripts/summarize_tap.mjs').includes('the test run did not finish'));
+  assert.ok(debug.includes('2026-10-14 a "research the market" test passed here and failed in CI'));
+  // Recovery: the stale windows, the attempt ceiling and the backoff in the note are worker.js's.
+  const { MAX_JOB_ATTEMPTS, enqueueJob, jobStaleMs } = mod;
+  const note = atlasCard('c-recovery').che_note;
+  assert.equal(MAX_JOB_ATTEMPTS, 4);
+  assert.ok(note.includes(`after ${MAX_JOB_ATTEMPTS} attempts it is dead-lettered`), note);
+  assert.deepEqual([jobStaleMs({ kind: 'chat' }), jobStaleMs({ kind: 'self_development' }), jobStaleMs({ kind: 'autonomy_exam' })], [5 * 60_000, 20 * 60_000, 20 * 60_000]);
+  assert.ok(note.includes('5 minutes for most jobs and 20 for coding and exam jobs'));
+  assert.ok(read('server/cloudflare/worker.js').includes('job.retry_at = now + backoffMs(attempts, 60_000, 15 * 60_000);'));
+  assert.equal(idempotencyKey('job:chat', 'Draft the weekly report'), idempotencyKey('job:chat', '  draft the WEEKLY report '));
+  // The recovery drill's fixed rule is what enqueueJob does today, at the same job ages.
+  const drill = atlasCard('c-recovery').review_drills[0];
+  drill.probe.calls.forEach(([job, now], i) => {
+    const age = now - Date.parse(job.created_at);
+    const at = new Date(Date.now() - age).toISOString();
+    const data = { jobs: [{ id: `j${i}`, kind: 'chat', idempotency_key: 'k', status: job.status, retry_count: job.retry_count, created_at: at, updated_at: at }] };
+    assert.equal(enqueueJob(data, { prompt: 'p', idempotency_key: 'k' }).deduplicated, drill.probe.fixed[i], JSON.stringify(job));
+  });
 });
 
 // ─── Every example, solution and drill runs ───────────────────────────────
@@ -815,6 +878,64 @@ test('through /api/chat with SQLite: exercise and drill answers are graded, neve
   const next = await che.say('what is the weather like in Paris');
   assert.equal(next.route, 'model');
   assert.ok(heard.at(-1).endsWith('what is the weather like in Paris'), `the model read his own words: ${heard.at(-1)}`);
+});
+
+test('code inspection, reasoning, CI validation and recovery: lessons reach the atlas; inspection, job, CI and "your reasoning" turns keep main\'s routes', async () => {
+  const che = await owner();
+  const sent = requests.length;
+  const route = async (words, history = []) => (await che.say(words, { history })).route;
+  // The new cards by name, typed, spoken and with CHE's name in front: no model, no network.
+  for (const [phrase, start] of [
+    ['Teach me code inspection', 'Code inspection: reading unfamiliar code before changing it, beginner level, sir.'],
+    ['Explain CI validation at an advanced level', 'CI validation: what a green check proves, expert level, sir.'],
+    ['Quiz me on recovery', 'Quiz on Recovery: resuming after a crash without repeating work, sir.'],
+    ['Teach me reasoning about code', 'Reasoning about code: invariants, small cases and evidence, beginner level, sir.'],
+    ['What is idempotency?', 'Recovery: resuming after a crash without repeating work, beginner level, sir.'],
+    ['Explain invariants', 'Reasoning about code: invariants, small cases and evidence, beginner level, sir.'],
+    ['What is a flaky test?', 'CI validation: what a green check proves, beginner level, sir.'],
+  ]) {
+    for (const words of variants(phrase)) {
+      const out = await che.say(words);
+      assert.equal(out.route, 'che_knowledge_atlas', words);
+      assert.equal(out.modelCalls, 0, words);
+      assert.ok(out.reply.startsWith(start), `${words}: ${out.reply.slice(0, 120)}`);
+    }
+  }
+  const exercise = await che.say('Give me an exercise on code inspection');
+  assert.match(exercise.reply, /^Exercise 1 of 2 on Code inspection: reading unfamiliar code before changing it, sir, in JavaScript\./);
+  const right = await che.say('5', { history: after(exercise.reply) });
+  assert.match(right.reply, /^Right, sir/);
+  const drill = await che.say('Give me a review drill on recovery');
+  assert.match(drill.reply, /The retry that stopped blocking its duplicate/);
+  const how = await che.say('How does CHE recover interrupted jobs?');
+  assert.equal(how.route, 'che_knowledge_atlas');
+  assert.match(how.reply, /server\/cloudflare\/worker\.js, enqueueJob/);
+  assert.match(how.reply, /server\/cloudflare\/worker\.js, processJobs/);
+  // Counter-cases, as main routes them, fresh and right after an atlas exercise or drill.
+  for (const history of [[], after(exercise.reply), after(drill.reply)]) {
+    for (const [words, want] of [
+      ['inspect the code', 'model'],
+      ['inspect my repo', 'model'],
+      ['inspect your code', 'che_repository_inspection'],
+      ['inspect your repository', 'che_repository_inspection'],
+      ['explain your code', 'che_repository_inspection'],
+      ['recover my job', 'che_self_development'],
+      ['recover the job', 'che_self_development'],
+      ['resume the coding job', 'che_coding_resume'],
+      ['run CI', 'model'],
+      ['why did CI fail', 'model'],
+      ['did CI pass', 'model'],
+      ['rerun the failed checks', 'model'],
+      ["what's your reasoning", 'model'],
+      ['explain your reasoning', 'model'],
+      ['teach me reasoning', 'model'],
+      ['teach me reading', 'model'],
+      ['what are entry points', 'che_trading_desk'],
+    ]) assert.equal(await route(words, history), want, `${words} after ${history.length ? 'practice' : 'nothing'}`);
+  }
+  assert.equal(findAtlasCard('code inspection')?.id, 'c-code-inspection', 'the name moved from the planning card');
+  assert.equal(findAtlasCard('ci validation')?.id, 'c-ci-validation', 'the name moved from the self-repair card');
+  assert.equal(requests.length, sent, 'no network');
 });
 
 test('summary: every language that could run here did', () => {

@@ -52,6 +52,7 @@ void main() {
     final phase1 = atlas.cards.where((c) => !RegExp(r'^[ct]-').hasMatch(c.id));
     expect(phase1.where((c) => c.domain == 'coding').length, 10);
     expect(phase1.where((c) => c.domain == 'trading').length, 10);
+    expect(atlas.inDomain('coding').length, 34, reason: 'phase 1 and the coding lane');
     for (final c in atlas.cards) {
       for (final level in cheAtlasLevels) {
         expect(c.levels[level], isNotEmpty, reason: '${c.id} $level');
@@ -71,6 +72,11 @@ void main() {
     expect(atlas.find('python')?.id, 'c-python');
     expect(atlas.find('recursion in python')?.id, 'recursion');
     expect(atlas.find('binary search')?.id, 'c-binary-search');
+    // The second coding batch: the names moved from the planning and self-repair cards.
+    expect(atlas.find('code inspection')?.id, 'c-code-inspection');
+    expect(atlas.find('CI validation')?.id, 'c-ci-validation');
+    expect(atlas.find('recovery')?.id, 'c-recovery');
+    expect(atlas.find('invariants')?.id, 'c-reasoning');
     // An id is never a topic: "c-python" must not make "C" the Python lesson.
     for (final other in ['c', 'C++', 'C#', 'c programming', 'pythons', 'this python code', 'the python code', 'this js code', 'this dart code', 'that javascript', 'this python']) {
       expect(atlas.find(other), isNull, reason: other);

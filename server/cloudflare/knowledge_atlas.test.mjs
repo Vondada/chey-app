@@ -99,7 +99,7 @@ test('ten coding and ten trading cards, each complete from beginner to expert', 
   assert.equal(PHASE1.filter((c) => c.domain === 'trading').length, 10);
   assert.equal(new Set(ATLAS_CARDS.map((c) => c.id)).size, ATLAS_CARDS.length, 'ids are unique');
   assert.equal(new Set(ATLAS_CARDS.map((c) => c.title)).size, ATLAS_CARDS.length, 'titles are unique');
-  assert.equal(ATLAS_CARDS.filter((c) => c.domain === 'coding').length, 30, 'phase 1 and the coding lane');
+  assert.equal(ATLAS_CARDS.filter((c) => c.domain === 'coding').length, 34, 'phase 1 and the coding lane');
   assert.equal(ATLAS_CARDS.filter((c) => c.domain === 'trading').length, 30, 'phase 1 and the trading lane');
   for (const c of ATLAS_CARDS) {
     assert.match(c.id, /^[a-z][a-z0-9-]+$/, c.id);
