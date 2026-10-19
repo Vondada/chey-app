@@ -337,9 +337,7 @@ test('unsafe runtime blockers are not automatically retried as coding failures',
 
 // ─── The OpenCode run step itself (che-opencode-runtime.yml), run with a fake opencode ───
 
-// A test owns its temp directory. The runtime step writes fixed /tmp paths, so the copy the test
-// runs is pointed at the test's own directory; no other process can truncate the test's files.
-function runStepScript(name, tmp = null) {
+function runStepScript(name) {
   const workflow = readFileSync(new URL('../../.github/workflows/che-opencode-runtime.yml', import.meta.url), 'utf8');
   const at = workflow.indexOf(`- name: ${name}`);
   const run = workflow.indexOf('run: |', at);
@@ -349,8 +347,7 @@ function runStepScript(name, tmp = null) {
     if (line.trim() && !line.startsWith('          ')) break;
     out.push(line.slice(10));
   }
-  const script = out.join('\n');
-  return tmp ? script.split('/tmp/').join(`${tmp}/`) : script;
+  return out.join('\n');
 }
 
 test('a model that cannot do the request is stopped at its first fatal error, and the next model gets the time', async () => {
@@ -386,7 +383,7 @@ sleep 60
   copyFileSync(new URL('../../tools/che_coding_paid_gate.mjs', import.meta.url), join(trusted, 'tools/che_coding_paid_gate.mjs'));
   copyFileSync(new URL('./coding_failover.mjs', import.meta.url), join(trusted, 'server/cloudflare/coding_failover.mjs'));
   const started = Date.now();
-  const res = spawnSync('bash', ['-c', runStepScript('Run OpenCode in the isolated checkout', dir)], {
+  const res = spawnSync('bash', ['-c', runStepScript('Run OpenCode in the isolated checkout')], {
     cwd: repo,
     env: { PATH: `${bin}:${process.env.PATH}`, FREE_CANDIDATES: 'google/quota groq/small groq/reads', GITHUB_OUTPUT: output, HOME: dir, RUNNER_TEMP: dir, CHE_TRUSTED_TOOLS: trusted, BASE_SHA: 'a'.repeat(40) },
     encoding: 'utf8',
@@ -430,7 +427,7 @@ sleep 60
   copyFileSync(new URL('../../tools/che_coding_checkpoint.mjs', import.meta.url), join(trusted, 'tools/che_coding_checkpoint.mjs'));
   copyFileSync(new URL('../../tools/che_coding_paid_gate.mjs', import.meta.url), join(trusted, 'tools/che_coding_paid_gate.mjs'));
   copyFileSync(new URL('./coding_failover.mjs', import.meta.url), join(trusted, 'server/cloudflare/coding_failover.mjs'));
-  const res = spawnSync('bash', ['-c', runStepScript('Run OpenCode in the isolated checkout', dir)], {
+  const res = spawnSync('bash', ['-c', runStepScript('Run OpenCode in the isolated checkout')], {
     cwd: repo,
     env: { PATH: `${bin}:${process.env.PATH}`, FREE_CANDIDATES: 'google/quota groq/small groq/reads', GITHUB_OUTPUT: join(dir, 'output'), HOME: dir, RUNNER_TEMP: dir, CHE_TRUSTED_TOOLS: trusted, BASE_SHA: 'a'.repeat(40) },
     encoding: 'utf8',
@@ -535,7 +532,7 @@ test('the runner shell redacts each leak case through the same redactor as the r
   mkdirSync(join(trusted, 'server/cloudflare'), { recursive: true });
   copyFileSync(new URL('../../tools/che_coding_checkpoint.mjs', import.meta.url), join(trusted, 'tools/che_coding_checkpoint.mjs'));
   copyFileSync(new URL('./coding_failover.mjs', import.meta.url), join(trusted, 'server/cloudflare/coding_failover.mjs'));
-  const redactLine = runStepScript('Run OpenCode in the isolated checkout', dir).split('\n').find((line) => /^redact\(\) \{/.test(line));
+  const redactLine = runStepScript('Run OpenCode in the isolated checkout').split('\n').find((line) => /^redact\(\) \{/.test(line));
   assert.ok(redactLine, 'the runner defines redact() through the shared redactor');
   assert.match(redactLine, /che_coding_checkpoint\.mjs" redact/);
   const cases = [
@@ -555,4 +552,14 @@ test('the runner shell redacts each leak case through the same redactor as the r
     assert.equal(res.status, 0, res.stderr);
     assert.equal(res.stdout.includes(secret), false, `the shell output must not carry ${secret}: ${res.stdout}`);
   }
+});
+
+// The runtime job's steps write only under RUNNER_TEMP. A fixed /tmp path is shared with every
+// other process on the machine, so a test reading it could be truncated mid-run.
+test('the runtime job uses no fixed /tmp path: each test can own its scratch directory', () => {
+  const workflow = readFileSync(new URL('../../.github/workflows/che-opencode-runtime.yml', import.meta.url), 'utf8');
+  const runtime = workflow.slice(workflow.indexOf('\n  runtime:\n'), workflow.indexOf('\n  deliver:\n'));
+  assert.ok(runtime.length > 1000, 'the runtime job is found');
+  assert.doesNotMatch(runtime, /\/tmp\//, 'every runtime scratch path comes from RUNNER_TEMP');
+  assert.match(runtime, /OPENCODE_CONFIG: \$\{\{ runner\.temp \}\}\/che-opencode-config\.json/);
 });
