@@ -679,14 +679,17 @@ class CheBrainSpaceController {
       ..addAll([?category]);
     if (category != null) {
       final c = layout.clusters[category];
+      final what = category == 'Knowledge Atlas' ? 'Knowledge Atlas records' : '$category memories';
       if (c == null) {
         _changed();
-        return 'There are no $category memories yet.';
+        return 'There are no $what yet.';
       }
       c.expanded = true;
       flyTo(CheBrainCamera(target: c.center.clone(), yaw: math.atan2(-c.center.x, c.center.z), pitch: .15, distance: 11));
       _changed();
-      return 'Showing your $category memories: ${c.members.length}.';
+      return category == 'Knowledge Atlas'
+          ? 'Showing the Knowledge Atlas records, curated lessons and your practice: ${c.members.length}.'
+          : 'Showing your $category memories: ${c.members.length}.';
     }
     _changed();
     return 'Showing all ${layout.nodes.length} memories.';

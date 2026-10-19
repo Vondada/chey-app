@@ -50,7 +50,7 @@ function storageFor(saved = new Map()) {
 }
 
 // A paired owner phone. `say` returns the route, the reply, the model calls and every system prompt the model was given.
-async function owner() {
+async function owner({ model = () => '' } = {}) {
   let calls = 0;
   const prompts = [];
   const pending = [];
@@ -60,7 +60,8 @@ async function owner() {
       calls += 1;
       const system = (opts.messages || []).find((m) => m.role === 'system');
       if (system) prompts.push(String(system.content || ''));
-      return { response: 'MODEL ANSWERED' };
+      const asked = [...(opts.messages || [])].reverse().find((m) => m.role === 'user');
+      return { response: model(String(asked?.content || '')) || 'MODEL ANSWERED' };
     } },
   };
   const storage = storageFor();
@@ -199,8 +200,10 @@ test('the Brain sync projects the cards, so the phone replica pulls them for the
 
 test('with nothing studied, "what have I learned so far" says no lessons recorded yet, typed or spoken', sqlite, async () => {
   const che = await owner();
-  for (const words of [...variants('What have I learned so far?'), ...variants('How am I doing on trading?'), 'how many lessons have I done', "what's my learning progress in coding"]) {
-    const out = await che.say(words, { keep: false });
+  const lesson = [{ role: 'assistant', content: 'Quiz on Recursion, sir. 3 questions:\n1. Q?\nSource: Knowledge Atlas card "Recursion" (coding), curated teaching content.' }];
+  const cold = [...variants('What have I learned so far in the Knowledge Atlas?'), ...variants('How am I doing on trading?'), 'how many lessons have I done', "what's my learning progress in coding", 'what did I learn in coding'];
+  for (const [words, history] of [...cold.map((w) => [w, []]), ...variants('What have I learned so far?').map((w) => [w, lesson])]) {
+    const out = await che.say(words, { keep: false, history });
     assert.equal(out.route, 'che_knowledge_atlas', `${words} → ${out.route}: ${out.reply.slice(0, 100)}`);
     assert.equal(out.modelCalls, 0, words);
     assert.match(out.reply, /^No (?:coding |trading )?lessons recorded yet, sir\./, words);
@@ -227,15 +230,17 @@ test('lessons and graded quiz answers are recorded as owner practice, and read b
   // Question 3 has a check: 1 + … + 10 = 55, recomputed from the card's formula.
   const q3 = await che.say('number 3 is 55');
   assert.equal(q3.route, 'che_knowledge_atlas', q3.reply);
-  assert.match(q3.reply, /^Question 3 on Loops and iteration, sir: correct\. You said: 55\./);
+  assert.match(q3.reply, /^Quiz finished on Loops and iteration, sir\. Question 3: correct\. You said: 55\./, 'the last question closes the quiz');
   assert.match(q3.reply, /Graded by the number, recomputed from the card's formula\. Recorded in your Brain as owner practice\./);
   const wrong = await che.say('CHE, the answer to question 3 is fifty four', { history: [{ role: 'assistant', content: quiz.reply }] });
-  assert.match(wrong.reply, /^Question 3 on Loops and iteration, sir: not quite\. You said: fifty four\. The card's answer: 55/);
+  assert.match(wrong.reply, /^Quiz finished on Loops and iteration, sir\. Question 3: not quite\. You said: fifty four\. The card's answer: 55/);
+  const after = await che.say('my answer is 55', { history: [{ role: 'assistant', content: wrong.reply }], keep: false });
+  assert.notEqual(after.done.atlas_kind, 'grade', 'a finished quiz grades nothing more');
   const q1 = await che.say('number one is a condition that eventually becomes false', { history: [{ role: 'assistant', content: quiz.reply }] });
   assert.match(q1.reply, /^Question 1 on Loops and iteration, sir: correct\./);
   assert.match(q1.reply, /key words of the card's answer \(\d+ of \d+\), a rough check/, 'a key-word grade says it is rough');
   assert.match(q1.reply, /Question 2: A loop runs i from 0/, 'the next question is read');
-  const q2 = await che.say('my answer is i have no idea');
+  const q2 = await che.say('my answer is no idea');
   assert.match(q2.reply, /^Question 2 on Loops and iteration, sir: not quite\./, 'a bare answer goes to the next question');
   const answers = learningRecords(che.brain).filter((r) => r.source.event === 'quiz');
   assert.equal(answers.length, 4);
@@ -294,18 +299,19 @@ test('a numbered answer is graded by its number, recomputed; yes-or-no by the wo
 
 test('"what should I study next" follows the prerequisites from what was studied', sqlite, async () => {
   const che = await owner();
-  const first = await che.say('What should I study next?', { keep: false });
+  const first = await che.say('What lesson should I study next?', { keep: false });
   const start = coding.find((c) => !c.prerequisites.length);
   assert.equal(first.route, 'che_knowledge_atlas');
   assert.match(first.reply, new RegExp(`^Next for you, sir: ${start.title}, ${start.level} level\\. .*No lessons are recorded yet, so this is where the curriculum starts\\. For trading, the first card is ${trading[0].title}\\.`));
-  for (const words of variants('What should I study next in trading?')) {
+  for (const words of [...variants('What should I study next in trading?'), ...variants('What should I study next in the Knowledge Atlas?').slice(0, 2)].slice(0, 6)) {
     const out = await che.say(words, { keep: false });
-    assert.match(out.reply, new RegExp(`^Next for you, sir: ${trading.find((c) => !c.prerequisites.length).title},`), words);
+    if (/trading/.test(words)) assert.match(out.reply, new RegExp(`^Next for you, sir: ${trading.find((c) => !c.prerequisites.length).title},`), words);
+    else assert.match(out.reply, /^Next for you, sir: /, words);
   }
   // Study cards out of order; the next card must be one whose every prerequisite is studied.
   const studied = new Set();
   for (const c of [coding[0], coding[2], coding[1]]) { await che.say(`teach me ${c.aliases[0]}`, { keep: false }); studied.add(c.id); }
-  const out = await che.say('what should i study next', { keep: false });
+  const out = await che.say('what lesson should i study next', { keep: false });
   const { card } = nextToStudy(learningRecords(che.brain));
   assert.equal(out.done.atlas_card, card.id);
   assert.ok(!studied.has(card.id), 'not one already studied');
@@ -333,7 +339,7 @@ test('"reset my progress" is a delete: held for the owner\'s yes, and only then 
   }
   const held = await che.say('Reset my progress');
   assert.equal(held.route, 'held');
-  assert.match(held.reply, /^Before I delete or remove anything, I need your yes\. Should I go ahead\?/);
+  assert.equal(held.reply, 'Before I delete anything, I need your yes: delete your 2 Knowledge Atlas practice records (lessons studied, quiz answers and practice results)? The cards and your memories stay. Should I go ahead?', 'the hold names the target and the count');
   assert.equal(learningRecords(che.brain).length, 2, 'nothing deleted while it waits');
   const declined = await che.say('no thanks');
   assert.notEqual(declined.done.atlas_kind, 'reset');
@@ -349,17 +355,24 @@ test('"reset my progress" is a delete: held for the owner\'s yes, and only then 
   assert.match((await che.say('what have I learned so far', { keep: false })).reply, /^No lessons recorded yet, sir\./);
 });
 
-test('a correction to a card is recorded with the owner\'s words, and the card is not claimed fixed', sqlite, async () => {
+test('a correction that names the card is recorded as his statement about it, and the card is not claimed fixed', sqlite, async () => {
   const che = await owner();
-  const lesson = await che.say('teach me vwap');
-  const fix = await che.say("that's wrong, VWAP resets every session");
-  assert.equal(fix.route, 'che_knowledge_atlas', fix.reply);
-  assert.match(fix.reply, /^Thank you, sir\. I recorded your correction to the VWAP card in your Brain\./);
-  assert.match(fix.reply, /changes only when it is fixed and its tests pass/);
+  await che.say('teach me vwap');
+  for (const words of ['Your lesson on VWAP is wrong, it resets every session.', 'your lesson on vwap is wrong it resets every session']) {
+    const fix = await che.say(words, { keep: false });
+    assert.equal(fix.route, 'che_knowledge_atlas', fix.reply);
+    assert.match(fix.reply, /^Thank you, sir\. I recorded your correction to the VWAP card in your Brain\./);
+    assert.match(fix.reply, /changes only when it is fixed and its tests pass/);
+  }
   const rec = learningRecords(che.brain).find((r) => r.source.event === 'correction');
-  assert.match(rec.body, /What the owner said is wrong: vwap resets every session/);
-  assert.equal(rec.verification, 'owner_practice');
-  void lesson;
+  assert.match(rec.body, /What the owner said is wrong: it resets every session/);
+  assert.match(rec.body, /The owner's own statement about this card, as he said it in this chat\. The card is unchanged until it is fixed and tested\./);
+  assert.equal(rec.verification, 'owner_attested', 'his own words about the card');
+  assert.equal(rec.source.provenance, "the owner's statement about this card, in this chat");
+  // Named with no lesson just before, or "that formula" right after one.
+  assert.equal((await che.say('the recursion card is wrong', { keep: false, history: [] })).done.atlas_card, 'recursion');
+  const lesson = await che.say('teach me expectancy', { keep: false });
+  assert.equal((await che.say('that formula is wrong', { keep: false, history: [{ role: 'assistant', content: lesson.reply }] })).done.atlas_card, 'expectancy');
 });
 
 // ─── Relevant retrieval, with few tokens ──────────────────────────────────
@@ -435,6 +448,9 @@ test('retrieval: an unrelated question carries 0 atlas characters; a related one
     assert.equal(atlasPromptContext(spoken(q)), ctx, 'unpunctuated speech, the same cards');
   }
   for (const q of UNRELATED) assert.equal(atlasPromptContext(q), '', q);
+  // Whole words only (#357): "trade-offs" is not a trading word, so it never lends a card its domain.
+  for (const q of ['what are the trade-offs here', 'what are the trade-offs of a wide spread', 'what are the trade-offs of sizing']) assert.equal(atlasPromptContext(q), '', q);
+  assert.deepEqual(atlasRelevantCards('the trade-offs of a hash map in python').map((c) => c.id), ['hash-maps']);
   // Each excerpt is the card's definition and its formula, not the whole lesson.
   const vwap = atlasPromptContext('does vwap work better on nq or es for intraday entries');
   assert.ok(vwap.includes(atlasCard('vwap').summary) && vwap.includes(atlasCard('vwap').formula.expression));
@@ -509,7 +525,109 @@ test('counter-cases keep their routes: a bare "how am I doing", measured questio
   for (const words of ['reset my thoughts', 'clear the screen']) assert.deepEqual(classifyOwnerActions(words), [], `${words} is still ordinary chat`);
   assert.equal(atlasResetIntent('reset the timer'), null);
   assert.equal(atlasIntent('number 3 is 55'), null, 'an answer needs the quiz it answers');
-  for (const words of ['what should I do next', 'suggest a topic', 'what should I read', 'show my results in trading', "what's my progress"]) {
-    assert.equal(atlasIntent(words), null, `${words}: not about the atlas without lesson words`);
+  for (const words of ['what should I do next', 'suggest a topic', 'what should I read', 'show my results in trading', "what's my progress", 'what did I learn', 'what have I covered', 'what have I studied', 'what should I study next', 'what have I learned so far', 'show my history']) {
+    assert.equal(atlasIntent(words), null, `${words}: not about the atlas without an atlas word or an atlas reply just before`);
+    assert.notEqual((await che.say(words, { keep: false, history: [] })).route, 'che_knowledge_atlas', words);
   }
+});
+
+// ─── Review of acd7286: ordinary sentences are never answers, corrections or resets ─────
+
+test('after a quiz, ordinary sentences are never graded or saved as practice, and a memory still saves', sqlite, async () => {
+  const che = await owner({ model: (m) => (/remember that/i.test(m) ? 'Noted, sir.\n```che-remember\n[People] The owner\'s mom\'s birthday is Friday\n```' : '') });
+  const ordinary = [
+    'no one told me about the meeting', 'first tell me the time', 'I think we should stop the quiz', 'is it raining in Denver',
+    'answer the email from Bob', 'one more thing email Bob the report', 'two tickets for tonight please', 'number 3 is my favorite',
+    'I say we switch to live trading', 'I think I want to buy two calls', "I think my mom's birthday is Friday, remember that",
+    'my answer is send it to Bob', 'number 2 is what time is it?', 'answer 1: delete my notes', 'my answer is my wife knows',
+  ];
+  for (const words of ordinary) {
+    const quiz = await che.say('quiz me on recursion', { keep: false, history: [] });
+    const out = await che.say(words, { keep: false, history: [{ role: 'user', content: 'quiz me on recursion' }, { role: 'assistant', content: quiz.reply }] });
+    assert.notEqual(out.done.atlas_kind, 'grade', `${words} → graded`);
+    assert.doesNotMatch(out.reply, /^(?:Question \d+ on|Quiz finished on)/, words);
+    // The phone saves a memory from the reply's che-remember block, so the model must answer this one.
+    if (/remember that/.test(words)) assert.ok(out.route === 'model' && /```che-remember\n\[People\] The owner's mom's birthday is Friday/.test(out.reply), `the memory sentence still saves: ${out.route}`);
+  }
+  assert.equal(learningRecords(che.brain).filter((r) => r.source.event === 'quiz').length, 0, 'no practice record was written');
+  // The explicit forms still grade.
+  const quiz = await che.say('quiz me on recursion', { keep: false, history: [] });
+  const graded = await che.say('number 1 is a base case and a recursive case', { keep: false, history: [{ role: 'assistant', content: quiz.reply }] });
+  assert.equal(graded.done.atlas_kind, 'grade');
+});
+
+test('a memory statement after a lesson is never filed as a card correction', sqlite, async () => {
+  const che = await owner();
+  await che.post('/api/memory/add', { memory: 'My name is Wesley' });
+  for (const words of ["that's wrong, my name is Wes", "you're wrong, I live in Denver now", "no, that's wrong, I said Tuesday not Thursday", "that is incorrect, my wife's name is Ana", 'your recursion card is wrong, my name is Wes']) {
+    const lesson = await che.say('teach me recursion', { keep: false, history: [] });
+    const out = await che.say(words, { keep: false, history: [{ role: 'user', content: 'teach me recursion' }, { role: 'assistant', content: lesson.reply }] });
+    assert.notEqual(out.done.atlas_kind, 'correction', words);
+    assert.doesNotMatch(out.reply, /I recorded your correction/, words);
+  }
+  assert.equal(learningRecords(che.brain).filter((r) => r.source.event === 'correction').length, 0);
+});
+
+test('an approved "delete my history" or "clear my records" never touches atlas progress', sqlite, async () => {
+  const che = await owner();
+  await che.say('teach me recursion', { keep: false });
+  for (const words of ['delete my history', 'clear my records', 'clear my trading history', 'delete my trading records']) {
+    assert.equal(atlasResetIntent(words), null, words);
+    assert.equal((await che.say(words)).route, 'held', `${words} is still held as a delete`);
+    const yes = await che.say('yes');
+    assert.notEqual(yes.done.atlas_kind, 'reset', words);
+    assert.equal(learningRecords(che.brain).length, 1, `${words}: the practice record is still there`);
+  }
+  for (const words of ['reset my progress', 'clear my lesson history', 'delete my quiz records', 'delete my history in the knowledge atlas']) assert.ok(atlasResetIntent(words), words);
+});
+
+test('only an explicit lesson request records a study; definitions and readbacks do not', sqlite, async () => {
+  const che = await owner();
+  for (const words of ['what is risk', 'explain the drawdown', 'explain expectancy', 'define expectancy', 'knowledge atlas expectancy', 'what is win rate']) await che.say(words, { keep: false });
+  assert.equal(learningRecords(che.brain).length, 0, 'no study recorded');
+  const taught = await che.say('teach me expectancy', { keep: false });
+  await che.say('give me the expert version', { keep: false, history: [{ role: 'assistant', content: taught.reply }] });
+  assert.deepEqual(learningRecords(che.brain).map((r) => r.source.level).sort(), ['beginner', 'expert']);
+});
+
+test('a held Gmail send does not survive a quiz answer or a reset: the later yes sends nothing', sqlite, async () => {
+  const che = await owner();
+  const hold = () => che.storage.put('pending_google_action', { intent: { kind: 'gmail_send', to: 'bob@example.com', subject: 'Report', body: 'The report is ready.' }, at: Date.now(), summary: 'The email to bob@example.com' });
+  const quiz = await che.say('quiz me on loops', { keep: false, history: [] });
+  await hold();
+  const graded = await che.say('my answer is no', { keep: false, history: [{ role: 'assistant', content: quiz.reply }] });
+  assert.equal(graded.done.atlas_kind, 'grade');
+  assert.equal(await che.storage.get('pending_google_action'), null, 'the grade turn dropped the held email');
+  let yes = await che.say('yes', { keep: false, history: [] });
+  assert.notEqual(yes.done.source, 'che_google');
+  assert.doesNotMatch(yes.reply, /bob@example\.com/);
+
+  await che.say('teach me loops', { keep: false });
+  await hold();
+  assert.equal((await che.say('reset my progress', { keep: false, history: [] })).route, 'held');
+  const reset = await che.say('yes', { keep: false, history: [] });
+  assert.equal(reset.done.atlas_kind, 'reset');
+  assert.equal(await che.storage.get('pending_google_action'), null, 'the reset dropped the held email');
+  yes = await che.say('yes', { keep: false, history: [] });
+  assert.notEqual(yes.done.source, 'che_google');
+  assert.doesNotMatch(yes.reply, /bob@example\.com/);
+});
+
+test('review nits: a phone edit of a card is kept, capped counts say so, and a list of guesses is not an answer', sqlite, () => {
+  const store = new CheBrainStore(storageFor());
+  projectAtlasToBrain(store);
+  const c = ATLAS_CARDS[0];
+  const mine = store.get(`atlas:${c.id}`);
+  store.apply({ type: 'put', record: { ...mine, body: 'The owner rewrote this card on his phone.' }, base_rev: mine.rev }, { origin: 'iphone' });
+  const meta = store.meta('atlas_projection');
+  store.setMeta('atlas_projection', { ...meta, hashes: { ...meta.hashes, [`atlas:${c.id}`]: 'stale' } });
+  projectAtlasToBrain(store);
+  assert.equal(store.get(`atlas:${c.id}`).body, 'The owner rewrote this card on his phone.', 'a card revision never overwrites his edit');
+
+  const rows = Object.assign([{ source: { event: 'lesson', card_id: c.id, domain: c.domain, level: 'beginner' }, created_at: '2026-10-19T00:00:00Z' }], { capped: true });
+  assert.match(progressText(rows), /These counts are from your newest 1 practice records only; older ones are not counted\./);
+
+  const loops = atlasCard('loops');
+  assert.equal(gradeQuizAnswer(loops, 2, '55').correct, true);
+  assert.equal(gradeQuizAnswer(loops, 2, '10 or 55 or 100').correct, false, 'the main number must match');
 });

@@ -970,7 +970,10 @@ export function recordLearning(store, { card, kind, item_id = '', correct = null
     event === 'lesson' ? '' : `Result: ${result}${method ? `, graded by ${clip(method, 60)}` : ''}.`,
     expected ? `Card's answer: ${clip(expected, 300)}` : '',
     detail ? clip(detail, 600) : '',
-    'Owner practice, measured from this chat: a record of study, not something the owner stated as fact.',
+    // A correction is the owner's own statement about the card; everything else is study CHE measured.
+    event === 'correction'
+      ? 'The owner\'s own statement about this card, as he said it in this chat. The card is unchanged until it is fixed and tested.'
+      : 'Owner practice, measured from this chat: a record of study, not something the owner stated as fact.',
   ].filter(Boolean).join('\n');
   const current = store.get(id);
   if (current && current.kind !== ATLAS_PROGRESS_KIND) return { outcome: 'rejected', reason: 'not an atlas practice record' };
@@ -983,19 +986,22 @@ export function recordLearning(store, { card, kind, item_id = '', correct = null
     body,
     source: {
       kind: ATLAS_PROGRESS_KIND, event, card_id: cardId, item_id: item, level: lvl, domain: card.domain === 'trading' ? 'trading' : 'coding',
-      correct: typeof correct === 'boolean' ? correct : null, method: clip(method, 60), provenance: 'measured from this chat',
+      correct: typeof correct === 'boolean' ? correct : null, method: clip(method, 60),
+      provenance: event === 'correction' ? 'the owner\'s statement about this card, in this chat' : 'measured from this chat',
     },
-    verification: 'owner_practice',
+    verification: event === 'correction' ? 'owner_attested' : 'owner_practice',
     links: [{ type: 'relevant_to', to: `atlas:${cardId}` }],
     created_at: at,
   }, { origin: 'atlas', now: at });
 }
 
-/** The owner's practice records, newest first (one indexed read, capped). */
+/** The owner's practice records, newest first (one indexed read). `capped` says the read stopped at its limit. */
 export function learningRecords(store, { domain = '' } = {}) {
   if (!store?.init?.()) return [];
-  const rows = store.rows('SELECT * FROM brain_records WHERE kind = ? AND deleted = 0 ORDER BY seq DESC LIMIT ?', ATLAS_PROGRESS_KIND, MAX_PROGRESS_READ).map(rowToRecord);
-  return domain ? rows.filter((r) => r.source?.domain === domain) : rows;
+  const rows = store.rows('SELECT * FROM brain_records WHERE kind = ? AND deleted = 0 ORDER BY seq DESC LIMIT ?', ATLAS_PROGRESS_KIND, MAX_PROGRESS_READ + 1).map(rowToRecord);
+  const capped = rows.length > MAX_PROGRESS_READ;
+  const kept = rows.slice(0, MAX_PROGRESS_READ);
+  return Object.assign(domain ? kept.filter((r) => r.source?.domain === domain) : kept, { capped });
 }
 
 /**

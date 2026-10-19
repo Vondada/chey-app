@@ -549,6 +549,16 @@ class CheBrainCommand {
     'agents': 'Agents',
     'agent': 'Agents',
     'agent work': 'Agents',
+    // The Knowledge Atlas lobe: curated cards and the owner's practice. Never the bare "atlas", which is the Office worker.
+    'knowledge atlas': 'Knowledge Atlas',
+    'atlas lesson': 'Knowledge Atlas',
+    'atlas lessons': 'Knowledge Atlas',
+    'atlas card': 'Knowledge Atlas',
+    'atlas cards': 'Knowledge Atlas',
+    'lesson': 'Knowledge Atlas',
+    'lessons': 'Knowledge Atlas',
+    'curated lessons': 'Knowledge Atlas',
+    'practice': 'Knowledge Atlas',
   };
 
   /// "take me inside", "show my research memories", "find my memory about
@@ -579,11 +589,14 @@ class CheBrainCommand {
       final lens = CheBrainLens.fromWord(facet.group(1)!);
       if (lens != null) return CheBrainCommand(CheBrainAction.lens, lens: lens);
     }
-    final cat = RegExp(r'^(?:show|open|filter to|only show) (?:me )?(?:my |your |the )?(.+?) memories$').firstMatch(t);
+    final cat = RegExp(r'^(?:show|open|filter to|only show) (?:me )?(?:my |your |the )?(.+?) (?:memories|records|cards|lessons)$').firstMatch(t);
     if (cat != null) {
       final c = _categoryWords[cat.group(1)!.trim()];
       if (c != null) return CheBrainCommand(CheBrainAction.filter, category: c);
     }
+    // "show my lessons", "show the knowledge atlas cards": the atlas lobe by its own words.
+    final atlasLobe = RegExp(r'^(?:show|open|filter to|only show) (?:me )?(?:my |your |the )?(?:lessons|knowledge atlas (?:lobe|group)|atlas (?:cards|lessons)|curated lessons)$').firstMatch(t);
+    if (atlasLobe != null) return const CheBrainCommand(CheBrainAction.filter, category: 'Knowledge Atlas');
     final find = RegExp(r'^(?:find|show me|locate|where is|search (?:for )?) ?(?:my |your |the )?memor(?:y|ies) (?:about|of|on|for) (.+)$').firstMatch(t);
     if (find != null) return CheBrainCommand(CheBrainAction.find, query: find.group(1)!.trim());
     if (RegExp(r'^(?:open|read) (?:this|that|the) memory$').hasMatch(t)) return const CheBrainCommand(CheBrainAction.openSelected);

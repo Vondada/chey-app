@@ -135,6 +135,23 @@ void main() {
       plain.dispose();
     });
 
+    test('the lobe has a voice route, and says records, not memories', () {
+      for (final words in ['show my lessons', 'CHE, show the knowledge atlas cards', 'show knowledge atlas records', 'show the knowledge atlas memories', 'only show atlas lessons', 'show curated lessons']) {
+        final cmd = CheBrainCommand.parse(words);
+        expect(cmd?.action, CheBrainAction.filter, reason: words);
+        expect(cmd?.category, 'Knowledge Atlas', reason: words);
+      }
+      expect(CheBrainCommand.parse("open atlas's brain")!.worker, 'atlas', reason: 'the bare "atlas" is still the Office worker');
+      expect(CheBrainCommand.parse('show my research memories')!.category, 'Research');
+      final dots = cheBuildMemoryDots(savedMemories: const [], memoryNotes: const [], learnedPersonality: const [], learnedKnowledge: const [], brainRecords: records);
+      final c = CheBrainSpaceController(dots);
+      expect(c.execute(CheBrainCommand.parse('show my lessons')!), 'Showing the Knowledge Atlas records, curated lessons and your practice: 2.');
+      c.dispose();
+      final none = CheBrainSpaceController(dots.where((d) => d.category != 'Knowledge Atlas').toList());
+      expect(none.execute(CheBrainCommand.parse('show my lessons')!), 'There are no Knowledge Atlas records yet.');
+      none.dispose();
+    });
+
     test('the labels say what a card and a practice record are', () {
       expect(cheBrainVerificationLabel('curated_lesson').$1, 'Curated lesson: teaching content, not your memory');
       expect(cheBrainVerificationLabel('owner_practice').$1, 'Your practice, measured in chat');

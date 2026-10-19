@@ -676,7 +676,7 @@ test('atlasIntent reads whole sentences only, and answers are pure functions of 
   assert.equal(atlasIntent('explain why that trade lost'), null);
   assert.equal(atlasIntent('tell me about my business'), null);
   assert.equal(atlasIntent('delete the recursion card'), null, 'a delete is never a lesson');
-  assert.deepEqual(atlasIntent('teach me recursion', [], { explainLevel: 'deeper' }), { kind: 'teach', card: atlasCard('recursion'), level: 'expert' }, 'the phone\'s depth setting applies when none is said');
+  assert.deepEqual(atlasIntent('teach me recursion', [], { explainLevel: 'deeper' }), { kind: 'teach', card: atlasCard('recursion'), level: 'expert', study: true }, 'the phone\'s depth setting applies when none is said');
   const a = await answerAtlas(atlasIntent('teach me big o'));
   const b = await answerAtlas(atlasIntent('teach me big o'));
   assert.equal(a.text, b.text);

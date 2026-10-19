@@ -61,7 +61,7 @@ import { answerOwnerMemoryQuestion, auditMemoryProvenance, evidenceQuestion, evi
 import { condenseHistory, ownerNotificationPolicy } from './workflow_governor.js';
 import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, nextTradingTickAt, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
 import { evidenceIntent, evidenceReport, evidenceTick } from './trading_evidence_runner.js';
-import { ATLAS_SOURCE, answerAtlas, atlasIntent, atlasPromptContext, atlasResetIntent, projectAtlasToBrain, resetAtlasProgress } from './knowledge_atlas.js';
+import { ATLAS_SOURCE, answerAtlas, atlasIntent, atlasPromptContext, atlasResetAsk, atlasResetIntent, projectAtlasToBrain, resetAtlasProgress } from './knowledge_atlas.js';
 import { LIVE_BACKTEST, LIVE_STATE, liveBacktest, liveDashboard, livePaperSummary, liveTick, nextLiveTickAt, setLivePaper } from './trading_live.js';
 import { alpacaKeys, alpacaPaperOrders, alpacaStatus, placeAlpacaPaperOrder, removeAlpacaPaperKeys, saveAlpacaPaperKeys } from './broker_alpaca.js';
 import { speakConnections, tradingConnections } from './trading_connections.js';
@@ -8268,7 +8268,10 @@ export class CheState extends DurableObject {
           const ownerGate = gateOwnerAction(message, ownerGrant);
           if (!ownerGate.allowed) {
             await this.ctx.storage.put(PENDING_OWNER_ACTION_KEY, { kinds: ownerGate.kinds, text: message, at: Date.now() });
-            return json({ message: ownerGate.ask, reply: ownerGate.ask, held_for_owner: true, owner_action_kind: ownerGate.kind, owner_action_kinds: ownerGate.kinds, code_review_passed: false, owner_approval_required: true });
+            // "Reset my progress" names what the yes would delete, and how much (Knowledge Atlas, #346).
+            const resetAsk = ownerDevice && ownerGate.kinds.length === 1 && atlasResetIntent(message) ? atlasResetAsk(this.ctx.storage, atlasResetIntent(message)) : '';
+            const ask = resetAsk || ownerGate.ask;
+            return json({ message: ask, reply: ask, held_for_owner: true, owner_action_kind: ownerGate.kind, owner_action_kinds: ownerGate.kinds, code_review_passed: false, owner_approval_required: true });
           }
         } catch (_) {
           // Fail closed: if the hold cannot be recorded, nothing gated runs.
@@ -8277,6 +8280,14 @@ export class CheState extends DurableObject {
         // "Reset my progress" (Knowledge Atlas, #346) is a delete: it runs only with the owner's yes for it.
         const atlasReset = ownerDevice && ownerGrant.delete === true ? atlasResetIntent(message) : null;
         if (atlasReset) {
+          // Like a lesson turn, the reset retires every other held request (an app, a Gmail send, a spoken list).
+          try {
+            await this.ctx.storage.put(PENDING_APP_ACTION_KEY, null);
+            await this.ctx.storage.put(PENDING_GOOGLE_ACTION_KEY, null);
+            await this.ctx.storage.put(LAST_RESULTS_KEY, null);
+          } catch (_) {
+            return json({ message: 'I could not record that safely, so I did not act. Please say it again.', reply: 'I could not record that safely, so I did not act. Please say it again.', code_review_passed: false, owner_approval_required: true }, 503);
+          }
           const reset = resetAtlasProgress(this.ctx.storage, atlasReset);
           return ndjsonReply(reset.text, { source: ATLAS_SOURCE, ok: reset.ok, atlas_kind: 'reset', deleted: reset.deleted, model_calls: 0 });
         }

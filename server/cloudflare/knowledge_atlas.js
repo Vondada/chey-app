@@ -959,9 +959,13 @@ export function atlasContext(history = []) {
     ? [...text.matchAll(/(?:^|\n)(\d{1,2})\. ([^\n]+?), (?:beginner|intermediate|expert)\./g)]
     : [];
   const list = numbered.length ? numbered.reduce((m, [, n, t]) => (m[n] = ATLAS_CARDS.find((c) => c.title === t)?.id || '', m), {}) : null;
-  // A graded answer ("Question 2 on Recursion, sir: correct.") keeps the quiz open for the next one.
+  // A graded answer with a question still to come ("Question 2 on Recursion, sir: correct.") keeps the
+  // quiz open for one more turn; the last one ("Quiz finished on …") closes it.
   const graded = /^Question (\d{1,2}) on /.exec(text);
-  return { card: found, level, quiz: /^Quiz on /.test(text) || Boolean(graded), quizAt: graded ? Number(graded[1]) : 0, quizList: /for a quiz, sir/.test(text), list, progress: /^(?:Your (?:coding |trading )?Knowledge Atlas progress|No (?:coding |trading )?lessons recorded yet)/.test(text) };
+  // One of CHE's last three replies came from the atlas: a bare "how am I doing" is about it.
+  const recent = [...(Array.isArray(history) ? history : [])].filter((h) => String(h?.role) === 'assistant').slice(-3)
+    .some((h) => /Knowledge Atlas/.test(String(h?.content || h?.text || '')));
+  return { card: found, level, quiz: /^Quiz on /.test(text) || Boolean(graded), quizAt: graded ? Number(graded[1]) : 0, quizList: /for a quiz, sir/.test(text), list, progress: /^(?:Your (?:coding |trading )?Knowledge Atlas progress|No (?:coding |trading )?lessons recorded yet)/.test(text), recent };
 }
 
 const THIS = /^(?:this|that|it|this one|that one|this card|that card|this topic|that topic|the same|the same one)$/;
@@ -1009,7 +1013,7 @@ export function atlasIntent(message, history = [], { explainLevel = '' } = {}) {
   if (pick && ctx.list && numberOf(pick[1])) {
     const id = ctx.list[String(numberOf(pick[1]))];
     const chosen = atlasCard(id);
-    if (chosen) return ctx.quizList ? { kind: 'quiz', card: chosen } : { kind: 'teach', card: chosen, level: preferred };
+    if (chosen) return ctx.quizList ? { kind: 'quiz', card: chosen } : { kind: 'teach', card: chosen, level: preferred, study: true };
     return { kind: 'pick_missing', number: numberOf(pick[1]) };
   }
 
@@ -1019,7 +1023,7 @@ export function atlasIntent(message, history = [], { explainLevel = '' } = {}) {
     return /quiz/.test(t) ? { kind: 'no_quiz' } : null;
   }
 
-  const learning = learningIntent(t, ctx);
+  const learning = learningIntent(t, ctx, raw);
   if (learning) return learning;
 
   // "Ask me a question" is a quiz only right after a lesson; "quiz me" with no topic asks which one.
@@ -1065,13 +1069,13 @@ export function atlasIntent(message, history = [], { explainLevel = '' } = {}) {
       const at = Math.max(0, LEVELS.indexOf(ctx.level || 'beginner'));
       level = /simpl|easi/.test(t) ? LEVELS[Math.max(0, at - 1)] : LEVELS[Math.min(LEVELS.length - 1, at + 1)];
     }
-    return { kind: 'teach', card: target, level };
+    return { kind: 'teach', card: target, level, study: true };
   }
 
   if (/^(?:what(?:'s| is)|whats) next(?: after (?:this|that|this one|this card|it))?$|^(?:next|next card|next lesson|next topic|the next one|what comes next|what should i learn next|what do i learn next)$/.test(t)) {
     if (ctx.card) return { kind: 'next', card: ctx.card };
     // With no card just discussed, "what should I learn next" asks what to study, from his progress.
-    return /\b(?:learn|study) next$/.test(t) ? { kind: 'study_next', domain: '' } : null;
+    return ctx.recent && /\b(?:learn|study) next$/.test(t) ? { kind: 'study_next', domain: '' } : null;
   }
 
   // Lessons: "teach me X", "explain X like I'm a beginner", "what is X".
@@ -1083,10 +1087,12 @@ export function atlasIntent(message, history = [], { explainLevel = '' } = {}) {
     // continues the lesson just given, or goes on to the usual routes.
     if (!topic || /^(?:something|anything|stuff)$/.test(topic)) {
       if (/^teach me/.test(rest)) return { kind: 'ask_topic', purpose: 'teach', domain: '' };
-      return ctx.card ? { kind: 'teach', card: ctx.card, level: asked || ctx.level || preferred } : null;
+      return ctx.card ? { kind: 'teach', card: ctx.card, level: asked || ctx.level || preferred, study: true } : null;
     }
-    if (THIS.test(topic)) return ctx.card ? { kind: 'teach', card: ctx.card, level: asked || preferred } : null;
-    return resolveTopic(topic, { kind: 'teach', level: asked || preferred, explicit });
+    if (THIS.test(topic)) return ctx.card ? { kind: 'teach', card: ctx.card, level: asked || preferred, study: true } : null;
+    // Only an explicit lesson request counts as study; "what is risk" or a definition does not.
+    const lesson = resolveTopic(topic, { kind: 'teach', level: asked || preferred, explicit });
+    return lesson?.kind === 'teach' ? { ...lesson, study: true } : lesson;
   }
   // "Explain X", "what is X", "define X", "tell me about X": a lesson only when a card names X.
   const ask = /^(?:explain|define|describe|tell me about)\s+(.+?)(?:\s+to me)?$/.exec(rest);
@@ -1121,41 +1127,67 @@ function resolveTopic(rawTopic, { kind, level = 'beginner', explicit = false }) 
 const DOMAIN_WORD = { coding: 'coding', code: 'coding', programming: 'coding', trading: 'trading' };
 // "… on trading", "… in coding so far": the domain he asks about, taken off the end of the sentence.
 const DOMAIN_TAIL = /^(.+?)(?: (?:on|in|with|at|for|of) (?:the |my )?(coding|code|programming|trading)(?: (?:cards|lessons|side))?)?(?: so far| until now| up to now)?$/;
-// Always about the atlas: the owner names learning, lessons or a quiz.
-const PROGRESS_STRONG = /^(?:what (?:have|did) i (?:learn(?:ed|t)?|stud(?:y|ied)|cover(?:ed)?)|what (?:lessons|cards|topics) (?:have|did) i (?:do(?:ne)?|stud(?:y|ied)|learn(?:ed|t)?|finish(?:ed)?|complete(?:d)?|take|taken)|how many (?:lessons|cards|quizzes|quiz questions) (?:have|did) i (?:do(?:ne)?|stud(?:y|ied)|learn(?:ed|t)?|finish(?:ed)?|complete(?:d)?|take|taken|answer(?:ed)?|get right|got right)|(?:what(?:'s| is| are)?|whats|show(?: me)?|tell me|read(?: me)?|give me) (?:my |the )?(?:learning|study|studying|atlas|knowledge atlas|lesson|quiz) (?:progress|scores?|results|history)|how(?:'s| is) my (?:learning|studying|study)(?: going)?|how am i doing (?:on|in|with) (?:my |the )?(?:lessons|quizzes|knowledge atlas|learning|studies))$/;
-// Needs a domain ("how am I doing on trading") or a lesson just before: alone it could mean anything.
-const PROGRESS_WEAK = /^(?:how am i doing|how(?:'s| is) my progress(?: going)?|(?:what(?:'s| is)?|whats|show(?: me)?|tell me|read(?: me)?|give me) my (?:progress|scores?))$/;
+// A sentence about the atlas names it: lessons, cards, a quiz, coding or trading, or learning progress.
+const ATLAS_WORD = /\b(?:knowledge atlas|atlas|lessons?|cards?|quiz(?:zes)?|coding|trading|learning progress|study progress)\b/;
+// Progress questions. Each needs an atlas word, a domain ("how am I doing on trading") or an atlas reply
+// among CHE's last three: alone, "what did I learn" or "how am I doing" could be about anything.
+const PROGRESS = /^(?:what (?:have|did) i (?:learn(?:ed|t)?|stud(?:y|ied)|cover(?:ed)?)|what (?:lessons|cards|topics) (?:have|did) i (?:do(?:ne)?|stud(?:y|ied)|learn(?:ed|t)?|finish(?:ed)?|complete(?:d)?|take|taken)|how many (?:lessons|cards|quizzes|quiz questions) (?:have|did) i (?:do(?:ne)?|stud(?:y|ied)|learn(?:ed|t)?|finish(?:ed)?|complete(?:d)?|take|taken|answer(?:ed)?|get right|got right)|(?:what(?:'s| is| are)?|whats|show(?: me)?|tell me|read(?: me)?|give me) (?:my |the )?(?:(?:learning|study|studying|atlas|knowledge atlas|lesson|quiz) (?:progress|scores?|results|history)|progress|scores?)|how(?:'s| is) my (?:learning|studying|study|progress)(?: going)?|how am i doing(?: (?:on|in|with) (?:my |the )?(?:lessons|quizzes|knowledge atlas|learning|studies))?)$/;
 // "What should I do next" or "suggest a topic" alone is not about study: the lesson words are required.
 const STUDY_NEXT = /^(?:what (?:should|do|can|shall) i (?:study|learn) next|what(?:'s| is)? next (?:for me )?to (?:study|learn)|whats next (?:for me )?to (?:study|learn)|(?:what|which) (?:card|lesson) (?:should i|do i|to|shall i) (?:study|learn|take|do)(?: next)?|(?:what|which) topic (?:should i|do i|to|shall i) (?:study|learn)(?: next)?|(?:suggest|recommend|pick) (?:me )?(?:a|the next|my next|the) (?:lesson|card)(?: to (?:study|learn))?|(?:suggest|recommend|pick) (?:me )?(?:a|the next|my next|the) topic to (?:study|learn)|what(?:'s| is)? my next (?:lesson|card)|whats my next (?:lesson|card))$/;
-const QUESTION_NUMBER = String.raw`(\d{1,2}|one|two|three|four|five|six|seven|eight|first|second|third|fourth|fifth)`;
-const NUMBERED_ANSWER = new RegExp(String.raw`^(?:(?:my |the )?answer (?:to |for )?|for |on )?(?:question |number |no )?${QUESTION_NUMBER}(?:\s*[.:),=-]\s*|\s+(?:is|was)\s+|\s+)(?:(?:the answer is|my answer is|i think it'?s|i think it is|i think|i'?d say|i say|it'?s|its|it is)\s+)?(.+)$`);
-const NEXT_ANSWER = /^(?:my answer is|the answer is|i think it'?s|i think it is|i think|i'?d say|i say|is it|answer)\s+(.+)$/;
-const CARD_FIX = /^(?:no[, ]+)?(?:(?:that(?:'s| is)|thats|this is|the card is|your card is|that card is|the lesson is|that lesson is|that answer is|your answer is) (?:wrong|not right|incorrect|a mistake|mistaken|outdated)|you(?:'re| are) wrong(?: about (?:that|this|it))?|(?:that|the card|this card) has a mistake)(?:\s*[,:;.-]\s*|\s+)?(.*)$/;
+// A quiz answer only in an explicit form: "number 3 is 55", "answer 2: yes", "question 1: a string",
+// "the answer to question 3 is 55", "my answer is no". A bare "3 55", "I think …" or "is it …" is not one.
+const QN = String.raw`(\d{1,2}|one|two|three|four|five|six|seven|eight)`;
+const NUMBERED_ANSWER = new RegExp(String.raw`^(?:(?:(?:my|the) )?answer (?:to |for )?(?:question |number )?${QN}|(?:for )?(?:question|number) ${QN})(?:\s*[:,-]\s*|\s+is\s+)(.+)$`);
+const NEXT_ANSWER = /^my answer(?: to (?:that|this|this one|the next one))? is\s+(.+)$/;
+// What a quiz answer never is: a request, a question, a sentence about the owner, or a long speech.
+const ANSWER_ACTION = /\b(?:e-?mail|send|text|message|mail|buy|sell|pay|purchase|delete|remove|erase|remember|forget|open|switch|book|schedule|remind|post|upload|publish|transfer|deploy|merge|subscribe|cancel)\b/;
+const ANSWER_QUESTION = /^(?:is|are|was|were|do|does|did|can|could|would|will|should|what|who|where|when|why|how|which)\b/;
+const ANSWER_PERSONAL = /^(?:my|mine|your|our|his|her|their|i|i'm|im|we|you|me)\b/;
+function quizAnswer(answer, raw) {
+  const a = String(answer || '').trim();
+  if (!a || a.split(/\s+/).length > 12 || /\?\s*$/.test(String(raw || ''))) return null;
+  if (ANSWER_ACTION.test(a) || ANSWER_QUESTION.test(a) || ANSWER_PERSONAL.test(a) || classifyOwnerActions(a).length) return null;
+  return a.slice(0, 300);
+}
+// A correction names the card, the lesson or a part of it: "the recursion card is wrong", "your lesson on
+// VWAP is wrong, …", "that formula is wrong". "That's wrong, my name is Wes" is about him, not a card.
+const CARD_FIX = /^(?:no[, ]+)?(?:the|that|this|your) (?:(.+?) )?(?:card|lesson|formula|example|explanation|definition|analogy)(?: (?:on|about|for|of) (.+?))? (?:is|was|looks) (?:wrong|not right|incorrect|a mistake|mistaken|outdated|an error)(?:\s*[,:;.-]\s*|\s+)?(.*)$/;
+const MEMORY_STATEMENT = /\b(?:my (?:name|wife|husband|partner|son|daughter|kids?|children|mom|mother|dad|father|sister|brother|family|birthday|address|phone|email|boss|job|car|dog|cat|friend)|i (?:live|lived|said|told you|meant|work|was born|am called|am from)|i'?m (?:called|from|moving)|call me|remember)\b/;
 
 /** Progress, "what should I study next", a quiz answer or a card correction; null for anything else. */
-function learningIntent(t, ctx) {
+function learningIntent(t, ctx, raw = '') {
   const tail = DOMAIN_TAIL.exec(t);
   const core = tail ? tail[1] : t;
   const domain = DOMAIN_WORD[tail?.[2] || ''] || '';
-  if (PROGRESS_STRONG.test(core) || (PROGRESS_WEAK.test(core) && (domain || ctx.card || ctx.progress))) return { kind: 'progress', domain };
+  // The whole sentence counts: "what have I learned from the knowledge atlas" names it after the prefix is gone.
+  const about = Boolean(domain) || ATLAS_WORD.test(speech(raw) || t) || ctx.recent;
+  if (PROGRESS.test(core) && about) return { kind: 'progress', domain };
   // Right after a lesson, "what should I learn next" keeps its curriculum meaning: the card after that one.
-  if (STUDY_NEXT.test(core) && !(ctx.card && !domain && /\blearn next$/.test(core))) return { kind: 'study_next', domain };
+  if (STUDY_NEXT.test(core) && about && !(ctx.card && !domain && /\blearn next$/.test(core))) return { kind: 'study_next', domain };
   if (ctx.card && ctx.quiz) {
     const numbered = NUMBERED_ANSWER.exec(t);
-    if (numbered) return { kind: 'grade', card: ctx.card, index: numberOf(numbered[1]) - 1, answer: numbered[2].slice(0, 300) };
-    const next = NEXT_ANSWER.exec(t);
-    if (next) return { kind: 'grade', card: ctx.card, index: ctx.quizAt, answer: next[1].slice(0, 300) };
+    const next = numbered ? null : NEXT_ANSWER.exec(t);
+    const answer = quizAnswer(numbered ? numbered[3] : next?.[1], raw);
+    if (numbered && answer) return { kind: 'grade', card: ctx.card, index: numberOf(numbered[1] || numbered[2]) - 1, answer };
+    if (next && answer) return { kind: 'grade', card: ctx.card, index: ctx.quizAt, answer };
   }
-  const fix = ctx.card ? CARD_FIX.exec(t) : null;
-  if (fix) return { kind: 'correction', card: ctx.card, detail: fix[1].slice(0, 400) };
+  const fix = CARD_FIX.exec(t);
+  if (fix && !MEMORY_STATEMENT.test(fix[3] || '')) {
+    const named = String(fix[1] || fix[2] || '').trim();
+    const card = named && !THIS.test(named) ? findAtlasCard(named) : ctx.card;
+    if (card) return { kind: 'correction', card, detail: String(fix[3] || '').slice(0, 400) };
+  }
   return null;
 }
 
 /** "Reset my progress", "clear my trading quiz scores": a delete, so it runs only after the owner's yes. */
 export function atlasResetIntent(message) {
   const t = speech(message);
-  const m = /^(?:reset|clear|delete|erase|wipe|remove)(?: out)?(?: all)?(?: of)? my (?:(coding|trading) )?(?:(?:learning|study|atlas|knowledge atlas|lesson|quiz|practice) )*(?:progress|scores|history|records)(?: (?:in|on|for|from) (?:the )?(?:(coding|trading)|knowledge atlas))?$/.exec(t);
-  return m ? { kind: 'reset', domain: m[1] || m[2] || '' } : null;
+  const m = /^(?:reset|clear|delete|erase|wipe|remove)(?: out)?(?: all)?(?: of)? my (?:(coding|trading) )?((?:(?:learning|study|atlas|knowledge atlas|lesson|quiz|practice) )*)(progress|scores|history|records)(?: (?:in|on|for|from) (?:the )?(?:(coding|trading)|(knowledge atlas)))?$/.exec(t);
+  if (!m) return null;
+  // "Delete my history" or "clear my trading records" is not the atlas: those nouns need an atlas word.
+  if (/^(?:history|records)$/.test(m[3]) && !m[2].trim() && !m[5]) return null;
+  return { kind: 'reset', domain: m[1] || m[4] || '' };
 }
 
 const NUMBER_VALUES = { zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90 };
@@ -1194,7 +1226,8 @@ export function gradeQuizAnswer(c, index, answer) {
     const result = FORMULAS[q.check.compute](q.check.inputs);
     const want = typeof result === 'object' && result ? Object.values(result) : [result];
     const percent = (q.check.shown || []).some((x) => /%/.test(x));
-    const nums = answerNumbers(answer).map((n) => (percent && !n.marked ? n.raw / 100 : n.x));
+    // The answer's own main number (or the first two, for a range) must match: a list of guesses does not.
+    const nums = answerNumbers(answer).map((n) => (percent && !n.marked ? n.raw / 100 : n.x)).slice(0, want.length);
     const correct = want.every((v) => nums.some((x) => near(x, v)));
     return { correct, method: 'the number, recomputed from the card\'s formula', expected: q.a };
   }
@@ -1256,6 +1289,7 @@ export function progressText(records, domain = '') {
   if (graded.length) lines.push(`Latest answers: ${graded.slice(0, 3).map((r) => `${cardName(r.source.card_id)}${r.source.item_id ? ` ${r.source.item_id}` : ''}, ${r.source.correct === true ? 'correct' : r.source.correct === false ? 'not correct' : 'not graded'}`).join('; ')}.`);
   lines.push('Say "what should I study next", or "quiz me on" a topic.');
   if (domain === 'trading') lines.push('This is your study of the trading cards; for CHE\'s paper trading results, say "what\'s my win rate".');
+  if (records.capped) lines.push(`These counts are from your newest ${records.length} practice records only; older ones are not counted.`);
   lines.push(`Source: ${plural(rows.length, 'practice record')} in CHE's Brain, Knowledge Atlas folder, labelled owner practice. They record your study in this chat, not facts you told me.`);
   return lines.join('\n');
 }
@@ -1288,6 +1322,15 @@ function studyNextText(records, domain) {
   const other = !domain && !studied.size ? inDomain(card.domain === 'coding' ? 'trading' : 'coding')[0] : null;
   const also = other ? ` For ${other.domain}, the first card is ${other.title}.` : '';
   return { text: `Next for you, sir: ${card.title}, ${card.level} level. ${card.summary} ${why}${also} Say "teach me ${firstAlias(card)}" to start it.\n${sourceLine(card)}`, card };
+}
+
+/** What the delete hold says for "reset my progress": the target and how many records it would remove. */
+export function atlasResetAsk(storage, { domain = '' } = {}) {
+  const brain = brainOf(storage);
+  if (!brain) return '';
+  const rows = learningRecords(brain, { domain });
+  const where = domain ? `${domain} ` : '';
+  return `Before I delete anything, I need your yes: delete your ${rows.capped ? `newest ${rows.length}` : rows.length} ${where}Knowledge Atlas practice record${rows.length === 1 ? '' : 's'} (lessons studied, quiz answers and practice results)? The cards and your memories stay. Should I go ahead?`;
 }
 
 /** "Reset my progress", after the owner's yes: his practice records become tombstones; the cards stay. */
@@ -1492,7 +1535,8 @@ export async function answerAtlas(intent, { storage = null, now } = {}) {
       return out('There is no quiz open right now, sir. Say "quiz me on" and a topic first.', false);
     case 'teach': {
       const level = LEVELS.includes(intent.level) ? intent.level : 'beginner';
-      practice({ kind: 'lesson', level });
+      // A study is recorded only for an explicit lesson request, never for a definition or a reading.
+      if (intent.study) practice({ kind: 'lesson', level });
       return out(teachText(c, level, records));
     }
     case 'formula': {
@@ -1538,8 +1582,10 @@ export async function answerAtlas(intent, { storage = null, now } = {}) {
       const grade = gradeQuizAnswer(c, intent.index, intent.answer);
       const saved = recorded(practice({ kind: 'quiz', item_id: `question ${intent.index + 1}`, correct: grade.correct, question: q.q, answer: intent.answer, expected: q.a, method: grade.method }));
       const next = c.quiz[intent.index + 1];
+      // The last answer closes the quiz: its reply does not start "Question N on", so nothing after it is graded.
+      const head = next ? `Question ${intent.index + 1} on ${c.title}, sir: ` : `Quiz finished on ${c.title}, sir. Question ${intent.index + 1}: `;
       return out([
-        `Question ${intent.index + 1} on ${c.title}, sir: ${grade.correct ? 'correct' : 'not quite'}. You said: ${intent.answer}. The card's answer: ${q.a}`,
+        `${head}${grade.correct ? 'correct' : 'not quite'}. You said: ${intent.answer}. The card's answer: ${q.a}`,
         `Graded by ${grade.method}. ${saved ? 'Recorded in your Brain as owner practice.' : 'I could not record it in the Brain just now, so it is not in your progress.'}`,
         next ? `Question ${intent.index + 2}: ${next.q} Say "my answer is" and your answer.` : 'That was the last question. Say "how am I doing" for your scores.',
         sourceLine(c),
@@ -1632,7 +1678,8 @@ export function projectAtlasToBrain(store, { now } = {}) {
     if (hashes[record.id] === hash) { unchanged += 1; continue; }
     if (written >= MAX_PROJECTION_WRITES) { skipped += 1; continue; }
     const current = store.get(record.id);
-    if (current && (current.deleted || current.source?.kind !== 'knowledge_atlas')) { hashes[record.id] = hash; skipped += 1; continue; }
+    // Deleted by the owner, edited by him on the phone, or not the atlas's at all: left as it is.
+    if (current && (current.deleted || current.source?.kind !== 'knowledge_atlas' || (current.origin && current.origin !== 'atlas'))) { hashes[record.id] = hash; skipped += 1; continue; }
     const result = store.put(record, { origin: 'atlas', now });
     if (!['created', 'updated', 'merged', 'unchanged'].includes(result.outcome)) { skipped += 1; continue; }
     hashes[record.id] = hash;
