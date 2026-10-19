@@ -336,7 +336,7 @@ test('each card fits the Brain\'s own record schema, with typed links and no sen
     const normalized = normalizeRecord(record);
     assert.equal(normalized.error, undefined, c.id);
     assert.equal(normalized.region, c.domain === 'coding' ? BRAIN_REGIONS.coding : BRAIN_REGIONS.trading);
-    assert.equal(normalized.verification, 'unverified_reference', 'a reference link is not proof of every sentence');
+    assert.equal(normalized.verification, 'curated_lesson', 'curated teaching text: not the owner\'s memory, not a measured fact (atlas_brain.test.mjs)');
     assert.ok(normalized.links.every((l) => RELATIONSHIP_TYPES.includes(l.type) && atlasCard(l.to.replace(/^atlas:/, ''))), c.id);
     assert.equal(normalized.links.filter((l) => l.type === 'builds_upon').length, c.prerequisites.length);
     assert.ok(isSafeText(`${normalized.title}\n${normalized.body}`), `${c.id} passes the Brain's secret gate`);

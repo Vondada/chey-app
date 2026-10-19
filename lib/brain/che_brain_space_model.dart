@@ -27,6 +27,8 @@ const List<String> cheBrainCategories = [
   'Translation',
   'Conversations',
   'Agents',
+  // Curated teaching cards and the owner's practice on them (#346): their own lobe, never counted as memories.
+  'Knowledge Atlas',
 ];
 
 /// The brain's shape, seen from its left side by default like an anatomy
@@ -61,6 +63,7 @@ const Map<String, (double, double, double, double)> _brainRegions = {
   'Suggestion': (-5.4, -3.9, 0, 1.6), // cerebellum
   'Translation': (-2.2, -5.4, 0, 1.2), // brainstem
   'Agents': (4.8, -3.6, 0, 2.0), // lower front: live specialist work
+  'Knowledge Atlas': (-4.4, 3.4, 0, 1.8), // upper back: curated lessons, apart from memories
 };
 
 String cheBrainCategoryKey(String category) {

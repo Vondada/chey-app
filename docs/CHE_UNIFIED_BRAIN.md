@@ -67,7 +67,16 @@ inspired_by, requires_verification, escalated_to, used_by_project, discovered_by
 
 Verification labels (`VERIFICATION_STATES`, the che-fact-check vocabulary):
 owner_attested, verified_source, unverified_reference, unverified_research_lead,
-model_opinion, hypothesis, unknown. A model's text is never stored as a fact.
+model_opinion, hypothesis, curated_lesson, owner_practice, unknown. A model's text is never stored as a fact.
+
+Knowledge Atlas (#346): each card is a `concept_card` record, `curated_lesson`, in
+`Knowledge Atlas/<Coding|Trading>/<card>` (prerequisites are `builds_upon` links, related cards
+`related_to`), projected by `knowledge_atlas.projectAtlasToBrain` from the Brain sync and the first
+atlas turn, keyed by card id and hash (a second run writes nothing). The owner's study (lessons,
+graded quiz answers, corrections, exercises and drills) is `atlas_progress`, `owner_practice`,
+"measured from this chat", in the same card folder (`brain_store.recordLearning`). The Brain Room
+shows both as their own Knowledge Atlas lobe, never as memories. "Reset my progress" tombstones the
+`atlas_progress` records only, after the owner's yes.
 
 Significance (`assessSignificance`) is rule-based and explained: every score carries
 its reasons (owner said it, a correction, verified source, relationships, superseded,
