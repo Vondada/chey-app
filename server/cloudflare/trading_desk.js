@@ -132,9 +132,11 @@ export function deskIntent(message) {
   const stock = stockOrderIntent(message);
   if (stock) return stock;
   const text = String(message || '').toLowerCase().replace(/[’']/g, "'");
-  // "Yes, place it": the yes for the Alpaca paper order CHE just read back or, with none waiting,
-  // for the newest live alert, as before.
-  if (/^\s*(?:yes[,!.]?\s+)?(?:please\s+)?place\s+(?:it|that|the\s+order|that\s+order|the\s+paper\s+order|my\s+order)(?:\s+(?:please|now))?[\s.!]*$/.test(text)) return { kind: 'take', place: true };
+  // "Yes, place it" is the only place-take: the explicit yes for the Alpaca paper order CHE just read back or,
+  // with none waiting, for the newest live alert. A bare "place it" has no yes in it, so it places nothing
+  // (B1): it is answered with the phrase to say.
+  const placeIt = /^\s*(yes[,!.]?\s+)?(?:please\s+)?place\s+(?:it|that|the\s+order|that\s+order|the\s+paper\s+order|my\s+order)(?:\s+(?:please|now))?[\s.!]*$/.exec(text);
+  if (placeIt) return placeIt[1] ? { kind: 'take', place: true } : { kind: 'place_unconfirmed' };
   // A no to that order. With nothing waiting it is an ordinary "no" and goes on to its own route.
   if (/^\s*(?:no|nope|no thanks|no thank you|don't|dont|do not)(?:[,!.]?\s+(?:don't|dont|do not)\s+(?:place|send)\s+it)?[\s.!]*$|^\s*(?:no[,!.]?\s+)?(?:don't|dont|do not)\s+(?:place|send)\s+(?:it|that|the order|that order)[\s.!]*$|^\s*(?:no[,!.]?\s+)?(?:drop|cancel)\s+(?:it|that order|the order)[\s.!]*$/.test(text)) return { kind: 'stock_no' };
   if (/\b(?:what|which|show|list|read|tell me|check|any)\b[\s\S]{0,30}\b(?:alpaca(?:\s+paper)?|paper)\s+orders?\b|^\s*(?:my\s+)?alpaca(?:\s+paper)?\s+orders\s*[?.!]*$|\b(?:did|has)\b[\s\S]{0,25}\b(?:alpaca(?:\s+paper)?|paper)\s+orders?\b[\s\S]{0,20}\bfill/.test(text)) return { kind: 'alpaca_orders' };
@@ -324,10 +326,15 @@ const NUMBER_WORDS = {
 };
 const NUMBER_WORD = `(?:${[...Object.keys(NUMBER_WORDS), 'hundred', 'thousand'].join('|')})`;
 const QTY = String.raw`(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?|half(?:\s+a)?|${NUMBER_WORD}(?:(?:[\s-]+|\s+and\s+)${NUMBER_WORD})*)`;
-// Company names said aloud, only where the ticker is unambiguous; the read-back names both.
-const COMPANIES = { apple: 'AAPL', microsoft: 'MSFT', tesla: 'TSLA', nvidia: 'NVDA', amazon: 'AMZN', netflix: 'NFLX' };
-// Spelled letters ("a a p l", "A.A.P.L.") or a ticker; never a venue word or a pronoun.
-const SYMBOL = String.raw`(${Object.keys(COMPANIES).join('|')}|(?:[a-z][.\s]){1,4}[a-z]\.?(?=\s|$)|(?!(?:paper|alpaca|shares?|stocks?|it|that|this|them|some|more|the)\b)[a-z]{1,5}(?:\.[a-z])?)`;
+// Company names said aloud, resolved to their ticker; the read-back names both.
+const COMPANIES = { apple: 'AAPL', microsoft: 'MSFT', tesla: 'TSLA', nvidia: 'NVDA', amazon: 'AMZN', netflix: 'NFLX', google: 'GOOGL', alphabet: 'GOOGL', disney: 'DIS', walmart: 'WMT', intel: 'INTC' };
+// The explicit list of symbols CHE reads back as stock orders (B4). A word that is not on it ("reams",
+// "boxes", "rolls") is never a symbol, so a shopping sentence cannot become an order.
+const TICKERS = new Set(('aapl msft tsla nvda amzn nflx googl goog amd intc dis wmt jpm bac wfc gs ms ba ge xom cvx pfe jnj unh mrk abbv lly '
+  + 'ko mcd sbux nke hd orcl crm adbe ibm csco qcom txn avgo pypl abnb pltr sofi rivn nio baba pdd gm vz tmus cmcsa '
+  + 'spy qqq iwm dia voo vti tqqq sqqq arkk cl brk.b').split(' '));
+// Spelled letters ("a a p l", "A.A.P.L.") or a ticker; never a venue word, a function word or a pronoun.
+const SYMBOL = String.raw`(${Object.keys(COMPANIES).join('|')}|(?:[a-z][.\s]){1,4}[a-z]\.?(?=\s|$)|(?!(?:paper|alpaca|shares?|stocks?|it|that|this|them|some|more|the|of|in|on|at|for|to|from|with|and|my|your)\b)[a-z]{1,5}(?:\.[a-z])?)`;
 const LEAD = String.raw`(?:(?:hey\s+)?(?:che|chey|chay)[,:]?\s+)?(?:(?:please|ok|okay|now|just|go ahead and|can you|could you|would you|will you|i want to|i want you to|i'd like to|id like to|i would like to|let's|lets)\s+)*`;
 const STOCK_VERB = new RegExp(String.raw`^${LEAD}(?:buy|sell|purchase)\b`);
 const STOCK_HEAD = new RegExp(String.raw`^${LEAD}(buy|sell|purchase)\s+${QTY}\s+(?:shares?\s+(?:of\s+|in\s+)?)?${SYMBOL}(?:\s+(?:shares?|stocks?))?(?=\s|$)`);
@@ -364,6 +371,17 @@ function wordsToNumber(raw) {
 
 const refused = (reason, text) => ({ kind: 'stock_order', refuse: reason, paper: !LIVE_WORDS.test(text) && !OTHER_CLAUSE.test(text) });
 
+// Spelled letters lose their spaces and dots ("a a p l" is AAPL); a class share keeps its dot (BRK.B).
+function symbolAsSaid(raw) {
+  return /^(?:[a-z][.\s]){1,4}[a-z]\.?$/.test(raw) ? raw.replace(/[.\s]/g, '') : raw;
+}
+
+// The ticker for a word said: a company name or a symbol on the explicit list. Anything else is null.
+function tickerFor(said) {
+  if (Object.prototype.hasOwnProperty.call(COMPANIES, said)) return COMPANIES[said];
+  return TICKERS.has(said) ? said.toUpperCase() : null;
+}
+
 /**
  * The owner's Alpaca paper stock order in [message], a refusal with its reason, or null when the
  * sentence is not a broker order at all ("buy paper towels" keeps its own route and money hold).
@@ -374,23 +392,34 @@ export function stockOrderIntent(message) {
   const text = raw.toLowerCase().replace(/[’']/g, "'").replace(/[?!]+$/g, '').replace(/\.$/, '').trim();
   if (!STOCK_VERB.test(text) || !/\b(?:alpaca|paper)\b/.test(text)) return null;
   const alpaca = /\balpaca\b/.test(text);
+  // B4: the stock route claims a sentence only with a stock signal: the word shares, stock or equity, the word
+  // Alpaca, or a ticker or company name CHE knows. Without one it is not a broker order at all, so a purchase
+  // like "buy 10 reams paper" or "buy 10 rolls of paper towels on Amazon" keeps its own route and money hold.
+  const head = STOCK_HEAD.exec(text);
+  const said = head ? symbolAsSaid(head[3]) : '';
+  const ticker = head ? tickerFor(said) : null;
+  const words = /\b(?:shares?|stocks?|equity|equities)\b/.test(text);
+  if (!alpaca && !words && !ticker) return null;
   if (LIVE_WORDS.test(text)) return { kind: 'stock_order', refuse: 'CHE sends Alpaca orders only to your Alpaca PAPER account, sir. Live Alpaca trading is not built, and it would need your separate approval first. Nothing was sent.', paper: false };
   if (OPTION_WORDS.test(text)) return refused('CHE does not place option orders yet, sir; that comes later. I can read your Alpaca paper options level: say "what are my trading connections". Nothing was sent.', text);
   if (CRYPTO_WORDS.test(text)) return refused('CHE sends only stock orders to Alpaca paper, sir, not crypto. Nothing was sent.', text);
   if (FUTURES_ROOTS.test(text) || FUTURES_WORDS.test(text) || (SHARED_ROOTS.test(text) && !/\bshares?\b/.test(text))) return refused('Alpaca does not trade futures, sir. Futures paper trading is CHE\'s own paper engine, and Tradovate demo orders stay blocked until Tradovate approves API access. Nothing was sent.', text);
-  const head = STOCK_HEAD.exec(text);
   if (!head) {
     // "Buy some Apple on Alpaca": an order for the broker, but not one CHE can read back exactly.
-    return alpaca || /\bshares?\b/.test(text)
+    return alpaca || words
       ? { kind: 'stock_order', refuse: 'How many shares of which stock, sir? Say it like "buy 10 shares of AAPL on Alpaca paper". Nothing was sent.', paper: false }
+      : null;
+  }
+  // A word that is not on the ticker list or a company name is never a symbol (B4): refused by name, nothing sent.
+  if (!ticker) {
+    return alpaca || words
+      ? { kind: 'stock_order', refuse: `I don't know a stock called ${said.toUpperCase()}, sir. Say its ticker or company name, like "buy 10 shares of AAPL on Alpaca paper". Nothing was sent.`, paper: false }
       : null;
   }
   const qty = wordsToNumber(head[2]);
   if (!Number.isInteger(qty)) return refused('CHE sends whole shares only, 1 to 1,000, sir. Nothing was sent.', text);
   if (qty < 1 || qty > 1000) return refused('Choose 1 to 1,000 shares, sir. Nothing was sent.', text);
-  // Spelled letters lose their spaces and dots; a class share keeps its dot (BRK.B).
-  const said = /^(?:[a-z][.\s]){1,4}[a-z]\.?$/.test(head[3]) ? head[3].replace(/[.\s]/g, '') : head[3];
-  const symbol = (COMPANIES[said] || said).toUpperCase();
+  const symbol = ticker;
   let rest = text.slice(head[0].length).replace(NOT_YET, ' ');
   if (UNSUPPORTED_TYPE.test(rest)) return refused('CHE sends Alpaca paper orders as market or limit orders for one trading day only, sir. Say it again as a market or a limit order. Nothing was sent.', text);
   const limits = [...rest.matchAll(LIMIT)].map((m) => Number(m[1] || m[2] || m[3]));
@@ -400,6 +429,8 @@ export function stockOrderIntent(message) {
   rest = rest.replace(MARKET, ' ').replace(VENUE, ' ').replace(DAY, ' ').replace(FILLER, ' ').replace(/\b(?:che|chey|chay)\b/g, ' ');
   const left = rest.replace(/[\s,.]+/g, ' ').trim();
   if (left || limits.length > 1 || (market && limits.length)) {
+    // Only a sentence that says Alpaca or shares is called an Alpaca order; "buy 10 apple paper towels" is a purchase.
+    if (!alpaca && !words) return null;
     return { kind: 'stock_order', refuse: `I heard an Alpaca paper order, sir, but not all of it${left ? ` ("${left.slice(0, 60)}")` : ''}. Say it like "buy 10 shares of AAPL on Alpaca paper", adding "at limit 410" for a limit order. Nothing was sent.`, paper: false };
   }
   const limit = limits[0];
@@ -459,6 +490,31 @@ export async function dropStockOrder(storage, now = Date.now()) {
   await saveDesk(storage, desk);
   return { dropped: true, order: o };
 }
+
+/**
+ * A "yes, place it" while an Alpaca PAPER record exists and is no longer pending (B2): the record is cleared
+ * and nothing is sent. Its paper result never becomes permission for a live or sim alert.
+ */
+export async function clearStockOrder(storage) {
+  const desk = await readDesk(storage);
+  const o = desk.stock_order;
+  if (!o) return null;
+  desk.stock_order = null;
+  await saveDesk(storage, desk);
+  return o;
+}
+
+/** The reply to a "yes, place it" that found an old Alpaca paper record. Nothing live is placed in any case. */
+export function speakStaleStockOrder(o, { alertOpen = false } = {}) {
+  const live = alertOpen ? ' A live trade alert is still waiting; say "take the trade" to place it, or "skip it".' : '';
+  if (o.status === 'placed') return `That ${STOCK_ACCOUNT} order was already sent, sir, and it stands, once. ${o.receipt ? speakStockReceipt(o.receipt) : ''} Nothing more was sent, and nothing live was placed.${live}`;
+  if (o.status === 'placing' || o.status === 'unclear') return `I cannot confirm whether Alpaca placed that paper order, sir. Nothing else was sent, and nothing live was placed.${live} Say "check my Alpaca paper orders" to see its status.`;
+  if (o.status === 'failed') return `That ${STOCK_ACCOUNT} order was not sent, sir, and nothing live was placed.${live} Say the order again and I will read it back.`;
+  return `The ${STOCK_ACCOUNT} order I read back waited more than two minutes, sir, so nothing was sent.${live} ${alertOpen ? '' : 'Say the order again and I will read it back.'}`.replace(/ $/, '');
+}
+
+/** Spoken when the owner says "place it" without the yes that makes it a placing order (B1). Places nothing. */
+export const PLACE_NEEDS_YES = 'Nothing was placed, sir. To place an order, say "yes, place it" as one sentence, so I know it is your yes.';
 
 /**
  * "Yes, place it": sends the order read back within the last two minutes, once. Its request id

@@ -3832,6 +3832,108 @@ test('Alpaca paper order: a yes after an interrupted send reuses the same reques
   }
 });
 
+// Review blockers on PR #355 (B1-B4). Each regression runs through /api/chat with every outbound request recorded.
+const liveAlertFor = (over = {}) => ({ id: 'alert-1', paper_id: 'paper-1', at: new Date().toISOString(), expires_at: new Date(Date.now() + 3600_000).toISOString(), root: 'MES', qty: 1, entry: 5820, stop: 5805, target: 5850, skill: 'test', why: '', mode: 'live', account: 'DEMO123', status: 'pending', announced: true, ...over });
+const deskFor = (mode, over = {}) => ({ mode, qty: 1, contract: 'micro', alerts: [liveAlertFor({ mode })], account: { sim: 'DEMO123', live: 'DEMO123' }, risk_limits: { maxContracts: 1, maxRiskDollars: 100 }, ...over });
+const tradovateSignedIn = () => ({ access_token: 'tradovate-test-token', expires_at: Date.now() + 3600_000, connected_at: new Date().toISOString() });
+const tradovateAnswers = (url) => {
+  if (url.includes('/account/list')) return { status: 200, body: [{ id: 7, name: 'DEMO123', active: true }] };
+  if (url.includes('/contract/suggest')) return { status: 200, body: [{ name: 'MESZ6' }] };
+  if (url.includes('/order/placeoso')) return { status: 200, body: { orderId: 42, failureReason: 'Success' } };
+  return null;
+};
+const tradovateCalls = (o) => o.calls.filter((c) => /tradovateapi\.com/.test(c.url));
+const stockRecord = (over = {}) => ({ order: { symbol: 'AAPL', name: '', side: 'buy', qty: 10, type: 'market', limit_price: null }, client_order_id: 'che-11111111-2222-4333-8444-555555555555', asked_at: Date.now(), status: 'waiting', ...over });
+
+test('B1 regression: a bare "place it" with a live alert pending places nothing; only "yes, place it" can reach Tradovate', async () => {
+  const o = await stockOwner({ broker: tradovateAnswers });
+  try {
+    o.saved.set('trading_desk', deskFor('live'));
+    o.saved.set('tradovate_auth', tradovateSignedIn());
+    for (const said of ['place it', 'place the order']) {
+      const { reply, done } = await o.say(said);
+      assert.match(reply, /^Nothing was placed, sir\. To place an order, say "yes, place it"/, said);
+      assert.equal(done.order_sent, false, said);
+    }
+    assert.equal(tradovateCalls(o).length, 0, 'a bare "place it" reaches no broker, live or demo');
+    assert.equal(o.saved.get('trading_desk').alerts[0].status, 'pending', 'the live alert stays open, unplaced');
+    await o.say('yes, place it');
+    assert.ok(tradovateCalls(o).some((c) => c.url.startsWith('https://live.tradovateapi.com')), 'the explicit yes is the one that may reach live');
+  } finally {
+    o.restore();
+  }
+});
+
+test('B2 regression: "yes, place it" after an expired or already placed Alpaca paper order never takes a live or sim alert', async () => {
+  const cases = [
+    ['live read-back expired', 'live', stockRecord({ asked_at: Date.now() - 3 * 60_000 })],
+    ['live paper order placed 3 minutes ago', 'live', stockRecord({ asked_at: Date.now() - 3 * 60_000, status: 'placed', receipt: { id: 'ord-0042', symbol: 'AAPL', qty: 10, side: 'buy', type: 'market', status: 'accepted', filled_qty: '0' } })],
+    ['live paper order failed', 'live', stockRecord({ asked_at: Date.now() - 3 * 60_000, status: 'failed', detail: 'Alpaca refused it.' })],
+    ['sim read-back expired', 'sim', stockRecord({ asked_at: Date.now() - 3 * 60_000 })],
+    ['sim paper order placed 3 minutes ago', 'sim', stockRecord({ asked_at: Date.now() - 3 * 60_000, status: 'placed', receipt: { id: 'ord-0042', symbol: 'AAPL', qty: 10, side: 'buy', type: 'market', status: 'accepted', filled_qty: '0' } })],
+  ];
+  for (const [name, mode, record] of cases) {
+    const o = await stockOwner({ broker: tradovateAnswers });
+    try {
+      o.saved.set('trading_desk', deskFor(mode, { stock_order: record }));
+      o.saved.set('tradovate_auth', tradovateSignedIn());
+      const { reply, done } = await o.say('yes, place it');
+      assert.equal(done.order_sent, false, name);
+      assert.doesNotMatch(reply, /Placed on|NOT placed, sir\. Tradovate|Tradovate order/, `${name}: ${reply}`);
+      assert.equal(tradovateCalls(o).length, 0, `${name}: nothing reached Tradovate, live or demo`);
+      assert.equal(o.saved.get('trading_desk').alerts[0].status, 'pending', `${name}: the alert stays open`);
+      assert.equal(o.saved.get('trading_desk').stock_order, null, `${name}: the stale paper record is cleared`);
+      assert.doesNotMatch(reply, /Alpaca PAPER order, sir, no real money/, name);
+    } finally {
+      o.restore();
+    }
+  }
+  // Within the two minutes, a placed paper order is reported again and still sends nothing live.
+  const recent = await stockOwner({ broker: tradovateAnswers });
+  try {
+    recent.saved.set('trading_desk', deskFor('live', { stock_order: stockRecord({ status: 'placed', receipt: { id: 'ord-0042', symbol: 'AAPL', qty: 10, side: 'buy', type: 'market', status: 'accepted', filled_qty: '0' } }) }));
+    recent.saved.set('tradovate_auth', tradovateSignedIn());
+    assert.match((await recent.say('yes, place it')).reply, /^That order was already sent to Alpaca PAPER, sir, once/);
+    assert.equal(tradovateCalls(recent).length, 0, 'a placed paper order is never a live take');
+  } finally {
+    recent.restore();
+  }
+});
+
+test('B3 regression: a Gmail send or app grant held before a paper order is cleared by its read-back, so the "yes" releases nothing', async () => {
+  const o = await stockOwner({ broker: acceptOrders });
+  const gmail = () => o.calls.filter((c) => c.url.includes('gmail.googleapis.com'));
+  try {
+    o.saved.set('pending_google_action', { intent: { kind: 'gmail_send', to: 'bob@example.com', body: 'The report is ready.' }, at: Date.now(), summary: 'The email to bob@example.com' });
+    o.saved.set('che:pending_app_action', { app: 'notes', text: 'read my last note in notes', at: Date.now() });
+    await o.say('buy 10 shares of AAPL on Alpaca paper');
+    assert.equal(o.saved.get('pending_google_action') ?? null, null, 'the held email is dropped by the paper order');
+    assert.equal(o.saved.get('che:pending_app_action') ?? null, null, 'the held app request is dropped by the paper order');
+    assert.match((await o.say('yes')).reply, /^To send it to Alpaca PAPER, sir, say "yes, place it"/, 'a bare yes only asks for the paper yes');
+    assert.equal(gmail().length, 0, 'no email was sent to Gmail');
+    assert.doesNotMatch(JSON.stringify(o.saved.get('che:allowed_apps') ?? null), /notes/, 'no app was granted by that yes');
+    assert.equal(o.calls.filter((c) => c.method === 'POST').length, 0, 'the read-back sent no order');
+  } finally {
+    o.restore();
+  }
+});
+
+test('B4 regression: shopping sentences are held as purchases, never read back as Alpaca paper orders', async () => {
+  const o = await stockOwner({ broker: acceptOrders });
+  try {
+    for (const message of ['buy 10 reams paper', 'buy 10 boxes paper', 'Buy 10 rolls of paper towels on Amazon']) {
+      const { reply, done } = await o.say(message);
+      assert.doesNotMatch(reply, /Alpaca PAPER order, sir, no real money|I heard an Alpaca paper order|How many shares/, `${message}: ${reply}`);
+      assert.notEqual(done.source, 'che_trading_desk', message);
+      assert.equal(done.held_for_owner, true, `${message}: a purchase keeps the owner's money hold`);
+      assert.equal(o.saved.get('trading_desk')?.stock_order ?? null, null, `${message}: no paper record was made`);
+    }
+    assert.equal(o.calls.length, 0, 'nothing reached Alpaca or any broker');
+  } finally {
+    o.restore();
+  }
+});
+
 test('trading connections by voice: the Alpaca options level is read only, and Tradovate\'s steps are read as a numbered list (issue #344)', async () => {
   const o = await stockOwner({ broker: (url) => (url.endsWith('/v2/account') ? { status: 200, body: { account_number: 'PA1234567', status: 'ACTIVE', buying_power: '200000', options_approved_level: 2, options_trading_level: 1 } } : null) });
   try {

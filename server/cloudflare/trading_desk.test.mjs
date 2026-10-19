@@ -415,7 +415,7 @@ test('stock orders: options, crypto, futures, live, fractions and stops are refu
     ['buy 10 shares of AAPL on alpaca paper and pay my electric bill', /not all of it \("and pay my electric bill"\)/, false],
     ['buy 1 bitcoin on alpaca paper and then pay rent', /not crypto/, false],
     ['buy some apple on alpaca', /How many shares of which stock/, false],
-    ['buy 10 shares of it on alpaca paper', /not all of it/, false],
+    ['buy 10 shares of it on alpaca paper', /How many shares of which stock/, false],
   ]) {
     const intent = stockOrderIntent(said);
     assert.match(intent.refuse, why, said);
@@ -436,11 +436,41 @@ test('stock orders: the read-back names the exact order and the account; the rec
   assert.match(speakStockReceipt({ id: 'abc-123', symbol: 'AAPL', qty: 10, filled_qty: 4, filled_avg_price: 231.5, side: 'buy', type: 'market', status: 'partially_filled' }), /Partly filled so far: 4 of 10 at \$231\.50\./);
   assert.match(speakStockReceipt({ id: 'abc-123', symbol: 'AAPL', qty: 10, filled_qty: 10, filled_avg_price: 231.5, side: 'buy', type: 'market', status: 'filled' }), /Filled: 10 at \$231\.50\.$/);
   assert.doesNotMatch(speakStockReceipt({ id: 'x', symbol: 'AAPL', qty: 10, filled_qty: null, side: 'buy', type: 'market', status: 'new' }), /\bFilled\b/);
-  assert.deepEqual(['yes, place it', 'yes place it', 'place it', 'place the order'].map((m) => deskIntent(m)), Array(4).fill({ kind: 'take', place: true }));
+  assert.deepEqual(['yes, place it', 'yes place it', 'yes, please place the order'].map((m) => deskIntent(m)), Array(3).fill({ kind: 'take', place: true }));
+  assert.deepEqual(['place it', 'place the order'].map((m) => deskIntent(m)), Array(2).fill({ kind: 'place_unconfirmed' }), 'a bare "place it" has no yes, so it places nothing (B1)');
   assert.deepEqual(['no', "no, don't place it", 'dont place it', 'cancel it', 'drop it'].map((m) => deskIntent(m)?.kind), Array(5).fill('stock_no'));
   assert.equal(deskIntent('yes'), null, 'a bare yes is never an order confirmation by itself');
   for (const m of ['check my Alpaca paper orders', 'what are my alpaca paper orders', 'did my paper order fill?']) assert.equal(deskIntent(m)?.kind, 'alpaca_orders', m);
   for (const m of ['what do I need for Tradovate?', 'tradovate steps', 'how do I get Tradovate API access']) assert.equal(deskIntent(m)?.kind, 'tradovate_steps', m);
+});
+
+test('B1 regression: a bare "place it" is never a place-take; only "yes, place it" is', () => {
+  for (const said of ['place it', 'place the order', 'please place it now', 'place my order']) {
+    assert.deepEqual(deskIntent(said), { kind: 'place_unconfirmed' }, said);
+  }
+  for (const said of ['yes, place it', 'yes place it', 'Yes, please place it.', 'yes, place the order']) {
+    assert.deepEqual(deskIntent(said), { kind: 'take', place: true }, said);
+  }
+  // "Take the trade" keeps its own explicit words; it is not a place-take and does not change.
+  assert.deepEqual(deskIntent('take the trade'), { kind: 'take' });
+});
+
+test('B4 regression: shopping sentences and dictionary words are never Alpaca stock orders', () => {
+  for (const said of ['buy 10 reams paper', 'buy 10 boxes paper', 'Buy 10 rolls of paper towels on Amazon', 'buy 10 reams of paper on alpaca paper', 'buy 3 cost paper', 'buy 10 rolls paper', 'buy 10 apple paper towels']) {
+    const intent = stockOrderIntent(said);
+    assert.ok(intent === null || (intent.refuse && !intent.order), `${said}: must not become an order (${JSON.stringify(intent)})`);
+    assert.ok(!intent || !/I heard an Alpaca paper order/.test(intent.refuse || ''), `${said}: not answered as a half-heard Alpaca order`);
+  }
+  // Without a shares, stock or Alpaca signal, a sentence with a paper venue is not a broker order at all.
+  for (const said of ['buy 10 reams paper', 'buy 10 boxes paper', 'buy 10 rolls of paper towels on Amazon']) assert.equal(stockOrderIntent(said), null, said);
+  // A dictionary word with the stock signal is refused by name, never read back as an order.
+  assert.equal(stockOrderIntent('buy 10 shares of reams on alpaca paper').order, undefined);
+  assert.match(stockOrderIntent('buy 10 shares of reams on alpaca paper').refuse, /I don't know a stock called REAMS/);
+  assert.equal(stockOrderIntent('buy 10 boxes on alpaca paper').order, undefined);
+  // The ticker list and the company names still read back exactly.
+  assert.equal(stockOrder('buy 10 shares of aapl on alpaca paper').symbol, 'AAPL');
+  assert.equal(stockOrder('buy 10 shares of google on alpaca paper').symbol, 'GOOGL');
+  assert.equal(stockOrder('buy 10 shares of AMD on alpaca paper').symbol, 'AMD');
 });
 
 test('stock orders: sent once only after the yes within two minutes; expiry, no and failures send nothing more', async () => {

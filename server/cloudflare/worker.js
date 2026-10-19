@@ -52,7 +52,7 @@ import {
 import { activityFeed, creations, findCreations, greeting, suggestions, stalledTasks, decisionsNeeded, nextActions } from './activity.js';
 import { accountSnapshot as marketAccountSnapshot, candles as marketCandles, chartPage as marketChartPage, quote as marketQuote, snapshot as marketSnapshot } from './markets.js';
 import { CALLBACK_PATH as TRADOVATE_CALLBACK, accountBalance, connectLink, listAccounts, connection as brokerConnection, handleCallback as tradovateCallback, renewToken, tradovateConfigured } from './broker_tradovate.js';
-import { MODE_NAME, STOCK_ACCOUNT, chooseAccount, confirmLive, confirmStockOrder, deskIntent, dropStockOrder, pendingStockOrder, rememberListed, deskTick, pendingAlert, readDesk, requestLive, requestStockOrder, setMode, setRiskLimits, setSize, skipTrade, speakAlert, speakDeskStatus, speakLiveRequest, speakStockOrder, speakStockReceipt, takeAnnouncement, takeTrade } from './trading_desk.js';
+import { MODE_NAME, PLACE_NEEDS_YES, STOCK_ACCOUNT, chooseAccount, clearStockOrder, confirmLive, confirmStockOrder, deskIntent, dropStockOrder, pendingStockOrder, speakStaleStockOrder, rememberListed, deskTick, pendingAlert, readDesk, requestLive, requestStockOrder, setMode, setRiskLimits, setSize, skipTrade, speakAlert, speakDeskStatus, speakLiveRequest, speakStockOrder, speakStockReceipt, takeAnnouncement, takeTrade } from './trading_desk.js';
 import { externalGrounding } from './external_grounding.js';
 import { answerEvidenceReceipt, cachedResearch, evidenceReferenceFollowup, factKey, forgetKnowledge, invalidateKnowledge, knownAnswer, LAST_ANSWER_EVIDENCE_KEY, ownerFactQuestion, markPureResearch, rememberOwnerFact, researchHit, researchKey } from './knowledge_cache.js';
 import { claimMatcher, disprovenContext, downgradeDisproven, externalCorrection, guardCitations, loadDisproven, newsQuestion, newsResearch, reopenArticles, recheckExternalClaim, recordDisproven, verifiedSourcesContext } from './source_verification.js';
@@ -8321,7 +8321,7 @@ export class CheState extends DurableObject {
         const frameReadsIt = frame.lossless && !['unclear', 'followup', 'correction'].includes(frame.mode);
         // A broker order, its "yes, place it" or its "no, don't place it" is read by the desk word for
         // word; a model reading could only blur which order the owner approved.
-        const deskReadsIt = ['take', 'stock_no', 'stock_order', 'alpaca_orders', 'tradovate_steps'].includes(deskIntent(message)?.kind);
+        const deskReadsIt = ['take', 'place_unconfirmed', 'stock_no', 'stock_order', 'alpaca_orders', 'tradovate_steps'].includes(deskIntent(message)?.kind);
         if (interpretation.kind === 'unclear' && !frameReadsIt && !deskReadsIt && !interpretation.clarify && !interpretation.passthrough && ownerHistory.length > 0) {
           const reading = await interpretWithModel({
             runText: (messages) => this.runInterpreterText(messages),
@@ -8384,7 +8384,18 @@ export class CheState extends DurableObject {
           // Fail closed: if the hold cannot be recorded, nothing gated runs.
           return json({ message: 'I could not record that safely, so I did not act. Please say it again.', reply: 'I could not record that safely, so I did not act. Please say it again.', code_review_passed: false, owner_approval_required: true }, 503);
         }
-        if (stockTurn) return this.stockOrderTurn(stockTurn);
+        if (stockTurn && !ownerDevice) return ndjsonReply('Only the CHE owner can use the trading desk.', { source: 'che_trading_desk', ok: false, model_calls: 0 });
+        if (stockTurn) {
+          // B3: a paper order replaces every held request, so the "yes" its read-back waits for can release
+          // none of them: not a money hold, not an app grant, and not a Gmail, Drive or Calendar write.
+          try {
+            await this.dropHeldActions();
+            await this.ctx.storage.put(PENDING_GOOGLE_ACTION_KEY, null);
+          } catch (_) {
+            return json({ message: 'I could not record that safely, so I did not act. Please say it again.', reply: 'I could not record that safely, so I did not act. Please say it again.', code_review_passed: false, owner_approval_required: true }, 503);
+          }
+          return this.stockOrderTurn(stockTurn);
+        }
         // "Reset my progress" (Knowledge Atlas, #346) is a delete: it runs only with the owner's yes for it.
         const atlasReset = ownerDevice && ownerGrant.delete === true ? atlasResetIntent(message) : null;
         if (atlasReset) {
@@ -9651,11 +9662,19 @@ export class CheState extends DurableObject {
         const desk = deskIntent(message);
         if (desk) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can use the trading desk.', { source: 'che_trading_desk', ok: false });
+          // B1: a bare "place it" has no yes, so it places nothing; it is answered with the phrase to say.
+          if (desk.kind === 'place_unconfirmed') {
+            return ndjsonReply(PLACE_NEEDS_YES, { source: 'che_trading_desk', ok: false, model_calls: 0, order_sent: false });
+          }
           const deskNow = ['take', 'stock_no', 'skip'].includes(desk.kind) ? await readDesk(this.ctx.storage) : null;
           const stockPending = deskNow ? pendingStockOrder(deskNow) : null;
-          // The two minutes ran out: say so, unless a live alert is what "place it" can still mean.
-          if (!stockPending && desk.kind === 'take' && desk.place && deskNow?.stock_order?.status === 'waiting' && !pendingAlert(deskNow)) {
-            return ndjsonReply(`The ${STOCK_ACCOUNT} order I read back waited more than two minutes, sir, so nothing was sent. Say the order again and I will read it back.`, { source: 'che_trading_desk', ok: false, model_calls: 0, account: STOCK_ACCOUNT, order_sent: false });
+          // B2: a "yes, place it" while ANY Alpaca PAPER record exists (placed, failed, unclear, or read back and
+          // waiting past two minutes) belongs to that paper record. It is answered here, on the paper branch,
+          // and never reaches takeTrade, so no live or sim alert is sent from a paper result. The stale record is cleared.
+          if (desk.kind === 'take' && desk.place && deskNow?.stock_order && !stockPending) {
+            const stale = (await clearStockOrder(this.ctx.storage)) || deskNow.stock_order;
+            const alertOpen = Boolean(pendingAlert(await readDesk(this.ctx.storage)));
+            return ndjsonReply(speakStaleStockOrder(stale, { alertOpen }), { source: 'che_trading_desk', ok: false, model_calls: 0, account: STOCK_ACCOUNT, order_sent: false });
           }
           if (stockPending && ((desk.kind === 'take' && desk.place) || desk.kind === 'stock_no' || desk.kind === 'skip')) {
             if (desk.kind !== 'take') {
