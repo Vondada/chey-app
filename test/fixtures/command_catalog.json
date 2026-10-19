@@ -1588,6 +1588,47 @@
    "optional_missing": []
   },
   {
+   "id": "trade-sim",
+   "category": "trading",
+   "title": "Trade Sim",
+   "summary": "Pause, resume or check the strategy simulation.",
+   "does": "Pauses or resumes CHE's paper strategy simulation (ten rules on minute bars; no money, no model call), or reads its status. Owner only.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "action",
+    "required": false,
+    "hint": "pause, resume or status"
+   },
+   "examples": [
+    "Pause the strategy simulation",
+    "Resume the strategy simulation",
+    "Strategy simulation status"
+   ],
+   "needs": [
+    "office"
+   ],
+   "optional": [],
+   "handler": "strategy_sim.strategySimIntent → setStrategySimPaused / strategySimView",
+   "route": "che_strategy_sim",
+   "produces": "simulation status",
+   "evidence": "Stored simulation state and trades only.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "strategy simulation",
+    "simulation",
+    "pause simulation",
+    "resume simulation",
+    "paper strategies"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
    "id": "trade-execute",
    "category": "trading",
    "title": "Trade Execute",

@@ -61,9 +61,11 @@ import { recordReliability, reliabilityIntent, reliabilitySummary, speakReliabil
 import { answerOwnerMemoryQuestion, auditMemoryProvenance, evidenceQuestion, evidenceReferent, evidenceRequestSplit, explainEvidenceFor, findAnswerEvidence, guardOwnerAttributions, guardRememberBlock, latestAnswerEvidence, loadRetractions, memoryPromptContext, ownerFactCorrection, ownerMemoryQuestion, ownerWords, recordAnswerEvidence, recordRetractions, storyRequested } from './memory_provenance.js';
 import { condenseHistory, ownerNotificationPolicy } from './workflow_governor.js';
 import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, nextTradingTickAt, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
+import { nextStrategySimTickAt, setStrategySimCeiling, setStrategySimPaused, speakStrategySim, strategySimIntent, strategySimTick, strategySimView, strategySimWake } from './strategy_sim.js';
 import { evidenceIntent, evidenceReport, evidenceTick } from './trading_evidence_runner.js';
 import { ATLAS_SOURCE, answerAtlas, atlasHiddenAction, atlasIntent, atlasQuizAnswerTurn, atlasPromptContext, atlasResetAsk, atlasResetIntent, projectAtlasToBrain, resetAtlasProgress } from './knowledge_atlas.js';
-import { LIVE_BACKTEST, LIVE_STATE, liveBacktest, liveDashboard, livePaperSummary, liveTick, nextLiveTickAt, setLivePaper } from './trading_live.js';
+import { LIVE_BACKTEST, LIVE_RUNS, LIVE_STATE, liveBacktest, liveDashboard, livePaperSummary, liveTick, nextLiveTickAt, setLivePaper } from './trading_live.js';
+import { cmeSession } from './market_feed.js';
 import { alpacaKeys, alpacaPaperOrders, alpacaStatus, liveKeyProblem, placeAlpacaPaperOrder, removeAlpacaPaperKeys, saveAlpacaPaperKeys } from './broker_alpaca.js';
 import { speakConnections, speakTradovateSteps, tradingConnections } from './trading_connections.js';
 import { liveAnswer, liveIntent } from './trading_live_chat.js';
@@ -3585,10 +3587,14 @@ export class CheState extends DurableObject {
     await evidenceTick(this.ctx.storage, { now: opts.now, force: opts.force }).catch((error) => console.error('Trading evidence tick failed:', error?.message || error));
     // Forward paper trading on 5-minute NQ/MNQ bars, every minute while it is on and CME is open.
     await liveTick(this.ctx.storage, { now: opts.now }).catch((error) => console.error('Live paper tick failed:', error?.message || error));
+    // Strategy simulation (paper, minute bars): one alarm slot, so it runs here when due and scheduleWork arms its next minute.
+    await strategySimTick(this.ctx.storage, { now: opts.now, force: opts.force }).catch((error) => console.error('Strategy simulation tick failed:', error?.message || error));
     return book;
   }
 
-  async scheduleWork() {
+  // Every time the alarm must wake for, read from storage only (no network). The simulation's minute and the live
+  // tick come back apart from the rest, so a minute-only wake-up can be recognised and rescheduled exactly.
+  async wakeTimes() {
     const data = await this.loadData();
     const times = [];
     if (data.autonomy) {
@@ -3624,8 +3630,37 @@ export class CheState extends DurableObject {
     // Paper trading learns every hour (deterministic, no AI tokens, no money).
     times.push(Math.max(Date.now() + 250, await nextTradingTickAt(this.ctx.storage).catch(() => Date.now() + 3_600_000)));
     const liveAt = await nextLiveTickAt(this.ctx.storage).catch(() => null);
-    if (liveAt) times.push(Math.max(Date.now() + 250, liveAt));
+    // The simulation's next minute (null while paused or before its first pass). Same alarm slot, earliest wins.
+    const simAt = await nextStrategySimTickAt(this.ctx.storage).catch(() => null);
+    return { others: times, live: liveAt ? Math.max(Date.now() + 250, liveAt) : null, sim: simAt };
+  }
+
+  async scheduleWork() {
+    const w = await this.wakeTimes();
+    const times = [...w.others, ...(w.live ? [w.live] : []), ...(w.sim ? [w.sim] : [])];
     if (times.length) await this.ctx.storage.setAlarm(Math.min(...times));
+  }
+
+  // The live tick's next run from its last saved run, with the same gap liveTick uses; null while paper trading is off.
+  async liveNextAt(now = Date.now()) {
+    const state = await this.ctx.storage.get(LIVE_STATE);
+    if (!state?.enabled) return null;
+    const runs = (await this.ctx.storage.get(LIVE_RUNS)) || [];
+    const last = runs[runs.length - 1];
+    if (!last?.at) return now;
+    const gap = cmeSession(now).open ? 50_000 : 14 * 60_000;
+    return Date.parse(last.at) + gap;
+  }
+
+  // Minute-only wake-up test: the simulation's minute is due and nothing else is (no hourly, live, job, mailbox or
+  // other timer). Returns the times still to keep, or null when another wake-up is due and the full alarm must run.
+  async minuteOnlyWake(now = Date.now()) {
+    const sim = await strategySimWake(this.ctx.storage, now);
+    if (!sim.due) return null;
+    const w = await this.wakeTimes();
+    const liveNext = await this.liveNextAt(now);
+    const due = [...w.others, ...(liveNext ? [liveNext] : [])].some((t) => t <= now + 5_000);
+    return due ? null : { others: w.others, liveNext };
   }
 
   /**
@@ -6368,6 +6403,32 @@ export class CheState extends DurableObject {
         if (body.action === 'tick') return json({ ok: true, run: await liveTick(this.ctx.storage, { force: true }) });
         if (body.action === 'backtest') return json(await liveBacktest(this.ctx.storage));
         return json({ detail: 'Unknown action. Use start, stop, tick or backtest.' }, 400);
+      }
+      // Strategy simulation (step a): paper minute-bar strategies. Read and the kill switch are owner-only; nothing here orders or spends.
+      const simOwnerOnly = () => json({ detail: 'Only the CHE owner can view or control the strategy simulation.' }, 403);
+      if (path === '/api/trading/sim' && request.method === 'GET') {
+        if (!ownerDevice) return simOwnerOnly();
+        return json(await strategySimView(this.ctx.storage));
+      }
+      if (path === '/api/trading/sim' && request.method === 'POST') {
+        if (!ownerDevice) return simOwnerOnly();
+        if (body.action === 'pause' || body.action === 'resume') {
+          const state = await setStrategySimPaused(this.ctx.storage, body.action === 'pause');
+          // Resuming re-arms the alarm now, so the next minute is not left waiting for some other wake-up.
+          if (body.action === 'resume') await this.scheduleWork();
+          return json({ ok: true, state, view: await strategySimView(this.ctx.storage) });
+        }
+        if (body.action === 'tick') {
+          const run = await strategySimTick(this.ctx.storage, { force: true });
+          // The first pass arms the minute cadence here, so the owner can start it without waiting for the hourly alarm.
+          await this.scheduleWork();
+          return json({ ok: true, run });
+        }
+        if (body.action === 'ceiling') {
+          const result = await setStrategySimCeiling(this.ctx.storage, body.usd);
+          return json(result, result.ok ? 200 : 400);
+        }
+        return json({ detail: 'Unknown action. Use pause, resume, tick or ceiling.' }, 400);
       }
       // The phone's Studio panel: the same records CHE reads aloud, loaded quietly.
       if (path === '/api/studio' && request.method === 'GET') {
@@ -9889,6 +9950,20 @@ export class CheState extends DurableObject {
         if (evidenceIntent(message)) {
           return ndjsonReply(await evidenceReport(this.ctx.storage), { source: 'che_trading_evidence' });
         }
+        // Strategy simulation: pause, resume and status by typing, by voice, or through the /trade-sim command. Owner only.
+        const sim = strategySimIntent(message);
+        if (sim) {
+          if (!ownerDevice) return ndjsonReply('Only the CHE owner can control the strategy simulation, sir.', { source: 'che_strategy_sim', ok: false });
+          if (sim.kind === 'pause' || sim.kind === 'resume') {
+            await setStrategySimPaused(this.ctx.storage, sim.kind === 'pause');
+            // Resuming arms the next minute at once, so it does not wait for another wake-up.
+            if (sim.kind === 'resume') await this.scheduleWork();
+          }
+          const lead = sim.kind === 'pause' ? 'Paused the strategy simulation, sir. No bars are read and no trades open until you resume it.'
+            : sim.kind === 'resume' ? 'Resumed the strategy simulation, sir. It runs again on the next minute.' : '';
+          const view = await strategySimView(this.ctx.storage);
+          return ndjsonReply([lead, speakStrategySim(view)].filter(Boolean).join('\n'), { source: 'che_strategy_sim' });
+        }
         const trade = tradingIntent(message);
         if (trade) {
           if (trade.kind === 'book') {
@@ -11147,6 +11222,17 @@ export class CheState extends DurableObject {
 
   async alarm() {
     await this.refreshKeyEnv();
+    // A minute-only wake-up: the simulation's minute is the only work due. It runs that one pass and makes no
+    // mailbox (GitHub), job, Tradovate, hourly or live call. Those keep their own wake-up times and run on them.
+    const minuteNow = Date.now();
+    const minute = await this.minuteOnlyWake(minuteNow).catch(() => null);
+    if (minute) {
+      await strategySimTick(this.ctx.storage, { now: minuteNow }).catch((error) => console.error('Strategy simulation tick failed:', error?.message || error));
+      const simNext = await nextStrategySimTickAt(this.ctx.storage, Date.now()).catch(() => null);
+      const kept = [...minute.others, ...(minute.liveNext ? [minute.liveNext] : []), ...(simNext ? [simNext] : [])];
+      if (kept.length) await this.ctx.storage.setAlarm(Math.min(...kept));
+      return;
+    }
     // Flagstaff stays responsive even when Office autonomy is paused. Incoming
     // AI messages are advice only and cannot authorize consequential actions.
     await this.processFlagstaffInbox().catch((error) => {
