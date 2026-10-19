@@ -180,14 +180,16 @@ class _CheLivePaperPanelState extends State<CheLivePaperPanel> {
       ),
       if (status != 'LIVE') ...[
         const SizedBox(height: 8),
-        const Text(
-          'Prices are delayed. The chart and paper fills update from recorded bars, not a live CME quote.',
-          style: TextStyle(color: _gold, fontSize: 15, fontWeight: FontWeight.w700, height: 1.35),
+        Text(
+          status == 'DELAYED'
+              ? 'Prices are delayed. The chart and paper fills update from recorded bars, not a live CME quote.'
+              : 'No verified market feed is available. Any chart still visible shows previously saved bars.',
+          style: const TextStyle(color: _gold, fontSize: 15, fontWeight: FontWeight.w700, height: 1.35),
         ),
         TextButton.icon(
           onPressed: () => setState(() => _showFeedDetails = !_showFeedDetails),
           icon: Icon(_showFeedDetails ? Icons.expand_less : Icons.info_outline),
-          label: Text(_showFeedDetails ? 'Hide live-feed requirements' : 'Why are prices delayed?'),
+          label: Text(_showFeedDetails ? 'Hide live-feed requirements' : status == 'DELAYED' ? 'Why are prices delayed?' : 'Why is the feed unavailable?'),
         ),
         if (_showFeedDetails)
           Text('${d['feed_blocker'] ?? 'A real-time market-data subscription and verified broker feed are required.'}'
