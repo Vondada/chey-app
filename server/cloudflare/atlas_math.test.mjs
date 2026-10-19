@@ -5,13 +5,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  FUTURES_SPECS, VERDICT_RULES, bookFill, candleAnatomy, costInR, expectancyStats, fairValueGaps, futuresRisk, latestRthSession,
+  FUTURES_SPECS, VERDICT_RULES, bookFill, losingStreaks, multipleComparisons, paperFill, performanceBreakdown, relativeVolume, volumeProfile, candleAnatomy, costInR, expectancyStats, fairValueGaps, futuresRisk, latestRthSession,
   liquiditySweeps, maxDrawdown, monteCarlo, mulberry32, openingRange, optionAtExpiry, orderBlock, percentile, positionSize,
   premiumDiscount, profitFactor, rMultiple, rewardRisk, riskOfRuin, rthOpenOf, sampleSizeForMargin, sessionLevels, stockShares,
   strategyVerdict, structureBreaks, studentTCdf, tQuantile, vwapBands, winRateInterval,
 } from './atlas_math.js';
 import { FORMULAS } from './knowledge_atlas.js';
-import { CONTRACTS, INTRADAY_CANDIDATES, intradayContext, summarize, wilsonInterval } from './trading_evidence.js';
+import { COSTS, CONTRACTS, INTRADAY_CANDIDATES, intradayContext, sessionOf, summarize, wilsonInterval } from './trading_evidence.js';
 import { POINT_VALUE } from './trading_lab.js';
 
 globalThis.fetch = async () => { throw new TypeError('atlas_math tests are offline'); };
@@ -473,4 +473,148 @@ test('verdicts follow the written criteria exactly', () => {
   assert.equal(v({ trades: 50, low: -0.1, high: 0.4, mean: 0.15, profitFactor: 1.5 }), 'unsupported', 'a range that includes zero');
   assert.equal(v({ trades: 50, low: -0.6, high: -0.05, mean: -0.3, profitFactor: 0.7 }), 'bad');
   assert.equal(v({ trades: 80, low: -0.3, high: 0.1, mean: -0.1, profitFactor: 0.9 }), 'bad', 'a loss on an adequate sample');
+});
+
+// ─── Volume, probability, paper fills and performance review ─────────────
+
+test('relative volume: hand-worked, matched by clock time across daylight saving, and equal to per-session sums', () => {
+  const b = (t, v) => ({ t, o: 1, h: 1, l: 1, c: 1, v });
+  const card = relativeVolume({ sessions: 2, bars: [b('2026-10-14T13:30:00Z', 200), b('2026-10-14T13:35:00Z', 150), b('2026-10-14T13:40:00Z', 150), b('2026-10-14T13:45:00Z', 999),
+    b('2026-10-15T13:30:00Z', 300), b('2026-10-15T13:35:00Z', 250), b('2026-10-15T13:40:00Z', 450), b('2026-10-15T13:45:00Z', 999),
+    b('2026-10-16T13:30:00Z', 400), b('2026-10-16T13:35:00Z', 300), b('2026-10-16T13:40:00Z', 200)] });
+  assert.equal(card.value, 1.2, '900 ÷ average(500, 1,000)');
+  // 9:30 New York is 14:30 UTC on Friday 2026-03-06 and 13:30 UTC on Monday 2026-03-09: the same clock time is compared.
+  const dst = relativeVolume({ sessions: 1, bars: [b('2026-03-06T14:30:00Z', 100), b('2026-03-06T14:35:00Z', 100), b('2026-03-06T14:40:00Z', 500), b('2026-03-09T13:30:00Z', 150), b('2026-03-09T13:35:00Z', 150)] });
+  assert.equal(dst.values.average, 200, 'Friday up to 9:35 New York, not up to 13:35 UTC');
+  assert.equal(dst.value, 1.5);
+  // Independent: identical bar times each day, so "up to the same time" is simply the first k bars of every session.
+  for (let trial = 0; trial < 30; trial += 1) {
+    const days = ['2026-10-12', '2026-10-13', '2026-10-14', '2026-10-15', '2026-10-16'];
+    const perDay = days.map(() => Array.from({ length: 12 }, () => randInt(0, 500)));
+    const k = randInt(1, 12);
+    const bars = days.flatMap((d, i) => perDay[i].slice(0, i === days.length - 1 ? k : 12).map((v, j) => b(new Date(Date.parse(`${d}T13:30:00Z`) + j * 300_000).toISOString(), v)));
+    const sum = (list) => list.slice(0, k).reduce((x, y) => x + y, 0);
+    const avg = perDay.slice(0, -1).map(sum).reduce((x, y) => x + y, 0) / 4;
+    const out = relativeVolume({ bars, sessions: 4 });
+    if (avg > 0) assert.ok(close(out.value, sum(perDay.at(-1)) / avg, 1e-12), `trial ${trial}`);
+  }
+  assert.equal(relativeVolume({ sessions: 3, bars: [b('2026-10-16T13:30:00Z', 5)] }).ok, false, 'one session has nothing to compare with');
+});
+
+test('volume profile: hand-worked POC and value area, and brute-force checks of the levels and the 70%', () => {
+  const card = volumeProfile({ step: 1, bars: [{ c: 100, v: 100 }, { c: 101, v: 300 }, { c: 102, v: 600 }, { c: 103, v: 250 }, { c: 104, v: 100 }, { c: 101.4, v: 100 }, { c: 99.6, v: 50 }] });
+  assert.deepEqual([card.value.poc, card.value.val, card.value.vah], [102, 101, 103]);
+  assert.ok(close(card.value.share, 1250 / 1500));
+  for (let trial = 0; trial < 60; trial += 1) {
+    const bars = Array.from({ length: randInt(1, 40) }, () => ({ c: randInt(80, 100) + randInt(0, 3) / 4, v: randInt(1, 900) }));
+    const out = volumeProfile({ bars, step: 1 });
+    // Independent: per-level sums by direct rounding, the POC as the largest (lowest price on ties).
+    const sums = {};
+    for (const x of bars) sums[Math.round(x.c)] = (sums[Math.round(x.c)] || 0) + x.v;
+    const levels = Object.keys(sums).map(Number).sort((a, b) => a - b);
+    const total = bars.reduce((n, x) => n + x.v, 0);
+    assert.deepEqual(out.values.levels.map((l) => [l.price, l.volume]), levels.map((l) => [l, sums[l]]));
+    const top = Math.max(...Object.values(sums));
+    assert.equal(out.value.poc, levels.find((l) => sums[l] === top));
+    const inside = levels.filter((l) => l >= out.value.val && l <= out.value.vah).reduce((n, l) => n + sums[l], 0);
+    assert.ok(out.value.val <= out.value.poc && out.value.poc <= out.value.vah && inside >= 0.7 * total - 1e-9, `trial ${trial}`);
+    // Brute force: the narrowest contiguous band around the POC that holds 70%; the greedy band is never narrower.
+    let narrowest = Infinity;
+    const p = levels.indexOf(out.value.poc);
+    for (let i = 0; i <= p; i += 1) for (let j = p; j < levels.length; j += 1) {
+      const v = levels.slice(i, j + 1).reduce((n, l) => n + sums[l], 0);
+      if (v >= 0.7 * total - 1e-9) narrowest = Math.min(narrowest, j - i + 1);
+    }
+    const greedy = levels.filter((l) => l >= out.value.val && l <= out.value.vah).length;
+    assert.ok(greedy >= narrowest, 'the greedy band can never beat the narrowest band');
+  }
+});
+
+test('losing streaks: hand-worked, brute force over every sequence, the seeded Monte Carlo, and Schilling\'s approximation', () => {
+  const card = losingStreaks({ winRate: 0.4, trades: 10, streak: 4 });
+  assert.ok(close(card.value.inARow, 0.6 ** 4, 1e-15));
+  // Every one of the 2^n win/loss sequences, weighted by its probability.
+  const brute = (p, n, k) => {
+    let atLeast = 0; let expected = 0;
+    for (let mask = 0; mask < 2 ** n; mask += 1) {
+      let prob = 1; let run = 0; let longest = 0;
+      for (let i = 0; i < n; i += 1) {
+        const loss = (mask >> i) & 1;
+        prob *= loss ? 1 - p : p;
+        run = loss ? run + 1 : 0; longest = Math.max(longest, run);
+      }
+      if (longest >= k) atLeast += prob;
+      expected += prob * longest;
+    }
+    return { atLeast, expected };
+  };
+  for (const p of [0.3, 0.4, 0.5, 0.65]) {
+    for (const n of [1, 4, 9, 14]) {
+      for (const k of [1, 2, 3, 5, 7]) {
+        const out = losingStreaks({ winRate: p, trades: n, streak: k });
+        const b = brute(p, n, k);
+        assert.ok(close(out.value.atLeastOnce, b.atLeast, 1e-12), `p ${p}, n ${n}, k ${k}`);
+        assert.ok(close(out.value.expectedLongest, b.expected, 1e-9), `expected longest, p ${p}, n ${n}`);
+      }
+    }
+  }
+  assert.ok(close(card.value.atLeastOnce, brute(0.4, 10, 4).atLeast, 1e-12));
+  // The seeded Monte Carlo of a 40% win record (two wins, three losses, drawn with replacement) shows the same odds.
+  const mc = monteCarlo({ results: [1, 1, -1, -1, -1], trades: 30, paths: 20000, seed: 5 });
+  for (const k of [3, 4, 5, 6, 8]) {
+    const exact = losingStreaks({ winRate: 0.4, trades: 30, streak: k }).value.atLeastOnce;
+    assert.ok(Math.abs(mc.values.streakAtLeast[k] - exact) < 0.015, `k ${k}: simulated ${mc.values.streakAtLeast[k]} vs ${exact}`);
+  }
+  for (const [p, n] of [[0.5, 50], [0.5, 200], [0.4, 100], [0.6, 200], [0.4, 500], [0.55, 1000]]) {
+    const out = losingStreaks({ winRate: p, trades: n, streak: 3 });
+    assert.ok(Math.abs(out.values.approxLongest - out.value.expectedLongest) < 0.1, `Schilling within 0.1 at p ${p}, n ${n}`);
+  }
+  assert.equal(losingStreaks({ winRate: 1, trades: 5, streak: 1 }).ok, false);
+});
+
+test('multiple comparisons: the formula, and a seeded simulation of independent null tests', () => {
+  const out = multipleComparisons({ alpha: 0.05, groups: 20 });
+  assert.ok(close(out.value.familywise, 1 - 0.95 ** 20) && close(out.value.bonferroni, 0.0025));
+  const rand = mulberry32(99);
+  for (const m of [1, 5, 20]) {
+    let hits = 0;
+    for (let trial = 0; trial < 40000; trial += 1) {
+      let any = false;
+      for (let g = 0; g < m; g += 1) if (rand() < 0.05) any = true;
+      if (any) hits += 1;
+    }
+    assert.ok(Math.abs(hits / 40000 - multipleComparisons({ alpha: 0.05, groups: m }).value.familywise) < 0.01, `m ${m}`);
+  }
+});
+
+test('a paper fill is CHE\'s engine fill, worked out by hand from its assumed costs', () => {
+  const tick = CONTRACTS.MNQ.tick; const pv = CONTRACTS.MNQ.pointValue;
+  const half = (COSTS.spreadTicks * tick) / 2; const slip = COSTS.slippageTicks * tick;
+  const fixed = 2 * COSTS.commissionPerSide + 2 * COSTS.feePerSide;
+  const target = paperFill({ open: 21000, stop: 20990, exitReason: 'target', exitPrice: 21020 });
+  assert.deepEqual(target.value, { entryFill: 21000 + half + slip, exitFill: 21020 - half, gross: 40, net: 40 - 2 * half * pv - slip * pv - fixed, rNet: (40 - 2 * half * pv - slip * pv - fixed) / 20 });
+  assert.deepEqual([target.value.entryFill, target.value.exitFill, target.value.net, target.value.rNet], [21000.375, 21019.875, 35, 1.75], 'by hand: 21,000 + 0.125 + 0.25; 21,020 − 0.125; $40 − $5');
+  const stop = paperFill({ open: 21000, stop: 20990, exitReason: 'stop', exitPrice: 20990 });
+  assert.deepEqual([stop.value.exitFill, stop.value.net, stop.value.rNet], [20989.625, -25.5, -1.275], 'a stop pays slippage too: −$20 − $0.50 − $1.00 − $4.00');
+  const short = paperFill({ side: 'short', open: 21000, stop: 21010, exitReason: 'time', exitPrice: 20990 });
+  assert.deepEqual([short.value.entryFill, short.value.exitFill, short.value.net], [20999.625, 20990.375, 20 - 2 * half * pv - 2 * slip * pv - fixed]);
+  assert.equal(paperFill({ symbol: 'ES', open: 1, stop: 0, exitPrice: 2 }).ok, false, 'the paper engine trades MNQ and NQ only');
+});
+
+test('performance breakdown: hand-worked, streaks by brute force, and the engine\'s mean and sessions', () => {
+  const trades = [['2026-10-15T13:35:00Z', 2], ['2026-10-15T14:10:00Z', -1], ['2026-10-15T14:40:00Z', -1], ['2026-10-15T15:05:00Z', -1], ['2026-10-15T17:20:00Z', 2.5], ['2026-10-15T18:00:00Z', -0.5], ['2026-10-16T13:45:00Z', 1], ['2026-10-16T19:10:00Z', -1]].map(([time, r]) => ({ time, r }));
+  const out = performanceBreakdown({ trades });
+  assert.deepEqual(out.value, { meanR: 0.125, medianR: -0.75, longestWinStreak: 1, longestLossStreak: 3 });
+  assert.deepEqual(Object.fromEntries(Object.entries(out.values.bySession).map(([k, v]) => [k, v.trades])), { 'opening-30m': 2, 'mid-morning': 3, afternoon: 3 });
+  for (let trial = 0; trial < 50; trial += 1) {
+    const rs = Array.from({ length: randInt(2, 40) }, () => [randInt(-2, 3), 0][randInt(0, 3) ? 0 : 1]);
+    const res = performanceBreakdown({ trades: rs.map((r, i) => ({ r, time: new Date(Date.parse('2026-10-15T13:30:00Z') + i * 1_800_000).toISOString() })) });
+    // Independent: write the record as letters and measure the longest run of each.
+    const letters = rs.map((r) => (r > 0 ? 'W' : r < 0 ? 'L' : '-')).join('');
+    const longest = (ch) => Math.max(0, ...letters.split(new RegExp(`[^${ch}]`)).map((x) => x.length));
+    assert.equal(res.value.longestWinStreak, longest('W'));
+    assert.equal(res.value.longestLossStreak, longest('L'));
+    assert.ok(close(res.value.meanR, summarize(asTrades(rs)).expectancy_r, 1e-4), 'the engine\'s expectancy');
+    for (const [k, v] of Object.entries(res.values.bySession)) assert.equal(v.trades, rs.filter((_, i) => sessionOf(new Date(Date.parse('2026-10-15T13:30:00Z') + i * 1_800_000).toISOString(), '5m') === k).length);
+  }
 });
