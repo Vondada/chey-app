@@ -41,6 +41,7 @@ class CheAtlasCard {
     required this.example,
     required this.quiz,
     required this.misconceptions,
+    this.limitations = const [],
     required this.cheNote,
     required this.measured,
     required this.sources,
@@ -60,6 +61,7 @@ class CheAtlasCard {
   final Map<String, dynamic> example;
   final List<CheAtlasQuestion> quiz;
   final List<String> misconceptions;
+  final List<String> limitations;
   final String cheNote;
   final bool measured;
   final List<String> sources;
@@ -85,6 +87,7 @@ class CheAtlasCard {
         for (final q in (j['quiz'] as List? ?? const []).whereType<Map>()) CheAtlasQuestion('${q['q']}', '${q['a']}'),
       ],
       misconceptions: _strings(j['misconceptions']),
+      limitations: _strings(j['limitations']),
       cheNote: '${j['che_note'] ?? ''}',
       measured: j['measured'] is Map,
       sources: [
@@ -241,6 +244,10 @@ List<CheAtlasLine> cheAtlasCardLines(CheKnowledgeAtlas atlas, CheAtlasCard c, St
     if (c.cheNote.isNotEmpty) ...[
       const CheAtlasLine('In CHE', CheAtlasLineKind.heading),
       CheAtlasLine(c.cheNote),
+    ],
+    if (c.limitations.isNotEmpty) ...[
+      const CheAtlasLine('Limitations', CheAtlasLineKind.heading),
+      for (final l in c.limitations) CheAtlasLine(l),
     ],
     if (c.measured) ...[
       const CheAtlasLine('Your recorded numbers', CheAtlasLineKind.heading),

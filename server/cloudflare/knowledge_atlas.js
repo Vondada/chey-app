@@ -16,6 +16,7 @@ import { CANDIDATES, COSTS, CONTRACTS, INTRADAY_CANDIDATES, MIN_TRADES, readTrad
 import { MODE_NAME, readDesk } from './trading_desk.js';
 import { evidenceIntent } from './trading_evidence_runner.js';
 import { LIVE_BACKTEST } from './trading_live.js';
+import { ATLAS_TRADING_CARDS, PLAN_PRICES, PROVENANCE, TRADING_FORMULAS, answerTradingAtlas, isTradingAtlasKind, tradingAtlasIntent, withLimitations } from './atlas_trading.js';
 
 export const ATLAS_VERSION = 1;
 export const LEVELS = Object.freeze(['beginner', 'intermediate', 'expert']);
@@ -64,6 +65,7 @@ export const FORMULAS = Object.freeze({
   },
   vwap: ({ bars }) => bars.reduce((s, b) => s + ((b.h + b.l + b.c) / 3) * b.v, 0) / bars.reduce((s, b) => s + b.v, 0),
   meanCi: ({ mean, sd, n, z = 1.96 }) => ({ low: mean - (z * sd) / Math.sqrt(n), high: mean + (z * sd) / Math.sqrt(n) }),
+  ...TRADING_FORMULAS,
 });
 
 // ─── The cards ────────────────────────────────────────────────────────────
@@ -801,7 +803,7 @@ const TRADING = [
       expert: 'On bars the typical price is an approximation; the true VWAP adds up every trade\'s price × size. The session start decides the value, so a futures VWAP from the 6 p.m. open differs from one anchored at the 9:30 New York open, and an anchored VWAP starts from a chosen event instead. Deviation bands use the volume-weighted standard deviation of price around VWAP. VWAP describes, it does not predict: price crossing it is not an edge without tested evidence.',
     },
     analogy: 'VWAP is like the average price per gallon a gas station sold at today, where a truck filling 100 gallons counts for more than a scooter filling one.',
-    che_note: 'CHE computes a session VWAP from her stored, delayed MNQ bars when you ask for a market read, for example "analyze MNQ with VWAP" (trading_live_chat.js); /trade-liquidity marks swing highs and lows and does not compute it. The numbers on this card are a worked example, not a market reading.',
+    che_note: 'CHE computes a session VWAP from her stored, delayed MNQ bars when you ask for a market read, for example "analyze MNQ with VWAP" (trading_live_chat.js), and the 9:30 New York session VWAP with its bands when you say "calculate VWAP from the latest bars" (atlas_trading.js); /trade-liquidity marks swing highs and lows and does not compute it. The numbers on this card are an educational example, not a market reading.',
     formula: {
       name: 'VWAP', expression: 'VWAP = Σ(TPᵢ × Vᵢ) ÷ ΣVᵢ,  TP = (H + L + C) ÷ 3',
       spoken: 'VWAP equals the sum of typical price times volume, divided by the sum of volume, where typical price is high plus low plus close, divided by 3',
@@ -868,7 +870,7 @@ const TRADING = [
 ];
 
 /** Every card, coding first, each domain in curriculum order (the order "what's next" follows). */
-export const ATLAS_CARDS = Object.freeze([...CODING, ...TRADING]);
+export const ATLAS_CARDS = Object.freeze([...CODING, ...TRADING.map(withLimitations), ...ATLAS_TRADING_CARDS]);
 const BY_ID = new Map(ATLAS_CARDS.map((c) => [c.id, c]));
 export function atlasCard(id) { return BY_ID.get(String(id || '')) || null; }
 const inDomain = (domain) => ATLAS_CARDS.filter((c) => c.domain === domain);
@@ -989,9 +991,14 @@ export function atlasIntent(message, history = [], { explainLevel = '' } = {}) {
     t = suffixed[1].trim();
   }
   // "Teach me recursion and email it to Mark": two requests, so neither is swallowed here.
-  if (!explicit && SECOND_ACTION.test(t)) return null;
+  // A trade plan's own prices ("…, stop 17990, target 18030") are not a second request.
+  if (!explicit && SECOND_ACTION.test(t.replace(PLAN_PRICES, ''))) return null;
 
   if (/^(?:open|use|show(?: me)?|go to|bring up|read|what(?:'s| is)? in|whats in)\s+(?:the |my |your |che's )?knowledge atlas(?: page)?$/.test(t)) return { kind: 'overview' };
+
+  // Trading calculations and readings of CHE's own records (atlas_trading.js).
+  const trade = tradingAtlasIntent(t, { findCard: (x) => (conceptTopic(x) ? findAtlasCard(x) : null), cardById: atlasCard });
+  if (trade) return trade;
 
   const list = /^(?:(?:list|show|read|tell|give)(?: me)?|what are) (?:all )?(?:of )?(?:the |your )?(?:(coding|code|programming|trading|all) )?(?:knowledge atlas )?(?:cards|lessons|knowledge atlas topics)(?: (?:in|of|from) (?:the |your )?knowledge atlas)?(?: (?:you have|there are))?$/.exec(t)
     || /^what (?:cards|lessons|topics) (?:do you have|are there|are in the knowledge atlas|can you teach(?: me)?)$/.exec(t)
@@ -1141,7 +1148,9 @@ export async function loadAtlasRecords(storage) {
   if (!storage) return { paper: [], backtest: null };
   try {
     const [paper, backtest] = await Promise.all([readTrades(storage, (t) => t?.environment === 'paper'), storage.get(LIVE_BACKTEST)]);
-    return { paper: Array.isArray(paper) ? paper : [], backtest: backtest || null };
+    const list = Array.isArray(paper) ? paper : [];
+    if (list.length) summarize(list); // a record the statistics cannot read makes the journal unreadable, never a crash
+    return { paper: list, backtest: backtest || null };
   } catch (_) {
     return { paper: [], backtest: null, unreadable: true };
   }
@@ -1199,7 +1208,7 @@ export function measuredText(c, records = { paper: [], backtest: null }) {
     }[c.measured.metric]();
     const lead = c.measured.metric === 'sample' ? '' : many ? 'The largest is ' : 'It is ';
     const where = many ? `in ${books.length} separate paper portfolios, each its own strategy, so nothing is pooled into one account.` : 'in 1 paper portfolio, one strategy.';
-    parts.push(`Your records, measured from CHE's paper journal: ${plural(total, 'closed paper trade')} ${where} ${lead}${line} Largest sample: n = ${s.trades}, ${SAMPLE[s.sample]}.`);
+    parts.push(`Your records, measured from CHE's paper journal (${PROVENANCE.paper}): ${plural(total, 'closed paper trade')} ${where} ${lead}${line} Largest sample: n = ${s.trades}, ${SAMPLE[s.sample]}.`);
   }
   const bt = records.backtest;
   const rows = bt?.ok && Array.isArray(bt.rows) ? bt.rows.filter((r) => Number(r?.stats?.trades) > 0) : [];
@@ -1212,7 +1221,7 @@ export function measuredText(c, records = { paper: [], backtest: null }) {
       max_drawdown: () => `maximum drawdown ranged ${range(rows.map((r) => r.stats.max_drawdown), money)} across them`,
       sample: () => `${rows.filter((r) => r.stats.trades >= MIN_TRADES).length} of them reached ${MIN_TRADES} trades`,
     }[c.measured.metric]();
-    parts.push(`Latest stored backtest, ${String(bt.at || '').slice(0, 10)}, ${bt.data || 'unnamed data'}: ${rows.length} strategy portfolio${rows.length === 1 ? '' : 's'} with ${total} trades; ${across}. A backtest is history, not a forward result.`);
+    parts.push(`Latest stored backtest (${PROVENANCE.backtest}), ${String(bt.at || '').slice(0, 10)}, ${bt.data || 'unnamed data'}: ${rows.length} strategy portfolio${rows.length === 1 ? '' : 's'} with ${total} trades; ${across}. A backtest is history, not a forward result.`);
   } else {
     parts.push('No stored backtest with trades yet.');
   }
@@ -1242,6 +1251,7 @@ function teachText(c, level, records) {
   lines.push(`Worked example: ${exampleWords(c)}`);
   if (level === 'expert' && c.misconceptions.length) lines.push(`Common mistake: ${c.misconceptions[0]}`);
   if (c.che_note) lines.push(`In CHE: ${c.che_note}`);
+  if (c.limitations?.length) lines.push(`Limitations: ${c.limitations.join(' ')}`);
   const measured = measuredText(c, records);
   if (measured) lines.push(measured);
   const other = LEVELS.filter((l) => l !== level).map((l) => `"the ${l} version"`).join(' or ');
@@ -1252,6 +1262,7 @@ function teachText(c, level, records) {
 
 /** The reply to an atlasIntent result. Deterministic: records are read, no model is called. */
 export async function answerAtlas(intent, { storage = null } = {}) {
+  if (isTradingAtlasKind(intent?.kind)) return answerTradingAtlas(intent, { storage });
   const c = intent?.card || null;
   const total = ATLAS_CARDS.length;
   const coding = inDomain('coding').length;
@@ -1340,7 +1351,7 @@ export function atlasExport() {
       id: c.id, domain: c.domain, title: c.title, level: c.level, summary: c.summary, revision: c.revision, source_kind: c.source_kind,
       aliases: c.aliases, tags: c.tags, prerequisites: c.prerequisites, related: c.related,
       levels: c.levels, analogy: c.analogy, formula: c.formula, example: c.example, quiz: c.quiz.map(({ q, a }) => ({ q, a })),
-      misconceptions: c.misconceptions, che_note: c.che_note, measured: c.measured, sources: c.sources,
+      misconceptions: c.misconceptions, limitations: c.limitations || [], che_note: c.che_note, measured: c.measured, sources: c.sources,
     })),
   };
 }
