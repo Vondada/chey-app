@@ -5050,7 +5050,6 @@
    "revision": 1,
    "source_kind": "curated",
    "aliases": [
-    "recovery",
     "job recovery",
     "crash recovery",
     "recovering from a crash",
@@ -5897,6 +5896,7 @@
     "hit rate",
     "strike rate",
     "win rate confidence interval",
+    "win rate uncertainty",
     "confidence interval",
     "confidence intervals",
     "wilson interval",
