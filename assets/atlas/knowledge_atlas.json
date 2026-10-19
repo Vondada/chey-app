@@ -5806,8 +5806,8 @@
       "riskPerTrade": 100,
       "account": 1000,
       "ruinAt": 0,
-      "trades": 300,
-      "paths": 1000,
+      "trades": 200,
+      "paths": 400,
       "seed": 7
      },
      "result": {
@@ -5825,8 +5825,8 @@
      "riskPerTrade": 100,
      "account": 1000,
      "ruinAt": 0,
-     "trades": 300,
-     "paths": 1000,
+     "trades": 200,
+     "paths": 400,
      "seed": 7
     },
     "compute": "tRiskOfRuin",
@@ -5836,9 +5836,9 @@
     "unit": "probability",
     "steps": [
      "Educational example, made-up numbers, not market data",
-     "1,000 paths of up to 300 trades, seed 7: win 55.0% of the time for +1R, lose 45.0% for −1R, $100.00 a trade",
+     "400 paths of up to 200 trades, seed 7: win 55.0% of the time for +1R, lose 45.0% for −1R, $100.00 a trade",
      "ruin = equity at or below $0.00, starting from $1,000.00: 10 losing trades of room",
-     "130 of 1,000 paths were ruined = 13.00%, give or take 2.08% from simulation noise",
+     "40 of 400 paths were ruined = 10.00%, give or take 2.94% from simulation noise",
      "check, gambler's ruin with an endless horizon: (0.45 ÷ 0.55)^10 = 13.44%"
     ]
    },

@@ -562,7 +562,7 @@ const CARDS = [
       expert: 'The simulation assumes a fixed dollar risk, independent trades and a known, fixed win rate and payoff, none of which hold exactly: estimation error in the win rate alone can multiply the true risk. Fixed-fraction sizing never reaches zero in theory but suffers the same drawdowns in percent. Set "ruin" as the loss limit you would really stop at, not zero, and read the result as a lower bound.',
     },
     analogy: 'Risk of ruin is like a boat crossing rough water with low sides: even with a good engine, enough big waves in a row will sink it, so you raise the sides by risking less each trade.',
-    compute: 'tRiskOfRuin', inputs: { winRate: 0.55, avgWinR: 1, avgLossR: 1, riskPerTrade: 100, account: 1000, ruinAt: 0, trades: 300, paths: 1000, seed: 7 }, result: { classic: 0.134431 }, unit: 'probability',
+    compute: 'tRiskOfRuin', inputs: { winRate: 0.55, avgWinR: 1, avgLossR: 1, riskPerTrade: 100, account: 1000, ruinAt: 0, trades: 200, paths: 400, seed: 7 }, result: { classic: 0.134431 }, unit: 'probability',
     f: ['Risk of ruin', 'Monte Carlo: ruined paths ÷ all paths;  equal wins and losses: (q ÷ p)^units', 'the risk of ruin is the share of simulated paths that hit the ruin level, and with equal wins and losses the classic answer is q over p, raised to the units of room',
       [['p, q', 'win rate and loss rate', 'fractions'], ['units', '(account − ruin level) ÷ risk per trade', 'losing trades of room'], ['paths, seed', 'simulated sequences and the generator\'s seed', 'counts']],
       'Fixed dollar risk, independent trades, fixed win rate and payoff, no costs; a lower bound on the real risk.'],
