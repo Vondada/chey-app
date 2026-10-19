@@ -706,6 +706,9 @@ test('review #356: a claim with a question tag is taken out, and a real question
   assert.equal(guard('I sent it. Yes, I did.', { message }).text, NOTHING_SENT);
   assert.equal(guard('I sent it? Sí, lo hice.', { message }).text, NOTHING_SENT);
   assert.equal(guard('Yes, I did.', { message }).text, 'Yes, I did.');
+  // The affirmation goes only with the sentence just before it (follow-up): a "Yes." after a question is the owner's answer.
+  assert.equal(guard('Your order went through, right? Is the calendar clear? Yes.', { message }).text,
+    'Is the calendar clear? Yes. I cannot confirm that from my record, sir.');
   assert.equal(guard("I sent it, didn't I?", { message }).text, NOTHING_SENT);
   assert.equal(guard('I sent Sarah the email, right?', { message }).text, NOTHING_SENT);
   assert.equal(guard('Your order went through, right?', { message }).text, 'I cannot confirm that from my record, sir.');

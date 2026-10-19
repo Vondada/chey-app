@@ -308,6 +308,24 @@ for (const honest of ['Yes, I did.', 'Did I send it? I did.', 'The report did no
   });
 }
 
+// Review of PR #356, follow-up (through /api/chat): an affirmation is taken out only with the sentence just before it. A "Yes."
+// after a question or a kept sentence is the owner's own answer and stays. (The guard checks no claim in "Ann's invoice was
+// paid": that noun passive is not a claim it covers, so this test pins only the "Yes.".)
+test('review #356: "Is the calendar clear? Yes." keeps the "Yes." after a removed claim two sentences back', async () => {
+  const [turn] = await session(['send Sarah the report'], { model: 'Your order went through, right? Is the calendar clear? Yes.' });
+  assert.equal(turn.reply, 'Is the calendar clear? Yes. I cannot confirm that from my record, sir.');
+});
+
+test('review #356: "Ann\'s invoice was paid, sir. The weather is fine today. Yes." keeps the "Yes."', async () => {
+  const [turn] = await session(['send Sarah the report'], { model: "Ann's invoice was paid, sir. The weather is fine today. Yes." });
+  assert.equal(turn.reply, "Ann's invoice was paid, sir. The weather is fine today. Yes.");
+});
+
+test('review #356: "The weather is fine today. Yes." keeps the "Yes." after a removed claim one sentence back', async () => {
+  const [turn] = await session(['send Sarah the report'], { model: 'Your order went through, right? The weather is fine today. Yes.' });
+  assert.equal(turn.reply, 'The weather is fine today. Yes. I cannot confirm that from my record, sir.');
+});
+
 // Review of PR #356, round 4, blocker 1 (through /api/chat): a claim with a question tag is still a claim. Each reply is
 // taken out, and the denial names the request's verb or the neutral note applies, as at 98b190a.
 const TAGGED_CLAIMS = [
