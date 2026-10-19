@@ -116,18 +116,18 @@ void main() {
     // CHE's own paper chart is primary. TradingView has no iframe until selected.
     expect(find.text('Other charts (optional)'), findsOneWidget);
     expect(find.byType(CheLiveChartPanel), findsNothing);
-    await tester.ensureVisible(find.text('Other charts (optional)'));
+    await tester.scrollUntilVisible(find.text('Other charts (optional)'), 300.0);
     await tester.tap(find.text('Other charts (optional)'));
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 450));
     expect(find.byType(CheLiveChartPanel), findsOneWidget);
     expect(find.textContaining('E-mini S&P 500 futures'), findsWidgets);
     await tester.tap(find.text('Other charts (optional)'));
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 450));
     expect(find.byType(CheLiveChartPanel), findsNothing);
     // Secondary market research stays out of the way until requested.
-    await tester.ensureVisible(find.text('Market research & tools'));
+    await tester.scrollUntilVisible(find.text('Market research & tools'), 300.0);
     await tester.tap(find.text('Market research & tools'));
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 450));
     // The quote panels follow the CHE paper chart and optional charts.
     for (var i = 0; i < 12 && find.text('6123', skipOffstage: false).evaluate().isEmpty; i++) {
       await tester.drag(find.byType(ListView).first, const Offset(0, -300));
@@ -319,9 +319,9 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
     // The CHE paper chart sits above the delayed index panels.
-    await tester.ensureVisible(find.text('Market research & tools'));
+    await tester.scrollUntilVisible(find.text('Market research & tools'), 300.0);
     await tester.tap(find.text('Market research & tools'));
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 450));
     for (var i = 0; i < 12 && find.text('2.00', skipOffstage: false).evaluate().isEmpty; i++) {
       await tester.drag(find.byType(ListView).first, const Offset(0, -300));
       await tester.pump();
