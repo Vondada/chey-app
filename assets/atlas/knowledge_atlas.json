@@ -3885,6 +3885,531 @@
    ]
   },
   {
+   "id": "c-code-inspection",
+   "domain": "coding",
+   "title": "Code inspection: reading unfamiliar code before changing it",
+   "level": "intermediate",
+   "summary": "Read before you change: start at an entry point, follow the calls, read the tests and the history, then decide.",
+   "revision": 1,
+   "source_kind": "curated",
+   "aliases": [
+    "code inspection",
+    "inspecting code",
+    "reading code",
+    "reading unfamiliar code",
+    "code reading",
+    "reading a codebase",
+    "exploring a codebase",
+    "code navigation",
+    "call graphs",
+    "call graph",
+    "dead code"
+   ],
+   "tags": [
+    "engineering",
+    "reading code"
+   ],
+   "prerequisites": [
+    "c-git",
+    "c-graph-search"
+   ],
+   "related": [
+    "c-debugging",
+    "c-agent-planning",
+    "c-architecture"
+   ],
+   "levels": {
+    "beginner": "Before changing code you did not write, read it the way a detective reads a scene: find where the program starts, follow what calls what, and read its tests, which say what the code is meant to do. Only then change it, and only the part you understand.",
+    "intermediate": "Start at an entry point, where the program begins running (CHE has two: lib/main.dart on the phone and server/cloudflare/worker.js on the server), and follow the calls toward the behaviour you need. Search for exact names with rg -n \"name\" to find a definition and every caller. Read the tests first: they state the intended behaviour and give you a way to check a change. Run git log -p and git blame on the lines you will touch to learn why they are that way; often they name the bug they once fixed.",
+    "expert": "Build the part of the call graph you need, not all of it: the definition, its callers, its imports and its adjacent tests. A file that nothing reached from an entry point loads is dead, however well its name matches, so changing it changes nothing. Keep what you read apart from what you guess: a name that sounds right is a hypothesis until the code at a known commit shows it. When finding where something is defined, search real source before tests, because test fixtures repeat the same words. Inspection is read-only; deciding to change the code is a separate step that has to be allowed."
+   },
+   "analogy": "Inspecting code is like learning a building before renovating it: find the front door, follow the hallways to the room you need, and read the plans, before you knock down a wall.",
+   "formula": null,
+   "example": {
+    "kind": "code",
+    "language": "javascript",
+    "explain": "From the entry point worker.js, 5 files are reachable. old_atlas.js is dead: it imports a live file, but nothing imports it, so nothing runs it. Before changing gate.js, read its caller, router.js, and its test, gate.test.js.",
+    "code": "// A tiny repository: each file and the files it imports.\nconst imports = {\n  'worker.js': ['router.js', 'atlas.js'],\n  'router.js': ['gate.js'],\n  'atlas.js': ['index.js'],\n  'gate.js': [],\n  'index.js': [],\n  'old_atlas.js': ['index.js'],   // a copy that nothing imports\n};\nconst tests = { 'gate.js': 'gate.test.js', 'atlas.js': 'atlas.test.js' };\n// Breadth-first from the entry point: every file the running program can reach.\nfunction reachable(entry) {\n  const seen = new Set([entry]);\n  const queue = [entry];\n  while (queue.length) {\n    for (const next of imports[queue.shift()]) if (!seen.has(next)) { seen.add(next); queue.push(next); }\n  }\n  return seen;\n}\nconst live = reachable('worker.js');\nreturn {\n  live: live.size,\n  dead: Object.keys(imports).filter((file) => !live.has(file)),\n  callersOfGate: Object.keys(imports).filter((file) => imports[file].includes('gate.js')),\n  readFirst: tests['gate.js'],\n};",
+    "expected": {
+     "live": 5,
+     "dead": [
+      "old_atlas.js"
+     ],
+     "callersOfGate": [
+      "router.js"
+     ],
+     "readFirst": "gate.test.js"
+    }
+   },
+   "quiz": [
+    {
+     "q": "Where should you start reading an unfamiliar program?",
+     "a": "At an entry point, where it starts running, then follow the calls toward the behaviour you need."
+    },
+    {
+     "q": "Why read a function's tests before changing it?",
+     "a": "They state what it is meant to do, and they give you a way to check your change."
+    },
+    {
+     "q": "A file has exactly the right name, but nothing reached from an entry point imports it. Will changing it change the program?",
+     "a": "No. It is dead code: nothing runs it."
+    },
+    {
+     "q": "Which git command shows the commit that last changed each line of a file?",
+     "a": "git blame."
+    }
+   ],
+   "misconceptions": [
+    "A file whose name matches the feature is not necessarily the code that runs: check that something reached from an entry point loads it."
+   ],
+   "limitations": [
+    "Reading code statically misses what is decided at run time, such as routes built from strings and configuration; CHE's trace follows imports, quoted paths and her two entry points, and says when a file's runtime use is not verified."
+   ],
+   "che_note": "When the owner asks CHE to inspect her code, she reads it read-only (code_scout.js repositoryInspectionIntent: a request that also asks for a fix is a build, not an inspection), at the exact current commit, and traces the files from her two entry points with their callers, imports and adjacent tests; files that nothing loads are listed as unreferenced (self_development.js traceSourceGraph).",
+   "measured": null,
+   "sources": [
+    {
+     "title": "Working Effectively with Legacy Code",
+     "author": "Michael Feathers",
+     "url": "https://www.oreilly.com/library/view/working-effectively-with/0131177052/",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "ripgrep user guide",
+     "author": "Andrew Gallant",
+     "url": "https://github.com/BurntSushi/ripgrep/blob/master/GUIDE.md",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "git-blame documentation",
+     "author": "Git project",
+     "url": "https://git-scm.com/docs/git-blame",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "CHE source: server/cloudflare/self_development.js",
+     "author": "CHE repository",
+     "url": "",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    }
+   ],
+   "exercises": [
+    {
+     "id": "c-code-inspection.1",
+     "kind": "returns",
+     "topic": "call graphs",
+     "prompt": "worker.js imports router.js and atlas.js; router.js imports gate.js; atlas.js imports index.js; old_atlas.js also imports index.js, but nothing imports old_atlas.js. Counting worker.js itself, how many files can the entry point worker.js reach?",
+     "language": "javascript",
+     "code": "const reachableCount = (imports, entry) => { const seen = new Set([entry]); const queue = [entry]; while (queue.length) for (const next of imports[queue.shift()] || []) if (!seen.has(next)) { seen.add(next); queue.push(next); } return seen.size; };",
+     "options": [],
+     "answer": "5",
+     "explain": "worker.js, router.js, atlas.js, gate.js and index.js: 5. old_atlas.js imports a live file, but imports point one way, so the entry point never reaches it."
+    },
+    {
+     "id": "c-code-inspection.2",
+     "kind": "choice",
+     "topic": "repository inspection",
+     "prompt": "The owner says \"inspect your codebase and fix the bug\". For CHE, is that a read-only inspection or a build request?",
+     "language": "javascript",
+     "code": "",
+     "options": [
+      "an inspection only",
+      "a request to change code"
+     ],
+     "answer": "option 2, a request to change code",
+     "explain": "It also asks for a fix, so it is a build: CHE's inspection route is read-only and never takes a turn that asks her to change code."
+    }
+   ],
+   "review_drills": [],
+   "repo_examples": [
+    {
+     "path": "server/cloudflare/self_development.js",
+     "symbol": "traceSourceGraph",
+     "what": "from the files a request names, follows callers, imports and adjacent tests, and marks a file that nothing loads as dead",
+     "test": "server/cloudflare/discovery_exam.test.mjs"
+    },
+    {
+     "path": "server/cloudflare/code_scout.js",
+     "symbol": "repositoryInspectionIntent",
+     "what": "\"inspect your code\" is a read-only inspection; a turn that also asks for a change is a build, not an inspection",
+     "test": "server/cloudflare/code_scout.test.mjs"
+    },
+    {
+     "path": "server/cloudflare/self_development.js",
+     "symbol": "inspectRepositoryContext",
+     "what": "read-only grounding at the live commit: real paths, real symbols and the open pull requests",
+     "test": "server/cloudflare/self_development.test.mjs"
+    },
+    {
+     "path": "server/cloudflare/self_development.js",
+     "symbol": "isTestPath",
+     "what": "test files are searched last, so a definition in real source wins over the same words in a test fixture",
+     "test": "server/cloudflare/self_development.test.mjs"
+    }
+   ]
+  },
+  {
+   "id": "c-reasoning",
+   "domain": "coding",
+   "title": "Reasoning about code: invariants, small cases and evidence",
+   "level": "intermediate",
+   "summary": "Restate the problem, name what must always hold, try small cases, and keep what you suspect apart from what you saw.",
+   "revision": 1,
+   "source_kind": "curated",
+   "aliases": [
+    "reasoning about code",
+    "code reasoning",
+    "reasoning in code",
+    "program reasoning",
+    "invariants",
+    "invariant",
+    "loop invariants",
+    "loop invariant",
+    "small cases",
+    "rubber duck debugging",
+    "rubber ducking",
+    "rubber duck",
+    "hypotheses and evidence",
+    "hypothesis and evidence",
+    "hypotheses vs evidence",
+    "hypothesis versus evidence"
+   ],
+   "tags": [
+    "engineering",
+    "thinking"
+   ],
+   "prerequisites": [
+    "c-debugging"
+   ],
+   "related": [
+    "c-code-inspection",
+    "c-self-repair",
+    "c-binary-search"
+   ],
+   "levels": {
+    "beginner": "Reasoning about code means thinking it through before and while you change it: say the problem back in your own words, try it on tiny examples by hand, and explain it out loud, even to a rubber duck. Many bugs show up the moment you try to explain the step you skipped.",
+    "intermediate": "Restate the task with its inputs, outputs and limits. Name an invariant, something that must stay true at every step, such as \"the target is always between low and high\" in binary search, and check that each line keeps it. Work small cases first: empty, one item, two items, the boundary. Rubber-ducking works because explaining forces every step into words, and the missing one shows. Keep a list of what you suspect apart from what you have seen.",
+    "expert": "Treat every explanation as a hypothesis until an observation could have proved it wrong: reproduce the failure, predict what a change will do, then run it. A fix that passes without a reproduction proves nothing about the bug. An invariant must hold on every path, early returns included: CHE's #319 fix moved an early return below the sweep that ends interrupted jobs, because while autonomy was paused the return skipped the sweep and jobs read running forever. Small cases are evidence, not proof: n² + n + 41 is prime for every n from 0 to 39 and not at 40."
+   },
+   "analogy": "Reasoning about code is like keeping a detective's notebook: what you saw goes on one page, what you suspect on another, and nobody is charged until the evidence fits.",
+   "formula": null,
+   "example": {
+    "kind": "code",
+    "language": "javascript",
+    "explain": "The claim holds for the 40 values from 0 to 39, which is evidence, not proof: the 41st check, n = 40, gives 1681, which is 41 × 41. In the binary search, the invariant that 13 stays between low and high held at every step.",
+    "code": "const isPrime = (n) => {\n  if (n < 2) return false;\n  for (let d = 2; d * d <= n; d += 1) if (n % d === 0) return false;\n  return true;\n};\n// Hypothesis: n × n + n + 41 is prime for every n. Small cases first, in order.\nlet checked = 0;\nlet counterexample = null;\nfor (let n = 0; n <= 100; n += 1) {\n  checked += 1;\n  if (!isPrime(n * n + n + 41)) { counterexample = n; break; }\n}\n// An invariant of binary search: if the target is in the list, it stays between low and high.\nconst list = [2, 3, 5, 7, 11, 13, 17];\nconst target = 13;\nconst at = list.indexOf(target);\nlet low = 0;\nlet high = list.length - 1;\nlet held = true;\nwhile (low <= high) {\n  if (at < low || at > high) held = false;\n  const mid = Math.floor((low + high) / 2);\n  if (list[mid] === target) break;\n  if (list[mid] < target) low = mid + 1; else high = mid - 1;\n}\nreturn { checked, counterexample, value: counterexample * counterexample + counterexample + 41, invariantHeld: held };",
+    "expected": {
+     "checked": 41,
+     "counterexample": 40,
+     "value": 1681,
+     "invariantHeld": true
+    }
+   },
+   "quiz": [
+    {
+     "q": "What is an invariant?",
+     "a": "Something that must stay true at every step of the code, such as the target staying between low and high in binary search."
+    },
+    {
+     "q": "Why try small cases, such as an empty list or one item, first?",
+     "a": "They are quick to check by hand, and they are where boundary bugs show up."
+    },
+    {
+     "q": "A change makes the tests pass, but the bug was never reproduced. What has it proved about the bug?",
+     "a": "Nothing: without a reproduction there is no evidence the change fixed it."
+    },
+    {
+     "q": "n² + n + 41 is prime for every n from 0 to 39. Is it prime for every n?",
+     "a": "No. At n = 40 it is 1681, which is 41 × 41."
+    }
+   ],
+   "misconceptions": [
+    "Passing many small cases is evidence, not proof: one counterexample, like n = 40 for n² + n + 41, ends a claim that 40 cases supported."
+   ],
+   "limitations": [
+    "Teaches everyday reasoning habits, not formal proof: invariants are named and checked by hand or by running small cases here, not proved with a proof assistant or a model checker."
+   ],
+   "che_note": "CHE's che-debug skill fixes the order: reproduce, locate, fix narrowly, prove, review, with no edit before the defect is reproduced, and it counts as reproduced only when the output shows the wrong behaviour. Her reply guards hold the same line: a claim to have searched, compared or checked something needs a receipt from this turn (truth_layer.js guardClaimedResearchActions).",
+   "measured": null,
+   "sources": [
+    {
+     "title": "How to Solve It",
+     "author": "George Pólya",
+     "url": "https://en.wikipedia.org/wiki/How_to_Solve_It",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "The Pragmatic Programmer, 20th anniversary edition (rubber ducking)",
+     "author": "David Thomas and Andrew Hunt",
+     "url": "https://pragprog.com/titles/tpp20/the-pragmatic-programmer-20th-anniversary-edition/",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "Euler's lucky numbers, OEIS A014556",
+     "author": "The On-Line Encyclopedia of Integer Sequences",
+     "url": "https://oeis.org/A014556",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "CHE source: .claude/skills/che-debug/SKILL.md",
+     "author": "CHE repository",
+     "url": "",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    }
+   ],
+   "exercises": [
+    {
+     "id": "c-reasoning.1",
+     "kind": "returns",
+     "topic": "small cases",
+     "prompt": "Hypothesis: n × n + n + 41 is prime for every whole number n. Checking small cases in order from 0, what is the first n where it is not prime?",
+     "language": "javascript",
+     "code": "const firstFailure = (a) => { const isPrime = (n) => { if (n < 2) return false; for (let d = 2; d * d <= n; d += 1) if (n % d === 0) return false; return true; }; for (let n = 0; ; n += 1) if (!isPrime(n * n + n + a)) return n; };",
+     "options": [],
+     "answer": "40",
+     "explain": "Every n from 0 to 39 gives a prime, which is strong evidence but not proof; n = 40 gives 1681, which is 41 × 41."
+    }
+   ],
+   "review_drills": [
+    {
+     "id": "c-reasoning.d1",
+     "title": "The early return that skipped the sweep",
+     "language": "javascript",
+     "code": "function processJobs(data) {\n  const ownerApprovedOnly = !data.autonomy;\n  const done = [];\n  if (ownerApprovedOnly && !data.jobs.some((job) => job.approved && job.status === 'queued')) return done;\n  for (const job of data.jobs) {\n    if (job.status === 'running' && job.stale) { job.status = 'queued'; done.push(`requeued ${job.id}`); }\n  }\n  for (const job of data.jobs) if (job.status === 'queued' && (job.approved || !ownerApprovedOnly)) done.push(`ran ${job.id}`);\n  return done;\n}",
+     "finding": "With autonomy paused and nothing approved waiting, the function returns before the sweep, so an interrupted job reads running forever. The invariant must hold on every path: sweep first, then return early.",
+     "fixed": "function processJobs(data) {\n  const ownerApprovedOnly = !data.autonomy;\n  const done = [];\n  for (const job of data.jobs) {\n    // This runs while autonomy is paused too, so no job reads \"running\" forever.\n    if (job.status === 'running' && job.stale) { job.status = 'queued'; done.push(`requeued ${job.id}`); }\n  }\n  if (ownerApprovedOnly && !data.jobs.some((job) => job.approved && job.status === 'queued')) return done;\n  for (const job of data.jobs) if (job.status === 'queued' && (job.approved || !ownerApprovedOnly)) done.push(`ran ${job.id}`);\n  return done;\n}",
+     "from": "Adapted from a real CHE fix: the #319 fix, after which a paused alarm still ends interrupted jobs instead of leaving them running forever, commit 0abdbf7; pinned by \"autonomy paused with nothing approved: the alarm sweeps interrupted jobs and starts nothing\" in server/cloudflare/worker_autonomy.test.mjs"
+    }
+   ],
+   "repo_examples": [
+    {
+     "path": "server/cloudflare/truth_layer.js",
+     "symbol": "guardClaimedResearchActions",
+     "what": "a reply that claims a search, comparison or check CHE did not run this turn is corrected before the owner sees it",
+     "test": "server/cloudflare/resilience.test.mjs"
+    },
+    {
+     "path": "server/cloudflare/self_development.js",
+     "symbol": "definitionAnswer",
+     "what": "\"which file defines X?\" is answered only from a definition found in the index, with its real path and line, so a guess never becomes a fact",
+     "test": "server/cloudflare/self_development.test.mjs"
+    }
+   ]
+  },
+  {
+   "id": "c-ci-validation",
+   "domain": "coding",
+   "title": "CI validation: what a green check proves",
+   "level": "intermediate",
+   "summary": "A green check proves that the checks which ran passed on that commit; flakes, missing checks and the live system need their own evidence.",
+   "revision": 1,
+   "source_kind": "curated",
+   "aliases": [
+    "ci validation",
+    "validating with ci",
+    "ci checks",
+    "continuous integration checks",
+    "required checks",
+    "gating checks",
+    "non gating checks",
+    "flaky tests",
+    "flaky test",
+    "test flakiness",
+    "ci failures",
+    "reproducing ci failures",
+    "reproducing ci locally",
+    "green ci"
+   ],
+   "tags": [
+    "engineering",
+    "testing",
+    "operations"
+   ],
+   "prerequisites": [
+    "testing",
+    "c-deployment"
+   ],
+   "related": [
+    "c-self-repair",
+    "c-debugging",
+    "sample-size"
+   ],
+   "levels": {
+    "beginner": "CI, continuous integration, is a robot that runs a project's checks on every change. A green result means those checks passed on that exact version of the code. It does not mean the app works on your phone, or that the new version is live; those need their own checks.",
+    "intermediate": "Know which checks gate a merge and which only report. CHE's release status treats one known check, Workers Builds: chey-app, as non-gating, because it fails on every pull-request branch by design; every other check decides the verdict: green, red or pending. No check reported is not green: it means CI has not started. A failure is real until shown otherwise: rerun it once, and if it fails again, reproduce it with the same command CI runs before calling it a flake.",
+    "expert": "A flaky test that fails a correct change with probability p fails k runs in a row by luck with probability pᵏ, so three failures in a row of a 10% flake happen 1 time in 1,000: treat that as real. Reproduce with CI's own commands: CHE's run_checks.sh runs the checks flutter-check.yml runs for the changed paths, reports a missing Flutter as NOT RUN, and treats a test run with no totals as unfinished, never as a pass. Mind the network: on 2026-10-14 a test that passed offline in a sandbox failed in CI, which could reach the internet. After a merge, CI proves nothing about production: the deploy asks the live /health for the new commit."
+   },
+   "analogy": "A green check is like a car passing its safety inspection: it proves the car met the tests that day, not that it will start tomorrow, and not that it is the car now parked outside.",
+   "formula": {
+    "name": "Chance a flaky test fails k times in a row",
+    "expression": "P(k in a row) = pᵏ",
+    "spoken": "the chance that a flaky test fails k runs in a row by luck alone is p to the power k",
+    "variables": [
+     {
+      "symbol": "p",
+      "meaning": "chance that one run fails on a correct change",
+      "unit": "a fraction from 0 to 1"
+     },
+     {
+      "symbol": "k",
+      "meaning": "runs in a row that failed",
+      "unit": "a count"
+     }
+    ],
+    "assumptions": "Runs are independent and the change itself is correct. Real flakes often repeat together, under the same load or clock, so luck can be likelier than pᵏ.",
+    "compute": "flakeStreak",
+    "example": {
+     "inputs": {
+      "p": 0.1,
+      "k": 3
+     },
+     "result": 0.001
+    }
+   },
+   "example": {
+    "kind": "code",
+    "language": "javascript",
+    "explain": "Both gating checks passed and the failing one is non-gating, so the verdict is GREEN; with no checks at all it is NONE, not green. Three failures in a row of a 10% flake happen by luck 0.001 of the time, 1 in 1,000, so treat it as a real failure.",
+    "code": "// The verdict rule of CHE's release status: one known check never gates.\nconst NON_GATING = new Set(['Workers Builds: chey-app']);\nfunction verdict(runs) {\n  const gating = runs.filter((r) => !NON_GATING.has(r.name));\n  if (!gating.length) return 'NONE';\n  if (gating.some((r) => r.status !== 'completed')) return 'PENDING';\n  return gating.every((r) => ['success', 'skipped', 'neutral'].includes(r.conclusion)) ? 'GREEN' : 'RED';\n}\nconst done = (name, conclusion) => ({ name, status: 'completed', conclusion });\nconst runs = [done('analyze', 'success'), done('Worker syntax and unit tests', 'success'), done('Workers Builds: chey-app', 'failure')];\n// A test that fails 10% of the time on correct code failed 3 runs in a row.\nconst byLuck = Math.round(0.1 ** 3 * 1000000) / 1000000;\nreturn { verdict: verdict(runs), noChecks: verdict([]), byLuck, treatAsReal: byLuck < 0.01 };",
+    "expected": {
+     "verdict": "GREEN",
+     "noChecks": "NONE",
+     "byLuck": 0.001,
+     "treatAsReal": true
+    }
+   },
+   "quiz": [
+    {
+     "q": "What does a green CI result prove?",
+     "a": "That the checks which ran passed on that exact commit; not that it works on the device, and not that it is live."
+    },
+    {
+     "q": "A pull request shows no checks at all yet. Is it green?",
+     "a": "No. Zero checks reported means CI has yet to start: wait for it."
+    },
+    {
+     "q": "A test that fails 10% of the time on correct code fails 3 runs in a row. How likely is that by luck?",
+     "a": "0.001, 1 time in 1,000: 0.1 to the power 3, so treat it as a real failure."
+    },
+    {
+     "q": "How should you reproduce a CI failure?",
+     "a": "Run the same commands CI runs, on the same commit, on your own machine."
+    }
+   ],
+   "misconceptions": [
+    "Rerunning a red check until it turns green is not validation: it hides a real failure as a flake, and every repeat of the same failure is more evidence that it is real."
+   ],
+   "limitations": [
+    "The flake formula assumes independent runs. The check names, and which checks gate a merge, are this repository's as of October 2026 and change over time. No CI run here proves behaviour on the owner's iPhone."
+   ],
+   "che_note": "CHE's che-release status reads a commit's checks without changing anything: Workers Builds: chey-app is reported but never decides the verdict, and a deploy counts as live only when its \"Verify live deployed commit\" step saw the live /health report the commit's first 12 characters. A reply that says tests passed or that a change is deployed is removed unless a receipt proves it (truth_layer.js guardOwnerReply).",
+   "measured": null,
+   "sources": [
+    {
+     "title": "About status checks",
+     "author": "GitHub Docs",
+     "url": "https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/collaborating-on-repositories-with-code-quality-features/about-status-checks",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "Flaky Tests at Google and How We Mitigate Them",
+     "author": "John Micco, Google Testing Blog",
+     "url": "https://testing.googleblog.com/2016/05/flaky-tests-at-google-and-how-we.html",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "Continuous Integration",
+     "author": "Martin Fowler",
+     "url": "https://martinfowler.com/articles/continuousIntegration.html",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "CHE source: .claude/skills/che-release/scripts/release_status.mjs",
+     "author": "CHE repository",
+     "url": "",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    }
+   ],
+   "exercises": [
+    {
+     "id": "c-ci-validation.1",
+     "kind": "choice",
+     "topic": "ci validation",
+     "prompt": "On a pull request, analyze passed, Worker syntax and unit tests passed, and Workers Builds: chey-app failed. What verdict does CHE's release status give?",
+     "language": "javascript",
+     "code": "const NON_GATING = new Set(['Workers Builds: chey-app']); const verdict = (runs) => { const gating = runs.filter((r) => !NON_GATING.has(r.name)); if (!gating.length) return 'NONE'; if (gating.some((r) => r.status !== 'completed')) return 'PENDING'; return gating.every((r) => ['success', 'skipped', 'neutral'].includes(r.conclusion)) ? 'GREEN' : 'RED'; };",
+     "options": [
+      "green",
+      "red",
+      "pending",
+      "not started"
+     ],
+     "answer": "option 1, green",
+     "explain": "Workers Builds: chey-app is non-gating: it fails on every pull-request branch by design. Both gating checks passed, so the verdict is green."
+    },
+    {
+     "id": "c-ci-validation.2",
+     "kind": "returns",
+     "topic": "flaky tests",
+     "prompt": "A test fails 10% of the time on correct code. It failed 3 runs in a row. Rounded to three decimals, how likely is that by luck alone?",
+     "language": "javascript",
+     "code": "const byLuck = (p, k) => Math.round(p ** k * 1000) / 1000;",
+     "options": [],
+     "answer": "0.001",
+     "explain": "0.1 × 0.1 × 0.1 = 0.001, one time in a thousand: three in a row is a real failure, not bad luck."
+    }
+   ],
+   "review_drills": [
+    {
+     "id": "c-ci-validation.d1",
+     "title": "The merge that read no checks as a pass",
+     "language": "javascript",
+     "code": "function mergeDecision(status) {\n  if (status.ci === 'failed') return 'refuse: CI failed';\n  if (status.ci === 'running') return 'wait: CI is still running';\n  return 'merge';\n}",
+     "finding": "With no check reported yet, ci is none, which is neither failed nor running, so the pull request is merged as if CI had passed. Zero checks means CI has not started: wait for it.",
+     "fixed": "function mergeDecision(status) {\n  if (status.ci === 'failed') return 'refuse: CI failed';\n  if (status.ci === 'running') return 'wait: CI is still running';\n  // No check has reported yet: CI has not started, which is never a pass.\n  if (status.ci === 'none') return 'wait: no check has reported yet';\n  return 'merge';\n}",
+     "from": "Adapted from a real CHE fix: the #319 fix, after which a pull request with no reported checks waits for CI instead of being merged as passed, commit 0abdbf7; pinned by \"merge requires CI, a CHE branch, no conflict, and pins the checked head; Worker merges trigger deploy\" in server/cloudflare/autonomy_failure_injection.test.mjs"
+    }
+   ],
+   "repo_examples": [
+    {
+     "path": "server/cloudflare/self_update.js",
+     "symbol": "mergeSelfUpdatePr",
+     "what": "merges only after the checks on the head it checked passed; no check reported yet is CI not started, never a pass",
+     "test": "server/cloudflare/autonomy_failure_injection.test.mjs"
+    },
+    {
+     "path": ".claude/skills/che-release/scripts/release_status.mjs",
+     "symbol": "NON_GATING",
+     "what": "the one check that fails on every pull-request branch by design is reported but never decides the verdict; every other check gates",
+     "test": ".claude/skills/tests/skills.test.mjs"
+    },
+    {
+     "path": ".claude/skills/che-debug/scripts/summarize_tap.mjs",
+     "symbol": "summarizeTap",
+     "what": "a passing suite is one line, a failure keeps its diagnostic, and a run with no totals is unfinished, never a pass",
+     "test": ".claude/skills/tests/skills.test.mjs"
+    },
+    {
+     "path": "server/cloudflare/truth_layer.js",
+     "symbol": "guardOwnerReply",
+     "what": "\"Tests passed\" or \"it is deployed\" is removed from a reply unless a CI or deploy receipt proves it",
+     "test": "server/cloudflare/truth_layer.test.mjs"
+    }
+   ]
+  },
+  {
    "id": "c-agent-planning",
    "domain": "coding",
    "title": "Autonomous coding: explore, plan, build",
@@ -3900,8 +4425,7 @@
     "explore plan build",
     "explore plan and build",
     "planning modes",
-    "execution modes",
-    "code inspection"
+    "execution modes"
    ],
    "tags": [
     "autonomy",
@@ -4384,7 +4908,6 @@
     "self repair loops",
     "self healing code",
     "self correction",
-    "ci validation",
     "reasoning about failures",
     "failure analysis",
     "repair loops"
@@ -4515,6 +5038,174 @@
      "symbol": "revert",
      "what": "drops unverified edits and re-applies the last checkpoint",
      "test": "tools/che_coding_failover_loop.test.mjs"
+    }
+   ]
+  },
+  {
+   "id": "c-recovery",
+   "domain": "coding",
+   "title": "Recovery: resuming after a crash without repeating work",
+   "level": "expert",
+   "summary": "Recovering safely means resuming from saved progress and making every retry idempotent, so no side effect happens twice.",
+   "revision": 1,
+   "source_kind": "curated",
+   "aliases": [
+    "recovery",
+    "job recovery",
+    "crash recovery",
+    "recovering from a crash",
+    "recovery after a crash",
+    "idempotency",
+    "idempotent",
+    "idempotent operations",
+    "idempotency keys",
+    "idempotency key",
+    "safe retries",
+    "retry safety",
+    "at least once delivery",
+    "exactly once delivery",
+    "dead letter queue",
+    "dead letters"
+   ],
+   "tags": [
+    "autonomy",
+    "reliability"
+   ],
+   "prerequisites": [
+    "c-checkpoints",
+    "c-model-failover"
+   ],
+   "related": [
+    "c-databases",
+    "c-self-repair",
+    "c-cloudflare-workers"
+   ],
+   "levels": {
+    "beginner": "Programs get interrupted: the server restarts, the network drops, a time limit hits. Recovering means picking up where the work stopped, not starting over and not doing anything twice. If a message was already sent before the crash, sending it again on the retry would be a second message, so the program has to remember what it already did.",
+    "intermediate": "Save progress before the risky step, so a restart knows how far the work got. A job left running too long was interrupted: requeue it with a growing wait, and after a fixed number of attempts move it to a dead-letter state instead of looping. Make each step idempotent, so doing it twice has the same effect as doing it once. Give each request an idempotency key, a fingerprint of what was asked, and reuse the first job when the same key arrives again.",
+    "expert": "Delivery is usually at least once, so effects that happen exactly once come from idempotent handlers, not from the network: keep processed event ids apart from any trimmed log, because a webhook can be resent much later. Count the attempt before spending anything, so a crash in the middle still uses up the attempt budget. A completed step is final; a retried step resumes from its own checkpoint; a step that may already have had its effect is checked before it is repeated. Restart from scratch only when no side effect happened and the saved progress cannot be trusted."
+   },
+   "analogy": "Safe recovery is like a nurse's medication chart: after any interruption the nurse reads the chart before giving the next dose, so nobody gets the same dose twice.",
+   "formula": null,
+   "example": {
+    "kind": "code",
+    "language": "javascript",
+    "explain": "The first attempt sends; the 2 retries after the restart find the key and send nothing, so the owner gets 1 email. Without the key, the 3 attempts would be 3 emails.",
+    "code": "// Durable storage that survives a restart: the keys of messages already sent.\nconst outbox = new Set();\nconst sent = [];\nfunction sendOnce(key, text) {\n  if (outbox.has(key)) return 'already sent';      // a retry checks before acting\n  sent.push(text);\n  outbox.add(key);\n  return 'sent';\n}\n// The first attempt sends, then the Worker restarts before it reports success.\nconst log = [sendOnce('report:2026-10-19', 'Weekly report')];\n// Two retries after the restart carry the same key.\nlog.push(sendOnce('report:2026-10-19', 'Weekly report'), sendOnce('report:2026-10-19', 'Weekly report'));\n// Without a key, every attempt looks new.\nlet withoutKey = 0;\nfor (let attempt = 0; attempt < 3; attempt += 1) withoutKey += 1;\nreturn { log, emails: sent.length, withoutKey };",
+    "expected": {
+     "log": [
+      "sent",
+      "already sent",
+      "already sent"
+     ],
+     "emails": 1,
+     "withoutKey": 3
+    }
+   },
+   "quiz": [
+    {
+     "q": "What does idempotent mean?",
+     "a": "Doing it twice has the same effect as doing it once."
+    },
+    {
+     "q": "A job crashed after sending an email but before saving that it had. What must the retry do first?",
+     "a": "Check whether the email already went out, by its idempotency key, before sending it again."
+    },
+    {
+     "q": "When should an interrupted job stop being retried?",
+     "a": "After a fixed number of attempts: then it is dead-lettered and reported, never looped."
+    },
+    {
+     "q": "A requeued job waits 1 minute doubled for each attempt, at most 15 minutes. How long after its 3rd attempt?",
+     "a": "8 minutes: 1 × 2 to the 3rd, under the 15-minute ceiling."
+    }
+   ],
+   "misconceptions": [
+    "Retrying is not recovery by itself: a retry of a step that already had its effect repeats the effect, unless the step is idempotent or checks first."
+   ],
+   "limitations": [
+    "An idempotency key stops the duplicates CHE can see; an outside service that acted without reporting back can still need a check by hand. The figures are CHE's background jobs as of October 2026; coding jobs also resume from verified checkpoints, which the checkpoints card teaches."
+   ],
+   "che_note": "CHE saves a job's attempt before any AI is spent, so a crash still counts. A job left running past its stale window, 5 minutes for most jobs and 20 for coding and exam jobs, is requeued with a wait that doubles with each attempt up to 15 minutes, and after 4 attempts it is dead-lettered instead of looping (worker.js processJobs). The same request queued twice reuses the first job, by an idempotency key that ignores spacing and capitals (enqueueJob).",
+   "measured": null,
+   "sources": [
+    {
+     "title": "Making retries safe with idempotent APIs",
+     "author": "Malcolm Featonby, Amazon Builders' Library",
+     "url": "https://aws.amazon.com/builders-library/making-retries-safe-with-idempotent-APIs/",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "Idempotent requests",
+     "author": "Stripe API reference",
+     "url": "https://docs.stripe.com/api/idempotent_requests",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "Designing Data-Intensive Applications",
+     "author": "Martin Kleppmann",
+     "url": "https://dataintensive.net/",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    },
+    {
+     "title": "CHE source: server/cloudflare/objective_graph.js",
+     "author": "CHE repository",
+     "url": "",
+     "license": "reference link only; card text is original",
+     "text_scope": "own-words summary"
+    }
+   ],
+   "exercises": [
+    {
+     "id": "c-recovery.1",
+     "kind": "returns",
+     "topic": "idempotency",
+     "prompt": "A send times out after the email actually went out, and the job retries 3 more times with the same idempotency key. How many emails does the owner receive?",
+     "language": "javascript",
+     "code": "const emailsReceived = (retries, sameKey) => { const sent = new Set(); for (let attempt = 0; attempt <= retries; attempt += 1) sent.add(sameKey ? 'email:report' : `email:${attempt}`); return sent.size; };",
+     "options": [],
+     "answer": "1",
+     "explain": "Every retry carries the same key, so the first send is recognised and the 3 retries send nothing: 1 email. Without the key it would be 4."
+    }
+   ],
+   "review_drills": [
+    {
+     "id": "c-recovery.d1",
+     "title": "The retry that stopped blocking its duplicate",
+     "language": "javascript",
+     "code": "const JOB_DEDUPE_MS = 30 * 60_000;\n// Does this job already do the work a new request with the same key asks for?\nfunction blocksDuplicate(job, now) {\n  return ['queued', 'running'].includes(job.status)\n    && now - Date.parse(job.created_at || 0) < JOB_DEDUPE_MS;\n}",
+     "finding": "A job still running, or waiting on its retry backoff, stops blocking duplicates once it is 30 minutes old, so the same request queues a second job and the work runs twice. A running or retrying job must block duplicates however old it is.",
+     "fixed": "const JOB_DEDUPE_MS = 30 * 60_000;\n// A job still running, or waiting on its retry backoff, blocks duplicates however old it is.\nfunction blocksDuplicate(job, now) {\n  return ['queued', 'running'].includes(job.status)\n    && (job.status === 'running' || Number(job.retry_count || 0) > 0 || now - Date.parse(job.created_at || 0) < JOB_DEDUPE_MS);\n}",
+     "from": "Adapted from a real CHE fix: the #164 fix, after which a job that is running or waiting on its retry backoff blocks a duplicate however old it is, commit 138874c; pinned by \"review: a job waiting on its retry backoff blocks duplicates past 30 minutes; long coding runs are not treated as stale\" in server/cloudflare/worker_autonomy.test.mjs"
+    }
+   ],
+   "repo_examples": [
+    {
+     "path": "server/cloudflare/worker.js",
+     "symbol": "enqueueJob",
+     "what": "a retried request or a double-queued owner message reuses the first job with the same idempotency key, so the work runs once",
+     "test": "server/cloudflare/worker_autonomy.test.mjs"
+    },
+    {
+     "path": "server/cloudflare/worker.js",
+     "symbol": "processJobs",
+     "what": "saves each attempt before any AI is spent; a job interrupted mid-run is requeued with backoff while attempts remain, then dead-lettered",
+     "test": "server/cloudflare/worker_autonomy.test.mjs"
+    },
+    {
+     "path": "server/cloudflare/objective_graph.js",
+     "symbol": "applyMissionEvent",
+     "what": "a resent event id is recognised and ignored, even after the visible event log was trimmed",
+     "test": "server/cloudflare/objective_graph.test.mjs"
+    },
+    {
+     "path": "server/cloudflare/recovery_policy.js",
+     "symbol": "idempotencyKey",
+     "what": "the fingerprint of a request: the same ask with other spacing or capitals is the same key",
+     "test": "server/cloudflare/worker_autonomy.test.mjs"
     }
    ]
   },

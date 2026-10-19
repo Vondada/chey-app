@@ -930,7 +930,7 @@ for (const c of ATLAS_CARDS) {
 }
 // Words with common senses outside code: a near match on one of them names a coding card only beside
 // a coding word ("code performance", "caching in python"), never on its own ("explain performance").
-const GENERIC_WORDS = new Set(['inspection', 'performance', 'security', 'architecture', 'profiling', 'latency', 'cache', 'caching', 'stack', 'queue', 'dict', 'dynamic', 'module', 'resumable', 'resuming', 'indentation', 'widget']);
+const GENERIC_WORDS = new Set(['inspection', 'performance', 'security', 'architecture', 'profiling', 'latency', 'cache', 'caching', 'stack', 'queue', 'dict', 'dynamic', 'module', 'resumable', 'resuming', 'indentation', 'widget', 'reading', 'reasoning']);
 
 // Whole words only: "trade-offs", "trader-joe's" or "options" inside a longer word never count, so a
 // word that is part of a hyphenated or possessive word is not a domain word.
