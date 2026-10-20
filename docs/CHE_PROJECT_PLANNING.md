@@ -84,6 +84,9 @@ The owner's request (2026-10-20): turn any idea into a structured, visual, coste
 - `test/che_plan_room_test.dart` covers the model, sorting, voice and the widget.
 - **Regenerating the fixture:** if the planner changes, regenerate `test/fixtures/plan_scene.json` by running `buildPlan` and `planScene` with the arguments in the fixture test.
 
+## Simulation Lab
+"Find the closest realistic solution" runs the Simulation Lab on the latest plan: a budgeted, seeded, staged search with Monte Carlo on the finalists. See `docs/CHE_SIMULATION_LAB.md`.
+
 ## Not yet
 
 - Model-written, topic-specific items on top of the templates. For example, the parts unique to one particular invention. These would be labeled model output.

@@ -464,6 +464,15 @@ extension _CheHomeStreaming on _CHEHomeState {
             onSpeak: (text) => speakText(text, record: false),
           )));
         }
+        // "Find the closest realistic solution": the Worker ran the lab; the Simulation Lab shows the run.
+        final simId = data['sim_id']?.toString().trim() ?? '';
+        if (data['source'] == 'che_sim_lab' && simId.isNotEmpty && mounted) {
+          unawaited(Navigator.of(context).push(CheSimLabPage.route(
+            load: _agentRuntime.simScene,
+            simId: simId,
+            onSpeak: (text) => speakText(text, record: false),
+          )));
+        }
         final mediaUrl = data['media_url']?.toString().trim() ?? '';
         final mediaType = data['media_type']?.toString().trim() ?? '';
         if (mediaUrl.startsWith('https://')) {

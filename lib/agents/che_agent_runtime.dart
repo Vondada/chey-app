@@ -734,6 +734,12 @@ class CheAgentRuntimeClient {
     final j = await _send('GET', '/api/world/scene?scene=plan&id=${Uri.encodeQueryComponent(id)}');
     return (j['scene'] as Map?)?.cast<String, dynamic>() ?? const {};
   }
+
+  /// A Simulation Lab run (sim_lab.js) as its scene.
+  Future<Map<String, dynamic>> simScene(String id) async {
+    final j = await _send('GET', '/api/world/scene?scene=sim&id=${Uri.encodeQueryComponent(id)}');
+    return (j['scene'] as Map?)?.cast<String, dynamic>() ?? const {};
+  }
 }
 
 /// Mirrors the live roster. Polls quickly while work is running and slowly

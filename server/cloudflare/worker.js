@@ -70,7 +70,8 @@ import { alpacaKeys, alpacaPaperOrders, alpacaStatus, liveKeyProblem, placeAlpac
 import { speakConnections, speakTradovateSteps, tradingConnections } from './trading_connections.js';
 import { liveAnswer, liveIntent } from './trading_live_chat.js';
 import { LEDGER_SOURCE, ledgerIntent, readLedgers, speakLedgers } from './trading_ledgers.js';
-import { meetingCommand, meetingScene, planScene } from './world_scene.js';
+import { meetingCommand, meetingScene, planScene, simScene } from './world_scene.js';
+import { SIM_SOURCE, listRuns, loadRun, loadSimMemory, runLab, saveRun, simLabIntent } from './sim_lab.js';
 import { PLAN_SOURCE, answerPlanFollowUp, buildPlan, classifyProject, listPlans, loadPlan, planFollowUpIntent, planSubject, projectPlanIntent, researchSource, savePlan } from './project_plan.js';
 import { BRAIN_ROOMS_SOURCE, ROOMS as BRAIN_ROOMS, answerCrossRoom, crossRoomIntent, drainRoomEvents, pointsAtScreen, recentScreen, relinkRecords, rememberScreen, screenDeictic, screenFollowUp, screenRoomContext, screenRoomFor, statusLabel } from './brain_rooms.js';
 import { queueRoomEvent } from './room_events.js';
@@ -7304,10 +7305,25 @@ export class CheState extends DurableObject {
           const plan = await loadPlan(this.ctx.storage, query.get('id') || '');
           return plan ? json({ scene: planScene(plan) }) : json({ detail: 'No such plan.' }, 404);
         }
-        if ((query.get('scene') || 'meeting') !== 'meeting') return json({ detail: 'Only the Meeting Room and plan scenes exist so far.' }, 400);
+        if (query.get('scene') === 'sim') {
+          const run = await loadRun(this.ctx.storage, query.get('id') || '');
+          return run ? json({ scene: simScene(run) }) : json({ detail: 'No such simulation run.' }, 404);
+        }
+        if ((query.get('scene') || 'meeting') !== 'meeting') return json({ detail: 'Only the Meeting Room, plan and simulation scenes exist so far.' }, 400);
         const meeting = (data.meetings || []).find((item) => item.id === query.get('id')) || (query.get('id') ? null : (data.meetings || [])[0]);
         if (!meeting) return json({ detail: 'No such meeting.' }, 404);
         return json({ scene: meetingScene(meeting, runtimeSnapshot(data).agents) });
+      }
+      // Simulation Lab (sim_lab.js): the saved runs, newest first, and one run in full. Owner only.
+      if (path === '/api/sims' && request.method === 'GET') {
+        if (!ownerDevice) return ownerOnly();
+        return json({ runs: await listRuns(this.ctx.storage) });
+      }
+      const simMatch = /^\/api\/sims\/(sim-[A-Za-z0-9-]{4,64})$/.exec(path);
+      if (simMatch && request.method === 'GET') {
+        if (!ownerDevice) return ownerOnly();
+        const run = await loadRun(this.ctx.storage, simMatch[1]);
+        return run ? json({ run }) : json({ detail: 'No such simulation run.' }, 404);
       }
       // Concept-to-Plan (project_plan.js): the saved plans, newest first, and one plan in full. Owner only.
       if (path === '/api/plans' && request.method === 'GET') {
@@ -8825,6 +8841,42 @@ export class CheState extends DurableObject {
           return ndjsonReply(`Starting the meeting, sir. ${scene.spoken} Their cards appear on the table as they write them; drafts are model output, not verified.`, {
             source: 'che_meeting_room', ok: true, model_calls: 0, meeting_id: convened.meeting.id,
           });
+        }
+
+        // Simulation Lab (owner, 2026-10-20): "find the closest realistic solution", "simulate this design",
+        // "run a million simulations on this idea". It runs on the latest plan, or plans the idea named first,
+        // then searches the design space with a seeded, budgeted, staged search (sim_lab.js). No model call;
+        // the reply states the evaluations actually executed and labels predictions vs simulated results.
+        const simAsk = body.attachment ? null : simLabIntent(message);
+        if (simAsk) {
+          if (!ownerDevice) return ownerOnly();
+          if (simAsk.open) {
+            const last = await loadRun(this.ctx.storage);
+            return last
+              ? ndjsonReply(`Opening the Simulation Lab on ${last.title}, sir.`, { source: SIM_SOURCE, ok: true, model_calls: 0, sim_id: last.id })
+              : ndjsonReply('The Simulation Lab has no runs yet, sir. Describe an idea and say "find the closest realistic solution".', { source: SIM_SOURCE, ok: true, model_calls: 0, sim_id: '' });
+          }
+          const latest = await loadPlan(this.ctx.storage);
+          const fresh = latest && !latest.refused && Date.now() - Date.parse(latest.created_at) < 24 * 3600 * 1000;
+          // "The sneaker idea" points back at the latest plan when it is the same kind of project.
+          const pointsBack = fresh && (!simAsk.subject || (/^(?:the|this|that|my)\b/i.test(simAsk.subject) && classifyProject(simAsk.subject).type.id === latest.type));
+          let plan = pointsBack ? latest : null;
+          if (!plan) {
+            // No idea named and no fresh plan: the owner's previous message is the idea.
+            const lastTurn = [...(Array.isArray(body.history) ? body.history : [])].reverse().find((h) => String(h?.role) === 'user' && String(h.content || h.text || '').trim());
+            const subject = simAsk.subject || String(lastTurn?.content || lastTurn?.text || '').trim().slice(0, 1200);
+            if (!subject) {
+              return ndjsonReply('Which idea should I simulate, sir? Describe it, for example "find the closest realistic solution for a flying suit".', { source: SIM_SOURCE, ok: false, model_calls: 0, sim_id: '' });
+            }
+            const { type } = classifyProject(subject);
+            const background = await researchSource(type.id);
+            plan = buildPlan(subject, { id: `plan-${crypto.randomUUID().slice(0, 12)}`, sources: background ? [background] : [] });
+            if (!plan.refused) await savePlan(this.ctx.storage, new CheBrainStore(this.ctx.storage), plan);
+          }
+          const memory = plan.refused ? {} : await loadSimMemory(this.ctx.storage, plan);
+          const run = runLab(plan, { id: `sim-${crypto.randomUUID().slice(0, 12)}`, budget: simAsk.budget || undefined, memory });
+          if (!run.refused) await saveRun(this.ctx.storage, new CheBrainStore(this.ctx.storage), run);
+          return ndjsonReply(run.spoken, { source: SIM_SOURCE, ok: !run.refused, model_calls: 0, sim_id: run.refused ? '' : run.id, plan_id: plan.refused ? '' : plan.id, project_type: plan.type, safety: run.safety.level });
         }
 
         // Concept-to-Plan (owner, 2026-10-20): "design a wearable robotics prototype and estimate the

@@ -185,3 +185,59 @@ export function planScene(plan) {
   scene.version = hash([scene.id, scene.objects.map((o) => [o.id, o.status])]);
   return scene;
 }
+
+// ── Simulation Lab (owner 2026-10-20; sim_lab.js) ──────────────────────────────────────────────
+const SIM_PROVENANCE_SPOKEN = {
+  simulated: 'a simulated result, not a measurement',
+  prediction: 'a mathematical prediction, not a simulation',
+  measured: 'an experimental measurement',
+  proven: 'a proven real-world result',
+  assumption: 'an assumption of the model',
+  open: 'unresolved',
+  policy: 'CHE\'s safety rule',
+  reference: 'a reference for the method, not read in this run',
+};
+
+/** A lab run as a scene: candidates with their uncertainty and parts, eliminations with reasons, findings, assumptions and open problems. */
+export function simScene(run) {
+  if (!run?.id) return null;
+  const src = (id) => ({ store: 'sim_runs', id: `${run.id}#${id}` });
+  const objects = [];
+  for (const m of run.models || []) {
+    const unit = m.model.primary.unit;
+    for (const c of m.candidates) {
+      objects.push({
+        id: `candidate:${m.model.id}:${c.id}`, kind: 'candidate', label: `${m.model.label}: design ${c.rank}`, status: c.beyond_today.length ? 'beyond_today' : 'realistic',
+        zone: `model:${m.model.id}`, provenance: 'simulated', source: src(`${m.model.id}:${c.id}`), model: m.model.id, rank: c.rank,
+        params: c.params, metrics: c.metrics, primary: c.primary, cost: c.cost, feasibility: c.feasibility, score: c.score, dims: c.dims, parts: c.parts, beyond_today: c.beyond_today,
+        text: `${m.model.primary.name} ${c.primary.p50} ${unit} (p10 ${c.primary.p10}, p90 ${c.primary.p90}); met every constraint in ${Math.round(c.feasibility * 100)}% of Monte Carlo runs; about $${c.cost.nominal.toLocaleString('en-US')}.`,
+        preview: `${c.primary.p50} ${unit}, ${Math.round(c.feasibility * 100)}% feasible`,
+        spoken: `${m.model.label}, design ${c.rank}: ${m.model.primary.name.toLowerCase()} about ${c.primary.p50} ${unit}, between ${c.primary.p10} and ${c.primary.p90}. Met every constraint in ${Math.round(c.feasibility * 100)}% of runs. About $${c.cost.nominal.toLocaleString('en-US')}.${c.beyond_today.length ? ` Needs ${c.beyond_today.join(' and ').toLowerCase()} beyond today's technology.` : ''}`,
+      });
+    }
+    m.eliminated.forEach((e) => objects.push({
+      id: `eliminated:${m.model.id}:${e.id}`, kind: 'elimination', label: e.reason, status: 'eliminated', zone: `model:${m.model.id}`, provenance: 'prediction', source: src(`${m.model.id}:eliminated:${e.id}`), count: e.count, model: m.model.id,
+      text: `${e.count.toLocaleString('en-US')} designs: ${e.reason}.`, preview: `${e.count.toLocaleString('en-US')} designs`, spoken: `${e.count.toLocaleString('en-US')} designs failed: ${e.reason}.`,
+    }));
+    if (m.closest_miss) objects.push({ id: `closest:${m.model.id}`, kind: 'closest_miss', label: `${m.model.label}: closest miss`, status: 'infeasible', zone: `model:${m.model.id}`, provenance: 'prediction', source: src(`${m.model.id}:closest`), params: m.closest_miss.params, metrics: m.closest_miss.metrics, text: `Still fails: ${m.closest_miss.fails.join('; ')}.`, preview: 'No design met every constraint', spoken: `No design met every constraint. The closest still fails: ${m.closest_miss.fails.join('; ')}.` });
+    (m.model.references || []).forEach((r, i) => objects.push({ id: `reference:${m.model.id}:${i}`, kind: 'reference', label: r.title, status: 'reference', zone: 'edge', provenance: 'reference', source: { store: 'public_source', id: r.url }, url: r.url, text: m.model.method, preview: r.url, spoken: `${r.title}: the method behind the ${m.model.label.toLowerCase()} model.` }));
+  }
+  (run.findings || []).forEach((f, i) => objects.push({ id: `finding:${i}`, kind: 'finding', label: `Finding ${i + 1}`, status: f.evidence, zone: 'findings', provenance: f.evidence, source: src(`finding:${i}`), text: f.text, preview: clip(f.text, 140), spoken: f.text }));
+  (run.assumptions || []).forEach((a, i) => objects.push({ id: `assumption:${i}`, kind: 'assumption', label: `Assumption ${i + 1}`, status: 'assumed', zone: 'notes', provenance: 'assumption', source: src(`assumption:${i}`), text: a, preview: clip(a, 140), spoken: a }));
+  (run.unresolved || []).forEach((a, i) => objects.push({ id: `unresolved:${i}`, kind: 'unresolved', label: `Open problem ${i + 1}`, status: 'open', zone: 'notes', provenance: 'open', source: src(`unresolved:${i}`), text: a, preview: clip(a, 140), spoken: a }));
+  [...(run.hazard_notes || []), ...(run.safety?.excluded || []), ...(run.safety?.notes || [])].forEach((text, i) => objects.push({ id: `safety:${i}`, kind: 'safety', label: `Safety ${i + 1}`, status: run.safety?.level || 'ok', zone: 'edge', provenance: 'policy', source: src(`safety:${i}`), text, preview: clip(text, 140), spoken: text }));
+  const scene = {
+    scene: 'sim', id: run.id, title: run.title, objective: run.request, plan_id: run.plan_id || '', stage: run.refused ? 'refused' : 'complete', progress: 1,
+    spoken: run.spoken, type: run.type || '', type_label: run.type_label || '', seed: run.seed ?? null, budget: run.budget ?? null, requested_budget: run.requested_budget ?? null,
+    totals: run.totals || {}, readiness: run.readiness || {}, roadmap: run.roadmap || [], evidence_levels: run.evidence_levels || {},
+    missing_capabilities: run.missing_capabilities || [], safety_level: run.safety?.level || 'ok',
+    models: (run.models || []).map((m) => ({
+      id: m.model.id, version: m.model.version, label: m.model.label, method: m.model.method, primary: m.model.primary, params: m.model.params,
+      uncertain: m.model.uncertain, seed: m.seed, budget: m.budget, stop: m.stop, counts: m.counts, rounds: m.rounds,
+    })),
+    objects: objects.map((o) => ({ ...o, provenance_spoken: SIM_PROVENANCE_SPOKEN[o.provenance] || o.provenance })),
+    edges: [], updated_at: run.created_at || '',
+  };
+  scene.version = hash([scene.id, scene.objects.map((o) => [o.id, o.status])]);
+  return scene;
+}

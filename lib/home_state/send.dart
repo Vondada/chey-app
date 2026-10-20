@@ -783,6 +783,23 @@ extension _CheHomeSend on _CHEHomeState {
       return;
     }
 
+    // In the Simulation Lab: "what's the best design", "why were designs eliminated", "how many simulations ran".
+    final simLab = CheSimLabPage.current.value;
+    final simAnswer = simLab == null || _pendingAttachment != null ? null : simLab.answer(message);
+    if (simAnswer != null) {
+      if (mounted) {
+        _set(() {
+          controller.clear();
+          messages
+            ..add({'role': 'user', 'text': message})
+            ..add({'role': 'assistant', 'text': simAnswer});
+        });
+      }
+      HapticFeedback.mediumImpact();
+      await speakText(simAnswer, record: false);
+      return;
+    }
+
     // In the Plan Room: "sort by cheapest", "show premium", "what comes first".
     final planRoom = ChePlanRoom.current.value;
     final planAnswer = planRoom == null || _pendingAttachment != null ? null : planRoom.answer(message);
