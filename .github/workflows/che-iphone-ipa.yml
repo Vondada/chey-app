@@ -12,6 +12,9 @@ jobs:
     timeout-minutes: 60
     env:
       CHE_AGENT_URL: ${{ secrets.CHE_AGENT_URL }}
+      # Screen sharing (ReplayKit extension + App Group). Set the repository
+      # variable CHE_SCREEN_BROADCAST to "off" to build without it.
+      CHE_SCREEN_BROADCAST: ${{ vars.CHE_SCREEN_BROADCAST || 'on' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -96,6 +99,23 @@ jobs:
             app="$(find build/ios/archive -maxdepth 5 -type d -path '*Products/Applications/Runner.app' | head -1)"
           fi
           test -d "$app" || { echo "::error::Runner.app not found"; exit 1; }
+          # The build signs nothing, so the App Group the screen-sharing
+          # extension and CHE share would be missing. An ad-hoc signature
+          # carries each one's entitlements; SideStore reads them when it signs
+          # CHE for the iPhone (it renames the group and lists it under
+          # ALTAppGroups, which CHE reads).
+          ext="$app/PlugIns/CheBroadcast.appex"
+          if [[ -d "$ext" ]]; then
+            for framework in "$app"/Frameworks/*; do
+              [[ -e "$framework" ]] && codesign --force --sign - --timestamp=none "$framework"
+            done
+            codesign --force --sign - --timestamp=none --entitlements ios/CheBroadcast/CheBroadcast.entitlements "$ext"
+            codesign --force --sign - --timestamp=none --entitlements ios/Runner/Runner.entitlements "$app"
+            codesign -d --entitlements - "$ext" 2>/dev/null | grep -q 'application-groups' || { echo "::error::extension lost its App Group"; exit 1; }
+            echo "Screen-sharing extension included and ad-hoc signed with its App Group."
+          else
+            echo "::warning::No screen-sharing extension in this build (CHE_SCREEN_BROADCAST=$CHE_SCREEN_BROADCAST)."
+          fi
           rm -rf build/ios/ipa
           mkdir -p build/ios/ipa/Payload
           cp -R "$app" build/ios/ipa/Payload/

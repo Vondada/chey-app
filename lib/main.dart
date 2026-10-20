@@ -30,6 +30,7 @@ import 'che_ui/che_screen_awareness.dart';
 import 'che_ui/che_screen_capture.dart';
 import 'world/che_meeting_room.dart';
 import 'world/che_scene_model.dart';
+import 'che_ui/che_screen_share.dart';
 import 'che_ui/che_ui_voice_command.dart';
 import 'che_native_voice.dart';
 import 'che_edge_voice.dart';

@@ -21,12 +21,26 @@ import 'package:flutter/widgets.dart';
 
 /// One capture of CHE's screen: a PNG as base64, or the reason there is none.
 class CheScreenShot {
-  const CheScreenShot._({this.base64 = '', this.width = 0, this.height = 0, this.reason = ''});
+  const CheScreenShot._({this.base64 = '', this.width = 0, this.height = 0, this.reason = '', this.shared = false, this.at, this.beforeSwitch = false});
   const CheScreenShot.refused(String reason) : this._(reason: reason);
+
+  /// A frame of the whole iPhone screen from the screen-sharing broadcast
+  /// (che_screen_share.dart), not a picture of CHE's own app.
+  const CheScreenShot.shared({required String base64, required int width, required int height, DateTime? at, bool beforeSwitch = false})
+      : this._(base64: base64, width: width, height: height, shared: true, at: at, beforeSwitch: beforeSwitch);
 
   final String base64;
   final int width;
   final int height;
+
+  /// True for a broadcast frame of the whole screen (any app).
+  final bool shared;
+
+  /// When a shared frame was taken.
+  final DateTime? at;
+
+  /// The shared frame is from just before the owner switched back to CHE.
+  final bool beforeSwitch;
 
   /// Why nothing was captured, in words CHE can say aloud.
   final String reason;
