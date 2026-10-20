@@ -8644,7 +8644,7 @@ export class CheState extends DurableObject {
         const frameReadsIt = frame.lossless && !['unclear', 'followup', 'correction'].includes(frame.mode);
         // A broker order, its "yes, place it" or its "no, don't place it" is read by the desk word for
         // word; a model reading could only blur which order the owner approved.
-        const deskReadsIt = ['take', 'take_unconfirmed', 'place_unconfirmed', 'stock_no', 'stock_order', 'alpaca_orders', 'tradovate_steps'].includes(deskIntent(message)?.kind);
+        const deskReadsIt = ['take', 'take_unconfirmed', 'place_unconfirmed', 'stock_no', 'stock_order', 'alpaca_orders', 'alpaca_dashboard', 'tradovate_steps'].includes(deskIntent(message)?.kind);
         // "Reset my knowledge atlas progress" is a delete with a fixed hold: it never needs a reading (issue #346 audit).
         const deterministicHold = ownerDevice && Boolean(atlasResetIntent(message));
         if (interpretation.kind === 'unclear' && !frameReadsIt && !deskReadsIt && !interpretation.clarify && !interpretation.passthrough && ownerHistory.length > 0 && !deterministicHold) {
@@ -10196,6 +10196,14 @@ export class CheState extends DurableObject {
           }
           if (desk.kind === 'stock_order') return this.stockOrderTurn(desk);
           if (desk.kind === 'alpaca_orders') {
+            const listed = await alpacaPaperOrders(this.keyEnv || this.env, { limit: 5 });
+            const text = listed.state === 'not_configured' ? 'Alpaca paper is not set up yet, sir, so there are no orders to read. Say "connect Alpaca" to hear how.'
+              : !listed.ok ? `I could not read your Alpaca paper orders, sir: ${listed.error}`
+                : !listed.orders.length ? `Alpaca reports no orders on your ${STOCK_ACCOUNT} account, sir.`
+                  : `Your latest ${STOCK_ACCOUNT} orders, as Alpaca reports them, sir: ${listed.orders.map((o, i) => `${i + 1}, ${speakStockReceipt(o, { brief: true }).replace(/^Alpaca's receipt: /, '')}`).join(' ')}`;
+            return ndjsonReply(text, { source: 'che_trading_desk', ok: listed.ok, model_calls: 0, account: STOCK_ACCOUNT, open_view: 'alpaca_paper' });
+          }
+          if (desk.kind === 'alpaca_dashboard') {
             // The Alpaca PAPER dashboard (owner, 2026-10-20): a short summary from Alpaca's own records, and the
             // app opens the visual view (chart, order and fill markers, positions, history).
             const dash = await alpacaPaperDashboard(this.keyEnv || this.env);
