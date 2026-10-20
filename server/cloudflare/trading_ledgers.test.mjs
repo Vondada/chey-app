@@ -68,7 +68,7 @@ function seedSim(saved, n, { strategies = [SIM_STRATEGIES[0].id] } = {}) {
 function journalTrade(i, { net = 25, strategy = 'fvg-retest-5m' } = {}) {
   const entry = `2026-10-${String(13 + Math.floor(i / 60)).padStart(2, '0')}T15:${String(i % 60).padStart(2, '0')}:00.000Z`;
   return {
-    environment: 'paper', source: 'paper', portfolio: `${strategy}|any|2`, strategy, filter: 'any', params: { target_r: 2 },
+    environment: 'paper', source: 'paper', portfolio: `${strategy}|any@version1`, strategy, filter: 'any', params: { target_r: 2 },
     side: 'long', contract: 'MNQ', qty: 1, session: 'ny', entry: { time: entry, raw: 20000, fill: 20000.5 }, stop: 19990, target: 20020,
     exit: { time: entry, fill: net > 0 ? 20020 : 19990, reason: net > 0 ? 'target' : 'stop' }, net_pnl: net, r_net: net > 0 ? 1.9 : -1.05,
     costs: { spread: 0.5, slippage: 0.5, commissions: 0.62, fees: 0.3 }, data: { label: 'DELAYED', resolution: '5m' },
@@ -314,7 +314,7 @@ test('the EMA strategy comparison is answered strategy by strategy from the forw
 const SESSION_OVERLAP_QUESTION = "Compare EMA Pullback's New York morning versus overnight performance and determine whether the any and trend variants contain identical trades.";
 function emaTrade(entry, { filter = 'any', net = 25, side = 'long', exit = null } = {}) {
   return {
-    environment: 'paper', source: 'paper', portfolio: `ema-pullback-5m|${filter}|2`, strategy: 'ema-pullback-5m', filter, params: { target_r: 2 },
+    environment: 'paper', source: 'paper', portfolio: `ema-pullback-5m|${filter}@version1`, strategy: 'ema-pullback-5m', filter, params: { target_r: 2 },
     side, contract: 'MNQ', qty: 1, entry: { time: entry, raw: 20000, fill: 20000.5 }, stop: 19990, target: 20020,
     exit: { time: exit || entry.replace(/:00\.000Z$/, ':30.000Z'), fill: net > 0 ? 20020 : 19990, reason: net > 0 ? 'target' : 'stop' }, net_pnl: net, r_net: net > 0 ? 1.9 : -1.05,
     costs: { spread: 0.5, slippage: 0.5, commissions: 0.62, fees: 0.3 }, data: { label: 'DELAYED', resolution: '5m' },
@@ -352,4 +352,57 @@ test('the earlier EMA comparison and the new session question each keep their ow
   const che = await owner();
   assert.equal((await che.say(EMA_QUESTION)).route, LEDGER_SOURCE);
   assert.equal((await che.say(SESSION_OVERLAP_QUESTION)).route, 'che_trading_analysis');
+});
+
+// The owner's exact questions, 2026-10-20 (typed on the iPhone after #379 was merged).
+const OWNER_Q1 = 'CHE, analyze your EMA Pullback 5-minute strategy from your actual forward-paper trading ledger. Compare it against every other MNQ strategy. Show the number of trades, wins, losses, net profit, profit factor, expectancy, maximum drawdown, and out-of-sample results where available. Tell me if EMA is truly the most profitable or only has the most recent winning trades. Use real records, not guesses.';
+const OWNER_Q2 = 'CHE, show the performance of your EMA Pullback strategy during New York morning trading versus overnight trading. Show actual wins, losses, net profit, and expectancy for each session. Also tell me whether the EMA any and trend versions contain the same trades';
+function ownerLedger() {
+  const saved = new Map();
+  const put = (t) => saved.set(`${RECORD_PREFIX}paper:${t.portfolio}:${t.entry.time}`, t);
+  // EMA Pullback (any): three early losses overnight, then five newer New York morning wins.
+  ['2026-10-14T02:05:00.000Z', '2026-10-14T02:35:00.000Z', '2026-10-15T03:05:00.000Z'].forEach((at) => put(emaTrade(at, { net: -20 })));
+  const wins = ['2026-10-15T14:05:00.000Z', '2026-10-15T15:10:00.000Z', '2026-10-16T14:20:00.000Z', '2026-10-16T15:40:00.000Z', '2026-10-17T14:15:00.000Z'];
+  wins.forEach((at) => put(emaTrade(at, { net: 25 })));
+  // EMA Pullback (trend): two of the same entries and one of its own.
+  put(emaTrade(wins[0], { filter: 'trend' })); put(emaTrade(wins[1], { filter: 'trend' })); put(emaTrade('2026-10-17T15:30:00.000Z', { filter: 'trend' }));
+  // Fair value gap retest: ten wins, more net profit than EMA.
+  for (let i = 0; i < 10; i += 1) put(journalTrade(i, { strategy: 'fvg-retest-5m', net: 25 }));
+  return saved;
+}
+test('owner question 1, exact words: EMA against every other MNQ strategy, with an honest verdict from the records', async () => {
+  const saved = ownerLedger();
+  const keys = [...saved.keys()];
+  // Real newPortfolio() keys are candidate|filter@version. An earlier synthetic
+  // candidate|filter|target fixture concealed a production recency bug (PR #380).
+  assert.ok([...saved.values()].every((t) => /^[-\w]+\|(?:any|trend)@version1$/.test(t.portfolio)));
+  const journal = (await readLedgers(storageFor(saved))).find((l) => l.id === 'forward_paper_journal');
+  const any = journal.by_strategy.find((r) => r.strategy === 'ema-pullback-5m' && r.filter === 'any');
+  assert.deepEqual({ recent: any.recent_trades, recentNet: any.recent_net, earlier: any.earlier_trades, earlierNet: any.earlier_net },
+    { recent: 5, recentNet: 125, earlier: 3, earlierNet: -60 });
+  const che = await owner({ saved });
+  const out = await che.say(OWNER_Q1);
+  assert.equal(out.route, LEDGER_SOURCE);
+  assert.equal(out.modelCalls, 0);
+  assert.equal(out.done.kind, 'strategies');
+  assert.doesNotMatch(out.reply, /sample rules|couldn't complete/i);
+  assert.match(out.reply, /fair value gap retest \(any\): 10 trades, 10 won, 0 lost/, 'every other strategy is listed, not only EMA');
+  assert.match(out.reply, /\[asked about\] trend pullback to the 20 EMA \(any\): 8 trades, 5 won, 3 lost, win rate 62\.5%, expectancy [-\d.]+ R per trade, net \$65\.00, profit factor 2\.08, maximum drawdown \$\d+\.\d\d/);
+  assert.match(out.reply, /Not recorded for this set, so not reported: out-of-sample results\./);
+  assert.match(out.reply, /trend pullback to the 20 EMA \(any\) ranks 3 of 3 by net P&L/);
+  assert.match(out.reply, /under the 30-trade minimum, so "most profitable" is not established/);
+  assert.match(out.reply, /Its newest 5 trades made \$125\.00; its 3 earlier trades made minus \$60\.00\. So its profit rests on its most recent winning trades/);
+  assert.match(out.reply, /The highest net P&L here is fair value gap retest \(any\) at \$250\.00\./);
+  assert.match(out.reply, /never added together/);
+  assert.deepEqual([...saved.keys()].filter((k) => k.startsWith(RECORD_PREFIX)), keys.filter((k) => k.startsWith(RECORD_PREFIX)), 'paper trades are preserved');
+});
+test('owner question 2, exact words: EMA Pullback New York morning versus overnight, and whether any and trend share trades', async () => {
+  const che = await owner({ saved: ownerLedger() });
+  const out = await che.say(OWNER_Q2);
+  assert.equal(out.route, 'che_trading_analysis');
+  assert.equal(out.modelCalls, 0);
+  assert.match(out.reply, /Recorded: 11 closed trades across 2 variants \(any, 2R target: 8; trend, 2R target: 3\), which are 9 distinct market entries\./);
+  assert.match(out.reply, /New York morning \(9:30 AM to 1:00 PM ET\): 6 trades: 6 won, 0 lost, net \$150\.00, expectancy 1\.9 R per trade/);
+  assert.match(out.reply, /overnight \([^)]*\): 3 trades: 0 won, 3 lost, net minus \$60\.00, expectancy -1\.05 R per trade/);
+  assert.match(out.reply, /2 identical market entries \(same side and entry bar\), 2 of them with the same exit too; 6 only in the first, 1 only in the second\. Partly/);
 });

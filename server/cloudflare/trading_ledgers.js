@@ -73,6 +73,7 @@ const RECORD_ID = /\b(?:sim|paper|trade|journal|evidence|ledger|strategy|fill|po
 // forward-paper trading, with win rate and out-of-sample expectancy") is not a question about the sample
 // rule, even when it names out-of-sample as one of the metrics it wants (owner, 2026-10-20).
 const EXPLICIT_COMPARE = /\b(?:compare|compares|comparing|comparison|versus|vs\.?|rank|ranking|stack\s+up)\b|\b(?:by|per|each)\s+strategy\b|\bstrategy[- ]by[- ]strategy\b/i;
+const RECENT_TRADES = 5;
 const STRATEGY_COMPARE = /\b(?:compare|compares|comparing|comparison|versus|vs\.?|rank|ranking|stack\s+up)\b[^.!?\n]{0,120}\bstrateg(?:y|ies)\b|\bstrateg(?:y|ies)\b[^.!?\n]{0,120}\b(?:compare|compared|comparison|stack\s+up|perform(?:ed|ing|ance)?)\b|\b(?:by|per|each)\s+strategy\b|\bstrategy[- ]by[- ]strategy\b|\bwhich\s+(?:\w+\s+){0,2}strateg(?:y|ies)\b/i;
 // Metrics an owner can ask for; each is answered from the record set or said to be unavailable.
 const METRICS = [
@@ -138,8 +139,12 @@ export function ledgerIntent(message) {
     }
   }
   const metrics = METRICS.filter(([, re]) => re.test(text)).map(([m]) => m);
-  const family = /\bEMA\b|\bexponential\s+moving\s+averages?\b/i.test(text) ? 'ema' : '';
-  return { ledgers: ledgers.length ? ledgers : LEDGERS.map((l) => l.id), named: ledgers, kind, kinds, record_id: recordId || null, metrics, family };
+  const named = /\bEMA\b|\bexponential\s+moving\s+averages?\b/i.test(text) ? 'ema' : '';
+  // "Compare it against every other MNQ strategy": the named family is the focus, not a filter (owner, 2026-10-20).
+  const againstOthers = /\b(?:against|versus|vs\.?|with|to)\s+(?:every|all|each|the)\s+(?:other|rest)\b|\bother\s+(?:\w+\s+)?strateg(?:y|ies)\b|\bthe\s+rest\b/i.test(text);
+  const family = againstOthers ? '' : named;
+  const focus = againstOthers ? named : '';
+  return { ledgers: ledgers.length ? ledgers : LEDGERS.map((l) => l.id), named: ledgers, kind, kinds, record_id: recordId || null, metrics, family, focus };
 }
 
 // ─── The records ──────────────────────────────────────────────────────────
@@ -211,16 +216,26 @@ export async function readLedgers(storage, { now = Date.now() } = {}) {
   const journal = await safely('forward_paper_journal', async () => {
     const dash = await liveDashboard(storage, { now });
     const best = dash.by_strategy[0] || null;
+    const journalled = await readTrades(storage, isLive);
+    // A stored portfolio key contains a strategy version (candidate|filter@hash), not
+    // candidate|filter|target_r. Group by the same fields as liveDashboard's
+    // strategy rows, or every production row incorrectly appears to have no history.
+    const byStrategy = {};
+    for (const t of [...journalled].sort((a, b) => String(a.exit?.time).localeCompare(String(b.exit?.time)))) {
+      const key = `${t.strategy}|${t.filter}|${t.params?.target_r}`;
+      (byStrategy[key] ||= []).push(t);
+    }
+    const recentOf = (row) => { const list = byStrategy[`${row.strategy}|${row.filter}|${row.target_r}`] || []; const last = list.slice(-RECENT_TRADES); return { recent_trades: last.length, recent_net: r2(last.reduce((sum, t) => sum + t.net_pnl, 0)), earlier_trades: list.length - last.length, earlier_net: r2(list.slice(0, -RECENT_TRADES).reduce((sum, t) => sum + t.net_pnl, 0)) }; };
     return {
       status: dash.state?.enabled ? 'on' : 'off', trades: dash.totals.trades, wins: dash.totals.wins, losses: dash.totals.losses, win_rate: dash.totals.win_rate,
       net_pnl: dash.totals.net_pnl, expectancy_r: dash.totals.expectancy_r, open: dash.positions.length, newest: journalTrade(dash.trades[0]),
       feed: dash.feed ? { status: dash.feed.status, provider: dash.feed.provider, checked_at: dash.feed.checked_at } : null,
       best: best && { strategy: best.strategy, name: best.name, filter: best.filter, trades: best.trades, win_rate: best.win_rate, expectancy_r: best.expectancy_r, net_pnl: best.net_pnl, ranked: best.ranked, params: { target_r: best.target_r, filter: best.filter } },
       min_sample: MIN_TRADES, last_run: dash.runs[0]?.at || null,
-      by_strategy: dash.by_strategy.map((row) => ({ strategy: row.strategy, name: row.name, filter: row.filter, target_r: row.target_r, trades: row.trades, wins: row.wins, losses: row.losses, win_rate: row.win_rate, expectancy_r: row.expectancy_r, net_pnl: row.net_pnl, profit_factor: row.profit_factor ?? null, max_drawdown: row.max_drawdown ?? null, ranked: row.ranked })),
+      by_strategy: dash.by_strategy.map((row) => ({ strategy: row.strategy, name: row.name, filter: row.filter, target_r: row.target_r, trades: row.trades, wins: row.wins, losses: row.losses, win_rate: row.win_rate, expectancy_r: row.expectancy_r, net_pnl: row.net_pnl, profit_factor: row.profit_factor ?? null, max_drawdown: row.max_drawdown ?? null, ranked: row.ranked, ...recentOf(row) })),
       feeds: dash.feed ? [{ symbol: dash.feed.provider_symbol || 'MNQ=F', source: dash.feed.provider || null, status: dash.feed.status || 'unknown', last_bar: dash.feed.last_bar_time || null, latency_s: dash.feed.latency_s ?? null, error: dash.feed.error || null }] : [],
       // The journal's own trades, oldest first (the dashboard list is newest first and capped at 200).
-      equity: equityCurve(await readTrades(storage, isLive), { at: (t) => t.exit.time, value: (t) => t.net_pnl, unit: '$' }),
+      equity: equityCurve(journalled, { at: (t) => t.exit.time, value: (t) => t.net_pnl, unit: '$' }),
     };
   });
   const evidence = await safely('daily_evidence', async () => {
@@ -345,6 +360,34 @@ function strategyLine(row, ledgerId, metrics = []) {
   if (ranked === false) parts.push('not ranked yet: too few trades');
   return `${row.name || row.strategy}${row.filter ? ` (${row.filter})` : ''}: ${parts.join(', ')}`;
 }
+// "Is it truly the most profitable, or does it only have the most recent winning trades?" answered from the
+// records: its rank by net P&L and by expectancy among strategies with trades, whether its sample reaches
+// the minimum, and how much of its result came from its newest trades. Variants of one strategy are
+// separate portfolios that can share entries, so they are ranked as rows, never added together.
+function focusVerdict(traded, isFocus, l) {
+  const focus = traded.filter(isFocus);
+  const label = (row) => `${row.name}${row.filter ? ` (${row.filter})` : ''}`;
+  if (!focus.length) return ['  Verdict: the strategy you asked about has no closed trade in this set, so it cannot be compared yet.'];
+  const byNet = [...traded].sort((a, b) => (b.net_pnl ?? -Infinity) - (a.net_pnl ?? -Infinity));
+  const byExp = [...traded].sort((a, b) => (b.expectancy_r ?? -Infinity) - (a.expectancy_r ?? -Infinity));
+  const out = ['  Verdict, from these records:'];
+  for (const row of focus) {
+    const rankNet = byNet.indexOf(row) + 1; const rankExp = byExp.indexOf(row) + 1;
+    out.push(`  - ${label(row)} ranks ${rankNet} of ${traded.length} by net P&L and ${rankExp} of ${traded.length} by expectancy.`);
+    if (row.trades < (l.min_sample || MIN_TRADES)) out.push(`    With ${n(row.trades)} it is under the ${l.min_sample || MIN_TRADES}-trade minimum, so "most profitable" is not established by these records.`);
+    if (row.recent_trades != null) {
+      if (!row.earlier_trades) out.push(`    All ${n(row.trades)} are recent, so there is no older record to separate a lasting edge from a recent run.`);
+      else {
+        const rests = row.net_pnl > 0 && row.earlier_net <= 0;
+        out.push(`    Its newest ${row.recent_trades} trades made ${money(row.recent_net)}; its ${n(row.earlier_trades, 'earlier trade')} made ${money(row.earlier_net)}. ${rests ? 'So its profit rests on its most recent winning trades, not on its whole record.' : row.net_pnl > 0 ? 'Its earlier trades were profitable too, so the result is not only its latest trades.' : 'Overall it is not profitable.'}`);
+      }
+    }
+  }
+  if (focus.length > 1) out.push('    Its variants are separate portfolios that can share the same market entries, so they are ranked as rows and never added together.');
+  const leader = byNet[0];
+  if (leader && !isFocus(leader)) out.push(`  - The highest net P&L here is ${label(leader)} at ${money(leader.net_pnl)}.`);
+  return out;
+}
 function speakStrategies(intent, chosen) {
   const sets = chosen.filter((l) => l.id !== 'broker_alpaca_paper');
   const lines = [`Strategy by strategy, sir, from ${sets.length === 1 ? `the ${sets[0].label}` : 'each record set separately'}${intent.family === 'ema' ? ', EMA strategies' : ''}:`];
@@ -358,7 +401,9 @@ function speakStrategies(intent, chosen) {
       continue;
     }
     lines.push(`${l.label} (${l.what}):`);
-    rows.forEach((row, i) => lines.push(`  ${i + 1}. ${strategyLine(row, l.id, intent.metrics || [])}.`));
+    const isFocus = (row) => Boolean(intent.focus) && /\bema\b/i.test(`${row.strategy} ${row.name}`);
+    rows.forEach((row, i) => lines.push(`  ${i + 1}. ${isFocus(row) ? '[asked about] ' : ''}${strategyLine(row, l.id, intent.metrics || [])}.`));
+    if (intent.focus) lines.push(...focusVerdict(rows.filter((row) => row.trades > 0), isFocus, l));
     const missing = (intent.metrics || []).filter((m) => !RECORDED[l.id].includes(m));
     if (missing.length) lines.push(`  Not recorded for this set, so not reported: ${missing.map((m) => METRIC_LABEL[m]).join(', ')}.`);
   }
