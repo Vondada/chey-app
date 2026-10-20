@@ -19,6 +19,7 @@ import 'che_live_chart.dart';
 import 'che_live_paper.dart';
 import 'che_trading_ledgers.dart';
 import 'che_trading_connections.dart';
+import 'che_alpaca_paper_panel.dart';
 
 class CheQuote {
   const CheQuote({required this.symbol, required this.name, this.price, this.changePct, required this.status, this.note});
@@ -239,6 +240,11 @@ class _CheMarketsRoomState extends State<CheMarketsRoom> {
               Padding(
                 padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.md, CheSpace.gutter, 0),
                 child: CheTradingConnectionsPanel(baseUrl: widget.baseUrl, headers: widget.headers, onAsk: widget.onAsk, client: widget.client),
+              ),
+              // Alpaca stock paper orders: broker receipts, never MNQ simulator fills.
+              Padding(
+                padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.md, CheSpace.gutter, 0),
+                child: CheAlpacaPaperPanel(baseUrl: widget.baseUrl, headers: widget.headers, client: widget.client),
               ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(
