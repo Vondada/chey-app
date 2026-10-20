@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
-import { chartMarkers, chartView, drawingProblems, futuresOrderIntent, readDrawings, saveDrawings } from './trading_chart.js';
+import { chartMarkers, chartView, drawingProblems, futuresOrderIntent, marketOrderFeedProblem, readDrawings, saveDrawings } from './trading_chart.js';
 import { cancelAlpacaPaperOrder, previewAlpacaPaperOrder } from './broker_alpaca.js';
 
 const generated = new URL('./.trading_chart.test.generated.mjs', import.meta.url);
@@ -207,4 +207,12 @@ test('the owner\'s chart words through /api/chat', sqlite, async () => {
   assert.equal(progress.done.chart.section, 'strategies');
   const alpaca = await che.say('show me my Alpaca trades');
   assert.equal(alpaca.done.open_view, 'alpaca_paper', 'the Alpaca dashboard keeps its route');
+});
+
+test('a market order needs a current Alpaca price; limit orders still queue (Build 1: block entries on a stale feed)', async () => {
+  const fresh = fakeAlpaca();
+  assert.equal(await marketOrderFeedProblem(ENV, { symbol: 'AAPL', qty: 1, side: 'buy', type: 'market' }, { fetcher: fresh, now: NOW }), '');
+  const later = NOW + 3 * 3600_000; // the latest trade is now three hours old: the market is shut
+  assert.match(await marketOrderFeedProblem(ENV, { symbol: 'AAPL', qty: 1, side: 'buy', type: 'market' }, { fetcher: fresh, now: later }), /market orders are blocked.*181 minutes old.*Use a limit order.*Nothing was sent/);
+  assert.equal(await marketOrderFeedProblem(ENV, { symbol: 'AAPL', qty: 1, side: 'buy', type: 'limit', limit_price: 200 }, { fetcher: fresh, now: later }), '');
 });

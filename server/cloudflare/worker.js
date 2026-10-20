@@ -64,7 +64,7 @@ import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook,
 import { nextStrategySimTickAt, setStrategySimCeiling, setStrategySimPaused, speakStrategySim, strategySimIntent, strategySimTick, strategySimView, strategySimWake } from './strategy_sim.js';
 import { evidenceIntent, evidenceReport, evidenceTick } from './trading_evidence_runner.js';
 import { readTrades } from './trading_evidence.js';
-import { chartIntent, chartView, drawIntent, futuresOrderIntent, readDrawings, saveDrawings } from './trading_chart.js';
+import { chartIntent, chartView, drawIntent, futuresOrderIntent, marketOrderFeedProblem, readDrawings, saveDrawings } from './trading_chart.js';
 import { ATLAS_SOURCE, answerAtlas, atlasHiddenAction, atlasIntent, atlasQuizAnswerTurn, atlasPromptContext, atlasResetAsk, atlasResetIntent, projectAtlasToBrain, resetAtlasProgress } from './knowledge_atlas.js';
 import { LIVE_BACKTEST, LIVE_RUNS, LIVE_STATE, haltLivePaper, liveSpecs, liveBacktest, liveDashboard, livePaperSummary, liveTick, nextLiveTickAt, readLivePortfolios, setLivePaper } from './trading_live.js';
 import { ICT_CONCEPTS, applyControlChange, controlsView, noteAuditEffect, readControls, strategyRegistry, resolveStep, speakControlResult, speakControlsView, speakSkipReasons, stockOrderProblem } from './trading_controls.js';
@@ -6680,6 +6680,10 @@ export class CheState extends DurableObject {
       }
       if (path === '/api/trading/alpaca/order' && request.method === 'POST') {
         if (!ownerDevice) return tradingOwnerOnly();
+        // Build 1: a market order needs a current price. When Alpaca's latest trade is old (market
+        // closed) or missing (feed unavailable), the order is refused before it reaches the broker.
+        const stale = await marketOrderFeedProblem(this.keyEnv || this.env, body);
+        if (stale) return json({ ok: false, blocked: true, detail: stale }, 400);
         const placed = await placeAlpacaPaperOrder(this.keyEnv || this.env, this.ctx.storage, body, { guard: await this.stockOrderGuard() });
         return json(placed, placed.ok ? 200 : 400);
       }

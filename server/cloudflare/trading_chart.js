@@ -7,7 +7,7 @@
 //   PAPER fills. Identical records are shown once.
 // New entries from the chart are blocked when the feed is delayed or unavailable, and futures
 // orders are refused because no futures paper broker is connected. Live orders stay disabled.
-import { alpacaPaperDashboard } from './broker_alpaca.js';
+import { alpacaPaperDashboard, previewAlpacaPaperOrder } from './broker_alpaca.js';
 import { aggregate } from './market_feed.js';
 import { readSimState, readStoredTrades } from './strategy_sim.js';
 import { readTrades } from './trading_evidence.js';
@@ -200,4 +200,18 @@ export function futuresOrderIntent(message) {
     kind: 'futures_order',
     reply: 'I cannot place that, sir: no futures paper broker is connected. Tradovate demo orders stay blocked until Tradovate approves API access and you sign in, and CHE\'s MNQ paper engine trades only its own written strategies for research. Nothing was sent. On the chart you can draw the level, or place a paper stock order on Alpaca.',
   };
+}
+
+// A market order from the app needs a current price: no Alpaca trade in the last 15 minutes means
+// the market is closed or the feed stopped. Limit orders still queue. Empty when the order may go.
+export const MARKET_ORDER_MAX_AGE_S = 15 * 60;
+export async function marketOrderFeedProblem(env, order = {}, { fetcher = fetch, now = Date.now() } = {}) {
+  if (String(order.type || 'market').toLowerCase() !== 'market') return '';
+  const p = await previewAlpacaPaperOrder(env, { ...order, type: 'market' }, { fetcher });
+  if (!p.ok) return '';
+  const at = Date.parse(p.last_trade_time || '');
+  if (!Number.isFinite(at)) return `New market orders are blocked: Alpaca reports no recent trade for ${p.symbol}, so there is no current price. Use a limit order. Nothing was sent.`;
+  const age = Math.round((now - at) / 1000);
+  if (age > MARKET_ORDER_MAX_AGE_S) return `New market orders are blocked: Alpaca's latest ${p.symbol} trade is ${Math.round(age / 60)} minutes old (market closed or the feed stopped). Use a limit order to queue it. Nothing was sent.`;
+  return '';
 }
