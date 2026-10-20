@@ -70,8 +70,10 @@ import { alpacaKeys, alpacaPaperOrders, alpacaStatus, liveKeyProblem, placeAlpac
 import { speakConnections, speakTradovateSteps, tradingConnections } from './trading_connections.js';
 import { liveAnswer, liveIntent } from './trading_live_chat.js';
 import { LEDGER_SOURCE, ledgerIntent, readLedgers, speakLedgers } from './trading_ledgers.js';
-import { meetingCommand, meetingScene } from './world_scene.js';
-import { BRAIN_ROOMS_SOURCE, ROOMS as BRAIN_ROOMS, answerCrossRoom, crossRoomIntent, drainRoomEvents, pointsAtScreen, recentScreen, relinkRecords, rememberScreen, screenDeictic, screenFollowUp, screenRoomContext, screenRoomFor, statusLabel } from './brain_rooms.js';
+import { meetingCommand, meetingScene, planScene, simScene } from './world_scene.js';
+import { SIM_SOURCE, listRuns, loadRun, loadSimMemory, runLab, saveRun, simLabIntent } from './sim_lab.js';
+import { PLAN_SOURCE, answerPlanFollowUp, buildPlan, classifyProject, listPlans, loadPlan, planFollowUpIntent, planSubject, projectPlanIntent, researchSource, savePlan } from './project_plan.js';
+import { BRAIN_ROOMS_SOURCE, ROOMS as BRAIN_ROOMS, answerCrossRoom, crossRoomIntent, drainRoomEvents, imageReference, pointsAtScreen, prFollowUp, recentScreen, relinkRecords, rememberScreen, screenDeictic, screenFollowUp, screenRoomContext, screenRoomFor, statusLabel } from './brain_rooms.js';
 import { queueRoomEvent } from './room_events.js';
 import { cloudDailyLimit, sanitizeOwnerText } from './che_errors.js';
 import { CHE_UPDATE_GUIDE, mergeSelfUpdatePr, openSelfUpdatePr, rollbackLastUpdate, selfUpdateGitHubAccess, selfUpdateStatus, workerDeploymentStatus } from './self_update.js';
@@ -7122,7 +7124,7 @@ export class CheState extends DurableObject {
         let visual = null;
         const frame = String(body.frame_base64 || '');
         if (frame.length > 1000 && frame.length < 7_200_000) {
-          visual = await optionalMultimodal(this.env, {
+          visual = await optionalMultimodal(this.keyEnv || this.env, {
             name: `youtube-${videoId}-frame.jpg`,
             media_type: 'image',
             base64: frame,
@@ -7299,10 +7301,40 @@ export class CheState extends DurableObject {
       if (path === '/api/world/scene' && request.method === 'GET') {
         if (!ownerDevice) return ownerOnly();
         const query = new URL(request.url).searchParams;
-        if ((query.get('scene') || 'meeting') !== 'meeting') return json({ detail: 'Only the Meeting Room scene exists so far.' }, 400);
+        if (query.get('scene') === 'plan') {
+          const plan = await loadPlan(this.ctx.storage, query.get('id') || '');
+          return plan ? json({ scene: planScene(plan) }) : json({ detail: 'No such plan.' }, 404);
+        }
+        if (query.get('scene') === 'sim') {
+          const run = await loadRun(this.ctx.storage, query.get('id') || '');
+          return run ? json({ scene: simScene(run) }) : json({ detail: 'No such simulation run.' }, 404);
+        }
+        if ((query.get('scene') || 'meeting') !== 'meeting') return json({ detail: 'Only the Meeting Room, plan and simulation scenes exist so far.' }, 400);
         const meeting = (data.meetings || []).find((item) => item.id === query.get('id')) || (query.get('id') ? null : (data.meetings || [])[0]);
         if (!meeting) return json({ detail: 'No such meeting.' }, 404);
         return json({ scene: meetingScene(meeting, runtimeSnapshot(data).agents) });
+      }
+      // Simulation Lab (sim_lab.js): the saved runs, newest first, and one run in full. Owner only.
+      if (path === '/api/sims' && request.method === 'GET') {
+        if (!ownerDevice) return ownerOnly();
+        return json({ runs: await listRuns(this.ctx.storage) });
+      }
+      const simMatch = /^\/api\/sims\/(sim-[A-Za-z0-9-]{4,64})$/.exec(path);
+      if (simMatch && request.method === 'GET') {
+        if (!ownerDevice) return ownerOnly();
+        const run = await loadRun(this.ctx.storage, simMatch[1]);
+        return run ? json({ run }) : json({ detail: 'No such simulation run.' }, 404);
+      }
+      // Concept-to-Plan (project_plan.js): the saved plans, newest first, and one plan in full. Owner only.
+      if (path === '/api/plans' && request.method === 'GET') {
+        if (!ownerDevice) return ownerOnly();
+        return json({ plans: await listPlans(this.ctx.storage) });
+      }
+      const planMatch = /^\/api\/plans\/(plan-[A-Za-z0-9-]{4,64})$/.exec(path);
+      if (planMatch && request.method === 'GET') {
+        if (!ownerDevice) return ownerOnly();
+        const plan = await loadPlan(this.ctx.storage, planMatch[1]);
+        return plan ? json({ plan }) : json({ detail: 'No such plan.' }, 404);
       }
       const meetingMatch = /^\/api\/meetings\/([A-Za-z0-9-]{8,64})$/.exec(path);
       if (meetingMatch && request.method === 'GET') {
@@ -7581,7 +7613,7 @@ export class CheState extends DurableObject {
         let mediaAnalysis = null;
         if (attachment) {
           mediaAnalysis = await optionalMultimodal(
-            this.env,
+            this.keyEnv || this.env,
             attachment,
             'Extract concise, useful owner context. Identify people, projects, decisions, companies, meetings, daily responsibilities and reusable knowledge. Do not infer sensitive traits or expose credentials.',
           );
@@ -8475,9 +8507,12 @@ export class CheState extends DurableObject {
           // the button on the left" without another upload (owner, 2026-10-20). Older than that, CHE cannot see.
           if (ownerDevice && !body.attachment && !String(body.screen_context || '').trim() && (asksAboutScreen(rawMessage) || screenDeictic(rawMessage))) {
             const seen = await recentScreen(this.ctx.storage);
-            if (seen) body.screen_context = `Most recent screen observation (temporary, not a record; seen ${seen.at} with ${seen.engine || 'the phone'}; room: ${seen.room}): ${seen.summary}`;
+            if (seen) body.screen_context = `Most recent screen observation (temporary, not a record; seen ${seen.at} with ${seen.engine || 'the phone'}; room: ${seen.room}). This is the text summary made when the image was read; the image itself is not kept, so answer only what the summary says and say so if a detail is not in it: ${seen.summary}`;
           }
           // "What is on my screen?" with no screen sent and nothing recent: say so, never guess.
+          if (!body.attachment && !String(body.screen_context || '').trim() && imageReference(rawMessage) && !asksAboutScreen(rawMessage)) {
+            return ndjsonReply('I have no image from earlier in this conversation, sir: either it was not read, or its summary has expired, and I never keep the image itself. Send the screenshot again and ask your question with it.', { source: 'che_screen', ok: false, model_calls: 0 });
+          }
           if (!body.attachment && !String(body.screen_context || '').trim() && (asksAboutScreen(rawMessage) || screenFollowUp(rawMessage))) {
             if (ownerDevice) await this.dropHeldActions();
             return ndjsonReply('I can\'t see your screen from here, sir: this message came without any screen report from your phone, so I won\'t guess. '
@@ -8811,11 +8846,70 @@ export class CheState extends DurableObject {
           });
         }
 
+        // Simulation Lab (owner, 2026-10-20): "find the closest realistic solution", "simulate this design",
+        // "run a million simulations on this idea". It runs on the latest plan, or plans the idea named first,
+        // then searches the design space with a seeded, budgeted, staged search (sim_lab.js). No model call;
+        // the reply states the evaluations actually executed and labels predictions vs simulated results.
+        const simAsk = body.attachment ? null : simLabIntent(message);
+        if (simAsk) {
+          if (!ownerDevice) return ownerOnly();
+          if (simAsk.open) {
+            const last = await loadRun(this.ctx.storage);
+            return last
+              ? ndjsonReply(`Opening the Simulation Lab on ${last.title}, sir.`, { source: SIM_SOURCE, ok: true, model_calls: 0, sim_id: last.id })
+              : ndjsonReply('The Simulation Lab has no runs yet, sir. Describe an idea and say "find the closest realistic solution".', { source: SIM_SOURCE, ok: true, model_calls: 0, sim_id: '' });
+          }
+          const latest = await loadPlan(this.ctx.storage);
+          const fresh = latest && !latest.refused && Date.now() - Date.parse(latest.created_at) < 24 * 3600 * 1000;
+          // "The sneaker idea" points back at the latest plan when it is the same kind of project.
+          const pointsBack = fresh && (!simAsk.subject || (/^(?:the|this|that|my)\b/i.test(simAsk.subject) && classifyProject(simAsk.subject).type.id === latest.type));
+          let plan = pointsBack ? latest : null;
+          if (!plan) {
+            // No idea named and no fresh plan: the owner's previous message is the idea.
+            const lastTurn = [...(Array.isArray(body.history) ? body.history : [])].reverse().find((h) => String(h?.role) === 'user' && String(h.content || h.text || '').trim());
+            const subject = simAsk.subject || String(lastTurn?.content || lastTurn?.text || '').trim().slice(0, 1200);
+            if (!subject) {
+              return ndjsonReply('Which idea should I simulate, sir? Describe it, for example "find the closest realistic solution for a flying suit".', { source: SIM_SOURCE, ok: false, model_calls: 0, sim_id: '' });
+            }
+            const { type } = classifyProject(subject);
+            const background = await researchSource(type.id);
+            plan = buildPlan(subject, { id: `plan-${crypto.randomUUID().slice(0, 12)}`, sources: background ? [background] : [] });
+            if (!plan.refused) await savePlan(this.ctx.storage, new CheBrainStore(this.ctx.storage), plan);
+          }
+          const memory = plan.refused ? {} : await loadSimMemory(this.ctx.storage, plan);
+          const run = runLab(plan, { id: `sim-${crypto.randomUUID().slice(0, 12)}`, budget: simAsk.budget || undefined, memory });
+          if (!run.refused) await saveRun(this.ctx.storage, new CheBrainStore(this.ctx.storage), run);
+          return ndjsonReply(run.spoken, { source: SIM_SOURCE, ok: !run.refused, model_calls: 0, sim_id: run.refused ? '' : run.id, plan_id: plan.refused ? '' : plan.id, project_type: plan.type, safety: run.safety.level });
+        }
+
+        // Concept-to-Plan (owner, 2026-10-20): "design a wearable robotics prototype and estimate the
+        // cost", "turn this idea into an app", "break down this car into its major systems". One
+        // deterministic planner for every project type (project_plan.js): no model call, every figure a
+        // labeled estimate, one public background page when it can be read, saved to the Brain as a
+        // proposal. Weapons and harm are refused or left out by its safety layer.
+        const planAsk = body.attachment ? null : projectPlanIntent(message);
+        if (planAsk) {
+          if (!ownerDevice) return ownerOnly();
+          const subject = planSubject(planAsk.idea, body.history);
+          const { type } = classifyProject(subject);
+          const background = await researchSource(type.id);
+          const plan = buildPlan(subject, { id: `plan-${crypto.randomUUID().slice(0, 12)}`, sources: background ? [background] : [] });
+          if (!plan.refused) await savePlan(this.ctx.storage, new CheBrainStore(this.ctx.storage), plan);
+          return ndjsonReply(plan.spoken, { source: PLAN_SOURCE, ok: !plan.refused, model_calls: 0, plan_id: plan.refused ? '' : plan.id, project_type: plan.type, safety: plan.safety.level });
+        }
+        // "Sort the parts from smallest to biggest", "what must happen first", "what's possible today":
+        // answered from the latest plan while it is fresh (six hours), from its own data.
+        const planFollow = body.attachment || !ownerDevice ? null : planFollowUpIntent(message);
+        const latestPlan = planFollow ? await loadPlan(this.ctx.storage) : null;
+        if (latestPlan && Date.now() - Date.parse(latestPlan.created_at) < 6 * 3600 * 1000) {
+          return ndjsonReply(answerPlanFollowUp(latestPlan, planFollow), { source: PLAN_SOURCE, ok: true, model_calls: 0, plan_id: latestPlan.id, follow_up: planFollow.kind });
+        }
+
         // "What is connected to PR 374?" and "how is X related to Y?" ask the Brain for relationships
         // (owner, 2026-10-20), so they are answered here, before the GitHub and update readers that
         // would otherwise take any question naming a pull request as a status check.
         // "What's related to this?" with no screen shared is about the conversation: the model answers it.
-        const relation = body.attachment ? null : crossRoomIntent(message);
+        const relation = body.attachment ? null : (crossRoomIntent(message) || prFollowUp(message, body.history));
         const relationScreen = relation && ownerDevice ? await recentScreen(this.ctx.storage) : null;
         if (relation && ['related', 'relate'].includes(relation.kind) && (relationScreen || ![relation.topic, relation.other].some(pointsAtScreen))) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can read across his rooms, sir.', { source: BRAIN_ROOMS_SOURCE, ok: false, model_calls: 0 });
@@ -9004,7 +9098,7 @@ export class CheState extends DurableObject {
           const sourceName = learnSkill.source === 'text' ? 'what you told me' : String(body.attachment?.name || 'your attachment').slice(0, 120);
           let sourceText = learnSkill.source === 'text' ? learnSkill.text : attachmentText(body.attachment);
           if (!sourceText && learnSkill.source === 'attachment') {
-            const read = await optionalMultimodal(this.env, body.attachment, READ_FOR_SKILLS).catch((error) => ({ error: String(error?.message || error) }));
+            const read = await optionalMultimodal(this.keyEnv || this.env, body.attachment, READ_FOR_SKILLS).catch((error) => ({ error: String(error?.message || error) }));
             if (!read?.summary) {
               return ndjsonReply(`I could not read ${sourceName}, sir${read?.error ? `: ${read.error}` : ''}. I did not learn anything from it. Paste the words and say "learn this skill:" before them, and I will learn from the text.`, { source: 'che_self_skills', ok: false });
             }
@@ -10048,7 +10142,7 @@ export class CheState extends DurableObject {
         if (stockWaiting?.status === 'waiting') {
           return ndjsonReply(`To send it to ${STOCK_ACCOUNT}, sir, say "yes, place it". Say "no" to drop it. Nothing has been sent yet.`, { source: 'che_trading_desk', ok: true, model_calls: 0, account: STOCK_ACCOUNT, order_sent: false, confirmation_needed: true });
         }
-        const desk = deskIntent(message);
+        const desk = body.attachment ? null : deskIntent(message);
         if (desk) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can use the trading desk.', { source: 'che_trading_desk', ok: false });
           // B1: a bare "place it" has no yes, so it places nothing; it is answered with the phrase to say.
@@ -10185,7 +10279,7 @@ export class CheState extends DurableObject {
         }
 
         // The owner's evidence questions are answered from recorded runs only, never from a guess.
-        if (evidenceIntent(message)) {
+        if (!body.attachment && evidenceIntent(message)) {
           return ndjsonReply(await evidenceReport(this.ctx.storage), { source: 'che_trading_evidence' });
         }
         // Strategy simulation: pause, resume and status by typing, by voice, or through the /trade-sim command. Owner only.
@@ -10478,7 +10572,7 @@ export class CheState extends DurableObject {
           await this.saveChatData(data);
         }
         const multimodal = body.attachment
-          ? await optionalMultimodal(this.env, body.attachment, message)
+          ? await optionalMultimodal(this.keyEnv || this.env, body.attachment, message)
           : null;
         // The owner's screen (owner, 2026-10-20): the observation is kept for follow-ups (never the image), tied to the
         // room it shows, and that room's authoritative records are read so a number on the screen is never taken for a record.

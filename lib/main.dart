@@ -29,7 +29,10 @@ import 'che_mic_supervisor.dart';
 import 'che_ui/che_screen_awareness.dart';
 import 'che_ui/che_screen_capture.dart';
 import 'world/che_meeting_room.dart';
+import 'world/che_meetings.dart';
+import 'world/che_plan_room.dart';
 import 'world/che_scene_model.dart';
+import 'world/che_sim_lab.dart';
 import 'che_ui/che_ui_voice_command.dart';
 import 'che_native_voice.dart';
 import 'che_edge_voice.dart';
@@ -51,6 +54,7 @@ import 'che_account_bridge.dart';
 import 'che_realtime_voice.dart';
 import 'che_wake_word.dart';
 import 'che_wake_match.dart';
+import 'che_voice_health.dart';
 import 'che_voice_state.dart';
 import 'che_local_voice_loop.dart';
 import 'che_cloud_voice_picker.dart';
@@ -458,6 +462,10 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   CheRealtimeVoiceEngine? _realtimeVoice;
   CheWakeWordEngine? _porcupineWake;
   bool _realtimeConnecting = false;
+  // The owner tapped the mic or Stop while live voice was still connecting.
+  bool _realtimeCancelRequested = false;
+  // The iPhone reported that microphone or speech permission is off.
+  bool _micPermissionDenied = false;
   bool _wakeListenerStarting = false;
 
   // Unread INCOMING mailbox messages (badge on the Chat mailbox icon).
@@ -527,7 +535,24 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
     return CheOrbState.awake;
   }
 
+  /// The microphone's real owner and wake-listener state (che_voice_health.dart).
+  CheVoiceHealth get _voiceHealth => CheVoiceHealth(
+        handsFree: CheUiPreferences.instance.handsFreeWake,
+        sleeping: cheSleeping,
+        porcupineRunning: _porcupineWake?.running == true,
+        nativeActive: _nativeIosVoiceActive,
+        speechListening: speech.isListening,
+        realtimeConnected: _realtimeVoice?.connected == true,
+        realtimeConnecting: _realtimeConnecting,
+        permissionDenied: _micPermissionDenied,
+        lastFailure: _localVoice.lastMicFailure,
+      );
+
   void _stopReply() {
+    if (_realtimeConnecting) {
+      // Stop works during a stalled connection too.
+      unawaited(toggleListening());
+    }
     if (!_isSending) return;
     HapticFeedback.lightImpact();
     setState(() => _stopRequested = true);
@@ -1599,6 +1624,17 @@ OWNER AGENCY
                     ),
                 ],
               ),
+            ),
+          ),
+        // What the microphone is really doing, from the engine flags (muted, never spoken).
+        if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 2, 16, 2),
+            child: Semantics(
+              liveRegion: false,
+              label: 'Voice status: ${_voiceHealth.wakeStatus}',
+              excludeSemantics: true,
+              child: Text(_voiceHealth.wakeStatus, textAlign: TextAlign.center, style: const TextStyle(fontSize: 14, color: Colors.white60)),
             ),
           ),
         SafeArea(

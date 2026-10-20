@@ -449,9 +449,29 @@ extension _CheHomeStreaming on _CHEHomeState {
         // meeting; the Meeting Room shows it as it happens (Spatial World MVP 1).
         final meetingId = data['meeting_id']?.toString().trim() ?? '';
         if (data['source'] == 'che_meeting_room' && meetingId.isNotEmpty && mounted) {
-          unawaited(Navigator.of(context).push(CheMeetingRoom.route(
+          unawaited(cheOpenMeetingRoom(
+            context,
             client: _agentRuntime,
-            meetingId: meetingId,
+            id: meetingId,
+            onSpeak: (text) => speakText(text, record: false),
+            onBackToOffice: () => _goShellTab(2),
+          ));
+        }
+        // "Design a wearable robotics prototype…": the Worker made a plan; the Plan Room shows it.
+        final planId = data['plan_id']?.toString().trim() ?? '';
+        if (data['source'] == 'che_project_plan' && planId.isNotEmpty && data['follow_up'] == null && mounted) {
+          unawaited(Navigator.of(context).push(ChePlanRoom.route(
+            load: _agentRuntime.planScene,
+            planId: planId,
+            onSpeak: (text) => speakText(text, record: false),
+          )));
+        }
+        // "Find the closest realistic solution": the Worker ran the lab; the Simulation Lab shows the run.
+        final simId = data['sim_id']?.toString().trim() ?? '';
+        if (data['source'] == 'che_sim_lab' && simId.isNotEmpty && mounted) {
+          unawaited(Navigator.of(context).push(CheSimLabPage.route(
+            load: _agentRuntime.simScene,
+            simId: simId,
             onSpeak: (text) => speakText(text, record: false),
           )));
         }

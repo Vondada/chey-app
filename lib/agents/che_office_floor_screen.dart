@@ -5,6 +5,8 @@
 // queues work through her Office goal API. "War Room" convenes a multi-agent
 // project.
 
+import '../world/che_meetings.dart';
+import 'che_war_room_screen.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -18,7 +20,6 @@ import '../che_ui/che_voice_actions.dart';
 import '../rooms/che_characters_room.dart';
 import 'che_agent_runtime.dart';
 import 'che_office_store.dart';
-import 'che_war_room_screen.dart';
 import '../widgets/che_native_scene_world.dart';
 
 /// Short, glanceable version of an agent's task or a meeting objective: the
@@ -298,12 +299,39 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
     }
   }
 
+  /// Reopens the same visual Meeting Room for this meeting id (nothing restarts).
   Future<void> _openMeeting(String id) async {
     if (!mounted) return;
-    await Navigator.of(context).push(MaterialPageRoute<void>(
-      builder: (_) => CheWarRoomScreen(client: widget.client, meetingId: id),
-    ));
+    await cheOpenMeetingRoom(context, client: widget.client, id: id, onSpeak: _roomSpeak);
     await _runtime.refresh();
+    if (mounted) setState(() {});
+  }
+
+  /// The War Room's full text record of the same meeting (board, decisions, final plan).
+  Future<void> _openTranscript(String id) async {
+    if (!mounted) return;
+    await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => CheWarRoomScreen(client: widget.client, meetingId: id)));
+    await _runtime.refresh();
+  }
+
+  Future<void> _roomSpeak(String text) async => widget.onSpeak?.call(text);
+
+  /// Meetings: Active, Recent and Completed, without starting a new one.
+  Future<void> _openMeetings() async {
+    if (!mounted) return;
+    HapticFeedback.selectionClick();
+    await Navigator.of(context).push(CheMeetingsPage.route(client: widget.client, onSpeak: _roomSpeak));
+    await _runtime.refresh();
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _returnToLastMeeting() async {
+    final id = await cheLastMeetingId();
+    if (id == null) {
+      _snack('No meeting opened yet.');
+      return;
+    }
+    await _openMeeting(id);
   }
 
 
@@ -420,6 +448,13 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
               onTap: _warRoom,
               semantics: '3. War Room',
             ),
+            CheVoiceAction(
+              number: 4,
+              label: 'Meetings',
+              icon: Icons.meeting_room_rounded,
+              onTap: () => unawaited(_openMeetings()),
+              semantics: '4. Meetings: active, recent and completed',
+            ),
           ],
         ),
         const SizedBox(height: CheSpace.md),
@@ -474,6 +509,19 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
         const SizedBox(height: CheSpace.lg),
         Text('WAR ROOM', style: CheType.overline),
         const SizedBox(height: CheSpace.sm),
+        Wrap(spacing: CheSpace.sm, runSpacing: CheSpace.sm, children: [
+          OutlinedButton.icon(
+            onPressed: () => unawaited(_openMeetings()),
+            icon: const Icon(Icons.meeting_room_rounded, size: 18),
+            label: const Text('All meetings'),
+          ),
+          OutlinedButton.icon(
+            onPressed: () => unawaited(_returnToLastMeeting()),
+            icon: const Icon(Icons.replay_rounded, size: 18),
+            label: const Text('Return to meeting'),
+          ),
+        ]),
+        const SizedBox(height: CheSpace.sm),
         if (r.meetings.isEmpty)
           Text('No meetings yet. Convene the team when a project needs several specialties.', style: CheType.bodyDim)
         else
@@ -481,6 +529,7 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
             _MeetingTile(
               meeting: m,
               onTap: () => _openMeeting(m.id),
+              onTranscript: () => _openTranscript(m.id),
               onReadAloud: () => _speak('${m.statusLabel}. ${m.objective}. With ${m.participantNames.join(', ')}.'),
             ),
         const SizedBox(height: CheSpace.lg),
@@ -1022,10 +1071,11 @@ class _Banner extends StatelessWidget {
 }
 
 class _MeetingTile extends StatelessWidget {
-  const _MeetingTile({required this.meeting, required this.onTap, required this.onReadAloud});
+  const _MeetingTile({required this.meeting, required this.onTap, required this.onReadAloud, required this.onTranscript});
   final CheMeetingSummary meeting;
   final VoidCallback onTap;
   final VoidCallback onReadAloud;
+  final VoidCallback onTranscript;
   @override
   Widget build(BuildContext context) {
     const amber = Color(0xFFE8B04A);
@@ -1049,6 +1099,10 @@ class _MeetingTile extends StatelessWidget {
             const SizedBox(height: 6),
             LinearProgressIndicator(value: meeting.progress, color: amber, backgroundColor: CheColors.stroke),
           ],
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton(onPressed: onTranscript, child: const Text('Full transcript')),
+          ),
         ]),
         trailing: _ReadAloudButton(label: 'Read this meeting aloud', onPressed: onReadAloud),
       ),

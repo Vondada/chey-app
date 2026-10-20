@@ -60,19 +60,40 @@ class CheLocalVoiceLoop {
     return ++speechGeneration;
   }
 
+  /// The most recent microphone operation that failed or never returned, for
+  /// Voice diagnostics. Null until one fails.
+  String? lastMicFailure;
+  DateTime? lastMicFailureAt;
+
+  /// How long one microphone start, stop or wake may take before the chain
+  /// moves on. A native call that never returns used to hold every later mic
+  /// operation forever (the frozen mic button, owner report 2026-10-20).
+  static const micOpTimeout = Duration(seconds: 8);
+
   /// Serialize microphone start/stop so overlapping calls cannot fight.
-  Future<T> runMicOp<T>(Future<T> Function() op) {
+  /// Each operation is bounded by [timeout]: when it runs over, the caller gets
+  /// a [TimeoutException] and the next operation runs.
+  Future<T> runMicOp<T>(Future<T> Function() op, {Duration timeout = micOpTimeout}) {
     final done = Completer<T>();
     _micChain = _micChain
         .catchError((_) {})
         .then((_) async {
       try {
-        done.complete(await op());
+        done.complete(await op().timeout(timeout));
+      } on TimeoutException catch (e, st) {
+        recordMicFailure('A microphone operation did not finish within ${timeout.inSeconds} seconds.');
+        done.completeError(e, st);
       } catch (e, st) {
+        recordMicFailure(e.toString());
         done.completeError(e, st);
       }
     });
     return done.future;
+  }
+
+  void recordMicFailure(String reason, {DateTime? now}) {
+    lastMicFailure = reason.trim();
+    lastMicFailureAt = now ?? DateTime.now();
   }
 
   /// Configure the iOS playAndRecord session at most once per process.

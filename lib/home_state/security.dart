@@ -814,8 +814,8 @@ extension _CheHomeSecurity on _CHEHomeState {
     }
     _set(() {
       _isSpeaking = snapshot.phase == CheVoicePhase.speaking;
-      _isSending = snapshot.phase == CheVoicePhase.thinking ||
-          snapshot.phase == CheVoicePhase.connecting;
+      // Connecting is not sending: typing and Stop stay usable while live voice connects.
+      _isSending = snapshot.phase == CheVoicePhase.thinking;
       isListening = snapshot.microphoneActive &&
           (snapshot.phase == CheVoicePhase.listening ||
               snapshot.phase == CheVoicePhase.userSpeaking ||
@@ -1005,8 +1005,10 @@ extension _CheHomeSecurity on _CHEHomeState {
       return;
     }
 
-    if (DateTime.now().isBefore(_realtimeSkipUntil)) {
-      // Straight to the free native listener, no failed live-voice attempt.
+    _realtimeCancelRequested = false;
+    if (!cheUseLiveVoice(liveConfigured: integrations['openai_live_voice'] == true, skipUntil: _realtimeSkipUntil, now: DateTime.now())) {
+      // Straight to the free native listener: live voice is not set up, or it
+      // failed recently. Waking never waits on a paid provider.
       HapticFeedback.mediumImpact();
       _mic.cancelRestart('state change');
       try {
@@ -1019,7 +1021,13 @@ extension _CheHomeSecurity on _CHEHomeState {
             await CheNativeVoice.wake();
           }
         });
-      } catch (_) {}
+      } catch (error) {
+        _localVoice.recordMicFailure('The iPhone speech recognizer did not start: $error');
+        _nativeIosVoiceActive = false;
+      }
+      if (!_nativeIosVoiceActive && _localVoice.lastMicFailure == null) {
+        _localVoice.recordMicFailure('The iPhone speech recognizer did not start.');
+      }
       if (mounted) {
         _set(() {
           cheSleeping = false;
@@ -1076,7 +1084,11 @@ extension _CheHomeSecurity on _CHEHomeState {
         onStandDown: _returnToWakeStandby,
       );
       _realtimeVoice = engine;
-      await engine.connect();
+      // Bounded: a stalled connection falls back instead of holding the mic.
+      await engine.connect().timeout(cheLiveVoiceConnectTimeout);
+      if (_realtimeCancelRequested) {
+        throw StateError('cancelled by the owner');
+      }
 
       if (mounted) {
         _set(() {
@@ -1093,6 +1105,15 @@ extension _CheHomeSecurity on _CHEHomeState {
         } catch (_) {}
       }
 
+      if (_realtimeCancelRequested) {
+        // The owner cancelled: no fallback mic, nothing listening.
+        _realtimeCancelRequested = false;
+        _voiceMachine.sleep();
+        _applyVoiceSnapshot(_voiceMachine.snapshot);
+        if (mounted) _set(() { openConversation = false; isListening = false; });
+        return;
+      }
+      _localVoice.recordMicFailure(error is TimeoutException ? 'Live voice did not connect within ${cheLiveVoiceConnectTimeout.inSeconds} seconds; using the iPhone recognizer.' : 'Live voice failed: $error');
       _voiceMachine.fallback(error.toString());
       _applyVoiceSnapshot(_voiceMachine.snapshot);
       _realtimeSkipUntil = DateTime.now().add(const Duration(hours: 6));
@@ -1158,10 +1179,11 @@ extension _CheHomeSecurity on _CHEHomeState {
     // Use the same intake, authorization, streaming guard and TTS as typing.
     // A typed/local turn can already own the HTTP request. Keep these exact
     // words in this queued callback until it releases the composer.
-    while (mounted && _isSending) {
+    final waitUntil = DateTime.now().add(const Duration(seconds: 30));
+    while (mounted && _isSending && DateTime.now().isBefore(waitUntil)) {
       await Future<void>.delayed(const Duration(milliseconds: 50));
     }
-    if (!mounted) return;
+    if (!mounted || _isSending) return;
     controller.text = clean;
     await sendMessage(fromVoice: true);
   }
@@ -1285,6 +1307,8 @@ extension _CheHomeSecurity on _CHEHomeState {
       isScrollControlled: true,
       builder: (_) => CheVoiceDiagnosticsSheet(
         snapshot: _voiceSnapshot,
+        health: _voiceHealth,
+        lastMicFailureAt: _localVoice.lastMicFailureAt,
         serverOnline: _deviceToken != null,
         lastServerEvent: _realtimeVoice?.lastServerEvent,
         playbackEngine: _lastVoiceEngine,
