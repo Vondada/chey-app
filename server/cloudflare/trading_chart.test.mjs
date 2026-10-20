@@ -67,7 +67,7 @@ async function owner({ model = () => 'Here is the answer, sir.' } = {}) {
     const done = events.find((e) => e.type === 'done') || {};
     const reply = events.filter((e) => e.type === 'delta').map((e) => e.delta).join('');
     history.push({ role: 'user', content: message }, { role: 'assistant', content: reply });
-    return { status: res.status, reply, done, route: done.source || (calls > before ? 'model' : 'none'), modelCalls: calls - before };
+    return { status: res.status, raw, reply, done, route: done.source || (calls > before ? 'model' : 'none'), modelCalls: calls - before };
   };
   const seedMemory = async (records) => {
     await say('Hello CHE.');
@@ -190,7 +190,12 @@ test('the owner\'s chart words through /api/chat', sqlite, async () => {
   assert.equal(draw.done.open_view, 'trading_chart');
   const chart = await che.api('/api/trading/chart?account=futures_paper&tf=5m');
   assert.deepEqual(chart.drawings.map((d) => d.points[0].price), [21450], 'the drawing comes back with the chart');
-  const mnq = await che.say('Buy 1 MNQ at 21,400.');
+  // A futures order is money: the owner's gate (#356) holds it first; only after his yes does
+  // the chart route answer, and it still sends nothing because no futures paper broker is connected.
+  const held = await che.say('Buy 1 MNQ at 21,400.');
+  assert.match(JSON.parse(held.raw).reply, /I need your yes/, 'the money gate holds it');
+  assert.equal(held.modelCalls, 0);
+  const mnq = await che.say('Yes.');
   assert.equal(mnq.route, 'che_trading_chart');
   assert.equal(mnq.done.order_sent, false);
   assert.match(mnq.reply, /no futures paper broker is connected[\s\S]*Nothing was sent/);
