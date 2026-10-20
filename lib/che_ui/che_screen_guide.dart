@@ -8,7 +8,7 @@ class CheScreenGuide {
 
   static String description(CheScreenReport? report, String fallback) {
     if (report != null) return report.spoken;
-    return 'You are on ' + fallback + '. This page has not registered '
+    return 'You are on $fallback. This page has not registered '
       'its individual controls for the guide yet. Use the VoiceOver labels '
       'or ask CHE to describe the current screen. I will not guess button actions.';
   }
@@ -36,7 +36,7 @@ class CheScreenGuide {
               Row(children: [
                 const Icon(Icons.help_outline, semanticLabel: 'Screen help'),
                 const SizedBox(width: 10),
-                Expanded(child: Text('Help: ' + title,
+                Expanded(child: Text('Help: $title',
                   style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700))),
               ]),
               const SizedBox(height: 14),
@@ -49,7 +49,7 @@ class CheScreenGuide {
                 for (final entry in controls.indexed)
                   Padding(
                     padding: const EdgeInsets.symmetric(vertical: 4),
-                    child: Text((entry.$1 + 1).toString() + '. ' + entry.$2,
+                    child: Text('${entry.$1 + 1}. ${entry.$2}',
                       style: const TextStyle(fontSize: 16)),
                   ),
               ],
