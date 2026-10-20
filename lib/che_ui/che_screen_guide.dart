@@ -7,8 +7,10 @@ class CheScreenGuide {
   CheScreenGuide._();
 
   static String description(CheScreenReport? report, String fallback) {
-    if (report != null) return CheScreenReport(page: report.page, tab: report.tab, tabs: report.tabs, detail: report.detail).spoken
+    if (report != null) {
+      return CheScreenReport(page: report.page, tab: report.tab, tabs: report.tabs, detail: report.detail).spoken
       + (report.controls.isEmpty ? '' : ' Controls: ${report.controls.indexed.map((entry) => '${entry.$1 + 1}. ${entry.$2}').join('. ')}.');
+    }
     return 'You are on $fallback. This page has not registered '
       'its individual controls for the guide yet. Use the VoiceOver labels '
       'or ask CHE to describe the current screen. I will not guess button actions.';
