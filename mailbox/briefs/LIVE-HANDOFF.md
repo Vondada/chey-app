@@ -64,6 +64,12 @@ Then, on GitHub:
 - Next: open focused PR for milestone 1 when the owner is ready (or continue: milestone 2 = scripted multi-agent demo via officeGoal + War Room board wiring + orb-tap deep link to the real task; then Phase B typed memory/provenance).
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
+## 2. Current position (Claude, 2026-10-20 — NEW future project: Spatial World design written, nothing built)
+
+- Owner asked for a grounded visual AI workspace (agents as avatars, tasks as objects, meetings in rooms, Brain as nodes). Design: `mailbox/briefs/SPATIAL-WORLD.md` (concept, Scene contract, data→object mapping, MVP 1–4, files to read, smallest first build).
+- Rule: every visible object is a projection of one real record (`source` mandatory, che-fact-check provenance labels, motion only from state diffs, actions only through existing routes).
+- First build (one PR, Shorebird only): "start a meeting with the team about X" → `command_catalog.js` entry over existing `POST /api/meetings` (War Room) + pure `world_scene.js` projection + `lib/world/che_meeting_room.dart`. Not started; waits for the owner's go. Still open from before: PR #376 merge decision and permission to push the ReplayKit branch.
+
 ## 2. Current position (Claude, 2026-10-20 — owner's order: relationships → phone capture → ReplayKit → Music; PR #376 open, ReplayKit branch local)
 
 - **#374 merged and LIVE** (`502cf47`): Worker version `37115edd`, Shorebird patch published (run 39378864795).
