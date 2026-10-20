@@ -217,9 +217,15 @@ export async function readLedgers(storage, { now = Date.now() } = {}) {
     const dash = await liveDashboard(storage, { now });
     const best = dash.by_strategy[0] || null;
     const journalled = await readTrades(storage, isLive);
-    const byPortfolio = {};
-    for (const t of [...journalled].sort((a, b) => String(a.exit?.time).localeCompare(String(b.exit?.time)))) (byPortfolio[t.portfolio] ||= []).push(t);
-    const recentOf = (row) => { const list = byPortfolio[`${row.strategy}|${row.filter}|${row.target_r}`] || []; const last = list.slice(-RECENT_TRADES); return { recent_trades: last.length, recent_net: r2(last.reduce((sum, t) => sum + t.net_pnl, 0)), earlier_trades: list.length - last.length, earlier_net: r2(list.slice(0, -RECENT_TRADES).reduce((sum, t) => sum + t.net_pnl, 0)) }; };
+    // A stored portfolio key contains a strategy version (candidate|filter@hash), not
+    // candidate|filter|target_r. Group by the same fields as liveDashboard's
+    // strategy rows, or every production row incorrectly appears to have no history.
+    const byStrategy = {};
+    for (const t of [...journalled].sort((a, b) => String(a.exit?.time).localeCompare(String(b.exit?.time)))) {
+      const key = `${t.strategy}|${t.filter}|${t.params?.target_r}`;
+      (byStrategy[key] ||= []).push(t);
+    }
+    const recentOf = (row) => { const list = byStrategy[`${row.strategy}|${row.filter}|${row.target_r}`] || []; const last = list.slice(-RECENT_TRADES); return { recent_trades: last.length, recent_net: r2(last.reduce((sum, t) => sum + t.net_pnl, 0)), earlier_trades: list.length - last.length, earlier_net: r2(list.slice(0, -RECENT_TRADES).reduce((sum, t) => sum + t.net_pnl, 0)) }; };
     return {
       status: dash.state?.enabled ? 'on' : 'off', trades: dash.totals.trades, wins: dash.totals.wins, losses: dash.totals.losses, win_rate: dash.totals.win_rate,
       net_pnl: dash.totals.net_pnl, expectancy_r: dash.totals.expectancy_r, open: dash.positions.length, newest: journalTrade(dash.trades[0]),
