@@ -64,12 +64,58 @@ Then, on GitHub:
 - Next: open focused PR for milestone 1 when the owner is ready (or continue: milestone 2 = scripted multi-agent demo via officeGoal + War Room board wiring + orb-tap deep link to the real task; then Phase B typed memory/provenance).
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
-## 2. Current position (Codex, 2026-10-20 — PR #372 MERGED; deploy verification running)
+## 2. Current position (Codex, 2026-10-20 — PR #372 MERGED AND WORKER VERIFIED LIVE; mobile patch building)
 
-- **PR #372 squash-merged** as `e61c27ca406a4f672fb769d9f5865727f1e53ed2` after exact final head `ea87cc3883ab272aec18fc7faf7fb19341419e34` passed all GitHub Actions checks (39359433013 / 39359432968) and independent Codex review completed with no findings. All eight review threads fixed, test-backed and resolved. Cloudflare branch previews are the established non-gating failure; production uses the existing deploy workflow.
-- Final Worker runtime at 75dcff5b: **2452 total; 2445 passed; 0 failed; 7 skipped**. Coding checkpoint/failover/workflow-policy/paid-gate **52/52**. New execution/GitHub pipeline regressions **20/20**. Full Flutter analysis/tests and real-browser observer passed in final CI. ea87cc3 only adds Dart preview-sequencing code/tests after the Worker runtime was verified; all its CI passed too.
-- Review follow-ups now also preserve spoken barge-in, polite numbered PR lookup, and voice preview sequencing/cancellation using the existing speech pipeline. Additional files beyond the earlier checkpoint list: `lib/che_speech_pipeline.dart`, `test/che_speech_pipeline_test.dart`. No new router or memory/execution engine.
-- **NOT YET CLAIMED LIVE.** Worker deploy run `39360217473` is running (job `118424414990`); Shorebird run `39360217453` is running (job `118424414950`). IPA build/release were skipped, appropriate for Dart-only client changes. Next: verify production /health reports `e61c27ca406a`, live memory/GitHub/handoff/receipt and command probes pass; inspect actual Shorebird patch output and report device-baseline limitations. Do not infer successful deployment or iPhone delivery from the merge.
+- **PR #372 merged:** `e61c27ca406a4f672fb769d9f5865727f1e53ed2`, from final head `ea87cc3883ab272aec18fc7faf7fb19341419e34`. Final independent Codex review completed with **no findings**; all **8** earlier findings fixed and resolved. Source main before merge was `a27d319b0f684781eb2669f482e6d3fd1457d4e8` (the real #356 merge). Existing Claude and context work preserved.
+- **Worker LIVE:** deploy workflow [39360217473](https://github.com/Vondada/chey-app/actions/runs/39360217473) SUCCESS. Actual /health check verified `version_tag=e61c27ca406a`, Worker version `491a2a90-11af-4d29-8747-40c1d06c0b9d`. Live memory/truth **15/15**, including real two-PR GitHub execution receipts, pinned handoff retrieval, fake transcript/JSON receipt rejection; Command Center **5/5**; Knowledge Atlas **11/11**.
+- **Tests:** Worker **2452 total / 2445 passed / 0 failed / 7 skipped**; coding checkpoint/failover/workflow-policy/paid-gate **52/52**; execution/GitHub regression **20/20**. Final CI [39359433013](https://github.com/Vondada/chey-app/actions/runs/39359433013) passed full Flutter analyze/tests, Worker checks and real-browser observer; UI [39359432968](https://github.com/Vondada/chey-app/actions/runs/39359432968) passed. Post-merge full Flutter CI **39360217429 SUCCESS**. Local Flutter was blocked by read-only-home analyzer state; CI is the Flutter evidence. Cloudflare preview builds remain the established non-gating failure; actual production deploy succeeded.
+- **Root causes/implementation:** retain complete supplied context and lossless digests; actual HTTP 413 capacity failures never trigger clipped/identical retries; retain failed/stalled REA IDs during workflow polling and support explicit owner-only linked retries; runtime-only invocation/request receipts persist in existing lossless storage; deterministic live PR facts validate IDs/state/hashes; handoff reads pin to the real mailbox head; fake git/gh transcripts/JSON cannot create evidence. Phone/browser realtime input uses existing guarded chat/TTS, with queued corrections, immediate local barge-in and previews sequenced after completed audio and suppressed after cancellation. No parallel router, memory system or execution engine.
+- **iPhone NOT VERIFIED:** [Shorebird 39360217453](https://github.com/Vondada/chey-app/actions/runs/39360217453), job `118424414950`, is still in its patch step. No publication or device-install claim yet. New IPA jobs were skipped (Dart-only client changes). Next unfinished step: inspect terminal patch output, exact target release and publication; record any baseline/asset limitation. Only owner-device acceptance can confirm installed behavior. Do not start unrelated autonomous work, spend money, delete data or authorize live trades.
+- Evidence/limitations: `docs/CHE_TOOL_TRUTH_BASELINE.json`, `docs/CHE_CONTEXT_CONTINUITY.md`. All files changed in #372 (including preserved prior work):
+
+```
+assets/atlas/knowledge_atlas.json
+docs/CHE_CONTEXT_CONTINUITY.md
+docs/CHE_TOOL_TRUTH_BASELINE.json
+lib/che_realtime_voice.dart
+lib/che_speech_pipeline.dart
+lib/home_state/security.dart
+lib/home_state/send.dart
+lib/home_state/streaming.dart
+lib/home_state/voice.dart
+server/cloudflare/ai_router.js
+server/cloudflare/atlas_coding.js
+server/cloudflare/autonomy_failure_injection.test.mjs
+server/cloudflare/command_catalog.js
+server/cloudflare/command_center.test.mjs
+server/cloudflare/context_continuity.test.mjs
+server/cloudflare/execution_truth.test.mjs
+server/cloudflare/features.test.mjs
+server/cloudflare/lossless_intake.test.mjs
+server/cloudflare/mailbox.js
+server/cloudflare/memory_truth.test.mjs
+server/cloudflare/objective_graph.js
+server/cloudflare/objective_graph.test.mjs
+server/cloudflare/plugin_runtime.js
+server/cloudflare/prompt_compaction.js
+server/cloudflare/prompt_compaction.test.mjs
+server/cloudflare/rea_runner.js
+server/cloudflare/rea_runner.test.mjs
+server/cloudflare/reply_latency.js
+server/cloudflare/reply_latency.test.mjs
+server/cloudflare/self_development.test.mjs
+server/cloudflare/self_update.js
+server/cloudflare/truth_layer.js
+server/cloudflare/web_app.js
+server/cloudflare/worker.js
+server/cloudflare/worker.test.mjs
+server/cloudflare/worker_autonomy.test.mjs
+server/cloudflare/workflow_governor.js
+server/cloudflare/workflow_governor.test.mjs
+test/che_installed_skill_intent_test.dart
+test/che_realtime_truth_test.dart
+test/che_speech_pipeline_test.dart
+```
 
 ## 2. Current position (Codex, 2026-10-20 — PR #372 reliability repair, final CI pending)
 
