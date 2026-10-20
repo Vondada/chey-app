@@ -1,5 +1,5 @@
 // CHE Meetings (owner, 2026-10-20: "once I left, I couldn't find my way
-// back"). One list of the War Room meetings the Worker already keeps (GET
+// back"). One list of the meetings the Worker already keeps (GET
 // /api/meetings, same ids), grouped Active, Recent and Completed, each opening
 // the same visual Meeting Room for that meeting id. Nothing is restarted or
 // copied: the room reads the meeting's existing scene. The only thing kept on
