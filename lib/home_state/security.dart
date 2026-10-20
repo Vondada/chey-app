@@ -1070,6 +1070,7 @@ extension _CheHomeSecurity on _CHEHomeState {
         state: _voiceMachine,
         onSnapshot: _applyVoiceSnapshot,
         onUserTranscript: _onRealtimeUserTranscript,
+        onUserSpeechStarted: () => _interruptSpeechAndListen(resumeListening: false),
         onAssistantTranscript: _onRealtimeAssistantTranscript,
         onCapabilityRequest: _runRealtimeCapabilityTool,
         onStandDown: _returnToWakeStandby,
@@ -1118,6 +1119,8 @@ extension _CheHomeSecurity on _CHEHomeState {
   }
 
   Future<void> _returnToWakeStandby({bool restartWakeListener = true}) async {
+    if (_isSending) _stopReply();
+    await _interruptSpeechAndListen(resumeListening: false);
     final engine = _realtimeVoice;
     _realtimeVoice = null;
     if (engine != null) {

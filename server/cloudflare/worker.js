@@ -8739,7 +8739,7 @@ export class CheState extends DurableObject {
 
         // Existing GitHub and mailbox readers supply facts; the model never
         // interprets release state. Read-only questions authorize no mutation.
-        const readQuestion = /^(?:(?:che|please)[,:]?\s+)*(?:was|is|has|did|what|show|check|verify|look up|read|tell)\b/i.test(message);
+        const readQuestion = /^(?:(?:che|please)[,:]?\s+)*(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:was|is|has|did|what|show|check|verify|look up|read|tell)\b/i.test(message);
         const prNumbers = readQuestion ? [...new Set([...message.matchAll(/\b(?:PR|pull request)\s*#?\s*(\d+)\b/gi)].map((m) => Number(m[1])))] : [];
         const handoffRead = /\b(?:handoff|LIVE-HANDOFF\.md)\b/i.test(message)
           && /^(?:(?:che|please)[,:]?\s+)*(?:what|where|show|read|retrieve|fetch|verify|check|give|tell)\b/i.test(message);

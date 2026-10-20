@@ -502,7 +502,7 @@ extension _CheHomeVoice on _CHEHomeState {
   }
 
   Future<void> _interruptSpeechAndListen({bool resumeListening = true}) async {
-    if (_realtimeVoice?.connected == true) {
+    if (_realtimeVoice?.connected == true && !_realtimeVoice!.guardedOutput) {
       await _realtimeVoice!.cancelActiveResponse('owner interruption');
       _applyVoiceSnapshot(_voiceMachine.snapshot);
       return;

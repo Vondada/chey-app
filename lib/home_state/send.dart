@@ -1037,7 +1037,13 @@ extension _CheHomeSend on _CHEHomeState {
         _pendingVoicePreviewId = null;
       } else {
         replySpeech?.close();
-        await replySpeech?.done;
+        if (fromVoice && _realtimeVoice?.guardedOutput == true) {
+          // The next queued owner turn must not wait for playback. The speech
+          // pipeline owns its cleanup and new speech interrupts it immediately.
+          unawaited(replySpeech?.done);
+        } else {
+          await replySpeech?.done;
+        }
         // A free sample asked for by voice starts only after the spoken reply has finished.
         if (mounted) unawaited(_playPendingVoicePreview());
       }

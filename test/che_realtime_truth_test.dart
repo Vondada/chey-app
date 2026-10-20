@@ -55,6 +55,7 @@ void main() {
     final received = <String>[];
     final first = Completer<void>();
     final second = Completer<void>();
+    var interrupts = 0;
     final engine = CheRealtimeVoiceEngine(
       baseUrl: 'https://che.invalid', deviceToken: 'fixture', state: CheVoiceStateMachine(),
       onSnapshot: (_) {},
@@ -65,6 +66,7 @@ void main() {
       },
       onAssistantTranscript: (_, _, _) {}, onCapabilityRequest: (_, _) async => '',
       onStandDown: () async {},
+      onUserSpeechStarted: () { interrupts++; },
     );
     for (final text in ['first', 'correction: never spend money']) {
       engine.handleServerEvent(RTCDataChannelMessage(jsonEncode({
@@ -74,6 +76,10 @@ void main() {
     }
     await Future<void>.delayed(Duration.zero);
     expect(received, ['first']);
+    engine.handleServerEvent(RTCDataChannelMessage(jsonEncode({
+      'type': 'input_audio_buffer.speech_started',
+    })));
+    expect(interrupts, 1, reason: 'local playback is interrupted before the active queued callback ends');
     first.complete();
     await second.future;
     expect(received, ['first', 'correction: never spend money']);

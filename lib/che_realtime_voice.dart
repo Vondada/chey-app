@@ -41,6 +41,7 @@ class CheRealtimeVoiceEngine {
     required this.onAssistantTranscript,
     required this.onCapabilityRequest,
     required this.onStandDown,
+    this.onUserSpeechStarted,
   });
 
   final String baseUrl;
@@ -51,6 +52,7 @@ class CheRealtimeVoiceEngine {
   final CheRealtimeAssistantTranscriptCallback onAssistantTranscript;
   final CheRealtimeToolHandler onCapabilityRequest;
   final CheRealtimeSleepCallback onStandDown;
+  final FutureOr<void> Function()? onUserSpeechStarted;
 
   RTCPeerConnection? _peer;
   RTCDataChannel? _events;
@@ -317,6 +319,8 @@ class CheRealtimeVoiceEngine {
         return;
 
       case 'input_audio_buffer.speech_started':
+        final interrupt = onUserSpeechStarted;
+        if (interrupt != null) unawaited(Future<void>.sync(interrupt));
         final wasSpeaking = state.phase == CheVoicePhase.speaking;
         state.userSpeechStarted();
         if (wasSpeaking) {

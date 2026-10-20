@@ -113,6 +113,18 @@ test('acceptance A: both requested PRs use independent current GitHub responses'
   assert.equal(out.modelCalls, 0);
 });
 
+test('polite numbered PR lookups never use the unrelated last self-update PR', async () => {
+  globalThis.fetch = githubFetch();
+  const che = await owner({ github: true });
+  for (const message of ['Can you check PR #356?', 'Could you verify PR #356?', 'Would you please read PR #356?']) {
+    const out = await che.say(message);
+    assert.equal(out.meta.source, 'che_github_verification');
+    assert.equal(out.meta.execution_receipts[0].verified_response.number, 356);
+    assert.match(out.reply, /PR #356 is merged/);
+    assert.equal(out.modelCalls, 0);
+  }
+});
+
 test('acceptance B: handoff returns exact pinned path and checkpoint with source receipt', async () => {
   const checkpoint = '## 2. Current position (fixture)\nPR #372 is pending. Never spend money.\n';
   globalThis.fetch = githubFetch({ handoff: '# Handoff\n' + checkpoint + '\n## 3. Older history\nold text' });
