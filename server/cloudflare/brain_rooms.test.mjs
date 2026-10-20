@@ -244,7 +244,6 @@ test('screen helpers: the room a screen shows, follow-up phrases, and the 15-min
   // Ordinary sentences are neither: they are the model's to answer (review, 2026-10-20).
   for (const m of ['What is the weather?', 'Read me the simulation records', 'What does the Trading Room know about MNQ?', 'Why does this code fail when I run it?', 'What does this mean in the error log?', 'Read this code: function f() {}', 'Explain this error message', 'Do we have this option in Flutter?', 'Compare this to a Honda Civic']) {
     assert.equal(screenFollowUp(m), false, `narrow: ${m}`);
-    if (!/Honda|Trading Room|weather|simulation records/.test(m)) assert.ok(screenDeictic(m) || !screenDeictic(m), m);
   }
   assert.equal(screenDeictic('What is the weather?'), false);
   assert.equal(screenDeictic('What does the Trading Room know about MNQ?'), false);
@@ -253,6 +252,7 @@ test('screen helpers: the room a screen shows, follow-up phrases, and the 15-min
   const storage = { get: async (k) => saved.get(k), put: async (k, v) => saved.set(k, v) };
   const now = Date.parse('2026-10-20T10:00:00Z');
   await rememberScreen(storage, { name: 'shot.png', summary: 'Trading Room with MNQ candles', engine: 'gemini-media:test', at: '2026-10-20T09:50:00Z' });
+  assert.ok(saved.has(LAST_SCREEN_KEY), 'a normal screen summary is kept (positive check, review 2026-10-20)');
   assert.equal((await recentScreen(storage, now)).room, 'trading');
   assert.equal(await recentScreen(storage, now + 16 * 60_000), null, 'after fifteen minutes the screen is gone');
   assert.equal(statusLabel('observed'), 'observed, not verified');
