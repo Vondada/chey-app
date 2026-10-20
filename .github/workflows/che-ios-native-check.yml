@@ -12,6 +12,8 @@ on:
     paths:
       - "tool/bootstrap.sh"
       - "tool/patch_local_runtime.py"
+      - "tool/add_broadcast_extension.rb"
+      - "native/iphone/**"
       - ".github/workflows/che-ios-native-check.yml"
   workflow_dispatch:
 
@@ -55,3 +57,12 @@ jobs:
 
       - name: Compile for the simulator (no signing)
         run: flutter build ios --simulator --debug
+
+      # Screen sharing (owner, 2026-10-20): the broadcast extension must be
+      # built and embedded, and CHE's channel for it compiled in.
+      - name: Check the screen-sharing extension is in the app
+        run: |
+          app="build/ios/iphonesimulator/Runner.app"
+          test -d "$app/PlugIns/CheBroadcast.appex" || { echo "::error::CheBroadcast.appex missing from Runner.app"; ls -R "$app" | head -50; exit 1; }
+          /usr/libexec/PlistBuddy -c 'Print :NSExtension:NSExtensionPointIdentifier' "$app/PlugIns/CheBroadcast.appex/Info.plist"
+          grep -n 'che/screen_share' ios/Runner/AppDelegate.swift
