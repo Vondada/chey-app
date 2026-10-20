@@ -64,11 +64,12 @@ import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook,
 import { nextStrategySimTickAt, setStrategySimCeiling, setStrategySimPaused, speakStrategySim, strategySimIntent, strategySimTick, strategySimView, strategySimWake } from './strategy_sim.js';
 import { evidenceIntent, evidenceReport, evidenceTick } from './trading_evidence_runner.js';
 import { readTrades } from './trading_evidence.js';
+import { chartIntent, chartView, drawIntent, futuresOrderIntent, readDrawings, saveDrawings } from './trading_chart.js';
 import { ATLAS_SOURCE, answerAtlas, atlasHiddenAction, atlasIntent, atlasQuizAnswerTurn, atlasPromptContext, atlasResetAsk, atlasResetIntent, projectAtlasToBrain, resetAtlasProgress } from './knowledge_atlas.js';
 import { LIVE_BACKTEST, LIVE_RUNS, LIVE_STATE, haltLivePaper, liveSpecs, liveBacktest, liveDashboard, livePaperSummary, liveTick, nextLiveTickAt, readLivePortfolios, setLivePaper } from './trading_live.js';
 import { ICT_CONCEPTS, applyControlChange, controlsView, noteAuditEffect, readControls, strategyRegistry, resolveStep, speakControlResult, speakControlsView, speakSkipReasons, stockOrderProblem } from './trading_controls.js';
 import { cmeSession } from './market_feed.js';
-import { alpacaKeys, alpacaPaperDashboard, haltAlpacaPaper, alpacaPaperOrders, alpacaStatus, speakAlpacaDashboard, liveKeyProblem, placeAlpacaPaperOrder, removeAlpacaPaperKeys, saveAlpacaPaperKeys } from './broker_alpaca.js';
+import { alpacaKeys, alpacaPaperDashboard, cancelAlpacaPaperOrder, haltAlpacaPaper, previewAlpacaPaperOrder, alpacaPaperOrders, alpacaStatus, speakAlpacaDashboard, liveKeyProblem, placeAlpacaPaperOrder, removeAlpacaPaperKeys, saveAlpacaPaperKeys } from './broker_alpaca.js';
 import { speakConnections, speakTradovateSteps, tradingConnections } from './trading_connections.js';
 import { liveAnswer, liveIntent } from './trading_live_chat.js';
 import { ANALYSIS_SOURCE, LEDGER_SOURCE, analyzeStrategy, ledgerIntent, readLedgers, speakLedgers, strategyAnalysisIntent } from './trading_ledgers.js';
@@ -6646,6 +6647,33 @@ export class CheState extends DurableObject {
         const symbol = (new URL(request.url).searchParams.get('symbol') || '').trim().toUpperCase().slice(0, 8);
         return json(await alpacaPaperDashboard(this.keyEnv || this.env, { symbol }));
       }
+      // The Trading Room chart (owner, 2026-10-20, Build 1): bars, feed health, the entry gate and
+      // markers by source for one account, symbol and timeframe; the owner's drawings; paper ticket preview and cancel.
+      if (path === '/api/trading/chart' && request.method === 'GET') {
+        if (!ownerDevice) return tradingOwnerOnly();
+        const q = new URL(request.url).searchParams;
+        const view = await chartView(this.ctx.storage, this.keyEnv || this.env, { account: q.get('account') || 'alpaca_paper', symbol: (q.get('symbol') || '').trim().toUpperCase().slice(0, 8), tf: q.get('tf') || '5m' });
+        if (view.ok) view.drawings = await readDrawings(this.ctx.storage, view.account, view.symbol || '');
+        if (view.ok && view.account === 'alpaca_paper' && view.symbol) await this.ctx.storage.put('trading_chart_last_symbol', view.symbol);
+        return json(view, view.ok ? 200 : 400);
+      }
+      if (path === '/api/trading/chart/drawings' && request.method === 'PUT') {
+        if (!ownerDevice) return tradingOwnerOnly();
+        const saved = await saveDrawings(this.ctx.storage, String(body.account || ''), String(body.symbol || ''), body.drawings);
+        return json(saved, saved.ok ? 200 : 400);
+      }
+      if (path === '/api/trading/alpaca/order/preview' && request.method === 'POST') {
+        if (!ownerDevice) return tradingOwnerOnly();
+        const guard = await this.stockOrderGuard();
+        const journal = (await this.ctx.storage.get('alpaca_paper_orders').catch(() => null)) || [];
+        const preview = await previewAlpacaPaperOrder(this.keyEnv || this.env, body, { problem: (order, ctx) => guard(order, { ...ctx, journal, now: Date.now() }) });
+        return json(preview, preview.ok ? 200 : 400);
+      }
+      if (path === '/api/trading/alpaca/order/cancel' && request.method === 'POST') {
+        if (!ownerDevice) return tradingOwnerOnly();
+        const cancelled = await cancelAlpacaPaperOrder(this.keyEnv || this.env, body.id);
+        return json(cancelled, cancelled.ok ? 200 : 400);
+      }
       if (path === '/api/trading/alpaca/orders' && request.method === 'GET') {
         if (!ownerDevice) return tradingOwnerOnly();
         return json(await alpacaPaperOrders(this.keyEnv || this.env));
@@ -9308,6 +9336,9 @@ export class CheState extends DurableObject {
           const uploads = youtubeUploads(ytData);
           return ndjsonReply(youtubeStatusSpeech(st, uploads), { source: 'che_youtube_status', ok: Boolean(st.connected), uploads: uploads.length, model_calls: 0 });
         }
+        // "Buy 1 MNQ at 21,400" from the chart: no futures paper broker is connected, so nothing is sent.
+        const futuresAsk = ownerDevice && !body.attachment && !/\bfund\s*your\s*edge|\bfye\b|\brithmic\b/i.test(message) ? futuresOrderIntent(message) : null;
+        if (futuresAsk) return ndjsonReply(futuresAsk.reply, { source: 'che_trading_chart', ok: false, model_calls: 0, order_sent: false });
         // FundYourEdge has no licensed Rithmic connection, so CHE says so and never
         // prepares or places an order for it.
         const orderBrokerReady = ownerDevice && !chatOnlyEvaluation
@@ -10221,6 +10252,23 @@ export class CheState extends DurableObject {
             await this.ctx.storage.delete('trading_controls_pending');
             return ndjsonReply('Left as it was, sir. Nothing changed.', { source: 'che_trading_controls', ok: true, model_calls: 0 });
           }
+        }
+        // The Trading Room chart by voice: "draw a line at 21,450", "open Alpaca chart", "show EMA trades".
+        const chartAsk = body.attachment || !ownerDevice ? null : (drawIntent(message) || chartIntent(message) || futuresOrderIntent(message));
+        if (chartAsk?.kind === 'futures_order') return ndjsonReply(chartAsk.reply, { source: 'che_trading_chart', ok: false, model_calls: 0, order_sent: false });
+        if (chartAsk?.kind === 'draw') {
+          const account = /^(MNQ|NQ)$/.test(chartAsk.symbol) || (!chartAsk.symbol && chartAsk.drawing.points[0].price > 5000) ? 'futures_paper' : 'alpaca_paper';
+          const symbol = account === 'futures_paper' ? 'MNQ' : chartAsk.symbol || (await this.ctx.storage.get('trading_chart_last_symbol')) || '';
+          if (!symbol) return ndjsonReply('Which stock should the line go on, sir? Say, for example, "draw a line at 230 on AAPL". Nothing was drawn.', { source: 'che_trading_chart', ok: false, model_calls: 0 });
+          const list = [...(await readDrawings(this.ctx.storage, account, symbol)), chartAsk.drawing];
+          const saved = await saveDrawings(this.ctx.storage, account, symbol, list);
+          const price = chartAsk.drawing.points[0].price.toLocaleString('en-US');
+          return ndjsonReply(saved.ok ? `Drawn, sir: a level at ${price} on the ${symbol} ${account === 'futures_paper' ? 'paper futures' : 'Alpaca PAPER'} chart. It stays until you remove it.` : `Nothing was drawn: ${saved.error}`,
+            { source: 'che_trading_chart', ok: saved.ok, model_calls: 0, open_view: 'trading_chart', chart: { account, symbol } });
+        }
+        if (chartAsk?.kind === 'chart_open') {
+          const where = chartAsk.section === 'strategies' ? 'Opening Strategies, sir.' : `Opening the ${chartAsk.account === 'alpaca_paper' ? 'Alpaca PAPER' : chartAsk.account === 'futures_paper' ? 'MNQ paper' : ''} chart${chartAsk.symbol ? ` for ${chartAsk.symbol}` : ''}${chartAsk.filter?.strategy ? `, showing only ${chartAsk.filter.strategy.toUpperCase()} trades` : ''}, sir.`;
+          return ndjsonReply(where.replace('the  chart', 'the chart'), { source: 'che_trading_chart', ok: true, model_calls: 0, open_view: 'trading_chart', chart: { section: chartAsk.section, account: chartAsk.account || null, symbol: chartAsk.symbol || null, filter: chartAsk.filter || null } });
         }
         const desk = body.attachment ? null : deskIntent(message);
         if (desk && ['controls', 'controls_view', 'controls_why'].includes(desk.kind)) {

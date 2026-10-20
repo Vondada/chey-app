@@ -225,6 +225,53 @@ export async function haltAlpacaPaper(env, { flatten = false, fetcher = fetch } 
   return { state: 'verified', cancelled, failed, closed, positions, positions_read: pos.ok };
 }
 
+/**
+ * What a paper stock order would do, before it is sent: the account it goes to, the estimated
+ * cost against buying power (limit price, else the latest trade), and the owner's controls.
+ * Nothing is sent.
+ */
+export async function previewAlpacaPaperOrder(env, order = {}, { fetcher = fetch, problem = null } = {}) {
+  const keys = alpacaKeys(env);
+  if (!keys) return { ok: false, detail: 'Alpaca PAPER is not connected.' };
+  if (liveKeyProblem(keys.id)) return { ok: false, detail: liveKeyProblem(keys.id) };
+  const symbol = String(order.symbol || '').trim().toUpperCase();
+  const qty = Number(order.qty);
+  const side = String(order.side || '').toLowerCase();
+  const type = String(order.type || 'market').toLowerCase();
+  const limit = order.limit_price == null ? null : Number(order.limit_price);
+  if (!/^[A-Z]{1,5}(?:\.[A-Z])?$/.test(symbol) || !(Number.isInteger(qty) && qty >= 1 && qty <= 1000) || !['buy', 'sell'].includes(side) || !['market', 'limit'].includes(type) || (type === 'limit' && !(limit > 0))) {
+    return { ok: false, detail: 'The ticket needs a stock symbol, 1 to 1,000 shares, buy or sell, and a limit price for a limit order.' };
+  }
+  const [account, trade] = await Promise.all([
+    call(keys, '/v2/account', { fetcher }),
+    call(keys, `/v2/stocks/${encodeURIComponent(symbol)}/trades/latest?feed=iex`, { fetcher, host: ALPACA_DATA }),
+  ]);
+  const last = money(trade.data?.trade?.p);
+  const price = type === 'limit' ? limit : last;
+  const buyingPower = money(account.data?.buying_power);
+  const cost = price == null ? null : Math.round(price * qty * 100) / 100;
+  const blocked = problem ? await problem({ symbol, qty, side, type, limit_price: limit }, { buyingPower }) : '';
+  return {
+    ok: true, account: 'Alpaca PAPER', mode: 'PAPER', money_at_risk: false, symbol, qty, side, type, limit_price: limit,
+    last_trade: last, last_trade_time: trade.data?.trade?.t || null, estimated_cost: cost, buying_power: buyingPower,
+    buying_power_after: side === 'buy' && cost != null && buyingPower != null ? Math.round((buyingPower - cost) * 100) / 100 : buyingPower,
+    blocked: blocked || '', confirm_with: 'yes',
+  };
+}
+
+/** Cancel one open paper order by its Alpaca id; the answer is Alpaca's record of it afterwards. */
+export async function cancelAlpacaPaperOrder(env, orderId, { fetcher = fetch } = {}) {
+  const keys = alpacaKeys(env);
+  if (!keys) return { ok: false, detail: 'Alpaca PAPER is not connected.' };
+  const id = String(orderId || '').trim();
+  if (!/^[A-Za-z0-9-]{8,64}$/.test(id)) return { ok: false, detail: 'That is not an Alpaca order id.' };
+  const del = await call(keys, `/v2/orders/${encodeURIComponent(id)}`, { method: 'DELETE', fetcher });
+  const after = await call(keys, `/v2/orders/${encodeURIComponent(id)}`, { fetcher });
+  const r = after.ok ? receipt(after.data) : null;
+  if (!del.ok && !r) return { ok: false, detail: `Alpaca did not cancel it: ${del.error}.` };
+  return { ok: del.ok || ['canceled', 'pending_cancel'].includes(r?.status), receipt: r, detail: del.ok ? 'Alpaca accepted the cancel.' : `Alpaca refused the cancel: ${del.error}.` };
+}
+
 // ─── The Alpaca PAPER dashboard (owner, 2026-10-20) ────────────────────────────────────────────
 // Everything here is read from Alpaca's paper account as Alpaca reports it now: the account, open
 // positions, orders in every status, FILL activities and portfolio history, plus 5-minute bars for
@@ -284,7 +331,10 @@ export function realizedFromFills(fills) {
   return { realized_pl: Math.round(realized * 100) / 100, closing_fills: closes, winning_closes: wins, losing_closes: losses };
 }
 
-export async function alpacaPaperDashboard(env, { symbol = '', fetcher = fetch, now = Date.now() } = {}) {
+// The chart's timeframes: Alpaca's name for each and how many days back to read.
+const BAR_FRAMES = { '1m': ['1Min', 1], '5m': ['5Min', 5], '15m': ['15Min', 10], '1h': ['1Hour', 30], '1d': ['1Day', 365] };
+
+export async function alpacaPaperDashboard(env, { symbol = '', fetcher = fetch, now = Date.now(), timeframe = '5m' } = {}) {
   const keys = alpacaKeys(env);
   const base = { provider: 'alpaca', mode: 'paper', source: 'Alpaca PAPER stock account', fetched_at: new Date(now).toISOString(), money_at_risk: false };
   if (!keys) return { ...base, state: 'not_configured' };
@@ -308,8 +358,9 @@ export async function alpacaPaperDashboard(env, { symbol = '', fetcher = fetch, 
   const chartSymbol = String(symbol || fillList[0]?.symbol || orderList[0]?.symbol || positionList[0]?.symbol || '').toUpperCase();
   let bars = { ok: false, error: chartSymbol ? '' : 'no symbol to chart yet' };
   if (/^[A-Z]{1,5}(?:\.[A-Z])?$/.test(chartSymbol)) {
-    const start = new Date(now - 5 * 86400_000).toISOString();
-    const got = await call(keys, `/v2/stocks/${encodeURIComponent(chartSymbol)}/bars?timeframe=5Min&start=${encodeURIComponent(start)}&limit=1000&feed=iex`, { fetcher, host: ALPACA_DATA });
+    const [frame, days] = BAR_FRAMES[timeframe] || BAR_FRAMES['5m'];
+    const start = new Date(now - days * 86400_000).toISOString();
+    const got = await call(keys, `/v2/stocks/${encodeURIComponent(chartSymbol)}/bars?timeframe=${frame}&start=${encodeURIComponent(start)}&limit=1000&feed=iex`, { fetcher, host: ALPACA_DATA });
     bars = got.ok ? { ok: true, list: (got.data?.bars || []).map((b) => ({ t: b.t, o: money(b.o), h: money(b.h), l: money(b.l), c: money(b.c), v: money(b.v) })).filter((b) => b.o != null).slice(-240) } : { ok: false, error: got.error };
   }
   const unrealized = positionList.reduce((sum, p) => sum + (p.unrealized_pl || 0), 0);
@@ -327,7 +378,7 @@ export async function alpacaPaperDashboard(env, { symbol = '', fetcher = fetch, 
     open_orders: orderList.filter((o) => OPEN_GROUPS.has(o.status_group)).length,
     fills: fillList,
     history: curve,
-    chart: { symbol: chartSymbol || null, timeframe: '5Min', feed: 'iex', bars: bars.ok ? bars.list : [], error: bars.ok ? null : bars.error || null },
+    chart: { symbol: chartSymbol || null, timeframe: (BAR_FRAMES[timeframe] || BAR_FRAMES['5m'])[0], feed: 'iex', bars: bars.ok ? bars.list : [], error: bars.ok ? null : bars.error || null },
     reads: { positions: positions.ok, orders: orders.ok, fills: fills.ok, history: history.ok, bars: bars.ok },
     separate_from: ['MNQ/NQ futures paper simulations (CHE\'s own engine)', 'Tradovate data'],
   };
