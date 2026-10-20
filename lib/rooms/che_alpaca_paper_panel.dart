@@ -58,7 +58,7 @@ class _CheAlpacaPaperPanelState extends State<CheAlpacaPaperPanel> {
         _get('/api/trading/connections'),
       ]);
       final orders = responses[0];
-      final connections = (responses[1]['connections'] as List? ?? const []);
+      final connections = (responses[1]['cards'] as List? ?? const []);
       final alpaca = connections.whereType<Map>().firstWhere(
         (v) => v['id'] == 'alpaca', orElse: () => const {},
       );
