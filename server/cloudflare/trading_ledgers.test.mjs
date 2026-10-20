@@ -5,7 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
-import { LEDGERS, ledgerIntent, readLedgers, speakLedgers } from './trading_ledgers.js';
+import { LEDGER_SOURCE, LEDGERS, ledgerIntent, readLedgers, speakLedgers } from './trading_ledgers.js';
 import { SIM_STRATEGIES, STATE_KEY, TRADE_CHUNK } from './strategy_sim.js';
 import { RECORD_PREFIX } from './trading_evidence.js';
 
@@ -65,10 +65,10 @@ function seedSim(saved, n, { strategies = [SIM_STRATEGIES[0].id] } = {}) {
   return trades;
 }
 
-function journalTrade(i, { net = 25 } = {}) {
+function journalTrade(i, { net = 25, strategy = 'fvg-retest-5m' } = {}) {
   const entry = `2026-10-${String(13 + Math.floor(i / 60)).padStart(2, '0')}T15:${String(i % 60).padStart(2, '0')}:00.000Z`;
   return {
-    environment: 'paper', source: 'paper', portfolio: 'fvg-retest-5m|any|2', strategy: 'fvg-retest-5m', filter: 'any', params: { target_r: 2 },
+    environment: 'paper', source: 'paper', portfolio: `${strategy}|any|2`, strategy, filter: 'any', params: { target_r: 2 },
     side: 'long', contract: 'MNQ', qty: 1, session: 'ny', entry: { time: entry, raw: 20000, fill: 20000.5 }, stop: 19990, target: 20020,
     exit: { time: entry, fill: net > 0 ? 20020 : 19990, reason: net > 0 ? 'target' : 'stop' }, net_pnl: net, r_net: net > 0 ? 1.9 : -1.05,
     costs: { spread: 0.5, slippage: 0.5, commissions: 0.62, fees: 0.3 }, data: { label: 'DELAYED', resolution: '5m' },
@@ -278,4 +278,29 @@ test('a question with no ledger named that the model would have invented an answ
   assert.match(out.reply, /strategy simulation \(/);
   assert.match(out.reply, /forward paper journal \(/);
   assert.match(out.reply, /no closed trade recorded yet/);
+});
+
+// Owner, 2026-10-20: after the iPhone update the EMA strategy comparison still answered "The sample rules,
+// sir", because "out-of-sample" (a metric the owner asked for) was read as a sample-rule question and
+// "forward-paper" with a hyphen was not recognized. EMA_QUESTION is the comparison under test.
+const EMA_QUESTION = 'Compare the EMA strategies in forward-paper trading on MNQ: which one performs best, with win rate, profit factor and out-of-sample expectancy for each?';
+test('the EMA strategy comparison is answered strategy by strategy from the forward-paper records, never with the sample rules', async () => {
+  const saved = new Map();
+  for (let i = 0; i < 6; i += 1) { const t = journalTrade(i, { strategy: 'ema-pullback-5m', net: i % 3 === 2 ? -20 : 25 }); saved.set(`${RECORD_PREFIX}paper:${t.portfolio}:${t.entry.time}`, t); }
+  for (let i = 6; i < 10; i += 1) { const t = journalTrade(i, { strategy: 'fvg-retest-5m', net: 25 }); saved.set(`${RECORD_PREFIX}paper:${t.portfolio}:${t.entry.time}`, t); }
+  const che = await owner({ saved });
+  const out = await che.say(EMA_QUESTION);
+  assert.equal(out.route, LEDGER_SOURCE);
+  assert.equal(out.modelCalls, 0);
+  assert.equal(out.done.kind, 'strategies');
+  assert.doesNotMatch(out.reply, /sample rules/i, 'a requested metric is never taken for the main objective');
+  assert.match(out.reply, /^Strategy by strategy, sir, from the forward paper journal, EMA strategies:/i);
+  assert.match(out.reply, /1\. trend pullback to the 20 EMA \(any\): 6 trades, 4 won, 2 lost, win rate 66\.67%, expectancy 0\.9167 R per trade, net \$60\.00/);
+  assert.doesNotMatch(out.reply, /fair value gap/i, 'only the EMA strategies the owner asked about');
+  assert.match(out.reply, /Not recorded for this set, so not reported: profit factor, out-of-sample results/);
+  // The same question without a hyphen, and the plain sample-rule question still keeps its own answer.
+  const spaced = await che.say(EMA_QUESTION.replace('forward-paper', 'forward paper'));
+  assert.equal(spaced.done.kind, 'strategies');
+  const rule = await che.say('How many out-of-sample trades do you need before you rank a strategy?');
+  assert.match(rule.reply, /sample rules/);
 });

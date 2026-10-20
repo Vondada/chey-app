@@ -60,7 +60,7 @@ const TRADE_WORDS = /\btrad(?:e|es|ed|ing|er)\b|\bstrateg(?:y|ies)\b|\bprofit\w*
 const NAMED = {
   strategy_simulation: /\bstrateg(?:y|ies)\s+sim(?:ulation)?\b|\bsimulat(?:ion|or)(?:'s)?\b|\bsim\s+trades?\b/i,
   // "Trading journal" and "my trading journal" are the Trading Lab's book (the /trade-journal command, trading_lab.speakBook).
-  forward_paper_journal: /\b(?:forward|live)\s+paper\b|\bpaper(?:\s+trading)?\s+journal\b|\bjournal\s+trades?\b/i,
+  forward_paper_journal: /\b(?:forward|live)[-\s]+paper\b|\bpaper[-\s]+forward\b|\bpaper(?:\s+trading)?\s+journal\b|\bjournal\s+trades?\b/i,
   daily_evidence: /\bevidence\s+pass\b|\bdaily\s+(?:research|evidence)\b/i,
   lab_paper_book: /\btrading\s+lab\b|\bpaper\s+book\b|\blab(?:'s)?\s+(?:paper\s+)?(?:trades?|book)\b/i,
   broker_alpaca_paper: /\balpaca\b/i,
@@ -69,15 +69,28 @@ const NAMED = {
 const DESK_SIM = /\bsimulat(?:ion|ed)\s+(?:trading|account|accounts|mode)\b|\bbroker\s+simulation\b|\bswitch\s+to\s+simulation\b/i;
 // A made-up trade record id looks like sim-2023-03-10-001; CHE's own ids never do, and an order or ticket id is not a trade.
 const RECORD_ID = /\b(?:sim|paper|trade|journal|evidence|ledger|strategy|fill|position)[-_](?:\d{4}-\d{2}-\d{2}|\d{8})[-_]\d{2,}\b/i;
+// The primary objective comes first: a strategy-by-strategy comparison ("compare the EMA strategies in
+// forward-paper trading, with win rate and out-of-sample expectancy") is not a question about the sample
+// rule, even when it names out-of-sample as one of the metrics it wants (owner, 2026-10-20).
+const STRATEGY_COMPARE = /\b(?:compare|compares|comparing|comparison|versus|vs\.?|rank|ranking|stack\s+up)\b[^.!?\n]{0,120}\bstrateg(?:y|ies)\b|\bstrateg(?:y|ies)\b[^.!?\n]{0,120}\b(?:compare|compared|comparison|stack\s+up|perform(?:ed|ing|ance)?)\b|\b(?:by|per|each)\s+strategy\b|\bstrategy[- ]by[- ]strategy\b|\bwhich\s+(?:\w+\s+){0,2}strateg(?:y|ies)\b/i;
+// Metrics an owner can ask for; each is answered from the record set or said to be unavailable.
+const METRICS = [
+  ['win_rate', /\bwin\s*(?:rate|%|percentage)\b/i], ['expectancy_r', /\bexpectancy\b|\bR\s+per\s+trade\b|\baverage\s+R\b/i],
+  ['net_pnl', /\bnet\b|\bp\s*&\s*l\b|\bpnl\b|\bprofit(?!\s+factor)\b/i], ['trades', /\b(?:number\s+of|how\s+many)\s+trades\b|\btrade\s+count\b/i],
+  ['profit_factor', /\bprofit\s+factor\b/i], ['max_drawdown', /\bdraw\s*downs?\b/i], ['sharpe', /\bsharpe\b/i],
+  ['out_of_sample', /\bout[- ]of[- ]sample\b|\bOOS\b/],
+];
+const METRIC_LABEL = { win_rate: 'win rate', expectancy_r: 'expectancy', net_pnl: 'net P&L', trades: 'trade count', profit_factor: 'profit factor', max_drawdown: 'maximum drawdown', sharpe: 'Sharpe ratio', out_of_sample: 'out-of-sample results' };
 const KINDS = [
   ['record', /\b(?:pull|show|read|find|look\s+up|retrieve|open|fetch|get)\b[^.!?\n]{0,40}\brecord\b|\brecord\s+(?:for|of|named|called)\b/i],
   ['storage', /\bstorage\s+keys?\b|\bwhich\s+keys?\b|\bwhere\s+(?:do\s+you|is|are|does)\b[^.!?\n]{0,30}\b(?:store|stored|kept|saved|live|held)\b|\bunder\s+what\s+key\b/i],
-  ['rule', /\b(?:30|100|thirty|hundred|\d+)[- ]trade\b|\bsample\s+(?:size|you\s+need|required|requirement|rule)\b|\bbefore\s+you\s+(?:call|count|rank|promote|trust)\b|\bout[- ]of[- ]sample\b|\bminimum\s+(?:number\s+of\s+)?trades?\b|\bhow\s+many\s+trades\s+(?:do\s+you\s+need|before|until|are\s+(?:needed|required))/i],
+  ['rule', /\b(?:30|100|thirty|hundred|\d+)[- ]trade\b|\bsample\s+(?:size|you\s+need|required|requirement|rule)\b|\bbefore\s+you\s+(?:call|count|rank|promote|trust)\b|\bout[- ]of[- ]sample\s+(?:rule|requirement|minimum|trades\s+(?:do\s+you\s+)?(?:need|required))\b|\bminimum\s+(?:number\s+of\s+)?trades?\b|\bhow\s+many\s+trades\s+(?:do\s+you\s+need|before|until|are\s+(?:needed|required))/i],
   ['settings', /\b(?:settings?|parameters?|params|configuration|config)\b/i],
   ['best', /\bbest\b|\bmost\s+profitable\b|\btop\s+strateg|\bleaderboard\b|\bwinning\s+strateg|\bperforming\b/i],
   ['last', /\b(?:last|latest|newest|most\s+recent|final)\b[^.!?\n]{0,30}\b(?:trade|entry|record|position|fill)\b|\bnewest\s+entry\b/i],
   ['count', /\bhow\s+many\b|\bnumber\s+of\b|\bcount\b|\btotal\b/i],
   ['compare', /\bversus\b|\bvs\.?\b|\bcompared?\b|\bdifferen(?:ce|t)\b|\bbut\s+(?:the|my|your)\b|\bwhy\s+(?:does|do|is|are)\b|\bonly\s+\d+\b|\bboth\b/i],
+  ['strategies', STRATEGY_COMPARE],
 ];
 
 /** Which record sets the owner named and what he asked of them, or null when another route owns the turn. */
@@ -101,10 +114,18 @@ export function ledgerIntent(message) {
   if (sim && ledgers.length <= 1 && !kinds.length && !recordId) return null;
   let kind = kinds[0] || (ledgers.length > 1 ? 'compare' : ledgers.length ? 'status' : '');
   if (ledgers.length > 1 && kinds.includes('compare')) kind = 'compare';
+  // An explicit sample-rule question ("how many trades before you rank") keeps the rule; a bare metric never does.
+  if (kinds.includes('strategies') && !kinds.includes('rule')) kind = 'strategies';
   if (!kind) return null;
   // Nothing named and no record, key or rule asked: the existing trading reads keep their turns
   // ("how many paper trades did you win", "which trading strategy is performing best").
-  if (!ledgers.length && kind !== 'record') {
+  // With no record set named, only an explicit comparison is read here; "which strategy is performing best"
+  // keeps its existing trading route.
+  if (!ledgers.length && kind === 'strategies' && !/\b(?:compare|compares|comparing|comparison|versus|vs\.?)\b|\b(?:by|per|each)\s+strategy\b|\bstrategy[- ]by[- ]strategy\b/i.test(text)) {
+    kind = kinds.find((k) => k !== 'strategies') || '';
+    if (!kind) return null;
+  }
+  if (!ledgers.length && kind !== 'record' && kind !== 'strategies') {
     // A question about the owner's own strategy or a lesson ("is my sample size of 30 trades enough",
     // "what settings should I use", "your best profit tip") is teaching, not a read of CHE's records: it
     // needs "you" or "your" and a trading noun (a trade, a strategy, P&L, a win rate, a ledger).
@@ -115,7 +136,9 @@ export function ledgerIntent(message) {
       if (!['last', 'best', 'settings', 'count'].includes(kind)) return null;
     }
   }
-  return { ledgers: ledgers.length ? ledgers : LEDGERS.map((l) => l.id), named: ledgers, kind, kinds, record_id: recordId || null };
+  const metrics = METRICS.filter(([, re]) => re.test(text)).map(([m]) => m);
+  const family = /\bEMA\b|\bexponential\s+moving\s+averages?\b/i.test(text) ? 'ema' : '';
+  return { ledgers: ledgers.length ? ledgers : LEDGERS.map((l) => l.id), named: ledgers, kind, kinds, record_id: recordId || null, metrics, family };
 }
 
 // ─── The records ──────────────────────────────────────────────────────────
@@ -278,6 +301,7 @@ export function speakLedgers(intent, ledgers) {
     lines.push(`There is no 100-trade requirement anywhere: ${TRADE_CHUNK} is only how many simulation trades fit in one storage chunk.`);
     return lines.join('\n');
   }
+  if (intent.kind === 'strategies') return speakStrategies(intent, chosen);
   if (intent.kind === 'storage') {
     lines.push('Where each record set lives, sir (Worker durable storage; nothing is named simulation_trades or journal_trades):');
     for (const l of chosen) lines.push(`${lines.length}. ${l.label}: ${l.storage_keys.length ? l.storage_keys.join(', ') : 'no CHE storage, read from Alpaca when asked'} (${l.module}).`);
@@ -295,5 +319,45 @@ export function speakLedgers(intent, ledgers) {
   }
   if (intent.kind === 'compare') lines.push('Each count is that set\'s own closed trades; the simulation and the journal are different strategies on different bars, so their numbers never match and are never summed.');
   lines.push('Paper only: no money, no broker order and no model call in this answer.');
+  return lines.join('\n');
+}
+
+// Strategy by strategy, from each named record set's own closed trades. A metric the set does not record is
+// said to be unavailable; nothing is estimated, and the sample rule is never the answer to a comparison.
+const RECORDED = {
+  strategy_simulation: ['trades', 'win_rate', 'expectancy_r', 'out_of_sample'],
+  forward_paper_journal: ['trades', 'win_rate', 'expectancy_r', 'net_pnl'],
+  daily_evidence: ['trades', 'win_rate', 'expectancy_r', 'net_pnl'],
+  lab_paper_book: ['trades', 'expectancy_r'],
+};
+function strategyLine(row, ledgerId) {
+  const parts = [`${n(row.trades || 0)}`];
+  if (row.wins != null && row.losses != null) parts.push(`${row.wins} won, ${row.losses} lost`);
+  if (RECORDED[ledgerId].includes('win_rate')) parts.push(`win rate ${row.win_rate == null || !row.trades ? 'not measured' : `${row.win_rate}%`}`);
+  parts.push(`expectancy ${row.expectancy_r == null || !row.trades ? 'not measured' : `${row.expectancy_r} R per trade`}`);
+  if (RECORDED[ledgerId].includes('net_pnl')) parts.push(`net ${money(row.trades ? row.net_pnl : null)}`);
+  if (ledgerId === 'strategy_simulation') parts.push(`${row.out_of_sample || 0} out of sample${row.out_of_sample ? ` at ${row.out_of_sample_expectancy_r} R per trade` : ''}`);
+  const ranked = row.ranked ?? (row.label ? row.label === 'profitable' : null);
+  if (ranked === false) parts.push('not ranked yet: too few trades');
+  return `${row.name || row.strategy}${row.filter ? ` (${row.filter})` : ''}: ${parts.join(', ')}`;
+}
+function speakStrategies(intent, chosen) {
+  const sets = chosen.filter((l) => l.id !== 'broker_alpaca_paper');
+  const lines = [`Strategy by strategy, sir, from ${sets.length === 1 ? `the ${sets[0].label}` : 'each record set separately'}${intent.family === 'ema' ? ', EMA strategies' : ''}:`];
+  const famRe = intent.family === 'ema' ? /\bema\b/i : null;
+  for (const l of sets) {
+    if (l.unavailable) { lines.push(`${l.label}: I could not read it just now, so I give no number for it.`); continue; }
+    const all = (l.by_strategy || []).filter((row) => row.trades > 0 || l.id !== 'strategy_simulation');
+    const rows = famRe ? all.filter((row) => famRe.test(`${row.strategy} ${row.name} ${row.filter || ''}`)) : all;
+    if (!rows.length) {
+      lines.push(`${l.label}: ${famRe ? `no EMA strategy has a recorded trade here${all.length ? ` (it records ${all.length} other ${all.length === 1 ? 'strategy' : 'strategies'})` : ''}` : 'no strategy has a closed trade recorded yet'}.`);
+      continue;
+    }
+    lines.push(`${l.label} (${l.what}):`);
+    rows.forEach((row, i) => lines.push(`  ${i + 1}. ${strategyLine(row, l.id)}.`));
+    const missing = (intent.metrics || []).filter((m) => !RECORDED[l.id].includes(m));
+    if (missing.length) lines.push(`  Not recorded for this set, so not reported: ${missing.map((m) => METRIC_LABEL[m]).join(', ')}.`);
+  }
+  lines.push('Each set is read on its own and never summed. Paper only: no money, no broker order and no model call in this answer.');
   return lines.join('\n');
 }
