@@ -149,7 +149,7 @@ export async function alpacaPaperOrders(env, { limit = 20, fetcher = fetch } = {
  * refuses it before the network when its own journal already holds it. Option orders are
  * refused here until the owner's paper options level is wired in.
  */
-export async function placeAlpacaPaperOrder(env, storage, order = {}, { fetcher = fetch, now = Date.now() } = {}) {
+export async function placeAlpacaPaperOrder(env, storage, order = {}, { fetcher = fetch, now = Date.now(), guard = null } = {}) {
   const keys = alpacaKeys(env);
   if (!keys) return { ok: false, detail: 'Alpaca paper is not set up yet, sir, so no order was sent.' };
   const live = liveKeyProblem(keys.id);
@@ -169,6 +169,12 @@ export async function placeAlpacaPaperOrder(env, storage, order = {}, { fetcher 
   const journal = (await storage.get(ORDERS).catch(() => null)) || [];
   const earlier = journal.find((r) => r.client_order_id === clientId);
   if (earlier) return { ok: true, repeated: true, receipt: earlier };
+  // The owner's Strategy Control Center limits (trading_controls.js stockOrderProblem), checked before the network.
+  if (guard) {
+    const buyingPower = type === 'limit' && side === 'buy' ? money((await call(keys, '/v2/account', { fetcher })).data?.buying_power) : null;
+    const problem = await guard({ symbol, qty, side, type, limit_price: limit }, { journal, buyingPower, now });
+    if (problem) return { ok: false, blocked: true, detail: problem };
+  }
   const answer = await call(keys, '/v2/orders', {
     method: 'POST',
     fetcher,
@@ -190,6 +196,33 @@ export async function placeAlpacaPaperOrder(env, storage, order = {}, { fetcher 
   const made = { ...receipt(answer.data), recorded_at: new Date(now).toISOString() };
   await storage.put(ORDERS, [...journal, made].slice(-50));
   return { ok: true, receipt: made };
+}
+
+/**
+ * Emergency Stop on the paper account: cancel every order Alpaca still holds open (not filled), one
+ * DELETE per order, and report what Alpaca confirmed and which positions remain open. Nothing is
+ * placed. Flatten (owner-confirmed) also asks Alpaca to close every paper position.
+ */
+export async function haltAlpacaPaper(env, { flatten = false, fetcher = fetch } = {}) {
+  const keys = alpacaKeys(env);
+  if (!keys) return { state: 'not_configured', cancelled: [], failed: [], positions: [], closed: [] };
+  if (liveKeyProblem(keys.id)) return { state: 'refused', cancelled: [], failed: [], positions: [], closed: [] };
+  const open = await call(keys, '/v2/orders?status=open&limit=100', { fetcher });
+  if (!open.ok) return { state: open.state, error: open.error, cancelled: [], failed: [], positions: [], closed: [] };
+  const cancelled = []; const failed = [];
+  for (const o of Array.isArray(open.data) ? open.data : []) {
+    const r = await call(keys, `/v2/orders/${encodeURIComponent(o.id)}`, { method: 'DELETE', fetcher });
+    (r.ok ? cancelled : failed).push({ id: String(o.id), symbol: String(o.symbol || ''), side: String(o.side || ''), qty: money(o.qty), ...(r.ok ? {} : { error: r.error }) });
+  }
+  const closed = [];
+  if (flatten) {
+    const r = await call(keys, '/v2/positions?cancel_orders=true', { method: 'DELETE', fetcher });
+    for (const x of Array.isArray(r.data) ? r.data : []) closed.push({ symbol: String(x.symbol || ''), status: Number(x.status) || null });
+    if (!r.ok) failed.push({ id: 'positions', error: r.error });
+  }
+  const pos = await call(keys, '/v2/positions', { fetcher });
+  const positions = (pos.ok && Array.isArray(pos.data) ? pos.data : []).map((x) => ({ symbol: String(x.symbol || ''), qty: money(x.qty), side: String(x.side || ''), unrealized_pl: money(x.unrealized_pl) }));
+  return { state: 'verified', cancelled, failed, closed, positions, positions_read: pos.ok };
 }
 
 // ─── The Alpaca PAPER dashboard (owner, 2026-10-20) ────────────────────────────────────────────

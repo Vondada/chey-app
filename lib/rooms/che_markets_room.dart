@@ -18,6 +18,7 @@ import '../widgets/che_native_scene_world.dart';
 import 'che_live_chart.dart';
 import 'che_live_paper.dart';
 import 'che_alpaca_paper.dart';
+import 'che_strategy_controls.dart';
 import 'che_trading_ledgers.dart';
 import 'che_trading_connections.dart';
 
@@ -230,6 +231,11 @@ class _CheMarketsRoomState extends State<CheMarketsRoom> {
               Padding(
                 padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.md, CheSpace.gutter, 0),
                 child: CheLivePaperPanel(baseUrl: widget.baseUrl, headers: widget.headers, onAsk: widget.onAsk, client: widget.client),
+              ),
+              // The Strategy Control Center (owner, 2026-10-20): limits, pause, Emergency Stop, audit.
+              Padding(
+                padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.md, CheSpace.gutter, 0),
+                child: CheStrategyControlsPanel(baseUrl: widget.baseUrl, headers: widget.headers, onAsk: widget.onAsk, client: widget.client),
               ),
               // CHE's Alpaca PAPER stock account, visually: orders, confirmed fills, positions (owner, 2026-10-20).
               Padding(

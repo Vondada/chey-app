@@ -551,7 +551,19 @@ export function newPortfolio(candidateId, filterId, {
 // Processes each new bar in time order. A signal is read from the closed bar; the
 // trade fills at the next bar's open. Returns the trades that closed in this step.
 // Portfolio state persists, so a later step continues where this one stopped.
-export function stepPortfolio(pf, candles, ctx = causalContext(candles)) {
+// A skipped or blocked signal is kept with its reason (live portfolios carry a skips list).
+function noteSkip(pf, time, reason, sig) {
+  if (!Array.isArray(pf.skips)) return;
+  pf.skips = [...pf.skips, { time, reason, side: sig?.side || 'long', why: sig?.why || '' }].slice(-40);
+}
+
+/**
+ * `gate(pf, {stage, time, day})`, when given, is the owner's controls (trading_controls.js): it is
+ * asked before a signal becomes an order ('signal') and before that order fills ('fill'), and
+ * returns null to allow or the reason it is blocked. A blocked signal is never traded and is kept
+ * with its reason; nothing is ever entered to fill a quota.
+ */
+export function stepPortfolio(pf, candles, ctx = causalContext(candles), gate = null) {
   const problems = candleProblems(candles);
   if (problems.length) throw new Error(`candles refused: ${problems.join('; ')}`);
   const cand = candidateOf(pf.candidate);
@@ -572,7 +584,11 @@ export function stepPortfolio(pf, candles, ctx = causalContext(candles)) {
       const inside = side === 'short' ? fill < sig.stop && fill > sig.target : fill > sig.stop && fill < sig.target;
       // An intraday plan is void across the CME daily break: it never fills at the next session's open.
       const sameDay = !ctx.day || !sig.trade_day || ctx.day[k] === sig.trade_day;
-      if (inside && sameDay) {
+      const blocked = gate ? gate(pf, { stage: 'fill', time: bar.t, day: ctx.day?.[k] }) : null;
+      if (blocked) {
+        pf.counts.skipped = (pf.counts.skipped || 0) + 1;
+        noteSkip(pf, sig.signal_time, `the order was cancelled before it filled: ${blocked}`, sig);
+      } else if (inside && sameDay) {
         pf.open = {
           side, signal_time: sig.signal_time, signal_why: sig.why, signal_ref: sig.ref, condition: sig.condition,
           entry_time: bar.t, entry: fillEntry(bar, contract, pf.costs, side), stop: sig.stop, target: sig.target,
@@ -582,6 +598,7 @@ export function stepPortfolio(pf, candles, ctx = causalContext(candles)) {
         pf.counts.filled += 1;
       } else {
         pf.counts.gap_skipped += 1;
+        noteSkip(pf, sig.signal_time, sameDay ? 'the next bar opened past the stop or target, so the plan was void' : 'the plan could not fill before the CME daily break', sig);
       }
     }
     if (pf.open) {
@@ -594,18 +611,26 @@ export function stepPortfolio(pf, candles, ctx = causalContext(candles)) {
         pf.open.max_high = Math.max(pf.open.max_high, bar.h);
         pf.open.min_low = Math.min(pf.open.min_low, bar.l);
       }
-      if (hit) closed.push(closeAt(pf, bar, hit));
+      if (hit) { closed.push(closeAt(pf, bar, hit)); pf.last_exit_time = bar.t; }
     }
     const late = ctx.td && ctx.td[k] >= FLAT_TD - 5;
     if (!pf.open && !pf.pending && cand && !late) {
       const sig = cand.entry(candles, k, ctx);
       const side = sig?.side || 'long';
       const risk = sig ? (side === 'short' ? sig.stop - sig.ref : sig.ref - sig.stop) : 0;
-      if (sig && finite(sig.ref) && finite(sig.stop) && risk >= 0.25 && filter.ok(candles, k, ctx, side)) {
+      const filterOk = sig && finite(sig.ref) && finite(sig.stop) && risk >= 0.25 && filter.ok(candles, k, ctx, side);
+      if (sig && !filterOk) noteSkip(pf, bar.t, risk < 0.25 ? 'the stop was too close to the entry' : `the ${pf.filter} filter refused it: the signal was not ${filter.name || 'allowed'}`, { side, why: sig.why });
+      if (filterOk) {
         const R = pf.params?.target_r ?? TARGET_R;
         const target = finite(sig.target) ? sig.target : r4(side === 'short' ? sig.ref - R * risk : sig.ref + R * risk);
         const reward = side === 'short' ? sig.ref - target : target - sig.ref;
-        if (reward >= 0.5) {
+        const blocked = reward >= 0.5 && gate ? gate(pf, { stage: 'signal', time: bar.t, day: ctx.day?.[k] }) : null;
+        if (reward < 0.5) noteSkip(pf, bar.t, 'the target was too close to the entry', { side, why: sig.why });
+        if (blocked) {
+          pf.counts.skipped = (pf.counts.skipped || 0) + 1;
+          noteSkip(pf, bar.t, `blocked: ${blocked}`, { side, why: sig.why });
+        }
+        if (reward >= 0.5 && !blocked) {
           pf.pending = {
             side, signal_time: bar.t, why: sig.why, ref: sig.ref, stop: sig.stop,
             target, condition: conditionOf(candles, k, ctx),
