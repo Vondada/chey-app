@@ -22,6 +22,7 @@
 // existing self-development job (a draft pull request; never a merge).
 
 import { gh } from './coding_runtime.js';
+import { queueRoomEvent } from './room_events.js';
 import {
   REA_PIN, REA_JOB_ID, NPM_NAME, EXACT_VERSION, NPM_INTEGRITY, cleanText, validateReaSummary,
 } from './rea_evidence.js';
@@ -227,8 +228,11 @@ export async function refreshReaJobs(storage, env, now = Date.now(), fetcher = f
       changed = true;
       continue;
     }
-    if (checked.summary.state === 'complete') Object.assign(job, { state: 'complete', summary: checked.summary });
-    else Object.assign(job, { state: 'failed', error: checked.summary.error });
+    if (checked.summary.state === 'complete') {
+      Object.assign(job, { state: 'complete', summary: checked.summary });
+      // The Brain hears a finished inspection (owner, 2026-10-20); the REA record stays authoritative.
+      await queueRoomEvent(storage, { room: 'rea', kind: 'npm_inspection', key: `rea:${job.id}:complete`, title: `REA inspected npm ${job.target?.name || ''} ${job.target?.version || ''}`.trim(), body: `Inspection ${job.id} of npm ${job.target?.name || ''}@${job.target?.version || ''} finished with a checked result record. Read the investigation for its features and limitations.`, status: 'verified', evidence: [`rea job ${job.id}`], refs: { job_id: job.id, target: `npm:${job.target?.name || ''}@${job.target?.version || ''}` } }, now).catch(() => null);
+    } else Object.assign(job, { state: 'failed', error: checked.summary.error });
     job.updated_at = new Date(now).toISOString();
     changed = true;
   }
@@ -507,7 +511,12 @@ async function runInvestigation(storage, env, inv, target, { fetcher, now, featu
     setStage(inv, 'map', 'done', `${map.features.length} features mapped, each with its evidence.`, now);
     setStage(inv, 'architecture', 'done', `${map.architecture.filter((a) => a.kind === 'observed').length} observed, ${map.architecture.filter((a) => a.kind === 'inferred').length} inferred, ${map.architecture.filter((a) => a.kind === 'unknown').length} unknown.`, now);
   }
-  if (inv.state === 'running') inv.state = 'complete';
+  if (inv.state === 'running') {
+    inv.state = 'complete';
+    const observed = (inv.architecture || []).filter((a) => a.kind === 'observed').length;
+    const inferred = (inv.architecture || []).filter((a) => a.kind === 'inferred').length;
+    await queueRoomEvent(storage, { room: 'rea', kind: 'investigation', key: `rea:${inv.id}:complete`, title: `REA investigation complete: ${String(inv.target?.label || inv.id).slice(0, 120)}`, body: `Investigation ${inv.id} of ${inv.target?.label || inv.target?.url || 'the target'} mapped ${(inv.features || []).length} features from ${(inv.sources || []).length} sources; architecture notes: ${observed} observed, ${inferred} inferred. Each feature carries its own evidence; read the investigation for them.`, status: 'verified', evidence: (inv.sources || []).slice(0, 6).map((src) => src.url || src.label || String(src)), refs: { investigation: inv.id }, surface: true }, now).catch(() => null);
+  }
   // The isolated browser run adds screenshots and interactions for a web page.
   if (target.kind === 'website' && inv.state === 'complete' && reaConfigured(env)) {
     const sent = await gh(env, 'POST', `/actions/workflows/${encodeURIComponent(REA_WEB_WORKFLOW)}/dispatches`, { ref: REA_WORKFLOW_REF, inputs: { job_id: inv.id, url: facts.final_url } }, fetcher);
@@ -545,6 +554,7 @@ async function refreshBrowser(storage, env, inv, fetcher, now) {
     return saveInvestigation(storage, inv);
   }
   inv.browser = { state: 'complete', observed_at: w.observed_at };
+  await queueRoomEvent(storage, { room: 'rea', kind: 'browser_run', key: `rea:${inv.id}:browser`, title: `REA browser run observed ${String(inv.target?.label || inv.id).slice(0, 120)}`, body: `The isolated browser opened ${inv.target?.url || 'the page'} at ${w.observed_at} and recorded ${(w.interactions || []).length} interactions and ${(w.screenshots || []).length} screenshots. What it saw is observed, not verified.`, status: 'observed', evidence: [`rea browser run ${inv.id} ${w.observed_at}`], refs: { investigation: inv.id } }, now).catch(() => null);
   inv.screenshots = (w.screenshots || []).map((x) => ({ label: x.label === 'mobile' ? 'Phone width (390 px)' : 'Desktop width (1280 px)', file: x.file }));
   for (const step of (w.interactions || []).slice(0, 5)) {
     inv.architecture.push({ label: `Browser: ${cleanText(step.action, 30)}`, detail: cleanText(`${step.target}: ${step.observed}`, 300), kind: 'observed', evidence: [linkOf(w.target?.final_url || inv.target.url, w.target?.final_url || inv.target.url)] });

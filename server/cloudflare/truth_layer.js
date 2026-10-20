@@ -9,6 +9,7 @@
 //    model-generated owner replies before they reach chat or voice.
 
 import { requestNamesAction, storyRequested } from './memory_provenance.js';
+import { queueRoomEvent, receiptEvent } from './room_events.js';
 import { isEvidenceRequest } from './recovery_policy.js';
 import { savePackedJson } from './prompt_compaction.js';
 
@@ -148,6 +149,8 @@ export async function recordReceipt(storage, receipt) {
   list.push(entry);
   try { await storage.put(RECEIPTS_KEY, list.slice(-300)); } catch (_) {}
   if (CHANGE_EVENTS.has(entry.kind) && Number(entry.number) > 0) await recordChange(storage, entry);
+  // The Brain hears every room conclusion a receipt records (brain_rooms.js drains the queue).
+  try { const event = receiptEvent(entry); if (event) await queueRoomEvent(storage, event); } catch (_) {}
   return entry;
 }
 

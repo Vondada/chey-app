@@ -56,9 +56,14 @@ const RELATIONSHIPS = new Set(RELATIONSHIP_TYPES);
 // curated_lesson is a Knowledge Atlas card (CHE's own teaching text, tested, not a measured fact and
 // not the owner's memory); owner_practice is his study measured in chat (a lesson read, a quiz answer
 // CHE graded), never something he stated as true.
+// Room events (brain_rooms.js, owner 2026-10-20) add the conclusion states: derived (calculated from
+// verified data), observed (seen on a screen or a page, temporary unless saved), inferred (CHE's
+// reasoning, not evidence), proposed (an idea or a plan), superseded and contradicted (replaced or
+// disputed by a newer record, which the link names). A verified room fact is verified_source.
 export const VERIFICATION_STATES = Object.freeze([
   'owner_attested', 'verified_source', 'unverified_reference', 'unverified_research_lead',
   'model_opinion', 'hypothesis', 'curated_lesson', 'owner_practice', 'unknown',
+  'derived', 'observed', 'inferred', 'proposed', 'superseded', 'contradicted',
 ]);
 const VERIFICATIONS = new Set(VERIFICATION_STATES);
 
