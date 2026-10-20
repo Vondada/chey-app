@@ -73,7 +73,7 @@ import { LEDGER_SOURCE, ledgerIntent, readLedgers, speakLedgers } from './tradin
 import { meetingCommand, meetingScene, planScene, simScene } from './world_scene.js';
 import { SIM_SOURCE, listRuns, loadRun, loadSimMemory, runLab, saveRun, simLabIntent } from './sim_lab.js';
 import { PLAN_SOURCE, answerPlanFollowUp, buildPlan, classifyProject, listPlans, loadPlan, planFollowUpIntent, planSubject, projectPlanIntent, researchSource, savePlan } from './project_plan.js';
-import { BRAIN_ROOMS_SOURCE, ROOMS as BRAIN_ROOMS, answerCrossRoom, crossRoomIntent, drainRoomEvents, pointsAtScreen, prFollowUp, recentScreen, relinkRecords, rememberScreen, screenDeictic, screenFollowUp, screenRoomContext, screenRoomFor, statusLabel } from './brain_rooms.js';
+import { BRAIN_ROOMS_SOURCE, ROOMS as BRAIN_ROOMS, answerCrossRoom, crossRoomIntent, drainRoomEvents, imageReference, pointsAtScreen, prFollowUp, recentScreen, relinkRecords, rememberScreen, screenDeictic, screenFollowUp, screenRoomContext, screenRoomFor, statusLabel } from './brain_rooms.js';
 import { queueRoomEvent } from './room_events.js';
 import { cloudDailyLimit, sanitizeOwnerText } from './che_errors.js';
 import { CHE_UPDATE_GUIDE, mergeSelfUpdatePr, openSelfUpdatePr, rollbackLastUpdate, selfUpdateGitHubAccess, selfUpdateStatus, workerDeploymentStatus } from './self_update.js';
@@ -7124,7 +7124,7 @@ export class CheState extends DurableObject {
         let visual = null;
         const frame = String(body.frame_base64 || '');
         if (frame.length > 1000 && frame.length < 7_200_000) {
-          visual = await optionalMultimodal(this.env, {
+          visual = await optionalMultimodal(this.keyEnv || this.env, {
             name: `youtube-${videoId}-frame.jpg`,
             media_type: 'image',
             base64: frame,
@@ -7613,7 +7613,7 @@ export class CheState extends DurableObject {
         let mediaAnalysis = null;
         if (attachment) {
           mediaAnalysis = await optionalMultimodal(
-            this.env,
+            this.keyEnv || this.env,
             attachment,
             'Extract concise, useful owner context. Identify people, projects, decisions, companies, meetings, daily responsibilities and reusable knowledge. Do not infer sensitive traits or expose credentials.',
           );
@@ -8507,9 +8507,12 @@ export class CheState extends DurableObject {
           // the button on the left" without another upload (owner, 2026-10-20). Older than that, CHE cannot see.
           if (ownerDevice && !body.attachment && !String(body.screen_context || '').trim() && (asksAboutScreen(rawMessage) || screenDeictic(rawMessage))) {
             const seen = await recentScreen(this.ctx.storage);
-            if (seen) body.screen_context = `Most recent screen observation (temporary, not a record; seen ${seen.at} with ${seen.engine || 'the phone'}; room: ${seen.room}): ${seen.summary}`;
+            if (seen) body.screen_context = `Most recent screen observation (temporary, not a record; seen ${seen.at} with ${seen.engine || 'the phone'}; room: ${seen.room}). This is the text summary made when the image was read; the image itself is not kept, so answer only what the summary says and say so if a detail is not in it: ${seen.summary}`;
           }
           // "What is on my screen?" with no screen sent and nothing recent: say so, never guess.
+          if (!body.attachment && !String(body.screen_context || '').trim() && imageReference(rawMessage) && !asksAboutScreen(rawMessage)) {
+            return ndjsonReply('I have no image from earlier in this conversation, sir: either it was not read, or its summary has expired, and I never keep the image itself. Send the screenshot again and ask your question with it.', { source: 'che_screen', ok: false, model_calls: 0 });
+          }
           if (!body.attachment && !String(body.screen_context || '').trim() && (asksAboutScreen(rawMessage) || screenFollowUp(rawMessage))) {
             if (ownerDevice) await this.dropHeldActions();
             return ndjsonReply('I can\'t see your screen from here, sir: this message came without any screen report from your phone, so I won\'t guess. '
@@ -9095,7 +9098,7 @@ export class CheState extends DurableObject {
           const sourceName = learnSkill.source === 'text' ? 'what you told me' : String(body.attachment?.name || 'your attachment').slice(0, 120);
           let sourceText = learnSkill.source === 'text' ? learnSkill.text : attachmentText(body.attachment);
           if (!sourceText && learnSkill.source === 'attachment') {
-            const read = await optionalMultimodal(this.env, body.attachment, READ_FOR_SKILLS).catch((error) => ({ error: String(error?.message || error) }));
+            const read = await optionalMultimodal(this.keyEnv || this.env, body.attachment, READ_FOR_SKILLS).catch((error) => ({ error: String(error?.message || error) }));
             if (!read?.summary) {
               return ndjsonReply(`I could not read ${sourceName}, sir${read?.error ? `: ${read.error}` : ''}. I did not learn anything from it. Paste the words and say "learn this skill:" before them, and I will learn from the text.`, { source: 'che_self_skills', ok: false });
             }
@@ -10139,7 +10142,7 @@ export class CheState extends DurableObject {
         if (stockWaiting?.status === 'waiting') {
           return ndjsonReply(`To send it to ${STOCK_ACCOUNT}, sir, say "yes, place it". Say "no" to drop it. Nothing has been sent yet.`, { source: 'che_trading_desk', ok: true, model_calls: 0, account: STOCK_ACCOUNT, order_sent: false, confirmation_needed: true });
         }
-        const desk = deskIntent(message);
+        const desk = body.attachment ? null : deskIntent(message);
         if (desk) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can use the trading desk.', { source: 'che_trading_desk', ok: false });
           // B1: a bare "place it" has no yes, so it places nothing; it is answered with the phrase to say.
@@ -10276,7 +10279,7 @@ export class CheState extends DurableObject {
         }
 
         // The owner's evidence questions are answered from recorded runs only, never from a guess.
-        if (evidenceIntent(message)) {
+        if (!body.attachment && evidenceIntent(message)) {
           return ndjsonReply(await evidenceReport(this.ctx.storage), { source: 'che_trading_evidence' });
         }
         // Strategy simulation: pause, resume and status by typing, by voice, or through the /trade-sim command. Owner only.
@@ -10569,7 +10572,7 @@ export class CheState extends DurableObject {
           await this.saveChatData(data);
         }
         const multimodal = body.attachment
-          ? await optionalMultimodal(this.env, body.attachment, message)
+          ? await optionalMultimodal(this.keyEnv || this.env, body.attachment, message)
           : null;
         // The owner's screen (owner, 2026-10-20): the observation is kept for follow-ups (never the image), tied to the
         // room it shows, and that room's authoritative records are read so a number on the screen is never taken for a record.

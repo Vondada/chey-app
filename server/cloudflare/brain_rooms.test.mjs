@@ -276,7 +276,7 @@ test('with no screen shared CHE says she cannot see it (Test K); a fresh observa
   await che.storage.put(LAST_SCREEN_KEY, { at: new Date(Date.now() - 2 * 60_000).toISOString(), name: 'shot.png', summary: 'A settings page with a blue Save button on the left and a red Cancel button on the right.', engine: 'gemini-media:test', room: 'screen' });
   const follow = await che.say('What about the button on the left?');
   assert.equal(follow.route, 'model');
-  assert.ok(follow.prompts.some((p) => /Most recent screen observation \(temporary, not a record; seen [^)]*gemini-media:test[^)]*\): A settings page with a blue Save button/.test(p)), 'the recent observation is the screen context');
+  assert.ok(follow.prompts.some((p) => /Most recent screen observation \(temporary, not a record; seen [^)]*gemini-media:test[^)]*\)\. This is the text summary made when the image was read; the image itself is not kept[^:]*: A settings page with a blue Save button/.test(p)), 'the recent observation is the screen context');
   await che.storage.put(LAST_SCREEN_KEY, { at: new Date(Date.now() - 20 * 60_000).toISOString(), name: 'shot.png', summary: 'old', engine: 'gemini-media:test', room: 'screen' });
   const stale = await che.say('What about the button on the left?');
   assert.equal(stale.route, 'che_screen'); assert.match(stale.reply, /can't see your screen/);
@@ -303,6 +303,29 @@ test('a real image analysis is reported with its engine, remembered for follow-u
   const none = await che.say('And this one?', { attachment: { name: 'two.png', media_type: 'image/png', base64: 'aGVsbG8=' } });
   assert.equal(none.done.vision.ok, false);
   assert.match(none.reply, /\(Vision: the attachment was not analyzed/);
+});
+
+test('a screenshot is read in the same turn and its summary answers the next turn; the image itself is never kept (owner, 2026-10-20)', sqlite, async () => {
+  const { setStoredKeys } = await import('./resilience.js');
+  visionSummary = 'CHE Trading Room performance screen: 95 closed trades, 22 wins, 73 losses, 23.16% win rate.';
+  const che = await owner();
+  // The vision connector is set in CHE's Keys tab, not as a Worker secret: vision must still use it.
+  await setStoredKeys(che.storage, { CHE_MULTIMODAL_URL: VISION_URL });
+  const shot = { name: 'IMG_0412.png', media_type: 'image/png', base64: 'aGVsbG8=' };
+  const same = await che.say('What is my win rate here?', { attachment: shot });
+  assert.equal(same.done.vision.ok, true, 'a key saved in the Keys tab reaches vision');
+  assert.ok(same.prompts.some((p) => /23\.16% win rate/.test(p)), 'the same-turn prompt carries what the image shows');
+  const next = await che.say('How many losses were in the screenshot I sent?');
+  assert.equal(next.route, 'model');
+  assert.ok(next.prompts.some((p) => /73 losses/.test(p) && /the image itself is not kept/.test(p)), 'the next turn answers from the kept summary, labelled as a summary');
+  const kept = await recentScreen(che.storage);
+  assert.ok(!JSON.stringify(kept).includes('aGVsbG8='), 'the image bytes are never stored');
+  // Nothing kept: an honest answer, no model guess.
+  await che.storage.delete(LAST_SCREEN_KEY);
+  const gone = await che.say('What was the win rate in that screenshot?');
+  assert.equal(gone.route, 'che_screen'); assert.equal(gone.modelCalls, 0);
+  assert.match(gone.reply, /no image from earlier/);
+  visionSummary = '';
 });
 
 test('a guest cannot read across rooms or the screen memory', sqlite, async () => {

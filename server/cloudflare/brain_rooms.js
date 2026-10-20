@@ -552,7 +552,20 @@ export function screenRoomFor(text) {
 // your knowledge"). Never a refusal: without a screen the model answers, as it would for any question (review, 2026-10-20).
 export function screenDeictic(message) {
   const text = String(message || '').replace(/[’']/g, "'").replace(WAKE, '').trim();
-  return screenFollowUp(text) || /^(?:what\s+does\s+(?:this|that)\s+(?:do|mean)\b|compare\s+(?:this|that)\s+to\b|(?:why|how)\s+does\s+(?:this|that)\b|do\s+we\s+(?:already\s+)?have\s+(?:this|that|something\s+like\s+this)\b|explain\s+(?:this|that)\b|read\s+(?:this|that)\b|what\s+new\s+idea\s+does\s+this\b|connect\s+this\b|look\s+at\s+(?:that|this)\b)/i.test(text);
+  return screenFollowUp(text) || imageReference(text) || /^(?:what\s+does\s+(?:this|that)\s+(?:do|mean)\b|compare\s+(?:this|that)\s+to\b|(?:why|how)\s+does\s+(?:this|that)\b|do\s+we\s+(?:already\s+)?have\s+(?:this|that|something\s+like\s+this)\b|explain\s+(?:this|that)\b|read\s+(?:this|that)\b|what\s+new\s+idea\s+does\s+this\b|connect\s+this\b|look\s+at\s+(?:that|this)\b)/i.test(text);
+}
+
+/**
+ * A reference to an image sent earlier: "the screenshot I sent", "in that picture", "what was the win rate in
+ * the image?". Answered from the kept text summary of that image (the image itself is never kept).
+ */
+export function imageReference(message) {
+  const text = String(message || '').replace(/[’']/g, "'");
+  const IMG = '(?:screen\\s*shot|image|picture|photo|pic|attachment)';
+  return new RegExp(`\\b(?:in|on|from)\\s+(?:the|that|this|my)\\s+${IMG}\\b`, 'i').test(text)
+    || new RegExp(`\\b(?:that|last|previous|earlier)\\s+${IMG}\\b`, 'i').test(text)
+    || new RegExp(`\\b${IMG}\\s+(?:i|we)\\s+(?:just\\s+)?(?:sent|shared|attached|uploaded|showed)\\b`, 'i').test(text)
+    || /\b(?:the|my)\s+screen\s*shot\b/i.test(text);
 }
 
 /** A narrow visual phrase: the only follow-ups that get "I can't see your screen" when no screen is shared. */
