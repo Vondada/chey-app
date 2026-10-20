@@ -105,9 +105,19 @@ class CheScreenAwareness {
 }
 
 /// "What is on my screen?" in the ways it is said.
-bool cheAsksAboutScreen(String raw) {
+String _screenWords(String raw) {
   final t = raw.trim().toLowerCase().replaceAll('’', "'").replaceAll(RegExp(r'[.!?]+$'), '')
       .replaceFirst(RegExp(r'^(?:(?:hey|hi|ok|okay)[\s,]+)?(?:che|chay|chey|shay)[\s,.:!]+'), '')
       .replaceFirst(RegExp(r'^(?:please|can you|could you)\s+'), '').trim();
+  return t;
+}
+
+/// Help intent shares normalization with screen descriptions.
+bool cheAsksForScreenHelp(String raw) => RegExp(
+  r"^(?:how (?:do i|can i) use|explain|help(?: me)? (?:with|understand)) (?:this|the|my) (?:screen|page)$",
+).hasMatch(_screenWords(raw));
+
+bool cheAsksAboutScreen(String raw) {
+  final t = _screenWords(raw);
   return RegExp(r"^(?:(?:tell me |say )?what(?:'s| is) on (?:my|the|this) (?:screen|page)(?: (?:right )?now)?|what am i looking at|what (?:screen|page) am i on|where am i(?: in the app)?|describe (?:my|the|this) (?:screen|page)|what do you see on (?:my|the) screen|(?:how (?:do i|can i) use|explain|help(?: me)? (?:with|understand)) (?:this|the|my) (?:screen|page))$").hasMatch(t);
 }

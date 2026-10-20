@@ -9,6 +9,18 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 void main() {
+  test('all normalized screen-help requests open the same guide', () {
+    for (final phrase in [
+      'help me understand this screen', 'help with the page',
+      'how can I use my screen', 'Hey CHE, please explain my page!',
+    ]) {
+      expect(cheAsksForScreenHelp(phrase), isTrue, reason: phrase);
+      expect(cheAsksAboutScreen(phrase), isTrue, reason: phrase);
+    }
+    expect(cheAsksForScreenHelp('what is on my screen?'), isFalse);
+    expect(cheAsksForScreenHelp('buy this stock'), isFalse);
+  });
+
   test('guide uses actual report and explicitly declines to invent unregistered controls', () {
     const report = CheScreenReport(
       page: 'Trading Room',

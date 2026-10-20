@@ -612,6 +612,25 @@ extension _CheHomeSend on _CHEHomeState {
       return;
     }
 
+    // Foreground screen actions (including numbered help and actual broker receipts).
+    final screenReply = _pendingAttachment == null ? await CheScreenAwareness.handleVoice(message) : null;
+    if (screenReply != null) {
+      if (mounted) {
+        _set(() { controller.clear(); messages.add({'role': 'assistant', 'text': screenReply}); });
+        if (screenReply.isNotEmpty) {
+          ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
+            content: Text(screenReply, style: const TextStyle(fontSize: 18, height: 1.3)),
+            duration: const Duration(seconds: 10),
+          ));
+        }
+      }
+      HapticFeedback.mediumImpact();
+      if (screenReply.isNotEmpty) {
+        await speakText(screenReply, record: false, readOnDemand: true);
+      }
+      return;
+    }
+
     // The Command Center, while it is open, answers its own voice routes
     // first (search, numbered options, run, favorite, workflows, run
     // controls). Its reply is on its banner; CHE says it here. An empty
@@ -773,19 +792,6 @@ extension _CheHomeSend on _CHEHomeState {
       return;
     }
 
-    // Foreground screen actions (including numbered help and actual broker receipts).
-    final screenReply = _pendingAttachment == null ? await CheScreenAwareness.handleVoice(message) : null;
-    if (screenReply != null) {
-      if (mounted) {
-        _set(() { controller.clear(); messages.add({'role': 'assistant', 'text': screenReply}); });
-      }
-      HapticFeedback.mediumImpact();
-      if (screenReply.isNotEmpty) {
-        await speakText(screenReply, record: false, readOnDemand: true);
-      }
-      return;
-    }
-
     // In the Meeting Room: "read the suggestions", "what's the recommendation",
     // "read suggestion 2", "who's at the table" are answered from its scene.
     final meetingRoom = CheMeetingRoom.current.value;
@@ -875,7 +881,7 @@ extension _CheHomeSend on _CHEHomeState {
     // "What is on my screen?": answered from the page really in front of the
     // owner (its registered page, tab and controls), never a model's guess.
     // Pages with their own voice routes (Commands, the browser) answered above.
-    if (_pendingAttachment == null && RegExp(r"^(?:(?:hey )?(?:che|chay|chey)[,.]?\s+)?(?:how (?:do i|can i) use (?:this|the) screen|explain this (?:screen|page)|help me with this screen)[?.!]*$", caseSensitive: false).hasMatch(message.trim())) {
+    if (_pendingAttachment == null && cheAsksForScreenHelp(message)) {
       if (!mounted) return;
       CheScreenGuide.open(context, fallback: 'current screen', onRead: (words) { speakText(words, record: false, readOnDemand: true); });
       if (mounted) _set(() => controller.clear());
