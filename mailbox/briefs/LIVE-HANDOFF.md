@@ -64,6 +64,58 @@ Then, on GitHub:
 - Next: open focused PR for milestone 1 when the owner is ready (or continue: milestone 2 = scripted multi-agent demo via officeGoal + War Room board wiring + orb-tap deep link to the real task; then Phase B typed memory/provenance).
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
+## 2. Current position (Codex, 2026-10-20 — PR #372 reliability repair, final CI pending)
+
+- Owner authorized fixing, testing, independent review, squash merge when green, and existing Worker/mobile delivery. No spending, deletion or live trades; no unrelated work.
+- PR #372 remains OPEN. Original main independently fetched and verified: `a27d319b0f684781eb2669f482e6d3fd1457d4e8`; PR #356 is merged at that exact SHA. Current PR head: `5c4eba8443591cce10c1620c19b94124f0a3f105`. All prior context work and Claude work preserved; no duplicate PR created.
+- Implemented: runtime-only execution receipts with invocation/request IDs and sanitized failure; existing lossless receipt storage; deterministic live multi-PR reads with validated IDs/state/hashes; mailbox-head-pinned handoff retrieval; final streamed execution/transcript guard; phone/browser realtime input goes through guarded chat/TTS; queued spoken corrections; actual HTTP 413 capacity failover; failed REA poll dedup plus explicit owner-only linked retries. Baseline A/B/C reproduced in actual local /api/chat with dishonest model; D already blocked by old guard. Evidence: `docs/CHE_TOOL_TRUTH_BASELINE.json`; limitations/design: `docs/CHE_CONTEXT_CONTINUITY.md`.
+- Tests: local full Worker at runtime tree ac6e2f47: **2451 total, 2444 pass, 0 fail, 7 skipped**. Review-fix subset: **61/61**. ac6e2f47 CI Worker success; Flutter analyze passed but Flutter test failed because an old source assertion expected pre-guard realtime condition. 5c4eba8 updates that assertion to require the new guard and original skill exclusions; fresh runs `39345459702` (Flutter + Worker) and `39345460046` (UI analyze) are running. Local Flutter cannot write analyzer state under executor's read-only home; no local Flutter success claimed.
+- Independent review of 74ca853a found three additional issues, all fixed in 1b1dbbf5: queued spoken turns, explicit REA retries, browser voice protocol. Original P1/P2 fixed. All five have test-backed thread replies; final re-review requested through GitHub. Threads are not yet resolved. Never merge with failed required CI or unresolved blocking findings.
+- CLI GitHub auth began returning HTTP 401; installed GitHub connector still works. Continue via connector without interactive login or reading credentials.
+- NOT merged, NOT deployed, no iPhone patch delivery verified. Existing deploy memory probe now includes real GitHub/handoff receipts and fabricated transcript boundary checks. Next: inspect exact-head CI + final independent review; fix any new findings; resolve all threads; squash merge #372 with expected head; verify deploy workflow + /health and memory/command probes; inspect Shorebird output and installed-baseline limitation; update this checkpoint with actual merge/deploy evidence.
+
+Exact PR files (including preserved prior work):
+```
+assets/atlas/knowledge_atlas.json
+docs/CHE_CONTEXT_CONTINUITY.md
+docs/CHE_TOOL_TRUTH_BASELINE.json
+lib/che_realtime_voice.dart
+lib/home_state/security.dart
+lib/home_state/send.dart
+lib/home_state/voice.dart
+server/cloudflare/ai_router.js
+server/cloudflare/atlas_coding.js
+server/cloudflare/autonomy_failure_injection.test.mjs
+server/cloudflare/command_catalog.js
+server/cloudflare/command_center.test.mjs
+server/cloudflare/context_continuity.test.mjs
+server/cloudflare/execution_truth.test.mjs
+server/cloudflare/features.test.mjs
+server/cloudflare/lossless_intake.test.mjs
+server/cloudflare/mailbox.js
+server/cloudflare/memory_truth.test.mjs
+server/cloudflare/objective_graph.js
+server/cloudflare/objective_graph.test.mjs
+server/cloudflare/plugin_runtime.js
+server/cloudflare/prompt_compaction.js
+server/cloudflare/prompt_compaction.test.mjs
+server/cloudflare/rea_runner.js
+server/cloudflare/rea_runner.test.mjs
+server/cloudflare/reply_latency.js
+server/cloudflare/reply_latency.test.mjs
+server/cloudflare/self_development.test.mjs
+server/cloudflare/self_update.js
+server/cloudflare/truth_layer.js
+server/cloudflare/web_app.js
+server/cloudflare/worker.js
+server/cloudflare/worker.test.mjs
+server/cloudflare/worker_autonomy.test.mjs
+server/cloudflare/workflow_governor.js
+server/cloudflare/workflow_governor.test.mjs
+test/che_realtime_truth_test.dart
+test/che_installed_skill_intent_test.dart
+```
+
 ## 2. Current position (ChatGPT, 2026-10-19 — tool truth mission now overrides autonomy)
 - Owner confirmed four failures: fabricated PR/handoff facts, invented shell/gh execution, incorrect #356 merge status, unreliable handoff retrieval. New branch `chatgpt/tool-truth-and-github-verification` starts from live main `a27d319b0f684781eb2669f482e6d3fd1457d4e8`. Reproduce through /api/chat before edits; reuse existing truth layer and GitHub integration. Do not resume autonomous coding yet.
 - Prior context work is preserved in **PR #372**, branch `chatgpt/context-and-command-reliability`, remote head `1c50b49e13cb100a96387fe32713472f75232678`, reconciled with main a27d319b. NOT merged or deployed. Exact tree `877b52a4b4a133d6a3216090acc79fe818f0cc3e` passed full Worker tests: 2427 total, 2420 pass, 0 fail, 7 skipped. Coding checkpoint/failover/workflow-policy/paid-gate tests: 52/52. Core changes and limitations: `docs/CHE_CONTEXT_CONTINUITY.md` on that branch; 24 changed files listed in PR.
