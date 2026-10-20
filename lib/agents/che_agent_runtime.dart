@@ -722,6 +722,12 @@ class CheAgentRuntimeClient {
     final j = await _send('GET', '/api/meetings/$id');
     return CheMeeting.fromJson(j['meeting'] as Map<String, dynamic>);
   }
+
+  /// The Meeting Room scene for one War Room meeting (Spatial World MVP 1).
+  Future<Map<String, dynamic>> meetingScene(String id) async {
+    final j = await _send('GET', '/api/world/scene?scene=meeting&id=${Uri.encodeQueryComponent(id)}');
+    return (j['scene'] as Map?)?.cast<String, dynamic>() ?? const {};
+  }
 }
 
 /// Mirrors the live roster. Polls quickly while work is running and slowly

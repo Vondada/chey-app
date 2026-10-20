@@ -445,6 +445,16 @@ extension _CheHomeStreaming on _CHEHomeState {
           ScaffoldMessenger.of(context).showSnackBar(cheInstalledSkillReceiptBar(ok));
           unawaited(_statusHaptic(ok ? 3 : 4));
         }
+        // "Start a meeting with the team about X": the Worker convened a real War Room
+        // meeting; the Meeting Room shows it as it happens (Spatial World MVP 1).
+        final meetingId = data['meeting_id']?.toString().trim() ?? '';
+        if (data['source'] == 'che_meeting_room' && meetingId.isNotEmpty && mounted) {
+          unawaited(Navigator.of(context).push(CheMeetingRoom.route(
+            client: _agentRuntime,
+            meetingId: meetingId,
+            onSpeak: (text) => speakText(text, record: false),
+          )));
+        }
         final mediaUrl = data['media_url']?.toString().trim() ?? '';
         final mediaType = data['media_type']?.toString().trim() ?? '';
         if (mediaUrl.startsWith('https://')) {

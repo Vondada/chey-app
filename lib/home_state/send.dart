@@ -765,6 +765,24 @@ extension _CheHomeSend on _CHEHomeState {
       }
     }
 
+    // In the Meeting Room: "read the suggestions", "what's the recommendation",
+    // "read suggestion 2", "who's at the table" are answered from its scene.
+    final meetingRoom = CheMeetingRoom.current.value;
+    final roomAnswer = meetingRoom == null || _pendingAttachment != null ? null : cheMeetingRoomAnswer(meetingRoom, message);
+    if (roomAnswer != null) {
+      if (mounted) {
+        _set(() {
+          controller.clear();
+          messages
+            ..add({'role': 'user', 'text': message})
+            ..add({'role': 'assistant', 'text': roomAnswer});
+        });
+      }
+      HapticFeedback.mediumImpact();
+      await speakText(roomAnswer, record: false);
+      return;
+    }
+
     // "Look at my screen" (owner, 2026-10-20): CHE takes a picture of her own
     // screen and sends it with this turn, with the page's report, so the
     // Worker's vision reads what is really there. A password or vault page

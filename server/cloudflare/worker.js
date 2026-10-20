@@ -70,6 +70,7 @@ import { alpacaKeys, alpacaPaperOrders, alpacaStatus, liveKeyProblem, placeAlpac
 import { speakConnections, speakTradovateSteps, tradingConnections } from './trading_connections.js';
 import { liveAnswer, liveIntent } from './trading_live_chat.js';
 import { LEDGER_SOURCE, ledgerIntent, readLedgers, speakLedgers } from './trading_ledgers.js';
+import { meetingCommand, meetingScene } from './world_scene.js';
 import { BRAIN_ROOMS_SOURCE, ROOMS as BRAIN_ROOMS, answerCrossRoom, crossRoomIntent, drainRoomEvents, pointsAtScreen, recentScreen, relinkRecords, rememberScreen, screenDeictic, screenFollowUp, screenRoomContext, screenRoomFor, statusLabel } from './brain_rooms.js';
 import { queueRoomEvent } from './room_events.js';
 import { cloudDailyLimit, sanitizeOwnerText } from './che_errors.js';
@@ -7293,6 +7294,16 @@ export class CheState extends DurableObject {
         this.broadcastAgents(data);
         return json({ meeting: convened.meeting, created_agents: convened.created.map((item) => item.name) });
       }
+      // The Meeting Room as a scene (Spatial World MVP 1): a read-only projection of one real War Room
+      // meeting; every object names its record. Owner only.
+      if (path === '/api/world/scene' && request.method === 'GET') {
+        if (!ownerDevice) return ownerOnly();
+        const query = new URL(request.url).searchParams;
+        if ((query.get('scene') || 'meeting') !== 'meeting') return json({ detail: 'Only the Meeting Room scene exists so far.' }, 400);
+        const meeting = (data.meetings || []).find((item) => item.id === query.get('id')) || (query.get('id') ? null : (data.meetings || [])[0]);
+        if (!meeting) return json({ detail: 'No such meeting.' }, 404);
+        return json({ scene: meetingScene(meeting, runtimeSnapshot(data).agents) });
+      }
       const meetingMatch = /^\/api\/meetings\/([A-Za-z0-9-]{8,64})$/.exec(path);
       if (meetingMatch && request.method === 'GET') {
         const meeting = data.meetings.find((item) => item.id === meetingMatch[1]);
@@ -8779,6 +8790,26 @@ export class CheState extends DurableObject {
         // those words are subject matter, not permission to act.
         const turnActionPolicy = currentTurnActionPolicy(message);
         const chatOnlyEvaluation = turnActionPolicy.terminalChatOnly;
+
+        // "Start a meeting with the team about X" (Spatial World MVP 1): a real War Room meeting, which
+        // the app shows as the Meeting Room (it opens on `meeting_id`). Its drafts cost model calls,
+        // so it starts only when the owner asks, and never without a topic.
+        const meetingAsk = body.attachment ? null : meetingCommand(message);
+        if (meetingAsk) {
+          if (!ownerDevice) return ownerOnly();
+          if (!meetingAsk.topic) {
+            return ndjsonReply('What should the team meet about, sir? Say "start a meeting with the team about" and the topic.', { source: 'che_meeting_room', ok: false, model_calls: 0, needs: 'topic' });
+          }
+          const convened = conveneMeeting(data, { objective: meetingAsk.topic });
+          if (convened.error) return ndjsonReply(`The meeting did not start, sir: ${convened.error}`, { source: 'che_meeting_room', ok: false, model_calls: 0 });
+          await this.ctx.storage.put('che', data);
+          await this.scheduleWork();
+          this.broadcastAgents(data);
+          const scene = meetingScene(convened.meeting, runtimeSnapshot(data).agents);
+          return ndjsonReply(`Starting the meeting, sir. ${scene.spoken} Their cards appear on the table as they write them; drafts are model output, not verified.`, {
+            source: 'che_meeting_room', ok: true, model_calls: 0, meeting_id: convened.meeting.id,
+          });
+        }
 
         // "What is connected to PR 374?" and "how is X related to Y?" ask the Brain for relationships
         // (owner, 2026-10-20), so they are answered here, before the GitHub and update readers that
