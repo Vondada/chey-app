@@ -67,7 +67,7 @@ export async function handleCallback(storage, env, requestUrl, fetcher = fetch, 
     const token = body.access_token || body.accessToken;
     if (!response.ok || !token) return { ok: false, message: `Tradovate did not accept the sign-in (${body.error_description || body.errorText || response.status}).` };
     const seconds = Number(body.expires_in) || 80 * 60;
-    await storage.put(AUTH_KEY, { access_token: token, expires_at: now + seconds * 1000, connected_at: new Date(now).toISOString() });
+    await storage.put(AUTH_KEY, { access_token: token, md_access_token: body.mdAccessToken || body.md_access_token || null, market_data_allowed: typeof body.hasMarketData === 'boolean' ? body.hasMarketData : null, expires_at: Date.parse(body.expirationTime) || now + seconds * 1000, connected_at: new Date(now).toISOString() });
     return { ok: true, message: 'NinjaTrader is connected to CHE. You can close this page and go back to CHE.' };
   } catch (error) {
     return { ok: false, message: `Tradovate could not be reached: ${String(error?.message || error).slice(0, 120)}` };
@@ -88,7 +88,7 @@ export async function renewToken(storage, fetcher = fetch, now = Date.now()) {
     const response = await fetcher(`${BASE.live}/auth/renewaccesstoken`, { headers: { Authorization: `Bearer ${auth.access_token}`, Accept: 'application/json' } });
     const body = await response.json().catch(() => ({}));
     if (response.ok && body.accessToken) {
-      const next = { ...auth, access_token: body.accessToken, expires_at: Date.parse(body.expirationTime) || now + 80 * 60_000 };
+      const next = { ...auth, access_token: body.accessToken, md_access_token: body.mdAccessToken || auth.md_access_token || null, expires_at: Date.parse(body.expirationTime) || now + 80 * 60_000 };
       await storage.put(AUTH_KEY, next);
       return next;
     }
@@ -198,4 +198,18 @@ export async function accountBalance(storage, mode, preferred = '', opts = {}) {
   if (res.error) return res;
   const n = (v) => (Number.isFinite(Number(v)) ? Math.round(Number(v) * 100) / 100 : null);
   return { account: acct.account.name, cash: n(res.data?.totalCashValue), net_liq: n(res.data?.netLiq), open_pnl: n(res.data?.openPnL), realized_pnl: n(res.data?.realizedPnL) };
+}
+
+
+/** Read-only preparation for the supported CME socket; an ordinary web login is not API access. */
+export async function marketDataAccess(storage, env, root, symbol, { fetcher = fetch, now = Date.now() } = {}) {
+  if (!['MNQ', 'NQ'].includes(root) || !new RegExp(`^${root}[HMUZ]\\d{1,2}$`).test(symbol)) return { ok: false, state: 'refused', detail: 'Choose a verified MNQ/NQ front-month contract.' };
+  const auth = await renewToken(storage, fetcher, now);
+  if (!auth?.access_token || !(auth.expires_at > now)) return { ok: false, state: tradovateConfigured(env) ? 'sign_in_required' : 'app_setup_required', detail: tradovateConfigured(env)
+    ? 'Sign in to Tradovate in CHE Connections, with your existing CME/API market-data entitlement.'
+    : 'Register CHE as a Tradovate OAuth application, configure its existing OAuth client ID/secret and callback URL, then sign in in CHE Connections. Existing CME market-data/API entitlement must permit the subscription; CHE will not buy or activate it.' };
+  if (auth.market_data_allowed === false) return { ok: false, state: 'entitlement_required', detail: 'Tradovate reports no market-data permission. The owner must verify existing CME/API entitlement; CHE purchased nothing.' };
+  const contract = await api(storage, 'live', `/contract/find?name=${encodeURIComponent(symbol)}`, { fetcher, now });
+  if (contract.error || contract.data?.name !== symbol || !Number.isSafeInteger(contract.data?.id)) return { ok: false, state: 'contract_unverified', detail: 'Tradovate could not verify the exact front-month contract. No real-time entry is permitted.' };
+  return { ok: true, token: auth.md_access_token || auth.access_token, expires_at: auth.expires_at, contract_id: contract.data.id, symbol, root };
 }
