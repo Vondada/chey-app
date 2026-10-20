@@ -72,6 +72,7 @@ class CheMarketsRoom extends StatefulWidget {
     required this.headers,
     required this.actions,
     required this.onAsk,
+    this.onRead,
     this.client,
     this.onOpenTradingApp,
   });
@@ -82,6 +83,7 @@ class CheMarketsRoom extends StatefulWidget {
 
   /// Sends a prompt to CHE (e.g. "Analyze S&P 500 structure").
   final void Function(String prompt) onAsk;
+  final void Function(String)? onRead;
   final http.Client? client;
 
   /// Opens a supported trading website inside CHE's in-app browser.
@@ -216,6 +218,12 @@ class _CheMarketsRoomState extends State<CheMarketsRoom> {
               _TickerTape(quotes: _quotes, fmt: _fmt),
               // The live chart fills the room: switch symbols and timeframes
               // by tap, typing or voice; "Read price" speaks the latest price.
+              // CHE's forward paper trading, from its records (owner, 2026-10-18).
+              Padding(
+                padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.md, CheSpace.gutter, 0),
+                child: CheLivePaperPanel(baseUrl: widget.baseUrl, headers: widget.headers, onAsk: widget.onAsk, onRead: widget.onRead, client: widget.client),
+              ),
+              // Every trade record set by source, never summed (owner, 2026-10-20).
               Padding(
                 padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.md, CheSpace.gutter, 0),
                 child: CheLiveChartPanel(
@@ -225,12 +233,6 @@ class _CheMarketsRoomState extends State<CheMarketsRoom> {
                   height: math.max(320.0, MediaQuery.sizeOf(context).height * 0.55),
                 ),
               ),
-              // CHE's forward paper trading, from its records (owner, 2026-10-18).
-              Padding(
-                padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.md, CheSpace.gutter, 0),
-                child: CheLivePaperPanel(baseUrl: widget.baseUrl, headers: widget.headers, onAsk: widget.onAsk, client: widget.client),
-              ),
-              // Every trade record set by source, never summed (owner, 2026-10-20).
               Padding(
                 padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.md, CheSpace.gutter, 0),
                 child: CheTradingLedgersPanel(baseUrl: widget.baseUrl, headers: widget.headers, onAsk: widget.onAsk, client: widget.client),

@@ -9,7 +9,7 @@
 import { aggregate, cmeSession, frontMonth, liveFeedBlocker, loadIntraday } from './market_feed.js';
 import {
   CONTRACTS, COSTS, INTRADAY_CANDIDATES, INTRADAY_COMMON_RULES, INTRADAY_FILTERS, MIN_TRADES, appendTrades, breakdown, candleProblems,
-  evaluateWalkForward, intradayContext, newPortfolio, readTrades, stepPortfolio, summarize, validateTradeRecord,
+  evaluateWalkForward, intradayContext, newPortfolio, readTrades, stepPortfolio, summarize, validateTradeRecord, tradeDayOf,
 } from './trading_evidence.js';
 
 export const LIVE_STATE = 'live_paper_state';
@@ -17,6 +17,8 @@ export const LIVE_PORTFOLIOS = 'live_paper_portfolios';
 export const LIVE_RUNS = 'live_paper_runs';
 export const LIVE_FEED = 'live_paper_feed';
 export const LIVE_BACKTEST = 'live_paper_backtest';
+export const LIVE_RESEARCH_PREFIX = 'live_research_run:';
+const RESEARCH_LAST = 'live_research_last_success';
 // Records that never count as forward results but are never thrown away: a closed trade the
 // journal refused, and a position voided because paper trading was stopped while it was open.
 export const LIVE_EXCLUDED = 'live_paper_excluded';
@@ -144,6 +146,7 @@ export async function liveTick(storage, { fetcher = fetch, now = Date.now(), for
         // Forward only: a new portfolio starts at the newest closed bar, so history is never journalled as paper.
         for (const pf of portfolios) if (pf.last_bar_time == null) Object.assign(pf, { last_bar_time: newest, started_from: newest });
         const closed = [];
+        run.missed_windows = portfolios.filter((pf) => pf.last_bar_time && pf.last_bar_time < bars[0].t).length;
         for (const pf of portfolios) {
           pf.feed = feedOf(feed);
           const before = pf.counts.signals;
@@ -176,30 +179,120 @@ export async function liveTick(storage, { fetcher = fetch, now = Date.now(), for
 
 const isLive = (t) => t.environment === 'paper' && t.data?.resolution === RESOLUTION;
 
-/** Historical baseline on Yahoo's 5-minute history: same rules, same fills, out-of-sample folds. */
-export async function liveBacktest(storage, { fetcher = fetch, now = Date.now(), load = loadIntraday } = {}) {
-  const feed = await load(ROOT, { fetcher, now, range: '30d', interval: '5m' });
-  if (feed.status === 'UNAVAILABLE' || !feed.candles?.length) {
-    const failed = { at: new Date(now).toISOString(), ok: false, error: feed.error || 'no history' };
-    await storage.put(LIVE_BACKTEST, failed);
-    return failed;
+// One existing research operation at a time; interrupted leases expire without deleting evidence.
+export async function liveBacktest(storage, options = {}) {
+  const now = options.now ?? Date.now();
+  const token = crypto.randomUUID();
+  const update = (fn) => storage.transaction ? storage.transaction(fn) : fn(storage);
+  const acquired = await update(async (tx) => {
+    const lock = await tx.get('live_research_lock');
+    if (lock?.token && now - lock.at < 15 * 60000) return false;
+    await tx.put('live_research_lock', { token, at: now }); return true;
+  });
+  if (!acquired) return { ok: false, error: 'Historical research is already running; no duplicate run dispatched.' };
+  try {
+    const old = await storage.get(LIVE_BACKTEST);
+    if (old?.at && !old.id) {
+      const key = `${LIVE_RESEARCH_PREFIX}legacy:${old.at}`;
+      if (!(await storage.get(key))) await storage.put(key, old);
+    }
+    return await historicalReplay(storage, options);
   }
-  const bars = feed.interval === '5m' ? feed.candles : aggregate(feed.candles, 5, now);
+  finally { await update(async (tx) => { if ((await tx.get('live_research_lock'))?.token === token) await tx.put('live_research_lock', { token: null, at: now, finished_at: new Date().toISOString() }); }); }
+}
+
+// Accelerated historical replay uses the same fixed-timeframe engine, never the forward journal.
+// Every dataset/configuration has an immutable archive; rerunning it is not new evidence.
+async function historicalReplay(storage, { fetcher = fetch, now = Date.now(), load = loadIntraday } = {}) {
+  const at = new Date(now).toISOString();
+  const fail = async (error) => {
+    const result = { at, ok: false, error };
+    await storage.put(`${LIVE_RESEARCH_PREFIX}failed:${at}`, result);
+    await storage.put(LIVE_BACKTEST, result);
+    return result;
+  };
+  let feed;
+  try { feed = await load(ROOT, { fetcher, now, range: '60d', interval: RESOLUTION }); }
+  catch (error) { return fail(String(error?.message || error)); }
+  if (feed.status === 'UNAVAILABLE' || !feed.candles?.length) return fail(feed.error || 'no history');
+  if (feed.interval !== RESOLUTION) return fail('Research requires genuine 5-minute history; no timeframe substitution.');
+  const bars = feed.candles;
+  const problems = candleProblems(bars);
+  if (bars.some((b) => Date.parse(b.t) % 300000 !== 0 || Date.parse(b.t) + 300000 > now)) problems.push('unaligned or forming five-minute bar');
+  if (problems.length) return fail(`data refused: ${problems.join('; ')}`);
+  const specs = liveSpecs();
+  // Explicit parameter experiments: baseline and target-R alternatives, same 5-minute rules.
+  for (const c of Object.keys(INTRADAY_CANDIDATES)) for (const target_r of [1.5, 2, 3]) {
+    if (!specs.some((x) => x.c === c && x.f === 'any' && x.target_r === target_r)) specs.push({ c, f: 'any', target_r });
+  }
+  const hex = async (value) => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(value)))), (x) => x.toString(16).padStart(2, '0')).join('');
+  const dataset_hash = await hex({ provider: feed.provider, symbol: feed.provider_symbol, resolution: RESOLUTION, bars });
+  const id = await hex({ dataset_hash, versions: specs.map((spec) => freshPortfolio(spec, 'backtest').strategy_version) });
+  const previous = await storage.get(`${LIVE_RESEARCH_PREFIX}${id}`);
+  if (previous) { await storage.put(LIVE_BACKTEST, previous); return { ...previous, reused: true }; }
+  const dataset_refs = [];
+  for (let i = 0; i < bars.length; i += 256) {
+    const key = `live_research_data:${dataset_hash}:${i / 256}`;
+    if (!(await storage.get(key))) await storage.put(key, bars.slice(i, i + 256));
+    dataset_refs.push(key);
+  }
   const ctx = intradayContext(bars);
   const rows = [];
-  for (const spec of liveSpecs()) {
+  for (const spec of specs) {
     const pf = freshPortfolio(spec, 'backtest');
     const trades = stepPortfolio(pf, bars, ctx);
-    const s = summarize(trades);
-    const wf = evaluateWalkForward(trades, { folds: 4, minTrain: 0.4 });
-    rows.push({ portfolio: pf.key, strategy: spec.c, filter: spec.f, target_r: spec.target_r, name: INTRADAY_CANDIDATES[spec.c].name,
-      family: INTRADAY_CANDIDATES[spec.c].family, stats: s, oos: wf.oos ? summarize(wf.oos) : null, folds_positive: wf.folds_positive, folds: wf.folds_total,
+    const invalid = trades.flatMap((t) => validateTradeRecord(t));
+    if (invalid.length) return fail(`experiment records refused: ${invalid.join('; ')}`);
+    const wf = evaluateWalkForward(trades, { folds: 4, minTrain: 0.4, barTimes: bars.map((b) => b.t) });
+    const split = bars[Math.floor(bars.length * 0.4)]?.t;
+    const training = trades.filter((t) => t.exit.time < split);
+    // Chunks keep complete provenance/outcomes without exceeding a Durable Object value limit.
+    let new_outcomes = 0;
+    // Batch evidence I/O; a changed window or target sweep never re-counts a version/entry.
+    const keys = await Promise.all(trades.map(async (t) => `live_research_seen:${pf.strategy_version}:${await hex(entryIdentity(t))}`));
+    for (let i = 0; i < keys.length; i += 64) {
+      const batch = [...new Set(keys.slice(i, i + 64))];
+      const existing = await storage.get(batch);
+      const additions = Object.fromEntries(batch.filter((key) => !existing.has(key)).map((key) => [key, { first_seen: at, dataset_hash }]));
+      new_outcomes += Object.keys(additions).length;
+      if (Object.keys(additions).length) await storage.put(additions);
+    }
+    const studies = await storage.list({ prefix: `live_research_seen:${pf.strategy_version}:` });
+    const studied_today = [...studies.values()].filter((v) => tradeDayOf(v.first_seen) === tradeDayOf(at)).length;
+    const refs = [];
+    for (let i = 0; i < trades.length; i += 32) {
+      const key = `live_research_trades:${id}:${pf.strategy_version}:${i / 32}`;
+      await storage.put(key, trades.slice(i, i + 32)); refs.push(key);
+    }
+    rows.push({ portfolio: pf.key, strategy: spec.c, filter: spec.f, target_r: spec.target_r,
+      strategy_version: pf.strategy_version, params: pf.params, counts: pf.counts,
+      name: INTRADAY_CANDIDATES[spec.c].name, family: INTRADAY_CANDIDATES[spec.c].family,
+      stats: summarize(trades), training: summarize(training), oos: summarize(wf.oos),
+      walk_forward: wf.folds, folds_positive: wf.folds_positive, folds: wf.folds_total,
+      new_outcomes, studied_today, outcome_refs: refs, open_at_end: Boolean(pf.open),
       sample: trades.slice(-3).map((t) => ({ side: t.side, entry: t.entry.time, exit: t.exit.time, reason: t.exit.reason, net: t.net_pnl })) });
   }
   rows.sort((a, b) => b.stats.expectancy_r - a.stats.expectancy_r);
-  const result = { at: new Date(now).toISOString(), ok: true, data: `${feed.provider} ${feed.provider_symbol}, ${bars.length} five-minute bars ${bars[0].t} to ${bars[bars.length - 1].t} (DELAYED public data)`, costs: COSTS, rows };
+  const result = { id, at, ok: true, dataset_hash, dataset_refs, resolution: RESOLUTION, target_per_strategy: MIN_TRADES,
+    provider: feed.provider, data_quality: feed.status, bars: bars.length, from: bars[0].t, to: bars.at(-1).t,
+    data: `${feed.provider} ${feed.provider_symbol}, ${bars.length} five-minute bars ${bars[0].t} to ${bars.at(-1).t} (historical research only)`,
+    split_rule: 'First 40% of bars train; four consecutive held-out time windows. Trades crossing fold boundaries excluded from OOS. Parameters fixed before replay; all alternatives retained, not independent samples.',
+    costs: COSTS, rows };
+  await storage.put(`${LIVE_RESEARCH_PREFIX}${id}`, result);
+  await storage.put(RESEARCH_LAST, result);
   await storage.put(LIVE_BACKTEST, result);
   return result;
+}
+
+/** Daily deterministic research on the existing hourly alarm, only while forward paper is on. */
+export async function researchDue(storage, { now = Date.now(), ...options } = {}) {
+  const state = await storage.get(LIVE_STATE);
+  if (!state?.enabled) return { skipped: 'paper research is off' };
+  const last = await storage.get(LIVE_BACKTEST);
+  const today = tradeDayOf(new Date(now).toISOString());
+  if (last?.ok && tradeDayOf(last.at) === today) return { skipped: 'research already recorded this research day' };
+  if (last?.at && now - Date.parse(last.at) < 3600000) return { skipped: 'research retry cooldown' };
+  return liveBacktest(storage, { now, ...options });
 }
 
 function unrealized(pf, lastClose) {
@@ -258,5 +351,88 @@ export async function liveDashboard(storage, { now = Date.now(), tradovateConnec
     runs: (runs || []).slice(-10).reverse(),
     backtest: backtest || null,
     min_trades: MIN_TRADES,
+    learning: await strategyLearning(storage, { now }),
   };
+}
+// Strategy evidence is projected from immutable records; it is never an order permission.
+const entryIdentity = (t) => [t.contract, t.data?.resolution, t.strategy, t.side, t.entry?.time].join('|');
+const outcomeIdentity = (t) => JSON.stringify([t.entry?.fill, t.exit?.time, t.exit?.fill, t.exit?.reason, t.net_pnl, t.r_net]);
+const ordered = (list) => [...list].sort((a, b) => String(a.exit.time).localeCompare(String(b.exit.time)));
+const emptySummary = () => summarize([]);
+
+/** Learning cards keep one predeclared baseline per strategy; parameter experiments are never pooled. */
+export async function strategyLearning(storage, { now = Date.now() } = {}) {
+  const [records, state, feed, runs, portfolios, latest, lastSuccess] = await Promise.all([
+    readTrades(storage, isLive), storage.get(LIVE_STATE), storage.get(LIVE_FEED), storage.get(LIVE_RUNS),
+    readLivePortfolios(storage), storage.get(LIVE_BACKTEST), storage.get(RESEARCH_LAST),
+  ]);
+  const history = latest?.ok ? latest : lastSuccess;
+  const today = tradeDayOf(new Date(now).toISOString());
+  const current = cmeSession(now);
+  const strategies = [];
+  for (const [id, spec] of Object.entries(INTRADAY_CANDIDATES)) {
+    const primary = freshPortfolio({ c: id, f: 'any', target_r: id === 'rsi-revert-5m' ? 1.5 : 2 });
+    const all = records.filter((t) => t.strategy === id);
+    const baseline = ordered(all.filter((t) => t.filter === 'any' && t.strategy_version === primary.strategy_version));
+    const seen = new Set();
+    const unique = baseline.filter((t) => { const key = entryIdentity(t); if (seen.has(key)) return false; seen.add(key); return true; });
+    const forward = summarize(unique);
+    const groups = new Map();
+    for (const t of all) { const key = entryIdentity(t); const group = groups.get(key) || []; group.push(t); groups.set(key, group); }
+    const duplicates = [...groups.values()].reduce((n, group) => n + group.length - new Set(group.map(outcomeIdentity)).size, 0);
+    const correlated = [...groups.values()].filter((g) => new Set(g.map(outcomeIdentity)).size > 1).length;
+    const daily = unique.filter((t) => tradeDayOf(t.exit.time) === today);
+    const before = unique.filter((t) => tradeDayOf(t.exit.time) < today);
+    const old = summarize(before);
+    const research = (history?.rows || []).find((r) => r.strategy === id && r.filter === 'any' && r.strategy_version === primary.strategy_version);
+    const hist = research?.stats || null; const oos = research?.oos || null;
+    const historicalOk = hist?.trades >= MIN_TRADES && hist.expectancy_r > 0;
+    const oosOk = oos?.trades >= MIN_TRADES && oos.expectancy_r_95ci?.low > 0 && (oos.profit_factor > 1.2 || (!oos.losses && oos.wins > 0)) && research.folds_positive / research.folds >= 0.6;
+    const forwardOk = forward.trades >= MIN_TRADES && forward.expectancy_r_95ci.low > 0;
+    const milestones = [
+      { id: 'historical', label: 'Historical validation', status: historicalOk ? 'review' : 'blocked', detail: hist ? `${hist.trades} baseline historical outcomes; ${historicalOk ? 'positive result needs independent review' : '30 outcomes and positive after-cost expectancy not yet established'}` : 'No version-matched historical run recorded.' },
+      { id: 'oos', label: 'Out-of-sample', status: oosOk ? 'review' : 'blocked', detail: oos ? `${oos.trades} held-out outcomes; ${research.folds_positive}/${research.folds} positive time folds. Parameter sweeps are exploratory; untouched holdout review is required.` : 'No purged time-split evaluation recorded.' },
+      { id: 'forward', label: 'Forward paper', status: forwardOk ? 'review' : 'blocked', detail: `${forward.trades}/${MIN_TRADES} unique baseline trades. Reaching 30 alone never establishes readiness.` },
+      { id: 'feed', label: 'Data and feed quality', status: 'blocked', detail: `${feed?.status || 'UNKNOWN'} feed; real-time entitlement, gaps and execution-grade prices must be verified.` },
+      { id: 'risk', label: 'Drawdown and risk controls', status: 'blocked', detail: 'Owner risk budget, maximum tolerated drawdown, sizing, kill switch and broker risk tests need approval; no risk limit is invented.' },
+      { id: 'broker', label: 'Broker compatibility', status: 'blocked', detail: 'MNQ execution integration and contract permissions are not certified. Alpaca stock paper orders do not qualify MNQ.' },
+      { id: 'owner', label: 'Owner approval', status: 'blocked', detail: 'No live permission granted by this dashboard. Exact live orders require explicit owner approval.' },
+    ];
+    const statsToday = summarize(daily);
+    let eq = 0;
+    const equity = unique.map((t) => ({ time: t.exit.time, value: r2(eq += t.net_pnl) }));
+    const pfs = portfolios.filter((p) => p.candidate === id);
+    const counts = pfs.reduce((a, p) => ({ bars: a.bars + p.counts.bars, signals: a.signals + p.counts.signals, filled: a.filled + p.counts.filled, gap_skipped: a.gap_skipped + p.counts.gap_skipped }), { bars: 0, signals: 0, filled: 0, gap_skipped: 0 });
+    strategies.push({ id, name: spec.name, rules: spec.rules, resolution: RESOLUTION, strategy_version: primary.strategy_version, params: primary.params,
+      featured: id === 'ema-pullback-5m', secondary: id === 'vwap-revert-5m', forward, historical: hist, out_of_sample: oos,
+      broker_paper: { status: 'not_attributed', trades: null, detail: 'Broker paper receipts are a separate ledger; no strategy attribution is assumed.' },
+      live_execution: { status: 'disabled', trades: null },
+      progress: { completed: forward.trades, target: MIN_TRADES, fraction: Math.min(1, forward.trades / MIN_TRADES) },
+      stage: !forward.trades ? 'Awaiting forward setups' : forward.trades < MIN_TRADES ? 'Collecting forward evidence' : 'Sample reached; validation pending',
+      live_ready: false, milestones, next_milestone: milestones.find((m) => m.status === 'blocked')?.label || 'Independent review',
+      raw_records: all.length, duplicates, correlated_entries: correlated, excluded_from_baseline: all.length - baseline.length,
+      variants: Object.entries(breakdown(all, (t) => `${t.filter}@${t.strategy_version}|${t.params?.target_r}R`)).map(([version, stats]) => ({ version, ...stats })),
+      today: { ...statsToday, expectancy_change_r: before.length && daily.length ? r2(forward.expectancy_r - old.expectancy_r) : null,
+        studied: history && tradeDayOf(history.at) === today ? research?.studied_today || 0 : 0 },
+      equity: equity.slice(-200), recent_trades: unique.slice(-12).reverse(), counts,
+      data_quality: [...new Set(unique.map((t) => t.data?.feed?.status || t.data?.label || 'UNKNOWN'))],
+    });
+  }
+  strategies.sort((a, b) => (a.featured ? -2 : a.secondary ? -1 : 0) - (b.featured ? -2 : b.secondary ? -1 : 0) || a.name.localeCompare(b.name));
+  const eligible = strategies.filter((r) => r.forward.trades >= MIN_TRADES).sort((a, b) => b.forward.expectancy_r - a.forward.expectancy_r);
+  const last = runs?.at(-1);
+  const diagnostics = { enabled: Boolean(state?.enabled), session: current, resolution: RESOLUTION,
+    poll_seconds: current.open ? 60 : 900, last_run: last || null,
+    scheduler: !state?.enabled ? 'off' : !last ? 'no recorded pass' : current.open && now - Date.parse(last.at) > 5 * 60000 ? 'overdue: inspect alarm or errors' : 'recent pass recorded',
+    feed: feed ? { ...feed, bars: undefined } : null, errors: (runs || []).filter((r) => !r.ok).slice(-5),
+    explanation: 'Only closed complete five-minute bars count. Delayed feeds, quiet setups, risk-size filters, session windows, one open position per portfolio and gap skips can limit growth. Signals are portfolio counts, not independent evidence.',
+  };
+  const research = { last_attempt: latest?.at || null, error: latest?.ok === false ? latest.error : null, last_success: history?.at || null,
+    id: history?.id || null, dataset_hash: history?.dataset_hash || null, data: history?.data || null,
+    target_per_strategy: MIN_TRADES, quota_met: strategies.every((r) => r.today.studied >= MIN_TRADES),
+    note: 'Daily target, not a quota: no forced entries, timeframe changes or duplicate experiment samples. Historical and OOS overlap and are never summed. Public data availability/usage rights limit research.',
+  };
+  return { paper_only: true, day: today, timezone: 'CME research day, America/New_York 18:00 boundary', strategies, research, diagnostics,
+    leader: eligible[0] ? { id: eligible[0].id, metric: 'forward baseline expectancy after costs', provisional: true } : null,
+    daily_report: `${today}: ${strategies.reduce((n, r) => n + r.today.trades, 0)} unique baseline forward trades closed; ${strategies.reduce((n, r) => n + r.today.studied, 0)} outcomes in today's latest historical baseline. ${eligible[0] ? `Provisional forward expectancy leader: ${eligible[0].name}.` : 'No strategy has the minimum forward sample for a ranking.'} Live trading remains disabled.` };
 }

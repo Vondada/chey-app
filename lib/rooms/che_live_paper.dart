@@ -7,6 +7,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
+import 'che_strategy_learning.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -35,10 +36,11 @@ String _clock(Object? iso) {
 }
 
 class CheLivePaperPanel extends StatefulWidget {
-  const CheLivePaperPanel({super.key, required this.baseUrl, required this.headers, required this.onAsk, this.client, this.refresh = const Duration(seconds: 30)});
+  const CheLivePaperPanel({super.key, required this.baseUrl, required this.headers, required this.onAsk, this.onRead, this.client, this.refresh = const Duration(seconds: 30)});
   final String Function() baseUrl;
   final Map<String, String> Function() headers;
   final void Function(String prompt) onAsk;
+  final void Function(String)? onRead;
   final http.Client? client;
   final Duration refresh;
 
@@ -54,6 +56,9 @@ class _CheLivePaperPanelState extends State<CheLivePaperPanel> {
   bool _busy = false;
   Timer? _timer;
   final Set<String> _open = {};
+  bool _notifyCloses = false;
+  Set<String>? _seenClosures;
+  bool _loading = false;
 
   @override
   void initState() {
@@ -69,6 +74,8 @@ class _CheLivePaperPanelState extends State<CheLivePaperPanel> {
   }
 
   Future<void> _load() async {
+    if (_loading) return;
+    _loading = true;
     try {
       final r = await _http.get(Uri.parse('${widget.baseUrl()}/api/trading/live'), headers: widget.headers()).timeout(const Duration(seconds: 20));
       final j = jsonDecode(utf8.decode(r.bodyBytes));
@@ -78,9 +85,24 @@ class _CheLivePaperPanelState extends State<CheLivePaperPanel> {
         setState(() => _error = j is Map && j['detail'] != null ? '${j['detail']}' : 'Paper trading records are not available from CHE yet (${r.statusCode}).');
         return;
       }
+      final learning = j['learning'];
+      final closures = <String>{};
+      if (learning is Map) for (final row in (learning['strategies'] as List? ?? const [])) {
+        if (row is Map) for (final trade in (row['recent_trades'] as List? ?? const [])) {
+          if (trade is Map && trade['entry'] is Map && trade['exit'] is Map) closures.add('${row['id']}|${trade['side']}|${trade['entry']['time']}');
+        }
+      }
+      final added = _seenClosures == null ? 0 : closures.difference(_seenClosures!).length;
+      _seenClosures = {...?_seenClosures, ...closures};
+      if (_notifyCloses && added > 0 && TickerMode.valuesOf(context).enabled && (ModalRoute.of(context)?.isCurrent ?? true)) {
+        HapticFeedback.lightImpact();
+        ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(content: Text('$added newly reported unique forward-paper trade${added == 1 ? '' : 's'} closed. Read the daily report for results.')));
+      }
       setState(() { _d = Map<String, dynamic>.from(j); _error = ''; });
     } catch (e) {
       if (mounted) setState(() => _error = 'Could not reach CHE for the paper trading records.');
+    } finally {
+      _loading = false;
     }
   }
 
@@ -101,6 +123,24 @@ class _CheLivePaperPanelState extends State<CheLivePaperPanel> {
     } catch (_) {
       HapticFeedback.heavyImpact();
       if (mounted) setState(() => _status = 'Not changed: CHE did not answer.');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _research() async {
+    if (_busy) return;
+    setState(() { _busy = true; _status = 'Replaying available five-minute history; no orders.'; });
+    try {
+      final response = await _http.post(Uri.parse('${widget.baseUrl()}/api/trading/live'),
+        headers: {...widget.headers(), 'content-type': 'application/json'}, body: jsonEncode({'action': 'backtest'})).timeout(const Duration(seconds: 90));
+      final result = jsonDecode(utf8.decode(response.bodyBytes));
+      if (!mounted) return;
+      setState(() => _status = response.statusCode == 200 && result is Map && result['ok'] == true
+        ? 'Research recorded. No forward trades or live permissions were added.' : 'Research not completed: ${result is Map ? result['error'] ?? result['detail'] : response.statusCode}');
+      await _load();
+    } catch (_) {
+      if (mounted) setState(() => _status = 'Research response unavailable. Refresh to verify the actual run before retrying.');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -160,6 +200,15 @@ class _CheLivePaperPanelState extends State<CheLivePaperPanel> {
     final backtest = d['backtest'] is Map ? Map<String, dynamic>.from(d['backtest'] as Map) : null;
 
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      if (_error.isNotEmpty) Text('Stale records: $_error', style: const TextStyle(color: _gold)),
+      if (d['learning'] is Map) CheStrategyLearningDashboard(
+        data: Map<String, dynamic>.from(d['learning'] as Map), onAsk: widget.onAsk, onRead: widget.onRead, onResearch: _busy ? null : _research,
+      ),
+      SwitchListTile(
+        title: const Text('Notify after verified paper closes'),
+        subtitle: const Text('Quiet banner and haptic while this room is open; off by default. No background push or orders.'),
+        value: _notifyCloses, onChanged: (value) => setState(() => _notifyCloses = value),
+      ),
       Row(children: [
         const Expanded(child: Text('LIVE PAPER TRADING', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w900, letterSpacing: 1.2))),
         _badge('PAPER', _up, label: 'Account: paper only, no real money'),
@@ -207,7 +256,7 @@ class _CheLivePaperPanelState extends State<CheLivePaperPanel> {
       GridView.count(
         crossAxisCount: 3, shrinkWrap: true, physics: const NeverScrollableScrollPhysics(), mainAxisSpacing: 8, crossAxisSpacing: 8, childAspectRatio: 1.25,
         children: [
-          _stat('Closed trades', '$n'),
+          _stat('Portfolio records', '$n'),
           _stat('Won / lost', '${totals['wins'] ?? 0} / ${totals['losses'] ?? 0}'),
           _stat('Win rate', totals['win_rate'] == null ? '—' : '${totals['win_rate']}%'),
           _stat('Net after costs', _money(totals['net_pnl']), color: (_num(totals['net_pnl']) ?? 0) >= 0 ? _up : _down),
@@ -238,7 +287,7 @@ class _CheLivePaperPanelState extends State<CheLivePaperPanel> {
           ),
         ),
       const SizedBox(height: 12),
-      const Text('Strategies (forward paper)', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800)),
+      const Text('Portfolio variants (correlated forward paper)', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800)),
       if (ranking.isEmpty) const Padding(padding: EdgeInsets.symmetric(vertical: 6), child: Text('No strategy has closed a trade yet.', style: TextStyle(color: _dim))),
       for (final s in ranking.take(12))
         Semantics(

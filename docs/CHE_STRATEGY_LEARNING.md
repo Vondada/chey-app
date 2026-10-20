@@ -1,0 +1,27 @@
+# Strategy learning and live readiness
+
+Owner priority, 2026-10-20. Existing `trading_live.js` and `trading_evidence.js` remain the sole five-minute research/forward engines. No broker execution is added.
+
+## Evidence and cards
+
+`GET /api/trading/live` includes `learning`: EMA Pullback first, VWAP second, then every registered intraday strategy. A card's primary forward statistics are the current strategy-version's predeclared `any` filter / default-target portfolio. Identical entries are counted once. Variant records remain available with their version, target and statistics; no cross-parameter/version P&L is pooled. Identical any/trend outcomes are reported as duplicates; shared entries with different outcomes are flagged as correlated. Portfolio totals retained for compatibility are explicitly labeled portfolio records in the UI.
+
+Cards show unique samples toward 30, wins/losses, win rate, expectancy in R, net after assumed costs, profit factor (unknown if no losses), maximum drawdown, baseline equity and recent trade receipts. A sample threshold is never live readiness. Seven separate milestones cover history, OOS, forward paper, feed, risk, broker and owner approval. Positive statistical evidence is marked for review, not certified. All cards remain live-locked. Broker paper receipts are separate and unattributed unless the broker has an actual strategy link; live execution is disabled, not represented as a successful zero-trade live strategy.
+
+## Reproducible accelerated research
+
+The existing historical replay requests up to 60 days of available five-minute history. It refuses interval substitutions, invalid candles and forming bars; it never fabricates setups. The fixed strategy/parameter grid includes default any/trend portfolios and target-R experiments, all archived. Strategies such as VWAP use their written target rules even where a target-R input is immaterial; experiments never count as independent samples. All outcomes, costs, parameters, strategy versions and complete dataset candles are saved in bounded chunks. A SHA-256 identifies the dataset and another identifies its version/configuration grid. Repeating identical data/config returns the same experiment. Prior legacy summaries and failed attempts are retained.
+
+The first 40% of bar time is training; four consecutive held-out windows use frozen rules. Trades crossing a split boundary are purged from held-out counts. These are exploratory historical evaluations, not a guarantee of independence after parameter selection. Historical and OOS samples overlap and are never added. `live_research_seen` records version/entry identities, so overlapping data windows do not inflate newly studied counts. Forward results are never written by replay.
+
+Research runs at most daily on the existing deterministic hourly paper alarm while paper learning is enabled, with hourly failure cooldown. Explicit replay is available in Trading Room. An expiring storage lease prevents overlapping research operations. No extra scheduler, model call, paid data provider, broker action or alternate engine is added. The target is 30 newly studied valid outcomes per strategy/research day when data and genuine setups permit; shortfall is visible, never filled by forcing entries. Available public data has provider limits and is not certified execution-grade or an entitlement for redistribution.
+
+## Daily report, accessibility and diagnostics
+
+The existing deterministic live-chat handler reads strategy progress/readiness without dispatching research or orders. Trading Room shows the daily unique forward closes, wins/losses, expectancy change and newly studied historical outcomes, plus source-separated details. Manual reading uses the existing read-on-demand speech override. Optional quiet banner/haptic close notifications apply only while the Trading Room is open; they default off and do not imply background push delivery.
+
+Diagnostics expose last pass/error, CME session, feed delay, cadence, signal/fill/gap-skip counters and missed feed windows. Normal constraints include closed five-minute bar cadence, delayed Yahoo futures data, session-specific signals, 6–60 point risk filter, one position per portfolio and the daily break. An overdue recorded pass is distinguished from a quiet successful pass. Incomplete one-minute buckets were incorrectly aggregated as valid five-minute bars; aggregation now requires all contiguous minutes. Historical gaps remain visible limitations, not fabricated prices.
+
+## Verification limits
+
+Fixture tests use genuine engine-generated outcomes and explicitly seeded records, never production claims. Production records must be checked through the authorized deploy trading probe. SDK/CI, runtime health and iPhone results are recorded in the PR and LIVE-HANDOFF only after actual evidence. Device installation/hearing is not inferable from publishing a patch.

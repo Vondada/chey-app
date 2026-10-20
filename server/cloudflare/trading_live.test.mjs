@@ -346,3 +346,105 @@ test('comprehension audit: the owner\'s own words for paper results read the jou
     assert.equal(liveIntent(q)?.kind, 'performance', q);
   }
 });
+
+// Owner strategy learning dashboard: evidence is unique entries, not portfolio copies.
+test('learning cards deduplicate identical any/trend entries and keep every source separate', async () => {
+  const { strategyLearning } = await import('./trading_live.js');
+  const storage = memoryStorage();
+  await setLivePaper(storage, true);
+  await liveTick(storage, { force: true, load: feedOf(DAY1), now: after(DAY1) });
+  await liveTick(storage, { force: true, load: feedOf([...DAY1, ...DAY2]), now: after(DAY2) });
+  const records = await readTrades(storage, (t) => t.environment === 'paper');
+  const sweep = records.filter((t) => t.strategy === 'pdhl-sweep-5m');
+  assert.ok(sweep.length >= 1);
+  const { appendTrades } = await import('./trading_evidence.js');
+  const trend = newPortfolio('pdhl-sweep-5m', 'trend', { contract: 'MNQ', resolution: '5m' });
+  await appendTrades(storage, [{ ...sweep[0], portfolio: trend.key, filter: 'trend', strategy_version: trend.strategy_version }]);
+  const result = await strategyLearning(storage, { now: after(DAY2) });
+  const row = result.strategies.find((r) => r.id === 'pdhl-sweep-5m');
+  assert.equal(row.forward.trades, 1, 'one entry seen by any and trend is one sample');
+  assert.equal(row.raw_records, sweep.length + 1);
+  assert.equal(row.duplicates, sweep.length);
+  assert.equal(row.progress.target, 30);
+  assert.equal(row.live_ready, false);
+  assert.equal(row.milestones.find((m) => m.id === 'owner').status, 'blocked');
+  assert.equal(row.historical, null);
+  assert.equal(row.broker_paper.status, 'not_attributed');
+  assert.equal(row.live_execution.status, 'disabled');
+  assert.equal(result.strategies[0].id, 'ema-pullback-5m');
+  assert.equal(result.strategies[1].id, 'vwap-revert-5m');
+});
+
+test('research archives reproducible 5-minute experiments and never turns replays into paper trades', async () => {
+  const { LIVE_RESEARCH_PREFIX, strategyLearning, liveBacktest } = await import('./trading_live.js');
+  const storage = memoryStorage();
+  const bars = [...DAY1, ...DAY2];
+  const load = async () => ({ status: 'DELAYED', interval: '5m', provider: 'licensed test fixture', provider_symbol: 'MNQ=F', candles: bars });
+  const first = await liveBacktest(storage, { load, now: after(bars) });
+  assert.equal(first.ok, true);
+  assert.match(first.dataset_hash, /^[a-f0-9]{64}$/);
+  assert.equal(first.resolution, '5m');
+  assert.equal(first.target_per_strategy, 30);
+  assert.ok(first.rows.every((r) => r.strategy_version && r.params && r.walk_forward));
+  assert.equal((await readTrades(storage, (t) => t.environment === 'paper')).length, 0);
+  const again = await liveBacktest(storage, { load, now: after(bars) + 1000 });
+  assert.equal(again.id, first.id, 'repeating identical data/config is the same experiment, not new samples');
+  const archives = await storage.list({ prefix: LIVE_RESEARCH_PREFIX });
+  assert.equal(archives.size, 1);
+  const result = await strategyLearning(storage, { now: after(bars) });
+  assert.equal(result.strategies.find((r) => r.id === 'pdhl-sweep-5m').historical.trades, 1);
+  assert.equal(result.strategies.find((r) => r.id === 'pdhl-sweep-5m').forward.trades, 0);
+  assert.equal(result.research.quota_met, false, 'no fabricated outcomes to fill a quota');
+});
+
+test('incomplete minute buckets are not valid 5-minute evidence', () => {
+  const bars = oneMinute(DAY1.slice(0, 2));
+  assert.equal(aggregate(bars.filter((_, i) => i !== 2), 5, Date.parse(DAY1[2].t)).length, 1);
+});
+
+test('30 unique forward samples still cannot enable live execution or imply owner approval', async () => {
+  const { strategyLearning } = await import('./trading_live.js');
+  const { appendTrades } = await import('./trading_evidence.js');
+  const storage = memoryStorage();
+  await setLivePaper(storage, true);
+  await liveTick(storage, { force: true, load: feedOf(DAY1), now: after(DAY1) });
+  await liveTick(storage, { force: true, load: feedOf([...DAY1, ...DAY2]), now: after(DAY2) });
+  const seed = (await readTrades(storage, (t) => t.strategy === 'pdhl-sweep-5m' && t.filter === 'any'))[0];
+  const entries = Array.from({ length: 35 }, (_, i) => {
+    const at = new Date(Date.parse(seed.entry.time) + (i + 1) * 300000).toISOString();
+    return { ...seed, entry: { ...seed.entry, time: at }, exit: { ...seed.exit, time: at } };
+  });
+  await appendTrades(storage, entries);
+  const row = (await strategyLearning(storage, { now: after(DAY2) })).strategies.find((r) => r.id === seed.strategy);
+  assert.equal(row.forward.trades, 36);
+  assert.equal(row.progress.fraction, 1);
+  assert.equal(row.live_ready, false);
+  assert.equal(row.milestones.filter((m) => ['owner', 'risk', 'broker', 'feed'].includes(m.id) && m.status === 'blocked').length, 4);
+});
+
+test('research failure preserves history and never changes a timeframe to meet its target', async () => {
+  const { liveBacktest, LIVE_BACKTEST, LIVE_RESEARCH_PREFIX } = await import('./trading_live.js');
+  const storage = memoryStorage();
+  storage.saved.set(LIVE_BACKTEST, { ok: true, at: '2026-10-19T23:00:00Z', rows: [], data: 'legacy history' });
+  const result = await liveBacktest(storage, { now: after(DAY2), load: async () => ({ status: 'REPLAY', interval: '1m', candles: oneMinute(DAY1) }) });
+  assert.equal(result.ok, false);
+  assert.match(result.error, /no timeframe substitution/);
+  assert.ok([...(await storage.list({ prefix: LIVE_RESEARCH_PREFIX })).values()].some((r) => r.data === 'legacy history'));
+});
+
+test('walk-forward purges trades that carry training or earlier fold exposure into a held-out window', async () => {
+  const { evaluateWalkForward } = await import('./trading_evidence.js');
+  const times = Array.from({ length: 20 }, (_, i) => new Date(Date.parse(DAY1[0].t) + i * 300000).toISOString());
+  const t = { net_pnl: 1, r_net: 1, costs: { spread: 0, slippage: 0, commissions: 0, fees: 0 }, side: 'long' };
+  const result = evaluateWalkForward([
+    { ...t, entry: { time: times[5] }, exit: { time: times[9] } },
+    { ...t, entry: { time: times[9] }, exit: { time: times[12] } },
+    { ...t, entry: { time: times[12] }, exit: { time: times[13] } },
+  ], { barTimes: times, folds: 4, minTrain: 0.4 });
+  assert.equal(result.oos.length, 1);
+  assert.equal(result.oos[0].entry.time, times[12]);
+});
+
+test('learning and daily progress questions read records and never dispatch research or orders', () => {
+  for (const message of ['Read my strategy learning progress and live readiness.', 'Show my daily strategy report.']) assert.equal(liveIntent(message).kind, 'learning');
+});

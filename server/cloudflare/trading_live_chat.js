@@ -13,6 +13,7 @@ const COMMANDS = [
 // Every read needs trading words of its own. One question can ask several (issue #350), and each
 // one asked is answered, in the order asked.
 const READS = [
+  ['learning', /\b(?:strategy learning|live readiness|strategy (?:daily |learning )?progress|daily strategy report)\b/i],
   ['why', /\b(?:explain|why)\b[\s\S]{0,40}\b(?:that|the\s+last|last|this|your\s+last)\s+trade\b[\s\S]{0,25}\b(?:lost|lose|won|win|worked|failed)\b|\bwhy\s+did\s+(?:that|the\s+last|your\s+last)\s+trade\s+(?:lose|win|fail|work)\b|\bexplain\s+(?:the\s+|your\s+)?last\s+(?:losing|winning)\s+trade\b/i],
   ['chart', /\bshow\b[\s\S]{0,25}\bchart\b[\s\S]{0,30}\b(?:you\s+)?(?:entered|entry|exited)\b|\bshow\s+me\s+where\s+you\s+(?:entered|exited)\b/i],
   ['positions', /\b(?:your|my|paper)\s+(?:current\s+|open\s+)?(?:paper\s+)?positions?\b|\bcurrent\s+(?:paper\s+)?positions?\b/i],
@@ -139,6 +140,7 @@ export function marketRead(bars = []) {
 
 /** The reply for one command, from the dashboard data. `extra.started` etc. come from the route. */
 export function liveReply(kind, d, extra = {}) {
+  if (kind === 'learning') return [d.learning?.daily_report || 'No strategy learning report is available yet.', ...(d.learning?.strategies || []).map((r) => `${r.name}: ${r.forward.trades} unique forward trades, ${r.forward.wins} wins, ${r.forward.losses} losses, expectancy ${r.forward.expectancy_r} R, net ${money(r.forward.net_pnl)}. Next: ${r.next_milestone}.`)].join(' ');
   const t = d.totals;
   const head = 'Paper trading only; no real money and no broker orders.';
   switch (kind) {

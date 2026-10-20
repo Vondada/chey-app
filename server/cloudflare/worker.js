@@ -64,7 +64,7 @@ import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook,
 import { nextStrategySimTickAt, setStrategySimCeiling, setStrategySimPaused, speakStrategySim, strategySimIntent, strategySimTick, strategySimView, strategySimWake } from './strategy_sim.js';
 import { evidenceIntent, evidenceReport, evidenceTick } from './trading_evidence_runner.js';
 import { ATLAS_SOURCE, answerAtlas, atlasHiddenAction, atlasIntent, atlasQuizAnswerTurn, atlasPromptContext, atlasResetAsk, atlasResetIntent, projectAtlasToBrain, resetAtlasProgress } from './knowledge_atlas.js';
-import { LIVE_BACKTEST, LIVE_RUNS, LIVE_STATE, liveBacktest, liveDashboard, livePaperSummary, liveTick, nextLiveTickAt, setLivePaper } from './trading_live.js';
+import { LIVE_BACKTEST, LIVE_RUNS, LIVE_STATE, liveBacktest, liveDashboard, livePaperSummary, liveTick, researchDue, nextLiveTickAt, setLivePaper } from './trading_live.js';
 import { cmeSession } from './market_feed.js';
 import { alpacaKeys, alpacaPaperOrders, alpacaStatus, liveKeyProblem, placeAlpacaPaperOrder, removeAlpacaPaperKeys, saveAlpacaPaperKeys } from './broker_alpaca.js';
 import { speakConnections, speakTradovateSteps, tradingConnections } from './trading_connections.js';
@@ -3662,6 +3662,7 @@ export class CheState extends DurableObject {
       trades: d.trades.slice(0, 10).map(brief),
       signals: d.signals.slice(-10),
       broker: d.broker,
+      learning: d.learning,
       backtest: d.backtest ? {
         at: d.backtest.at, ok: d.backtest.ok, error: d.backtest.error || null, data: d.backtest.data,
         rows: (d.backtest.rows || []).map((r) => ({ strategy: r.strategy, filter: r.filter, target_r: r.target_r, trades: r.stats.trades,
@@ -3684,6 +3685,7 @@ export class CheState extends DurableObject {
     // Strategy simulation (paper, minute bars): one alarm slot, so it runs here when due and scheduleWork arms its next minute.
     const simRun = await strategySimTick(this.ctx.storage, { now: opts.now, force: opts.force }).catch((error) => { console.error('Strategy simulation tick failed:', error?.message || error); return null; });
     if (simRun?.closed > 0) await queueRoomEvent(this.ctx.storage, { room: 'trading', kind: 'simulation_trades', key: `simulation:${simRun.at}`, title: `${simRun.closed} strategy simulation trade${simRun.closed === 1 ? '' : 's'} closed`, body: `The strategy simulation (1-minute paper strategies) closed ${simRun.closed} trade${simRun.closed === 1 ? '' : 's'} at ${simRun.at}; ${simRun.stored} stored in total. Read the ledger for the numbers.`, status: 'verified', evidence: [`strategy_sim_state ${simRun.at}`], refs: { ledger: 'strategy_simulation', run_at: simRun.at } }).catch(() => null);
+    await researchDue(this.ctx.storage, { now: opts.now }).catch((error) => console.error('Historical research failed:', error?.message || error));
     return book;
   }
 
