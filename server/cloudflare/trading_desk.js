@@ -8,6 +8,7 @@
 //          after the owner says "take the trade" (owner rule: anything that
 //          costs money is confirmed first).
 
+import { controlIntent } from './trading_controls.js';
 import { placeBracket, tick } from './broker_tradovate.js';
 import { withoutProhibitions } from './owner_action_gate.js';
 
@@ -142,6 +143,11 @@ export function deskIntent(message) {
   if (placeIt) return placeIt[1] ? { kind: 'take', place: true, live: false } : { kind: 'place_unconfirmed' };
   // A no to that order. With nothing waiting it is an ordinary "no" and goes on to its own route.
   if (/^\s*(?:no|nope|no thanks|no thank you|don't|dont|do not)(?:[,!.]?\s+(?:don't|dont|do not)\s+(?:place|send)\s+it)?[\s.!]*$|^\s*(?:no[,!.]?\s+)?(?:don't|dont|do not)\s+(?:place|send)\s+(?:it|that|the order|that order)[\s.!]*$|^\s*(?:no[,!.]?\s+)?(?:drop|cancel)\s+(?:it|that order|the order)[\s.!]*$/.test(text)) return { kind: 'stock_no' };
+  // Strategy Control Center words: pause, limits, Emergency Stop, skip reasons (trading_controls.js).
+  const control = controlIntent(message);
+  if (control) return control;
+  // "Show me my Alpaca trades", "How is my Alpaca paper account doing?": the Alpaca PAPER dashboard (owner, 2026-10-20).
+  if (/\b(?:what|which|show|list|read|tell me|check|any|how|open|see|watch|pull up|bring up)\b[\s\S]{0,40}\balpaca\b[\s\S]{0,25}\b(?:trades?|fills?|positions?|account|portfolio|dashboard|equity|p\s*&\s*l|pnl|performance|executions?)\b/.test(text)) return { kind: 'alpaca_dashboard' };
   if (/\b(?:what|which|show|list|read|tell me|check|any)\b[\s\S]{0,30}\b(?:alpaca(?:\s+paper)?|paper)\s+orders?\b|^\s*(?:my\s+)?alpaca(?:\s+paper)?\s+orders\s*[?.!]*$|\b(?:did|has)\b[\s\S]{0,25}\b(?:alpaca(?:\s+paper)?|paper)\s+orders?\b[\s\S]{0,20}\bfill/.test(text)) return { kind: 'alpaca_orders' };
   // "What do I need for Tradovate?", "Tradovate steps": Tradovate's own requirements, read as a list.
   if (/\b(?:what|which)\b[\s\S]{0,30}\b(?:need|required|requirements?|steps?|prerequisites?|blocking|missing)\b[\s\S]{0,30}\b(?:tradovate|ninja\s?trader)\b|\b(?:tradovate|ninja\s?trader)(?:\s+api)?\s+(?:steps|requirements|prerequisites)\b|\bhow\s+(?:do|can)\s+i\s+get\b[\s\S]{0,20}\b(?:tradovate|ninja\s?trader)\b[\s\S]{0,15}\bapi\b/.test(text)) return { kind: 'tradovate_steps' };

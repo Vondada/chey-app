@@ -1545,6 +1545,84 @@
    "optional_missing": []
   },
   {
+   "id": "trade-controls",
+   "category": "trading",
+   "title": "Trade Controls",
+   "summary": "Read or change your paper strategy limits.",
+   "does": "Reads each paper strategy's limits and state (maximum trades per day, default 30; size; paused or running), or changes them in your words: pause or resume one strategy, the ICT group or all; set or raise the daily maximum; stop new entries; restore the previous settings. A change that raises risk is read back with its impact and applied only after \"yes, confirm\". Every change is audited. Paper only.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "What are my trading limits?",
+    "Pause the ICT strategy",
+    "Set every strategy to 30 per day",
+    "Increase the maximum trades",
+    "Why did this strategy skip that trade?"
+   ],
+   "needs": [
+    "office"
+   ],
+   "optional": [],
+   "handler": "trading_controls.controlIntent → applyControlChange / controlsView",
+   "route": "che_trading_controls",
+   "produces": "strategy limits",
+   "evidence": "The stored controls, the audit trail and the live portfolios' own skip records.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "limits",
+    "controls",
+    "pause strategy",
+    "resume strategy",
+    "max trades",
+    "trades per day",
+    "ict",
+    "skip",
+    "stop new entries"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "trade-emergency",
+   "category": "trading",
+   "title": "Trade Emergency",
+   "summary": "Emergency Stop: block entries and cancel unfilled paper orders.",
+   "does": "Acts at once: blocks new entries for every strategy, cancels unfilled orders in CHE's MNQ paper simulations and on Alpaca PAPER, writes an audit record, and says which positions remain open. It never closes positions; \"flatten\" does that only after you confirm. Say \"allow new entries\" to clear it.",
+   "mode": "BUILD",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Emergency stop",
+    "Kill switch"
+   ],
+   "needs": [
+    "office"
+   ],
+   "optional": [],
+   "handler": "trading_controls.applyControlChange(emergency_stop) → haltLivePaper / haltAlpacaPaper",
+   "route": "che_trading_controls",
+   "produces": "what was stopped and what remains open",
+   "evidence": "The cancellations Alpaca confirmed and the simulations' own records.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "emergency stop",
+    "kill switch",
+    "halt",
+    "stop trading"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
    "id": "trade-execute",
    "category": "trading",
    "title": "Trade Execute",

@@ -10,7 +10,9 @@ import { aggregate, cmeSession, frontMonth, liveFeedBlocker, loadIntraday } from
 import {
   CONTRACTS, COSTS, INTRADAY_CANDIDATES, INTRADAY_COMMON_RULES, INTRADAY_FILTERS, MIN_TRADES, appendTrades, breakdown, candleProblems,
   evaluateWalkForward, intradayContext, newPortfolio, readTrades, stepPortfolio, summarize, validateTradeRecord,
+  tradeDayOf,
 } from './trading_evidence.js';
+import { makeEntryGate, readControls } from './trading_controls.js';
 
 export const LIVE_STATE = 'live_paper_state';
 export const LIVE_PORTFOLIOS = 'live_paper_portfolios';
@@ -42,6 +44,7 @@ const seriesName = (source) => `Yahoo ${source === 'backtest' ? 'MNQ=F 5-minute 
 function freshPortfolio(spec, source = 'paper') {
   const pf = newPortfolio(spec.c, spec.f, { contract: 'MNQ', qty: 1, source, resolution: RESOLUTION, priceSeries: seriesName(source), params: { target_r: spec.target_r } });
   pf.signals = [];
+  pf.skips = [];
   return pf;
 }
 
@@ -49,7 +52,7 @@ export async function readLivePortfolios(storage) {
   const saved = (await storage.get(LIVE_PORTFOLIOS)) || {};
   return liveSpecs().map((spec) => {
     const fresh = freshPortfolio(spec);
-    return saved[fresh.key] ? { signals: [], ...saved[fresh.key] } : fresh;
+    return saved[fresh.key] ? { signals: [], skips: [], ...saved[fresh.key] } : fresh;
   });
 }
 
@@ -85,6 +88,33 @@ export async function setLivePaper(storage, enabled, now = Date.now()) {
 }
 
 /** When the next minute pass is due, or null when paper trading is off. */
+/**
+ * Emergency Stop and Flatten on the forward-paper portfolios. Emergency Stop cancels every order
+ * that has not filled (a pending signal) and lists the positions that stay open with their stops
+ * and targets; Flatten (owner-confirmed) also closes the open positions as voided records, never
+ * at an invented price. Nothing is deleted: each cancelled or voided item is kept with its reason.
+ */
+export async function haltLivePaper(storage, { flatten = false, now = Date.now(), reason = 'Emergency Stop' } = {}) {
+  const saved = (await storage.get(LIVE_PORTFOLIOS)) || {};
+  const at = new Date(now).toISOString();
+  const cancelled = []; const voided = []; const open = [];
+  for (const pf of Object.values(saved)) {
+    if (pf.pending) {
+      cancelled.push({ kind: 'cancelled', at, portfolio: pf.key, strategy: pf.candidate, pending: pf.pending, reason: `${reason}: the order had not filled` });
+      pf.pending = null;
+    }
+    if (pf.open && flatten) {
+      voided.push({ kind: 'voided', at, portfolio: pf.key, strategy: pf.candidate, open: pf.open, reason: 'flattened by the owner; closed without a market price, so it is not a result' });
+      pf.open = null;
+    } else if (pf.open) {
+      open.push({ portfolio: pf.key, strategy: pf.candidate, filter: pf.filter, side: pf.open.side, entry: pf.open.entry?.raw ?? null, stop: pf.open.stop, target: pf.open.target, qty: pf.qty, contract: pf.contract });
+    }
+  }
+  await exclude(storage, [...cancelled, ...voided]);
+  if (cancelled.length || voided.length) await storage.put(LIVE_PORTFOLIOS, saved);
+  return { cancelled: cancelled.length, flattened: voided.length, open };
+}
+
 export async function nextLiveTickAt(storage, now = Date.now()) {
   const state = await storage.get(LIVE_STATE);
   if (!state?.enabled) return null;
@@ -113,6 +143,15 @@ export function postTradeReview(t) {
 
 const feedOf = (feed) => ({ authenticated: Boolean(feed.authenticated), subscription_verified: Boolean(feed.subscription_verified), status: feed.status, provider: feed.provider, provider_symbol: feed.provider_symbol, contract: feed.contract, latency_s: feed.latency_s ?? null, last_bar_time: feed.last_bar_time ?? null });
 
+// Closed 5-minute bars for the engine. A verified provider stream already delivers closed 5-minute
+// bars (Tradovate MinuteBar, elementSize 5), kept only once their 5 minutes are over; Yahoo's
+// 1-minute bars are summed into 5 minutes, volume included.
+function closedFiveMinuteBars(feed, now) {
+  if (feed.interval === RESOLUTION) return feed.candles.filter((b) => Date.parse(b.t) + 300000 <= now);
+  const bars = aggregate(feed.candles, 5, now);
+  return bars;
+}
+
 /**
  * One forward-paper pass: newest closed bars, each portfolio stepped from where it
  * stopped, closed trades journalled (validated, append-only), state saved, run logged.
@@ -133,7 +172,7 @@ export async function liveTick(storage, { fetcher = fetch, now = Date.now(), for
       run.error = feed.error;
       await storage.put(LIVE_FEED, { ...feedOf(feed), error: feed.error, checked_at: feed.checked_at, session, bars: ((await storage.get(LIVE_FEED)) || {}).bars || [] });
     } else {
-      const bars = feed.interval === RESOLUTION ? feed.candles.filter((b) => Date.parse(b.t) + 300000 <= now) : aggregate(feed.candles, 5, now);
+      const bars = closedFiveMinuteBars(feed, now);
       const problems = candleProblems(bars);
       if (problems.length) {
         run.error = `data refused: ${problems.join('; ')}`;
@@ -143,16 +182,26 @@ export async function liveTick(storage, { fetcher = fetch, now = Date.now(), for
         const newest = bars[bars.length - 1].t;
         // Forward only: a new portfolio starts at the newest closed bar, so history is never journalled as paper.
         for (const pf of portfolios) if (pf.last_bar_time == null) Object.assign(pf, { last_bar_time: newest, started_from: newest });
+        // Two entry gates, both required: the real-time evidence gate (a delayed, replayed, stale or
+        // unsubscribed feed opens nothing) and the owner's controls (trading_controls.js).
         const barAge = now - Date.parse(newest) - 300000;
         const allowEntries = barAge >= 0 && barAge <= 90000 && feed.status === 'LIVE' && feed.authenticated === true && feed.subscription_verified === true && Number.isFinite(feed.latency_s) && feed.latency_s <= 15;
         run.entries_allowed = allowEntries;
         run.entry_blocker = allowEntries ? null : 'New forward-paper entries require fresh authenticated and subscribed real-time CME delivery. Delayed/replay/stale data cannot open positions.';
+        // The owner's controls (trading_controls.js) decide whether a valid signal may enter.
+        const controls = await readControls(storage);
+        const today = tradeDayOf(now);
+        const realizedToday = (await readTrades(storage, isLive))
+          .filter((t) => tradeDayOf(t.exit?.time || 0) === today).reduce((sum, t) => sum + (Number(t.net_pnl) || 0), 0);
+        const gate = makeEntryGate(controls, { realized_today: realizedToday, open_positions: portfolios.filter((pf) => pf.open || pf.pending).length });
         const closed = [];
         for (const pf of portfolios) {
           pf.feed = feedOf(feed);
+          // A size change applies from the next entry, never to an open position or a placed order.
+          if (!pf.open && !pf.pending) pf.qty = controls.strategies[pf.candidate]?.qty || pf.qty;
           const before = pf.counts.signals;
           pf.price_series = `${feed.provider} ${feed.provider_symbol} ${RESOLUTION} (${feed.status})`;
-          closed.push(...stepPortfolio(pf, bars, ctx, { allowEntries }));
+          closed.push(...stepPortfolio(pf, bars, ctx, gate, { allowEntries }));
           run.signals = (run.signals || 0) + pf.counts.signals - before;
         }
         const valid = [];

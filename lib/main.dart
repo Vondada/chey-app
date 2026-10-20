@@ -114,6 +114,8 @@ import 'self_update/che_update_screen.dart';
 import 'self_update/che_update_card.dart';
 import 'self_update/che_self_update_intent.dart';
 import 'rooms/che_markets_room.dart';
+import 'rooms/che_alpaca_paper.dart';
+import 'rooms/che_strategy_controls.dart';
 import 'rooms/che_store_room.dart';
 import 'rooms/che_pipeline_room.dart';
 import 'rooms/che_creator_studio.dart';
