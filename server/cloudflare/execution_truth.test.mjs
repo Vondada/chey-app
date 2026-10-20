@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, unlinkSync } from 'node:fs';
-import { RETRIEVAL_NOT_EVIDENCE, executeWithReceipt, guardExecutionClaims, guardRetrievalClaims, isExecutionReceipt } from './truth_layer.js';
+import { RETRIEVAL_NOTE, RETRIEVAL_NOT_EVIDENCE, executeWithReceipt, guardExecutionClaims, guardRetrievalClaims, isExecutionReceipt } from './truth_layer.js';
 import { runPluginTool } from './plugin_runtime.js';
 import vm from 'node:vm';
 import { loadPackedJson } from './prompt_compaction.js';
@@ -279,7 +279,7 @@ test('a model-written retrieval, storage key, record id, tool success or review 
     ['I retrieved the records from storage key simulation_trades and found the best one.', 'retrieval'],
     ['The best trade was sim-2023-03-10-001 with +$412.50.', 'record_id'],
     ['From journal_trades, the newest entry made +$180.', 'storage_key'],
-    ['According to the ledger, you are up $300 this week.', 'retrieval_source'],
+    ['According to my ledger, you are up $300 this week.', 'retrieval_source'],
     ['I also ran the lookup tool successfully and it returned the row.', 'tool_success'],
     ['The code review found no issues in the trading desk.', 'review_done'],
     ['I reviewed your code and the tests all pass.', 'review_done'],
@@ -290,7 +290,38 @@ test('a model-written retrieval, storage key, record id, tool success or review 
     assert.equal(guardRetrievalClaims(claim).removed[0]?.rule, rule, claim);
   }
   const whole = guardExecutionClaims(FABRICATED, { message: 'Which trade was the most profitable?' });
-  assert.equal(whole.text, RETRIEVAL_NOT_EVIDENCE);
+  assert.ok(whole.removed.length >= 1);
+  assert.doesNotMatch(whole.text, /sim-2023|paper-2023|simulation_trades|journal_trades|\$412|\$180|lookup tool/);
+  // One fabricated sentence inside an otherwise plain answer: that sentence goes, the rest stays, and the note says so.
+  const mixed = guardExecutionClaims('Your meeting is at 3, sir. I retrieved the records from my storage and the best trade made +$412.50 on 2023-03-10. The groceries are milk and eggs.', { message: 'what is on today?' });
+  assert.equal(mixed.text, `Your meeting is at 3, sir. The groceries are milk and eggs. ${RETRIEVAL_NOTE}`);
+  assert.deepEqual(mixed.removed, ['I retrieved the records from my storage and the best trade made +$412.50 on 2023-03-10.']);
+});
+
+test('ordinary honest answers about code, orders, keys and the owner\'s pasted text are never touched (review of PR #373)', () => {
+  for (const honest of [
+    'Return JSON. Fetch the row from the database, then send it with a 200 status.',
+    'Your function returned the promise instead of the value, so await it before using it.',
+    'Your Amazon order order-2026-10-18-0042 ships Friday, sir.',
+    'Use a storage key like session:<id> in Cloudflare KV and set a TTL.',
+    'The patient_records table needs an index on patient_id.',
+    'I checked your inbox and the logs you pasted: the error is on line 12.',
+    'That review found no issues with the battery.',
+    'The SQL query returned 0 rows because the filter is wrong.',
+    'The API call returned the token, which the client stores.',
+    'Keep the ledger table normalized and store the balance per account.',
+  ]) {
+    assert.equal(guardExecutionClaims(honest, { message: 'help me with this' }).removed.length, 0, honest);
+    assert.equal(guardRetrievalClaims(honest).removed.length, 0, honest);
+  }
+  // Code the owner pasted has been read, so a review of it is an honest sentence; without the paste it is not.
+  const review = 'I reviewed your code and found two problems: the loop is off by one and the return adds one.';
+  assert.equal(guardExecutionClaims(review, { message: 'review this code: function f(a){ for (let i=0;i<=a.length;i++) {} return a+1 }', documentRead: true }).removed.length, 0);
+  assert.equal(guardExecutionClaims(review, { message: 'did you review my repository?' }).removed.length, 1);
+  // One honest "not" in another sentence never covers a fabrication in this one.
+  const covered = guardExecutionClaims('The journal is not summed with the simulation. I retrieved the records from my storage and the best trade made +$412.50 on 2023-03-10.', { message: 'and?' });
+  assert.deepEqual(covered.removed, ['I retrieved the records from my storage and the best trade made +$412.50 on 2023-03-10.']);
+  assert.equal(guardRetrievalClaims('I retrieved the records from my storage without issue: +$180.').removed.length, 1);
 });
 
 test('a denial, a plain answer and a real receipt pass; flagOnly keeps the sentence marked', () => {

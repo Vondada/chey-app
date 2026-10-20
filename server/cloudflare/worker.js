@@ -11278,7 +11278,7 @@ export class CheState extends DurableObject {
           })),
         ];
         // Final owner-facing boundary: keep internal provider/model failover chatter out of chat and TTS.
-        reply = guardExecutionClaims(sanitizeOwnerText(reply, { truncate: false }), { message: rawMessage, receipts: skillResults.map((r) => r.execution_receipt) }).text;
+        reply = guardExecutionClaims(sanitizeOwnerText(reply, { truncate: false }), { message: rawMessage, receipts: skillResults.map((r) => r.execution_receipt), documentRead: Boolean(multimodal?.summary || body.screen_context || pastedText) }).text;
         // This answer's own receipt, keyed to its text, for "how do you know that?".
         await recordAnswerEvidence(this.ctx.storage, reply, answerReceipt, { attributions_removed: attribution.removed.length });
         // Sentence-sized deltas: the Flutter client paints/speaks the first

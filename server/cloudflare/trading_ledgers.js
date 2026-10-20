@@ -54,7 +54,9 @@ export const LEDGERS = Object.freeze([
 // ─── The question ─────────────────────────────────────────────────────────
 
 const WAKE = /^\s*(?:(?:hey\s+)?(?:che|chay|chey)[,:]?\s+)?/i;
-const TRADE_WORDS = /\btrad(?:e|es|ed|ing|er)\b|\bstrateg(?:y|ies)\b|\bprofit\w*|\bwin\s+rate\b|\bledgers?\b|\brecords?\b|\bp\s*&\s*l\b|\bpnl\b|\bjournal\b|\bsimulat(?:ion|or)\b|\bpositions?\b/i;
+// Trading words proper. "Record", "position" and a bare "journal" are not: "a record of my dentist appointment",
+// "your last position at the company" and "your last journal entry" are other routes' (review of PR #373).
+const TRADE_WORDS = /\btrad(?:e|es|ed|ing|er)\b|\bstrateg(?:y|ies)\b|\bprofit\w*|\bwin\s+rate\b|\bledgers?\b|\bp\s*&\s*l\b|\bpnl\b|\bpaper\s+journal\b|\bsimulat(?:ion|or)\b/i;
 const NAMED = {
   strategy_simulation: /\bstrateg(?:y|ies)\s+sim(?:ulation)?\b|\bsimulat(?:ion|or)(?:'s)?\b|\bsim\s+trades?\b/i,
   // "Trading journal" and "my trading journal" are the Trading Lab's book (the /trade-journal command, trading_lab.speakBook).
@@ -65,8 +67,8 @@ const NAMED = {
 };
 // The desk's simulated account is NinjaTrader's, not this simulation (same rule as strategySimIntent).
 const DESK_SIM = /\bsimulat(?:ion|ed)\s+(?:trading|account|accounts|mode)\b|\bbroker\s+simulation\b|\bswitch\s+to\s+simulation\b/i;
-// A made-up record id looks like sim-2023-03-10-001; CHE's own ids never do.
-const RECORD_ID = /\b[a-z]{2,10}[-_](?:\d{4}-\d{2}-\d{2}|\d{8})[-_]\d{2,}\b/i;
+// A made-up trade record id looks like sim-2023-03-10-001; CHE's own ids never do, and an order or ticket id is not a trade.
+const RECORD_ID = /\b(?:sim|paper|trade|journal|evidence|ledger|strategy|fill|position)[-_](?:\d{4}-\d{2}-\d{2}|\d{8})[-_]\d{2,}\b/i;
 const KINDS = [
   ['record', /\b(?:pull|show|read|find|look\s+up|retrieve|open|fetch|get)\b[^.!?\n]{0,40}\brecord\b|\brecord\s+(?:for|of|named|called)\b/i],
   ['storage', /\bstorage\s+keys?\b|\bwhich\s+keys?\b|\bwhere\s+(?:do\s+you|is|are|does)\b[^.!?\n]{0,30}\b(?:store|stored|kept|saved|live|held)\b|\bunder\s+what\s+key\b/i],
@@ -81,7 +83,9 @@ const KINDS = [
 /** Which record sets the owner named and what he asked of them, or null when another route owns the turn. */
 export function ledgerIntent(message) {
   const text = String(message || '').replace(/[’']/g, "'").replace(WAKE, '').trim();
-  if (!text || text.length > 1200 || !TRADE_WORDS.test(text)) return null;
+  if (!text || text.length > 1200) return null;
+  const recordId = RECORD_ID.exec(text)?.[0] || '';
+  if (!TRADE_WORDS.test(text) && !recordId) return null;
   // Orders, desk reads and the simulation's own controls (pause, resume, the plain status forms) keep
   // their routes and their holds; a specific read of the simulation ("its best strategy") is answered here.
   const sim = strategySimIntent(text);
@@ -90,9 +94,10 @@ export function ledgerIntent(message) {
   // A coding, messaging or peer request that mentions trading belongs to its own route.
   if (/\b(?:code|coding|feature|function|bug|fix|pull\s+request|commit|deploy|e-?mail|mailbox|youtube|video|website)\b|\b(?:ask|tell)\s+(?:claude|chatgpt|codex|gemini|cursor|copilot|grok)\b/i.test(text)) return null;
   const ledgers = LEDGERS.filter((l) => NAMED[l.id].test(text)).map((l) => l.id);
-  const recordId = RECORD_ID.exec(text)?.[0] || '';
   const kinds = KINDS.filter(([, re]) => re.test(text)).map(([kind]) => kind);
-  if (recordId && /\brecord\b|\btrade\b|\bentry\b|\bpull\b|\bshow\b|\blook\s+up\b/i.test(text) && !kinds.includes('record')) kinds.unshift('record');
+  if (recordId && !kinds.includes('record')) kinds.unshift('record');
+  // "Pull the record" with no trade record id is a memory or document question, not a ledger read.
+  if (kinds[0] === 'record' && !recordId) { kinds.shift(); if (!ledgers.length) return null; }
   if (sim && ledgers.length <= 1 && !kinds.length && !recordId) return null;
   let kind = kinds[0] || (ledgers.length > 1 ? 'compare' : ledgers.length ? 'status' : '');
   if (ledgers.length > 1 && kinds.includes('compare')) kind = 'compare';
@@ -192,8 +197,9 @@ const whenShort = (iso) => (iso ? String(iso).replace('T', ' ').replace(/:\d{2}(
 function newestLine(l) {
   if (!l.newest) return 'no closed trade recorded yet';
   const t = l.newest;
-  if (l.id === 'strategy_simulation') return `newest: ${t.strategy} on ${t.symbol}, signal ${whenShort(t.signal_t)}, exit on ${t.exit_reason} at ${whenShort(t.exit_t)}, ${t.r >= 0 ? '+' : ''}${t.r} R after costs (record ${t.id})`;
+  if (l.id === 'strategy_simulation' && t.r != null) return `newest: ${t.strategy} on ${t.symbol}, signal ${whenShort(t.signal_t)}, exit on ${t.exit_reason} at ${whenShort(t.exit_t)}, ${t.r >= 0 ? '+' : ''}${t.r} R after costs (record ${t.id})`;
   if (l.id === 'lab_paper_book') return `newest: ${t.strategy} on ${t.symbol}, closed ${whenShort(t.closed_at)}${t.r == null ? '' : `, ${t.r >= 0 ? '+' : ''}${t.r} R`}`;
+  if (l.id === 'strategy_simulation' && t.r == null) return `newest: ${t.strategy} on ${t.symbol}, signal ${whenShort(t.signal_t)}, exit on ${t.exit_reason} at ${whenShort(t.exit_t)} (record ${t.id})`;
   return `newest: ${t.side} ${t.qty} ${t.contract}, ${t.strategy}, entered ${whenShort(t.entry_time)}, exited on ${t.exit_reason} at ${whenShort(t.exit_time)}, net ${money(t.net_pnl)} (record ${t.key})`;
 }
 
@@ -220,10 +226,8 @@ export function speakLedgers(intent, ledgers) {
   const chosen = ledgers.filter((l) => intent.ledgers.includes(l.id));
   const lines = [];
   if (intent.kind === 'record') {
-    const id = intent.record_id || 'that';
-    const hit = ledgers.find((l) => !l.unavailable && JSON.stringify(l).includes(id));
-    if (hit) lines.push(`Record ${id} is in the ${hit.label}, sir: ${newestLine(hit)}.`);
-    else lines.push(`No record named ${id} exists in any of my record sets, sir, so I will not describe one. Simulation trades are keyed strategy|symbol|entry minute inside strategy_sim_trades chunks; journal trades are keyed ${RECORD_PREFIX}paper:<portfolio>:<entry time>. A model never gets to invent an id.`);
+    // CHE's own ids are strategy|symbol|entry minute and evr:paper:<portfolio>:<entry time>; an id of this shape was never issued.
+    lines.push(`No record named ${intent.record_id} exists in any of my record sets, sir, so I will not describe one. Simulation trades are keyed strategy|symbol|entry minute inside strategy_sim_trades chunks; journal trades are keyed ${RECORD_PREFIX}paper:<portfolio>:<entry time>. A model never gets to invent an id.`);
     return lines.join('\n');
   }
   if (intent.kind === 'rule') {
@@ -239,7 +243,8 @@ export function speakLedgers(intent, ledgers) {
   }
   lines.push(chosen.length > 1 ? 'Separate record sets, sir; I never add them together.' : `From the ${chosen[0].label}, sir (${chosen[0].what}):`);
   for (const l of chosen) {
-    if (l.unavailable) { lines.push(`${lines.length}. ${l.label}: I could not read it just now (${l.error}), so I give no number for it.`); continue; }
+    // The exception text stays in the API record; the owner hears only that the read failed.
+    if (l.unavailable) { lines.push(`${lines.length}. ${l.label}: I could not read it just now, so I give no number for it.`); continue; }
     if (l.id === 'broker_alpaca_paper') { lines.push(`${lines.length}. ${l.label}: ${l.rule}.`); continue; }
     const parts = [countLine(l)];
     if (['last', 'status', 'compare'].includes(intent.kind) || intent.kinds.includes('last')) parts.push(newestLine(l));

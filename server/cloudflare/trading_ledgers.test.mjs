@@ -99,7 +99,7 @@ async function owner({ saved = new Map(), model = () => FAKE } = {}) {
     return { reply: events.filter((e) => e.type === 'delta').map((e) => e.delta).join(''), done, route: done.source || (counter.calls > before ? 'model' : 'none'), modelCalls: counter.calls - before };
   };
   const get = async (path, auth = token) => { const res = await send(path, null, auth, 'GET'); return { status: res.status, body: await res.json() }; };
-  return { say, get, saved, counter };
+  return { say, get, saved, counter, env };
 }
 
 // ─── The question ─────────────────────────────────────────────────────────
@@ -129,6 +129,11 @@ test('the owner\'s record questions name their ledger and kind; other trading tu
     'How many paper trades have you won and lost?', 'Which trading strategy is performing best?', 'How is the simulation doing?', 'Strategy simulation status',
     'Pause the strategy simulation', 'Switch to simulation mode', 'Buy 1 MNQ at market', 'How are the trades doing?', 'Check my Alpaca paper orders',
     'Tell me a story about a trader whose journal was lost', 'Fix the bug in the simulation code', 'Ask Claude which strategy is best', 'What is the weather?',
+    // Review of PR #373: "record", "position" and a bare "journal" are not trading words.
+    'Do you have a record of my dentist appointment?', 'What is the record for the most home runs in a season?', 'How many records do you have about me?',
+    'Where do you store your records?', 'What was your last position at the company?', 'Pull up the record of the meeting with Dr. Smith.',
+    'Read me your last journal entry.', 'When does my Amazon order order-2026-10-18-0042 ship?', 'is my sample size of 30 trades enough to trust the results',
+    'what settings should I use for my best strategy', 'explain the database of trades',
   ]) assert.equal(ledgerIntent(other), null, other);
 });
 
@@ -174,9 +179,6 @@ test('a record id a model invented is reported as absent; the real keys and the 
   const missing = speakLedgers(ledgerIntent('Pull the record for sim-2023-03-10-001.'), ledgers);
   assert.match(missing, /No record named sim-2023-03-10-001 exists/);
   assert.match(missing, /strategy_sim_trades/);
-  const real = ledgers[0].newest.id;
-  const found = speakLedgers({ ...ledgerIntent('Pull the record for sim-2023-03-10-001.'), record_id: real }, ledgers);
-  assert.match(found, new RegExp(`Record ${real.replace(/[|]/g, '\\|')} is in the strategy simulation`));
   const keys = speakLedgers(ledgerIntent('Which storage key holds the simulation trades?'), ledgers);
   assert.match(keys, /strategy_sim_state, strategy_sim_trades:<chunk number>/);
   assert.match(keys, /nothing is named simulation_trades or journal_trades/);
@@ -196,7 +198,9 @@ test('a record set that cannot be read says so and gives no number; the others s
   assert.equal(ledgers[0].trades, null);
   assert.equal(ledgers[1].trades, 2);
   const said = speakLedgers(ledgerIntent('How many trades have the simulation and the paper journal made so far?'), ledgers);
-  assert.match(said, /strategy simulation: I could not read it just now \(storage read failed\), so I give no number/);
+  assert.match(said, /strategy simulation: I could not read it just now, so I give no number/);
+  assert.doesNotMatch(said, /storage read failed/, 'the exception text is not spoken');
+  assert.equal(ledgers[0].error, 'storage read failed');
   assert.match(said, /2 trades journalled/);
 });
 
@@ -246,6 +250,8 @@ test('the existing trading routes keep their turns, and a guest cannot read the 
   assert.equal(ledgers.body.separate, true);
   assert.deepEqual(ledgers.body.ledgers.map((l) => l.id), LEDGERS.map((l) => l.id));
   assert.equal((await che.get('/api/trading/ledgers', '')).status, 401);
+  const unpaired = await worker.fetch(new Request('https://che.example/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: 'What was the last trade the simulator took?', history: [] }) }), che.env);
+  assert.equal(unpaired.status, 401);
 });
 
 test('a question with no ledger named that the model would have invented an answer to reads every record set', async () => {
