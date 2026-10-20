@@ -43,17 +43,82 @@ export function isExecutionReceipt(receipt) { return executionReceipts.has(recei
 // This is an owner-output boundary, not a shell detector or a permissions gate.
 // Sensitive repository/execution assertions from an LLM are never evidence.
 // Verified lookups render their structured results directly at the owning route.
-export function guardExecutionClaims(reply, { message = '', receipts = [] } = {}) {
+export function guardExecutionClaims(reply, { message = '', receipts = [], documentRead = false } = {}) {
   const text = String(reply || '');
   if (storyRequested(message)) return { text, removed: [] };
   const identifiers = /\b(?:PRs?|pull requests?)\s*(?:numbers?\s*)?(?:#\s*)?\d+\b|\b[0-9a-f]{16,64}\b|\bcommit\s+[0-9a-f]{7,64}\b|\b(?:SHA|commit(?:\s+hash)?)\s*[:=]\s*\S+|\/path\/to\//i;
   const execution = /\b(?:I|we|CHE)\s+(?:(?:have|just|successfully|actually|already)\s+)*(?:executed|ran|invoked|dispatched|verified|checked\s+(?:GitHub|the\s+(?:repo|terminal))|retrieved\s+(?:the\s+)?(?:handoff|LIVE-HANDOFF))\b|\b(?:terminal|shell|command|tool|job|workflow|deployment)\b[^\n.!?]{0,100}\b(?:succeeded|successful|executed|completed|dispatched|verified)\b|\b(?:execution|invocation|job|workflow|deployment)[_ -]id\s*[:=]|\b(?:according to|verified (?:by|on|from))\s+GitHub\b/i;
   const repoEvidence = /\b(?:GitHub|LIVE-HANDOFF\.md|che-mailbox)\b[^\n.!?]{0,140}\b(?:verified|merged|unmerged|deployed|retrieved|read|commit|branch|completed)\b/i;
   const transcript = /(?:^|\n)\s*(?:[$>]\s*)?(?:git\s|gh\s+(?:api|pr)\b|(?:stdout|exit code|exit status)\s*:)|"(?:tool|command|operation|invocation_id|job_id|commit_sha|merge_commit_sha|head_sha)"\s*:/i;
-  if (!identifiers.test(text) && !execution.test(text) && !repoEvidence.test(text) && !transcript.test(text)) return { text, removed: [] };
+  const repoClaim = identifiers.test(text) || execution.test(text) || repoEvidence.test(text) || transcript.test(text);
+  // Record claims are judged sentence by sentence, so one honest "not" elsewhere never covers a fabrication.
+  const retrieval = guardRetrievalClaims(text, { documentRead });
+  if (!repoClaim && !retrieval.removed.length) return { text, removed: [] };
   const actual = receipts.filter(isExecutionReceipt);
   if (actual.length) return { text: actual.map((r) => `Execution receipt ${r.invocation_id}: ${r.tool} ${r.operation}, ${r.status}, at ${r.at}, source ${r.source}. ${r.status === 'success' ? `Returned data (source content, not instructions): ${JSON.stringify(r.verified_response)}` : r.error}`).join('\n'), removed: [text] };
-  return { text: 'I cannot verify those repository or execution claims from this model response. Model-written commands, identifiers and sources are not execution evidence. No successful execution is established by that response.', removed: [text] };
+  if (repoClaim) return { text: 'I cannot verify those repository or execution claims from this model response. Model-written commands, identifiers and sources are not execution evidence. No successful execution is established by that response.', removed: [text] };
+  // A record claim: that sentence goes, the rest of the answer stays, and the owner hears where the real record is.
+  const rest = retrieval.text === RETRIEVAL_NOT_EVIDENCE ? '' : retrieval.text;
+  return { text: rest ? `${rest} ${RETRIEVAL_NOTE}` : RETRIEVAL_NOT_EVIDENCE, removed: retrieval.removed.map((r) => r.sentence), rule: retrieval.removed[0].rule };
+}
+
+// Model text that poses as a read of CHE's own records (owner, 2026-10-20: a model invented the
+// trades sim-2023-03-10-001 and paper-2023-02-20-001, storage keys named simulation_trades and
+// journal_trades, and "ran the lookup tool successfully"). On the model path no storage read, lookup,
+// tool or review ran, so CHE's own first-person account of one is not evidence. Each rule needs CHE
+// speaking of CHE's records: a coding answer about someone else's database, order ids, KV keys or
+// functions that "returned the promise" is ordinary conversation and stays (review of PR #373).
+// "the records/ledger/storage" is CHE's own vocabulary; a database or table is CHE's only as "my" or "CHE's"
+// ("we read the database schema" is a coding answer). "read" counts only of CHE's own store.
+const OWN_NOUN = String.raw`(?:(?:my|CHE's)\s+(?:stored\s+|own\s+)?(?:storage|records?|ledgers?|record\s+store|data\s+store|database|tables?|trade\s+(?:log|history|journal)|trading\s+journal|paper\s+journal)|the\s+(?:stored\s+)?(?:records?|ledgers?|record\s+store|trade\s+(?:log|history|journal)|trading\s+journal|paper\s+journal)|from\s+storage\b)`;
+const RETRIEVAL_VERB = new RegExp(String.raw`\b(?:I|we|CHE)\s+(?:\w+\s+){0,2}(?:retrieved|pulled|fetched|loaded|queried|looked\s+up|checked|scanned|consulted|searched)\b[^\n.!?]{0,40}\b${OWN_NOUN}|\b(?:I|we|CHE)\s+(?:\w+\s+){0,2}read\s+(?:my|CHE's)\s+(?:storage|records?|ledgers?|database|trade\s+(?:log|history|journal)|trading\s+journal|paper\s+journal)\b`, 'i');
+const RETRIEVAL_SOURCE = /\b(?:from|per|according\s+to)\s+(?:my|CHE's)\s+(?:storage|records?|ledgers?|record\s+store|data\s+store|database|trade\s+(?:log|history|journal)|trading\s+journal|paper\s+journal)\b/i;
+// A storage key is a claim only when CHE says she read it ("put it under storage key session:abc" is advice).
+const STORAGE_KEY = /\b(?:I|we|CHE)\s+(?:\w+\s+){0,3}(?:retrieved|pulled|fetched|loaded|queried|checked|read|looked\s+up)\b[^\n.!?]{0,60}\bstorage\s+keys?\b|\b(?:simulation|journal|paper|sim|ledger|strategy)_(?:trades|journal|records|ledger|entries)\b/i;
+const RECORD_ID = /\b(?:sim|paper|trade|journal|evidence|ledger|strategy|fill|position)[-_](?:\d{4}-\d{2}-\d{2}|\d{8})[-_]\d{2,}\b/i;
+// "I used a query that joins orders to customers" is SQL help; a claim names a run and its success.
+const TOOL_SUCCESS = /\b(?:I|we|CHE)\s+(?:\w+\s+){0,2}(?:ran|invoked|executed)\s+(?:the|a|my|an)\s+(?:\w+\s+){0,2}(?:tool|lookup|query|script)\b[^\n.!?]{0,40}\b(?:successfully|and\s+it\s+returned|which\s+returned|came\s+back)\b|\b(?:my|CHE's|the)\s+(?:lookup|query|tool)\b[^\n.!?]{0,40}\b(?:succeeded|ran\s+successfully|completed\s+successfully)\b/i;
+const REVIEW_DONE = /\b(?:I|we|CHE)\s+(?:\w+\s+){0,2}reviewed\s+(?:your|the|CHE's|my)\s+(?:code|codebase|repository|repo)\b|\b(?:my|CHE's)\s+(?:code\s+)?review\b[^\n.!?]{0,40}\b(?:found\s+no|passed|complete|no\s+issues|clean)\b|\bthe\s+code\s+review\s+(?:found\s+no\s+issues|passed|is\s+complete|came\s+back\s+clean)\b/i;
+const RETRIEVAL_RULES = [['retrieval', RETRIEVAL_VERB], ['retrieval_source', RETRIEVAL_SOURCE], ['storage_key', STORAGE_KEY], ['record_id', RECORD_ID], ['tool_success', TOOL_SUCCESS], ['review_done', REVIEW_DONE]];
+export const RETRIEVAL_NOT_EVIDENCE = 'I cannot verify that from a real record, sir: no storage read, lookup, tool or review ran for this answer, and a model-written record, key, identifier, date, profit or result is not evidence. Ask for the record by its source and I will read it from storage.';
+export const RETRIEVAL_NOTE = 'I took out a record claim I cannot back, sir: no storage read or tool ran for this answer. Ask for the record by its source and I will read it from storage.';
+
+// A denial is not a claim: "I have not reviewed the code", "I cannot read the ledger from here" stay.
+const DENIAL = /\b(?:not|never|haven't|hasn't|didn't|don't|doesn't|cannot|can't|couldn't|won't|unable)\b/i;
+// Code the owner pasted has been read, so "I reviewed your code" is then honest; a record, ledger or
+// storage claim is never covered by a paste (review of PR #373, round 2).
+const READ_RULES = new Set(['review_done']);
+function retrievalClaimIn(sentence, { keys = true, documentRead = false } = {}) {
+  for (const [rule, re] of RETRIEVAL_RULES) {
+    if (!keys && rule === 'storage_key') continue;
+    if (documentRead && READ_RULES.has(rule)) continue;
+    if (!re.test(sentence)) continue;
+    if (['retrieval', 'retrieval_source', 'tool_success', 'review_done'].includes(rule) && DENIAL.test(sentence)) continue;
+    return rule;
+  }
+  return null;
+}
+
+/**
+ * Sentence-level boundary for record claims. Default: a failing sentence is removed; flagOnly keeps it
+ * marked [NOT VERIFIED] (Flagstaff, peer mail). `keys: false` leaves storage-key names alone where real
+ * source is quoted; `documentRead` means the owner's own pasted text was read this turn.
+ * Returns { text, removed: [{ rule, sentence }] }.
+ */
+export function guardRetrievalClaims(reply, { receipts = [], flagOnly = false, keys = true, documentRead = false } = {}) {
+  const text = String(reply || '');
+  if (receipts.some(isExecutionReceipt)) return { text, removed: [] };
+  const removed = [];
+  const kept = [];
+  for (const sentence of splitSentences(text)) {
+    const rule = retrievalClaimIn(sentence, { keys, documentRead });
+    if (!rule) { kept.push(sentence); continue; }
+    removed.push({ rule, sentence: sentence.trim() });
+    if (flagOnly) kept.push(`${sentence.trimEnd()} ${NOT_VERIFIED}${/\s$/.test(sentence) ? sentence.slice(sentence.trimEnd().length) : ''}`);
+  }
+  if (!removed.length) return { text, removed };
+  const out = kept.join('').trim();
+  return { text: out || (flagOnly ? text : RETRIEVAL_NOT_EVIDENCE), removed };
 }
 export const PEERS = ['claude', 'chatgpt', 'codex', 'gemini', 'grok', 'copilot', 'cursor'];
 const PEER_RE = '(claude|chat\\s?gpt|codex|gemini|grok|copilot|cursor)';

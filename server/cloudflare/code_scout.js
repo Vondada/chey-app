@@ -646,13 +646,18 @@ export function repositoryInspectionIntent(message) {
     || /\b(?:do\s+not|don['’]t|never)\s+(?:access|inspect|read|fetch|use)\b[^.!?\n]{0,60}\b(?:repo(?:sitory)?|codebase|source|code)\b/i.test(text)) return false;
 
   // "How does your memory code work?" asks how the real source does it, so it is read, not guessed.
-  const directInspection = /^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:please\s+|(?:can|could|will)\s+you\s+)?(?:inspect|find|locate|trace|show|identify|investigate|diagnose|audit|review|examine|verify|analy[sz]e|explain|how\s+(?:does|do|is|are))\b/i.test(text);
+  const directInspection = /^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:please\s+|(?:can|could|will)\s+you\s+)?(?:code\s+review|inspect|find|locate|trace|show|identify|investigate|diagnose|audit|review|examine|verify|analy[sz]e|explain|how\s+(?:does|do|is|are))\b/i.test(text);
   const repoTarget = /\b(?:your|che(?:'s)?)\s+(?:current\s+)?(?:github\s+)?(?:main\s+branch|repo(?:sitory)?|codebase|source|code|routing|router|worker|coding\s+(?:job|pipeline|runtime)|architecture)\b/i.test(text)
     // "your memory code", "the code for the voice studio": a part of CHE named (comprehension audit).
     || /\b(?:your|che(?:'s)?)\s+(?:own\s+)?(?:voice\s+studio|memory|brain|router|routing|chat|trading(?:\s+room)?|office|mailbox|command(?:\s+center)?|video|rea|navigator|mic(?:rophone)?|captions?|worker|app|flutter|dart|swift|server|backend|ui|interface|own)\s+(?:source\s+)?code\b/i.test(text)
     || /\bthe\s+(?:source\s+)?code\s+(?:for|of|behind)\s+(?:the\s+|your\s+|che's\s+)?(?:voice\s+studio|memory|brain|router|routing|chat|trading\s+room|office|war\s+room|mailbox|command\s+center|video\s+(?:line|renderer)|rea|navigator|mic(?:rophone)?|captions?|home\s+screen|settings)\b/i.test(text)
     || /\b(?:current|exact|latest)\s+main\s+(?:branch\s+)?sha\b/i.test(text)
-    || /\b(?:coding\s+(?:job|pipeline|runtime)|cloudflare\s+worker|github\s+main)\b/i.test(text);
+    || /\b(?:coding\s+(?:job|pipeline|runtime)|cloudflare\s+worker|github\s+main)\b/i.test(text)
+    // "Review the code quality of the trading desk", "code review of the router": the catalog's /code-review
+    // said in words, a read of CHE's own source. "Review this code" (pasted code) is still the model's.
+    || (!/\b(?:below|pasted?|attached|i\s+wrote|my\s+(?:project|app|code|repo|script|file)|the\s+following|this\s+code|this\s+file)\b|```/i.test(text)
+      && /\b(?:code\s+review|review\s+(?:of\s+)?(?:the\s+)?code(?:\s+quality)?|code\s+quality)\b[^.!?\n]{0,40}\b(?:of|in|for|on)\s+(?:the\s+|your\s+|che's\s+)?(?:voice\s+studio|memory|brain|router|routing|chat|trading(?:\s+(?:room|desk|lab))?|strategy\s+sim(?:ulation)?|paper\s+(?:journal|trading)|office|war\s+room|mailbox|command(?:\s+center)?|video|rea|navigator|mic(?:rophone)?|captions?|worker|app|flutter|dart|swift|server|backend|ui|interface|coding|alpaca|desk|ledgers?|home\s+screen|settings)\b/i.test(text))
+    || /\bcode\s+review\s+(?:the\s+|your\s+|che's\s+)(?:voice\s+studio|memory|brain|router|routing|chat|trading(?:\s+(?:room|desk|lab))?|strategy\s+sim(?:ulation)?|paper\s+(?:journal|trading)|office|mailbox|command(?:\s+center)?|video|rea|navigator|worker|app|server|backend|desk|ledgers?)\b/i.test(text);
   const selfDiagnosticSource = /\bself[- ]diagnostic\b[\s\S]{0,260}\b(?:github|main\s+sha|repo(?:sitory)?|source|coding[- ]job|routing|worker)\b/i.test(text);
   const exactHeadQuestion = /\b(?:what(?:'s|\s+is)|give\s+me|show\s+me|tell\s+me)\b[\s\S]{0,80}\b(?:current|exact|latest)\s+(?:github\s+)?main\s+(?:branch\s+)?sha\b/i.test(text);
   const repositoryStateQuestion = repoTarget
