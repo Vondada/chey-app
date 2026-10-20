@@ -271,13 +271,11 @@ class _CheHelpTargetState extends State<CheHelpTarget> {
           return Semantics(
             key: _key,
             hint: on ? 'Highlighted by help' : null,
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
-              padding: const EdgeInsets.all(2),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: on ? const Color(0xFFFFD166) : Colors.transparent, width: 3),
-              ),
+            // Drawn over the control, so wrapping a control never changes its size or the layout around it.
+            child: Container(
+              foregroundDecoration: on
+                  ? BoxDecoration(borderRadius: BorderRadius.circular(10), border: Border.all(color: const Color(0xFFFFD166), width: 3))
+                  : null,
               child: child,
             ),
           );

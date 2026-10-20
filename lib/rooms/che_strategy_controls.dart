@@ -195,7 +195,7 @@ class _CheStrategyControlsPanelState extends State<CheStrategyControlsPanel> {
               decoration: BoxDecoration(color: _gold.withValues(alpha: 0.18), borderRadius: BorderRadius.circular(6), border: Border.all(color: _gold)),
               child: const Text('PAPER ONLY', style: TextStyle(color: _gold, fontWeight: FontWeight.w800, fontSize: 12)),
             )),
-            const CheHelpButton(color: _dim),
+            const CheHelpButton(color: _dim, dense: true),
             IconButton(tooltip: 'Read aloud', onPressed: () => widget.onAsk(kReadControlsAloud), icon: const Icon(Icons.volume_up, color: _dim)),
           ]),
           if (v == null && _error.isEmpty) const Padding(padding: EdgeInsets.all(12), child: Text('Reading your strategy controls…', style: TextStyle(color: _dim))),

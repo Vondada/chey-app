@@ -210,8 +210,9 @@ class _CheAlpacaPaperPanelState extends State<CheAlpacaPaperPanel> {
         ),
         const SizedBox(width: 8),
         const Expanded(child: Text('Alpaca stocks', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w800))),
-        const CheHelpButton(color: _dim),
+        const CheHelpButton(color: _dim, dense: true),
         TextButton.icon(
+          style: TextButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal: 6)),
           onPressed: () => widget.onAsk(kReadAlpacaAloud),
           icon: const Icon(Icons.record_voice_over, size: 18),
           label: const Text('Read aloud'),
