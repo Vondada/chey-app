@@ -27,6 +27,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'che_job_activity_banner.dart';
 import 'che_mic_supervisor.dart';
 import 'che_ui/che_screen_awareness.dart';
+import 'che_ui/che_screen_guide.dart';
 import 'che_ui/che_screen_capture.dart';
 import 'world/che_meeting_room.dart';
 import 'world/che_meetings.dart';
@@ -2312,6 +2313,14 @@ OWNER AGENCY
     );
   }
 
+  void _openScreenGuide() {
+    final fallback = switch (_shellTab) {
+      0 => 'Home', 1 => 'Chat', 2 => 'Office', 3 => 'Apps', _ => 'More',
+    };
+    CheScreenGuide.open(context, fallback: fallback,
+      onRead: (words) { speakText(words, record: false); });
+  }
+
   @override
   Widget build(BuildContext context) {
     _ensureOfficeRuntime();
@@ -2412,6 +2421,17 @@ OWNER AGENCY
             ],
           ),
         ),
+      ),
+      // Always-available on the five main tabs. Nested routes use their own
+      // toolbar while they are open; those routes will receive this control in
+      // later help coverage, rather than pretending the shell can overlay them.
+      floatingActionButtonLocation: FloatingActionButtonLocation.endTop,
+      floatingActionButton: FloatingActionButton.small(
+        tooltip: 'Help for this screen',
+        heroTag: 'che-screen-help',
+        backgroundColor: kit.CheColors.accent,
+        onPressed: _openScreenGuide,
+        child: const Icon(Icons.help_outline),
       ),
       bottomNavigationBar: ChePhoneBottomNav(
         index: _shellTab,
