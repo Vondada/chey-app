@@ -10,11 +10,12 @@ const _teal = Color(0xFF3DDC97);
 const _gold = Color(0xFFE8B04A);
 
 class CheStrategyLearningDashboard extends StatelessWidget {
-  const CheStrategyLearningDashboard({super.key, required this.data, required this.onAsk, required this.onResearch, this.onRead});
+  const CheStrategyLearningDashboard({super.key, required this.data, required this.onAsk, required this.onResearch, this.onRead, this.chart});
   final Map<String, dynamic> data;
   final void Function(String) onAsk;
   final VoidCallback? onResearch;
   final void Function(String)? onRead;
+  final Widget? chart;
 
   @override
   Widget build(BuildContext context) {
@@ -36,6 +37,7 @@ class CheStrategyLearningDashboard extends StatelessWidget {
         }, icon: const Icon(Icons.record_voice_over_outlined), label: const Text('Read learning report')),
         OutlinedButton.icon(onPressed: onResearch, icon: const Icon(Icons.fast_forward), label: const Text('Replay available history')),
       ]),
+      if (chart != null) chart!,
       for (final strategy in strategies) _StrategyCard(row: strategy),
       ExpansionTile(
         title: const Text('Research and slow-progress diagnostics'),
@@ -68,7 +70,7 @@ class _StrategyCard extends StatelessWidget {
     final featured = row['featured'] == true;
     final points = _rows(row['equity']);
     final count = forward['trades'] ?? 0;
-    final fraction = (progress['fraction'] as num? ?? 0).toDouble().clamp(0.0, 1.0);
+    final fraction = (progress['fraction'] as num? ?? 0).toDouble().clamp(0.0, 1.0).toDouble();
     final metrics = <String, String>{
       'Unique trades': '$count', 'Wins': '${forward['wins'] ?? 0}', 'Losses': '${forward['losses'] ?? 0}',
       'Win rate': _value(forward['win_rate'], '%'), 'Expectancy': _value(forward['expectancy_r'], ' R'),

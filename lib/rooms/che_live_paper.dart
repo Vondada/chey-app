@@ -87,9 +87,15 @@ class _CheLivePaperPanelState extends State<CheLivePaperPanel> {
       }
       final learning = j['learning'];
       final closures = <String>{};
-      if (learning is Map) for (final row in (learning['strategies'] as List? ?? const [])) {
-        if (row is Map) for (final trade in (row['recent_trades'] as List? ?? const [])) {
-          if (trade is Map && trade['entry'] is Map && trade['exit'] is Map) closures.add('${row['id']}|${trade['side']}|${trade['entry']['time']}');
+      if (learning is Map) {
+        for (final row in (learning['strategies'] as List? ?? const [])) {
+          if (row is Map) {
+            for (final trade in (row['recent_trades'] as List? ?? const [])) {
+              if (trade is Map && trade['entry'] is Map && trade['exit'] is Map) {
+                closures.add('${row['id']}|${trade['side']}|${trade['entry']['time']}');
+              }
+            }
+          }
         }
       }
       final added = _seenClosures == null ? 0 : closures.difference(_seenClosures!).length;
@@ -200,9 +206,12 @@ class _CheLivePaperPanelState extends State<CheLivePaperPanel> {
     final backtest = d['backtest'] is Map ? Map<String, dynamic>.from(d['backtest'] as Map) : null;
 
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      if (_status.isNotEmpty) Text(_status, style: const TextStyle(color: Colors.white, fontSize: 16)),
       if (_error.isNotEmpty) Text('Stale records: $_error', style: const TextStyle(color: _gold)),
       if (d['learning'] is Map) CheStrategyLearningDashboard(
         data: Map<String, dynamic>.from(d['learning'] as Map), onAsk: widget.onAsk, onRead: widget.onRead, onResearch: _busy ? null : _research,
+        chart: Semantics(label: 'Five-minute ${feed['status']} paper chart with recorded entry and exit markers.',
+          child: SizedBox(height: 240, child: CustomPaint(painter: _PaperChartPainter(d)))),
       ),
       SwitchListTile(
         title: const Text('Notify after verified paper closes'),
@@ -229,7 +238,7 @@ class _CheLivePaperPanelState extends State<CheLivePaperPanel> {
         child: Text('${d['feed_blocker'] ?? ''}${feed['error'] != null ? ' Last error: ${feed['error']}.' : ''}', style: const TextStyle(color: _gold, fontSize: 13)),
       ),
       const SizedBox(height: 10),
-      Semantics(
+      if (d['learning'] is! Map) Semantics(
         label: 'Candlestick chart of ${feed['provider_symbol'] ?? 'MNQ'} five-minute bars with paper entries, exits, stops and targets marked. '
             '${positions.isEmpty ? 'No open position.' : '${positions.length} open positions.'} Ask CHE "show the chart where you entered" to hear the levels.',
         excludeSemantics: true,
@@ -251,7 +260,7 @@ class _CheLivePaperPanelState extends State<CheLivePaperPanel> {
         Semantics(button: true, label: 'Refresh paper trading records',
           child: OutlinedButton.icon(onPressed: _load, icon: const Icon(Icons.refresh), label: const Text('Refresh'))),
       ]),
-      if (_status.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 6), child: Text(_status, style: const TextStyle(color: Colors.white, fontSize: 16))),
+
       const SizedBox(height: 12),
       GridView.count(
         crossAxisCount: 3, shrinkWrap: true, physics: const NeverScrollableScrollPhysics(), mainAxisSpacing: 8, crossAxisSpacing: 8, childAspectRatio: 1.25,
