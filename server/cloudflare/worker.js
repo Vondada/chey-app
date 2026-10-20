@@ -3689,9 +3689,9 @@ export class CheState extends DurableObject {
   async tradingProbe() {
     const ensured = await this.ensureLivePaper();
     const run = ensured.enabled ? await liveTick(this.ctx.storage, { force: true }) : { skipped: 'paper trading is off' };
-    // The historical baseline (same rules and fills, delayed 5-minute history), at most twice a day.
-    const previous = await this.ctx.storage.get(LIVE_BACKTEST);
-    if (!previous?.ok || Date.now() - Date.parse(previous.at) > 12 * 3_600_000) await liveBacktest(this.ctx.storage).catch(() => null);
+    // The historical baseline uses the same daily schedule as the alarm: the current research attempt
+    // (not the immutable archive's timestamp), so a reused dataset is not downloaded again on every deploy.
+    const research = await researchDue(this.ctx.storage).catch((error) => ({ ok: false, error: String(error?.message || error) }));
     const d = await this.liveTradingDashboard();
     const brief = (t) => ({ strategy: t.strategy, filter: t.filter, side: t.side, signal: t.signal?.time, entry: t.entry?.time, entry_fill: t.entry?.fill,
       exit: t.exit?.time, exit_fill: t.exit?.fill, reason: t.exit?.reason, net: t.net_pnl, feed: t.data?.feed?.status });
@@ -3707,6 +3707,7 @@ export class CheState extends DurableObject {
       signals: d.signals.slice(-10),
       broker: d.broker,
       learning: d.learning,
+      research: { skipped: research?.skipped || null, ok: research?.skipped ? null : Boolean(research?.ok), reused: Boolean(research?.reused), error: research?.error || null },
       backtest: d.backtest ? {
         at: d.backtest.at, ok: d.backtest.ok, error: d.backtest.error || null, data: d.backtest.data,
         rows: (d.backtest.rows || []).map((r) => ({ strategy: r.strategy, filter: r.filter, target_r: r.target_r, trades: r.stats.trades,

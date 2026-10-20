@@ -44,6 +44,8 @@ class CheStrategyLearningDashboard extends StatelessWidget {
         childrenPadding: const EdgeInsets.all(12),
         children: [
           Text('Research target: ${research['target_per_strategy'] ?? 30} historical outcomes per strategy per research day, when genuine setups and usable data exist. No forced trades.'),
+          Text(research['last_attempt'] == null ? 'Last research attempt: Not run' : 'Last research attempt: ${research['last_attempt']} · ${research['attempt_status'] ?? 'status not recorded'}'
+            '${research['reused'] == true ? ' · reused the archived experiment (same dataset, no new evidence)' : ''}'),
           Text('Last successful research: ${research['last_success'] ?? 'Not run'}'),
           Text('${research['data'] ?? 'Historical data not yet available.'}'),
           if (research['error'] != null) Text('Last research attempt failed: ${research['error']}'),

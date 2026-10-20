@@ -142,9 +142,13 @@ class _CheLivePaperPanelState extends State<CheLivePaperPanel> {
         headers: {...widget.headers(), 'content-type': 'application/json'}, body: jsonEncode({'action': 'backtest'})).timeout(const Duration(seconds: 90));
       final result = jsonDecode(utf8.decode(response.bodyBytes));
       if (!mounted) return;
-      setState(() => _status = response.statusCode == 200 && result is Map && result['ok'] == true
-        ? 'Research recorded. No forward trades or live permissions were added.' : 'Research not completed: ${result is Map ? result['error'] ?? result['detail'] : response.statusCode}');
-      HapticFeedback.mediumImpact();
+      final ok = response.statusCode == 200 && result is Map && result['ok'] == true;
+      setState(() => _status = ok
+        ? (result['reused'] == true
+            ? 'Research reused the archived experiment for this unchanged dataset. No forward trades or live permissions were added.'
+            : 'Research recorded. No forward trades or live permissions were added.')
+        : 'Research not completed: ${result is Map ? result['error'] ?? result['detail'] : response.statusCode}');
+      if (ok) { HapticFeedback.mediumImpact(); } else { HapticFeedback.heavyImpact(); }
       widget.onRead?.call(_status);
       await _load();
     } catch (_) {

@@ -236,6 +236,8 @@ export async function liveBacktest(storage, options = {}) {
       if (!(await storage.get(key))) await storage.put(key, old);
     }
     const result = await historicalReplay(storage, options);
+    // Inside the lease, so no replay is writing chunks while unreferenced ones are removed.
+    await pruneResearch(storage, { now }).catch((error) => console.error('Research retention failed:', error?.message || error));
     await storage.put(RESEARCH_ATTEMPT, { at: new Date(now).toISOString(), status: result.ok ? 'complete' : 'failed', experiment_id: result.id || null, reused: Boolean(result.reused), error: result.error || null });
     return result;
   }
@@ -355,6 +357,55 @@ async function historicalReplay(storage, { fetcher = fetch, now = Date.now(), lo
   await storage.put(RESEARCH_LAST, result);
   await storage.put(LIVE_BACKTEST, result);
   return result;
+}
+
+// Retention (bounded storage): the newest RESEARCH_KEEP experiments keep their full candle,
+// checkpoint and outcome chunks; older experiments keep their metadata (id, dataset SHA-256,
+// parameters, per-version stats) with dataset_retained: false, so results stay auditable and a
+// rerun of the same dataset_hash stays reproducible from the provider. Failure logs, daily budgets
+// and seen-entry identities that can no longer fall inside the 60-day window are bounded too.
+export const RESEARCH_KEEP = 10;
+const FAILED_KEEP = 50;
+const SEEN_DAYS = 90;
+const BUDGET_DAYS = 7;
+export async function pruneResearch(storage, { now = Date.now(), keep = RESEARCH_KEEP } = {}) {
+  const at = new Date(now).toISOString();
+  const drop = async (keys) => { for (let i = 0; i < keys.length; i += 128) await storage.delete(keys.slice(i, i + 128)); };
+  const runs = [...(await storage.list({ prefix: LIVE_RESEARCH_PREFIX })).entries()];
+  const retained = runs.filter(([, v]) => v?.ok && Array.isArray(v.dataset_refs) && v.dataset_retained !== false)
+    .sort(([, a], [, b]) => String(b.at).localeCompare(String(a.at)));
+  const kept = retained.slice(0, keep).map(([, v]) => v);
+  for (const [key, v] of retained.slice(keep)) {
+    await storage.put(key, { ...v, dataset_refs: [], dataset_retained: false, data_pruned_at: at,
+      rows: (v.rows || []).map((r) => ({ ...r, outcome_index_ref: null, checkpoint_ref: null })) });
+  }
+  const failed = runs.filter(([key]) => key.startsWith(`${LIVE_RESEARCH_PREFIX}failed:`)).map(([key]) => key).sort();
+  await drop(failed.slice(0, Math.max(0, failed.length - FAILED_KEEP)));
+  // Everything a kept experiment, the incremental baseline or the shown result still points to.
+  const live = [...kept, await storage.get(RESEARCH_LAST), await storage.get(LIVE_BACKTEST)].filter((v) => v?.ok);
+  const referenced = new Set();
+  for (const v of live) {
+    for (const ref of v.dataset_refs || []) referenced.add(ref);
+    for (const r of v.rows || []) {
+      if (r.checkpoint_ref) referenced.add(r.checkpoint_ref);
+      if (r.outcome_index_ref) {
+        referenced.add(r.outcome_index_ref);
+        for (const ref of (await storage.get(r.outcome_index_ref)) || []) referenced.add(ref);
+      }
+    }
+  }
+  let removed = 0;
+  for (const prefix of ['live_research_data:', 'live_research_trade_chunk:', 'live_research_outcomes:', 'live_research_checkpoint:']) {
+    const stale = [...(await storage.list({ prefix })).keys()].filter((key) => !referenced.has(key));
+    await drop(stale); removed += stale.length;
+  }
+  // An entry first seen 90+ days ago has an entry time older than any 60-day window, so it cannot be re-counted.
+  const seen = [...(await storage.list({ prefix: 'live_research_seen:' })).entries()]
+    .filter(([, v]) => v?.first_seen && now - Date.parse(v.first_seen) > SEEN_DAYS * 86400000).map(([key]) => key);
+  const oldestDay = tradeDayOf(new Date(now - BUDGET_DAYS * 86400000).toISOString());
+  const budgets = [...(await storage.list({ prefix: 'live_research_budget:' })).keys()].filter((key) => key.slice('live_research_budget:'.length) < oldestDay);
+  await drop([...seen, ...budgets]);
+  return { kept: kept.length, pruned_experiments: Math.max(0, retained.length - keep), removed_chunks: removed, removed_failures: Math.max(0, failed.length - FAILED_KEEP) };
 }
 
 /** Daily deterministic research on the existing hourly alarm, only while forward paper is on. */

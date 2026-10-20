@@ -19,7 +19,7 @@ function memoryStorage(saved = new Map()) {
       if (typeof key === 'object') { for (const [k, v] of Object.entries(key)) saved.set(k, structuredClone(v)); return; }
       saved.set(key, structuredClone(value));
     },
-    delete: async (key) => saved.delete(key),
+    delete: async (key) => (Array.isArray(key) ? key.filter((k) => saved.delete(k)).length : saved.delete(key)),
     list: async ({ prefix = '' } = {}) => new Map([...saved.entries()].filter(([k]) => k.startsWith(prefix)).map(([k, v]) => [k, structuredClone(v)])),
     setAlarm: async () => {},
     deleteAlarm: async () => {},
@@ -517,4 +517,65 @@ test('incremental replay matches a full replay exactly and never double-counts c
   assert.equal(incremental.incremental, true);
   assert.deepEqual(incremental.rows.map((r) => [r.strategy_version, r.stats]), full.rows.map((r) => [r.strategy_version, r.stats]));
   assert.deepEqual(incremental.dataset_refs, full.dataset_refs);
+});
+
+test('research retention keeps every experiment record but only the newest datasets, and bounds logs', async () => {
+  const { liveBacktest, pruneResearch, strategyLearning } = await import('./trading_live.js');
+  const storage = memoryStorage();
+  const load = (rows) => async () => ({ status: 'REPLAY', interval: '5m', provider: 'fixture', provider_symbol: 'MNQ', candles: rows });
+  const firstBars = [...DAY1, ...DAY2.slice(0, 1)];
+  const bars = [...DAY1, ...DAY2];
+  const now = after(bars);
+  const first = await liveBacktest(storage, { load: load(firstBars), now: after(firstBars) });
+  const second = await liveBacktest(storage, { load: load(bars), now });
+  for (let i = 0; i < 55; i++) storage.saved.set(`live_research_run:failed:2026-10-${String(1 + (i % 9)).padStart(2, '0')}T00:${String(i).padStart(2, '0')}:00.000Z`, { ok: false, error: 'offline' });
+  storage.saved.set('live_research_seen:v-old:abc', { first_seen: new Date(now - 100 * 86400000).toISOString(), dataset_hash: 'x' });
+  storage.saved.set('live_research_seen:v-new:def', { first_seen: new Date(now - 86400000).toISOString(), dataset_hash: 'y' });
+  storage.saved.set('live_research_budget:2026-09-01', ['old']);
+  const report = await pruneResearch(storage, { now, keep: 1 });
+  assert.equal(report.pruned_experiments, 1);
+  // The older experiment's metadata and results survive; only its bulk data is released.
+  const archived = storage.saved.get(`live_research_run:${first.id}`);
+  assert.equal(archived.id, first.id);
+  assert.equal(archived.dataset_hash, first.dataset_hash);
+  assert.equal(archived.dataset_retained, false);
+  assert.deepEqual(archived.dataset_refs, []);
+  assert.deepEqual(archived.rows.map((r) => [r.strategy_version, r.stats]), first.rows.map((r) => [r.strategy_version, r.stats]));
+  assert.ok(archived.rows.every((r) => r.checkpoint_ref === null && r.outcome_index_ref === null));
+  // The newest experiment is fully intact and nothing unreferenced is left behind.
+  const kept = storage.saved.get(`live_research_run:${second.id}`);
+  assert.deepEqual(kept.dataset_refs, second.dataset_refs);
+  for (const ref of kept.dataset_refs) assert.ok(storage.saved.has(ref));
+  for (const r of kept.rows) { assert.ok(storage.saved.has(r.checkpoint_ref)); for (const ref of storage.saved.get(r.outcome_index_ref)) assert.ok(storage.saved.has(ref)); }
+  assert.deepEqual([...(await storage.list({ prefix: 'live_research_data:' })).keys()].sort(), [...new Set(second.dataset_refs)].sort());
+  assert.ok([...(await storage.list({ prefix: 'live_research_checkpoint:' })).keys()].every((k) => k.startsWith(`live_research_checkpoint:${second.id}:`)));
+  assert.equal((await storage.list({ prefix: 'live_research_run:failed:' })).size, 50);
+  assert.equal(storage.saved.has('live_research_seen:v-old:abc'), false);
+  assert.equal(storage.saved.has('live_research_seen:v-new:def'), true);
+  assert.equal(storage.saved.has('live_research_budget:2026-09-01'), false);
+  // Results and diagnostics still read from the retained records.
+  const learning = await strategyLearning(storage, { now });
+  assert.equal(learning.research.id, second.id);
+  // Reusing the pruned dataset again restores its metadata without re-downloading or re-running.
+  const again = await liveBacktest(storage, { load: load(firstBars), now: now + 86400000 });
+  assert.equal(again.id, first.id);
+  assert.equal(again.reused, true);
+});
+
+test('the deploy probe follows the daily research attempt, not the archived experiment time', async () => {
+  const storage = memoryStorage();
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1' };
+  const state = new CheState({ storage }, env);
+  await setLivePaper(storage, true);
+  // Today's replay reused a three-day-old archive: the attempt is current, the archive is not.
+  storage.saved.set('live_paper_backtest', { id: 'archived', ok: true, at: new Date(Date.now() - 3 * 86400000).toISOString(), rows: [] });
+  storage.saved.set('live_research_attempt', { at: new Date().toISOString(), status: 'complete', experiment_id: 'archived', reused: true });
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response('{}', { status: 503 });
+  try {
+    const probe = await state.tradingProbe();
+    assert.match(probe.research.skipped, /already recorded/);
+    assert.equal(storage.saved.get('live_research_lock'), undefined, 'no historical replay was dispatched');
+    assert.equal(storage.saved.get('live_paper_backtest').id, 'archived');
+  } finally { globalThis.fetch = realFetch; }
 });

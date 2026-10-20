@@ -39,4 +39,15 @@ void main() {
     expect(find.textContaining('Unlock live'), findsNothing);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('diagnostics show the current research attempt separately from the archived success', (tester) async {
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: SingleChildScrollView(child: CheStrategyLearningDashboard(
+      data: {'research': {'last_attempt': '2026-10-20T14:00:00.000Z', 'attempt_status': 'complete', 'reused': true, 'last_success': '2026-10-17T14:00:00.000Z'}, 'strategies': []},
+      onAsk: (_) {}, onResearch: null,
+    )))));
+    await tester.tap(find.text('Research and slow-progress diagnostics'));
+    await tester.pumpAndSettle();
+    expect(find.text('Last research attempt: 2026-10-20T14:00:00.000Z · complete · reused the archived experiment (same dataset, no new evidence)'), findsOneWidget);
+    expect(find.text('Last successful research: 2026-10-17T14:00:00.000Z'), findsOneWidget);
+  });
 }
