@@ -7,10 +7,10 @@
 // never by a language model: a model once invented sim-2023-03-10-001, paper-2023-02-20-001 and
 // storage keys named simulation_trades and journal_trades. Read only: nothing here orders, spends
 // or calls a model. A record set that cannot be read says so instead of giving a number.
-import { MIN_SAMPLE, STATE_KEY as SIM_STATE_KEY, TRADE_CAP, TRADE_CHUNK, leaderboard, readSimState, readStoredTrades, strategySimIntent } from './strategy_sim.js';
+import { MINUTE_FEEDS, MIN_SAMPLE, STATE_KEY as SIM_STATE_KEY, TRADE_CAP, TRADE_CHUNK, leaderboard, readSimState, readStoredTrades, strategySimIntent } from './strategy_sim.js';
 import { LIVE_PORTFOLIOS, LIVE_RUNS, LIVE_STATE, RESOLUTION, liveDashboard } from './trading_live.js';
 import { EVIDENCE_PORTFOLIOS, EVIDENCE_RUNS, evidenceIntent } from './trading_evidence_runner.js';
-import { MIN_TRADES, RECORD_PREFIX, readTrades, summarize } from './trading_evidence.js';
+import { CANDIDATES, MIN_TRADES, RECORD_PREFIX, breakdown, readTrades, summarize } from './trading_evidence.js';
 import { readBook, tradingIntent } from './trading_lab.js';
 import { ORDER_ASK, liveIntent } from './trading_live_chat.js';
 import { deskIntent } from './trading_desk.js';
@@ -125,6 +125,20 @@ const r3 = (x) => (Number.isFinite(x) ? Math.round(x * 1000) / 1000 : null);
 const isLive = (t) => t.environment === 'paper' && t.data?.resolution === RESOLUTION;
 const isDaily = (t) => t.environment === 'paper' && (t.data?.resolution ?? 'daily') === 'daily';
 
+// The dashboard's curve: one point per closed trade, cumulative, oldest first, at most EQUITY_POINTS
+// points (evenly thinned, the last point always kept). `unit` says what the number is: R or $.
+export const EQUITY_POINTS = 240;
+function equityCurve(trades, { at, value, unit }) {
+  const sorted = trades.filter((t) => Number.isFinite(value(t))).map((t) => ({ t: at(t) || null, v: value(t) })).sort((a, b) => String(a.t).localeCompare(String(b.t)));
+  let sum = 0;
+  const points = sorted.map((p) => ({ t: p.t, v: (sum = Math.round((sum + p.v) * 1000) / 1000) }));
+  if (points.length <= EQUITY_POINTS) return { unit, points, trades: points.length };
+  const step = points.length / EQUITY_POINTS;
+  const thinned = Array.from({ length: EQUITY_POINTS }, (_, i) => points[Math.min(points.length - 1, Math.floor(i * step))]);
+  thinned[thinned.length - 1] = points[points.length - 1];
+  return { unit, points: thinned, trades: points.length };
+}
+
 async function safely(id, read) {
   const base = LEDGERS.find((l) => l.id === id);
   try {
@@ -162,6 +176,10 @@ export async function readLedgers(storage, { now = Date.now() } = {}) {
       open: Object.keys(state.open || {}).length, newest: simTrade(trades[trades.length - 1]),
       best: lead && { strategy: lead.id, name: lead.name, trades: lead.trades, win_rate: lead.win_rate, expectancy_r: r3(lead.expectancy_r), out_of_sample: lead.sample_size, out_of_sample_expectancy_r: r3(lead.out_of_sample.expectancy_r), label: lead.label, reasons: lead.reasons, params: lead.params },
       profitable: board.filter((row) => row.label === 'profitable').length, strategies: board.length, min_sample: MIN_SAMPLE,
+      // For the Trading Room dashboard: every strategy, the minute feeds and the equity curve in R.
+      by_strategy: board.map((row) => ({ strategy: row.id, name: row.name, family: row.family, trades: row.trades, wins: row.wins, losses: row.losses, win_rate: row.win_rate == null ? null : Math.round(row.win_rate * 1000) / 10, expectancy_r: r3(row.expectancy_r), out_of_sample: row.sample_size, out_of_sample_expectancy_r: r3(row.out_of_sample.expectancy_r), label: row.label })),
+      feeds: Object.entries(MINUTE_FEEDS).map(([symbol, feed]) => { const sym = state.symbols[symbol] || {}; return { symbol, source: feed.feed, status: sym.feed?.status || 'waiting for the first tick', last_bar: sym.feed?.last_bar_t || null, bars: sym.bars || 0, error: sym.error || null }; }),
+      equity: equityCurve(trades, { at: (t) => t.exit_t, value: (t) => t.r, unit: 'R' }),
     };
   });
   const journal = await safely('forward_paper_journal', async () => {
@@ -173,20 +191,39 @@ export async function readLedgers(storage, { now = Date.now() } = {}) {
       feed: dash.feed ? { status: dash.feed.status, provider: dash.feed.provider, checked_at: dash.feed.checked_at } : null,
       best: best && { strategy: best.strategy, name: best.name, filter: best.filter, trades: best.trades, win_rate: best.win_rate, expectancy_r: best.expectancy_r, net_pnl: best.net_pnl, ranked: best.ranked, params: { target_r: best.target_r, filter: best.filter } },
       min_sample: MIN_TRADES, last_run: dash.runs[0]?.at || null,
+      by_strategy: dash.by_strategy.map((row) => ({ strategy: row.strategy, name: row.name, filter: row.filter, target_r: row.target_r, trades: row.trades, wins: row.wins, losses: row.losses, win_rate: row.win_rate, expectancy_r: row.expectancy_r, net_pnl: row.net_pnl, ranked: row.ranked })),
+      feeds: dash.feed ? [{ symbol: dash.feed.provider_symbol || 'MNQ=F', source: dash.feed.provider || null, status: dash.feed.status || 'unknown', last_bar: dash.feed.last_bar_time || null, latency_s: dash.feed.latency_s ?? null, error: dash.feed.error || null }] : [],
+      // The journal's own trades, oldest first (the dashboard list is newest first and capped at 200).
+      equity: equityCurve(await readTrades(storage, isLive), { at: (t) => t.exit.time, value: (t) => t.net_pnl, unit: '$' }),
     };
   });
   const evidence = await safely('daily_evidence', async () => {
     const trades = await readTrades(storage, isDaily);
     const runs = (await storage.get(EVIDENCE_RUNS)) || [];
     const s = summarize(trades);
-    return { status: runs.length ? 'ran' : 'not run yet', runs: runs.length, trades: s.trades, wins: s.wins, losses: s.losses, win_rate: s.win_rate, net_pnl: s.net_pnl, expectancy_r: s.expectancy_r, newest: journalTrade(trades[trades.length - 1]), min_sample: MIN_TRADES, last_run: runs[runs.length - 1]?.at || null };
+    const byPortfolio = Object.entries(breakdown(trades, (t) => t.portfolio)).map(([portfolio, b]) => {
+      const first = trades.find((t) => t.portfolio === portfolio);
+      return { strategy: first?.strategy || portfolio, name: CANDIDATES[first?.strategy]?.name || first?.strategy || portfolio, filter: first?.filter || '', trades: b.trades, wins: b.wins, losses: b.losses, win_rate: b.win_rate, expectancy_r: b.expectancy_r, net_pnl: b.net_pnl, ranked: b.trades >= MIN_TRADES };
+    }).sort((a, b) => b.expectancy_r - a.expectancy_r);
+    return {
+      status: runs.length ? 'ran' : 'not run yet', runs: runs.length, trades: s.trades, wins: s.wins, losses: s.losses, win_rate: s.win_rate, net_pnl: s.net_pnl, expectancy_r: s.expectancy_r,
+      newest: journalTrade(trades[trades.length - 1]), min_sample: MIN_TRADES, last_run: runs[runs.length - 1]?.at || null,
+      by_strategy: byPortfolio, feeds: [], equity: equityCurve(trades, { at: (t) => t.exit.time, value: (t) => t.net_pnl, unit: '$' }),
+    };
   });
   const lab = await safely('lab_paper_book', async () => {
     const book = await readBook(storage);
     const last = book.closed[book.closed.length - 1] || null;
-    return { status: 'learning', trades: book.closed.length, open: book.open.length, watching: book.watch.length, newest: last && { id: last.id, symbol: last.symbol, strategy: last.strategy, closed_at: last.closed_at, r: r3(last.r) } };
+    const groups = {};
+    for (const t of book.closed) (groups[t.strategy] ||= []).push(t);
+    return {
+      status: 'learning', trades: book.closed.length, open: book.open.length, watching: book.watch.length,
+      newest: last && { id: last.id, symbol: last.symbol, strategy: last.strategy, closed_at: last.closed_at, r: r3(last.r) },
+      by_strategy: Object.entries(groups).map(([strategy, list]) => ({ strategy, name: strategy, trades: list.length, wins: list.filter((t) => t.r > 0).length, losses: list.filter((t) => t.r < 0).length, expectancy_r: r3(list.reduce((sum, t) => sum + (Number(t.r) || 0), 0) / list.length) })).sort((a, b) => b.expectancy_r - a.expectancy_r),
+      feeds: [], equity: equityCurve(book.closed, { at: (t) => t.closed_at, value: (t) => Number(t.r), unit: 'R' }),
+    };
   });
-  const broker = { ...LEDGERS[4], unavailable: false, trades: null, status: 'read live on request' };
+  const broker = { ...LEDGERS[4], unavailable: false, trades: null, status: 'read live on request', by_strategy: [], feeds: [], equity: null };
   return [sim, journal, evidence, lab, broker];
 }
 
