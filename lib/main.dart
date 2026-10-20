@@ -116,6 +116,7 @@ import 'self_update/che_self_update_intent.dart';
 import 'rooms/che_markets_room.dart';
 import 'rooms/che_alpaca_paper.dart';
 import 'rooms/che_strategy_controls.dart';
+import 'che_ui/che_help.dart';
 import 'rooms/che_store_room.dart';
 import 'rooms/che_pipeline_room.dart';
 import 'rooms/che_creator_studio.dart';
@@ -1482,25 +1483,31 @@ OWNER AGENCY
           baseUrl: cheAgentBaseUrl,
           onSpeak: (text) => speakText(text, record: false, readOnDemand: true),
         ),
-        Semantics(
-          liveRegion: true,
-          label: _statusBanner,
-          child: Container(
-            width: double.infinity,
-            color: const Color(0xFF102D29),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-            child: Text(
-              _statusBanner,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: 13,
-                height: 1.15,
-                fontWeight: FontWeight.w600,
-                color: Colors.white,
+        Container(
+          width: double.infinity,
+          color: const Color(0xFF102D29),
+          padding: const EdgeInsets.only(left: 12),
+          child: Row(children: [
+            Expanded(
+              child: Semantics(
+                liveRegion: true,
+                label: _statusBanner,
+                child: Text(
+                  _statusBanner,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    height: 1.15,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white,
+                  ),
+                ),
               ),
             ),
-          ),
+            // Universal help: what the controls on this screen do (che_ui/che_help.dart).
+            const CheHelpButton(color: Colors.white, dense: true),
+          ]),
         ),
         if (_actionApprovals.isNotEmpty)
           ConstrainedBox(
@@ -2378,6 +2385,7 @@ OWNER AGENCY
                   icon: const Icon(Icons.add_rounded),
                   onPressed: _isSending ? null : _homeNewChat,
                 ),
+                const CheHelpButton(),
                 IconButton(
                   tooltip: 'Mailbox and Flagstaff',
                   icon: _mailboxUnread > 0
