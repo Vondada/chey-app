@@ -52,11 +52,12 @@ void main() {
     expect(find.text('AAPL · BUY'), findsOneWidget);
     expect(find.text('1 / 3 filled'), findsOneWidget);
     expect(find.text('partially_filled'), findsOneWidget);
-    expect(find.textContaining('Paper account equity: '), findsOneWidget);
+    expect(find.text(r'Paper account equity: $10000.00'), findsOneWidget);
     await tester.tap(find.text('AAPL · BUY'));
     await tester.pumpAndSettle();
     expect(find.text('Verified paper-order receipt'), findsOneWidget);
     expect(find.text('Filled: 1'), findsOneWidget);
+    expect(find.text(r'Average fill: $195.00'), findsOneWidget);
     expect(find.text('Alpaca order ID: broker-order-1'), findsOneWidget);
     expect(requests, contains('GET /api/trading/alpaca/orders'));
     expect(requests.every((r) => r.startsWith('GET ')), isTrue,

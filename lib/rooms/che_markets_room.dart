@@ -256,7 +256,7 @@ class _CheMarketsRoomState extends State<CheMarketsRoom> {
               // Alpaca stock paper orders: broker receipts, never MNQ simulator fills.
               Padding(
                 padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.md, CheSpace.gutter, 0),
-                child: CheAlpacaPaperPanel(baseUrl: widget.baseUrl, headers: widget.headers, client: widget.client),
+                child: CheAlpacaPaperPanel(baseUrl: widget.baseUrl, headers: widget.headers, onAsk: widget.onAsk, client: widget.client),
               ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(

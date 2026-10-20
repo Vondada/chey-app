@@ -8,11 +8,12 @@ import 'package:http/http.dart' as http;
 class CheAlpacaPaperPanel extends StatefulWidget {
   const CheAlpacaPaperPanel({
     super.key, required this.baseUrl, required this.headers,
-    this.client, this.refresh = const Duration(seconds: 30),
+    this.client, this.onAsk, this.refresh = const Duration(seconds: 30),
   });
   final String Function() baseUrl;
   final Map<String, String> Function() headers;
   final http.Client? client;
+  final void Function(String)? onAsk;
   final Duration refresh;
 
   @override
@@ -26,6 +27,8 @@ class _CheAlpacaPaperPanelState extends State<CheAlpacaPaperPanel> {
   String _notice = 'Reading broker-confirmed paper orders…';
   String? _equity;
   DateTime? _checked;
+  bool _loading = false;
+  bool _stale = false;
 
   @override
   void initState() {
@@ -52,10 +55,12 @@ class _CheAlpacaPaperPanelState extends State<CheAlpacaPaperPanel> {
   }
 
   Future<void> _load() async {
+    if (_loading) return;
+    _loading = true;
     try {
       final responses = await Future.wait([
         _get('/api/trading/alpaca/orders'),
-        _get('/api/trading/connections'),
+        _get('/api/trading/connections').catchError((Object _) => <String, dynamic>{}),
       ]);
       final orders = responses[0];
       final connections = (responses[1]['cards'] as List? ?? const []);
@@ -75,9 +80,10 @@ class _CheAlpacaPaperPanelState extends State<CheAlpacaPaperPanel> {
         return;
       }
       setState(() {
+        _stale = false;
         _orders = (orders['orders'] as List? ?? const []).whereType<Map>()
             .map((m) => Map<String, dynamic>.from(m)).toList();
-        _equity = account is Map && account['equity'] != null
+        _equity = alpaca['state'] == 'verified' && account is Map && account['equity'] != null
             ? _money(account['equity']) : null;
         _checked = DateTime.now();
         _notice = _orders.isEmpty ? 'No Alpaca paper orders recorded by the broker.' : '';
@@ -85,14 +91,17 @@ class _CheAlpacaPaperPanelState extends State<CheAlpacaPaperPanel> {
     } catch (_) {
       if (!mounted) return;
       setState(() {
+        _stale = true;
         _notice = 'Refresh failed. Any orders below are old, not a live status.';
       });
+    } finally {
+      _loading = false;
     }
   }
 
   String _money(Object? amount) {
     final n = amount is num ? amount.toDouble() : double.tryParse('$amount');
-    return n == null ? 'Not reported' : '\${n.toStringAsFixed(2)}';
+    return n == null || !n.isFinite ? 'Not reported' : '\$${n.toStringAsFixed(2)}';
   }
 
   void _showReceipt(Map<String, dynamic> order) {
@@ -116,8 +125,8 @@ class _CheAlpacaPaperPanelState extends State<CheAlpacaPaperPanel> {
         padding: const EdgeInsets.all(22),
         child: Column(mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text('Verified paper-order receipt',
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+          Text(_stale ? 'Previously verified paper-order receipt' : 'Verified paper-order receipt',
+            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
           const SizedBox(height: 12),
           for (final line in lines) Padding(
             padding: const EdgeInsets.symmetric(vertical: 5),
@@ -189,6 +198,11 @@ class _CheAlpacaPaperPanelState extends State<CheAlpacaPaperPanel> {
               );
             }),
           ),
+        if (widget.onAsk != null) TextButton.icon(
+          onPressed: () => widget.onAsk!('Read my Alpaca paper orders.'),
+          icon: const Icon(Icons.record_voice_over_outlined),
+          label: const Text('Read Alpaca paper orders aloud'),
+        ),
         const SizedBox(height: 8),
         const Text('No order is placed here. Chart markers require a verified stock price feed.',
           style: TextStyle(color: Colors.white70, fontSize: 12)),
