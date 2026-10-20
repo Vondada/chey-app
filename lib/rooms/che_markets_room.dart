@@ -16,11 +16,7 @@ import '../che_ui/che_rooms.dart';
 import '../che_ui/che_theme.dart';
 import '../widgets/che_native_scene_world.dart';
 import 'che_live_chart.dart';
-import 'che_live_paper.dart';
-import 'che_alpaca_paper.dart';
-import 'che_strategy_controls.dart';
-import 'che_trading_ledgers.dart';
-import 'che_trading_connections.dart';
+import 'che_trading_room.dart';
 
 class CheQuote {
   const CheQuote({required this.symbol, required this.name, this.price, this.changePct, required this.status, this.note});
@@ -76,6 +72,7 @@ class CheMarketsRoom extends StatefulWidget {
     required this.onAsk,
     this.client,
     this.onOpenTradingApp,
+    this.onSpeak,
   });
 
   final String Function() baseUrl;
@@ -88,6 +85,9 @@ class CheMarketsRoom extends StatefulWidget {
 
   /// Opens a supported trading website inside CHE's in-app browser.
   final void Function(String appName)? onOpenTradingApp;
+
+  /// Reads text aloud, only when the owner presses a Read button.
+  final void Function(String text)? onSpeak;
 
   @override
   State<CheMarketsRoom> createState() => _CheMarketsRoomState();
@@ -212,12 +212,31 @@ class _CheMarketsRoomState extends State<CheMarketsRoom> {
           onRefresh: () async {
             await Future.wait([_load(), _loadCandles()]);
           },
-          child: ListView(
-            padding: const EdgeInsets.only(bottom: CheSpace.xxl),
-            children: [
-              _TickerTape(quotes: _quotes, fmt: _fmt),
-              // The live chart fills the room: switch symbols and timeframes
-              // by tap, typing or voice; "Read price" speaks the latest price.
+          // Build 1 (owner, 2026-10-20): four sections. CHART holds the interactive paper chart, then
+          // the market overview; CHE TRADES, STRATEGIES and ACCOUNT hold the existing panels.
+          child: CheTradingRoom(
+            baseUrl: widget.baseUrl,
+            headers: widget.headers,
+            onAsk: widget.onAsk,
+            onSpeak: widget.onSpeak,
+            client: widget.client,
+            header: _TickerTape(quotes: _quotes, fmt: _fmt),
+            accountExtras: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.md, CheSpace.gutter, 0),
+                child: _LiveAccountCard(
+                  account: _account,
+                  money: _money,
+                  onOpenNinjaTrader: widget.onOpenTradingApp == null ? null : () => widget.onOpenTradingApp!('NinjaTrader'),
+                ),
+              ),
+            ],
+            chartExtras: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.lg, CheSpace.gutter, 0),
+                child: Text('MARKET OVERVIEW', style: CheType.overline.copyWith(color: _gold)),
+              ),
+              // The index futures chart: switch symbols and timeframes by tap, typing or voice.
               Padding(
                 padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.md, CheSpace.gutter, 0),
                 child: CheLiveChartPanel(
@@ -226,31 +245,6 @@ class _CheMarketsRoomState extends State<CheMarketsRoom> {
                   client: widget.client,
                   height: math.max(320.0, MediaQuery.sizeOf(context).height * 0.55),
                 ),
-              ),
-              // CHE's forward paper trading, from its records (owner, 2026-10-18).
-              Padding(
-                padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.md, CheSpace.gutter, 0),
-                child: CheLivePaperPanel(baseUrl: widget.baseUrl, headers: widget.headers, onAsk: widget.onAsk, client: widget.client),
-              ),
-              // The Strategy Control Center (owner, 2026-10-20): limits, pause, Emergency Stop, audit.
-              Padding(
-                padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.md, CheSpace.gutter, 0),
-                child: CheStrategyControlsPanel(baseUrl: widget.baseUrl, headers: widget.headers, onAsk: widget.onAsk, client: widget.client),
-              ),
-              // CHE's Alpaca PAPER stock account, visually: orders, confirmed fills, positions (owner, 2026-10-20).
-              Padding(
-                padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.md, CheSpace.gutter, 0),
-                child: CheAlpacaPaperPanel(baseUrl: widget.baseUrl, headers: widget.headers, onAsk: widget.onAsk, client: widget.client),
-              ),
-              // Every trade record set by source, never summed (owner, 2026-10-20).
-              Padding(
-                padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.md, CheSpace.gutter, 0),
-                child: CheTradingLedgersPanel(baseUrl: widget.baseUrl, headers: widget.headers, onAsk: widget.onAsk, client: widget.client),
-              ),
-              // Every broker connection as its own system reports it (issue #344).
-              Padding(
-                padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.md, CheSpace.gutter, 0),
-                child: CheTradingConnectionsPanel(baseUrl: widget.baseUrl, headers: widget.headers, onAsk: widget.onAsk, client: widget.client),
               ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(
@@ -305,14 +299,6 @@ class _CheMarketsRoomState extends State<CheMarketsRoom> {
                 child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
                   if (_error != null)
                     Text('Market data: $_error', style: CheType.caption.copyWith(color: CheColors.warning)),
-                  _LiveAccountCard(
-                    account: _account,
-                    money: _money,
-                    onOpenNinjaTrader: widget.onOpenTradingApp == null
-                        ? null
-                        : () => widget.onOpenTradingApp!('NinjaTrader'),
-                  ),
-                  const SizedBox(height: CheSpace.md),
                   SizedBox(
                     height: 84,
                     child: ListView.separated(

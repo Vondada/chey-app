@@ -461,6 +461,17 @@ extension _CheHomeStreaming on _CHEHomeState {
         if (data['open_view'] == 'trading_controls' && mounted) {
           unawaited(Navigator.of(context).push(CheStrategyControlsPage.route(baseUrl: () => cheAgentBaseUrl, headers: () => _authHeaders, onAsk: _runHubPrompt)));
         }
+        // "Open Alpaca chart", "CHE, show EMA trades", "Draw a line at 21,450": the Trading Room on
+        // the section, account, symbol and strategy the Worker named (Build 1).
+        if (data['open_view'] == 'trading_chart' && mounted) {
+          unawaited(Navigator.of(context).push(CheTradingRoomPage.route(
+            baseUrl: () => cheAgentBaseUrl,
+            headers: () => _authHeaders,
+            onAsk: _runHubPrompt,
+            onSpeak: (text) => speakText(text, record: false),
+            chart: data['chart'] is Map<String, dynamic> ? data['chart'] as Map<String, dynamic> : null,
+          )));
+        }
         if (data['open_view'] == 'alpaca_paper' && mounted) {
           unawaited(Navigator.of(context).push(CheAlpacaPaperPage.route(baseUrl: () => cheAgentBaseUrl, headers: () => _authHeaders, onAsk: _runHubPrompt)));
         }
