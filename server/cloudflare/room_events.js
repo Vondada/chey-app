@@ -42,13 +42,26 @@ export async function queueRoomEvent(storage, event, now = Date.now()) {
   return true;
 }
 
-/** Takes every queued event out of storage. The caller publishes them; a failure to publish is logged, never requeued forever. */
-export async function takeRoomEvents(storage) {
-  let list = [];
-  try { list = (await storage.get(ROOM_EVENTS_KEY)) || []; } catch (_) { return []; }
-  if (!Array.isArray(list) || !list.length) return [];
-  try { await storage.put(ROOM_EVENTS_KEY, []); } catch (_) {}
-  return list;
+/** The queued events, read only. The caller publishes them, then acknowledges the ones it handled. */
+export async function peekRoomEvents(storage) {
+  try { const list = (await storage.get(ROOM_EVENTS_KEY)) || []; return Array.isArray(list) ? list : []; } catch (_) { return []; }
+}
+
+/** Identity of a queued event, the same for a repeat, so a handled event is removed exactly once. */
+export const eventSignature = (event) => `${event?.room || ''}|${event?.key || ''}|${event?.at || ''}|${event?.title || ''}`;
+
+/**
+ * Removes the events a drain has handled. Events queued meanwhile stay, and a crash before this call
+ * leaves the events queued: publishing is idempotent (the Brain answers 'present' to a repeat), so a
+ * repeat drain is safe. Owner review 2026-10-20: the old take-then-write lost events on a crash.
+ */
+export async function ackRoomEvents(storage, handled) {
+  const done = new Set(handled.map(eventSignature));
+  if (!done.size) return 0;
+  const list = await peekRoomEvents(storage);
+  const kept = list.filter((event) => !done.has(eventSignature(event)));
+  try { await storage.put(ROOM_EVENTS_KEY, kept); } catch (_) { return 0; }
+  return list.length - kept.length;
 }
 
 /**

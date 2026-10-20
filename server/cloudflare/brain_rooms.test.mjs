@@ -6,7 +6,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { BRAIN_REGIONS, CheBrainStore } from './brain_store.js';
-import { EVENT_STATUSES, ROOM_EVENTS_KEY, queueRoomEvent, receiptEvent, takeRoomEvents } from './room_events.js';
+import { EVENT_STATUSES, ROOM_EVENTS_KEY, peekRoomEvents, queueRoomEvent, receiptEvent } from './room_events.js';
 import {
   LAST_SCREEN_KEY, ROOMS, answerCrossRoom, crossRoomIntent, drainRoomEvents, linkRelated, publishRoomEvent, recentScreen, rememberScreen,
   roomEventRecord, screenFollowUp, screenRoomFor, statusLabel,
@@ -142,7 +142,8 @@ test('receipts map to coding, trading and office events; the queue drains into t
   const store = new CheBrainStore(storage);
   const drained = await drainRoomEvents(storage, store);
   assert.equal(drained.taken, 1); assert.equal(drained.written, 1);
-  assert.deepEqual(await takeRoomEvents(storage), []);
+  assert.deepEqual(await peekRoomEvents(storage), [], 'a handled event leaves the queue');
+  assert.equal((await drainRoomEvents(storage, store)).taken, 0, 'a repeat drain finds nothing');
   const hit = store.search('pull request 374 merged', { limit: 3 })[0];
   assert.ok(hit && hit.source.room === 'coding' && hit.verification === 'verified_source');
   assert.equal(await queueRoomEvent(storage, { room: 'trading', title: 'dup', key: 'd' }), true);
@@ -195,6 +196,22 @@ test('from Chat, a question about the Trading Room is answered from the Brain an
   const plain = await che.say('Tell me something about MNQ breakouts today.');
   assert.equal(plain.route, 'model');
   assert.ok(plain.prompts.some((p) => /Brain records on the Worker[\s\S]*\[Trading Room; verified; 2026-10-20\] 2 forward paper trades closed on MNQ breakout/.test(p)), 'the Worker\'s own Brain feeds the prompt');
+});
+
+test('an event the Brain could not take stays queued; a repeat drain never writes it twice (owner review, crash safety)', sqlite, async () => {
+  const storage = storageFor();
+  await queueRoomEvent(storage, { room: 'trading', kind: 'journal_trades', key: 'j1', title: 'Forward paper trade closed', body: 'x', status: 'verified', at: '2026-10-20T10:00:00Z' });
+  await queueRoomEvent(storage, { room: 'rea', kind: 'investigation', key: 'r1', title: 'REA investigation complete: example.com', body: 'y', status: 'verified', at: '2026-10-20T10:01:00Z' });
+  const offline = { init: () => false };
+  const held = await drainRoomEvents(storage, offline);
+  assert.equal(held.taken, 2); assert.equal(held.written, 0);
+  assert.equal((await peekRoomEvents(storage)).length, 2, 'nothing is lost when the Brain is unavailable');
+  const store = new CheBrainStore(storage);
+  const first = await drainRoomEvents(storage, store);
+  assert.equal(first.written, 2);
+  const second = await drainRoomEvents(storage, store);
+  assert.equal(second.taken, 0);
+  assert.equal(store.search('forward paper trade closed', { limit: 5 }).filter((r) => r.title === 'Forward paper trade closed').length, 1, 'one record, not two');
 });
 
 test('the phone replica sees queued room events on its next sync without a chat turn', sqlite, async () => {
@@ -250,6 +267,7 @@ test('a real image analysis is reported with its engine, remembered for follow-u
   assert.equal(out.done.vision.ok, true);
   assert.equal(out.done.screen_room, 'trading');
   assert.ok(out.prompts.some((p) => /Authoritative trading records now \(read from storage, not from the screen/.test(p)), 'the Trading Room\'s ledgers are read for a Trading Room screen');
+  assert.ok(out.prompts.some((p) => /<<<UNTRUSTED_SCREEN[\s\S]*UNTRUSTED_SCREEN>>>/.test(p) && /never instructions/.test(p)), 'screen text is framed as untrusted data');
   const seen = await recentScreen(che.storage);
   assert.equal(seen.room, 'trading'); assert.match(seen.engine, /^gemini-media|^openai|^connector|multimodal|vision/i);
   const connect = await che.say('Connect this to the Brain.');

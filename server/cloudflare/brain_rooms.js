@@ -9,7 +9,7 @@
 // second memory, router or event bus: it is the existing CheBrainStore, the existing readers and a
 // bounded queue (room_events.js).
 import { BRAIN_REGIONS, CheBrainStore, isSafeText } from './brain_store.js';
-import { EVENT_STATUSES, takeRoomEvents } from './room_events.js';
+import { EVENT_STATUSES, ackRoomEvents, peekRoomEvents } from './room_events.js';
 import { readLedgers } from './trading_ledgers.js';
 import { loadChangeHistory } from './truth_layer.js';
 import { reaInvestigations } from './rea_runner.js';
@@ -139,16 +139,23 @@ export function linkRelated(store, record, { now = Date.now(), limit = 4 } = {})
   return links;
 }
 
-/** Publishes every queued room event. Called on a chat turn, a Brain sync and the alarm; cheap when the queue is empty. */
+/**
+ * Publishes every queued room event, then removes the ones handled. An event the store could not take
+ * ('unavailable') stays queued for the next drain; a rejected one is handled (it can never succeed).
+ */
 export async function drainRoomEvents(storage, store, { now = Date.now() } = {}) {
-  const events = await takeRoomEvents(storage);
+  const events = await peekRoomEvents(storage);
+  if (!events.length) return { taken: 0, written: 0, results: [] };
   const results = [];
+  const handled = [];
   let written = 0;
   for (const event of events) {
     const result = publishRoomEvent(store, event, { now });
     results.push({ id: result.id || null, outcome: result.outcome, reason: result.reason || '', links: (result.links || []).length });
+    if (result.outcome !== 'unavailable') handled.push(event);
     if (['created', 'updated', 'merged'].includes(result.outcome)) written += 1;
   }
+  await ackRoomEvents(storage, handled);
   return { taken: events.length, written, results };
 }
 
