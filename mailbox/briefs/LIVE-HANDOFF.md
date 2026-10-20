@@ -31,6 +31,11 @@ git log origin/main --oneline -15                                    # what is m
 git branch -r --sort=-committerdate | head -15                       # newest work branches
 git log origin/main..origin/<branch> --oneline                       # unmerged commits on a branch
 git show origin/che-mailbox:mailbox/briefs/LIVE-HANDOFF.md | sed -n '/## 2/,/## 3/p'   # last recorded position
+
+**Claude, 2026-10-20 (owner: Simulation Lab on top of Concept-to-Plan).** Branch `claude/che-latency-optimization-8ruaus` at 319b345, PR #378 (open, NOT merged, NOT deployed; merge needs owner go, `[worker-deploy]` + Shorebird).
+- Added `server/cloudflare/sim_lab.js` + `lib/world/che_sim_lab.dart`, docs `docs/CHE_SIMULATION_LAB.md`. "Find the closest realistic solution" → staged seeded budgeted search (hover/EV/exo physics + option search), Monte Carlo on finalists, honest counts, Brain `simulation_run` proposed.
+- Verified locally: Worker 2521/2521, Flutter 559, analyze clean. Not verified: iPhone, production, CF CPU at the 1M cap.
+- Next: owner go to merge #378; then models for buildings/software/business, benchmarks vs measured data, long runs on Actions.
 ```
 
 Then, on GitHub:
