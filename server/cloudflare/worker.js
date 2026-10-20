@@ -10459,6 +10459,8 @@ export class CheState extends DurableObject {
           // A compound question ("won and lost, which strategy is best, is it still on?") gets every part.
           return ndjsonReply(liveAnswer(live, dash, { message, already }), {
             source: 'che_trading_live', model_calls: 0, ...(opens ? { open_screen: 'trading_room' } : {}),
+            // "Show strategy progress": the Trading Room opens on its STRATEGIES section (Build 1).
+            ...((live.kinds || [live.kind]).includes('learning') ? { chart: { section: 'strategies' } } : {}),
             trades_closed: dash.totals.trades, positions_open: dash.positions.length, account: 'PAPER',
           });
         }

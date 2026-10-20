@@ -8,7 +8,6 @@
 // New entries from the chart are blocked when the feed is delayed or unavailable, and futures
 // orders are refused because no futures paper broker is connected. Live orders stay disabled.
 import { alpacaPaperDashboard, alpacaPaperOrder, openAlpacaPaperOrders, previewAlpacaPaperOrder } from './broker_alpaca.js';
-import { aggregate } from './market_feed.js';
 import { readSimState, readStoredTrades } from './strategy_sim.js';
 import { readTrades } from './trading_evidence.js';
 import { LIVE_FEED, readLivePortfolios } from './trading_live.js';
@@ -78,6 +77,24 @@ export function chartMarkers({ journal = [], portfolios = [], simTrades = [], or
   return [...out.values()].sort((a, b) => String(a.time).localeCompare(String(b.time)));
 }
 
+// The stored 5-minute bars rolled into 15-minute, hourly or daily candles for the chart. Unlike
+// market_feed's aggregate (1-minute bars into closed 5-minute ones), the newest candle may still be
+// forming: a chart shows it, and nothing trades on it.
+export function rollUp(bars, minutes) {
+  const size = minutes * 60_000;
+  const out = [];
+  for (const b of bars) {
+    const t = Date.parse(b.t);
+    if (!Number.isFinite(t)) continue;
+    const start = Math.floor(t / size) * size;
+    const cur = out.at(-1);
+    if (cur && cur.start === start) {
+      cur.h = Math.max(cur.h, b.h); cur.l = Math.min(cur.l, b.l); cur.c = b.c; cur.v = (cur.v || 0) + (b.v || 0);
+    } else out.push({ start, t: new Date(start).toISOString(), o: b.o, h: b.h, l: b.l, c: b.c, v: b.v || 0 });
+  }
+  return out.map(({ start, ...bar }) => bar);
+}
+
 function feedHealth({ provider, status, lastBarTime, now, tf }) {
   const age = lastBarTime ? Math.round((now - Date.parse(lastBarTime)) / 1000) : null;
   const stale = age == null || age > (FRESH_SECONDS[tf] || 600) + 300;
@@ -112,7 +129,7 @@ export async function chartView(storage, env, { account = 'alpaca_paper', symbol
   const stored = (await storage.get(LIVE_FEED)) || {};
   const five = Array.isArray(stored.bars) ? stored.bars : [];
   const minutes = TIMEFRAMES[frame].minutes;
-  const bars = minutes <= 5 ? five : aggregate(five.map((b) => ({ ...b, t: b.t })), minutes, now);
+  const bars = minutes <= 5 ? five : rollUp(five, minutes);
   const journal = await readTrades(storage, (t) => t.environment === 'paper' && t.data?.resolution === '5m');
   const portfolios = await readLivePortfolios(storage);
   const sim = await readSimState(storage).catch(() => null);

@@ -232,7 +232,10 @@ test('the owner\'s chart words through /api/chat', sqlite, async () => {
   assert.deepEqual(open.done.chart, { section: 'chart', account: 'alpaca_paper', symbol: null, filter: null });
   const ema = await che.say('CHE, show EMA trades.');
   assert.deepEqual(ema.done.chart.filter, { strategy: 'ema' });
+  // The strategy learning report (#382) answers it, and the Trading Room opens on STRATEGIES.
   const progress = await che.say('Show strategy progress.');
+  assert.equal(progress.route, 'che_trading_live');
+  assert.equal(progress.done.open_screen, 'trading_room');
   assert.equal(progress.done.chart.section, 'strategies');
   const alpaca = await che.say('show me my Alpaca trades');
   assert.equal(alpaca.done.open_view, 'alpaca_paper', 'the Alpaca dashboard keeps its route');
