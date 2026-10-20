@@ -304,3 +304,49 @@ test('the EMA strategy comparison is answered strategy by strategy from the forw
   const rule = await che.say('How many out-of-sample trades do you need before you rank a strategy?');
   assert.match(rule.reply, /sample rules/);
 });
+
+// Owner, 2026-10-20: this exact question fell to the model, which failed with "I couldn't complete that
+// request just now, sir" (che_errors retryable_provider_error / temporary_cloud_unavailable): no route read
+// the journal. Now it is answered from the forward paper journal, by session and across the two variants.
+const SESSION_OVERLAP_QUESTION = "Compare EMA Pullback's New York morning versus overnight performance and determine whether the any and trend variants contain identical trades.";
+function emaTrade(entry, { filter = 'any', net = 25, side = 'long', exit = null } = {}) {
+  return {
+    environment: 'paper', source: 'paper', portfolio: `ema-pullback-5m|${filter}|2`, strategy: 'ema-pullback-5m', filter, params: { target_r: 2 },
+    side, contract: 'MNQ', qty: 1, entry: { time: entry, raw: 20000, fill: 20000.5 }, stop: 19990, target: 20020,
+    exit: { time: exit || entry.replace(/:00\.000Z$/, ':30.000Z'), fill: net > 0 ? 20020 : 19990, reason: net > 0 ? 'target' : 'stop' }, net_pnl: net, r_net: net > 0 ? 1.9 : -1.05,
+    costs: { spread: 0.5, slippage: 0.5, commissions: 0.62, fees: 0.3 }, data: { label: 'DELAYED', resolution: '5m' },
+  };
+}
+test('the EMA Pullback session and variant-overlap question is answered from the journal, counting shared entries once', async () => {
+  const saved = new Map();
+  const put = (t) => saved.set(`${RECORD_PREFIX}paper:${t.portfolio}:${t.entry.time}`, t);
+  // New York morning (14:00-16:00 UTC = 10:00-12:00 ET in October) and overnight (02:00 UTC = 22:00 ET).
+  const morning = ['2026-10-14T14:05:00.000Z', '2026-10-14T15:10:00.000Z', '2026-10-15T14:20:00.000Z'];
+  const overnight = ['2026-10-15T02:05:00.000Z', '2026-10-16T02:35:00.000Z'];
+  morning.forEach((at, i) => put(emaTrade(at, { net: i === 2 ? -20 : 25 })));
+  overnight.forEach((at) => put(emaTrade(at, { net: -20 })));
+  // The trend variant took two of the same morning entries (identical) and one entry of its own.
+  put(emaTrade(morning[0], { filter: 'trend' }));
+  put(emaTrade(morning[1], { filter: 'trend' }));
+  put(emaTrade('2026-10-16T15:00:00.000Z', { filter: 'trend', net: 25 }));
+  const before = [...saved.keys()].length;
+  const che = await owner({ saved });
+  const out = await che.say(SESSION_OVERLAP_QUESTION);
+  assert.equal(out.route, 'che_trading_analysis');
+  assert.equal(out.modelCalls, 0);
+  assert.doesNotMatch(out.reply, /couldn't complete/);
+  assert.match(out.reply, /Recorded: 8 closed trades across 2 variants \(any, 2R target: 5; trend, 2R target: 3\), which are 6 distinct market entries\./);
+  // Unique entries only: morning has 4 distinct entries (3 any + 1 trend-only), overnight 2.
+  assert.match(out.reply, /New York morning \(9:30 AM to 1:00 PM ET\): 4 trades: 3 won, 1 lost, net \$55\.00, expectancy 1\.1625 R per trade \(sample of 4/);
+  assert.match(out.reply, /overnight \(4:00 PM to 9:30 AM ET[^)]*\): 2 trades: 0 won, 2 lost, net minus \$40\.00, expectancy -1\.05 R per trade/);
+  assert.match(out.reply, /any, 2R target alone: 3 trades: 2 won, 1 lost/);
+  assert.match(out.reply, /2 identical market entries \(same side and entry bar\), 2 of them with the same exit too; 3 only in the first, 1 only in the second\. Partly:/);
+  assert.match(out.reply, /never added together/);
+  assert.equal([...saved.keys()].length >= before, true, 'no paper trade was removed');
+});
+
+test('the earlier EMA comparison and the new session question each keep their own route', async () => {
+  const che = await owner();
+  assert.equal((await che.say(EMA_QUESTION)).route, LEDGER_SOURCE);
+  assert.equal((await che.say(SESSION_OVERLAP_QUESTION)).route, 'che_trading_analysis');
+});

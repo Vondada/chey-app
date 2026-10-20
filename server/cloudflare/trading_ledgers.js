@@ -10,7 +10,7 @@
 import { MINUTE_FEEDS, MIN_SAMPLE, STATE_KEY as SIM_STATE_KEY, TRADE_CAP, TRADE_CHUNK, leaderboard, readSimState, readStoredTrades, strategySimIntent } from './strategy_sim.js';
 import { LIVE_PORTFOLIOS, LIVE_RUNS, LIVE_STATE, RESOLUTION, liveDashboard } from './trading_live.js';
 import { EVIDENCE_PORTFOLIOS, EVIDENCE_RUNS, evidenceIntent } from './trading_evidence_runner.js';
-import { CANDIDATES, MIN_TRADES, RECORD_PREFIX, breakdown, readTrades, summarize } from './trading_evidence.js';
+import { CANDIDATES, INTRADAY_CANDIDATES, INTRADAY_FILTERS, MIN_TRADES, RECORD_PREFIX, breakdown, readTrades, sessionOf, summarize } from './trading_evidence.js';
 import { readBook, tradingIntent } from './trading_lab.js';
 import { ORDER_ASK, liveIntent } from './trading_live_chat.js';
 import { deskIntent } from './trading_desk.js';
@@ -360,4 +360,104 @@ function speakStrategies(intent, chosen) {
   }
   lines.push('Each set is read on its own and never summed. Paper only: no money, no broker order and no model call in this answer.');
   return lines.join('\n');
+}
+
+// ─── One strategy, analysed: by session, and across its portfolio variants (owner, 2026-10-20) ──────
+// "Compare EMA Pullback's New York morning versus overnight performance and determine whether the any and
+// trend variants contain identical trades" fell to the model, which failed. It is answered here from the
+// forward paper journal's own trades. Each variant (filter and target) is its own portfolio; a market
+// entry both variants took is ONE entry, so combined numbers count it once and never add correlated
+// portfolios together. Read only.
+export const ANALYSIS_SOURCE = 'che_trading_analysis';
+// New York time, from trading_evidence.sessionOf (5-minute bars). Each window names its sessions.
+const SESSION_WINDOWS = [
+  { id: 'ny_morning', label: 'New York morning (9:30 AM to 1:00 PM ET)', keys: ['opening-30m', 'mid-morning'], re: /\b(?:new\s+york|ny|nyc)\s+(?:morning|open(?:ing)?|a\.?m\.?)\b|\bmorning\s+session\b|\bregular\s+morning\b/i },
+  { id: 'ny_afternoon', label: 'New York afternoon (1:00 PM to 4:00 PM ET)', keys: ['afternoon'], re: /\b(?:new\s+york\s+|ny\s+)?afternoon\b/i },
+  { id: 'overnight', label: 'overnight (4:00 PM to 9:30 AM ET, including the 8:30 AM release bar)', keys: ['close-and-overnight', 'pre-open', 'econ-0830'], re: /\bovernight\b|\bglobex\b|\bafter[- ]hours\b|\basia(?:n)?\s+session\b/i },
+  { id: 'pre_open', label: 'before the New York open (before 9:30 AM ET)', keys: ['pre-open', 'econ-0830'], re: /\bpre[- ]?(?:open|market)\b/i },
+];
+const OVERLAP = /\b(?:identical|same|duplicate[sd]?|overlap(?:ping)?|shared|correlated)\b[^.!?\n]{0,60}\b(?:trades?|entries|entry|positions?)\b|\b(?:trades?|entries)\b[^.!?\n]{0,60}\b(?:identical|the\s+same|overlap|duplicated?)\b/i;
+const strategyWords = (id) => id.replace(/-5m$/, '').split('-').join('[-\\s]+');
+function strategyNamed(text) {
+  for (const [id, spec] of Object.entries(INTRADAY_CANDIDATES)) {
+    if (new RegExp(`\\b${strategyWords(id)}\\b`, 'i').test(text) || text.toLowerCase().includes(String(spec.name).toLowerCase())) return id;
+  }
+  return '';
+}
+
+/** A named forward-paper strategy asked about by session and/or for overlap between its variants, or null. */
+export function strategyAnalysisIntent(message) {
+  const text = String(message || '').replace(/[’']/g, "'").replace(WAKE, '').trim();
+  if (!text || text.length > 1200 || ORDER_ASK.test(text)) return null;
+  const strategy = strategyNamed(text);
+  if (!strategy) return null;
+  const windows = SESSION_WINDOWS.filter((w) => w.re.test(text) && !(w.id === 'pre_open' && /\bovernight\b/i.test(text)));
+  const overlap = OVERLAP.test(text);
+  if (!windows.length && !overlap) return null;
+  const variants = Object.keys(INTRADAY_FILTERS).filter((f) => new RegExp(`\\b${f}\\b`, 'i').test(text));
+  return { kind: 'analysis', strategy, windows: windows.map((w) => w.id), overlap, variants };
+}
+
+const entryKey = (t) => `${t.side}|${t.entry?.time}`;
+const sessionKey = (t) => t.session || sessionOf(t.entry?.time, '5m');
+const variantOf = (t) => `${t.filter || 'any'}, ${t.params?.target_r ?? '?'}R target`;
+const statLine = (s) => s.trades
+  ? `${n(s.trades)}: ${s.wins} won, ${s.losses} lost, net ${money(s.net_pnl)}, expectancy ${s.expectancy_r} R per trade${s.trades < MIN_TRADES ? ` (sample of ${s.trades}, under the ${MIN_TRADES}-trade minimum, so not a conclusion)` : ''}`
+  : 'no closed trades';
+// One copy of each market entry: the first variant's trade stands for the entry.
+const uniqueEntries = (trades) => [...new Map(trades.map((t) => [entryKey(t), t])).values()];
+
+export async function analyzeStrategy(storage, intent) {
+  const name = INTRADAY_CANDIDATES[intent.strategy]?.name || intent.strategy;
+  let trades;
+  try {
+    trades = (await readTrades(storage, (t) => t.environment === 'paper' && t.data?.resolution === RESOLUTION)).filter((t) => t.strategy === intent.strategy);
+  } catch (_) {
+    return { ok: false, text: `I could not read the forward paper journal just now, sir, so I give no number for ${name}.` };
+  }
+  const byVariant = {};
+  for (const t of trades) (byVariant[t.portfolio] ||= []).push(t);
+  const variants = Object.entries(byVariant).sort(([a], [b]) => a.localeCompare(b));
+  const lines = [`${name}, sir, from the forward paper journal (MNQ 5-minute paper trades; paper only, no money):`];
+  if (!trades.length) {
+    lines.push('No closed trade of this strategy is recorded yet, so there is nothing to compare and no overlap to check.');
+    return { ok: true, text: lines.join('\n'), trades: 0 };
+  }
+  lines.push(`Recorded: ${n(trades.length, 'closed trade')} across ${variants.length} variant${variants.length === 1 ? '' : 's'} (${variants.map(([, list]) => `${variantOf(list[0])}: ${list.length}`).join('; ')}), which are ${n(uniqueEntries(trades).length, 'distinct market entry').replace('entrys', 'entries')}.`);
+  let part = 0;
+  if (intent.windows.length) {
+    part += 1;
+    lines.push(`${part}. By session, counting each market entry once across variants:`);
+    const unique = uniqueEntries(trades);
+    for (const id of intent.windows) {
+      const w = SESSION_WINDOWS.find((x) => x.id === id);
+      const inWindow = unique.filter((t) => w.keys.includes(sessionKey(t)));
+      lines.push(`   ${w.label}: ${statLine(summarize(inWindow))}.`);
+      if (variants.length > 1) for (const [, list] of variants) lines.push(`      ${variantOf(list[0])} alone: ${statLine(summarize(list.filter((t) => w.keys.includes(sessionKey(t)))))}.`);
+    }
+  }
+  if (intent.overlap) {
+    part += 1;
+    const asked = intent.variants.length >= 2 ? variants.filter(([, list]) => intent.variants.includes(list[0].filter || 'any')) : variants;
+    lines.push(`${part}. Do the ${asked.map(([, list]) => list[0].filter || 'any').join(' and ')} variants contain identical trades?`);
+    if (asked.length < 2) {
+      lines.push(`   I cannot compare them: only ${asked.length ? `the ${variantOf(asked[0][1][0])} variant has` : 'no variant has'} recorded trades${intent.variants.length ? ` among ${intent.variants.join(' and ')}` : ''}.`);
+    } else {
+      for (let i = 0; i < asked.length; i += 1) {
+        for (let j = i + 1; j < asked.length; j += 1) {
+          const [, a] = asked[i]; const [, b] = asked[j];
+          const bByEntry = new Map(b.map((t) => [entryKey(t), t]));
+          const shared = a.filter((t) => bByEntry.has(entryKey(t)));
+          const sameOutcome = shared.filter((t) => { const u = bByEntry.get(entryKey(t)); return u.exit?.time === t.exit?.time && u.exit?.reason === t.exit?.reason; });
+          const verdict = shared.length === a.length && shared.length === b.length && sameOutcome.length === shared.length
+            ? 'Yes: every trade is the same market entry with the same exit, so they are one result recorded twice, not independent evidence.'
+            : shared.length ? 'Partly: they share some market entries; the shared ones are one result, not two.' : 'No: they share no market entry; every trade was taken independently.';
+          lines.push(`   ${variantOf(a[0])} (${n(a.length)}) and ${variantOf(b[0])} (${n(b.length)}): ${shared.length} identical market ${shared.length === 1 ? 'entry' : 'entries'} (same side and entry bar), ${sameOutcome.length} of them with the same exit too; ${a.length - shared.length} only in the first, ${b.length - shared.length} only in the second. ${verdict}`);
+          if (shared.length) lines.push(`   Shared entries alone: ${statLine(summarize(sameOutcome.length === shared.length ? shared : shared.filter((t) => sameOutcome.includes(t))))}.`);
+        }
+      }
+    }
+  }
+  lines.push('Combined figures count each market entry once; correlated variants are never added together. No model call and no order in this answer.');
+  return { ok: true, text: lines.join('\n'), trades: trades.length };
 }
