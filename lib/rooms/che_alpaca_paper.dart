@@ -17,6 +17,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
+import '../che_ui/che_help.dart';
 import 'che_trading_ledgers.dart' show EquityCurvePainter;
 
 const _up = Color(0xFF3DDC97);
@@ -58,6 +59,18 @@ const kAlpacaStatusGroups = <String, (String, Color)>{
 
 /// What CHE is asked when the owner taps Read aloud (the Worker's Alpaca dashboard route).
 const kReadAlpacaAloud = 'Show me my Alpaca trades.';
+
+const kAlpacaHelp = CheHelpTopic(
+  title: 'Alpaca stocks (PAPER)',
+  summary: 'Your Alpaca paper account as Alpaca reports it. No real money; separate from CHE\'s MNQ/NQ simulations and Tradovate.',
+  items: [
+    CheControlHelp(name: 'PAPER badge', does: 'Marks everything here as Alpaca\'s paper account: no real money'),
+    CheControlHelp(name: 'Symbol chips', does: 'Choose which stock the chart shows'),
+    CheControlHelp(name: 'Chart markers', does: 'A filled dot is a fill Alpaca confirmed; a ring is an order that has not filled, at its limit or stop price. Each opens its receipt'),
+    CheControlHelp(name: 'Order list', does: 'Every order with its status: submitted, accepted, partially filled, filled, canceled, rejected or expired. Each opens its receipt'),
+    CheControlHelp(name: 'Read aloud', does: 'Reads a short summary of the account and the latest orders', say: 'show me my Alpaca trades'),
+  ],
+);
 
 /// One marker on the chart: a confirmed fill, or an order shown by its status.
 class AlpacaMarker {
@@ -120,16 +133,19 @@ class _CheAlpacaPaperPanelState extends State<CheAlpacaPaperPanel> {
   DateTime? _readAt;
   bool _stale = false;
   Timer? _timer;
+  Object? _help;
 
   @override
   void initState() {
     super.initState();
+    _help = CheHelp.register(context, () => kAlpacaHelp);
     _load();
     _timer = Timer.periodic(widget.refresh, (_) => _load());
   }
 
   @override
   void dispose() {
+    CheHelp.unregister(_help);
     _timer?.cancel();
     super.dispose();
   }
@@ -194,6 +210,7 @@ class _CheAlpacaPaperPanelState extends State<CheAlpacaPaperPanel> {
         ),
         const SizedBox(width: 8),
         const Expanded(child: Text('Alpaca stocks', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w800))),
+        const CheHelpButton(color: _dim),
         TextButton.icon(
           onPressed: () => widget.onAsk(kReadAlpacaAloud),
           icon: const Icon(Icons.record_voice_over, size: 18),
@@ -544,6 +561,7 @@ class CheAlpacaPaperPage extends StatelessWidget {
       appBar: AppBar(
         backgroundColor: const Color(0xFF05080A),
         title: const Text('Alpaca paper trades'),
+        actions: const [CheHelpButton()],
         leading: IconButton(tooltip: 'Back to where you were', icon: const Icon(Icons.arrow_back), onPressed: () => Navigator.of(context).maybePop()),
       ),
       body: ListView(padding: const EdgeInsets.all(12), children: [
