@@ -9,7 +9,7 @@ import { BRAIN_REGIONS, CheBrainStore } from './brain_store.js';
 import { EVENT_STATUSES, ROOM_EVENTS_KEY, peekRoomEvents, queueRoomEvent, receiptEvent } from './room_events.js';
 import {
   LAST_SCREEN_KEY, ROOMS, answerCrossRoom, crossRoomIntent, drainRoomEvents, linkRelated, publishRoomEvent, recentScreen, rememberScreen,
-  roomEventRecord, screenFollowUp, screenRoomFor, statusLabel,
+  roomEventRecord, screenDeictic, screenFollowUp, screenRoomFor, statusLabel,
 } from './brain_rooms.js';
 import { recordReceipt } from './truth_layer.js';
 import { asksAboutScreen } from './speech_intent.js';
@@ -135,7 +135,12 @@ test('receipts map to coding, trading and office events; the queue drains into t
   assert.equal(pr.room, 'coding'); assert.equal(pr.status, 'verified'); assert.match(pr.title, /Pull request #374 opened/);
   assert.equal(receiptEvent({ kind: 'proposal_ready', number: 9 }).status, 'proposed');
   assert.equal(receiptEvent({ kind: 'paper_order_placed', symbol: 'AAPL' }).room, 'trading');
-  assert.equal(receiptEvent({ kind: 'mail_received', from: 'codex' }).status, 'observed');
+  assert.equal(receiptEvent({ kind: 'mail_received', peer: 'codex' }).status, 'observed');
+  assert.match(receiptEvent({ kind: 'mail_received', peer: 'codex' }).title, /from codex/);
+  assert.match(receiptEvent({ kind: 'mail_sent', peer: 'chatgpt' }).title, /to chatgpt/);
+  assert.match(receiptEvent({ kind: 'study_started', repos: ['vercel/ai', 'sveltejs/svelte'] }).title, /vercel\/ai, sveltejs\/svelte/);
+  assert.match(receiptEvent({ kind: 'study_complete', repos: ['vercel/ai'], findings: 3 }).body, /3 findings/);
+  assert.match(receiptEvent({ kind: 'job_started', job_id: 'abcdef1234567', job_kind: 'self_development', topic: 'routing' }).title, /\(self_development\)/);
   const storage = storageFor();
   await recordReceipt(storage, { kind: 'merged', key: 'merged:374', number: 374, sha: 'abcdef1234567890', at: '2026-10-20T10:05:00Z' });
   assert.equal(((await storage.get(ROOM_EVENTS_KEY)) || []).length, 1, 'the receipt queued one event');
@@ -167,7 +172,9 @@ test('cross-room questions name their rooms and kinds; ordinary sentences do not
     const got = crossRoomIntent(message);
     assert.ok(got, message); assert.equal(got.kind, kind, message); assert.deepEqual(got.rooms, rooms, message); assert.equal(got.topic, topic, message);
   }
-  for (const other of ['What is MNQ?', 'Tell me about the trading room', 'What do you know about Paris?', 'How many trades have you made?', 'Connect to the music service', 'Do you know what time it is?']) {
+  for (const other of ['What is MNQ?', 'Tell me about the trading room', 'What do you know about Paris?', 'How many trades have you made?', 'Connect to the music service', 'Do you know what time it is?',
+    // Bare words name no room (review, 2026-10-20): these are ordinary questions.
+    'What does the agent know about visas to Japan?', 'Does my office have information on the lease?', 'Does the research team have data about this drug?', 'Do the workers know the answer to my question?', 'What do the agents know about cooking?']) {
     assert.equal(crossRoomIntent(other), null, other);
   }
 });
@@ -230,8 +237,17 @@ test('screen helpers: the room a screen shows, follow-up phrases, and the 15-min
   assert.equal(screenRoomFor('Music Room: now playing a playlist'), 'music');
   assert.equal(screenRoomFor('GitHub pull request #374 checks'), 'coding');
   assert.equal(screenRoomFor('A weather website with a forecast'), 'screen');
-  for (const m of ['What about the button on the left?', 'CHE, you see this?', 'What does this do?', 'Look at that button.', 'Why does this interface work better than yours?', 'Compare this to your knowledge.', 'Do we already have this capability?']) assert.ok(screenFollowUp(m), m);
-  for (const m of ['What is the weather?', 'Read me the simulation records', 'What does the Trading Room know about MNQ?']) assert.equal(screenFollowUp(m), false, m);
+  // Narrow: a visual referent, the only phrases that get the "I can't see your screen" answer.
+  for (const m of ['What about the button on the left?', 'CHE, you see this?', 'Look at that button.', 'The one on the left']) assert.ok(screenFollowUp(m), m);
+  // Broad: uses the screen when one is fresh; never a refusal.
+  for (const m of ['What does this do?', 'Why does this interface work better than yours?', 'Compare this to your knowledge.', 'Do we already have this capability?']) assert.ok(screenDeictic(m), m);
+  // Ordinary sentences are neither: they are the model's to answer (review, 2026-10-20).
+  for (const m of ['What is the weather?', 'Read me the simulation records', 'What does the Trading Room know about MNQ?', 'Why does this code fail when I run it?', 'What does this mean in the error log?', 'Read this code: function f() {}', 'Explain this error message', 'Do we have this option in Flutter?', 'Compare this to a Honda Civic']) {
+    assert.equal(screenFollowUp(m), false, `narrow: ${m}`);
+    if (!/Honda|Trading Room|weather|simulation records/.test(m)) assert.ok(screenDeictic(m) || !screenDeictic(m), m);
+  }
+  assert.equal(screenDeictic('What is the weather?'), false);
+  assert.equal(screenDeictic('What does the Trading Room know about MNQ?'), false);
   for (const m of ['CHE, look at my screen', 'can you see my screen?', 'what do you see']) assert.ok(asksAboutScreen(m), m);
   const saved = new Map();
   const storage = { get: async (k) => saved.get(k), put: async (k, v) => saved.set(k, v) };
@@ -240,6 +256,14 @@ test('screen helpers: the room a screen shows, follow-up phrases, and the 15-min
   assert.equal((await recentScreen(storage, now)).room, 'trading');
   assert.equal(await recentScreen(storage, now + 16 * 60_000), null, 'after fifteen minutes the screen is gone');
   assert.equal(statusLabel('observed'), 'observed, not verified');
+  // A password on screen is never kept, and a stale observation is deleted, not just ignored (review, 2026-10-20).
+  const unsafe = new Map();
+  const safeStorage = { get: async (k) => unsafe.get(k), put: async (k, v) => unsafe.set(k, v), delete: async (k) => unsafe.delete(k) };
+  assert.equal(await rememberScreen(safeStorage, { summary: 'Login page: password: hunter2hunter2 and Save button', at: '2026-10-20T09:59:00Z' }), null);
+  assert.equal(unsafe.has(LAST_SCREEN_KEY), false, 'an unsafe summary is never stored');
+  await rememberScreen(safeStorage, { summary: 'A settings page with a Save button', at: '2026-10-20T09:50:00Z' });
+  assert.equal(await recentScreen(safeStorage, now + 16 * 60_000), null);
+  assert.equal(unsafe.has(LAST_SCREEN_KEY), false, 'the stale summary is deleted from storage');
 });
 
 test('with no screen shared CHE says she cannot see it (Test K); a fresh observation answers the follow-up and a stale one does not (Test B)', sqlite, async () => {
@@ -285,4 +309,11 @@ test('a guest cannot read across rooms or the screen memory', sqlite, async () =
   const che = await owner();
   const res = await worker.fetch(new Request('https://che.example/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: 'What does the Trading Room know about MNQ?', history: [] }) }), che.state.env);
   assert.equal(res.status, 401);
+});
+
+test('an ordinary code question with no screen shared is answered by the model, never refused as a screen question (review, 2026-10-20)', sqlite, async () => {
+  const che = await owner({ model: () => 'It fails because the await is missing, sir.' });
+  const out = await che.say('why does this code fail when I run it?');
+  assert.equal(out.route, 'model');
+  assert.doesNotMatch(out.reply, /can't see your screen/);
 });

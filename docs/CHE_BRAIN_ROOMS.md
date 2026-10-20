@@ -49,6 +49,12 @@ its new state and a link to the replacement, and links the new record to records
 titles share two or more words (`related_to`, candidate links kept in `source.candidate_links`).
 This is incremental: one FTS query per event, never a rescan.
 
+Delivery is at least once and idempotent. The drain publishes each queued event and then removes only the
+events it handled; an event the Brain could not take stays queued. A crash between the write and the removal
+means the event is published again next time, and the Brain answers the repeat with 'present', so it is never
+written twice. Queue writes run through one chain inside the isolate, so a queued event cannot be lost to a
+concurrent removal.
+
 Producers wired now: every receipt (`truth_layer.recordReceipt`: coding jobs, pull requests, CI,
 merges, deploys, paper orders, Flagstaff mail), the forward paper journal and the strategy
 simulation (closed trades, from the alarm tick), REA (an npm inspection, an investigation and a
@@ -68,7 +74,12 @@ matching records (room, status, date, title) to the model's reference context ne
 **The owner's screen.** The latest observation (a vision summary, or the phone's page report) is
 kept for fifteen minutes as `che_last_screen`, never the image. "What about the button on the
 left?", "you see this?", "what does this do?" use it as the screen context, labelled temporary;
-after fifteen minutes, or with nothing shared, CHE says she cannot see the screen. A vision result
+after fifteen minutes (the stale entry is deleted from storage, not only ignored), or with nothing shared, CHE says she
+cannot see the screen. Only the owner's device writes or reads this memory. A summary that fails the sensitive-text
+gate (a password, a card number) is never kept. Two lists of phrases exist: a narrow list of visual references
+("the button on the left", "you see this?") that gets the "cannot see" answer when no screen is shared, and a
+broader list ("what does this do?", "compare this to your knowledge") that uses a fresh screen when there is one
+and is never a refusal, so an ordinary code question is answered by the model. A vision result
 names its engine in the reply ("Seen with gemini-media…") and in the done event (`vision`), and a
 failed analysis says so. The screen's room is detected (`screenRoomFor`); for the Trading Room the
 authoritative ledgers are read into the prompt so a number on the screen is never taken for a
