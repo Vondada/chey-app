@@ -64,6 +64,16 @@ Then, on GitHub:
 - Next: open focused PR for milestone 1 when the owner is ready (or continue: milestone 2 = scripted multi-agent demo via officeGoal + War Room board wiring + orb-tap deep link to the real task; then Phase B typed memory/provenance).
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
+## 2. Current position (Claude, 2026-10-20 — PR #375 Brain coordinator MERGED and LIVE; PR #374 ledger dashboard green, waiting on the owner)
+
+- **#375 merged** as `92a2432` (squash of head `11f58bd`) on the owner's go ("I think it's ready"). Deploy run 39378074233: live commit check VERIFIED, Worker version `dd33eac6-50b2-46a5-b9eb-d7ecd6d027a6`; memory, voice and command-center probes passed; Knowledge Atlas 11/11, Memory truth 18/18.
+- What #375 does: rooms queue verified events (`room_events.js`), the Brain drains them idempotently (`brain_rooms.js`), cross-room questions answer by source room and status (owner only), the chat prompt gets Worker Brain records inside `UNTRUSTED_BRAIN` markers, owner-only screen memory (15 min, unsafe summaries never kept, stale ones deleted). Design: `docs/CHE_BRAIN_ROOMS.md`.
+- Independent review: APPROVE on `86def03`; its three nits were fixed in `11f58bd` (Brain block capped before wrapping, `cappedBrain` in `compactChatPrompt`, positive screen-kept test, tautology removed). Worker suite 2477/2477.
+- Not verified: the paired non-owner screen case (code-read only); nothing on the iPhone.
+- **#374** (Trading Room ledger cards, head `77d1813`): CI green, merges cleanly onto `92a2432` (trial merge). Independent review still pending; needs the owner's go to merge, then deploy + Shorebird check.
+- Next, not started: Stage A phone-side screen capture (Flutter, Shorebird-patchable); Stage B ReplayKit broadcast (native, new IPA); Music Room knowledge; relationship discovery beyond title words.
+- Owner-side: ElevenLabs out of credits (5 left; CHE speaks with Fish).
+
 ## 2. Current position (Claude, 2026-10-20 — PR #373 trade records by name + retrieval boundary)
 
 - **Owner mission (2026-10-20):** stop fabricated retrieval evidence (invented sim-2023-03-10-001 / paper-2023-02-20-001, storage keys simulation_trades / journal_trades, 2023 dates, "ran the lookup tool"), source-aware retrieval for trading questions, 172 simulation vs 81 paper-journal confusion, /code-review dispatch, failed jobs never claim completion. Preserved: #372 (context continuity, execution receipts), Worker live at e61c27ca406a, Shorebird patch run 39360217453 SUCCESS, 91 catalog commands.
