@@ -37,7 +37,7 @@ class CheStrategyLearningDashboard extends StatelessWidget {
         }, icon: const Icon(Icons.record_voice_over_outlined), label: const Text('Read learning report')),
         OutlinedButton.icon(onPressed: onResearch, icon: const Icon(Icons.fast_forward), label: const Text('Replay available history')),
       ]),
-      if (chart != null) chart!,
+      ?chart,
       for (final strategy in strategies) _StrategyCard(row: strategy),
       ExpansionTile(
         title: const Text('Research and slow-progress diagnostics'),
