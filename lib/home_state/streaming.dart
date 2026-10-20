@@ -455,6 +455,15 @@ extension _CheHomeStreaming on _CHEHomeState {
             onSpeak: (text) => speakText(text, record: false),
           )));
         }
+        // "Design a wearable robotics prototype…": the Worker made a plan; the Plan Room shows it.
+        final planId = data['plan_id']?.toString().trim() ?? '';
+        if (data['source'] == 'che_project_plan' && planId.isNotEmpty && data['follow_up'] == null && mounted) {
+          unawaited(Navigator.of(context).push(ChePlanRoom.route(
+            load: _agentRuntime.planScene,
+            planId: planId,
+            onSpeak: (text) => speakText(text, record: false),
+          )));
+        }
         final mediaUrl = data['media_url']?.toString().trim() ?? '';
         final mediaType = data['media_type']?.toString().trim() ?? '';
         if (mediaUrl.startsWith('https://')) {

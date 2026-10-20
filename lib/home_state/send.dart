@@ -783,6 +783,23 @@ extension _CheHomeSend on _CHEHomeState {
       return;
     }
 
+    // In the Plan Room: "sort by cheapest", "show premium", "what comes first".
+    final planRoom = ChePlanRoom.current.value;
+    final planAnswer = planRoom == null || _pendingAttachment != null ? null : planRoom.answer(message);
+    if (planAnswer != null) {
+      if (mounted) {
+        _set(() {
+          controller.clear();
+          messages
+            ..add({'role': 'user', 'text': message})
+            ..add({'role': 'assistant', 'text': planAnswer});
+        });
+      }
+      HapticFeedback.mediumImpact();
+      await speakText(planAnswer, record: false);
+      return;
+    }
+
     // "Look at my screen" (owner, 2026-10-20): CHE takes a picture of her own
     // screen and sends it with this turn, with the page's report, so the
     // Worker's vision reads what is really there. A password or vault page

@@ -135,3 +135,53 @@ export function meetingCommand(message) {
   if (!m) return null;
   return { topic: clip(m[1] || '', 1200) };
 }
+
+// ── Project plan (Concept-to-Plan, owner 2026-10-20; project_plan.js) ───────────────────────────
+const PLAN_PROVENANCE_SPOKEN = {
+  estimate: 'CHE\'s estimate, not a quote',
+  derived: 'grouped by CHE from the plan',
+  sourced: 'read from a public source',
+  speculative: 'speculative, not available today',
+  fiction: 'fiction, not real technology',
+  policy: 'CHE\'s safety rule',
+  owner_request: 'your request',
+};
+
+/** The plan as a scene: groups (lanes), item cards with real fields, dependency edges, speculative, safety and source objects. */
+export function planScene(plan) {
+  if (!plan?.id) return null;
+  const src = (id) => ({ store: 'project_plans', id: `${plan.id}#${id}` });
+  const objects = [];
+  const edges = [];
+  (plan.systems || []).forEach((system, i) => {
+    objects.push({ id: `system:${system.id}`, kind: 'system', label: system.name, status: 'group', zone: `lane:${i + 1}`, provenance: 'derived', source: src(`system:${system.id}`), spoken: `${system.name}: ${system.items.length} item${system.items.length === 1 ? '' : 's'}.` });
+  });
+  const systemId = new Map((plan.systems || []).map((s) => [s.name, s.id]));
+  for (const item of plan.items || []) {
+    const b = item.cost?.balanced || [0, 0];
+    objects.push({
+      id: `item:${item.id}`, kind: item.kind, label: item.name, status: item.required ? 'required' : 'optional', zone: `system:${systemId.get(item.system)}`,
+      provenance: 'estimate', source: src(item.id), system: item.system, purpose: item.purpose,
+      size: item.size, size_label: item.size_label, complexity: item.complexity, stage: item.stage, priority: item.priority,
+      per: item.per, cost: item.cost, options: item.options, effort_hours: item.effort_hours, needs: item.needs, asked: Boolean(item.asked), confidence: item.confidence,
+      text: `${item.purpose}. Cheapest: ${item.options.cheapest}. Balanced: ${item.options.balanced}. Premium: ${item.options.premium}.`,
+      preview: item.purpose,
+      spoken: `${item.name}: ${item.purpose}. ${item.required ? 'Required' : 'Optional'}, ${item.size_label}, complexity ${item.complexity} of 5, stage ${item.stage}. Balanced option: ${item.options.balanced}, about $${b[0].toLocaleString('en-US')} to $${b[1].toLocaleString('en-US')}${item.per === 'unit' ? ' per unit' : item.per === 'month' ? ' a month' : ''}.`,
+    });
+    for (const need of item.needs || []) edges.push({ from: `item:${item.id}`, to: `item:${need}`, type: 'needs' });
+  }
+  (plan.speculative || []).forEach((s, i) => objects.push({ id: `speculative:${i}`, kind: 'speculative', label: s.name, status: s.provenance, zone: 'edge', provenance: s.provenance, source: src(`speculative:${i}`), text: s.why, preview: s.why, spoken: `${s.name}: ${s.why}.` }));
+  [...(plan.safety?.excluded || []), ...(plan.safety?.notes || [])].forEach((text, i) => objects.push({ id: `safety:${i}`, kind: 'safety', label: `Safety ${i + 1}`, status: plan.safety.level, zone: 'edge', provenance: 'policy', source: src(`safety:${i}`), text, preview: clip(text, 140), spoken: text }));
+  (plan.sources || []).forEach((s, i) => objects.push({ id: `source:${i}`, kind: 'source', label: s.title, status: 'read', zone: 'edge', provenance: 'sourced', source: { store: 'public_source', id: s.url }, url: s.url, text: s.text, preview: clip(s.text, 140), spoken: `${s.title}: ${clip(s.text, 200)}` }));
+  const scene = {
+    scene: 'plan', id: plan.id, title: plan.title, objective: plan.request, stage: plan.refused ? 'refused' : 'complete', progress: 1,
+    spoken: plan.spoken, type: plan.type, type_label: plan.type_label, structure: plan.structure, structure_label: plan.structure_label,
+    tiers: plan.tiers || {}, stages: plan.stages || [], complexity: plan.complexity || '', feasibility: plan.feasibility || '',
+    assumptions: plan.assumptions || [], open_questions: plan.open_questions || [], next_actions: plan.next_actions || [],
+    requirements: plan.requirements || [], estimate_basis: plan.estimate_basis || {}, safety_level: plan.safety?.level || 'ok',
+    objects: objects.map((o) => ({ ...o, provenance_spoken: PLAN_PROVENANCE_SPOKEN[o.provenance] || o.provenance })),
+    edges, updated_at: plan.created_at || '',
+  };
+  scene.version = hash([scene.id, scene.objects.map((o) => [o.id, o.status])]);
+  return scene;
+}

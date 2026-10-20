@@ -1,0 +1,1276 @@
+{
+ "scene": "plan",
+ "id": "plan-fixture",
+ "title": "Wearable robotics prototype inspired by an Iron Man suit with a HUD",
+ "objective": "Come up with a wearable robotics prototype inspired by an Iron Man suit with a HUD",
+ "stage": "complete",
+ "progress": 1,
+ "spoken": "Here is the plan, sir. Wearable robotics prototype inspired by an Iron Man suit with a HUD: a wearable robotics project, planned as a bill of materials of 15 items in 8 groups and 7 stages. Cheapest version about $920 to $2,750; balanced about $6,450 to $19,350; premium about $36,800 to $113,000. These are CHE's estimates, not quotes. Time: about 10 to 35 weeks for the balanced version. Overall complexity is high. Not real today: Flight like Iron Man; Arc-reactor power; Bullet-proof full-body armor with full mobility. Start with stage 1: Exoskeleton frame and limb links, Battery pack and battery management, Sensors (IMU, joint encoders, force), CAD, body measurements and fit. Background read from Wikipedia: Powered exoskeleton.",
+ "type": "wearable_robotics",
+ "type_label": "wearable robotics project",
+ "structure": "bill_of_materials",
+ "structure_label": "bill of materials",
+ "tiers": {
+  "cheapest": {
+   "one_time": [
+    920,
+    2750
+   ],
+   "per_unit": [
+    0,
+    0
+   ],
+   "monthly": [
+    0,
+    0
+   ],
+   "effort_hours": [
+    378,
+    1374
+   ],
+   "weeks": [
+    38,
+    138
+   ]
+  },
+  "balanced": {
+   "one_time": [
+    6450,
+    19350
+   ],
+   "per_unit": [
+    0,
+    0
+   ],
+   "monthly": [
+    0,
+    0
+   ],
+   "effort_hours": [
+    378,
+    1374
+   ],
+   "weeks": [
+    10,
+    35
+   ]
+  },
+  "premium": {
+   "one_time": [
+    36800,
+    113000
+   ],
+   "per_unit": [
+    0,
+    0
+   ],
+   "monthly": [
+    0,
+    0
+   ],
+   "effort_hours": [
+    378,
+    1374
+   ],
+   "weeks": [
+    4,
+    12
+   ]
+  }
+ },
+ "stages": [
+  {
+   "n": 1,
+   "name": "Design and core structure",
+   "items": [
+    "frame",
+    "battery",
+    "sensors",
+    "cad"
+   ]
+  },
+  {
+   "n": 2,
+   "name": "Main systems",
+   "items": [
+    "joints",
+    "shell",
+    "harness"
+   ]
+  },
+  {
+   "n": 3,
+   "name": "Integration",
+   "items": [
+    "actuators"
+   ]
+  },
+  {
+   "n": 4,
+   "name": "Finishing and testing",
+   "items": [
+    "drivers"
+   ]
+  },
+  {
+   "n": 5,
+   "name": "Production and release",
+   "items": [
+    "controller"
+   ]
+  },
+  {
+   "n": 6,
+   "name": "Production and release",
+   "items": [
+    "estop",
+    "firmware",
+    "wiring",
+    "hud"
+   ]
+  },
+  {
+   "n": 7,
+   "name": "Production and release",
+   "items": [
+    "testing"
+   ]
+  }
+ ],
+ "complexity": "high",
+ "feasibility": "A walking, assist-only prototype is feasible for a skilled maker or small team. Strength amplification is research-grade; flight and weapons are not part of any version.",
+ "assumptions": [
+  "One working prototype; production quantities change unit costs.",
+  "Prices are US dollar ranges for the 2026-10 market, not supplier quotes.",
+  "Cheapest means you do the work with off-the-shelf parts; balanced means good parts and some paid help; premium means top parts and professional work.",
+  "Timelines assume about 10 hours a week for the cheapest version, 40 for balanced and 120 for premium."
+ ],
+ "open_questions": [
+  "What is the budget ceiling?",
+  "One prototype, or a production run, and how many?",
+  "When do you need it?",
+  "Is anything else a must-have?"
+ ],
+ "next_actions": [
+  "Start with stage 1: Exoskeleton frame and limb links, Battery pack and battery management, Sensors (IMU, joint encoders, force), CAD, body measurements and fit.",
+  "Confirm the budget and quantity so CHE can narrow the ranges.",
+  "Get two or three real quotes for the largest cost items before buying."
+ ],
+ "requirements": [
+  {
+   "text": "a wearable robotics prototype inspired by an Iron Man suit with a HUD",
+   "provenance": "owner_request",
+   "covered": true
+  }
+ ],
+ "estimate_basis": {
+  "currency": "USD",
+  "as_of": "2026-10",
+  "method": "CHE category template, US dollars, 2026-10 market ranges for one build; not supplier quotes",
+  "type": "range estimate",
+  "confidence": "medium"
+ },
+ "safety_level": "ok",
+ "objects": [
+  {
+   "id": "system:structure",
+   "kind": "system",
+   "label": "Structure",
+   "status": "group",
+   "zone": "lane:1",
+   "provenance": "derived",
+   "source": {
+    "store": "project_plans",
+    "id": "plan-fixture#system:structure"
+   },
+   "spoken": "Structure: 3 items.",
+   "provenance_spoken": "grouped by CHE from the plan"
+  },
+  {
+   "id": "system:actuation",
+   "kind": "system",
+   "label": "Actuation",
+   "status": "group",
+   "zone": "lane:2",
+   "provenance": "derived",
+   "source": {
+    "store": "project_plans",
+    "id": "plan-fixture#system:actuation"
+   },
+   "spoken": "Actuation: 2 items.",
+   "provenance_spoken": "grouped by CHE from the plan"
+  },
+  {
+   "id": "system:power",
+   "kind": "system",
+   "label": "Power",
+   "status": "group",
+   "zone": "lane:3",
+   "provenance": "derived",
+   "source": {
+    "store": "project_plans",
+    "id": "plan-fixture#system:power"
+   },
+   "spoken": "Power: 1 item.",
+   "provenance_spoken": "grouped by CHE from the plan"
+  },
+  {
+   "id": "system:control",
+   "kind": "system",
+   "label": "Control",
+   "status": "group",
+   "zone": "lane:4",
+   "provenance": "derived",
+   "source": {
+    "store": "project_plans",
+    "id": "plan-fixture#system:control"
+   },
+   "spoken": "Control: 3 items.",
+   "provenance_spoken": "grouped by CHE from the plan"
+  },
+  {
+   "id": "system:sensing",
+   "kind": "system",
+   "label": "Sensing",
+   "status": "group",
+   "zone": "lane:5",
+   "provenance": "derived",
+   "source": {
+    "store": "project_plans",
+    "id": "plan-fixture#system:sensing"
+   },
+   "spoken": "Sensing: 1 item.",
+   "provenance_spoken": "grouped by CHE from the plan"
+  },
+  {
+   "id": "system:safety",
+   "kind": "system",
+   "label": "Safety",
+   "status": "group",
+   "zone": "lane:6",
+   "provenance": "derived",
+   "source": {
+    "store": "project_plans",
+    "id": "plan-fixture#system:safety"
+   },
+   "spoken": "Safety: 2 items.",
+   "provenance_spoken": "grouped by CHE from the plan"
+  },
+  {
+   "id": "system:shell",
+   "kind": "system",
+   "label": "Shell",
+   "status": "group",
+   "zone": "lane:7",
+   "provenance": "derived",
+   "source": {
+    "store": "project_plans",
+    "id": "plan-fixture#system:shell"
+   },
+   "spoken": "Shell: 1 item.",
+   "provenance_spoken": "grouped by CHE from the plan"
+  },
+  {
+   "id": "system:integration",
+   "kind": "system",
+   "label": "Integration",
+   "status": "group",
+   "zone": "lane:8",
+   "provenance": "derived",
+   "source": {
+    "store": "project_plans",
+    "id": "plan-fixture#system:integration"
+   },
+   "spoken": "Integration: 2 items.",
+   "provenance_spoken": "grouped by CHE from the plan"
+  },
+  {
+   "id": "item:frame",
+   "kind": "part",
+   "label": "Exoskeleton frame and limb links",
+   "status": "required",
+   "zone": "system:structure",
+   "provenance": "estimate",
+   "source": {
+    "store": "project_plans",
+    "id": "plan-fixture#frame"
+   },
+   "system": "Structure",
+   "purpose": "Carries the load along the body",
+   "size": 5,
+   "size_label": "very large",
+   "complexity": 3,
+   "stage": 1,
+   "priority": 147,
+   "per": "once",
+   "cost": {
+    "cheapest": [
+     150,
+     400
+    ],
+    "balanced": [
+     600,
+     1500
+    ],
+    "premium": [
+     3000,
+     9000
+    ]
+   },
+   "options": {
+    "cheapest": "aluminium extrusion and PETG prints",
+    "balanced": "CNC aluminium links",
+    "premium": "carbon-fibre tube and machined titanium joints"
+   },
+   "effort_hours": [
+    40,
+    120
+   ],
+   "needs": [],
+   "asked": false,
+   "confidence": "medium",
+   "text": "Carries the load along the body. Cheapest: aluminium extrusion and PETG prints. Balanced: CNC aluminium links. Premium: carbon-fibre tube and machined titanium joints.",
+   "preview": "Carries the load along the body",
+   "spoken": "Exoskeleton frame and limb links: Carries the load along the body. Required, very large, complexity 3 of 5, stage 1. Balanced option: CNC aluminium links, about $600 to $1,500.",
+   "provenance_spoken": "CHE's estimate, not a quote"
+  },
+  {
+   "id": "item:joints",
+   "kind": "part",
+   "label": "Joint bearings and hinges",
+   "status": "required",
+   "zone": "system:structure",
+   "provenance": "estimate",
+   "source": {
+    "store": "project_plans",
+    "id": "plan-fixture#joints"
+   },
+   "system": "Structure",
+   "purpose": "Lets each limb pivot where the body does",
+   "size": 2,
+   "size_label": "small",
+   "complexity": 3,
+   "stage": 2,
+   "priority": 116,
+   "per": "once",
+   "cost": {
+    "cheapest": [
+     60,
+     150
+    ],
+    "balanced": [
+     200,
+     500
+    ],
+    "premium": [
+     800,
+     2000
+    ]
+   },
+   "options": {
+    "cheapest": "skate bearings and printed hinges",
+    "balanced": "flanged bearings and shoulder bolts",
+    "premium": "cross-roller bearings"
+   },
+   "effort_hours": [
+    10,
+    30
+   ],
+   "needs": [
+    "frame"
+   ],
+   "asked": false,
+   "confidence": "medium",
+   "text": "Lets each limb pivot where the body does. Cheapest: skate bearings and printed hinges. Balanced: flanged bearings and shoulder bolts. Premium: cross-roller bearings.",
+   "preview": "Lets each limb pivot where the body does",
+   "spoken": "Joint bearings and hinges: Lets each limb pivot where the body does. Required, small, complexity 3 of 5, stage 2. Balanced option: flanged bearings and shoulder bolts, about $200 to $500.",
+   "provenance_spoken": "CHE's estimate, not a quote"
+  },
+  {
+   "id": "item:actuators",
+   "kind": "part",
+   "label": "Joint actuators (elbows, knees, hips)",
+   "status": "required",
+   "zone": "system:actuation",
+   "provenance": "estimate",
+   "source": {
+    "store": "project_plans",
+    "id": "plan-fixture#actuators"
+   },
+   "system": "Actuation",
+   "purpose": "Adds assistive force at the joints",
+   "size": 3,
+   "size_label": "medium",
+   "complexity": 5,
+   "stage": 3,
+   "priority": 115,
+   "per": "once",
+   "cost": {
+    "cheapest": [
+     200,
+     600
+    ],
+    "balanced": [
+     1500,
+     4000
+    ],
+    "premium": [
+     8000,
+     25000
+    ]
+   },
+   "options": {
+    "cheapest": "high-torque hobby servos, light assist only",
+    "balanced": "BLDC motors with planetary gearboxes",
+    "premium": "quasi-direct-drive actuators with torque sensing"
+   },
+   "effort_hours": [
+    60,
+    200
+   ],
+   "needs": [
+    "frame",
+    "joints"
+   ],
+   "asked": false,
+   "confidence": "low",
+   "text": "Adds assistive force at the joints. Cheapest: high-torque hobby servos, light assist only. Balanced: BLDC motors with planetary gearboxes. Premium: quasi-direct-drive actuators with torque sensing.",
+   "preview": "Adds assistive force at the joints",
+   "spoken": "Joint actuators (elbows, knees, hips): Adds assistive force at the joints. Required, medium, complexity 5 of 5, stage 3. Balanced option: BLDC motors with planetary gearboxes, about $1,500 to $4,000.",
+   "provenance_spoken": "CHE's estimate, not a quote"
+  },
+  {
+   "id": "item:drivers",
+   "kind": "part",
+   "label": "Motor drivers",
+   "status": "required",
+   "zone": "system:actuation",
+   "provenance": "estimate",
+   "source": {
+    "store": "project_plans",
+    "id": "plan-fixture#drivers"
+   },
+   "system": "Actuation",
+   "purpose": "Power and control each actuator",
+   "size": 2,
+   "size_label": "small",
+   "complexity": 4,
+   "stage": 4,
+   "priority": 134,
+   "per": "once",
+   "cost": {
+    "cheapest": [
+     50,
+     150
+    ],
+    "balanced": [
+     300,
+     800
+    ],
+    "premium": [
+     1500,
+     4000
+    ]
+   },
+   "options": {
+    "cheapest": "hobby servo boards",
+    "balanced": "field-oriented BLDC drivers",
+    "premium": "industrial servo drives"
+   },
+   "effort_hours": [
+    10,
+    40
+   ],
+   "needs": [
+    "actuators",
+    "battery"
+   ],
+   "asked": false,
+   "confidence": "medium",
+   "text": "Power and control each actuator. Cheapest: hobby servo boards. Balanced: field-oriented BLDC drivers. Premium: industrial servo drives.",
+   "preview": "Power and control each actuator",
+   "spoken": "Motor drivers: Power and control each actuator. Required, small, complexity 4 of 5, stage 4. Balanced option: field-oriented BLDC drivers, about $300 to $800.",
+   "provenance_spoken": "CHE's estimate, not a quote"
+  },
+  {
+   "id": "item:battery",
+   "kind": "part",
+   "label": "Battery pack and battery management",
+   "status": "required",
+   "zone": "system:power",
+   "provenance": "estimate",
+   "source": {
+    "store": "project_plans",
+    "id": "plan-fixture#battery"
+   },
+   "system": "Power",
+   "purpose": "Stores the energy; the BMS keeps cells safe",
+   "size": 3,
+   "size_label": "medium",
+   "complexity": 4,
+   "stage": 1,
+   "priority": 127,
+   "per": "once",
+   "cost": {
+    "cheapest": [
+     120,
+     300
+    ],
+    "balanced": [
+     400,
+     1000
+    ],
+    "premium": [
+     1500,
+     4000
+    ]
+   },
+   "options": {
+    "cheapest": "power-tool packs with adapters",
+    "balanced": "custom Li-ion pack with a BMS",
+    "premium": "high-density cells, certified BMS and enclosure"
+   },
+   "effort_hours": [
+    10,
+    40
+   ],
+   "needs": [],
+   "asked": false,
+   "confidence": "medium",
+   "text": "Stores the energy; the BMS keeps cells safe. Cheapest: power-tool packs with adapters. Balanced: custom Li-ion pack with a BMS. Premium: high-density cells, certified BMS and enclosure.",
+   "preview": "Stores the energy; the BMS keeps cells safe",
+   "spoken": "Battery pack and battery management: Stores the energy; the BMS keeps cells safe. Required, medium, complexity 4 of 5, stage 1. Balanced option: custom Li-ion pack with a BMS, about $400 to $1,000.",
+   "provenance_spoken": "CHE's estimate, not a quote"
+  },
+  {
+   "id": "item:controller",
+   "kind": "part",
+   "label": "Main controller",
+   "status": "required",
+   "zone": "system:control",
+   "provenance": "estimate",
+   "source": {
+    "store": "project_plans",
+    "id": "plan-fixture#controller"
+   },
+   "system": "Control",
+   "purpose": "Reads the sensors and commands the joints",
+   "size": 2,
+   "size_label": "small",
+   "complexity": 4,
+   "stage": 5,
+   "priority": 143,
+   "per": "once",
+   "cost": {
+    "cheapest": [
+     30,
+     80
+    ],
+    "balanced": [
+     150,
+     400
+    ],
+    "premium": [
+     600,
+     1500
+    ]
+   },
+   "options": {
+    "cheapest": "ESP32 or Teensy microcontroller",
+    "balanced": "single-board computer plus a real-time microcontroller",
+    "premium": "Jetson-class compute with a real-time co-processor"
+   },
+   "effort_hours": [
+    10,
+    30
+   ],
+   "needs": [
+    "drivers",
+    "sensors"
+   ],
+   "asked": false,
+   "confidence": "medium",
+   "text": "Reads the sensors and commands the joints. Cheapest: ESP32 or Teensy microcontroller. Balanced: single-board computer plus a real-time microcontroller. Premium: Jetson-class compute with a real-time co-processor.",
+   "preview": "Reads the sensors and commands the joints",
+   "spoken": "Main controller: Reads the sensors and commands the joints. Required, small, complexity 4 of 5, stage 5. Balanced option: single-board computer plus a real-time microcontroller, about $150 to $400.",
+   "provenance_spoken": "CHE's estimate, not a quote"
+  },
+  {
+   "id": "item:sensors",
+   "kind": "part",
+   "label": "Sensors (IMU, joint encoders, force)",
+   "status": "required",
+   "zone": "system:sensing",
+   "provenance": "estimate",
+   "source": {
+    "store": "project_plans",
+    "id": "plan-fixture#sensors"
+   },
+   "system": "Sensing",
+   "purpose": "Measures posture, joint angles and load",
+   "size": 1,
+   "size_label": "tiny",
+   "complexity": 4,
+   "stage": 1,
+   "priority": 127,
+   "per": "once",
+   "cost": {
+    "cheapest": [
+     40,
+     120
+    ],
+    "balanced": [
+     200,
+     600
+    ],
+    "premium": [
+     1000,
+     3000
+    ]
+   },
+   "options": {
+    "cheapest": "hobby IMU and potentiometers",
+    "balanced": "magnetic encoders and load cells",
+    "premium": "industrial encoders and six-axis force sensors"
+   },
+   "effort_hours": [
+    10,
+    40
+   ],
+   "needs": [],
+   "asked": false,
+   "confidence": "medium",
+   "text": "Measures posture, joint angles and load. Cheapest: hobby IMU and potentiometers. Balanced: magnetic encoders and load cells. Premium: industrial encoders and six-axis force sensors.",
+   "preview": "Measures posture, joint angles and load",
+   "spoken": "Sensors (IMU, joint encoders, force): Measures posture, joint angles and load. Required, tiny, complexity 4 of 5, stage 1. Balanced option: magnetic encoders and load cells, about $200 to $600.",
+   "provenance_spoken": "CHE's estimate, not a quote"
+  },
+  {
+   "id": "item:estop",
+   "kind": "part",
+   "label": "Emergency stop and joint limits",
+   "status": "required",
+   "zone": "system:safety",
+   "provenance": "estimate",
+   "source": {
+    "store": "project_plans",
+    "id": "plan-fixture#estop"
+   },
+   "system": "Safety",
+   "purpose": "Cuts power and keeps joints inside human range",
+   "size": 1,
+   "size_label": "tiny",
+   "complexity": 3,
+   "stage": 6,
+   "priority": 112,
+   "per": "once",
+   "cost": {
+    "cheapest": [
+     20,
+     60
+    ],
+    "balanced": [
+     80,
+     200
+    ],
+    "premium": [
+     300,
+     800
+    ]
+   },
+   "options": {
+    "cheapest": "latching stop switch and software limits",
+    "balanced": "hardware stop relay plus mechanical end stops",
+    "premium": "certified safety relay with redundant limits"
+   },
+   "effort_hours": [
+    10,
+    40
+   ],
+   "needs": [
+    "controller",
+    "drivers"
+   ],
+   "asked": false,
+   "confidence": "medium",
+   "text": "Cuts power and keeps joints inside human range. Cheapest: latching stop switch and software limits. Balanced: hardware stop relay plus mechanical end stops. Premium: certified safety relay with redundant limits.",
+   "preview": "Cuts power and keeps joints inside human range",
+   "spoken": "Emergency stop and joint limits: Cuts power and keeps joints inside human range. Required, tiny, complexity 3 of 5, stage 6. Balanced option: hardware stop relay plus mechanical end stops, about $80 to $200.",
+   "provenance_spoken": "CHE's estimate, not a quote"
+  },
+  {
+   "id": "item:shell",
+   "kind": "part",
+   "label": "Armor shell panels",
+   "status": "required",
+   "zone": "system:shell",
+   "provenance": "estimate",
+   "source": {
+    "store": "project_plans",
+    "id": "plan-fixture#shell"
+   },
+   "system": "Shell",
+   "purpose": "The look; protects the parts underneath",
+   "size": 4,
+   "size_label": "large",
+   "complexity": 2,
+   "stage": 2,
+   "priority": 116,
+   "per": "once",
+   "cost": {
+    "cheapest": [
+     60,
+     200
+    ],
+    "balanced": [
+     300,
+     900
+    ],
+    "premium": [
+     2000,
+     8000
+    ]
+   },
+   "options": {
+    "cheapest": "EVA foam",
+    "balanced": "3D-printed PETG or ABS, painted",
+    "premium": "carbon or fibreglass layup, automotive paint"
+   },
+   "effort_hours": [
+    30,
+    120
+   ],
+   "needs": [
+    "frame"
+   ],
+   "asked": false,
+   "confidence": "medium",
+   "text": "The look; protects the parts underneath. Cheapest: EVA foam. Balanced: 3D-printed PETG or ABS, painted. Premium: carbon or fibreglass layup, automotive paint.",
+   "preview": "The look; protects the parts underneath",
+   "spoken": "Armor shell panels: The look; protects the parts underneath. Required, large, complexity 2 of 5, stage 2. Balanced option: 3D-printed PETG or ABS, painted, about $300 to $900.",
+   "provenance_spoken": "CHE's estimate, not a quote"
+  },
+  {
+   "id": "item:harness",
+   "kind": "part",
+   "label": "Straps, harness and padding",
+   "status": "required",
+   "zone": "system:structure",
+   "provenance": "estimate",
+   "source": {
+    "store": "project_plans",
+    "id": "plan-fixture#harness"
+   },
+   "system": "Structure",
+   "purpose": "Holds the frame to the body comfortably",
+   "size": 3,
+   "size_label": "medium",
+   "complexity": 2,
+   "stage": 2,
+   "priority": 116,
+   "per": "once",
+   "cost": {
+    "cheapest": [
+     40,
+     100
+    ],
+    "balanced": [
+     150,
+     400
+    ],
+    "premium": [
+     600,
+     1500
+    ]
+   },
+   "options": {
+    "cheapest": "webbing and foam",
+    "balanced": "climbing-grade harness and molded pads",
+    "premium": "custom-fitted medical-grade cuffs"
+   },
+   "effort_hours": [
+    8,
+    24
+   ],
+   "needs": [
+    "frame"
+   ],
+   "asked": false,
+   "confidence": "medium",
+   "text": "Holds the frame to the body comfortably. Cheapest: webbing and foam. Balanced: climbing-grade harness and molded pads. Premium: custom-fitted medical-grade cuffs.",
+   "preview": "Holds the frame to the body comfortably",
+   "spoken": "Straps, harness and padding: Holds the frame to the body comfortably. Required, medium, complexity 2 of 5, stage 2. Balanced option: climbing-grade harness and molded pads, about $150 to $400.",
+   "provenance_spoken": "CHE's estimate, not a quote"
+  },
+  {
+   "id": "item:wiring",
+   "kind": "part",
+   "label": "Wiring harness and connectors",
+   "status": "required",
+   "zone": "system:integration",
+   "provenance": "estimate",
+   "source": {
+    "store": "project_plans",
+    "id": "plan-fixture#wiring"
+   },
+   "system": "Integration",
+   "purpose": "Connects power and signals",
+   "size": 1,
+   "size_label": "tiny",
+   "complexity": 3,
+   "stage": 6,
+   "priority": 102,
+   "per": "once",
+   "cost": {
+    "cheapest": [
+     40,
+     100
+    ],
+    "balanced": [
+     150,
+     350
+    ],
+    "premium": [
+     500,
+     1200
+    ]
+   },
+   "options": {
+    "cheapest": "hobby wire and connectors",
+    "balanced": "locking connectors and sleeving",
+    "premium": "aviation-grade harness"
+   },
+   "effort_hours": [
+    10,
+    30
+   ],
+   "needs": [
+    "battery",
+    "drivers",
+    "controller"
+   ],
+   "asked": false,
+   "confidence": "medium",
+   "text": "Connects power and signals. Cheapest: hobby wire and connectors. Balanced: locking connectors and sleeving. Premium: aviation-grade harness.",
+   "preview": "Connects power and signals",
+   "spoken": "Wiring harness and connectors: Connects power and signals. Required, tiny, complexity 3 of 5, stage 6. Balanced option: locking connectors and sleeving, about $150 to $350.",
+   "provenance_spoken": "CHE's estimate, not a quote"
+  },
+  {
+   "id": "item:hud",
+   "kind": "part",
+   "label": "Helmet display (HUD)",
+   "status": "required",
+   "zone": "system:control",
+   "provenance": "estimate",
+   "source": {
+    "store": "project_plans",
+    "id": "plan-fixture#hud"
+   },
+   "system": "Control",
+   "purpose": "Shows status inside the helmet",
+   "size": 2,
+   "size_label": "small",
+   "complexity": 4,
+   "stage": 6,
+   "priority": 102,
+   "per": "once",
+   "cost": {
+    "cheapest": [
+     60,
+     200
+    ],
+    "balanced": [
+     400,
+     1200
+    ],
+    "premium": [
+     2000,
+     6000
+    ]
+   },
+   "options": {
+    "cheapest": "a phone or small OLED",
+    "balanced": "AR glasses module",
+    "premium": "custom waveguide display"
+   },
+   "effort_hours": [
+    20,
+    80
+   ],
+   "needs": [
+    "controller"
+   ],
+   "asked": true,
+   "confidence": "medium",
+   "text": "Shows status inside the helmet. Cheapest: a phone or small OLED. Balanced: AR glasses module. Premium: custom waveguide display.",
+   "preview": "Shows status inside the helmet",
+   "spoken": "Helmet display (HUD): Shows status inside the helmet. Required, small, complexity 4 of 5, stage 6. Balanced option: AR glasses module, about $400 to $1,200.",
+   "provenance_spoken": "CHE's estimate, not a quote"
+  },
+  {
+   "id": "item:cad",
+   "kind": "work",
+   "label": "CAD, body measurements and fit",
+   "status": "required",
+   "zone": "system:integration",
+   "provenance": "estimate",
+   "source": {
+    "store": "project_plans",
+    "id": "plan-fixture#cad"
+   },
+   "system": "Integration",
+   "purpose": "Sizes everything to the wearer",
+   "size": 3,
+   "size_label": "medium",
+   "complexity": 3,
+   "stage": 1,
+   "priority": 107,
+   "per": "once",
+   "cost": {
+    "cheapest": [
+     0,
+     100
+    ],
+    "balanced": [
+     500,
+     2000
+    ],
+    "premium": [
+     4000,
+     12000
+    ]
+   },
+   "options": {
+    "cheapest": "free CAD, your own measurements",
+    "balanced": "paid CAD and a fitting session",
+    "premium": "professional design studio and 3D body scan"
+   },
+   "effort_hours": [
+    40,
+    160
+   ],
+   "needs": [],
+   "asked": false,
+   "confidence": "medium",
+   "text": "Sizes everything to the wearer. Cheapest: free CAD, your own measurements. Balanced: paid CAD and a fitting session. Premium: professional design studio and 3D body scan.",
+   "preview": "Sizes everything to the wearer",
+   "spoken": "CAD, body measurements and fit: Sizes everything to the wearer. Required, medium, complexity 3 of 5, stage 1. Balanced option: paid CAD and a fitting session, about $500 to $2,000.",
+   "provenance_spoken": "CHE's estimate, not a quote"
+  },
+  {
+   "id": "item:firmware",
+   "kind": "work",
+   "label": "Control firmware and tuning",
+   "status": "required",
+   "zone": "system:control",
+   "provenance": "estimate",
+   "source": {
+    "store": "project_plans",
+    "id": "plan-fixture#firmware"
+   },
+   "system": "Control",
+   "purpose": "Makes the joints move safely with the wearer",
+   "size": 4,
+   "size_label": "large",
+   "complexity": 5,
+   "stage": 6,
+   "priority": 112,
+   "per": "once",
+   "cost": {
+    "cheapest": [
+     0,
+     0
+    ],
+    "balanced": [
+     1000,
+     4000
+    ],
+    "premium": [
+     8000,
+     25000
+    ]
+   },
+   "options": {
+    "cheapest": "you write it",
+    "balanced": "a freelance embedded engineer",
+    "premium": "a robotics firm"
+   },
+   "effort_hours": [
+    80,
+    300
+   ],
+   "needs": [
+    "controller",
+    "sensors"
+   ],
+   "asked": false,
+   "confidence": "low",
+   "text": "Makes the joints move safely with the wearer. Cheapest: you write it. Balanced: a freelance embedded engineer. Premium: a robotics firm.",
+   "preview": "Makes the joints move safely with the wearer",
+   "spoken": "Control firmware and tuning: Makes the joints move safely with the wearer. Required, large, complexity 5 of 5, stage 6. Balanced option: a freelance embedded engineer, about $1,000 to $4,000.",
+   "provenance_spoken": "CHE's estimate, not a quote"
+  },
+  {
+   "id": "item:testing",
+   "kind": "work",
+   "label": "Bench and fit testing",
+   "status": "required",
+   "zone": "system:safety",
+   "provenance": "estimate",
+   "source": {
+    "store": "project_plans",
+    "id": "plan-fixture#testing"
+   },
+   "system": "Safety",
+   "purpose": "Proves it is safe before anyone wears it powered",
+   "size": 3,
+   "size_label": "medium",
+   "complexity": 3,
+   "stage": 7,
+   "priority": 101,
+   "per": "once",
+   "cost": {
+    "cheapest": [
+     50,
+     200
+    ],
+    "balanced": [
+     500,
+     1500
+    ],
+    "premium": [
+     3000,
+     10000
+    ]
+   },
+   "options": {
+    "cheapest": "bench tests with a mannequin",
+    "balanced": "instrumented tests and a spotter",
+    "premium": "lab testing to exoskeleton standards"
+   },
+   "effort_hours": [
+    30,
+    120
+   ],
+   "needs": [
+    "estop",
+    "firmware",
+    "shell",
+    "harness"
+   ],
+   "asked": false,
+   "confidence": "medium",
+   "text": "Proves it is safe before anyone wears it powered. Cheapest: bench tests with a mannequin. Balanced: instrumented tests and a spotter. Premium: lab testing to exoskeleton standards.",
+   "preview": "Proves it is safe before anyone wears it powered",
+   "spoken": "Bench and fit testing: Proves it is safe before anyone wears it powered. Required, medium, complexity 3 of 5, stage 7. Balanced option: instrumented tests and a spotter, about $500 to $1,500.",
+   "provenance_spoken": "CHE's estimate, not a quote"
+  },
+  {
+   "id": "speculative:0",
+   "kind": "speculative",
+   "label": "Flight like Iron Man",
+   "status": "fiction",
+   "zone": "edge",
+   "provenance": "fiction",
+   "source": {
+    "store": "project_plans",
+    "id": "plan-fixture#speculative:0"
+   },
+   "text": "fiction today: real jet suits use kerosene turbines, run minutes, and need training and permits",
+   "preview": "fiction today: real jet suits use kerosene turbines, run minutes, and need training and permits",
+   "spoken": "Flight like Iron Man: fiction today: real jet suits use kerosene turbines, run minutes, and need training and permits.",
+   "provenance_spoken": "fiction, not real technology"
+  },
+  {
+   "id": "speculative:1",
+   "kind": "speculative",
+   "label": "Arc-reactor power",
+   "status": "fiction",
+   "zone": "edge",
+   "provenance": "fiction",
+   "source": {
+    "store": "project_plans",
+    "id": "plan-fixture#speculative:1"
+   },
+   "text": "fiction: no compact reactor exists; real suits run on batteries for minutes to a few hours",
+   "preview": "fiction: no compact reactor exists; real suits run on batteries for minutes to a few hours",
+   "spoken": "Arc-reactor power: fiction: no compact reactor exists; real suits run on batteries for minutes to a few hours.",
+   "provenance_spoken": "fiction, not real technology"
+  },
+  {
+   "id": "speculative:2",
+   "kind": "speculative",
+   "label": "Bullet-proof full-body armor with full mobility",
+   "status": "speculative",
+   "zone": "edge",
+   "provenance": "speculative",
+   "source": {
+    "store": "project_plans",
+    "id": "plan-fixture#speculative:2"
+   },
+   "text": "not possible at wearable weight with today's materials",
+   "preview": "not possible at wearable weight with today's materials",
+   "spoken": "Bullet-proof full-body armor with full mobility: not possible at wearable weight with today's materials.",
+   "provenance_spoken": "speculative, not available today"
+  },
+  {
+   "id": "safety:0",
+   "kind": "safety",
+   "label": "Safety 1",
+   "status": "ok",
+   "zone": "edge",
+   "provenance": "policy",
+   "source": {
+    "store": "project_plans",
+    "id": "plan-fixture#safety:0"
+   },
+   "text": "A powered suit worn by a person is safety-critical: build with emergency stops and joint limits, test unpowered first, and never test alone.",
+   "preview": "A powered suit worn by a person is safety-critical: build with emergency stops and joint limits, test unpowered first, and never test alone.",
+   "spoken": "A powered suit worn by a person is safety-critical: build with emergency stops and joint limits, test unpowered first, and never test alone.",
+   "provenance_spoken": "CHE's safety rule"
+  },
+  {
+   "id": "safety:1",
+   "kind": "safety",
+   "label": "Safety 2",
+   "status": "ok",
+   "zone": "edge",
+   "provenance": "policy",
+   "source": {
+    "store": "project_plans",
+    "id": "plan-fixture#safety:1"
+   },
+   "text": "Medical or rehabilitation exoskeletons are FDA-regulated devices.",
+   "preview": "Medical or rehabilitation exoskeletons are FDA-regulated devices.",
+   "spoken": "Medical or rehabilitation exoskeletons are FDA-regulated devices.",
+   "provenance_spoken": "CHE's safety rule"
+  },
+  {
+   "id": "source:0",
+   "kind": "source",
+   "label": "Wikipedia: Powered exoskeleton",
+   "status": "read",
+   "zone": "edge",
+   "provenance": "sourced",
+   "source": {
+    "store": "public_source",
+    "id": "https://en.wikipedia.org/wiki/Powered_exoskeleton"
+   },
+   "url": "https://en.wikipedia.org/wiki/Powered_exoskeleton",
+   "text": "A powered exoskeleton is a wearable mobile machine.",
+   "preview": "A powered exoskeleton is a wearable mobile machine.",
+   "spoken": "Wikipedia: Powered exoskeleton: A powered exoskeleton is a wearable mobile machine.",
+   "provenance_spoken": "read from a public source"
+  }
+ ],
+ "edges": [
+  {
+   "from": "item:joints",
+   "to": "item:frame",
+   "type": "needs"
+  },
+  {
+   "from": "item:actuators",
+   "to": "item:frame",
+   "type": "needs"
+  },
+  {
+   "from": "item:actuators",
+   "to": "item:joints",
+   "type": "needs"
+  },
+  {
+   "from": "item:drivers",
+   "to": "item:actuators",
+   "type": "needs"
+  },
+  {
+   "from": "item:drivers",
+   "to": "item:battery",
+   "type": "needs"
+  },
+  {
+   "from": "item:controller",
+   "to": "item:drivers",
+   "type": "needs"
+  },
+  {
+   "from": "item:controller",
+   "to": "item:sensors",
+   "type": "needs"
+  },
+  {
+   "from": "item:estop",
+   "to": "item:controller",
+   "type": "needs"
+  },
+  {
+   "from": "item:estop",
+   "to": "item:drivers",
+   "type": "needs"
+  },
+  {
+   "from": "item:shell",
+   "to": "item:frame",
+   "type": "needs"
+  },
+  {
+   "from": "item:harness",
+   "to": "item:frame",
+   "type": "needs"
+  },
+  {
+   "from": "item:wiring",
+   "to": "item:battery",
+   "type": "needs"
+  },
+  {
+   "from": "item:wiring",
+   "to": "item:drivers",
+   "type": "needs"
+  },
+  {
+   "from": "item:wiring",
+   "to": "item:controller",
+   "type": "needs"
+  },
+  {
+   "from": "item:hud",
+   "to": "item:controller",
+   "type": "needs"
+  },
+  {
+   "from": "item:firmware",
+   "to": "item:controller",
+   "type": "needs"
+  },
+  {
+   "from": "item:firmware",
+   "to": "item:sensors",
+   "type": "needs"
+  },
+  {
+   "from": "item:testing",
+   "to": "item:estop",
+   "type": "needs"
+  },
+  {
+   "from": "item:testing",
+   "to": "item:firmware",
+   "type": "needs"
+  },
+  {
+   "from": "item:testing",
+   "to": "item:shell",
+   "type": "needs"
+  },
+  {
+   "from": "item:testing",
+   "to": "item:harness",
+   "type": "needs"
+  }
+ ],
+ "updated_at": "2026-10-20T00:00:00Z",
+ "version": "9f8f83fd"
+}

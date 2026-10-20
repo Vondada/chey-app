@@ -70,7 +70,8 @@ import { alpacaKeys, alpacaPaperOrders, alpacaStatus, liveKeyProblem, placeAlpac
 import { speakConnections, speakTradovateSteps, tradingConnections } from './trading_connections.js';
 import { liveAnswer, liveIntent } from './trading_live_chat.js';
 import { LEDGER_SOURCE, ledgerIntent, readLedgers, speakLedgers } from './trading_ledgers.js';
-import { meetingCommand, meetingScene } from './world_scene.js';
+import { meetingCommand, meetingScene, planScene } from './world_scene.js';
+import { PLAN_SOURCE, answerPlanFollowUp, buildPlan, classifyProject, listPlans, loadPlan, planFollowUpIntent, planSubject, projectPlanIntent, researchSource, savePlan } from './project_plan.js';
 import { BRAIN_ROOMS_SOURCE, ROOMS as BRAIN_ROOMS, answerCrossRoom, crossRoomIntent, drainRoomEvents, pointsAtScreen, recentScreen, relinkRecords, rememberScreen, screenDeictic, screenFollowUp, screenRoomContext, screenRoomFor, statusLabel } from './brain_rooms.js';
 import { queueRoomEvent } from './room_events.js';
 import { cloudDailyLimit, sanitizeOwnerText } from './che_errors.js';
@@ -7299,10 +7300,25 @@ export class CheState extends DurableObject {
       if (path === '/api/world/scene' && request.method === 'GET') {
         if (!ownerDevice) return ownerOnly();
         const query = new URL(request.url).searchParams;
-        if ((query.get('scene') || 'meeting') !== 'meeting') return json({ detail: 'Only the Meeting Room scene exists so far.' }, 400);
+        if (query.get('scene') === 'plan') {
+          const plan = await loadPlan(this.ctx.storage, query.get('id') || '');
+          return plan ? json({ scene: planScene(plan) }) : json({ detail: 'No such plan.' }, 404);
+        }
+        if ((query.get('scene') || 'meeting') !== 'meeting') return json({ detail: 'Only the Meeting Room and plan scenes exist so far.' }, 400);
         const meeting = (data.meetings || []).find((item) => item.id === query.get('id')) || (query.get('id') ? null : (data.meetings || [])[0]);
         if (!meeting) return json({ detail: 'No such meeting.' }, 404);
         return json({ scene: meetingScene(meeting, runtimeSnapshot(data).agents) });
+      }
+      // Concept-to-Plan (project_plan.js): the saved plans, newest first, and one plan in full. Owner only.
+      if (path === '/api/plans' && request.method === 'GET') {
+        if (!ownerDevice) return ownerOnly();
+        return json({ plans: await listPlans(this.ctx.storage) });
+      }
+      const planMatch = /^\/api\/plans\/(plan-[A-Za-z0-9-]{4,64})$/.exec(path);
+      if (planMatch && request.method === 'GET') {
+        if (!ownerDevice) return ownerOnly();
+        const plan = await loadPlan(this.ctx.storage, planMatch[1]);
+        return plan ? json({ plan }) : json({ detail: 'No such plan.' }, 404);
       }
       const meetingMatch = /^\/api\/meetings\/([A-Za-z0-9-]{8,64})$/.exec(path);
       if (meetingMatch && request.method === 'GET') {
@@ -8809,6 +8825,29 @@ export class CheState extends DurableObject {
           return ndjsonReply(`Starting the meeting, sir. ${scene.spoken} Their cards appear on the table as they write them; drafts are model output, not verified.`, {
             source: 'che_meeting_room', ok: true, model_calls: 0, meeting_id: convened.meeting.id,
           });
+        }
+
+        // Concept-to-Plan (owner, 2026-10-20): "design a wearable robotics prototype and estimate the
+        // cost", "turn this idea into an app", "break down this car into its major systems". One
+        // deterministic planner for every project type (project_plan.js): no model call, every figure a
+        // labeled estimate, one public background page when it can be read, saved to the Brain as a
+        // proposal. Weapons and harm are refused or left out by its safety layer.
+        const planAsk = body.attachment ? null : projectPlanIntent(message);
+        if (planAsk) {
+          if (!ownerDevice) return ownerOnly();
+          const subject = planSubject(planAsk.idea, body.history);
+          const { type } = classifyProject(subject);
+          const background = await researchSource(type.id);
+          const plan = buildPlan(subject, { id: `plan-${crypto.randomUUID().slice(0, 12)}`, sources: background ? [background] : [] });
+          if (!plan.refused) await savePlan(this.ctx.storage, new CheBrainStore(this.ctx.storage), plan);
+          return ndjsonReply(plan.spoken, { source: PLAN_SOURCE, ok: !plan.refused, model_calls: 0, plan_id: plan.refused ? '' : plan.id, project_type: plan.type, safety: plan.safety.level });
+        }
+        // "Sort the parts from smallest to biggest", "what must happen first", "what's possible today":
+        // answered from the latest plan while it is fresh (six hours), from its own data.
+        const planFollow = body.attachment || !ownerDevice ? null : planFollowUpIntent(message);
+        const latestPlan = planFollow ? await loadPlan(this.ctx.storage) : null;
+        if (latestPlan && Date.now() - Date.parse(latestPlan.created_at) < 6 * 3600 * 1000) {
+          return ndjsonReply(answerPlanFollowUp(latestPlan, planFollow), { source: PLAN_SOURCE, ok: true, model_calls: 0, plan_id: latestPlan.id, follow_up: planFollow.kind });
         }
 
         // "What is connected to PR 374?" and "how is X related to Y?" ask the Brain for relationships
