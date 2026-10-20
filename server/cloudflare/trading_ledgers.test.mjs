@@ -68,7 +68,7 @@ function seedSim(saved, n, { strategies = [SIM_STRATEGIES[0].id] } = {}) {
 function journalTrade(i, { net = 25, strategy = 'fvg-retest-5m' } = {}) {
   const entry = `2026-10-${String(13 + Math.floor(i / 60)).padStart(2, '0')}T15:${String(i % 60).padStart(2, '0')}:00.000Z`;
   return {
-    environment: 'paper', source: 'paper', portfolio: `${strategy}|any|2`, strategy, filter: 'any', params: { target_r: 2 },
+    environment: 'paper', source: 'paper', portfolio: `${strategy}|any@version1`, strategy, filter: 'any', params: { target_r: 2 },
     side: 'long', contract: 'MNQ', qty: 1, session: 'ny', entry: { time: entry, raw: 20000, fill: 20000.5 }, stop: 19990, target: 20020,
     exit: { time: entry, fill: net > 0 ? 20020 : 19990, reason: net > 0 ? 'target' : 'stop' }, net_pnl: net, r_net: net > 0 ? 1.9 : -1.05,
     costs: { spread: 0.5, slippage: 0.5, commissions: 0.62, fees: 0.3 }, data: { label: 'DELAYED', resolution: '5m' },
@@ -314,7 +314,7 @@ test('the EMA strategy comparison is answered strategy by strategy from the forw
 const SESSION_OVERLAP_QUESTION = "Compare EMA Pullback's New York morning versus overnight performance and determine whether the any and trend variants contain identical trades.";
 function emaTrade(entry, { filter = 'any', net = 25, side = 'long', exit = null } = {}) {
   return {
-    environment: 'paper', source: 'paper', portfolio: `ema-pullback-5m|${filter}|2`, strategy: 'ema-pullback-5m', filter, params: { target_r: 2 },
+    environment: 'paper', source: 'paper', portfolio: `ema-pullback-5m|${filter}@version1`, strategy: 'ema-pullback-5m', filter, params: { target_r: 2 },
     side, contract: 'MNQ', qty: 1, entry: { time: entry, raw: 20000, fill: 20000.5 }, stop: 19990, target: 20020,
     exit: { time: exit || entry.replace(/:00\.000Z$/, ':30.000Z'), fill: net > 0 ? 20020 : 19990, reason: net > 0 ? 'target' : 'stop' }, net_pnl: net, r_net: net > 0 ? 1.9 : -1.05,
     costs: { spread: 0.5, slippage: 0.5, commissions: 0.62, fees: 0.3 }, data: { label: 'DELAYED', resolution: '5m' },
@@ -373,6 +373,13 @@ function ownerLedger() {
 test('owner question 1, exact words: EMA against every other MNQ strategy, with an honest verdict from the records', async () => {
   const saved = ownerLedger();
   const keys = [...saved.keys()];
+  // Real newPortfolio() keys are candidate|filter@version. An earlier synthetic
+  // candidate|filter|target fixture concealed a production recency bug (PR #380).
+  assert.ok([...saved.values()].every((t) => /^[-\w]+\|(?:any|trend)@version1$/.test(t.portfolio)));
+  const journal = (await readLedgers(storageFor(saved))).find((l) => l.id === 'forward_paper_journal');
+  const any = journal.by_strategy.find((r) => r.strategy === 'ema-pullback-5m' && r.filter === 'any');
+  assert.deepEqual({ recent: any.recent_trades, recentNet: any.recent_net, earlier: any.earlier_trades, earlierNet: any.earlier_net },
+    { recent: 5, recentNet: 125, earlier: 3, earlierNet: -60 });
   const che = await owner({ saved });
   const out = await che.say(OWNER_Q1);
   assert.equal(out.route, LEDGER_SOURCE);
