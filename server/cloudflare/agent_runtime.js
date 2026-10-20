@@ -16,6 +16,7 @@ import { classifyItem, extractCandidateMemories } from './privacy_policy.js';
 import { agentActionGuard, isLaAgenciaAgent, officeToolBlocker } from './office_company.js';
 import { isResearchStyleJob, writeResearchMemoryNote } from './research_memory.js';
 import { codexThreadId } from './office_router.js';
+import { meetingEvent, officeTaskEvent, researchEvent } from './room_events.js';
 import { assertAgentMayRun, permissionBlocker } from './agent_permissions.js';
 
 export const AGENT_STATUSES = [
@@ -385,6 +386,13 @@ export function agentDetail(data, agent) {
 }
 
 const MAX_AGENT_WORK_LOG = 120;
+
+// The Brain hears an Office outcome when it happens (owner, Build 2): the Worker passes ctx.roomEvent, which
+// queues the event (room_events.js). Without it (tests, older callers) nothing is reported and nothing fails.
+async function reportRoomEvent(ctx, event) {
+  if (!event || typeof ctx?.roomEvent !== 'function') return;
+  try { await ctx.roomEvent(event); } catch (_) { /* a Brain record never blocks Office work */ }
+}
 
 /**
  * Per-agent working memory with provenance: one compact entry per terminal
@@ -914,6 +922,7 @@ async function runOneTask(ctx) {
     task.error = 'Agent no longer in the Office.';
     task.updated_at = now();
     await save(data);
+    await reportRoomEvent(ctx, officeTaskEvent(task, { agent: task.partner_name, outcome: 'failed', at: task.updated_at }));
     return true;
   }
   normalizeAgent(agent);
@@ -1039,6 +1048,7 @@ async function runOneTask(ctx) {
     t1.updated_at = now();
     if (!retry) {
       recordAgentWork(data, { task: t1, agent: a1 || agent, outcome: 'failed', verified: false, error: t1.error });
+      await reportRoomEvent(ctx, officeTaskEvent(t1, { agent: (a1 || agent)?.name, outcome: 'failed', at: t1.updated_at }));
     }
     if (a1) {
       a1.runtime_status = 'idle';
@@ -1133,6 +1143,12 @@ async function runOneTask(ctx) {
     memoryNoteId: t2.memory_note_id || '',
     error: '',
   });
+  await reportRoomEvent(ctx, officeTaskEvent(t2, { agent: (a2 || agent)?.name, outcome: 'complete', verified: approved, at: t2.updated_at || now() }));
+  if (t2.memory_written) {
+    const note = (data.memory_notes || []).find((item) => item.id === t2.memory_note_id);
+    // An agent's research note is a lead: its cited pages were not checked, so the event says inferred.
+    if (note) await reportRoomEvent(ctx, researchEvent({ id: note.id, title: note.title, summary: (note.bullets || []).join(' '), sources: note.url ? [note.url] : [], by: (a2 || agent)?.name || 'an Office agent', sourcesRead: false, at: note.created_at }));
+  }
   if (approved && t2.teach_as_skill) {
     const skill = teachOfficeSkill(data, {
       name: t2.teach_as_skill,
@@ -1214,6 +1230,9 @@ async function advanceMeeting(ctx) {
     m.updated_at = now();
     await save(data);
     notify();
+    // A meeting that concluded or ended without a result is a Meeting Room event (owner, Build 2).
+    if (m.status === 'complete') await reportRoomEvent(ctx, meetingEvent(m, 'concluded'));
+    else if (m.status === 'failed') await reportRoomEvent(ctx, meetingEvent(m, 'failed'));
   };
 
   if (!participants.length) {

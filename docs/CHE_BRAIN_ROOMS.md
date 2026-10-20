@@ -137,8 +137,9 @@ The Music Room has no service of its own unless `CHE_MUSIC_URL` is set, so its r
 what really happens:
 
 - A music request on the phone ("play the song X", or a YouTube search with music words: song,
-  playlist, album, lo-fi, jazz…) writes an `observed` record to the phone's Brain replica
-  (`kind: room_request`, `source.room: music`). It says CHE opened the search; which video then
+  playlist, album, lo-fi, jazz…) is posted to `POST /api/brain/room-event` (Build 2, below) as an
+  `observed` `played` event. Only when that post fails does the phone write the older replica record
+  (`kind: room_request`, `source.room: music`) instead, so the request is never lost or recorded twice. It says CHE opened the search; which video then
   played is not recorded, because that happens in `che_browser.dart`. It syncs to the Worker, where
   the relink pass relates it to the rest of the Brain.
 - A successful action through a music tool (the music connector, a Spotify, Apple Music, playlist
@@ -147,6 +148,48 @@ what really happens:
 - "What does the Music Room know about Miles Davis?" lists those records. It adds what the owner
   said about his music, from Memory ("you told me"), and whether a music service is connected. With
   nothing about the topic it says "Nothing recorded"; the service line alone is not knowledge.
+
+## 2b. Build 2: every room records its activity (owner, 2026-10-20)
+
+The owner's goal: whatever happened in any room, CHE can tell him, by voice or in chat. Each room now
+queues a room event at the moment the activity happens (`room_events.js` builders, `queueRoomEvent`),
+with an honest status, its evidence and a stable key, so a retry is never a second record. The same
+queue, drain and `CheBrainStore` as above; no second memory, router or planner.
+
+| Room (`ROOMS` id) | What produces its events | Status |
+|---|---|---|
+| Trading Room (`trading`) | an Alpaca PAPER order placed (its receipt, from `/api/trading/alpaca/order` and the chat "yes, place it") or not placed (`paperOrderRefusedEvent`); every applied Strategy Control Center change (`tradingControl`: pause, resume, limits, Emergency Stop and Flatten with what they cancelled); forward-paper and simulation closes | verified (an unconfirmed order: unknown) |
+| Coding Room (`coding`) | receipts (`recordReceipt` → `receiptEvent`) | verified, proposed |
+| Meeting Room (`meetings`, region Conversations, label "Meeting Room") | a War Room meeting convened (`/api/meetings`, "start a meeting") and concluded or ended without a result (`advanceMeeting` through `ctx.roomEvent`) | verified that it happened; the body says the plan is model output |
+| Office (`office`) | an Office task completed or failed for good (`runOneTask` through `ctx.roomEvent`, and chat-triggered Office work) | verified when CHE approved it or it failed; observed when unreviewed |
+| Research (`research`) | an agent's research note (`inferred`: its cited page was not checked) and a fresh chat research answer with its sources (`observed`) | observed, inferred |
+| Music Room (`music`) | the phone, when the Music Room starts a track (`played`, `paused`, `liked`) | observed |
+| Help (`help`, region CHE Self-Knowledge) | the phone, when Help explains a control or walks through a screen (`explained`, `walkthrough`) | observed |
+| Screen (`screen`) | the phone, when "what is on my screen" names the page; the Worker, when "look at my screen" is read by vision. Only the screen's name and the time: never the image or the screen's text | observed |
+
+**`POST /api/brain/room-event`** (owner device only, the same `ownerDevice` check as every Brain
+endpoint): `{room, kind, key, title, detail?}`. Rooms `music`, `help`, `screen`, each with its
+allowlist of kinds; a key of 4–80 letters, digits or `:._-`; a title of at most 200 characters (80 for a
+screen) and detail of at most 600; text that fails `isSafeText` is refused. A screen event ignores any
+detail. The phone posts fire and forget (`lib/brain/che_room_events.dart`): nothing is shown or spoken,
+and a failed post is silent.
+
+**Questions** (`activityIntent`, inside `crossRoomIntent`, answered by `answerCrossRoom` at the
+`che_brain_rooms` route with no model call): "What happened in the Music Room today?", "What did I do
+in the Trading Room?", "What did CHE do in the Office lately?", "What did I ask help about?", "What
+was on my screen earlier?", "What happened in the Meeting Room?", "What did the Research Room find?",
+"What happened in the Coding Room?". The answer lists that room's records (`source.room`) newest first,
+each with its title, room, status label and time (UTC), plus the live ledgers or change history for
+Trading and Coding; "today" and "yesterday" are the owner's Central-time day. A room is named only by
+its name ("the Trading Room", "the Office", "the War Room", "the Help Center"); "my office", "the
+Office of the President", "what happened today?" and "what is on my screen?" are not room questions.
+The app-permission gate does not hold these questions: reading CHE's own room records opens no app.
+
+Privacy and retention are unchanged: room records are ordinary Brain records (deletable, synced only
+to the owner's devices), the queue is bounded, and a screen's content stays the 15-minute temporary
+observation unless the owner says "connect this to the Brain". Paper trading only.
+
+Not verified: on the iPhone, or in production.
 
 ## 3. The flow
 

@@ -106,7 +106,7 @@ export function receiptEvent(receipt) {
     case 'study_started': return coding(`Repository study started${repos(r) ? `: ${short(repos(r), 80)}` : ''}`, short(r.topic ? `Topic: ${r.topic}` : repos(r), 300));
     case 'study_complete': return coding(`Repository study complete${repos(r) ? `: ${short(repos(r), 80)}` : ''}`, `${Number(r.findings) || 0} finding${Number(r.findings) === 1 ? '' : 's'}${r.topic ? ` on ${r.topic}` : ''}.`);
     case 'trade_placed': return { room: 'trading', kind: 'order', key: `trade_placed:${r.key || at}`, title: 'Live order placed through the trading desk', body: short(r.detail, 300), status: 'verified', evidence: [`receipt trade_placed ${at}`], refs: { receipt: r.key || '' }, at, sensitivity: 'private' };
-    case 'paper_order_placed': return { room: 'trading', kind: 'paper_order', key: `paper_order:${r.key || at}`, title: `Alpaca PAPER order placed${r.symbol ? `: ${short(r.symbol, 12)}` : ''}`, body: short(r.detail, 300), status: 'verified', evidence: [`receipt paper_order_placed ${at}`], refs: { receipt: r.key || '', client_order_id: r.client_order_id || '' }, at };
+    case 'paper_order_placed': return { room: 'trading', kind: 'paper_order', key: `paper_order:${r.key || at}`, title: `Alpaca PAPER order placed${r.symbol ? `: ${[short(r.side, 8), r.qty ? short(r.qty, 10) : '', short(r.symbol, 12)].filter(Boolean).join(' ')}` : ''}`, body: short(r.detail, 300), status: 'verified', evidence: [`receipt paper_order_placed ${at}`], refs: { receipt: r.key || '', client_order_id: r.client_order_id || '' }, at };
     case 'mail_sent': return { room: 'office', kind: 'mail', key: `mail_sent:${r.key || at}`, title: `Flagstaff mail sent to ${short(r.peer || 'a peer', 24)}`, body: short(r.detail || r.text, 300), status: 'verified', evidence: [`receipt mail_sent ${at}`], refs: { receipt: r.key || '' }, at };
     // A music service or plugin really did something (owner, 2026-10-20): the Music Room's verified record.
     case 'tool_execution': {
@@ -117,4 +117,152 @@ export function receiptEvent(receipt) {
     case 'mail_received': return { room: 'office', kind: 'mail', key: `mail_received:${r.key || at}`, title: `Flagstaff mail received from ${short(r.peer || 'a peer', 24)}`, body: short(r.detail || r.text, 300), status: 'observed', evidence: [`receipt mail_received ${at}`], refs: { receipt: r.key || '' }, at };
     default: return null;
   }
+}
+
+// ─── Room events at the moment things happen (owner, Build 2, 2026-10-20) ─────
+// Each builder turns one real activity into one event with an honest status, its evidence and a key
+// that is the same for a retry, so the Brain never records the same activity twice. They are pure:
+// the caller queues the result with queueRoomEvent.
+
+const clipText = (text, n) => String(text ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
+
+/**
+ * An Alpaca PAPER order the owner asked for that was NOT placed (CHE's own check, the owner's limits or
+ * Alpaca said no). A placed order is recorded from its receipt (recordReceipt -> receiptEvent), so this
+ * returns null for it and for a repeat of an order already journalled.
+ */
+export function paperOrderRefusedEvent(order = {}, placed = {}, { via = 'app', at } = {}) {
+  if (!placed || placed.ok || placed.repeated) return null;
+  const when = at || new Date().toISOString();
+  const symbol = clipText(order?.symbol, 12).toUpperCase();
+  const side = clipText(order?.side, 8).toLowerCase();
+  const qty = Number(order?.qty) || 0;
+  const what = [side, qty || '', symbol || 'stock'].filter(Boolean).join(' ');
+  const clientId = clipText(order?.client_order_id, 64);
+  return {
+    room: 'trading', kind: 'paper_order_refused', key: `paper_refused:${clientId || `${what}:${when.slice(0, 16)}`}`,
+    title: `Alpaca PAPER order not placed: ${what}`,
+    body: `${clipText(placed.detail || placed.error || 'The order was refused.', 300)} Asked from ${via === 'chat' ? 'Chat' : 'the Trading Room'}. Paper only; no money moved.`,
+    status: placed.unclear ? 'unknown' : 'verified',
+    evidence: [`alpaca paper order request ${clientId || 'without request id'} ${when}`],
+    refs: { client_order_id: clientId, blocked_by_controls: Boolean(placed.blocked) }, at: when,
+  };
+}
+
+const CONTROL_LABEL = Object.freeze({
+  emergency_stop: 'Emergency Stop turned on', flatten: 'Flatten: paper positions closed', pause: 'Strategies paused', resume: 'Strategies resumed',
+  restore: 'Previous strategy limits restored', set: 'Strategy limit changed', disable: 'Strategy disabled', enable: 'Strategy enabled',
+});
+
+/** A Strategy Control Center change that was applied (its audit record), with what Emergency Stop cancelled. */
+export function controlChangeEvent(record = {}, { halted = null } = {}) {
+  if (!record?.at || !record?.action) return null;
+  const action = String(record.action);
+  const label = CONTROL_LABEL[action] || `Strategy control: ${clipText(action.replace(/_/g, ' '), 40)}`;
+  const scope = record.scope && record.scope !== 'all' ? ` (${clipText(Array.isArray(record.scope) ? record.scope.join(', ') : record.scope, 60)})` : '';
+  const cancelled = halted?.alpaca?.state === 'verified' ? (halted.alpaca.cancelled || []).length : null;
+  return {
+    room: 'trading', kind: 'control', key: `control:${record.at}:${action}`,
+    title: `${label}${scope}`,
+    body: `${clipText(record.summary || (record.effect || []).join(' '), 900)}${record.raised_risk ? ' The owner confirmed this raise in risk.' : ''}${cancelled != null ? ` Alpaca PAPER orders cancelled: ${cancelled}.` : ''} Changed by ${clipText(record.who || 'owner', 20)}. Paper only.`,
+    status: 'verified', evidence: [`strategy control audit ${record.at}`], refs: { audit_at: record.at, action }, at: record.at,
+  };
+}
+
+/** A War Room meeting convened, concluded or ended without a result. */
+export function meetingEvent(meeting = {}, phase = 'concluded') {
+  if (!meeting?.id) return null;
+  const topic = clipText(meeting.objective || meeting.title || 'a team topic', 120);
+  const people = (Array.isArray(meeting.participants) ? meeting.participants : []).map((p) => clipText(p?.name, 30)).filter(Boolean);
+  const at = (phase === 'convened' ? meeting.created_at : meeting.updated_at) || new Date().toISOString();
+  const base = { room: 'meetings', key: `meeting:${meeting.id}:${phase}`, refs: { meeting_id: meeting.id }, at, evidence: [`war room meeting ${meeting.id} ${phase} ${at}`], status: 'verified' };
+  if (phase === 'convened') {
+    return { ...base, kind: 'convened', title: `Meeting convened: ${topic}`, body: `CHE convened a War Room meeting about "${topic}"${people.length ? ` with ${people.join(', ')}` : ''}.` };
+  }
+  if (phase === 'failed') {
+    return { ...base, kind: 'failed', title: `Meeting ended without a result: ${topic}`, body: clipText(meeting.error || 'The meeting could not finish.', 300) };
+  }
+  const decisions = (Array.isArray(meeting.decisions) ? meeting.decisions : []).map((d) => clipText(d, 160)).filter(Boolean).slice(0, 4);
+  // That the meeting concluded is verified; what it decided is the agents' and CHE's model output, and the body says so.
+  return {
+    ...base, kind: 'concluded', title: `Meeting concluded: ${topic}`,
+    body: `${people.length ? `Participants: ${people.join(', ')}. ` : ''}${decisions.length ? `Decisions: ${decisions.join('; ')}. ` : ''}The plan is CHE's synthesis of the agents' drafts: model output, not verified facts.`,
+  };
+}
+
+/** An Office worker task that completed, or failed for good (a retry is not an outcome). */
+export function officeTaskEvent(task = {}, { agent = '', outcome = 'complete', verified = false, at } = {}) {
+  if (!task?.id) return null;
+  const when = at || task.updated_at || new Date().toISOString();
+  const who = clipText(agent || task.partner_name || 'An Office agent', 40);
+  const failed = outcome === 'failed';
+  return {
+    room: 'office', kind: failed ? 'task_failed' : 'task_complete', key: `task:${task.id}:${failed ? 'failed' : 'complete'}`,
+    title: `${who} ${failed ? 'could not finish' : 'finished'}: ${clipText(task.task || 'a task', 120)}`,
+    body: failed ? 'The task failed; details are in the owner-authorized task history.' : `${verified ? 'CHE reviewed and approved the result.' : 'CHE did not review the result.'} The result is in the task history.`,
+    // The outcome itself is verified; an unreviewed result is only observed.
+    status: failed || verified ? 'verified' : 'observed',
+    evidence: [`team task ${task.id} ${failed ? 'failed' : 'complete'} ${when}`], refs: { task_id: task.id, agent: who }, at: when,
+  };
+}
+
+/** A research note written (an agent's lead) or a fresh research answer with its sources. */
+export function researchEvent({ id = '', title = '', summary = '', sources = [], by = 'CHE', sourcesRead = true, at } = {}) {
+  const when = at || new Date().toISOString();
+  const text = clipText(title || summary, 140);
+  if (!text) return null;
+  const urls = (Array.isArray(sources) ? sources : []).map((s) => clipText(typeof s === 'string' ? s : s?.url || s?.title, 200)).filter(Boolean).slice(0, 6);
+  return {
+    room: 'research', kind: 'finding', key: `research:${clipText(id, 80) || `${text.slice(0, 60)}:${when.slice(0, 13)}`}`,
+    title: `Research: ${text}`,
+    body: `${clipText(summary, 600)}\n${urls.length ? `Sources: ${urls.join(', ')}` : 'No sources were cited.'}\nFound by ${clipText(by, 40)}. A finding is a lead until a source check or the owner confirms it.`,
+    // The research step read its sources, but nobody checked the claim against them: observed at best. An agent's
+    // cited page was not necessarily opened at all (research_memory.js), so its note is inferred.
+    status: urls.length && sourcesRead ? 'observed' : 'inferred',
+    evidence: urls.length ? urls : [`research by ${clipText(by, 40)} ${when}`], refs: { note_id: clipText(id, 80) }, at: when,
+  };
+}
+
+// ─── The phone's rooms: music, help and screen (POST /api/brain/room-event) ───
+export const PHONE_ROOM_KINDS = Object.freeze({
+  music: Object.freeze(['played', 'paused', 'liked']),
+  help: Object.freeze(['explained', 'walkthrough']),
+  screen: Object.freeze(['observed']),
+});
+const PHONE_KIND_WORD = Object.freeze({ played: 'Played', paused: 'Paused', liked: 'Liked', explained: 'Help explained', walkthrough: 'Help walkthrough' });
+
+/**
+ * One event the owner's phone reports, or { error }. The phone names the room, a kind from that room's
+ * allowlist, a stable key and a short title; the Worker writes the record. A screen event keeps only the
+ * name of the screen or room and the time, never the image or the screen's text (the screen is temporary
+ * unless the owner saves it).
+ */
+export function phoneRoomEvent(body = {}, { now = Date.now(), isSafe = () => true } = {}) {
+  const room = String(body?.room || '');
+  const kinds = PHONE_ROOM_KINDS[room];
+  if (!kinds) return { error: 'room must be music, help or screen' };
+  const kind = String(body.kind || '');
+  if (!kinds.includes(kind)) return { error: `kind must be one of ${kinds.join(', ')}` };
+  const key = String(body.key || '');
+  if (!/^[A-Za-z0-9:._-]{4,80}$/.test(key)) return { error: 'a stable key of 4 to 80 letters, digits or :._- is required' };
+  const rawTitle = String(body.title ?? '');
+  const title = clipText(rawTitle, room === 'screen' ? 80 : 200);
+  if (!title || rawTitle.length > (room === 'screen' ? 80 : 200)) return { error: `a title of at most ${room === 'screen' ? 80 : 200} characters is required` };
+  const rawDetail = room === 'screen' ? '' : String(body.detail ?? '');
+  if (rawDetail.length > 600) return { error: 'detail is at most 600 characters' };
+  const detail = clipText(rawDetail, 600);
+  if (!isSafe(title) || (detail && !isSafe(detail))) return { error: 'sensitive text is never recorded' };
+  const at = new Date(now).toISOString();
+  if (room === 'screen') {
+    return {
+      room, kind, key: `${kind}:${key}`, title: `Looked at ${title}`,
+      body: `The owner looked at ${title} on his phone. Only the screen's name and the time are kept; the image and the screen's text are not.`,
+      status: 'observed', evidence: [`phone screen report ${at}`], refs: { screen: title }, at,
+    };
+  }
+  return {
+    room, kind, key: `${kind}:${key}`, title: `${PHONE_KIND_WORD[kind]}: ${title}`,
+    body: `${detail || title}${/[.!?]$/.test(detail || title) ? '' : '.'} Reported by the owner's phone.`,
+    status: 'observed', evidence: [`phone ${room} ${kind} ${at}`], refs: { phone_key: key }, at,
+  };
 }
