@@ -12540,14 +12540,18 @@ export class CheState extends DurableObject {
     }
     const jobId = crypto.randomUUID();
     const targetBranch = `che/auto/${jobId.slice(0, 8)}`;
+    // The runner's PR merges itself only when the owner's own words authorized the merge.
+    const mergeAuthorized = policy.mergeAllowed === true && !ownerRequiresMergeApproval(ownerRequest);
     const started = await runtime.createSession({
       jobId,
       ownerRequest,
       baseSha,
       targetBranch,
       executionMode: policy.mode,
+      mergeAuthorized,
     });
     if (started.status === 202) {
+      await this.ctx.storage.put('che_runtime_last_merge_authorized', mergeAuthorized);
       await this.ctx.storage.put('che_runtime_last_base_sha', baseSha);
       await this.ctx.storage.put('che_runtime_last_branch', targetBranch);
       await this.ctx.storage.put('che_runtime_last_session', started.session_id);
@@ -12601,6 +12605,7 @@ export class CheState extends DurableObject {
       baseSha: pending.base_sha,
       targetBranch: pending.target_branch,
       executionMode: 'BUILD',
+      mergeAuthorized: pending.merge_authorized === true,
     }).catch(() => null);
     if (started?.status === 202 && started.session_id === pending.session_id) {
       const now = new Date().toISOString();
@@ -12655,6 +12660,7 @@ export class CheState extends DurableObject {
           base_sha: String(await this.ctx.storage.get('che_runtime_last_base_sha') || ''),
           target_branch: String(await this.ctx.storage.get('che_runtime_last_branch') || ''),
           request: String(await this.ctx.storage.get('che_runtime_last_request') || ''),
+          merge_authorized: (await this.ctx.storage.get('che_runtime_last_merge_authorized')) === true,
           resume_count: Number(status.resume_count || 0),
           attempt: plan.attempt,
           failure_kind: String(status.failure_kind || 'unknown'),
