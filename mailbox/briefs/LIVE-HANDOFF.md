@@ -69,6 +69,16 @@ Then, on GitHub:
 - Next: open focused PR for milestone 1 when the owner is ready (or continue: milestone 2 = scripted multi-agent demo via officeGoal + War Room board wiring + orb-tap deep link to the real task; then Phase B typed memory/provenance).
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
+
+## 2. Current position (ChatGPT, 2026-10-20 ~10:04 UTC — Claude limit takeover)
+
+- Verified `main=372cf27a2839ceac4fdcf1145b014ce168ee5ec4`, PR #379 (EMA strategy/session + overlap) merged and Worker deployed successfully.
+- Claude left PR **#380** `claude/che-exact-ema-questions` open at 1c31c95 with a P1 review finding: its newest-five verdict grouped real production portfolio keys `candidate|filter@version` as `candidate|filter|targetR`, so all trades wrongly appeared recent.
+- ChatGPT appended two commits to the existing #380 branch, **9ebdf6d** (group recency by the same strategy/filter/target as liveDashboard) and **6fa2371** (production-shaped test keys and assertions). Latest #380 head `6fa23715130aa910ce029fe7890c01505ede47bd`. Worker syntax/unit tests and Flutter analysis checks are green; **Cloudflare Workers Builds preview check is red**, so **DO NOT MERGE** until required checks and blocker are resolved, then verify deploy and exact owner questions in production. No trades/orders were changed.
+- Owner then asked for visual Alpaca stock trades and a universal ? guide, independent of #380. ChatGPT created draft PR **#381** `chatgpt/alpaca-visual-help-20261020` at `ab31de7f82b1fabd60fb7b6f2c119b9de4791876`: read-only broker-confirmed PAPER orders visual panel on Trading Room with actual status/fill quantity, account equity where available and receipt sheet; help FAB on five shell tabs reading `CheScreenAwareness` reports, Trading Room registration, local spoken/typed how-to phrasing and Flutter tests. **Draft, CI pending, no deploy, no iPhone acceptance**. Cloudflare preview also reports red on this branch.
+- IMPORTANT limitations: #381 is **NOT** a complete candlestick/fill-marker/position trading terminal; official verified stock market data plus positions and marker overlays are future work. The ? control currently covers the five root tabs, not nested pushed routes. Do not advertise full feature completion.
+- Next: inspect and fix CI/review findings on #381, keep safety/owner/voice gates, and complete chart/position UX and help on nested screens in follow-up. Do not merge red or unverified work. Preserve Claude's completed work and source-separated trading ledger architecture. No live trades or spend allowed.
+
 ## 2. Current position (Claude, 2026-10-20 09:10 UTC — #378 merged and LIVE: RAG repair, vision follow-ups, voice, Meetings)
 
 - **main = `73afb21`** (#378 squash, [worker-deploy]). Deploy run 39397042170 success; the live commit check confirmed 73afb21 is live (Worker version 062f74ed). Memory truth 18/18, Command Center 5/5, Knowledge Atlas 11/11. Shorebird run 39397042227 success. No IPA was built (skipped; no native change).
