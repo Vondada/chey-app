@@ -463,7 +463,7 @@ class CheTradingChartState extends State<CheTradingChart> {
                   FilledButton(
                     onPressed: () {
                       Navigator.pop(ctx);
-                      unawaited(cancelOrder('${m.raw['order_id'] ?? m.raw['id']}'));
+                      unawaited(cancelOrder('${m.raw['order_id'] ?? m.raw['id']}', what: '${m.side.toUpperCase()} ${m.raw['qty'] ?? ''} ${m.raw['symbol'] ?? ''}'));
                     },
                     child: const Text('Cancel this order'),
                   ),
@@ -519,9 +519,25 @@ class CheTradingChartState extends State<CheTradingChart> {
     );
   }
 
-  Future<void> cancelOrder(String id) async {
+  /// Cancelling removes an order, so the owner is asked first; only "Yes, cancel it" sends it.
+  Future<void> cancelOrder(String id, {String what = 'this paper order'}) async {
+    final yes = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Cancel this order?'),
+        content: Text('Cancel $what on Alpaca PAPER?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Keep it')),
+          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Yes, cancel it')),
+        ],
+      ),
+    );
+    if (yes != true) {
+      _setStatus('Kept the order; nothing was cancelled.');
+      return;
+    }
     try {
-      final j = await _post('/api/trading/alpaca/order/cancel', {'id': id});
+      final j = await _post('/api/trading/alpaca/order/cancel', {'id': id, 'confirm': true});
       final receipt = j['receipt'] is Map ? j['receipt'] as Map : const {};
       final ok = j['ok'] == true;
       _setStatus(ok
@@ -727,7 +743,7 @@ class CheTradingChartState extends State<CheTradingChart> {
                   style: const TextStyle(color: Colors.white, fontSize: 14),
                 ),
               ),
-              TextButton(onPressed: () => unawaited(cancelOrder('${o['id']}')), child: Text('Cancel', semanticsLabel: 'Cancel the ${o['side']} ${o['qty']} ${o['symbol']} order')),
+              TextButton(onPressed: () => unawaited(cancelOrder('${o['id']}', what: '${'${o['side'] ?? ''}'.toUpperCase()} ${o['qty'] ?? ''} ${o['symbol'] ?? ''}')), child: Text('Cancel', semanticsLabel: 'Cancel the ${o['side']} ${o['qty']} ${o['symbol']} order')),
             ]),
         ],
         if (_status.isNotEmpty)

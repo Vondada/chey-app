@@ -242,10 +242,18 @@ void main() {
   testWidgets('an open order is cancelled and the broker receipt is shown', (tester) async {
     final s = _Server();
     await _pumpRoom(tester, s);
-    await tester.ensureVisible(find.text('Cancel'));
     await _tap(tester, find.text('Cancel'));
     await tester.pumpAndSettle();
-    expect(jsonDecode(s.to('/api/trading/alpaca/order/cancel').single.body), {'id': 'order-0001-abcd'});
+    // Cancelling removes an order: the owner is asked first, and "Keep it" sends nothing.
+    expect(find.text('Cancel BUY 2 AAPL on Alpaca PAPER?'), findsOneWidget);
+    await tester.tap(find.text('Keep it'));
+    await tester.pumpAndSettle();
+    expect(s.to('/api/trading/alpaca/order/cancel'), isEmpty);
+    await _tap(tester, find.text('Cancel'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Yes, cancel it'));
+    await tester.pumpAndSettle();
+    expect(jsonDecode(s.to('/api/trading/alpaca/order/cancel').single.body), {'id': 'order-0001-abcd', 'confirm': true});
     expect(find.textContaining('Alpaca reports the order canceled'), findsWidgets);
   });
 
