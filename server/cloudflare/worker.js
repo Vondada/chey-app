@@ -70,7 +70,8 @@ import { alpacaKeys, alpacaPaperOrders, alpacaStatus, liveKeyProblem, placeAlpac
 import { speakConnections, speakTradovateSteps, tradingConnections } from './trading_connections.js';
 import { liveAnswer, liveIntent } from './trading_live_chat.js';
 import { LEDGER_SOURCE, ledgerIntent, readLedgers, speakLedgers } from './trading_ledgers.js';
-import { BRAIN_ROOMS_SOURCE, ROOMS as BRAIN_ROOMS, answerCrossRoom, crossRoomIntent, drainRoomEvents, recentScreen, rememberScreen, screenDeictic, screenFollowUp, screenRoomContext, screenRoomFor, statusLabel } from './brain_rooms.js';
+import { meetingCommand, meetingScene } from './world_scene.js';
+import { BRAIN_ROOMS_SOURCE, ROOMS as BRAIN_ROOMS, answerCrossRoom, crossRoomIntent, drainRoomEvents, pointsAtScreen, recentScreen, relinkRecords, rememberScreen, screenDeictic, screenFollowUp, screenRoomContext, screenRoomFor, statusLabel } from './brain_rooms.js';
 import { queueRoomEvent } from './room_events.js';
 import { cloudDailyLimit, sanitizeOwnerText } from './che_errors.js';
 import { CHE_UPDATE_GUIDE, mergeSelfUpdatePr, openSelfUpdatePr, rollbackLastUpdate, selfUpdateGitHubAccess, selfUpdateStatus, workerDeploymentStatus } from './self_update.js';
@@ -7293,6 +7294,16 @@ export class CheState extends DurableObject {
         this.broadcastAgents(data);
         return json({ meeting: convened.meeting, created_agents: convened.created.map((item) => item.name) });
       }
+      // The Meeting Room as a scene (Spatial World MVP 1): a read-only projection of one real War Room
+      // meeting; every object names its record. Owner only.
+      if (path === '/api/world/scene' && request.method === 'GET') {
+        if (!ownerDevice) return ownerOnly();
+        const query = new URL(request.url).searchParams;
+        if ((query.get('scene') || 'meeting') !== 'meeting') return json({ detail: 'Only the Meeting Room scene exists so far.' }, 400);
+        const meeting = (data.meetings || []).find((item) => item.id === query.get('id')) || (query.get('id') ? null : (data.meetings || [])[0]);
+        if (!meeting) return json({ detail: 'No such meeting.' }, 404);
+        return json({ scene: meetingScene(meeting, runtimeSnapshot(data).agents) });
+      }
       const meetingMatch = /^\/api\/meetings\/([A-Za-z0-9-]{8,64})$/.exec(path);
       if (meetingMatch && request.method === 'GET') {
         const meeting = data.meetings.find((item) => item.id === meetingMatch[1]);
@@ -8470,7 +8481,7 @@ export class CheState extends DurableObject {
           if (!body.attachment && !String(body.screen_context || '').trim() && (asksAboutScreen(rawMessage) || screenFollowUp(rawMessage))) {
             if (ownerDevice) await this.dropHeldActions();
             return ndjsonReply('I can\'t see your screen from here, sir: this message came without any screen report from your phone, so I won\'t guess. '
-              + 'In CHE\'s iPhone app, ask "what is on my screen?" and the app answers from the page it has open.', { source: 'che_screen', ok: false, model_calls: 0 });
+              + 'In CHE\'s iPhone app, say "look at my screen" and I will take a picture of the app and read it, or ask "what is on my screen?" for the page it has open.', { source: 'che_screen', ok: false, model_calls: 0 });
           }
         }
         // Always-on speech learning: corrections teach her how the owner's voice
@@ -8779,6 +8790,40 @@ export class CheState extends DurableObject {
         // those words are subject matter, not permission to act.
         const turnActionPolicy = currentTurnActionPolicy(message);
         const chatOnlyEvaluation = turnActionPolicy.terminalChatOnly;
+
+        // "Start a meeting with the team about X" (Spatial World MVP 1): a real War Room meeting, which
+        // the app shows as the Meeting Room (it opens on `meeting_id`). Its drafts cost model calls,
+        // so it starts only when the owner asks, and never without a topic.
+        const meetingAsk = body.attachment ? null : meetingCommand(message);
+        if (meetingAsk) {
+          if (!ownerDevice) return ownerOnly();
+          if (!meetingAsk.topic) {
+            return ndjsonReply('What should the team meet about, sir? Say "start a meeting with the team about" and the topic.', { source: 'che_meeting_room', ok: false, model_calls: 0, needs: 'topic' });
+          }
+          const convened = conveneMeeting(data, { objective: meetingAsk.topic });
+          if (convened.error) return ndjsonReply(`The meeting did not start, sir: ${convened.error}`, { source: 'che_meeting_room', ok: false, model_calls: 0 });
+          await this.ctx.storage.put('che', data);
+          await this.scheduleWork();
+          this.broadcastAgents(data);
+          const scene = meetingScene(convened.meeting, runtimeSnapshot(data).agents);
+          return ndjsonReply(`Starting the meeting, sir. ${scene.spoken} Their cards appear on the table as they write them; drafts are model output, not verified.`, {
+            source: 'che_meeting_room', ok: true, model_calls: 0, meeting_id: convened.meeting.id,
+          });
+        }
+
+        // "What is connected to PR 374?" and "how is X related to Y?" ask the Brain for relationships
+        // (owner, 2026-10-20), so they are answered here, before the GitHub and update readers that
+        // would otherwise take any question naming a pull request as a status check.
+        // "What's related to this?" with no screen shared is about the conversation: the model answers it.
+        const relation = body.attachment ? null : crossRoomIntent(message);
+        const relationScreen = relation && ownerDevice ? await recentScreen(this.ctx.storage) : null;
+        if (relation && ['related', 'relate'].includes(relation.kind) && (relationScreen || ![relation.topic, relation.other].some(pointsAtScreen))) {
+          if (!ownerDevice) return ndjsonReply('Only the CHE owner can read across his rooms, sir.', { source: BRAIN_ROOMS_SOURCE, ok: false, model_calls: 0 });
+          const relationStore = new CheBrainStore(this.ctx.storage);
+          await drainRoomEvents(this.ctx.storage, relationStore).catch(() => null);
+          const answer = await answerCrossRoom({ store: relationStore, storage: this.ctx.storage, env: this.keyEnv || this.env, intent: relation, screen: relationScreen });
+          return ndjsonReply(answer.text, { source: BRAIN_ROOMS_SOURCE, ok: answer.ok, model_calls: 0, rooms: answer.rooms, hits: answer.hits, kind: relation.kind });
+        }
 
         // Existing GitHub and mailbox readers supply facts; the model never
         // interprets release state. Read-only questions authorize no mutation.
@@ -9960,7 +10005,8 @@ export class CheState extends DurableObject {
         // A question that names a room, the Brain or "another room" (owner, 2026-10-20) is answered from the
         // Brain's records and that room's live reader, by source and status, with no model call.
         const cross = body.attachment ? null : crossRoomIntent(message);
-        if (cross) {
+        // Relationship questions were answered above, or left to the model ("what's related to this?" with no screen).
+        if (cross && !['related', 'relate'].includes(cross.kind)) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can read across his rooms, sir.', { source: BRAIN_ROOMS_SOURCE, ok: false, model_calls: 0 });
           const seen = await recentScreen(this.ctx.storage);
           // Queued room events are written first, so a fact a room produced a moment ago is already in the answer.
@@ -11483,7 +11529,12 @@ export class CheState extends DurableObject {
     // Paper trading keeps learning even when autonomy is off (no money moves).
     await this.tradingTick().catch(() => null);
     // Room events reach the Brain on the alarm too, so the phone's next sync sees them without a chat turn.
-    await drainRoomEvents(this.ctx.storage, new CheBrainStore(this.ctx.storage)).catch(() => null);
+    {
+      const alarmBrain = new CheBrainStore(this.ctx.storage);
+      await drainRoomEvents(this.ctx.storage, alarmBrain).catch(() => null);
+      // Older room records get relationship discovery too, a dozen per alarm until none are left.
+      await relinkRecords(this.ctx.storage, alarmBrain).catch(() => null);
+    }
     const autonomyOn = Boolean((await this.loadData()).autonomy);
     if (autonomyOn) await this.recoverOpenCodeFailure().catch((error) => console.error('OpenCode recovery watch failed:', error?.message || error));
     // processJobs decides what may run while Office autonomy is paused: the

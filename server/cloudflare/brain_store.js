@@ -566,7 +566,8 @@ export class CheBrainStore {
     }) };
   }
 
-  search(question, { limit = 8, region = '' } = {}) {
+  // `prefix` matches words that start with each term (a commit hash written at any length).
+  search(question, { limit = 8, region = '', prefix = false } = {}) {
     if (!this.init()) return [];
     const terms = [...new Set(String(question || '').toLowerCase().match(/[a-z0-9']{3,}/g) || [])].slice(0, 12);
     if (!terms.length) return [];
@@ -574,7 +575,7 @@ export class CheBrainStore {
     let ids = [];
     if (this.fts) {
       try {
-        const match = terms.map((t) => `"${t.replace(/"/g, '')}"`).join(' OR ');
+        const match = terms.map((t) => `"${t.replace(/"/g, '')}"${prefix ? '*' : ''}`).join(' OR ');
         ids = this.rows('SELECT id FROM brain_fts WHERE brain_fts MATCH ? ORDER BY bm25(brain_fts) LIMIT ?', match, size * 3).map((r) => r.id);
       } catch (_) { ids = []; }
     }

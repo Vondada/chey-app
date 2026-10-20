@@ -45,9 +45,9 @@ authoritative record is), confidence, derivation, whether the owner must confirm
 surface it, what it supersedes or contradicts, sensitivity. The Brain drains the queue on the next
 chat turn, Brain sync (`/api/brain/status`, `/api/brain/changes`) and alarm, writes one record under
 the room's region with `source.kind = 'room_event'`, marks a superseded or contradicted record with
-its new state and a link to the replacement, and links the new record to records in any room whose
-titles share two or more words (`related_to`, candidate links kept in `source.candidate_links`).
-This is incremental: one FTS query per event, never a rescan.
+its new state and a link to the replacement, and links the new record to related records in any
+room (see "Relationship discovery" below). This is incremental: a few FTS queries per event, never a
+rescan.
 
 Delivery is at least once and idempotent. The drain publishes each queued event and then removes only the
 events it handled; an event the Brain could not take stays queued. A crash between the write and the removal
@@ -86,6 +86,68 @@ authoritative ledgers are read into the prompt so a number on the screen is neve
 record, and for other rooms the Brain's related records are. "Connect this to the Brain" saves the
 observation as an `observed` record with its links.
 
+### Relationship discovery (`brain_relations.js`)
+
+Title words alone missed most real connections: a deploy receipt and a screenshot of the same pull
+request share no title word. A new record is now related to others by what they actually share:
+
+| Basis | Example | Status | Link type |
+| --- | --- | --- | --- |
+| Same pull request, commit, coding job, REA investigation, repository, file or npm package | "Update #374 deployed" and "Screen: checks for PR #374" | derived | `builds_upon` for a later stage in the same room, `relevant_to` with a screen observation, else `related_to` |
+| Same market symbol, trade record set or website | an REA investigation of an MNQ tool and a Trading Room journal record | derived | `related_to`, across rooms only, and dropped when more than six records carry it |
+| Three distinctive shared words in title and body (or two in both titles) | two notes about websocket reconnect backoff | candidate | `related_to` |
+
+References are read from the title, body and `source.refs`; the provenance lines a room event adds
+(status, evidence, source room) are ignored. A bare capitalised word is a symbol only if it is on
+the symbol list or written `$TICKER`; "update 3" is not a pull request ("Update #3" is). Each link is
+kept in `source.relations` with its basis, the shared values and its status; a derived link is also
+written on the other record, so it is found from either side. Older room records are relinked a dozen
+per alarm (`relinkRecords`) until none are left; `RELATIONS_VERSION` restarts that when the rules
+change.
+
+The owner asks "What is connected to pull request 374?", "What else is linked to job c2987a73?",
+"What's related to this?" (with a screen shared) or "How is PR 371 related to job c2987a73?". These
+are answered from the records only, before the GitHub status readers, with each link's room, status
+and reason, and "no recorded link" when there is none. They parse only when the subject is an exact
+identifier, "this" with a fresh screen, or the sentence says "in the Brain" or names a room: "What is
+related to diabetes?" and "What is related to Three.js?" stay with the model.
+
+Not used: embeddings. `vector_memory.js` can embed text when pgvector is connected, but that is a paid
+network call per record; semantic links would be `inferred` and are left for later.
+
+### "Look at my screen" on the phone (`lib/che_ui/che_screen_capture.dart`)
+
+"Look at my screen", "can you see my screen", "what do you see", "analyze my screen" or "look at
+this" (typed or spoken) makes CHE take a PNG of her own app, the page really in front of the owner
+with any sheet or dialog on it. The longest side is at most 1400 px. The PNG is the turn's image
+attachment, and `screen_context` carries the page report. The Worker's existing vision path reads it,
+names the engine, ties it to a room (`screenRoomFor` over the summary and report) and remembers it
+for 15 minutes on the owner's device. "What is on my screen?" still answers from the page report,
+instantly and with no upload.
+
+A page that shows a password or a vault note is wrapped in `CheSensitiveScreen`: while one is
+mounted the capture refuses and CHE says why, so a password never reaches the Worker or a vision
+provider. The wrapped surfaces are the password sheet and the vault notes list. Web pages and videos
+are drawn by iOS, not Flutter, so they come out blank; the browser already sends its page text, and
+the capture is added to it. Only CHE's own app is captured.
+
+### The Music Room's knowledge
+
+The Music Room has no service of its own unless `CHE_MUSIC_URL` is set, so its records come from
+what really happens:
+
+- A music request on the phone ("play the song X", or a YouTube search with music words: song,
+  playlist, album, lo-fi, jazz…) writes an `observed` record to the phone's Brain replica
+  (`kind: room_request`, `source.room: music`). It says CHE opened the search; which video then
+  played is not recorded, because that happens in `che_browser.dart`. It syncs to the Worker, where
+  the relink pass relates it to the rest of the Brain.
+- A successful action through a music tool (the music connector, a Spotify, Apple Music, playlist
+  or song plugin) has a receipt, and `receiptEvent` makes it a `verified` Music Room record. A
+  failed action, or a tool that only sounds similar (a package tracker), makes none.
+- "What does the Music Room know about Miles Davis?" lists those records. It adds what the owner
+  said about his music, from Memory ("you told me"), and whether a music service is connected. With
+  nothing about the topic it says "Nothing recorded"; the service line alone is not knowledge.
+
 ## 3. The flow
 
 Question or event → intent and room (`crossRoomIntent`, `ledgerIntent`, `screenRoomFor`, the
@@ -95,10 +157,7 @@ reply guards (`truth_layer.js`) → receipts and room events → the Brain → t
 
 ## 4. Still to do (later PRs)
 
-- Music knowledge: there is no music record store; a Music Room event producer waits for one.
-- The phone: "look at my screen" during voice should capture CHE's own screen and send it as the
-  attachment with the active room (Dart, Shorebird); sharing another app's screen needs the iOS
-  ReplayKit broadcast extension, an app group and a new IPA (native, not patchable).
-- Relationship discovery beyond shared title words (embeddings exist in `vector_memory.js` when
-  pgvector is connected; not wired to room events).
-- The Brain Room UI: show `source.room`, status and candidate links on a record card.
+- Sharing another app's screen needs the iOS ReplayKit broadcast extension, an app group and a new
+  IPA (native, not patchable).
+- Semantic relationships (embeddings through `vector_memory.js`, status `inferred`).
+- The Brain Room UI: show `source.room`, status and `source.relations` (basis, status) on a record card.

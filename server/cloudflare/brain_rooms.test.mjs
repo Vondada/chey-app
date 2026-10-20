@@ -8,7 +8,7 @@ import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { BRAIN_REGIONS, CheBrainStore } from './brain_store.js';
 import { EVENT_STATUSES, ROOM_EVENTS_KEY, peekRoomEvents, queueRoomEvent, receiptEvent } from './room_events.js';
 import {
-  LAST_SCREEN_KEY, ROOMS, answerCrossRoom, crossRoomIntent, drainRoomEvents, linkRelated, publishRoomEvent, recentScreen, rememberScreen,
+  LAST_SCREEN_KEY, ROOMS, answerCrossRoom, crossRoomIntent, drainRoomEvents, linkRelated, publishRoomEvent, recentScreen, relinkRecords, rememberScreen,
   roomEventRecord, screenDeictic, screenFollowUp, screenRoomFor, statusLabel,
 } from './brain_rooms.js';
 import { recordReceipt } from './truth_layer.js';
@@ -316,4 +316,63 @@ test('an ordinary code question with no screen shared is answered by the model, 
   const out = await che.say('why does this code fail when I run it?');
   assert.equal(out.route, 'model');
   assert.doesNotMatch(out.reply, /can't see your screen/);
+});
+
+test('through chat: "what is connected to PR 374" answers from the Brain with no model call; an ordinary "related to" question goes to the model', sqlite, async () => {
+  const che = await owner();
+  await recordReceipt(che.storage, { kind: 'merged', number: 374, sha: '502cf47dafa5', detail: 'squash', at: '2026-10-20T11:00:00Z' });
+  await queueRoomEvent(che.storage, { room: 'screen', kind: 'observation', key: 'screen:374', title: 'Screen: GitHub checks page', body: 'Checks for PR #374, all green.', status: 'observed', at: '2026-10-20T11:05:00Z' });
+  const reply = await che.say('CHE, what is connected to pull request 374?');
+  assert.equal(reply.route, 'che_brain_rooms');
+  assert.equal(reply.modelCalls, 0);
+  assert.match(reply.reply, /Pull request #374 merged/);
+  assert.match(reply.reply, /Records that name it: .*Screen: GitHub checks page \(Screen, observed, not verified\)/);
+  const plain = await che.say('What is related to diabetes?');
+  assert.equal(plain.route, 'model');
+  // "This" with no screen shared is about the conversation, not a refusal.
+  const deictic = await che.say("What's related to this?");
+  assert.equal(deictic.route, 'model');
+});
+
+test('the phone\'s "look at my screen" capture (image + page report) is seen by vision, never refused, and remembered with its room', sqlite, async () => {
+  visionSummary = 'CHE Trading Room: MNQ chart with two paper positions and a Stop button.';
+  const che = await owner({ env: { CHE_MULTIMODAL_URL: VISION_URL } });
+  const out = await che.say('CHE, look at my screen', {
+    attachment: { name: 'che-screen.png', media_type: 'image', base64: 'aGVsbG8=' },
+    screen_context: "The owner asked CHE to look at his screen. The attached image is a picture of CHE's own app (1290x2796); web pages and videos inside it appear blank. Page report: You are on Trading Room.",
+  });
+  assert.notEqual(out.route, 'che_screen', 'a capture is never answered with "I can\'t see your screen"');
+  assert.equal(out.done.vision.ok, true);
+  assert.equal(out.done.screen_room, 'trading');
+  const seen = await recentScreen(che.storage);
+  assert.match(seen.summary, /MNQ chart with two paper positions/, 'the vision summary, not the page report, is the remembered screen');
+  visionSummary = '';
+});
+
+test('the Music Room: a music tool action is a verified record, a phone request is observed, and the answer adds the owner\'s taste and the service', sqlite, async () => {
+  // Only a successful music tool becomes a Music Room event.
+  const action = receiptEvent({ kind: 'tool_execution', tool: 'music_control', operation: 'music_action', invocation_id: 'inv-1', status: 'success', verified_response: { playing: 'Kind of Blue' }, at: '2026-10-20T12:00:00Z' });
+  assert.equal(action.room, 'music'); assert.equal(action.status, 'verified'); assert.match(action.title, /Music: music_action through music_control/);
+  assert.equal(receiptEvent({ kind: 'tool_execution', tool: 'music_control', operation: 'music_action', status: 'failure' }), null, 'a failed action is not a record');
+  assert.equal(receiptEvent({ kind: 'tool_execution', tool: 'package_tracker', operation: 'track', status: 'success' }), null, 'a tracker is not music');
+  assert.equal(receiptEvent({ kind: 'tool_execution', tool: 'spotify', operation: 'play_playlist', status: 'success' }).room, 'music');
+
+  const che = await owner({ env: { CHE_MUSIC_URL: 'https://music.example/act' } });
+  const store = che.brain();
+  // What the phone writes for "play the song Blue in Green" (synced through /api/brain/changes).
+  store.put({
+    id: 'room:music:request:2026-10-20T12:01:00Z', kind: 'room_request', region: BRAIN_REGIONS.media, path: 'Music Room/request',
+    title: 'Music request: Blue in Green Miles Davis', body: 'The owner asked CHE to play "Blue in Green Miles Davis". CHE opened a YouTube search for it in her browser.',
+    verification: 'observed', source: { kind: 'room_event', room: 'music', room_label: 'Music Room', event_kind: 'request', status: 'observed' }, created_at: '2026-10-20T12:01:00Z',
+  }, { origin: 'phone' });
+  store.put({ id: 'mem:jazz', kind: 'memory', region: BRAIN_REGIONS.personal, title: 'The owner loves Miles Davis and modal jazz', body: 'He said jazz helps him focus.', verification: 'owner_attested', source: { kind: 'memory' }, created_at: '2026-10-19T09:00:00Z' }, { origin: 'phone' });
+  const reply = await che.say('What does the Music Room know about Miles Davis?');
+  assert.equal(reply.route, 'che_brain_rooms'); assert.equal(reply.modelCalls, 0);
+  assert.match(reply.reply, /Music Room: Music request: Blue in Green Miles Davis \(observed, not verified/);
+  assert.match(reply.reply, /From Memory: The owner loves Miles Davis and modal jazz \(you told me/);
+  assert.match(reply.reply, /a music service is connected/);
+  // The phone's record is relinked on the alarm like any room record.
+  const relinked = await relinkRecords(che.storage, store);
+  assert.ok(relinked.checked >= 1);
+  assert.equal(store.get('room:music:request:2026-10-20T12:01:00Z').source.relations_v, 1);
 });

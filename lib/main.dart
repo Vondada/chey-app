@@ -27,6 +27,9 @@ import 'package:url_launcher/url_launcher.dart';
 import 'che_job_activity_banner.dart';
 import 'che_mic_supervisor.dart';
 import 'che_ui/che_screen_awareness.dart';
+import 'che_ui/che_screen_capture.dart';
+import 'world/che_meeting_room.dart';
+import 'world/che_scene_model.dart';
 import 'che_ui/che_ui_voice_command.dart';
 import 'che_native_voice.dart';
 import 'che_edge_voice.dart';
@@ -226,10 +229,11 @@ class _CHEAppState extends State<CHEApp> {
           themeMode: _ui.themeMode,
           builder: (context, child) {
             final mq = MediaQuery.of(context);
-            return MediaQuery(
+            // "Look at my screen" captures from here: every page, sheet and dialog.
+            return CheScreenCapture.wrap(MediaQuery(
               data: mq.copyWith(textScaler: TextScaler.linear(_ui.textScale)),
               child: child ?? const SizedBox.shrink(),
-            );
+            ));
           },
           home: const CHEHome(),
         );
