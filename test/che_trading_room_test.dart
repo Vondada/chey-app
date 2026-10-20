@@ -99,7 +99,7 @@ Future<void> _pumpRoom(WidgetTester tester, _Server s, {CheTradingSection sectio
         baseUrl: () => 'https://che.example',
         headers: () => const {},
         onAsk: (_) {},
-        onSpeak: spoken?.add,
+        onRead: spoken?.add,
         client: s.client,
         initialSection: section,
         initialAccount: account,

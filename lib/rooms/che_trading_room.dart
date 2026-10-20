@@ -40,7 +40,7 @@ class CheTradingRoom extends StatefulWidget {
     required this.headers,
     required this.onAsk,
     this.client,
-    this.onSpeak,
+    this.onRead,
     this.initialSection = CheTradingSection.chart,
     this.chartController,
     this.initialAccount = 'alpaca_paper',
@@ -56,7 +56,8 @@ class CheTradingRoom extends StatefulWidget {
   final Map<String, String> Function() headers;
   final void Function(String prompt) onAsk;
   final http.Client? client;
-  final void Function(String text)? onSpeak;
+  /// Reads text aloud, only when the owner presses a Read button.
+  final void Function(String text)? onRead;
   final CheTradingSection initialSection;
   final CheTradingChartController? chartController;
   final String initialAccount, initialSymbol;
@@ -86,7 +87,7 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
             baseUrl: p.baseUrl,
             headers: p.headers,
             client: p.client,
-            onSpeak: widget.onSpeak,
+            onSpeak: widget.onRead,
             controller: _chart,
             initialAccount: widget.initialAccount,
             initialSymbol: widget.initialSymbol,
@@ -97,12 +98,14 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
         ];
       case CheTradingSection.cheTrades:
         return [
-          _pad(CheLivePaperPanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, client: p.client)),
+          _pad(CheLivePaperPanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, onRead: widget.onRead, client: p.client)),
           _pad(CheTradingLedgersPanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, client: p.client)),
         ];
       case CheTradingSection.strategies:
+        // Limits and the registry, then each strategy's learning progress (#382), from the same panel CHE TRADES uses.
         return [
           _pad(CheStrategyControlsPanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, client: p.client)),
+          _pad(CheLivePaperPanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, onRead: widget.onRead, client: p.client)),
         ];
       case CheTradingSection.account:
         return [
@@ -176,7 +179,7 @@ class CheTradingRoomPage extends StatelessWidget {
     required this.baseUrl,
     required this.headers,
     required this.onAsk,
-    this.onSpeak,
+    this.onRead,
     this.section = CheTradingSection.chart,
     this.account,
     this.symbol,
@@ -186,7 +189,8 @@ class CheTradingRoomPage extends StatelessWidget {
   final String Function() baseUrl;
   final Map<String, String> Function() headers;
   final void Function(String prompt) onAsk;
-  final void Function(String text)? onSpeak;
+  /// Reads text aloud, only when the owner presses a Read button.
+  final void Function(String text)? onRead;
   final CheTradingSection section;
   final String? account, symbol, strategy;
 
@@ -195,7 +199,7 @@ class CheTradingRoomPage extends StatelessWidget {
     required String Function() baseUrl,
     required Map<String, String> Function() headers,
     required void Function(String) onAsk,
-    void Function(String)? onSpeak,
+    void Function(String)? onRead,
     Map<String, dynamic>? chart,
   }) {
     final c = chart ?? const {};
@@ -206,7 +210,7 @@ class CheTradingRoomPage extends StatelessWidget {
         baseUrl: baseUrl,
         headers: headers,
         onAsk: onAsk,
-        onSpeak: onSpeak,
+        onRead: onRead,
         section: cheTradingSectionNamed(c['section']?.toString()),
         account: c['account']?.toString(),
         symbol: c['symbol']?.toString(),
@@ -229,7 +233,7 @@ class CheTradingRoomPage extends StatelessWidget {
             baseUrl: baseUrl,
             headers: headers,
             onAsk: onAsk,
-            onSpeak: onSpeak,
+            onRead: onRead,
             initialSection: section,
             initialAccount: account ?? (strategy != null ? 'futures_paper' : 'alpaca_paper'),
             initialSymbol: symbol ?? '',

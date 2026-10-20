@@ -70,9 +70,9 @@ class CheMarketsRoom extends StatefulWidget {
     required this.headers,
     required this.actions,
     required this.onAsk,
+    this.onRead,
     this.client,
     this.onOpenTradingApp,
-    this.onSpeak,
   });
 
   final String Function() baseUrl;
@@ -81,13 +81,11 @@ class CheMarketsRoom extends StatefulWidget {
 
   /// Sends a prompt to CHE (e.g. "Analyze S&P 500 structure").
   final void Function(String prompt) onAsk;
+  final void Function(String)? onRead;
   final http.Client? client;
 
   /// Opens a supported trading website inside CHE's in-app browser.
   final void Function(String appName)? onOpenTradingApp;
-
-  /// Reads text aloud, only when the owner presses a Read button.
-  final void Function(String text)? onSpeak;
 
   @override
   State<CheMarketsRoom> createState() => _CheMarketsRoomState();
@@ -218,7 +216,7 @@ class _CheMarketsRoomState extends State<CheMarketsRoom> {
             baseUrl: widget.baseUrl,
             headers: widget.headers,
             onAsk: widget.onAsk,
-            onSpeak: widget.onSpeak,
+            onRead: widget.onRead,
             client: widget.client,
             header: _TickerTape(quotes: _quotes, fmt: _fmt),
             accountExtras: [
