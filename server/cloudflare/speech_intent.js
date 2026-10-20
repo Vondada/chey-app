@@ -441,7 +441,7 @@ export function asksAboutScreen(text) {
   const t = String(text || '').trim().toLowerCase().replace(/[’]/g, "'").replace(/[.!?]+$/, '')
     .replace(/^(?:(?:hey|hi|ok|okay)[\s,]+)?(?:che|chay|chey|shay)[\s,.:!]+/, '')
     .replace(/^(?:please|can you|could you)\s+/, '').trim();
-  return /^(?:(?:tell me |say )?what(?:'s| is) on (?:my|the|this) (?:screen|page)(?: (?:right )?now)?|what am i looking at|what (?:screen|page) am i on|describe (?:my|the|this) (?:screen|page)|what do you see on (?:my|the) screen)$/.test(t);
+  return /^(?:(?:tell me |say )?what(?:'s| is) on (?:my|the|this) (?:screen|page)(?: (?:right )?now)?|what am i looking at|what (?:screen|page) am i on|describe (?:my|the|this) (?:screen|page)|what do you see on (?:my|the) screen|(?:take a )?look at (?:my|the|this) screen(?: now)?|(?:can|do) you see (?:my|the|this) screen(?: now)?|see my screen|what do you see(?: now)?)$/.test(t);
 }
 
 // Asks the reply model only for turns the rules could not read. Cached and capped,
