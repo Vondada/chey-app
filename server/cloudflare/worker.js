@@ -70,7 +70,7 @@ import { alpacaKeys, alpacaPaperOrders, alpacaStatus, liveKeyProblem, placeAlpac
 import { speakConnections, speakTradovateSteps, tradingConnections } from './trading_connections.js';
 import { liveAnswer, liveIntent } from './trading_live_chat.js';
 import { LEDGER_SOURCE, ledgerIntent, readLedgers, speakLedgers } from './trading_ledgers.js';
-import { BRAIN_ROOMS_SOURCE, ROOMS as BRAIN_ROOMS, answerCrossRoom, crossRoomIntent, drainRoomEvents, recentScreen, rememberScreen, screenDeictic, screenFollowUp, screenRoomContext, screenRoomFor, statusLabel } from './brain_rooms.js';
+import { BRAIN_ROOMS_SOURCE, ROOMS as BRAIN_ROOMS, answerCrossRoom, crossRoomIntent, drainRoomEvents, pointsAtScreen, recentScreen, relinkRecords, rememberScreen, screenDeictic, screenFollowUp, screenRoomContext, screenRoomFor, statusLabel } from './brain_rooms.js';
 import { queueRoomEvent } from './room_events.js';
 import { cloudDailyLimit, sanitizeOwnerText } from './che_errors.js';
 import { CHE_UPDATE_GUIDE, mergeSelfUpdatePr, openSelfUpdatePr, rollbackLastUpdate, selfUpdateGitHubAccess, selfUpdateStatus, workerDeploymentStatus } from './self_update.js';
@@ -8780,6 +8780,20 @@ export class CheState extends DurableObject {
         const turnActionPolicy = currentTurnActionPolicy(message);
         const chatOnlyEvaluation = turnActionPolicy.terminalChatOnly;
 
+        // "What is connected to PR 374?" and "how is X related to Y?" ask the Brain for relationships
+        // (owner, 2026-10-20), so they are answered here, before the GitHub and update readers that
+        // would otherwise take any question naming a pull request as a status check.
+        // "What's related to this?" with no screen shared is about the conversation: the model answers it.
+        const relation = body.attachment ? null : crossRoomIntent(message);
+        const relationScreen = relation && ownerDevice ? await recentScreen(this.ctx.storage) : null;
+        if (relation && ['related', 'relate'].includes(relation.kind) && (relationScreen || ![relation.topic, relation.other].some(pointsAtScreen))) {
+          if (!ownerDevice) return ndjsonReply('Only the CHE owner can read across his rooms, sir.', { source: BRAIN_ROOMS_SOURCE, ok: false, model_calls: 0 });
+          const relationStore = new CheBrainStore(this.ctx.storage);
+          await drainRoomEvents(this.ctx.storage, relationStore).catch(() => null);
+          const answer = await answerCrossRoom({ store: relationStore, storage: this.ctx.storage, env: this.keyEnv || this.env, intent: relation, screen: relationScreen });
+          return ndjsonReply(answer.text, { source: BRAIN_ROOMS_SOURCE, ok: answer.ok, model_calls: 0, rooms: answer.rooms, hits: answer.hits, kind: relation.kind });
+        }
+
         // Existing GitHub and mailbox readers supply facts; the model never
         // interprets release state. Read-only questions authorize no mutation.
         const readQuestion = /^(?:(?:che|please)[,:]?\s+)*(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:was|is|has|did|what|show|check|verify|look up|read|tell)\b/i.test(message);
@@ -9960,7 +9974,8 @@ export class CheState extends DurableObject {
         // A question that names a room, the Brain or "another room" (owner, 2026-10-20) is answered from the
         // Brain's records and that room's live reader, by source and status, with no model call.
         const cross = body.attachment ? null : crossRoomIntent(message);
-        if (cross) {
+        // Relationship questions were answered above, or left to the model ("what's related to this?" with no screen).
+        if (cross && !['related', 'relate'].includes(cross.kind)) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can read across his rooms, sir.', { source: BRAIN_ROOMS_SOURCE, ok: false, model_calls: 0 });
           const seen = await recentScreen(this.ctx.storage);
           // Queued room events are written first, so a fact a room produced a moment ago is already in the answer.
@@ -11483,7 +11498,12 @@ export class CheState extends DurableObject {
     // Paper trading keeps learning even when autonomy is off (no money moves).
     await this.tradingTick().catch(() => null);
     // Room events reach the Brain on the alarm too, so the phone's next sync sees them without a chat turn.
-    await drainRoomEvents(this.ctx.storage, new CheBrainStore(this.ctx.storage)).catch(() => null);
+    {
+      const alarmBrain = new CheBrainStore(this.ctx.storage);
+      await drainRoomEvents(this.ctx.storage, alarmBrain).catch(() => null);
+      // Older room records get relationship discovery too, a dozen per alarm until none are left.
+      await relinkRecords(this.ctx.storage, alarmBrain).catch(() => null);
+    }
     const autonomyOn = Boolean((await this.loadData()).autonomy);
     if (autonomyOn) await this.recoverOpenCodeFailure().catch((error) => console.error('OpenCode recovery watch failed:', error?.message || error));
     // processJobs decides what may run while Office autonomy is paused: the

@@ -317,3 +317,19 @@ test('an ordinary code question with no screen shared is answered by the model, 
   assert.equal(out.route, 'model');
   assert.doesNotMatch(out.reply, /can't see your screen/);
 });
+
+test('through chat: "what is connected to PR 374" answers from the Brain with no model call; an ordinary "related to" question goes to the model', sqlite, async () => {
+  const che = await owner();
+  await recordReceipt(che.storage, { kind: 'merged', number: 374, sha: '502cf47dafa5', detail: 'squash', at: '2026-10-20T11:00:00Z' });
+  await queueRoomEvent(che.storage, { room: 'screen', kind: 'observation', key: 'screen:374', title: 'Screen: GitHub checks page', body: 'Checks for PR #374, all green.', status: 'observed', at: '2026-10-20T11:05:00Z' });
+  const reply = await che.say('CHE, what is connected to pull request 374?');
+  assert.equal(reply.route, 'che_brain_rooms');
+  assert.equal(reply.modelCalls, 0);
+  assert.match(reply.reply, /Pull request #374 merged/);
+  assert.match(reply.reply, /Records that name it: .*Screen: GitHub checks page \(Screen, observed, not verified\)/);
+  const plain = await che.say('What is related to diabetes?');
+  assert.equal(plain.route, 'model');
+  // "This" with no screen shared is about the conversation, not a refusal.
+  const deictic = await che.say("What's related to this?");
+  assert.equal(deictic.route, 'model');
+});

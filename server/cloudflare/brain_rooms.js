@@ -12,6 +12,7 @@ import { BRAIN_REGIONS, CheBrainStore, isSafeText } from './brain_store.js';
 import { EVENT_STATUSES, ackRoomEvents, peekRoomEvents } from './room_events.js';
 import { readLedgers } from './trading_ledgers.js';
 import { loadChangeHistory } from './truth_layer.js';
+import { RELATIONS_VERSION, discoverRelations, entitiesOf, relationReason } from './brain_relations.js';
 import { reaInvestigations } from './rea_runner.js';
 
 export const BRAIN_ROOMS_SOURCE = 'che_brain_rooms';
@@ -115,28 +116,62 @@ export function publishRoomEvent(store, event, { now = Date.now() } = {}) {
   return { ...result, id: record.id, links };
 }
 
-/** Candidate relationships: records whose titles share two or more words with the new one, in any room. */
-export function linkRelated(store, record, { now = Date.now(), limit = 4 } = {}) {
-  const mine = new Set(termsOf(record.title));
-  if (mine.size < 2) return [];
-  const links = [];
-  const rooms = new Set();
-  for (const hit of store.search(record.title, { limit: 10 })) {
-    if (hit.id === record.id || hit.deleted) continue;
-    const shared = termsOf(hit.title).filter((t) => mine.has(t));
-    if (shared.length < 2) continue;
-    links.push({ type: 'related_to', to: hit.id, shared: shared.slice(0, 3), room: hit.source?.room || '', region: hit.region });
-    if (hit.source?.room) rooms.add(hit.source.room);
-    if (links.length >= limit) break;
-  }
-  if (!links.length) return [];
-  const current = store.get(record.id) || record;
+/**
+ * Relationships for a new record (brain_relations.js): the same pull request, commit, job,
+ * investigation, repository, file, package, record set or symbol (derived), else distinctive shared
+ * words (candidate). The record gets typed links and `source.relations` with each link's basis; a
+ * derived link is also written on the other record, so the connection is found from either side.
+ */
+export function linkRelated(store, record, { now = Date.now(), limit = 6 } = {}) {
+  const found = discoverRelations(store, record, { limit });
+  const current = store.get(record.id);
+  if (!current || current.deleted) return found; // only a stored record gets links written
+  const relations = found.map(({ to, type, basis, shared, status, room }) => ({ to, type, basis, shared, status, room }));
   store.put({
     ...current,
-    links: [...(current.links || []), ...links.map(({ type, to }) => ({ type, to }))],
-    source: { ...current.source, candidate_links: links.map((l) => ({ to: l.to, shared: l.shared, room: l.room })), related_rooms: [...rooms] },
+    links: [...(current.links || []), ...found.map(({ type, to }) => ({ type, to }))],
+    source: {
+      ...current.source,
+      relations,
+      candidate_links: relations.map((l) => ({ to: l.to, shared: l.shared, room: l.room })),
+      related_rooms: [...new Set(found.map((l) => l.room).filter(Boolean))],
+      relations_v: RELATIONS_VERSION,
+    },
   }, { origin: 'cloud', now });
-  return links;
+  for (const link of found.filter((l) => l.status === 'derived')) {
+    const other = store.get(link.to);
+    if (!other || other.deleted || (other.links || []).some((l) => l.to === record.id)) continue;
+    const back = { to: record.id, type: link.type === 'builds_upon' ? 'related_to' : link.type, basis: link.basis, shared: link.shared, status: 'derived', room: record.source?.room || '' };
+    store.put({
+      ...other,
+      links: [...(other.links || []), { type: back.type, to: back.to }],
+      source: { ...other.source, relations: [...(other.source?.relations || []).filter((r) => r.to !== record.id), back].slice(-12) },
+    }, { origin: 'cloud', now });
+  }
+  return found;
+}
+
+export const RELINK_DONE_KEY = 'che_brain_relink_done';
+
+/**
+ * Room records written before relationship discovery (or by an older version of it) get their
+ * relations found again, a few per alarm, newest first. Once a pass finds none left it records the
+ * version in storage and stops querying until the rules change.
+ */
+export async function relinkRecords(storage, store, { now = Date.now(), limit = 12 } = {}) {
+  if (!store?.init?.()) return { checked: 0, linked: 0 };
+  if (Number(await storage.get(RELINK_DONE_KEY)) === RELATIONS_VERSION) return { checked: 0, linked: 0, done: true };
+  const ids = store.rows(
+    "SELECT id FROM brain_records WHERE deleted = 0 AND kind LIKE 'room\\_%' ESCAPE '\\' AND COALESCE(json_extract(source, '$.relations_v'), 0) <> ? ORDER BY seq DESC LIMIT ?",
+    RELATIONS_VERSION, limit,
+  ).map((row) => row.id);
+  let linked = 0;
+  for (const id of ids) {
+    const record = store.get(id);
+    if (record && linkRelated(store, record, { now }).length) linked += 1;
+  }
+  if (!ids.length) await storage.put(RELINK_DONE_KEY, RELATIONS_VERSION);
+  return { checked: ids.length, linked, done: !ids.length };
 }
 
 /**
@@ -181,11 +216,14 @@ const BRAIN_SUBJECT = /^(?:the\s+|your\s+|my\s+)?brain$/i;
 const roomsIn = (text) => ROOM_WORDS.filter(([, re]) => re.test(text)).map(([id]) => id);
 const WAKE = /^\s*(?:(?:hey\s+)?(?:che|chay|chey|shay)[,:]?\s+)?(?:please\s+)?/i;
 const THIS = /^(?:this|that|it|these|those|this\s+one|that\s+one)$/i;
+/** True when a parsed topic is only "this" or "that": it points at the screen, if one is shared. */
+export const pointsAtScreen = (topic) => THIS.test(String(topic || '').trim());
 
 /**
  * "What does the Trading Room know about MNQ?", "What does the Brain know about this?", "Did we learn
  * anything about X in another room?", "Does the Music Room have related information?", "Connect this
- * to the Brain." Returns { kind: 'know' | 'learned' | 'connect', rooms, topic } or null.
+ * to the Brain.", "What is connected to PR 374?", "How is X related to Y?". Returns
+ * { kind: 'know' | 'learned' | 'connect' | 'related' | 'relate', rooms, topic, other? } or null.
  */
 export function crossRoomIntent(message) {
   const text = String(message || '').replace(/[’']/g, "'").replace(WAKE, '').trim().replace(/[.?!]+$/, '');
@@ -207,6 +245,23 @@ export function crossRoomIntent(message) {
     // The subject is the words before "have" ('Music Room'), so the room's name is read whole.
     const named = roomsIn(m[0].split(/\s+have\s+/i)[0]);
     if (named.length) return { kind: 'know', rooms: named.filter((r) => r !== 'brain'), topic: (m[2] || 'this').trim() };
+  }
+  // "What is connected to pull request 374?", "How is the MNQ journal related to PR 371?". Only when the
+  // subject names an exact reference, "this" (the screen), the Brain or a room: "what is related to
+  // diabetes?" stays an ordinary question for the model.
+  const inBrain = /\s+(?:in|across)\s+(?:the\s+brain|(?:my|your|the|all|other)\s+rooms)$/i;
+  // Anchors are exact identifiers; a symbol, website or framework name ("Three.js") is a general topic
+  // unless the sentence says "in the Brain" or names a room.
+  const anchored = (topic) => THIS.test(topic) || entitiesOf(topic).some((e) => /^(?:pr|sha|job|inv|repo|npm):/.test(e) || /^file:.*[_/]/.test(e));
+  if ((m = /^(?:what(?:'s|\s+is|\s+else\s+is)|show\s+me\s+(?:what(?:'s|\s+is)|everything)|is\s+anything|anything)\s+(?:connected|related|linked|tied)\s+to\s+(.+)$/i.exec(text))) {
+    const scoped = inBrain.test(m[1]) || rooms.length > 0;
+    const topic = m[1].replace(inBrain, '').trim();
+    if (anchored(topic) || scoped) return { kind: 'related', rooms: [], topic };
+  }
+  if ((m = /^(?:how\s+(?:is|are|does|do)|is|are)\s+(.+?)\s+(?:related|connected|linked|tied)\s+(?:to|with)\s+(.+)$/i.exec(text))) {
+    const a = m[1].trim();
+    const b = m[2].replace(inBrain, '').trim();
+    if ((anchored(a) && anchored(b)) || inBrain.test(m[2])) return { kind: 'relate', rooms: [], topic: a, other: b };
   }
   if ((m = /^what\s+do\s+(?:you|we)\s+(?:already\s+)?know\s+about\s+(.+)$/i.exec(text)) && rooms.length) {
     return { kind: 'know', rooms: rooms.filter((r) => r !== 'brain'), topic: m[1].trim() };
@@ -264,10 +319,11 @@ export async function answerCrossRoom({ store, storage, env, intent, screen = nu
     if (!['created', 'updated', 'merged'].includes(result.outcome)) return { text: `I could not save that observation, sir (${result.reason || result.outcome}).`, ok: false, rooms: ['screen'], hits: 0 };
     const links = result.links || [];
     return {
-      text: `Connected, sir: the screen observation is in the Brain as an observed note, not a verified fact${links.length ? `, linked to ${links.length} related record${links.length === 1 ? '' : 's'}: ${links.map((l) => `${store.get(l.to)?.title || l.to} (${l.room ? ROOMS[l.room]?.label || l.room : l.region})`).join('; ')}` : ', with no related record found yet'}.`,
+      text: `Connected, sir: the screen observation is in the Brain as an observed note, not a verified fact${links.length ? `, linked to ${links.length} related record${links.length === 1 ? '' : 's'}: ${links.map((l) => `${store.get(l.to)?.title || l.to} (${l.room ? ROOMS[l.room]?.label || l.room : l.region}; ${relationReason(l)})`).join('; ')}` : ', with no related record found yet'}.`,
       ok: true, rooms: ['screen', ...new Set(links.map((l) => l.room).filter(Boolean))], hits: links.length,
     };
   }
+  if (intent.kind === 'related' || intent.kind === 'relate') return answerRelations({ store: ready ? store : null, intent, topic, fromScreen });
   const rooms = (intent.rooms || []).filter((r) => ROOMS[r] && r !== 'brain');
   const scanned = rooms.length ? rooms : Object.keys(ROOMS).filter((r) => !['brain', 'screen'].includes(r));
   const lines = [];
@@ -286,6 +342,74 @@ export async function answerCrossRoom({ store, storage, env, intent, screen = nu
   }
   const head = intent.kind === 'learned' ? `What the rooms recorded about ${subject}, sir, each by its source:` : `What ${rooms.length ? rooms.map((r) => `the ${ROOMS[r].label}`).join(' and ') : 'the Brain'} holds about ${subject}, sir:`;
   return { text: [head, ...lines, 'Each item carries its own status; nothing here is a live price, a new trade or a model guess.'].join('\n'), ok: true, rooms: scanned, hits };
+}
+
+// ─── Relationships: what is connected to what, and why ───────────────────
+
+const roomOf = (record) => ROOMS[record?.source?.room]?.label || record?.region || 'Brain';
+
+/** Records about a subject: those naming its exact references first, else the best text matches. */
+function anchorsFor(store, topic, limit = 6) {
+  const entities = entitiesOf(topic);
+  const out = new Map();
+  for (const entity of entities.slice(0, 4)) {
+    const type = entity.slice(0, entity.indexOf(':'));
+    const value = entity.slice(type.length + 1);
+    const words = type === 'pr' ? (value.length >= 3 ? value : `pull request update ${value}`) : value.replace(/[/@._-]+/g, ' ');
+    for (const hit of store.search(words, { limit: 20, prefix: type === 'sha' })) {
+      if (!hit.deleted && entitiesOf(hit).includes(entity)) out.set(hit.id, hit);
+    }
+  }
+  if (!entities.length) for (const hit of store.search(topic, { limit })) if (!hit.deleted) out.set(hit.id, hit);
+  return { entities, records: [...out.values()].sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || ''))).slice(0, limit) };
+}
+
+const relationsOf = (record) => (Array.isArray(record?.source?.relations) ? record.source.relations : []);
+
+/** "What is connected to X" and "how is X related to Y", from recorded links and shared references only. */
+function answerRelations({ store, intent, topic, fromScreen }) {
+  if (!store) return { text: 'The Brain is not available right now, sir, so I cannot say what is connected.', ok: false, rooms: [], hits: 0 };
+  const subject = fromScreen ? 'what is on your screen' : `"${intent.topic}"`;
+  const a = anchorsFor(store, topic);
+  if (intent.kind === 'relate') {
+    const b = anchorsFor(store, intent.other);
+    if (!a.records.length || !b.records.length) {
+      const missing = !a.records.length ? subject : `"${intent.other}"`;
+      return { text: `I have no record about ${missing} in the Brain, sir, so I cannot say how they are connected. I will not guess.`, ok: true, rooms: [], hits: 0 };
+    }
+    const bIds = new Set(b.records.map((r) => r.id));
+    const lines = [];
+    for (const ra of a.records) {
+      for (const rel of relationsOf(ra).filter((r) => bIds.has(r.to))) {
+        lines.push(`${ra.title} (${roomOf(ra)}) is linked to ${store.get(rel.to)?.title || rel.to} (${ROOMS[rel.room]?.label || rel.room || 'Brain'}) by ${relationReason(rel)}.`);
+      }
+    }
+    // Two records that name the same exact reference are connected even if no link was written yet.
+    if (!lines.length) {
+      const shared = a.records.flatMap((ra) => b.records.filter((rb) => rb.id !== ra.id).map((rb) => [ra, rb, entitiesOf(ra).filter((e) => entitiesOf(rb).includes(e))])).filter(([, , e]) => e.length);
+      for (const [ra, rb, e] of shared.slice(0, 3)) lines.push(`${ra.title} (${roomOf(ra)}) and ${rb.title} (${roomOf(rb)}) both name ${e.slice(0, 2).map((x) => x.replace(/^pr:/, 'pull request #').replace(/^[a-z]+:/, '')).join(' and ')}.`);
+    }
+    if (!lines.length) return { text: `The Brain holds records about both, sir, but no recorded link or shared reference between ${subject} and "${intent.other}". I will not guess at one.`, ok: true, rooms: [], hits: 0 };
+    return { text: [`How ${subject} and "${intent.other}" are connected, sir, from the records:`, ...lines.slice(0, 5).map((l, i) => `${i + 1}. ${l}`), 'A candidate link is a likely connection by shared words that nobody has checked.'].join('\n'), ok: true, rooms: [], hits: lines.length };
+  }
+  if (!a.records.length) return { text: `Nothing in the Brain names ${subject}, sir, so nothing is connected to it yet. I will not guess.`, ok: true, rooms: [], hits: 0 };
+  const lines = [];
+  const seen = new Set(a.records.map((r) => r.id));
+  if (a.entities.length && a.records.length > 1) {
+    lines.push(`Records that name it: ${a.records.map((r) => `${r.title} (${roomOf(r)}, ${statusLabel(r.verification)})`).join('; ')}.`);
+  }
+  for (const record of a.records) {
+    const linked = relationsOf(record).filter((rel) => !seen.has(rel.to)).slice(0, 3);
+    for (const rel of linked) {
+      const other = store.get(rel.to);
+      if (!other || other.deleted) continue;
+      seen.add(rel.to);
+      lines.push(`${record.title} (${roomOf(record)}) is linked to ${other.title} (${roomOf(other)}, ${statusLabel(other.verification)}) by ${relationReason(rel)}.`);
+    }
+  }
+  if (!lines.length) return { text: `The Brain has ${a.records.length === 1 ? `one record about ${subject}` : `records about ${subject}`}, sir (${a.records.slice(0, 3).map((r) => `${r.title}, ${roomOf(r)}`).join('; ')}), but nothing linked to ${a.records.length === 1 ? 'it' : 'them'} yet.`, ok: true, rooms: [], hits: a.records.length };
+  const rooms = [...new Set([...seen].map((id) => store.get(id)?.source?.room).filter(Boolean))];
+  return { text: [`What is connected to ${subject}, sir, with the reason for each link:`, ...lines.slice(0, 6).map((l, i) => `${i + 1}. ${l}`), 'Derived links share an exact reference; a candidate link shares words and nobody has checked it.'].join('\n'), ok: true, rooms, hits: lines.length };
 }
 
 // ─── The owner's screen: the most recent observation, temporary ───────────
