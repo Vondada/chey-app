@@ -115,6 +115,7 @@ extension _CheHomeHubRooms on _CHEHomeState {
       baseUrl: () => cheAgentBaseUrl,
       headers: () => _authHeaders,
       onAsk: _runHubPrompt,
+      onRead: (words) { speakText(words, record: false, readOnDemand: true); },
       onOpenTradingApp: _openTradingApp,
       actions: [
         CheDeskAction(
