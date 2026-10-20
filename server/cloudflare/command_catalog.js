@@ -393,6 +393,23 @@ export const COMMANDS = Object.freeze([
     prompt: 'Strategy simulation {input}', produces: 'simulation status', evidence: 'Stored simulation state and trades only.',
     keywords: ['strategy simulation', 'simulation', 'pause simulation', 'resume simulation', 'paper strategies'],
   }),
+  // Strategy Control Center (owner, 2026-10-20): trading_controls.js through the desk's own intent parser.
+  C('trade-controls', 'trading', 'EXPLORE', 'Read or change your paper strategy limits.', {
+    does: 'Reads each paper strategy\'s limits and state (maximum trades per day, default 30; size; paused or running), or changes them in your words: pause or resume one strategy, the ICT group or all; set or raise the daily maximum; stop new entries; restore the previous settings. A change that raises risk is read back with its impact and applied only after "yes, confirm". Every change is audited. Paper only.',
+    needs: ['office'], route: 'che_trading_controls', handler: 'trading_controls.controlIntent → applyControlChange / controlsView',
+    input: null,
+    examples: ['What are my trading limits?', 'Pause the ICT strategy', 'Set every strategy to 30 per day', 'Increase the maximum trades', 'Why did this strategy skip that trade?'],
+    prompt: 'What are my trading limits?', produces: 'strategy limits', evidence: 'The stored controls, the audit trail and the live portfolios\' own skip records.',
+    keywords: ['limits', 'controls', 'pause strategy', 'resume strategy', 'max trades', 'trades per day', 'ict', 'skip', 'stop new entries'],
+  }),
+  C('trade-emergency', 'trading', 'BUILD', 'Emergency Stop: block entries and cancel unfilled paper orders.', {
+    does: 'Acts at once: blocks new entries for every strategy, cancels unfilled orders in CHE\'s MNQ paper simulations and on Alpaca PAPER, writes an audit record, and says which positions remain open. It never closes positions; "flatten" does that only after you confirm. Say "allow new entries" to clear it.',
+    needs: ['office'], route: 'che_trading_controls', handler: 'trading_controls.applyControlChange(emergency_stop) → haltLivePaper / haltAlpacaPaper',
+    input: null,
+    examples: ['Emergency stop', 'Kill switch'],
+    prompt: 'Emergency stop', produces: 'what was stopped and what remains open', evidence: 'The cancellations Alpaca confirmed and the simulations\' own records.',
+    keywords: ['emergency stop', 'kill switch', 'halt', 'stop trading'],
+  }),
   C('trade-execute', 'trading', 'BUILD', 'Prepare authorized broker actions with confirmation.', {
     does: 'Places the current desk alert on your selected NinjaTrader account as a bracket order. Live accounts risk real money.',
     confirm: 'Places a real order on your broker account.',

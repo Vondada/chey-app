@@ -1,0 +1,569 @@
+{
+ "controls": {
+  "paused_all": false,
+  "stop_new_entries": false,
+  "emergency": null,
+  "account": {
+   "max_daily_loss": 1000,
+   "max_open_positions": 30,
+   "max_order_qty": 100,
+   "cooldown_min": 0
+  },
+  "strategies": {
+   "fvg-retest-5m": {
+    "max_per_day": 30,
+    "qty": 1,
+    "paused": false,
+    "disabled": false
+   },
+   "silver-bullet-5m": {
+    "max_per_day": 30,
+    "qty": 1,
+    "paused": false,
+    "disabled": false
+   },
+   "sweep-mss-5m": {
+    "max_per_day": 30,
+    "qty": 1,
+    "paused": false,
+    "disabled": false
+   },
+   "sweep-reclaim-5m": {
+    "max_per_day": 30,
+    "qty": 1,
+    "paused": false,
+    "disabled": false
+   },
+   "pdhl-sweep-5m": {
+    "max_per_day": 30,
+    "qty": 1,
+    "paused": false,
+    "disabled": false
+   },
+   "order-block-5m": {
+    "max_per_day": 30,
+    "qty": 1,
+    "paused": false,
+    "disabled": false
+   },
+   "orb-15m": {
+    "max_per_day": 30,
+    "qty": 1,
+    "paused": false,
+    "disabled": false
+   },
+   "vwap-revert-5m": {
+    "max_per_day": 30,
+    "qty": 1,
+    "paused": false,
+    "disabled": false
+   },
+   "ema-pullback-5m": {
+    "max_per_day": 30,
+    "qty": 1,
+    "paused": false,
+    "disabled": false
+   },
+   "rsi-revert-5m": {
+    "max_per_day": 20,
+    "qty": 1,
+    "paused": false,
+    "disabled": false
+   }
+  },
+  "updated_at": "2026-10-20T14:00:00.000Z"
+ },
+ "ict_concepts": [
+  {
+   "name": "Market structure shift / break of structure",
+   "implemented": true,
+   "strategies": [
+    "sweep-mss-5m",
+    "sweep-reclaim-5m"
+   ],
+   "note": ""
+  },
+  {
+   "name": "Liquidity sweeps",
+   "implemented": true,
+   "strategies": [
+    "sweep-mss-5m",
+    "sweep-reclaim-5m",
+    "pdhl-sweep-5m"
+   ],
+   "note": ""
+  },
+  {
+   "name": "Fair value gaps",
+   "implemented": true,
+   "strategies": [
+    "fvg-retest-5m",
+    "silver-bullet-5m"
+   ],
+   "note": ""
+  },
+  {
+   "name": "Order blocks",
+   "implemented": true,
+   "strategies": [
+    "order-block-5m"
+   ],
+   "note": ""
+  },
+  {
+   "name": "Displacement (a bar body of at least 1.5 ATR)",
+   "implemented": true,
+   "strategies": [
+    "order-block-5m"
+   ],
+   "note": ""
+  },
+  {
+   "name": "New York session filter (Silver Bullet: 10:00–11:00 and 14:00–15:00)",
+   "implemented": true,
+   "strategies": [
+    "silver-bullet-5m"
+   ],
+   "note": ""
+  },
+  {
+   "name": "London session filter",
+   "implemented": false,
+   "strategies": [],
+   "note": "Not implemented: no strategy filters on the London session yet."
+  },
+  {
+   "name": "Premium / discount (dealing range)",
+   "implemented": false,
+   "strategies": [],
+   "note": "Not implemented: no strategy checks premium or discount yet."
+  }
+ ],
+ "strategies": [
+  {
+   "id": "fvg-retest-5m",
+   "name": "fair value gap retest",
+   "family": "ICT",
+   "state": "running",
+   "max_per_day": 30,
+   "qty": 1,
+   "paused": false,
+   "disabled": false,
+   "variants": [
+    "any trend, 2R",
+    "with the 50 EMA trend, 2R",
+    "any trend, 1.5R",
+    "any trend, 3R"
+   ],
+   "entries_today": 0,
+   "signals_today": 0,
+   "open_positions": 0,
+   "signals_total": 0,
+   "skipped_total": 0,
+   "recent_skips": [],
+   "description": "fair value gap retest",
+   "rules": "Gap: bar 1 high below bar 3 low (bullish) or bar 1 low above bar 3 high (bearish), at least 2 ticks, unfilled. Entry: the first bar that trades into the gap and closes in its direction; market order at the next open. Stop: 1 tick beyond the far side of the gap. Target: the R multiple of the portfolio. Flat by 16:55 New York.",
+   "common_rules": "All strategies: entries are market orders at the next bar open, checked after costs; a signal with risk under 6 or over 60 index points is skipped; positions are flat by 16:55 New York, before the CME daily break; one position per portfolio.",
+   "target": "2R or 1.5R or 3R (a multiple of the risk to the stop)",
+   "exit": "At the stop, at the target, or flat by 16:55 New York, whichever comes first.",
+   "timeframe": "5-minute bars",
+   "data": "Yahoo MNQ=F 1-minute bars built into 5-minute bars (DELAYED public data). Paper only.",
+   "ict_concepts": [
+    "Fair value gaps"
+   ],
+   "paper": {
+    "trades": 0,
+    "wins": 0,
+    "losses": 0,
+    "net_pnl": 0,
+    "expectancy_r": 0,
+    "enough": false,
+    "min_trades": 30
+   },
+   "backtest": null
+  },
+  {
+   "id": "silver-bullet-5m",
+   "name": "ICT Silver Bullet",
+   "family": "ICT",
+   "state": "running",
+   "max_per_day": 30,
+   "qty": 1,
+   "paused": false,
+   "disabled": false,
+   "variants": [
+    "any trend, 2R",
+    "with the 50 EMA trend, 2R"
+   ],
+   "entries_today": 0,
+   "signals_today": 0,
+   "open_positions": 0,
+   "signals_total": 0,
+   "skipped_total": 0,
+   "recent_skips": [],
+   "description": "ICT Silver Bullet",
+   "rules": "Only 10:00–11:00 and 14:00–15:00 New York. A fair value gap formed inside the window, first retest closing in its direction. Stop beyond the gap; target the R multiple.",
+   "common_rules": "All strategies: entries are market orders at the next bar open, checked after costs; a signal with risk under 6 or over 60 index points is skipped; positions are flat by 16:55 New York, before the CME daily break; one position per portfolio.",
+   "target": "2R (a multiple of the risk to the stop)",
+   "exit": "At the stop, at the target, or flat by 16:55 New York, whichever comes first.",
+   "timeframe": "5-minute bars",
+   "data": "Yahoo MNQ=F 1-minute bars built into 5-minute bars (DELAYED public data). Paper only.",
+   "ict_concepts": [
+    "Fair value gaps",
+    "New York session filter (Silver Bullet: 10:00–11:00 and 14:00–15:00)"
+   ],
+   "paper": {
+    "trades": 0,
+    "wins": 0,
+    "losses": 0,
+    "net_pnl": 0,
+    "expectancy_r": 0,
+    "enough": false,
+    "min_trades": 30
+   },
+   "backtest": null
+  },
+  {
+   "id": "sweep-mss-5m",
+   "name": "liquidity sweep then market structure shift",
+   "family": "ICT",
+   "state": "running",
+   "max_per_day": 30,
+   "qty": 1,
+   "paused": false,
+   "disabled": false,
+   "variants": [
+    "any trend, 2R",
+    "with the 50 EMA trend, 2R",
+    "any trend, 1.5R",
+    "any trend, 3R"
+   ],
+   "entries_today": 0,
+   "signals_today": 0,
+   "open_positions": 0,
+   "signals_total": 0,
+   "skipped_total": 0,
+   "recent_skips": [],
+   "description": "liquidity sweep then market structure shift",
+   "rules": "Long: within the last 12 bars a bar traded below the last confirmed swing low (the sweep); now, for the first time since, a bar closes above the last confirmed swing high before the sweep (the shift). Short: mirror. Stop 1 tick beyond the sweep extreme.",
+   "common_rules": "All strategies: entries are market orders at the next bar open, checked after costs; a signal with risk under 6 or over 60 index points is skipped; positions are flat by 16:55 New York, before the CME daily break; one position per portfolio.",
+   "target": "2R or 1.5R or 3R (a multiple of the risk to the stop)",
+   "exit": "At the stop, at the target, or flat by 16:55 New York, whichever comes first.",
+   "timeframe": "5-minute bars",
+   "data": "Yahoo MNQ=F 1-minute bars built into 5-minute bars (DELAYED public data). Paper only.",
+   "ict_concepts": [
+    "Market structure shift / break of structure",
+    "Liquidity sweeps"
+   ],
+   "paper": {
+    "trades": 0,
+    "wins": 0,
+    "losses": 0,
+    "net_pnl": 0,
+    "expectancy_r": 0,
+    "enough": false,
+    "min_trades": 30
+   },
+   "backtest": null
+  },
+  {
+   "id": "sweep-reclaim-5m",
+   "name": "liquidity sweep and reclaim",
+   "family": "ICT",
+   "state": "running",
+   "max_per_day": 30,
+   "qty": 1,
+   "paused": false,
+   "disabled": false,
+   "variants": [
+    "any trend, 2R",
+    "with the 50 EMA trend, 2R"
+   ],
+   "entries_today": 0,
+   "signals_today": 0,
+   "open_positions": 0,
+   "signals_total": 0,
+   "skipped_total": 0,
+   "recent_skips": [],
+   "description": "liquidity sweep and reclaim",
+   "rules": "Long: the bar trades below the last confirmed swing low, closes back above it and above the prior bar high. Short: mirror at the last swing high. Stop 1 tick beyond the sweep extreme.",
+   "common_rules": "All strategies: entries are market orders at the next bar open, checked after costs; a signal with risk under 6 or over 60 index points is skipped; positions are flat by 16:55 New York, before the CME daily break; one position per portfolio.",
+   "target": "2R (a multiple of the risk to the stop)",
+   "exit": "At the stop, at the target, or flat by 16:55 New York, whichever comes first.",
+   "timeframe": "5-minute bars",
+   "data": "Yahoo MNQ=F 1-minute bars built into 5-minute bars (DELAYED public data). Paper only.",
+   "ict_concepts": [
+    "Market structure shift / break of structure",
+    "Liquidity sweeps"
+   ],
+   "paper": {
+    "trades": 0,
+    "wins": 0,
+    "losses": 0,
+    "net_pnl": 0,
+    "expectancy_r": 0,
+    "enough": false,
+    "min_trades": 30
+   },
+   "backtest": null
+  },
+  {
+   "id": "pdhl-sweep-5m",
+   "name": "previous-day high/low sweep",
+   "family": "ICT",
+   "state": "running",
+   "max_per_day": 30,
+   "qty": 1,
+   "paused": false,
+   "disabled": false,
+   "variants": [
+    "any trend, 2R",
+    "with the 50 EMA trend, 2R"
+   ],
+   "entries_today": 0,
+   "signals_today": 0,
+   "open_positions": 0,
+   "signals_total": 0,
+   "skipped_total": 0,
+   "recent_skips": [],
+   "description": "previous-day high/low sweep",
+   "rules": "Long: the first bar of the CME day to trade below the previous day low and close back above it. Short: mirror at the previous day high. Stop 1 tick beyond the bar extreme.",
+   "common_rules": "All strategies: entries are market orders at the next bar open, checked after costs; a signal with risk under 6 or over 60 index points is skipped; positions are flat by 16:55 New York, before the CME daily break; one position per portfolio.",
+   "target": "2R (a multiple of the risk to the stop)",
+   "exit": "At the stop, at the target, or flat by 16:55 New York, whichever comes first.",
+   "timeframe": "5-minute bars",
+   "data": "Yahoo MNQ=F 1-minute bars built into 5-minute bars (DELAYED public data). Paper only.",
+   "ict_concepts": [
+    "Liquidity sweeps"
+   ],
+   "paper": {
+    "trades": 0,
+    "wins": 0,
+    "losses": 0,
+    "net_pnl": 0,
+    "expectancy_r": 0,
+    "enough": false,
+    "min_trades": 30
+   },
+   "backtest": null
+  },
+  {
+   "id": "order-block-5m",
+   "name": "order block retest",
+   "family": "ICT",
+   "state": "running",
+   "max_per_day": 30,
+   "qty": 1,
+   "paused": false,
+   "disabled": false,
+   "variants": [
+    "any trend, 2R",
+    "with the 50 EMA trend, 2R"
+   ],
+   "entries_today": 0,
+   "signals_today": 0,
+   "open_positions": 0,
+   "signals_total": 0,
+   "skipped_total": 0,
+   "recent_skips": [],
+   "description": "order block retest",
+   "rules": "A displacement bar (body at least 1.5 ATR). Long: the last down bar before an up displacement is the block; the next bar trades into it and closes up. Short: mirror. Stop 1 tick beyond the block.",
+   "common_rules": "All strategies: entries are market orders at the next bar open, checked after costs; a signal with risk under 6 or over 60 index points is skipped; positions are flat by 16:55 New York, before the CME daily break; one position per portfolio.",
+   "target": "2R (a multiple of the risk to the stop)",
+   "exit": "At the stop, at the target, or flat by 16:55 New York, whichever comes first.",
+   "timeframe": "5-minute bars",
+   "data": "Yahoo MNQ=F 1-minute bars built into 5-minute bars (DELAYED public data). Paper only.",
+   "ict_concepts": [
+    "Order blocks",
+    "Displacement (a bar body of at least 1.5 ATR)"
+   ],
+   "paper": {
+    "trades": 0,
+    "wins": 0,
+    "losses": 0,
+    "net_pnl": 0,
+    "expectancy_r": 0,
+    "enough": false,
+    "min_trades": 30
+   },
+   "backtest": null
+  },
+  {
+   "id": "orb-15m",
+   "name": "opening range breakout (9:30–9:45 New York)",
+   "family": "Breakout",
+   "state": "running",
+   "max_per_day": 30,
+   "qty": 1,
+   "paused": false,
+   "disabled": false,
+   "variants": [
+    "any trend, 2R",
+    "with the 50 EMA trend, 2R"
+   ],
+   "entries_today": 0,
+   "signals_today": 0,
+   "open_positions": 0,
+   "signals_total": 0,
+   "skipped_total": 0,
+   "recent_skips": [],
+   "description": "opening range breakout (9:30–9:45 New York)",
+   "rules": "Range: high and low of 9:30–9:45 New York. Entry: the first 5-minute close above the high (long) or below the low (short) between 9:45 and 11:30. Stop: the middle of the range. Target: the R multiple of the portfolio. Flat by 15:55 New York.",
+   "common_rules": "All strategies: entries are market orders at the next bar open, checked after costs; a signal with risk under 6 or over 60 index points is skipped; positions are flat by 16:55 New York, before the CME daily break; one position per portfolio.",
+   "target": "2R (a multiple of the risk to the stop)",
+   "exit": "At the stop, at the target, or flat by 15:55 New York, whichever comes first.",
+   "timeframe": "5-minute bars; the range is 9:30–9:45 New York",
+   "data": "Yahoo MNQ=F 1-minute bars built into 5-minute bars (DELAYED public data). Paper only.",
+   "ict_concepts": [],
+   "paper": {
+    "trades": 0,
+    "wins": 0,
+    "losses": 0,
+    "net_pnl": 0,
+    "expectancy_r": 0,
+    "enough": false,
+    "min_trades": 30
+   },
+   "backtest": null
+  },
+  {
+   "id": "vwap-revert-5m",
+   "name": "VWAP 2-sigma reversion",
+   "family": "Mean reversion",
+   "state": "running",
+   "max_per_day": 30,
+   "qty": 1,
+   "paused": false,
+   "disabled": false,
+   "variants": [
+    "any trend, 2R",
+    "with the 50 EMA trend, 2R"
+   ],
+   "entries_today": 0,
+   "signals_today": 0,
+   "open_positions": 0,
+   "signals_total": 0,
+   "skipped_total": 0,
+   "recent_skips": [],
+   "description": "VWAP 2-sigma reversion",
+   "rules": "Session VWAP from 18:00 New York. Long: a close below VWAP minus 2 standard deviations, then a close back inside on an up bar. Short: mirror. Stop 1 tick beyond the two-bar extreme. Target: VWAP.",
+   "common_rules": "All strategies: entries are market orders at the next bar open, checked after costs; a signal with risk under 6 or over 60 index points is skipped; positions are flat by 16:55 New York, before the CME daily break; one position per portfolio.",
+   "target": "VWAP",
+   "exit": "At the stop, at the target, or flat by 16:55 New York, whichever comes first.",
+   "timeframe": "5-minute bars",
+   "data": "Yahoo MNQ=F 1-minute bars built into 5-minute bars (DELAYED public data). Paper only.",
+   "ict_concepts": [],
+   "paper": {
+    "trades": 0,
+    "wins": 0,
+    "losses": 0,
+    "net_pnl": 0,
+    "expectancy_r": 0,
+    "enough": false,
+    "min_trades": 30
+   },
+   "backtest": null
+  },
+  {
+   "id": "ema-pullback-5m",
+   "name": "trend pullback to the 20 EMA",
+   "family": "Trend",
+   "state": "running",
+   "max_per_day": 30,
+   "qty": 1,
+   "paused": false,
+   "disabled": false,
+   "variants": [
+    "any trend, 2R",
+    "with the 50 EMA trend, 2R"
+   ],
+   "entries_today": 0,
+   "signals_today": 0,
+   "open_positions": 0,
+   "signals_total": 3,
+   "skipped_total": 0,
+   "recent_skips": [
+    {
+     "time": "2026-10-20T14:35:00.000Z",
+     "reason": "the trend filter refused it: the signal was not with the 50 EMA trend",
+     "side": "long",
+     "why": "uptrend pullback held the 20 EMA 21450",
+     "variant": "trend 2R"
+    }
+   ],
+   "description": "trend pullback to the 20 EMA",
+   "rules": "Long: 20 EMA above the 50 EMA and rising; the bar touches the 20 EMA and closes above it on an up bar. Short: mirror. Stop 1 tick beyond the two-bar extreme.",
+   "common_rules": "All strategies: entries are market orders at the next bar open, checked after costs; a signal with risk under 6 or over 60 index points is skipped; positions are flat by 16:55 New York, before the CME daily break; one position per portfolio.",
+   "target": "2R (a multiple of the risk to the stop)",
+   "exit": "At the stop, at the target, or flat by 16:55 New York, whichever comes first.",
+   "timeframe": "5-minute bars",
+   "data": "Yahoo MNQ=F 1-minute bars built into 5-minute bars (DELAYED public data). Paper only.",
+   "ict_concepts": [],
+   "paper": {
+    "trades": 0,
+    "wins": 0,
+    "losses": 0,
+    "net_pnl": 0,
+    "expectancy_r": 0,
+    "enough": false,
+    "min_trades": 30
+   },
+   "backtest": null
+  },
+  {
+   "id": "rsi-revert-5m",
+   "name": "RSI 30/70 reversal",
+   "family": "Mean reversion",
+   "state": "running",
+   "max_per_day": 20,
+   "qty": 1,
+   "paused": false,
+   "disabled": false,
+   "variants": [
+    "any trend, 1.5R",
+    "with the 50 EMA trend, 1.5R"
+   ],
+   "entries_today": 0,
+   "signals_today": 0,
+   "open_positions": 0,
+   "signals_total": 0,
+   "skipped_total": 0,
+   "recent_skips": [],
+   "description": "RSI 30/70 reversal",
+   "rules": "Long: RSI(14) crosses back above 30 on an up bar. Short: crosses back below 70 on a down bar. Stop 1 tick beyond the six-bar extreme.",
+   "common_rules": "All strategies: entries are market orders at the next bar open, checked after costs; a signal with risk under 6 or over 60 index points is skipped; positions are flat by 16:55 New York, before the CME daily break; one position per portfolio.",
+   "target": "1.5R (a multiple of the risk to the stop)",
+   "exit": "At the stop, at the target, or flat by 16:55 New York, whichever comes first.",
+   "timeframe": "5-minute bars",
+   "data": "Yahoo MNQ=F 1-minute bars built into 5-minute bars (DELAYED public data). Paper only.",
+   "ict_concepts": [],
+   "paper": {
+    "trades": 0,
+    "wins": 0,
+    "losses": 0,
+    "net_pnl": 0,
+    "expectancy_r": 0,
+    "enough": false,
+    "min_trades": 30
+   },
+   "backtest": null
+  }
+ ],
+ "audit": [
+  {
+   "at": "2026-10-20T14:00:00.000Z",
+   "who": "owner (iPhone)",
+   "action": "set",
+   "scope": "rsi-revert-5m",
+   "summary": "RSI 30/70 reversal: maximum trades per day 30 → 20.",
+   "effect": [
+    "RSI 30/70 reversal: maximum trades per day 30 → 20."
+   ],
+   "raised_risk": false
+  }
+ ],
+ "can_restore": true,
+ "paper_only": true,
+ "live_orders": "disabled",
+ "live_paper_enabled": true
+}

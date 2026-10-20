@@ -463,6 +463,13 @@ extension _CheHomeStreaming on _CHEHomeState {
             onBackToOffice: () => _goShellTab(2),
           ));
         }
+        // "Show me my Alpaca trades": the Alpaca PAPER dashboard opens beside the spoken summary (owner, 2026-10-20).
+        if (data['open_view'] == 'trading_controls' && mounted) {
+          unawaited(Navigator.of(context).push(CheStrategyControlsPage.route(baseUrl: () => cheAgentBaseUrl, headers: () => _authHeaders, onAsk: _runHubPrompt)));
+        }
+        if (data['open_view'] == 'alpaca_paper' && mounted) {
+          unawaited(Navigator.of(context).push(CheAlpacaPaperPage.route(baseUrl: () => cheAgentBaseUrl, headers: () => _authHeaders, onAsk: _runHubPrompt)));
+        }
         // "Design a wearable robotics prototype…": the Worker made a plan; the Plan Room shows it.
         final planId = data['plan_id']?.toString().trim() ?? '';
         if (data['source'] == 'che_project_plan' && planId.isNotEmpty && data['follow_up'] == null && mounted) {

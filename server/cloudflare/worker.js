@@ -63,10 +63,12 @@ import { condenseHistory, ownerNotificationPolicy } from './workflow_governor.js
 import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, nextTradingTickAt, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
 import { nextStrategySimTickAt, setStrategySimCeiling, setStrategySimPaused, speakStrategySim, strategySimIntent, strategySimTick, strategySimView, strategySimWake } from './strategy_sim.js';
 import { evidenceIntent, evidenceReport, evidenceTick } from './trading_evidence_runner.js';
+import { readTrades } from './trading_evidence.js';
 import { ATLAS_SOURCE, answerAtlas, atlasHiddenAction, atlasIntent, atlasQuizAnswerTurn, atlasPromptContext, atlasResetAsk, atlasResetIntent, projectAtlasToBrain, resetAtlasProgress } from './knowledge_atlas.js';
-import { LIVE_BACKTEST, LIVE_RUNS, LIVE_STATE, liveBacktest, liveDashboard, livePaperSummary, liveTick, researchDue, nextLiveTickAt, setLivePaper } from './trading_live.js';
+import { LIVE_BACKTEST, LIVE_RUNS, LIVE_STATE, haltLivePaper, liveSpecs, liveBacktest, liveDashboard, livePaperSummary, liveTick, nextLiveTickAt, readLivePortfolios, researchDue, setLivePaper } from './trading_live.js';
+import { ICT_CONCEPTS, applyControlChange, controlsView, noteAuditEffect, readControls, strategyRegistry, resolveStep, speakControlResult, speakControlsView, speakSkipReasons, stockOrderProblem } from './trading_controls.js';
 import { cmeSession } from './market_feed.js';
-import { alpacaKeys, alpacaPaperOrders, alpacaStatus, liveKeyProblem, placeAlpacaPaperOrder, removeAlpacaPaperKeys, saveAlpacaPaperKeys } from './broker_alpaca.js';
+import { alpacaKeys, alpacaPaperDashboard, haltAlpacaPaper, alpacaPaperOrders, alpacaStatus, speakAlpacaDashboard, liveKeyProblem, placeAlpacaPaperOrder, removeAlpacaPaperKeys, saveAlpacaPaperKeys } from './broker_alpaca.js';
 import { speakConnections, speakTradovateSteps, tradingConnections } from './trading_connections.js';
 import { liveAnswer, liveIntent } from './trading_live_chat.js';
 import { ANALYSIS_SOURCE, LEDGER_SOURCE, analyzeStrategy, ledgerIntent, readLedgers, speakLedgers, strategyAnalysisIntent } from './trading_ledgers.js';
@@ -3611,6 +3613,48 @@ export class CheState extends DurableObject {
     return reply(speakStockOrder(pending), { ok: true, confirmation_needed: true });
   }
 
+  // ─── Strategy Control Center (owner, 2026-10-20): trading_controls.js ───────────────────────────
+  async stockOrderGuard() {
+    const controls = await readControls(this.ctx.storage);
+    return (order, ctx) => stockOrderProblem(controls, order, ctx);
+  }
+
+  async tradingControlsView() {
+    const controls = await readControls(this.ctx.storage);
+    const portfolios = await readLivePortfolios(this.ctx.storage);
+    const { previous, audit, ...rest } = controls;
+    const trades = await readTrades(this.ctx.storage, (t) => t.environment === 'paper' && t.data?.resolution === '5m');
+    const registry = strategyRegistry({ specs: liveSpecs(), trades, backtest: await this.ctx.storage.get(LIVE_BACKTEST) });
+    return {
+      controls: rest, strategies: controlsView(controls, portfolios).map((r) => ({ ...r, ...registry[r.id] })), audit: audit.slice(-50).reverse(),
+      ict_concepts: ICT_CONCEPTS.map((k) => ({ name: k.name, implemented: k.strategies.length > 0, strategies: k.strategies, note: k.note || '' })),
+      can_restore: Boolean(previous), paper_only: true, live_orders: 'disabled',
+      live_paper_enabled: Boolean((await this.ctx.storage.get(LIVE_STATE))?.enabled),
+    };
+  }
+
+  /**
+   * One owner control change. Emergency Stop acts at once: it blocks entries, cancels unfilled orders
+   * (CHE's MNQ simulations and Alpaca PAPER) and reports what stays open, all in its audit record.
+   */
+  async tradingControl(change, { who = 'owner', confirm = false } = {}) {
+    const resolved = resolveStep(await readControls(this.ctx.storage), change || {});
+    if (resolved.error) return { ok: false, error: resolved.error };
+    const result = await applyControlChange(this.ctx.storage, resolved, { who, confirm });
+    if (!result.ok || !['emergency_stop', 'flatten'].includes(resolved.kind)) return result;
+    const flatten = resolved.kind === 'flatten';
+    const sims = await haltLivePaper(this.ctx.storage, { flatten, reason: flatten ? 'Flatten' : 'Emergency Stop' });
+    const alpaca = await haltAlpacaPaper(this.keyEnv || this.env, { flatten });
+    const lines = [`CHE's MNQ paper simulations: ${sims.cancelled} unfilled order${sims.cancelled === 1 ? '' : 's'} cancelled${flatten ? `, ${sims.flattened} position${sims.flattened === 1 ? '' : 's'} closed as voided records` : ''}; ${sims.open.length} position${sims.open.length === 1 ? '' : 's'} still open${sims.open.length ? ` (${sims.open.map((o) => `${o.strategy} ${o.side}, stop ${o.stop}, target ${o.target}`).join('; ')})` : ''}.`];
+    if (alpaca.state === 'verified') {
+      lines.push(`Alpaca PAPER: ${alpaca.cancelled.length} open order${alpaca.cancelled.length === 1 ? '' : 's'} cancelled${alpaca.failed.length ? `, ${alpaca.failed.length} could not be cancelled (${alpaca.failed.map((f) => f.error).join('; ')})` : ''}${flatten ? `, ${alpaca.closed.length} position close${alpaca.closed.length === 1 ? '' : 's'} sent` : ''}; ${alpaca.positions_read ? `${alpaca.positions.length} position${alpaca.positions.length === 1 ? '' : 's'} still open${alpaca.positions.length ? ` (${alpaca.positions.map((x) => `${x.qty} ${x.symbol}`).join(', ')})` : ''}` : 'the open positions could not be read'}.`);
+    } else {
+      lines.push(alpaca.state === 'not_configured' ? 'Alpaca PAPER is not connected, so there was nothing to cancel there.' : `Alpaca PAPER could not be reached (${alpaca.error || alpaca.state}); its orders were not confirmed cancelled.`);
+    }
+    await noteAuditEffect(this.ctx.storage, result.record.at, lines);
+    return { ...result, record: { ...result.record, effect: [...result.record.effect, ...lines] }, halted: { sims, alpaca } };
+  }
+
   async liveTradingDashboard() {
     const auth = await this.ctx.storage.get('tradovate_auth').catch(() => null);
     const connected = Boolean(auth?.access_token) && Date.now() < Number(auth.expires_at || 0);
@@ -6527,6 +6571,16 @@ export class CheState extends DurableObject {
         if (body.action === 'backtest') return json(await liveBacktest(this.ctx.storage));
         return json({ detail: 'Unknown action. Use start, stop, tick or backtest.' }, 400);
       }
+      // Strategy Control Center (owner, 2026-10-20): limits, pause/resume, Emergency Stop and the audit trail.
+      if (path === '/api/trading/controls' && request.method === 'GET') {
+        if (!ownerDevice) return ownerOnly();
+        return json(await this.tradingControlsView());
+      }
+      if (path === '/api/trading/controls' && request.method === 'POST') {
+        if (!ownerDevice) return ownerOnly();
+        const result = await this.tradingControl(body.change, { who: String(body.who || 'owner (iPhone)').slice(0, 40), confirm: body.confirm === true });
+        return json({ ...result, spoken: speakControlResult(result), view: await this.tradingControlsView() }, result.ok || result.needs_confirmation ? 200 : 400);
+      }
       // Strategy simulation (step a): paper minute-bar strategies. Read and the kill switch are owner-only; nothing here orders or spends.
       const simOwnerOnly = () => json({ detail: 'Only the CHE owner can view or control the strategy simulation.' }, 403);
       if (path === '/api/trading/sim' && request.method === 'GET') {
@@ -6588,13 +6642,19 @@ export class CheState extends DurableObject {
         if (saved.ok) await this.refreshKeyEnv();
         return json(saved, saved.ok ? 200 : 400);
       }
+      // The Alpaca PAPER dashboard: account, positions, orders by status, verified fills, history and bars. Read only.
+      if (path === '/api/trading/alpaca/dashboard' && request.method === 'GET') {
+        if (!ownerDevice) return tradingOwnerOnly();
+        const symbol = (new URL(request.url).searchParams.get('symbol') || '').trim().toUpperCase().slice(0, 8);
+        return json(await alpacaPaperDashboard(this.keyEnv || this.env, { symbol }));
+      }
       if (path === '/api/trading/alpaca/orders' && request.method === 'GET') {
         if (!ownerDevice) return tradingOwnerOnly();
         return json(await alpacaPaperOrders(this.keyEnv || this.env));
       }
       if (path === '/api/trading/alpaca/order' && request.method === 'POST') {
         if (!ownerDevice) return tradingOwnerOnly();
-        const placed = await placeAlpacaPaperOrder(this.keyEnv || this.env, this.ctx.storage, body);
+        const placed = await placeAlpacaPaperOrder(this.keyEnv || this.env, this.ctx.storage, body, { guard: await this.stockOrderGuard() });
         return json(placed, placed.ok ? 200 : 400);
       }
       if (path === '/api/trading/paper' && request.method === 'GET') {
@@ -8640,7 +8700,7 @@ export class CheState extends DurableObject {
         const frameReadsIt = frame.lossless && !['unclear', 'followup', 'correction'].includes(frame.mode);
         // A broker order, its "yes, place it" or its "no, don't place it" is read by the desk word for
         // word; a model reading could only blur which order the owner approved.
-        const deskReadsIt = ['take', 'take_unconfirmed', 'place_unconfirmed', 'stock_no', 'stock_order', 'alpaca_orders', 'tradovate_steps'].includes(deskIntent(message)?.kind);
+        const deskReadsIt = ['take', 'take_unconfirmed', 'place_unconfirmed', 'stock_no', 'stock_order', 'alpaca_orders', 'alpaca_dashboard', 'tradovate_steps', 'controls', 'controls_view', 'controls_why'].includes(deskIntent(message)?.kind);
         // "Reset my knowledge atlas progress" is a delete with a fixed hold: it never needs a reading (issue #346 audit).
         const deterministicHold = ownerDevice && Boolean(atlasResetIntent(message));
         if (interpretation.kind === 'unclear' && !frameReadsIt && !deskReadsIt && !interpretation.clarify && !interpretation.passthrough && ownerHistory.length > 0 && !deterministicHold) {
@@ -10162,7 +10222,31 @@ export class CheState extends DurableObject {
         if (stockWaiting?.status === 'waiting') {
           return ndjsonReply(`To send it to ${STOCK_ACCOUNT}, sir, say "yes, place it". Say "no" to drop it. Nothing has been sent yet.`, { source: 'che_trading_desk', ok: true, model_calls: 0, account: STOCK_ACCOUNT, order_sent: false, confirmation_needed: true });
         }
+        // A control change that raises risk waits for "yes, confirm" (two minutes); "no" drops it.
+        const controlWaiting = !body.attachment && ownerDevice ? await this.ctx.storage.get('trading_controls_pending') : null;
+        if (controlWaiting && Date.now() - Date.parse(controlWaiting.at) < 120_000) {
+          if (isOwnerYes(message) || /^\s*yes[,!.]?\s+(?:confirm|apply|do it)\b/i.test(message)) {
+            await this.ctx.storage.delete('trading_controls_pending');
+            const result = await this.tradingControl(controlWaiting.change, { who: 'owner (chat)', confirm: true });
+            return ndjsonReply(speakControlResult(result), { source: 'che_trading_controls', ok: result.ok, model_calls: 0, open_view: 'trading_controls' });
+          }
+          if (/^\s*(?:no|nope|cancel|don't|do not|leave it)\b/i.test(message)) {
+            await this.ctx.storage.delete('trading_controls_pending');
+            return ndjsonReply('Left as it was, sir. Nothing changed.', { source: 'che_trading_controls', ok: true, model_calls: 0 });
+          }
+        }
         const desk = body.attachment ? null : deskIntent(message);
+        if (desk && ['controls', 'controls_view', 'controls_why'].includes(desk.kind)) {
+          if (!ownerDevice) return ndjsonReply('Only the CHE owner can change or read the strategy controls.', { source: 'che_trading_controls', ok: false });
+          if (desk.kind === 'controls_view' || desk.kind === 'controls_why') {
+            const view = await this.tradingControlsView();
+            const text = desk.kind === 'controls_view' ? speakControlsView(view.strategies, view.controls) : speakSkipReasons(view.strategies, desk.scope);
+            return ndjsonReply(text, { source: 'che_trading_controls', ok: true, model_calls: 0, open_view: 'trading_controls' });
+          }
+          const result = await this.tradingControl(desk.change, { who: 'owner (chat)' });
+          if (result.needs_confirmation) await this.ctx.storage.put('trading_controls_pending', { change: result.change, at: new Date().toISOString() });
+          return ndjsonReply(speakControlResult(result), { source: 'che_trading_controls', ok: result.ok || Boolean(result.needs_confirmation), model_calls: 0, confirmation_needed: Boolean(result.needs_confirmation), open_view: 'trading_controls' });
+        }
         if (desk) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can use the trading desk.', { source: 'che_trading_desk', ok: false });
           // B1: a bare "place it" has no yes, so it places nothing; it is answered with the phrase to say.
@@ -10191,7 +10275,8 @@ export class CheState extends DurableObject {
                 : `Dropped, sir. Nothing was sent to ${STOCK_ACCOUNT}.`, { source: 'che_trading_desk', ok: true, model_calls: 0, account: STOCK_ACCOUNT, order_sent: Boolean(dropped?.already) });
             }
             const env = this.keyEnv || this.env;
-            const placed = await confirmStockOrder(this.ctx.storage, { place: (order) => placeAlpacaPaperOrder(env, this.ctx.storage, order) });
+            const guard = await this.stockOrderGuard();
+            const placed = await confirmStockOrder(this.ctx.storage, { place: (order) => placeAlpacaPaperOrder(env, this.ctx.storage, order, { guard }) });
             if (placed.ok && !placed.repeated && placed.receipt?.id) {
               await recordReceipt(this.ctx.storage, { kind: 'paper_order_placed', key: `alpaca_paper:${placed.receipt.id}`, detail: placed.reply.slice(0, 300) }).catch(() => null);
             }
@@ -10208,7 +10293,18 @@ export class CheState extends DurableObject {
               : !listed.ok ? `I could not read your Alpaca paper orders, sir: ${listed.error}`
                 : !listed.orders.length ? `Alpaca reports no orders on your ${STOCK_ACCOUNT} account, sir.`
                   : `Your latest ${STOCK_ACCOUNT} orders, as Alpaca reports them, sir: ${listed.orders.map((o, i) => `${i + 1}, ${speakStockReceipt(o, { brief: true }).replace(/^Alpaca's receipt: /, '')}`).join(' ')}`;
-            return ndjsonReply(text, { source: 'che_trading_desk', ok: listed.ok, model_calls: 0, account: STOCK_ACCOUNT });
+            return ndjsonReply(text, { source: 'che_trading_desk', ok: listed.ok, model_calls: 0, account: STOCK_ACCOUNT, open_view: 'alpaca_paper' });
+          }
+          if (desk.kind === 'alpaca_dashboard') {
+            // The Alpaca PAPER dashboard (owner, 2026-10-20): a short summary from Alpaca's own records, and the
+            // app opens the visual view (chart, order and fill markers, positions, history).
+            const dash = await alpacaPaperDashboard(this.keyEnv || this.env);
+            const latest = dash.state === 'verified' && dash.orders.length
+              ? ` Latest orders: ${dash.orders.slice(0, 3).map((o, i) => `${i + 1}, ${speakStockReceipt(o, { brief: true }).replace(/^Alpaca's receipt: /, '')}`).join(' ')}` : '';
+            return ndjsonReply(`${speakAlpacaDashboard(dash)}${latest}`, {
+              source: 'che_trading_desk', ok: dash.state === 'verified' || dash.state === 'not_configured', model_calls: 0, account: STOCK_ACCOUNT,
+              open_view: 'alpaca_paper', alpaca_state: dash.state,
+            });
           }
           if (desk.kind === 'tradovate_steps') {
             return ndjsonReply(speakTradovateSteps({ configured: tradovateConfigured(this.keyEnv || this.env), redirect: `${new URL(request.url).origin}/broker/tradovate/callback` }), { source: 'che_trading_desk', ok: true, model_calls: 0 });
