@@ -66,7 +66,7 @@ import { evidenceIntent, evidenceReport, evidenceTick } from './trading_evidence
 import { ATLAS_SOURCE, answerAtlas, atlasHiddenAction, atlasIntent, atlasQuizAnswerTurn, atlasPromptContext, atlasResetAsk, atlasResetIntent, projectAtlasToBrain, resetAtlasProgress } from './knowledge_atlas.js';
 import { LIVE_BACKTEST, LIVE_RUNS, LIVE_STATE, liveBacktest, liveDashboard, livePaperSummary, liveTick, nextLiveTickAt, setLivePaper } from './trading_live.js';
 import { cmeSession } from './market_feed.js';
-import { alpacaKeys, alpacaPaperOrders, alpacaStatus, liveKeyProblem, placeAlpacaPaperOrder, removeAlpacaPaperKeys, saveAlpacaPaperKeys } from './broker_alpaca.js';
+import { alpacaKeys, alpacaPaperDashboard, alpacaPaperOrders, alpacaStatus, speakAlpacaDashboard, liveKeyProblem, placeAlpacaPaperOrder, removeAlpacaPaperKeys, saveAlpacaPaperKeys } from './broker_alpaca.js';
 import { speakConnections, speakTradovateSteps, tradingConnections } from './trading_connections.js';
 import { liveAnswer, liveIntent } from './trading_live_chat.js';
 import { ANALYSIS_SOURCE, LEDGER_SOURCE, analyzeStrategy, ledgerIntent, readLedgers, speakLedgers, strategyAnalysisIntent } from './trading_ledgers.js';
@@ -6586,6 +6586,12 @@ export class CheState extends DurableObject {
         if (saved.ok) await this.refreshKeyEnv();
         return json(saved, saved.ok ? 200 : 400);
       }
+      // The Alpaca PAPER dashboard: account, positions, orders by status, verified fills, history and bars. Read only.
+      if (path === '/api/trading/alpaca/dashboard' && request.method === 'GET') {
+        if (!ownerDevice) return tradingOwnerOnly();
+        const symbol = (new URL(request.url).searchParams.get('symbol') || '').trim().toUpperCase().slice(0, 8);
+        return json(await alpacaPaperDashboard(this.keyEnv || this.env, { symbol }));
+      }
       if (path === '/api/trading/alpaca/orders' && request.method === 'GET') {
         if (!ownerDevice) return tradingOwnerOnly();
         return json(await alpacaPaperOrders(this.keyEnv || this.env));
@@ -10190,12 +10196,15 @@ export class CheState extends DurableObject {
           }
           if (desk.kind === 'stock_order') return this.stockOrderTurn(desk);
           if (desk.kind === 'alpaca_orders') {
-            const listed = await alpacaPaperOrders(this.keyEnv || this.env, { limit: 5 });
-            const text = listed.state === 'not_configured' ? 'Alpaca paper is not set up yet, sir, so there are no orders to read. Say "connect Alpaca" to hear how.'
-              : !listed.ok ? `I could not read your Alpaca paper orders, sir: ${listed.error}`
-                : !listed.orders.length ? `Alpaca reports no orders on your ${STOCK_ACCOUNT} account, sir.`
-                  : `Your latest ${STOCK_ACCOUNT} orders, as Alpaca reports them, sir: ${listed.orders.map((o, i) => `${i + 1}, ${speakStockReceipt(o, { brief: true }).replace(/^Alpaca's receipt: /, '')}`).join(' ')}`;
-            return ndjsonReply(text, { source: 'che_trading_desk', ok: listed.ok, model_calls: 0, account: STOCK_ACCOUNT });
+            // The Alpaca PAPER dashboard (owner, 2026-10-20): a short summary from Alpaca's own records, and the
+            // app opens the visual view (chart, order and fill markers, positions, history).
+            const dash = await alpacaPaperDashboard(this.keyEnv || this.env);
+            const latest = dash.state === 'verified' && dash.orders.length
+              ? ` Latest orders: ${dash.orders.slice(0, 3).map((o, i) => `${i + 1}, ${speakStockReceipt(o, { brief: true }).replace(/^Alpaca's receipt: /, '')}`).join(' ')}` : '';
+            return ndjsonReply(`${speakAlpacaDashboard(dash)}${latest}`, {
+              source: 'che_trading_desk', ok: dash.state === 'verified' || dash.state === 'not_configured', model_calls: 0, account: STOCK_ACCOUNT,
+              open_view: 'alpaca_paper', alpaca_state: dash.state,
+            });
           }
           if (desk.kind === 'tradovate_steps') {
             return ndjsonReply(speakTradovateSteps({ configured: tradovateConfigured(this.keyEnv || this.env), redirect: `${new URL(request.url).origin}/broker/tradovate/callback` }), { source: 'che_trading_desk', ok: true, model_calls: 0 });
