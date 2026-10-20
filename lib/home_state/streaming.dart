@@ -449,11 +449,13 @@ extension _CheHomeStreaming on _CHEHomeState {
         // meeting; the Meeting Room shows it as it happens (Spatial World MVP 1).
         final meetingId = data['meeting_id']?.toString().trim() ?? '';
         if (data['source'] == 'che_meeting_room' && meetingId.isNotEmpty && mounted) {
-          unawaited(Navigator.of(context).push(CheMeetingRoom.route(
+          unawaited(cheOpenMeetingRoom(
+            context,
             client: _agentRuntime,
-            meetingId: meetingId,
+            id: meetingId,
             onSpeak: (text) => speakText(text, record: false),
-          )));
+            onBackToOffice: () => _goShellTab(2),
+          ));
         }
         // "Design a wearable robotics prototype…": the Worker made a plan; the Plan Room shows it.
         final planId = data['plan_id']?.toString().trim() ?? '';

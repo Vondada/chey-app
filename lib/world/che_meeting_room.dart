@@ -18,10 +18,11 @@ import 'package:flutter/services.dart';
 
 import '../agents/che_agent_runtime.dart';
 import '../che_ui/che_agents.dart';
+import 'che_meetings.dart';
 import 'che_scene_model.dart';
 
 class CheMeetingRoom extends StatefulWidget {
-  const CheMeetingRoom({super.key, required this.meetingId, required this.load, required this.onSpeak, this.pollEvery = const Duration(seconds: 3)});
+  const CheMeetingRoom({super.key, required this.meetingId, required this.load, required this.onSpeak, this.pollEvery = const Duration(seconds: 3), this.onBackToOffice});
 
   final String meetingId;
 
@@ -30,11 +31,18 @@ class CheMeetingRoom extends StatefulWidget {
   final Future<void> Function(String text) onSpeak;
   final Duration pollEvery;
 
+  /// "Back to Office": the caller's way home (the Office tab). Without one it
+  /// returns to the first screen.
+  final VoidCallback? onBackToOffice;
+
   /// The room on screen, for voice questions asked while it is open.
   static final current = ValueNotifier<CheScene?>(null);
 
-  static Route<void> route({required CheAgentRuntimeClient client, required String meetingId, required Future<void> Function(String) onSpeak}) =>
-      MaterialPageRoute<void>(builder: (_) => CheMeetingRoom(meetingId: meetingId, load: client.meetingScene, onSpeak: onSpeak));
+  static Route<void> route({required CheAgentRuntimeClient client, required String meetingId, required Future<void> Function(String) onSpeak, VoidCallback? onBackToOffice}) =>
+      MaterialPageRoute<void>(
+        settings: RouteSettings(name: 'meeting/$meetingId'),
+        builder: (_) => CheMeetingRoom(meetingId: meetingId, load: client.meetingScene, onSpeak: onSpeak, onBackToOffice: onBackToOffice),
+      );
 
   @override
   State<CheMeetingRoom> createState() => _CheMeetingRoomState();
@@ -50,7 +58,21 @@ class _CheMeetingRoomState extends State<CheMeetingRoom> {
   @override
   void initState() {
     super.initState();
+    // Remembered so "take me back to my last meeting" finds it after leaving or a restart.
+    unawaited(cheRememberMeeting(widget.meetingId));
     _refresh();
+  }
+
+  void _leave() {
+    HapticFeedback.selectionClick();
+    Navigator.of(context).maybePop();
+  }
+
+  void _backToOffice() {
+    HapticFeedback.selectionClick();
+    final home = widget.onBackToOffice;
+    Navigator.of(context).popUntil((route) => route.isFirst);
+    home?.call();
   }
 
   @override
@@ -109,8 +131,19 @@ class _CheMeetingRoomState extends State<CheMeetingRoom> {
               _ProvenanceBadge(o),
               const SizedBox(height: 12),
               ConstrainedBox(
-                constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(sheet).height * 0.5),
-                child: SingleChildScrollView(child: SelectableText(o.text.isNotEmpty ? o.text : o.detail, style: const TextStyle(fontSize: 19, height: 1.4))),
+                constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(sheet).height * 0.55),
+                child: SingleChildScrollView(
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    // The short plain-language version first; the complete sourced text one tap below.
+                    Text(chePlainText(o.text.isNotEmpty ? o.text : o.detail, max: 400), style: const TextStyle(fontSize: 19, height: 1.4)),
+                    if ((o.text.isNotEmpty ? o.text : o.detail).trim().isNotEmpty)
+                      ExpansionTile(
+                        tilePadding: EdgeInsets.zero,
+                        title: const Text('Full sourced text', style: TextStyle(fontSize: 17)),
+                        children: [SelectableText(o.text.isNotEmpty ? o.text : o.detail, style: const TextStyle(fontSize: 16, height: 1.4))],
+                      ),
+                  ]),
+                ),
               ),
               const SizedBox(height: 8),
               Text('From ${o.sourceStore}${o.sourceId.isEmpty ? '' : ' #${o.sourceId}'}', style: const TextStyle(fontSize: 13, color: Colors.white54)),
@@ -132,7 +165,8 @@ class _CheMeetingRoomState extends State<CheMeetingRoom> {
     final scene = _scene;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Meeting Room'),
+        title: Text(scene == null ? 'Meeting Room' : 'Meeting: ${chePlainText(scene.title, max: 40)}'),
+        leading: IconButton(tooltip: 'Leave meeting', icon: const Icon(Icons.arrow_back_rounded), onPressed: _leave),
         actions: [
           if (scene != null)
             IconButton(
@@ -141,6 +175,32 @@ class _CheMeetingRoomState extends State<CheMeetingRoom> {
               onPressed: () => widget.onSpeak(scene.path == null ? scene.spoken : '${scene.spoken} ${scene.path!.spoken}'),
             ),
         ],
+      ),
+      // Always visible: how to leave, and the way back to the Office. The meeting keeps
+      // running and stays in Meetings; reopening it shows this same room.
+      bottomNavigationBar: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
+          child: Row(children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(52)),
+                onPressed: _leave,
+                icon: const Icon(Icons.logout_rounded),
+                label: const Text('Leave meeting', style: TextStyle(fontSize: 17)),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: FilledButton.icon(
+                style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
+                onPressed: _backToOffice,
+                icon: const Icon(Icons.apartment_rounded),
+                label: const Text('Back to Office', style: TextStyle(fontSize: 17)),
+              ),
+            ),
+          ]),
+        ),
       ),
       body: scene == null
           ? Center(child: Padding(padding: const EdgeInsets.all(24), child: Text(_error ?? 'Gathering the team…', style: const TextStyle(fontSize: 18), textAlign: TextAlign.center)))
@@ -163,7 +223,7 @@ class _CheMeetingRoomState extends State<CheMeetingRoom> {
                 for (final (i, o) in scene.readingOrder.indexed)
                   Semantics(
                     button: true,
-                    label: '${i + 1}. ${o.label}. ${o.provenanceSpoken}. ${o.preview}',
+                    label: '${i + 1}. ${o.label}. ${o.provenanceSpoken}. ${chePlainText(o.preview)}',
                     excludeSemantics: true,
                     child: ListTile(
                       leading: CircleAvatar(
@@ -172,7 +232,7 @@ class _CheMeetingRoomState extends State<CheMeetingRoom> {
                       ),
                       title: Text(o.label, style: TextStyle(fontWeight: o.isPath ? FontWeight.w700 : FontWeight.w500)),
                       subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                        Text(o.preview, maxLines: 3, overflow: TextOverflow.ellipsis),
+                        Text(chePlainText(o.preview), maxLines: 3, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 16)),
                         const SizedBox(height: 4),
                         _ProvenanceBadge(o),
                       ]),
@@ -249,7 +309,7 @@ class _Table extends StatelessWidget {
               ),
               child: Center(
                 child: Text(
-                  path == null ? scene.objective : 'Recommended path\n${path.preview}',
+                  path == null ? chePlainText(scene.objective, max: 90) : 'Recommended path\n${chePlainText(path.preview, max: 90)}',
                   textAlign: TextAlign.center, maxLines: 5, overflow: TextOverflow.ellipsis,
                   style: TextStyle(fontSize: 12, color: path == null ? Colors.white70 : const Color(0xFFE8B04A)),
                 ),

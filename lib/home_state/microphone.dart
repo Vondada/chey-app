@@ -2,7 +2,34 @@ part of '../main.dart';
 
 // Split out of main.dart: _CHEHomeState members (microphone).
 extension _CheHomeMicrophone on _CHEHomeState {
+  /// The mic button. Never leaves the screen stuck: a stalled live-voice
+  /// connection is cancelled, and any failure resets the mic state, is shown
+  /// in Voice diagnostics and on screen, and leaves typing and navigation working.
   Future<void> toggleListening() async {
+    if (_realtimeConnecting) {
+      HapticFeedback.lightImpact();
+      _realtimeCancelRequested = true;
+      _mic.ownerOff('mic button (cancel connecting)');
+      _voiceMachine.sleep();
+      _applyVoiceSnapshot(_voiceMachine.snapshot);
+      if (mounted) _set(() { openConversation = false; isListening = false; });
+      return;
+    }
+    try {
+      await _toggleListeningUnguarded();
+    } catch (error) {
+      _localVoice.recordMicFailure(error is TimeoutException ? 'The microphone did not respond in time.' : 'The microphone failed: $error');
+      _mic.ownerOff('mic failure');
+      if (!mounted) return;
+      _set(() {
+        isListening = false;
+        openConversation = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('${_localVoice.lastMicFailure} You can still type.')));
+    }
+  }
+
+  Future<void> _toggleListeningUnguarded() async {
     HapticFeedback.lightImpact();
 
     if (_realtimeVoice?.connected == true) {

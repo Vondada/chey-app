@@ -181,10 +181,14 @@ class CheMeetingSummary {
     required this.status,
     required this.progress,
     required this.participantNames,
+    this.createdAt,
+    this.updatedAt,
   });
 
   final String id;
   final String objective;
+  final DateTime? createdAt;
+  final DateTime? updatedAt;
   final String status; // drafting, cross_check, synthesizing, complete, failed
   final double progress;
   final List<String> participantNames;
@@ -209,6 +213,8 @@ class CheMeetingSummary {
           for (final p in (j['participants'] as List? ?? const []))
             if (p is Map) '${p['name']}',
         ],
+        createdAt: DateTime.tryParse('${j['created_at'] ?? ''}'),
+        updatedAt: DateTime.tryParse('${j['updated_at'] ?? ''}'),
       );
 }
 
@@ -717,6 +723,12 @@ class CheAgentRuntimeClient {
   /// CHE's universal AI layer overview (providers, models, health, privacy).
   /// Contains connection states only, never credential values.
   Future<Map<String, dynamic>> aiOverview() => _send('GET', '/api/ai/overview');
+
+  /// The War Room meetings the Worker already keeps (newest first, up to 12).
+  Future<List<CheMeetingSummary>> meetings() async {
+    final j = await _send('GET', '/api/meetings');
+    return [for (final m in (j['meetings'] as List? ?? const [])) if (m is Map) CheMeetingSummary.fromJson(m.cast<String, dynamic>())];
+  }
 
   Future<CheMeeting> meeting(String id) async {
     final j = await _send('GET', '/api/meetings/$id');

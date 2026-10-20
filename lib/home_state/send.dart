@@ -765,6 +765,14 @@ extension _CheHomeSend on _CHEHomeState {
       }
     }
 
+    // "Take me back to my last meeting", "show my meetings", "open the meeting about my app":
+    // reopen existing meetings by id (che_meetings.dart); nothing is restarted.
+    final meetingNav = _pendingAttachment != null ? null : cheMeetingNavIntent(message);
+    if (meetingNav != null) {
+      await _navigateMeetings(message, meetingNav);
+      return;
+    }
+
     // In the Meeting Room: "read the suggestions", "what's the recommendation",
     // "read suggestion 2", "who's at the table" are answered from its scene.
     final meetingRoom = CheMeetingRoom.current.value;
@@ -1367,5 +1375,54 @@ extension _CheHomeSend on _CHEHomeState {
       ..add({'role': 'assistant', 'text': reply}));
     if (!command.readPrice) _openAssistantHub(tab: 1);
     await speakText(reply, record: false);
+  }
+
+  /// Opens the Meetings list, the last meeting, or the meeting matching a topic, and says what happened.
+  Future<void> _navigateMeetings(String message, ({String kind, String topic}) nav) async {
+    Future<void> say(String reply) async {
+      if (mounted) {
+        _set(() {
+          controller.clear();
+          messages
+            ..add({'role': 'user', 'text': message})
+            ..add({'role': 'assistant', 'text': reply});
+        });
+      }
+      HapticFeedback.mediumImpact();
+      await speakText(reply, record: false);
+    }
+
+    Future<void> open(String id) => cheOpenMeetingRoom(context, client: _agentRuntime, id: id, onSpeak: (t) => speakText(t, record: false), onBackToOffice: () => _goShellTab(2));
+
+    if (nav.kind == 'list') {
+      unawaited(say('Opening your meetings, sir: active, recent and completed.'));
+      if (mounted) unawaited(Navigator.of(context).push(CheMeetingsPage.route(client: _agentRuntime, onSpeak: (t) => speakText(t, record: false), onBackToOffice: () => _goShellTab(2))));
+      return;
+    }
+    List<CheMeetingSummary> all;
+    try {
+      all = await _agentRuntime.meetings();
+    } catch (e) {
+      await say('I could not load your meetings, sir: $e');
+      return;
+    }
+    if (nav.kind == 'last') {
+      final id = await cheLastMeetingId() ?? (all.isEmpty ? null : all.first.id);
+      final m = all.where((x) => x.id == id).firstOrNull;
+      if (id == null) {
+        await say('You have no meetings yet, sir.');
+        return;
+      }
+      unawaited(say(m == null ? 'Taking you back to your last meeting, sir.' : 'Taking you back to ${cheMeetingName(m)}, sir. It is ${cheMeetingStatusSpoken(m)}.'));
+      if (mounted) unawaited(open(id));
+      return;
+    }
+    final m = cheMatchMeeting(all, nav.topic);
+    if (m == null) {
+      await say(all.isEmpty ? 'You have no meetings yet, sir.' : 'I found no meeting about ${nav.topic}, sir. Say "show my meetings" to hear the list.');
+      return;
+    }
+    unawaited(say('Opening ${cheMeetingName(m)}, sir. It is ${cheMeetingStatusSpoken(m)}.'));
+    if (mounted) unawaited(open(m.id));
   }
 }

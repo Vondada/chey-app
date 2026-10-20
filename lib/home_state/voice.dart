@@ -545,6 +545,16 @@ extension _CheHomeVoice on _CHEHomeState {
   Future<void> _fallbackSpeech(String reason) async {
     if (_usingSpeechFallback) return;
     _usingSpeechFallback = true;
+    try {
+      await _fallbackSpeechOnce(reason);
+    } finally {
+      // Re-armed after each attempt: a later failure gets its own fallback.
+      _usingSpeechFallback = false;
+    }
+  }
+
+  Future<void> _fallbackSpeechOnce(String reason) async {
+    _localVoice.recordMicFailure('iPhone recognizer: $reason');
     debugPrint('CHE speech error: native: $reason');
     await _localVoice.runMicOp(() async {
       try {
