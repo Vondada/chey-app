@@ -166,6 +166,21 @@ test('the simulation and the journal are counted separately, each with its own n
   assert.match(said, /forward paper journal \(.*\): 81 trades journalled/);
   assert.match(said, /never summed/);
   assert.doesNotMatch(said, /253/);
+  // The dashboard fields: per-strategy rows, feed health and one equity curve per set, each in its own unit.
+  assert.equal(simL.equity.unit, 'R');
+  assert.equal(simL.equity.trades, 172);
+  assert.ok(simL.equity.points.length <= 240 && simL.equity.points.length >= 2);
+  assert.equal(simL.equity.points[simL.equity.points.length - 1].v, Math.round(sim.reduce((a, t) => a + t.r, 0) * 1000) / 1000);
+  assert.equal(simL.by_strategy.length, 10);
+  // One unit for the owner: the headline and the rows both say percent, and a strategy with no trade says nothing.
+  assert.equal(simL.best.win_rate, simL.by_strategy[0].win_rate);
+  assert.ok(simL.best.win_rate > 1 && simL.best.win_rate <= 100);
+  assert.ok(simL.by_strategy.filter((r) => r.trades === 0).every((r) => r.win_rate === null && r.expectancy_r === null));
+  assert.deepEqual(simL.feeds.map((f) => f.symbol), ['BTCUSDT', 'ETHUSDT', 'MNQ']);
+  assert.equal(journal.equity.unit, '$');
+  assert.equal(journal.equity.trades, 81);
+  assert.ok(journal.by_strategy[0].trades === 81 && journal.by_strategy[0].name);
+  assert.equal(ledgers[4].equity, null);
   const settings = speakLedgers(ledgerIntent('What settings did your most profitable strategy use?'), ledgers);
   const s0 = SIM_STRATEGIES.find((x) => x.id === ledgers[0].best.strategy);
   assert.match(settings, new RegExp(`Settings: signal ${s0.signal}, trend_filter ${s0.trend_filter}, target_r ${s0.target_r}`));
