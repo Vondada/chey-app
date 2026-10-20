@@ -890,6 +890,8 @@ extension _CheHomeSend on _CHEHomeState {
     // from the controls the screen in front really reports (che_ui/che_help.dart), never a guess.
     final helpAsk = _pendingAttachment == null ? cheHelpIntent(message) : null;
     if (helpAsk != null) {
+      // Read before anything opens over the screen the owner is asking about.
+      final helpScreen = CheHelp.shown;
       final reply = CheHelp.answer(helpAsk) ?? '';
       if (mounted) {
         final onChat = _shellTab == 1 && (ModalRoute.of(context)?.isCurrent ?? true);
@@ -900,7 +902,7 @@ extension _CheHomeSend on _CHEHomeState {
             ..add({'role': 'assistant', 'text': reply});
         });
         if (helpAsk.kind == CheHelpKind.center) {
-          unawaited(Navigator.of(context).push(CheHelpCenter.route()));
+          unawaited(Navigator.of(context).push(CheHelpCenter.route(screen: helpScreen)));
         } else if (helpAsk.kind == CheHelpKind.walkthrough) {
           unawaitedWalk(context);
         } else if (!onChat) {

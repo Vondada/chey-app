@@ -82,4 +82,60 @@ void main() {
     expect(find.text('Help Center'), findsOneWidget);
     expect(find.text('Strategy Control Center'), findsOneWidget);
   });
+
+  testWidgets('review of #386: no false "Highlighted"; "Strategy switch" is help; spoken next/back/done move the tour; duplicate panels keep their targets; the Help Center keeps the screen', (tester) async {
+    tester.view.physicalSize = const Size(900, 3000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    addTearDown(CheHelp.clear);
+    await tester.pumpWidget(host(FakeWorker()));
+    await tester.pumpAndSettle();
+
+    // A help item with no outline target on screen is never reported as highlighted.
+    final extra = CheHelp.register(tester.element(find.byType(CheStrategyControlsPanel)),
+        () => const CheHelpTopic(title: 'Extra', summary: '', items: [CheControlHelp(name: 'Chart markers', does: 'Marks fills on the chart')]));
+    addTearDown(() => CheHelp.unregister(extra));
+    expect(CheHelp.canHighlight('Chart markers'), isFalse);
+    expect(CheHelp.answer(const CheHelpRequest(CheHelpKind.show, 'chart markers')), startsWith('I cannot outline Chart markers on this screen'));
+    expect(CheHelp.highlighted.value, isNull);
+    expect(CheHelp.answer(const CheHelpRequest(CheHelpKind.show, 'emergency stop')), startsWith('Highlighted. Emergency Stop'));
+
+    // The literal on-screen control name is help, even though it says "strategy".
+    final sw = cheHelpIntent('what does the Strategy switch do?');
+    expect(sw?.kind, CheHelpKind.explain);
+    expect(CheHelp.answer(sw!), startsWith('Strategy switch: Pauses or resumes one strategy'));
+    expect(cheHelpIntent('what does the EMA strategy do'), isNull);
+
+    // Spoken steps move the walkthrough; outside one, "next" is not help.
+    expect(cheHelpIntent('next'), isNull);
+    await tester.tap(find.bySemanticsLabel('Help for this screen').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Walk me through'));
+    await tester.pumpAndSettle();
+    final next = cheHelpIntent('next');
+    expect(next?.kind, CheHelpKind.step);
+    expect(CheHelp.answer(next!), startsWith('Step 2 of 11. Pause all'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Step 2 of 11. Pause all'), findsOneWidget, reason: 'the banner follows the voice');
+    expect(CheHelp.answer(cheHelpIntent('back')!), startsWith('Step 1 of 11. Emergency Stop'));
+    expect(CheHelp.answer(cheHelpIntent('done')!), 'Walkthrough finished.');
+    await tester.pumpAndSettle();
+    expect(CheHelp.walking, isFalse);
+    expect(find.textContaining('Step 1 of 11'), findsNothing);
+
+    // A second Control Center on a pushed page, then popped: the room's own targets still work.
+    final nav = tester.state<NavigatorState>(find.byType(Navigator).first);
+    nav.push(MaterialPageRoute<void>(builder: (_) => Scaffold(body: SingleChildScrollView(child: CheStrategyControlsPanel(baseUrl: () => 'https://che.test', headers: () => {}, onAsk: (_) {}, client: FakeWorker().client, refresh: const Duration(hours: 1))))));
+    await tester.pumpAndSettle();
+    expect(CheHelp.canHighlight('Emergency Stop'), isTrue);
+    nav.pop();
+    await tester.pumpAndSettle();
+    expect(CheHelp.canHighlight('Emergency Stop'), isTrue, reason: 'the still-mounted panel keeps its target');
+
+    // The Help Center keeps the screen it was opened from.
+    nav.push(CheHelpCenter.route(screen: const [CheHelpTopic(title: 'Chat', summary: '', items: [CheControlHelp(name: 'New chat', does: 'Starts a new conversation')])]));
+    await tester.pumpAndSettle();
+    expect(find.text('Chat'), findsOneWidget);
+    expect(find.text('Strategy Control Center'), findsOneWidget);
+  });
 }

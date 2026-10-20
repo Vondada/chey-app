@@ -50,7 +50,7 @@ class _Topic {
 class CheHelp {
   CheHelp._();
   static final _topics = <_Topic>[];
-  static final _targets = <String, GlobalKey>{};
+  static final _targets = <String, List<GlobalKey>>{};
 
   /// The control being explained right now, drawn with an outline by its [CheHelpTarget].
   static final highlighted = ValueNotifier<String?>(null);
@@ -97,7 +97,7 @@ class CheHelp {
   static List<CheControlHelp> get _items => [for (final t in shown) ...t.items];
 
   /// The control on screen whose name best matches [words], or null.
-  static CheControlHelp? find(String words) {
+  static CheControlHelp? find(String words, {int minScore = 10}) {
     final w = words.toLowerCase().replaceAll(RegExp(r'\b(?:the|button|switch|toggle|control|this|that)\b'), ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
     if (w.isEmpty) return null;
     CheControlHelp? best;
@@ -107,20 +107,34 @@ class CheHelp {
       final s = n == w ? 100 : n.contains(w) ? 60 + w.length : w.contains(n) ? 50 + n.length : w.split(' ').where((x) => x.length > 2 && n.contains(x)).length * 10;
       if (s > score) { score = s; best = i; }
     }
-    return score >= 10 ? best : null;
+    return score >= minScore ? best : null;
   }
 
-  static void target(String name, GlobalKey key) => _targets[name.toLowerCase()] = key;
+  // Every mounted control with this name is kept: the same panel can be open in a room and on a
+  // pushed page, and per-strategy controls repeat. The one on the screen in front is chosen.
+  static void target(String name, GlobalKey key) => (_targets[name.toLowerCase()] ??= []).add(key);
   static void untarget(String name, GlobalKey key) {
-    if (_targets[name.toLowerCase()] == key) _targets.remove(name.toLowerCase());
+    final list = _targets[name.toLowerCase()];
+    list?.remove(key);
+    if (list != null && list.isEmpty) _targets.remove(name.toLowerCase());
   }
 
-  /// Outlines the control and scrolls it into view. Returns false when it is not on screen.
+  static BuildContext? _onScreen(String name) {
+    for (final k in (_targets[name.toLowerCase()] ?? const <GlobalKey>[]).reversed) {
+      final c = k.currentContext;
+      if (c != null && _shown(c)) return c;
+    }
+    return null;
+  }
+
+  /// Whether the control can be outlined on the screen in front of the owner.
+  static bool canHighlight(String name) => _onScreen(name) != null;
+
+  /// Outlines the control and scrolls it into view. Returns false, and outlines nothing, when it is not on screen.
   static Future<bool> highlight(String name) async {
-    final key = _targets[name.toLowerCase()];
+    final c = _onScreen(name);
+    if (c == null) return false;
     highlighted.value = name.toLowerCase();
-    final c = key?.currentContext;
-    if (c == null || !c.mounted) return false;
     await Scrollable.ensureVisible(c, duration: const Duration(milliseconds: 300), alignment: 0.3);
     return true;
   }
@@ -133,6 +147,7 @@ class CheHelp {
     final page = CheScreenAwareness.current?.page;
     final where = page ?? 'this screen';
     if (r.kind == CheHelpKind.center) return 'Opening the Help Center: help for every screen that is open.';
+    if (r.kind == CheHelpKind.step) return step(r.name);
     if (r.kind == CheHelpKind.walkthrough) {
       return items.isEmpty ? 'This screen does not list its controls to me yet, so I cannot walk you through it.' : 'Walking you through $where: ${items.length} controls. Say "next" or use the Next button.';
     }
@@ -141,8 +156,10 @@ class CheHelp {
       if (hit == null) {
         return 'I do not see a control called "${r.name}" on $where.${items.isEmpty ? '' : ' On this screen: ${_list(items)}.'}';
       }
-      if (r.kind == CheHelpKind.show) highlight(hit.name);
-      return '${r.kind == CheHelpKind.show ? 'Highlighted. ' : ''}${hit.spoken}';
+      if (r.kind != CheHelpKind.show) return hit.spoken;
+      if (!canHighlight(hit.name)) return 'I cannot outline ${hit.name} on this screen, but here is what it does. ${hit.spoken}';
+      highlight(hit.name);
+      return 'Highlighted. ${hit.spoken}';
     }
     final lit = highlighted.value;
     final current = lit == null ? null : items.where((i) => i.name.toLowerCase() == lit).firstOrNull;
@@ -151,10 +168,44 @@ class CheHelp {
     return 'On $where: ${[for (final (n, i) in items.indexed) '${n + 1}. ${i.name}: ${i.does}'].join('. ')}. Say "show me" and a name to highlight one.';
   }
 
+  // The walkthrough in progress, so spoken "next", "back" and "done" move it like its buttons.
+  static List<CheControlHelp> _walk = const [];
+  static int _walkAt = 0;
+  static void Function()? _walkShow;
+  static void Function()? _walkHide;
+  static bool get walking => _walk.isNotEmpty;
+
+  static void _endWalk() {
+    _walkHide?.call();
+    _walk = const [];
+    _walkShow = null;
+    _walkHide = null;
+    clear();
+  }
+
+  /// "next", "back" or "done" in the walkthrough; the answer says which step it is on.
+  static String step(String dir) {
+    if (!walking) return 'There is no walkthrough running. Say "walk me through this screen" to start one.';
+    if (dir == 'done') {
+      _endWalk();
+      return 'Walkthrough finished.';
+    }
+    final to = _walkAt + (dir == 'back' ? -1 : 1);
+    if (to < 0) return 'This is the first step. ${_walk[_walkAt].spoken}';
+    if (to >= _walk.length) {
+      final n = _walk.length;
+      _endWalk();
+      return 'That was the last of the $n controls. Walkthrough finished.';
+    }
+    _walkAt = to;
+    _walkShow?.call();
+    return 'Step ${_walkAt + 1} of ${_walk.length}. ${_walk[_walkAt].spoken}';
+  }
+
   static String _list(List<CheControlHelp> items) => [for (final (n, i) in items.indexed) '${n + 1}. ${i.name}'].join(', ');
 }
 
-enum CheHelpKind { explain, show, walkthrough, center }
+enum CheHelpKind { explain, show, walkthrough, center, step }
 
 class CheHelpRequest {
   const CheHelpRequest(this.kind, [this.name = '']);
@@ -169,12 +220,19 @@ CheHelpRequest? cheHelpIntent(String raw) {
       .replaceFirst(RegExp(r'^(?:(?:hey|hi|ok|okay)[\s,]+)?(?:che|chay|chey|shay)[\s,.:!]+'), '')
       .replaceFirst(RegExp(r'^(?:please|can you|could you)\s+'), '').trim();
   if (RegExp(r'^(?:open |show me |go to )?(?:the )?help cent(?:er|re)$').hasMatch(t)) return const CheHelpRequest(CheHelpKind.center);
+  if (CheHelp.walking) {
+    final m = RegExp(r'^(?:go )?(next|back|previous|done|stop|finish(?:ed)?|that.?s enough)(?: step| one| please)?$').firstMatch(t);
+    if (m != null) return CheHelpRequest(CheHelpKind.step, switch (m.group(1)!) { 'next' => 'next', 'back' || 'previous' => 'back', _ => 'done' });
+  }
   if (RegExp(r'^(?:walk me through|give me a tour of|show me around) (?:this|the|my) (?:screen|page|room)$').hasMatch(t)) return const CheHelpRequest(CheHelpKind.walkthrough);
   if (RegExp(r"^(?:help|help me|i need help)(?: (?:with|on) (?:this|the) (?:screen|page|room))?$|^what (?:is|are|'s) (?:this|that|these) (?:button|buttons|switch|control|controls)(?: for| do)?$|^what (?:does|do) (?:this|that) (?:button|switch|control) do$").hasMatch(t)) {
     return const CheHelpRequest(CheHelpKind.explain);
   }
   final what = RegExp(r"^what (?:does|do|is) (?:the )?(.+?)(?: button| switch| control)? (?:do|for|mean)$").firstMatch(t);
-  if (what != null && !RegExp(r'\b(?:market|price|strategy|trade|stock|nq|mnq|it|you|che)\b').hasMatch(what.group(1)!)) return CheHelpRequest(CheHelpKind.explain, what.group(1)!.trim());
+  // A market or strategy question is not help, unless it names a control on screen ("the Strategy switch").
+  if (what != null && (CheHelp.find(what.group(0)!.replaceFirst(RegExp(r'^what (?:does|do|is) '), '').replaceFirst(RegExp(r' (?:do|for|mean)$'), ''), minScore: 50) != null || !RegExp(r'\b(?:market|price|strategy|trade|stock|nq|mnq|it|you|che)\b').hasMatch(what.group(1)!))) {
+    return CheHelpRequest(CheHelpKind.explain, what.group(1)!.trim());
+  }
   final show = RegExp(r'^(?:show me|where is|highlight|point to) (?:the )?(.+?) (?:button|switch|control)$').firstMatch(t);
   if (show != null) return CheHelpRequest(CheHelpKind.show, show.group(1)!.trim());
   return null;
@@ -255,16 +313,18 @@ Future<void> showCheHelp(BuildContext context) {
   // Read before the sheet opens: once it is up, the page behind it is no longer the current route.
   final topics = CheHelp.shown;
   final page = CheScreenAwareness.current?.page ?? 'this screen';
+  final outlinable = {for (final t in topics) for (final i in t.items) if (CheHelp.canHighlight(i.name)) i.name};
   return showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
     backgroundColor: const Color(0xFF0B1416),
-    builder: (ctx) => _CheHelpSheet(outer: context, topics: topics, page: page),
+    builder: (ctx) => _CheHelpSheet(outer: context, topics: topics, page: page, outlinable: outlinable),
   );
 }
 
 class _CheHelpSheet extends StatelessWidget {
-  const _CheHelpSheet({required this.outer, required this.topics, required this.page});
+  const _CheHelpSheet({required this.outer, required this.topics, required this.page, required this.outlinable});
+  final Set<String> outlinable;
   final BuildContext outer;
   final List<CheHelpTopic> topics;
   final String page;
@@ -286,7 +346,7 @@ class _CheHelpSheet extends StatelessWidget {
               label: const Text('Walk me through'),
             ),
             OutlinedButton.icon(
-              onPressed: () { Navigator.pop(context); Navigator.of(outer).push(CheHelpCenter.route()); },
+              onPressed: () { Navigator.pop(context); Navigator.of(outer).push(CheHelpCenter.route(screen: topics)); },
               icon: const Icon(Icons.menu_book_rounded),
               label: const Text('Help Center'),
             ),
@@ -304,10 +364,12 @@ class _CheHelpSheet extends StatelessWidget {
                   contentPadding: EdgeInsets.zero,
                   title: Text(i.name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
                   subtitle: Text([i.does, if (i.caution.isNotEmpty) i.caution, if (i.say.isNotEmpty) 'Say: "${i.say}"'].join('\n'), style: const TextStyle(color: Color(0xFFB8C7C4))),
-                  trailing: TextButton(
-                    onPressed: () { Navigator.pop(context); CheHelp.highlight(i.name); },
-                    child: const Text('Show me'),
-                  ),
+                  trailing: outlinable.contains(i.name)
+                      ? TextButton(
+                          onPressed: () { Navigator.pop(context); CheHelp.highlight(i.name); },
+                          child: const Text('Show me'),
+                        )
+                      : null,
                 ),
               ),
           ],
@@ -317,41 +379,50 @@ class _CheHelpSheet extends StatelessWidget {
   }
 }
 
-/// Steps through the controls on screen, outlining each, with Back, Next and Done.
+/// Steps through the controls on screen, outlining each, with Back, Next and Done (also by voice).
 void unawaitedWalk(BuildContext context, {List<CheControlHelp>? items}) {
   final steps = items ?? [for (final t in CheHelp.shown) ...t.items];
-  if (steps.isEmpty) return;
-  var i = 0;
+  final m = ScaffoldMessenger.maybeOf(context);
+  if (steps.isEmpty || m == null) return;
   void show() {
-    CheHelp.highlight(steps[i].name);
-    final m = ScaffoldMessenger.maybeOf(context);
-    if (m == null) return;
-    m.hideCurrentMaterialBanner();
+    final i = CheHelp._walkAt;
+    final item = CheHelp._walk[i];
+    CheHelp.highlight(item.name);
+    m.clearMaterialBanners();
     m.showMaterialBanner(MaterialBanner(
       backgroundColor: const Color(0xFF13262A),
       content: Semantics(
         liveRegion: true,
-        child: Text('Step ${i + 1} of ${steps.length}. ${steps[i].spoken}', style: const TextStyle(color: Colors.white, fontSize: 16)),
+        child: Text('Step ${i + 1} of ${CheHelp._walk.length}. ${item.spoken}', style: const TextStyle(color: Colors.white, fontSize: 16)),
       ),
       actions: [
-        if (i > 0) TextButton(onPressed: () { i -= 1; show(); }, child: const Text('Back')),
-        if (i < steps.length - 1) TextButton(onPressed: () { i += 1; show(); }, child: const Text('Next')),
-        TextButton(onPressed: () { CheHelp.clear(); m.hideCurrentMaterialBanner(); }, child: const Text('Done')),
+        if (i > 0) TextButton(onPressed: () => CheHelp.step('back'), child: const Text('Back')),
+        if (i < CheHelp._walk.length - 1) TextButton(onPressed: () => CheHelp.step('next'), child: const Text('Next')),
+        TextButton(onPressed: () => CheHelp.step('done'), child: const Text('Done')),
       ],
     ));
   }
+  CheHelp._walk = steps;
+  CheHelp._walkAt = 0;
+  CheHelp._walkShow = show;
+  CheHelp._walkHide = m.clearMaterialBanners;
   show();
 }
 
 /// Every screen's help that is open in the app now, in one place.
 class CheHelpCenter extends StatelessWidget {
-  const CheHelpCenter({super.key});
+  const CheHelpCenter({super.key, this.screen = const []});
 
-  static Route<void> route() => MaterialPageRoute(builder: (_) => const CheHelpCenter(), settings: const RouteSettings(name: 'help_center'));
+  /// The help of the screen it was opened from, read before this page covered it.
+  final List<CheHelpTopic> screen;
+
+  static Route<void> route({List<CheHelpTopic> screen = const []}) =>
+      MaterialPageRoute(builder: (_) => CheHelpCenter(screen: screen), settings: const RouteSettings(name: 'help_center'));
 
   @override
   Widget build(BuildContext context) {
-    final topics = CheHelp.everywhere;
+    final titles = {for (final t in screen) t.title};
+    final topics = [...screen, for (final t in CheHelp.everywhere) if (titles.add(t.title)) t];
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(backgroundColor: Colors.black, foregroundColor: Colors.white, title: const Text('Help Center')),
