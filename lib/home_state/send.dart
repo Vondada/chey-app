@@ -362,11 +362,14 @@ extension _CheHomeSend on _CHEHomeState {
     // Shown in a private sheet with large text, never added to the chat.
     unawaited(showModalBottomSheet<void>(
       context: context,
-      builder: (sheetContext) => Semantics(
-        liveRegion: true,
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: SelectableText(shown, style: const TextStyle(fontSize: 24, height: 1.4)),
+      // A password on screen: "look at my screen" refuses while this is open.
+      builder: (sheetContext) => CheSensitiveScreen(
+        child: Semantics(
+          liveRegion: true,
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: SelectableText(shown, style: const TextStyle(fontSize: 24, height: 1.4)),
+          ),
         ),
       ),
     ));
@@ -729,6 +732,40 @@ extension _CheHomeSend on _CHEHomeState {
         await speakText(reply);
         return;
       }
+    }
+
+    // "Look at my screen" (owner, 2026-10-20): CHE takes a picture of her own
+    // screen and sends it with this turn, with the page's report, so the
+    // Worker's vision reads what is really there. A password or vault page
+    // on screen refuses the picture; a failure is said aloud, never guessed.
+    if (_pendingAttachment == null && cheAsksToLookAtScreen(message)) {
+      final shot = await CheScreenCapture.capture();
+      if (!shot.ok) {
+        final reply = 'I did not look, sir: ${shot.reason}.';
+        if (mounted) {
+          _set(() {
+            controller.clear();
+            messages
+              ..add({'role': 'user', 'text': message})
+              ..add({'role': 'assistant', 'text': reply});
+          });
+          ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
+            content: Text(reply, style: const TextStyle(fontSize: 18, height: 1.3)),
+            duration: const Duration(seconds: 8),
+          ));
+        }
+        HapticFeedback.heavyImpact();
+        await speakText(reply, record: false);
+        return;
+      }
+      HapticFeedback.lightImpact();
+      final look = 'The owner asked CHE to look at his screen. The attached image is a picture of CHE\'s own app '
+          '(${shot.width}x${shot.height}); web pages and videos inside it appear blank. Page report: ${CheScreenAwareness.describe()}';
+      _set(() {
+        _pendingAttachment = {'name': 'che-screen.png', 'media_type': 'image', 'base64': shot.base64};
+        // The browser's page text, when it is open, stays with the picture.
+        _pendingScreenContext = [if ((_pendingScreenContext ?? '').trim().isNotEmpty) _pendingScreenContext!, look].join('\n\n');
+      });
     }
 
     // "What is on my screen?": answered from the page really in front of the

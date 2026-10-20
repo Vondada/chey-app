@@ -333,3 +333,18 @@ test('through chat: "what is connected to PR 374" answers from the Brain with no
   const deictic = await che.say("What's related to this?");
   assert.equal(deictic.route, 'model');
 });
+
+test('the phone\'s "look at my screen" capture (image + page report) is seen by vision, never refused, and remembered with its room', sqlite, async () => {
+  visionSummary = 'CHE Trading Room: MNQ chart with two paper positions and a Stop button.';
+  const che = await owner({ env: { CHE_MULTIMODAL_URL: VISION_URL } });
+  const out = await che.say('CHE, look at my screen', {
+    attachment: { name: 'che-screen.png', media_type: 'image', base64: 'aGVsbG8=' },
+    screen_context: "The owner asked CHE to look at his screen. The attached image is a picture of CHE's own app (1290x2796); web pages and videos inside it appear blank. Page report: You are on Trading Room.",
+  });
+  assert.notEqual(out.route, 'che_screen', 'a capture is never answered with "I can\'t see your screen"');
+  assert.equal(out.done.vision.ok, true);
+  assert.equal(out.done.screen_room, 'trading');
+  const seen = await recentScreen(che.storage);
+  assert.match(seen.summary, /MNQ chart with two paper positions/, 'the vision summary, not the page report, is the remembered screen');
+  visionSummary = '';
+});

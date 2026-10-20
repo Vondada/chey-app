@@ -8470,7 +8470,7 @@ export class CheState extends DurableObject {
           if (!body.attachment && !String(body.screen_context || '').trim() && (asksAboutScreen(rawMessage) || screenFollowUp(rawMessage))) {
             if (ownerDevice) await this.dropHeldActions();
             return ndjsonReply('I can\'t see your screen from here, sir: this message came without any screen report from your phone, so I won\'t guess. '
-              + 'In CHE\'s iPhone app, ask "what is on my screen?" and the app answers from the page it has open.', { source: 'che_screen', ok: false, model_calls: 0 });
+              + 'In CHE\'s iPhone app, say "look at my screen" and I will take a picture of the app and read it, or ask "what is on my screen?" for the page it has open.', { source: 'che_screen', ok: false, model_calls: 0 });
           }
         }
         // Always-on speech learning: corrections teach her how the owner's voice

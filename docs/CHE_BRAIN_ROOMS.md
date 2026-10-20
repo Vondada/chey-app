@@ -115,6 +115,22 @@ related to diabetes?" and "What is related to Three.js?" stay with the model.
 Not used: embeddings. `vector_memory.js` can embed text when pgvector is connected, but that is a paid
 network call per record; semantic links would be `inferred` and are left for later.
 
+### "Look at my screen" on the phone (`lib/che_ui/che_screen_capture.dart`)
+
+"Look at my screen", "can you see my screen", "what do you see", "analyze my screen" or "look at
+this" (typed or spoken) makes CHE take a PNG of her own app, the page really in front of the owner
+with any sheet or dialog on it. The longest side is at most 1400 px. The PNG is the turn's image
+attachment, and `screen_context` carries the page report. The Worker's existing vision path reads it,
+names the engine, ties it to a room (`screenRoomFor` over the summary and report) and remembers it
+for 15 minutes on the owner's device. "What is on my screen?" still answers from the page report,
+instantly and with no upload.
+
+A page that shows a password or a vault note is wrapped in `CheSensitiveScreen`: while one is
+mounted the capture refuses and CHE says why, so a password never reaches the Worker or a vision
+provider. The wrapped surfaces are the password sheet and the vault notes list. Web pages and videos
+are drawn by iOS, not Flutter, so they come out blank; the browser already sends its page text, and
+the capture is added to it. Only CHE's own app is captured.
+
 ## 3. The flow
 
 Question or event → intent and room (`crossRoomIntent`, `ledgerIntent`, `screenRoomFor`, the
@@ -125,8 +141,7 @@ reply guards (`truth_layer.js`) → receipts and room events → the Brain → t
 ## 4. Still to do (later PRs)
 
 - Music knowledge: there is no music record store; a Music Room event producer waits for one.
-- The phone: "look at my screen" during voice should capture CHE's own screen and send it as the
-  attachment with the active room (Dart, Shorebird); sharing another app's screen needs the iOS
-  ReplayKit broadcast extension, an app group and a new IPA (native, not patchable).
+- Sharing another app's screen needs the iOS ReplayKit broadcast extension, an app group and a new
+  IPA (native, not patchable).
 - Semantic relationships (embeddings through `vector_memory.js`, status `inferred`).
 - The Brain Room UI: show `source.room`, status and `source.relations` (basis, status) on a record card.
