@@ -489,3 +489,32 @@ test('actual /api/chat reads learning without a model and reports failed replay 
     assert.equal(calls, 0);
   } finally { globalThis.fetch = realFetch; }
 });
+
+test('overlapping research windows share immutable candle/outcome chunks and diagnostics use the real attempt time', async () => {
+  const { liveBacktest, strategyLearning } = await import('./trading_live.js');
+  const storage = memoryStorage(); const bars = [...DAY1, ...DAY2];
+  const feed = async () => ({ status: 'REPLAY', interval: '5m', provider: 'fixture', provider_symbol: 'MNQ', candles: bars });
+  await liveBacktest(storage, { load: feed, now: after(bars) });
+  const first = await storage.list({ prefix: 'live_research_data:' });
+  const later = after(bars) + 86400000;
+  await liveBacktest(storage, { load: feed, now: later });
+  const learning = await strategyLearning(storage, { now: later });
+  assert.equal(learning.research.last_attempt, new Date(later).toISOString());
+  assert.equal(learning.research.reused, true);
+  assert.equal((await storage.list({ prefix: 'live_research_data:' })).size, first.size);
+});
+
+test('incremental replay matches a full replay exactly and never double-counts carried outcomes', async () => {
+  const { liveBacktest } = await import('./trading_live.js');
+  const storage = memoryStorage();
+  const firstBars = [...DAY1, ...DAY2.slice(0, 1)];
+  const bars = [...DAY1, ...DAY2];
+  const load = (rows) => async () => ({ status: 'REPLAY', interval: '5m', provider: 'fixture', provider_symbol: 'MNQ', candles: rows });
+  await liveBacktest(storage, { load: load(firstBars), now: after(firstBars) });
+  const incremental = await liveBacktest(storage, { load: load(bars), now: after(bars) });
+  const full = await liveBacktest(memoryStorage(), { load: load(bars), now: after(bars) });
+  assert.equal(incremental.ok, true);
+  assert.equal(incremental.incremental, true);
+  assert.deepEqual(incremental.rows.map((r) => [r.strategy_version, r.stats]), full.rows.map((r) => [r.strategy_version, r.stats]));
+  assert.deepEqual(incremental.dataset_refs, full.dataset_refs);
+});

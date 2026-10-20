@@ -234,17 +234,49 @@ async function historicalReplay(storage, { fetcher = fetch, now = Date.now(), lo
   const id = await hex({ dataset_hash, versions: specs.map((spec) => freshPortfolio(spec, 'backtest').strategy_version) });
   const previous = await storage.get(`${LIVE_RESEARCH_PREFIX}${id}`);
   if (previous) { await storage.put(LIVE_BACKTEST, previous); return { ...previous, reused: true }; }
-  const dataset_refs = [];
-  for (let i = 0; i < bars.length; i += 256) {
-    const key = `live_research_data:${dataset_hash}:${i / 256}`;
-    if (!(await storage.get(key))) await storage.put(key, bars.slice(i, i + 256));
-    dataset_refs.push(key);
-  }
+  // Stable six-hour content-addressed chunks reuse the unchanged part of a rolling window.
+  // Preserve every experiment and never duplicate its full 60-day candle/outcome payload.
+  const chunkRecords = async (records, timeOf, prefix, size) => {
+    const groups = new Map();
+    for (const record of records) {
+      const slot = Math.floor(Date.parse(timeOf(record)) / (6 * 3600000));
+      const group = groups.get(slot) || []; group.push(record); groups.set(slot, group);
+    }
+    const refs = [];
+    for (const group of groups.values()) for (let i = 0; i < group.length; i += size) {
+      const part = group.slice(i, i + size);
+      const key = `${prefix}:${await hex({ provider: feed.provider, symbol: feed.provider_symbol, records: part })}`;
+      if (!(await storage.get(key))) await storage.put(key, part);
+      refs.push(key);
+    }
+    return refs;
+  };
+  if (bars.length > 18000) return fail('Historical data exceeds the bounded 60-day five-minute research window.');
+  const dayKey = `live_research_budget:${tradeDayOf(at)}`;
+  const budget = (await storage.get(dayKey)) || [];
+  if (budget.length >= 2) return fail('Two distinct historical datasets were already studied this research day. Reuse the archived results; no repeated data or forced trades added.');
+  const dataset_refs = await chunkRecords(bars, (b) => b.t, 'live_research_data', 72);
+  const prior = await storage.get(RESEARCH_LAST);
+  const priorBars = prior?.provider === feed.provider && prior?.dataset_refs
+    ? (await Promise.all(prior.dataset_refs.map((key) => storage.get(key)))).flat() : [];
+  const incremental = priorBars.length > 0 && priorBars.length < bars.length && priorBars.every((bar, i) => JSON.stringify(bar) === JSON.stringify(bars[i]));
   const ctx = intradayContext(bars);
   const rows = [];
   for (const spec of specs) {
-    const pf = freshPortfolio(spec, 'backtest');
-    const trades = stepPortfolio(pf, bars, ctx);
+    let pf = freshPortfolio(spec, 'backtest');
+    let carried = [];
+    const earlier = incremental ? prior.rows.find((r) => r.strategy_version === pf.strategy_version) : null;
+    if (earlier?.checkpoint_ref && earlier?.outcome_index_ref) {
+      const checkpoint = await storage.get(earlier.checkpoint_ref);
+      const refs = await storage.get(earlier.outcome_index_ref);
+      if (checkpoint && Array.isArray(refs)) {
+        pf = checkpoint;
+        carried = (await Promise.all(refs.map((key) => storage.get(key)))).flat();
+      }
+    }
+    const trades = [...carried, ...stepPortfolio(pf, bars, ctx)];
+    const checkpoint_ref = `live_research_checkpoint:${id}:${pf.strategy_version}`;
+    await storage.put(checkpoint_ref, pf);
     const invalid = trades.flatMap((t) => validateTradeRecord(t));
     if (invalid.length) return fail(`experiment records refused: ${invalid.join('; ')}`);
     const wf = evaluateWalkForward(trades, { folds: 4, minTrain: 0.4, barTimes: bars.map((b) => b.t) });
@@ -263,26 +295,26 @@ async function historicalReplay(storage, { fetcher = fetch, now = Date.now(), lo
     }
     const studies = await storage.list({ prefix: `live_research_seen:${pf.strategy_version}:` });
     const studied_today = [...studies.values()].filter((v) => tradeDayOf(v.first_seen) === tradeDayOf(at)).length;
-    const refs = [];
-    for (let i = 0; i < trades.length; i += 32) {
-      const key = `live_research_trades:${id}:${pf.strategy_version}:${i / 32}`;
-      await storage.put(key, trades.slice(i, i + 32)); refs.push(key);
-    }
+    const refs = await chunkRecords(trades, (t) => t.entry.time, 'live_research_trade_chunk', 32);
+    const outcome_index_ref = `live_research_outcomes:${id}:${pf.strategy_version}`;
+    await storage.put(outcome_index_ref, refs);
     rows.push({ portfolio: pf.key, strategy: spec.c, filter: spec.f, target_r: spec.target_r,
       strategy_version: pf.strategy_version, params: pf.params, counts: pf.counts,
       name: INTRADAY_CANDIDATES[spec.c].name, family: INTRADAY_CANDIDATES[spec.c].family,
       stats: summarize(trades), training: summarize(training), oos: summarize(wf.oos),
       walk_forward: wf.folds, folds_positive: wf.folds_positive, folds: wf.folds_total,
-      new_outcomes, studied_today, outcome_refs: refs, open_at_end: Boolean(pf.open),
+      new_outcomes, studied_today, outcome_index_ref, checkpoint_ref, open_at_end: Boolean(pf.open),
       sample: trades.slice(-3).map((t) => ({ side: t.side, entry: t.entry.time, exit: t.exit.time, reason: t.exit.reason, net: t.net_pnl })) });
   }
   rows.sort((a, b) => b.stats.expectancy_r - a.stats.expectancy_r);
-  const result = { id, at, ok: true, dataset_hash, dataset_refs, resolution: RESOLUTION, target_per_strategy: MIN_TRADES,
+  const result = { id, at, ok: true, dataset_hash, dataset_refs, incremental, resolution: RESOLUTION, target_per_strategy: MIN_TRADES,
     provider: feed.provider, data_quality: feed.status, bars: bars.length, from: bars[0].t, to: bars.at(-1).t,
     data: `${feed.provider} ${feed.provider_symbol}, ${bars.length} five-minute bars ${bars[0].t} to ${bars.at(-1).t} (historical research only)`,
     split_rule: 'First 40% of bars train; four consecutive held-out time windows. Trades crossing fold boundaries excluded from OOS. Parameters fixed before replay; all alternatives retained, not independent samples.',
     costs: COSTS, rows };
+  if (new TextEncoder().encode(JSON.stringify(result)).byteLength > 120000) return fail('Research metadata exceeds its bounded record size; no success was recorded.');
   await storage.put(`${LIVE_RESEARCH_PREFIX}${id}`, result);
+  await storage.put(dayKey, [...budget, id]);
   await storage.put(RESEARCH_LAST, result);
   await storage.put(LIVE_BACKTEST, result);
   return result;
@@ -294,6 +326,7 @@ export async function researchDue(storage, { now = Date.now(), ...options } = {}
   if (!state?.enabled) return { skipped: 'paper research is off' };
   const last = await storage.get(RESEARCH_ATTEMPT);
   const today = tradeDayOf(new Date(now).toISOString());
+  if (((await storage.get(`live_research_budget:${today}`)) || []).length >= 2) return { skipped: 'daily research dataset budget reached' };
   if (last?.status === 'complete' && tradeDayOf(last.at) === today) return { skipped: 'research already recorded this research day' };
   if (last?.at && now - Date.parse(last.at) < 3600000) return { skipped: 'research retry cooldown' };
   return liveBacktest(storage, { now, ...options });
@@ -366,9 +399,9 @@ const emptySummary = () => summarize([]);
 
 /** Learning cards keep one predeclared baseline per strategy; parameter experiments are never pooled. */
 export async function strategyLearning(storage, { now = Date.now() } = {}) {
-  const [records, state, feed, runs, portfolios, latest, lastSuccess] = await Promise.all([
+  const [records, state, feed, runs, portfolios, latest, lastSuccess, attempt] = await Promise.all([
     readTrades(storage, isLive), storage.get(LIVE_STATE), storage.get(LIVE_FEED), storage.get(LIVE_RUNS),
-    readLivePortfolios(storage), storage.get(LIVE_BACKTEST), storage.get(RESEARCH_LAST),
+    readLivePortfolios(storage), storage.get(LIVE_BACKTEST), storage.get(RESEARCH_LAST), storage.get(RESEARCH_ATTEMPT),
   ]);
   const history = latest?.ok ? latest : lastSuccess;
   const today = tradeDayOf(new Date(now).toISOString());
@@ -431,7 +464,7 @@ export async function strategyLearning(storage, { now = Date.now() } = {}) {
     feed: feed ? { ...feed, bars: undefined } : null, errors: (runs || []).filter((r) => !r.ok).slice(-5),
     explanation: 'Only closed complete five-minute bars count. Delayed feeds, quiet setups, risk-size filters, session windows, one open position per portfolio and gap skips can limit growth. Signals are portfolio counts, not independent evidence.',
   };
-  const research = { last_attempt: latest?.at || null, error: latest?.ok === false ? latest.error : null, last_success: history?.at || null,
+  const research = { last_attempt: attempt?.at || latest?.at || null, attempt_status: attempt?.status || null, reused: Boolean(attempt?.reused), error: attempt?.status === 'failed' ? attempt.error : latest?.ok === false ? latest.error : null, last_success: history?.at || null,
     id: history?.id || null, dataset_hash: history?.dataset_hash || null, data: history?.data || null,
     target_per_strategy: MIN_TRADES, quota_met: strategies.every((r) => r.today.studied >= MIN_TRADES),
     note: 'Daily target, not a quota: no forced entries, timeframe changes or duplicate experiment samples. Historical and OOS overlap and are never summed. Public data availability/usage rights limit research.',

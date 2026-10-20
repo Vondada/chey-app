@@ -152,13 +152,13 @@ void main() {
     await openCenter(tester, che: che);
     expect(find.text('Commands'), findsOneWidget);
     expect(find.text('All 93'), findsOneWidget);
-    for (final label in ['Intelligence & Control 11', 'YouTube 11', 'Trading 11', 'Websites, Apps & AI 20', 'Money Management 8',
+    for (final label in ['Intelligence & Control 11', 'YouTube 11', 'Trading 13', 'Websites, Apps & AI 20', 'Money Management 8',
       'Client Scouting & Delivery 9', 'Marketing & Sales 7', 'Office & Automation 8', 'Creator Studio 6']) {
       expect(find.text(label), findsOneWidget, reason: label);
     }
-    await tester.ensureVisible(find.text('Trading 11'));
+    await tester.ensureVisible(find.text('Trading 13'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Trading 11'));
+    await tester.tap(find.text('Trading 13'));
     await tester.pumpAndSettle();
     final library = find.descendant(of: find.byKey(const ValueKey('command-library')), matching: find.byType(Scrollable)).first;
     for (final id in ['trade-open', 'trade-chart', 'trade-setup', 'trade-liquidity', 'trade-risk', 'trade-backtest', 'trade-journal', 'trade-alert', 'trade-execute', 'trade-connections']) {
@@ -406,8 +406,8 @@ void main() {
   testWidgets('no automatic speech: opening, browsing and searching stay silent; Read This speaks', (tester) async {
     final spoken = <String>[];
     await openCenter(tester, che: FakeChe(), spoken: spoken);
-    await tester.ensureVisible(find.text('Trading 11'));
-    await tester.tap(find.text('Trading 11'));
+    await tester.ensureVisible(find.text('Trading 13'));
+    await tester.tap(find.text('Trading 13'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Workflows'));
     await tester.pumpAndSettle();
@@ -425,9 +425,9 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.bySemanticsLabel(RegExp(r'^/trade chart\. Analyze NQ/MNQ market structure\. (Ready|Needs setup)')), findsNothing,
         reason: 'not on screen until scrolled');
-    await tester.ensureVisible(find.text('Trading 11'));
+    await tester.ensureVisible(find.text('Trading 13'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Trading 11'));
+    await tester.tap(find.text('Trading 13'));
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
     expect(find.bySemanticsLabel(RegExp(r'^/trade chart\. Analyze NQ/MNQ market structure\. Ready\.')), findsOneWidget);

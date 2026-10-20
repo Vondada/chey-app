@@ -96,7 +96,7 @@ void main() {
     await waitFor(tester, find.text('All 93'));
 
     // The catalog and its live status come from the Worker.
-    expect(find.text('Trading 11'), findsOneWidget);
+    expect(find.text('Trading 13'), findsOneWidget);
     await tester.enterText(find.byType(TextField).first, 'trade-journal');
     await tester.pumpAndSettle();
     await tester.tap(find.text('/trade-journal').first);
