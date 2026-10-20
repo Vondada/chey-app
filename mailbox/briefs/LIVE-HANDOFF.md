@@ -64,6 +64,13 @@ Then, on GitHub:
 - Next: open focused PR for milestone 1 when the owner is ready (or continue: milestone 2 = scripted multi-agent demo via officeGoal + War Room board wiring + orb-tap deep link to the real task; then Phase B typed memory/provenance).
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
+## 2. Current position (Claude, 2026-10-20 — owner's order: relationships → phone capture → ReplayKit → Music; PR #376 open, ReplayKit branch local)
+
+- **#374 merged and LIVE** (`502cf47`): Worker version `37115edd`, Shorebird patch published (run 39378864795).
+- **PR #376 open** on `claude/che-latency-optimization-8ruaus` (head `2e5af1e`), three commits: relationship discovery (`brain_relations.js`, "what is connected to PR 374"), "look at my screen" phone capture (`lib/che_ui/che_screen_capture.dart`, password/vault surfaces refuse), Music Room knowledge (phone music requests + music tool receipts + Memory taste). Local: Worker 2488/2488, dart analyze clean, Flutter 549. CI green on `7eb4099`; `2e5af1e` CI pending at handoff. Needs the owner's go to merge (Worker deploy + Shorebird patch).
+- **ReplayKit screen sharing**: committed on LOCAL branch `claude/che-replaykit-broadcast` (`ef24013`, rebased on `2e5af1e`), not pushed: pushing to a new branch needs the owner's OK. Contents: `native/iphone/CheBroadcast/*` (extension), `tool/add_broadcast_extension.rb` (xcodeproj, run by bootstrap; tested twice on a generated project), AppDelegate `che/screen_share` channel in `tool/bootstrap.sh`, IPA ad-hoc signing with App Group entitlements, native-check verifies the appex, `lib/che_ui/che_screen_share.dart` + "share my screen"/"stop sharing my screen". Swift is unverified until the macOS native check compiles it; SideStore App Group behaviour only provable on the iPhone. Kill switch: repo variable `CHE_SCREEN_BROADCAST=off`. NOTE: if this session's container is gone, the local branch is gone too — the design is in `docs/CHE_BRAIN_ROOMS.md` on that branch only; recreate from that description.
+- Owner-side: ElevenLabs out of credits (CHE speaks with Fish).
+
 ## 2. Current position (Claude, 2026-10-20 — PR #375 Brain coordinator MERGED and LIVE; PR #374 ledger dashboard green, waiting on the owner)
 
 - **#375 merged** as `92a2432` (squash of head `11f58bd`) on the owner's go ("I think it's ready"). Deploy run 39378074233: live commit check VERIFIED, Worker version `dd33eac6-50b2-46a5-b9eb-d7ecd6d027a6`; memory, voice and command-center probes passed; Knowledge Atlas 11/11, Memory truth 18/18.
