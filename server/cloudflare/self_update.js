@@ -191,6 +191,26 @@ async function gh(env, method, path, body, fetcher = fetch) {
   return { status: response.status, ok: response.ok, data };
 }
 
+/**
+ * One pull request as GitHub records it, for answering questions about it: title, state, dates, body
+ * and changed file paths. Read-only. { ok:false, reason } when GitHub is not connected or the read failed.
+ */
+export async function readPullRequest(env, number, fetcher = fetch) {
+  const n = Number(number);
+  if (!Number.isSafeInteger(n) || n < 1) return { ok: false, reason: 'invalid pull request number' };
+  if (!repoOf(env)) return { ok: false, reason: 'GitHub is not connected (CHE_GITHUB_TOKEN / CHE_GITHUB_REPO)' };
+  const pr = await gh(env, 'GET', `/pulls/${n}`, null, fetcher);
+  if (!pr.ok || pr.data?.number !== n) return { ok: false, reason: pr.status === 404 ? `pull request #${n} does not exist` : `GitHub read failed (${pr.status || 'network'}${ghReason(pr) ? `: ${ghReason(pr).slice(0, 80)}` : ''})` };
+  const files = await gh(env, 'GET', `/pulls/${n}/files?per_page=100`, null, fetcher);
+  return {
+    ok: true, number: n, url: String(pr.data.html_url || ''), title: String(pr.data.title || ''),
+    state: pr.data.merged_at ? 'merged' : String(pr.data.state || ''), merged_at: String(pr.data.merged_at || ''), created_at: String(pr.data.created_at || ''),
+    body: String(pr.data.body || '').slice(0, 4000),
+    files: files.ok && Array.isArray(files.data) ? files.data.map((f) => String(f.filename || '')).filter(Boolean) : [],
+    files_read: files.ok,
+  };
+}
+
 function ghReason(result) {
   return String(result?.data?.message || result?.data?.errors?.[0]?.message || '').trim();
 }

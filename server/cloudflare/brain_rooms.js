@@ -14,6 +14,8 @@ import { readLedgers } from './trading_ledgers.js';
 import { loadChangeHistory } from './truth_layer.js';
 import { RELATIONS_VERSION, discoverRelations, entitiesOf, relationReason } from './brain_relations.js';
 import { reaInvestigations } from './rea_runner.js';
+import { splitAsk } from './memory_provenance.js';
+import { readPullRequest } from './self_update.js';
 
 export const BRAIN_ROOMS_SOURCE = 'che_brain_rooms';
 
@@ -226,7 +228,8 @@ export const pointsAtScreen = (topic) => THIS.test(String(topic || '').trim());
  * { kind: 'know' | 'learned' | 'connect' | 'related' | 'relate', rooms, topic, other? } or null.
  */
 export function crossRoomIntent(message) {
-  const text = String(message || '').replace(/[’']/g, "'").replace(WAKE, '').trim().replace(/[.?!]+$/, '');
+  // Only the sentence that asks: "Tell me what you learned from it…" after it is an instruction, not the subject.
+  const text = splitAsk(String(message || '').replace(/[’']/g, "'")).ask.replace(WAKE, '').trim().replace(/[.?!]+$/, '');
   if (!text || text.length > 400) return null;
   const rooms = roomsIn(text);
   let m;
@@ -249,7 +252,7 @@ export function crossRoomIntent(message) {
   // "What is connected to pull request 374?", "How is the MNQ journal related to PR 371?". Only when the
   // subject names an exact reference, "this" (the screen), the Brain or a room: "what is related to
   // diabetes?" stays an ordinary question for the model.
-  const inBrain = /\s+(?:in|across)\s+(?:the\s+brain|(?:my|your|the|all|other)\s+rooms)$/i;
+  const inBrain = /\s+(?:in|across|from)\s+(?:(?:the|your|my)\s+brain|(?:my|your|the|all|other)\s+rooms)$/i;
   // Anchors are exact identifiers; a symbol, website or framework name ("Three.js") is a general topic
   // unless the sentence says "in the Brain" or names a room.
   const anchored = (topic) => THIS.test(topic) || entitiesOf(topic).some((e) => /^(?:pr|sha|job|inv|repo|npm):/.test(e) || /^file:.*[_/]/.test(e));
@@ -258,13 +261,38 @@ export function crossRoomIntent(message) {
     const topic = m[1].replace(inBrain, '').trim();
     if (anchored(topic) || scoped) return { kind: 'related', rooms: [], topic };
   }
+  // Subject first: "What is PR 374 related to (in the Brain)?", "What does PR 374 connect to?".
+  if ((m = /^(?:what|which\s+rooms?)\s+(?:is|are|does|do)\s+(.+?)\s+(?:related|connected|linked|tied|connects?|relates?|links?)\s+(?:to|with)((?:\s+(?:in|across|from)\s+.+)?)$/i.exec(text))) {
+    const topic = m[1].trim();
+    if (anchored(topic) || (m[2] && inBrain.test(m[2]))) return { kind: 'related', rooms: [], topic };
+  }
   if ((m = /^(?:how\s+(?:is|are|does|do)|is|are)\s+(.+?)\s+(?:related|connected|linked|tied)\s+(?:to|with)\s+(.+)$/i.exec(text))) {
     const a = m[1].trim();
     const b = m[2].replace(inBrain, '').trim();
-    if ((anchored(a) && anchored(b)) || inBrain.test(m[2])) return { kind: 'relate', rooms: [], topic: a, other: b };
+    // An exact reference against a room ("How is PR 374 related to the Trading Room?") is a relation too.
+    if ((anchored(a) && (anchored(b) || roomsIn(b).length)) || inBrain.test(m[2])) return { kind: 'relate', rooms: [], topic: a, other: b };
   }
   if ((m = /^what\s+do\s+(?:you|we)\s+(?:already\s+)?know\s+about\s+(.+)$/i.exec(text)) && rooms.length) {
     return { kind: 'know', rooms: rooms.filter((r) => r !== 'brain'), topic: m[1].trim() };
+  }
+  return null;
+}
+
+/**
+ * "Which files did it change?" right after a question about PR 374: the follow-up keeps that pull request
+ * as its subject. Only a pronoun follow-up about what the PR changed or touches, and only when the owner's
+ * recent turns name exactly one pull request; anything else stays an ordinary question.
+ */
+export function prFollowUp(message, history = []) {
+  const text = String(message || '').replace(/[’']/g, "'").replace(WAKE, '').trim();
+  if (!text || text.length > 200 || entitiesOf(text).some((e) => e.startsWith('pr:'))) return null;
+  if (!/\b(?:it|that(?:\s+(?:pr|pull\s+request))?|this\s+(?:pr|pull\s+request)|the\s+(?:pr|pull\s+request))\b/i.test(text)) return null;
+  if (!/\b(?:files?|change[sd]?|touch(?:ed|es)?|rooms?|related|connect(?:ed|s)?|linked)\b/i.test(text)) return null;
+  const turns = (Array.isArray(history) ? history : []).filter((h) => String(h?.role) === 'user').slice(-2).reverse();
+  for (const turn of turns) {
+    const prs = [...new Set(entitiesOf(String(turn.content ?? turn.text ?? '')).filter((e) => e.startsWith('pr:')))];
+    if (prs.length === 1) return { kind: 'related', rooms: [], topic: `PR ${prs[0].slice(3)}`, follow_up: true };
+    if (prs.length > 1) return null;
   }
   return null;
 }
@@ -312,7 +340,32 @@ async function liveLine(room, { storage, env, topic, store }) {
 }
 
 /** The owner's cross-room question answered from records only. `screen` is the recent screen observation, if any. */
-export async function answerCrossRoom({ store, storage, env, intent, screen = null, now = Date.now() } = {}) {
+/**
+ * What a pull request is and which rooms it touches, from GitHub (verified) and the change history,
+ * labelled verified, derived or not found. Never invents a title, file or link.
+ */
+async function prEvidence(n, { env, fetcher, store }) {
+  const pr = await readPullRequest(env || {}, n, fetcher);
+  if (!pr.ok) return { ok: false, rooms: [], hits: 0, text: `GitHub: I could not read pull request #${n} (${pr.reason}), so I cannot say what it changed.` };
+  const lines = [`From GitHub (verified), pull request #${n}: "${pr.title}", ${pr.state}${pr.merged_at ? ` on ${pr.merged_at.slice(0, 10)}` : ''}, ${pr.files.length} file${pr.files.length === 1 ? '' : 's'} changed. ${pr.url}`];
+  const summary = String(pr.body || '').replace(/[#*`>_]/g, '').replace(/\s+/g, ' ').trim();
+  if (summary) lines.push(`What it says it does (the pull request's own description, written by its author): ${summary.slice(0, 300)}${summary.length > 300 ? '…' : ''}`);
+  const byRoom = roomsForFiles(pr.files);
+  const rooms = [...byRoom.keys()];
+  if (byRoom.size) {
+    lines.push(`Rooms it is connected to, verified by the files it changed: ${[...byRoom].map(([room, files]) => `${ROOMS[room]?.label || room} (${files.slice(0, 3).join(', ')}${files.length > 3 ? ` and ${files.length - 3} more` : ''})`).join('; ')}.`);
+  } else if (pr.files_read) {
+    lines.push('None of its files belong to a specific room.');
+  }
+  // Brain records that came from it (room events and coding receipts), never chat about it.
+  const recorded = store ? store.search(String(n), { limit: 20 }).filter((r) => !r.deleted && !isConversation(r) && entitiesOf(r).includes(`pr:${n}`)) : [];
+  lines.push(recorded.length
+    ? `Recorded in the Brain from it: ${recorded.slice(0, 4).map((r) => `${r.title} (${roomOf(r)}, ${statusLabel(r.verification)})`).join('; ')}.`
+    : 'Nothing in the Brain was recorded from it yet beyond our conversations, so anything more would be inference.');
+  return { ok: true, rooms, hits: 1 + recorded.length, text: lines.join('\n') };
+}
+
+export async function answerCrossRoom({ store, storage, env, intent, screen = null, now = Date.now(), fetcher = globalThis.fetch } = {}) {
   const topicRaw = String(intent.topic || '').trim();
   const fromScreen = THIS.test(topicRaw);
   if (fromScreen && !screen) {
@@ -335,7 +388,15 @@ export async function answerCrossRoom({ store, storage, env, intent, screen = nu
       ok: true, rooms: ['screen', ...new Set(links.map((l) => l.room).filter(Boolean))], hits: links.length,
     };
   }
-  if (intent.kind === 'related' || intent.kind === 'relate') return answerRelations({ store: ready ? store : null, intent, topic, fromScreen });
+  if (intent.kind === 'related' || intent.kind === 'relate') {
+    const answer = answerRelations({ store: ready ? store : null, intent, topic, fromScreen });
+    // A pull request's authoritative record is on GitHub: read it whatever the Brain holds.
+    const prs = [...new Set([topic, intent.other || ''].flatMap((t) => entitiesOf(t)).filter((e) => e.startsWith('pr:')).map((e) => Number(e.slice(3))))].slice(0, 2);
+    if (!prs.length) return answer;
+    const extra = [];
+    for (const n of prs) extra.push(await prEvidence(n, { env, fetcher, store: ready ? store : null }));
+    return { ...answer, text: [...extra.map((e) => e.text), answer.text].join('\n'), ok: answer.ok || extra.some((e) => e.ok), rooms: [...new Set([...(answer.rooms || []), ...extra.flatMap((e) => e.rooms)])], hits: answer.hits + extra.reduce((n, e) => n + e.hits, 0) };
+  }
   const rooms = (intent.rooms || []).filter((r) => ROOMS[r] && r !== 'brain');
   const scanned = rooms.length ? rooms : Object.keys(ROOMS).filter((r) => !['brain', 'screen'].includes(r));
   const lines = [];
@@ -361,6 +422,27 @@ export async function answerCrossRoom({ store, storage, env, intent, screen = nu
 
 const roomOf = (record) => ROOMS[record?.source?.room]?.label || record?.region || 'Brain';
 
+// A chat exchange (the owner's question, CHE's earlier answer) is not evidence about its subject:
+// retrieving it answered "what is connected to PR 374" with the question itself (owner, 2026-10-20).
+const isConversation = (record) => record?.region === BRAIN_REGIONS.conversations || ['conversation', 'correction'].includes(record?.kind);
+
+// Which room a changed file belongs to, by its path. A pull request that changed a room's code is
+// connected to that room: verified from GitHub's file list, not guessed from words.
+const ROOM_FILES = [
+  ['trading', /trad|ledger|broker|strategy_sim|atlas_trading|paper_|tradovate|alpaca|mnq/i],
+  ['coding', /coding_|code_index|self_update|opencode|codex/i],
+  ['rea', /(?:^|\/)rea_|rea\./i],
+  ['music', /music/i],
+  ['brain', /brain_|memory|che_brain/i],
+  ['office', /office|agent_runtime|war_room|meeting|world_scene/i],
+  ['research', /research|knowledge_cache|library/i],
+];
+export function roomsForFiles(files = []) {
+  const out = new Map();
+  for (const f of files) for (const [room, re] of ROOM_FILES) if (re.test(f)) out.set(room, [...(out.get(room) || []), f]);
+  return out;
+}
+
 /** Records about a subject: those naming its exact references first, else the best text matches. */
 function anchorsFor(store, topic, limit = 6) {
   const entities = entitiesOf(topic);
@@ -370,10 +452,10 @@ function anchorsFor(store, topic, limit = 6) {
     const value = entity.slice(type.length + 1);
     const words = type === 'pr' ? (value.length >= 3 ? value : `pull request update ${value}`) : value.replace(/[/@._-]+/g, ' ');
     for (const hit of store.search(words, { limit: 20, prefix: type === 'sha' })) {
-      if (!hit.deleted && entitiesOf(hit).includes(entity)) out.set(hit.id, hit);
+      if (!hit.deleted && !isConversation(hit) && entitiesOf(hit).includes(entity)) out.set(hit.id, hit);
     }
   }
-  if (!entities.length) for (const hit of store.search(topic, { limit })) if (!hit.deleted) out.set(hit.id, hit);
+  if (!entities.length) for (const hit of store.search(topic, { limit })) if (!hit.deleted && !isConversation(hit)) out.set(hit.id, hit);
   return { entities, records: [...out.values()].sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || ''))).slice(0, limit) };
 }
 

@@ -85,9 +85,60 @@ export function supportedBy(claim, evidenceTexts = []) {
 
 // ─── Owner-attested evidence ───────────────────────────────────────────────
 
+// ─── The question, the subject and who said it ────────────────────────────
+
+const ASK_START = /^(?:(?:hey\s+)?(?:che|chay|chey|shay)[,:]?\s+)?(?:please\s+)?(?:what|which|who|whom|whose|when|where|why|how|is|are|was|were|do|does|did|have|has|had|can|could|would|will|should|tell\s+me|show\s+me|give\s+me|list|name|remind\s+me)\b/i;
+
+/**
+ * The sentence that asks, and the instructions around it (owner, 2026-10-20: "what music preferences
+ * have I told you? Give me the source of each one." was searched for "the source of each one").
+ */
+export function splitAsk(message) {
+  const raw = String(message || '').replace(/\s+/g, ' ').trim();
+  const parts = raw.split(/(?<=[.?!])\s+(?=["“(]?[A-Z])/).filter(Boolean);
+  if (parts.length < 2) return { ask: raw, rest: '' };
+  let i = parts.findIndex((p) => /\?\s*$/.test(p));
+  if (i < 0) i = parts.findIndex((p) => ASK_START.test(p));
+  if (i < 0) i = 0;
+  return { ask: parts[i], rest: parts.filter((_, j) => j !== i).join(' ') };
+}
+
+// Words that put a memory in a subject area, so "my music preferences" finds "I love 90s R&B".
+const SUBJECT_AREAS = [
+  [/\b(?:music|musical|songs?|singers?|bands?|artists?|albums?|playlists?|genres?|tunes)\b/, /\b(?:music|songs?|singers?|bands?|artists?|albums?|playlists?|genres?|jazz|blues|rock|hip ?hop|rap|r ?b|r&b|soul|funk|country|classical|lo ?fi|edm|techno|house|reggae|gospel|metal|pop|spotify|concerts?|tracks?|listen\w*|sing\w*)\b/],
+  [/\b(?:food|foods|meals?|eat|eating|cuisine|dishes)\b/, /\b(?:food|meals?|eat\w*|cuisine|dish\w*|pizza|pasta|sushi|tacos?|burgers?|steak|chicken|salad|dessert|breakfast|lunch|dinner|cook\w*|restaurant\w*)\b/],
+  [/\b(?:movies?|films?|shows?|tv|series)\b/, /\b(?:movies?|films?|shows?|tv|series|netflix|actor|actress|director|watch\w*)\b/],
+  [/\b(?:sports?|teams?)\b/, /\b(?:sports?|teams?|football|basketball|baseball|soccer|nfl|nba|mlb|golf|tennis|boxing|ufc)\b/],
+];
+
+/** True when a memory text is about the asked topic: most of its words, or the same subject area. */
+export function topicMatches(topic, text) {
+  if (supportedBy(topic, [text])) return true;
+  const t = plainWords(topic);
+  const body = String(text || '').toLowerCase();
+  return SUBJECT_AREAS.some(([asks, about]) => asks.test(t) && about.test(body));
+}
+
+const AGENT_NAMES = 'atlas|knox|nova|juno|claude|codex|chatgpt|openai|gemini|cursor|copilot|grok|flagstaff|opencode';
+const AGENT_AUTHORED = new RegExp(`^\\s*(?:\\[?(?:from|by|re|fwd?)[:\\s]+)?(${AGENT_NAMES})\\b[^\\n]{0,60}?(?:report|update|summary|message|note|says|said|wrote|reply|response|:|—|-)|\\b(${AGENT_NAMES})(?:'s)?\\s+(?:report|update|summary|status report|message)\\b|^\\s*(?:report|update|message)\\s+from\\s+(${AGENT_NAMES})\\b`, 'i');
+
+/**
+ * The agent who wrote a text the owner pasted or imported (Atlas, Claude, Codex, Flagstaff…), or ''.
+ * Such text is a report the owner shared, never the owner's own statement (owner, 2026-10-20).
+ */
+export function agentAuthor(textOrRecord) {
+  const r = textOrRecord && typeof textOrRecord === 'object' ? textOrRecord : null;
+  const declared = String(r?.author || r?.source_author || '').trim();
+  if (declared && !/^(?:owner|me|you|user)$/i.test(declared)) return declared;
+  const m = AGENT_AUTHORED.exec(String(r ? r.text ?? r.body ?? '' : textOrRecord ?? '').slice(0, 400));
+  const name = m ? (m[1] || m[2] || m[3] || '') : '';
+  return name ? name[0].toUpperCase() + name.slice(1).toLowerCase() : '';
+}
+
 /** A record CHE may cite as the owner's own statement or approval. */
 export function isOwnerAttested(record) {
   if (!record || record.active === false || record.superseded_at) return false;
+  if (agentAuthor(record)) return false;
   if (UNTRUSTED_STATUSES.has(String(record.verification_status || ''))) return false;
   if (record.verification_status !== 'owner_attested') return false;
   return OWNER_MEMORY_SOURCES.has(String(record.source || ''));
@@ -146,7 +197,7 @@ const ASK_FORM = /^(?:(?:can|could|would|will) you (?:please )?)?(?:tell me|name
  * ("I confirmed the order", "confirm my booking") are not questions about memory.
  */
 export function ownerMemoryQuestion(message) {
-  const q = plainWords(message);
+  const q = plainWords(splitAsk(message).ask);
   if (!q || q.split(' ').length > 30 || FICTION_REQUEST.test(q)) return null;
   // The question itself must ask about memory: "I confirmed the order, what
   // is next?" is a statement followed by an unrelated question.
@@ -157,7 +208,9 @@ export function ownerMemoryQuestion(message) {
   if (/\b(?:just|a (?:moment|second|minute) ago|right now)\b/.test(q) && /\b(?:say|said|ask|asked|tell you|told you)\b/.test(q)) return { topic: '', recent: true };
   // "What did I tell you about my dog?" → "my dog". "Did I tell you I am moving?" → "i am moving".
   const about = /\babout (.+)$/.exec(q);
-  let topic = about ? about[1] : '';
+  // "What music preferences have I told you?": the subject comes before the verb.
+  const before = new RegExp(`^(?:what|which) (?:kind of |kinds of |sort of )?(.+?) (?:have|did|do|had) i ${OWNER_ADVERBS}${OWNER_ACT}`).exec(q);
+  let topic = about ? about[1] : (before ? before[1] : '');
   if (!topic) {
     const tail = new RegExp(`${OWNER_ACT}\\b(?: (?:that|to you|me))? (.+)$`).exec(q);
     topic = tail ? tail[1] : '';
@@ -210,7 +263,17 @@ export function answerOwnerMemoryQuestion(data = {}, question = {}, history = []
       answer: `Here ${pick.length === 1 ? 'is something' : 'are things'} you told me yourself, sir. ${lines} ${pick.length === 1 ? 'That is your own statement' : 'These are your own statements'}, recorded when you made ${pick.length === 1 ? 'it' : 'them'}. I haven't checked ${pick.length === 1 ? 'it' : 'them'} against any outside source.`,
     };
   }
-  const matches = attested.filter((r) => supportedBy(topic, [r.text]));
+  const matches = attested.filter((r) => topicMatches(topic, r.text));
+  // Several separate statements ("what music preferences have I told you"): each with its own source.
+  const standalone = matches.filter((r) => !records.some((o) => o && o.active === false && o.superseded_by && sameSlot(o.text, r.text)));
+  if (standalone.length > 1) {
+    const pick = standalone.slice(-5).reverse();
+    return {
+      kind: 'owner_attested',
+      records: pick.map((r) => r.id).filter(Boolean),
+      answer: `Here is what you told me about ${clip(topic, 80)}, sir, each with its source: ${pick.map((r, i) => `${i + 1}. ${quoteRecord(r)}`).join(' ')} These are your own statements; I haven't checked them against any outside source.`,
+    };
+  }
   if (matches.length) {
     const current = matches[matches.length - 1];
     const history = records.filter((r) => r && r !== current && r.active === false && r.superseded_by &&
@@ -224,9 +287,17 @@ export function answerOwnerMemoryQuestion(data = {}, question = {}, history = []
       answer: `${quoteRecord(current)}${earlier} That is your own statement; I haven't checked it against any outside source.`,
     };
   }
-  const notes = unconfirmed.filter((r) => supportedBy(topic, [r.text]));
+  const notes = [...unconfirmed, ...records.filter((r) => r && r.active !== false && isOwnerAttested({ ...r, author: '' }) && agentAuthor(r))].filter((r) => topicMatches(topic, r.text));
   if (notes.length) {
     const note = notes[notes.length - 1];
+    const author = agentAuthor(note);
+    if (author) {
+      return {
+        kind: 'unverified',
+        records: [],
+        answer: `I don't have a record of you telling me about ${clip(topic, 80)}, sir. The closest note is a report written by ${author}${OWNER_MEMORY_SOURCES.has(String(note.source || '')) ? ' that you shared' : ''}, so it is ${author}'s statement, not yours.`,
+      };
+    }
     return {
       kind: 'unverified',
       records: [],
