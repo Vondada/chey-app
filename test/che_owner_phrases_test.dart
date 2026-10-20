@@ -114,6 +114,12 @@ void main() {
       expect(cheAsksAboutScreen(words), isTrue, reason: words);
       expect(parseScreenCommand(words), isNull, reason: words);
     }
+    for (final words in spoken('How do I use this screen?')) {
+      expect(cheAsksAboutScreen(words), isTrue, reason: words);
+    }
+    for (final words in spoken('Explain this page.')) {
+      expect(cheAsksAboutScreen(words), isTrue, reason: words);
+    }
     // Other searches stay Chat's.
     for (final words in ['Search YouTube for jazz', 'search for YouTube videos about cats', 'search for youtube shorts ideas', 'search for money']) {
       expect(parseScreenCommand(words)?.op, isNot(ScreenOp.searchCommands), reason: words);
