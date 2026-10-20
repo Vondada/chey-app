@@ -55,7 +55,7 @@ class CheScreenGuide {
               ],
               const SizedBox(height: 18),
               const Text('You can also ask CHE by voice or typing: '
-                '"What is on my screen?" or "Explain the Trading Room." '
+                '"What is on my screen?" or "How do I use this screen?" '
                 'The guide never places a trade or changes a setting.',
                 style: TextStyle(fontSize: 15)),
               const SizedBox(height: 14),
