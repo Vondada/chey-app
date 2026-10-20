@@ -64,6 +64,12 @@ Then, on GitHub:
 - Next: open focused PR for milestone 1 when the owner is ready (or continue: milestone 2 = scripted multi-agent demo via officeGoal + War Room board wiring + orb-tap deep link to the real task; then Phase B typed memory/provenance).
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
+## 2. Current position (Claude, 2026-10-20 — Spatial World MVP 1 built: the Meeting Room, in PR #376)
+
+- Commit `f941eaa` on `claude/che-latency-optimization-8ruaus` (PR #376, 4th commit): "start a meeting with the team about X" → real War Room meeting via chat (`meetingCommand` in `server/cloudflare/world_scene.js`) → `meeting_id` → app opens `lib/world/che_meeting_room.dart`, drawn from `GET /api/world/scene` (`meetingScene`, owner only). Worker 2493/2493, dart analyze clean, Flutter 552.
+- Next: MVP 2 mission board (`objectiveScene` over `objective_graph.js`), which also adds "make this the plan" (deferred from MVP 1 so the scene offers only real actions).
+- Still waiting on the owner: merge #376; permission to push the local ReplayKit branch.
+
 ## 2. Current position (Claude, 2026-10-20 — NEW future project: Spatial World design written, nothing built)
 
 - Owner asked for a grounded visual AI workspace (agents as avatars, tasks as objects, meetings in rooms, Brain as nodes). Design: `mailbox/briefs/SPATIAL-WORLD.md` (concept, Scene contract, data→object mapping, MVP 1–4, files to read, smallest first build).
