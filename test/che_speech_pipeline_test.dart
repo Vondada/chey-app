@@ -35,6 +35,29 @@ class _Harness {
 Future<void> _flush() => Future<void>.delayed(Duration.zero);
 
 void main() {
+  test('a preview follows completed reply audio without blocking its caller', () async {
+    final h = _Harness();
+    h.pipeline..add('reply')..close();
+    final preview = h.pipeline.afterPlayback(() async { h.events.add('preview'); });
+    await _flush();
+    h.synth['reply']!.complete('audio');
+    await _flush();
+    expect(h.events, isNot(contains('preview')));
+    h.plays['audio']!.complete(true);
+    await preview;
+    expect(h.events.indexOf('preview'), greaterThan(h.events.indexOf('complete')));
+  });
+
+  test('interrupting a reply also cancels its deferred preview', () async {
+    final h = _Harness();
+    h.pipeline..add('reply')..close();
+    final preview = h.pipeline.afterPlayback(() async { h.events.add('preview'); });
+    await _flush();
+    h.pipeline.cancel();
+    await preview;
+    expect(h.events, isNot(contains('preview')));
+  });
+
   test('next chunk is synthesized while the current chunk is still playing', () async {
     final h = _Harness();
     h.pipeline

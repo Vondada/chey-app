@@ -3,9 +3,9 @@ part of '../main.dart';
 // Split out of main.dart: _CHEHomeState members (streaming).
 extension _CheHomeStreaming on _CHEHomeState {
   /// Plays the held free sample. If it cannot play, CHE says so on screen and aloud.
-  Future<void> _playPendingVoicePreview() async {
-    final voiceId = _pendingVoicePreviewId;
-    _pendingVoicePreviewId = null;
+  Future<void> _playPendingVoicePreview({String? requestedVoiceId}) async {
+    final voiceId = requestedVoiceId ?? _pendingVoicePreviewId;
+    if (requestedVoiceId == null) _pendingVoicePreviewId = null;
     if (voiceId == null) return;
     final played = await CheVoiceStudioPreview.play(voiceId: voiceId);
     if (played || !mounted) return;

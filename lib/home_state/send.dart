@@ -1037,15 +1037,23 @@ extension _CheHomeSend on _CHEHomeState {
         _pendingVoicePreviewId = null;
       } else {
         replySpeech?.close();
+        final previewId = _pendingVoicePreviewId;
+        _pendingVoicePreviewId = null;
+        final generation = _speechTurn;
+        Future<void> playPreview() async {
+          if (mounted && previewId != null && generation == _speechTurn) {
+            unawaited(_playPendingVoicePreview(requestedVoiceId: previewId));
+          }
+        }
+        final finished = replySpeech?.afterPlayback(playPreview) ?? playPreview();
         if (fromVoice && _realtimeVoice?.guardedOutput == true) {
           // The next queued owner turn must not wait for playback. The speech
           // pipeline owns its cleanup and new speech interrupts it immediately.
-          unawaited(replySpeech?.done);
+          unawaited(finished);
         } else {
-          await replySpeech?.done;
+          await finished;
         }
-        // A free sample asked for by voice starts only after the spoken reply has finished.
-        if (mounted) unawaited(_playPendingVoicePreview());
+
       }
     } on _CHEAgentException catch (e) {
       final errorReply = e.message;
