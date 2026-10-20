@@ -64,10 +64,12 @@ Then, on GitHub:
 - Next: open focused PR for milestone 1 when the owner is ready (or continue: milestone 2 = scripted multi-agent demo via officeGoal + War Room board wiring + orb-tap deep link to the real task; then Phase B typed memory/provenance).
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
-## 2. Current position (Claude, 2026-10-20 — Spatial World MVP 1 built: the Meeting Room, in PR #376)
+## 2. Current position (Claude, 2026-10-20 — Concept-to-Plan built, PR #378)
 
-- Commit `f941eaa` on `claude/che-latency-optimization-8ruaus` (PR #376, 4th commit): "start a meeting with the team about X" → real War Room meeting via chat (`meetingCommand` in `server/cloudflare/world_scene.js`) → `meeting_id` → app opens `lib/world/che_meeting_room.dart`, drawn from `GET /api/world/scene` (`meetingScene`, owner only). Worker 2493/2493, dart analyze clean, Flutter 552.
-- Next: MVP 2 mission board (`objectiveScene` over `objective_graph.js`), which also adds "make this the plan" (deferred from MVP 1 so the scene offers only real actions).
+- #376 merged as `da8ef59` [worker-deploy] (Brain relationships, look at my screen, Music Room, Meeting Room). Live deploy and Shorebird outcome were NOT re-checked after the merge (the owner interrupted the status poll); run `node .claude/skills/che-release/scripts/release_status.mjs` first.
+- PR #377 (ReplayKit broadcast extension, `claude/che-replaykit-broadcast`): the native compile on CI is its first real compile. Merging it builds an IPA, which needs the owner's go.
+- PR #378 (`claude/che-latency-optimization-8ruaus`, `218cce2`): universal Concept-to-Plan. Worker `project_plan.js` (classifier with 12 types, decomposition, tiers, stages, safety layer, speculative list, Wikipedia background, Brain record), chat route `che_project_plan` with follow-ups, `planScene`, `/api/plans`. Phone `lib/world/che_plan_room.dart` (map, tiers, six sorts, voice). Docs: `docs/CHE_PROJECT_PLANNING.md`. Worker 2507/2507, dart analyze clean, Flutter 556. Merge needs the owner's go.
+- Next: model-written topic items for plans, a Command Center catalog entry, MVP 2 mission board (`objectiveScene`).
 - Still waiting on the owner: merge #376; permission to push the local ReplayKit branch.
 
 ## 2. Current position (Claude, 2026-10-20 — NEW future project: Spatial World design written, nothing built)
