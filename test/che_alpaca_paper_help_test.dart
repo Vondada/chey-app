@@ -25,7 +25,7 @@ void main() {
   testWidgets('Alpaca panel displays only the broker-confirmed filled quantity and receipt', (tester) async {
     final requests = <String>[];
     final client = MockClient((request) async {
-      requests.add(request.method + ' ' + request.url.path);
+      requests.add('${request.method} ${request.url.path}');
       if (request.url.path == '/api/trading/alpaca/orders') {
         return http.Response(jsonEncode({
           'ok': true, 'orders': [{
