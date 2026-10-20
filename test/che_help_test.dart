@@ -19,6 +19,9 @@ Widget host(FakeWorker w) => MaterialApp(
 void main() {
   test('the owner\'s help questions are recognised; other questions are left alone', () {
     expect(cheHelpIntent('Chey, what is this button?')?.kind, CheHelpKind.explain);
+    // From #381: the same help, in the owner's other words.
+    expect(cheHelpIntent('How do I use this screen?')?.kind, CheHelpKind.explain);
+    expect(cheHelpIntent('Explain this page.')?.kind, CheHelpKind.explain);
     expect(cheHelpIntent('what does the Emergency Stop button do')?.name, 'emergency stop');
     expect(cheHelpIntent('what does Flatten do?')?.name, 'flatten');
     expect(cheHelpIntent('show me the pause all button')?.kind, CheHelpKind.show);

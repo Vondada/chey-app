@@ -225,7 +225,7 @@ CheHelpRequest? cheHelpIntent(String raw) {
     if (m != null) return CheHelpRequest(CheHelpKind.step, switch (m.group(1)!) { 'next' => 'next', 'back' || 'previous' => 'back', _ => 'done' });
   }
   if (RegExp(r'^(?:walk me through|give me a tour of|show me around) (?:this|the|my) (?:screen|page|room)$').hasMatch(t)) return const CheHelpRequest(CheHelpKind.walkthrough);
-  if (RegExp(r"^(?:help|help me|i need help)(?: (?:with|on) (?:this|the) (?:screen|page|room))?$|^what (?:is|are|'s) (?:this|that|these) (?:button|buttons|switch|control|controls)(?: for| do)?$|^what (?:does|do) (?:this|that) (?:button|switch|control) do$").hasMatch(t)) {
+  if (RegExp(r"^(?:help|help me|i need help)(?: (?:with|on) (?:this|the) (?:screen|page|room))?$|^how do i use (?:this|the) (?:screen|page|room)$|^explain (?:this|the) (?:screen|page|room)$|^what (?:is|are|'s) (?:this|that|these) (?:button|buttons|switch|control|controls)(?: for| do)?$|^what (?:does|do) (?:this|that) (?:button|switch|control) do$").hasMatch(t)) {
     return const CheHelpRequest(CheHelpKind.explain);
   }
   final what = RegExp(r"^what (?:does|do|is) (?:the )?(.+?)(?: button| switch| control)? (?:do|for|mean)$").firstMatch(t);
