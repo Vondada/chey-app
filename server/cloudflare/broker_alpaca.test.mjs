@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ALPACA_PAPER, alpacaPaperOrders, alpacaStatus, placeAlpacaPaperOrder, removeAlpacaPaperKeys, saveAlpacaPaperKeys } from './broker_alpaca.js';
+import { ALPACA_DATA, ALPACA_PAPER, alpacaPaperDashboard, alpacaPaperOrders, orderStatusGroup, realizedFromFills, speakAlpacaDashboard, alpacaStatus, placeAlpacaPaperOrder, removeAlpacaPaperKeys, saveAlpacaPaperKeys } from './broker_alpaca.js';
 import { storedKeys } from './resilience.js';
 import { TRADOVATE_PREREQUISITES, alpacaOptions, speakConnections, speakTradovateSteps, tradingConnections } from './trading_connections.js';
 
@@ -159,4 +159,87 @@ test('Alpaca options readiness is read only, exactly as GET /v2/account reports 
   assert.doesNotMatch(spoken, /deposit now|buy the add-on now|tap/i);
   const set = tradingConnections({ desk: { mode: 'paper', account: { sim: '', live: '' }, risk_limits: null }, tradovate: { configured: true, conn: { connected: false } } }).cards[1];
   assert.deepEqual([set.blocked_by, set.blocked_note], [[], undefined], 'once set up, nothing reads as blocked');
+});
+
+// ─── The Alpaca PAPER dashboard (owner, 2026-10-20) ────────────────────────────────────────────
+const DASH = {
+  '/v2/account': { account_number: 'PA9876543', status: 'ACTIVE', buying_power: '198000', cash: '99000', equity: '100250.5', last_equity: '100000', portfolio_value: '100250.5' },
+  '/v2/positions': [{ symbol: 'AAPL', side: 'long', qty: '5', avg_entry_price: '200', current_price: '202', market_value: '1010', cost_basis: '1000', unrealized_pl: '10', unrealized_plpc: '0.01' }],
+  '/v2/orders': [
+    { id: 'o-filled', client_order_id: 'c1', symbol: 'AAPL', qty: '5', filled_qty: '5', filled_avg_price: '200', side: 'buy', type: 'market', status: 'filled', submitted_at: '2026-10-19T14:00:00Z', filled_at: '2026-10-19T14:00:02Z' },
+    { id: 'o-partial', client_order_id: 'c2', symbol: 'AAPL', qty: '10', filled_qty: '4', filled_avg_price: '201', side: 'buy', type: 'limit', limit_price: '201', status: 'partially_filled', submitted_at: '2026-10-19T15:00:00Z' },
+    { id: 'o-new', client_order_id: 'c3', symbol: 'MSFT', qty: '2', filled_qty: '0', side: 'buy', type: 'limit', limit_price: '300', status: 'new', submitted_at: '2026-10-19T16:00:00Z' },
+    { id: 'o-acc', client_order_id: 'c4', symbol: 'MSFT', qty: '2', filled_qty: '0', side: 'buy', type: 'limit', limit_price: '299', status: 'accepted', submitted_at: '2026-10-19T16:01:00Z' },
+    { id: 'o-can', client_order_id: 'c5', symbol: 'TSLA', qty: '1', filled_qty: '0', side: 'sell', type: 'limit', limit_price: '400', status: 'canceled', submitted_at: '2026-10-18T14:00:00Z', canceled_at: '2026-10-18T15:00:00Z' },
+    { id: 'o-rej', client_order_id: 'c6', symbol: 'TSLA', qty: '1', filled_qty: '0', side: 'buy', type: 'market', status: 'rejected', submitted_at: '2026-10-18T14:30:00Z' },
+    { id: 'o-exp', client_order_id: 'c7', symbol: 'NVDA', qty: '1', filled_qty: '0', side: 'buy', type: 'limit', limit_price: '100', status: 'expired', submitted_at: '2026-10-17T14:00:00Z', expired_at: '2026-10-17T20:00:00Z' },
+  ],
+  '/v2/account/activities/FILL': [
+    { id: 'f1', activity_type: 'FILL', order_id: 'o-filled', symbol: 'AAPL', side: 'buy', qty: '5', price: '200', transaction_time: '2026-10-19T14:00:02Z', type: 'fill', cum_qty: '5', leaves_qty: '0', order_status: 'filled' },
+    { id: 'f2', activity_type: 'FILL', order_id: 'o-partial', symbol: 'AAPL', side: 'buy', qty: '4', price: '201', transaction_time: '2026-10-19T15:00:05Z', type: 'partial_fill', cum_qty: '4', leaves_qty: '6', order_status: 'partially_filled' },
+  ],
+  '/v2/account/portfolio/history': { timestamp: [1760832000, 1760918400], equity: [100000, 100250.5], profit_loss: [0, 250.5], base_value: 100000 },
+};
+const dashAlpaca = (over = {}) => alpaca((url) => {
+  const u = new URL(url);
+  if (u.origin === ALPACA_DATA) return { status: 200, body: { bars: [{ t: '2026-10-19T14:00:00Z', o: 199, h: 201, l: 198.5, c: 200.5, v: 1000 }, { t: '2026-10-19T14:05:00Z', o: 200.5, h: 202, l: 200, c: 201.5, v: 900 }] } };
+  const key = Object.keys(DASH).find((k) => u.pathname === k);
+  return key in over ? over[key] : { status: 200, body: DASH[key] };
+});
+
+test('Alpaca dashboard: account, positions, every order status, verified fills only, history and bars, read from the paper and data hosts', async () => {
+  const a = dashAlpaca();
+  const d = await alpacaPaperDashboard(PAPER, { fetcher: a.fetcher, now: Date.parse('2026-10-20T10:00:00Z') });
+  assert.equal(d.state, 'verified');
+  assert.equal(d.mode, 'paper');
+  assert.equal(d.money_at_risk, false);
+  assert.ok(a.calls.every((c) => c.method === 'GET'), 'the dashboard only reads');
+  assert.ok(a.calls.every((c) => c.url.startsWith(ALPACA_PAPER) || c.url.startsWith(ALPACA_DATA)));
+  assert.ok(a.calls.some((c) => c.url.startsWith(`${ALPACA_DATA}/v2/stocks/AAPL/bars`)), 'the newest filled symbol is charted');
+  assert.equal(d.account.equity, 100250.5);
+  assert.equal(d.account.day_change, 250.5);
+  assert.deepEqual(d.order_counts, { submitted: 1, accepted: 1, partially_filled: 1, filled: 1, canceled: 1, rejected: 1, expired: 1, other: 0 });
+  assert.equal(d.open_orders, 3);
+  assert.equal(d.fills.length, 2, 'only FILL activities are executions');
+  assert.ok(!d.fills.some((f) => ['o-new', 'o-acc', 'o-can', 'o-rej', 'o-exp'].includes(f.order_id)), 'no execution is drawn for an order Alpaca has not filled');
+  assert.equal(d.positions[0].unrealized_pl, 10);
+  assert.equal(d.unrealized_pl, 10);
+  assert.equal(d.history.length, 2);
+  assert.equal(d.chart.bars.length, 2);
+  assert.match(d.realized.basis, /computed first-in first-out from the 2 fills/);
+  assert.deepEqual(d.separate_from, ['MNQ/NQ futures paper simulations (CHE\'s own engine)', 'Tradovate data']);
+  const said = speakAlpacaDashboard(d);
+  assert.match(said, /Alpaca PAPER account, read just now: equity \$100,250\.50/);
+  assert.match(said, /Orders: 1 filled, 1 partially filled, 2 waiting, 1 canceled, 1 rejected, 1 expired\./);
+  assert.match(said, /separate from CHE's MNQ futures paper simulations/);
+});
+
+test('Alpaca dashboard: an empty paper account is shown honestly, and an unreadable part gives no numbers', async () => {
+  const empty = dashAlpaca({ '/v2/positions': { status: 200, body: [] }, '/v2/orders': { status: 200, body: [] }, '/v2/account/activities/FILL': { status: 200, body: [] } });
+  const d = await alpacaPaperDashboard(PAPER, { fetcher: empty.fetcher });
+  assert.equal(d.state, 'verified');
+  assert.equal(d.fills.length, 0); assert.equal(d.orders.length, 0);
+  assert.equal(d.chart.symbol, null);
+  assert.match(speakAlpacaDashboard(d), /No open positions\. No orders on this account yet\. No fills confirmed by Alpaca yet\./);
+  assert.equal((await alpacaPaperDashboard({})).state, 'not_configured');
+  const down = dashAlpaca({ '/v2/account': { status: 503, body: { message: 'maintenance' } } });
+  const bad = await alpacaPaperDashboard(PAPER, { fetcher: down.fetcher });
+  assert.notEqual(bad.state, 'verified');
+  assert.match(speakAlpacaDashboard(bad), /could not read the Alpaca paper account.*no numbers/);
+  const live = alpaca();
+  assert.equal((await alpacaPaperDashboard({ ...PAPER, CHE_ALPACA_PAPER_KEY_ID: 'AKLIVEKEY1234567890' }, { fetcher: live.fetcher })).state, 'refused');
+  assert.equal(live.calls.length, 0, 'a live key never reaches the network');
+});
+
+test('Alpaca status groups and realized P&L from fills', () => {
+  assert.equal(orderStatusGroup('pending_new'), 'submitted');
+  assert.equal(orderStatusGroup('done_for_day'), 'canceled');
+  assert.equal(orderStatusGroup('weird'), 'other');
+  const r = realizedFromFills([
+    { symbol: 'AAPL', side: 'buy', qty: 10, price: 100, time: '1' },
+    { symbol: 'AAPL', side: 'sell', qty: 4, price: 110, time: '2' },
+    { symbol: 'AAPL', side: 'sell', qty: 6, price: 95, time: '3' },
+  ]);
+  assert.equal(r.realized_pl, 10); // +40 - 30
+  assert.equal(r.winning_closes, 1); assert.equal(r.losing_closes, 1);
 });
