@@ -47,7 +47,7 @@ const DAY2 = [
   { t: five('2026-10-20T22:00:00Z', 2), o: 20028, h: 20031, l: 20020, c: 20025 },
 ];
 const oneMinute = (bars) => bars.flatMap((b) => minutesOf(b.t, b));
-const feedOf = (bars) => async () => ({ status: 'DELAYED', provider: 'test feed', provider_symbol: 'MNQ=F', contract: 'MNQZ6', candles: oneMinute(bars), latency_s: 600, last_bar_time: bars.at(-1).t, checked_at: new Date().toISOString() });
+const feedOf = (bars) => async () => ({ status: 'LIVE', authenticated: true, subscription_verified: true, provider: 'test feed', provider_symbol: 'MNQ=F', contract: 'MNQZ6', candles: oneMinute(bars), latency_s: 0, last_bar_time: bars.at(-1).t, checked_at: new Date().toISOString() });
 const after = (bars) => Date.parse(bars.at(-1).t) + 6 * 60_000;
 
 test('Yahoo bars: the forming bar and empty bars are never used; 5-minute bars are only complete ones', () => {
@@ -100,7 +100,7 @@ test('forward only: history is never journalled; a new signal enters, exits and 
   assert.equal(sweep.signal.time, DAY2[0].t, 'the signal is the sweep bar, after the start');
   assert.equal(sweep.entry.time, DAY2[1].t, 'filled at the next bar open');
   assert.equal(sweep.exit.reason, 'target');
-  assert.equal(sweep.data.feed.status, 'DELAYED');
+  assert.equal(sweep.data.feed.status, 'LIVE');
   assert.ok(sweep.review.facts.length >= 3);
   assert.ok(sweep.net_pnl > 0);
 });
@@ -344,5 +344,17 @@ test('issue #350 route: the compound question is answered in full from the journ
 test('comprehension audit: the owner\'s own words for paper results read the journal', () => {
   for (const q of ['How did my paper trades do today?', "What's my paper trading balance?", 'how are my paper trades doing', 'what is my paper p&l']) {
     assert.equal(liveIntent(q)?.kind, 'performance', q);
+  }
+});
+
+test('delayed, unverified and stale feeds cannot create new forward-paper entries', async () => {
+  for (const override of [{ status: 'DELAYED' }, { status: 'LIVE', authenticated: false }, { status: 'LIVE', subscription_verified: false }, { status: 'LIVE', latency_s: 100 }, { status: 'STALE' }]) {
+    const storage = memoryStorage(); await setLivePaper(storage, true);
+    const load = (bars) => async () => ({ ...await feedOf(bars)(), ...override });
+    await liveTick(storage, { force: true, load: load(DAY1), now: after(DAY1) });
+    const run = await liveTick(storage, { force: true, load: load([...DAY1, ...DAY2]), now: after(DAY2) });
+    assert.equal(run.entries_allowed, false);
+    assert.equal((await readTrades(storage)).length, 0);
+    assert.match(run.entry_blocker, /real-time CME/);
   }
 });

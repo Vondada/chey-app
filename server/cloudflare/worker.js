@@ -52,7 +52,7 @@ import {
 } from './youtube_connection.js';
 import { activityFeed, creations, findCreations, greeting, suggestions, stalledTasks, decisionsNeeded, nextActions } from './activity.js';
 import { accountSnapshot as marketAccountSnapshot, candles as marketCandles, chartPage as marketChartPage, quote as marketQuote, snapshot as marketSnapshot } from './markets.js';
-import { CALLBACK_PATH as TRADOVATE_CALLBACK, accountBalance, connectLink, listAccounts, connection as brokerConnection, handleCallback as tradovateCallback, renewToken, tradovateConfigured } from './broker_tradovate.js';
+import { CALLBACK_PATH as TRADOVATE_CALLBACK, accountBalance, connectLink, listAccounts, connection as brokerConnection, handleCallback as tradovateCallback, renewToken, tradovateConfigured, marketDataAccess } from './broker_tradovate.js';
 import { MODE_NAME, STOCK_ACCOUNT, speakPlaceNeedsYes, chooseAccount, clearStockOrder, confirmLive, confirmStockOrder, deskIntent, dropStockOrder, pendingStockOrder, speakStaleStockOrder, rememberListed, deskTick, pendingAlert, readDesk, requestLive, requestStockOrder, setMode, setRiskLimits, setSize, skipTrade, speakAlert, speakDeskStatus, speakLiveRequest, speakStockOrder, speakStockReceipt, speakTakeNeedsYes, takeAnnouncement, takeTrade } from './trading_desk.js';
 import { externalGrounding } from './external_grounding.js';
 import { answerEvidenceReceipt, cachedResearch, evidenceReferenceFollowup, factKey, forgetKnowledge, invalidateKnowledge, knownAnswer, LAST_ANSWER_EVIDENCE_KEY, ownerFactQuestion, markPureResearch, rememberOwnerFact, researchHit, researchKey } from './knowledge_cache.js';
@@ -65,8 +65,8 @@ import { nextStrategySimTickAt, setStrategySimCeiling, setStrategySimPaused, spe
 import { evidenceIntent, evidenceReport, evidenceTick } from './trading_evidence_runner.js';
 import { ATLAS_SOURCE, answerAtlas, atlasHiddenAction, atlasIntent, atlasQuizAnswerTurn, atlasPromptContext, atlasResetAsk, atlasResetIntent, projectAtlasToBrain, resetAtlasProgress } from './knowledge_atlas.js';
 import { LIVE_BACKTEST, LIVE_RUNS, LIVE_STATE, liveBacktest, liveDashboard, livePaperSummary, liveTick, nextLiveTickAt, setLivePaper } from './trading_live.js';
-import { cmeSession } from './market_feed.js';
-import { alpacaKeys, alpacaPaperOrders, alpacaStatus, liveKeyProblem, placeAlpacaPaperOrder, removeAlpacaPaperKeys, saveAlpacaPaperKeys } from './broker_alpaca.js';
+import { cmeSession, frontMonth, loadIntraday, TradovateMarketStream, connectMarketSocket } from './market_feed.js';
+import { alpacaKeys, alpacaPaperOrders, alpacaPaperPositions, alpacaPaperEquity, alpacaStockBars, AlpacaStockStream, AlpacaOrderStream, alpacaStatus, liveKeyProblem, placeAlpacaPaperOrder, removeAlpacaPaperKeys, saveAlpacaPaperKeys } from './broker_alpaca.js';
 import { speakConnections, speakTradovateSteps, tradingConnections } from './trading_connections.js';
 import { liveAnswer, liveIntent } from './trading_live_chat.js';
 import { ANALYSIS_SOURCE, LEDGER_SOURCE, analyzeStrategy, ledgerIntent, readLedgers, speakLedgers, strategyAnalysisIntent } from './trading_ledgers.js';
@@ -3611,6 +3611,100 @@ export class CheState extends DurableObject {
     return reply(speakStockOrder(pending), { ok: true, confirmation_needed: true });
   }
 
+  async ensureFuturesStream(root = 'MNQ') {
+    const now = Date.now(); const symbol = frontMonth(root, now)?.code;
+    const auth = await this.ctx.storage.get('tradovate_auth');
+    this._futuresStreams ||= new Map(); this._futuresAccess ||= new Map();
+    let access = this._futuresAccess.get(root);
+    if (!access || access.symbol !== symbol || access.owner_token !== auth?.access_token || access.expires_at <= now + 60000 || now - access.checked_at > 300000) {
+      const prepared = await marketDataAccess(this.ctx.storage, this.keyEnv || this.env, root, symbol);
+      if (!prepared.ok) { this._futuresStreams.get(root)?.stop(); this._futuresAccess.delete(root); return { status: 'UNAVAILABLE', provider: 'Tradovate CME', root, provider_symbol: symbol, interval: '5m', candles: [], error: prepared.detail, owner_action: prepared.state }; }
+      access = { ...prepared, owner_token: auth?.access_token, checked_at: now }; this._futuresAccess.set(root, access);
+    }
+    let stream = this._futuresStreams.get(root);
+    if (!stream) {
+      stream = new TradovateMarketStream({ socketFactory: this.marketSocketFactory || connectMarketSocket, onChange: (event) => this.marketEvent(event) });
+      this._futuresStreams.set(root, stream);
+    }
+    await stream.start(access);
+    return stream.snapshot();
+  }
+
+  async tradingFeed(root, options = {}) {
+    const real = await this.ensureFuturesStream(root);
+    if (real.status === 'LIVE') return real;
+    const delayed = await loadIntraday(root, options);
+    return { ...delayed, realtime_status: real.status, realtime_error: real.error || 'Awaiting authenticated current CME quote and chart subscriptions.', owner_action: real.owner_action || null };
+  }
+
+  async runForwardPaper(options = {}) {
+    return liveTick(this.ctx.storage, { ...options, load: (root, opts) => this.tradingFeed(root, opts) });
+  }
+
+  async ensureStockStreams(symbols = ['AAPL'], feed = 'iex') {
+    this._stockWantedUntil = Date.now() + 120000;
+    const keys = alpacaKeys(this.keyEnv || this.env);
+    if (!keys || liveKeyProblem(keys.id)) return { status: 'UNAVAILABLE', provider: 'Alpaca', feed, error: 'Connect existing Alpaca PAPER credentials in Trading connections. No paid subscription was activated.' };
+    const factory = this.marketSocketFactory || connectMarketSocket;
+    this._stockStream ||= new AlpacaStockStream({ socketFactory: factory, wanted: () => Date.now() < this._stockWantedUntil, onChange: (event) => this.marketEvent(event) });
+    this._stockOrderStream ||= new AlpacaOrderStream({ socketFactory: factory, wanted: () => Date.now() < this._stockWantedUntil,
+      onChange: (event) => this.marketEvent(event), onOrder: async (order) => {
+        const list = (await this.ctx.storage.get('alpaca_stream_orders')) || [];
+        await this.ctx.storage.put('alpaca_stream_orders', [order, ...list.filter((r) => r.id !== order.id)].slice(0, 50));
+      } });
+    await Promise.all([this._stockStream.start({ keys, symbols, feed }), this._stockOrderStream.start({ keys })]);
+    return { ...this._stockStream.snapshot(), order_stream: this._stockOrderStream.snapshot() };
+  }
+
+  marketEvent(event) {
+    for (const listener of this._marketListeners || []) { try { listener(event); } catch (_) {} }
+  }
+
+  async stockTerminal(symbol = 'AAPL', feed = 'iex') {
+    if (!/^[A-Z]{1,5}(?:\.[A-Z])?$/.test(symbol) || !['iex', 'sip', 'delayed_sip'].includes(feed)) return { ok: false, detail: 'Unsupported stock symbol or feed.' };
+    const env = this.keyEnv || this.env;
+    const stream = await this.ensureStockStreams([symbol], feed);
+    this._stockHistory ||= new Map();
+    const key = `${symbol}|${feed}`;
+    let history = this._stockHistory.get(key);
+    if (!history || Date.now() - history.at > 60000) { history = { at: Date.now(), result: await alpacaStockBars(env, { symbol, feed }) }; this._stockHistory.set(key, history); }
+    const [orders, positions, equity, account] = await Promise.all([alpacaPaperOrders(env), alpacaPaperPositions(env), alpacaPaperEquity(env), alpacaStatus(env)]);
+    const journal = (await this.ctx.storage.get('alpaca_paper_orders')) || [];
+    const enriched = (orders.orders || []).map((order) => {
+      const own = journal.find((r) => r.id === order.id && r.client_order_id === order.client_order_id);
+      return { ...order, strategy: null, signal_id: null, attribution: own ? 'CHE owner-requested order; no verified strategy attached' : 'No verified CHE strategy attribution in the broker record' };
+    });
+    return { ok: orders.ok === true, account: 'Alpaca PAPER stocks', environment: 'alpaca_paper', symbol,
+      market: stream, historical: history.result, orders: enriched, order_error: orders.ok ? null : orders.error || orders.state,
+      positions, equity, broker_account: account.account || null, checked_at: new Date().toISOString(),
+      automation: { enabled: false, detail: 'No broker paper automation enabled. Individual orders need the owner’s explicit request. Automation requires separate opt-in, documented limits and an emergency stop.' } };
+  }
+
+  async marketStreamResponse(request) {
+    const query = new URL(request.url).searchParams;
+    const stocks = query.get('asset') === 'stocks'; const symbol = (query.get('symbol') || (stocks ? 'AAPL' : 'MNQ')).toUpperCase();
+    const feed = query.get('feed') || 'iex';
+    if (stocks ? !/^[A-Z]{1,5}(?:\.[A-Z])?$/.test(symbol) || !['iex', 'sip', 'delayed_sip'].includes(feed) : !['MNQ', 'NQ'].includes(symbol)) return json({ detail: 'Unsupported symbol/feed.' }, 400);
+    this._marketListeners ||= new Set();
+    if (this._marketListeners.size >= 8) return json({ detail: 'Too many market views are open. Close an older view.' }, 429);
+    const snapshot = stocks ? await this.ensureStockStreams([symbol], feed) : await this.ensureFuturesStream(symbol);
+    const encoder = new TextEncoder(); let listener; let heartbeat; let expiry;
+    const cleanup = () => { clearInterval(heartbeat); clearTimeout(expiry); this._marketListeners.delete(listener); };
+    const stream = new ReadableStream({ start: (controller) => {
+      const send = (value) => { try { controller.enqueue(encoder.encode(`${JSON.stringify(value)}\n`)); } catch (_) { cleanup(); } };
+      send({ type: 'snapshot', snapshot }); let last = 0;
+      listener = (event) => {
+        if (stocks ? !event.provider?.startsWith('Alpaca') || (event.symbol && event.symbol !== symbol) : event.provider !== 'Tradovate CME' || (event.root && event.root !== symbol)) return;
+        if (Date.now() - last < 250 && event.type === 'quote') return;
+        last = Date.now(); send(event);
+      };
+      this._marketListeners.add(listener);
+      heartbeat = setInterval(() => { if (stocks) this._stockWantedUntil = Date.now() + 120000; send({ type: 'heartbeat', at: new Date().toISOString(), snapshot: stocks ? this._stockStream?.snapshot() || snapshot : this._futuresStreams.get(symbol)?.snapshot() || snapshot }); }, 10000);
+      expiry = setTimeout(() => { cleanup(); try { controller.close(); } catch (_) {} }, 55000);
+    }, cancel: cleanup });
+    return new Response(stream, { headers: { 'content-type': 'application/x-ndjson; charset=utf-8', 'cache-control': 'no-store' } });
+  }
+
   async liveTradingDashboard() {
     const auth = await this.ctx.storage.get('tradovate_auth').catch(() => null);
     const connected = Boolean(auth?.access_token) && Date.now() < Number(auth.expires_at || 0);
@@ -3644,7 +3738,7 @@ export class CheState extends DurableObject {
   // Summary for the deploy check: feed, counts, positions and the newest trades, from records.
   async tradingProbe() {
     const ensured = await this.ensureLivePaper();
-    const run = ensured.enabled ? await liveTick(this.ctx.storage, { force: true }) : { skipped: 'paper trading is off' };
+    const run = ensured.enabled ? await this.runForwardPaper( { force: true }) : { skipped: 'paper trading is off' };
     // The historical baseline (same rules and fills, delayed 5-minute history), at most twice a day.
     const previous = await this.ctx.storage.get(LIVE_BACKTEST);
     if (!previous?.ok || Date.now() - Date.parse(previous.at) > 12 * 3_600_000) await liveBacktest(this.ctx.storage).catch(() => null);
@@ -3661,7 +3755,7 @@ export class CheState extends DurableObject {
       positions: d.positions.map((p) => ({ strategy: p.strategy, filter: p.filter, side: p.side, entry_time: p.entry_time, entry: p.entry, stop: p.stop, target: p.target, unrealized: p.unrealized })),
       trades: d.trades.slice(0, 10).map(brief),
       signals: d.signals.slice(-10),
-      broker: d.broker,
+      broker: { ...d.broker, alpaca: await alpacaStatus(this.keyEnv || this.env) },
       backtest: d.backtest ? {
         at: d.backtest.at, ok: d.backtest.ok, error: d.backtest.error || null, data: d.backtest.data,
         rows: (d.backtest.rows || []).map((r) => ({ strategy: r.strategy, filter: r.filter, target_r: r.target_r, trades: r.stats.trades,
@@ -3678,7 +3772,7 @@ export class CheState extends DurableObject {
     // Forward-paper evidence on the same hourly pass. Failures are logged in the run log, not thrown.
     await evidenceTick(this.ctx.storage, { now: opts.now, force: opts.force }).catch((error) => console.error('Trading evidence tick failed:', error?.message || error));
     // Forward paper trading on 5-minute NQ/MNQ bars, every minute while it is on and CME is open.
-    const liveRun = await liveTick(this.ctx.storage, { now: opts.now }).catch((error) => { console.error('Live paper tick failed:', error?.message || error); return null; });
+    const liveRun = await this.runForwardPaper( { now: opts.now }).catch((error) => { console.error('Live paper tick failed:', error?.message || error); return null; });
     // A journalled trade is a verified Trading Room event the Brain records (owner, 2026-10-20); the ledger stays authoritative.
     if (liveRun?.closed > 0 && !liveRun.skipped) await queueRoomEvent(this.ctx.storage, { room: 'trading', kind: 'journal_trades', key: `journal:${liveRun.at}`, title: `${liveRun.closed} forward paper trade${liveRun.closed === 1 ? '' : 's'} closed`, body: `The forward paper journal (MNQ 5-minute) closed ${liveRun.closed} trade${liveRun.closed === 1 ? '' : 's'} at ${liveRun.at}${liveRun.rejected ? `; ${liveRun.rejected} record${liveRun.rejected === 1 ? '' : 's'} refused by the journal` : ''}. Read the ledger for the numbers.`, status: 'verified', evidence: [`live_paper_runs ${liveRun.at}`], refs: { ledger: 'forward_paper_journal', run_at: liveRun.at } }).catch(() => null);
     // Strategy simulation (paper, minute bars): one alarm slot, so it runs here when due and scheduleWork arms its next minute.
@@ -6510,6 +6604,16 @@ export class CheState extends DurableObject {
         return json({ symbol: data.label, data: data.data, bars: data.candles.length, from: data.candles[0].t, to: data.candles[data.candles.length - 1].t, results });
       }
       // Forward paper trading (owner, 2026-10-18): the Trading Room's live evidence.
+      if (path === '/api/trading/market/stream' && request.method === 'GET') {
+        if (!ownerDevice) return ownerOnly();
+        return this.marketStreamResponse(request);
+      }
+      if (path === '/api/trading/alpaca/terminal' && request.method === 'GET') {
+        if (!ownerDevice) return ownerOnly();
+        const query = new URL(request.url).searchParams;
+        const result = await this.stockTerminal((query.get('symbol') || 'AAPL').toUpperCase(), query.get('feed') || 'iex');
+        return json(result, result.detail ? 400 : 200);
+      }
       if (path === '/api/trading/live' && request.method === 'GET') {
         if (!ownerDevice) return ownerOnly();
         return json(await this.liveTradingDashboard());
@@ -6518,10 +6622,10 @@ export class CheState extends DurableObject {
         if (!ownerDevice) return ownerOnly();
         if (body.action === 'start' || body.action === 'stop') {
           const state = await setLivePaper(this.ctx.storage, body.action === 'start');
-          if (state.enabled) { await liveTick(this.ctx.storage, { force: true }).catch(() => null); await this.scheduleWork(); }
+          if (state.enabled) { await this.runForwardPaper( { force: true }).catch(() => null); await this.scheduleWork(); }
           return json({ ok: true, state, dashboard: await this.liveTradingDashboard() });
         }
-        if (body.action === 'tick') return json({ ok: true, run: await liveTick(this.ctx.storage, { force: true }) });
+        if (body.action === 'tick') return json({ ok: true, run: await this.runForwardPaper( { force: true }) });
         if (body.action === 'backtest') return json(await liveBacktest(this.ctx.storage));
         return json({ detail: 'Unknown action. Use start, stop, tick or backtest.' }, 400);
       }
@@ -10133,7 +10237,7 @@ export class CheState extends DurableObject {
           if (live.kind === 'start' || live.kind === 'stop') {
             already = live.kind === 'start' && Boolean((await this.ctx.storage.get('live_paper_state'))?.enabled);
             const state = await setLivePaper(this.ctx.storage, live.kind === 'start');
-            if (state.enabled) { await liveTick(this.ctx.storage, { force: true }).catch(() => null); await this.scheduleWork(); }
+            if (state.enabled) { await this.runForwardPaper( { force: true }).catch(() => null); await this.scheduleWork(); }
           }
           const dash = await this.liveTradingDashboard();
           const opens = (live.kinds || [live.kind]).some((kind) => ['open', 'chart', 'trades', 'positions'].includes(kind));

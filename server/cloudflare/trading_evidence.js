@@ -551,7 +551,7 @@ export function newPortfolio(candidateId, filterId, {
 // Processes each new bar in time order. A signal is read from the closed bar; the
 // trade fills at the next bar's open. Returns the trades that closed in this step.
 // Portfolio state persists, so a later step continues where this one stopped.
-export function stepPortfolio(pf, candles, ctx = causalContext(candles)) {
+export function stepPortfolio(pf, candles, ctx = causalContext(candles), { allowEntries = true } = {}) {
   const problems = candleProblems(candles);
   if (problems.length) throw new Error(`candles refused: ${problems.join('; ')}`);
   const cand = candidateOf(pf.candidate);
@@ -562,6 +562,7 @@ export function stepPortfolio(pf, candles, ctx = causalContext(candles)) {
   if (start < 0) return closed;
   for (let k = start; k < candles.length; k++) {
     const bar = candles[k];
+    if (!allowEntries && pf.pending) { pf.pending = null; pf.counts.blocked_entries = (pf.counts.blocked_entries || 0) + 1; }
     if (pf.pending && !pf.open) {
       const sig = pf.pending;
       pf.pending = null;
@@ -575,6 +576,7 @@ export function stepPortfolio(pf, candles, ctx = causalContext(candles)) {
       if (inside && sameDay) {
         pf.open = {
           side, signal_time: sig.signal_time, signal_why: sig.why, signal_ref: sig.ref, condition: sig.condition,
+          entry_feed: pf.feed ? structuredClone(pf.feed) : null,
           entry_time: bar.t, entry: fillEntry(bar, contract, pf.costs, side), stop: sig.stop, target: sig.target,
           max_high: bar.o, min_low: bar.o, session: sessionOf(bar.t, pf.resolution),
           ...(sig.trade_day ? { trade_day: sig.trade_day, flat_td: sig.flat_td } : {}),
@@ -597,7 +599,7 @@ export function stepPortfolio(pf, candles, ctx = causalContext(candles)) {
       if (hit) closed.push(closeAt(pf, bar, hit));
     }
     const late = ctx.td && ctx.td[k] >= FLAT_TD - 5;
-    if (!pf.open && !pf.pending && cand && !late) {
+    if (allowEntries && !pf.open && !pf.pending && cand && !late) {
       const sig = cand.entry(candles, k, ctx);
       const side = sig?.side || 'long';
       const risk = sig ? (side === 'short' ? sig.stop - sig.ref : sig.ref - sig.stop) : 0;
@@ -662,6 +664,7 @@ function closeAt(pf, bar, hit) {
       price_series: pf.price_series,
       label: pf.resolution === 'daily' ? 'approximate: daily bars, fills at the next open' : pf.resolution === 'intraday' ? 'intraday bars' : `intraday ${pf.resolution} bars, fills at the next open`,
       ...(pf.feed ? { feed: pf.feed } : {}),
+      entry_feed: pos.entry_feed || null,
     },
     cost_assumptions: { ...pf.costs },
     result: settled.net_pnl > 0 ? 'win' : settled.net_pnl < 0 ? 'loss' : 'flat',
