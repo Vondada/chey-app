@@ -56,12 +56,17 @@ void main() {
     expect(find.text(r'Paper account equity: $10000.00'), findsOneWidget);
     await tester.tap(find.text('Read Alpaca paper orders aloud'));
     expect(spoken.single, contains(r'average fill $195.00'));
-    await tester.tap(find.text('AAPL · BUY'));
+    final receipt = await CheScreenAwareness.handleVoice('Read the first Alpaca receipt');
+    expect(receipt, contains('Alpaca order ID: broker-order-1'));
+    await CheScreenAwareness.handleVoice('Open the first Alpaca receipt');
     await tester.pumpAndSettle();
     expect(find.text('Verified paper-order receipt'), findsOneWidget);
     expect(find.text('Filled: 1'), findsOneWidget);
     expect(find.text(r'Average fill: $195.00'), findsOneWidget);
     expect(find.text('Alpaca order ID: broker-order-1'), findsOneWidget);
+    expect(await CheScreenAwareness.handleVoice('Read this'), contains('Submitted: 2026-10-20T14:01:00.000Z'));
+    expect(await CheScreenAwareness.handleVoice('Close receipt'), contains('Closed'));
+    await tester.pumpAndSettle();
     expect(requests, contains('GET /api/trading/alpaca/orders'));
     expect(requests.every((r) => r.startsWith('GET ')), isTrue,
       reason: 'opening paper-order receipts may never submit an order');
@@ -84,4 +89,26 @@ void main() {
     expect(find.textContaining('Connect Alpaca PAPER'), findsOneWidget);
     expect(find.text('AAPL · BUY'), findsNothing);
   });
+  testWidgets('foreground help exposes real controls and a spoken number invokes the same action', (tester) async {
+    var opened = 0;
+    final spoken = <String>[];
+    await tester.pumpWidget(MaterialApp(home: Builder(builder: (context) => Scaffold(
+      appBar: AppBar(title: const Text('Actual page')),
+      body: Column(children: [
+        FilledButton(onPressed: () => opened++, child: const Text('Show report')),
+        IconButton(tooltip: CheScreenGuide.tooltip, icon: const Icon(Icons.help_outline),
+          onPressed: () => CheScreenGuide.open(context, fallback: 'Actual page', onRead: spoken.add)),
+      ]),
+    ))));
+    await tester.tap(find.byTooltip(CheScreenGuide.tooltip));
+    await tester.pumpAndSettle();
+    expect(find.text('1. Show report'), findsOneWidget);
+    final selection = CheScreenAwareness.handleVoice('Number one');
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(await selection, contains('Selected Show report'));
+    expect(opened, 1);
+    expect(await CheScreenAwareness.handleVoice('Number one'), isNull, reason: 'dismissed help must not retain an action');
+  });
+
 }

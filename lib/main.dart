@@ -188,6 +188,8 @@ class CHEApp extends StatefulWidget {
 }
 
 class _CHEAppState extends State<CHEApp> {
+  final _navigator = GlobalKey<NavigatorState>();
+  final _home = GlobalKey<_CHEHomeState>();
   final CheUiPreferences _ui = CheUiPreferences.instance;
 
   @override
@@ -225,6 +227,7 @@ class _CHEAppState extends State<CHEApp> {
       builder: (context, _) {
         return MaterialApp(
           title: 'CHE',
+          navigatorKey: _navigator,
           debugShowCheckedModeBanner: false,
           // iPhone-native feel: bounce scrolling everywhere, iOS swipe-back page
           // transitions on every platform, and no Android-style ink ripples.
@@ -237,10 +240,20 @@ class _CHEAppState extends State<CHEApp> {
             // "Look at my screen" captures from here: every page, sheet and dialog.
             return CheScreenCapture.wrap(MediaQuery(
               data: mq.copyWith(textScaler: TextScaler.linear(_ui.textScale)),
-              child: child ?? const SizedBox.shrink(),
+              child: Stack(children: [
+                child ?? const SizedBox.shrink(),
+                Positioned(right: 16, bottom: mq.viewInsets.bottom + mq.padding.bottom + 88,
+                  child: FloatingActionButton.small(heroTag: null,
+                    onPressed: () {
+                      final target = _navigator.currentState?.overlay?.context;
+                      if (target != null) {
+                        CheScreenGuide.open(target, fallback: 'current screen', onRead: (words) { _home.currentState?.speakText(words, record: false, readOnDemand: true); });
+                      }
+                    }, child: const Icon(Icons.help_outline, semanticLabel: CheScreenGuide.tooltip))),
+              ]),
             ));
           },
-          home: const CHEHome(),
+          home: CHEHome(key: _home),
         );
       },
     );
@@ -2313,14 +2326,6 @@ OWNER AGENCY
     );
   }
 
-  void _openScreenGuide() {
-    final fallback = switch (_shellTab) {
-      0 => 'Home', 1 => 'Chat', 2 => 'Office', 3 => 'Apps', _ => 'More',
-    };
-    CheScreenGuide.open(context, fallback: fallback,
-      onRead: (words) { speakText(words, record: false, readOnDemand: true); });
-  }
-
   @override
   Widget build(BuildContext context) {
     _ensureOfficeRuntime();
@@ -2421,17 +2426,6 @@ OWNER AGENCY
             ],
           ),
         ),
-      ),
-      // Always-available on the five main tabs. Nested routes use their own
-      // toolbar while they are open; those routes will receive this control in
-      // later help coverage, rather than pretending the shell can overlay them.
-      floatingActionButtonLocation: FloatingActionButtonLocation.endTop,
-      floatingActionButton: FloatingActionButton.small(
-        tooltip: 'Help for this screen',
-        heroTag: 'che-screen-help',
-        backgroundColor: kit.CheColors.accent,
-        onPressed: _openScreenGuide,
-        child: const Icon(Icons.help_outline),
       ),
       bottomNavigationBar: ChePhoneBottomNav(
         index: _shellTab,

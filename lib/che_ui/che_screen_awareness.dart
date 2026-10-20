@@ -41,9 +41,10 @@ class CheScreenReport {
 }
 
 class _Entry {
-  _Entry(this.context, this.report);
+  _Entry(this.context, this.report, {this.voice});
   final BuildContext context;
-  final CheScreenReport Function() report;
+  final CheScreenReport Function()? report;
+  final Future<String?> Function(String)? voice;
 }
 
 class CheScreenAwareness {
@@ -59,6 +60,24 @@ class CheScreenAwareness {
 
   static void unregister(Object? token) => _entries.remove(token);
 
+  // Screen-local spoken actions use the same foreground/lifetime authority as reports.
+  static Object registerVoice(BuildContext context, Future<String?> Function(String) voice) {
+    final entry = _Entry(context, null, voice: voice);
+    _entries.add(entry);
+    return entry;
+  }
+
+  static Future<String?> handleVoice(String words) async {
+    for (final entry in _entries.reversed.toList()) {
+      if (entry.voice != null && _shown(entry.context)) {
+        final reply = await entry.voice!(words);
+        if (reply != null) return reply;
+      }
+    }
+    return null;
+  }
+
+
   static bool _shown(BuildContext c) {
     if (!c.mounted) return false;
     // Pages behind another route, and rooms in a tab that is not selected,
@@ -70,7 +89,7 @@ class CheScreenAwareness {
   /// The page in front of the owner, or null when none reports itself.
   static CheScreenReport? get current {
     for (final e in _entries.reversed) {
-      if (_shown(e.context)) return e.report();
+      if (e.report != null && _shown(e.context)) return e.report!();
     }
     return null;
   }
@@ -79,9 +98,9 @@ class CheScreenAwareness {
   static String describe() {
     final now = current;
     if (now != null) return now.spoken;
-    final below = _entries.reversed.where((e) => e.context.mounted).firstOrNull;
+    final below = _entries.reversed.where((e) => e.context.mounted && e.report != null).firstOrNull;
     return 'I can\'t tell exactly what is on your screen right now: the page in front of you does not report its contents to me yet, so I won\'t guess.'
-        '${below == null ? '' : ' Behind it is ${below.report().page}.'} Say "go back" to return, then ask again.';
+        '${below == null ? '' : ' Behind it is ${below.report!().page}.'} Say "go back" to return, then ask again.';
   }
 }
 

@@ -3,6 +3,9 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import '../che_ui/che_screen_awareness.dart';
+import '../che_wake_match.dart';
 import 'package:http/http.dart' as http;
 
 class CheAlpacaPaperPanel extends StatefulWidget {
@@ -29,16 +32,19 @@ class _CheAlpacaPaperPanelState extends State<CheAlpacaPaperPanel> {
   DateTime? _checked;
   bool _loading = false;
   bool _stale = false;
+  Object? _voiceToken;
 
   @override
   void initState() {
     super.initState();
+    _voiceToken = CheScreenAwareness.registerVoice(context, _voice);
     unawaited(_load());
     _timer = Timer.periodic(widget.refresh, (_) => unawaited(_load()));
   }
 
   @override
   void dispose() {
+    CheScreenAwareness.unregister(_voiceToken);
     _timer?.cancel();
     if (widget.client == null) _client.close();
     super.dispose();
@@ -54,9 +60,10 @@ class _CheAlpacaPaperPanelState extends State<CheAlpacaPaperPanel> {
     return Map<String, dynamic>.from(decoded);
   }
 
-  Future<void> _load() async {
+  Future<void> _load({bool requested = false}) async {
     if (_loading) return;
     _loading = true;
+    var verified = false;
     try {
       final responses = await Future.wait([
         _get('/api/trading/alpaca/orders'),
@@ -80,6 +87,7 @@ class _CheAlpacaPaperPanelState extends State<CheAlpacaPaperPanel> {
         return;
       }
       setState(() {
+        verified = true;
         _stale = false;
         _orders = (orders['orders'] as List? ?? const []).whereType<Map>()
             .map((m) => Map<String, dynamic>.from(m)).toList();
@@ -96,6 +104,11 @@ class _CheAlpacaPaperPanelState extends State<CheAlpacaPaperPanel> {
       });
     } finally {
       _loading = false;
+      if (requested && mounted) {
+        final text = verified ? 'Alpaca PAPER refreshed: ${_orders.length} broker orders reported. An order is not a fill.' : _notice;
+        widget.onRead?.call(text);
+        if (verified) { HapticFeedback.mediumImpact(); } else { HapticFeedback.heavyImpact(); }
+      }
     }
   }
 
@@ -104,9 +117,10 @@ class _CheAlpacaPaperPanelState extends State<CheAlpacaPaperPanel> {
     return n == null || !n.isFinite ? 'Not reported' : '\$${n.toStringAsFixed(2)}';
   }
 
-  void _showReceipt(Map<String, dynamic> order) {
-    final lines = <String>[
+  String _receipt(Map<String, dynamic> order) {
+    return <String>[
       'Broker: Alpaca PAPER',
+      'Client snapshot check: ${_checked?.toIso8601String() ?? 'Not verified'}',
       'Symbol: ${order['symbol'] ?? 'Unknown'}',
       'Side: ${order['side'] ?? 'Unknown'}',
       'Status: ${order['status'] ?? 'Unknown'}',
@@ -118,10 +132,40 @@ class _CheAlpacaPaperPanelState extends State<CheAlpacaPaperPanel> {
       'Filled at: ${order['filled_at'] ?? 'Not filled'}',
       'Alpaca order ID: ${order['id'] ?? 'Not reported'}',
       'Client order ID: ${order['client_order_id'] ?? 'Not reported'}',
-    ];
+    ].join('\n');
+  }
+
+  Future<String?> _voice(String raw) async {
+    final text = (cheWakeRemainder(raw) ?? raw).toLowerCase().replaceAll(RegExp(r'[.,!?]'), '').trim();
+    if (RegExp(r'^refresh (?:my |the )?alpaca (?:paper )?(?:orders|trades)$').hasMatch(text)) {
+      await _load();
+      return _stale || _notice.isNotEmpty ? _notice : 'Alpaca PAPER refreshed: ${_orders.length} broker orders reported.';
+    }
+    final match = RegExp(r'^(open|show|read)(?: me)? (?:the )?(first|second|third|fourth|fifth|[1-9][0-9]?) alpaca (?:paper )?receipt$').firstMatch(text)
+      ?? RegExp(r'^(open|show|read)(?: me)? (?:the )?alpaca (?:paper )?receipt (?:number )?(first|second|third|fourth|fifth|[1-9][0-9]?)$').firstMatch(text);
+    if (match == null) return null;
+    const ordinals = {'first': 1, 'second': 2, 'third': 3, 'fourth': 4, 'fifth': 5};
+    final index = (ordinals[match[2]] ?? int.tryParse(match[2]!) ?? 0) - 1;
+    if (index < 0 || index >= _orders.length) return 'That Alpaca receipt is not in the broker records shown here. Refresh the orders first.';
+    final order = _orders[index];
+    if (match[1] != 'read') { _showReceipt(order); }
+    return '${_stale ? 'Previously verified, not current. ' : ''}${_receipt(order)}';
+  }
+
+  void _showReceipt(Map<String, dynamic> order) {
+    final receipt = _receipt(order);
+    final lines = receipt.split('\n');
+    Object? receiptVoice;
     showModalBottomSheet<void>(
       context: context, isScrollControlled: true,
-      builder: (context) => SafeArea(child: SingleChildScrollView(
+      builder: (context) {
+        receiptVoice ??= CheScreenAwareness.registerVoice(context, (raw) async {
+          final text = (cheWakeRemainder(raw) ?? raw).toLowerCase().replaceAll(RegExp(r'[.!?,]'), '').trim();
+          if (RegExp(r'^(?:close (?:the )?receipt|go back)$').hasMatch(text)) { Navigator.pop(context); return 'Closed the Alpaca receipt.'; }
+          if (RegExp(r'^read (?:this|(?:the )?receipt)$').hasMatch(text)) return receipt;
+          return null;
+        });
+        return SafeArea(child: SingleChildScrollView(
         padding: const EdgeInsets.all(22),
         child: Column(mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -132,11 +176,13 @@ class _CheAlpacaPaperPanelState extends State<CheAlpacaPaperPanel> {
             padding: const EdgeInsets.symmetric(vertical: 5),
             child: SelectableText(line, style: const TextStyle(fontSize: 16))),
           const Text('An accepted order is not a fill. Only the filled quantity is executed.'),
+          if (widget.onRead != null) TextButton(onPressed: () => widget.onRead!(receipt), child: const Text('Read receipt aloud')),
           TextButton(onPressed: () => Navigator.pop(context),
             child: const Text('Close receipt')),
         ]),
-      )),
-    );
+      ));
+      },
+    ).whenComplete(() => CheScreenAwareness.unregister(receiptVoice));
   }
 
   @override
@@ -157,7 +203,7 @@ class _CheAlpacaPaperPanelState extends State<CheAlpacaPaperPanel> {
             style: TextStyle(color: Colors.white, fontSize: 19,
               fontWeight: FontWeight.bold))),
           const Text('PAPER', style: TextStyle(color: amber)),
-          IconButton(onPressed: _load, tooltip: 'Refresh Alpaca paper orders',
+          IconButton(onPressed: () => _load(requested: true), tooltip: 'Refresh Alpaca paper orders',
             icon: const Icon(Icons.refresh, color: Colors.white)),
         ]),
         const Text('Broker-verified stock orders · separate from MNQ simulations',
