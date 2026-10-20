@@ -141,7 +141,16 @@ export function postTradeReview(t) {
   return { complied: true, compliance: 'Entered and exited by the engine from the written rules, with no manual change.', rule_summary: INTRADAY_CANDIDATES[t.strategy]?.rules || '', facts, hypotheses, risk_points: risk, written_at: t.exit.time };
 }
 
-const feedOf = (feed) => ({ status: feed.status, provider: feed.provider, provider_symbol: feed.provider_symbol, contract: feed.contract, latency_s: feed.latency_s ?? null, last_bar_time: feed.last_bar_time ?? null });
+const feedOf = (feed) => ({ authenticated: Boolean(feed.authenticated), subscription_verified: Boolean(feed.subscription_verified), status: feed.status, provider: feed.provider, provider_symbol: feed.provider_symbol, contract: feed.contract, latency_s: feed.latency_s ?? null, last_bar_time: feed.last_bar_time ?? null });
+
+// Closed 5-minute bars for the engine. A verified provider stream already delivers closed 5-minute
+// bars (Tradovate MinuteBar, elementSize 5), kept only once their 5 minutes are over; Yahoo's
+// 1-minute bars are summed into 5 minutes, volume included.
+function closedFiveMinuteBars(feed, now) {
+  if (feed.interval === RESOLUTION) return feed.candles.filter((b) => Date.parse(b.t) + 300000 <= now);
+  const bars = aggregate(feed.candles, 5, now);
+  return bars;
+}
 
 /**
  * One forward-paper pass: newest closed bars, each portfolio stepped from where it
@@ -163,7 +172,7 @@ export async function liveTick(storage, { fetcher = fetch, now = Date.now(), for
       run.error = feed.error;
       await storage.put(LIVE_FEED, { ...feedOf(feed), error: feed.error, checked_at: feed.checked_at, session, bars: ((await storage.get(LIVE_FEED)) || {}).bars || [] });
     } else {
-      const bars = aggregate(feed.candles, 5, now);
+      const bars = closedFiveMinuteBars(feed, now);
       const problems = candleProblems(bars);
       if (problems.length) {
         run.error = `data refused: ${problems.join('; ')}`;
@@ -173,6 +182,12 @@ export async function liveTick(storage, { fetcher = fetch, now = Date.now(), for
         const newest = bars[bars.length - 1].t;
         // Forward only: a new portfolio starts at the newest closed bar, so history is never journalled as paper.
         for (const pf of portfolios) if (pf.last_bar_time == null) Object.assign(pf, { last_bar_time: newest, started_from: newest });
+        // Two entry gates, both required: the real-time evidence gate (a delayed, replayed, stale or
+        // unsubscribed feed opens nothing) and the owner's controls (trading_controls.js).
+        const barAge = now - Date.parse(newest) - 300000;
+        const allowEntries = barAge >= 0 && barAge <= 90000 && feed.status === 'LIVE' && feed.authenticated === true && feed.subscription_verified === true && Number.isFinite(feed.latency_s) && feed.latency_s <= 15;
+        run.entries_allowed = allowEntries;
+        run.entry_blocker = allowEntries ? null : 'New forward-paper entries require fresh authenticated and subscribed real-time CME delivery. Delayed/replay/stale data cannot open positions.';
         // The owner's controls (trading_controls.js) decide whether a valid signal may enter.
         const controls = await readControls(storage);
         const today = tradeDayOf(now);
@@ -185,7 +200,8 @@ export async function liveTick(storage, { fetcher = fetch, now = Date.now(), for
           // A size change applies from the next entry, never to an open position or a placed order.
           if (!pf.open && !pf.pending) pf.qty = controls.strategies[pf.candidate]?.qty || pf.qty;
           const before = pf.counts.signals;
-          closed.push(...stepPortfolio(pf, bars, ctx, gate));
+          pf.price_series = `${feed.provider} ${feed.provider_symbol} ${RESOLUTION} (${feed.status})`;
+          closed.push(...stepPortfolio(pf, bars, ctx, gate, { allowEntries }));
           run.signals = (run.signals || 0) + pf.counts.signals - before;
         }
         const valid = [];
