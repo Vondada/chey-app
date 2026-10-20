@@ -458,7 +458,7 @@ test('AI router stores daily usage budgets and puts a fast free engine before pa
 });
 
 
-test('AI router compacts old conversation history before provider calls', async () => {
+test('AI router preserves old conversation history before provider calls', async () => {
   resetRouterForTests();
   const sent = [];
   const messages = [
@@ -481,10 +481,9 @@ test('AI router compacts old conversation history before provider calls', async 
   assert.equal(result.engine, 'groq');
   const outbound = sent[0].messages;
   assert.equal(outbound[0].role, 'system');
-  assert.match(outbound[1].content, /Earlier conversation summary/);
-  assert.equal(outbound.length, 12, 'system + one summary + last 10 conversation messages');
+  assert.deepEqual(outbound, messages, 'original roles and every complete turn survive');
   assert.equal(outbound.at(-1).content.startsWith('message-13'), true);
-  assert.ok(JSON.stringify(outbound).length < JSON.stringify(messages).length);
+  assert.deepEqual(input.messages, messages);
 });
 
 

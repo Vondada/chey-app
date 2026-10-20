@@ -434,9 +434,15 @@ async function checkRuns(env, sha, fetcher) {
 const FAILED = ['failure', 'cancelled', 'timed_out', 'action_required', 'startup_failure'];
 
 export async function selfUpdateStatus(env, number, fetcher = fetch) {
+  if (!Number.isSafeInteger(Number(number)) || Number(number) < 1) return { status: 400, detail: 'Invalid pull request number.' };
   if (!repoOf(env)) return { status: 503, detail: 'Self-update is not connected to GitHub.' };
   const pr = await gh(env, 'GET', `/pulls/${Number(number)}`, null, fetcher);
   if (!pr.ok) return pr.status === 404 ? { status: 404, detail: 'Update pull request not found.' } : failed(pr, 'Could not read the pull request');
+  if (pr.data?.number !== Number(number) || typeof pr.data?.merged !== 'boolean'
+    || !['open', 'closed'].includes(pr.data?.state) || !/^[a-f0-9]{40}$/i.test(pr.data?.head?.sha || '')
+    || (pr.data.merged && (pr.data.state !== 'closed' || !/^[a-f0-9]{40}$/i.test(pr.data.merge_commit_sha || '')))) {
+    return { status: 502, detail: 'GitHub returned an invalid or contradictory pull request record.' };
+  }
   const head = await checkRuns(env, pr.data.head.sha, fetcher);
   const runs = head.runs;
   const failedRuns = runs.filter((run) => FAILED.includes(run.conclusion));
@@ -448,7 +454,7 @@ export async function selfUpdateStatus(env, number, fetcher = fetch) {
     preexisting = failedRuns.filter((run) => baseFailed.has(run.name));
   }
   const blocking = failedRuns.filter((run) => !preexisting.includes(run));
-  const ci = !runs.length ? 'none' : blocking.length ? 'failed' : pending.length ? 'running' : 'passed';
+  const ci = !head.ok ? 'unknown' : !runs.length ? 'none' : blocking.length ? 'failed' : pending.length ? 'running' : 'passed';
   return {
     status: 200,
     number: pr.data.number,

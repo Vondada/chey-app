@@ -161,6 +161,58 @@ test('a record that fails the check is refused, and so is one written for a diff
   assert.equal((await other.get(REA_JOBS_KEY))[0].state, 'failed', 'a record whose job id differs is not used');
 });
 
+test('failed retained REA job stays terminal across repeated workflow polls, with original evidence and ID', async () => {
+  const store = memStore();
+  const world = fakeWorld({ registry: { 'semver/7.7.2': REGISTRY } });
+  const started = await handleReaRequest(store, ENV, 'REA inspect: npm:semver@7.7.2', { fetcher: world.fetcher, now: T0, random: FIXED });
+  assert.equal(started.job_id, JOB);
+  const bad = fakeWorld({ registry: { 'semver/7.7.2': REGISTRY }, records: { [JOB]: { ...SEMVER, job_id: JOB, evidence: { ...SEMVER.evidence, id: 'forged' } } } });
+  await refreshReaJobs(store, ENV, T0 + 60_000, bad.fetcher);
+  for (let i = 2; i < 6; i++) {
+    const out = await handleReaRequest(store, ENV, 'REA inspect: npm:semver@7.7.2', { fetcher: bad.fetcher, now: T0 + i * 60_000, random: FIXED });
+    assert.equal(out.ok, false);
+    assert.equal(out.state, 'failed');
+    assert.equal(out.job_id, JOB);
+    assert.match(out.text, /did not pass the check/);
+    assert.doesNotMatch(out.text, /still queued|started for|inspection of/);
+  }
+  assert.equal(bad.writes().length, 0);
+  assert.equal((await store.get(REA_JOBS_KEY)).length, 1);
+});
+
+test('dispatch rejection retains failed job identity and cannot dispatch again on polling', async () => {
+  const store = memStore();
+  const world = fakeWorld({ registry: { 'semver/7.7.2': REGISTRY }, dispatchStatus: 403 });
+  const first = await handleReaRequest(store, ENV, 'REA inspect: npm:semver@7.7.2', { fetcher: world.fetcher, now: T0, random: FIXED });
+  const next = await handleReaRequest(store, ENV, 'REA inspect: npm:semver@7.7.2', { fetcher: world.fetcher, now: T0 + 60_000, random: FIXED });
+  assert.equal(first.job_id, JOB);
+  assert.equal(next.job_id, JOB);
+  assert.equal(first.state, 'failed');
+  assert.equal(next.state, 'failed');
+  assert.equal(world.writes().length, 1);
+});
+
+test('only an explicit owner REA retry creates a linked new attempt after failure', async () => {
+  const store = memStore();
+  const failed = fakeWorld({ registry: { 'semver/7.7.2': REGISTRY }, dispatchStatus: 403 });
+  await handleReaRequest(store, ENV, 'REA inspect: npm:semver@7.7.2', { fetcher: failed.fetcher, now: T0, random: FIXED });
+  const world = fakeWorld({ registry: { 'semver/7.7.2': REGISTRY } });
+  const denied = await handleReaRequest(store, ENV, 'REA retry: npm:semver@7.7.2', { owner: false, fetcher: world.fetcher, now: T0 + 1 });
+  assert.equal(denied.ok, false);
+  assert.equal(world.writes().length, 0);
+  const retry = await handleReaRequest(store, ENV, 'REA retry: npm:semver@7.7.2', { owner: true, fetcher: world.fetcher, now: T0 + 2, random: () => Uint8Array.of(1, 2, 3, 4) });
+  assert.equal(retry.state, 'queued');
+  assert.notEqual(retry.job_id, JOB);
+  const jobs = await store.get(REA_JOBS_KEY);
+  assert.equal(jobs.length, 2);
+  assert.equal(jobs[0].state, 'failed');
+  assert.equal(jobs[1].retry_of, JOB);
+  assert.equal(jobs[1].original_job_id, JOB);
+  assert.equal(world.writes().length, 1);
+  await handleReaRequest(store, ENV, 'REA retry: npm:semver@7.7.2', { owner: true, fetcher: world.fetcher, now: T0 + 3 });
+  assert.equal(world.writes().length, 1, 'even explicit retry reuses an active attempt');
+});
+
 test('a job with no record after two hours is reported as stalled, not as running forever', async () => {
   const store = memStore();
   await store.put(REA_JOBS_KEY, [{ id: JOB, state: 'queued', created_at: new Date(T0 - 3 * 3600_000).toISOString(), target: REGISTRY, cache_key: 'k' }]);

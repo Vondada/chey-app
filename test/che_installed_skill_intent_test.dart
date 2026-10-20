@@ -69,6 +69,7 @@ void main() {
     final send = File('lib/home_state/send.dart').readAsStringSync();
     expect(send, matches(RegExp(
       r'if \(_realtimeVoice\?\.connected == true &&\s*'
+      r'!_realtimeVoice!\.guardedOutput &&\s*'
       r'_pendingAttachment == null &&\s*!isInstalledSkillRequest\(message\)\)',
     )));
     final stream = File('lib/home_state/streaming.dart').readAsStringSync();

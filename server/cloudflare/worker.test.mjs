@@ -738,19 +738,20 @@ test('media routes serve owner-only images; chat image requests use the CHE imag
   assert.match(reply, /"media_type":"image","media_url":"https:\/\/che\.example\/api\/media\/[a-f0-9-]+\/image"/);
 });
 
-test('chat recovers when the model rejects the full prompt, and reports real errors', async () => {
+test('chat recovers on a larger model without shortening context, and reports real errors', async () => {
   const saved = new Map();
   const seen = [];
   let failAll = false;
   const env = {
     CHE_PAIR_CODE: '123456',
     CHE_DISABLE_KEYLESS_AI: '1',
+    CHE_FAST_MODEL: 'small-context', CHE_STRONG_MODEL: 'large-context',
     AI: {
       run: async (model, input) => {
         const system = input.messages[0].content;
         seen.push({ model, length: system.length });
         if (failAll) throw new Error('AiError: 3036: model overloaded');
-        if (system.length > 8000) throw new Error('AiError: 5021: input exceeds the model context window');
+        if (model === 'small-context') throw new Error('AiError: 5021: input exceeds the model context window');
         return { response: 'Hey sir, all good.' };
       },
     },
@@ -768,13 +769,14 @@ test('chat recovers when the model rejects the full prompt, and reports real err
   }), env);
   const token = (await (await send('/api/pair', { code: '123456' })).json()).device_token;
 
-  // Ordinary chat prefers the compact/fast prompt so first token is sooner.
+  // Ordinary chat selects the fast route, preserving full rules and context.
   const ok = await send('/api/chat', { message: "What's up", brain_context: ['[CHE SOUL] warm'] }, token);
   assert.equal(ok.status, 200);
   assert.match(await ok.text(), /Hey sir, all good/);
-  assert.ok(seen[0].length < 8000, 'compact/fast prompt tried first on casual chat');
+  assert.ok(seen[0].length > 8000, 'full rules are retained on casual chat too');
+  assert.ok(seen.some((call) => call.model === 'large-context'), 'replacement model receives the full prompt');
 
-  // Complex turns still try the full quality prompt first, then compact.
+  // Complex turns retain the full quality prompt.
   seen.length = 0;
   const heavy = await send('/api/chat', {
     message: 'Please debug this and write a deep analysis research report',
@@ -785,8 +787,8 @@ test('chat recovers when the model rejects the full prompt, and reports real err
   const fullPromptIndex = seen.findIndex((call) => call.length > 8000);
   assert.ok(fullPromptIndex >= 0, 'heavy turns still try the full quality prompt');
   assert.ok(
-    seen.slice(fullPromptIndex + 1).some((call) => call.length < 8000),
-    'compact prompt retried after full prompt failure',
+    seen.filter((call) => call.model === 'large-context').every((call) => call.length > 8000),
+    'no shorter prompt was substituted',
   );
 
   failAll = true;

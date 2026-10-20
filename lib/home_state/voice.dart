@@ -282,7 +282,7 @@ extension _CheHomeVoice on _CHEHomeState {
   CheSpeechPipeline<CheVoiceClip>? _openSpeechTurn({bool readOnDemand = false, String purpose = 'conversation'}) {
     // Mirror the persisted UI Controls toggle (defaults ON).
     voiceResponsesEnabled = CheUiPreferences.instance.voiceResponsesEnabled;
-    if (_realtimeVoice?.connected == true) {
+    if (_realtimeVoice?.connected == true && !_realtimeVoice!.guardedOutput) {
       // Realtime owns the speaker while it is mid-turn. Otherwise fall through
       // to local TTS so greetings / system prompts are not silently dropped.
       final phase = _voiceSnapshot.phase;
@@ -502,7 +502,7 @@ extension _CheHomeVoice on _CHEHomeState {
   }
 
   Future<void> _interruptSpeechAndListen({bool resumeListening = true}) async {
-    if (_realtimeVoice?.connected == true) {
+    if (_realtimeVoice?.connected == true && !_realtimeVoice!.guardedOutput) {
       await _realtimeVoice!.cancelActiveResponse('owner interruption');
       _applyVoiceSnapshot(_voiceMachine.snapshot);
       return;
@@ -697,12 +697,6 @@ extension _CheHomeVoice on _CHEHomeState {
           await _beginRealtimeConversation(fromWake: true);
           if (_realtimeVoice?.connected == true) {
             if (afterWake.isNotEmpty) {
-              if (mounted) {
-                _set(() {
-                  messages.add({'role': 'user', 'text': afterWake});
-                });
-                _scrollToBottom();
-              }
               await _realtimeVoice!.sendText(afterWake);
             }
             return;

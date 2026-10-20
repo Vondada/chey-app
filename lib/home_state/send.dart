@@ -259,10 +259,9 @@ extension _CheHomeSend on _CHEHomeState {
         (source.last['text'] ?? '').trim() == currentMessage.trim()) {
       source.removeLast();
     }
-    final recent = source.length > 14
-        ? source.sublist(source.length - 14)
-        : source;
-    return recent
+    // Earlier names, requirements and approvals remain part of this request.
+    // The Worker selects an engine that can receive the complete history.
+    return source
         .map(
           (item) => {
             'role': item['role'] == 'assistant' ? 'assistant' : 'user',
@@ -868,6 +867,7 @@ extension _CheHomeSend on _CHEHomeState {
     // Realtime voice is text/audio-only. A turn with an attachment must go
     // through the normal multimodal HTTP path so CHE actually sees/hears it.
     if (_realtimeVoice?.connected == true &&
+        !_realtimeVoice!.guardedOutput &&
         _pendingAttachment == null &&
         !isInstalledSkillRequest(message)) {
       if (!mounted) return;
@@ -1037,9 +1037,23 @@ extension _CheHomeSend on _CHEHomeState {
         _pendingVoicePreviewId = null;
       } else {
         replySpeech?.close();
-        await replySpeech?.done;
-        // A free sample asked for by voice starts only after the spoken reply has finished.
-        if (mounted) unawaited(_playPendingVoicePreview());
+        final previewId = _pendingVoicePreviewId;
+        _pendingVoicePreviewId = null;
+        final generation = _speechTurn;
+        Future<void> playPreview() async {
+          if (mounted && previewId != null && generation == _speechTurn) {
+            unawaited(_playPendingVoicePreview(requestedVoiceId: previewId));
+          }
+        }
+        final finished = replySpeech?.afterPlayback(playPreview) ?? playPreview();
+        if (fromVoice && _realtimeVoice?.guardedOutput == true) {
+          // The next queued owner turn must not wait for playback. The speech
+          // pipeline owns its cleanup and new speech interrupts it immediately.
+          unawaited(finished);
+        } else {
+          await finished;
+        }
+
       }
     } on _CHEAgentException catch (e) {
       final errorReply = e.message;

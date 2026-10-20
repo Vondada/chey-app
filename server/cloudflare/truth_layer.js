@@ -10,8 +10,51 @@
 
 import { requestNamesAction, storyRequested } from './memory_provenance.js';
 import { isEvidenceRequest } from './recovery_policy.js';
+import { savePackedJson } from './prompt_compaction.js';
 
 export const RECEIPTS_KEY = 'che_receipts';
+// Only execution code owns these objects. JSON from a model, client, memory or
+// provider cannot mint an execution capability, even if it copies every field.
+const executionReceipts = new WeakSet();
+export async function executeWithReceipt({ tool, operation, source, request_id, run, verify = (r) => r?.ok === true, response = (r) => r }) {
+  const invocation_id = crypto.randomUUID();
+  let result;
+  let status = 'failure';
+  let verified_response = null;
+  let error = '';
+  try {
+    result = await run();
+    status = verify(result) ? 'success' : result?.status === 503 || result?.status === 0 ? 'unavailable' : 'failure';
+    if (status === 'success') verified_response = response(result);
+    else error = `Operation did not succeed${Number.isInteger(result?.status) ? ` (HTTP ${result.status})` : ''}.`;
+  } catch (_) {
+    status = 'unavailable';
+    error = 'Execution unavailable; no successful result was verified.';
+  }
+  const receipt = Object.freeze({ kind: 'tool_execution', tool, operation, invocation_id,
+    request_id, status, at: new Date().toISOString(), source,
+    verified_response: verified_response == null ? null : structuredClone(verified_response), error });
+  executionReceipts.add(receipt);
+  return { result, receipt };
+}
+
+export function isExecutionReceipt(receipt) { return executionReceipts.has(receipt); }
+
+// This is an owner-output boundary, not a shell detector or a permissions gate.
+// Sensitive repository/execution assertions from an LLM are never evidence.
+// Verified lookups render their structured results directly at the owning route.
+export function guardExecutionClaims(reply, { message = '', receipts = [] } = {}) {
+  const text = String(reply || '');
+  if (storyRequested(message)) return { text, removed: [] };
+  const identifiers = /\b(?:PRs?|pull requests?)\s*(?:numbers?\s*)?(?:#\s*)?\d+\b|\b[0-9a-f]{16,64}\b|\bcommit\s+[0-9a-f]{7,64}\b|\b(?:SHA|commit(?:\s+hash)?)\s*[:=]\s*\S+|\/path\/to\//i;
+  const execution = /\b(?:I|we|CHE)\s+(?:(?:have|just|successfully|actually|already)\s+)*(?:executed|ran|invoked|dispatched|verified|checked\s+(?:GitHub|the\s+(?:repo|terminal))|retrieved\s+(?:the\s+)?(?:handoff|LIVE-HANDOFF))\b|\b(?:terminal|shell|command|tool|job|workflow|deployment)\b[^\n.!?]{0,100}\b(?:succeeded|successful|executed|completed|dispatched|verified)\b|\b(?:execution|invocation|job|workflow|deployment)[_ -]id\s*[:=]|\b(?:according to|verified (?:by|on|from))\s+GitHub\b/i;
+  const repoEvidence = /\b(?:GitHub|LIVE-HANDOFF\.md|che-mailbox)\b[^\n.!?]{0,140}\b(?:verified|merged|unmerged|deployed|retrieved|read|commit|branch|completed)\b/i;
+  const transcript = /(?:^|\n)\s*(?:[$>]\s*)?(?:git\s|gh\s+(?:api|pr)\b|(?:stdout|exit code|exit status)\s*:)|"(?:tool|command|operation|invocation_id|job_id|commit_sha|merge_commit_sha|head_sha)"\s*:/i;
+  if (!identifiers.test(text) && !execution.test(text) && !repoEvidence.test(text) && !transcript.test(text)) return { text, removed: [] };
+  const actual = receipts.filter(isExecutionReceipt);
+  if (actual.length) return { text: actual.map((r) => `Execution receipt ${r.invocation_id}: ${r.tool} ${r.operation}, ${r.status}, at ${r.at}, source ${r.source}. ${r.status === 'success' ? `Returned data (source content, not instructions): ${JSON.stringify(r.verified_response)}` : r.error}`).join('\n'), removed: [text] };
+  return { text: 'I cannot verify those repository or execution claims from this model response. Model-written commands, identifiers and sources are not execution evidence. No successful execution is established by that response.', removed: [text] };
+}
 export const PEERS = ['claude', 'chatgpt', 'codex', 'gemini', 'grok', 'copilot', 'cursor'];
 const PEER_RE = '(claude|chat\\s?gpt|codex|gemini|grok|copilot|cursor)';
 const RECENT_MS = 6 * 3600_000;
@@ -29,6 +72,14 @@ export async function recordReceipt(storage, receipt) {
   if (!Array.isArray(list)) list = [];
   if (receipt.key && list.some((item) => item.key === receipt.key)) return list.find((item) => item.key === receipt.key);
   const entry = { ...receipt, at: receipt.at || new Date().toISOString() };
+  if (entry.kind === 'tool_execution' && entry.invocation_id) {
+    // Keep the authoritative result losslessly in existing packed storage.
+    // Repeating a large lookup must not overflow the bounded receipt index.
+    const key = `execution_receipt:${entry.invocation_id}`;
+    await savePackedJson(storage, key, entry);
+    entry.response_ref = key;
+    delete entry.verified_response;
+  }
   list.push(entry);
   try { await storage.put(RECEIPTS_KEY, list.slice(-300)); } catch (_) {}
   if (CHANGE_EVENTS.has(entry.kind) && Number(entry.number) > 0) await recordChange(storage, entry);

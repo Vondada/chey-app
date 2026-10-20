@@ -1070,6 +1070,7 @@ extension _CheHomeSecurity on _CHEHomeState {
         state: _voiceMachine,
         onSnapshot: _applyVoiceSnapshot,
         onUserTranscript: _onRealtimeUserTranscript,
+        onUserSpeechStarted: () => _interruptSpeechAndListen(resumeListening: false),
         onAssistantTranscript: _onRealtimeAssistantTranscript,
         onCapabilityRequest: _runRealtimeCapabilityTool,
         onStandDown: _returnToWakeStandby,
@@ -1118,6 +1119,8 @@ extension _CheHomeSecurity on _CHEHomeState {
   }
 
   Future<void> _returnToWakeStandby({bool restartWakeListener = true}) async {
+    if (_isSending) _stopReply();
+    await _interruptSpeechAndListen(resumeListening: false);
     final engine = _realtimeVoice;
     _realtimeVoice = null;
     if (engine != null) {
@@ -1148,41 +1151,19 @@ extension _CheHomeSecurity on _CHEHomeState {
     }
   }
 
-  void _onRealtimeUserTranscript(String text, String? itemId) {
+  Future<void> _onRealtimeUserTranscript(String text, String? itemId) async {
     final clean = text.trim();
     if (clean.isEmpty || !mounted) return;
 
-    _set(() {
-      final assistantIndex = _realtimeAssistantIndex;
-      if (assistantIndex != null &&
-          assistantIndex >= 0 &&
-          assistantIndex < messages.length) {
-        messages.insert(assistantIndex, {'role': 'user', 'text': clean});
-        _realtimeAssistantIndex = assistantIndex + 1;
-      } else {
-        messages.add({'role': 'user', 'text': clean});
-      }
-    });
-    _scrollToBottom();
-
-    unawaited(_controlAutonomy(clean));
-    unawaited(_observeRealtimeTurn(clean, itemId));
-  }
-
-  Future<void> _observeRealtimeTurn(String message, String? itemId) async {
-    if (_deviceToken == null || cheAgentBaseUrl.isEmpty) return;
-    try {
-      await http
-          .post(
-            Uri.parse('$cheAgentBaseUrl/api/realtime/observe'),
-            headers: _authHeaders,
-            body: jsonEncode({
-              'message': message,
-              'item_id': itemId,
-            }),
-          )
-          .timeout(const Duration(seconds: 8));
-    } catch (_) {}
+    // Use the same intake, authorization, streaming guard and TTS as typing.
+    // A typed/local turn can already own the HTTP request. Keep these exact
+    // words in this queued callback until it releases the composer.
+    while (mounted && _isSending) {
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    }
+    if (!mounted) return;
+    controller.text = clean;
+    await sendMessage(fromVoice: true);
   }
 
   void _onRealtimeAssistantTranscript(

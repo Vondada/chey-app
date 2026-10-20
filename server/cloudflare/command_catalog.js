@@ -903,7 +903,7 @@ export function parseSlashCommand(message) {
   if (!m) return null;
   const name = m[1].toLowerCase();
   const command = BY_ID.get(name) || null;
-  return { name, command, input: m[2].trim().slice(0, 4000) };
+  return { name, command, input: m[2].trim() };
 }
 
 /** The request this command sends through /api/chat. */
@@ -969,10 +969,11 @@ function speechText(message) {
  * exactly one command's id. Returns { command, input } or { candidates }.
  */
 export function commandFromWords(words) {
-  const tokens = String(words || '').toLowerCase().replace(/^(?:the|my)\s+/, '').split(/\s+/).filter(Boolean)
+  const rawTokens = String(words || '').replace(/^(?:the|my)\s+/i, '').split(/\s+/).filter(Boolean);
+  const tokens = rawTokens.map((w) => w.toLowerCase())
     .map((w) => (w === 'youtube' ? 'yt' : w === 'chey' || w === 'chay' ? 'che' : w.replace(/^\//, '')));
   const id = (n) => tokens.slice(0, n).join('-');
-  const rest = (n) => tokens.slice(n).join(' ').replace(/^(?:for|on|about|with|to)\s+/, '');
+  const rest = (n) => rawTokens.slice(n).join(' ').replace(/^(?:for|on|about|with|to)\s+/i, '');
   for (let n = tokens.length; n >= 1; n--) if (BY_ID.has(id(n))) return { command: BY_ID.get(id(n)), input: rest(n) };
   for (let n = tokens.length; n >= 1; n--) {
     const named = COMMANDS.filter((c) => c.id.endsWith(`-${id(n)}`));
@@ -1122,7 +1123,8 @@ export function describeWorkflow(input = {}, connectors = {}) {
     const command = commandById(s?.command);
     const id = `s${i + 1}`;
     if (!command) { issues.push(`Step ${i + 1}: "${cleanName(s?.command, 40)}" is not a CHE command.`); return { id, command: cleanName(s?.command, 40), valid: false }; }
-    const text = cleanName(s?.input, 1000);
+    const text = String(s?.input || '').trim();
+    if (text.length > 1000) issues.push(`Step ${i + 1} input exceeds 1,000 characters; shorten it explicitly. Nothing was cut.`);
     // By default a step waits for the one before it. "parallel" makes it
     // share the previous step's prerequisites instead, so both run together.
     const after = i === 0 ? [] : s?.parallel === true ? (raw[i - 1]?.__deps || []) : [`s${i}`];
@@ -1189,4 +1191,22 @@ export function findSavedWorkflow(saved = [], message = '') {
   const want = m[1].toLowerCase().trim();
   return (saved || []).find((w) => w.name.toLowerCase() === want)
     || (saved || []).find((w) => w.name.toLowerCase().includes(want) || want.includes(w.name.toLowerCase())) || null;
+}
+
+/** Named commands in one owner sentence, compiled into the existing graph.
+ * No model, guessed command, schedule or new execution path. Unknown or
+ * ambiguous steps stop the whole request before any step is queued.
+ */
+export function workflowFromWords(message = '') {
+  const match = /^(?:please\s+)?(create|make|run|start)\s+(?:me\s+)?(?:a\s+)?workflow\s+(?:to|using|with|:)\s*([\s\S]+)$/i.exec(String(message).trim());
+  if (!match) return null;
+  const parts = match[2].split(/\s+(?:and\s+)?then\s+/i);
+  const issues = [];
+  if (parts.length < 2 || parts.length > MAX_STEPS) issues.push(`Name between 2 and ${MAX_STEPS} commands separated by "then".`);
+  const steps = parts.map((part, i) => {
+    const found = commandFromWords(part.trim().replace(/^(?:run|use)\s+/i, ''));
+    if (!found?.command) issues.push(`Step ${i + 1}: ${found?.candidates?.length ? 'ambiguous command; name its full command' : 'no matching command'}. Nothing was run.`);
+    return { command: found?.command?.id || '', input: found?.input || '' };
+  });
+  return { action: /^(?:run|start)$/i.test(match[1]) ? 'run' : 'save', name: steps.map((s) => s.command).filter(Boolean).join(' then ').slice(0, 80), steps, issues };
 }

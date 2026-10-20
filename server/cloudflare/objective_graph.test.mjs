@@ -257,7 +257,7 @@ test('A11 + A12: a replacement engine gets a compact structured slice; condensin
   h.advance();
   const ctx = nodeContext(o, h.node('fix'));
   for (const part of ['Fix it', 'VERIFICATION REQUIRED', 'mic test passes', 'VERIFIED RESULTS OF EARLIER STEPS', 'FAILED STRATEGIES', 'MISSION (owner objective; do not change it): Fix the microphone problem', 'do not touch che_browser.dart', 'abc1234']) assert.ok(ctx.includes(part), part);
-  assert.ok(ctx.length < 6000, 'a slice, not the whole history');
+  assert.ok(ctx.includes(h.node('find').output), 'the full dependency result, without unrelated history');
   // Fill the mission state past 70% of its budget, then condense.
   for (let i = 0; i < 30; i += 1) o.events.push({ key: `k${i}`, type: 'noise', node_id: '', detail: 'x'.repeat(250), at: '' });
   const keep = JSON.stringify({ objective: o.objective, constraints: o.constraints, auth: o.owner_authorized, sha: o.repo_sha, graph: o.nodes.map((n) => [n.id, n.status, n.depends_on, n.fingerprints, n.failed_strategies, n.checkpoint, n.verify, n.prompt]) });
@@ -269,7 +269,7 @@ test('A11 + A12: a replacement engine gets a compact structured slice; condensin
   h.finish('fix');
   h.advance();
   condenseObjective(o, { budgetTokens: 2000 });
-  assert.match(h.node('find').output, /\[condensed\]$/, 'once consumed, finished output is condensed');
+  assert.doesNotMatch(h.node('find').output, /\[condensed\]$/, 'finished output remains authoritative for future verification');
 });
 
 test('review fixes: events never orphan a running job; only verification evidence reopens a finished step; old event ids stay deduplicated; owner keeps his replans', () => {
