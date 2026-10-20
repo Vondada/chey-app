@@ -47,7 +47,9 @@ const DAY2 = [
   { t: five('2026-10-20T22:00:00Z', 2), o: 20028, h: 20031, l: 20020, c: 20025 },
 ];
 const oneMinute = (bars) => bars.flatMap((b) => minutesOf(b.t, b));
-const feedOf = (bars) => async () => ({ status: 'DELAYED', provider: 'test feed', provider_symbol: 'MNQ=F', contract: 'MNQZ6', candles: oneMinute(bars), latency_s: 600, last_bar_time: bars.at(-1).t, checked_at: new Date().toISOString() });
+// Verified real-time delivery (PR #383): only such a feed may open forward-paper entries, so the
+// controls are exercised on it; a delayed feed is blocked before the controls are asked.
+const feedOf = (bars) => async () => ({ status: 'LIVE', authenticated: true, subscription_verified: true, provider: 'test feed', provider_symbol: 'MNQ=F', contract: 'MNQZ6', candles: oneMinute(bars), latency_s: 0, last_bar_time: bars.at(-1).t, checked_at: new Date().toISOString() });
 const after = (bars) => Date.parse(bars.at(-1).t) + 6 * 60_000;
 
 const paperTrades = (storage) => readTrades(storage, (t) => t.data?.resolution === '5m');
@@ -173,4 +175,27 @@ test('a paper stock order is checked against the controls before Alpaca: stop, s
   assert.match(stockOrderProblem(c, { symbol: 'AAPL', side: 'buy', qty: 10, limit_price: 200 }, { buyingPower: 1500, now }), /buying power/);
   const stopped = (await applyControlChange(storage, { kind: 'stop_entries' })).controls;
   assert.match(stockOrderProblem(stopped, { symbol: 'AAPL', side: 'buy', qty: 1 }, { now }), /New entries are stopped/);
+});
+
+test('both entry gates apply: a delayed feed opens nothing even when the controls allow it, and cancels a waiting order', async () => {
+  const delayed = (bars) => async () => ({ ...await feedOf(bars)(), status: 'DELAYED', latency_s: 600 });
+  const storage = memoryStorage();
+  const controls = await readControls(storage);
+  assert.ok(Object.values(controls.strategies).every((s) => !s.paused && s.max_per_day === 30), 'the controls allow every strategy');
+  await setLivePaper(storage, true, Date.parse('2026-10-19T21:59:00Z'));
+  await liveTick(storage, { force: true, load: delayed(DAY1), now: after(DAY1) });
+  const blocked = await liveTick(storage, { force: true, load: delayed([...DAY1, ...DAY2]), now: after(DAY2) });
+  assert.equal(blocked.entries_allowed, false);
+  assert.match(blocked.entry_blocker, /real-time CME/);
+  assert.equal((await paperTrades(storage)).length, 0, 'no strategy entered on delayed data');
+  // A real-time order waiting to fill is cancelled, with its reason, when the feed degrades to delayed.
+  const waiting = memoryStorage();
+  await run(waiting, [...DAY1, DAY2[0]]);
+  assert.ok((await readLivePortfolios(waiting)).some((p) => p.candidate === 'pdhl-sweep-5m' && p.pending), 'an order is waiting to fill');
+  await liveTick(waiting, { force: true, load: delayed([...DAY1, ...DAY2]), now: after(DAY2) });
+  assert.equal(await sweepTrade(waiting), undefined, 'the waiting order never filled on delayed data');
+  const pf = (await readLivePortfolios(waiting)).find((p) => p.candidate === 'pdhl-sweep-5m' && p.filter === 'any');
+  assert.equal(pf.pending, null);
+  assert.equal(pf.counts.blocked_entries, 1);
+  assert.match(pf.skips.map((x) => x.reason).join(' | '), /no verified real-time market data/);
 });

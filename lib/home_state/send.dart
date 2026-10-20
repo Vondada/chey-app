@@ -885,6 +885,38 @@ extension _CheHomeSend on _CHEHomeState {
       return;
     }
 
+    // Universal help (owner, 2026-10-20): "what is this button?", "what does Emergency Stop do?",
+    // "show me the pause button", "walk me through this screen", "open the help center". Answered
+    // from the controls the screen in front really reports (che_ui/che_help.dart), never a guess.
+    final helpAsk = _pendingAttachment == null ? cheHelpIntent(message) : null;
+    if (helpAsk != null) {
+      // Read before anything opens over the screen the owner is asking about.
+      final helpScreen = CheHelp.shown;
+      final reply = CheHelp.answer(helpAsk) ?? '';
+      if (mounted) {
+        final onChat = _shellTab == 1 && (ModalRoute.of(context)?.isCurrent ?? true);
+        _set(() {
+          controller.clear();
+          messages
+            ..add({'role': 'user', 'text': message})
+            ..add({'role': 'assistant', 'text': reply});
+        });
+        if (helpAsk.kind == CheHelpKind.center) {
+          unawaited(Navigator.of(context).push(CheHelpCenter.route(screen: helpScreen)));
+        } else if (helpAsk.kind == CheHelpKind.walkthrough) {
+          unawaitedWalk(context);
+        } else if (!onChat) {
+          ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
+            content: Text(reply, style: const TextStyle(fontSize: 18, height: 1.3)),
+            duration: const Duration(seconds: 10),
+          ));
+        }
+      }
+      HapticFeedback.mediumImpact();
+      await speakText(reply, record: false);
+      return;
+    }
+
     // One-step video search in CHE's own browser: "search YouTube for jazz",
     // "find new videos about Mars", "play lofi beats video". Inside the
     // browser, "read the videos" / "play number one" / "pause" take over.

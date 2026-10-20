@@ -148,9 +148,150 @@ export async function loadIntraday(root = 'MNQ', { fetcher = fetch, now = Date.n
   }
 }
 
-/** The live-data route CHE does not have yet, said plainly for the Trading Room. */
+/** Account prerequisites; a signed-in account alone is never live-delivery evidence. */
 export function liveFeedBlocker({ tradovateConnected = false } = {}) {
   return tradovateConnected
-    ? 'Tradovate is signed in, but CHE does not yet read its market data; prices stay DELAYED until that is built and your CME real-time entitlement is confirmed.'
+    ? 'Tradovate is signed in. Real-time CME entries remain blocked until matching authenticated quote/chart subscriptions and fresh timestamps are verified. Check the feed status and existing CME/API entitlements.'
     : 'LIVE CME data needs your Tradovate (NinjaTrader) sign-in in CHE Connections and a CME real-time market data subscription with API access on that account. Until then prices are DELAYED.';
+}
+
+// Outgoing provider socket transport. URLs are fixed by the trusted adapters below,
+// credentials stay in their private configuration, and no order operation is exposed.
+export async function connectMarketSocket(url) {
+  if (!['wss://md.tradovateapi.com/v1/websocket', 'wss://stream.data.alpaca.markets/v2/iex', 'wss://stream.data.alpaca.markets/v2/sip', 'wss://stream.data.alpaca.markets/v2/delayed_sip', 'wss://paper-api.alpaca.markets/stream'].includes(url)) throw new Error('Unsupported market socket');
+  const response = await fetch(url.replace('wss:', 'https:'), { headers: { Upgrade: 'websocket' }, redirect: 'manual' });
+  if (response.status !== 101 || !response.webSocket) throw new Error('Provider socket upgrade unavailable');
+  return response.webSocket;
+}
+
+export class ManagedMarketStream {
+  #configuration = null;
+  constructor({ socketFactory = connectMarketSocket, now = Date.now, onChange = () => {}, wanted = () => true } = {}) {
+    Object.assign(this, { socketFactory, now, onChange, wanted });
+    this.generation = 0; this.phase = 'DISCONNECTED'; this.retry = 0; this.lastMessage = 0;
+  }
+  async connect(url, configuration) {
+    const fingerprint = JSON.stringify(configuration);
+    if (this.#configuration?.fingerprint === fingerprint && this.socket && !this.stopped) return;
+    this.stop();
+    this.#configuration = { url, value: configuration, fingerprint };
+    this.stopped = false;
+    await this.reconnect();
+  }
+  async reconnect() {
+    if (this.stopped || !this.wanted()) return;
+    const generation = ++this.generation;
+    this.phase = 'CONNECTING'; this.error = ''; this.reset();
+    try {
+      const socket = await this.socketFactory(this.#configuration.url);
+      if (generation !== this.generation || this.stopped) { socket.close(); return; }
+      this.socket = socket; this.lastMessage = this.now(); this.phase = 'UNVERIFIED';
+      let pending = Promise.resolve();
+      socket.addEventListener('message', (event) => {
+        pending = pending.then(async () => {
+          if (generation !== this.generation || this.stopped) return;
+          let data = event.data;
+          if (data instanceof ArrayBuffer) data = new TextDecoder().decode(data);
+          if (typeof data !== 'string' || data.length > 2000000) return;
+          this.lastMessage = this.now();
+          try { await this.process(data, this.#configuration.value); }
+          catch (_) { this.error = 'Provider sent an invalid market-data frame.'; this.emit({ type: 'connection' }); this.closeTransport(); this.scheduleReconnect(); }
+        });
+      });
+      const lost = () => {
+        if (generation !== this.generation || this.stopped) return;
+        this.phase = 'DISCONNECTED'; this.emit({ type: 'connection' }); this.closeTransport(); this.scheduleReconnect();
+      };
+      socket.addEventListener('close', lost); socket.addEventListener('error', lost);
+      socket.accept?.(); this.opened(this.#configuration.value);
+      this.timer = setInterval(() => {
+        if (!this.wanted()) { this.stop(); return; }
+        if (this.now() - this.lastMessage > 20000) { lost(); return; }
+        this.heartbeat();
+      }, 5000);
+      this.timer.unref?.();
+    } catch (_) {
+      if (generation !== this.generation || this.stopped) return;
+      this.phase = 'UNAVAILABLE'; this.error = 'Market-data connection failed; no live delivery verified.';
+      this.emit({ type: 'connection' }); this.scheduleReconnect();
+    }
+  }
+  scheduleReconnect() {
+    if (this.stopped || this.refused || this.reconnectTimer) return;
+    const wait = Math.min(60000, 1000 * 2 ** Math.min(6, this.retry++));
+    this.reconnectTimer = setTimeout(() => { this.reconnectTimer = null; this.reconnect(); }, wait);
+    this.reconnectTimer.unref?.();
+  }
+  closeTransport() { clearInterval(this.timer); this.timer = null; const socket = this.socket; this.socket = null; socket?.close(); }
+  stop() {
+    this.stopped = true; this.generation++; this.phase = 'DISCONNECTED';
+    clearTimeout(this.reconnectTimer); this.reconnectTimer = null; this.closeTransport();
+  }
+  refuse(code) { this.refused = true; this.error = `Provider refused authentication/subscription (${Number(code) || 'unknown status'}). Check existing account permissions; no subscription was purchased.`; this.phase = 'UNAVAILABLE'; this.emit({ type: 'connection' }); this.closeTransport(); }
+  send(value) { this.socket?.send(value); }
+  opened() {}
+  heartbeat() {}
+  reset() { this.refused = false; }
+  emit(event) { this.onChange({ ...event, provider: this.provider, received_at: new Date(this.now()).toISOString() }); }
+}
+
+const validMarketBar = (b) => b && Number.isFinite(Date.parse(b.t)) && [b.o, b.h, b.l, b.c, b.v].every(Number.isFinite)
+  && b.l <= Math.min(b.o, b.c) && b.h >= Math.max(b.o, b.c) && b.v >= 0;
+export function marketBar(b) { return validMarketBar(b) ? { ...b, t: new Date(b.t).toISOString() } : null; }
+
+/** Tradovate SockJS framing and subscription correlation, per official Market Data Request Reference. */
+export class TradovateMarketStream extends ManagedMarketStream {
+  provider = 'Tradovate CME';
+  async start({ token, root, symbol, contract_id, expires_at }) {
+    if (!['MNQ', 'NQ'].includes(root) || !new RegExp(`^${root}[HMUZ]\\d{1,2}$`).test(symbol) || !Number.isSafeInteger(contract_id) || !(expires_at > this.now()) || !token) throw new Error('Verified contract and current Tradovate authorization required');
+    this.root = root; this.symbol = symbol; this.contractId = contract_id; this.expiresAt = expires_at;
+    await this.connect('wss://md.tradovateapi.com/v1/websocket', { token, root, symbol, contract_id, expires_at });
+  }
+  reset() { super.reset(); this.authenticated = false; this.quoteAck = false; this.chartIds = []; this.bars = new Map(); this.quote = null; }
+  heartbeat() { this.send('[]'); }
+  async process(text, config) {
+    if (text === 'o') { this.send(`authorize\n1\n\n${config.token}`); return; }
+    if (text === 'h') { this.send('[]'); return; }
+    if (!text.startsWith('a')) return;
+    const messages = JSON.parse(text.slice(1));
+    for (let message of messages) {
+      if (typeof message === 'string') message = JSON.parse(message);
+      if (message?.e === 'shutdown') { this.refuse(429); continue; }
+      if (message?.i && (message.s !== 200 || message.d?.errorText)) { this.refuse(message.s); continue; }
+      if (message?.i === 1 && message.s === 200) {
+        this.authenticated = true; this.retry = 0;
+        this.send(`md/subscribeQuote\n2\n\n${JSON.stringify({ symbol: config.symbol })}`);
+        this.send(`md/getChart\n3\n\n${JSON.stringify({ symbol: config.symbol, chartDescription: { underlyingType: 'MinuteBar', elementSize: 5, elementSizeUnit: 'UnderlyingUnits', withHistogram: false }, timeRange: { asMuchAsElements: 480 } })}`);
+      }
+      if (!this.authenticated) continue;
+      if (message?.i === 2 && message.s === 200) this.quoteAck = true;
+      if (message?.i === 3 && message.s === 200 && Number.isSafeInteger(message.d?.historicalId) && Number.isSafeInteger(message.d?.realtimeId)) this.chartIds = [message.d.historicalId, message.d.realtimeId];
+      for (const chart of message.e === 'chart' ? message.d?.charts || [] : []) {
+        if (!this.chartIds.includes(chart.id)) continue;
+        for (const b of chart.bars || []) {
+          const bar = marketBar({ t: b.timestamp, o: b.open, h: b.high, l: b.low, c: b.close, v: Number(b.upVolume || 0) + Number(b.downVolume || 0) });
+          if (bar && Date.parse(bar.t) % 300000 === 0 && Date.parse(bar.t) + 300000 <= this.now()) this.bars.set(bar.t, bar);
+        }
+        this.bars = new Map([...this.bars].sort(([a], [b]) => a.localeCompare(b)).slice(-480));
+        this.emit({ type: 'bars', root: this.root });
+      }
+      for (const q of message.e === 'md' ? message.d?.quotes || [] : []) {
+        const time = Date.parse(q.timestamp);
+        if (q.contractId !== this.contractId || !Number.isFinite(time) || time > this.now() + 5000 || time < (Date.parse(this.quote?.t) || 0)) continue;
+        const price = q.entries?.Trade?.price;
+        if (Number.isFinite(price)) { this.quote = { t: new Date(time).toISOString(), price }; this.emit({ type: 'quote', root: this.root, symbol: this.symbol, quote: this.quote }); }
+      }
+    }
+  }
+  snapshot() {
+    const candles = [...(this.bars?.values() || [])]; const lag = this.quote ? this.now() - Date.parse(this.quote.t) : Infinity;
+    const verified = this.authenticated && this.quoteAck && this.chartIds?.length === 2 && candles.length && this.phase === 'UNVERIFIED' && !this.error;
+    const status = this.error ? 'UNAVAILABLE' : this.stopped || this.phase === 'DISCONNECTED' ? 'DISCONNECTED' : !verified ? 'UNVERIFIED' : this.now() - Date.parse(candles.at(-1)?.t) - 300000 > 90000 || lag > 15000 || this.now() - this.lastMessage > 15000 || this.now() >= this.expiresAt ? 'STALE' : 'LIVE';
+    return { status, provider: this.provider, provider_symbol: this.symbol, root: this.root, contract: this.symbol, contract_id: this.contractId,
+      interval: '5m', checked_at: new Date(this.now()).toISOString(), last_bar_time: candles.at(-1)?.t || null,
+      latency_s: Number.isFinite(lag) ? Math.max(0, Math.round(lag / 1000)) : null,
+      entitlement: this.quoteAck ? 'provider accepted the quote subscription; fresh timestamp and chart required' : 'unverified',
+      authenticated: Boolean(this.authenticated), subscription_verified: Boolean(verified), quote: this.quote || null, candles,
+      error: this.error || null, note: 'CME delivery is live only while the authenticated matching quote/chart subscriptions and timestamps remain valid; this does not authorize orders.' };
+  }
 }

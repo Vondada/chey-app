@@ -13,6 +13,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
+import '../che_ui/che_help.dart';
+
 const _up = Color(0xFF3DDC97);
 const _down = Color(0xFFFF5C7A);
 const _gold = Color(0xFFE8B04A);
@@ -21,6 +23,24 @@ const _panel = Color(0xFF0A1214);
 const _stroke = Color(0xFF1B2A2D);
 
 const kReadControlsAloud = 'What are my trading limits?';
+
+/// The Control Center's help, from what its controls really do (trading_controls.js).
+const kStrategyControlsHelp = CheHelpTopic(
+  title: 'Strategy Control Center',
+  summary: 'Your limits on CHE\'s paper strategies. Paper only; live trading is off.',
+  items: [
+    CheControlHelp(name: 'Emergency Stop', does: 'Blocks new entries for every strategy at once, cancels unfilled paper orders in CHE\'s simulations and on Alpaca PAPER, and lists the positions that stay open', caution: 'It does not close positions; Flatten does that, after you confirm', say: 'emergency stop'),
+    CheControlHelp(name: 'Pause all', does: 'Pauses every strategy: no new entries. Open positions keep their stops and targets', say: 'pause every strategy'),
+    CheControlHelp(name: 'Stop new entries', does: 'Stops new entries for every strategy while leaving each one\'s settings as they are', say: 'stop all new entries'),
+    CheControlHelp(name: 'Flatten', does: 'Closes every open paper position and cancels unfilled paper orders', caution: 'It asks you to confirm first', say: 'flatten my paper positions'),
+    CheControlHelp(name: 'Restore previous settings', does: 'Puts back the settings from before your last change', say: 'restore the previous settings'),
+    CheControlHelp(name: 'Strategy switch', does: 'Pauses or resumes one strategy', caution: 'Resuming lets it trade again, so CHE confirms first', say: 'pause the ICT strategy'),
+    CheControlHelp(name: 'Maximum trades per day', does: 'The most entries a strategy may take in one CME trading day; the default is 30. It is a ceiling, never a target: CHE never trades to fill it', caution: 'Raising it shows the impact and needs your confirmation', say: 'set every strategy to 30 per day'),
+    CheControlHelp(name: 'Contracts per trade', does: 'The size of each new entry in MNQ contracts, applied from the next entry', caution: 'Raising it raises dollar risk per trade and needs your confirmation'),
+    CheControlHelp(name: 'Skip reasons', does: 'Shows a strategy\'s rules, its paper and backtest results, and why recent signals were skipped or blocked', say: 'why did this strategy skip that trade'),
+    CheControlHelp(name: 'Audit trail', does: 'Every change: who made it, when, and what it did'),
+  ],
+);
 
 /// The ranges the Worker accepts (trading_controls.js RANGES); the steppers stay inside them.
 const kControlRanges = <String, (int, int)>{
@@ -67,16 +87,19 @@ class _CheStrategyControlsPanelState extends State<CheStrategyControlsPanel> {
   bool _busy = false;
   final Set<String> _open = {};
   Timer? _timer;
+  Object? _help;
 
   @override
   void initState() {
     super.initState();
+    _help = CheHelp.register(context, () => kStrategyControlsHelp);
     _load();
     _timer = Timer.periodic(widget.refresh, (_) => _load());
   }
 
   @override
   void dispose() {
+    CheHelp.unregister(_help);
     _timer?.cancel();
     super.dispose();
   }
@@ -172,6 +195,7 @@ class _CheStrategyControlsPanelState extends State<CheStrategyControlsPanel> {
               decoration: BoxDecoration(color: _gold.withValues(alpha: 0.18), borderRadius: BorderRadius.circular(6), border: Border.all(color: _gold)),
               child: const Text('PAPER ONLY', style: TextStyle(color: _gold, fontWeight: FontWeight.w800, fontSize: 12)),
             )),
+            const CheHelpButton(color: _dim, dense: true),
             IconButton(tooltip: 'Read aloud', onPressed: () => widget.onAsk(kReadControlsAloud), icon: const Icon(Icons.volume_up, color: _dim)),
           ]),
           if (v == null && _error.isEmpty) const Padding(padding: EdgeInsets.all(12), child: Text('Reading your strategy controls…', style: TextStyle(color: _dim))),
@@ -198,9 +222,9 @@ class _CheStrategyControlsPanelState extends State<CheStrategyControlsPanel> {
       const SizedBox(height: 10),
       Wrap(spacing: 8, runSpacing: 8, children: [
         _button(emergency ? 'Emergency Stop is on' : 'Emergency Stop', Icons.stop_circle, _down, emergency ? null : () => _change({'kind': 'emergency_stop'}),
-            hint: 'Blocks new entries, cancels unfilled paper orders, and lists the positions that stay open.'),
-        _button(pausedAll ? 'Resume all' : 'Pause all', pausedAll ? Icons.play_arrow : Icons.pause, _gold, () => _change({'kind': pausedAll ? 'resume' : 'pause', 'scope': 'all'})),
-        _button(stopped || emergency ? 'Allow new entries' : 'Stop new entries', Icons.block, _gold, () => _change({'kind': stopped || emergency ? 'allow_entries' : 'stop_entries'})),
+            hint: 'Blocks new entries, cancels unfilled paper orders, and lists the positions that stay open.', help: 'Emergency Stop'),
+        _button(pausedAll ? 'Resume all' : 'Pause all', pausedAll ? Icons.play_arrow : Icons.pause, _gold, () => _change({'kind': pausedAll ? 'resume' : 'pause', 'scope': 'all'}), help: 'Pause all'),
+        _button(stopped || emergency ? 'Allow new entries' : 'Stop new entries', Icons.block, _gold, () => _change({'kind': stopped || emergency ? 'allow_entries' : 'stop_entries'}), help: 'Stop new entries'),
         _button('Flatten', Icons.horizontal_rule, _down, () => _change({'kind': 'flatten'}), hint: 'Closes every open paper position after you confirm.'),
         if (v['can_restore'] == true) _button('Restore previous settings', Icons.undo, _dim, () => _change({'kind': 'restore'})),
       ]),
@@ -227,7 +251,7 @@ class _CheStrategyControlsPanelState extends State<CheStrategyControlsPanel> {
       for (final f in ['max_daily_loss', 'max_open_positions', 'max_order_qty', 'cooldown_min'])
         _stepper(kControlLabels[f]!, (c['account'] as Map? ?? const {})[f], f, null),
       const SizedBox(height: 12),
-      const Text('Audit trail', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700)),
+      const CheHelpTarget(name: 'Audit trail', child: Text('Audit trail', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700))),
       if ((v['audit'] as List? ?? const []).isEmpty) const Text('No changes yet: every strategy is at its default.', style: TextStyle(color: _dim)),
       for (final a in (v['audit'] as List? ?? const []).whereType<Map>().take(12))
         Semantics(
@@ -248,7 +272,7 @@ class _CheStrategyControlsPanelState extends State<CheStrategyControlsPanel> {
     return '${t.month}/${t.day} ${two(t.hour)}:${two(t.minute)}';
   }
 
-  Widget _button(String label, IconData icon, Color color, VoidCallback? onTap, {String? hint}) => Semantics(
+  Widget _button(String label, IconData icon, Color color, VoidCallback? onTap, {String? hint, String? help}) => CheHelpTarget(name: help ?? label, child: Semantics(
         button: true,
         label: label,
         hint: hint,
@@ -259,7 +283,7 @@ class _CheStrategyControlsPanelState extends State<CheStrategyControlsPanel> {
           icon: Icon(icon, size: 18),
           label: Text(label),
         ),
-      );
+      ));
 
   Widget _strategy(Map<String, dynamic> r) {
     final id = '${r['id']}';
@@ -289,7 +313,7 @@ class _CheStrategyControlsPanelState extends State<CheStrategyControlsPanel> {
             label: paused ? 'Resume ${r['name']}' : 'Pause ${r['name']}',
             toggled: !paused,
             excludeSemantics: true,
-            child: Switch(value: !paused && !disabled, onChanged: disabled || _busy ? null : (on) => _change({'kind': on ? 'resume' : 'pause', 'scope': id})),
+            child: CheHelpTarget(name: 'Strategy switch', child: Switch(value: !paused && !disabled, onChanged: disabled || _busy ? null : (on) => _change({'kind': on ? 'resume' : 'pause', 'scope': id}))),
           ),
         ]),
         _stepper(kControlLabels['max_per_day']!, r['max_per_day'], 'max_per_day', id),
@@ -299,7 +323,7 @@ class _CheStrategyControlsPanelState extends State<CheStrategyControlsPanel> {
             button: true,
             label: open ? 'Hide rules and skip reasons for ${r['name']}' : 'Show rules, results and skip reasons for ${r['name']}',
             excludeSemantics: true,
-            child: TextButton(onPressed: () => setState(() => open ? _open.remove(id) : _open.add(id)), child: Text(open ? 'Hide details' : 'Rules, results, skips (${skips.length})')),
+            child: CheHelpTarget(name: 'Skip reasons', child: TextButton(onPressed: () => setState(() => open ? _open.remove(id) : _open.add(id)), child: Text(open ? 'Hide details' : 'Rules, results, skips (${skips.length})'))),
           ),
           const Spacer(),
           Semantics(
@@ -354,14 +378,14 @@ class _CheStrategyControlsPanelState extends State<CheStrategyControlsPanel> {
     final step = _steps[field]!;
     void set(int to) => _change({'kind': 'set', 'scope': scope ?? 'all', 'field': field, 'value': to.clamp(lo, hi)});
     final who = scope == null ? 'account' : 'this strategy';
-    return Row(children: [
+    return CheHelpTarget(name: label, child: Row(children: [
       Expanded(child: Text(label, style: const TextStyle(color: _dim, fontSize: 13))),
       Semantics(button: true, label: 'Decrease $label for $who, now $n', excludeSemantics: true,
           child: IconButton(onPressed: _busy || n <= lo ? null : () => set(n - step), icon: const Icon(Icons.remove_circle_outline, color: Colors.white))),
       Semantics(label: '$label: $n', excludeSemantics: true, child: SizedBox(width: 56, child: Text('$n', textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700)))),
       Semantics(button: true, label: 'Increase $label for $who, now $n', excludeSemantics: true,
           child: IconButton(onPressed: _busy || n >= hi ? null : () => set(n + step), icon: const Icon(Icons.add_circle_outline, color: Colors.white))),
-    ]);
+    ]));
   }
 }
 
@@ -382,6 +406,7 @@ class CheStrategyControlsPage extends StatelessWidget {
           backgroundColor: Colors.black,
           foregroundColor: Colors.white,
           title: const Text('Strategy Control Center'),
+          actions: const [CheHelpButton()],
           leading: IconButton(tooltip: 'Back', icon: const Icon(Icons.arrow_back), onPressed: () => Navigator.of(context).maybePop()),
         ),
         body: SafeArea(child: SingleChildScrollView(padding: const EdgeInsets.all(12), child: CheStrategyControlsPanel(baseUrl: baseUrl, headers: headers, onAsk: onAsk))),

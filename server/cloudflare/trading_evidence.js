@@ -562,8 +562,12 @@ function noteSkip(pf, time, reason, sig) {
  * asked before a signal becomes an order ('signal') and before that order fills ('fill'), and
  * returns null to allow or the reason it is blocked. A blocked signal is never traded and is kept
  * with its reason; nothing is ever entered to fill a quota.
+ *
+ * `allowEntries: false` is the real-time evidence gate (trading_live.js): while the feed is not
+ * fresh, authenticated and subscribed real-time delivery, no new signal is taken and a pending
+ * order is cancelled before it fills. Open positions are still managed to their exit.
  */
-export function stepPortfolio(pf, candles, ctx = causalContext(candles), gate = null) {
+export function stepPortfolio(pf, candles, ctx = causalContext(candles), gate = null, { allowEntries = true } = {}) {
   const problems = candleProblems(candles);
   if (problems.length) throw new Error(`candles refused: ${problems.join('; ')}`);
   const cand = candidateOf(pf.candidate);
@@ -574,6 +578,10 @@ export function stepPortfolio(pf, candles, ctx = causalContext(candles), gate = 
   if (start < 0) return closed;
   for (let k = start; k < candles.length; k++) {
     const bar = candles[k];
+    if (!allowEntries && pf.pending) {
+      noteSkip(pf, pf.pending.signal_time, 'the order was cancelled before it filled: no verified real-time market data', pf.pending);
+      pf.pending = null; pf.counts.blocked_entries = (pf.counts.blocked_entries || 0) + 1;
+    }
     if (pf.pending && !pf.open) {
       const sig = pf.pending;
       pf.pending = null;
@@ -591,6 +599,7 @@ export function stepPortfolio(pf, candles, ctx = causalContext(candles), gate = 
       } else if (inside && sameDay) {
         pf.open = {
           side, signal_time: sig.signal_time, signal_why: sig.why, signal_ref: sig.ref, condition: sig.condition,
+          entry_feed: pf.feed ? structuredClone(pf.feed) : null,
           entry_time: bar.t, entry: fillEntry(bar, contract, pf.costs, side), stop: sig.stop, target: sig.target,
           max_high: bar.o, min_low: bar.o, session: sessionOf(bar.t, pf.resolution),
           ...(sig.trade_day ? { trade_day: sig.trade_day, flat_td: sig.flat_td } : {}),
@@ -614,7 +623,7 @@ export function stepPortfolio(pf, candles, ctx = causalContext(candles), gate = 
       if (hit) { closed.push(closeAt(pf, bar, hit)); pf.last_exit_time = bar.t; }
     }
     const late = ctx.td && ctx.td[k] >= FLAT_TD - 5;
-    if (!pf.open && !pf.pending && cand && !late) {
+    if (allowEntries && !pf.open && !pf.pending && cand && !late) {
       const sig = cand.entry(candles, k, ctx);
       const side = sig?.side || 'long';
       const risk = sig ? (side === 'short' ? sig.stop - sig.ref : sig.ref - sig.stop) : 0;
@@ -687,6 +696,7 @@ function closeAt(pf, bar, hit) {
       price_series: pf.price_series,
       label: pf.resolution === 'daily' ? 'approximate: daily bars, fills at the next open' : pf.resolution === 'intraday' ? 'intraday bars' : `intraday ${pf.resolution} bars, fills at the next open`,
       ...(pf.feed ? { feed: pf.feed } : {}),
+      entry_feed: pos.entry_feed || null,
     },
     cost_assumptions: { ...pf.costs },
     result: settled.net_pnl > 0 ? 'win' : settled.net_pnl < 0 ? 'loss' : 'flat',
