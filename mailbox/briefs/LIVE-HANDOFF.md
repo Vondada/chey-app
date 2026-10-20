@@ -69,13 +69,21 @@ Then, on GitHub:
 - Next: open focused PR for milestone 1 when the owner is ready (or continue: milestone 2 = scripted multi-agent demo via officeGoal + War Room board wiring + orb-tap deep link to the real task; then Phase B typed memory/provenance).
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
-## 2. Current position (Claude, 2026-10-20 — Concept-to-Plan built, PR #378)
+## 2. Current position (Claude, 2026-10-20 09:10 UTC — #378 merged and LIVE: RAG repair, vision follow-ups, voice, Meetings)
 
-- #376 merged as `da8ef59` [worker-deploy] (Brain relationships, look at my screen, Music Room, Meeting Room). Live deploy and Shorebird outcome were NOT re-checked after the merge (the owner interrupted the status poll); run `node .claude/skills/che-release/scripts/release_status.mjs` first.
-- PR #377 (ReplayKit broadcast extension, `claude/che-replaykit-broadcast`): the native compile on CI is its first real compile. Merging it builds an IPA, which needs the owner's go.
-- PR #378 (`claude/che-latency-optimization-8ruaus`, `218cce2`): universal Concept-to-Plan. Worker `project_plan.js` (classifier with 12 types, decomposition, tiers, stages, safety layer, speculative list, Wikipedia background, Brain record), chat route `che_project_plan` with follow-ups, `planScene`, `/api/plans`. Phone `lib/world/che_plan_room.dart` (map, tiers, six sorts, voice). Docs: `docs/CHE_PROJECT_PLANNING.md`. Worker 2507/2507, dart analyze clean, Flutter 556. Merge needs the owner's go.
-- Next: model-written topic items for plans, a Command Center catalog entry, MVP 2 mission board (`objectiveScene`).
-- Still waiting on the owner: merge #376; permission to push the local ReplayKit branch.
+- **main = `73afb21`** (#378 squash, [worker-deploy]). Deploy run 39397042170 success; the live commit check confirmed 73afb21 is live (Worker version 062f74ed). Memory truth 18/18, Command Center 5/5, Knowledge Atlas 11/11. Shorebird run 39397042227 success. No IPA was built (skipped; no native change).
+- #378 contains: Concept-to-Plan, Simulation Lab, iPhone voice repair (bounded mic, free recognizer first, cancellable live connect, truthful voice status), Meetings navigation, the **RAG repair** and **vision follow-ups**.
+- RAG regression suite: `server/cloudflare/rag_eval.test.mjs`, 10 evaluations through /api/chat. origin/main before the fix: 4/10. After: 10/10.
+  - Failure A (PR 374 relationships): the answer now comes from GitHub plus the Brain.
+  - Failure B (music preferences): a pasted Atlas report is no longer attributed to the owner.
+- Vision: keys in the Keys tab now reach vision. A trading question sent with a screenshot is no longer hijacked. "…in the screenshot I sent" answers from the kept summary; the image is never stored.
+- **Live problem:** ElevenLabs is out of credits (5 left; HTTP 401 quota_exceeded). CHE speaks with Fish until the owner tops it up (money: the owner's call).
+- **Not verified on the iPhone:** the wake word ("Chay"), mic freeze/cancel, Meetings Leave/Back/Return, and a screenshot followed by a next-turn question.
+- PR #377 (ReplayKit) stays unmerged until its sensitive-frame security findings are fixed.
+- Next:
+  - persistent learning: write verified corrections into the Brain with their author;
+  - section 7, capability acquisition through the existing coding system;
+  - Gmail routing (task 34).
 
 ## 2. Current position (Claude, 2026-10-20 — NEW future project: Spatial World design written, nothing built)
 
