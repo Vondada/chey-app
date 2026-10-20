@@ -60,6 +60,8 @@ class _CheTradingLedgersPanelState extends State<CheTradingLedgersPanel> {
   late final http.Client _http = widget.client ?? http.Client();
   Map<String, dynamic>? _d;
   String _error = '';
+  // Set when a refresh fails after a first successful load, so stale numbers are never shown as current.
+  DateTime? _staleSince;
   Timer? _timer;
 
   @override
@@ -82,12 +84,12 @@ class _CheTradingLedgersPanelState extends State<CheTradingLedgersPanel> {
       if (!mounted) return;
       if (r.statusCode != 200 || j is! Map || j['ledgers'] is! List) {
         // An older CHE server has no record-set view yet: say so in one quiet line.
-        setState(() => _error = j is Map && j['detail'] != null ? '${j['detail']}' : 'Trade record sets are not available from CHE yet (${r.statusCode}).');
+        setState(() { _error = j is Map && j['detail'] != null ? '${j['detail']}' : 'Trade record sets are not available from CHE yet (${r.statusCode}).'; _staleSince ??= DateTime.now(); });
         return;
       }
-      setState(() { _d = Map<String, dynamic>.from(j); _error = ''; });
+      setState(() { _d = Map<String, dynamic>.from(j); _error = ''; _staleSince = null; });
     } catch (e) {
-      if (mounted) setState(() => _error = 'Could not reach CHE for the trade record sets.');
+      if (mounted) setState(() { _error = 'Could not reach CHE for the trade record sets.'; _staleSince ??= DateTime.now(); });
     }
   }
 
@@ -116,6 +118,10 @@ class _CheTradingLedgersPanelState extends State<CheTradingLedgersPanel> {
       ]),
       const SizedBox(height: 4),
       Text('${d['note'] ?? 'Each count is that record set\'s own closed trades; the sets are never summed.'}', style: const TextStyle(color: _dim, fontSize: 13)),
+      if (_staleSince != null) Padding(
+        padding: const EdgeInsets.only(top: 4),
+        child: Text('Last refresh failed; these numbers are from before ${_clock(_staleSince!.toIso8601String())}.', style: const TextStyle(color: _gold, fontSize: 13)),
+      ),
       const SizedBox(height: 8),
       Wrap(spacing: 8, runSpacing: 8, children: [
         Semantics(button: true, label: 'Read the trade record sets aloud',
@@ -179,7 +185,7 @@ class _LedgerCard extends StatelessWidget {
         decoration: BoxDecoration(color: _panel, border: Border.all(color: _stroke), borderRadius: BorderRadius.circular(12)),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
-            Expanded(child: Text(_label, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800))),
+            Expanded(child: ExcludeSemantics(child: Text(_label, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800)))),
             ExcludeSemantics(
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
@@ -192,7 +198,7 @@ class _LedgerCard extends StatelessWidget {
           ExcludeSemantics(child: Text(what, style: const TextStyle(color: _dim, fontSize: 13))),
           if (unavailable) const Padding(
             padding: EdgeInsets.only(top: 8),
-            child: Text('Could not read this record set just now; no number is shown for it.', style: TextStyle(color: _down, fontSize: 14)),
+            child: ExcludeSemantics(child: Text('Could not read this record set just now; no number is shown for it.', style: TextStyle(color: _down, fontSize: 14))),
           ) else if (broker) Padding(
             padding: const EdgeInsets.only(top: 8),
             child: ExcludeSemantics(child: Text('${ledger['rule'] ?? ''}', style: const TextStyle(color: _dim, fontSize: 14))),

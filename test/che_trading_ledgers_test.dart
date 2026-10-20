@@ -91,6 +91,22 @@ void main() {
     expect(find.text('Not found'), findsOneWidget);
   });
 
+  testWidgets('a refresh that fails after a good load keeps the numbers but says they are stale', (tester) async {
+    var calls = 0;
+    final client = MockClient((r) async {
+      calls += 1;
+      if (calls == 1) return http.Response(jsonEncode(view()), 200, headers: {'content-type': 'application/json'});
+      throw Exception('offline');
+    });
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: SingleChildScrollView(child: CheTradingLedgersPanel(baseUrl: () => 'https://che.test', headers: () => {}, onAsk: (_) {}, client: client, refresh: const Duration(milliseconds: 50))))));
+    await tester.pumpAndSettle();
+    expect(find.text('172'), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 80));
+    await tester.pumpAndSettle();
+    expect(find.text('172'), findsOneWidget, reason: 'the last good numbers stay');
+    expect(find.textContaining('Last refresh failed'), findsOneWidget);
+  });
+
   test('the equity painter repaints only when its points or unit change', () {
     final a = EquityCurvePainter(points: [0.5, 1.0], unit: 'R');
     expect(a.shouldRepaint(EquityCurvePainter(points: [0.5, 1.0], unit: 'R')), isFalse, reason: 'the same series again is not a change');

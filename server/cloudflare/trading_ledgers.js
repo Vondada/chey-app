@@ -122,6 +122,7 @@ export function ledgerIntent(message) {
 
 const r2 = (x) => (Number.isFinite(x) ? Math.round(x * 100) / 100 : null);
 const r3 = (x) => (Number.isFinite(x) ? Math.round(x * 1000) / 1000 : null);
+const pctOf = (fraction) => (Number.isFinite(fraction) ? Math.round(fraction * 1000) / 10 : null);
 const isLive = (t) => t.environment === 'paper' && t.data?.resolution === RESOLUTION;
 const isDaily = (t) => t.environment === 'paper' && (t.data?.resolution ?? 'daily') === 'daily';
 
@@ -174,10 +175,11 @@ export async function readLedgers(storage, { now = Date.now() } = {}) {
     return {
       status: state.paused ? 'paused' : 'running', last_tick: state.last_tick || null, trades: state.trades.stored, dropped: state.trades.dropped,
       open: Object.keys(state.open || {}).length, newest: simTrade(trades[trades.length - 1]),
-      best: lead && { strategy: lead.id, name: lead.name, trades: lead.trades, win_rate: lead.win_rate, expectancy_r: r3(lead.expectancy_r), out_of_sample: lead.sample_size, out_of_sample_expectancy_r: r3(lead.out_of_sample.expectancy_r), label: lead.label, reasons: lead.reasons, params: lead.params },
+      // Win rates are percent everywhere the owner sees them (the leaderboard keeps a fraction); review of PR #374.
+      best: lead && { strategy: lead.id, name: lead.name, trades: lead.trades, win_rate: pctOf(lead.win_rate), expectancy_r: r3(lead.expectancy_r), out_of_sample: lead.sample_size, out_of_sample_expectancy_r: r3(lead.out_of_sample.expectancy_r), label: lead.label, reasons: lead.reasons, params: lead.params },
       profitable: board.filter((row) => row.label === 'profitable').length, strategies: board.length, min_sample: MIN_SAMPLE,
       // For the Trading Room dashboard: every strategy, the minute feeds and the equity curve in R.
-      by_strategy: board.map((row) => ({ strategy: row.id, name: row.name, family: row.family, trades: row.trades, wins: row.wins, losses: row.losses, win_rate: row.win_rate == null ? null : Math.round(row.win_rate * 1000) / 10, expectancy_r: r3(row.expectancy_r), out_of_sample: row.sample_size, out_of_sample_expectancy_r: r3(row.out_of_sample.expectancy_r), label: row.label })),
+      by_strategy: board.map((row) => ({ strategy: row.id, name: row.name, family: row.family, trades: row.trades, wins: row.wins, losses: row.losses, win_rate: row.trades ? pctOf(row.win_rate) : null, expectancy_r: row.trades ? r3(row.expectancy_r) : null, out_of_sample: row.sample_size, out_of_sample_expectancy_r: row.sample_size ? r3(row.out_of_sample.expectancy_r) : null, label: row.label })),
       feeds: Object.entries(MINUTE_FEEDS).map(([symbol, feed]) => { const sym = state.symbols[symbol] || {}; return { symbol, source: feed.feed, status: sym.feed?.status || 'waiting for the first tick', last_bar: sym.feed?.last_bar_t || null, bars: sym.bars || 0, error: sym.error || null }; }),
       equity: equityCurve(trades, { at: (t) => t.exit_t, value: (t) => t.r, unit: 'R' }),
     };
@@ -219,7 +221,8 @@ export async function readLedgers(storage, { now = Date.now() } = {}) {
     return {
       status: 'learning', trades: book.closed.length, open: book.open.length, watching: book.watch.length,
       newest: last && { id: last.id, symbol: last.symbol, strategy: last.strategy, closed_at: last.closed_at, r: r3(last.r) },
-      by_strategy: Object.entries(groups).map(([strategy, list]) => ({ strategy, name: strategy, trades: list.length, wins: list.filter((t) => t.r > 0).length, losses: list.filter((t) => t.r < 0).length, expectancy_r: r3(list.reduce((sum, t) => sum + (Number(t.r) || 0), 0) / list.length) })).sort((a, b) => b.expectancy_r - a.expectancy_r),
+      // A closed trade with no finite R is counted but never averaged (review of PR #374).
+      by_strategy: Object.entries(groups).map(([strategy, list]) => { const scored = list.filter((t) => Number.isFinite(Number(t.r))); return { strategy, name: strategy, trades: list.length, wins: scored.filter((t) => t.r > 0).length, losses: scored.filter((t) => t.r < 0).length, expectancy_r: scored.length ? r3(scored.reduce((sum, t) => sum + Number(t.r), 0) / scored.length) : null }; }).sort((a, b) => (b.expectancy_r ?? -Infinity) - (a.expectancy_r ?? -Infinity)),
       feeds: [], equity: equityCurve(book.closed, { at: (t) => t.closed_at, value: (t) => Number(t.r), unit: 'R' }),
     };
   });
@@ -247,7 +250,7 @@ function bestLine(l, withSettings) {
   const b = l.best;
   const settings = withSettings && b.params ? ` Settings: ${Object.entries(b.params).map(([k, v]) => `${k} ${v}`).join(', ')}.` : '';
   if (l.id === 'strategy_simulation') {
-    return `${b.label === 'profitable' ? 'best' : 'leading, not proven yet'}: ${b.name}, ${n(b.trades)}, win rate ${b.win_rate == null ? 'not measured' : `${Math.round(b.win_rate * 100)}%`}, ${b.out_of_sample} out of sample at ${b.out_of_sample_expectancy_r} R per trade${b.label === 'profitable' ? '' : ` (${b.reasons.join('; ')})`}.${settings}`;
+    return `${b.label === 'profitable' ? 'best' : 'leading, not proven yet'}: ${b.name}, ${n(b.trades)}, win rate ${b.win_rate == null ? 'not measured' : `${b.win_rate}%`}, ${b.out_of_sample} out of sample at ${b.out_of_sample_expectancy_r} R per trade${b.label === 'profitable' ? '' : ` (${b.reasons.join('; ')})`}.${settings}`;
   }
   return `${b.ranked ? 'best' : 'leading, not ranked yet'}: ${b.name}, ${n(b.trades)}, win rate ${b.win_rate == null ? 'not measured' : `${b.win_rate}%`}, ${b.expectancy_r} R per trade, net ${money(b.net_pnl)}${b.ranked ? '' : ` (fewer than ${l.min_sample} trades)`}.${settings}`;
 }
