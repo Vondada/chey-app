@@ -97,3 +97,37 @@ test('stock history and positions preserve official sources without placing orde
   assert.ok(requests.every((r) => r.method === 'GET'));
   assert.ok(requests.every((r) => r.url.startsWith('https://data.alpaca.markets/') || r.url.startsWith('https://paper-api.alpaca.markets/')));
 });
+
+test('two stock views share one socket per feed subscribed to both symbols, and removed keys close it (review on #383)', async () => {
+  const { readFileSync, unlinkSync, writeFileSync } = await import('node:fs');
+  const generated = new URL('./.market_stream.test.generated.mjs', import.meta.url);
+  writeFileSync(generated, readFileSync(new URL('./worker.js', import.meta.url), 'utf8').replace(
+    "import { DurableObject } from 'cloudflare:workers';",
+    'class DurableObject { constructor(ctx, env) { this.ctx = ctx; this.env = env; } }',
+  ), 'utf8');
+  let CheState;
+  try { ({ CheState } = await import(generated.href + '?t=' + Date.now())); } finally { try { unlinkSync(generated); } catch (_) {} }
+  const { ALPACA_KEY_ENV, ALPACA_SECRET_ENV } = await import('./broker_alpaca.js');
+  const sockets = [];
+  const self = {
+    keyEnv: { [ALPACA_KEY_ENV]: 'PK-fixture', [ALPACA_SECRET_ENV]: 'private-secret' },
+    marketSocketFactory: async (url) => { const s = new Socket(); s.url = url; sockets.push(s); return s; },
+    ctx: { storage: { get: async () => null, put: async () => {} } },
+    marketEvent() {},
+  };
+  for (const name of ['stockViewSymbols', 'stopStockStreams', 'ensureStockStreams', 'stockSnapshotFor']) self[name] = CheState.prototype[name].bind(self);
+  self._stockViews = new Map([[{}, { symbol: 'AAPL', feed: 'iex' }]]);
+  await self.ensureStockStreams(['AAPL'], 'iex');
+  self._stockViews.set({}, { symbol: 'MSFT', feed: 'iex' });
+  await self.ensureStockStreams(['MSFT'], 'iex');
+  const stream = self._stockStreams.get('iex');
+  assert.deepEqual(stream.symbols, ['AAPL', 'MSFT'], 'the second view adds its symbol instead of replacing the first');
+  assert.equal(self._stockStreams.size, 1);
+  assert.equal(self.stockSnapshotFor('MSFT', 'iex', null).symbols[0], 'MSFT');
+  self.keyEnv = {};
+  const answer = await self.ensureStockStreams(['AAPL'], 'iex');
+  assert.equal(answer.status, 'UNAVAILABLE');
+  assert.equal(self._stockStreams.size, 0, 'removed keys close every stock socket');
+  assert.equal(stream.stopped, true);
+  assert.equal(self._stockOrderStream, null);
+});

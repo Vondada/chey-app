@@ -3643,19 +3643,53 @@ export class CheState extends DurableObject {
     return liveTick(this.ctx.storage, { ...options, load: (root, opts) => this.tradingFeed(root, opts) });
   }
 
+  // One Alpaca stock socket per feed, subscribed to the union of the symbols its open views want, so a
+  // second view never closes the socket the first one is reading (review on #383).
+  stockViewSymbols(feed, extra = []) {
+    const wanted = new Set(extra);
+    for (const view of (this._stockViews || new Map()).values()) if (view.feed === feed) wanted.add(view.symbol);
+    return [...wanted].sort().slice(0, 10);
+  }
+
+  // Closes every Alpaca socket, so removed keys stop streaming at once.
+  stopStockStreams() {
+    for (const stream of (this._stockStreams || new Map()).values()) stream.stop();
+    this._stockStreams?.clear();
+    this._stockOrderStream?.stop();
+    this._stockOrderStream = null;
+    this._stockWantedUntil = 0;
+  }
+
   async ensureStockStreams(symbols = ['AAPL'], feed = 'iex') {
-    this._stockWantedUntil = Date.now() + 120000;
     const keys = alpacaKeys(this.keyEnv || this.env);
-    if (!keys || liveKeyProblem(keys.id)) return { status: 'UNAVAILABLE', provider: 'Alpaca', feed, error: 'Connect existing Alpaca PAPER credentials in Trading connections. No paid subscription was activated.' };
+    if (!keys || liveKeyProblem(keys.id)) {
+      // No usable keys (or they were just removed): sockets opened with the old ones close now.
+      this.stopStockStreams();
+      return { status: 'UNAVAILABLE', provider: 'Alpaca', feed, error: 'Connect existing Alpaca PAPER credentials in Trading connections. No paid subscription was activated.' };
+    }
+    this._stockWantedUntil = Date.now() + 120000;
     const factory = this.marketSocketFactory || connectMarketSocket;
-    this._stockStream ||= new AlpacaStockStream({ socketFactory: factory, wanted: () => Date.now() < this._stockWantedUntil, onChange: (event) => this.marketEvent(event) });
+    this._stockStreams ||= new Map();
+    let stream = this._stockStreams.get(feed);
+    if (!stream) {
+      stream = new AlpacaStockStream({ socketFactory: factory, wanted: () => Date.now() < this._stockWantedUntil, onChange: (event) => this.marketEvent(event) });
+      this._stockStreams.set(feed, stream);
+    }
     this._stockOrderStream ||= new AlpacaOrderStream({ socketFactory: factory, wanted: () => Date.now() < this._stockWantedUntil,
       onChange: (event) => this.marketEvent(event), onOrder: async (order) => {
         const list = (await this.ctx.storage.get('alpaca_stream_orders')) || [];
         await this.ctx.storage.put('alpaca_stream_orders', [order, ...list.filter((r) => r.id !== order.id)].slice(0, 50));
       } });
-    await Promise.all([this._stockStream.start({ keys, symbols, feed }), this._stockOrderStream.start({ keys })]);
-    return { ...this._stockStream.snapshot(), order_stream: this._stockOrderStream.snapshot() };
+    await Promise.all([stream.start({ keys, symbols: this.stockViewSymbols(feed, symbols), feed }), this._stockOrderStream.start({ keys })]);
+    return { ...stream.snapshot(), order_stream: this._stockOrderStream.snapshot() };
+  }
+
+  // A shared socket's snapshot narrowed to one view's symbol, so a view never shows another's quotes.
+  stockSnapshotFor(symbol, feed, fallback) {
+    const snap = this._stockStreams?.get(feed)?.snapshot();
+    if (!snap) return fallback;
+    const only = (rec) => (rec && rec[symbol] ? { [symbol]: rec[symbol] } : {});
+    return { ...snap, symbols: [symbol], quotes: only(snap.quotes), bars: only(snap.bars), symbol_status: only(snap.symbol_status) };
   }
 
   marketEvent(event) {
@@ -3689,9 +3723,11 @@ export class CheState extends DurableObject {
     if (stocks ? !/^[A-Z]{1,5}(?:\.[A-Z])?$/.test(symbol) || !['iex', 'sip', 'delayed_sip'].includes(feed) : !['MNQ', 'NQ'].includes(symbol)) return json({ detail: 'Unsupported symbol/feed.' }, 400);
     this._marketListeners ||= new Set();
     if (this._marketListeners.size >= 8) return json({ detail: 'Too many market views are open. Close an older view.' }, 429);
+    const view = {};
+    if (stocks) (this._stockViews ||= new Map()).set(view, { symbol, feed });
     const snapshot = stocks ? await this.ensureStockStreams([symbol], feed) : await this.ensureFuturesStream(symbol);
     const encoder = new TextEncoder(); let listener; let heartbeat; let expiry;
-    const cleanup = () => { clearInterval(heartbeat); clearTimeout(expiry); this._marketListeners.delete(listener); };
+    const cleanup = () => { clearInterval(heartbeat); clearTimeout(expiry); this._marketListeners.delete(listener); this._stockViews?.delete(view); };
     const stream = new ReadableStream({ start: (controller) => {
       const send = (value) => { try { controller.enqueue(encoder.encode(`${JSON.stringify(value)}\n`)); } catch (_) { cleanup(); } };
       send({ type: 'snapshot', snapshot }); let last = 0;
@@ -3701,7 +3737,15 @@ export class CheState extends DurableObject {
         last = Date.now(); send(event);
       };
       this._marketListeners.add(listener);
-      heartbeat = setInterval(() => { if (stocks) this._stockWantedUntil = Date.now() + 120000; send({ type: 'heartbeat', at: new Date().toISOString(), snapshot: stocks ? this._stockStream?.snapshot() || snapshot : this._futuresStreams.get(symbol)?.snapshot() || snapshot }); }, 10000);
+      heartbeat = setInterval(() => {
+        // A heartbeat keeps the stock sockets wanted only while usable keys remain.
+        if (stocks) {
+          const keys = alpacaKeys(this.keyEnv || this.env);
+          if (keys && !liveKeyProblem(keys.id)) this._stockWantedUntil = Date.now() + 120000;
+          else this.stopStockStreams();
+        }
+        send({ type: 'heartbeat', at: new Date().toISOString(), snapshot: stocks ? this.stockSnapshotFor(symbol, feed, snapshot) : this._futuresStreams.get(symbol)?.snapshot() || snapshot });
+      }, 10000);
       expiry = setTimeout(() => { cleanup(); try { controller.close(); } catch (_) {} }, 55000);
     }, cancel: cleanup });
     return new Response(stream, { headers: { 'content-type': 'application/x-ndjson; charset=utf-8', 'cache-control': 'no-store' } });
@@ -6734,6 +6778,7 @@ export class CheState extends DurableObject {
         if (body.action === 'remove') {
           if (body.confirm !== true) return json({ ok: false, detail: 'Removing the Alpaca paper keys needs your confirmation, sir. Nothing was removed.' }, 409);
           const removed = await removeAlpacaPaperKeys(this.ctx.storage);
+          this.stopStockStreams();
           await this.refreshKeyEnv();
           const detail = workerPair ? 'CHE still uses the Alpaca paper keys set as Worker secrets, sir; remove those in Cloudflare to disconnect Alpaca.'
             : removed.removed ? 'The Alpaca paper keys are removed, sir.' : 'There were no Alpaca paper keys saved in CHE, sir.';
