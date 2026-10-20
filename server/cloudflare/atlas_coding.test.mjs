@@ -783,6 +783,9 @@ test("review of #360: event words, CHE's own work, C and C++, generic words and 
     ['where did you deploy it', 'che_self_update'], ['where did you deploy', 'che_self_update'], ['where did you commit that', 'model'],
     ['show me your code for checkpoints', 'che_repository_inspection'], ['review this code', 'model'], ['can we review this code', 'model'],
     ['lets review some code', 'model'],
+    // The catalog's /code-review said in words reads CHE's own source; it never reaches a model that could "find no issues".
+    ['review the code quality of the trading desk', 'che_repository_inspection'], ['code review the router', 'che_repository_inspection'],
+    ['review your code for bugs in the strategy simulation', 'che_repository_inspection'], ['review my essay for clarity', 'model'],
   ]) assert.equal(await route(words), want, words);
   // B4 and S4: no card is C, C++ or C#, and a word with an everyday sense is not a coding lesson.
   for (const words of ['teach me C', 'teach me C++', 'explain C#', 'what is c++', 'teach me c programming', 'tell me about the inspection',

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, unlinkSync } from 'node:fs';
-import { executeWithReceipt, guardExecutionClaims, isExecutionReceipt } from './truth_layer.js';
+import { RETRIEVAL_NOT_EVIDENCE, executeWithReceipt, guardExecutionClaims, guardRetrievalClaims, isExecutionReceipt } from './truth_layer.js';
 import { runPluginTool } from './plugin_runtime.js';
 import vm from 'node:vm';
 import { loadPackedJson } from './prompt_compaction.js';
@@ -266,3 +266,64 @@ test('browser live voice uses guarded input, queues chat, and ignores provider o
   assert.equal(node('reply').textContent, 'Verified chat reply.');
 });
 
+
+
+// ─── Retrieval claims (owner, 2026-10-20) ─────────────────────────────────
+// A model once answered "I retrieved the records from storage key simulation_trades ... sim-2023-03-10-001
+// ... I also ran the lookup tool successfully." Nothing on the model path reads storage or runs a tool.
+
+const FABRICATED = 'I retrieved the records from storage key simulation_trades. The most profitable simulation trade was sim-2023-03-10-001 on 2023-03-10: BTCUSDT breakout, +$412.50. From journal_trades, paper-2023-02-20-001 made +$180 on 2023-02-20. I also ran the lookup tool successfully.';
+
+test('a model-written retrieval, storage key, record id, tool success or review result is rejected at the boundary', () => {
+  for (const [claim, rule] of [
+    ['I retrieved the records from storage key simulation_trades and found the best one.', 'retrieval'],
+    ['The best trade was sim-2023-03-10-001 with +$412.50.', 'record_id'],
+    ['From journal_trades, the newest entry made +$180.', 'storage_key'],
+    ['According to the ledger, you are up $300 this week.', 'retrieval_source'],
+    ['I also ran the lookup tool successfully and it returned the row.', 'tool_success'],
+    ['The code review found no issues in the trading desk.', 'review_done'],
+    ['I reviewed your code and the tests all pass.', 'review_done'],
+  ]) {
+    const out = guardExecutionClaims(claim, { message: 'what did you find?' });
+    assert.equal(out.removed.length, 1, claim);
+    assert.doesNotMatch(out.text, /\$\d|sim-2023|journal_trades|found no issues|successfully/, claim);
+    assert.equal(guardRetrievalClaims(claim).removed[0]?.rule, rule, claim);
+  }
+  const whole = guardExecutionClaims(FABRICATED, { message: 'Which trade was the most profitable?' });
+  assert.equal(whole.text, RETRIEVAL_NOT_EVIDENCE);
+});
+
+test('a denial, a plain answer and a real receipt pass; flagOnly keeps the sentence marked', () => {
+  for (const honest of [
+    'I have not reviewed the code and cannot read the ledger from here, sir.',
+    'Nothing was retrieved for this answer: I have no record of that trade.',
+    'The simulation and the journal are different record sets; ask me for either and I will read it.',
+    'Your meeting is at 3 and the groceries are milk, eggs and bread.',
+  ]) {
+    assert.equal(guardExecutionClaims(honest, { message: 'tell me' }).removed.length, 0, honest);
+    assert.equal(guardRetrievalClaims(honest).removed.length, 0, honest);
+  }
+  const flagged = guardRetrievalClaims('The source shows readSimState. I retrieved the row from the records table. Codex can confirm.', { flagOnly: true, keys: false });
+  assert.equal(flagged.removed.length, 1);
+  assert.match(flagged.text, /^The source shows readSimState\. I retrieved the row from the records table\. \[NOT VERIFIED\] Codex can confirm\.$/);
+  const cut = guardRetrievalClaims('The source shows readSimState. I retrieved the row from the records table. Codex can confirm.');
+  assert.equal(cut.text, 'The source shows readSimState. Codex can confirm.');
+  const keyQuoted = guardRetrievalClaims('The simulation state lives under storage key strategy_sim_state in the source.', { keys: false });
+  assert.equal(keyQuoted.removed.length, 0);
+});
+
+test('through /api/chat a fabricated retrieval never reaches the owner as text, stream or speech', async () => {
+  const che = await owner({ model: () => FABRICATED });
+  const out = await che.say('What did you find in the records you mentioned earlier?');
+  assert.equal(out.modelCalls >= 1, true, 'the model path was taken');
+  assert.doesNotMatch(out.reply, /sim-2023|paper-2023|simulation_trades|journal_trades|\$412|\$180|lookup tool/);
+  assert.match(out.reply, /not evidence|cannot verify/i);
+});
+
+test('a real adapter receipt still renders when the model text around it is fabricated', async () => {
+  const { receipt } = await executeWithReceipt({ tool: 'storage', operation: 'read strategy_sim_state', source: 'durable storage', request_id: 'req-1', run: async () => ({ ok: true, trades: 172 }), response: (r) => ({ trades: r.trades }) });
+  const out = guardExecutionClaims('I retrieved it from storage key simulation_trades: sim-2023-03-10-001 made $412.', { message: 'how many?', receipts: [receipt] });
+  assert.match(out.text, /Execution receipt .*storage read strategy_sim_state, success/);
+  assert.match(out.text, /"trades":172/);
+  assert.doesNotMatch(out.text, /sim-2023|\$412/);
+});

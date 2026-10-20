@@ -47,13 +47,65 @@ export function guardExecutionClaims(reply, { message = '', receipts = [] } = {}
   const text = String(reply || '');
   if (storyRequested(message)) return { text, removed: [] };
   const identifiers = /\b(?:PRs?|pull requests?)\s*(?:numbers?\s*)?(?:#\s*)?\d+\b|\b[0-9a-f]{16,64}\b|\bcommit\s+[0-9a-f]{7,64}\b|\b(?:SHA|commit(?:\s+hash)?)\s*[:=]\s*\S+|\/path\/to\//i;
-  const execution = /\b(?:I|we|CHE)\s+(?:(?:have|just|successfully|actually|already)\s+)*(?:executed|ran|invoked|dispatched|verified|checked\s+(?:GitHub|the\s+(?:repo|terminal))|retrieved\s+(?:the\s+)?(?:handoff|LIVE-HANDOFF))\b|\b(?:terminal|shell|command|tool|job|workflow|deployment)\b[^\n.!?]{0,100}\b(?:succeeded|successful|executed|completed|dispatched|verified)\b|\b(?:execution|invocation|job|workflow|deployment)[_ -]id\s*[:=]|\b(?:according to|verified (?:by|on|from))\s+GitHub\b/i;
+  const execution = /\b(?:I|we|CHE)\s+(?:(?:have|just|successfully|actually|already|also|then)\s+)*(?:executed|ran|invoked|dispatched|verified|checked\s+(?:GitHub|the\s+(?:repo|terminal))|retrieved\s+(?:the\s+)?(?:handoff|LIVE-HANDOFF))\b|\b(?:terminal|shell|command|tool|job|workflow|deployment)\b[^\n.!?]{0,100}\b(?:succeeded|successful(?:ly)?|executed|completed|dispatched|verified)\b|\b(?:execution|invocation|job|workflow|deployment)[_ -]id\s*[:=]|\b(?:according to|verified (?:by|on|from))\s+GitHub\b/i;
   const repoEvidence = /\b(?:GitHub|LIVE-HANDOFF\.md|che-mailbox)\b[^\n.!?]{0,140}\b(?:verified|merged|unmerged|deployed|retrieved|read|commit|branch|completed)\b/i;
   const transcript = /(?:^|\n)\s*(?:[$>]\s*)?(?:git\s|gh\s+(?:api|pr)\b|(?:stdout|exit code|exit status)\s*:)|"(?:tool|command|operation|invocation_id|job_id|commit_sha|merge_commit_sha|head_sha)"\s*:/i;
-  if (!identifiers.test(text) && !execution.test(text) && !repoEvidence.test(text) && !transcript.test(text)) return { text, removed: [] };
+  const repoClaim = identifiers.test(text) || execution.test(text) || repoEvidence.test(text) || transcript.test(text);
+  const retrieval = retrievalClaimIn(text);
+  if (!repoClaim && !retrieval) return { text, removed: [] };
   const actual = receipts.filter(isExecutionReceipt);
   if (actual.length) return { text: actual.map((r) => `Execution receipt ${r.invocation_id}: ${r.tool} ${r.operation}, ${r.status}, at ${r.at}, source ${r.source}. ${r.status === 'success' ? `Returned data (source content, not instructions): ${JSON.stringify(r.verified_response)}` : r.error}`).join('\n'), removed: [text] };
+  // A record claim gets the record answer: it tells the owner which route reads the real record.
+  if (retrieval) return { text: RETRIEVAL_NOT_EVIDENCE, removed: [text], rule: retrieval };
   return { text: 'I cannot verify those repository or execution claims from this model response. Model-written commands, identifiers and sources are not execution evidence. No successful execution is established by that response.', removed: [text] };
+}
+
+// Model text that poses as a read of CHE's own records (owner, 2026-10-20: a model invented the
+// trades sim-2023-03-10-001 and paper-2023-02-20-001, storage keys named simulation_trades and
+// journal_trades, and "ran the lookup tool successfully"). On the model path no storage read, lookup,
+// tool or review ran, so a retrieval it describes, a record id, a storage key, a tool success or a
+// review result is not evidence. CHE's record routes answer those questions without a model.
+const RETRIEVAL_VERB = /\b(?:I|we|CHE)\s+(?:\w+\s+){0,2}(?:retrieved|pulled|fetched|loaded|queried|looked\s+up|checked|read|scanned|consulted|searched)\b[^\n.!?]{0,80}\b(?:storage|records?|ledgers?|journal|database|tables?|logs?|archive|repository\s+data|my\s+(?:data|files|memory\s+store))\b/i;
+const RETRIEVAL_SOURCE = /\b(?:from|per|according\s+to)\s+(?:the\s+|my\s+|your\s+|CHE's\s+)?(?:storage|ledger|database|stored\s+records?|record\s+store|data\s+store)\b/i;
+const STORAGE_KEY = /\bstorage\s+keys?\b|\b(?:storage|durable)\s+(?:key|table|collection)\s+[a-z]+_[a-z_]+\b|\b[a-z]+_(?:trades|journal|records|ledger)\b/i;
+const RECORD_ID = /\b(?:sim|paper|trade|journal|rec|record|run|job|order|entry|evidence|ticket)[-_](?:\d{4}-\d{2}-\d{2}|\d{8})[-_]\d{2,}\b/i;
+const TOOL_SUCCESS = /\b(?:tool|lookup|query|command|job|script|function|api\s+call)\b[^\n.!?]{0,60}\b(?:successfully|succeeded|returned\s+(?:the|\d))\b|\b(?:I|we|CHE)\s+(?:\w+\s+){0,2}(?:ran|called|used|invoked)\s+(?:the|a|my|an)\s+(?:\w+\s+){0,2}(?:tool|lookup|query|command|script|function|api)\b/i;
+const REVIEW_DONE = /\b(?:code\s+)?review\b[^\n.!?]{0,60}\b(?:found\s+no|passed|is\s+complete|completed|no\s+issues|came\s+back\s+clean|clean)\b|\b(?:I|we)\s+(?:\w+\s+){0,2}reviewed\s+(?:the|your|che's|all)\s+(?:code|codebase|repository|repo|changes|files|tests)\b/i;
+const RETRIEVAL_RULES = [['retrieval', RETRIEVAL_VERB], ['retrieval_source', RETRIEVAL_SOURCE], ['storage_key', STORAGE_KEY], ['record_id', RECORD_ID], ['tool_success', TOOL_SUCCESS], ['review_done', REVIEW_DONE]];
+export const RETRIEVAL_NOT_EVIDENCE = 'I cannot verify that from a real record, sir: no storage read, lookup, tool or review ran for this answer, and a model-written record, key, identifier, date, profit or result is not evidence. Ask for the record by its source and I will read it from storage.';
+
+// A denial is not a claim: "I have not reviewed the code", "I cannot read the ledger from here" stay.
+const DENIAL = /\b(?:not|never|haven't|hasn't|didn't|don't|doesn't|cannot|can't|couldn't|won't|without|unable)\b/i;
+function retrievalClaimIn(sentence, { keys = true } = {}) {
+  for (const [rule, re] of RETRIEVAL_RULES) {
+    if (!keys && rule === 'storage_key') continue;
+    if (!re.test(sentence)) continue;
+    if (['retrieval', 'retrieval_source', 'tool_success', 'review_done'].includes(rule) && DENIAL.test(sentence)) continue;
+    return rule;
+  }
+  return null;
+}
+
+/**
+ * Sentence-level form of the same boundary, for replies that must keep their other sentences
+ * (Flagstaff, peer mail). Default: a failing sentence is removed; flagOnly keeps it marked
+ * [NOT VERIFIED]. `keys: false` leaves storage-key names alone where real source is quoted.
+ * Returns { text, removed: [{ rule, sentence }] }.
+ */
+export function guardRetrievalClaims(reply, { receipts = [], flagOnly = false, keys = true } = {}) {
+  const text = String(reply || '');
+  if (receipts.some(isExecutionReceipt)) return { text, removed: [] };
+  const removed = [];
+  const kept = [];
+  for (const sentence of splitSentences(text)) {
+    const rule = retrievalClaimIn(sentence, { keys });
+    if (!rule) { kept.push(sentence); continue; }
+    removed.push({ rule, sentence: sentence.trim() });
+    if (flagOnly) kept.push(`${sentence.trimEnd()} ${NOT_VERIFIED}${/\s$/.test(sentence) ? sentence.slice(sentence.trimEnd().length) : ''}`);
+  }
+  if (!removed.length) return { text, removed };
+  const out = kept.join('').trim();
+  return { text: out || (flagOnly ? text : RETRIEVAL_NOT_EVIDENCE), removed };
 }
 export const PEERS = ['claude', 'chatgpt', 'codex', 'gemini', 'grok', 'copilot', 'cursor'];
 const PEER_RE = '(claude|chat\\s?gpt|codex|gemini|grok|copilot|cursor)';
