@@ -876,6 +876,7 @@ extension _CheHomeSend on _CHEHomeState {
     // owner (its registered page, tab and controls), never a model's guess.
     // Pages with their own voice routes (Commands, the browser) answered above.
     if (_pendingAttachment == null && RegExp(r"^(?:(?:hey )?(?:che|chay|chey)[,.]?\s+)?(?:how (?:do i|can i) use (?:this|the) screen|explain this (?:screen|page)|help me with this screen)[?.!]*$", caseSensitive: false).hasMatch(message.trim())) {
+      if (!mounted) return;
       CheScreenGuide.open(context, fallback: 'current screen', onRead: (words) { speakText(words, record: false, readOnDemand: true); });
       if (mounted) _set(() => controller.clear());
       return;
