@@ -64,6 +64,13 @@ Then, on GitHub:
 - Next: open focused PR for milestone 1 when the owner is ready (or continue: milestone 2 = scripted multi-agent demo via officeGoal + War Room board wiring + orb-tap deep link to the real task; then Phase B typed memory/provenance).
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
+## 2. Current position (Codex, 2026-10-20 — PR #372 MERGED; deploy verification running)
+
+- **PR #372 squash-merged** as `e61c27ca406a4f672fb769d9f5865727f1e53ed2` after exact final head `ea87cc3883ab272aec18fc7faf7fb19341419e34` passed all GitHub Actions checks (39359433013 / 39359432968) and independent Codex review completed with no findings. All eight review threads fixed, test-backed and resolved. Cloudflare branch previews are the established non-gating failure; production uses the existing deploy workflow.
+- Final Worker runtime at 75dcff5b: **2452 total; 2445 passed; 0 failed; 7 skipped**. Coding checkpoint/failover/workflow-policy/paid-gate **52/52**. New execution/GitHub pipeline regressions **20/20**. Full Flutter analysis/tests and real-browser observer passed in final CI. ea87cc3 only adds Dart preview-sequencing code/tests after the Worker runtime was verified; all its CI passed too.
+- Review follow-ups now also preserve spoken barge-in, polite numbered PR lookup, and voice preview sequencing/cancellation using the existing speech pipeline. Additional files beyond the earlier checkpoint list: `lib/che_speech_pipeline.dart`, `test/che_speech_pipeline_test.dart`. No new router or memory/execution engine.
+- **NOT YET CLAIMED LIVE.** Worker deploy run `39360217473` is running (job `118424414990`); Shorebird run `39360217453` is running (job `118424414950`). IPA build/release were skipped, appropriate for Dart-only client changes. Next: verify production /health reports `e61c27ca406a`, live memory/GitHub/handoff/receipt and command probes pass; inspect actual Shorebird patch output and report device-baseline limitations. Do not infer successful deployment or iPhone delivery from the merge.
+
 ## 2. Current position (Codex, 2026-10-20 — PR #372 reliability repair, final CI pending)
 
 - Owner authorized fixing, testing, independent review, squash merge when green, and existing Worker/mobile delivery. No spending, deletion or live trades; no unrelated work.
