@@ -627,6 +627,7 @@ extension _CheHomeVoice on _CHEHomeState {
     if (type == 'state') {
       if (_realtimeConnecting || _realtimeVoice?.connected == true) return;
       final running = event['running'] == true;
+      if (running) _micPermissionDenied = false;
 
       if (mounted) {
         _set(() {
@@ -776,6 +777,10 @@ extension _CheHomeVoice on _CHEHomeState {
     if (type == 'error' && mounted) {
       final message =
           event['message']?.toString() ?? 'Unknown native voice error.';
+      // "Microphone permission is required…" / "Speech Recognition permission is required…" (AppDelegate.swift).
+      if (RegExp(r'permission', caseSensitive: false).hasMatch(message)) {
+        _set(() => _micPermissionDenied = true);
+      }
 
       await _fallbackSpeech(message);
     }

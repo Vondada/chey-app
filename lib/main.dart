@@ -464,6 +464,8 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   bool _realtimeConnecting = false;
   // The owner tapped the mic or Stop while live voice was still connecting.
   bool _realtimeCancelRequested = false;
+  // The iPhone reported that microphone or speech permission is off.
+  bool _micPermissionDenied = false;
   bool _wakeListenerStarting = false;
 
   // Unread INCOMING mailbox messages (badge on the Chat mailbox icon).
@@ -542,6 +544,7 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
         speechListening: speech.isListening,
         realtimeConnected: _realtimeVoice?.connected == true,
         realtimeConnecting: _realtimeConnecting,
+        permissionDenied: _micPermissionDenied,
         lastFailure: _localVoice.lastMicFailure,
       );
 
