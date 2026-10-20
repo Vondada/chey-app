@@ -431,6 +431,12 @@ extension _CheHomeStreaming on _CHEHomeState {
 
       if (type == 'done') {
         _streamUnderstoodAs = cheUnderstoodAs(data);
+        // Only the trusted deterministic trading handlers can request this room.
+        if (data['open_screen'] == 'trading_room' &&
+            const {'che_trading_live', 'che_trading_ledgers', 'che_trading_desk'}.contains(data['source']) &&
+            mounted && !_assistantHubOpen) {
+          _openAssistantHub(tab: 1);
+        }
         // "Preview number three": the reply names a free sample from the provider's own
         // library. It is held here and played by send.dart once CHE has finished saying
         // the reply, so the two never talk over each other.

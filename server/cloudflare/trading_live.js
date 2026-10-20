@@ -19,6 +19,7 @@ export const LIVE_FEED = 'live_paper_feed';
 export const LIVE_BACKTEST = 'live_paper_backtest';
 export const LIVE_RESEARCH_PREFIX = 'live_research_run:';
 const RESEARCH_LAST = 'live_research_last_success';
+const RESEARCH_ATTEMPT = 'live_research_attempt';
 // Records that never count as forward results but are never thrown away: a closed trade the
 // journal refused, and a position voided because paper trading was stopped while it was open.
 export const LIVE_EXCLUDED = 'live_paper_excluded';
@@ -191,12 +192,15 @@ export async function liveBacktest(storage, options = {}) {
   });
   if (!acquired) return { ok: false, error: 'Historical research is already running; no duplicate run dispatched.' };
   try {
+    await storage.put(RESEARCH_ATTEMPT, { at: new Date(now).toISOString(), status: 'running' });
     const old = await storage.get(LIVE_BACKTEST);
     if (old?.at && !old.id) {
       const key = `${LIVE_RESEARCH_PREFIX}legacy:${old.at}`;
       if (!(await storage.get(key))) await storage.put(key, old);
     }
-    return await historicalReplay(storage, options);
+    const result = await historicalReplay(storage, options);
+    await storage.put(RESEARCH_ATTEMPT, { at: new Date(now).toISOString(), status: result.ok ? 'complete' : 'failed', experiment_id: result.id || null, reused: Boolean(result.reused), error: result.error || null });
+    return result;
   }
   finally { await update(async (tx) => { if ((await tx.get('live_research_lock'))?.token === token) await tx.put('live_research_lock', { token: null, at: now, finished_at: new Date().toISOString() }); }); }
 }
@@ -288,9 +292,9 @@ async function historicalReplay(storage, { fetcher = fetch, now = Date.now(), lo
 export async function researchDue(storage, { now = Date.now(), ...options } = {}) {
   const state = await storage.get(LIVE_STATE);
   if (!state?.enabled) return { skipped: 'paper research is off' };
-  const last = await storage.get(LIVE_BACKTEST);
+  const last = await storage.get(RESEARCH_ATTEMPT);
   const today = tradeDayOf(new Date(now).toISOString());
-  if (last?.ok && tradeDayOf(last.at) === today) return { skipped: 'research already recorded this research day' };
+  if (last?.status === 'complete' && tradeDayOf(last.at) === today) return { skipped: 'research already recorded this research day' };
   if (last?.at && now - Date.parse(last.at) < 3600000) return { skipped: 'research retry cooldown' };
   return liveBacktest(storage, { now, ...options });
 }

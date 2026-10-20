@@ -10131,6 +10131,17 @@ export class CheState extends DurableObject {
         const live = liveIntent(message);
         if (live && !body.attachment) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can use the Trading Room.', { source: 'che_trading_live', ok: false });
+          if (live.kind === 'research') {
+            const { result, receipt } = await executeWithReceipt({
+              tool: 'trading_live', operation: 'historical_replay', source: 'trading_live.js', request_id: crypto.randomUUID(),
+              run: () => liveBacktest(this.ctx.storage), response: (r) => ({ id: r.id, dataset_hash: r.dataset_hash, rows: r.rows?.length, reused: Boolean(r.reused) }),
+            });
+            await recordReceipt(this.ctx.storage, { ...receipt, key: `execution:${receipt.invocation_id}` });
+            return ndjsonReply(receipt.status === 'success'
+              ? `Historical five-minute research ${result.reused ? 'reused its verified dataset' : 'completed'}. Experiment ${result.id}. No forward trades or live permissions were added.`
+              : `Historical research could not be verified: ${result?.error || receipt.error}. No live orders were sent.`,
+              { source: 'che_trading_live', model_calls: 0, ok: receipt.status === 'success', execution_receipts: [receipt], open_screen: 'trading_room' });
+          }
           let already = false;
           if (live.kind === 'start' || live.kind === 'stop') {
             already = live.kind === 'start' && Boolean((await this.ctx.storage.get('live_paper_state'))?.enabled);
@@ -10138,7 +10149,7 @@ export class CheState extends DurableObject {
             if (state.enabled) { await liveTick(this.ctx.storage, { force: true }).catch(() => null); await this.scheduleWork(); }
           }
           const dash = await this.liveTradingDashboard();
-          const opens = (live.kinds || [live.kind]).some((kind) => ['open', 'chart', 'trades', 'positions'].includes(kind));
+          const opens = (live.kinds || [live.kind]).some((kind) => ['open', 'chart', 'trades', 'positions', 'learning'].includes(kind));
           // A compound question ("won and lost, which strategy is best, is it still on?") gets every part.
           return ndjsonReply(liveAnswer(live, dash, { message, already }), {
             source: 'che_trading_live', model_calls: 0, ...(opens ? { open_screen: 'trading_room' } : {}),

@@ -144,9 +144,15 @@ class _CheLivePaperPanelState extends State<CheLivePaperPanel> {
       if (!mounted) return;
       setState(() => _status = response.statusCode == 200 && result is Map && result['ok'] == true
         ? 'Research recorded. No forward trades or live permissions were added.' : 'Research not completed: ${result is Map ? result['error'] ?? result['detail'] : response.statusCode}');
+      HapticFeedback.mediumImpact();
+      widget.onRead?.call(_status);
       await _load();
     } catch (_) {
-      if (mounted) setState(() => _status = 'Research response unavailable. Refresh to verify the actual run before retrying.');
+      if (mounted) {
+        setState(() => _status = 'Research response unavailable. Refresh to verify the actual run before retrying.');
+        HapticFeedback.heavyImpact();
+        widget.onRead?.call(_status);
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }

@@ -448,3 +448,44 @@ test('walk-forward purges trades that carry training or earlier fold exposure in
 test('learning and daily progress questions read records and never dispatch research or orders', () => {
   for (const message of ['Read my strategy learning progress and live readiness.', 'Show my daily strategy report.']) assert.equal(liveIntent(message).kind, 'learning');
 });
+
+test('daily research reuse records a current attempt and does not download unchanged history hourly', async () => {
+  const { liveBacktest, researchDue } = await import('./trading_live.js');
+  const storage = memoryStorage();
+  await setLivePaper(storage, true);
+  const bars = [...DAY1, ...DAY2];
+  let loads = 0;
+  const load = async () => { loads++; return { status: 'REPLAY', interval: '5m', provider: 'fixture', provider_symbol: 'MNQ', candles: bars }; };
+  const first = await liveBacktest(storage, { load, now: after(bars) });
+  const later = after(bars) + 86400000;
+  const reused = await researchDue(storage, { load, now: later });
+  assert.equal(reused.id, first.id);
+  assert.equal(reused.reused, true);
+  const skipped = await researchDue(storage, { load, now: later + 3600000 });
+  assert.match(skipped.skipped, /already recorded/);
+  assert.equal(loads, 2);
+  for (const message of ['Replay available history', 'Backtest strategy history', 'Please replay five-minute history.']) assert.equal(liveIntent(message).kind, 'research');
+  for (const message of ["Don't replay available history.", 'Why did you replay available history?', 'Can replaying historical data make money?']) assert.notEqual(liveIntent(message)?.kind, 'research');
+});
+
+test('actual /api/chat reads learning without a model and reports failed replay honestly with a trusted receipt', async () => {
+  const storage = memoryStorage(); let calls = 0;
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => { calls++; return { response: 'I ran 30 winning trades.' }; } } };
+  const state = new CheState({ storage }, env); env.CHE_STATE = { getByName: () => state };
+  const send = (path, body, token = '') => worker.fetch(new Request(`https://che.example${path}`, { method: 'POST', headers: { 'content-type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body) }), env);
+  const token = (await (await send('/api/pair', { code: '123456' })).json()).device_token;
+  const realFetch = globalThis.fetch; globalThis.fetch = async () => new Response('{}', { status: 503 });
+  try {
+    const ask = async (message) => (await (await send('/api/chat', { message }, token)).text()).trim().split('\n').map(JSON.parse);
+    const read = await ask('Show my strategy learning progress and live readiness.');
+    assert.equal(read.at(-1).source, 'che_trading_live');
+    assert.equal(read.at(-1).open_screen, 'trading_room');
+    assert.equal(storage.saved.get('live_paper_backtest'), undefined);
+    const replay = await ask('Replay available history');
+    assert.equal(replay.at(-1).source, 'che_trading_live');
+    assert.equal(replay.at(-1).ok, false);
+    assert.equal(replay.at(-1).execution_receipts[0].status, 'failure');
+    assert.match(replay.filter((r) => r.type === 'delta').map((r) => r.delta).join(''), /could not be verified/);
+    assert.equal(calls, 0);
+  } finally { globalThis.fetch = realFetch; }
+});

@@ -7,13 +7,14 @@ const WAKE = /^\s*(?:(?:hey\s+)?(?:che|chay|chey)[,:]?\s+)?/i;
 // Start and stop are commands only: "Don't stop paper trading" and "Why did you stop paper
 // trading?" change nothing (review of #339). They count only when the turn opens with them.
 const COMMANDS = [
+  ['research', /^(?:please\s+)?(?:(?:can|could|would)\s+you\s+)?(?:replay|backtest|research)\s+(?:(?:the|your|available|historical|strategy|five[- ]minute|5[- ]minute)\s+)*(?:history|historical data|strategy history)(?:\s+(?:now|please))?[.!?]*$/i],
   ['stop', /^(?:please\s+)?(?:stop|pause|turn\s+off|end|halt)\s+(?:the\s+|your\s+)?paper[\s-]*trad\w*/i],
   ['start', /^(?:please\s+)?(?:start|begin|turn\s+on|resume|run|launch)\s+(?:the\s+|your\s+)?paper[\s-]*trad\w*/i],
 ];
 // Every read needs trading words of its own. One question can ask several (issue #350), and each
 // one asked is answered, in the order asked.
 const READS = [
-  ['learning', /\b(?:strategy learning|live readiness|strategy (?:daily |learning )?progress|daily strategy report)\b/i],
+  ['learning', /\b(?:strategy learning|live readiness|(?:strategy |learning )progress|daily strategy report|how much have you learned today)\b/i],
   ['why', /\b(?:explain|why)\b[\s\S]{0,40}\b(?:that|the\s+last|last|this|your\s+last)\s+trade\b[\s\S]{0,25}\b(?:lost|lose|won|win|worked|failed)\b|\bwhy\s+did\s+(?:that|the\s+last|your\s+last)\s+trade\s+(?:lose|win|fail|work)\b|\bexplain\s+(?:the\s+|your\s+)?last\s+(?:losing|winning)\s+trade\b/i],
   ['chart', /\bshow\b[\s\S]{0,25}\bchart\b[\s\S]{0,30}\b(?:you\s+)?(?:entered|entry|exited)\b|\bshow\s+me\s+where\s+you\s+(?:entered|exited)\b/i],
   ['positions', /\b(?:your|my|paper)\s+(?:current\s+|open\s+)?(?:paper\s+)?positions?\b|\bcurrent\s+(?:paper\s+)?positions?\b/i],
@@ -68,6 +69,7 @@ export function liveIntent(message) {
   if (!command && LATER_COMMAND.test(asked)) return null;
   if (!command && ANALYSIS.test(text) && FEED_DETAIL.test(text)) return { kind: 'analysis' };
   if (OTHER_TOPIC.test(asked)) return null;
+  if (/^(?:please\s+)?which strategy is performing best[?.!]*$/i.test(asked)) return { kind: 'learning' };
   // A long turn needs trading words of its own: "my positions on the church committee … help me write
   // her a note" is not about paper trades (review of #352). Short questions keep the plain reads.
   if (!command && text.length > 160 && !TRADING_WORDS.test(text) && !/\btrad(?:e|es|ing)\b/i.test(text)) return null;
