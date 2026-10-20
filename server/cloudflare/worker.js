@@ -2758,7 +2758,12 @@ async function mergeRuntimePrWaitingForOwner(env, storage, ops = {}) {
   if (status?.status !== 200 || runtimeState(status) !== 'approved_waiting_owner' || !number) return null;
   const last = await storage.get(LAST_SELF_UPDATE_PR_KEY).catch(() => null);
   if (last?.number && !last.merged_at && Date.parse(last.opened_at || 0) > Date.parse(status.updated_at || 0)) return null;
-  const merged = await mergeSelfUpdatePr(env, number);
+  // Only the exact commit the independent review approved (che-autopilot records it).
+  const reviewed = String(status.reviewed_sha || '');
+  if (!/^[a-f0-9]{40}$/i.test(reviewed)) {
+    return { ok: false, message: `I did not merge pull request #${number}, sir: its record does not say which commit the review approved, so it needs a fresh review. Nothing was merged.` };
+  }
+  const merged = await mergeSelfUpdatePr(env, number, fetch, { expectedHeadSha: reviewed });
   if (merged.status !== 200) {
     return { ok: false, message: `I did not merge pull request #${number}, sir: ${String(merged.detail || 'GitHub refused the merge').replace(/\.$/, '')}. Nothing was merged.` };
   }

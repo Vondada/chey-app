@@ -43,12 +43,12 @@ test('the workflows: the runner records the decision, and che-autopilot merges o
   const merge = autopilot.indexOf('github.rest.pulls.merge(');
   assert.ok(hold > 0 && merge > hold, 'the authorization check comes before the only merge call');
   assert.equal(autopilot.split('github.rest.pulls.merge(').length, 2, 'there is exactly one merge call');
-  assert.match(autopilot.slice(hold, merge), /putRuntime\('approved_waiting_owner'[\s\S]*return;/);
+  assert.match(autopilot.slice(hold, merge), /putRuntime\('approved_waiting_owner'[\s\S]*reviewed_sha: expectedSha[\s\S]*return;/);
 });
 
 function fakeGitHub({ branch = 'che/auto/abcd1234', record = {} } = {}) {
   const calls = [];
-  let stored = { session_id: SESSION, state: 'approved_waiting_owner', pr_number: 412, updated_at: '2026-10-20T20:00:00Z', changed_files: 1, ...record };
+  let stored = { session_id: SESSION, state: 'approved_waiting_owner', pr_number: 412, reviewed_sha: HEAD, updated_at: '2026-10-20T20:00:00Z', changed_files: 1, ...record };
   const fetcher = async (url, init = {}) => {
     const u = new URL(url); const method = init.method || 'GET';
     calls.push(`${method} ${u.pathname}`);
@@ -108,4 +108,18 @@ test('CHE merges only her own branches, even on a yes', async (t) => {
 
 test('the waiting state is spoken as waiting, never as merged', () => {
   assert.match(speakRuntimeStatus({ state: 'approved_waiting_owner', pr_number: 7, changed_files: 1 }), /waiting for your approval, sir; I have not merged or deployed it/);
+});
+
+test('"merge it" merges only the commit the review approved: a later push, or no recorded commit, is refused', async (t) => {
+  for (const record of [{ reviewed_sha: 'e'.repeat(40) }, { reviewed_sha: undefined }]) {
+    const gh = fakeGitHub({ record });
+    const real = globalThis.fetch;
+    globalThis.fetch = gh.fetcher;
+    t.after(() => { globalThis.fetch = real; });
+    const out = await worker.handleSelfUpdateChatAction(env, memory({ che_runtime_last_session: SESSION }), { kind: 'merge' }, {});
+    globalThis.fetch = real;
+    assert.equal(out.ok, false);
+    assert.match(out.message, record.reviewed_sha ? /changed after it was reviewed.*Nothing was merged/ : /does not say which commit the review approved.*Nothing was merged/);
+    assert.ok(!gh.calls.some((c) => c.endsWith('/merge')), 'nothing merged');
+  }
 });

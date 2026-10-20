@@ -509,6 +509,8 @@ jobs:
                 pr_number: prNumber,
                 review_model: reviewModel,
                 review: finding,
+                // The owner's "merge it" merges exactly this reviewed commit, never a later push.
+                reviewed_sha: expectedSha,
               });
               await appendAction('approved_waiting_owner', 'CI and independent review passed; not merged: waiting for the owner\'s yes.');
               await github.rest.issues.createComment({

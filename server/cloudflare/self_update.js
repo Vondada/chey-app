@@ -499,9 +499,13 @@ export async function selfUpdateStatus(env, number, fetcher = fetch) {
 // and the head is exactly the commit CHE checked (no race with a new push).
 // Worker changes carry [worker-deploy] so the repository's deploy workflow
 // runs; deployment truth is then verified separately.
-export async function mergeSelfUpdatePr(env, number, fetcher = fetch) {
+export async function mergeSelfUpdatePr(env, number, fetcher = fetch, { expectedHeadSha = '' } = {}) {
   const status = await selfUpdateStatus(env, number, fetcher);
   if (status.status !== 200) return status;
+  // A merge bound to a reviewed commit refuses a head that moved after that review.
+  if (expectedHeadSha && status.state === 'open' && status.head_sha !== expectedHeadSha) {
+    return { status: 409, detail: `PR #${status.number} changed after it was reviewed (reviewed ${expectedHeadSha.slice(0, 7)}, now ${status.head_sha.slice(0, 7)}); it needs a new review before it can merge.`, failure_class: FAILURE_CLASS.INTERNAL };
+  }
   if (status.state === 'merged') return { status: 200, already_merged: true, number: status.number, merge_commit_sha: status.merge_commit_sha, url: status.url };
   if (status.state !== 'open') return { status: 409, detail: `PR #${status.number} is ${status.state}.`, failure_class: FAILURE_CLASS.PERMANENT_EXTERNAL };
   const pr = await gh(env, 'GET', `/pulls/${Number(number)}`, null, fetcher);
