@@ -500,6 +500,25 @@ jobs:
               return;
             }
 
+            // Build 5 (owner, 2026-10-20): never merge to main without the owner's explicit yes. Only a
+            // session whose record says his own request authorized the merge is merged here; every other
+            // one stops at "approved, waiting for the owner", and his "merge it" in CHE merges it.
+            const runtimeNow = await loadRuntime();
+            if (runtimeNow.value.merge_authorized !== true) {
+              await putRuntime('approved_waiting_owner', {
+                pr_number: prNumber,
+                review_model: reviewModel,
+                review: finding,
+              });
+              await appendAction('approved_waiting_owner', 'CI and independent review passed; not merged: waiting for the owner\'s yes.');
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number: prNumber,
+                body: 'CI and the independent review passed. CHE has **not** merged this: it waits for the owner\'s explicit yes ("merge it" in CHE).\n\n---\n_che-autopilot_',
+              });
+              return;
+            }
+
             const merged = await github.rest.pulls.merge({
               ...context.repo,
               pull_number: prNumber,

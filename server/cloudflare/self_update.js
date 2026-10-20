@@ -16,6 +16,7 @@ import { classifyFailure, FAILURE_CLASS, stableHash } from './recovery_policy.js
 const MAX_FILES = 12;
 const MAX_FILE_BYTES = 200_000;
 const BRANCH_PREFIX = 'che/update-';
+const RUNTIME_BRANCH_PREFIX = 'che/auto/';
 
 // Owner-authorized self-development can edit normal application/source/test/docs
 // files on a review branch. High-risk control planes stay read-only: GitHub
@@ -505,7 +506,8 @@ export async function mergeSelfUpdatePr(env, number, fetcher = fetch) {
   if (status.state !== 'open') return { status: 409, detail: `PR #${status.number} is ${status.state}.`, failure_class: FAILURE_CLASS.PERMANENT_EXTERNAL };
   const pr = await gh(env, 'GET', `/pulls/${Number(number)}`, null, fetcher);
   const branch = String(pr.data?.head?.ref || '');
-  if (!branch.startsWith(BRANCH_PREFIX)) return { status: 403, detail: 'CHE only merges her own owner-approved update branches.', failure_class: FAILURE_CLASS.AUTHORIZATION };
+  // Her built-in update branches, and her coding runner's branches (che/auto/, Build 5): both only on the owner's yes.
+  if (!branch.startsWith(BRANCH_PREFIX) && !branch.startsWith(RUNTIME_BRANCH_PREFIX)) return { status: 403, detail: 'CHE only merges her own owner-approved update branches.', failure_class: FAILURE_CLASS.AUTHORIZATION };
   if (status.ci === 'failed') return { status: 409, detail: `CI failed: ${status.failed_checks.join(', ')}.`, ci: status, failure_class: FAILURE_CLASS.INTERNAL };
   if (status.ci === 'running') return { status: 409, detail: 'CI is still running.', ci: status, retryable: true, failure_class: FAILURE_CLASS.TEMPORARY_EXTERNAL };
   // No check has reported yet (GitHub creates them seconds after a push). Every
