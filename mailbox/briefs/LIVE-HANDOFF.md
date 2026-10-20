@@ -70,6 +70,19 @@ Then, on GitHub:
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
 
+## 2. Current position — scoped completion of PR #372 reliability mission (Codex, 2026-10-20T16:22:16Z)
+
+This closes the earlier #372 mobile-pending checkpoint only; preserve and continue the newer #380/#381 work recorded below under its own authorization.
+
+- PR #372 is MERGED at `e61c27ca406a4f672fb769d9f5865727f1e53ed2` (final reviewed head `ea87cc3883ab272aec18fc7faf7fb19341419e34`). Both original P1/P2 findings and all eight review threads were fixed/resolved; final independent review had no findings. Exact changed files/root causes remain in the earlier #372 checkpoint and `docs/CHE_CONTEXT_CONTINUITY.md`; baseline in `docs/CHE_TOOL_TRUTH_BASELINE.json`.
+- Trusted adapter receipts, GitHub response validation, pinned handoff reads, provider capacity failover without truncation, REA terminal failure identity/dedup/authorized retry, lossless supplied context, and guarded streaming/voice output were implemented in existing systems.
+- Verified #372 tests: Worker 2452 total, 2445 passed, 0 failed, 7 skipped; coding recovery/policy 52/52; fabricated execution/GitHub chat regressions 20/20. Full Flutter analysis/tests and required CI passed at final head (39359433013, UI 39359432968); post-merge Flutter 39360217429 passed.
+- #372 Worker deployment 39360217473 succeeded, health confirmed `e61c27ca406a`, version `491a2a90-11af-4d29-8747-40c1d06c0b9d`; live memory/truth 15/15, Command Center 5/5, Atlas 11/11. Since then main advanced six commits. Fresh live /health at this checkpoint reports `372cf27a2839`, version `2542e110-a5f1-42c0-9fb6-ba9145163c61`; GitHub compare confirms main `372cf27a2839ceac4fdcf1145b014ce168ee5ec4` includes the #372 merge. Do not roll back newer work.
+- Shorebird run 39360217453 succeeded: Stable Patch 2 for `1.4.1025188026+3925344141001`. Its asset-exclusion warning required a complete IPA for bundled assets.
+- Full iPhone build 39361874103 / job 118429687353 SUCCESS on the exact #372 merge; Shorebird baseline `1.4.1025239740+3936187410301` published. Public-release workflow 39362714401 / job 118432338868 SUCCESS. Release: https://github.com/Vondada/chey-app/releases/tag/che-ios-v1.4.1025239740-b3936187410301 . Both unsigned and SideStore bundle-ID IPA assets are uploaded, 43604868 bytes, SHA-256 `5c68c4cd4884c8300e13188f45f0402d807888fb835f2ba1172317eccc5d1949`. Existing publication workflow validated matching artifact/IPA digests.
+- Fresh production `/api/update/latest` confirms this exact commit, version/build, checksum, full update lane, Shorebird baseline and SideStore installation URL. Build/publication is complete; installation and microphone/speaker behavior on the owner's actual iPhone are UNVERIFIED. Patch publication is not proof of device installation.
+- Remaining next step for THIS mission: install/reopen the published update on the paired iPhone and retest the owner's GitHub/handoff/voice prompts. No repository/deployment blocker remains for #372. Supervised coding may resume with real execution receipts; these tests do not prove that all possible future model statements are safe. Do not purchase, delete data, place live trades, or begin unrelated work.
+
 ## 2. Current position (ChatGPT, 2026-10-20 ~10:04 UTC — Claude limit takeover)
 
 - Verified `main=372cf27a2839ceac4fdcf1145b014ce168ee5ec4`, PR #379 (EMA strategy/session + overlap) merged and Worker deployed successfully.
