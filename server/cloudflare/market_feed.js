@@ -93,14 +93,15 @@ export function aggregate(bars, minutes, now = Date.now()) {
     const start = Math.floor(t / size) * size;
     if (!cur || cur.start !== start) {
       if (cur) out.push(cur);
-      cur = { start, t: new Date(start).toISOString(), o: b.o, h: b.h, l: b.l, c: b.c, v: b.v, n: 1 };
+      cur = { start, t: new Date(start).toISOString(), o: b.o, h: b.h, l: b.l, c: b.c, v: b.v, n: 1, last: t, contiguous: true };
     } else {
+      cur.contiguous &&= t === cur.last + 60000; cur.last = t;
       cur.h = Math.max(cur.h, b.h); cur.l = Math.min(cur.l, b.l); cur.c = b.c; cur.v += b.v; cur.n += 1;
     }
   }
   if (cur) out.push(cur);
   const last = bars.length ? Date.parse(bars[bars.length - 1].t) + 60_000 : 0;
-  return out.filter((b) => b.start + size <= Math.min(now, last)).map(({ start, n, ...bar }) => bar);
+  return out.filter((b) => b.n === minutes && b.contiguous && b.start + size <= Math.min(now, last)).map(({ start, n, last: finalTime, contiguous, ...bar }) => bar);
 }
 
 /**

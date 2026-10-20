@@ -358,6 +358,19 @@ export const COMMANDS = Object.freeze([
     examples: ['Backtest NQ', 'Backtest bitcoin strategies'],
     prompt: 'Backtest {input}', produces: 'backtest', evidence: 'Results computed from historical candles, with the period.', keywords: ['backtest', 'historical', 'strategy test'],
   }),
+  C('trade-learning', 'trading', 'EXPLORE', 'Read unique strategy learning and live-readiness evidence.', {
+    does: 'Reads the current version-matched strategy cards, daily study counts and explicit live-readiness blockers. Never unlocks execution.',
+    needs: ['office'], route: 'che_trading_live', handler: 'trading_live.strategyLearning', input: null,
+    examples: ['Show my strategy learning progress', 'Read my daily strategy report'],
+    prompt: 'Read my strategy learning progress and live readiness.', produces: 'learning report',
+    evidence: 'Unique current-version forward journal records and archived historical experiments.', keywords: ['learning progress', 'live readiness', 'daily strategy report'],
+  }),
+  C('trade-research', 'trading', 'EXPLORE', 'Replay available five-minute history without orders.', {
+    does: 'Runs the existing fixed-timeframe historical research, preserving datasets, parameters and purged held-out folds; never creates forward or broker fills.',
+    needs: ['market_data'], route: 'che_trading_live', handler: 'trading_live.liveBacktest', input: null,
+    examples: ['Replay available history'], prompt: 'Replay available history', produces: 'research receipt',
+    evidence: 'Trusted execution receipt and immutable dataset/experiment identifiers.', keywords: ['replay history', 'strategy research', 'historical learning'],
+  }),
   C('trade-journal', 'trading', 'EXPLORE', 'Document trades and outcomes.', {
     does: 'Reads your paper-trading book: open and closed trades and results.',
     needs: ['office'], route: 'che_trading', handler: 'trading_lab.speakBook',

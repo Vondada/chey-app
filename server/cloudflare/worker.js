@@ -79,7 +79,7 @@ function spokenPick(message, n) {
   return k >= 1 && k <= n ? k : 0;
 }
 import { ATLAS_SOURCE, answerAtlas, atlasHiddenAction, atlasIntent, atlasQuizAnswerTurn, atlasPromptContext, atlasResetAsk, atlasResetIntent, projectAtlasToBrain, resetAtlasProgress } from './knowledge_atlas.js';
-import { LIVE_BACKTEST, LIVE_RUNS, LIVE_STATE, haltLivePaper, liveSpecs, liveBacktest, liveDashboard, livePaperSummary, liveTick, nextLiveTickAt, readLivePortfolios, setLivePaper } from './trading_live.js';
+import { LIVE_BACKTEST, LIVE_RUNS, LIVE_STATE, haltLivePaper, liveSpecs, liveBacktest, liveDashboard, livePaperSummary, liveTick, nextLiveTickAt, readLivePortfolios, researchDue, setLivePaper } from './trading_live.js';
 import { ICT_CONCEPTS, applyControlChange, controlsView, noteAuditEffect, readControls, strategyRegistry, resolveStep, speakControlResult, speakControlsView, speakSkipReasons, stockOrderProblem } from './trading_controls.js';
 import { cmeSession, frontMonth, loadIntraday, TradovateMarketStream, connectMarketSocket } from './market_feed.js';
 import { alpacaKeys, alpacaPaperDashboard, cancelAlpacaPaperOrder, haltAlpacaPaper, previewAlpacaPaperOrder, alpacaPaperOrders, alpacaPaperPositions, alpacaPaperEquity, alpacaStockBars, AlpacaStockStream, AlpacaOrderStream, alpacaStatus, speakAlpacaDashboard, liveKeyProblem, placeAlpacaPaperOrder, removeAlpacaPaperKeys, saveAlpacaPaperKeys } from './broker_alpaca.js';
@@ -3856,10 +3856,10 @@ export class CheState extends DurableObject {
   // Summary for the deploy check: feed, counts, positions and the newest trades, from records.
   async tradingProbe() {
     const ensured = await this.ensureLivePaper();
-    const run = ensured.enabled ? await this.runForwardPaper( { force: true }) : { skipped: 'paper trading is off' };
-    // The historical baseline (same rules and fills, delayed 5-minute history), at most twice a day.
-    const previous = await this.ctx.storage.get(LIVE_BACKTEST);
-    if (!previous?.ok || Date.now() - Date.parse(previous.at) > 12 * 3_600_000) await liveBacktest(this.ctx.storage).catch(() => null);
+    const run = ensured.enabled ? await this.runForwardPaper({ force: true }) : { skipped: 'paper trading is off' };
+    // The historical baseline uses the same daily schedule as the alarm: the current research attempt
+    // (not the immutable archive's timestamp), so a reused dataset is not downloaded again on every deploy.
+    const research = await researchDue(this.ctx.storage).catch((error) => ({ ok: false, error: String(error?.message || error) }));
     const d = await this.liveTradingDashboard();
     const brief = (t) => ({ strategy: t.strategy, filter: t.filter, side: t.side, signal: t.signal?.time, entry: t.entry?.time, entry_fill: t.entry?.fill,
       exit: t.exit?.time, exit_fill: t.exit?.fill, reason: t.exit?.reason, net: t.net_pnl, feed: t.data?.feed?.status });
@@ -3874,6 +3874,8 @@ export class CheState extends DurableObject {
       trades: d.trades.slice(0, 10).map(brief),
       signals: d.signals.slice(-10),
       broker: { ...d.broker, alpaca: await alpacaStatus(this.keyEnv || this.env) },
+      learning: d.learning,
+      research: { skipped: research?.skipped || null, ok: research?.skipped ? null : Boolean(research?.ok), reused: Boolean(research?.reused), error: research?.error || null },
       backtest: d.backtest ? {
         at: d.backtest.at, ok: d.backtest.ok, error: d.backtest.error || null, data: d.backtest.data,
         rows: (d.backtest.rows || []).map((r) => ({ strategy: r.strategy, filter: r.filter, target_r: r.target_r, trades: r.stats.trades,
@@ -3890,12 +3892,13 @@ export class CheState extends DurableObject {
     // Forward-paper evidence on the same hourly pass. Failures are logged in the run log, not thrown.
     await evidenceTick(this.ctx.storage, { now: opts.now, force: opts.force }).catch((error) => console.error('Trading evidence tick failed:', error?.message || error));
     // Forward paper trading on 5-minute NQ/MNQ bars, every minute while it is on and CME is open.
-    const liveRun = await this.runForwardPaper( { now: opts.now }).catch((error) => { console.error('Live paper tick failed:', error?.message || error); return null; });
+    const liveRun = await this.runForwardPaper({ now: opts.now }).catch((error) => { console.error('Live paper tick failed:', error?.message || error); return null; });
     // A journalled trade is a verified Trading Room event the Brain records (owner, 2026-10-20); the ledger stays authoritative.
     if (liveRun?.closed > 0 && !liveRun.skipped) await queueRoomEvent(this.ctx.storage, { room: 'trading', kind: 'journal_trades', key: `journal:${liveRun.at}`, title: `${liveRun.closed} forward paper trade${liveRun.closed === 1 ? '' : 's'} closed`, body: `The forward paper journal (MNQ 5-minute) closed ${liveRun.closed} trade${liveRun.closed === 1 ? '' : 's'} at ${liveRun.at}${liveRun.rejected ? `; ${liveRun.rejected} record${liveRun.rejected === 1 ? '' : 's'} refused by the journal` : ''}. Read the ledger for the numbers.`, status: 'verified', evidence: [`live_paper_runs ${liveRun.at}`], refs: { ledger: 'forward_paper_journal', run_at: liveRun.at } }).catch(() => null);
     // Strategy simulation (paper, minute bars): one alarm slot, so it runs here when due and scheduleWork arms its next minute.
     const simRun = await strategySimTick(this.ctx.storage, { now: opts.now, force: opts.force }).catch((error) => { console.error('Strategy simulation tick failed:', error?.message || error); return null; });
     if (simRun?.closed > 0) await queueRoomEvent(this.ctx.storage, { room: 'trading', kind: 'simulation_trades', key: `simulation:${simRun.at}`, title: `${simRun.closed} strategy simulation trade${simRun.closed === 1 ? '' : 's'} closed`, body: `The strategy simulation (1-minute paper strategies) closed ${simRun.closed} trade${simRun.closed === 1 ? '' : 's'} at ${simRun.at}; ${simRun.stored} stored in total. Read the ledger for the numbers.`, status: 'verified', evidence: [`strategy_sim_state ${simRun.at}`], refs: { ledger: 'strategy_simulation', run_at: simRun.at } }).catch(() => null);
+    await researchDue(this.ctx.storage, { now: opts.now }).catch((error) => console.error('Historical research failed:', error?.message || error));
     return book;
   }
 
@@ -6741,10 +6744,10 @@ export class CheState extends DurableObject {
         if (!ownerDevice) return ownerOnly();
         if (body.action === 'start' || body.action === 'stop') {
           const state = await setLivePaper(this.ctx.storage, body.action === 'start');
-          if (state.enabled) { await this.runForwardPaper( { force: true }).catch(() => null); await this.scheduleWork(); }
+          if (state.enabled) { await this.runForwardPaper({ force: true }).catch(() => null); await this.scheduleWork(); }
           return json({ ok: true, state, dashboard: await this.liveTradingDashboard() });
         }
-        if (body.action === 'tick') return json({ ok: true, run: await this.runForwardPaper( { force: true }) });
+        if (body.action === 'tick') return json({ ok: true, run: await this.runForwardPaper({ force: true }) });
         if (body.action === 'backtest') return json(await liveBacktest(this.ctx.storage));
         return json({ detail: 'Unknown action. Use start, stop, tick or backtest.' }, 400);
       }
@@ -10434,14 +10437,25 @@ export class CheState extends DurableObject {
         const live = liveIntent(message);
         if (live && !body.attachment) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can use the Trading Room.', { source: 'che_trading_live', ok: false });
+          if (live.kind === 'research') {
+            const { result, receipt } = await executeWithReceipt({
+              tool: 'trading_live', operation: 'historical_replay', source: 'trading_live.js', request_id: crypto.randomUUID(),
+              run: () => liveBacktest(this.ctx.storage), response: (r) => ({ id: r.id, dataset_hash: r.dataset_hash, rows: r.rows?.length, reused: Boolean(r.reused) }),
+            });
+            await recordReceipt(this.ctx.storage, { ...receipt, key: `execution:${receipt.invocation_id}` });
+            return ndjsonReply(receipt.status === 'success'
+              ? `Historical five-minute research ${result.reused ? 'reused its verified dataset' : 'completed'}. Experiment ${result.id}. No forward trades or live permissions were added.`
+              : `Historical research could not be verified: ${result?.error || receipt.error}. No live orders were sent.`,
+              { source: 'che_trading_live', model_calls: 0, ok: receipt.status === 'success', execution_receipts: [receipt], open_screen: 'trading_room' });
+          }
           let already = false;
           if (live.kind === 'start' || live.kind === 'stop') {
             already = live.kind === 'start' && Boolean((await this.ctx.storage.get('live_paper_state'))?.enabled);
             const state = await setLivePaper(this.ctx.storage, live.kind === 'start');
-            if (state.enabled) { await this.runForwardPaper( { force: true }).catch(() => null); await this.scheduleWork(); }
+            if (state.enabled) { await this.runForwardPaper({ force: true }).catch(() => null); await this.scheduleWork(); }
           }
           const dash = await this.liveTradingDashboard();
-          const opens = (live.kinds || [live.kind]).some((kind) => ['open', 'chart', 'trades', 'positions'].includes(kind));
+          const opens = (live.kinds || [live.kind]).some((kind) => ['open', 'chart', 'trades', 'positions', 'learning'].includes(kind));
           // A compound question ("won and lost, which strategy is best, is it still on?") gets every part.
           return ndjsonReply(liveAnswer(live, dash, { message, already }), {
             source: 'che_trading_live', model_calls: 0, ...(opens ? { open_screen: 'trading_room' } : {}),

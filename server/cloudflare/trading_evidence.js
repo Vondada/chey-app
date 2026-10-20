@@ -822,6 +822,19 @@ const byEntry = (a, b) => String(a.entry.time).localeCompare(String(b.entry.time
 // Evaluates trades in time order, fold by fold. Returns the out-of-sample trades too.
 export function evaluateWalkForward(trades, opts = {}) {
   const sorted = [...trades].sort(byEntry);
+  if (opts.barTimes) {
+    const times = opts.barTimes;
+    const windows = walkForwardFolds(times.length, opts);
+    const oos = []; const rows = [];
+    for (const f of windows) {
+      const end = times[f.testEnd];
+      const part = sorted.filter((t) => t.entry.time >= times[f.testStart] && (!end || t.exit.time < end));
+      oos.push(...part);
+      const s = summarize(part);
+      rows.push({ fold: f.fold, test_from: times[f.testStart], test_to: end || times.at(-1), trades: s.trades, net_pnl: s.net_pnl, expectancy_r: s.expectancy_r, profit_factor: s.profit_factor });
+    }
+    return { folds: rows, folds_total: rows.length, folds_positive: rows.filter((r) => r.trades && r.net_pnl > 0).length, oos };
+  }
   const folds = walkForwardFolds(sorted.length, opts);
   const rows = folds.map((f) => {
     const part = sorted.slice(f.testStart, f.testEnd);
