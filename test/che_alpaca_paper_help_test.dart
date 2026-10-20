@@ -15,7 +15,7 @@ void main() {
       controls: ['Alpaca paper orders', 'Live market chart'],
       detail: 'Alpaca stocks and MNQ futures are separate sources.',
     );
-    expect(CheScreenGuide.description(report, 'Other page'), contains('Alpaca paper orders'));
+    expect(CheScreenGuide.description(report, 'Other page'), contains('1. Alpaca paper orders'));
     expect(CheScreenGuide.description(report, 'Other page'), contains('separate sources'));
     final missing = CheScreenGuide.description(null, 'Other page');
     expect(missing, contains('not registered'));
@@ -24,6 +24,7 @@ void main() {
 
   testWidgets('Alpaca panel displays only the broker-confirmed filled quantity and receipt', (tester) async {
     final requests = <String>[];
+    final spoken = <String>[];
     final client = MockClient((request) async {
       requests.add('${request.method} ${request.url.path}');
       if (request.url.path == '/api/trading/alpaca/orders') {
@@ -44,7 +45,7 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: Scaffold(
       body: SingleChildScrollView(child: CheAlpacaPaperPanel(
         baseUrl: () => 'https://che.test', headers: () => const {},
-        client: client, refresh: const Duration(days: 1),
+        client: client, onRead: spoken.add, refresh: const Duration(days: 1),
       )),
     )));
     await tester.pumpAndSettle();
@@ -53,6 +54,8 @@ void main() {
     expect(find.text('1 / 3 filled'), findsOneWidget);
     expect(find.text('partially_filled'), findsOneWidget);
     expect(find.text(r'Paper account equity: $10000.00'), findsOneWidget);
+    await tester.tap(find.text('Read Alpaca paper orders aloud'));
+    expect(spoken.single, contains(r'average fill $195.00'));
     await tester.tap(find.text('AAPL · BUY'));
     await tester.pumpAndSettle();
     expect(find.text('Verified paper-order receipt'), findsOneWidget);

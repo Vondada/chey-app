@@ -2318,7 +2318,7 @@ OWNER AGENCY
       0 => 'Home', 1 => 'Chat', 2 => 'Office', 3 => 'Apps', _ => 'More',
     };
     CheScreenGuide.open(context, fallback: fallback,
-      onRead: (words) { speakText(words, record: false); });
+      onRead: (words) { speakText(words, record: false, readOnDemand: true); });
   }
 
   @override

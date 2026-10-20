@@ -8,12 +8,12 @@ import 'package:http/http.dart' as http;
 class CheAlpacaPaperPanel extends StatefulWidget {
   const CheAlpacaPaperPanel({
     super.key, required this.baseUrl, required this.headers,
-    this.client, this.onAsk, this.refresh = const Duration(seconds: 30),
+    this.client, this.onRead, this.refresh = const Duration(seconds: 30),
   });
   final String Function() baseUrl;
   final Map<String, String> Function() headers;
   final http.Client? client;
-  final void Function(String)? onAsk;
+  final void Function(String)? onRead;
   final Duration refresh;
 
   @override
@@ -198,8 +198,12 @@ class _CheAlpacaPaperPanelState extends State<CheAlpacaPaperPanel> {
               );
             }),
           ),
-        if (widget.onAsk != null) TextButton.icon(
-          onPressed: () => widget.onAsk!('Read my Alpaca paper orders.'),
+        if (widget.onRead != null) TextButton.icon(
+          onPressed: () => widget.onRead!([
+            if (_stale) 'These are old records. The refresh failed.',
+            _notice,
+            for (final order in _orders) '${order['symbol']}, ${order['side']}, ${order['filled_qty']} of ${order['qty']} filled, ${order['status']}, average fill ${_money(order['filled_avg_price'])}.',
+          ].where((line) => line.isNotEmpty).join(' ')),
           icon: const Icon(Icons.record_voice_over_outlined),
           label: const Text('Read Alpaca paper orders aloud'),
         ),

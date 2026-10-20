@@ -74,6 +74,7 @@ class CheMarketsRoom extends StatefulWidget {
     required this.headers,
     required this.actions,
     required this.onAsk,
+    this.onRead,
     this.client,
     this.onOpenTradingApp,
   });
@@ -84,6 +85,7 @@ class CheMarketsRoom extends StatefulWidget {
 
   /// Sends a prompt to CHE (e.g. "Analyze S&P 500 structure").
   final void Function(String prompt) onAsk;
+  final void Function(String)? onRead;
   final http.Client? client;
 
   /// Opens a supported trading website inside CHE's in-app browser.
@@ -256,7 +258,7 @@ class _CheMarketsRoomState extends State<CheMarketsRoom> {
               // Alpaca stock paper orders: broker receipts, never MNQ simulator fills.
               Padding(
                 padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.md, CheSpace.gutter, 0),
-                child: CheAlpacaPaperPanel(baseUrl: widget.baseUrl, headers: widget.headers, onAsk: widget.onAsk, client: widget.client),
+                child: CheAlpacaPaperPanel(baseUrl: widget.baseUrl, headers: widget.headers, onRead: widget.onRead, client: widget.client),
               ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(
