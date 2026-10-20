@@ -434,8 +434,11 @@ extension _CheHomeStreaming on _CHEHomeState {
         // Only the trusted deterministic trading handlers can request this room.
         if (data['open_screen'] == 'trading_room' &&
             const {'che_trading_live', 'che_trading_ledgers', 'che_trading_desk'}.contains(data['source']) &&
-            mounted && !_assistantHubOpen) {
-          _openAssistantHub(tab: 1);
+            mounted) {
+          // The section the reply names ("Show strategy progress" → STRATEGIES), for an open room too.
+          final chart = data['chart'];
+          if (chart is Map && chart['section'] != null) CheTradingRoom.requestedSection.value = cheTradingSectionNamed('${chart['section']}');
+          if (!_assistantHubOpen) _openAssistantHub(tab: 1);
         }
         // "Preview number three": the reply names a free sample from the provider's own
         // library. It is held here and played by send.dart once CHE has finished saying

@@ -68,12 +68,36 @@ class CheTradingRoom extends StatefulWidget {
   final List<Widget> chartExtras, accountExtras;
   final double chartHeight;
 
+  /// A voice reply that opens the Trading Room on a section ("Show strategy progress" → STRATEGIES)
+  /// sets this; the open room switches to it, and a room built afterwards starts on it.
+  static final requestedSection = ValueNotifier<CheTradingSection?>(null);
+
   @override
   State<CheTradingRoom> createState() => _CheTradingRoomState();
 }
 
 class _CheTradingRoomState extends State<CheTradingRoom> {
-  late CheTradingSection _section = widget.initialSection;
+  late CheTradingSection _section = CheTradingRoom.requestedSection.value ?? widget.initialSection;
+
+  @override
+  void initState() {
+    super.initState();
+    CheTradingRoom.requestedSection.value = null;
+    CheTradingRoom.requestedSection.addListener(_onRequest);
+  }
+
+  @override
+  void dispose() {
+    CheTradingRoom.requestedSection.removeListener(_onRequest);
+    super.dispose();
+  }
+
+  void _onRequest() {
+    final s = CheTradingRoom.requestedSection.value;
+    if (s == null || !mounted) return;
+    setState(() => _section = s);
+    CheTradingRoom.requestedSection.value = null;
+  }
   late final CheTradingChartController _chart = widget.chartController ?? CheTradingChartController();
 
   Widget _pad(Widget child) => Padding(padding: const EdgeInsets.fromLTRB(12, 12, 12, 0), child: child);

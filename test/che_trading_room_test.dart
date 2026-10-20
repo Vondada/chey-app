@@ -280,6 +280,16 @@ void main() {
     expect(find.byType(CheTradingChart), findsOneWidget);
   });
 
+  testWidgets('a voice reply naming a section switches the open room to it', (tester) async {
+    final s = _Server();
+    await _pumpRoom(tester, s);
+    expect(find.byType(CheTradingChart), findsOneWidget);
+    CheTradingRoom.requestedSection.value = CheTradingSection.strategies;
+    await tester.pump();
+    expect(find.byType(CheTradingChart), findsNothing);
+    expect(CheTradingRoom.requestedSection.value, isNull);
+  });
+
   test('a Worker reply names the section', () {
     expect(cheTradingSectionNamed('strategies'), CheTradingSection.strategies);
     expect(cheTradingSectionNamed('che_trades'), CheTradingSection.cheTrades);
