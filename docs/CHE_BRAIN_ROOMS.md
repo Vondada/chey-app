@@ -131,6 +131,23 @@ provider. The wrapped surfaces are the password sheet and the vault notes list. 
 are drawn by iOS, not Flutter, so they come out blank; the browser already sends its page text, and
 the capture is added to it. Only CHE's own app is captured.
 
+### The Music Room's knowledge
+
+The Music Room has no service of its own unless `CHE_MUSIC_URL` is set, so its records come from
+what really happens:
+
+- A music request on the phone ("play the song X", or a YouTube search with music words: song,
+  playlist, album, lo-fi, jazz…) writes an `observed` record to the phone's Brain replica
+  (`kind: room_request`, `source.room: music`). It says CHE opened the search; which video then
+  played is not recorded, because that happens in `che_browser.dart`. It syncs to the Worker, where
+  the relink pass relates it to the rest of the Brain.
+- A successful action through a music tool (the music connector, a Spotify, Apple Music, playlist
+  or song plugin) has a receipt, and `receiptEvent` makes it a `verified` Music Room record. A
+  failed action, or a tool that only sounds similar (a package tracker), makes none.
+- "What does the Music Room know about Miles Davis?" lists those records. It adds what the owner
+  said about his music, from Memory ("you told me"), and whether a music service is connected. With
+  nothing about the topic it says "Nothing recorded"; the service line alone is not knowledge.
+
 ## 3. The flow
 
 Question or event → intent and room (`crossRoomIntent`, `ledgerIntent`, `screenRoomFor`, the
@@ -140,7 +157,6 @@ reply guards (`truth_layer.js`) → receipts and room events → the Brain → t
 
 ## 4. Still to do (later PRs)
 
-- Music knowledge: there is no music record store; a Music Room event producer waits for one.
 - Sharing another app's screen needs the iOS ReplayKit broadcast extension, an app group and a new
   IPA (native, not patchable).
 - Semantic relationships (embeddings through `vector_memory.js`, status `inferred`).

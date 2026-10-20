@@ -276,8 +276,20 @@ function brainLine(record) {
   return `${record.title} (${statusLabel(record.verification)}${date ? `, ${date}` : ''})`;
 }
 
-async function liveLine(room, { storage, env, topic }) {
+// Words that make a memory about music (the owner's taste), not about anything else.
+const MUSIC_WORDS = /\b(?:music|songs?|singers?|bands?|artists?|albums?|playlists?|genres?|jazz|blues|rock|hip[\s-]?hop|rap|r&b|soul|funk|country|classical|lo-?fi|edm|techno|house music|reggae|gospel|metal|pop music|spotify|apple music|concerts?|tracks?)\b/i;
+
+const musicService = (env) => `Live: ${env?.CHE_MUSIC_URL ? 'a music service is connected (CHE_MUSIC_URL)' : 'no music service is connected, so CHE plays music through YouTube in her browser'}.`;
+
+async function liveLine(room, { storage, env, topic, store }) {
   try {
+    if (room === 'music') {
+      // What the owner told CHE about his music (Memory), and whether a music service is connected.
+      const prefs = store?.search ? store.search(`${topic} music song artist band genre playlist`, { limit: 12, region: BRAIN_REGIONS.personal })
+        .filter((r) => MUSIC_WORDS.test(`${r.title} ${r.body}`)).slice(0, 3) : [];
+      // Nothing about the topic means nothing to say: the service line alone is not knowledge.
+      return prefs.length ? `From Memory: ${prefs.map(brainLine).join('; ')}. ${musicService(env)}` : '';
+    }
     if (room === 'trading') {
       const ledgers = await readLedgers(storage);
       return `Live ledgers: ${ledgers.filter((l) => l.trades != null).map((l) => `${l.label} ${l.unavailable ? 'unreadable' : `${l.trades} closed trades`}`).join(', ')}.`;
@@ -331,7 +343,8 @@ export async function answerCrossRoom({ store, storage, env, intent, screen = nu
   for (const room of scanned) {
     const region = ROOMS[room].region;
     const records = ready ? store.search(topic, { limit: 4, region }).filter((r) => r.source?.room ? r.source.room === room : true) : [];
-    const live = rooms.length ? await liveLine(room, { storage, env, topic }) : '';
+    let live = rooms.length ? await liveLine(room, { storage, env, topic, store: ready ? store : null }) : '';
+    if (room === 'music' && rooms.length && records.length && !live) live = musicService(env);
     if (!records.length && !live) continue;
     hits += records.length;
     lines.push(`${lines.length + 1}. ${ROOMS[room].label}: ${records.length ? records.map(brainLine).join('; ') : 'no Brain record about that'}${live ? ` ${live}` : ''}`);

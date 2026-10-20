@@ -8,7 +8,7 @@ import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { BRAIN_REGIONS, CheBrainStore } from './brain_store.js';
 import { EVENT_STATUSES, ROOM_EVENTS_KEY, peekRoomEvents, queueRoomEvent, receiptEvent } from './room_events.js';
 import {
-  LAST_SCREEN_KEY, ROOMS, answerCrossRoom, crossRoomIntent, drainRoomEvents, linkRelated, publishRoomEvent, recentScreen, rememberScreen,
+  LAST_SCREEN_KEY, ROOMS, answerCrossRoom, crossRoomIntent, drainRoomEvents, linkRelated, publishRoomEvent, recentScreen, relinkRecords, rememberScreen,
   roomEventRecord, screenDeictic, screenFollowUp, screenRoomFor, statusLabel,
 } from './brain_rooms.js';
 import { recordReceipt } from './truth_layer.js';
@@ -347,4 +347,32 @@ test('the phone\'s "look at my screen" capture (image + page report) is seen by 
   const seen = await recentScreen(che.storage);
   assert.match(seen.summary, /MNQ chart with two paper positions/, 'the vision summary, not the page report, is the remembered screen');
   visionSummary = '';
+});
+
+test('the Music Room: a music tool action is a verified record, a phone request is observed, and the answer adds the owner\'s taste and the service', sqlite, async () => {
+  // Only a successful music tool becomes a Music Room event.
+  const action = receiptEvent({ kind: 'tool_execution', tool: 'music_control', operation: 'music_action', invocation_id: 'inv-1', status: 'success', verified_response: { playing: 'Kind of Blue' }, at: '2026-10-20T12:00:00Z' });
+  assert.equal(action.room, 'music'); assert.equal(action.status, 'verified'); assert.match(action.title, /Music: music_action through music_control/);
+  assert.equal(receiptEvent({ kind: 'tool_execution', tool: 'music_control', operation: 'music_action', status: 'failure' }), null, 'a failed action is not a record');
+  assert.equal(receiptEvent({ kind: 'tool_execution', tool: 'package_tracker', operation: 'track', status: 'success' }), null, 'a tracker is not music');
+  assert.equal(receiptEvent({ kind: 'tool_execution', tool: 'spotify', operation: 'play_playlist', status: 'success' }).room, 'music');
+
+  const che = await owner({ env: { CHE_MUSIC_URL: 'https://music.example/act' } });
+  const store = che.brain();
+  // What the phone writes for "play the song Blue in Green" (synced through /api/brain/changes).
+  store.put({
+    id: 'room:music:request:2026-10-20T12:01:00Z', kind: 'room_request', region: BRAIN_REGIONS.media, path: 'Music Room/request',
+    title: 'Music request: Blue in Green Miles Davis', body: 'The owner asked CHE to play "Blue in Green Miles Davis". CHE opened a YouTube search for it in her browser.',
+    verification: 'observed', source: { kind: 'room_event', room: 'music', room_label: 'Music Room', event_kind: 'request', status: 'observed' }, created_at: '2026-10-20T12:01:00Z',
+  }, { origin: 'phone' });
+  store.put({ id: 'mem:jazz', kind: 'memory', region: BRAIN_REGIONS.personal, title: 'The owner loves Miles Davis and modal jazz', body: 'He said jazz helps him focus.', verification: 'owner_attested', source: { kind: 'memory' }, created_at: '2026-10-19T09:00:00Z' }, { origin: 'phone' });
+  const reply = await che.say('What does the Music Room know about Miles Davis?');
+  assert.equal(reply.route, 'che_brain_rooms'); assert.equal(reply.modelCalls, 0);
+  assert.match(reply.reply, /Music Room: Music request: Blue in Green Miles Davis \(observed, not verified/);
+  assert.match(reply.reply, /From Memory: The owner loves Miles Davis and modal jazz \(you told me/);
+  assert.match(reply.reply, /a music service is connected/);
+  // The phone's record is relinked on the alarm like any room record.
+  const relinked = await relinkRecords(che.storage, store);
+  assert.ok(relinked.checked >= 1);
+  assert.equal(store.get('room:music:request:2026-10-20T12:01:00Z').source.relations_v, 1);
 });

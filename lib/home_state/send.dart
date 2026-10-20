@@ -392,6 +392,37 @@ extension _CheHomeSend on _CHEHomeState {
         'Say “what passwords do you have” or “what’s my Gmail password”.';
   }
 
+  /// The Music Room's record of a music request (owner, 2026-10-20): what the
+  /// owner asked for and that CHE opened the search. It is observed, not a
+  /// verified play: which video then played is not known here. It syncs to
+  /// the Worker's Brain, where it is related to the rest of what CHE knows.
+  Future<void> _rememberMusicRequest(CheVideoVoiceCommand command) async {
+    final at = DateTime.now().toUtc().toIso8601String();
+    try {
+      await _brainReplica.remember(
+        id: 'room:music:request:$at',
+        kind: 'room_request',
+        region: 'YouTube and Media',
+        path: 'Music Room/request',
+        title: 'Music request: ${command.query}',
+        body: 'The owner asked CHE to play "${command.query}". CHE opened a YouTube search for it in her browser. '
+            'Which video then played is not recorded here.\n\nStatus: observed.\nSource room: Music Room. Recorded $at.',
+        verification: 'observed',
+        source: {
+          'kind': 'room_event',
+          'room': 'music',
+          'room_label': 'Music Room',
+          'event_kind': 'request',
+          'status': 'observed',
+          'refs': {'query': command.query, 'url': command.url},
+          'at': at,
+        },
+      );
+    } catch (_) {
+      // A Brain write never blocks the music itself.
+    }
+  }
+
   String _sanitizeCheReply(String value) {
     // ```che-remember blocks stay: the chat shows them as "Saved to brain".
     final reply = value.trim();
@@ -807,6 +838,7 @@ extension _CheHomeSend on _CHEHomeState {
         });
       }
       HapticFeedback.mediumImpact();
+      if (videoCommand.music) unawaited(_rememberMusicRequest(videoCommand));
       await speakText(videoCommand.spoken);
       if (!mounted) return;
       await Navigator.of(context).push(

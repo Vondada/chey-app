@@ -82,6 +82,10 @@ async function ackRoomEventsNow(storage, handled) {
  * (tool executions are kept losslessly in their own store). Every mapped event is verified: a receipt is
  * written only by the Worker after the real action.
  */
+// Tools that act on music: the generic music connector, Spotify, Apple Music, playlists, songs.
+// Matched on the name with "_" and "-" read as spaces ("music_control" -> "music control").
+const MUSIC_TOOL = /\b(?:music|spotify|apple music|playlists?|songs?|albums?|soundcloud)\b/i;
+
 export function receiptEvent(receipt) {
   const r = receipt && typeof receipt === 'object' ? receipt : {};
   const at = r.at || new Date().toISOString();
@@ -104,6 +108,12 @@ export function receiptEvent(receipt) {
     case 'trade_placed': return { room: 'trading', kind: 'order', key: `trade_placed:${r.key || at}`, title: 'Live order placed through the trading desk', body: short(r.detail, 300), status: 'verified', evidence: [`receipt trade_placed ${at}`], refs: { receipt: r.key || '' }, at, sensitivity: 'private' };
     case 'paper_order_placed': return { room: 'trading', kind: 'paper_order', key: `paper_order:${r.key || at}`, title: `Alpaca PAPER order placed${r.symbol ? `: ${short(r.symbol, 12)}` : ''}`, body: short(r.detail, 300), status: 'verified', evidence: [`receipt paper_order_placed ${at}`], refs: { receipt: r.key || '', client_order_id: r.client_order_id || '' }, at };
     case 'mail_sent': return { room: 'office', kind: 'mail', key: `mail_sent:${r.key || at}`, title: `Flagstaff mail sent to ${short(r.peer || 'a peer', 24)}`, body: short(r.detail || r.text, 300), status: 'verified', evidence: [`receipt mail_sent ${at}`], refs: { receipt: r.key || '' }, at };
+    // A music service or plugin really did something (owner, 2026-10-20): the Music Room's verified record.
+    case 'tool_execution': {
+      const tool = String(r.tool || '');
+      if (r.status !== 'success' || !MUSIC_TOOL.test(`${tool} ${r.operation || ''}`.replace(/[_-]+/g, ' '))) return null;
+      return { room: 'music', kind: 'action', key: `music:${r.invocation_id || r.key || at}`, title: `Music: ${short(r.operation || 'action', 60)} through ${short(tool, 40)}`, body: short(typeof r.verified_response === 'string' ? r.verified_response : JSON.stringify(r.verified_response ?? ''), 300), status: 'verified', evidence: [`receipt tool_execution ${r.invocation_id || ''} ${at}`.trim()], refs: { receipt: r.key || '', invocation_id: r.invocation_id || '' }, at };
+    }
     case 'mail_received': return { room: 'office', kind: 'mail', key: `mail_received:${r.key || at}`, title: `Flagstaff mail received from ${short(r.peer || 'a peer', 24)}`, body: short(r.detail || r.text, 300), status: 'observed', evidence: [`receipt mail_received ${at}`], refs: { receipt: r.key || '' }, at };
     default: return null;
   }
