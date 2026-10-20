@@ -297,10 +297,13 @@ test('the EMA strategy comparison is answered strategy by strategy from the forw
   assert.match(out.reply, /^Strategy by strategy, sir, from the forward paper journal, EMA strategies:/i);
   assert.match(out.reply, /1\. trend pullback to the 20 EMA \(any\): 6 trades, 4 won, 2 lost, win rate 66\.67%, expectancy 0\.9167 R per trade, net \$60\.00/);
   assert.doesNotMatch(out.reply, /fair value gap/i, 'only the EMA strategies the owner asked about');
-  assert.match(out.reply, /Not recorded for this set, so not reported: profit factor, out-of-sample results/);
+  // Codex review of #379: the journal's profit factor is computed by summarize(), so it is reported, not called missing.
+  assert.match(out.reply, /net \$60\.00, profit factor 2\.5/);
+  assert.match(out.reply, /Not recorded for this set, so not reported: out-of-sample results\./);
   // The same question without a hyphen, and the plain sample-rule question still keeps its own answer.
   const spaced = await che.say(EMA_QUESTION.replace('forward-paper', 'forward paper'));
   assert.equal(spaced.done.kind, 'strategies');
+  for (const q of ['Rank the EMA strategies by profit factor.', 'How do your EMA strategies stack up?']) assert.equal((await che.say(q)).done.kind, 'strategies', q);
   const rule = await che.say('How many out-of-sample trades do you need before you rank a strategy?');
   assert.match(rule.reply, /sample rules/);
 });

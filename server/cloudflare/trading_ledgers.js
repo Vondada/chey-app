@@ -72,6 +72,7 @@ const RECORD_ID = /\b(?:sim|paper|trade|journal|evidence|ledger|strategy|fill|po
 // The primary objective comes first: a strategy-by-strategy comparison ("compare the EMA strategies in
 // forward-paper trading, with win rate and out-of-sample expectancy") is not a question about the sample
 // rule, even when it names out-of-sample as one of the metrics it wants (owner, 2026-10-20).
+const EXPLICIT_COMPARE = /\b(?:compare|compares|comparing|comparison|versus|vs\.?|rank|ranking|stack\s+up)\b|\b(?:by|per|each)\s+strategy\b|\bstrategy[- ]by[- ]strategy\b/i;
 const STRATEGY_COMPARE = /\b(?:compare|compares|comparing|comparison|versus|vs\.?|rank|ranking|stack\s+up)\b[^.!?\n]{0,120}\bstrateg(?:y|ies)\b|\bstrateg(?:y|ies)\b[^.!?\n]{0,120}\b(?:compare|compared|comparison|stack\s+up|perform(?:ed|ing|ance)?)\b|\b(?:by|per|each)\s+strategy\b|\bstrategy[- ]by[- ]strategy\b|\bwhich\s+(?:\w+\s+){0,2}strateg(?:y|ies)\b/i;
 // Metrics an owner can ask for; each is answered from the record set or said to be unavailable.
 const METRICS = [
@@ -121,7 +122,7 @@ export function ledgerIntent(message) {
   // ("how many paper trades did you win", "which trading strategy is performing best").
   // With no record set named, only an explicit comparison is read here; "which strategy is performing best"
   // keeps its existing trading route.
-  if (!ledgers.length && kind === 'strategies' && !/\b(?:compare|compares|comparing|comparison|versus|vs\.?)\b|\b(?:by|per|each)\s+strategy\b|\bstrategy[- ]by[- ]strategy\b/i.test(text)) {
+  if (!ledgers.length && kind === 'strategies' && !EXPLICIT_COMPARE.test(text)) {
     kind = kinds.find((k) => k !== 'strategies') || '';
     if (!kind) return null;
   }
@@ -216,7 +217,7 @@ export async function readLedgers(storage, { now = Date.now() } = {}) {
       feed: dash.feed ? { status: dash.feed.status, provider: dash.feed.provider, checked_at: dash.feed.checked_at } : null,
       best: best && { strategy: best.strategy, name: best.name, filter: best.filter, trades: best.trades, win_rate: best.win_rate, expectancy_r: best.expectancy_r, net_pnl: best.net_pnl, ranked: best.ranked, params: { target_r: best.target_r, filter: best.filter } },
       min_sample: MIN_TRADES, last_run: dash.runs[0]?.at || null,
-      by_strategy: dash.by_strategy.map((row) => ({ strategy: row.strategy, name: row.name, filter: row.filter, target_r: row.target_r, trades: row.trades, wins: row.wins, losses: row.losses, win_rate: row.win_rate, expectancy_r: row.expectancy_r, net_pnl: row.net_pnl, ranked: row.ranked })),
+      by_strategy: dash.by_strategy.map((row) => ({ strategy: row.strategy, name: row.name, filter: row.filter, target_r: row.target_r, trades: row.trades, wins: row.wins, losses: row.losses, win_rate: row.win_rate, expectancy_r: row.expectancy_r, net_pnl: row.net_pnl, profit_factor: row.profit_factor ?? null, max_drawdown: row.max_drawdown ?? null, ranked: row.ranked })),
       feeds: dash.feed ? [{ symbol: dash.feed.provider_symbol || 'MNQ=F', source: dash.feed.provider || null, status: dash.feed.status || 'unknown', last_bar: dash.feed.last_bar_time || null, latency_s: dash.feed.latency_s ?? null, error: dash.feed.error || null }] : [],
       // The journal's own trades, oldest first (the dashboard list is newest first and capped at 200).
       equity: equityCurve(await readTrades(storage, isLive), { at: (t) => t.exit.time, value: (t) => t.net_pnl, unit: '$' }),
@@ -228,7 +229,7 @@ export async function readLedgers(storage, { now = Date.now() } = {}) {
     const s = summarize(trades);
     const byPortfolio = Object.entries(breakdown(trades, (t) => t.portfolio)).map(([portfolio, b]) => {
       const first = trades.find((t) => t.portfolio === portfolio);
-      return { strategy: first?.strategy || portfolio, name: CANDIDATES[first?.strategy]?.name || first?.strategy || portfolio, filter: first?.filter || '', trades: b.trades, wins: b.wins, losses: b.losses, win_rate: b.win_rate, expectancy_r: b.expectancy_r, net_pnl: b.net_pnl, ranked: b.trades >= MIN_TRADES };
+      return { strategy: first?.strategy || portfolio, name: CANDIDATES[first?.strategy]?.name || first?.strategy || portfolio, filter: first?.filter || '', trades: b.trades, wins: b.wins, losses: b.losses, win_rate: b.win_rate, expectancy_r: b.expectancy_r, net_pnl: b.net_pnl, profit_factor: b.profit_factor ?? null, max_drawdown: b.max_drawdown ?? null, ranked: b.trades >= MIN_TRADES };
     }).sort((a, b) => b.expectancy_r - a.expectancy_r);
     return {
       status: runs.length ? 'ran' : 'not run yet', runs: runs.length, trades: s.trades, wins: s.wins, losses: s.losses, win_rate: s.win_rate, net_pnl: s.net_pnl, expectancy_r: s.expectancy_r,
@@ -326,16 +327,19 @@ export function speakLedgers(intent, ledgers) {
 // said to be unavailable; nothing is estimated, and the sample rule is never the answer to a comparison.
 const RECORDED = {
   strategy_simulation: ['trades', 'win_rate', 'expectancy_r', 'out_of_sample'],
-  forward_paper_journal: ['trades', 'win_rate', 'expectancy_r', 'net_pnl'],
-  daily_evidence: ['trades', 'win_rate', 'expectancy_r', 'net_pnl'],
+  forward_paper_journal: ['trades', 'win_rate', 'expectancy_r', 'net_pnl', 'profit_factor', 'max_drawdown'],
+  daily_evidence: ['trades', 'win_rate', 'expectancy_r', 'net_pnl', 'profit_factor', 'max_drawdown'],
   lab_paper_book: ['trades', 'expectancy_r'],
 };
-function strategyLine(row, ledgerId) {
+function strategyLine(row, ledgerId, metrics = []) {
   const parts = [`${n(row.trades || 0)}`];
   if (row.wins != null && row.losses != null) parts.push(`${row.wins} won, ${row.losses} lost`);
   if (RECORDED[ledgerId].includes('win_rate')) parts.push(`win rate ${row.win_rate == null || !row.trades ? 'not measured' : `${row.win_rate}%`}`);
   parts.push(`expectancy ${row.expectancy_r == null || !row.trades ? 'not measured' : `${row.expectancy_r} R per trade`}`);
   if (RECORDED[ledgerId].includes('net_pnl')) parts.push(`net ${money(row.trades ? row.net_pnl : null)}`);
+  // summarize() gives no profit factor when there is no losing trade (or no trade): said, never invented.
+  if (metrics.includes('profit_factor') && RECORDED[ledgerId].includes('profit_factor')) parts.push(`profit factor ${row.trades && row.profit_factor != null ? row.profit_factor : row.trades ? 'not defined (no losing trade yet)' : 'not measured'}`);
+  if (metrics.includes('max_drawdown') && RECORDED[ledgerId].includes('max_drawdown')) parts.push(`maximum drawdown ${row.trades ? money(row.max_drawdown) : 'not measured'}`);
   if (ledgerId === 'strategy_simulation') parts.push(`${row.out_of_sample || 0} out of sample${row.out_of_sample ? ` at ${row.out_of_sample_expectancy_r} R per trade` : ''}`);
   const ranked = row.ranked ?? (row.label ? row.label === 'profitable' : null);
   if (ranked === false) parts.push('not ranked yet: too few trades');
@@ -354,7 +358,7 @@ function speakStrategies(intent, chosen) {
       continue;
     }
     lines.push(`${l.label} (${l.what}):`);
-    rows.forEach((row, i) => lines.push(`  ${i + 1}. ${strategyLine(row, l.id)}.`));
+    rows.forEach((row, i) => lines.push(`  ${i + 1}. ${strategyLine(row, l.id, intent.metrics || [])}.`));
     const missing = (intent.metrics || []).filter((m) => !RECORDED[l.id].includes(m));
     if (missing.length) lines.push(`  Not recorded for this set, so not reported: ${missing.map((m) => METRIC_LABEL[m]).join(', ')}.`);
   }
