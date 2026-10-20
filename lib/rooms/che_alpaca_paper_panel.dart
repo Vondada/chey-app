@@ -92,23 +92,23 @@ class _CheAlpacaPaperPanelState extends State<CheAlpacaPaperPanel> {
 
   String _money(Object? amount) {
     final n = amount is num ? amount.toDouble() : double.tryParse('$amount');
-    return n == null ? 'Not reported' : '\$' + n.toStringAsFixed(2);
+    return n == null ? 'Not reported' : '\${n.toStringAsFixed(2)}';
   }
 
   void _showReceipt(Map<String, dynamic> order) {
     final lines = <String>[
       'Broker: Alpaca PAPER',
-      'Symbol: ' + (order['symbol'] ?? 'Unknown').toString(),
-      'Side: ' + (order['side'] ?? 'Unknown').toString(),
-      'Status: ' + (order['status'] ?? 'Unknown').toString(),
-      'Requested: ' + (order['qty'] ?? 'Unknown').toString(),
-      'Filled: ' + (order['filled_qty'] ?? 'Unknown').toString(),
-      'Average fill: ' + _money(order['filled_avg_price']),
-      'Limit price: ' + _money(order['limit_price']),
-      'Submitted: ' + (order['submitted_at'] ?? 'Not reported').toString(),
-      'Filled at: ' + (order['filled_at'] ?? 'Not filled').toString(),
-      'Alpaca order ID: ' + (order['id'] ?? 'Not reported').toString(),
-      'Client order ID: ' + (order['client_order_id'] ?? 'Not reported').toString(),
+      'Symbol: ${order['symbol'] ?? 'Unknown'}',
+      'Side: ${order['side'] ?? 'Unknown'}',
+      'Status: ${order['status'] ?? 'Unknown'}',
+      'Requested: ${order['qty'] ?? 'Unknown'}',
+      'Filled: ${order['filled_qty'] ?? 'Unknown'}',
+      'Average fill: ${_money(order['filled_avg_price'])}',
+      'Limit price: ${_money(order['limit_price'])}',
+      'Submitted: ${order['submitted_at'] ?? 'Not reported'}',
+      'Filled at: ${order['filled_at'] ?? 'Not filled'}',
+      'Alpaca order ID: ${order['id'] ?? 'Not reported'}',
+      'Client order ID: ${order['client_order_id'] ?? 'Not reported'}',
     ];
     showModalBottomSheet<void>(
       context: context, isScrollControlled: true,
@@ -153,9 +153,9 @@ class _CheAlpacaPaperPanelState extends State<CheAlpacaPaperPanel> {
         ]),
         const Text('Broker-verified stock orders · separate from MNQ simulations',
           style: TextStyle(color: Colors.white70)),
-        if (_equity != null) Text('Paper account equity: ' + _equity!,
+        if (_equity != null) Text('Paper account equity: ${_equity!}',
           style: const TextStyle(color: Colors.white, fontSize: 16)),
-        if (_checked != null) Text('Last order check: ' + _checked!.toLocal().toString(),
+        if (_checked != null) Text('Last order check: ${_checked!.toLocal()}',
           style: const TextStyle(color: Colors.white70, fontSize: 12)),
         if (_notice.isNotEmpty) Padding(padding: const EdgeInsets.symmetric(vertical: 10),
           child: Text(_notice, style: const TextStyle(color: amber))),
@@ -170,8 +170,7 @@ class _CheAlpacaPaperPanelState extends State<CheAlpacaPaperPanel> {
               final filled = (order['filled_qty'] ?? 0).toString();
               final requested = (order['qty'] ?? '?').toString();
               return Semantics(button: true,
-                label: symbol + ' ' + side + ', ' + filled + ' of ' + requested
-                  + ' filled; ' + status + '. Open paper broker receipt.',
+                label: '$symbol $side, $filled of $requested filled; $status. Open paper broker receipt.',
                 child: OutlinedButton(onPressed: () => _showReceipt(order),
                   child: Row(children: [
                     Icon(status == 'filled' ? Icons.check_circle
@@ -179,15 +178,14 @@ class _CheAlpacaPaperPanelState extends State<CheAlpacaPaperPanel> {
                     const SizedBox(width: 10),
                     Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(symbol + ' · ' + side,
+                        Text('$symbol · $side',
                           style: const TextStyle(color: Colors.white,
                             fontWeight: FontWeight.bold, fontSize: 17)),
-                        Text(filled + ' / ' + requested + ' filled',
+                        Text('$filled / $requested filled',
                           style: const TextStyle(color: Colors.white70)),
                       ])),
                     Text(status, style: TextStyle(color: color)),
                   ])),
-                ),
               );
             }),
           ),
