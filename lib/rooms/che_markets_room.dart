@@ -14,6 +14,7 @@ import 'package:http/http.dart' as http;
 import '../che_app_portal.dart';
 import '../che_ui/che_rooms.dart';
 import '../che_ui/che_theme.dart';
+import '../che_ui/che_screen_awareness.dart';
 import '../widgets/che_native_scene_world.dart';
 import 'che_live_chart.dart';
 import 'che_live_paper.dart';
@@ -109,10 +110,20 @@ class _CheMarketsRoomState extends State<CheMarketsRoom> {
   // Live broker account from the Worker (/api/trading/account); null = unknown.
   Map<String, dynamic>? _account;
   Timer? _accountTimer;
+  Object? _screenReportToken;
 
   @override
   void initState() {
     super.initState();
+    _screenReportToken = CheScreenAwareness.register(context, () => const CheScreenReport(
+      page: 'Trading Room',
+      detail: 'Market charts, CHE paper futures, and Alpaca stock paper orders are separate sources.',
+      controls: [
+        'Live market chart', 'CHE futures paper trading',
+        'Trade records by source', 'Trading connections',
+        'Alpaca paper orders and broker receipts', 'Refresh market data',
+      ],
+    ));
     unawaited(_load());
     unawaited(_loadCandles());
     _timer = Timer.periodic(const Duration(seconds: 60), (_) => unawaited(_load()));
@@ -138,6 +149,7 @@ class _CheMarketsRoomState extends State<CheMarketsRoom> {
 
   @override
   void dispose() {
+    CheScreenAwareness.unregister(_screenReportToken);
     _timer?.cancel();
     _accountTimer?.cancel();
     super.dispose();
