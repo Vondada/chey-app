@@ -64,7 +64,20 @@ import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook,
 import { nextStrategySimTickAt, setStrategySimCeiling, setStrategySimPaused, speakStrategySim, strategySimIntent, strategySimTick, strategySimView, strategySimWake } from './strategy_sim.js';
 import { evidenceIntent, evidenceReport, evidenceTick } from './trading_evidence_runner.js';
 import { readTrades } from './trading_evidence.js';
-import { chartIntent, chartView, drawIntent, futuresOrderIntent, marketOrderFeedProblem, readDrawings, saveDrawings } from './trading_chart.js';
+import { cancelCandidates, cancelConfirmation, cancelOrderIntent, chartIntent, chartView, drawIntent, futuresOrderIntent, marketOrderFeedProblem, readDrawings, saveDrawings, speakOrder } from './trading_chart.js';
+// A spoken cancel of one Alpaca PAPER order waiting for the owner's yes, or for his pick from a numbered list.
+const CHART_CANCEL_PENDING = 'trading_chart_cancel_pending';
+// "Number 2", "2", "the second one": a pick from a numbered list of n. 0 when the turn picks nothing.
+const ORDINALS = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth'];
+const NUMBER_WORDS = ['one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine'];
+function spokenPick(message, n) {
+  const t = String(message || '').toLowerCase().trim().replace(/[.!?]+$/, '');
+  const m = /^(?:(?:cancel\s+)?(?:number|no\.?|option)\s+)?(\d|one|two|three|four|five|six|seven|eight|nine)$/.exec(t)
+    || /^(?:cancel\s+)?(?:the\s+)?(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth)(?:\s+one)?$/.exec(t);
+  if (!m) return 0;
+  const k = /^\d$/.test(m[1]) ? Number(m[1]) : NUMBER_WORDS.includes(m[1]) ? NUMBER_WORDS.indexOf(m[1]) + 1 : ORDINALS.indexOf(m[1]) + 1;
+  return k >= 1 && k <= n ? k : 0;
+}
 import { ATLAS_SOURCE, answerAtlas, atlasHiddenAction, atlasIntent, atlasQuizAnswerTurn, atlasPromptContext, atlasResetAsk, atlasResetIntent, projectAtlasToBrain, resetAtlasProgress } from './knowledge_atlas.js';
 import { LIVE_BACKTEST, LIVE_RUNS, LIVE_STATE, haltLivePaper, liveSpecs, liveBacktest, liveDashboard, livePaperSummary, liveTick, nextLiveTickAt, readLivePortfolios, setLivePaper } from './trading_live.js';
 import { ICT_CONCEPTS, applyControlChange, controlsView, noteAuditEffect, readControls, strategyRegistry, resolveStep, speakControlResult, speakControlsView, speakSkipReasons, stockOrderProblem } from './trading_controls.js';
@@ -3753,6 +3766,22 @@ export class CheState extends DurableObject {
   }
 
   // ─── Strategy Control Center (owner, 2026-10-20): trading_controls.js ───────────────────────────
+
+  // Reads one open Alpaca PAPER order back and holds it for the owner's yes (two minutes).
+  async chartCancelAsk(order) {
+    await this.ctx.storage.put(CHART_CANCEL_PENDING, { order, at: new Date().toISOString() });
+    return ndjsonReply(`Cancel ${speakOrder(order)}? Say yes to cancel.`, { source: 'che_trading_chart', ok: true, model_calls: 0, order_cancelled: false, needs_confirmation: true, order });
+  }
+
+  // The owner said yes: cancel that order and read back Alpaca's own record of it.
+  async chartCancelReply(order) {
+    const done = await cancelAlpacaPaperOrder(this.keyEnv || this.env, order.id);
+    const r = done.receipt;
+    const reply = done.ok
+      ? `Cancelled, sir. Alpaca now reports ${speakOrder(r || order)} as ${r?.status || 'cancel accepted'}.`
+      : `It was not cancelled, sir: ${done.detail}${r ? ` Alpaca reports ${speakOrder(r)} as ${r.status}.` : ''}`;
+    return ndjsonReply(reply, { source: 'che_trading_chart', ok: done.ok, model_calls: 0, order_cancelled: done.ok, receipt: r || null });
+  }
   async stockOrderGuard() {
     const controls = await readControls(this.ctx.storage);
     return (order, ctx) => stockOrderProblem(controls, order, ctx);
@@ -5119,6 +5148,7 @@ export class CheState extends DurableObject {
   // media, code or connections; owner actions are refused with no model call.
   async guestChat(body, message, tenant) {
     if (parseSlashCommand(message)) return ndjsonReply('Only the CHE owner can run commands, sir.', { source: 'che_command', ok: false, model_calls: 0 });
+    if (cancelOrderIntent(message)) return ndjsonReply('Only the CHE owner can cancel Alpaca PAPER orders. Nothing was cancelled.', { source: 'che_trading_chart', ok: false, model_calls: 0, order_cancelled: false });
     if (GUEST_OWNER_ACTION.test(message)) {
       return ndjsonReply('Only the CHE owner can do that. Nothing was changed. I can still talk it through with you.', { source: 'che_guest', ok: false, model_calls: 0 });
     }
@@ -5604,7 +5634,7 @@ export class CheState extends DurableObject {
         });
       }
 
-      const body = ['POST', 'PATCH'].includes(request.method) ? await bodyOf(request) : {};
+      const body = ['POST', 'PATCH', 'PUT'].includes(request.method) ? await bodyOf(request) : {};
       // Internal release probe: only the per-deploy random token may read
       // connector readiness, with no user data, keys, or saved workflows.
       if (request.method === 'POST' && path === '/api/commands/readiness') {
@@ -6820,6 +6850,12 @@ export class CheState extends DurableObject {
       }
       if (path === '/api/trading/alpaca/order/cancel' && request.method === 'POST') {
         if (!ownerDevice) return tradingOwnerOnly();
+        // Owner rule: removing anything is asked first. Without confirm: true nothing is sent to Alpaca;
+        // the answer is 409 with the open order as Alpaca reports it, for the app to read back.
+        if (body.confirm !== true) {
+          const ask = await cancelConfirmation(this.keyEnv || this.env, body.id);
+          return json(ask, ask.needs_confirmation ? 409 : 400);
+        }
         const cancelled = await cancelAlpacaPaperOrder(this.keyEnv || this.env, body.id);
         return json(cancelled, cancelled.ok ? 200 : 400);
       }
@@ -8879,7 +8915,7 @@ export class CheState extends DurableObject {
         const frameReadsIt = frame.lossless && !['unclear', 'followup', 'correction'].includes(frame.mode);
         // A broker order, its "yes, place it" or its "no, don't place it" is read by the desk word for
         // word; a model reading could only blur which order the owner approved.
-        const deskReadsIt = ['take', 'take_unconfirmed', 'place_unconfirmed', 'stock_no', 'stock_order', 'alpaca_orders', 'alpaca_dashboard', 'tradovate_steps', 'controls', 'controls_view', 'controls_why'].includes(deskIntent(message)?.kind);
+        const deskReadsIt = ['take', 'take_unconfirmed', 'place_unconfirmed', 'stock_no', 'stock_order', 'alpaca_orders', 'alpaca_dashboard', 'tradovate_steps', 'controls', 'controls_view', 'controls_why'].includes(deskIntent(message)?.kind) || Boolean(cancelOrderIntent(message));
         // "Reset my knowledge atlas progress" is a delete with a fixed hold: it never needs a reading (issue #346 audit).
         const deterministicHold = ownerDevice && Boolean(atlasResetIntent(message));
         if (interpretation.kind === 'unclear' && !frameReadsIt && !deskReadsIt && !interpretation.clarify && !interpretation.passthrough && ownerHistory.length > 0 && !deterministicHold) {
@@ -8897,6 +8933,7 @@ export class CheState extends DurableObject {
           try {
             await this.ctx.storage.put(PENDING_OWNER_ACTION_KEY, null);
             await this.ctx.storage.put(PENDING_APP_ACTION_KEY, null);
+            await this.ctx.storage.put(CHART_CANCEL_PENDING, null);
             // "Never mind" also drops an Alpaca paper order still waiting for "yes, place it".
             if (interpretation.kind === 'cancel') await dropStockOrder(this.ctx.storage);
           } catch (_) {
@@ -8909,6 +8946,25 @@ export class CheState extends DurableObject {
         // form (#346) is gated, and on a yes run, exactly as the bare sentence would be.
         const hiddenAction = atlasHiddenAction(message);
         if (hiddenAction) message = hiddenAction;
+
+        // A spoken cancel of an Alpaca PAPER order waits for its own yes (or a pick from the numbered list)
+        // for two minutes. Any other turn drops it, so a later yes can never cancel an order by surprise.
+        if (ownerDevice && !body.attachment) {
+          let cancelWaiting = null;
+          try { cancelWaiting = await this.ctx.storage.get(CHART_CANCEL_PENDING); } catch (_) { cancelWaiting = null; }
+          if (cancelWaiting) {
+            try { await this.ctx.storage.put(CHART_CANCEL_PENDING, null); } catch (_) {
+              return json({ message: 'I could not record that safely, so I did not act. Please say it again.', reply: 'I could not record that safely, so I did not act. Please say it again.', code_review_passed: false, owner_approval_required: true }, 503);
+            }
+            const fresh = Date.now() - Date.parse(cancelWaiting.at) < 120_000;
+            if (fresh && cancelWaiting.order && isOwnerYes(message)) return this.chartCancelReply(cancelWaiting.order);
+            const pick = fresh && Array.isArray(cancelWaiting.choices) ? spokenPick(message, cancelWaiting.choices.length) : 0;
+            if (pick) return this.chartCancelAsk(cancelWaiting.choices[pick - 1]);
+            if (fresh && /^\s*(?:no|nope|don't|do not|leave it|keep it|never mind)\b/i.test(message)) {
+              return ndjsonReply('Left open, sir. Nothing was cancelled.', { source: 'che_trading_chart', ok: true, model_calls: 0, order_cancelled: false });
+            }
+          }
+        }
 
         // Owner rule: money and delete/remove need an explicit yes. The hold is
         // enforced here in code. A plain yes on the next turn releases exactly
@@ -8940,7 +8996,12 @@ export class CheState extends DurableObject {
           // The sale and order-object rules of #356 hold every other "sell" and "place the order"; on a turn the desk owns,
           // money that comes only from those words is the desk's own confirmation (see deskOwnedMoney).
           const deskOwned = (stockTurn || ['place_unconfirmed', 'take'].includes(deskTurn?.kind)) && deskOwnedMoney(message);
-          const ownerGate = gateOwnerAction(message, stockTurn?.paper || deskOwned ? { ...ownerGrant, money: true } : ownerGrant);
+          // "Cancel my AAPL order" is a removal the chart route always confirms itself, naming the exact order
+          // Alpaca holds ("Cancel BUY 2 AAPL limit 109? Say yes to cancel."), so the gate does not ask a second,
+          // vaguer question first. Only a whole sentence that is one order cancel qualifies.
+          const chartOwnedDelete = !body.attachment && Boolean(cancelOrderIntent(message));
+          const deskGrant = stockTurn?.paper || deskOwned ? { ...ownerGrant, money: true } : ownerGrant;
+          const ownerGate = gateOwnerAction(message, chartOwnedDelete ? { ...deskGrant, delete: true } : deskGrant);
           if (!ownerGate.allowed) {
             await this.ctx.storage.put(PENDING_OWNER_ACTION_KEY, { kinds: ownerGate.kinds, text: message, at: Date.now() });
             // "Reset my progress" names what the yes would delete, and how much (Knowledge Atlas, #346).
@@ -10405,6 +10466,30 @@ export class CheState extends DurableObject {
             await this.ctx.storage.delete('trading_controls_pending');
             return ndjsonReply('Left as it was, sir. Nothing changed.', { source: 'che_trading_controls', ok: true, model_calls: 0 });
           }
+        }
+        // "Cancel my AAPL order": the matching open Alpaca PAPER orders, read from Alpaca. One is read back and
+        // waits for the owner's yes; several are read as a numbered list. Nothing is cancelled on this turn.
+        const cancelAsk = body.attachment ? null : cancelOrderIntent(message);
+        if (cancelAsk) {
+          if (!ownerDevice) return ndjsonReply('Only the CHE owner can cancel Alpaca PAPER orders. Nothing was cancelled.', { source: 'che_trading_chart', ok: false, model_calls: 0, order_cancelled: false });
+          try {
+            await this.dropHeldActions();
+            await this.ctx.storage.put(PENDING_GOOGLE_ACTION_KEY, null);
+            await dropStockOrder(this.ctx.storage);
+          } catch (_) {
+            return json({ message: 'I could not record that safely, so I did not act. Please say it again.', reply: 'I could not record that safely, so I did not act. Please say it again.', code_review_passed: false, owner_approval_required: true }, 503);
+          }
+          const found = await cancelCandidates(this.keyEnv || this.env, cancelAsk);
+          const meta = { source: 'che_trading_chart', model_calls: 0, order_cancelled: false };
+          if (!found.ok) return ndjsonReply(`${found.detail} Nothing was cancelled.`, { ...meta, ok: false });
+          const where = cancelAsk.symbol ? ` for ${cancelAsk.symbol}` : '';
+          if (!found.orders.length) return ndjsonReply(`Alpaca shows no open PAPER order${where}, sir. Nothing was cancelled.`, { ...meta, ok: true, open_orders: [] });
+          if (found.orders.length === 1) return this.chartCancelAsk(found.orders[0]);
+          const list = found.orders.slice(0, 9);
+          await this.ctx.storage.put(CHART_CANCEL_PENDING, { choices: list, at: new Date().toISOString() });
+          const lines = list.map((o, i) => `${i + 1}. ${speakOrder(o)}.`).join(' ');
+          return ndjsonReply(`Alpaca shows ${found.orders.length} open PAPER orders${where}, sir: ${lines} Which one should I cancel? Say its number. Nothing was cancelled.`,
+            { ...meta, ok: true, open_orders: list, needs_choice: true });
         }
         // The Trading Room chart by voice: "draw a line at 21,450", "open Alpaca chart", "show EMA trades".
         const chartAsk = body.attachment || !ownerDevice ? null : (drawIntent(message) || chartIntent(message) || futuresOrderIntent(message));

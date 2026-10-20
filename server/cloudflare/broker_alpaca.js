@@ -382,6 +382,9 @@ export async function previewAlpacaPaperOrder(env, order = {}, { fetcher = fetch
     call(keys, '/v2/account', { fetcher }),
     call(keys, `/v2/stocks/${encodeURIComponent(symbol)}/trades/latest?feed=iex`, { fetcher, host: ALPACA_DATA }),
   ]);
+  // A preview built on a failed read would show an empty cost or buying power as if it were known.
+  if (!account.ok) return { ok: false, upstream_error: true, error: account.error, status: account.status || null, detail: `Alpaca's paper account could not be read: ${account.error}. Nothing was sent.` };
+  if (type === 'market' && !trade.ok) return { ok: false, upstream_error: true, error: trade.error, status: trade.status || null, detail: `Alpaca's latest ${symbol} price could not be read: ${trade.error}. Nothing was sent.` };
   const last = money(trade.data?.trade?.p);
   const price = type === 'limit' ? limit : last;
   const buyingPower = money(account.data?.buying_power);
@@ -393,6 +396,29 @@ export async function previewAlpacaPaperOrder(env, order = {}, { fetcher = fetch
     buying_power_after: side === 'buy' && cost != null && buyingPower != null ? Math.round((buyingPower - cost) * 100) / 100 : buyingPower,
     blocked: blocked || '', confirm_with: 'yes',
   };
+}
+
+/** One paper order as Alpaca reports it now. */
+export async function alpacaPaperOrder(env, orderId, { fetcher = fetch } = {}) {
+  const keys = alpacaKeys(env);
+  if (!keys) return { ok: false, detail: 'Alpaca PAPER is not connected.' };
+  const id = String(orderId || '').trim();
+  if (!/^[A-Za-z0-9-]{8,64}$/.test(id)) return { ok: false, detail: 'That is not an Alpaca order id.' };
+  const r = await call(keys, `/v2/orders/${encodeURIComponent(id)}`, { fetcher });
+  if (!r.ok) return { ok: false, error: r.error, detail: `Alpaca could not read that order: ${r.error}.` };
+  return { ok: true, order: receipt(r.data) };
+}
+
+/** The paper orders Alpaca still holds open (not filled, cancelled or expired), optionally for one symbol. */
+export async function openAlpacaPaperOrders(env, { symbol = '', fetcher = fetch } = {}) {
+  const keys = alpacaKeys(env);
+  if (!keys) return { ok: false, detail: 'Alpaca PAPER is not connected.' };
+  if (liveKeyProblem(keys.id)) return { ok: false, detail: liveKeyProblem(keys.id) };
+  const sym = String(symbol || '').trim().toUpperCase();
+  const r = await call(keys, `/v2/orders?status=open&limit=100${sym ? `&symbols=${encodeURIComponent(sym)}` : ''}`, { fetcher });
+  if (!r.ok) return { ok: false, error: r.error, detail: `Alpaca's open orders could not be read: ${r.error}.` };
+  const orders = (Array.isArray(r.data) ? r.data : []).map(receipt).filter((o) => !sym || o.symbol.toUpperCase() === sym);
+  return { ok: true, orders };
 }
 
 /** Cancel one open paper order by its Alpaca id; the answer is Alpaca's record of it afterwards. */

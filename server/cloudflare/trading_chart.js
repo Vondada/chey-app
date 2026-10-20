@@ -7,7 +7,7 @@
 //   PAPER fills. Identical records are shown once.
 // New entries from the chart are blocked when the feed is delayed or unavailable, and futures
 // orders are refused because no futures paper broker is connected. Live orders stay disabled.
-import { alpacaPaperDashboard, previewAlpacaPaperOrder } from './broker_alpaca.js';
+import { alpacaPaperDashboard, alpacaPaperOrder, openAlpacaPaperOrders, previewAlpacaPaperOrder } from './broker_alpaca.js';
 import { aggregate } from './market_feed.js';
 import { readSimState, readStoredTrades } from './strategy_sim.js';
 import { readTrades } from './trading_evidence.js';
@@ -32,6 +32,8 @@ export const MARKER_SOURCES = Object.freeze({
   alpaca_fill: 'Alpaca PAPER fill',
 });
 // A feed older than this is not current enough for new entries from the chart.
+// Futures bars are CHE's stored 5-minute bars, so nothing finer than 5 minutes exists for them.
+export const FUTURES_TIMEFRAMES = Object.freeze(Object.keys(TIMEFRAMES).filter((tf) => TIMEFRAMES[tf].minutes >= 5));
 const FRESH_SECONDS = { '1m': 180, '5m': 600, '15m': 1800, '1h': 5400, '1d': 3 * 86400 };
 
 const num = (v) => (v == null || v === '' || !Number.isFinite(Number(v)) ? null : Number(v));
@@ -86,8 +88,10 @@ function feedHealth({ provider, status, lastBarTime, now, tf }) {
 /** The chart for one account, symbol and timeframe: bars, feed health, the entry gate and markers. */
 export async function chartView(storage, env, { account = 'alpaca_paper', symbol = '', tf = '5m', now = Date.now(), fetcher = fetch } = {}) {
   if (!ACCOUNTS[account]) return { ok: false, error: `Choose an account: ${Object.keys(ACCOUNTS).join(' or ')}.` };
-  const frame = TIMEFRAMES[tf] ? tf : '5m';
-  const base = { ok: true, account, account_label: ACCOUNTS[account].label, mode: 'PAPER', timeframe: frame, timeframes: Object.keys(TIMEFRAMES), live_orders: 'disabled', sources: MARKER_SOURCES };
+  const offered = account === 'futures_paper' ? FUTURES_TIMEFRAMES : Object.keys(TIMEFRAMES);
+  // A timeframe the account does not offer (futures at 1m) answers with 5-minute bars, labelled 5m.
+  const frame = offered.includes(tf) ? tf : '5m';
+  const base = { ok: true, account, account_label: ACCOUNTS[account].label, mode: 'PAPER', timeframe: frame, timeframes: [...offered], live_orders: 'disabled', sources: MARKER_SOURCES };
   if (account === 'alpaca_paper') {
     const d = await alpacaPaperDashboard(env, { symbol, fetcher, now, timeframe: frame });
     if (d.state !== 'verified') {
@@ -208,10 +212,61 @@ export const MARKET_ORDER_MAX_AGE_S = 15 * 60;
 export async function marketOrderFeedProblem(env, order = {}, { fetcher = fetch, now = Date.now() } = {}) {
   if (String(order.type || 'market').toLowerCase() !== 'market') return '';
   const p = await previewAlpacaPaperOrder(env, { ...order, type: 'market' }, { fetcher });
-  if (!p.ok) return '';
+  // A failed read of Alpaca is no current price: the market order is blocked, never let through.
+  if (!p.ok) return p.upstream_error ? `New market orders are blocked: ${p.detail.replace(/\s*Nothing was sent\.$/, '')} Use a limit order. Nothing was sent.` : '';
   const at = Date.parse(p.last_trade_time || '');
   if (!Number.isFinite(at)) return `New market orders are blocked: Alpaca reports no recent trade for ${p.symbol}, so there is no current price. Use a limit order. Nothing was sent.`;
   const age = Math.round((now - at) / 1000);
   if (age > MARKET_ORDER_MAX_AGE_S) return `New market orders are blocked: Alpaca's latest ${p.symbol} trade is ${Math.round(age / 60)} minutes old (market closed or the feed stopped). Use a limit order to queue it. Nothing was sent.`;
   return '';
+}
+
+// ─── Cancelling an open Alpaca PAPER order: always asked first (owner rule: confirm before removing) ───
+
+/** "BUY 2 AAPL limit 109", "SELL 1 AAPL market": an order as the owner hears it. */
+export function speakOrder(o = {}) {
+  const type = String(o.type || 'market').toLowerCase();
+  const price = type === 'limit' && o.limit_price != null ? ` limit ${Number(o.limit_price).toLocaleString('en-US')}` : ` ${type}`;
+  return `${String(o.side || '').toUpperCase()} ${o.qty ?? '?'} ${o.symbol || ''}${price}`.replace(/\s+/g, ' ').trim();
+}
+
+const OPEN_STATUSES = new Set(['new', 'pending_new', 'accepted', 'accepted_for_bidding', 'calculated', 'partially_filled', 'pending_replace', 'replaced', 'held']);
+
+/**
+ * The confirmation a cancel needs before anything is sent: the order as Alpaca reports it now.
+ * { ok: false, needs_confirmation: true, order, detail } for an open order; { ok: false, detail } when it
+ * cannot be read or is no longer open. Nothing is cancelled here.
+ */
+export async function cancelConfirmation(env, orderId, { fetcher = fetch } = {}) {
+  const read = await alpacaPaperOrder(env, orderId, { fetcher });
+  if (!read.ok) return { ok: false, detail: `${read.detail} Nothing was cancelled.` };
+  const order = read.order;
+  if (!OPEN_STATUSES.has(order.status)) return { ok: false, order, detail: `Alpaca reports ${speakOrder(order)} as ${order.status}, so there is nothing open to cancel. Nothing was cancelled.` };
+  return { ok: false, needs_confirmation: true, order, detail: `Cancel ${speakOrder(order)}? Say yes to cancel; nothing was cancelled.` };
+}
+
+const CANCEL_FILLER = new Set(['my', 'the', 'that', 'this', 'open', 'pending', 'working', 'alpaca', 'paper', 'stock', 'limit', 'market', 'buy', 'sell', 'an', 'a']);
+/**
+ * "Cancel my AAPL order", "cancel the open Alpaca order", "cancel my paper order": one open Alpaca PAPER
+ * order to cancel, with the symbol when one is named. Null otherwise ("cancel my pizza order" names no
+ * stock: a symbol must be spoken in capitals, or the sentence must say Alpaca, paper or stock).
+ */
+export function cancelOrderIntent(message) {
+  const raw = String(message || '').trim().replace(/[’']/g, "'");
+  const m = /^(?:(?:hey\s+)?(?:che|chey|chay)[,\s]+)?(?:please\s+)?(?:can you\s+|could you\s+)?cancel\s+((?:[A-Za-z.]+\s+){1,5}?)orders?(?:\s+please)?\s*[.!?]*$/i.exec(raw);
+  if (!m) return null;
+  const words = m[1].trim().split(/\s+/);
+  let symbol = '';
+  for (const w of words) {
+    if (CANCEL_FILLER.has(w.toLowerCase())) continue;
+    if (/^[A-Z]{1,5}(?:\.[A-Z])?$/.test(w) && !symbol) { symbol = w; continue; }
+    return null;
+  }
+  if (!symbol && !words.some((w) => /^(?:alpaca|paper|stock)$/i.test(w))) return null;
+  return { kind: 'cancel_order', symbol };
+}
+
+/** The open Alpaca PAPER orders a spoken cancel names, read from Alpaca. */
+export async function cancelCandidates(env, intent, { fetcher = fetch } = {}) {
+  return openAlpacaPaperOrders(env, { symbol: intent?.symbol || '', fetcher });
 }

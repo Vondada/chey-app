@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
-import { chartMarkers, chartView, drawingProblems, futuresOrderIntent, marketOrderFeedProblem, readDrawings, saveDrawings } from './trading_chart.js';
+import { cancelConfirmation, cancelOrderIntent, chartMarkers, chartView, drawingProblems, futuresOrderIntent, marketOrderFeedProblem, readDrawings, saveDrawings } from './trading_chart.js';
 import { cancelAlpacaPaperOrder, previewAlpacaPaperOrder } from './broker_alpaca.js';
 
 const generated = new URL('./.trading_chart.test.generated.mjs', import.meta.url);
@@ -40,11 +40,11 @@ function storageFor(saved = new Map()) {
   };
 }
 
-async function owner({ model = () => 'Here is the answer, sir.' } = {}) {
+async function owner({ model = () => 'Here is the answer, sir.', env: extraEnv = {} } = {}) {
   let calls = 0;
   const pending = [];
   const env = {
-    CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', 
+    CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', ...extraEnv,
     AI: { run: async (_model, opts = {}) => { calls += 1; return { response: model(opts) }; } },
   };
   const saved = new Map();
@@ -76,7 +76,23 @@ async function owner({ model = () => 'Here is the answer, sir.' } = {}) {
     saved.set('che', data);
   };
   const api = async (path, method = 'GET', payload) => (await worker.fetch(new Request(`https://che.example${path}`, { method, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, ...(payload ? { body: JSON.stringify(payload) } : {}) }), env)).json();
-  return { say, seedMemory, saved, api };
+  const raw = (path, method, payload, as = token) => worker.fetch(new Request(`https://che.example${path}`, { method, headers: { 'Content-Type': 'application/json', ...(as ? { Authorization: `Bearer ${as}` } : {}) }, ...(payload ? { body: JSON.stringify(payload) } : {}) }), env);
+  // A guest: a private device enrolled into a family tenant by the owner, so it reaches routing but is not the owner.
+  let guestToken = '';
+  const guest = async (message) => {
+    if (!guestToken) {
+      const tenant = await (await send('/api/platform/tenants', { name: 'Guest', role: 'family' }, token)).json();
+      const invite = await (await send('/api/platform/enrollments', { access: 'private', tenant_id: tenant.tenant.id }, token)).json();
+      guestToken = (await (await send('/api/enroll', { enrollment_token: invite.enrollment.token, device_name: 'guest' })).json()).device_token;
+    }
+    const res = await send('/api/chat', { message, history: [] }, guestToken);
+    const text = await res.text();
+    while (pending.length) await pending.shift();
+    const events = text.split('\n').filter(Boolean).map((l) => { try { return JSON.parse(l); } catch (_) { return null; } }).filter(Boolean);
+    const done = events.find((e) => e.type === 'done') || {};
+    return { status: res.status, raw: text, reply: events.filter((e) => e.type === 'delta').map((e) => e.delta).join('') || (events[0]?.reply ?? ''), done, route: done.source || 'none' };
+  };
+  return { say, seedMemory, saved, api, raw, guest };
 }
 
 
@@ -84,10 +100,23 @@ async function owner({ model = () => 'Here is the answer, sir.' } = {}) {
 const memStorage = () => { const m = new Map(); return { saved: m, get: async (k) => structuredClone(m.get(k)), put: async (k, v) => { m.set(k, structuredClone(v)); }, delete: async (k) => m.delete(k), list: async ({ prefix = '' } = {}) => new Map([...m].filter(([k]) => String(k).startsWith(prefix))) }; };
 const ENV = { CHE_ALPACA_PAPER_KEY_ID: 'PKTEST1234', CHE_ALPACA_PAPER_SECRET: 'secret' };
 const NOW = Date.parse('2026-10-20T15:00:00Z');
-function fakeAlpaca({ lastBar = '2026-10-20T14:55:00Z', calls = [] } = {}) {
+function fakeAlpaca({ lastBar = '2026-10-20T14:55:00Z', calls = [], failAccount = false, failTrade = false, open = null } = {}) {
   const ok = (d) => new Response(JSON.stringify(d), { status: 200, headers: { 'content-type': 'application/json' } });
   return async (url, init = {}) => {
     const u = new URL(url); calls.push(`${init.method || 'GET'} ${u.pathname}`);
+    if (u.pathname === '/v2/account' && failAccount) return new Response(JSON.stringify({ message: 'access key verification failed' }), { status: 403 });
+    if (/\/trades\/latest$/.test(u.pathname) && failTrade) return new Response(JSON.stringify({ message: 'subscription does not permit querying recent SIP data' }), { status: 403 });
+    if (u.pathname === '/v2/orders' && open && u.searchParams.get('status') === 'open') {
+      const sym = u.searchParams.get('symbols');
+      return ok(open.filter((o) => ['new', 'accepted'].includes(o.status) && (!sym || o.symbol === sym)));
+    }
+    if (open && /^\/v2\/orders\/[^/]+$/.test(u.pathname)) {
+      const id = decodeURIComponent(u.pathname.split('/').pop());
+      const o = open.find((x) => x.id === id);
+      if (!o) return new Response(JSON.stringify({ message: 'order not found' }), { status: 404 });
+      if (init.method === 'DELETE') { o.status = 'canceled'; return new Response(null, { status: 204 }); }
+      return ok(o);
+    }
     if (u.pathname === '/v2/account') return ok({ account_number: 'PA1234', status: 'ACTIVE', cash: '1000', buying_power: '2000', equity: '1500', last_equity: '1500' });
     if (u.pathname === '/v2/positions') return ok([]);
     if (u.pathname === '/v2/orders' && (init.method || 'GET') === 'GET') return ok([
@@ -215,4 +244,156 @@ test('a market order needs a current Alpaca price; limit orders still queue (Bui
   const later = NOW + 3 * 3600_000; // the latest trade is now three hours old: the market is shut
   assert.match(await marketOrderFeedProblem(ENV, { symbol: 'AAPL', qty: 1, side: 'buy', type: 'market' }, { fetcher: fresh, now: later }), /market orders are blocked.*181 minutes old.*Use a limit order.*Nothing was sent/);
   assert.equal(await marketOrderFeedProblem(ENV, { symbol: 'AAPL', qty: 1, side: 'buy', type: 'limit', limit_price: 200 }, { fetcher: fresh, now: later }), '');
+});
+
+// ─── Codex review of #387 ─────────────────────────────────────────────────────────────────────
+
+test('PUT /api/trading/chart/drawings saves through the real Worker, and GET /api/trading/chart returns them', sqlite, async () => {
+  const che = await owner();
+  await che.say('Hello CHE.');
+  const drawings = [{ kind: 'hline', points: [{ price: 21500 }] }, { kind: 'line', points: [{ price: 21400, time: '2026-10-20T14:00:00Z' }, { price: 21450, time: '2026-10-20T14:30:00Z' }] }];
+  const put = await che.raw('/api/trading/chart/drawings', 'PUT', { account: 'futures_paper', symbol: 'MNQ', drawings });
+  assert.equal(put.status, 200);
+  const saved = await put.json();
+  assert.equal(saved.ok, true);
+  assert.equal(saved.drawings.length, 2);
+  const chart = await che.api('/api/trading/chart?account=futures_paper&tf=5m');
+  assert.deepEqual(chart.drawings.map((d) => d.kind), ['hline', 'line']);
+  assert.deepEqual(chart.drawings[1].points.map((p) => p.price), [21400, 21450]);
+  const bad = await che.raw('/api/trading/chart/drawings', 'PUT', { account: 'futures_paper', symbol: 'MNQ', drawings: [{ kind: 'circle', points: [] }] });
+  assert.equal(bad.status, 400, 'an invalid body is read and refused, not taken as empty');
+  const guest = await che.raw('/api/trading/chart/drawings', 'PUT', { account: 'futures_paper', symbol: 'MNQ', drawings: [] }, '');
+  assert.notEqual(guest.status, 200);
+  assert.equal((await che.api('/api/trading/chart?account=futures_paper&tf=5m')).drawings.length, 2, 'a guest changes nothing');
+});
+
+test('futures never offer 1m: a 1m request answers with the 5-minute bars, labelled 5m', async () => {
+  const storage = memStorage();
+  storage.saved.set('live_paper_feed', { status: 'DELAYED', provider: 'Yahoo', last_bar_time: '2026-10-20T14:50:00Z', bars: [0, 1, 2].map((k) => ({ t: new Date(Date.parse('2026-10-20T14:40:00Z') + k * 300_000).toISOString(), o: 1, h: 2, l: 0.5, c: 1.5, v: 1 })) });
+  const v = await chartView(storage, {}, { account: 'futures_paper', tf: '1m', now: NOW });
+  assert.equal(v.timeframe, '5m');
+  assert.ok(!v.timeframes.includes('1m'));
+  assert.deepEqual(v.timeframes, ['5m', '15m', '1h', '1d']);
+  assert.equal(v.bars.length, 3);
+  const stocks = await chartView(memStorage(), ENV, { account: 'alpaca_paper', symbol: 'AAPL', tf: '1m', now: NOW, fetcher: fakeAlpaca() });
+  assert.equal(stocks.timeframe, '1m', 'Alpaca stocks keep 1-minute bars');
+  assert.ok(stocks.timeframes.includes('1m'));
+});
+
+test('ticket preview fails with Alpaca\'s error when the account or the latest trade cannot be read; a market order is then blocked', async () => {
+  const acct = await previewAlpacaPaperOrder(ENV, { symbol: 'AAPL', qty: 1, side: 'buy', type: 'limit', limit_price: 200 }, { fetcher: fakeAlpaca({ failAccount: true }) });
+  assert.equal(acct.ok, false);
+  assert.equal(acct.upstream_error, true);
+  assert.match(acct.error, /access key verification failed/);
+  assert.match(acct.detail, /account could not be read: access key verification failed/);
+  const trade = await previewAlpacaPaperOrder(ENV, { symbol: 'AAPL', qty: 1, side: 'buy', type: 'market' }, { fetcher: fakeAlpaca({ failTrade: true }) });
+  assert.equal(trade.ok, false);
+  assert.match(trade.error, /SIP data/);
+  assert.match(trade.detail, /latest AAPL price could not be read/);
+  const limit = await previewAlpacaPaperOrder(ENV, { symbol: 'AAPL', qty: 1, side: 'buy', type: 'limit', limit_price: 200 }, { fetcher: fakeAlpaca({ failTrade: true }) });
+  assert.equal(limit.ok, true, 'a limit order is priced by its limit, so a missing trade does not fail it');
+  assert.equal(limit.estimated_cost, 200);
+  assert.match(await marketOrderFeedProblem(ENV, { symbol: 'AAPL', qty: 1, side: 'buy', type: 'market' }, { fetcher: fakeAlpaca({ failTrade: true }), now: NOW }), /market orders are blocked: .*could not be read.*Nothing was sent/);
+});
+
+const OPEN_ORDERS = () => [
+  { id: 'o-aapl-0001', symbol: 'AAPL', side: 'buy', qty: '2', type: 'limit', limit_price: '109', status: 'new', submitted_at: '2026-10-20T14:40:00Z' },
+  { id: 'o-msft-0001', symbol: 'MSFT', side: 'sell', qty: '1', type: 'limit', limit_price: '420', status: 'accepted', submitted_at: '2026-10-20T14:41:00Z' },
+];
+
+test('cancel endpoint: without confirm it sends nothing and answers 409 with the open order; with confirm it cancels', sqlite, async () => {
+  const che = await owner({ env: ENV });
+  await che.say('Hello CHE.');
+  const open = OPEN_ORDERS();
+  const calls = [];
+  const prior = globalThis.fetch;
+  globalThis.fetch = fakeAlpaca({ open, calls });
+  try {
+    const ask = await che.raw('/api/trading/alpaca/order/cancel', 'POST', { id: 'o-aapl-0001' });
+    assert.equal(ask.status, 409);
+    const body = await ask.json();
+    assert.equal(body.ok, false);
+    assert.equal(body.needs_confirmation, true);
+    assert.equal(body.order.id, 'o-aapl-0001');
+    assert.equal(body.order.symbol, 'AAPL');
+    assert.equal(body.order.status, 'new');
+    assert.equal(body.detail, 'Cancel BUY 2 AAPL limit 109? Say yes to cancel; nothing was cancelled.');
+    assert.ok(!calls.some((c) => c.startsWith('DELETE')), 'nothing was sent to Alpaca');
+    const no = await che.raw('/api/trading/alpaca/order/cancel', 'POST', { id: 'o-aapl-0001', confirm: 'yes' });
+    assert.equal(no.status, 409, 'only confirm: true confirms');
+    assert.ok(!calls.some((c) => c.startsWith('DELETE')));
+    const done = await (await che.raw('/api/trading/alpaca/order/cancel', 'POST', { id: 'o-aapl-0001', confirm: true })).json();
+    assert.equal(done.ok, true);
+    assert.equal(done.receipt.status, 'canceled');
+    assert.ok(calls.includes('DELETE /v2/orders/o-aapl-0001'));
+    const gone = await che.raw('/api/trading/alpaca/order/cancel', 'POST', { id: 'o-aapl-0001' });
+    assert.equal(gone.status, 400, 'an order no longer open is not offered for cancelling');
+    assert.match((await gone.json()).detail, /as canceled, so there is nothing open to cancel/);
+  } finally { globalThis.fetch = prior; }
+  const direct = await cancelConfirmation(ENV, 'o-msft-0001', { fetcher: fakeAlpaca({ open: OPEN_ORDERS() }) });
+  assert.equal(direct.detail, 'Cancel SELL 1 MSFT limit 420? Say yes to cancel; nothing was cancelled.');
+});
+
+test('cancel words: only an order cancel that names a stock, Alpaca, paper or stock', () => {
+  assert.deepEqual(cancelOrderIntent('Cancel my AAPL order.'), { kind: 'cancel_order', symbol: 'AAPL' });
+  assert.deepEqual(cancelOrderIntent('cancel the open Alpaca order'), { kind: 'cancel_order', symbol: '' });
+  assert.deepEqual(cancelOrderIntent('CHE, cancel my paper order'), { kind: 'cancel_order', symbol: '' });
+  assert.equal(cancelOrderIntent('cancel my pizza order'), null);
+  assert.equal(cancelOrderIntent('cancel my Amazon order'), null);
+  assert.equal(cancelOrderIntent('cancel the meeting'), null);
+  assert.equal(cancelOrderIntent('cancel my AAPL order and delete my notes'), null, 'only a whole sentence that is one cancel');
+});
+
+test('cancel by voice through /api/chat: one match is read back and cancelled on yes; several are listed and nothing is cancelled; a guest is refused', sqlite, async () => {
+  const che = await owner({ env: ENV });
+  await che.say('Hello CHE.');
+  const open = OPEN_ORDERS();
+  const calls = [];
+  const prior = globalThis.fetch;
+  globalThis.fetch = fakeAlpaca({ open, calls });
+  const deletes = () => calls.filter((c) => c.startsWith('DELETE'));
+  try {
+    // Several matches: a numbered list, nothing cancelled.
+    const many = await che.say('Cancel my paper order.');
+    assert.equal(many.route, 'che_trading_chart');
+    assert.equal(many.modelCalls, 0);
+    assert.match(many.reply, /2 open PAPER orders, sir: 1\. BUY 2 AAPL limit 109\. 2\. SELL 1 MSFT limit 420\. Which one should I cancel\? Say its number\. Nothing was cancelled\./);
+    assert.equal(many.done.order_cancelled, false);
+    assert.deepEqual(deletes(), []);
+    // Anything else drops the list; a later yes cancels nothing.
+    await che.say('Draw a line at 21,450.');
+    const stray = await che.say('Yes.');
+    assert.notEqual(stray.done.order_cancelled, true);
+    assert.deepEqual(deletes(), [], 'a yes after another turn cancels nothing');
+    // One match: read back and held for yes; "no" leaves it open.
+    const one = await che.say('Cancel my AAPL order.');
+    assert.equal(one.route, 'che_trading_chart');
+    assert.equal(one.modelCalls, 0);
+    assert.equal(one.reply, 'Cancel BUY 2 AAPL limit 109? Say yes to cancel.');
+    assert.equal(one.done.needs_confirmation, true);
+    assert.deepEqual(deletes(), [], 'the gate did not swallow it and nothing was cancelled yet');
+    const kept = await che.say('No.');
+    assert.match(kept.reply, /Nothing was cancelled/);
+    assert.deepEqual(deletes(), []);
+    await che.say('Cancel my AAPL order.');
+    const yes = await che.say('Yes.');
+    assert.equal(yes.route, 'che_trading_chart');
+    assert.equal(yes.modelCalls, 0);
+    assert.equal(yes.done.order_cancelled, true);
+    assert.equal(yes.reply, 'Cancelled, sir. Alpaca now reports BUY 2 AAPL limit 109 as canceled.');
+    assert.deepEqual(deletes(), ['DELETE /v2/orders/o-aapl-0001']);
+    // A pick from the list: "number 2" reads that order back; it still waits for yes.
+    open.push({ id: 'o-msft-0002', symbol: 'MSFT', side: 'buy', qty: '3', type: 'limit', limit_price: '400', status: 'new', submitted_at: '2026-10-20T14:42:00Z' });
+    const two = await che.say('Cancel the open Alpaca order.');
+    assert.match(two.reply, /1\. SELL 1 MSFT limit 420\. 2\. BUY 3 MSFT limit 400\./);
+    const picked = await che.say('Number 2.');
+    assert.equal(picked.reply, 'Cancel BUY 3 MSFT limit 400? Say yes to cancel.');
+    assert.equal(deletes().length, 1, 'a pick alone cancels nothing');
+    const none = await che.say('Cancel my TSLA order.');
+    assert.match(none.reply, /no open PAPER order for TSLA.*Nothing was cancelled/);
+    // A guest is refused and nothing is sent.
+    const guest = await che.guest('Cancel my MSFT order.');
+    assert.match(guest.reply, /Only the CHE owner can cancel Alpaca PAPER orders\. Nothing was cancelled\./);
+    assert.equal(deletes().length, 1);
+  } finally { globalThis.fetch = prior; }
 });
