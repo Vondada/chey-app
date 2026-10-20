@@ -106,8 +106,10 @@ export function ledgerIntent(message) {
   // ("how many paper trades did you win", "which trading strategy is performing best").
   if (!ledgers.length && kind !== 'record') {
     // A question about the owner's own strategy or a lesson ("is my sample size of 30 trades enough",
-    // "what settings should I use") is teaching, not a read of CHE's records: it needs "you" or "your".
-    if (!/\byou(?:r|rs)?\b/i.test(text) || /\b(?:my|mine|our|should|would|how\s+do\s+i)\b/i.test(text)) return null;
+    // "what settings should I use", "your best profit tip") is teaching, not a read of CHE's records: it
+    // needs "you" or "your" and a trading noun (a trade, a strategy, P&L, a win rate, a ledger).
+    if (!/\byou(?:r|rs)?\b/i.test(text) || /\b(?:my|mine|our|should|would|how\s+do\s+i|tips?|advice|ideas?|lessons?)\b/i.test(text)) return null;
+    if (!/\btrades?\b|\bstrateg(?:y|ies)\b|\bpnl\b|\bp\s*&\s*l\b|\bwin\s+rate\b|\bledgers?\b|\bsimulat|\bpaper\s+journal\b/i.test(text)) return null;
     if (kind !== 'storage' && kind !== 'rule') {
       if (liveIntent(text) || evidenceIntent(text) || tradingIntent(text)) return null;
       if (!['last', 'best', 'settings', 'count'].includes(kind)) return null;

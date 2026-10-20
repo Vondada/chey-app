@@ -133,7 +133,7 @@ test('the owner\'s record questions name their ledger and kind; other trading tu
     'Do you have a record of my dentist appointment?', 'What is the record for the most home runs in a season?', 'How many records do you have about me?',
     'Where do you store your records?', 'What was your last position at the company?', 'Pull up the record of the meeting with Dr. Smith.',
     'Read me your last journal entry.', 'When does my Amazon order order-2026-10-18-0042 ship?', 'is my sample size of 30 trades enough to trust the results',
-    'what settings should I use for my best strategy', 'explain the database of trades',
+    'what settings should I use for my best strategy', 'explain the database of trades', 'What is your best profit tip?', 'What is your best idea for profit?',
   ]) assert.equal(ledgerIntent(other), null, other);
 });
 

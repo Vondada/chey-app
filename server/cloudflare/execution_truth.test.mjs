@@ -310,6 +310,13 @@ test('ordinary honest answers about code, orders, keys and the owner\'s pasted t
     'The SQL query returned 0 rows because the filter is wrong.',
     'The API call returned the token, which the client stores.',
     'Keep the ledger table normalized and store the balance per account.',
+    // Round 2: first-person coding and general sentences.
+    'First we read the database schema, then we generate the types with a script.',
+    'Here I used a query that joins orders to customers on customer_id.',
+    'Put the session under storage key session:abc and set a TTL of one hour.',
+    'According to its records, the company was founded in 1998.',
+    'We used a tool called a mandoline to slice the potatoes thin.',
+    'I looked up the table of contents and the chapter you want is the fourth.',
   ]) {
     assert.equal(guardExecutionClaims(honest, { message: 'help me with this' }).removed.length, 0, honest);
     assert.equal(guardRetrievalClaims(honest).removed.length, 0, honest);
@@ -318,6 +325,11 @@ test('ordinary honest answers about code, orders, keys and the owner\'s pasted t
   const review = 'I reviewed your code and found two problems: the loop is off by one and the return adds one.';
   assert.equal(guardExecutionClaims(review, { message: 'review this code: function f(a){ for (let i=0;i<=a.length;i++) {} return a+1 }', documentRead: true }).removed.length, 0);
   assert.equal(guardExecutionClaims(review, { message: 'did you review my repository?' }).removed.length, 1);
+  // A paste never covers a record claim: four turns after an article is pasted, this is still taken out.
+  const afterPaste = guardExecutionClaims('I checked the records and the best simulation trade made +$412.50 on 2023-03-10 with the breakout strategy.', { message: 'and the trades?', documentRead: true });
+  assert.equal(afterPaste.removed.length, 1);
+  assert.doesNotMatch(afterPaste.text, /\$412|2023/);
+  assert.equal(guardExecutionClaims('I retrieved it from my ledger: sim-2023-03-10-001 made +$412.', { message: 'ok', documentRead: true }).removed.length, 1);
   // One honest "not" in another sentence never covers a fabrication in this one.
   const covered = guardExecutionClaims('The journal is not summed with the simulation. I retrieved the records from my storage and the best trade made +$412.50 on 2023-03-10.', { message: 'and?' });
   assert.deepEqual(covered.removed, ['I retrieved the records from my storage and the best trade made +$412.50 on 2023-03-10.']);
