@@ -69,7 +69,7 @@ import { cmeSession } from './market_feed.js';
 import { alpacaKeys, alpacaPaperOrders, alpacaStatus, liveKeyProblem, placeAlpacaPaperOrder, removeAlpacaPaperKeys, saveAlpacaPaperKeys } from './broker_alpaca.js';
 import { speakConnections, speakTradovateSteps, tradingConnections } from './trading_connections.js';
 import { liveAnswer, liveIntent } from './trading_live_chat.js';
-import { LEDGER_SOURCE, ledgerIntent, readLedgers, speakLedgers } from './trading_ledgers.js';
+import { ANALYSIS_SOURCE, LEDGER_SOURCE, analyzeStrategy, ledgerIntent, readLedgers, speakLedgers, strategyAnalysisIntent } from './trading_ledgers.js';
 import { meetingCommand, meetingScene, planScene, simScene } from './world_scene.js';
 import { SIM_SOURCE, listRuns, loadRun, loadSimMemory, runLab, saveRun, simLabIntent } from './sim_lab.js';
 import { PLAN_SOURCE, answerPlanFollowUp, buildPlan, classifyProject, listPlans, loadPlan, planFollowUpIntent, planSubject, projectPlanIntent, researchSource, savePlan } from './project_plan.js';
@@ -10108,6 +10108,13 @@ export class CheState extends DurableObject {
           await drainRoomEvents(this.ctx.storage, crossStore).catch(() => null);
           const answer = await answerCrossRoom({ store: crossStore, storage: this.ctx.storage, env: this.keyEnv || this.env, intent: cross, screen: seen });
           return ndjsonReply(answer.text, { source: BRAIN_ROOMS_SOURCE, ok: answer.ok, model_calls: 0, rooms: answer.rooms, hits: answer.hits, kind: cross.kind });
+        }
+        // One named strategy by session and/or across its variants, from the forward paper journal (owner, 2026-10-20).
+        const analysis = body.attachment ? null : strategyAnalysisIntent(message);
+        if (analysis) {
+          if (!ownerDevice) return ndjsonReply('Only the CHE owner can read the trading records, sir.', { source: ANALYSIS_SOURCE, ok: false, model_calls: 0 });
+          const result = await analyzeStrategy(this.ctx.storage, analysis);
+          return ndjsonReply(result.text, { source: ANALYSIS_SOURCE, ok: result.ok, model_calls: 0, kind: 'analysis', strategy: analysis.strategy, windows: analysis.windows, overlap: analysis.overlap, trades: result.trades ?? null });
         }
         const ledger = body.attachment ? null : ledgerIntent(message);
         if (ledger) {

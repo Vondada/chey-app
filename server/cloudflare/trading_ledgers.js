@@ -10,7 +10,7 @@
 import { MINUTE_FEEDS, MIN_SAMPLE, STATE_KEY as SIM_STATE_KEY, TRADE_CAP, TRADE_CHUNK, leaderboard, readSimState, readStoredTrades, strategySimIntent } from './strategy_sim.js';
 import { LIVE_PORTFOLIOS, LIVE_RUNS, LIVE_STATE, RESOLUTION, liveDashboard } from './trading_live.js';
 import { EVIDENCE_PORTFOLIOS, EVIDENCE_RUNS, evidenceIntent } from './trading_evidence_runner.js';
-import { CANDIDATES, MIN_TRADES, RECORD_PREFIX, breakdown, readTrades, summarize } from './trading_evidence.js';
+import { CANDIDATES, INTRADAY_CANDIDATES, INTRADAY_FILTERS, MIN_TRADES, RECORD_PREFIX, breakdown, readTrades, sessionOf, summarize } from './trading_evidence.js';
 import { readBook, tradingIntent } from './trading_lab.js';
 import { ORDER_ASK, liveIntent } from './trading_live_chat.js';
 import { deskIntent } from './trading_desk.js';
@@ -60,7 +60,7 @@ const TRADE_WORDS = /\btrad(?:e|es|ed|ing|er)\b|\bstrateg(?:y|ies)\b|\bprofit\w*
 const NAMED = {
   strategy_simulation: /\bstrateg(?:y|ies)\s+sim(?:ulation)?\b|\bsimulat(?:ion|or)(?:'s)?\b|\bsim\s+trades?\b/i,
   // "Trading journal" and "my trading journal" are the Trading Lab's book (the /trade-journal command, trading_lab.speakBook).
-  forward_paper_journal: /\b(?:forward|live)\s+paper\b|\bpaper(?:\s+trading)?\s+journal\b|\bjournal\s+trades?\b/i,
+  forward_paper_journal: /\b(?:forward|live)[-\s]+paper\b|\bpaper[-\s]+forward\b|\bpaper(?:\s+trading)?\s+journal\b|\bjournal\s+trades?\b/i,
   daily_evidence: /\bevidence\s+pass\b|\bdaily\s+(?:research|evidence)\b/i,
   lab_paper_book: /\btrading\s+lab\b|\bpaper\s+book\b|\blab(?:'s)?\s+(?:paper\s+)?(?:trades?|book)\b/i,
   broker_alpaca_paper: /\balpaca\b/i,
@@ -69,15 +69,29 @@ const NAMED = {
 const DESK_SIM = /\bsimulat(?:ion|ed)\s+(?:trading|account|accounts|mode)\b|\bbroker\s+simulation\b|\bswitch\s+to\s+simulation\b/i;
 // A made-up trade record id looks like sim-2023-03-10-001; CHE's own ids never do, and an order or ticket id is not a trade.
 const RECORD_ID = /\b(?:sim|paper|trade|journal|evidence|ledger|strategy|fill|position)[-_](?:\d{4}-\d{2}-\d{2}|\d{8})[-_]\d{2,}\b/i;
+// The primary objective comes first: a strategy-by-strategy comparison ("compare the EMA strategies in
+// forward-paper trading, with win rate and out-of-sample expectancy") is not a question about the sample
+// rule, even when it names out-of-sample as one of the metrics it wants (owner, 2026-10-20).
+const EXPLICIT_COMPARE = /\b(?:compare|compares|comparing|comparison|versus|vs\.?|rank|ranking|stack\s+up)\b|\b(?:by|per|each)\s+strategy\b|\bstrategy[- ]by[- ]strategy\b/i;
+const STRATEGY_COMPARE = /\b(?:compare|compares|comparing|comparison|versus|vs\.?|rank|ranking|stack\s+up)\b[^.!?\n]{0,120}\bstrateg(?:y|ies)\b|\bstrateg(?:y|ies)\b[^.!?\n]{0,120}\b(?:compare|compared|comparison|stack\s+up|perform(?:ed|ing|ance)?)\b|\b(?:by|per|each)\s+strategy\b|\bstrategy[- ]by[- ]strategy\b|\bwhich\s+(?:\w+\s+){0,2}strateg(?:y|ies)\b/i;
+// Metrics an owner can ask for; each is answered from the record set or said to be unavailable.
+const METRICS = [
+  ['win_rate', /\bwin\s*(?:rate|%|percentage)\b/i], ['expectancy_r', /\bexpectancy\b|\bR\s+per\s+trade\b|\baverage\s+R\b/i],
+  ['net_pnl', /\bnet\b|\bp\s*&\s*l\b|\bpnl\b|\bprofit(?!\s+factor)\b/i], ['trades', /\b(?:number\s+of|how\s+many)\s+trades\b|\btrade\s+count\b/i],
+  ['profit_factor', /\bprofit\s+factor\b/i], ['max_drawdown', /\bdraw\s*downs?\b/i], ['sharpe', /\bsharpe\b/i],
+  ['out_of_sample', /\bout[- ]of[- ]sample\b|\bOOS\b/],
+];
+const METRIC_LABEL = { win_rate: 'win rate', expectancy_r: 'expectancy', net_pnl: 'net P&L', trades: 'trade count', profit_factor: 'profit factor', max_drawdown: 'maximum drawdown', sharpe: 'Sharpe ratio', out_of_sample: 'out-of-sample results' };
 const KINDS = [
   ['record', /\b(?:pull|show|read|find|look\s+up|retrieve|open|fetch|get)\b[^.!?\n]{0,40}\brecord\b|\brecord\s+(?:for|of|named|called)\b/i],
   ['storage', /\bstorage\s+keys?\b|\bwhich\s+keys?\b|\bwhere\s+(?:do\s+you|is|are|does)\b[^.!?\n]{0,30}\b(?:store|stored|kept|saved|live|held)\b|\bunder\s+what\s+key\b/i],
-  ['rule', /\b(?:30|100|thirty|hundred|\d+)[- ]trade\b|\bsample\s+(?:size|you\s+need|required|requirement|rule)\b|\bbefore\s+you\s+(?:call|count|rank|promote|trust)\b|\bout[- ]of[- ]sample\b|\bminimum\s+(?:number\s+of\s+)?trades?\b|\bhow\s+many\s+trades\s+(?:do\s+you\s+need|before|until|are\s+(?:needed|required))/i],
+  ['rule', /\b(?:30|100|thirty|hundred|\d+)[- ]trade\b|\bsample\s+(?:size|you\s+need|required|requirement|rule)\b|\bbefore\s+you\s+(?:call|count|rank|promote|trust)\b|\bout[- ]of[- ]sample\s+(?:rule|requirement|minimum|trades\s+(?:do\s+you\s+)?(?:need|required))\b|\bminimum\s+(?:number\s+of\s+)?trades?\b|\bhow\s+many\s+trades\s+(?:do\s+you\s+need|before|until|are\s+(?:needed|required))/i],
   ['settings', /\b(?:settings?|parameters?|params|configuration|config)\b/i],
   ['best', /\bbest\b|\bmost\s+profitable\b|\btop\s+strateg|\bleaderboard\b|\bwinning\s+strateg|\bperforming\b/i],
   ['last', /\b(?:last|latest|newest|most\s+recent|final)\b[^.!?\n]{0,30}\b(?:trade|entry|record|position|fill)\b|\bnewest\s+entry\b/i],
   ['count', /\bhow\s+many\b|\bnumber\s+of\b|\bcount\b|\btotal\b/i],
   ['compare', /\bversus\b|\bvs\.?\b|\bcompared?\b|\bdifferen(?:ce|t)\b|\bbut\s+(?:the|my|your)\b|\bwhy\s+(?:does|do|is|are)\b|\bonly\s+\d+\b|\bboth\b/i],
+  ['strategies', STRATEGY_COMPARE],
 ];
 
 /** Which record sets the owner named and what he asked of them, or null when another route owns the turn. */
@@ -101,10 +115,18 @@ export function ledgerIntent(message) {
   if (sim && ledgers.length <= 1 && !kinds.length && !recordId) return null;
   let kind = kinds[0] || (ledgers.length > 1 ? 'compare' : ledgers.length ? 'status' : '');
   if (ledgers.length > 1 && kinds.includes('compare')) kind = 'compare';
+  // An explicit sample-rule question ("how many trades before you rank") keeps the rule; a bare metric never does.
+  if (kinds.includes('strategies') && !kinds.includes('rule')) kind = 'strategies';
   if (!kind) return null;
   // Nothing named and no record, key or rule asked: the existing trading reads keep their turns
   // ("how many paper trades did you win", "which trading strategy is performing best").
-  if (!ledgers.length && kind !== 'record') {
+  // With no record set named, only an explicit comparison is read here; "which strategy is performing best"
+  // keeps its existing trading route.
+  if (!ledgers.length && kind === 'strategies' && !EXPLICIT_COMPARE.test(text)) {
+    kind = kinds.find((k) => k !== 'strategies') || '';
+    if (!kind) return null;
+  }
+  if (!ledgers.length && kind !== 'record' && kind !== 'strategies') {
     // A question about the owner's own strategy or a lesson ("is my sample size of 30 trades enough",
     // "what settings should I use", "your best profit tip") is teaching, not a read of CHE's records: it
     // needs "you" or "your" and a trading noun (a trade, a strategy, P&L, a win rate, a ledger).
@@ -115,7 +137,9 @@ export function ledgerIntent(message) {
       if (!['last', 'best', 'settings', 'count'].includes(kind)) return null;
     }
   }
-  return { ledgers: ledgers.length ? ledgers : LEDGERS.map((l) => l.id), named: ledgers, kind, kinds, record_id: recordId || null };
+  const metrics = METRICS.filter(([, re]) => re.test(text)).map(([m]) => m);
+  const family = /\bEMA\b|\bexponential\s+moving\s+averages?\b/i.test(text) ? 'ema' : '';
+  return { ledgers: ledgers.length ? ledgers : LEDGERS.map((l) => l.id), named: ledgers, kind, kinds, record_id: recordId || null, metrics, family };
 }
 
 // ─── The records ──────────────────────────────────────────────────────────
@@ -193,7 +217,7 @@ export async function readLedgers(storage, { now = Date.now() } = {}) {
       feed: dash.feed ? { status: dash.feed.status, provider: dash.feed.provider, checked_at: dash.feed.checked_at } : null,
       best: best && { strategy: best.strategy, name: best.name, filter: best.filter, trades: best.trades, win_rate: best.win_rate, expectancy_r: best.expectancy_r, net_pnl: best.net_pnl, ranked: best.ranked, params: { target_r: best.target_r, filter: best.filter } },
       min_sample: MIN_TRADES, last_run: dash.runs[0]?.at || null,
-      by_strategy: dash.by_strategy.map((row) => ({ strategy: row.strategy, name: row.name, filter: row.filter, target_r: row.target_r, trades: row.trades, wins: row.wins, losses: row.losses, win_rate: row.win_rate, expectancy_r: row.expectancy_r, net_pnl: row.net_pnl, ranked: row.ranked })),
+      by_strategy: dash.by_strategy.map((row) => ({ strategy: row.strategy, name: row.name, filter: row.filter, target_r: row.target_r, trades: row.trades, wins: row.wins, losses: row.losses, win_rate: row.win_rate, expectancy_r: row.expectancy_r, net_pnl: row.net_pnl, profit_factor: row.profit_factor ?? null, max_drawdown: row.max_drawdown ?? null, ranked: row.ranked })),
       feeds: dash.feed ? [{ symbol: dash.feed.provider_symbol || 'MNQ=F', source: dash.feed.provider || null, status: dash.feed.status || 'unknown', last_bar: dash.feed.last_bar_time || null, latency_s: dash.feed.latency_s ?? null, error: dash.feed.error || null }] : [],
       // The journal's own trades, oldest first (the dashboard list is newest first and capped at 200).
       equity: equityCurve(await readTrades(storage, isLive), { at: (t) => t.exit.time, value: (t) => t.net_pnl, unit: '$' }),
@@ -205,7 +229,7 @@ export async function readLedgers(storage, { now = Date.now() } = {}) {
     const s = summarize(trades);
     const byPortfolio = Object.entries(breakdown(trades, (t) => t.portfolio)).map(([portfolio, b]) => {
       const first = trades.find((t) => t.portfolio === portfolio);
-      return { strategy: first?.strategy || portfolio, name: CANDIDATES[first?.strategy]?.name || first?.strategy || portfolio, filter: first?.filter || '', trades: b.trades, wins: b.wins, losses: b.losses, win_rate: b.win_rate, expectancy_r: b.expectancy_r, net_pnl: b.net_pnl, ranked: b.trades >= MIN_TRADES };
+      return { strategy: first?.strategy || portfolio, name: CANDIDATES[first?.strategy]?.name || first?.strategy || portfolio, filter: first?.filter || '', trades: b.trades, wins: b.wins, losses: b.losses, win_rate: b.win_rate, expectancy_r: b.expectancy_r, net_pnl: b.net_pnl, profit_factor: b.profit_factor ?? null, max_drawdown: b.max_drawdown ?? null, ranked: b.trades >= MIN_TRADES };
     }).sort((a, b) => b.expectancy_r - a.expectancy_r);
     return {
       status: runs.length ? 'ran' : 'not run yet', runs: runs.length, trades: s.trades, wins: s.wins, losses: s.losses, win_rate: s.win_rate, net_pnl: s.net_pnl, expectancy_r: s.expectancy_r,
@@ -278,6 +302,7 @@ export function speakLedgers(intent, ledgers) {
     lines.push(`There is no 100-trade requirement anywhere: ${TRADE_CHUNK} is only how many simulation trades fit in one storage chunk.`);
     return lines.join('\n');
   }
+  if (intent.kind === 'strategies') return speakStrategies(intent, chosen);
   if (intent.kind === 'storage') {
     lines.push('Where each record set lives, sir (Worker durable storage; nothing is named simulation_trades or journal_trades):');
     for (const l of chosen) lines.push(`${lines.length}. ${l.label}: ${l.storage_keys.length ? l.storage_keys.join(', ') : 'no CHE storage, read from Alpaca when asked'} (${l.module}).`);
@@ -296,4 +321,147 @@ export function speakLedgers(intent, ledgers) {
   if (intent.kind === 'compare') lines.push('Each count is that set\'s own closed trades; the simulation and the journal are different strategies on different bars, so their numbers never match and are never summed.');
   lines.push('Paper only: no money, no broker order and no model call in this answer.');
   return lines.join('\n');
+}
+
+// Strategy by strategy, from each named record set's own closed trades. A metric the set does not record is
+// said to be unavailable; nothing is estimated, and the sample rule is never the answer to a comparison.
+const RECORDED = {
+  strategy_simulation: ['trades', 'win_rate', 'expectancy_r', 'out_of_sample'],
+  forward_paper_journal: ['trades', 'win_rate', 'expectancy_r', 'net_pnl', 'profit_factor', 'max_drawdown'],
+  daily_evidence: ['trades', 'win_rate', 'expectancy_r', 'net_pnl', 'profit_factor', 'max_drawdown'],
+  lab_paper_book: ['trades', 'expectancy_r'],
+};
+function strategyLine(row, ledgerId, metrics = []) {
+  const parts = [`${n(row.trades || 0)}`];
+  if (row.wins != null && row.losses != null) parts.push(`${row.wins} won, ${row.losses} lost`);
+  if (RECORDED[ledgerId].includes('win_rate')) parts.push(`win rate ${row.win_rate == null || !row.trades ? 'not measured' : `${row.win_rate}%`}`);
+  parts.push(`expectancy ${row.expectancy_r == null || !row.trades ? 'not measured' : `${row.expectancy_r} R per trade`}`);
+  if (RECORDED[ledgerId].includes('net_pnl')) parts.push(`net ${money(row.trades ? row.net_pnl : null)}`);
+  // summarize() gives no profit factor when there is no losing trade (or no trade): said, never invented.
+  if (metrics.includes('profit_factor') && RECORDED[ledgerId].includes('profit_factor')) parts.push(`profit factor ${row.trades && row.profit_factor != null ? row.profit_factor : row.trades ? 'not defined (no losing trade yet)' : 'not measured'}`);
+  if (metrics.includes('max_drawdown') && RECORDED[ledgerId].includes('max_drawdown')) parts.push(`maximum drawdown ${row.trades ? money(row.max_drawdown) : 'not measured'}`);
+  if (ledgerId === 'strategy_simulation') parts.push(`${row.out_of_sample || 0} out of sample${row.out_of_sample ? ` at ${row.out_of_sample_expectancy_r} R per trade` : ''}`);
+  const ranked = row.ranked ?? (row.label ? row.label === 'profitable' : null);
+  if (ranked === false) parts.push('not ranked yet: too few trades');
+  return `${row.name || row.strategy}${row.filter ? ` (${row.filter})` : ''}: ${parts.join(', ')}`;
+}
+function speakStrategies(intent, chosen) {
+  const sets = chosen.filter((l) => l.id !== 'broker_alpaca_paper');
+  const lines = [`Strategy by strategy, sir, from ${sets.length === 1 ? `the ${sets[0].label}` : 'each record set separately'}${intent.family === 'ema' ? ', EMA strategies' : ''}:`];
+  const famRe = intent.family === 'ema' ? /\bema\b/i : null;
+  for (const l of sets) {
+    if (l.unavailable) { lines.push(`${l.label}: I could not read it just now, so I give no number for it.`); continue; }
+    const all = (l.by_strategy || []).filter((row) => row.trades > 0 || l.id !== 'strategy_simulation');
+    const rows = famRe ? all.filter((row) => famRe.test(`${row.strategy} ${row.name} ${row.filter || ''}`)) : all;
+    if (!rows.length) {
+      lines.push(`${l.label}: ${famRe ? `no EMA strategy has a recorded trade here${all.length ? ` (it records ${all.length} other ${all.length === 1 ? 'strategy' : 'strategies'})` : ''}` : 'no strategy has a closed trade recorded yet'}.`);
+      continue;
+    }
+    lines.push(`${l.label} (${l.what}):`);
+    rows.forEach((row, i) => lines.push(`  ${i + 1}. ${strategyLine(row, l.id, intent.metrics || [])}.`));
+    const missing = (intent.metrics || []).filter((m) => !RECORDED[l.id].includes(m));
+    if (missing.length) lines.push(`  Not recorded for this set, so not reported: ${missing.map((m) => METRIC_LABEL[m]).join(', ')}.`);
+  }
+  lines.push('Each set is read on its own and never summed. Paper only: no money, no broker order and no model call in this answer.');
+  return lines.join('\n');
+}
+
+// ─── One strategy, analysed: by session, and across its portfolio variants (owner, 2026-10-20) ──────
+// "Compare EMA Pullback's New York morning versus overnight performance and determine whether the any and
+// trend variants contain identical trades" fell to the model, which failed. It is answered here from the
+// forward paper journal's own trades. Each variant (filter and target) is its own portfolio; a market
+// entry both variants took is ONE entry, so combined numbers count it once and never add correlated
+// portfolios together. Read only.
+export const ANALYSIS_SOURCE = 'che_trading_analysis';
+// New York time, from trading_evidence.sessionOf (5-minute bars). Each window names its sessions.
+const SESSION_WINDOWS = [
+  { id: 'ny_morning', label: 'New York morning (9:30 AM to 1:00 PM ET)', keys: ['opening-30m', 'mid-morning'], re: /\b(?:new\s+york|ny|nyc)\s+(?:morning|open(?:ing)?|a\.?m\.?)\b|\bmorning\s+session\b|\bregular\s+morning\b/i },
+  { id: 'ny_afternoon', label: 'New York afternoon (1:00 PM to 4:00 PM ET)', keys: ['afternoon'], re: /\b(?:new\s+york\s+|ny\s+)?afternoon\b/i },
+  { id: 'overnight', label: 'overnight (4:00 PM to 9:30 AM ET, including the 8:30 AM release bar)', keys: ['close-and-overnight', 'pre-open', 'econ-0830'], re: /\bovernight\b|\bglobex\b|\bafter[- ]hours\b|\basia(?:n)?\s+session\b/i },
+  { id: 'pre_open', label: 'before the New York open (before 9:30 AM ET)', keys: ['pre-open', 'econ-0830'], re: /\bpre[- ]?(?:open|market)\b/i },
+];
+const OVERLAP = /\b(?:identical|same|duplicate[sd]?|overlap(?:ping)?|shared|correlated)\b[^.!?\n]{0,60}\b(?:trades?|entries|entry|positions?)\b|\b(?:trades?|entries)\b[^.!?\n]{0,60}\b(?:identical|the\s+same|overlap|duplicated?)\b/i;
+const strategyWords = (id) => id.replace(/-5m$/, '').split('-').join('[-\\s]+');
+function strategyNamed(text) {
+  for (const [id, spec] of Object.entries(INTRADAY_CANDIDATES)) {
+    if (new RegExp(`\\b${strategyWords(id)}\\b`, 'i').test(text) || text.toLowerCase().includes(String(spec.name).toLowerCase())) return id;
+  }
+  return '';
+}
+
+/** A named forward-paper strategy asked about by session and/or for overlap between its variants, or null. */
+export function strategyAnalysisIntent(message) {
+  const text = String(message || '').replace(/[’']/g, "'").replace(WAKE, '').trim();
+  if (!text || text.length > 1200 || ORDER_ASK.test(text)) return null;
+  const strategy = strategyNamed(text);
+  if (!strategy) return null;
+  const windows = SESSION_WINDOWS.filter((w) => w.re.test(text) && !(w.id === 'pre_open' && /\bovernight\b/i.test(text)));
+  const overlap = OVERLAP.test(text);
+  if (!windows.length && !overlap) return null;
+  const variants = Object.keys(INTRADAY_FILTERS).filter((f) => new RegExp(`\\b${f}\\b`, 'i').test(text));
+  return { kind: 'analysis', strategy, windows: windows.map((w) => w.id), overlap, variants };
+}
+
+const entryKey = (t) => `${t.side}|${t.entry?.time}`;
+const sessionKey = (t) => t.session || sessionOf(t.entry?.time, '5m');
+const variantOf = (t) => `${t.filter || 'any'}, ${t.params?.target_r ?? '?'}R target`;
+const statLine = (s) => s.trades
+  ? `${n(s.trades)}: ${s.wins} won, ${s.losses} lost, net ${money(s.net_pnl)}, expectancy ${s.expectancy_r} R per trade${s.trades < MIN_TRADES ? ` (sample of ${s.trades}, under the ${MIN_TRADES}-trade minimum, so not a conclusion)` : ''}`
+  : 'no closed trades';
+// One copy of each market entry: the first variant's trade stands for the entry.
+const uniqueEntries = (trades) => [...new Map(trades.map((t) => [entryKey(t), t])).values()];
+
+export async function analyzeStrategy(storage, intent) {
+  const name = INTRADAY_CANDIDATES[intent.strategy]?.name || intent.strategy;
+  let trades;
+  try {
+    trades = (await readTrades(storage, (t) => t.environment === 'paper' && t.data?.resolution === RESOLUTION)).filter((t) => t.strategy === intent.strategy);
+  } catch (_) {
+    return { ok: false, text: `I could not read the forward paper journal just now, sir, so I give no number for ${name}.` };
+  }
+  const byVariant = {};
+  for (const t of trades) (byVariant[t.portfolio] ||= []).push(t);
+  const variants = Object.entries(byVariant).sort(([a], [b]) => a.localeCompare(b));
+  const lines = [`${name}, sir, from the forward paper journal (MNQ 5-minute paper trades; paper only, no money):`];
+  if (!trades.length) {
+    lines.push('No closed trade of this strategy is recorded yet, so there is nothing to compare and no overlap to check.');
+    return { ok: true, text: lines.join('\n'), trades: 0 };
+  }
+  lines.push(`Recorded: ${n(trades.length, 'closed trade')} across ${variants.length} variant${variants.length === 1 ? '' : 's'} (${variants.map(([, list]) => `${variantOf(list[0])}: ${list.length}`).join('; ')}), which are ${n(uniqueEntries(trades).length, 'distinct market entry').replace('entrys', 'entries')}.`);
+  let part = 0;
+  if (intent.windows.length) {
+    part += 1;
+    lines.push(`${part}. By session, counting each market entry once across variants:`);
+    const unique = uniqueEntries(trades);
+    for (const id of intent.windows) {
+      const w = SESSION_WINDOWS.find((x) => x.id === id);
+      const inWindow = unique.filter((t) => w.keys.includes(sessionKey(t)));
+      lines.push(`   ${w.label}: ${statLine(summarize(inWindow))}.`);
+      if (variants.length > 1) for (const [, list] of variants) lines.push(`      ${variantOf(list[0])} alone: ${statLine(summarize(list.filter((t) => w.keys.includes(sessionKey(t)))))}.`);
+    }
+  }
+  if (intent.overlap) {
+    part += 1;
+    const asked = intent.variants.length >= 2 ? variants.filter(([, list]) => intent.variants.includes(list[0].filter || 'any')) : variants;
+    lines.push(`${part}. Do the ${asked.map(([, list]) => list[0].filter || 'any').join(' and ')} variants contain identical trades?`);
+    if (asked.length < 2) {
+      lines.push(`   I cannot compare them: only ${asked.length ? `the ${variantOf(asked[0][1][0])} variant has` : 'no variant has'} recorded trades${intent.variants.length ? ` among ${intent.variants.join(' and ')}` : ''}.`);
+    } else {
+      for (let i = 0; i < asked.length; i += 1) {
+        for (let j = i + 1; j < asked.length; j += 1) {
+          const [, a] = asked[i]; const [, b] = asked[j];
+          const bByEntry = new Map(b.map((t) => [entryKey(t), t]));
+          const shared = a.filter((t) => bByEntry.has(entryKey(t)));
+          const sameOutcome = shared.filter((t) => { const u = bByEntry.get(entryKey(t)); return u.exit?.time === t.exit?.time && u.exit?.reason === t.exit?.reason; });
+          const verdict = shared.length === a.length && shared.length === b.length && sameOutcome.length === shared.length
+            ? 'Yes: every trade is the same market entry with the same exit, so they are one result recorded twice, not independent evidence.'
+            : shared.length ? 'Partly: they share some market entries; the shared ones are one result, not two.' : 'No: they share no market entry; every trade was taken independently.';
+          lines.push(`   ${variantOf(a[0])} (${n(a.length)}) and ${variantOf(b[0])} (${n(b.length)}): ${shared.length} identical market ${shared.length === 1 ? 'entry' : 'entries'} (same side and entry bar), ${sameOutcome.length} of them with the same exit too; ${a.length - shared.length} only in the first, ${b.length - shared.length} only in the second. ${verdict}`);
+          if (shared.length) lines.push(`   Shared entries alone: ${statLine(summarize(sameOutcome.length === shared.length ? shared : shared.filter((t) => sameOutcome.includes(t))))}.`);
+        }
+      }
+    }
+  }
+  lines.push('Combined figures count each market entry once; correlated variants are never added together. No model call and no order in this answer.');
+  return { ok: true, text: lines.join('\n'), trades: trades.length };
 }

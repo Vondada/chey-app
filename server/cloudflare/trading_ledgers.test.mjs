@@ -5,7 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
-import { LEDGERS, ledgerIntent, readLedgers, speakLedgers } from './trading_ledgers.js';
+import { LEDGER_SOURCE, LEDGERS, ledgerIntent, readLedgers, speakLedgers } from './trading_ledgers.js';
 import { SIM_STRATEGIES, STATE_KEY, TRADE_CHUNK } from './strategy_sim.js';
 import { RECORD_PREFIX } from './trading_evidence.js';
 
@@ -65,10 +65,10 @@ function seedSim(saved, n, { strategies = [SIM_STRATEGIES[0].id] } = {}) {
   return trades;
 }
 
-function journalTrade(i, { net = 25 } = {}) {
+function journalTrade(i, { net = 25, strategy = 'fvg-retest-5m' } = {}) {
   const entry = `2026-10-${String(13 + Math.floor(i / 60)).padStart(2, '0')}T15:${String(i % 60).padStart(2, '0')}:00.000Z`;
   return {
-    environment: 'paper', source: 'paper', portfolio: 'fvg-retest-5m|any|2', strategy: 'fvg-retest-5m', filter: 'any', params: { target_r: 2 },
+    environment: 'paper', source: 'paper', portfolio: `${strategy}|any|2`, strategy, filter: 'any', params: { target_r: 2 },
     side: 'long', contract: 'MNQ', qty: 1, session: 'ny', entry: { time: entry, raw: 20000, fill: 20000.5 }, stop: 19990, target: 20020,
     exit: { time: entry, fill: net > 0 ? 20020 : 19990, reason: net > 0 ? 'target' : 'stop' }, net_pnl: net, r_net: net > 0 ? 1.9 : -1.05,
     costs: { spread: 0.5, slippage: 0.5, commissions: 0.62, fees: 0.3 }, data: { label: 'DELAYED', resolution: '5m' },
@@ -278,4 +278,78 @@ test('a question with no ledger named that the model would have invented an answ
   assert.match(out.reply, /strategy simulation \(/);
   assert.match(out.reply, /forward paper journal \(/);
   assert.match(out.reply, /no closed trade recorded yet/);
+});
+
+// Owner, 2026-10-20: after the iPhone update the EMA strategy comparison still answered "The sample rules,
+// sir", because "out-of-sample" (a metric the owner asked for) was read as a sample-rule question and
+// "forward-paper" with a hyphen was not recognized. EMA_QUESTION is the comparison under test.
+const EMA_QUESTION = 'Compare the EMA strategies in forward-paper trading on MNQ: which one performs best, with win rate, profit factor and out-of-sample expectancy for each?';
+test('the EMA strategy comparison is answered strategy by strategy from the forward-paper records, never with the sample rules', async () => {
+  const saved = new Map();
+  for (let i = 0; i < 6; i += 1) { const t = journalTrade(i, { strategy: 'ema-pullback-5m', net: i % 3 === 2 ? -20 : 25 }); saved.set(`${RECORD_PREFIX}paper:${t.portfolio}:${t.entry.time}`, t); }
+  for (let i = 6; i < 10; i += 1) { const t = journalTrade(i, { strategy: 'fvg-retest-5m', net: 25 }); saved.set(`${RECORD_PREFIX}paper:${t.portfolio}:${t.entry.time}`, t); }
+  const che = await owner({ saved });
+  const out = await che.say(EMA_QUESTION);
+  assert.equal(out.route, LEDGER_SOURCE);
+  assert.equal(out.modelCalls, 0);
+  assert.equal(out.done.kind, 'strategies');
+  assert.doesNotMatch(out.reply, /sample rules/i, 'a requested metric is never taken for the main objective');
+  assert.match(out.reply, /^Strategy by strategy, sir, from the forward paper journal, EMA strategies:/i);
+  assert.match(out.reply, /1\. trend pullback to the 20 EMA \(any\): 6 trades, 4 won, 2 lost, win rate 66\.67%, expectancy 0\.9167 R per trade, net \$60\.00/);
+  assert.doesNotMatch(out.reply, /fair value gap/i, 'only the EMA strategies the owner asked about');
+  // Codex review of #379: the journal's profit factor is computed by summarize(), so it is reported, not called missing.
+  assert.match(out.reply, /net \$60\.00, profit factor 2\.5/);
+  assert.match(out.reply, /Not recorded for this set, so not reported: out-of-sample results\./);
+  // The same question without a hyphen, and the plain sample-rule question still keeps its own answer.
+  const spaced = await che.say(EMA_QUESTION.replace('forward-paper', 'forward paper'));
+  assert.equal(spaced.done.kind, 'strategies');
+  for (const q of ['Rank the EMA strategies by profit factor.', 'How do your EMA strategies stack up?']) assert.equal((await che.say(q)).done.kind, 'strategies', q);
+  const rule = await che.say('How many out-of-sample trades do you need before you rank a strategy?');
+  assert.match(rule.reply, /sample rules/);
+});
+
+// Owner, 2026-10-20: this exact question fell to the model, which failed with "I couldn't complete that
+// request just now, sir" (che_errors retryable_provider_error / temporary_cloud_unavailable): no route read
+// the journal. Now it is answered from the forward paper journal, by session and across the two variants.
+const SESSION_OVERLAP_QUESTION = "Compare EMA Pullback's New York morning versus overnight performance and determine whether the any and trend variants contain identical trades.";
+function emaTrade(entry, { filter = 'any', net = 25, side = 'long', exit = null } = {}) {
+  return {
+    environment: 'paper', source: 'paper', portfolio: `ema-pullback-5m|${filter}|2`, strategy: 'ema-pullback-5m', filter, params: { target_r: 2 },
+    side, contract: 'MNQ', qty: 1, entry: { time: entry, raw: 20000, fill: 20000.5 }, stop: 19990, target: 20020,
+    exit: { time: exit || entry.replace(/:00\.000Z$/, ':30.000Z'), fill: net > 0 ? 20020 : 19990, reason: net > 0 ? 'target' : 'stop' }, net_pnl: net, r_net: net > 0 ? 1.9 : -1.05,
+    costs: { spread: 0.5, slippage: 0.5, commissions: 0.62, fees: 0.3 }, data: { label: 'DELAYED', resolution: '5m' },
+  };
+}
+test('the EMA Pullback session and variant-overlap question is answered from the journal, counting shared entries once', async () => {
+  const saved = new Map();
+  const put = (t) => saved.set(`${RECORD_PREFIX}paper:${t.portfolio}:${t.entry.time}`, t);
+  // New York morning (14:00-16:00 UTC = 10:00-12:00 ET in October) and overnight (02:00 UTC = 22:00 ET).
+  const morning = ['2026-10-14T14:05:00.000Z', '2026-10-14T15:10:00.000Z', '2026-10-15T14:20:00.000Z'];
+  const overnight = ['2026-10-15T02:05:00.000Z', '2026-10-16T02:35:00.000Z'];
+  morning.forEach((at, i) => put(emaTrade(at, { net: i === 2 ? -20 : 25 })));
+  overnight.forEach((at) => put(emaTrade(at, { net: -20 })));
+  // The trend variant took two of the same morning entries (identical) and one entry of its own.
+  put(emaTrade(morning[0], { filter: 'trend' }));
+  put(emaTrade(morning[1], { filter: 'trend' }));
+  put(emaTrade('2026-10-16T15:00:00.000Z', { filter: 'trend', net: 25 }));
+  const before = [...saved.keys()].length;
+  const che = await owner({ saved });
+  const out = await che.say(SESSION_OVERLAP_QUESTION);
+  assert.equal(out.route, 'che_trading_analysis');
+  assert.equal(out.modelCalls, 0);
+  assert.doesNotMatch(out.reply, /couldn't complete/);
+  assert.match(out.reply, /Recorded: 8 closed trades across 2 variants \(any, 2R target: 5; trend, 2R target: 3\), which are 6 distinct market entries\./);
+  // Unique entries only: morning has 4 distinct entries (3 any + 1 trend-only), overnight 2.
+  assert.match(out.reply, /New York morning \(9:30 AM to 1:00 PM ET\): 4 trades: 3 won, 1 lost, net \$55\.00, expectancy 1\.1625 R per trade \(sample of 4/);
+  assert.match(out.reply, /overnight \(4:00 PM to 9:30 AM ET[^)]*\): 2 trades: 0 won, 2 lost, net minus \$40\.00, expectancy -1\.05 R per trade/);
+  assert.match(out.reply, /any, 2R target alone: 3 trades: 2 won, 1 lost/);
+  assert.match(out.reply, /2 identical market entries \(same side and entry bar\), 2 of them with the same exit too; 3 only in the first, 1 only in the second\. Partly:/);
+  assert.match(out.reply, /never added together/);
+  assert.equal([...saved.keys()].length >= before, true, 'no paper trade was removed');
+});
+
+test('the earlier EMA comparison and the new session question each keep their own route', async () => {
+  const che = await owner();
+  assert.equal((await che.say(EMA_QUESTION)).route, LEDGER_SOURCE);
+  assert.equal((await che.say(SESSION_OVERLAP_QUESTION)).route, 'che_trading_analysis');
 });
