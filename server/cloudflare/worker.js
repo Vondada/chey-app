@@ -9624,9 +9624,14 @@ export class CheState extends DurableObject {
         // URL?") is answered from CHE's own memory with zero AI calls. A
         // "remember that my X is Y" turn also becomes such a fact.
         if (ownerDevice && !body.attachment) {
+          // A correction of an owner fact ("Actually, correction: my favorite music is 90s R&B, not country")
+          // replaces the old statement the same way "remember that…" does (owner, 2026-10-20: corrections
+          // were acknowledged and then forgotten).
+          const correctedFact = /\bremember\b/i.test(rawMessage) ? null
+            : /^(?:(?:chay|chey|shay|che)[, ]+)?(?:(?:no|nope|wrong)[,.!]?\s+)?(?:actually|correction|to correct that|let me correct (?:that|you)|i was wrong)[,:.!]?\s+(?:(?:actually|correction)[,:]?\s+)?((?:my|i'm|i am)\s+.{3,300}?)\s*[.!]?$/i.exec(message);
           const rememberFact = /\bremember\b/i.test(rawMessage)
             ? /^(?:(?:chay|chey|shay|che)[, ]+)?remember(?: that)?\s+(.+)/i.exec(message)
-            : null;
+            : correctedFact && /^my\s+[\w' -]{2,60}?\s+(?:is|are|was)\s+\S/i.test(correctedFact[1]) ? [correctedFact[0], correctedFact[1].replace(/,?\s+not\s+[^,.]+$/i, '')] : null;
           // A plain owner fact is saved right here, before page reading or any
           // AI step can misread it ("remember that my Worker URL is https://…"
           // used to be fetched as a web page instead of remembered).
@@ -9634,6 +9639,7 @@ export class CheState extends DurableObject {
           if (savedFact) {
             const added = addOwnerMemory(data, rememberFact[1].trim().slice(0, 500), { source: 'owner_chat', category: 'Memory', scope: 'owner', confidence: 1 });
             if (added.added || added.replaced?.length) await this.saveChatData(data);
+            if (correctedFact) return ndjsonReply(`Corrected, sir: ${rememberFact[1].trim().replace(/^my\b/i, 'your').replace(/[.!]+$/, '')}.${added.replaced?.length ? ' I replaced what you told me before and keep it only as history.' : ''}`, { source: 'che_memory', model_calls: 0, corrected: true });
             return ndjsonReply('I’ll remember that, sir.', { source: 'che_memory', model_calls: 0 });
           }
           const known = rememberFact ? null : await knownAnswer(this.ctx.storage, message, { memories: data.memories }).catch(() => null);

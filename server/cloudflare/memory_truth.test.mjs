@@ -567,3 +567,17 @@ test('G: everyday ways of claiming a search never reach the owner without a rece
   const brainstorm = await owner({ model: () => 'I researched the market and three websites agree it is growing.' });
   assert.match((await brainstorm.say('Brainstorm business ideas for me.')).reply, /do not have execution receipts/);
 });
+
+test('an owner correction replaces the earlier statement and is kept as history (owner, 2026-10-20)', async () => {
+  const che = await owner();
+  await che.say('Remember that my favorite music is country.');
+  const fixed = await che.say('Actually, correction: my favorite music is 90s R&B, not country.');
+  assert.match(fixed.reply, /^Corrected, sir: your favorite music is 90s R&B\. I replaced what you told me before/);
+  const asked = await che.say('What have I told you about my favorite music?');
+  assert.match(asked.reply, /"my favorite music is 90s R&B\."/);
+  assert.match(asked.reply, /you corrected it/);
+  for (const m of ['Actually, I think we should leave now.', 'No, actually, play something else.']) {
+    const out = await che.say(m);
+    assert.doesNotMatch(out.reply, /^Corrected/, m);
+  }
+});
