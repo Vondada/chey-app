@@ -130,7 +130,7 @@ void main() {
     expect(await say('Show me the YouTube commands that need setup'), startsWith('4 of the 11 YouTube commands are not ready.'));
     expect(await say('which commands are there for trading'), startsWith('Trading: 13 commands.'));
     // A topic in a readiness question is that topic, not the last list.
-    expect(await say('are the trading ones ready?'), startsWith('10 of the 11 Trading commands are ready.'));
+    expect(await say('are the trading ones ready?'), startsWith('12 of the 13 Trading commands are ready.'));
     expect(find.text('/trade-execute'), findsNothing, reason: 'the screen lists only what CHE read: the ready ones');
     expect(await say('which money ones need setup'), 'All 8 Money Management commands are ready.');
     expect(await say('show me 0 YouTube commands'), contains('Say "more" for the next 5.'), reason: 'zero is not a page size');
