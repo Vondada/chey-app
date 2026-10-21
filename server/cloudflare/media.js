@@ -204,10 +204,41 @@ async function geminiVideo(env, prompt, fetcher) {
 const OWNER_BASE64_CHARS = 1_400_000;
 const OWNER_TYPES = /^(?:image\/(?:png|jpe?g|gif|webp|heic)|video\/(?:mp4|quicktime|webm)|application\/pdf|text\/plain)$/;
 
+// The app's label is not trusted: the iPhone build sends "image", "video" or "document" for any file, and a name can lie.
+// The type is read from the bytes. Generic or specific labels are both checked against the bytes; unknown bytes are refused.
+const TEXT_LABELS = ['text/plain', 'document', 'file', 'text'];
+
+function looksLikeText(base64) {
+  let bytes;
+  try { bytes = Uint8Array.from(atob(String(base64)), (c) => c.charCodeAt(0)); } catch (_) { return false; }
+  if (!bytes.length || bytes.includes(0)) return false;
+  try { new TextDecoder('utf-8', { fatal: true }).decode(bytes); return true; } catch (_) { return false; }
+}
+
+/** The owner file's real type from its signature, or null when the bytes are not a kind CHE keeps. */
+export function ownerTypeFromBytes(declared, base64) {
+  let head;
+  try { head = atob(String(base64 || '').slice(0, 24)); } catch (_) { return null; }
+  const picture = imageMimeFromBase64(base64);
+  if (picture) return picture;
+  if (head.slice(0, 4) === 'GIF8') return 'image/gif';
+  if (head.slice(0, 4) === '%PDF') return 'application/pdf';
+  if (head.slice(0, 4) === '\x1aE\xdf\xa3') return 'video/webm';
+  if (head.slice(4, 8) === 'ftyp') {
+    const brand = head.slice(8, 12);
+    if (brand === 'qt  ') return 'video/quicktime';
+    if (/^(?:isom|iso[2-9]|mp4[12]|M4V |avc1|dash)/.test(brand)) return 'video/mp4';
+    return null;
+  }
+  if (TEXT_LABELS.includes(String(declared || '').toLowerCase()) && looksLikeText(base64)) return 'text/plain';
+  return null;
+}
+
 export async function saveOwnerFile(env, storage, { name = '', media_type = '', base64 = '' } = {}) {
-  const type = String(media_type || '').toLowerCase();
+  const declared = String(media_type || '').toLowerCase();
   if (!base64) return { ok: false, reason: 'no file arrived with that message' };
-  if (!OWNER_TYPES.test(type)) return { ok: false, reason: `I keep pictures, videos, PDFs and text files, and ${type || 'this file'} is not one of those` };
+  const type = ownerTypeFromBytes(declared, base64);
+  if (!type || !OWNER_TYPES.test(type)) return { ok: false, reason: `the file is not a picture, video, PDF or text file I can read (sent as ${declared || 'no type'}), so nothing was saved` };
   if (base64.length > OWNER_BASE64_CHARS && !env.CHE_DATA_BUCKET) {
     return { ok: false, reason: 'the file is larger than 1.4 MB, and larger files need the R2 bucket (CHE_DATA_BUCKET), which is not connected' };
   }
