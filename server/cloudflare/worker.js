@@ -93,6 +93,7 @@ import { alpacaKeys, alpacaPaperDashboard, cancelAlpacaPaperOrder, haltAlpacaPap
 import { speakConnections, speakTradovateSteps, tradingConnections } from './trading_connections.js';
 import { liveAnswer, liveIntent } from './trading_live_chat.js';
 import { ANALYSIS_SOURCE, LEDGER_SOURCE, analyzeStrategy, ledgerIntent, readLedgers, speakLedgers, strategyAnalysisIntent } from './trading_ledgers.js';
+import { TRADING_STATUS_SOURCE, newTradesIntent, tradingStatus } from './trading_status.js';
 import { meetingCommand, meetingScene, planScene, simScene } from './world_scene.js';
 import { SIM_SOURCE, listRuns, loadRun, loadSimMemory, runLab, saveRun, simLabIntent } from './sim_lab.js';
 import { PLAN_SOURCE, answerPlanFollowUp, buildPlan, classifyProject, listPlans, loadPlan, planFollowUpIntent, planSubject, projectPlanIntent, researchSource, savePlan } from './project_plan.js';
@@ -10816,6 +10817,13 @@ export class CheState extends DurableObject {
           await drainRoomEvents(this.ctx.storage, crossStore).catch(() => null);
           const answer = await answerCrossRoom({ store: crossStore, storage: this.ctx.storage, env: this.keyEnv || this.env, intent: cross, screen: seen });
           return ndjsonReply(answer.text, { source: BRAIN_ROOMS_SOURCE, ok: answer.ok, model_calls: 0, rooms: answer.rooms, hits: answer.hits, kind: cross.kind });
+        }
+        // "Why are there no new trades?": five facts from the stored journal and scheduler records (owner, 2026-10-21).
+        const whyNoTrades = body.attachment ? null : newTradesIntent(message);
+        if (whyNoTrades) {
+          if (!ownerDevice) return ndjsonReply('Only the CHE owner can read the trading records, sir.', { source: TRADING_STATUS_SOURCE, ok: false, model_calls: 0 });
+          const status = await tradingStatus(this.ctx.storage, { now: Date.now() });
+          return ndjsonReply(status.text, { source: TRADING_STATUS_SOURCE, ok: status.ok, model_calls: 0, kind: whyNoTrades.kind, trades: status.trades ?? null });
         }
         // One named strategy by session and/or across its variants, from the forward paper journal (owner, 2026-10-20).
         const analysis = body.attachment ? null : strategyAnalysisIntent(message);
