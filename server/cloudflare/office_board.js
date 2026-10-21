@@ -4,9 +4,9 @@
 import { LA_AGENCIA_ROLES, officeToolBlocker } from './office_company.js';
 import { stalledTasks } from './activity.js';
 
-const ACTIVE = new Set(['queued', 'running', 'reviewing']);
+const ACTIVE = new Set(['queued', 'running', 'reviewing', 'review_pending']);
 const DONE = new Set(['complete']);
-const BLOCKED = new Set(['failed', 'blocked']);
+const BLOCKED = new Set(['failed', 'blocked', 'rejected', 'needs_review']);
 
 // The owner's day runs midnight to midnight in his own time zone (Chicago by
 // default), not UTC, so "today" never resets at 7 PM Central.

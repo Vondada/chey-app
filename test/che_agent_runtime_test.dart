@@ -498,4 +498,12 @@ void main() {
 
     await tester.pumpWidget(const SizedBox());
   });
+
+  test('only complete is finished work; a held or pending review is not', () {
+    CheAgentTask t(String status) => CheAgentTask.fromJson({'id': 't', 'task': 'x', 'status': status});
+    expect(t('review_pending').inProgress, isTrue);
+    for (final s in ['needs_review', 'rejected', 'complete', 'failed']) {
+      expect(t(s).inProgress, isFalse, reason: s);
+    }
+  });
 }

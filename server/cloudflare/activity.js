@@ -160,6 +160,9 @@ export function activityFeed(data, media = [], origin = '', limit = 30) {
     else if (t.status === 'queued') line = `${who} has ${title} next.`;
     else if (t.status === 'blocked' || t.status === 'waiting') { line = `${who} is blocked on ${title}.`; kind = 'stalled'; }
     else if (t.status === 'failed') line = `${who} could not finish ${title}.`;
+    else if (t.status === 'reviewing' || t.status === 'review_pending') line = `CHE is reviewing ${who}'s work on ${title}.`;
+    else if (t.status === 'needs_review') { line = `${who}'s result on ${title} is not verified yet; CHE could not review it.`; kind = 'stalled'; }
+    else if (t.status === 'rejected') line = `CHE rejected ${who}'s result on ${title}; it is not complete.`;
     if (line) events.push({ at: t.updated_at || t.created_at, who, line, kind, id: t.id });
   }
   for (const m of data.meetings || []) {

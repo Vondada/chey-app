@@ -195,6 +195,16 @@ export function officeTaskEvent(task = {}, { agent = '', outcome = 'complete', v
   if (!task?.id) return null;
   const when = at || task.updated_at || new Date().toISOString();
   const who = clipText(agent || task.partner_name || 'An Office agent', 40);
+  if (outcome === 'rejected') {
+    // CHE rejected the result after its repair passes: that verdict is the verified outcome, not the result.
+    return {
+      room: 'office', kind: 'task_rejected', key: `task:${task.id}:rejected`,
+      title: `CHE rejected ${who}'s result: ${clipText(task.task || 'a task', 120)}`,
+      body: 'CHE did not approve the result after its repair passes, so the task is not complete. The rejected result and CHE\'s review are in the task history.',
+      status: 'verified',
+      evidence: [`team task ${task.id} rejected ${when}`], refs: { task_id: task.id, agent: who }, at: when,
+    };
+  }
   const failed = outcome === 'failed';
   return {
     room: 'office', kind: failed ? 'task_failed' : 'task_complete', key: `task:${task.id}:${failed ? 'failed' : 'complete'}`,

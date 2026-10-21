@@ -3974,7 +3974,8 @@ export class CheState extends DurableObject {
     const data = await this.loadData();
     const times = [];
     if (data.autonomy) {
-      times.push(...[...data.jobs, ...data.team_tasks].filter(j => j.status === 'queued')
+      // An Office result waiting on CHE's review retry wakes the alarm too.
+      times.push(...[...data.jobs, ...data.team_tasks].filter(j => j.status === 'queued' || (j.status === 'review_pending' && j.partner_id))
         .map(j => Math.max(Date.now() + 250, Number(j.retry_at) || 0)));
     } else {
       times.push(...data.jobs.filter(j => j.status === 'queued' && OWNER_APPROVED_JOB_KINDS.has(j.kind))
