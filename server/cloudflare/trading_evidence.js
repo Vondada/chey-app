@@ -567,7 +567,7 @@ function noteSkip(pf, time, reason, sig) {
  * fresh, authenticated and subscribed real-time delivery, no new signal is taken and a pending
  * order is cancelled before it fills. Open positions are still managed to their exit.
  */
-export function stepPortfolio(pf, candles, ctx = causalContext(candles), gate = null, { allowEntries = true } = {}) {
+export function stepPortfolio(pf, candles, ctx = causalContext(candles), gate = null, { allowEntries = true, blockReason = null } = {}) {
   const problems = candleProblems(candles);
   if (problems.length) throw new Error(`candles refused: ${problems.join('; ')}`);
   const cand = candidateOf(pf.candidate);
@@ -623,6 +623,13 @@ export function stepPortfolio(pf, candles, ctx = causalContext(candles), gate = 
       if (hit) { closed.push(closeAt(pf, bar, hit)); pf.last_exit_time = bar.t; }
     }
     const late = ctx.td && ctx.td[k] >= FLAT_TD - 5;
+    // The real-time gate is closed: a valid setup is not traded, but it is still journalled as skipped with its
+    // time and reason, so no setup passes unrecorded while the feed is delayed, stale or unverified.
+    if (!allowEntries && !pf.open && !pf.pending && cand && !late) {
+      const sig = cand.entry(candles, k, ctx);
+      const side = sig?.side || 'long';
+      if (sig && finite(sig.ref) && finite(sig.stop)) noteSkip(pf, bar.t, `${blockReason || 'real-time CME data was not verified'}, so this setup was not traded`, { side, why: sig.why });
+    }
     if (allowEntries && !pf.open && !pf.pending && cand && !late) {
       const sig = cand.entry(candles, k, ctx);
       const side = sig?.side || 'long';

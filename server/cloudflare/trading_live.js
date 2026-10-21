@@ -192,6 +192,11 @@ export async function liveTick(storage, { fetcher = fetch, now = Date.now(), for
         const allowEntries = barAge >= 0 && barAge <= 90000 && feed.status === 'LIVE' && feed.authenticated === true && feed.subscription_verified === true && Number.isFinite(feed.latency_s) && feed.latency_s <= 15;
         run.entries_allowed = allowEntries;
         run.entry_blocker = allowEntries ? null : 'New forward-paper entries require fresh authenticated and subscribed real-time CME delivery. Delayed/replay/stale data cannot open positions.';
+        // The exact gate that closed, for the journal: the feed, or a newest bar that was not fresh enough to trade.
+        const blockReason = allowEntries ? null
+          : feed.status !== 'LIVE' || feed.authenticated !== true || feed.subscription_verified !== true || !Number.isFinite(feed.latency_s) || feed.latency_s > 15
+            ? `real-time CME data was not verified (feed ${feed.status || 'unknown'})`
+            : `the newest closed bar was not fresh enough to trade (${Math.round(barAge / 1000)} s after its close; the window is 90 s)`;
         // The owner's controls (trading_controls.js) decide whether a valid signal may enter.
         const controls = await readControls(storage);
         const today = tradeDayOf(now);
@@ -206,7 +211,7 @@ export async function liveTick(storage, { fetcher = fetch, now = Date.now(), for
           if (!pf.open && !pf.pending) pf.qty = controls.strategies[pf.candidate]?.qty || pf.qty;
           const before = pf.counts.signals;
           pf.price_series = `${feed.provider} ${feed.provider_symbol} ${RESOLUTION} (${feed.status})`;
-          closed.push(...stepPortfolio(pf, bars, ctx, gate, { allowEntries }));
+          closed.push(...stepPortfolio(pf, bars, ctx, gate, { allowEntries, blockReason }));
           run.signals = (run.signals || 0) + pf.counts.signals - before;
         }
         const valid = [];
