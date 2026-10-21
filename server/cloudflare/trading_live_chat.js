@@ -145,6 +145,8 @@ export function liveReply(kind, d, extra = {}) {
   if (kind === 'learning') return [d.learning?.daily_report || 'No strategy learning report is available yet.', ...(d.learning?.strategies || []).map((r) => `${r.name}: ${r.forward.trades} unique forward trades, ${r.forward.wins} wins, ${r.forward.losses} losses, expectancy ${r.forward.expectancy_r} R, net ${money(r.forward.net_pnl)}. Next: ${r.next_milestone}.`)].join(' ');
   const t = d.totals;
   const head = 'Paper trading only; no real money and no broker orders.';
+  const delayed = d.delayed_training;
+  const research = delayed ? ` Separate delayed-bar research: ${delayed.observed_trades} hypothetical closed outcomes, ${delayed.focused ? `currently focusing on ${delayed.ranking.find((r) => r.portfolio === delayed.focused)?.name || 'a qualified strategy'} with a 75 percent research priority` : 'balanced exploration until enough reliable outcomes justify a leader'}. This research is NOT verified live-forward performance, and no broker order was sent.` : '';
   switch (kind) {
     case 'start':
       return `${extra.already ? 'Paper trading was already on' : 'Paper trading is on'}, sir. ${d.portfolios} isolated paper portfolios run ${d.strategies.length} strategies on MNQ 5-minute bars, every minute while CME is open, even with the app closed. ${feedLine(d)} I report a trade only once it is recorded.`;
@@ -158,7 +160,7 @@ export function liveReply(kind, d, extra = {}) {
         ? `${t.trades} closed paper trades: ${t.wins} won, ${t.losses} lost, ${t.flat} flat. Win rate ${pct(t.win_rate)} (95% range ${pct(t.win_rate_95ci?.low)} to ${pct(t.win_rate_95ci?.high)}). Net after costs ${money(t.net_pnl)}.${t.trades < d.min_trades ? ` That is fewer than ${d.min_trades} trades, so it is not yet evidence.` : ''}`
         : `No paper trade has closed yet, sir. ${d.counts.signals} signals so far and ${d.positions.length} open. ${feedLine(d)}`;
     case 'strategies':
-      return `I am testing ${d.strategies.length} strategies in ${d.portfolios} isolated paper portfolios: ${d.strategies.map((s, i) => `${i + 1}, ${s.name} (${s.family})`).join('; ')}. Each has written rules for entry, stop, target and exit; ask me to explain one by name.`;
+      return `I am testing ${d.strategies.length} strategies in ${d.portfolios} isolated paper portfolios: ${d.strategies.map((s, i) => `${i + 1}, ${s.name} (${s.family})`).join('; ')}. Each has written rules for entry, stop, target and exit; ask me to explain one by name.${research}`;
     case 'trades': {
       if (!t.trades) return `No paper trade has closed yet, sir. ${d.positions.length} open, ${d.counts.signals} signals recorded. ${feedLine(d)}`;
       const list = d.trades.slice(0, 8).map((x, i) => `${i + 1}, ${tradeLine(x)}`).join('; ');
@@ -179,6 +181,12 @@ export function liveReply(kind, d, extra = {}) {
     }
     case 'best':
     case 'compare': {
+      // Unverified delayed journal outcomes are never used to declare a deployable winner.
+      const verified = d.verified_live_forward?.trades || 0;
+      if (!verified) {
+        const top = (delayed?.ranking || []).slice(0, 3).map((r) => `${r.name} (${r.filter}): ${r.trades} delayed-research hypothetical trades, net ${money(r.net_pnl)}, expectancy ${r.expectancy_r} R, ${r.qualified ? 'qualified for paper-research focus only' : 'not qualified'}`).join('; ');
+        return `No verified real-time MNQ forward-paper trade is recorded. ${top ? `Delayed-data research: ${top}.` : 'No new delayed-data strategy research outcomes yet.'} ${delayed?.allocation || 'Keep comparing strategies before deciding which is strongest.'} Prior delayed journal trades cannot establish a live-forward strategy ranking.`;
+      }
       const rows = d.by_strategy;
       if (!rows.length) {
         const bt = d.backtest?.ok ? d.backtest.rows.slice(0, 3).map((r, i) => `${i + 1}, ${r.name} (${r.filter}, ${r.target_r} R): ${r.stats.trades} backtest trades, ${r.stats.expectancy_r} R per trade, net ${money(r.stats.net_pnl)}`).join('; ') : '';
@@ -190,9 +198,9 @@ export function liveReply(kind, d, extra = {}) {
     }
     case 'performance':
     case 'evidence':
-      return `${head} ${feedLine(d)} Since ${d.state.started_at ? when(d.state.started_at) : 'the start'}: ${d.counts.signals} signals, ${d.counts.filled} entries, ${t.trades} closed (${t.wins} won, ${t.losses} lost), ${d.positions.length} open. Net after costs ${money(t.net_pnl)}, profit factor ${t.profit_factor ?? 'not measured'}, max drawdown ${money(t.max_drawdown)}. ${t.trades < d.min_trades ? `Fewer than ${d.min_trades} trades: not yet evidence.` : ''}`;
+      return `${head} ${feedLine(d)} Since ${d.state.started_at ? when(d.state.started_at) : 'the start'}: ${d.counts.signals} signals, ${d.counts.filled} entries, ${t.trades} closed (${t.wins} won, ${t.losses} lost), ${d.positions.length} open. Net after costs ${money(t.net_pnl)}, profit factor ${t.profit_factor ?? 'not measured'}, max drawdown ${money(t.max_drawdown)}. ${t.trades < d.min_trades ? `Fewer than ${d.min_trades} trades: not yet evidence.` : ''} Verified real-time forward outcomes: ${d.verified_live_forward?.trades || 0}; legacy delayed entries are unverified. ${research}`;
     case 'analysis':
-      return `I placed no order, sir. ${feedLine(d)} ${marketRead(d.bars)} Paper trading is ${d.state.enabled ? 'on' : 'off'}: ${d.counts.signals} signals, ${d.counts.filled} entries, ${t.trades} closed (${t.wins} won, ${t.losses} lost), ${d.positions.length} open. This is a read of recorded data, not a forecast.`;
+      return `I placed no order, sir. ${feedLine(d)} ${marketRead(d.bars)} Paper trading is ${d.state.enabled ? 'on' : 'off'}: ${d.counts.signals} signals, ${d.counts.filled} entries, ${t.trades} closed (${t.wins} won, ${t.losses} lost), ${d.positions.length} open. Verified real-time forward outcomes: ${d.verified_live_forward?.trades || 0}. ${research} This is a read of recorded data, not a forecast.`;
     case 'open':
       return `Opening the Trading Room, sir. ${d.state.enabled ? 'Paper trading is on.' : 'Paper trading is off; say start paper trading to begin.'} ${feedLine(d)}`;
     case 'state':
