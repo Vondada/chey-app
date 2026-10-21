@@ -20,7 +20,19 @@ export function matchOfficePhrase(raw) {
   if (/\bread (?:this |the )?office(?: board)?(?: to me)?\b/.test(t)) return { type: 'readOffice' };
   // "Who is in the office?", "what is the team working on?": the same board (comprehension audit).
   if (/^who(?:'s|s| is| are)? (?:in|at|working in) the office\b/.test(t)) return { type: 'readOffice' };
-  if (/^what(?:'s|s| is| are) (?:the team|the office|my team|the agents|everyone in the office) (?:working on|doing)(?: right now| now| today)?\s*\??$/.test(t)) return { type: 'happening' };
+  if (/^what(?:'s|s| is| are) (?:the team|the office|my team|my office|the agents|my agents|the crew|my crew|everyone in the office) (?:working on|doing)(?: right now| now| today)?\s*\??$/.test(t)) return { type: 'happening' };
+  // "Stop the Atlas task", "cancel Knox's job", "tell Mira to stop": cancels that agent's open Office work.
+  const stop = t.match(/^(?:please )?(?:stop|cancel|halt|abort|kill)(?: the| my)? ([a-z]+)(?:'s|s)? (?:task|tasks|job|jobs|work)\b/)
+    || t.match(/^(?:please )?(?:tell|have|ask) ([a-z]+) to (?:stop|cancel|stand down)\b/);
+  // "Review Atlas's task again", "review it again": a held result goes back to CHE's review as is.
+  const again = t.match(/^(?:please )?(?:re ?review|review|check)(?: the| my)? ([a-z]+)(?:'s|s)? (?:task|result|work)(?: again)?\b/)
+    || t.match(/^(?:please )?(?:re ?review|review) (?:it|that|that task|the task|the result) again\b/);
+  if (again) {
+    const name = again[1] && [again[1], again[1].replace(/s$/, '')].find((n) => AGENTS.includes(n));
+    if (name || !again[1]) return { type: 'reviewAgentTask', agentId: name || '' };
+  }
+  const stopped = stop && [stop[1], stop[1].replace(/s$/, '')].find((name) => AGENTS.includes(name));
+  if (stopped) return { type: 'stopAgentTask', agentId: stopped };
   const who = t.match(/\bwhat(?:'s|s| is) ([a-z]+) (?:doing|working on)\b/);
   if (who && AGENTS.includes(who[1])) return { type: 'agentStatus', agentId: who[1] };
   if (/^(?:office )?stand down\b|\boffice,? stand down\b/.test(t)) return { type: 'standDown' };

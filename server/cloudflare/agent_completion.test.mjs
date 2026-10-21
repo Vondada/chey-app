@@ -187,7 +187,8 @@ test('review verdicts are read from the first line only', () => {
   assert.equal(reviewVerdict('I cannot approve; NEEDS WORK'), 'needs_work');
   assert.equal(reviewVerdict('APPROVED? No. NEEDS WORK'), null, 'both verdicts on one line is not a verdict');
   assert.equal(reviewVerdict('APPROVED?'), null);
-  assert.equal(reviewVerdict('The result is not APPROVED'), null);
+  assert.equal(reviewVerdict('The result is not APPROVED'), 'needs_work', '"not approved" is a rejection');
+  assert.equal(reviewVerdict('Not approved: NEEDS WORK'), 'needs_work');
   assert.equal(reviewVerdict(''), null);
 });
 
@@ -362,4 +363,37 @@ test('repeated evictions during review stop at the cap instead of looping', () =
     recoverStaleWork(o.data);
   }
   assert.equal(o.task(id).status, 'needs_review');
+});
+
+test('an agent whose task was cancelled mid-run is shown idle, not working (re-review of #394)', async () => {
+  const o = office();
+  const id = o.queue();
+  const realRun = o.ctx.env.AI.run;
+  o.ctx.env.AI.run = async (model, body) => {
+    const data = o.data;
+    data.team_tasks.find((x) => x.id === id).status = 'cancelled';
+    o.data = data;
+    return realRun(model, body);
+  };
+  await o.run(1);
+  assert.equal(o.agent().runtime_status, 'idle');
+  assert.equal(o.agent().runtime_task, null);
+});
+
+test('a repair pass sees the workspace output from the earlier pass (re-review of #394)', async (t) => {
+  const o = office({ review: ['NEEDS WORK\nTighten the copy.', 'APPROVED\nGood.'] });
+  o.ctx.env.CHE_COMPUTER_URL = 'https://computer.example/run';
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ listing_url: 'https://shop.example/lamp-42' }), { status: 200 });
+  t.after(() => { globalThis.fetch = realFetch; });
+  const systems = [];
+  const realRun = o.ctx.env.AI.run;
+  o.ctx.env.AI.run = async (model, body) => {
+    if (!REVIEW_PROMPT.test(body.messages[0].content)) systems.push(body.messages[0].content);
+    return realRun(model, body);
+  };
+  o.queue('Post the listing on the shop.', { use_computer: true, owner_approved_computer: true });
+  await o.run();
+  assert.equal(systems.length, 2);
+  assert.match(systems[1], /from the earlier pass; not run again[\s\S]*lamp-42/);
 });

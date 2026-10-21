@@ -9,6 +9,7 @@ import {
   normalizeAgent,
   processAgentWork,
   requeueAgentReview,
+  cancelAgentTasks,
   TASK_FINISHED,
   queueAgentTask,
   recordAgentWork,
@@ -7369,8 +7370,10 @@ export class CheState extends DurableObject {
         return new Response(null, { status: 101, webSocket: pair[0] });
       }
       if (path === '/api/agents' && request.method === 'GET') {
-        if (recoverStaleWork(data)) {
-          await this.ctx.storage.put('che', data);
+        // Recovery runs in the alarm, never here: a long model call still in flight would be requeued and
+        // run twice. Here a stale-looking task only makes sure the alarm is coming.
+        const staleCutoff = Date.now() - 5 * 60_000;
+        if (data.team_tasks.some((t) => ['running', 'reviewing'].includes(t.status) && Date.parse(t.updated_at) < staleCutoff)) {
           await this.scheduleWork();
         }
         return json(runtimeSnapshot(data));
@@ -10026,6 +10029,37 @@ export class CheState extends DurableObject {
             goal_id: scout.goal_id,
             owner_confirm_required: true,
           });
+        }
+        if (officePhrase?.type === 'reviewAgentTask') {
+          const held = (data.team_tasks || []).filter((t) => ['needs_review', 'review_pending'].includes(t.status) && t.result
+            && (!officePhrase.agentId || String(t.partner_name || '').toLowerCase() === officePhrase.agentId));
+          const target = held[0];
+          const outcome = target ? requeueAgentReview(data, target.id) : { error: 'none' };
+          if (!outcome.error) {
+            await this.ctx.storage.put('che', data);
+            await this.scheduleWork();
+            this.broadcastAgents(data);
+          }
+          return ndjsonReply(outcome.error
+            ? `There is no result waiting for my review${officePhrase.agentId ? ` from ${officePhrase.agentId.charAt(0).toUpperCase()}${officePhrase.agentId.slice(1)}` : ''}, sir. Nothing changed.`
+            : `I will review ${target.partner_name}'s result on "${String(target.task || '').slice(0, 70)}" again, sir. The work is not redone, and it is not complete until I approve it.`,
+          { source: 'office', office: 'reviewAgentTask', task_id: target?.id || null });
+        }
+        if (officePhrase?.type === 'stopAgentTask') {
+          // Cancels in durable state first; the reply says only what the record now holds.
+          const { agent, cancelled } = cancelAgentTasks(data, officePhrase.agentId);
+          if (cancelled.length) {
+            await this.ctx.storage.put('che', data);
+            this.broadcastAgents(data);
+          }
+          const name = agent?.name || officePhrase.agentId.charAt(0).toUpperCase() + officePhrase.agentId.slice(1);
+          const list = cancelled.map((t) => `"${String(t.task || '').slice(0, 70)}"`).join(', ');
+          return ndjsonReply(!agent
+            ? `${name} is not in your Office, sir, so there was nothing to stop.`
+            : cancelled.length
+              ? `Stopped, sir. I cancelled ${name}'s ${cancelled.length === 1 ? 'task' : `${cancelled.length} tasks`}: ${list}. Anything ${name} already finished stays as it was.`
+              : `${name} has no open task, sir, so nothing was stopped.`,
+          { source: 'office', office: 'stopAgentTask', cancelled: cancelled.map((t) => t.id) });
         }
         if (officePhrase?.type === 'standDown') {
           await this.setAutonomy(false);

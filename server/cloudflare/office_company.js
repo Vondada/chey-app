@@ -68,31 +68,43 @@ const GOAL_ROUTES = [
   ['Lyra', /\b(?:social|post|posts|content|instagram|tiktok|caption|campaign|video|blog|clothing|avatar|ugc)\b/],
 ];
 
-// An Office agent the owner names ("Atlas, research…", "have Mira write…") gets that slice of work.
+// An Office agent the owner names ("Atlas, research…", "have Mira write…", "Atlas and Mira research…")
+// gets that slice of work. A name counts only capitalised and followed by a comma or a work verb, so
+// "Sage green lamps", "Iris flowers" and "Knox's notes" are ordinary words.
 const OFFICE_NAMES = ['Nova', 'Atlas', 'Mira', 'Knox', 'Sage', 'Lyra', 'Iris'];
-const NAMED_AGENT = new RegExp(`^(?:(?:please|then|and|also|ask|have|get|tell|let)\\s+)*(${OFFICE_NAMES.join('|')})\\b`, 'i');
+const NAME_ALT = OFFICE_NAMES.join('|');
+const SPLIT_VERBS = 'build|write|research|find|make|draft|post|fix|report|create|list|reply|answer|compare|ship|scout|analy[sz]e|design|translate|summari[sz]e|review|plan|prepare';
+const NAMED_LEAD = new RegExp(String.raw`^(?:(?:[Pp]lease|[Tt]hen|[Aa]nd|[Aa]lso|[Aa]sk|[Hh]ave|[Gg]et|[Tt]ell|[Ll]et)\s+)*((?:${NAME_ALT})(?:\s*(?:,|and)\s*(?:${NAME_ALT}))*)(?=,|\s+(?:to\s+|please\s+)?(?:${SPLIT_VERBS})\b)`);
+const SPLIT_AT_NAME = new RegExp(String.raw`\s+and\s+(?=(?:have\s+|ask\s+|get\s+)?(?:${NAME_ALT})(?:,|\s+(?:to\s+|please\s+)?(?:${SPLIT_VERBS})\b))`);
 
 export function splitGoal(goal) {
   const text = String(goal || '').replace(/\s+/g, ' ').trim();
   if (!text) return [];
   const parts = text
-    .split(new RegExp(String.raw`(?:[.;]\s+|,?\s+(?:and then|then|and also|also)\s+|,\s+and\s+|\s+and\s+(?=(?:build|write|research|find|make|draft|post|fix|report|create|list|reply|answer|compare|ship|scout)\b)|\s+and\s+(?=(?:have\s+|ask\s+|get\s+)?(?:${OFFICE_NAMES.join('|')})\b))`, 'i'))
+    .split(/(?:[.;]\s+|,?\s+(?:and then|then|and also|also)\s+|,\s+and\s+|\s+and\s+(?=(?:build|write|research|find|make|draft|post|fix|report|create|list|reply|answer|compare|ship|scout)\b))/i)
+    .flatMap((part) => part.split(SPLIT_AT_NAME).reduce((out, piece) => {
+      // "Atlas and Mira research…" is one shared job: a piece that is only names joins the next one.
+      if (out.length && new RegExp(`^(?:${NAME_ALT})(?:\\s*(?:,|and)\\s*(?:${NAME_ALT}))*$`).test(out[out.length - 1])) out[out.length - 1] += ` and ${piece}`;
+      else out.push(piece);
+      return out;
+    }, []))
     .map((part) => part.replace(/[.;,]+$/, '').trim())
     .filter((part) => part.split(' ').length >= 2)
     .slice(0, 6);
-  const jobs = (parts.length ? parts : [text]).map((part) => {
+  const jobs = (parts.length ? parts : [text]).flatMap((part) => {
     const lower = part.toLowerCase();
-    const named = NAMED_AGENT.exec(part);
+    const task = part.charAt(0).toUpperCase() + part.slice(1);
+    const named = NAMED_LEAD.exec(part);
     if (named) {
-      const agent = OFFICE_NAMES.find((n) => n.toLowerCase() === named[1].toLowerCase());
-      return { agent, task: part.charAt(0).toUpperCase() + part.slice(1) };
+      const agents = [...new Set(named[1].split(/\s*(?:,|and)\s*/).filter((n) => OFFICE_NAMES.includes(n)))];
+      if (agents.length) return agents.map((agent) => ({ agent, task }));
     }
     const hit = /^(?:research|find|compare|look up|scout|find trending|find topics)\b/.test(lower)
       ? ['Atlas']
       : GOAL_ROUTES.find(([, pattern]) => pattern.test(lower));
-    return { agent: hit ? hit[0] : 'Atlas', task: part.charAt(0).toUpperCase() + part.slice(1) };
+    return [{ agent: hit ? hit[0] : 'Atlas', task }];
   });
-  return jobs;
+  return jobs.slice(0, 6);
 }
 
 const RESTRICTED_ACTIONS = [

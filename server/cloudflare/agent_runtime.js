@@ -49,6 +49,8 @@ export function retryDelayMs(attempt, base = 60_000, cap = 3_600_000) {
 /** CHE's review verdict: 'approved', 'needs_work', or null when the review said neither. */
 export function reviewVerdict(review) {
   const first = (String(review || '').trim().split('\n')[0] || '').replace(/^\W*(?:(?:CHE\s+)?(?:verdict|review|decision)\s*[:\-]\s*)/i, '');
+  // "Not approved" is a rejection, whatever follows it.
+  if (/\bnot\s+approved\b/i.test(first)) return 'needs_work';
   const approved = /\bAPPROVED\b/i.test(first);
   const needsWork = /\bNEEDS[\s_-]*WORK\b/i.test(first);
   // A first line naming both is not a verdict; approval must lead the line and not be a question.
@@ -64,14 +66,21 @@ export function reviewVerdict(review) {
 // nothing but claim adverbs may sit between the subject and the verb. Quoted words and attributed
 // sentences ("according to", "said", "per the 10-K") are someone else's account, so research stays clean.
 const CLAIM_SUBJECT = String.raw`\b(?:I|we)(?:'ve|'d|\s+have|\s+had)?\s+(?:(?:just|successfully|already|also|then|now)\s+)*`;
-const MONEY_VERBS = String.raw`paid|purchased|bought|sold|ordered|transferred|placed\s+(?:an?\s+|the\s+)?(?:order|trade)|executed\s+(?:an?\s+|the\s+)?(?:order|trade|payment|transfer)`;
+// Money verbs count only with a money object: "paid close attention", "ordered the findings" and
+// "bought into the thesis" are idioms.
+const MONEY_VERBS = String.raw`paid\s+(?:\$|USD|for\b|the\s+(?:invoice|bill|fee|deposit|balance|vendor|supplier)|an?\s+(?:invoice|bill|fee|deposit)|\d)|purchased\b|bought\s+(?:\d+|an?|the|some|more)\s+(?:\w+\s+){0,2}(?:shares?|stock|contracts?|domains?|ads?|units?|items?|products?|inventory|supplies|samples?|tickets?|subscriptions?|plans?|licen[cs]es?|lamps?)\b|sold\s+(?:\d+|the|our|my|an?|some)\s+(?:\w+\s+){0,2}(?:shares?|contracts?|positions?|stock|units?|items?|products?|lamps?)\b|ordered\s+(?:\d+|an?|more|new|the)\s+(?:\w+\s+){0,2}(?:units?|items?|products?|stock|inventory|supplies|samples?|copies|parts?|lamps?)\b|transferred\s+(?:\$|\d|the\s+(?:money|funds|balance|payment))|placed\s+(?:an?\s+|the\s+)?(?:order|trade)\b|executed\s+(?:an?\s+|the\s+)?(?:order|trade|payment|transfer)\b`;
 const ACTION_VERBS = String.raw`deployed|merged|pushed|committed|published|uploaded|posted|sent|emailed|texted|messaged|opened\s+(?:an?\s+|the\s+)?(?:PR|pull\s+request|issue)|created\s+(?:an?\s+|the\s+)?(?:PR|pull\s+request|branch|repo(?:sitory)?|listing|campaign|video|account)|rendered\s+(?:an?\s+|the\s+)?(?:video|mp4|clip|image)|executed\s+(?:an?\s+|the\s+)?(?:script|command|workflow|deploy(?:ment)?)|ran\s+(?:the\s+|our\s+)?(?:tests?|script|command|workflow|job)`;
-const ACTION_CLAIM = new RegExp(`${CLAIM_SUBJECT}(?:${ACTION_VERBS}|${MONEY_VERBS})\\b`, 'i');
-const MONEY_CLAIM = new RegExp(`${CLAIM_SUBJECT}(?:${MONEY_VERBS})\\b|\\b(?:order|trade|payment|transfer|purchase)\\s+(?:was|has\\s+been|is\\s+now)\\s+(?:successfully\\s+)?(?:placed|filled|executed|sent|made|completed)\\b`, 'i');
-// Without a subject: "Deployed to production at 3pm." / "The PR was merged."
-const BARE_CLAIM = /^(?:successfully\s+)?(?:deployed|merged|pushed|published|uploaded|sent|emailed|posted)\b|\b(?:PR|pull\s+request|branch|fix|change|commit|build|release|email|message|listing|video|post|order|trade|payment|transfer|purchase)\s+(?:#?\d+\s+)?(?:was|has\s+been|have\s+been|were|is\s+now)\s+(?:successfully\s+)?(?:deployed|merged|pushed|published|uploaded|sent|posted|opened|created|placed|filled|executed|made|completed)\b/i;
+const ACTION_CLAIM = new RegExp(`${CLAIM_SUBJECT}(?:${ACTION_VERBS})\\b`, 'i');
+const MONEY_CLAIM = new RegExp(`${CLAIM_SUBJECT}(?:${MONEY_VERBS})|\\b(?:(?:our|my|your|this|the)\\s+)(?:order|trade|payment|transfer|purchase)\\s+(?:was|has\\s+been|is\\s+now)\\s+(?:successfully\\s+)?(?:placed|filled|executed|sent|made|completed)\\b`, 'i');
+// Without a first-person subject: "Deployed to production at 3pm." / "The PR was merged." / "Your email was sent."
+const BARE_START = /^(?:successfully\s+)?(?:deployed|merged|pushed|published|uploaded|sent|emailed|posted)\s+(?:to|on|at|it|them|this|the\s+(?:fix|change|PR|pull\s+request|branch|update|build|post|email|message|listing|video))\b|^(?:successfully\s+)?(?:deployed|merged|pushed|published|uploaded|sent|emailed|posted)[.!]?$/i;
+const BARE_PASSIVE = /^(?:the|our|my|your|this)\s+(?:new\s+)?(?:PR|pull\s+request|branch|fix|change|commit|build|release|email|message|listing|video|post|order|trade|payment|transfer|purchase)\s+(?:#?\d+\s+)?(?:was|has\s+been|have\s+been|were|is\s+now)\s+(?:successfully\s+)?(?:deployed|merged|pushed|published|uploaded|sent|posted|opened|created|placed|filled|executed|made|completed)\b/i;
+// Someone else's account: an attributed source, a named third party's work, a past date, a backtest.
 const ATTRIBUTED = /\b(?:according\s+to|per\s+(?:the|its|their)|said|says|stated|reported|announced|wrote|told|cited|described\s+in|in\s+(?:the|its|their)\s+(?:filing|report|10-K|10-Q|earnings|paper|study|press\s+release))\b/i;
-const QUOTED = /"[^"]*"|“[^”]*”|'[^'\n]{12,}'/g;
+const OWNER_INSTRUCTED = /\b(?:as\s+you\s+(?:told|asked|said)|you\s+(?:told|asked|said)|per\s+(?:your|the\s+owner'?s?)|(?:the\s+)?owner\s+(?:said|told|asked)|(?:told|asked)\s+me)\b/i;
+const THIRD_PARTY = /\b[A-Z][a-z]+'s\s+(?:fix|change|update|release|video|post|order|trade)\b|\b(?:19|20)\d{2}\b|\blast\s+(?:week|month|year)\b|\bbacktest|\bback-test|\bsimulat|\bpaper[- ]trad|\bhypothetical/i;
+// Real quotation marks only: an apostrophe inside a word ("team's", "I've") is not a quote.
+const QUOTED = /"[^"]*"|“[^”]*”|(?<![A-Za-z])'[^'\n]{12,}'(?![A-Za-z])/g;
 
 /**
  * Sentences of an agent result that claim an external action or a record read no receipt backs. A
@@ -82,11 +91,14 @@ export function unbackedActionClaims(result, receipts = []) {
   const workspace = (Array.isArray(receipts) ? receipts : []).some((r) => r && r.status === 'ok');
   const text = String(result || '');
   const claims = text.split(/(?<=[.!?])\s+|\n+/).map((s) => s.trim()).filter(Boolean)
-    .filter((sentence) => !ATTRIBUTED.test(sentence))
     .filter((sentence) => {
-      const own = sentence.replace(QUOTED, ' ');
-      if (MONEY_CLAIM.test(own)) return true;
-      return !workspace && (ACTION_CLAIM.test(own) || BARE_CLAIM.test(own));
+      const own = sentence.replace(QUOTED, ' ').trim();
+      // The owner's instruction ("as you told me") is not someone else's account of the action.
+      const attributed = ATTRIBUTED.test(own) && !OWNER_INSTRUCTED.test(own);
+      if (attributed) return false;
+      if (MONEY_CLAIM.test(own) && !THIRD_PARTY.test(own)) return true;
+      if (workspace) return false;
+      return ACTION_CLAIM.test(own) || ((BARE_START.test(own) || BARE_PASSIVE.test(own)) && !THIRD_PARTY.test(own));
     });
   const records = workspace ? [] : guardRetrievalClaims(text, { flagOnly: true }).removed.map((r) => r.sentence);
   return [...new Set([...claims, ...records])].map((s) => clip(s, 240)).slice(0, 4);
@@ -674,6 +686,41 @@ export function steerAgentTask(data, taskId, instruction) {
   return { task };
 }
 
+// An agent whose task was cancelled, handed on or recovered under it shows what it really holds now.
+function settleAgent(data, agentId) {
+  const agent = (data.team || []).find((a) => a.id === agentId);
+  if (!agent) return;
+  const open = (data.team_tasks || []).filter((t) => t.partner_id === agentId && TASK_OPEN.has(t.status));
+  if (open.some((t) => t.status === 'running')) return;
+  const waiting = open.find((t) => ['queued', 'review_pending', 'reviewing'].includes(t.status));
+  agent.runtime_status = waiting ? 'waiting' : 'idle';
+  agent.runtime_task = waiting ? clip(waiting.task, 80) : null;
+  agent.runtime_updated_at = now();
+  if (!waiting) agent.status = 'available';
+}
+
+/** "Stop the Atlas task": cancels every open task of the named Office agent, in durable state. */
+export function cancelAgentTasks(data, agentName, reason = 'Owner stopped it.') {
+  const name = String(agentName || '').toLowerCase();
+  const agent = (data.team || []).find((a) => String(a.name || '').toLowerCase() === name && !a.retired);
+  if (!agent) return { agent: null, cancelled: [] };
+  const cancelled = (data.team_tasks || []).filter((t) => t.partner_id === agent.id && TASK_OPEN.has(t.status));
+  const at = now();
+  for (const task of cancelled) {
+    task.status = 'cancelled';
+    task.error = reason;
+    task.retry_at = null;
+    task.updated_at = at;
+  }
+  if (cancelled.length) {
+    agent.runtime_status = 'idle';
+    agent.runtime_task = null;
+    agent.runtime_updated_at = at;
+    agent.status = 'available';
+  }
+  return { agent, cancelled };
+}
+
 // "Review it again": a result CHE could not review goes back to CHE's review as is; the agent's
 // work, and any computer action, is not repeated.
 export function requeueAgentReview(data, taskId) {
@@ -1106,6 +1153,7 @@ async function runOneTask(ctx) {
     verifiedHistory.length ? `VERIFIED PAST RESULTS — use only when relevant; compare and recombine proven patterns, never copy blindly:\n${verifiedHistory.map((item) => `- ${item.task}: ${item.result}`).join('\n')}` : '',
     skills.length ? `REUSABLE OFFICE SKILLS:\n${skills.map((skill) => `${skill.name}: ${skill.steps.join(' -> ')}`).join('\n')}` : '',
     computer ? `CONNECTED COMPUTER RESULT:\n${JSON.stringify(computer).slice(0, 16000)}` : '',
+    !computer && task.computer_result ? `CONNECTED COMPUTER RESULT (from the earlier pass; not run again):\n${task.computer_result}` : '',
   ].filter(Boolean).join('\n\n');
   let worker = { engine: '', model: '' };
   try {
@@ -1131,7 +1179,12 @@ async function runOneTask(ctx) {
   const a1 = data.team.find((item) => item.id === agent.id);
   if (!t1) return true;
   // Cancelled, handed to another agent, retired or recovered while this agent worked: the result is stale.
-  if (t1.status !== 'running' || t1.partner_id !== agent.id) return true;
+  if (t1.status !== 'running' || t1.partner_id !== agent.id) {
+    settleAgent(data, agent.id);
+    await save(data);
+    notify();
+    return true;
+  }
   if (!error && Number(t1.steering_version || 0) > startSteeringVersion) {
     t1.prior_result = result;
     t1.status = 'queued';
@@ -1169,7 +1222,10 @@ async function runOneTask(ctx) {
   t1.result = result;
   t1.review_attempts = 0;
   // The only tool this loop runs is the owner-approved computer workspace; its answer is the receipt.
-  if (computer) t1.receipts = [{ kind: 'computer_workspace', status: computer.status, at: now() }];
+  if (computer) {
+    t1.receipts = [{ kind: 'computer_workspace', status: computer.status, at: now() }];
+    t1.computer_result = JSON.stringify(computer).slice(0, 16000);
+  }
   else if (computerAgain || !Array.isArray(t1.receipts)) t1.receipts = [];
   t1.updated_at = now();
   t1.provider_trail = Array.isArray(t1.provider_trail) ? t1.provider_trail : [];
@@ -1240,6 +1296,8 @@ async function reviewDelegatedResult(ctx, taskId, { saved = false } = {}) {
     t2.prior_result = result;
     t2.status = 'queued';
     t2.updated_at = now();
+    settleAgent(data, partnerAtReview);
+    if (t2.partner_id !== partnerAtReview) settleAgent(data, t2.partner_id);
     await save(data);
     notify();
     return true;

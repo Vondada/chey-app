@@ -37,6 +37,7 @@ async function owner() {
   return {
     say: async (message) => { const res = await post('/api/chat', { message, agent_mode: 'full' }, token); await res.text(); return res.status; },
     tasks: () => (saved.get('che')?.team_tasks || []),
+    save: async () => {},
   };
 }
 
@@ -69,6 +70,34 @@ test('Agent Mode: work for named agents is queued for those agents; their chat i
   for (const advice of che.tasks().filter((x) => x.status === 'advisory')) assert.equal(advice.verified_by_che, false);
 });
 
+test('work requested politely, or as a plain command, is work (re-review of #394)', () => {
+  for (const work of [
+    'Do a competitive analysis of brass lamp sellers on Etsy',
+    'Have someone research the lamp market and write a summary',
+    'Have the team draft three Instagram captions for the launch',
+    'Tell me the top lamp trends and draft a post about them',
+    'Research brass lamp suppliers and draft an outreach email, ok?',
+    'Build the landing page, what do you think?',
+    'Will you write a blog post about our spring collection',
+    'Can you build me a landing page for the lamp store?',
+    'Could you research the top 5 CRMs and draft a comparison?',
+    'Can Atlas research the lamp market?',
+    'I need you to build the landing page',
+  ]) assert.equal(isOwnerQuestion(work), false, work);
+  for (const question of ['Iris is great. Who are you?', 'Tell me a joke', 'Can you tell me who you are?', 'What should we build next?', 'Is it possible to build a rocket at home?', 'How do I make pasta?']) {
+    assert.equal(isOwnerQuestion(question), true, question);
+  }
+});
+
+test('agent names are names only when used as names (re-review of #394)', () => {
+  const agents = (goal) => splitGoal(goal).map((s) => s.agent);
+  assert.ok(!agents('Write a post about Sage green lamps and Iris flowers').includes('Sage'));
+  assert.ok(!agents('Write a post about Sage green lamps and Iris flowers').includes('Iris'));
+  assert.ok(!agents('Find suppliers and also iris-themed packaging ideas').includes('Iris'));
+  assert.ok(!agents("Research the market and Knox's notes on the API").includes('Knox'));
+  assert.deepEqual(agents('Atlas and Mira research the market together'), ['Atlas', 'Mira'], 'a shared job goes to both');
+});
+
 test('a question is told apart from handing work to an agent', () => {
   assert.equal(isOwnerQuestion('Who are you?'), true);
   assert.equal(isOwnerQuestion('Chay, how do I fix a loop'), true);
@@ -83,4 +112,23 @@ test('splitGoal gives a named agent its own slice', () => {
   assert.deepEqual(splitGoal('Have Atlas research lamp prices and Mira write a product description from it.').map((s) => s.agent), ['Atlas', 'Mira']);
   assert.deepEqual(splitGoal('Knox, fix the failing Worker test').map((s) => s.agent), ['Knox']);
   assert.deepEqual(splitGoal('Build the landing page and write the FAQ').map((s) => s.agent), ['Knox', 'Mira']);
+});
+
+test('voice: "stop the Atlas task" cancels it in storage, and "review it again" re-reviews a held result', async (t) => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => { throw new TypeError('offline'); };
+  t.after(() => { globalThis.fetch = realFetch; });
+  const che = await owner();
+  await che.say('Have Atlas research lamp prices and Mira write a product description from it.');
+  const atlasTask = che.tasks().find((x) => x.partner_name === 'Atlas' && x.status === 'queued');
+  assert.ok(atlasTask);
+  await che.say('Stop the Atlas task.');
+  assert.equal(che.tasks().find((x) => x.id === atlasTask.id).status, 'cancelled');
+  assert.equal(che.tasks().find((x) => x.partner_name === 'Mira' && x.task.startsWith('Mira')).status, 'queued', "Mira's task is untouched");
+  // A held result, then "review Mira's task again".
+  const mira = che.tasks().find((x) => x.partner_name === 'Mira' && x.status === 'queued');
+  Object.assign(mira, { status: 'needs_review', result: 'A product description.' });
+  await che.save();
+  await che.say("Review Mira's task again");
+  assert.equal(che.tasks().find((x) => x.id === mira.id).status, 'review_pending');
 });
