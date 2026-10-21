@@ -32,6 +32,7 @@ import {
 } from './provider_registry.js';
 import { discoverKeylessModels, engineStatus, paidAllowed, routedEnv } from './ai_router.js';
 import { capabilityPromptLine, inferTurnCapabilities, runtimeCapabilityRegistry } from './cognitive_capabilities.js';
+import { identityQuestionIntent, speakIdentity } from './che_maturity.js';
 import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, upscaleImage } from './media.js';
 import { probeVideoEngine, videoEngineStatus, videoStatusSpeech } from './video_engine.js';
 import { githubVideoDiagnosis, mp4Facts } from './github_video_renderer.js';
@@ -10968,6 +10969,16 @@ export class CheState extends DurableObject {
         // answered from that actual contract, not by a guessing chat model.
         if (asksForCurrentOwnerLocation(message)) {
           return ndjsonReply(OWNER_LOCATION_NOT_VERIFIED, { source: 'location_provenance', live_gps: false });
+        }
+        // Owner's core-identity questions must work with every text model down.
+        // Answer from canonical runtime identity, not untrusted page/memory data.
+        if (ownerDevice) {
+          const identityKind = identityQuestionIntent(message);
+          if (identityKind) {
+            return ndjsonReply(speakIdentity(identityKind), {
+              source: 'che_identity', identity_source: 'built_in', model_calls: 0,
+            });
+          }
         }
         const phoneBrainContext = Array.isArray(body.brain_context)
           ? redactBrainText(body.brain_context.map((item) => String(item)).join('\n\n'), message).slice(0, 9000)

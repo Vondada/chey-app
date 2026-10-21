@@ -30,8 +30,8 @@ test('honors Retry-After and does not leak raw dumps to the owner', () => {
   });
   assert.equal(error.owner_safe, true);
   assert.doesNotMatch(error.message, /All AI engines failed|ENOSPC|llama-3.3/);
-  assert.match(sanitizeOwnerText('All AI engines failed (huge dump)'), /not confirmed.*running/i);
-  assert.doesNotMatch(sanitizeOwnerText('All AI engines failed (huge dump)'), /still working/i);
+  assert.match(sanitizeOwnerText('All AI engines failed (huge dump)'), /confirmed result to report/i);
+  assert.doesNotMatch(sanitizeOwnerText('All AI engines failed (huge dump)'), /still working|work is still running/i);
   assert.doesNotMatch(sanitizeOwnerText('All AI engines failed (huge dump)'), /engine|route|provider/i, 'the owner never hears about engines');
 });
 
@@ -86,7 +86,7 @@ test('provider status dumps and credentials are still kept out of owner replies'
   ]) {
     const long = longReply(leak);
     assert.ok(long.length > 120, leak);
-    assert.match(sanitizeOwnerText(long, { truncate: false }), /not confirmed.*running/i, leak);
+    assert.match(sanitizeOwnerText(long, { truncate: false }), /confirmed result to report/i, leak);
   }
 });
 
