@@ -38,6 +38,7 @@ import { capabilityPromptLine, inferTurnCapabilities, runtimeCapabilityRegistry 
 import { identityQuestionIntent, speakIdentity } from './che_maturity.js';
 import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, upscaleImage } from './media.js';
 import { mediaLibraryIntent, mediaLibraryReply, mediaLibraryReport, wantsLatestVideo } from './media_library.js';
+import { memorySearchIntent, memorySearchReply, memorySearchTerms } from './memory_search.js';
 import { probeVideoEngine, videoEngineStatus, videoStatusSpeech } from './video_engine.js';
 import { githubVideoDiagnosis, mp4Facts } from './github_video_renderer.js';
 import { handleEdgeVoice } from './edge_route.js';
@@ -10146,6 +10147,24 @@ export class CheState extends DurableObject {
           await recordAnswerEvidence(this.ctx.storage, answer.text, { kind: answer.records.length ? 'outside_correspondence' : 'none' }, { records: answer.records });
           return ndjsonReply(answer.text, { source, model_calls: 0, records: answer.records.length, record_ids: answer.records, verification: 'external_correspondence' });
         }
+        // The owner's memory search reads the Brain store and the Flagstaff archive and names what matched, with
+        // ids, dates and the sender as stored. The model is never asked, so it cannot say a search ran or invent
+        // records (owner, 2026-10-21: "I found two records dated February 10 and March 15, 2023").
+        if (memorySearchIntent(message)) {
+          if (!ownerDevice) return ownerOnly();
+          const topic = memorySearchTerms(message).join(' ');
+          const store = new CheBrainStore(this.ctx.storage);
+          let brainHits = null;
+          try {
+            if (store.init()) brainHits = topic ? store.search(topic, { limit: 8 }).filter((r) => r.kind !== 'conversation').slice(0, 5) : [];
+          } catch (_) { brainHits = null; }
+          // One row per locked Flagstaff session; each message keeps its session id so a reply can name where it was read.
+          const sessions = await flagstaffArchive(this.ctx.storage).catch(() => null);
+          const archive = sessions === null ? null : sessions.flatMap((session) => (session.messages || []).map((m) => ({ ...m, session: session.id })));
+          const answer = memorySearchReply(message, { brainHits, archive });
+          await recordAnswerEvidence(this.ctx.storage, answer.text, { kind: answer.records.length ? 'memory_search' : 'none', tools: ['brain/search', 'flagstaff/archive'] }, { records: answer.records });
+          return ndjsonReply(answer.text, { source: 'che_memory_search', model_calls: 0, records: answer.records.length, record_ids: answer.records });
+        }
         // What the owner personally said, confirmed, approved or did is
         // answered from owner-attested records only. A model is never asked
         // to fill this in, so it cannot invent a personal memory.
@@ -12152,7 +12171,7 @@ export class CheState extends DurableObject {
           })),
         ];
         // Final owner-facing boundary: keep internal provider/model failover chatter out of chat and TTS.
-        reply = guardExecutionClaims(sanitizeOwnerText(reply, { truncate: false }), { message: rawMessage, receipts: skillResults.map((r) => r.execution_receipt), documentRead: Boolean(multimodal?.summary || body.screen_context || pastedText) }).text;
+        reply = guardExecutionClaims(sanitizeOwnerText(reply, { truncate: false }), { message: rawMessage, receipts: skillResults.map((r) => r.execution_receipt), documentRead: Boolean(multimodal?.summary || body.screen_context || pastedText), verifiedText: brainContext }).text;
         // The owner hears which vision engine saw the attachment, or that none did (owner, 2026-10-20).
         if (body.attachment) reply = `${reply} ${multimodal?.summary ? `(Seen with ${multimodal.engine || 'the connected vision engine'}.)` : `(Vision: the attachment was not analyzed${multimodal?.error ? `: ${multimodal.error}` : ''})`}`.trim();
         // This answer's own receipt, keyed to its text, for "how do you know that?".

@@ -59,7 +59,7 @@ function sourceClaimIn(text, verifiedPaths) {
   return false;
 }
 
-export function guardExecutionClaims(reply, { message = '', receipts = [], documentRead = false, verifiedPaths = null } = {}) {
+export function guardExecutionClaims(reply, { message = '', receipts = [], documentRead = false, verifiedPaths = null, verifiedText = '' } = {}) {
   const text = String(reply || '');
   if (storyRequested(message)) return { text, removed: [] };
   const identifiers = /\b(?:PRs?|pull requests?)\s*(?:numbers?\s*)?(?:#\s*)?\d+\b|\b[0-9a-f]{16,64}\b|\bcommit\s+[0-9a-f]{7,64}\b|\b(?:SHA|commit(?:\s+hash)?)\s*[:=]\s*\S+|\/path\/to\//i;
@@ -69,7 +69,7 @@ export function guardExecutionClaims(reply, { message = '', receipts = [], docum
   const repoClaim = identifiers.test(text) || execution.test(text) || repoEvidence.test(text) || transcript.test(text);
   const sourceClaim = sourceClaimIn(text, verifiedPaths);
   // Record claims are judged sentence by sentence, so one honest "not" elsewhere never covers a fabrication.
-  const retrieval = guardRetrievalClaims(text, { documentRead });
+  const retrieval = guardRetrievalClaims(text, { documentRead, verifiedText });
   if (!repoClaim && !sourceClaim && !retrieval.removed.length) return { text, removed: [] };
   const actual = receipts.filter(isExecutionReceipt);
   if (actual.length) return { text: actual.map((r) => `Execution receipt ${r.invocation_id}: ${r.tool} ${r.operation}, ${r.status}, at ${r.at}, source ${r.source}. ${r.status === 'success' ? `Returned data (source content, not instructions): ${JSON.stringify(r.verified_response)}` : r.error}`).join('\n'), removed: [text] };
@@ -88,8 +88,9 @@ export function guardExecutionClaims(reply, { message = '', receipts = [], docum
 // functions that "returned the promise" is ordinary conversation and stays (review of PR #373).
 // "the records/ledger/storage" is CHE's own vocabulary; a database or table is CHE's only as "my" or "CHE's"
 // ("we read the database schema" is a coding answer). "read" counts only of CHE's own store.
-const OWN_NOUN = String.raw`(?:(?:my|CHE's)\s+(?:stored\s+|own\s+)?(?:storage|records?|ledgers?|record\s+store|data\s+store|database|tables?|trade\s+(?:log|history|journal)|trading\s+journal|paper\s+journal)|the\s+(?:stored\s+)?(?:records?|ledgers?|record\s+store|trade\s+(?:log|history|journal)|trading\s+journal|paper\s+journal)|from\s+storage\b)`;
+const OWN_NOUN = String.raw`(?:(?:my|CHE's)\s+(?:stored\s+|own\s+)?(?:storage|records?|ledgers?|record\s+store|data\s+store|database|tables?|trade\s+(?:log|history|journal)|trading\s+journal|paper\s+journal|long[- ]term\s+memory|memory)|the\s+(?:stored\s+)?(?:records?|ledgers?|record\s+store|trade\s+(?:log|history|journal)|trading\s+journal|paper\s+journal|flagstaff\s+(?:records?|history|archive|messages?)|brain\s+(?:records?|store))|the\s+long[- ]term\s+memory|from\s+storage\b)`;
 const RETRIEVAL_VERB = new RegExp(String.raw`\b(?:I|we|CHE)\s+(?:\w+\s+){0,2}(?:retrieved|pulled|fetched|loaded|queried|looked\s+up|checked|scanned|consulted|searched)\b[^\n.!?]{0,40}\b${OWN_NOUN}|\b(?:I|we|CHE)\s+(?:\w+\s+){0,2}read\s+(?:my|CHE's)\s+(?:storage|records?|ledgers?|database|trade\s+(?:log|history|journal)|trading\s+journal|paper\s+journal)\b`, 'i');
+const FOUND_RECORDS = /\b(?:I|we|CHE)\s+(?:\w+\s+){0,2}(?:found|located|pulled\s+up)\s+(?:\w+\s+)?(?:records?|messages?|entries|instructions?)\b/i;
 const RETRIEVAL_SOURCE = /\b(?:from|per|according\s+to)\s+(?:my|CHE's)\s+(?:storage|records?|ledgers?|record\s+store|data\s+store|database|trade\s+(?:log|history|journal)|trading\s+journal|paper\s+journal)\b/i;
 // A storage key is a claim only when CHE says she read it ("put it under storage key session:abc" is advice).
 const STORAGE_KEY = /\b(?:I|we|CHE)\s+(?:\w+\s+){0,3}(?:retrieved|pulled|fetched|loaded|queried|checked|read|looked\s+up)\b[^\n.!?]{0,60}\bstorage\s+keys?\b|\b(?:simulation|journal|paper|sim|ledger|strategy)_(?:trades|journal|records|ledger|entries)\b/i;
@@ -97,7 +98,7 @@ const RECORD_ID = /\b(?:sim|paper|trade|journal|evidence|ledger|strategy|fill|po
 // "I used a query that joins orders to customers" is SQL help; a claim names a run and its success.
 const TOOL_SUCCESS = /\b(?:I|we|CHE)\s+(?:\w+\s+){0,2}(?:ran|invoked|executed)\s+(?:the|a|my|an)\s+(?:\w+\s+){0,2}(?:tool|lookup|query|script)\b[^\n.!?]{0,40}\b(?:successfully|and\s+it\s+returned|which\s+returned|came\s+back)\b|\b(?:my|CHE's|the)\s+(?:lookup|query|tool)\b[^\n.!?]{0,40}\b(?:succeeded|ran\s+successfully|completed\s+successfully)\b/i;
 const REVIEW_DONE = /\b(?:I|we|CHE)\s+(?:\w+\s+){0,2}reviewed\s+(?:your|the|CHE's|my)\s+(?:code|codebase|repository|repo)\b|\b(?:my|CHE's)\s+(?:code\s+)?review\b[^\n.!?]{0,40}\b(?:found\s+no|passed|complete|no\s+issues|clean)\b|\bthe\s+code\s+review\s+(?:found\s+no\s+issues|passed|is\s+complete|came\s+back\s+clean)\b/i;
-const RETRIEVAL_RULES = [['retrieval', RETRIEVAL_VERB], ['retrieval_source', RETRIEVAL_SOURCE], ['storage_key', STORAGE_KEY], ['record_id', RECORD_ID], ['tool_success', TOOL_SUCCESS], ['review_done', REVIEW_DONE]];
+const RETRIEVAL_RULES = [['retrieval', RETRIEVAL_VERB], ['found_records', FOUND_RECORDS], ['retrieval_source', RETRIEVAL_SOURCE], ['storage_key', STORAGE_KEY], ['record_id', RECORD_ID], ['tool_success', TOOL_SUCCESS], ['review_done', REVIEW_DONE]];
 export const RETRIEVAL_NOT_EVIDENCE = 'I cannot verify that from a real record, sir: no storage read, lookup, tool or review ran for this answer, and a model-written record, key, identifier, date, profit or result is not evidence. Ask for the record by its source and I will read it from storage.';
 export const RETRIEVAL_NOTE = 'I took out a record claim I cannot back, sir: no storage read or tool ran for this answer. Ask for the record by its source and I will read it from storage.';
 
@@ -106,12 +107,32 @@ const DENIAL = /\b(?:not|never|haven't|hasn't|didn't|don't|doesn't|cannot|can't|
 // Code the owner pasted has been read, so "I reviewed your code" is then honest; a record, ledger or
 // storage claim is never covered by a paste (review of PR #373, round 2).
 const READ_RULES = new Set(['review_done']);
-function retrievalClaimIn(sentence, { keys = true, documentRead = false } = {}) {
+// A dated record ("an instruction dated February 10, 2023") is a claim that a stored record exists. It stands only
+// when each date it names appears in the stored text the model was given this turn (verifiedText).
+const MONTH = 'January|February|March|April|May|June|July|August|September|October|November|December';
+const DATE = String.raw`(?:(?:${MONTH})\s+\d{1,2}(?:st|nd|rd|th)?,?\s+\d{4}|\d{4}-\d{2}-\d{2})`;
+const DATED_RECORD = new RegExp(String.raw`\b(?:record|message|instruction|note|entry|memory|exchange|transcript)s?\b[^.!?\n]{0,100}\b${DATE}|\b${DATE}\b[^.!?\n]{0,60}\b(?:record|message|instruction|note|entry|memory|exchange)s?\b`, 'i');
+function undatedClaim(sentence, verifiedText) {
+  if (!DATED_RECORD.test(sentence)) return false;
+  const verified = String(verifiedText || '').toLowerCase();
+  const dates = sentence.match(new RegExp(DATE, 'gi')) || [];
+  return dates.some((date) => !verified.includes(date.toLowerCase()));
+}
+// Who said something is a claim only when the sentence says how it was told apart. Wording and tone are
+// never a source: a speaker is named from the stored sender alone (owner, 2026-10-21).
+const AUTHOR_VERB = /\b(?:distinguish\w*|tell\w*\s+(?:\w+\s+){0,4}apart|told\s+(?:\w+\s+){0,4}apart|attribut\w*|identif\w*|separat\w*|differentiat\w*|figured\s+out|inferred)\b/i;
+const AUTHOR_METHOD = /\b(?:tone|keywords?|wording|phrasing|writing\s+style)\b/i;
+const AUTHOR_SUBJECT = /\b(?:owner|Claude|author|sender|wrote|written|said|sent|them|between)\b/i;
+function retrievalClaimIn(sentence, { keys = true, documentRead = false, verifiedText = '' } = {}) {
+  if (!DENIAL.test(sentence)) {
+    if (undatedClaim(sentence, verifiedText)) return 'dated_record';
+    if (AUTHOR_VERB.test(sentence) && AUTHOR_METHOD.test(sentence) && AUTHOR_SUBJECT.test(sentence)) return 'authorship_inference';
+  }
   for (const [rule, re] of RETRIEVAL_RULES) {
     if (!keys && rule === 'storage_key') continue;
     if (documentRead && READ_RULES.has(rule)) continue;
     if (!re.test(sentence)) continue;
-    if (['retrieval', 'retrieval_source', 'tool_success', 'review_done'].includes(rule) && DENIAL.test(sentence)) continue;
+    if (['retrieval', 'found_records', 'retrieval_source', 'tool_success', 'review_done'].includes(rule) && DENIAL.test(sentence)) continue;
     return rule;
   }
   return null;
@@ -123,13 +144,13 @@ function retrievalClaimIn(sentence, { keys = true, documentRead = false } = {}) 
  * source is quoted; `documentRead` means the owner's own pasted text was read this turn.
  * Returns { text, removed: [{ rule, sentence }] }.
  */
-export function guardRetrievalClaims(reply, { receipts = [], flagOnly = false, keys = true, documentRead = false } = {}) {
+export function guardRetrievalClaims(reply, { receipts = [], flagOnly = false, keys = true, documentRead = false, verifiedText = '' } = {}) {
   const text = String(reply || '');
   if (receipts.some(isExecutionReceipt)) return { text, removed: [] };
   const removed = [];
   const kept = [];
   for (const sentence of splitSentences(text)) {
-    const rule = retrievalClaimIn(sentence, { keys, documentRead });
+    const rule = retrievalClaimIn(sentence, { keys, documentRead, verifiedText });
     if (!rule) { kept.push(sentence); continue; }
     removed.push({ rule, sentence: sentence.trim() });
     if (flagOnly) kept.push(`${sentence.trimEnd()} ${NOT_VERIFIED}${/\s$/.test(sentence) ? sentence.slice(sentence.trimEnd().length) : ''}`);
