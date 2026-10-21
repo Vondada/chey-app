@@ -12,13 +12,14 @@ import 'che_strategy_learning.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
+import '../che_ui/che_theme.dart';
 
 const _up = Color(0xFF3DDC97);
 const _down = Color(0xFFFF5C7A);
-const _gold = Color(0xFFE8B04A);
-const _dim = Color(0xFF8FA4A1);
-const _panel = Color(0xFF0A1214);
-const _stroke = Color(0xFF1B2A2D);
+const _gold = CheColors.markets;
+final _dim = CheColors.textDim;
+final _panel = CheColors.surface;
+final _stroke = CheColors.stroke;
 
 double? _num(Object? v) => v is num ? v.toDouble() : double.tryParse('${v ?? ''}');
 String _money(Object? v) {
@@ -179,7 +180,7 @@ class _CheLivePaperPanelState extends State<CheLivePaperPanel> {
           padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(color: _panel, border: Border.all(color: _stroke), borderRadius: BorderRadius.circular(10)),
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: _dim, fontSize: 12)),
+            Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: _dim, fontSize: 12)),
             const SizedBox(height: 2),
             FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerLeft,
               child: Text(value, style: TextStyle(color: color ?? Colors.white, fontSize: 18, fontWeight: FontWeight.w800, fontFeatures: const [FontFeature.tabularFigures()]))),
@@ -193,7 +194,7 @@ class _CheLivePaperPanelState extends State<CheLivePaperPanel> {
     if (d == null) {
       return Padding(
         padding: const EdgeInsets.all(12),
-        child: Text(_error.isEmpty ? 'Loading paper trading records…' : _error, style: const TextStyle(color: _dim, fontSize: 16)),
+        child: Text(_error.isEmpty ? 'Loading paper trading records…' : _error, style: TextStyle(color: _dim, fontSize: 16)),
       );
     }
     final feed = d['feed'] is Map ? Map<String, dynamic>.from(d['feed'] as Map) : <String, dynamic>{};
@@ -240,7 +241,7 @@ class _CheLivePaperPanelState extends State<CheLivePaperPanel> {
         child: Text(
           '${feed['provider_symbol'] ?? 'MNQ'} · $contract · ${feed['provider'] ?? 'no feed yet'} · last bar ${_clock(feed['last_bar_time'])}'
           '${lagMin == null ? '' : ' (about $lagMin min old)'} · market $session · engine ${enabled ? 'ON' : 'OFF'}',
-          style: const TextStyle(color: _dim, fontSize: 14),
+          style: TextStyle(color: _dim, fontSize: 14),
         ),
       ),
       if (status != 'LIVE') Padding(
@@ -288,11 +289,11 @@ class _CheLivePaperPanelState extends State<CheLivePaperPanel> {
       ),
       if (n < minTrades) Padding(
         padding: const EdgeInsets.only(top: 6),
-        child: Text('$n of $minTrades closed trades: not yet evidence. Nothing here is a profitability claim.', style: const TextStyle(color: _dim, fontSize: 13)),
+        child: Text('$n of $minTrades closed trades: not yet evidence. Nothing here is a profitability claim.', style: TextStyle(color: _dim, fontSize: 13)),
       ),
       const SizedBox(height: 14),
       const Text('Open positions', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800)),
-      if (positions.isEmpty) const Padding(padding: EdgeInsets.symmetric(vertical: 6), child: Text('None open.', style: TextStyle(color: _dim))),
+      if (positions.isEmpty) Padding(padding: EdgeInsets.symmetric(vertical: 6), child: Text('None open.', style: TextStyle(color: _dim))),
       for (final p in positions)
         Semantics(
           label: '${p['side']} ${p['qty']} ${p['contract']}, ${p['name']}, entry ${p['entry']}, stop ${p['stop']}, target ${p['target']}, unrealized ${_money(p['unrealized'])}',
@@ -301,13 +302,13 @@ class _CheLivePaperPanelState extends State<CheLivePaperPanel> {
             dense: true, contentPadding: EdgeInsets.zero,
             leading: Icon(p['side'] == 'short' ? Icons.south_east : Icons.north_east, color: p['side'] == 'short' ? _down : _up),
             title: Text('${'${p['side']}'.toUpperCase()} ${p['qty']} ${p['contract']} · ${p['name']}', style: const TextStyle(color: Colors.white)),
-            subtitle: Text('Entry ${p['entry']} at ${_clock(p['entry_time'])} · stop ${p['stop']} · target ${p['target']}\n${p['why'] ?? ''}', style: const TextStyle(color: _dim)),
+            subtitle: Text('Entry ${p['entry']} at ${_clock(p['entry_time'])} · stop ${p['stop']} · target ${p['target']}\n${p['why'] ?? ''}', style: TextStyle(color: _dim)),
             trailing: Text(_money(p['unrealized']), style: TextStyle(color: (_num(p['unrealized']) ?? 0) >= 0 ? _up : _down, fontWeight: FontWeight.w800)),
           ),
         ),
       const SizedBox(height: 12),
       const Text('Portfolio variants (correlated forward paper)', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800)),
-      if (ranking.isEmpty) const Padding(padding: EdgeInsets.symmetric(vertical: 6), child: Text('No strategy has closed a trade yet.', style: TextStyle(color: _dim))),
+      if (ranking.isEmpty) Padding(padding: EdgeInsets.symmetric(vertical: 6), child: Text('No strategy has closed a trade yet.', style: TextStyle(color: _dim))),
       for (final s in ranking.take(12))
         Semantics(
           label: '${s['name']}, ${s['filter']}, ${s['target_r']} R target: ${s['trades']} trades, win rate ${s['win_rate'] ?? 'not measured'} percent, net ${_money(s['net_pnl'])}${s['ranked'] == true ? '' : ', too few trades to rank'}',
@@ -316,14 +317,14 @@ class _CheLivePaperPanelState extends State<CheLivePaperPanel> {
             padding: const EdgeInsets.symmetric(vertical: 3),
             child: Row(children: [
               Expanded(child: Text('${s['name']} · ${s['filter']} · ${s['target_r']}R', style: const TextStyle(color: Colors.white))),
-              Text('${s['trades']} tr · ${s['win_rate'] ?? '—'}% · ${_money(s['net_pnl'])}${s['ranked'] == true ? '' : ' ·'}', style: const TextStyle(color: _dim, fontFeatures: [FontFeature.tabularFigures()])),
+              Text('${s['trades']} tr · ${s['win_rate'] ?? '—'}% · ${_money(s['net_pnl'])}${s['ranked'] == true ? '' : ' ·'}', style: TextStyle(color: _dim, fontFeatures: [FontFeature.tabularFigures()])),
               if (s['ranked'] != true) const Text(' small sample', style: TextStyle(color: _gold, fontSize: 12)),
             ]),
           ),
         ),
       const SizedBox(height: 12),
       Text('Trade history (${trades.length})', style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800)),
-      if (trades.isEmpty) const Padding(padding: EdgeInsets.symmetric(vertical: 6), child: Text('No paper trade has closed yet. Each one appears here with its receipt the moment it is recorded.', style: TextStyle(color: _dim))),
+      if (trades.isEmpty) Padding(padding: EdgeInsets.symmetric(vertical: 6), child: Text('No paper trade has closed yet. Each one appears here with its receipt the moment it is recorded.', style: TextStyle(color: _dim))),
       for (final t in trades.take(60)) _tradeTile(t),
       const SizedBox(height: 12),
       const Text('Broker and accounts', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800)),
@@ -331,18 +332,18 @@ class _CheLivePaperPanelState extends State<CheLivePaperPanel> {
         'Tradovate / NinjaTrader: ${tradovate['signed_in'] == true ? 'signed in' : tradovate['expired'] == true ? 'sign-in expired, reconnect in Connections' : tradovate['app_configured'] == true ? 'not signed in; sign in from Connections' : 'not set up on the server'}.\n'
         'FundYourEdge: ${(broker['fundyouredge'] is Map ? (broker['fundyouredge'] as Map)['why'] : null) ?? 'not linked'}\n'
         'Live orders: ${broker['live_orders'] ?? 'disabled'}',
-        style: const TextStyle(color: _dim, fontSize: 14),
+        style: TextStyle(color: _dim, fontSize: 14),
       ),
       if (backtest != null && backtest['ok'] == true) ...[
         const SizedBox(height: 12),
         const Text('Historical baseline (backtest, not forward evidence)', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800)),
-        Text('${backtest['data'] ?? ''}', style: const TextStyle(color: _dim, fontSize: 12)),
+        Text('${backtest['data'] ?? ''}', style: TextStyle(color: _dim, fontSize: 12)),
         for (final row in ((backtest['rows'] as List?) ?? const []).whereType<Map>().take(8))
           Text('${row['name']} · ${row['filter']} · ${row['target_r']}R: ${(row['stats'] as Map?)?['trades'] ?? 0} trades, ${(row['stats'] as Map?)?['expectancy_r'] ?? '—'} R each, net ${_money((row['stats'] as Map?)?['net_pnl'])}',
-              style: const TextStyle(color: _dim, fontSize: 13)),
+              style: TextStyle(color: _dim, fontSize: 13)),
       ],
       const SizedBox(height: 6),
-      Text('${d['isolation'] ?? ''}', style: const TextStyle(color: _dim, fontSize: 12)),
+      Text('${d['isolation'] ?? ''}', style: TextStyle(color: _dim, fontSize: 12)),
     ]);
   }
 
@@ -368,7 +369,7 @@ class _CheLivePaperPanelState extends State<CheLivePaperPanel> {
               const SizedBox(width: 6),
               Expanded(child: Text(summary, style: const TextStyle(color: Colors.white))),
             ]),
-            Text('${_clock(entry['time'])} → ${_clock(exit['time'])} · ${t['session']}', style: const TextStyle(color: _dim, fontSize: 12)),
+            Text('${_clock(entry['time'])} → ${_clock(exit['time'])} · ${t['session']}', style: TextStyle(color: _dim, fontSize: 12)),
             if (open) Padding(
               padding: const EdgeInsets.only(top: 4, left: 24),
               child: Text(
@@ -382,7 +383,7 @@ class _CheLivePaperPanelState extends State<CheLivePaperPanel> {
                   ...((review['facts'] as List?) ?? const []).map((f) => 'Fact: $f'),
                   ...((review['hypotheses'] as List?) ?? const []).map((h) => 'Possible reason (not proven): $h'),
                 ].join('\n'),
-                style: const TextStyle(color: _dim, fontSize: 13, height: 1.3),
+                style: TextStyle(color: _dim, fontSize: 13, height: 1.3),
               ),
             ),
           ]),
@@ -404,7 +405,7 @@ class _PaperChartPainter extends CustomPainter {
     final bg = Paint()..color = const Color(0xFF05080A);
     canvas.drawRect(Offset.zero & size, bg);
     if (bars.isEmpty) {
-      final tp = TextPainter(text: const TextSpan(text: 'No bars yet', style: TextStyle(color: _dim)), textDirection: TextDirection.ltr)..layout();
+      final tp = TextPainter(text: TextSpan(text: 'No bars yet', style: TextStyle(color: _dim)), textDirection: TextDirection.ltr)..layout();
       tp.paint(canvas, Offset(size.width / 2 - tp.width / 2, size.height / 2));
       return;
     }
@@ -430,7 +431,7 @@ class _PaperChartPainter extends CustomPainter {
     for (var k = 0; k <= 4; k++) {
       final v = lo + (hi - lo) * k / 4;
       canvas.drawLine(Offset(0, y(v)), Offset(size.width - right, y(v)), grid);
-      final tp = TextPainter(text: TextSpan(text: v.toStringAsFixed(2), style: const TextStyle(color: _dim, fontSize: 10)), textDirection: TextDirection.ltr)..layout();
+      final tp = TextPainter(text: TextSpan(text: v.toStringAsFixed(2), style: TextStyle(color: _dim, fontSize: 10)), textDirection: TextDirection.ltr)..layout();
       tp.paint(canvas, Offset(size.width - right + 4, y(v) - 6));
     }
     for (var i = 0; i < shown.length; i++) {

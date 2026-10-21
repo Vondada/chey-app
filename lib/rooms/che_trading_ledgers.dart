@@ -11,13 +11,14 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import '../che_ui/che_theme.dart';
 
 const _up = Color(0xFF3DDC97);
 const _down = Color(0xFFFF5C7A);
-const _gold = Color(0xFFE8B04A);
-const _dim = Color(0xFF8FA4A1);
-const _panel = Color(0xFF0A1214);
-const _stroke = Color(0xFF1B2A2D);
+const _gold = CheColors.markets;
+final _dim = CheColors.textDim;
+final _panel = CheColors.surface;
+final _stroke = CheColors.stroke;
 
 double? _num(Object? v) => v is num ? v.toDouble() : double.tryParse('${v ?? ''}');
 String _money(Object? v) {
@@ -99,7 +100,7 @@ class _CheTradingLedgersPanelState extends State<CheTradingLedgersPanel> {
     if (d == null) {
       return Padding(
         padding: const EdgeInsets.all(12),
-        child: Text(_error.isEmpty ? 'Loading trade record sets…' : _error, style: const TextStyle(color: _dim, fontSize: 16)),
+        child: Text(_error.isEmpty ? 'Loading trade record sets…' : _error, style: TextStyle(color: _dim, fontSize: 16)),
       );
     }
     final ledgers = (d['ledgers'] as List).whereType<Map>().map((m) => Map<String, dynamic>.from(m)).toList();
@@ -117,7 +118,7 @@ class _CheTradingLedgersPanelState extends State<CheTradingLedgersPanel> {
         ),
       ]),
       const SizedBox(height: 4),
-      Text('${d['note'] ?? 'Each count is that record set\'s own closed trades; the sets are never summed.'}', style: const TextStyle(color: _dim, fontSize: 13)),
+      Text('${d['note'] ?? 'Each count is that record set\'s own closed trades; the sets are never summed.'}', style: TextStyle(color: _dim, fontSize: 13)),
       if (_staleSince != null) Padding(
         padding: const EdgeInsets.only(top: 4),
         child: Text('Last refresh failed; these numbers are from before ${_clock(_staleSince!.toIso8601String())}.', style: const TextStyle(color: _gold, fontSize: 13)),
@@ -195,13 +196,13 @@ class _LedgerCard extends StatelessWidget {
             ),
           ]),
           const SizedBox(height: 2),
-          ExcludeSemantics(child: Text(what, style: const TextStyle(color: _dim, fontSize: 13))),
+          ExcludeSemantics(child: Text(what, style: TextStyle(color: _dim, fontSize: 13))),
           if (unavailable) const Padding(
             padding: EdgeInsets.only(top: 8),
             child: ExcludeSemantics(child: Text('Could not read this record set just now; no number is shown for it.', style: TextStyle(color: _down, fontSize: 14))),
           ) else if (broker) Padding(
             padding: const EdgeInsets.only(top: 8),
-            child: ExcludeSemantics(child: Text('${ledger['rule'] ?? ''}', style: const TextStyle(color: _dim, fontSize: 14))),
+            child: ExcludeSemantics(child: Text('${ledger['rule'] ?? ''}', style: TextStyle(color: _dim, fontSize: 14))),
           ) else ...[
             const SizedBox(height: 10),
             ExcludeSemantics(
@@ -243,7 +244,7 @@ class _LedgerCard extends StatelessWidget {
                   child: CustomPaint(painter: EquityCurvePainter(points: points, unit: unit)),
                 ),
               ),
-            ) else if (!unavailable) const Padding(
+            ) else if (!unavailable) Padding(
               padding: EdgeInsets.only(top: 8),
               child: ExcludeSemantics(child: Text('No closed trade yet, so there is no equity curve.', style: TextStyle(color: _dim, fontSize: 13))),
             ),
@@ -257,7 +258,7 @@ class _LedgerCard extends StatelessWidget {
                       Expanded(child: Text('${s['name'] ?? s['strategy']}${s['filter'] != null && '${s['filter']}'.isNotEmpty ? ' · ${s['filter']}' : ''}', style: const TextStyle(color: Colors.white, fontSize: 13), maxLines: 1, overflow: TextOverflow.ellipsis)),
                       Text(
                         '${s['trades']} tr${s['win_rate'] != null ? ' · ${s['win_rate']}%' : ''}${s['net_pnl'] != null ? ' · ${_money(s['net_pnl'])}' : s['expectancy_r'] != null ? ' · ${_r(s['expectancy_r'])}' : ''}',
-                        style: const TextStyle(color: _dim, fontSize: 13, fontFeatures: [FontFeature.tabularFigures()]),
+                        style: TextStyle(color: _dim, fontSize: 13, fontFeatures: [FontFeature.tabularFigures()]),
                       ),
                       if (s['label'] == 'profitable' || s['ranked'] == true) const Text(' ✓', style: TextStyle(color: _up, fontSize: 13)),
                     ]),
@@ -267,7 +268,7 @@ class _LedgerCard extends StatelessWidget {
           ],
           if (keys.isNotEmpty) Padding(
             padding: const EdgeInsets.only(top: 8),
-            child: ExcludeSemantics(child: Text('Stored under $keys', style: const TextStyle(color: _dim, fontSize: 11))),
+            child: ExcludeSemantics(child: Text('Stored under $keys', style: TextStyle(color: _dim, fontSize: 11))),
           ),
         ]),
       ),
@@ -278,7 +279,7 @@ class _LedgerCard extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
         decoration: BoxDecoration(border: Border.all(color: _stroke), borderRadius: BorderRadius.circular(8)),
         child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(label, style: const TextStyle(color: _dim, fontSize: 11)),
+          Text(label, style: TextStyle(color: _dim, fontSize: 11)),
           Text(value, style: TextStyle(color: color ?? Colors.white, fontSize: 16, fontWeight: FontWeight.w800, fontFeatures: const [FontFeature.tabularFigures()])),
         ]),
       );

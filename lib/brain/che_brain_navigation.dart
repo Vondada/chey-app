@@ -127,7 +127,7 @@ class _CheBrainSwitcherState extends State<CheBrainSwitcher> {
               decoration: InputDecoration(
                 isDense: true,
                 hintText: 'Find a brain by worker or role',
-                prefixIcon: const Icon(Icons.search_rounded, size: 16, color: CheColors.accent),
+                prefixIcon: Icon(Icons.search_rounded, size: 16, color: CheColors.accent),
                 filled: true,
                 fillColor: CheColors.surfaceHi,
                 contentPadding: const EdgeInsets.symmetric(vertical: 6),

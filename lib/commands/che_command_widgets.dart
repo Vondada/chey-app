@@ -353,7 +353,7 @@ class CheCommandSuggestionCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              const ExcludeSemantics(child: Icon(Icons.bolt_rounded, size: 18, color: CheColors.accent)),
+              ExcludeSemantics(child: Icon(Icons.bolt_rounded, size: 18, color: CheColors.accent)),
               const SizedBox(width: 6),
               Expanded(
                 child: Semantics(
@@ -369,7 +369,7 @@ class CheCommandSuggestionCard extends StatelessWidget {
                   HapticFeedback.selectionClick();
                   onDismiss();
                 },
-                icon: const Icon(Icons.close_rounded, size: 18, color: CheColors.textDim),
+                icon: Icon(Icons.close_rounded, size: 18, color: CheColors.textDim),
               ),
             ],
           ),

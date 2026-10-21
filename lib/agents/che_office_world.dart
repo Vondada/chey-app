@@ -332,7 +332,7 @@ class _CheOfficeWorldState extends State<CheOfficeWorld> with TickerProviderStat
       return box(Rect.fromLTWH(room.left + 60 + i * (w + 16), room.top + 46, w, 26),
           const Color(0xFF7FD4FF).withValues(alpha: 0.18), radius: 6, border: const Color(0xFF7FD4FF).withValues(alpha: 0.35));
     }
-    const warm = Color(0xFFE8B04A);
+    const warm = CheColors.markets;
     final frameColors = [CheColors.insights, CheColors.create, CheColors.music, warm, CheColors.accent];
     final seatRows = math.max(2, ((theater.height - 150) / 34).floor());
     return ExcludeSemantics(

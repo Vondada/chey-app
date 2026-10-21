@@ -9,6 +9,7 @@
 import 'package:flutter/material.dart';
 
 import 'che_screen_awareness.dart';
+import 'che_theme.dart';
 
 class CheControlHelp {
   const CheControlHelp({required this.name, required this.does, this.say = '', this.caution = ''});
@@ -335,7 +336,7 @@ class _CheHelpSheet extends StatelessWidget {
         child: ListView(padding: const EdgeInsets.all(16), shrinkWrap: true, children: [
           Semantics(header: true, child: Text('Help: $page', style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w800))),
           const SizedBox(height: 4),
-          const Text('Ask by voice or typing: "what is this button?", "what does Emergency Stop do?", "show me the pause button".', style: TextStyle(color: Color(0xFF8FA4A1))),
+          Text('Ask by voice or typing: "what is this button?", "what does Emergency Stop do?", "show me the pause button".', style: TextStyle(color: CheColors.textDim)),
           const SizedBox(height: 10),
           Wrap(spacing: 8, children: [
             FilledButton.icon(
@@ -353,7 +354,7 @@ class _CheHelpSheet extends StatelessWidget {
           for (final t in topics) ...[
             const SizedBox(height: 14),
             Text(t.title, style: const TextStyle(color: Color(0xFFFFD166), fontSize: 16, fontWeight: FontWeight.w800)),
-            if (t.summary.isNotEmpty) Text(t.summary, style: const TextStyle(color: Color(0xFF8FA4A1))),
+            if (t.summary.isNotEmpty) Text(t.summary, style: TextStyle(color: CheColors.textDim)),
             for (final i in t.items)
               Semantics(
                 label: i.spoken,
@@ -425,13 +426,13 @@ class CheHelpCenter extends StatelessWidget {
       backgroundColor: Colors.black,
       appBar: AppBar(backgroundColor: Colors.black, foregroundColor: Colors.white, title: const Text('Help Center')),
       body: ListView(padding: const EdgeInsets.all(16), children: [
-        const Text('Help for every screen that is open. Ask by voice or typing at any time: "what is this button?", "show me the Emergency Stop button", "walk me through this screen", "take me back to my meeting".',
-            style: TextStyle(color: Color(0xFF8FA4A1))),
+        Text('Help for every screen that is open. Ask by voice or typing at any time: "what is this button?", "show me the Emergency Stop button", "walk me through this screen", "take me back to my meeting".',
+            style: TextStyle(color: CheColors.textDim)),
         if (topics.isEmpty) const Padding(padding: EdgeInsets.only(top: 12), child: Text('No screen has listed its controls yet.', style: TextStyle(color: Colors.white))),
         for (final t in topics)
           ExpansionTile(
             title: Text(t.title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
-            subtitle: t.summary.isEmpty ? null : Text(t.summary, style: const TextStyle(color: Color(0xFF8FA4A1))),
+            subtitle: t.summary.isEmpty ? null : Text(t.summary, style: TextStyle(color: CheColors.textDim)),
             children: [for (final i in t.items) ListTile(title: Text(i.name, style: const TextStyle(color: Colors.white)), subtitle: Text(i.spoken, style: const TextStyle(color: Color(0xFFB8C7C4))))],
           ),
       ]),

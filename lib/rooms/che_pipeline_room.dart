@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
+import '../che_ui/che_theme.dart';
 
 class ChePipelineRoom extends StatefulWidget {
   const ChePipelineRoom({
@@ -30,7 +31,7 @@ class ChePipelineRoom extends StatefulWidget {
 }
 
 class _ChePipelineRoomState extends State<ChePipelineRoom> {
-  static const _teal = Color(0xFF34E0B8);
+  static final _teal = CheColors.accent;
   static const _stageLabels = {
     'lead': 'LEAD',
     'proposal': 'PROPOSAL · NEEDS YOU',
@@ -265,7 +266,7 @@ class _ChePipelineRoomState extends State<ChePipelineRoom> {
         ];
       case 'invoiced':
         return [
-          if (payUrl != null) SelectableText(payUrl, style: const TextStyle(color: _teal)),
+          if (payUrl != null) SelectableText(payUrl, style: TextStyle(color: _teal)),
           Wrap(
             children: [
               if (payUrl != null)
@@ -297,7 +298,7 @@ class _ChePipelineRoomState extends State<ChePipelineRoom> {
                 Expanded(
                   child: Text('${d['client_name']}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                 ),
-                if (price != null) Text('\$$price', style: const TextStyle(color: _teal, fontWeight: FontWeight.bold)),
+                if (price != null) Text('\$$price', style: TextStyle(color: _teal, fontWeight: FontWeight.bold)),
               ],
             ),
             const SizedBox(height: 2),

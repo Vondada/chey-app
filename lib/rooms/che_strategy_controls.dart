@@ -14,13 +14,14 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
 import '../che_ui/che_help.dart';
+import '../che_ui/che_theme.dart';
 
 const _up = Color(0xFF3DDC97);
 const _down = Color(0xFFFF5C7A);
-const _gold = Color(0xFFE8B04A);
-const _dim = Color(0xFF8FA4A1);
-const _panel = Color(0xFF0A1214);
-const _stroke = Color(0xFF1B2A2D);
+const _gold = CheColors.markets;
+final _dim = CheColors.textDim;
+final _panel = CheColors.surface;
+final _stroke = CheColors.stroke;
 
 const kReadControlsAloud = 'What are my trading limits?';
 
@@ -164,10 +165,10 @@ class _CheStrategyControlsPanelState extends State<CheStrategyControlsPanel> {
               const SizedBox(height: 8),
               for (final s in (m['summary'] as List? ?? const [])) Text('$s', style: const TextStyle(color: Colors.white, fontSize: 16)),
               const SizedBox(height: 8),
-              const Text('Impact', style: TextStyle(color: _dim, fontWeight: FontWeight.w700)),
+              Text('Impact', style: TextStyle(color: _dim, fontWeight: FontWeight.w700)),
               for (final s in (m['impact'] as List? ?? const [])) Text('• $s', style: const TextStyle(color: Colors.white, fontSize: 16)),
               const SizedBox(height: 6),
-              const Text('Paper only. Nothing has changed yet.', style: TextStyle(color: _dim)),
+              Text('Paper only. Nothing has changed yet.', style: TextStyle(color: _dim)),
               const SizedBox(height: 14),
               Row(children: [
                 Expanded(child: OutlinedButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Keep as is'))),
@@ -184,7 +185,7 @@ class _CheStrategyControlsPanelState extends State<CheStrategyControlsPanel> {
     final v = _v;
     return Material(
       color: _panel,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: const BorderSide(color: _stroke)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: BorderSide(color: _stroke)),
       child: Padding(
         padding: const EdgeInsets.all(14),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -195,10 +196,10 @@ class _CheStrategyControlsPanelState extends State<CheStrategyControlsPanel> {
               decoration: BoxDecoration(color: _gold.withValues(alpha: 0.18), borderRadius: BorderRadius.circular(6), border: Border.all(color: _gold)),
               child: const Text('PAPER ONLY', style: TextStyle(color: _gold, fontWeight: FontWeight.w800, fontSize: 12)),
             )),
-            const CheHelpButton(color: _dim, dense: true),
-            IconButton(tooltip: 'Read aloud', onPressed: () => widget.onAsk(kReadControlsAloud), icon: const Icon(Icons.volume_up, color: _dim)),
+            CheHelpButton(color: _dim, dense: true),
+            IconButton(tooltip: 'Read aloud', onPressed: () => widget.onAsk(kReadControlsAloud), icon: Icon(Icons.volume_up, color: _dim)),
           ]),
-          if (v == null && _error.isEmpty) const Padding(padding: EdgeInsets.all(12), child: Text('Reading your strategy controls…', style: TextStyle(color: _dim))),
+          if (v == null && _error.isEmpty) Padding(padding: EdgeInsets.all(12), child: Text('Reading your strategy controls…', style: TextStyle(color: _dim))),
           if (_error.isNotEmpty) Text('I could not read the strategy controls: $_error', style: const TextStyle(color: _down)),
           if (v != null) ..._body(v),
         ]),
@@ -218,7 +219,7 @@ class _CheStrategyControlsPanelState extends State<CheStrategyControlsPanel> {
       Semantics(liveRegion: false, label: 'Status: $status', excludeSemantics: true,
           child: Text(status, style: TextStyle(color: emergency ? _down : (stopped || pausedAll) ? _gold : _up, fontWeight: FontWeight.w700))),
       const SizedBox(height: 4),
-      const Text('A daily maximum is a ceiling, never a target: CHE never trades to fill it.', style: TextStyle(color: _dim, fontSize: 12)),
+      Text('A daily maximum is a ceiling, never a target: CHE never trades to fill it.', style: TextStyle(color: _dim, fontSize: 12)),
       const SizedBox(height: 10),
       Wrap(spacing: 8, runSpacing: 8, children: [
         _button(emergency ? 'Emergency Stop is on' : 'Emergency Stop', Icons.stop_circle, _down, emergency ? null : () => _change({'kind': 'emergency_stop'}),
@@ -252,14 +253,14 @@ class _CheStrategyControlsPanelState extends State<CheStrategyControlsPanel> {
         _stepper(kControlLabels[f]!, (c['account'] as Map? ?? const {})[f], f, null),
       const SizedBox(height: 12),
       const CheHelpTarget(name: 'Audit trail', child: Text('Audit trail', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700))),
-      if ((v['audit'] as List? ?? const []).isEmpty) const Text('No changes yet: every strategy is at its default.', style: TextStyle(color: _dim)),
+      if ((v['audit'] as List? ?? const []).isEmpty) Text('No changes yet: every strategy is at its default.', style: TextStyle(color: _dim)),
       for (final a in (v['audit'] as List? ?? const []).whereType<Map>().take(12))
         Semantics(
           label: '${a['at']}, ${a['who']}: ${a['summary']}',
           excludeSemantics: true,
           child: Padding(
             padding: const EdgeInsets.symmetric(vertical: 4),
-            child: Text('${_when(a['at'])} · ${a['who']} · ${a['summary']}', style: const TextStyle(color: _dim, fontSize: 13)),
+            child: Text('${_when(a['at'])} · ${a['who']} · ${a['summary']}', style: TextStyle(color: _dim, fontSize: 13)),
           ),
         ),
     ];
@@ -334,9 +335,9 @@ class _CheStrategyControlsPanelState extends State<CheStrategyControlsPanel> {
           ),
         ]),
         if (open) ..._registry(r),
-        if (open && skips.isEmpty) const Text('No skipped signal on record. A strategy enters only on its own valid signal.', style: TextStyle(color: _dim, fontSize: 13)),
+        if (open && skips.isEmpty) Text('No skipped signal on record. A strategy enters only on its own valid signal.', style: TextStyle(color: _dim, fontSize: 13)),
         if (open)
-          for (final k in skips) Text('${_when(k['time'])} · ${k['variant'] ?? ''} · ${k['side']} · ${k['reason']}', style: const TextStyle(color: _dim, fontSize: 13)),
+          for (final k in skips) Text('${_when(k['time'])} · ${k['variant'] ?? ''} · ${k['side']} · ${k['reason']}', style: TextStyle(color: _dim, fontSize: 13)),
       ]),
     );
   }
@@ -348,7 +349,7 @@ class _CheStrategyControlsPanelState extends State<CheStrategyControlsPanel> {
     Widget line(String k, Object? v) => Padding(
           padding: const EdgeInsets.only(top: 4),
           child: Text.rich(TextSpan(children: [
-            TextSpan(text: '$k: ', style: const TextStyle(color: _dim, fontWeight: FontWeight.w700)),
+            TextSpan(text: '$k: ', style: TextStyle(color: _dim, fontWeight: FontWeight.w700)),
             TextSpan(text: '$v', style: const TextStyle(color: Colors.white)),
           ]), style: const TextStyle(fontSize: 13)),
         );
@@ -368,7 +369,7 @@ class _CheStrategyControlsPanelState extends State<CheStrategyControlsPanel> {
           ? 'not run yet'
           : (bt['variants'] as List? ?? const []).whereType<Map>().map((v) => '${v['variant']}: ${v['trades']} trades, expectancy ${v['expectancy_r']} R${v['oos_trades'] == null ? '' : ', out of sample ${v['oos_trades']} trades at ${v['oos_expectancy_r']} R'}').join('; ')),
       const SizedBox(height: 4),
-      const Text('Skip reasons', style: TextStyle(color: _dim, fontWeight: FontWeight.w700, fontSize: 13)),
+      Text('Skip reasons', style: TextStyle(color: _dim, fontWeight: FontWeight.w700, fontSize: 13)),
     ];
   }
 
@@ -379,7 +380,7 @@ class _CheStrategyControlsPanelState extends State<CheStrategyControlsPanel> {
     void set(int to) => _change({'kind': 'set', 'scope': scope ?? 'all', 'field': field, 'value': to.clamp(lo, hi)});
     final who = scope == null ? 'account' : 'this strategy';
     return CheHelpTarget(name: label, child: Row(children: [
-      Expanded(child: Text(label, style: const TextStyle(color: _dim, fontSize: 13))),
+      Expanded(child: Text(label, style: TextStyle(color: _dim, fontSize: 13))),
       Semantics(button: true, label: 'Decrease $label for $who, now $n', excludeSemantics: true,
           child: IconButton(onPressed: _busy || n <= lo ? null : () => set(n - step), icon: const Icon(Icons.remove_circle_outline, color: Colors.white))),
       Semantics(label: '$label: $n', excludeSemantics: true, child: SizedBox(width: 56, child: Text('$n', textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700)))),

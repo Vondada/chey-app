@@ -8,11 +8,12 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
+import '../che_ui/che_theme.dart';
 
 const _dim = Color(0xFF9A8FA6);
 const _panel = Color(0xFF130A14);
 const _good = Color(0xFF3DDC97);
-const _warn = Color(0xFFE8B04A);
+const _warn = CheColors.markets;
 
 /// The words for each state, the same ones CHE says aloud.
 const cheStudioStateWords = {

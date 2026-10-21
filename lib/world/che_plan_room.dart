@@ -15,6 +15,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../che_ui/che_theme.dart';
 
 const _tiers = ['cheapest', 'balanced', 'premium'];
 const _tierNames = {'cheapest': 'Cheapest', 'balanced': 'Balanced', 'premium': 'Premium'};
@@ -221,7 +222,7 @@ class ChePlanRoom extends StatefulWidget {
 
 class ChePlanRoomState extends State<ChePlanRoom> {
   static const _teal = Color(0xFF3FD0C9);
-  static const _gold = Color(0xFFE8B04A);
+  static const _gold = CheColors.markets;
   ChePlan? plan;
   String? _error;
   String tier = 'balanced';
@@ -506,7 +507,7 @@ class _PlanMapPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     const teal = Color(0xFF3FD0C9);
-    const gold = Color(0xFFE8B04A);
+    const gold = CheColors.markets;
     for (final (n, name, _) in plan.stages) {
       _text(canvas, '$n. $name', Offset(_PlanMap.laneLabel + (n - 1) * _PlanMap.stageWidth + 8, 4), _PlanMap.stageWidth - 16, color: Colors.white70, size: 11, weight: FontWeight.w700, lines: 1);
     }

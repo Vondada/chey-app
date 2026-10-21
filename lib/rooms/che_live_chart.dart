@@ -261,7 +261,7 @@ class _CheLiveChartPanelState extends State<CheLiveChartPanel> {
   Widget _chart(BuildContext context, String url) {
     if (widget.chartBuilder != null) return widget.chartBuilder!(context, url);
     if (kIsWeb || WebViewPlatform.instance == null) {
-      return const Center(child: Text('The live chart runs in the CHE iPhone app.', style: CheType.caption));
+      return Center(child: Text('The live chart runs in the CHE iPhone app.', style: CheType.caption));
     }
     return _CheChartWebView(url: url, onLoaded: _loaded);
   }

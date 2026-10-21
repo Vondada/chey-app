@@ -33,7 +33,7 @@ extension CheRoomInfo on CheRoom {
         CheRoom.core => CheColors.accent,
         CheRoom.studio => const Color(0xFFFF4D6D),
         CheRoom.office => const Color(0xFF8FB8FF),
-        CheRoom.conference => const Color(0xFFE8B04A),
+        CheRoom.conference => CheColors.markets,
         CheRoom.brain => const Color(0xFF5CC8FF),
         CheRoom.markets => const Color(0xFF3DDC97),
         CheRoom.art => const Color(0xFFFF9F5A),

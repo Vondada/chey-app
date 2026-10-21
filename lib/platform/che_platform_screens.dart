@@ -94,7 +94,7 @@ class _ChePriorityNotificationBannerState extends State<ChePriorityNotificationB
                       if (!mounted || result != ChePlatformAvailability.live) return;
                       setState(() => _banners = _banners.where((item) => item.id != top.id).toList());
                     },
-                    icon: const Icon(Icons.check_rounded, color: CheColors.text),
+                    icon: Icon(Icons.check_rounded, color: CheColors.text),
                   ),
                 ),
               ],
@@ -466,7 +466,7 @@ class _ChePlatformDevicesScreenState extends State<ChePlatformDevicesScreen> {
               ),
           const SizedBox(height: 12),
           Text('Share access', style: CheType.headline),
-          const Text(
+          Text(
             'Enrollment tokens are created only by the owner endpoint. This screen does not invent a paired device.',
             style: CheType.bodyDim,
           ),
@@ -572,7 +572,7 @@ class _CheTwoBrainsViewState extends State<CheTwoBrainsView> {
                   IconButton(
                     tooltip: 'Open the Knowledge Atlas',
                     onPressed: widget.onOpenAtlas,
-                    icon: const Icon(Icons.school_rounded, color: CheColors.textDim),
+                    icon: Icon(Icons.school_rounded, color: CheColors.textDim),
                   ),
                 for (var i = 0; i < cheBrainPresentations.length; i++)
                   Padding(

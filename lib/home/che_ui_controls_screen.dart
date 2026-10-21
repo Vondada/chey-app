@@ -5,6 +5,7 @@ import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 
 import '../che_native_voice.dart';
+import '../che_ui/che_palettes.dart';
 import '../che_ui/che_theme.dart';
 import '../che_ui/che_ui_preferences.dart';
 import '../che_ui/che_ui_voice_command.dart';
@@ -48,19 +49,13 @@ class CheUiControlsScreen extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text('Theme', style: CheType.label.copyWith(color: cheTextOf(context))),
+                    const SizedBox(height: 4),
+                    Text('Changes every screen, right away.', style: CheType.caption.copyWith(color: cheTextDimOf(context))),
                     const SizedBox(height: CheSpace.sm),
                     PillToggle(
-                      options: const ['Dark', 'Light', 'System'],
-                      index: switch (prefs.themeMode) {
-                        ThemeMode.dark => 0,
-                        ThemeMode.light => 1,
-                        ThemeMode.system => 2,
-                      },
-                      onChanged: (i) => prefs.setThemeMode(switch (i) {
-                        1 => ThemeMode.light,
-                        2 => ThemeMode.system,
-                        _ => ThemeMode.dark,
-                      }),
+                      options: [for (final p in kCheColorPalettes) p.label],
+                      index: kCheColorPalettes.indexWhere((p) => p.id == prefs.palette.id).clamp(0, kCheColorPalettes.length - 1),
+                      onChanged: (i) => prefs.setPalette(kCheColorPalettes[i]),
                     ),
                     const SizedBox(height: CheSpace.lg),
                     Text('Avatar style', style: CheType.label.copyWith(color: cheTextOf(context))),

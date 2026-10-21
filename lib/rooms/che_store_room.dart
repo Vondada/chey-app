@@ -9,6 +9,7 @@ import '../widgets/che_native_scene_world.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
+import '../che_ui/che_theme.dart';
 
 class CheStoreRoom extends StatefulWidget {
   const CheStoreRoom({
@@ -31,7 +32,7 @@ class CheStoreRoom extends StatefulWidget {
 }
 
 class _CheStoreRoomState extends State<CheStoreRoom> {
-  static const _teal = Color(0xFF34E0B8);
+  static final _teal = CheColors.accent;
 
   late final http.Client _http = widget.client ?? http.Client();
   String _mode = 'not_connected';
@@ -275,7 +276,7 @@ class _CheStoreRoomState extends State<CheStoreRoom> {
             Row(
               children: [
                 Expanded(child: Text('${p['name']}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16))),
-                Text(_money(p['unit_amount'] as num?), style: const TextStyle(color: _teal, fontWeight: FontWeight.bold)),
+                Text(_money(p['unit_amount'] as num?), style: TextStyle(color: _teal, fontWeight: FontWeight.bold)),
               ],
             ),
             if ('${p['description'] ?? ''}'.isNotEmpty)
@@ -302,7 +303,7 @@ class _CheStoreRoomState extends State<CheStoreRoom> {
             ],
             if (link != null) ...[
               const SizedBox(height: 8),
-              SelectableText(link, style: const TextStyle(color: _teal)),
+              SelectableText(link, style: TextStyle(color: _teal)),
               TextButton.icon(
                 onPressed: () async {
                   await Clipboard.setData(ClipboardData(text: link));

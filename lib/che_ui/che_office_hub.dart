@@ -288,7 +288,7 @@ class _CheSectionShellState extends State<CheSectionShell> {
             CheHeader(
               compact: true,
               leading: IconButton(
-                icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 19, color: CheColors.text),
+                icon: Icon(Icons.arrow_back_ios_new_rounded, size: 19, color: CheColors.text),
                 onPressed: () => Navigator.of(context).maybePop(),
               ),
               trailing: CheIconButton(icon: Icons.chat_bubble_rounded, glow: true, onTap: widget.onOpenChat),
@@ -386,7 +386,7 @@ class CheFeatureCard extends StatelessWidget {
             ]),
           ),
           if (trailing != null) trailing! else if (onTap != null)
-            const Padding(
+            Padding(
               padding: EdgeInsets.only(left: 6, top: 10),
               child: Icon(Icons.chevron_right_rounded, color: CheColors.textFaint),
             ),

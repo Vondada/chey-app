@@ -77,7 +77,7 @@ extension _CheHomeHubRooms on _CHEHomeState {
           connected ? 'CONNECTED' : (onTap != null ? 'SET UP' : 'NOT CONNECTED'),
           style: TextStyle(
             color: connected
-                ? const Color(0xFF34E0B8)
+                ? CheColors.accent
                 : (onTap != null ? Colors.amberAccent : Colors.white38),
             fontSize: 10,
             fontWeight: FontWeight.bold,

@@ -120,7 +120,7 @@ class _CoreSpherePainter extends CustomPainter {
       center,
       coreRadius,
       Paint()
-        ..shader = const RadialGradient(
+        ..shader = RadialGradient(
           colors: [Color(0xFFF4FFFC), CheColors.accent, CheColors.accentDeep],
         ).createShader(Rect.fromCircle(center: center, radius: coreRadius)),
     );

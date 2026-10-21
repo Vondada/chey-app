@@ -670,14 +670,14 @@ class CheBrainCard extends StatelessWidget {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: CheColors.surface,
-        title: const Text('Teach CHE something', style: CheType.headline),
+        title: Text('Teach CHE something', style: CheType.headline),
         content: TextField(
           controller: ctrl,
           autofocus: true,
           minLines: 1,
           maxLines: 4,
           style: CheType.body,
-          decoration: const InputDecoration(hintText: 'e.g. I trade futures on NinjaTrader', hintStyle: CheType.bodyDim),
+          decoration: InputDecoration(hintText: 'e.g. I trade futures on NinjaTrader', hintStyle: CheType.bodyDim),
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
@@ -704,9 +704,9 @@ class CheBrainCard extends StatelessWidget {
           padding: const EdgeInsets.all(CheSpace.lg),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Row(children: [
-              const Icon(Icons.psychology_rounded, color: CheColors.accent, size: 22),
+              Icon(Icons.psychology_rounded, color: CheColors.accent, size: 22),
               const SizedBox(width: 8),
-              const Expanded(child: Text('CHE Brain', style: CheType.headline)),
+              Expanded(child: Text('CHE Brain', style: CheType.headline)),
               CheIconButton(icon: Icons.add_rounded, size: 34, onTap: () => _addFact(context), tooltip: 'Teach CHE'),
             ]),
             const SizedBox(height: 4),
@@ -722,7 +722,7 @@ class CheBrainCard extends StatelessWidget {
             ),
             const SizedBox(height: CheSpace.md),
             if (brain.facts.isEmpty)
-              const Text('No facts yet. Tell CHE things to remember, or tap + to teach her.', style: CheType.bodyDim)
+              Text('No facts yet. Tell CHE things to remember, or tap + to teach her.', style: CheType.bodyDim)
             else
               for (final f in brain.facts.take(6))
                 Dismissible(
@@ -766,14 +766,14 @@ class CheBrainCard extends StatelessWidget {
                 ]),
               ),
             ],
-            const Divider(color: CheColors.stroke, height: CheSpace.xl),
+            Divider(color: CheColors.stroke, height: CheSpace.xl),
             ChePressable(
               onTap: () => Navigator.of(context).push(CheRoute(builder: (_) => _SoulScreen(brain: brain))),
               child: Row(children: [
-                const Icon(Icons.favorite_outline_rounded, size: 18, color: CheColors.accent),
+                Icon(Icons.favorite_outline_rounded, size: 18, color: CheColors.accent),
                 const SizedBox(width: 8),
-                const Expanded(child: Text('Soul — CHE’s personality', style: CheType.label)),
-                const Icon(Icons.chevron_right_rounded, color: CheColors.textFaint),
+                Expanded(child: Text('Soul — CHE’s personality', style: CheType.label)),
+                Icon(Icons.chevron_right_rounded, color: CheColors.textFaint),
               ]),
             ),
             const SizedBox(height: CheSpace.md),
@@ -781,10 +781,10 @@ class CheBrainCard extends StatelessWidget {
               onTap: () => Navigator.of(context)
                   .push(CheRoute(builder: (_) => CheConversationLogScreen(controller: controller))),
               child: Row(children: [
-                const Icon(Icons.forum_outlined, size: 18, color: CheColors.accent),
+                Icon(Icons.forum_outlined, size: 18, color: CheColors.accent),
                 const SizedBox(width: 8),
-                const Expanded(child: Text('Conversation log — read everything word for word', style: CheType.label)),
-                const Icon(Icons.chevron_right_rounded, color: CheColors.textFaint),
+                Expanded(child: Text('Conversation log — read everything word for word', style: CheType.label)),
+                Icon(Icons.chevron_right_rounded, color: CheColors.textFaint),
               ]),
             ),
           ]),
@@ -813,7 +813,7 @@ class _AllFactsScreen extends StatelessWidget {
                 subtitle: 'EVERYTHING CHE KNOWS',
                 status: null,
                 leading: IconButton(
-                  icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 19, color: CheColors.text),
+                  icon: Icon(Icons.arrow_back_ios_new_rounded, size: 19, color: CheColors.text),
                   onPressed: () => Navigator.of(context).maybePop(),
                 ),
               ),
@@ -838,7 +838,7 @@ class _AllFactsScreen extends StatelessWidget {
                         subtitle: Text('${f.source == 'che' ? 'Saved by CHE' : 'You taught this'} · ${f.at.toLocal().toString().substring(0, 16)}',
                             style: CheType.caption),
                         trailing: IconButton(
-                          icon: const Icon(Icons.delete_outline_rounded, color: CheColors.textDim),
+                          icon: Icon(Icons.delete_outline_rounded, color: CheColors.textDim),
                           onPressed: () => brain.removeFact(f.id),
                         ),
                       ),
@@ -883,7 +883,7 @@ class _SoulScreenState extends State<_SoulScreen> {
               subtitle: 'WHO CHE IS',
               status: null,
               leading: IconButton(
-                icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 19, color: CheColors.text),
+                icon: Icon(Icons.arrow_back_ios_new_rounded, size: 19, color: CheColors.text),
                 onPressed: () => Navigator.of(context).maybePop(),
               ),
               trailing: TextButton(
@@ -917,7 +917,7 @@ class _SoulScreenState extends State<_SoulScreen> {
                 await widget.brain.resetSoul();
                 setState(() => _t.text = widget.brain.soul);
               },
-              child: const Text('Reset to original personality', style: CheType.caption),
+              child: Text('Reset to original personality', style: CheType.caption),
             ),
           ]),
         ),

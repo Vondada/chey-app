@@ -243,7 +243,7 @@ class _CheAppsHubTabState extends State<CheAppsHubTab> {
       children: [
         const Text('Apps inside CHE', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800)),
         const SizedBox(height: 4),
-        const Text(
+        Text(
           'Web-capable services open without leaving CHE. Tap Grok for native Worker chat (long-press for grok.com). Native-only features use the official app when iOS or the service requires it.',
           style: TextStyle(color: CheColors.textDim),
         ),
@@ -286,7 +286,7 @@ class _CheAppsHubTabState extends State<CheAppsHubTab> {
                       style: const TextStyle(fontWeight: FontWeight.w700),
                     ),
                     if (app.name == 'Grok')
-                      const Text(
+                      Text(
                         'Native',
                         style: TextStyle(fontSize: 10, color: CheColors.accent, fontWeight: FontWeight.w700),
                       ),

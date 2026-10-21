@@ -19,13 +19,14 @@ import 'package:http/http.dart' as http;
 
 import '../che_ui/che_help.dart';
 import 'che_trading_ledgers.dart' show EquityCurvePainter;
+import '../che_ui/che_theme.dart';
 
 const _up = Color(0xFF3DDC97);
 const _down = Color(0xFFFF5C7A);
-const _gold = Color(0xFFE8B04A);
-const _dim = Color(0xFF8FA4A1);
-const _panel = Color(0xFF0A1214);
-const _stroke = Color(0xFF1B2A2D);
+const _gold = CheColors.markets;
+final _dim = CheColors.textDim;
+final _panel = CheColors.surface;
+final _stroke = CheColors.stroke;
 const _blue = Color(0xFF6CB4FF);
 
 double? _num(Object? v) => v is num ? v.toDouble() : double.tryParse('${v ?? ''}');
@@ -46,7 +47,7 @@ String _clock(Object? iso) {
 
 /// Alpaca's order status groups, in the order the owner reads them, with a
 /// plain-English label and a colour. The label always accompanies the colour.
-const kAlpacaStatusGroups = <String, (String, Color)>{
+final kAlpacaStatusGroups = <String, (String, Color)>{
   'submitted': ('Submitted', _blue),
   'accepted': ('Accepted, waiting', _blue),
   'partially_filled': ('Partially filled', _gold),
@@ -177,13 +178,13 @@ class _CheAlpacaPaperPanelState extends State<CheAlpacaPaperPanel> {
     // A Material (not a decorated box) so the receipt rows' ink shows on the panel.
     return Material(
       color: _panel,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: const BorderSide(color: _stroke)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: BorderSide(color: _stroke)),
       child: Padding(
         padding: const EdgeInsets.all(14),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           _header(d),
           const SizedBox(height: 8),
-          if (d == null && _error.isEmpty) const Padding(padding: EdgeInsets.all(12), child: Text('Reading the Alpaca paper account…', style: TextStyle(color: _dim))),
+          if (d == null && _error.isEmpty) Padding(padding: EdgeInsets.all(12), child: Text('Reading the Alpaca paper account…', style: TextStyle(color: _dim))),
           if (d == null && _error.isNotEmpty) Text('I could not read the Alpaca paper account: $_error', style: const TextStyle(color: _down)),
           if (d != null) ..._body(d),
         ]),
@@ -210,7 +211,7 @@ class _CheAlpacaPaperPanelState extends State<CheAlpacaPaperPanel> {
         ),
         const SizedBox(width: 8),
         const Expanded(child: Text('Alpaca stocks', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w800))),
-        const CheHelpButton(color: _dim, dense: true),
+        CheHelpButton(color: _dim, dense: true),
         TextButton.icon(
           style: TextButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal: 6)),
           onPressed: () => widget.onAsk(kReadAlpacaAloud),
@@ -226,7 +227,7 @@ class _CheAlpacaPaperPanelState extends State<CheAlpacaPaperPanel> {
           Expanded(child: Text(fresh, style: TextStyle(color: _stale ? _gold : _dim, fontSize: 12))),
         ]),
       ),
-      const Text('Separate from CHE\'s MNQ/NQ futures paper simulations and from Tradovate. Nothing here is summed with them.', style: TextStyle(color: _dim, fontSize: 12)),
+      Text('Separate from CHE\'s MNQ/NQ futures paper simulations and from Tradovate. Nothing here is summed with them.', style: TextStyle(color: _dim, fontSize: 12)),
     ]);
   }
 
@@ -274,7 +275,7 @@ class _CheAlpacaPaperPanelState extends State<CheAlpacaPaperPanel> {
         _legend(counts),
         if (markers.isNotEmpty) ...[
           const SizedBox(height: 6),
-          const Text('On this chart', style: TextStyle(color: _dim, fontWeight: FontWeight.w700)),
+          Text('On this chart', style: TextStyle(color: _dim, fontWeight: FontWeight.w700)),
           for (final m in markers.reversed.take(12))
             ListTile(
               dense: true,
@@ -285,16 +286,16 @@ class _CheAlpacaPaperPanelState extends State<CheAlpacaPaperPanel> {
             ),
         ],
         const SizedBox(height: 10),
-        const Text('Open positions', style: TextStyle(color: _dim, fontWeight: FontWeight.w700)),
+        Text('Open positions', style: TextStyle(color: _dim, fontWeight: FontWeight.w700)),
         if (positions.isEmpty) const Text('No open positions.', style: TextStyle(color: Colors.white)),
         for (final p in positions) _position(p),
         const SizedBox(height: 10),
-        const Text('Orders, newest first', style: TextStyle(color: _dim, fontWeight: FontWeight.w700)),
+        Text('Orders, newest first', style: TextStyle(color: _dim, fontWeight: FontWeight.w700)),
         for (final o in orders.take(20)) _order(o),
       ],
       if (history.length >= 2) ...[
         const SizedBox(height: 10),
-        const Text('Account profit and loss, last month (Alpaca portfolio history)', style: TextStyle(color: _dim, fontWeight: FontWeight.w700)),
+        Text('Account profit and loss, last month (Alpaca portfolio history)', style: TextStyle(color: _dim, fontWeight: FontWeight.w700)),
         Semantics(
           label: 'Account profit and loss over the last month, ending at ${_money(history.last)}',
           child: SizedBox(height: 90, child: CustomPaint(painter: EquityCurvePainter(points: history, unit: r'$'), size: Size.infinite)),
@@ -311,7 +312,7 @@ class _CheAlpacaPaperPanelState extends State<CheAlpacaPaperPanel> {
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(border: Border.all(color: _stroke), borderRadius: BorderRadius.circular(10)),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(label, style: const TextStyle(color: _dim, fontSize: 12)),
+              Text(label, style: TextStyle(color: _dim, fontSize: 12)),
               Text(value, style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w800)),
             ]),
           ),
@@ -333,7 +334,7 @@ class _CheAlpacaPaperPanelState extends State<CheAlpacaPaperPanel> {
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(border: Border.all(color: color.withValues(alpha: 0.6)), borderRadius: BorderRadius.circular(10)),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(label, style: const TextStyle(color: _dim, fontSize: 12)),
+              Text(label, style: TextStyle(color: _dim, fontSize: 12)),
               Row(mainAxisSize: MainAxisSize.min, children: [
                 Icon(x == null || x == 0 ? Icons.remove : x > 0 ? Icons.arrow_upward : Icons.arrow_downward, size: 16, color: color),
                 Text(' $word ${x == null ? '' : _money(x.abs())}', style: TextStyle(color: color, fontSize: 16, fontWeight: FontWeight.w800)),
@@ -382,7 +383,7 @@ class _CheAlpacaPaperPanelState extends State<CheAlpacaPaperPanel> {
       dense: true,
       contentPadding: EdgeInsets.zero,
       title: Text('${p['symbol']} · ${p['side']} ${_num(p['qty'])?.toStringAsFixed(0)} shares at ${_money(p['avg_entry_price'])}', style: const TextStyle(color: Colors.white)),
-      subtitle: Text('Now ${_money(p['current_price'])} · value ${_money(p['market_value'])}', style: const TextStyle(color: _dim)),
+      subtitle: Text('Now ${_money(p['current_price'])} · value ${_money(p['market_value'])}', style: TextStyle(color: _dim)),
       trailing: Text('${pl == null ? '' : pl >= 0 ? 'up ' : 'down '}${_money(pl?.abs())}', style: TextStyle(color: color, fontWeight: FontWeight.w800)),
     );
   }
@@ -430,15 +431,15 @@ class _CheAlpacaPaperPanelState extends State<CheAlpacaPaperPanel> {
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 2),
                 child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  SizedBox(width: 130, child: Text(r.$1, style: const TextStyle(color: _dim))),
+                  SizedBox(width: 130, child: Text(r.$1, style: TextStyle(color: _dim))),
                   Expanded(child: Text(r.$2, style: const TextStyle(color: Colors.white))),
                 ]),
               ),
             const SizedBox(height: 8),
-            Text(fills.isEmpty ? 'Fills: none confirmed by Alpaca.' : 'Fills confirmed by Alpaca:', style: const TextStyle(color: _dim, fontWeight: FontWeight.w700)),
+            Text(fills.isEmpty ? 'Fills: none confirmed by Alpaca.' : 'Fills confirmed by Alpaca:', style: TextStyle(color: _dim, fontWeight: FontWeight.w700)),
             for (final f in fills) Text('${_num(f['qty'])?.toStringAsFixed(0)} shares at ${_money(f['price'])}, ${_clock(f['time'])} (${f['kind']})', style: const TextStyle(color: Colors.white)),
             const SizedBox(height: 8),
-            const Text('Paper money only. CHE shows what Alpaca reports and never marks an order as executed before Alpaca confirms a fill.', style: TextStyle(color: _dim, fontSize: 12)),
+            Text('Paper money only. CHE shows what Alpaca reports and never marks an order as executed before Alpaca confirms a fill.', style: TextStyle(color: _dim, fontSize: 12)),
             Align(alignment: Alignment.centerRight, child: TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Close receipt'))),
           ]),
         ),
@@ -500,7 +501,7 @@ class AlpacaChartPainter extends CustomPainter {
     canvas.drawRect(Offset.zero & size, Paint()..color = const Color(0xFF05080A));
     final f = _frame();
     if (f == null) {
-      final tp = TextPainter(text: const TextSpan(text: 'No candles for this symbol yet', style: TextStyle(color: _dim)), textDirection: TextDirection.ltr)..layout();
+      final tp = TextPainter(text: TextSpan(text: 'No candles for this symbol yet', style: TextStyle(color: _dim)), textDirection: TextDirection.ltr)..layout();
       tp.paint(canvas, Offset(size.width / 2 - tp.width / 2, size.height / 2));
       return;
     }
@@ -510,7 +511,7 @@ class AlpacaChartPainter extends CustomPainter {
     for (var k = 0; k <= 4; k++) {
       final v = f.lo + (f.hi - f.lo) * k / 4;
       canvas.drawLine(Offset(0, y(v)), Offset(size.width - _right, y(v)), grid);
-      final tp = TextPainter(text: TextSpan(text: v.toStringAsFixed(2), style: const TextStyle(color: _dim, fontSize: 10)), textDirection: TextDirection.ltr)..layout();
+      final tp = TextPainter(text: TextSpan(text: v.toStringAsFixed(2), style: TextStyle(color: _dim, fontSize: 10)), textDirection: TextDirection.ltr)..layout();
       tp.paint(canvas, Offset(size.width - _right + 4, y(v) - 6));
     }
     for (var i = 0; i < bars.length; i++) {

@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import '../browser/che_embedded_app_shell.dart';
+import '../che_ui/che_theme.dart';
 
 class ChePluginWebApp extends StatefulWidget {
   const ChePluginWebApp({super.key, this.html, this.url, this.onPrompt});
@@ -25,7 +26,7 @@ class _ChePluginWebAppState extends State<ChePluginWebApp> {
     super.initState();
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setBackgroundColor(const Color(0xFF030607))
+      ..setBackgroundColor(CheColors.bg)
       ..addJavaScriptChannel('CHE', onMessageReceived: (message) {
         final text = message.message.trim();
         if (text.isNotEmpty) widget.onPrompt?.call(text.length > 2000 ? text.substring(0, 2000) : text);

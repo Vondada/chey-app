@@ -642,7 +642,7 @@ class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom> {
                       decoration: InputDecoration(
                         isDense: true,
                         hintText: c.scope == null ? 'Find a memory, then fly to it' : "Find in ${c.scope}'s brain",
-                        prefixIcon: const Icon(Icons.search_rounded, size: 18, color: CheColors.accent),
+                        prefixIcon: Icon(Icons.search_rounded, size: 18, color: CheColors.accent),
                         suffixIcon: IconButton(tooltip: 'Fly to the best match', icon: const Icon(Icons.arrow_forward_rounded, size: 18), onPressed: () => _find(_search.text)),
                         filled: true,
                         fillColor: CheColors.surfaceHi,

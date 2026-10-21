@@ -700,7 +700,7 @@ class StepLine extends StatelessWidget {
     final Widget icon = switch (status) {
       StepStatus.done => const Icon(Icons.check_rounded, size: 15, color: CheColors.success),
       StepStatus.error => const Icon(Icons.error_outline_rounded, size: 15, color: CheColors.danger),
-      StepStatus.running => const SizedBox(
+      StepStatus.running => SizedBox(
           width: 12,
           height: 12,
           child: CircularProgressIndicator(strokeWidth: 1.6, color: CheColors.accent),
@@ -763,7 +763,7 @@ class _ThinkingShimmerState extends State<ThinkingShimmer> with SingleTickerProv
           return LinearGradient(
             begin: Alignment(x - 1, 0),
             end: Alignment(x, 0),
-            colors: const [CheColors.textFaint, CheColors.text, CheColors.textFaint],
+            colors: [CheColors.textFaint, CheColors.text, CheColors.textFaint],
           ).createShader(r);
         },
         child: child,
@@ -886,7 +886,7 @@ class _RememberChip extends StatelessWidget {
         border: Border.all(color: CheColors.accent.withValues(alpha: 0.35)),
       ),
       child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const Icon(Icons.psychology_rounded, size: 16, color: CheColors.accent),
+        Icon(Icons.psychology_rounded, size: 16, color: CheColors.accent),
         const SizedBox(width: 8),
         Expanded(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -934,7 +934,7 @@ class _Paragraphs extends StatelessWidget {
           margin: const EdgeInsets.only(top: 9, right: 10),
           width: 5,
           height: 5,
-          decoration: const BoxDecoration(color: CheColors.accent, shape: BoxShape.circle),
+          decoration: BoxDecoration(color: CheColors.accent, shape: BoxShape.circle),
         );
       } else if (RegExp(r'^\s*\d+[.)]\s').hasMatch(raw)) {
         final m = RegExp(r'^\s*(\d+)[.)]\s').firstMatch(raw)!;
@@ -1037,9 +1037,9 @@ class CodeCard extends StatelessWidget {
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         Container(
           padding: const EdgeInsets.fromLTRB(12, 8, 6, 8),
-          decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: CheColors.stroke))),
+          decoration: BoxDecoration(border: Border(bottom: BorderSide(color: CheColors.stroke))),
           child: Row(children: [
-            const Icon(Icons.code_rounded, size: 16, color: CheColors.accent),
+            Icon(Icons.code_rounded, size: 16, color: CheColors.accent),
             const SizedBox(width: 8),
             Expanded(
               child: Text(filename ?? 'code',
@@ -1047,7 +1047,7 @@ class CodeCard extends StatelessWidget {
             ),
             IconButton(
               visualDensity: VisualDensity.compact,
-              icon: const Icon(Icons.copy_rounded, size: 16, color: CheColors.textDim),
+              icon: Icon(Icons.copy_rounded, size: 16, color: CheColors.textDim),
               onPressed: () {
                 Clipboard.setData(ClipboardData(text: code));
                 HapticFeedback.lightImpact();

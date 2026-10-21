@@ -639,7 +639,7 @@ class _Theater3DStage extends StatelessWidget {
     ];
     if (visitors.isEmpty) {
       visitors.add(
-        const CheSceneEntity(
+        CheSceneEntity(
           id: 'che',
           label: 'CHE',
           description: 'Theater host',

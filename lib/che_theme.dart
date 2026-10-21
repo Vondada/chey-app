@@ -10,22 +10,25 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
+// The shared tokens below follow the owner's palette (Settings > Appearance) through the che_ui design system.
+import 'che_ui/che_theme.dart' as kit;
+
 class CheColors {
   CheColors._();
 
-  static const Color bg = Color(0xFF030607); // kit bg
-  static const Color bgDeep = Color(0xFF030607); // alias for legacy screens
-  static const Color panel = Color(0xFF0A1214); // kit surface
+  static Color get bg => kit.CheColors.bg; // kit bg
+  static Color get bgDeep => kit.CheColors.bg; // alias for legacy screens
+  static Color get panel => kit.CheColors.surface; // kit surface
   static const Color panelGlass = Color(0xCC101B1E);
-  static const Color accent = Color(0xFF34E0B8); // logo main
-  static const Color accentDim = Color(0xFF0C9A7E); // logo deep
+  static Color get accent => kit.CheColors.accent; // logo main
+  static Color get accentDim => kit.CheColors.accentDeep; // logo deep
   static const Color violet = Color(0xFF8B7BFF);
   static const Color amber = Color(0xFFFFC876); // alias for legacy screens
-  static const Color rose = Color(0xFFFF7E9B);
-  static const Color textPrimary = Color(0xFFEAF4F2); // alias for legacy screens
-  static const Color textDim = Color(0xFF8FA4A1);
+  static final Color rose = Color(0xFFFF7E9B);
+  static Color get textPrimary => kit.CheColors.text; // alias for legacy screens
+  static Color get textDim => kit.CheColors.textDim;
 
-  static const List<Color> buildingPalette = [
+  static List<Color> buildingPalette = [
     accent,
     violet,
     amber,
@@ -46,7 +49,7 @@ class CheBackdrop extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return DecoratedBox(
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         gradient: RadialGradient(
           center: Alignment(0, -0.6),
           radius: 1.4,
@@ -64,14 +67,15 @@ class CheGlassPanel extends StatelessWidget {
   const CheGlassPanel({
     super.key,
     required this.child,
-    this.glow = CheColors.accent,
+    this.glow,
     this.padding = const EdgeInsets.all(16),
     this.borderRadius = 20,
     this.onTap,
   });
 
   final Widget child;
-  final Color glow;
+  /// The border and shadow colour; the owner's accent when not given.
+  final Color? glow;
   final EdgeInsets padding;
   final double borderRadius;
   final VoidCallback? onTap;
@@ -83,10 +87,10 @@ class CheGlassPanel extends StatelessWidget {
       decoration: BoxDecoration(
         color: CheColors.panelGlass,
         borderRadius: BorderRadius.circular(borderRadius),
-        border: Border.all(color: glow.withValues(alpha: 0.35), width: 1),
+        border: Border.all(color: (glow ?? CheColors.accent).withValues(alpha: 0.35), width: 1),
         boxShadow: [
           BoxShadow(
-            color: glow.withValues(alpha: 0.16),
+            color: (glow ?? CheColors.accent).withValues(alpha: 0.16),
             blurRadius: 24,
             spreadRadius: -4,
           ),

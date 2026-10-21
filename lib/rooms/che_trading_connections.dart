@@ -11,12 +11,13 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
+import '../che_ui/che_theme.dart';
 
-const _dim = Color(0xFF8FA4A1);
-const _panel = Color(0xFF0A1214);
-const _stroke = Color(0xFF1B2A2D);
+final _dim = CheColors.textDim;
+final _panel = CheColors.surface;
+final _stroke = CheColors.stroke;
 const _good = Color(0xFF3DDC97);
-const _warn = Color(0xFFE8B04A);
+const _warn = CheColors.markets;
 const _bad = Color(0xFFFF5C7A);
 
 /// The words for each state, the same ones CHE says aloud.
@@ -183,16 +184,16 @@ class _CheTradingConnectionsPanelState extends State<CheTradingConnectionsPanel>
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Row(children: [
               Expanded(child: Text('${c['name']}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16))),
-              if (mode.isNotEmpty) Padding(padding: const EdgeInsets.only(right: 6), child: Text(mode, style: const TextStyle(color: _dim, fontWeight: FontWeight.w700, fontSize: 12))),
+              if (mode.isNotEmpty) Padding(padding: const EdgeInsets.only(right: 6), child: Text(mode, style: TextStyle(color: _dim, fontWeight: FontWeight.w700, fontSize: 12))),
               Text(word, style: TextStyle(color: _tone(state), fontWeight: FontWeight.w800, fontSize: 13)),
             ]),
-            if (feed.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 4), child: Text(feed, style: const TextStyle(color: _dim, fontSize: 13))),
+            if (feed.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 4), child: Text(feed, style: TextStyle(color: _dim, fontSize: 13))),
             if (detail.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 4), child: Text(detail, style: const TextStyle(color: Colors.white70, fontSize: 14))),
             if (options.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 4), child: Text(options, style: const TextStyle(color: Colors.white70, fontSize: 14))),
-            for (final step in steps) Padding(padding: const EdgeInsets.only(top: 2), child: Text(step, style: const TextStyle(color: _dim, fontSize: 13))),
-            if (note.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 4), child: Text(note, style: const TextStyle(color: _dim, fontSize: 13))),
-            if (secrets.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 4), child: SelectableText('Worker secret names: ${secrets.join(', ')}', style: const TextStyle(color: _dim, fontSize: 12))),
-            if (link.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 4), child: SelectableText('Open an account: $link', style: const TextStyle(color: _dim, fontSize: 13))),
+            for (final step in steps) Padding(padding: const EdgeInsets.only(top: 2), child: Text(step, style: TextStyle(color: _dim, fontSize: 13))),
+            if (note.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 4), child: Text(note, style: TextStyle(color: _dim, fontSize: 13))),
+            if (secrets.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 4), child: SelectableText('Worker secret names: ${secrets.join(', ')}', style: TextStyle(color: _dim, fontSize: 12))),
+            if (link.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 4), child: SelectableText('Open an account: $link', style: TextStyle(color: _dim, fontSize: 13))),
           ]),
         ),
         if (c['id'] == 'tradovate' && steps.isNotEmpty)
@@ -220,16 +221,16 @@ class _CheTradingConnectionsPanelState extends State<CheTradingConnectionsPanel>
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Row(children: [
         const Expanded(child: Text('Trading connections', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w800))),
-        IconButton(tooltip: 'Refresh trading connections', onPressed: _busy ? null : _load, icon: const Icon(Icons.refresh, color: _dim)),
+        IconButton(tooltip: 'Refresh trading connections', onPressed: _busy ? null : _load, icon: Icon(Icons.refresh, color: _dim)),
         TextButton(onPressed: () => widget.onAsk('What are my trading connections?'), child: const Text('Read aloud')),
       ]),
       if (v != null)
         Semantics(
           label: 'Trading mode ${v['mode']}. Live orders: ${permissions['live_orders'] ?? 'off'}.',
           excludeSemantics: true,
-          child: Text('Mode ${v['mode']} · Live orders: ${permissions['live_orders'] ?? 'off'}', style: const TextStyle(color: _dim, fontSize: 13)),
+          child: Text('Mode ${v['mode']} · Live orders: ${permissions['live_orders'] ?? 'off'}', style: TextStyle(color: _dim, fontSize: 13)),
         ),
-      if (_error.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 6), child: Text(_error, style: const TextStyle(color: _dim, fontSize: 13))),
+      if (_error.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 6), child: Text(_error, style: TextStyle(color: _dim, fontSize: 13))),
       for (final c in cards) _card(c),
       // The result of an action the owner just took is announced (AGENTS.md: every action is reported).
       if (_status.isNotEmpty)

@@ -92,7 +92,7 @@ class CheMarketsRoom extends StatefulWidget {
 }
 
 class _CheMarketsRoomState extends State<CheMarketsRoom> {
-  static const _gold = Color(0xFFE8B04A);
+  static const _gold = CheColors.markets;
   static const _up = Color(0xFF3DDC97);
   static const _down = Color(0xFFFF5C7A);
 
@@ -370,7 +370,7 @@ class _CheMarketsRoomState extends State<CheMarketsRoom> {
                   const SizedBox(height: CheSpace.lg),
                   Text('CHARTS INSIDE CHE', style: CheType.overline.copyWith(color: _gold)),
                   const SizedBox(height: CheSpace.sm),
-                  const Text(
+                  Text(
                     'Opens in CHE. Official app or Safari only if you choose that from More.',
                     style: CheType.caption,
                   ),
@@ -423,7 +423,7 @@ class _EmbeddedAppChip extends StatelessWidget {
       button: true,
       label: 'Open $label inside CHE',
       child: ActionChip(
-        avatar: const Icon(Icons.open_in_new_rounded, size: 16, color: Color(0xFFE8B04A)),
+        avatar: const Icon(Icons.open_in_new_rounded, size: 16, color: CheColors.markets),
         label: Text(label),
         onPressed: () {
           HapticFeedback.selectionClick();
@@ -478,7 +478,7 @@ class _TickerTapeState extends State<_TickerTape> with SingleTickerProviderState
                   child: Text(text,
                       maxLines: 1,
                       softWrap: false,
-                      style: const TextStyle(color: Color(0xFFE8B04A), fontSize: 12, fontWeight: FontWeight.w600)),
+                      style: const TextStyle(color: CheColors.markets, fontSize: 12, fontWeight: FontWeight.w600)),
                 ),
               );
             },
@@ -507,7 +507,7 @@ class _IndexPanel extends StatelessWidget {
         decoration: BoxDecoration(
           color: const Color(0xFF0E1418),
           borderRadius: BorderRadius.circular(CheRadius.md),
-          border: Border.all(color: selected ? const Color(0xFFE8B04A) : CheColors.stroke),
+          border: Border.all(color: selected ? CheColors.markets : CheColors.stroke),
         ),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
           Text(quote.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.caption),
@@ -541,14 +541,14 @@ class _DeskCard extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: CheSpace.sm),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(CheRadius.md),
-        side: const BorderSide(color: CheColors.stroke),
+        side: BorderSide(color: CheColors.stroke),
       ),
       child: ListTile(
         onTap: () {
           HapticFeedback.selectionClick();
           a.onRun();
         },
-        leading: Icon(a.icon, color: const Color(0xFFE8B04A)),
+        leading: Icon(a.icon, color: CheColors.markets),
         title: Text(a.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.label),
         subtitle: Text(
           a.connected ? a.body : '${a.body}\nNeeds: ${a.connectorName} (not connected). CHE can still plan it with you.',
@@ -602,7 +602,7 @@ class _CandlePainter extends CustomPainter {
     // Last price line
     final last = y(candles.last.close);
     canvas.drawLine(Offset(0, last), Offset(size.width, last), Paint()
-      ..color = const Color(0xFFE8B04A).withValues(alpha: 0.5)
+      ..color = CheColors.markets.withValues(alpha: 0.5)
       ..strokeWidth = 1);
   }
 

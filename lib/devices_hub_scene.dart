@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'che_ui/che_theme.dart';
 
 class DevicesHubScene extends StatefulWidget {
   const DevicesHubScene({
@@ -28,7 +29,7 @@ class DevicesHubScene extends StatefulWidget {
 class _DevicesHubSceneState extends State<DevicesHubScene>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
-  static const _teal = Color(0xFF34E0B8);
+  static final _teal = CheColors.accent;
 
   @override
   void initState() {
@@ -324,7 +325,7 @@ class _DevicesHubSceneState extends State<DevicesHubScene>
         top: false,
         child: Column(
           children: [
-            const Padding(
+            Padding(
               padding: EdgeInsets.fromLTRB(18, 16, 18, 2),
               child: Align(
                 alignment: Alignment.centerLeft,
@@ -394,10 +395,10 @@ class _DevicesHubSceneState extends State<DevicesHubScene>
                                   height: 104,
                                   decoration: BoxDecoration(
                                     shape: BoxShape.circle,
-                                    gradient: const RadialGradient(
+                                    gradient: RadialGradient(
                                       colors: [
                                         Color(0xFFB9FFF5),
-                                        Color(0xFF34E0B8),
+                                        CheColors.accent,
                                         Color(0xFF17505A),
                                         Color(0xFF071018),
                                       ],
@@ -468,7 +469,7 @@ class _DevicesHubSceneState extends State<DevicesHubScene>
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
+                  Text(
                     'CHE SYSTEMS RACK',
                     style: TextStyle(
                       color: _teal,
@@ -524,7 +525,7 @@ class _SystemRackTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const teal = Color(0xFF34E0B8);
+    final teal = CheColors.accent;
     return GestureDetector(
       onTap: module.onTap ??
           () {
@@ -621,7 +622,7 @@ class _DeviceBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const teal = Color(0xFF34E0B8);
+    final teal = CheColors.accent;
     return SizedBox(
       width: 88,
       child: Column(
@@ -707,7 +708,7 @@ class _ConnectionsPainter extends CustomPainter {
         ..style = PaintingStyle.stroke
         ..strokeWidth = connected ? 1.8 : 1.2
         ..color = connected
-            ? const Color(0xFF34E0B8).withValues(alpha: .36)
+            ? CheColors.accent.withValues(alpha: .36)
             : Colors.white.withValues(alpha: .10);
 
       if (!connected) {

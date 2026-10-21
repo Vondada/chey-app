@@ -21,7 +21,7 @@ class CheWarRoomScreen extends StatefulWidget {
 }
 
 class _CheWarRoomScreenState extends State<CheWarRoomScreen> {
-  static const _amber = Color(0xFFE8B04A);
+  static const _amber = CheColors.markets;
 
   CheMeeting? _meeting;
   Map<String, CheAgent> _agents = const {};
@@ -194,7 +194,7 @@ class _Seat extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.black.withValues(alpha: 0.35),
         borderRadius: BorderRadius.circular(CheRadius.md),
-        border: Border.all(color: speaking ? const Color(0xFFE8B04A) : Colors.white12, width: speaking ? 2 : 1),
+        border: Border.all(color: speaking ? CheColors.markets : Colors.white12, width: speaking ? 2 : 1),
       ),
       child: Column(mainAxisSize: MainAxisSize.min, children: [
         CheMiniPerson(agent: agent, size: 48),

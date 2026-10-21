@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'widgets/che_native_scene_world.dart';
+import 'che_ui/che_theme.dart';
 
 class CreateGalleryScene extends StatefulWidget {
   const CreateGalleryScene({
@@ -40,7 +41,7 @@ class CreateGalleryScene extends StatefulWidget {
 class _CreateGallerySceneState extends State<CreateGalleryScene>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
-  static const _teal = Color(0xFF34E0B8);
+  static final _teal = CheColors.accent;
 
   @override
   void initState() {
@@ -147,7 +148,7 @@ class _CreateGallerySceneState extends State<CreateGalleryScene>
                         mode: CheSceneMode.projects,
                         quality: quality,
                         entities: [
-                          const CheSceneEntity(
+                          CheSceneEntity(
                             id: 'che',
                             label: 'CHE',
                             description: 'Gallery curator',
@@ -192,7 +193,7 @@ class _CreateGallerySceneState extends State<CreateGalleryScene>
                     children: [
                       Row(
                         children: [
-                          const Expanded(
+                          Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
@@ -562,7 +563,7 @@ class _WorkbenchRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const teal = Color(0xFF34E0B8);
+    final teal = CheColors.accent;
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Material(

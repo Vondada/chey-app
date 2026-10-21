@@ -62,7 +62,7 @@ class _CheLiveStepsViewState extends State<CheLiveStepsView> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(children: [
-          const SizedBox(
+          SizedBox(
             width: 12,
             height: 12,
             child: CircularProgressIndicator(strokeWidth: 1.6, color: CheColors.accent),

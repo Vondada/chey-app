@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'che_ui/che_theme.dart';
 
 class InsightsBrainScene extends StatefulWidget {
   const InsightsBrainScene({
@@ -28,7 +29,7 @@ class InsightsBrainScene extends StatefulWidget {
 class _InsightsBrainSceneState extends State<InsightsBrainScene>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
-  static const _teal = Color(0xFF34E0B8);
+  static final _teal = CheColors.accent;
   static const _violet = Color(0xFFB58BFF);
   static const _amber = Color(0xFFFFC86B);
 
@@ -262,7 +263,7 @@ class _InsightsBrainSceneState extends State<InsightsBrainScene>
         top: false,
         child: Column(
           children: [
-            const Padding(
+            Padding(
               padding: EdgeInsets.fromLTRB(18, 16, 18, 4),
               child: Align(
                 alignment: Alignment.centerLeft,
@@ -421,7 +422,7 @@ class _BrainPainter extends CustomPainter {
     final glow = Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = 2
-      ..color = const Color(0xFF34E0B8).withValues(alpha: .18)
+      ..color = CheColors.accent.withValues(alpha: .18)
       ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10);
 
     final left = Path()
@@ -516,7 +517,7 @@ class _BrainPainter extends CustomPainter {
       const Offset(345, 360),
       95,
       Paint()
-        ..color = const Color(0xFF34E0B8).withValues(alpha: .12)
+        ..color = CheColors.accent.withValues(alpha: .12)
         ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 30),
     );
   }

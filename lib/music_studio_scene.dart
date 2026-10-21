@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'widgets/che_native_scene_world.dart';
+import 'che_ui/che_theme.dart';
 
 class MusicStudioScene extends StatefulWidget {
   const MusicStudioScene({
@@ -25,7 +26,7 @@ class MusicStudioScene extends StatefulWidget {
 class _MusicStudioSceneState extends State<MusicStudioScene>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
-  static const _teal = Color(0xFF34E0B8);
+  static final _teal = CheColors.accent;
   static const _amber = Color(0xFFFFB45F);
   static const _purple = Color(0xFF9B6DFF);
 
@@ -215,7 +216,7 @@ class _MusicStudioSceneState extends State<MusicStudioScene>
                   const SizedBox(height: 14),
                   Row(
                     children: [
-                      const Expanded(
+                      Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
@@ -323,9 +324,9 @@ class _MusicStudioSceneState extends State<MusicStudioScene>
                                 height: 7,
                                 decoration: BoxDecoration(
                                   borderRadius: BorderRadius.circular(99),
-                                  gradient: const LinearGradient(
+                                  gradient: LinearGradient(
                                     colors: [
-                                      Color(0xFF34E0B8),
+                                      CheColors.accent,
                                       Color(0xFFFFC85F),
                                       Color(0xFFFF6B72),
                                     ],
@@ -441,11 +442,11 @@ class _ChannelStrip extends StatelessWidget {
               child: Container(
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(3),
-                  gradient: const LinearGradient(
+                  gradient: LinearGradient(
                     colors: [
                       Color(0xFFFF625F),
                       Color(0xFFFFD36B),
-                      Color(0xFF34E0B8),
+                      CheColors.accent,
                     ],
                     begin: Alignment.topCenter,
                     end: Alignment.bottomCenter,
@@ -518,14 +519,14 @@ class _StudioMonitor extends StatelessWidget {
               color: const Color(0xFF151A1E),
               border: Border.all(
                 color: active
-                    ? const Color(0xFF34E0B8)
+                    ? CheColors.accent
                     : Colors.white24,
                 width: 2,
               ),
               boxShadow: active
                   ? [
                       BoxShadow(
-                        color: const Color(0xFF34E0B8).withValues(alpha: .18),
+                        color: CheColors.accent.withValues(alpha: .18),
                         blurRadius: 12,
                       ),
                     ]

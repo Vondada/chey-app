@@ -69,7 +69,7 @@ class CheActivityFeedSheet extends StatelessWidget {
                         trailing: IconButton(
                           tooltip: 'Read aloud',
                           onPressed: () => onSpeak(line),
-                          icon: const Icon(Icons.volume_up_rounded, color: CheColors.accent),
+                          icon: Icon(Icons.volume_up_rounded, color: CheColors.accent),
                         ),
                         onTap: () => onSpeak(line),
                       ),

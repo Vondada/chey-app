@@ -133,7 +133,7 @@ class _CheAiModelsPanelState extends State<CheAiModelsPanel> {
               excludeSemantics: true,
               onTap: _reload,
               child: ActionChip(
-                avatar: const Icon(Icons.refresh_rounded, size: 16, color: CheColors.accent),
+                avatar: Icon(Icons.refresh_rounded, size: 16, color: CheColors.accent),
                 label: const Text('Refresh'),
                 onPressed: _reload,
               ),

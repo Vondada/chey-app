@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_scene/scene.dart' hide Material;
 import 'package:vector_math/vector_math.dart' as vm;
+import '../che_ui/che_theme.dart';
 
 /// Primary native 3D renderer for CHE's Office, Brain and War Room.
 ///
@@ -277,17 +278,17 @@ class _CheNativeSceneWorldState extends State<CheNativeSceneWorld> {
   }
 
   Color get _roomAccent => switch (widget.mode) {
-        CheSceneMode.warRoom => const Color(0xFFE8B04A),
+        CheSceneMode.warRoom => CheColors.markets,
         CheSceneMode.theater => const Color(0xFFB98A62),
         CheSceneMode.artStudio => const Color(0xFFE4D8C8),
         CheSceneMode.musicStudio => const Color(0xFFFF3D8B),
-        CheSceneMode.workshop => const Color(0xFF34E0B8),
+        CheSceneMode.workshop => CheColors.accent,
         CheSceneMode.projects => const Color(0xFF8E86FF),
-        CheSceneMode.markets => const Color(0xFFE8B04A),
+        CheSceneMode.markets => CheColors.markets,
         CheSceneMode.pipeline => const Color(0xFF4EA4FF),
-        CheSceneMode.store => const Color(0xFF34E0B8),
+        CheSceneMode.store => CheColors.accent,
         CheSceneMode.creator => const Color(0xFFFF3D8B),
-        _ => const Color(0xFF34E0B8),
+        _ => CheColors.accent,
       };
 
   void _addRoomShell() {
@@ -749,7 +750,7 @@ class _CheNativeSceneWorldState extends State<CheNativeSceneWorld> {
             UnlitMaterial()
               ..baseColorFactor = _colorVector(
                 entity.speaking
-                    ? const Color(0xFFE8B04A)
+                    ? CheColors.markets
                     : entity.color,
               ),
           ),
