@@ -108,9 +108,10 @@ test('2: "What books do you have in your knowledge library, and which have you r
   const out = await che.say('What books do you have in your knowledge library, and which have you read?');
   assert.equal(out.meta.source, 'che_knowledge');
   assert.equal(out.modelCalls, 0);
-  assert.match(out.reply, /has 2 references/);
+  // 77 seeded catalogue entries (added on first open) plus the owner's one reference.
+  assert.match(out.reply, /has 78 references/);
   assert.match(out.reply, /Read \(I have the text[^)]*\): Team notes/);
-  assert.match(out.reply, /Not read \(catalogued only[^)]*\): Release It! by Michael T\. Nygard/);
+  assert.match(out.reply, /Not read \(catalogued only[^)]*\):[\s\S]*Release It! by Michael T\. Nygard/);
   assert.doesNotMatch(out.reply, /personal library/);
 });
 
@@ -176,4 +177,19 @@ test('engine: factual and memory questions go to the strong engine; creative one
   const out = await che.say('Explain photosynthesis in one sentence');
   assert.equal(typeof out.meta.engine, 'string');
   assert.ok(out.meta.engine.length > 0, 'the done record names the model that answered');
+});
+
+// The owner's library on an empty store (production's first open): the exact question gets the real catalog, with
+// the 77 references, and the indexed and catalogued-only counts kept apart. Nothing is said to be read.
+test('K1: an empty library answers the owner\'s exact question with the 77-reference catalog, and never says it is read', async () => {
+  const che = await owner({ model: () => 'I have no library.' });
+  const out = await che.say('What books do you have in your knowledge library, and which have you read?');
+  assert.equal(out.meta.source, 'che_knowledge');
+  assert.equal(out.modelCalls, 0);
+  assert.match(out.reply, /My knowledge library has 77 references\./);
+  assert.match(out.reply, /Read: none yet\. I have not indexed the text of any reference\./);
+  assert.match(out.reply, /Not read \(catalogued only; I have not read them/);
+  assert.doesNotMatch(out.reply, /no books or references/);
+  const count = await che.say('How many references are in my knowledge library?');
+  assert.match(count.reply, /My knowledge library has 77 references\./);
 });
