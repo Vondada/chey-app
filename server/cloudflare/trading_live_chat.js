@@ -184,6 +184,8 @@ export function liveReply(kind, d, extra = {}) {
       // Unverified delayed journal outcomes are never used to declare a deployable winner.
       const verified = d.verified_live_forward?.trades || 0;
       if (!verified) {
+        if (!(d.totals?.trades) && !(delayed?.observed_trades))
+          return 'No forward paper trade has closed yet, so no strategy is ranked, sir. No delayed-data research outcomes exist yet either.';
         const top = (delayed?.ranking || []).slice(0, 3).map((r) => `${r.name} (${r.filter}): ${r.trades} delayed-research hypothetical trades, net ${money(r.net_pnl)}, expectancy ${r.expectancy_r} R, ${r.qualified ? 'qualified for paper-research focus only' : 'not qualified'}`).join('; ');
         return `No verified real-time MNQ forward-paper trade is recorded. ${top ? `Delayed-data research: ${top}.` : 'No new delayed-data strategy research outcomes yet.'} ${delayed?.allocation || 'Keep comparing strategies before deciding which is strongest.'} Prior delayed journal trades cannot establish a live-forward strategy ranking.`;
       }
