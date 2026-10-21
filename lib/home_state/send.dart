@@ -813,7 +813,7 @@ extension _CheHomeSend on _CHEHomeState {
     if (shareAsk || stopAsk) {
       final share = await CheScreenShare.status();
       if (!share.available) {
-        await sayHere('Screen sharing needs the newer CHE app build with the screen-broadcast extension, sir, and this one does not have it. '
+        await sayHere('Cross-app screen sharing is temporarily disabled for privacy, sir, because other apps may show passwords or other secrets. '
             'I can still see CHE\'s own screen: say "look at my screen".', failed: true);
       } else if (stopAsk && !share.active) {
         await sayHere('Screen sharing is already off, sir.');
