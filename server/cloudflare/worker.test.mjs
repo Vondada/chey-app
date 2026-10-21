@@ -43,6 +43,64 @@ test('live Worker deployment questions route to GitHub Actions, never source ins
   }
 });
 
+test('paired iPhone voice request gets a live deployment receipt before speech interpretation', async () => {
+  const saved = new Map();
+  const env = {
+    CHE_PAIR_CODE: '123456',
+    CHE_GITHUB_TOKEN: 'test-only',
+    CHE_GITHUB_REPO: 'Vondada/chey-app',
+    AI: { run: async () => ({ response: 'That sounds like a speech mix-up; no jobs running.' }) },
+  };
+  const state = new CheState({
+    storage: {
+      get: async (key) => saved.get(key),
+      put: async (key, value) => saved.set(key, value),
+      delete: async (key) => saved.delete(key),
+      setAlarm: async () => {},
+    },
+  }, env);
+  env.CHE_STATE = { getByName: () => state };
+  const post = (path, message, token = '') => worker.fetch(new Request('https://che.example' + path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
+    body: JSON.stringify(message),
+  }), env);
+  const token = (await (await post('/api/pair', { code: '123456' })).json()).device_token;
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url) => {
+    calls.push(String(url));
+    assert.match(String(url), /\/actions\/workflows\/che-worker-deploy\.yml\/runs/);
+    return new Response(JSON.stringify({
+      workflow_runs: [{
+        id: 39532490580, name: 'Deploy CHE Worker',
+        status: 'completed', conclusion: 'success',
+        head_sha: '29102ccbf53a288120d669c51a5c602bfdbc3b33',
+        html_url: 'https://github.com/Vondada/chey-app/actions/runs/39532490580',
+        created_at: '2026-10-21T02:19:35Z',
+      }],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
+  try {
+    for (const request of [
+      'CHE, check GitHub Actions for your latest Worker deployment. Tell me the run ID, commit SHA, result, and GitHub link. Do not inspect your source code.',
+      'Chay, can you tell me the latest Worker deployment status?',
+    ]) {
+      const result = await post('/api/chat', { message: request, history: [{ role: 'user', content: 'Please inspect your own code.' }] }, token);
+      const spoken = await result.text();
+      assert.equal(result.status, 200);
+      assert.match(spoken, /39532490580/, request);
+      assert.match(spoken, /29102ccbf53a288120d669c51a5c602bfdbc3b33/);
+      assert.match(spoken, /completed successfully/);
+      assert.match(spoken, /che_github_actions_deploy_status/);
+      assert.doesNotMatch(spoken, /speech mix-up|no jobs running/i);
+    }
+    assert.equal(calls.length, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('latest Worker deployment receipt uses current GitHub run; stale/local state is never substituted', async () => {
   const repository = 'Vondada/chey-app';
   const env = { CHE_GITHUB_REPO: repository, CHE_GITHUB_TOKEN: 'fixture' };
