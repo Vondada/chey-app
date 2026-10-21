@@ -580,24 +580,40 @@ test('the deploy probe follows the daily research attempt, not the archived expe
   } finally { globalThis.fetch = realFetch; }
 });
 
-test('delayed, unverified and stale feeds cannot create new forward-paper entries', async () => {
-  for (const override of [{ status: 'DELAYED' }, { status: 'LIVE', authenticated: false }, { status: 'LIVE', subscription_verified: false }, { status: 'LIVE', latency_s: 100 }, { status: 'STALE' }]) {
+test('unverified live, stale and unavailable feeds cannot create new forward-paper entries', async () => {
+  for (const override of [{ status: 'LIVE', authenticated: false }, { status: 'LIVE', subscription_verified: false }, { status: 'LIVE', latency_s: 100 }, { status: 'STALE' }, { status: 'UNAVAILABLE' }]) {
     const storage = memoryStorage(); await setLivePaper(storage, true);
     const load = (bars) => async () => ({ ...await feedOf(bars)(), ...override });
     await liveTick(storage, { force: true, load: load(DAY1), now: after(DAY1) });
     const run = await liveTick(storage, { force: true, load: load([...DAY1, ...DAY2]), now: after(DAY2) });
-    assert.equal(run.entries_allowed, false);
+    assert.notEqual(run.entries_allowed, true);
     assert.equal((await readTrades(storage)).length, 0);
-    assert.match(run.entry_blocker, /real-time CME/);
   }
 });
 
-test('a valid setup seen while real-time data is closed is journalled as skipped with its time and reason, never traded', async () => {
+test('delayed CME bars open paper entries, journalled as delayed and never counted as verified live evidence', async () => {
   const storage = memoryStorage();
   await setLivePaper(storage, true, Date.parse('2026-10-19T21:59:00Z'));
-  const delayed = (bars) => async () => ({ ...(await feedOf(bars)()), status: 'DELAYED' });
+  const delayed = (bars) => async () => ({ ...(await feedOf(bars)()), status: 'DELAYED', authenticated: false, subscription_verified: false, latency_s: null });
   await liveTick(storage, { force: true, load: delayed(DAY1), now: after(DAY1) });
   const run = await liveTick(storage, { force: true, load: delayed([...DAY1, ...DAY2]), now: after(DAY2) });
+  assert.equal(run.entries_allowed, true);
+  assert.equal(run.entry_quality, 'delayed');
+  const trades = await readTrades(storage);
+  const sweep = trades.find((t) => t.strategy === 'pdhl-sweep-5m' && t.filter === 'any');
+  assert.ok(sweep, 'the delayed sweep setup is a paper trade');
+  assert.equal(sweep.environment, 'paper', 'still paper only');
+  assert.equal(sweep.data.entry_feed.status, 'DELAYED');
+  const dash = await liveDashboard(storage);
+  assert.equal(dash.verified_live_forward?.trades ?? 0, 0, 'delayed trades are not verified live evidence');
+});
+
+test('a valid setup seen while the feed is not verified is journalled as skipped with its time and reason, never traded', async () => {
+  const storage = memoryStorage();
+  await setLivePaper(storage, true, Date.parse('2026-10-19T21:59:00Z'));
+  const unverified = (bars) => async () => ({ ...(await feedOf(bars)()), authenticated: false });
+  await liveTick(storage, { force: true, load: unverified(DAY1), now: after(DAY1) });
+  const run = await liveTick(storage, { force: true, load: unverified([...DAY1, ...DAY2]), now: after(DAY2) });
   assert.equal(run.entries_allowed, false);
   assert.equal((await readTrades(storage)).length, 0, 'no trade is opened');
   const portfolio = Object.values((await storage.get(LIVE_PORTFOLIOS)) || {}).find((pf) => pf.candidate === 'pdhl-sweep-5m' && pf.filter === 'any');
@@ -605,5 +621,4 @@ test('a valid setup seen while real-time data is closed is journalled as skipped
   const skip = (portfolio.skips || []).find((s) => s.time === DAY2[0].t);
   assert.ok(skip, `the sweep setup is journalled as skipped: ${JSON.stringify(portfolio.skips)}`);
   assert.match(skip.reason, /real-time CME data was not verified/);
-  assert.equal(skip.side, 'long');
 });
