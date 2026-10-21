@@ -74,6 +74,8 @@ Then, on GitHub:
 
 ## 2. Current position (Claude, 2026-10-21 — MASTER MISSION checkpoint; read this first)
 
+**DEPLOY FAILED (2026-10-21): PR #418 merge `a4586f1aa956d8264a0471ba589572d7850f5cb3`, Deploy CHE Worker run 39676173628 (run_number 298), job 119486486509, step "Worker tests": 2940 pass, 1 fail. The failing test was worker_autonomy.test.mjs (Alpaca paper order): it asserted every outbound call goes to the Alpaca paper origin, and a background GitHub read in CI was recorded. No deploy step ran after the failed test; the Worker was NOT deployed from this run.** Fix: the assertion now checks broker calls only (commit 9f6a54b on claude/che-image-chat-creation, local, NOT pushed). The main branch still needs that fix before the next deploy passes; push decision pending with the owner.
+
 **DEPLOY COMPLETED (2026-10-21, checked via actions_get): PR #419 merge `68352bbf344ab434ca25a40ad4279db96591485b`, Deploy CHE Worker run 39674495916 (run_number 297): conclusion SUCCESS (started 20:55:31Z, updated 20:58:23Z).** Live `/health` from the sandbox was not checked here (sandbox network policy). No other merges were made in this step.
 
 **MERGED (2026-10-21 20:55 UTC): PR #419 squash-merged to main as `68352bbf344ab434ca25a40ad4279db96591485b` (head `a9ceb96ccb3982efc483b77247a7460b2e87b1f8`, title `[worker-deploy]`). Required checks green on a9ceb96: "Worker syntax and unit tests", both "analyze". Deploy run 39674495916 (`che-worker-deploy.yml`, run_number 297) QUEUED at this update; its conclusion is recorded in the next update. Live `/health` from the sandbox: UNREACHABLE (HTTP 000).
