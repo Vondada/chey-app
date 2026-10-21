@@ -93,6 +93,7 @@ import { alpacaKeys, alpacaPaperDashboard, cancelAlpacaPaperOrder, haltAlpacaPap
 import { speakConnections, speakTradovateSteps, tradingConnections } from './trading_connections.js';
 import { liveAnswer, liveIntent } from './trading_live_chat.js';
 import { ANALYSIS_SOURCE, LEDGER_SOURCE, analyzeStrategy, ledgerIntent, readLedgers, speakLedgers, strategyAnalysisIntent } from './trading_ledgers.js';
+import { TRADING_STATUS_SOURCE, newTradesIntent, tradingStatus } from './trading_status.js';
 import { meetingCommand, meetingScene, planScene, simScene } from './world_scene.js';
 import { SIM_SOURCE, listRuns, loadRun, loadSimMemory, runLab, saveRun, simLabIntent } from './sim_lab.js';
 import { PLAN_SOURCE, answerPlanFollowUp, buildPlan, classifyProject, listPlans, loadPlan, planFollowUpIntent, planSubject, projectPlanIntent, researchSource, savePlan } from './project_plan.js';
@@ -137,7 +138,7 @@ import { KnowledgeLibrary, knowledgeIntent, knowledgeReply, knowledgeTaskContext
 import { answerPersonalFact, groundedReply, needsStrongEngine, personalFactQuestion } from './personal_recall.js';
 import { adRequest, adStatusLines, assetTruthReply } from './asset_truth.js';
 import { dropAgentTaskTurns, replyRepeatsAgentTask } from './agent_task_guard.js';
-import { seedKnowledgeCatalog } from './knowledge_catalog_seed.js';
+import { openKnowledgeLibrary, seedKnowledgeCatalog } from './knowledge_catalog_seed.js';
 import { CheBrainStore, backfillConversations, displayCopy, isSafeText, ownerMemoryRecord, projectLegacyState, rememberExchange, retrievableOwnerRecord, retrievalBody, sameDisplayCopy } from './brain_store.js';
 import { brainReviewIntent, latestReview, ownerScore, runBrainMaintenance, speakReview } from './brain_audit.js';
 import { answerCorrespondenceQuestion, archiveTasks, correspondenceStatus, importOutsideCorrespondence, outsideCorrespondenceIntent, projectOfficeExperience, recoverHistory, speakCorrespondenceCount, speakCorrespondenceImport, workerBrains } from './brain_office.js';
@@ -7200,13 +7201,13 @@ export class CheState extends DurableObject {
 
       // ─── Knowledge Library: 20 categories, cataloged or indexed references (knowledge_library.js) ──
       if (path === '/api/knowledge' && request.method === 'GET') {
-        const kl = new KnowledgeLibrary(this.ctx.storage);
+        const kl = await openKnowledgeLibrary(this.ctx.storage);
         const category = new URL(request.url).searchParams.get('category') || '';
         return json({ categories: kl.status(), references: kl.list({ category }) });
       }
       if (path === '/api/knowledge/search' && request.method === 'GET') {
         const params = new URL(request.url).searchParams;
-        const kl = new KnowledgeLibrary(this.ctx.storage);
+        const kl = await openKnowledgeLibrary(this.ctx.storage);
         return json(kl.answer(params.get('q') || '', { category: params.get('category') || '', technical: params.get('fiction') !== '1' }));
       }
       if (path === '/api/knowledge' && request.method === 'POST') {
@@ -10464,7 +10465,7 @@ export class CheState extends DurableObject {
         // the reference and part; cataloged works are said to be unread. Owner device only.
         const knowledge = ownerDevice ? knowledgeIntent(message) : null;
         if (knowledge) {
-          const kl = new KnowledgeLibrary(this.ctx.storage);
+          const kl = await openKnowledgeLibrary(this.ctx.storage);
           return ndjsonReply(knowledgeReply(kl, knowledge), { source: 'che_knowledge' });
         }
 
@@ -10822,6 +10823,13 @@ export class CheState extends DurableObject {
           await drainRoomEvents(this.ctx.storage, crossStore).catch(() => null);
           const answer = await answerCrossRoom({ store: crossStore, storage: this.ctx.storage, env: this.keyEnv || this.env, intent: cross, screen: seen });
           return ndjsonReply(answer.text, { source: BRAIN_ROOMS_SOURCE, ok: answer.ok, model_calls: 0, rooms: answer.rooms, hits: answer.hits, kind: cross.kind });
+        }
+        // "Why are there no new trades?": five facts from the stored journal and scheduler records (owner, 2026-10-21).
+        const whyNoTrades = body.attachment ? null : newTradesIntent(message);
+        if (whyNoTrades) {
+          if (!ownerDevice) return ndjsonReply('Only the CHE owner can read the trading records, sir.', { source: TRADING_STATUS_SOURCE, ok: false, model_calls: 0 });
+          const status = await tradingStatus(this.ctx.storage, { now: Date.now() });
+          return ndjsonReply(status.text, { source: TRADING_STATUS_SOURCE, ok: status.ok, model_calls: 0, kind: whyNoTrades.kind, trades: status.trades ?? null });
         }
         // One named strategy by session and/or across its variants, from the forward paper journal (owner, 2026-10-20).
         const analysis = body.attachment ? null : strategyAnalysisIntent(message);

@@ -186,17 +186,24 @@ export async function liveTick(storage, { fetcher = fetch, now = Date.now(), for
         const newest = bars[bars.length - 1].t;
         // Forward only: a new portfolio starts at the newest closed bar, so history is never journalled as paper.
         for (const pf of portfolios) if (pf.last_bar_time == null) Object.assign(pf, { last_bar_time: newest, started_from: newest });
-        // Two entry gates, both required: the real-time evidence gate (a delayed, replayed, stale or
-        // unsubscribed feed opens nothing) and the owner's controls (trading_controls.js).
+        // Entry gates, all required. Paper trading may use delayed CME bars (owner, 2026-10-21): those trades are
+        // journalled with their delayed entry feed and never count as verified live evidence (verified_live_forward).
+        // A real-time feed must still be authenticated, subscribed, fresh and under 15 s of latency. Stale, replayed,
+        // unavailable or unknown feeds open nothing. Live orders are never placed from here.
         const barAge = now - Date.parse(newest) - 300000;
-        const allowEntries = barAge >= 0 && barAge <= 90000 && feed.status === 'LIVE' && feed.authenticated === true && feed.subscription_verified === true && Number.isFinite(feed.latency_s) && feed.latency_s <= 15;
+        const liveOk = barAge >= 0 && barAge <= 90000 && feed.status === 'LIVE' && feed.authenticated === true && feed.subscription_verified === true && Number.isFinite(feed.latency_s) && feed.latency_s <= 15;
+        const delayedOk = feed.status === 'DELAYED' && barAge >= 0;
+        const allowEntries = liveOk || delayedOk;
         run.entries_allowed = allowEntries;
-        run.entry_blocker = allowEntries ? null : 'New forward-paper entries require fresh authenticated and subscribed real-time CME delivery. Delayed/replay/stale data cannot open positions.';
-        // The exact gate that closed, for the journal: the feed, or a newest bar that was not fresh enough to trade.
+        run.entry_quality = liveOk ? 'real-time' : delayedOk ? 'delayed' : null;
+        run.entry_blocker = allowEntries ? null : 'New forward-paper entries need delayed or real-time CME bars. Stale, replayed or unavailable data cannot open positions.';
+        // The exact gate that closed, for the journal.
         const blockReason = allowEntries ? null
-          : feed.status !== 'LIVE' || feed.authenticated !== true || feed.subscription_verified !== true || !Number.isFinite(feed.latency_s) || feed.latency_s > 15
-            ? `real-time CME data was not verified (feed ${feed.status || 'unknown'})`
-            : `the newest closed bar was not fresh enough to trade (${Math.round(barAge / 1000)} s after its close; the window is 90 s)`;
+          : feed.status !== 'LIVE' && feed.status !== 'DELAYED'
+            ? `the feed is not usable (feed ${feed.status || 'unknown'})`
+            : feed.status === 'LIVE'
+              ? 'real-time CME data was not verified (authenticated, subscribed and under 15 s of latency are required)'
+              : `the newest closed bar is not usable (${Math.round(barAge / 1000)} s after its close)`;
         // The owner's controls (trading_controls.js) decide whether a valid signal may enter.
         const controls = await readControls(storage);
         const today = tradeDayOf(now);

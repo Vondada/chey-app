@@ -177,23 +177,23 @@ test('a paper stock order is checked against the controls before Alpaca: stop, s
   assert.match(stockOrderProblem(stopped, { symbol: 'AAPL', side: 'buy', qty: 1 }, { now }), /New entries are stopped/);
 });
 
-test('both entry gates apply: a delayed feed opens nothing even when the controls allow it, and cancels a waiting order', async () => {
+test('both entry gates apply: delayed paper entries follow the controls, and a waiting order is cancelled when the feed becomes unusable', async () => {
   const delayed = (bars) => async () => ({ ...await feedOf(bars)(), status: 'DELAYED', latency_s: 600 });
   const storage = memoryStorage();
   const controls = await readControls(storage);
   assert.ok(Object.values(controls.strategies).every((s) => !s.paused && s.max_per_day === 30), 'the controls allow every strategy');
   await setLivePaper(storage, true, Date.parse('2026-10-19T21:59:00Z'));
   await liveTick(storage, { force: true, load: delayed(DAY1), now: after(DAY1) });
-  const blocked = await liveTick(storage, { force: true, load: delayed([...DAY1, ...DAY2]), now: after(DAY2) });
-  assert.equal(blocked.entries_allowed, false);
-  assert.match(blocked.entry_blocker, /real-time CME/);
-  assert.equal((await paperTrades(storage)).length, 0, 'no strategy entered on delayed data');
-  // A real-time order waiting to fill is cancelled, with its reason, when the feed degrades to delayed.
+  const allowed = await liveTick(storage, { force: true, load: delayed([...DAY1, ...DAY2]), now: after(DAY2) });
+  assert.equal(allowed.entries_allowed, true, 'delayed paper entries are allowed (owner, 2026-10-21)');
+  assert.equal(allowed.entry_quality, 'delayed');
+  assert.ok((await paperTrades(storage)).length >= 1, 'the delayed setup is a paper trade');
+  // A real-time order waiting to fill is cancelled, with its reason, when the feed becomes unusable (here: stale).
   const waiting = memoryStorage();
   await run(waiting, [...DAY1, DAY2[0]]);
   assert.ok((await readLivePortfolios(waiting)).some((p) => p.candidate === 'pdhl-sweep-5m' && p.pending), 'an order is waiting to fill');
-  await liveTick(waiting, { force: true, load: delayed([...DAY1, ...DAY2]), now: after(DAY2) });
-  assert.equal(await sweepTrade(waiting), undefined, 'the waiting order never filled on delayed data');
+  await liveTick(waiting, { force: true, load: async () => ({ ...await feedOf([...DAY1, ...DAY2])(), status: 'STALE' }), now: after(DAY2) });
+  assert.equal(await sweepTrade(waiting), undefined, 'the waiting order never filled on stale data');
   const pf = (await readLivePortfolios(waiting)).find((p) => p.candidate === 'pdhl-sweep-5m' && p.filter === 'any');
   assert.equal(pf.pending, null);
   assert.equal(pf.counts.blocked_entries, 1);
