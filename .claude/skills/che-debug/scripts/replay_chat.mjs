@@ -106,6 +106,8 @@ let modelCalls = 0;
 const env = {
   CHE_PAIR_CODE: '123456',
   CHE_DISABLE_KEYLESS_AI: '1',
+  // --network lets the repository read reach GitHub with the caller's own credentials (never printed).
+  ...(flag('--network') ? Object.fromEntries(Object.entries(process.env).filter(([k]) => k === 'CHE_GITHUB_TOKEN' || k === 'CHE_GITHUB_REPO')) : {}),
   AI: { run: async (_model, input) => ({ response: modelReply(input, modelCalls++) }) },
 };
 const state = new mod.CheState({ storage, waitUntil: () => {} }, env);

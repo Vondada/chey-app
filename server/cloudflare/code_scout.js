@@ -209,6 +209,9 @@ function ownerBuildAuthorization(message) {
     || /\b(?:hypothetical|plan\s+only|planning\s+only|proposal\s+only)\b/i.test(text)
     || hypotheticalChange(text);
   if (mutationVerb && mutationTarget && !hypothetical) return true;
+  // The owner's mode word is an explicit authorization: "Use BUILD mode." (uppercase, as the owner types it).
+  // Prohibitions and hypothetical framing were already checked above and still win.
+  if (/\b(?:[Uu]se|[Ii]n|[Ss]witch\s+to|[Rr]un\s+(?:this\s+)?in)\s+BUILD\s+mode\b/.test(text) && !hypothetical) return true;
   if (/\bmake\b[\s\S]{0,80}\b(?:improvement|improvements)\b[\s\S]{0,80}\b(?:to|in)\s+(?:your|che(?:'s)?)\s+(?:own\s+)?(?:code|app|worker|system|routing|workflow)\b/i.test(text)
     && !hypothetical) return true;
   if (/^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:(?:can|could|would)\s+you\s+|please\s+)?(?:add|implement|build|create)\s+(?:the\s+)?(?:ability|capability|support)\b[\s\S]{0,180}\b(?:github|pull\s+request|voice|api|tool|integration)\b/i.test(text)
@@ -238,15 +241,19 @@ function explorationIntent(text) {
     || /\bexplain\b[\s\S]{0,100}\b(?:architecture|routing|router|workflow|pipeline|source|code|worker|job|runtime)\b/i.test(value);
 }
 
+// A prohibition reaches only to the end of its own sentence: "Do not merge or deploy. Give me the commit SHA"
+// forbids a merge and a deploy, not the commit or the PR the owner asked for in the next sentence.
 function deliveryRestrictions(text) {
   const value = String(text || '');
-  const noPr = /\b(?:do\s+not|don['’]?t|never|without)\b[\s\S]{0,80}\b(?:create|open)\b[\s\S]{0,30}\b(?:pr|pull\s+request)\b/i.test(value)
+  const noPr = /\b(?:do\s+not|don['’]?t|never|without)\b[^.!?\n]{0,80}\b(?:create|open)\b[^.!?\n]{0,30}\b(?:pr|pull\s+request)\b/i.test(value)
     || /\bno\s+(?:pr|pull\s+request)\b/i.test(value);
-  const noMerge = /\b(?:do\s+not|don['’]?t|never|without)\b[\s\S]{0,70}\bmerge\b/i.test(value)
-    || /\bno\s+merge\b/i.test(value);
-  const noDeploy = /\b(?:do\s+not|don['’]?t|never|without)\b[\s\S]{0,70}\bdeploy\b/i.test(value)
+  const noMerge = /\b(?:do\s+not|don['’]?t|never|without)\b[^.!?\n]{0,70}\bmerge\b/i.test(value)
+    || /\bno\s+merge\b/i.test(value)
+    || /\b(?:must|should|shall|will|to)\s+not\s+(?:be\s+)?merged?\b/i.test(value)
+    || /\bmerge\b[^.!?\n]{0,80}\b(?:only\s+)?(?:after|once|until|if)\s+I\s+(?:approve|say|confirm|authori[sz]e|tell)\b/i.test(value);
+  const noDeploy = /\b(?:do\s+not|don['’]?t|never|without)\b[^.!?\n]{0,70}\bdeploy\b/i.test(value)
     || /\bno\s+deploy(?:ment)?\b/i.test(value);
-  const noCommitPush = /\b(?:do\s+not|don['’]?t|never|without)\b[\s\S]{0,70}\b(?:commit|push|create\s+(?:a\s+)?branch)\b/i.test(value);
+  const noCommitPush = /\b(?:do\s+not|don['’]?t|never|without)\b[^.!?\n]{0,70}\b(?:commit|push|create\s+(?:a\s+)?branch)\b/i.test(value);
   return { noPr, noMerge, noDeploy, noCommitPush };
 }
 
@@ -626,6 +633,16 @@ export function codingHistoryIntent(message) {
   return asked;
 }
 
+// A question that asks for reasoning about the code ("explain", "why", "weaknesses", "recommend a repair").
+// It is answered from the inspected source in plain English. Only an explicit request for the file list
+// gets the list: "which files", "list the files", "show me the files" (owner, 2026-10-21).
+export function analyticalRepositoryQuestion(message) {
+  const text = withoutQuotedText(String(message || '').trim());
+  // Reasoning wins over listing: "explain why it stalls and list the files involved" gets the explanation.
+  // A pure listing request ("show me the files", "which files") has no reasoning word and keeps the list.
+  return /\b(?:explain|why|how\s+(?:does|do|is|are|would|should|could)|weakness(?:es)?|weak\s+points?|biggest|recommend\w*|repairs?|root\s+cause|trade-?offs?|risks?|improve\w*|what\s+(?:should|would|could)|what\s+(?:the\s+)?(?:code|source|it|this|that)\s+(?:does|do)\b|analy[sz]e|compare|list\s+the\s+(?:weaknesses|problems|risks|causes|reasons))\b/i.test(text);
+}
+
 export function repositoryInspectionIntent(message) {
   const text = withoutQuotedText(String(message || '').trim());
   if (explicitChatOnlyResponseDirective(text)) return false;
@@ -653,6 +670,7 @@ export function repositoryInspectionIntent(message) {
     || /\bthe\s+(?:source\s+)?code\s+(?:for|of|behind)\s+(?:the\s+|your\s+|che's\s+)?(?:voice\s+studio|memory|brain|router|routing|chat|trading\s+room|office|war\s+room|mailbox|command\s+center|video\s+(?:line|renderer)|rea|navigator|mic(?:rophone)?|captions?|home\s+screen|settings)\b/i.test(text)
     || /\b(?:current|exact|latest)\s+main\s+(?:branch\s+)?sha\b/i.test(text)
     || /\b(?:coding\s+(?:job|pipeline|runtime)|cloudflare\s+worker|github\s+main)\b/i.test(text)
+    || /\b(?:your|che(?:'s)?)\s+(?:coding\s+)?architecture\b/i.test(text)
     // "Review the code quality of the trading desk", "code review of the router": the catalog's /code-review
     // said in words, a read of CHE's own source. "Review this code" (pasted code) is still the model's.
     || (!/\b(?:below|pasted?|attached|i\s+wrote|my\s+(?:project|app|code|repo|script|file)|the\s+following|this\s+code|this\s+file)\b|```/i.test(text)
@@ -663,7 +681,13 @@ export function repositoryInspectionIntent(message) {
   const repositoryStateQuestion = repoTarget
     && /\b(?:status|state|current|latest|exact)\b/i.test(text);
   const guardedDiagnostic = readOnlyDiagnosticIntent(text) && repoTarget;
-  return Boolean((directInspection && repoTarget) || exactHeadQuestion || repositoryStateQuestion || guardedDiagnostic || selfDiagnosticSource);
+  // An analysis of CHE's own architecture (weaknesses, repairs, root causes) reads her source, whatever it opens with.
+  const architectureAnalysis = repoTarget && /\b(?:weakness(?:es)?|recommend\w*|repairs?|root\s+cause|trade-?offs?)\b/i.test(text);
+  // "CHE, investigate Creator Studio read-only": an investigation (not "show me") of a named screen or room
+  // reads its source. Without this the no-tools model answers with file names it invented.
+  const namedAreaInvestigation = /\b(?:creator|music|voice|video|trading|war|brain|office)\s+(?:studio|room|desk|screen|page)\b/i.test(text)
+    && /^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:please\s+|(?:can|could|will)\s+you\s+)?(?:investigate|inspect|audit|review|diagnose|analy[sz]e|trace|examine|verify)\b/i.test(text);
+  return Boolean((directInspection && repoTarget) || architectureAnalysis || namedAreaInvestigation || exactHeadQuestion || repositoryStateQuestion || guardedDiagnostic || selfDiagnosticSource);
 }
 
 export function starredRepoIntent(message) {

@@ -141,6 +141,8 @@ export function isOwnerAttested(record) {
   if (agentAuthor(record)) return false;
   if (UNTRUSTED_STATUSES.has(String(record.verification_status || ''))) return false;
   if (record.verification_status !== 'owner_attested') return false;
+  // A Brain record (structured source) is the owner's only by its stored speaker, never by its wording.
+  if (record.source && typeof record.source === 'object') return storedSpeaker(record).owner;
   return OWNER_MEMORY_SOURCES.has(String(record.source || ''));
 }
 
@@ -738,4 +740,79 @@ export function ownerFactCorrection(rawMessage, records = []) {
   return (Array.isArray(records) ? records : []).some((r) => isOwnerAttested(r) && sameSlot(r.text, statement))
     ? statement
     : null;
+}
+
+
+// ─── Stored speakers: who a record's words came from, read from its stored fields only ───
+// Owner, owner (2026-10-21): the owner's words are attributed only to owner-origin records, Claude's messages stay
+// correspondence, and an Office agent keeps its own name. A speaker is never inferred from how a record reads.
+const SPEAKER_BY_ORIGIN = new Set(['atlas', 'nova', 'mira', 'knox', 'sage', 'lyra', 'iris', 'office']);
+const SPEAKER_NONE = Object.freeze({ speaker: '', owner: false, correspondence: false });
+
+/** { speaker, owner, correspondence } for a record in either shape (legacy memory record or Brain record). */
+export function storedSpeaker(record = {}) {
+  const source = record && typeof record.source === 'object' && record.source ? record.source : {};
+  const origin = String(record?.origin || source.origin || '').toLowerCase();
+  if (record?.kind === 'flagstaff' || source.kind === 'flagstaff_exchange') {
+    const peer = String(source.peer || source.sender || '').trim();
+    return { speaker: peer || 'Flagstaff', owner: false, correspondence: true };
+  }
+  const attested = record?.verification === 'owner_attested' || record?.verification_status === 'owner_attested';
+  if (attested && source.owner_words !== false && !source.agent) return { speaker: 'owner', owner: true, correspondence: false };
+  if (source.agent) return { speaker: String(source.agent), owner: false, correspondence: false };
+  if (SPEAKER_BY_ORIGIN.has(origin)) return { speaker: origin[0].toUpperCase() + origin.slice(1), owner: false, correspondence: false };
+  return SPEAKER_NONE;
+}
+
+// The named speakers CHE may be asked about. A sentence that gives one of them words needs a record from that speaker.
+const SPEECH_ACT = /\b(?:said|say|says|told|tell|tells|wrote|write|writes|reported|report|reports|instructed|instruct|sent|send|recommended|recommend|suggested|suggest|asked|ask|finished|finish|confirmed|confirm|replied|claimed|posted|advised|advise)\b/i;
+
+const SPEECH_STEMS = new Set(contentWords('said say tell told write wrote report reported instruct instructed send sent recommend recommended suggest suggested ask asked finish finished confirm confirmed reply replied claim claimed post posted advise advised'));
+const SPEAKER_NAMES = /\b(?:Claude|Atlas|Nova|Mira|Knox|Sage|Lyra|Iris|Flagstaff|ChatGPT|Codex|Gemini|Grok|Copilot|Cursor)\b/gi;
+
+// The words a speaker is said to have spoken must be in that speaker's stored text: names and speech verbs do not
+// count as support (a record that says "Claude:" is not evidence for "Claude said …"), and at least 80% must match.
+function speakerSupports(sentence, storedText) {
+  const words = contentWords(sentence.replace(SPEAKER_NAMES, ' ')).filter((w) => !SPEECH_STEMS.has(w));
+  if (!words.length) return false;
+  const have = new Set(contentWords(String(storedText).replace(SPEAKER_NAMES, ' ')));
+  return words.filter((w) => have.has(w)).length >= Math.max(2, Math.ceil(words.length * 0.8));
+}
+
+/**
+ * Removes sentences that give a named speaker (Claude, Atlas, …) words that no stored record from that speaker
+ * supports. `records` may be legacy memory records or Brain records, or { text, speaker } for an incoming message.
+ * Returns { text, removed: [sentences] }.
+ */
+export function guardSpeakerAttributions(reply, { records = [], message = '' } = {}) {
+  const text = String(reply || '');
+  if (!text.trim() || FICTION_REQUEST.test(plainWords(message))) return { text, removed: [] };
+  const evidence = (records || []).map((r) => ({
+    speaker: String(r.speaker || storedSpeaker(r).speaker || '').toLowerCase(),
+    text: `${r.title || ''} ${r.text ?? r.body ?? ''}`,
+  }));
+  const removed = [];
+  const parts = text.split(/(```[\s\S]*?```)/g);
+  const kept = parts.map((part) => {
+    if (part.startsWith('```')) return part;
+    return sentences(part).filter((sentence) => {
+      // The speaker is the named subject of the speech act ("Claude told you …"); a name only mentioned in the content is not.
+      const names = [...sentence.matchAll(/\b(Claude|Atlas|Nova|Mira|Knox|Sage|Lyra|Iris|Flagstaff|ChatGPT|Codex|Gemini|Grok|Copilot|Cursor)\b[^.!?\n]{0,30}?\b(?:said|say|says|told|tell|tells|wrote|write|writes|reported|report|reports|instructed|instruct|sent|send|recommended|recommend|suggested|suggest|asked|ask|finished|finish|confirmed|confirm|replied|claimed|posted|advised|advise)\b/gi)].map((m) => m[1]);
+      // A denial is not an attribution: "Atlas never said that" and "Claude has not sent anything" stay.
+      if (!names.length || !SPEECH_ACT.test(sentence) || /\?\s*$/.test(sentence) || HYPOTHETICAL.test(plainWords(sentence)) || /\b(?:not|never|no|nothing|cannot|can['’]t|didn['’]t|haven['’]t|hasn['’]t|wasn['’]t|isn['’]t)\b/i.test(sentence)) return true;
+      const supported = names.every((name) => evidence.some((e) => e.speaker === name.toLowerCase() && speakerSupports(sentence, e.text)));
+      if (supported) return true;
+      removed.push(clip(sentence, 300));
+      return false;
+    }).join('');
+  }).join('').replace(/[ \t]+\n/g, '\n').replace(/\s{2,}/g, ' ').trim();
+  if (!removed.length) return { text, removed };
+  const correction = 'I can find no stored record of that speaker saying it, sir, so I have left it out rather than attribute it to them.';
+  const body = kept.replace(/```[\s\S]*?```/g, '').trim();
+  return { text: body.length >= 40 || contentWords(body).length >= 2 ? `${kept}\n\n${correction}` : correction, removed };
+}
+
+/** A Brain record in the shape the owner-attribution check reads (text, verification_status). */
+export function brainRecordForProvenance(record = {}) {
+  return { ...record, text: String(record.body ?? record.text ?? ''), verification_status: record.verification };
 }

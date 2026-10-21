@@ -776,7 +776,7 @@ export async function inspectRepositoryContext(env, request, fetcher = fetch, { 
       const name = match[1] || match[2] || match[3] || match[4];
       if (name && !symbols.includes(name)) symbols.push(name);
     }
-    files.push({ path, sha: file.sha, symbols, references: structuralReferences(path, file.text, allPaths) });
+    files.push({ path, sha: file.sha, symbols, references: structuralReferences(path, file.text, allPaths), excerpt: String(file.text || '').slice(0, 1600) });
   }
 
   const pulls = await ghRead(env, '/pulls?state=open&per_page=30', fetcher);

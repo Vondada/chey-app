@@ -1,0 +1,186 @@
+{
+ "description": "Real repository files. Label = area: worker-js (server/cloudflare/*.js, tests excluded), flutter-dart (lib/**/*.dart), docs-md (docs/**/*.md). 12 files per label, spread evenly over each area sorted by path. Text is the first 600 characters, whitespace collapsed.",
+ "generated_on": "2026-10-21",
+ "examples": [
+  {
+   "id": "server/cloudflare/activity.js",
+   "text": "import { pendingBulkDecisions } from './twilio_sms.js'; // CHE's connected world: one activity feed of what CHE and the Office really // did, a \"find anything\" search across every room (agent work, Art Studio // images, projects, vault items, background jobs, War Room plans), and a // one-line greeting built only from real state. Nothing here invents work. const clip = (text, max) => { const t = String(text || '').replace(/\\s+/g, ' ').trim(); return t.length > max ? `${t.slice(0, max - 1).trimEnd()}…` : t; }; // 3–6 word summary for glanceable titles and spoken lists. export function shortTitl",
+   "label": "worker-js"
+  },
+  {
+   "id": "server/cloudflare/blocker_speech.js",
+   "text": "// CHE speaks new blockers without being asked. Dedup keys persist on the // Durable Object (passed in as `spoken`) so a poll never repeats a line, and a // cleared blocker that comes back is spoken again. function toolName(status) { const inner = String(status).match(/\\(([^)]+)\\)/); return inner ? inner[1].trim() : ''; } export function cheBlockerSpeech(agentName, status, spoken = new Set()) { const s = String(status || ''); if (!s.startsWith('Blocked:')) return null; const key = `${String(agentName).toLowerCase()}:${s}`; if (spoken.has(key)) return null; spoken.add(key); if (s.startsWith('Bl",
+   "label": "worker-js"
+  },
+  {
+   "id": "server/cloudflare/che_pronunciation.js",
+   "text": "// CHE is said \"Chay\". Only the text handed to a voice changes; what the owner // reads on screen keeps \"CHE\". export function cheSpokenText(text) { return String(text || '').replace(/\\bCHE\\b/g, 'Chay').replace(/\\bChe\\b/g, 'Chay'); }",
+   "label": "worker-js"
+  },
+  {
+   "id": "server/cloudflare/command_catalog.js",
+   "text": "// CHE Command Center: one catalog of owner commands over CHE's EXISTING // runtime. A command is a stable name for something CHE can already do (or // honestly cannot do yet): it never adds a second router, planner or agent. // // Running a command means sending its request through the ordinary /api/chat // pipeline, so every owner gate (money, delete, apps), every truth guard and // every receipt applies exactly as if the owner had said the words. A // workflow runs its steps as nodes of CHE's existing objective graph and job // queue (objective_graph.js), with the same retries, checkpoints ",
+   "label": "worker-js"
+  },
+  {
+   "id": "server/cloudflare/flagstaff_code_check.js",
+   "text": "// Syntax guard for code CHE sends in Flagstaff replies. JavaScript regex literals // accept only the flags d g i m s u v y. The verbose x flag from other languages is // a syntax error, so a reply that uses it would not load. Only fenced code blocks are // checked, so ordinary prose is never flagged. const JS_REGEX_FLAGS = new Set(['d', 'g', 'i', 'm', 's', 'u', 'v', 'y']); const CODE_BLOCK = /```(?:js|javascript)?\\n([\\s\\S]*?)```/g; // A regex literal starts where an operator or opening punctuation comes before it, so // division such as total / count is never read as a regex. const REGEX_LITE",
+   "label": "worker-js"
+  },
+  {
+   "id": "server/cloudflare/market_feed.js",
+   "text": "// Intraday NQ / MNQ market data for CHE's forward paper trading (owner, 2026-10-18). // // Sources, in order, each labelled with what it really is: // LIVE Tradovate market data with the owner's own sign-in and CME entitlement. // Not connected yet: CHE says so and names the owner step. // DELAYED Yahoo Finance's public chart data for the continuous front month (MNQ=F, // NQ=F). CME data there is delayed; the delay is measured from the last bar. // It is research and paper-trading evidence only, never execution evidence. // REPLAY recorded bars played back, said as replay. // No price, bar or",
+   "label": "worker-js"
+  },
+  {
+   "id": "server/cloudflare/office_company.js",
+   "text": "// Canonical La Agencia roster (report to CHE, the Office Boss). Existing matching agents keep their IDs, // workspaces and task history; this only fills/updates company responsibilities. // Scout is not a separate person. Atlas is the scout. export const LA_AGENCIA_ROLES = { Nova: { role: 'Product / listings', specialty: 'Product offers, listings and sales-page drafts', provider_preference: 'openai', capability_requirements: ['coding'] }, Atlas: { role: 'Research / scout', specialty: 'Research, sourcing, competitive checks, and trend topics from connected feeds. Does not invent demand.', prov",
+   "label": "worker-js"
+  },
+  {
+   "id": "server/cloudflare/provider_health_store.js",
+   "text": "// Durable provider health + cooldown store. // Isolate memory is a cache. Durable Object / Worker storage is the source // of truth so a new isolate does not forget a 401 or 429. const HEALTH_KEY = 'ai_health'; const COOLDOWN_KEY = 'ai_provider_cooldown'; export async function loadHealth(storage) { if (!storage?.get) return {}; try { const value = await storage.get(HEALTH_KEY); return value && typeof value === 'object' ? value : {}; } catch (_) { return {}; } } export async function saveHealth(storage, health) { if (!storage?.put || !health) return; try { await storage.put(HEALTH_KEY, health)",
+   "label": "worker-js"
+  },
+  {
+   "id": "server/cloudflare/resource_catalogs.js",
+   "text": "// CHE's resource finder: the big curated GitHub lists the owner pointed her // to (public-apis, free-for-dev, awesome-mcp-servers, awesome-mac, // awesome-cpp, Awesome-Hacking, free-programming-books), read straight from // the lists themselves, parsed into entries and searched without AI tokens. // Every answer names the list it came from; nothing is invented. export const CATALOGS = { apis: { repo: 'public-apis/public-apis', files: ['README.md'], label: 'public-apis', what: 'free public API' }, free: { repo: 'ripienaar/free-for-dev', files: ['README.md'], label: 'free-for-dev', what: 'free ",
+   "label": "worker-js"
+  },
+  {
+   "id": "server/cloudflare/stripe_store.js",
+   "text": "// CHE Studio store: Stripe products, payment links and sales, owner-approved. // // Secrets (names only): STRIPE_SECRET_KEY, STRIPE_PUBLISHABLE_KEY, STRIPE_WEBHOOK_SECRET // Pattern matches Twilio: Worker secrets + Plugins UI; never echo secret values (sk_/whsec_). // // Safety model: // - Uses STRIPE_SECRET_KEY (ideally a restricted key: Products/Prices/Payment // Links write, Charges/Balance/Checkout read). The key never leaves the Worker. // - STRIPE_PUBLISHABLE_KEY (pk_) may be returned to the paired device for client Stripe.js. // - Nothing is created in Stripe until the owner approves a",
+   "label": "worker-js"
+  },
+  {
+   "id": "server/cloudflare/trading_live.js",
+   "text": "// Forward paper trading on intraday NQ/MNQ bars (owner, 2026-10-18): the same evidence // engine as the daily research (trading_evidence.js), stepped every minute on the // Worker's alarm while paper trading is on, so closing the iPhone does not stop it. // // Paper only: nothing here can reach a broker. Every portfolio is a research source // ('paper' or 'backtest'), which newPortfolio refuses to change, and no broker module is // imported. Every number shown is computed from the journal; a trade is reported only // once its record exists. import { aggregate, cmeSession, frontMonth, liveFeed",
+   "label": "worker-js"
+  },
+  {
+   "id": "server/cloudflare/voice_choices.js",
+   "text": "// CHE voice choices. Every selected voice is checked against the provider's own // account (ElevenLabs' current voice API, Fish Audio's model list) before it may be // saved. No keys, invented voices or arbitrary provider IDs are sent to the phone. import { fetchElevenLibrary, fetchElevenModels, fetchFishModels, isVoiceId, validateElevenSettings } from './voice_library.js'; const VOICE_ID = /^[A-Za-z0-9_-]{10,80}$/; const enabled = (value) => ['1', 'true', 'yes'].includes(String(value || '').toLowerCase()); export function parseElevenVoices(payload) { return (Array.isArray(payload?.voices) ? ",
+   "label": "worker-js"
+  },
+  {
+   "id": "lib/agents/che_agent_runtime.dart",
+   "text": "// Client for CHE's backend Agent Runtime (server/cloudflare/agent_runtime.js). // // The agents run on the server and keep working while the phone is locked. // This file only mirrors their real state: the roster, each agent's task // history and War Room meetings. Nothing here invents progress. import 'dart:async'; import 'dart:convert'; import 'package:flutter/foundation.dart'; import 'package:http/http.dart' as http; import '../che_ui/che_agents.dart'; class CheAgentRuntimeException implements Exception { const CheAgentRuntimeException(this.message); final String message; @override String ",
+   "label": "flutter-dart"
+  },
+  {
+   "id": "lib/browser/che_tradesea_check.dart",
+   "text": "// TradeSea inside CHE's web view (issue #342): the owner's chart and active account load in the // native TradeSea app but not reliably here. Two differences from Safari are known in code: // - With no handler, iOS's web view answers every confirm() with \"Cancel\" and drops every // alert(), silently. CHE's browser now shows TradeSea's own questions to the owner. // - A window TradeSea opens (window.open, target=_blank) replaces the page in the same view and // the opener gets nothing back, so a sign-in or chart window that needs its own window fails. // The rest is unproven, so the owner can ",
+   "label": "flutter-dart"
+  },
+  {
+   "id": "lib/che_local_brain.dart",
+   "text": "import 'dart:convert'; import 'package:flutter/foundation.dart'; import 'package:flutter/services.dart'; import 'che_bootstrap.dart'; import 'che_native_voice.dart'; /// Pinned Local Brain model. Chosen for English instruction following, /// tool-routing, permissive license, and iPhone RAM. class CheLocalBrainModel { const CheLocalBrainModel({ required this.modelId, required this.version, required this.runtime, required this.filename, required this.sourceUrl, required this.sourcePage, required this.license, required this.quantization, required this.parameterCount, required this.bytes, required",
+   "label": "flutter-dart"
+  },
+  {
+   "id": "lib/che_theme.dart",
+   "text": "// ============================================================================ // C.H.E. THEME // // Shared color tokens, gradients and small reusable \"premium AI product\" // widgets (glass panels, glow, floating animation) used across the main // conversation screen and the Virtual Office hub. Pulled out of main.dart so // visual language stays consistent and main.dart stops growing. // ============================================================================ import 'dart:math' as math; import 'package:flutter/material.dart'; class CheColors { CheColors._(); static const Color bg = Color(",
+   "label": "flutter-dart"
+  },
+  {
+   "id": "lib/che_ui/che_screen_awareness.dart",
+   "text": "// What CHE can truthfully say about the screen the owner is on. Each page // registers a report of itself (page, selected tab, main controls) while it // is shown; \"What is on my screen?\" is answered from the one that is really // in front of the owner, never guessed by a model. When the screen on top // does not report itself, CHE says so instead of describing the one below. import 'package:flutter/widgets.dart'; class CheScreenReport { const CheScreenReport({required this.page, this.tab = '', this.tabs = const [], this.controls = const [], this.detail = ''}); /// \"Chat\", \"Commands\", \"Connec",
+   "label": "flutter-dart"
+  },
+  {
+   "id": "lib/che_voice_state.dart",
+   "text": "enum CheVoicePhase { sleeping, wakeListening, connecting, listening, userSpeaking, thinking, speaking, interrupted, fallback, disconnected, } enum CheVoiceEngine { none, realtime, nativeFallback, } class CheVoiceSnapshot { const CheVoiceSnapshot({ required this.phase, required this.engine, required this.connectionState, required this.microphoneActive, required this.lastInterruptionReason, required this.lastLatencyMs, required this.lastError, required this.selectedModel, required this.selectedVoice, required this.audioReturned, required this.audioVerified, required this.sessionReady, }); final ",
+   "label": "flutter-dart"
+  },
+  {
+   "id": "lib/commands/che_command_voice.dart",
+   "text": "// Voice routes for the Command Center. While the page is open it registers // [CheCommandCenterVoice.handler]; Chat's send pipeline offers it the // owner's words first (the same hook pattern CHE's browser uses), so every // action on the page also works by voice: search, read the options as a // numbered list, pick by number, open, run, favorite, switch tabs, build, // run, edit or delete a workflow, and approve, retry, pause, resume or // cancel a run. Parsing is deterministic and never calls a model. // // Requests to list or search commands are read as whole sentences, the way // speech r",
+   "label": "flutter-dart"
+  },
+  {
+   "id": "lib/home/che_inline_preview.dart",
+   "text": "// Shows a page, video or site right inside the chat bubble, so the owner sees // what CHE or her crew rendered without leaving the conversation. import 'package:flutter/foundation.dart'; import 'package:flutter/material.dart'; import 'package:url_launcher/url_launcher.dart'; import 'package:webview_flutter/webview_flutter.dart'; import '../browser/che_embedded_app_shell.dart'; import '../che_app_portal.dart'; import '../che_ui/che_theme.dart'; class CheInlinePreview extends StatefulWidget { const CheInlinePreview({ super.key, required this.url, this.height = 300, this.headers = const {}, this",
+   "label": "flutter-dart"
+  },
+  {
+   "id": "lib/home_state/microphone.dart",
+   "text": "part of '../main.dart'; // Split out of main.dart: _CHEHomeState members (microphone). extension _CheHomeMicrophone on _CHEHomeState { /// The mic button. Never leaves the screen stuck: a stalled live-voice /// connection is cancelled, and any failure resets the mic state, is shown /// in Voice diagnostics and on screen, and leaves typing and navigation working. Future<void> toggleListening() async { if (_realtimeConnecting) { HapticFeedback.lightImpact(); _realtimeCancelRequested = true; _mic.ownerOff('mic button (cancel connecting)'); _voiceMachine.sleep(); _applyVoiceSnapshot(_voiceMachine.",
+   "label": "flutter-dart"
+  },
+  {
+   "id": "lib/platform/che_core_sphere.dart",
+   "text": "import 'dart:math' as math; import 'package:flutter/material.dart'; import '../che_ui/che_theme.dart'; /// Original CHE Core mark: a compact, dense, compressed-energy sphere. /// Not a copy of any named anime or game energy attack. class CheCoreSphere extends StatefulWidget { const CheCoreSphere({super.key, this.size = 148, this.active = true}); final double size; final bool active; @override State<CheCoreSphere> createState() => _CheCoreSphereState(); } class _CheCoreSphereState extends State<CheCoreSphere> with SingleTickerProviderStateMixin { late final AnimationController _controller = Ani",
+   "label": "flutter-dart"
+  },
+  {
+   "id": "lib/rooms/che_store_room.dart",
+   "text": "// CHE Studio Store: products CHE or the owner propose, approved one tap at a // time, then created in Stripe with a real payment link. Sales and balance come // straight from Stripe. There is no refund, payout or spend control here. import 'dart:async'; import 'dart:convert'; import '../widgets/che_native_scene_world.dart'; import 'package:flutter/material.dart'; import 'package:flutter/services.dart'; import 'package:http/http.dart' as http; class CheStoreRoom extends StatefulWidget { const CheStoreRoom({ super.key, required this.baseUrl, required this.headers, required this.onAsk, this.clie",
+   "label": "flutter-dart"
+  },
+  {
+   "id": "lib/self_update/che_self_update_intent.dart",
+   "text": "/// Repository-library discovery must happen before CHE tries to patch herself. /// These requests belong to the GitHub research/scout lane, even when the owner /// eventually wants the useful parts integrated into CHE. bool cheIsRepositoryResearchRequest(String raw) { final text = raw.trim(); // Explicit implementation requests that use Inspirations/starred repos as // references belong to the coding lane, not the research-only lane. final explicitCodeUpdate = RegExp( r'^(?:(?:chay|chey|shay|che)[, ]+)?update\\s+your\\s+code\\s*:', caseSensitive: false, ).hasMatch(text); final implementation = R",
+   "label": "flutter-dart"
+  },
+  {
+   "id": "docs/CHE_AGENT_SKILLS.md",
+   "text": "# CHE's approved installed agent skills ## Reviewed installation `find-skills` is installed at `.opencode/skills/find-skills/SKILL.md` from `vercel-labs/skills`, commit `e878c4502674f84094dc27b5ad94ddaf64f22551`. Upstream path: `skills/find-skills/SKILL.md`; Git blob: `a41bdd074bb587afd861332cf2f473f3154de4d7`. MIT license included alongside it. The file was read before copying; its blob is checked by a regression test. The package directory contains only Markdown, no scripts. Its instructions include `npx skills add ... -g -y` and update commands. Those can download and install arbitrary thir",
+   "label": "docs-md"
+  },
+  {
+   "id": "docs/CHE_CODING_FAILOVER.md",
+   "text": "# CHE coding: free first, paid last ($15/month ceiling) This runs inside the existing `.github/workflows/che-opencode-runtime.yml`. It adds no agent and no billing system. No credit is bought and no provider account is changed by this repository. ## What CHE does on a coding job 1. Free models first: OpenRouter `:free` models, plus any other free provider the owner names in `CHE_CODING_FREE_PROVIDERS`. 2. Verified checkpoints: after a failed model that changed files, the change is kept only if it passes the path rules, stays under 300 KB and parses. The next model continues from it; anything e",
+   "label": "docs-md"
+  },
+  {
+   "id": "docs/CHE_GOOGLE_CONNECTIONS.md",
+   "text": "# CHE Google connections: Gmail, Drive, Calendar, Google Ads One Google OAuth client (the one YouTube already uses, `CHE_YOUTUBE_CLIENT_ID`) serves four services. Each service is its own Google sign-in, so the owner approves each one on its own screen and CHE asks only for that service's permissions. Tokens are sealed in CHE's store with `CHE_OAUTH_SECRET` and never reach the app. The app shows state and the signed-in address only. | Service | Permissions requested | What CHE can do | |---|---|---| | Gmail | `gmail.readonly`, `gmail.send` | List unread or matching mail; send plain-text email o",
+   "label": "docs-md"
+  },
+  {
+   "id": "docs/CHE_PROJECT_PLANNING.md",
+   "text": "# CHE Concept-to-Plan The owner's request (2026-10-20): turn any idea into a structured, visual, costed plan. The idea can be a product, clothing, a vehicle, a rocket, an app, a game, a business or a creative project. This is one universal layer. It is not a second router or planner. ## How it works - **Worker:** `server/cloudflare/project_plan.js`. It's deterministic and makes no model call. 1. **Classifier** (`classifyProject`). It sorts the idea into one of 12 types, and each type has its planning structure: | Type | Planning structure | |---|---| | aerospace | bill of materials | | wearabl",
+   "label": "docs-md"
+  },
+  {
+   "id": "docs/CHE_STRATEGY_LEARNING.md",
+   "text": "# Strategy learning and live readiness Owner priority, 2026-10-20. Existing `trading_live.js` and `trading_evidence.js` remain the sole five-minute research/forward engines. No broker execution is added. ## Evidence and cards `GET /api/trading/live` includes `learning`: EMA Pullback first, VWAP second, then every registered intraday strategy. A card's primary forward statistics are the current strategy-version's predeclared `any` filter / default-target portfolio. Identical entries are counted once. Variant records remain available with their version, target and statistics; no cross-parameter/",
+   "label": "docs-md"
+  },
+  {
+   "id": "docs/CLOUDFLARE_DEPLOY.md",
+   "text": "> **Auto-deploy:** Cloudflare Workers Builds is connected to this repo (root > `server/cloudflare`, branch `main`, `npx wrangler deploy`). Every push to > `main` redeploys the Worker. Do not put `[skip ci]` in a commit that must > deploy: Workers Builds honors it and skips. # Cloudflare Worker deploy checklist Last verified **2026-09-29** (America/Chicago). Do not put secret values in Flutter, git, or this file. ## Current readiness: YES (prod live) | Check | Result | |---|---| | Account ID | `c49b395e8f1138b5fae36ab88222542c` (Henryjavoni@gmail.com's Account) | | Worker name | `chey-app` | | ",
+   "label": "docs-md"
+  },
+  {
+   "id": "docs/SESSION_PROGRESS.md",
+   "text": "# CHE session progress — FINAL 2026-09-29 (America/Chicago) Work tree: `/workspace/chey-app-git` (Vondada/chey-app, `gh` as Vondada). Prod Worker: **https://chey-app.henryjavoni.workers.dev** — `/health` → `{\"ok\":true,\"agent\":\"CHE cloud\"}`. Deployed version: `717d399e-b77b-4650-ae63-9796fe1468eb` (Office auto providers). Worker tests: `cd server/cloudflare && npm test` → **128/128 pass**. --- ## Office providers (2026-09-29 evening) **xAI key may be present but uncredited.** Iris, Atlas, Mira, and Lyra now use `provider_preference: 'auto'` so Office work is not blocked on Grok. `routingForAgen",
+   "label": "docs-md"
+  },
+  {
+   "id": "docs/TWILIO_CHE.md",
+   "text": "# Twilio SMS for CHE (trial-ready) CHE is the **only** sender (`send_sms` / `send_sms_bulk`). Office specialists may draft message text into a pending bulk job; CHE sends after the owner confirms bulk. Never commit secret values. ## Secret names (Worker only) | Secret | Purpose | |---|---| | `TWILIO_ACCOUNT_SID` | Twilio Account SID | | `TWILIO_AUTH_TOKEN` | Twilio Auth Token (also used to validate inbound signatures) | | `TWILIO_FROM_NUMBER` | E.164 trial From number (e.g. `+1…`) | | `TWILIO_MESSAGING_SERVICE_SID` | Optional Messaging Service SID (alternative to From) | Set on the Worker (fro",
+   "label": "docs-md"
+  },
+  {
+   "id": "docs/ai-ad-business/FIVERR_PUBLIC_DEMAND.md",
+   "text": "# Fiverr public demand snapshot — 2026-09-29 No-login notes only. This is **not** a buyer-request scrape, not a gig inventory, and not permission to message, bid, or buy. Figures come from Fiverr's own June 2026 Business Trends Index press (search growth, May–October 2025 vs November 2025–April 2026). Confidence: **medium** (publisher stats, not a live listing check). Owner decision: **pending**. Recommendation: **watch**. Sources: - https://www.fiverr.com/news/business-trends-index-ai-2026 - https://www.fiverr.com/resources/guides/reports/business-trends-index-june-2026 - GlobeNewswire reprin",
+   "label": "docs-md"
+  },
+  {
+   "id": "docs/ai-ad-business/ORDER_CHECKLIST.md",
+   "text": "# Order intake checklist — before creative work starts Copy one block per client. Do not start the clock until **Payment** and **Required assets** are checked. --- ## Client - [ ] Business name: _______________________ - [ ] Contact name + phone / IG: _______________________ - [ ] City / neighborhood: _______________________ - [ ] Package: [ ] $500 Tonight [ ] $250 Mid [ ] $150 Starter - [ ] Need-by time (local): _______________________ ## Payment - [ ] Method: [ ] Cash App [ ] Venmo [ ] Stripe link [ ] Other: _______ - [ ] Amount received: $_______ - [ ] Confirmation (screenshot / txn id): __",
+   "label": "docs-md"
+  },
+  {
+   "id": "docs/ml-studio/README.md",
+   "text": "# ML studio See [PLAYBOOK.md](./PLAYBOOK.md). Module: `server/cloudflare/ml_studio.js`.",
+   "label": "docs-md"
+  },
+  {
+   "id": "docs/roblox-studio/luau/README.md",
+   "text": "# Luau stubs (owner pastes into Roblox Studio) These are **drafts**. CHE/Office never auto-publishes them. | File | Use | |---|---| | [`WeaponToolBase.luau`](./WeaponToolBase.luau) | Tonight first deliverable — Tool swing/damage probe | | (next) Clothing / shirt template brief | See PLAYBOOK clothing path — asset PNGs stay on owner machine | Harden server-side validation before any public experience.",
+   "label": "docs-md"
+  }
+ ]
+}

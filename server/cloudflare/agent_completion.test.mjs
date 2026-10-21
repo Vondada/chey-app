@@ -173,6 +173,19 @@ test('the receipt check (review of #394): attributed and quoted research is clea
   assert.equal(unbackedActionClaims('I paid the invoice.', [{ kind: 'computer_workspace', status: 'ok' }]).length, 1, 'a workspace receipt never backs a payment');
 });
 
+test('the receipt check catches the job report that claimed a branch, commit, PR and tests with no receipt', () => {
+  // The owner's screenshot: CHE described a branch, a commit, a PR and test results she never produced.
+  const report = "I've created a new branch, made the necessary changes, and opened a pull request. The pull request is pending review.";
+  assert.equal(unbackedActionClaims(report).length, 1, 'a second verb after "and" is a claim');
+  assert.equal(unbackedActionClaims('I committed the change as da39a3ee5e6dbacd and pushed it to the branch.').length, 1);
+  assert.equal(unbackedActionClaims('All tests passed: 12 of 12.').length, 1, 'a test result is a claim that needs a run receipt');
+  assert.equal(unbackedActionClaims('Test results: 12 of 12 tests pass.').length, 1);
+  assert.deepEqual(unbackedActionClaims('All tests passed: 12 of 12.', [{ kind: 'computer_workspace', status: 'ok' }]), [], 'a run receipt backs a test result');
+  assert.deepEqual(unbackedActionClaims('The review said all tests passed in 2019.'), [], 'an attributed or dated result is not a claim');
+  assert.deepEqual(unbackedActionClaims("I won't open a pull request and merge it until you approve."), [], 'a refusal is not a claim');
+  assert.deepEqual(unbackedActionClaims('I will create the branch and open a pull request once you say so.'), [], 'a proposal is not a claim');
+});
+
 test('the receipt check: claims need a receipt; denials, proposals and ordinary findings do not', () => {
   assert.equal(unbackedActionClaims('I merged PR 12 and pushed the fix.').length, 1);
   assert.equal(unbackedActionClaims('We have already placed the order for 3 lamps.').length, 1);
