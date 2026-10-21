@@ -40,8 +40,14 @@ function result(status, extra) {
  * Returns { status, answer?, sources?, steps, reason? } with status one of:
  *   answered | not_found | uncited | needs_owner | held | refused | budget_exhausted | no_plan
  */
-export async function runBrowseLoop({ question, planner, executor, search = null, app = 'browser', grants = [], ownerConfirmed = false, limits = LOOP_LIMITS } = {}) {
+export async function runBrowseLoop(args = {}) {
   const observations = [];
+  const outcome = await browseSteps({ ...args, observations });
+  // The pages read in this run, so the caller can keep them as research leads (agent_research_memory.js).
+  return { ...outcome, observations };
+}
+
+async function browseSteps({ question, planner, executor, search = null, app = 'browser', grants = [], ownerConfirmed = false, limits = LOOP_LIMITS, observations } = {}) {
   const steps = [];
   let searches = 0;
   for (let i = 0; i < limits.maxSteps; i++) {
