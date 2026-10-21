@@ -19,7 +19,7 @@ import { codexThreadId } from './office_router.js';
 import { meetingEvent, officeTaskEvent, researchEvent } from './room_events.js';
 import { assertAgentMayRun, permissionBlocker } from './agent_permissions.js';
 import { guardRetrievalClaims } from './truth_layer.js';
-import { runBrowseTask } from './browse_chat.js';
+import { agentSoul, pickOfficeAgent, runBrowseTask } from './browse_chat.js';
 
 export const AGENT_STATUSES = [
   'idle', 'researching', 'building', 'analyzing', 'meeting',
@@ -512,6 +512,22 @@ export function recordAgentWork(data, { task = {}, agent = {}, outcome = 'comple
     agent.last_work = { task_id: entry.task_id, status: entry.status, verified: entry.verified_by_che, at: entry.at };
   }
   return entry;
+}
+
+// The job a finished research task hands on: queued to the agent whose job description fits it, with the research
+// as its input. When nobody on the team fits, the hand-off is recorded as blocked; nobody is hired.
+export function queueNextJob(data, task, researcher) {
+  const next = task.next;
+  task.next = null;
+  const agent = pickOfficeAgent(data.team, { needs: next.needs || [] });
+  if (!agent) {
+    task.next_blocked = `No agent on the team fits ${next.label || 'the next job'}, so it was not started. Nobody was hired.`;
+    return null;
+  }
+  const input = clip(task.result, 6000);
+  const queued = queueAgentTask(data, agent, `${next.task}\n\nRESEARCH FROM ${researcher?.name || 'the researcher'}:\n${input}`, 'collaboration');
+  task.next_queued_to = agent.name;
+  return queued;
 }
 
 export function queueAgentTask(data, agent, task, source = 'owner', options = {}) {
@@ -1172,7 +1188,7 @@ async function runOneTask(ctx) {
     const detailed = task.browse
       ? await runBrowseTask({
         question: task.task,
-        soul: agent.personality,
+        soul: agentSoul(agent),
         complete: async ({ system, user }) => (await runModelDetailed(env, modelFor(env, agent, models), system, user, 400, routing)).text,
         keepReads: ctx.keepReads || null,
       }).then((run) => ({ text: run.text, engine: 'browse_loop', model: '' }))
@@ -1397,6 +1413,8 @@ async function reviewDelegatedResult(ctx, taskId, { saved = false } = {}) {
   }
 
   t2.status = 'complete';
+  // A research job passes its result to the content job it was planned with, to whichever agent's job fits it.
+  if (t2.next && t2.next.task) queueNextJob(data, t2, a2 || agent);
   // Research / opportunity scout → Durable Object memory notes (owner-visible).
   if (isResearchStyleJob(t2, a2 || agent)) {
     const written = writeResearchMemoryNote(data, {

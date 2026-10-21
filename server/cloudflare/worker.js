@@ -3681,15 +3681,17 @@ export class CheState extends DurableObject {
     const data = await this.loadData();
     const lines = [];
     for (const item of plan) {
-      // Only agents already on the team take work. CHE never hires one to fill a task.
-      const agent = pickOfficeAgent(data.team, { name: item.agent, needs: item.needs });
+      // The agent is the one on the team whose job description fits this job. CHE never hires one to fill a job.
+      const agent = pickOfficeAgent(data.team, { needs: item.needs });
       if (!agent) { lines.push(`No agent on the team fits ${item.label}, so I did not start it. I did not hire anyone.`); continue; }
       let refused = '';
       try { assertAgentMayRun(agent, { task: item.task }); } catch (error) { refused = permissionBlocker(agent, error); }
       if (refused) { lines.push(`${item.agent} did not start: ${refused}`); continue; }
       // The owner assigned it, which is the permission for the browser: the agent runs the browsing loop.
-      queueAgentTask(data, agent, item.task, 'owner_chat', { browse: true });
-      lines.push(`${agent.name} is working on it with the browsing loop: ${item.label}. ${agent.name} will hand the result to me for review; ask me for it when it is back.`);
+      const queued = queueAgentTask(data, agent, item.task, 'owner_chat', { browse: true });
+      if (item.next) queued.next = { needs: item.next.needs, label: item.next.label, task: item.next.task };
+      const then = item.next ? ` When the research is reviewed, the ${item.next.label} job goes to the agent whose job fits it.` : '';
+      lines.push(`${agent.name} is working on it with the browsing loop: ${item.label}.${then} ${agent.name} will hand the result to me for review; ask me for it when it is back.`);
     }
     await this.ctx.storage.put('che', data);
     await this.scheduleWork();

@@ -1,7 +1,8 @@
 // The owner's chat routed into the browsing loop and the sub-agents. Fixtures only; nothing reaches the network.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { browseIntent, browseReply, pickOfficeAgent, runBrowseTask, runSearchRoute, subAgentPlan } from './browse_chat.js';
+import { agentSoul, browseIntent, browseReply, pickOfficeAgent, runBrowseTask, runSearchRoute, subAgentPlan } from './browse_chat.js';
+import { queueNextJob } from './agent_runtime.js';
 import { parseReaRequest } from './rea_runner.js';
 
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
@@ -56,12 +57,17 @@ test('the owner\'s whole Instagram request asks for a study, a style and an orig
   assert.equal(intent.create, true);
 });
 
-test('the sub-agents: a story goes to Mira; the style study goes to Atlas only when a link is given', () => {
-  const withLink = subAgentPlan('Study https://www.instagram.com/example/ and recreate the same style. Then write an original story.', { url: 'https://www.instagram.com/example/' });
-  assert.deepEqual(withLink.map((p) => p.agent), ['Atlas', 'Mira']);
-  assert.match(withLink[0].task, /instagram\.com\/example\//);
-  const withoutLink = subAgentPlan('Study an Instagram page and recreate the same style');
-  assert.deepEqual(withoutLink, []);
+test('a study with a link is research first, with the content job after it; a story is content only', () => {
+  const study = subAgentPlan('Study https://www.instagram.com/example/ and recreate the same style. Then write an original story.', { url: 'https://www.instagram.com/example/' });
+  assert.equal(study.length, 1, 'one research job; the content job travels with it');
+  assert.match(study[0].task, /instagram\.com\/example\//);
+  assert.ok(study[0].needs.includes('research'));
+  assert.ok(study[0].next.needs.includes('video') || study[0].next.needs.includes('content'));
+  const story = subAgentPlan('Write an original story about a lighthouse keeper');
+  assert.equal(story.length, 1);
+  assert.ok(story[0].needs.includes('story'));
+  assert.equal(story[0].next, undefined);
+  assert.deepEqual(subAgentPlan('Study an Instagram page and recreate the same style'), [], 'no link, no job: the owner is asked for it');
 });
 
 test('an answer is shown with the pages it read and how many steps it took', async () => {
@@ -116,16 +122,45 @@ test('a study of a link is handed to REA as its inspect request, with the link a
   assert.equal(parsed.input, 'https://www.instagram.com/example/reel/abc123');
 });
 
-test('an agent takes a task only from the existing team: the named one, else one whose role fits, else nobody', () => {
+test('a job goes to the team member whose job description fits it, never by name, and nobody is hired', () => {
   const team = [
-    { name: 'Nova', role: 'Operations', specialty: 'Scheduling', retired: false },
-    { name: 'Atlas', role: 'Research', specialty: 'Reads public pages', retired: false },
-    { name: 'Lyra', role: 'Writing', specialty: 'Stories', retired: true },
+    { name: 'Nova', role: 'Product / listings', specialty: 'Product offers', retired: false },
+    { name: 'Atlas', role: 'Research / scout', specialty: 'Research, sourcing, competitive checks', retired: false },
+    { name: 'Lyra', role: 'Content / social', specialty: 'Content, social copy and campaign drafts', retired: false },
+    { name: 'Vale', role: 'Writing', specialty: 'Original stories', retired: true },
   ];
-  assert.equal(pickOfficeAgent(team, { name: 'Atlas', needs: ['research'] }).name, 'Atlas');
-  assert.equal(pickOfficeAgent(team, { name: 'Mira', needs: ['research'] }).name, 'Atlas');
-  assert.equal(pickOfficeAgent(team, { name: 'Mira', needs: ['writ', 'stor'] }), null, 'a retired agent is not used, and nobody is hired');
-  assert.equal(pickOfficeAgent([], { name: 'Atlas', needs: ['research'] }), null);
+  assert.equal(pickOfficeAgent(team, { needs: ['research', 'study'] }).name, 'Atlas');
+  assert.equal(pickOfficeAgent(team, { needs: ['content', 'video', 'story'] }).name, 'Lyra');
+  assert.equal(pickOfficeAgent(team, { needs: ['trade'] }), null, 'no trader on the team: nobody is hired');
+  assert.equal(pickOfficeAgent(team, { needs: ['story'] }), null, 'a retired agent is never used');
+  assert.equal(pickOfficeAgent([], { needs: ['research'] }), null);
+});
+
+test('an agent\'s loop uses its own personality and its job at CHE', () => {
+  const soul = agentSoul({ personality: 'Dry and precise.', role: 'Research / scout', specialty: 'Sourcing' });
+  assert.match(soul, /Dry and precise\./);
+  assert.match(soul, /Your job at CHE: Research \/ scout \(Sourcing\)/);
+});
+
+test('a finished research job hands its result to the content job, to the agent whose job fits it', () => {
+  const data = { team: [
+    { id: 'a', name: 'Atlas', role: 'Research / scout', specialty: 'Research, sourcing', retired: false },
+    { id: 'l', name: 'Lyra', role: 'Content / social', specialty: 'Video content and campaign drafts', retired: false },
+  ], team_tasks: [] };
+  const research = { id: 't1', task: 'Study the page', result: 'Pacing is fast; captions on every shot.', next: { needs: ['content', 'video'], label: 'make a video in the same style', task: 'Make the video plan.' } };
+  const queued = queueNextJob(data, research, data.team[0]);
+  assert.equal(queued.partner_name, 'Lyra');
+  assert.match(queued.task, /RESEARCH FROM Atlas:\nPacing is fast; captions on every shot\./);
+  assert.equal(research.next, null);
+  assert.equal(research.next_queued_to, 'Lyra');
+});
+
+test('with no content agent on the team, the hand-off is recorded as blocked and nobody is hired', () => {
+  const data = { team: [{ id: 'a', name: 'Atlas', role: 'Research / scout', specialty: 'Research', retired: false }], team_tasks: [] };
+  const research = { id: 't2', task: 'Study', result: 'Done.', next: { needs: ['content', 'video'], label: 'make a video', task: 'Make it.' } };
+  assert.equal(queueNextJob(data, research, data.team[0]), null);
+  assert.match(research.next_blocked, /Nobody was hired/);
+  assert.equal(data.team.length, 1);
 });
 
 test('a browsing task runs the loop with the agent\'s own planner and keeps the pages it reads', async () => {

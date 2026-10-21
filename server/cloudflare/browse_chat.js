@@ -43,44 +43,66 @@ export function browseIntent(message) {
   };
 }
 
-/** The sub-agent tasks a request needs. Each task names the agent that does it; CHE reports back what they return. */
+// Job descriptions, matched against each office agent's role, specialty and mission (the roster in office_company.js).
+// Research goes to the researcher (Atlas); content, video and story work goes to the content agent (Lyra).
+export const JOB_NEEDS = Object.freeze({
+  research: ['research', 'scout', 'source', 'analy', 'study', 'read', 'competitor', 'market'],
+  content: ['content', 'social', 'video', 'story', 'script', 'copy', 'creative', 'caption'],
+});
+
+/**
+ * The jobs a request needs, in order. A research job comes first when the request needs reading; a content job
+ * follows it and receives the research as its input (the research task's `next`). Each job names what it needs,
+ * never a fixed agent: the agent is chosen from the team by job description.
+ */
 export function subAgentPlan(message, { url = '' } = {}) {
   const intent = browseIntent(message);
-  const plan = [];
-  if (intent.style && (url || intent.url)) {
-    plan.push({
-      agent: 'Atlas', needs: ['research', 'read', 'analy', 'video', 'media'],
-      label: 'study how the page makes its AI videos and describe the same style',
-      task: `Study how the page ${url || intent.url} makes its AI videos: pacing, camera moves, shot length, captions, music, and the tools that look used. Use only what was really read. Then describe the same style as a plan for an original video, and list what could not be verified. The owner's words: ${String(message).slice(0, 1000)}`,
-    });
-  }
-  if (intent.create) {
-    plan.push({
-      agent: 'Mira', needs: ['writ', 'stor', 'script', 'copy'],
-      label: 'write an original story',
-      task: `Write the original story the owner asked for, and keep to the length and form he gave. Do not copy any existing story. Mark any detail you invented as invented. The owner's words: ${String(message).slice(0, 1000)}`,
-    });
-  }
-  return plan;
+  const link = url || intent.url;
+  const research = intent.study && link
+    ? {
+      needs: JOB_NEEDS.research,
+      label: 'study the page and describe how it makes its videos',
+      task: `Study the page ${link}: pacing, camera moves, shot length, captions, music, and the tools that look used. Use only what was really read. List what could not be verified. The owner's words: ${String(message).slice(0, 800)}`,
+    }
+    : null;
+  const contentWanted = intent.create || (intent.style && Boolean(link));
+  if (!contentWanted) return research ? [research] : [];
+  const content = {
+    needs: JOB_NEEDS.content,
+    label: intent.create && !research ? 'write an original story' : 'make an original video in the same style',
+    task: research
+      ? `Make an original video plan in the same style as the research that follows. Do not copy the source. Mark any detail you invented as invented. The owner's words: ${String(message).slice(0, 800)}`
+      : `Write the original story the owner asked for, and keep to the length and form he gave. Do not copy any existing story. Mark any detail you invented as invented. The owner's words: ${String(message).slice(0, 800)}`,
+  };
+  if (!research) return [content];
+  return [{ ...research, next: content }];
 }
 
 /**
- * The office agent who takes a task: the named one when they are on the team, else the first agent whose role,
- * specialty or mission fits. Null when no one fits: CHE never hires to fill a task.
+ * The office agent whose job description fits the job best: the most job-need words found in the agent's role,
+ * specialty and mission. Null when no agent fits: CHE never hires to fill a job.
  */
-export function pickOfficeAgent(team = [], { name = '', needs = [] } = {}) {
+export function pickOfficeAgent(team = [], { needs = [] } = {}) {
   const live = (Array.isArray(team) ? team : []).filter((a) => a && !a.retired);
-  const named = live.find((a) => a.name === name);
-  if (named) return named;
-  return live.find((a) => {
-    const text = `${a.role || ''} ${a.specialty || ''} ${a.mission || ''}`.toLowerCase();
-    return needs.some((word) => text.includes(word));
-  }) || null;
+  let best = null;
+  let bestScore = 0;
+  for (const agent of live) {
+    const text = `${agent.role || ''} ${agent.specialty || ''} ${agent.mission || ''}`.toLowerCase();
+    const score = needs.filter((word) => text.includes(word)).length;
+    if (score > bestScore) { best = agent; bestScore = score; }
+  }
+  return best;
+}
+
+/** An office agent's own personality plus the job it holds at CHE, used as the soul of its loop. */
+export function agentSoul(agent = {}) {
+  return [String(agent.personality || '').trim(), agent.role ? `Your job at CHE: ${agent.role}${agent.specialty ? ` (${agent.specialty})` : ''}. Work only within it.` : '']
+    .filter(Boolean).join('\n');
 }
 
 /**
- * An office agent's browsing task: the same loop CHE uses, planned with the agent's own personality and model
- * (complete). Pages the run reads are kept through keepReads, when the Worker provides it.
+ * An office agent's browsing task: the same loop CHE uses, planned with the agent's own soul (personality and job)
+ * through complete. Pages the run reads are kept through keepReads, when the Worker provides it.
  */
 export async function runBrowseTask({ question, soul = '', complete, fetcher = fetch, keepReads = null }) {
   const outcome = await runSearchRoute(question, { complete, soul, fetcher });
