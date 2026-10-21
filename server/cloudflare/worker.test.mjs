@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
 import { recallMemories, recordConversationMemory, rememberedText } from './brain_memory.js';
+import { latestWorkerDeploymentIntent, latestWorkerDeploymentStatus, speakLatestWorkerDeployment } from './self_update.js';
 
 // Import the Worker as a normal temporary ES module. Keeping the generated
 // module beside worker.js lets every relative import resolve naturally and
@@ -31,6 +32,54 @@ try {
 } finally {
   try { unlinkSync(generatedWorker); } catch (_) {}
 }
+
+test('live Worker deployment questions route to GitHub Actions, never source inspection', () => {
+  const direct = 'CHE, check GitHub Actions for Vondada/chey-app. Find the latest Deploy CHE Worker run and give me its run ID, conclusion, commit SHA, and GitHub link. Use live GitHub records, not memory.';
+  for (const ask of [direct, 'What is the latest CHE Worker deployment status?', 'Show latest Deploy CHE Worker run']) {
+    assert.equal(latestWorkerDeploymentIntent(ask), true, ask);
+  }
+  for (const ask of ['Fix your code so deployments show correctly', 'Deploy CHE now', 'Is live trading on?', 'Explain how to deploy a Worker', 'Tell me what self_update.js does']) {
+    assert.equal(latestWorkerDeploymentIntent(ask), false, ask);
+  }
+});
+
+test('latest Worker deployment receipt uses current GitHub run; stale/local state is never substituted', async () => {
+  const repository = 'Vondada/chey-app';
+  const env = { CHE_GITHUB_REPO: repository, CHE_GITHUB_TOKEN: 'fixture' };
+  const sha = '8fd6bb30aa7f497f0768745f4fe1f0b58aa4fde7';
+  const calls = [];
+  const fetcher = async (url) => {
+    calls.push(url);
+    return { ok: true, status: 200, json: async () => ({ workflow_runs: [
+      { name: 'Deploy CHE Worker', id: 11, status: 'completed', conclusion: 'success',
+        head_sha: sha, created_at: '2026-10-21T01:44:19Z', html_url: 'https://github.com/Vondada/chey-app/actions/runs/11' },
+      { name: 'Deploy CHE Worker', id: 9, status: 'completed', conclusion: 'failure',
+        head_sha: 'older', created_at: '2026-10-20T08:00:00Z', html_url: 'https://github.com/Vondada/chey-app/actions/runs/9' },
+    ] }) };
+  };
+  const result = await latestWorkerDeploymentStatus(env, fetcher, { version_tag: sha.slice(0, 12) });
+  assert.equal(calls.length, 1);
+  assert.match(calls[0], /actions\/workflows\/che-worker-deploy.yml\/runs\?per_page=10/);
+  assert.equal(result.run_id, 11);
+  assert.equal(result.conclusion, 'success');
+  assert.equal(result.commit_sha, sha);
+  assert.equal(result.production_version_verified, true);
+  assert.match(speakLatestWorkerDeployment(result), /completed successfully/);
+  assert.match(speakLatestWorkerDeployment(result), /actions\/runs\/11/);
+
+  const unavailable = await latestWorkerDeploymentStatus({}, fetcher);
+  assert.equal(unavailable.status, 503);
+  assert.match(speakLatestWorkerDeployment(unavailable), /could not verify/);
+  assert.equal(calls.length, 1, 'missing access must not claim a live read');
+
+  const broken = await latestWorkerDeploymentStatus(env, async () => ({ ok: false, status: 403, json: async () => ({ message: 'forbidden' }) }));
+  assert.equal(broken.status, 403);
+  assert.match(speakLatestWorkerDeployment(broken), /unverified/);
+
+  const empty = await latestWorkerDeploymentStatus(env, async () => ({ ok: true, status: 200, json: async () => ({ workflow_runs: [] }) }));
+  assert.equal(empty.found, false);
+  assert.doesNotMatch(speakLatestWorkerDeployment(empty), /completed successfully/);
+});
 
 test('nightly self-improvement only selects concrete reliability lessons', () => {
   assert.match(
