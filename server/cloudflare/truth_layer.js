@@ -98,7 +98,9 @@ const RECORD_ID = /\b(?:sim|paper|trade|journal|evidence|ledger|strategy|fill|po
 // "I used a query that joins orders to customers" is SQL help; a claim names a run and its success.
 const TOOL_SUCCESS = /\b(?:I|we|CHE)\s+(?:\w+\s+){0,2}(?:ran|invoked|executed)\s+(?:the|a|my|an)\s+(?:\w+\s+){0,2}(?:tool|lookup|query|script)\b[^\n.!?]{0,40}\b(?:successfully|and\s+it\s+returned|which\s+returned|came\s+back)\b|\b(?:my|CHE's|the)\s+(?:lookup|query|tool)\b[^\n.!?]{0,40}\b(?:succeeded|ran\s+successfully|completed\s+successfully)\b/i;
 const REVIEW_DONE = /\b(?:I|we|CHE)\s+(?:\w+\s+){0,2}reviewed\s+(?:your|the|CHE's|my)\s+(?:code|codebase|repository|repo)\b|\b(?:my|CHE's)\s+(?:code\s+)?review\b[^\n.!?]{0,40}\b(?:found\s+no|passed|complete|no\s+issues|clean)\b|\bthe\s+code\s+review\s+(?:found\s+no\s+issues|passed|is\s+complete|came\s+back\s+clean)\b/i;
-const RETRIEVAL_RULES = [['retrieval', RETRIEVAL_VERB], ['found_records', FOUND_RECORDS], ['retrieval_source', RETRIEVAL_SOURCE], ['storage_key', STORAGE_KEY], ['record_id', RECORD_ID], ['tool_success', TOOL_SUCCESS], ['review_done', REVIEW_DONE]];
+// The model never sees record ids (Brain lines carry only room, status, speaker and date), so any id it writes is invented.
+const BRAIN_RECORD_ID = /\b(?:mem|conv|office|atlas|brain|flagstaff|record)[:#][\w.-]{3,}|\brecord\s+(?:id|ids)\s*[:#]?\s*[\w.-]{4,}/i;
+const RETRIEVAL_RULES = [['retrieval', RETRIEVAL_VERB], ['found_records', FOUND_RECORDS], ['brain_record_id', BRAIN_RECORD_ID], ['retrieval_source', RETRIEVAL_SOURCE], ['storage_key', STORAGE_KEY], ['record_id', RECORD_ID], ['tool_success', TOOL_SUCCESS], ['review_done', REVIEW_DONE]];
 export const RETRIEVAL_NOT_EVIDENCE = 'I cannot verify that from a real record, sir: no storage read, lookup, tool or review ran for this answer, and a model-written record, key, identifier, date, profit or result is not evidence. Ask for the record by its source and I will read it from storage.';
 export const RETRIEVAL_NOTE = 'I took out a record claim I cannot back, sir: no storage read or tool ran for this answer. Ask for the record by its source and I will read it from storage.';
 
@@ -132,7 +134,7 @@ function retrievalClaimIn(sentence, { keys = true, documentRead = false, verifie
     if (!keys && rule === 'storage_key') continue;
     if (documentRead && READ_RULES.has(rule)) continue;
     if (!re.test(sentence)) continue;
-    if (['retrieval', 'found_records', 'retrieval_source', 'tool_success', 'review_done'].includes(rule) && DENIAL.test(sentence)) continue;
+    if (['retrieval', 'found_records', 'brain_record_id', 'retrieval_source', 'tool_success', 'review_done'].includes(rule) && DENIAL.test(sentence)) continue;
     return rule;
   }
   return null;

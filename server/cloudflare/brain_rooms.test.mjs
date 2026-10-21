@@ -202,7 +202,7 @@ test('from Chat, a question about the Trading Room is answered from the Brain an
   // The same records reach the model's context on an ordinary question, labelled by room and status.
   const plain = await che.say('Tell me something about MNQ breakouts today.');
   assert.equal(plain.route, 'model');
-  assert.ok(plain.prompts.some((p) => /Brain records on the Worker[\s\S]*\[Trading Room; verified; 2026-10-20\] 2 forward paper trades closed on MNQ breakout/.test(p)), 'the Worker\'s own Brain feeds the prompt');
+  assert.ok(plain.prompts.some((p) => /Brain records on the Worker[\s\S]*\[Trading Room; verified; speaker [^;\]]+; 2026-10-20\] 2 forward paper trades closed on MNQ breakout/.test(p)), 'the Worker\'s own Brain feeds the prompt');
 });
 
 test('an event the Brain could not take stays queued; a repeat drain never writes it twice (owner review, crash safety)', sqlite, async () => {

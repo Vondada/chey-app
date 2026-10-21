@@ -1,5 +1,7 @@
 // The owner's memory search, answered from the Brain store and the Flagstaff archive themselves.
 //
+import { storedSpeaker } from './memory_provenance.js';
+
 // Read-only. Every answer names the records it actually read (id, date, where each was stored, and the sender
 // the store recorded), or it says that nothing matched, or that a store could not be read. Who said something
 // is never inferred from wording or tone: a speaker is named only when the stored record names one.
@@ -9,7 +11,7 @@ const STOP = new Set([
   'message', 'messages', 'more', 'not', 'one', 'our', 'out', 'over', 'please', 'previous', 'record', 'records', 'search',
   'show', 'tell', 'than', 'that', 'the', 'their', 'them', 'then', 'there', 'these', 'they', 'this', 'those', 'through',
   'till', 'was', 'were', 'what', 'when', 'where', 'which', 'who', 'why', 'will', 'with', 'would', 'you', 'your',
-  'long', 'term', 'memory', 'flagstaff', 'brain', 'claude', 'owner', 'check', 'find', 'look', 'given', 'gave', 'said', 'came', 'made', 'make',
+  'long', 'term', 'memory', 'flagstaff', 'brain', 'claude', 'owner', 'check', 'find', 'look', 'given', 'gave', 'said', 'came', 'made', 'make', 'tell', 'told', 'said', 'give', 'gave', 'sent', 'wrote', 'write', 'reported', 'report',
   'distinguish', 'between', 'separate', 'source', 'sources', 'stored', 'store', 'access', 'available', 'right', 'now',
 ]);
 
@@ -20,7 +22,14 @@ export function memorySearchIntent(message) {
   const search = /\b(?:search|check|look\s+(?:through|in|up)|find|dig\s+(?:through|into))\b[\s\S]{0,60}\b(?:long[- ]term\s+memory|my\s+memory|the\s+brain|flagstaff\s+(?:records?|history|archive|messages?))\b/i;
   const access = /\b(?:do\s+you\s+have|can\s+you)\s+(?:access\s+to\s+)?(?:my\s+)?(?:long[- ]term\s+memory|flagstaff\s+(?:records?|history|archive)|the\s+brain)\b/i;
   const attribution = /\b(?:distinguish|tell\s+apart|which\s+(?:instruction|message)\s+(?:came|was)\s+from|who\s+(?:said|wrote|sent))\b[\s\S]{0,160}\b(?:claude|owner)\b/i;
-  return search.test(text) || access.test(text) || attribution.test(text);
+  // "What did Claude tell you about Atlas?", "what instruction did I give you about Atlas": a named speaker's words.
+  const speakerWords = /\b(?:what|which|who)\b[\s\S]{0,100}\b(?:Claude|Atlas|Nova|Mira|Knox|Sage|Lyra|Iris|Flagstaff|ChatGPT|Codex|Gemini|Grok|Copilot|Cursor)\b[\s\S]{0,40}\b(?:said|say|told|tell|wrote|write|reported|report|instructed|instruct|sent|send|recommended|recommend|suggested|suggest|asked|ask|finished|finish|confirmed|confirm)\b/i;
+  const ownInstruction = /\b(?:instructions?|messages?|notes?|requests?)\b[\s\S]{0,40}\b(?:did\s+I\s+(?:give|tell|send|write)\s+you|I\s+(?:gave|told|sent)\s+you)\b/i;
+  const cameFrom = /\b(?:came|comes|coming)\s+from\s+(?:me|the\s+owner|you|Claude|Atlas|Flagstaff)\b/i;
+  // A named speaker's words to the owner: only when the question is about what was said to you or me ("What did Claude tell you"),
+  // so "What did ChatGPT say?" stays with the mailbox.
+  const toOwner = /\b(?:you|me|my|I)\b/i.test(text);
+  return search.test(text) || access.test(text) || attribution.test(text) || (toOwner && speakerWords.test(text)) || ownInstruction.test(text) || cameFrom.test(text);
 }
 
 /** The words a memory search matches on: significant words of the owner's question, no names of the stores. */
@@ -34,11 +43,10 @@ function day(value) {
   return /^\d{4}-\d{2}-\d{2}/.test(text) ? text.slice(0, 10) : (text.slice(0, 10) || 'date not recorded');
 }
 
-// The sender exactly as the store recorded it. A record with no recorded sender says so.
+// The sender exactly as the store recorded it (memory_provenance storedSpeaker). A record with none says so.
 function storedSender(record) {
-  const origin = record.origin || record.source?.origin || '';
-  if (origin) return `${origin} (as stored)`;
-  return 'sender not recorded';
+  const { speaker } = storedSpeaker(record);
+  return speaker ? `${speaker} (as stored)` : 'sender not recorded';
 }
 
 /**
