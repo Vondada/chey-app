@@ -136,7 +136,7 @@ import { CheLibrary, fetchReadable, libraryContext, libraryIntent } from './libr
 import { KnowledgeLibrary, knowledgeIntent, knowledgeReply, knowledgeTaskContext } from './knowledge_library.js';
 import { answerPersonalFact, groundedReply, needsStrongEngine, personalFactQuestion } from './personal_recall.js';
 import { dropAgentTaskTurns, replyRepeatsAgentTask } from './agent_task_guard.js';
-import { seedKnowledgeCatalog } from './knowledge_catalog_seed.js';
+import { openKnowledgeLibrary, seedKnowledgeCatalog } from './knowledge_catalog_seed.js';
 import { CheBrainStore, backfillConversations, displayCopy, isSafeText, ownerMemoryRecord, projectLegacyState, rememberExchange, retrievableOwnerRecord, retrievalBody, sameDisplayCopy } from './brain_store.js';
 import { brainReviewIntent, latestReview, ownerScore, runBrainMaintenance, speakReview } from './brain_audit.js';
 import { answerCorrespondenceQuestion, archiveTasks, correspondenceStatus, importOutsideCorrespondence, outsideCorrespondenceIntent, projectOfficeExperience, recoverHistory, speakCorrespondenceCount, speakCorrespondenceImport, workerBrains } from './brain_office.js';
@@ -7199,13 +7199,13 @@ export class CheState extends DurableObject {
 
       // ─── Knowledge Library: 20 categories, cataloged or indexed references (knowledge_library.js) ──
       if (path === '/api/knowledge' && request.method === 'GET') {
-        const kl = new KnowledgeLibrary(this.ctx.storage);
+        const kl = await openKnowledgeLibrary(this.ctx.storage);
         const category = new URL(request.url).searchParams.get('category') || '';
         return json({ categories: kl.status(), references: kl.list({ category }) });
       }
       if (path === '/api/knowledge/search' && request.method === 'GET') {
         const params = new URL(request.url).searchParams;
-        const kl = new KnowledgeLibrary(this.ctx.storage);
+        const kl = await openKnowledgeLibrary(this.ctx.storage);
         return json(kl.answer(params.get('q') || '', { category: params.get('category') || '', technical: params.get('fiction') !== '1' }));
       }
       if (path === '/api/knowledge' && request.method === 'POST') {
@@ -10463,7 +10463,7 @@ export class CheState extends DurableObject {
         // the reference and part; cataloged works are said to be unread. Owner device only.
         const knowledge = ownerDevice ? knowledgeIntent(message) : null;
         if (knowledge) {
-          const kl = new KnowledgeLibrary(this.ctx.storage);
+          const kl = await openKnowledgeLibrary(this.ctx.storage);
           return ndjsonReply(knowledgeReply(kl, knowledge), { source: 'che_knowledge' });
         }
 

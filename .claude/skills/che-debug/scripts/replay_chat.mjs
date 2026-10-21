@@ -89,7 +89,11 @@ try {
 
 const saved = new Map();
 // Like Durable Object storage: one key, a list of keys, or an object of entries.
+// Production Durable Objects are SQLite-backed (wrangler.jsonc: storage "sqlite"), so the replay gives the same `sql`.
+const { DatabaseSync } = await import('node:sqlite');
+const sqlDb = new DatabaseSync(':memory:');
 const storage = {
+  sql: { exec: (q, ...p) => { const stmt = sqlDb.prepare(q); return /^\s*SELECT/i.test(q) ? stmt.all(...p) : (stmt.run(...p), []); } },
   get: async (k) => (Array.isArray(k)
     ? new Map(k.filter((key) => saved.has(key)).map((key) => [key, structuredClone(saved.get(key))]))
     : (saved.has(k) ? structuredClone(saved.get(k)) : undefined)),

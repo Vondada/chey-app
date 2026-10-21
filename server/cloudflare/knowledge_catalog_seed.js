@@ -114,3 +114,29 @@ export function seedKnowledgeCatalog(kl, { now } = {}) {
 }
 
 export { KnowledgeLibrary };
+
+// Bump when the owner's reference list changes, so an existing library gets the new entries once.
+export const KNOWLEDGE_SEED_VERSION = 1;
+const SEED_MARK = 'knowledge_catalog_seed';
+
+/**
+ * Seeds the owner's references into this storage the first time, and again when KNOWLEDGE_SEED_VERSION changes.
+ * Idempotent: a reference that is already there is left exactly as it is, so indexed text and its status survive.
+ */
+export async function ensureKnowledgeCatalog(storage, kl) {
+  const mark = await Promise.resolve().then(() => storage.get(SEED_MARK)).catch(() => null);
+  if (mark?.version === KNOWLEDGE_SEED_VERSION) return { seeded: false, ...mark };
+  // No SQLite storage means the library cannot open: nothing is seeded, and nothing is marked as done.
+  if (!kl.init()) return { seeded: false, reason: 'library storage is not available' };
+  const out = seedKnowledgeCatalog(kl);
+  const record = { version: KNOWLEDGE_SEED_VERSION, at: new Date().toISOString(), added: out.added, duplicates: out.duplicates, errors: out.errors.length };
+  await Promise.resolve().then(() => storage.put(SEED_MARK, record));
+  return { seeded: true, ...record };
+}
+
+/** The owner's library with its catalog in place. Every owner read path opens the library through this. */
+export async function openKnowledgeLibrary(storage) {
+  const kl = new KnowledgeLibrary(storage);
+  await ensureKnowledgeCatalog(storage, kl);
+  return kl;
+}
