@@ -1,10 +1,8 @@
 // Screen sharing (owner, 2026-10-20): CHE seeing another app's screen
-// through the iOS ReplayKit broadcast extension (CheBroadcast). The owner
-// starts and stops the broadcast in the system sheet; iOS never lets an app
-// start it alone, and shows a red indicator while it runs. The extension
-// keeps the last few frames on the iPhone; CHE sends one to the Worker only
-// when the owner asks "look at my screen". Builds without the extension
-// (older IPAs receiving this as a Shorebird patch) answer "not available".
+// would require iOS ReplayKit. Cross-app sharing is disabled by default
+// because replay frames can contain credentials; only CHE's own screen can
+// be captured until a reviewed, on-device privacy guard is delivered.
+// The native extension must not be activated automatically or trusted.
 
 import 'che_screen_capture.dart';
 
