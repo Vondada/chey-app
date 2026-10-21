@@ -192,6 +192,7 @@ test('ordinary commits, versions, figures, dates, slugs and links stay safe (sec
     'Dated 2026-10-18', 'Deployed at 2026-10-18T21:00:00.000Z.', 'The meeting notes go on and on.',
     'The commit is 4acb3d970966 and 4acb3d97096606e878e462812571c34d851b704d', 'PR-351-READY tonight',
     'Next is brain-sync-follow-up-plan today', 'UUID 97d389bb-537b-425e-81c5-908ab17e5ce8 is fine',
+    'Simulation models hover_flight@1 and config_search@1 are mathematical predictions, not keys',
     'See https://github.com/Vondada/chey-app/pull/351?ref=main',
     'See https://github.com/Vondada/chey-app/pull/354#issuecomment-1234567890',
     'See https://github.com/Vondada/chey-app/commit/4acb3d97096606e878e462812571c34d851b704d',
