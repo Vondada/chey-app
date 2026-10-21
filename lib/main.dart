@@ -150,6 +150,7 @@ import 'commands/che_command_widgets.dart';
 import 'che_web_voice_stub.dart'
     if (dart.library.js_interop) 'che_web_voice_web.dart' as che_web_voice;
 import 'knowledge/che_knowledge_library_screen.dart';
+import 'rithmic/che_rithmic_screen.dart';
 
 part 'home_state/connected.dart';
 part 'home_state/home_ui.dart';
@@ -2106,6 +2107,12 @@ OWNER AGENCY
     }
   }
 
+  /// Rithmic market data, set up and connected from the phone (read-only; the password stays in the vault).
+  Future<void> _openRithmic() async {
+    HapticFeedback.selectionClick();
+    await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const CheRithmicScreen()));
+  }
+
   Future<void> _openConnections({String autoConnect = ''}) async {
     await Navigator.of(context).push(MaterialPageRoute<void>(
       builder: (_) => CheConnectionsScreen(
@@ -2187,6 +2194,13 @@ OWNER AGENCY
           title: 'Connections',
           subtitle: 'YouTube · Google · broker · banks · business · voice',
           onTap: () => unawaited(_openConnections()),
+          hue: kit.CheColors.accent,
+        ),
+        CheMoreItem(
+          icon: Icons.show_chart_rounded,
+          title: 'Rithmic market data',
+          subtitle: 'Connect your Rithmic account · read-only prices · password stays on this phone',
+          onTap: () => unawaited(_openRithmic()),
           hue: kit.CheColors.accent,
         ),
         CheMoreItem(
