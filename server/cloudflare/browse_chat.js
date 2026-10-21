@@ -19,11 +19,14 @@ const STYLE = /\b(?:recreate|same\s+(?:type\s+of\s+)?style|style|render)\b/i;
 // A question about search itself ("shouldn't searching the web be free?") is an answer, not a search.
 const QUESTION_OPENER = /^(?:why|should|shouldn'?t|is|isn'?t|does|doesn'?t|do\s+you\s+think|what\s+do\s+you\s+think)\b/i;
 const URL_RE = /https?:\/\/[^\s)"'<>]+/i;
+// The research pages CHE kept from her reads. Listing is free; forgetting always waits for the owner's yes.
+const LIST_PAGES = /\b(?:list|show|what)\b[\s\S]{0,40}\b(?:research\s+pages?|pages\s+(?:you|che)\s+(?:read|kept|stored|saved))\b/i;
+const FORGET_PAGES = /\b(?:forget|delete|remove|erase)\b[\s\S]{0,60}\b(?:research\s+pages?|(?:the\s+)?pages?\s+(?:you|che)\s+(?:read|kept|stored|saved))\b/i;
 
 /** What the owner's words ask for. A message can ask for more than one thing. */
 export function browseIntent(message) {
   const text = String(message || '').trim();
-  if (!text || memorySearchIntent(text)) return { search: false, study: false, create: false, style: false, url: '' };
+  if (!text || memorySearchIntent(text)) return { search: false, study: false, create: false, style: false, list: false, forget: false, all: false, url: '' };
   const url = ((text.match(URL_RE) || [])[0] || '').replace(/[.,;!?]+$/, '');
   const question = QUESTION_OPENER.test(text);
   const study = STUDY.test(text) && !question;
@@ -33,6 +36,9 @@ export function browseIntent(message) {
     study,
     create,
     style: STYLE.test(text) && (study || create),
+    list: LIST_PAGES.test(text) && !question,
+    forget: FORGET_PAGES.test(text) && !question,
+    all: /\b(?:all|every)\b/i.test(text),
     url,
   };
 }

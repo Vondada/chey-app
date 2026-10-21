@@ -209,6 +209,14 @@ import { advanceObjectives, applyMissionEvent, approvalReached, approveNode, awa
 import { CATEGORIES, COMMANDS, catalogView, commandById, commandStatus, connectorStatus, describeWorkflow, dispatchPrompt, findSavedWorkflow, normalizeSavedWorkflow, parseSlashCommand, readCommandSpeech, searchCommands, speakCommandList, speakUnavailable, suggestCommands, workflowNodes, workflowFromWords } from './command_catalog.js';
 import { handleReaRequest, loadInvestigation, parseReaRequest, reaInvestigationDetail, reaInvestigations } from './rea_runner.js';
 import { browseIntent, runSearchRoute, subAgentPlan } from './browse_chat.js';
+import { forgetResearchPages, listResearchPages, storeLoopReads } from './agent_research_memory.js';
+const PAGE_DELETE_KEY = 'research_page_delete_pending';
+const PAGE_DELETE_MS = 5 * 60_000;
+function speakResearchPages({ pages, more }) {
+  if (!pages.length) return 'I have no research pages kept yet, sir. Ask me to browse something, and the pages I read will be kept here.';
+  const lines = pages.slice(0, 20).map((page, i) => `${i + 1}. ${page.title || page.url} (${page.url}, read ${String(page.read_at).slice(0, 10)})`);
+  return `I keep ${pages.length}${more ? ' or more' : ''} research page${pages.length === 1 ? '' : 's'}, newest first:\n${lines.join('\n')}`;
+}
 import { LAST_RESULTS_KEY, loadCatalog, resourceChoice, resourceIntent, resultLinks, searchCatalog, speakResults } from './resource_catalogs.js';
 import { fiveLayerIntent, LAYER_RESULTS_KEY, reasoningLayer, runReasoningLayer, speakFiveLayerResults } from './reasoning_exam.js';
 import { AUTONOMY_EXAM, EXAM_RESULTS_KEY, examIntent, examLevel, gradeLevel, mergeExamResult, speakExamResults, ungradableEngineFailure } from './autonomy_exam.js';
@@ -3623,8 +3631,28 @@ export class CheState extends DurableObject {
   // The owner's search, study and sub-agent requests (browse_chat.js). The owner typed the request, which is his
   // permission for the browser. Money, deletes and sends never run here; sub-agents report back to CHE.
   async browseTurn(message, body = {}) {
+    // A pending forget is retired by the next owner turn; only an immediate yes carries it out.
+    const pending = await Promise.resolve().then(() => this.ctx.storage.get(PAGE_DELETE_KEY)).catch(() => null);
+    if (pending) {
+      await this.ctx.storage.put(PAGE_DELETE_KEY, null);
+      if (isOwnerYes(message) && Date.now() - Number(pending.at || 0) < PAGE_DELETE_MS) {
+        const result = forgetResearchPages(new CheBrainStore(this.ctx.storage), pending.ids, { now: new Date().toISOString() });
+        const left = result.missing.length ? ` ${result.missing.length} ${result.missing.length === 1 ? 'was' : 'were'} not research pages, so I left ${result.missing.length === 1 ? 'it' : 'them'} alone.` : '';
+        return { text: `Deleted ${result.deleted.length} research page${result.deleted.length === 1 ? '' : 's'}, sir.${left}` };
+      }
+    }
     const intent = browseIntent(message);
-    if (!intent.search && !intent.study && !intent.create) return null;
+    if (!intent.search && !intent.study && !intent.create && !intent.list && !intent.forget) return null;
+    if (intent.list || intent.forget) {
+      const store = new CheBrainStore(this.ctx.storage);
+      const listed = listResearchPages(store, { limit: 200 });
+      const { pages } = listed;
+      if (intent.list) return { text: speakResearchPages(listed) };
+      const named = intent.all ? pages : pages.filter((page) => page.url && intent.url && page.url.startsWith(intent.url));
+      if (!named.length) return { text: 'I found no research page to forget, sir. Nothing was deleted. Name the page by its link, or say "forget all research pages".' };
+      await this.ctx.storage.put(PAGE_DELETE_KEY, { ids: named.map((page) => page.id), at: Date.now() });
+      return { text: `This deletes ${named.length} research page${named.length === 1 ? '' : 's'}: ${named.slice(0, 5).map((page) => page.title || page.url).join('; ')}${named.length > 5 ? '; and more' : ''}. Nothing is deleted until you say yes.` };
+    }
     const parts = [];
     if (intent.study && intent.url) {
       const rea = await handleReaRequest(this.ctx.storage, this.keyEnv || this.env, `REA inspect: ${intent.url}`, this.reaOptions({ history: [], owner: true }))
@@ -3642,7 +3670,9 @@ export class CheState extends DurableObject {
         return String(answer?.response || '');
       };
       const searched = await runSearchRoute(message, { complete, soul: String(body.soul || '').slice(0, 1500) });
-      parts.push(searched.text);
+      // Every page the run read is kept as a research page: kept until the owner asks for it to be forgotten.
+      const kept = storeLoopReads(new CheBrainStore(this.ctx.storage), { question: message, observations: searched.observations, now: new Date().toISOString() }).kept.length;
+      parts.push(kept ? `${searched.text}\nI kept ${kept} page${kept === 1 ? '' : 's'} I read as research pages.` : searched.text);
     }
     return { text: parts.filter(Boolean).join('\n\n') };
   }
