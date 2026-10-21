@@ -84,7 +84,7 @@ class ChartDrawing {
   static ChartDrawing? fromJson(Object? j) {
     if (j is! Map) return null;
     final pts = [
-      for (final p in (j['points'] as List? ?? const []))
+      for (final p in (j['points'] is List ? j['points'] as List : const []))
         if (p is Map && _num(p['price']) != null) (_time(p['time']), _num(p['price'])!),
     ];
     if (pts.isEmpty) return null;
@@ -266,18 +266,18 @@ class CheTradingChartState extends State<CheTradingChart> {
     }
     if (_account == 'futures_paper') _symbol = sym ?? 'MNQ';
     _tf = '${j['timeframe'] ?? _tf}';
-    _timeframes = [for (final t in (j['timeframes'] as List? ?? _timeframes)) '$t'];
+    _timeframes = [for (final t in (j['timeframes'] is List ? j['timeframes'] as List : _timeframes)) '$t'];
     _bars = [
-      for (final b in (j['bars'] as List? ?? const []))
+      for (final b in (j['bars'] is List ? j['bars'] as List : const []))
         if (b is Map && _time(b['t']) != null && _num(b['o']) != null && _num(b['h']) != null && _num(b['l']) != null && _num(b['c']) != null)
           ChartBar(_time(b['t'])!, _num(b['o'])!, _num(b['h'])!, _num(b['l'])!, _num(b['c'])!),
     ];
     _markers = [
-      for (final m in (j['markers'] as List? ?? const []))
+      for (final m in (j['markers'] is List ? j['markers'] as List : const []))
         if (m is Map<String, dynamic>) ChartMarker(m),
     ];
-    _drawings = [for (final d in (j['drawings'] as List? ?? const [])) ?ChartDrawing.fromJson(d)];
-    _openOrders = [for (final o in (j['open_orders'] as List? ?? const [])) if (o is Map<String, dynamic>) o];
+    _drawings = [for (final d in (j['drawings'] is List ? j['drawings'] as List : const [])) ?ChartDrawing.fromJson(d)];
+    _openOrders = [for (final o in (j['open_orders'] is List ? j['open_orders'] as List : const [])) if (o is Map<String, dynamic>) o];
     _feed = j['feed'] is Map<String, dynamic> ? j['feed'] as Map<String, dynamic> : const {};
     _entriesAllowed = j['entries_allowed'] == true;
     _marketAllowed = j['market_orders_allowed'] == true;
@@ -323,7 +323,7 @@ class CheTradingChartState extends State<CheTradingChart> {
       final j = jsonDecode(r.body);
       final ok = r.statusCode == 200 && j is Map && j['ok'] == true;
       if (ok) {
-        _drawings = [for (final d in (j['drawings'] as List? ?? const [])) ?ChartDrawing.fromJson(d)];
+        _drawings = [for (final d in (j['drawings'] is List ? j['drawings'] as List : const [])) ?ChartDrawing.fromJson(d)];
       }
       _setStatus(ok ? done : 'The drawing was not saved: ${j is Map ? j['error'] ?? j['detail'] : r.statusCode}.', ok: ok);
     } catch (e) {
