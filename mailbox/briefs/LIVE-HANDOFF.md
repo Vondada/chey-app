@@ -1837,3 +1837,26 @@ Sources: owner's master mission message (2026-10-21, "CHE MASTER MISSION"); this
 5. Update this §6 status after each merge; never mark DONE-V without the test or run named in the row.
 
 **Not verified anywhere in this checkpoint:** production Worker version, health probes (sandbox network blocked), any installed iPhone behaviour, Rithmic live data, image/video generation output.
+
+---
+
+## 7. OWNER PROGRAM: Premium hybrid UI, UI Studio, Dynamic Action Engine, character customization (received 2026-10-21)
+
+Status: PROGRAM, not built. The request spans several multi-week projects (visual redesign, iOS-first layout, server-driven configuration, voice-driven editor, character generation, workflow engine). Built as vertical slices, each with tests and its own PR. Nothing below is DONE unless its row says DONE-V.
+
+| Slice | What | Status | Evidence / next action |
+|---|---|---|---|
+| S1 | Palette data (CHE dark, silver and black, light) with WCAG AA tests | DONE-V (tests) on `claude/che-ui-theme-tokens` `44a445c`, NO PR yet | `lib/che_ui/che_palettes.dart`, `test/che_palettes_test.dart` (8/8). Next: wire into `CheTheme` without breaking const TextStyles (616 colour literals in 63 files; `CheColors` is static const) |
+| S2 | Theme switch, instant, persisted, synced across devices | NOT-STARTED | depends on S1 wiring and a preferences store |
+| S3 | Five-tab bar: Home, Chat, Office, CHE World, More (Apps moved into More) | NOT-STARTED | current nav in `lib/main.dart` / `che_immersive_hub_shell.dart`; keep every existing page reachable |
+| S4 | Home as command dashboard with verified cards only | NOT-STARTED | data sources exist (jobs, PRs, Office, trading status, calendar, memory); cards must read real records |
+| S5 | Chat redesign (iMessage-style bubbles, honest status, search, attachments) | NOT-STARTED | large; reuse `che_conversation_state.dart` |
+| S6 | UI Studio: layout presets, move up/down, hide/resize, undo, restore default | NOT-STARTED | needs S7 storage |
+| S7 | Server-driven, versioned configuration (schema, migration, rollback) stored per owner, cached offline | NOT-STARTED | new Worker route + validation; reuse existing owner-setting storage |
+| S8 | Voice commands that change UI config ("switch to silver and black") | NOT-STARTED | route through the existing command catalog (`command_catalog.js`), no second router |
+| S9 | Character appearance presets, reversible, moderated; unsupported requests refused honestly | NOT-STARTED | depends on asset validation; generation needs an image model: BLOCKED until owner says which |
+| S10 | Dynamic Action Engine: owner-assembled workflows over existing tools, approval-gated | NOT-STARTED | reuse `workflow_governor`, `owner_action_gate.js`, existing job queue; no unrestricted script executor |
+
+**Immediate next step (S1 wiring):** change `CheTheme.dark()` to take a `CheColorPalette` and keep the current look as the default; migrate `CheColors` getters to read the active palette only where a const context does not need them, then run `flutter analyze` and the full `flutter test`. Acceptance: default look unchanged (golden or token-equality test), silver and light palettes render with contrast checks.
+
+**Open owner decision:** `analysis_options.yaml` has an uncommitted exclusion (`android/**`, `ios/**`) in the sandbox checkout. Not committed, not reverted. Owner to say keep or revert.
