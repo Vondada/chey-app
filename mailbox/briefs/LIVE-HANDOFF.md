@@ -70,6 +70,13 @@ Then, on GitHub:
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
 
+## 2. Current position (ChatGPT, Oct 20 2026 — owner's CHE Soul/identity resilience upgrade, PR #392)
+
+- Owner's exact identity/self-awareness question returned a generic provider failure: existing `che_errors.js` and Flutter fallback text referred to unconfirmed running work. Root cause of that text verified in code; cannot infer which live provider failed without a production error receipt.
+- Created branch `chatgpt/che-soul-reliability-20261020` from main `29102ccb` and PR #392 https://github.com/Vondada/chey-app/pull/392. Head at checkpoint `f1edbf07dcab1f105d945455476418d58382b595` (check head again before acting). Adds a deterministic owner-only core identity/mission/Soul route reusing `CHE_IDENTITY` in `che_maturity.js`, no model required; keeps edited on-phone Soul distinct from built-in identity. Removes bogus running-job claim in Worker and Flutter generic error. Tests in `worker.test.mjs`, `che_os_maturity.test.mjs`, `test/che_os_maturity_test.dart`.
+- First PR CI Worker suite found three regression expectation mismatches (two old error-text regexes, one 'What's your name?' smalltalk corpus route). Patched tests and narrowed the handler to leave basic name smalltalk in existing model path; next CI for f1edbf0: CHE UI Analyze succeeded, full Worker/Flutter jobs still RUNNING at last observation. DO NOT claim CI green, merged, deployed or iPhone updated until verified. Only other open PR at this checkpoint: #377 ReplayKit, security-blocked and untouched.
+- Next: inspect full CI for PR #392 exact head SHA; fix any remaining failures; review files/security and approvals; merge/deploy only under current owner authorization; verify Worker's live commit and any Dart patch; ask owner for iPhone identity turn. No costs, trades or signing bypass.
+
 ## 2. Current position (ChatGPT, October 20 2026 — live GitHub deployment receipt fix)
 
 - Live CHE owner test: asking for latest Deploy CHE Worker action run was incorrectly routed to source-code inspector; generic deploy-status falsely said no deployment exists because `last_self_update_deploy` is set only for CHE-initiated merges. The correct latest verifiable run at test was GitHub Actions #39529044486 (SUCCESS), main 8fd6bb3. This is a real routing and stale-local-cache bug, not a missing deployment.
