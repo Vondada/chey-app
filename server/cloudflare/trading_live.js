@@ -468,6 +468,8 @@ export async function liveDashboard(storage, { now = Date.now(), tradovateConnec
   ]);
   const trades = await readTrades(storage, isLive);
   const delayedTraining = await readDelayedTraining(storage, { enabled: Boolean(state?.enabled) });
+  const verifiedLive = trades.filter((t) => t.data?.entry_feed?.status === 'LIVE'
+    && t.data.entry_feed.authenticated === true && t.data.entry_feed.subscription_verified === true);
   const lastClose = feed?.bars?.length ? feed.bars[feed.bars.length - 1].c : null;
   const positions = portfolios.filter((pf) => pf.open).map((pf) => ({
     portfolio: pf.key, strategy: pf.candidate, name: INTRADAY_CANDIDATES[pf.candidate]?.name, filter: pf.filter, side: pf.open.side,
@@ -484,6 +486,7 @@ export async function liveDashboard(storage, { now = Date.now(), tradovateConnec
     account: 'PAPER',
     isolation: 'Paper portfolios are research records only. No broker module is reachable from this engine, and live orders stay disabled.',
     delayed_training: delayedTraining,
+    verified_live_forward: { trades: verifiedLive.length, ...summarize(verifiedLive), source: 'authenticated subscribed LIVE CME at entry' },
     state: state || { enabled: false },
     session: cmeSession(now),
     contract: frontMonth(ROOT, now),
