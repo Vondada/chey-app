@@ -70,6 +70,14 @@ Then, on GitHub:
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
 
+## 2. Current position (ChatGPT, 2026-10-20 20:46 Central — Cloudflare-red PR merge/release mission)
+
+- Owner explicitly authorized fixes, merges, and deployment. Main after verified merges: #371 (`f2dac88`), #390 (`3170b9b`), #388 (`396a9ca`), #354 (`8fd6bb3`). #366 was a superseded Flutter draft overlapping #388 and closed rather than regressing the chart.
+- #354 had stale conflicts: reconciled onto #388 main while preserving all existing commands; addressed failures of Simulation Lab Brain record secret-shape filtering and Command Center catalog 98 count. Final head `0b85432fdd394c81947feaf2dfe2c1d9a3005f65`, full Worker job and Flutter tests/analyze passed; merged `8fd6bb30aa7f497f0768745f4fe1f0b58aa4fde7`. Its Cloudflare PR-build check remained red, but the main-release Worker workflow was triggered; verify its conclusion before claiming deployed.
+- #388's main commit `396a9ca`: GitHub Flutter/Worker checks green; Codemagic automatic mobile update check succeeded. Actual installation on owner iPhone not verified.
+- #377 ReplayKit screen sharing is still open, NOT merged: unresolved high-priority security issues for password capture, plaintext frame persistence, and iOS signing across IPA paths, plus branch conflicts. A specific blocker comment has been posted on #377. Repair and independently verify native iOS behavior before merge; do not bypass this guardrail simply because owner wants fast release.
+- Continue: verify latest #354 Worker production deploy, verify actual deployed health/version; preserve owner control over paper-only trading and all credential protection. No paid services, real trades, or silent screen broadcast.
+
 ## 2. Current position (Codex, 2026-10-20 20:24:40 UTC — autonomous Trading Room continuation IN PROGRESS)
 
 - Owner authorizes fixes, tests, independent reviews, green merges, deployment and compatible iPhone delivery for Trading Room, real-time feeds, strategy learning/research, Alpaca terminal and universal help. PAPER ONLY. No purchases, new paid subscriptions, real-money orders or automatic live activation. Broker paper automation needs explicit opt-in/risk limits/stop control. Preserve all existing work; do not duplicate engines or routers.
