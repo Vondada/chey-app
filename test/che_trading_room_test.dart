@@ -1,5 +1,6 @@
 // Build 1 (owner, 2026-10-20): the four-section Trading Room and its interactive PAPER chart.
 import 'dart:convert';
+import 'dart:async';
 
 import 'package:chey/rooms/che_trading_chart.dart';
 import 'package:chey/rooms/che_trading_room.dart';
@@ -56,6 +57,8 @@ Map<String, dynamic> _chart({String account = 'alpaca_paper', bool stale = false
 class _Server {
   _Server({this.stale = false});
   final bool stale;
+  bool failChart = false;
+  Completer<http.Response>? pendingPreview;
   final requests = <http.Request>[];
   List<Map<String, dynamic>> drawings = [];
 
@@ -63,6 +66,7 @@ class _Server {
     requests.add(r);
     final p = r.url.path;
     if (p == '/api/trading/chart') {
+      if (failChart) return http.Response('{"error":"feed offline"}', 503);
       final account = r.url.queryParameters['account'] ?? 'alpaca_paper';
       return http.Response(jsonEncode(_chart(account: account, stale: stale, entries: account == 'alpaca_paper', drawings: drawings)), 200);
     }
@@ -72,6 +76,7 @@ class _Server {
       return http.Response(jsonEncode({'ok': true, 'drawings': drawings}), 200);
     }
     if (p == '/api/trading/alpaca/order/preview') {
+      if (pendingPreview != null) return pendingPreview!.future;
       final body = jsonDecode(r.body) as Map<String, dynamic>;
       final cost = (body['limit_price'] as num? ?? 120) * (body['qty'] as num);
       return http.Response(jsonEncode({'ok': true, 'mode': 'PAPER', 'estimated_cost': cost, 'buying_power': 100000, 'buying_power_after': 100000 - cost, 'last_trade': 120.3, 'blocked': ''}), 200);
@@ -152,7 +157,8 @@ void main() {
 
   testWidgets('a chart price opens a PAPER ticket; nothing is sent until "Yes, place paper order"', (tester) async {
     final s = _Server();
-    await _pumpRoom(tester, s);
+    final spoken = <String>[];
+    await _pumpRoom(tester, s, spoken: spoken);
     await tester.ensureVisible(_chartArea());
     await tester.pump();
     await tester.tapAt(tester.getCenter(_chartArea()));
@@ -174,6 +180,40 @@ void main() {
     expect(body['side'], 'buy');
     expect(body['client_order_id'], startsWith('che-'));
     expect(find.textContaining('Alpaca PAPER accepted BUY 1 AAPL'), findsWidgets);
+    expect(spoken.last, contains('Alpaca PAPER accepted BUY 1 AAPL'));
+  });
+
+  testWidgets('a refresh outage revokes trading freshness while keeping historical bars visible', (tester) async {
+    final server = _Server();
+    await _pumpRoom(tester, server);
+    server.failChart = true;
+    final state = tester.state<CheTradingChartState>(find.byType(CheTradingChart));
+    await state.load();
+    await tester.pump();
+    expect(_chartArea(), findsOneWidget);
+    expect(find.textContaining('Alpaca IEX: UNAVAILABLE'), findsOneWidget);
+    expect(find.textContaining('feed offline'), findsWidgets);
+    expect(state.summary, isNot(contains('Paper entries allowed')));
+    await state.openTicket();
+    await tester.pump();
+    expect(find.text('AAPL order ticket'), findsNothing);
+    expect(server.to('/api/trading/alpaca/order'), isEmpty);
+  });
+
+  testWidgets('dismissing a pending preview causes no state update after disposal', (tester) async {
+    final server = _Server()..pendingPreview = Completer<http.Response>();
+    await _pumpRoom(tester, server);
+    final state = tester.state<CheTradingChartState>(find.byType(CheTradingChart));
+    unawaited(state.openTicket());
+    await tester.pumpAndSettle();
+    await _tap(tester, find.text('Preview order'));
+    await tester.pump();
+    Navigator.of(tester.element(find.text('AAPL order ticket'))).pop();
+    await tester.pumpAndSettle();
+    server.pendingPreview!.complete(http.Response('{"ok":true}', 200));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(server.to('/api/trading/alpaca/order'), isEmpty);
   });
 
   testWidgets('a stale feed allows limit orders only; "No, cancel" sends nothing', (tester) async {

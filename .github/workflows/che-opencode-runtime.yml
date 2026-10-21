@@ -27,6 +27,11 @@ on:
         description: OpenCode model in provider/model form
         required: true
         type: string
+      merge_authorized:
+        description: "'true' only when the owner's own words authorized the merge; otherwise the PR waits for his yes"
+        required: false
+        default: 'false'
+        type: string
 
 # The coding process itself only receives read access. A separate publisher job
 # gets contents:write solely to place compact status JSON on che-mailbox.
@@ -58,6 +63,7 @@ jobs:
           BASE_SHA: ${{ inputs.base_sha }}
           TARGET_BRANCH: ${{ inputs.target_branch }}
           MODEL: ${{ inputs.model }}
+          MERGE_AUTHORIZED: ${{ inputs.merge_authorized }}
         with:
           github-token: ${{ github.token }}
           script: |
@@ -100,6 +106,8 @@ jobs:
               base_sha: process.env.BASE_SHA,
               target_branch: process.env.TARGET_BRANCH,
               model: process.env.MODEL,
+              // che-autopilot merges only a session whose record says the owner authorized it.
+              merge_authorized: process.env.MERGE_AUTHORIZED === 'true',
               changed_files: 0,
               files: [],
               unsafe_files: [],
@@ -719,6 +727,7 @@ jobs:
           JOB_ID: ${{ inputs.job_id }}
           TARGET_BRANCH: ${{ inputs.target_branch }}
           REQUEST_B64: ${{ inputs.request_b64 }}
+          MERGE_AUTHORIZED: ${{ inputs.merge_authorized }}
         run: |
           # The redactor is copied from the checked-out base before the patch is applied, so the
           # patch can never change the code that redacts the PR error below.
@@ -731,7 +740,11 @@ jobs:
           git -c user.name="CHE" -c user.email="che-autopilot@users.noreply.github.com" commit -qm "che-auto: ${JOB_ID}" -m "Automated change by CHE's OpenCode runner. [che-auto]"
           git push -q origin "HEAD:refs/heads/${TARGET_BRANCH}"
           title="CHE: $(echo "$REQUEST_B64" | base64 -d | head -c 90 | tr '\n' ' ')"
-          body="Automated change by CHE's OpenCode runner (session ${JOB_ID}). che-autopilot reviews and merges it when CI passes."
+          if [ "$MERGE_AUTHORIZED" = true ]; then
+            body="Automated change by CHE's OpenCode runner (session ${JOB_ID}). The owner authorized the merge in his request, so che-autopilot merges it after CI and an independent review pass."
+          else
+            body="Automated change by CHE's OpenCode runner (session ${JOB_ID}). CI and an independent review run; it is NOT merged until the owner says yes (\"merge it\")."
+          fi
           if ! url=$(gh pr create --base main --head "$TARGET_BRANCH" --title "$title" --body "$body" --label che-auto 2>/tmp/pr-err.txt) \
              && ! url=$(gh pr create --base main --head "$TARGET_BRANCH" --title "$title" --body "$body" 2>/tmp/pr-err.txt); then
             echo "::error::Branch ${TARGET_BRANCH} was pushed but GitHub refused to open the PR: $(redact </tmp/pr-err.txt). CHE_GITHUB_TOKEN needs Pull requests: Read and write."
@@ -796,6 +809,7 @@ jobs:
           JOB_ID: ${{ inputs.job_id }}
           PR_NUMBER: ${{ needs.deliver.outputs.pr_number }}
           DELIVER_RESULT: ${{ needs.deliver.result }}
+          MERGE_AUTHORIZED: ${{ inputs.merge_authorized }}
         with:
           github-token: ${{ github.token }}
           script: |
@@ -816,6 +830,8 @@ jobs:
               });
               result.checkpoint = { seq: saved.meta.seq, files: saved.meta.files, additions: saved.meta.additions, deletions: saved.meta.deletions, path: cpPath };
             }
+            // The final record keeps the owner's merge decision; without it the PR waits for his yes.
+            result.merge_authorized = process.env.MERGE_AUTHORIZED === 'true';
             const pr = Number(process.env.PR_NUMBER || 0);
             if (pr && result.state === 'implemented') Object.assign(result, { state: 'pr_open', pr_number: pr });
             if (!pr && result.state === 'implemented' && process.env.DELIVER_RESULT === 'failure') {

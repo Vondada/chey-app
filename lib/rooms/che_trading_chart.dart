@@ -152,7 +152,7 @@ class CheTradingChart extends StatefulWidget {
   final Map<String, String> Function() headers;
   final http.Client? client;
 
-  /// Reads text aloud, only when the owner asks ("Read chart").
+  /// Reads explicit requests and user-initiated action results. Passive loads stay silent.
   final void Function(String text)? onSpeak;
   final CheTradingChartController? controller;
   final String initialAccount, initialSymbol;
@@ -242,11 +242,16 @@ class CheTradingChartState extends State<CheTradingChart> {
       if (j is! Map<String, dynamic>) throw const FormatException('The chart answer was not readable.');
       if (r.statusCode != 200 || j['ok'] == false) throw Exception('${j['error'] ?? j['detail'] ?? 'The chart is unavailable.'}');
       setState(() => _apply(j));
+
     } catch (e) {
       if (seq != _seq || !mounted) return;
       setState(() {
         _state = 'error';
         _error = '$e'.replaceFirst('Exception: ', '');
+        _feed = {..._feed, 'status': 'UNAVAILABLE', 'stale': true};
+        _entriesAllowed = false;
+        _marketAllowed = false;
+        _blocked = 'Feed freshness could not be verified: $_error';
       });
     }
   }
@@ -260,6 +265,7 @@ class CheTradingChartState extends State<CheTradingChart> {
       _symbolField.text = sym;
     }
     if (_account == 'futures_paper') _symbol = sym ?? 'MNQ';
+    _tf = '${j['timeframe'] ?? _tf}';
     _timeframes = [for (final t in (j['timeframes'] as List? ?? _timeframes)) '$t'];
     _bars = [
       for (final b in (j['bars'] as List? ?? const []))
@@ -347,6 +353,7 @@ class CheTradingChartState extends State<CheTradingChart> {
   void _setStatus(String text, {bool ok = true}) {
     if (!mounted) return;
     setState(() => _status = text);
+    widget.onSpeak?.call(text);
     unawaited(HapticFeedback.mediumImpact());
     ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(content: Text(text, style: const TextStyle(fontSize: 16)), backgroundColor: ok ? const Color(0xFF14332A) : const Color(0xFF3A1720)));
   }
@@ -928,7 +935,9 @@ class _ChartPainter extends CustomPainter {
       ..strokeWidth = 2
       ..style = PaintingStyle.stroke;
     for (final d in drawings) {
-      final pts = [for (final (t, p) in d.points) Offset(g.xOfTime(t) ?? (t == null ? 0 : g.plotW), g.y(p))];
+      // A time outside the window is not the latest candle. Hide drawings until their points are visible.
+      if (d.points.any((point) => point.$1 != null && g.xOfTime(point.$1) == null)) continue;
+      final pts = [for (final (t, p) in d.points) Offset(g.xOfTime(t) ?? 0, g.y(p))];
       switch (d.kind) {
         case 'hline':
           canvas.drawLine(Offset(0, pts.first.dy), Offset(g.plotW, pts.first.dy), ink);
@@ -1079,6 +1088,7 @@ class _OrderTicketState extends State<_OrderTicket> {
     setState(() => _busy = true);
     try {
       final p = await widget.preview(_order);
+      if (!mounted) return;
       setState(() {
         if (p['ok'] == true) {
           _preview = p;
@@ -1088,6 +1098,7 @@ class _OrderTicketState extends State<_OrderTicket> {
         }
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() => _error = 'The preview failed: $e');
     }
     if (mounted) setState(() => _busy = false);
