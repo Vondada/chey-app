@@ -1596,6 +1596,7 @@ class _TaskCard extends StatelessWidget {
       // Tasks finished before CHE's approval became required can still read complete without it.
       'complete' => task.verifiedByChe ? ('Approved by CHE', CheColors.success) : ('Not verified', CheColors.warning),
       'rejected' => ('Rejected by CHE', CheColors.danger),
+      'advisory' => ('Input to an answer, not reviewed', CheColors.textDim),
       'blocked' => ('Blocked', CheColors.danger),
       'failed' => ('Failed', CheColors.danger),
       'cancelled' => ('Cancelled', CheColors.textFaint),

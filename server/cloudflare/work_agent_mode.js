@@ -68,6 +68,16 @@ CHE does not literally have Cursor cloud agents, a Grok Bot Linux box, or unrest
 desktop shell unless CHE_COMPUTER_URL (or another connected connector) proves it.
 `;
 
+// A question to CHE ("Who are you?", "How do I fix a loop?", "What are my agents working on?") is
+// answered, not turned into Office work, unless it hands work to a named agent ("Atlas, can you research…").
+const QUESTION_START = /^(?:(?:hey|ok(?:ay)?)\s+)?(?:(?:che|chay|chey)[,:]?\s+)?(?:who|what|what's|whats|when|where|why|how|which|is|are|am|was|were|do|does|did|can|could|would|should|will|have|has|tell me|explain)\b/i;
+const HANDS_WORK = /^(?:(?:hey|ok(?:ay)?)\s+)?(?:(?:che|chay|chey)[,:]?\s+)?(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?(?:have|ask|get|tell|let)\s+(?:nova|atlas|mira|knox|sage|lyra|iris|the office)\b|^(?:nova|atlas|mira|knox|sage|lyra|iris)\b/i;
+export function isOwnerQuestion(message) {
+  const text = String(message || '').trim();
+  if (HANDS_WORK.test(text)) return false;
+  return QUESTION_START.test(text) || /\?\s*$/.test(text);
+}
+
 export function isWorkAgentMode(body = {}) {
   const mode = String(body.agent_mode || body.mode || '').trim().toLowerCase();
   return mode === 'full' || mode === 'agent' || mode === 'work' || mode === 'work_agent';
@@ -78,6 +88,7 @@ export function shouldAutoDelegateOffice(message, { agentMode = false, casual = 
   if (!agentMode || casual) return false;
   const text = String(message || '').trim();
   if (text.length < 12) return false;
+  if (isOwnerQuestion(text)) return false;
   // Explicit Office phrases are handled earlier in /api/chat.
   if (/^(?:(?:hey )?(?:che|chay|chey)[, ]+)?(?:tell|have|put|get) the office\b/i.test(text)) return false;
   if (/^(?:(?:hey )?(?:che|chay|chey)[, ]+)?(?:draft|make|prepare|build)\s+(?:a |the )?tonight pack\b/i.test(text)) return false;

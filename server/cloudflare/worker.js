@@ -8,6 +8,8 @@ import {
   createAgent,
   normalizeAgent,
   processAgentWork,
+  requeueAgentReview,
+  TASK_FINISHED,
   queueAgentTask,
   recordAgentWork,
   recoverStaleWork,
@@ -2261,7 +2263,8 @@ async function runOfficeAgents(env, team, requestedCapabilities, query, fullAgen
     const partner = team.find((item) => item.role === need.role);
     if (partner) active.push({ partner, focus: need.focus });
   }
-  if (fullAgentMode) {
+  // Only actionable work is staffed; a question to CHE is answered without consulting a desk.
+  if (fullAgentMode && shouldAutoDelegateOffice(query, { agentMode: true, capabilities: requestedCapabilities })) {
     for (const need of laAgenciaPanelNeeds(query)) {
       const partner = team.find((item) =>
         !item.retired && (item.name === need.name || item.role === need.role));
@@ -3991,6 +3994,11 @@ export class CheState extends DurableObject {
     // one cut off by a Worker eviction is never left "running" forever.
     times.push(...data.jobs.filter((j) => j.status === 'running')
       .map((j) => Math.max(Date.now() + 250, (Date.parse(j.updated_at) || Date.now()) + jobStaleMs(j) + 1000)));
+    // The same for Office tasks cut off mid-work or mid-review (recoverStaleWork's five minutes).
+    if (data.autonomy) {
+      times.push(...data.team_tasks.filter((t) => ['running', 'reviewing'].includes(t.status))
+        .map((t) => Math.max(Date.now() + 250, (Date.parse(t.updated_at) || Date.now()) + 5 * 60_000 + 1000)));
+    }
     // While Flagstaff is open, do one cheap GitHub-head check every 30 seconds.
     // The AI only runs when a genuinely new message addressed to CHE appears.
     const flagstaffInitialized = Boolean(await this.ctx.storage.get('web_mailbox_code'));
@@ -7663,16 +7671,19 @@ export class CheState extends DurableObject {
           outcome = steerAgentTask(data, taskId, body.instruction || body.message);
         } else if (action === 'handoff') {
           outcome = handoffAgentTask(data, taskId, String(body.target_agent_id || ''), body.note);
+        } else if (action === 'review') {
+          outcome = requeueAgentReview(data, taskId);
         } else if (action === 'cancel') {
           const task = data.team_tasks.find((item) => item.id === taskId);
           if (!task) outcome = { error: 'Office task not found.' };
+          else if (TASK_FINISHED.has(task.status)) outcome = { error: 'That task is already finished.' };
           else {
             task.status = 'cancelled';
             task.updated_at = new Date().toISOString();
             outcome = { task };
           }
         } else {
-          outcome = { error: 'Choose steer, handoff, or cancel.' };
+          outcome = { error: 'Choose steer, handoff, review, or cancel.' };
         }
         if (outcome.error) return json({ detail: outcome.error }, 400);
         await this.ctx.storage.put('che', data);
@@ -11505,18 +11516,20 @@ export class CheState extends DurableObject {
               partner.status = result.error ? 'available' : 'available';
               partner.updated_at = now;
             }
+            // A desk's input to this chat answer is advice CHE used, not a delivered task: CHE did not run
+            // its review on it, so it is recorded as advisory and unverified, never as complete.
             const completedTask = {
               id: crypto.randomUUID(),
               partner_id: result.partner_id,
               partner_name: result.partner_name,
               role: result.role,
               task: message.slice(0, 1000),
-              requested_output: 'A concrete useful deliverable that helps answer or execute the owner request.',
+              requested_output: 'Input for CHE\'s answer to the owner request.',
               why_it_matters: 'Directly supports the owner request and its requested capability.',
-              status: result.error ? 'failed' : 'complete',
+              status: result.error ? 'failed' : 'advisory',
               result: result.result || '',
               error: result.error || '',
-              verified_by_che: !result.error && Boolean(result.result),
+              verified_by_che: false,
               created_at: now,
               updated_at: now,
             };
@@ -12244,6 +12257,9 @@ export class CheState extends DurableObject {
     // sweep that ends interrupted "running" jobs. Gating it here stranded them.
     await this.processJobs();
     if (autonomyOn) {
+      // Office work cut off by an eviction is recovered here too, not only when the app opens the Office.
+      const officeData = await this.loadData();
+      if (recoverStaleWork(officeData)) await this.ctx.storage.put('che', officeData);
       await processAgentWork({
         env: this.env,
         load: () => this.loadData(),

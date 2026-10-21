@@ -30,6 +30,7 @@
 |---|---|
 | `--json` | Full rows as JSON. |
 | `--network` | Allow real outbound requests. By default they are refused, and the refused hosts are listed. |
+| `--state` | After each turn, list the Office tasks, jobs and objectives it created in durable storage. |
 | `--verbose` | Show the Worker's own logs. |
 
 Storage is in memory and starts empty on every run. Nothing touches the owner's CHE.

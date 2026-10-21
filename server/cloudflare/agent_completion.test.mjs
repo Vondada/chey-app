@@ -12,11 +12,13 @@ import {
   processAgentWork,
   queueAgentTask,
   recoverStaleWork,
+  requeueAgentReview,
   reviewVerdict,
+  updateAgent,
   steerAgentTask,
   unbackedActionClaims,
 } from './agent_runtime.js';
-import { activityFeed } from './activity.js';
+import { activityFeed, decisionsNeeded } from './activity.js';
 
 const REVIEW_PROMPT = /reviewing a delegated result/;
 
@@ -119,7 +121,7 @@ test('review outage: the review is retried without redoing the work, then held n
   assert.match(t.error, /could not review.*not complete/);
   assert.ok(!o.events.some((e) => e.kind === 'task_complete'));
   const line = activityFeed(o.data).find((e) => e.id === id);
-  assert.match(line.line, /not verified yet/);
+  assert.match(line.line, /Atlas needs your decision/);
   // Further passes do nothing to a held task.
   await o.run();
   assert.equal(o.calls.review, MAX_REVIEW_ATTEMPTS);
@@ -148,6 +150,26 @@ test('an approved result that claims an action with no tool receipt is sent back
   assert.match(t.review_feedback, /state it as a proposal/);
 });
 
+test('the receipt check (review of #394): attributed and quoted research is clean; contractions and passive claims are caught', () => {
+  for (const clean of [
+    "We sold 4 million units in Q3, according to the company's earnings call.",
+    'Apple said: "We shipped and we sold more iPhones than ever."',
+    'we ran the tests described in the 2023 paper',
+    'we posted a 5% decline per the 10-K',
+    'Step 1: I executed a search of public filings.',
+    'The company released a new lamp in 2024.',
+  ]) assert.deepEqual(unbackedActionClaims(clean), [], clean);
+  for (const claim of [
+    "I've deployed the fix to production.",
+    "We've merged PR #42.",
+    'I deployed the app and it will now serve users.',
+    'I sent the email, so the client should reply soon.',
+    'Deployed to production at 3pm.',
+    'The PR was merged.',
+  ]) assert.equal(unbackedActionClaims(claim).length, 1, claim);
+  assert.equal(unbackedActionClaims('I paid the invoice.', [{ kind: 'computer_workspace', status: 'ok' }]).length, 1, 'a workspace receipt never backs a payment');
+});
+
 test('the receipt check: claims need a receipt; denials, proposals and ordinary findings do not', () => {
   assert.equal(unbackedActionClaims('I merged PR 12 and pushed the fix.').length, 1);
   assert.equal(unbackedActionClaims('We have already placed the order for 3 lamps.').length, 1);
@@ -161,6 +183,10 @@ test('review verdicts are read from the first line only', () => {
   assert.equal(reviewVerdict('APPROVED\nGood.'), 'approved');
   assert.equal(reviewVerdict('**NEEDS WORK**\nMissing sources.'), 'needs_work');
   assert.equal(reviewVerdict('Needs-work: thin'), 'needs_work');
+  assert.equal(reviewVerdict('Verdict: APPROVED'), 'approved');
+  assert.equal(reviewVerdict('I cannot approve; NEEDS WORK'), 'needs_work');
+  assert.equal(reviewVerdict('APPROVED? No. NEEDS WORK'), null, 'both verdicts on one line is not a verdict');
+  assert.equal(reviewVerdict('APPROVED?'), null);
   assert.equal(reviewVerdict('The result is not APPROVED'), null);
   assert.equal(reviewVerdict(''), null);
 });
@@ -182,12 +208,21 @@ test('interrupted in review: the stored result goes back to review; the agent is
 test('interrupted during owner-approved computer use: held, never re-run', async () => {
   const o = office();
   const id = o.queue('Post the listing on the shop.', { use_computer: true, owner_approved_computer: true });
-  Object.assign(o.task(id), { status: 'running', updated_at: new Date(Date.now() - 600_000).toISOString() });
+  const started = new Date(Date.now() - 600_000).toISOString();
+  Object.assign(o.task(id), { status: 'running', run_started_at: started, computer_started_at: started, updated_at: started });
   recoverStaleWork(o.data);
   assert.equal(o.task(id).status, 'needs_review');
   assert.match(o.task(id).error, /Not re-run/);
   await o.run();
   assert.equal(o.calls.work, 0);
+});
+
+test('interrupted before any computer use ran (no workspace configured): queued again, not held', () => {
+  const o = office();
+  const id = o.queue('Post the listing on the shop.', { use_computer: true, owner_approved_computer: true });
+  Object.assign(o.task(id), { status: 'running', run_started_at: new Date(Date.now() - 600_000).toISOString(), updated_at: new Date(Date.now() - 600_000).toISOString() });
+  recoverStaleWork(o.data);
+  assert.equal(o.task(id).status, 'queued');
 });
 
 test('work interrupted over and over stops as failed instead of looping forever', () => {
@@ -235,4 +270,96 @@ test('cancelled while CHE was reviewing: the late review does not revive it', as
   };
   await o.run();
   assert.equal(o.task(id).status, 'cancelled');
+});
+
+test('cancelled or handed off while the agent works: the late result does not overwrite it (review of #394)', async () => {
+  for (const change of ['cancel', 'handoff']) {
+    const o = office();
+    const id = o.queue();
+    const other = createAgent(o.data, { name: 'Mira', role: 'Writer' }).agent;
+    const realRun = o.ctx.env.AI.run;
+    o.ctx.env.AI.run = async (model, body) => {
+      if (!REVIEW_PROMPT.test(body.messages[0].content)) {
+        const data = o.data;
+        const t = data.team_tasks.find((x) => x.id === id);
+        if (change === 'cancel') t.status = 'cancelled';
+        else Object.assign(t, { status: 'queued', partner_id: other.id, partner_name: 'Mira' });
+        o.data = data;
+      }
+      return realRun(model, body);
+    };
+    await o.run(1);
+    const t = o.task(id);
+    assert.equal(t.status, change === 'cancel' ? 'cancelled' : 'queued', change);
+    assert.equal(t.result, '', `${change}: the stale result is not stored`);
+    assert.equal(o.calls.review, 0, `${change}: nothing is reviewed`);
+  }
+});
+
+test('steering during CHE review: the old result is not completed; the task is reworked (review of #394)', async () => {
+  const o = office({ work: ['Global findings.', 'Europe-only findings.'] });
+  const id = o.queue();
+  const realRun = o.ctx.env.AI.run;
+  let steered = false;
+  o.ctx.env.AI.run = async (model, body) => {
+    if (REVIEW_PROMPT.test(body.messages[0].content) && !steered) {
+      steered = true;
+      const data = o.data;
+      steerAgentTask(data, id, 'Focus on Europe only.');
+      o.data = data;
+    }
+    return realRun(model, body);
+  };
+  await o.run();
+  const t = o.task(id);
+  assert.equal(t.status, 'complete');
+  assert.equal(t.result, 'Europe-only findings.', 'the approved result is the steered one');
+  assert.equal(o.calls.work, 2);
+});
+
+test('"review it again" sends a held result back to review without redoing the work (review of #394)', async () => {
+  const o = office({ review: [new Error('down'), new Error('down'), new Error('down'), 'APPROVED\nChecked.'] });
+  const id = o.queue();
+  for (let i = 0; i < MAX_REVIEW_ATTEMPTS; i++) await o.run(1);
+  assert.equal(o.task(id).status, 'needs_review');
+  assert.equal(decisionsNeeded(o.data).find((d) => d.id === id)?.reason, 'needs your decision', 'the owner is told it needs a decision');
+  assert.equal(requeueAgentReview(o.data, id).task.status, 'review_pending');
+  await o.run();
+  assert.equal(o.task(id).status, 'complete');
+  assert.equal(o.calls.work, 1);
+  assert.match(requeueAgentReview(o.data, id).error, /no result waiting/);
+});
+
+test('a repair pass does not repeat owner-approved computer use (review of #394)', async (t) => {
+  const o = office({ review: ['NEEDS WORK\nTighten the copy.', 'APPROVED\nGood.'] });
+  o.ctx.env.CHE_COMPUTER_URL = 'https://computer.example/run';
+  let computerCalls = 0;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => { computerCalls++; return new Response(JSON.stringify({ done: true }), { status: 200 }); };
+  t.after(() => { globalThis.fetch = realFetch; });
+  const id = o.queue('Post the listing on the shop.', { use_computer: true, owner_approved_computer: true });
+  await o.run();
+  assert.equal(o.task(id).status, 'complete');
+  assert.equal(o.calls.work, 2);
+  assert.equal(computerCalls, 1, 'the workspace acted once');
+  assert.equal(o.task(id).receipts[0]?.status, 'ok', 'the first receipt is kept for the repair pass');
+});
+
+test('retiring an agent cancels its held and pending reviews too', async () => {
+  const o = office({ review: [new Error('down')] });
+  const id = o.queue();
+  await o.run(1);
+  assert.equal(o.task(id).status, 'review_pending');
+  updateAgent(o.data, o.agent(), { action: 'retire' });
+  assert.equal(o.task(id).status, 'cancelled');
+});
+
+test('repeated evictions during review stop at the cap instead of looping', () => {
+  const o = office();
+  const id = o.queue();
+  for (let i = 0; i < 4; i++) {
+    Object.assign(o.task(id), { status: 'reviewing', result: 'Findings.', updated_at: new Date(Date.now() - 600_000).toISOString() });
+    recoverStaleWork(o.data);
+  }
+  assert.equal(o.task(id).status, 'needs_review');
 });

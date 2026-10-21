@@ -1,6 +1,6 @@
 // Workshop truth layer: every object comes from real CHE runtime data.
 const DONE=new Set(['done','complete','completed','finished','merged','shipped','success']);
-const ACTIVE=new Set(['queued','running','working','reviewing','building','researching','thinking','waiting']);
+const ACTIVE=new Set(['queued','running','working','reviewing','review_pending','needs_review','building','researching','thinking','waiting']);
 const clip=(v,n=12000)=>String(v??'').trim().slice(0,n);
 const firstUrl=(text)=>/https?:\/\/[^\s<>"')]+/i.exec(String(text||''))?.[0]||'';
 function inferType(text,link=''){const s=`${text} ${link}`.toLowerCase();if(/youtube|youtu\.be|video|movie|clip/.test(s))return'video';if(/website|web app|landing page|pages\.dev|vercel\.app|http/.test(s))return'website';if(/iphone|ios|flutter app|\.ipa\b|mobile app/.test(s))return'app';return'code'}

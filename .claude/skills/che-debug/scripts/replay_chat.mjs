@@ -129,12 +129,32 @@ if (Array.isArray(spec.records) && spec.records.length) {
   await storage.put('che', data);
 }
 
+// --state: the Office tasks, jobs and objectives each turn left in durable storage, so a reply that
+// says work started can be checked against what was actually queued.
+const DURABLE = { team_tasks: (t) => `${t.partner_name || 'agent'} ${t.status}: ${String(t.task || '').slice(0, 70)}`,
+  jobs: (j) => `${j.kind || 'job'} ${j.status}: ${String(j.title || j.prompt || '').slice(0, 70)}`,
+  objectives: (o) => `${o.status}: ${String(o.title || o.goal || '').slice(0, 70)}` };
+async function durableIds() {
+  const data = (await storage.get('che')) || {};
+  return new Set(Object.keys(DURABLE).flatMap((k) => (Array.isArray(data[k]) ? data[k] : []).map((x) => `${k}:${x.id}`)));
+}
+async function createdSince(seen) {
+  const data = (await storage.get('che')) || {};
+  const out = {};
+  for (const [k, show] of Object.entries(DURABLE)) {
+    const fresh = (Array.isArray(data[k]) ? data[k] : []).filter((x) => !seen.has(`${k}:${x.id}`)).map(show);
+    if (fresh.length) out[k] = fresh;
+  }
+  return out;
+}
+
 const history = Array.isArray(spec.history) ? spec.history.slice() : [];
 const results = [];
 let misses = 0;
 for (const [i, raw] of spec.turns.entries()) {
   const turn = typeof raw === 'string' ? { message: raw } : raw;
   const before = modelCalls;
+  const seen = await durableIds();
   turnHosts.clear();
   const started = performance.now();
   mute();
@@ -157,6 +177,7 @@ for (const [i, raw] of spec.turns.entries()) {
     model_calls: modelCalls - before, ms: Math.round(performance.now() - started), reply,
     ...(turnHosts.size ? { refused_hosts: [...turnHosts] } : {}),
   };
+  if (flag('--state')) row.created = await createdSince(seen);
   const expect = turn.expect || {};
   const problems = [];
   if (expect.route && row.route !== expect.route) problems.push(`route ${row.route}, expected ${expect.route}`);
@@ -178,6 +199,7 @@ if (flag('--json')) {
     console.log(`   > ${clip(r.message, 110)}`);
     console.log(`   < ${clip(r.reply, 320)}`);
     if (r.refused_hosts) console.log(`   (offline: refused ${r.refused_hosts.join(', ')})`);
+    for (const [k, list] of Object.entries(r.created || {})) console.log(`   + ${k}: ${list.join(' | ')}`);
   }
   if (results.some((r) => r.check)) console.log(`${results.filter((r) => r.check === 'PASS').length}/${results.filter((r) => r.check).length} expectations met`);
 }

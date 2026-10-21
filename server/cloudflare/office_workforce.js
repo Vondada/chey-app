@@ -107,7 +107,7 @@ export function startPairedJob(env, data, { objective, families = [] }) {
 
 // Retires temporary specialists with no remaining queued/running work.
 export function retireIdleTemporaries(data) {
-  const busy = new Set(data.team_tasks.filter((t) => ['queued', 'running', 'reviewing'].includes(t.status)).map((t) => t.partner_id));
+  const busy = new Set(data.team_tasks.filter((t) => ['queued', 'running', 'reviewing', 'review_pending', 'needs_review'].includes(t.status)).map((t) => t.partner_id));
   const inMeeting = new Set((data.meetings || [])
     .filter((m) => ['drafting', 'cross_check', 'synthesizing'].includes(m.status))
     .flatMap((m) => m.participants.map((p) => p.agent_id)));

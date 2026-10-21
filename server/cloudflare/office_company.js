@@ -68,16 +68,25 @@ const GOAL_ROUTES = [
   ['Lyra', /\b(?:social|post|posts|content|instagram|tiktok|caption|campaign|video|blog|clothing|avatar|ugc)\b/],
 ];
 
+// An Office agent the owner names ("Atlas, research…", "have Mira write…") gets that slice of work.
+const OFFICE_NAMES = ['Nova', 'Atlas', 'Mira', 'Knox', 'Sage', 'Lyra', 'Iris'];
+const NAMED_AGENT = new RegExp(`^(?:(?:please|then|and|also|ask|have|get|tell|let)\\s+)*(${OFFICE_NAMES.join('|')})\\b`, 'i');
+
 export function splitGoal(goal) {
   const text = String(goal || '').replace(/\s+/g, ' ').trim();
   if (!text) return [];
   const parts = text
-    .split(/(?:[.;]\s+|,?\s+(?:and then|then|and also|also)\s+|,\s+and\s+|\s+and\s+(?=(?:build|write|research|find|make|draft|post|fix|report|create|list|reply|answer|compare|ship|scout)\b))/i)
+    .split(new RegExp(String.raw`(?:[.;]\s+|,?\s+(?:and then|then|and also|also)\s+|,\s+and\s+|\s+and\s+(?=(?:build|write|research|find|make|draft|post|fix|report|create|list|reply|answer|compare|ship|scout)\b)|\s+and\s+(?=(?:have\s+|ask\s+|get\s+)?(?:${OFFICE_NAMES.join('|')})\b))`, 'i'))
     .map((part) => part.replace(/[.;,]+$/, '').trim())
     .filter((part) => part.split(' ').length >= 2)
     .slice(0, 6);
   const jobs = (parts.length ? parts : [text]).map((part) => {
     const lower = part.toLowerCase();
+    const named = NAMED_AGENT.exec(part);
+    if (named) {
+      const agent = OFFICE_NAMES.find((n) => n.toLowerCase() === named[1].toLowerCase());
+      return { agent, task: part.charAt(0).toUpperCase() + part.slice(1) };
+    }
     const hit = /^(?:research|find|compare|look up|scout|find trending|find topics)\b/.test(lower)
       ? ['Atlas']
       : GOAL_ROUTES.find(([, pattern]) => pattern.test(lower));
