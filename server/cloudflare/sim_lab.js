@@ -676,6 +676,7 @@ export async function saveRun(storage, store, run) {
     console.error('SIM_LAB_BRAIN_SAFE_DIAGNOSTIC', written.reason,
       'title', isSafeText(brainRecord.title),
       'body', isSafeText(brainRecord.body),
+      'unsafeBodyLines', brainRecord.body.split('\n').map((line, i) => (!isSafeText(line) ? i : -1)).filter((n) => n >= 0),
       'source', isSafeText(JSON.stringify(brainRecord.source)));
   }
   return written;
