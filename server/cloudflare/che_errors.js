@@ -18,8 +18,8 @@ export const ERROR_CATEGORIES = [
 const OWNER_MESSAGES = {
   // No "engine" here: the phone hides server text with technical words (lib/che_owner_errors.dart).
   message_too_long: 'That message is too long for the AI I can reach right now, sir, so I did nothing with it. Please send it in parts.',
-  retryable_provider_error: "I couldn't complete that request just now, sir. I have not confirmed that any work is still running.",
-  temporary_cloud_unavailable: "I couldn't complete that request just now, sir. I have not confirmed that any work is still running.",
+  retryable_provider_error: "I couldn't finish that answer just now, sir. I don't have a confirmed result to report.",
+  temporary_cloud_unavailable: "I couldn't finish that answer just now, sir. I don't have a confirmed result to report.",
   network_offline: "I lost the network connection, sir. I could not confirm that the request was accepted.",
   voice_unavailable: "My spoken voice is down, sir. I still have your text and the iPhone voice as backup.",
   capability_missing: "That tool isn't connected right now, sir.",
