@@ -76,6 +76,10 @@ function plainSecret(trimmed) {
   if (groupedCode(trimmed)) return true;
   const token = trimmed.replace(/!+$/, '');
   if (token.length < 8 || !/[A-Za-z]/.test(token) || !/\d/.test(token)) return false;
+  // Built-in Simulation Lab model references are lowercase snake_case with a numeric
+  // version (hover_flight@1), not credentials. The full model identifier is retained
+  // for provenance; real broker keys, random tokens and passwords stay blocked.
+  if (/^[a-z]+(?:_[a-z]+)+@[1-9][0-9]?$/.test(token)) return false;
   if (HEX_RE.test(token)) return token.length >= 13 && token.length !== 40;
   if (UUID_RE.test(token) || /^[\w.+-]+@[\w-]+\.[\w.]+$/.test(token)) return false;
   if (/^\d{4}-\d{2}-\d{2}/.test(token) || /^v?\d+(?:\.\d+)+/i.test(token) || /^#\d+/.test(token)) return false;
