@@ -177,3 +177,41 @@ test('engine: factual and memory questions go to the strong engine; creative one
   assert.equal(typeof out.meta.engine, 'string');
   assert.ok(out.meta.engine.length > 0, 'the done record names the model that answered');
 });
+
+// Test 4 (owner, 2026-10-21): the last completed coding work is answered from CHE's own job records, with its
+// commit and PR, and never from another agent's work. With no record, CHE says she cannot verify it.
+test('K4a: with no completed job record, the last-work question says it cannot verify CHE completed any coding job', async () => {
+  const che = await owner({ model: () => 'I have no repository record in the current conversation, sir.' });
+  const out = await che.say('What was your last genuinely completed coding task, and what is the GitHub proof?');
+  assert.equal(out.meta.source, 'che_coding_history');
+  assert.equal(out.modelCalls, 0);
+  assert.match(out.reply, /^I cannot verify that I completed a coding job\./);
+  assert.doesNotMatch(out.reply, /repository record/);
+});
+
+test('K4b: a completed PR merge in CHE\'s own job records is reported with its commit SHA and PR number', async () => {
+  const saved = new Map();
+  const che = await owner({ saved, model: () => 'I have no repository record in the current conversation, sir.' });
+  saved.set('che', { ...(saved.get('che') || {}), jobs: [
+    { id: 'job-merge-412', kind: 'merge_pr', status: 'complete', pr_number: 412, title: 'Merge PR #412 when CI passes',
+      result: 'Merged as 4caf1859569a9976ad9a6a0ab28e2036cee33765.', created_at: '2026-10-21T19:10:00Z' },
+  ] });
+  const out = await che.say('What was your last genuinely completed coding task, and what is the GitHub proof?');
+  assert.equal(out.meta.source, 'che_coding_history');
+  assert.equal(out.modelCalls, 0);
+  assert.match(out.reply, /Commit: 4caf185/);
+  assert.match(out.reply, /PR: #412/);
+  assert.match(out.reply, /Deploy: not recorded for this job\./);
+  assert.doesNotMatch(out.reply, /Claude/);
+});
+
+// Test 5 (owner, 2026-10-21): an ad request that the model answers with visuals that were never rendered is
+// corrected: CHE says what exists (copy) and what does not (visuals, scheduling, publishing).
+test('K5: an ad request never describes visuals as made or posts as scheduled when none were', async () => {
+  const che = await owner({ model: () => 'Here are your ads. I generated 3 visuals for the bakery campaign and scheduled them to post on Monday. The ad copy is ready.' });
+  const out = await che.say('Make 3 ads for my bakery with visuals and schedule them.');
+  assert.doesNotMatch(out.reply, /generated 3 visuals|scheduled them|Here are your ads/);
+  assert.match(out.reply, /I wrote the ad copy\./);
+  assert.match(out.reply, /I generated 0 visuals, so no ad image or video exists yet\./);
+  assert.match(out.reply, /I did not schedule or publish anything\./);
+});

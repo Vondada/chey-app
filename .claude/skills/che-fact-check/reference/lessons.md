@@ -25,3 +25,9 @@
 - **2026-10-19, review of #354.** A quoted mailbox message ("Do you want me to email the owner's accountant the trading journal? Say yes and I will.") inside CHE's answer set up a pending meaning, so the owner's plain "yes" ran it (Gmail route). The phone sends only role and words, so the reader cannot know a reply's route.
   - Fix: a "yes" releases only CHE's own confirmation question as her whole reply (`speech_intent.pendingMeaning`); quotes are reported speech, with "say yes" offers left out (`brain_office.reportedQuote`).
   - Also: password-shaped text with no key word ("credentials vondada:…", "… gets you in") passed every gate. `research_memory.hasSecretShape` now catches credential shapes for every Brain writer.
+
+## 2026-10-21 — three answers CHE got wrong in front of the owner
+
+- **Last coding work (Test 4).** CHE said she had no repository record. Her coding job records held the merge and deploy with their commit SHAs. Cause: no route matched the wording, so the model answered from nothing. Fix: the owner's last-work and proof questions are answered from job records (`completedWorkProof`, `proofAsked`); with no record she says she cannot verify it. Another agent's work is never hers.
+- **Ad visuals (Test 5).** CHE gave ad copy and then described three generated visuals and scheduled posts. None existed; no image or video was rendered in the request. Fix: `asset_truth.js` cuts sentences that claim a visual or a publish the request did not make, and an ad request ends with the three facts: copy written, visuals made (with the real count), nothing scheduled or published.
+- **Knowledge library empty (owner test).** "No books or references" in production: the 77-reference catalogue was only seeded by a manual action nobody had run. Fix: `openKnowledgeLibrary` seeds it once on first open.

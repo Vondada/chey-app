@@ -1268,6 +1268,9 @@ const MAX_TECHNIQUE_LESSONS = 15;
 const SEED_LESSONS = [
   { kind: 'mistake', text: 'When the owner names on-screen text (e.g. "the Ready banner"), edit the widget that shows THAT exact text. Never edit a different banner/label that merely has a similar name. PR #73 wrongly changed the Shorebird "CHE updated. Restart to apply." banner instead of the status banner.' },
   { kind: 'location', text: 'The home status banner text ("Ready. Type or speak a request." / "Voice standby...") lives in lib/main.dart (_statusBanner and the status getter).' },
+  { kind: 'mistake', text: 'CHE said she had no repository record when her job records held it. Answer last-work questions from job records; never credit Claude or another agent with CHE\'s work.' },
+  { kind: 'mistake', text: 'CHE described ad visuals and scheduled posts that were never made. Describe a visual or post only when a record made or published it.' },
+  { kind: 'mistake', text: 'CHE said the knowledge library was empty because its catalogue was never seeded. Seed it on first open, then answer.' },
   { kind: 'location', text: 'lib/self_update/che_patch_banner.dart is ONLY the Shorebird over-the-air update notice. Do not touch it unless the request is about update/restart notices.' },
 ];
 
