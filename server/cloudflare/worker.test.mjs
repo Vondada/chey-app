@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
 import { recallMemories, recordConversationMemory, rememberedText } from './brain_memory.js';
+import { identityQuestionIntent } from './che_maturity.js';
 import { latestWorkerDeploymentIntent, latestWorkerDeploymentStatus, speakLatestWorkerDeployment } from './self_update.js';
 
 // Import the Worker as a normal temporary ES module. Keeping the generated
@@ -263,6 +264,36 @@ async function pairedOwner() {
   const token = (await (await post('/api/pair', { code: '123456' })).json()).device_token;
   return { send: (path, body) => post(path, body, token), inputs };
 }
+
+
+// Owner's Oct 20 identity question previously returned generic provider failure
+// even though CHE has a persisted Soul; this must work without model calls.
+test('CHE answers identity, mission and Soul questions without a model or fake job status', async () => {
+  const { send, inputs } = await pairedOwner();
+  const questions = [
+    ['Who are you?', /Cognitive Horizon Engine/],
+    ['Chay, what is your soul?', /Soul is the identity/],
+    ['CHE, are you aware of your soul?', /does not establish consciousness/],
+    ['CHE, what is your mission?', /understand what you need/],
+    ['CHE, explain your core identity, what your mission means to you operationally, and how your instructions influence your decisions. Tell me which parts of your identity are actually enforced by your runtime and which are only written instructions. Don’t guess—verify what you can.', /not every line of my Soul is independently enforced/],
+  ];
+  for (const [message, expected] of questions) {
+    const res = await send('/api/chat', { message });
+    const raw = await res.text();
+    assert.equal(res.status, 200, message);
+    const events = raw.split('\n').filter(Boolean).map((line) => JSON.parse(line));
+    const done = events.find((event) => event.type === 'done');
+    const spoken = events.filter((event) => event.type === 'delta').map((event) => event.delta).join('');
+    assert.equal(done?.source, 'che_identity', message);
+    assert.match(spoken, expected, message);
+    assert.match(spoken, /\bCHE\b/, message);
+    assert.doesNotMatch(spoken, /work is still running|already deployed|successfully connected/i, message);
+  }
+  assert.equal(inputs.length, 0, 'identity replies require zero model calls');
+  assert.equal(identityQuestionIntent('Explain the meaning of soul music in jazz'), null);
+  assert.equal(identityQuestionIntent('Fix your soul and redeploy the Worker'), null);
+  assert.equal(identityQuestionIntent('What changed in your soul yesterday?'), null);
+});
 
 test('"do it again" after a long request reaches the model with its late "don\'t" (issue #345)', async () => {
   const realFetch = globalThis.fetch;
