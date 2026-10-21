@@ -1,6 +1,7 @@
 // The owner's memory search, answered from the Brain store and the Flagstaff archive themselves.
 //
 import { storedSpeaker } from './memory_provenance.js';
+import { retrievalBody } from './brain_store.js';
 
 // Read-only. Every answer names the records it actually read (id, date, where each was stored, and the sender
 // the store recorded), or it says that nothing matched, or that a store could not be read. Who said something
@@ -83,7 +84,7 @@ export function memorySearchReply(question, { brainHits = null, archive = null, 
   const records = [];
   for (const r of hits) {
     records.push(r.id);
-    lines.push(`- Brain record ${r.id}, ${day(r.created_at)}, stored in ${r.source?.room_label || r.region || 'an unnamed room'}, sender: ${storedSender(r)}. "${r.title || 'untitled'}": ${String(r.body || '').replace(/\s+/g, ' ').slice(0, 240)}`);
+    lines.push(`- Brain record ${r.id}, ${day(r.created_at)}, stored in ${r.source?.room_label || r.region || 'an unnamed room'}, sender: ${storedSender(r)}. "${r.title || 'untitled'}": ${retrievalBody(r).replace(/\s+/g, ' ').slice(0, 240)}`);
   }
   for (const m of messages) {
     const id = `session ${m.session || 'unknown'}, message at ${m.at || 'unknown time'}`;

@@ -595,15 +595,23 @@ export class CheBrainStore {
       }
       ids = [...scored.entries()].sort((a, b) => b[1] - a[1]).map(([id]) => id);
     }
-    const out = [];
+    // Candidates are ranked by how many of the question's words each record contains (ties keep the
+    // full-text order). Ranking after the cut would keep a record that matched one word over one that matched all.
+    const candidates = [];
     for (const id of ids) {
       const record = this.get(id);
       if (!record || record.deleted) continue;
       if (region && record.region !== region && !this.rows('SELECT 1 AS x FROM brain_places WHERE record_id = ? AND region = ?', id, region).length) continue;
-      out.push({ ...record, body: record.body.slice(0, 1200) });
-      if (out.length >= size) break;
+      const text = `${record.title || ''} ${record.body || ''}`.toLowerCase();
+      const matched = terms.filter((t) => text.includes(t)).length;
+      candidates.push({ record, matched });
+      if (candidates.length >= size * 3) break;
     }
-    return out;
+    return candidates
+      .map((c, i) => ({ ...c, i }))
+      .sort((a, b) => b.matched - a.matched || a.i - b.i)
+      .slice(0, size)
+      .map(({ record }) => ({ ...record, body: record.body.slice(0, 1200) }));
   }
 
   /** Every region with its subfolders and live record counts. Regions with nothing still appear. */
@@ -701,6 +709,25 @@ export class CheBrainStore {
 // ─── Live hooks and legacy projection ──────────────────────────────────────
 
 /** A whole exchange, word for word, in Conversations and Corrections. Same id as its brainmem record. */
+/**
+ * Whether a chat search may return a record. Conversation turns are the owner's own words ("You said: …")
+ * when the store marks them owner-attested. They were excluded from every chat search before, so a fact the
+ * owner told CHE in chat could never be found again.
+ */
+export function retrievableOwnerRecord(record = {}) {
+  if (record.kind !== 'conversation') return true;
+  return record.verification === 'owner_attested' && String(record.body || '').startsWith('You said:');
+}
+
+/** The text CHE may quote from a record: a conversation turn's owner words only, never CHE's own answer. */
+export function retrievalBody(record = {}) {
+  const body = String(record.body || '');
+  if (record.kind === 'conversation' && body.startsWith('You said:')) {
+    return body.split(/\nCHE answered:/)[0].replace(/^You said:\s*/, '').trim();
+  }
+  return body;
+}
+
 export function rememberExchange(store, { id, message, reply, at, correction = false } = {}) {
   const said = String(message || '').trim();
   const answered = String(reply || '').trim();
