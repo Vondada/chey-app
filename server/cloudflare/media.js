@@ -31,6 +31,18 @@ function b64ToBytes(b64) {
   return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
 }
 
+// The picture type from its first bytes: PNG, JPEG or WebP. Null for anything else, so a fabricated or broken
+// "image" is never stored as one. Only the first 16 bytes are decoded.
+export function imageMimeFromBase64(base64) {
+  let bytes;
+  try { bytes = atob(String(base64 || '').slice(0, 24)); } catch (_) { return null; }
+  const at = (i) => bytes.charCodeAt(i);
+  if (at(0) === 0x89 && bytes.slice(1, 4) === 'PNG') return 'image/png';
+  if (at(0) === 0xff && at(1) === 0xd8 && at(2) === 0xff) return 'image/jpeg';
+  if (bytes.slice(0, 4) === 'RIFF' && bytes.slice(8, 12) === 'WEBP') return 'image/webp';
+  return null;
+}
+
 function extensionForMime(mimeType) {
   if (mimeType === 'image/png') return 'png';
   if (mimeType === 'image/webp') return 'webp';
@@ -240,7 +252,8 @@ export async function generateImage(env, storage, body, fetcher = fetch) {
   const engines = [];
   if (env.CHE_IMAGE_GEN_URL) engines.push({ id: 'Your image connector', run: async () => ({ url: await connectorImage(env, finalPrompt, fetcher) }) });
   if (paidMediaEnabled(env) && openAiKey(env)) engines.push({ id: draft ? 'openai-gpt-image-fast' : 'openai-gpt-image-hd', run: async () => openAiImage(env, finalPrompt, draft, fetcher) });
-  if (env.AI) engines.push({ id: draft ? 'CHE image engine (draft)' : 'CHE image engine', run: async () => {
+  // CHE_AI_BOUND is false when the Worker has no AI binding (routedEnv always exposes an AI member).
+  if (env.AI && env.CHE_AI_BOUND !== false) engines.push({ id: draft ? 'CHE image engine (draft)' : 'CHE image engine', run: async () => {
     const result = await env.AI.run(IMAGE_MODEL, { prompt: finalPrompt.slice(0, 2048), steps: draft ? 4 : 8, seed: Math.floor(Math.random() * 2 ** 31) });
     if (!result?.image) throw new Error('The image model returned no image.');
     return { base64: result.image, mime_type: 'image/jpeg' };
@@ -279,7 +292,10 @@ export async function generateImage(env, storage, body, fetcher = fetch) {
   }
   if (generated.url) record.url = generated.url;
   else {
-    record.mime_type = generated.mime_type;
+    // The type comes from the bytes, not from what the engine said. Bytes that are not a picture are never saved.
+    const sniffed = imageMimeFromBase64(generated.base64);
+    if (!sniffed) return { status: 502, detail: 'The image engine returned data that is not a PNG, JPEG or WebP picture, so nothing was saved.' };
+    record.mime_type = sniffed;
     // Storage failures must not invoke another billable generator.
     try { Object.assign(record, await storeBlob(env, storage, id, generated.base64, record.mime_type, 'image')); }
     catch (error) { return { status: 502, detail: `Image generated but could not be saved: ${error.message}` }; }

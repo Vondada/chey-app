@@ -211,10 +211,12 @@ test('K4b: a completed PR merge in CHE\'s own job records is reported with its c
 test('K5: an ad request never describes visuals as made or posts as scheduled when none were', async () => {
   const che = await owner({ model: () => 'Here are your ads. I generated 3 visuals for the bakery campaign and scheduled them to post on Monday. The ad copy is ready.' });
   const out = await che.say('Make 3 ads for my bakery with visuals and schedule them.');
+  // Test 5 (2026-10-21): a visual request makes the real pictures or says none were made. The model's claims are never shown.
   assert.doesNotMatch(out.reply, /generated 3 visuals|scheduled them|Here are your ads/);
-  assert.match(out.reply, /I wrote the ad copy\./);
-  assert.match(out.reply, /I generated 0 visuals, so no ad image or video exists yet\./);
-  assert.match(out.reply, /I did not schedule or publish anything\./);
+  assert.equal(out.meta.source, 'che_image_generation', 'the picture route answers, not the model');
+  assert.match(out.reply, /^I did not generate any pictures, sir\. Nothing was saved\./);
+  assert.doesNotMatch(out.reply, /\.(?:png|jpe?g|webp)\b/i, 'no file name is claimed');
+  assert.doesNotMatch(out.reply, /scheduled|published|posted/i, 'nothing is claimed as scheduled or published');
 });
 
 // The owner's library on an empty store (production's first open): the exact question gets the real catalog, with

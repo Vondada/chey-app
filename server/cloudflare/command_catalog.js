@@ -256,7 +256,7 @@ export const COMMANDS = Object.freeze([
   }),
   C('yt-thumbnail', 'youtube', 'BUILD', 'Generate thumbnails.', {
     does: 'Generates a thumbnail image from your description with CHE\'s image engine.',
-    needs: ['image_generation'], route: 'model', handler: 'media.js image generation',
+    needs: ['image_generation'], route: 'che_image_generation', handler: 'media.js image generation (chat_images.js)',
     input: { name: 'description', required: true, hint: 'What the thumbnail shows' },
     examples: ['Generate a thumbnail image of a glowing octopus brain'],
     prompt: 'Generate an image for a YouTube thumbnail: {input}. Bold, high contrast, at most 4 words of text.',

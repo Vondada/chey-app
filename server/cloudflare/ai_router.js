@@ -1057,6 +1057,9 @@ export function routedEnv(env, fetcher = fetch, usageStorage = null) {
     },
     enumerable: true,
   });
+  // The wrapper always has an AI member, so callers that need a real picture engine check this flag: true only when the
+  // Worker has an AI binding (media.js generateImage). Without it, "no engine" is reported as no engine, not as a failed call.
+  Object.defineProperty(wrapped, 'CHE_AI_BOUND', { value: Boolean(env.AI), enumerable: true });
   return wrapped;
 }
 

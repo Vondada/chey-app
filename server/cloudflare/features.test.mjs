@@ -279,14 +279,14 @@ test('art studio: real images with versions, draft opt-in, honest upscaling', as
   const storage = memStorage();
   const calls = [];
   const env = {
-    AI: { run: async (model, input) => { calls.push({ model, input }); return { image: Buffer.from('JPEGDATA').toString('base64') }; } },
+    AI: { run: async (model, input) => { calls.push({ model, input }); return { image: '/9j/4AAQSkZJRgAB' }; } },
   };
   const made = await generateImage(env, storage, { prompt: 'A neon studio at night' });
   assert.equal(made.status, 200);
   assert.equal(calls[0].model, '@cf/black-forest-labs/flux-1-schnell');
   assert.equal(calls[0].input.steps, 8, 'highest quality by default');
   assert.equal(made.item.version, 1);
-  assert.equal(Buffer.from(await readBlob(env, storage, made.item)).toString(), 'JPEGDATA');
+  assert.equal(Buffer.from(await readBlob(env, storage, made.item)).toString('base64'), '/9j/4AAQSkZJRgAB');
 
   const variation = await generateImage(env, storage, { mode: 'variation', parent_id: made.item.id });
   assert.equal(variation.item.root_id, made.item.id);
@@ -492,7 +492,7 @@ test('image relay falls from FLUX to Gemini and keeps the returned MIME type', a
   const result = await generateImage({ GEMINI_API_KEY: 'key', CHE_ALLOW_PAID_MEDIA: '1', CHE_ALLOW_PAID_AI: '1', AI: {run: async () => {calls.push('flux'); throw new Error('quota');}} }, storage, {prompt:'A tree'}, async (url, init) => {
     calls.push('gemini');
     assert.equal(init.headers['x-goog-api-key'], 'key');
-    return Response.json({candidates:[{content:{parts:[{inlineData:{data:'YQ==',mimeType:'image/png'}}]}}]});
+    return Response.json({candidates:[{content:{parts:[{inlineData:{data:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',mimeType:'image/png'}}]}}]});
   });
   assert.deepEqual(calls, ['flux', 'gemini']);
   assert.equal(result.status, 200); assert.equal(result.item.mime_type, 'image/png');
