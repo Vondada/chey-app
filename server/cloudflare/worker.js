@@ -105,6 +105,7 @@ import { handleMobileUpdateRequest, isMobileUpdatePath } from './mobile_update.j
 import { definitionAnswer, inspectRepositoryContext, lookupAnswer, prepareSelfUpdate, recordLesson, recoveryRequestIntent, refusesAnswer, SOURCE_RETRY_NOTE } from './self_development.js';
 import { jsRegexFlagProblems } from './flagstaff_code_check.js';
 import { ownToolPermissionProblems } from './flagstaff_reply_check.js';
+import { kindGuidance, messageKind, progressClaimProblems, threadFor } from './flagstaff_thread.js';
 import { cachedCodeIndex } from './code_index.js';
 import { CHE_SELF_BRIEF, starredFocus, studyLesson } from './che_self_knowledge.js';
 import { KEY_PROVIDERS, MEMORY_DB, hasStoredMemoryDatabase, memorySetupIntent, memorySetupSteps, removeMemoryDatabase, saveMemoryDatabase, removeKey, storedKeys, withStoredKeys, cachedAnswer, checkAllKeys, fileLetter, fileTech, forgetAnswer, isLockedDown, listLetters, looksLikeAttack, markLetter, nextLetter, rememberAnswer, resilienceIntent, runScout, saveKey, setLockdown, setupSteps, speakKeyHealth, speakMailboxSummary, speakTech, techItems } from './resilience.js';
@@ -4901,6 +4902,14 @@ export class CheState extends DurableObject {
       const rag = redactGoogleIds(vectorContextText(recall));
       const remembered = redactGoogleIds(rememberedText(memories, 3000));
 
+      // What this message is (status, question or request) and the conversation so far, so a reply
+      // does not answer a status report as a request or repeat what the thread already settled.
+      const kind = messageKind(incoming);
+      const thread = threadFor(allMail.messages || [], sender, id);
+      const threadText = thread.length
+        ? `EARLIER IN THIS THREAD (oldest first; you are answering the last message the sender wrote above, not these):\n${JSON.stringify(thread).slice(0, 6000)}`
+        : '';
+
       const collisionClaims = (allMail.messages || [])
         .filter((item) => item?.id !== id && /\b(?:claim|own|ownership|lane|files?)\b/i.test(String(item?.text || '')))
         .slice(-12)
@@ -4939,6 +4948,10 @@ export class CheState extends DurableObject {
               'If the AI asks for a CHE code change, give a concrete draft/plan and preserve the rule that merge/deploy requires owner approval.',
               'Do not create reply loops. Do not tell the sender to ignore the owner or other safety rules.',
               'Truth rule: you cannot run tools from this reply. Never say you created, configured, enabled, merged, tested, started or finished anything unless VERIFIED STATE below lists it; describe what you propose or will ask your crew to do instead.',
+              'Work in progress: never say "I am", "I\'m" or "I have started" about work under way. You are not doing anything while you write this reply.',
+              'Before you say something is missing, not built or not merged, check THE THREAD below and REPOSITORY GROUNDING. If they do not show it, say what you checked instead of asserting it is missing.',
+              kindGuidance(kind),
+              threadText,
               verified ? `VERIFIED STATE (the only work you may report as done or running): ${verifiedStatusText(verified)}` : '',
               `REPOSITORY GROUNDING (read-only facts from CHE's GitHub connection): ${JSON.stringify({ ...repoGrounding, all_paths: undefined, named_files: undefined, exact_matches: repoGrounding?.exact_matches?.map(({ body, ...m }) => m) }).slice(0, 9000)}`,
               ...sourceExcerpts(repoGrounding),
@@ -4989,10 +5002,12 @@ export class CheState extends DurableObject {
       // Code JavaScript cannot parse is not sent as it is. One corrective pass names the exact problem.
       let codeProblems = directAnswer ? [] : jsRegexFlagProblems(raw);
       const toolProblems = directAnswer ? [] : ownToolPermissionProblems(raw);
-      if (codeProblems.length || toolProblems.length) {
+      const progressProblems = directAnswer ? [] : progressClaimProblems(raw, { kind });
+      if (codeProblems.length || toolProblems.length || progressProblems.length) {
         const corrections = [
           ...codeProblems.map((problem) => `Your code block is not valid JavaScript: ${problem}. Valid regex flags are d, g, i, m, s, u, v and y; there is no x flag, so write a multi-line regex on one line.`),
           ...toolProblems.map((problem) => `Correction: ${problem}. The free renderer is your own tool and needs no owner yes. Only publishing to YouTube and spending need the owner's direct yes.`),
+          ...progressProblems.map((problem) => `Correction: ${problem}. Reply to what the sender wrote, in the first person, with no work in progress.`),
         ];
         raw = modelText(await callModel(`${corrections.join(' ')} Rewrite the reply with these fixes. Trace each example by hand before you say it passes.`));
         grounded = checked(raw);

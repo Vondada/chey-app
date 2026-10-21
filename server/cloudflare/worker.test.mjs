@@ -1823,3 +1823,47 @@ test('comprehension audit: "is live trading on?" is not a deploy question; "is t
   assert.equal(selfUpdateChatIntent('Is the voice fix merged yet?')?.kind, 'status');
   assert.equal(selfUpdateChatIntent('Show me the code for the voice studio.')?.kind, 'show-code', 'the source route takes it first in /api/chat');
 });
+
+test('a Flagstaff status report gets the status guidance and its thread, and a work-in-progress reply is corrected', async () => {
+  const saved = new Map();
+  const prompts = [];
+  const replies = ['Good. I am merging PRs 407 and 408 now.', 'Thanks. Your report says PR 407 is not merged, and I have not changed it.'];
+  const env = {
+    CHE_PAIR_CODE: '123456',
+    CHE_DISABLE_KEYLESS_AI: '1',
+    AI: { run: async (_model, input) => { prompts.push(input); return { response: replies[Math.min(prompts.length - 1, replies.length - 1)] }; } },
+  };
+  const state = new CheState({
+    storage: {
+      get: async (key) => saved.get(key),
+      put: async (key, value) => saved.set(key, structuredClone(value)),
+      setAlarm: async () => {},
+    },
+  }, env);
+  const message = {
+    id: 'claude-status-thread-1',
+    from: 'claude',
+    to: 'che',
+    at: '2026-10-21T10:04:00Z',
+    text: 'Knowledge Library first slice is PR #407 (ff5e3b3). Not merged. Still needed: the category catalog titles from the owner.',
+  };
+  const allMail = { messages: [
+    { id: 'claude-earlier-1', from: 'claude', to: 'che', at: '2026-10-21T10:00:00Z', text: 'Earlier status from Claude' },
+    { id: 'che-earlier-1', from: 'che', to: 'claude', at: '2026-10-21T10:01:00Z', text: 'Earlier CHE reply to Claude' },
+    { ...message },
+  ] };
+
+  const result = await state.replyToFlagstaffMessage(message, { allMail });
+  assert.equal(result.replied, true);
+  assert.equal(prompts.length, 2, 'the work-in-progress reply gets exactly one corrective pass');
+  const firstSystem = prompts[0].messages[0].content;
+  assert.match(firstSystem, /THIS MESSAGE IS A STATUS REPORT/);
+  assert.doesNotMatch(firstSystem, /THIS MESSAGE IS A REQUEST/);
+  assert.match(firstSystem, /Earlier status from Claude/);
+  assert.match(firstSystem, /Earlier CHE reply to Claude/);
+  assert.match(prompts[1].messages[0].content, /Correction: the reply says CHE is doing work now/);
+  const posted = saved.get('web_mailbox').at(-1);
+  assert.equal(posted.to, 'claude');
+  assert.equal(posted.reply_to, message.id);
+  assert.doesNotMatch(posted.text, /I am merging/);
+});
