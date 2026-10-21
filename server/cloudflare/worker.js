@@ -37,6 +37,7 @@ import { discoverKeylessModels, engineStatus, paidAllowed, routedEnv } from './a
 import { capabilityPromptLine, inferTurnCapabilities, runtimeCapabilityRegistry } from './cognitive_capabilities.js';
 import { identityQuestionIntent, speakIdentity } from './che_maturity.js';
 import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, upscaleImage } from './media.js';
+import { mediaLibraryIntent, mediaLibraryReply, mediaLibraryReport, wantsLatestVideo } from './media_library.js';
 import { probeVideoEngine, videoEngineStatus, videoStatusSpeech } from './video_engine.js';
 import { githubVideoDiagnosis, mp4Facts } from './github_video_renderer.js';
 import { handleEdgeVoice } from './edge_route.js';
@@ -9439,6 +9440,15 @@ export class CheState extends DurableObject {
         }
 
 
+        // The owner's saved videos, from the stored records and their files (media_library.js). Read-only, and
+        // answered here: the model has no tool to inspect the library, so it must never be asked.
+        if (mediaLibraryIntent(message)) {
+          if (!ownerDevice) return ownerOnly();
+          const report = await mediaLibraryReport(this.keyEnv || this.env, this.ctx.storage, await listMedia(this.ctx.storage), { fetcher: fetch });
+          return ndjsonReply(mediaLibraryReply(report, { latest: wantsLatestVideo(message) }), {
+            source: 'che_media_library', ok: true, media_total: report.total, media_playable: report.playable,
+          });
+        }
         const directRepositoryInspection = repositoryInspectionIntent(message);
         const recentRepositoryEvidenceRequest = [...ownerHistory]
           .reverse()
