@@ -69,8 +69,14 @@ const CLAIM_SUBJECT = String.raw`\b(?:I|we)(?:'ve|'d|\s+have|\s+had)?\s+(?:(?:ju
 // Money verbs count only with a money object: "paid close attention", "ordered the findings" and
 // "bought into the thesis" are idioms.
 const MONEY_VERBS = String.raw`paid\s+(?:\$|USD|for\b|the\s+(?:invoice|bill|fee|deposit|balance|vendor|supplier)|an?\s+(?:invoice|bill|fee|deposit)|\d)|purchased\b|bought\s+(?:\d+|an?|the|some|more)\s+(?:\w+\s+){0,2}(?:shares?|stock|contracts?|domains?|ads?|units?|items?|products?|inventory|supplies|samples?|tickets?|subscriptions?|plans?|licen[cs]es?|lamps?)\b|sold\s+(?:\d+|the|our|my|an?|some)\s+(?:\w+\s+){0,2}(?:shares?|contracts?|positions?|stock|units?|items?|products?|lamps?)\b|ordered\s+(?:\d+|an?|more|new|the)\s+(?:\w+\s+){0,2}(?:units?|items?|products?|stock|inventory|supplies|samples?|copies|parts?|lamps?)\b|transferred\s+(?:\$|\d|the\s+(?:money|funds|balance|payment))|placed\s+(?:an?\s+|the\s+)?(?:order|trade)\b|executed\s+(?:an?\s+|the\s+)?(?:order|trade|payment|transfer)\b`;
-const ACTION_VERBS = String.raw`deployed|merged|pushed|committed|published|uploaded|posted|sent|emailed|texted|messaged|opened\s+(?:an?\s+|the\s+)?(?:PR|pull\s+request|issue)|created\s+(?:an?\s+|the\s+)?(?:PR|pull\s+request|branch|repo(?:sitory)?|listing|campaign|video|account)|rendered\s+(?:an?\s+|the\s+)?(?:video|mp4|clip|image)|executed\s+(?:an?\s+|the\s+)?(?:script|command|workflow|deploy(?:ment)?)|ran\s+(?:the\s+|our\s+)?(?:tests?|script|command|workflow|job)`;
+const ACTION_VERBS = String.raw`deployed|merged|pushed|committed|published|uploaded|posted|sent|emailed|texted|messaged|opened\s+(?:an?\s+|the\s+)?(?:new\s+)?(?:PR|pull\s+request|issue)|created\s+(?:an?\s+|the\s+)?(?:new\s+)?(?:PR|pull\s+request|branch|repo(?:sitory)?|listing|campaign|video|account)|rendered\s+(?:an?\s+|the\s+)?(?:video|mp4|clip|image)|executed\s+(?:an?\s+|the\s+)?(?:script|command|workflow|deploy(?:ment)?)|ran\s+(?:the\s+|our\s+)?(?:tests?|script|command|workflow|job)`;
 const ACTION_CLAIM = new RegExp(`${CLAIM_SUBJECT}(?:${ACTION_VERBS})\\b`, 'i');
+// A second past-tense action after "and" or "then" in one sentence: "I've created a branch, and opened a pull request."
+// A modal, a negation or a question word makes it a plan or a refusal, not a claim.
+const COMPOUND_CLAIM = new RegExp(`${CLAIM_SUBJECT}[^.!?]{0,120}?\\b(?:and|then|also)\\s+(?:${ACTION_VERBS})\\b`, 'i');
+const PLAN_OR_REFUSAL = /\b(?:will|would|shall|should|could|might|may|can|must|plan|planning|want|wish|need|not|never|no|don'?t|didn'?t|won'?t|can'?t|couldn'?t|isn'?t|haven'?t|hasn'?t)\b|\b(?:once|until|when|if|after)\b|\?/i;
+// A test result is a claim that the tests ran: "All tests passed: 12 of 12." needs a run receipt.
+const TEST_CLAIM = /\b(?:all\s+)?(?:\d+\s+)?tests?\s+(?:have\s+|has\s+)?passed\b|\btest\s+results?\s*:|\b\d+\s+of\s+\d+\s+tests?\s+pass(?:ed|es)?\b/i;
 const MONEY_CLAIM = new RegExp(`${CLAIM_SUBJECT}(?:${MONEY_VERBS})|\\b(?:(?:our|my|your|this|the)\\s+)(?:order|trade|payment|transfer|purchase)\\s+(?:was|has\\s+been|is\\s+now)\\s+(?:successfully\\s+)?(?:placed|filled|executed|sent|made|completed)\\b`, 'i');
 // Without a first-person subject: "Deployed to production at 3pm." / "The PR was merged." / "Your email was sent."
 const BARE_START = /^(?:successfully\s+)?(?:deployed|merged|pushed|published|uploaded|sent|emailed|posted)\s+(?:to|on|at|it|them|this|the\s+(?:fix|change|PR|pull\s+request|branch|update|build|post|email|message|listing|video))\b|^(?:successfully\s+)?(?:deployed|merged|pushed|published|uploaded|sent|emailed|posted)[.!]?$/i;
@@ -98,7 +104,9 @@ export function unbackedActionClaims(result, receipts = []) {
       if (attributed) return false;
       if (MONEY_CLAIM.test(own) && !THIRD_PARTY.test(own)) return true;
       if (workspace) return false;
-      return ACTION_CLAIM.test(own) || ((BARE_START.test(own) || BARE_PASSIVE.test(own)) && !THIRD_PARTY.test(own));
+      if (TEST_CLAIM.test(own) && !THIRD_PARTY.test(own)) return true;
+      const compound = COMPOUND_CLAIM.test(own) && !PLAN_OR_REFUSAL.test(own);
+      return ACTION_CLAIM.test(own) || compound || ((BARE_START.test(own) || BARE_PASSIVE.test(own)) && !THIRD_PARTY.test(own));
     });
   const records = workspace ? [] : guardRetrievalClaims(text, { flagOnly: true }).removed.map((r) => r.sentence);
   return [...new Set([...claims, ...records])].map((s) => clip(s, 240)).slice(0, 4);
