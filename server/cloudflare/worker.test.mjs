@@ -837,13 +837,16 @@ test('logs, brain reflect, plugins, markets and self-update routes', async () =>
   }
 });
 
+// A real 1x1 PNG: generated pictures are checked from their bytes, so fake bytes are refused.
+const REAL_PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+
 test('media routes serve owner-only images; chat image requests use the CHE image engine', async () => {
   const saved = new Map();
   const env = {
     CHE_PAIR_CODE: '123456',
     AI: {
       run: async (model, input) => (model.includes('flux')
-        ? { image: Buffer.from('IMG').toString('base64') }
+        ? { image: REAL_PNG_BASE64 }
         : { response: 'Done.' }),
     },
   };
@@ -866,8 +869,8 @@ test('media routes serve owner-only images; chat image requests use the CHE imag
   const made = (await (await send('/api/media/generate', 'POST', { prompt: 'a fox' }, token)).json()).item;
   assert.equal((await send(`/api/media/${made.id}/image`)).status, 401);
   const image = await send(`/api/media/${made.id}/image`, 'GET', {}, token);
-  assert.equal(image.headers.get('Content-Type'), 'image/jpeg');
-  assert.equal(Buffer.from(await image.arrayBuffer()).toString(), 'IMG');
+  assert.equal(image.headers.get('Content-Type'), 'image/png');
+  assert.equal(Buffer.from(await image.arrayBuffer()).toString('base64'), REAL_PNG_BASE64);
   const list = await (await send('/api/media', 'GET', {}, token)).json();
   assert.equal(list.engine, 'workers_ai');
   assert.equal(list.items.length, 1);
@@ -876,7 +879,7 @@ test('media routes serve owner-only images; chat image requests use the CHE imag
   const reply = await (await send('/api/chat', 'POST', {
     message: 'Make an image of a red car', requested_capabilities: ['image_generation'],
   }, token)).text();
-  assert.match(reply, /"media_type":"image","media_url":"https:\/\/che\.example\/api\/media\/[a-f0-9-]+\/image"/);
+  assert.match(reply, /"done".*"source":"che_image_generation".*"mime_type":"image\/png".*"url":"\/api\/media\/[a-f0-9-]+\/image"/);
 });
 
 test('chat recovers on a larger model without shortening context, and reports real errors', async () => {

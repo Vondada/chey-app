@@ -3844,7 +3844,9 @@ test('Alpaca paper order: a yes after an interrupted send reuses the same reques
     const { reply } = await o.say('yes, place it');
     assert.deepEqual(posts, [id], 'the same request id, so Alpaca cannot make a second order');
     assert.match(reply, /order ending beef, buy 2 AAPL market, status filled\. Filled: 2 at \$231\.50\.$/, 'a fill is said because the receipt records it');
-    assert.deepEqual([...new Set(o.calls.map((c) => c.origin))], ['https://paper-api.alpaca.markets']);
+    // Broker traffic only: background code may make unrelated reads (GitHub), which this order test does not govern.
+    assert.deepEqual([...new Set(o.calls.filter((c) => c.origin.includes('alpaca')).map((c) => c.origin))], ['https://paper-api.alpaca.markets']);
+    assert.deepEqual([...new Set(o.calls.filter((c) => c.method === 'POST').map((c) => c.origin))], ['https://paper-api.alpaca.markets']);
   } finally {
     o.restore();
   }

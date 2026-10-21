@@ -40,6 +40,7 @@ import { identityQuestionIntent, speakIdentity } from './che_maturity.js';
 import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, saveOwnerFile, upscaleImage } from './media.js';
 import { mediaHoldIntent, mediaHoldReply, mediaLibraryIntent, mediaLibraryReply, mediaLibraryReport, mediaSaveIntent, mediaSaveReply, wantsLatestVideo } from './media_library.js';
 import { capabilityGap, capabilityReply } from './capability_gap.js';
+import { CHAT_IMAGE_SOURCE, chatImageMedia, chatImageReply, makeChatImages, requestedImageCount } from './chat_images.js';
 import { memorySearchIntent, memorySearchReply, memorySearchTerms } from './memory_search.js';
 import { probeVideoEngine, videoEngineStatus, videoStatusSpeech } from './video_engine.js';
 import { githubVideoDiagnosis, mp4Facts } from './github_video_renderer.js';
@@ -11440,6 +11441,13 @@ export class CheState extends DurableObject {
         const learnedSkillList = await loadLearnedSkills(this.ctx.storage);
         const learnedSkills = learnedSkillsContext(learnedSkillList, message);
 
+        // Pictures asked for (Test 5, 2026-10-21): the real pictures are made by the media engine, each one saved, and the
+        // reply is built from those results. The model is not asked here, so it cannot describe a picture that was not made.
+        if (requestedCapabilities.includes('image_generation') && !requestedCapabilities.includes('video_generation') && !body.attachment) {
+          if (!ownerDevice) return ndjsonReply('Only the CHE owner can make pictures, sir. Nothing was made.', { source: CHAT_IMAGE_SOURCE, ok: false, model_calls: 0 });
+          const results = await makeChatImages(this.keyEnv || this.env, this.ctx.storage, { message, count: requestedImageCount(message) });
+          return ndjsonReply(chatImageReply(results), { source: CHAT_IMAGE_SOURCE, ok: results.some((r) => r.ok), model_calls: 0, media: chatImageMedia(results) });
+        }
         let imageGeneration = requestedCapabilities.includes('image_generation') &&
           !requestedCapabilities.includes('video_generation')
           ? await optionalMediaGeneration(this.env, 'image', message, vectorMemoryContext)

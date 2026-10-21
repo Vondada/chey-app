@@ -872,8 +872,8 @@
     "image_generation"
    ],
    "optional": [],
-   "handler": "media.js image generation",
-   "route": "model",
+   "handler": "media.js image generation (chat_images.js)",
+   "route": "che_image_generation",
    "produces": "image",
    "evidence": "The generated image link.",
    "cost": "Free engines only, unless you turned paid AI on.",

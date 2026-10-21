@@ -7,6 +7,10 @@ import { listMedia, saveOwnerFile } from './media.js';
 import { mediaHoldIntent, mediaSaveIntent } from './media_library.js';
 
 const PNG = 'iVBORw0KGgo=';
+// A real PNG header padded past the 1.4 MB limit: the bytes are a picture, so only the size rule decides.
+const BIG_PNG = Buffer.concat([Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex'), Buffer.alloc(1_100_000)]).toString('base64');
+// Windows executable bytes ("MZ" header): not a kind CHE keeps, whatever the label says.
+const EXE = Buffer.from('MZ\x90\x00\x03\x00\x00\x00', 'binary').toString('base64');
 
 function memoryStorage(saved = new Map()) {
   return {
@@ -33,7 +37,7 @@ test('a picture the owner sends is kept in the store and listed', async () => {
 
 test('a file over 1.4 MB needs the R2 bucket: refused with that reason, and nothing is stored', async () => {
   const storage = memoryStorage();
-  const saved = await saveOwnerFile({}, storage, { name: 'big.mp4', media_type: 'video/mp4', base64: 'A'.repeat(1_400_004) });
+  const saved = await saveOwnerFile({}, storage, { name: 'big.png', media_type: 'image', base64: BIG_PNG });
   assert.equal(saved.ok, false);
   assert.match(saved.reason, /R2 bucket/);
   assert.equal((await listMedia(storage)).length, 0);
@@ -43,18 +47,18 @@ test('with the R2 bucket bound, a large file is written to R2 instead', async ()
   const writes = [];
   const env = { CHE_DATA_BUCKET: { put: async (key, bytes) => writes.push({ key, size: bytes.length }) } };
   const storage = memoryStorage();
-  const saved = await saveOwnerFile(env, storage, { name: 'big.mp4', media_type: 'video/mp4', base64: 'A'.repeat(1_400_004) });
+  const saved = await saveOwnerFile(env, storage, { name: 'big.png', media_type: 'image', base64: BIG_PNG });
   assert.equal(saved.ok, true, saved.reason);
   assert.equal(saved.item.blob, 'r2');
   assert.equal(writes.length, 1);
-  assert.match(writes[0].key, /^media\/.+\.mp4$/);
+  assert.match(writes[0].key, /^media\/.+\.png$/);
 });
 
 test('a file type CHE does not keep is refused and nothing is stored', async () => {
   const storage = memoryStorage();
-  const saved = await saveOwnerFile({}, storage, { name: 'setup.exe', media_type: 'application/x-msdownload', base64: PNG });
+  const saved = await saveOwnerFile({}, storage, { name: 'setup.exe', media_type: 'application/x-msdownload', base64: EXE });
   assert.equal(saved.ok, false);
-  assert.match(saved.reason, /not one of those/);
+  assert.match(saved.reason, /is not a picture, video, PDF or text file I can read/);
   assert.equal((await listMedia(storage)).length, 0);
 });
 

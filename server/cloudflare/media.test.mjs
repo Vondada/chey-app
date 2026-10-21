@@ -19,7 +19,7 @@ test('HD image generation uses current OpenAI GPT Image when a key is configured
   const fakeFetch = async (url, options) => {
     request = { url, body: JSON.parse(options.body) };
     return new Response(JSON.stringify({
-      data: [{ b64_json: btoa('fake-png-bytes') }],
+      data: [{ b64_json: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==' }],
     }), { status: 200, headers: { 'Content-Type': 'application/json' } });
   };
 
