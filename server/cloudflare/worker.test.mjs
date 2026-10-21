@@ -82,6 +82,7 @@ test('paired iPhone voice request gets a live deployment receipt before speech i
     }), { status: 200, headers: { 'Content-Type': 'application/json' } });
   };
   try {
+    saved.set('che:pending_owner_action', { kinds: ['money'], text: 'Buy a $100 subscription', at: Date.now() });
     for (const request of [
       'CHE, check GitHub Actions for your latest Worker deployment. Tell me the run ID, commit SHA, result, and GitHub link. Do not inspect your source code.',
       'Chay, can you tell me the latest Worker deployment status?',
@@ -96,6 +97,7 @@ test('paired iPhone voice request gets a live deployment receipt before speech i
       assert.doesNotMatch(spoken, /speech mix-up|no jobs running/i);
     }
     assert.equal(calls.length, 2);
+    assert.equal(saved.get('che:pending_owner_action'), null, 'a status read must retire a pending purchase');
   } finally {
     globalThis.fetch = originalFetch;
   }
