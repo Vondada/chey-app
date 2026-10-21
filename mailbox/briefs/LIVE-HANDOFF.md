@@ -1869,6 +1869,22 @@ Status: PROGRAM, not built. The request spans several multi-week projects (visua
 
 ---
 
+## 8a. ACTIVE CHECKPOINT (Claude, 2026-10-21 23:00Z) — read first
+
+- **Soul branch:** `claude/che-soul-routing` at `502f150`, **PR #422 open** (not merged, not deployed). Worker CI queued at 22:53Z; the Cloudflare "Workers Builds" failure is ignored per owner rule. Owner merge rule: merge only when Worker/Flutter/analyze checks are green; merge title must carry `[worker-deploy]`.
+- **What is in #422:** `server/cloudflare/soul.js` (one versioned Soul: six traits 0-10, notes, hash, history, restore as a new version, provenance); `soul.test.mjs` 8/8; `soul_chat.test.mjs` 8/8 through `/api/chat`; `worker.js`: `/api/soul` GET/POST and `/api/soul/restore` (owner device only, placed before the `/api/brain/` block), chat prompt carries `soulPromptBlock`, phone "CHE SOUL" text stripped from brain context, model `done` frame carries `soul` provenance.
+- **Also in #422:** media retrieval (`65d3fe8` + later edits): exact owner store request lists all records, verifies bytes, "show me the last picture" returns `media_url` image. Tests: `media_retrieval.test.mjs`, `media_store`, `media_save`, `media_library`, `readonly_acceptance`.
+- **Tested:** `run_checks.sh` Worker tests 2993/2993 on the branch (before commit `502f150`'s push, same tree).
+- **NOT done (next edit, in order):**
+  1. Flutter Soul controls: `lib/che_ui/che_brain.dart` `_SoulScreen` (line ~858) still edits the local text file. Replace with a Worker-backed panel: six sliders (VoiceOver labels, "7 of 10"), notes field, Save → `POST /api/soul`, history list with Restore → `POST /api/soul/restore`, visible error banner. Needs the device token: thread `headers: () => _authHeaders` and `baseUrl: () => cheAgentBaseUrl` from `lib/home_state` into the Brain screen (`_SoulScreen` is built at che_brain.dart:771 from a widget that only has `brain`). Run `flutter analyze` and `flutter test` with `/opt/flutter-sdk/flutter/bin`.
+  2. Response Details → Personality: show `soul.version`, `soul.hash`, `soul_applied`, `route` from the done frame (not yet in Flutter).
+  3. Deterministic routes do not yet carry a `soul` field (only model replies do). Decide: add `soul_applied:false` default in `ndjsonReply`, or leave absent.
+  4. Remaining Soul prompt paths: other personas in `worker.js` (about lines 5346, 6328, 8814, 11891 region) still hard-code personality; route them through `soulPromptBlock` only where the reply is owner-facing.
+- **Media follow-up:** `readonly_acceptance` video phrase fixed (video override limited to picture words).
+- **Shorebird:** run 39684505690 for PR #421 concluded `success` at 22:26Z on main `a88fe01e`. Phone install NOT verified.
+- **Exact next action for the next agent:** `gh`-free: `mcp__github__pull_request_read` on #422 (`get_check_runs`); if green and merged by owner, verify `/health` version; then do item 1 above on a new branch from main (not from #422 unless #422 is merged).
+- Secrets: none in this checkpoint.
+
 ## 8. OWNER PRIORITY OVERRIDE — SOUL FIRST AND AI-TO-AI RESUME (2026-10-21)
 
 **Owner instruction:** Finish CHE's consistent Soul/personality routing FIRST. Then continue *all* remaining owner-authorized CHE work across bounded, independently verified implementation slices. Never stop merely to write a plan. If Claude reaches a limit or any AI stops, make its partial implementation durable so ChatGPT/Codex/another available agent can resume from the exact verified point, without rereading or rewriting everything.
