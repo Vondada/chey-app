@@ -397,6 +397,12 @@ extension _CheHomeSend on _CHEHomeState {
   /// verified play: which video then played is not known here. It syncs to
   /// the Worker's Brain, where it is related to the rest of what CHE knows.
   Future<void> _rememberMusicRequest(CheVideoVoiceCommand command) async {
+    // Build 2 (owner, 2026-10-20): the Worker records it in the Music Room with its source and time, and the
+    // phone's Brain receives it on its next sync. Only when that post fails is it written here, so it is not lost.
+    if (await _postRoomEvent(CheRoomEvents.music(command.query,
+        detail: 'The owner asked CHE to play "${command.query}". CHE opened a YouTube search for it in her browser; which video then played is not recorded.'))) {
+      return;
+    }
     final at = DateTime.now().toUtc().toIso8601String();
     try {
       await _brainReplica.remember(
@@ -422,6 +428,10 @@ extension _CheHomeSend on _CHEHomeState {
       // A Brain write never blocks the music itself.
     }
   }
+
+  /// One room's activity for CHE's Brain (owner, Build 2): fire and forget, silent, no UI. True when accepted.
+  Future<bool> _postRoomEvent(Map<String, String>? event) =>
+      CheRoomEvents.post(baseUrl: cheAgentBaseUrl, headers: _authHeaders, event: event);
 
   String _sanitizeCheReply(String value) {
     // ```che-remember blocks stay: the chat shows them as "Saved to brain".
@@ -864,6 +874,9 @@ extension _CheHomeSend on _CHEHomeState {
     // Pages with their own voice routes (Commands, the browser) answered above.
     if (_pendingAttachment == null && cheAsksAboutScreen(message)) {
       final reply = CheScreenAwareness.describe();
+      // The Screen room keeps only which screen he asked about and when (owner, Build 2).
+      final page = CheScreenAwareness.current?.page ?? '';
+      if (page.isNotEmpty) unawaited(_postRoomEvent(CheRoomEvents.screen(page)));
       if (mounted) {
         final onChat = _shellTab == 1 && (ModalRoute.of(context)?.isCurrent ?? true);
         _set(() {
@@ -893,6 +906,11 @@ extension _CheHomeSend on _CHEHomeState {
       // Read before anything opens over the screen the owner is asking about.
       final helpScreen = CheHelp.shown;
       final reply = CheHelp.answer(helpAsk) ?? '';
+      // What he asked Help about, for the Brain's Help records (owner, Build 2). Steps and the Help Center itself are not activity.
+      if (reply.isNotEmpty && helpAsk.kind != CheHelpKind.step && helpAsk.kind != CheHelpKind.center) {
+        unawaited(_postRoomEvent(CheRoomEvents.help(message,
+            walkthrough: helpAsk.kind == CheHelpKind.walkthrough, screen: CheScreenAwareness.current?.page ?? '')));
+      }
       if (mounted) {
         final onChat = _shellTab == 1 && (ModalRoute.of(context)?.isCurrent ?? true);
         _set(() {

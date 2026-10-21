@@ -3,7 +3,7 @@
 **Where:** CHE → **Chat** → **Commands** (top bar, next to Conversations). Or say "open commands". The Back button returns to the same chat.
 
 The page has three tabs:
-- **Library:** all 93 commands (the owner's 71, plus REA, trading with the strategy simulation, the Knowledge Atlas, the Brain's Flagstaff import and outside correspondence, and six Creator Studio commands). Search by name ("/trade-chart") or by goal ("find website clients"). Nine category filters, favorites, recently used. Each command has a details page with:
+- **Library:** all 98 commands (the owner's 71, plus REA, trading, the Knowledge Atlas, six Creator Studio commands and `/che-cancel-job`). Search by name ("/trade-chart") or by goal ("find website clients"). Nine category filters, favorites, recently used. Each command has a details page with:
   - what it can actually do and its live status (Ready, Needs setup, Not supported yet, Unavailable right now);
   - its requirements, with setup steps for anything missing;
   - whether it needs your approval, and its input;
@@ -58,7 +58,7 @@ A ninth category, **Creator Studio**, holds six commands over `server/cloudflare
 
 | Piece | Where | Reuses |
 |---|---|---|
-| Catalog of 93 commands (71 + REA, trading with the strategy simulation, Knowledge Atlas, Brain Flagstaff import and outside correspondence, and Creator Studio) | `server/cloudflare/command_catalog.js` | One entry per command. It names the existing handler and chat route it uses, its mode (EXPLORE, PLAN or BUILD), approval, input, connectors, evidence and cost. |
+| Catalog of 98 commands (71 + REA, trading, Knowledge Atlas, Creator Studio and the coding-job cancel) | `server/cloudflare/command_catalog.js` | One entry per command. It names the existing handler and chat route it uses, its mode (EXPLORE, PLAN or BUILD), approval, input, connectors, evidence and cost. |
 | Live status | `connectorStatus()` | Real Worker secrets, the YouTube OAuth state, the NinjaTrader token and `runtimeCapabilityRegistry`. |
 | Running a command | `/name input` in chat | The request goes through the ordinary `/api/chat` route, so every money, delete and app gate, every truth guard and every receipt applies. A command name cannot bypass a permission. |
 | Approval | `confirm` in the catalog | Only `/trade-execute` (real money) and `/yt-publish` (your YouTube channel). Owner rule of September 28: everything else you ask for explicitly just runs, and money and delete gates still ask separately. Held with the same "plain yes on the next turn" hold the money gate uses, or confirmed on the page. In a workflow, an approval step can be approved only once the steps before it are done, so you decide with their results. |
@@ -66,11 +66,22 @@ A ninth category, **Creator Studio**, holds six commands over `server/cloudflare
 | Suggestions | `suggestCommands()` | Deterministic word rules, never a model call. At most two cards, appended after the reply as a `command_suggestions` event (older apps ignore it). Tapping a card opens details; nothing runs from a suggestion. |
 | Phone | `lib/commands/` | Favorites, recents, dismissed suggestions and the last catalog are kept on the phone. Saved workflows are kept on CHE, so "run my website clients workflow" works by voice. |
 
-Four commands had no chat route, so each got a thin wrapper over an existing function:
+Five commands had no chat route, so each got a thin wrapper over an existing function:
 - `/voice-test`: one real ElevenLabs call (`voiceProbe`);
 - `/yt-analytics`: `youtubeStatus` plus the uploads CHE made;
 - `/lead-crm`: `pipelineSummary`;
-- `/yt-publish`: one Office video pass (`runOfficeVideoPass`).
+- `/yt-publish`: one Office video pass (`runOfficeVideoPass`);
+- `/che-cancel-job`: `cancelQueuedJob` (`coding_cancel.js`), the same function as `POST /api/job/cancel`.
+
+## Cancelling a coding job (`/che-cancel-job`)
+
+The owner's voice and typed route to `POST /api/job/cancel` (owner, 2026-10-19: "Cancel that fake commit by Che"). Both call `cancelQueuedJob` in `server/cloudflare/coding_cancel.js`.
+
+- **Says:** "cancel coding job c2987a73" or "cancel job c2987a73" (8 or more characters of the id; spaces and capitals are fine), "cancel that coding job", "cancel the last coding job", "Cancel that fake commit by Che", or `/che-cancel-job <id>`. Right after CHE says "I accepted coding job …", a bare "cancel that" means that job.
+- **Which job:** an id is matched by prefix. "That" or "last" is the job named in CHE's most recent "I accepted coding job <id>" or "I saved coding job <id>" reply; with none, the only queued coding job ("last" takes the newest). When more than one queued job could be meant, CHE reads them as a numbered list (short id and the first 80 characters of its request), cancels nothing and asks which; a spoken number on the next turn picks one.
+- **Rule:** owner only (a guest or private device is refused, as the HTTP route refuses it). Only a `queued` job is cancelled. Its record is kept, with `status: cancelled`, `cancelled_by`, `cancelled_at` and `cancelled_via`. Nothing is deleted, so it asks nothing first and never reaches the money/delete hold.
+- **Reply:** read back from the store after the write: "I cancelled coding job c2987a73, sir. It had not started, so nothing was committed." A running, finished, failed or already cancelled job is left as it is and CHE says which; an id that is not found is said plainly.
+- **Other "cancel" sentences:** "never mind" or a bare "cancel that" while a payment, delete or app request is held still drops that request, and cancels no job. The route runs before the interpreter, so a sentence that names a coding job (or "that fake commit") cancels the job; like any other turn, it also replaces a held request, so a later "yes" releases nothing. Trades and workflow runs are never touched by it.
 
 ## Readiness
 
@@ -80,8 +91,8 @@ What each command needs:
 
 | Needs | Commands |
 |---|---|
-| Nothing beyond CHE | che, che-plan, learn, che-research, che-verify, che-memory, che-brain-review, che-outside-mail, che-recover, che-status, yt-ideas, yt-research, yt-script, yt-seo, yt-batch, yt-grow, trade-open, trade-chart, trade-setup, trade-liquidity, trade-backtest, trade-journal, trade-alert, trade-risk (account limits need NinjaTrader), trade-connections (reads each connection's own state; it never connects, removes keys or goes live), site-build, site-redesign, site-audit, site-publish, app-build, ai-build, all money commands, all client commands, all marketing commands, office-status, office-delegate, warroom, automate, skill-learn, connect, create-3d |
-| GitHub secrets | che-explore, che-build, app-fix, code-review, che-release, iphone-update, che-flagstaff-import |
+| Nothing beyond CHE | che, che-plan, learn, che-cancel-job, che-research, che-verify, che-memory, che-brain-review, che-recover, che-status, yt-ideas, yt-research, yt-script, yt-seo, yt-batch, yt-grow, trade-open, trade-chart, trade-setup, trade-liquidity, trade-backtest, trade-journal, trade-alert, trade-risk (account limits need NinjaTrader), trade-connections (reads each connection's own state; it never connects, removes keys or goes live), site-build, site-redesign, site-audit, site-publish, app-build, ai-build, all money commands, all client commands, all marketing commands, office-status, office-delegate, warroom, automate, skill-learn, connect, create-3d |
+| GitHub secrets | che-explore, che-build, app-fix, code-review, che-release, iphone-update |
 | Video renderer | yt-video, yt-voice (also a voice key) |
 | Image engine | yt-thumbnail |
 | ElevenLabs or Fish key | voice-test |
@@ -141,3 +152,7 @@ Concept cards for coding and trading: the ten phase-1 cards of each domain in `s
 - **End to end** (`test/che_command_center_e2e_test.dart` + `tool/command_center_e2e_server.mjs`): the real page over real HTTP against the real Worker code. A command handed to Chat reaches the trading handler, and a workflow built on the page completes on the job queue and shows in Activity. CI starts the server in the `flutter test` step.
 
 Adding a command means one catalog entry. The route test then checks that it reaches the handler it names. Regenerate the phone fixture with `node tool/dump_command_catalog.mjs`.
+
+## Flagstaff Brain correspondence
+
+CHE's `/che-flagstaff-import` and `/che-outside-mail` reuse the existing mailbox and Brain. These are outside correspondence rather than statements by the owner; every record has source provenance and is never an executable instruction.

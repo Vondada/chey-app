@@ -64,11 +64,25 @@ import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook,
 import { nextStrategySimTickAt, setStrategySimCeiling, setStrategySimPaused, speakStrategySim, strategySimIntent, strategySimTick, strategySimView, strategySimWake } from './strategy_sim.js';
 import { evidenceIntent, evidenceReport, evidenceTick } from './trading_evidence_runner.js';
 import { readTrades } from './trading_evidence.js';
+import { cancelCandidates, cancelConfirmation, cancelOrderIntent, chartIntent, chartView, drawIntent, futuresOrderIntent, marketOrderFeedProblem, readDrawings, saveDrawings, speakOrder } from './trading_chart.js';
+// A spoken cancel of one Alpaca PAPER order waiting for the owner's yes, or for his pick from a numbered list.
+const CHART_CANCEL_PENDING = 'trading_chart_cancel_pending';
+// "Number 2", "2", "the second one": a pick from a numbered list of n. 0 when the turn picks nothing.
+const ORDINALS = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth'];
+const NUMBER_WORDS = ['one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine'];
+function spokenPick(message, n) {
+  const t = String(message || '').toLowerCase().trim().replace(/[.!?]+$/, '');
+  const m = /^(?:(?:cancel\s+)?(?:number|no\.?|option)\s+)?(\d|one|two|three|four|five|six|seven|eight|nine)$/.exec(t)
+    || /^(?:cancel\s+)?(?:the\s+)?(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth)(?:\s+one)?$/.exec(t);
+  if (!m) return 0;
+  const k = /^\d$/.test(m[1]) ? Number(m[1]) : NUMBER_WORDS.includes(m[1]) ? NUMBER_WORDS.indexOf(m[1]) + 1 : ORDINALS.indexOf(m[1]) + 1;
+  return k >= 1 && k <= n ? k : 0;
+}
 import { ATLAS_SOURCE, answerAtlas, atlasHiddenAction, atlasIntent, atlasQuizAnswerTurn, atlasPromptContext, atlasResetAsk, atlasResetIntent, projectAtlasToBrain, resetAtlasProgress } from './knowledge_atlas.js';
 import { LIVE_BACKTEST, LIVE_RUNS, LIVE_STATE, haltLivePaper, liveSpecs, liveBacktest, liveDashboard, livePaperSummary, liveTick, nextLiveTickAt, readLivePortfolios, researchDue, setLivePaper } from './trading_live.js';
 import { ICT_CONCEPTS, applyControlChange, controlsView, noteAuditEffect, readControls, strategyRegistry, resolveStep, speakControlResult, speakControlsView, speakSkipReasons, stockOrderProblem } from './trading_controls.js';
 import { cmeSession, frontMonth, loadIntraday, TradovateMarketStream, connectMarketSocket } from './market_feed.js';
-import { alpacaKeys, alpacaPaperDashboard, haltAlpacaPaper, alpacaPaperOrders, alpacaPaperPositions, alpacaPaperEquity, alpacaStockBars, AlpacaStockStream, AlpacaOrderStream, alpacaStatus, speakAlpacaDashboard, liveKeyProblem, placeAlpacaPaperOrder, removeAlpacaPaperKeys, saveAlpacaPaperKeys } from './broker_alpaca.js';
+import { alpacaKeys, alpacaPaperDashboard, cancelAlpacaPaperOrder, haltAlpacaPaper, previewAlpacaPaperOrder, alpacaPaperOrders, alpacaPaperPositions, alpacaPaperEquity, alpacaStockBars, AlpacaStockStream, AlpacaOrderStream, alpacaStatus, speakAlpacaDashboard, liveKeyProblem, placeAlpacaPaperOrder, removeAlpacaPaperKeys, saveAlpacaPaperKeys } from './broker_alpaca.js';
 import { speakConnections, speakTradovateSteps, tradingConnections } from './trading_connections.js';
 import { liveAnswer, liveIntent } from './trading_live_chat.js';
 import { ANALYSIS_SOURCE, LEDGER_SOURCE, analyzeStrategy, ledgerIntent, readLedgers, speakLedgers, strategyAnalysisIntent } from './trading_ledgers.js';
@@ -76,7 +90,7 @@ import { meetingCommand, meetingScene, planScene, simScene } from './world_scene
 import { SIM_SOURCE, listRuns, loadRun, loadSimMemory, runLab, saveRun, simLabIntent } from './sim_lab.js';
 import { PLAN_SOURCE, answerPlanFollowUp, buildPlan, classifyProject, listPlans, loadPlan, planFollowUpIntent, planSubject, projectPlanIntent, researchSource, savePlan } from './project_plan.js';
 import { BRAIN_ROOMS_SOURCE, ROOMS as BRAIN_ROOMS, answerCrossRoom, crossRoomIntent, drainRoomEvents, imageReference, pointsAtScreen, prFollowUp, recentScreen, relinkRecords, rememberScreen, screenDeictic, screenFollowUp, screenRoomContext, screenRoomFor, statusLabel } from './brain_rooms.js';
-import { queueRoomEvent } from './room_events.js';
+import { controlChangeEvent, meetingEvent, officeTaskEvent, paperOrderRefusedEvent, phoneRoomEvent, queueRoomEvent, researchEvent } from './room_events.js';
 import { cloudDailyLimit, sanitizeOwnerText } from './che_errors.js';
 import { CHE_UPDATE_GUIDE, mergeSelfUpdatePr, openSelfUpdatePr, rollbackLastUpdate, selfUpdateGitHubAccess, selfUpdateStatus, workerDeploymentStatus } from './self_update.js';
 import { FAILURE_CLASS, backoffMs, classifyFailure, idempotencyKey, ownerEngineeringMessage, stableHash, stripOwnerHomework } from './recovery_policy.js';
@@ -99,6 +113,7 @@ import { learnedSkillsContext, learnedSkillsIntent, learnSkillIntent, attachment
 import { APPROVED_SKILLS, handleInstalledSkill, installedSkillIntent, installedSkillsContext } from './installed_skills.js';
 import { lastSite, publishSite, saveSite, serveSite, siteBuildIntent, siteEditIntent, sitePreviewIntent, sitePublishIntent, siteUrl, speakSitePublished, speakSiteResult, wantsImmediatePublish, workingHtml, writeSite } from './site_builder.js';
 import { noteJobActivity } from './job_activity.js';
+import { CODING_CANCEL_SOURCE, cancelQueuedJob, codingCancelIntent, resolveCodingCancel, speakCancelResult, speakUnresolved } from './coding_cancel.js';
 import { PENDING_OWNER_ACTION_KEY, deskOwnedMoney, forbiddenAction, prohibitionSpans, withoutProhibitions, PENDING_OWNER_ACTION_MS, gateOwnerAction, grantForKinds, isOwnerYes, peerActionReply, APPS_GRANTED_KEY, PENDING_APP_ACTION_KEY, PENDING_APP_ACTION_MS, gateAppAccess, classifyAppNeed, classifyExplicitAppOpen, classifyAppAccesses } from './owner_action_gate.js';
 import { asksForCurrentOwnerLocation, executeWithReceipt, guardExecutionClaims, guardRetrievalClaims, changeHistoryIntent, guardClaimedOwnerActions, guardClaimedResearchActions, guardGroundedFacts, guardLocationWeatherReply, guardOwnerReply, loadChangeHistory, loadReceipts, OWNER_LOCATION_NOT_VERIFIED, recordReceipt, requestedCodeNames, speakChangeHistory, vagueResearchRequest, verifiedState, verifiedStatusText } from './truth_layer.js';
 import { ENGINEERING_PLAYBOOK_SPOKEN, playbookIntent } from './engineering_playbook.js';
@@ -2748,6 +2763,38 @@ export function proposalSummaryMessage(proposal, lead = 'My team built and revie
   return `${lead} ${summary}${/[.!?]$/.test(summary) ? '' : '.'} It touches ${files.length === 1 ? files[0] : `${files.length} files`}. Nothing is applied yet. Say "create the PR" to send it to GitHub, or "show me the code" if you want to see it.`;
 }
 
+// The runner PR from CHE's latest coding session, when it passed CI and review and waits for the
+// owner's yes, and is newer than any built-in update PR still open. Merged on that yes, and the
+// session record then says the owner merged it. Null when no runner PR is waiting.
+async function mergeRuntimePrWaitingForOwner(env, storage, ops = {}) {
+  const session = String(await storage.get('che_runtime_last_session').catch(() => '') || '');
+  if (!session) return null;
+  const runtime = new CheCodingRuntime(env);
+  const status = await runtime.getStatus(session).catch(() => null);
+  const number = Number(status?.pr_number || 0);
+  if (status?.status !== 200 || runtimeState(status) !== 'approved_waiting_owner' || !number) return null;
+  const last = await storage.get(LAST_SELF_UPDATE_PR_KEY).catch(() => null);
+  if (last?.number && !last.merged_at && Date.parse(last.opened_at || 0) > Date.parse(status.updated_at || 0)) return null;
+  // Only the exact commit the independent review approved (che-autopilot records it).
+  const reviewed = String(status.reviewed_sha || '');
+  if (!/^[a-f0-9]{40}$/i.test(reviewed)) {
+    return { ok: false, message: `I did not merge pull request #${number}, sir: its record does not say which commit the review approved, so it needs a fresh review. Nothing was merged.` };
+  }
+  const merged = await mergeSelfUpdatePr(env, number, fetch, { expectedHeadSha: reviewed });
+  if (merged.status !== 200) {
+    return { ok: false, message: `I did not merge pull request #${number}, sir: ${String(merged.detail || 'GitHub refused the merge').replace(/\.$/, '')}. Nothing was merged.` };
+  }
+  await runtime.recordOwnerMerge(session, { prNumber: number, mergeCommitSha: merged.merge_commit_sha }).catch(() => null);
+  await recordReceipt(storage, { kind: 'merged', key: `merged:${number}`, number, sha: merged.merge_commit_sha || '' });
+  const sha = String(merged.merge_commit_sha || '').slice(0, 7);
+  if (merged.worker_deploy && merged.merge_commit_sha) {
+    await storage.put(LAST_SELF_UPDATE_DEPLOY_KEY, { number, merge_commit_sha: merged.merge_commit_sha, started_at: new Date().toISOString(), state: 'deploying' });
+    await ops.queueJob?.({ kind: 'verify_deploy', title: `Verify deploy of PR #${number}`, prompt: merged.merge_commit_sha, merge_commit_sha: merged.merge_commit_sha, pr_number: number, idempotency_key: `verify_deploy:${merged.merge_commit_sha}`, retry_at: Date.now() + 60_000 });
+    return { ok: true, merged, message: `Pull request #${number} is merged on your yes, sir (commit ${sha}). The Worker deploy is running; I will verify the live server myself and only call it deployed once that check passes.` };
+  }
+  return { ok: true, merged, message: `Pull request #${number} is merged on your yes, sir (commit ${sha}).${merged.already_merged ? ' It was already merged.' : ''}` };
+}
+
 export async function handleSelfUpdateChatAction(env, storage, intent, ops = {}) {
   if (intent.kind === 'access') {
     const access = await selfUpdateGitHubAccess(env);
@@ -2924,6 +2971,13 @@ export async function handleSelfUpdateChatAction(env, storage, intent, ops = {})
         return { ok: false, message: 'There is no reviewed update waiting to install, sir. Tell me what to change with "update your code:" and I will build and review it first.' };
       }
     }
+  }
+
+  // Build 5: "merge it" is the owner's yes for CHE's own runner PR that passed CI and review and
+  // waits for him (che-autopilot.yml never merges one without his authorization).
+  if (intent.kind === 'merge') {
+    const owned = await mergeRuntimePrWaitingForOwner(env, storage, ops);
+    if (owned) return owned;
   }
 
   if (intent.kind === 'merge' || intent.kind === 'ship-update') {
@@ -3754,6 +3808,22 @@ export class CheState extends DurableObject {
   }
 
   // ─── Strategy Control Center (owner, 2026-10-20): trading_controls.js ───────────────────────────
+
+  // Reads one open Alpaca PAPER order back and holds it for the owner's yes (two minutes).
+  async chartCancelAsk(order) {
+    await this.ctx.storage.put(CHART_CANCEL_PENDING, { order, at: new Date().toISOString() });
+    return ndjsonReply(`Cancel ${speakOrder(order)}? Say yes to cancel.`, { source: 'che_trading_chart', ok: true, model_calls: 0, order_cancelled: false, needs_confirmation: true, order });
+  }
+
+  // The owner said yes: cancel that order and read back Alpaca's own record of it.
+  async chartCancelReply(order) {
+    const done = await cancelAlpacaPaperOrder(this.keyEnv || this.env, order.id);
+    const r = done.receipt;
+    const reply = done.ok
+      ? `Cancelled, sir. Alpaca now reports ${speakOrder(r || order)} as ${r?.status || 'cancel accepted'}.`
+      : `It was not cancelled, sir: ${done.detail}${r ? ` Alpaca reports ${speakOrder(r)} as ${r.status}.` : ''}`;
+    return ndjsonReply(reply, { source: 'che_trading_chart', ok: done.ok, model_calls: 0, order_cancelled: done.ok, receipt: r || null });
+  }
   async stockOrderGuard() {
     const controls = await readControls(this.ctx.storage);
     return (order, ctx) => stockOrderProblem(controls, order, ctx);
@@ -3777,10 +3847,28 @@ export class CheState extends DurableObject {
    * One owner control change. Emergency Stop acts at once: it blocks entries, cancels unfilled orders
    * (CHE's MNQ simulations and Alpaca PAPER) and reports what stays open, all in its audit record.
    */
+  /**
+   * The Trading Room's record of one Alpaca PAPER order request (owner, Build 2): a placed order as a receipt
+   * (which the Brain hears as a verified room event), a refused one as its own event. Same key on a retry.
+   */
+  async notePaperOrder(order, placed, via = 'app') {
+    try {
+      if (placed?.ok && !placed.repeated && placed.receipt?.id) {
+        const r = placed.receipt;
+        await recordReceipt(this.ctx.storage, { kind: 'paper_order_placed', key: `alpaca_paper:${r.id}`, symbol: r.symbol, side: r.side, qty: r.qty, client_order_id: r.client_order_id, detail: String(placed.detail || `Alpaca PAPER accepted the order (${r.status}).`).slice(0, 300) });
+        return;
+      }
+      const event = paperOrderRefusedEvent(order, placed, { via });
+      if (event) await queueRoomEvent(this.ctx.storage, event);
+    } catch (_) { /* a Brain record never blocks a trading answer */ }
+  }
+
   async tradingControl(change, { who = 'owner', confirm = false } = {}) {
     const resolved = resolveStep(await readControls(this.ctx.storage), change || {});
     if (resolved.error) return { ok: false, error: resolved.error };
     const result = await applyControlChange(this.ctx.storage, resolved, { who, confirm });
+    // Every applied change is a Trading Room event (owner, Build 2); Emergency Stop and Flatten are recorded below with what they cancelled.
+    if (result.ok && !['emergency_stop', 'flatten'].includes(resolved.kind)) await queueRoomEvent(this.ctx.storage, controlChangeEvent(result.record)).catch(() => null);
     if (!result.ok || !['emergency_stop', 'flatten'].includes(resolved.kind)) return result;
     const flatten = resolved.kind === 'flatten';
     const sims = await haltLivePaper(this.ctx.storage, { flatten, reason: flatten ? 'Flatten' : 'Emergency Stop' });
@@ -3792,6 +3880,8 @@ export class CheState extends DurableObject {
       lines.push(alpaca.state === 'not_configured' ? 'Alpaca PAPER is not connected, so there was nothing to cancel there.' : `Alpaca PAPER could not be reached (${alpaca.error || alpaca.state}); its orders were not confirmed cancelled.`);
     }
     await noteAuditEffect(this.ctx.storage, result.record.at, lines);
+    const audited = { ...result.record, effect: [...result.record.effect, ...lines], summary: [result.record.summary, ...lines].join(' ') };
+    await queueRoomEvent(this.ctx.storage, controlChangeEvent(audited, { halted: { sims, alpaca } })).catch(() => null);
     return { ...result, record: { ...result.record, effect: [...result.record.effect, ...lines] }, halted: { sims, alpaca } };
   }
 
@@ -5126,6 +5216,11 @@ export class CheState extends DurableObject {
   // media, code or connections; owner actions are refused with no model call.
   async guestChat(body, message, tenant) {
     if (parseSlashCommand(message)) return ndjsonReply('Only the CHE owner can run commands, sir.', { source: 'che_command', ok: false, model_calls: 0 });
+    // Like POST /api/job/cancel, which a guest device cannot reach: refused, with no model call.
+    if (codingCancelIntent(message)) {
+      return ndjsonReply('Only the CHE owner can cancel coding jobs. Nothing was changed.', { source: CODING_CANCEL_SOURCE, ok: false, model_calls: 0 });
+    }
+    if (cancelOrderIntent(message)) return ndjsonReply('Only the CHE owner can cancel Alpaca PAPER orders. Nothing was cancelled.', { source: 'che_trading_chart', ok: false, model_calls: 0, order_cancelled: false });
     if (GUEST_OWNER_ACTION.test(message)) {
       return ndjsonReply('Only the CHE owner can do that. Nothing was changed. I can still talk it through with you.', { source: 'che_guest', ok: false, model_calls: 0 });
     }
@@ -5187,7 +5282,7 @@ export class CheState extends DurableObject {
       const ask = preflight?.ask || `/${command.id}: ${command.confirm} Should I go ahead, sir? Say yes to approve.`;
       return json({ message: ask, reply: ask, held_for_owner: true, owner_action_kind: 'command', command: command.id, code_review_passed: false, owner_approval_required: true });
     }
-    if (command.local) return this.runLocalCommand(command, parsed.input, request, data, parsed.pin || null);
+    if (command.local) return this.runLocalCommand(command, parsed.input, request, data, parsed.pin || null, body);
     const inner = new Request(request.url, {
       method: 'POST', headers: request.headers,
       body: JSON.stringify({ ...body, message: dispatchPrompt(command, parsed.input), command_confirmed: false }),
@@ -5260,8 +5355,13 @@ export class CheState extends DurableObject {
 
   // The few commands with no chat route of their own: thin wrappers over the
   // existing functions, answered from real results only.
-  async runLocalCommand(command, input, request, data, pin = null) {
+  async runLocalCommand(command, input, request, data, pin = null, body = {}) {
     const env = this.keyEnv || this.env;
+    if (command.local === 'coding_cancel') {
+      // Owner only, like POST /api/job/cancel: checked here too, not only by the guest gate in front.
+      if (!OWNER_CHAT_REQUESTS.has(request)) return ndjsonReply('Only the CHE owner can cancel coding jobs. Nothing was changed.', { source: CODING_CANCEL_SOURCE, ok: false, model_calls: 0 });
+      return this.cancelCodingJob(input, Array.isArray(body?.history) ? body.history : []);
+    }
     if (command.local === 'voice_test') {
       const probe = await this.voiceProbe().catch((error) => ({ ok: false, status: 'error', reason: String(error?.message || error).slice(0, 160) }));
       const fish = probe.fish || fishAudioKeyStatus(this.voiceEnv()).status;
@@ -5307,6 +5407,28 @@ export class CheState extends DurableObject {
       return ndjsonReply(text, { source: 'che_creator_studio', command: command.id, model_calls: 0, ...done });
     }
     return ndjsonReply(`/${command.id} has no runner, sir. Nothing was run.`, { source: 'che_command', ok: false, model_calls: 0 });
+  }
+
+  // /che-cancel-job and its spoken forms. The job is found in a fresh copy of the store, cancelled
+  // only if still queued (cancelQueuedJob, shared with POST /api/job/cancel), and read back after
+  // the write: the reply says what the store holds, never what was meant to happen.
+  async cancelCodingJob(input, history = []) {
+    const current = await this.loadData();
+    const target = resolveCodingCancel(input, current.jobs, history);
+    if (target.kind !== 'job') {
+      return ndjsonReply(speakUnresolved(target), {
+        source: CODING_CANCEL_SOURCE, ok: false, cancelled: false, model_calls: 0,
+        ...(Array.isArray(target.jobs) && target.jobs.length ? { choices: target.jobs.slice(0, 9).map((job) => job.id) } : {}),
+      });
+    }
+    const changed = cancelQueuedJob(target.job, { via: 'chat' });
+    if (changed) await this.ctx.storage.put('che', current);
+    const stored = ((await this.loadData()).jobs || []).find((job) => job.id === target.job.id) || null;
+    const cancelled = changed && stored?.status === 'cancelled';
+    return ndjsonReply(speakCancelResult(stored, { changed, id: target.job.id }), {
+      source: CODING_CANCEL_SOURCE, ok: cancelled, cancelled, model_calls: 0,
+      background_job_id: target.job.id, background_job_status: stored?.status || null,
+    });
   }
 
   studioContext(request, data) {
@@ -5615,7 +5737,7 @@ export class CheState extends DurableObject {
         });
       }
 
-      const body = ['POST', 'PATCH'].includes(request.method) ? await bodyOf(request) : {};
+      const body = ['POST', 'PATCH', 'PUT'].includes(request.method) ? await bodyOf(request) : {};
       // Internal release probe: only the per-deploy random token may read
       // connector readiness, with no user data, keys, or saved workflows.
       if (request.method === 'POST' && path === '/api/commands/readiness') {
@@ -6246,6 +6368,18 @@ export class CheState extends DurableObject {
         });
       }
 
+      // The phone's rooms report what happened there (owner, Build 2, 2026-10-20): a track played, a Help
+      // explanation or walkthrough, a screen looked at. Owner device only; an allowlisted kind per room, a
+      // stable key (a retry is never a second record), bounded safe text, and for the screen only its name and
+      // the time. The event is queued like any room's and written to the Brain on the next drain.
+      if (path === '/api/brain/room-event' && request.method === 'POST') {
+        if (!ownerDevice) return json({ detail: 'Only the CHE owner can record activity in his rooms.' }, 403);
+        const event = phoneRoomEvent(body, { isSafe: isSafeText });
+        if (event.error) return json({ ok: false, detail: event.error }, 400);
+        const queued = await queueRoomEvent(this.ctx.storage, event);
+        return json({ ok: true, queued, room: event.room, kind: event.kind, key: event.key, at: event.at });
+      }
+
       // ─── Brain: the one logical Brain the phone replicates ──────────────
       // Reads and writes are the owner's only. /changes and /push are the two
       // halves of the phone's incremental sync; /status gives real counts.
@@ -6809,13 +6943,51 @@ export class CheState extends DurableObject {
         const symbol = (new URL(request.url).searchParams.get('symbol') || '').trim().toUpperCase().slice(0, 8);
         return json(await alpacaPaperDashboard(this.keyEnv || this.env, { symbol }));
       }
+      // The Trading Room chart (owner, 2026-10-20, Build 1): bars, feed health, the entry gate and
+      // markers by source for one account, symbol and timeframe; the owner's drawings; paper ticket preview and cancel.
+      if (path === '/api/trading/chart' && request.method === 'GET') {
+        if (!ownerDevice) return tradingOwnerOnly();
+        const q = new URL(request.url).searchParams;
+        const view = await chartView(this.ctx.storage, this.keyEnv || this.env, { account: q.get('account') || 'alpaca_paper', symbol: (q.get('symbol') || '').trim().toUpperCase().slice(0, 8), tf: q.get('tf') || '5m' });
+        if (view.ok) view.drawings = await readDrawings(this.ctx.storage, view.account, view.symbol || '');
+        if (view.ok && view.account === 'alpaca_paper' && view.symbol) await this.ctx.storage.put('trading_chart_last_symbol', view.symbol);
+        return json(view, view.ok ? 200 : 400);
+      }
+      if (path === '/api/trading/chart/drawings' && request.method === 'PUT') {
+        if (!ownerDevice) return tradingOwnerOnly();
+        const saved = await saveDrawings(this.ctx.storage, String(body.account || ''), String(body.symbol || ''), body.drawings);
+        return json(saved, saved.ok ? 200 : 400);
+      }
+      if (path === '/api/trading/alpaca/order/preview' && request.method === 'POST') {
+        if (!ownerDevice) return tradingOwnerOnly();
+        const guard = await this.stockOrderGuard();
+        const journal = (await this.ctx.storage.get('alpaca_paper_orders').catch(() => null)) || [];
+        const preview = await previewAlpacaPaperOrder(this.keyEnv || this.env, body, { problem: (order, ctx) => guard(order, { ...ctx, journal, now: Date.now() }) });
+        return json(preview, preview.ok ? 200 : 400);
+      }
+      if (path === '/api/trading/alpaca/order/cancel' && request.method === 'POST') {
+        if (!ownerDevice) return tradingOwnerOnly();
+        // Owner rule: removing anything is asked first. Without confirm: true nothing is sent to Alpaca;
+        // the answer is 409 with the open order as Alpaca reports it, for the app to read back.
+        if (body.confirm !== true) {
+          const ask = await cancelConfirmation(this.keyEnv || this.env, body.id);
+          return json(ask, ask.needs_confirmation ? 409 : 400);
+        }
+        const cancelled = await cancelAlpacaPaperOrder(this.keyEnv || this.env, body.id);
+        return json(cancelled, cancelled.ok ? 200 : 400);
+      }
       if (path === '/api/trading/alpaca/orders' && request.method === 'GET') {
         if (!ownerDevice) return tradingOwnerOnly();
         return json(await alpacaPaperOrders(this.keyEnv || this.env));
       }
       if (path === '/api/trading/alpaca/order' && request.method === 'POST') {
         if (!ownerDevice) return tradingOwnerOnly();
+        // Build 1: a market order needs a current price. When Alpaca's latest trade is old (market
+        // closed) or missing (feed unavailable), the order is refused before it reaches the broker.
+        const stale = await marketOrderFeedProblem(this.keyEnv || this.env, body);
+        if (stale) return json({ ok: false, blocked: true, detail: stale }, 400);
         const placed = await placeAlpacaPaperOrder(this.keyEnv || this.env, this.ctx.storage, body, { guard: await this.stockOrderGuard() });
+        await this.notePaperOrder(body, placed, 'app');
         return json(placed, placed.ok ? 200 : 400);
       }
       if (path === '/api/trading/paper' && request.method === 'GET') {
@@ -7515,6 +7687,7 @@ export class CheState extends DurableObject {
         const convened = conveneMeeting(data, body);
         if (convened.error) return json({ detail: convened.error }, 400);
         await this.ctx.storage.put('che', data);
+        await queueRoomEvent(this.ctx.storage, meetingEvent(convened.meeting, 'convened')).catch(() => null);
         await this.scheduleWork();
         this.broadcastAgents(data);
         return json({ meeting: convened.meeting, created_agents: convened.created.map((item) => item.name) });
@@ -8114,11 +8287,8 @@ export class CheState extends DurableObject {
         const id = String(body.id || '');
         const job = data.jobs.find((item) => item.id === id);
         if (!job) return json({ detail: 'Background job not found.' }, 404);
-        if (job.status === 'queued') {
-          job.status = 'cancelled';
-          job.updated_at = new Date().toISOString();
-          await this.ctx.storage.put('che', data);
-        }
+        // The same rule as "cancel coding job …" in chat: queued only, the record kept.
+        if (cancelQueuedJob(job, { via: 'api' })) await this.ctx.storage.put('che', data);
         return json({ job });
       }
 
@@ -8703,6 +8873,24 @@ export class CheState extends DurableObject {
             const started = await this.startCommandWorkflow(data, savedWorkflow, { ownerDevice });
             return ndjsonReply(started.spoken, { source: 'che_command_workflow', ok: started.ok, objective_id: started.objective?.id || null, model_calls: 0 });
           }
+          // "Cancel that fake commit by Che", "cancel coding job c2987a73", "cancel the last coding
+          // job", or a number from the list CHE just read: the /che-cancel-job command. It runs before
+          // the interpreter, which reads "cancel that …" as dropping a held request, and before the
+          // money/delete gate: cancelling a queued job deletes nothing. A bare "cancel that" while a
+          // payment, delete or app request is held keeps its old meaning: drop that request.
+          const jobCancel = body.attachment || body.workflow_step ? null : codingCancelIntent(rawMessage, body.history);
+          let heldForCancel = null;
+          if (jobCancel?.weak) {
+            try {
+              heldForCancel = (await this.ctx.storage.get(PENDING_OWNER_ACTION_KEY)) || (await this.ctx.storage.get(PENDING_APP_ACTION_KEY)) || null;
+            } catch (_) { heldForCancel = true; }
+          }
+          if (jobCancel && !heldForCancel) {
+            // Like any other turn, it replaces a held request, so a later "yes" releases nothing.
+            await this.dropHeldActions();
+            const command = commandById('che-cancel-job');
+            return this.runSlashCommand(request, body, data, { name: command.id, command, input: jobCancel.input }, { confirmed: false });
+          }
           // Spoken requests about CHE's own commands, answered from the
           // catalog with live states and no model (owner, 2026-10-16).
           const said = body.attachment || body.workflow_step ? null : readCommandSpeech(rawMessage, body.history);
@@ -8861,7 +9049,7 @@ export class CheState extends DurableObject {
         const frameReadsIt = frame.lossless && !['unclear', 'followup', 'correction'].includes(frame.mode);
         // A broker order, its "yes, place it" or its "no, don't place it" is read by the desk word for
         // word; a model reading could only blur which order the owner approved.
-        const deskReadsIt = ['take', 'take_unconfirmed', 'place_unconfirmed', 'stock_no', 'stock_order', 'alpaca_orders', 'alpaca_dashboard', 'tradovate_steps', 'controls', 'controls_view', 'controls_why'].includes(deskIntent(message)?.kind);
+        const deskReadsIt = ['take', 'take_unconfirmed', 'place_unconfirmed', 'stock_no', 'stock_order', 'alpaca_orders', 'alpaca_dashboard', 'tradovate_steps', 'controls', 'controls_view', 'controls_why'].includes(deskIntent(message)?.kind) || Boolean(cancelOrderIntent(message));
         // "Reset my knowledge atlas progress" is a delete with a fixed hold: it never needs a reading (issue #346 audit).
         const deterministicHold = ownerDevice && Boolean(atlasResetIntent(message));
         if (interpretation.kind === 'unclear' && !frameReadsIt && !deskReadsIt && !interpretation.clarify && !interpretation.passthrough && ownerHistory.length > 0 && !deterministicHold) {
@@ -8879,6 +9067,7 @@ export class CheState extends DurableObject {
           try {
             await this.ctx.storage.put(PENDING_OWNER_ACTION_KEY, null);
             await this.ctx.storage.put(PENDING_APP_ACTION_KEY, null);
+            await this.ctx.storage.put(CHART_CANCEL_PENDING, null);
             // "Never mind" also drops an Alpaca paper order still waiting for "yes, place it".
             if (interpretation.kind === 'cancel') await dropStockOrder(this.ctx.storage);
           } catch (_) {
@@ -8891,6 +9080,25 @@ export class CheState extends DurableObject {
         // form (#346) is gated, and on a yes run, exactly as the bare sentence would be.
         const hiddenAction = atlasHiddenAction(message);
         if (hiddenAction) message = hiddenAction;
+
+        // A spoken cancel of an Alpaca PAPER order waits for its own yes (or a pick from the numbered list)
+        // for two minutes. Any other turn drops it, so a later yes can never cancel an order by surprise.
+        if (ownerDevice && !body.attachment) {
+          let cancelWaiting = null;
+          try { cancelWaiting = await this.ctx.storage.get(CHART_CANCEL_PENDING); } catch (_) { cancelWaiting = null; }
+          if (cancelWaiting) {
+            try { await this.ctx.storage.put(CHART_CANCEL_PENDING, null); } catch (_) {
+              return json({ message: 'I could not record that safely, so I did not act. Please say it again.', reply: 'I could not record that safely, so I did not act. Please say it again.', code_review_passed: false, owner_approval_required: true }, 503);
+            }
+            const fresh = Date.now() - Date.parse(cancelWaiting.at) < 120_000;
+            if (fresh && cancelWaiting.order && isOwnerYes(message)) return this.chartCancelReply(cancelWaiting.order);
+            const pick = fresh && Array.isArray(cancelWaiting.choices) ? spokenPick(message, cancelWaiting.choices.length) : 0;
+            if (pick) return this.chartCancelAsk(cancelWaiting.choices[pick - 1]);
+            if (fresh && /^\s*(?:no|nope|don't|do not|leave it|keep it|never mind)\b/i.test(message)) {
+              return ndjsonReply('Left open, sir. Nothing was cancelled.', { source: 'che_trading_chart', ok: true, model_calls: 0, order_cancelled: false });
+            }
+          }
+        }
 
         // Owner rule: money and delete/remove need an explicit yes. The hold is
         // enforced here in code. A plain yes on the next turn releases exactly
@@ -8922,7 +9130,12 @@ export class CheState extends DurableObject {
           // The sale and order-object rules of #356 hold every other "sell" and "place the order"; on a turn the desk owns,
           // money that comes only from those words is the desk's own confirmation (see deskOwnedMoney).
           const deskOwned = (stockTurn || ['place_unconfirmed', 'take'].includes(deskTurn?.kind)) && deskOwnedMoney(message);
-          const ownerGate = gateOwnerAction(message, stockTurn?.paper || deskOwned ? { ...ownerGrant, money: true } : ownerGrant);
+          // "Cancel my AAPL order" is a removal the chart route always confirms itself, naming the exact order
+          // Alpaca holds ("Cancel BUY 2 AAPL limit 109? Say yes to cancel."), so the gate does not ask a second,
+          // vaguer question first. Only a whole sentence that is one order cancel qualifies.
+          const chartOwnedDelete = !body.attachment && Boolean(cancelOrderIntent(message));
+          const deskGrant = stockTurn?.paper || deskOwned ? { ...ownerGrant, money: true } : ownerGrant;
+          const ownerGate = gateOwnerAction(message, chartOwnedDelete ? { ...deskGrant, delete: true } : deskGrant);
           if (!ownerGate.allowed) {
             await this.ctx.storage.put(PENDING_OWNER_ACTION_KEY, { kinds: ownerGate.kinds, text: message, at: Date.now() });
             // "Reset my progress" names what the yes would delete, and how much (Knowledge Atlas, #346).
@@ -8988,7 +9201,9 @@ export class CheState extends DurableObject {
             const merged = [...new Set([...stored, ...sentGrants])];
             if (merged.length !== stored.length) await this.ctx.storage.put(APPS_GRANTED_KEY, merged);
           }
-          const { explicit, required } = classifyAppAccesses(message);
+          // "What happened in the Music Room today?" reads CHE's own room records (owner, Build 2): it opens and acts in no app.
+          const roomRead = !body.attachment && crossRoomIntent(message)?.kind === 'activity';
+          const { explicit, required } = roomRead ? { explicit: [], required: [] } : classifyAppAccesses(message);
           if (explicit.length || required.length) {
             const allowedApps = await this.ctx.storage.get(APPS_GRANTED_KEY) || [];
             const additions = explicit.filter((app) => !allowedApps.includes(app));
@@ -9061,6 +9276,7 @@ export class CheState extends DurableObject {
           const convened = conveneMeeting(data, { objective: meetingAsk.topic });
           if (convened.error) return ndjsonReply(`The meeting did not start, sir: ${convened.error}`, { source: 'che_meeting_room', ok: false, model_calls: 0 });
           await this.ctx.storage.put('che', data);
+          await queueRoomEvent(this.ctx.storage, meetingEvent(convened.meeting, 'convened')).catch(() => null);
           await this.scheduleWork();
           this.broadcastAgents(data);
           const scene = meetingScene(convened.meeting, runtimeSnapshot(data).agents);
@@ -9134,7 +9350,8 @@ export class CheState extends DurableObject {
         // "What's related to this?" with no screen shared is about the conversation: the model answers it.
         const relation = body.attachment ? null : (crossRoomIntent(message) || prFollowUp(message, body.history));
         const relationScreen = relation && ownerDevice ? await recentScreen(this.ctx.storage) : null;
-        if (relation && ['related', 'relate'].includes(relation.kind) && (relationScreen || ![relation.topic, relation.other].some(pointsAtScreen))) {
+        // "What happened in the Music Room today?" (owner, Build 2) is answered here too, before any reader that would take a room's name for its own.
+        if (relation && (relation.kind === 'activity' || (['related', 'relate'].includes(relation.kind) && (relationScreen || ![relation.topic, relation.other].some(pointsAtScreen))))) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can read across his rooms, sir.', { source: BRAIN_ROOMS_SOURCE, ok: false, model_calls: 0 });
           const relationStore = new CheBrainStore(this.ctx.storage);
           await drainRoomEvents(this.ctx.storage, relationStore).catch(() => null);
@@ -9471,6 +9688,9 @@ export class CheState extends DurableObject {
           const uploads = youtubeUploads(ytData);
           return ndjsonReply(youtubeStatusSpeech(st, uploads), { source: 'che_youtube_status', ok: Boolean(st.connected), uploads: uploads.length, model_calls: 0 });
         }
+        // "Buy 1 MNQ at 21,400" from the chart: no futures paper broker is connected, so nothing is sent.
+        const futuresAsk = ownerDevice && !body.attachment && !/\bfund\s*your\s*edge|\bfye\b|\brithmic\b/i.test(message) ? futuresOrderIntent(message) : null;
+        if (futuresAsk) return ndjsonReply(futuresAsk.reply, { source: 'che_trading_chart', ok: false, model_calls: 0, order_sent: false });
         // FundYourEdge has no licensed Rithmic connection, so CHE says so and never
         // prepares or places an order for it.
         const orderBrokerReady = ownerDevice && !chatOnlyEvaluation
@@ -10403,6 +10623,8 @@ export class CheState extends DurableObject {
           // A compound question ("won and lost, which strategy is best, is it still on?") gets every part.
           return ndjsonReply(liveAnswer(live, dash, { message, already }), {
             source: 'che_trading_live', model_calls: 0, ...(opens ? { open_screen: 'trading_room' } : {}),
+            // "Show strategy progress": the Trading Room opens on its STRATEGIES section (Build 1).
+            ...((live.kinds || [live.kind]).includes('learning') ? { chart: { section: 'strategies' } } : {}),
             trades_closed: dash.totals.trades, positions_open: dash.positions.length, account: 'PAPER',
           });
         }
@@ -10424,6 +10646,47 @@ export class CheState extends DurableObject {
             await this.ctx.storage.delete('trading_controls_pending');
             return ndjsonReply('Left as it was, sir. Nothing changed.', { source: 'che_trading_controls', ok: true, model_calls: 0 });
           }
+        }
+        // "Cancel my AAPL order": the matching open Alpaca PAPER orders, read from Alpaca. One is read back and
+        // waits for the owner's yes; several are read as a numbered list. Nothing is cancelled on this turn.
+        const cancelAsk = body.attachment ? null : cancelOrderIntent(message);
+        if (cancelAsk) {
+          if (!ownerDevice) return ndjsonReply('Only the CHE owner can cancel Alpaca PAPER orders. Nothing was cancelled.', { source: 'che_trading_chart', ok: false, model_calls: 0, order_cancelled: false });
+          try {
+            await this.dropHeldActions();
+            await this.ctx.storage.put(PENDING_GOOGLE_ACTION_KEY, null);
+            await dropStockOrder(this.ctx.storage);
+          } catch (_) {
+            return json({ message: 'I could not record that safely, so I did not act. Please say it again.', reply: 'I could not record that safely, so I did not act. Please say it again.', code_review_passed: false, owner_approval_required: true }, 503);
+          }
+          const found = await cancelCandidates(this.keyEnv || this.env, cancelAsk);
+          const meta = { source: 'che_trading_chart', model_calls: 0, order_cancelled: false };
+          if (!found.ok) return ndjsonReply(`${found.detail} Nothing was cancelled.`, { ...meta, ok: false });
+          const where = cancelAsk.symbol ? ` for ${cancelAsk.symbol}` : '';
+          if (!found.orders.length) return ndjsonReply(`Alpaca shows no open PAPER order${where}, sir. Nothing was cancelled.`, { ...meta, ok: true, open_orders: [] });
+          if (found.orders.length === 1) return this.chartCancelAsk(found.orders[0]);
+          const list = found.orders.slice(0, 9);
+          await this.ctx.storage.put(CHART_CANCEL_PENDING, { choices: list, at: new Date().toISOString() });
+          const lines = list.map((o, i) => `${i + 1}. ${speakOrder(o)}.`).join(' ');
+          return ndjsonReply(`Alpaca shows ${found.orders.length} open PAPER orders${where}, sir: ${lines} Which one should I cancel? Say its number. Nothing was cancelled.`,
+            { ...meta, ok: true, open_orders: list, needs_choice: true });
+        }
+        // The Trading Room chart by voice: "draw a line at 21,450", "open Alpaca chart", "show EMA trades".
+        const chartAsk = body.attachment || !ownerDevice ? null : (drawIntent(message) || chartIntent(message) || futuresOrderIntent(message));
+        if (chartAsk?.kind === 'futures_order') return ndjsonReply(chartAsk.reply, { source: 'che_trading_chart', ok: false, model_calls: 0, order_sent: false });
+        if (chartAsk?.kind === 'draw') {
+          const account = /^(MNQ|NQ)$/.test(chartAsk.symbol) || (!chartAsk.symbol && chartAsk.drawing.points[0].price > 5000) ? 'futures_paper' : 'alpaca_paper';
+          const symbol = account === 'futures_paper' ? 'MNQ' : chartAsk.symbol || (await this.ctx.storage.get('trading_chart_last_symbol')) || '';
+          if (!symbol) return ndjsonReply('Which stock should the line go on, sir? Say, for example, "draw a line at 230 on AAPL". Nothing was drawn.', { source: 'che_trading_chart', ok: false, model_calls: 0 });
+          const list = [...(await readDrawings(this.ctx.storage, account, symbol)), chartAsk.drawing];
+          const saved = await saveDrawings(this.ctx.storage, account, symbol, list);
+          const price = chartAsk.drawing.points[0].price.toLocaleString('en-US');
+          return ndjsonReply(saved.ok ? `Drawn, sir: a level at ${price} on the ${symbol} ${account === 'futures_paper' ? 'paper futures' : 'Alpaca PAPER'} chart. It stays until you remove it.` : `Nothing was drawn: ${saved.error}`,
+            { source: 'che_trading_chart', ok: saved.ok, model_calls: 0, open_view: 'trading_chart', chart: { account, symbol } });
+        }
+        if (chartAsk?.kind === 'chart_open') {
+          const where = chartAsk.section === 'strategies' ? 'Opening Strategies, sir.' : `Opening the ${chartAsk.account === 'alpaca_paper' ? 'Alpaca PAPER' : chartAsk.account === 'futures_paper' ? 'MNQ paper' : ''} chart${chartAsk.symbol ? ` for ${chartAsk.symbol}` : ''}${chartAsk.filter?.strategy ? `, showing only ${chartAsk.filter.strategy.toUpperCase()} trades` : ''}, sir.`;
+          return ndjsonReply(where.replace('the  chart', 'the chart'), { source: 'che_trading_chart', ok: true, model_calls: 0, open_view: 'trading_chart', chart: { section: chartAsk.section, account: chartAsk.account || null, symbol: chartAsk.symbol || null, filter: chartAsk.filter || null } });
         }
         const desk = body.attachment ? null : deskIntent(message);
         if (desk && ['controls', 'controls_view', 'controls_why'].includes(desk.kind)) {
@@ -10466,10 +10729,9 @@ export class CheState extends DurableObject {
             }
             const env = this.keyEnv || this.env;
             const guard = await this.stockOrderGuard();
-            const placed = await confirmStockOrder(this.ctx.storage, { place: (order) => placeAlpacaPaperOrder(env, this.ctx.storage, order, { guard }) });
-            if (placed.ok && !placed.repeated && placed.receipt?.id) {
-              await recordReceipt(this.ctx.storage, { kind: 'paper_order_placed', key: `alpaca_paper:${placed.receipt.id}`, detail: placed.reply.slice(0, 300) }).catch(() => null);
-            }
+            let asked = null;
+            const placed = await confirmStockOrder(this.ctx.storage, { place: (order) => { asked = order; return placeAlpacaPaperOrder(env, this.ctx.storage, order, { guard }); } });
+            if (asked) await this.notePaperOrder(asked, { ...placed, detail: placed.detail || placed.reply }, 'chat');
             return ndjsonReply(placed.reply, {
               source: 'che_trading_desk', ok: placed.ok, model_calls: 0, account: STOCK_ACCOUNT, order_sent: placed.ok,
               ...(placed.receipt ? { order_id: placed.receipt.id, order_status: placed.receipt.status, client_order_id: placed.receipt.client_order_id } : {}),
@@ -10884,6 +11146,13 @@ export class CheState extends DurableObject {
         // room it shows, and that room's authoritative records are read so a number on the screen is never taken for a record.
         const screenRoom = multimodal?.summary ? screenRoomFor(`${multimodal.summary}\n${body.screen_context || ''}`) : '';
         if (ownerDevice && multimodal?.summary) await rememberScreen(this.ctx.storage, { name: multimodal.name, summary: multimodal.summary, engine: multimodal.engine, room: screenRoom }).catch(() => null);
+        // "Look at my screen" (owner, Build 2): the Screen room records only which screen he looked at and when; the
+        // summary stays the temporary observation above, and the image is never kept.
+        if (ownerDevice && multimodal?.summary && (/^che-screen\.png$/i.test(String(body.attachment?.name || '')) || asksAboutScreen(message))) {
+          const page = /\bYou are on ([^.,;\n]{2,60})/.exec(String(body.screen_context || ''))?.[1]?.trim();
+          const seenAs = phoneRoomEvent({ room: 'screen', kind: 'observed', key: `vision-${crypto.randomUUID()}`, title: page || (screenRoom && screenRoom !== 'screen' ? BRAIN_ROOMS[screenRoom]?.label : '') || 'his screen' }, { isSafe: isSafeText });
+          if (!seenAs.error) await queueRoomEvent(this.ctx.storage, { ...seenAs, evidence: [`look at my screen, read by ${String(multimodal.engine || 'vision').slice(0, 40)} ${seenAs.at}`] }).catch(() => null);
+        }
         const screenRecords = multimodal?.summary
           ? await screenRoomContext({ store: new CheBrainStore(this.ctx.storage), storage: this.ctx.storage, room: screenRoom, summary: multimodal.summary }).catch(() => '')
           : '';
@@ -11233,6 +11502,7 @@ export class CheState extends DurableObject {
               verified: completedTask.verified_by_che,
               error: completedTask.error,
             });
+            await queueRoomEvent(this.ctx.storage, officeTaskEvent(completedTask, { agent: result.partner_name, outcome: completedTask.status, verified: completedTask.verified_by_che, at: now })).catch(() => null);
           }
           data.team_tasks = data.team_tasks.slice(0, 100);
           await this.saveChatData(data);
@@ -11247,7 +11517,7 @@ export class CheState extends DurableObject {
             data.learned_knowledge.push(learned);
             data.learned_knowledge = data.learned_knowledge.slice(-30);
           }
-          writeResearchMemoryNote(data, {
+          const researchNote = writeResearchMemoryNote(data, {
             force: true,
             result: research.summary,
             sources: research.sources || [],
@@ -11255,6 +11525,8 @@ export class CheState extends DurableObject {
             agent: { name: 'CHE', role: 'Research Partner' },
           });
           await this.saveChatData(data);
+          // A fresh research answer is a Research Room finding (owner, Build 2); a reused one was recorded when it was new.
+          if (!research.cached) await queueRoomEvent(this.ctx.storage, researchEvent({ id: researchNote?.note?.id || '', title: researchNote?.note?.title || message, summary: research.summary, sources: research.sources || [], by: 'CHE' })).catch(() => null);
         }
 
         const remember = /\bremember\b/i.test(rawMessage)
@@ -11949,6 +12221,8 @@ export class CheState extends DurableObject {
         notify: () => { this.loadData().then((value) => this.broadcastAgents(value)).catch(() => {}); },
         models: { fast: FAST_MODEL, strong: STRONG_MODEL },
         recall: (text) => retrieveVectorContext(this.keyEnv || this.env, text),
+        // Office tasks, War Room meetings and research notes report to the Brain when they happen (owner, Build 2).
+        roomEvent: (event) => (event ? queueRoomEvent(this.ctx.storage, event).catch(() => false) : Promise.resolve(false)),
       });
     }
     // A retry or mailbox watch may be due later, so always compute the next alarm.
@@ -12743,14 +13017,18 @@ export class CheState extends DurableObject {
     }
     const jobId = crypto.randomUUID();
     const targetBranch = `che/auto/${jobId.slice(0, 8)}`;
+    // The runner's PR merges itself only when the owner's own words authorized the merge.
+    const mergeAuthorized = policy.mergeAllowed === true && !ownerRequiresMergeApproval(ownerRequest);
     const started = await runtime.createSession({
       jobId,
       ownerRequest,
       baseSha,
       targetBranch,
       executionMode: policy.mode,
+      mergeAuthorized,
     });
     if (started.status === 202) {
+      await this.ctx.storage.put('che_runtime_last_merge_authorized', mergeAuthorized);
       await this.ctx.storage.put('che_runtime_last_base_sha', baseSha);
       await this.ctx.storage.put('che_runtime_last_branch', targetBranch);
       await this.ctx.storage.put('che_runtime_last_session', started.session_id);
@@ -12804,6 +13082,7 @@ export class CheState extends DurableObject {
       baseSha: pending.base_sha,
       targetBranch: pending.target_branch,
       executionMode: 'BUILD',
+      mergeAuthorized: pending.merge_authorized === true,
     }).catch(() => null);
     if (started?.status === 202 && started.session_id === pending.session_id) {
       const now = new Date().toISOString();
@@ -12858,6 +13137,7 @@ export class CheState extends DurableObject {
           base_sha: String(await this.ctx.storage.get('che_runtime_last_base_sha') || ''),
           target_branch: String(await this.ctx.storage.get('che_runtime_last_branch') || ''),
           request: String(await this.ctx.storage.get('che_runtime_last_request') || ''),
+          merge_authorized: (await this.ctx.storage.get('che_runtime_last_merge_authorized')) === true,
           resume_count: Number(status.resume_count || 0),
           attempt: plan.attempt,
           failure_kind: String(status.failure_kind || 'unknown'),

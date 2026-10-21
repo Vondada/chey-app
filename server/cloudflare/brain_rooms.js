@@ -15,6 +15,7 @@ import { loadChangeHistory } from './truth_layer.js';
 import { RELATIONS_VERSION, discoverRelations, entitiesOf, relationReason } from './brain_relations.js';
 import { reaInvestigations } from './rea_runner.js';
 import { splitAsk } from './memory_provenance.js';
+import { chicagoDayKey } from './chicago_time.js';
 import { readPullRequest } from './self_update.js';
 
 export const BRAIN_ROOMS_SOURCE = 'che_brain_rooms';
@@ -30,7 +31,10 @@ export const ROOMS = Object.freeze({
   music: { label: 'Music Room', region: BRAIN_REGIONS.media, owns: 'music play, preferences and discoveries through the connected music service', live: 'music records' },
   office: { label: 'Office', region: BRAIN_REGIONS.agents, owns: 'worker tasks, verified work histories and Flagstaff mail', live: 'worker brains' },
   atlas: { label: 'Knowledge Atlas', region: BRAIN_REGIONS.learned, owns: 'teaching cards and the owner\'s practice', live: 'atlas cards' },
-  screen: { label: 'Screen', region: BRAIN_REGIONS.learned, owns: 'what the owner showed on his screen, temporary unless he saves it', live: 'the most recent screen observation' },
+  screen: { label: 'Screen', region: BRAIN_REGIONS.learned, owns: 'what the owner showed on his screen, temporary unless he saves it', live: 'the most recent screen observation', strict: true },
+  // War Room meetings, which the app shows as the Meeting Room; the Office projection files them under Conversations too.
+  meetings: { label: 'Meeting Room', region: BRAIN_REGIONS.conversations, owns: 'War Room meetings: who met, about what, and what they concluded', live: 'meeting records', strict: true },
+  help: { label: 'Help', region: BRAIN_REGIONS.self, owns: 'what the owner asked Help about and the walkthroughs CHE gave', live: 'help records', strict: true },
   brain: { label: 'Brain', region: '', owns: 'every room\'s recorded conclusions', live: 'the Brain' },
 });
 
@@ -212,6 +216,10 @@ const ROOM_WORDS = [
   ['chat', /\bchat\s+room\b/i],
   ['atlas', /\bKnowledge\s+Atlas\b/i],
   ['brain', /\bbrain\s+room\b/i],
+  // Build 2 (owner, 2026-10-20). "War Room" and "Help Center" are names; a bare "meeting", "help" or "screen" is not.
+  ['meetings', /\bmeeting\s+room\b|\bwar\s+room\b/i],
+  ['help', /\bhelp\s+(?:cent(?:er|re)|room)\b/i],
+  ['screen', /\bscreen\s+room\b/i],
 ];
 // "the Brain" as a subject ("what does the Brain know about this") is the coordinator itself.
 const BRAIN_SUBJECT = /^(?:the\s+|your\s+|my\s+)?brain$/i;
@@ -274,6 +282,58 @@ export function crossRoomIntent(message) {
   }
   if ((m = /^what\s+do\s+(?:you|we)\s+(?:already\s+)?know\s+about\s+(.+)$/i.exec(text)) && rooms.length) {
     return { kind: 'know', rooms: rooms.filter((r) => r !== 'brain'), topic: m[1].trim() };
+  }
+  return activityIntent(text);
+}
+
+// ─── "What happened in the Music Room today?" (owner, Build 2, 2026-10-20) ───
+// A question about what happened in a room, answered from that room's records, newest first.
+const WHEN = '(today|so\\s+far(?:\\s+today)?|earlier(?:\\s+today)?|this\\s+(?:morning|afternoon|evening|week)|yesterday|last\\s+night|lately|recently|before)';
+const WINDOW = (word) => {
+  const w = String(word || '').toLowerCase().replace(/\s+/g, ' ');
+  if (/^(?:today|so far|this morning|this afternoon|this evening|earlier today)/.test(w)) return 'today';
+  if (/^(?:yesterday|last night)$/.test(w)) return 'yesterday';
+  if (w === 'this week') return 'week';
+  return 'recent';
+};
+const ACTIVITY_PATTERNS = [
+  // "What happened in the Coding Room (today)?", "Tell me what happened in the War Room."
+  new RegExp(`^(?:what|tell\\s+me\\s+what|show\\s+me\\s+what)\\s+(?:has\\s+)?happen(?:ed|ing)\\s+in\\s+(.+?)(?:\\s+${WHEN})?$`, 'i'),
+  // "What did I do in the Trading Room?", "What did CHE do in the Office lately?"
+  new RegExp(`^what\\s+(?:did|have|has)\\s+(?:i|we|you|che|she|the\\s+team|the\\s+agents)\\s+(?:do|done|been\\s+doing)\\s+in\\s+(.+?)(?:\\s+${WHEN})?$`, 'i'),
+  // "What's new in the Music Room?"
+  new RegExp(`^(?:what(?:'s|\\s+is)\\s+new|anything\\s+new)\\s+in\\s+(.+?)(?:\\s+${WHEN})?$`, 'i'),
+  // "What did the Research Room find?", "What did the War Room decide today?"
+  new RegExp(`^what\\s+(?:did|has)\\s+(.+?)\\s+(?:find|found|learn|learned|record|recorded|conclude|concluded|decide|decided)(?:\\s+${WHEN})?$`, 'i'),
+];
+// The phrase must be only the room's name ("the Trading Room", "my Office"): "the Office of the President" is not a room.
+const ROOM_FILLER = /^(?:(?:the|my|your|che's|our|room)\s*)*$/i;
+function namedRoomOnly(phrase) {
+  const text = String(phrase || '').trim();
+  for (const [id, re] of ROOM_WORDS) {
+    const found = re.exec(text);
+    if (found && ROOM_FILLER.test(`${text.slice(0, found.index)} ${text.slice(found.index + found[0].length)}`.trim()) && id !== 'brain') return id;
+  }
+  return '';
+}
+
+/** { kind: 'activity', rooms: [room], topic: '', when } for a question about what happened in one named room, else null. */
+export function activityIntent(text) {
+  const t = String(text || '').trim();
+  let m;
+  // "What did I ask Help about?", "What have I asked the Help Center for today?"
+  if ((m = new RegExp(`^what\\s+(?:did|have)\\s+i\\s+ask(?:ed)?\\s+(?:the\\s+)?help(?:\\s+cent(?:er|re))?\\s+(?:about|for)(?:\\s+${WHEN})?$`, 'i').exec(t))) {
+    return { kind: 'activity', rooms: ['help'], topic: '', when: WINDOW(m[1]) };
+  }
+  // "What was on my screen earlier?", "What screens did I look at today?" (never "what is on my screen": that is the screen now).
+  if ((m = new RegExp(`^what\\s+(?:was|were)\\s+on\\s+my\\s+screens?\\s+${WHEN}$`, 'i').exec(t))
+    || (m = new RegExp(`^what\\s+(?:screens?|pages?|rooms?)\\s+(?:did|have)\\s+i\\s+(?:look(?:ed)?\\s+at|open(?:ed)?|visit(?:ed)?)(?:\\s+${WHEN})?$`, 'i').exec(t))) {
+    return { kind: 'activity', rooms: ['screen'], topic: '', when: WINDOW(m[1]) };
+  }
+  for (const re of ACTIVITY_PATTERNS) {
+    if (!(m = re.exec(t))) continue;
+    const room = namedRoomOnly(m[1]);
+    if (room) return { kind: 'activity', rooms: [room], topic: '', when: WINDOW(m[2]) };
   }
   return null;
 }
@@ -365,7 +425,57 @@ async function prEvidence(n, { env, fetcher, store }) {
   return { ok: true, rooms, hits: 1 + recorded.length, text: lines.join('\n') };
 }
 
+// ─── What happened in a room: its records, newest first ──────────────────
+
+const stampOf = (iso) => { const t = String(iso || ''); return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(t) ? `${t.slice(0, 10)} ${t.slice(11, 16)} UTC` : t.slice(0, 10) || 'no date'; };
+const previousChicagoDay = (now) => {
+  const [year, month, day] = chicagoDayKey(now).split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, day - 1)).toISOString().slice(0, 10);
+};
+const inWindow = (iso, when, now) => {
+  const at = Date.parse(iso || '');
+  if (!Number.isFinite(at)) return when === 'recent';
+  if (when === 'today') return chicagoDayKey(at) === chicagoDayKey(now);
+  if (when === 'yesterday') return chicagoDayKey(at) === previousChicagoDay(now);
+  if (when === 'week') return now - at <= 7 * 86_400_000;
+  return true;
+};
+const WINDOW_WORDS = { today: 'today', yesterday: 'yesterday', week: 'this week', recent: 'recently' };
+
+/** A room's own records (source.room), newest first, within the asked window. Reads ids only, then each record. */
+export function roomActivity(store, room, { when = 'recent', now = Date.now(), limit = 6 } = {}) {
+  if (!store?.init?.() || !ROOMS[room]) return { records: [], latest: null };
+  const ids = store.rows(
+    "SELECT id FROM brain_records WHERE deleted = 0 AND json_extract(source, '$.room') = ? ORDER BY created_at DESC, seq DESC LIMIT 200", room,
+  ).map((row) => row.id);
+  const all = ids.map((id) => store.get(id)).filter((r) => r && !r.deleted);
+  return { records: all.filter((r) => inWindow(r.created_at, when, now)).slice(0, limit), latest: all[0] || null };
+}
+
+// The room's name in a sentence ("in the Research Room", "in the Help Center"), where its short label would not read.
+const PLACE_NAME = Object.freeze({ research: 'Research Room', help: 'Help Center', screen: 'Screen room', memory: 'Memory room', chat: 'Chat room' });
+
+async function answerActivity({ store, storage, env, intent, now }) {
+  const room = (intent.rooms || []).find((r) => ROOMS[r]) || '';
+  const label = PLACE_NAME[room] || ROOMS[room]?.label || 'that room';
+  if (!store?.init?.()) return { text: `The Brain is not available right now, sir, so I cannot read the ${label}'s records.`, ok: false, rooms: [room], hits: 0 };
+  const when = intent.when || 'recent';
+  const { records, latest } = roomActivity(store, room, { when, now });
+  const live = ['trading', 'coding'].includes(room) ? await liveLine(room, { storage, env, topic: '', store }) : '';
+  if (!records.length) {
+    const earlier = latest && when !== 'recent' ? ` The most recent ${label} record is from ${stampOf(latest.created_at)}: ${latest.title} (${statusLabel(latest.verification)}).` : '';
+    return { text: `Nothing is recorded in the ${label} ${when === 'recent' ? 'yet' : WINDOW_WORDS[when]}, sir.${earlier} Activity is recorded as it happens; I will not guess.${live ? ` ${live}` : ''}`, ok: true, rooms: [room], hits: 0 };
+  }
+  const lines = records.map((r, i) => `${i + 1}. ${r.title} (${label}; ${statusLabel(r.verification)}; ${stampOf(r.created_at)})`);
+  return {
+    text: [`What the ${label} recorded${when === 'recent' ? '' : ` ${WINDOW_WORDS[when]}`}, sir, newest first, from the Brain's records of that room:`, ...lines,
+      ...(live ? [live] : []), 'Each item carries its own status and time; ask about one for its evidence.'].join('\n'),
+    ok: true, rooms: [room], hits: records.length,
+  };
+}
+
 export async function answerCrossRoom({ store, storage, env, intent, screen = null, now = Date.now(), fetcher = globalThis.fetch } = {}) {
+  if (intent?.kind === 'activity') return answerActivity({ store, storage, env, intent, now });
   const topicRaw = String(intent.topic || '').trim();
   const fromScreen = THIS.test(topicRaw);
   if (fromScreen && !screen) {
@@ -403,7 +513,8 @@ export async function answerCrossRoom({ store, storage, env, intent, screen = nu
   let hits = 0;
   for (const room of scanned) {
     const region = ROOMS[room].region;
-    const records = ready ? store.search(topic, { limit: 4, region }).filter((r) => r.source?.room ? r.source.room === room : true) : [];
+    // A room that shares its region (Meeting Room, Help, Screen) shows only its own records; the others also show the region's.
+    const records = ready ? store.search(topic, { limit: 4, region }).filter((r) => (r.source?.room ? r.source.room === room : !ROOMS[room].strict)) : [];
     let live = rooms.length ? await liveLine(room, { storage, env, topic, store: ready ? store : null }) : '';
     if (room === 'music' && rooms.length && records.length && !live) live = musicService(env);
     if (!records.length && !live) continue;
@@ -424,7 +535,8 @@ const roomOf = (record) => ROOMS[record?.source?.room]?.label || record?.region 
 
 // A chat exchange (the owner's question, CHE's earlier answer) is not evidence about its subject:
 // retrieving it answered "what is connected to PR 374" with the question itself (owner, 2026-10-20).
-const isConversation = (record) => record?.region === BRAIN_REGIONS.conversations || ['conversation', 'correction'].includes(record?.kind);
+// A Meeting Room record shares the Conversations region but is a room event, not chat.
+const isConversation = (record) => (record?.region === BRAIN_REGIONS.conversations && record?.source?.room !== 'meetings') || ['conversation', 'correction'].includes(record?.kind);
 
 // Which room a changed file belongs to, by its path. A pull request that changed a room's code is
 // connected to that room: verified from GitHub's file list, not guessed from words.
