@@ -37,8 +37,9 @@ import {
 import { discoverKeylessModels, engineStatus, paidAllowed, routedEnv } from './ai_router.js';
 import { capabilityPromptLine, inferTurnCapabilities, runtimeCapabilityRegistry } from './cognitive_capabilities.js';
 import { identityQuestionIntent, speakIdentity } from './che_maturity.js';
-import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, upscaleImage } from './media.js';
-import { mediaLibraryIntent, mediaLibraryReply, mediaLibraryReport, wantsLatestVideo } from './media_library.js';
+import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, saveOwnerFile, upscaleImage } from './media.js';
+import { mediaHoldIntent, mediaHoldReply, mediaLibraryIntent, mediaLibraryReply, mediaLibraryReport, mediaSaveIntent, mediaSaveReply, wantsLatestVideo } from './media_library.js';
+import { capabilityGap, capabilityReply } from './capability_gap.js';
 import { memorySearchIntent, memorySearchReply, memorySearchTerms } from './memory_search.js';
 import { probeVideoEngine, videoEngineStatus, videoStatusSpeech } from './video_engine.js';
 import { githubVideoDiagnosis, mp4Facts } from './github_video_renderer.js';
@@ -9559,6 +9560,18 @@ export class CheState extends DurableObject {
         }
 
 
+        // Pictures, videos and files the owner sends are kept in CHE's media store (media.js saveOwnerFile), and "how many"
+        // is counted from that store. Owner only, with no model call, so CHE never says she has nowhere to keep them.
+        if (mediaSaveIntent(message, Boolean(body.attachment))) {
+          if (!ownerDevice) return ownerOnly();
+          const saved = await saveOwnerFile(this.keyEnv || this.env, this.ctx.storage, body.attachment);
+          return ndjsonReply(mediaSaveReply(saved), { source: 'che_media_store', ok: saved.ok, media_total: saved.total ?? null });
+        }
+        if (mediaHoldIntent(message)) {
+          if (!ownerDevice) return ownerOnly();
+          const held = await listMedia(this.ctx.storage);
+          return ndjsonReply(mediaHoldReply(held), { source: 'che_media_store', ok: true, media_total: held.filter((item) => item?.kind === 'upload').length });
+        }
         // The owner's saved videos, from the stored records and their files (media_library.js). Read-only, and
         // answered here: the model has no tool to inspect the library, so it must never be asked.
         if (mediaLibraryIntent(message)) {
@@ -12297,6 +12310,15 @@ export class CheState extends DurableObject {
         const asset = assetTruthReply(reply, { made: 0, published: 0 });
         if (asset.removed.length) console.log('CHE asset check removed', JSON.stringify(asset.removed).slice(0, 800));
         reply = adRequest(rawMessage) ? [asset.text, adStatusLines({ copy: Boolean(asset.text), made: 0, published: 0 })].filter(Boolean).join('\n') : asset.text;
+        // A missing ability is never refused: CHE queues it for herself as a self-development job and says so (capability_gap.js).
+        // Owner only; money, deletion and secrets are never queued.
+        const gap = ownerDevice ? capabilityGap(rawMessage, reply) : null;
+        if (gap) {
+          const { job } = enqueueJob(data, gap.fields);
+          await this.ctx.storage.put('che', data);
+          await this.scheduleWork();
+          reply = capabilityReply(job.id);
+        }
         const ownerTurnsNow = ownerWords(ownerHistory, rawMessage);
         // Owner evidence: the owner's own turns, the owner-attested memory records and the owner-attested Brain records
         // retrieved this turn. Every other named speaker (Claude, Atlas, …) needs its own stored record.

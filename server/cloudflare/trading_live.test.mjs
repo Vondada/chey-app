@@ -125,6 +125,20 @@ test('the dashboard totals are the journal recounted, and a restart resumes the 
   assert.ok(Object.keys(saved.get(LIVE_PORTFOLIOS)).length >= 18);
 });
 
+test('delayed data older than the maximum age is refused before any portfolio steps; fresh delayed data is used', async () => {
+  const storage = memoryStorage();
+  await setLivePaper(storage, true, after(DAY1));
+  const delayedOf = (bars) => async () => ({ ...(await feedOf(bars)()), status: 'DELAYED', authenticated: false, subscription_verified: false, latency_s: 900, delayed_by_min: 15 });
+  const old = await liveTick(storage, { force: true, load: delayedOf(DAY1), now: after(DAY1) + 2 * 24 * 60 * 60_000 });
+  assert.equal(old.ok, false, 'two-day-old delayed bars are not used');
+  assert.match(old.error, /^data refused: the newest delayed bar closed \d+ min ago; the maximum is 45 min$/);
+  assert.equal(old.closed, undefined, 'no portfolio was stepped on the stale bars');
+  assert.equal(old.journal, undefined, 'nothing was journalled from the stale bars');
+  const fresh = await liveTick(storage, { force: true, load: delayedOf(DAY1), now: after(DAY1) });
+  assert.equal(fresh.ok, true, fresh.error);
+  assert.equal(fresh.error, undefined);
+});
+
 test('paper trading cannot reach a broker: no broker host is called and live sources are refused', async () => {
   const storage = memoryStorage();
   await setLivePaper(storage, true);

@@ -71,6 +71,33 @@ export async function mediaLibraryReport(env, storage, items, { fetcher = fetch 
   return { total: rows.length, playable: count('playable'), unverified: count('unverified'), missing: count('missing'), videos: rows };
 }
 
+// "Save this picture", "keep this file" with a file attached: CHE keeps it in her media store (media.js saveOwnerFile).
+export function mediaSaveIntent(message, hasAttachment) {
+  const text = String(message || '').trim().replace(/^(?:che|chay|chey)[,:]?\s+/i, '');
+  return hasAttachment && /\b(?:save|store|keep|hold|archive)\b/i.test(text);
+}
+
+// "How many pictures do you hold", "where do you keep my files": counted from the stored index, never by the model.
+// Video questions stay with the video library above.
+export function mediaHoldIntent(message) {
+  const text = String(message || '').trim().replace(/^(?:che|chay|chey)[,:]?\s+/i, '');
+  if (/\b(?:videos?|mp4s?|clips?)\b/i.test(text)) return false;
+  return /\b(?:how\s+many|what|which|list|show)\b[\s\S]{0,40}\b(?:pictures?|photos?|images?|files?|documents?|pdfs?|media)\b[\s\S]{0,30}\b(?:have|hold|store|stored|saved|keep|kept)\b|\b(?:where|anywhere)\b[\s\S]{0,40}\b(?:store|keep|hold|save)\b[\s\S]{0,30}\b(?:pictures?|photos?|media|files?|documents?)\b/i.test(text);
+}
+
+export function mediaSaveReply(result) {
+  if (!result.ok) return `I could not keep that file, sir: ${result.reason}. Nothing was saved.`;
+  return `Saved "${result.item.title}" to my media store, sir. I now hold ${result.total} ${result.total === 1 ? 'item' : 'items'} there.`;
+}
+
+export function mediaHoldReply(items) {
+  const files = (items || []).filter((item) => item?.kind === 'upload');
+  if (!files.length) return 'I hold no saved pictures or files yet, sir. Send one with "save this picture" and I will keep it in my media store.';
+  const shown = files.slice(0, 8).map((item) => `- ${item.title} (${String(item.created_at || '').slice(0, 10) || 'date unknown'})`);
+  const more = files.length > 8 ? `${files.length - 8} more are in my media store.` : '';
+  return [`I hold ${files.length} saved ${files.length === 1 ? 'file' : 'files'}, sir.`, ...shown, more].filter(Boolean).join('\n');
+}
+
 export function mediaLibraryReply(report, { latest = false } = {}) {
   if (!report.total) {
     return 'You have no saved videos, sir. None is playable, because none has been rendered and saved yet. Rendering and failed jobs are not library records; ask for the video status to see them.';

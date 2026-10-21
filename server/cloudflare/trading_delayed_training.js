@@ -9,6 +9,9 @@ export const DELAYED_PORTFOLIOS = 'delayed_training_portfolios_v1';
 export const DELAYED_INDEX = 'delayed_training_index_v1';
 export const DELAYED_AUDIT = 'delayed_training_audit_v1';
 export const DELAYED_RECORD_PREFIX = 'delayed_training_trade:';
+// The newest closed bar of DELAYED data may be this old at most (owner, 2026-10-21). Older bars are never stepped,
+// journalled or trained on: a days-old price is not a research input.
+export const MAX_DELAYED_BAR_AGE_MS = 45 * 60000;
 const INDEX_CAP = 1500;
 const AUDIT_CAP = 250;
 const r2 = (n) => Math.round(n * 100) / 100;
@@ -96,7 +99,7 @@ export async function runDelayedTraining(storage, { feed, bars, specs, controls,
   const last = bars?.at(-1);
   if (!last || bars.length < 55) return { skipped: 'insufficient closed bars' };
   const age = now - Date.parse(last.t) - 300000;
-  if (!(age >= 0 && age <= 45 * 60000)) return { skipped: 'delayed research feed too old or inconsistent' };
+  if (!(age >= 0 && age <= MAX_DELAYED_BAR_AGE_MS)) return { skipped: 'delayed research feed too old or inconsistent' };
   const existing = (await storage.get(DELAYED_PORTFOLIOS)) || {};
   const index = (await storage.get(DELAYED_INDEX)) || [];
   const audit = (await storage.get(DELAYED_AUDIT)) || [];
