@@ -850,6 +850,16 @@ extension _CheHomeSecurity on _CHEHomeState {
     }
   }
 
+  /// One voice teardown step, bounded so a stalled plugin call cannot hold the
+  /// realtime handoff open. A timeout or an error is logged, never thrown.
+  Future<void> _boundedVoiceStep(String label, Future<void> Function() step) async {
+    try {
+      await step().timeout(const Duration(seconds: 4));
+    } catch (error) {
+      debugPrint('CHE voice: $label did not finish ($error)');
+    }
+  }
+
   Future<void> _stopPorcupineWake({bool disposeEngine = false}) async {
     final wake = _porcupineWake;
     if (wake == null) {
@@ -1054,23 +1064,23 @@ extension _CheHomeSecurity on _CHEHomeState {
     try {
       _mic.cancelRestart('state change');
 
-      // Realtime is the only microphone owner once CHE wakes.
-      await _stopPorcupineWake();
+      // Realtime is the only microphone owner once CHE wakes. Each teardown
+      // step is bounded: a plugin call that never returns used to leave the
+      // mic button in "connecting" for good, so every tap only cancelled.
+      await _boundedVoiceStep('wake listener stop', _stopPorcupineWake);
       await _localVoice.runMicOp(() async {
         await speech.cancel();
         try {
           await CheNativeVoice.stop();
         } catch (_) {}
       });
-      await flutterTts.stop();
-      try {
-        await CheNativeVoice.stopAudio();
-      } catch (_) {}
+      await _boundedVoiceStep('speech stop', () => flutterTts.stop());
+      await _boundedVoiceStep('native audio stop', () => CheNativeVoice.stopAudio());
       _nativeIosVoiceActive = false;
 
       final old = _realtimeVoice;
       _realtimeVoice = null;
-      if (old != null) await old.dispose();
+      if (old != null) await _boundedVoiceStep('previous live voice dispose', old.dispose);
 
       final engine = CheRealtimeVoiceEngine(
         baseUrl: cheAgentBaseUrl,
