@@ -3996,11 +3996,10 @@ export class CheState extends DurableObject {
     // one cut off by a Worker eviction is never left "running" forever.
     times.push(...data.jobs.filter((j) => j.status === 'running')
       .map((j) => Math.max(Date.now() + 250, (Date.parse(j.updated_at) || Date.now()) + jobStaleMs(j) + 1000)));
-    // The same for Office tasks cut off mid-work or mid-review (recoverStaleWork's five minutes).
-    if (data.autonomy) {
-      times.push(...data.team_tasks.filter((t) => ['running', 'reviewing'].includes(t.status))
-        .map((t) => Math.max(Date.now() + 250, (Date.parse(t.updated_at) || Date.now()) + 5 * 60_000 + 1000)));
-    }
+    // The same for Office tasks cut off mid-work or mid-review (recoverStaleWork's five minutes), with
+    // autonomy on or off: recovery only corrects statuses, it never starts work.
+    times.push(...data.team_tasks.filter((t) => ['running', 'reviewing'].includes(t.status))
+      .map((t) => Math.max(Date.now() + 250, (Date.parse(t.updated_at) || Date.now()) + 5 * 60_000 + 1000)));
     // While Flagstaff is open, do one cheap GitHub-head check every 30 seconds.
     // The AI only runs when a genuinely new message addressed to CHE appears.
     const flagstaffInitialized = Boolean(await this.ctx.storage.get('web_mailbox_code'));
@@ -12301,10 +12300,10 @@ export class CheState extends DurableObject {
     // owner's approved merges, deploy checks and Command Center runs, plus the
     // sweep that ends interrupted "running" jobs. Gating it here stranded them.
     await this.processJobs();
+    // Office work cut off by an eviction is recovered here, autonomy on or off: it only corrects statuses.
+    const officeData = await this.loadData();
+    if (recoverStaleWork(officeData)) await this.ctx.storage.put('che', officeData);
     if (autonomyOn) {
-      // Office work cut off by an eviction is recovered here too, not only when the app opens the Office.
-      const officeData = await this.loadData();
-      if (recoverStaleWork(officeData)) await this.ctx.storage.put('che', officeData);
       await processAgentWork({
         env: this.env,
         load: () => this.loadData(),

@@ -58,3 +58,9 @@ test('comprehension audit: who is in the office, what the team is doing and what
   assert.deepEqual(matchOfficePhrase('Is anything stalled in the office?'), { type: 'stalled' });
   assert.equal(matchOfficePhrase('what is the team working on in their spare time on weekends ok'), null);
 });
+
+test('"review that again" about a draft is not an Office re-review (third review of #394)', () => {
+  assert.equal(matchOfficePhrase('Review that again, I changed paragraph two')?.type === 'reviewAgentTask', false);
+  assert.equal(matchOfficePhrase('Review the office task again')?.type, 'reviewAgentTask');
+  assert.equal(matchOfficePhrase("Review Mira's task again")?.type, 'reviewAgentTask');
+});

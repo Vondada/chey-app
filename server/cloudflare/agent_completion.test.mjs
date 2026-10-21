@@ -166,6 +166,9 @@ test('the receipt check (review of #394): attributed and quoted research is clea
     'I sent the email, so the client should reply soon.',
     'Deployed to production at 3pm.',
     'The PR was merged.',
+    'The app was deployed successfully.',
+    'The landing page was published.',
+    'I deployed the app and will monitor it.',
   ]) assert.equal(unbackedActionClaims(claim).length, 1, claim);
   assert.equal(unbackedActionClaims('I paid the invoice.', [{ kind: 'computer_workspace', status: 'ok' }]).length, 1, 'a workspace receipt never backs a payment');
 });

@@ -60,3 +60,15 @@ test('stalled work appears on the board and marks the desk', () => {
     Date.now = old;
   }
 });
+
+test('desks show review states honestly (Codex review of #394)', () => {
+  const desk = (status) => officeToday({ team: [{ id: 'mira', name: 'Mira' }], team_tasks: [
+    { id: 't', partner_id: 'mira', partner_name: 'Mira', task: 'Write the FAQ', status, created_at: new Date().toISOString(), updated_at: new Date().toISOString(), next_review_at: new Date(Date.now() + 60_000).toISOString() },
+  ] }, null, new Date()).agents.find((a) => a.name === 'Mira');
+  const pending = desk('review_pending');
+  assert.match(pending.status, /^Waiting for CHE review/);
+  assert.equal(desk('needs_review').state, 'blocked');
+  assert.match(desk('needs_review').status, /Not verified yet/);
+  assert.equal(desk('rejected').state, 'blocked');
+  assert.match(desk('rejected').status, /Rejected by CHE/);
+});

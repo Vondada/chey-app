@@ -25,8 +25,9 @@ export function matchOfficePhrase(raw) {
   const stop = t.match(/^(?:please )?(?:stop|cancel|halt|abort|kill)(?: the| my)? ([a-z]+)(?:'s|s)? (?:task|tasks|job|jobs|work)\b/)
     || t.match(/^(?:please )?(?:tell|have|ask) ([a-z]+) to (?:stop|cancel|stand down)\b/);
   // "Review Atlas's task again", "review it again": a held result goes back to CHE's review as is.
-  const again = t.match(/^(?:please )?(?:re ?review|review|check)(?: the| my)? ([a-z]+)(?:'s|s)? (?:task|result|work)(?: again)?\b/)
-    || t.match(/^(?:please )?(?:re ?review|review) (?:it|that|that task|the task|the result) again\b/);
+  const named = t.match(/^(?:please )?(?:re ?review|review|check)(?: the| my)? ([a-z]+)(?:'s|s)? (?:task|result|work)(?: again)?\b/);
+  const again = (named && [named[1], named[1].replace(/s$/, '')].some((n) => AGENTS.includes(n)) ? named : null)
+    || t.match(/^(?:please )?(?:re ?review|review) (?:the |that |this )?(?:office (?:task|result)|office's (?:task|result)|held (?:task|result)|task) again\b/);
   if (again) {
     const name = again[1] && [again[1], again[1].replace(/s$/, '')].find((n) => AGENTS.includes(n));
     if (name || !again[1]) return { type: 'reviewAgentTask', agentId: name || '' };

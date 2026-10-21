@@ -108,6 +108,19 @@ test('a question is told apart from handing work to an agent', () => {
   assert.equal(shouldAutoDelegateOffice('Research the brass lamp market and draft three listings', { agentMode: true }), true);
 });
 
+test('status questions and follow-ups about earlier work are questions; plain commands still delegate (third review of #394)', () => {
+  for (const question of [
+    'Did Mira write the product description yet?',
+    'Remind me, did Atlas finish the research?',
+    'Has Knox fixed the login bug?',
+    'Can you write that again but shorter?',
+    'Could you list the steps again?',
+    'Can you fix the typo in your last answer?',
+  ]) assert.equal(isOwnerQuestion(question), true, question);
+  assert.equal(isOwnerQuestion('Can you fix the login bug in the app?'), false);
+  assert.equal(shouldAutoDelegateOffice('Do a competitive analysis of brass lamp sellers on Etsy', { agentMode: true }), true);
+});
+
 test('splitGoal gives a named agent its own slice', () => {
   assert.deepEqual(splitGoal('Have Atlas research lamp prices and Mira write a product description from it.').map((s) => s.agent), ['Atlas', 'Mira']);
   assert.deepEqual(splitGoal('Knox, fix the failing Worker test').map((s) => s.agent), ['Knox']);
