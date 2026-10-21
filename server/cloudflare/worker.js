@@ -398,6 +398,22 @@ async function withDoneFields(response, fields) {
   return new Response(lines.join('\n'), { status: response.status, headers: response.headers });
 }
 
+// A reply that no model call produced (a CHE handler, a saved job) still says which Soul was on record and that it
+// did not shape the words. Replies that already carry a Soul record (model or cache) are left as they are.
+async function withSoulRecord(response, profile) {
+  const raw = await response.text();
+  const lines = raw.split('\n');
+  const at = lines.map((line) => { try { return JSON.parse(line); } catch (_) { return null; } }).findLastIndex((e) => e && e.type === 'done');
+  if (at >= 0) {
+    const done = JSON.parse(lines[at]);
+    if (!done.soul) {
+      done.soul = soulProvenance(profile, { applied: false, route: 'handler', reason: 'no model call produced this reply' });
+      lines[at] = JSON.stringify(done);
+    }
+  }
+  return new Response(lines.join('\n'), { status: response.status, headers: response.headers });
+}
+
 function prefixNdjson(response, text) {
   const head = new TextEncoder().encode(JSON.stringify({ type: 'delta', delta: text }) + '\n');
   const body = response.body;
@@ -3572,7 +3588,8 @@ async function runChatModel(env, { model, systemPrompt, compactPrompt, turns, me
         reply = mergeReplyContinuation(reply, more);
         answer = { ...continued, response: reply };
       }
-      return { ...answer, response: reply };
+      // Which engine actually answered, and whether it was a fallback past the first choice (Soul provenance).
+      return { ...answer, response: reply, served_by: { model: attempt.model, route: attempt.route, fallback: attempt !== attempts[0] } };
     } catch (error) {
       // A busy or failing engine on an earlier attempt is the truer reason than a later "too long"
       // from engines that were left (review of #349).
@@ -5197,6 +5214,9 @@ export class CheState extends DurableObject {
     if (isChat && response?.ok && OWNER_CHAT_REQUESTS.has(request)) {
       const understood = understoodAs(String((await sent)?.message || ''));
       if (understood) response = await withDoneFields(response, { understood_as: understood });
+    }
+    if (isChat && response?.ok && OWNER_CHAT_REQUESTS.has(request) && /ndjson/i.test(response.headers.get('Content-Type') || '')) {
+      response = await withSoulRecord(response, await loadSoul(this.ctx.storage));
     }
     // A trade alert the owner has not heard yet is said first, in the reply
     // to whatever he says next (there is no phone push for it yet).
@@ -12193,7 +12213,7 @@ export class CheState extends DurableObject {
               che_audit: { task: String(message).slice(0, 160), agent: 'CHE', route: 'owner_chat_rescue' },
             });
             const rescued = String(rescue?.response || rescue?.choices?.[0]?.message?.content || '').trim();
-            if (rescued) answer = rescue;
+            if (rescued) answer = { ...rescue, served_by: { model: FAST_MODEL, route: 'rescue', fallback: true } };
           } catch (_) { /* fall through to the saved job */ }
         }
         if (!answer) {
@@ -12448,7 +12468,11 @@ export class CheState extends DurableObject {
             vision: multimodal ? { engine: multimodal.engine || null, ok: Boolean(multimodal.summary), error: multimodal.error || '' } : null,
             screen_room: screenRoom || null,
             // Which Soul version and hash shaped this reply, and whether the model actually received it.
-            soul: soulProvenance(soulProfile, { applied: answer?.engine !== 'cache', route: 'model', reason: 'this reply came from the answer cache' }),
+            // applied is true only when a model call returned this reply with the Soul in its system prompt.
+            soul: answer?.engine === 'cache'
+              ? soulProvenance(soulProfile, { applied: false, route: 'cache', reason: 'this reply came from the answer cache' })
+              : soulProvenance(soulProfile, { applied: Boolean(answer?.served_by), route: answer?.served_by ? 'model' : 'handler', reason: answer?.served_by ? '' : 'no model call produced this reply' }),
+            served_by: answer?.served_by || null,
           }),
         ]).join('\n') + '\n', {
           headers: { 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store' },
