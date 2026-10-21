@@ -8836,6 +8836,9 @@ export class CheState extends DurableObject {
         // CHE-only last_self_update_deploy key cannot prove deployment history.
         if (!body.attachment && !body.workflow_step && latestWorkerDeploymentIntent(rawMessage)) {
           if (!ownerDevice) return ownerOnly();
+          // A different owner turn retires pending payment/delete approvals.
+          // A later bare 'yes' must never release an earlier held action.
+          await this.dropHeldActions();
           const record = await latestWorkerDeploymentStatus(this.env, fetch, runtimeVersion(this.env));
           return ndjsonReply(speakLatestWorkerDeployment(record), {
             source: 'che_github_actions_deploy_status', ok: record.status === 200 && record.found === true,
