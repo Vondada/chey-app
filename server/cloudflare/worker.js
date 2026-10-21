@@ -2746,6 +2746,38 @@ export function proposalSummaryMessage(proposal, lead = 'My team built and revie
   return `${lead} ${summary}${/[.!?]$/.test(summary) ? '' : '.'} It touches ${files.length === 1 ? files[0] : `${files.length} files`}. Nothing is applied yet. Say "create the PR" to send it to GitHub, or "show me the code" if you want to see it.`;
 }
 
+// The runner PR from CHE's latest coding session, when it passed CI and review and waits for the
+// owner's yes, and is newer than any built-in update PR still open. Merged on that yes, and the
+// session record then says the owner merged it. Null when no runner PR is waiting.
+async function mergeRuntimePrWaitingForOwner(env, storage, ops = {}) {
+  const session = String(await storage.get('che_runtime_last_session').catch(() => '') || '');
+  if (!session) return null;
+  const runtime = new CheCodingRuntime(env);
+  const status = await runtime.getStatus(session).catch(() => null);
+  const number = Number(status?.pr_number || 0);
+  if (status?.status !== 200 || runtimeState(status) !== 'approved_waiting_owner' || !number) return null;
+  const last = await storage.get(LAST_SELF_UPDATE_PR_KEY).catch(() => null);
+  if (last?.number && !last.merged_at && Date.parse(last.opened_at || 0) > Date.parse(status.updated_at || 0)) return null;
+  // Only the exact commit the independent review approved (che-autopilot records it).
+  const reviewed = String(status.reviewed_sha || '');
+  if (!/^[a-f0-9]{40}$/i.test(reviewed)) {
+    return { ok: false, message: `I did not merge pull request #${number}, sir: its record does not say which commit the review approved, so it needs a fresh review. Nothing was merged.` };
+  }
+  const merged = await mergeSelfUpdatePr(env, number, fetch, { expectedHeadSha: reviewed });
+  if (merged.status !== 200) {
+    return { ok: false, message: `I did not merge pull request #${number}, sir: ${String(merged.detail || 'GitHub refused the merge').replace(/\.$/, '')}. Nothing was merged.` };
+  }
+  await runtime.recordOwnerMerge(session, { prNumber: number, mergeCommitSha: merged.merge_commit_sha }).catch(() => null);
+  await recordReceipt(storage, { kind: 'merged', key: `merged:${number}`, number, sha: merged.merge_commit_sha || '' });
+  const sha = String(merged.merge_commit_sha || '').slice(0, 7);
+  if (merged.worker_deploy && merged.merge_commit_sha) {
+    await storage.put(LAST_SELF_UPDATE_DEPLOY_KEY, { number, merge_commit_sha: merged.merge_commit_sha, started_at: new Date().toISOString(), state: 'deploying' });
+    await ops.queueJob?.({ kind: 'verify_deploy', title: `Verify deploy of PR #${number}`, prompt: merged.merge_commit_sha, merge_commit_sha: merged.merge_commit_sha, pr_number: number, idempotency_key: `verify_deploy:${merged.merge_commit_sha}`, retry_at: Date.now() + 60_000 });
+    return { ok: true, merged, message: `Pull request #${number} is merged on your yes, sir (commit ${sha}). The Worker deploy is running; I will verify the live server myself and only call it deployed once that check passes.` };
+  }
+  return { ok: true, merged, message: `Pull request #${number} is merged on your yes, sir (commit ${sha}).${merged.already_merged ? ' It was already merged.' : ''}` };
+}
+
 export async function handleSelfUpdateChatAction(env, storage, intent, ops = {}) {
   if (intent.kind === 'access') {
     const access = await selfUpdateGitHubAccess(env);
@@ -2922,6 +2954,13 @@ export async function handleSelfUpdateChatAction(env, storage, intent, ops = {})
         return { ok: false, message: 'There is no reviewed update waiting to install, sir. Tell me what to change with "update your code:" and I will build and review it first.' };
       }
     }
+  }
+
+  // Build 5: "merge it" is the owner's yes for CHE's own runner PR that passed CI and review and
+  // waits for him (che-autopilot.yml never merges one without his authorization).
+  if (intent.kind === 'merge') {
+    const owned = await mergeRuntimePrWaitingForOwner(env, storage, ops);
+    if (owned) return owned;
   }
 
   if (intent.kind === 'merge' || intent.kind === 'ship-update') {
@@ -12703,14 +12742,18 @@ export class CheState extends DurableObject {
     }
     const jobId = crypto.randomUUID();
     const targetBranch = `che/auto/${jobId.slice(0, 8)}`;
+    // The runner's PR merges itself only when the owner's own words authorized the merge.
+    const mergeAuthorized = policy.mergeAllowed === true && !ownerRequiresMergeApproval(ownerRequest);
     const started = await runtime.createSession({
       jobId,
       ownerRequest,
       baseSha,
       targetBranch,
       executionMode: policy.mode,
+      mergeAuthorized,
     });
     if (started.status === 202) {
+      await this.ctx.storage.put('che_runtime_last_merge_authorized', mergeAuthorized);
       await this.ctx.storage.put('che_runtime_last_base_sha', baseSha);
       await this.ctx.storage.put('che_runtime_last_branch', targetBranch);
       await this.ctx.storage.put('che_runtime_last_session', started.session_id);
@@ -12764,6 +12807,7 @@ export class CheState extends DurableObject {
       baseSha: pending.base_sha,
       targetBranch: pending.target_branch,
       executionMode: 'BUILD',
+      mergeAuthorized: pending.merge_authorized === true,
     }).catch(() => null);
     if (started?.status === 202 && started.session_id === pending.session_id) {
       const now = new Date().toISOString();
@@ -12818,6 +12862,7 @@ export class CheState extends DurableObject {
           base_sha: String(await this.ctx.storage.get('che_runtime_last_base_sha') || ''),
           target_branch: String(await this.ctx.storage.get('che_runtime_last_branch') || ''),
           request: String(await this.ctx.storage.get('che_runtime_last_request') || ''),
+          merge_authorized: (await this.ctx.storage.get('che_runtime_last_merge_authorized')) === true,
           resume_count: Number(status.resume_count || 0),
           attempt: plan.attempt,
           failure_kind: String(status.failure_kind || 'unknown'),

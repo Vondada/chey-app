@@ -16,6 +16,7 @@ import { classifyFailure, FAILURE_CLASS, stableHash } from './recovery_policy.js
 const MAX_FILES = 12;
 const MAX_FILE_BYTES = 200_000;
 const BRANCH_PREFIX = 'che/update-';
+const RUNTIME_BRANCH_PREFIX = 'che/auto/';
 
 // Owner-authorized self-development can edit normal application/source/test/docs
 // files on a review branch. High-risk control planes stay read-only: GitHub
@@ -498,14 +499,19 @@ export async function selfUpdateStatus(env, number, fetcher = fetch) {
 // and the head is exactly the commit CHE checked (no race with a new push).
 // Worker changes carry [worker-deploy] so the repository's deploy workflow
 // runs; deployment truth is then verified separately.
-export async function mergeSelfUpdatePr(env, number, fetcher = fetch) {
+export async function mergeSelfUpdatePr(env, number, fetcher = fetch, { expectedHeadSha = '' } = {}) {
   const status = await selfUpdateStatus(env, number, fetcher);
   if (status.status !== 200) return status;
+  // A merge bound to a reviewed commit refuses a head that moved after that review.
+  if (expectedHeadSha && status.state === 'open' && status.head_sha !== expectedHeadSha) {
+    return { status: 409, detail: `PR #${status.number} changed after it was reviewed (reviewed ${expectedHeadSha.slice(0, 7)}, now ${status.head_sha.slice(0, 7)}); it needs a new review before it can merge.`, failure_class: FAILURE_CLASS.INTERNAL };
+  }
   if (status.state === 'merged') return { status: 200, already_merged: true, number: status.number, merge_commit_sha: status.merge_commit_sha, url: status.url };
   if (status.state !== 'open') return { status: 409, detail: `PR #${status.number} is ${status.state}.`, failure_class: FAILURE_CLASS.PERMANENT_EXTERNAL };
   const pr = await gh(env, 'GET', `/pulls/${Number(number)}`, null, fetcher);
   const branch = String(pr.data?.head?.ref || '');
-  if (!branch.startsWith(BRANCH_PREFIX)) return { status: 403, detail: 'CHE only merges her own owner-approved update branches.', failure_class: FAILURE_CLASS.AUTHORIZATION };
+  // Her built-in update branches, and her coding runner's branches (che/auto/, Build 5): both only on the owner's yes.
+  if (!branch.startsWith(BRANCH_PREFIX) && !branch.startsWith(RUNTIME_BRANCH_PREFIX)) return { status: 403, detail: 'CHE only merges her own owner-approved update branches.', failure_class: FAILURE_CLASS.AUTHORIZATION };
   if (status.ci === 'failed') return { status: 409, detail: `CI failed: ${status.failed_checks.join(', ')}.`, ci: status, failure_class: FAILURE_CLASS.INTERNAL };
   if (status.ci === 'running') return { status: 409, detail: 'CI is still running.', ci: status, retryable: true, failure_class: FAILURE_CLASS.TEMPORARY_EXTERNAL };
   // No check has reported yet (GitHub creates them seconds after a push). Every

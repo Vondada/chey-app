@@ -140,7 +140,9 @@ export class CheCodingRuntime {
     return codingRuntimeEnabled(this.env);
   }
 
-  async createSession({ jobId = '', ownerRequest = '', baseSha = '', targetBranch = '', model = '', workflowRef = 'main', executionMode = 'BUILD' } = {}) {
+  // mergeAuthorized: the owner's own words authorized the merge. Without it the runner's PR stops at
+  // "approved, waiting for the owner" (che-autopilot.yml), and only the owner's "merge it" merges it.
+  async createSession({ jobId = '', ownerRequest = '', baseSha = '', targetBranch = '', model = '', workflowRef = 'main', executionMode = 'BUILD', mergeAuthorized = false } = {}) {
     if (String(executionMode || '').toUpperCase() !== 'BUILD') {
       return { status: 403, denied: true, runtime: 'opencode', detail: 'OpenCode mutation runtime accepts BUILD-authorized turns only.' };
     }
@@ -171,6 +173,7 @@ export class CheCodingRuntime {
         base_sha: head,
         target_branch: branch,
         model: resolvedModel,
+        merge_authorized: mergeAuthorized === true ? 'true' : 'false',
       },
     }, this.fetcher);
     if (!sent.ok) {
@@ -189,7 +192,30 @@ export class CheCodingRuntime {
       accepted_at: new Date().toISOString(),
       workflow: this.workflow,
       result_path: `${RESULT_PREFIX}/${sessionId}.json`,
+      merge_authorized: mergeAuthorized === true,
     };
+  }
+
+  // After the owner's "merge it" merged a runner PR that was waiting for him, the session's
+  // record says so, so "coding status" never keeps calling it waiting.
+  async recordOwnerMerge(sessionId, { prNumber = 0, mergeCommitSha = '' } = {}) {
+    const id = String(sessionId || '').trim();
+    if (!/^ocr-[0-9a-f]{8}$/.test(id)) return { ok: false };
+    const path = `${RESULT_PREFIX}/${id}.json`;
+    const found = await gh(this.env, 'GET', `/contents/${path}?ref=${encodeURIComponent(this.resultsRef)}`, null, this.fetcher);
+    if (!found.ok || !found.data?.sha) return { ok: false };
+    let record;
+    try { record = JSON.parse(decodeBase64Utf8(found.data.content)); } catch (_) { return { ok: false }; }
+    if (record?.session_id !== id) return { ok: false };
+    const now = new Date().toISOString();
+    const next = { ...record, state: 'merged', merged_by: 'owner', owner_merged_at: now, updated_at: now, pr_number: Number(prNumber) || record.pr_number, merge_commit_sha: String(mergeCommitSha || '') };
+    const put = await gh(this.env, 'PUT', `/contents/${path}`, {
+      message: `runtime: ${id} merged by the owner`,
+      content: encodeBase64Utf8(JSON.stringify(next)),
+      sha: found.data.sha,
+      branch: this.resultsRef,
+    }, this.fetcher);
+    return { ok: put.ok };
   }
 
   // Exact commit of the default branch, so the runner refuses stale source.
@@ -371,7 +397,9 @@ export function speakRuntimeStatus(result = {}) {
     case 'pr_open': parts.push(`I ${changed} and opened ${pr === 'its pull request' ? 'a pull request' : pr}. Tests are running.`); break;
     case 'reviewing': parts.push(`Tests passed. My reviewer is checking ${pr}.`); break;
     case 'approved_waiting_owner': parts.push(`Tests and independent review passed for ${pr}. It is waiting for your approval, sir; I have not merged or deployed it.`); break;
-    case 'merged': parts.push(`Done. I ${changed}, tests passed, my reviewer approved, and I merged ${pr}.`); break;
+    case 'merged': parts.push(result.merged_by === 'owner'
+      ? `Done. I ${changed}, tests passed, my reviewer approved, and I merged ${pr} after your yes.`
+      : `Done. I ${changed}, tests passed, my reviewer approved, and I merged ${pr}.`); break;
     case 'review_rejected': {
       const review = typeof result.review === 'string' ? result.review.trim().slice(0, 200) : '';
       parts.push(`Tests passed but my reviewer rejected it${review ? `: ${review}` : ''}. I did not merge.`);
