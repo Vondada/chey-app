@@ -65,6 +65,35 @@ const PUBLISH_RE = /\b(publish|unpublish|make (it )?public|post (it )?publicly|s
 const COMPLETION_RE = /\b(done|sent|deleted|opened|merged|published|finished|i (have )?(sent|deleted|opened|merged|published|paid|bought))\b/i;
 const READING_INTENTS = new Set(['question', 'explain', 'plan', 'action', 'followup', 'chitchat', 'unclear']);
 const CANCEL_RE = /\b(never mind|nevermind|forget (it|that)|scratch that|cancel that|actually no)\b/;
+// A cancel calls off only what it points back to (comprehension audit, issue #350). "Forget that my
+// favorite color is blue" asks CHE to forget a memory, "don't forget that…" asks her to remember, and
+// "never mind that, what's my favorite food?" drops the earlier thing and asks a new question.
+const CANCEL_PHRASE = String.raw`(?:never\s*mind(?:\s+(?:that|it|this))?|forget\s+(?:it|that|this)|scratch\s+that|cancel\s+that|actually\s+no)`;
+const LEAD_CANCEL_RE = new RegExp(String.raw`^\s*(?:(?:oh|ok|okay|wait|actually|no|hey|che|chey|chay)[,\s]+)*(${CANCEL_PHRASE})\b\s*([,.;:!?—–-]+)?\s*([\s\S]*)$`, 'i');
+const NOT_A_CANCEL_RE = /\b(?:don't|dont|do not|never) (?:you )?forget\b|\bforget (?:that|this) (?!(?:please|sir|then|okay|ok)\b)\w/;
+const REST_FILLER_RE = /^(?:please|sir|then|okay|ok|thanks|thank you)?[\s.!?]*$/i;
+
+// 'cancel', the new request after a leading cancel, or null.
+const NEW_REQUEST_START = /^(?:what|whats|what's|who|where|when|why|how|which|is|are|do|does|did|can|could|would|will|tell|show|read|check|give|find|just|please|let's)\b/i;
+function cancelShape(raw) {
+  const lead = LEAD_CANCEL_RE.exec(raw);
+  if (lead) {
+    let rest = lead[3].trim();
+    if (REST_FILLER_RE.test(rest)) return 'cancel';
+    // "Forget that my favorite color is blue": a memory to forget, not a cancel.
+    if (/^forget\s+(?:that|this)$/i.test(lead[1]) && !lead[2]) return null;
+    // "Never mind the weather, what's on my calendar?": the words before the first break are what is
+    // dropped. With no break and no new question or request, the whole turn is dropped as before.
+    if (!lead[2] && !NEW_REQUEST_START.test(rest)) {
+      const brk = /[,.;:!?—–]\s*/.exec(rest);
+      if (!brk) return 'cancel';
+      rest = rest.slice(brk.index + brk[0].length).trim();
+      if (REST_FILLER_RE.test(rest)) return 'cancel';
+    }
+    return { rest };
+  }
+  return null;
+}
 // A "that one" or "fix it" can point back to any substantive owner statement.
 const SUBSTANTIVE = new Set(['action', 'plan', 'explain', 'question', 'unclear']);
 
@@ -250,6 +279,7 @@ function verbFor(text) {
   const t = normalizeForKind(text);
   if (/\b(delete|remove|erase|wipe|trash|discard|uninstall)\b/.test(t)) return 'delete';
   if (/\b(buy|purchase|pay|order|subscribe|donate|transfer)\b/.test(t)) return 'pay for';
+  if (/\b(sell|sells|selling)\b/.test(t)) return 'sell';
   if (/\bmerge\b/.test(t)) return 'merge';
   if (/\bdeploy\b/.test(t)) return 'deploy';
   if (/\bpublish\b/.test(t)) return 'publish';
@@ -266,11 +296,21 @@ export function classifyOwnerTurn(text, { lastUser = '', hasHeldAction = false }
   if (!s) return turn('unclear', { confidence: 0 });
   if (YES_RE.test(s)) return turn('yes', { held: hasHeldAction });
   // Cancel is checked before no: "never mind" and "forget it" call the request off.
-  if (CANCEL_RE.test(s)) return turn('cancel');
+  const shape = cancelShape(raw);
+  if (shape === 'cancel') return turn('cancel');
+  // With an action held, a turn that opens with a cancel calls it off whatever follows. "Actually no, yes" or
+  // "never mind. Yes." must never hand the "yes" on as a release (comprehension audit, issue #350).
+  if (shape?.rest && hasHeldAction) return turn('cancel');
+  if (shape?.rest) return { ...classifyOwnerTurn(shape.rest, { lastUser, hasHeldAction }), rest: shape.rest };
+  if (CANCEL_RE.test(s) && !NOT_A_CANCEL_RE.test(s)) return turn('cancel');
   if (NO_RE.test(s)) return turn('no');
   if (GREET_RE.test(s) && words <= 5) return turn('greeting');
   if (THANKS_RE.test(s) && words <= 4) return turn('thanks');
   if (CORRECTION_RE.test(s)) return turn('correction');
+  // "Do it now: fix the login bug in your app" names its own action. "Do it now" is emphasis there, not a reference to
+  // the last request, so the order is never swapped for an earlier one (review of #356, round 3: a dropped order is a failure).
+  const ownAction = s.replace(/^(?:just |please )?do (?:it|this|that)(?: (?:now|right now|today|asap))? (?=\S)/, '');
+  if (ownAction !== s && ACTION_START_RE.test(ownAction)) return turn('action');
   if (REFERENCE_RE.test(s)) return turn('followup', { reference: true });
   const actionLike = ACTION_START_RE.test(s) || ACTION_ANYWHERE_RE.test(s);
   // "why?" and "and the other one?" lean on the last request; a full new question does not.
@@ -325,6 +365,8 @@ export function interpretOwnerTurn(rawText, { history = [], hasHeldAction = fals
   const { text: corrected, changes } = correctSpokenTerms(raw);
   const recent = recentTurns(history);
   const turn = classifyOwnerTurn(corrected, { hasHeldAction });
+  // "Never mind that, what's on my calendar?": the new request is what is read and routed.
+  if (turn.rest) return interpretOwnerTurn(turn.rest, { history, hasHeldAction });
   const base = { text: corrected, kind: turn.kind, consequential: turn.consequential, reference: turn.reference, changes, clarify: null, passthrough: false, referent: '' };
 
   // The owner called it off: nothing is run, and CHE says so plainly.
@@ -399,7 +441,7 @@ export function asksAboutScreen(text) {
   const t = String(text || '').trim().toLowerCase().replace(/[’]/g, "'").replace(/[.!?]+$/, '')
     .replace(/^(?:(?:hey|hi|ok|okay)[\s,]+)?(?:che|chay|chey|shay)[\s,.:!]+/, '')
     .replace(/^(?:please|can you|could you)\s+/, '').trim();
-  return /^(?:(?:tell me |say )?what(?:'s| is) on (?:my|the|this) (?:screen|page)(?: (?:right )?now)?|what am i looking at|what (?:screen|page) am i on|describe (?:my|the|this) (?:screen|page)|what do you see on (?:my|the) screen)$/.test(t);
+  return /^(?:(?:tell me |say )?what(?:'s| is) on (?:my|the|this) (?:screen|page)(?: (?:right )?now)?|what am i looking at|what (?:screen|page) am i on|describe (?:my|the|this) (?:screen|page)|what do you see on (?:my|the) screen|(?:take a )?look at (?:my|the|this) screen(?: now)?|(?:can|do) you see (?:my|the|this) screen(?: now)?|see my screen|what do you see(?: now)?)$/.test(t);
 }
 
 // Asks the reply model only for turns the rules could not read. Cached and capped,

@@ -22,4 +22,13 @@ void main() {
       expect(CheVideoVoiceCommand.parse(q), isNull, reason: q);
     }
   });
+
+  test('music requests are marked for the Music Room; other videos are not (owner, 2026-10-20)', () {
+    for (final m in ['play the song Hello by Adele', 'Play lofi beats video', 'search YouTube for jazz playlist', 'play Miles Davis Kind of Blue album on youtube']) {
+      expect(CheVideoVoiceCommand.parse(m)?.music, isTrue, reason: m);
+    }
+    for (final m in ['search YouTube for Mars landing', 'find videos about black holes', 'play the video SpaceX launch']) {
+      expect(CheVideoVoiceCommand.parse(m)?.music, isFalse, reason: m);
+    }
+  });
 }

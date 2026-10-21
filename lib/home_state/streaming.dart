@@ -3,9 +3,9 @@ part of '../main.dart';
 // Split out of main.dart: _CHEHomeState members (streaming).
 extension _CheHomeStreaming on _CHEHomeState {
   /// Plays the held free sample. If it cannot play, CHE says so on screen and aloud.
-  Future<void> _playPendingVoicePreview() async {
-    final voiceId = _pendingVoicePreviewId;
-    _pendingVoicePreviewId = null;
+  Future<void> _playPendingVoicePreview({String? requestedVoiceId}) async {
+    final voiceId = requestedVoiceId ?? _pendingVoicePreviewId;
+    if (requestedVoiceId == null) _pendingVoicePreviewId = null;
     if (voiceId == null) return;
     final played = await CheVoiceStudioPreview.play(voiceId: voiceId);
     if (played || !mounted) return;
@@ -346,6 +346,7 @@ extension _CheHomeStreaming on _CHEHomeState {
     final complete = StringBuffer();
     _streamMediaUrl = null;
     _streamMediaType = null;
+    _streamUnderstoodAs = null;
 
     await for (final line in response.stream
         .transform(utf8.decoder)
@@ -361,6 +362,7 @@ extension _CheHomeStreaming on _CHEHomeState {
       // "delta" events. Always show and speak the actual question instead
       // of silently discarding it and reporting an empty response.
       if (type == null && data['held_for_owner'] == true) {
+        _streamUnderstoodAs = cheUnderstoodAs(data);
         final question = data['message']?.toString() ?? data['reply']?.toString() ?? '';
         if (question.isNotEmpty) {
           complete.write(question);
@@ -428,6 +430,13 @@ extension _CheHomeStreaming on _CHEHomeState {
       }
 
       if (type == 'done') {
+        _streamUnderstoodAs = cheUnderstoodAs(data);
+        // Only the trusted deterministic trading handlers can request this room.
+        if (data['open_screen'] == 'trading_room' &&
+            const {'che_trading_live', 'che_trading_ledgers', 'che_trading_desk'}.contains(data['source']) &&
+            mounted && !_assistantHubOpen) {
+          _openAssistantHub(tab: 1);
+        }
         // "Preview number three": the reply names a free sample from the provider's own
         // library. It is held here and played by send.dart once CHE has finished saying
         // the reply, so the two never talk over each other.
@@ -441,6 +450,43 @@ extension _CheHomeStreaming on _CHEHomeState {
           // and screen-reader status without starting another spoken turn.
           ScaffoldMessenger.of(context).showSnackBar(cheInstalledSkillReceiptBar(ok));
           unawaited(_statusHaptic(ok ? 3 : 4));
+        }
+        // "Start a meeting with the team about X": the Worker convened a real War Room
+        // meeting; the Meeting Room shows it as it happens (Spatial World MVP 1).
+        final meetingId = data['meeting_id']?.toString().trim() ?? '';
+        if (data['source'] == 'che_meeting_room' && meetingId.isNotEmpty && mounted) {
+          unawaited(cheOpenMeetingRoom(
+            context,
+            client: _agentRuntime,
+            id: meetingId,
+            onSpeak: (text) => speakText(text, record: false),
+            onBackToOffice: () => _goShellTab(2),
+          ));
+        }
+        // "Show me my Alpaca trades": the Alpaca PAPER dashboard opens beside the spoken summary (owner, 2026-10-20).
+        if (data['open_view'] == 'trading_controls' && mounted) {
+          unawaited(Navigator.of(context).push(CheStrategyControlsPage.route(baseUrl: () => cheAgentBaseUrl, headers: () => _authHeaders, onAsk: _runHubPrompt)));
+        }
+        if (data['open_view'] == 'alpaca_paper' && mounted) {
+          unawaited(Navigator.of(context).push(CheAlpacaPaperPage.route(baseUrl: () => cheAgentBaseUrl, headers: () => _authHeaders, onAsk: _runHubPrompt)));
+        }
+        // "Design a wearable robotics prototype…": the Worker made a plan; the Plan Room shows it.
+        final planId = data['plan_id']?.toString().trim() ?? '';
+        if (data['source'] == 'che_project_plan' && planId.isNotEmpty && data['follow_up'] == null && mounted) {
+          unawaited(Navigator.of(context).push(ChePlanRoom.route(
+            load: _agentRuntime.planScene,
+            planId: planId,
+            onSpeak: (text) => speakText(text, record: false),
+          )));
+        }
+        // "Find the closest realistic solution": the Worker ran the lab; the Simulation Lab shows the run.
+        final simId = data['sim_id']?.toString().trim() ?? '';
+        if (data['source'] == 'che_sim_lab' && simId.isNotEmpty && mounted) {
+          unawaited(Navigator.of(context).push(CheSimLabPage.route(
+            load: _agentRuntime.simScene,
+            simId: simId,
+            onSpeak: (text) => speakText(text, record: false),
+          )));
         }
         final mediaUrl = data['media_url']?.toString().trim() ?? '';
         final mediaType = data['media_type']?.toString().trim() ?? '';

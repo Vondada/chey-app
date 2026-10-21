@@ -19,7 +19,7 @@ function memoryStorage(saved = new Map()) {
       if (typeof key === 'object') { for (const [k, v] of Object.entries(key)) saved.set(k, structuredClone(v)); return; }
       saved.set(key, structuredClone(value));
     },
-    delete: async (key) => saved.delete(key),
+    delete: async (key) => (Array.isArray(key) ? key.filter((k) => saved.delete(k)).length : saved.delete(key)),
     list: async ({ prefix = '' } = {}) => new Map([...saved.entries()].filter(([k]) => k.startsWith(prefix)).map(([k, v]) => [k, structuredClone(v)])),
     setAlarm: async () => {},
     deleteAlarm: async () => {},
@@ -47,7 +47,7 @@ const DAY2 = [
   { t: five('2026-10-20T22:00:00Z', 2), o: 20028, h: 20031, l: 20020, c: 20025 },
 ];
 const oneMinute = (bars) => bars.flatMap((b) => minutesOf(b.t, b));
-const feedOf = (bars) => async () => ({ status: 'DELAYED', provider: 'test feed', provider_symbol: 'MNQ=F', contract: 'MNQZ6', candles: oneMinute(bars), latency_s: 600, last_bar_time: bars.at(-1).t, checked_at: new Date().toISOString() });
+const feedOf = (bars) => async () => ({ status: 'LIVE', authenticated: true, subscription_verified: true, provider: 'test feed', provider_symbol: 'MNQ=F', contract: 'MNQZ6', candles: oneMinute(bars), latency_s: 0, last_bar_time: bars.at(-1).t, checked_at: new Date().toISOString() });
 const after = (bars) => Date.parse(bars.at(-1).t) + 6 * 60_000;
 
 test('Yahoo bars: the forming bar and empty bars are never used; 5-minute bars are only complete ones', () => {
@@ -100,7 +100,7 @@ test('forward only: history is never journalled; a new signal enters, exits and 
   assert.equal(sweep.signal.time, DAY2[0].t, 'the signal is the sweep bar, after the start');
   assert.equal(sweep.entry.time, DAY2[1].t, 'filled at the next bar open');
   assert.equal(sweep.exit.reason, 'target');
-  assert.equal(sweep.data.feed.status, 'DELAYED');
+  assert.equal(sweep.data.feed.status, 'LIVE');
   assert.ok(sweep.review.facts.length >= 3);
   assert.ok(sweep.net_pnl > 0);
 });
@@ -338,5 +338,256 @@ test('issue #350 route: the compound question is answered in full from the journ
     }
   } finally {
     globalThis.fetch = realFetch;
+  }
+});
+
+test('comprehension audit: the owner\'s own words for paper results read the journal', () => {
+  for (const q of ['How did my paper trades do today?', "What's my paper trading balance?", 'how are my paper trades doing', 'what is my paper p&l']) {
+    assert.equal(liveIntent(q)?.kind, 'performance', q);
+  }
+});
+
+// Owner strategy learning dashboard: evidence is unique entries, not portfolio copies.
+test('learning cards deduplicate identical any/trend entries and keep every source separate', async () => {
+  const { strategyLearning } = await import('./trading_live.js');
+  const storage = memoryStorage();
+  await setLivePaper(storage, true);
+  await liveTick(storage, { force: true, load: feedOf(DAY1), now: after(DAY1) });
+  await liveTick(storage, { force: true, load: feedOf([...DAY1, ...DAY2]), now: after(DAY2) });
+  const records = await readTrades(storage, (t) => t.environment === 'paper');
+  const sweep = records.filter((t) => t.strategy === 'pdhl-sweep-5m');
+  assert.ok(sweep.length >= 1);
+  const { appendTrades } = await import('./trading_evidence.js');
+  const trend = newPortfolio('pdhl-sweep-5m', 'trend', { contract: 'MNQ', resolution: '5m' });
+  await appendTrades(storage, [{ ...sweep[0], portfolio: trend.key, filter: 'trend', strategy_version: trend.strategy_version }]);
+  const result = await strategyLearning(storage, { now: after(DAY2) });
+  const row = result.strategies.find((r) => r.id === 'pdhl-sweep-5m');
+  assert.equal(row.forward.trades, 1, 'one entry seen by any and trend is one sample');
+  assert.equal(row.raw_records, sweep.length + 1);
+  assert.equal(row.duplicates, sweep.length);
+  assert.equal(row.progress.target, 30);
+  assert.equal(row.live_ready, false);
+  assert.equal(row.milestones.find((m) => m.id === 'owner').status, 'blocked');
+  assert.equal(row.historical, null);
+  assert.equal(row.broker_paper.status, 'not_attributed');
+  assert.equal(row.live_execution.status, 'disabled');
+  assert.equal(result.strategies[0].id, 'ema-pullback-5m');
+  assert.equal(result.strategies[1].id, 'vwap-revert-5m');
+});
+
+test('research archives reproducible 5-minute experiments and never turns replays into paper trades', async () => {
+  const { LIVE_RESEARCH_PREFIX, strategyLearning, liveBacktest } = await import('./trading_live.js');
+  const storage = memoryStorage();
+  const bars = [...DAY1, ...DAY2];
+  const load = async () => ({ status: 'DELAYED', interval: '5m', provider: 'licensed test fixture', provider_symbol: 'MNQ=F', candles: bars });
+  const first = await liveBacktest(storage, { load, now: after(bars) });
+  assert.equal(first.ok, true);
+  assert.match(first.dataset_hash, /^[a-f0-9]{64}$/);
+  assert.equal(first.resolution, '5m');
+  assert.equal(first.target_per_strategy, 30);
+  assert.ok(first.rows.every((r) => r.strategy_version && r.params && r.walk_forward));
+  assert.equal((await readTrades(storage, (t) => t.environment === 'paper')).length, 0);
+  const again = await liveBacktest(storage, { load, now: after(bars) + 1000 });
+  assert.equal(again.id, first.id, 'repeating identical data/config is the same experiment, not new samples');
+  const archives = await storage.list({ prefix: LIVE_RESEARCH_PREFIX });
+  assert.equal(archives.size, 1);
+  const result = await strategyLearning(storage, { now: after(bars) });
+  assert.equal(result.strategies.find((r) => r.id === 'pdhl-sweep-5m').historical.trades, 1);
+  assert.equal(result.strategies.find((r) => r.id === 'pdhl-sweep-5m').forward.trades, 0);
+  assert.equal(result.research.quota_met, false, 'no fabricated outcomes to fill a quota');
+});
+
+test('incomplete minute buckets are not valid 5-minute evidence', () => {
+  const bars = oneMinute(DAY1.slice(0, 2));
+  assert.equal(aggregate(bars.filter((_, i) => i !== 2), 5, Date.parse(DAY1[2].t)).length, 1);
+});
+
+test('30 unique forward samples still cannot enable live execution or imply owner approval', async () => {
+  const { strategyLearning } = await import('./trading_live.js');
+  const { appendTrades } = await import('./trading_evidence.js');
+  const storage = memoryStorage();
+  await setLivePaper(storage, true);
+  await liveTick(storage, { force: true, load: feedOf(DAY1), now: after(DAY1) });
+  await liveTick(storage, { force: true, load: feedOf([...DAY1, ...DAY2]), now: after(DAY2) });
+  const seed = (await readTrades(storage, (t) => t.strategy === 'pdhl-sweep-5m' && t.filter === 'any'))[0];
+  const entries = Array.from({ length: 35 }, (_, i) => {
+    const at = new Date(Date.parse(seed.entry.time) + (i + 1) * 300000).toISOString();
+    return { ...seed, entry: { ...seed.entry, time: at }, exit: { ...seed.exit, time: at } };
+  });
+  await appendTrades(storage, entries);
+  const row = (await strategyLearning(storage, { now: after(DAY2) })).strategies.find((r) => r.id === seed.strategy);
+  assert.equal(row.forward.trades, 36);
+  assert.equal(row.progress.fraction, 1);
+  assert.equal(row.live_ready, false);
+  assert.equal(row.milestones.filter((m) => ['owner', 'risk', 'broker', 'feed'].includes(m.id) && m.status === 'blocked').length, 4);
+});
+
+test('research failure preserves history and never changes a timeframe to meet its target', async () => {
+  const { liveBacktest, LIVE_BACKTEST, LIVE_RESEARCH_PREFIX } = await import('./trading_live.js');
+  const storage = memoryStorage();
+  storage.saved.set(LIVE_BACKTEST, { ok: true, at: '2026-10-19T23:00:00Z', rows: [], data: 'legacy history' });
+  const result = await liveBacktest(storage, { now: after(DAY2), load: async () => ({ status: 'REPLAY', interval: '1m', candles: oneMinute(DAY1) }) });
+  assert.equal(result.ok, false);
+  assert.match(result.error, /no timeframe substitution/);
+  assert.ok([...(await storage.list({ prefix: LIVE_RESEARCH_PREFIX })).values()].some((r) => r.data === 'legacy history'));
+});
+
+test('walk-forward purges trades that carry training or earlier fold exposure into a held-out window', async () => {
+  const { evaluateWalkForward } = await import('./trading_evidence.js');
+  const times = Array.from({ length: 20 }, (_, i) => new Date(Date.parse(DAY1[0].t) + i * 300000).toISOString());
+  const t = { net_pnl: 1, r_net: 1, costs: { spread: 0, slippage: 0, commissions: 0, fees: 0 }, side: 'long' };
+  const result = evaluateWalkForward([
+    { ...t, entry: { time: times[5] }, exit: { time: times[9] } },
+    { ...t, entry: { time: times[9] }, exit: { time: times[12] } },
+    { ...t, entry: { time: times[12] }, exit: { time: times[13] } },
+  ], { barTimes: times, folds: 4, minTrain: 0.4 });
+  assert.equal(result.oos.length, 1);
+  assert.equal(result.oos[0].entry.time, times[12]);
+});
+
+test('learning and daily progress questions read records and never dispatch research or orders', () => {
+  for (const message of ['Read my strategy learning progress and live readiness.', 'Show my daily strategy report.']) assert.equal(liveIntent(message).kind, 'learning');
+});
+
+test('daily research reuse records a current attempt and does not download unchanged history hourly', async () => {
+  const { liveBacktest, researchDue } = await import('./trading_live.js');
+  const storage = memoryStorage();
+  await setLivePaper(storage, true);
+  const bars = [...DAY1, ...DAY2];
+  let loads = 0;
+  const load = async () => { loads++; return { status: 'REPLAY', interval: '5m', provider: 'fixture', provider_symbol: 'MNQ', candles: bars }; };
+  const first = await liveBacktest(storage, { load, now: after(bars) });
+  const later = after(bars) + 86400000;
+  const reused = await researchDue(storage, { load, now: later });
+  assert.equal(reused.id, first.id);
+  assert.equal(reused.reused, true);
+  const skipped = await researchDue(storage, { load, now: later + 3600000 });
+  assert.match(skipped.skipped, /already recorded/);
+  assert.equal(loads, 2);
+  for (const message of ['Replay available history', 'Backtest strategy history', 'Please replay five-minute history.']) assert.equal(liveIntent(message).kind, 'research');
+  for (const message of ["Don't replay available history.", 'Why did you replay available history?', 'Can replaying historical data make money?']) assert.notEqual(liveIntent(message)?.kind, 'research');
+});
+
+test('actual /api/chat reads learning without a model and reports failed replay honestly with a trusted receipt', async () => {
+  const storage = memoryStorage(); let calls = 0;
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => { calls++; return { response: 'I ran 30 winning trades.' }; } } };
+  const state = new CheState({ storage }, env); env.CHE_STATE = { getByName: () => state };
+  const send = (path, body, token = '') => worker.fetch(new Request(`https://che.example${path}`, { method: 'POST', headers: { 'content-type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body) }), env);
+  const token = (await (await send('/api/pair', { code: '123456' })).json()).device_token;
+  const realFetch = globalThis.fetch; globalThis.fetch = async () => new Response('{}', { status: 503 });
+  try {
+    const ask = async (message) => (await (await send('/api/chat', { message }, token)).text()).trim().split('\n').map(JSON.parse);
+    const read = await ask('Show my strategy learning progress and live readiness.');
+    assert.equal(read.at(-1).source, 'che_trading_live');
+    assert.equal(read.at(-1).open_screen, 'trading_room');
+    assert.equal(storage.saved.get('live_paper_backtest'), undefined);
+    const replay = await ask('Replay available history');
+    assert.equal(replay.at(-1).source, 'che_trading_live');
+    assert.equal(replay.at(-1).ok, false);
+    assert.equal(replay.at(-1).execution_receipts[0].status, 'failure');
+    assert.match(replay.filter((r) => r.type === 'delta').map((r) => r.delta).join(''), /could not be verified/);
+    assert.equal(calls, 0);
+  } finally { globalThis.fetch = realFetch; }
+});
+
+test('overlapping research windows share immutable candle/outcome chunks and diagnostics use the real attempt time', async () => {
+  const { liveBacktest, strategyLearning } = await import('./trading_live.js');
+  const storage = memoryStorage(); const bars = [...DAY1, ...DAY2];
+  const feed = async () => ({ status: 'REPLAY', interval: '5m', provider: 'fixture', provider_symbol: 'MNQ', candles: bars });
+  await liveBacktest(storage, { load: feed, now: after(bars) });
+  const first = await storage.list({ prefix: 'live_research_data:' });
+  const later = after(bars) + 86400000;
+  await liveBacktest(storage, { load: feed, now: later });
+  const learning = await strategyLearning(storage, { now: later });
+  assert.equal(learning.research.last_attempt, new Date(later).toISOString());
+  assert.equal(learning.research.reused, true);
+  assert.equal((await storage.list({ prefix: 'live_research_data:' })).size, first.size);
+});
+
+test('incremental replay matches a full replay exactly and never double-counts carried outcomes', async () => {
+  const { liveBacktest } = await import('./trading_live.js');
+  const storage = memoryStorage();
+  const firstBars = [...DAY1, ...DAY2.slice(0, 1)];
+  const bars = [...DAY1, ...DAY2];
+  const load = (rows) => async () => ({ status: 'REPLAY', interval: '5m', provider: 'fixture', provider_symbol: 'MNQ', candles: rows });
+  await liveBacktest(storage, { load: load(firstBars), now: after(firstBars) });
+  const incremental = await liveBacktest(storage, { load: load(bars), now: after(bars) });
+  const full = await liveBacktest(memoryStorage(), { load: load(bars), now: after(bars) });
+  assert.equal(incremental.ok, true);
+  assert.equal(incremental.incremental, true);
+  assert.deepEqual(incremental.rows.map((r) => [r.strategy_version, r.stats]), full.rows.map((r) => [r.strategy_version, r.stats]));
+  assert.deepEqual(incremental.dataset_refs, full.dataset_refs);
+});
+
+test('research retention keeps every experiment record but only the newest datasets, and bounds logs', async () => {
+  const { liveBacktest, pruneResearch, strategyLearning } = await import('./trading_live.js');
+  const storage = memoryStorage();
+  const load = (rows) => async () => ({ status: 'REPLAY', interval: '5m', provider: 'fixture', provider_symbol: 'MNQ', candles: rows });
+  const firstBars = [...DAY1, ...DAY2.slice(0, 1)];
+  const bars = [...DAY1, ...DAY2];
+  const now = after(bars);
+  const first = await liveBacktest(storage, { load: load(firstBars), now: after(firstBars) });
+  const second = await liveBacktest(storage, { load: load(bars), now });
+  for (let i = 0; i < 55; i++) storage.saved.set(`live_research_run:failed:2026-10-${String(1 + (i % 9)).padStart(2, '0')}T00:${String(i).padStart(2, '0')}:00.000Z`, { ok: false, error: 'offline' });
+  storage.saved.set('live_research_seen:v-old:abc', { first_seen: new Date(now - 100 * 86400000).toISOString(), dataset_hash: 'x' });
+  storage.saved.set('live_research_seen:v-new:def', { first_seen: new Date(now - 86400000).toISOString(), dataset_hash: 'y' });
+  storage.saved.set('live_research_budget:2026-09-01', ['old']);
+  const report = await pruneResearch(storage, { now, keep: 1 });
+  assert.equal(report.pruned_experiments, 1);
+  // The older experiment's metadata and results survive; only its bulk data is released.
+  const archived = storage.saved.get(`live_research_run:${first.id}`);
+  assert.equal(archived.id, first.id);
+  assert.equal(archived.dataset_hash, first.dataset_hash);
+  assert.equal(archived.dataset_retained, false);
+  assert.deepEqual(archived.dataset_refs, []);
+  assert.deepEqual(archived.rows.map((r) => [r.strategy_version, r.stats]), first.rows.map((r) => [r.strategy_version, r.stats]));
+  assert.ok(archived.rows.every((r) => r.checkpoint_ref === null && r.outcome_index_ref === null));
+  // The newest experiment is fully intact and nothing unreferenced is left behind.
+  const kept = storage.saved.get(`live_research_run:${second.id}`);
+  assert.deepEqual(kept.dataset_refs, second.dataset_refs);
+  for (const ref of kept.dataset_refs) assert.ok(storage.saved.has(ref));
+  for (const r of kept.rows) { assert.ok(storage.saved.has(r.checkpoint_ref)); for (const ref of storage.saved.get(r.outcome_index_ref)) assert.ok(storage.saved.has(ref)); }
+  assert.deepEqual([...(await storage.list({ prefix: 'live_research_data:' })).keys()].sort(), [...new Set(second.dataset_refs)].sort());
+  assert.ok([...(await storage.list({ prefix: 'live_research_checkpoint:' })).keys()].every((k) => k.startsWith(`live_research_checkpoint:${second.id}:`)));
+  assert.equal((await storage.list({ prefix: 'live_research_run:failed:' })).size, 50);
+  assert.equal(storage.saved.has('live_research_seen:v-old:abc'), false);
+  assert.equal(storage.saved.has('live_research_seen:v-new:def'), true);
+  assert.equal(storage.saved.has('live_research_budget:2026-09-01'), false);
+  // Results and diagnostics still read from the retained records.
+  const learning = await strategyLearning(storage, { now });
+  assert.equal(learning.research.id, second.id);
+  // Reusing the pruned dataset again restores its metadata without re-downloading or re-running.
+  const again = await liveBacktest(storage, { load: load(firstBars), now: now + 86400000 });
+  assert.equal(again.id, first.id);
+  assert.equal(again.reused, true);
+});
+
+test('the deploy probe follows the daily research attempt, not the archived experiment time', async () => {
+  const storage = memoryStorage();
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1' };
+  const state = new CheState({ storage }, env);
+  await setLivePaper(storage, true);
+  // Today's replay reused a three-day-old archive: the attempt is current, the archive is not.
+  storage.saved.set('live_paper_backtest', { id: 'archived', ok: true, at: new Date(Date.now() - 3 * 86400000).toISOString(), rows: [] });
+  storage.saved.set('live_research_attempt', { at: new Date().toISOString(), status: 'complete', experiment_id: 'archived', reused: true });
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response('{}', { status: 503 });
+  try {
+    const probe = await state.tradingProbe();
+    assert.match(probe.research.skipped, /already recorded/);
+    assert.equal(storage.saved.get('live_research_lock'), undefined, 'no historical replay was dispatched');
+    assert.equal(storage.saved.get('live_paper_backtest').id, 'archived');
+  } finally { globalThis.fetch = realFetch; }
+});
+
+test('delayed, unverified and stale feeds cannot create new forward-paper entries', async () => {
+  for (const override of [{ status: 'DELAYED' }, { status: 'LIVE', authenticated: false }, { status: 'LIVE', subscription_verified: false }, { status: 'LIVE', latency_s: 100 }, { status: 'STALE' }]) {
+    const storage = memoryStorage(); await setLivePaper(storage, true);
+    const load = (bars) => async () => ({ ...await feedOf(bars)(), ...override });
+    await liveTick(storage, { force: true, load: load(DAY1), now: after(DAY1) });
+    const run = await liveTick(storage, { force: true, load: load([...DAY1, ...DAY2]), now: after(DAY2) });
+    assert.equal(run.entries_allowed, false);
+    assert.equal((await readTrades(storage)).length, 0);
+    assert.match(run.entry_blocker, /real-time CME/);
   }
 });

@@ -7,12 +7,14 @@ const WAKE = /^\s*(?:(?:hey\s+)?(?:che|chay|chey)[,:]?\s+)?/i;
 // Start and stop are commands only: "Don't stop paper trading" and "Why did you stop paper
 // trading?" change nothing (review of #339). They count only when the turn opens with them.
 const COMMANDS = [
+  ['research', /^(?:please\s+)?(?:(?:can|could|would)\s+you\s+)?(?:replay|backtest|research)\s+(?:(?:the|your|available|historical|strategy|five[- ]minute|5[- ]minute)\s+)*(?:history|historical data|strategy history)(?:\s+(?:now|please))?[.!?]*$/i],
   ['stop', /^(?:please\s+)?(?:stop|pause|turn\s+off|end|halt)\s+(?:the\s+|your\s+)?paper[\s-]*trad\w*/i],
   ['start', /^(?:please\s+)?(?:start|begin|turn\s+on|resume|run|launch)\s+(?:the\s+|your\s+)?paper[\s-]*trad\w*/i],
 ];
 // Every read needs trading words of its own. One question can ask several (issue #350), and each
 // one asked is answered, in the order asked.
 const READS = [
+  ['learning', /\b(?:strategy learning|live readiness|(?:strategy |learning )progress|daily strategy report|how much have you learned today)\b/i],
   ['why', /\b(?:explain|why)\b[\s\S]{0,40}\b(?:that|the\s+last|last|this|your\s+last)\s+trade\b[\s\S]{0,25}\b(?:lost|lose|won|win|worked|failed)\b|\bwhy\s+did\s+(?:that|the\s+last|your\s+last)\s+trade\s+(?:lose|win|fail|work)\b|\bexplain\s+(?:the\s+|your\s+)?last\s+(?:losing|winning)\s+trade\b/i],
   ['chart', /\bshow\b[\s\S]{0,25}\bchart\b[\s\S]{0,30}\b(?:you\s+)?(?:entered|entry|exited)\b|\bshow\s+me\s+where\s+you\s+(?:entered|exited)\b/i],
   ['positions', /\b(?:your|my|paper)\s+(?:current\s+|open\s+)?(?:paper\s+)?positions?\b|\bcurrent\s+(?:paper\s+)?positions?\b/i],
@@ -21,7 +23,8 @@ const READS = [
   ['compare', /\bcompare\s+(?:all\s+)?your\s+(?:trading\s+|paper\s+)?strateg|\bcompare\s+(?:the\s+)?(?:trading|paper)\s+strateg/i],
   ['best', /\bwhich\s+(?:ict|smart\s+money|trading|paper)\s+strateg\w*\b[\s\S]{0,25}\b(?:best|performing|winning|working)\b|\bwhich\s+of\s+your\s+(?:trading\s+)?strateg\w*\b[\s\S]{0,25}\b(?:best|performing|winning|working)\b/i],
   ['trades', /\b(?:show|list|read|tell)\s+me\s+(?:every|all|the|your)?\s*(?:live\s+)?(?:(?:nq|mnq|paper)\s+)+trades?\b|\bevery\s+trade\s+you\s+(?:made|took|placed)\b|\b(?:show|list|read)\s+me\s+(?:all\s+)?(?:the\s+)?trades\s+you\s+(?:made|took|placed)\b/i],
-  ['performance', /\btrading\s+performance\b|\bread\s+me\s+your\s+(?:trading\s+|paper\s+)?(?:results|performance)\b|\bhow\s+did\s+your\s+paper\s+trades?\s+do\b/i],
+  // "How did my paper trades do today?", "what's my paper trading balance?" (comprehension audit).
+  ['performance', /\btrading\s+performance\b|\bread\s+me\s+your\s+(?:trading\s+|paper\s+)?(?:results|performance)\b|\bhow\s+(?:did|are|have)\s+(?:your|my|the)\s+paper\s+trades?\s+(?:do|doing|done|going|gone)\b|\bpaper[\s-]*trad\w*\s+(?:balance|results|profit|p\s*&\s*l|pnl)\b|\bpaper\s+(?:balance|p\s*&\s*l|pnl)\b/i],
   ['evidence', /\b(?:show|read)\b[\s\S]{0,15}\btrading\s+evidence\b/i],
   ['open', /^(?:please\s+)?open\s+(?:up\s+)?(?:your\s+|the\s+)?trading\s+room\b/i],
   // "Is paper trading still on?" reads the switch and never flips it. "Is paper trading on NQ
@@ -66,6 +69,7 @@ export function liveIntent(message) {
   if (!command && LATER_COMMAND.test(asked)) return null;
   if (!command && ANALYSIS.test(text) && FEED_DETAIL.test(text)) return { kind: 'analysis' };
   if (OTHER_TOPIC.test(asked)) return null;
+  if (/^(?:please\s+)?which strategy is performing best[?.!]*$/i.test(asked)) return { kind: 'learning' };
   // A long turn needs trading words of its own: "my positions on the church committee … help me write
   // her a note" is not about paper trades (review of #352). Short questions keep the plain reads.
   if (!command && text.length > 160 && !TRADING_WORDS.test(text) && !/\btrad(?:e|es|ing)\b/i.test(text)) return null;
@@ -138,6 +142,7 @@ export function marketRead(bars = []) {
 
 /** The reply for one command, from the dashboard data. `extra.started` etc. come from the route. */
 export function liveReply(kind, d, extra = {}) {
+  if (kind === 'learning') return [d.learning?.daily_report || 'No strategy learning report is available yet.', ...(d.learning?.strategies || []).map((r) => `${r.name}: ${r.forward.trades} unique forward trades, ${r.forward.wins} wins, ${r.forward.losses} losses, expectancy ${r.forward.expectancy_r} R, net ${money(r.forward.net_pnl)}. Next: ${r.next_milestone}.`)].join(' ');
   const t = d.totals;
   const head = 'Paper trading only; no real money and no broker orders.';
   switch (kind) {

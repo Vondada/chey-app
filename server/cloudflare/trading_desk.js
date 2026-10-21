@@ -8,7 +8,9 @@
 //          after the owner says "take the trade" (owner rule: anything that
 //          costs money is confirmed first).
 
+import { controlIntent } from './trading_controls.js';
 import { placeBracket, tick } from './broker_tradovate.js';
+import { withoutProhibitions } from './owner_action_gate.js';
 
 const DESK = 'trading_desk';
 const ALERT_HOURS = 20; // a daily-bar entry is good until the next session
@@ -141,6 +143,11 @@ export function deskIntent(message) {
   if (placeIt) return placeIt[1] ? { kind: 'take', place: true, live: false } : { kind: 'place_unconfirmed' };
   // A no to that order. With nothing waiting it is an ordinary "no" and goes on to its own route.
   if (/^\s*(?:no|nope|no thanks|no thank you|don't|dont|do not)(?:[,!.]?\s+(?:don't|dont|do not)\s+(?:place|send)\s+it)?[\s.!]*$|^\s*(?:no[,!.]?\s+)?(?:don't|dont|do not)\s+(?:place|send)\s+(?:it|that|the order|that order)[\s.!]*$|^\s*(?:no[,!.]?\s+)?(?:drop|cancel)\s+(?:it|that order|the order)[\s.!]*$/.test(text)) return { kind: 'stock_no' };
+  // Strategy Control Center words: pause, limits, Emergency Stop, skip reasons (trading_controls.js).
+  const control = controlIntent(message);
+  if (control) return control;
+  // "Show me my Alpaca trades", "How is my Alpaca paper account doing?": the Alpaca PAPER dashboard (owner, 2026-10-20).
+  if (/\b(?:what|which|show|list|read|tell me|check|any|how|open|see|watch|pull up|bring up)\b[\s\S]{0,40}\balpaca\b[\s\S]{0,25}\b(?:trades?|fills?|positions?|account|portfolio|dashboard|equity|p\s*&\s*l|pnl|performance|executions?)\b/.test(text)) return { kind: 'alpaca_dashboard' };
   if (/\b(?:what|which|show|list|read|tell me|check|any)\b[\s\S]{0,30}\b(?:alpaca(?:\s+paper)?|paper)\s+orders?\b|^\s*(?:my\s+)?alpaca(?:\s+paper)?\s+orders\s*[?.!]*$|\b(?:did|has)\b[\s\S]{0,25}\b(?:alpaca(?:\s+paper)?|paper)\s+orders?\b[\s\S]{0,20}\bfill/.test(text)) return { kind: 'alpaca_orders' };
   // "What do I need for Tradovate?", "Tradovate steps": Tradovate's own requirements, read as a list.
   if (/\b(?:what|which)\b[\s\S]{0,30}\b(?:need|required|requirements?|steps?|prerequisites?|blocking|missing)\b[\s\S]{0,30}\b(?:tradovate|ninja\s?trader)\b|\b(?:tradovate|ninja\s?trader)(?:\s+api)?\s+(?:steps|requirements|prerequisites)\b|\bhow\s+(?:do|can)\s+i\s+get\b[\s\S]{0,20}\b(?:tradovate|ninja\s?trader)\b[\s\S]{0,15}\bapi\b/.test(text)) return { kind: 'tradovate_steps' };
@@ -154,6 +161,13 @@ export function deskIntent(message) {
   // "Connect Alpaca", "how do I connect alpaca?": the sentence ends at Alpaca, so it means the broker.
   if (/\b(?:connect|link|set up|setup|hook up)\b[\s\S]{0,20}\balpaca[\s?.!]*$/.test(text)) return { kind: 'alpaca_setup' };
   if (/\b(?:connect|link|sign in to|log in to|hook up)\b[\s\S]{0,30}\b(?:ninja\s?trader|tradovate|trading account|funded account|broker)\b/.test(text)) return { kind: 'connect' };
+  // "Switch to paper", "go back to paper", "go live", "turn on live trading": the same switches, said
+  // shorter (comprehension audit). "Don't go live yet" asks nothing; going live still takes the confirmation.
+  const asked = withoutProhibitions(text);
+  if (/^\s*(?:(?:hey\s+)?(?:che|chey|chay)[,\s]+)?(?:please\s+|ok\s+|okay\s+|now\s+)?(?:switch|change|go|flip|move)(?:\s+(?:back|over))*\s+to\s+paper(?:\s+(?:trading|mode|account))?(?:\s+(?:now|please))?[\s.!]*$/.test(asked)) return { kind: 'mode', mode: 'paper' };
+  if (/^\s*(?:(?:hey\s+)?(?:che|chey|chay)[,\s]+)?(?:please\s+|ok\s+|okay\s+|now\s+|let's\s+)?(?:go\s+live|turn\s+on\s+live(?:\s+(?:trading|mode))?|(?:start|enable)\s+live\s+trading|switch\s+to\s+live)\b/.test(asked)) return { kind: 'mode', mode: 'live' };
+  // "Is live trading on?", "are we trading live or paper right now?": the mode, read only.
+  if (/\bis\s+live\s+trading\s+(?:on|off|enabled|active|turned\s+on)\b|\b(?:are\s+we|am\s+i|are\s+you)\s+(?:trading\s+)?(?:live|on\s+live|paper|on\s+paper)(?:\s+or\s+(?:on\s+)?(?:paper|live|sim))?(?:\s+(?:trading|right\s+now|now|today))*\s*[?.!]*$/.test(text)) return { kind: 'status' };
   const sw = /\b(?:switch|change|go|flip|move|put|set)\b[\s\S]{0,25}\b(?:to|over to|on|into)\b/.test(text);
   if (sw && /\b(?:live|real)(?:\s+money)?\s+(?:trading|account|mode)\b/.test(text)) return { kind: 'mode', mode: 'live' };
   if (sw && /\b(?:sim|simulated|simulation|demo|practice)\s+(?:trading|account|mode)\b/.test(text)) return { kind: 'mode', mode: 'sim' };

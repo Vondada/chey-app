@@ -303,3 +303,16 @@ test('POST /api/job/cancel still cancels only a queued job and keeps the record,
   assert.equal(missing.status, 404);
   assert.equal((await missing.json()).detail, 'Background job not found.');
 });
+
+
+test('letter-only hexadecimal job prefixes work by typing, voice, and the command', async () => {
+  for (const words of ['cancel coding job abcdefab', 'Chey please cancel job ABCD EFAB', '/che-cancel-job abcdefab']) {
+    const che = await owner();
+    const id = 'abcdefab-1234-4567-890a-123456789abc';
+    che.seed([fakeJob({ id }), realJob()]);
+    const out = await che.say(words);
+    assert.equal(out.route, 'che_coding_cancel', words);
+    assert.equal(che.job(id).status, 'cancelled', words);
+    assert.equal(che.job(REAL).status, 'queued');
+  }
+});

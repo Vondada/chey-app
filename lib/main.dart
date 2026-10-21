@@ -27,6 +27,12 @@ import 'package:url_launcher/url_launcher.dart';
 import 'che_job_activity_banner.dart';
 import 'che_mic_supervisor.dart';
 import 'che_ui/che_screen_awareness.dart';
+import 'che_ui/che_screen_capture.dart';
+import 'world/che_meeting_room.dart';
+import 'world/che_meetings.dart';
+import 'world/che_plan_room.dart';
+import 'world/che_scene_model.dart';
+import 'world/che_sim_lab.dart';
 import 'che_ui/che_ui_voice_command.dart';
 import 'che_native_voice.dart';
 import 'che_edge_voice.dart';
@@ -48,6 +54,7 @@ import 'che_account_bridge.dart';
 import 'che_realtime_voice.dart';
 import 'che_wake_word.dart';
 import 'che_wake_match.dart';
+import 'che_voice_health.dart';
 import 'che_voice_state.dart';
 import 'che_local_voice_loop.dart';
 import 'che_cloud_voice_picker.dart';
@@ -79,6 +86,7 @@ import 'che_ui/che_plugins.dart'
     show ChePluginOfferCard, ChePluginRegistry, ChePluginsScreen, chePluginAuthoringGuide;
 import 'che_ui/che_theme.dart' as kit;
 import 'che_ui/che_ui_preferences.dart';
+import 'che_ui/che_understood_as.dart' show CheUnderstoodAs, cheUnderstoodAs;
 import 'che_ui/che_transitions.dart';
 import 'che_ui/che_widgets.dart' as kit show CheBackground;
 import 'che_ui/che_agents.dart' show CheAgent, CheAgentStatusLabel;
@@ -106,6 +114,9 @@ import 'self_update/che_update_screen.dart';
 import 'self_update/che_update_card.dart';
 import 'self_update/che_self_update_intent.dart';
 import 'rooms/che_markets_room.dart';
+import 'rooms/che_alpaca_paper.dart';
+import 'rooms/che_strategy_controls.dart';
+import 'che_ui/che_help.dart';
 import 'rooms/che_store_room.dart';
 import 'rooms/che_pipeline_room.dart';
 import 'rooms/che_creator_studio.dart';
@@ -225,10 +236,11 @@ class _CHEAppState extends State<CHEApp> {
           themeMode: _ui.themeMode,
           builder: (context, child) {
             final mq = MediaQuery.of(context);
-            return MediaQuery(
+            // "Look at my screen" captures from here: every page, sheet and dialog.
+            return CheScreenCapture.wrap(MediaQuery(
               data: mq.copyWith(textScaler: TextScaler.linear(_ui.textScale)),
               child: child ?? const SizedBox.shrink(),
-            );
+            ));
           },
           home: const CHEHome(),
         );
@@ -453,6 +465,10 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   CheRealtimeVoiceEngine? _realtimeVoice;
   CheWakeWordEngine? _porcupineWake;
   bool _realtimeConnecting = false;
+  // The owner tapped the mic or Stop while live voice was still connecting.
+  bool _realtimeCancelRequested = false;
+  // The iPhone reported that microphone or speech permission is off.
+  bool _micPermissionDenied = false;
   bool _wakeListenerStarting = false;
 
   // Unread INCOMING mailbox messages (badge on the Chat mailbox icon).
@@ -522,7 +538,24 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
     return CheOrbState.awake;
   }
 
+  /// The microphone's real owner and wake-listener state (che_voice_health.dart).
+  CheVoiceHealth get _voiceHealth => CheVoiceHealth(
+        handsFree: CheUiPreferences.instance.handsFreeWake,
+        sleeping: cheSleeping,
+        porcupineRunning: _porcupineWake?.running == true,
+        nativeActive: _nativeIosVoiceActive,
+        speechListening: speech.isListening,
+        realtimeConnected: _realtimeVoice?.connected == true,
+        realtimeConnecting: _realtimeConnecting,
+        permissionDenied: _micPermissionDenied,
+        lastFailure: _localVoice.lastMicFailure,
+      );
+
   void _stopReply() {
+    if (_realtimeConnecting) {
+      // Stop works during a stalled connection too.
+      unawaited(toggleListening());
+    }
     if (!_isSending) return;
     HapticFeedback.lightImpact();
     setState(() => _stopRequested = true);
@@ -909,6 +942,8 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   Map<String, String>? _pendingAttachment;
   String? _streamMediaUrl;
   String? _streamMediaType;
+  // How CHE read a held or multi-step turn (issue #345), shown quietly under the reply.
+  String? _streamUnderstoodAs;
   final ImagePicker _imagePicker = ImagePicker();
 
   List<String> savedMemories = [];
@@ -1448,25 +1483,31 @@ OWNER AGENCY
           baseUrl: cheAgentBaseUrl,
           onSpeak: (text) => speakText(text, record: false, readOnDemand: true),
         ),
-        Semantics(
-          liveRegion: true,
-          label: _statusBanner,
-          child: Container(
-            width: double.infinity,
-            color: const Color(0xFF102D29),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-            child: Text(
-              _statusBanner,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: 13,
-                height: 1.15,
-                fontWeight: FontWeight.w600,
-                color: Colors.white,
+        Container(
+          width: double.infinity,
+          color: const Color(0xFF102D29),
+          padding: const EdgeInsets.only(left: 12),
+          child: Row(children: [
+            Expanded(
+              child: Semantics(
+                liveRegion: true,
+                label: _statusBanner,
+                child: Text(
+                  _statusBanner,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    height: 1.15,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white,
+                  ),
+                ),
               ),
             ),
-          ),
+            // Universal help: what the controls on this screen do (che_ui/che_help.dart).
+            const CheHelpButton(color: Colors.white, dense: true),
+          ]),
         ),
         if (_actionApprovals.isNotEmpty)
           ConstrainedBox(
@@ -1592,6 +1633,17 @@ OWNER AGENCY
                     ),
                 ],
               ),
+            ),
+          ),
+        // What the microphone is really doing, from the engine flags (muted, never spoken).
+        if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 2, 16, 2),
+            child: Semantics(
+              liveRegion: false,
+              label: 'Voice status: ${_voiceHealth.wakeStatus}',
+              excludeSemantics: true,
+              child: Text(_voiceHealth.wakeStatus, textAlign: TextAlign.center, style: const TextStyle(fontSize: 14, color: Colors.white60)),
             ),
           ),
         SafeArea(
@@ -2333,6 +2385,7 @@ OWNER AGENCY
                   icon: const Icon(Icons.add_rounded),
                   onPressed: _isSending ? null : _homeNewChat,
                 ),
+                const CheHelpButton(),
                 IconButton(
                   tooltip: 'Mailbox and Flagstaff',
                   icon: _mailboxUnread > 0

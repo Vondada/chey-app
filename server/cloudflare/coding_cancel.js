@@ -52,7 +52,7 @@ function idFrom(words) {
   const t = String(words || '').toLowerCase().replace(/^(?:number|id|#)\s*/, '').replace(/^#/, '').trim();
   if (!/^[0-9a-f][0-9a-f\s-]*$/.test(t)) return '';
   const id = t.replace(/[\s-]+/g, '');
-  return id.length >= 8 && id.length <= 32 && /\d/.test(id) ? id : '';
+  return id.length >= 8 && id.length <= 32 ? id : '';
 }
 
 const VERB = '(?:cancel|call off|abort|scrap|kill|stop)';

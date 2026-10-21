@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:chey/rooms/che_live_paper.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -68,5 +69,37 @@ void main() {
     await tester.pumpAndSettle();
     expect(jsonDecode(posted.single)['action'], 'start');
     expect(find.text('Paper trading is on.'), findsOneWidget);
+  });
+
+  testWidgets('replaying history speaks its actual result with a result haptic, and opening stays silent', (tester) async {
+    final read = <String>[];
+    final haptics = <String>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      if (call.method == 'HapticFeedback.vibrate') haptics.add('${call.arguments}');
+      return null;
+    });
+    addTearDown(() => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, null));
+    tester.view.physicalSize = const Size(440, 2400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    var replay = <String, dynamic>{'ok': true, 'id': 'exp-1', 'reused': true};
+    final client = MockClient((r) async {
+      if (r.method == 'POST') return http.Response(jsonEncode(replay), 200);
+      return http.Response(jsonEncode({...dashboard(), 'learning': {'daily_report': 'Live trading remains disabled.', 'research': {}, 'strategies': []}}), 200);
+    });
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: SingleChildScrollView(child: CheLivePaperPanel(baseUrl: () => 'https://che.test', headers: () => {}, onAsk: (_) {}, onRead: read.add, client: client, refresh: const Duration(hours: 1))))));
+    await tester.pumpAndSettle();
+    expect(read, isEmpty, reason: 'opening the Trading Room is silent');
+    await tester.tap(find.text('Replay available history'));
+    await tester.pumpAndSettle();
+    expect(read.single, contains('reused the archived experiment'));
+    expect(find.textContaining('reused the archived experiment'), findsOneWidget);
+    expect(haptics.single, 'HapticFeedbackType.mediumImpact');
+    replay = {'ok': false, 'error': 'no history'};
+    await tester.tap(find.text('Replay available history'));
+    await tester.pumpAndSettle();
+    expect(read.last, 'Research not completed: no history');
+    expect(haptics.last, 'HapticFeedbackType.heavyImpact');
   });
 }

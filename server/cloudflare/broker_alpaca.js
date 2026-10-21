@@ -8,8 +8,11 @@
 // the owner's own request each time, and CHE reports only what Alpaca's receipt says.
 
 import { setStoredKeys, storedKeys } from './resilience.js';
+import { ManagedMarketStream, marketBar } from './market_feed.js';
 
 export const ALPACA_PAPER = 'https://paper-api.alpaca.markets';
+// Alpaca's market-data host: read only (bars), never orders. The same paper key pair reads it.
+export const ALPACA_DATA = 'https://data.alpaca.markets';
 export const ALPACA_KEY_ENV = 'CHE_ALPACA_PAPER_KEY_ID';
 export const ALPACA_SECRET_ENV = 'CHE_ALPACA_PAPER_SECRET';
 const ORDERS = 'alpaca_paper_orders';
@@ -28,9 +31,10 @@ export function liveKeyProblem(id) {
 }
 
 // One request to the paper host. The answer says what happened; it never throws.
-async function call(keys, path, { method = 'GET', body = null, fetcher = fetch } = {}) {
-  const url = new URL(path, ALPACA_PAPER);
-  if (url.origin !== ALPACA_PAPER) return { ok: false, state: 'refused', error: 'CHE sends Alpaca requests to the paper host only.' };
+async function call(keys, path, { method = 'GET', body = null, fetcher = fetch, host = ALPACA_PAPER } = {}) {
+  const url = new URL(path, host);
+  // Orders go to the paper host only; the data host is read for bars with GET and nothing else.
+  if (!(url.origin === ALPACA_PAPER || (url.origin === ALPACA_DATA && method === 'GET'))) return { ok: false, state: 'refused', error: 'CHE sends Alpaca requests to the paper host only.' };
   let response;
   try {
     response = await fetcher(url.toString(), {
@@ -146,7 +150,7 @@ export async function alpacaPaperOrders(env, { limit = 20, fetcher = fetch } = {
  * refuses it before the network when its own journal already holds it. Option orders are
  * refused here until the owner's paper options level is wired in.
  */
-export async function placeAlpacaPaperOrder(env, storage, order = {}, { fetcher = fetch, now = Date.now() } = {}) {
+export async function placeAlpacaPaperOrder(env, storage, order = {}, { fetcher = fetch, now = Date.now(), guard = null } = {}) {
   const keys = alpacaKeys(env);
   if (!keys) return { ok: false, detail: 'Alpaca paper is not set up yet, sir, so no order was sent.' };
   const live = liveKeyProblem(keys.id);
@@ -166,6 +170,12 @@ export async function placeAlpacaPaperOrder(env, storage, order = {}, { fetcher 
   const journal = (await storage.get(ORDERS).catch(() => null)) || [];
   const earlier = journal.find((r) => r.client_order_id === clientId);
   if (earlier) return { ok: true, repeated: true, receipt: earlier };
+  // The owner's Strategy Control Center limits (trading_controls.js stockOrderProblem), checked before the network.
+  if (guard) {
+    const buyingPower = type === 'limit' && side === 'buy' ? money((await call(keys, '/v2/account', { fetcher })).data?.buying_power) : null;
+    const problem = await guard({ symbol, qty, side, type, limit_price: limit }, { journal, buyingPower, now });
+    if (problem) return { ok: false, blocked: true, detail: problem };
+  }
   const answer = await call(keys, '/v2/orders', {
     method: 'POST',
     fetcher,
@@ -187,4 +197,289 @@ export async function placeAlpacaPaperOrder(env, storage, order = {}, { fetcher 
   const made = { ...receipt(answer.data), recorded_at: new Date(now).toISOString() };
   await storage.put(ORDERS, [...journal, made].slice(-50));
   return { ok: true, receipt: made };
+}
+
+// Official market-data endpoints are distinct from the PAPER order host; no live order URL is added.
+const STOCK_DATA = ALPACA_DATA;
+export const ALPACA_STOCK_FEEDS = Object.freeze({ iex: 'IEX single-exchange coverage; not consolidated SIP/NBBO', sip: 'Consolidated SIP coverage', delayed_sip: 'SIP delayed by 15 minutes; not real-time' });
+const stockSymbol = (s) => /^[A-Z]{1,5}(?:\.[A-Z])?$/.test(s);
+
+export class AlpacaStockStream extends ManagedMarketStream {
+  provider = 'Alpaca stock data';
+  async start({ keys, symbols, feed = 'iex' }) {
+    if (!keys?.id || !keys?.secret || liveKeyProblem(keys.id)) throw new Error('Existing Alpaca PAPER keys required');
+    if (!ALPACA_STOCK_FEEDS[feed] || !Array.isArray(symbols) || !symbols.length || symbols.length > 10 || !symbols.every(stockSymbol)) throw new Error('Unsupported symbols or stock data feed');
+    this.feed = feed; this.symbols = [...new Set(symbols)].sort();
+    await this.connect(`wss://stream.data.alpaca.markets/v2/${feed}`, { keys, symbols: this.symbols, feed });
+  }
+  reset() { super.reset(); this.authenticated = false; this.subscription = false; this.authSent = false; this.quotes = {}; this.bars = {}; }
+  opened(config) { if (!this.authSent) { this.authSent = true; this.send(JSON.stringify({ action: 'auth', key: config.keys.id, secret: config.keys.secret })); } }
+  heartbeat() {
+    if (this.authenticated && this.now() - (this.lastBeat || 0) >= 15000) {
+      this.lastBeat = this.now(); this.send(JSON.stringify({ action: 'subscribe', quotes: this.symbols, bars: this.symbols, updatedBars: this.symbols, trades: this.symbols }));
+    }
+  }
+  async process(text, config) {
+    for (const m of JSON.parse(text)) {
+      if (m.T === 'error') { this.refuse(m.code); continue; }
+      if (m.T === 'success' && m.msg === 'connected') this.opened(config);
+      if (m.T === 'success' && m.msg === 'authenticated') {
+        this.authenticated = true; this.retry = 0;
+        this.send(JSON.stringify({ action: 'subscribe', quotes: config.symbols, bars: config.symbols, updatedBars: config.symbols, trades: config.symbols }));
+      }
+      if (!this.authenticated) continue;
+      if (m.T === 'subscription') this.subscription = config.symbols.every((s) => m.quotes?.includes(s) && m.bars?.includes(s));
+      if (!config.symbols.includes(m.S)) continue;
+      const time = Date.parse(m.t);
+      if (!Number.isFinite(time) || time > this.now() + 5000) continue;
+      if (m.T === 'q' && [m.bp, m.ap].every(Number.isFinite) && m.bp <= m.ap && time >= (Date.parse(this.quotes[m.S]?.t) || 0)) {
+        this.quotes[m.S] = { t: new Date(time).toISOString(), bid: m.bp, ask: m.ap };
+        this.emit({ type: 'quote', symbol: m.S, feed: config.feed, quote: this.quotes[m.S] });
+      }
+      if (m.T === 'b' || m.T === 'u') {
+        const bar = marketBar({ t: m.t, o: m.o, h: m.h, l: m.l, c: m.c, v: m.v });
+        if (bar && time % 60000 === 0 && time + 60000 <= this.now()) {
+          const bars = new Map((this.bars[m.S] || []).map((b) => [b.t, b])); bars.set(bar.t, bar);
+          this.bars[m.S] = [...bars.values()].sort((a, b) => a.t.localeCompare(b.t)).slice(-400);
+          this.emit({ type: 'bar', symbol: m.S, feed: config.feed, bar });
+        }
+      }
+    }
+  }
+  snapshot() {
+    const oldest = Math.min(...(this.symbols || []).map((s) => Date.parse(this.quotes?.[s]?.t) || 0));
+    const verified = this.authenticated && this.subscription && !this.error;
+    const status = this.error ? 'UNAVAILABLE' : this.stopped || this.phase === 'DISCONNECTED' ? 'DISCONNECTED' : !verified ? 'UNVERIFIED' : this.feed === 'delayed_sip' ? 'DELAYED' : this.now() - oldest > 15000 || this.now() - this.lastMessage > 15000 ? 'STALE' : 'LIVE';
+    return { status, provider: this.provider, feed: this.feed, coverage: ALPACA_STOCK_FEEDS[this.feed],
+      authenticated: Boolean(this.authenticated), subscription_verified: Boolean(this.subscription), symbols: this.symbols || [],
+      checked_at: new Date(this.now()).toISOString(), quotes: { ...this.quotes }, symbol_status: Object.fromEntries((this.symbols || []).map((s) => [s, this.now() - (Date.parse(this.quotes?.[s]?.t) || 0) > 15000 ? 'STALE' : status])), bars: { ...this.bars }, error: this.error || null };
+  }
+}
+
+async function stockData(env, path, { fetcher = fetch } = {}) {
+  const keys = alpacaKeys(env);
+  if (!keys || liveKeyProblem(keys.id)) return { ok: false, state: 'not_configured', error: 'Existing Alpaca PAPER keys are required.' };
+  try {
+    const url = new URL(path, STOCK_DATA);
+    if (url.origin !== STOCK_DATA) return { ok: false, state: 'refused', error: 'Unsupported stock data host.' };
+    const response = await fetcher(url.toString(), { headers: { 'APCA-API-KEY-ID': keys.id, 'APCA-API-SECRET-KEY': keys.secret, Accept: 'application/json' }, redirect: 'manual', signal: AbortSignal.timeout(8000) });
+    if (!response.ok) return { ok: false, state: response.status === 403 ? 'entitlement_required' : 'unavailable', error: `Alpaca stock data answered HTTP ${response.status}. No paid service was activated.` };
+    return { ok: true, data: await response.json() };
+  } catch (_) { return { ok: false, state: 'unavailable', error: 'Alpaca stock data could not be verified.' }; }
+}
+
+export async function alpacaStockBars(env, { symbol = 'AAPL', feed = 'iex', fetcher = fetch, now = Date.now() } = {}) {
+  if (!stockSymbol(symbol) || !ALPACA_STOCK_FEEDS[feed]) return { ok: false, error: 'Unsupported stock symbol/feed.' };
+  const start = new Date(now - 7 * 86400000).toISOString();
+  const answer = await stockData(env, `/v2/stocks/${encodeURIComponent(symbol)}/bars?feed=${feed}&timeframe=5Min&start=${encodeURIComponent(start)}&limit=400&sort=desc&adjustment=raw`, { fetcher });
+  if (!answer.ok) return { ...answer, symbol, feed, coverage: ALPACA_STOCK_FEEDS[feed], bars: [] };
+  if (!Array.isArray(answer.data?.bars)) return { ok: false, symbol, feed, error: 'Alpaca returned no valid bar list.', bars: [] };
+  const bars = answer.data.bars.map((b) => marketBar({ t: b.t, o: b.o, h: b.h, l: b.l, c: b.c, v: b.v })).filter((b) => b && Date.parse(b.t) % 300000 === 0 && Date.parse(b.t) + 300000 <= now).sort((a, b) => a.t.localeCompare(b.t));
+  return { ok: true, symbol, feed, coverage: ALPACA_STOCK_FEEDS[feed], interval: '5m', bars, checked_at: new Date(now).toISOString(), last_bar: bars.at(-1)?.t || null, status: feed === 'delayed_sip' ? 'DELAYED' : 'HISTORICAL', note: 'Historical candles are not proof of a current live quote.' };
+}
+
+export async function alpacaPaperPositions(env, options = {}) {
+  const keys = alpacaKeys(env); if (!keys || liveKeyProblem(keys.id)) return { ok: false, state: 'not_configured', positions: [] };
+  const answer = await call(keys, '/v2/positions', options);
+  if (!answer.ok || !Array.isArray(answer.data)) return { ok: false, state: answer.state || 'unavailable', error: answer.error || 'Invalid broker position list.', positions: [] };
+  return { ok: true, environment: 'alpaca_paper', positions: answer.data.map((p) => ({ symbol: p.symbol, qty: money(p.qty), side: p.side, avg_entry_price: money(p.avg_entry_price), current_price: money(p.current_price), market_value: money(p.market_value), unrealized_pl: money(p.unrealized_pl), cost_basis: money(p.cost_basis), strategy: null, attribution: 'not verified by this broker position record' })) };
+}
+
+export async function alpacaPaperEquity(env, options = {}) {
+  const keys = alpacaKeys(env); if (!keys || liveKeyProblem(keys.id)) return { ok: false, state: 'not_configured', points: [] };
+  const answer = await call(keys, '/v2/account/portfolio/history?period=1M&timeframe=1D', options);
+  if (!answer.ok || !Array.isArray(answer.data?.timestamp) || !Array.isArray(answer.data?.equity)) return { ok: false, state: answer.state || 'unavailable', points: [] };
+  return { ok: true, environment: 'alpaca_paper', points: answer.data.timestamp.map((t, i) => ({ time: Number.isFinite(t) && Number.isFinite(new Date(t * 1000).getTime()) ? new Date(t * 1000).toISOString() : null, equity: money(answer.data.equity[i]), profit_loss: money(answer.data.profit_loss?.[i]) })).filter((p) => p.time && p.equity != null), note: 'Broker account equity includes all strategies and manual activity; it is not a strategy win rate.' };
+}
+
+/** Broker-confirmed order/fill changes; a fill is never inferred from a model or quote. */
+export class AlpacaOrderStream extends ManagedMarketStream {
+  provider = 'Alpaca PAPER trade_updates';
+  constructor(options = {}) { super(options); this.onOrder = options.onOrder || (() => {}); }
+  async start({ keys }) {
+    if (!keys?.id || !keys?.secret || liveKeyProblem(keys.id)) throw new Error('Existing PAPER credentials required');
+    await this.connect('wss://paper-api.alpaca.markets/stream', { keys });
+  }
+  reset() { super.reset(); this.authenticated = false; this.subscription = false; this.lastOrders = new Map(); }
+  opened(config) { this.send(JSON.stringify({ action: 'auth', key: config.keys.id, secret: config.keys.secret })); }
+  heartbeat() {
+    if (this.authenticated) this.send(JSON.stringify({ action: 'listen', data: { streams: ['trade_updates'] } }));
+  }
+  async process(text) {
+    const messages = JSON.parse(text);
+    for (const m of Array.isArray(messages) ? messages : [messages]) {
+      if (m.stream === 'authorization') {
+        if (m.data?.status !== 'authorized') { this.refuse(401); continue; }
+        this.authenticated = true; this.retry = 0; this.heartbeat();
+      }
+      if (m.stream === 'listening') this.subscription = m.data?.streams?.includes('trade_updates') === true;
+      if (m.stream !== 'trade_updates' || !this.authenticated || !this.subscription) continue;
+      const order = m.data?.order;
+      if (!order?.id || !stockSymbol(order.symbol) || !['buy', 'sell'].includes(order.side)) { this.emit({ type: 'reconcile_required' }); continue; }
+      const qty = money(order.qty); const filled = money(order.filled_qty);
+      if (!(qty > 0 && filled >= 0 && filled <= qty) || (order.status === 'filled' && filled !== qty)) { this.emit({ type: 'reconcile_required' }); continue; }
+      const eventTime = Date.parse(m.data?.timestamp || order.updated_at || order.filled_at || order.created_at);
+      const previous = this.lastOrders.get(order.id);
+      if (!Number.isFinite(eventTime) || eventTime > this.now() + 5000 ||
+          (previous && (eventTime < previous.time || filled < previous.filled))) {
+        this.emit({ type: 'reconcile_required' }); continue;
+      }
+      this.lastOrders.set(order.id, { time: eventTime, filled });
+      if (this.lastOrders.size > 500) this.lastOrders.delete(this.lastOrders.keys().next().value);
+      const verified = { ...receipt(order), event_at: new Date(eventTime).toISOString(), observed_at: new Date(this.now()).toISOString(), source: this.provider };
+      await this.onOrder(verified);
+      this.emit({ type: 'broker_order', order: verified });
+    }
+  }
+  snapshot() { return { provider: this.provider, status: this.error ? 'UNAVAILABLE' : this.stopped ? 'DISCONNECTED' : this.authenticated && this.subscription && this.now() - this.lastMessage <= 20000 ? 'CONNECTED' : 'UNVERIFIED', authenticated: Boolean(this.authenticated), subscription_verified: Boolean(this.subscription), error: this.error || null }; }
+}
+
+/**
+ * Emergency Stop on the paper account: cancel every order Alpaca still holds open (not filled), one
+ * DELETE per order, and report what Alpaca confirmed and which positions remain open. Nothing is
+ * placed. Flatten (owner-confirmed) also asks Alpaca to close every paper position.
+ */
+export async function haltAlpacaPaper(env, { flatten = false, fetcher = fetch } = {}) {
+  const keys = alpacaKeys(env);
+  if (!keys) return { state: 'not_configured', cancelled: [], failed: [], positions: [], closed: [] };
+  if (liveKeyProblem(keys.id)) return { state: 'refused', cancelled: [], failed: [], positions: [], closed: [] };
+  const open = await call(keys, '/v2/orders?status=open&limit=100', { fetcher });
+  if (!open.ok) return { state: open.state, error: open.error, cancelled: [], failed: [], positions: [], closed: [] };
+  const cancelled = []; const failed = [];
+  for (const o of Array.isArray(open.data) ? open.data : []) {
+    const r = await call(keys, `/v2/orders/${encodeURIComponent(o.id)}`, { method: 'DELETE', fetcher });
+    (r.ok ? cancelled : failed).push({ id: String(o.id), symbol: String(o.symbol || ''), side: String(o.side || ''), qty: money(o.qty), ...(r.ok ? {} : { error: r.error }) });
+  }
+  const closed = [];
+  if (flatten) {
+    const r = await call(keys, '/v2/positions?cancel_orders=true', { method: 'DELETE', fetcher });
+    for (const x of Array.isArray(r.data) ? r.data : []) closed.push({ symbol: String(x.symbol || ''), status: Number(x.status) || null });
+    if (!r.ok) failed.push({ id: 'positions', error: r.error });
+  }
+  const pos = await call(keys, '/v2/positions', { fetcher });
+  const positions = (pos.ok && Array.isArray(pos.data) ? pos.data : []).map((x) => ({ symbol: String(x.symbol || ''), qty: money(x.qty), side: String(x.side || ''), unrealized_pl: money(x.unrealized_pl) }));
+  return { state: 'verified', cancelled, failed, closed, positions, positions_read: pos.ok };
+}
+
+// ─── The Alpaca PAPER dashboard (owner, 2026-10-20) ────────────────────────────────────────────
+// Everything here is read from Alpaca's paper account as Alpaca reports it now: the account, open
+// positions, orders in every status, FILL activities and portfolio history, plus 5-minute bars for
+// the chart. An execution is drawn only from a FILL activity Alpaca returned; an order that has not
+// filled is shown by its status and never as an execution. Read only: nothing here orders.
+
+// Alpaca's order statuses, grouped the way the owner reads them.
+export const ORDER_STATUS_GROUPS = Object.freeze({
+  submitted: ['pending_new', 'new'],
+  accepted: ['accepted', 'accepted_for_bidding', 'calculated', 'pending_replace', 'replaced'],
+  partially_filled: ['partially_filled'],
+  filled: ['filled'],
+  canceled: ['canceled', 'pending_cancel', 'done_for_day', 'stopped', 'suspended'],
+  rejected: ['rejected'],
+  expired: ['expired'],
+});
+export function orderStatusGroup(status) {
+  const s = String(status || '').toLowerCase();
+  for (const [group, list] of Object.entries(ORDER_STATUS_GROUPS)) if (list.includes(s)) return group;
+  return 'other';
+}
+const OPEN_GROUPS = new Set(['submitted', 'accepted', 'partially_filled']);
+
+function positionOf(p = {}) {
+  return {
+    symbol: String(p.symbol || ''), side: String(p.side || 'long'), qty: money(p.qty),
+    avg_entry_price: money(p.avg_entry_price), current_price: money(p.current_price), market_value: money(p.market_value),
+    cost_basis: money(p.cost_basis), unrealized_pl: money(p.unrealized_pl), unrealized_plpc: money(p.unrealized_plpc),
+    unrealized_intraday_pl: money(p.unrealized_intraday_pl),
+  };
+}
+function fillOf(a = {}) {
+  return {
+    id: String(a.id || ''), order_id: String(a.order_id || ''), symbol: String(a.symbol || ''), side: String(a.side || ''),
+    qty: money(a.qty), price: money(a.price), time: a.transaction_time || null, kind: String(a.type || 'fill'),
+    cum_qty: money(a.cum_qty), leaves_qty: money(a.leaves_qty), order_status: String(a.order_status || ''),
+  };
+}
+// Realized P&L from the fills Alpaca returned, first in first out per symbol. Labelled as computed
+// from those fills: a position opened before the oldest returned fill is not in it.
+export function realizedFromFills(fills) {
+  const lots = {}; let realized = 0; let closes = 0; let wins = 0; let losses = 0;
+  for (const f of [...fills].filter((x) => x.qty > 0 && x.price > 0).sort((a, b) => String(a.time).localeCompare(String(b.time)))) {
+    const book = (lots[f.symbol] ||= []);
+    const sign = f.side === 'buy' ? 1 : -1;
+    let qty = f.qty;
+    while (qty > 0 && book.length && Math.sign(book[0].qty) === -sign) {
+      const lot = book[0];
+      const take = Math.min(qty, Math.abs(lot.qty));
+      const pnl = (f.price - lot.price) * take * (lot.qty > 0 ? 1 : -1);
+      realized += pnl; closes += 1; if (pnl > 0) wins += 1; else if (pnl < 0) losses += 1;
+      lot.qty += sign * take; qty -= take;
+      if (lot.qty === 0) book.shift();
+    }
+    if (qty > 0) book.push({ qty: sign * qty, price: f.price });
+  }
+  return { realized_pl: Math.round(realized * 100) / 100, closing_fills: closes, winning_closes: wins, losing_closes: losses };
+}
+
+export async function alpacaPaperDashboard(env, { symbol = '', fetcher = fetch, now = Date.now() } = {}) {
+  const keys = alpacaKeys(env);
+  const base = { provider: 'alpaca', mode: 'paper', source: 'Alpaca PAPER stock account', fetched_at: new Date(now).toISOString(), money_at_risk: false };
+  if (!keys) return { ...base, state: 'not_configured' };
+  if (liveKeyProblem(keys.id)) return { ...base, state: 'refused', error: liveKeyProblem(keys.id) };
+  const [account, positions, orders, fills, history] = await Promise.all([
+    call(keys, '/v2/account', { fetcher }),
+    call(keys, '/v2/positions', { fetcher }),
+    call(keys, '/v2/orders?status=all&direction=desc&limit=100&nested=true', { fetcher }),
+    call(keys, '/v2/account/activities/FILL?direction=desc&page_size=100', { fetcher }),
+    call(keys, '/v2/account/portfolio/history?period=1M&timeframe=1D', { fetcher }),
+  ]);
+  if (!account.ok) return { ...base, state: account.status === 401 || account.status === 403 ? 'rejected' : account.state, error: account.error };
+  const orderList = (orders.ok && Array.isArray(orders.data) ? orders.data : []).flatMap((o) => [o, ...(Array.isArray(o.legs) ? o.legs : [])])
+    .map((o) => { const r = receipt(o); return { ...r, status_group: orderStatusGroup(r.status), canceled_at: o.canceled_at || null, expired_at: o.expired_at || null, failed_at: o.failed_at || null, stop_price: money(o.stop_price), time_in_force: String(o.time_in_force || '') }; });
+  const fillList = (fills.ok && Array.isArray(fills.data) ? fills.data : []).map(fillOf).filter((f) => f.order_id && f.price != null && f.qty > 0);
+  const positionList = (positions.ok && Array.isArray(positions.data) ? positions.data : []).map(positionOf);
+  const h = history.ok ? history.data || {} : {};
+  const curve = (Array.isArray(h.timestamp) ? h.timestamp : []).map((t, i) => ({ t: new Date(Number(t) * 1000).toISOString(), equity: money(h.equity?.[i]), profit_loss: money(h.profit_loss?.[i]) })).filter((p) => p.equity != null);
+  const counts = Object.fromEntries([...Object.keys(ORDER_STATUS_GROUPS), 'other'].map((g) => [g, orderList.filter((o) => o.status_group === g).length]));
+  // The chart's symbol: the one asked for, else the newest filled or ordered symbol, else an open position.
+  const chartSymbol = String(symbol || fillList[0]?.symbol || orderList[0]?.symbol || positionList[0]?.symbol || '').toUpperCase();
+  let bars = { ok: false, error: chartSymbol ? '' : 'no symbol to chart yet' };
+  if (/^[A-Z]{1,5}(?:\.[A-Z])?$/.test(chartSymbol)) {
+    const start = new Date(now - 5 * 86400_000).toISOString();
+    const got = await call(keys, `/v2/stocks/${encodeURIComponent(chartSymbol)}/bars?timeframe=5Min&start=${encodeURIComponent(start)}&limit=1000&feed=iex`, { fetcher, host: ALPACA_DATA });
+    bars = got.ok ? { ok: true, list: (got.data?.bars || []).map((b) => ({ t: b.t, o: money(b.o), h: money(b.h), l: money(b.l), c: money(b.c), v: money(b.v) })).filter((b) => b.o != null).slice(-240) } : { ok: false, error: got.error };
+  }
+  const unrealized = positionList.reduce((sum, p) => sum + (p.unrealized_pl || 0), 0);
+  const acct = accountSummary(account.data);
+  return {
+    ...base,
+    state: 'verified',
+    key_last4: last4(keys.id),
+    account: { ...acct, last_equity: money(account.data?.last_equity), portfolio_value: money(account.data?.portfolio_value), long_market_value: money(account.data?.long_market_value), short_market_value: money(account.data?.short_market_value), day_change: acct.equity != null && money(account.data?.last_equity) != null ? Math.round((acct.equity - Number(account.data.last_equity)) * 100) / 100 : null },
+    positions: positionList,
+    unrealized_pl: Math.round(unrealized * 100) / 100,
+    realized: { ...realizedFromFills(fillList), basis: `computed first-in first-out from the ${fillList.length} fill${fillList.length === 1 ? '' : 's'} Alpaca returned; a position opened before the oldest of them is not included` },
+    orders: orderList,
+    order_counts: counts,
+    open_orders: orderList.filter((o) => OPEN_GROUPS.has(o.status_group)).length,
+    fills: fillList,
+    history: curve,
+    chart: { symbol: chartSymbol || null, timeframe: '5Min', feed: 'iex', bars: bars.ok ? bars.list : [], error: bars.ok ? null : bars.error || null },
+    reads: { positions: positions.ok, orders: orders.ok, fills: fills.ok, history: history.ok, bars: bars.ok },
+    separate_from: ['MNQ/NQ futures paper simulations (CHE\'s own engine)', 'Tradovate data'],
+  };
+}
+
+/** The dashboard said aloud: short, by source, only what Alpaca reported. */
+export function speakAlpacaDashboard(d) {
+  if (d.state === 'not_configured') return 'Alpaca paper is not set up yet, sir. Add your Alpaca paper keys in Trading Connections and I will show its account, orders and fills.';
+  if (d.state !== 'verified') return `I could not read the Alpaca paper account just now, sir (${d.error || d.state}). I show no numbers for it.`;
+  const a = d.account;
+  const m = (x) => (x == null ? 'unknown' : `${x < 0 ? 'minus ' : ''}$${Math.abs(x).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
+  const parts = [`Alpaca PAPER account, read just now: equity ${m(a.equity)}, cash ${m(a.cash)}, buying power ${m(a.buying_power)}.`];
+  parts.push(d.positions.length ? `${d.positions.length} open position${d.positions.length === 1 ? '' : 's'}: ${d.positions.slice(0, 5).map((p) => `${p.symbol} ${p.qty} shares, unrealized ${m(p.unrealized_pl)}`).join('; ')}.` : 'No open positions.');
+  const c = d.order_counts;
+  parts.push(d.orders.length ? `Orders: ${c.filled} filled, ${c.partially_filled} partially filled, ${c.submitted + c.accepted} waiting, ${c.canceled} canceled, ${c.rejected} rejected, ${c.expired} expired.` : 'No orders on this account yet.');
+  parts.push(d.fills.length ? `${d.fills.length} fill${d.fills.length === 1 ? '' : 's'} confirmed by Alpaca; realized ${m(d.realized.realized_pl)} from those fills.` : 'No fills confirmed by Alpaca yet.');
+  parts.push('This is paper money, separate from CHE\'s MNQ futures paper simulations.');
+  return parts.join(' ');
 }

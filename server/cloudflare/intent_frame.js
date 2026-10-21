@@ -18,7 +18,7 @@ const ASK_CHE = /^(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?|i\s+(?:want
 // A sentence that calls off the turn at its end: "Buy two apples, actually, cancel that."
 const SELF_CANCEL = /(?:^|[,.;!?—–-]\s*)(?:(?:actually|wait|no|oh)[,\s]+)*(?:cancel\s+(?:that|it|this|all\s+(?:of\s+)?that)|scratch\s+that|forget\s+(?:it|that)|never\s*mind)(?:\s+(?:please|sir))?\s*[.!]*\s*$/i;
 // A plain request: "buy 3 apples online now", "place a paper trade", "email Sarah the report".
-const IMPERATIVE = /^(?:please\s+)?(?:buy|order|pay|place|sell|send|e-?mail|text|call|message|draft|make|create|add|put|remind|schedule|book|set|find|search|look\s+up|get|give|tell|show|read|open|play|start|stop|cancel|delete|remove|move|copy|save|share|post|publish|upload|download|write|fix|build|run|check|analy[sz]e|research|summari[sz]e|translate|turn|switch|go)\b/i;
+const IMPERATIVE = /^(?:please\s+)?(?:buy|order|pay|place|sell|send|e-?mail|text|call|message|draft|make|create|add|put|remind|schedule|book|set|find|search|look\s+up|get|give|tell|show|read|open|play|start|stop|cancel|delete|remove|forget|remember|move|copy|save|share|post|publish|upload|download|write|fix|build|run|check|analy[sz]e|research|summari[sz]e|translate|turn|switch|go)\b/i;
 // Work and learning requests that name what they act on: "Investigate the Doodle app", "Inspect the
 // latest main SHA", "Quiz me on option spreads", "Remember that my favorite food is pizza", "connect my
 // Alpaca account". Measured 2026-10-19 on 923 owner sentences after earlier turns: reading-model calls
@@ -103,4 +103,14 @@ export function compactFrame(frame) {
   if (conditions.length) parts.push(`if: ${conditions.join('; ')}`);
   if (frame.needs_yes.length) parts.push(`needs yes: ${frame.needs_yes.join(', ')}`);
   return parts.join(' | ');
+}
+
+/** The "Understood as" line for a turn with a money or delete hold, or with two or more steps and a
+ *  "don't" (issue #345), or ''. It is shown, never spoken by itself, and only when the compact form keeps
+ *  every constraint: CHE still acts on the owner's own words. */
+export function understoodAs(text) {
+  const frame = intentFrame(text);
+  if (frame.mode === 'cancel' || !frame.lossless) return '';
+  const multiStep = frame.steps.length >= 2 && frame.do_not.length > 0;
+  return frame.needs_yes.length || multiStep ? frame.compact : '';
 }

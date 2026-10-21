@@ -1477,6 +1477,73 @@
    "optional_missing": []
   },
   {
+   "id": "trade-learning",
+   "category": "trading",
+   "title": "Trade Learning",
+   "summary": "Read unique strategy learning and live-readiness evidence.",
+   "does": "Reads the current version-matched strategy cards, daily study counts and explicit live-readiness blockers. Never unlocks execution.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Show my strategy learning progress",
+    "Read my daily strategy report"
+   ],
+   "needs": [
+    "office"
+   ],
+   "optional": [],
+   "handler": "trading_live.strategyLearning",
+   "route": "che_trading_live",
+   "produces": "learning report",
+   "evidence": "Unique current-version forward journal records and archived historical experiments.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "learning progress",
+    "live readiness",
+    "daily strategy report"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "trade-research",
+   "category": "trading",
+   "title": "Trade Research",
+   "summary": "Replay available five-minute history without orders.",
+   "does": "Runs the existing fixed-timeframe historical research, preserving datasets, parameters and purged held-out folds; never creates forward or broker fills.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Replay available history"
+   ],
+   "needs": [
+    "market_data"
+   ],
+   "optional": [],
+   "handler": "trading_live.liveBacktest",
+   "route": "che_trading_live",
+   "produces": "research receipt",
+   "evidence": "Trusted execution receipt and immutable dataset/experiment identifiers.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "replay history",
+    "strategy research",
+    "historical learning"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
    "id": "trade-journal",
    "category": "trading",
    "title": "Trade Journal",
@@ -1540,6 +1607,125 @@
     "notify",
     "watch",
     "alarm"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "trade-sim",
+   "category": "trading",
+   "title": "Trade Sim",
+   "summary": "Pause, resume or check the strategy simulation.",
+   "does": "Pauses or resumes CHE's paper strategy simulation (ten rules on minute bars; no money, no model call), or reads its status. Owner only.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "action",
+    "required": false,
+    "hint": "pause, resume or status"
+   },
+   "examples": [
+    "Pause the strategy simulation",
+    "Resume the strategy simulation",
+    "Strategy simulation status"
+   ],
+   "needs": [
+    "office"
+   ],
+   "optional": [],
+   "handler": "strategy_sim.strategySimIntent → setStrategySimPaused / strategySimView",
+   "route": "che_strategy_sim",
+   "produces": "simulation status",
+   "evidence": "Stored simulation state and trades only.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "strategy simulation",
+    "simulation",
+    "pause simulation",
+    "resume simulation",
+    "paper strategies"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "trade-controls",
+   "category": "trading",
+   "title": "Trade Controls",
+   "summary": "Read or change your paper strategy limits.",
+   "does": "Reads each paper strategy's limits and state (maximum trades per day, default 30; size; paused or running), or changes them in your words: pause or resume one strategy, the ICT group or all; set or raise the daily maximum; stop new entries; restore the previous settings. A change that raises risk is read back with its impact and applied only after \"yes, confirm\". Every change is audited. Paper only.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "What are my trading limits?",
+    "Pause the ICT strategy",
+    "Set every strategy to 30 per day",
+    "Increase the maximum trades",
+    "Why did this strategy skip that trade?"
+   ],
+   "needs": [
+    "office"
+   ],
+   "optional": [],
+   "handler": "trading_controls.controlIntent → applyControlChange / controlsView",
+   "route": "che_trading_controls",
+   "produces": "strategy limits",
+   "evidence": "The stored controls, the audit trail and the live portfolios' own skip records.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "limits",
+    "controls",
+    "pause strategy",
+    "resume strategy",
+    "max trades",
+    "trades per day",
+    "ict",
+    "skip",
+    "stop new entries"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "trade-emergency",
+   "category": "trading",
+   "title": "Trade Emergency",
+   "summary": "Emergency Stop: block entries and cancel unfilled paper orders.",
+   "does": "Acts at once: blocks new entries for every strategy, cancels unfilled orders in CHE's MNQ paper simulations and on Alpaca PAPER, writes an audit record, and says which positions remain open. It never closes positions; \"flatten\" does that only after you confirm. Say \"allow new entries\" to clear it.",
+   "mode": "BUILD",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Emergency stop",
+    "Kill switch"
+   ],
+   "needs": [
+    "office"
+   ],
+   "optional": [],
+   "handler": "trading_controls.applyControlChange(emergency_stop) → haltLivePaper / haltAlpacaPaper",
+   "route": "che_trading_controls",
+   "produces": "what was stopped and what remains open",
+   "evidence": "The cancellations Alpaca confirmed and the simulations' own records.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "emergency stop",
+    "kill switch",
+    "halt",
+    "stop trading"
    ],
    "status": "available",
    "missing": [],

@@ -15,7 +15,20 @@ const VOCATIVE = String.raw`(?:(?:(?:hey|hi|ok|okay)\s+(?:chey|che|chay|shay)|(?
 const LEAD = String.raw`^(?:${VOCATIVE}(?:(?:please|pls|plz|now|then|also|and|ok|okay|just|to|let's|lets|let\s+us|can you|could you|would you|will you|i want you to|i need you to|i want to|i'd like to|id like to|i am going to|i'm going to|im going to|go ahead and|you should|you must)\s+)*)["'(]?`;
 // Verb forms are written out in full so "delete", "deleting", "pays" and
 // "purchased" all match without matching unrelated words.
-const MONEY_VERB = String.raw`(?:bought|buy(?:s|ing)?|purchas(?:e|es|ed|ing)|pay(?:s|ing)?|paid|subscrib(?:e|es|ed|ing)(?:\s+to)?|donat(?:e|es|ed|ing)(?:\s+to)?|charg(?:e|es|ed|ing)|checkout|upgrad(?:e|es|ed|ing)\s+to|renew(?:s|ed|ing)?|top\s+up|sign\s+up\s+for|spend(?:s|ing)?|withdr(?:aw|aws|awing|awn|ew)|cash\s+out|take\s+out\s+(?:\$|\d|money|cash)|make\s+a\s+purchase|place\s+an?\s+order|send(?:s|ing)?\s+(?:money|\$))`;
+// An order placed with the broker or a shop: "place an order for pizza", "place sell orders", "put in a sell order",
+// "place a stop-loss order", "place a GTC order", "place a bracket order", "place an IOC order". Up to three words may sit
+// between "place" and "order", so an order type outside any list is held too. "in order to" and "in order of" are not orders
+// ("put in order to finish the report"). The word "order" is required, so "place a call to Ann" is not held (review of
+// PR #356, rounds 3 and 4).
+const ORDER_OBJECT = String.raw`(?:(?:an?|another|some|\d+|my|the)\s+)?(?:[\w-]+\s+){0,3}?orders?\b(?!\s+(?:to|of|by|in|that)\b)`;
+const MONEY_VERB = String.raw`(?:bought|buy(?:s|ing)?|purchas(?:e|es|ed|ing)|pay(?:s|ing)?|paid|subscrib(?:e|es|ed|ing)(?:\s+to)?|donat(?:e|es|ed|ing)(?:\s+to)?|charg(?:e|es|ed|ing)|checkout|upgrad(?:e|es|ed|ing)\s+to|renew(?:s|ed|ing)?|top\s+up|sign\s+up\s+for|spend(?:s|ing)?|withdr(?:aw|aws|awing|awn|ew)|cash\s+out|take\s+out\s+(?:\$|\d|money|cash)|make\s+a\s+purchase|place\s+${ORDER_OBJECT}|(?:put|enter|submit)\s+(?:in\s+)?${ORDER_OBJECT}|send(?:s|ing)?\s+(?:money|\$))`;
+// "sell" moves money the other way, so a sale of anything is held like a purchase (comprehension audit, issue #350: "can
+// you open Robinhood and sell my Tesla shares" was answered with no hold). A bare object counts too: "sell Tesla", "sell
+// shares", "sell MNQ", "sell out of my position" (review of PR #356, round 2). These name no sale and are not held:
+// "sell me on this idea", "sell-through", "sales", "sell the idea to Ann", and "can you sell things for me?", which asks
+// about CHE's ability and not for an order.
+const SALE_VERB = String.raw`sell(?:s|ing)?\b(?=\s+[\w$'’])(?!\s*-)(?!\s+things?\b)(?!\s+me\s+on\b)(?!\s+(?:(?:the|this|that|a|an|my|your|our|these|those|some|any|all)\s+)?(?:ideas?|concepts?|arguments?|pitch(?:es)?|points?|team|people|signals?)\b)`;
+const SALE_RE = new RegExp(`\\b${SALE_VERB}`, 'i');
 const MONEY_ORDER = String.raw`order(?:s|ed|ing)?\s+(?:me\s+|us\s+)?(?:a|an|another|more|some|\d|\$|[a-z]+)`;
 const MONEY_TRANSFER = String.raw`(?:transfer(?:s|red|ring)?|wire(?:s|d|ing)?)\s+(?:\$|\d|money|funds|dollars?|to\s)`;
 // Paid promotion spends money too (review of #353). Clause-anchored here: "run an ad on TikTok",
@@ -34,7 +47,7 @@ function paidPromotion(t) {
   const text = t.replace(NOT_PAID, ' ');
   return hasVerb(PROMOTE_RE, text) && PAID_WORDS.test(text);
 }
-const MONEY_RE = new RegExp(`${LEAD}(?:${MONEY_VERB}\\b|${MONEY_ORDER}|${MONEY_TRANSFER}|${MONEY_PROMOTION})`, 'i');
+const MONEY_RE = new RegExp(`${LEAD}(?:${MONEY_VERB}\\b|${SALE_VERB}|${MONEY_ORDER}|${MONEY_TRANSFER}|${MONEY_PROMOTION})`, 'i');
 // Strong delete verbs always count. "Order" followed by a bare word is held only
 // when it is not "order of/in/by" (checked below), so "order pizza" is held.
 // Weak verbs (reset, clear, cancel, drop) count only with a data object, so
@@ -47,6 +60,14 @@ const WEAK_DELETE = String.raw`(?:reset(?:s|ting)?|clear(?:s|ed|ing)?(?:\s+out)?
 const LEARNING_RESET = String.raw`(?:reset(?:s|ting)?|clear(?:s|ed|ing)?(?:\s+out)?|drop(?:s|ped|ping)?)\s+(?:all\s+(?:of\s+)?)?my\s+(?:(?:coding|trading|learning|study|studying|atlas|knowledge\s+atlas|lesson|quiz|practice)\s+){0,3}(?:progress|scores?)(?!\s+(?:bars?|indicators?|spinners?|reports?|calls?|meetings?|reviews?|widgets?|boards?|screens?|notes?|charts?))`;
 const DELETE_RE = new RegExp(`${LEAD}(?:${STRONG_DELETE}|${WEAK_DELETE}|${LEARNING_RESET})\\b`, 'i');
 const NEGATED_RE = /\b(?:do\s+not|don't|dont|never|not|no)\s+$/i;
+// Signing up makes an account and agrees to its terms, in an app or a service. It is held for the owner's yes like a
+// purchase (comprehension audit, issue #350: "Investigate the Notion app and sign me up" was not held). REA reads a
+// listing and never signs up, so an investigation that names the app still only reads it.
+// A new account is held wherever it is ("create an account on Etsy", "set up an account on Etsy"), and so is a registration
+// for anything ("register me for the course"). The gate cannot tell a free registration from a paid one, and a sign-up gives
+// personal data, so the owner decides (review of PR #356, round 2). "Set up my account on the phone" names an account the
+// owner already has, so it is not held.
+const SIGNUP_RE = new RegExp(`${LEAD}(?:sign\\s+(?:me|us|myself|ourselves)\\s+up\\b|(?:create|make)\\s+(?:me\\s+|us\\s+|my\\s+|our\\s+)?(?:an?\\s+|a\\s+new\\s+)?(?:new\\s+)?(?:[a-z][\\w.-]*\\s+)?account\\b|set\\s+up\\s+(?:me\\s+|us\\s+)?(?:an?\\s+|a\\s+new\\s+|new\\s+)(?:[a-z][\\w.-]*\\s+)?account\\b|register\\s+(?:me|us|myself|ourselves)\\s+(?:for|on|with)\\s+[\\w$'’-])`, 'i');
 
 // Each clause of a compound request ("buy X, then delete Y") is checked on its
 // own, so a verb that opens any clause counts.
@@ -58,11 +79,20 @@ function clausesOf(t) {
   clauses.push([start, t.length]);
   return clauses;
 }
+// A question about what CHE is able to do asks her to do nothing (comprehension audit): "Can you buy things
+// for me?" names no purchase, and "Could you pay my bills if I asked?" waits for an ask that has not come.
+// "Can you buy me a coffee?" and "Could you pay my electric bill?" name one, so they are still held.
+const ABILITY_ASK_RE = new RegExp(String.raw`^${VOCATIVE}(?:can|could|would|will)\s+you\s+(?:ever\s+|actually\s+|really\s+|even\s+)?(?:${MONEY_VERB}|${STRONG_DELETE}|order)\s+(?:things|stuff|anything|something|items|products)(?:\s+(?:for\s+(?:me|us)|online|on\s+my\s+behalf|by\s+yourself|yourself))*$`, 'i');
+const IF_I_ASKED_RE = new RegExp(String.raw`^${VOCATIVE}(?:can|could|would|will)\s+you\b[^?]*\bif\s+i\s+(?:asked|told|wanted|said)(?:\s+(?:you|you\s+to|to|so))?$`, 'i');
+function abilityQuestion(clause) {
+  const c = clause.replace(/[\s?.!]+$/, '');
+  return ABILITY_ASK_RE.test(c) || IF_I_ASKED_RE.test(c);
+}
 function hasVerb(re, t) {
   return clausesOf(t).some(([from, to]) => {
     const c = t.slice(from, to).trim();
     const m = re.exec(c);
-    return Boolean(m) && !NEGATED_RE.test(c.slice(0, m.index));
+    return Boolean(m) && !NEGATED_RE.test(c.slice(0, m.index)) && !abilityQuestion(c);
   });
 }
 
@@ -142,8 +172,8 @@ export function prohibitedText(text) {
 // CHE pays, so it never counts as forbidding the purchase.
 const OWN_PLAN = String.raw`^${VOCATIVE}(?:(?:so|well|and|but|ok|okay|also)\s+)*(?:i\s+(?:want|need|plan|hope|intend|would\s+like)\s+to|i(?:['’]d|d)\s+like\s+to|i\s+am\s+(?:going|planning)\s+to|i(?:['’]m|m)\s+(?:going|planning)\s+to|i\s+will|i['’]ll|i\s+might)\s+`;
 const OWN_PLAN_RE = new RegExp(OWN_PLAN, 'i');
-const OWN_MONEY_RE = new RegExp(`${OWN_PLAN}(?:${MONEY_VERB}\\b|${MONEY_ORDER}|${MONEY_TRANSFER})`, 'i');
-const BARE_MONEY_RE = new RegExp(`^(?:${MONEY_VERB}\\b|${MONEY_ORDER}|${MONEY_TRANSFER})`, 'i');
+const OWN_MONEY_RE = new RegExp(`${OWN_PLAN}(?:${MONEY_VERB}\\b|${SALE_VERB}|${MONEY_ORDER}|${MONEY_TRANSFER})`, 'i');
+const BARE_MONEY_RE = new RegExp(`^(?:${MONEY_VERB}\\b|${SALE_VERB}|${MONEY_ORDER}|${MONEY_TRANSFER})`, 'i');
 // A ban on every purchase: "don't purchase anything", "don't order anything yet", "don't order them".
 // "Don't buy the extended warranty" or "don't order any drinks" forbids one item, not the purchase.
 const BLANKET_BAN = /\b(?:do\s+not|don['’]?t|never)\s+(?:(?:actually|ever|even|just)\s+)*(?:buy|purchase|pay\s+for|order|spend|check\s*out|place\s+(?:an?\s+|any\s+)?orders?)(?:\s+(?:anything(?!\s+else)|any\s+(?:orders?|purchases?)|it|them|this|that|yet|now|today|online))*\s*(?=$|[,.;!?]|\s+(?:or|nor|and|but|add|create|explain|just|tell)\b)/gi;
@@ -185,6 +215,7 @@ export function classifyOwnerActions(text) {
   const asked = withoutProhibitions(t);
   if (((hasVerb(MONEY_RE, t) || hasVerb(MONEY_RE, asked)) && !onlyOwnPlanMoney(t)) || paidPromotion(asked)) kinds.push('money');
   if (hasVerb(DELETE_RE, t) || hasVerb(DELETE_RE, asked)) kinds.push('delete');
+  if ([SIGNUP_RE, SIGNUP_NAMED_RE].some((re) => hasVerb(re, t) || hasVerb(re, asked))) kinds.push('signup');
   return kinds;
 }
 
@@ -196,14 +227,27 @@ export function classifyOwnerAction(text) {
 // Decision for one request. `grant` holds the owner's explicit, recent yes per
 // kind (for example { money: true }). The request is allowed only when every
 // kind it contains has a grant. Without one, CHE must ask aloud first.
+// The trading desk owns its own confirmations (#355): a whole-sentence stock order's "sell" (a paper sell is read back
+// and waits for the desk's yes; a live one is refused with nothing sent), and "place the order" / "yes, place the order"
+// for a pending desk alert or paper read-back. Money that comes only from those words is the desk's to confirm, so the
+// gate does not ask a second, vaguer question first. Any other money word in the sentence ("buy 10 shares ... live with
+// real money", "... and buy AirPods") keeps the hold. The worker asks this only for turns the desk itself recognises.
+export function deskOwnedMoney(text) {
+  const t = String(text || '');
+  if (!classifyOwnerActions(t).includes('money')) return false;
+  const rest = t.replace(new RegExp(`\\b${SALE_VERB}`, 'gi'), ' ').replace(/\bplace\s+(?:the|my|this|that)\s+orders?\b/gi, ' ');
+  return !classifyOwnerActions(rest).includes('money');
+}
+
 export function gateOwnerAction(text, grant = {}) {
   const kinds = classifyOwnerActions(text);
   if (!kinds.length) return { allowed: true, kind: '', kinds: [] };
   const missing = kinds.filter((k) => !(grant && grant[k] === true));
   if (!missing.length) return { allowed: true, kind: kinds[0], kinds };
   const parts = [];
-  if (missing.includes('money')) parts.push('spend or buy anything');
+  if (missing.includes('money')) parts.push(SALE_RE.test(text) ? 'spend, buy or sell anything' : 'spend or buy anything');
   if (missing.includes('delete')) parts.push('delete or remove anything');
+  if (missing.includes('signup')) parts.push('sign you up for anything');
   return {
     allowed: false,
     kind: missing[0],
@@ -236,12 +280,18 @@ const KNOWN_APPS = [
   'instagram', 'snapchat', 'facebook', 'linkedin', 'whatsapp', 'messenger', 'telegram',
   'chatgpt', 'youtube', 'spotify', 'outlook', 'notion', 'pinterest', 'netflix',
   'weather', 'reminders', 'messages', 'settings', 'safari', 'photos', 'calendar', 'amazon',
-  'paypal', 'reddit', 'discord', 'twitch', 'threads', 'gmail', 'slack', 'zoom', 'hulu', 'tubi',
+  'paypal', 'robinhood', 'reddit', 'discord', 'twitch', 'threads', 'gmail', 'slack', 'zoom', 'hulu', 'tubi',
   'github', 'grok', 'music', 'notes', 'mail', 'email', 'maps', 'clock', 'camera',
 ];
 // Sorted longest first so "google maps" matches before "maps" would.
 const APPS_RE = [...new Set(KNOWN_APPS)].sort((a, b) => b.length - a.length)
   .map((a) => a.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+// An account set up with a named service, including one the owner already has ("set up my Notion account"). Only a
+// service in KNOWN_APPS is named: clauses split at every full stop, so a site like "chey-test.com" is not read as one.
+// "Set up my account on the phone" names no service and is not held.
+const SERVICE_NAME = String.raw`(?:${APPS_RE})\b`;
+const SIGNUP_NAMED_RE = new RegExp(`${LEAD}(?:set\\s+up\\s+(?:me\\s+|us\\s+|my\\s+|our\\s+)?(?:an?\\s+|a\\s+new\\s+)?(?:new\\s+)?${SERVICE_NAME}\\s+account\\b|set\\s+up\\s+(?:me\\s+|us\\s+|my\\s+|our\\s+)?(?:an?\\s+|a\\s+new\\s+)?(?:new\\s+)?account\\s+(?:with|on|at)\\s+${SERVICE_NAME})`, 'i');
+
 // "open X" as the owner says it: the verb names the app outright, with a
 // clean end after it. No "my" or "the" before the name, so "use my notes to
 // answer this" (CHE's own memory, not the Notes app) never grants anything.
@@ -266,6 +316,18 @@ const APP_NAMED_OPEN_RE = new RegExp(
     APPS_RE + ')\\s+app(?=$|[.,!?;]|\\s+(?:and|to|now|please)\\b)', 'i',
 );
 
+// Naming an app is not using it when the app is what CHE studies or reports on (comprehension audit): REA
+// reads an app's public listing and code ("run your REA on the Notion app", "investigate the Spotify app"),
+// and channel numbers come from CHE's own YouTube connection ("how many subscribers do I have on YouTube").
+// Anything that would open, play or read inside the app still needs the owner's permission.
+const STUDIED_APP_RE = /\b(?:rea|reverse[- ]engineer\w*|investigat\w*|analy[sz]\w*|inspect\w*|stud(?:y|ying|ied)|compar\w*)\b/i;
+const CHANNEL_STATS_RE = /\b(?:subscribers?|views|uploads?|channel|analytics|watch\s+time)\b/i;
+const USES_APP_RE = /\b(?:open|launch|play|go\s+to|watch(?!\s+time)|use|show\s+me|read|post|upload|comment|like)\b/i;
+function studiesApp(clause, app, named) {
+  if (named ? STUDIED_APP_RE.test(clause) : /\b(?:rea|reverse[- ]engineer\w*)\b/i.test(clause)) return true;
+  return app === 'youtube' && CHANNEL_STATS_RE.test(clause) && !USES_APP_RE.test(clause);
+}
+
 // Classify each clause independently. A single explicit open must never
 // bypass another app mentioned later in the same owner request.
 export function classifyAppAccesses(text) {
@@ -282,6 +344,7 @@ export function classifyAppAccesses(text) {
     const named = APP_NAMED_RE.exec(clause);
     const implicit = named ? named[0].toLowerCase().replace(/\s+app$/, '')
       : (APP_IN_RE.exec(clause)?.[1]?.toLowerCase() || '');
+    if (implicit && !openApp && studiesApp(clause, implicit, Boolean(named))) continue;
     if (implicit && implicit !== openApp && !required.includes(implicit)) required.push(implicit);
   }
   return { explicit, required: required.filter((app) => !explicit.includes(app)) };
@@ -301,8 +364,9 @@ export function classifyAppNeed(text) {
 export function peerActionReply(text) {
   const kinds = classifyOwnerActions(text);
   if (!kinds.length) return '';
-  const done = kinds.length > 1 ? "spent, bought or deleted" : kinds[0] === 'money' ? 'spent or bought' : 'deleted';
-  const need = kinds.length > 1 ? 'Those need' : kinds[0] === 'money' ? 'Spending money needs' : 'Deleting needs';
+  const multi = kinds.includes('signup') ? 'spent, bought, deleted or signed up' : 'spent, bought or deleted';
+  const done = kinds.length > 1 ? multi : kinds[0] === 'money' ? 'spent or bought' : kinds[0] === 'signup' ? 'signed up' : 'deleted';
+  const need = kinds.length > 1 ? 'Those need' : kinds[0] === 'money' ? 'Spending money needs' : kinds[0] === 'signup' ? 'Signing up needs' : 'Deleting needs';
   return `I haven't ${done} anything. ${need} the owner's direct yes, and I don't act on requests from other AIs. If the owner wants it, the owner can ask me directly, and I'll confirm exactly what I'll do before I do it.`;
 }
 
@@ -328,6 +392,6 @@ export function isOwnerYes(text) {
 // Grant object that releases exactly the kinds a held request contained.
 export function grantForKinds(kinds = []) {
   const grant = {};
-  for (const k of kinds) if (k === 'money' || k === 'delete') grant[k] = true;
+  for (const k of kinds) if (k === 'money' || k === 'delete' || k === 'signup') grant[k] = true;
   return grant;
 }

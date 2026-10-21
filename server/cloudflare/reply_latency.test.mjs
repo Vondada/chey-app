@@ -12,7 +12,7 @@ test('casual chat heuristic skips heavy and capability-backed turns', () => {
   assert.equal(isLikelyCasualChat('x'.repeat(300)), false);
 });
 
-test('fast attempts put compact+fast route first', () => {
+test('fast attempts retain full rules and context; only the route and model change', () => {
   const fast = chatModelAttempts({
     preferFast: true,
     model: 'fast-model',
@@ -22,7 +22,9 @@ test('fast attempts put compact+fast route first', () => {
     turns: [{ role: 'user', content: 'a' }, { role: 'assistant', content: 'b' }, { role: 'user', content: 'c' }],
   });
   assert.equal(fast[0].route, 'fast');
-  assert.equal(fast[0].system, 'COMPACT');
+  assert.equal(fast[0].system, 'FULL');
+  assert.equal(fast.length, 2);
+  assert.deepEqual(fast[1].turns, fast[0].turns);
   assert.equal(fast[1].route, 'quality');
   assert.equal(fast[1].system, 'FULL');
 

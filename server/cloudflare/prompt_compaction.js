@@ -43,10 +43,8 @@ export async function packText(text, { minBytes = 768 } = {}) {
 export async function unpackText(record) {
   if (record == null) return null;
   if (typeof record === 'string') return record;
-  if (record.codec === 'plain-v1') return String(record.text ?? '');
-  if (record.codec !== 'gzip-v1') throw new Error('Unknown prompt compression codec.');
-  const raw = await gunzip(record.bytes);
-  const text = dec.decode(raw);
+  if (!['plain-v1', 'gzip-v1'].includes(record.codec)) throw new Error('Unknown prompt compression codec.');
+  const text = record.codec === 'plain-v1' ? String(record.text ?? '') : dec.decode(await gunzip(record.bytes));
   const digest = await sha256Text(text);
   if (record.sha256 && digest !== record.sha256) throw new Error('Compressed prompt integrity check failed.');
   return text;
