@@ -74,6 +74,8 @@ Then, on GitHub:
 
 ## 2. Current position (Claude, 2026-10-21 — MASTER MISSION checkpoint; read this first)
 
+**UPDATE (later the same session):** PR #415 MERGED as `a1590b2` (main). PR **#416** OPEN = consolidated bundle: head `a309e91` on `claude/che-capability-media-age` = media store + capability queue + delayed-bar age (Worker, `f10a9b6`) + Trading Room Details section (Flutter, `3e9f4b0` cherry-picked). Checks on #416 were running at this update; merge with `[worker-deploy]` title only when "Worker syntax and unit tests" and both "analyze" pass. Full `flutter test` on the bundle: 612 passed, exit 0 (run in sandbox at /opt/flutter-sdk/flutter/bin). `flutter analyze` on the changed Dart files: no issues. Trading Room item T5 DONE-V (widget test `test/che_trading_details_test.dart`). Items T1–T4, T6–T7 still open (see §6 I.2 for the exact next step).
+
 **Branches and PRs (exact):**
 - `main` = `26dbc6b` (PR #411 merged 81a982852 → main e7863be; #413 merged 360ae46; #414 merged 26dbc6b).
 - PR **#415** `claude/che-coding-history-ads` head `0815b37` (main merged in, conflict in chat_grounding.test.mjs resolved, run_checks Worker 2915/2915, skills 17/17). Open. Actions checks were still running at checkpoint; merge only when "Worker syntax and unit tests" and both "analyze" are success (ignore "Workers Builds").
