@@ -72,6 +72,11 @@ Then, on GitHub:
 
 **ChatGPT 2026-10-20 owner-directed end-to-end continuation:** Current main `295a9cde` (PRs #393 and #392 merged). Claude PR #394 false-completion fix is open: CI green on inspected commit `6984aa1`, but unresolved Codex review threads remain for `office_workforce.js` (`review_pending` must keep temporary agents busy) and `office_board.js` (desk statuses for `review_pending`, `needs_review`, `rejected`); original passive-claims thread is outdated but should be rechecked. DO NOT MERGE #394 before current-head review and checks pass. ChatGPT created PR #395 from main `chatgpt/chart-malformed-response-20261020` commit `2865b6e` to guard malformed scalar API collection fields (`points`, `timeframes`, `bars`, `markers`, `drawings`, `open_orders`) in `lib/rooms/che_trading_chart.dart`, resolving the owner's observed `int` cast crash. PR #395 CI Flutter / UI Analyze in progress (`39540411941`, `39540411947`); not merged, not installed, no live iPhone test. Actual live FundYourEdge/Tradesea Rithmic market-data and broker paper-order integration NOT CONNECTED; existing futures `/api/trading/chart` uses stored delayed research bars and blocks futures orders. Next: add chart malformed-payload regression, obtain valid Rithmic API access/terms and separate simulated account permission; test read-only stream, then simulated orders only; no credentials shared in chat and no paid purchases. Owner requested end-to-end finish, but third-party API authorization is a real external blocker.
 
+## 2. Current position (Claude, 2026-10-21 — PR 401 split opened as #402-#405, not merged)
+
+- #402 claude/che-split-1-gate-loop (base main); #403 claude/che-split-2-sources-memory (base #402); #404 claude/che-split-3-rooms-clock (base main); #405 claude/che-split-4-chat-routing (base #403).
+- PR 401 is still open. Merge needs the owner's go for each PR.
+
 ## 2. Current position (Claude, 2026-10-21 — office agents take browsing tasks; no hiring: claude/che-split-4-chat-routing at be796d6)
 
 - Sub-agent work goes only to agents already on the team (pickOfficeAgent in browse_chat.js). No fit means CHE says so; nobody is hired.
