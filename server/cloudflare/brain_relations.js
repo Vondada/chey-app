@@ -162,3 +162,42 @@ export function relationReason(link) {
   const shared = (link.shared || []).map((v) => (link.basis === 'pr' ? `#${v}` : v)).join(', ');
   return `${RELATION_LABEL[link.basis] || 'a shared reference'}${shared ? ` (${shared})` : ''}${link.status === 'candidate' ? ', a candidate link' : ''}`;
 }
+
+/**
+ * Walks the links outward from the given records, up to `depth` steps in either direction (a link and the
+ * relations CHE stored on each record), so a question reaches the notes connected to what it matched.
+ * Returns [{ record, depth, via: [{ type, from }] }], nearest first, at most `limit` notes. Nothing is written.
+ */
+export function expandByLinks(store, hits = [], { depth = 2, limit = 20 } = {}) {
+  if (!store?.get) return [];
+  const seen = new Map();
+  let frontier = [];
+  for (const hit of hits) {
+    if (!hit?.id || hit.deleted || seen.has(hit.id)) continue;
+    seen.set(hit.id, { record: hit, depth: 0, via: [] });
+    frontier.push(hit.id);
+  }
+  for (let step = 1; step <= depth && frontier.length && seen.size < limit; step++) {
+    const next = [];
+    for (const id of frontier) {
+      const from = seen.get(id);
+      const links = [...(from.record.links || []), ...(from.record.source?.relations || []).map((r) => ({ type: r.type, to: r.to }))];
+      for (const link of links) {
+        if (!link?.to || seen.has(link.to) || seen.size >= limit) continue;
+        const other = store.get(link.to);
+        if (!other || other.deleted) continue;
+        seen.set(link.to, { record: other, depth: step, via: [...from.via, { type: link.type, from: id }] });
+        next.push(link.to);
+      }
+    }
+    frontier = next;
+  }
+  return [...seen.values()].sort((a, b) => a.depth - b.depth);
+}
+
+/** Every record connected to [id] through links, however far, up to `limit`. Records that link together form one cluster. */
+export function clusterOf(store, id, { limit = 200 } = {}) {
+  const start = store?.get?.(id);
+  if (!start || start.deleted) return [];
+  return expandByLinks(store, [start], { depth: 50, limit }).map((item) => item.record);
+}
