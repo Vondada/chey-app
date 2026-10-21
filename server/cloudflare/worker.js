@@ -10334,7 +10334,9 @@ export class CheState extends DurableObject {
             if (added.added || added.replaced?.length) await this.saveChatData(data);
             return ndjsonReply('I’ll remember that, sir.', { source: 'che_memory', model_calls: 0 });
           }
-          const known = rememberFact ? null : await knownAnswer(this.ctx.storage, message, { memories: data.memories }).catch(() => null);
+          // "Where did you learn it?" needs the stored date and source, which the personal route (below) gives and this
+          // shortcut does not, so that question skips the shortcut.
+          const known = rememberFact || personalFactQuestion(rawMessage)?.learn ? null : await knownAnswer(this.ctx.storage, message, { memories: data.memories }).catch(() => null);
           if (known) {
             await Promise.resolve().then(() => this.ctx.storage.put(LAST_ANSWER_EVIDENCE_KEY,
               answerEvidenceReceipt({ ownerAttested: true, at: Date.now() }))).catch(() => null);

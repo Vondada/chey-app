@@ -77,6 +77,24 @@ test('1a: "What is my favorite food" with only a stored drink never names the dr
   assert.doesNotMatch(out.reply, /Sprite|April|2024/);
 });
 
+test('1c: the owner\'s exact words, with the wake word "CHE," and a stored food, are answered from that record', async () => {
+  const che = await owner({ model: () => 'Your favorite food is pasta, from April 12, 2024.' });
+  await che.say('Remember that my favorite food is pizza');
+  const out = await che.say("CHE, what's my favorite food, and where did you learn it?");
+  assert.equal(out.meta.source, 'che_personal_recall');
+  assert.equal(out.modelCalls, 0, 'the personal route answers, so no model is asked');
+  assert.match(out.reply, /You told me "My favorite food is pizza"/);
+  assert.match(out.reply, /I learned it from you in this chat/);
+});
+
+test('1d: British spelling in the stored statement ("favourite") still answers "favorite food"', async () => {
+  const che = await owner();
+  await che.say('Remember that my favourite food is pizza');
+  const out = await che.say('What is my favorite food?');
+  assert.equal(out.meta.source, 'che_personal_recall');
+  assert.match(out.reply, /pizza/);
+});
+
 test('1b: a stored food is quoted with the date it was stored, and where it came from', async () => {
   const che = await owner({ model: () => 'Your favorite food is pasta, recorded on April 12, 2024.' });
   await che.say('Remember that my favorite food is pizza');

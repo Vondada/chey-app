@@ -11,17 +11,22 @@ import { ownerAttestedRecords } from './memory_provenance.js';
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const STOP = new Set(['the', 'a', 'an', 'my', 'your', 'of', 'to', 'in', 'is', 'are', 'and', 'or', 'it', 'that', 'this', 'me', 'you', 'i', 'do', 'did', 'know', 'what', 'which', 'whats', 'where']);
 const PERSONAL = /^(?:what(?:'s| is| are)?|which(?: one is)?|do you (?:know|remember)|tell me|remind me|what do you know about)\s+(?:is |are |was |about )?(?:my|the owner'?s?|your owner'?s?)\s+(.{2,60})$/i;
+const WAKE = /^(?:(?:hey|ok|okay)\s+)?(?:(?:che|chey|chay|shay)\b[,:]?\s*)/i;
 const LEARN = /\b(?:where|how) did you (?:learn|get|hear)\b/i;
 // Trading, market, system and measurement words belong to their own routes: "what is my MAE" is not a personal fact.
 const NOT_PERSONAL = /\b(?:trad(?:e|es|ing)|paper|performance|volume|probability|mae|mfe|win|loss|streak|session|hour|price|market|portfolio|orders?|balance|chart|strateg(?:y|ies)|positions?|accounts?|rate|expectancy|drawdown|pnl|profit|eth|btc|nq|mnq|es)\b/i;
 
+// British and American spellings of the same word match: a stored "favourite food" answers "favorite food".
+const SPELLING = { favourite: 'favorite', colour: 'color', flavour: 'flavor', honour: 'honor', organise: 'organize', centre: 'center' };
+
 function words(text) {
-  return String(text || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/).filter((w) => w && !STOP.has(w));
+  return String(text || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/).map((w) => SPELLING[w] || w).filter((w) => w && !STOP.has(w));
 }
 
 /** The subject of a personal question, or null when the words are not asking for a personal fact. */
 export function personalFactQuestion(message) {
-  const text = String(message || '').replace(/\s+/g, ' ').trim().replace(/[?.!]+$/, '');
+  // The wake word ("CHE," / "Hey CHE,") is not part of the question. Left in, its comma split the sentence at once.
+  const text = String(message || '').replace(/\s+/g, ' ').trim().replace(WAKE, '').replace(/[?.!]+$/, '');
   if (!text || /\b(?:story|fiction|pretend|imagine|hypothetical|poem|joke)\b/i.test(text)) return null;
   const learn = LEARN.test(text);
   const [head] = text.split(/,|\band\b|\bwhere\b/i);
