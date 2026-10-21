@@ -13035,7 +13035,9 @@ export class CheState extends DurableObject {
     // commit alone never replaces a good answer; a real execution or record claim still does.
     const hashes = [];
     const masked = text.replace(/\b[0-9a-f]{7,64}\b/g, (hash) => { hashes.push(hash); return `\u27e6sha${hashes.length - 1}\u27e7`; });
-    const checked = guardExecutionClaims(masked, { message: question, receipts: [] });
+    // Only a path the pinned read returned may be named; any other file, lint run or dependency is a fabrication.
+    const verifiedPaths = new Set([...(inspected.files || []), ...(inspected.discovery?.files || [])].map((file) => file.path).filter(Boolean));
+    const checked = guardExecutionClaims(masked, { message: question, receipts: [], verifiedPaths });
     if (!checked.removed.length) return text;
     return checked.text.replace(/\u27e6sha(\d+)\u27e7/g, (_, i) => hashes[Number(i)] || '');
   }

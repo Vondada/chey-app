@@ -162,3 +162,52 @@ test('review fix: a real execution claim in the analysis is still removed', asyn
   assert.doesNotMatch(reply, /job completed successfully/);
   assert.deepEqual(record.dispatches, []);
 });
+
+// Owner report (2026-10-21): "CHE, investigate Creator Studio read-only" was answered by the no-tools model with
+// five nonexistent app/services files, a "pylint" run that passed, and dependencies. None of those is evidence.
+const CREATOR_STUDIO_QUESTION = 'CHE, investigate Creator Studio read-only. Tell me which files you read, what the code does, and whether any tests or lint checks passed. Do not change anything.';
+const FABRICATED = 'Creator Studio is handled by app/services/media.py, app/services/video_list.py and app/services/database.py. Authentication is in app/services/auth.py, routed from app/routes.py. I ran pylint on app/services/media.py and it passed with no warnings. The class MediaService stores uploads. The dependencies are pandas, sqlite3, google-cloud-storage and flask_login.';
+
+test('creator studio: an investigation of a named room reads the source; the model never answers from its own file names', async (t) => {
+  const record = { models: [], dispatches: [] };
+  withFakeGithub(t, record);
+  const che = await owner(FABRICATED, record);
+  const { reply, done } = await che.say(CREATOR_STUDIO_QUESTION);
+  assert.notEqual(done.source, 'model', 'the investigation no longer reaches the model without a tool');
+  for (const path of ['app/services/media.py', 'app/services/video_list.py', 'app/services/database.py', 'app/services/auth.py', 'app/routes.py']) {
+    assert.doesNotMatch(reply, new RegExp(path.replace(/[.]/g, '\\.')), `fabricated path ${path} must not reach the owner`);
+  }
+  assert.doesNotMatch(reply, /pylint|pandas|sqlite3|flask_login|google-cloud-storage|MediaService/);
+  assert.deepEqual(record.dispatches, [], 'a read-only investigation starts no job');
+});
+
+test('creator studio: "show me my creator studio" is not a source investigation', async () => {
+  const { repositoryInspectionIntent } = await import('./code_scout.js');
+  assert.equal(repositoryInspectionIntent('CHE, investigate Creator Studio read-only. Which files implement it?'), true);
+  assert.equal(repositoryInspectionIntent('Show me my creator studio.'), false);
+  assert.equal(repositoryInspectionIntent('Open Creator Studio.'), false);
+  const { analyticalRepositoryQuestion } = await import('./code_scout.js');
+  assert.equal(analyticalRepositoryQuestion('CHE, investigate Creator Studio read-only. Tell me which files you read, what the code does, and whether any tests passed.'), true, 'what the code does is an explanation, not a listing');
+});
+
+test('creator studio: a general question that names fabricated files is refused on the model path', async () => {
+  const record = { models: [], dispatches: [] };
+  const che = await owner(FABRICATED, record);
+  const { reply, done } = await che.say('Which files make up Creator Studio?');
+  assert.notEqual(done.source, 'che_repository_inspection', 'no source read ran for this question');
+  assert.doesNotMatch(reply, /app\/services|pylint|pandas/);
+  assert.match(reply, /cannot verify/i);
+});
+
+test('creator studio: source claims are judged against the paths the read returned', async () => {
+  const { guardExecutionClaims } = await import('./truth_layer.js');
+  const verified = new Set(['server/cloudflare/worker.js']);
+  assert.equal(guardExecutionClaims('It is in server/cloudflare/worker.js.', { verifiedPaths: verified }).removed.length, 0, 'a path the read returned is kept');
+  assert.equal(guardExecutionClaims('It is in app/services/media.py.', { verifiedPaths: verified }).removed.length, 1, 'a path the read did not return is removed');
+  assert.equal(guardExecutionClaims('It is in app/services/media.py.', {}).removed.length, 1, 'with no read, any named file is removed');
+  assert.equal(guardExecutionClaims('See https://example.com/v1/data.json for the spec.').removed.length, 0, 'a URL is not a repository path');
+  assert.equal(guardExecutionClaims('Pylint passed with no warnings.').removed.length, 1, 'a lint result with no run is removed');
+  assert.equal(guardExecutionClaims('The dependencies are pandas and sqlite3.').removed.length, 1, 'an unverified dependency is removed');
+  assert.equal(guardExecutionClaims('The class MediaService stores uploads.').removed.length, 1, 'a class name with no read is removed');
+  assert.equal(guardExecutionClaims('Creator Studio is a room where you make videos.').removed.length, 0, 'ordinary product talk stays');
+});

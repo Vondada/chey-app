@@ -640,7 +640,7 @@ export function analyticalRepositoryQuestion(message) {
   const text = withoutQuotedText(String(message || '').trim());
   // Reasoning wins over listing: "explain why it stalls and list the files involved" gets the explanation.
   // A pure listing request ("show me the files", "which files") has no reasoning word and keeps the list.
-  return /\b(?:explain|why|how\s+(?:does|do|is|are|would|should|could)|weakness(?:es)?|weak\s+points?|biggest|recommend\w*|repairs?|root\s+cause|trade-?offs?|risks?|improve\w*|what\s+(?:should|would|could)|analy[sz]e|compare|list\s+the\s+(?:weaknesses|problems|risks|causes|reasons))\b/i.test(text);
+  return /\b(?:explain|why|how\s+(?:does|do|is|are|would|should|could)|weakness(?:es)?|weak\s+points?|biggest|recommend\w*|repairs?|root\s+cause|trade-?offs?|risks?|improve\w*|what\s+(?:should|would|could)|what\s+(?:the\s+)?(?:code|source|it|this|that)\s+(?:does|do)\b|analy[sz]e|compare|list\s+the\s+(?:weaknesses|problems|risks|causes|reasons))\b/i.test(text);
 }
 
 export function repositoryInspectionIntent(message) {
@@ -683,7 +683,11 @@ export function repositoryInspectionIntent(message) {
   const guardedDiagnostic = readOnlyDiagnosticIntent(text) && repoTarget;
   // An analysis of CHE's own architecture (weaknesses, repairs, root causes) reads her source, whatever it opens with.
   const architectureAnalysis = repoTarget && /\b(?:weakness(?:es)?|recommend\w*|repairs?|root\s+cause|trade-?offs?)\b/i.test(text);
-  return Boolean((directInspection && repoTarget) || architectureAnalysis || exactHeadQuestion || repositoryStateQuestion || guardedDiagnostic || selfDiagnosticSource);
+  // "CHE, investigate Creator Studio read-only": an investigation (not "show me") of a named screen or room
+  // reads its source. Without this the no-tools model answers with file names it invented.
+  const namedAreaInvestigation = /\b(?:creator|music|voice|video|trading|war|brain|office)\s+(?:studio|room|desk|screen|page)\b/i.test(text)
+    && /^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:please\s+|(?:can|could|will)\s+you\s+)?(?:investigate|inspect|audit|review|diagnose|analy[sz]e|trace|examine|verify)\b/i.test(text);
+  return Boolean((directInspection && repoTarget) || architectureAnalysis || namedAreaInvestigation || exactHeadQuestion || repositoryStateQuestion || guardedDiagnostic || selfDiagnosticSource);
 }
 
 export function starredRepoIntent(message) {

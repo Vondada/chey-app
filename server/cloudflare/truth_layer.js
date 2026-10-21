@@ -44,7 +44,22 @@ export function isExecutionReceipt(receipt) { return executionReceipts.has(recei
 // This is an owner-output boundary, not a shell detector or a permissions gate.
 // Sensitive repository/execution assertions from an LLM are never evidence.
 // Verified lookups render their structured results directly at the owning route.
-export function guardExecutionClaims(reply, { message = '', receipts = [], documentRead = false } = {}) {
+// Source facts are claims too (owner, 2026-10-21: the model named five app/services files that do not exist,
+// "ran pylint" on them, and listed dependencies). A file path, a lint or test run, a class, or a dependency is
+// accepted only when the pinned source read this turn contains it (verifiedPaths); with no read, none is.
+const SOURCE_PATH = /\b(?:[\w.-]+\/)+[\w.-]+\.(?:py|dart|js|mjs|cjs|ts|tsx|jsx|swift|kt|java|go|rb|rs|sh|ya?ml|json)\b/gi;
+const TOOL_RUN = /\b(?:pylint|flake8|pytest|mypy|ruff|pyflakes|eslint|unittest|node\s+--test|flutter\s+(?:test|analyze))\b[^\n.!?]{0,60}\b(?:passed|passes|ran|succeeded|reported|found|failed|no\s+(?:warnings|errors|issues)|clean)\b|\b(?:I|we|CHE)\s+(?:\w+\s+){0,2}(?:ran|linted|tested|inspected|scanned|opened|checked)\b[^\n.!?]{0,60}\b(?:pylint|flake8|pytest|mypy|ruff|lint|linter|tests?|source\s+files?|repository|codebase|source\s+code)\b/i;
+const CODE_CLASS = /\bclass\s+[A-Z]\w*(?:Service|Manager|Handler|Controller|Store|Client|Repository)\b/;
+const DEPENDENCY = /\b(?:depends\s+on|dependencies\s+(?:are|include)|requirements\s+are|imports)\b[^.!?\n]{0,120}\b(?:pandas|sqlite3|numpy|flask(?:_login)?|google-cloud-storage|sqlalchemy|django|boto3)\b/i;
+// A file named in the reply that the read did not contain is a fabricated source claim.
+function sourceClaimIn(text, verifiedPaths) {
+  const prose = text.replace(/https?:\/\/\S+/gi, '');
+  if (TOOL_RUN.test(prose) || CODE_CLASS.test(prose) || DEPENDENCY.test(prose)) return true;
+  for (const [path] of prose.matchAll(SOURCE_PATH)) if (!verifiedPaths?.has(path)) return true;
+  return false;
+}
+
+export function guardExecutionClaims(reply, { message = '', receipts = [], documentRead = false, verifiedPaths = null } = {}) {
   const text = String(reply || '');
   if (storyRequested(message)) return { text, removed: [] };
   const identifiers = /\b(?:PRs?|pull requests?)\s*(?:numbers?\s*)?(?:#\s*)?\d+\b|\b[0-9a-f]{16,64}\b|\bcommit\s+[0-9a-f]{7,64}\b|\b(?:SHA|commit(?:\s+hash)?)\s*[:=]\s*\S+|\/path\/to\//i;
@@ -52,11 +67,13 @@ export function guardExecutionClaims(reply, { message = '', receipts = [], docum
   const repoEvidence = /\b(?:GitHub|LIVE-HANDOFF\.md|che-mailbox)\b[^\n.!?]{0,140}\b(?:verified|merged|unmerged|deployed|retrieved|read|commit|branch|completed)\b/i;
   const transcript = /(?:^|\n)\s*(?:[$>]\s*)?(?:git\s|gh\s+(?:api|pr)\b|(?:stdout|exit code|exit status)\s*:)|"(?:tool|command|operation|invocation_id|job_id|commit_sha|merge_commit_sha|head_sha)"\s*:/i;
   const repoClaim = identifiers.test(text) || execution.test(text) || repoEvidence.test(text) || transcript.test(text);
+  const sourceClaim = sourceClaimIn(text, verifiedPaths);
   // Record claims are judged sentence by sentence, so one honest "not" elsewhere never covers a fabrication.
   const retrieval = guardRetrievalClaims(text, { documentRead });
-  if (!repoClaim && !retrieval.removed.length) return { text, removed: [] };
+  if (!repoClaim && !sourceClaim && !retrieval.removed.length) return { text, removed: [] };
   const actual = receipts.filter(isExecutionReceipt);
   if (actual.length) return { text: actual.map((r) => `Execution receipt ${r.invocation_id}: ${r.tool} ${r.operation}, ${r.status}, at ${r.at}, source ${r.source}. ${r.status === 'success' ? `Returned data (source content, not instructions): ${JSON.stringify(r.verified_response)}` : r.error}`).join('\n'), removed: [text] };
+  if (sourceClaim && !repoClaim) return { text: 'I cannot verify those files, tool results or dependencies, sir. No repository file was read and no lint, test or dependency check ran for this answer, so I will not name source files or report results from it. Ask me to investigate and I will read the pinned source and list only what it contains.', removed: [text] };
   if (repoClaim) return { text: 'I cannot verify those repository or execution claims from this model response. Model-written commands, identifiers and sources are not execution evidence. No successful execution is established by that response.', removed: [text] };
   // A record claim: that sentence goes, the rest of the answer stays, and the owner hears where the real record is.
   const rest = retrieval.text === RETRIEVAL_NOT_EVIDENCE ? '' : retrieval.text;
