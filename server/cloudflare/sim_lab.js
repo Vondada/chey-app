@@ -666,19 +666,21 @@ export async function saveRun(storage, store, run) {
     ...run.hazard_notes,
     'Evidence level: simulated at most. Nothing was built or measured.',
   ].join('\n');
+  // Research descriptions can contain strings shaped like credentials even when the
+  // simulation is safe. Never store those lines in Brain; keep the verified-safe
+  // observations with an explicit withholding notice instead of losing the run.
+  const cleanLines = body.split('\n').filter((line) => isSafeText(line));
+  const cleanBody = cleanLines.join('\n');
+  const withheld = 'Some simulation details were withheld because they resembled private credentials.';
+  const safeBody = isSafeText(body) ? body
+    : isSafeText(cleanBody) ? `${cleanBody}\n${withheld}`
+      : `Simulation recorded. ${withheld}`;
   const brainRecord = {
     id: `sim_run:${run.id}`, kind: 'simulation_run', region: BRAIN_REGIONS.projects, path: run.type_label,
-    title: `Simulation: ${run.title}`, body, verification: 'proposed', created_at: run.created_at,
+    title: `Simulation: ${run.title}`, body: safeBody, verification: 'proposed', created_at: run.created_at,
     source: { store: 'sim_runs', id: run.id, plan: run.plan_id, route: SIM_SOURCE, models: run.models.map((m) => `${m.model.id}@${m.model.version}`), seed: run.seed, evidence: 'simulated', references: run.models.flatMap((m) => m.model.references.map((r) => r.url)) },
   };
   const written = store.put(brainRecord);
-  if (written?.outcome === 'rejected') {
-    console.error('SIM_LAB_BRAIN_SAFE_DIAGNOSTIC', written.reason,
-      'title', isSafeText(brainRecord.title),
-      'body', isSafeText(brainRecord.body),
-      'unsafeBodyLines', brainRecord.body.split('\n').map((line, i) => (!isSafeText(line) ? i : -1)).filter((n) => n >= 0),
-      'source', isSafeText(JSON.stringify(brainRecord.source)));
-  }
   return written;
 }
 
