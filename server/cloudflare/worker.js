@@ -136,7 +136,7 @@ import { githubWorkshopPieces, workshopAvatar, workshopAvatarIntent, workshopSna
 import { flushOutbox, handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, openMailbox, transcript as flagstaffTranscript, mailboxCode, mailboxLink, postWebMail, readWebMail, rotateMailboxCode } from './web_mailbox.js';
 import { CheLibrary, fetchReadable, libraryContext, libraryIntent } from './library.js';
 import { KnowledgeLibrary, knowledgeIntent, knowledgeReply, knowledgeTaskContext } from './knowledge_library.js';
-import { answerPersonalFact, groundedReply, needsStrongEngine, personalFactQuestion } from './personal_recall.js';
+import { answerPersonalFact, groundedReply, isQuestionLike, needsStrongEngine, personalFactQuestion } from './personal_recall.js';
 import { adRequest, adStatusLines, assetTruthReply } from './asset_truth.js';
 import { dropAgentTaskTurns, replyRepeatsAgentTask } from './agent_task_guard.js';
 import { openKnowledgeLibrary, seedKnowledgeCatalog } from './knowledge_catalog_seed.js';
@@ -10342,9 +10342,11 @@ export class CheState extends DurableObject {
         // URL?") is answered from CHE's own memory with zero AI calls. A
         // "remember that my X is Y" turn also becomes such a fact.
         if (ownerDevice && !body.attachment) {
-          const rememberFact = /\bremember\b/i.test(rawMessage)
+          const rememberMatch = /\bremember\b/i.test(rawMessage)
             ? /^(?:(?:chay|chey|shay|che)[, ]+)?remember(?: that)?\s+(.+)/i.exec(message)
             : null;
+          // A question is never saved as a fact: "remember what my favorite food is?" is asked, not told (personal_recall.js).
+          const rememberFact = rememberMatch && !isQuestionLike(rememberMatch[1]) ? rememberMatch : null;
           // A plain owner fact is saved right here, before page reading or any
           // AI step can misread it ("remember that my Worker URL is https://…"
           // used to be fetched as a web page instead of remembered).
@@ -11810,9 +11812,14 @@ export class CheState extends DurableObject {
           if (!research.cached) await queueRoomEvent(this.ctx.storage, researchEvent({ id: researchNote?.note?.id || '', title: researchNote?.note?.title || message, summary: research.summary, sources: research.sources || [], by: 'CHE' })).catch(() => null);
         }
 
-        const remember = /\bremember\b/i.test(rawMessage)
+        const rememberAsked = /\bremember\b/i.test(rawMessage)
           ? /^(?:(?:chay|chey|shay|che)[, ]+)?remember(?: that)?\s+(.+)/i.exec(message)
           : null;
+        // A question is asked, not told: it is never saved as a memory (personal_recall.js isQuestionLike).
+        if (rememberAsked && isQuestionLike(rememberAsked[1])) {
+          return ndjsonReply('That is a question, sir, so I did not save it as a fact. Tell me the fact itself, for example "my favorite food is pizza".', { source: 'che_memory', model_calls: 0 });
+        }
+        const remember = rememberAsked;
         if (remember) {
           const memory = remember[1].trim().slice(0, 500);
           const reply = /password|passcode|security code|social security|credit card/i.test(memory)

@@ -111,7 +111,7 @@ test('a fact the owner told CHE in chat is found by a normal question, with the 
   await che.say('What is my favorite food?');
   // The owner's own words are quoted deterministically (personal_recall.js); the model is not asked to recall them.
   const answer = (await che.say('What is my favorite food?')).reply;
-  assert.match(answer, /You told me "My favorite food is pizza"/, 'the owner\'s own words are quoted');
+  assert.match(answer, /^Your favorite food is pizza\. You told me that on [A-Z][a-z]+ \d{1,2}, \d{4}\./, 'the owner\'s stored value is given with its genuine date');
   assert.doesNotMatch(answer, /Noted, sir/, 'CHE\'s own answer is not presented as the owner\'s words');
   assert.equal(record.models.length, 0, 'no model is asked to recall a personal fact');
 });
