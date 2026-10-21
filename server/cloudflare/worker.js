@@ -12994,7 +12994,10 @@ export class CheState extends DurableObject {
       ],
       max_tokens: 7000,
     });
-    return String(answer?.response || answer?.choices?.[0]?.message?.content || '').trim();
+    // The model has no tools here, so any job ID, branch, commit, test result or PR it writes is
+    // invented: the same execution-claim guard as the main chat path removes it before anything is said.
+    const text = String(answer?.response || answer?.choices?.[0]?.message?.content || '').trim();
+    return guardExecutionClaims(text, { message, receipts: [] }).text;
   }
 
   // Owner chat reply for a coding request. Proposal → short summary;

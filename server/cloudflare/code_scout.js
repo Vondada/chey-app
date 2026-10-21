@@ -209,6 +209,9 @@ function ownerBuildAuthorization(message) {
     || /\b(?:hypothetical|plan\s+only|planning\s+only|proposal\s+only)\b/i.test(text)
     || hypotheticalChange(text);
   if (mutationVerb && mutationTarget && !hypothetical) return true;
+  // The owner's mode word is an explicit authorization: "Use BUILD mode." (uppercase, as the owner types it).
+  // Prohibitions and hypothetical framing were already checked above and still win.
+  if (/\b(?:[Uu]se|[Ii]n|[Ss]witch\s+to|[Rr]un\s+(?:this\s+)?in)\s+BUILD\s+mode\b/.test(text) && !hypothetical) return true;
   if (/\bmake\b[\s\S]{0,80}\b(?:improvement|improvements)\b[\s\S]{0,80}\b(?:to|in)\s+(?:your|che(?:'s)?)\s+(?:own\s+)?(?:code|app|worker|system|routing|workflow)\b/i.test(text)
     && !hypothetical) return true;
   if (/^(?:(?:che|chay|chey|shay)[,:]?\s*)?(?:(?:can|could|would)\s+you\s+|please\s+)?(?:add|implement|build|create)\s+(?:the\s+)?(?:ability|capability|support)\b[\s\S]{0,180}\b(?:github|pull\s+request|voice|api|tool|integration)\b/i.test(text)
@@ -238,15 +241,17 @@ function explorationIntent(text) {
     || /\bexplain\b[\s\S]{0,100}\b(?:architecture|routing|router|workflow|pipeline|source|code|worker|job|runtime)\b/i.test(value);
 }
 
+// A prohibition reaches only to the end of its own sentence: "Do not merge or deploy. Give me the commit SHA"
+// forbids a merge and a deploy, not the commit or the PR the owner asked for in the next sentence.
 function deliveryRestrictions(text) {
   const value = String(text || '');
-  const noPr = /\b(?:do\s+not|don['’]?t|never|without)\b[\s\S]{0,80}\b(?:create|open)\b[\s\S]{0,30}\b(?:pr|pull\s+request)\b/i.test(value)
+  const noPr = /\b(?:do\s+not|don['’]?t|never|without)\b[^.!?\n]{0,80}\b(?:create|open)\b[^.!?\n]{0,30}\b(?:pr|pull\s+request)\b/i.test(value)
     || /\bno\s+(?:pr|pull\s+request)\b/i.test(value);
-  const noMerge = /\b(?:do\s+not|don['’]?t|never|without)\b[\s\S]{0,70}\bmerge\b/i.test(value)
+  const noMerge = /\b(?:do\s+not|don['’]?t|never|without)\b[^.!?\n]{0,70}\bmerge\b/i.test(value)
     || /\bno\s+merge\b/i.test(value);
-  const noDeploy = /\b(?:do\s+not|don['’]?t|never|without)\b[\s\S]{0,70}\bdeploy\b/i.test(value)
+  const noDeploy = /\b(?:do\s+not|don['’]?t|never|without)\b[^.!?\n]{0,70}\bdeploy\b/i.test(value)
     || /\bno\s+deploy(?:ment)?\b/i.test(value);
-  const noCommitPush = /\b(?:do\s+not|don['’]?t|never|without)\b[\s\S]{0,70}\b(?:commit|push|create\s+(?:a\s+)?branch)\b/i.test(value);
+  const noCommitPush = /\b(?:do\s+not|don['’]?t|never|without)\b[^.!?\n]{0,70}\b(?:commit|push|create\s+(?:a\s+)?branch)\b/i.test(value);
   return { noPr, noMerge, noDeploy, noCommitPush };
 }
 
