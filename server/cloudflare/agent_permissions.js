@@ -45,3 +45,50 @@ export function permissionBlocker(agent, error) {
     default: return `Blocked: ${error?.message || 'not permitted'}`;
   }
 }
+
+// ─── Hands-on app steps (browser, logins, forms) ───────────────────────────
+// One gate for every step CHE takes inside an app: reading a page, clicking, typing,
+// sending a message, spending money, deleting, or using a password. Owner rules
+// (AGENTS.md): CHE may act freely, including sending messages and emails; she asks
+// first before anything that costs money or deletes or removes something; she opens
+// an app only after the owner grants that app; passwords come only from the vault.
+
+const SPEND_WORDS = /\b(buy|purchase|checkout|check out|pay|payment|subscribe|subscription|order now|place order|donate|tip|transfer|send money|add to cart)\b/i;
+const DELETE_WORDS = /\b(delete|remove|unsubscribe|cancel (?:my )?(?:account|subscription)|close (?:my )?account|erase|uninstall|clear all)\b/i;
+const SEND_WORDS = /\b(send|submit|post|reply|message|email|publish|share)\b/i;
+export const BROWSER_STEP_KINDS = Object.freeze(['read', 'navigate', 'click', 'type', 'send', 'spend', 'delete', 'credential']);
+
+/** What kind of step this is. An explicit kind wins; otherwise the element's own label decides. */
+export function browserStepKind(step = {}) {
+  const explicit = String(step.kind || '').toLowerCase();
+  if (BROWSER_STEP_KINDS.includes(explicit)) return explicit;
+  const label = `${step.label || ''} ${step.text || ''}`.toLowerCase();
+  if (step.action === 'type' && step.secret) return 'credential';
+  if (DELETE_WORDS.test(label)) return 'delete';
+  if (SPEND_WORDS.test(label)) return 'spend';
+  if (step.action === 'click' && SEND_WORDS.test(label)) return 'send';
+  if (step.action === 'type') return 'type';
+  if (step.action === 'click') return 'click';
+  if (step.action === 'navigate') return 'navigate';
+  return 'read';
+}
+
+/**
+ * Enforces one browser step before the phone runs it.
+ * Returns { held: false, kind } when the step may run now, or { held: true, kind, reason } when it
+ * waits for the owner's yes (spending and deleting). Throws a 403 for steps the owner never allowed:
+ * an app without a grant, or a password typed from anywhere but the vault.
+ */
+export function assertBrowserStepMayRun(step = {}, { app = '', grants = [], ownerConfirmed = false } = {}) {
+  const kind = browserStepKind(step);
+  if (!app || !grants.includes(app)) {
+    throw refusal(`CHE has no permission to act in ${app || 'that app'} yet. Grant it first.`);
+  }
+  if (kind === 'credential' && (!step.vault_ref || step.value !== undefined)) {
+    throw refusal('A password can only be typed from the on-device vault, never from a value CHE was given.');
+  }
+  if ((kind === 'spend' || kind === 'delete') && !ownerConfirmed) {
+    return { held: true, kind, reason: kind === 'spend' ? 'Spending money needs your yes first.' : 'Deleting or removing needs your yes first.' };
+  }
+  return { held: false, kind };
+}
