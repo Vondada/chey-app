@@ -831,11 +831,10 @@ extension _CheHomeSend on _CHEHomeState {
     }
 
     if (_pendingAttachment == null && cheAsksToLookAtScreen(message)) {
-      // While the owner shares his screen, CHE reads the broadcast (any app,
-      // the frame from before he came back to her); otherwise her own app.
-      final share = await CheScreenShare.status();
-      final sharedFrame = share.active && !CheScreenCapture.blocked ? await CheScreenShare.frame() : null;
-      final shot = sharedFrame ?? await CheScreenCapture.capture();
+      // Cross-app frames can contain unknown passwords. This privacy gate
+      // never forwards one, even if a legacy native extension is installed.
+      // CHE's own visible Flutter screen stays capturable.
+      final shot = await CheScreenCapture.capture();
       if (!shot.ok) {
         await sayHere('I did not look, sir: ${shot.reason}.', failed: true);
         return;

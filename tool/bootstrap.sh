@@ -162,9 +162,11 @@ private final class CHEScreenShare: NSObject {
     channel.setMethodCallHandler { [weak self] call, result in
       guard let self else { result(nil); return }
       switch call.method {
-      case "status": result(self.status())
-      case "latestFrame": result(self.latestFrame())
-      case "showPicker": result(self.showPicker())
+      // Keep the native bridge fail-closed as well as the Dart API: a
+      // legacy client must not retrieve raw cross-app frames through this channel.
+      case "status": result(["available": false, "active": false, "paused": false])
+      case "latestFrame": result(nil)
+      case "showPicker": result(false)
       default: result(FlutterMethodNotImplemented)
       }
     }
@@ -1591,7 +1593,7 @@ fi
 # that lets CHE see another app's screen, and the App Group it shares frames
 # through. CHE_SCREEN_BROADCAST=off builds without it, should a signing tool
 # refuse the extension; "look at my screen" then sees CHE's own app only.
-if [[ -d ios && "${CHE_SCREEN_BROADCAST:-on}" != "off" ]]; then
+if [[ -d ios && "${CHE_SCREEN_BROADCAST:-off}" == "on" ]]; then
   if ! ruby -e 'require "xcodeproj"' >/dev/null 2>&1; then
     gem install --user-install --no-document xcodeproj
   fi
