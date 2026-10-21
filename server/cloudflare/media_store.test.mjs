@@ -137,8 +137,8 @@ test('chat: "How many pictures do you hold?" is counted from the store, not inve
   const out = await che.say('How many pictures do you hold?');
   assert.equal(out.meta.source, 'che_media_store');
   assert.equal(out.modelCalls, 0);
-  assert.match(out.reply, /^I hold 1 saved file, sir\./);
-  assert.match(out.reply, /- cat\.png/);
+  assert.match(out.reply, /^I hold 1 saved media record, sir: 1 owner upload and 0 generated\./);
+  assert.match(out.reply, /"cat\.png"/);
 });
 
 test('chat: an ability CHE lacks is queued for herself as a self-development job, not refused', async () => {

@@ -91,6 +91,47 @@ export async function readBlob(env, storage, item) {
   return b64 ? b64ToBytes(b64) : null;
 }
 
+function bytesToBase64(bytes) {
+  let text = '';
+  for (const byte of bytes) text += String.fromCharCode(byte);
+  return btoa(text);
+}
+
+// Reads the stored bytes back and checks them: the file must be there, its real type must be one CHE keeps, and that
+// type must be the one on the record. Only a verified record may be called retrievable. Nothing is changed or deleted,
+// and the reason never names a storage key or credential.
+export async function verifyMediaFile(env, storage, item) {
+  let head;
+  let size;
+  try {
+    if (item.blob === 'r2') {
+      if (!env.CHE_DATA_BUCKET || !item.blob_key) return { ok: false, status: 'missing', reason: 'its file is not in the R2 bucket' };
+      const object = await env.CHE_DATA_BUCKET.get(item.blob_key, { range: { offset: 0, length: 32 } });
+      if (!object) return { ok: false, status: 'missing', reason: 'its file is not in the R2 bucket' };
+      head = bytesToBase64(new Uint8Array(await object.arrayBuffer()));
+      size = Number(object.size) || 0;
+    } else if (item.blob === 'do') {
+      const data = await storage.get(`media:${item.id}`);
+      if (!data) return { ok: false, status: 'missing', reason: 'its file is not in my storage' };
+      head = data;
+      size = Math.floor(data.length * 0.75);
+    } else if (item.blob === 'github-artifact' || item.github_artifact_id) {
+      const bytes = await readBlob(env, storage, item);
+      if (!bytes) return { ok: false, status: 'unverified', reason: 'GitHub did not return the archived file just now' };
+      head = bytesToBase64(bytes.slice(0, 32));
+      size = bytes.length;
+    } else {
+      return { ok: false, status: 'missing', reason: 'the record names no file' };
+    }
+    const found = ownerTypeFromBytes(item.mime_type, head);
+    if (!found || !OWNER_TYPES.test(found)) return { ok: false, status: 'missing', reason: 'the stored bytes are not a picture, video, PDF or text file' };
+    if (item.mime_type && item.mime_type !== found) return { ok: false, status: 'mismatch', reason: `the stored bytes are ${found}, not the ${item.mime_type} on record` };
+    return { ok: true, status: 'verified', mime_type: found, size };
+  } catch (error) {
+    return { ok: false, status: 'unverified', reason: `the file could not be read (${String(error?.message || error).slice(0, 120)})` };
+  }
+}
+
 async function connectorImage(env, prompt, fetcher) {
   const url = new URL(env.CHE_IMAGE_GEN_URL);
   if (url.protocol !== 'https:') throw new Error('Image connector must use HTTPS.');

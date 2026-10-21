@@ -94,7 +94,7 @@ test('the file count is kept: a second save makes two, and "how many" answers fr
   const second = await che.say(SAVE, { name: 'b.jpg', media_type: 'image', base64: JPEG });
   assert.match(second.reply, /I now hold 2 items there\./);
   const count = await che.say('How many pictures do you have saved?');
-  assert.match(count.reply, /^I hold 2 saved files, sir\./);
+  assert.match(count.reply, /^I hold 2 saved media records, sir: 2 owner uploads and 0 generated\./);
 });
 
 test('bytes that are not a picture are refused with the reason; nothing is saved and nothing is claimed', async () => {
