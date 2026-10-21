@@ -68,6 +68,7 @@ export async function readDelayedTraining(storage, { enabled = false } = {}) {
     observed_trades: (index || []).length, last_record: (index || []).at(-1) || null,
     focused: ranking.leader, allocation: ranking.policy, ranking: ranking.rows,
     recent_decisions: (audit || []).slice(-12).reverse(), verified_forward_trades: 0,
+    paper_focus_choices: (audit || []).filter((a) => a.event === 'hypothetical_signal' && a.paper_focus_selected === true).length,
   };
 }
 
@@ -102,7 +103,8 @@ export async function runDelayedTraining(storage, { feed, bars, specs, controls,
   const chosen = specsOf(specs || []);
   const pfs = chosen.map((spec) => {
     const fresh = portfolio(spec);
-    return existing[fresh.key] ? { ...fresh, ...existing[fresh.key] } : { ...fresh, last_bar_time: last.t };
+    const found = existing[fresh.key];
+    return found ? { ...fresh, ...found, last_bar_time: found.last_bar_time || last.t } : { ...fresh, last_bar_time: last.t };
   });
   if (!pfs.length) return { skipped: 'no configured research strategies' };
   const prior = rankDelayedTraining(index, pfs);
@@ -141,6 +143,23 @@ export async function runDelayedTraining(storage, { feed, bars, specs, controls,
         portfolio: pf.key, bar: skip.time, reason: skip.reason,
         focus: from, no_broker_order: true });
     }
+  }
+  // Choose at most one hypothetical focus per observed signal bar. The allocation is made
+  // from rankings frozen BEFORE this tick; unselected signals remain shadow observations.
+  // There is no broker order, and the selection time is later than the real market signal.
+  const signals = decisions.filter((d) => d.event === 'hypothetical_signal');
+  for (const bar of new Set(signals.map((d) => d.bar))) {
+    const candidates = signals.filter((d) => d.bar === bar).sort((a, b) => a.portfolio.localeCompare(b.portfolio));
+    const total = candidates.reduce((sum, d) => sum + d.priority, 0);
+    if (!(total > 0)) continue;
+    const draw = (hash100(bar + '|' + candidates.map((d) => d.portfolio).join('|')) / 100) * total;
+    let carried = 0;
+    let picked = candidates.at(-1);
+    for (const candidate of candidates) {
+      carried += candidate.priority;
+      if (draw < carried) { picked = candidate; break; }
+    }
+    for (const candidate of candidates) candidate.paper_focus_selected = candidate === picked;
   }
   await storage.put(DELAYED_PORTFOLIOS, Object.fromEntries(pfs.map((p) => [p.key, p])));
   if (added.length) await storage.put(DELAYED_INDEX, [...index, ...added].slice(-INDEX_CAP));
