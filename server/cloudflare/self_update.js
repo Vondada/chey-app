@@ -582,6 +582,60 @@ export async function workerDeploymentStatus(env, mergeSha, fetcher = fetch, run
   };
 }
 
+// GitHub's workflow history, not last_self_update_deploy (only CHE-initiated merges).
+export function latestWorkerDeploymentIntent(message) {
+  const text = String(message || '').trim();
+  if (!text || /^\/|(?:^|[.!?\n]\s*)(?:fix|repair|implement|deploy|start|trigger|launch)\b/i.test(text)) return false;
+  return /\b(?:check|show|find|look up|verify|report|tell|give|what(?:'s| is| was)|latest|last|recent)\b/i.test(text)
+    && /\b(?:deploy che worker|worker deploy(?:ment)?|che worker deploy(?:ment)?|github actions[\s\S]{0,120}deploy|deploy[\s\S]{0,120}github actions)\b/i.test(text)
+    && !/\b(?:how|why)\s+(?:do|does|would|could)\s+(?:i|you|che)\s+(?:build|deploy|implement)\b/i.test(text);
+}
+
+/** Query the real newest Deploy CHE Worker run; no guessing from files or memory. */
+export async function latestWorkerDeploymentStatus(env, fetcher = fetch, runtime = {}) {
+  const repository = repoOf(env);
+  if (!repository) {
+    return { status: 503, detail: 'CHE GitHub access is not configured. The Worker needs CHE_GITHUB_TOKEN and CHE_GITHUB_REPO; no live deployment lookup ran.' };
+  }
+  const result = await gh(env, 'GET', '/actions/workflows/che-worker-deploy.yml/runs?per_page=10', null, fetcher);
+  if (!result.ok || !Array.isArray(result.data?.workflow_runs)) {
+    return { status: result.status || 503, detail: 'GitHub Actions did not return deployment runs (HTTP ' + (result.status || 'network failure') + '). Current deployment state is unverified.' };
+  }
+  const run = result.data.workflow_runs
+    .filter((item) => /deploy che worker|che-worker-deploy/i.test(String(item.name || '') + ' ' + String(item.path || '')))
+    .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))[0];
+  if (!run) {
+    return { status: 200, found: false, repository, detail: 'GitHub Actions returned no Deploy CHE Worker runs in the latest ten executions. No deployment is verified by this lookup.' };
+  }
+  const conclusion = run.status === 'completed' ? String(run.conclusion || 'unknown') : 'in_progress';
+  const sha = String(run.head_sha || '');
+  const versionTag = String(runtime?.version_tag || '');
+  const matches = Boolean(sha && versionTag && (sha.startsWith(versionTag) || versionTag.startsWith(sha.slice(0, 7))));
+  return {
+    status: 200, found: true, repository,
+    run_id: Number(run.id) || null, workflow: conclusion,
+    conclusion, commit_sha: sha, workflow_url: String(run.html_url || ''),
+    created_at: String(run.created_at || ''), completed_at: String(run.updated_at || ''),
+    running_version_tag: versionTag,
+    production_version_verified: Boolean(conclusion === 'success' && matches),
+    production_version_checked: Boolean(versionTag),
+  };
+}
+
+export function speakLatestWorkerDeployment(result) {
+  if (result?.status !== 200) return 'Sir, I could not verify the Worker deployment from GitHub. ' + (result?.detail || 'GitHub did not respond.');
+  if (!result.found) return 'Sir, ' + result.detail;
+  const resultText = result.conclusion === 'in_progress' ? 'still running'
+    : result.conclusion === 'success' ? 'completed successfully'
+      : 'completed with conclusion ' + result.conclusion;
+  const versionText = result.production_version_verified ? ' The Worker version matches this commit.'
+    : result.production_version_checked ? ' The running Worker version was not verified as this commit.'
+      : ' Production version match was not checked by this lookup.';
+  return 'Sir, GitHub Actions reports the latest Deploy CHE Worker run ' + (result.run_id || 'unknown')
+    + ' ' + resultText + '. Commit: ' + (result.commit_sha || 'unavailable') + '. Run: '
+    + (result.workflow_url || 'GitHub did not supply a link') + '.' + versionText;
+}
+
 // Opens a real git revert of the last merged CHE update (GitHub's
 // revertPullRequest). Only that update's changes are undone; later edits to
 // the same files are kept, and a revert that would conflict is refused
