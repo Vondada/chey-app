@@ -1,7 +1,7 @@
 // The owner's chat routed into the browsing loop and the sub-agents. Fixtures only; nothing reaches the network.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { agentSoul, browseIntent, browseReply, pickOfficeAgent, runBrowseTask, runSearchRoute, subAgentPlan } from './browse_chat.js';
+import { JOB_NEEDS, JOB_ROLE_SPECS, agentSoul, browseIntent, browseReply, pickOfficeAgent, runBrowseTask, runSearchRoute, subAgentPlan } from './browse_chat.js';
 import { ensureJobAgent, queueNextJob } from './agent_runtime.js';
 import { parseReaRequest } from './rea_runner.js';
 
@@ -210,4 +210,31 @@ test('a browsing task runs the loop with the agent\'s own planner and keeps the 
   assert.equal(run.status, 'answered');
   assert.match(run.text, /Pizza is a dish from Naples\./);
   assert.deepEqual(kept, ['https://en.wikipedia.org/wiki/Pizza']);
+});
+
+test('unnamed work goes to a pool name already on the team; a new one takes the first free pool name', () => {
+  const data = { team: [{ id: 'v', name: 'Vale', role: 'Operations', specialty: 'lists', retired: false }], team_tasks: [] };
+  assert.equal(ensureJobAgent(data, { needs: ['zebra'], roleSpec: JOB_ROLE_SPECS.fallback }).agent.name, 'Vale');
+  assert.equal(data.team.length, 1, 'an existing pool name is used, not a new agent');
+  const empty = { team: [], team_tasks: [] };
+  const made = ensureJobAgent(empty, { needs: ['zebra'], roleSpec: JOB_ROLE_SPECS.fallback });
+  assert.equal(made.hired, true);
+  assert.equal(made.agent.name, 'Orion', 'the first free pool name');
+});
+
+test('trades go to Orion, the trader; a new trader is created as Orion when there is none', () => {
+  const data = { team: [{ id: 'l', name: 'Lyra', role: 'Content / social', specialty: 'content', retired: false }], team_tasks: [] };
+  const trader = ensureJobAgent(data, { needs: JOB_NEEDS.trade, roleSpec: JOB_ROLE_SPECS.trade });
+  assert.equal(trader.agent.name, 'Orion');
+  assert.equal(trader.agent.role, 'Trader / markets');
+  assert.match(trader.agent.specialty, /Paper only/);
+});
+
+test('a partner is the last resort: used only when every pool name is taken by partners', () => {
+  const partners = ['Orion', 'Vale', 'Juno', 'Rhea', 'Cato'].map((name, i) => ({ id: `p${i}`, name, role: `Research Partner ${i}`, specialty: 'research', retired: false }));
+  const data = { team: [...partners], team_tasks: [] };
+  const got = ensureJobAgent(data, { needs: ['research'], roleSpec: JOB_ROLE_SPECS.research });
+  assert.equal(got.hired, false);
+  assert.match(got.agent.role, /Partner/);
+  assert.equal(data.team.length, 5, 'nothing created while a partner can take the job');
 });

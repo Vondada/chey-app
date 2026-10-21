@@ -49,7 +49,11 @@ export function browseIntent(message) {
 export const JOB_NEEDS = Object.freeze({
   research: ['research', 'scout', 'source', 'analy', 'study', 'read', 'competitor', 'market'],
   content: ['content', 'social', 'video', 'story', 'script', 'copy', 'creative', 'caption'],
+  trade: ['trader', 'trading', 'trade', 'futures', 'portfolio', 'stock', 'price'],
 });
+
+// The names kept for work that has no name of its own (and for every new War Room partner). Orion is the trader.
+export const POOL_NAMES = Object.freeze(['Orion', 'Vale', 'Juno', 'Rhea', 'Cato']);
 
 /**
  * The jobs a request needs, in order. A research job comes first when the request needs reading; a content job
@@ -83,14 +87,17 @@ export function subAgentPlan(message, { url = '' } = {}) {
 
 // Who takes a job, in order: the named roster first (Nova, Atlas, Mira, Knox, Sage, Lyra, Iris, from office_company.js),
 // then any other named agent, and partners last. Within a tier the best job-description match wins. Null when no one fits.
-export function pickOfficeAgent(team = [], { needs = [] } = {}) {
+export function isPartnerAgent(agent = {}) {
+  return /partner|reviewer/i.test(String(agent.role || ''));
+}
+
+export function pickOfficeAgent(team = [], { needs = [], partners = true } = {}) {
   const live = (Array.isArray(team) ? team : []).filter((a) => a && !a.retired);
   const onRoster = (a) => Object.prototype.hasOwnProperty.call(LA_AGENCIA_ROLES, a.name);
-  const isPartner = (a) => /partner|reviewer/i.test(String(a.role || ''));
   const tiers = [
     live.filter(onRoster),
-    live.filter((a) => !onRoster(a) && !isPartner(a)),
-    live.filter(isPartner),
+    live.filter((a) => !onRoster(a) && !isPartnerAgent(a)),
+    partners ? live.filter(isPartnerAgent) : [],
   ];
   for (const tier of tiers) {
     let best = null;
@@ -109,6 +116,8 @@ export function pickOfficeAgent(team = [], { needs = [] } = {}) {
 export const JOB_ROLE_SPECS = Object.freeze({
   research: Object.freeze({ role: 'Research / scout', specialty: 'Research, source reading and public-page study' }),
   content: Object.freeze({ role: 'Content / social', specialty: 'Content, video and story drafts' }),
+  trade: Object.freeze({ role: 'Trader / markets', specialty: 'Trading: market analysis and paper trades with their records. Paper only; live orders are never placed by an agent.' }),
+  fallback: Object.freeze({ role: 'General / unassigned', specialty: 'Work with no named specialty' }),
 });
 
 /** An office agent's own personality plus the job it holds at CHE, used as the soul of its loop. */

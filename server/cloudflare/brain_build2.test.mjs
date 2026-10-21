@@ -211,8 +211,12 @@ test('every room records its activity through its real producer, and CHE answers
   // task whose agent left the Office (a real failure).
   const data = await che.state.loadData();
   data.autonomy = true;
-  const researcher = data.team.find((a) => /Research/.test(a.role)) || data.team[0];
-  assert.ok(researcher, 'the War Room staffed a research partner');
+  // The research job goes to the agent whose job fits it (a named agent or a pool name), never to a placeholder partner.
+  const { ensureJobAgent } = await import('./agent_runtime.js');
+  const { JOB_NEEDS, JOB_ROLE_SPECS } = await import('./browse_chat.js');
+  const picked = ensureJobAgent(data, { needs: JOB_NEEDS.research, roleSpec: JOB_ROLE_SPECS.research });
+  assert.ok(picked.agent, 'a research agent takes the research job');
+  const researcher = picked.agent;
   queueAgentTask(data, researcher, 'Research which jazz playlists keep listeners longest', 'owner');
   queueAgentTask(data, { id: 'gone', name: 'Old Agent', role: 'Helper' }, 'Tidy the old notes', 'owner');
   await che.storage.put('che', data);

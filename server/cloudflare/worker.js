@@ -3692,7 +3692,7 @@ export class CheState extends DurableObject {
       if (refused) { lines.push(`${item.agent} did not start: ${refused}`); continue; }
       // The owner assigned it, which is the permission for the browser: the agent runs the browsing loop.
       const queued = queueAgentTask(data, agent, item.task, 'owner_chat', { browse: true });
-      if (item.next) queued.next = { needs: item.next.needs, label: item.next.label, task: item.next.task };
+      if (item.next) queued.next = { needs: item.next.needs, roleSpec: item.next.roleSpec, label: item.next.label, task: item.next.task };
       const then = item.next ? ` When the research is reviewed, the ${item.next.label} job goes to the agent whose job fits it.` : '';
       lines.push(`${agent.name} is working on it with the browsing loop: ${item.label}.${then} ${agent.name} will hand the result to me for review; ask me for it when it is back.`);
     }
