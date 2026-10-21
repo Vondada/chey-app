@@ -13,7 +13,7 @@
 // retrieve before they repeat the same research.
 
 import {
-  BRAIN_REGIONS, CheBrainStore, OUTSIDE_CORRESPONDENCE_PATH, backfillConversations, clipWords, contentHash, fnv1a32, isSafeText, normalizeRecord,
+  BRAIN_REGIONS, CheBrainStore, OUTSIDE_CORRESPONDENCE_PATH, backfillConversations, clipWords, contentHash, isSafeText, normalizeRecord,
   projectLegacyState, relabelFlagstaffExchanges,
 } from './brain_store.js';
 import { hasGitHubMailbox, listMailboxFiles, normalizePeer, readMailboxFile } from './mailbox.js';
@@ -643,10 +643,42 @@ export function redactCorrespondence(text) {
   return { text: lines.join('\n').replace(/\n{3,}/g, '\n\n').trim(), withheld };
 }
 
-/** The Brain id of a mailbox message: its own id, so a second import finds it. */
+// SHA-256 keeps externally authored IDs out of primary keys, including the ID-less fallback.
+// Synchronous because Brain record projection and reply links are synchronous.
+const MAIL_HASH_K = [];
+const MAIL_HASH_INITIAL = [];
+for (let n = 2; MAIL_HASH_K.length < 64; n += 1) {
+  let prime = true;
+  for (let d = 2; d * d <= n; d += 1) if (n % d === 0) { prime = false; break; }
+  if (prime) {
+    if (MAIL_HASH_INITIAL.length < 8) MAIL_HASH_INITIAL.push((Math.sqrt(n) % 1 * 0x100000000) >>> 0);
+    MAIL_HASH_K.push((Math.cbrt(n) % 1 * 0x100000000) >>> 0);
+  }
+}
 export function correspondenceId(messageId) {
-  const raw = String(messageId || '').replace(/\u0000/g, '').trim();
-  return raw.length <= 150 ? `mail:${raw}` : `mail:${raw.slice(0, 130)}~${fnv1a32(raw).toString(16)}`;
+  const raw = new TextEncoder().encode(String(messageId || '').replace(/\u0000/g, '').trim());
+  const bytes = new Uint8Array(Math.ceil((raw.length + 9) / 64) * 64);
+  bytes.set(raw); bytes[raw.length] = 0x80;
+  const view = new DataView(bytes.buffer);
+  view.setUint32(bytes.length - 8, Math.floor(raw.length / 0x20000000));
+  view.setUint32(bytes.length - 4, (raw.length * 8) >>> 0);
+  const hash = [...MAIL_HASH_INITIAL], w = new Uint32Array(64);
+  const rot = (x, n) => (x >>> n) | (x << (32 - n));
+  for (let block = 0; block < bytes.length; block += 64) {
+    for (let i = 0; i < 16; i += 1) w[i] = view.getUint32(block + i * 4);
+    for (let i = 16; i < 64; i += 1) {
+      const x = w[i - 15], y = w[i - 2];
+      w[i] = (w[i - 16] + (rot(x, 7) ^ rot(x, 18) ^ (x >>> 3)) + w[i - 7] + (rot(y, 17) ^ rot(y, 19) ^ (y >>> 10))) >>> 0;
+    }
+    let [a, b, c, d, e, f, g, h] = hash;
+    for (let i = 0; i < 64; i += 1) {
+      const t1 = (h + (rot(e, 6) ^ rot(e, 11) ^ rot(e, 25)) + ((e & f) ^ (~e & g)) + MAIL_HASH_K[i] + w[i]) >>> 0;
+      const t2 = ((rot(a, 2) ^ rot(a, 13) ^ rot(a, 22)) + ((a & b) ^ (a & c) ^ (b & c))) >>> 0;
+      [a, b, c, d, e, f, g, h] = [(t1 + t2) >>> 0, a, b, c, (d + t1) >>> 0, e, f, g];
+    }
+    for (const [i, value] of [a, b, c, d, e, f, g, h].entries()) hash[i] = (hash[i] + value) >>> 0;
+  }
+  return `mail:${hash.map((x) => x.toString(16).padStart(8, '0')).join('')}`;
 }
 
 /**
@@ -755,10 +787,10 @@ export async function importOutsideCorrespondence(store, env, { storage = null, 
     for (const { message, record } of items) {
       stats.messages += 1;
       const existing = stored.get(record.id);
-      if (seen.has(record.id) || (meta.fillOnly && existing)) { stats.skipped += 1; last = message.id; continue; }
+      if (seen.has(record.id) || (meta.fillOnly && existing)) { stats.skipped += 1; last = record.id; continue; }
       seen.add(record.id);
-      if (existing && Number(existing.deleted) === 1) { stats.deleted_by_owner += 1; last = message.id; continue; }
-      if (existing && existing.hash === contentHash(normalizeRecord(record))) { stats.skipped += 1; last = message.id; continue; }
+      if (existing && Number(existing.deleted) === 1) { stats.deleted_by_owner += 1; last = record.id; continue; }
+      if (existing && existing.hash === contentHash(normalizeRecord(record))) { stats.skipped += 1; last = record.id; continue; }
       if (written >= budget) { stats.messages -= 1; return { stoppedAfter: last }; }
       let result = store.put(record, { origin: 'cloud', now });
       let outline = false;
@@ -770,7 +802,7 @@ export async function importOutsideCorrespondence(store, env, { storage = null, 
           if (result.outcome !== 'rejected') { outline = i === 1; break; }
         }
       }
-      last = message.id;
+      last = record.id;
       if (result.outcome === 'created') stats.imported += 1;
       else if (result.outcome === 'updated' || result.outcome === 'merged') stats.updated += 1;
       else if (result.outcome === 'unchanged' || result.outcome === 'deleted') { stats.skipped += 1; continue; }
@@ -803,7 +835,7 @@ export async function importOutsideCorrespondence(store, env, { storage = null, 
       if (read.error) { stats.error = read.error; errors.push(`${file.path}: ${read.error}`); files.push(stats); continue; }
       // Lines that parse but are not messages (the autopilot's activity log) count as not messages too.
       stats.not_messages = Math.max(0, stats.lines - read.messages.length);
-      const resumeAt = pass.current?.path === file.path && pass.current.after_id ? read.messages.findIndex((m) => m?.id === pass.current.after_id) : -1;
+      const resumeAt = pass.current?.path === file.path && pass.current.after_id ? read.messages.findIndex((m) => correspondenceId(m?.id) === pass.current.after_id) : -1;
       const out = consider(read.messages.slice(resumeAt + 1), { file: file.path, thread: file.thread, archived: file.archive, where: `${file.path} on the che-mailbox branch` }, stats);
       files.push(stats);
       if (out.stoppedAfter !== undefined) {
@@ -872,7 +904,10 @@ export function speakCorrespondenceImport(report) {
     const board = report.totals?.imported ? `I brought in ${report.totals.imported} message${report.totals.imported === 1 ? '' : 's'} from my own Flagstaff board archive. ` : '';
     return `I can't read the Flagstaff mailbox, sir: GitHub isn't connected to me (CHE_GITHUB_TOKEN and CHE_GITHUB_REPO). Nothing was imported from it. ${board}${held}.${relabel}`;
   }
-  if (report.no_branch) return `There is no Flagstaff mailbox on GitHub yet, sir: the che-mailbox branch does not exist, so there was nothing to import. ${held}.${relabel}`;
+  if (report.no_branch) {
+    const t = report.totals;
+    return `There is no Flagstaff mailbox on GitHub yet, sir: the che-mailbox branch does not exist, so nothing was imported from GitHub. I brought in ${t.imported} messages from my own Flagstaff board archive; ${t.withheld} kept with sensitive parts withheld, ${t.dropped} dropped. ${held}.${relabel}${what}`;
+  }
   if (!report.files_read && report.errors.length) return `I couldn't read the Flagstaff mailbox, sir: ${clip(report.errors[0], 160)} Nothing new was imported. ${held}.${relabel}`;
   if (report.up_to_date) return `The Flagstaff history is already in your Brain, sir: nothing new on the che-mailbox branch since the last import (commit ${report.head.slice(0, 7)}). ${held}.${relabel}${what}`;
   const t = report.totals;

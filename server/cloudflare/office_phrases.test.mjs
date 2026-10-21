@@ -51,3 +51,10 @@ test('opportunity scout phrases (Pinterest / dropship / forever)', () => {
   // Fiverr stays on dedicated path
   assert.equal(matchOfficePhrase('scout Fiverr for AI ads')?.type, 'fiverrScout');
 });
+
+test('comprehension audit: who is in the office, what the team is doing and what is stalled read the board', () => {
+  assert.deepEqual(matchOfficePhrase('Who is in the office?'), { type: 'readOffice' });
+  assert.deepEqual(matchOfficePhrase('What is the team working on?'), { type: 'happening' });
+  assert.deepEqual(matchOfficePhrase('Is anything stalled in the office?'), { type: 'stalled' });
+  assert.equal(matchOfficePhrase('what is the team working on in their spare time on weekends ok'), null);
+});

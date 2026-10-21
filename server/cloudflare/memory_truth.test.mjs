@@ -353,6 +353,7 @@ test('deploy check: the live memory probe runs the real chat route in an isolate
   const waits = [];
   const env = {
     CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1',
+    CHE_GITHUB_TOKEN: 'fixture', CHE_GITHUB_REPO: 'Vondada/chey-app',
     CHE_VOICE_PROBE_TOKEN: 'a'.repeat(64),
     CHE_PGVECTOR_REST_URL: 'https://vectors.example', CHE_PGVECTOR_TOKEN: 'vector-token',
     AI: { run: async (_model, input) => {
@@ -372,6 +373,13 @@ test('deploy check: the live memory probe runs the real chat route in an isolate
   const original = globalThis.fetch;
   globalThis.fetch = async (url) => {
     if (String(url).startsWith('https://vectors.example')) vectorWrites.push(String(url));
+    const u = String(url);
+    const sha = 'a27d319b0f684781eb2669f482e6d3fd1457d4e8';
+    if (/\/pulls\/(356|372)$/.test(u)) return Response.json({ number: Number(u.split('/').at(-1)), merged: true, state: 'closed', head: { sha }, merge_commit_sha: sha });
+    if (u.includes('/check-runs')) return Response.json({ check_runs: [] });
+    if (u.endsWith('/git/ref/heads/che-mailbox')) return Response.json({ object: { sha } });
+    if (u.includes('/contents/mailbox/briefs/LIVE-HANDOFF.md')) return Response.json({ path: 'mailbox/briefs/LIVE-HANDOFF.md', encoding: 'base64', sha, content: btoa('## 2. Current position\nFixture checkpoint.') });
+
     return new Response('[]', { status: 200 });
   };
   try {

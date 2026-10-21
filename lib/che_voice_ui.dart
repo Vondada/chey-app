@@ -6,6 +6,7 @@ import 'che_edge_voice.dart';
 import 'che_native_voice.dart';
 import 'che_cloud_voice_picker.dart';
 import 'che_theme.dart';
+import 'che_voice_health.dart';
 import 'che_voice_state.dart';
 
 class CheVoiceOrb extends StatefulWidget {
@@ -118,6 +119,8 @@ class CheVoiceDiagnosticsSheet extends StatelessWidget {
   const CheVoiceDiagnosticsSheet({
     super.key,
     required this.snapshot,
+    this.health,
+    this.lastMicFailureAt,
     required this.serverOnline,
     required this.lastServerEvent,
     this.playbackEngine,
@@ -130,6 +133,9 @@ class CheVoiceDiagnosticsSheet extends StatelessWidget {
   });
 
   final CheVoiceSnapshot snapshot;
+  /// The microphone's real owner and wake-listener state.
+  final CheVoiceHealth? health;
+  final DateTime? lastMicFailureAt;
   final bool serverOnline;
   final String? lastServerEvent;
   final String? playbackEngine;
@@ -210,6 +216,12 @@ class CheVoiceDiagnosticsSheet extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 10),
+            if (health != null) ...[
+              row('Microphone owner', health!.ownerLabel),
+              row('Wake listener', health!.wakeStatus),
+              row('Hands-free', health!.handsFree ? 'On' : 'Off'),
+              row('Last mic failure', health!.lastFailure == null ? '—' : '${health!.lastFailure}${lastMicFailureAt == null ? '' : ' (${lastMicFailureAt!.toLocal().toString().substring(11, 19)})'}'),
+            ],
             row('Engine', snapshot.engineLabel),
             row('Voice state', snapshot.phaseLabel),
             row('Microphone', snapshot.microphoneActive ? 'Active' : 'Inactive'),

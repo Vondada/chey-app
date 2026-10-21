@@ -378,6 +378,19 @@ export const COMMANDS = Object.freeze([
     examples: ['Backtest NQ', 'Backtest bitcoin strategies'],
     prompt: 'Backtest {input}', produces: 'backtest', evidence: 'Results computed from historical candles, with the period.', keywords: ['backtest', 'historical', 'strategy test'],
   }),
+  C('trade-learning', 'trading', 'EXPLORE', 'Read unique strategy learning and live-readiness evidence.', {
+    does: 'Reads the current version-matched strategy cards, daily study counts and explicit live-readiness blockers. Never unlocks execution.',
+    needs: ['office'], route: 'che_trading_live', handler: 'trading_live.strategyLearning', input: null,
+    examples: ['Show my strategy learning progress', 'Read my daily strategy report'],
+    prompt: 'Read my strategy learning progress and live readiness.', produces: 'learning report',
+    evidence: 'Unique current-version forward journal records and archived historical experiments.', keywords: ['learning progress', 'live readiness', 'daily strategy report'],
+  }),
+  C('trade-research', 'trading', 'EXPLORE', 'Replay available five-minute history without orders.', {
+    does: 'Runs the existing fixed-timeframe historical research, preserving datasets, parameters and purged held-out folds; never creates forward or broker fills.',
+    needs: ['market_data'], route: 'che_trading_live', handler: 'trading_live.liveBacktest', input: null,
+    examples: ['Replay available history'], prompt: 'Replay available history', produces: 'research receipt',
+    evidence: 'Trusted execution receipt and immutable dataset/experiment identifiers.', keywords: ['replay history', 'strategy research', 'historical learning'],
+  }),
   C('trade-journal', 'trading', 'EXPLORE', 'Document trades and outcomes.', {
     does: 'Reads your paper-trading book: open and closed trades and results.',
     needs: ['office'], route: 'che_trading', handler: 'trading_lab.speakBook',
@@ -399,6 +412,23 @@ export const COMMANDS = Object.freeze([
     examples: ['Pause the strategy simulation', 'Resume the strategy simulation', 'Strategy simulation status'],
     prompt: 'Strategy simulation {input}', produces: 'simulation status', evidence: 'Stored simulation state and trades only.',
     keywords: ['strategy simulation', 'simulation', 'pause simulation', 'resume simulation', 'paper strategies'],
+  }),
+  // Strategy Control Center (owner, 2026-10-20): trading_controls.js through the desk's own intent parser.
+  C('trade-controls', 'trading', 'EXPLORE', 'Read or change your paper strategy limits.', {
+    does: 'Reads each paper strategy\'s limits and state (maximum trades per day, default 30; size; paused or running), or changes them in your words: pause or resume one strategy, the ICT group or all; set or raise the daily maximum; stop new entries; restore the previous settings. A change that raises risk is read back with its impact and applied only after "yes, confirm". Every change is audited. Paper only.',
+    needs: ['office'], route: 'che_trading_controls', handler: 'trading_controls.controlIntent → applyControlChange / controlsView',
+    input: null,
+    examples: ['What are my trading limits?', 'Pause the ICT strategy', 'Set every strategy to 30 per day', 'Increase the maximum trades', 'Why did this strategy skip that trade?'],
+    prompt: 'What are my trading limits?', produces: 'strategy limits', evidence: 'The stored controls, the audit trail and the live portfolios\' own skip records.',
+    keywords: ['limits', 'controls', 'pause strategy', 'resume strategy', 'max trades', 'trades per day', 'ict', 'skip', 'stop new entries'],
+  }),
+  C('trade-emergency', 'trading', 'BUILD', 'Emergency Stop: block entries and cancel unfilled paper orders.', {
+    does: 'Acts at once: blocks new entries for every strategy, cancels unfilled orders in CHE\'s MNQ paper simulations and on Alpaca PAPER, writes an audit record, and says which positions remain open. It never closes positions; "flatten" does that only after you confirm. Say "allow new entries" to clear it.',
+    needs: ['office'], route: 'che_trading_controls', handler: 'trading_controls.applyControlChange(emergency_stop) → haltLivePaper / haltAlpacaPaper',
+    input: null,
+    examples: ['Emergency stop', 'Kill switch'],
+    prompt: 'Emergency stop', produces: 'what was stopped and what remains open', evidence: 'The cancellations Alpaca confirmed and the simulations\' own records.',
+    keywords: ['emergency stop', 'kill switch', 'halt', 'stop trading'],
   }),
   C('trade-execute', 'trading', 'BUILD', 'Prepare authorized broker actions with confirmation.', {
     does: 'Places the current desk alert on your selected NinjaTrader account as a bracket order. Live accounts risk real money.',
@@ -923,7 +953,7 @@ export function parseSlashCommand(message) {
   if (!m) return null;
   const name = m[1].toLowerCase();
   const command = BY_ID.get(name) || null;
-  return { name, command, input: m[2].trim().slice(0, 4000) };
+  return { name, command, input: m[2].trim() };
 }
 
 /** The request this command sends through /api/chat. */
@@ -989,10 +1019,11 @@ function speechText(message) {
  * exactly one command's id. Returns { command, input } or { candidates }.
  */
 export function commandFromWords(words) {
-  const tokens = String(words || '').toLowerCase().replace(/^(?:the|my)\s+/, '').split(/\s+/).filter(Boolean)
+  const rawTokens = String(words || '').replace(/^(?:the|my)\s+/i, '').split(/\s+/).filter(Boolean);
+  const tokens = rawTokens.map((w) => w.toLowerCase())
     .map((w) => (w === 'youtube' ? 'yt' : w === 'chey' || w === 'chay' ? 'che' : w.replace(/^\//, '')));
   const id = (n) => tokens.slice(0, n).join('-');
-  const rest = (n) => tokens.slice(n).join(' ').replace(/^(?:for|on|about|with|to)\s+/, '');
+  const rest = (n) => rawTokens.slice(n).join(' ').replace(/^(?:for|on|about|with|to)\s+/i, '');
   for (let n = tokens.length; n >= 1; n--) if (BY_ID.has(id(n))) return { command: BY_ID.get(id(n)), input: rest(n) };
   for (let n = tokens.length; n >= 1; n--) {
     const named = COMMANDS.filter((c) => c.id.endsWith(`-${id(n)}`));
@@ -1014,6 +1045,8 @@ export function readCommandSpeech(message, history = []) {
   const t = speechText(message);
   if (!t || t.length > 300) return null;
   if (/^(?:open|go to|bring up|take me to|show(?: me)?)\s+(?:the |your |my |che's )?(?:commands?|command (?:center|library))(?: (?:page|screen|tab|list))?$/.test(t)) return { kind: 'open' };
+  // "What commands do you have?": the same groups, read as an answer rather than a page (comprehension audit).
+  if (/^(?:what|which)\s+commands\s+(?:do\s+you\s+have|are\s+there|can\s+(?:i|you)\s+(?:use|run))$|^(?:what|which)\s+are\s+(?:your|the)\s+commands$|^(?:list|tell\s+me)\s+(?:all\s+)?(?:of\s+)?(?:your|the)\s+commands$/.test(t)) return { kind: 'groups' };
   const search = /^(?:search|look)(?: for| up)? (.+)$/.exec(t);
   if (search && GROUP_WORDS[search[1]]) return { kind: 'list', topic: GROUP_WORDS[search[1]], count: 5, readiness: false };
   // "show me five youtube commands (and tell me which are ready)".
@@ -1140,7 +1173,8 @@ export function describeWorkflow(input = {}, connectors = {}) {
     const command = commandById(s?.command);
     const id = `s${i + 1}`;
     if (!command) { issues.push(`Step ${i + 1}: "${cleanName(s?.command, 40)}" is not a CHE command.`); return { id, command: cleanName(s?.command, 40), valid: false }; }
-    const text = cleanName(s?.input, 1000);
+    const text = String(s?.input || '').trim();
+    if (text.length > 1000) issues.push(`Step ${i + 1} input exceeds 1,000 characters; shorten it explicitly. Nothing was cut.`);
     // By default a step waits for the one before it. "parallel" makes it
     // share the previous step's prerequisites instead, so both run together.
     const after = i === 0 ? [] : s?.parallel === true ? (raw[i - 1]?.__deps || []) : [`s${i}`];
@@ -1207,4 +1241,22 @@ export function findSavedWorkflow(saved = [], message = '') {
   const want = m[1].toLowerCase().trim();
   return (saved || []).find((w) => w.name.toLowerCase() === want)
     || (saved || []).find((w) => w.name.toLowerCase().includes(want) || want.includes(w.name.toLowerCase())) || null;
+}
+
+/** Named commands in one owner sentence, compiled into the existing graph.
+ * No model, guessed command, schedule or new execution path. Unknown or
+ * ambiguous steps stop the whole request before any step is queued.
+ */
+export function workflowFromWords(message = '') {
+  const match = /^(?:please\s+)?(create|make|run|start)\s+(?:me\s+)?(?:a\s+)?workflow\s+(?:to|using|with|:)\s*([\s\S]+)$/i.exec(String(message).trim());
+  if (!match) return null;
+  const parts = match[2].split(/\s+(?:and\s+)?then\s+/i);
+  const issues = [];
+  if (parts.length < 2 || parts.length > MAX_STEPS) issues.push(`Name between 2 and ${MAX_STEPS} commands separated by "then".`);
+  const steps = parts.map((part, i) => {
+    const found = commandFromWords(part.trim().replace(/^(?:run|use)\s+/i, ''));
+    if (!found?.command) issues.push(`Step ${i + 1}: ${found?.candidates?.length ? 'ambiguous command; name its full command' : 'no matching command'}. Nothing was run.`);
+    return { command: found?.command?.id || '', input: found?.input || '' };
+  });
+  return { action: /^(?:run|start)$/i.test(match[1]) ? 'run' : 'save', name: steps.map((s) => s.command).filter(Boolean).join(' then ').slice(0, 80), steps, issues };
 }

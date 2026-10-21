@@ -9,6 +9,8 @@
 //   - with a short timeout and a size-capped response that CHE treats as
 //     untrusted data, never instructions.
 
+import { executeWithReceipt } from './truth_layer.js';
+
 // Built-in catalog entries. Keyless public APIs only, so they work on day one.
 export const BUILTIN_PLUGIN_MANIFESTS = [
   {
@@ -215,7 +217,16 @@ export async function readCapped(response, maxBytes) {
   return new TextDecoder().decode(all);
 }
 
-export async function runPluginTool(tool, params, permissions, fetcher = fetch) {
+export async function runPluginTool(tool, params, permissions, fetcher = fetch, request_id = crypto.randomUUID()) {
+  const built = buildToolUrl(tool, params, permissions);
+  const { result, receipt } = await executeWithReceipt({
+    tool: String(tool?.name || 'plugin'), operation: 'GET', source: built.url || 'plugin_runtime:validation', request_id,
+    run: () => performPluginTool(tool, params, permissions, fetcher),
+  });
+  return { ...(result || { ok: false, error: receipt.error }), execution_receipt: receipt };
+}
+
+async function performPluginTool(tool, params, permissions, fetcher = fetch) {
   const built = buildToolUrl(tool, params, permissions);
   if (built.error) return { ok: false, error: built.error };
   const controller = new AbortController();

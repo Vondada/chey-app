@@ -22,6 +22,7 @@
 // existing self-development job (a draft pull request; never a merge).
 
 import { gh } from './coding_runtime.js';
+import { queueRoomEvent } from './room_events.js';
 import {
   REA_PIN, REA_JOB_ID, NPM_NAME, EXACT_VERSION, NPM_INTEGRITY, cleanText, validateReaSummary,
 } from './rea_evidence.js';
@@ -33,6 +34,8 @@ import {
   browserFeatures, buildFeatureMap, buildRequestFor, compareWithChe, pickFeatures, planFor, proposeImprovements, verifyBuild,
 } from './rea_features.js';
 import { validateWebSummary } from './rea_web_evidence.js';
+import { withoutProhibitions } from './owner_action_gate.js';
+import { questionNotRequest } from './code_scout.js';
 
 export const REA_WORKFLOW = 'che-rea-analysis.yml';
 export const REA_WORKFLOW_REF = 'main';
@@ -48,7 +51,7 @@ const STALLED_AFTER_MS = 2 * 60 * 60_000;
 const VERIFIED_STATES = ['passed', 'failed'];
 const VERIFY_RECHECK_MS = 2 * 60_000;
 
-const VERBS = { inspect: 'inspect', 'reverse engineer': 'inspect', 'reverse-engineer': 'inspect', analyze: 'inspect', analyse: 'inspect', explain: 'explain', debug: 'debug', compare: 'compare' };
+const VERBS = { inspect: 'inspect', investigate: 'inspect', 'reverse engineer': 'inspect', 'reverse-engineer': 'inspect', analyze: 'inspect', analyse: 'inspect', explain: 'explain', debug: 'debug', compare: 'compare' };
 const TITLES = { inspect: 'inspection', explain: 'explanation', debug: 'debug review', compare: 'comparison', rebuild: 'rebuild plan' };
 
 export function reaConfigured(env = {}) {
@@ -66,7 +69,10 @@ const RECALL = /\bremember (?:that|the) (?:app|website|site|repo(?:sitory)?|pack
 const PRONOUN_TARGET = /\b(?:this|that|the) (?:app|application|website|site|web ?app|repo(?:sitory)?|project|software|tool)\b/i;
 const NOT_REA = /\b(?:seo|audit|summari[sz]e|remember (?:this|that) (?:page|link)|save (?:this|that)|memori[sz]e|my (?:website|site|app)|your (?:own )?(?:code|app|website|repo))\b/i;
 const NO_CODE_CHANGE = /\b(?:do\s+not|don['’]t|never|without)\s+(?:modify\w*|chang\w*|touch\w*|edit\w*|writ\w*|open\w*)\s+(?:your|the|any|a)?\s*(?:code|pull request|pr)\b|\b(?:chat|conversation)[- ]only\b|\banswer (?:only )?in (?:this )?chat\b/i;
-const SELF_REA = /\b(?:your|che['’]?s|the|my)\s+(?:own\s+)?rea\b/i;
+// "Your most recent REA investigation", "your last REA run": CHE's own REA with a word between (comprehension audit).
+const SELF_REA = /\b(?:your|che['’]?s|the|my)\s+(?:(?:own|most\s+recent|latest|last|recent|newest|previous)\s+)*rea\b/i;
+// "Run your REA on the Notion app": an investigation asked for by naming REA itself.
+const RUN_REA = /\b(?:run|use|point|aim)\s+(?:your\s+|the\s+|my\s+)?rea\b[\s\S]{0,20}\b(?:on|at|against|over)\b/i;
 const SELF_REA_READ = /\b(?:what|which|explain|describe|tell|show|list|status|history|latest|last|most\s+recent|recent|capabilit\w*|evidence)\b/i;
 const OWN_AREAS = /^(?:office|workshop|command center|commands?|brain|mailbox|connections?|trading(?: desk)?|studio|che|chey|keys|settings)$/i;
 
@@ -99,20 +105,27 @@ export function parseReaRequest(message, { history = [] } = {}) {
 }
 
 function parseNaturalRea(text, { history = [] } = {}) {
-  const npmNatural = text.match(/\b(reverse[- ]engineer|analy[sz]e|inspect|explain|debug|compare)\b[\s\S]{0,80}\b(?:npm package\b|npm:)/i);
+  const npmNatural = text.match(/\b(reverse[- ]engineer|analy[sz]e|inspect|investigate|explain|debug|compare)\b[\s\S]{0,80}\b(?:npm package\b|npm:)/i);
   if (npmNatural) return { command: VERBS[npmNatural[1].toLowerCase().replace(/\s+/g, ' ')] || 'inspect', input: text };
   if (text.length > 600) return null;
   // Follow-ups about an earlier investigation; handleReaRequest drops them when there is none.
   const named = text.match(BUILD_NAMED);
-  if (RECALL.test(text) || named || BUILD_THOSE.test(text)) {
-    return { command: named || BUILD_THOSE.test(text) ? 'build' : 'recall', input: named ? named[1].trim() : '', natural: true, followup: true };
+  const buildWords = Boolean(named) || BUILD_THOSE.test(text);
+  // "Should I add those features into yourself?" asks; it does not order a build (review of #356, round 2). The
+  // read-only comparison answers it. "Build those into yourself" and "Could you add those into yourself?" still build.
+  if (buildWords && questionNotRequest(text)) return { command: 'compare', input: '', natural: true, followup: true, build_question: true };
+  if (RECALL.test(text) || buildWords) {
+    return { command: buildWords ? 'build' : 'recall', input: named ? named[1].trim() : '', natural: true, followup: true };
   }
   const wantsGap = GAP.test(text);
-  const investigating = INVESTIGATE.test(text) || HOW_IT_WORKS.test(text);
+  // A run the owner forbade ("don't run it") or only imagined ("if I asked you to run REA on Spotify") is not asked for.
+  // A comparison ("… and tell me what features we're missing") keeps its own route.
+  const runAsked = !wantsGap && RUN_REA.test(withoutProhibitions(text)) && !/\bif\s+i\s+(?:asked|told|wanted)\b/i.test(text);
+  const investigating = INVESTIGATE.test(text) || HOW_IT_WORKS.test(text) || runAsked;
   if (!investigating) return wantsGap ? { command: 'compare', input: '', natural: true, followup: true } : null;
   if (NOT_REA.test(text)) return null;
   const target = identifyTarget(text);
-  const strongCue = wantsGap || HOW_IT_WORKS.test(text) || /\breverse[- ]engineer/i.test(text);
+  const strongCue = wantsGap || HOW_IT_WORKS.test(text) || /\breverse[- ]engineer/i.test(text) || runAsked;
   const kindWord = /\b(?:app|application|website|site|web ?app|repo(?:sitory)?|software|project)\b/i.test(text);
   if (target && target.kind !== 'app_name' && target.kind !== 'private_app') return { command: 'inspect', input: text, natural: true, gap: wantsGap };
   if (target && (target.kind === 'private_app' || ((kindWord || strongCue) && !OWN_AREAS.test(target.name)))) {
@@ -215,8 +228,11 @@ export async function refreshReaJobs(storage, env, now = Date.now(), fetcher = f
       changed = true;
       continue;
     }
-    if (checked.summary.state === 'complete') Object.assign(job, { state: 'complete', summary: checked.summary });
-    else Object.assign(job, { state: 'failed', error: checked.summary.error });
+    if (checked.summary.state === 'complete') {
+      Object.assign(job, { state: 'complete', summary: checked.summary });
+      // The Brain hears a finished inspection (owner, 2026-10-20); the REA record stays authoritative.
+      await queueRoomEvent(storage, { room: 'rea', kind: 'npm_inspection', key: `rea:${job.id}:complete`, title: `REA inspected npm ${job.target?.name || ''} ${job.target?.version || ''}`.trim(), body: `Inspection ${job.id} of npm ${job.target?.name || ''}@${job.target?.version || ''} finished with a checked result record. Read the investigation for its features and limitations.`, status: 'verified', evidence: [`rea job ${job.id}`], refs: { job_id: job.id, target: `npm:${job.target?.name || ''}@${job.target?.version || ''}` } }, now).catch(() => null);
+    } else Object.assign(job, { state: 'failed', error: checked.summary.error });
     job.updated_at = new Date(now).toISOString();
     changed = true;
   }
@@ -495,7 +511,12 @@ async function runInvestigation(storage, env, inv, target, { fetcher, now, featu
     setStage(inv, 'map', 'done', `${map.features.length} features mapped, each with its evidence.`, now);
     setStage(inv, 'architecture', 'done', `${map.architecture.filter((a) => a.kind === 'observed').length} observed, ${map.architecture.filter((a) => a.kind === 'inferred').length} inferred, ${map.architecture.filter((a) => a.kind === 'unknown').length} unknown.`, now);
   }
-  if (inv.state === 'running') inv.state = 'complete';
+  if (inv.state === 'running') {
+    inv.state = 'complete';
+    const observed = (inv.architecture || []).filter((a) => a.kind === 'observed').length;
+    const inferred = (inv.architecture || []).filter((a) => a.kind === 'inferred').length;
+    await queueRoomEvent(storage, { room: 'rea', kind: 'investigation', key: `rea:${inv.id}:complete`, title: `REA investigation complete: ${String(inv.target?.label || inv.id).slice(0, 120)}`, body: `Investigation ${inv.id} of ${inv.target?.label || inv.target?.url || 'the target'} mapped ${(inv.features || []).length} features from ${(inv.sources || []).length} sources; architecture notes: ${observed} observed, ${inferred} inferred. Each feature carries its own evidence; read the investigation for them.`, status: 'verified', evidence: (inv.sources || []).slice(0, 6).map((src) => src.url || src.label || String(src)), refs: { investigation: inv.id }, surface: true }, now).catch(() => null);
+  }
   // The isolated browser run adds screenshots and interactions for a web page.
   if (target.kind === 'website' && inv.state === 'complete' && reaConfigured(env)) {
     const sent = await gh(env, 'POST', `/actions/workflows/${encodeURIComponent(REA_WEB_WORKFLOW)}/dispatches`, { ref: REA_WORKFLOW_REF, inputs: { job_id: inv.id, url: facts.final_url } }, fetcher);
@@ -533,6 +554,7 @@ async function refreshBrowser(storage, env, inv, fetcher, now) {
     return saveInvestigation(storage, inv);
   }
   inv.browser = { state: 'complete', observed_at: w.observed_at };
+  await queueRoomEvent(storage, { room: 'rea', kind: 'browser_run', key: `rea:${inv.id}:browser`, title: `REA browser run observed ${String(inv.target?.label || inv.id).slice(0, 120)}`, body: `The isolated browser opened ${inv.target?.url || 'the page'} at ${w.observed_at} and recorded ${(w.interactions || []).length} interactions and ${(w.screenshots || []).length} screenshots. What it saw is observed, not verified.`, status: 'observed', evidence: [`rea browser run ${inv.id} ${w.observed_at}`], refs: { investigation: inv.id } }, now).catch(() => null);
   inv.screenshots = (w.screenshots || []).map((x) => ({ label: x.label === 'mobile' ? 'Phone width (390 px)' : 'Desktop width (1280 px)', file: x.file }));
   for (const step of (w.interactions || []).slice(0, 5)) {
     inv.architecture.push({ label: `Browser: ${cleanText(step.action, 30)}`, detail: cleanText(`${step.target}: ${step.observed}`, 300), kind: 'observed', evidence: [linkOf(w.target?.final_url || inv.target.url, w.target?.final_url || inv.target.url)] });
@@ -857,7 +879,12 @@ async function pickedCandidate(storage, message, history) {
 export async function handleReaRequest(storage, env, message, { fetcher = fetch, now = Date.now(), random, history = [], build = null, jobLookup = null, remember = null, owner = true, codingBlocked = false } = {}) {
   const picked = await pickedCandidate(storage, message, history).catch(() => '');
   if (picked) message = `Investigate ${picked}`;
-  const request = parseReaRequest(message, { history });
+  const explicitRetry = /^(?:(?:che|chay)[,:]?\s+)?rea\s+retry\s*:?\s+(npm:[^\s]+)\s*[.!]?$/i.exec(String(message).trim());
+  const request = parseReaRequest(explicitRetry ? `REA inspect: ${explicitRetry[1]}` : message, { history });
+  if (explicitRetry && request) {
+    if (!owner) return { ok: false, text: 'Only the owner can retry a failed REA run.' };
+    request.retry = true;
+  }
   if (!request) return null;
   const jobs = await refreshReaJobs(storage, env, now, fetcher);
   const hasInvestigations = jobs.some((j) => j.kind === 'investigation');
@@ -948,7 +975,8 @@ export async function handleReaRequest(storage, env, message, { fetcher = fetch,
     if (!/^[\w.-]+\/[\w.-]+$/.test(String(env.CHE_GITHUB_REPO || '').trim())) return { ok: false, investigation_id: inv.id, text: 'Comparing needs my repository name (CHE_GITHUB_REPO), and it is not set. Nothing was marked missing.' };
     const done = await compareInvestigation(storage, env, inv, fetcher, now);
     await rememberInvestigation(remember, done);
-    return { ok: true, investigation_id: inv.id, text: compareAnswer(done) };
+    const asked = request.build_question ? '\n\nThat was a question, so nothing was built. Say "Build those features into yourself" when you want them built.' : '';
+    return { ok: true, investigation_id: inv.id, text: `${compareAnswer(done)}${asked}` };
   }
   if (request.command === 'rebuild') {
     const wanted = request.input.replace(/rea-[0-9a-f]{8}/, '').match(/\bf\d{1,2}\b/g) || (request.input.replace(/rea-[0-9a-f]{8}/, '').trim() ? [request.input.replace(/rea-[0-9a-f]{8}/, '').trim()] : []);
@@ -1004,8 +1032,11 @@ async function npmRequest(storage, env, jobs, request, { fetcher, now, random })
   if (!resolved.ok) return { ok: false, text: resolved.reason };
   const target = { kind: 'npm', name: parsed.name, version: resolved.version, license: resolved.license };
   const cacheKey = `${REA_PIN.version}|npm:${parsed.name}@${parsed.version}|${resolved.integrity}`;
-  const earlier = [...jobs].reverse().find((j) => j.cache_key === cacheKey && j.state === 'complete' && j.summary);
-  if (earlier) return { ok: true, reused: earlier.id, text: evidenceAnswer(request.command, { ...earlier, target }) };
+  const earlier = [...jobs].reverse().find((j) => j.cache_key === cacheKey);
+  if (earlier?.state === 'complete' && earlier.summary) return { ok: true, job_id: earlier.id, state: 'complete', reused: earlier.id, text: evidenceAnswer(request.command, { ...earlier, target }) };
+  if (earlier && ['queued', 'running'].includes(earlier.state)) return { ok: true, job_id: earlier.id, state: earlier.state, reused: earlier.id, text: `REA job ${earlier.id} is still ${earlier.state}. No completed evidence has been received; I did not dispatch it again.` };
+  if (earlier && !request.retry) return { ok: false, job_id: earlier.id, state: earlier.state === 'stalled' ? 'stalled' : 'failed', reused: earlier.id,
+    text: `REA job ${earlier.id} failed: ${earlier.error || 'No validated completed evidence exists.'} No new run was dispatched. To authorize another attempt, say REA retry: npm:${target.name}@${target.version}.` };
 
   if (!reaConfigured(env)) {
     return { ok: false, text: 'REA analysis runs on GitHub Actions, and CHE has no GitHub connection (CHE_GITHUB_TOKEN and CHE_GITHUB_REPO). Nothing was run.' };
@@ -1013,6 +1044,7 @@ async function npmRequest(storage, env, jobs, request, { fetcher, now, random })
   const job = {
     id: newJobId(random), command: request.command, target, integrity: resolved.integrity, cache_key: cacheKey,
     state: 'queued', created_at: new Date(now).toISOString(), updated_at: new Date(now).toISOString(),
+    ...(request.retry && earlier ? { retry_of: earlier.id, original_job_id: earlier.original_job_id || earlier.id } : {}),
   };
   const sent = await gh(env, 'POST', `/actions/workflows/${encodeURIComponent(REA_WORKFLOW)}/dispatches`, {
     ref: REA_WORKFLOW_REF,
@@ -1022,9 +1054,9 @@ async function npmRequest(storage, env, jobs, request, { fetcher, now, random })
     Object.assign(job, { state: 'failed', error: `GitHub did not start the run (status ${sent.status || 'none'}).` });
   }
   await storage.put(REA_JOBS_KEY, [...jobs, job].slice(-JOB_LOG_LIMIT));
-  if (!sent.ok) return { ok: false, text: `REA could not start: GitHub did not start the analysis run (status ${sent.status || 'none'}). Nothing was analyzed.` };
+  if (!sent.ok) return { ok: false, job_id: job.id, state: 'failed', text: `REA job ${job.id} could not start: GitHub did not start the analysis run (status ${sent.status || 'none'}). Nothing was analyzed.` };
   return {
-    ok: true,
+    ok: true, job_id: job.id, state: 'queued',
     text: [
       `REA ${TITLES[request.command] || 'inspection'} started for npm ${target.name} ${target.version} (${target.license}). Job ${job.id}.`,
       'It runs on GitHub Actions. Nothing from the package runs on this phone or on the Worker.',

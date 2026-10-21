@@ -1179,7 +1179,8 @@ extension _CheHomeMemory on _CHEHomeState {
                                 style: TextStyle(color: Colors.white54),
                               ),
                             )
-                          : ListView.builder(
+                          // Vault notes on screen: "look at my screen" refuses while they are shown.
+                          : CheSensitiveScreen(child: ListView.builder(
                               padding: const EdgeInsets.all(14),
                               itemCount: vaultItems.length,
                               itemBuilder: (context, index) {
@@ -1229,7 +1230,7 @@ extension _CheHomeMemory on _CHEHomeState {
                                   ),
                                 );
                               },
-                            ),
+                            )),
                     ),
                   ],
                 ),

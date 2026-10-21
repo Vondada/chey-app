@@ -139,7 +139,7 @@ footer .row{max-width:760px;margin:0 auto}
     say('CHE is thinking.');
     let reply = '';
     try {
-      const res = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token }, body: JSON.stringify({ message: text, history: turns.slice(-12), client: { platform: 'web' } }) });
+      const res = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token }, body: JSON.stringify({ message: text, history: turns, client: { platform: 'web' } }) });
       if (res.status === 401) { store.set('che_token', ''); token = ''; show(); return; }
       const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = '';
       for (;;) {

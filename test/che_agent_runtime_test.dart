@@ -379,7 +379,8 @@ void main() {
     );
     await tester.drag(officeScroll, const Offset(0, -120));
     await tester.pump();
-    await tester.tap(find.text('Plan the launch'));
+    // Tapping the meeting opens its visual room; "Full transcript" opens the War Room's text record.
+    await tester.tap(find.text('Full transcript').first);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 600));
 

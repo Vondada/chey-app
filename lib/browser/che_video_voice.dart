@@ -4,7 +4,11 @@
 // voice ("play number one", "pause", "what's on the screen") takes over.
 
 class CheVideoVoiceCommand {
-  const CheVideoVoiceCommand({required this.query, required this.newest, required this.url});
+  const CheVideoVoiceCommand({required this.query, required this.newest, required this.url, this.music = false});
+
+  /// A request for music ("play the song …", or a search for a song, artist,
+  /// genre or playlist): the Music Room records it (owner, 2026-10-20).
+  final bool music;
 
   /// Empty for "find new videos" (the owner's subscriptions feed).
   final String query;
@@ -15,6 +19,10 @@ class CheVideoVoiceCommand {
     if (query.isEmpty) return 'Opening your newest videos on YouTube in my browser, sir. Say "read the videos" to hear them, or "play number one".';
     return '${newest ? 'Searching the newest' : 'Searching'} YouTube videos for $query in my browser, sir. Say "read the videos" to hear the results, or "play number one".';
   }
+
+  static final _musicWords = RegExp(
+    r"\b(?:music|songs?|singers?|albums?|playlists?|mix|beats|lo-?fi|jazz|blues|rock|hip[\s-]?hop|rap|r&b|soul|funk|country|classical|edm|techno|reggae|gospel|metal|karaoke|lyrics|instrumental|concert|live session|official audio)\b",
+  );
 
   static final _prefix = RegExp(r'^(?:(?:hey\s+)?(?:che|chay|chey|shay)[,:]?\s*)?(?:please\s+|can you\s+|could you\s+)?', caseSensitive: false);
 
@@ -48,6 +56,7 @@ class CheVideoVoiceCommand {
         query: query,
         newest: newest,
         url: 'https://m.youtube.com/results?search_query=${Uri.encodeQueryComponent(query)}$sort',
+        music: lower.startsWith(RegExp(r'^play (?:the )?song ')) || _musicWords.hasMatch(query),
       );
     }
     return null;

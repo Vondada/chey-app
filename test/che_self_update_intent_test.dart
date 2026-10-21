@@ -5,6 +5,29 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:chey/self_update/che_self_update_intent.dart';
 
 void main() {
+  test('comprehension: questions cannot be silently compressed into coding orders', () {
+    for (final words in [
+      'Which of those features could improve your app?',
+      'What would you change in your own code if you could?',
+      'Do you think any of those features could improve your app?',
+      'Should we add dark mode and fix the login bug in your app?',
+      'Can you tell me how you would fix your code?',
+      'CHE, how would you improve the Office screen? Do not start a job.',
+      'Which updates would help your app the most?',
+    ]) {
+      expect(cheIsSelfUpdateRequest(words), isFalse, reason: words);
+    }
+    for (final words in [
+      'Can you add dark mode to your app?',
+      'Could you fix the login bug in your app?',
+      'Implement dark mode in your app.',
+      'What I need you to do is fix your code.',
+      'How would you improve your app? Now fix the login screen in your app.',
+    ]) {
+      expect(cheIsSelfUpdateRequest(words), isTrue, reason: words);
+    }
+  });
+
   const autonomyExam = '''CHE AUTONOMY EXAM — CHAT-ONLY TEST
 
 IMPORTANT: This is an evaluation, NOT a coding or self-development request.

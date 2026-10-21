@@ -259,10 +259,9 @@ extension _CheHomeSend on _CHEHomeState {
         (source.last['text'] ?? '').trim() == currentMessage.trim()) {
       source.removeLast();
     }
-    final recent = source.length > 14
-        ? source.sublist(source.length - 14)
-        : source;
-    return recent
+    // Earlier names, requirements and approvals remain part of this request.
+    // The Worker selects an engine that can receive the complete history.
+    return source
         .map(
           (item) => {
             'role': item['role'] == 'assistant' ? 'assistant' : 'user',
@@ -363,11 +362,14 @@ extension _CheHomeSend on _CHEHomeState {
     // Shown in a private sheet with large text, never added to the chat.
     unawaited(showModalBottomSheet<void>(
       context: context,
-      builder: (sheetContext) => Semantics(
-        liveRegion: true,
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: SelectableText(shown, style: const TextStyle(fontSize: 24, height: 1.4)),
+      // A password on screen: "look at my screen" refuses while this is open.
+      builder: (sheetContext) => CheSensitiveScreen(
+        child: Semantics(
+          liveRegion: true,
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: SelectableText(shown, style: const TextStyle(fontSize: 24, height: 1.4)),
+          ),
         ),
       ),
     ));
@@ -388,6 +390,37 @@ extension _CheHomeSend on _CHEHomeState {
     if (!direct && !explicit) return null;
     return 'Your passwords live only in CHE’s vault on this iPhone, sir. '
         'Say “what passwords do you have” or “what’s my Gmail password”.';
+  }
+
+  /// The Music Room's record of a music request (owner, 2026-10-20): what the
+  /// owner asked for and that CHE opened the search. It is observed, not a
+  /// verified play: which video then played is not known here. It syncs to
+  /// the Worker's Brain, where it is related to the rest of what CHE knows.
+  Future<void> _rememberMusicRequest(CheVideoVoiceCommand command) async {
+    final at = DateTime.now().toUtc().toIso8601String();
+    try {
+      await _brainReplica.remember(
+        id: 'room:music:request:$at',
+        kind: 'room_request',
+        region: 'YouTube and Media',
+        path: 'Music Room/request',
+        title: 'Music request: ${command.query}',
+        body: 'The owner asked CHE to play "${command.query}". CHE opened a YouTube search for it in her browser. '
+            'Which video then played is not recorded here.\n\nStatus: observed.\nSource room: Music Room. Recorded $at.',
+        verification: 'observed',
+        source: {
+          'kind': 'room_event',
+          'room': 'music',
+          'room_label': 'Music Room',
+          'event_kind': 'request',
+          'status': 'observed',
+          'refs': {'query': command.query, 'url': command.url},
+          'at': at,
+        },
+      );
+    } catch (_) {
+      // A Brain write never blocks the music itself.
+    }
   }
 
   String _sanitizeCheReply(String value) {
@@ -732,6 +765,100 @@ extension _CheHomeSend on _CHEHomeState {
       }
     }
 
+    // "Take me back to my last meeting", "show my meetings", "open the meeting about my app":
+    // reopen existing meetings by id (che_meetings.dart); nothing is restarted.
+    final meetingNav = _pendingAttachment != null ? null : cheMeetingNavIntent(message);
+    if (meetingNav != null) {
+      await _navigateMeetings(message, meetingNav);
+      return;
+    }
+
+    // In the Meeting Room: "read the suggestions", "what's the recommendation",
+    // "read suggestion 2", "who's at the table" are answered from its scene.
+    final meetingRoom = CheMeetingRoom.current.value;
+    final roomAnswer = meetingRoom == null || _pendingAttachment != null ? null : cheMeetingRoomAnswer(meetingRoom, message);
+    if (roomAnswer != null) {
+      if (mounted) {
+        _set(() {
+          controller.clear();
+          messages
+            ..add({'role': 'user', 'text': message})
+            ..add({'role': 'assistant', 'text': roomAnswer});
+        });
+      }
+      HapticFeedback.mediumImpact();
+      await speakText(roomAnswer, record: false);
+      return;
+    }
+
+    // In the Simulation Lab: "what's the best design", "why were designs eliminated", "how many simulations ran".
+    final simLab = CheSimLabPage.current.value;
+    final simAnswer = simLab == null || _pendingAttachment != null ? null : simLab.answer(message);
+    if (simAnswer != null) {
+      if (mounted) {
+        _set(() {
+          controller.clear();
+          messages
+            ..add({'role': 'user', 'text': message})
+            ..add({'role': 'assistant', 'text': simAnswer});
+        });
+      }
+      HapticFeedback.mediumImpact();
+      await speakText(simAnswer, record: false);
+      return;
+    }
+
+    // In the Plan Room: "sort by cheapest", "show premium", "what comes first".
+    final planRoom = ChePlanRoom.current.value;
+    final planAnswer = planRoom == null || _pendingAttachment != null ? null : planRoom.answer(message);
+    if (planAnswer != null) {
+      if (mounted) {
+        _set(() {
+          controller.clear();
+          messages
+            ..add({'role': 'user', 'text': message})
+            ..add({'role': 'assistant', 'text': planAnswer});
+        });
+      }
+      HapticFeedback.mediumImpact();
+      await speakText(planAnswer, record: false);
+      return;
+    }
+
+    // "Look at my screen" (owner, 2026-10-20): CHE takes a picture of her own
+    // screen and sends it with this turn, with the page's report, so the
+    // Worker's vision reads what is really there. A password or vault page
+    // on screen refuses the picture; a failure is said aloud, never guessed.
+    if (_pendingAttachment == null && cheAsksToLookAtScreen(message)) {
+      final shot = await CheScreenCapture.capture();
+      if (!shot.ok) {
+        final reply = 'I did not look, sir: ${shot.reason}.';
+        if (mounted) {
+          _set(() {
+            controller.clear();
+            messages
+              ..add({'role': 'user', 'text': message})
+              ..add({'role': 'assistant', 'text': reply});
+          });
+          ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
+            content: Text(reply, style: const TextStyle(fontSize: 18, height: 1.3)),
+            duration: const Duration(seconds: 8),
+          ));
+        }
+        HapticFeedback.heavyImpact();
+        await speakText(reply, record: false);
+        return;
+      }
+      HapticFeedback.lightImpact();
+      final look = 'The owner asked CHE to look at his screen. The attached image is a picture of CHE\'s own app '
+          '(${shot.width}x${shot.height}); web pages and videos inside it appear blank. Page report: ${CheScreenAwareness.describe()}';
+      _set(() {
+        _pendingAttachment = {'name': 'che-screen.png', 'media_type': 'image', 'base64': shot.base64};
+        // The browser's page text, when it is open, stays with the picture.
+        _pendingScreenContext = [if ((_pendingScreenContext ?? '').trim().isNotEmpty) _pendingScreenContext!, look].join('\n\n');
+      });
+    }
+
     // "What is on my screen?": answered from the page really in front of the
     // owner (its registered page, tab and controls), never a model's guess.
     // Pages with their own voice routes (Commands, the browser) answered above.
@@ -758,6 +885,38 @@ extension _CheHomeSend on _CHEHomeState {
       return;
     }
 
+    // Universal help (owner, 2026-10-20): "what is this button?", "what does Emergency Stop do?",
+    // "show me the pause button", "walk me through this screen", "open the help center". Answered
+    // from the controls the screen in front really reports (che_ui/che_help.dart), never a guess.
+    final helpAsk = _pendingAttachment == null ? cheHelpIntent(message) : null;
+    if (helpAsk != null) {
+      // Read before anything opens over the screen the owner is asking about.
+      final helpScreen = CheHelp.shown;
+      final reply = CheHelp.answer(helpAsk) ?? '';
+      if (mounted) {
+        final onChat = _shellTab == 1 && (ModalRoute.of(context)?.isCurrent ?? true);
+        _set(() {
+          controller.clear();
+          messages
+            ..add({'role': 'user', 'text': message})
+            ..add({'role': 'assistant', 'text': reply});
+        });
+        if (helpAsk.kind == CheHelpKind.center) {
+          unawaited(Navigator.of(context).push(CheHelpCenter.route(screen: helpScreen)));
+        } else if (helpAsk.kind == CheHelpKind.walkthrough) {
+          unawaitedWalk(context);
+        } else if (!onChat) {
+          ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
+            content: Text(reply, style: const TextStyle(fontSize: 18, height: 1.3)),
+            duration: const Duration(seconds: 10),
+          ));
+        }
+      }
+      HapticFeedback.mediumImpact();
+      await speakText(reply, record: false);
+      return;
+    }
+
     // One-step video search in CHE's own browser: "search YouTube for jazz",
     // "find new videos about Mars", "play lofi beats video". Inside the
     // browser, "read the videos" / "play number one" / "pause" take over.
@@ -771,6 +930,7 @@ extension _CheHomeSend on _CHEHomeState {
         });
       }
       HapticFeedback.mediumImpact();
+      if (videoCommand.music) unawaited(_rememberMusicRequest(videoCommand));
       await speakText(videoCommand.spoken);
       if (!mounted) return;
       await Navigator.of(context).push(
@@ -868,6 +1028,7 @@ extension _CheHomeSend on _CHEHomeState {
     // Realtime voice is text/audio-only. A turn with an attachment must go
     // through the normal multimodal HTTP path so CHE actually sees/hears it.
     if (_realtimeVoice?.connected == true &&
+        !_realtimeVoice!.guardedOutput &&
         _pendingAttachment == null &&
         !isInstalledSkillRequest(message)) {
       if (!mounted) return;
@@ -1010,6 +1171,9 @@ extension _CheHomeSend on _CHEHomeState {
             messages[assistantIndex]['media_url'] = _streamMediaUrl!;
             messages[assistantIndex]['media_type'] = _streamMediaType ?? 'image';
           }
+          if (_streamUnderstoodAs != null) {
+            messages[assistantIndex]['understood_as'] = _streamUnderstoodAs!;
+          }
         }
         _isSending = false;
       });
@@ -1034,9 +1198,23 @@ extension _CheHomeSend on _CHEHomeState {
         _pendingVoicePreviewId = null;
       } else {
         replySpeech?.close();
-        await replySpeech?.done;
-        // A free sample asked for by voice starts only after the spoken reply has finished.
-        if (mounted) unawaited(_playPendingVoicePreview());
+        final previewId = _pendingVoicePreviewId;
+        _pendingVoicePreviewId = null;
+        final generation = _speechTurn;
+        Future<void> playPreview() async {
+          if (mounted && previewId != null && generation == _speechTurn) {
+            unawaited(_playPendingVoicePreview(requestedVoiceId: previewId));
+          }
+        }
+        final finished = replySpeech?.afterPlayback(playPreview) ?? playPreview();
+        if (fromVoice && _realtimeVoice?.guardedOutput == true) {
+          // The next queued owner turn must not wait for playback. The speech
+          // pipeline owns its cleanup and new speech interrupts it immediately.
+          unawaited(finished);
+        } else {
+          await finished;
+        }
+
       }
     } on _CHEAgentException catch (e) {
       final errorReply = e.message;
@@ -1229,5 +1407,54 @@ extension _CheHomeSend on _CHEHomeState {
       ..add({'role': 'assistant', 'text': reply}));
     if (!command.readPrice) _openAssistantHub(tab: 1);
     await speakText(reply, record: false);
+  }
+
+  /// Opens the Meetings list, the last meeting, or the meeting matching a topic, and says what happened.
+  Future<void> _navigateMeetings(String message, ({String kind, String topic}) nav) async {
+    Future<void> say(String reply) async {
+      if (mounted) {
+        _set(() {
+          controller.clear();
+          messages
+            ..add({'role': 'user', 'text': message})
+            ..add({'role': 'assistant', 'text': reply});
+        });
+      }
+      HapticFeedback.mediumImpact();
+      await speakText(reply, record: false);
+    }
+
+    Future<void> open(String id) => cheOpenMeetingRoom(context, client: _agentRuntime, id: id, onSpeak: (t) => speakText(t, record: false), onBackToOffice: () => _goShellTab(2));
+
+    if (nav.kind == 'list') {
+      unawaited(say('Opening your meetings, sir: active, recent and completed.'));
+      if (mounted) unawaited(Navigator.of(context).push(CheMeetingsPage.route(client: _agentRuntime, onSpeak: (t) => speakText(t, record: false), onBackToOffice: () => _goShellTab(2))));
+      return;
+    }
+    List<CheMeetingSummary> all;
+    try {
+      all = await _agentRuntime.meetings();
+    } catch (e) {
+      await say('I could not load your meetings, sir: $e');
+      return;
+    }
+    if (nav.kind == 'last') {
+      final id = await cheLastMeetingId() ?? (all.isEmpty ? null : all.first.id);
+      final m = all.where((x) => x.id == id).firstOrNull;
+      if (id == null) {
+        await say('You have no meetings yet, sir.');
+        return;
+      }
+      unawaited(say(m == null ? 'Taking you back to your last meeting, sir.' : 'Taking you back to ${cheMeetingName(m)}, sir. It is ${cheMeetingStatusSpoken(m)}.'));
+      if (mounted) unawaited(open(id));
+      return;
+    }
+    final m = cheMatchMeeting(all, nav.topic);
+    if (m == null) {
+      await say(all.isEmpty ? 'You have no meetings yet, sir.' : 'I found no meeting about ${nav.topic}, sir. Say "show my meetings" to hear the list.');
+      return;
+    }
+    unawaited(say('Opening ${cheMeetingName(m)}, sir. It is ${cheMeetingStatusSpoken(m)}.'));
+    if (mounted) unawaited(open(m.id));
   }
 }

@@ -466,7 +466,8 @@ export function resilienceIntent(message) {
   if (setup) return { kind: 'setup', provider: setup };
   if (/\bread (?:the )?security first\b/.test(t)) return { kind: 'next-letter', securityFirst: true };
   if (/\bread (?:the )?next letter\b|\bnext letter\b/.test(t)) return { kind: 'next-letter' };
-  if (/\b(?:open (?:the )?mailbox|what'?s in (?:the |my )?mailbox|any letters)\b/.test(t)) return { kind: 'mailbox' };
+  // "Read my letters", "check my letters", "what letters do I have" (comprehension audit).
+  if (/\b(?:open (?:the )?mailbox|what'?s in (?:the |my )?mailbox|any letters)\b|^(?:read|check|show|list)(?: me)? (?:my|the) letters(?: (?:please|now|to me))?$|^what letters (?:do i have|are there)$/.test(t)) return { kind: 'mailbox' };
   if (/\bwhat'?s in (?:the )?free tech\b|\bfree tech\b/.test(t)) return { kind: 'tech', cost: 'free' };
   if (/\bwhat'?s in (?:the )?paid tech\b|\bpaid tech\b/.test(t)) return { kind: 'tech', cost: 'paid' };
   if (/^scout now$|\bscout (?:for )?(?:new )?(?:engines|tech)\b/.test(t)) return { kind: 'scout' };

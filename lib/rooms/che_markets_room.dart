@@ -17,6 +17,9 @@ import '../che_ui/che_theme.dart';
 import '../widgets/che_native_scene_world.dart';
 import 'che_live_chart.dart';
 import 'che_live_paper.dart';
+import 'che_alpaca_paper.dart';
+import 'che_strategy_controls.dart';
+import 'che_trading_ledgers.dart';
 import 'che_trading_connections.dart';
 
 class CheQuote {
@@ -71,6 +74,7 @@ class CheMarketsRoom extends StatefulWidget {
     required this.headers,
     required this.actions,
     required this.onAsk,
+    this.onRead,
     this.client,
     this.onOpenTradingApp,
   });
@@ -81,6 +85,7 @@ class CheMarketsRoom extends StatefulWidget {
 
   /// Sends a prompt to CHE (e.g. "Analyze S&P 500 structure").
   final void Function(String prompt) onAsk;
+  final void Function(String)? onRead;
   final http.Client? client;
 
   /// Opens a supported trading website inside CHE's in-app browser.
@@ -213,6 +218,11 @@ class _CheMarketsRoomState extends State<CheMarketsRoom> {
             padding: const EdgeInsets.only(bottom: CheSpace.xxl),
             children: [
               _TickerTape(quotes: _quotes, fmt: _fmt),
+              // CHE's forward paper trading, from its records (owner, 2026-10-18).
+              Padding(
+                padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.md, CheSpace.gutter, 0),
+                child: CheLivePaperPanel(baseUrl: widget.baseUrl, headers: widget.headers, onAsk: widget.onAsk, onRead: widget.onRead, client: widget.client),
+              ),
               // The live chart fills the room: switch symbols and timeframes
               // by tap, typing or voice; "Read price" speaks the latest price.
               Padding(
@@ -224,10 +234,20 @@ class _CheMarketsRoomState extends State<CheMarketsRoom> {
                   height: math.max(320.0, MediaQuery.sizeOf(context).height * 0.55),
                 ),
               ),
-              // CHE's forward paper trading, from its records (owner, 2026-10-18).
+              // The Strategy Control Center (owner, 2026-10-20): limits, pause, Emergency Stop, audit.
               Padding(
                 padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.md, CheSpace.gutter, 0),
-                child: CheLivePaperPanel(baseUrl: widget.baseUrl, headers: widget.headers, onAsk: widget.onAsk, client: widget.client),
+                child: CheStrategyControlsPanel(baseUrl: widget.baseUrl, headers: widget.headers, onAsk: widget.onAsk, client: widget.client),
+              ),
+              // CHE's Alpaca PAPER stock account, visually: orders, confirmed fills, positions (owner, 2026-10-20).
+              Padding(
+                padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.md, CheSpace.gutter, 0),
+                child: CheAlpacaPaperPanel(baseUrl: widget.baseUrl, headers: widget.headers, onAsk: widget.onAsk, client: widget.client),
+              ),
+              // Every trade record set by source, never summed (owner, 2026-10-20).
+              Padding(
+                padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.md, CheSpace.gutter, 0),
+                child: CheTradingLedgersPanel(baseUrl: widget.baseUrl, headers: widget.headers, onAsk: widget.onAsk, client: widget.client),
               ),
               // Every broker connection as its own system reports it (issue #344).
               Padding(

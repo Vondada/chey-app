@@ -30,7 +30,7 @@ const MISSION_IDS = {
   intelligence: ['che', 'che-explore', 'che-plan', 'che-build', 'che-research', 'che-verify', 'che-memory', 'che-brain-review', 'che-flagstaff-import', 'che-outside-mail', 'che-recover', 'che-status', 'learn'],
   youtube: ['yt-ideas', 'yt-research', 'yt-script', 'yt-video', 'yt-voice', 'yt-thumbnail', 'yt-seo', 'yt-publish', 'yt-batch', 'yt-analytics', 'yt-grow'],
   // trade-connections reads the owner-only connections of #348 (issue #350).
-  trading: ['trade-open', 'trade-chart', 'trade-setup', 'trade-liquidity', 'trade-risk', 'trade-backtest', 'trade-journal', 'trade-alert', 'trade-sim', 'trade-execute', 'trade-connections'],
+  trading: ['trade-open', 'trade-chart', 'trade-setup', 'trade-liquidity', 'trade-risk', 'trade-backtest', 'trade-learning', 'trade-research', 'trade-journal', 'trade-alert', 'trade-sim', 'trade-controls', 'trade-emergency', 'trade-execute', 'trade-connections'],
   build: ['site-build', 'site-redesign', 'site-audit', 'site-publish', 'app-build', 'app-fix', 'ai-build', 'code-review', 'che-release', 'iphone-update', 'rea-inspect', 'rea-discover', 'rea-features', 'rea-explain', 'rea-debug', 'rea-compare', 'rea-rebuild', 'rea-build', 'rea-verify', 'rea-status'],
   money: ['money-dashboard', 'cashflow', 'budget', 'expenses', 'invoices', 'money-forecast', 'pricing', 'profit-report'],
   clients: ['lead-scout', 'lead-audit', 'lead-score', 'lead-match', 'lead-proposal', 'lead-outreach', 'lead-crm', 'lead-followup', 'client-deliver'],
@@ -48,8 +48,12 @@ const siteModel = (input) => (/website|web app|change the website|<html|html doc
 
 function storageFor(saved) {
   return {
-    get: async (key) => (saved.has(key) ? structuredClone(saved.get(key)) : undefined),
-    put: async (key, value) => saved.set(key, structuredClone(value)),
+    get: async (key) => Array.isArray(key) ? new Map(key.filter((k) => saved.has(k)).map((k) => [k, structuredClone(saved.get(k))])) : saved.has(key) ? structuredClone(saved.get(key)) : undefined,
+    // Like Durable Object storage, put also takes an object of several keys.
+    put: async (key, value) => {
+      if (key && typeof key === 'object') { for (const [k, v] of Object.entries(key)) saved.set(k, structuredClone(v)); return; }
+      saved.set(key, structuredClone(value));
+    },
     delete: async (key) => saved.delete(key),
     list: async ({ prefix = '' } = {}) => new Map([...saved.entries()].filter(([k]) => k.startsWith(prefix))),
     setAlarm: async () => {},
@@ -104,9 +108,9 @@ async function owner({ saved = new Map(), model = () => 'Here is the answer, sir
 
 // ─── 1. Catalog identities ────────────────────────────────────────────────
 
-test('1. the owner\'s 71 commands exist exactly as listed, plus ten REA, trading, Knowledge Atlas, Brain correspondence and six Creator Studio commands, in 9 categories, each fully described', () => {
-  assert.equal(COMMANDS.length, 93);
-  assert.equal(new Set(COMMANDS.map((c) => c.id)).size, 93, 'ids are unique');
+test('1. the owner\'s 71 commands exist exactly as listed, plus ten REA, six Creator Studio, two Strategy Control Center and two strategy learning commands, in 9 categories, each fully described', () => {
+  assert.equal(COMMANDS.length, 97);
+  assert.equal(new Set(COMMANDS.map((c) => c.id)).size, 97, 'ids are unique');
   assert.deepEqual(CATEGORIES.map((c) => c.id), Object.keys(MISSION_IDS));
   for (const [category, ids] of Object.entries(MISSION_IDS)) {
     assert.deepEqual(COMMANDS.filter((c) => c.category === category).map((c) => c.id), ids, category);
@@ -157,7 +161,7 @@ test('2. availability comes from real configuration: ready, needs setup, unsuppo
   const expired = connectorStatus({ CHE_TRADOVATE_OAUTH_CLIENT_ID: 'x', CHE_TRADOVATE_OAUTH_CLIENT_SECRET: 'y' }, { broker: { expired: true } });
   assert.equal(expired.broker.state, 'needs_reconnect');
   const view = catalogView(bare);
-  assert.equal(view.commands.length, 93);
+  assert.equal(view.commands.length, 97);
   assert.ok(view.commands.every((c) => ['available', 'setup_required', 'unsupported', 'temporarily_unavailable'].includes(c.status)));
 });
 
@@ -676,7 +680,7 @@ test('the Flutter catalog fixture matches what the Worker serves (regenerate: no
   const { fixtureCatalog } = await import('../../tool/dump_command_catalog.mjs');
   const fixture = JSON.parse(readFileSync(new URL('../../test/fixtures/command_catalog.json', import.meta.url), 'utf8'));
   assert.deepEqual(fixture, JSON.parse(JSON.stringify(fixtureCatalog())));
-  assert.equal(fixture.commands.length, 93);
+  assert.equal(fixture.commands.length, 97);
   assert.ok(fixture.templates.length >= 4);
 });
 
@@ -795,7 +799,7 @@ test('the owner\'s six spoken phrases are answered from the catalog with no mode
   for (const words of variants('CHE, open your Commands page.')) {
     const out = await che.say(words);
     assert.equal(out.route, 'che_command_center', words);
-    assert.match(out.reply, /93 commands in 9 groups[\s\S]*2\. YouTube, 11[\s\S]*9\. Creator Studio, 6[\s\S]*Nothing was run/, words);
+    assert.match(out.reply, /97 commands in 9 groups[\s\S]*2\. YouTube, 11[\s\S]*9\. Creator Studio, 6[\s\S]*Nothing was run/, words);
   }
   for (const words of variants('CHE, search for YouTube.')) {
     const out = await che.say(words);
@@ -863,4 +867,101 @@ test('a fast command or screen reply drops a held payment or app request, so a l
     const yes = await che.say('yes');
     assert.doesNotMatch(yes.reply, /laptop|spotify/i, `${phrase}: a later yes releases nothing`);
   }
+});
+
+test('context continuity: the real chat model receives details older than 80 turns once, with their roles', async () => {
+  const che = await owner();
+  const first = 'Willo receives order 42 on Friday at 16:45 via https://example.com/a?b=2.';
+  const history = [{ role: 'user', content: first }, ...Array.from({ length: 90 }, (_, i) => ({ role: i % 2 ? 'user' : 'assistant', content: `ordinary detail ${i}` }))];
+  await che.say('/che-plan summarize the delivery details', { history });
+  const input = che.inputs.at(-1);
+  assert.equal(input.messages.filter((m) => m.role === 'user' && m.content === first).length, 1);
+  assert.ok(input.messages.some((m) => m.content === 'ordinary detail 0'));
+});
+
+test('workflow dependencies pass the complete earlier result, including its late constraint', async () => {
+  const result = 'Project detail. '.repeat(150) + ' FINAL: ask Willo before publishing.';
+  const che = await owner({ model: () => result });
+  const run = await che.post('/api/commands/workflow/run', { name: 'Context test', steps: [
+    { command: 'che-plan', input: 'Outline the project' }, { command: 'che-plan', input: 'Refine the earlier outline' },
+  ] });
+  assert.equal(run.status, 200);
+  await che.state().processJobs();
+  await che.state().processJobs();
+  assert.ok(che.inputs.some((input) => input.messages.some((m) => String(m.content).includes(result))), 'the dependent model receives the whole verified result');
+});
+
+test('a code-review workflow cannot accept a model reply as proof of repository inspection', async () => {
+  const che = await owner({ env: READY_ENV });
+  const started = await che.post('/api/commands/workflow/run', { name: 'Code review', steps: [{ command: 'code-review', input: 'routing' }] });
+  assert.equal(started.status, 200);
+  const data = che.saved.get('che');
+  const job = data.jobs.find((j) => j.kind === 'command');
+  const state = che.state();
+  state.handleRequest = async () => new Response(JSON.stringify({ type: 'delta', delta: 'Done, job-12345 completed the review.' }) + '\n' + JSON.stringify({ type: 'done', source: 'model', ok: true }) + '\n');
+  const out = await state.runCommandJob(job);
+  assert.equal(out.status, 'failed');
+  assert.match(out.error, /route|handler/i);
+  assert.equal(out.result, '');
+});
+
+test('a voice/typed sentence compiles named commands into the existing saved workflow without model calls', async () => {
+  const che = await owner();
+  const out = await che.say('Create a workflow to che plan Willo Project then che plan Refine Willo Project');
+  assert.equal(out.route, 'che_command_workflow');
+  assert.equal(out.done.ok, true);
+  assert.equal(out.modelCalls, 0);
+  const saved = che.saved.get('che');
+  assert.equal(saved.command_workflows.length, 1);
+  assert.equal(saved.command_workflows[0].steps[0].input, 'Willo Project');
+  assert.equal(saved.jobs.length, 0);
+  const started = await che.say(`run my ${saved.command_workflows[0].name} workflow`);
+  assert.equal(started.done.ok, true);
+  assert.equal(che.saved.get('che').objectives[0].source, 'command_workflow');
+});
+
+test('an unknown step in a natural workflow queues nothing; oversized command input keeps the late prohibition', async () => {
+  const che = await owner();
+  const unknown = await che.say('run a workflow to che plan Willo Project then imaginary command');
+  assert.equal(unknown.done.ok, false);
+  assert.equal(unknown.modelCalls, 0);
+  assert.equal((che.saved.get('che').jobs || []).length, 0);
+  const long = await che.say('/che-plan ' + 'x'.repeat(4100) + ' do not buy anything');
+  assert.equal(long.done.ok, false);
+  assert.equal(long.modelCalls, 0);
+  assert.match(long.reply, /Nothing was cut or run/);
+});
+
+test('REA workflows wait for real runner evidence, then unblock the dependent command without redispatching', async () => {
+  let finished = false;
+  await withGitHub({ resultFor: (id) => finished ? { ...REA_SEMVER, job_id: id } : undefined }, async (seen) => {
+    const che = await owner({ env: READY_ENV });
+    const start = await che.say('run a workflow to rea inspect npm:semver@7.7.2 then rea explain npm:semver@7.7.2');
+    assert.equal(start.done.ok, true);
+    await che.state().processJobs();
+    let data = che.saved.get('che');
+    const first = data.objectives[0].nodes[0];
+    assert.equal(first.status, 'running');
+    assert.equal(data.objectives[0].nodes[1].status, 'pending');
+    const job = data.jobs.find((j) => j.kind === 'command');
+    assert.equal(job.status, 'queued');
+    assert.ok(job.retry_at > Date.now());
+    finished = true;
+    job.retry_at = 0;
+    che.saved.set('che', data);
+    await che.state().processJobs();
+    await che.state().processJobs();
+    data = che.saved.get('che');
+    assert.ok(data.objectives[0].nodes.every((n) => n.status === 'complete'));
+    assert.equal(seen.filter((s) => s.startsWith('POST')).length, 1);
+    assert.equal(che.inputs.length, 0);
+  });
+});
+
+test('comprehension audit: "what commands do you have?" is answered from the catalog', () => {
+  for (const text of ['What commands do you have?', 'which commands are there', 'chey list all your commands']) {
+    assert.deepEqual(readCommandSpeech(text), { kind: 'groups' }, text);
+  }
+  assert.deepEqual(readCommandSpeech('open commands'), { kind: 'open' });
+  assert.equal(readCommandSpeech('what commands should I use for youtube'), null);
 });

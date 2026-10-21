@@ -17,7 +17,7 @@ const WAKE = "(?:(?:hey\\s+)?(?:che|chay|chey|shay)[,:]?\\s+)?";
 // action CHE just took in chat, which is not a job) stay with their own routes.
 const NOW_WORDS = '(?:\\s+(?:right\\s+now|now|currently|at\\s+the\\s+moment))?';
 const DAY_WORDS = '(?:\\s+(?:right\\s+now|now|currently|at\\s+the\\s+moment|today|so\\s+far))?';
-const ACTIVE_ASK = new RegExp(`^${WAKE}(?:what\\s+(?:are|r)\\s+(?:you|u)\\s+(?:doing|working\\s+on|up\\s+to|busy\\s+with)|what(?:['’]s|\\s+is)\\s+(?:running|in\\s+progress)|(?:is\\s+)?anything\\s+running|what\\s+jobs\\s+are\\s+running)${NOW_WORDS}[?.!\\s]*$`, 'i');
+const ACTIVE_ASK = new RegExp(`^${WAKE}(?:what\\s+(?:are|r)\\s+(?:you|u)\\s+(?:doing|working\\s+on|up\\s+to|busy\\s+with)|what(?:['’]s|\\s+is)\\s+(?:running|in\\s+progress)|(?:is\\s+)?anything\\s+running|what\\s+jobs\\s+are\\s+running|(?:is|are)\\s+(?:there\\s+)?(?:any|a)\\s+(?:coding\\s+|background\\s+)?jobs?\\s+(?:running|in\\s+progress|queued))${NOW_WORDS}[?.!\\s]*$`, 'i');
 const FINISHED_ASK = new RegExp(`^${WAKE}(?:what(?:['’]s|\\s+is)\\s+(?:finished|done|completed)|what\\s+(?:did|have)\\s+(?:you|u)\\s+(?:finish(?:ed)?|complete(?:d)?))${DAY_WORDS}[?.!\\s]*$`, 'i');
 
 export function activityStatusIntent(message) {

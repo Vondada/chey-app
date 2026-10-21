@@ -85,6 +85,12 @@ class CheSpeechPipeline<A> {
   bool get cancelled => _cancelled;
   Future<void> get done => _done.future;
 
+  /// Run a follow-up only after this reply finishes, never after interruption.
+  Future<void> afterPlayback(Future<void> Function() action) async {
+    await done;
+    if (!_cancelled) await action();
+  }
+
   int get _nowMs => _clock().difference(_start).inMilliseconds;
 
   void _mark(String event) => log?.call('+${_nowMs}ms $event');

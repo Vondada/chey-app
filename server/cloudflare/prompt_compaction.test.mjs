@@ -27,3 +27,19 @@ test('packed JSON storage is transparent to callers', async () => {
   assert.ok(['gzip-v1','plain-v1'].includes(info.codec));
   assert.deepEqual(await loadPackedJson(storage, 'p'), value);
 });
+
+test('plain compaction records reject changed content instead of ignoring their integrity digest', async () => {
+  const packed = await packText('Willo, Friday 16:45. Do not publish.', { minBytes: 1000 });
+  await assert.rejects(unpackText({ ...packed, text: 'Willo, Friday 16:45. Publish now.' }), /integrity check failed/);
+});
+
+test('Unicode and transitions between compressed and plain JSON stay exact', async () => {
+  const saved = new Map();
+  const storage = { get: async (k) => saved.get(k), put: async (k, v) => saved.set(k, structuredClone(v)), delete: async (k) => saved.delete(k) };
+  const values = [{ text: 'CHE 🧠 — Chay\nWillo: $25,000; 16:45; https://example.com/A?B=2\n'.repeat(200) }, { text: 'Small 🧠' }];
+  for (const value of [...values, values[0]]) {
+    await savePackedJson(storage, 'context', value);
+    assert.deepEqual(await loadPackedJson(storage, 'context'), value);
+    assert.equal(saved.has('context') && saved.has('context:gz'), false, 'no duplicate representation remains');
+  }
+});

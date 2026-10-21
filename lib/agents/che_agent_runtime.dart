@@ -181,10 +181,14 @@ class CheMeetingSummary {
     required this.status,
     required this.progress,
     required this.participantNames,
+    this.createdAt,
+    this.updatedAt,
   });
 
   final String id;
   final String objective;
+  final DateTime? createdAt;
+  final DateTime? updatedAt;
   final String status; // drafting, cross_check, synthesizing, complete, failed
   final double progress;
   final List<String> participantNames;
@@ -209,6 +213,8 @@ class CheMeetingSummary {
           for (final p in (j['participants'] as List? ?? const []))
             if (p is Map) '${p['name']}',
         ],
+        createdAt: DateTime.tryParse('${j['created_at'] ?? ''}'),
+        updatedAt: DateTime.tryParse('${j['updated_at'] ?? ''}'),
       );
 }
 
@@ -718,9 +724,33 @@ class CheAgentRuntimeClient {
   /// Contains connection states only, never credential values.
   Future<Map<String, dynamic>> aiOverview() => _send('GET', '/api/ai/overview');
 
+  /// The War Room meetings the Worker already keeps (newest first, up to 12).
+  Future<List<CheMeetingSummary>> meetings() async {
+    final j = await _send('GET', '/api/meetings');
+    return [for (final m in (j['meetings'] as List? ?? const [])) if (m is Map) CheMeetingSummary.fromJson(m.cast<String, dynamic>())];
+  }
+
   Future<CheMeeting> meeting(String id) async {
     final j = await _send('GET', '/api/meetings/$id');
     return CheMeeting.fromJson(j['meeting'] as Map<String, dynamic>);
+  }
+
+  /// The Meeting Room scene for one War Room meeting (Spatial World MVP 1).
+  Future<Map<String, dynamic>> meetingScene(String id) async {
+    final j = await _send('GET', '/api/world/scene?scene=meeting&id=${Uri.encodeQueryComponent(id)}');
+    return (j['scene'] as Map?)?.cast<String, dynamic>() ?? const {};
+  }
+
+  /// A plan CHE made (Concept-to-Plan, project_plan.js) as its scene.
+  Future<Map<String, dynamic>> planScene(String id) async {
+    final j = await _send('GET', '/api/world/scene?scene=plan&id=${Uri.encodeQueryComponent(id)}');
+    return (j['scene'] as Map?)?.cast<String, dynamic>() ?? const {};
+  }
+
+  /// A Simulation Lab run (sim_lab.js) as its scene.
+  Future<Map<String, dynamic>> simScene(String id) async {
+    final j = await _send('GET', '/api/world/scene?scene=sim&id=${Uri.encodeQueryComponent(id)}');
+    return (j['scene'] as Map?)?.cast<String, dynamic>() ?? const {};
   }
 }
 

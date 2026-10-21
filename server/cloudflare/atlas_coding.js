@@ -1772,7 +1772,7 @@ const AUTONOMY = [
       at('server/cloudflare/coding_failover.mjs', 'classifyModelFailure', 'one ordered rule list decides what a failed model attempt means', 'server/cloudflare/coding_failover.test.mjs', 'a Groq request-too-large error is too_large even though it names tokens per minute'),
       at('server/cloudflare/coding_failover.mjs', 'resumeDecision', 'bounded resumes with growing backoff, then CHE\'s own coding team', 'server/cloudflare/coding_failover.test.mjs', 'resumes are bounded: backoff grows, then the job is handed to CHE\'s own team'),
       at('server/cloudflare/recovery_policy.js', 'classifyFailure', 'one failure class per stage: CHE fixes it, retries, stops, or asks only for authorization', 'server/cloudflare/worker_autonomy.test.mjs'),
-      at('server/cloudflare/ai_router.js', 'fitToBudget', 'the newest turn is never cut to fit; an engine too small for it is marked and skipped', 'server/cloudflare/lossless_intake.test.mjs', 'the newest turn is never cut to fit; older turns and the system prompt give way first'),
+      at('server/cloudflare/ai_router.js', 'fitToBudget', 'the complete context is never cut to fit; an engine too small for it is marked and skipped', 'server/cloudflare/lossless_intake.test.mjs', 'no turn or system rule is cut to fit a smaller engine'),
     ],
     che_asks: ['recover when a model fails', 'recover when models fail', 'recover from a model failure', 'recover from model failures', 'handle model failures', 'handle a model failure', 'handle failed models', 'fail over', 'failover', 'fail over between models', 'switch models when one fails', 'model failover', 'retry failed models', 'recover from failures', 'recover from errors'],
     sources: [

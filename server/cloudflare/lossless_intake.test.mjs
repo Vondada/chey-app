@@ -8,7 +8,7 @@ import { interpretWithModel } from './speech_intent.js';
 
 const LATE_NO = ' Actually, do not buy anything yet; only make the list.';
 
-test('the newest turn is never cut to fit; older turns and the system prompt give way first', () => {
+test('no turn or system rule is cut to fit a smaller engine', () => {
   const newest = 'Plan my Walmart trip tomorrow: ' + 'apples, '.repeat(700) + LATE_NO;
   const input = { messages: [
     { role: 'system', content: 'IDENTITY: You are CHE. ' + 'rule '.repeat(4000) },
@@ -16,9 +16,9 @@ test('the newest turn is never cut to fit; older turns and the system prompt giv
     { role: 'user', content: newest },
   ] };
   const out = fitToBudget(input, 16000);
-  assert.equal(out.oversize, undefined);
+  assert.equal(out.oversize, true);
   assert.equal(out.messages.at(-1).content, newest, 'the whole newest turn, with its last words');
-  assert.ok(out.messages.reduce((n, m) => n + m.content.length, 0) <= 16500);
+  assert.deepEqual(out.messages, input.messages);
   const tooBig = fitToBudget({ messages: [{ role: 'system', content: 'sys' }, { role: 'user', content: newest }] }, 4000);
   assert.equal(tooBig.oversize, true, 'too long for this engine: marked, not cut');
   assert.equal(tooBig.messages.at(-1).content, newest);

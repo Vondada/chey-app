@@ -1,0 +1,1964 @@
+{
+ "scene": "sim",
+ "id": "sim-fixture",
+ "title": "Iron Man suit that can fly",
+ "objective": "Design an Iron Man suit that can fly",
+ "plan_id": "plan-fixture",
+ "stage": "complete",
+ "progress": 1,
+ "spoken": "Simulation Lab for Iron Man suit that can fly, sir. I screened 2,320 candidate designs with equations, which are mathematical predictions, not simulations, and ran 10,000 Monte Carlo simulations on the strongest 10. Closest realistic solution, electric hover flight for one person: total fan disk area 1.4 m², battery mass 65 kg, battery pack specific energy 290 Wh/kg, motor specific power 6.6 kW/kg. Hover time: about 12 minutes, between 9.9 minutes and 13 minutes; it met every constraint in 100% of runs. Estimated cost about $18,338. Eliminated 1,163: mostly more than 1.5 m² of fans, too large to wear, then the battery would have to discharge faster than 10C. These are simulated results, not measurements: nothing has been built or tested. Crewed flight can kill. Any test starts unmanned, tethered and subscale, under the aviation authority's rules.",
+ "type": "wearable_robotics",
+ "type_label": "wearable robotics project",
+ "seed": 2026,
+ "budget": 4000,
+ "requested_budget": 4000,
+ "totals": {
+  "screening_evaluations": 2320,
+  "monte_carlo_samples": 10000,
+  "eliminated": 1163,
+  "feasible": 1157,
+  "reused_prior": 0
+ },
+ "readiness": {
+  "stage": "simulated",
+  "ladder": [
+   "idea",
+   "planned",
+   "mathematical prediction",
+   "simulated",
+   "prototype built",
+   "bench tested",
+   "proven in the real world"
+  ],
+  "index": 3
+ },
+ "roadmap": [
+  "Check the hover model against a small tethered fan rig (thrust and power measured, unmanned).",
+  "Build a subscale unmanned demonstrator and measure hover time.",
+  "Full-size tethered, unmanned test with a dummy load.",
+  "Crewed flight only with certified parts, the regulator and a professional test programme."
+ ],
+ "evidence_levels": {
+  "prediction": "mathematical prediction",
+  "simulated": "simulated result",
+  "measured": "experimental measurement",
+  "proven": "proven real-world result"
+ },
+ "missing_capabilities": [],
+ "safety_level": "ok",
+ "models": [
+  {
+   "id": "hover_flight",
+   "version": 1,
+   "label": "Electric hover flight for one person",
+   "method": "Actuator-disk momentum theory: ideal hover power P = T^1.5 / sqrt(2·ρ·A), divided by the figure of merit and drive efficiency; mass solved to a fixed point because motors add mass.",
+   "primary": {
+    "id": "minutes",
+    "name": "Hover time",
+    "unit": "minutes"
+   },
+   "params": [
+    {
+     "id": "area",
+     "name": "Total fan disk area",
+     "unit": "m²",
+     "min": 0.3,
+     "max": 4,
+     "today": [
+      0.3,
+      4
+     ],
+     "int": false
+    },
+    {
+     "id": "battery",
+     "name": "Battery mass",
+     "unit": "kg",
+     "min": 5,
+     "max": 80,
+     "today": [
+      5,
+      80
+     ],
+     "int": false
+    },
+    {
+     "id": "energy",
+     "name": "Battery pack specific energy",
+     "unit": "Wh/kg",
+     "min": 150,
+     "max": 500,
+     "today": [
+      150,
+      300
+     ],
+     "int": false
+    },
+    {
+     "id": "motor",
+     "name": "Motor specific power",
+     "unit": "kW/kg",
+     "min": 2,
+     "max": 12,
+     "today": [
+      2,
+      7
+     ],
+     "int": false
+    }
+   ],
+   "uncertain": [
+    {
+     "id": "fm",
+     "name": "Fan figure of merit",
+     "lo": 0.55,
+     "hi": 0.75,
+     "nominal": 0.65
+    },
+    {
+     "id": "rho",
+     "name": "Air density",
+     "unit": "kg/m³",
+     "lo": 1.1,
+     "hi": 1.25,
+     "nominal": 1.225
+    },
+    {
+     "id": "eta",
+     "name": "Motor and controller efficiency",
+     "lo": 0.85,
+     "hi": 0.92,
+     "nominal": 0.88
+    },
+    {
+     "id": "pack",
+     "name": "Real pack energy vs. rated",
+     "lo": 0.9,
+     "hi": 1,
+     "nominal": 0.95
+    }
+   ],
+   "seed": 2026,
+   "budget": 3200,
+   "stop": "converged",
+   "counts": {
+    "screening_evaluations": 1760,
+    "feasible": 597,
+    "eliminated": 1163,
+    "monte_carlo_samples": 5000,
+    "detailed_candidates": 5,
+    "reused_prior": 0,
+    "combinations": null
+   },
+   "rounds": [
+    {
+     "round": 1,
+     "kind": "random screening",
+     "evaluations": 1280,
+     "best": 0.7958
+    },
+    {
+     "round": 2,
+     "kind": "refinement",
+     "evaluations": 1520,
+     "best": 0.7958
+    },
+    {
+     "round": 3,
+     "kind": "refinement",
+     "evaluations": 1760,
+     "best": 0.7958
+    }
+   ]
+  },
+  {
+   "id": "config_search",
+   "version": 1,
+   "label": "Option choices for Iron Man suit that can fly",
+   "method": "Every combination of cheapest, balanced or premium per item, and of the optional items, scored on first-year cost (monthly costs × 12), quality and risk. Monte Carlo samples each item's cost inside its estimated range.",
+   "primary": {
+    "id": "first_year",
+    "name": "First-year cost",
+    "unit": "USD"
+   },
+   "params": [
+    {
+     "id": "tier:frame",
+     "name": "Exoskeleton frame and limb links option",
+     "unit": "",
+     "min": 0,
+     "max": 2,
+     "today": [
+      0,
+      2
+     ],
+     "int": true
+    },
+    {
+     "id": "tier:joints",
+     "name": "Joint bearings and hinges option",
+     "unit": "",
+     "min": 0,
+     "max": 2,
+     "today": [
+      0,
+      2
+     ],
+     "int": true
+    },
+    {
+     "id": "tier:actuators",
+     "name": "Joint actuators (elbows, knees, hips) option",
+     "unit": "",
+     "min": 0,
+     "max": 2,
+     "today": [
+      0,
+      2
+     ],
+     "int": true
+    },
+    {
+     "id": "tier:drivers",
+     "name": "Motor drivers option",
+     "unit": "",
+     "min": 0,
+     "max": 2,
+     "today": [
+      0,
+      2
+     ],
+     "int": true
+    },
+    {
+     "id": "tier:battery",
+     "name": "Battery pack and battery management option",
+     "unit": "",
+     "min": 0,
+     "max": 2,
+     "today": [
+      0,
+      2
+     ],
+     "int": true
+    },
+    {
+     "id": "tier:controller",
+     "name": "Main controller option",
+     "unit": "",
+     "min": 0,
+     "max": 2,
+     "today": [
+      0,
+      2
+     ],
+     "int": true
+    },
+    {
+     "id": "tier:sensors",
+     "name": "Sensors (IMU, joint encoders, force) option",
+     "unit": "",
+     "min": 0,
+     "max": 2,
+     "today": [
+      0,
+      2
+     ],
+     "int": true
+    },
+    {
+     "id": "tier:estop",
+     "name": "Emergency stop and joint limits option",
+     "unit": "",
+     "min": 0,
+     "max": 2,
+     "today": [
+      0,
+      2
+     ],
+     "int": true
+    },
+    {
+     "id": "tier:shell",
+     "name": "Armor shell panels option",
+     "unit": "",
+     "min": 0,
+     "max": 2,
+     "today": [
+      0,
+      2
+     ],
+     "int": true
+    },
+    {
+     "id": "tier:harness",
+     "name": "Straps, harness and padding option",
+     "unit": "",
+     "min": 0,
+     "max": 2,
+     "today": [
+      0,
+      2
+     ],
+     "int": true
+    },
+    {
+     "id": "tier:wiring",
+     "name": "Wiring harness and connectors option",
+     "unit": "",
+     "min": 0,
+     "max": 2,
+     "today": [
+      0,
+      2
+     ],
+     "int": true
+    },
+    {
+     "id": "tier:hud",
+     "name": "Helmet display (HUD) option",
+     "unit": "",
+     "min": 0,
+     "max": 2,
+     "today": [
+      0,
+      2
+     ],
+     "int": true
+    },
+    {
+     "id": "tier:cad",
+     "name": "CAD, body measurements and fit option",
+     "unit": "",
+     "min": 0,
+     "max": 2,
+     "today": [
+      0,
+      2
+     ],
+     "int": true
+    },
+    {
+     "id": "tier:firmware",
+     "name": "Control firmware and tuning option",
+     "unit": "",
+     "min": 0,
+     "max": 2,
+     "today": [
+      0,
+      2
+     ],
+     "int": true
+    },
+    {
+     "id": "tier:testing",
+     "name": "Bench and fit testing option",
+     "unit": "",
+     "min": 0,
+     "max": 2,
+     "today": [
+      0,
+      2
+     ],
+     "int": true
+    },
+    {
+     "id": "include:hud",
+     "name": "Include Helmet display (HUD)",
+     "unit": "",
+     "min": 0,
+     "max": 1,
+     "today": [
+      0,
+      1
+     ],
+     "int": true
+    }
+   ],
+   "uncertain": [
+    {
+     "name": "15 item costs, each inside its range"
+    }
+   ],
+   "seed": 9945,
+   "budget": 800,
+   "stop": "converged",
+   "counts": {
+    "screening_evaluations": 560,
+    "feasible": 560,
+    "eliminated": 0,
+    "monte_carlo_samples": 5000,
+    "detailed_candidates": 5,
+    "reused_prior": 0,
+    "combinations": 28697814
+   },
+   "rounds": [
+    {
+     "round": 1,
+     "kind": "random screening",
+     "evaluations": 320,
+     "best": 0.8032
+    },
+    {
+     "round": 2,
+     "kind": "refinement",
+     "evaluations": 380,
+     "best": 0.8032
+    },
+    {
+     "round": 3,
+     "kind": "refinement",
+     "evaluations": 440,
+     "best": 0.8108
+    },
+    {
+     "round": 4,
+     "kind": "refinement",
+     "evaluations": 500,
+     "best": 0.8108
+    },
+    {
+     "round": 5,
+     "kind": "refinement",
+     "evaluations": 560,
+     "best": 0.8108
+    }
+   ]
+  }
+ ],
+ "objects": [
+  {
+   "id": "candidate:hover_flight:c1",
+   "kind": "candidate",
+   "label": "Electric hover flight for one person: design 1",
+   "status": "realistic",
+   "zone": "model:hover_flight",
+   "provenance": "simulated",
+   "source": {
+    "store": "sim_runs",
+    "id": "sim-fixture#hover_flight:c1"
+   },
+   "model": "hover_flight",
+   "rank": 1,
+   "params": {
+    "area": 1.3997,
+    "battery": 65.1319,
+    "energy": 289.7137,
+    "motor": 6.5743
+   },
+   "metrics": {
+    "minutes": 11.737,
+    "mass": 185.543,
+    "power_kw": 73.31,
+    "disk_loading": 1300.412,
+    "c_rate": 4.09,
+    "battery_kwh": 17.926
+   },
+   "primary": {
+    "id": "minutes",
+    "name": "Hover time",
+    "unit": "minutes",
+    "nominal": 11.74,
+    "p10": 9.93,
+    "p50": 11.51,
+    "p90": 13.22
+   },
+   "cost": {
+    "nominal": 18338,
+    "p10": 17816,
+    "p90": 19318
+   },
+   "feasibility": 1,
+   "score": 0.7958,
+   "dims": {
+    "feasibility": 1,
+    "closeness": 1,
+    "performance": 0.587,
+    "cost": 0.686,
+    "reliability": 0.645,
+    "simplicity": 0.222
+   },
+   "parts": [
+    {
+     "name": "Battery pack",
+     "spec": "17.9 kWh, 65.1 kg at 290 Wh/kg",
+     "cost": 5378
+    },
+    {
+     "name": "Electric fans and motors",
+     "spec": "73 kW in total, 1.4 m² of disk, motors at 6.6 kW/kg",
+     "cost": 8664
+    },
+    {
+     "name": "Suit structure and harness",
+     "spec": "25 kg frame carrying the fans and the pilot",
+     "cost": 5000
+    }
+   ],
+   "beyond_today": [],
+   "text": "Hover time 11.51 minutes (p10 9.93, p90 13.22); met every constraint in 100% of Monte Carlo runs; about $18,338.",
+   "preview": "11.51 minutes, 100% feasible",
+   "spoken": "Electric hover flight for one person, design 1: hover time about 11.51 minutes, between 9.93 and 13.22. Met every constraint in 100% of runs. About $18,338.",
+   "provenance_spoken": "a simulated result, not a measurement"
+  },
+  {
+   "id": "candidate:hover_flight:c2",
+   "kind": "candidate",
+   "label": "Electric hover flight for one person: design 2",
+   "status": "realistic",
+   "zone": "model:hover_flight",
+   "provenance": "simulated",
+   "source": {
+    "store": "sim_runs",
+    "id": "sim-fixture#hover_flight:c2"
+   },
+   "model": "hover_flight",
+   "rank": 2,
+   "params": {
+    "area": 1.4681,
+    "battery": 74.3775,
+    "energy": 287.6879,
+    "motor": 6.9096
+   },
+   "metrics": {
+    "minutes": 12.644,
+    "mass": 195.078,
+    "power_kw": 77.168,
+    "disk_loading": 1303.491,
+    "c_rate": 3.796,
+    "battery_kwh": 20.328
+   },
+   "primary": {
+    "id": "minutes",
+    "name": "Hover time",
+    "unit": "minutes",
+    "nominal": 12.64,
+    "p10": 10.61,
+    "p50": 12.3,
+    "p90": 14.19
+   },
+   "cost": {
+    "nominal": 19467,
+    "p10": 18911,
+    "p90": 20547
+   },
+   "feasibility": 1,
+   "score": 0.7915,
+   "dims": {
+    "feasibility": 1,
+    "closeness": 1,
+    "performance": 0.632,
+    "cost": 0.673,
+    "reliability": 0.549,
+    "simplicity": 0.184
+   },
+   "parts": [
+    {
+     "name": "Battery pack",
+     "spec": "20.3 kWh, 74.4 kg at 288 Wh/kg",
+     "cost": 6098
+    },
+    {
+     "name": "Electric fans and motors",
+     "spec": "77 kW in total, 1.47 m² of disk, motors at 6.9 kW/kg",
+     "cost": 9110
+    },
+    {
+     "name": "Suit structure and harness",
+     "spec": "25 kg frame carrying the fans and the pilot",
+     "cost": 5000
+    }
+   ],
+   "beyond_today": [],
+   "text": "Hover time 12.3 minutes (p10 10.61, p90 14.19); met every constraint in 100% of Monte Carlo runs; about $19,467.",
+   "preview": "12.3 minutes, 100% feasible",
+   "spoken": "Electric hover flight for one person, design 2: hover time about 12.3 minutes, between 10.61 and 14.19. Met every constraint in 100% of runs. About $19,467.",
+   "provenance_spoken": "a simulated result, not a measurement"
+  },
+  {
+   "id": "candidate:hover_flight:c3",
+   "kind": "candidate",
+   "label": "Electric hover flight for one person: design 3",
+   "status": "realistic",
+   "zone": "model:hover_flight",
+   "provenance": "simulated",
+   "source": {
+    "store": "sim_runs",
+    "id": "sim-fixture#hover_flight:c3"
+   },
+   "model": "hover_flight",
+   "rank": 3,
+   "params": {
+    "area": 1.4198,
+    "battery": 68.3918,
+    "energy": 287.3614,
+    "motor": 6.0601
+   },
+   "metrics": {
+    "minutes": 11.879,
+    "mass": 190.026,
+    "power_kw": 75.441,
+    "disk_loading": 1312.955,
+    "c_rate": 4.041,
+    "battery_kwh": 18.671
+   },
+   "primary": {
+    "id": "minutes",
+    "name": "Hover time",
+    "unit": "minutes",
+    "nominal": 11.88,
+    "p10": 10.11,
+    "p50": 11.67,
+    "p90": 13.31
+   },
+   "cost": {
+    "nominal": 18752,
+    "p10": 18194,
+    "p90": 19647
+   },
+   "feasibility": 1,
+   "score": 0.7915,
+   "dims": {
+    "feasibility": 1,
+    "closeness": 1,
+    "performance": 0.594,
+    "cost": 0.681,
+    "reliability": 0.6,
+    "simplicity": 0.211
+   },
+   "parts": [
+    {
+     "name": "Battery pack",
+     "spec": "18.7 kWh, 68.4 kg at 287 Wh/kg",
+     "cost": 5601
+    },
+    {
+     "name": "Electric fans and motors",
+     "spec": "75 kW in total, 1.42 m² of disk, motors at 6.1 kW/kg",
+     "cost": 8875
+    },
+    {
+     "name": "Suit structure and harness",
+     "spec": "25 kg frame carrying the fans and the pilot",
+     "cost": 5000
+    }
+   ],
+   "beyond_today": [],
+   "text": "Hover time 11.67 minutes (p10 10.11, p90 13.31); met every constraint in 100% of Monte Carlo runs; about $18,752.",
+   "preview": "11.67 minutes, 100% feasible",
+   "spoken": "Electric hover flight for one person, design 3: hover time about 11.67 minutes, between 10.11 and 13.31. Met every constraint in 100% of runs. About $18,752.",
+   "provenance_spoken": "a simulated result, not a measurement"
+  },
+  {
+   "id": "candidate:hover_flight:c4",
+   "kind": "candidate",
+   "label": "Electric hover flight for one person: design 4",
+   "status": "realistic",
+   "zone": "model:hover_flight",
+   "provenance": "simulated",
+   "source": {
+    "store": "sim_runs",
+    "id": "sim-fixture#hover_flight:c4"
+   },
+   "model": "hover_flight",
+   "rank": 4,
+   "params": {
+    "area": 1.2693,
+    "battery": 77.6192,
+    "energy": 297.1071,
+    "motor": 6.8504
+   },
+   "metrics": {
+    "minutes": 12.331,
+    "mass": 198.652,
+    "power_kw": 85.282,
+    "disk_loading": 1535.29,
+    "c_rate": 3.893,
+    "battery_kwh": 21.908
+   },
+   "primary": {
+    "id": "minutes",
+    "name": "Hover time",
+    "unit": "minutes",
+    "nominal": 12.33,
+    "p10": 10.4,
+    "p50": 12.12,
+    "p90": 13.92
+   },
+   "cost": {
+    "nominal": 20115,
+    "p10": 19465,
+    "p90": 21288
+   },
+   "feasibility": 1,
+   "score": 0.7892,
+   "dims": {
+    "feasibility": 1,
+    "closeness": 1,
+    "performance": 0.617,
+    "cost": 0.665,
+    "reliability": 0.513,
+    "simplicity": 0.295
+   },
+   "parts": [
+    {
+     "name": "Battery pack",
+     "spec": "21.9 kWh, 77.6 kg at 297 Wh/kg",
+     "cost": 6572
+    },
+    {
+     "name": "Electric fans and motors",
+     "spec": "85 kW in total, 1.27 m² of disk, motors at 6.9 kW/kg",
+     "cost": 9361
+    },
+    {
+     "name": "Suit structure and harness",
+     "spec": "25 kg frame carrying the fans and the pilot",
+     "cost": 5000
+    }
+   ],
+   "beyond_today": [],
+   "text": "Hover time 12.12 minutes (p10 10.4, p90 13.92); met every constraint in 100% of Monte Carlo runs; about $20,115.",
+   "preview": "12.12 minutes, 100% feasible",
+   "spoken": "Electric hover flight for one person, design 4: hover time about 12.12 minutes, between 10.4 and 13.92. Met every constraint in 100% of runs. About $20,115.",
+   "provenance_spoken": "a simulated result, not a measurement"
+  },
+  {
+   "id": "candidate:hover_flight:c5",
+   "kind": "candidate",
+   "label": "Electric hover flight for one person: design 5",
+   "status": "realistic",
+   "zone": "model:hover_flight",
+   "provenance": "simulated",
+   "source": {
+    "store": "sim_runs",
+    "id": "sim-fixture#hover_flight:c5"
+   },
+   "model": "hover_flight",
+   "rank": 5,
+   "params": {
+    "area": 1.0694,
+    "battery": 57.9596,
+    "energy": 297.1299,
+    "motor": 5.2034
+   },
+   "metrics": {
+    "minutes": 9.727,
+    "mass": 180.892,
+    "power_kw": 80.737,
+    "disk_loading": 1659.364,
+    "c_rate": 4.935,
+    "battery_kwh": 16.36
+   },
+   "primary": {
+    "id": "minutes",
+    "name": "Hover time",
+    "unit": "minutes",
+    "nominal": 9.73,
+    "p10": 8.14,
+    "p50": 9.58,
+    "p90": 10.94
+   },
+   "cost": {
+    "nominal": 17731,
+    "p10": 17119,
+    "p90": 18828
+   },
+   "feasibility": 1,
+   "score": 0.7888,
+   "dims": {
+    "feasibility": 1,
+    "closeness": 1,
+    "performance": 0.486,
+    "cost": 0.693,
+    "reliability": 0.673,
+    "simplicity": 0.406
+   },
+   "parts": [
+    {
+     "name": "Battery pack",
+     "spec": "16.4 kWh, 58 kg at 297 Wh/kg",
+     "cost": 4908
+    },
+    {
+     "name": "Electric fans and motors",
+     "spec": "81 kW in total, 1.07 m² of disk, motors at 5.2 kW/kg",
+     "cost": 8598
+    },
+    {
+     "name": "Suit structure and harness",
+     "spec": "25 kg frame carrying the fans and the pilot",
+     "cost": 5000
+    }
+   ],
+   "beyond_today": [],
+   "text": "Hover time 9.58 minutes (p10 8.14, p90 10.94); met every constraint in 100% of Monte Carlo runs; about $17,731.",
+   "preview": "9.58 minutes, 100% feasible",
+   "spoken": "Electric hover flight for one person, design 5: hover time about 9.58 minutes, between 8.14 and 10.94. Met every constraint in 100% of runs. About $17,731.",
+   "provenance_spoken": "a simulated result, not a measurement"
+  },
+  {
+   "id": "eliminated:hover_flight:not_wearable",
+   "kind": "elimination",
+   "label": "more than 1.5 m² of fans, too large to wear",
+   "status": "eliminated",
+   "zone": "model:hover_flight",
+   "provenance": "prediction",
+   "source": {
+    "store": "sim_runs",
+    "id": "sim-fixture#hover_flight:eliminated:not_wearable"
+   },
+   "count": 968,
+   "model": "hover_flight",
+   "text": "968 designs: more than 1.5 m² of fans, too large to wear.",
+   "preview": "968 designs",
+   "spoken": "968 designs failed: more than 1.5 m² of fans, too large to wear.",
+   "provenance_spoken": "a mathematical prediction, not a simulation"
+  },
+  {
+   "id": "eliminated:hover_flight:c_rate",
+   "kind": "elimination",
+   "label": "the battery would have to discharge faster than 10C",
+   "status": "eliminated",
+   "zone": "model:hover_flight",
+   "provenance": "prediction",
+   "source": {
+    "store": "sim_runs",
+    "id": "sim-fixture#hover_flight:eliminated:c_rate"
+   },
+   "count": 275,
+   "model": "hover_flight",
+   "text": "275 designs: the battery would have to discharge faster than 10C.",
+   "preview": "275 designs",
+   "spoken": "275 designs failed: the battery would have to discharge faster than 10C.",
+   "provenance_spoken": "a mathematical prediction, not a simulation"
+  },
+  {
+   "id": "eliminated:hover_flight:too_short",
+   "kind": "elimination",
+   "label": "under 3 minutes of hover, not a usable flight",
+   "status": "eliminated",
+   "zone": "model:hover_flight",
+   "provenance": "prediction",
+   "source": {
+    "store": "sim_runs",
+    "id": "sim-fixture#hover_flight:eliminated:too_short"
+   },
+   "count": 90,
+   "model": "hover_flight",
+   "text": "90 designs: under 3 minutes of hover, not a usable flight.",
+   "preview": "90 designs",
+   "spoken": "90 designs failed: under 3 minutes of hover, not a usable flight.",
+   "provenance_spoken": "a mathematical prediction, not a simulation"
+  },
+  {
+   "id": "eliminated:hover_flight:too_heavy",
+   "kind": "elimination",
+   "label": "over 250 kg in total, too heavy to stand or land on legs",
+   "status": "eliminated",
+   "zone": "model:hover_flight",
+   "provenance": "prediction",
+   "source": {
+    "store": "sim_runs",
+    "id": "sim-fixture#hover_flight:eliminated:too_heavy"
+   },
+   "count": 9,
+   "model": "hover_flight",
+   "text": "9 designs: over 250 kg in total, too heavy to stand or land on legs.",
+   "preview": "9 designs",
+   "spoken": "9 designs failed: over 250 kg in total, too heavy to stand or land on legs.",
+   "provenance_spoken": "a mathematical prediction, not a simulation"
+  },
+  {
+   "id": "reference:hover_flight:0",
+   "kind": "reference",
+   "label": "Momentum theory",
+   "status": "reference",
+   "zone": "edge",
+   "provenance": "reference",
+   "source": {
+    "store": "public_source",
+    "id": "https://en.wikipedia.org/wiki/Momentum_theory"
+   },
+   "url": "https://en.wikipedia.org/wiki/Momentum_theory",
+   "text": "Actuator-disk momentum theory: ideal hover power P = T^1.5 / sqrt(2·ρ·A), divided by the figure of merit and drive efficiency; mass solved to a fixed point because motors add mass.",
+   "preview": "https://en.wikipedia.org/wiki/Momentum_theory",
+   "spoken": "Momentum theory: the method behind the electric hover flight for one person model.",
+   "provenance_spoken": "a reference for the method, not read in this run"
+  },
+  {
+   "id": "reference:hover_flight:1",
+   "kind": "reference",
+   "label": "Disk loading",
+   "status": "reference",
+   "zone": "edge",
+   "provenance": "reference",
+   "source": {
+    "store": "public_source",
+    "id": "https://en.wikipedia.org/wiki/Disk_loading"
+   },
+   "url": "https://en.wikipedia.org/wiki/Disk_loading",
+   "text": "Actuator-disk momentum theory: ideal hover power P = T^1.5 / sqrt(2·ρ·A), divided by the figure of merit and drive efficiency; mass solved to a fixed point because motors add mass.",
+   "preview": "https://en.wikipedia.org/wiki/Disk_loading",
+   "spoken": "Disk loading: the method behind the electric hover flight for one person model.",
+   "provenance_spoken": "a reference for the method, not read in this run"
+  },
+  {
+   "id": "candidate:config_search:c1",
+   "kind": "candidate",
+   "label": "Option choices for Iron Man suit that can fly: design 1",
+   "status": "realistic",
+   "zone": "model:config_search",
+   "provenance": "simulated",
+   "source": {
+    "store": "sim_runs",
+    "id": "sim-fixture#config_search:c1"
+   },
+   "model": "config_search",
+   "rank": 1,
+   "params": {
+    "tier:frame": 2,
+    "tier:joints": 2,
+    "tier:actuators": 1,
+    "tier:drivers": 2,
+    "tier:battery": 2,
+    "tier:controller": 2,
+    "tier:sensors": 2,
+    "tier:estop": 2,
+    "tier:shell": 1,
+    "tier:harness": 2,
+    "tier:wiring": 1,
+    "tier:hud": 0,
+    "tier:cad": 1,
+    "tier:firmware": 1,
+    "tier:testing": 1,
+    "include:hud": 0
+   },
+   "metrics": {
+    "first_year": 25900,
+    "quality": 0.833,
+    "risk": 0.63
+   },
+   "primary": {
+    "id": "first_year",
+    "name": "First-year cost",
+    "unit": "USD",
+    "nominal": 25900,
+    "p10": 22705.3,
+    "p50": 25812.57,
+    "p90": 29112.95
+   },
+   "cost": {
+    "nominal": 25900,
+    "p10": 22705,
+    "p90": 29113
+   },
+   "feasibility": 1,
+   "score": 0.8108,
+   "dims": {
+    "feasibility": 1,
+    "closeness": 1,
+    "performance": 0.833,
+    "cost": 0.591,
+    "reliability": 0.37,
+    "simplicity": 0.37
+   },
+   "parts": [
+    {
+     "name": "Exoskeleton frame and limb links",
+     "spec": "premium: carbon-fibre tube and machined titanium joints",
+     "cost": 6000,
+     "per": "once"
+    },
+    {
+     "name": "Joint bearings and hinges",
+     "spec": "premium: cross-roller bearings",
+     "cost": 1400,
+     "per": "once"
+    },
+    {
+     "name": "Joint actuators (elbows, knees, hips)",
+     "spec": "balanced: BLDC motors with planetary gearboxes",
+     "cost": 2750,
+     "per": "once"
+    },
+    {
+     "name": "Motor drivers",
+     "spec": "premium: industrial servo drives",
+     "cost": 2750,
+     "per": "once"
+    },
+    {
+     "name": "Battery pack and battery management",
+     "spec": "premium: high-density cells, certified BMS and enclosure",
+     "cost": 2750,
+     "per": "once"
+    },
+    {
+     "name": "Main controller",
+     "spec": "premium: Jetson-class compute with a real-time co-processor",
+     "cost": 1050,
+     "per": "once"
+    },
+    {
+     "name": "Sensors (IMU, joint encoders, force)",
+     "spec": "premium: industrial encoders and six-axis force sensors",
+     "cost": 2000,
+     "per": "once"
+    },
+    {
+     "name": "Emergency stop and joint limits",
+     "spec": "premium: certified safety relay with redundant limits",
+     "cost": 550,
+     "per": "once"
+    },
+    {
+     "name": "Armor shell panels",
+     "spec": "balanced: 3D-printed PETG or ABS, painted",
+     "cost": 600,
+     "per": "once"
+    },
+    {
+     "name": "Straps, harness and padding",
+     "spec": "premium: custom-fitted medical-grade cuffs",
+     "cost": 1050,
+     "per": "once"
+    },
+    {
+     "name": "Wiring harness and connectors",
+     "spec": "balanced: locking connectors and sleeving",
+     "cost": 250,
+     "per": "once"
+    },
+    {
+     "name": "CAD, body measurements and fit",
+     "spec": "balanced: paid CAD and a fitting session",
+     "cost": 1250,
+     "per": "once"
+    },
+    {
+     "name": "Control firmware and tuning",
+     "spec": "balanced: a freelance embedded engineer",
+     "cost": 2500,
+     "per": "once"
+    },
+    {
+     "name": "Bench and fit testing",
+     "spec": "balanced: instrumented tests and a spotter",
+     "cost": 1000,
+     "per": "once"
+    }
+   ],
+   "beyond_today": [],
+   "text": "First-year cost 25812.57 USD (p10 22705.3, p90 29112.95); met every constraint in 100% of Monte Carlo runs; about $25,900.",
+   "preview": "25812.57 USD, 100% feasible",
+   "spoken": "Option choices for Iron Man suit that can fly, design 1: first-year cost about 25812.57 USD, between 22705.3 and 29112.95. Met every constraint in 100% of runs. About $25,900.",
+   "provenance_spoken": "a simulated result, not a measurement"
+  },
+  {
+   "id": "candidate:config_search:c2",
+   "kind": "candidate",
+   "label": "Option choices for Iron Man suit that can fly: design 2",
+   "status": "realistic",
+   "zone": "model:config_search",
+   "provenance": "simulated",
+   "source": {
+    "store": "sim_runs",
+    "id": "sim-fixture#config_search:c2"
+   },
+   "model": "config_search",
+   "rank": 2,
+   "params": {
+    "tier:frame": 1,
+    "tier:joints": 2,
+    "tier:actuators": 1,
+    "tier:drivers": 1,
+    "tier:battery": 2,
+    "tier:controller": 2,
+    "tier:sensors": 2,
+    "tier:estop": 2,
+    "tier:shell": 2,
+    "tier:harness": 2,
+    "tier:wiring": 1,
+    "tier:hud": 1,
+    "tier:cad": 1,
+    "tier:firmware": 1,
+    "tier:testing": 1,
+    "include:hud": 0
+   },
+   "metrics": {
+    "first_year": 23150,
+    "quality": 0.814,
+    "risk": 0.645
+   },
+   "primary": {
+    "id": "first_year",
+    "name": "First-year cost",
+    "unit": "USD",
+    "nominal": 23150,
+    "p10": 19769.72,
+    "p50": 23122.06,
+    "p90": 26176.97
+   },
+   "cost": {
+    "nominal": 23150,
+    "p10": 19770,
+    "p90": 26177
+   },
+   "feasibility": 1,
+   "score": 0.8088,
+   "dims": {
+    "feasibility": 1,
+    "closeness": 1,
+    "performance": 0.814,
+    "cost": 0.618,
+    "reliability": 0.355,
+    "simplicity": 0.355
+   },
+   "parts": [
+    {
+     "name": "Exoskeleton frame and limb links",
+     "spec": "balanced: CNC aluminium links",
+     "cost": 1050,
+     "per": "once"
+    },
+    {
+     "name": "Joint bearings and hinges",
+     "spec": "premium: cross-roller bearings",
+     "cost": 1400,
+     "per": "once"
+    },
+    {
+     "name": "Joint actuators (elbows, knees, hips)",
+     "spec": "balanced: BLDC motors with planetary gearboxes",
+     "cost": 2750,
+     "per": "once"
+    },
+    {
+     "name": "Motor drivers",
+     "spec": "balanced: field-oriented BLDC drivers",
+     "cost": 550,
+     "per": "once"
+    },
+    {
+     "name": "Battery pack and battery management",
+     "spec": "premium: high-density cells, certified BMS and enclosure",
+     "cost": 2750,
+     "per": "once"
+    },
+    {
+     "name": "Main controller",
+     "spec": "premium: Jetson-class compute with a real-time co-processor",
+     "cost": 1050,
+     "per": "once"
+    },
+    {
+     "name": "Sensors (IMU, joint encoders, force)",
+     "spec": "premium: industrial encoders and six-axis force sensors",
+     "cost": 2000,
+     "per": "once"
+    },
+    {
+     "name": "Emergency stop and joint limits",
+     "spec": "premium: certified safety relay with redundant limits",
+     "cost": 550,
+     "per": "once"
+    },
+    {
+     "name": "Armor shell panels",
+     "spec": "premium: carbon or fibreglass layup, automotive paint",
+     "cost": 5000,
+     "per": "once"
+    },
+    {
+     "name": "Straps, harness and padding",
+     "spec": "premium: custom-fitted medical-grade cuffs",
+     "cost": 1050,
+     "per": "once"
+    },
+    {
+     "name": "Wiring harness and connectors",
+     "spec": "balanced: locking connectors and sleeving",
+     "cost": 250,
+     "per": "once"
+    },
+    {
+     "name": "CAD, body measurements and fit",
+     "spec": "balanced: paid CAD and a fitting session",
+     "cost": 1250,
+     "per": "once"
+    },
+    {
+     "name": "Control firmware and tuning",
+     "spec": "balanced: a freelance embedded engineer",
+     "cost": 2500,
+     "per": "once"
+    },
+    {
+     "name": "Bench and fit testing",
+     "spec": "balanced: instrumented tests and a spotter",
+     "cost": 1000,
+     "per": "once"
+    }
+   ],
+   "beyond_today": [],
+   "text": "First-year cost 23122.06 USD (p10 19769.72, p90 26176.97); met every constraint in 100% of Monte Carlo runs; about $23,150.",
+   "preview": "23122.06 USD, 100% feasible",
+   "spoken": "Option choices for Iron Man suit that can fly, design 2: first-year cost about 23122.06 USD, between 19769.72 and 26176.97. Met every constraint in 100% of runs. About $23,150.",
+   "provenance_spoken": "a simulated result, not a measurement"
+  },
+  {
+   "id": "candidate:config_search:c3",
+   "kind": "candidate",
+   "label": "Option choices for Iron Man suit that can fly: design 3",
+   "status": "realistic",
+   "zone": "model:config_search",
+   "provenance": "simulated",
+   "source": {
+    "store": "sim_runs",
+    "id": "sim-fixture#config_search:c3"
+   },
+   "model": "config_search",
+   "rank": 3,
+   "params": {
+    "tier:frame": 1,
+    "tier:joints": 2,
+    "tier:actuators": 1,
+    "tier:drivers": 1,
+    "tier:battery": 2,
+    "tier:controller": 2,
+    "tier:sensors": 2,
+    "tier:estop": 2,
+    "tier:shell": 2,
+    "tier:harness": 2,
+    "tier:wiring": 1,
+    "tier:hud": 1,
+    "tier:cad": 1,
+    "tier:firmware": 0,
+    "tier:testing": 1,
+    "include:hud": 0
+   },
+   "metrics": {
+    "first_year": 20650,
+    "quality": 0.788,
+    "risk": 0.667
+   },
+   "primary": {
+    "id": "first_year",
+    "name": "First-year cost",
+    "unit": "USD",
+    "nominal": 20650,
+    "p10": 17697.77,
+    "p50": 20577.42,
+    "p90": 23602.29
+   },
+   "cost": {
+    "nominal": 20650,
+    "p10": 17698,
+    "p90": 23602
+   },
+   "feasibility": 1,
+   "score": 0.8043,
+   "dims": {
+    "feasibility": 1,
+    "closeness": 1,
+    "performance": 0.788,
+    "cost": 0.645,
+    "reliability": 0.333,
+    "simplicity": 0.333
+   },
+   "parts": [
+    {
+     "name": "Exoskeleton frame and limb links",
+     "spec": "balanced: CNC aluminium links",
+     "cost": 1050,
+     "per": "once"
+    },
+    {
+     "name": "Joint bearings and hinges",
+     "spec": "premium: cross-roller bearings",
+     "cost": 1400,
+     "per": "once"
+    },
+    {
+     "name": "Joint actuators (elbows, knees, hips)",
+     "spec": "balanced: BLDC motors with planetary gearboxes",
+     "cost": 2750,
+     "per": "once"
+    },
+    {
+     "name": "Motor drivers",
+     "spec": "balanced: field-oriented BLDC drivers",
+     "cost": 550,
+     "per": "once"
+    },
+    {
+     "name": "Battery pack and battery management",
+     "spec": "premium: high-density cells, certified BMS and enclosure",
+     "cost": 2750,
+     "per": "once"
+    },
+    {
+     "name": "Main controller",
+     "spec": "premium: Jetson-class compute with a real-time co-processor",
+     "cost": 1050,
+     "per": "once"
+    },
+    {
+     "name": "Sensors (IMU, joint encoders, force)",
+     "spec": "premium: industrial encoders and six-axis force sensors",
+     "cost": 2000,
+     "per": "once"
+    },
+    {
+     "name": "Emergency stop and joint limits",
+     "spec": "premium: certified safety relay with redundant limits",
+     "cost": 550,
+     "per": "once"
+    },
+    {
+     "name": "Armor shell panels",
+     "spec": "premium: carbon or fibreglass layup, automotive paint",
+     "cost": 5000,
+     "per": "once"
+    },
+    {
+     "name": "Straps, harness and padding",
+     "spec": "premium: custom-fitted medical-grade cuffs",
+     "cost": 1050,
+     "per": "once"
+    },
+    {
+     "name": "Wiring harness and connectors",
+     "spec": "balanced: locking connectors and sleeving",
+     "cost": 250,
+     "per": "once"
+    },
+    {
+     "name": "CAD, body measurements and fit",
+     "spec": "balanced: paid CAD and a fitting session",
+     "cost": 1250,
+     "per": "once"
+    },
+    {
+     "name": "Control firmware and tuning",
+     "spec": "cheapest: you write it",
+     "cost": 0,
+     "per": "once"
+    },
+    {
+     "name": "Bench and fit testing",
+     "spec": "balanced: instrumented tests and a spotter",
+     "cost": 1000,
+     "per": "once"
+    }
+   ],
+   "beyond_today": [],
+   "text": "First-year cost 20577.42 USD (p10 17697.77, p90 23602.29); met every constraint in 100% of Monte Carlo runs; about $20,650.",
+   "preview": "20577.42 USD, 100% feasible",
+   "spoken": "Option choices for Iron Man suit that can fly, design 3: first-year cost about 20577.42 USD, between 17697.77 and 23602.29. Met every constraint in 100% of runs. About $20,650.",
+   "provenance_spoken": "a simulated result, not a measurement"
+  },
+  {
+   "id": "candidate:config_search:c4",
+   "kind": "candidate",
+   "label": "Option choices for Iron Man suit that can fly: design 4",
+   "status": "realistic",
+   "zone": "model:config_search",
+   "provenance": "simulated",
+   "source": {
+    "store": "sim_runs",
+    "id": "sim-fixture#config_search:c4"
+   },
+   "model": "config_search",
+   "rank": 4,
+   "params": {
+    "tier:frame": 2,
+    "tier:joints": 2,
+    "tier:actuators": 1,
+    "tier:drivers": 2,
+    "tier:battery": 2,
+    "tier:controller": 2,
+    "tier:sensors": 1,
+    "tier:estop": 2,
+    "tier:shell": 2,
+    "tier:harness": 0,
+    "tier:wiring": 2,
+    "tier:hud": 0,
+    "tier:cad": 1,
+    "tier:firmware": 1,
+    "tier:testing": 1,
+    "include:hud": 0
+   },
+   "metrics": {
+    "first_year": 28320,
+    "quality": 0.821,
+    "risk": 0.642
+   },
+   "primary": {
+    "id": "first_year",
+    "name": "First-year cost",
+    "unit": "USD",
+    "nominal": 28320,
+    "p10": 24554.12,
+    "p50": 28475.49,
+    "p90": 32193.11
+   },
+   "cost": {
+    "nominal": 28320,
+    "p10": 24554,
+    "p90": 32193
+   },
+   "feasibility": 1,
+   "score": 0.8032,
+   "dims": {
+    "feasibility": 1,
+    "closeness": 1,
+    "performance": 0.821,
+    "cost": 0.569,
+    "reliability": 0.358,
+    "simplicity": 0.358
+   },
+   "parts": [
+    {
+     "name": "Exoskeleton frame and limb links",
+     "spec": "premium: carbon-fibre tube and machined titanium joints",
+     "cost": 6000,
+     "per": "once"
+    },
+    {
+     "name": "Joint bearings and hinges",
+     "spec": "premium: cross-roller bearings",
+     "cost": 1400,
+     "per": "once"
+    },
+    {
+     "name": "Joint actuators (elbows, knees, hips)",
+     "spec": "balanced: BLDC motors with planetary gearboxes",
+     "cost": 2750,
+     "per": "once"
+    },
+    {
+     "name": "Motor drivers",
+     "spec": "premium: industrial servo drives",
+     "cost": 2750,
+     "per": "once"
+    },
+    {
+     "name": "Battery pack and battery management",
+     "spec": "premium: high-density cells, certified BMS and enclosure",
+     "cost": 2750,
+     "per": "once"
+    },
+    {
+     "name": "Main controller",
+     "spec": "premium: Jetson-class compute with a real-time co-processor",
+     "cost": 1050,
+     "per": "once"
+    },
+    {
+     "name": "Sensors (IMU, joint encoders, force)",
+     "spec": "balanced: magnetic encoders and load cells",
+     "cost": 400,
+     "per": "once"
+    },
+    {
+     "name": "Emergency stop and joint limits",
+     "spec": "premium: certified safety relay with redundant limits",
+     "cost": 550,
+     "per": "once"
+    },
+    {
+     "name": "Armor shell panels",
+     "spec": "premium: carbon or fibreglass layup, automotive paint",
+     "cost": 5000,
+     "per": "once"
+    },
+    {
+     "name": "Straps, harness and padding",
+     "spec": "cheapest: webbing and foam",
+     "cost": 70,
+     "per": "once"
+    },
+    {
+     "name": "Wiring harness and connectors",
+     "spec": "premium: aviation-grade harness",
+     "cost": 850,
+     "per": "once"
+    },
+    {
+     "name": "CAD, body measurements and fit",
+     "spec": "balanced: paid CAD and a fitting session",
+     "cost": 1250,
+     "per": "once"
+    },
+    {
+     "name": "Control firmware and tuning",
+     "spec": "balanced: a freelance embedded engineer",
+     "cost": 2500,
+     "per": "once"
+    },
+    {
+     "name": "Bench and fit testing",
+     "spec": "balanced: instrumented tests and a spotter",
+     "cost": 1000,
+     "per": "once"
+    }
+   ],
+   "beyond_today": [],
+   "text": "First-year cost 28475.49 USD (p10 24554.12, p90 32193.11); met every constraint in 100% of Monte Carlo runs; about $28,320.",
+   "preview": "28475.49 USD, 100% feasible",
+   "spoken": "Option choices for Iron Man suit that can fly, design 4: first-year cost about 28475.49 USD, between 24554.12 and 32193.11. Met every constraint in 100% of runs. About $28,320.",
+   "provenance_spoken": "a simulated result, not a measurement"
+  },
+  {
+   "id": "candidate:config_search:c5",
+   "kind": "candidate",
+   "label": "Option choices for Iron Man suit that can fly: design 5",
+   "status": "realistic",
+   "zone": "model:config_search",
+   "provenance": "simulated",
+   "source": {
+    "store": "sim_runs",
+    "id": "sim-fixture#config_search:c5"
+   },
+   "model": "config_search",
+   "rank": 5,
+   "params": {
+    "tier:frame": 2,
+    "tier:joints": 2,
+    "tier:actuators": 1,
+    "tier:drivers": 2,
+    "tier:battery": 2,
+    "tier:controller": 2,
+    "tier:sensors": 2,
+    "tier:estop": 2,
+    "tier:shell": 1,
+    "tier:harness": 2,
+    "tier:wiring": 1,
+    "tier:hud": 0,
+    "tier:cad": 1,
+    "tier:firmware": 1,
+    "tier:testing": 2,
+    "include:hud": 1
+   },
+   "metrics": {
+    "first_year": 31530,
+    "quality": 0.878,
+    "risk": 0.698
+   },
+   "primary": {
+    "id": "first_year",
+    "name": "First-year cost",
+    "unit": "USD",
+    "nominal": 31530,
+    "p10": 27424.37,
+    "p50": 31457.41,
+    "p90": 35729.07
+   },
+   "cost": {
+    "nominal": 31530,
+    "p10": 27424,
+    "p90": 35729
+   },
+   "feasibility": 1,
+   "score": 0.8023,
+   "dims": {
+    "feasibility": 1,
+    "closeness": 1,
+    "performance": 0.878,
+    "cost": 0.543,
+    "reliability": 0.302,
+    "simplicity": 0.302
+   },
+   "parts": [
+    {
+     "name": "Exoskeleton frame and limb links",
+     "spec": "premium: carbon-fibre tube and machined titanium joints",
+     "cost": 6000,
+     "per": "once"
+    },
+    {
+     "name": "Joint bearings and hinges",
+     "spec": "premium: cross-roller bearings",
+     "cost": 1400,
+     "per": "once"
+    },
+    {
+     "name": "Joint actuators (elbows, knees, hips)",
+     "spec": "balanced: BLDC motors with planetary gearboxes",
+     "cost": 2750,
+     "per": "once"
+    },
+    {
+     "name": "Motor drivers",
+     "spec": "premium: industrial servo drives",
+     "cost": 2750,
+     "per": "once"
+    },
+    {
+     "name": "Battery pack and battery management",
+     "spec": "premium: high-density cells, certified BMS and enclosure",
+     "cost": 2750,
+     "per": "once"
+    },
+    {
+     "name": "Main controller",
+     "spec": "premium: Jetson-class compute with a real-time co-processor",
+     "cost": 1050,
+     "per": "once"
+    },
+    {
+     "name": "Sensors (IMU, joint encoders, force)",
+     "spec": "premium: industrial encoders and six-axis force sensors",
+     "cost": 2000,
+     "per": "once"
+    },
+    {
+     "name": "Emergency stop and joint limits",
+     "spec": "premium: certified safety relay with redundant limits",
+     "cost": 550,
+     "per": "once"
+    },
+    {
+     "name": "Armor shell panels",
+     "spec": "balanced: 3D-printed PETG or ABS, painted",
+     "cost": 600,
+     "per": "once"
+    },
+    {
+     "name": "Straps, harness and padding",
+     "spec": "premium: custom-fitted medical-grade cuffs",
+     "cost": 1050,
+     "per": "once"
+    },
+    {
+     "name": "Wiring harness and connectors",
+     "spec": "balanced: locking connectors and sleeving",
+     "cost": 250,
+     "per": "once"
+    },
+    {
+     "name": "Helmet display (HUD)",
+     "spec": "cheapest: a phone or small OLED",
+     "cost": 130,
+     "per": "once"
+    },
+    {
+     "name": "CAD, body measurements and fit",
+     "spec": "balanced: paid CAD and a fitting session",
+     "cost": 1250,
+     "per": "once"
+    },
+    {
+     "name": "Control firmware and tuning",
+     "spec": "balanced: a freelance embedded engineer",
+     "cost": 2500,
+     "per": "once"
+    },
+    {
+     "name": "Bench and fit testing",
+     "spec": "premium: lab testing to exoskeleton standards",
+     "cost": 6500,
+     "per": "once"
+    }
+   ],
+   "beyond_today": [],
+   "text": "First-year cost 31457.41 USD (p10 27424.37, p90 35729.07); met every constraint in 100% of Monte Carlo runs; about $31,530.",
+   "preview": "31457.41 USD, 100% feasible",
+   "spoken": "Option choices for Iron Man suit that can fly, design 5: first-year cost about 31457.41 USD, between 27424.37 and 35729.07. Met every constraint in 100% of runs. About $31,530.",
+   "provenance_spoken": "a simulated result, not a measurement"
+  },
+  {
+   "id": "finding:0",
+   "kind": "finding",
+   "label": "Finding 1",
+   "status": "simulated",
+   "zone": "findings",
+   "provenance": "simulated",
+   "source": {
+    "store": "sim_runs",
+    "id": "sim-fixture#finding:0"
+   },
+   "text": "Electric hover flight for one person: the best design gives hover time of 12 minutes (p10 9.9 minutes, p90 13 minutes), meeting every constraint in 100% of 1000 Monte Carlo runs.",
+   "preview": "Electric hover flight for one person: the best design gives hover time of 12 minutes (p10 9.9 minutes, p90 13 minutes), meeting every const…",
+   "spoken": "Electric hover flight for one person: the best design gives hover time of 12 minutes (p10 9.9 minutes, p90 13 minutes), meeting every constraint in 100% of 1000 Monte Carlo runs.",
+   "provenance_spoken": "a simulated result, not a measurement"
+  },
+  {
+   "id": "finding:1",
+   "kind": "finding",
+   "label": "Finding 2",
+   "status": "prediction",
+   "zone": "findings",
+   "provenance": "prediction",
+   "source": {
+    "store": "sim_runs",
+    "id": "sim-fixture#finding:1"
+   },
+   "text": "Most designs failed because of more than 1.5 m² of fans, too large to wear (968 of 1,760).",
+   "preview": "Most designs failed because of more than 1.5 m² of fans, too large to wear (968 of 1,760).",
+   "spoken": "Most designs failed because of more than 1.5 m² of fans, too large to wear (968 of 1,760).",
+   "provenance_spoken": "a mathematical prediction, not a simulation"
+  },
+  {
+   "id": "finding:2",
+   "kind": "finding",
+   "label": "Finding 3",
+   "status": "simulated",
+   "zone": "findings",
+   "provenance": "simulated",
+   "source": {
+    "store": "sim_runs",
+    "id": "sim-fixture#finding:2"
+   },
+   "text": "Option choices for Iron Man suit that can fly: the best design gives first-year cost of $25,813 (p10 $22,705, p90 $29,113), meeting every constraint in 100% of 1000 Monte Carlo runs.",
+   "preview": "Option choices for Iron Man suit that can fly: the best design gives first-year cost of $25,813 (p10 $22,705, p90 $29,113), meeting every c…",
+   "spoken": "Option choices for Iron Man suit that can fly: the best design gives first-year cost of $25,813 (p10 $22,705, p90 $29,113), meeting every constraint in 100% of 1000 Monte Carlo runs.",
+   "provenance_spoken": "a simulated result, not a measurement"
+  },
+  {
+   "id": "assumption:0",
+   "kind": "assumption",
+   "label": "Assumption 1",
+   "status": "assumed",
+   "zone": "notes",
+   "provenance": "assumption",
+   "source": {
+    "store": "sim_runs",
+    "id": "sim-fixture#assumption:0"
+   },
+   "text": "Pilot 80 kg, suit structure 25 kg, fans and ducts 4 kg per m² of disk",
+   "preview": "Pilot 80 kg, suit structure 25 kg, fans and ducts 4 kg per m² of disk",
+   "spoken": "Pilot 80 kg, suit structure 25 kg, fans and ducts 4 kg per m² of disk",
+   "provenance_spoken": "an assumption of the model"
+  },
+  {
+   "id": "assumption:1",
+   "kind": "assumption",
+   "label": "Assumption 2",
+   "status": "assumed",
+   "zone": "notes",
+   "provenance": "assumption",
+   "source": {
+    "store": "sim_runs",
+    "id": "sim-fixture#assumption:1"
+   },
+   "text": "20% battery reserve kept for landing",
+   "preview": "20% battery reserve kept for landing",
+   "spoken": "20% battery reserve kept for landing",
+   "provenance_spoken": "an assumption of the model"
+  },
+  {
+   "id": "assumption:2",
+   "kind": "assumption",
+   "label": "Assumption 3",
+   "status": "assumed",
+   "zone": "notes",
+   "provenance": "assumption",
+   "source": {
+    "store": "sim_runs",
+    "id": "sim-fixture#assumption:2"
+   },
+   "text": "Costs: packs $300/kWh, motors and controllers $80/kW, fans $2,000/m², structure $5,000",
+   "preview": "Costs: packs $300/kWh, motors and controllers $80/kW, fans $2,000/m², structure $5,000",
+   "spoken": "Costs: packs $300/kWh, motors and controllers $80/kW, fans $2,000/m², structure $5,000",
+   "provenance_spoken": "an assumption of the model"
+  },
+  {
+   "id": "assumption:3",
+   "kind": "assumption",
+   "label": "Assumption 4",
+   "status": "assumed",
+   "zone": "notes",
+   "provenance": "assumption",
+   "source": {
+    "store": "sim_runs",
+    "id": "sim-fixture#assumption:3"
+   },
+   "text": "Item cost ranges from the plan (CHE category template, US dollars, 2026-10 market ranges for one build; not supplier quotes)",
+   "preview": "Item cost ranges from the plan (CHE category template, US dollars, 2026-10 market ranges for one build; not supplier quotes)",
+   "spoken": "Item cost ranges from the plan (CHE category template, US dollars, 2026-10 market ranges for one build; not supplier quotes)",
+   "provenance_spoken": "an assumption of the model"
+  },
+  {
+   "id": "assumption:4",
+   "kind": "assumption",
+   "label": "Assumption 5",
+   "status": "assumed",
+   "zone": "notes",
+   "provenance": "assumption",
+   "source": {
+    "store": "sim_runs",
+    "id": "sim-fixture#assumption:4"
+   },
+   "text": "Quality 0.5, 0.75 and 1 for the cheapest, balanced and premium options; risk falls as quality rises",
+   "preview": "Quality 0.5, 0.75 and 1 for the cheapest, balanced and premium options; risk falls as quality rises",
+   "spoken": "Quality 0.5, 0.75 and 1 for the cheapest, balanced and premium options; risk falls as quality rises",
+   "provenance_spoken": "an assumption of the model"
+  },
+  {
+   "id": "assumption:5",
+   "kind": "assumption",
+   "label": "Assumption 6",
+   "status": "assumed",
+   "zone": "notes",
+   "provenance": "assumption",
+   "source": {
+    "store": "sim_runs",
+    "id": "sim-fixture#assumption:5"
+   },
+   "text": "No budget ceiling was given",
+   "preview": "No budget ceiling was given",
+   "spoken": "No budget ceiling was given",
+   "provenance_spoken": "an assumption of the model"
+  },
+  {
+   "id": "assumption:6",
+   "kind": "assumption",
+   "label": "Assumption 7",
+   "status": "assumed",
+   "zone": "notes",
+   "provenance": "assumption",
+   "source": {
+    "store": "sim_runs",
+    "id": "sim-fixture#assumption:6"
+   },
+   "text": "Every count above is the number of evaluations this run executed; screening evaluations are equations, not simulations.",
+   "preview": "Every count above is the number of evaluations this run executed; screening evaluations are equations, not simulations.",
+   "spoken": "Every count above is the number of evaluations this run executed; screening evaluations are equations, not simulations.",
+   "provenance_spoken": "an assumption of the model"
+  },
+  {
+   "id": "unresolved:0",
+   "kind": "unresolved",
+   "label": "Open problem 1",
+   "status": "open",
+   "zone": "notes",
+   "provenance": "open",
+   "source": {
+    "store": "sim_runs",
+    "id": "sim-fixture#unresolved:0"
+   },
+   "text": "No model here has been benchmarked against measured data yet; treat the numbers as predictions to test.",
+   "preview": "No model here has been benchmarked against measured data yet; treat the numbers as predictions to test.",
+   "spoken": "No model here has been benchmarked against measured data yet; treat the numbers as predictions to test.",
+   "provenance_spoken": "unresolved"
+  },
+  {
+   "id": "unresolved:1",
+   "kind": "unresolved",
+   "label": "Open problem 2",
+   "status": "open",
+   "zone": "notes",
+   "provenance": "open",
+   "source": {
+    "store": "sim_runs",
+    "id": "sim-fixture#unresolved:1"
+   },
+   "text": "Flight like Iron Man stays speculative: fiction today: real jet suits use kerosene turbines, run minutes, and need training and permits",
+   "preview": "Flight like Iron Man stays speculative: fiction today: real jet suits use kerosene turbines, run minutes, and need training and permits",
+   "spoken": "Flight like Iron Man stays speculative: fiction today: real jet suits use kerosene turbines, run minutes, and need training and permits",
+   "provenance_spoken": "unresolved"
+  },
+  {
+   "id": "unresolved:2",
+   "kind": "unresolved",
+   "label": "Open problem 3",
+   "status": "open",
+   "zone": "notes",
+   "provenance": "open",
+   "source": {
+    "store": "sim_runs",
+    "id": "sim-fixture#unresolved:2"
+   },
+   "text": "Arc-reactor power stays speculative: fiction: no compact reactor exists; real suits run on batteries for minutes to a few hours",
+   "preview": "Arc-reactor power stays speculative: fiction: no compact reactor exists; real suits run on batteries for minutes to a few hours",
+   "spoken": "Arc-reactor power stays speculative: fiction: no compact reactor exists; real suits run on batteries for minutes to a few hours",
+   "provenance_spoken": "unresolved"
+  },
+  {
+   "id": "unresolved:3",
+   "kind": "unresolved",
+   "label": "Open problem 4",
+   "status": "open",
+   "zone": "notes",
+   "provenance": "open",
+   "source": {
+    "store": "sim_runs",
+    "id": "sim-fixture#unresolved:3"
+   },
+   "text": "Bullet-proof full-body armor with full mobility stays speculative: not possible at wearable weight with today's materials",
+   "preview": "Bullet-proof full-body armor with full mobility stays speculative: not possible at wearable weight with today's materials",
+   "spoken": "Bullet-proof full-body armor with full mobility stays speculative: not possible at wearable weight with today's materials",
+   "provenance_spoken": "unresolved"
+  },
+  {
+   "id": "safety:0",
+   "kind": "safety",
+   "label": "Safety 1",
+   "status": "ok",
+   "zone": "edge",
+   "provenance": "policy",
+   "source": {
+    "store": "sim_runs",
+    "id": "sim-fixture#safety:0"
+   },
+   "text": "Crewed flight can kill. Any test starts unmanned, tethered and subscale, under the aviation authority's rules.",
+   "preview": "Crewed flight can kill. Any test starts unmanned, tethered and subscale, under the aviation authority's rules.",
+   "spoken": "Crewed flight can kill. Any test starts unmanned, tethered and subscale, under the aviation authority's rules.",
+   "provenance_spoken": "CHE's safety rule"
+  },
+  {
+   "id": "safety:1",
+   "kind": "safety",
+   "label": "Safety 2",
+   "status": "ok",
+   "zone": "edge",
+   "provenance": "policy",
+   "source": {
+    "store": "sim_runs",
+    "id": "sim-fixture#safety:1"
+   },
+   "text": "A simulated result is never proof that a real-world test is safe.",
+   "preview": "A simulated result is never proof that a real-world test is safe.",
+   "spoken": "A simulated result is never proof that a real-world test is safe.",
+   "provenance_spoken": "CHE's safety rule"
+  },
+  {
+   "id": "safety:2",
+   "kind": "safety",
+   "label": "Safety 3",
+   "status": "ok",
+   "zone": "edge",
+   "provenance": "policy",
+   "source": {
+    "store": "sim_runs",
+    "id": "sim-fixture#safety:2"
+   },
+   "text": "A powered suit worn by a person is safety-critical: build with emergency stops and joint limits, test unpowered first, and never test alone.",
+   "preview": "A powered suit worn by a person is safety-critical: build with emergency stops and joint limits, test unpowered first, and never test alone.",
+   "spoken": "A powered suit worn by a person is safety-critical: build with emergency stops and joint limits, test unpowered first, and never test alone.",
+   "provenance_spoken": "CHE's safety rule"
+  },
+  {
+   "id": "safety:3",
+   "kind": "safety",
+   "label": "Safety 4",
+   "status": "ok",
+   "zone": "edge",
+   "provenance": "policy",
+   "source": {
+    "store": "sim_runs",
+    "id": "sim-fixture#safety:3"
+   },
+   "text": "Medical or rehabilitation exoskeletons are FDA-regulated devices.",
+   "preview": "Medical or rehabilitation exoskeletons are FDA-regulated devices.",
+   "spoken": "Medical or rehabilitation exoskeletons are FDA-regulated devices.",
+   "provenance_spoken": "CHE's safety rule"
+  }
+ ],
+ "edges": [],
+ "updated_at": "2026-10-20T00:00:00Z",
+ "version": "918466a4"
+}

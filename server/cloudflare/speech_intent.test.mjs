@@ -389,3 +389,41 @@ test('a long limit clause keeps its "don\'t" when the text is bounded (review of
   assert.match(starred, /never remove/);
   assert.match(starred, /characters not shown\]$/, 'what was left out at the end is marked');
 });
+
+test('comprehension audit: a cancel calls off only what it points back to', () => {
+  // "Forget that X" asks CHE to forget a memory (a delete the gate holds), and "don't forget" asks her to remember.
+  for (const text of ['Forget that my favorite color is blue.', 'forget that i park on level 3', "Don't forget that my mom's birthday is June 3rd.", 'dont forget it']) {
+    assert.notEqual(interpretOwnerTurn(text).kind, 'cancel', text);
+  }
+  // A leading cancel drops the earlier thing; the new question is what is read and routed.
+  const next = interpretOwnerTurn("Never mind that, what's my favorite food?");
+  assert.equal(next.text, "what's my favorite food?");
+  assert.equal(next.clarify, null);
+  assert.equal(interpretOwnerTurn('forget it, just tell me the weather').text, 'just tell me the weather');
+  assert.equal(interpretOwnerTurn("never mind the weather, what's on my calendar?").text, "what's on my calendar?");
+  assert.equal(interpretOwnerTurn('never mind whats my favorite food').text, 'whats my favorite food');
+  assert.equal(interpretOwnerTurn('never mind the weather').clarify, 'Okay, I have dropped that.');
+  // Still cancelled: alone, at the end, or mid-turn.
+  for (const text of ['never mind', 'Forget that.', 'oh forget that', 'scratch that', 'Remember that I hate mushrooms. Actually, cancel that.',
+    'Buy 2 apples at Walmart—actually, cancel that', 'Pay my rent, actually never mind.', 'Buy apples, actually no, buy oranges']) {
+    assert.equal(interpretOwnerTurn(text).clarify, 'Okay, I have dropped that.', text);
+  }
+});
+
+// Comprehension audit, review of PR #356 (issue #350): with an action held, a turn that opens with a cancel calls it
+// off. The words after it are never a yes that releases the hold.
+test('review #356: a cancel-led turn with a held action is a cancel, never a yes', () => {
+  for (const said of ['actually no, yes', 'never mind, yes', 'forget it, yes please', 'scratch that, yes', 'Never mind. Yes.']) {
+    const held = interpretOwnerTurn(said, { hasHeldAction: true });
+    assert.equal(held.kind, 'cancel', said);
+    assert.equal(held.passthrough, true, said);
+    assert.equal(held.clarify, 'Okay, I have dropped that.', said);
+    assert.equal(held.text.includes('yes') && held.kind === 'yes', false, said);
+  }
+  assert.equal(classifyOwnerTurn('never mind that, what is on my calendar?', { hasHeldAction: true }).kind, 'cancel');
+  // With nothing held, the same words keep their meaning: a plain yes is an acknowledgement, a cancel is a cancel.
+  assert.equal(classifyOwnerTurn('never mind, yes', { hasHeldAction: false }).kind, 'yes');
+  assert.equal(classifyOwnerTurn('yes, never mind', { hasHeldAction: true }).kind, 'cancel');
+  // A plain yes still releases the hold, so the cancel rule does not turn real yeses into cancels.
+  assert.equal(classifyOwnerTurn('yes', { hasHeldAction: true }).kind, 'yes');
+});

@@ -7,7 +7,7 @@ import 'package:http/http.dart' as http;
 import 'che_voice_state.dart';
 
 typedef CheRealtimeSnapshotCallback = void Function(CheVoiceSnapshot snapshot);
-typedef CheRealtimeUserTranscriptCallback = void Function(String text, String? itemId);
+typedef CheRealtimeUserTranscriptCallback = FutureOr<void> Function(String text, String? itemId);
 typedef CheRealtimeAssistantTranscriptCallback = void Function(
   String text,
   bool isFinal,
@@ -41,6 +41,7 @@ class CheRealtimeVoiceEngine {
     required this.onAssistantTranscript,
     required this.onCapabilityRequest,
     required this.onStandDown,
+    this.onUserSpeechStarted,
   });
 
   final String baseUrl;
@@ -51,6 +52,7 @@ class CheRealtimeVoiceEngine {
   final CheRealtimeAssistantTranscriptCallback onAssistantTranscript;
   final CheRealtimeToolHandler onCapabilityRequest;
   final CheRealtimeSleepCallback onStandDown;
+  final FutureOr<void> Function()? onUserSpeechStarted;
 
   RTCPeerConnection? _peer;
   RTCDataChannel? _events;
@@ -61,6 +63,7 @@ class CheRealtimeVoiceEngine {
   bool _disposed = false;
   bool _connected = false;
   bool _handlingTool = false;
+  Future<void> _pendingUserTurns = Future<void>.value();
   String? _activeResponseId;
   String _assistantTranscript = '';
   bool _assistantFinalDelivered = false;
@@ -70,7 +73,9 @@ class CheRealtimeVoiceEngine {
   String? lastServerEvent;
   String? lastError;
 
-  bool get connected => _connected && state.audioVerified;
+  /// Realtime supplies input transcripts only. All replies use /api/chat.
+  bool get guardedOutput => true;
+  bool get connected => _connected && state.sessionReady;
 
   Future<void> initialize() async {
     if (_rendererReady) return;
@@ -147,6 +152,10 @@ class CheRealtimeVoiceEngine {
       };
 
       pc.onTrack = (event) {
+        if (guardedOutput) {
+          event.track.enabled = false;
+          return;
+        }
         if (event.streams.isNotEmpty) {
           _remoteRenderer.srcObject = event.streams.first;
         }
@@ -162,7 +171,7 @@ class CheRealtimeVoiceEngine {
         RTCDataChannelInit()..ordered = true,
       );
       _events = channel;
-      channel.onMessage = _handleMessage;
+      channel.onMessage = handleServerEvent;
       channel.onDataChannelState = (channelState) {
         state.connectionChanged('data:${channelState.name}');
         _emitSnapshot();
@@ -199,28 +208,7 @@ class CheRealtimeVoiceEngine {
         ),
       );
 
-      _send({
-        'type': 'response.create',
-        'event_id': _eventId('health'),
-        'response': {
-          'instructions':
-              'The owner just woke you. Reply in three words or fewer, naturally.',
-        },
-      });
-
-      await _audioStarted!.future.timeout(
-        const Duration(seconds: 8),
-        onTimeout: () => throw TimeoutException(
-          'OpenAI Realtime connected but returned no audio.',
-        ),
-      );
-
-      await _verifyInboundAudio();
-      // Re-assert speaker route after audio is verified — some iOS builds fall
-      // back to the earpiece after WebRTC renegotiation.
-      try {
-        await Helper.setSpeakerphoneOnButPreferBluetooth();
-      } catch (_) {}
+      if (!guardedOutput) await _verifyInboundAudio();
       _connected = true;
       state.realtimeReady();
       _emitSnapshot();
@@ -242,7 +230,7 @@ class CheRealtimeVoiceEngine {
             'Authorization': 'Bearer $deviceToken',
             'Content-Type': 'application/json',
           },
-          body: '{}',
+          body: jsonEncode({'guarded_output': true}),
         )
         .timeout(const Duration(seconds: 15));
 
@@ -254,6 +242,10 @@ class CheRealtimeVoiceEngine {
       throw StateError(
         decoded['detail']?.toString() ?? 'Realtime session token failed.',
       );
+    }
+
+    if (decoded['guarded_output'] != true) {
+      throw StateError('Server did not confirm guarded voice output.');
     }
 
     final value = decoded['value']?.toString() ??
@@ -299,7 +291,7 @@ class CheRealtimeVoiceEngine {
     );
   }
 
-  void _handleMessage(RTCDataChannelMessage message) {
+  void handleServerEvent(RTCDataChannelMessage message) {
     if (message.isBinary || message.text.isEmpty) return;
 
     Map<String, dynamic> event;
@@ -311,6 +303,11 @@ class CheRealtimeVoiceEngine {
 
     final type = event['type']?.toString() ?? '';
     lastServerEvent = type;
+    // Provider-generated words, audio and tool calls never reach UI or TTS.
+    if (guardedOutput && (type.startsWith('response.') ||
+        type == 'output_audio_buffer.started')) {
+      return;
+    }
 
     switch (type) {
       case 'session.created':
@@ -322,6 +319,8 @@ class CheRealtimeVoiceEngine {
         return;
 
       case 'input_audio_buffer.speech_started':
+        final interrupt = onUserSpeechStarted;
+        if (interrupt != null) unawaited(Future<void>.sync(interrupt));
         final wasSpeaking = state.phase == CheVoicePhase.speaking;
         state.userSpeechStarted();
         if (wasSpeaking) {
@@ -354,7 +353,7 @@ class CheRealtimeVoiceEngine {
           unawaited(_standDown());
           return;
         }
-        onUserTranscript(text, itemId);
+        unawaited(_enqueueUserTurn(text, itemId));
         _emitSnapshot();
         return;
 
@@ -507,27 +506,23 @@ class CheRealtimeVoiceEngine {
     }
   }
 
+  Future<void> _enqueueUserTurn(String text, String? itemId) {
+    final next = _pendingUserTurns.then((_) async {
+      if (!_disposed) await onUserTranscript(text, itemId);
+    });
+    _pendingUserTurns = next.catchError((Object error) {
+      lastError = error.toString();
+      state.reportError(lastError!);
+      _emitSnapshot();
+    });
+    return _pendingUserTurns;
+  }
+
   Future<void> sendText(String text) async {
     final clean = text.trim();
     if (!_connected || clean.isEmpty) return;
 
-    _send({
-      'type': 'conversation.item.create',
-      'event_id': _eventId('text'),
-      'item': {
-        'type': 'message',
-        'role': 'user',
-        'content': [
-          {'type': 'input_text', 'text': clean},
-        ],
-      },
-    });
-    state.userSpeechStopped();
-    _emitSnapshot();
-    _send({
-      'type': 'response.create',
-      'event_id': _eventId('respond'),
-    });
+    await _enqueueUserTurn(clean, null);
   }
 
   Future<void> cancelActiveResponse([String reason = 'owner interruption']) async {

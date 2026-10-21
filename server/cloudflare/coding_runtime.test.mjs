@@ -373,7 +373,7 @@ esac
 sleep 60
 `);
   chmodSync(join(bin, 'opencode'), 0o755);
-  writeFileSync('/tmp/che-runtime-prompt.txt', 'OWNER REQUEST: a tiny change');
+  writeFileSync(join(dir, 'che-runtime-prompt.txt'), 'OWNER REQUEST: a tiny change');
   const output = join(dir, 'output');
   // The runner stages the gate and verifier from the base before any attempt; the step uses that copy.
   const trusted = join(dir, 'trusted');
@@ -399,6 +399,56 @@ sleep 60
   assert.match(res.stdout, /groq\/small failed \(exit 75\)/);
   assert.equal(readFileSync(join(dir, 'tried'), 'utf8').trim().split('\n').join(' '), 'google/quota groq/small groq/reads');
   assert.equal(readFileSync(join(repo, 'edited.txt'), 'utf8').trim(), 'ok', 'file text mentioning an error never stops a working model');
+});
+
+test('every model attempt leaves its own receipt, so an earlier failure is not lost when a later model succeeds', async () => {
+  const { mkdtempSync, writeFileSync, chmodSync, copyFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { spawnSync } = await import('node:child_process');
+  const dir = mkdtempSync(join(tmpdir(), 'che-opencode-'));
+  const bin = join(dir, 'bin');
+  const repo = join(dir, 'repo');
+  spawnSync('mkdir', ['-p', bin, repo]);
+  spawnSync('git', ['init', '-q', repo]);
+  writeFileSync(join(bin, 'opencode'), `#!/usr/bin/env bash
+model=""; while [ $# -gt 0 ]; do [ "$1" = --model ] && model=$2; shift; done
+case "$model" in
+  google/quota) echo '{"type":"error","error":{"name":"APIError","data":{"message":"You exceeded your current quota, please check your plan"}}}';;
+  groq/small) echo '{"type":"error","error":{"name":"ContextOverflowError","data":{"message":"Request too large for model on input tokens per minute (ITPM): Limit 7000, Requested 10182"}}}';;
+  groq/reads) echo '{"type":"tool","part":{"output":"notes"}}'; echo ok > "${repo}/edited.txt"; exit 0;;
+esac
+sleep 60
+`);
+  chmodSync(join(bin, 'opencode'), 0o755);
+  writeFileSync(join(dir, 'che-runtime-prompt.txt'), 'OWNER REQUEST: a tiny change');
+  const trusted = join(dir, 'trusted');
+  spawnSync('mkdir', ['-p', join(trusted, 'tools'), join(trusted, 'server/cloudflare')]);
+  copyFileSync(new URL('../../tools/che_coding_checkpoint.mjs', import.meta.url), join(trusted, 'tools/che_coding_checkpoint.mjs'));
+  copyFileSync(new URL('../../tools/che_coding_paid_gate.mjs', import.meta.url), join(trusted, 'tools/che_coding_paid_gate.mjs'));
+  copyFileSync(new URL('./coding_failover.mjs', import.meta.url), join(trusted, 'server/cloudflare/coding_failover.mjs'));
+  const res = spawnSync('bash', ['-c', runStepScript('Run OpenCode in the isolated checkout')], {
+    cwd: repo,
+    env: { PATH: `${bin}:${process.env.PATH}`, FREE_CANDIDATES: 'google/quota groq/small groq/reads', GITHUB_OUTPUT: join(dir, 'output'), HOME: dir, RUNNER_TEMP: dir, CHE_TRUSTED_TOOLS: trusted, BASE_SHA: 'a'.repeat(40) },
+    encoding: 'utf8',
+    timeout: 60_000,
+  });
+  assert.equal(res.status, 0, res.stderr);
+  const receipts = readFileSync(join(dir, 'che-attempts.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+  assert.deepEqual(receipts.map((r) => [r.model, r.kind, r.resumable, r.exit_code]), [
+    ['google/quota', 'quota', true, 75],
+    ['groq/small', 'too_large', false, 75],
+    ['groq/reads', 'success', false, 0],
+  ], 'the quota and size failures before the working model are kept, not overwritten by its success');
+  assert.match(receipts[0].error, /exceeded your current quota/);
+  assert.equal(receipts[2].progress, 'delivered', 'the successful attempt is recorded with its change');
+  for (const receipt of receipts) {
+    assert.ok(receipt.cap_seconds > 0 && receipt.cap_seconds <= 120, 'each attempt names the time it was allowed');
+    assert.ok(receipt.seconds >= 0 && receipt.seconds < 60, 'each attempt names the time it took');
+  }
+  const workflow = readFileSync(new URL('../../.github/workflows/che-opencode-runtime.yml', import.meta.url), 'utf8');
+  assert.match(workflow, /const attemptsFile = `\$\{process\.env\.RUNNER_TEMP\}\/che-attempts\.jsonl`;/, 'the record reads every attempt');
+  assert.match(workflow, /^\s+attempts,$/m, 'the job record carries the attempts');
 });
 
 test('a blocked coding session turns the run red after its record is posted, never a green wrapper', () => {
@@ -469,4 +519,145 @@ test('Codex #327: the record keeps every model the run may try, so the last caus
   assert.match(workflow, new RegExp(`models_tried: String\\(process\\.env\\.TRIED \\|\\| ''\\)\\.trim\\(\\)\\.split\\(/\\\\s\\+/\\)\\.filter\\(Boolean\\)\\.slice\\(0, ${limit}\\)`));
   const spoken = speakRuntimeStatus({ state: 'blocked', failure: 'opencode_failed', models_tried: ['a/1', 'a/2', 'a/3', 'a/4', 'a/5', 'a/6'] });
   assert.match(spoken, /after trying 6 models \(a\/1, a\/2, a\/3, a\/4, a\/5, a\/6\)/);
+});
+
+// Every leak form the review found, plus the hardening forms. The paid step and the PR step used
+// their own redaction before; each step's redact() is now run on every case.
+const SHELL_LEAKS = [
+  ['Authorization: Bearer abc.def.GhIjKlMnOpQr123456', 'GhIjKlMnOpQr123456'],
+  ['bearer tokenValue987654321', 'tokenValue987654321'],
+  ['https://api.example.com/v1/models?api_key=SUPERSECRET123456789&alt=json', 'SUPERSECRET123456789'],
+  ['https://hooks.example.com/x?token=tok_live_987654321abcdef', 'tok_live_987654321abcdef'],
+  ['{"access_token":"ya29.a0AfH6SMBx1234567890"}', 'ya29.a0AfH6SMBx1234567890'],
+  ['xai-AbCdEf1234567890', 'AbCdEf1234567890'],
+  ['password=hunter2hunter2', 'hunter2hunter2'],
+  // Built at run time so this file never holds a GitHub-token-shaped string (CHE's edit check refuses one).
+  [`token ${'gh'}p_abcdefghijklmnopqrstuvwxyz0123456789 rejected`, 'abcdefghijklmnopqrstuvwxyz0123456789'],
+  ['x-api-key: AbCdEfGh12345678', 'AbCdEfGh12345678'],
+  ['api-key: ZyXwVu98765432', 'ZyXwVu98765432'],
+  ['Authorization: Basic dXNlcjpwYXNzd29yZA==', 'dXNlcjpwYXNzd29yZA=='],
+  ['client_secret=s3cr3tValue123456', 's3cr3tValue123456'],
+];
+
+test('every runner step that writes error text redacts each leak case through the shared redactor', async () => {
+  const { mkdtempSync, copyFileSync, mkdirSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { spawnSync } = await import('node:child_process');
+  const dir = mkdtempSync(join(tmpdir(), 'che-redact-'));
+  const trusted = join(dir, 'trusted');
+  mkdirSync(join(trusted, 'tools'), { recursive: true });
+  mkdirSync(join(trusted, 'server/cloudflare'), { recursive: true });
+  copyFileSync(new URL('../../tools/che_coding_checkpoint.mjs', import.meta.url), join(trusted, 'tools/che_coding_checkpoint.mjs'));
+  copyFileSync(new URL('./coding_failover.mjs', import.meta.url), join(trusted, 'server/cloudflare/coding_failover.mjs'));
+  const steps = ['Run OpenCode in the isolated checkout', 'Run capped paid OpenRouter only after free attempts', 'Commit, push and open PR'];
+  for (const step of steps) {
+    const redactLine = runStepScript(step).split('\n').find((line) => /^redact\(\) \{/.test(line));
+    assert.ok(redactLine, `${step} defines redact()`);
+    assert.match(redactLine, /che_coding_checkpoint\.mjs" redact \|/, `${step} uses the shared redactor`);
+    for (const [input, secret] of SHELL_LEAKS) {
+      // The free and paid steps use CHE_TRUSTED_TOOLS; the PR step stages its own copy as $trust.
+      const res = spawnSync('bash', ['-c', `CHE_TRUSTED_TOOLS='${trusted}'; trust='${trusted}'\n${redactLine}\nredact`], {
+        input,
+        encoding: 'utf8',
+        env: { PATH: process.env.PATH, HOME: dir },
+      });
+      assert.equal(res.status, 0, res.stderr);
+      assert.equal(res.stdout.includes(secret), false, `${step} must not carry ${secret}: ${res.stdout}`);
+    }
+  }
+});
+
+// The tail, head or cut commands on a shell line that run before any redactor in their pipeline.
+// Quoted text and ${VAR} are blanked first, so a grep pattern like 'error|quota' is not split.
+function unredactedCuts(line) {
+  const text = line.replace(/'[^']*'/g, "''").replace(/\$\{[A-Za-z_]+\}/g, '$VAR');
+  const bad = [];
+  for (const fragment of text.split(/\$\(|\)|;|\{|\}/)) {
+    let clean = false;
+    for (const command of fragment.split('|').map((part) => part.trim())) {
+      if (/^redact(?:_raw)?\b/.test(command)) clean = true;
+      else if (/^(?:tail|head|cut)\b/.test(command) && !clean) bad.push(command);
+    }
+  }
+  return bad;
+}
+
+test('no error or log text in the runtime workflow bypasses the shared redactor', () => {
+  const workflow = readFileSync(new URL('../../.github/workflows/che-opencode-runtime.yml', import.meta.url), 'utf8');
+  const lines = workflow.split('\n');
+  assert.doesNotMatch(workflow, /sed\s+-E?\s*'s\/\(AIza/, 'no inline key-prefix sed redaction remains');
+  assert.doesNotMatch(workflow, /\[key\]/, 'only the shared redactor writes the [key] marker');
+  const definitions = lines.filter((line) => /^\s*redact\(\) \{/.test(line));
+  assert.equal(definitions.length, 3, 'the free step, the paid step and the PR step each define redact()');
+  for (const line of definitions) assert.match(line, /node "\$(?:CHE_TRUSTED_TOOLS|trust)\/tools\/che_coding_checkpoint\.mjs" redact \|/);
+  // Every command substitution that reads a model log, checkpoint verdict or PR error prints redacted text.
+  // A line that only writes one of these files (`2>file`, `>file`) prints nothing; a read is what matters.
+  const reads = (line) => line.replace(/\d?>>?\s*"?[^\s")]+"?/g, '');
+  const readers = lines.filter((line) => /\$\(/.test(line) && /opencode-stderr\.log|opencode-events\.jsonl|checkpoint-verdict\.json|checkpoint-restore\.json|pr-err\.txt/.test(reads(line)));
+  assert.equal(readers.length, 6, `expected the six known readers, found ${readers.length}`);
+  for (const line of readers) assert.match(line, /\bredact\b/, `unredacted text: ${line.trim()}`);
+  // Order: a log window is cut only after the redactor ran, so a key split by the cut leaves nothing.
+  for (const line of readers) assert.deepEqual(unredactedCuts(line), [], `cut before redaction: ${line.trim()}`);
+  const rawDefinitions = lines.filter((line) => /^\s*redact_raw\(\) \{/.test(line));
+  assert.equal(rawDefinitions.length, 2, 'the free and paid steps define redact_raw()');
+  for (const line of rawDefinitions) assert.match(line, /redact_raw\(\) \{ node "\$CHE_TRUSTED_TOOLS\/tools\/che_coding_checkpoint\.mjs" redact; \}/);
+  for (const line of definitions) assert.match(line, /che_coding_checkpoint\.mjs" redact \|.*\bcut -c/, 'redact() cuts only after the redactor ran');
+  // The guard itself catches the old order on the paid and free lines.
+  assert.deepEqual(unredactedCuts('err=$(tail -c 400 ${RUNNER_TEMP}/opencode-stderr.log | redact)'), ['tail -c 400 $VAR/opencode-stderr.log']);
+  assert.equal(unredactedCuts("why=$( { tail -c 4000 ${RUNNER_TEMP}/opencode-stderr.log; grep -iE 'error|quota' ${RUNNER_TEMP}/opencode-events.jsonl | tail -2; } 2>/dev/null | redact)").length, 2);
+});
+
+test('a key split by the log window is redacted before the window is cut, so no fragment survives', async () => {
+  const { mkdtempSync, copyFileSync, mkdirSync, writeFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { spawnSync } = await import('node:child_process');
+  const base = mkdtempSync(join(tmpdir(), 'che-window-'));
+  const trusted = join(base, 'trusted');
+  mkdirSync(join(trusted, 'tools'), { recursive: true });
+  mkdirSync(join(trusted, 'server/cloudflare'), { recursive: true });
+  copyFileSync(new URL('../../tools/che_coding_checkpoint.mjs', import.meta.url), join(trusted, 'tools/che_coding_checkpoint.mjs'));
+  copyFileSync(new URL('./coding_failover.mjs', import.meta.url), join(trusted, 'server/cloudflare/coding_failover.mjs'));
+  // A 33-character key; a cut 13 characters into it leaves this 20-character tail, which no rule matches.
+  const key = ['sk', '-', 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123'].join('');
+  const fragment = key.slice(13);
+  const cases = [
+    { step: 'Run capped paid OpenRouter only after free attempts', window: 400, old: 'err=$(tail -c 400 ${RUNNER_TEMP}/opencode-stderr.log | redact)' },
+    { step: 'Run OpenCode in the isolated checkout', window: 4000, old: "err=$( { tail -c 4000 ${RUNNER_TEMP}/opencode-stderr.log; grep -iE 'error' ${RUNNER_TEMP}/opencode-events.jsonl | tail -2; } 2>/dev/null | redact)" },
+  ];
+  for (const { step, window, old } of cases) {
+    const dir = mkdtempSync(join(base, 'step-'));
+    // The key sits so that the last `window` bytes start exactly 13 characters into it.
+    writeFileSync(join(dir, 'opencode-stderr.log'), `request failed for ${key}${'x'.repeat(window - 20)}`);
+    writeFileSync(join(dir, 'opencode-events.jsonl'), '');
+    const script = runStepScript(step).split('\n');
+    const definitions = script.filter((line) => /^redact(?:_raw)?\(\) \{/.test(line)).join('\n');
+    const windowed = script.map((line) => line.trim()).filter((line) => /^(?:why|err)=\$\(/.test(line) && /opencode-stderr\.log/.test(line));
+    assert.ok(windowed.length >= 1, `${step} has a windowed error line`);
+    const run = (line) => spawnSync('bash', ['-c', "CHE_TRUSTED_TOOLS='" + trusted + "'\n" + definitions + '\n' + line + '\nprintf "%s" "${err:-$why}"'], {
+      encoding: 'utf8',
+      env: { PATH: process.env.PATH, HOME: dir, RUNNER_TEMP: dir },
+    });
+    const before = run(old);
+    assert.equal(before.status, 0, before.stderr);
+    assert.ok(before.stdout.includes(fragment), `${step}: the old order leaves the fragment ${fragment}: ${before.stdout.slice(0, 60)}`);
+    for (const line of windowed) {
+      const after = run(line);
+      assert.equal(after.status, 0, after.stderr);
+      assert.equal(after.stdout.includes(fragment), false, `${step}: no fragment after redact-first: ${after.stdout.slice(0, 60)}`);
+      assert.match(after.stdout, /\[key\]/, `${step}: the key is replaced`);
+    }
+  }
+});
+
+// The runtime job's steps write only under RUNNER_TEMP. A fixed /tmp path is shared with every
+// other process on the machine, so a test reading it could be truncated mid-run.
+test('the runtime job uses no fixed /tmp path: each test can own its scratch directory', () => {
+  const workflow = readFileSync(new URL('../../.github/workflows/che-opencode-runtime.yml', import.meta.url), 'utf8');
+  const runtime = workflow.slice(workflow.indexOf('\n  runtime:\n'), workflow.indexOf('\n  deliver:\n'));
+  assert.ok(runtime.length > 1000, 'the runtime job is found');
+  // /tmp as a word, so `mktemp -p /tmp` or a bare /tmp also fails, not only /tmp/ followed by a name.
+  assert.doesNotMatch(runtime, /(^|[\s"'=:])\/tmp\b/m, 'every runtime scratch path comes from RUNNER_TEMP');
+  assert.match(runtime, /OPENCODE_CONFIG: \$\{\{ runner\.temp \}\}\/che-opencode-config\.json/);
 });
