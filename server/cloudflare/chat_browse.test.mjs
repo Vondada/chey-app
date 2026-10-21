@@ -37,6 +37,10 @@ async function owner() {
   }), env);
   const token = (await (await post('/api/pair', { code: '123456' })).json()).device_token;
   return {
+    seedTeam: async (team) => {
+      const current = saved.get('che') || {};
+      saved.set('che', { ...current, team });
+    },
     seedPages: async (pages) => {
       const { CheBrainStore } = await import('./brain_store.js');
       const { storeLoopReads } = await import('./agent_research_memory.js');
@@ -79,17 +83,30 @@ test('a question about search, and a search of the owner\'s memory, do not enter
   assert.notEqual(memory.body.source, 'che_browse');
 });
 
-test('an original story goes to Mira as a queued task, and CHE says who has it', async (t) => {
+test('an original story goes to the existing writing agent as a browsing task, and CHE says who has it', async (t) => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => { throw new TypeError('offline'); };
+  t.after(() => { globalThis.fetch = realFetch; });
+  const che = await owner();
+  await che.seedTeam([{ id: 'm1', name: 'Mira', role: 'Customer and writing copy', specialty: 'Stories and scripts', status: 'available', retired: false }]);
+  const { body } = await che.ask('Write an original story about a lighthouse keeper');
+  assert.equal(body.source, 'che_browse');
+  assert.match(body.message, /Mira is working on it with the browsing loop: write an original story\./);
+  const queued = che.tasks().find((task) => task.partner_name === 'Mira' && task.source === 'owner_chat');
+  assert.ok(queued, 'the story task is in the team queue');
+  assert.equal(queued.browse, true);
+  assert.match(queued.task, /original story/);
+});
+
+test('with no agent on the team who fits, nobody is hired: CHE says so and queues nothing', async (t) => {
   const realFetch = globalThis.fetch;
   globalThis.fetch = async () => { throw new TypeError('offline'); };
   t.after(() => { globalThis.fetch = realFetch; });
   const che = await owner();
   const { body } = await che.ask('Write an original story about a lighthouse keeper');
-  assert.equal(body.source, 'che_browse');
-  assert.match(body.message, /Mira is working on it: write an original story\. Mira will hand the result to me for review; ask me for it when it is back\./);
-  const queued = che.tasks().find((task) => task.partner_name === 'Mira' && task.source === 'owner_chat');
-  assert.ok(queued, 'the story task is in the team queue');
-  assert.match(queued.task, /original story/);
+  assert.match(body.message, /No agent on the team fits/);
+  assert.match(body.message, /did not hire anyone/);
+  assert.equal(che.tasks().filter((task) => task.source === 'owner_chat').length, 0);
 });
 
 test('kept research pages: listed, named ones forgotten only on a yes, and a yes for anything else deletes nothing', async (t) => {

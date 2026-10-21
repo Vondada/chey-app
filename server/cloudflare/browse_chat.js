@@ -49,19 +49,43 @@ export function subAgentPlan(message, { url = '' } = {}) {
   const plan = [];
   if (intent.style && (url || intent.url)) {
     plan.push({
-      agent: 'Atlas', role: 'Research', specialty: 'Reads public pages and describes how media is made',
+      agent: 'Atlas', needs: ['research', 'read', 'analy', 'video', 'media'],
       label: 'study how the page makes its AI videos and describe the same style',
       task: `Study how the page ${url || intent.url} makes its AI videos: pacing, camera moves, shot length, captions, music, and the tools that look used. Use only what was really read. Then describe the same style as a plan for an original video, and list what could not be verified. The owner's words: ${String(message).slice(0, 1000)}`,
     });
   }
   if (intent.create) {
     plan.push({
-      agent: 'Mira', role: 'Writing', specialty: 'Original stories and scripts',
+      agent: 'Mira', needs: ['writ', 'stor', 'script', 'copy'],
       label: 'write an original story',
       task: `Write the original story the owner asked for, and keep to the length and form he gave. Do not copy any existing story. Mark any detail you invented as invented. The owner's words: ${String(message).slice(0, 1000)}`,
     });
   }
   return plan;
+}
+
+/**
+ * The office agent who takes a task: the named one when they are on the team, else the first agent whose role,
+ * specialty or mission fits. Null when no one fits: CHE never hires to fill a task.
+ */
+export function pickOfficeAgent(team = [], { name = '', needs = [] } = {}) {
+  const live = (Array.isArray(team) ? team : []).filter((a) => a && !a.retired);
+  const named = live.find((a) => a.name === name);
+  if (named) return named;
+  return live.find((a) => {
+    const text = `${a.role || ''} ${a.specialty || ''} ${a.mission || ''}`.toLowerCase();
+    return needs.some((word) => text.includes(word));
+  }) || null;
+}
+
+/**
+ * An office agent's browsing task: the same loop CHE uses, planned with the agent's own personality and model
+ * (complete). Pages the run reads are kept through keepReads, when the Worker provides it.
+ */
+export async function runBrowseTask({ question, soul = '', complete, fetcher = fetch, keepReads = null }) {
+  const outcome = await runSearchRoute(question, { complete, soul, fetcher });
+  const kept = keepReads ? keepReads(question, outcome.observations || []) : 0;
+  return { text: kept ? `${outcome.text}\nI kept ${kept} page${kept === 1 ? '' : 's'} I read as research pages.` : outcome.text, status: outcome.status };
 }
 
 /** Plain text of the loop's outcome. Every reason is the real one; nothing is filled in. */

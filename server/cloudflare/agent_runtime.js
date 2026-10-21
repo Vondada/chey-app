@@ -19,6 +19,7 @@ import { codexThreadId } from './office_router.js';
 import { meetingEvent, officeTaskEvent, researchEvent } from './room_events.js';
 import { assertAgentMayRun, permissionBlocker } from './agent_permissions.js';
 import { guardRetrievalClaims } from './truth_layer.js';
+import { runBrowseTask } from './browse_chat.js';
 
 export const AGENT_STATUSES = [
   'idle', 'researching', 'building', 'analyzing', 'meeting',
@@ -530,6 +531,8 @@ export function queueAgentTask(data, agent, task, source = 'owner', options = {}
     steering: [],
     steering_version: 0,
     handoffs: [],
+    // A browsing task runs the browsing loop (browse_chat.js) with the agent's own model and personality.
+    browse: options.browse === true,
     use_computer: options.use_computer === true,
     owner_approved_computer: options.owner_approved_computer === true,
     computer_permissions: Array.isArray(options.computer_permissions)
@@ -1165,14 +1168,22 @@ async function runOneTask(ctx) {
   ].filter(Boolean).join('\n\n');
   let worker = { engine: '', model: '' };
   try {
-    const detailed = await runModelDetailed(
-      env,
-      modelFor(env, agent, models),
-      agentSystemPrompt(agent, workContext),
-      task.task,
-      agent.model_tier === 'strong' ? 1800 : 1100,
-      routingForAgent(agent, data, task),
-    );
+    const routing = routingForAgent(agent, data, task);
+    const detailed = task.browse
+      ? await runBrowseTask({
+        question: task.task,
+        soul: agent.personality,
+        complete: async ({ system, user }) => (await runModelDetailed(env, modelFor(env, agent, models), system, user, 400, routing)).text,
+        keepReads: ctx.keepReads || null,
+      }).then((run) => ({ text: run.text, engine: 'browse_loop', model: '' }))
+      : await runModelDetailed(
+        env,
+        modelFor(env, agent, models),
+        agentSystemPrompt(agent, workContext),
+        task.task,
+        agent.model_tier === 'strong' ? 1800 : 1100,
+        routing,
+      );
     result = clip(detailed.text, 16000);
     worker = { engine: detailed.engine, model: detailed.model };
     if (!result) error = 'No result returned.';

@@ -1,7 +1,7 @@
 // The owner's chat routed into the browsing loop and the sub-agents. Fixtures only; nothing reaches the network.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { browseIntent, browseReply, runSearchRoute, subAgentPlan } from './browse_chat.js';
+import { browseIntent, browseReply, pickOfficeAgent, runBrowseTask, runSearchRoute, subAgentPlan } from './browse_chat.js';
 import { parseReaRequest } from './rea_runner.js';
 
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
@@ -114,4 +114,39 @@ test('a study of a link is handed to REA as its inspect request, with the link a
   const parsed = parseReaRequest('REA inspect: https://www.instagram.com/example/reel/abc123', { history: [] });
   assert.equal(parsed.command, 'inspect');
   assert.equal(parsed.input, 'https://www.instagram.com/example/reel/abc123');
+});
+
+test('an agent takes a task only from the existing team: the named one, else one whose role fits, else nobody', () => {
+  const team = [
+    { name: 'Nova', role: 'Operations', specialty: 'Scheduling', retired: false },
+    { name: 'Atlas', role: 'Research', specialty: 'Reads public pages', retired: false },
+    { name: 'Lyra', role: 'Writing', specialty: 'Stories', retired: true },
+  ];
+  assert.equal(pickOfficeAgent(team, { name: 'Atlas', needs: ['research'] }).name, 'Atlas');
+  assert.equal(pickOfficeAgent(team, { name: 'Mira', needs: ['research'] }).name, 'Atlas');
+  assert.equal(pickOfficeAgent(team, { name: 'Mira', needs: ['writ', 'stor'] }), null, 'a retired agent is not used, and nobody is hired');
+  assert.equal(pickOfficeAgent([], { name: 'Atlas', needs: ['research'] }), null);
+});
+
+test('a browsing task runs the loop with the agent\'s own planner and keeps the pages it reads', async () => {
+  const fetcher = routes({
+    ...DNS,
+    'api.php': () => json({ query: { search: [{ title: 'Pizza', snippet: 'A dish' }] } }),
+    'robots.txt': () => text('User-agent: *\nDisallow: /private'),
+    '/wiki/Pizza': () => text('<h1>Pizza</h1><p>Pizza is a dish from Naples.</p>'),
+  });
+  const kept = [];
+  const replies = [
+    '{"type":"search","query":"pizza","why":"look it up"}',
+    '{"type":"open","url":"https://en.wikipedia.org/wiki/Pizza","why":"read it"}',
+    '{"type":"finish","answer":"Pizza is a dish from Naples.","cite":["https://en.wikipedia.org/wiki/Pizza"],"why":"read"}',
+  ];
+  const run = await runBrowseTask({
+    question: 'Study pizza', soul: 'Warm and brief.', fetcher,
+    complete: async ({ system }) => { assert.match(system, /Warm and brief\./); return replies.shift(); },
+    keepReads: (question, observations) => { kept.push(...observations.filter((o) => o.read).map((o) => o.url)); return kept.length; },
+  });
+  assert.equal(run.status, 'answered');
+  assert.match(run.text, /Pizza is a dish from Naples\./);
+  assert.deepEqual(kept, ['https://en.wikipedia.org/wiki/Pizza']);
 });

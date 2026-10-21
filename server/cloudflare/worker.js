@@ -208,7 +208,7 @@ import { APP_BUILD_KEY, appBuildIntent, appBuildRun, dispatchAppBuild, speakAppB
 import { advanceObjectives, applyMissionEvent, approvalReached, approveNode, awaitingApproval, cancelObjective, createObjective, mutateObjective, replanNode, resolveKnownNodes, retryNode, setObjectivePaused, speakObjective } from './objective_graph.js';
 import { CATEGORIES, COMMANDS, catalogView, commandById, commandStatus, connectorStatus, describeWorkflow, dispatchPrompt, findSavedWorkflow, normalizeSavedWorkflow, parseSlashCommand, readCommandSpeech, searchCommands, speakCommandList, speakUnavailable, suggestCommands, workflowNodes, workflowFromWords } from './command_catalog.js';
 import { handleReaRequest, loadInvestigation, parseReaRequest, reaInvestigationDetail, reaInvestigations } from './rea_runner.js';
-import { browseIntent, runSearchRoute, subAgentPlan } from './browse_chat.js';
+import { browseIntent, pickOfficeAgent, runSearchRoute, subAgentPlan } from './browse_chat.js';
 import { forgetResearchPages, listResearchPages, storeLoopReads } from './agent_research_memory.js';
 const PAGE_DELETE_KEY = 'research_page_delete_pending';
 const PAGE_DELETE_MS = 5 * 60_000;
@@ -3681,18 +3681,15 @@ export class CheState extends DurableObject {
     const data = await this.loadData();
     const lines = [];
     for (const item of plan) {
-      // An agent who is not on the team yet is hired through the Office's own hiring path, then given the task.
-      let agent = (data.team || []).find((a) => a.name === item.agent && !a.retired);
-      if (!agent) {
-        const hired = createAgent(data, { name: item.agent, role: item.role, specialty: item.specialty });
-        if (hired.error) { lines.push(`${item.agent} did not start: ${hired.error}`); continue; }
-        agent = hired.agent;
-      }
+      // Only agents already on the team take work. CHE never hires one to fill a task.
+      const agent = pickOfficeAgent(data.team, { name: item.agent, needs: item.needs });
+      if (!agent) { lines.push(`No agent on the team fits ${item.label}, so I did not start it. I did not hire anyone.`); continue; }
       let refused = '';
       try { assertAgentMayRun(agent, { task: item.task }); } catch (error) { refused = permissionBlocker(agent, error); }
       if (refused) { lines.push(`${item.agent} did not start: ${refused}`); continue; }
-      queueAgentTask(data, agent, item.task, 'owner_chat');
-      lines.push(`${item.agent} is working on it: ${item.label}. ${item.agent} will hand the result to me for review; ask me for it when it is back.`);
+      // The owner assigned it, which is the permission for the browser: the agent runs the browsing loop.
+      queueAgentTask(data, agent, item.task, 'owner_chat', { browse: true });
+      lines.push(`${agent.name} is working on it with the browsing loop: ${item.label}. ${agent.name} will hand the result to me for review; ask me for it when it is back.`);
     }
     await this.ctx.storage.put('che', data);
     await this.scheduleWork();
@@ -12441,6 +12438,7 @@ export class CheState extends DurableObject {
         notify: () => { this.loadData().then((value) => this.broadcastAgents(value)).catch(() => {}); },
         models: { fast: FAST_MODEL, strong: STRONG_MODEL },
         recall: (text) => retrieveVectorContext(this.keyEnv || this.env, text),
+        keepReads: (question, observations) => storeLoopReads(new CheBrainStore(this.ctx.storage), { question, observations, now: new Date().toISOString() }).kept.length,
         // Office tasks, War Room meetings and research notes report to the Brain when they happen (owner, Build 2).
         roomEvent: (event) => (event ? queueRoomEvent(this.ctx.storage, event).catch(() => false) : Promise.resolve(false)),
       });
