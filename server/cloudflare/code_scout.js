@@ -631,6 +631,16 @@ export function codingHistoryIntent(message) {
   return asked;
 }
 
+// A question that asks for reasoning about the code ("explain", "why", "weaknesses", "recommend a repair").
+// It is answered from the inspected source in plain English. Only an explicit request for the file list
+// gets the list: "which files", "list the files", "show me the files" (owner, 2026-10-21).
+export function analyticalRepositoryQuestion(message) {
+  // "Answer in plain English, not a file list" names a list only to refuse it: negated mentions do not count.
+  const text = withoutQuotedText(String(message || '').trim()).replace(/\bnot\s+(?:a\s+|an\s+|any\s+)?(?:file\s+(?:list|index)|list\s+of\s+files|files?|list)\b[^.!?\n]*/gi, ' ');
+  if (/\b(?:list|which\s+files|file\s+(?:list|index)|show\s+me\s+(?:the\s+)?files|paths?\s+only|just\s+the\s+(?:files|paths))\b/i.test(text)) return false;
+  return /\b(?:explain|why|how\s+(?:does|do|is|are|would|should|could)|weakness(?:es)?|weak\s+points?|biggest|recommend\w*|repairs?|root\s+cause|trade-?offs?|risks?|improve\w*|what\s+(?:should|would|could)|analy[sz]e|compare)\b/i.test(text);
+}
+
 export function repositoryInspectionIntent(message) {
   const text = withoutQuotedText(String(message || '').trim());
   if (explicitChatOnlyResponseDirective(text)) return false;
