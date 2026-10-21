@@ -82,6 +82,7 @@ import 'home/che_cloud_logs_screen.dart';
 import 'che_ui/che_agent_chat.dart' show CheAgentController;
 import 'che_ui/che_backend.dart' show CheBackend;
 import 'che_ui/che_brain.dart' show CheBrain;
+import 'che_ui/che_soul.dart' show CheSoulClient;
 import 'che_ui/che_log.dart' show CheConversationStore;
 import 'che_ui/che_plugins.dart'
     show ChePluginOfferCard, ChePluginRegistry, ChePluginsScreen, chePluginAuthoringGuide;
@@ -1241,6 +1242,7 @@ OWNER AGENCY
   @override
   void initState() {
     super.initState();
+    CheSoulClient.configure(baseUrl: () => cheAgentBaseUrl, headers: () => _authHeaders);
     _screenToken = CheScreenAwareness.register(context, _shellScreenReport);
     unawaited(CheNotifications.requestPermission());
     unawaited(_syncUiVoicePrefs());

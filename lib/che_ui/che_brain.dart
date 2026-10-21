@@ -21,6 +21,7 @@ import 'che_agent_chat.dart' show CheAgentController;
 import 'che_log.dart';
 import 'che_models.dart';
 import 'che_agents.dart';
+import 'che_soul_controls.dart';
 import 'che_theme.dart';
 import 'che_transitions.dart';
 import 'che_widgets.dart';
@@ -862,14 +863,6 @@ class _SoulScreen extends StatefulWidget {
 }
 
 class _SoulScreenState extends State<_SoulScreen> {
-  late final TextEditingController _t = TextEditingController(text: widget.brain.soul);
-
-  @override
-  void dispose() {
-    _t.dispose();
-    super.dispose();
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -886,39 +879,9 @@ class _SoulScreenState extends State<_SoulScreen> {
                 icon: Icon(Icons.arrow_back_ios_new_rounded, size: 19, color: CheColors.text),
                 onPressed: () => Navigator.of(context).maybePop(),
               ),
-              trailing: TextButton(
-                onPressed: () async {
-                  await widget.brain.setSoul(_t.text);
-                  HapticFeedback.mediumImpact();
-                  if (context.mounted) Navigator.of(context).maybePop();
-                },
-                child: Text('Save', style: CheType.label.copyWith(color: CheColors.accent)),
-              ),
             ),
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(CheSpace.gutter, 0, CheSpace.gutter, CheSpace.lg),
-                child: GlowCard(
-                  radius: CheRadius.lg,
-                  child: TextField(
-                    controller: _t,
-                    expands: true,
-                    maxLines: null,
-                    minLines: null,
-                    textAlignVertical: TextAlignVertical.top,
-                    style: CheType.body,
-                    decoration: const InputDecoration(border: InputBorder.none),
-                  ),
-                ),
-              ),
-            ),
-            TextButton(
-              onPressed: () async {
-                await widget.brain.resetSoul();
-                setState(() => _t.text = widget.brain.soul);
-              },
-              child: Text('Reset to original personality', style: CheType.caption),
-            ),
+            // The Worker keeps the Soul (version, hash, history). These controls read and save it there.
+            const Expanded(child: CheSoulControls()),
           ]),
         ),
       ),
