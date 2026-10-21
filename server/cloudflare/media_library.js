@@ -87,8 +87,8 @@ const VIDEO_WORD = /\b(?:videos?|mp4s?|movies?|clips?)\b/i;
 // Words that make a question about the picture/file store, not about the video library.
 const STORE_WORD = /\b(?:pictures?|photos?|images?|pics?|pngs?|jpe?gs?|webps?|files?|uploads?|attachments?|documents?|pdfs?|media)\b/i;
 // What turns a store word into a request to list the store: a listing, count, check, or "do you still have".
-// Words that make a store question about pictures or uploads even when a video is also named.
-const OTHER_STORE_WORD = /\b(?:pictures?|photos?|images?|pics?|pngs?|jpe?gs?|webps?|uploads?|attachments?|documents?|pdfs?|media\s+items?)\b/i;
+// Words that make a store question about pictures even when a video is also named.
+const OTHER_STORE_WORD = /\b(?:pictures?|photos?|images?|pics?|pngs?|jpe?gs?|webps?)\b/i;
 // Google and mail questions are answered by their own routes, never by the store.
 const SERVICE_WORD = /\b(?:google|drive|gmail|e-?mails?|calendar|youtube|inbox)\b/i;
 // A store question is about what CHE holds for the owner: saved, stored, kept, still there, or "my" pictures and files.
