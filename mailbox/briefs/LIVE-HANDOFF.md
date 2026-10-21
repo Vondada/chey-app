@@ -72,6 +72,14 @@ Then, on GitHub:
 
 **ChatGPT 2026-10-20 owner-directed end-to-end continuation:** Current main `295a9cde` (PRs #393 and #392 merged). Claude PR #394 false-completion fix is open: CI green on inspected commit `6984aa1`, but unresolved Codex review threads remain for `office_workforce.js` (`review_pending` must keep temporary agents busy) and `office_board.js` (desk statuses for `review_pending`, `needs_review`, `rejected`); original passive-claims thread is outdated but should be rechecked. DO NOT MERGE #394 before current-head review and checks pass. ChatGPT created PR #395 from main `chatgpt/chart-malformed-response-20261020` commit `2865b6e` to guard malformed scalar API collection fields (`points`, `timeframes`, `bars`, `markers`, `drawings`, `open_orders`) in `lib/rooms/che_trading_chart.dart`, resolving the owner's observed `int` cast crash. PR #395 CI Flutter / UI Analyze in progress (`39540411941`, `39540411947`); not merged, not installed, no live iPhone test. Actual live FundYourEdge/Tradesea Rithmic market-data and broker paper-order integration NOT CONNECTED; existing futures `/api/trading/chart` uses stored delayed research bars and blocks futures orders. Next: add chart malformed-payload regression, obtain valid Rithmic API access/terms and separate simulated account permission; test read-only stream, then simulated orders only; no credentials shared in chat and no paid purchases. Owner requested end-to-end finish, but third-party API authorization is a real external blocker.
 
+## 2. Current position (Claude, 2026-10-21 — Knowledge Library: #407 merged (c4a9a98); #408 = chat, Brain links, compare/learn, Office context, screen, evaluation: 645e5d7)
+
+- Merged: #407 at c4a9a98 (catalog, 77-reference seed, owner routes).
+- PR #408 (branch claude/che-knowledge-chat, head 645e5d7): owner chat and voice (status, cited search, owner text, compare, what CHE learned), Brain records and links per reference (metadata only), Office agents get cited passages, Flutter screen (lib/knowledge/che_knowledge_library_screen.dart, opened from the chat app bar), evaluation (synthetic corpus: relevance 3/3, citations 3/3, hallucinated readings 0, p50 1.5 ms).
+- Verified: Worker suite 2883/2883; Flutter suite 611 passed; flutter analyze clean.
+- Not done: indexing third-party works (none of the 77 has a licence that allows text; owner text or public-domain/open text only); iPhone verification (Dart needs a build or Shorebird patch); before/after retrieval measurements on real text.
+- Next: merge #408 when its checks are green; then verify the Worker deploy from main (che-worker-deploy.yml) with a health check.
+
 ## 2. Current position (Claude, 2026-10-21 — Knowledge Library first slice: PR #407, branch claude/che-knowledge-library at ff5e3b3, NOT merged, NOT deployed)
 
 - Merged: #406 (brain links) at e070a0c on main.
