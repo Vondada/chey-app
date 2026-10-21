@@ -6,10 +6,6 @@
 // when the owner asks "look at my screen". Builds without the extension
 // (older IPAs receiving this as a Shorebird patch) answer "not available".
 
-import 'dart:convert';
-
-import 'package:flutter/services.dart';
-
 import 'che_screen_capture.dart';
 
 class CheScreenShareStatus {
@@ -28,54 +24,15 @@ class CheScreenShare {
 
   static const _channel = MethodChannel('che/screen_share');
 
-  static Future<CheScreenShareStatus> status() async {
-    try {
-      final raw = await _channel.invokeMapMethod<String, dynamic>('status');
-      return CheScreenShareStatus(
-        available: raw?['available'] == true,
-        active: raw?['active'] == true,
-        paused: raw?['paused'] == true,
-      );
-    } on MissingPluginException {
-      return const CheScreenShareStatus();
-    } on PlatformException {
-      return const CheScreenShareStatus();
-    }
-  }
+  /// Fail closed: an installed legacy extension cannot prove another app's
+  /// pixels contain no credentials. Never read its status or payload.
+  static Future<CheScreenShareStatus> status() async => const CheScreenShareStatus();
 
-  /// The shared screen as CHE should read it: the newest frame from before
-  /// the owner came back to CHE (the other app), else the newest one. Null
-  /// when nothing is being shared.
-  static Future<CheScreenShot?> frame() async {
-    try {
-      final raw = await _channel.invokeMapMethod<String, dynamic>('latestFrame');
-      final bytes = raw?['bytes'];
-      if (bytes is! Uint8List || bytes.isEmpty) return null;
-      final at = raw?['at'];
-      return CheScreenShot.shared(
-        base64: base64Encode(bytes),
-        width: (raw?['width'] as num?)?.toInt() ?? 0,
-        height: (raw?['height'] as num?)?.toInt() ?? 0,
-        at: at is num ? DateTime.fromMillisecondsSinceEpoch((at * 1000).round()) : null,
-        beforeSwitch: raw?['before_switch'] == true,
-      );
-    } on MissingPluginException {
-      return null;
-    } on PlatformException {
-      return null;
-    }
-  }
+  /// Do not transfer external app pixels to Dart, Worker or vision models.
+  static Future<CheScreenShot?> frame() async => null;
 
-  /// Opens the system "Screen Broadcast" sheet with CHE's extension chosen.
-  static Future<bool> showPicker() async {
-    try {
-      return await _channel.invokeMethod<bool>('showPicker') ?? false;
-    } on MissingPluginException {
-      return false;
-    } on PlatformException {
-      return false;
-    }
-  }
+  /// The extension remains off until a reviewed privacy-safe workflow ships.
+  static Future<bool> showPicker() async => false;
 }
 
 String _normalize(String raw) => raw.trim().toLowerCase().replaceAll('’', "'").replaceAll(RegExp(r'[.!?]+$'), '')

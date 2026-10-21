@@ -63,6 +63,8 @@ jobs:
       - name: Check the screen-sharing extension is in the app
         run: |
           app="build/ios/iphonesimulator/Runner.app"
-          test -d "$app/PlugIns/CheBroadcast.appex" || { echo "::error::CheBroadcast.appex missing from Runner.app"; ls -R "$app" | head -50; exit 1; }
-          /usr/libexec/PlistBuddy -c 'Print :NSExtension:NSExtensionPointIdentifier' "$app/PlugIns/CheBroadcast.appex/Info.plist"
+          # Privacy-first default: no third-party frames are captured or saved.
+          # A future reviewed on-device redactor must be verified before enabling.
+          test ! -d "$app/PlugIns/CheBroadcast.appex" || { echo "::error::ReplayKit extension must be OFF by default"; exit 1; }
           grep -n 'che/screen_share' ios/Runner/AppDelegate.swift
+          grep -n 'case "latestFrame": result(nil)' ios/Runner/AppDelegate.swift

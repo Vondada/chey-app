@@ -1,6 +1,5 @@
 // Screen sharing through the ReplayKit extension (owner, 2026-10-20): the
 // phrases, the native channel's answers, and older builds without it.
-import 'dart:convert';
 
 import 'package:chey/che_ui/che_screen_share.dart';
 import 'package:flutter/services.dart';
@@ -35,38 +34,25 @@ void main() {
     expect(await CheScreenShare.showPicker(), isFalse);
   });
 
-  test('a running broadcast hands over its frame with its time and whether it was taken before the switch', () async {
-    final jpeg = Uint8List.fromList([0xFF, 0xD8, 0xFF, 0xE0, 1, 2, 3]);
-    final calls = <String>[];
+  test('a legacy extension cannot return cross-app pixels or open the picker', () async {
+    var calls = 0;
     messenger.setMockMethodCallHandler(_channel, (call) async {
-      calls.add(call.method);
+      calls++;
       switch (call.method) {
         case 'status':
           return {'available': true, 'active': true, 'paused': false};
         case 'latestFrame':
-          return {'bytes': jpeg, 'at': 1760950000.5, 'width': 1290, 'height': 2796, 'before_switch': true};
+          return {'bytes': Uint8List.fromList([255, 216, 255]), 'at': 1760950000.5, 'width': 1290, 'height': 2796};
         case 'showPicker':
           return true;
       }
       return null;
     });
     final status = await CheScreenShare.status();
-    expect(status.available && status.active, isTrue);
-    final frame = await CheScreenShare.frame();
-    expect(frame, isNotNull);
-    expect(frame!.ok, isTrue);
-    expect(frame.shared, isTrue);
-    expect(frame.beforeSwitch, isTrue);
-    expect(base64Decode(frame.base64), jpeg);
-    expect(frame.width, 1290);
-    expect(frame.at, DateTime.fromMillisecondsSinceEpoch(1760950000500));
-    expect(await CheScreenShare.showPicker(), isTrue);
-    expect(calls, ['status', 'latestFrame', 'showPicker']);
+    expect(status.available || status.active, isFalse);
+    expect(await CheScreenShare.frame(), isNull);
+    expect(await CheScreenShare.showPicker(), isFalse);
+    expect(calls, 0, reason: 'The privacy guard cannot request unredacted frames');
   });
 
-  test('no frame (sharing ended) or a native error is null, never a stale picture', () async {
-    messenger.setMockMethodCallHandler(_channel, (call) async => call.method == 'latestFrame' ? null : throw PlatformException(code: 'x'));
-    expect(await CheScreenShare.frame(), isNull);
-    expect((await CheScreenShare.status()).available, isFalse);
-  });
 }
