@@ -839,31 +839,67 @@ extension _CheHomeSend on _CHEHomeState {
     // screen and sends it with this turn, with the page's report, so the
     // Worker's vision reads what is really there. A password or vault page
     // on screen refuses the picture; a failure is said aloud, never guessed.
+    // Shown as large text on the page in front and spoken, for a blind or deaf owner.
+    Future<void> sayHere(String reply, {bool failed = false}) async {
+      if (mounted) {
+        _set(() {
+          controller.clear();
+          messages
+            ..add({'role': 'user', 'text': message})
+            ..add({'role': 'assistant', 'text': reply});
+        });
+        ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
+          content: Text(reply, style: const TextStyle(fontSize: 18, height: 1.3)),
+          duration: const Duration(seconds: 10),
+        ));
+      }
+      failed ? HapticFeedback.heavyImpact() : HapticFeedback.mediumImpact();
+      await speakText(reply, record: false);
+    }
+
+    // "Share my screen" / "stop sharing my screen" (owner, 2026-10-20): the
+    // iPhone's Screen Broadcast sheet, with CHE's extension chosen. iOS lets
+    // only the owner start or stop it there; CHE says what to choose.
+    final shareAsk = _pendingAttachment == null && cheAsksToShareScreen(message);
+    final stopAsk = _pendingAttachment == null && !shareAsk && cheAsksToStopSharing(message);
+    if (shareAsk || stopAsk) {
+      final share = await CheScreenShare.status();
+      if (!share.available) {
+        await sayHere('Cross-app screen sharing is temporarily disabled for privacy, sir, because other apps may show passwords or other secrets. '
+            'I can still see CHE\'s own screen: say "look at my screen".', failed: true);
+      } else if (stopAsk && !share.active) {
+        await sayHere('Screen sharing is already off, sir.');
+      } else if (shareAsk && share.active) {
+        await sayHere('Your screen is already shared with me, sir. Go to any app, come back, and say "look at my screen". Say "stop sharing my screen" to end it.');
+      } else if (await CheScreenShare.showPicker()) {
+        await sayHere(stopAsk
+            ? 'The iPhone\'s Screen Broadcast sheet is open, sir. Choose Stop Broadcast to end sharing. The red indicator at the top of the screen ends it too.'
+            : 'The iPhone\'s Screen Broadcast sheet is open, sir, with CHE Screen chosen. Choose Start Broadcast. '
+                'A red indicator shows while sharing is on, and I only look when you say "look at my screen".');
+      } else {
+        await sayHere('I could not open the iPhone\'s Screen Broadcast sheet, sir. In Control Center, hold Screen Recording and choose CHE Screen.', failed: true);
+      }
+      return;
+    }
+
     if (_pendingAttachment == null && cheAsksToLookAtScreen(message)) {
+      // Cross-app frames can contain unknown passwords. This privacy gate
+      // never forwards one, even if a legacy native extension is installed.
+      // CHE's own visible Flutter screen stays capturable.
       final shot = await CheScreenCapture.capture();
       if (!shot.ok) {
-        final reply = 'I did not look, sir: ${shot.reason}.';
-        if (mounted) {
-          _set(() {
-            controller.clear();
-            messages
-              ..add({'role': 'user', 'text': message})
-              ..add({'role': 'assistant', 'text': reply});
-          });
-          ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
-            content: Text(reply, style: const TextStyle(fontSize: 18, height: 1.3)),
-            duration: const Duration(seconds: 8),
-          ));
-        }
-        HapticFeedback.heavyImpact();
-        await speakText(reply, record: false);
+        await sayHere('I did not look, sir: ${shot.reason}.', failed: true);
         return;
       }
       HapticFeedback.lightImpact();
-      final look = 'The owner asked CHE to look at his screen. The attached image is a picture of CHE\'s own app '
-          '(${shot.width}x${shot.height}); web pages and videos inside it appear blank. Page report: ${CheScreenAwareness.describe()}';
+      final look = shot.shared
+          ? 'The owner asked CHE to look at his screen. The attached image is a frame of his whole iPhone screen from screen sharing '
+              '(${shot.width}x${shot.height}${shot.at == null ? '' : ', taken ${shot.at!.toIso8601String()}'}'
+              '${shot.beforeSwitch ? ', just before he switched back to CHE' : ''}); it can show any app.'
+          : 'The owner asked CHE to look at his screen. The attached image is a picture of CHE\'s own app '
+              '(${shot.width}x${shot.height}); web pages and videos inside it appear blank. Page report: ${CheScreenAwareness.describe()}';
       _set(() {
-        _pendingAttachment = {'name': 'che-screen.png', 'media_type': 'image', 'base64': shot.base64};
+        _pendingAttachment = {'name': shot.shared ? 'shared-screen.jpg' : 'che-screen.png', 'media_type': 'image', 'base64': shot.base64};
         // The browser's page text, when it is open, stays with the picture.
         _pendingScreenContext = [if ((_pendingScreenContext ?? '').trim().isNotEmpty) _pendingScreenContext!, look].join('\n\n');
       });

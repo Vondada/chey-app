@@ -190,6 +190,35 @@ to the owner's devices), the queue is bounded, and a screen's content stays the 
 observation unless the owner says "connect this to the Brain". Paper trading only.
 
 Not verified: on the iPhone, or in production.
+### Screen sharing: CHE sees other apps (ReplayKit; new IPA)
+
+"Share my screen" (or "start screen sharing", "watch my screen") opens the iPhone's Screen
+Broadcast sheet with "CHE Screen" chosen. iOS lets only the owner start it there; a red indicator
+shows while it runs. "Stop sharing my screen" opens the same sheet to stop it, and the red indicator
+stops it too. A build without the extension says so and offers CHE's own screen instead.
+
+While sharing is on, the extension (`native/iphone/CheBroadcast/SampleHandler.swift`) writes a
+downscaled JPEG (longest side 1400 px) at most once a second into the App Group folder it shares
+with CHE. It keeps the last 8 frames, beats a heartbeat every 2 seconds, and deletes every frame
+when the broadcast stops. Nothing leaves the iPhone until the owner says "look at my screen". CHE
+then sends one frame: the newest from before the owner came back to CHE (if that was within 2
+minutes), so she sees the other app, not herself. Otherwise she sends the newest frame. The reply
+says the image was the whole screen and when it was taken. If CHE is showing a password while
+sharing, she refuses.
+
+Build: the iPhone project is generated in CI, so `tool/bootstrap.sh` runs
+`tool/add_broadcast_extension.rb` (xcodeproj gem). That adds the `CheBroadcast` app-extension
+target, embeds it before Flutter's "Thin Binary" phase, and gives the app and the extension the
+`group.com.cheyapp.chey` App Group. The AppDelegate gains the `che/screen_share` channel. The IPA
+step ad-hoc signs the extension and the app with their entitlements, because the unsigned build
+would otherwise carry no App Group. SideStore renames the group when it signs and lists the new name
+under `ALTAppGroups`, which both sides read. The repository variable `CHE_SCREEN_BROADCAST=off`
+builds without any of it. `che-ios-native-check.yml` compiles it and checks the extension is in the
+app. Shorebird patches carry only the Dart side; an older IPA answers "not available".
+
+Not verified here: the broadcast on a real iPhone, SideStore's handling of the App Group and the
+extra App ID (a free Apple ID allows 10 App IDs a week, and the extension uses one), memory under the
+extension's 50 MB limit, and whether secure text fields are hidden in the broadcast.
 
 ## 3. The flow
 
@@ -200,7 +229,7 @@ reply guards (`truth_layer.js`) → receipts and room events → the Brain → t
 
 ## 4. Still to do (later PRs)
 
-- Sharing another app's screen needs the iOS ReplayKit broadcast extension, an app group and a new
-  IPA (native, not patchable).
+- Screen sharing (above) is verified only by compiling in CI; it needs a new IPA and the owner's
+  iPhone to prove the broadcast, the App Group under SideStore, and frame selection.
 - Semantic relationships (embeddings through `vector_memory.js`, status `inferred`).
 - The Brain Room UI: show `source.room`, status and `source.relations` (basis, status) on a record card.

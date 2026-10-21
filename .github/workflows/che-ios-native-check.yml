@@ -12,6 +12,8 @@ on:
     paths:
       - "tool/bootstrap.sh"
       - "tool/patch_local_runtime.py"
+      - "tool/add_broadcast_extension.rb"
+      - "native/iphone/**"
       - ".github/workflows/che-ios-native-check.yml"
   workflow_dispatch:
 
@@ -55,3 +57,14 @@ jobs:
 
       - name: Compile for the simulator (no signing)
         run: flutter build ios --simulator --debug
+
+      # Screen sharing (owner, 2026-10-20): the broadcast extension must be
+      # built and embedded, and CHE's channel for it compiled in.
+      - name: Check the screen-sharing extension is in the app
+        run: |
+          app="build/ios/iphonesimulator/Runner.app"
+          # Privacy-first default: no third-party frames are captured or saved.
+          # A future reviewed on-device redactor must be verified before enabling.
+          test ! -d "$app/PlugIns/CheBroadcast.appex" || { echo "::error::ReplayKit extension must be OFF by default"; exit 1; }
+          grep -n 'che/screen_share' ios/Runner/AppDelegate.swift
+          grep -n 'case "latestFrame": result(nil)' ios/Runner/AppDelegate.swift

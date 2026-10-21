@@ -126,6 +126,125 @@ import LocalAuthentication
 import Security
 import UserNotifications
 import BackgroundTasks
+import ReplayKit
+
+/// CHE screen sharing (owner, 2026-10-20): reads the frames the CheBroadcast
+/// extension writes into the App Group folder both share, and opens the
+/// system broadcast sheet. Nothing leaves the iPhone from here: Dart sends one
+/// frame only when the owner asks "look at my screen".
+private final class CHEScreenShare: NSObject {
+  static let shared = CHEScreenShare()
+  private var cameForwardAt = Date.distantPast
+  private var picker: RPSystemBroadcastPickerView?
+
+  /// SideStore/AltStore rename the App Group when they sign CHE and list the
+  /// new name under ALTAppGroups; the declared name is the fallback.
+  private var folder: URL? {
+    let group = (Bundle.main.object(forInfoDictionaryKey: "ALTAppGroups") as? [String])?
+      .first(where: { !$0.isEmpty }) ?? "group.com.cheyapp.chey"
+    return FileManager.default
+      .containerURL(forSecurityApplicationGroupIdentifier: group)?
+      .appendingPathComponent("che_screen", isDirectory: true)
+  }
+
+  /// The extension's real bundle id (a signing tool may have changed it).
+  private var extensionID: String? {
+    guard let url = Bundle.main.builtInPlugInsURL?.appendingPathComponent("CheBroadcast.appex") else { return nil }
+    return Bundle(url: url)?.bundleIdentifier
+  }
+
+  func register(messenger: FlutterBinaryMessenger) {
+    NotificationCenter.default.addObserver(
+      self, selector: #selector(cameForward),
+      name: UIApplication.didBecomeActiveNotification, object: nil
+    )
+    let channel = FlutterMethodChannel(name: "che/screen_share", binaryMessenger: messenger)
+    channel.setMethodCallHandler { [weak self] call, result in
+      guard let self else { result(nil); return }
+      switch call.method {
+      // Keep the native bridge fail-closed as well as the Dart API: a
+      // legacy client must not retrieve raw cross-app frames through this channel.
+      case "status": result(["available": false, "active": false, "paused": false])
+      case "latestFrame": result(nil)
+      case "showPicker": result(false)
+      default: result(FlutterMethodNotImplemented)
+      }
+    }
+  }
+
+  @objc private func cameForward() { cameForwardAt = Date() }
+
+  private func state() -> [String: Any] {
+    guard let url = folder?.appendingPathComponent("state.json"),
+          let data = try? Data(contentsOf: url),
+          let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [:] }
+    return object
+  }
+
+  private func status() -> [String: Any] {
+    let s = state()
+    let beat = (s["heartbeat_at"] as? Double) ?? 0
+    // The extension beats every two seconds; a stale heartbeat means it ended.
+    let live = (s["active"] as? Bool ?? false) && Date().timeIntervalSince1970 - beat < 8
+    return [
+      "available": folder != nil && extensionID != nil,
+      "active": live,
+      "paused": s["paused"] as? Bool ?? false,
+    ]
+  }
+
+  /// The newest frame from before CHE came to the front, when that was in the
+  /// last two minutes (what the owner was looking at in the other app), else
+  /// the newest frame.
+  private func latestFrame() -> [String: Any]? {
+    guard let folder, status()["active"] as? Bool == true else { return nil }
+    let names = ((try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [])
+      .filter { $0.hasPrefix("frame-") && $0.hasSuffix(".jpg") }
+      .sorted()
+    // frame-<milliseconds>-<width>x<height>.jpg
+    let frames: [(name: String, at: Double, width: Int, height: Int)] = names.compactMap { name -> (name: String, at: Double, width: Int, height: Int)? in
+      let core = name.dropFirst("frame-".count).dropLast(".jpg".count)
+      let parts = core.split(separator: "-")
+      guard parts.count == 2, let ms = Double(parts[0]) else { return nil }
+      let size = parts[1].split(separator: "x").compactMap { Int($0) }
+      guard size.count == 2 else { return nil }
+      return (name: name, at: ms / 1000, width: size[0], height: size[1])
+    }
+    let forward = cameForwardAt.timeIntervalSince1970
+    let recentSwitch = Date().timeIntervalSince(cameForwardAt) < 120
+    let before = recentSwitch ? frames.last(where: { $0.at < forward - 0.5 }) : nil
+    guard let pick = before ?? frames.last,
+          let data = try? Data(contentsOf: folder.appendingPathComponent(pick.name)) else { return nil }
+    return [
+      "bytes": FlutterStandardTypedData(bytes: data),
+      "at": pick.at,
+      "width": pick.width,
+      "height": pick.height,
+      "before_switch": before != nil,
+    ]
+  }
+
+  /// Opens the system "Screen Broadcast" sheet with CHE's extension chosen; the
+  /// owner starts or stops it there (iOS never lets an app start it alone).
+  private func showPicker() -> Bool {
+    guard let id = extensionID else { return false }
+    let window = UIApplication.shared.connectedScenes
+      .compactMap { $0 as? UIWindowScene }
+      .flatMap { $0.windows }
+      .first { $0.isKeyWindow }
+    guard let window else { return false }
+    let picker = self.picker ?? RPSystemBroadcastPickerView(frame: CGRect(x: 0, y: 0, width: 2, height: 2))
+    picker.preferredExtension = id
+    picker.showsMicrophoneButton = false
+    picker.alpha = 0.02
+    picker.isAccessibilityElement = false
+    if picker.superview == nil { window.addSubview(picker) }
+    self.picker = picker
+    guard let button = picker.subviews.compactMap({ $0 as? UIButton }).first else { return false }
+    button.sendActions(for: .touchUpInside)
+    return true
+  }
+}
 
 private final class CHEVoiceStreamHandler: NSObject, FlutterStreamHandler {
   private var sink: FlutterEventSink?
@@ -256,6 +375,7 @@ struct CHEAppShortcuts: AppShortcutsProvider {
         binaryMessenger: messenger
       )
       events.setStreamHandler(voiceStreamHandler)
+      CHEScreenShare.shared.register(messenger: messenger)
 
       let nativeShell = FlutterMethodChannel(
         name: "che/native_shell",
@@ -1467,4 +1587,15 @@ struct CHEAppShortcuts: AppShortcutsProvider {
   }
 }
 SWIFT
+fi
+
+# CHE screen sharing (owner, 2026-10-20): the ReplayKit broadcast extension
+# that lets CHE see another app's screen, and the App Group it shares frames
+# through. CHE_SCREEN_BROADCAST=off builds without it, should a signing tool
+# refuse the extension; "look at my screen" then sees CHE's own app only.
+if [[ -d ios && "${CHE_SCREEN_BROADCAST:-off}" == "on" ]]; then
+  if ! ruby -e 'require "xcodeproj"' >/dev/null 2>&1; then
+    gem install --user-install --no-document xcodeproj
+  fi
+  ruby tool/add_broadcast_extension.rb ios
 fi
