@@ -434,8 +434,11 @@ extension _CheHomeStreaming on _CHEHomeState {
         // Only the trusted deterministic trading handlers can request this room.
         if (data['open_screen'] == 'trading_room' &&
             const {'che_trading_live', 'che_trading_ledgers', 'che_trading_desk'}.contains(data['source']) &&
-            mounted && !_assistantHubOpen) {
-          _openAssistantHub(tab: 1);
+            mounted) {
+          // The section the reply names ("Show strategy progress" → STRATEGIES), for an open room too.
+          final chart = data['chart'];
+          if (chart is Map && chart['section'] != null) CheTradingRoom.requestedSection.value = cheTradingSectionNamed('${chart['section']}');
+          if (!_assistantHubOpen) _openAssistantHub(tab: 1);
         }
         // "Preview number three": the reply names a free sample from the provider's own
         // library. It is held here and played by send.dart once CHE has finished saying
@@ -466,6 +469,17 @@ extension _CheHomeStreaming on _CHEHomeState {
         // "Show me my Alpaca trades": the Alpaca PAPER dashboard opens beside the spoken summary (owner, 2026-10-20).
         if (data['open_view'] == 'trading_controls' && mounted) {
           unawaited(Navigator.of(context).push(CheStrategyControlsPage.route(baseUrl: () => cheAgentBaseUrl, headers: () => _authHeaders, onAsk: _runHubPrompt)));
+        }
+        // "Open Alpaca chart", "CHE, show EMA trades", "Draw a line at 21,450": the Trading Room on
+        // the section, account, symbol and strategy the Worker named (Build 1).
+        if (data['open_view'] == 'trading_chart' && mounted) {
+          unawaited(Navigator.of(context).push(CheTradingRoomPage.route(
+            baseUrl: () => cheAgentBaseUrl,
+            headers: () => _authHeaders,
+            onAsk: _runHubPrompt,
+            onRead: (words) { speakText(words, record: false, readOnDemand: true); },
+            chart: data['chart'] is Map<String, dynamic> ? data['chart'] as Map<String, dynamic> : null,
+          )));
         }
         if (data['open_view'] == 'alpaca_paper' && mounted) {
           unawaited(Navigator.of(context).push(CheAlpacaPaperPage.route(baseUrl: () => cheAgentBaseUrl, headers: () => _authHeaders, onAsk: _runHubPrompt)));

@@ -112,8 +112,14 @@ void main() {
     ));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 200));
-    // The live chart now fills the top of the room; the quote panels follow it.
-    expect(find.textContaining('E-mini S&P 500 futures'), findsWidgets);
+    // Build 1: the CHART section opens on the interactive paper chart; the index futures chart
+    // and the quote panels follow it under MARKET OVERVIEW.
+    expect(find.text('CHART'), findsWidgets);
+    for (var i = 0; i < 12 && find.textContaining('E-mini S&P 500 futures', skipOffstage: false).evaluate().isEmpty; i++) {
+      await tester.drag(find.byType(ListView).first, const Offset(0, -300));
+      await tester.pump();
+    }
+    expect(find.textContaining('E-mini S&P 500 futures', skipOffstage: false), findsWidgets);
     // The live paper panel sits under the chart, so the quote panels are further down.
     for (var i = 0; i < 12 && find.text('6123', skipOffstage: false).evaluate().isEmpty; i++) {
       await tester.drag(find.byType(ListView).first, const Offset(0, -300));

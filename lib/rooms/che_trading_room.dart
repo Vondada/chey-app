@@ -1,0 +1,268 @@
+// The Trading Room in four sections (owner, 2026-10-20, Build 1): CHART, CHE TRADES, STRATEGIES
+// and ACCOUNT. Each section holds panels that already exist; nothing here reads or trades on its
+// own. The Markets tab shows it, and voice ("Open Alpaca chart", "CHE, show EMA trades", "Show
+// strategy progress") opens it as a page on the section asked for. Silent on open.
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:http/http.dart' as http;
+
+import 'che_alpaca_paper.dart';
+import 'che_live_paper.dart';
+import 'che_strategy_controls.dart';
+import 'che_trading_chart.dart';
+import 'che_trading_connections.dart';
+import 'che_trading_ledgers.dart';
+
+const _gold = Color(0xFFE8B04A);
+const _stroke = Color(0xFF1B2A2D);
+
+enum CheTradingSection { chart, cheTrades, strategies, account }
+
+const kTradingSectionLabels = <CheTradingSection, String>{
+  CheTradingSection.chart: 'CHART',
+  CheTradingSection.cheTrades: 'CHE TRADES',
+  CheTradingSection.strategies: 'STRATEGIES',
+  CheTradingSection.account: 'ACCOUNT',
+};
+
+/// The section a Worker reply names ("chart", "strategies", ...); chart when unknown.
+CheTradingSection cheTradingSectionNamed(String? name) => switch ((name ?? '').toLowerCase().replaceAll(RegExp(r'[^a-z]'), '')) {
+      'chetrades' || 'trades' => CheTradingSection.cheTrades,
+      'strategies' || 'strategy' => CheTradingSection.strategies,
+      'account' => CheTradingSection.account,
+      _ => CheTradingSection.chart,
+    };
+
+class CheTradingRoom extends StatefulWidget {
+  const CheTradingRoom({
+    super.key,
+    required this.baseUrl,
+    required this.headers,
+    required this.onAsk,
+    this.client,
+    this.onRead,
+    this.initialSection = CheTradingSection.chart,
+    this.chartController,
+    this.initialAccount = 'alpaca_paper',
+    this.initialSymbol = '',
+    this.initialStrategy,
+    this.header,
+    this.chartExtras = const [],
+    this.accountExtras = const [],
+    this.chartHeight = 340,
+  });
+
+  final String Function() baseUrl;
+  final Map<String, String> Function() headers;
+  final void Function(String prompt) onAsk;
+  final http.Client? client;
+  /// Reads text aloud, only when the owner presses a Read button.
+  final void Function(String text)? onRead;
+  final CheTradingSection initialSection;
+  final CheTradingChartController? chartController;
+  final String initialAccount, initialSymbol;
+  final String? initialStrategy;
+  final Widget? header;
+
+  /// The market overview under the chart, and the extra cards under the account panels.
+  final List<Widget> chartExtras, accountExtras;
+  final double chartHeight;
+
+  /// A voice reply that opens the Trading Room on a section ("Show strategy progress" → STRATEGIES)
+  /// sets this; the open room switches to it, and a room built afterwards starts on it.
+  static final requestedSection = ValueNotifier<CheTradingSection?>(null);
+
+  @override
+  State<CheTradingRoom> createState() => _CheTradingRoomState();
+}
+
+class _CheTradingRoomState extends State<CheTradingRoom> {
+  late CheTradingSection _section = CheTradingRoom.requestedSection.value ?? widget.initialSection;
+
+  @override
+  void initState() {
+    super.initState();
+    CheTradingRoom.requestedSection.value = null;
+    CheTradingRoom.requestedSection.addListener(_onRequest);
+  }
+
+  @override
+  void dispose() {
+    CheTradingRoom.requestedSection.removeListener(_onRequest);
+    super.dispose();
+  }
+
+  void _onRequest() {
+    final s = CheTradingRoom.requestedSection.value;
+    if (s == null || !mounted) return;
+    setState(() => _section = s);
+    CheTradingRoom.requestedSection.value = null;
+  }
+  late final CheTradingChartController _chart = widget.chartController ?? CheTradingChartController();
+
+  Widget _pad(Widget child) => Padding(padding: const EdgeInsets.fromLTRB(12, 12, 12, 0), child: child);
+
+  List<Widget> _sectionChildren() {
+    final p = (baseUrl: widget.baseUrl, headers: widget.headers, onAsk: widget.onAsk, client: widget.client);
+    switch (_section) {
+      case CheTradingSection.chart:
+        return [
+          _pad(CheTradingChart(
+            baseUrl: p.baseUrl,
+            headers: p.headers,
+            client: p.client,
+            onSpeak: widget.onRead,
+            controller: _chart,
+            initialAccount: widget.initialAccount,
+            initialSymbol: widget.initialSymbol,
+            initialStrategy: widget.initialStrategy,
+            height: widget.chartHeight,
+          )),
+          ...widget.chartExtras,
+        ];
+      case CheTradingSection.cheTrades:
+        return [
+          _pad(CheLivePaperPanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, onRead: widget.onRead, client: p.client)),
+          _pad(CheTradingLedgersPanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, client: p.client)),
+        ];
+      case CheTradingSection.strategies:
+        // Limits and the registry, then each strategy's learning progress (#382), from the same panel CHE TRADES uses.
+        return [
+          _pad(CheStrategyControlsPanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, client: p.client)),
+          _pad(CheLivePaperPanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, onRead: widget.onRead, client: p.client)),
+        ];
+      case CheTradingSection.account:
+        return [
+          _pad(CheAlpacaPaperPanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, client: p.client)),
+          _pad(CheTradingConnectionsPanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, client: p.client)),
+          ...widget.accountExtras,
+        ];
+    }
+  }
+
+  void _go(CheTradingSection s) {
+    if (s == _section) return;
+    HapticFeedback.selectionClick();
+    setState(() => _section = s);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.only(bottom: 32),
+      children: [
+        ?widget.header,
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+          child: Row(children: [
+            for (final e in kTradingSectionLabels.entries)
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 3),
+                  child: Semantics(
+                    button: true,
+                    selected: e.key == _section,
+                    label: '${e.value} section${e.key == _section ? ', open' : ''}',
+                    excludeSemantics: true,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(10),
+                      onTap: () => _go(e.key),
+                      child: Container(
+                        height: 46,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: e.key == _section ? _gold : Colors.transparent,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: e.key == _section ? _gold : _stroke),
+                        ),
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 4),
+                            child: Text(e.value,
+                                style: TextStyle(color: e.key == _section ? Colors.black : Colors.white, fontWeight: FontWeight.w800, fontSize: 13, letterSpacing: 0.6)),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ]),
+        ),
+        ..._sectionChildren(),
+      ],
+    );
+  }
+}
+
+/// The Trading Room as its own page, opened by voice on the section and chart asked for.
+class CheTradingRoomPage extends StatelessWidget {
+  const CheTradingRoomPage({
+    super.key,
+    required this.baseUrl,
+    required this.headers,
+    required this.onAsk,
+    this.onRead,
+    this.section = CheTradingSection.chart,
+    this.account,
+    this.symbol,
+    this.strategy,
+  });
+
+  final String Function() baseUrl;
+  final Map<String, String> Function() headers;
+  final void Function(String prompt) onAsk;
+  /// Reads text aloud, only when the owner presses a Read button.
+  final void Function(String text)? onRead;
+  final CheTradingSection section;
+  final String? account, symbol, strategy;
+
+  /// Route for a Worker reply's `chart` object: {section, account, symbol, filter: {strategy}}.
+  static Route<void> route({
+    required String Function() baseUrl,
+    required Map<String, String> Function() headers,
+    required void Function(String) onAsk,
+    void Function(String)? onRead,
+    Map<String, dynamic>? chart,
+  }) {
+    final c = chart ?? const {};
+    final filter = c['filter'] is Map ? c['filter'] as Map : const {};
+    return MaterialPageRoute(
+      settings: const RouteSettings(name: 'trading_room'),
+      builder: (_) => CheTradingRoomPage(
+        baseUrl: baseUrl,
+        headers: headers,
+        onAsk: onAsk,
+        onRead: onRead,
+        section: cheTradingSectionNamed(c['section']?.toString()),
+        account: c['account']?.toString(),
+        symbol: c['symbol']?.toString(),
+        strategy: filter['strategy']?.toString(),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        backgroundColor: const Color(0xFF05080A),
+        appBar: AppBar(
+          backgroundColor: Colors.black,
+          foregroundColor: Colors.white,
+          title: const Text('Trading Room'),
+          leading: IconButton(tooltip: 'Back', icon: const Icon(Icons.arrow_back), onPressed: () => Navigator.of(context).maybePop()),
+        ),
+        body: SafeArea(
+          child: CheTradingRoom(
+            baseUrl: baseUrl,
+            headers: headers,
+            onAsk: onAsk,
+            onRead: onRead,
+            initialSection: section,
+            initialAccount: account ?? (strategy != null ? 'futures_paper' : 'alpaca_paper'),
+            initialSymbol: symbol ?? '',
+            initialStrategy: strategy,
+          ),
+        ),
+      );
+}
