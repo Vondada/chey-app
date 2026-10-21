@@ -1,10 +1,14 @@
 // CHE answers "what is my favorite food?" from the owner's own stored statements, and nothing else.
 //
-// The bug this fixes (owner, 2026-10-21): "What is my favorite food…" matched no memory route, so the language model
-// answered it with every stored memory in its prompt. It gave "favorite drink" for a food question and an invented
-// date. Here the subject must match a stored statement exactly (every content word of it), the answer quotes that
-// statement with the date it was stored, and with no match CHE says so and asks the owner to tell her.
+// Bugs this fixes (owner, 2026-10-21, real iPhone test): asked "CHE, what is my favorite food, and where did you
+// learn it?", CHE answered "You told me … 'CHE, what is my favorite food, and where did you learn it?' on October 21".
+// Cause: the owner's own question was stored in the Brain as "You said: …", and recall took every stored owner turn as
+// a statement, so the question matched its own subject words. Also, a wake prefix ("CHE,") was not stripped, so a
+// prefixed question never reached this route at all.
 //
+// The rules now: a fact is an owner statement that asserts one ("my favorite food is pizza"). A question, request,
+// hypothetical, quoted or uncertain statement is never a fact, and older records of that kind are skipped at recall,
+// never deleted. The answer is the stored subject and value with the genuine date the owner gave it.
 // groundedReply is the last check on every model reply: a date the stored records do not contain is never shown.
 import { ownerAttestedRecords } from './memory_provenance.js';
 
@@ -15,13 +19,48 @@ const LEARN = /\b(?:where|how) did you (?:learn|get|hear)\b/i;
 // Trading, market, system and measurement words belong to their own routes: "what is my MAE" is not a personal fact.
 const NOT_PERSONAL = /\b(?:trad(?:e|es|ing)|paper|performance|volume|probability|mae|mfe|win|loss|streak|session|hour|price|market|portfolio|orders?|balance|chart|strateg(?:y|ies)|positions?|accounts?|rate|expectancy|drawdown|pnl|profit|eth|btc|nq|mnq|es)\b/i;
 
+// The wake prefix in any spelling the owner speaks: "CHE, …", "Chay …", "chey: …", "Shay, …".
+const WAKE = /^(?:(?:che|chay|chey|shay)[,:]?\s+)+/i;
+// Starts like a question or a request, so it asks rather than states.
+const ASKS_OR_ORDERS = /^(?:what|which|who|whom|whose|when|where|why|how|is|are|was|were|do|does|did|can|could|would|should|will|tell|remind|ask|show|list|find|search|quote|say|write|give|check|open|send|delete|remove|forget)\b/i;
+// Not a statement the owner makes: a question mark, a guess, a hypothetical, a fiction, or a quote of an answer.
+const NOT_A_FACT = /\?|\b(?:if|suppose|pretend|imagine|hypothetical|maybe|might|perhaps|probably|i think|i guess|i(?:'m| am) not sure|not sure|story|poem|joke|you said|you told me|che answered|che said)\b/i;
+// "my favorite food is pizza", "my Worker URL is https://…": the owner's subject and value.
+const FACT = /^my\s+(.{2,60}?)\s+(?:is|are)\s+(.{1,300}?)\.?$/i;
+
 function words(text) {
   return String(text || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/).filter((w) => w && !STOP.has(w));
 }
 
+/** The text with any leading wake prefix ("CHE, ", "Chay ") removed, whitespace collapsed. */
+export function stripWake(text) {
+  return String(text || '').replace(/\s+/g, ' ').trim().replace(WAKE, '').trim();
+}
+
+/** True when the text is a question or a request, so it must never be saved or quoted as a fact. */
+export function isQuestionLike(text) {
+  const body = stripWake(text).replace(/^remember(?: that)?\s+/i, '');
+  return body.endsWith('?') || ASKS_OR_ORDERS.test(body) || /\?/.test(String(text || ''));
+}
+
+/**
+ * The fact an owner statement asserts, or null. Only a plain statement "my <subject> is <value>" qualifies: a question,
+ * request, hypothetical, guess, quote or fiction does not. The subject keeps its words; the value keeps the owner's own.
+ */
+export function ownerAssertion(text) {
+  const body = stripWake(text).replace(/^remember(?: that)?\s+/i, '').trim();
+  if (!body || isQuestionLike(text) || ASKS_OR_ORDERS.test(body) || NOT_A_FACT.test(body)) return null;
+  const match = FACT.exec(body);
+  if (!match) return null;
+  const subject = match[1].trim();
+  const value = match[2].trim();
+  if (!words(subject).length || NOT_PERSONAL.test(subject) || !value) return null;
+  return { subject, subjectWords: words(subject), value, text: body.replace(/[.!]+$/, '') };
+}
+
 /** The subject of a personal question, or null when the words are not asking for a personal fact. */
 export function personalFactQuestion(message) {
-  const text = String(message || '').replace(/\s+/g, ' ').trim().replace(/[?.!]+$/, '');
+  const text = stripWake(message).replace(/[?.!]+$/, '');
   if (!text || /\b(?:story|fiction|pretend|imagine|hypothetical|poem|joke)\b/i.test(text)) return null;
   const learn = LEARN.test(text);
   const [head] = text.split(/,|\band\b|\bwhere\b/i);
@@ -39,16 +78,24 @@ export function spokenStoredDate(record = {}) {
   return `${MONTHS[at.getUTCMonth()]} ${at.getUTCDate()}, ${at.getUTCFullYear()}`;
 }
 
+// Same subject, same words, in any order: "favorite food" matches "food favorite"; "favorite drink" never matches "food".
+function sameSubject(a, b) {
+  const x = new Set(a);
+  const y = new Set(b);
+  return x.size === y.size && [...x].every((w) => y.has(w));
+}
+
 /**
- * The owner's own statement that matches the subject: every content word of the subject appears in it.
- * "food" never matches "my favorite drink is Sprite".
+ * The owner's stored statement of this fact: an assertion whose subject is exactly the asked subject. The newest match
+ * wins. Questions and other non-assertions are skipped here even when an older record holds them.
  */
 export function recallPersonalFact(data = {}, question = {}, brainRecords = []) {
   const records = [...ownerAttestedRecords(data), ...statementsFromBrain(brainRecords)].filter((r) => r.text);
-  const matches = records.filter((r) => {
-    const body = new Set(words(r.text));
-    return question.words.every((w) => body.has(w));
-  });
+  const matches = [];
+  for (const r of records) {
+    const fact = ownerAssertion(r.text);
+    if (fact && sameSubject(fact.subjectWords, question.words)) matches.push({ ...r, subject: fact.subject, value: fact.value });
+  }
   return matches.length ? matches[matches.length - 1] : null;
 }
 
@@ -66,7 +113,7 @@ export function statementsFromBrain(records = []) {
     .filter((r) => r.text);
 }
 
-/** The reply and the records it rests on. A miss says so and never guesses; a hit quotes the stored statement. */
+/** The reply and the records it rests on. A miss says so and never guesses; a hit gives the stored subject and value. */
 export function answerPersonalFact(data = {}, question = {}, brainRecords = []) {
   const record = recallPersonalFact(data, question, brainRecords);
   if (!record) {
@@ -77,10 +124,9 @@ export function answerPersonalFact(data = {}, question = {}, brainRecords = []) 
     };
   }
   const when = spokenStoredDate(record);
-  const statement = String(record.text).replace(/[.!]+$/, '');
-  const quoted = `You told me "${statement.charAt(0).toUpperCase()}${statement.slice(1)}"${when ? ` on ${when}` : ''}.`;
   const source = question.learn ? ' I learned it from you in this chat.' : '';
-  return { kind: 'owner_attested', records: [record.id].filter(Boolean), answer: `${quoted}${source}` };
+  const answer = `Your ${record.subject} is ${record.value}.${when ? ` You told me that on ${when}.` : ''}${source}`;
+  return { kind: 'owner_attested', records: [record.id].filter(Boolean), answer };
 }
 
 // Dates and attributions a reply may show: only what a stored record holds. Anything else is removed.
