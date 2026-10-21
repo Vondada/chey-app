@@ -133,6 +133,7 @@ import 'browser/che_video_voice.dart';
 import 'browser/che_embedded_app_shell.dart' show CheEmbeddedAppAnnouncer;
 import 'brain/che_brain_space.dart' show CheBrainSpaceController;
 import 'brain/che_knowledge_atlas.dart';
+import 'brain/che_room_events.dart';
 import 'brain/che_brain_space_model.dart' show CheBrainAction, CheBrainCommand;
 import 'conversations/che_conversations_screen.dart';
 import 'browser/che_chat_links.dart';

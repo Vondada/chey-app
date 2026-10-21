@@ -90,7 +90,7 @@ import { meetingCommand, meetingScene, planScene, simScene } from './world_scene
 import { SIM_SOURCE, listRuns, loadRun, loadSimMemory, runLab, saveRun, simLabIntent } from './sim_lab.js';
 import { PLAN_SOURCE, answerPlanFollowUp, buildPlan, classifyProject, listPlans, loadPlan, planFollowUpIntent, planSubject, projectPlanIntent, researchSource, savePlan } from './project_plan.js';
 import { BRAIN_ROOMS_SOURCE, ROOMS as BRAIN_ROOMS, answerCrossRoom, crossRoomIntent, drainRoomEvents, imageReference, pointsAtScreen, prFollowUp, recentScreen, relinkRecords, rememberScreen, screenDeictic, screenFollowUp, screenRoomContext, screenRoomFor, statusLabel } from './brain_rooms.js';
-import { queueRoomEvent } from './room_events.js';
+import { controlChangeEvent, meetingEvent, officeTaskEvent, paperOrderRefusedEvent, phoneRoomEvent, queueRoomEvent, researchEvent } from './room_events.js';
 import { cloudDailyLimit, sanitizeOwnerText } from './che_errors.js';
 import { CHE_UPDATE_GUIDE, mergeSelfUpdatePr, openSelfUpdatePr, rollbackLastUpdate, selfUpdateGitHubAccess, selfUpdateStatus, workerDeploymentStatus } from './self_update.js';
 import { FAILURE_CLASS, backoffMs, classifyFailure, idempotencyKey, ownerEngineeringMessage, stableHash, stripOwnerHomework } from './recovery_policy.js';
@@ -3845,10 +3845,28 @@ export class CheState extends DurableObject {
    * One owner control change. Emergency Stop acts at once: it blocks entries, cancels unfilled orders
    * (CHE's MNQ simulations and Alpaca PAPER) and reports what stays open, all in its audit record.
    */
+  /**
+   * The Trading Room's record of one Alpaca PAPER order request (owner, Build 2): a placed order as a receipt
+   * (which the Brain hears as a verified room event), a refused one as its own event. Same key on a retry.
+   */
+  async notePaperOrder(order, placed, via = 'app') {
+    try {
+      if (placed?.ok && !placed.repeated && placed.receipt?.id) {
+        const r = placed.receipt;
+        await recordReceipt(this.ctx.storage, { kind: 'paper_order_placed', key: `alpaca_paper:${r.id}`, symbol: r.symbol, side: r.side, qty: r.qty, client_order_id: r.client_order_id, detail: String(placed.detail || `Alpaca PAPER accepted the order (${r.status}).`).slice(0, 300) });
+        return;
+      }
+      const event = paperOrderRefusedEvent(order, placed, { via });
+      if (event) await queueRoomEvent(this.ctx.storage, event);
+    } catch (_) { /* a Brain record never blocks a trading answer */ }
+  }
+
   async tradingControl(change, { who = 'owner', confirm = false } = {}) {
     const resolved = resolveStep(await readControls(this.ctx.storage), change || {});
     if (resolved.error) return { ok: false, error: resolved.error };
     const result = await applyControlChange(this.ctx.storage, resolved, { who, confirm });
+    // Every applied change is a Trading Room event (owner, Build 2); Emergency Stop and Flatten are recorded below with what they cancelled.
+    if (result.ok && !['emergency_stop', 'flatten'].includes(resolved.kind)) await queueRoomEvent(this.ctx.storage, controlChangeEvent(result.record)).catch(() => null);
     if (!result.ok || !['emergency_stop', 'flatten'].includes(resolved.kind)) return result;
     const flatten = resolved.kind === 'flatten';
     const sims = await haltLivePaper(this.ctx.storage, { flatten, reason: flatten ? 'Flatten' : 'Emergency Stop' });
@@ -3860,6 +3878,8 @@ export class CheState extends DurableObject {
       lines.push(alpaca.state === 'not_configured' ? 'Alpaca PAPER is not connected, so there was nothing to cancel there.' : `Alpaca PAPER could not be reached (${alpaca.error || alpaca.state}); its orders were not confirmed cancelled.`);
     }
     await noteAuditEffect(this.ctx.storage, result.record.at, lines);
+    const audited = { ...result.record, effect: [...result.record.effect, ...lines], summary: [result.record.summary, ...lines].join(' ') };
+    await queueRoomEvent(this.ctx.storage, controlChangeEvent(audited, { halted: { sims, alpaca } })).catch(() => null);
     return { ...result, record: { ...result.record, effect: [...result.record.effect, ...lines] }, halted: { sims, alpaca } };
   }
 
@@ -6339,6 +6359,18 @@ export class CheState extends DurableObject {
         });
       }
 
+      // The phone's rooms report what happened there (owner, Build 2, 2026-10-20): a track played, a Help
+      // explanation or walkthrough, a screen looked at. Owner device only; an allowlisted kind per room, a
+      // stable key (a retry is never a second record), bounded safe text, and for the screen only its name and
+      // the time. The event is queued like any room's and written to the Brain on the next drain.
+      if (path === '/api/brain/room-event' && request.method === 'POST') {
+        if (!ownerDevice) return json({ detail: 'Only the CHE owner can record activity in his rooms.' }, 403);
+        const event = phoneRoomEvent(body, { isSafe: isSafeText });
+        if (event.error) return json({ ok: false, detail: event.error }, 400);
+        const queued = await queueRoomEvent(this.ctx.storage, event);
+        return json({ ok: true, queued, room: event.room, kind: event.kind, key: event.key, at: event.at });
+      }
+
       // ─── Brain: the one logical Brain the phone replicates ──────────────
       // Reads and writes are the owner's only. /changes and /push are the two
       // halves of the phone's incremental sync; /status gives real counts.
@@ -6944,6 +6976,7 @@ export class CheState extends DurableObject {
         const stale = await marketOrderFeedProblem(this.keyEnv || this.env, body);
         if (stale) return json({ ok: false, blocked: true, detail: stale }, 400);
         const placed = await placeAlpacaPaperOrder(this.keyEnv || this.env, this.ctx.storage, body, { guard: await this.stockOrderGuard() });
+        await this.notePaperOrder(body, placed, 'app');
         return json(placed, placed.ok ? 200 : 400);
       }
       if (path === '/api/trading/paper' && request.method === 'GET') {
@@ -7643,6 +7676,7 @@ export class CheState extends DurableObject {
         const convened = conveneMeeting(data, body);
         if (convened.error) return json({ detail: convened.error }, 400);
         await this.ctx.storage.put('che', data);
+        await queueRoomEvent(this.ctx.storage, meetingEvent(convened.meeting, 'convened')).catch(() => null);
         await this.scheduleWork();
         this.broadcastAgents(data);
         return json({ meeting: convened.meeting, created_agents: convened.created.map((item) => item.name) });
@@ -9156,7 +9190,9 @@ export class CheState extends DurableObject {
             const merged = [...new Set([...stored, ...sentGrants])];
             if (merged.length !== stored.length) await this.ctx.storage.put(APPS_GRANTED_KEY, merged);
           }
-          const { explicit, required } = classifyAppAccesses(message);
+          // "What happened in the Music Room today?" reads CHE's own room records (owner, Build 2): it opens and acts in no app.
+          const roomRead = !body.attachment && crossRoomIntent(message)?.kind === 'activity';
+          const { explicit, required } = roomRead ? { explicit: [], required: [] } : classifyAppAccesses(message);
           if (explicit.length || required.length) {
             const allowedApps = await this.ctx.storage.get(APPS_GRANTED_KEY) || [];
             const additions = explicit.filter((app) => !allowedApps.includes(app));
@@ -9229,6 +9265,7 @@ export class CheState extends DurableObject {
           const convened = conveneMeeting(data, { objective: meetingAsk.topic });
           if (convened.error) return ndjsonReply(`The meeting did not start, sir: ${convened.error}`, { source: 'che_meeting_room', ok: false, model_calls: 0 });
           await this.ctx.storage.put('che', data);
+          await queueRoomEvent(this.ctx.storage, meetingEvent(convened.meeting, 'convened')).catch(() => null);
           await this.scheduleWork();
           this.broadcastAgents(data);
           const scene = meetingScene(convened.meeting, runtimeSnapshot(data).agents);
@@ -9302,7 +9339,8 @@ export class CheState extends DurableObject {
         // "What's related to this?" with no screen shared is about the conversation: the model answers it.
         const relation = body.attachment ? null : (crossRoomIntent(message) || prFollowUp(message, body.history));
         const relationScreen = relation && ownerDevice ? await recentScreen(this.ctx.storage) : null;
-        if (relation && ['related', 'relate'].includes(relation.kind) && (relationScreen || ![relation.topic, relation.other].some(pointsAtScreen))) {
+        // "What happened in the Music Room today?" (owner, Build 2) is answered here too, before any reader that would take a room's name for its own.
+        if (relation && (relation.kind === 'activity' || (['related', 'relate'].includes(relation.kind) && (relationScreen || ![relation.topic, relation.other].some(pointsAtScreen))))) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can read across his rooms, sir.', { source: BRAIN_ROOMS_SOURCE, ok: false, model_calls: 0 });
           const relationStore = new CheBrainStore(this.ctx.storage);
           await drainRoomEvents(this.ctx.storage, relationStore).catch(() => null);
@@ -10651,10 +10689,9 @@ export class CheState extends DurableObject {
             }
             const env = this.keyEnv || this.env;
             const guard = await this.stockOrderGuard();
-            const placed = await confirmStockOrder(this.ctx.storage, { place: (order) => placeAlpacaPaperOrder(env, this.ctx.storage, order, { guard }) });
-            if (placed.ok && !placed.repeated && placed.receipt?.id) {
-              await recordReceipt(this.ctx.storage, { kind: 'paper_order_placed', key: `alpaca_paper:${placed.receipt.id}`, detail: placed.reply.slice(0, 300) }).catch(() => null);
-            }
+            let asked = null;
+            const placed = await confirmStockOrder(this.ctx.storage, { place: (order) => { asked = order; return placeAlpacaPaperOrder(env, this.ctx.storage, order, { guard }); } });
+            if (asked) await this.notePaperOrder(asked, { ...placed, detail: placed.detail || placed.reply }, 'chat');
             return ndjsonReply(placed.reply, {
               source: 'che_trading_desk', ok: placed.ok, model_calls: 0, account: STOCK_ACCOUNT, order_sent: placed.ok,
               ...(placed.receipt ? { order_id: placed.receipt.id, order_status: placed.receipt.status, client_order_id: placed.receipt.client_order_id } : {}),
@@ -11069,6 +11106,13 @@ export class CheState extends DurableObject {
         // room it shows, and that room's authoritative records are read so a number on the screen is never taken for a record.
         const screenRoom = multimodal?.summary ? screenRoomFor(`${multimodal.summary}\n${body.screen_context || ''}`) : '';
         if (ownerDevice && multimodal?.summary) await rememberScreen(this.ctx.storage, { name: multimodal.name, summary: multimodal.summary, engine: multimodal.engine, room: screenRoom }).catch(() => null);
+        // "Look at my screen" (owner, Build 2): the Screen room records only which screen he looked at and when; the
+        // summary stays the temporary observation above, and the image is never kept.
+        if (ownerDevice && multimodal?.summary && (/^che-screen\.png$/i.test(String(body.attachment?.name || '')) || asksAboutScreen(message))) {
+          const page = /\bYou are on ([^.,;\n]{2,60})/.exec(String(body.screen_context || ''))?.[1]?.trim();
+          const seenAs = phoneRoomEvent({ room: 'screen', kind: 'observed', key: `vision-${crypto.randomUUID()}`, title: page || (screenRoom && screenRoom !== 'screen' ? BRAIN_ROOMS[screenRoom]?.label : '') || 'his screen' }, { isSafe: isSafeText });
+          if (!seenAs.error) await queueRoomEvent(this.ctx.storage, { ...seenAs, evidence: [`look at my screen, read by ${String(multimodal.engine || 'vision').slice(0, 40)} ${seenAs.at}`] }).catch(() => null);
+        }
         const screenRecords = multimodal?.summary
           ? await screenRoomContext({ store: new CheBrainStore(this.ctx.storage), storage: this.ctx.storage, room: screenRoom, summary: multimodal.summary }).catch(() => '')
           : '';
@@ -11418,6 +11462,7 @@ export class CheState extends DurableObject {
               verified: completedTask.verified_by_che,
               error: completedTask.error,
             });
+            await queueRoomEvent(this.ctx.storage, officeTaskEvent(completedTask, { agent: result.partner_name, outcome: completedTask.status, verified: completedTask.verified_by_che, at: now })).catch(() => null);
           }
           data.team_tasks = data.team_tasks.slice(0, 100);
           await this.saveChatData(data);
@@ -11432,7 +11477,7 @@ export class CheState extends DurableObject {
             data.learned_knowledge.push(learned);
             data.learned_knowledge = data.learned_knowledge.slice(-30);
           }
-          writeResearchMemoryNote(data, {
+          const researchNote = writeResearchMemoryNote(data, {
             force: true,
             result: research.summary,
             sources: research.sources || [],
@@ -11440,6 +11485,8 @@ export class CheState extends DurableObject {
             agent: { name: 'CHE', role: 'Research Partner' },
           });
           await this.saveChatData(data);
+          // A fresh research answer is a Research Room finding (owner, Build 2); a reused one was recorded when it was new.
+          if (!research.cached) await queueRoomEvent(this.ctx.storage, researchEvent({ id: researchNote?.note?.id || '', title: researchNote?.note?.title || message, summary: research.summary, sources: research.sources || [], by: 'CHE' })).catch(() => null);
         }
 
         const remember = /\bremember\b/i.test(rawMessage)
@@ -12134,6 +12181,8 @@ export class CheState extends DurableObject {
         notify: () => { this.loadData().then((value) => this.broadcastAgents(value)).catch(() => {}); },
         models: { fast: FAST_MODEL, strong: STRONG_MODEL },
         recall: (text) => retrieveVectorContext(this.keyEnv || this.env, text),
+        // Office tasks, War Room meetings and research notes report to the Brain when they happen (owner, Build 2).
+        roomEvent: (event) => (event ? queueRoomEvent(this.ctx.storage, event).catch(() => false) : Promise.resolve(false)),
       });
     }
     // A retry or mailbox watch may be due later, so always compute the next alarm.
