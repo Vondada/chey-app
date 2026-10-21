@@ -133,7 +133,7 @@ import { loadPackedJson, savePackedJson } from './prompt_compaction.js';
 import { githubWorkshopPieces, workshopAvatar, workshopAvatarIntent, workshopSnapshot } from './workshop.js';
 import { flushOutbox, handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, openMailbox, transcript as flagstaffTranscript, mailboxCode, mailboxLink, postWebMail, readWebMail, rotateMailboxCode } from './web_mailbox.js';
 import { CheLibrary, fetchReadable, libraryContext, libraryIntent } from './library.js';
-import { KnowledgeLibrary, knowledgeIntent, knowledgeReply } from './knowledge_library.js';
+import { KnowledgeLibrary, knowledgeIntent, knowledgeReply, knowledgeTaskContext } from './knowledge_library.js';
 import { seedKnowledgeCatalog } from './knowledge_catalog_seed.js';
 import { CheBrainStore, backfillConversations, displayCopy, isSafeText, ownerMemoryRecord, projectLegacyState, rememberExchange, retrievableOwnerRecord, retrievalBody, sameDisplayCopy } from './brain_store.js';
 import { brainReviewIntent, latestReview, ownerScore, runBrainMaintenance, speakReview } from './brain_audit.js';
@@ -12475,6 +12475,7 @@ export class CheState extends DurableObject {
         notify: () => { this.loadData().then((value) => this.broadcastAgents(value)).catch(() => {}); },
         models: { fast: FAST_MODEL, strong: STRONG_MODEL },
         recall: (text) => retrieveVectorContext(this.keyEnv || this.env, text),
+        knowledge: (question) => knowledgeTaskContext(this.ctx.storage, question),
         keepReads: (question, observations) => storeLoopReads(new CheBrainStore(this.ctx.storage), { question, observations, now: new Date().toISOString() }).kept.length,
         // Office tasks, War Room meetings and research notes report to the Brain when they happen (owner, Build 2).
         roomEvent: (event) => (event ? queueRoomEvent(this.ctx.storage, event).catch(() => false) : Promise.resolve(false)),

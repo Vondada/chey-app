@@ -86,3 +86,10 @@ test('a search that finds nothing indexed says so and never invents a source', a
   assert.equal(res.source, 'che_knowledge');
   assert.doesNotMatch(res.message, /\[/);
 });
+
+test('compare and "what did you learn" name the library; ordinary questions do not take those routes', () => {
+  assert.equal(knowledgeIntent('Compare Team notes and Release It! in my knowledge library').kind, 'compare');
+  assert.equal(knowledgeIntent('What did you learn from Team notes in my knowledge library?').kind, 'learned');
+  assert.equal(knowledgeIntent('Compare tea and coffee'), null);
+  assert.equal(knowledgeIntent('What did you learn from the news today?'), null);
+});
