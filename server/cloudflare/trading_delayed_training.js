@@ -2,7 +2,7 @@
 // Reuses the existing deterministic strategy and risk engines without relaxing the LIVE CME entry gate.
 // All fills are hypothetical, observed only after the provider's delayed bar arrived. The separate
 // ledger and ranking can NEVER qualify an account for live orders or be counted as verified forward trades.
-import { INTRADAY_CANDIDATES, MIN_TRADES, intradayContext, newPortfolio, stepPortfolio, summarize, validateTradeRecord } from './trading_evidence.js';
+import { INTRADAY_CANDIDATES, MIN_TRADES, intradayContext, newPortfolio, stepPortfolio, summarize, tradeDayOf, validateTradeRecord } from './trading_evidence.js';
 import { makeEntryGate } from './trading_controls.js';
 
 export const DELAYED_PORTFOLIOS = 'delayed_training_portfolios_v1';
@@ -29,7 +29,7 @@ export function rankDelayedTraining(index = [], portfolios = []) {
       .map((t) => ({ net_pnl: t.net_pnl, r_net: t.r_net, side: 'long', costs: { spread: 0, slippage: 0, commissions: 0, fees: 0 } }));
     const stats = summarize(trades);
     const qualified = stats.trades >= MIN_TRADES && stats.expectancy_r_95ci.low > 0
-      && stats.profit_factor != null && stats.profit_factor > 1.2;
+      && (stats.profit_factor == null ? stats.wins > 0 && stats.losses === 0 : stats.profit_factor > 1.2);
     return { portfolio: pf.key, strategy: pf.candidate, name: INTRADAY_CANDIDATES[pf.candidate]?.name || pf.candidate,
       filter: pf.filter, strategy_version: pf.strategy_version, qualified, trades: stats.trades,
       wins: stats.wins, losses: stats.losses, net_pnl: stats.net_pnl, expectancy_r: stats.expectancy_r,
@@ -43,8 +43,8 @@ export function rankDelayedTraining(index = [], portfolios = []) {
   for (const row of rows) row.focus_share = leader
     ? (row.portfolio === leader ? 0.75 : 0.25 / Math.max(1, rows.length - 1)) : 1 / Math.max(1, rows.length);
   return { rows: rows.sort((a, b) => b.confidence_low_r - a.confidence_low_r), leader,
-    policy: leader ? 'research-only 75% leader focus, 25% diversified exploration; shadow-test all variants'
-      : 'balanced exploratory research; no strategy has independently qualified for extra focus',
+    policy: leader ? 'research-only 75% leader focus, 25% diversified exploration; shadow-test all variants; correlated MNQ signals are not independent evidence'
+      : 'balanced exploratory research; no strategy has independently qualified for extra focus; correlated variants must not be double-counted',
     execution_allowed: false };
 }
 
@@ -107,13 +107,15 @@ export async function runDelayedTraining(storage, { feed, bars, specs, controls,
   if (!pfs.length) return { skipped: 'no configured research strategies' };
   const prior = rankDelayedTraining(index, pfs);
   const context = intradayContext(bars);
-  const riskGate = makeEntryGate(controls, { realized_today: 0, open_positions: pfs.filter((p) => p.open || p.pending).length });
+  const day = tradeDayOf(new Date(now).toISOString());
+  const realized = index.filter((t) => tradeDayOf(t.exit_time) === day)
+    .reduce((sum, t) => sum + (Number(t.net_pnl) || 0), 0);
+  const riskGate = makeEntryGate(controls, { realized_today: realized, open_positions: pfs.filter((p) => p.open || p.pending).length });
   const added = []; const decisions = [];
   for (const pf of pfs) {
     pf.feed = { status: 'DELAYED', authenticated: false, subscription_verified: false,
       provider: feed.provider, provider_symbol: feed.provider_symbol, contract: feed.contract, latency_s: feed.latency_s };
-    const previousSignals = pf.counts.signals;
-    const previousSkips = pf.counts.skipped || 0;
+    const previousBar = pf.last_bar_time;
     const completed = stepPortfolio(pf, bars, context, riskGate, { allowEntries: true });
     for (const trade of completed) {
       const validated = validateTradeRecord(trade);
@@ -127,12 +129,17 @@ export async function runDelayedTraining(storage, { feed, bars, specs, controls,
         added.push(slim(recorded));
       }
     }
-    if (pf.counts.signals > previousSignals || (pf.counts.skipped || 0) > previousSkips) {
-      const from = prior.leader === pf.key ? 'research_priority' : prior.leader ? 'shadow_exploration' : 'balanced_exploration';
-      decisions.push({ at: new Date(now).toISOString(), bar: last.t, portfolio: pf.key,
-        event: 'signal_and_risk_review', observed_signals: pf.counts.signals - previousSignals,
-        blocked: (pf.counts.skipped || 0) - previousSkips, focus: from,
-        reason: prior.policy, recent_skips: (pf.skips || []).slice(-2) });
+    const from = prior.leader === pf.key ? 'research_priority' : prior.leader ? 'shadow_exploration' : 'balanced_exploration';
+    for (const signal of (pf.signals || []).filter((v) => v.time > previousBar)) {
+      decisions.push({ at: new Date(now).toISOString(), event: 'hypothetical_signal',
+        portfolio: pf.key, bar: signal.time, side: signal.side, reason: signal.why,
+        focus: from, priority: prior.rows.find((r) => r.portfolio === pf.key)?.focus_share || 0,
+        no_broker_order: true });
+    }
+    for (const skip of (pf.skips || []).filter((v) => v.time > previousBar)) {
+      decisions.push({ at: new Date(now).toISOString(), event: 'signal_skipped',
+        portfolio: pf.key, bar: skip.time, reason: skip.reason,
+        focus: from, no_broker_order: true });
     }
   }
   await storage.put(DELAYED_PORTFOLIOS, Object.fromEntries(pfs.map((p) => [p.key, p])));
