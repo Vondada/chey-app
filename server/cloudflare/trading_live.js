@@ -12,7 +12,7 @@ import {
   evaluateWalkForward, intradayContext, newPortfolio, readTrades, stepPortfolio, summarize, validateTradeRecord, tradeDayOf,
 } from './trading_evidence.js';
 import { makeEntryGate, readControls } from './trading_controls.js';
-import { readDelayedTraining, resetDelayedTraining, runDelayedTraining } from './trading_delayed_training.js';
+import { MAX_DELAYED_BAR_AGE_MS, readDelayedTraining, resetDelayedTraining, runDelayedTraining } from './trading_delayed_training.js';
 
 export const LIVE_STATE = 'live_paper_state';
 export const LIVE_PORTFOLIOS = 'live_paper_portfolios';
@@ -156,6 +156,15 @@ function closedFiveMinuteBars(feed, now) {
   return bars;
 }
 
+// A delayed feed's newest closed bar may be at most MAX_DELAYED_BAR_AGE_MS old (owner, 2026-10-21). An older bar is
+// refused before any portfolio steps, so a days-old price can never open, close or journal a trade.
+function staleBarProblems(feed, bars, now) {
+  if (feed.status !== 'DELAYED' || !bars.length) return [];
+  const age = now - Date.parse(bars[bars.length - 1].t) - 300000;
+  if (age <= MAX_DELAYED_BAR_AGE_MS) return [];
+  return [`the newest delayed bar closed ${Math.round(age / 60000)} min ago; the maximum is ${MAX_DELAYED_BAR_AGE_MS / 60000} min`];
+}
+
 /**
  * One forward-paper pass: newest closed bars, each portfolio stepped from where it
  * stopped, closed trades journalled (validated, append-only), state saved, run logged.
@@ -177,7 +186,7 @@ export async function liveTick(storage, { fetcher = fetch, now = Date.now(), for
       await storage.put(LIVE_FEED, { ...feedOf(feed), error: feed.error, checked_at: feed.checked_at, session, bars: ((await storage.get(LIVE_FEED)) || {}).bars || [] });
     } else {
       const bars = closedFiveMinuteBars(feed, now);
-      const problems = candleProblems(bars);
+      const problems = [...candleProblems(bars), ...staleBarProblems(feed, bars, now)];
       if (problems.length) {
         run.error = `data refused: ${problems.join('; ')}`;
       } else {

@@ -36,6 +36,9 @@ function extensionForMime(mimeType) {
   if (mimeType === 'image/webp') return 'webp';
   if (mimeType === 'video/mp4') return 'mp4';
   if (mimeType === 'video/webm') return 'webm';
+  if (mimeType === 'video/quicktime') return 'mov';
+  if (mimeType === 'application/pdf') return 'pdf';
+  if (mimeType === 'text/plain') return 'txt';
   return 'jpg';
 }
 
@@ -181,6 +184,31 @@ async function geminiVideo(env, prompt, fetcher) {
   const out = String(video?.uri || data?.video_url || data?.url || '').trim();
   if (out.startsWith('https://')) return { url: out, model };
   throw new Error('Gemini returned no video.');
+}
+
+// Pictures, videos, PDFs and text files the owner sends are kept in the media index, so CHE always has somewhere to hold
+// them (owner, 2026-10-21). Bytes go to R2 when bound, otherwise to a Durable Object value, which holds about 2 MB:
+// a larger file needs the bucket and is refused with that reason. Nothing is shared or published.
+const OWNER_BASE64_CHARS = 1_400_000;
+const OWNER_TYPES = /^(?:image\/(?:png|jpe?g|gif|webp|heic)|video\/(?:mp4|quicktime|webm)|application\/pdf|text\/plain)$/;
+
+export async function saveOwnerFile(env, storage, { name = '', media_type = '', base64 = '' } = {}) {
+  const type = String(media_type || '').toLowerCase();
+  if (!base64) return { ok: false, reason: 'no file arrived with that message' };
+  if (!OWNER_TYPES.test(type)) return { ok: false, reason: `I keep pictures, videos, PDFs and text files, and ${type || 'this file'} is not one of those` };
+  if (base64.length > OWNER_BASE64_CHARS && !env.CHE_DATA_BUCKET) {
+    return { ok: false, reason: 'the file is larger than 1.4 MB, and larger files need the R2 bucket (CHE_DATA_BUCKET), which is not connected' };
+  }
+  const id = crypto.randomUUID();
+  try {
+    const stored = await storeBlob(env, storage, id, base64, type, 'upload');
+    const item = { id, kind: 'upload', mime_type: type, title: String(name || 'Untitled file').replace(/[`<>]/g, '').slice(0, 120), created_at: now(), source: 'owner', ...stored };
+    const items = [item, ...(await listMedia(storage))];
+    await saveIndex(storage, items);
+    return { ok: true, item, total: Math.min(items.length, MAX_ITEMS) };
+  } catch (error) {
+    return { ok: false, reason: `the file could not be read (${String(error?.message || error).slice(0, 120)})` };
+  }
 }
 
 // mode: new | variation | refine. parent_id links versions of one piece.
