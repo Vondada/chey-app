@@ -114,7 +114,7 @@ import { applyModelReading, asksAboutScreen, clipKeepingLimits, interpretOwnerTu
 import { intentFrame, understoodAs } from './intent_frame.js';
 import { replyHijacksOwnerRequest, usageIntent, usageReport, speakUsage } from './usage_tracker.js';
 import { newestStarredIntent, speakNewestStarred, autoImproveScan, analyticalRepositoryQuestion, chatOnlyResponseIntent, currentTurnActionPolicy, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, inspirationUpgradeContext, listOwnerStarredRepos, readRepoSource, referenceSourceBlock, codingHistoryIntent, hypotheticalChange, repositoryImplementationIntent, repositoryInspectionIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, starredStudyList, studySelectionIntent } from './code_scout.js';
-import { codingHistoryReceipt } from './coding_history.js';
+import { codingHistoryReceipt, completedWorkProof, proofAsked } from './coding_history.js';
 import { activityReceipt, activityStatusIntent } from './activity_status.js';
 import { webAppPage } from './web_app.js';
 import { learnedSkillsContext, learnedSkillsIntent, learnSkillIntent, attachmentText, condenseSkills, loadLearnedSkills, READ_FOR_SKILLS, redactSensitive, saveLearnedSkills, speakLearned, speakSkillList } from './self_skills.js';
@@ -136,6 +136,7 @@ import { flushOutbox, handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, op
 import { CheLibrary, fetchReadable, libraryContext, libraryIntent } from './library.js';
 import { KnowledgeLibrary, knowledgeIntent, knowledgeReply, knowledgeTaskContext } from './knowledge_library.js';
 import { answerPersonalFact, groundedReply, needsStrongEngine, personalFactQuestion } from './personal_recall.js';
+import { adRequest, adStatusLines, assetTruthReply } from './asset_truth.js';
 import { dropAgentTaskTurns, replyRepeatsAgentTask } from './agent_task_guard.js';
 import { openKnowledgeLibrary, seedKnowledgeCatalog } from './knowledge_catalog_seed.js';
 import { CheBrainStore, backfillConversations, displayCopy, isSafeText, ownerMemoryRecord, projectLegacyState, rememberExchange, retrievableOwnerRecord, retrievalBody, sameDisplayCopy } from './brain_store.js';
@@ -10565,6 +10566,11 @@ export class CheState extends DurableObject {
         if (!body.attachment && codingHistoryIntent(message) && !handoffIntent(message) && !mailboxIntent(message) && !consultIntent(message)) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can read coding job status, sir.', { source: 'che_coding_history', ok: false });
           const jobs = (await this.loadData()).jobs || [];
+          // The owner asks for the last completed work and its proof: CHE's own job records answer it, never another agent's work.
+          if (proofAsked(message)) {
+            const proof = completedWorkProof(jobs, this.env.CHE_GITHUB_REPO || '');
+            return ndjsonReply(proof.text, { source: 'che_coding_history', ok: proof.ok, model_calls: 0, job_id: proof.job_id || null, sha: proof.sha || null });
+          }
           // enqueueJob uses unshift, so the first match is the newest.
           const selfJobs = jobs.filter((item) => item.kind === 'self_development');
           const activeJob = selfJobs.find((item) => ['queued', 'running'].includes(item.status)) || null;
@@ -12286,6 +12292,11 @@ export class CheState extends DurableObject {
         const grounded = groundedReply(reply, { records: data.memory_records || [], message: rawMessage });
         if (grounded.removed.length) console.log('CHE grounding removed dates', JSON.stringify(grounded.removed));
         reply = grounded.text;
+        // A visual exists only when a record of this request made it, and a post only when one was published (asset_truth.js).
+        // An ad request always ends with the three facts: copy written, visuals made, nothing scheduled or published.
+        const asset = assetTruthReply(reply, { made: 0, published: 0 });
+        if (asset.removed.length) console.log('CHE asset check removed', JSON.stringify(asset.removed).slice(0, 800));
+        reply = adRequest(rawMessage) ? [asset.text, adStatusLines({ copy: Boolean(asset.text), made: 0, published: 0 })].filter(Boolean).join('\n') : asset.text;
         const ownerTurnsNow = ownerWords(ownerHistory, rawMessage);
         // Owner evidence: the owner's own turns, the owner-attested memory records and the owner-attested Brain records
         // retrieved this turn. Every other named speaker (Claude, Atlas, …) needs its own stored record.

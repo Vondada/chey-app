@@ -4,6 +4,8 @@
 //  - Results are DATA the crew learns from and adapts, reviewed + owner-approved
 //    like any self-update — never blind auto-merge of a stranger's code.
 
+import { PROOF_ASK } from './coding_history.js';
+
 const REUSABLE = new Set(['mit', 'apache-2.0', 'bsd-2-clause', 'bsd-3-clause', 'isc', '0bsd', 'unlicense', 'mpl-2.0', 'cc0-1.0']);
 
 function ghHeaders(env) {
@@ -603,6 +605,8 @@ export function codingHistoryIntent(message) {
     .filter((part) => !NEGATION_CLAUSE.test(part.replace(OPENING_ASIDE, '').trim()))
     .join('. ');
   if (CHANGE_INSTRUCTION.test(active) || trailingAction(active)) return false;
+  // "Your last completed coding task, and the GitHub proof" is CHE's own record, whatever words the proof uses.
+  if (PROOF_ASK.test(text)) return true;
   if (OTHER_SUBJECT.test(text) || PEER_TALK.test(text)) return false;
   if (STATUS_PHRASE.test(text)) return true;
   // "Inspect your coding runtime and GitHub. What's your most recent coding job? Give me the job ID":

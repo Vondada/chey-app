@@ -134,3 +134,36 @@ export function codingHistoryReceipt({ kind = 'none', job = null, stale = false,
   if (status.heartbeat === 'stale' && status.liveness !== 'unverified') lines.push('GitHub shows the run is still live, but it has not reported progress recently.');
   return lines.join(' ');
 }
+
+// The owner asks for CHE's last completed coding work and its GitHub proof (owner, 2026-10-21). The answer is built
+// from CHE's own job records only: a PR merge or a deploy counts when its record carries the commit SHA. Work by
+// Claude or another agent is not in these records and is never reported as CHE's.
+const SHA = /\b([0-9a-f]{7,40})\b/;
+export const PROOF_ASK = /\b(?:last|latest|most recent)\b[^.?!]{0,40}\b(?:completed|finished|genuinely completed|genuinely finished)\b[^.?!]{0,30}\b(?:coding|code|task|job|work)\b|\b(?:github|commit|sha|pull request|PR)\b[^.?!]{0,30}\b(?:proof|evidence)\b|\b(?:proof|evidence)\b[^.?!]{0,30}\b(?:github|commit|sha|pull request|PR)\b/i;
+
+export function proofAsked(message) {
+  return PROOF_ASK.test(String(message || ''));
+}
+
+/** The newest completed work CHE recorded, with its PR, commit SHA, link and deploy status, or an honest "cannot verify". */
+export function completedWorkProof(jobs = [], repo = '') {
+  const done = (Array.isArray(jobs) ? jobs : []).filter((job) => job?.status === 'complete');
+  const repoLink = repo ? `https://github.com/${repo}` : '';
+  // The job list is newest first (enqueueJob unshifts), so the first match is the newest.
+  for (const job of done) {
+    const fromResult = job.kind === 'merge_pr' ? SHA.exec(String(job.result || '').replace(/^.*Merged as\s*/i, '')) : null;
+    const sha = String(job.merge_commit_sha || (job.kind === 'verify_deploy' ? job.prompt : '') || fromResult?.[1] || '').trim();
+    if (!sha || !/^[0-9a-f]{7,40}$/.test(sha)) continue;
+    if (!['merge_pr', 'verify_deploy'].includes(job.kind)) continue;
+    const pr = Number(job.pr_number) || 0;
+    const lines = [`Last completed coding work I can verify, from my own job record: "${String(job.title || job.kind).slice(0, 120)}".`];
+    lines.push(`Commit: ${sha.slice(0, 7)}${repoLink ? ` (${repoLink}/commit/${sha})` : ''}.`);
+    if (pr) lines.push(`PR: #${pr}${repoLink ? ` (${repoLink}/pull/${pr})` : ''}.`);
+    lines.push(job.kind === 'verify_deploy'
+      ? `Deploy: verified by job ${job.id || 'unknown'}, which completed.`
+      : 'Deploy: not recorded for this job.');
+    lines.push(`Verification: my job ${job.id || 'unknown'} is recorded complete; this answer reads that record, not a live GitHub check.`);
+    return { ok: true, text: lines.join('\n'), job_id: job.id || null, sha };
+  }
+  return { ok: false, text: 'I cannot verify that I completed a coding job. My job records hold no completed PR merge or deploy with a commit SHA. Work by Claude or another agent is not mine, so I do not count it.' };
+}
