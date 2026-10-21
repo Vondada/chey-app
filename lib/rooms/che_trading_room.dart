@@ -12,9 +12,10 @@ import 'che_strategy_controls.dart';
 import 'che_trading_chart.dart';
 import 'che_trading_connections.dart';
 import 'che_trading_ledgers.dart';
+import '../che_ui/che_theme.dart';
 
-const _gold = Color(0xFFE8B04A);
-const _stroke = Color(0xFF1B2A2D);
+const _gold = CheColors.markets;
+final _stroke = CheColors.stroke;
 
 enum CheTradingSection { chart, cheTrades, strategies, account }
 

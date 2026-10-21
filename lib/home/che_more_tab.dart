@@ -133,7 +133,7 @@ class _MoreRow extends StatelessWidget {
                   ],
                 ),
               ),
-              const Icon(Icons.chevron_right_rounded, color: CheColors.textFaint),
+              Icon(Icons.chevron_right_rounded, color: CheColors.textFaint),
             ],
           ),
         ),

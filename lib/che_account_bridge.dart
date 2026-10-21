@@ -106,7 +106,7 @@ class _CheAccountBridgeScreenState extends State<CheAccountBridgeScreen> {
                   style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
                 ),
                 const SizedBox(height: 8),
-                const Text(
+                Text(
                   'CHE can keep owner-authorized service tokens in the iPhone Keychain. Web apps inside CHE keep their own website sessions so you normally sign in once.',
                   textAlign: TextAlign.center,
                   style: TextStyle(color: CheColors.textDim, height: 1.35),
@@ -122,7 +122,7 @@ class _CheAccountBridgeScreenState extends State<CheAccountBridgeScreen> {
           ),
           const SizedBox(height: 18),
           ListTile(
-            leading: const Icon(Icons.apps, color: CheColors.accent),
+            leading: Icon(Icons.apps, color: CheColors.accent),
             title: const Text('Apps inside CHE'),
             subtitle: const Text(
               'Open supported web apps. Their web sign-in can stay persistent inside CHE.',
@@ -139,7 +139,7 @@ class _CheAccountBridgeScreenState extends State<CheAccountBridgeScreen> {
                 : _unlock,
           ),
           const SizedBox(height: 10),
-          const Text(
+          Text(
             'iOS does not let one app copy another app’s private login session. CHE uses official sign-in/OAuth, persistent web sessions, passkeys/AutoFill, and owner-authorized tokens instead.',
             style: TextStyle(color: CheColors.textDim, fontSize: 12.5, height: 1.35),
           ),

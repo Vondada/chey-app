@@ -1,13 +1,14 @@
 // A read-only projection of trading_live's source-separated learning records.
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import '../che_ui/che_theme.dart';
 
 Map<String, dynamic> _map(Object? v) => v is Map ? Map<String, dynamic>.from(v) : {};
 List<Map<String, dynamic>> _rows(Object? v) => v is List ? v.whereType<Map>().map((m) => Map<String, dynamic>.from(m)).toList() : [];
 String _value(Object? v, [String suffix = '']) => v == null ? 'Not measured' : '$v$suffix';
 String _money(Object? v) => v is num ? '\$${v.toStringAsFixed(2)}' : 'Not measured';
 const _teal = Color(0xFF3DDC97);
-const _gold = Color(0xFFE8B04A);
+const _gold = CheColors.markets;
 
 class CheStrategyLearningDashboard extends StatelessWidget {
   const CheStrategyLearningDashboard({super.key, required this.data, required this.onAsk, required this.onResearch, this.onRead, this.chart});

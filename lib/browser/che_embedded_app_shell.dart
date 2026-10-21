@@ -227,7 +227,7 @@ class _HeaderState extends State<_Header> {
       onVerticalDragEnd: _end,
       onVerticalDragCancel: () => _dragDy = 0,
       child: Material(
-        color: const Color(0xFF0A1214),
+        color: CheColors.surface,
         child: Padding(
           padding: EdgeInsets.only(top: widget.topInset),
           child: Column(

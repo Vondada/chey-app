@@ -492,7 +492,7 @@ class _CheProjectsBoardState extends State<CheProjectsBoard> {
               mode: CheSceneMode.projects,
               quality: quality,
               entities: [
-                const CheSceneEntity(
+                CheSceneEntity(
                   id: 'che',
                   label: 'CHE',
                   description: 'Office Boss on the project floor',
@@ -707,7 +707,7 @@ class _ProjectCard extends StatelessWidget {
                       IconButton(
                         tooltip: 'Open URL',
                         onPressed: onOpenUrl,
-                        icon: const Icon(Icons.open_in_new_rounded, size: 18, color: CheColors.accent),
+                        icon: Icon(Icons.open_in_new_rounded, size: 18, color: CheColors.accent),
                       ),
                     ],
                   ],

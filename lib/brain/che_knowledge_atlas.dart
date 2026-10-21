@@ -681,13 +681,13 @@ class _CheKnowledgeAtlasPageState extends State<CheKnowledgeAtlasPage> {
   }
 
   Widget _chip(String label, bool selected, VoidCallback onTap) => ChoiceChip(
-        label: Text(label, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+        label: Text(label, style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
         selected: selected,
         onSelected: (_) => onTap(),
       );
 
-  static const _big = TextStyle(fontSize: 18, height: 1.45, color: CheColors.text);
-  static const _dim = TextStyle(fontSize: 16, height: 1.4, color: CheColors.textDim);
+  static final _big = TextStyle(fontSize: 18, height: 1.45, color: CheColors.text);
+  static final _dim = TextStyle(fontSize: 16, height: 1.4, color: CheColors.textDim);
 
   // One line as the page shows it. Each carries its index as a key, so a test can read the screen
   // in order and compare it with what Read aloud says.
@@ -847,7 +847,7 @@ class _CheKnowledgeAtlasPageState extends State<CheKnowledgeAtlasPage> {
               constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.35),
               child: Container(
                 width: double.infinity,
-                decoration: const BoxDecoration(color: CheColors.surface, border: Border(top: BorderSide(color: CheColors.stroke))),
+                decoration: BoxDecoration(color: CheColors.surface, border: Border(top: BorderSide(color: CheColors.stroke))),
                 child: SingleChildScrollView(
                   padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
                   child: Semantics(liveRegion: true, child: Text(_status, style: _big.copyWith(color: CheColors.accent))),

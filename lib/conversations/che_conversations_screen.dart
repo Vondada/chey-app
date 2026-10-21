@@ -163,7 +163,7 @@ class _CheConversationsScreenState extends State<CheConversationsScreen> {
               ]),
             ),
           if (!_loading && _error == null && _threads.isEmpty)
-            const Padding(
+            Padding(
               padding: EdgeInsets.all(24),
               child: Text('No agent conversations yet. War Room meetings, Office work and coding jobs appear here as they happen.', textAlign: TextAlign.center, style: CheType.caption),
             ),

@@ -20,13 +20,14 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
+import '../che_ui/che_theme.dart';
 
 const _up = Color(0xFF3DDC97);
 const _down = Color(0xFFFF5C7A);
-const _gold = Color(0xFFE8B04A);
-const _dim = Color(0xFF8FA4A1);
-const _panel = Color(0xFF0A1214);
-const _stroke = Color(0xFF1B2A2D);
+const _gold = CheColors.markets;
+final _dim = CheColors.textDim;
+final _panel = CheColors.surface;
+final _stroke = CheColors.stroke;
 const _draw = Color(0xFF7FD3FF);
 
 /// The four marker sources, in the order the legend shows them.
@@ -718,7 +719,7 @@ class CheTradingChartState extends State<CheTradingChart> {
         ]),
         // Drawing tools
         Wrap(spacing: 6, runSpacing: 6, crossAxisAlignment: WrapCrossAlignment.center, children: [
-          const Text('Draw:', style: TextStyle(color: _dim, fontSize: 13)),
+          Text('Draw:', style: TextStyle(color: _dim, fontSize: 13)),
           _chip('Line', _tool == _Tool.line, () => _pickTool(_Tool.line), semantics: 'Draw a line: tap two points on the chart'),
           _chip('Level', _tool == _Tool.hline, () => _pickTool(_Tool.hline), semantics: 'Draw a horizontal level: tap a price'),
           _chip('Box', _tool == _Tool.box, () => _pickTool(_Tool.box), semantics: 'Draw a box: tap two corners'),

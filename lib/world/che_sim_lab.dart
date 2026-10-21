@@ -14,6 +14,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../che_ui/che_theme.dart';
 
 String _num(num v) {
   if (v.abs() < 1 && v != 0) return double.parse(v.toStringAsPrecision(2)).toString();
@@ -258,7 +259,7 @@ class CheSimLabPage extends StatefulWidget {
 
 class CheSimLabState extends State<CheSimLabPage> {
   static const _teal = Color(0xFF3FD0C9);
-  static const _gold = Color(0xFFE8B04A);
+  static const _gold = CheColors.markets;
   CheSimLab? lab;
   String? _error;
 

@@ -162,13 +162,13 @@ class CheVoiceDiagnosticsSheet extends StatelessWidget {
                 width: 132,
                 child: Text(
                   label,
-                  style: const TextStyle(color: CheColors.textDim, fontSize: 12),
+                  style: TextStyle(color: CheColors.textDim, fontSize: 12),
                 ),
               ),
               Expanded(
                 child: Text(
                   value,
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: CheColors.textPrimary,
                     fontSize: 12.5,
                     fontWeight: FontWeight.w600,
@@ -376,7 +376,7 @@ class _CheVoiceSettingsSheetState extends State<CheVoiceSettingsSheet> {
                       ),
                     ),
                     const SizedBox(height: 6),
-                    const Align(
+                    Align(
                       alignment: Alignment.centerLeft,
                       child: Text(
                         'Choose a local neural voice and tune the delivery. Your selection is saved on this iPhone and works offline after the Kokoro voice pack is installed.',
@@ -395,7 +395,7 @@ class _CheVoiceSettingsSheetState extends State<CheVoiceSettingsSheet> {
                             label: const Text('CHOOSE NATURAL CHAT VOICE'),
                           ),
                           const SizedBox(height: 8),
-                          const Text('ElevenLabs and Fish voices for normal Chat and Read This. Your selection controls actual server speech.',
+                          Text('ElevenLabs and Fish voices for normal Chat and Read This. Your selection controls actual server speech.',
                             style: TextStyle(color: CheColors.textDim, fontSize: 12)),
                           const Divider(height: 30),
                           const Text('Local/offline fallback', style: TextStyle(fontWeight: FontWeight.w700)),
@@ -421,7 +421,7 @@ class _CheVoiceSettingsSheetState extends State<CheVoiceSettingsSheet> {
                           const SizedBox(height: 8),
                           Text(
                             'Selected: ${selected['speaker']}',
-                            style: const TextStyle(color: CheColors.textDim, fontSize: 12),
+                            style: TextStyle(color: CheColors.textDim, fontSize: 12),
                           ),
                           const SizedBox(height: 20),
                           _VoiceSlider(
@@ -448,7 +448,7 @@ class _CheVoiceSettingsSheetState extends State<CheVoiceSettingsSheet> {
                             style: TextStyle(fontWeight: FontWeight.w700),
                           ),
                           const SizedBox(height: 4),
-                          const Text(
+                          Text(
                             'These controls affect Apple’s built-in fallback voice when the local neural voice is still loading or unavailable.',
                             style: TextStyle(color: CheColors.textDim, fontSize: 12.5),
                           ),
@@ -472,7 +472,7 @@ class _CheVoiceSettingsSheetState extends State<CheVoiceSettingsSheet> {
                             onChanged: (v) => setState(() => nativeRate = v),
                           ),
                           const SizedBox(height: 12),
-                          const Text(
+                          Text(
                             'Voice labels describe language/region and presentation only. They do not assign a race or ethnicity to a voice.',
                             style: TextStyle(color: CheColors.textDim, fontSize: 12),
                           ),
@@ -534,7 +534,7 @@ class _VoiceSlider extends StatelessWidget {
         Row(
           children: [
             Expanded(child: Text(label)),
-            Text(display, style: const TextStyle(color: CheColors.textDim)),
+            Text(display, style: TextStyle(color: CheColors.textDim)),
           ],
         ),
         Slider(

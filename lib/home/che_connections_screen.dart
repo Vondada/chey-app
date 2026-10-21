@@ -404,7 +404,7 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
               Text(status, style: TextStyle(fontSize: 12, color: color, fontWeight: FontWeight.w700)),
             ]),
             const SizedBox(height: 7),
-            Text(_detail(connector, explanation), style: const TextStyle(color: CheColors.textDim, height: 1.3)),
+            Text(_detail(connector, explanation), style: TextStyle(color: CheColors.textDim, height: 1.3)),
             if (onAction != null) ...[
               const SizedBox(height: 10),
               OutlinedButton(
@@ -427,7 +427,7 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
 
   Widget _heading(String text) => Padding(
     padding: const EdgeInsets.symmetric(vertical: 10),
-    child: Text(text.toUpperCase(), style: const TextStyle(fontWeight: FontWeight.w800, color: CheColors.accent, letterSpacing: 1.2)),
+    child: Text(text.toUpperCase(), style: TextStyle(fontWeight: FontWeight.w800, color: CheColors.accent, letterSpacing: 1.2)),
   );
 
   @override
@@ -449,7 +449,7 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
         child: ListView(padding: const EdgeInsets.all(16), children: [
           const Text('One app. Real connections.', style: TextStyle(fontSize: 23, fontWeight: FontWeight.w800)),
           const SizedBox(height: 6),
-          const Text('CHE verifies status with her Worker. A configured API key is not proof of a signed-in account. Account passwords stay with their providers.',
+          Text('CHE verifies status with her Worker. A configured API key is not proof of a signed-in account. Account passwords stay with their providers.',
             style: TextStyle(color: CheColors.textDim)),
           if (_loading) const LinearProgressIndicator(),
           if (_error.isNotEmpty) Padding(
@@ -459,7 +459,7 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
           if (_message.isNotEmpty) Padding(
             padding: const EdgeInsets.symmetric(vertical: 12),
             child: Semantics(liveRegion: true,
-              child: Text(_message, style: const TextStyle(color: CheColors.accent, fontSize: 18, height: 1.3))),
+              child: Text(_message, style: TextStyle(color: CheColors.accent, fontSize: 18, height: 1.3))),
           ),
           _heading('Google & creators'),
           _card('YouTube channel', Icons.play_circle_outline_rounded, 'youtube',
@@ -506,7 +506,7 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
               'Natural voice keys may be configured. Change local voices, or select a supported cloud voice inside CHE.',
               onAction: widget.onVoiceSettings, action: 'Change CHE’s voice'),
           const SizedBox(height: 10),
-          const Text('Secure Google or broker login may temporarily open the provider’s official consent screen. CHE cannot bypass that requirement.', style: TextStyle(color: CheColors.textDim, fontSize: 12)),
+          Text('Secure Google or broker login may temporarily open the provider’s official consent screen. CHE cannot bypass that requirement.', style: TextStyle(color: CheColors.textDim, fontSize: 12)),
           const SizedBox(height: 24),
         ]),
       )),

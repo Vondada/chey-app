@@ -159,7 +159,7 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
         child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text('Add $name key', style: CheType.title),
           const SizedBox(height: 8),
-          const Text('Tap the button to create a key on the official page, then paste it here. CHE tests it and starts using it right away. One account in your name.', style: CheType.bodyDim),
+          Text('Tap the button to create a key on the official page, then paste it here. CHE tests it and starts using it right away. One account in your name.', style: CheType.bodyDim),
           const SizedBox(height: 12),
           Semantics(
             button: true,
@@ -375,7 +375,7 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
       ]),
       const Divider(height: 16),
       if (threads.isEmpty)
-        const Padding(padding: EdgeInsets.all(20), child: Text('No messages yet.', style: CheType.bodyDim))
+        Padding(padding: EdgeInsets.all(20), child: Text('No messages yet.', style: CheType.bodyDim))
       else
         for (final entry in threads.entries)
           Semantics(
@@ -447,7 +447,7 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
         padding: const EdgeInsets.all(12),
         children: [
           _archiveBrain(),
-          const Padding(
+          Padding(
             padding: EdgeInsets.all(20),
             child: Text('No saved sessions yet. Lock Flagstaff to save one.', style: CheType.bodyDim),
           ),
@@ -467,7 +467,7 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
             return Card(
               color: CheColors.surface,
               child: ExpansionTile(
-                leading: const Icon(Icons.inventory_2_rounded, color: CheColors.accentAlt),
+                leading: Icon(Icons.inventory_2_rounded, color: CheColors.accentAlt),
                 title: Text('Session $shown', style: CheType.label),
                 subtitle: Text('${messages.length} messages', style: CheType.caption),
                 onExpansionChanged: (open) {
@@ -624,7 +624,7 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('YouTube', style: CheType.label),
+            Text('YouTube', style: CheType.label),
             const SizedBox(height: 4),
             Text(line, style: CheType.bodyDim),
             const SizedBox(height: 8),
@@ -692,7 +692,7 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
         ),
         Expanded(
           child: providers.isEmpty
-              ? const Center(
+              ? Center(
                   child: Text('No matching key providers.',
                       style: CheType.bodyDim),
                 )
@@ -793,7 +793,7 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
                     _flagstaffTab(),
                     _archiveTab(),
                     _letters.isEmpty
-                        ? const Center(child: Text('No letters yet.', style: CheType.bodyDim))
+                        ? Center(child: Text('No letters yet.', style: CheType.bodyDim))
                         : ListView.builder(
                             padding: const EdgeInsets.all(12),
                             itemCount: _letters.length,

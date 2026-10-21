@@ -227,7 +227,7 @@ class _CheGrokChatScreenState extends State<CheGrokChatScreen> {
       appBar: AppBar(
         backgroundColor: CheColors.surface,
         foregroundColor: CheColors.text,
-        title: const Column(
+        title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text('Grok', style: TextStyle(fontWeight: FontWeight.w800)),
@@ -331,23 +331,23 @@ class _CheGrokChatScreenState extends State<CheGrokChatScreen> {
                       maxLines: 5,
                       textInputAction: TextInputAction.send,
                       onSubmitted: (_) => _send(),
-                      style: const TextStyle(color: CheColors.text),
+                      style: TextStyle(color: CheColors.text),
                       decoration: InputDecoration(
                         hintText: paired ? 'Message Grok…' : 'Pair to chat',
-                        hintStyle: const TextStyle(color: CheColors.textFaint),
+                        hintStyle: TextStyle(color: CheColors.textFaint),
                         filled: true,
                         fillColor: CheColors.surface,
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(CheRadius.lg),
-                          borderSide: const BorderSide(color: CheColors.stroke),
+                          borderSide: BorderSide(color: CheColors.stroke),
                         ),
                         enabledBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(CheRadius.lg),
-                          borderSide: const BorderSide(color: CheColors.stroke),
+                          borderSide: BorderSide(color: CheColors.stroke),
                         ),
                         focusedBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(CheRadius.lg),
-                          borderSide: const BorderSide(color: CheColors.accent),
+                          borderSide: BorderSide(color: CheColors.accent),
                         ),
                         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                       ),
@@ -390,15 +390,15 @@ class _EmptyState extends StatelessWidget {
       padding: const EdgeInsets.all(CheSpace.xl),
       children: [
         const SizedBox(height: 24),
-        const Icon(Icons.smart_toy_outlined, size: 48, color: CheColors.accent),
+        Icon(Icons.smart_toy_outlined, size: 48, color: CheColors.accent),
         const SizedBox(height: 12),
-        const Text(
+        Text(
           'Native Grok chat',
           textAlign: TextAlign.center,
           style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: CheColors.text),
         ),
         const SizedBox(height: 6),
-        const Text(
+        Text(
           'Runs through CHE\'s Cloudflare Worker with xAI preferred — not grok.com in a WebView.',
           textAlign: TextAlign.center,
           style: TextStyle(color: CheColors.textDim, height: 1.35),
@@ -412,7 +412,7 @@ class _EmptyState extends StatelessWidget {
                 onPressed: () => onPrompt!(p),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: CheColors.text,
-                  side: const BorderSide(color: CheColors.strokeHi),
+                  side: BorderSide(color: CheColors.strokeHi),
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                   alignment: Alignment.centerLeft,
                 ),

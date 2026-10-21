@@ -895,7 +895,7 @@ class _ReadAloudButton extends StatelessWidget {
         tooltip: label,
         visualDensity: VisualDensity.compact,
         onPressed: onPressed,
-        icon: const Icon(Icons.volume_up_rounded, size: 20, color: CheColors.accent),
+        icon: Icon(Icons.volume_up_rounded, size: 20, color: CheColors.accent),
       );
 }
 
@@ -1043,7 +1043,7 @@ class _AgentListCard extends StatelessWidget {
                     ],
                   ),
                 ),
-                const Icon(Icons.chevron_right_rounded, color: CheColors.textFaint),
+                Icon(Icons.chevron_right_rounded, color: CheColors.textFaint),
               ],
             ),
           ),
@@ -1078,7 +1078,7 @@ class _MeetingTile extends StatelessWidget {
   final VoidCallback onTranscript;
   @override
   Widget build(BuildContext context) {
-    const amber = Color(0xFFE8B04A);
+    const amber = CheColors.markets;
     return Card(
       color: CheColors.surfaceHi,
       margin: const EdgeInsets.only(bottom: CheSpace.sm),
@@ -1496,7 +1496,7 @@ class _AgentDeskSheetState extends State<_AgentDeskSheet> {
               IconButton(
                 tooltip: _isChe ? 'Send request' : 'Send task',
                 onPressed: _working ? null : () => _sendRequest(a),
-                icon: const Icon(Icons.send_rounded, color: CheColors.accent),
+                icon: Icon(Icons.send_rounded, color: CheColors.accent),
               ),
             ]),
             const SizedBox(height: CheSpace.md),
@@ -1638,7 +1638,7 @@ class _TaskCard extends StatelessWidget {
 // the War Room as a room on the right, CHE's desk front and center.
 // ─────────────────────────────────────────────────────────────────────────
 
-const Color _warRoomColor = Color(0xFFE8B04A);
+const Color _warRoomColor = CheColors.markets;
 
 class CheOfficeFloorPlan extends StatelessWidget {
   const CheOfficeFloorPlan({super.key, required this.store, required this.onTapDesk, required this.onWarRoom});

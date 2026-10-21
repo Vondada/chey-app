@@ -72,9 +72,9 @@ class CheVoiceIdsSection extends StatelessWidget {
       child: Theme(
         data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
         child: ExpansionTile(
-          leading: const Icon(Icons.record_voice_over_rounded, color: CheColors.accent),
+          leading: Icon(Icons.record_voice_over_rounded, color: CheColors.accent),
           title: const Text('Voice IDs', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
-          subtitle: const Text('Paste a voice ID, name it, and use it',
+          subtitle: Text('Paste a voice ID, name it, and use it',
               style: TextStyle(fontSize: 14, color: CheColors.textDim)),
           childrenPadding: const EdgeInsets.fromLTRB(4, 0, 4, 12),
           children: [
@@ -394,7 +394,7 @@ class _CheVoiceIdsPanelState extends State<CheVoiceIdsPanel> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(8, 4, 8, 12),
       children: [
-        const Text(
+        Text(
           'Paste a voice ID from ElevenLabs or Fish Audio. CHE checks it with the provider before it saves. Your keys stay on the server.',
           style: TextStyle(color: CheColors.textDim, fontSize: 15, height: 1.35),
         ),
@@ -432,7 +432,7 @@ class _CheVoiceIdsPanelState extends State<CheVoiceIdsPanel> {
           icon: const Icon(Icons.check),
           label: const Text('Save & Use Voice'),
         ),
-        const Padding(
+        Padding(
           padding: EdgeInsets.only(top: 6),
           child: Text(
             'If the ElevenLabs key cannot read voice details, saving sends one short test sentence (a few credits).',
@@ -474,14 +474,14 @@ class _CheVoiceIdsPanelState extends State<CheVoiceIdsPanel> {
         if (_progress.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(top: 10),
-            child: Text(_progress, style: const TextStyle(color: CheColors.textDim, fontSize: 15, height: 1.3)),
+            child: Text(_progress, style: TextStyle(color: CheColors.textDim, fontSize: 15, height: 1.3)),
           ),
         if (_status.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(top: 10),
             child: Semantics(
               liveRegion: true,
-              child: Text(_status, style: const TextStyle(color: CheColors.accent, fontSize: 18, height: 1.3)),
+              child: Text(_status, style: TextStyle(color: CheColors.accent, fontSize: 18, height: 1.3)),
             ),
           ),
       ],

@@ -128,7 +128,7 @@ class _CheVoiceOrbState extends State<CheVoiceOrb>
                 children: [
                   Text(
                     _label.toUpperCase(),
-                    style: const TextStyle(
+                    style: TextStyle(
                       color: CheColors.accent,
                       fontSize: 11,
                       fontWeight: FontWeight.w800,
@@ -138,7 +138,7 @@ class _CheVoiceOrbState extends State<CheVoiceOrb>
                   const SizedBox(height: 3),
                   Text(
                     _engine,
-                    style: const TextStyle(
+                    style: TextStyle(
                       color: CheColors.textDim,
                       fontSize: 10.5,
                     ),

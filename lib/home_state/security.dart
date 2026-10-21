@@ -616,14 +616,14 @@ extension _CheHomeSecurity on _CHEHomeState {
                 padding: const EdgeInsets.all(20),
                 child: Column(
                   children: [
-                    const Row(
+                    Row(
                       children: [
-                        Icon(Icons.shield, color: Color(0xFF34E0B8)),
+                        Icon(Icons.shield, color: CheColors.accent),
                         SizedBox(width: 10),
                         Text(
                           'C.H.E. SECURITY + SELF PROFILE',
                           style: TextStyle(
-                            color: Color(0xFF34E0B8),
+                            color: CheColors.accent,
                             fontSize: 18,
                             fontWeight: FontWeight.bold,
                           ),
@@ -641,7 +641,7 @@ extension _CheHomeSecurity on _CHEHomeState {
 
                     SwitchListTile(
                       value: strictOwnerMode,
-                      activeThumbColor: const Color(0xFF34E0B8),
+                      activeThumbColor: CheColors.accent,
                       title: const Text('Strict owner mode'),
                       subtitle: const Text(
                         'Require an authorized paired device for private C.H.E. Agent requests.',
@@ -656,7 +656,7 @@ extension _CheHomeSecurity on _CHEHomeState {
 
                     SwitchListTile(
                       value: proactiveMode,
-                      activeThumbColor: const Color(0xFF34E0B8),
+                      activeThumbColor: CheColors.accent,
                       title: const Text('Proactive CHE'),
                       subtitle: const Text(
                         'Surface useful follow-ups and next steps while the app is active.',
@@ -671,7 +671,7 @@ extension _CheHomeSecurity on _CHEHomeState {
 
                     SwitchListTile(
                       value: wakePhraseMode,
-                      activeThumbColor: const Color(0xFF34E0B8),
+                      activeThumbColor: CheColors.accent,
                       title: const Text('Wake phrase: “Chay”'),
                       subtitle: Text(
                         kIsWeb
@@ -687,12 +687,12 @@ extension _CheHomeSecurity on _CHEHomeState {
                     ),
 
                     const SizedBox(height: 8),
-                    const Align(
+                    Align(
                       alignment: Alignment.centerLeft,
                       child: Text(
                         'LEARNED PERSONALITY',
                         style: TextStyle(
-                          color: Color(0xFF34E0B8),
+                          color: CheColors.accent,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
@@ -702,10 +702,10 @@ extension _CheHomeSecurity on _CHEHomeState {
                     Expanded(
                       child: ListView(
                         children: [
-                          const Text(
+                          Text(
                             'WHAT C.H.E. HAS LEARNED ABOUT YOUR STYLE',
                             style: TextStyle(
-                              color: Color(0xFF34E0B8),
+                              color: CheColors.accent,
                               fontWeight: FontWeight.bold,
                             ),
                           ),
@@ -726,9 +726,9 @@ extension _CheHomeSecurity on _CHEHomeState {
                               return Card(
                                 color: const Color(0xFF243747),
                                 child: ListTile(
-                                  leading: const Icon(
+                                  leading: Icon(
                                     Icons.psychology_alt,
-                                    color: Color(0xFF34E0B8),
+                                    color: CheColors.accent,
                                   ),
                                   title: Text(statement),
                                   subtitle: confidence == null

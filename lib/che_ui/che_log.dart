@@ -195,9 +195,9 @@ class CheConversationLogCard extends StatelessWidget {
           padding: const EdgeInsets.all(CheSpace.lg),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Row(children: [
-              const Icon(Icons.forum_outlined, color: CheColors.accent, size: 20),
+              Icon(Icons.forum_outlined, color: CheColors.accent, size: 20),
               const SizedBox(width: 8),
-              const Expanded(child: Text('Conversation Log', style: CheType.headline)),
+              Expanded(child: Text('Conversation Log', style: CheType.headline)),
               TextButton(
                 onPressed: () => Navigator.of(context)
                     .push(CheRoute(builder: (_) => CheConversationLogScreen(controller: controller))),
@@ -208,7 +208,7 @@ class CheConversationLogCard extends StatelessWidget {
                 style: CheType.caption),
             const SizedBox(height: CheSpace.md),
             if (recent.isEmpty)
-              const Text('Nothing yet — talk to CHE and it shows up here.', style: CheType.bodyDim)
+              Text('Nothing yet — talk to CHE and it shows up here.', style: CheType.bodyDim)
             else
               for (final c in recent) _LogRow(conversation: c),
           ]),
@@ -232,7 +232,7 @@ class _LogRow extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 8),
         child: Row(children: [
-          const Icon(Icons.description_outlined, size: 18, color: CheColors.textDim),
+          Icon(Icons.description_outlined, size: 18, color: CheColors.textDim),
           const SizedBox(width: 10),
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -287,7 +287,7 @@ class _CheConversationLogScreenState extends State<CheConversationLogScreen> {
               subtitle: 'EVERY CONVERSATION WITH CHE',
               status: null,
               leading: IconButton(
-                icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 19, color: CheColors.text),
+                icon: Icon(Icons.arrow_back_ios_new_rounded, size: 19, color: CheColors.text),
                 onPressed: () => Navigator.of(context).maybePop(),
               ),
             ),
@@ -298,23 +298,23 @@ class _CheConversationLogScreenState extends State<CheConversationLogScreen> {
                 style: CheType.body,
                 decoration: InputDecoration(
                   isDense: true,
-                  prefixIcon: const Icon(Icons.search_rounded, color: CheColors.textDim, size: 20),
+                  prefixIcon: Icon(Icons.search_rounded, color: CheColors.textDim, size: 20),
                   hintText: 'Search everything you and CHE said',
                   hintStyle: CheType.bodyDim,
                   filled: true,
                   fillColor: CheColors.surface,
                   border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(CheRadius.md),
-                      borderSide: const BorderSide(color: CheColors.stroke)),
+                      borderSide: BorderSide(color: CheColors.stroke)),
                   enabledBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(CheRadius.md),
-                      borderSide: const BorderSide(color: CheColors.stroke)),
+                      borderSide: BorderSide(color: CheColors.stroke)),
                 ),
               ),
             ),
             Expanded(
               child: rows.isEmpty
-                  ? const Center(child: Text('No matches.', style: CheType.bodyDim))
+                  ? Center(child: Text('No matches.', style: CheType.bodyDim))
                   : ListView(
                       padding: EdgeInsets.fromLTRB(CheSpace.gutter, 0, CheSpace.gutter,
                           CheSpace.xxl + MediaQuery.of(context).viewPadding.bottom),
@@ -360,7 +360,7 @@ class _CheTranscriptScreenState extends State<CheTranscriptScreen> {
               subtitle: c.title.toUpperCase(),
               status: null,
               leading: IconButton(
-                icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 19, color: CheColors.text),
+                icon: Icon(Icons.arrow_back_ios_new_rounded, size: 19, color: CheColors.text),
                 onPressed: () => Navigator.of(context).maybePop(),
               ),
               trailing: CheIconButton(
@@ -381,18 +381,18 @@ class _CheTranscriptScreenState extends State<CheTranscriptScreen> {
                 style: CheType.body,
                 decoration: InputDecoration(
                   isDense: true,
-                  prefixIcon: const Icon(Icons.search_rounded, color: CheColors.textDim, size: 20),
+                  prefixIcon: Icon(Icons.search_rounded, color: CheColors.textDim, size: 20),
                   hintText: 'Search this conversation',
                   hintStyle: CheType.bodyDim,
                   filled: true,
                   fillColor: CheColors.surface,
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(CheRadius.md),
-                    borderSide: const BorderSide(color: CheColors.stroke),
+                    borderSide: BorderSide(color: CheColors.stroke),
                   ),
                   enabledBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(CheRadius.md),
-                    borderSide: const BorderSide(color: CheColors.stroke),
+                    borderSide: BorderSide(color: CheColors.stroke),
                   ),
                 ),
               ),

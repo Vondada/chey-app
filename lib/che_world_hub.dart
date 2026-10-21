@@ -33,7 +33,7 @@ class CheBuilding {
   final Color color;
 }
 
-const List<CheBuilding> cheCampusBuildings = [
+List<CheBuilding> cheCampusBuildings = [
   CheBuilding(
     tab: 0,
     title: 'Brain',
@@ -102,7 +102,7 @@ const List<CheBuilding> cheCampusBuildings = [
     title: 'Workshop',
     subtitle: 'Watch real work form',
     icon: Icons.construction_rounded,
-    color: Color(0xFF34E0B8),
+    color: CheColors.accent,
   ),
 ];
 
@@ -202,14 +202,14 @@ class _WorldHeader extends StatelessWidget {
         children: [
           IconButton(
             onPressed: () => Navigator.of(context).maybePop(),
-            icon: const Icon(Icons.arrow_back_ios_new, color: CheColors.textPrimary, size: 18),
+            icon: Icon(Icons.arrow_back_ios_new, color: CheColors.textPrimary, size: 18),
           ),
           const SizedBox(width: 4),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
+                Text(
                   'CHE VIRTUAL OFFICE',
                   style: TextStyle(
                     color: CheColors.textPrimary,

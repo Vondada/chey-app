@@ -260,10 +260,10 @@ extension _CheHomeMemory on _CHEHomeState {
                 padding: const EdgeInsets.all(20),
                 child: Column(
                   children: [
-                    const Text(
+                    Text(
                       'C.H.E. MEMORY',
                       style: TextStyle(
-                        color: Color(0xFF34E0B8),
+                        color: CheColors.accent,
                         fontSize: 22,
                         fontWeight: FontWeight.bold,
                         letterSpacing: 2,
@@ -293,9 +293,9 @@ extension _CheHomeMemory on _CHEHomeState {
                                 return Card(
                                   color: const Color(0xFF243747),
                                   child: ListTile(
-                                    leading: const Icon(
+                                    leading: Icon(
                                       Icons.memory,
-                                      color: Color(0xFF34E0B8),
+                                      color: CheColors.accent,
                                     ),
                                     title: Text(
                                       text,
@@ -565,11 +565,11 @@ extension _CheHomeMemory on _CHEHomeState {
           padding: const EdgeInsets.symmetric(vertical: 8),
           child: Wrap(
             children: [
-              const ListTile(
+              ListTile(
                 title: Text(
                   'PERSONAL SOURCES',
                   style: TextStyle(
-                    color: Color(0xFF34E0B8),
+                    color: CheColors.accent,
                     fontWeight: FontWeight.w800,
                   ),
                 ),
@@ -921,9 +921,9 @@ extension _CheHomeMemory on _CHEHomeState {
                     children: [
                       Row(
                         children: [
-                          const Icon(
+                          Icon(
                             Icons.auto_awesome,
-                            color: Color(0xFF34E0B8),
+                            color: CheColors.accent,
                           ),
                           const SizedBox(width: 10),
                           const Expanded(
@@ -1139,9 +1139,9 @@ extension _CheHomeMemory on _CHEHomeState {
                       padding: const EdgeInsets.fromLTRB(18, 16, 12, 8),
                       child: Row(
                         children: [
-                          const Icon(
+                          Icon(
                             Icons.storage_outlined,
-                            color: Color(0xFF34E0B8),
+                            color: CheColors.accent,
                           ),
                           const SizedBox(width: 10),
                           const Expanded(
@@ -1433,11 +1433,11 @@ extension _CheHomeMemory on _CHEHomeState {
         return SafeArea(
           child: Wrap(
             children: [
-              const ListTile(
+              ListTile(
                 title: Text(
                   'MULTIMODAL INPUT',
                   style: TextStyle(
-                    color: Color(0xFF34E0B8),
+                    color: CheColors.accent,
                     fontWeight: FontWeight.bold,
                   ),
                 ),

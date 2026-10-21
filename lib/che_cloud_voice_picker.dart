@@ -328,10 +328,10 @@ class _CheCloudVoicePickerState extends State<CheCloudVoicePicker> {
       body: SafeArea(child: ListView(padding: const EdgeInsets.all(18), children: [
         const Text('Choose how CHE speaks', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
         const SizedBox(height: 8),
-        const Text('These are the real cloud voices for normal Chat and Read This, not the iPhone fallback voices. Choose and save one here; do not open the providers’ apps.', style: TextStyle(color: CheColors.textDim)),
+        Text('These are the real cloud voices for normal Chat and Read This, not the iPhone fallback voices. Choose and save one here; do not open the providers’ apps.', style: TextStyle(color: CheColors.textDim)),
         const SizedBox(height: 12),
         Text('ElevenLabs: $_elevenState    Fish Audio: $_fishState',
-          style: const TextStyle(color: CheColors.accent)),
+          style: TextStyle(color: CheColors.accent)),
         if (_loading) const Padding(padding: EdgeInsets.all(12), child: LinearProgressIndicator()),
         if (_error.isNotEmpty) Text(_error, style: const TextStyle(color: CheColors.warning)),
         if (!_loading && _voices.isEmpty) const Padding(
@@ -341,7 +341,7 @@ class _CheCloudVoicePickerState extends State<CheCloudVoicePicker> {
         if (_savedUnlisted.isNotEmpty) Padding(
           padding: const EdgeInsets.symmetric(vertical: 8),
           child: Text('CHE keeps using $_savedUnlisted. It is not in the provider\'s list right now, so it is not shown below.',
-            style: const TextStyle(color: CheColors.textDim)),
+            style: TextStyle(color: CheColors.textDim)),
         ),
         for (final v in _voices)
           ListTile(
@@ -365,9 +365,9 @@ class _CheCloudVoicePickerState extends State<CheCloudVoicePicker> {
             icon: const Icon(Icons.check), label: const Text('Save Voice'))),
         ]),
         if (_status.isNotEmpty) Padding(padding: const EdgeInsets.symmetric(vertical: 14),
-          child: Semantics(liveRegion: true, child: Text(_status, style: const TextStyle(color: CheColors.accent, fontSize: 18, height: 1.3)))),
+          child: Semantics(liveRegion: true, child: Text(_status, style: TextStyle(color: CheColors.accent, fontSize: 18, height: 1.3)))),
         const SizedBox(height: 18),
-        const Text('Only account-authorized voices are listed. Fish currently exposes its configured voice, not an invented catalog. If a provider fails, CHE tries the other connected provider.', style: TextStyle(color: CheColors.textDim, fontSize: 12)),
+        Text('Only account-authorized voices are listed. Fish currently exposes its configured voice, not an invented catalog. If a provider fails, CHE tries the other connected provider.', style: TextStyle(color: CheColors.textDim, fontSize: 12)),
       ])),
     );
   }

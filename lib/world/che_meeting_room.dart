@@ -20,6 +20,7 @@ import '../agents/che_agent_runtime.dart';
 import '../che_ui/che_agents.dart';
 import 'che_meetings.dart';
 import 'che_scene_model.dart';
+import '../che_ui/che_theme.dart';
 
 class CheMeetingRoom extends StatefulWidget {
   const CheMeetingRoom({super.key, required this.meetingId, required this.load, required this.onSpeak, this.pollEvery = const Duration(seconds: 3), this.onBackToOffice});
@@ -49,7 +50,7 @@ class CheMeetingRoom extends StatefulWidget {
 }
 
 class _CheMeetingRoomState extends State<CheMeetingRoom> {
-  static const _gold = Color(0xFFE8B04A);
+  static const _gold = CheColors.markets;
   CheScene? _scene;
   String? _error;
   Timer? _timer;
@@ -255,7 +256,7 @@ class _ProvenanceBadge extends StatelessWidget {
   Widget build(BuildContext context) {
     final synthesis = o.provenance == 'che_synthesis_unverified';
     final filled = o.provenance == 'live' || o.provenance == 'owner_request';
-    final color = synthesis ? const Color(0xFFE8B04A) : (filled ? const Color(0xFF5FD3B3) : Colors.white70);
+    final color = synthesis ? CheColors.markets : (filled ? const Color(0xFF5FD3B3) : Colors.white70);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       decoration: BoxDecoration(
@@ -305,13 +306,13 @@ class _Table extends StatelessWidget {
               decoration: BoxDecoration(
                 color: path == null ? Colors.black54 : const Color(0xFF2C2410),
                 borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: path == null ? Colors.white24 : const Color(0xFFE8B04A), width: path == null ? 1 : 2),
+                border: Border.all(color: path == null ? Colors.white24 : CheColors.markets, width: path == null ? 1 : 2),
               ),
               child: Center(
                 child: Text(
                   path == null ? chePlainText(scene.objective, max: 90) : 'Recommended path\n${chePlainText(path.preview, max: 90)}',
                   textAlign: TextAlign.center, maxLines: 5, overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 12, color: path == null ? Colors.white70 : const Color(0xFFE8B04A)),
+                  style: TextStyle(fontSize: 12, color: path == null ? Colors.white70 : CheColors.markets),
                 ),
               ),
             ),

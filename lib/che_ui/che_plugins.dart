@@ -337,7 +337,7 @@ Future<bool> showChePluginReview(BuildContext context, ChePluginRegistry reg, Ch
                 onPressed: () => Navigator.pop(ctx, false),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: CheColors.text,
-                  side: const BorderSide(color: CheColors.stroke),
+                  side: BorderSide(color: CheColors.stroke),
                   padding: const EdgeInsets.symmetric(vertical: 14),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(CheRadius.md)),
                 ),
@@ -499,13 +499,13 @@ class _ChePluginsScreenState extends State<ChePluginsScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: CheColors.surface,
-        title: const Text('Add a plugin', style: CheType.headline),
+        title: Text('Add a plugin', style: CheType.headline),
         content: TextField(
           controller: ctrl,
           minLines: 3,
           maxLines: 8,
           style: CheType.mono,
-          decoration: const InputDecoration(
+          decoration: InputDecoration(
             hintText: 'Paste a secure HTTPS link or plugin JSON',
             hintStyle: CheType.bodyDim,
           ),
@@ -606,7 +606,7 @@ class _ChePluginsScreenState extends State<ChePluginsScreen> {
           border: Border.all(color: CheColors.stroke),
         ),
         child: Row(children: [
-          const Icon(Icons.hub_rounded, size: 18, color: CheColors.accent),
+          Icon(Icons.hub_rounded, size: 18, color: CheColors.accent),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
@@ -641,11 +641,11 @@ class _ChePluginsScreenState extends State<ChePluginsScreen> {
         contentPadding: const EdgeInsets.symmetric(vertical: 12),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(CheRadius.md),
-          borderSide: const BorderSide(color: CheColors.stroke),
+          borderSide: BorderSide(color: CheColors.stroke),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(CheRadius.md),
-          borderSide: const BorderSide(color: CheColors.stroke),
+          borderSide: BorderSide(color: CheColors.stroke),
         ),
       ),
     );
@@ -946,7 +946,7 @@ class _ChePluginsScreenState extends State<ChePluginsScreen> {
           ),
           PopupMenuButton<String>(
             color: CheColors.surfaceHi,
-            icon: const Icon(Icons.more_horiz_rounded, color: CheColors.textDim),
+            icon: Icon(Icons.more_horiz_rounded, color: CheColors.textDim),
             onSelected: (v) {
               if (v == 'open') _openPlugin(p);
               if (v == 'rollback') reg.rollback(p.id);
@@ -1039,7 +1039,7 @@ class ChePluginPage extends StatelessWidget {
               subtitle: 'PLUGIN · v${plugin.version}',
               status: null,
               leading: IconButton(
-                icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 19, color: CheColors.text),
+                icon: Icon(Icons.arrow_back_ios_new_rounded, size: 19, color: CheColors.text),
                 onPressed: () => Navigator.of(context).maybePop(),
               ),
             ),

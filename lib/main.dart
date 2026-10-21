@@ -86,6 +86,8 @@ import 'che_ui/che_log.dart' show CheConversationStore;
 import 'che_ui/che_plugins.dart'
     show ChePluginOfferCard, ChePluginRegistry, ChePluginsScreen, chePluginAuthoringGuide;
 import 'che_ui/che_theme.dart' as kit;
+import 'che_ui/che_palette_theme.dart';
+import 'che_ui/che_palettes.dart';
 import 'che_ui/che_ui_preferences.dart';
 import 'che_ui/che_understood_as.dart' show CheUnderstoodAs, cheUnderstoodAs;
 import 'che_ui/che_transitions.dart';
@@ -203,23 +205,11 @@ class _CHEAppState extends State<CHEApp> {
     unawaited(_ui.load());
   }
 
-  ThemeData _darkTheme() => kit.CheTheme.dark().copyWith(
-        appBarTheme: const AppBarTheme(
-          backgroundColor: Colors.transparent,
-          surfaceTintColor: Colors.transparent,
-          elevation: 0,
-          scrolledUnderElevation: 0,
-        ),
-        bottomSheetTheme: const BottomSheetThemeData(
-          backgroundColor: CheColors.panel,
-          showDragHandle: false,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
-          ),
-        ),
-        dialogTheme: const DialogThemeData(
-          backgroundColor: CheColors.panel,
-          shape: RoundedRectangleBorder(
+  // The owner's palette (Settings > Appearance) drives every screen; the dialog and sheet shapes stay CHE's.
+  ThemeData _themeFor(CheColorPalette p) => cheThemeFor(p).copyWith(
+        dialogTheme: DialogThemeData(
+          backgroundColor: p.surface,
+          shape: const RoundedRectangleBorder(
             borderRadius: BorderRadius.all(Radius.circular(18)),
           ),
         ),
@@ -230,14 +220,16 @@ class _CHEAppState extends State<CHEApp> {
     return ListenableBuilder(
       listenable: _ui,
       builder: (context, _) {
-        return MaterialApp(
+        // The root is remounted when the palette changes, so every open screen takes the new colours (CheColors
+        // reads the active palette while each widget builds).
+        return KeyedSubtree(key: ValueKey('che-palette-${_ui.palette.id}'), child: MaterialApp(
           title: 'CHE',
           debugShowCheckedModeBanner: false,
           // iPhone-native feel: bounce scrolling everywhere, iOS swipe-back page
           // transitions on every platform, and no Android-style ink ripples.
           scrollBehavior: const _CheScrollBehavior(),
-          theme: kit.CheTheme.light(),
-          darkTheme: _darkTheme(),
+          theme: _themeFor(_ui.palette),
+          darkTheme: _themeFor(_ui.palette),
           themeMode: _ui.themeMode,
           builder: (context, child) {
             final mq = MediaQuery.of(context);
@@ -248,7 +240,7 @@ class _CHEAppState extends State<CHEApp> {
             ));
           },
           home: const CHEHome(),
-        );
+        ));
       },
     );
   }
@@ -1644,7 +1636,7 @@ OWNER AGENCY
                     ConstrainedBox(
                       constraints: BoxConstraints(maxWidth: constraints.maxWidth),
                       child: ActionChip(
-                        avatar: const Icon(Icons.bolt_rounded, size: 16, color: kit.CheColors.accent),
+                        avatar: Icon(Icons.bolt_rounded, size: 16, color: kit.CheColors.accent),
                         label: Text(action, maxLines: 1, overflow: TextOverflow.ellipsis),
                         onPressed: () => _runPluginPrompt(action),
                       ),

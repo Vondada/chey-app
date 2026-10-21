@@ -4,6 +4,9 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'che_active_palette.dart';
+import 'che_palettes.dart';
+
 enum CheAvatarStyle { mini, portrait }
 
 enum CheDeskDensity { comfortable, compact }
@@ -21,6 +24,8 @@ class CheUiPreferences extends ChangeNotifier {
   static final CheUiPreferences instance = CheUiPreferences._();
 
   static const _themeKey = 'che.ui.themeMode';
+  // The owner's palette (che_palettes.dart ids). Saved once chosen; the dark palette is the default.
+  static const _paletteKey = 'che.ui.palette';
   static const _avatarKey = 'che.ui.avatarStyle';
   static const _densityKey = 'che.ui.deskDensity';
   static const _textScaleKey = 'che.ui.textScale';
@@ -32,7 +37,9 @@ class CheUiPreferences extends ChangeNotifier {
   bool _loaded = false;
   bool get isLoaded => _loaded;
 
-  ThemeMode themeMode = ThemeMode.dark;
+  CheColorPalette palette = kCheDarkPalette;
+  // Light palettes use light system chrome; every other palette is dark.
+  ThemeMode get themeMode => palette.brightness == Brightness.light ? ThemeMode.light : ThemeMode.dark;
   // Owner asked for CHE to appear as her female character by default.
   CheAvatarStyle avatarStyle = CheAvatarStyle.portrait;
   CheDeskDensity deskDensity = CheDeskDensity.comfortable;
@@ -54,7 +61,8 @@ class CheUiPreferences extends ChangeNotifier {
 
   Future<void> load() async {
     final prefs = await SharedPreferences.getInstance();
-    themeMode = _parseTheme(prefs.getString(_themeKey));
+    palette = _paletteFromSaved(prefs);
+    CheActivePalette.current = palette;
     avatarStyle = prefs.getString(_avatarKey) == CheAvatarStyle.mini.name
         ? CheAvatarStyle.mini
         : CheAvatarStyle.portrait;
@@ -78,26 +86,28 @@ class CheUiPreferences extends ChangeNotifier {
     notifyListeners();
   }
 
-  ThemeMode _parseTheme(String? raw) => switch (raw) {
-        'light' => ThemeMode.light,
-        'system' => ThemeMode.system,
-        _ => ThemeMode.dark,
-      };
+  // A palette saved by id; the older dark / light / system choice maps to the dark or light palette.
+  CheColorPalette _paletteFromSaved(SharedPreferences prefs) {
+    final id = prefs.getString(_paletteKey);
+    if (id != null) return cheColorPaletteFor(id);
+    return switch (prefs.getString(_themeKey)) {
+      'light' => kCheLightPalette,
+      _ => kCheDarkPalette,
+    };
+  }
 
-  Future<void> setThemeMode(ThemeMode mode) async {
-    if (themeMode == mode) return;
-    themeMode = mode;
+  Future<void> setPalette(CheColorPalette next) async {
+    if (palette.id == next.id) return;
+    palette = next;
+    CheActivePalette.current = next;
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(
-      _themeKey,
-      switch (mode) {
-        ThemeMode.light => 'light',
-        ThemeMode.system => 'system',
-        ThemeMode.dark => 'dark',
-      },
-    );
+    await prefs.setString(_paletteKey, next.id);
   }
+
+  /// The older Dark / Light / System control, now choosing a palette: System keeps the dark palette.
+  Future<void> setThemeMode(ThemeMode mode) =>
+      setPalette(mode == ThemeMode.light ? kCheLightPalette : kCheDarkPalette);
 
   Future<void> setAvatarStyle(CheAvatarStyle style) async {
     if (avatarStyle == style) return;

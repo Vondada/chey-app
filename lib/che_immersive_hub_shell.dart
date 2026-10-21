@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'che_ui/che_screen_awareness.dart';
+import 'che_ui/che_theme.dart';
 
 typedef CheImmersivePageBuilder = Widget Function(bool active);
 
@@ -29,7 +30,7 @@ class CheImmersiveHubShell extends StatefulWidget {
 
 class _CheImmersiveHubShellState extends State<CheImmersiveHubShell>
     with SingleTickerProviderStateMixin {
-  static const _accent = Color(0xFF34E0B8);
+  static final _accent = CheColors.accent;
 
   late final TabController _controller;
   late int _index;
@@ -153,7 +154,7 @@ class _CheImmersiveHubShellState extends State<CheImmersiveHubShell>
                       key: ValueKey(_index),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: _accent,
                         fontSize: 18,
                         fontWeight: FontWeight.w800,
@@ -231,7 +232,7 @@ class _RoomPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const accent = Color(0xFF34E0B8);
+    final accent = CheColors.accent;
     return Semantics(
       button: true,
       selected: selected,

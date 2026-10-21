@@ -785,7 +785,7 @@ class _CheAgentChatScreenState extends State<CheAgentChatScreen> {
         Row(children: [
           if (canPop)
             IconButton(
-              icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 19, color: CheColors.text),
+              icon: Icon(Icons.arrow_back_ios_new_rounded, size: 19, color: CheColors.text),
               onPressed: () => Navigator.of(context).maybePop(),
             )
           else
@@ -828,7 +828,7 @@ class _CheAgentChatScreenState extends State<CheAgentChatScreen> {
                     child: Text(c.current.title,
                         maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.label),
                   ),
-                  const Icon(Icons.keyboard_arrow_down_rounded, size: 20, color: CheColors.textDim),
+                  Icon(Icons.keyboard_arrow_down_rounded, size: 20, color: CheColors.textDim),
                 ]),
               ),
             ),
@@ -859,10 +859,10 @@ class _CheAgentChatScreenState extends State<CheAgentChatScreen> {
                 padding: const EdgeInsets.only(bottom: 6, top: 2),
                 child: InputChip(
                   label: Text('${_attachments.length} attached', style: CheType.caption),
-                  avatar: const Icon(Icons.photo_library_outlined, size: 16, color: CheColors.accent),
+                  avatar: Icon(Icons.photo_library_outlined, size: 16, color: CheColors.accent),
                   onDeleted: () => setState(_attachments.clear),
                   backgroundColor: CheColors.surfaceHi,
-                  side: const BorderSide(color: CheColors.stroke),
+                  side: BorderSide(color: CheColors.stroke),
                 ),
               ),
             ),
@@ -899,7 +899,7 @@ class _CheAgentChatScreenState extends State<CheAgentChatScreen> {
                 ),
                 child: Row(mainAxisSize: MainAxisSize.min, children: [
                   Text(c.mode, style: CheType.caption.copyWith(color: CheColors.accent, fontWeight: FontWeight.w700)),
-                  const Icon(Icons.keyboard_arrow_down_rounded, size: 16, color: CheColors.accent),
+                  Icon(Icons.keyboard_arrow_down_rounded, size: 16, color: CheColors.accent),
                 ]),
               ),
             ),
@@ -1018,7 +1018,7 @@ class _UserBubble extends StatelessWidget {
                 Padding(
                   padding: const EdgeInsets.only(bottom: 4),
                   child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    const Icon(Icons.photo_library_outlined, size: 14, color: CheColors.accent),
+                    Icon(Icons.photo_library_outlined, size: 14, color: CheColors.accent),
                     const SizedBox(width: 4),
                     Text('${message.attachments.length} attached', style: CheType.caption),
                   ]),
@@ -1066,7 +1066,7 @@ class _AssistantMessageState extends State<_AssistantMessage> {
                   AnimatedRotation(
                     turns: _showSteps ? 0.25 : 0,
                     duration: CheMotion.d(context, CheMotion.fast),
-                    child: const Icon(Icons.chevron_right_rounded, size: 16, color: CheColors.textDim),
+                    child: Icon(Icons.chevron_right_rounded, size: 16, color: CheColors.textDim),
                   ),
                 ]),
               ),
@@ -1186,9 +1186,9 @@ class _EmptyState extends StatelessWidget {
       child: Column(children: [
         CheOrb(size: 120, label: true, state: orbState),
         const SizedBox(height: CheSpace.xl),
-        const Text('What should we build?', style: CheType.title, textAlign: TextAlign.center),
+        Text('What should we build?', style: CheType.title, textAlign: TextAlign.center),
         const SizedBox(height: CheSpace.sm),
-        const Text('Ask, plan, create or run a task. CHE works fast and shows every step.',
+        Text('Ask, plan, create or run a task. CHE works fast and shows every step.',
             style: CheType.bodyDim, textAlign: TextAlign.center),
         const SizedBox(height: CheSpace.xl),
         Wrap(
@@ -1238,13 +1238,13 @@ class _ConversationSheet extends StatelessWidget {
               Padding(
                 padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.lg, CheSpace.sm, CheSpace.sm),
                 child: Row(children: [
-                  const Expanded(child: Text('Conversations', style: CheType.headline)),
+                  Expanded(child: Text('Conversations', style: CheType.headline)),
                   TextButton.icon(
                     onPressed: () {
                       controller.newConversation();
                       Navigator.pop(context);
                     },
-                    icon: const Icon(Icons.add_rounded, color: CheColors.accent),
+                    icon: Icon(Icons.add_rounded, color: CheColors.accent),
                     label: Text('New', style: CheType.label.copyWith(color: CheColors.accent)),
                   ),
                 ]),
@@ -1277,7 +1277,7 @@ class _ConversationSheet extends StatelessWidget {
                         subtitle: Text('${conv.messages.length} messages', style: CheType.caption),
                         trailing: IconButton(
                           tooltip: 'Read full log',
-                          icon: const Icon(Icons.description_outlined, color: CheColors.textDim, size: 20),
+                          icon: Icon(Icons.description_outlined, color: CheColors.textDim, size: 20),
                           onPressed: () {
                             final nav = Navigator.of(context);
                             nav.pop();
