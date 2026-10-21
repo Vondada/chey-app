@@ -323,6 +323,8 @@ export function citation(ref, part, text) {
 const STATUS_RE = /\b(?:knowledge library|my library)\b[\s\S]{0,30}\b(?:status|what(?:'s| is| are)? (?:indexed|in it|in there)|how many|categories|catalog)\b|\bwhat(?:'s| is| are)? (?:indexed|in (?:my|the) knowledge library)\b/i;
 const SEARCH_RE = /\b(?:search|look\s+up|check|ask)\b[\s\S]{0,30}\b(?:knowledge library|my library)\b[\s\S]{0,12}?\b(?:for|about)\s+(.{2,200})$|\bwhat\s+(?:does|do)\s+(?:my|the)\s+(?:knowledge\s+library|library)\s+(?:say|have|know)\s+about\s+(.{2,200})$/i;
 // Compare and "what did you learn" must name the library, so ordinary questions never take these routes.
+// "What books do you have in my knowledge library, and which have you read?" lists the catalog and the read status.
+const CATALOG_RE = /\b(?:what|which|list|show|tell me)\b[\s\S]{0,40}\b(?:books?|references?|sources?|documents?|works?)\b[\s\S]{0,60}\b(?:knowledge library|my library|your library)\b|\b(?:knowledge library|my library|your library)\b[\s\S]{0,40}\b(?:books?|references?|sources?)\b[\s\S]{0,40}\b(?:have|list|show|read)\b/i;
 const COMPARE_RE = /^(?:compare|contrast)\s+(.{2,160}?)\s+(?:and|with|to|versus|vs\.?)\s+(.{2,160}?)\s+(?:in|from)\s+(?:my|the)\s+(?:knowledge\s+)?library[?.!]*$/i;
 const LEARN_RE = /\bwhat\s+(?:did|have)\s+(?:you|che)\s+learn(?:ed)?\s+from\s+(.{2,160}?)\s+(?:in|from)\s+(?:my|the)\s+knowledge\s+library[?.!]*$/i;
 const INDEX_RE = /\b(?:add|index|store|save)\b[\s\S]{0,20}\bto\s+(?:my|the)\s+knowledge library\b[\s\S]*?\b(?:called|titled|named)\s+["“]?([^"”:\n]{2,120})["”]?[\s\S]*?\bin\s+([^:\n]{2,80}):\s*([\s\S]{20,})$/i;
@@ -339,6 +341,7 @@ export function knowledgeIntent(message) {
   if (index) return { kind: 'index', title: index[1].trim(), category: index[2].trim(), text: index[3].trim() };
   const search = SEARCH_RE.exec(text);
   if (search) return { kind: 'search', question: (search[1] || search[2] || '').replace(/[?.!]+$/, '').trim() };
+  if (CATALOG_RE.test(text)) return { kind: 'catalog' };
   if (STATUS_RE.test(text)) return { kind: 'status' };
   return null;
 }
@@ -359,6 +362,20 @@ export function knowledgeReply(kl, intent, { now } = {}) {
     const indexed = rows.reduce((n, r) => n + r.indexed, 0);
     const cataloged = rows.reduce((n, r) => n + r.cataloged, 0);
     return `My knowledge library has ${indexed} indexed reference${indexed === 1 ? '' : 's'} with text I can quote, and ${cataloged} catalogued only. I have not read the catalogued ones. The categories: ${rows.map((r) => `${r.name} (${r.indexed} indexed, ${r.cataloged} catalogued)`).join('; ')}.`;
+  }
+  if (intent.kind === 'catalog') {
+    const refs = kl.list({ limit: 500 });
+    if (!refs.length) return 'My knowledge library has no books or references in it yet, sir. Tell me one and I can add it.';
+    const label = (r) => `${r.title}${r.creator ? ` by ${r.creator}` : ''}`;
+    const read = refs.filter((r) => r.access === 'indexed');
+    const unread = refs.filter((r) => r.access !== 'indexed');
+    const readLine = read.length
+      ? `Read (I have the text and can quote it): ${read.map(label).join('; ')}.`
+      : 'Read: none yet. I have not indexed the text of any reference.';
+    const unreadLine = unread.length
+      ? `Not read (catalogued only; I have not read them, so I can't quote them): ${unread.map(label).join('; ')}.`
+      : '';
+    return [`My knowledge library has ${refs.length} reference${refs.length === 1 ? '' : 's'}.`, readLine, unreadLine].filter(Boolean).join('\n');
   }
   if (intent.kind === 'search') {
     if (!intent.question) return 'Tell me what to search the knowledge library for, sir.';

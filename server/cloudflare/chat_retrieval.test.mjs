@@ -109,10 +109,11 @@ test('a fact the owner told CHE in chat is found by a normal question, with the 
   const record = { models: [] };
   const che = await owner(storage, 'I do not know your favorite food.', record);
   await che.say('What is my favorite food?');
-  const prompt = JSON.stringify(record.models.at(-1)?.input || {});
-  assert.match(prompt, /pizza/, 'the model is given the owner\'s chat words');
-  assert.match(prompt, /speaker owner/, 'the owner is the stored speaker');
-  assert.doesNotMatch(prompt, /Noted, sir/, 'CHE\'s own answer is not presented as the owner\'s words');
+  // The owner's own words are quoted deterministically (personal_recall.js); the model is not asked to recall them.
+  const answer = (await che.say('What is my favorite food?')).reply;
+  assert.match(answer, /You told me "My favorite food is pizza"/, 'the owner\'s own words are quoted');
+  assert.doesNotMatch(answer, /Noted, sir/, 'CHE\'s own answer is not presented as the owner\'s words');
+  assert.equal(record.models.length, 0, 'no model is asked to recall a personal fact');
 });
 
 test('"search my memory" finds the same owner chat turn and names its stored sender', async (t) => {
