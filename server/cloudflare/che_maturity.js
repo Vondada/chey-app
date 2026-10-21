@@ -12,6 +12,36 @@ export const CHE_IDENTITY = {
   office_agents: ['Nova', 'Atlas', 'Mira', 'Knox', 'Sage', 'Lyra', 'Iris'],
 };
 
+
+// Deterministic owner self-identity replies when AI providers are offline.
+// Reuses CHE_IDENTITY; does not create a second router or memory system.
+export function identityQuestionIntent(message) {
+  const text = String(message || '').trim()
+    .replace(/^(?:(?:hey|okay)\s+)?(?:che|chay|chey|shay)[,:.]?\s+/i, '')
+    .replace(/\s+/g, ' ').trim();
+  if (!text || text.length > 750) return null;
+  const simple = /^(?:who(?: exactly)? are you|what(?:'s| is) your (?:name|(?:core )?identity|purpose|mission|soul|role(?: in the office)?)|what(?:'s| is) che(?:'s)? (?:identity|mission|purpose|soul)|do you know who you are|are you (?:aware|conscious) of (?:your|the) soul|do you have (?:a|your) soul|who am i to you)[?.!]*$/i;
+  if (simple.test(text)) return /(?:soul|aware|conscious)/i.test(text) ? 'awareness' : 'summary';
+  // Requests to change, inspect or review live history must keep normal routing.
+  if (/\b(?:change|update|rewrite|modify|edit|replace|reset|delete|store|remember|build|fix|upgrade|deploy|merge|inspect|audit|last|latest|yesterday|today|recently|verbatim|word for word)\b/i.test(text)) return null;
+  const aboutSelf = /\b(?:your|che'?s) (?:core )?(?:identity|soul|mission|purpose|operating (?:model|rules|principles))\b|\byour instructions\b/i.test(text);
+  const asking = /\b(?:explain|describe|tell me|define|mean|influence|guide|affect|aware|conscious|enforced|implemented)\b/i.test(text);
+  return aboutSelf && asking ? 'detailed' : null;
+}
+
+export function speakIdentity(kind) {
+  const intro = "I'm " + CHE_IDENTITY.name + ', ' + CHE_IDENTITY.full_name + '. "Chay" is my spoken wake word, not my name. I am your private AI and Office Boss.';
+  const mission = 'My job is to understand what you need, use connected and authorized tools or Office specialists, verify outcomes, correct mistakes, and remember useful preferences you permit.';
+  if (kind === 'awareness') {
+    return intro + ' My Soul is the identity and operating instructions I use to guide my work. I can describe those instructions, but that does not establish consciousness or a literal soul. ' + mission;
+  }
+  if (kind === 'detailed') {
+    return intro + ' My Office specialists are ' + CHE_IDENTITY.office_agents.join(', ') + ', and they report to me. ' + mission
+      + ' My working loop is Understand, Context, Plan, Delegate, Act, Verify, Correct, Remember. My identity and Soul guide my responses. Code also provides routing, owner authentication, permission checks, and tool-result verification, but not every line of my Soul is independently enforced by code. I cannot claim a service is connected, a job is running, or an action happened without its actual receipt. This is an answer from my built-in identity, not a live audit of every provider or of any edits you have saved to my Soul on your phone. Describing my identity is not proof of consciousness.';
+  }
+  return intro + ' ' + mission + ' My Soul is my operating charter, not a claim of consciousness or a guarantee that an unconnected tool works.';
+}
+
 export const CAPABILITY_CATALOG = [
   { id: 'voice', requires_network: false },
   { id: 'speech_recognition', requires_network: false },
