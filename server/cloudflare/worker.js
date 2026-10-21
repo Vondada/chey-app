@@ -208,6 +208,7 @@ import { APP_BUILD_KEY, appBuildIntent, appBuildRun, dispatchAppBuild, speakAppB
 import { advanceObjectives, applyMissionEvent, approvalReached, approveNode, awaitingApproval, cancelObjective, createObjective, mutateObjective, replanNode, resolveKnownNodes, retryNode, setObjectivePaused, speakObjective } from './objective_graph.js';
 import { CATEGORIES, COMMANDS, catalogView, commandById, commandStatus, connectorStatus, describeWorkflow, dispatchPrompt, findSavedWorkflow, normalizeSavedWorkflow, parseSlashCommand, readCommandSpeech, searchCommands, speakCommandList, speakUnavailable, suggestCommands, workflowNodes, workflowFromWords } from './command_catalog.js';
 import { handleReaRequest, loadInvestigation, parseReaRequest, reaInvestigationDetail, reaInvestigations } from './rea_runner.js';
+import { browseIntent, runSearchRoute, subAgentPlan } from './browse_chat.js';
 import { LAST_RESULTS_KEY, loadCatalog, resourceChoice, resourceIntent, resultLinks, searchCatalog, speakResults } from './resource_catalogs.js';
 import { fiveLayerIntent, LAYER_RESULTS_KEY, reasoningLayer, runReasoningLayer, speakFiveLayerResults } from './reasoning_exam.js';
 import { AUTONOMY_EXAM, EXAM_RESULTS_KEY, examIntent, examLevel, gradeLevel, mergeExamResult, speakExamResults, ungradableEngineFailure } from './autonomy_exam.js';
@@ -3617,6 +3618,55 @@ export class CheState extends DurableObject {
       });
     })().catch(() => {}).finally(() => { this.mailRefresh = null; });
     return this.mailRefresh;
+  }
+
+  // The owner's search, study and sub-agent requests (browse_chat.js). The owner typed the request, which is his
+  // permission for the browser. Money, deletes and sends never run here; sub-agents report back to CHE.
+  async browseTurn(message, body = {}) {
+    const intent = browseIntent(message);
+    if (!intent.search && !intent.study && !intent.create) return null;
+    const parts = [];
+    if (intent.study && intent.url) {
+      const rea = await handleReaRequest(this.ctx.storage, this.keyEnv || this.env, `REA inspect: ${intent.url}`, this.reaOptions({ history: [], owner: true }))
+        .catch((error) => ({ ok: false, text: `REA could not start on that page: ${String(error?.message || error).slice(0, 200)}` }));
+      if (rea?.text) parts.push(rea.text);
+    } else if (intent.study) {
+      parts.push('Send me the link to the page you want studied, and REA will read what the site allows.');
+    }
+    const plan = subAgentPlan(message, { url: intent.url });
+    if (plan.length) parts.push(await this.queueBrowseSubAgents(plan));
+    if (intent.search) {
+      // A model failure is no plan, so the loop stops and says so; it never becomes an invented answer.
+      const complete = async ({ system, user }) => {
+        const answer = await runChatModel(this.env, { systemPrompt: system, turns: [], message: user, maxTokens: 400, preferFast: true }).catch(() => ({ response: '' }));
+        return String(answer?.response || '');
+      };
+      const searched = await runSearchRoute(message, { complete, soul: String(body.soul || '').slice(0, 1500) });
+      parts.push(searched.text);
+    }
+    return { text: parts.filter(Boolean).join('\n\n') };
+  }
+
+  async queueBrowseSubAgents(plan) {
+    const data = await this.loadData();
+    const lines = [];
+    for (const item of plan) {
+      // An agent who is not on the team yet is hired through the Office's own hiring path, then given the task.
+      let agent = (data.team || []).find((a) => a.name === item.agent && !a.retired);
+      if (!agent) {
+        const hired = createAgent(data, { name: item.agent, role: item.role, specialty: item.specialty });
+        if (hired.error) { lines.push(`${item.agent} did not start: ${hired.error}`); continue; }
+        agent = hired.agent;
+      }
+      let refused = '';
+      try { assertAgentMayRun(agent, { task: item.task }); } catch (error) { refused = permissionBlocker(agent, error); }
+      if (refused) { lines.push(`${item.agent} did not start: ${refused}`); continue; }
+      queueAgentTask(data, agent, item.task, 'owner_chat');
+      lines.push(`${item.agent} is working on it: ${item.label}. ${item.agent} will hand the result to me for review; ask me for it when it is back.`);
+    }
+    await this.ctx.storage.put('che', data);
+    await this.scheduleWork();
+    return lines.join(' ');
   }
 
   async loadData() {
@@ -8867,6 +8917,13 @@ export class CheState extends DurableObject {
             } : null,
             model_calls: 0,
           });
+        }
+
+        // Search, study and sub-agent requests (browse_chat.js): the browsing loop, REA, or sub-agents who report
+        // back to CHE. A plain yes, a money request and a delete never match these words, so they keep their holds.
+        if (!body.attachment && !body.workflow_step) {
+          const browsed = await this.browseTurn(rawMessage, body).catch((error) => ({ text: `That did not run: ${String(error?.message || error).slice(0, 160)}` }));
+          if (browsed?.text) return ndjsonReply(browsed.text, { source: 'che_browse', ok: true, code_review_passed: false, owner_approval_required: false });
         }
 
         // Command Center: a plain yes releases a held command (once, fresh);
