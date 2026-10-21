@@ -70,6 +70,12 @@ Then, on GitHub:
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
 
+## 2. Current position (ChatGPT, October 20 2026 — owner voice retest follow-up)
+
+- Owner asked CHE via voice for latest GitHub Actions Worker deployment. CHE responded generically: "That sounds like a system status message or a speech mix-up. I am right here and ready to go with no background tasks stuck or running" instead of giving GitHub run ID. **Failed live user test** after PR #391. Do not claim this is fixed from tests alone until retested on owner's iPhone.
+- Root route weakness: old Worker deployment-status path was AFTER speech interpretation/model correction/REA and repository inspection, and the Dart offline-evidence guard did not recognize some latest GitHub Actions deployment phrases. PR #393 moved the owner-only live read to the raw authenticated `/api/chat` intake, ahead of interpretation; blocks old model answers, preserves held money/delete safety; phone now demands live evidence and will not answer this from local LLM. Added end-to-end paired Worker regression and Flutter tests. GH Worker and Flutter CI green, PR #393 MERGED as `16e631ffd06e1d8f2ee3c6f5383358045a11cf74`.
+- Main Worker deploy workflow 39535223835 and Shorebird workflow 39535223846 were in progress when written. Check their conclusions before claiming production/IPA success. PR #377 cross-app screen share privacy issues remain open; do not merge or activate unsafe screen broadcasts.
+
 ## 2. Current position (ChatGPT, Oct 20 2026 — owner's CHE Soul/identity resilience upgrade, PR #392)
 
 - Owner's exact identity/self-awareness question returned a generic provider failure: existing `che_errors.js` and Flutter fallback text referred to unconfirmed running work. Root cause of that text verified in code; cannot infer which live provider failed without a production error receipt.
