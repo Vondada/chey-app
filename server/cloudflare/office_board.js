@@ -4,9 +4,9 @@
 import { LA_AGENCIA_ROLES, officeToolBlocker } from './office_company.js';
 import { stalledTasks } from './activity.js';
 
-const ACTIVE = new Set(['queued', 'running', 'reviewing']);
+const ACTIVE = new Set(['queued', 'running', 'reviewing', 'review_pending']);
 const DONE = new Set(['complete']);
-const BLOCKED = new Set(['failed', 'blocked']);
+const BLOCKED = new Set(['failed', 'blocked', 'rejected', 'needs_review']);
 
 // The owner's day runs midnight to midnight in his own time zone (Chicago by
 // default), not UTC, so "today" never resets at 7 PM Central.
@@ -48,12 +48,19 @@ function deskStatus(agent, tasks, env, stallById = new Map()) {
         status: `Stalled (${stall.reason}): ${active.task}`,
       };
     }
-    const verb = active.status === 'queued' ? 'Up next' : active.status === 'reviewing' ? 'In CHE review' : 'Working';
+    const verb = active.status === 'queued' ? 'Up next'
+      : active.status === 'reviewing' ? 'In CHE review'
+        : active.status === 'review_pending' ? 'Waiting for CHE review' : 'Working';
     return { state: active.status === 'queued' ? 'queued' : 'working', job: active.task, job_id: active.id, status: `${verb}: ${active.task}` };
   }
-  const blocked = mine.find((t) => t.status === 'blocked');
+  const blocked = mine.find((t) => t.status === 'blocked' || t.status === 'needs_review')
+    || (mine[0]?.status === 'rejected' ? mine[0] : null);
   const tool = env ? officeToolBlocker(env, agent) : '';
-  if (blocked) return { state: 'blocked', job: blocked.task, job_id: blocked.id, status: blocked.error || tool || 'Blocked' };
+  if (blocked) {
+    const why = blocked.status === 'needs_review' ? `Not verified yet, needs your decision: ${blocked.task}`
+      : blocked.status === 'rejected' ? `Rejected by CHE: ${blocked.task}` : blocked.error || tool || 'Blocked';
+    return { state: 'blocked', job: blocked.task, job_id: blocked.id, status: why };
+  }
   if (tool) return { state: 'blocked', job: '', job_id: '', status: tool };
   const last = mine[0];
   if (last && DONE.has(last.status)) return { state: 'done', job: last.task, job_id: last.id, status: `Finished: ${last.task}` };

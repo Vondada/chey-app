@@ -288,7 +288,7 @@ export async function handleAiVoiceIntent(env, data, storage, message, history =
   if (move && providerFrom(move[2])) {
     const target = providerFrom(move[2]);
     const from = move[1] ? providerFrom(move[1]) : '';
-    const open = (data.team_tasks || []).filter((task) => ['queued', 'running', 'reviewing'].includes(task.status));
+    const open = (data.team_tasks || []).filter((task) => ['queued', 'running', 'reviewing', 'review_pending', 'needs_review'].includes(task.status));
     const active = open.find((task) => from && data.team.find((a) => a.id === task.partner_id)?.provider_preference === from) || open[0];
     if (!active) return { reply: 'There\'s no active Office task to move right now, sir.', meta: { source: 'office' } };
     const current = data.team.find((a) => a.id === active.partner_id);

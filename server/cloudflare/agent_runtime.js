@@ -18,11 +18,91 @@ import { isResearchStyleJob, writeResearchMemoryNote } from './research_memory.j
 import { codexThreadId } from './office_router.js';
 import { meetingEvent, officeTaskEvent, researchEvent } from './room_events.js';
 import { assertAgentMayRun, permissionBlocker } from './agent_permissions.js';
+import { guardRetrievalClaims } from './truth_layer.js';
 
 export const AGENT_STATUSES = [
   'idle', 'researching', 'building', 'analyzing', 'meeting',
   'waiting', 'reviewing', 'talking', 'done', 'offline',
 ];
+
+// A delegated task's lifecycle. Only `complete` means CHE approved the result; nothing else
+// becomes complete. queued -> running -> reviewing -> complete, or:
+//   review_pending  CHE's review could not run (provider down, unreadable verdict); the review is
+//                   retried with backoff, the agent's work is NOT redone.
+//   needs_review    the review failed MAX_REVIEW_ATTEMPTS times, or the task was interrupted where
+//                   re-running could repeat an action; held unverified until steered or re-reviewed.
+//   rejected        CHE did not approve after MAX_REPAIR_PASSES repair passes. Terminal, never complete.
+// `advisory` is a desk's input to one chat answer, recorded for history; it was never a delegated task.
+export const TASK_FINISHED = new Set(['complete', 'failed', 'cancelled', 'rejected', 'advisory']);
+// Work an agent still holds: not finished and not blocked on a permission or credential.
+export const TASK_OPEN = new Set(['queued', 'running', 'reviewing', 'review_pending', 'needs_review']);
+export const MAX_REPAIR_PASSES = 2;
+export const MAX_REVIEW_ATTEMPTS = 3;
+export const MAX_WORK_RETRIES = 8;
+export const MAX_STALE_RECOVERIES = 3;
+
+/** Exponential backoff: base, 2x base, 4x base ... capped. */
+export function retryDelayMs(attempt, base = 60_000, cap = 3_600_000) {
+  return Math.min(cap, base * 2 ** Math.max(0, Number(attempt) || 0));
+}
+
+/** CHE's review verdict: 'approved', 'needs_work', or null when the review said neither. */
+export function reviewVerdict(review) {
+  const first = (String(review || '').trim().split('\n')[0] || '').replace(/^\W*(?:(?:CHE\s+)?(?:verdict|review|decision)\s*[:\-]\s*)/i, '');
+  // "Not approved" is a rejection, whatever follows it.
+  if (/\bnot\s+approved\b/i.test(first)) return 'needs_work';
+  const approved = /\bAPPROVED\b/i.test(first);
+  const needsWork = /\bNEEDS[\s_-]*WORK\b/i.test(first);
+  // A first line naming both is not a verdict; approval must lead the line and not be a question.
+  if (approved && needsWork) return null;
+  if (needsWork) return 'needs_work';
+  if (approved && /^\W*APPROVED\b(?!\s*\?)/i.test(first)) return 'approved';
+  return null;
+}
+
+// Claims that something happened outside the model call: a deploy, merge, push, PR, message, upload,
+// order or payment. An Office agent's model call has no tools, so such a claim needs a tool receipt on the
+// task. Only past-tense claims count: "I will open a PR" and "I have not deployed" never match, because
+// nothing but claim adverbs may sit between the subject and the verb. Quoted words and attributed
+// sentences ("according to", "said", "per the 10-K") are someone else's account, so research stays clean.
+const CLAIM_SUBJECT = String.raw`\b(?:I|we)(?:'ve|'d|\s+have|\s+had)?\s+(?:(?:just|successfully|already|also|then|now)\s+)*`;
+// Money verbs count only with a money object: "paid close attention", "ordered the findings" and
+// "bought into the thesis" are idioms.
+const MONEY_VERBS = String.raw`paid\s+(?:\$|USD|for\b|the\s+(?:invoice|bill|fee|deposit|balance|vendor|supplier)|an?\s+(?:invoice|bill|fee|deposit)|\d)|purchased\b|bought\s+(?:\d+|an?|the|some|more)\s+(?:\w+\s+){0,2}(?:shares?|stock|contracts?|domains?|ads?|units?|items?|products?|inventory|supplies|samples?|tickets?|subscriptions?|plans?|licen[cs]es?|lamps?)\b|sold\s+(?:\d+|the|our|my|an?|some)\s+(?:\w+\s+){0,2}(?:shares?|contracts?|positions?|stock|units?|items?|products?|lamps?)\b|ordered\s+(?:\d+|an?|more|new|the)\s+(?:\w+\s+){0,2}(?:units?|items?|products?|stock|inventory|supplies|samples?|copies|parts?|lamps?)\b|transferred\s+(?:\$|\d|the\s+(?:money|funds|balance|payment))|placed\s+(?:an?\s+|the\s+)?(?:order|trade)\b|executed\s+(?:an?\s+|the\s+)?(?:order|trade|payment|transfer)\b`;
+const ACTION_VERBS = String.raw`deployed|merged|pushed|committed|published|uploaded|posted|sent|emailed|texted|messaged|opened\s+(?:an?\s+|the\s+)?(?:PR|pull\s+request|issue)|created\s+(?:an?\s+|the\s+)?(?:PR|pull\s+request|branch|repo(?:sitory)?|listing|campaign|video|account)|rendered\s+(?:an?\s+|the\s+)?(?:video|mp4|clip|image)|executed\s+(?:an?\s+|the\s+)?(?:script|command|workflow|deploy(?:ment)?)|ran\s+(?:the\s+|our\s+)?(?:tests?|script|command|workflow|job)`;
+const ACTION_CLAIM = new RegExp(`${CLAIM_SUBJECT}(?:${ACTION_VERBS})\\b`, 'i');
+const MONEY_CLAIM = new RegExp(`${CLAIM_SUBJECT}(?:${MONEY_VERBS})|\\b(?:(?:our|my|your|this|the)\\s+)(?:order|trade|payment|transfer|purchase)\\s+(?:was|has\\s+been|is\\s+now)\\s+(?:successfully\\s+)?(?:placed|filled|executed|sent|made|completed)\\b`, 'i');
+// Without a first-person subject: "Deployed to production at 3pm." / "The PR was merged." / "Your email was sent."
+const BARE_START = /^(?:successfully\s+)?(?:deployed|merged|pushed|published|uploaded|sent|emailed|posted)\s+(?:to|on|at|it|them|this|the\s+(?:fix|change|PR|pull\s+request|branch|update|build|post|email|message|listing|video))\b|^(?:successfully\s+)?(?:deployed|merged|pushed|published|uploaded|sent|emailed|posted)[.!]?$/i;
+const BARE_PASSIVE = /^(?:the|our|my|your|this)\s+(?:new\s+)?(?:PR|pull\s+request|branch|fix|change|commit|build|release|email|message|listing|video|post|order|trade|payment|transfer|purchase|app|site|website|landing\s+page|page|worker|update|patch|code|campaign|invoice)\s+(?:#?\d+\s+)?(?:was|has\s+been|have\s+been|were|is\s+now)\s+(?:successfully\s+)?(?:deployed|merged|pushed|published|uploaded|sent|posted|opened|created|placed|filled|executed|made|completed)\b/i;
+// Someone else's account: an attributed source, a named third party's work, a past date, a backtest.
+const ATTRIBUTED = /\b(?:according\s+to|per\s+(?:the|its|their)|said|says|stated|reported|announced|wrote|told|cited|described\s+in|in\s+(?:the|its|their)\s+(?:filing|report|10-K|10-Q|earnings|paper|study|press\s+release))\b/i;
+const OWNER_INSTRUCTED = /\b(?:as\s+you\s+(?:told|asked|said)|you\s+(?:told|asked|said)|per\s+(?:your|the\s+owner'?s?)|(?:the\s+)?owner\s+(?:said|told|asked)|(?:told|asked)\s+me)\b/i;
+const THIRD_PARTY = /\b[A-Z][a-z]+'s\s+(?:fix|change|update|release|video|post|order|trade)\b|\b(?:19|20)\d{2}\b|\blast\s+(?:week|month|year)\b|\bbacktest|\bback-test|\bsimulat|\bpaper[- ]trad|\bhypothetical/i;
+// Real quotation marks only: an apostrophe inside a word ("team's", "I've") is not a quote.
+const QUOTED = /"[^"]*"|“[^”]*”|(?<![A-Za-z])'[^'\n]{12,}'(?![A-Za-z])/g;
+
+/**
+ * Sentences of an agent result that claim an external action or a record read no receipt backs. A
+ * successful computer-workspace receipt backs workspace actions; no Office receipt backs a payment,
+ * purchase, order or transfer, which only a broker or payment receipt could.
+ */
+export function unbackedActionClaims(result, receipts = []) {
+  const workspace = (Array.isArray(receipts) ? receipts : []).some((r) => r && r.status === 'ok');
+  const text = String(result || '');
+  const claims = text.split(/(?<=[.!?])\s+|\n+/).map((s) => s.trim()).filter(Boolean)
+    .filter((sentence) => {
+      const own = sentence.replace(QUOTED, ' ').trim();
+      // The owner's instruction ("as you told me") is not someone else's account of the action.
+      const attributed = ATTRIBUTED.test(own) && !OWNER_INSTRUCTED.test(own);
+      if (attributed) return false;
+      if (MONEY_CLAIM.test(own) && !THIRD_PARTY.test(own)) return true;
+      if (workspace) return false;
+      return ACTION_CLAIM.test(own) || ((BARE_START.test(own) || BARE_PASSIVE.test(own)) && !THIRD_PARTY.test(own));
+    });
+  const records = workspace ? [] : guardRetrievalClaims(text, { flagOnly: true }).removed.map((r) => r.sentence);
+  return [...new Set([...claims, ...records])].map((s) => clip(s, 240)).slice(0, 4);
+}
 
 const AGENT_NAMES = ['Nova', 'Atlas', 'Mira', 'Knox', 'Sage', 'Lyra', 'Orion', 'Vale', 'Juno', 'Rhea', 'Cato', 'Iris'];
 
@@ -586,13 +666,71 @@ function matchedOfficeSkills(data, task, max = 3, agent = null) {
 export function steerAgentTask(data, taskId, instruction) {
   const task = data.team_tasks.find((item) => item.id === taskId);
   if (!task) return { error: 'Office task not found.' };
-  if (['complete', 'failed', 'cancelled'].includes(task.status)) return { error: 'That task is already finished.' };
+  if (TASK_FINISHED.has(task.status)) return { error: 'That task is already finished.' };
   const text = clip(instruction, 1200);
   if (!text) return { error: 'Steering instruction required.' };
   task.steering = Array.isArray(task.steering) ? task.steering : [];
   task.steering.push({ text, at: now() });
   task.steering = task.steering.slice(-12);
   task.steering_version = Number(task.steering_version || 0) + 1;
+  // New owner direction earns fresh repair passes.
+  task.revision_count = 0;
+  // A held, unverified result is reworked with the new instruction rather than left waiting.
+  if (['needs_review', 'review_pending'].includes(task.status)) {
+    if (task.result) task.prior_result = task.result;
+    task.status = 'queued';
+    task.review_attempts = 0;
+    task.retry_at = null;
+  }
+  task.updated_at = now();
+  return { task };
+}
+
+// An agent whose task was cancelled, handed on or recovered under it shows what it really holds now.
+function settleAgent(data, agentId) {
+  const agent = (data.team || []).find((a) => a.id === agentId);
+  if (!agent) return;
+  const open = (data.team_tasks || []).filter((t) => t.partner_id === agentId && TASK_OPEN.has(t.status));
+  if (open.some((t) => t.status === 'running')) return;
+  const waiting = open.find((t) => ['queued', 'review_pending', 'reviewing'].includes(t.status));
+  agent.runtime_status = waiting ? 'waiting' : 'idle';
+  agent.runtime_task = waiting ? clip(waiting.task, 80) : null;
+  agent.runtime_updated_at = now();
+  if (!waiting) agent.status = 'available';
+}
+
+/** "Stop the Atlas task": cancels every open task of the named Office agent, in durable state. */
+export function cancelAgentTasks(data, agentName, reason = 'Owner stopped it.') {
+  const name = String(agentName || '').toLowerCase();
+  const agent = (data.team || []).find((a) => String(a.name || '').toLowerCase() === name && !a.retired);
+  if (!agent) return { agent: null, cancelled: [] };
+  const cancelled = (data.team_tasks || []).filter((t) => t.partner_id === agent.id && TASK_OPEN.has(t.status));
+  const at = now();
+  for (const task of cancelled) {
+    task.status = 'cancelled';
+    task.error = reason;
+    task.retry_at = null;
+    task.updated_at = at;
+  }
+  if (cancelled.length) {
+    agent.runtime_status = 'idle';
+    agent.runtime_task = null;
+    agent.runtime_updated_at = at;
+    agent.status = 'available';
+  }
+  return { agent, cancelled };
+}
+
+// "Review it again": a result CHE could not review goes back to CHE's review as is; the agent's
+// work, and any computer action, is not repeated.
+export function requeueAgentReview(data, taskId) {
+  const task = data.team_tasks.find((item) => item.id === taskId);
+  if (!task) return { error: 'Office task not found.' };
+  if (!['needs_review', 'review_pending'].includes(task.status) || !task.result) return { error: 'That task has no result waiting for review.' };
+  task.status = 'review_pending';
+  task.review_attempts = 0;
+  task.retry_at = null;
+  task.error = '';
   task.updated_at = now();
   return { task };
 }
@@ -600,7 +738,7 @@ export function steerAgentTask(data, taskId, instruction) {
 export function handoffAgentTask(data, taskId, targetAgentId, note = '') {
   const task = data.team_tasks.find((item) => item.id === taskId);
   if (!task) return { error: 'Office task not found.' };
-  if (['complete', 'failed', 'cancelled'].includes(task.status)) return { error: 'That task is already finished.' };
+  if (TASK_FINISHED.has(task.status)) return { error: 'That task is already finished.' };
   const target = data.team.find((item) => item.id === targetAgentId && !item.retired);
   if (!target) return { error: 'Target agent not found.' };
   const from = data.team.find((item) => item.id === task.partner_id);
@@ -691,7 +829,7 @@ export function updateAgent(data, agent, body) {
   const action = clip(body.action, 20);
   const at = now();
   if (action === 'retire') {
-    const pending = data.team_tasks.filter((item) => item.partner_id === agent.id && ['queued', 'running'].includes(item.status));
+    const pending = data.team_tasks.filter((item) => item.partner_id === agent.id && TASK_OPEN.has(item.status));
     for (const item of pending) {
       item.status = 'cancelled';
       item.error = 'Agent retired before the task ran.';
@@ -909,12 +1047,17 @@ export function contextItemsFrom(matches = []) {
   }).filter((item) => item.text && item.data_class !== 'secret').slice(0, 12);
 }
 
-// Runs one queued delegated task: agent works, CHE reviews, result recorded.
+// Runs one queued delegated task: agent works, CHE reviews, result recorded. A task whose review
+// is due again (review_pending) goes straight back to CHE's review; the agent's work is not redone.
 async function runOneTask(ctx) {
   const { env, load, save, notify, models } = ctx;
   let data = await load();
   if (data.autonomy === false) return false;
-  const task = [...data.team_tasks].reverse().find((item) => item.status === 'queued' && (!item.retry_at || item.retry_at <= Date.now()));
+  const due = (item) => !item.retry_at || item.retry_at <= Date.now();
+  const oldestFirst = [...data.team_tasks].reverse();
+  const pendingReview = oldestFirst.find((item) => item.status === 'review_pending' && due(item));
+  if (pendingReview) return reviewDelegatedResult(ctx, pendingReview.id);
+  const task = oldestFirst.find((item) => item.status === 'queued' && due(item));
   if (!task) return false;
   const agent = data.team.find((item) => item.id === task.partner_id);
   if (!agent) {
@@ -956,6 +1099,14 @@ async function runOneTask(ctx) {
   }
   task.status = 'running';
   task.updated_at = now();
+  task.run_started_at = task.updated_at;
+  // A repair pass reuses the workspace result instead of acting again; only new owner steering re-runs it.
+  const computerAgain = !(Number(task.revision_count || 0) > 0 && Number(task.computer_steering_version ?? -1) === Number(task.steering_version || 0));
+  const computerWillRun = Boolean(task.use_computer && task.owner_approved_computer && String(env.CHE_COMPUTER_URL || '').trim() && computerAgain);
+  if (computerWillRun) {
+    task.computer_started_at = task.updated_at;
+    task.computer_steering_version = Number(task.steering_version || 0);
+  }
   agent.runtime_status = workingStatusFor(agent);
   agent.runtime_task = clip(task.task, 80);
   agent.runtime_updated_at = now();
@@ -972,7 +1123,7 @@ async function runOneTask(ctx) {
     skill.updated_at = now();
     if (!agent.skill_ids.includes(skill.id)) agent.skill_ids.push(skill.id);
   }
-  const computer = await runComputerWorkspace(env, agent, task);
+  const computer = computerAgain ? await runComputerWorkspace(env, agent, task) : null;
   // pgvector context is gathered once and stored on the task envelope so it
   // survives handoffs between provider families.
   if (!Array.isArray(task.context_items) && typeof ctx.recall === 'function') {
@@ -1002,6 +1153,7 @@ async function runOneTask(ctx) {
     verifiedHistory.length ? `VERIFIED PAST RESULTS — use only when relevant; compare and recombine proven patterns, never copy blindly:\n${verifiedHistory.map((item) => `- ${item.task}: ${item.result}`).join('\n')}` : '',
     skills.length ? `REUSABLE OFFICE SKILLS:\n${skills.map((skill) => `${skill.name}: ${skill.steps.join(' -> ')}`).join('\n')}` : '',
     computer ? `CONNECTED COMPUTER RESULT:\n${JSON.stringify(computer).slice(0, 16000)}` : '',
+    !computer && task.computer_result ? `CONNECTED COMPUTER RESULT (from the earlier pass; not run again):\n${task.computer_result}` : '',
   ].filter(Boolean).join('\n\n');
   let worker = { engine: '', model: '' };
   try {
@@ -1026,6 +1178,13 @@ async function runOneTask(ctx) {
   const t1 = data.team_tasks.find((item) => item.id === task.id);
   const a1 = data.team.find((item) => item.id === agent.id);
   if (!t1) return true;
+  // Cancelled, handed to another agent, retired or recovered while this agent worked: the result is stale.
+  if (t1.status !== 'running' || t1.partner_id !== agent.id) {
+    settleAgent(data, agent.id);
+    await save(data);
+    notify();
+    return true;
+  }
   if (!error && Number(t1.steering_version || 0) > startSteeringVersion) {
     t1.prior_result = result;
     t1.status = 'queued';
@@ -1040,10 +1199,10 @@ async function runOneTask(ctx) {
     return true;
   }
   if (error) {
-    const retry = retryable && (t1.retry_count || 0) < 24;
+    const retry = retryable && (t1.retry_count || 0) < MAX_WORK_RETRIES;
     t1.status = retry ? 'queued' : 'failed';
+    t1.retry_at = retry ? Date.now() + retryDelayMs(t1.retry_count || 0, 300_000, 6 * 3_600_000) : null;
     t1.retry_count = (t1.retry_count || 0) + (retry ? 1 : 0);
-    t1.retry_at = retry ? Date.now() + 300000 : null;
     t1.error = error;
     t1.updated_at = now();
     if (!retry) {
@@ -1061,6 +1220,13 @@ async function runOneTask(ctx) {
   }
   t1.status = 'reviewing';
   t1.result = result;
+  t1.review_attempts = 0;
+  // The only tool this loop runs is the owner-approved computer workspace; its answer is the receipt.
+  if (computer) {
+    t1.receipts = [{ kind: 'computer_workspace', status: computer.status, at: now() }];
+    t1.computer_result = JSON.stringify(computer).slice(0, 16000);
+  }
+  else if (computerAgain || !Array.isArray(t1.receipts)) t1.receipts = [];
   t1.updated_at = now();
   t1.provider_trail = Array.isArray(t1.provider_trail) ? t1.provider_trail : [];
   t1.provider_trail.push({ agent: agent.name, provider: worker.engine || 'unknown', model: worker.model || '', at: now() });
@@ -1083,37 +1249,128 @@ async function runOneTask(ctx) {
   await save(data);
   notify();
 
-  // CHE reviews every delegated result before it counts as done.
+  return reviewDelegatedResult(ctx, task.id, { saved: true });
+}
+
+// CHE reviews a delegated result before it counts as done. Approval is the only way to `complete`:
+// a rejection is repaired (bounded) and then `rejected`, a review that cannot run is retried with
+// backoff and then held as `needs_review`, and an approved result that claims an action no receipt
+// backs is sent back for repair like a rejection.
+async function reviewDelegatedResult(ctx, taskId, { saved = false } = {}) {
+  const { env, load, save, notify, models } = ctx;
+  let data = await load();
+  const t0 = data.team_tasks.find((item) => item.id === taskId);
+  if (!t0) return true;
+  const agent = data.team.find((item) => item.id === t0.partner_id) || { name: t0.partner_name || 'Office agent' };
+  const result = t0.result || '';
+  const task = { task: t0.task };
+  const steeringAtReview = Number(t0.steering_version || 0);
+  const partnerAtReview = t0.partner_id;
+  if (!saved) {
+    t0.status = 'reviewing';
+    t0.updated_at = now();
+    await save(data);
+    notify();
+  }
+
   let review = '';
   try {
     review = await runModel(env, env.CHE_FAST_MODEL || models.fast, [
       'You are CHE, Office Boss, reviewing a delegated result from one of your Office agents. You own the outcome: accept solid work, reject weak or unverified claims.',
       'First line must be exactly APPROVED or NEEDS WORK.',
       'Then at most 3 short lines: what is solid, what is weak or unverified, what to do next.',
-      'Do not invent facts. Unverifiable claims are weak.',
-    ].join('\n'), JSON.stringify({ task: task.task, agent: agent.name, result }), 260);
+      'Do not invent facts. Unverifiable claims are weak. A claim that something was deployed, merged, sent, bought or published is unverified without a tool receipt.',
+    ].join('\n'), JSON.stringify({ task: task.task, agent: agent.name, result, receipts: t0.receipts || [] }), 260);
   } catch (_) {
     review = '';
   }
 
   data = await load();
-  const t2 = data.team_tasks.find((item) => item.id === task.id);
-  const a2 = data.team.find((item) => item.id === agent.id);
+  const t2 = data.team_tasks.find((item) => item.id === taskId);
+  const a2 = data.team.find((item) => item.id === t2?.partner_id);
   if (!t2) return true;
-  const approved = /^\s*APPROVED\b/i.test(review);
-  t2.che_review = clip(review, 2000) || 'CHE review unavailable; result not verified.';
-  t2.verified_by_che = approved;
-  t2.updated_at = now();
-
-  if (!approved && review && Number(t2.revision_count || 0) < 2) {
+  // Cancelled, handed off or steered while CHE was reviewing: this review no longer applies.
+  if (t2.status !== 'reviewing') return true;
+  if (Number(t2.steering_version || 0) !== steeringAtReview || t2.partner_id !== partnerAtReview) {
+    // The owner redirected it (or moved it to another agent) during review: rework with the new direction.
     t2.prior_result = result;
-    t2.review_feedback = clip(review, 1800);
-    t2.revision_count = Number(t2.revision_count || 0) + 1;
     t2.status = 'queued';
+    t2.updated_at = now();
+    settleAgent(data, partnerAtReview);
+    if (t2.partner_id !== partnerAtReview) settleAgent(data, t2.partner_id);
+    await save(data);
+    notify();
+    return true;
+  }
+  const verdict = reviewVerdict(review);
+  t2.updated_at = now();
+  t2.verified_by_che = false;
+
+  if (!verdict) {
+    const attempts = Number(t2.review_attempts || 0) + 1;
+    t2.review_attempts = attempts;
+    t2.che_review = 'CHE review unavailable; result not verified.';
+    if (attempts < MAX_REVIEW_ATTEMPTS) {
+      t2.status = 'review_pending';
+      t2.retry_at = Date.now() + retryDelayMs(attempts - 1);
+      if (a2) {
+        a2.runtime_status = 'waiting';
+        a2.runtime_task = 'Waiting to retry CHE review';
+        a2.runtime_updated_at = now();
+      }
+    } else {
+      t2.status = 'needs_review';
+      t2.retry_at = null;
+      t2.error = `CHE could not review this result after ${attempts} attempts. It is held unverified and is not complete.`;
+      recordAgentWork(data, { task: t2, agent: a2 || agent, outcome: 'needs_review', verified: false, error: t2.error });
+      if (a2) {
+        a2.runtime_status = 'idle';
+        a2.runtime_task = null;
+        a2.runtime_updated_at = now();
+        a2.status = 'available';
+      }
+    }
+    await save(data);
+    notify();
+    return true;
+  }
+
+  const unbacked = verdict === 'approved' ? unbackedActionClaims(result, t2.receipts) : [];
+  const approved = verdict === 'approved' && !unbacked.length;
+  const receiptNote = unbacked.length
+    ? `Receipt check: no tool receipt backs ${unbacked.map((c) => `"${c}"`).join('; ')}. Remove the claim or state it as a proposal.`
+    : '';
+  t2.che_review = clip([review, receiptNote].filter(Boolean).join('\n'), 2000);
+  t2.verified_by_che = approved;
+  t2.review_attempts = 0;
+  t2.retry_at = null;
+
+  if (!approved) {
+    const feedback = clip(verdict === 'needs_work' ? review : receiptNote, 1800);
+    if (Number(t2.revision_count || 0) < MAX_REPAIR_PASSES) {
+      t2.prior_result = result;
+      t2.review_feedback = feedback;
+      t2.revision_count = Number(t2.revision_count || 0) + 1;
+      t2.status = 'queued';
+      if (a2) {
+        a2.runtime_status = 'waiting';
+        a2.runtime_task = `Repair pass ${t2.revision_count}`;
+        a2.runtime_updated_at = now();
+      }
+      await save(data);
+      notify();
+      return true;
+    }
+    t2.status = 'rejected';
+    t2.review_feedback = feedback;
+    t2.error = `CHE did not approve this result after ${MAX_REPAIR_PASSES} repair passes. It is not complete.`;
+    recordAgentWork(data, { task: t2, agent: a2 || agent, outcome: 'rejected', verified: false, error: t2.error });
+    await reportRoomEvent(ctx, officeTaskEvent(t2, { agent: (a2 || agent)?.name, outcome: 'rejected', at: t2.updated_at }));
     if (a2) {
-      a2.runtime_status = 'waiting';
-      a2.runtime_task = `Repair pass ${t2.revision_count}`;
+      a2.runtime_status = 'idle';
+      a2.runtime_task = null;
       a2.runtime_updated_at = now();
+      a2.status = 'available';
     }
     await save(data);
     notify();
@@ -1163,6 +1420,7 @@ async function runOneTask(ctx) {
     if (skill && a2 && !a2.skill_ids.includes(skill.id)) a2.skill_ids.push(skill.id);
   }
   if (a2) {
+    normalizeAgent(a2);
     a2.workspace.notes = Array.isArray(a2.workspace?.notes) ? a2.workspace.notes : [];
     if (approved) {
       a2.workspace.notes.push(clip(`CHE-VERIFIED: ${task.task} | ${result}`, 700));
@@ -1173,7 +1431,7 @@ async function runOneTask(ctx) {
     a2.runtime_task = clip(task.task, 80);
     a2.runtime_updated_at = now();
     a2.status = 'available';
-    if (a2.temporary && !data.team_tasks.some((item) => item.partner_id === a2.id && item.status === 'queued')) {
+    if (a2.temporary && !data.team_tasks.some((item) => item.partner_id === a2.id && TASK_OPEN.has(item.status))) {
       data.team = data.team.filter((item) => item.id !== a2.id);
     }
   }
@@ -1330,20 +1588,42 @@ export async function processAgentWork(ctx, budget = 6) {
     if (!did) return false;
   }
   const data = await ctx.load();
-  return data.team_tasks.some((item) => item.status === 'queued') ||
+  return data.team_tasks.some((item) => ['queued', 'review_pending'].includes(item.status)) ||
     (data.meetings || []).some((item) => ['drafting', 'cross_check', 'synthesizing'].includes(item.status));
 }
 
-// Stale "running" work (e.g. the Durable Object was evicted mid-call) goes
-// back to the queue so status never claims work that is no longer happening.
+// Stale work (e.g. the Durable Object was evicted mid-call) is recovered so status never claims
+// work that is no longer happening, without doing anything twice:
+// - interrupted in review: the stored result goes back to CHE's review, the agent does not redo it;
+// - interrupted while working: queued again, at most MAX_STALE_RECOVERIES times, then failed;
+// - interrupted during owner-approved computer use: held as needs_review, never re-run, because the
+//   workspace may already have acted.
 export function recoverStaleWork(data, maxAgeMs = 5 * 60_000) {
   let changed = false;
   const cutoff = Date.now() - maxAgeMs;
   for (const task of data.team_tasks) {
-    if (['running', 'reviewing'].includes(task.status) && Date.parse(task.updated_at) < cutoff) {
+    if (!['running', 'reviewing'].includes(task.status) || !(Date.parse(task.updated_at) < cutoff)) continue;
+    task.stale_recoveries = Number(task.stale_recoveries || 0) + 1;
+    task.updated_at = now();
+    changed = true;
+    if (task.status === 'running' && task.computer_started_at && Date.parse(task.computer_started_at) >= Date.parse(task.run_started_at || 0)) {
+      task.status = 'needs_review';
+      task.error = 'Interrupted during computer use. Not re-run, so no action is repeated; check the workspace before steering it again.';
+    } else if (task.stale_recoveries > MAX_STALE_RECOVERIES) {
+      // A result that exists is held for review; work that never finished stops.
+      task.status = task.status === 'reviewing' && task.result ? 'needs_review' : 'failed';
+      task.error = `Interrupted ${task.stale_recoveries} times without finishing; stopped.`;
+    } else if (task.status === 'reviewing' && task.result) {
+      task.status = 'review_pending';
+      task.retry_at = null;
+    } else {
       task.status = 'queued';
-      task.updated_at = now();
-      changed = true;
+    }
+    const agent = (data.team || []).find((item) => item.id === task.partner_id);
+    if (agent && task.status !== 'queued') {
+      agent.runtime_status = task.status === 'review_pending' ? 'waiting' : 'idle';
+      agent.runtime_task = task.status === 'review_pending' ? 'Waiting on CHE review' : null;
+      agent.runtime_updated_at = task.updated_at;
     }
   }
   return changed;

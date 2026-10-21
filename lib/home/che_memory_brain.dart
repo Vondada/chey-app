@@ -77,8 +77,8 @@ class CheMemoryDot {
   /// A task's outcome: 'done', 'failed', 'live' or '' (not a task or unknown).
   String get outcome => switch (status.toLowerCase()) {
         'complete' || 'completed' || 'done' || 'succeeded' || 'success' => 'done',
-        'failed' || 'error' || 'cancelled' || 'canceled' => 'failed',
-        'queued' || 'running' || 'reviewing' || 'working' || 'waiting' || 'in_progress' || 'live' => 'live',
+        'failed' || 'error' || 'cancelled' || 'canceled' || 'rejected' => 'failed',
+        'queued' || 'running' || 'reviewing' || 'review_pending' || 'needs_review' || 'working' || 'waiting' || 'in_progress' || 'live' => 'live',
         _ => '',
       };
 

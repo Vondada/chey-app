@@ -68,6 +68,31 @@ CHE does not literally have Cursor cloud agents, a Grok Bot Linux box, or unrest
 desktop shell unless CHE_COMPUTER_URL (or another connected connector) proves it.
 `;
 
+// A question to CHE ("Who are you?", "How do I fix a loop?", "What are my agents working on?") is
+// answered, not turned into Office work. A request for work is work however politely it is put:
+// "Can you build me a landing page?", "Do a competitive analysis…", "Have someone research…",
+// "Tell me the trends and draft a post…". Agent names count only as names (capitalised, followed by a
+// comma or a work verb), so "Sage green" and "Iris flowers" are words.
+export const WORK_VERBS = 'build|research|draft|write|fix|implement|code|compare|scout|analy[sz]e|design|create|ship|make|find|prepare|plan|translate|list|post|send|look into|put together|set up|summari[sz]e|outline|review|audit|test|edit|rewrite|produce|generate|investigate|update';
+const WORK_CLAUSE = new RegExp(String.raw`(?:^|[,.;:]\s*|\band\s+(?:then\s+)?|\bthen\s+|\b(?:can|could|would|will)\s+you\s+(?:please\s+)?|\bplease\s+|\b(?:you|someone|them)\s+to\s+)(?:${WORK_VERBS})\b|^(?:(?:hey|ok(?:ay)?)\s+)?(?:(?:che|chay|chey)[,:]?\s+)?(?:please\s+)?do\s+(?:a|an|the|some|me\s+a)\s+\w+`, 'i');
+const OFFICE_AGENT_NAMES = 'Nova|Atlas|Mira|Knox|Sage|Lyra|Iris';
+const NAMED_WORKER = new RegExp(String.raw`\b(?:${OFFICE_AGENT_NAMES})(?:\s+and\s+(?:${OFFICE_AGENT_NAMES}))*(?:,|\s+(?:to\s+|please\s+|can\s+you\s+|could\s+you\s+)?(?:${WORK_VERBS})\b)`);
+const HANDS_WORK = new RegExp(String.raw`^(?:(?:hey|ok(?:ay)?)\s+)?(?:(?:che|chay|chey)[,:]?\s+)?(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?(?:have|ask|get|tell|let)\s+(?:someone|somebody|the\s+(?:office|team|crew|agents)|(?:${OFFICE_AGENT_NAMES}))\b`, 'i');
+const QUESTION_START = /^(?:(?:hey|ok(?:ay)?)\s+)?(?:(?:che|chay|chey)[,:]?\s+)?(?:who|what|what's|whats|when|where|why|how|which|is|are|am|was|were|does|did|can|could|would|should|will|has|explain|do\s+(?:you|i|we)|have\s+(?:you|i|we))\b/i;
+// "Did Mira write the email?", "Has Atlas researched it yet?": a question about work, answered from the board.
+const STATUS_QUESTION = /^(?:(?:hey|ok(?:ay)?)\s+)?(?:(?:che|chay|chey)[,:]?\s+)?(?:remind me,?\s+)?(?:did|has|is|was|were|when|where|how far|how is|how's)\b/i;
+// "Can you write that again but shorter?": chat reworking its own answer, not new Office work. The verb form
+// only counts at the start of the message, so "... and draft a post about them" stays work.
+const REFERS_BACK = new RegExp(String.raw`^(?:(?:hey|ok(?:ay)?)\s+)?(?:(?:che|chay|chey)[,:]?\s+)?(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?(?:${WORK_VERBS})\s+(?:\w+\s+){0,4}?(?:that|it|this|them|those|your\s+(?:last\s+)?(?:answer|reply|response|message|list))\b|\bagain\b`, 'i');
+export function isOwnerQuestion(message) {
+  const text = String(message || '').trim();
+  if (STATUS_QUESTION.test(text)) return true;
+  if (HANDS_WORK.test(text)) return false;
+  if (REFERS_BACK.test(text) && !NAMED_WORKER.test(text)) return true;
+  if (NAMED_WORKER.test(text) || WORK_CLAUSE.test(text)) return false;
+  return QUESTION_START.test(text) || /\?\s*$/.test(text) || /^(?:(?:che|chay|chey)[,:]?\s+)?tell me\b/i.test(text);
+}
+
 export function isWorkAgentMode(body = {}) {
   const mode = String(body.agent_mode || body.mode || '').trim().toLowerCase();
   return mode === 'full' || mode === 'agent' || mode === 'work' || mode === 'work_agent';
@@ -78,6 +103,7 @@ export function shouldAutoDelegateOffice(message, { agentMode = false, casual = 
   if (!agentMode || casual) return false;
   const text = String(message || '').trim();
   if (text.length < 12) return false;
+  if (isOwnerQuestion(text)) return false;
   // Explicit Office phrases are handled earlier in /api/chat.
   if (/^(?:(?:hey )?(?:che|chay|chey)[, ]+)?(?:tell|have|put|get) the office\b/i.test(text)) return false;
   if (/^(?:(?:hey )?(?:che|chay|chey)[, ]+)?(?:draft|make|prepare|build)\s+(?:a |the )?tonight pack\b/i.test(text)) return false;
@@ -92,7 +118,7 @@ export function shouldAutoDelegateOffice(message, { agentMode = false, casual = 
   const steps = splitGoal(text);
   if (steps.length >= 2) return true;
   // Single-clause but clearly specialist work (build/research/draft/…).
-  if (steps.length === 1 && /\b(?:build|research|draft|write|fix|implement|code|compare|scout|analyze|design|create|ship|report|translate|list)\b/i.test(text)
+  if (steps.length === 1 && (new RegExp(String.raw`\b(?:${WORK_VERBS}|report)\b`, 'i').test(text) || /^(?:please\s+)?do\s+(?:a|an|the|some)\s+\w+/i.test(text))
     && text.split(/\s+/).length >= 5) {
     return true;
   }

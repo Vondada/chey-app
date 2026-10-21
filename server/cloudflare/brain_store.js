@@ -815,7 +815,7 @@ function lessonToBrain(text) {
 
 function taskToBrain(task) {
   const status = clip(task.status, 30) || 'unknown';
-  const live = ['queued', 'running', 'reviewing'].includes(status);
+  const live = ['queued', 'running', 'reviewing', 'review_pending', 'needs_review'].includes(status);
   return {
     id: `task:${task.id}`,
     kind: 'task',

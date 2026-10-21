@@ -34,14 +34,16 @@ class CheAgentTask {
 
   final String id;
   final String task;
-  final String status; // queued, running, reviewing, complete, failed, cancelled
+  // queued, running, reviewing, review_pending, needs_review, complete (CHE approved), rejected, blocked,
+  // failed, cancelled. Only complete means CHE approved the result.
+  final String status;
   final String result;
   final String cheReview;
   final bool verifiedByChe;
   final String error;
   final DateTime? createdAt;
 
-  bool get inProgress => status == 'queued' || status == 'running' || status == 'reviewing';
+  bool get inProgress => const {'queued', 'running', 'reviewing', 'review_pending'}.contains(status);
 
   static CheAgentTask fromJson(Map<String, dynamic> j) => CheAgentTask(
         id: '${j['id']}',

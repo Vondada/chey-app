@@ -105,9 +105,10 @@ function ageMs(iso) {
 export function stalledTasks(data) {
   const out = [];
   for (const t of data.team_tasks || []) {
-    if (!['running', 'queued', 'blocked', 'waiting'].includes(t.status)) continue;
+    if (!['running', 'queued', 'blocked', 'waiting', 'needs_review'].includes(t.status)) continue;
     const blob = `${t.task || ''} ${t.result || ''} ${t.blocker || ''}`;
-    const waitingOnOwner = /need(s)? (you|the owner|approval|a decision)/i.test(blob);
+    // A result CHE could not review waits on the owner: review it again, steer it, or cancel it.
+    const waitingOnOwner = t.status === 'needs_review' || /need(s)? (you|the owner|approval|a decision)/i.test(blob);
     const stale = ageMs(t.updated_at || t.created_at) > STALL_MS;
     if (t.status === 'blocked' || waitingOnOwner || stale) {
       out.push({
@@ -160,6 +161,10 @@ export function activityFeed(data, media = [], origin = '', limit = 30) {
     else if (t.status === 'queued') line = `${who} has ${title} next.`;
     else if (t.status === 'blocked' || t.status === 'waiting') { line = `${who} is blocked on ${title}.`; kind = 'stalled'; }
     else if (t.status === 'failed') line = `${who} could not finish ${title}.`;
+    else if (t.status === 'reviewing' || t.status === 'review_pending') line = `CHE is reviewing ${who}'s work on ${title}.`;
+    else if (t.status === 'needs_review') { line = `${who}'s result on ${title} is not verified yet; CHE could not review it.`; kind = 'stalled'; }
+    else if (t.status === 'rejected') line = `CHE rejected ${who}'s result on ${title}; it is not complete.`;
+    else if (t.status === 'advisory') line = `${who} gave input on ${title}.`;
     if (line) events.push({ at: t.updated_at || t.created_at, who, line, kind, id: t.id });
   }
   for (const m of data.meetings || []) {
