@@ -266,6 +266,8 @@ extension _CheHomeStreaming on _CHEHomeState {
       'dismissed_suggestions': _commandStore.dismissed.toList(),
       'client_identity_profile': _cheIdentityProfile,
       'client_personality_profile': learnedPersonality,
+      // CHE's soul, for the browsing loop: each step is planned as her. The Worker reads it only in a loop request.
+      'soul': _brain.soul,
       // A memory that holds a secret shape is never sent, even one a replica brought in from before the gate.
       'client_memories': savedMemories.where((m) => !cheBrainTextIsSensitive(m)).toList(),
       'brain_context': _brainContextFor(userMessage),
