@@ -70,6 +70,12 @@ Then, on GitHub:
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
 
+## 2. Current position (ChatGPT, October 20 2026 — live GitHub deployment receipt fix)
+
+- Live CHE owner test: asking for latest Deploy CHE Worker action run was incorrectly routed to source-code inspector; generic deploy-status falsely said no deployment exists because `last_self_update_deploy` is set only for CHE-initiated merges. The correct latest verifiable run at test was GitHub Actions #39529044486 (SUCCESS), main 8fd6bb3. This is a real routing and stale-local-cache bug, not a missing deployment.
+- Fixed by PR #391, merged to `main` as `29102ccbf53a288120d669c51a5c602bfdbc3b33`: new `latestWorkerDeploymentIntent` and `latestWorkerDeploymentStatus` read GitHub Actions workflow history directly with receipts, route before source inspection, and fallback to GitHub for no local self-update deployment. Regression tests in `server/cloudflare/worker.test.mjs`; Worker tests and Flutter CI both green on PR. Main Worker deployment workflow run 39532490580 started; final result must be checked before claiming production is on the fix.
+- Outstanding: Coding-history questions with several asides sometimes fall through to generic model; separately improve existing `code_scout.codingHistoryIntent` rather than duplicate handlers. PR #377 ReplayKit remains unresolved and NOT MERGED; the branch contains fail-closed security patches, but cross-app screen sharing remains disabled pending native privacy and signing QA.
+
 ## 2. Current position (ChatGPT, owner live tests and #377 security, 2026-10-20)
 
 - Owner tests of CHE on deployed main `8fd6bb30aa7f497f0768745f4fe1f0b58aa4fde7`: Brain reported no Coding Room events (may be accurate), but falsely claimed PR #307, #297, #273 are open (GitHub confirms all CLOSED on Oct 17); coding-job status query returned generic "I am a large language model, have no coding jobs" despite `self_development.js` and runtime; deploy query claimed "No CHE Worker deployment is in progress or recorded" despite GitHub Actions run 39529044486 SUCCESS at main `8fd6bb3`. This is a confirmed status freshness / tool-routing problem; do not assert exact cause until traced. Next, diagnose existing Worker intent routing to official GitHub Actions and coding job status and add fail-closed regression tests; avoid duplicate routers.
