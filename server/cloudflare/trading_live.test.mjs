@@ -591,3 +591,19 @@ test('delayed, unverified and stale feeds cannot create new forward-paper entrie
     assert.match(run.entry_blocker, /real-time CME/);
   }
 });
+
+test('a valid setup seen while real-time data is closed is journalled as skipped with its time and reason, never traded', async () => {
+  const storage = memoryStorage();
+  await setLivePaper(storage, true, Date.parse('2026-10-19T21:59:00Z'));
+  const delayed = (bars) => async () => ({ ...(await feedOf(bars)()), status: 'DELAYED' });
+  await liveTick(storage, { force: true, load: delayed(DAY1), now: after(DAY1) });
+  const run = await liveTick(storage, { force: true, load: delayed([...DAY1, ...DAY2]), now: after(DAY2) });
+  assert.equal(run.entries_allowed, false);
+  assert.equal((await readTrades(storage)).length, 0, 'no trade is opened');
+  const portfolio = Object.values((await storage.get(LIVE_PORTFOLIOS)) || {}).find((pf) => pf.candidate === 'pdhl-sweep-5m' && pf.filter === 'any');
+  assert.ok(portfolio, 'the portfolio exists');
+  const skip = (portfolio.skips || []).find((s) => s.time === DAY2[0].t);
+  assert.ok(skip, `the sweep setup is journalled as skipped: ${JSON.stringify(portfolio.skips)}`);
+  assert.match(skip.reason, /real-time CME data was not verified/);
+  assert.equal(skip.side, 'long');
+});

@@ -28,10 +28,12 @@ Map<String, dynamic> _scene(String id) => {
 
 void main() {
   final now = DateTime(2026, 10, 20, 15);
+  // Timestamps are relative to the real clock: the page groups by DateTime.now(), so fixed dates would age out.
+  final clock = DateTime.now();
   final meetings = [
-    _m('m-live', 'Plan the Music Room launch', 'drafting', now.subtract(const Duration(minutes: 5))),
-    _m('m-app', 'Plan my app launch and pricing', 'complete', now.subtract(const Duration(hours: 2))),
-    _m('m-old', 'Pick a trading journal format', 'complete', now.subtract(const Duration(days: 3))),
+    _m('m-live', 'Plan the Music Room launch', 'drafting', clock.subtract(const Duration(minutes: 5))),
+    _m('m-app', 'Plan my app launch and pricing', 'complete', clock.subtract(const Duration(hours: 2))),
+    _m('m-old', 'Pick a trading journal format', 'complete', clock.subtract(const Duration(days: 3))),
   ];
 
   test('plain language: JSON and Markdown become short sentences', () {
@@ -43,7 +45,7 @@ void main() {
   });
 
   test('groups and dates are readable', () {
-    final g = cheGroupMeetings(meetings, now: now);
+    final g = cheGroupMeetings(meetings);
     expect(g.active.map((m) => m.id), ['m-live']);
     expect(g.recent.map((m) => m.id), ['m-app']);
     expect(g.completed.map((m) => m.id), ['m-old']);

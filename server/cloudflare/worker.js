@@ -134,6 +134,8 @@ import { githubWorkshopPieces, workshopAvatar, workshopAvatarIntent, workshopSna
 import { flushOutbox, handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, openMailbox, transcript as flagstaffTranscript, mailboxCode, mailboxLink, postWebMail, readWebMail, rotateMailboxCode } from './web_mailbox.js';
 import { CheLibrary, fetchReadable, libraryContext, libraryIntent } from './library.js';
 import { KnowledgeLibrary, knowledgeIntent, knowledgeReply, knowledgeTaskContext } from './knowledge_library.js';
+import { answerPersonalFact, groundedReply, needsStrongEngine, personalFactQuestion } from './personal_recall.js';
+import { dropAgentTaskTurns, replyRepeatsAgentTask } from './agent_task_guard.js';
 import { seedKnowledgeCatalog } from './knowledge_catalog_seed.js';
 import { CheBrainStore, backfillConversations, displayCopy, isSafeText, ownerMemoryRecord, projectLegacyState, rememberExchange, retrievableOwnerRecord, retrievalBody, sameDisplayCopy } from './brain_store.js';
 import { brainReviewIntent, latestReview, ownerScore, runBrainMaintenance, speakReview } from './brain_audit.js';
@@ -9090,7 +9092,8 @@ export class CheState extends DurableObject {
         }
         // Always-on speech learning: corrections teach her how the owner's voice
         // gets misheard; learned fixes apply when the context matches.
-        const ownerHistory = Array.isArray(body.history) ? body.history : [];
+        // Office task lines are not the owner's conversation, so they never reach the model as history (agent_task_guard.js).
+        const ownerHistory = dropAgentTaskTurns(Array.isArray(body.history) ? body.history : [], (await this.loadData().catch(() => ({}))).team_tasks || []);
         // Evaluate references before the interpreter expands "the last one"
         // into a new question. Route it later, after permission handling.
         const asksForEvidence = evidenceQuestion(rawMessage, ownerHistory) ||
@@ -11797,7 +11800,7 @@ export class CheState extends DurableObject {
         }
         // Preserve supplied conversation state; capacity checks must skip a
         // small engine instead of silently dropping the owner's earlier turns.
-        const history = Array.isArray(body.history) ? body.history : [];
+        const history = dropAgentTaskTurns(Array.isArray(body.history) ? body.history : [], (await this.loadData().catch(() => ({}))).team_tasks || []);
         const { turns, condensed: earlierContext } = condenseHistory(history, { keep: 12 });
         if (turns.length &&
             turns[turns.length - 1].role === 'user' &&
@@ -11809,7 +11812,8 @@ export class CheState extends DurableObject {
           else turns.unshift({ role: 'user', content: earlierContext });
         }
         const needsStrongModel = Boolean(skillResults.length || multimodal || research?.summary || panel.length || specialists.length || officeResults.length || actionResults.length || plugins.length) ||
-          /\b(debug|write code|implement|architect|deep analysis|step.by.step plan|backtest|legal analysis|financial analysis|medical analysis|research report)\b/i.test(message);
+          /\b(debug|write code|implement|architect|deep analysis|step.by.step plan|backtest|legal analysis|financial analysis|medical analysis|research report)\b/i.test(message) ||
+          needsStrongEngine(message);
         const model = needsStrongModel
           ? (this.env.CHE_STRONG_MODEL || STRONG_MODEL)
           : (this.env.CHE_FAST_MODEL || FAST_MODEL);
@@ -12046,6 +12050,19 @@ export class CheState extends DurableObject {
                 : '',
               'BRAIN: when you learn a durable, non-sensitive fact about the owner, end your reply with a ```che-remember block, one fact per line, tagged [People]/[Projects]/[Decisions]/[Companies]/[Meetings]/[Daily]/[Knowledge]. Never save passwords, card numbers, keys or other secrets. Never repeat the same opening or catchphrase twice in a row.',
             ].filter(Boolean).join('\n');
+        // "What is my favorite food?": the owner's own stored statement, quoted with its date, or an honest "I don't have
+        // a record". The model is never asked, so it cannot invent a memory, a date or a source (personal_recall.js).
+        // Only when no route above answered: every deterministic route keeps its own questions.
+        const personal = ownerDevice && !body.attachment && !memoryQuestion ? personalFactQuestion(rawMessage) : null;
+        if (personal) {
+          let brainStatements = [];
+          try { brainStatements = new CheBrainStore(this.ctx.storage).list({ limit: 500 }).records || []; } catch (_) { brainStatements = []; }
+          const answer = answerPersonalFact(data, personal, brainStatements);
+          const receipt = answerEvidenceReceipt({ ownerAttested: answer.kind === 'owner_attested' });
+          await Promise.resolve().then(() => this.ctx.storage.put(LAST_ANSWER_EVIDENCE_KEY, receipt)).catch(() => null);
+          await recordAnswerEvidence(this.ctx.storage, answer.answer, { ...receipt, kind: answer.kind }, { records: answer.records });
+          return ndjsonReply(answer.answer, { source: 'che_personal_recall', model_calls: 0, records: answer.records.length });
+        }
         let answer;
         const reusable = officeResults.length === 0 && skillResults.length === 0
           ? await cachedAnswer(this.ctx.storage, message, { hasConversationContext: turns.length > 0 })
@@ -12257,6 +12274,10 @@ export class CheState extends DurableObject {
         // Nothing the owner did not say becomes "you told me" or "you
         // confirmed", and a fact the model inferred never reaches the phone's
         // brain as a saved memory.
+        // Every date in a reply must be one a stored record holds (personal_recall.js). An invented date is never shown.
+        const grounded = groundedReply(reply, { records: data.memory_records || [], message: rawMessage });
+        if (grounded.removed.length) console.log('CHE grounding removed dates', JSON.stringify(grounded.removed));
+        reply = grounded.text;
         const ownerTurnsNow = ownerWords(ownerHistory, rawMessage);
         // Owner evidence: the owner's own turns, the owner-attested memory records and the owner-attested Brain records
         // retrieved this turn. Every other named speaker (Claude, Atlas, …) needs its own stored record.
@@ -12268,6 +12289,10 @@ export class CheState extends DurableObject {
         reply = guardRememberBlock(speakers.text, {
           ownerTurns: ownerTurnsNow, retracted: await loadRetractions(this.ctx.storage),
         }).text;
+        // An Office task is never shown as CHE's own reply; the owner finds it in the Office view.
+        if (replyRepeatsAgentTask(reply, data.team_tasks || [])) {
+          reply = 'That is an internal Office task, sir, so I am not repeating it here. It is in the Office view.';
+        }
         // Persist the actual answer-provenance receipt, not a model-invented
         // bibliography. Source-backed research may be reused; model-only text
         // cannot become verified memory by repetition.
@@ -12311,6 +12336,7 @@ export class CheState extends DurableObject {
             type: 'done',
             model,
             route: needsStrongModel ? 'quality' : 'fast',
+            engine: model,
             request_id: executionRequestId,
             execution_receipts: skillResults.map((r) => r.execution_receipt),
             // What the source check did: articles opened by research, pages
