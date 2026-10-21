@@ -20,7 +20,7 @@ export function identityQuestionIntent(message) {
     .replace(/^(?:(?:hey|okay)\s+)?(?:che|chay|chey|shay)[,:.]?\s+/i, '')
     .replace(/\s+/g, ' ').trim();
   if (!text || text.length > 750) return null;
-  const simple = /^(?:who(?: exactly)? are you|what(?:'s| is) your (?:name|(?:core )?identity|purpose|mission|soul|role(?: in the office)?)|what(?:'s| is) che(?:'s)? (?:identity|mission|purpose|soul)|do you know who you are|are you (?:aware|conscious) of (?:your|the) soul|do you have (?:a|your) soul|who am i to you)[?.!]*$/i;
+  const simple = /^(?:who(?: exactly)? are you|what(?:'s| is) your (?:(?:core )?identity|purpose|mission|soul|role(?: in the office)?)|what(?:'s| is) che(?:'s)? (?:identity|mission|purpose|soul)|do you know who you are|are you (?:aware|conscious) of (?:your|the) soul|do you have (?:a|your) soul|who am i to you)[?.!]*$/i;
   if (simple.test(text)) return /(?:soul|aware|conscious)/i.test(text) ? 'awareness' : 'summary';
   // Requests to change, inspect or review live history must keep normal routing.
   if (/\b(?:change|update|rewrite|modify|edit|replace|reset|delete|store|remember|build|fix|upgrade|deploy|merge|inspect|audit|last|latest|yesterday|today|recently|verbatim|word for word)\b/i.test(text)) return null;
