@@ -467,3 +467,25 @@ test('a Gmail list with more pages is spoken as "about", and "read my latest ema
     globalThis.fetch = offline;
   }
 });
+
+// A guest or private phone never reaches Google, so its model must not be asked: that model answered
+// "I cannot access external emails", which is false for the owner's own Gmail.
+test('a guest phone asking for Gmail, Calendar or the send path is refused with no model call', async () => {
+  const me = await owner();
+  const tenant = await me.post('/api/platform/tenants', { name: 'Guest', role: 'family' });
+  const invite = await me.post('/api/platform/enrollments', { access: 'private', tenant_id: tenant.body.tenant.id });
+  const guest = (await (await me.send('/api/enroll', { enrollment_token: invite.body.enrollment.token, device_name: 'guest' })).json()).device_token;
+  const before = me.modelCalls();
+  for (const words of [
+    'CHE, check my unread emails and tell me the newest one.',
+    'What is on my calendar today?',
+    'Send an email to ann@example.com saying lunch at noon.',
+  ]) {
+    const res = await me.send('/api/chat', { message: words, history: [] }, guest);
+    const reply = spoken(await res.text());
+    // An email send is caught by the earlier owner-action refusal; each refusal is honest and says nothing was done.
+    assert.match(reply, /^Only the CHE owner can .*(?:Nothing was (?:read or )?changed|nothing was done)/s, words);
+    assert.doesNotMatch(reply, /cannot access/i, words);
+  }
+  assert.equal(me.modelCalls(), before);
+});

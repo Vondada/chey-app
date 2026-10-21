@@ -5333,6 +5333,11 @@ export class CheState extends DurableObject {
     if (outsideCorrespondenceIntent(message)) {
       return ndjsonReply('Only the CHE owner can read the outside correspondence in his Brain. Nothing was read or changed.', { source: 'che_guest', ok: false, model_calls: 0 });
     }
+    // Gmail, Calendar, Drive and YouTube belong to the owner's full device. Without this, a guest or private
+    // phone's model answered "I cannot access external emails" (the owner saw that on his phone), which is false.
+    if (googleChatIntent(message) || youtubeChatIntent(message)) {
+      return ndjsonReply('Only the CHE owner can read or change Gmail, Calendar, Drive or YouTube from this phone. Nothing was read or changed.', { source: 'che_guest', ok: false, model_calls: 0 });
+    }
     const history = (Array.isArray(body.history) ? body.history : [])
       .filter((turn) => ['user', 'assistant'].includes(turn?.role) && typeof turn.content === 'string')
       .slice(-10).map((turn) => ({ role: turn.role, content: turn.content.slice(0, 4000) }));
