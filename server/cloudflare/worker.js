@@ -133,6 +133,8 @@ import { loadPackedJson, savePackedJson } from './prompt_compaction.js';
 import { githubWorkshopPieces, workshopAvatar, workshopAvatarIntent, workshopSnapshot } from './workshop.js';
 import { flushOutbox, handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, openMailbox, transcript as flagstaffTranscript, mailboxCode, mailboxLink, postWebMail, readWebMail, rotateMailboxCode } from './web_mailbox.js';
 import { CheLibrary, fetchReadable, libraryContext, libraryIntent } from './library.js';
+import { KnowledgeLibrary } from './knowledge_library.js';
+import { seedKnowledgeCatalog } from './knowledge_catalog_seed.js';
 import { CheBrainStore, backfillConversations, displayCopy, isSafeText, ownerMemoryRecord, projectLegacyState, rememberExchange, retrievableOwnerRecord, retrievalBody, sameDisplayCopy } from './brain_store.js';
 import { brainReviewIntent, latestReview, ownerScore, runBrainMaintenance, speakReview } from './brain_audit.js';
 import { answerCorrespondenceQuestion, archiveTasks, correspondenceStatus, importOutsideCorrespondence, outsideCorrespondenceIntent, projectOfficeExperience, recoverHistory, speakCorrespondenceCount, speakCorrespondenceImport, workerBrains } from './brain_office.js';
@@ -7191,6 +7193,28 @@ export class CheState extends DurableObject {
         const id = new URL(request.url).searchParams.get('id') || body.id;
         try { new CheBrainStore(this.ctx.storage).delete(`lib:${String(id || '')}`, { origin: 'owner' }); } catch (_) {}
         return json({ ok: new CheLibrary(this.ctx.storage).remove(String(id || '')) });
+      }
+
+      // ─── Knowledge Library: 20 categories, cataloged or indexed references (knowledge_library.js) ──
+      if (path === '/api/knowledge' && request.method === 'GET') {
+        const kl = new KnowledgeLibrary(this.ctx.storage);
+        const category = new URL(request.url).searchParams.get('category') || '';
+        return json({ categories: kl.status(), references: kl.list({ category }) });
+      }
+      if (path === '/api/knowledge/search' && request.method === 'GET') {
+        const params = new URL(request.url).searchParams;
+        const kl = new KnowledgeLibrary(this.ctx.storage);
+        return json(kl.answer(params.get('q') || '', { category: params.get('category') || '', technical: params.get('fiction') !== '1' }));
+      }
+      if (path === '/api/knowledge' && request.method === 'POST') {
+        const kl = new KnowledgeLibrary(this.ctx.storage);
+        if (body.action === 'seed') return json(seedKnowledgeCatalog(kl));
+        if (body.action === 'index') {
+          const saved = kl.index(String(body.id || ''), String(body.text || ''));
+          return json(saved, saved.error ? 422 : 200);
+        }
+        const saved = kl.catalog(body);
+        return json(saved, saved.error ? 422 : 200);
       }
 
       // ─── Unread / importance badge for the app ────────────────────────

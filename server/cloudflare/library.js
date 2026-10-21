@@ -128,7 +128,7 @@ export class CheLibrary {
       }
       rows = [...scored.values()].sort((a, b) => b.score - a.score).slice(0, limit);
     }
-    return rows.map((row) => ({ title: row.title, part: Number(row.n) + 1, text: row.body }));
+    return rows.map((row) => ({ title: row.title, doc_id: row.doc_id, part: Number(row.n) + 1, text: row.body }));
   }
 }
 
