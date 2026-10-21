@@ -92,7 +92,7 @@ import { PLAN_SOURCE, answerPlanFollowUp, buildPlan, classifyProject, listPlans,
 import { BRAIN_ROOMS_SOURCE, ROOMS as BRAIN_ROOMS, answerCrossRoom, crossRoomIntent, drainRoomEvents, imageReference, pointsAtScreen, prFollowUp, recentScreen, relinkRecords, rememberScreen, screenDeictic, screenFollowUp, screenRoomContext, screenRoomFor, statusLabel } from './brain_rooms.js';
 import { controlChangeEvent, meetingEvent, officeTaskEvent, paperOrderRefusedEvent, phoneRoomEvent, queueRoomEvent, researchEvent } from './room_events.js';
 import { cloudDailyLimit, sanitizeOwnerText } from './che_errors.js';
-import { CHE_UPDATE_GUIDE, mergeSelfUpdatePr, openSelfUpdatePr, rollbackLastUpdate, selfUpdateGitHubAccess, selfUpdateStatus, workerDeploymentStatus } from './self_update.js';
+import { CHE_UPDATE_GUIDE, mergeSelfUpdatePr, openSelfUpdatePr, rollbackLastUpdate, selfUpdateGitHubAccess, selfUpdateStatus, workerDeploymentStatus, latestWorkerDeploymentIntent, latestWorkerDeploymentStatus, speakLatestWorkerDeployment } from './self_update.js';
 import { FAILURE_CLASS, backoffMs, classifyFailure, idempotencyKey, ownerEngineeringMessage, stableHash, stripOwnerHomework } from './recovery_policy.js';
 import { handleMobileUpdateRequest, isMobileUpdatePath } from './mobile_update.js';
 import { definitionAnswer, inspectRepositoryContext, lookupAnswer, prepareSelfUpdate, recordLesson, recoveryRequestIntent, refusesAnswer, SOURCE_RETRY_NOTE } from './self_development.js';
@@ -3024,7 +3024,11 @@ export async function handleSelfUpdateChatAction(env, storage, intent, ops = {})
 
   if (intent.kind === 'deploy-status') {
     const deploy = await storage.get(LAST_SELF_UPDATE_DEPLOY_KEY).catch(() => null);
-    if (!deploy?.merge_commit_sha) return { ok: true, message: 'No CHE Worker deployment is in progress or recorded, sir.' };
+    if (!deploy?.merge_commit_sha) {
+      const latest = await latestWorkerDeploymentStatus(env, fetch, runtimeVersion(env));
+      return { ok: latest.status === 200 && latest.found === true,
+        deploy: latest, message: speakLatestWorkerDeployment(latest) };
+    }
     const status = await workerDeploymentStatus(env, deploy.merge_commit_sha, fetch, runtimeVersion(env));
     if (status.status !== 200) return { ok: false, message: ownerPrFailure(status, 'check the deployment') };
     const text = status.deployed
@@ -9393,6 +9397,24 @@ export class CheState extends DurableObject {
             }
           }
           return ndjsonReply(answers.join('\n'), { source: handoffRead ? 'che_live_handoff' : 'che_github_verification', ok: receipts.every((r) => r.status === 'success'), execution_receipts: receipts, request_id });
+        }
+
+        // Owner asks for the latest deployment receipt: query GitHub Actions
+        // before any source-code inspection. Reading a workflow YAML or the
+        // CHE-only last_self_update_deploy key cannot prove deployment history.
+        if (!body.attachment && latestWorkerDeploymentIntent(message)) {
+          if (!ownerDevice) return ownerOnly();
+          const record = await latestWorkerDeploymentStatus(this.env, fetch, runtimeVersion(this.env));
+          return ndjsonReply(speakLatestWorkerDeployment(record), {
+            source: 'che_github_actions_deploy_status', ok: record.status === 200 && record.found === true,
+            execution_receipt: record.status === 200 && record.found ? {
+              tool: 'github', operation: 'read_worker_deployment_runs',
+              status: 'success', source: record.workflow_url,
+              run_id: record.run_id, commit_sha: record.commit_sha,
+              conclusion: record.conclusion,
+            } : null,
+            model_calls: 0,
+          });
         }
 
         const directRepositoryInspection = repositoryInspectionIntent(message);
