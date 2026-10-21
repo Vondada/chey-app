@@ -37,8 +37,8 @@ import {
 import { discoverKeylessModels, engineStatus, paidAllowed, routedEnv } from './ai_router.js';
 import { capabilityPromptLine, inferTurnCapabilities, runtimeCapabilityRegistry } from './cognitive_capabilities.js';
 import { identityQuestionIntent, speakIdentity } from './che_maturity.js';
-import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, saveOwnerFile, upscaleImage } from './media.js';
-import { mediaHoldIntent, mediaHoldReply, mediaLibraryIntent, mediaLibraryReply, mediaLibraryReport, mediaSaveIntent, mediaSaveReply, wantsLatestVideo } from './media_library.js';
+import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, saveOwnerFile, upscaleImage, verifyMediaFile } from './media.js';
+import { mediaHoldAnswer, mediaHoldIntent, mediaKeepFor, mediaLatestReply, mediaLibraryIntent, mediaLibraryReply, mediaLibraryReport, mediaRows, mediaSaveIntent, mediaSaveReply, mediaShowLatestIntent, mediaShowReply, verifyMediaRows, wantsLatestVideo } from './media_library.js';
 import { capabilityGap, capabilityReply } from './capability_gap.js';
 import { CHAT_IMAGE_SOURCE, chatImageMedia, chatImageReply, makeChatImages, requestedImageCount } from './chat_images.js';
 import { memorySearchIntent, memorySearchReply, memorySearchTerms } from './memory_search.js';
@@ -9081,6 +9081,23 @@ export class CheState extends DurableObject {
             const command = commandById(studio.command);
             return this.runSlashCommand(request, body, data, { name: command.id, command, input: studio.input }, { confirmed: false });
           }
+          // "Show me the last picture": the newest saved picture, its bytes read back first, returned as an image for the chat.
+          if (mediaShowLatestIntent(rawMessage)) {
+            if (!ownerDevice) return ownerOnly();
+            const [row] = mediaRows(await listMedia(this.ctx.storage), mediaKeepFor(rawMessage));
+            if (!row) return ndjsonReply(mediaLatestReply(null), { source: 'che_media_store', ok: false, media_total: 0 });
+            await verifyMediaRows(this.keyEnv || this.env, this.ctx.storage, [row], 1);
+            if (!row.verify.ok) return ndjsonReply(mediaShowReply(row), { source: 'che_media_store', ok: false, media_id: row.id });
+            return ndjsonReply(mediaShowReply(row), {
+              source: 'che_media_store', ok: true, media_id: row.id, mime_type: row.mime_type,
+              media_type: 'image', media_url: `${new URL(request.url).origin}/api/media/${row.id}/image`,
+            });
+          }
+          if (mediaHoldIntent(rawMessage)) {
+            if (!ownerDevice) return ownerOnly();
+            const answer = await mediaHoldAnswer(this.keyEnv || this.env, this.ctx.storage, await listMedia(this.ctx.storage), rawMessage);
+            return ndjsonReply(answer.text, { source: 'che_media_store', ok: true, media_total: answer.total, media_uploads: answer.uploads, media_verified: answer.verified });
+          }
           // The phone's page report is a screen observation too: kept for follow-ups, never as a record.
           if (ownerDevice && String(body.screen_context || '').trim()) await rememberScreen(this.ctx.storage, { name: 'page report', summary: body.screen_context, engine: 'phone-page-report' }).catch(() => null);
           // A fresh observation (a vision summary or page report from the last 15 minutes) answers "what about
@@ -9572,11 +9589,6 @@ export class CheState extends DurableObject {
           if (!ownerDevice) return ownerOnly();
           const saved = await saveOwnerFile(this.keyEnv || this.env, this.ctx.storage, body.attachment);
           return ndjsonReply(mediaSaveReply(saved), { source: 'che_media_store', ok: saved.ok, media_total: saved.total ?? null });
-        }
-        if (mediaHoldIntent(message)) {
-          if (!ownerDevice) return ownerOnly();
-          const held = await listMedia(this.ctx.storage);
-          return ndjsonReply(mediaHoldReply(held), { source: 'che_media_store', ok: true, media_total: held.filter((item) => item?.kind === 'upload').length });
         }
         // The owner's saved videos, from the stored records and their files (media_library.js). Read-only, and
         // answered here: the model has no tool to inspect the library, so it must never be asked.

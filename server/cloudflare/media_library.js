@@ -6,8 +6,11 @@
 // with no file is "missing"; a GitHub artifact that could not be read right now is "unverified", never playable.
 // Rendering and failed jobs are not library records, so they are reported as not part of the library.
 import { githubVideoFile } from './github_video_renderer.js';
+import { verifyMediaFile } from './media.js';
 
 const MAX_CHECKS = 12;
+// How many stored files one answer reads back. Each read is a storage read, so the rest are marked not checked.
+const INVENTORY_CHECKS = 60;
 
 // "Open my video library", "show my saved videos", "how many videos are playable", "CHE, open Creator Studio and
 // show my latest video". Generation ("make a video about…") is not a library request and goes elsewhere.
@@ -77,12 +80,51 @@ export function mediaSaveIntent(message, hasAttachment) {
   return hasAttachment && /\b(?:save|store|keep|hold|archive)\b/i.test(text);
 }
 
-// "How many pictures do you hold", "where do you keep my files": counted from the stored index, never by the model.
-// Video questions stay with the video library above.
+// The longest message that can be a store question. The owner's own media requests are well under this.
+const MAX_STORE_REQUEST = 500;
+const PICTURE_WORD = /\b(?:pictures?|photos?|images?|pics?|pngs?|jpe?gs?|webps?)\b/i;
+const VIDEO_WORD = /\b(?:videos?|mp4s?|movies?|clips?)\b/i;
+// Words that make a question about the picture/file store, not about the video library.
+const STORE_WORD = /\b(?:pictures?|photos?|images?|pics?|pngs?|jpe?gs?|webps?|files?|uploads?|attachments?|documents?|pdfs?|media)\b/i;
+// What turns a store word into a request to list the store: a listing, count, check, or "do you still have".
+// Words that make a store question about pictures or uploads even when a video is also named.
+const OTHER_STORE_WORD = /\b(?:pictures?|photos?|images?|pics?|pngs?|jpe?gs?|webps?|uploads?|attachments?|documents?|pdfs?|media\s+items?)\b/i;
+// Google and mail questions are answered by their own routes, never by the store.
+const SERVICE_WORD = /\b(?:google|drive|gmail|e-?mails?|calendar|youtube|inbox)\b/i;
+// A store question is about what CHE holds for the owner: saved, stored, kept, still there, or "my" pictures and files.
+const STORE_OWNER = /\b(?:saved|stored|store|hold|held|keep|kept|have|got|uploaded|uploads?|generated|still|media\s+store|my\s+(?:latest\s+|last\s+|newest\s+|saved\s+|stored\s+)?(?:pictures?|photos?|images?|pngs?|jpe?gs?|webps?|files?|media|uploads?|attachments?|documents?|pdfs?))\b/i;
+const INVENTORY_CUE = /\b(?:how\s+many|list|every|all\s+(?:of\s+)?(?:my|the|your)|which|verify|confirm|check|inventory|still\s+(?:saved|stored|there|kept|held)|do\s+you\s+(?:have|hold|keep|store)|have\s+you\s+(?:got|saved|kept|stored)|where\s+(?:do\s+you|are|is)|anywhere|show\s+(?:me\s+)?(?:my|all|every|saved|stored)|what\s+(?:pictures?|photos?|images?|files?|media|uploads?|documents?|pdfs?|items?|creations?|pngs?)|(?:my|the|your)\s+(?:saved|stored|latest|last|newest))\b/i;
+
+// "How many pictures do you hold", "list every saved media item by its ID", "verify my latest PNG is still stored":
+// the full store is listed from the stored records, each file checked, never answered by the model. A video-only
+// question stays with the video library above.
 export function mediaHoldIntent(message) {
-  const text = String(message || '').trim().replace(/^(?:che|chay|chey)[,:]?\s+/i, '');
-  if (/\b(?:videos?|mp4s?|clips?)\b/i.test(text)) return false;
-  return /\b(?:how\s+many|what|which|list|show)\b[\s\S]{0,40}\b(?:pictures?|photos?|images?|files?|documents?|pdfs?|media)\b[\s\S]{0,30}\b(?:have|hold|store|stored|saved|keep|kept)\b|\b(?:where|anywhere)\b[\s\S]{0,40}\b(?:store|keep|hold|save)\b[\s\S]{0,30}\b(?:pictures?|photos?|media|files?|documents?)\b/i.test(text);
+  const text = cleanText(message);
+  if (text.length > MAX_STORE_REQUEST) return false; // a long instruction (a study plan, a document) is never a store question
+  if (!STORE_WORD.test(text) || SERVICE_WORD.test(text) || !STORE_OWNER.test(text)) return false;
+  if (VIDEO_WORD.test(text) && !OTHER_STORE_WORD.test(text)) return false;
+  return INVENTORY_CUE.test(text) || /\b(?:where|anywhere)\b[\s\S]{0,40}\b(?:store|keep|hold|save)\b/i.test(text);
+}
+
+// "Show me the last picture": the newest saved picture, returned as an image the chat can display.
+export function mediaShowLatestIntent(message) {
+  const text = cleanText(message);
+  if (text.length > MAX_STORE_REQUEST) return false;
+  return /\b(?:show|open|display|send|see|view|pull\s+up|bring\s+up)\b/i.test(text)
+    && /\b(?:last|latest|newest|most\s+recent)\b/i.test(text)
+    && PICTURE_WORD.test(text) && !VIDEO_WORD.test(text);
+}
+
+export function wantsLatestMedia(message) {
+  return /\b(?:latest|last|newest|most\s+recent)\b/i.test(cleanText(message));
+}
+
+export function wantsPng(message) {
+  return /\bpngs?\b/i.test(cleanText(message));
+}
+
+function cleanText(message) {
+  return String(message || '').trim().replace(/^(?:che|chay|chey)[,:]?\s+/i, '');
 }
 
 export function mediaSaveReply(result) {
@@ -90,12 +132,106 @@ export function mediaSaveReply(result) {
   return `Saved "${result.item.title}" to my media store, sir. I now hold ${result.total} ${result.total === 1 ? 'item' : 'items'} there.`;
 }
 
-export function mediaHoldReply(items) {
-  const files = (items || []).filter((item) => item?.kind === 'upload');
-  if (!files.length) return 'I hold no saved pictures or files yet, sir. Send one with "save this picture" and I will keep it in my media store.';
-  const shown = files.slice(0, 8).map((item) => `- ${item.title} (${String(item.created_at || '').slice(0, 10) || 'date unknown'})`);
-  const more = files.length > 8 ? `${files.length - 8} more are in my media store.` : '';
-  return [`I hold ${files.length} saved ${files.length === 1 ? 'file' : 'files'}, sir.`, ...shown, more].filter(Boolean).join('\n');
+// Every record of the store, newest first. `keep` narrows the list (for example to PNG files) before any file is read.
+export function mediaRows(items, keep = () => true) {
+  return [...(items || [])]
+    .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))
+    .filter(keep)
+    .map((item) => ({
+      id: String(item.id || ''),
+      title: String(item.title || 'Untitled').slice(0, 80),
+      mime_type: String(item.mime_type || ''),
+      created_at: String(item.created_at || ''),
+      category: item.kind === 'upload' ? 'upload' : 'generated',
+      item,
+    }));
+}
+
+// Reads each file back (at most `limit`); the rest are marked not checked, so nothing unverified is called retrievable.
+export async function verifyMediaRows(env, storage, rows, limit = INVENTORY_CHECKS) {
+  let checked = 0;
+  for (const row of rows) {
+    if (checked >= limit) {
+      row.verify = { ok: false, status: 'not_checked', reason: 'not checked in this answer, because of the limit' };
+      continue;
+    }
+    checked += 1;
+    row.verify = await verifyMediaFile(env, storage, row.item);
+  }
+  return rows;
+}
+
+function stateOf(row) {
+  const verify = row.verify || { status: 'not_checked', reason: 'not checked' };
+  if (verify.ok) return 'stored, bytes verified';
+  if (verify.status === 'not_checked') return 'not checked in this answer';
+  if (verify.status === 'unverified') return `could not be verified just now: ${verify.reason}`;
+  return `not retrievable: ${verify.reason}`;
+}
+
+function dateOf(row) {
+  return row.created_at.slice(0, 10) || 'date not recorded';
+}
+
+// The full store: total records, owner uploads apart from generated ones, and every record with its real ID,
+// filename, type, creation date and whether its stored bytes were verified.
+export function mediaInventoryReply(rows, { png = false } = {}) {
+  if (!rows.length) return 'I hold no saved media records, sir. My media store is empty. Send a picture with "save this picture" and I will keep it there.';
+  const uploads = rows.filter((row) => row.category === 'upload').length;
+  const generated = rows.length - uploads;
+  const verified = rows.filter((row) => row.verify?.ok).length;
+  const shown = png ? rows.filter((row) => row.mime_type === 'image/png') : rows;
+  const head = png
+    ? `I hold ${shown.length} saved PNG ${shown.length === 1 ? 'file' : 'files'}, sir. ${shown.filter((row) => row.verify?.ok).length} of them ${shown.filter((row) => row.verify?.ok).length === 1 ? 'is' : 'are'} retrievable.`
+    : `I hold ${rows.length} saved media ${rows.length === 1 ? 'record' : 'records'}, sir: ${uploads} owner ${uploads === 1 ? 'upload' : 'uploads'} and ${generated} generated. ${verified} of ${rows.length} can be retrieved: the stored bytes were read back and checked.`;
+  if (!shown.length) return head;
+  const lines = shown.map((row) => `- "${row.title}" · ID ${row.id} · ${row.mime_type || 'type not recorded'} · created ${dateOf(row)} · ${row.category} · ${stateOf(row)}`);
+  return [head, ...lines].join('\n');
+}
+
+// Which saved records a question is about: PNG files, pictures, or (when neither is named) any record.
+export function mediaKeepFor(message) {
+  if (wantsPng(message)) return (item) => item.mime_type === 'image/png';
+  if (PICTURE_WORD.test(cleanText(message))) return (item) => /^image\//.test(String(item.mime_type || ''));
+  return () => true;
+}
+
+// "Show me the last picture" and "verify my latest PNG": one record, with its verified state.
+export function mediaLatestReply(row, { png = false } = {}) {
+  const label = png ? 'PNG' : row?.mime_type?.startsWith('image/') ? 'picture' : 'record';
+  if (!row) return `I hold no saved ${png ? 'PNG files' : 'pictures or files'}, sir, so there is nothing to show.`;
+  if (row.verify?.ok) return `Your latest ${label} is "${row.title}", sir: ID ${row.id}, ${row.mime_type}, created ${dateOf(row)}, ${row.category}. Its stored bytes are present and verified.`;
+  return `Your latest ${label} is "${row.title}" (ID ${row.id}), sir, and it is not retrievable: ${row.verify?.reason || 'the bytes were not checked'}.`;
+}
+
+// The owner's store question, answered from the stored records. A list request gets every record; a "latest" part
+// gets that record with its bytes read back. A latest-only question gets just that record, never a list.
+export async function mediaHoldAnswer(env, storage, items, message) {
+  const text = cleanText(message);
+  const png = wantsPng(message);
+  const latest = wantsLatestMedia(message);
+  const listAsked = /\b(?:list|every|all|which|how\s+many|inventory|what\s+(?:do|have)\s+you)\b/i.test(text);
+  const rows = mediaRows(items);
+  const keep = mediaKeepFor(message);
+  const latestRow = latest ? rows.find((row) => keep(row.item)) || null : null;
+  if (latest && !listAsked) {
+    if (latestRow) latestRow.verify = await verifyMediaFile(env, storage, latestRow.item);
+    return { text: mediaLatestReply(latestRow, { png }), total: rows.length, uploads: rows.filter((row) => row.category === 'upload').length, verified: latestRow?.verify?.ok ? 1 : 0 };
+  }
+  await verifyMediaRows(env, storage, rows);
+  if (latestRow && !latestRow.verify) latestRow.verify = await verifyMediaFile(env, storage, latestRow.item);
+  const answer = mediaInventoryReply(rows);
+  return {
+    text: latest ? `${answer}\n${mediaLatestReply(latestRow, { png })}` : answer,
+    total: rows.length,
+    uploads: rows.filter((row) => row.category === 'upload').length,
+    verified: rows.filter((row) => row.verify?.ok).length,
+  };
+}
+
+export function mediaShowReply(row) {
+  if (row.verify?.ok) return `Here is your latest picture, sir: "${row.title}" (ID ${row.id}, ${row.mime_type}, created ${dateOf(row)}). I read its stored bytes back before showing it.`;
+  return `I could not show your latest picture, sir: "${row.title}" (ID ${row.id}) is not retrievable: ${row.verify?.reason || 'its bytes were not checked'}.`;
 }
 
 export function mediaLibraryReply(report, { latest = false } = {}) {
