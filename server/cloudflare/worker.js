@@ -9458,7 +9458,7 @@ export class CheState extends DurableObject {
           const inspected = await inspectRepositoryContext(this.env, repositoryInspectionRequest, fetch, { trace: true });
           if (!inspected.ok) return ndjsonReply(`I could not verify the current repository source, sir. ${inspected.detail}`, { source: 'che_repository_inspection', ok: false });
           // A historical cause keeps its VERIFIED / INFERRED / UNKNOWN answer below; it is not an open analysis.
-          const historicalCauseRequested = /\b(?:previous|earlier|last)\b[\s\S]{0,160}\b(?:self[- ]diagnostic|diagnostic|coding\s+(?:job|pipeline|runtime))\b|\bwhy\b[\s\S]{0,160}\b(?:entered|started|triggered|routed)\b[\s\S]{0,100}\b(?:coding|pipeline|job)\b/i.test(repositoryInspectionRequest);
+          const historicalCauseRequested = /\b(?:previous|earlier)\b[\s\S]{0,160}\b(?:self[- ]diagnostic|diagnostic)\b|\bwhy\b[\s\S]{0,160}\b(?:entered|started|triggered|routed)\b[\s\S]{0,100}\b(?:coding|pipeline|job)\b/i.test(repositoryInspectionRequest);
           // A question about the code is answered from the source it was read from; the file index is not the answer.
           if (analyticalRepositoryQuestion(repositoryInspectionRequest) && !historicalCauseRequested) {
             const analysis = await this.answerFromRepositoryEvidence(repositoryInspectionRequest, inspected).catch(() => '');
@@ -13021,7 +13021,13 @@ export class CheState extends DurableObject {
     });
     const text = String(answer?.response || answer?.choices?.[0]?.message?.content || '').trim();
     if (!text) return '';
-    return guardExecutionClaims(text, { message: question, receipts: [] }).text;
+    // The analysis may name the commit it read. Hashes are masked for the claim check only, so a quoted
+    // commit alone never replaces a good answer; a real execution or record claim still does.
+    const hashes = [];
+    const masked = text.replace(/\b[0-9a-f]{7,64}\b/g, (hash) => { hashes.push(hash); return `\u27e6sha${hashes.length - 1}\u27e7`; });
+    const checked = guardExecutionClaims(masked, { message: question, receipts: [] });
+    if (!checked.removed.length) return text;
+    return checked.text.replace(/\u27e6sha(\d+)\u27e7/g, (_, i) => hashes[Number(i)] || '');
   }
 
   // Owner chat reply for a coding request. Proposal → short summary;

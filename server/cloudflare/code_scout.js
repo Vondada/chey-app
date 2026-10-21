@@ -248,7 +248,9 @@ function deliveryRestrictions(text) {
   const noPr = /\b(?:do\s+not|don['’]?t|never|without)\b[^.!?\n]{0,80}\b(?:create|open)\b[^.!?\n]{0,30}\b(?:pr|pull\s+request)\b/i.test(value)
     || /\bno\s+(?:pr|pull\s+request)\b/i.test(value);
   const noMerge = /\b(?:do\s+not|don['’]?t|never|without)\b[^.!?\n]{0,70}\bmerge\b/i.test(value)
-    || /\bno\s+merge\b/i.test(value);
+    || /\bno\s+merge\b/i.test(value)
+    || /\b(?:must|should|shall|will|to)\s+not\s+(?:be\s+)?merged?\b/i.test(value)
+    || /\bmerge\b[^.!?\n]{0,80}\b(?:only\s+)?(?:after|once|until|if)\s+I\s+(?:approve|say|confirm|authori[sz]e|tell)\b/i.test(value);
   const noDeploy = /\b(?:do\s+not|don['’]?t|never|without)\b[^.!?\n]{0,70}\bdeploy\b/i.test(value)
     || /\bno\s+deploy(?:ment)?\b/i.test(value);
   const noCommitPush = /\b(?:do\s+not|don['’]?t|never|without)\b[^.!?\n]{0,70}\b(?:commit|push|create\s+(?:a\s+)?branch)\b/i.test(value);
@@ -635,10 +637,10 @@ export function codingHistoryIntent(message) {
 // It is answered from the inspected source in plain English. Only an explicit request for the file list
 // gets the list: "which files", "list the files", "show me the files" (owner, 2026-10-21).
 export function analyticalRepositoryQuestion(message) {
-  // "Answer in plain English, not a file list" names a list only to refuse it: negated mentions do not count.
-  const text = withoutQuotedText(String(message || '').trim()).replace(/\bnot\s+(?:a\s+|an\s+|any\s+)?(?:file\s+(?:list|index)|list\s+of\s+files|files?|list)\b[^.!?\n]*/gi, ' ');
-  if (/\b(?:list|which\s+files|file\s+(?:list|index)|show\s+me\s+(?:the\s+)?files|paths?\s+only|just\s+the\s+(?:files|paths))\b/i.test(text)) return false;
-  return /\b(?:explain|why|how\s+(?:does|do|is|are|would|should|could)|weakness(?:es)?|weak\s+points?|biggest|recommend\w*|repairs?|root\s+cause|trade-?offs?|risks?|improve\w*|what\s+(?:should|would|could)|analy[sz]e|compare)\b/i.test(text);
+  const text = withoutQuotedText(String(message || '').trim());
+  // Reasoning wins over listing: "explain why it stalls and list the files involved" gets the explanation.
+  // A pure listing request ("show me the files", "which files") has no reasoning word and keeps the list.
+  return /\b(?:explain|why|how\s+(?:does|do|is|are|would|should|could)|weakness(?:es)?|weak\s+points?|biggest|recommend\w*|repairs?|root\s+cause|trade-?offs?|risks?|improve\w*|what\s+(?:should|would|could)|analy[sz]e|compare|list\s+the\s+(?:weaknesses|problems|risks|causes|reasons))\b/i.test(text);
 }
 
 export function repositoryInspectionIntent(message) {
@@ -668,6 +670,7 @@ export function repositoryInspectionIntent(message) {
     || /\bthe\s+(?:source\s+)?code\s+(?:for|of|behind)\s+(?:the\s+|your\s+|che's\s+)?(?:voice\s+studio|memory|brain|router|routing|chat|trading\s+room|office|war\s+room|mailbox|command\s+center|video\s+(?:line|renderer)|rea|navigator|mic(?:rophone)?|captions?|home\s+screen|settings)\b/i.test(text)
     || /\b(?:current|exact|latest)\s+main\s+(?:branch\s+)?sha\b/i.test(text)
     || /\b(?:coding\s+(?:job|pipeline|runtime)|cloudflare\s+worker|github\s+main)\b/i.test(text)
+    || /\b(?:your|che(?:'s)?)\s+(?:coding\s+)?architecture\b/i.test(text)
     // "Review the code quality of the trading desk", "code review of the router": the catalog's /code-review
     // said in words, a read of CHE's own source. "Review this code" (pasted code) is still the model's.
     || (!/\b(?:below|pasted?|attached|i\s+wrote|my\s+(?:project|app|code|repo|script|file)|the\s+following|this\s+code|this\s+file)\b|```/i.test(text)
@@ -678,7 +681,9 @@ export function repositoryInspectionIntent(message) {
   const repositoryStateQuestion = repoTarget
     && /\b(?:status|state|current|latest|exact)\b/i.test(text);
   const guardedDiagnostic = readOnlyDiagnosticIntent(text) && repoTarget;
-  return Boolean((directInspection && repoTarget) || exactHeadQuestion || repositoryStateQuestion || guardedDiagnostic || selfDiagnosticSource);
+  // An analysis of CHE's own architecture (weaknesses, repairs, root causes) reads her source, whatever it opens with.
+  const architectureAnalysis = repoTarget && /\b(?:weakness(?:es)?|recommend\w*|repairs?|root\s+cause|trade-?offs?)\b/i.test(text);
+  return Boolean((directInspection && repoTarget) || architectureAnalysis || exactHeadQuestion || repositoryStateQuestion || guardedDiagnostic || selfDiagnosticSource);
 }
 
 export function starredRepoIntent(message) {

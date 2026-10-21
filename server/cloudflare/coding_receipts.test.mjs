@@ -96,3 +96,9 @@ test('a prohibition covers only its own sentence: "Do not commit or push" still 
   assert.equal(currentTurnActionPolicy('Use BUILD mode. Fix the typo. Do not commit or push.').prCreationAllowed, false);
   assert.equal(currentTurnActionPolicy('Use BUILD mode. Fix the typo and open a pull request. Do not merge it.').prCreationAllowed, true);
 });
+
+test('review fix: a merge that must not happen, or waits for owner approval, is not authorized', () => {
+  assert.equal(currentTurnActionPolicy('Use BUILD mode. Fix the typo in your code and open a PR. It must not be merged, then merge it when green.').mergeAllowed, false);
+  assert.equal(currentTurnActionPolicy('Use BUILD mode. Fix the typo in your code and open a PR. Merge it only after I approve.').mergeAllowed, false);
+  assert.equal(currentTurnActionPolicy('Use BUILD mode. Fix the typo in your code and open a PR. Merge it when CI is green.').mergeAllowed, true, 'an unconditional instruction still authorizes a merge');
+});

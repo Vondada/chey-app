@@ -133,3 +133,32 @@ test('the second read-only form, "How does your memory code work?", is answered 
   assert.doesNotMatch(reply, /^VERIFIED/m);
   assert.deepEqual(record.dispatches, []);
 });
+
+test('review fix: reasoning wins over a listing phrase; a historical trigger needs a real historical cue', async (t) => {
+  const { analyticalRepositoryQuestion, repositoryInspectionIntent } = await import('./code_scout.js');
+  assert.equal(analyticalRepositoryQuestion('Explain why the coding runtime stalls, not as a file list.'), true);
+  assert.equal(analyticalRepositoryQuestion('Explain why the coding runtime stalls and list the files involved.'), true);
+  assert.equal(analyticalRepositoryQuestion('Explain why my last coding job failed and recommend a repair.'), true);
+  assert.equal(analyticalRepositoryQuestion('Show me the files in your coding runtime.'), false);
+  assert.equal(repositoryInspectionIntent('List the weaknesses in your coding architecture and explain each.'), true, 'an architecture question about CHE reaches the inspection');
+});
+
+test('review fix: an analysis that names the commit it read keeps its answer', async (t) => {
+  const record = { models: [], dispatches: [] };
+  withFakeGithub(t, record);
+  const che = await owner(`1. The runtime waits on a runner. Repair: record a claim deadline. Read at commit ${HEAD}.`, record);
+  const { reply, done } = await che.say(OWNER_QUESTION);
+  assert.equal(done.source, 'che_repository_analysis');
+  assert.match(reply, /claim deadline/, 'the analysis is not replaced for quoting a hash');
+  assert.match(reply, new RegExp(HEAD));
+});
+
+test('review fix: a real execution claim in the analysis is still removed', async (t) => {
+  const record = { models: [], dispatches: [] };
+  withFakeGithub(t, record);
+  const che = await owner(`I ran the coding runtime and the job completed successfully at commit ${HEAD}.`, record);
+  const { reply } = await che.say(OWNER_QUESTION);
+  assert.match(reply, /cannot verify/i);
+  assert.doesNotMatch(reply, /job completed successfully/);
+  assert.deepEqual(record.dispatches, []);
+});
