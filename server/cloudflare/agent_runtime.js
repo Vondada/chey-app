@@ -1107,6 +1107,11 @@ export function contextItemsFrom(matches = []) {
 
 // Runs one queued delegated task: agent works, CHE reviews, result recorded. A task whose review
 // is due again (review_pending) goes straight back to CHE's review; the agent's work is not redone.
+// The owner's Knowledge Library passages for this task (indexed text, cited; cataloged works named as unread).
+function knowledgeLines(ctx, question) {
+  try { return typeof ctx.knowledge === 'function' ? String(ctx.knowledge(question) || '') : ''; } catch (_) { return ''; }
+}
+
 async function runOneTask(ctx) {
   const { env, load, save, notify, models } = ctx;
   let data = await load();
@@ -1210,6 +1215,7 @@ async function runOneTask(ctx) {
     steeringText ? `OWNER STEERING RECEIVED:\n- ${steeringText}` : '',
     verifiedHistory.length ? `VERIFIED PAST RESULTS — use only when relevant; compare and recombine proven patterns, never copy blindly:\n${verifiedHistory.map((item) => `- ${item.task}: ${item.result}`).join('\n')}` : '',
     skills.length ? `REUSABLE OFFICE SKILLS:\n${skills.map((skill) => `${skill.name}: ${skill.steps.join(' -> ')}`).join('\n')}` : '',
+    knowledgeLines(ctx, task.task),
     computer ? `CONNECTED COMPUTER RESULT:\n${JSON.stringify(computer).slice(0, 16000)}` : '',
     !computer && task.computer_result ? `CONNECTED COMPUTER RESULT (from the earlier pass; not run again):\n${task.computer_result}` : '',
   ].filter(Boolean).join('\n\n');

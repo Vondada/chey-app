@@ -149,6 +149,7 @@ import 'commands/che_command_voice.dart';
 import 'commands/che_command_widgets.dart';
 import 'che_web_voice_stub.dart'
     if (dart.library.js_interop) 'che_web_voice_web.dart' as che_web_voice;
+import 'knowledge/che_knowledge_library_screen.dart';
 
 part 'home_state/connected.dart';
 part 'home_state/home_ui.dart';
@@ -575,6 +576,19 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
       _commandSuggestions = const [];
     });
     _brainLog.newConversation();
+  }
+
+  /// The Knowledge Library: the owner's reference catalog and the passages CHE can quote. Speaks only on request.
+  Future<void> _openKnowledgeLibrary() async {
+    HapticFeedback.selectionClick();
+    _composerFocus.unfocus();
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => CheKnowledgeLibraryScreen(
+        baseUrl: () => cheAgentBaseUrl,
+        headers: () => _authHeaders,
+        onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
+      ),
+    ));
   }
 
   /// Chat → Commands. [command] opens one command's details; [steps] opens
@@ -2357,6 +2371,16 @@ OWNER AGENCY
                 style: kit.CheType.title.copyWith(fontSize: 22, fontWeight: FontWeight.w800),
               ),
               actions: [
+                Semantics(
+                  button: true,
+                  label: 'Knowledge Library. Search the references CHE can quote.',
+                  excludeSemantics: true,
+                  child: IconButton(
+                    tooltip: 'Knowledge Library',
+                    icon: const Icon(Icons.menu_book_rounded),
+                    onPressed: () => unawaited(_openKnowledgeLibrary()),
+                  ),
+                ),
                 Semantics(
                   button: true,
                   label: 'Commands. Open CHE\'s command library, workflows and activity.',
