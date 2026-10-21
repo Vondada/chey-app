@@ -11,11 +11,19 @@ import { INTRADAY_CANDIDATES, MIN_TRADES, readTrades, summarize } from './tradin
 export const TRADING_STATUS_SOURCE = 'che_trading_status';
 
 const WAKE = /^\s*(?:(?:hey\s+)?(?:che|chay|chey|shay)[,:]?\s+)?/i;
-const WHY_NO = /\bwhy\b[\s\S]{0,40}?\b(?:(?:no|zero)\s+(?:new\s+)?(?:trades?|entries|positions?)|(?:aren'?t|isn'?t|haven'?t|hasn'?t|not)\s+(?:there\s+)?(?:any\s+)?(?:(?:you|she|che|it)\s+)?(?:(?:taking|opening|placing|making|entering)\s+)?(?:any\s+)?(?:new\s+)?(?:trades?|entries|positions?))\b/i;
+// A negation ("no", "zero", "aren't", "isn't", "not", "don't see") followed by at most four other words and a trade
+// word, after "why". The words between may be a market ("new MNQ paper trades"), a subject ("CHE is not taking any
+// trades") or a verb ("showing up"). Trade words are the nouns for the journal, not "trading" used as an adjective.
+const NEGATION = "(?:no|zero|none|not|aren'?t|isn'?t|haven'?t|hasn'?t|didn'?t|don'?t|doesn'?t|won'?t|never|nothing|without)";
+const TRADE_WORD = '(?:trades?|entries|entry|positions?|orders?|setups?|signals?|fills?)';
+const WHY_NO = new RegExp(`\\bwhy\\b[\\s\\S]{0,60}?\\b${NEGATION}\\b(?:\\s+[a-z0-9&/']+){0,6}?\\s+${TRADE_WORD}\\b`, 'i');
 
-/** The owner's "why are there no new trades" question, or null. */
+/**
+ * The owner's "why are there no new trades" question in any natural wording, with or without a market name, "paper",
+ * or a wake word ("CHE", "Chay", "Chey", "Shay", "Hey CHE"), or null. Questions about other things do not match.
+ */
 export function newTradesIntent(message) {
-  const text = String(message || '').replace(/[’]/g, "'").replace(WAKE, '').trim();
+  const text = String(message || '').replace(/[’]/g, "'").replace(WAKE, '').replace(/\s+/g, ' ').trim();
   if (!text || text.length > 300) return null;
   return WHY_NO.test(text) ? { kind: 'why_no_trades' } : null;
 }
