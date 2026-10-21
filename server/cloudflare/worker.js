@@ -158,6 +158,7 @@ import { assertOwnerTalksToCheOnly, codexWorkPacket } from './office_router.js';
 import {
   mlProjectFromResult,
   mlReadiness,
+  mlResultsReply,
   parseMlPhrase,
   runMlJob,
   speakMlPlan,
@@ -4155,23 +4156,20 @@ export class CheState extends DurableObject {
   async officeMlJob(data, phrase = {}) {
     await this.staffOffice(data);
     const kind = String(phrase.kind || 'classification');
-    // Demo seed when owner only spoke the command without uploading examples yet.
-    const seedClass = [
-      { text: 'buy shoes online cart checkout', label: 'shop' },
-      { text: 'purchase phone store deal', label: 'shop' },
-      { text: 'order headphones shopping', label: 'shop' },
-      { text: 'soccer match goals score', label: 'sports' },
-      { text: 'basketball game championship', label: 'sports' },
-      { text: 'tennis tournament win', label: 'sports' },
-      { text: 'pasta recipe dinner cook', label: 'food' },
-      { text: 'bake cake kitchen ingredients', label: 'food' },
-    ];
-    const seedCluster = seedClass.map((e) => e.text);
-    const body = kind === 'clustering'
-      ? { kind: 'clustering', examples: seedCluster, k: 3, task: phrase.task }
-      : { kind: 'classification', examples: seedClass, holdout: 0.25, task: phrase.task };
-    const result = await runMlJob(this.env, body);
-    if (!result.ok) return { reply: speakMlPlan(result), kind, jobs: [], metrics: null };
+    // A spoken command carries no dataset. Results come only from runs already stored, and a run without a
+    // dataset grades nothing: no demo examples are ever scored and presented as a grade.
+    if (kind === 'results') {
+      return { reply: mlResultsReply(data.projects), kind, jobs: [], metrics: null };
+    }
+    const result = await runMlJob(this.env, { kind: kind === 'clustering' ? 'clustering' : 'classification', examples: [], task: phrase.task });
+    if (!result.ok) {
+      return {
+        reply: `CHE here. No ML run started, because this command has no labeled dataset. ${result.detail} Say "show me the actual results" to hear the runs already stored.`,
+        kind,
+        jobs: [],
+        metrics: null,
+      };
+    }
     const project = mlProjectFromResult(result, phrase.task || '');
     data.projects = Array.isArray(data.projects) ? data.projects : [];
     data.projects.unshift(project);
