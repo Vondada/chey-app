@@ -98,7 +98,7 @@ class CheOwnerError {
       case 'authentication_required':
         return 'CHE could not authenticate that request, sir. Nothing was confirmed as running.';
       default:
-        return "I couldn't complete that request just now, sir. I have not confirmed that any work is still running.";
+        return "I couldn't finish that answer just now, sir. I don't have a confirmed result to report.";
     }
   }
 }
