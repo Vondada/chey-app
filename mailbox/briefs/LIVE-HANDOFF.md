@@ -1869,6 +1869,17 @@ Status: PROGRAM, not built. The request spans several multi-week projects (visua
 
 ---
 
+## 8b. SOUL CHECKPOINT 2 (Claude, 2026-10-21 23:30Z)
+
+- **Merged and deployed:** PR #422 (Worker Soul: soul.js, /api/soul, /api/soul/restore, chat prompt Soul block, model-reply provenance, media retrieval) → main `46f1dfb`. Deploy CHE Worker run 39690831421 `success`. Live `/health` NOT checked (sandbox proxy 403).
+- **Open:** PR #423 `claude/che-soul-phone-controls` at `7c7494f` (Flutter: Soul screen edits the Worker Soul; `che_soul.dart`, `che_soul_controls.dart`, `che_brain.dart`, `main.dart`). Local: `flutter analyze lib test` clean; `flutter test` 645 passed, 1 skipped. Not built, not on iPhone. On merge to main, `che-shorebird.yml` patches lib/** automatically; a phone only gets it when its release matches.
+- **Still open in Soul (in order):**
+  1. Deterministic routes carry no `soul` field (only model replies do). Add a default in `ndjsonReply` (`soul_applied:false`) or leave absent, then test.
+  2. Flutter "Response Details → Personality" showing soul.version, hash, soul_applied, route from the done frame.
+  3. Other persona prompts in `worker.js` still hard-code personality (about lines 5346, 6328, 8814). Route owner-facing ones through `soulPromptBlock`.
+  4. Verify on live `/health` version = 46f1dfb (needs a route the sandbox can reach).
+- **Next action:** check PR #423 checks; merge with `[worker-deploy]`-free title (Flutter only) once green; then item 1 above.
+
 ## 8a. ACTIVE CHECKPOINT (Claude, 2026-10-21 23:00Z) — read first
 
 - **Soul branch:** `claude/che-soul-routing` at `502f150`, **PR #422 open** (not merged, not deployed). Worker CI queued at 22:53Z; the Cloudflare "Workers Builds" failure is ignored per owner rule. Owner merge rule: merge only when Worker/Flutter/analyze checks are green; merge title must carry `[worker-deploy]`.
