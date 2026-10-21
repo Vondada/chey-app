@@ -74,6 +74,8 @@ Then, on GitHub:
 
 ## 2. Current position (Claude, 2026-10-21 — MASTER MISSION checkpoint; read this first)
 
+**DEPLOY COMPLETED (2026-10-21, checked via actions_get): PR #419 merge `68352bbf344ab434ca25a40ad4279db96591485b`, Deploy CHE Worker run 39674495916 (run_number 297): conclusion SUCCESS (started 20:55:31Z, updated 20:58:23Z).** Live `/health` from the sandbox was not checked here (sandbox network policy). No other merges were made in this step.
+
 **MERGED (2026-10-21 20:55 UTC): PR #419 squash-merged to main as `68352bbf344ab434ca25a40ad4279db96591485b` (head `a9ceb96ccb3982efc483b77247a7460b2e87b1f8`, title `[worker-deploy]`). Required checks green on a9ceb96: "Worker syntax and unit tests", both "analyze". Deploy run 39674495916 (`che-worker-deploy.yml`, run_number 297) QUEUED at this update; its conclusion is recorded in the next update. Live `/health` from the sandbox: UNREACHABLE (HTTP 000).
 
 **MERGED (2026-10-21 20:10 UTC, owner: "merge and complete"):** PR #412 squash-merged as `fca3262` (Worker, title `[worker-deploy]`; required checks green on 4caf185; deploy run 39668045999 COMPLETED, conclusion SUCCESS (started 20:10:52Z, updated 20:13:46Z); live /health not reachable from the sandbox, so the live version is NOT verified from here). PR #410 (Rithmic on the phone, Dart only) squash-merged as `6c6670b` (checks green on 5ecf1b9; no iPhone build yet, no live Rithmic check). OPEN: `claude/che-flagstaff-thread` (stacked on #412; rebase on main before PR). OPEN QUESTION for owner: `analysis_options.yaml` has an uncommitted exclusion of `android/**` and `ios/**`; not committed, not reverted.
