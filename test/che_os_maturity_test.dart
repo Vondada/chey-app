@@ -38,7 +38,9 @@ void main() {
     expect(error.message.toLowerCase(), isNot(contains('enospc')));
     expect(error.message.toLowerCase(), isNot(contains('engine')));
     expect(error.message.toLowerCase(), isNot(contains('still working')));
-    expect(error.message.toLowerCase(), contains('not confirmed'));
+    expect(error.message.toLowerCase(), contains('confirmed result'));
+    expect(error.message.toLowerCase(), isNot(contains('work is still running')));
+    expect(error.message.toLowerCase(), isNot(contains('coding job')));
     expect(error.category, 'temporary_cloud_unavailable');
   });
 
