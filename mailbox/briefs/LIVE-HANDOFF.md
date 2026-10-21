@@ -72,6 +72,13 @@ Then, on GitHub:
 
 **ChatGPT 2026-10-20 owner-directed end-to-end continuation:** Current main `295a9cde` (PRs #393 and #392 merged). Claude PR #394 false-completion fix is open: CI green on inspected commit `6984aa1`, but unresolved Codex review threads remain for `office_workforce.js` (`review_pending` must keep temporary agents busy) and `office_board.js` (desk statuses for `review_pending`, `needs_review`, `rejected`); original passive-claims thread is outdated but should be rechecked. DO NOT MERGE #394 before current-head review and checks pass. ChatGPT created PR #395 from main `chatgpt/chart-malformed-response-20261020` commit `2865b6e` to guard malformed scalar API collection fields (`points`, `timeframes`, `bars`, `markers`, `drawings`, `open_orders`) in `lib/rooms/che_trading_chart.dart`, resolving the owner's observed `int` cast crash. PR #395 CI Flutter / UI Analyze in progress (`39540411941`, `39540411947`); not merged, not installed, no live iPhone test. Actual live FundYourEdge/Tradesea Rithmic market-data and broker paper-order integration NOT CONNECTED; existing futures `/api/trading/chart` uses stored delayed research bars and blocks futures orders. Next: add chart malformed-payload regression, obtain valid Rithmic API access/terms and separate simulated account permission; test read-only stream, then simulated orders only; no credentials shared in chat and no paid purchases. Owner requested end-to-end finish, but third-party API authorization is a real external blocker.
 
+## 2. Current position (Claude, 2026-10-21 — roster routing: named first, partners last, create only when no role covers the job: 840803c, PR #405)
+
+- Roster source: server/cloudflare/office_company.js (LA_AGENCIA_ROLES). Others with personas only: Orion, Vale, Juno, Rhea, Cato (agent_runtime.js PERSONAS; no role).
+- Partners (agent_runtime.js MEETING_ROLES, the partner list): Market Intelligence, Business Operations, Creative Studio, Build + Operations, Roblox Experience, Research Partner, Critical Reviewer. Used last.
+- Gap: no trader on the roster. Trades are not routed to anyone; a trader role needs the owner's yes.
+- Not verified live.
+
 ## 2. Current position (Claude, 2026-10-21 — jobs routed by job description; research hands off to content: d706902, PR #405)
 
 - Matched by role, specialty and mission (no name picking). Research to Atlas; content/video/story to Lyra; a research result is queued to the content job when it is reviewed. No fitting agent means blocked, not hired.
