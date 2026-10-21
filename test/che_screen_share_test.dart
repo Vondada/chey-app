@@ -2,6 +2,8 @@
 // phrases, the native channel's answers, and older builds without it.
 
 import 'package:chey/che_ui/che_screen_share.dart';
+import 'dart:typed_data';
+
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
