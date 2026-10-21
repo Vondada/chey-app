@@ -13,7 +13,7 @@
 // are seeded and reproducible. What worked and what failed is kept per model and seeds the next run.
 // Pure except `saveRun` / `loadSimMemory` (DO storage + the Brain).
 
-import { BRAIN_REGIONS } from './brain_store.js';
+import { BRAIN_REGIONS, isSafeText } from './brain_store.js';
 import { classifyProject, safetyCheck } from './project_plan.js';
 
 export const SIM_VERSION = 1;
@@ -666,11 +666,19 @@ export async function saveRun(storage, store, run) {
     ...run.hazard_notes,
     'Evidence level: simulated at most. Nothing was built or measured.',
   ].join('\n');
-  return store.put({
+  const brainRecord = {
     id: `sim_run:${run.id}`, kind: 'simulation_run', region: BRAIN_REGIONS.projects, path: run.type_label,
     title: `Simulation: ${run.title}`, body, verification: 'proposed', created_at: run.created_at,
     source: { store: 'sim_runs', id: run.id, plan: run.plan_id, route: SIM_SOURCE, models: run.models.map((m) => `${m.model.id}@${m.model.version}`), seed: run.seed, evidence: 'simulated', references: run.models.flatMap((m) => m.model.references.map((r) => r.url)) },
-  });
+  };
+  const written = store.put(brainRecord);
+  if (written?.outcome === 'rejected') {
+    console.error('SIM_LAB_BRAIN_SAFE_DIAGNOSTIC', written.reason,
+      'title', isSafeText(brainRecord.title),
+      'body', isSafeText(brainRecord.body),
+      'source', isSafeText(JSON.stringify(brainRecord.source)));
+  }
+  return written;
 }
 
 export async function loadRun(storage, id) {
