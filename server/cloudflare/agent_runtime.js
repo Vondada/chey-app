@@ -514,14 +514,27 @@ export function recordAgentWork(data, { task = {}, agent = {}, outcome = 'comple
   return entry;
 }
 
+/**
+ * The team member who takes a job: the best existing fit (named roster first, partners last). Only when nobody on
+ * the team covers the job is a new agent created, for the role the job needs, with a name not yet taken.
+ */
+export function ensureJobAgent(data, { needs = [], roleSpec = null } = {}) {
+  const agent = pickOfficeAgent(data.team, { needs });
+  if (agent) return { agent, hired: false };
+  if (!roleSpec) return { agent: null, hired: false, error: 'no role was given for the job' };
+  const made = createAgent(data, { role: roleSpec.role, specialty: roleSpec.specialty, mission: roleSpec.specialty });
+  if (made.error) return { agent: null, hired: false, error: made.error };
+  return { agent: made.agent, hired: true };
+}
+
 // The job a finished research task hands on: queued to the agent whose job description fits it, with the research
 // as its input. When nobody on the team fits, the hand-off is recorded as blocked; nobody is hired.
 export function queueNextJob(data, task, researcher) {
   const next = task.next;
   task.next = null;
-  const agent = pickOfficeAgent(data.team, { needs: next.needs || [] });
+  const { agent, error } = ensureJobAgent(data, { needs: next.needs || [], roleSpec: next.roleSpec });
   if (!agent) {
-    task.next_blocked = `No agent on the team fits ${next.label || 'the next job'}, so it was not started. Nobody was hired.`;
+    task.next_blocked = `No agent could take ${next.label || 'the next job'}: ${error || 'no one on the team fits it'}.`;
     return null;
   }
   const input = clip(task.result, 6000);

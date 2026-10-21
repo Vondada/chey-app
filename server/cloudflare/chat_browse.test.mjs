@@ -98,15 +98,16 @@ test('an original story goes to the existing writing agent as a browsing task, a
   assert.match(queued.task, /original story/);
 });
 
-test('with no agent on the team who fits, nobody is hired: CHE says so and queues nothing', async (t) => {
+test('with no agent on the team who covers the role, a new one is created for it and takes the job', async (t) => {
   const realFetch = globalThis.fetch;
   globalThis.fetch = async () => { throw new TypeError('offline'); };
   t.after(() => { globalThis.fetch = realFetch; });
   const che = await owner();
   const { body } = await che.ask('Write an original story about a lighthouse keeper');
-  assert.match(body.message, /No agent on the team fits/);
-  assert.match(body.message, /did not hire anyone/);
-  assert.equal(che.tasks().filter((task) => task.source === 'owner_chat').length, 0);
+  assert.match(body.message, /Nobody on the team covers write an original story, so I created/);
+  const queued = che.tasks().find((task) => task.source === 'owner_chat');
+  assert.ok(queued, 'the job is queued to the new agent');
+  assert.equal(queued.browse, true);
 });
 
 test('kept research pages: listed, named ones forgotten only on a yes, and a yes for anything else deletes nothing', async (t) => {

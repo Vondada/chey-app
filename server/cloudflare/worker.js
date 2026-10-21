@@ -11,6 +11,7 @@ import {
   requeueAgentReview,
   cancelAgentTasks,
   TASK_FINISHED,
+  ensureJobAgent,
   queueAgentTask,
   recordAgentWork,
   recoverStaleWork,
@@ -208,7 +209,7 @@ import { APP_BUILD_KEY, appBuildIntent, appBuildRun, dispatchAppBuild, speakAppB
 import { advanceObjectives, applyMissionEvent, approvalReached, approveNode, awaitingApproval, cancelObjective, createObjective, mutateObjective, replanNode, resolveKnownNodes, retryNode, setObjectivePaused, speakObjective } from './objective_graph.js';
 import { CATEGORIES, COMMANDS, catalogView, commandById, commandStatus, connectorStatus, describeWorkflow, dispatchPrompt, findSavedWorkflow, normalizeSavedWorkflow, parseSlashCommand, readCommandSpeech, searchCommands, speakCommandList, speakUnavailable, suggestCommands, workflowNodes, workflowFromWords } from './command_catalog.js';
 import { handleReaRequest, loadInvestigation, parseReaRequest, reaInvestigationDetail, reaInvestigations } from './rea_runner.js';
-import { browseIntent, pickOfficeAgent, runSearchRoute, subAgentPlan } from './browse_chat.js';
+import { browseIntent, runSearchRoute, subAgentPlan } from './browse_chat.js';
 import { forgetResearchPages, listResearchPages, storeLoopReads } from './agent_research_memory.js';
 const PAGE_DELETE_KEY = 'research_page_delete_pending';
 const PAGE_DELETE_MS = 5 * 60_000;
@@ -3681,9 +3682,11 @@ export class CheState extends DurableObject {
     const data = await this.loadData();
     const lines = [];
     for (const item of plan) {
-      // The agent is the one on the team whose job description fits this job. CHE never hires one to fill a job.
-      const agent = pickOfficeAgent(data.team, { needs: item.needs });
-      if (!agent) { lines.push(`No agent on the team fits ${item.label}, so I did not start it. I did not hire anyone.`); continue; }
+      // The best existing fit takes the job (named roster first, partners last). A new agent is created only when
+      // nobody on the team covers the role.
+      const { agent, hired, error } = ensureJobAgent(data, { needs: item.needs, roleSpec: item.roleSpec });
+      if (!agent) { lines.push(`I could not start ${item.label}: ${error}.`); continue; }
+      if (hired) lines.push(`Nobody on the team covers ${item.label}, so I created ${agent.name} for it.`);
       let refused = '';
       try { assertAgentMayRun(agent, { task: item.task }); } catch (error) { refused = permissionBlocker(agent, error); }
       if (refused) { lines.push(`${item.agent} did not start: ${refused}`); continue; }

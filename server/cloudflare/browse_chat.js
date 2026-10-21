@@ -8,6 +8,7 @@
 import { runBrowseLoop, createSearchRegistry, soulPlanner } from './agent_browse_loop.js';
 import { FREE_PROVIDERS, registerFreeSources, serverExecutor } from './free_sources.js';
 import { memorySearchIntent } from './memory_search.js';
+import { LA_AGENCIA_ROLES } from './office_company.js';
 
 // Only the browser wording starts the loop. Ordinary "look it up" and "search the web" questions keep their own
 // research route (comprehension_corpus.test.mjs), so this route never takes them over.
@@ -61,6 +62,7 @@ export function subAgentPlan(message, { url = '' } = {}) {
   const research = intent.study && link
     ? {
       needs: JOB_NEEDS.research,
+      roleSpec: JOB_ROLE_SPECS.research,
       label: 'study the page and describe how it makes its videos',
       task: `Study the page ${link}: pacing, camera moves, shot length, captions, music, and the tools that look used. Use only what was really read. List what could not be verified. The owner's words: ${String(message).slice(0, 800)}`,
     }
@@ -69,6 +71,7 @@ export function subAgentPlan(message, { url = '' } = {}) {
   if (!contentWanted) return research ? [research] : [];
   const content = {
     needs: JOB_NEEDS.content,
+    roleSpec: JOB_ROLE_SPECS.content,
     label: intent.create && !research ? 'write an original story' : 'make an original video in the same style',
     task: research
       ? `Make an original video plan in the same style as the research that follows. Do not copy the source. Mark any detail you invented as invented. The owner's words: ${String(message).slice(0, 800)}`
@@ -78,21 +81,35 @@ export function subAgentPlan(message, { url = '' } = {}) {
   return [{ ...research, next: content }];
 }
 
-/**
- * The office agent whose job description fits the job best: the most job-need words found in the agent's role,
- * specialty and mission. Null when no agent fits: CHE never hires to fill a job.
- */
+// Who takes a job, in order: the named roster first (Nova, Atlas, Mira, Knox, Sage, Lyra, Iris, from office_company.js),
+// then any other named agent, and partners last. Within a tier the best job-description match wins. Null when no one fits.
 export function pickOfficeAgent(team = [], { needs = [] } = {}) {
   const live = (Array.isArray(team) ? team : []).filter((a) => a && !a.retired);
-  let best = null;
-  let bestScore = 0;
-  for (const agent of live) {
-    const text = `${agent.role || ''} ${agent.specialty || ''} ${agent.mission || ''}`.toLowerCase();
-    const score = needs.filter((word) => text.includes(word)).length;
-    if (score > bestScore) { best = agent; bestScore = score; }
+  const onRoster = (a) => Object.prototype.hasOwnProperty.call(LA_AGENCIA_ROLES, a.name);
+  const isPartner = (a) => /partner|reviewer/i.test(String(a.role || ''));
+  const tiers = [
+    live.filter(onRoster),
+    live.filter((a) => !onRoster(a) && !isPartner(a)),
+    live.filter(isPartner),
+  ];
+  for (const tier of tiers) {
+    let best = null;
+    let bestScore = 0;
+    for (const agent of tier) {
+      const text = `${agent.role || ''} ${agent.specialty || ''} ${agent.mission || ''}`.toLowerCase();
+      const score = needs.filter((word) => text.includes(word)).length;
+      if (score > bestScore) { best = agent; bestScore = score; }
+    }
+    if (best) return best;
   }
-  return best;
+  return null;
 }
+
+// The role CHE creates when nobody on the team covers a job. Created only then, and only with a name not yet taken.
+export const JOB_ROLE_SPECS = Object.freeze({
+  research: Object.freeze({ role: 'Research / scout', specialty: 'Research, source reading and public-page study' }),
+  content: Object.freeze({ role: 'Content / social', specialty: 'Content, video and story drafts' }),
+});
 
 /** An office agent's own personality plus the job it holds at CHE, used as the soul of its loop. */
 export function agentSoul(agent = {}) {

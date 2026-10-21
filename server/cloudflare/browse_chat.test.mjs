@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { agentSoul, browseIntent, browseReply, pickOfficeAgent, runBrowseTask, runSearchRoute, subAgentPlan } from './browse_chat.js';
-import { queueNextJob } from './agent_runtime.js';
+import { ensureJobAgent, queueNextJob } from './agent_runtime.js';
 import { parseReaRequest } from './rea_runner.js';
 
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
@@ -136,6 +136,28 @@ test('a job goes to the team member whose job description fits it, never by name
   assert.equal(pickOfficeAgent([], { needs: ['research'] }), null);
 });
 
+test('the roster is taken first, other named agents next, and partners last', () => {
+  const team = [
+    { name: 'Market Intel', role: 'Market Intelligence Partner', specialty: 'research markets', retired: false },
+    { name: 'Atlas', role: 'Research / scout', specialty: 'Research, sourcing', retired: false },
+    { name: 'Orion', role: 'Strategist', specialty: 'research', retired: false },
+  ];
+  assert.equal(pickOfficeAgent(team, { needs: ['research'] }).name, 'Atlas', 'roster beats a better-matching partner');
+  assert.equal(pickOfficeAgent([team[0], team[2]], { needs: ['research'] }).name, 'Orion', 'a named agent beats a partner');
+  assert.equal(pickOfficeAgent([team[0]], { needs: ['research'] }).name, 'Market Intel', 'a partner is used only when nobody else fits');
+});
+
+test('ensureJobAgent takes an existing fit and creates a role only when none exists', () => {
+  const data = { team: [{ id: 'l', name: 'Lyra', role: 'Content / social', specialty: 'Content and video', retired: false }], team_tasks: [] };
+  const existing = ensureJobAgent(data, { needs: ['video'], roleSpec: { role: 'Research / scout', specialty: 'research' } });
+  assert.equal(existing.agent.name, 'Lyra');
+  assert.equal(existing.hired, false);
+  const created = ensureJobAgent(data, { needs: ['research'], roleSpec: { role: 'Research / scout', specialty: 'Research, source reading' } });
+  assert.equal(created.hired, true);
+  assert.equal(created.agent.role, 'Research / scout');
+  assert.equal(data.team.length, 2);
+});
+
 test('an agent\'s loop uses its own personality and its job at CHE', () => {
   const soul = agentSoul({ personality: 'Dry and precise.', role: 'Research / scout', specialty: 'Sourcing' });
   assert.match(soul, /Dry and precise\./);
@@ -155,12 +177,16 @@ test('a finished research job hands its result to the content job, to the agent 
   assert.equal(research.next_queued_to, 'Lyra');
 });
 
-test('with no content agent on the team, the hand-off is recorded as blocked and nobody is hired', () => {
+test('with no content agent on the team, a content agent is created for the hand-off; nobody is created when one exists', () => {
   const data = { team: [{ id: 'a', name: 'Atlas', role: 'Research / scout', specialty: 'Research', retired: false }], team_tasks: [] };
-  const research = { id: 't2', task: 'Study', result: 'Done.', next: { needs: ['content', 'video'], label: 'make a video', task: 'Make it.' } };
-  assert.equal(queueNextJob(data, research, data.team[0]), null);
-  assert.match(research.next_blocked, /Nobody was hired/);
-  assert.equal(data.team.length, 1);
+  const research = { id: 't2', task: 'Study', result: 'Done.', next: { needs: ['content', 'video'], roleSpec: { role: 'Content / social', specialty: 'Content, video and story drafts' }, label: 'make a video', task: 'Make it.' } };
+  const queued = queueNextJob(data, research, data.team[0]);
+  assert.equal(data.team.length, 2, 'one new content agent, because none existed');
+  assert.equal(queued.partner_role || data.team[1].role, 'Content / social');
+  assert.equal(research.next_queued_to, data.team[1].name);
+  const again = { id: 't3', task: 'Study', result: 'More.', next: { needs: ['content'], roleSpec: { role: 'Content / social', specialty: 'x' }, label: 'make a video', task: 'Make it.' } };
+  queueNextJob(data, again, data.team[0]);
+  assert.equal(data.team.length, 2, 'the existing content agent is used, not a second one');
 });
 
 test('a browsing task runs the loop with the agent\'s own planner and keeps the pages it reads', async () => {
