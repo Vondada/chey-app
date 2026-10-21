@@ -230,6 +230,28 @@ Again: ANSWER IN CHAT ONLY. ZERO REPOSITORY CHANGES. NO PR.''';
     }
   });
 
+  test('spoken GitHub deployment receipts never fall back to local knowledge', () {
+    for (final request in [
+      'CHE, check GitHub Actions for your latest Worker deployment.',
+      'CHE, check GitHub Actions for your latest Worker deployment. Tell me the run ID, commit SHA, result, and GitHub link. Do not inspect your source code.',
+      'Chay, can you tell me the latest Worker deployment status?',
+      'Show the latest Deploy CHE Worker run',
+    ]) {
+      expect(cheRequiresVerifiedRemoteEvidence(request), isTrue,
+          reason: request);
+      expect(cheTurnRequiresVerifiedRemoteEvidence(request, const []), isTrue,
+          reason: request);
+    }
+    for (final request in [
+      'How do GitHub Actions work?',
+      'Explain how to deploy a Cloudflare Worker.',
+      'What are the benefits of continuous deployment?',
+    ]) {
+      expect(cheRequiresVerifiedRemoteEvidence(request), isFalse,
+          reason: request);
+    }
+  });
+
   test('live CHE repository diagnostics require connected verified evidence', () {
     const diagnostic =
         'CHE, inspect your current GitHub main branch and investigate why your previous self-diagnostic entered the coding pipeline. Do not modify code, start a coding job, create a PR, merge, or deploy. Report only verified findings, and clearly separate anything inferred or unknown.';

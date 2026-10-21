@@ -8829,6 +8829,30 @@ export class CheState extends DurableObject {
         }
         // A family/guest device never reaches the owner's chat routes below.
         if (!ownerDevice) return this.guestChat(body, rawMessage, activeTenant);
+        // The owner's exact words are authoritative for a read-only, verified
+        // deployment lookup. Never let speech interpretation, REA, the local
+        // code inspector, or a generic model discard the GitHub Actions request.
+        // Owner asks for the latest deployment receipt: query GitHub Actions
+        // before any source-code inspection. Reading a workflow YAML or the
+        // CHE-only last_self_update_deploy key cannot prove deployment history.
+        if (!body.attachment && !body.workflow_step && latestWorkerDeploymentIntent(rawMessage)) {
+          if (!ownerDevice) return ownerOnly();
+          // A different owner turn retires pending payment/delete approvals.
+          // A later bare 'yes' must never release an earlier held action.
+          await this.dropHeldActions();
+          const record = await latestWorkerDeploymentStatus(this.env, fetch, runtimeVersion(this.env));
+          return ndjsonReply(speakLatestWorkerDeployment(record), {
+            source: 'che_github_actions_deploy_status', ok: record.status === 200 && record.found === true,
+            execution_receipt: record.status === 200 && record.found ? {
+              tool: 'github', operation: 'read_worker_deployment_runs',
+              status: 'success', source: record.workflow_url,
+              run_id: record.run_id, commit_sha: record.commit_sha,
+              conclusion: record.conclusion,
+            } : null,
+            model_calls: 0,
+          });
+        }
+
         // Command Center: a plain yes releases a held command (once, fresh);
         // "/name …" runs a catalog command; "run my X workflow" starts a saved
         // workflow. Each runs through this same route and its gates.
@@ -9400,23 +9424,6 @@ export class CheState extends DurableObject {
           return ndjsonReply(answers.join('\n'), { source: handoffRead ? 'che_live_handoff' : 'che_github_verification', ok: receipts.every((r) => r.status === 'success'), execution_receipts: receipts, request_id });
         }
 
-        // Owner asks for the latest deployment receipt: query GitHub Actions
-        // before any source-code inspection. Reading a workflow YAML or the
-        // CHE-only last_self_update_deploy key cannot prove deployment history.
-        if (!body.attachment && latestWorkerDeploymentIntent(message)) {
-          if (!ownerDevice) return ownerOnly();
-          const record = await latestWorkerDeploymentStatus(this.env, fetch, runtimeVersion(this.env));
-          return ndjsonReply(speakLatestWorkerDeployment(record), {
-            source: 'che_github_actions_deploy_status', ok: record.status === 200 && record.found === true,
-            execution_receipt: record.status === 200 && record.found ? {
-              tool: 'github', operation: 'read_worker_deployment_runs',
-              status: 'success', source: record.workflow_url,
-              run_id: record.run_id, commit_sha: record.commit_sha,
-              conclusion: record.conclusion,
-            } : null,
-            model_calls: 0,
-          });
-        }
 
         const directRepositoryInspection = repositoryInspectionIntent(message);
         const recentRepositoryEvidenceRequest = [...ownerHistory]

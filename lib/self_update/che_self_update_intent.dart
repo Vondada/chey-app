@@ -227,6 +227,18 @@ bool _cheRepositoryEvidenceTarget(String raw) {
 /// of substituting an ungrounded local answer.
 bool cheRequiresVerifiedRemoteEvidence(String raw) {
   final text = _cheWithoutQuotedText(raw.trim());
+  // A spoken latest-deploy check is a live GitHub Actions question even
+  // without the phrase "your repository". Never answer it from offline notes
+  // or an on-phone language model, which has no workflow receipts.
+  final liveDeployment = RegExp(
+    r'\b(?:github\s+actions?|deploy\s+che\s+worker|worker\s+deploy(?:ment)?|che\s+worker\s+deploy(?:ment)?|workflow\s+runs?)\b',
+    caseSensitive: false,
+  ).hasMatch(text);
+  final statusRequest = RegExp(
+    r"\b(?:check|show|find|look\s+up|verify|latest|last|recent|status|result|run\s+id|commit\s+sha|tell\s+me|give\s+me|what(?:'s| is| was))\b",
+    caseSensitive: false,
+  ).hasMatch(text);
+  if (liveDeployment && statusRequest) return true;
   if (!_cheRepositoryEvidenceTarget(text)) return false;
   return RegExp(
     r"\b(?:inspect|find|locate|trace|show|identify|investigate|diagnos(?:e|is|tic)|audit|review|examine|verify|verified|analy[sz]e|explain|exact|current|status|self[- ]diagnostic|what\s+happened|why\b[\s\S]{0,80}\bfailed)\b",
