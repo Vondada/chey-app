@@ -29,7 +29,7 @@ const { default: worker, CheState } = mod;
 const MISSION_IDS = {
   // 'learn' is the Knowledge Atlas (issue #346), one entry over knowledge_atlas.js.
   // 'che-cancel-job' cancels a queued coding job by voice or typing (owner, 2026-10-19).
-  intelligence: ['che', 'che-explore', 'che-plan', 'che-build', 'che-research', 'che-verify', 'che-memory', 'che-brain-review', 'che-recover', 'che-cancel-job', 'che-status', 'learn'],
+  intelligence: ['che', 'che-explore', 'che-plan', 'che-build', 'che-research', 'che-verify', 'che-memory', 'che-brain-review', 'che-flagstaff-import', 'che-outside-mail', 'che-recover', 'che-cancel-job', 'che-status', 'learn'],
   youtube: ['yt-ideas', 'yt-research', 'yt-script', 'yt-video', 'yt-voice', 'yt-thumbnail', 'yt-seo', 'yt-publish', 'yt-batch', 'yt-analytics', 'yt-grow'],
   // trade-connections reads the owner-only connections of #348 (issue #350).
   trading: ['trade-open', 'trade-chart', 'trade-setup', 'trade-liquidity', 'trade-risk', 'trade-backtest', 'trade-learning', 'trade-research', 'trade-journal', 'trade-alert', 'trade-sim', 'trade-controls', 'trade-emergency', 'trade-execute', 'trade-connections'],
@@ -111,8 +111,8 @@ async function owner({ saved = new Map(), model = () => 'Here is the answer, sir
 // ─── 1. Catalog identities ────────────────────────────────────────────────
 
 test('1. the owner\'s 71 commands exist exactly as listed, plus ten REA, six Creator Studio, two Strategy Control Center and two strategy learning commands, in 9 categories, each fully described', () => {
-  assert.equal(COMMANDS.length, 96);
-  assert.equal(new Set(COMMANDS.map((c) => c.id)).size, 96, 'ids are unique');
+  assert.equal(COMMANDS.length, 98);
+  assert.equal(new Set(COMMANDS.map((c) => c.id)).size, 98, 'ids are unique');
   assert.deepEqual(CATEGORIES.map((c) => c.id), Object.keys(MISSION_IDS));
   for (const [category, ids] of Object.entries(MISSION_IDS)) {
     assert.deepEqual(COMMANDS.filter((c) => c.category === category).map((c) => c.id), ids, category);
@@ -163,7 +163,7 @@ test('2. availability comes from real configuration: ready, needs setup, unsuppo
   const expired = connectorStatus({ CHE_TRADOVATE_OAUTH_CLIENT_ID: 'x', CHE_TRADOVATE_OAUTH_CLIENT_SECRET: 'y' }, { broker: { expired: true } });
   assert.equal(expired.broker.state, 'needs_reconnect');
   const view = catalogView(bare);
-  assert.equal(view.commands.length, 96);
+  assert.equal(view.commands.length, 98);
   assert.ok(view.commands.every((c) => ['available', 'setup_required', 'unsupported', 'temporarily_unavailable'].includes(c.status)));
 });
 
@@ -209,6 +209,21 @@ test('3. a slash command and its plain-English request reach the same handler', 
   // A question about what the owner himself said is his memory question, even when it names the review.
   assert.equal((await che.say('What have I told you about my brain review?')).route, 'che_memory_provenance');
   assert.notEqual((await che.say('Did I ask you for a brain review yesterday?')).route, 'che_brain_review');
+  // The Flagstaff mailbox as outside correspondence: the commands and the owner's own words reach one
+  // handler each, with no model; "what did I tell you" stays his memory question. (Offline here, so the
+  // import reports that GitHub could not be read.)
+  const mailCe = await owner({ env: READY_ENV });
+  for (const [said, route] of [
+    ['/che-flagstaff-import', 'che_flagstaff_import'], ['Import the Flagstaff history', 'che_flagstaff_import'], ['import the flagstaff history', 'che_flagstaff_import'],
+    ['/che-outside-mail', 'che_outside_correspondence'], ['How many outside messages are in my Brain?', 'che_outside_correspondence'],
+    ['how many outside messages are in my brain', 'che_outside_correspondence'], ['What did ChatGPT tell you about #350?', 'che_outside_correspondence'],
+    ['What did you tell ChatGPT about #351?', 'che_outside_correspondence'], ['What did I tell you about #350?', 'che_memory_provenance'],
+  ]) {
+    const out = await mailCe.say(said);
+    assert.equal(out.route, route, said);
+    assert.equal(out.modelCalls, 0, said);
+  }
+  assert.match((await che.say('/che-flagstaff-import')).reply, /needs setup[\s\S]*GitHub/, 'without GitHub the command says what it needs');
   assert.deepEqual(parseSlashCommand('/Trade-Chart  NQ please'), { name: 'trade-chart', command: commandById('trade-chart'), input: 'NQ please' });
   assert.equal(parseSlashCommand('Analyze the NQ chart'), null);
 });
@@ -294,6 +309,10 @@ test('a guest device cannot run commands or workflows', async () => {
   const guestToken = (await (await che.send('/api/enroll', { enrollment_token: invite.body.enrollment.token, device_name: 'guest' })).json()).device_token;
   const res = await che.send('/api/chat', { message: '/trade-chart NQ', history: [] }, guestToken);
   assert.match(replyFromNdjson(await res.text()), /Only the CHE owner can run commands/);
+  for (const words of ['Import the Flagstaff history', 'What did ChatGPT tell you about #350?', 'How many outside messages are in my Brain?']) {
+    const out = await che.send('/api/chat', { message: words, history: [] }, guestToken);
+    assert.match(replyFromNdjson(await out.text()), /^Only the CHE owner can/, words);
+  }
   const run = await che.send('/api/commands/workflow/run', { name: 'x', steps: [{ command: 'che-plan', input: 'y' }] }, guestToken);
   assert.equal(run.status, 403);
 });
@@ -684,7 +703,7 @@ test('the Flutter catalog fixture matches what the Worker serves (regenerate: no
   const { fixtureCatalog } = await import('../../tool/dump_command_catalog.mjs');
   const fixture = JSON.parse(readFileSync(new URL('../../test/fixtures/command_catalog.json', import.meta.url), 'utf8'));
   assert.deepEqual(fixture, JSON.parse(JSON.stringify(fixtureCatalog())));
-  assert.equal(fixture.commands.length, 96);
+  assert.equal(fixture.commands.length, 98);
   assert.ok(fixture.templates.length >= 4);
 });
 
@@ -803,7 +822,7 @@ test('the owner\'s six spoken phrases are answered from the catalog with no mode
   for (const words of variants('CHE, open your Commands page.')) {
     const out = await che.say(words);
     assert.equal(out.route, 'che_command_center', words);
-    assert.match(out.reply, /96 commands in 9 groups[\s\S]*2\. YouTube, 11[\s\S]*9\. Creator Studio, 6[\s\S]*Nothing was run/, words);
+    assert.match(out.reply, /98 commands in 9 groups[\s\S]*2\. YouTube, 11[\s\S]*9\. Creator Studio, 6[\s\S]*Nothing was run/, words);
   }
   for (const words of variants('CHE, search for YouTube.')) {
     const out = await che.say(words);

@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { ownerAskedAboutGoogle, redactBrainText, redactGoogleIds } from './research_memory.js';
 import {
   addOwnerMemory,
   buildAgentTaskNodes,
   buildBrainGraph,
   distillResearchNote,
+  hasSecretShape,
   isResearchStyleJob,
   isSafeMemoryText,
   listMemoryNotes,
@@ -145,4 +147,301 @@ test('bounded brain graph does not falsely hide an agent behind another agent ba
   assert.equal(nodes.length, 20);
   assert.ok(nodes.some((n) => n.agent === 'Sage' && n.task_id === 'sage-live'));
   assert.ok(nodes.some((n) => n.agent === 'Atlas'));
+});
+
+// ─── Second review of #354: secret shapes ────────────────────────────────────
+// Fixtures are built at run time from pieces, so no literal key, code or token sits in the repository.
+const HEX_KEY_A = ['3f2a9c8e7d6b5a4f', '3e2d1c0b9a8f7e6d'].join(''); // 32 hex characters
+const HEX_KEY_B = ['4f8a1c2e9b7d3f60', 'a5c8e1b4d9f2a7c3'].join(''); // 32 hex characters
+const SLACK_WEBHOOK = ['https://hooks.slack.com/services/', 'T00000000/B00000000/', 'XXXXXXXXXXXXXXXXXXXXXXXX'].join('');
+const PASS = ['Summer', '2026', '!'].join('');
+const GROUPED_CODE = ['8F3K', '9LQ2', '7MZP', '4XWD'].join('-');
+const RANDOM_PATH = ['Q7mZ2kP9', 'xL4vN8wR3tY6uB1c'].join('');
+const BARE_SLACK = ['xoxb', '1234567890123', '1234567890123', 'AbCdEfGhIjKlMnOpQrStUvWx'].join('-');
+const TWILIO_AUTH = ['a1b2c3d4e5f6a7b8', 'c9d0e1f2a3b4c5d6'].join('');
+
+test('secret shapes: long hex keys, webhook and link tokens, grouped codes and bare tokens are withheld (second review of #354)', () => {
+  const secrets = [
+    `The Fish key is ${HEX_KEY_A} — rotate it`,
+    `Webhook URL ${SLACK_WEBHOOK}`,
+    `The backup code is ${GROUPED_CODE}`,
+    `The deploy key is ${HEX_KEY_B}`,
+    `The deploy key is ${HEX_KEY_B.toUpperCase()}`,
+    `The Twilio auth is ${TWILIO_AUTH}`,
+    `Slack ${BARE_SLACK} is live`,
+    `The recovery code is ${['ABCD', 'EFGH', 'IJKL', 'MNOP'].join('-')}`,
+    `The recovery code is ${GROUPED_CODE.toLowerCase()}`,
+    `Hook hooks.slack.com/services/${['T0/B0/', 'XXXXXXXXXXXXXXXXXXXXXXXX'].join('')}`,
+    `Discord ${['https://discord.com/api/webhooks/', '123456789012345678/abcdefGHIJKL'].join('')} is set`,
+    `See https://example.com/reset/${RANDOM_PATH} for the page`,
+    `Open https://example.com/login?pw=${PASS} today`,
+    `Clone https://vondada:${PASS}@github.com/Vondada/chey-app.git now`,
+    `Credentials vondada:${PASS} for the test`,
+    `The code is ${['1a2b3c4d5e6f', '7'].join('')}`,
+    `The commit is ${['4acb3d97096606e878e462812571c34d851b704d', 'e'].join('')}`,
+  ];
+  for (const text of secrets) {
+    assert.equal(isSafeMemoryText(text), false, text);
+    assert.equal(hasSecretShape(text), true, text);
+  }
+});
+
+test('ordinary commits, versions, figures, dates, slugs and links stay safe (second review of #354)', () => {
+  const kept = [
+    '+0.0125R', '-1.5%', '#350', 'PR 351', 'commit 4acb3d9', 'version v2.3.1', 'Build v2.3.1-rc1 passed',
+    'Dated 2026-10-18', 'Deployed at 2026-10-18T21:00:00.000Z.', 'The meeting notes go on and on.',
+    'The commit is 4acb3d970966 and 4acb3d97096606e878e462812571c34d851b704d', 'PR-351-READY tonight',
+    'Next is brain-sync-follow-up-plan today', 'UUID 97d389bb-537b-425e-81c5-908ab17e5ce8 is fine',
+    'Simulation models hover_flight@1 and config_search@1 are mathematical predictions, not keys',
+    'See https://github.com/Vondada/chey-app/pull/351?ref=main',
+    'See https://github.com/Vondada/chey-app/pull/354#issuecomment-1234567890',
+    'See https://github.com/Vondada/chey-app/commit/4acb3d97096606e878e462812571c34d851b704d',
+    'Read https://ocw.mit.edu/courses/6-006-introduction-to-algorithms-spring-2020/ now',
+    'See https://en.wikipedia.org/wiki/Amdahl%27s_law',
+    'See https://www.fiverr.com/categories/graphics-design',
+  ];
+  for (const text of kept) {
+    assert.equal(isSafeMemoryText(text), true, text);
+    assert.equal(hasSecretShape(text), false, text);
+  }
+});
+
+// ─── Third review of #354: the narrower code rule, Google document IDs, the broker key shape ──────
+test('third review of #354: ordinary hyphenated words and Google document links are stored; the withheld codes, broker keys and link credentials stay withheld', () => {
+  const PASS_SYM = ['Summer', '2026', '!'].join('');
+  const PK_KEY = ['PK', 'Z9Y8X7W6V5U4T3S2R1Q'].join('');
+  const DOC_ID = '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms';
+  const DRIVE_ID = '1AbCdEfGhIjKlMnOpQrStUvWxYz012345';
+  const kept = [
+    'Keep the CHE-APP-V2-BETA plan in the drafts folder',
+    'Form-1099-NEC-tax-2025 filed on time',
+    'The iPhone-15-Pro-Max is the phone I want',
+    'Sprint-12-week-3-retro notes are in the folder',
+    `Here is the doc https://docs.google.com/document/d/${DOC_ID}/edit for Monday`,
+    `Drive link https://drive.google.com/file/d/${DRIVE_ID}/view`,
+  ];
+  for (const text of kept) {
+    assert.equal(isSafeMemoryText(text), true, text);
+    assert.equal(hasSecretShape(text), false, text);
+  }
+  const withheld = [
+    `The backup code is ${GROUPED_CODE}`,
+    `The recovery code is ${['ABCD', 'EFGH', 'IJKL', 'MNOP'].join('-')}`,
+    `The recovery code is ${GROUPED_CODE.toLowerCase()}`,
+    `Result: the Alpaca key ${PK_KEY} was printed in the log.`,
+    `Doc https://vondada:${PASS_SYM}@docs.google.com/document/d/${DOC_ID}/edit`,
+    `Doc https://docs.google.com/document/d/${DOC_ID}/edit?pw=${PASS_SYM}`,
+  ];
+  for (const text of withheld) {
+    assert.equal(isSafeMemoryText(text), false, text);
+    assert.equal(hasSecretShape(text), true, text);
+  }
+});
+
+// ─── Sixth review of #354: a password in URL userinfo, and an encoded hyphen in a token ───────────
+test('sixth review of #354: a password in URL userinfo and a percent-encoded hyphen in a query or path token are withheld; the approved kept cases stay kept', () => {
+  // Built from pieces, so no literal token sits in the repository.
+  const ENCODED_TOKEN = ['Q7mZ2kP9', 'xL4vN8wR3', 'tY6uB1c', 'Q7mZ2kP9'].join('%2D');
+  const DOC_ID = '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms';
+  const DRIVE_ID = '1AbCdEfGhIjKlMnOpQrStUvWxYz012345';
+  const withheld = [
+    'Login https://bob:hunter22@example.com/x',
+    `Doc https://bob:hunter22@docs.google.com/document/d/${DOC_ID}/edit`,
+    `Reset https://docs.google.com/reset?code=${ENCODED_TOKEN}`,
+    `Reset https://example.com/reset?code=${ENCODED_TOKEN}`,
+    `Reset https://example.com/reset/${ENCODED_TOKEN}`,
+  ];
+  for (const text of withheld) {
+    assert.equal(isSafeMemoryText(text), false, text);
+    assert.equal(hasSecretShape(text), true, text);
+  }
+  const kept = [
+    'Read https://example.com/brain-sync-follow-up-plan now',
+    `Here is the doc https://docs.google.com/document/d/${DOC_ID}/edit for Monday`,
+    `Drive link https://drive.google.com/file/d/${DRIVE_ID}/view`,
+    `Sheet https://docs.google.com/spreadsheets/d/${DOC_ID}/edit#gid=0`,
+    `Folder https://drive.google.com/drive/folders/${DRIVE_ID}`,
+    'Read https://en.wikipedia.org/wiki/Amdahl%27s_law now',
+    'See https://example.com:8080/path?ref=main now',
+  ];
+  for (const text of kept) {
+    assert.equal(isSafeMemoryText(text), true, text);
+    assert.equal(hasSecretShape(text), false, text);
+  }
+});
+
+// ─── Seventh review of #354: encoded delimiters, the functional Google shapes, and redaction ─────────
+test('seventh review of #354: encoded delimiters and encoded slashes cannot split a token; only the functional Google shapes keep an ID; the published-doc shape is kept', () => {
+  // Built from pieces, so no literal token sits in the repository.
+  const TOKEN = ['Q7mZ2kP9', 'xL4vN8wR3', 'tY6uB1c', 'Q7mZ2kP9'];
+  const DOC_ID = '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms';
+  const DRIVE_ID = '1AbCdEfGhIjKlMnOpQrStUvWxYz012345';
+  const PUB_ID = ['2PACX-1vQ', 'aBcD3eFgH4iJkL5mNoPqRsT6uVwXyZ7aBcD8eFgH9iJkL0mNoPqRsT'].join('-');
+  const withheld = [
+    `Reset https://example.com/reset?code=${TOKEN.join('%26')}`,
+    `Reset https://example.com/reset?code=${TOKEN.join('%3D')}`,
+    `Reset https://example.com/reset?code=${TOKEN.join('%3F')}`,
+    `Reset https://example.com/reset?code=${TOKEN.join('%23')}`,
+    `Reset https://docs.google.com/reset?code=${TOKEN.join('%26')}`,
+    `Reset https://example.com/reset/${['Q7mZ2kP9-xL4vN8wR3-tY6uB1c', '7mZ2kP9xL4vN8wR'].join('%2F')}`,
+    `Doc https://docs.google.com/document/d/${DOC_ID}/copy`,
+    `Doc https://docs.google.com/document/d/e/${PUB_ID}/pub/Q7mZ2kP9xL4vN8wR3tY6uB1c`,
+    `Doc https://docs.google.com/document/d/e/${PUB_ID}/pub?pw=Summer2026!`,
+  ];
+  for (const text of withheld) {
+    assert.equal(isSafeMemoryText(text), false, text);
+    assert.equal(hasSecretShape(text), true, text);
+  }
+  const kept = [
+    `Published https://docs.google.com/document/d/e/${PUB_ID}/pub now`,
+    `Here is the doc https://docs.google.com/document/d/${DOC_ID}/edit for Monday`,
+    `Sheet https://docs.google.com/spreadsheets/d/${DOC_ID}/edit#gid=0`,
+    `Deck https://docs.google.com/presentation/d/${DOC_ID}/edit`,
+    `Drive link https://drive.google.com/file/d/${DRIVE_ID}/view`,
+    `Folder https://drive.google.com/drive/folders/${DRIVE_ID}`,
+    'Read https://example.com/brain-sync-follow-up-plan now',
+    'Read https://ocw.mit.edu/courses/6-006-introduction-to-algorithms-spring-2020/ now',
+    'Read https://en.wikipedia.org/wiki/Amdahl%27s_law now',
+    'See https://example.com:8080/path?ref=main now',
+  ];
+  for (const text of kept) {
+    assert.equal(isSafeMemoryText(text), true, text);
+    assert.equal(hasSecretShape(text), false, text);
+  }
+});
+
+test('seventh review of #354: a Google ID is redacted for an unrelated request, and kept for the owner\'s own Google request', () => {
+  const DOC_ID = '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms';
+  const DRIVE_ID = '1AbCdEfGhIjKlMnOpQrStUvWxYz012345';
+  const text = `Here is the doc https://docs.google.com/document/d/${DOC_ID}/edit for Monday`;
+  const redacted = 'Here is the doc https://docs.google.com/document/d/[google-id]/edit for Monday';
+  assert.equal(redactGoogleIds(text), redacted);
+  assert.equal(redactBrainText(text, 'What did Claude say about #350?'), redacted, 'an unrelated request sees the placeholder');
+  assert.equal(redactBrainText(text, 'Open my Google doc for Monday'), text, 'the owner\'s own Google request keeps the ID');
+  assert.equal(ownerAskedAboutGoogle('Open my Google doc'), true);
+  assert.equal(ownerAskedAboutGoogle('What did Claude say about #350?'), false);
+  assert.equal(redactGoogleIds(`https://drive.google.com/open?id=${DRIVE_ID}`), 'https://drive.google.com/open?id=[google-id]');
+  // The stored link is not changed by redaction: the gate still reads it as the allowed shape.
+  assert.equal(isSafeMemoryText(text), true);
+});
+
+// ─── Fifth review of #354: a hyphen-joined random token in a path is withheld; slugs stay kept ───────
+test('fifth review of #354: a hyphen-joined mixed-case token in a URL path is withheld, the same token without hyphens too; lower-case slugs and the approved Google links stay kept', () => {
+  // Built from pieces, so no literal token sits in the repository.
+  const HYPHEN_TOKEN = ['Q7mZ2kP9', 'xL4vN8wR3', 'tY6uB1c', '7mZ2kP9xL4vN8wR'].join('-');
+  const SAME_TOKEN = HYPHEN_TOKEN.replace(/-/g, '');
+  const DOC_ID = '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms';
+  const DRIVE_ID = '1AbCdEfGhIjKlMnOpQrStUvWxYz012345';
+  const withheld = [
+    `Reset link https://example.com/reset/${HYPHEN_TOKEN}`,
+    `Reset link https://example.com/reset/${SAME_TOKEN}`,
+  ];
+  for (const text of withheld) {
+    assert.equal(isSafeMemoryText(text), false, text);
+    assert.equal(hasSecretShape(text), true, text);
+  }
+  const kept = [
+    'Read https://example.com/brain-sync-follow-up-plan now',
+    'Read https://ocw.mit.edu/courses/6-006-introduction-to-algorithms-spring-2020/ now',
+    `Here is the doc https://docs.google.com/document/d/${DOC_ID}/edit for Monday`,
+    `Drive link https://drive.google.com/file/d/${DRIVE_ID}/view`,
+    `Sheet https://docs.google.com/spreadsheets/d/${DOC_ID}/edit#gid=0`,
+    `Folder https://drive.google.com/drive/folders/${DRIVE_ID}`,
+  ];
+  for (const text of kept) {
+    assert.equal(isSafeMemoryText(text), true, text);
+    assert.equal(hasSecretShape(text), false, text);
+  }
+});
+
+// ─── Fourth review of #354: codes of any group length, and only Google's own document shapes ───────
+test('fourth review of #354: 3- and 6-character code groups are withheld; Google document IDs after their own type are kept; a bare or random ID is withheld', () => {
+  const PASS_SYM = ['Summer', '2026', '!'].join('');
+  const DOC_ID = '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms';
+  const DRIVE_ID = '1AbCdEfGhIjKlMnOpQrStUvWxYz012345';
+  // Built from pieces, so no literal key-shaped string sits in the repository (GitHub push protection).
+  const STRIPE_LIKE = ['sk_live_', '4eC39HqLyjWDarjtT1zdp7dc'].join('');
+  const SIX_GROUP = ['ABCDE1', 'FGHIJ2', 'KLMNO3', 'PQRST4'].join('-');
+  const THREE_GROUP = ['AB1', 'CD2', 'EF3', 'GH4'].join('-');
+  const withheld = [
+    `Backup code ${SIX_GROUP} for the account`,
+    `Backup code ${THREE_GROUP} for the account`,
+    'Ship WARN-ERROR-FAIL-DONE tonight',
+    `See https://docs.google.com/d/${STRIPE_LIKE} now`,
+    `See https://docs.google.com/document/d/${RANDOM_PATH}/edit`,
+    `Doc https://docs.google.com/document/d/${DOC_ID}/edit?pw=${PASS_SYM}`,
+  ];
+  for (const text of withheld) {
+    assert.equal(isSafeMemoryText(text), false, text);
+    assert.equal(hasSecretShape(text), true, text);
+  }
+  const kept = [
+    `Here is the doc https://docs.google.com/document/d/${DOC_ID}/edit for Monday`,
+    `Drive link https://drive.google.com/file/d/${DRIVE_ID}/view`,
+    `Sheet https://docs.google.com/spreadsheets/d/${DOC_ID}/edit#gid=0`,
+    `Folder https://drive.google.com/drive/folders/${DRIVE_ID}`,
+    'Warn-Error-Fail-Done tonight',
+    'Keep the CHE-APP-V2-BETA plan in the drafts folder',
+    'Form-1099-NEC-tax-2025 filed on time',
+    'The iPhone-15-Pro-Max is the phone I want',
+    'Sprint-12-week-3-retro notes are in the folder',
+  ];
+  for (const text of kept) {
+    assert.equal(isSafeMemoryText(text), true, text);
+    assert.equal(hasSecretShape(text), false, text);
+  }
+});
+
+// ─── Eighth review of #354: functional Google shapes, the about-Google decision, and long-ID redaction ─────────
+test('eighth review of #354: published, multi-account, trailing-slash, view and present links are kept; a random tail, an over-long ID and open?id are withheld', () => {
+  const DOC_ID = '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms';
+  const DRIVE_ID = '1AbCdEfGhIjKlMnOpQrStUvWxYz012345';
+  // A real "publish to the web" ID is about 86 characters.
+  const PUB86 = ['2PACX-1vQ', 'aBcD3eFgH4iJkL5mNoPqRsT6uVwXyZ7aBcD8eFgH9iJkL0mNoPqRsT', 'uVwXyZ1aBcD2eFgH3iJkL'].join('-');
+  assert.equal(PUB86.length, 86);
+  const PUB_LONG = `${PUB86}-${'Qx7Lm2Np9Rt4Vw8Yz3Bc6Df1Gh5Jk0Ln7Mp2Qr9St'}`;
+  assert.ok(PUB_LONG.length > 120);
+  const kept = [
+    `Published https://docs.google.com/document/d/e/${PUB86}/pub now`,
+    `Doc https://docs.google.com/document/u/0/d/${DOC_ID}/edit`,
+    `Folder https://drive.google.com/drive/u/0/folders/${DRIVE_ID}`,
+    `Doc https://docs.google.com/document/d/${DOC_ID}/edit/`,
+    `Sheet https://docs.google.com/spreadsheets/d/${DOC_ID}/view`,
+    `Deck https://docs.google.com/presentation/d/${DOC_ID}/view`,
+    `Deck https://docs.google.com/presentation/d/${DOC_ID}/present`,
+  ];
+  for (const text of kept) {
+    assert.equal(isSafeMemoryText(text), true, text);
+    assert.equal(hasSecretShape(text), false, text);
+  }
+  const withheld = [
+    `Published https://docs.google.com/document/d/e/${PUB86}/pub/${['Q7mZ2kP9', 'xL4vN8wR3tY6uB1c'].join('')}`,
+    `Published https://docs.google.com/document/d/e/${PUB_LONG}/pub now`,
+    `Drive open https://drive.google.com/open?id=${DRIVE_ID}`,
+  ];
+  for (const text of withheld) {
+    assert.equal(isSafeMemoryText(text), false, text);
+    assert.equal(hasSecretShape(text), true, text);
+  }
+  // The redaction is never weaker than the gate: an ID over 64 characters is redacted too.
+  assert.equal(redactGoogleIds(`https://docs.google.com/document/d/e/${PUB86}/pub`), 'https://docs.google.com/document/d/e/[google-id]/pub');
+  assert.equal(redactGoogleIds(`https://drive.google.com/drive/u/0/folders/${DRIVE_ID}`), 'https://drive.google.com/drive/u/0/folders/[google-id]');
+});
+
+test('eighth review of #354: a request is about a Google file only when it names one; the verb "google" is not one', () => {
+  for (const text of ['Can you google how TCP handshakes work?', 'What did Claude say about #350?', 'Open the file', 'Google the weather for me']) {
+    assert.equal(ownerAskedAboutGoogle(text), false, text);
+  }
+  for (const text of ['Open my budget sheet.', 'Read my notes doc', 'What is in my Drive folder?', 'Open the spreadsheet', 'Open the slides', 'Open my Google Doc', 'Show me Google Sheets']) {
+    assert.equal(ownerAskedAboutGoogle(text), true, text);
+  }
+  // A stored record's title words decide it, and a bare "file" or "link" counts only with a Google record on topic.
+  assert.equal(ownerAskedAboutGoogle('budget forecast numbers', { titles: ['Budget forecast'] }), true);
+  assert.equal(ownerAskedAboutGoogle('Open the budget file', { titles: ['Budget forecast'] }), true);
+  assert.equal(ownerAskedAboutGoogle('Open the file', { titles: ['Budget forecast'] }), false);
+  assert.equal(ownerAskedAboutGoogle('budget numbers', { titles: ['Budget forecast'] }), false);
+  const DOC_ID = '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms';
+  const text = `Here is the doc https://docs.google.com/document/d/${DOC_ID}/edit for Monday`;
+  assert.equal(redactBrainText(text, 'Can you google how TCP handshakes work?').includes(DOC_ID), false, 'the verb google does not unlock the ID');
+  assert.equal(redactBrainText(text, 'Open my budget sheet.'), text, 'the owner\'s own Google request keeps the ID');
 });

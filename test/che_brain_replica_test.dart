@@ -463,4 +463,276 @@ void main() {
     expect(CheBrainSyncReceipt(at: '2026-10-18T00:00:00Z', error: 'SocketException: Failed host lookup: che.example').syncNotice, isNull);
     expect(CheBrainSyncReceipt(at: '2026-10-18T00:00:00Z').syncNotice, isNull);
   });
+
+  test('R: the four planted secret shapes are refused on the phone, a legacy one a sync brings in is never searched, and ordinary words stay (second review of #354)', () async {
+    final dir = await freshDir();
+    final worker = FakeWorker();
+    final brain = CheBrainReplica(directory: dir);
+    // Built from pieces, so no literal key, code or token sits in the repository.
+    final hexA = ['3f2a9c8e7d6b5a4f', '3e2d1c0b9a8f7e6d'].join();
+    final hexB = ['4f8a1c2e9b7d3f60', 'a5c8e1b4d9f2a7c3'].join();
+    final webhook = ['https://hooks.slack.com/services/', 'T00000000/B00000000/', 'XXXXXXXXXXXXXXXXXXXXXXXX'].join();
+    final groupedCode = ['8F3K', '9LQ2', '7MZP', '4XWD'].join('-');
+    final planted = ['The Fish key is $hexA — rotate it', 'Webhook URL $webhook', 'The backup code is $groupedCode', 'The deploy key is $hexB'];
+    for (final text in planted) {
+      expect(cheBrainTextIsSensitive(text), isTrue, reason: text);
+      expect(await brain.remember(kind: 'memory', region: 'Personal Memory', body: text), isNull, reason: text);
+    }
+    expect(brain.count, 0);
+    for (final clean in ['+0.0125R', '-1.5%', '#350', 'PR 351', 'commit 4acb3d9', 'version v2.3.1', 'Dated 2026-10-18', 'The meeting notes go on and on.']) {
+      expect(cheBrainTextIsSensitive(clean), isFalse, reason: clean);
+    }
+    // The same verdicts as research_memory.test.mjs: a bare Slack token, a 32-hex Twilio auth, link credentials,
+    // a random path, a 13-character hex key, and the kept side: a 12-character and a 40-character commit,
+    // a UUID, a slug, a fragment, and a PR chain.
+    final pass = ['Summer', '2026', '!'].join();
+    final secretsMore = [
+      'Slack ${['xoxb', '1234567890123', '1234567890123', 'AbCdEfGhIjKlMnOpQrStUvWx'].join('-')} is live',
+      'The Twilio auth is ${['a1b2c3d4e5f6a7b8', 'c9d0e1f2a3b4c5d6'].join()}',
+      'Clone https://vondada:$pass@github.com/Vondada/chey-app.git now',
+      'See https://example.com/reset/${['Q7mZ2kP9', 'xL4vN8wR3tY6uB1c'].join()} for the page',
+      'The code is ${['1a2b3c4d5e6f', '7'].join()}',
+      'The recovery code is ${['ABCD', 'EFGH', 'IJKL', 'MNOP'].join('-')}',
+      'credentials vondada:$pass for the test',
+      'Here is the deploy key:\n${'-----BEGIN OPENSSH ' 'PRIVATE KEY-----'}\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmU\n${'-----END OPENSSH ' 'PRIVATE KEY-----'}',
+      'Session ${['eyJhbGciOiJI', 'UzI1NiIsInR5cCI6IkpXVCJ9'].join()}.${['eyJzdWIiOiIx', 'MjM0NTY3ODkwIn0'].join()}.${['SflKxwRJSMeK', 'KF2QT4fwpMeJf36POk6yJV_adQssw5c'].join()}',
+    ];
+    for (final text in secretsMore) {
+      expect(cheBrainTextIsSensitive(text), isTrue, reason: text);
+    }
+    final keptMore = [
+      'commit 1a2b3c4d5e6f and 4acb3d97096606e878e462812571c34d851b704d',
+      'UUID 97d389bb-537b-425e-81c5-908ab17e5ce8 is fine',
+      'Read https://ocw.mit.edu/courses/6-006-introduction-to-algorithms-spring-2020/ now',
+      'See https://github.com/Vondada/chey-app/pull/354#issuecomment-1234567890',
+      'Ship PR-351-READY tonight',
+      'Build v2.3.1-rc1 passed',
+    ];
+    for (final text in keptMore) {
+      expect(cheBrainTextIsSensitive(text), isFalse, reason: text);
+    }
+    // A record from before the gate arrives by sync: it stays in the list, but no search finds its words.
+    worker.cloudWrite('note:legacy', title: 'Legacy key', body: 'The deploy key is $hexB and the rest of the note.');
+    worker.cloudWrite('note:plain', title: 'Plain lunch', body: 'Lunch with the deploy team was good.');
+    await brain.sync('https://che.example', const {}, get: worker.get, post: worker.post);
+    expect(brain.get('note:legacy'), isNotNull);
+    expect(brain.search('deploy key legacy', limit: 10).map((r) => r.id), isNot(contains('note:legacy')));
+    expect(brain.search('lunch deploy team', limit: 10).map((r) => r.id), contains('note:plain'));
+  });
+
+  test('S: a broker key and the withheld code shapes are refused; ordinary hyphenated words and Google document links are stored (third review of #354)', () async {
+    final dir = await freshDir();
+    final brain = CheBrainReplica(directory: dir);
+    // Built from pieces, so no literal key or code sits in the repository.
+    final key = ['PK', 'Z9Y8X7W6V5U4T3S2R1Q'].join();
+    final groupedCode = ['8F3K', '9LQ2', '7MZP', '4XWD'].join('-');
+    final refused = [
+      'Result: the Alpaca key $key was printed in the log.',
+      'The backup code is $groupedCode',
+      'The recovery code is ${['ABCD', 'EFGH', 'IJKL', 'MNOP'].join('-')}',
+      'The recovery code is ${groupedCode.toLowerCase()}',
+    ];
+    for (final text in refused) {
+      expect(cheBrainTextIsSensitive(text), isTrue, reason: text);
+      expect(await brain.remember(kind: 'memory', region: 'Personal Memory', body: text), isNull, reason: text);
+    }
+    expect(brain.count, 0);
+    final kept = [
+      'Keep the CHE-APP-V2-BETA plan in the drafts folder',
+      'Form-1099-NEC-tax-2025 filed on time',
+      'The iPhone-15-Pro-Max is the phone I want',
+      'Sprint-12-week-3-retro notes are in the folder',
+      'Here is the doc https://docs.google.com/document/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit for Monday',
+      'Drive link https://drive.google.com/file/d/1AbCdEfGhIjKlMnOpQrStUvWxYz012345/view',
+    ];
+    for (final text in kept) {
+      expect(cheBrainTextIsSensitive(text), isFalse, reason: text);
+      expect(await brain.remember(kind: 'memory', region: 'Personal Memory', body: text), isNotNull, reason: text);
+    }
+    expect(brain.count, kept.length);
+  });
+
+  test('W: encoded delimiters and encoded slashes cannot split a token on the phone; only the functional Google shapes keep an ID; an unrelated request redacts it (seventh review of #354)', () async {
+    final dir = await freshDir();
+    final brain = CheBrainReplica(directory: dir);
+    // Built from pieces, so no literal token sits in the repository.
+    final token = ['Q7mZ2kP9', 'xL4vN8wR3', 'tY6uB1c', 'Q7mZ2kP9'];
+    const docId = '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms';
+    const driveId = '1AbCdEfGhIjKlMnOpQrStUvWxYz012345';
+    final pubId = ['2PACX-1vQ', 'aBcD3eFgH4iJkL5mNoPqRsT6uVwXyZ7aBcD8eFgH9iJkL0mNoPqRsT'].join('-');
+    final withheld = [
+      'Reset https://example.com/reset?code=${token.join('%26')}',
+      'Reset https://example.com/reset?code=${token.join('%3D')}',
+      'Reset https://example.com/reset?code=${token.join('%3F')}',
+      'Reset https://example.com/reset?code=${token.join('%23')}',
+      'Reset https://docs.google.com/reset?code=${token.join('%26')}',
+      'Reset https://example.com/reset/${['Q7mZ2kP9-xL4vN8wR3-tY6uB1c', '7mZ2kP9xL4vN8wR'].join('%2F')}',
+      'Doc https://docs.google.com/document/d/$docId/copy',
+      'Doc https://docs.google.com/document/d/e/$pubId/pub/Q7mZ2kP9xL4vN8wR3tY6uB1c',
+      'Doc https://docs.google.com/document/d/e/$pubId/pub?pw=Summer2026!',
+    ];
+    for (final text in withheld) {
+      expect(cheBrainTextIsSensitive(text), isTrue, reason: text);
+      expect(await brain.remember(kind: 'memory', region: 'Personal Memory', body: text), isNull, reason: text);
+    }
+    expect(brain.count, 0);
+    final kept = [
+      'Published https://docs.google.com/document/d/e/$pubId/pub now',
+      'Here is the doc https://docs.google.com/document/d/$docId/edit for Monday',
+      'Sheet https://docs.google.com/spreadsheets/d/$docId/edit#gid=0',
+      'Deck https://docs.google.com/presentation/d/$docId/edit',
+      'Drive link https://drive.google.com/file/d/$driveId/view',
+      'Folder https://drive.google.com/drive/folders/$driveId',
+      'Read https://example.com/brain-sync-follow-up-plan now',
+      'Read https://ocw.mit.edu/courses/6-006-introduction-to-algorithms-spring-2020/ now',
+      'Read https://en.wikipedia.org/wiki/Amdahl%27s_law now',
+      'See https://example.com:8080/path?ref=main now',
+    ];
+    for (final text in kept) {
+      expect(cheBrainTextIsSensitive(text), isFalse, reason: text);
+      expect(await brain.remember(kind: 'memory', region: 'Personal Memory', body: text), isNotNull, reason: text);
+    }
+    expect(brain.count, kept.length);
+    // Redaction: an unrelated request sees the placeholder; the owner's own Google request keeps the ID.
+    const link = 'Here is the doc https://docs.google.com/document/d/$docId/edit for Monday';
+    expect(cheRedactBrainText(link, 'What did Claude say about #350?'), 'Here is the doc https://docs.google.com/document/d/[google-id]/edit for Monday');
+    expect(cheRedactBrainText(link, 'Open my Google doc for Monday'), link);
+    expect(cheAskedAboutGoogle('Open my Google doc'), isTrue);
+    expect(cheAskedAboutGoogle('What did Claude say about #350?'), isFalse);
+  });
+
+  test('V: a password in URL userinfo and a percent-encoded hyphen token are withheld on the phone; the approved kept cases stay kept (sixth review of #354)', () async {
+    final dir = await freshDir();
+    final brain = CheBrainReplica(directory: dir);
+    // Built from pieces, so no literal token sits in the repository.
+    final encodedToken = ['Q7mZ2kP9', 'xL4vN8wR3', 'tY6uB1c', 'Q7mZ2kP9'].join('%2D');
+    final withheld = [
+      'Login https://bob:hunter22@example.com/x',
+      'Doc https://bob:hunter22@docs.google.com/document/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit',
+      'Reset https://docs.google.com/reset?code=$encodedToken',
+      'Reset https://example.com/reset?code=$encodedToken',
+      'Reset https://example.com/reset/$encodedToken',
+    ];
+    for (final text in withheld) {
+      expect(cheBrainTextIsSensitive(text), isTrue, reason: text);
+      expect(await brain.remember(kind: 'memory', region: 'Personal Memory', body: text), isNull, reason: text);
+    }
+    expect(brain.count, 0);
+    final kept = [
+      'Read https://example.com/brain-sync-follow-up-plan now',
+      'Here is the doc https://docs.google.com/document/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit for Monday',
+      'Drive link https://drive.google.com/file/d/1AbCdEfGhIjKlMnOpQrStUvWxYz012345/view',
+      'Sheet https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit#gid=0',
+      'Folder https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz012345',
+      'Read https://en.wikipedia.org/wiki/Amdahl%27s_law now',
+    ];
+    for (final text in kept) {
+      expect(cheBrainTextIsSensitive(text), isFalse, reason: text);
+      expect(await brain.remember(kind: 'memory', region: 'Personal Memory', body: text), isNotNull, reason: text);
+    }
+    expect(brain.count, kept.length);
+  });
+
+  test('U: a hyphen-joined mixed-case token in a URL path is withheld on the phone, the same token without hyphens too; lower-case slugs and the approved Google links stay kept (fifth review of #354)', () async {
+    final dir = await freshDir();
+    final brain = CheBrainReplica(directory: dir);
+    // Built from pieces, so no literal token sits in the repository.
+    final hyphenToken = ['Q7mZ2kP9', 'xL4vN8wR3', 'tY6uB1c', '7mZ2kP9xL4vN8wR'].join('-');
+    final sameToken = hyphenToken.replaceAll('-', '');
+    final withheld = [
+      'Reset link https://example.com/reset/$hyphenToken',
+      'Reset link https://example.com/reset/$sameToken',
+    ];
+    for (final text in withheld) {
+      expect(cheBrainTextIsSensitive(text), isTrue, reason: text);
+      expect(await brain.remember(kind: 'memory', region: 'Personal Memory', body: text), isNull, reason: text);
+    }
+    expect(brain.count, 0);
+    final kept = [
+      'Read https://example.com/brain-sync-follow-up-plan now',
+      'Here is the doc https://docs.google.com/document/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit for Monday',
+      'Drive link https://drive.google.com/file/d/1AbCdEfGhIjKlMnOpQrStUvWxYz012345/view',
+      'Sheet https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit#gid=0',
+      'Folder https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz012345',
+    ];
+    for (final text in kept) {
+      expect(cheBrainTextIsSensitive(text), isFalse, reason: text);
+      expect(await brain.remember(kind: 'memory', region: 'Personal Memory', body: text), isNotNull, reason: text);
+    }
+    expect(brain.count, kept.length);
+  });
+
+  test('T: the 3- and 6-character code repros, a Stripe-shaped key behind a Google path and a random Google ID are withheld; the two Google document links are kept (fourth review of #354)', () async {
+    final dir = await freshDir();
+    final brain = CheBrainReplica(directory: dir);
+    // Built from pieces, so no literal key-shaped string sits in the repository (GitHub push protection).
+    final stripeLike = ['sk_live_', '4eC39HqLyjWDarjtT1zdp7dc'].join();
+    final randomId = ['Q7mZ2kP9', 'xL4vN8wR3tY6uB1c'].join();
+    final withheld = [
+      'Backup code ${['ABCDE1', 'FGHIJ2', 'KLMNO3', 'PQRST4'].join('-')} for the account',
+      'Backup code ${['AB1', 'CD2', 'EF3', 'GH4'].join('-')} for the account',
+      'Ship WARN-ERROR-FAIL-DONE tonight',
+      'See https://docs.google.com/d/$stripeLike now',
+      'See https://docs.google.com/document/d/$randomId/edit',
+    ];
+    for (final text in withheld) {
+      expect(cheBrainTextIsSensitive(text), isTrue, reason: text);
+      expect(await brain.remember(kind: 'memory', region: 'Personal Memory', body: text), isNull, reason: text);
+    }
+    expect(brain.count, 0);
+    final kept = [
+      'Here is the doc https://docs.google.com/document/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit for Monday',
+      'Drive link https://drive.google.com/file/d/1AbCdEfGhIjKlMnOpQrStUvWxYz012345/view',
+    ];
+    for (final text in kept) {
+      expect(cheBrainTextIsSensitive(text), isFalse, reason: text);
+      expect(await brain.remember(kind: 'memory', region: 'Personal Memory', body: text), isNotNull, reason: text);
+    }
+    expect(brain.count, kept.length);
+  });
+  test('X: functional Google shapes are kept and a random tail is withheld on the phone; a request is about a Google file only when it names one (eighth review of #354)', () async {
+    final dir = await freshDir();
+    final brain = CheBrainReplica(directory: dir);
+    const docId = '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms';
+    const driveId = '1AbCdEfGhIjKlMnOpQrStUvWxYz012345';
+    final pub86 = ['2PACX-1vQ', 'aBcD3eFgH4iJkL5mNoPqRsT6uVwXyZ7aBcD8eFgH9iJkL0mNoPqRsT', 'uVwXyZ1aBcD2eFgH3iJkL'].join('-');
+    expect(pub86.length, 86);
+    final pubLong = '$pub86-Qx7Lm2Np9Rt4Vw8Yz3Bc6Df1Gh5Jk0Ln7Mp2Qr9St';
+    final kept = [
+      'Published https://docs.google.com/document/d/e/$pub86/pub now',
+      'Doc https://docs.google.com/document/u/0/d/$docId/edit',
+      'Folder https://drive.google.com/drive/u/0/folders/$driveId',
+      'Doc https://docs.google.com/document/d/$docId/edit/',
+      'Sheet https://docs.google.com/spreadsheets/d/$docId/view',
+      'Deck https://docs.google.com/presentation/d/$docId/view',
+      'Deck https://docs.google.com/presentation/d/$docId/present',
+    ];
+    for (final text in kept) {
+      expect(cheBrainTextIsSensitive(text), isFalse, reason: text);
+      expect(await brain.remember(kind: 'memory', region: 'Personal Memory', body: text), isNotNull, reason: text);
+    }
+    final withheld = [
+      'Published https://docs.google.com/document/d/e/$pub86/pub/${['Q7mZ2kP9', 'xL4vN8wR3tY6uB1c'].join()}',
+      'Published https://docs.google.com/document/d/e/$pubLong/pub now',
+      'Drive open https://drive.google.com/open?id=$driveId',
+    ];
+    for (final text in withheld) {
+      expect(cheBrainTextIsSensitive(text), isTrue, reason: text);
+      expect(await brain.remember(kind: 'memory', region: 'Personal Memory', body: text), isNull, reason: text);
+    }
+    expect(brain.count, kept.length);
+    expect(cheRedactGoogleIds('https://docs.google.com/document/d/e/$pub86/pub'), 'https://docs.google.com/document/d/e/[google-id]/pub');
+    for (final text in ['Can you google how TCP handshakes work?', 'What did Claude say about #350?', 'Open the file', 'Google the weather for me']) {
+      expect(cheAskedAboutGoogle(text), isFalse, reason: text);
+    }
+    for (final text in ['Open my budget sheet.', 'Read my notes doc', 'What is in my Drive folder?', 'Open the spreadsheet', 'Open the slides', 'Open my Google Doc', 'Show me Google Sheets']) {
+      expect(cheAskedAboutGoogle(text), isTrue, reason: text);
+    }
+    expect(cheAskedAboutGoogle('budget forecast numbers', titles: ['Budget forecast']), isTrue);
+    expect(cheAskedAboutGoogle('Open the budget file', titles: ['Budget forecast']), isTrue);
+    expect(cheAskedAboutGoogle('Open the file', titles: ['Budget forecast']), isFalse);
+    const link = 'Here is the doc https://docs.google.com/document/d/$docId/edit for Monday';
+    expect(cheRedactBrainText(link, 'Can you google how TCP handshakes work?').contains(docId), isFalse);
+    expect(cheRedactBrainText(link, 'Open my budget sheet.'), link);
+  });
 }

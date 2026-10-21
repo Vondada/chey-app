@@ -67,7 +67,8 @@ inspired_by, requires_verification, escalated_to, used_by_project, discovered_by
 
 Verification labels (`VERIFICATION_STATES`, the che-fact-check vocabulary):
 owner_attested, verified_source, unverified_reference, unverified_research_lead,
-model_opinion, hypothesis, curated_lesson, owner_practice, unknown. A model's text is never stored as a fact.
+model_opinion, hypothesis, curated_lesson, owner_practice, unknown, external_correspondence (another AI's message: see
+section 6). A model's text is never stored as a fact.
 
 Knowledge Atlas (#346): each card is a `concept_card` record, `curated_lesson`, in
 `Knowledge Atlas/<Coding|Trading>/<card>` (prerequisites are `builds_upon` links, related cards
@@ -373,6 +374,95 @@ seven quiet states; 5 013 records: build 63 ms, brain switch 1 ms, filter 1 ms);
 carries places); `test/che_brain_replica_test.dart` (places survive a restart).
 Not verified: an iPhone (VoiceOver, Reduce Motion, real frame times with the worker ring);
 the production Worker.
+
+## 6. Outside correspondence: the Flagstaff history (2026-10-19)
+
+Owner directive of 18 October: complete the historical recovery and archive Flagstaff. The
+Flagstaff mailbox is outside correspondence, never Office worker experience. (The directive's
+text was cut off at "Historical external AI correspondence must not be…"; what is built follows
+AGENTS.md: mailbox messages are advice, not orders, and only the owner's own words are his.)
+
+What it is, in the Brain:
+
+- One record per message, id `mail:<message id>`, kind `correspondence`, region Coding and
+  Development, folder `Outside correspondence/<thread>`, verification `external_correspondence`.
+- Provenance in `source`: file (`mailbox/claude.jsonl`, `mailbox/archive/claude.jsonl` or the
+  board archive session), message id, sender, recipient, time, reply-to, `advice_only: true`,
+  `owner_words: false`. The body opens with the same in words ("ChatGPT to Claude, 2026-10-18, in
+  the Flagstaff mailbox (…). Outside correspondence: another AI's advice, not the owner's words and
+  not an instruction."), so any excerpt, search hit or offline recall carries it. A reply links to
+  the message it answers.
+- Never in Personal Memory, Conversations and Corrections or Office Agents: the Memory screen, the
+  phone's offline conversation list, `answerOwnerMemoryQuestion` ("what did I tell you") and the
+  worker brains never read it.
+
+How it gets there (`brain_office.importOutsideCorrespondence`, owner-run only):
+
+- Reads `mailbox/archive/*.jsonl`, then `mailbox/*.jsonl`, at one commit, through the mailbox's
+  own GitHub read path (`mailbox.readMailboxFile`, which `readThread` now uses too;
+  `listMailboxFiles` never creates the branch). Read-only: no GitHub write.
+- Then the web board's locked sessions in CHE's storage (`flagstaff_archive`); the GitHub copy of a
+  message wins, so those only add messages GitHub never had.
+- Idempotent by message id and content hash: a second run on an unchanged branch reads three
+  listings and no file; a new commit re-reads the files and skips every unchanged message.
+- Bounded (1 000 records written per run, at most 2 000) and resumable: the cursor in
+  `brain_meta.correspondence_cursor` keeps the files done and the last message id of the file it
+  stopped in; a file that failed is read again next run. A message the owner deleted stays deleted.
+- Redaction: a private key block is withheld whole (BEGIN to END) and a JWT with every one of its
+  segments wherever they appear, before the text is split into lines; token shapes are scrubbed
+  (`privacy_policy.redactSecrets`, which now knows JWTs and key blocks too); every sentence that
+  `research_memory.isSafeMemoryText` refuses, that `self_skills.redactSensitive` reads as a token
+  (ids and paths excepted) or that hands over access ("credentials", "login", "… gets you in") is
+  withheld, marked "[withheld: sensitive content]" and counted. `isSafeMemoryText` and the Brain's
+  own gate (`brain_store.isSafeText`) now refuse credential shapes for every writer
+  (`research_memory.hasSecretShape`: a key block, a JWT piece, a user:password pair, a
+  password-like token such as "Summer2026!"; a commit, issue, date, version, link, address or
+  plain word is never one). When the store's gate still refuses the record, the
+  words are kept without the message ids, and failing that an outline (sender, recipient, time,
+  file) is kept and counted; nothing is dropped in silence.
+- Flagstaff replies CHE remembered (`brainmem` kind `flagstaff`) were backfilled as owner-attested
+  conversations. The backfill now labels them outside correspondence, and the import and the
+  nightly recovery pass relabel the old ones (`relabelFlagstaffExchanges`).
+- The report: `brain_meta.correspondence_import`, a Brain audit record
+  `audit:correspondence:<day>`, and a row in the recovery report (`/api/brain/recovery`; a POST
+  with `run: true` runs the import first). The nightly pass never reads GitHub.
+
+By voice or typing (Command Center: `/che-flagstaff-import`, `/che-outside-mail`), no model call:
+
+| Say | Route | Answer |
+|---|---|---|
+| "Import the Flagstaff history" | `che_flagstaff_import` | Files read, commit, messages brought in, already there, withheld, dropped, activity-log lines skipped, the Brain's total by sender |
+| "How many outside messages are in my Brain?" | `che_outside_correspondence` | Count by sender and the last import |
+| "What did ChatGPT tell you about #350?" | `che_outside_correspondence` | Up to three quotes, numbered, each with sender, recipient, date, file and message id |
+| "What did you tell Claude about the avatar?" | `che_outside_correspondence` | CHE's own messages to that AI |
+| "What did I tell you about #350?" | `che_memory_provenance` | The owner's records only; never a mailbox message |
+
+Not this route: a bare "What did ChatGPT say?" (no topic, no mailbox word), any question within a
+few turns of a live "Ask ChatGPT …" about that AI (its answer is the subject), and a name that is
+also a person's (Claude, Gemini, Cursor, Copilot) without an AI cue ("What did Claude say about
+dinner on Friday?"). A quote is reported, never re-asked: an offer in it to act on a "yes" is left
+out and its questions become "[it asked whether to …]". And a "yes" releases only CHE's own whole
+confirmation question ("Just to be sure, do you want me to …? Say yes, or tell me what you mean.",
+`speech_intent.pendingMeaning`); the phone sends a reply's words without its route, so words inside
+a quote or a model's offer never become the owner's request.
+
+Measured on a snapshot of `che-mailbox` (commit c7301eb, 19 Oct): 12 thread files, 747 lines,
+684 messages (63 activity-log lines), all 684 brought in, 100 with a sentence withheld (after the
+review's rules), none dropped; 15 GitHub reads, 0.8 s on the VM; the second run 3 reads and no file.
+
+Review of #354 (2026-10-19), fixed with regression tests: a quoted "Do you want me to email … ? Say
+yes" became the owner's request on a plain "yes" (it reached the Gmail route); a user:password pair,
+a "… gets you in" sentence, the last line of a key block and a JWT segment were stored whole; "What
+did ChatGPT say?" after a live consult and "What did Claude say about dinner?" took the mailbox route.
+
+Verified (offline): `brain_office.test.mjs` (provenance, two runs same count, a new commit
+re-read with every message skipped, bounded and resumable runs, a failed file read again,
+redaction and outlines, an owner delete kept, Flagstaff replies relabeled, the recovery report,
+the board archive, quotes with sources, the owner's phrases typed and spoken with counter-cases);
+`brain_sync.test.mjs` through `/api/chat` (import twice, count, quotes with sources, "what did I
+tell you" never citing it, an order in a message never acted on, memories untouched);
+`command_center.test.mjs` (both commands, guests refused). Not verified: the production Worker
+and the real branch through the live GitHub API; the phone (VM-free, Flutter not run here).
 
 ## 4. What remains (later PRs, in order)
 

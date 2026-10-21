@@ -48,3 +48,28 @@ test('quiet days and bad AI output are handled honestly', async () => {
   assert.equal(parseReview('not json'), null);
   assert.equal(nightlyContext({}), '');
 });
+
+test('eighth review of #354: the nightly review never carries a Google ID, in the prompt or in the stored notes', async () => {
+  const DOC_ID = '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms';
+  const link = `https://docs.google.com/spreadsheets/d/${DOC_ID}/edit`;
+  const day = {
+    log_index: [{ id: 'g', updated_at: '2026-10-18T23:00:00Z' }],
+    'log:g': { title: 'Budget', turns: [{ at: '2026-10-18T20:00:00Z', user: `My budget sheet is ${link}`, che: `Noted: ${link}` }] },
+  };
+  const collected = await collectDay(store(day), '2026-10-18T00:00:00Z');
+  assert.equal(collected.text.includes(DOC_ID), false);
+  assert.match(collected.text, /\[google-id\]/);
+  const prompts = [];
+  const env = { AI: { run: async (_model, input) => {
+    prompts.push(JSON.stringify(input.messages));
+    // A model may still echo a link it saw elsewhere: the stored review is redacted too.
+    return { response: JSON.stringify({ summary: `Owner shared the budget sheet ${link}.`, lessons: [`Keep ${link} handy.`], open_threads: [`Update ${link}`], stated_preferences: [] }) };
+  } } };
+  const data = { last_nightly_at: '2026-10-18T00:00:00Z', learned_knowledge: [] };
+  const result = await runNightlyReview(env, store(day), data, 'm', Date.parse('2026-10-19T07:07:00Z'));
+  assert.equal(result.status, 200);
+  assert.equal(prompts.join('').includes(DOC_ID), false, 'the review prompt carries no ID');
+  const stored = JSON.stringify(data.nightly_reviews[0]) + JSON.stringify(data.learned_knowledge) + nightlyContext(data);
+  assert.equal(stored.includes(DOC_ID), false, 'the stored review and the notes carry no ID');
+  assert.match(stored, /\[google-id\]/);
+});

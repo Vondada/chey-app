@@ -126,10 +126,17 @@ extension _CheHomeMemory on _CHEHomeState {
   }
 
   /// Recall for the offline answer: the records that share the most words with the question, labeled.
+  /// A record whose title or excerpt holds a secret shape is never placed in this context (the search
+  /// does not index it, and this check is the reach point itself).
   Future<List<String>> _brainReplicaContext(String message) async {
     try {
       await _brainReplica.load();
-      return _brainReplica.search(message, limit: 4).map((r) => 'BRAIN (${r.region}; ${r.verification.replaceAll('_', ' ')}): ${r.title} — ${r.excerpt}').toList();
+      return _brainReplica
+          .search(message, limit: 8)
+          .where((r) => !cheBrainTextIsSensitive('${r.title}\n${r.excerpt}'))
+          .take(4)
+          .map((r) => cheRedactBrainText('BRAIN (${r.region}; ${r.verification.replaceAll('_', ' ')}): ${r.title} — ${r.excerpt}', message, titles: [r.title]))
+          .toList();
     } catch (_) {
       return const [];
     }

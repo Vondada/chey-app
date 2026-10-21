@@ -128,7 +128,7 @@ import { flushOutbox, handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, op
 import { CheLibrary, fetchReadable, libraryContext, libraryIntent } from './library.js';
 import { CheBrainStore, backfillConversations, displayCopy, isSafeText, ownerMemoryRecord, projectLegacyState, rememberExchange, sameDisplayCopy } from './brain_store.js';
 import { brainReviewIntent, latestReview, ownerScore, runBrainMaintenance, speakReview } from './brain_audit.js';
-import { archiveTasks, projectOfficeExperience, recoverHistory, workerBrains } from './brain_office.js';
+import { answerCorrespondenceQuestion, archiveTasks, correspondenceStatus, importOutsideCorrespondence, outsideCorrespondenceIntent, projectOfficeExperience, recoverHistory, speakCorrespondenceCount, speakCorrespondenceImport, workerBrains } from './brain_office.js';
 import { fetchYouTubeKnowledge, mergeCaptionLines, normalizeCaptionLines, youtubeVideoId } from './youtube_learning.js';
 import {
   PENDING_GOOGLE_ACTION_KEY, disconnectGoogle, finishGoogleConnect, googleChatIntent, googleConnectorStates, googleLabel, googleOwnerStep, googleRecheckPending,
@@ -192,6 +192,8 @@ import {
   enrichNoteForBrain,
   BROKER_KEY_RE,
   isSafeMemoryText,
+  redactBrainText,
+  redactGoogleIds,
   listMemoryNotes,
   writeResearchMemoryNote,
 } from './research_memory.js';
@@ -4794,8 +4796,10 @@ export class CheState extends DurableObject {
         })),
         options.allMail ? Promise.resolve(options.allMail) : readAllMail(this.env).catch(() => ({ messages: [] })),
       ]);
-      const rag = vectorContextText(recall);
-      const remembered = rememberedText(memories, 3000);
+      // An outside AI is never the owner's own request: owner memory reaches this prompt with Google IDs redacted,
+      // whatever the AI asked (eighth review of #354).
+      const rag = redactGoogleIds(vectorContextText(recall));
+      const remembered = redactGoogleIds(rememberedText(memories, 3000));
 
       const collisionClaims = (allMail.messages || [])
         .filter((item) => item?.id !== id && /\b(?:claim|own|ownership|lane|files?)\b/i.test(String(item?.text || '')))
@@ -4896,7 +4900,8 @@ export class CheState extends DurableObject {
       const honesty = (grounded.removed.length ? ' Anything marked [NOT VERIFIED] is a file, link, code quote or job I could not confirm in the repository.' : '') + (codeProblems.length ? ` The code above still has a syntax problem I could not fix in one pass: ${codeProblems[0]}.` : '');
       // Never a bare refusal: when nothing can be pinned, say where to look.
       const searchTerms = [...new Set(incoming.match(/[A-Za-z_$][\w$]{3,}/g) || [])].slice(0, 4).join(', ') || 'the key words of the question';
-      const reply = grounded.text ? `${grounded.text}${honesty}` : `I can't pin the exact line from the source I read. To check it, search the pinned commit for: ${searchTerms}.${honesty}`;
+      // The reply leaves for an outside AI: a Google ID never leaves in it (eighth review of #354).
+      const reply = redactGoogleIds(grounded.text ? `${grounded.text}${honesty}` : `I can't pin the exact line from the source I read. To check it, search the pinned commit for: ${searchTerms}.${honesty}`);
       if (!reply) throw new Error('CHE returned no Flagstaff reply.');
       const posted = await postWebMail(this.ctx.storage, {
         from: 'che',
@@ -5218,6 +5223,10 @@ export class CheState extends DurableObject {
     if (cancelOrderIntent(message)) return ndjsonReply('Only the CHE owner can cancel Alpaca PAPER orders. Nothing was cancelled.', { source: 'che_trading_chart', ok: false, model_calls: 0, order_cancelled: false });
     if (GUEST_OWNER_ACTION.test(message)) {
       return ndjsonReply('Only the CHE owner can do that. Nothing was changed. I can still talk it through with you.', { source: 'che_guest', ok: false, model_calls: 0 });
+    }
+    // The Flagstaff correspondence is the owner's: a guest's model has none of it and must not guess it.
+    if (outsideCorrespondenceIntent(message)) {
+      return ndjsonReply('Only the CHE owner can read the outside correspondence in his Brain. Nothing was read or changed.', { source: 'che_guest', ok: false, model_calls: 0 });
     }
     const history = (Array.isArray(body.history) ? body.history : [])
       .filter((turn) => ['user', 'assistant'].includes(turn?.role) && typeof turn.content === 'string')
@@ -6510,6 +6519,8 @@ export class CheState extends DurableObject {
         // Historical recovery: everything CHE already holds, into the Brain, resumably; the report says what is where.
         if (path === '/api/brain/recovery') {
           if (request.method === 'POST' && body.run === true) {
+            // The owner asked for a recovery pass, so the Flagstaff mailbox is read too (the nightly pass never reads GitHub).
+            if (body.flagstaff !== false) await importOutsideCorrespondence(brain, this.env, { storage: this.ctx.storage }).catch(() => null);
             const report = await recoverHistory(brain, this.ctx.storage, data, { library: library(), batch: Math.max(50, Math.min(Number(body.batch) || 500, 2000)) });
             return json(report);
           }
@@ -8984,7 +8995,7 @@ export class CheState extends DurableObject {
         // an earlier answer is answered from records further down, in his own
         // words: no interpreter rewrite, clarifying question or model read.
         const memoryRoute = ownerDevice && !body.attachment && (asksForEvidence || Boolean(ownerMemoryQuestion(rawMessage)) ||
-          Boolean(ownerFactCorrection(rawMessage, data.memory_records)));
+          Boolean(ownerFactCorrection(rawMessage, data.memory_records)) || Boolean(outsideCorrespondenceIntent(rawMessage, { history: ownerHistory })));
         // Voice Studio: the owner's spoken requests about his voice library are answered
         // from the provider's account, with no model call. Anything else goes on below.
         if (ownerDevice && !body.attachment) {
@@ -10015,6 +10026,33 @@ export class CheState extends DurableObject {
           const latest = latestReview(new CheBrainStore(this.ctx.storage));
           return ndjsonReply(speakReview(latest), { source: 'che_brain_review', model_calls: 0, review_id: latest.review?.id || null });
         }
+        // The Flagstaff mailbox as outside correspondence: "import the Flagstaff history", "how many
+        // outside messages are in my Brain", "what did ChatGPT tell you about #350". Answered from
+        // correspondence records only, each with its file and message id; never the owner's words
+        // (his own "what did I tell you" is the memory question above), never an order. No model.
+        // Guests never reach here: guestChat refuses these.
+        const outside = ownerDevice && !body.attachment && !memoryQuestion ? outsideCorrespondenceIntent(rawMessage, { history: ownerHistory }) : null;
+        if (outside) {
+          const source = outside.kind === 'import' ? 'che_flagstaff_import' : 'che_outside_correspondence';
+          const brain = new CheBrainStore(this.ctx.storage);
+          if (outside.kind === 'import') {
+            const report = await importOutsideCorrespondence(brain, this.env, { storage: this.ctx.storage });
+            return ndjsonReply(speakCorrespondenceImport(report), {
+              source, model_calls: 0, ok: Boolean(report.available && report.connected && !report.errors?.length),
+              done_import: Boolean(report.done), imported: report.totals?.imported || 0, in_brain: report.in_brain || 0,
+            });
+          }
+          // The receipt names the records, so "how do you know?" says where it came from.
+          if (outside.kind === 'count') {
+            const status = correspondenceStatus(brain);
+            const text = speakCorrespondenceCount(status, { peer: outside.peer });
+            await recordAnswerEvidence(this.ctx.storage, text, { kind: 'tool_result', tools: ['brain/outside_correspondence'] });
+            return ndjsonReply(text, { source, model_calls: 0, in_brain: status.messages || 0 });
+          }
+          const answer = answerCorrespondenceQuestion(brain, outside);
+          await recordAnswerEvidence(this.ctx.storage, answer.text, { kind: answer.records.length ? 'outside_correspondence' : 'none' }, { records: answer.records });
+          return ndjsonReply(answer.text, { source, model_calls: 0, records: answer.records.length, record_ids: answer.records, verification: 'external_correspondence' });
+        }
         // What the owner personally said, confirmed, approved or did is
         // answered from owner-attested records only. A model is never asked
         // to fill this in, so it cannot invent a personal memory.
@@ -10158,12 +10196,14 @@ export class CheState extends DurableObject {
           : casualChat
           ? { status: 'skipped_casual', checked: false, matches: [], detail: 'Skipped for short casual chat latency.' }
           : await retrieveVectorContext(this.keyEnv || this.env, message);
-        const vectorMemoryContext = vectorContextText(vectorRecall);
+        // Owner memory in a model request follows the brain_context rule: Google IDs are redacted unless the owner's
+        // own request is about a Google file (eighth review of #354).
+        const vectorMemoryContext = redactBrainText(vectorContextText(vectorRecall), message);
         // Her own memory: War Room meetings, Flagstaff exchanges and earlier
         // talks with the owner that relate to this message.
         await syncWarRoomMemories(this.ctx.storage, data).catch(() => 0);
         const rememberedContext = ownerDevice
-          ? rememberedText(await recallMemories(this.ctx.storage, message).catch(() => []))
+          ? redactBrainText(rememberedText(await recallMemories(this.ctx.storage, message).catch(() => [])), message)
           : '';
         // CHE User Knowledge Bundle: canonical items from pgvector. The router
         // sends each engine only the data classes it is authorized for.
@@ -10901,7 +10941,7 @@ export class CheState extends DurableObject {
           return ndjsonReply(OWNER_LOCATION_NOT_VERIFIED, { source: 'location_provenance', live_gps: false });
         }
         const phoneBrainContext = Array.isArray(body.brain_context)
-          ? body.brain_context.map((item) => String(item)).join('\n\n').slice(0, 9000)
+          ? redactBrainText(body.brain_context.map((item) => String(item)).join('\n\n'), message).slice(0, 9000)
           : '';
         // The Worker's own Brain answers too (owner, 2026-10-20): queued room events are written first, then
         // the records that match this message, each with its source room and status. One FTS query; past
@@ -11731,9 +11771,9 @@ export class CheState extends DurableObject {
               body.client_identity_profile
                 ? `Client identity supplement (canonical CHE policy above still controls): ${String(body.client_identity_profile).slice(0, 1800)}`
                 : '',
-              memoryPromptContext(ownerDevice ? data : {}),
+              redactBrainText(memoryPromptContext(ownerDevice ? data : {}), message),
               rememberedContext,
-              ownerDevice ? nightlyContext(data) : '',
+              ownerDevice ? redactBrainText(nightlyContext(data), message) : '',
               WORK_POLICY,
               `Autonomy is ${data.autonomy ? 'on' : 'paused'}.`,
               /\b(?:change|update|improve|fix|add|build|modify|upgrade)\b[\s\S]{0,40}\b(?:your(?:self| own)?|the app|che app|your app|your code|your screen)\b/i.test(message)
@@ -11775,7 +11815,7 @@ export class CheState extends DurableObject {
             vectorMemoryContext,
             officeResults,
             skillResults,
-            memories: memoryPromptContext(ownerDevice ? data : {}),
+            memories: redactBrainText(memoryPromptContext(ownerDevice ? data : {}), message),
             remembered: rememberedContext,
           }).replace(/POSTGRES \+ PGVECTOR RAG[\s\S]*?(?=\n(?:Office results|Plugin tool results|Owner memories))/, '')
             // Fast turns carry only the taught skills that fit this message.
@@ -11973,7 +12013,7 @@ export class CheState extends DurableObject {
         // brain as a saved memory.
         const ownerTurnsNow = ownerWords(ownerHistory, rawMessage);
         const attribution = guardOwnerAttributions(reply, { records: data.memory_records, ownerTurns: ownerTurnsNow, message: rawMessage });
-        if (attribution.removed.length) console.log('CHE memory truth removed', JSON.stringify(attribution.removed).slice(0, 800));
+        if (attribution.removed.length) console.log('CHE memory truth removed', redactGoogleIds(JSON.stringify(attribution.removed)).slice(0, 800));
         reply = guardRememberBlock(attribution.text, {
           ownerTurns: ownerTurnsNow, retracted: await loadRetractions(this.ctx.storage),
         }).text;
@@ -12093,7 +12133,7 @@ export class CheState extends DurableObject {
       await recoverHistory(brain, this.ctx.storage, data, { library: new CheLibrary(this.ctx.storage).list(), batch: 500 });
       // Then the significance audit and the next-morning review, from those records alone.
       const maintenance = runBrainMaintenance(brain);
-      console.log('CHE brain maintenance:', JSON.stringify(maintenance.audit), maintenance.review.written ? 'review written' : maintenance.review.reason);
+      console.log('CHE brain maintenance:', redactGoogleIds(JSON.stringify(maintenance.audit)), maintenance.review.written ? 'review written' : maintenance.review.reason);
     } catch (error) { console.error('Brain projection failed:', error?.message || error); }
     if (!data.autonomy) return { status: 'paused' };
     const result = await runNightlyReview(this.env, this.ctx.storage, data, this.env.CHE_STRONG_MODEL || STRONG_MODEL);

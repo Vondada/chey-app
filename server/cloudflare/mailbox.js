@@ -116,12 +116,45 @@ export async function readThread(env, peer, fetcher = fetch) {
   const who = normalizePeer(peer);
   if (!repoOf(env)) return { error: 'Mailbox needs CHE_GITHUB_TOKEN and CHE_GITHUB_REPO.', messages: [] };
   if (!who) return { error: 'Name who the thread is with.', messages: [] };
-  const found = await gh(env, 'GET', `/contents/mailbox/${who}.jsonl?ref=${MAILBOX_BRANCH}`, null, fetcher);
-  if (found.status === 404) return { messages: [], sha: null };
-  if (!found.ok) return { error: `Mailbox read failed (${found.status}).`, messages: [] };
+  const file = await readMailboxFile(env, `mailbox/${who}.jsonl`, fetcher);
+  return file.error ? { error: file.error, messages: [] } : { messages: file.messages, sha: file.sha };
+}
+
+// One thread file, live or archived, read the way every mailbox read is (the Contents API with the
+// blob fallback). [ref] may be a commit, so a whole import reads one consistent mailbox. `lines`
+// counts every non-empty line, so a caller can say how many were not messages (activity logs).
+export async function readMailboxFile(env, path, fetcher = fetch, ref = MAILBOX_BRANCH) {
+  if (!repoOf(env)) return { error: 'Mailbox needs CHE_GITHUB_TOKEN and CHE_GITHUB_REPO.', messages: [], lines: 0 };
+  if (!/^mailbox\/(?:archive\/)?[a-z0-9-]+\.jsonl$/.test(String(path || ''))) return { error: 'Not a mailbox thread file.', messages: [], lines: 0 };
+  const found = await gh(env, 'GET', `/contents/${path}?ref=${encodeURIComponent(ref || MAILBOX_BRANCH)}`, null, fetcher);
+  if (found.status === 404) return { messages: [], sha: null, lines: 0 };
+  if (!found.ok) return { error: `Mailbox read failed (${found.status}).`, messages: [], lines: 0 };
   const text = await fileText(env, found, fetcher);
-  if (text === null) return { error: 'Mailbox read failed (file content unavailable).', messages: [] };
-  return { messages: parseMail(text), sha: found.data.sha };
+  if (text === null) return { error: 'Mailbox read failed (file content unavailable).', messages: [], lines: 0 };
+  return { messages: parseMail(text), sha: found.data.sha, lines: String(text).split('\n').filter((line) => line.trim()).length };
+}
+
+// Every thread file on the mailbox branch, archived ones first (they are the older lines), with the
+// branch's commit. Read-only: unlike mailboxHead it never creates the branch.
+export const MAX_MAILBOX_FILES = 40;
+export async function listMailboxFiles(env, fetcher = fetch) {
+  if (!repoOf(env)) return { error: 'Mailbox needs CHE_GITHUB_TOKEN and CHE_GITHUB_REPO.', files: [], head: '' };
+  const ref = await gh(env, 'GET', `/git/ref/heads/${MAILBOX_BRANCH}`, null, fetcher);
+  if (ref.status === 404) return { files: [], head: '' };
+  if (!ref.ok) return { error: `Mailbox head read failed (${ref.status}).`, files: [], head: '' };
+  const head = String(ref.data?.object?.sha || '');
+  const files = [];
+  for (const dir of [`mailbox/${ARCHIVE_DIR}`, 'mailbox']) {
+    const listing = await gh(env, 'GET', `/contents/${dir}?ref=${encodeURIComponent(head || MAILBOX_BRANCH)}`, null, fetcher);
+    if (listing.status === 404) continue;
+    if (!listing.ok) return { error: `Mailbox read failed (${listing.status}).`, files: [], head };
+    for (const item of Array.isArray(listing.data) ? listing.data : []) {
+      const m = /^([a-z0-9-]+)\.jsonl$/.exec(String(item?.name || ''));
+      if (!m || (item.type && item.type !== 'file')) continue;
+      files.push({ path: `${dir}/${m[0]}`, thread: m[1], archive: dir !== 'mailbox' });
+    }
+  }
+  return { head, files, more: false };
 }
 
 export async function listThreads(env, fetcher = fetch) {

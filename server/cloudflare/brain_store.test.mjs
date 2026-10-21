@@ -369,3 +369,22 @@ test('whole-table answers are scanned once per change, not once per request', as
   assert.notEqual(new CheBrainStore(storage).status().by_kind.memory, 99);
   assert.notEqual(new CheBrainStore(storage).folders()[0].count, 99);
 });
+
+test('a broker key is refused by put and by reconcile, and search never returns the record it was in (blocker, #354 review)', async (t) => {
+  const storage = await sqlStorage();
+  if (!storage) return t.skip('node:sqlite unavailable');
+  const store = new CheBrainStore(storage);
+  // Built from pieces, so no literal key sits in the repository.
+  const key = ['PK', 'Z9Y8X7W6V5U4T3S2R1Q'].join('');
+  const task = (id, body) => ({ id, kind: 'task', region: 'Trading and Market Research', path: 'Trading', title: 'Paper trade result', body, source: { kind: 'task', agent_id: 'a-knox', status: 'complete' }, verification: 'owner_attested', links: [] });
+  const leaked = `Result: the Alpaca key ${key} was printed in the log.`;
+  assert.equal(isSafeText(leaked), false);
+  assert.equal(store.put(task('task:paper-1', leaked)).outcome, 'rejected');
+  assert.equal(store.get('task:paper-1'), null);
+  assert.equal(store.apply({ type: 'put', record: task('task:paper-1', leaked) }, { origin: 'cloud' }).outcome, 'rejected', 'the reconcile path refuses it too');
+  assert.equal(store.get('task:paper-1'), null);
+  // A clean record with the same title is stored and found, so the empty search for the key is not an empty index.
+  assert.equal(store.put(task('task:paper-2', 'Result: the paper trade filled at the planned price.')).outcome, 'created');
+  assert.deepEqual(store.search(key, { limit: 10 }).map((r) => r.id), []);
+  assert.deepEqual(store.search('Paper trade result', { limit: 10 }).map((r) => r.id), ['task:paper-2']);
+});

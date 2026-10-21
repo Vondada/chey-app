@@ -30,6 +30,7 @@ const double cheBrainSidePanelWidth = 720;
       'curated_lesson' => ('Curated lesson: teaching content, not your memory', Icons.school_outlined),
       'owner_practice' => ('Your practice, measured in chat', Icons.fact_check_outlined),
       'unverified_reference' || 'unverified_research_lead' => ('Unverified reference', Icons.help_outline_rounded),
+      'external_correspondence' => ("Outside AI's message: advice, not your words", Icons.forum_outlined),
       '' || 'unknown' => ('Verification unknown', Icons.help_outline_rounded),
       final other => (other.replaceAll('_', ' '), Icons.help_outline_rounded),
     };

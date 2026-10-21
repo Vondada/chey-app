@@ -93,7 +93,7 @@ void main() {
       ),
     ));
     await tester.tap(find.text('Chat host'));
-    await waitFor(tester, find.text('All 96'));
+    await waitFor(tester, find.text('All 98'));
 
     // The catalog and its live status come from the Worker.
     expect(find.text('Trading 15'), findsOneWidget);
@@ -112,7 +112,7 @@ void main() {
 
     // A workflow built on the page runs on CHE's mission queue.
     await tester.tap(find.text('Chat host'));
-    await waitFor(tester, find.text('All 96'));
+    await waitFor(tester, find.text('All 98'));
     await settle(tester);
     await tester.tap(find.text('Workflows'));
     await tester.pumpAndSettle();

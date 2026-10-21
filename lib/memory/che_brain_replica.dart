@@ -64,8 +64,251 @@ final RegExp _sensitive = RegExp(
   caseSensitive: false,
 );
 
-/// True when [text] must not be kept in the Brain. Checked over the whole text.
-bool cheBrainTextIsSensitive(String text) => _sensitive.hasMatch(text);
+/// True when [text] must not be kept in the Brain or placed in the on-device model's context. Checked
+/// over the whole text: the words the Worker refuses, and the shapes of a secret (below).
+bool cheBrainTextIsSensitive(String text) => _sensitive.hasMatch(text) || cheBrainTextHasSecretShape(text);
+
+// The shapes of a secret, mirrored from research_memory.js (hasSecretShape and BROKER_KEY_RE), so the phone
+// refuses what the Worker refuses (second review of #354). A commit SHA, an id, a date, a version, a trading
+// figure, an address and an ordinary link are not secrets; see the Worker's tests for each case.
+final RegExp _brokerKeyShape = RegExp(r'\b[AP]K[A-Z0-9]{16,38}\b');
+final RegExp _pemShape = RegExp(r'-----BEGIN [A-Z0-9 ]{3,40}-----');
+final RegExp _jwtShape = RegExp(r'\beyJ[A-Za-z0-9_-]{8,}');
+final RegExp _userPassShape = RegExp(r"""(?:^|[\s(])[A-Za-z0-9._%+-]{2,40}:(?=[^\s:/@"'{}\[\],]*[A-Za-z])(?=[^\s:/@"'{}\[\],]*[\d!@#$%^&*+=?~])[^\s:/@"'{}\[\],]{6,}""");
+final RegExp _tokenSplitShape = RegExp(r'[\s"“”,;(){}\[\]<>]+');
+final RegExp _leadPunctShape = RegExp(r'''^[("'“‘[<{]+''');
+final RegExp _trailPunctShape = RegExp(r'''[)"'”’\]>},.;:?]+$''');
+final RegExp _trailingBangShape = RegExp(r'!+$');
+final RegExp _passwordSymbolShape = RegExp(r'[!@#$%^&*+=~?|\\]');
+final RegExp _hexShape = RegExp(r'^[0-9a-f]+$', caseSensitive: false);
+final RegExp _uuidShape = RegExp(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', caseSensitive: false);
+final RegExp _webhookShape = RegExp(r'hooks\.slack\.com/services/|discord(?:app)?\.com/api/webhooks/', caseSensitive: false);
+final RegExp _linkShape = RegExp(r'://|^www\.', caseSensitive: false);
+final RegExp _linkHeadShape = RegExp(r'^(?:[a-z][a-z0-9+.-]*://|www\.)([^/?#]*)', caseSensitive: false);
+final RegExp _pathSplitShape = RegExp(r'[?#]');
+final RegExp _queryPieceSplitShape = RegExp(r'[?&=#]+');
+final RegExp _percentShape = RegExp(r'%([0-9A-Fa-f]{2})');
+final RegExp _randomRunShape = RegExp(r'^[A-Za-z0-9_]{20,}$');
+// A hyphen-joined run of 20+ characters with capitals, lower-case letters and digits (fifth review of #354).
+final RegExp _hyphenRunShape = RegExp(r'^[A-Za-z0-9_-]{20,}$');
+final RegExp _groupShape = RegExp(r'^[A-Za-z0-9]{3,8}$');
+final RegExp _googleDocHostShape = RegExp(r'^(?:docs|drive)\.google\.com$', caseSensitive: false);
+// A Google document ID is 28 to 64 letters, digits, hyphens or underscores (fourth review of #354).
+final RegExp _googleDocIdShape = RegExp(r'^[A-Za-z0-9_-]{28,64}$');
+final RegExp _upperGroupShape = RegExp(r'^[A-Z0-9]+$');
+final RegExp _letterShape = RegExp(r'[A-Za-z]');
+final RegExp _digitShape = RegExp(r'\d');
+final RegExp _upperShape = RegExp(r'[A-Z]');
+final RegExp _lowerShape = RegExp(r'[a-z]');
+final RegExp _switchShape = RegExp(r'[A-Za-z](?=\d)|\d(?=[A-Za-z])');
+final RegExp _datePrefixShape = RegExp(r'^\d{4}-\d{2}-\d{2}');
+final RegExp _versionPrefixShape = RegExp(r'^v?\d+(?:\.\d+)+', caseSensitive: false);
+final RegExp _hashNumberShape = RegExp(r'^#\d+');
+final RegExp _emailShape = RegExp(r'^[\w.+-]+@[\w-]+\.[\w.]+$');
+final RegExp _figureShape = RegExp(r'^[+\-−]?\$?\d+\.\d+(?:R|%)?$');
+final RegExp _rFigureShape = RegExp(r'^[+\-−]\d+R$');
+
+/// True when [text] holds the shape of a password, key, token or private key. Whole text, not a window.
+bool cheBrainTextHasSecretShape(String text) {
+  if (_brokerKeyShape.hasMatch(text) || _pemShape.hasMatch(text) || _jwtShape.hasMatch(text) || _userPassShape.hasMatch(text)) {
+    return true;
+  }
+  for (final piece in text.split(_tokenSplitShape)) {
+    if (piece.isNotEmpty && _secretToken(piece)) return true;
+  }
+  return false;
+}
+
+bool _secretToken(String raw) {
+  final trimmed = raw.replaceFirst(_leadPunctShape, '').replaceFirst(_trailPunctShape, '');
+  if (_webhookShape.hasMatch(trimmed)) return true;
+  if (_linkShape.hasMatch(trimmed)) return _linkHasSecret(trimmed);
+  return _plainSecret(trimmed);
+}
+
+// A commit SHA is 7-12 or exactly 40 hex characters; any other hex run is a key or a token.
+bool _plainSecret(String trimmed) {
+  if (_groupedCode(trimmed)) return true;
+  final token = trimmed.replaceFirst(_trailingBangShape, '');
+  if (token.length < 8 || !_letterShape.hasMatch(token) || !_digitShape.hasMatch(token)) return false;
+  if (_hexShape.hasMatch(token)) return token.length >= 13 && token.length != 40;
+  if (_uuidShape.hasMatch(token) || _emailShape.hasMatch(token)) return false;
+  if (_datePrefixShape.hasMatch(token) || _versionPrefixShape.hasMatch(token) || _hashNumberShape.hasMatch(token)) return false;
+  if (_figureShape.hasMatch(token) || _rFigureShape.hasMatch(token)) return false;
+  final mixedCase = _lowerShape.hasMatch(token) && _upperShape.hasMatch(token);
+  if (_passwordSymbolShape.hasMatch(token) || (mixedCase && trimmed != token)) return true;
+  final switches = _switchShape.allMatches(token).length;
+  return mixedCase && ((token.length >= 12 && switches >= 3) || token.length >= 24);
+}
+
+// A code is four or more hyphen-separated groups of four or five letters and digits, and each group has
+// a digit or all groups are capitals (the same rule as research_memory.js; third review of #354).
+bool _groupedCode(String token) {
+  if (_uuidShape.hasMatch(token)) return false;
+  final groups = token.split('-');
+  if (groups.length < 4 || !groups.every(_groupShape.hasMatch)) return false;
+  if (!_letterShape.hasMatch(groups.join())) return false;
+  return groups.every(_digitShape.hasMatch) || groups.every(_upperGroupShape.hasMatch);
+}
+
+// Google links (owner decisions, seventh round of #354), as in research_memory.js. An ID is exempt from the
+// random-run checks only inside one of the functional shapes below, and only when it is a clean ID of 28 to 64
+// characters. Any other Google path with a long ID is withheld. A shape lists the path parts after the leading
+// "/": 'ID' is the Google ID and a List is a choice of parts.
+const List<List<Object>> _googleAllowedLinks = [
+  ['docs.google.com', ['document', 'd', 'ID', ['edit', 'view']]],
+  ['docs.google.com', ['spreadsheets', 'd', 'ID', ['edit', 'view']]],
+  ['docs.google.com', ['presentation', 'd', 'ID', ['edit', 'view', 'present']]],
+  ['docs.google.com', ['document', 'd', 'e', 'PUBID', 'pub']],
+  ['drive.google.com', ['file', 'd', 'ID', 'view']],
+  ['drive.google.com', ['drive', 'folders', 'ID']],
+];
+
+// A real "publish to the web" ID ("2PACX-1v…") is about 86 characters: on the pub shape only, a 2PACX- ID of up to
+// 120 characters is accepted. The multi-account form puts /u/<digit>/ after the file kind (eighth review of #354).
+final RegExp _googlePubIdShape = RegExp(r'^2PACX-[A-Za-z0-9_-]{22,114}$');
+final RegExp _singleDigitShape = RegExp(r'^\d$');
+const _googleMultiAccountKinds = {'document', 'spreadsheets', 'presentation', 'drive'};
+
+// The index of the allow-listed ID in the raw path segments, or -1 when the path is not one of those shapes.
+// A trailing slash after the action is allowed.
+int _googleAllowedIdIndex(String host, List<String> rawSegments) {
+  var parts = rawSegments.sublist(1);
+  if (parts.length > 1 && parts.last.isEmpty) parts = parts.sublist(0, parts.length - 1);
+  var offset = 1;
+  if (parts.length > 3 && _googleMultiAccountKinds.contains(parts[0]) && parts[1] == 'u' && _singleDigitShape.hasMatch(parts[2])) {
+    parts = [parts[0], ...parts.sublist(3)];
+    offset = 3;
+  }
+  for (final entry in _googleAllowedLinks) {
+    final allowedHost = entry[0] as String;
+    final shape = entry[1] as List<Object>;
+    if (host.toLowerCase() != allowedHost || parts.length != shape.length) continue;
+    var idIndex = -1;
+    var matches = true;
+    for (var k = 0; k < shape.length && matches; k++) {
+      final want = shape[k];
+      final part = parts[k];
+      if (want == 'ID') {
+        idIndex = k + offset;
+        matches = _googleDocIdShape.hasMatch(part);
+      } else if (want == 'PUBID') {
+        idIndex = k + offset;
+        matches = _googleDocIdShape.hasMatch(part) || _googlePubIdShape.hasMatch(part);
+      } else if (want is List) {
+        matches = want.contains(part);
+      } else {
+        matches = part == want;
+      }
+    }
+    if (matches) return idIndex;
+  }
+  return -1;
+}
+
+// A password in the userinfo is withheld when it is six or more characters with a letter and a digit or a
+// symbol (sixth review of #354), as in research_memory.js.
+final RegExp _digitOrSymbolShape = RegExp(r'[\d\W_]');
+bool _userinfoPasswordShape(String userinfo) {
+  final colon = userinfo.indexOf(':');
+  if (colon < 0) return false;
+  final password = userinfo.substring(colon + 1);
+  return password.length >= 6 && _letterShape.hasMatch(password) && _digitOrSymbolShape.hasMatch(password);
+}
+
+// Percent-encoded characters read as the characters they stand for (sixth review of #354).
+String _decodePercent(String text) =>
+    text.replaceAllMapped(_percentShape, (m) => String.fromCharCode(int.parse(m.group(1)!, radix: 16)));
+
+// Any character outside the token alphabet cuts a decoded segment into pieces (seventh review of #354).
+final RegExp _tokenBreakShape = RegExp(r'[^A-Za-z0-9_-]+');
+
+bool _randomRun(String piece) =>
+    _randomRunShape.hasMatch(piece) && _letterShape.hasMatch(piece) && _digitShape.hasMatch(piece) && !_hexShape.hasMatch(piece);
+
+// The hyphen-joined form: a hyphen, capitals, lower-case letters and digits (the same floor as _randomRun).
+bool _hyphenatedRandomRun(String piece) =>
+    _hyphenRunShape.hasMatch(piece) && piece.contains('-') && _lowerShape.hasMatch(piece) && _upperShape.hasMatch(piece) && _digitShape.hasMatch(piece);
+
+// A link is judged by its parts, as in research_memory.js: userinfo and query values get the full token check;
+// a path segment is judged piece by piece after decoding.
+bool _linkHasSecret(String link) {
+  final head = _linkHeadShape.firstMatch(link);
+  final authority = head == null ? '' : head.group(1)!;
+  final rest = head == null ? link : link.substring(head.group(0)!.length);
+  final at = authority.lastIndexOf('@');
+  if (at > 0 && authority.substring(0, at).split(':').any((piece) => piece.isNotEmpty && _plainSecret(piece))) return true;
+  if (at > 0 && _userinfoPasswordShape(authority.substring(0, at))) return true;
+  final host = authority.substring(at + 1).split(':').first;
+  final path = rest.split(_pathSplitShape).first;
+  final query = rest.substring(path.length);
+  final rawSegments = path.split('/');
+  final allowedId = _googleAllowedIdIndex(host, rawSegments);
+  final googleHost = _googleDocHostShape.hasMatch(host);
+  for (var i = 0; i < rawSegments.length; i++) {
+    if (i == allowedId) continue;
+    final decoded = _decodePercent(rawSegments[i]);
+    final pieces = decoded.split(_tokenBreakShape).where((p) => p.isNotEmpty).toList();
+    if (googleHost && pieces.any(_googleDocIdShape.hasMatch)) return true;
+    for (final piece in pieces) {
+      if (_randomRun(piece) || _hyphenatedRandomRun(piece)) return true;
+      if (_hexShape.hasMatch(piece) && _plainSecret(piece)) return true;
+    }
+  }
+  // The raw query is split on its delimiters first, so an encoded delimiter stays inside its value.
+  return query.split(_queryPieceSplitShape).any((raw) {
+    if (raw.isEmpty) return false;
+    final piece = _decodePercent(raw);
+    return _randomRun(piece) || _plainSecret(piece);
+  });
+}
+
+// Google document IDs are not repeated in logs, reports or unrelated model requests (owner decision): the ID in a
+// Google link becomes "[google-id]" at any length, so the redaction is never weaker than the gate. The link itself
+// stays stored whole.
+final RegExp _googleLinkTextShape =
+    RegExp(r"""https?://(?:docs|drive)\.google\.com/[^\s"'<>()\[\]]*""", caseSensitive: false);
+final RegExp _tokenCutShape = RegExp(r'[?#]');
+final RegExp _googleIdPartShape = RegExp(r'^[A-Za-z0-9_-]{28,}$');
+final RegExp _googleIdRunShape = RegExp(r'[A-Za-z0-9_-]{28,}');
+
+String cheRedactGoogleIds(String text) => text.replaceAllMapped(_googleLinkTextShape, (m) {
+      final link = m.group(0)!;
+      final cut = link.indexOf(_tokenCutShape);
+      final head = cut < 0 ? link : link.substring(0, cut);
+      final tail = cut < 0 ? '' : link.substring(cut);
+      final redactedHead = head.split('/').map((part) => _googleIdPartShape.hasMatch(part) ? '[google-id]' : part).join('/');
+      return redactedHead + tail.replaceAll(_googleIdRunShape, '[google-id]');
+    });
+
+// A request is about a Google file (eighth review of #354), as in research_memory.js: a Google file kind with a
+// possessive or a determiner, a Google product name or link, or every title word of a stored Google record. A bare
+// "file" or "link" counts only with "my" or "the" and a Google record on topic. The verb "google" alone does not.
+final RegExp _googleProductShape =
+    RegExp(r'\bgoogle\s+(?:docs?|sheets?|slides?|drive|forms?)\b|\b(?:docs|drive)\.google\.com\b', caseSensitive: false);
+final RegExp _googleFileKindShape = RegExp(
+    r"\b(?:my|the|our)\s+(?:[\w'’-]+\s+){0,3}?(?:docs?|documents?|sheets?|spreadsheets?|slides?|decks?|presentations?|forms?|folders?|drive)\b",
+    caseSensitive: false);
+final RegExp _googleBareFileShape = RegExp(r"\b(?:my|the)\s+(?:[\w'’-]+\s+){0,3}?(?:files?|links?)\b", caseSensitive: false);
+final RegExp _titleWordShape = RegExp(r'[a-z0-9]+');
+const _titleStopWords = {'the', 'and', 'for', 'with', 'from', 'into', 'your', 'our', 'this', 'that', 'what', 'are'};
+
+Set<String> _wordsOf(String text) => _titleWordShape.allMatches(text.toLowerCase()).map((m) => m.group(0)!).toSet();
+
+List<String> _titleWords(String title) => _wordsOf(title).where((w) => w.length >= 3 && !_titleStopWords.contains(w)).toList();
+
+/// True when the owner's own words are about a Google file, so the ID in it is theirs to use.
+bool cheAskedAboutGoogle(String text, {List<String> titles = const []}) {
+  if (_googleProductShape.hasMatch(text) || _googleFileKindShape.hasMatch(text)) return true;
+  final words = _wordsOf(text);
+  final lists = titles.map(_titleWords).where((list) => list.isNotEmpty).toList();
+  if (lists.any((list) => list.every(words.contains))) return true;
+  return _googleBareFileShape.hasMatch(text) && lists.any((list) => list.any(words.contains));
+}
+
+/// Brain text for a log, a report or a model request: IDs are redacted unless the owner's request is about Google.
+String cheRedactBrainText(String text, String ownerMessage, {List<String> titles = const []}) =>
+    cheAskedAboutGoogle(ownerMessage, titles: titles) ? text : cheRedactGoogleIds(text);
 
 class CheBrainRecord {
   CheBrainRecord({
@@ -456,6 +699,10 @@ class CheBrainReplica {
     _recordsJson = null;
     _records[record.id] = record;
     if (record.deleted) {
+      _tokens.remove(record.id);
+    } else if (cheBrainTextIsSensitive('${record.title}\n${record.excerpt}')) {
+      // A record that holds a secret shape (a sync from before the gate) stays in the list, but it is
+      // never indexed: no search finds it, so its words never reach the on-device model (second review of #354).
       _tokens.remove(record.id);
     } else {
       _tokens[record.id] = _tokenize('${record.title} ${record.excerpt}');

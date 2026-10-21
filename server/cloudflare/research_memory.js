@@ -33,12 +33,213 @@ function clipWords(value, max) {
 // A bare key carries no "secret" word, so it is matched by its shape (review of #348).
 export const BROKER_KEY_RE = /\b[AP]K[A-Z0-9]{16,38}\b/;
 
+// Credentials no word list catches, found by their shape (review of #354): a private key block, a
+// JWT or a piece of one (base64 JSON starts "eyJ"), a user:password pair, and a token that mixes
+// letters, digits and symbols the way passwords and keys do. A commit SHA, an issue number, a
+// date, a version, a URL, an address or a plain word is never one.
+const PEM_RE = /-----BEGIN [A-Z0-9 ]{3,40}-----/;
+const JWT_PIECE_RE = /\beyJ[A-Za-z0-9_-]{8,}/;
+const USER_PASS_RE = /(?:^|[\s(])[A-Za-z0-9._%+-]{2,40}:(?=[^\s:/@"'{}[\],]*[A-Za-z])(?=[^\s:/@"'{}[\],]*[\d!@#$%^&*+=?~])[^\s:/@"'{}[\],]{6,}/;
+const PASSWORD_SYMBOL = /[!@#$%^&*+=~?|\\]/;
+// A commit SHA is 7-12 or exactly 40 hex characters. Any other hex run is a key or a token (review of
+// #354: a 32-character hex key was read as a SHA). A UUID is an id, not a key.
+const HEX_RE = /^[0-9a-f]+$/i;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// Slack and Discord webhooks carry the secret in the path itself, so the path is the secret.
+const WEBHOOK_RE = /hooks\.slack\.com\/services\/|discord(?:app)?\.com\/api\/webhooks\//i;
+const URL_RE = /:\/\/|^www\./i;
+// A code is four or more hyphen-separated groups of three to eight letters and digits, and each group
+// has a digit or all groups are capitals: "8F3K-9LQ2-7MZP-4XWD", "ABCDE1-FGHIJ2-KLMNO3-PQRST4",
+// "AB1-CD2-EF3-GH4", "ABCD-EFGH-IJKL-MNOP" (fourth review of #354: the group length is {3,8}, not {4,5}).
+// Ordinary words are not codes: "CHE-APP-V2-BETA" (a two-character group), "Form-1099-NEC-tax-2025" (not
+// every group has a digit, and not all are capitals), "iPhone-15-Pro-Max" and "Sprint-12-week-3-retro"
+// (two-character groups).
+function groupedCode(token) {
+  if (UUID_RE.test(token)) return false;
+  const groups = token.split('-');
+  if (groups.length < 4 || !groups.every((g) => /^[A-Za-z0-9]{3,8}$/.test(g))) return false;
+  if (!/[A-Za-z]/.test(groups.join(''))) return false;
+  return groups.every((g) => /\d/.test(g)) || groups.every((g) => /^[A-Z0-9]+$/.test(g));
+}
+// A hyphen-joined run of 20 or more characters with capitals, lower-case letters and digits is a random
+// token too (fifth review of #354, owner default): "Q7mZ2kP9-xL4vN8wR3-tY6uB1c-7mZ2kP9xL4vN8wR" is
+// withheld. A lower-case slug ("brain-sync-follow-up-plan") has no capitals and stays kept. Path segments only.
+function hyphenatedRandomRun(piece) {
+  return /^[A-Za-z0-9_-]{20,}$/.test(piece) && piece.includes('-') && /[a-z]/.test(piece) && /[A-Z]/.test(piece) && /\d/.test(piece);
+}
+// A long run of letters and digits: a key or a token. A hyphen makes a slug words
+// ("issuecomment-1234567890"), so a slug is not one. A hex run is judged by the hex rule instead.
+function randomRun(piece) {
+  return /^[A-Za-z0-9_]{20,}$/.test(piece) && /[A-Za-z]/.test(piece) && /\d/.test(piece) && !HEX_RE.test(piece);
+}
+function plainSecret(trimmed) {
+  if (groupedCode(trimmed)) return true;
+  const token = trimmed.replace(/!+$/, '');
+  if (token.length < 8 || !/[A-Za-z]/.test(token) || !/\d/.test(token)) return false;
+  // Built-in Simulation Lab model references are lowercase snake_case with a numeric
+  // version (hover_flight@1), not credentials. The full model identifier is retained
+  // for provenance; real broker keys, random tokens and passwords stay blocked.
+  if (/^[a-z]+(?:_[a-z]+)+@[1-9][0-9]?$/.test(token)) return false;
+  if (HEX_RE.test(token)) return token.length >= 13 && token.length !== 40;
+  if (UUID_RE.test(token) || /^[\w.+-]+@[\w-]+\.[\w.]+$/.test(token)) return false;
+  if (/^\d{4}-\d{2}-\d{2}/.test(token) || /^v?\d+(?:\.\d+)+/i.test(token) || /^#\d+/.test(token)) return false;
+  // A trading figure is not a password: a signed decimal with an R or % unit ("+0.0125R", "-1.5%").
+  if (/^[+\-−]?\$?\d+\.\d+(?:R|%)?$/.test(token) || /^[+\-−]\d+R$/.test(token)) return false;
+  const mixedCase = /[a-z]/.test(token) && /[A-Z]/.test(token);
+  if (PASSWORD_SYMBOL.test(token) || (mixedCase && trimmed !== token)) return true;
+  const switches = (token.match(/[A-Za-z](?=\d)|\d(?=[A-Za-z])/g) || []).length;
+  return mixedCase && ((token.length >= 12 && switches >= 3) || token.length >= 24);
+}
+// Google links (owner decisions, seventh round of #354). An ID is exempt from the random-run checks only inside
+// one of the functional shapes below, and only when it is a clean ID of 28 to 64 characters (no encoded
+// characters inside it). Any other Google path with a long ID is withheld. A shape lists the path parts after
+// the leading "/": "ID" is the Google ID and an array is a choice of parts.
+const GOOGLE_DOC_HOST_RE = /^(?:docs|drive)\.google\.com$/i;
+const GOOGLE_DOC_ID_RE = /^[A-Za-z0-9_-]{28,64}$/;
+const GOOGLE_ALLOWED_LINKS = [
+  ['docs.google.com', ['document', 'd', 'ID', ['edit', 'view']]],
+  ['docs.google.com', ['spreadsheets', 'd', 'ID', ['edit', 'view']]],
+  ['docs.google.com', ['presentation', 'd', 'ID', ['edit', 'view', 'present']]],
+  ['docs.google.com', ['document', 'd', 'e', 'PUBID', 'pub']],
+  ['drive.google.com', ['file', 'd', 'ID', 'view']],
+  ['drive.google.com', ['drive', 'folders', 'ID']],
+];
+// A real "publish to the web" ID ("2PACX-1v…") is about 86 characters. On the /document/d/e/<id>/pub shape
+// only, a 2PACX- ID of up to 120 characters is accepted (eighth review of #354).
+const GOOGLE_PUB_ID_RE = /^2PACX-[A-Za-z0-9_-]{22,114}$/;
+// The multi-account form puts /u/<digit>/ after the file kind: /document/u/0/d/<id>/edit, /drive/u/0/folders/<id>.
+const GOOGLE_MULTI_ACCOUNT_KINDS = new Set(['document', 'spreadsheets', 'presentation', 'drive']);
+// The index of the allow-listed ID in the raw path segments, or -1 when the path is not one of those shapes.
+// A trailing slash after the action is allowed.
+function googleAllowedIdIndex(host, rawSegments) {
+  let parts = rawSegments.slice(1);
+  if (parts.length > 1 && parts[parts.length - 1] === '') parts = parts.slice(0, -1);
+  let offset = 1;
+  if (parts.length > 3 && GOOGLE_MULTI_ACCOUNT_KINDS.has(parts[0]) && parts[1] === 'u' && /^\d$/.test(parts[2])) {
+    parts = [parts[0], ...parts.slice(3)];
+    offset = 3;
+  }
+  for (const [allowedHost, shape] of GOOGLE_ALLOWED_LINKS) {
+    if (host.toLowerCase() !== allowedHost || parts.length !== shape.length) continue;
+    let idIndex = -1;
+    const matches = shape.every((want, k) => {
+      const part = parts[k];
+      if (want === 'ID') { idIndex = k + offset; return GOOGLE_DOC_ID_RE.test(part); }
+      if (want === 'PUBID') { idIndex = k + offset; return GOOGLE_DOC_ID_RE.test(part) || GOOGLE_PUB_ID_RE.test(part); }
+      if (Array.isArray(want)) return want.includes(part);
+      return part === want;
+    });
+    if (matches) return idIndex;
+  }
+  return -1;
+}
+// A password in the userinfo ("https://bob:hunter22@host") is withheld when it is six or more characters
+// with a letter and a digit or a symbol (sixth review of #354). The plain token check missed "hunter22".
+function userinfoPasswordShape(userinfo) {
+  const colon = userinfo.indexOf(':');
+  if (colon < 0) return false;
+  const password = userinfo.slice(colon + 1);
+  return password.length >= 6 && /[A-Za-z]/.test(password) && /[\d\W_]/.test(password);
+}
+// Percent-encoded characters read as the characters they stand for. A malformed escape is not a sequence,
+// so it is left alone and cannot throw.
+function decodePercent(text) {
+  return text.replace(/%([0-9A-Fa-f]{2})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+}
+// A link is judged by its parts. Its userinfo and query values get the full token check (a password or a
+// code in a link is a secret); a path segment is a secret as a long random run, a hex key, or a token that an
+// encoded character joins. An ordinary path slug ("6-006-introduction-to-algorithms-2020") and a percent-encoded
+// word ("Amdahl%27s_law") are words.
+function linkHasSecret(link) {
+  const head = /^(?:[a-z][a-z0-9+.-]*:\/\/|www\.)([^/?#]*)/i.exec(link);
+  const authority = head ? head[1] : '';
+  const rest = head ? link.slice(head[0].length) : link;
+  const at = authority.lastIndexOf('@');
+  if (at > 0 && authority.slice(0, at).split(':').some((piece) => piece && plainSecret(piece))) return true;
+  if (at > 0 && userinfoPasswordShape(authority.slice(0, at))) return true;
+  const host = authority.slice(at + 1).split(':')[0];
+  const path = rest.split(/[?#]/)[0];
+  const query = rest.slice(path.length);
+  // Each raw path segment is decoded, then split on any character outside [A-Za-z0-9_-], so an encoded "%2F"
+  // or "%3F" cannot join the pieces of one token; each piece is then judged.
+  const rawSegments = path.split('/');
+  const allowedId = googleAllowedIdIndex(host, rawSegments);
+  const googleHost = GOOGLE_DOC_HOST_RE.test(host);
+  for (let i = 0; i < rawSegments.length; i++) {
+    if (i === allowedId) continue;
+    const decoded = decodePercent(rawSegments[i]);
+    const pieces = decoded.split(/[^A-Za-z0-9_-]+/).filter(Boolean);
+    if (googleHost && pieces.some((piece) => GOOGLE_DOC_ID_RE.test(piece))) return true;
+    for (const piece of pieces) {
+      if (randomRun(piece) || hyphenatedRandomRun(piece)) return true;
+      if (HEX_RE.test(piece) && plainSecret(piece)) return true;
+    }
+  }
+  // The raw query is split on its delimiters first, so an encoded delimiter ("%26", "%3D", "%3F", "%23") stays
+  // inside its value. Each value is decoded, then judged by the plain rule.
+  return query.split(/[?&=#]+/).some((raw) => {
+    if (!raw) return false;
+    const piece = decodePercent(raw);
+    return randomRun(piece) || plainSecret(piece);
+  });
+}
+// Google document IDs are not repeated in logs, reports or unrelated model requests (owner decision). In a
+// Google link the ID is replaced by "[google-id]" at any length, so the redaction is never weaker than the gate.
+// The link itself stays stored whole.
+const GOOGLE_LINK_TEXT_RE = /https?:\/\/(?:docs|drive)\.google\.com\/[^\s"'<>()[\]]*/gi;
+const GOOGLE_ID_PART_RE = /^[A-Za-z0-9_-]{28,}$/;
+export function redactGoogleIds(text) {
+  return String(text ?? '').replace(GOOGLE_LINK_TEXT_RE, (link) => {
+    const cut = link.search(/[?#]/);
+    const head = cut < 0 ? link : link.slice(0, cut);
+    const tail = cut < 0 ? '' : link.slice(cut);
+    return head.split('/').map((part) => (GOOGLE_ID_PART_RE.test(part) ? '[google-id]' : part)).join('/')
+      + tail.replace(/[A-Za-z0-9_-]{28,}/g, '[google-id]');
+  });
+}
+// A request is about a Google file (eighth review of #354) when it names a Google file kind with a possessive or a
+// determiner ("my budget sheet", "the slides", "my Drive folder"), names Google Docs, Sheets, Slides, Drive or Forms
+// (or holds a Google link), or holds every title word of a stored Google record. A bare "file" or "link" counts
+// only with "my" or "the" and a Google record on topic. The verb "google" alone is not a request about a file.
+const GOOGLE_PRODUCT_RE = /\bgoogle\s+(?:docs?|sheets?|slides?|drive|forms?)\b|\b(?:docs|drive)\.google\.com\b/i;
+const GOOGLE_FILE_KIND_RE = /\b(?:my|the|our)\s+(?:[\w'’-]+\s+){0,3}?(?:docs?|documents?|sheets?|spreadsheets?|slides?|decks?|presentations?|forms?|folders?|drive)\b/i;
+const GOOGLE_BARE_FILE_RE = /\b(?:my|the)\s+(?:[\w'’-]+\s+){0,3}?(?:files?|links?)\b/i;
+const TITLE_STOP_WORDS = new Set(['the', 'and', 'for', 'with', 'from', 'into', 'your', 'our', 'this', 'that', 'what', 'are']);
+function titleWords(title) {
+  return [...new Set(String(title ?? '').toLowerCase().match(/[a-z0-9]+/g) || [])].filter((w) => w.length >= 3 && !TITLE_STOP_WORDS.has(w));
+}
+export function ownerAskedAboutGoogle(text, { titles = [] } = {}) {
+  const value = String(text ?? '');
+  if (GOOGLE_PRODUCT_RE.test(value) || GOOGLE_FILE_KIND_RE.test(value)) return true;
+  const words = new Set(value.toLowerCase().match(/[a-z0-9]+/g) || []);
+  const lists = (Array.isArray(titles) ? titles : []).map(titleWords).filter((list) => list.length);
+  if (lists.some((list) => list.every((w) => words.has(w)))) return true;
+  return GOOGLE_BARE_FILE_RE.test(value) && lists.some((list) => list.some((w) => words.has(w)));
+}
+// Brain text for a log, a report or a model request: IDs are redacted unless the owner's request is about Google.
+export function redactBrainText(text, ownerMessage = '', { titles = [] } = {}) {
+  return ownerAskedAboutGoogle(ownerMessage, { titles }) ? String(text ?? '') : redactGoogleIds(text);
+}
+function secretToken(raw) {
+  // Sentence punctuation is not part of a token; a closing "!" is, when the rest already mixes
+  // cases and digits the way a password does ("Summer2026!").
+  const trimmed = raw.replace(/^[("'“‘[<{]+/, '').replace(/[)"'”’\]>},.;:?]+$/, '');
+  if (WEBHOOK_RE.test(trimmed)) return true;
+  if (URL_RE.test(trimmed)) return linkHasSecret(trimmed);
+  return plainSecret(trimmed);
+}
+export function hasSecretShape(text) {
+  const value = String(text ?? '');
+  if (PEM_RE.test(value) || JWT_PIECE_RE.test(value) || USER_PASS_RE.test(value) || BROKER_KEY_RE.test(value)) return true;
+  return value.split(/[\s"“”,;(){}[\]<>]+/).some((piece) => piece && secretToken(piece));
+}
+
 export function isSafeMemoryText(text) {
   // The whole collapsed text, not the 500-character display window: a window can cut a word
   // ("pin|nacle") into something the classifier reads as a secret and refuse a clean memory.
   const whole = String(text ?? '').replace(/\s+/g, ' ').trim();
   if (!whole) return false;
-  if (SENSITIVE_RE.test(whole) || BROKER_KEY_RE.test(whole)) return false;
+  if (SENSITIVE_RE.test(whole) || BROKER_KEY_RE.test(whole) || hasSecretShape(whole)) return false;
   if (classifyItem(whole) === 'secret') return false;
   return true;
 }

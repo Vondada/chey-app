@@ -6,6 +6,8 @@
 // This is note-taking, not retraining: CHE gets better by remembering what
 // happened and what to do differently, not by changing the AI model.
 
+import { redactGoogleIds } from './research_memory.js';
+
 const MAX_DAY_CHARS = 14_000;
 const MAX_REVIEWS = 30;
 const MAX_KNOWLEDGE = 60;
@@ -29,7 +31,8 @@ export async function collectDay(storage, sinceIso) {
   }
   turns.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
   const lines = turns.map((t) => `[${t.at}] OWNER: ${clip(t.user, 600)}\nCHE: ${t.error ? '(failed to answer)' : clip(t.che, 800)}`);
-  let text = lines.join('\n\n');
+  // A Google document ID never reaches the review prompt (eighth review of #354).
+  let text = redactGoogleIds(lines.join('\n\n'));
   if (text.length > MAX_DAY_CHARS) text = text.slice(text.length - MAX_DAY_CHARS);
   return { turns: turns.length, failures: turns.filter((t) => t.error).length, text };
 }
@@ -51,6 +54,18 @@ export function parseReview(raw) {
   } catch (_) {
     return null;
   }
+}
+
+// A Google document ID never enters the stored review, its lessons or the notes fed to later prompts (eighth review
+// of #354).
+function redactReview(review) {
+  if (!review) return review;
+  return {
+    summary: redactGoogleIds(review.summary),
+    lessons: review.lessons.map((item) => redactGoogleIds(item)),
+    open_threads: review.open_threads.map((item) => redactGoogleIds(item)),
+    stated_preferences: review.stated_preferences.map((item) => redactGoogleIds(item)),
+  };
 }
 
 export async function runNightlyReview(env, storage, data, model, nowMs = Date.now()) {
@@ -86,7 +101,7 @@ export async function runNightlyReview(env, storage, data, model, nowMs = Date.n
   } catch (error) {
     return { status: 503, detail: `Nightly review could not run: ${clip(error?.message || error, 300)}` };
   }
-  const review = parseReview(raw);
+  const review = redactReview(parseReview(raw));
   if (!review) return { status: 502, detail: 'Nightly review came back unreadable; will retry next night.' };
   const record = { id: crypto.randomUUID(), at, since, turns: day.turns, failures: day.failures, ...review };
   data.nightly_reviews.unshift(record);

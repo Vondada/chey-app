@@ -10,6 +10,7 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
 import 'che_backend.dart';
+import '../memory/che_brain_replica.dart';
 import 'che_brain.dart';
 import 'che_log.dart';
 import 'che_models.dart';
@@ -208,7 +209,7 @@ class CheAgentController extends ChangeNotifier {
       history: history,
       attachments: user.attachments,
       systemAddons: [
-        ...?brain?.contextFor(user.text, conversations, exclude: current, recentReplies: _recentReplies()),
+        ...?brain?.contextFor(user.text, conversations, exclude: current, recentReplies: _recentReplies()).map((line) => cheRedactBrainText(line, user.text)),
         ...?systemAddons?.call(),
         if (RegExp(r'\bplug-?ins?\b', caseSensitive: false).hasMatch(user.text)) chePluginAuthoringGuide.trim(),
       ],

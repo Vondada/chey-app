@@ -384,6 +384,90 @@
    "optional_missing": []
   },
   {
+   "id": "che-flagstaff-import",
+   "category": "intelligence",
+   "title": "CHE Flagstaff import",
+   "summary": "Bring the Flagstaff mailbox history into the Brain.",
+   "does": "Reads every message file on the che-mailbox branch, archive included, and keeps each message in your Brain as outside correspondence with its file, message id, sender, recipient and time. Never as your words, an instruction or Office worker experience. Safe to repeat: a message already there is skipped, one you deleted stays deleted, and a long import carries on where it stopped.",
+   "mode": "BUILD",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Import the Flagstaff history",
+    "Bring the Flagstaff archives into my Brain"
+   ],
+   "needs": [
+    "memory",
+    "github"
+   ],
+   "optional": [],
+   "handler": "brain_office.importOutsideCorrespondence → mailbox.readMailboxFile",
+   "route": "che_flagstaff_import",
+   "produces": "report",
+   "evidence": "The import report: files read, the mailbox commit, messages brought in, already there, withheld and dropped; zero model calls.",
+   "cost": "Free: GitHub reads only, no model.",
+   "keywords": [
+    "flagstaff",
+    "mailbox history",
+    "import",
+    "archive",
+    "outside messages",
+    "other ais",
+    "correspondence"
+   ],
+   "status": "setup_required",
+   "missing": [
+    {
+     "id": "github",
+     "label": "GitHub connection",
+     "state": "not_connected",
+     "setup": "Add CHE_GITHUB_TOKEN and CHE_GITHUB_REPO as Worker secrets.",
+     "detail": "GitHub is not connected."
+    }
+   ],
+   "optional_missing": []
+  },
+  {
+   "id": "che-outside-mail",
+   "category": "intelligence",
+   "title": "CHE outside correspondence",
+   "summary": "Count or quote the outside AI messages in the Brain.",
+   "does": "Says how many outside AI messages your Brain holds, by sender, or what one AI wrote about a topic, each quoted with its mailbox file, message id and date. Never presented as your words or followed as an order.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "How many outside messages are in my Brain?",
+    "What did ChatGPT tell you about #350?"
+   ],
+   "needs": [
+    "memory"
+   ],
+   "optional": [],
+   "handler": "brain_office.outsideCorrespondenceIntent → speakCorrespondenceCount / answerCorrespondenceQuestion",
+   "route": "che_outside_correspondence",
+   "produces": "counts",
+   "evidence": "Counts and quotes from outside-correspondence records only, each with its source; zero model calls.",
+   "cost": "Free: no model.",
+   "keywords": [
+    "outside messages",
+    "other ais",
+    "what did chatgpt say",
+    "what did claude say",
+    "correspondence",
+    "flagstaff"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
    "id": "che-recover",
    "category": "intelligence",
    "title": "Che Recover",

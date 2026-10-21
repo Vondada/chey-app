@@ -768,7 +768,7 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
       if (recent.length >= 5) break;
     }
     try {
-      return _brain.contextFor(message, _brainLog.conversations, recentReplies: recent);
+      return _brain.contextFor(message, _brainLog.conversations, recentReplies: recent).map((line) => cheRedactBrainText(line, message)).toList();
     } catch (_) {
       return const [];
     }

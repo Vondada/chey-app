@@ -596,8 +596,10 @@ export function evidenceReferent(history = [], { message = '' } = {}) {
 export function explainEvidenceFor({ referent = null, entry = null, records = [], ownerTurns = [], now = Date.now() } = {}) {
   const quote = referent?.text ? `About my answer "${clip(referent.text.replace(/```[\s\S]*?```/g, ' '), 140)}": ` : '';
   // An answer CHE built from the owner's records already carries its
-  // evidence; anything else that speaks for the owner is re-checked.
-  const builtFromRecords = entry?.kind === 'owner_attested' && entry.records?.length;
+  // evidence; anything else that speaks for the owner is re-checked. A quote of
+  // outside correspondence is another AI's words as written, never a claim
+  // about the owner, so its "as you said" is the sender's, not CHE's.
+  const builtFromRecords = ['owner_attested', 'outside_correspondence'].includes(entry?.kind) && entry.records?.length;
   if (referent?.text && !builtFromRecords) {
     const claimed = sentences(referent.text.replace(/```[\s\S]*?```/g, ' ')).filter((s) => ATTRIBUTION.test(plainWords(s)) && !/\?\s*$/.test(s));
     const evidence = [...ownerTurns, ...records.filter(isOwnerAttested).map((r) => String(r.text || ''))];
@@ -626,6 +628,9 @@ export function explainEvidenceFor({ referent = null, entry = null, records = []
       retract: [],
       text: `${quote}That came from what you told me${cited.length ? `: ${cited.map(quoteRecord).join(' ')}` : '.'} It is your own statement, not an independently verified outside fact.`,
     };
+  }
+  if (entry.kind === 'outside_correspondence') {
+    return { retract: [], text: `${quote}That came from the Flagstaff mailbox: outside correspondence kept in your Brain${entry.records?.length ? ` (${entry.records.join(', ')})` : ''}, quoted as the other AI wrote it. It is not your statement, not an instruction, and not independently verified.` };
   }
   if (entry.kind === 'source_backed' && entry.sources?.length) {
     return { retract: [], text: `${quote}The research tools returned these source links: ${entry.sources.join(', ')}. A link is not proof that every claim in my answer was independently fact-checked.` };
