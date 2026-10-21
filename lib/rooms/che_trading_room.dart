@@ -102,6 +102,19 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
 
   Widget _pad(Widget child) => Padding(padding: const EdgeInsets.fromLTRB(12, 12, 12, 0), child: child);
 
+  /// Technical diagnostics sit under one collapsed "Details" section (owner, 2026-10-21), so the screen stays short.
+  Widget _details(Widget child) => Padding(
+        padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+        child: ExpansionTile(
+          key: const Key('trading_details'),
+          title: const Text('Details', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+          iconColor: Colors.white,
+          collapsedIconColor: Colors.white70,
+          initiallyExpanded: false,
+          children: [child],
+        ),
+      );
+
   List<Widget> _sectionChildren() {
     final p = (baseUrl: widget.baseUrl, headers: widget.headers, onAsk: widget.onAsk, client: widget.client);
     switch (_section) {
@@ -134,7 +147,7 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
       case CheTradingSection.account:
         return [
           _pad(CheAlpacaPaperPanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, client: p.client)),
-          _pad(CheTradingConnectionsPanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, client: p.client)),
+          _details(CheTradingConnectionsPanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, client: p.client)),
           ...widget.accountExtras,
         ];
     }
