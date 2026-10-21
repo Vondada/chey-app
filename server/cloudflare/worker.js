@@ -11,6 +11,7 @@ import {
   requeueAgentReview,
   cancelAgentTasks,
   TASK_FINISHED,
+  ensureJobAgent,
   queueAgentTask,
   recordAgentWork,
   recoverStaleWork,
@@ -208,6 +209,15 @@ import { APP_BUILD_KEY, appBuildIntent, appBuildRun, dispatchAppBuild, speakAppB
 import { advanceObjectives, applyMissionEvent, approvalReached, approveNode, awaitingApproval, cancelObjective, createObjective, mutateObjective, replanNode, resolveKnownNodes, retryNode, setObjectivePaused, speakObjective } from './objective_graph.js';
 import { CATEGORIES, COMMANDS, catalogView, commandById, commandStatus, connectorStatus, describeWorkflow, dispatchPrompt, findSavedWorkflow, normalizeSavedWorkflow, parseSlashCommand, readCommandSpeech, searchCommands, speakCommandList, speakUnavailable, suggestCommands, workflowNodes, workflowFromWords } from './command_catalog.js';
 import { handleReaRequest, loadInvestigation, parseReaRequest, reaInvestigationDetail, reaInvestigations } from './rea_runner.js';
+import { browseIntent, runSearchRoute, subAgentPlan } from './browse_chat.js';
+import { forgetResearchPages, listResearchPages, storeLoopReads } from './agent_research_memory.js';
+const PAGE_DELETE_KEY = 'research_page_delete_pending';
+const PAGE_DELETE_MS = 5 * 60_000;
+function speakResearchPages({ pages, more }) {
+  if (!pages.length) return 'I have no research pages kept yet, sir. Ask me to browse something, and the pages I read will be kept here.';
+  const lines = pages.slice(0, 20).map((page, i) => `${i + 1}. ${page.title || page.url} (${page.url}, read ${String(page.read_at).slice(0, 10)})`);
+  return `I keep ${pages.length}${more ? ' or more' : ''} research page${pages.length === 1 ? '' : 's'}, newest first:\n${lines.join('\n')}`;
+}
 import { LAST_RESULTS_KEY, loadCatalog, resourceChoice, resourceIntent, resultLinks, searchCatalog, speakResults } from './resource_catalogs.js';
 import { fiveLayerIntent, LAYER_RESULTS_KEY, reasoningLayer, runReasoningLayer, speakFiveLayerResults } from './reasoning_exam.js';
 import { AUTONOMY_EXAM, EXAM_RESULTS_KEY, examIntent, examLevel, gradeLevel, mergeExamResult, speakExamResults, ungradableEngineFailure } from './autonomy_exam.js';
@@ -3617,6 +3627,78 @@ export class CheState extends DurableObject {
       });
     })().catch(() => {}).finally(() => { this.mailRefresh = null; });
     return this.mailRefresh;
+  }
+
+  // The owner's search, study and sub-agent requests (browse_chat.js). The owner typed the request, which is his
+  // permission for the browser. Money, deletes and sends never run here; sub-agents report back to CHE.
+  async browseTurn(message, body = {}) {
+    // A pending forget is retired by the next owner turn; only an immediate yes carries it out.
+    const pending = await Promise.resolve().then(() => this.ctx.storage.get(PAGE_DELETE_KEY)).catch(() => null);
+    if (pending) {
+      await this.ctx.storage.put(PAGE_DELETE_KEY, null);
+      if (isOwnerYes(message) && Date.now() - Number(pending.at || 0) < PAGE_DELETE_MS) {
+        const result = forgetResearchPages(new CheBrainStore(this.ctx.storage), pending.ids, { now: new Date().toISOString() });
+        const left = result.missing.length ? ` ${result.missing.length} ${result.missing.length === 1 ? 'was' : 'were'} not research pages, so I left ${result.missing.length === 1 ? 'it' : 'them'} alone.` : '';
+        return { text: `Deleted ${result.deleted.length} research page${result.deleted.length === 1 ? '' : 's'}, sir.${left}` };
+      }
+    }
+    const intent = browseIntent(message);
+    if (!intent.search && !intent.study && !intent.create && !intent.list && !intent.forget) return null;
+    if (intent.list || intent.forget) {
+      const store = new CheBrainStore(this.ctx.storage);
+      const listed = listResearchPages(store, { limit: 200 });
+      const { pages } = listed;
+      if (intent.list) return { text: speakResearchPages(listed) };
+      const named = intent.all ? pages : pages.filter((page) => page.url && intent.url && page.url.startsWith(intent.url));
+      if (!named.length) return { text: 'I found no research page to forget, sir. Nothing was deleted. Name the page by its link, or say "forget all research pages".' };
+      await this.ctx.storage.put(PAGE_DELETE_KEY, { ids: named.map((page) => page.id), at: Date.now() });
+      return { text: `This deletes ${named.length} research page${named.length === 1 ? '' : 's'}: ${named.slice(0, 5).map((page) => page.title || page.url).join('; ')}${named.length > 5 ? '; and more' : ''}. Nothing is deleted until you say yes.` };
+    }
+    const parts = [];
+    if (intent.study && intent.url) {
+      const rea = await handleReaRequest(this.ctx.storage, this.keyEnv || this.env, `REA inspect: ${intent.url}`, this.reaOptions({ history: [], owner: true }))
+        .catch((error) => ({ ok: false, text: `REA could not start on that page: ${String(error?.message || error).slice(0, 200)}` }));
+      if (rea?.text) parts.push(rea.text);
+    } else if (intent.study) {
+      parts.push('Send me the link to the page you want studied, and REA will read what the site allows.');
+    }
+    const plan = subAgentPlan(message, { url: intent.url });
+    if (plan.length) parts.push(await this.queueBrowseSubAgents(plan));
+    if (intent.search) {
+      // A model failure is no plan, so the loop stops and says so; it never becomes an invented answer.
+      const complete = async ({ system, user }) => {
+        const answer = await runChatModel(this.env, { systemPrompt: system, turns: [], message: user, maxTokens: 400, preferFast: true }).catch(() => ({ response: '' }));
+        return String(answer?.response || '');
+      };
+      const searched = await runSearchRoute(message, { complete, soul: String(body.soul || '').slice(0, 1500) });
+      // Every page the run read is kept as a research page: kept until the owner asks for it to be forgotten.
+      const kept = storeLoopReads(new CheBrainStore(this.ctx.storage), { question: message, observations: searched.observations, now: new Date().toISOString() }).kept.length;
+      parts.push(kept ? `${searched.text}\nI kept ${kept} page${kept === 1 ? '' : 's'} I read as research pages.` : searched.text);
+    }
+    return { text: parts.filter(Boolean).join('\n\n') };
+  }
+
+  async queueBrowseSubAgents(plan) {
+    const data = await this.loadData();
+    const lines = [];
+    for (const item of plan) {
+      // The best existing fit takes the job (named roster first, partners last). A new agent is created only when
+      // nobody on the team covers the role.
+      const { agent, hired, error } = ensureJobAgent(data, { needs: item.needs, roleSpec: item.roleSpec });
+      if (!agent) { lines.push(`I could not start ${item.label}: ${error}.`); continue; }
+      if (hired) lines.push(`Nobody on the team covers ${item.label}, so I created ${agent.name} for it.`);
+      let refused = '';
+      try { assertAgentMayRun(agent, { task: item.task }); } catch (error) { refused = permissionBlocker(agent, error); }
+      if (refused) { lines.push(`${item.agent} did not start: ${refused}`); continue; }
+      // The owner assigned it, which is the permission for the browser: the agent runs the browsing loop.
+      const queued = queueAgentTask(data, agent, item.task, 'owner_chat', { browse: true });
+      if (item.next) queued.next = { needs: item.next.needs, roleSpec: item.next.roleSpec, label: item.next.label, task: item.next.task };
+      const then = item.next ? ` When the research is reviewed, the ${item.next.label} job goes to the agent whose job fits it.` : '';
+      lines.push(`${agent.name} is working on it with the browsing loop: ${item.label}.${then} ${agent.name} will hand the result to me for review; ask me for it when it is back.`);
+    }
+    await this.ctx.storage.put('che', data);
+    await this.scheduleWork();
+    return lines.join(' ');
   }
 
   async loadData() {
@@ -8869,6 +8951,13 @@ export class CheState extends DurableObject {
           });
         }
 
+        // Search, study and sub-agent requests (browse_chat.js): the browsing loop, REA, or sub-agents who report
+        // back to CHE. A plain yes, a money request and a delete never match these words, so they keep their holds.
+        if (!body.attachment && !body.workflow_step) {
+          const browsed = await this.browseTurn(rawMessage, body).catch((error) => ({ text: `That did not run: ${String(error?.message || error).slice(0, 160)}` }));
+          if (browsed?.text) return ndjsonReply(browsed.text, { source: 'che_browse', ok: true, code_review_passed: false, owner_approval_required: false });
+        }
+
         // Command Center: a plain yes releases a held command (once, fresh);
         // "/name …" runs a catalog command; "run my X workflow" starts a saved
         // workflow. Each runs through this same route and its gates.
@@ -12354,6 +12443,7 @@ export class CheState extends DurableObject {
         notify: () => { this.loadData().then((value) => this.broadcastAgents(value)).catch(() => {}); },
         models: { fast: FAST_MODEL, strong: STRONG_MODEL },
         recall: (text) => retrieveVectorContext(this.keyEnv || this.env, text),
+        keepReads: (question, observations) => storeLoopReads(new CheBrainStore(this.ctx.storage), { question, observations, now: new Date().toISOString() }).kept.length,
         // Office tasks, War Room meetings and research notes report to the Brain when they happen (owner, Build 2).
         roomEvent: (event) => (event ? queueRoomEvent(this.ctx.storage, event).catch(() => false) : Promise.resolve(false)),
       });

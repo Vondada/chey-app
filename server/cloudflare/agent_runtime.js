@@ -19,6 +19,7 @@ import { codexThreadId } from './office_router.js';
 import { meetingEvent, officeTaskEvent, researchEvent } from './room_events.js';
 import { assertAgentMayRun, permissionBlocker } from './agent_permissions.js';
 import { guardRetrievalClaims } from './truth_layer.js';
+import { JOB_ROLE_SPECS, POOL_NAMES, agentSoul, isPartnerAgent, pickOfficeAgent, runBrowseTask } from './browse_chat.js';
 
 export const AGENT_STATUSES = [
   'idle', 'researching', 'building', 'analyzing', 'meeting',
@@ -513,6 +514,53 @@ export function recordAgentWork(data, { task = {}, agent = {}, outcome = 'comple
   return entry;
 }
 
+/**
+ * The team member who takes a job: the best existing fit (named roster first, partners last). Only when nobody on
+ * the team covers the job is a new agent created, for the role the job needs, with a name not yet taken.
+ */
+export function ensureJobAgent(data, { needs = [], roleSpec = null } = {}) {
+  // 1. A named agent or a pool name already on the team whose job fits (partners not yet).
+  const fit = pickOfficeAgent(data.team, { needs, partners: false });
+  if (fit) return { agent: fit, hired: false };
+  const spec = roleSpec || JOB_ROLE_SPECS.fallback;
+  const order = spec.role === JOB_ROLE_SPECS.trade.role ? ['Orion'] : POOL_NAMES;
+  // 2. Work with no name of its own goes to a pool name already on the team (Orion for trades).
+  const live = data.team.filter((a) => a && !a.retired);
+  const kept = order.map((name) => live.find((a) => a.name === name && !isPartnerAgent(a))).find(Boolean);
+  if (kept) return { agent: kept, hired: false };
+  // 3. Only then a new agent, for the role, under the first pool name not yet taken.
+  const free = order.find((name) => !data.team.some((a) => a && a.name === name));
+  if (free) {
+    const made = createAgent(data, { name: free, role: spec.role, specialty: spec.specialty, mission: spec.specialty });
+    if (!made.error) return { agent: made.agent, hired: true };
+  }
+  // 4. Partners are the last resort: placeholders, used only when nothing else can take the job.
+  const placeholder = pickOfficeAgent(data.team, { needs });
+  if (placeholder) return { agent: placeholder, hired: false };
+  return { agent: null, hired: false, error: 'every pool name is taken and no partner fits' };
+}
+
+// The next free pool name for a new War Room partner: partners keep these names, never their role titles.
+function freePoolName(data) {
+  return POOL_NAMES.find((name) => !data.team.some((a) => a && a.name === name)) || undefined;
+}
+
+// The job a finished research task hands on: queued to the agent whose job description fits it, with the research
+// as its input. When nobody on the team fits, the hand-off is recorded as blocked; nobody is hired.
+export function queueNextJob(data, task, researcher) {
+  const next = task.next;
+  task.next = null;
+  const { agent, error } = ensureJobAgent(data, { needs: next.needs || [], roleSpec: next.roleSpec });
+  if (!agent) {
+    task.next_blocked = `No agent could take ${next.label || 'the next job'}: ${error || 'no one on the team fits it'}.`;
+    return null;
+  }
+  const input = clip(task.result, 6000);
+  const queued = queueAgentTask(data, agent, `${next.task}\n\nRESEARCH FROM ${researcher?.name || 'the researcher'}:\n${input}`, 'collaboration');
+  task.next_queued_to = agent.name;
+  return queued;
+}
+
 export function queueAgentTask(data, agent, task, source = 'owner', options = {}) {
   const at = now();
   const entry = {
@@ -530,6 +578,8 @@ export function queueAgentTask(data, agent, task, source = 'owner', options = {}
     steering: [],
     steering_version: 0,
     handoffs: [],
+    // A browsing task runs the browsing loop (browse_chat.js) with the agent's own model and personality.
+    browse: options.browse === true,
     use_computer: options.use_computer === true,
     owner_approved_computer: options.owner_approved_computer === true,
     computer_permissions: Array.isArray(options.computer_permissions)
@@ -919,7 +969,7 @@ export function conveneMeeting(data, body) {
     if (participants.some((item) => item.role === spec.role)) continue;
     let agent = data.team.find((item) => item.role === spec.role && !item.retired);
     if (!agent) {
-      const made = createAgent(data, spec);
+      const made = createAgent(data, { ...spec, name: freePoolName(data) });
       if (made.error) continue;
       agent = made.agent;
       created.push(agent);
@@ -1165,14 +1215,22 @@ async function runOneTask(ctx) {
   ].filter(Boolean).join('\n\n');
   let worker = { engine: '', model: '' };
   try {
-    const detailed = await runModelDetailed(
-      env,
-      modelFor(env, agent, models),
-      agentSystemPrompt(agent, workContext),
-      task.task,
-      agent.model_tier === 'strong' ? 1800 : 1100,
-      routingForAgent(agent, data, task),
-    );
+    const routing = routingForAgent(agent, data, task);
+    const detailed = task.browse
+      ? await runBrowseTask({
+        question: task.task,
+        soul: agentSoul(agent),
+        complete: async ({ system, user }) => (await runModelDetailed(env, modelFor(env, agent, models), system, user, 400, routing)).text,
+        keepReads: ctx.keepReads || null,
+      }).then((run) => ({ text: run.text, engine: 'browse_loop', model: '' }))
+      : await runModelDetailed(
+        env,
+        modelFor(env, agent, models),
+        agentSystemPrompt(agent, workContext),
+        task.task,
+        agent.model_tier === 'strong' ? 1800 : 1100,
+        routing,
+      );
     result = clip(detailed.text, 16000);
     worker = { engine: detailed.engine, model: detailed.model };
     if (!result) error = 'No result returned.';
@@ -1386,6 +1444,8 @@ async function reviewDelegatedResult(ctx, taskId, { saved = false } = {}) {
   }
 
   t2.status = 'complete';
+  // A research job passes its result to the content job it was planned with, to whichever agent's job fits it.
+  if (t2.next && t2.next.task) queueNextJob(data, t2, a2 || agent);
   // Research / opportunity scout → Durable Object memory notes (owner-visible).
   if (isResearchStyleJob(t2, a2 || agent)) {
     const written = writeResearchMemoryNote(data, {
