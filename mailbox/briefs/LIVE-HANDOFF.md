@@ -70,6 +70,12 @@ Then, on GitHub:
 - Environment notes: portable Node v24.20.0 at `%LOCALAPPDATA%\nodejs-portable\`; `flutter test` needed `build/unit_test_assets` cleared once (OneDrive lock).
 
 
+## 2. Current position (ChatGPT, owner live tests and #377 security, 2026-10-20)
+
+- Owner tests of CHE on deployed main `8fd6bb30aa7f497f0768745f4fe1f0b58aa4fde7`: Brain reported no Coding Room events (may be accurate), but falsely claimed PR #307, #297, #273 are open (GitHub confirms all CLOSED on Oct 17); coding-job status query returned generic "I am a large language model, have no coding jobs" despite `self_development.js` and runtime; deploy query claimed "No CHE Worker deployment is in progress or recorded" despite GitHub Actions run 39529044486 SUCCESS at main `8fd6bb3`. This is a confirmed status freshness / tool-routing problem; do not assert exact cause until traced. Next, diagnose existing Worker intent routing to official GitHub Actions and coding job status and add fail-closed regression tests; avoid duplicate routers.
+- PR #377 `claude/che-replaykit-broadcast` security hardening commit `a329a9921cbcb0d30ecc5f3941ed81d1edef1e08`: no raw ReplayKit JPEG writes, Dart refuses every cross-app frame/picker, native AppDelegate `latestFrame` returns nil, extension default off, voice refusal explains privacy. This is a SAFE DISABLED STUB, **not** functional live cross-app screen sharing. PR still merge-conflicted with newer main, and it has not received fresh Flutter/native iOS CI on this head; do not merge until reconciled and validated. iOS signing and native device privacy review still required before enabling cross-app capture. Details commented on PR #377.
+- Owner may continue other voice tests safely; do not encourage testing password screens. Latest main Worker deployment success confirmed by run https://github.com/Vondada/chey-app/actions/runs/39529044486.
+
 ## 2. Current position (ChatGPT, 2026-10-20 20:46 Central — Cloudflare-red PR merge/release mission)
 
 - Owner explicitly authorized fixes, merges, and deployment. Main after verified merges: #371 (`f2dac88`), #390 (`3170b9b`), #388 (`396a9ca`), #354 (`8fd6bb3`). #366 was a superseded Flutter draft overlapping #388 and closed rather than regressing the chart.
