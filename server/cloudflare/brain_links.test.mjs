@@ -55,3 +55,21 @@ test('the walk follows links outward and records the path; the cluster holds eve
   assert.deepEqual(cluster, ['a', 'b', 'c']);
   assert.ok(!cluster.includes('lone'), 'an unlinked record is not in the cluster');
 });
+
+test('a cluster is the same from either end, even when the word-match link was written one way', async (t) => {
+  const store = await brain();
+  if (!store) return t.skip('node:sqlite unavailable');
+  store.put(note('older', 'Pizza origin Naples', 'Pizza began in Naples Italy history of the dish', []), { origin: 'owner', now: 1 });
+  storeLoopReads(store, {
+    question: 'pizza history',
+    observations: [{ ok: true, read: true, url: 'https://example.org/naples-pizza', text: 'Naples pizza origin history: the dish began in Naples Italy and spread.' }],
+    now: '2026-10-21T10:00:00.000Z',
+  });
+  const newer = listResearchPages(store).pages.find((p) => p.url.includes('naples-pizza')).id;
+  const fromOld = clusterOf(store, 'older').map((r) => r.id).sort();
+  const fromNew = clusterOf(store, newer).map((r) => r.id).sort();
+  assert.deepEqual(fromOld, fromNew);
+  assert.equal(fromOld.length, 2);
+  // The stored time is still the ISO text the audit compares, not a number.
+  assert.match(String(store.get(newer).updated_at), /^\d{4}-\d{2}-\d{2}T/);
+});

@@ -31,7 +31,7 @@ export function storeLoopReads(store, { question = '', observations = [], now = 
     const result = store.apply({ op_id: `research-${id}`, type: 'put', record }, { origin: 'cloud', now });
     if (result?.outcome === 'rejected') { skipped.push({ url: o.url, reason: result.reason || 'the Brain did not accept it' }); continue; }
     // Linked as it is stored: the same people, places, symbols and distinctive words connect it to older pages.
-    linkRelated(store, record, { now: Date.parse(now) || Date.now() });
+    linkRelated(store, record, { now });
     kept.push({ id, url: o.url });
   }
   return { kept, skipped };

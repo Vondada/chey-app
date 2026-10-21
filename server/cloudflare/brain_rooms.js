@@ -144,6 +144,14 @@ export function linkRelated(store, record, { now = Date.now(), limit = 6 } = {})
       relations_v: RELATIONS_VERSION,
     },
   }, { origin: 'cloud', now });
+  // A word-match link stays one-way in `links`. The older note records the newer one as an incoming candidate, so a
+  // walk started from either side reaches the other, without showing a link the rules did not confirm.
+  for (const link of found.filter((l) => l.status !== 'derived')) {
+    const other = store.get(link.to);
+    if (!other || other.deleted) continue;
+    const incoming = [...new Set([...(other.source?.incoming_candidates || []), record.id])].slice(-24);
+    store.put({ ...other, source: { ...other.source, incoming_candidates: incoming } }, { origin: 'cloud', now });
+  }
   for (const link of found.filter((l) => l.status === 'derived')) {
     const other = store.get(link.to);
     if (!other || other.deleted || (other.links || []).some((l) => l.to === record.id)) continue;

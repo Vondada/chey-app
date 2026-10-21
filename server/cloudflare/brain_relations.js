@@ -181,7 +181,11 @@ export function expandByLinks(store, hits = [], { depth = 2, limit = 20 } = {}) 
     const next = [];
     for (const id of frontier) {
       const from = seen.get(id);
-      const links = [...(from.record.links || []), ...(from.record.source?.relations || []).map((r) => ({ type: r.type, to: r.to }))];
+      const links = [
+        ...(from.record.links || []),
+        ...(from.record.source?.relations || []).map((r) => ({ type: r.type, to: r.to })),
+        ...(from.record.source?.incoming_candidates || []).map((to) => ({ type: 'candidate', to })),
+      ];
       for (const link of links) {
         if (!link?.to || seen.has(link.to) || seen.size >= limit) continue;
         const other = store.get(link.to);
