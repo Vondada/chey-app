@@ -5,6 +5,7 @@
 // Anti-fabrication: an answer counts only when it cites a page this run actually read. A search result
 // lists where to look; it is not evidence.
 import { assertBrowserStepMayRun, needsOwnerVerification } from './agent_permissions.js';
+import { CHE_SELF_BRIEF } from './che_self_knowledge.js';
 
 export const LOOP_LIMITS = Object.freeze({ maxSteps: 12, maxSearches: 4, maxTextChars: 2000 });
 
@@ -46,7 +47,7 @@ export async function runBrowseLoop({ question, planner, executor, search = null
   for (let i = 0; i < limits.maxSteps; i++) {
     const action = await planner({ question, observations, steps });
     if (!action || typeof action !== 'object') return result('no_plan', { steps });
-    steps.push({ n: i + 1, type: action.type });
+    steps.push({ n: i + 1, type: action.type, why: String(action.why || '').slice(0, 200) });
 
     if (action.type === 'finish') {
       const read = observations.filter((o) => o.read && o.ok && o.url);
@@ -104,4 +105,46 @@ export async function runBrowseLoop({ question, planner, executor, search = null
     }
   }
   return result('budget_exhausted', { steps, reason: `The step limit of ${limits.maxSteps} was reached before an answer.` });
+}
+
+export const PLAN_ACTIONS = Object.freeze(['search', 'open', 'read', 'click', 'type', 'finish', 'ask_owner']);
+
+// CHE decides each step as herself: her soul (the personality kept on the phone) comes first, then her own
+// brief, then the rules. The code gate still applies to every step, whatever the soul says.
+const DEFAULT_PERSONALITY = 'Your standing personality: warm, quick, a little playful, honest, and short. Never fill a gap with a guess.';
+
+export function soulPlannerPrompt({ soul = '', question = '', observations = [], steps = [], rooms = [] } = {}) {
+  const system = [
+    'You are CHE deciding the next step of a task for the owner. Decide as CHE, with your personality and values.',
+    'YOUR SOUL (personality):',
+    String(soul || '').trim() || DEFAULT_PERSONALITY,
+    CHE_SELF_BRIEF,
+    'DECISION RULES: never guess a code, a password or a CAPTCHA; never invent a result; ask the owner when a page needs a human, or when the next step spends money or deletes; finish only with an answer that cites a page you read.',
+    'Reply with ONE JSON object: {"type": one of ' + PLAN_ACTIONS.join(', ') + ', "why": "one short sentence on why this step, in your own voice", and the fields for that type}.',
+  ].join('\n\n');
+  const user = JSON.stringify({
+    question,
+    rooms,
+    steps: steps.map((st) => ({ n: st.n, type: st.type, why: st.why })),
+    observations: observations.slice(-6).map((o) => ({ ok: o.ok, url: o.url, read: o.read, text: String(o.text || '').slice(0, 400), error: o.error, items: (o.items || []).slice(0, 5) })),
+  });
+  return { system, user };
+}
+
+/** Reads one planned action out of a model reply. Anything that is not a known action is no plan. */
+export function parsePlan(text) {
+  const match = String(text || '').match(/\{[\s\S]*\}/);
+  if (!match) return null;
+  let obj;
+  try { obj = JSON.parse(match[0]); } catch (_) { return null; }
+  return obj && PLAN_ACTIONS.includes(obj.type) ? obj : null;
+}
+
+/**
+ * A planner that decides with her soul. complete({ system, user }) -> text is the model call, injected so the
+ * loop is not tied to one provider.
+ */
+export function soulPlanner({ soul = '', complete, rooms = [] } = {}) {
+  if (typeof complete !== 'function') throw new Error('A soul planner needs a complete(messages) function.');
+  return async ({ question, observations, steps }) => parsePlan(await complete(soulPlannerPrompt({ soul, question, observations, steps, rooms })));
 }

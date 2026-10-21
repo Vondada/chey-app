@@ -1,7 +1,7 @@
 // The browsing loop: one step at a time, every app step through the gate, answers only from pages she read.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createSearchRegistry, runBrowseLoop } from './agent_browse_loop.js';
+import { createSearchRegistry, parsePlan, runBrowseLoop, soulPlanner, soulPlannerPrompt } from './agent_browse_loop.js';
 
 // A planner that follows a fixed script; each call returns the next action.
 function scripted(actions) {
@@ -147,4 +147,53 @@ test('a CAPTCHA page stops the loop the same way', async () => {
   const planner = scripted([{ type: 'read' }]);
   const r = await runBrowseLoop({ question: 'q', planner, executor: captcha, app: 'App', grants: ['App'] });
   assert.equal(r.status, 'needs_owner');
+});
+
+test('her soul comes first in the planner prompt, followed by her own brief and the decision rules', () => {
+  const { system } = soulPlannerPrompt({ soul: 'Warm and direct. I call the owner sir.' });
+  assert.match(system, /YOUR SOUL \(personality\):\s+Warm and direct\. I call the owner sir\./);
+  assert.ok(system.indexOf('Warm and direct') < system.indexOf('WHO CHE IS'), 'the soul is read before her brief');
+  assert.match(system, /DECISION RULES: never guess a code, a password or a CAPTCHA/);
+  assert.match(system, /ask the owner when a page needs a human/);
+});
+
+test('with no soul sent, her standing personality is used rather than an empty one', () => {
+  const { system } = soulPlannerPrompt({});
+  assert.match(system, /warm, quick, a little playful, honest, and short/);
+});
+
+test('the planner reads only a known action out of a reply, and rejects everything else', () => {
+  assert.deepEqual(parsePlan('Sure: {"type":"read","why":"open it"}'), { type: 'read', why: 'open it' });
+  assert.equal(parsePlan('{"type":"delete_everything"}'), null);
+  assert.equal(parsePlan('I think we should read the page.'), null);
+  assert.equal(parsePlan('{"type":'), null);
+});
+
+test('a soul planner decides every step, and each step keeps her reason', async () => {
+  const seen = [];
+  const complete = async ({ system }) => {
+    seen.push(system);
+    return seen.length === 1
+      ? '{"type":"open","url":"https://example.org/pizza","why":"The page is the source I was pointed to."}'
+      : '{"type":"finish","answer":"Pizza, from the page.","cite":["https://example.org/pizza"],"why":"The page answers it."}';
+  };
+  const executor = async (action) => ({ ok: true, url: action.url, text: 'Pizza is the favorite food.' });
+  const r = await runBrowseLoop({
+    question: 'favorite food?',
+    planner: soulPlanner({ soul: 'Warm and direct.', complete }),
+    executor, app: 'Web', grants: ['Web'],
+  });
+  assert.equal(r.status, 'answered');
+  assert.deepEqual(r.steps.map((s) => s.why), ['The page is the source I was pointed to.', 'The page answers it.']);
+  assert.match(seen[0], /Warm and direct/, 'every decision is made with her soul in the prompt');
+});
+
+test('a reply that is not a plan ends the loop with no_plan, not a guess', async () => {
+  const planner = soulPlanner({ complete: async () => 'maybe I should look it up' });
+  const r = await runBrowseLoop({ question: 'q', planner, executor: async () => ({ ok: true }) });
+  assert.equal(r.status, 'no_plan');
+});
+
+test('a soul planner needs a model call, and refuses to run without one', () => {
+  assert.throws(() => soulPlanner({ soul: 'x' }), /needs a complete/);
 });
