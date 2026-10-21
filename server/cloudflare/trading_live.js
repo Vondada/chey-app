@@ -12,6 +12,7 @@ import {
   evaluateWalkForward, intradayContext, newPortfolio, readTrades, stepPortfolio, summarize, validateTradeRecord, tradeDayOf,
 } from './trading_evidence.js';
 import { makeEntryGate, readControls } from './trading_controls.js';
+import { readDelayedTraining, resetDelayedTraining, runDelayedTraining } from './trading_delayed_training.js';
 
 export const LIVE_STATE = 'live_paper_state';
 export const LIVE_PORTFOLIOS = 'live_paper_portfolios';
@@ -86,6 +87,7 @@ export async function setLivePaper(storage, enabled, now = Date.now()) {
     ? { ...state, enabled: true, started_at: state.enabled ? state.started_at : new Date(now).toISOString(), stopped_at: null }
     : { ...state, enabled: false, stopped_at: new Date(now).toISOString() };
   await storage.put(LIVE_STATE, next);
+  if (Boolean(state.enabled) !== Boolean(enabled)) await resetDelayedTraining(storage, { now });
   return next;
 }
 
@@ -216,6 +218,15 @@ export async function liveTick(storage, { fetcher = fetch, now = Date.now(), for
           else valid.push(t);
         }
         run.journal = await appendTrades(storage, valid);
+        // Separate chronological DELAYED-bar research: never loosen verified LIVE
+        // entry eligibility or mix hypothetical delayed fills with the forward journal.
+        if (feed.status === 'DELAYED') {
+          try {
+            run.delayed_training = await runDelayedTraining(storage, { feed, bars, specs: liveSpecs(), controls, now });
+          } catch (error) {
+            run.delayed_training = { ok: false, error: String(error?.message || error).slice(0,180) };
+          }
+        }
         // A closed trade the journal refused is kept with its reason, never silently dropped.
         await exclude(storage, rejected.map((r) => ({ kind: 'rejected', at: run.at, ...r })));
         await storage.put(LIVE_PORTFOLIOS, Object.fromEntries(portfolios.map((pf) => [pf.key, pf])));
@@ -456,6 +467,9 @@ export async function liveDashboard(storage, { now = Date.now(), tradovateConnec
     storage.get(LIVE_STATE), storage.get(LIVE_FEED), storage.get(LIVE_RUNS), readLivePortfolios(storage), storage.get(LIVE_BACKTEST),
   ]);
   const trades = await readTrades(storage, isLive);
+  const delayedTraining = await readDelayedTraining(storage, { enabled: Boolean(state?.enabled) });
+  const verifiedLive = trades.filter((t) => t.data?.entry_feed?.status === 'LIVE'
+    && t.data.entry_feed.authenticated === true && t.data.entry_feed.subscription_verified === true);
   const lastClose = feed?.bars?.length ? feed.bars[feed.bars.length - 1].c : null;
   const positions = portfolios.filter((pf) => pf.open).map((pf) => ({
     portfolio: pf.key, strategy: pf.candidate, name: INTRADAY_CANDIDATES[pf.candidate]?.name, filter: pf.filter, side: pf.open.side,
@@ -471,6 +485,8 @@ export async function liveDashboard(storage, { now = Date.now(), tradovateConnec
   return {
     account: 'PAPER',
     isolation: 'Paper portfolios are research records only. No broker module is reachable from this engine, and live orders stay disabled.',
+    delayed_training: delayedTraining,
+    verified_live_forward: { trades: verifiedLive.length, ...summarize(verifiedLive), source: 'authenticated subscribed LIVE CME at entry' },
     state: state || { enabled: false },
     session: cmeSession(now),
     contract: frontMonth(ROOT, now),
