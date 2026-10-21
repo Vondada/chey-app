@@ -133,7 +133,7 @@ import { loadPackedJson, savePackedJson } from './prompt_compaction.js';
 import { githubWorkshopPieces, workshopAvatar, workshopAvatarIntent, workshopSnapshot } from './workshop.js';
 import { flushOutbox, handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, openMailbox, transcript as flagstaffTranscript, mailboxCode, mailboxLink, postWebMail, readWebMail, rotateMailboxCode } from './web_mailbox.js';
 import { CheLibrary, fetchReadable, libraryContext, libraryIntent } from './library.js';
-import { KnowledgeLibrary } from './knowledge_library.js';
+import { KnowledgeLibrary, knowledgeIntent, knowledgeReply } from './knowledge_library.js';
 import { seedKnowledgeCatalog } from './knowledge_catalog_seed.js';
 import { CheBrainStore, backfillConversations, displayCopy, isSafeText, ownerMemoryRecord, projectLegacyState, rememberExchange, retrievableOwnerRecord, retrievalBody, sameDisplayCopy } from './brain_store.js';
 import { brainReviewIntent, latestReview, ownerScore, runBrainMaintenance, speakReview } from './brain_audit.js';
@@ -10454,6 +10454,14 @@ export class CheState extends DurableObject {
           return ndjsonReply(saved.error
             ? `I couldn't save that, sir. ${saved.error}`
             : `Saved "${saved.title}" to my library, word for word: about ${Math.round(saved.chars / 5).toLocaleString('en-US')} words in ${saved.chunks} parts. Ask me anything about it.`, { source: 'che_library' });
+        }
+
+        // The Knowledge Library (knowledge_library.js): the owner's catalog and the text he gave CHE. Answers cite
+        // the reference and part; cataloged works are said to be unread. Owner device only.
+        const knowledge = ownerDevice ? knowledgeIntent(message) : null;
+        if (knowledge) {
+          const kl = new KnowledgeLibrary(this.ctx.storage);
+          return ndjsonReply(knowledgeReply(kl, knowledge), { source: 'che_knowledge' });
         }
 
         // Flagstaff 369 lock/unlock: "lock Flagstaff", "open/unlock Flagstaff".

@@ -238,3 +238,60 @@ export function citation(ref, part, text) {
     text: String(text || '').slice(0, 1200),
   };
 }
+
+// Owner phrases for the library, spoken or typed:
+//   "what is in my knowledge library" / "knowledge library status"       -> status
+//   "search my knowledge library for retry backoff"                     -> search
+//   "what does my library say about circuit breakers"                   -> search
+//   "add to my knowledge library called "Notes" in Software Engineering: <text>" -> index the owner's own text
+const STATUS_RE = /\b(?:knowledge library|my library)\b[\s\S]{0,30}\b(?:status|what(?:'s| is| are)? (?:indexed|in it|in there)|how many|categories|catalog)\b|\bwhat(?:'s| is| are)? (?:indexed|in (?:my|the) knowledge library)\b/i;
+const SEARCH_RE = /\b(?:search|look\s+up|check|ask)\b[\s\S]{0,30}\b(?:knowledge library|my library)\b[\s\S]{0,12}?\b(?:for|about)\s+(.{2,200})$|\bwhat\s+(?:does|do)\s+(?:my|the)\s+(?:knowledge\s+library|library)\s+(?:say|have|know)\s+about\s+(.{2,200})$/i;
+const INDEX_RE = /\b(?:add|index|store|save)\b[\s\S]{0,20}\bto\s+(?:my|the)\s+knowledge library\b[\s\S]*?\b(?:called|titled|named)\s+["“]?([^"”:\n]{2,120})["”]?[\s\S]*?\bin\s+([^:\n]{2,80}):\s*([\s\S]{20,})$/i;
+
+/** What the owner asked the library to do. Null when the words are not about the library. */
+export function knowledgeIntent(message) {
+  const text = String(message || '').trim();
+  if (!text) return null;
+  const index = INDEX_RE.exec(text);
+  if (index) return { kind: 'index', title: index[1].trim(), category: index[2].trim(), text: index[3].trim() };
+  const search = SEARCH_RE.exec(text);
+  if (search) return { kind: 'search', question: (search[1] || search[2] || '').replace(/[?.!]+$/, '').trim() };
+  if (STATUS_RE.test(text)) return { kind: 'status' };
+  return null;
+}
+
+/** The category whose name the owner spoke. Matched on the name, ignoring case; never guessed. */
+export function categoryByName(name) {
+  const want = String(name || '').trim().toLowerCase();
+  return KNOWLEDGE_CATEGORIES.find((c) => c.name.toLowerCase() === want || c.id === want.replace(/\s+/g, '_')) || null;
+}
+
+/**
+ * The spoken and typed reply for a library intent. The owner's own text is stored under the owner licence; any
+ * other reference is answered only from what is indexed, with citations.
+ */
+export function knowledgeReply(kl, intent, { now } = {}) {
+  if (intent.kind === 'status') {
+    const rows = kl.status();
+    const indexed = rows.reduce((n, r) => n + r.indexed, 0);
+    const cataloged = rows.reduce((n, r) => n + r.cataloged, 0);
+    return `My knowledge library has ${indexed} indexed reference${indexed === 1 ? '' : 's'} with text I can quote, and ${cataloged} catalogued only. I have not read the catalogued ones. The categories: ${rows.map((r) => `${r.name} (${r.indexed} indexed, ${r.cataloged} catalogued)`).join('; ')}.`;
+  }
+  if (intent.kind === 'search') {
+    if (!intent.question) return 'Tell me what to search the knowledge library for, sir.';
+    const answer = kl.answer(intent.question);
+    return answer.status === 'answered'
+      ? `${answer.text}\n\nSources:\n${answer.citations.map((c, i) => `${i + 1}. ${c}`).join('\n')}`
+      : answer.text;
+  }
+  if (intent.kind === 'index') {
+    const category = categoryByName(intent.category);
+    if (!category) return `I don't have a category called "${intent.category}". The 20 categories are: ${KNOWLEDGE_CATEGORIES.map((c) => c.name).join('; ')}. Name one of them, or ask me to request a new one.`;
+    const ref = kl.catalog({ title: intent.title, category: category.id, kind: 'note', license: 'owner', note: 'Written by the owner.' }, { now });
+    if (ref.error) return `I couldn't save that, sir. ${ref.error}`;
+    const saved = kl.index(ref.id, intent.text, { now });
+    if (saved.error) return `I couldn't index that, sir. ${saved.error}`;
+    return `Saved "${saved.title}" in ${category.name} as your own text, word for word: ${saved.chunks} part${saved.chunks === 1 ? '' : 's'}. Ask me about it.`;
+  }
+  return 'I did not understand that library request, sir.';
+}
