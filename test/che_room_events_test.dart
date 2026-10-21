@@ -15,7 +15,7 @@ void main() {
   test('payloads use the Worker\'s rooms, kinds and key shape', () {
     final music = CheRoomEvents.music('Blue in Green Miles Davis', detail: 'Opened a search.', at: at)!;
     expect(music['room'], 'music');
-    expect(music['kind'], 'played');
+    expect(music['kind'], 'requested');
     expect(music['title'], 'Blue in Green Miles Davis');
     expect(RegExp(r'^[A-Za-z0-9:._-]{4,80}$').hasMatch(music['key']!), isTrue);
     expect(CheRoomEvents.music('', at: at), isNull);

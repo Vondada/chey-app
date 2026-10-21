@@ -312,15 +312,32 @@ test('"look at my screen" read by vision records only which screen and when in t
     attachment: { name: 'che-screen.png', media_type: 'image', base64: 'aGVsbG8=' },
     screen_context: 'The owner asked CHE to look at his screen. Page report: You are on Trading Room, Controls tab.',
   });
+  await che.say('CHE, look at my screen', {
+    attachment: { name:'che-screen.png', media_type:'image', base64:'aGVsbG8=' },
+    screen_context:'You are on Music Room, Library tab.',
+  });
   // An ordinary photo is not a screen.
   await che.say('What is in this photo?', { attachment: { name: 'IMG_0001.jpg', media_type: 'image/jpeg', base64: 'aGVsbG8=' } });
   visionSummary = '';
   const out = await che.say('What was on my screen earlier?');
   assert.equal(out.route, 'che_brain_rooms'); assert.equal(out.modelCalls, 0);
-  assert.match(out.reply, /1\. Looked at Trading Room \(Screen room; observed, not verified; \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC\)/);
-  assert.doesNotMatch(out.reply, /2\./, 'one look, one record');
+  assert.match(out.reply, /2\. Looked at Trading Room \(Screen room; observed, not verified; \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC\)/);
+  assert.match(out.reply, /2\./, 'two observations within a minute are distinct');
   const records = roomActivity(che.brain(), 'screen', { limit: 10 }).records;
-  assert.equal(records.length, 1);
+  assert.equal(records.length, 2);
   assert.doesNotMatch(JSON.stringify(records), /MNQ chart|99881234|aGVsbG8=/, 'no screen text or image in the Brain');
   assert.match(records[0].source.evidence[0], /look at my screen, read by /);
+});
+
+
+test('yesterday uses the previous Chicago calendar date across daylight saving', sqlite, async () => {
+  const che = await owner();
+  const store = che.brain();
+  for (const [key, at] of [['previous', '2026-10-31T18:00:00Z'], ['current', '2026-11-01T18:00:00Z']]) {
+    await queueRoomEvent(che.storage, phoneRoomEvent({room:'music', kind:'requested', key, title:key}, { now: Date.parse(at) }));
+  }
+  await drainRoomEvents(che.storage, store);
+  const result = roomActivity(store, 'music', { when:'yesterday', now:Date.parse('2026-11-02T05:30:00Z') });
+  assert.equal(result.records.length, 1);
+  assert.match(result.records[0].title, /previous/);
 });

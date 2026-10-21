@@ -10871,7 +10871,7 @@ export class CheState extends DurableObject {
         // summary stays the temporary observation above, and the image is never kept.
         if (ownerDevice && multimodal?.summary && (/^che-screen\.png$/i.test(String(body.attachment?.name || '')) || asksAboutScreen(message))) {
           const page = /\bYou are on ([^.,;\n]{2,60})/.exec(String(body.screen_context || ''))?.[1]?.trim();
-          const seenAs = phoneRoomEvent({ room: 'screen', kind: 'observed', key: `vision-${Math.floor(Date.now() / 60_000)}`, title: page || (screenRoom && screenRoom !== 'screen' ? BRAIN_ROOMS[screenRoom]?.label : '') || 'his screen' }, { isSafe: isSafeText });
+          const seenAs = phoneRoomEvent({ room: 'screen', kind: 'observed', key: `vision-${crypto.randomUUID()}`, title: page || (screenRoom && screenRoom !== 'screen' ? BRAIN_ROOMS[screenRoom]?.label : '') || 'his screen' }, { isSafe: isSafeText });
           if (!seenAs.error) await queueRoomEvent(this.ctx.storage, { ...seenAs, evidence: [`look at my screen, read by ${String(multimodal.engine || 'vision').slice(0, 40)} ${seenAs.at}`] }).catch(() => null);
         }
         const screenRecords = multimodal?.summary

@@ -428,11 +428,15 @@ async function prEvidence(n, { env, fetcher, store }) {
 // ─── What happened in a room: its records, newest first ──────────────────
 
 const stampOf = (iso) => { const t = String(iso || ''); return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(t) ? `${t.slice(0, 10)} ${t.slice(11, 16)} UTC` : t.slice(0, 10) || 'no date'; };
+const previousChicagoDay = (now) => {
+  const [year, month, day] = chicagoDayKey(now).split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, day - 1)).toISOString().slice(0, 10);
+};
 const inWindow = (iso, when, now) => {
   const at = Date.parse(iso || '');
   if (!Number.isFinite(at)) return when === 'recent';
   if (when === 'today') return chicagoDayKey(at) === chicagoDayKey(now);
-  if (when === 'yesterday') return chicagoDayKey(at) === chicagoDayKey(now - 86_400_000);
+  if (when === 'yesterday') return chicagoDayKey(at) === previousChicagoDay(now);
   if (when === 'week') return now - at <= 7 * 86_400_000;
   return true;
 };

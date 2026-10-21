@@ -33,9 +33,9 @@ class CheRoomEvents {
   }
 
   /// The Music Room started something for the owner ("play the song Blue in Green").
-  static Map<String, String>? music(String query, {String detail = '', String kind = 'played', DateTime? at}) {
+  static Map<String, String>? music(String query, {String detail = '', String kind = 'requested', DateTime? at}) {
     final title = _clip(query, 200);
-    if (title.isEmpty || !const {'played', 'paused', 'liked'}.contains(kind)) return null;
+    if (title.isEmpty || !const {'requested', 'played', 'paused', 'liked'}.contains(kind)) return null;
     return {
       'room': 'music',
       'kind': kind,

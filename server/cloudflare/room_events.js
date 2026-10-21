@@ -225,11 +225,11 @@ export function researchEvent({ id = '', title = '', summary = '', sources = [],
 
 // ─── The phone's rooms: music, help and screen (POST /api/brain/room-event) ───
 export const PHONE_ROOM_KINDS = Object.freeze({
-  music: Object.freeze(['played', 'paused', 'liked']),
+  music: Object.freeze(['requested', 'played', 'paused', 'liked']),
   help: Object.freeze(['explained', 'walkthrough']),
   screen: Object.freeze(['observed']),
 });
-const PHONE_KIND_WORD = Object.freeze({ played: 'Played', paused: 'Paused', liked: 'Liked', explained: 'Help explained', walkthrough: 'Help walkthrough' });
+const PHONE_KIND_WORD = Object.freeze({ requested: 'Music requested', played: 'Played', paused: 'Paused', liked: 'Liked', explained: 'Help explained', walkthrough: 'Help walkthrough' });
 
 /**
  * One event the owner's phone reports, or { error }. The phone names the room, a kind from that room's
