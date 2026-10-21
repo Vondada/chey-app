@@ -1866,3 +1866,50 @@ Status: PROGRAM, not built. The request spans several multi-week projects (visua
 **Immediate next step (S1 wiring):** change `CheTheme.dark()` to take a `CheColorPalette` and keep the current look as the default; migrate `CheColors` getters to read the active palette only where a const context does not need them, then run `flutter analyze` and the full `flutter test`. Acceptance: default look unchanged (golden or token-equality test), silver and light palettes render with contrast checks.
 
 **Resolved:** the `analysis_options.yaml` exclusion was reverted on the owner's instruction (2026-10-21); the checkout is clean.
+
+---
+
+## 8. OWNER PRIORITY OVERRIDE — SOUL FIRST AND AI-TO-AI RESUME (2026-10-21)
+
+**Owner instruction:** Finish CHE's consistent Soul/personality routing FIRST. Then continue *all* remaining owner-authorized CHE work across bounded, independently verified implementation slices. Never stop merely to write a plan. If Claude reaches a limit or any AI stops, make its partial implementation durable so ChatGPT/Codex/another available agent can resume from the exact verified point, without rereading or rewriting everything.
+
+**Current source of truth (checked 2026-10-21):** main \`a88fe01e2f5c13d19b4d6982c09408a50d5138e9\` (PR #421, Flutter palette wiring and saved theme switch, merged). PR #420 merged \`a3a8101c39bbe0f34b7addf441231e6416708482\` (owner image MIME fix, false "forget" delete hold, fact-grounded performance intent, tests). Deployment run 39680293427 had successful Worker Deploy and Verify live deployed commit, but that does NOT prove a new iPhone build or Soul integration. PR #417 merged (theme tokens); #418 merged (questions are not memory facts); #419 merged (trading phrasing). At this checkpoint, Github query returned no open PRs. **§6 old "open PR" data and §7 S1/S2 statuses are stale; this paragraph supersedes those older snapshots.** Always recheck GitHub before acting. UI Home/navigation/Creation Room/UI Studio are still incomplete, regardless of stage-1 palette work.
+
+### FIRST IN QUEUE: Soul/personality end-to-end, not another planning document
+
+Goal: CHE feels like one mature, warm, confident, natural, observant woman who is lightly playful in relaxed contexts and precise in serious ones; occasional "sir," no repetitive gimmicks. Written name CHE, "Chay" spoken wake only. Personality **never changes factual evidence, permission gates, role auth, or trading/reporting numbers.**
+
+1. Trace REAL request path: Flutter Brain→Soul (\`lib/che_ui/che_brain.dart\`), payload (\`lib/home_state/streaming.dart\`), Worker (\`server/cloudflare/worker.js\`), AI/model fallback (\`ai_router.js\`), direct/deterministic routes (trading, memory, coding, media, Office), and voice. Existing phone sends \`body.soul\` but Worker doesn't consistently apply it in all owner-facing paths. DO NOT invent a duplicate Soul or a parallel router.
+2. Make a canonical, versioned owner-editable Soul contract; implement a safe deterministic presentation adapter for tool facts and conversational generation for ordinary talk. Ensure a provider switch preserves identity. Owner can change warmth/playfulness/formality/directness/verbosity/proactivity from Soul, persisted and available on next appropriate reply. Keep ability to restore previous version; do not sync secrets or private prompts to unauthorised devices.
+3. Add verifiable response provenance: response route, actual source/model/handler, Soul version/hash, \`soul_loaded\`, \`soul_applied\`, and fallback/bypass reason in diagnostics; NEVER mark Soul applied just because it was supplied in payload. Offer "Response Details → Personality" or equivalent accessible owner UI. Never expose secrets or chain-of-thought.
+4. Run paired \`/api/chat\` + Flutter/voice route tests using exact owner's phrases:
+   - "CHE, forget all the technical stuff for a minute. Talk to me normally. What's your personality like? Show me, don't just describe it." Must NOT enter deletion confirmation.
+   - "CHE, I'm frustrated because we've spent so much time building you, and you still don't feel like the assistant I imagined. What would you say to me?" Warm, relevant, not canned.
+   - "CHE, tell me how my paper trading is going. Talk to me naturally, like my assistant, not a technical report. Don't leave out the real numbers." Verified paper ledger only. NO fabricated +12.5% returns, 3.5 trades/day, January wins or drawdowns.
+   - owner changes Soul voice/style settings and immediately asks same prompt; verify effective configuration changed in response metadata, not just generic model fluctuation.
+   - missing memory/media/tool/provider returns a truthful, warm refusal with correct evidence and no fake action.
+5. Implement, commit, open focused PR(s), review/test, merge only green, verify Cloudflare live \`/health\` matches SHA, and deliver Flutter/Shorebird/IPA if needed; owner iPhone behavior remains UNVERIFIED until tested there. Personality correctness is a **release gate** for this priority.
+
+### THEN CONTINUE: full project completion, in dependency order
+
+A. Chat-to-media read/list/detail: owner iPhone saved PNG, then got "I hold 1 saved file" vs "I now hold 3 items"; uploaded-file count and all-media count use different filters (must be named). EXACT request "CHE, list every saved media item by its actual ID, filename, type, and creation date. Tell me which are uploads and which were generated. Verify that my latest PNG is still stored." currently MISSES \`mediaHoldIntent\` in \`server/cloudflare/media_library.js\` and falls through to a model claiming no library access. Implement authenticated factual listing/IDs/source/type/creation, bytes verification, inline Chat image rendering, Creation Room shared gallery, reopening persistence. Reuse \`media.js\`, not a second store; no fake assets or unauthorized spend.
+
+B. Premium silver/black UI beyond merged stage-1 palette: Home dashboard, Home/Chat/Office/CHE World/More bottom navigation (Apps in More), accessible no-code UI Studio and persistent settings, Creation Room makeover. Confirm latest Shorebird patch or IPA before asking owner to retest visual changes. Preserve older screens and all VoiceOver navigation.
+
+C. Trading: reconcile distinct entries vs variant outcomes and reporting windows; preserve delayed hypothetical research vs authenticated real-time paper and broker account separation; remove fabricated performance paths; learn from after-cost evidence, journal all outcomes; NEVER enable live orders without explicit owner-authorized connection and action. Test data provenance and live feed gating.
+
+D. Coding autonomy: real job/PR/CI/deploy receipts and failure recovery/fallback; no fake complete. Office agents and command routing; Knowledge Library beyond its 77 **metadata-only** entries only when legal text is actually provided; memory recall/provenance; videos and businesses; owner authorized abilities and accessibility. Respect external account/service blockers instead of claiming completion.
+
+### MANDATORY HANDOFF ON EVERY INTERRUPTION OR TOKEN LIMIT
+
+Before the session ends, push each working commit and write a **fresh "ACTIVE CHECKPOINT" at the very top of this §8** (or an immediately linked small companion file) on \`che-mailbox\`. It MUST include:
+- exact main SHA; active branch/commit/PR links, head/base, outstanding checks, blockers and failures;
+- what files/functions changed and what was actually tested (including test command/output);
+- what is verified merged, what is verified deployed on Worker (\`/health\` version), what iPhone build/patch is merely published vs actually installed and tested;
+- precise **next edit, file, and command** an incoming agent should run; remaining acceptance tests in priority order;
+- no user passwords/secrets, no invented claims, and no duplicate code/routers.
+- update outdated §6/§7 checkboxes/statuses after each merge, not only new prose.
+
+**Resumption command for any agent:** "Continue CHE from \`AGENTS.md\` and the newest \`che-mailbox:mailbox/briefs/LIVE-HANDOFF.md\` §8 checkpoint. Inspect real \`main\`, live PRs/Actions and personal mailbox. Resume the highest-priority unfinished verified edit; Soul is first. Do not restart, re-implement merged changes, claim deployments without evidence, or silently skip blocked work. Commit/push/checkpoint before your session runs out."
+
+**Execution reality:** Context/usage and CI interruptions cannot be abolished, and parallel agents must avoid editing the same files or racing deploys. Independent nonconflicting slices may be worked on in parallel but Soul release remains the first priority. Do NOT launch unattended paid agents or claim continuous work once the interactive session stops.
