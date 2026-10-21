@@ -4,7 +4,7 @@
 //
 // Anti-fabrication: an answer counts only when it cites a page this run actually read. A search result
 // lists where to look; it is not evidence.
-import { assertBrowserStepMayRun } from './agent_permissions.js';
+import { assertBrowserStepMayRun, needsOwnerVerification } from './agent_permissions.js';
 
 export const LOOP_LIMITS = Object.freeze({ maxSteps: 12, maxSearches: 4, maxTextChars: 2000 });
 
@@ -98,6 +98,10 @@ export async function runBrowseLoop({ question, planner, executor, search = null
     const outcome = await executor({ ...action, kind: gate.kind });
     const text = String(outcome?.text || '').slice(0, limits.maxTextChars);
     observations.push({ ok: Boolean(outcome?.ok), read: action.type === 'read' || action.type === 'open', url: String(outcome?.url || ''), text, error: outcome?.error });
+    // A code, a CAPTCHA or a phone check is the owner's step. CHE stops here and never guesses it.
+    if (needsOwnerVerification(text)) {
+      return result('needs_owner', { steps, reason: 'This page needs a code or a human check. Please complete it, then tell CHE to continue.' });
+    }
   }
   return result('budget_exhausted', { steps, reason: `The step limit of ${limits.maxSteps} was reached before an answer.` });
 }

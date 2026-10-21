@@ -1,7 +1,7 @@
 // Hands-on app steps: the owner's rules, enforced in code (agent_permissions.js).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assertBrowserStepMayRun, browserStepKind } from './agent_permissions.js';
+import { assertBrowserStepMayRun, browserStepKind, needsOwnerVerification } from './agent_permissions.js';
 
 test('reading, clicking, typing and navigating an app she was granted all run now', () => {
   const grants = ['Gmail'];
@@ -47,4 +47,26 @@ test('a password is typed only from the vault, never from a value', () => {
 test('an explicit kind wins over the label', () => {
   assert.equal(browserStepKind({ kind: 'read', label: 'Buy now' }), 'read');
   assert.equal(browserStepKind({ kind: 'nonsense', action: 'click', label: 'Open' }), 'click');
+});
+
+test('creating an account is held until the owner says yes for it; the owner does the verification', () => {
+  const r = assertBrowserStepMayRun({ action: 'click', label: 'Create account' }, { app: 'TikTok', grants: ['TikTok'] });
+  assert.equal(r.held, true);
+  assert.equal(r.kind, 'signup');
+  assert.match(r.reason, /You do the verification step/);
+  const yes = assertBrowserStepMayRun({ action: 'click', label: 'Sign up' }, { app: 'TikTok', grants: ['TikTok'], ownerConfirmed: true });
+  assert.deepEqual(yes, { held: false, kind: 'signup' });
+});
+
+test('filling a signup form field is not held, and her password for the account is typed from the vault', () => {
+  const grants = ['Instagram'];
+  assert.deepEqual(assertBrowserStepMayRun({ action: 'type', label: 'Email' }, { app: 'Instagram', grants }), { held: false, kind: 'type' });
+  assert.deepEqual(assertBrowserStepMayRun({ action: 'type', secret: true, vault_ref: 'instagram.password' }, { app: 'Instagram', grants }), { held: false, kind: 'credential' });
+});
+
+test('a verification, CAPTCHA or phone-check page is recognized, and an ordinary page is not', () => {
+  assert.equal(needsOwnerVerification('Enter the 6-digit verification code we sent to your email.'), true);
+  assert.equal(needsOwnerVerification('Confirm you are not a robot'), true);
+  assert.equal(needsOwnerVerification('Verify your phone number to continue'), true);
+  assert.equal(needsOwnerVerification('Welcome back. Here is your feed.'), false);
 });

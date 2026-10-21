@@ -123,3 +123,28 @@ test('the search registry takes only real providers and returns the first when n
   assert.equal(reg.pick('b').id, 'b');
   assert.deepEqual(reg.list(), [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }]);
 });
+
+test('creating an account is held for the owner, and nothing is submitted', async () => {
+  let ran = false;
+  const planner = scripted([{ type: 'click', label: 'Create account' }]);
+  const r = await runBrowseLoop({ question: 'sign up', planner, executor: async () => { ran = true; return { ok: true }; }, app: 'TikTok', grants: ['TikTok'] });
+  assert.equal(r.status, 'held');
+  assert.equal(r.kind, 'signup');
+  assert.equal(ran, false);
+});
+
+test('a page that asks for a code stops the loop for the owner; CHE does not type a guess', async () => {
+  const captchaPage = async () => ({ ok: true, url: 'https://app.example/verify', text: 'Enter the 6-digit verification code we sent to you.' });
+  const planner = scripted([{ type: 'open', url: 'https://app.example/verify' }, { type: 'type', label: 'Code', text: '123456' }]);
+  const r = await runBrowseLoop({ question: 'sign up', planner, executor: captchaPage, app: 'App', grants: ['App'] });
+  assert.equal(r.status, 'needs_owner');
+  assert.match(r.reason, /human check/);
+  assert.equal(r.steps.length, 1, 'the loop stopped before the planner\x27s typed guess ran');
+});
+
+test('a CAPTCHA page stops the loop the same way', async () => {
+  const captcha = async () => ({ ok: true, url: 'https://app.example/x', text: 'Confirm you are not a robot' });
+  const planner = scripted([{ type: 'read' }]);
+  const r = await runBrowseLoop({ question: 'q', planner, executor: captcha, app: 'App', grants: ['App'] });
+  assert.equal(r.status, 'needs_owner');
+});

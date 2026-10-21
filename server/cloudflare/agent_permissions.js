@@ -55,8 +55,15 @@ export function permissionBlocker(agent, error) {
 
 const SPEND_WORDS = /\b(buy|purchase|checkout|check out|pay|payment|subscribe|subscription|order now|place order|donate|tip|transfer|send money|add to cart)\b/i;
 const DELETE_WORDS = /\b(delete|remove|unsubscribe|cancel (?:my )?(?:account|subscription)|close (?:my )?account|erase|uninstall|clear all)\b/i;
+const SIGNUP_WORDS = /\b(create (?:an? |my )?account|sign ?up|register|join now)\b/i;
 const SEND_WORDS = /\b(send|submit|post|reply|message|email|publish|share)\b/i;
-export const BROWSER_STEP_KINDS = Object.freeze(['read', 'navigate', 'click', 'type', 'send', 'spend', 'delete', 'credential']);
+export const BROWSER_STEP_KINDS = Object.freeze(['read', 'navigate', 'click', 'type', 'send', 'spend', 'delete', 'credential', 'signup']);
+
+// Pages that need a human: a code, a CAPTCHA, a phone or 2-step check. CHE never guesses these or tries to get past them.
+const VERIFICATION = /verification code|confirmation code|enter the code|security code|one-time (?:code|password)|captcha|not a robot|two-factor|2-factor|verify (?:your )?(?:phone|email|identity|account)/i;
+export function needsOwnerVerification(text = '') {
+  return VERIFICATION.test(String(text || ''));
+}
 
 /** What kind of step this is. An explicit kind wins; otherwise the element's own label decides. */
 export function browserStepKind(step = {}) {
@@ -66,6 +73,7 @@ export function browserStepKind(step = {}) {
   if (step.action === 'type' && step.secret) return 'credential';
   if (DELETE_WORDS.test(label)) return 'delete';
   if (SPEND_WORDS.test(label)) return 'spend';
+  if (step.action === 'click' && SIGNUP_WORDS.test(label)) return 'signup';
   if (step.action === 'click' && SEND_WORDS.test(label)) return 'send';
   if (step.action === 'type') return 'type';
   if (step.action === 'click') return 'click';
@@ -87,8 +95,9 @@ export function assertBrowserStepMayRun(step = {}, { app = '', grants = [], owne
   if (kind === 'credential' && (!step.vault_ref || step.value !== undefined)) {
     throw refusal('A password can only be typed from the on-device vault, never from a value CHE was given.');
   }
-  if ((kind === 'spend' || kind === 'delete') && !ownerConfirmed) {
-    return { held: true, kind, reason: kind === 'spend' ? 'Spending money needs your yes first.' : 'Deleting or removing needs your yes first.' };
+  if ((kind === 'spend' || kind === 'delete' || kind === 'signup') && !ownerConfirmed) {
+    const reason = { spend: 'Spending money needs your yes first.', delete: 'Deleting or removing needs your yes first.', signup: 'Creating an account needs your yes first. You do the verification step.' }[kind];
+    return { held: true, kind, reason };
   }
   return { held: false, kind };
 }
