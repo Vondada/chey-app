@@ -20,8 +20,6 @@ class CheScreenShareStatus {
 class CheScreenShare {
   CheScreenShare._();
 
-  static const _channel = MethodChannel('che/screen_share');
-
   /// Fail closed: an installed legacy extension cannot prove another app's
   /// pixels contain no credentials. Never read its status or payload.
   static Future<CheScreenShareStatus> status() async => const CheScreenShareStatus();
