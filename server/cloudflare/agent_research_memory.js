@@ -33,3 +33,32 @@ export function storeLoopReads(store, { question = '', observations = [], now = 
   }
   return { kept, skipped };
 }
+
+function pageView(record) {
+  return { id: record.id, url: record.source?.url || '', title: record.title || '', read_at: record.source?.retrieved_at || record.created_at || '' };
+}
+
+/**
+ * The research pages kept in the Brain, newest first. Pages are kept until the owner asks for one to be deleted;
+ * nothing expires them.
+ */
+export function listResearchPages(store, { limit = 50 } = {}) {
+  const { records, more } = store.list({ region: BRAIN_REGIONS.learned, path: RESEARCH_PATH, limit });
+  return { pages: records.map(pageView), more };
+}
+
+/**
+ * Deletes the named research pages. Only research pages are deleted: any other id is reported as missing, never removed.
+ * Call this only after the owner has said yes to a delete (see browse_chat.js).
+ */
+export function forgetResearchPages(store, ids = [], { now = new Date().toISOString() } = {}) {
+  const deleted = [];
+  const missing = [];
+  for (const id of [...new Set(ids.map((x) => String(x)))]) {
+    const record = store.get(id);
+    if (!record || record.path !== RESEARCH_PATH) { missing.push(id); continue; }
+    store.delete(id, { origin: 'owner', now });
+    deleted.push(id);
+  }
+  return { deleted, missing };
+}

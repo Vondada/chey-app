@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { BRAIN_REGIONS, CheBrainStore } from './brain_store.js';
-import { storeLoopReads, RESEARCH_PATH } from './agent_research_memory.js';
+import { storeLoopReads, listResearchPages, forgetResearchPages, RESEARCH_PATH } from './agent_research_memory.js';
 
 async function sqlStorage() {
   let DatabaseSync;
@@ -68,4 +68,28 @@ test('a stored page is found by a later search, next to other records, and stays
   });
   const hits = store.search('pizza naples', { limit: 5 });
   assert.ok(hits.some((h) => h.kind === 'research' && h.verification === 'unverified_research_lead'));
+});
+
+test('the research pages are listed, and only the named ones are forgotten when the owner says yes', async (t) => {
+  const store = await brain();
+  if (!store) return t.skip('node:sqlite unavailable');
+  const now = '2026-10-21T10:00:00.000Z';
+  storeLoopReads(store, {
+    question: 'pizza',
+    observations: [
+      { ok: true, read: true, url: 'https://en.wikipedia.org/wiki/Pizza', text: 'Pizza began in Naples.' },
+      { ok: true, read: true, url: 'https://en.wikipedia.org/wiki/Naples', text: 'Naples is a city in Italy.' },
+    ],
+    now,
+  });
+  const listed = listResearchPages(store);
+  assert.equal(listed.pages.length, 2);
+  assert.ok(listed.pages.every((p) => p.url.startsWith('https://en.wikipedia.org/')));
+  const pizza = listed.pages.find((p) => p.url.endsWith('/Pizza')).id;
+  const naples = listed.pages.find((p) => p.url.endsWith('/Naples')).id;
+  // Only the named page goes; the other stays, and an id that is not a research page is reported, not removed.
+  const result = forgetResearchPages(store, [pizza, 'not-a-page'], { now });
+  assert.deepEqual(result, { deleted: [pizza], missing: ['not-a-page'] });
+  const after = listResearchPages(store).pages.map((p) => p.id);
+  assert.deepEqual(after, [naples]);
 });
