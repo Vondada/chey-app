@@ -7,7 +7,7 @@ const CACHE = new Map(); // sha -> index (lives while the Durable Object is warm
 const META_KEY = 'codeidx_meta';
 const CHUNK_PREFIX = 'codeidx:';
 const CHUNK_CHARS = 900_000; // well under the Durable Object value limit
-const MAX_FILE_BYTES = 1_000_000;
+const MAX_FILE_BYTES = 4_000_000; // worker.js alone passed 1 MB on 2026-10-22
 const TEXT_FILE = /\.(?:dart|m?js|cjs|ts|tsx|jsx|html|css|json|jsonc|ya?ml|md|swift|kt|kts|gradle|java|m|mm|h|plist|xml|txt|sql|sh|toml|arb|pbxproj)$/i;
 
 function repoOf(env) {

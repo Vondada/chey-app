@@ -1,0 +1,66 @@
+name: CHE Visual Studio Render
+run-name: CHE edit render ${{ github.event.client_payload.job_id || inputs.job_id }}
+on:
+  repository_dispatch:
+    types: [che_edit_render]
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: Render job id (gha_...)
+        required: true
+        type: string
+      source:
+        description: CHE Worker base URL the edit document and sources are read from
+        required: true
+        type: string
+      token:
+        description: One-time render token (expires; opens only this job)
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: edit-render-${{ github.event.client_payload.job_id || inputs.job_id }}
+  cancel-in-progress: false
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      JOB: ${{ github.event.client_payload.job_id || inputs.job_id }}
+      SOURCE: ${{ github.event.client_payload.source || inputs.source }}
+      TOKEN: ${{ github.event.client_payload.token || inputs.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Hide the one-time token in logs
+        run: echo "::add-mask::$TOKEN"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install renderer
+        run: |
+          python -m pip install --quiet pillow
+          if ! command -v ffmpeg >/dev/null; then sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg; fi
+          ffmpeg -hide_banner -version | head -1
+      - name: Fetch the edit document and its sources
+        run: |
+          set -euo pipefail
+          [[ "$JOB" =~ ^gha_[a-f0-9]{32}$ ]] || { echo "bad job id"; exit 1; }
+          [[ "$SOURCE" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?$ ]] || { echo "bad source"; exit 1; }
+          mkdir -p sources rendered
+          curl -fsS --max-time 60 -H "X-CHE-Render-Token: $TOKEN" "$SOURCE/api/visual/render/$JOB" -o spec.json
+          for id in $(python -c "import json;print(' '.join(json.load(open('spec.json'))['assets']))"); do
+            [[ "$id" =~ ^[A-Za-z0-9_-]{1,80}$ ]] || { echo "bad asset id"; exit 1; }
+            curl -fsS --max-time 300 -H "X-CHE-Render-Token: $TOKEN" "$SOURCE/api/visual/render/$JOB/asset/$id" -o "sources/$id"
+          done
+      - name: Render and measure the output
+        run: python tools/che_edit_render.py --spec spec.json --sources sources --out rendered
+      - name: Keep the files for CHE to verify
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: che-edit-${{ env.JOB }}
+          path: rendered/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0

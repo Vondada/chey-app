@@ -20,6 +20,7 @@ import { WORKFLOWS, drainOrder, engineCapacityState, planWorkflow, shouldSwitchE
 import { recordReliability } from './reliability_ledger.js';
 import { BUILTIN_PROVIDER_MANIFESTS } from './provider_registry.js';
 import { appendAudit, auditEntry } from './privacy_policy.js';
+import { guardModelInput, loadSecurity, recordFindings, saveSecurity } from './security_intelligence.js';
 import { storedKeys, withStoredKeys } from './resilience.js';
 import { addTokens } from './usage_tracker.js';
 import { classifyHttpStatus, cooldownMsFor, makeEngineError, parseRetryAfter } from './che_errors.js';
@@ -1034,6 +1035,7 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
 // Calls one specific provider+model directly (candidate evaluation, paired
 // intelligence). Uses the same keys, headers and translation as routing.
 export async function callSpecificModel(env, providerId, modelName, messages, { maxTokens = 400, fetcher = fetch } = {}) {
+  messages = guardModelInput({ messages }).input.messages;
   const provider = PROVIDERS.find((item) => item.id === providerId && !item.keyless);
   if (!provider || !providerEnabled(env, provider)) throw new Error(`${providerId} is not connected.`);
   const called = await callProvider(env, provider, true, { messages, max_tokens: maxTokens }, fetcher, modelName);
@@ -1049,11 +1051,16 @@ export function routedEnv(env, fetcher = fetch, usageStorage = null) {
   const wrapped = Object.create(env);
   Object.defineProperty(wrapped, 'AI', {
     value: {
-      run: (model, input, options) => (
-        /flux|stable-diffusion|image/i.test(String(model)) || !Array.isArray(input?.messages)
+      run: (model, rawInput, options) => {
+        // Security Intelligence: the last guard before any model provider. Credential-shaped text never leaves.
+        const { input, findings } = guardModelInput(rawInput);
+        if (findings.length && usageStorage) {
+          loadSecurity(usageStorage).then((state) => { recordFindings(state, 'a model prompt', findings); return saveSecurity(usageStorage, state); }).catch(() => null);
+        }
+        return /flux|stable-diffusion|image/i.test(String(model)) || !Array.isArray(input?.messages)
           ? env.AI.run(model, input, options)
-          : routeText(env, model, input, fetcher, usageStorage)
-      ),
+          : routeText(env, model, input, fetcher, usageStorage);
+      },
     },
     enumerable: true,
   });
