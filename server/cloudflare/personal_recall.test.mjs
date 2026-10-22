@@ -74,3 +74,37 @@ test('older question records are skipped at recall and never deleted: a real sta
   assert.equal(out.answer, 'Your favorite food is pizza. You told me that on October 21, 2026.');
   assert.equal(brain.length, 2, 'the question record is still stored');
 });
+
+// Owner's calendar is America/Chicago (CDT in summer, CST in winter). Stored instants stay UTC.
+import { ownerDay, spokenStoredDate as spokenDate } from './personal_recall.js';
+
+test('a statement stored late on October 21 in Louisiana is dated October 21, not the UTC day October 22', () => {
+  // 2026-10-22T02:30Z is 9:30 p.m. CDT on October 21 (Louisiana local).
+  assert.equal(spokenDate({ created_at: '2026-10-22T02:30:00Z' }), 'October 21, 2026');
+  assert.deepEqual(ownerDay(new Date('2026-10-22T02:30:00Z')), { year: 2026, month: 10, day: 21 });
+});
+
+test('midnight crosses on the owner calendar, not UTC: 04:59Z is still the previous Chicago day in CDT', () => {
+  assert.equal(spokenDate({ created_at: '2026-10-22T04:59:59Z' }), 'October 21, 2026');
+  assert.equal(spokenDate({ created_at: '2026-10-22T05:00:00Z' }), 'October 22, 2026');
+});
+
+test('CST in winter: 05:30Z on January 15 is 11:30 p.m. January 14 in Louisiana', () => {
+  assert.equal(spokenDate({ created_at: '2027-01-15T05:30:00Z' }), 'January 14, 2027');
+  assert.equal(spokenDate({ created_at: '2027-01-15T06:30:00Z' }), 'January 15, 2027');
+});
+
+test('daylight-saving transition: the offset changes on the owner calendar, the stored instant does not', () => {
+  // DST began 2026-03-08 at 2:00 a.m. CST (08:00Z). Before: UTC-6; after: UTC-5.
+  assert.equal(spokenDate({ created_at: '2026-03-08T06:30:00Z' }), 'March 8, 2026');
+  assert.equal(spokenDate({ created_at: '2026-03-08T05:59:00Z' }), 'March 7, 2026');
+  assert.equal(spokenDate({ created_at: '2026-03-08T06:00:00Z' }), 'March 8, 2026');
+  // Still CST at 07:30Z (1:30 a.m. CST); CDT from 08:00Z (3:00 a.m. CDT). The same Chicago day either side.
+  assert.equal(spokenDate({ created_at: '2026-03-08T07:30:00Z' }), 'March 8, 2026');
+  assert.equal(spokenDate({ created_at: '2026-03-08T08:30:00Z' }), 'March 8, 2026');
+});
+
+test('an unreadable stamp gives no date rather than an invented one', () => {
+  assert.equal(spokenDate({ created_at: 'not a date' }), '');
+  assert.equal(spokenDate({}), '');
+});
