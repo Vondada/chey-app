@@ -44,7 +44,8 @@ async function owner({ saved = new Map(), model = () => 'Sure thing, sir.', extr
     CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', ...extraEnv,
     AI: { run: async (name, input) => {
       calls.push({ model: name, system: String(input?.messages?.[0]?.content || '') });
-      return { response: model(name, input) };
+      const out = model(name, input);
+      return out && typeof out === 'object' ? out : { response: out };
     } },
   };
   const state = new CheState({ storage: storageFor(saved) }, env);
@@ -109,7 +110,7 @@ test('2. a personality question reaches the model with the Soul; the owner\'s re
   assert.doesNotMatch(out.reply, /CHE itself/);
   assert.doesNotMatch(out.reply, /4898af92|Soul v1\b/, 'a Soul version the model invented is corrected to the real one');
   assert.match(out.reply, new RegExp(`Soul v0 \\(${out.meta.soul.hash}\\)`));
-  assert.match(out.reply, /This reply came from Cloudflare Workers AI, model @cf\/meta\//);
+  assert.match(out.reply, /The engine that answered your question is Cloudflare Workers AI, model @cf\/meta\/[^,]+, with no other agents/);
   assert.match(out.reply, new RegExp(out.meta.served_by.model.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')));
 });
 
@@ -231,7 +232,14 @@ test('7b. the engine guard changes only the self-engine sentence: numbers and re
   const reply = `Done, sir. ${receipt} The engine that answered is CHE itself.`;
   const out = guardEngineClaims(reply, { provider: 'groq', model: 'llama-3.3-70b-versatile', fallback: true });
   assert.ok(out.text.includes(receipt), 'receipt byte-identical');
-  assert.equal(out.text, `Done, sir. ${receipt} This reply came from Groq, model llama-3.3-70b-versatile.`);
+  assert.equal(out.text, `Done, sir. ${receipt} The engine that answered is Groq, model llama-3.3-70b-versatile.`);
+  // Codex review on #436: a receipt in the same sentence as the engine clause must survive byte for byte.
+  const same = 'Receipt rcpt_8f2a confirms 3 emails sent, and the engine is CHE.';
+  const kept = guardEngineClaims(same, { provider: 'groq', model: 'llama-3.3-70b-versatile' });
+  assert.equal(kept.replaced, 1);
+  assert.ok(kept.text.startsWith('Receipt rcpt_8f2a confirms 3 emails sent, and the engine is '), kept.text);
+  assert.equal(kept.text, 'Receipt rcpt_8f2a confirms 3 emails sent, and the engine is Groq, model llama-3.3-70b-versatile.');
+  assert.equal(guardEngineClaims('CHE itself answered in 2.4 seconds.', { provider: 'groq', model: 'm' }).text, 'Groq, model m answered in 2.4 seconds.');
   assert.equal(guardEngineClaims(receipt, { provider: 'groq', model: 'x' }).text, receipt);
   for (const plain of ['CHE itself is a Flutter app with a Worker.', 'The model of the car is a 2019 Civic.', 'I did it myself, sir.', 'I myself generated the image you asked for.', 'The model I trust myself is the one with receipts.']) {
     assert.equal(guardEngineClaims(plain, { provider: 'groq', model: 'x' }).text, plain, plain);
@@ -247,6 +255,48 @@ test('7c. a Soul version the model states is checked against the real one; other
   const saved = await saveSoul(storage, { traits: { warmth: 9 } });
   const history = 'Soul v0 was the built-in one; you changed it to Soul v1.';
   assert.equal(guardSoulClaims(history, saved).text, history);
+  // Codex review on #436: only claims about CHE's own Soul are checked, never someone else's product or document.
+  for (const other of ['The Soul v2 headphones ship in May.', 'Read the Soul v9 (abcdef12) design doc before Friday.']) {
+    assert.equal(guardSoulClaims(other, profile).text, other);
+  }
+  assert.match(guardSoulClaims('My Soul v7 is active.', profile).text, /^My Soul v0 is active\.$/);
+  assert.match(guardSoulClaims('The version used is Soul v5 (deadbeef).', profile).text, /Soul v0 \([0-9a-f]{8}\)/);
+});
+
+test('a reply finished by a continuation on another engine names every engine, and provenance lists them all', async () => {
+  let n = 0;
+  const che = await owner({ model: () => {
+    n += 1;
+    if (n === 1) return { response: 'The short version is that Canberra was picked as a compromise between Sydney and Melbourne, and however', finish_reason: 'length' };
+    return { response: 'it took until 1927 for Parliament to move there.', engine: 'groq', model: 'llama-3.3-70b-versatile' };
+  } });
+  const out = await che.say('Why is Canberra the capital of Australia?');
+  assert.equal(out.calls.length, 2, 'the first answer and its continuation');
+  for (const call of out.calls) assertSoulPrompt(call.system);
+  assert.deepEqual(out.meta.served_by.parts, [
+    { provider: 'cloudflare', model: out.meta.served_by.model },
+    { provider: 'groq', model: 'llama-3.3-70b-versatile' },
+  ]);
+  assert.equal(out.meta.served_by.provider, 'cloudflare', 'the first engine stays the primary one');
+  const asked = await che.say('Which engine answered that?');
+  assert.equal(asked.calls.length, 0);
+  assert.match(asked.reply, /came from Cloudflare Workers AI, model @cf\/meta\/[^;]+; and Groq, model llama-3\.3-70b-versatile\./);
+});
+
+test('a browser answer (che_browse) records the engines its loop really used, so provenance never says "no model"', async () => {
+  const che = await owner({ model: () => '{"type":"answer","why":"Nothing to read offline.","answer":"I could not reach any page just now, sir."}' });
+  const out = await che.say('Browse the web for the best pizza ovens');
+  assert.equal(out.meta.source, 'che_browse');
+  assert.ok(out.calls.length >= 1, 'the browse loop asked a model to plan');
+  for (const call of out.calls) assert.match(call.system, /SOUL v0 \([0-9a-f]{8}\)/);
+  assert.equal(out.meta.served_by.provider, 'cloudflare');
+  assert.equal(out.meta.served_by.route, 'browse');
+  assert.equal(out.meta.served_by.parts.length, out.calls.length);
+  assert.equal(out.meta.soul.soul_applied, true);
+  const asked = await che.say('Which engine answered that?');
+  assert.equal(asked.calls.length, 0);
+  assert.match(asked.reply, /came from Cloudflare Workers AI, model @cf\/meta\//);
+  assert.doesNotMatch(asked.reply, /no model \(deterministic\)/);
 });
 
 test('provenance questions are recognised; advice about models is not', () => {

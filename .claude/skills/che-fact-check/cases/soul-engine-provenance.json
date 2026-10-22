@@ -3,7 +3,7 @@
   "owner": true,
   "model": "I'm using Soul v1 (4898af92). The Soul version used to shape this response is indeed the one I mentioned, and it did influence the response. The engine that answered your question is CHE itself, with no other agents involved in this conversation.",
   "turns": [
-    { "message": "Hey CHE, what's the capital of Australia?", "expect": { "route": "model", "match": "This reply came from Cloudflare Workers AI, model @cf/meta/", "not": "CHE itself|4898af92" } },
+    { "message": "Hey CHE, what's the capital of Australia?", "expect": { "route": "model", "match": "The engine that answered your question is Cloudflare Workers AI, model @cf/meta/", "not": "CHE itself|4898af92" } },
     { "message": "Which Soul version shaped that reply, and which engine answered it?", "expect": { "route": "che_reply_provenance", "model_calls": 0, "match": "came from Cloudflare Workers AI, model @cf/meta/.*Soul v0 \\([0-9a-f]{8}\\) was in its prompt", "not": "CHE itself" } },
     { "message": "What model answered you just now?", "expect": { "route": "che_reply_provenance", "model_calls": 0, "match": "came from Cloudflare Workers AI", "not": "CHE itself" } },
     { "message": "/status", "expect": { "route": "che_command", "model_calls": 0 } },

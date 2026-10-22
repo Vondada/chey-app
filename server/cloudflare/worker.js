@@ -3580,6 +3580,8 @@ async function runChatModel(env, { model, systemPrompt, compactPrompt, turns, me
       });
 
       let reply = String(answer?.response || answer?.choices?.[0]?.message?.content || '').trim();
+      // Every engine that wrote part of this reply, in order: a continuation may be served by a different engine.
+      const parts = [{ provider: String(answer?.engine || ''), model: String(answer?.model || attempt.model || '') }];
       // Some reasoning/free-tier engines spend most of a small completion
       // budget thinking and then stop mid-sentence. Finish the reply
       // automatically instead of showing the owner a dangling "However".
@@ -3603,11 +3605,12 @@ async function runChatModel(env, { model, systemPrompt, compactPrompt, turns, me
         const more = String(continued?.response || continued?.choices?.[0]?.message?.content || '').trim();
         if (!more) break;
         reply = mergeReplyContinuation(reply, more);
+        parts.push({ provider: String(continued?.engine || ''), model: String(continued?.model || attempt.model || '') });
         answer = { ...continued, response: reply };
       }
       // Which engine actually answered, and whether it was a fallback past the first choice (Soul provenance).
       // provider/model are what the router actually used (ai_router.js sets engine/model), not only what was asked for.
-      return { ...answer, response: reply, served_by: servedBy(answer, attempt.model, attempt.route, attempt !== attempts[0]) };
+      return { ...answer, response: reply, served_by: { ...servedBy({ engine: parts[0].provider, model: parts[0].model }, attempt.model, attempt.route, attempt !== attempts[0]), parts } };
     } catch (error) {
       // A busy or failing engine on an earlier attempt is the truer reason than a later "too long"
       // from engines that were left (review of #349).
@@ -3708,19 +3711,33 @@ export class CheState extends DurableObject {
     }
     const plan = subAgentPlan(message, { url: intent.url });
     if (plan.length) parts.push(await this.queueBrowseSubAgents(plan));
+    // Every model call the loop made, so the reply's provenance names the real engines (never "no model").
+    const served = [];
+    let soulProfile = null;
     if (intent.search) {
       // A model failure is no plan, so the loop stops and says so; it never becomes an invented answer.
       const complete = async ({ system, user }) => {
-        const answer = await runChatModel(this.env, { systemPrompt: system, turns: [], message: user, maxTokens: 400, preferFast: true }).catch(() => ({ response: '' }));
+        // The fast model by name: without one, the call reached the router with no model, and no model could be recorded.
+        const answer = await runChatModel(this.env, { model: this.env.CHE_FAST_MODEL || FAST_MODEL, systemPrompt: system, turns: [], message: user, maxTokens: 400, preferFast: true }).catch(() => ({ response: '' }));
+        if (answer?.served_by) served.push(answer.served_by);
         return String(answer?.response || '');
       };
       // The Worker's Soul is the one personality; the phone's copy (body.soul) is not a second source (soul.js).
-      const searched = await runSearchRoute(message, { complete, soul: soulPromptBlock(await loadSoul(this.ctx.storage)) });
+      soulProfile = await loadSoul(this.ctx.storage);
+      const searched = await runSearchRoute(message, { complete, soul: soulPromptBlock(soulProfile) });
       // Every page the run read is kept as a research page: kept until the owner asks for it to be forgotten.
       const kept = storeLoopReads(new CheBrainStore(this.ctx.storage), { question: message, observations: searched.observations, now: new Date().toISOString() }).kept.length;
       parts.push(kept ? `${searched.text}\nI kept ${kept} page${kept === 1 ? '' : 's'} I read as research pages.` : searched.text);
     }
-    return { text: parts.filter(Boolean).join('\n\n') };
+    const text = parts.filter(Boolean).join('\n\n');
+    if (!served.length) return { text };
+    // The Soul was in every planner prompt (soulPlannerPrompt), so it shaped the words those calls wrote.
+    const allParts = served.flatMap((entry) => entry.parts?.length ? entry.parts : [{ provider: entry.provider, model: entry.model }]);
+    return {
+      text,
+      served_by: { ...served[0], route: 'browse', fallback: served.some((entry) => entry.fallback), parts: allParts },
+      soul: soulProvenance(soulProfile, { applied: true, route: 'model' }),
+    };
   }
 
   async queueBrowseSubAgents(plan) {
@@ -9093,7 +9110,7 @@ export class CheState extends DurableObject {
         // back to CHE. A plain yes, a money request and a delete never match these words, so they keep their holds.
         if (!body.attachment && !body.workflow_step) {
           const browsed = await this.browseTurn(rawMessage, body).catch((error) => ({ text: `That did not run: ${String(error?.message || error).slice(0, 160)}` }));
-          if (browsed?.text) return ndjsonReply(browsed.text, { source: 'che_browse', ok: true, code_review_passed: false, owner_approval_required: false });
+          if (browsed?.text) return ndjsonReply(browsed.text, { source: 'che_browse', ok: true, code_review_passed: false, owner_approval_required: false, ...(browsed.served_by ? { served_by: browsed.served_by, soul: browsed.soul } : {}) });
         }
 
         // Command Center: a plain yes releases a held command (once, fresh);
