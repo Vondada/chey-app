@@ -9,6 +9,7 @@
 //
 // Privacy: a run keeps the route, outcome, counts and up to six content words of the request with numbers,
 // addresses and key-like strings removed. Never the message, reply, passwords or keys.
+import { BROAD_SECRET_RE } from './security_intelligence.js';
 import { COMMANDS, commandById, describeWorkflow, normalizeSavedWorkflow, searchCommands } from './command_catalog.js';
 
 export const ENGINE_VERSION = 1;
@@ -122,7 +123,8 @@ function jaccard(a, b) {
 }
 
 // Key-, token- and password-shaped text. Workflows never carry these; an import that does is refused.
-export const SECRET_RE = /\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,}|PK[A-Z0-9]{16,}|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,})|\b(?=[A-Za-z0-9+/_-]{32,}\b)(?=[^\s]*\d)(?=[^\s]*[A-Za-z])[A-Za-z0-9+/_-]{32,}\b|\b(?:password|passcode|api[ _-]?key|secret|token)\s*(?:is|=|:)\s*\S+/i;
+// One pattern set for CHE: Security Intelligence owns it (security_intelligence.js BROAD_SECRET_RE).
+export const SECRET_RE = BROAD_SECRET_RE;
 
 export function emptyState() {
   return { v: ENGINE_VERSION, stats: {}, runs: [], misses: {}, candidates: [], learned: [], prefs: { disabled: [], preferred: {} }, feedback: {}, versions: {}, audit: [] };
@@ -206,7 +208,11 @@ export function workflowForRun({ source = '', slash = '', workflow_id = '', engi
 export function recordRun(state, { message = '', done = {}, held = false, slash = '', ms = 0, data = {} } = {}, now = new Date().toISOString()) {
   const source = held ? 'che_held_action' : String(done.source || 'model');
   const wf = workflowForRun({ source, slash, workflow_id: done.workflow_id, engine_workflow: done.engine_workflow }, data, state);
-  const modelCalls = Number.isFinite(Number(done.model_calls)) ? Number(done.model_calls) : source === 'model' ? 1 : 0;
+  // A route that does not report its count but shows a model served it (served_by, engine, an applied Soul) counts
+  // as at least one call; only a route with no sign of a model counts as zero.
+  const reported = done.model_calls !== undefined && done.model_calls !== null && Number.isFinite(Number(done.model_calls));
+  const modelUsed = source === 'model' || Boolean(done.served_by || done.engine || done.provider || done.soul?.applied === true);
+  const modelCalls = reported ? Number(done.model_calls) : modelUsed ? 1 : 0;
   const ok = !held && done.ok !== false;
   const sys = SYSTEM_WORKFLOWS.find((w) => w.id === wf);
   const verified = ok && Boolean(done.receipt || done.evidence || done.verified === true || done.verification || (sys && sys.deterministic && sys.verify === 'handler') || (wf.startsWith('cmd:') && modelCalls === 0));
@@ -215,7 +221,7 @@ export function recordRun(state, { message = '', done = {}, held = false, slash 
   s.runs++; s.model_calls += modelCalls; s.ms += Math.max(0, Math.round(ms)); s.last_at = now;
   if (held) s.held++; else if (ok) s.ok++; else s.failed++;
   if (verified) s.verified++;
-  state.runs = [{ at: now, wf, source, ok, held, model_calls: modelCalls, ms: Math.round(ms), verified, sig }, ...(state.runs || [])].slice(0, MAX_RUNS);
+  state.runs = [{ at: now, wf, source, ok, held, model_calls: modelCalls, ...(reported ? {} : { model_calls_lower_bound: modelUsed }), ms: Math.round(ms), verified, sig }, ...(state.runs || [])].slice(0, MAX_RUNS);
   if (wf === 'open_conversation' && ok && sig && !slash) noteMiss(state, sig, message, now);
   return { workflow: wf, verified, model_calls: modelCalls };
 }
@@ -402,6 +408,9 @@ export function setDisabled(state, lib, words, disabled, now = new Date().toISOS
   const w = findWorkflow(lib, words);
   if (!w) return { ok: false, reason: 'not_found' };
   if (w.id === 'safety_gate' && disabled) return { ok: false, reason: 'protected', workflow: w };
+  // Only workflows whose execution checks this switch can be turned off: commands, saved and learned workflows.
+  // A built-in workflow is CHE's own handler for that kind of request; turning it off would not stop it.
+  if (w.kind === 'system' && disabled) return { ok: false, reason: 'built_in', workflow: w };
   const set = new Set(state.prefs.disabled || []);
   if (disabled) set.add(w.id); else set.delete(w.id);
   state.prefs.disabled = [...set];
@@ -419,6 +428,9 @@ export function setPreferred(state, lib, words, forWhat, now = new Date().toISOS
 }
 
 /** "That was wrong" / "that worked": feedback on the workflow that served the last request. */
+/** Is this workflow turned off by the owner? Checked by the executors (commands, saved and learned workflows). */
+export function isDisabled(state, id) { return (state?.prefs?.disabled || []).includes(id); }
+
 export function feedbackOnLast(state, good, now = new Date().toISOString()) {
   const last = (state.runs || []).find((r) => !r.feedback_for);
   if (!last) return { ok: false, reason: 'no_run' };

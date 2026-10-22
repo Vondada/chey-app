@@ -373,3 +373,10 @@ test('security words are read deterministically; ordinary sentences are not', ()
 });
 
 test.after(() => { globalThis.fetch = realFetch; });
+
+test('Office has a Security Intelligence specialist for security work; ordinary review still goes to QA', async () => {
+  const { specialtyFrom } = await import('./office_workforce.js');
+  assert.equal(specialtyFrom('triage this malware sample and the incident'), 'security');
+  assert.equal(specialtyFrom('scan the repo for exposed secrets with secret scanning'), 'security');
+  assert.equal(specialtyFrom('review this pull request'), 'review');
+});

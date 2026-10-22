@@ -9,6 +9,10 @@ import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
+import '../security/che_secret_scan.dart';
+
+export '../security/che_secret_scan.dart' show cheLooksSecret;
+
 class CheWorkflowsClient {
   CheWorkflowsClient({required this.baseUrl, required this.headers, http.Client? client}) : _client = client ?? http.Client();
   final String baseUrl;
@@ -42,6 +46,7 @@ class CheWorkflowsClient {
         body: jsonEncode(body),
       ));
 }
+
 
 /// The spoken summary of the measurements, the same words CHE says for "workflow stats".
 String cheWorkflowSummary(Map<String, dynamic> e) {
@@ -99,17 +104,29 @@ class _CheWorkflowsScreenState extends State<CheWorkflowsScreen> {
     if (_busy) return;
     setState(() => _busy = true);
     String said;
+    var ok = false;
     try {
       final out = await widget.client.action(name, body);
       if (out['view'] is Map) _view = Map<String, dynamic>.from(out['view'] as Map);
       said = success;
-      HapticFeedback.mediumImpact();
+      ok = true;
     } catch (e) {
       said = 'That did not work: ${e.toString().replaceFirst('Exception: ', '')}';
+    }
+    if (!mounted) return;
+    setState(() => _busy = false);
+    _report(said, ok: ok);
+  }
+
+  /// The same receipt for every result: visible text, a haptic pattern and a VoiceOver announcement.
+  void _report(String said, {required bool ok}) {
+    if (ok) {
+      HapticFeedback.mediumImpact();
+    } else {
       HapticFeedback.heavyImpact();
     }
     if (!mounted) return;
-    setState(() { _busy = false; _status = said; });
+    setState(() => _status = said);
     unawaited(SemanticsService.sendAnnouncement(View.of(context), said, TextDirection.ltr));
   }
 
@@ -117,21 +134,27 @@ class _CheWorkflowsScreenState extends State<CheWorkflowsScreen> {
     try {
       final out = await widget.client.exportAll();
       await Clipboard.setData(ClipboardData(text: const JsonEncoder.withIndent('  ').convert(out)));
-      setState(() => _status = 'Copied ${(out['workflows'] as List?)?.length ?? 0} workflows to the clipboard. No keys, tokens or passwords are in it.');
+      _report('Copied ${(out['workflows'] as List?)?.length ?? 0} workflows to the clipboard. No keys, tokens or passwords are in it.', ok: true);
     } catch (e) {
-      setState(() => _status = 'Export did not work: ${e.toString().replaceFirst('Exception: ', '')}');
+      _report('Export did not work: ${e.toString().replaceFirst('Exception: ', '')}', ok: false);
     }
   }
 
   Future<void> _import() async {
     final clip = await Clipboard.getData(Clipboard.kTextPlain);
+    final text = clip?.text ?? '';
+    // A password, key or token never leaves this iPhone: the import is refused here, before anything is sent.
+    if (cheLooksSecret(text)) {
+      _report('That workflow list contains something that looks like a password, key or token, so I did not import it. Nothing was sent.', ok: false);
+      return;
+    }
     Map<String, dynamic>? payload;
     try {
-      final d = jsonDecode(clip?.text ?? '');
+      final d = jsonDecode(text);
       if (d is Map) payload = Map<String, dynamic>.from(d);
     } catch (_) {}
     if (payload == null) {
-      setState(() => _status = 'The clipboard does not hold an exported workflow list. Nothing was imported.');
+      _report('The clipboard does not hold an exported workflow list. Nothing was imported.', ok: false);
       return;
     }
     await _act('import', payload, 'Import finished; see the library for what was added.');
@@ -197,7 +220,7 @@ class _CheWorkflowsScreenState extends State<CheWorkflowsScreen> {
                         ),
                     ]),
                     const SizedBox(height: 8),
-                    for (final w in shown.take(80)) _workflow(w),
+                    for (final w in shown) _workflow(w),
                   ],
                 ),
     );
@@ -226,6 +249,8 @@ class _CheWorkflowsScreenState extends State<CheWorkflowsScreen> {
     final s = Map<String, dynamic>.from(w['stats'] as Map? ?? const {});
     final runs = (s['runs'] as num?)?.toInt() ?? 0;
     final disabled = w['disabled'] == true;
+    // Built-in workflows are CHE's own handlers: they cannot be switched off, so no switch pretends they can.
+    final fixed = w['kind'] == 'system';
     final facts = runs == 0
         ? 'No runs yet'
         : '$runs runs · ${s['success_rate']}% succeeded · ${s['avg_model_calls']} model calls on average';
@@ -247,10 +272,10 @@ class _CheWorkflowsScreenState extends State<CheWorkflowsScreen> {
         ),
       ),
       Semantics(
-        label: w['id'] == 'safety_gate' ? '${w['name']} always stays on' : 'Use ${w['name']}',
+        label: fixed ? '${w['name']} always stays on' : 'Use ${w['name']}',
         child: Switch(
           value: !disabled,
-          onChanged: _busy || w['id'] == 'safety_gate'
+          onChanged: _busy || fixed
               ? null
               : (on) => unawaited(_act(on ? 'enable' : 'disable', {'id': w['id']}, '${w['name']} is ${on ? 'on' : 'off'}.')),
         ),

@@ -48,7 +48,11 @@ test('3. a finished reply is recorded against the workflow that served it, with 
   assert.equal(recordRun(s, { message: '/money-dashboard', slash: 'money-dashboard', done: { source: 'office', model_calls: 0 } }).workflow, 'cmd:money-dashboard');
   assert.equal(recordRun(s, { message: 'write a poem', done: {} }).workflow, 'open_conversation', 'no source = the language model answered');
   assert.equal(recordRun(s, { message: 'pay the bill', held: true }).workflow, 'safety_gate');
-  assert.equal(s.runs[0].held, true);
+  // A route that used a model but did not report its count is never recorded as zero model calls.
+  recordRun(s, { message: 'search the web for ferries', done: { source: 'che_browse', served_by: { engine: 'x' } } });
+  assert.equal(s.runs[0].model_calls, 1);
+  assert.equal(s.runs[0].model_calls_lower_bound, true);
+  assert.equal(s.runs[1].held, true);
   assert.equal(workflowForRun({ source: 'che_brand_new_handler' }), 'route:che_brand_new_handler', 'an unmapped handler is still recorded, by route');
 });
 
@@ -58,7 +62,8 @@ test('4. privacy: a run keeps at most six content words; never the message, numb
   const stored = JSON.stringify(s);
   for (const leak of ['joe@example.com', '4417', 'sk-abcdefghij', 'invoice about']) assert.ok(!stored.includes(leak), leak);
   assert.ok(s.runs[0].sig.split(' ').length <= 6);
-  assert.ok(SECRET_RE.test('my password is hunter2') && SECRET_RE.test('ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'));
+  for (const secret of ['my password is hunter2', 'use password hunter2', 'api key abc123', 'token: xyz9876', 'ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa']) assert.ok(SECRET_RE.test(secret), secret);
+  for (const plain of ['reset the password for my email', 'plan my week', 'a token of thanks']) assert.equal(SECRET_RE.test(plain), false, plain);
 });
 
 test('5. ranking explains its choice from trigger words, measured success and the owner\'s preference', () => {
@@ -84,14 +89,14 @@ test('6. preferences: "prefer X for Y" puts it first for that kind of request', 
   assert.ok(after[0].score > (before.find((r) => r.id === 'knowledge_answer')?.score || 0));
 });
 
-test('7. turning a workflow off removes it from ranking and learned routing; the safety gate cannot be turned off', () => {
+test('7. turning a workflow off: commands and saved workflows can be; built-ins and the safety gate cannot', () => {
   const s = emptyState();
   const lib = library({}, s);
-  assert.ok(setDisabled(s, lib, 'trading desk', true).ok);
-  assert.ok(!rankWorkflows('check my trading positions', library({}, s), s).some((r) => r.id === 'trading_desk'));
+  assert.equal(setDisabled(s, lib, 'trading desk', true).reason, 'built_in', 'a built-in handler cannot be switched off by a flag it does not read');
+  assert.ok(setDisabled(s, lib, 'cmd:trade-controls', true).ok);
+  assert.ok(!rankWorkflows('change my trade controls limits', library({}, s), s).some((r) => r.id === 'cmd:trade-controls'));
   assert.equal(setDisabled(s, lib, 'safety gate', true).reason, 'protected');
-  assert.ok(setDisabled(s, lib, 'trading desk', false).ok);
-  assert.ok(rankWorkflows('check my trading positions', library({}, s), s).some((r) => r.id === 'trading_desk'));
+  assert.ok(setDisabled(s, lib, 'cmd:trade-controls', false).ok);
 });
 
 test('8. feedback: "that workflow was wrong" lowers its rank; three mark it for review', () => {
@@ -305,8 +310,13 @@ test('20. Worker: the Workflows page API (owner only), voice controls, resume of
   // A guest device sees nothing.
   const guest = await che.send('/api/workflows', null, '', 'GET');
   assert.notEqual(guest.status, 200);
-  assert.match((await che.say('disable the trading desk workflow')).reply, /Trading desk is turned off/);
-  assert.ok((await che.get('/api/workflows')).workflows.find((w) => w.id === 'trading_desk').disabled);
+  assert.match((await che.say('disable the trading desk workflow')).reply, /built-in workflows, sir, so it cannot be turned off/);
+  assert.match((await che.say('disable the /trade-controls workflow')).reply, /\/trade-controls is turned off/);
+  assert.ok((await che.get('/api/workflows')).workflows.find((w) => w.id === 'cmd:trade-controls').disabled);
+  // Turned off means it does not run: the command refuses, and says how to turn it back on.
+  const refused = await che.say('/trade-controls');
+  assert.match(refused.reply, /turned off, sir, so I did not run it/);
+  assert.equal(refused.model_calls, 0);
   assert.match((await che.say('disable the safety gate workflow')).reply, /cannot be turned off/);
   const ranked = await che.post('/api/workflows/rank', { message: 'research the best microphones' });
   assert.equal(ranked.status, 200);

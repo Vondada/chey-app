@@ -35,6 +35,18 @@ const SECRET_PATTERNS = [
   ['secret_assignment', /\b(?:api[ _-]?key|secret|access[ _-]?token|client[ _-]?secret|auth[ _-]?token)\s*(?:is|=|:)\s*["']?[A-Za-z0-9._~+/=-]{12,}/gi],
 ];
 
+// The broad check used where a false positive only refuses (workflow import/export, saved inputs): it also catches
+// plain forms such as "password hunter2", "api key abc123" and "token: xyz". Model prompts and logs use the precise
+// patterns above, so ordinary prose ("the token expires") is never altered there. Mirrored on the phone in
+// lib/security/che_secret_scan.dart.
+export const BROAD_SECRET_RE = /\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,}|PK[A-Z0-9]{16,}|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,})|\b(?=[A-Za-z0-9+/_-]{32,}\b)(?=[^\s]*\d)(?=[^\s]*[A-Za-z])[A-Za-z0-9+/_-]{32,}\b|\b(?:password|passcode|passphrase|api[ _-]?key|secret[ _-]?key|access[ _-]?token|auth[ _-]?token|token|pin)\s*(?:is\s+|=\s*|:\s*|\s)\s*(?!is\b|for\b|the\b|a\b|to\b|and\b|of\b)\S{4,}/i;
+
+/** True when the text looks like it holds a credential. `broad` adds the plain-word forms. */
+export function looksSecret(value, { broad = false } = {}) {
+  const text = String(value ?? '');
+  return scanSecrets(text).length > 0 || (broad && BROAD_SECRET_RE.test(text));
+}
+
 function entropy(s) {
   const counts = {};
   for (const c of s) counts[c] = (counts[c] || 0) + 1;
