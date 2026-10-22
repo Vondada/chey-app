@@ -377,6 +377,8 @@ const SPOKEN = [
   ['delivery', /^(?:is\s+)?(.+?)\s+ready\s+(?:to\s+deliver|for\s+delivery)$|^delivery\s+(?:status\s+)?for\s+(.+)$/i, (m) => ({ title: m[1] || m[2] })],
   // "Add a beat called Smoke, 145 BPM, basic lease $30, exclusive $500"
   ['beat', /^add\s+(?:a\s+)?beat\s+(?:called|named)\s+(.+)$/i, (m) => parseBeat(m[1])],
+  // "Sell Smoke exclusively" / "Sell Smoke exclusively to Dre": Music, Business and Legal checked together; nothing is sold.
+  ['exclusive_check', /^(?:can i |can we |i want to |let's )?sell\s+(?:the\s+beat\s+)?(.+?)\s+exclusively(?:\s+to\s+(.+?))?$/i, (m) => ({ beat: m[1], buyer: m[2] || null })],
   // "Sold a basic lease of Smoke to Mike, payment cs_123" (an exclusive also names "agreement <ref>")
   ['beat_sale', /\bsold\s+(?:a|an|the)\s+(.+?)\s+(?:licen[cs]e\s+)?(?:of|for|on)\s+(.+?)\s+to\s+(.+?)[,;]?\s+payment\s+(?:ref(?:erence)?\s+)?(\S+?)(?:[,;]?\s+agreement\s+(\S+))?$/i, (m) => ({ license: m[1], beat: m[2], buyer: m[3], payment_ref: m[4], agreement_ref: m[5] || null })],
   // Agreement steps for a managed artist.
@@ -427,7 +429,7 @@ export function resolveSpokenBusiness(data, ask) {
     const song = data.projects.find((p) => p?.music?.workspace_id && p.title.toLowerCase() === ask.title.trim().toLowerCase());
     return song ? { song } : null;
   }
-  if (ask.kind === 'beat_sale') {
+  if (ask.kind === 'beat_sale' || ask.kind === 'exclusive_check') {
     const beat = findByName(data.music_beats, ask.beat);
     return beat ? { beat } : null;
   }
@@ -487,6 +489,10 @@ export function applySpokenBusiness(data, ask, target, now = new Date().toISOStr
     const r = recordBeatSale(data, target.beat, { license_id: lic.id, buyer: ask.buyer, payment_ref: ask.payment_ref, agreement_ref: ask.agreement_ref, owner_approved: true }, now);
     return r.ok ? done(`Recorded the ${lic.name} of ${target.beat.name} to ${r.sale.buyer}, payment ${r.sale.payment_ref}. ${r.state === 'EXCLUSIVE_SOLD' ? 'It is now sold exclusively; nothing else can be sold for it.' : 'It is now leased.'}`) : fail(r.why);
   }
+  if (ask.kind === 'exclusive_check') {
+    const c = exclusiveCheck(target.beat);
+    return { ok: c.ready, changed: false, text: c.text, check: c };
+  }
   if (ask.kind === 'agreement') {
     const r = advanceAgreement(target.ws, ask.step, ask.step === 'draft' ? { terms: ask.terms } : ask.evidence, now);
     const said = { draft: 'Drafted', legal_review: 'Recorded Legal\'s notes on', owner_approved: 'Recorded your approval of', sent: 'Recorded that you sent', executed: 'Recorded the signed' }[ask.step];
@@ -497,4 +503,28 @@ export function applySpokenBusiness(data, ask, target, now = new Date().toISOStr
     return r.ok ? done(`Recorded ${$(r.record.amount_usd)} ${r.record.kind.replace(/_/g, ' ')} for ${target.ws.name}, ${r.record.source.replace(/_/g, ' ')} ${r.record.ref}.`) : fail(r.why);
   }
   return null;
+}
+
+/// "Sell this beat exclusively": one answer from three checks. Music: the beat's state and what is already sold.
+/// Business: the exclusive licence and its price. Legal: whether existing leases allow an exclusive, and the
+/// agreement it needs. Nothing is sold or sent here.
+export function exclusiveCheck(beat) {
+  const ex = beat.licenses.find((l) => l.exclusive);
+  const leases = beat.sales.filter((s) => !s.exclusive);
+  const blockers = [];
+  const steps = [];
+  if (beat.state === 'EXCLUSIVE_SOLD') blockers.push(`Music: ${beat.name} was already sold exclusively.`);
+  if (beat.state === 'RETIRED') blockers.push(`Music: ${beat.name} is retired.`);
+  if (!ex) blockers.push(`Business: ${beat.name} has no exclusive licence priced. Set the exclusive price first.`);
+  if (ex && !ex.terms_ref) steps.push('Legal: write or attach the exclusive licence terms.');
+  if (leases.length && !ex?.legal_reviewed) blockers.push(`Legal: ${leases.length} lease${leases.length === 1 ? ' is' : 's are'} already sold (${leases.map((s) => s.buyer).join(', ')}). Check that those lease terms allow a later exclusive, and how those buyers keep their rights, before selling it.`);
+  steps.push('Business: the buyer pays, and you record the payment reference.');
+  steps.push('Legal: both sides sign the exclusive agreement; CHE does not sign.');
+  steps.push('You approve the sale; then say "sold an exclusive of ' + beat.name + ' to <buyer>, payment <ref>, agreement <ref>".');
+  const ready = blockers.length === 0;
+  const price = ex ? ` at $${ex.price_usd.toFixed(2)}` : '';
+  const text = ready
+    ? `${beat.name} can be sold exclusively${price}. Music: ${leases.length ? `${leases.length} earlier lease${leases.length === 1 ? '' : 's'}, cleared by Legal` : 'no licences sold yet'}. Next: ${steps.join(' ')}`
+    : `${beat.name} is not ready for an exclusive sale${price}. ${blockers.join(' ')} ${steps.length ? `After that: ${steps.join(' ')}` : ''}`.trim();
+  return { ready, blockers, steps, text };
 }
