@@ -145,26 +145,14 @@ class CheHomeUserBubble extends StatelessWidget {
             curve: CheMotion.spring,
             builder: (_, s, child) => Transform.scale(scale: s, alignment: Alignment.bottomRight, child: child),
             child: hud
-                // HUD: the owner's words on polished chrome, dark ink for contrast.
-                ? Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 11),
-                    decoration: BoxDecoration(
-                      borderRadius: shape,
-                      gradient: const LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [Color(0xFFFFFFFF), Color(0xFFDFE9F3), Color(0xFFA9BDD1)],
-                        stops: [0.0, 0.45, 1.0],
-                      ),
-                      border: Border.all(color: Colors.white.withValues(alpha: 0.9), width: 0.8),
-                      boxShadow: [
-                        BoxShadow(color: Colors.black.withValues(alpha: 0.45), blurRadius: 22, offset: const Offset(0, 10)),
-                        BoxShadow(color: CheHud.iceDeep.withValues(alpha: 0.22), blurRadius: 16),
-                      ],
-                    ),
+                // HUD: the owner's words on a lit holographic plate, ice-edged, bright text.
+                ? CheGlass(
+                    radius: 14,
+                    glow: CheHud.iceDeep,
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                     child: SelectableText(
                       text,
-                      style: CheType.body.copyWith(color: const Color(0xFF071320), fontWeight: FontWeight.w500),
+                      style: CheType.body.copyWith(color: const Color(0xFFF4FBFF), fontWeight: FontWeight.w500),
                     ),
                   )
                 : Container(
