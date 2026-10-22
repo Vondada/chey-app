@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
 import { premiumVoiceSpeech, voiceLogEntry, voiceProviderOf, voiceTag, voiceTurnFor } from './phone_voice.js';
-import { resetPreferredElevenLabsPause } from './preferred_elevenlabs_voice.js';
+import { preferredElevenLabsKeyStatus, resetPreferredElevenLabsPause } from './preferred_elevenlabs_voice.js';
 import { resetFishAudioState } from './fish_audio_voice.js';
 import { reconcileVoiceChoice, saveVoiceChoice, VOICE_PREF_KEY } from './voice_choices.js';
 
@@ -274,4 +274,15 @@ test('a connection lost while the audio downloads is not retried: the clip was a
   };
   assert.equal(await premiumVoiceSpeech(env(), 'Lost part.', { lock: 'elevenlabs', storage: memoryStorage(), ...noWait }), null);
   assert.equal(calls.eleven, 1);
+});
+
+test('a key that reached its own credit limit is reported as a key limit, not an out-of-credits account (owner, 2026-10-22)', async () => {
+  const quota = '{"detail":{"status":"quota_exceeded","message":"This request exceeds your API key (Che voice) quota of 10000. You have 2 credits remaining, while 16 credits are required for this request."}}';
+  globalThis.fetch = async (url) => {
+    if (String(url).includes('elevenlabs')) return new Response(quota, { status: 401, headers: { 'Content-Type': 'application/json' } });
+    throw new Error(`unexpected fetch ${url}`);
+  };
+  const e = env();
+  assert.equal(await premiumVoiceSpeech(e, 'Quota part.', { lock: 'elevenlabs', storage: memoryStorage(), ...noWait }), null);
+  assert.equal(preferredElevenLabsKeyStatus(e).status, 'key limit reached');
 });
