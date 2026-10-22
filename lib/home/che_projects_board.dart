@@ -380,7 +380,6 @@ class _CheProjectsBoardState extends State<CheProjectsBoard> {
                 const SizedBox(height: 4),
                 Text('${item.typeLabel} · ${item.statusLabel}', style: CheType.caption.copyWith(color: CheColors.accent)),
                 const SizedBox(height: CheSpace.md),
-                _ProgressBar(value: item.progress, label: '${(item.progress * 100).round()}%'),
                 if (item.subtitle.trim().isNotEmpty) ...[
                   const SizedBox(height: CheSpace.md),
                   Text(item.subtitle, style: CheType.bodyDim),
@@ -433,7 +432,7 @@ class _CheProjectsBoardState extends State<CheProjectsBoard> {
                       onTap: () {
                         Navigator.pop(ctx);
                         widget.onAskChe?.call(
-                          'Update me on project "${item.title}" (${item.typeLabel}). Status ${item.statusLabel}, ${(item.progress * 100).round()} percent. Live tasks: ${item.tasks.join('; ')}',
+                          'Update me on project "${item.title}" (${item.typeLabel}). Status ${item.statusLabel}. Live tasks: ${item.tasks.join('; ')}',
                         );
                       },
                     ),
@@ -537,6 +536,7 @@ class _CheProjectsBoardState extends State<CheProjectsBoard> {
                         item: rows[i],
                         onTap: () => _openDetail(rows[i]),
                         onOpenUrl: rows[i].url != null ? () => _openUrl(rows[i].url) : null,
+                        onAsk: widget.onAskChe,
                       ),
                     ),
                   ),
@@ -645,112 +645,93 @@ class _Pill extends StatelessWidget {
   }
 }
 
-class _ProgressBar extends StatelessWidget {
-  const _ProgressBar({required this.value, required this.label});
-  final double value;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Expanded(
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(99),
-            child: LinearProgressIndicator(
-              value: value.clamp(0.0, 1.0),
-              minHeight: 6,
-              backgroundColor: CheColors.stroke,
-              color: CheColors.accent,
-            ),
-          ),
-        ),
-        const SizedBox(width: 10),
-        Text(label, style: CheType.caption.copyWith(color: CheColors.accent, fontWeight: FontWeight.w700)),
-      ],
-    );
-  }
-}
-
 class _ProjectCard extends StatelessWidget {
-  const _ProjectCard({required this.item, required this.onTap, this.onOpenUrl});
+  const _ProjectCard({required this.item, required this.onTap, this.onOpenUrl, this.onAsk});
   final CheBoardItem item;
   final VoidCallback onTap;
   final VoidCallback? onOpenUrl;
 
+  /// Asks CHE to act on this item (continue, review, retry). Null hides those buttons.
+  final void Function(String prompt)? onAsk;
+
+  /// Actions the item's real status allows: a blocked or failed item is retried, a finished review is reviewed, the
+  /// rest continue. Open appears only when the item has a link. Details is always there.
+  List<(String, IconData, VoidCallback)> _actions() {
+    final s = item.statusLabel.toLowerCase();
+    final name = item.title;
+    final ask = onAsk;
+    final out = <(String, IconData, VoidCallback)>[];
+    if (onOpenUrl != null) out.add(('Open', Icons.open_in_new_rounded, onOpenUrl!));
+    if (ask != null) {
+      if (s.contains('block') || s.contains('fail')) {
+        out.add(('Retry', Icons.refresh_rounded, () => ask('Retry "$name" (${item.typeLabel}). Say what is blocking it first.')));
+      } else if (s.contains('review')) {
+        out.add(('Review', Icons.fact_check_outlined, () => ask('Review "$name" (${item.typeLabel}) and tell me what needs my approval.')));
+      } else if (s.contains('complete') || s.contains('done') || s == 'live') {
+        out.add(('Details', Icons.info_outline_rounded, onTap));
+      } else {
+        out.add(('Continue', Icons.play_arrow_rounded, () => ask('Continue "$name" (${item.typeLabel}). Tell me the next step.')));
+      }
+    }
+    out.add(('Details', Icons.info_outline_rounded, onTap));
+    return out.toSet().toList();
+  }
+
   @override
   Widget build(BuildContext context) {
-    final live = item.progress > 0.05 && item.progress < 0.99;
-    return Semantics(
-      button: true,
-      label: '${item.title}. ${item.typeLabel}. ${item.statusLabel}. ${(item.progress * 100).round()} percent.',
-      excludeSemantics: true,
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(CheRadius.lg),
-          child: CheOfficeInkPanel(
-            padding: const EdgeInsets.all(CheSpace.md),
-            glow: live ? CheColors.accent : null,
-            decoration: BoxDecoration(
-              color: CheColors.surfaceHi,
-              borderRadius: BorderRadius.circular(CheRadius.lg),
-              border: Border.all(
-                color: live ? CheColors.accent.withValues(alpha: 0.55) : CheColors.stroke,
+    final s = item.statusLabel.toLowerCase();
+    final attention = s.contains('block') || s.contains('fail') || s.contains('review');
+    final stageColor = attention ? CheColors.warning : (item.progress >= 0.99 ? CheColors.success : CheColors.accent);
+    final actions = _actions();
+    return CheOfficeInkPanel(
+      padding: const EdgeInsets.all(CheSpace.md),
+      glow: attention ? CheColors.warning : null,
+      decoration: BoxDecoration(
+        color: CheColors.surfaceHi,
+        borderRadius: BorderRadius.circular(CheRadius.lg),
+        border: Border.all(color: attention ? CheColors.warning.withValues(alpha: 0.6) : CheColors.stroke),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(item.typeLabel, maxLines: 1, overflow: TextOverflow.ellipsis,
+                    style: CheType.caption.copyWith(color: CheColors.accent)),
               ),
-              boxShadow: live
-                  ? [BoxShadow(color: CheColors.accent.withValues(alpha: 0.16), blurRadius: 14)]
-                  : null,
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: CheColors.accent.withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(CheRadius.pill),
-                      ),
-                      child: Text(item.typeLabel, style: CheType.caption.copyWith(color: CheColors.accent)),
-                    ),
-                    const Spacer(),
-                    Text(item.statusLabel, style: CheType.caption.copyWith(color: live ? CheColors.success : CheColors.textDim)),
-                    if (onOpenUrl != null) ...[
-                      const SizedBox(width: 4),
-                      IconButton(
-                        tooltip: 'Open URL',
-                        onPressed: onOpenUrl,
-                        icon: Icon(Icons.open_in_new_rounded, size: 18, color: CheColors.accent),
-                      ),
-                    ],
-                  ],
-                ),
-                const SizedBox(height: 6),
-                Text(item.title, maxLines: 2, overflow: TextOverflow.ellipsis, style: CheType.headline),
-                if (item.subtitle.trim().isNotEmpty) ...[
-                  const SizedBox(height: 4),
-                  Text(item.subtitle, maxLines: 2, overflow: TextOverflow.ellipsis, style: CheType.caption),
-                ],
-                if (item.metrics != null && item.metrics!.isNotEmpty) ...[
-                  const SizedBox(height: 6),
-                  Text(
-                    _formatMetrics(item.metrics!).split('\n').first,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: CheType.caption.copyWith(color: CheColors.accent),
-                  ),
-                ],
-                const SizedBox(height: 10),
-                _ProgressBar(value: item.progress, label: '${(item.progress * 100).round()}%'),
-              ],
-            ),
+              Text(item.statusLabel, style: CheType.caption.copyWith(color: stageColor, fontWeight: FontWeight.w700)),
+            ],
           ),
-        ),
+          const SizedBox(height: 6),
+          Text(item.title, maxLines: 2, overflow: TextOverflow.ellipsis, style: CheType.headline),
+          if (item.subtitle.trim().isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(item.subtitle, maxLines: 2, overflow: TextOverflow.ellipsis, style: CheType.caption),
+          ],
+          const SizedBox(height: CheSpace.sm),
+          Wrap(
+            spacing: CheSpace.sm,
+            runSpacing: CheSpace.xs,
+            children: [
+              for (final (label, icon, action) in actions)
+                Semantics(
+                  button: true,
+                  label: '$label ${item.title}',
+                  child: OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(minimumSize: const Size(44, 44)),
+                    onPressed: () {
+                      HapticFeedback.selectionClick();
+                      action();
+                    },
+                    icon: Icon(icon, size: 18),
+                    label: Text(label),
+                  ),
+                ),
+            ],
+          ),
+        ],
       ),
     );
   }
 }
-
