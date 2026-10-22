@@ -272,12 +272,10 @@ class _CheWorkflowsScreenState extends State<CheWorkflowsScreen> {
             : (on) async {
                 try {
                   await widget.client.capabilityPolicy({'internal_only': on});
-                  if (!mounted) return;
-                  setState(() => _status = 'Internal-only mode is ${on ? 'on' : 'off'}.');
+                  _report('Internal-only mode is ${on ? 'on' : 'off'}.', ok: true);
                   await _load();
                 } catch (e) {
-                  if (!mounted) return;
-                  setState(() => _status = 'That did not work: ${e.toString().replaceFirst('Exception: ', '')}');
+                  _report('That did not work: ${e.toString().replaceFirst('Exception: ', '')}', ok: false);
                 }
               },
       ),

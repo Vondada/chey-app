@@ -6,7 +6,7 @@ import test from 'node:test';
 import {
   populate, retrieve, extract, deriveProgram, runTool, acquire, useTool, rollbackTool, decideExecution, projectContext,
   learnFromOutcome, speakLearned, isStale, KnowledgeItems, defaultPolicy, policyIntent, applyPolicy, capabilityIdFor,
-  capabilityIntent, inScope,
+  capabilityIntent, inScope, installEgressGuard, egressGuard, ownerHost, projectBlocked,
 } from './capability_engine.js';
 import { EXECUTION, PROMOTION_CHECKS, emptyRegistry, loadRegistry, register, recordCheck, promote, serving, speakCapability } from './capability_registry.js';
 import { KnowledgeLibrary } from './knowledge_library.js';
@@ -321,6 +321,60 @@ test('the owner\'s policies are read deterministically and ordinary sentences ar
   assert.equal(capabilityIntent('what did you learn about csv files').topic, 'csv files');
   assert.equal(capabilityIntent('build an internal tool to convert csv to json').operation, 'convert csv to json');
   assert.equal(extract('To do it:\n1. Split the text into lines.').procedures[0].steps.length, 1);
+});
+
+// ─── Codex review of #465 ────────────────────────────────────────────────────
+
+test('scoped source text never enters the global Knowledge Library or Brain search', async () => {
+  const s = await storage();
+  populate(s, { title: 'Acme secret plan', text: 'The Acme launch codename is Bluebird and it ships on Friday.', license: 'owner', scope: 'project-only', project_id: 'acme' });
+  const kl = new KnowledgeLibrary(s);
+  assert.equal(kl.list().length, 0, 'not catalogued globally');
+  assert.equal(kl.search('Bluebird codename').hits.length, 0);
+  populate(s, { title: 'Public note', text: 'The Bluebird codename list is public for the open release.', license: 'owner' });
+  assert.ok(kl.search('Bluebird codename').hits.length > 0, 'global knowledge is still searchable (control)');
+  assert.ok(kl.search('Bluebird codename').hits.every((h) => !/Acme/.test(h.text)));
+  assert.ok(retrieve(s, emptyRegistry(), 'acme launch codename', { project_id: 'acme' }).facts.length > 0, 'still usable inside the project');
+  assert.ok(retrieve(s, emptyRegistry(), 'acme launch codename', { project_id: 'other' }).facts.every((f) => !/Acme/.test(f.item.body)), 'no Acme fact outside its project');
+});
+
+test('the egress guard blocks every external host under internal-only or a no-export project, and allows only owner-controlled hosts', async () => {
+  const sent = [];
+  globalThis.fetch = async (u) => { sent.push(String(u)); return new Response('ok'); };
+  const state = { policy: null, projectHolds: 0, env: { CHE_GITHUB_REPO: 'Vondada/chey-app', CHE_OLLAMA_URL: 'https://ollama.owner.example:11434' } };
+  const remove = installEgressGuard(egressGuard(state));
+  try {
+    await globalThis.fetch('https://api.duckduckgo.com/?q=x');
+    state.policy = applyPolicy(defaultPolicy(), policyIntent('Do not call any external API'));
+    await assert.rejects(globalThis.fetch('https://api.duckduckgo.com/?q=x'), /Not sent: internal-only mode is on, so the request to api\.duckduckgo\.com was blocked/);
+    await assert.rejects(globalThis.fetch('https://api.openai.com/v1/chat/completions'), /internal-only/);
+    await assert.rejects(globalThis.fetch('https://api.github.com/repos/someone/else/contents'), /internal-only/, 'only the owner\'s own repository');
+    await globalThis.fetch('https://api.github.com/repos/Vondada/chey-app/actions/runs');
+    await globalThis.fetch('https://ollama.owner.example:11434/api/chat');
+    // A project the owner said must stay inside CHE: external hosts are blocked while it is being handled.
+    state.policy = applyPolicy(defaultPolicy(), policyIntent('Do not send this project outside CHE'));
+    assert.equal(projectBlocked(state.policy, 'p1'), true);
+    assert.equal(projectBlocked(state.policy, ''), false);
+    await globalThis.fetch('https://api.duckduckgo.com/?q=y');
+    state.projectHolds = 1;
+    await assert.rejects(globalThis.fetch('https://api.duckduckgo.com/?q=z'), /this project stays inside CHE/);
+  } finally { remove(); }
+  assert.deepEqual(sent, ['https://api.duckduckgo.com/?q=x', 'https://api.github.com/repos/Vondada/chey-app/actions/runs', 'https://ollama.owner.example:11434/api/chat', 'https://api.duckduckgo.com/?q=y']);
+  assert.equal(ownerHost('https://pipelines.actions.githubusercontent.com/x', {}), true);
+});
+
+test('a rebuild after a rollback uses the serving version as its baseline, and a second rollback still runs', async () => {
+  const s = await storage();
+  learnCsv(s);
+  const v1 = await acquire(s, 'convert CSV to JSON');
+  const id = v1.capability.capability_id;
+  assert.equal((await acquire(s, 'convert CSV to JSON', { rebuild: true })).ok, true);
+  assert.equal((await rollbackTool(s, id)).cap.version, 1);
+  const v3 = await acquire(s, 'convert CSV to JSON', { rebuild: true });
+  assert.equal(v3.ok, true);
+  assert.equal((await s.get('che:internal_tools'))[id].previous.version, 1, 'the baseline is the serving version 1, not the rolled-back 2');
+  assert.equal((await rollbackTool(s, id)).cap.version, 1);
+  assert.equal((await useTool(s, id, 'k\n3')).output, '[{"k":3}]');
 });
 
 // ─── Through the Worker ──────────────────────────────────────────────────────

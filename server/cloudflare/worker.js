@@ -225,7 +225,7 @@ import {
 } from './research_memory.js';
 import { APP_BUILD_KEY, appBuildIntent, appBuildRun, dispatchAppBuild, speakAppBuild } from './app_builds.js';
 import { advanceObjectives, applyMissionEvent, approvalReached, approveNode, awaitingApproval, cancelObjective, createObjective, mutateObjective, replanNode, resolveKnownNodes, retryNode, setObjectivePaused, speakObjective } from './objective_graph.js';
-import { acquire as acquireCapability, applyPolicy as applyCapabilityPolicy, capabilityIntent, engineSummary as capabilityEngineSummary, learnFromOutcome, loadPolicy as loadCapabilityPolicy, populate as populateKnowledge, retrieve as retrieveKnowledge, rollbackTool, savePolicy as saveCapabilityPolicy, speakCapabilities, speakLearned as speakLearnedKnowledge, useTool, LAST_USED_KEY as KNOWLEDGE_USED_KEY } from './capability_engine.js';
+import { acquire as acquireCapability, applyPolicy as applyCapabilityPolicy, capabilityIntent, engineSummary as capabilityEngineSummary, learnFromOutcome, loadPolicy as loadCapabilityPolicy, populate as populateKnowledge, retrieve as retrieveKnowledge, rollbackTool, savePolicy as saveCapabilityPolicy, installEgressGuard, egressGuard, projectBlocked, speakCapabilities, speakLearned as speakLearnedKnowledge, useTool, LAST_USED_KEY as KNOWLEDGE_USED_KEY } from './capability_engine.js';
 import { loadRegistry as loadCapabilityRegistry } from './capability_registry.js';
 import { engineView, exportWorkflows, feedbackOnLast, importWorkflows, library as workflowLibrary, loadEngine, matchLearned, noteVersion, promoteCandidate, dismissCandidate, rankWorkflows, recordRun as recordWorkflowRun, isDisabled as workflowDisabled, restoreVersion, saveEngine, setDisabled as setWorkflowDisabled, setPreferred as setWorkflowPreferred, speakEfficiency, speakLibrary, testCandidate, workflowForRun, workflowIntent } from './workflow_engine.js';
 import { CATEGORIES, COMMANDS, catalogView, commandById, commandStatus, connectorStatus, describeWorkflow, dispatchPrompt, findSavedWorkflow, normalizeSavedWorkflow, parseSlashCommand, readCommandSpeech, searchCommands, speakCommandList, speakUnavailable, suggestCommands, workflowNodes, workflowFromWords } from './command_catalog.js';
@@ -3676,6 +3676,10 @@ function activeLegalActivities(data = {}, legal = {}) {
 export class CheState extends DurableObject {
   constructor(state, env) {
     super(state, env);
+    // Internal-only, no-external-API and per-project no-export are enforced at the network boundary (capability_engine.js):
+    // installed before the router captures fetch, so model providers are covered too.
+    this.egress = { policy: null, projectHolds: 0, env };
+    installEgressGuard(egressGuard(this.egress));
     // Every text model call goes through CHE's free-engine router. Persist
     // per-engine daily usage estimates in this owner's Durable Object.
     this.env = routedEnv(env, fetch, state.storage);
@@ -5449,6 +5453,22 @@ export class CheState extends DurableObject {
       await this.ctx.storage.deleteAll();
       return json({ ok: true, reset: true });
     }
+    // The owner's egress policy, read for every request (one small storage read), so the guard is never stale.
+    try { this.egress.policy = await loadCapabilityPolicy(this.ctx.storage); } catch (_) { this.egress.policy = null; }
+    let projectHold = false;
+    if (request.method === 'POST' && (this.egress.policy?.no_export_projects || []).length) {
+      const peek = await request.clone().json().catch(() => null);
+      projectHold = projectBlocked(this.egress.policy, peek?.project_id || peek?.visual_project_id || '');
+    }
+    if (projectHold) this.egress.projectHolds++;
+    try {
+      return await this.fetchInner(request);
+    } finally {
+      if (projectHold) this.egress.projectHolds--;
+    }
+  }
+
+  async fetchInner(request) {
     const isChat = request.method === 'POST' && new URL(request.url).pathname === '/api/chat';
     // The deploy's memory-truth check talks to its own isolated CHE; its test
     // conversation never grows the owner's shared vector memory.
@@ -5863,6 +5883,7 @@ export class CheState extends DurableObject {
     const before = await loadCapabilityPolicy(this.ctx.storage);
     const next = applyCapabilityPolicy(before, intent);
     await saveCapabilityPolicy(this.ctx.storage, next);
+    this.egress.policy = next;
     if (before.internal_only !== next.internal_only || before.no_paid !== next.no_paid) {
       const ai = ensureAiState(data);
       ai.policy.local_only = next.internal_only === true;

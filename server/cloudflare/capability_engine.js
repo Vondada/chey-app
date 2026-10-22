@@ -189,14 +189,27 @@ export function populate(storage, input = {}, { now = new Date().toISOString(), 
   let scope = SCOPES.includes(input.scope) ? input.scope : 'owner-global';
   if (input.client_id && policy.memory.private_clients) scope = 'client-only';
   else if (input.project_id && policy.memory.project_scope_default && scope === 'owner-global') scope = 'project-only';
-  // Raw source layer: the existing Knowledge Library (catalogue + approved text + Brain record).
-  const category = { data: 'software_engineering', video: 'marketing_video', rendering: 'animation_games', security: 'cybersecurity', music: 'creative_writing', writing: 'creative_writing' }[domain] || 'software_engineering';
-  const ref = kl.catalog({ title: input.title || 'Untitled source', creator: input.creator, kind: input.kind || 'documentation', license, category, source_url: input.source_url, note: input.note });
-  if (ref.error) return ref;
-  const indexed = kl.index(ref.id, text, { now });
-  if (indexed.error) return indexed;
+  // Raw source layer. Global knowledge goes to the existing Knowledge Library (catalogue + approved text + Brain record).
+  // Scoped knowledge (project, client, session, private, security) never enters those global indexes: its source is a
+  // scoped 'source' item here, so no library search or Brain query can return it outside its scope.
+  const global = ['owner-global', 'shareable', 'non-exportable'].includes(scope);
+  let ref;
+  if (global) {
+    const category = { data: 'software_engineering', video: 'marketing_video', rendering: 'animation_games', security: 'cybersecurity', music: 'creative_writing', writing: 'creative_writing' }[domain] || 'software_engineering';
+    ref = kl.catalog({ title: input.title || 'Untitled source', creator: input.creator, kind: input.kind || 'documentation', license, category, source_url: input.source_url, note: input.note });
+    if (ref.error) return ref;
+    const indexed = kl.index(ref.id, text, { now });
+    if (indexed.error) return indexed;
+  } else {
+    if (text.trim().length < 20) return { error: 'There was nothing readable to index.' };
+    const sid = crypto.randomUUID();
+    ref = { id: sid, key: `src:${sid}`, title: clip(input.title || 'Untitled source', 200), source_url: clip(input.source_url, 500) };
+    items.put({ id: sid, key: ref.key, layer: 'source', kind: 'source', title: ref.title, body: clip(text, 20000), domain, scope,
+      project_id: String(input.project_id || input.client_id || ''), provenance: { license, source_url: ref.source_url, session_id: input.session_id || '' },
+      confidence: 1, applicability: {}, status: 'source', version: 1, conflicts: [], links: [], freshness: { last_indexed: now }, steps: [], created: now, updated: now });
+  }
   const confidence = TRUST_CONFIDENCE[input.trust] ?? (license === 'owner' ? TRUST_CONFIDENCE.owner : TRUST_CONFIDENCE.open);
-  const provenance = { ref_id: ref.id, ref_key: ref.key, title: ref.title, source_url: ref.source_url || '', license, trust: input.trust || (license === 'owner' ? 'owner' : 'open'), indexed_at: now };
+  const provenance = { ref_id: ref.id, ref_key: ref.key, title: ref.title, source_url: ref.source_url || '', license, trust: input.trust || (license === 'owner' ? 'owner' : 'open'), indexed_at: now, ...(input.session_id ? { session_id: input.session_id } : {}) };
   const found = extract(text);
   const out = { source: ref.id, added: [], updated: [], conflicts: [], procedures: [] };
   const project_id = scope === 'project-only' || scope === 'client-only' ? String(input.project_id || input.client_id || '') : '';
@@ -441,7 +454,8 @@ export async function acquire(storage, operation, { now = new Date().toISOString
     related_knowledge: [proc.id, ...(proc.links || []).slice(0, 10)], related_loops: ['capability_acquisition', 'knowledge_to_tool'],
   }, now);
   const tools = await loadTools(storage);
-  const prevTool = tools[id] || null;
+  // The baseline is the version that serves now (after a rollback that is the older one), never a rolled-back tool.
+  const prevTool = toolForVersion(tools[id], existing?.version) || null;
   // Functional: every example from the knowledge must reproduce exactly.
   const results = examples.map((e) => ({ e, r: runTool(derived.program, e.input) }));
   const functional = results.length > 0 && results.every(({ e, r }) => r.ok && normalizeOut(r.output) === normalizeOut(e.output));
@@ -483,7 +497,7 @@ export async function useTool(storage, id, input, { now = new Date().toISOString
   const allowed = executionAllowed(cap, policy || await loadPolicy(storage));
   if (!allowed.ok) return { ok: false, said: `I did not run it: ${allowed.reason}.` };
   const tools = await loadTools(storage);
-  const tool = cap.version === tools[id]?.version ? tools[id] : tools[id]?.previous?.version === cap.version ? tools[id].previous : null;
+  const tool = toolForVersion(tools[id], cap.version);
   if (!tool) return { ok: false, said: 'The verified version of that tool is missing, so nothing ran.' };
   const r = runTool(tool.program, input);
   recordUse(registry, id, r.ok, now);
@@ -499,8 +513,81 @@ export async function useTool(storage, id, input, { now = new Date().toISOString
 export async function rollbackTool(storage, id, now = new Date().toISOString()) {
   const registry = await loadRegistry(storage);
   const out = rollback(registry, id, now);
-  if (out.ok) await saveRegistry(storage, registry);
+  if (out.ok) {
+    await saveRegistry(storage, registry);
+    // The stored program follows the registry: the serving version becomes the current tool.
+    const tools = await loadTools(storage);
+    const back = toolForVersion(tools[id], out.cap.version);
+    if (back) { tools[id] = { ...back, previous: null }; await storage.put(TOOLS_KEY, tools); }
+  }
   return out;
+}
+
+/** The stored program for one version of a tool (current or its kept previous), or null. */
+function toolForVersion(entry, version) {
+  if (!entry || version == null) return null;
+  if (entry.version === version) return entry;
+  return entry.previous?.version === version ? entry.previous : null;
+}
+
+// ─── Egress guard: internal-only, no-external-API and no-export enforced at the network boundary ─────────────
+
+// Hosts the owner controls: his own GitHub repository and Actions artifacts (owner compute), and his own model server.
+export function ownerHost(url, env = {}) {
+  let u;
+  try { u = new URL(String(url)); } catch (_) { return false; }
+  const repo = String(env.CHE_GITHUB_REPO || '').toLowerCase();
+  if (u.hostname === 'api.github.com' && repo && u.pathname.toLowerCase().startsWith(`/repos/${repo}/`)) return true;
+  if (/(^|\.)actions\.githubusercontent\.com$/.test(u.hostname) || /\.blob\.core\.windows\.net$/.test(u.hostname)) return true; // GitHub artifact storage
+  for (const own of [env.CHE_OLLAMA_URL, env.CHE_OWNER_COMPUTE_URL]) {
+    try { if (own && new URL(own).hostname === u.hostname) return true; } catch (_) {}
+  }
+  return false;
+}
+
+const GUARDS = new Set();
+let guardedFetch = null;
+/**
+ * Every outbound fetch passes here. While any CHE object in this isolate has internal-only (or no-external-API) on,
+ * or is handling a request for a project the owner said must stay inside CHE, a request to a host the owner does not
+ * control is refused before it leaves. Fail closed: when unsure, nothing external is sent.
+ */
+export function installEgressGuard(guard) {
+  GUARDS.add(guard);
+  if (guardedFetch && globalThis.fetch === guardedFetch) return () => GUARDS.delete(guard);
+  const original = globalThis.fetch;
+  guardedFetch = async (input, init) => {
+    const url = typeof input === 'string' ? input : input?.url || String(input);
+    for (const g of GUARDS) {
+      const why = g(url);
+      if (why) {
+        const err = new Error(`Not sent: ${why}. Nothing left CHE.`);
+        err.code = 'internal_only';
+        throw err;
+      }
+    }
+    return original(input, init);
+  };
+  globalThis.fetch = guardedFetch;
+  return () => GUARDS.delete(guard);
+}
+
+/** The guard for one CHE object: its cached policy and the projects it is handling right now. */
+export function egressGuard(state) {
+  return (url) => {
+    const p = state.policy;
+    if (!p || ownerHost(url, state.env || {})) return '';
+    if (p.internal_only || p.no_external_api) return `internal-only mode is on, so the request to ${hostOf(url)} was blocked`;
+    if (state.projectHolds > 0) return `this project stays inside CHE, so the request to ${hostOf(url)} was blocked`;
+    return '';
+  };
+}
+const hostOf = (url) => { try { return new URL(url).hostname; } catch (_) { return 'an external service'; } };
+
+/** Does this request carry a project the owner said must not leave CHE? */
+export function projectBlocked(policy, projectId) {
+  const list = policy?.no_export_projects || [];
+  return Boolean(projectId) && (list.includes('*') || list.includes(String(projectId)));
 }
 
 // ─── External dependency decision loop ──────────────────────────────────────
