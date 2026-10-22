@@ -6,7 +6,7 @@ const WORKFLOW = 'che-video-render.yml';
 const MAX_ARCHIVE_BYTES = 25 * 1024 * 1024;
 const TASK = /^gha_[a-f0-9]{32}$/;
 
-function credentials(env) {
+export function credentials(env) {
   return String(env.CHE_GITHUB_REPO || '') === REPO && Boolean(env.CHE_GITHUB_TOKEN);
 }
 
@@ -16,7 +16,7 @@ function credentials(env) {
 // whatever the token's permissions were.
 const USER_AGENT = 'CHE-Video-Renderer';
 
-function githubHeaders(env) {
+export function githubHeaders(env) {
   return {
     'Accept': 'application/vnd.github+json',
     'Authorization': 'Bearer ' + env.CHE_GITHUB_TOKEN,
@@ -51,7 +51,7 @@ export function githubDetail(response, bodyText, env) {
   return detail;
 }
 
-async function readJson(response) {
+export async function readJson(response) {
   return response.json().catch(() => ({}));
 }
 
@@ -81,7 +81,7 @@ function refusal(status, what) {
 // GitHub answers a rate limit with 403 as well as 429: no requests left in the
 // hour, a Retry-After, or a "secondary rate limit" message. That is a pause,
 // not a token without permission.
-async function refusalOf(response, what, env) {
+export async function refusalOf(response, what, env) {
   const text = await response.clone().text().catch(() => '');
   const github = githubDetail(response, text, env);
   const said = github.message ? ` GitHub said: "${github.message}"${github.request_id ? ` (request ${github.request_id})` : ''}.` : '';
@@ -351,7 +351,7 @@ export function mp4Facts(bytes) {
   return { ok: seconds > 0 && Boolean(video) && Boolean(audio), seconds: Math.round(seconds * 100) / 100, video, audio, width, height };
 }
 
-async function downloadArchive(env, artifactId, fetcher) {
+export async function downloadArchive(env, artifactId, fetcher) {
   let response = await fetcher('https://api.github.com/repos/' + REPO + '/actions/artifacts/' + artifactId + '/zip', {
     headers: githubHeaders(env), signal: AbortSignal.timeout(25000), redirect: 'manual',
   });
@@ -375,7 +375,7 @@ async function downloadArchive(env, artifactId, fetcher) {
   return bytes;
 }
 
-async function zipEntry(bytes, sought) {
+export async function zipEntry(bytes, sought) {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   let eocd = -1;
   for (let p = bytes.length - 22; p >= Math.max(0,bytes.length - 65557); p--) {
@@ -414,7 +414,7 @@ async function zipEntry(bytes, sought) {
 export async function githubVideoFile(env, artifactId, filename, fetcher = fetch) {
   if (!credentials(env)) return null;
   if (!Number.isSafeInteger(Number(artifactId)) || Number(artifactId) <= 0) return null;
-  if (!['video.mp4','thumbnail.png'].includes(filename)) return null;
+  if (!['video.mp4','thumbnail.png','edited.png'].includes(filename)) return null;
   const archive = await downloadArchive(env, artifactId, fetcher);
   return zipEntry(archive, filename);
 }
