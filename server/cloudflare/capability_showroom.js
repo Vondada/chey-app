@@ -180,10 +180,10 @@ export function showroomView(connectors = {}, { recent = {}, hasProofFile = () =
 
 // The owner asks CHE what she can do, shows an example, or which features need setup. These match the words of
 // those questions to the showroom, so the answer comes from the same states the cards show.
-const OVERVIEW = /\b(?:what\s+(?:can|could)\s+you\s+(?:create|make|build|design|do)|show\s+(?:me\s+)?(?:what\s+you\s+can|your\s+capabilit|everything)|capabilit(?:y|ies)|showroom)\b/i;
+const OVERVIEW = /\b(?:what\s+(?:can|could)\s+you\s+(?:create|make|build|design)|show\s+(?:me\s+)?(?:what\s+you\s+can|your\s+capabilit|everything)|capabilit(?:y|ies)|showroom)\b/i;
 const NEEDS_SETUP = /\b(?:which|what)\s+(?:features?|capabilit(?:y|ies)|things?)\s+(?:need|still\s+need)\s+(?:setup|set\s+up|connect\w*)|needs?\s+setup\b/i;
 const EXAMPLE = /\b(?:show|give|see)\s+(?:me\s+)?(?:an?\s+|the\s+)?(?:example|sample|demo)\s+(?:of|for)\s+(?:an?\s+|the\s+)?(.{3,60})/i;
-const CAN_RENDER = /\bcan\s+you\s+(?:actually\s+)?(?:render|make|build|design|create|model)\s+(?:this\s+|it\s+|that\s+)?(?:in\s+)?(?:3d|three\s*d|3-d|a\s+video|a\s+game|an?\s+app|a\s+website)/i;
+const CAN_RENDER = /\bcan\s+you\s+(?:actually\s+)?(?:render|make|build|design|create|model)\s+(?:this\s+|it\s+|that\s+)?(?:in\s+)?(?:3d|three\s*d|3-d|a\s+video|a\s+game|an?\s+app|a\s+website)\s*[?.!]?\s*$/i;
 
 /** The showroom question in a message, with what it asks for, or null. */
 export function showroomIntent(message) {

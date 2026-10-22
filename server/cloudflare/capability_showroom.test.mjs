@@ -100,6 +100,10 @@ test('CHE’s showroom questions are recognised; ordinary questions are not', ()
   assert.equal(showroomIntent('Can you actually render this in 3D?')?.kind, 'can_render');
   assert.equal(showroomIntent('Which features need setup?')?.kind, 'needs_setup');
   assert.equal(showroomIntent('what is the weather in Lafayette'), null);
+  // A real request for a video, or a question about a connector, is not a showroom question.
+  assert.equal(showroomIntent('Which rendering engines are connected, and can you make a video about bees?'), null);
+  assert.equal(showroomIntent('What can you do with my email?'), null);
+  assert.equal(showroomIntent('What can you do?'), null);
 });
 
 test('the answers repeat the states the view holds, and claim nothing the view does not', () => {
