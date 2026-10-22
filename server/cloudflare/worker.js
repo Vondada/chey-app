@@ -10960,7 +10960,8 @@ export class CheState extends DurableObject {
           // Two or more answers: the AIs read each other and build on it, and
           // CHE keeps the conclusion. Substitute engines are not the AI the
           // owner named, so they do not take part.
-          const table = await roundTable(this.env, results.filter((r) => !r.blocked && !r.substitute), consult.question, consultModel).catch(() => null);
+          const consultSoul = soulPromptBlock(await loadSoul(this.ctx.storage));
+          const table = await roundTable(this.env, results.filter((r) => !r.blocked && !r.substitute), consult.question, consultModel, consultSoul).catch(() => null);
           if (table) {
             for (const b of table.builds) {
               if (looksLikeAttack(b.text)) { b.text = ''; continue; }
