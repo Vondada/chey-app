@@ -61,15 +61,23 @@ export function workspaceView(data, id) {
 }
 
 /// A song inside a workspace. Client and managed-artist songs never enter the owner's catalog.
-export function addWorkspaceSong(data, workspaceId, title, now = new Date().toISOString()) {
+/// A song is bound to the quote that covers it: the deal named, or the workspace's only quote.
+export function addWorkspaceSong(data, workspaceId, title, { deal_id = null } = {}, now = new Date().toISOString()) {
   const ws = workspaceById(data, workspaceId);
   if (!ws) return { ok: false, why: 'No such client or artist.' };
-  const project = { id: `song_${crypto.randomUUID()}`, type: 'music', title: clip(title, 160), status: 'new', created_at: now, brief: `${ws.kind === 'CLIENT' ? 'Client' : ws.kind === 'MANAGED_ARTIST' ? 'Managed artist' : 'Collaboration'}: ${ws.name}`, music: { workspace_id: ws.id, context: ws.kind, purpose: 'CLIENT_SONG', versions: [], samples: [], splits: [], metadata: { title: clip(title, 160), artist: ws.name }, artwork: '', feedback: [], use_for_owner_taste: false } };
+  const quotes = data.pipeline.filter((d) => d.music_workspace_id === ws.id && d.music_quote);
+  if (deal_id && !quotes.some((d) => d.id === deal_id)) return { ok: false, why: `That quote is not ${ws.name}'s.` };
+  const dealId = deal_id || (quotes.length === 1 ? quotes[0].id : null);
+  const project = { id: `song_${crypto.randomUUID()}`, type: 'music', title: clip(title, 160), status: 'new', created_at: now, brief: `${ws.kind === 'CLIENT' ? 'Client' : ws.kind === 'MANAGED_ARTIST' ? 'Managed artist' : 'Collaboration'}: ${ws.name}`, music: { workspace_id: ws.id, deal_id: dealId, context: ws.kind, purpose: 'CLIENT_SONG', versions: [], samples: [], splits: [], metadata: { title: clip(title, 160), artist: ws.name }, artwork: '', feedback: [], use_for_owner_taste: false } };
   data.projects.unshift(project);
   return { ok: true, project };
 }
 
 // ─── Services, packages and quotes ────────────────────────────────────────
+
+// The pipeline's Stripe link bills the deal's full price once, after review, so a deposit could be
+// promised but never collected. Quotes carry no deposit until the payment link can take one.
+const NO_DEPOSITS = 'Deposits are not supported yet: the payment link bills the full price once the work is in review. Quote without a deposit.';
 
 /// The owner's own services. There are no built-in prices: every number comes from the owner.
 export function setService(data, s) {
@@ -78,9 +86,10 @@ export function setService(data, s) {
   if (!name) return { ok: false, why: 'A service needs a name.' };
   const price = money(s.price_usd);
   if (price === null) return { ok: false, why: `Set your price for ${name}.` };
+  if (Number(s.deposit_usd) > 0) return { ok: false, why: NO_DEPOSITS };
   const service = {
     id: s.id || `svc_${name.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`,
-    name, price_usd: price, deposit_usd: money(s.deposit_usd) ?? 0,
+    name, price_usd: price,
     turnaround_days: Number.isFinite(Number(s.turnaround_days)) ? Number(s.turnaround_days) : null,
     revisions: Number.isInteger(Number(s.revisions)) ? Number(s.revisions) : null,
     deliverables: (Array.isArray(s.deliverables) ? s.deliverables : []).map((d) => clip(d, 60)).filter(Boolean),
@@ -91,10 +100,13 @@ export function setService(data, s) {
 }
 
 /// A draft quote on the client's pipeline deal. Nothing is sent: the owner approves it first.
-export function draftQuote(data, { workspace_id, service_id, price_usd, service_name, deposit_usd, deliverables, revisions, due, notes }, now = new Date().toISOString()) {
+export function draftQuote(data, { workspace_id, project_id, service_id, price_usd, service_name, deposit_usd, deliverables, revisions, due, notes }, now = new Date().toISOString()) {
   lists(data);
   const ws = workspaceById(data, workspace_id);
   if (!ws) return { ok: false, why: 'No such client.' };
+  if (Number(deposit_usd) > 0) return { ok: false, why: NO_DEPOSITS };
+  const song = project_id ? data.projects.find((p) => p.id === project_id && p.music?.workspace_id === ws.id) : null;
+  if (project_id && !song) return { ok: false, why: `That song is not in ${ws.name}'s workspace.` };
   const svc = service_id ? data.music_services.find((s) => s.id === service_id) : null;
   const price = money(price_usd ?? svc?.price_usd);
   if (price === null) return { ok: false, why: 'A quote needs the price you want to charge.' };
@@ -105,7 +117,6 @@ export function draftQuote(data, { workspace_id, service_id, price_usd, service_
   deal.music_workspace_id = ws.id;
   deal.music_quote = {
     status: 'draft', service: name, price_usd: price,
-    deposit_usd: money(deposit_usd ?? svc?.deposit_usd) ?? 0,
     deliverables: (deliverables || svc?.deliverables || []).map((d) => clip(d, 60)),
     revisions: Number.isInteger(Number(revisions ?? svc?.revisions)) ? Number(revisions ?? svc?.revisions) : null,
     due: clip(due, 40) || null, notes: clip(notes, 1000), created_at: now,
@@ -114,13 +125,13 @@ export function draftQuote(data, { workspace_id, service_id, price_usd, service_
   deal.proposal_text = quoteText(ws, deal.music_quote);
   deal.stage = 'proposal';
   ws.deal_ids.push(deal.id);
+  if (song) song.music.deal_id = deal.id;
   return { ok: true, deal, quote: deal.music_quote };
 }
 
 export function quoteText(ws, q) {
   return [
     `Quote for ${ws.name}: ${q.service}, $${q.price_usd.toFixed(2)}.`,
-    q.deposit_usd ? `Deposit: $${q.deposit_usd.toFixed(2)}.` : 'No deposit.',
     q.deliverables.length ? `Deliverables: ${q.deliverables.join(', ')}.` : 'Deliverables: to be agreed.',
     q.revisions === null ? 'Revisions: to be agreed.' : `Revisions included: ${q.revisions}.`,
     q.due ? `Due: ${q.due}.` : '',
@@ -164,8 +175,12 @@ export function revisionsUsed(project) {
   return (project.music.feedback || []).filter((f) => !f.approved).length;
 }
 
+// The quote that covers this song: the one it is bound to, else the workspace's only quote. With
+// several quotes and no binding there is no answer, rather than borrowing another project's terms.
 function dealFor(data, project) {
-  return data.pipeline.find((d) => d.music_workspace_id === project.music.workspace_id && d.music_quote) || null;
+  const quotes = data.pipeline.filter((d) => d.music_workspace_id === project.music.workspace_id && d.music_quote);
+  if (project.music.deal_id) return quotes.find((d) => d.id === project.music.deal_id) || null;
+  return quotes.length === 1 ? quotes[0] : null;
 }
 
 export function revisionsAllowed(data, project) {
@@ -176,12 +191,12 @@ export function revisionsAllowed(data, project) {
 /// confirmed payment on the deal (pipeline.checkPaid sets deal.payment.paid).
 export function deliveryPackage(data, project) {
   const deal = dealFor(data, project);
-  if (!deal) return { ok: false, why: 'This song has no quote, so there is nothing agreed to deliver.' };
+  if (!deal) return { ok: false, why: 'This song is not tied to one quote, so there is nothing agreed to deliver. Say which quote covers it.' };
   if (deal.music_quote.status !== 'approved') return { ok: false, why: 'The quote has not been approved yet.' };
   if (!(deal.payment?.paid === true && deal.stage === 'paid')) return { ok: false, why: 'Waiting for payment. Stripe has not confirmed it, so nothing is delivered yet.' };
   const versions = project.music.versions || [];
   const wanted = deal.music_quote.deliverables.map((d) => d.toLowerCase());
-  const kindFor = (d) => (/master|wav/.test(d) ? 'master' : /instrumental/.test(d) ? 'instrumental' : /clean/.test(d) ? 'clean' : /stem/.test(d) ? 'stem' : /mp3|preview/.test(d) ? 'preview' : /mix/.test(d) ? 'mix' : null);
+  const kindFor = deliverableKind;
   const files = [];
   const missing = [];
   for (const d of wanted) {
@@ -190,6 +205,14 @@ export function deliveryPackage(data, project) {
     if (v) files.push({ deliverable: d, version: v.label || v.kind, sha256: v.sha256 }); else missing.push(d);
   }
   return { ok: missing.length === 0, files, missing, why: missing.length ? `Not ready: no approved ${missing.join(', ')} yet.` : null };
+}
+
+/// What a deliverable asks for. The content (instrumental, stems, mix...) decides; a file format such as
+/// WAV only means master when nothing else is named.
+export function deliverableKind(d) {
+  const t = String(d).toLowerCase();
+  return /instrumental/.test(t) ? 'instrumental' : /clean/.test(t) ? 'clean' : /stem/.test(t) ? 'stem'
+    : /master/.test(t) ? 'master' : /preview|mp3/.test(t) ? 'preview' : /mix/.test(t) ? 'mix' : /wav/.test(t) ? 'master' : null;
 }
 
 // ─── Beats ────────────────────────────────────────────────────────────────
@@ -254,17 +277,17 @@ const AGREEMENT_STEPS = ['draft', 'legal_review', 'owner_approved', 'sent', 'exe
 export function advanceAgreement(ws, step, evidence = {}, now = new Date().toISOString()) {
   ws.agreement ||= { step: null, terms: {}, history: [] };
   const a = ws.agreement;
-  const at = AGREEMENT_STEPS.indexOf(step);
+  const idx = AGREEMENT_STEPS.indexOf(step);
   const cur = a.step ? AGREEMENT_STEPS.indexOf(a.step) : -1;
-  if (at < 0) return { ok: false, why: 'Unknown agreement step.' };
-  if (at !== cur + 1) return { ok: false, why: `The next step is ${AGREEMENT_STEPS[cur + 1] || 'none'}, not ${step}.` };
+  if (idx < 0) return { ok: false, why: 'Unknown agreement step.' };
+  if (idx !== cur + 1) return { ok: false, why: `The next step is ${AGREEMENT_STEPS[cur + 1] || 'none'}, not ${step}.` };
   if (step === 'draft') a.terms = { ...(evidence.terms || {}) };
   if (step === 'legal_review' && !clip(evidence.legal_notes, 4000)) return { ok: false, why: 'Legal review needs its notes on record.' };
   if (step === 'owner_approved' && evidence.owner !== true) return { ok: false, why: 'Only the owner can approve this agreement.' };
   if (step === 'sent' && evidence.owner_sent !== true) return { ok: false, why: 'Sending an agreement needs the owner to do it or say so.' };
   if (step === 'executed' && !(evidence.signed_by_both === true && clip(evidence.document_ref, 300))) return { ok: false, why: 'Executed needs the document signed by both sides on record. CHE does not sign.' };
   a.step = step;
-  a.history.push({ step, at, ...(evidence.legal_notes ? { legal_notes: clip(evidence.legal_notes, 4000) } : {}), ...(evidence.document_ref ? { document_ref: clip(evidence.document_ref, 300) } : {}) });
+  a.history.push({ step, at: now, ...(evidence.legal_notes ? { legal_notes: clip(evidence.legal_notes, 4000) } : {}), ...(evidence.document_ref ? { document_ref: clip(evidence.document_ref, 300) } : {}) });
   return { ok: true, step };
 }
 
@@ -335,5 +358,143 @@ export function musicBusinessIntent(message) {
   m = t.match(/\badd\s+(?:a\s+)?(?:new\s+)?(?:music\s+)?client\s+(?:called|named)\s+(.+)$/i);
   if (m) return { kind: 'client', name: m[1].trim() };
   if (/\b(?:how(?:'s| is) my music business|music business (?:summary|dashboard|status))\b/i.test(t)) return { kind: 'dashboard' };
+  return spokenAction(t);
+}
+
+const NUM = '(\\d+(?:\\.\\d{1,2})?)';
+const SPOKEN = [
+  // "Set my mix and master price to $250 with 2 revisions"
+  ['service', new RegExp(`^(?:set\\s+)?my\\s+(.+?)\\s+price\\s+(?:is|to)\\s+\\$\\s?${NUM}(?:\\s+with\\s+(\\d+)\\s+revisions?)?$`, 'i'), (m) => ({ service: m[1], price_usd: Number(m[2]), revisions: m[3] === undefined ? null : Number(m[3]) })],
+  // "Approve the quote for Jay R"
+  ['approve_quote', /\bapprove\s+(?:the\s+|my\s+)?quote\s+for\s+(.+)$/i, (m) => ({ name: m[1] })],
+  // "Add a song called Night Drive for Jay R"
+  ['song', /\badd\s+(?:a\s+)?song\s+(?:called|named)\s+(.+?)\s+for\s+(?:client\s+|artist\s+)?(.+)$/i, (m) => ({ title: m[1], name: m[2] })],
+  // "Jay R wants changes on Night Drive: vocal louder"
+  ['feedback', /^(.+?)\s+wants\s+changes\s+(?:on|to)\s+(.+?)\s*[:,\u2014-]\s*(.+)$/i, (m) => ({ name: m[1], title: m[2], text: m[3] })],
+  // "Jay R approved the master of Night Drive" / "Jay R approved Night Drive"
+  ['approve_version', /^(.+?)\s+approved\s+(?:the\s+)?(?:(mix|master|preview|instrumental|stems?|clean)\s+(?:of|for|on)\s+)?(.+)$/i, (m) => ({ name: m[1], version_kind: m[2] ? m[2].toLowerCase().replace(/s$/, '') : null, title: m[3] })],
+  // "Is Night Drive ready to deliver?" / "Delivery status for Night Drive"
+  ['delivery', /^(?:is\s+)?(.+?)\s+ready\s+(?:to\s+deliver|for\s+delivery)$|^delivery\s+(?:status\s+)?for\s+(.+)$/i, (m) => ({ title: m[1] || m[2] })],
+  // "Add a beat called Smoke, 145 BPM, basic lease $30, exclusive $500"
+  ['beat', /^add\s+(?:a\s+)?beat\s+(?:called|named)\s+(.+)$/i, (m) => parseBeat(m[1])],
+  // "Sold a basic lease of Smoke to Mike, payment cs_123" (an exclusive also names "agreement <ref>")
+  ['beat_sale', /\bsold\s+(?:a|an|the)\s+(.+?)\s+(?:licen[cs]e\s+)?(?:of|for|on)\s+(.+?)\s+to\s+(.+?)[,;]?\s+payment\s+(?:ref(?:erence)?\s+)?(\S+?)(?:[,;]?\s+agreement\s+(\S+))?$/i, (m) => ({ license: m[1], beat: m[2], buyer: m[3], payment_ref: m[4], agreement_ref: m[5] || null })],
+  // Agreement steps for a managed artist.
+  ['agreement', new RegExp(`^draft\\s+(?:a\\s+)?management\\s+agreement\\s+for\\s+(.+?)(?:\\s+at\\s+${NUM}\\s*(?:%|percent))?(?:\\s+for\\s+(\\d+)\\s+months)?$`, 'i'), (m) => ({ step: 'draft', name: m[1], terms: { ...(m[2] ? { commission_pct: Number(m[2]) } : {}), ...(m[3] ? { term_months: Number(m[3]) } : {}) } })],
+  ['agreement', /^legal\s+notes\s+(?:for|on)\s+(.+?)'s\s+agreement\s*[:,\u2014-]\s*(.+)$/i, (m) => ({ step: 'legal_review', name: m[1], evidence: { legal_notes: m[2] } })],
+  ['agreement', /^i\s+approve\s+(.+?)'s\s+(?:management\s+)?agreement$/i, (m) => ({ step: 'owner_approved', name: m[1], evidence: { owner: true } })],
+  ['agreement', /^i\s+(?:sent|have sent|'ve sent)\s+(.+?)'s\s+(?:management\s+)?agreement$/i, (m) => ({ step: 'sent', name: m[1], evidence: { owner_sent: true } })],
+  ['agreement', /^(.+?)'s\s+(?:management\s+)?agreement\s+is\s+signed\s+by\s+both(?:\s+sides)?[,;]?\s+document\s+(\S+)$/i, (m) => ({ step: 'executed', name: m[1], evidence: { signed_by_both: true, document_ref: m[2] } })],
+  // "Record $150 management fee from Erica, invoice inv-1"
+  ['ledger', new RegExp(`^record\\s+\\$\\s?${NUM}\\s+(management fee|income|royalt(?:y|ies)|beat sale|streaming income)\\s+(?:from|for)\\s+(.+?)[,;]?\\s+(stripe|invoice|distributor statement|platform report|owner entered)\\s+(?:ref(?:erence)?\\s+)?(\\S+)$`, 'i'), (m) => ({ amount_usd: Number(m[1]), ledger_kind: m[2].toLowerCase().replace(/\s+/g, '_').replace(/^royalt(?:y|ies)$/, 'royalty'), name: m[3], source: m[4].toLowerCase().replace(/\s+/g, '_'), ref: m[5] })],
+];
+
+function spokenAction(t) {
+  const clean = t.replace(/^(?:che|hey che)[,\s]+/i, '');
+  for (const [kind, re, pick] of SPOKEN) {
+    const m = clean.match(re);
+    if (m) { const v = pick(m); if (v) return { kind, ...v }; }
+  }
+  return null;
+}
+
+function parseBeat(text) {
+  const parts = text.split(/\s*,\s*/);
+  const name = parts.shift();
+  const beat = { name, licenses: [] };
+  for (const p of parts) {
+    let m = p.match(/^(\d{2,3})\s*bpm$/i);
+    if (m) { beat.bpm = Number(m[1]); continue; }
+    m = p.match(/^(?:in\s+)?([A-G][#b]?\s+(?:major|minor))$/i);
+    if (m) { beat.key = m[1]; continue; }
+    m = p.match(/^(.+?)\s+\$\s?(\d+(?:\.\d{1,2})?)$/);
+    if (m) beat.licenses.push({ name: m[1], price_usd: Number(m[2]), exclusive: /exclusive/i.test(m[1]) });
+  }
+  return name ? beat : null;
+}
+
+const findByName = (list, name, key = 'name') => {
+  const n = String(name || '').trim().toLowerCase();
+  return list.find((x) => String(x[key] || '').toLowerCase() === n) || null;
+};
+
+/// Resolves a spoken action against the stored records without changing anything. Null means the
+/// words named no client, artist, song or beat CHE knows, so the sentence was not meant for here.
+export function resolveSpokenBusiness(data, ask) {
+  lists(data);
+  if (ask.kind === 'service' || ask.kind === 'beat') return {};
+  if (ask.kind === 'delivery') {
+    const song = data.projects.find((p) => p?.music?.workspace_id && p.title.toLowerCase() === ask.title.trim().toLowerCase());
+    return song ? { song } : null;
+  }
+  if (ask.kind === 'beat_sale') {
+    const beat = findByName(data.music_beats, ask.beat);
+    return beat ? { beat } : null;
+  }
+  const ws = findByName(data.music_workspaces, ask.name);
+  if (!ws) return null;
+  if (ask.kind === 'feedback' || ask.kind === 'approve_version') {
+    const song = data.projects.find((p) => p?.music?.workspace_id === ws.id && p.title.toLowerCase() === ask.title.trim().toLowerCase());
+    return song ? { ws, song } : null;
+  }
+  if (ask.kind === 'agreement' && ws.kind !== 'MANAGED_ARTIST') return null;
+  return { ws };
+}
+
+const $ = (n) => `$${Number(n).toFixed(2)}`;
+
+/// Carries out a resolved spoken action and says what actually happened.
+export function applySpokenBusiness(data, ask, target, now = new Date().toISOString()) {
+  const fail = (text) => ({ ok: false, changed: false, text });
+  const done = (text) => ({ ok: true, changed: true, text });
+  if (ask.kind === 'service') {
+    const r = setService(data, { name: ask.service, price_usd: ask.price_usd, revisions: ask.revisions });
+    return r.ok ? done(`${r.service.name} is set at ${$(r.service.price_usd)}${r.service.revisions === null ? '' : ` with ${r.service.revisions} revision${r.service.revisions === 1 ? '' : 's'}`}, sir.`) : fail(r.why);
+  }
+  if (ask.kind === 'approve_quote') {
+    const drafts = data.pipeline.filter((d) => d.music_workspace_id === target.ws.id && d.music_quote?.status === 'draft');
+    if (!drafts.length) return fail(`${target.ws.name} has no draft quote waiting for approval.`);
+    if (drafts.length > 1) return fail(`${target.ws.name} has ${drafts.length} draft quotes: ${drafts.map((d) => `${d.music_quote.service} at ${$(d.music_quote.price_usd)}`).join('; ')}. Approve that one in Clients, or remove the extra one first.`);
+    const r = approveQuote(data, drafts[0].id);
+    return r.ok ? done(`Approved the quote for ${target.ws.name}: ${drafts[0].music_quote.service}, ${$(drafts[0].music_quote.price_usd)}. It is yours to send. Nothing was sent.`) : fail(r.why);
+  }
+  if (ask.kind === 'song') {
+    const r = addWorkspaceSong(data, target.ws.id, ask.title, {}, now);
+    if (!r.ok) return fail(r.why);
+    return done(`Added ${r.project.title} to ${target.ws.name}'s workspace. ${r.project.music.deal_id ? 'It is tied to their quote.' : 'It is not tied to a quote yet, so revisions and delivery wait until one covers it.'}`);
+  }
+  if (ask.kind === 'feedback' || ask.kind === 'approve_version') {
+    const versions = (target.song.music.versions || []).filter((v) => !ask.version_kind || v.kind === ask.version_kind);
+    const v = versions.at(-1);
+    if (!v) return fail(`${target.song.title} has no ${ask.version_kind ? `${ask.version_kind} ` : ''}version on record yet.`);
+    const r = recordFeedback(data, target.song, { version_id: v.id, text: ask.text, approved: ask.kind === 'approve_version' }, now);
+    if (!r.ok) return fail(r.why);
+    if (r.approved) return done(`Recorded ${target.ws.name}'s approval of ${v.label || v.kind} for ${target.song.title}.`);
+    return done(`Recorded ${target.ws.name}'s changes on ${v.label || v.kind}. That is revision ${r.used}${r.allowed === null ? '; the quote does not set a limit' : ` of ${r.allowed}`}.`);
+  }
+  if (ask.kind === 'delivery') {
+    const r = deliveryPackage(data, target.song);
+    return { ok: r.ok, changed: false, text: r.ok ? `${target.song.title} is ready to deliver: ${r.files.map((f) => `${f.deliverable} from ${f.version}`).join(', ')}. Nothing has been sent.` : r.why };
+  }
+  if (ask.kind === 'beat') {
+    const r = addBeat(data, ask);
+    return r.ok ? done(`Added the beat ${r.beat.name}${r.beat.licenses.length ? ` with ${r.beat.licenses.map((l) => `${l.name} at ${$(l.price_usd)}`).join(', ')}` : ' with no licences priced yet'}. Nothing is listed or published.`) : fail(r.why);
+  }
+  if (ask.kind === 'beat_sale') {
+    const lic = target.beat.licenses.find((l) => l.name.toLowerCase() === ask.license.toLowerCase()) || target.beat.licenses.find((l) => l.name.toLowerCase().includes(ask.license.toLowerCase()));
+    if (!lic) return fail(`${target.beat.name} has no ${ask.license} licence. It has ${target.beat.licenses.map((l) => l.name).join(', ') || 'none'}.`);
+    // The owner saying he sold it is his approval; an exclusive still needs the signed agreement.
+    const r = recordBeatSale(data, target.beat, { license_id: lic.id, buyer: ask.buyer, payment_ref: ask.payment_ref, agreement_ref: ask.agreement_ref, owner_approved: true }, now);
+    return r.ok ? done(`Recorded the ${lic.name} of ${target.beat.name} to ${r.sale.buyer}, payment ${r.sale.payment_ref}. ${r.state === 'EXCLUSIVE_SOLD' ? 'It is now sold exclusively; nothing else can be sold for it.' : 'It is now leased.'}`) : fail(r.why);
+  }
+  if (ask.kind === 'agreement') {
+    const r = advanceAgreement(target.ws, ask.step, ask.step === 'draft' ? { terms: ask.terms } : ask.evidence, now);
+    const said = { draft: 'Drafted', legal_review: 'Recorded Legal\'s notes on', owner_approved: 'Recorded your approval of', sent: 'Recorded that you sent', executed: 'Recorded the signed' }[ask.step];
+    return r.ok ? done(`${said} ${target.ws.name}'s management agreement.${ask.step === 'draft' ? ' Legal reviews it next. CHE does not sign anything.' : ''}`) : fail(r.why);
+  }
+  if (ask.kind === 'ledger') {
+    const r = addLedger(data, { workspace_id: target.ws.id, kind: ask.ledger_kind, amount_usd: ask.amount_usd, source: ask.source, ref: ask.ref }, now);
+    return r.ok ? done(`Recorded ${$(r.record.amount_usd)} ${r.record.kind.replace(/_/g, ' ')} for ${target.ws.name}, ${r.record.source.replace(/_/g, ' ')} ${r.record.ref}.`) : fail(r.why);
+  }
   return null;
 }

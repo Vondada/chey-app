@@ -73,7 +73,7 @@ import { condenseHistory, ownerNotificationPolicy } from './workflow_governor.js
 import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, nextTradingTickAt, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
 import { intelligenceIntent, intelligenceReport, intelligenceView, speakIntelligence, startStudy, studyAlarm, studyStep } from './historical_intelligence.js';
 import { applyRightsAction, applySpokenRightsWrite, defensibility, musicRightsIntent, musicRightsWriteIntent, releaseReadiness, songFor, speakReadiness } from './music_rights.js';
-import { addBeat, addLedger, addWorkspace, addWorkspaceSong, advanceAgreement, approveQuote, artistReport, beatListing, businessDashboard, deliveryPackage, draftQuote, musicBusinessIntent, recordBeatSale, recordFeedback, setService, workspaceById, workspaceView } from './music_business.js';
+import { addBeat, addLedger, addWorkspace, addWorkspaceSong, advanceAgreement, applySpokenBusiness, approveQuote, artistReport, beatListing, businessDashboard, deliveryPackage, draftQuote, musicBusinessIntent, recordBeatSale, recordFeedback, resolveSpokenBusiness, setService, workspaceById, workspaceView } from './music_business.js';
 import { matrixIntent, readMatrix, runMatrix, speakMatrix } from './backtest_matrix.js';
 import { nextStrategySimTickAt, setStrategySimCeiling, setStrategySimPaused, speakStrategySim, strategySimIntent, strategySimTick, strategySimView, strategySimWake } from './strategy_sim.js';
 import { evidenceIntent, evidenceReport, evidenceTick } from './trading_evidence_runner.js';
@@ -7127,7 +7127,7 @@ export class CheState extends DurableObject {
         const song = () => (data.projects || []).find((p) => p.id === body.project_id && p.music?.workspace_id);
         const beat = () => (data.music_beats || []).find((b) => b.id === body.beat_id);
         const out = a === 'add_workspace' ? addWorkspace(data, body)
-          : a === 'add_song' ? addWorkspaceSong(data, body.workspace_id, body.title)
+          : a === 'add_song' ? addWorkspaceSong(data, body.workspace_id, body.title, { deal_id: body.deal_id || null })
           : a === 'set_service' ? setService(data, body.service || {})
           : a === 'draft_quote' ? draftQuote(data, body)
           : a === 'approve_quote' ? approveQuote(data, body.deal_id)
@@ -11153,7 +11153,16 @@ export class CheState extends DurableObject {
         }
         // Music business by voice or typing: a client, a managed artist, a draft quote, or the dashboard.
         const bizAsk = !body.attachment && musicBusinessIntent(message);
-        if (bizAsk) {
+        // Every other business action by voice or typing. Words that name no known client, artist, song
+        // or beat were not meant for the music business and go on to the rest of chat.
+        const bizTarget = bizAsk && !['quote', 'client', 'managed_artist', 'dashboard'].includes(bizAsk.kind) ? resolveSpokenBusiness(data, bizAsk) : null;
+        if (bizTarget) {
+          if (!ownerDevice) return ndjsonReply('Only the CHE owner can use the music business, sir.', { source: 'che_music_business', ok: false });
+          const done = applySpokenBusiness(data, bizAsk, bizTarget);
+          if (done.changed) await this.ctx.storage.put('che', data);
+          return ndjsonReply(done.text, { source: 'che_music_business', model_calls: 0, ok: done.ok });
+        }
+        if (bizAsk && ['quote', 'client', 'managed_artist', 'dashboard'].includes(bizAsk.kind)) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can use the music business, sir.', { source: 'che_music_business', ok: false });
           if (bizAsk.kind === 'dashboard') {
             const d = businessDashboard(data);

@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import {
   addWorkspace, workspaceView, addWorkspaceSong, setService, draftQuote, approveQuote, recordFeedback, revisionsUsed,
   deliveryPackage, addBeat, recordBeatSale, offers, beatListing, advanceAgreement, addLedger, businessDashboard, artistReport,
-  musicBusinessIntent,
+  musicBusinessIntent, resolveSpokenBusiness, applySpokenBusiness,
 } from './music_business.js';
 import { markStage, createPaymentLink, checkPaid } from './pipeline.js';
 import { applyRightsAction } from './music_rights.js';
@@ -40,16 +40,19 @@ test('client workflow: client, quote (draft until approved), song, stems analyse
   const ws = addWorkspace(data, { kind: 'CLIENT', name: 'Jay R', contact: 'jay@example.com' }).workspace;
   // Services have no built-in price; the owner sets it.
   assert.equal(setService(data, { name: 'Mix + Master' }).ok, false);
-  const svc = setService(data, { name: 'Mix + Master', price_usd: 250, deposit_usd: 100, revisions: 2, deliverables: ['Master WAV', 'MP3 preview'] }).service;
+  // A deposit could be promised but never collected by the full-price payment link, so it is refused.
+  assert.match(setService(data, { name: 'Mix + Master', price_usd: 250, deposit_usd: 100 }).why, /Deposits are not supported yet/);
+  const svc = setService(data, { name: 'Mix + Master', price_usd: 250, revisions: 2, deliverables: ['Master WAV', 'MP3 preview'] }).service;
   // 2. A quote is a draft on the existing pipeline deal; nothing is sent.
   const q = draftQuote(data, { workspace_id: ws.id, service_id: svc.id, due: '2026-11-01' });
   assert.equal(q.quote.status, 'draft');
   assert.equal(q.deal.stage, 'proposal');
-  assert.match(q.deal.proposal_text, /Mix \+ Master, \$250\.00\. Deposit: \$100\.00\. Deliverables: Master WAV, MP3 preview\. Revisions included: 2/);
+  assert.match(q.deal.proposal_text, /Mix \+ Master, \$250\.00\. Deliverables: Master WAV, MP3 preview\. Revisions included: 2/);
   // 3. The client's song is a project in the client's workspace, never in the owner's catalog.
   const song = addWorkspaceSong(data, ws.id, 'Night Drive').project;
   assert.equal(myCatalog(data.projects).length, 0);
   assert.equal(song.music.use_for_owner_taste, false);
+  assert.equal(song.music.deal_id, q.deal.id, 'the song is bound to the quote that covers it');
   // 4-5. Stems are analysed from their audio.
   const vox = stem({ tone: 900 }); const beat = stem({ tone: 120, amp: 0.4 });
   const stems = [analyzeWav(vox), analyzeWav(beat)];
@@ -147,6 +150,7 @@ test('managed artists: isolated workspaces, catalog import, EP from their songs 
   assert.equal(advanceAgreement(a, 'legal_review', {}).ok, false, 'Legal must leave notes');
   assert.equal(advanceAgreement(a, 'legal_review', { legal_notes: 'Exclusivity and termination need attorney review.' }).ok, true);
   assert.equal(advanceAgreement(a, 'owner_approved', {}).ok, false);
+  assert.ok(a.agreement.history.every((h) => typeof h.at === 'string' && !Number.isNaN(Date.parse(h.at))), 'each step records when it happened');
   assert.equal(advanceAgreement(a, 'owner_approved', { owner: true }).ok, true);
   assert.equal(advanceAgreement(a, 'sent', { owner_sent: true }).ok, true);
   // A management fee cannot be taken before the agreement is executed.
@@ -173,4 +177,53 @@ test('owner words: quotes, managed artists and clients', () => {
   assert.deepEqual(musicBusinessIntent('Add a client called Jay R'), { kind: 'client', name: 'Jay R' });
   assert.equal(musicBusinessIntent('How is my music business?').kind, 'dashboard');
   assert.equal(musicBusinessIntent('What time is it?'), null);
+});
+
+test('two quotes for one client: each song uses its own quote, so one paid project never unlocks another', () => {
+  const data = { projects: [], pipeline: [] };
+  const ws = addWorkspace(data, { kind: 'CLIENT', name: 'Jay R' }).workspace;
+  const first = draftQuote(data, { workspace_id: ws.id, price_usd: 200, service_name: 'Mix', deliverables: ['Mix WAV'], revisions: 1 });
+  const a = addWorkspaceSong(data, ws.id, 'First').project;
+  assert.equal(a.music.deal_id, first.deal.id);
+  const b = addWorkspaceSong(data, ws.id, 'Second').project;
+  const second = draftQuote(data, { workspace_id: ws.id, project_id: b.id, price_usd: 300, service_name: 'Mix + Master', deliverables: ['Instrumental WAV', 'Stems WAV'], revisions: 3 });
+  assert.equal(b.music.deal_id, second.deal.id);
+  // A third song with two quotes on file and no binding has no terms rather than borrowed ones.
+  const c = addWorkspaceSong(data, ws.id, 'Third').project;
+  assert.equal(c.music.deal_id, null);
+  assert.match(deliveryPackage(data, c).why, /not tied to one quote/);
+  // Revisions and payment come from each song's own quote.
+  const va = version(data, a, 'mix', 'Mix v1', stem({ amp: 0.3 }));
+  assert.equal(recordFeedback(data, a, { version_id: va.id, text: 'x' }).allowed, 1);
+  assert.equal(recordFeedback(data, a, { version_id: va.id, text: 'y' }).ok, false);
+  approveQuote(data, second.deal.id);
+  Object.assign(second.deal, { stage: 'paid', payment: { paid: true } });
+  recordFeedback(data, a, { version_id: va.id, approved: true });
+  assert.match(deliveryPackage(data, a).why, /not been approved/, 'the second project being paid does not unlock the first');
+  // WAV deliverables are matched by what they contain: an instrumental is not the master.
+  const master = version(data, b, 'master', 'Master', stem({ amp: 0.4 }));
+  const inst = version(data, b, 'instrumental', 'Instrumental', stem({ amp: 0.35 }));
+  for (const v of [master, inst]) recordFeedback(data, b, { version_id: v.id, approved: true });
+  const pack = deliveryPackage(data, b);
+  assert.deepEqual(pack.files.map((f) => [f.deliverable, f.version]), [['instrumental wav', 'Instrumental']]);
+  assert.deepEqual(pack.missing, ['stems wav']);
+});
+
+test('spoken business actions: parsed, resolved against stored records, and unknown names fall through', () => {
+  const data = { projects: [], pipeline: [] };
+  assert.equal(resolveSpokenBusiness(data, musicBusinessIntent('The bank approved my loan')), null);
+  const ws = addWorkspace(data, { kind: 'MANAGED_ARTIST', name: 'Erica' }).workspace;
+  const say = (t) => { const ask = musicBusinessIntent(t); const target = resolveSpokenBusiness(data, ask); return target && applySpokenBusiness(data, ask, target); };
+  assert.match(say('Draft a management agreement for Erica at 15 percent for 12 months').text, /Drafted Erica's management agreement/);
+  assert.deepEqual(ws.agreement.terms, { commission_pct: 15, term_months: 12 });
+  assert.equal(say('I approve Erica\'s agreement').ok, false, 'Legal reviews first');
+  assert.equal(say('Legal notes for Erica\'s agreement: termination clause needs an attorney').ok, true);
+  assert.equal(say('I approve Erica\'s agreement').ok, true);
+  assert.match(say('Record $150 management fee from Erica, invoice inv-1').text, /executed agreement/);
+  say('I sent Erica\'s agreement');
+  assert.equal(say('Erica\'s agreement is signed by both sides, document mgmt.pdf').ok, true);
+  assert.match(say('Record $150 management fee from Erica, invoice inv-1').text, /Recorded \$150\.00 management fee for Erica, invoice inv-1/);
+  assert.match(say('Add a beat called Smoke, 145 BPM, basic lease $30, exclusive $500').text, /Smoke with basic lease at \$30\.00, exclusive at \$500\.00/);
+  assert.match(say('Sold a basic lease of Smoke to Mike, payment cs_1').text, /now leased/);
+  assert.match(say('Sold an exclusive of Smoke to Dre, payment cs_2').text, /signed agreement/);
 });
