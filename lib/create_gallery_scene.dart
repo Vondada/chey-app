@@ -305,7 +305,7 @@ class _CreateGallerySceneState extends State<CreateGalleryScene>
                         ),
                       if (widget.onInventions != null)
                         _WorkbenchRow(
-                          icon: Icons.precision_manufacturing_outlined,
+                          icon: Icons.smart_toy_outlined,
                           title: 'Invention Studio',
                           subtitle:
                               'Design a suit, exoskeleton, robot or device: concept, parts by subsystem, costs with sourcing labels, feasibility and stages.',
