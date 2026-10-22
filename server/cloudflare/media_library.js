@@ -110,9 +110,61 @@ export function mediaHoldIntent(message) {
 export function mediaShowLatestIntent(message) {
   const text = cleanText(message);
   if (text.length > MAX_STORE_REQUEST) return false;
+  // A request to open it in the Creation Room is answered by mediaOpenIntent, never by this one-picture reply.
   return /\b(?:show|open|display|send|see|view|pull\s+up|bring\s+up)\b/i.test(text)
     && /\b(?:last|latest|newest|most\s+recent)\b/i.test(text)
-    && PICTURE_WORD.test(text) && !VIDEO_WORD.test(text);
+    && PICTURE_WORD.test(text) && !VIDEO_WORD.test(text) && !CREATION_ROOM_WORD.test(text);
+}
+
+// "Open this same picture in my Creation Room", "open media cb442323-… in Creation Room". The picture is the one the
+// message names by ID, or else the one the chat showed last (the client sends its media ID as last_media_id). Null when
+// the message is not that request, so the existing store and library routes still see it.
+const OPEN_WORD = /\b(?:open|show|view|display|bring\s+up|pull\s+up|put)\b/i;
+const CREATION_ROOM_WORD = /\b(?:creation\s+room|create\s+room|creations?|creative\s+room)\b/i;
+const MEDIA_ID_WORD = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i;
+const OPENABLE_NOUN = /\b(?:pictures?|photos?|images?|pics?|videos?|clips?|media|creations?|files?|one)\b/i;
+const DEICTIC_WORD = /\b(?:this|that|same|it|it's)\b/i;
+export function mediaOpenIntent(message) {
+  const text = cleanText(message);
+  if (text.length > MAX_STORE_REQUEST || !OPEN_WORD.test(text) || !CREATION_ROOM_WORD.test(text)) return null;
+  const id = (MEDIA_ID_WORD.exec(text) || [])[0]?.toLowerCase() || '';
+  const latest = /\b(?:latest|last|newest|most\s+recent)\b/i.test(text);
+  if (!id && !(OPENABLE_NOUN.test(text) && (DEICTIC_WORD.test(text) || latest))) return null;
+  return { id, latest: !id && latest };
+}
+
+function openable(row) {
+  return Boolean(row) && (row.kind === 'video' || /^image\//.test(String(row.mime_type || '')));
+}
+
+/** The saved picture or video with this ID, from the stored records, or null. An owner upload that is a picture opens too. */
+export function mediaOpenRow(items, id) {
+  const row = (items || []).find((item) => String(item?.id || '').toLowerCase() === id);
+  return openable(row) ? row : null;
+}
+
+/** The newest saved picture or video, for "open my latest picture in my Creation Room". */
+export function mediaLatestOpenRow(items) {
+  return [...(items || [])]
+    .sort((a, b) => String(b?.created_at || '').localeCompare(String(a?.created_at || '')))
+    .find(openable) || null;
+}
+
+export function mediaOpenReply(row, { origin = '' } = {}) {
+  const kind = row.kind === 'video' ? 'video' : 'image';
+  const title = String(row.title || (kind === 'video' ? 'Video' : 'Picture')).slice(0, 80);
+  return {
+    text: `Opening "${title}" (ID ${row.id}) in your Creation Room, sir.`,
+    media_id: row.id,
+    media_type: kind,
+    media_url: `${origin}/api/media/${row.id}/${kind === 'video' ? 'video' : 'image'}`,
+  };
+}
+
+export function mediaOpenMissingReply(id) {
+  return id
+    ? `I hold no saved picture or video with ID ${id}, sir, so there is nothing to open in your Creation Room.`
+    : 'I don\'t know which picture you mean, sir. Give me its media ID, or ask me about the picture first.';
 }
 
 export function wantsLatestMedia(message) {

@@ -39,7 +39,7 @@ import { capabilityPromptLine, inferTurnCapabilities, runtimeCapabilityRegistry 
 import { identityQuestionIntent, speakIdentity } from './che_maturity.js';
 import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, saveOwnerFile, upscaleImage, verifyMediaFile } from './media.js';
 import { loadSoul, restoreSoul, saveSoul, soulPromptBlock, soulProvenance, soulView, stripPhoneSoul } from './soul.js';
-import { mediaHoldAnswer, mediaHoldIntent, mediaKeepFor, mediaLatestReply, mediaLibraryIntent, mediaLibraryReply, mediaLibraryReport, mediaRows, mediaSaveIntent, mediaSaveReply, mediaShowLatestIntent, mediaShowReply, verifyMediaRows, wantsLatestVideo } from './media_library.js';
+import { mediaHoldAnswer, mediaHoldIntent, mediaKeepFor, mediaLatestReply, mediaLibraryIntent, mediaLibraryReply, mediaLibraryReport, mediaLatestOpenRow, mediaOpenIntent, mediaOpenMissingReply, mediaOpenReply, mediaOpenRow, mediaRows, mediaSaveIntent, mediaSaveReply, mediaShowLatestIntent, mediaShowReply, verifyMediaRows, wantsLatestVideo } from './media_library.js';
 import { capabilityGap, capabilityReply } from './capability_gap.js';
 import { CHAT_IMAGE_SOURCE, chatImageMedia, chatImageReply, makeChatImages, requestedImageCount } from './chat_images.js';
 import { memorySearchIntent, memorySearchReply, memorySearchTerms } from './memory_search.js';
@@ -117,7 +117,9 @@ import { applyModelReading, asksAboutScreen, clipKeepingLimits, interpretOwnerTu
 import { intentFrame, understoodAs } from './intent_frame.js';
 import { replyHijacksOwnerRequest, usageIntent, usageReport, speakUsage } from './usage_tracker.js';
 import { newestStarredIntent, speakNewestStarred, autoImproveScan, analyticalRepositoryQuestion, chatOnlyResponseIntent, currentTurnActionPolicy, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, inspirationUpgradeContext, listOwnerStarredRepos, readRepoSource, referenceSourceBlock, codingHistoryIntent, hypotheticalChange, repositoryImplementationIntent, repositoryInspectionIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, starredStudyList, studySelectionIntent } from './code_scout.js';
-import { codingHistoryReceipt, completedWorkProof, proofAsked } from './coding_history.js';
+import { codingHistoryReceipt, completedWorkProof, otherAgentWorkAsk, otherAgentWorkReply, proofAsked } from './coding_history.js';
+import { inventionIntent, inventionReply, planInvention, refusalReply } from './invention_studio.js';
+import { matchShowroom, showroomIntent, showroomReply, showroomView } from './capability_showroom.js';
 import { activityReceipt, activityStatusIntent } from './activity_status.js';
 import { webAppPage } from './web_app.js';
 import { learnedSkillsContext, learnedSkillsIntent, learnSkillIntent, attachmentText, condenseSkills, loadLearnedSkills, READ_FOR_SKILLS, redactSensitive, saveLearnedSkills, speakLearned, speakSkillList } from './self_skills.js';
@@ -151,7 +153,7 @@ import {
   googleTurnContext, youtubeChatIntent,
   googleStates, startGoogleConnect,
 } from './google_services.js';
-import { fundyouredgeReply } from './fundyouredge.js';
+import { FYE_STATUS, fundyouredgeDraft, fundyouredgeDraftReply, fundyouredgeIntent, fundyouredgeReply } from './fundyouredge.js';
 import { CheCodingRuntime, codingRuntimeEnabled, ownerRequiresMergeApproval, recoverableRuntimeFailure, runtimeState, runtimeStateClass, speakRuntimeStatus } from './coding_runtime.js';
 import { newMissionAction, RESUME_LIMIT, resumeAction, resumeDecision } from './coding_failover.mjs';
 import { handoffIntent, readLiveHandoff, latestHandoff, unseenReplies, relayText, listThreads, mailboxHead, mailboxIntent, readAllMail, readThread, sendMail, speakThreads } from './mailbox.js';
@@ -5306,6 +5308,26 @@ export class CheState extends DurableObject {
   // ── Command Center ─────────────────────────────────────────────────────
   // Live readiness of every connector a command can need, from the Worker's
   // real configuration (secrets, OAuth tokens, engines). Never guessed.
+  // The Showroom's real examples: the newest saved invention, video and picture, each only when it exists. The showroom
+  // shows these as the real output; without one, the card stays a labelled concept example.
+  async showroomView() {
+    const data = await this.loadData();
+    const connectors = await this.commandConnectors(data);
+    const projects = (await this.ctx.storage.get('invention_projects')) || [];
+    const media = await listMedia(this.ctx.storage);
+    const newest = (rows) => rows.slice().sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))[0];
+    const video = newest(media.filter((m) => m.kind === 'video'));
+    const picture = newest(media.filter((m) => /^image\//.test(String(m.mime_type || '')) || m.kind === 'image'));
+    const recent = {
+      invention: projects[0] ? { id: projects[0].id, title: projects[0].title } : null,
+      video: video ? { id: video.id, title: video.title || 'Video' } : null,
+      picture: picture ? { id: picture.id, title: picture.title || 'Picture' } : null,
+    };
+    // Proof files are checked by capability_showroom.test.mjs in CI, where the repository is readable; the runtime
+    // cannot read them, so it trusts the test that names them.
+    return showroomView(connectors, { recent, hasProofFile: () => true });
+  }
+
   async commandConnectors(data) {
     const env = this.keyEnv || this.env;
     const registry = runtimeCapabilityRegistry(env, data).capabilities || [];
@@ -6910,6 +6932,20 @@ export class CheState extends DurableObject {
       }
       // Explicit status/finalization for an asynchronous render, with real
       // archived media IDs. This endpoint never uploads to YouTube.
+      // The Capability Showroom (owner addendum, 2026-10-22): every category and capability with its real state.
+      if (path === '/api/showroom' && request.method === 'GET') {
+        return json(await this.showroomView());
+      }
+      // Invention projects, owner only: the list (newest first) and one project in full, for the Studio page.
+      if (path === '/api/inventions' && request.method === 'GET') {
+        const projects = (await this.ctx.storage.get('invention_projects')) || [];
+        return json({ items: projects.map((p) => ({ id: p.id, title: p.title, template: p.template, created_at: p.created_at, parts: p.parts.length, concept_media_id: p.concept?.media_id || null })) });
+      }
+      const inventionPath = path.match(/^\/api\/inventions\/([A-Za-z0-9-]{4,64})$/);
+      if (inventionPath && request.method === 'GET') {
+        const project = ((await this.ctx.storage.get('invention_projects')) || []).find((p) => p.id === inventionPath[1]);
+        return project ? json(project) : json({ detail: 'No invention project with that ID.' }, 404);
+      }
       if (path === '/api/media/video/finalize' && request.method === 'POST') {
         const result = await generateVideo(this.keyEnv || this.env, this.ctx.storage, {
           task_id: body.task_id, prompt: body.prompt || 'Video render',
@@ -7019,6 +7055,12 @@ export class CheState extends DurableObject {
         return json({ detail: 'Unknown action. Use start, stop, tick or backtest.' }, 400);
       }
       // Strategy Control Center (owner, 2026-10-20): limits, pause/resume, Emergency Stop and the audit trail.
+      // The latest FundYourEdge draft (owner, 2026-10-22). Read-only: there is no send path behind it.
+      if (path === '/api/trading/fye/draft' && request.method === 'GET') {
+        if (!ownerDevice) return ownerOnly();
+        const draft = await Promise.resolve().then(() => this.ctx.storage.get('fye_draft')).catch(() => null);
+        return json({ ok: true, status: FYE_STATUS, draft: draft || null, order_sent: false });
+      }
       if (path === '/api/trading/controls' && request.method === 'GET') {
         if (!ownerDevice) return ownerOnly();
         return json(await this.tradingControlsView());
@@ -9123,6 +9165,23 @@ export class CheState extends DurableObject {
             const command = commandById(studio.command);
             return this.runSlashCommand(request, body, data, { name: command.id, command, input: studio.input }, { confirmed: false });
           }
+          // "Open this same picture in my Creation Room": the picture is the one the message names, or the one the chat
+          // showed last. Read from the stored record and its bytes, so the phone opens only a file CHE can read back.
+          const openMedia = mediaOpenIntent(rawMessage);
+          if (openMedia) {
+            if (!ownerDevice) return ownerOnly();
+            const items = await listMedia(this.ctx.storage);
+            const id = openMedia.id || (openMedia.latest ? '' : String(body.last_media_id || '').trim().toLowerCase());
+            const row = openMedia.latest ? mediaLatestOpenRow(items) : mediaOpenRow(items, id);
+            if (!row) return ndjsonReply(mediaOpenMissingReply(id), { source: 'che_media_store', ok: false, media_id: id || null });
+            const check = await verifyMediaFile(this.keyEnv || this.env, this.ctx.storage, row);
+            if (!check.ok) return ndjsonReply(`I could not open ID ${row.id} in your Creation Room, sir: ${check.reason || 'its file was not checked'}.`, { source: 'che_media_store', ok: false, media_id: row.id });
+            const opened = mediaOpenReply(row, { origin: new URL(request.url).origin });
+            return ndjsonReply(opened.text, {
+              source: 'che_media_store', ok: true, media_id: opened.media_id, media_type: opened.media_type,
+              media_url: opened.media_url, open_creation: true,
+            });
+          }
           // "Show me the last picture": the newest saved picture, its bytes read back first, returned as an image for the chat.
           if (mediaShowLatestIntent(rawMessage)) {
             if (!ownerDevice) return ownerOnly();
@@ -9364,6 +9423,10 @@ export class CheState extends DurableObject {
           // vaguer question first. Only a whole sentence that is one order cancel qualifies.
           const chartOwnedDelete = !body.attachment && Boolean(cancelOrderIntent(message));
           const deskGrant = stockTurn?.paper || deskOwned ? { ...ownerGrant, money: true } : ownerGrant;
+          // A FundYourEdge order is refused before the money hold: there is nothing a "yes" could approve, and no
+          // pending action is stored. (orderBrokerReady: true keeps a generic futures order out of this check.)
+          const fyeOrder = ownerDevice && !body.attachment && fundyouredgeIntent(message, { orderBrokerReady: true })?.kind === 'order';
+          if (fyeOrder) return ndjsonReply(fundyouredgeReply(message, { orderBrokerReady: true }), { source: 'che_brokerage', ok: false, model_calls: 0, order_sent: false });
           const ownerGate = gateOwnerAction(message, chartOwnedDelete ? { ...deskGrant, delete: true } : deskGrant);
           if (!ownerGate.allowed) {
             await this.ctx.storage.put(PENDING_OWNER_ACTION_KEY, { kinds: ownerGate.kinds, text: message, at: Date.now() });
@@ -9555,6 +9618,51 @@ export class CheState extends DurableObject {
         // deterministic planner for every project type (project_plan.js): no model call, every figure a
         // labeled estimate, one public background page when it can be read, saved to the Brain as a
         // proposal. Weapons and harm are refused or left out by its safety layer.
+        // "What can you create?", "Show me an example of an animated video", "Which features need setup?": answered from the
+        // Capability Showroom's real states. An example or render question takes this route only when a capability matches;
+        // any other question keeps its ordinary route.
+        const showroom = body.attachment ? null : showroomIntent(message);
+        if (showroom) {
+          const view = await this.showroomView();
+          const matched = showroom.kind === 'example' || showroom.kind === 'can_render' ? matchShowroom(view, showroom.query) : ['overview', 'needs_setup'];
+          if (matched.length) {
+            if (!ownerDevice) return ndjsonReply('Only the CHE owner can open the Capability Showroom, sir.', { source: 'che_showroom', ok: false, model_calls: 0 });
+            return ndjsonReply(showroomReply(view, showroom), { source: 'che_showroom', ok: true, model_calls: 0, showroom_total: view.total });
+          }
+        }
+        // Invention Studio (owner, 2026-10-22): a design is planned as a project, and follow-up questions reopen the latest
+        // one. Concept pictures come from the existing media engine; the parts, costs and feasibility do not need it.
+        const invention = body.attachment ? null : inventionIntent(message);
+        if (invention) {
+          if (!ownerDevice) return ndjsonReply('Only the CHE owner can open the Invention Studio, sir. Nothing was made.', { source: 'che_invention_studio', ok: false, model_calls: 0 });
+          if (invention.kind === 'refused') return ndjsonReply(refusalReply(), { source: 'che_invention_studio', ok: false, model_calls: 0 });
+          const projects = (await this.ctx.storage.get('invention_projects')) || [];
+          const lastId = await this.ctx.storage.get('invention_last');
+          // Only a design starts a project. A follow-up (cost, sourcing, assembly, reality, plan) needs a project to answer
+          // from; with none, the message is not about an invention and the ordinary routes keep it.
+          if (invention.kind !== 'design' && !projects.some((p) => p.id === lastId)) {
+            // falls through to the other routes
+          } else if (invention.kind === 'design') {
+            const project = planInvention(invention.subject, { id: `inv-${crypto.randomUUID().slice(0, 8)}` });
+            const canDraw = Boolean(this.env.AI) || paidMediaOn(this.env);
+            if (canDraw) {
+              const made = await generateImage(this.keyEnv || this.env, this.ctx.storage, {
+                prompt: `Concept design, front, side and back views, clean engineering-style sketch: ${project.request}`.slice(0, 1800),
+                title: `${project.title}`.slice(0, 80),
+              }).catch(() => ({ detail: 'The image engine did not answer.' }));
+              project.concept = made.item
+                ? { status: 'generated', media_id: made.item.id, reason: '' }
+                : { status: 'not_generated', media_id: null, reason: made.detail || 'The image engine did not answer.' };
+            }
+            await this.ctx.storage.put('invention_projects', [project, ...projects].slice(0, 20));
+            await this.ctx.storage.put('invention_last', project.id);
+            const media = project.concept.media_id ? { media_id: project.concept.media_id, media_type: 'image', media_url: `${new URL(request.url).origin}/api/media/${project.concept.media_id}/image` } : {};
+            return ndjsonReply(inventionReply(project, 'design'), { source: 'che_invention_studio', ok: true, model_calls: 0, invention_id: project.id, open_invention: true, ...media });
+          } else {
+            const project = projects.find((p) => p.id === lastId);
+            return ndjsonReply(inventionReply(project, invention.kind), { source: 'che_invention_studio', ok: true, model_calls: 0, invention_id: project.id, open_invention: true });
+          }
+        }
         const planAsk = body.attachment ? null : projectPlanIntent(message);
         if (planAsk) {
           if (!ownerDevice) return ownerOnly();
@@ -9949,6 +10057,13 @@ export class CheState extends DurableObject {
         // prepares or places an order for it.
         const orderBrokerReady = ownerDevice && !chatOnlyEvaluation
           ? (await brokerConnection(this.ctx.storage).catch(() => ({ connected: false })))?.connected === true : false;
+        // A trade draft (owner, 2026-10-22) is prepared read-only and stored as a record only: nothing is sent.
+        const brokerIntent = ownerDevice && !chatOnlyEvaluation ? fundyouredgeIntent(message, { orderBrokerReady }) : null;
+        if (brokerIntent?.kind === 'draft') {
+          const draft = fundyouredgeDraft(message, { account: brokerIntent.account });
+          await this.ctx.storage.put('fye_draft', draft);
+          return ndjsonReply(fundyouredgeDraftReply(draft), { source: 'che_fye_draft', ok: true, model_calls: 0, order_sent: false });
+        }
         const brokerReply = ownerDevice && !chatOnlyEvaluation ? fundyouredgeReply(message, { orderBrokerReady }) : null;
         if (brokerReply) return ndjsonReply(brokerReply, { source: 'che_brokerage', ok: false, model_calls: 0 });
         const exam = ownerDevice && !chatOnlyEvaluation && !isExistingChangeCommand(selfUpdateChatIntent(message)) ? examIntent(message) : null;
@@ -10638,6 +10753,13 @@ export class CheState extends DurableObject {
         // a handoff, a message for another AI ("tell Claude the coding run failed") and a
         // consultation ("ask ChatGPT why the coding job failed") keep theirs.
         // A turn with an attachment is about that attachment, which this route cannot read.
+        // A question about who did coding work, when it names Claude or another AI: CHE's records never hold that work, so
+        // the model is never asked (it invented speakers and authors). Handoffs, mailbox and consultations keep their routes.
+        const otherAgent = body.attachment || handoffIntent(message) || mailboxIntent(message) || consultIntent(message) ? '' : otherAgentWorkAsk(message);
+        if (otherAgent) {
+          if (!ownerDevice) return ndjsonReply('Only the CHE owner can read coding job status, sir.', { source: 'che_coding_history', ok: false });
+          return ndjsonReply(otherAgentWorkReply(otherAgent, (await this.loadData()).jobs || [], this.env.CHE_GITHUB_REPO || ''), { source: 'che_coding_history', model_calls: 0 });
+        }
         if (!body.attachment && codingHistoryIntent(message) && !handoffIntent(message) && !mailboxIntent(message) && !consultIntent(message)) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can read coding job status, sir.', { source: 'che_coding_history', ok: false });
           const jobs = (await this.loadData()).jobs || [];

@@ -207,10 +207,16 @@ test('FundYourEdge is reported as not connected, nothing is checked, and no orde
   assert.equal(check.done.source, 'che_brokerage');
   assert.equal(check.modelCalls, 0);
   assert.match(check.raw, /FundYourEdge is not connected/);
-  const order = await me.say('prepare an MNQ trade');
+  // Owner (2026-10-22): preparing is a read-only draft that nothing sends; placing an order stays refused.
+  const draft = await me.say('prepare an MNQ trade');
+  assert.equal(draft.modelCalls, 0);
+  assert.equal(draft.done.source, 'che_fye_draft');
+  assert.equal(draft.done.order_sent, false);
+  assert.match(draft.raw, /NOT SUBMITTED — NO BROKER CONNECTION/);
+  const order = await me.say('place an MNQ order on FundYourEdge');
   assert.equal(order.modelCalls, 0);
-  assert.match(order.raw, /cannot prepare or place an order for FundYourEdge/);
-  assert.match(order.raw, /Nothing was prepared or placed/);
+  assert.match(order.raw, /cannot place or submit an order for FundYourEdge/);
+  assert.match(order.raw, /Nothing was placed/);
 });
 
 test('FundYourEdge shows as Unsupported on the Command Center, with its reason', async () => {

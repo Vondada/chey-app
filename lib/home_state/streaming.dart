@@ -253,6 +253,7 @@ extension _CheHomeStreaming on _CHEHomeState {
     request.body = jsonEncode({
       'message': userMessage,
       'history': history,
+      'last_media_id': _lastMediaId(),
       'request_id': _requestGate.current.requestId,
 
       // Future-ready fields for a tool-capable CHE Agent gateway.
@@ -513,6 +514,17 @@ extension _CheHomeStreaming on _CHEHomeState {
           _streamMediaUrl = mediaUrl;
           _streamMediaType = mediaType;
         }
+        // "Open this same picture in my Creation Room": the Worker named the saved file; the Creation Room shows it.
+        final openId = data['media_id']?.toString().trim() ?? '';
+        if (data['open_creation'] == true && openId.isNotEmpty && mounted) {
+          unawaited(Navigator.of(context).push(MaterialPageRoute<void>(
+            builder: (_) => CheCreationViewer(
+              item: {'id': openId, 'kind': mediaType == 'video' ? 'video' : 'image', 'title': 'Creation'},
+              baseUrl: cheAgentBaseUrl,
+              headers: _authHeaders,
+            ),
+          )));
+        }
         // "Open number two": the owner asked for this link by voice in this
         // turn; open it and report the actual outcome aloud.
         final openUrl = data['open_url']?.toString().trim() ?? '';
@@ -538,6 +550,15 @@ extension _CheHomeStreaming on _CHEHomeState {
       unawaited(_knowledge.remember(trimmedRequest, finalText));
     }
     return finalText;
+  }
+
+  /// The saved picture or video the chat showed last, so "open this same picture" needs no ID from the owner.
+  String _lastMediaId() {
+    for (final item in messages.reversed) {
+      final match = RegExp(r'/api/media/([0-9a-fA-F-]{36})/').firstMatch(item['media_url'] ?? '');
+      if (match != null) return match.group(1)!;
+    }
+    return '';
   }
 
   /// Turns "fix this" into a full brief for the coding crew.

@@ -71,11 +71,23 @@ export function personalFactQuestion(message) {
   return { subject, learn, words: words(subject) };
 }
 
-/** The date a record was stored, spoken as "October 21, 2026", from its ISO stamp or its recorded day. */
+// The owner's calendar. Stored instants stay UTC; only the day shown or spoken is converted to America/Chicago,
+// which moves between CDT and CST by itself.
+const OWNER_ZONE = 'America/Chicago';
+const OWNER_DAY = new Intl.DateTimeFormat('en-US', { timeZone: OWNER_ZONE, year: 'numeric', month: 'numeric', day: 'numeric' });
+
+/** The owner's calendar day for an instant: { year, month (1-12), day } in America/Chicago. */
+export function ownerDay(at) {
+  const parts = Object.fromEntries(OWNER_DAY.formatToParts(at).map((p) => [p.type, p.value]));
+  return { year: Number(parts.year), month: Number(parts.month), day: Number(parts.day) };
+}
+
+/** The date a record was stored, spoken as "October 21, 2026" on the owner's calendar, from its ISO stamp or recorded day. */
 export function spokenStoredDate(record = {}) {
   const at = new Date(String(record.created_at || record.recorded || ''));
   if (!Number.isFinite(at.getTime())) return '';
-  return `${MONTHS[at.getUTCMonth()]} ${at.getUTCDate()}, ${at.getUTCFullYear()}`;
+  const day = ownerDay(at);
+  return `${MONTHS[day.month - 1]} ${day.day}, ${day.year}`;
 }
 
 // Same subject, same words, in any order: "favorite food" matches "food favorite"; "favorite drink" never matches "food".
@@ -138,9 +150,10 @@ function storedDates(records = []) {
     for (const raw of [r?.created_at, r?.recorded, r?.superseded_at]) {
       const at = new Date(String(raw || ''));
       if (!Number.isFinite(at.getTime())) continue;
-      out.add(`${MONTHS[at.getUTCMonth()]} ${at.getUTCDate()}, ${at.getUTCFullYear()}`);
-      out.add(`${MONTHS[at.getUTCMonth()]} ${at.getUTCDate()} ${at.getUTCFullYear()}`);
-      out.add(at.toISOString().slice(0, 10));
+      const day = ownerDay(at);
+      out.add(`${MONTHS[day.month - 1]} ${day.day}, ${day.year}`);
+      out.add(`${MONTHS[day.month - 1]} ${day.day} ${day.year}`);
+      out.add(`${day.year}-${String(day.month).padStart(2, '0')}-${String(day.day).padStart(2, '0')}`);
     }
   }
   return out;

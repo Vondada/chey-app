@@ -15,11 +15,15 @@ List<Map<String, dynamic>> cheCreationsFrom(Object? decoded) {
   return [
     for (final item in decoded['items'] as List)
       if (item is Map &&
-          (item['kind'] == 'video' || item['kind'] == 'image') &&
+          _isPictureOrVideo(item) &&
           '${item['id'] ?? ''}'.trim().isNotEmpty)
         Map<String, dynamic>.from(item),
   ];
 }
+
+// A saved picture is a creation even when the owner uploaded it (kind 'upload', image MIME type); a document is not.
+bool _isPictureOrVideo(Map item) =>
+    item['kind'] == 'video' || item['kind'] == 'image' || '${item['mime_type'] ?? ''}'.startsWith('image/');
 
 /// The file a creation plays or shows on the CHE server, or null when it has no id.
 String? cheCreationFileUrl(String baseUrl, Map<String, dynamic> item) {

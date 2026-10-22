@@ -64,6 +64,8 @@ import 'che_voice_ui.dart';
 import 'che_app_portal.dart';
 import 'che_video.dart';
 import 'che_creations.dart';
+import 'rooms/che_invention_studio.dart';
+import 'che_ui/che_showroom.dart';
 import 'che_video_page.dart';
 import 'che_plugin_manager.dart';
 import 'che_theme.dart';
@@ -108,6 +110,7 @@ import 'home/che_connections_screen.dart';
 import 'home/che_projects_board.dart';
 import 'home/che_memory_brain.dart';
 import 'che_ui/che_phone_shell.dart';
+import 'che_ui/che_clock.dart';
 import 'che_ui/che_i18n.dart';
 import 'local_server/activity_local.dart';
 import 'plugins/che_plugin_webapp.dart';
@@ -2168,6 +2171,13 @@ OWNER AGENCY
       items: [
         CheMoreItem(
           icon: Icons.apps_rounded,
+          title: 'Capability Showroom',
+          subtitle: 'What CHE can make, and what still needs setup',
+          onTap: _openShowroom,
+          hue: kit.CheColors.apps,
+        ),
+        CheMoreItem(
+          icon: Icons.apps_rounded,
           title: 'Web apps',
           subtitle: 'Add and open web apps inside CHE',
           onTap: _openWebApps,
@@ -2483,9 +2493,16 @@ OWNER AGENCY
           ),
         ),
       ),
-      bottomNavigationBar: ChePhoneBottomNav(
-        index: _shellTab,
-        onChanged: _goShellTab,
+      // The clock is always visible above the tabs (owner, 2026-10-22). Quiet text: it never speaks.
+      bottomNavigationBar: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const CheClockStrip(),
+          ChePhoneBottomNav(
+            index: _shellTab,
+            onChanged: _goShellTab,
+          ),
+        ],
       ),
     );
   }

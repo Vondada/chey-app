@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
-import { mediaHoldIntent, mediaShowLatestIntent } from './media_library.js';
+import { mediaHoldIntent, mediaOpenIntent, mediaShowLatestIntent } from './media_library.js';
 
 // A real 1x1 PNG.
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
@@ -176,4 +176,64 @@ test('intents: natural media-library wording reaches the store; questions about 
   assert.equal(mediaShowLatestIntent('show me my latest PNG'), true);
   assert.equal(mediaShowLatestIntent('show me my latest video'), false, 'video goes to the video library');
   assert.equal(mediaShowLatestIntent('What is the latest picture about?'), false, 'a question is not a request to show it');
+});
+
+// Owner, 2026-10-22: "open this same picture in my Creation Room" after a saved picture was shown. The picture is the one
+// the message names, else the one the chat showed last (last_media_id from the phone), else the newest saved picture.
+test('"open this same picture in my Creation Room" opens the picture the chat showed last, with no model call', async () => {
+  const che = await app();
+  const { upload } = seedStore(che.saved);
+  const out = await che.say('open this same picture in my Creation Room', { last_media_id: upload.id });
+  assert.equal(out.meta.source, 'che_media_store');
+  assert.equal(out.modelCalls, 0, 'the store opens the picture; the model is never asked');
+  assert.equal(out.meta.open_creation, true);
+  assert.equal(out.meta.media_id, upload.id);
+  assert.equal(out.meta.media_type, 'image');
+  assert.equal(out.meta.media_url, `https://che.example/api/media/${upload.id}/image`);
+  assert.equal((await che.get(`/api/media/${upload.id}/image`)).status, 200, 'the file the phone opens is served');
+});
+
+test('a named media ID opens that exact saved picture, in any wording that names the Creation Room', async () => {
+  const che = await app();
+  const { made } = seedStore(che.saved);
+  const out = await che.say(`open media ${made.id} in my Creation Room`);
+  assert.equal(out.meta.open_creation, true);
+  assert.equal(out.meta.media_id, made.id);
+  assert.match(out.reply, new RegExp(`Opening "a lighthouse at dusk" \\(ID ${made.id}\\) in your Creation Room, sir\\.`));
+});
+
+test('"open my latest picture in my Creation Room" opens the newest saved picture, not an older one', async () => {
+  const che = await app();
+  const { upload } = seedStore(che.saved);
+  const out = await che.say('open my latest picture in my Creation Room');
+  assert.equal(out.meta.open_creation, true);
+  assert.equal(out.meta.media_id, upload.id, 'the upload is newer than the generated picture');
+});
+
+test('an ID with no saved record is not opened, and the reply says so', async () => {
+  const che = await app();
+  seedStore(che.saved);
+  const missing = '00000000-0000-4000-8000-00000000dead';
+  const out = await che.say(`open ${missing} in my Creation Room`);
+  assert.equal(out.meta.open_creation, undefined);
+  assert.equal(out.meta.ok, false);
+  assert.equal(out.reply, `I hold no saved picture or video with ID ${missing}, sir, so there is nothing to open in your Creation Room.`);
+});
+
+test('a saved picture whose bytes are missing is not opened in the Creation Room', async () => {
+  const che = await app();
+  const { upload } = seedStore(che.saved, { uploadBytes: null });
+  const out = await che.say('open this same picture in my Creation Room', { last_media_id: upload.id });
+  assert.equal(out.meta.open_creation, undefined);
+  assert.equal(out.meta.ok, false);
+  assert.match(out.reply, /I could not open ID .* in your Creation Room, sir/);
+});
+
+test('intents: opening a picture in the Creation Room is recognised; the bare room name and other questions are not', () => {
+  assert.deepEqual(mediaOpenIntent('open this same picture in my Creation Room'), { id: '', latest: false });
+  assert.deepEqual(mediaOpenIntent('CHE, open f9e8d7c6-0000-4000-8000-000000000002 in Creation Room'), { id: 'f9e8d7c6-0000-4000-8000-000000000002', latest: false });
+  assert.deepEqual(mediaOpenIntent('open my latest picture in my Creation Room'), { id: '', latest: true });
+  assert.equal(mediaOpenIntent('open the Creation Room'), null, 'the room itself is navigation, not a picture');
+  assert.equal(mediaOpenIntent('what is in my Creation Room?'), null);
+  assert.equal(mediaOpenIntent('open this same picture'), null, 'no room named: the existing routes answer');
 });

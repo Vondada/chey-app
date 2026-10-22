@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
 import 'che_alpaca_paper.dart';
+import 'che_fye_draft.dart';
 import 'che_live_paper.dart';
 import 'che_strategy_controls.dart';
 import 'che_trading_chart.dart';
@@ -137,6 +138,7 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
       case CheTradingSection.cheTrades:
         return [
           _pad(CheLivePaperPanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, onRead: widget.onRead, client: p.client)),
+          _pad(CheFyeDraftCard(baseUrl: p.baseUrl, headers: p.headers, client: p.client)),
           _pad(CheTradingLedgersPanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, client: p.client)),
         ];
       case CheTradingSection.strategies:
