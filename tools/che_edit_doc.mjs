@@ -51,11 +51,17 @@ const docs = {
     const s = editState(newVideoDoc({ preset: 'youtube' }));
     const A = must(edit(s, { op: 'add_clip', clip: { asset: a.clipA, name: 'Clip A', duration: 4 } })).id;
     must(edit(s, { op: 'clip', clip: A, freeze: { at: 1, duration: 1.5 } }));
+    // The freeze check compares frames; it does not need full HD (keeps CI fast on 2-core runners).
+    s.doc.canvas = { ...s.doc.canvas, w: 640, h: 360 };
     return s.doc;
   },
   template: () => { const d = useTemplate(TEMPLATES.find((t) => t.id === 'music-promo'), { artwork: a.photo, title: 'Night Shift', artist: 'CHE', song: { media_id: a.song, title: 'Night Shift' } }); d.clips[0].out = 5; d.clips[0].source_duration = 5; d.text.forEach((t) => { t.end = 5; }); return d; },
 };
 const doc = docs[scenario]();
+// The renderer tests check the preset's aspect, timing and pixels, not full HD: video documents render at a third of
+// their size so the suite stays inside CI's time on 2-core runners. Production renders are unaffected.
+const SCALE = Number(process.env.CHE_EDIT_TEST_SCALE || 1);
+if (doc.kind === 'video' && SCALE > 1 && doc.canvas.w > 700) doc.canvas = { ...doc.canvas, w: Math.round(doc.canvas.w / SCALE / 2) * 2, h: Math.round(doc.canvas.h / SCALE / 2) * 2 };
 const spec = renderSpec(doc, { title: scenario });
 if (!spec.ok) throw new Error(spec.why);
 process.stdout.write(JSON.stringify({ ...spec.spec, timeline: doc.kind === 'video' ? timeline(doc) : [] }));

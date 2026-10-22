@@ -1,7 +1,7 @@
 """End-to-end tests for the Visual Studio renderer: real source media made with ffmpeg, edit documents built by the
 real CHE operations (tools/che_edit_doc.mjs → server/cloudflare/visual_studio.js), real renders, and the outputs
 re-opened and measured. Skipped only when ffmpeg is not installed, and then says so."""
-import json, shutil, subprocess, sys, tempfile, unittest
+import json, os, shutil, subprocess, sys, tempfile, unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -34,7 +34,7 @@ class EditRender(unittest.TestCase):
         shutil.rmtree(cls.dir, ignore_errors=True)
 
     def render(self, scenario):
-        spec = json.loads(subprocess.run(['node', str(ROOT / 'tools' / 'che_edit_doc.mjs'), scenario, self.assets], check=True, capture_output=True, text=True).stdout)
+        spec = json.loads(subprocess.run(['node', str(ROOT / 'tools' / 'che_edit_doc.mjs'), scenario, self.assets], check=True, capture_output=True, text=True, env={**os.environ, 'CHE_EDIT_TEST_SCALE': '3'}).stdout)
         out = self.dir / scenario
         if out.exists():
             shutil.rmtree(out)
@@ -50,7 +50,7 @@ class EditRender(unittest.TestCase):
     def test_video_trim_split_reorder_transition_music_captions_render_mp4(self):
         spec, m, out = self.render('video')
         self.assertEqual(m['status'], 'verified')
-        self.assertEqual((m['video_width'], m['video_height']), (1080, 1920), 'TikTok 9:16 canvas')
+        self.assertEqual((m['video_width'], m['video_height']), (360, 640), 'TikTok 9:16 canvas (1080x1920 rendered at 1/3 for CI)')
         self.assertAlmostEqual(m['duration_seconds'], spec['duration'], delta=0.35)
         info = R.probe(out / 'video.mp4')
         kinds = {s['codec_type']: s['codec_name'] for s in info['streams']}
@@ -69,8 +69,8 @@ class EditRender(unittest.TestCase):
         moving = self.frame(out / 'video.mp4', 3.4)
         self.assertLess(diff(held_a, held_b), 0.5, 'the frame at 1 s is held for 1.5 s')
         self.assertGreater(diff(held_a, moving), diff(held_a, held_b) + 0.5, 'playback resumes after the freeze')
-        source_at_1 = subprocess.run(['ffmpeg', '-v', 'error', '-ss', '1.0', '-i', str(self.src / 'clipA.mp4'), '-frames:v', '1', '-vf', 'scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,scale=64:-1,format=gray', '-f', 'rawvideo', '-'], check=True, capture_output=True).stdout
-        source_end = subprocess.run(['ffmpeg', '-v', 'error', '-sseof', '-0.1', '-i', str(self.src / 'clipA.mp4'), '-frames:v', '1', '-vf', 'scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,scale=64:-1,format=gray', '-f', 'rawvideo', '-'], check=True, capture_output=True).stdout
+        source_at_1 = subprocess.run(['ffmpeg', '-v', 'error', '-ss', '1.0', '-i', str(self.src / 'clipA.mp4'), '-frames:v', '1', '-vf', 'scale=640:360:force_original_aspect_ratio=increase,crop=640:360,scale=64:-1,format=gray', '-f', 'rawvideo', '-'], check=True, capture_output=True).stdout
+        source_end = subprocess.run(['ffmpeg', '-v', 'error', '-sseof', '-0.1', '-i', str(self.src / 'clipA.mp4'), '-frames:v', '1', '-vf', 'scale=640:360:force_original_aspect_ratio=increase,crop=640:360,scale=64:-1,format=gray', '-f', 'rawvideo', '-'], check=True, capture_output=True).stdout
         self.assertLess(diff(held_a, source_at_1), diff(held_a, source_end), 'the held frame is the one at 1 s, not the last frame')
 
     def test_color_adjustment_changes_the_rendered_pixels(self):
@@ -94,7 +94,7 @@ class EditRender(unittest.TestCase):
 
     def test_youtube_variant_renders_16_9(self):
         _, m, _ = self.render('youtube')
-        self.assertEqual((m['video_width'], m['video_height']), (1920, 1080))
+        self.assertEqual((m['video_width'], m['video_height']), (640, 360), 'YouTube 16:9 (1920x1080 at 1/3)')
 
     def test_music_promo_template_with_song_and_waveform(self):
         spec, m, out = self.render('template')
