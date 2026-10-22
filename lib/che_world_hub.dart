@@ -240,6 +240,7 @@ class _WorldHeader extends StatelessWidget {
       child: Row(
         children: [
           IconButton(
+            tooltip: 'Back',
             onPressed: () => Navigator.of(context).maybePop(),
             icon: Icon(Icons.arrow_back_ios_new, color: CheColors.textPrimary, size: 18),
           ),
