@@ -6,7 +6,8 @@ import assert from 'node:assert/strict';
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
 import { imageMimeFromBase64 } from './media.js';
-import { requestedImageCount } from './chat_images.js';
+import { pretendToolCall, requestedImageCount } from './chat_images.js';
+import { inferTurnCapabilities } from './cognitive_capabilities.js';
 
 const generated = new URL('./.chat_images.test.generated.mjs', import.meta.url);
 writeFileSync(generated, readFileSync(new URL('./worker.js', import.meta.url), 'utf8').replace(
@@ -154,4 +155,71 @@ test('a saved picture is still there after a restart, from the same stored data'
   const res = await restarted.get(out.media[0].url, restarted.token);
   assert.equal(res.status, 200, 'the picture is retrieved after the restart, with no engine');
   assert.deepEqual(Buffer.from(await res.arrayBuffer()), Buffer.from(PNG, 'base64'));
+});
+
+// Owner, live iPhone 2026-10-22: "When do me a picture of a dog in this chat right now" reached the model, which printed
+// {"action": "dalle.text2im", ...} instead of a picture. Everyday picture requests go to the picture engine, the reply
+// carries the absolute media_url the iPhone chat shows inline, and a pretend tool call is never shown as text.
+const DALLE = JSON.stringify({ action: 'dalle.text2im', action_input: JSON.stringify({ prompt: 'A friendly dog sitting in a sunny park, realistic style.' }), thought: 'I am generating an image of a dog for you now.' }, null, 2);
+
+test('everyday picture requests are picture requests; ordinary sentences about pictures are not', () => {
+  for (const ask of [
+    'When do me a picture of a dog in this chat right now',
+    'Can you show me a picture of a red sports car?',
+    'give me two pictures of a lighthouse',
+    'paint me a sunset over the ocean',
+    'draw me a robot',
+    'Can you send me a photo of a golden retriever puppy?',
+    'I want a picture of a cabin in the snow',
+  ]) assert.ok(inferTurnCapabilities(ask).includes('image_generation'), ask);
+  for (const plain of [
+    'take a picture of the whiteboard later',
+    'what is in the picture I sent?',
+    'give me the big picture on the market',
+    'draw a line on the chart at the open',
+    'Tell me about dogs',
+  ]) assert.ok(!inferTurnCapabilities(plain).includes('image_generation'), plain);
+});
+
+test('the owner\'s dog picture is made, saved, and shown inline: media_url is absolute', async () => {
+  const che = await openChe(new Map(), { textReply: () => DALLE });
+  const r = await che.say('When do me a picture of a dog in this chat right now');
+  assert.equal(r.meta.source, 'che_image_generation');
+  assert.equal(r.textCalls, 0, 'the model is not asked');
+  assert.equal(r.imageCalls, 1);
+  assert.match(r.reply, /generated the picture and saved it/);
+  assert.equal(r.meta.media_type, 'image');
+  assert.match(r.meta.media_url, /^https:\/\/che\.example\/api\/media\/[0-9a-f-]{36}\/image$/);
+  assert.equal(r.meta.media_url, `https://che.example${r.media[0].url}`);
+  const image = await che.get(new URL(r.meta.media_url).pathname, che.token);
+  assert.equal(image.status, 200);
+  assert.doesNotMatch(r.reply, /action_input|dalle/);
+});
+
+test('a pretend picture-tool call from the model becomes a real picture made from its own prompt', async () => {
+  const che = await openChe(new Map(), { textReply: () => DALLE });
+  // No giving verb, so the router sends it to the model; the model answers with a pretend tool call.
+  const r = await che.say('a picture of a dog please');
+  assert.equal(r.meta.source, 'che_image_generation');
+  assert.equal(r.imageCalls, 1);
+  assert.match(r.reply, /generated the picture and saved it/);
+  assert.match(r.meta.media_url, /\/api\/media\/[0-9a-f-]{36}\/image$/);
+  assert.doesNotMatch(r.reply, /action_input|dalle|\{/);
+});
+
+test('a pretend tool call that is not about a picture is replaced by a plain sentence, and nothing runs', async () => {
+  const che = await openChe(new Map(), { textReply: () => DALLE });
+  const r = await che.say('Tell me about dogs');
+  assert.equal(r.imageCalls, 0);
+  assert.doesNotMatch(r.reply, /action_input|dalle|\{/);
+  assert.match(r.reply, /nothing was run/);
+});
+
+test('pretendToolCall reads only replies that are wholly a tool-call object', () => {
+  assert.deepEqual(pretendToolCall(DALLE), { action: 'dalle.text2im', prompt: 'A friendly dog sitting in a sunny park, realistic style.', picture: true });
+  assert.equal(pretendToolCall('```json\n' + DALLE + '\n```')?.picture, true);
+  assert.equal(pretendToolCall('Sure. Use {"action": "x"} in your config.'), null);
+  assert.equal(pretendToolCall('{"price": 21486.25, "change": 0.42}'), null, 'a data object is not a tool call');
+  assert.equal(pretendToolCall('Dogs are loyal.'), null);
+  assert.equal(pretendToolCall('{"action": "search", "action_input": "weather"}')?.picture, false);
 });

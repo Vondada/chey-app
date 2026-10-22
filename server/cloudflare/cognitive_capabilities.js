@@ -44,6 +44,10 @@ export function inferTurnCapabilities(message, attachment = null) {
     /\b(generate|create|make|draw|render|design|visualize)\b[^.]{0,80}\b(images?|pictures?|photos?|art|artwork|mockups?|graphics?|diagrams?|visuals?|thumbnails?|logos?|posters?|banners?)\b/,
     /\b(images?|pictures?|photos?|visuals?)\b[^.]{0,60}\b(generate|generation)\b/,
     /\b(ads?|advertisements?|posters?|flyers?|campaigns?)\b[^.]{0,60}\bwith\b[^.]{0,20}\b(?:matching\s+)?(?:pictures?|images?|photos?|visuals?|graphics?)\b/,
+    // Everyday words (owner, 2026-10-22: "do me a picture of a dog in this chat" reached the model, which printed a
+    // pretend tool call): a giving or showing verb, then "a picture of ...". "Take a picture" and "the picture I sent" are not.
+    /\b(do|give|get|show|send|paint|sketch|whip up|let me see|i want|i'd like|i need|can i (?:get|have|see))\b[^.?!]{0,25}\b(?:an?|some|one|two|three|four|\d+)\s+(?:[\w-]+\s+){0,3}?(?:images?|pictures?|pics?|photos?|drawings?|paintings?|illustrations?|portraits?|sketch(?:es)?)\s+of\b/,
+    /\b(draw|paint|sketch|illustrate)\s+(?:me|us)\s+(?:an?|some|one|two|three|\d+)\b/,
   ])) add('rendering', 'image_generation');
 
   if (any(value, [

@@ -56,6 +56,6 @@ void main() {
     ));
     expect(find.bySemanticsLabel('Video: Sunrise. Tap to play.'), findsOneWidget);
     expect(find.bySemanticsLabel('Picture: Logo. Tap to view.'), findsOneWidget);
-    expect(find.byIcon(Icons.play_circle_fill_rounded), findsOneWidget);
+    expect(find.byIcon(Icons.play_circle_fill), findsOneWidget);
   });
 }

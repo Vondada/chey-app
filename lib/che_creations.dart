@@ -170,7 +170,7 @@ class _CreationTile extends StatelessWidget {
                               errorBuilder: (_, _, _) => placeholder,
                             ),
                       if (isVideo)
-                        const Center(child: Icon(Icons.play_circle_fill_rounded, color: Colors.white, size: 36)),
+                        const Center(child: Icon(Icons.play_circle_fill, color: Colors.white, size: 36)),
                     ],
                   ),
                 ),

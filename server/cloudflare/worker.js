@@ -41,7 +41,7 @@ import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, saveOwn
 import { guardEngineClaims, guardSoulClaims, lastReplyRecord, loadSoul, replyProvenanceAnswer, replyProvenanceQuestion, restoreSoul, saveSoul, soulPromptBlock, soulProvenance, soulView, stripPhoneSoul } from './soul.js';
 import { mediaHoldAnswer, mediaHoldIntent, mediaKeepFor, mediaLatestReply, mediaLibraryIntent, mediaLibraryReply, mediaLibraryReport, mediaLatestOpenRow, mediaOpenIntent, mediaOpenMissingReply, mediaOpenReply, mediaOpenRow, mediaRows, mediaSaveIntent, mediaSaveReply, mediaShowLatestIntent, mediaShowReply, verifyMediaRows, wantsLatestVideo } from './media_library.js';
 import { capabilityGap, capabilityReply } from './capability_gap.js';
-import { CHAT_IMAGE_SOURCE, chatImageMedia, chatImageReply, makeChatImages, requestedImageCount } from './chat_images.js';
+import { CHAT_IMAGE_SOURCE, chatImageInline, chatImageMedia, chatImageReply, makeChatImages, pretendToolCall, requestedImageCount } from './chat_images.js';
 import { memorySearchIntent, memorySearchReply, memorySearchTerms } from './memory_search.js';
 import { probeVideoEngine, videoEngineStatus, videoStatusSpeech } from './video_engine.js';
 import { githubVideoDiagnosis, mp4Facts } from './github_video_renderer.js';
@@ -11699,7 +11699,8 @@ export class CheState extends DurableObject {
         if (requestedCapabilities.includes('image_generation') && !requestedCapabilities.includes('video_generation') && !body.attachment) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can make pictures, sir. Nothing was made.', { source: CHAT_IMAGE_SOURCE, ok: false, model_calls: 0 });
           const results = await makeChatImages(this.keyEnv || this.env, this.ctx.storage, { message, count: requestedImageCount(message) });
-          return ndjsonReply(chatImageReply(results), { source: CHAT_IMAGE_SOURCE, ok: results.some((r) => r.ok), model_calls: 0, media: chatImageMedia(results) });
+          // media_url is what the iPhone chat shows inline (owner, 2026-10-22: "I'm supposed to see an actual picture").
+          return ndjsonReply(chatImageReply(results), { source: CHAT_IMAGE_SOURCE, ok: results.some((r) => r.ok), model_calls: 0, media: chatImageMedia(results), ...chatImageInline(results, new URL(request.url).origin) });
         }
         let imageGeneration = requestedCapabilities.includes('image_generation') &&
           !requestedCapabilities.includes('video_generation')
@@ -12640,6 +12641,17 @@ export class CheState extends DurableObject {
             text: item.ok ? `✓ Used ${item.plugin} · ${item.tool}` : `${item.plugin} · ${item.tool} failed: ${item.error}`,
           })),
         ];
+        // A reply that is only a pretend tool call is never shown (owner, 2026-10-22: a "dalle.text2im" JSON object
+        // appeared instead of a dog picture). When the owner asked for a picture, the real engine makes it from the
+        // model's own prompt; otherwise CHE says plainly that nothing ran.
+        const pretend = pretendToolCall(reply);
+        if (pretend) {
+          if (pretend.picture && pretend.prompt && ownerDevice && !body.attachment && /\b(pictures?|images?|photos?|pics?|draw|paint|sketch|illustrat\w*|portraits?)\b/i.test(rawMessage)) {
+            const results = await makeChatImages(this.keyEnv || this.env, this.ctx.storage, { message: pretend.prompt, count: 1 });
+            return ndjsonReply(chatImageReply(results), { source: CHAT_IMAGE_SOURCE, ok: results.some((r) => r.ok), model_calls: 1, media: chatImageMedia(results), ...chatImageInline(results, new URL(request.url).origin), served_by: answer?.served_by || null });
+          }
+          reply = 'That came out as an internal tool request instead of an answer, sir, so nothing was run. Ask me again and I will answer it directly.';
+        }
         // Final owner-facing boundary: keep internal provider/model failover chatter out of chat and TTS.
         reply = guardExecutionClaims(sanitizeOwnerText(reply, { truncate: false }), { message: rawMessage, receipts: skillResults.map((r) => r.execution_receipt), documentRead: Boolean(multimodal?.summary || body.screen_context || pastedText), verifiedText: brainContext }).text;
         // A model cannot see its own routing: "the engine was CHE itself" becomes this reply's real engine (soul.js).
