@@ -73,6 +73,7 @@ import { condenseHistory, ownerNotificationPolicy } from './workflow_governor.js
 import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, nextTradingTickAt, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
 import { intelligenceIntent, intelligenceReport, intelligenceView, speakIntelligence, startStudy, studyAlarm, studyStep } from './historical_intelligence.js';
 import { applyRightsAction, applySpokenRightsWrite, defensibility, musicRightsIntent, musicRightsWriteIntent, releaseReadiness, songFor, speakReadiness } from './music_rights.js';
+import { addBeat, addLedger, addWorkspace, addWorkspaceSong, advanceAgreement, approveQuote, artistReport, beatListing, businessDashboard, deliveryPackage, draftQuote, musicBusinessIntent, recordBeatSale, recordFeedback, setService, workspaceById, workspaceView } from './music_business.js';
 import { matrixIntent, readMatrix, runMatrix, speakMatrix } from './backtest_matrix.js';
 import { nextStrategySimTickAt, setStrategySimCeiling, setStrategySimPaused, speakStrategySim, strategySimIntent, strategySimTick, strategySimView, strategySimWake } from './strategy_sim.js';
 import { evidenceIntent, evidenceReport, evidenceTick } from './trading_evidence_runner.js';
@@ -7112,6 +7113,34 @@ export class CheState extends DurableObject {
         return json({ ...result, spoken: speakControlResult(result), view: await this.tradingControlsView() }, result.ok || result.needs_confirmation ? 200 : 400);
       }
       // Strategy simulation (step a): paper minute-bar strategies. Read and the kill switch are owner-only; nothing here orders or spends.
+      // Music business (owner, 2026-10-22): clients, managed artists, services, quotes, revisions, delivery, beats, money.
+      // Owner only. Every write is a preparation or a record; nothing is sent, charged, signed or released here.
+      if (path === '/api/music/business' && (request.method === 'GET' || request.method === 'POST')) {
+        if (!ownerDevice) return json({ detail: 'Only the CHE owner can use the music business.' }, 403);
+        const q = new URL(request.url).searchParams;
+        if (request.method === 'GET') {
+          const ws = q.get('workspace_id');
+          if (ws) { const v = workspaceView(data, ws); return v ? json({ ...v, report: artistReport(data, ws) }) : json({ detail: 'No such client or artist.' }, 404); }
+          return json({ dashboard: businessDashboard(data), workspaces: data.music_workspaces || [], services: data.music_services || [], beats: (data.music_beats || []).map((b) => ({ ...b, listing: beatListing(b) })) });
+        }
+        const a = String(body.action || '');
+        const song = () => (data.projects || []).find((p) => p.id === body.project_id && p.music?.workspace_id);
+        const beat = () => (data.music_beats || []).find((b) => b.id === body.beat_id);
+        const out = a === 'add_workspace' ? addWorkspace(data, body)
+          : a === 'add_song' ? addWorkspaceSong(data, body.workspace_id, body.title)
+          : a === 'set_service' ? setService(data, body.service || {})
+          : a === 'draft_quote' ? draftQuote(data, body)
+          : a === 'approve_quote' ? approveQuote(data, body.deal_id)
+          : a === 'feedback' ? (song() ? recordFeedback(data, song(), body) : { ok: false, why: 'No such client song.' })
+          : a === 'delivery' ? (song() ? deliveryPackage(data, song()) : { ok: false, why: 'No such client song.' })
+          : a === 'add_beat' ? addBeat(data, body.beat || {})
+          : a === 'beat_sale' ? (beat() ? recordBeatSale(data, beat(), body) : { ok: false, why: 'No such beat.' })
+          : a === 'agreement' ? (workspaceById(data, body.workspace_id) ? advanceAgreement(workspaceById(data, body.workspace_id), body.step, body.evidence || {}) : { ok: false, why: 'No such artist.' })
+          : a === 'ledger' ? addLedger(data, body.record || {})
+          : { ok: false, why: 'Unknown action.' };
+        if (out.ok && !['delivery'].includes(a)) await this.ctx.storage.put('che', data);
+        return json(out, out.ok ? 200 : 400);
+      }
       // Music rights (owner, 2026-10-22): samples, licences, splits, metadata and release readiness on the song's own project record.
       if (path === '/api/music/rights' && (request.method === 'GET' || request.method === 'POST')) {
         if (!ownerDevice) return json({ detail: 'Only the CHE owner can read or change music rights.' }, 403);
@@ -11121,6 +11150,30 @@ export class CheState extends DurableObject {
             source: LEDGER_SOURCE, ok: true, model_calls: 0, kind: ledger.kind,
             ledgers: ledgers.map(({ id, trades, unavailable }) => ({ id, trades, unavailable: Boolean(unavailable) })),
           });
+        }
+        // Music business by voice or typing: a client, a managed artist, a draft quote, or the dashboard.
+        const bizAsk = !body.attachment && musicBusinessIntent(message);
+        if (bizAsk) {
+          if (!ownerDevice) return ndjsonReply('Only the CHE owner can use the music business, sir.', { source: 'che_music_business', ok: false });
+          if (bizAsk.kind === 'dashboard') {
+            const d = businessDashboard(data);
+            const money = d.revenue_usd === null ? 'No payments are recorded this month' : `$${d.revenue_usd.toFixed(2)} this month from ${d.revenue_note}`;
+            return ndjsonReply(`${money}. ${d.active_clients} active client${d.active_clients === 1 ? '' : 's'}, ${d.managed_artists} managed artist${d.managed_artists === 1 ? '' : 's'}, ${d.invoices_due} invoice${d.invoices_due === 1 ? '' : 's'} waiting for payment.`, { source: 'che_music_business', model_calls: 0 });
+          }
+          if (!bizAsk.name) return ndjsonReply('Who is the client, sir? Say "quote" and their name with the price.', { source: 'che_music_business', model_calls: 0, ok: false });
+          const kind = bizAsk.kind === 'managed_artist' ? 'MANAGED_ARTIST' : 'CLIENT';
+          const ws = addWorkspace(data, { kind, name: bizAsk.name });
+          if (!ws.ok) return ndjsonReply(ws.why, { source: 'che_music_business', model_calls: 0, ok: false });
+          if (bizAsk.kind === 'quote') {
+            const q = draftQuote(data, { workspace_id: ws.workspace.id, price_usd: bizAsk.price_usd, service_name: bizAsk.service });
+            if (!q.ok) return ndjsonReply(q.why, { source: 'che_music_business', model_calls: 0, ok: false });
+            await this.ctx.storage.put('che', data);
+            return ndjsonReply(`Draft quote for ${ws.workspace.name}: ${q.quote.service}, $${q.quote.price_usd.toFixed(2)}. Deliverables and revisions are not set yet. Nothing is sent until you approve it.`, { source: 'che_music_business', model_calls: 0 });
+          }
+          await this.ctx.storage.put('che', data);
+          return ndjsonReply(kind === 'MANAGED_ARTIST'
+            ? `${ws.existing ? 'You already manage' : 'Opened a private workspace for'} ${ws.workspace.name}, sir. Their songs, money and contracts stay separate from yours and every other artist's. No agreement is on record yet.`
+            : `${ws.existing ? `${ws.workspace.name} is already a client` : `Added ${ws.workspace.name} as a client`}, sir.`, { source: 'che_music_business', model_calls: 0 });
         }
         // Music rights by voice or typing: add a song, a sample, splits or a licence on the stored record.
         const rightsWrite = !body.attachment && musicRightsWriteIntent(message);

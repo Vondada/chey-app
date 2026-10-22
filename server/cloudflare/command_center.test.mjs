@@ -1080,3 +1080,21 @@ test('music rights by voice: add a song and a sample in chat, saved and read bac
   assert.equal(read.project.music.samples[0].name, 'Rain loop');
   assert.equal(read.readiness.items.find((i) => i.id === 'samples').ok, false);
 });
+
+test('music business by voice: a quote is a draft, a managed artist gets a private workspace, money is never invented', async () => {
+  const che = await owner();
+  const quote = await che.say('CHE, quote Jay R $250 for a mix and master');
+  assert.equal(quote.route, 'che_music_business');
+  assert.equal(quote.modelCalls, 0);
+  assert.match(quote.reply, /Draft quote for Jay R: mix and master, \$250\.00.*Nothing is sent until you approve it/);
+  const view = await che.get('/api/music/business');
+  const jay = view.workspaces.find((w) => w.name === 'Jay R');
+  assert.equal(jay.kind, 'CLIENT');
+  const deal = ((await che.get('/api/pipeline')).deals || []).find((d) => d.music_workspace_id === jay.id);
+  assert.equal(deal.stage, 'proposal', 'the quote waits in the existing pipeline for the owner');
+  const artist = await che.say("I'm managing Erica now");
+  assert.match(artist.reply, /private workspace for Erica/);
+  const dash = await che.say('How is my music business?');
+  assert.match(dash.reply, /No payments are recorded this month/);
+  assert.equal(view.dashboard.revenue_usd, null);
+});
