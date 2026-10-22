@@ -213,7 +213,7 @@ void main() {
       await send('What is on my screen?');
       expect(find.textContaining('You are on Chat, Chat tab. Tabs: 1. Home, 2. Chat, 3. Office, 4. CHE World, 5. More.'), findsOneWidget,
           reason: 'shown as large text in Chat as well as spoken');
-      expect(find.textContaining('Controls: Talk to CHE, Commands, Conversations, New chat'), findsOneWidget);
+      expect(find.textContaining('Controls: Talk to CHE, Commands, Flagstaff, Help, Chat options'), findsOneWidget);
       expect(find.text('PAIR WITH C.H.E. AGENT'), findsNothing, reason: 'nothing was sent to CHE\'s server or a model');
 
       await send('CHE, search for YouTube.');

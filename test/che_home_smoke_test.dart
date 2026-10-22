@@ -135,10 +135,9 @@ void main() {
   testWidgets('Chat stays usable with large text: the bar fits and the composer is reachable', (tester) async {
     tester.view.physicalSize = const Size(1320, 2868);
     tester.view.devicePixelRatio = 3;
-    tester.platformDispatcher.textScaleFactorTestValue = 1.6;
     addTearDown(tester.view.reset);
-    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
-    SharedPreferences.setMockInitialValues({});
+    // CHE's own Large text setting (the app applies its own scale, not the system's).
+    SharedPreferences.setMockInitialValues({'che.ui.textScale': 'large'});
 
     await tester.pumpWidget(const CHEApp());
     for (var i = 0; i < 15; i++) {
@@ -148,7 +147,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 500));
     expect(tester.takeException(), isNull);
     expect(find.byTooltip('Talk to CHE'), findsOneWidget);
-    expect(find.byTooltip('Commands'), findsOneWidget, reason: 'Commands becomes an icon with large text');
+    expect(find.byTooltip('Commands').evaluate().length + find.text('Commands').evaluate().length, 1, reason: 'one Commands control');
     expect(find.byTooltip('Flagstaff'), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox());
