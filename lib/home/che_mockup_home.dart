@@ -312,7 +312,7 @@ class _CheStage extends StatelessWidget {
           child: CheEnergyRing(
             mode: mode,
             size: size,
-            child: CheMiniPerson(agent: che, size: size * 0.66, showDesk: false),
+            child: CheMiniPerson(agent: che, size: size * 0.66, showDesk: false, painted: true),
           ),
         ),
         const SizedBox(height: CheSpace.sm),

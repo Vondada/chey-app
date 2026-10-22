@@ -116,10 +116,14 @@ class CheAgent {
 /// (offline), gentle breathe/blink (idle — honors Reduce Motion). CHE gets a
 /// glowing halo.
 class CheMiniPerson extends StatefulWidget {
-  const CheMiniPerson({super.key, required this.agent, this.size = 64, this.showDesk = false});
+  const CheMiniPerson({super.key, required this.agent, this.size = 64, this.showDesk = false, this.painted = false});
   final CheAgent agent;
   final double size;
   final bool showDesk;
+
+  /// Always draw the painted full figure, whatever the avatar style setting (the Home centrepiece uses it: the
+  /// portrait image is a cropped picture made for small badges).
+  final bool painted;
   @override
   State<CheMiniPerson> createState() => _CheMiniPersonState();
 }
@@ -262,7 +266,7 @@ class _CheMiniPersonState extends State<CheMiniPerson> with SingleTickerProvider
   static const String cheAvatarAsset = 'assets/avatars/che.png';
 
   Widget _paint(double t, {required bool portrait}) {
-    if (portrait && widget.agent.isChe) {
+    if (portrait && widget.agent.isChe && !widget.painted) {
       return _ChePortraitAvatar(
         agent: widget.agent,
         t: t,
