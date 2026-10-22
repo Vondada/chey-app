@@ -93,7 +93,6 @@ compass_calibration_outlined
 construction_rounded
 content_paste_go_outlined
 content_paste_outlined
-content_paste_rounded
 copy
 copy_all_outlined
 copy_all_rounded
@@ -116,7 +115,6 @@ dns_outlined
 dns_rounded
 document_scanner_outlined
 drafts_rounded
-edit
 edit_outlined
 edit_rounded
 emoji_events_outlined
@@ -346,7 +344,6 @@ undo
 undo_rounded
 unfold_less_rounded
 upgrade_rounded
-upload_file_rounded
 verified_outlined
 verified_rounded
 verified_user
