@@ -7,6 +7,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
+import 'che_ui/che_hud.dart';
 import 'home/che_inline_preview.dart';
 
 /// The pictures and videos in the Worker's media library, in the order it keeps them.
@@ -137,7 +138,11 @@ class _CreationTile extends StatelessWidget {
     final kind = isVideo ? 'Video' : 'Picture';
     final title = '${item['title'] ?? kind}'.trim();
     final thumb = cheCreationThumbUrl(baseUrl, item);
-    const placeholder = ColoredBox(color: Color(0xFF222428));
+    final hud = cheHudActive;
+    // HUD glass: an empty pane of glass while the picture loads, and an ice rim round every tile.
+    final Widget placeholder = hud
+        ? const CheGlass(radius: 14, shadow: false, child: SizedBox.expand())
+        : const ColoredBox(color: Color(0xFF222428));
     return Semantics(
       button: true,
       excludeSemantics: true,
@@ -171,6 +176,13 @@ class _CreationTile extends StatelessWidget {
                             ),
                       if (isVideo)
                         const Center(child: Icon(Icons.play_circle_fill, color: Colors.white, size: 36)),
+                      if (hud)
+                        DecoratedBox(
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(color: CheHud.ice.withValues(alpha: 0.45)),
+                          ),
+                        ),
                     ],
                   ),
                 ),

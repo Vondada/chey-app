@@ -11,6 +11,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../che_ui/che_hud.dart';
 import '../che_ui/che_rooms.dart';
 import '../che_ui/che_screen_awareness.dart';
 import '../che_ui/che_theme.dart';
@@ -110,7 +111,8 @@ class _CheCreatorStudioState extends State<CheCreatorStudio> with SingleTickerPr
     return Theme(
       data: CheTheme.dark(),
       child: Material(
-        color: const Color(0xFF07040A),
+        // HUD glass: the page's HUD backdrop shows through. Other palettes keep the neon studio's black.
+        color: cheHudActive ? CheColors.screen : const Color(0xFF07040A),
         child: Column(children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.sm, CheSpace.gutter, CheSpace.sm),
@@ -161,6 +163,18 @@ class _CheCreatorStudioState extends State<CheCreatorStudio> with SingleTickerPr
   Widget _studio(BuildContext context) {
     final onAir = widget.speaking || _rendering;
     final reduced = CheMotion.reduced(context);
+    final hud = cheHudActive;
+    Widget onAirPanel(Widget child) => hud
+        ? CheGlass(radius: CheRadius.lg, padding: const EdgeInsets.all(CheSpace.md), child: child)
+        : ClipRRect(
+            borderRadius: BorderRadius.circular(CheRadius.lg),
+            child: CheRoomBackdrop(
+              room: CheRoom.studio,
+              scrim: 0.5,
+              child: Padding(padding: const EdgeInsets.all(CheSpace.md), child: child),
+            ),
+          );
+    TextStyle section(Color color) => hud ? CheHud.label : CheType.overline.copyWith(color: color);
     return ListView(
       padding: const EdgeInsets.fromLTRB(CheSpace.gutter, 0, CheSpace.gutter, CheSpace.xxl),
       children: [
@@ -199,14 +213,8 @@ class _CheCreatorStudioState extends State<CheCreatorStudio> with SingleTickerPr
           ),
         ),
         const SizedBox(height: CheSpace.md),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(CheRadius.lg),
-          child: CheRoomBackdrop(
-            room: CheRoom.studio,
-            scrim: 0.5,
-            child: Padding(
-              padding: const EdgeInsets.all(CheSpace.md),
-              child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        onAirPanel(
+              Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
                 Row(children: [
                   AnimatedContainer(
                     duration: CheMotion.base,
@@ -245,34 +253,24 @@ class _CheCreatorStudioState extends State<CheCreatorStudio> with SingleTickerPr
                   ),
                 ),
               ]),
-            ),
-          ),
         ),
         if (widget.seriesPanel != null) ...[
           const SizedBox(height: CheSpace.lg),
-          Text('SERIES', style: CheType.overline.copyWith(color: _magenta)),
+          Text('SERIES', style: section(_magenta)),
           const SizedBox(height: CheSpace.xs),
           widget.seriesPanel!,
         ],
         const SizedBox(height: CheSpace.lg),
-        Text('RENDER QUEUE', style: CheType.overline.copyWith(color: _cyan)),
+        Text('RENDER QUEUE', style: section(_cyan)),
         const SizedBox(height: CheSpace.xs),
         if (widget.jobs.isEmpty)
           Text('Nothing rendering. Long creations run as cloud jobs and keep going when your phone is locked.', style: CheType.bodyDim)
         else
           for (final job in widget.jobs.take(6)) _JobRow(job: job, onTap: () => widget.onOpenJob(job)),
         const SizedBox(height: CheSpace.lg),
-        Text('CREATE', style: CheType.overline.copyWith(color: _magenta)),
+        Text('CREATE', style: section(_magenta)),
         const SizedBox(height: CheSpace.sm),
-        for (final a in widget.actions)
-          Card(
-            color: const Color(0xFF130A14),
-            margin: const EdgeInsets.only(bottom: CheSpace.sm),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(CheRadius.md),
-              side: BorderSide(color: _magenta.withValues(alpha: 0.25)),
-            ),
-            child: ListTile(
+        for (final a in widget.actions) _actionCard(hud, ListTile(
               onTap: () {
                 HapticFeedback.selectionClick();
                 a.onRun();
@@ -288,11 +286,30 @@ class _CheCreatorStudioState extends State<CheCreatorStudio> with SingleTickerPr
               isThreeLine: !a.connected || a.background,
               trailing: Text(a.connected ? 'READY' : 'CONNECT',
                   style: TextStyle(color: a.connected ? CheColors.success : CheColors.warning, fontSize: 10, fontWeight: FontWeight.w700)),
-            ),
-          ),
+            )),
       ],
     );
   }
+
+  /// One Create action: a glass pane on the HUD, the neon card otherwise. The tile inside is the same either way.
+  Widget _actionCard(bool hud, Widget tile) => hud
+      ? Padding(
+          padding: const EdgeInsets.only(bottom: CheSpace.sm),
+          child: CheGlass(
+            radius: CheRadius.md,
+            shadow: false,
+            child: Material(type: MaterialType.transparency, child: tile),
+          ),
+        )
+      : Card(
+          color: const Color(0xFF130A14),
+          margin: const EdgeInsets.only(bottom: CheSpace.sm),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(CheRadius.md),
+            side: BorderSide(color: _magenta.withValues(alpha: 0.25)),
+          ),
+          child: tile,
+        );
 }
 
 class _JobRow extends StatelessWidget {

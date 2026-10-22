@@ -10,6 +10,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
+import '../che_ui/che_hud.dart';
+
 class CheContinent {
   CheContinent({required this.tab, required this.name, required this.color, required this.lat, required this.lon, required this.outline, required this.cities});
   final int tab;
@@ -196,14 +198,25 @@ class _GlobePainter extends CustomPainter {
     if (size.isEmpty) return;
     final g = CheGlobeGeometry(size, s.yaw, s.pitch);
     final c = g.center, r = g.radius;
+    // HUD glass: ice-blue light on a navy planet. Other palettes keep the earlier teal globe.
+    final hud = cheHudActive;
+    final light = hud ? CheHud.ice : const Color(0xFF39E6C5);
     // Atmosphere and ocean.
-    canvas.drawCircle(c, r * 1.12, Paint()..shader = RadialGradient(colors: [const Color(0x5539E6C5), const Color(0x0039E6C5)], stops: const [.82, 1]).createShader(Rect.fromCircle(center: c, radius: r * 1.12)));
-    canvas.drawCircle(c, r, Paint()..shader = RadialGradient(center: const Alignment(-.35, -.4), colors: const [Color(0xFF0E3A44), Color(0xFF041418), Color(0xFF02080A)], stops: const [0, .7, 1]).createShader(Rect.fromCircle(center: c, radius: r)));
+    canvas.drawCircle(c, r * 1.12, Paint()..shader = RadialGradient(colors: [light.withValues(alpha: 0x55 / 255), light.withValues(alpha: 0)], stops: const [.82, 1]).createShader(Rect.fromCircle(center: c, radius: r * 1.12)));
+    canvas.drawCircle(
+        c,
+        r,
+        Paint()
+          ..shader = RadialGradient(
+            center: const Alignment(-.35, -.4),
+            colors: hud ? const [Color(0xFF123A5C), Color(0xFF061428), Color(0xFF02060E)] : const [Color(0xFF0E3A44), Color(0xFF041418), Color(0xFF02080A)],
+            stops: const [0, .7, 1],
+          ).createShader(Rect.fromCircle(center: c, radius: r)));
     // Lat/long grid.
     final grid = Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = .6
-      ..color = const Color(0x2239E6C5);
+      ..color = light.withValues(alpha: 0x22 / 255);
     for (var lat = -60; lat <= 60; lat += 30) {
       _line(canvas, g, [for (var lon = 0; lon <= 360; lon += 6) _unit(lat * math.pi / 180, lon * math.pi / 180)], grid);
     }
@@ -244,7 +257,7 @@ class _GlobePainter extends CustomPainter {
     canvas.drawCircle(c, r, Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.2
-      ..color = const Color(0x8839E6C5));
+      ..color = light.withValues(alpha: 0x88 / 255));
   }
 
   void _line(Canvas canvas, CheGlobeGeometry g, List<List<double>> pts, Paint paint) {

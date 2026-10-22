@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'che_ui/che_hud.dart';
 import 'che_ui/che_theme.dart';
 
 class InsightsBrainScene extends StatefulWidget {
@@ -193,7 +194,7 @@ class _InsightsBrainSceneState extends State<InsightsBrainScene>
   void _openNode(_BrainNode node) {
     showModalBottomSheet<void>(
       context: context,
-      backgroundColor: const Color(0xEE111A25),
+      backgroundColor: cheHudActive ? null : const Color(0xEE111A25),
       showDragHandle: true,
       builder: (context) => SafeArea(
         top: false,
@@ -257,8 +258,10 @@ class _InsightsBrainSceneState extends State<InsightsBrainScene>
   @override
   Widget build(BuildContext context) {
     final nodes = _nodes();
+    final hud = cheHudActive;
+    // HUD glass: the page's HUD backdrop shows through; other palettes keep the map's dark ground.
     return ColoredBox(
-      color: const Color(0xFF071018),
+      color: hud ? CheColors.screen : const Color(0xFF071018),
       child: SafeArea(
         top: false,
         child: Column(
@@ -269,12 +272,14 @@ class _InsightsBrainSceneState extends State<InsightsBrainScene>
                 alignment: Alignment.centerLeft,
                 child: Text(
                   'NEURAL BRAIN MAP',
-                  style: TextStyle(
-                    color: _teal,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: 1.5,
-                  ),
+                  style: hud
+                      ? CheHud.label.copyWith(fontSize: 12)
+                      : TextStyle(
+                          color: _teal,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 1.5,
+                        ),
                 ),
               ),
             ),

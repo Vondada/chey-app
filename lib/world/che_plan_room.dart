@@ -15,6 +15,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../che_ui/che_hud.dart';
 import '../che_ui/che_theme.dart';
 
 const _tiers = ['cheapest', 'balanced', 'premium'];
@@ -434,17 +435,24 @@ class _TierCard extends StatelessWidget {
   final String name, method;
   final ChePlanTier tier;
   @override
-  Widget build(BuildContext context) => Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(borderRadius: BorderRadius.circular(14), border: Border.all(color: Colors.white24)),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('$name version: about ${tier.phrase}', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
-          const SizedBox(height: 4),
-          Text('About ${tier.weeks.$1.round()} to ${tier.weeks.$2.round()} weeks · required items only', style: const TextStyle(fontSize: 16)),
-          const SizedBox(height: 4),
-          Text('CHE\'s estimate, not a quote: $method.', style: const TextStyle(fontSize: 13, color: Colors.white54)),
-        ]),
-      );
+  Widget build(BuildContext context) {
+    final body = Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text('$name version: about ${tier.phrase}', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+      const SizedBox(height: 4),
+      Text('About ${tier.weeks.$1.round()} to ${tier.weeks.$2.round()} weeks · required items only', style: const TextStyle(fontSize: 16)),
+      const SizedBox(height: 4),
+      Text('CHE\'s estimate, not a quote: $method.', style: const TextStyle(fontSize: 13, color: Colors.white54)),
+    ]);
+    // HUD glass: the estimate on a glass pane. Other palettes keep the outlined box.
+    if (cheHudActive) {
+      return CheGlass(radius: 14, shadow: false, padding: const EdgeInsets.all(14), child: SizedBox(width: double.infinity, child: body));
+    }
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(borderRadius: BorderRadius.circular(14), border: Border.all(color: Colors.white24)),
+      child: body,
+    );
+  }
 }
 
 /// Group lanes down, build stages across. Each box is one item, taller for a
