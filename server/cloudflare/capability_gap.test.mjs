@@ -46,3 +46,9 @@ test('an existing Projects or Office action is never queued as self-development,
 test('a real unsupported ability still queues after the existing actions do not cover it', () => {
   assert.equal(capabilityGap('Can you add a dark mode switch to the Settings page?', "I don't have a way to change the Settings page, sir.")?.fields.kind, 'self_development');
 });
+
+test('a missing ability that only mentions a project, team or agent still queues', () => {
+  for (const message of ['Can you store my project pictures?', 'Can you add OCR for Office documents?', 'Build a tool for my team to track invoices.']) {
+    assert.equal(capabilityGap(message, REFUSED)?.fields.kind, 'self_development', message);
+  }
+});

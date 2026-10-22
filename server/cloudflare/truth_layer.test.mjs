@@ -792,3 +792,10 @@ test('a provenance claim is kept when a research receipt from this turn backs it
   const out = guardClaimedResearchActions(claim, { research, tools: [], message: 'what makes a good personal AI assistant' });
   assert.equal(out.corrected, false);
 });
+
+test('a provenance claim is not backed by an unrelated successful tool such as a calculator', () => {
+  const claim = 'I learned this from research and studies on voice assistants.';
+  const tools = [{ ok: true, plugin: 'calculator', tool: 'calculate' }];
+  const out = guardClaimedResearchActions(claim, { research: null, tools, message: 'what makes a good personal AI assistant' });
+  assert.equal(out.corrected, true);
+});

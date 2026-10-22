@@ -373,7 +373,7 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   int _idleStatePollTicks = 0;
 
   bool _statePollDue() {
-    final jobsRunning = backgroundJobs.any((j) => !const {'complete', 'failed'}.contains(j['status']));
+    final jobsRunning = backgroundJobs.any((j) => !const {'complete', 'failed', 'cancelled', 'dead_letter'}.contains(j['status']));
     if (jobsRunning || _shellTab == 1 || _shellTab == 2) {
       _idleStatePollTicks = 0;
       return true;

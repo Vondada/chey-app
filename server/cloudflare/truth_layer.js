@@ -691,7 +691,7 @@ export function guardClaimedResearchActions(reply, { research = null, tools = []
       (claimedDocumentReview && !anyReceipt && !documentRead) ||
       ((stepReport || claimedSourceLook) && !anyReceipt) ||
       (claimedOpen && !opened && !successful.length && !documentRead) ||
-      (claimedProvenance && !anyReceipt && !documentRead)) {
+      (claimedProvenance && !actualResearch && !documentRead)) {
     return {
       text: 'I need to correct that, sir: I do not have execution receipts proving I performed the search or comparison I described. I have not independently fact-checked that answer.',
       corrected: true,
