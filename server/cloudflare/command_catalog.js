@@ -412,6 +412,15 @@ export const COMMANDS = Object.freeze([
     prompt: '{input} the historical strategy study', produces: 'historical study', evidence: 'Stored tests with dataset checksums only.',
     keywords: ['historical', 'history', 'since 1999', 'walk forward', 'out of sample', 'regime', 'trading intelligence'],
   }),
+  // Timeframe backtest matrix (owner, 2026-10-22): backtest_matrix.js through its own chat route.
+  C('trade-matrix', 'trading', 'EXPLORE', 'Test every strategy on every timeframe and hour of day.', {
+    does: 'Backtests CHE\'s ten strategies on free delayed NQ history at every timeframe CHE has data for (1 minute about 7 days, 5 to 30 minutes about 60 days, 1 and 4 hours about 2 years, daily, weekly and monthly from Stooq), net of MNQ costs, and ranks strategy, timeframe and New York hour only where there are at least 30 trades. 15-second bars are reported as unavailable. Nothing is bought and no order is placed. Owner only.',
+    needs: ['market_data'], route: 'che_trading_matrix', handler: 'backtest_matrix.matrixIntent → runMatrix / readMatrix',
+    input: { name: 'question', required: false, hint: 'run, or ask which strategy is best' },
+    examples: ['Backtest every strategy on every timeframe', 'Which strategy works best on which timeframe?', 'What is the best time of day to trade NQ?'],
+    prompt: '{input} the timeframe backtest matrix for every strategy', produces: 'timeframe matrix', evidence: 'Stored results with bar counts, dates and costs only.',
+    keywords: ['timeframe', 'time frame', 'every timeframe', 'time of day', 'best hour', 'matrix'],
+  }),
   C('trade-journal', 'trading', 'EXPLORE', 'Document trades and outcomes.', {
     does: 'Reads your paper-trading book: open and closed trades and results.',
     needs: ['office'], route: 'che_trading', handler: 'trading_lab.speakBook',
