@@ -83,7 +83,7 @@ class CheOfficeHub extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: CheColors.bg,
+      backgroundColor: CheColors.screen,
       body: CheBackground(
         child: SafeArea(
           child: CustomScrollView(slivers: [
@@ -274,7 +274,7 @@ class _CheSectionShellState extends State<CheSectionShell> {
   Widget build(BuildContext context) {
     final s = widget.sections[_i];
     return Scaffold(
-      backgroundColor: CheColors.bg,
+      backgroundColor: CheColors.screen,
       body: Stack(fit: StackFit.expand, children: [
         AnimatedSwitcher(
           duration: CheMotion.d(context, CheMotion.slow),

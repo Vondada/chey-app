@@ -1027,7 +1027,7 @@ class ChePluginPage extends StatelessWidget {
       );
     }
     return Scaffold(
-      backgroundColor: CheColors.bg,
+      backgroundColor: CheColors.screen,
       body: CheBackground(
         auraColor: plugin.color,
         child: SafeArea(

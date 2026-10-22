@@ -128,9 +128,9 @@ class CheCommandDetailScreen extends StatelessWidget {
     final c = command;
     final category = catalog.categories.where((x) => x.id == c.category).map((x) => x.title).firstOrNull ?? c.category;
     return Scaffold(
-      backgroundColor: CheColors.bg,
+      backgroundColor: CheColors.screen,
       appBar: AppBar(
-        backgroundColor: CheColors.bg,
+        backgroundColor: CheColors.screen,
         leading: const BackButton(),
         title: Text(c.slash, style: CheType.mono.copyWith(fontSize: 18, color: CheColors.accent, fontWeight: FontWeight.w800)),
         actions: [

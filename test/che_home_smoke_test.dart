@@ -1,4 +1,5 @@
 import 'package:chey/che_ui/che_phone_shell.dart';
+import 'package:chey/home/che_mockup_home.dart';
 import 'package:chey/main.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -18,11 +19,18 @@ void main() {
 
     // CHE 2.0 Home: one Talk control, the five destinations and CHE's real state (offline in a test: no device token).
     expect(find.text('Talk to CHE'), findsOneWidget);
-    for (final destination in ['The Office', 'Brain', 'Trading', 'Create']) {
+    // HUD Home (owner, 2026-10-22): Trading is the MNQ tile, the Office the OFFICE tile, Brain and Create are pills.
+    expect(find.text('CHE OFFLINE'), findsOneWidget);
+    expect(find.bySemanticsLabel(RegExp(r'^Voice on\.')), findsOneWidget);
+    // On this smaller iPhone the room pills sit just below the tiles, one short scroll down.
+    final homeList = find.descendant(of: find.byType(CheMockupHome), matching: find.byType(Scrollable)).first;
+    for (final destination in ['OFFICE', 'MNQ', 'Brain', 'Create']) {
+      await tester.scrollUntilVisible(find.text(destination), 120, scrollable: homeList);
       expect(find.text(destination), findsOneWidget, reason: destination);
     }
-    expect(find.text('Offline'), findsOneWidget);
-    expect(find.text('Voice on'), findsOneWidget);
+    // Back to the top, where the voice switch is.
+    tester.state<ScrollableState>(homeList).position.jumpTo(0);
+    await tester.pump(const Duration(milliseconds: 100));
 
     // Bottom shell tabs (CHE World is also a Home destination, so the tabs are read from the bar itself).
     final bar = find.byType(ChePhoneBottomNav);
@@ -31,9 +39,9 @@ void main() {
     }
 
     // One-tap Voice mute on Home.
-    await tester.tap(find.text('Voice on'));
+    await tester.tap(find.bySemanticsLabel(RegExp(r'^Voice on\.')));
     await tester.pump(const Duration(milliseconds: 300));
-    expect(find.text('Voice off'), findsOneWidget);
+    expect(find.bySemanticsLabel(RegExp(r'^Voice off\.')), findsOneWidget);
 
     // More → UI Controls entry.
     await tester.tap(find.text('More'));

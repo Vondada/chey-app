@@ -1,5 +1,6 @@
 // Owner (2026-10-21): a palette builds a theme in its own colours; the CHE dark palette builds the current dark look.
 import 'package:chey/che_ui/che_active_palette.dart';
+import 'package:chey/che_ui/che_hud.dart';
 import 'package:chey/che_ui/che_palette_theme.dart';
 import 'package:chey/che_ui/che_palettes.dart';
 import 'package:chey/che_ui/che_theme.dart';
@@ -31,10 +32,12 @@ void main() {
     expect(t.appBarTheme.foregroundColor, kCheSilverBlackPalette.text);
   });
 
-  test('the HUD glass palette uses its own navy background, light text and ice accent', () {
+  test('the HUD glass palette: clear pages over the HUD backdrop every page carries, light text, ice accent', () {
     final t = cheThemeFor(kCheHudPalette);
     expect(t.brightness, Brightness.dark);
-    expect(t.scaffoldBackgroundColor, kCheHudPalette.bg);
+    expect(t.scaffoldBackgroundColor, Colors.transparent, reason: 'every room shows the HUD backdrop');
+    expect(t.pageTransitionsTheme.builders[TargetPlatform.iOS], isA<CheHudPageTransitionsBuilder>());
+    expect(t.canvasColor, kCheHudPalette.bg);
     expect(t.colorScheme.primary, kCheHudPalette.accent);
     expect(t.textTheme.bodyLarge?.color, kCheHudPalette.text);
   });

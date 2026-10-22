@@ -276,7 +276,7 @@ class _CheConversationLogScreenState extends State<CheConversationLogScreen> {
       }
     }
     return Scaffold(
-      backgroundColor: CheColors.bg,
+      backgroundColor: CheColors.screen,
       body: CheBackground(
         child: SafeArea(
           bottom: false,
@@ -349,7 +349,7 @@ class _CheTranscriptScreenState extends State<CheTranscriptScreen> {
         ? c.messages
         : c.messages.where((m) => m.text.toLowerCase().contains(_q.toLowerCase())).toList();
     return Scaffold(
-      backgroundColor: CheColors.bg,
+      backgroundColor: CheColors.screen,
       body: CheBackground(
         child: SafeArea(
           bottom: false,

@@ -87,7 +87,7 @@ class _CheWarRoomScreenState extends State<CheWarRoomScreen> {
     return Theme(
       data: CheTheme.dark(),
       child: Scaffold(
-        backgroundColor: CheColors.bg,
+        backgroundColor: CheColors.screen,
         appBar: AppBar(backgroundColor: Colors.transparent, title: const Text('War Room')),
         body: SafeArea(
           top: false,

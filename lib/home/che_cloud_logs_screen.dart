@@ -99,7 +99,7 @@ class _CheCloudLogsScreenState extends State<CheCloudLogsScreen> {
     return Theme(
       data: CheTheme.dark(),
       child: Scaffold(
-        backgroundColor: CheColors.bg,
+        backgroundColor: CheColors.screen,
         appBar: AppBar(title: const Text('Cloud conversation logs')),
         body: SafeArea(
           child: RefreshIndicator(

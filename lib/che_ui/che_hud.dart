@@ -6,6 +6,7 @@
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
+import 'package:flutter/cupertino.dart' show CupertinoPageTransitionsBuilder;
 import 'package:flutter/material.dart';
 
 import 'che_active_palette.dart';
@@ -502,4 +503,21 @@ class CheHudReactorPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(CheHudReactorPainter old) => old.t != t || old.color != color || old.active != active;
+}
+
+
+/// Every page in the HUD look carries the HUD backdrop (owner, 2026-10-22: the style "for all her rooms"). The backdrop
+/// is part of the page, so the iOS slide between two rooms stays clean, and rooms with a clear background show it.
+class CheHudPageTransitionsBuilder extends PageTransitionsBuilder {
+  const CheHudPageTransitionsBuilder();
+
+  @override
+  Widget buildTransitions<T>(
+    PageRoute<T> route,
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) =>
+      const CupertinoPageTransitionsBuilder().buildTransitions(route, context, animation, secondaryAnimation, CheHudBackdrop(floor: 0.6, child: child));
 }

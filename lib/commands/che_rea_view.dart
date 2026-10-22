@@ -348,9 +348,9 @@ class _CheReaInvestigationsScreenState extends State<CheReaInvestigationsScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: CheColors.bg,
+      backgroundColor: CheColors.screen,
       appBar: AppBar(
-        backgroundColor: CheColors.bg,
+        backgroundColor: CheColors.screen,
         leading: IconButton(
           tooltip: 'Back to Commands',
           icon: const Icon(Icons.arrow_back_ios_new_rounded),
@@ -757,9 +757,9 @@ class _CheReaInvestigationScreenState extends State<CheReaInvestigationScreen> {
   Widget build(BuildContext context) {
     final i = _inv;
     return Scaffold(
-      backgroundColor: CheColors.bg,
+      backgroundColor: CheColors.screen,
       appBar: AppBar(
-        backgroundColor: CheColors.bg,
+        backgroundColor: CheColors.screen,
         leading: IconButton(
           tooltip: 'Back to investigations',
           icon: const Icon(Icons.arrow_back_ios_new_rounded),

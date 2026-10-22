@@ -752,9 +752,9 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
       length: 5,
       initialIndex: widget.initialTab.clamp(0, 4),
       child: Scaffold(
-        backgroundColor: CheColors.bg,
+        backgroundColor: CheColors.screen,
         appBar: AppBar(
-          backgroundColor: CheColors.bg,
+          backgroundColor: CheColors.screen,
           // Flagstaff is CHE's one inbox: AI messages, Office reports, letters and system notices (owner, 2026-10-22).
           title: const Text('Flagstaff'),
           actions: [

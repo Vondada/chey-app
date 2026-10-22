@@ -30,9 +30,9 @@ class CheUiControlsScreen extends StatelessWidget {
       builder: (context, _) {
         final bottom = MediaQuery.viewPaddingOf(context).bottom;
         return Scaffold(
-          backgroundColor: cheBgOf(context),
+          backgroundColor: CheColors.screen,
           appBar: AppBar(
-            backgroundColor: cheBgOf(context).withValues(alpha: 0.92),
+            backgroundColor: CheColors.screen == Colors.transparent ? Colors.transparent : cheBgOf(context).withValues(alpha: 0.92),
             title: Text('UI Controls', style: CheType.headline.copyWith(color: cheTextOf(context))),
             leading: IconButton(
               icon: Icon(Icons.arrow_back_ios_new_rounded, color: cheTextOf(context), size: 18),

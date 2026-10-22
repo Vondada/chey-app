@@ -317,7 +317,7 @@ class _CheCloudVoicePickerState extends State<CheCloudVoicePicker> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: CheColors.bg,
+      backgroundColor: CheColors.screen,
       appBar: AppBar(title: const Text('CHE Natural Voice'),
         actions: [
           if (widget.onListen != null)

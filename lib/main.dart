@@ -449,6 +449,8 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   // Latency (owner, 2026-10-22: "laggy when I click on different buttons"): the 15-second state poll skips the decode
   // and the whole-app rebuild when the Worker's state is unchanged.
   String? _lastAgentStateBody;
+  // The last measured round trip of the state poll, shown as the Home reactor's LAT readout (real, never estimated).
+  int? _stateLatencyMs;
   int _speechTurn = 0;
 
   // Single authority for automatic mic restarts (see che_mic_supervisor.dart).
@@ -1583,6 +1585,12 @@ OWNER AGENCY
       onOpenWorld: () => _goShellTab(3),
       onOfficeStatus: () => unawaited(_speakOfficeStatus()),
       onTapAgent: (agent) => _openOfficeFloor(agentName: agent.name),
+      unread: _mailboxUnread,
+      onOpenFlagstaff: () => unawaited(_openMailbox()),
+      latencyMs: _stateLatencyMs,
+      handsFree: CheUiPreferences.instance.handsFreeWake,
+      baseUrl: _deviceToken == null ? null : () => cheAgentBaseUrl,
+      headers: () => _authHeaders,
     );
   }
 
@@ -2120,7 +2128,7 @@ OWNER AGENCY
       builder: (_) => Theme(
         data: kit.CheTheme.dark(),
         child: Scaffold(
-          backgroundColor: kit.CheColors.bg,
+          backgroundColor: kit.CheColors.screen,
           appBar: AppBar(title: const Text('Voice IDs')),
           body: SafeArea(
             child: Padding(
