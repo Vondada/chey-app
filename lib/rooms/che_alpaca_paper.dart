@@ -19,7 +19,9 @@ import 'package:http/http.dart' as http;
 
 import '../che_ui/che_help.dart';
 import 'che_trading_ledgers.dart' show EquityCurvePainter;
+import '../che_ui/che_hud.dart';
 import '../che_ui/che_theme.dart';
+import 'che_trading_hud.dart';
 
 const _up = Color(0xFF3DDC97);
 const _down = Color(0xFFFF5C7A);
@@ -498,7 +500,8 @@ class AlpacaChartPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    canvas.drawRect(Offset.zero & size, Paint()..color = const Color(0xFF05080A));
+    // In the HUD look the plot is a darkened window, so the backdrop still reads through it.
+    canvas.drawRect(Offset.zero & size, Paint()..color = const Color(0xFF05080A).withValues(alpha: cheHudActive ? 0.55 : 1));
     final f = _frame();
     if (f == null) {
       final tp = TextPainter(text: TextSpan(text: 'No candles for this symbol yet', style: TextStyle(color: _dim)), textDirection: TextDirection.ltr)..layout();
@@ -559,10 +562,12 @@ class CheAlpacaPaperPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF05080A),
+      backgroundColor: cheTradingPage(const Color(0xFF05080A)),
       appBar: AppBar(
-        backgroundColor: const Color(0xFF05080A),
-        title: const Text('Alpaca paper trades'),
+        backgroundColor: cheTradingPage(const Color(0xFF05080A)),
+        title: cheHudActive
+            ? const CheChromeText('Alpaca paper trades', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800))
+            : const Text('Alpaca paper trades'),
         actions: const [CheHelpButton()],
         leading: IconButton(tooltip: 'Back to where you were', icon: const Icon(Icons.arrow_back), onPressed: () => Navigator.of(context).maybePop()),
       ),

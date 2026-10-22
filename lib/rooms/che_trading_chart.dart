@@ -20,7 +20,9 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
+import '../che_ui/che_hud.dart';
 import '../che_ui/che_theme.dart';
+import 'che_trading_hud.dart';
 
 const _up = Color(0xFF3DDC97);
 const _down = Color(0xFFFF5C7A);
@@ -589,11 +591,11 @@ class CheTradingChartState extends State<CheTradingChart> {
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
-              color: selected ? _gold.withValues(alpha: 0.22) : Colors.transparent,
+              color: selected ? cheTradingSelect.withValues(alpha: 0.22) : Colors.transparent,
               borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: selected ? _gold : _stroke),
+              border: Border.all(color: selected ? cheTradingSelect : (cheHudActive ? CheHud.ice.withValues(alpha: 0.28) : _stroke)),
             ),
-            child: Text(label, style: TextStyle(color: selected ? _gold : Colors.white, fontWeight: FontWeight.w700, fontSize: 14)),
+            child: Text(label, style: TextStyle(color: selected ? cheTradingSelect : Colors.white, fontWeight: FontWeight.w700, fontSize: 14)),
           ),
         ),
       );
@@ -635,12 +637,14 @@ class CheTradingChartState extends State<CheTradingChart> {
   Widget build(BuildContext context) {
     final stale = _feed['stale'] == true;
     final feedColor = _feed['status'] == 'REALTIME' && !stale ? _up : _feed['status'] == 'UNAVAILABLE' ? _down : _gold;
-    return Container(
-      decoration: BoxDecoration(color: _panel, borderRadius: BorderRadius.circular(16), border: Border.all(color: _stroke)),
+    return CheTradingPanel(
+      color: _panel,
+      borderColor: _stroke,
+      radius: 16,
       padding: const EdgeInsets.all(12),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         Row(children: [
-          const Text('CHART', style: TextStyle(color: _gold, fontWeight: FontWeight.w800, letterSpacing: 1.4, fontSize: 13)),
+          Text('CHART', style: cheTradingLabel(const TextStyle(color: _gold, fontWeight: FontWeight.w800, letterSpacing: 1.4, fontSize: 13))),
           const SizedBox(width: 8),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
