@@ -58,6 +58,38 @@ export function chatImageReply(results) {
   return [head, ...lines].join(' ');
 }
 
+/**
+ * The first saved picture as the fields the iPhone chat shows inline (media_type, media_url), with an absolute URL.
+ * The chat reads one picture per reply; the rest stay in the Creation Room and in `media`.
+ */
+export function chatImageInline(results, origin) {
+  const first = results.find((r) => r.ok);
+  return first ? { media_type: 'image', media_url: `${origin}/api/media/${first.id}/image`, media_id: first.id } : {};
+}
+
+/**
+ * A model reply that is only a pretend tool call (owner, 2026-10-22: {"action": "dalle.text2im", "action_input": ...}
+ * appeared in the chat instead of a picture). Returns { action, prompt, picture } or null for an ordinary reply.
+ * Only a reply that is wholly such an object counts, so prose that mentions JSON is never touched.
+ */
+export function pretendToolCall(text) {
+  const body = String(text || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+  if (!body.startsWith('{') || !body.endsWith('}')) return null;
+  let obj = null;
+  try { obj = JSON.parse(body); } catch (_) {
+    const action = /"(?:action|tool|name)"\s*:\s*"([^"]{1,80})"/.exec(body)?.[1];
+    if (!action) return null;
+    obj = { action, action_input: { prompt: /\\?"prompt\\?"\s*:\s*\\?"([^"\\]{1,600})/.exec(body)?.[1] || '' } };
+  }
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return null;
+  const action = String(obj.action || obj.tool || obj.function || obj.name || '').trim();
+  if (!action || !('action_input' in obj || 'input' in obj || 'arguments' in obj || 'parameters' in obj || 'prompt' in obj)) return null;
+  let input = obj.action_input ?? obj.input ?? obj.arguments ?? obj.parameters ?? { prompt: obj.prompt };
+  if (typeof input === 'string') { try { input = JSON.parse(input); } catch (_) { input = { prompt: input }; } }
+  const prompt = String(input?.prompt || input?.description || input?.text || '').trim().slice(0, 600);
+  return { action, prompt, picture: /dall|text2im|image|picture|draw|paint|illustrat/i.test(action) };
+}
+
 /** The media a reply refers to: stable ids and verified types, for the chat to show. */
 export function chatImageMedia(results) {
   return results.filter((r) => r.ok).map((r) => ({ media_id: r.id, mime_type: r.mime_type, title: r.title, url: `/api/media/${r.id}/image` }));
