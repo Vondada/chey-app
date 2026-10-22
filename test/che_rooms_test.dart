@@ -24,6 +24,19 @@ void _phone(WidgetTester tester) {
   addTearDown(tester.view.reset);
 }
 
+/// The older market overview (index chart, quotes, 3D scene) is folded under the research cards; open it.
+Future<void> _openOverview(WidgetTester tester) async {
+  for (var i = 0; i < 20 && find.text('Market overview', skipOffstage: false).evaluate().isEmpty; i++) {
+    await tester.drag(find.byType(ListView).first, const Offset(0, -300));
+    await tester.pump();
+  }
+  await tester.ensureVisible(find.text('Market overview', skipOffstage: false));
+  await tester.pump();
+  await tester.tap(find.text('Market overview'));
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 300));
+}
+
 void main() {
   test('address bar: URLs open, anything else searches', () {
     expect(cheAddressToUri('example.com').toString(), 'https://example.com');
@@ -115,6 +128,7 @@ void main() {
     // Build 1: the CHART section opens on the interactive paper chart; the index futures chart
     // and the quote panels follow it under MARKET OVERVIEW.
     expect(find.text('CHART'), findsWidgets);
+    await _openOverview(tester);
     for (var i = 0; i < 12 && find.textContaining('E-mini S&P 500 futures', skipOffstage: false).evaluate().isEmpty; i++) {
       await tester.drag(find.byType(ListView).first, const Offset(0, -300));
       await tester.pump();
@@ -310,7 +324,8 @@ void main() {
     ));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
-    // The live chart sits above the delayed index panels.
+    // The live chart sits above the delayed index panels, which are folded under Market overview.
+    await _openOverview(tester);
     for (var i = 0; i < 12 && find.text('2.00', skipOffstage: false).evaluate().isEmpty; i++) {
       await tester.drag(find.byType(ListView).first, const Offset(0, -300));
       await tester.pump();

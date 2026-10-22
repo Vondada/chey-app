@@ -644,14 +644,17 @@ class CheTradingChartState extends State<CheTradingChart> {
       padding: const EdgeInsets.all(12),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         Row(children: [
-          Text('CHART', style: cheTradingLabel(const TextStyle(color: _gold, fontWeight: FontWeight.w800, letterSpacing: 1.4, fontSize: 13))),
-          const SizedBox(width: 8),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-            decoration: BoxDecoration(color: _gold, borderRadius: BorderRadius.circular(6)),
-            child: const Text('PAPER', style: TextStyle(color: Colors.black, fontWeight: FontWeight.w900, fontSize: 12)),
+          // The title and PAPER badge wrap on a narrow screen or with large text instead of pushing the buttons off.
+          Expanded(
+            child: Wrap(spacing: 8, runSpacing: 4, crossAxisAlignment: WrapCrossAlignment.center, children: [
+              Text('CHART', style: cheTradingLabel(const TextStyle(color: _gold, fontWeight: FontWeight.w800, letterSpacing: 1.4, fontSize: 13))),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(color: _gold, borderRadius: BorderRadius.circular(6)),
+                child: const Text('PAPER', style: TextStyle(color: Colors.black, fontWeight: FontWeight.w900, fontSize: 12)),
+              ),
+            ]),
           ),
-          const Spacer(),
           if (widget.onSpeak != null) _iconButton(Icons.volume_up_rounded, 'Read chart aloud', () => widget.onSpeak!(summary)),
           _iconButton(Icons.refresh_rounded, 'Refresh chart', () => unawaited(load())),
         ]),
@@ -786,7 +789,8 @@ class CheTradingChartState extends State<CheTradingChart> {
           child: Row(mainAxisSize: MainAxisSize.min, children: [
             CustomPaint(size: const Size(12, 12), painter: _MarkerGlyph(source, color, on)),
             const SizedBox(width: 6),
-            Text('$label $n', style: TextStyle(color: on ? Colors.white : _dim, fontSize: 13)),
+            // Wraps instead of overflowing on a 320-point screen or with large text.
+            Flexible(child: Text('$label $n', style: TextStyle(color: on ? Colors.white : _dim, fontSize: 13))),
           ]),
         ),
       ),

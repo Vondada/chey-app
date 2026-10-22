@@ -1,5 +1,6 @@
 // The Trading Room in four sections (owner, 2026-10-20, Build 1): CHART, CHE TRADES, STRATEGIES
-// and ACCOUNT. Each section holds panels that already exist; nothing here reads or trades on its
+// and ACCOUNT. CHART leads with the live market (NQ | MNQ), then the status row, BEST NOW and the
+// strategy cards with per-timeframe evidence (owner, 2026-10-22); the older market overview is folded. Each section holds panels that already exist; nothing here reads or trades on its
 // own. The Markets tab shows it, and voice ("Open Alpaca chart", "CHE, show EMA trades", "Show
 // strategy progress") opens it as a page on the section asked for. Silent on open.
 import 'package:flutter/material.dart';
@@ -14,6 +15,7 @@ import 'che_trading_chart.dart';
 import 'che_trading_connections.dart';
 import 'che_trading_intelligence.dart';
 import 'che_trading_ledgers.dart';
+import 'che_trading_research.dart';
 import '../che_ui/che_hud.dart';
 import '../che_ui/che_theme.dart';
 import 'che_trading_hud.dart';
@@ -104,6 +106,16 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
     CheTradingRoom.requestedSection.value = null;
   }
   late final CheTradingChartController _chart = widget.chartController ?? CheTradingChartController();
+  late final CheTradingResearchClient _research = CheTradingResearchClient(baseUrl: widget.baseUrl, headers: widget.headers, client: widget.client);
+
+  /// The futures market the research and the live chart follow.
+  late String _market = const {'NQ', 'MNQ'}.contains(widget.initialSymbol.toUpperCase()) ? widget.initialSymbol.toUpperCase() : 'MNQ';
+
+  void _setMarket(String m) {
+    setState(() => _market = m);
+    // CHE's live futures feed is MNQ; the chart shows MNQ for both, and says so when NQ research is chosen.
+    _chart.show(account: 'futures_paper', symbol: 'MNQ');
+  }
 
   Widget _pad(Widget child) => Padding(padding: const EdgeInsets.fromLTRB(12, 12, 12, 0), child: child);
 
@@ -125,6 +137,16 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
     switch (_section) {
       case CheTradingSection.chart:
         return [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+            child: Wrap(spacing: 12, runSpacing: 6, crossAxisAlignment: WrapCrossAlignment.center, children: [
+              Semantics(header: true, child: const Text('LIVE MARKET', style: TextStyle(color: _gold, fontWeight: FontWeight.w800, fontSize: 13, letterSpacing: 1.1))),
+              CheMarketToggle(market: _market, onChanged: _setMarket),
+              if (_market == 'NQ')
+                const Text('Live chart: MNQ (CHE\'s live futures feed). Research below uses NQ history.',
+                    key: Key('nq_chart_note'), style: TextStyle(color: Colors.white, fontSize: 14)),
+            ]),
+          ),
           _pad(CheTradingChart(
             baseUrl: p.baseUrl,
             headers: p.headers,
@@ -136,7 +158,20 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
             initialStrategy: widget.initialStrategy,
             height: widget.chartHeight,
           )),
-          ...widget.chartExtras,
+          CheTradingResearchStrip(key: const Key('research_strip'), client: _research, market: _market, onRead: widget.onRead),
+          // The older overview (index chart, quotes, 3D scene) is folded so nothing heavy builds until asked for.
+          if (widget.chartExtras.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+              child: ExpansionTile(
+                key: const Key('market_overview'),
+                title: const Text('Market overview', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+                iconColor: Colors.white,
+                collapsedIconColor: Colors.white70,
+                tilePadding: EdgeInsets.zero,
+                children: widget.chartExtras,
+              ),
+            ),
         ];
       case CheTradingSection.cheTrades:
         return [
@@ -147,6 +182,7 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
       case CheTradingSection.strategies:
         // Limits and the registry, the historical study, then each strategy's learning progress (#382), from the same panel CHE TRADES uses.
         return [
+          _pad(CheTradingResearchDashboard(client: _research, market: _market, onRead: widget.onRead)),
           _pad(CheStrategyControlsPanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, client: p.client)),
           // Historical trading intelligence (owner, 2026-10-22): decades of history, out-of-sample ranking, paper signals.
           _pad(CheTradingIntelligencePanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, onRead: widget.onRead, client: p.client)),
