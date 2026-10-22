@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../che_local_brain.dart';
+import '../che_ui/che_hud.dart';
 import '../che_ui/che_screen_awareness.dart';
 import '../che_ui/che_theme.dart';
 import 'che_core_sphere.dart';
@@ -185,7 +186,14 @@ class _NotificationTile extends StatelessWidget {
       container: true,
       label: '${item.priority} notification from ${item.source}. ${item.title}. ${item.body}. $when.${item.isRead ? ' Read.' : ' Unread.'}',
       child: Card(
-        color: CheColors.surface,
+        // HUD look: an ice-edged glass card; other palettes keep the solid surface.
+        color: cheHudActive ? CheHud.ice.withValues(alpha: 0.07) : CheColors.surface,
+        shape: cheHudActive
+            ? RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+                side: BorderSide(color: CheHud.ice.withValues(alpha: 0.28)),
+              )
+            : null,
         child: ListTile(
           title: Text(item.title, style: CheType.headline),
           subtitle: Text('${item.source} · ${item.priority} · $when\n${item.body}', style: CheType.bodyDim),
@@ -284,7 +292,10 @@ class _CheCoreRoomScreenState extends State<CheCoreRoomScreen> {
         children: [
           Center(child: CheCoreSphere(active: _busy)),
           const SizedBox(height: 8),
-          Text('CHE Core', style: CheType.title, textAlign: TextAlign.center),
+          if (cheHudActive)
+            CheChromeText('CHE Core', style: CheType.title, textAlign: TextAlign.center)
+          else
+            Text('CHE Core', style: CheType.title, textAlign: TextAlign.center),
           Text(
             'Compact command space. Requests follow Core rules and do not bypass privacy.',
             style: CheType.bodyDim,
@@ -594,9 +605,15 @@ class _CheTwoBrainsViewState extends State<CheTwoBrainsView> {
                           height: 44,
                           padding: const EdgeInsets.symmetric(horizontal: 14),
                           decoration: BoxDecoration(
-                            color: i == _index ? CheColors.accent.withValues(alpha: 0.22) : CheColors.surface,
+                            color: i == _index
+                                ? CheColors.accent.withValues(alpha: 0.22)
+                                : (cheHudActive ? CheHud.ice.withValues(alpha: 0.06) : CheColors.surface),
                             borderRadius: BorderRadius.circular(999),
-                            border: Border.all(color: i == _index ? CheColors.accent : CheColors.stroke),
+                            border: Border.all(
+                              color: i == _index
+                                  ? CheColors.accent
+                                  : (cheHudActive ? CheHud.ice.withValues(alpha: 0.28) : CheColors.stroke),
+                            ),
                           ),
                           child: Center(
                             child: Text(
@@ -746,7 +763,10 @@ class _CheOfflineBrainPanelState extends State<CheOfflineBrainPanel> {
       child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          Text('CHE Brain — Offline', style: CheType.title),
+          if (cheHudActive)
+            CheChromeText('CHE Brain — Offline', style: CheType.title)
+          else
+            Text('CHE Brain — Offline', style: CheType.title),
           const SizedBox(height: 6),
           Text(cheBrainPresentations[1].detail, style: CheType.bodyDim),
           const SizedBox(height: 12),
@@ -783,7 +803,11 @@ class _PlatformScaffold extends StatelessWidget {
       data: CheTheme.dark(),
       child: Scaffold(
         backgroundColor: CheColors.screen,
-        appBar: AppBar(title: Text(title)),
+        appBar: AppBar(
+          title: cheHudActive
+              ? CheChromeText(title, style: CheType.title.copyWith(fontSize: 20, fontWeight: FontWeight.w800), maxLines: 1)
+              : Text(title),
+        ),
         body: child,
       ),
     );

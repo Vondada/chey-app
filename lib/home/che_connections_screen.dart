@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 
+import '../che_ui/che_hud.dart';
 import '../che_ui/che_screen_awareness.dart';
 import '../che_ui/che_theme.dart';
 
@@ -385,49 +386,57 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
       'Unsupported' => CheColors.textDim,
       _ => CheColors.danger,
     };
+    final body = Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(children: [
+        Icon(icon, color: CheColors.accent, size: 22),
+        const SizedBox(width: 10),
+        Expanded(child: Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700))),
+        Text(status, style: TextStyle(fontSize: 12, color: color, fontWeight: FontWeight.w700)),
+      ]),
+      const SizedBox(height: 7),
+      Text(_detail(connector, explanation), style: TextStyle(color: CheColors.textDim, height: 1.3)),
+      if (onAction != null) ...[
+        const SizedBox(height: 10),
+        OutlinedButton(
+          onPressed: _loading || _connecting ? null : onAction,
+          child: Text(action),
+        ),
+      ],
+      if (onDisconnect != null && _status(connector) == 'Connected') ...[
+        const SizedBox(height: 8),
+        OutlinedButton(
+          onPressed: _loading || _connecting ? null : onDisconnect,
+          child: const Text('Disconnect'),
+        ),
+      ],
+    ]);
     return Semantics(
       label: '$title. $status. ${_detail(connector, explanation)}',
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 12),
-        decoration: BoxDecoration(
-          color: CheColors.surface,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: CheColors.stroke),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Row(children: [
-              Icon(icon, color: CheColors.accent, size: 22),
-              const SizedBox(width: 10),
-              Expanded(child: Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700))),
-              Text(status, style: TextStyle(fontSize: 12, color: color, fontWeight: FontWeight.w700)),
-            ]),
-            const SizedBox(height: 7),
-            Text(_detail(connector, explanation), style: TextStyle(color: CheColors.textDim, height: 1.3)),
-            if (onAction != null) ...[
-              const SizedBox(height: 10),
-              OutlinedButton(
-                onPressed: _loading || _connecting ? null : onAction,
-                child: Text(action),
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        // HUD look: each connection is a glass pane; other palettes keep the solid card.
+        child: cheHudActive
+            ? CheGlass(radius: 16, padding: const EdgeInsets.all(14), shadow: false, child: body)
+            : DecoratedBox(
+                decoration: BoxDecoration(
+                  color: CheColors.surface,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: CheColors.stroke),
+                ),
+                child: Padding(padding: const EdgeInsets.all(14), child: body),
               ),
-            ],
-            if (onDisconnect != null && _status(connector) == 'Connected') ...[
-              const SizedBox(height: 8),
-              OutlinedButton(
-                onPressed: _loading || _connecting ? null : onDisconnect,
-                child: const Text('Disconnect'),
-              ),
-            ],
-          ]),
-        ),
       ),
     );
   }
 
   Widget _heading(String text) => Padding(
     padding: const EdgeInsets.symmetric(vertical: 10),
-    child: Text(text.toUpperCase(), style: TextStyle(fontWeight: FontWeight.w800, color: CheColors.accent, letterSpacing: 1.2)),
+    child: Text(
+      text.toUpperCase(),
+      style: cheHudActive
+          ? CheHud.label.copyWith(fontSize: 12)
+          : TextStyle(fontWeight: FontWeight.w800, color: CheColors.accent, letterSpacing: 1.2),
+    ),
   );
 
   @override
@@ -435,7 +444,9 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
     return Scaffold(
       backgroundColor: CheColors.screen,
       appBar: AppBar(
-        title: const Text('Connections'),
+        title: cheHudActive
+            ? CheChromeText('Connections', style: CheType.title.copyWith(fontSize: 22, fontWeight: FontWeight.w800))
+            : const Text('Connections'),
         actions: [
           IconButton(
             tooltip: 'Refresh verified connections',
@@ -447,7 +458,10 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
       body: SafeArea(child: RefreshIndicator(
         onRefresh: () => _refresh(announce: true),
         child: ListView(padding: const EdgeInsets.all(16), children: [
-          const Text('One app. Real connections.', style: TextStyle(fontSize: 23, fontWeight: FontWeight.w800)),
+          if (cheHudActive)
+            const CheChromeText('One app. Real connections.', style: TextStyle(fontSize: 23, fontWeight: FontWeight.w800))
+          else
+            const Text('One app. Real connections.', style: TextStyle(fontSize: 23, fontWeight: FontWeight.w800)),
           const SizedBox(height: 6),
           Text('CHE verifies status with her Worker. A configured API key is not proof of a signed-in account. Account passwords stay with their providers.',
             style: TextStyle(color: CheColors.textDim)),
