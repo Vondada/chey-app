@@ -26,6 +26,7 @@ import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:url_launcher/url_launcher.dart';
 import 'che_job_activity_banner.dart';
 import 'che_mic_supervisor.dart';
+import 'che_ui/che_latency.dart';
 import 'che_ui/che_screen_awareness.dart';
 import 'che_ui/che_screen_capture.dart';
 import 'world/che_meeting_room.dart';
@@ -365,6 +366,22 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
       await _loadAgentState(silent: true);
     } catch (error) { await speakText('The action could not be confirmed: $error'); }
     finally { if (mounted) _set(() => _approvalBusy = false); }
+  }
+
+  // The full state poll runs every 15 s only while it is needed: a background job is still running, or the Chat or
+  // Office tab is on screen. Otherwise (home, More, idle) it runs once a minute, so an idle phone sends far less.
+  int _idleStatePollTicks = 0;
+
+  bool _statePollDue() {
+    final jobsRunning = backgroundJobs.any((j) => !const {'complete', 'failed', 'cancelled', 'dead_letter'}.contains(j['status']));
+    if (jobsRunning || _shellTab == 1 || _shellTab == 2) {
+      _idleStatePollTicks = 0;
+      return true;
+    }
+    _idleStatePollTicks++;
+    if (_idleStatePollTicks < 4) return false;
+    _idleStatePollTicks = 0;
+    return true;
   }
 
   Future<void> _notifyFinishedJobs() async {
@@ -1271,7 +1288,7 @@ OWNER AGENCY
     initializeVoice();
     _loadSecuritySession();
     _jobPollTimer = Timer.periodic(const Duration(seconds: 15), (_) {
-      if (_appForeground) unawaited(_loadAgentState(silent: true));
+      if (_appForeground && _statePollDue()) unawaited(_loadAgentState(silent: true));
     });
     unawaited(_loadTypingPref());
     Future<void>.delayed(const Duration(seconds: 3), () => _refreshMailboxBadge(announce: false));
@@ -1469,6 +1486,17 @@ OWNER AGENCY
     };
   }
 
+  // Tabs the owner has opened at least once (see build). Index 3 is CHE World, which opens its own screen.
+  final Set<int> _builtTabs = {};
+
+  Widget _buildTab(int i, List<CheAgent> agents) => switch (i) {
+        0 => _buildHomeTab(agents),
+        1 => _buildChatTab(agents),
+        2 => _buildOfficeTab(),
+        4 => _buildMoreTab(),
+        _ => const SizedBox.shrink(),
+      };
+
   void _goShellTab(int i) {
     if (i < 0 || i > 4) return;
     // CHE World opens as its own full screen, the same screen the More list opens (owner, 2026-10-22).
@@ -1478,7 +1506,10 @@ OWNER AGENCY
     }
     if (i == _shellTab) return;
     HapticFeedback.selectionClick();
+    final mark = CheLatency.begin(CheLatency.navigation);
     setState(() => _shellTab = i);
+    // Measured to the frame that draws the new tab, which is when the owner can see it.
+    WidgetsBinding.instance.addPostFrameCallback((_) => mark.end());
   }
 
   Future<void> _speakOfficeStatus() async {
@@ -2372,6 +2403,9 @@ OWNER AGENCY
   @override
   Widget build(BuildContext context) {
     _ensureOfficeRuntime();
+    // A tab is built the first time the owner opens it, not on launch: the Office, Chat and More trees were all
+    // built and reconciled on every app-wide rebuild, even when the owner never opened them.
+    _builtTabs.add(_shellTab);
     final agents = [for (final p in _officeRuntime.agents) p.agent];
     final content = SafeArea(
       top: _shellTab != 1,
@@ -2387,14 +2421,10 @@ OWNER AGENCY
               // running, so the Office crew, CHE's orb and glowing cards animated off screen and slowed every tap.
               // Each tab also repaints on its own layer.
               children: [
-                for (final (i, tab) in [
-                  _buildHomeTab(agents),
-                  _buildChatTab(agents),
-                  _buildOfficeTab(),
-                  const SizedBox.shrink(),
-                  _buildMoreTab(),
-                ].indexed)
-                  TickerMode(enabled: i == _shellTab, child: RepaintBoundary(child: tab)),
+                for (var i = 0; i < 5; i++)
+                  _builtTabs.contains(i)
+                      ? TickerMode(enabled: i == _shellTab, child: RepaintBoundary(child: _buildTab(i, agents)))
+                      : const SizedBox.shrink(),
               ],
             ),
           ),

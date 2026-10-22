@@ -678,6 +678,10 @@ export function guardClaimedResearchActions(reply, { research = null, tools = []
   // several news sites", and reading code all claim work that left a receipt.
   const claimedOpen = /\b(?:i|we)(?:'ve|\s+have)?\s+(?:just\s+|already\s+|also\s+)?(?:opened|visited|clicked(?:\s+on)?|browsed|read|followed|loaded|pulled\s+up|skimmed)\s+(?:through\s+)?(?:the|that|this|your|their|its|each|both|all|several|those|these|a\s+few|some)\s+(?:[\w'-]+\s+){0,4}(?:links?|urls?|pages?|articles?|sites?|websites?|stor(?:y|ies)|posts?|press\s+releases?|reports?|papers?|studies|sources?)\b/i.test(text)
     || /\b(?:after|from)\s+(?:searching|browsing|checking|reviewing|reading|scanning|comparing|looking\s+(?:at|through))\s+(?:through\s+)?(?:\w+\s+){0,3}(?:sources?|sites?|websites?|news|articles?|outlets?|the\s+web|online|reports?|pages?)\b/i.test(text);
+  // Where something was learned ("I learned this from research and studies on Cortana and Google Assistant") is a
+  // provenance claim: it needs a receipt from this turn, like a search does. General knowledge is answered without one.
+  const claimedProvenance = /\b(?:i|we)(?:'ve|\s+have)?\s+(?:learned|learnt|read|studied|found|picked\s+up)\s+(?:this|that|it|these|those|about\s+[\w' -]{1,60}?)?\s*(?:from|in|through|via)\s+(?:(?:the|some|several|recent|a\s+few|published|academic|independent)\s+)?(?:research|studies|study|papers?|articles?|sources?|reports?|books?|websites?|documentation|docs?|surveys?)\b/i.test(text)
+    || /\b(?:my|our)\s+(?:research|studies|reading)\s+(?:and|or)\s+(?:studies|research|reading)\b/i.test(text);
   const claimedCode = /\b(?:i|we)(?:'ve|\s+have)?\s+(?:just\s+|already\s+|also\s+)?(?:inspected|reviewed|examined|read(?:\s+through)?|looked\s+(?:at|through)|went\s+through|scanned|audited)\s+(?:the|your|my|its|their|che's)\s+(?:[\w'-]+\s+){0,2}(?:code(?:base)?|source\s+code|repo(?:sitory)?|source\s+files?|worker\.js|dart\s+files?)\b/i.test(text);
   const opened = (Array.isArray(research?.articles) && research.articles.some((a) => a?.ok)) || actualResearch;
   const anyReceipt = actualResearch || comparisonReceipt || successful.length > 0;
@@ -686,7 +690,8 @@ export function guardClaimedResearchActions(reply, { research = null, tools = []
       (claimedVerification && !anyReceipt) ||
       (claimedDocumentReview && !anyReceipt && !documentRead) ||
       ((stepReport || claimedSourceLook) && !anyReceipt) ||
-      (claimedOpen && !opened && !successful.length && !documentRead)) {
+      (claimedOpen && !opened && !successful.length && !documentRead) ||
+      (claimedProvenance && !actualResearch && !documentRead)) {
     return {
       text: 'I need to correct that, sir: I do not have execution receipts proving I performed the search or comparison I described. I have not independently fact-checked that answer.',
       corrected: true,
