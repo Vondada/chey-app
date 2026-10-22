@@ -22,6 +22,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'che_hud.dart';
 import 'che_theme.dart';
 import 'che_widgets.dart';
 import 'che_office_hub.dart';
@@ -403,35 +404,45 @@ class ChePluginOfferCard extends StatelessWidget {
       builder: (context, _) {
         final have = registry.byId(plugin.id);
         final same = have != null && have.version == plugin.version;
-        return Padding(
-          padding: const EdgeInsets.only(top: CheSpace.sm),
-          child: GlowCard(
-            active: !same,
-            color: plugin.color,
-            radius: CheRadius.md,
-            child: Row(children: [
-              Icon(plugin.icon, color: plugin.color),
-              const SizedBox(width: CheSpace.md),
-              Expanded(
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text(plugin.name, style: CheType.label),
-                  Text(same ? 'Installed · v${plugin.version}' : 'New plugin · v${plugin.version}', style: CheType.caption),
-                ]),
-              ),
-              if (!same)
-                FilledButton(
-                  onPressed: () => showChePluginReview(context, registry, plugin),
-                  style: FilledButton.styleFrom(
-                    backgroundColor: plugin.color,
-                    foregroundColor: const Color(0xFF02110E),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(CheRadius.pill)),
-                  ),
-                  child: Text(have == null ? 'Review' : 'Update'),
-                )
-              else
-                const Icon(Icons.check_circle_rounded, color: CheColors.success),
+        final content = Row(children: [
+          Icon(plugin.icon, color: plugin.color),
+          const SizedBox(width: CheSpace.md),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(plugin.name, style: CheType.label),
+              Text(same ? 'Installed · v${plugin.version}' : 'New plugin · v${plugin.version}', style: CheType.caption),
             ]),
           ),
+          if (!same)
+            FilledButton(
+              onPressed: () => showChePluginReview(context, registry, plugin),
+              style: FilledButton.styleFrom(
+                backgroundColor: plugin.color,
+                foregroundColor: const Color(0xFF02110E),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(CheRadius.pill)),
+              ),
+              child: Text(have == null ? 'Review' : 'Update'),
+            )
+          else
+            const Icon(Icons.check_circle_rounded, color: CheColors.success),
+        ]);
+        return Padding(
+          padding: const EdgeInsets.only(top: CheSpace.sm),
+          // HUD look: a still glass pane lit in the plugin's colour (no spinning border); other palettes keep GlowCard.
+          child: cheHudActive
+              ? CheGlass(
+                  radius: CheRadius.md,
+                  padding: const EdgeInsets.all(CheSpace.md),
+                  glow: same ? null : plugin.color,
+                  shadow: false,
+                  child: content,
+                )
+              : GlowCard(
+                  active: !same,
+                  color: plugin.color,
+                  radius: CheRadius.md,
+                  child: content,
+                ),
         );
       },
     );
@@ -561,6 +572,24 @@ class _ChePluginsScreenState extends State<ChePluginsScreen> {
     if (run != null) run(prompt);
   }
 
+  // HUD look: ice-edged glass panes; other palettes keep the solid surface with its stroke.
+  Color get _edge => cheHudActive ? CheHud.ice.withValues(alpha: 0.28) : CheColors.stroke;
+
+  Widget _pane({required Widget child, required EdgeInsets padding, required double radius, Color? edge}) {
+    if (cheHudActive) {
+      return CheGlass(radius: radius, padding: padding, shadow: false, tint: edge?.withValues(alpha: 1), child: child);
+    }
+    return Container(
+      padding: padding,
+      decoration: BoxDecoration(
+        color: CheColors.surface,
+        borderRadius: BorderRadius.circular(radius),
+        border: Border.all(color: edge ?? CheColors.stroke),
+      ),
+      child: child,
+    );
+  }
+
   Widget _navChip(String id, String label, IconData icon) {
     final selected = _section == id;
     return Semantics(
@@ -583,8 +612,8 @@ class _ChePluginsScreenState extends State<ChePluginsScreen> {
           color: selected ? const Color(0xFF03120F) : CheColors.text,
         ),
         selectedColor: CheColors.accent,
-        backgroundColor: CheColors.surface,
-        side: BorderSide(color: selected ? CheColors.accent : CheColors.stroke),
+        backgroundColor: cheHudActive ? CheHud.ice.withValues(alpha: 0.06) : CheColors.surface,
+        side: BorderSide(color: selected ? CheColors.accent : _edge),
         showCheckmark: false,
         visualDensity: VisualDensity.compact,
       ),
@@ -595,16 +624,12 @@ class _ChePluginsScreenState extends State<ChePluginsScreen> {
     final enabled = installed.where((p) => reg.isEnabled(p.id)).length;
     return Semantics(
       label: '$enabled plugins enabled, ${installed.length} installed. Learning tools ready.',
-      child: Container(
+      child: _pane(
         padding: const EdgeInsets.symmetric(
           horizontal: CheSpace.md,
           vertical: 12,
         ),
-        decoration: BoxDecoration(
-          color: CheColors.surface,
-          borderRadius: BorderRadius.circular(CheRadius.md),
-          border: Border.all(color: CheColors.stroke),
-        ),
+        radius: CheRadius.md,
         child: Row(children: [
           Icon(Icons.hub_rounded, size: 18, color: CheColors.accent),
           const SizedBox(width: 10),
@@ -637,15 +662,15 @@ class _ChePluginsScreenState extends State<ChePluginsScreen> {
         hintText: 'Search skills',
         hintStyle: CheType.bodyDim,
         filled: true,
-        fillColor: CheColors.surface,
+        fillColor: cheHudActive ? CheHud.ice.withValues(alpha: 0.06) : CheColors.surface,
         contentPadding: const EdgeInsets.symmetric(vertical: 12),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(CheRadius.md),
-          borderSide: BorderSide(color: CheColors.stroke),
+          borderSide: BorderSide(color: _edge),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(CheRadius.md),
-          borderSide: BorderSide(color: CheColors.stroke),
+          borderSide: BorderSide(color: _edge),
         ),
       ),
     );
@@ -902,17 +927,10 @@ class _ChePluginsScreenState extends State<ChePluginsScreen> {
     return RepaintBoundary(
       child: Semantics(
       label: '${p.name}, version ${p.version}, ${reg.isEnabled(p.id) ? 'enabled' : 'disabled'}',
-      child: Container(
+      child: _pane(
         padding: const EdgeInsets.all(CheSpace.md),
-        decoration: BoxDecoration(
-          color: CheColors.surface,
-          borderRadius: BorderRadius.circular(CheRadius.lg),
-          border: Border.all(
-            color: reg.isEnabled(p.id)
-                ? p.color.withValues(alpha: 0.5)
-                : CheColors.stroke,
-          ),
-        ),
+        radius: CheRadius.lg,
+        edge: reg.isEnabled(p.id) ? p.color.withValues(alpha: 0.5) : null,
         child: Row(children: [
           GestureDetector(
             onTap: () => _openPlugin(p),

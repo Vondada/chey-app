@@ -18,6 +18,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'che_agent_chat.dart' show CheAgentController;
+import 'che_hud.dart';
 import 'che_models.dart';
 import 'che_transitions.dart';
 import 'che_theme.dart';
@@ -178,6 +179,9 @@ class CheConversationStore {
 // Insights → "Conversation Log" card (drop into the EXISTING Insights screen)
 // ─────────────────────────────────────────────────────────────────────────
 
+// Search-field edge: ice in the HUD look, the palette stroke otherwise.
+Color get _searchEdge => cheHudActive ? CheHud.ice.withValues(alpha: 0.28) : CheColors.stroke;
+
 class CheConversationLogCard extends StatelessWidget {
   const CheConversationLogCard({super.key, required this.controller});
   final CheAgentController controller;
@@ -190,29 +194,30 @@ class CheConversationLogCard extends StatelessWidget {
         final convs = controller.conversations.where((c) => c.messages.isNotEmpty).toList();
         final total = convs.fold<int>(0, (n, c) => n + c.messages.length);
         final recent = convs.take(3).toList();
-        return GlowCard(
-          radius: CheRadius.lg,
-          padding: const EdgeInsets.all(CheSpace.lg),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Row(children: [
-              Icon(Icons.forum_outlined, color: CheColors.accent, size: 20),
-              const SizedBox(width: 8),
-              Expanded(child: Text('Conversation Log', style: CheType.headline)),
-              TextButton(
-                onPressed: () => Navigator.of(context)
-                    .push(CheRoute(builder: (_) => CheConversationLogScreen(controller: controller))),
-                child: Text('See all', style: CheType.label.copyWith(color: CheColors.accent)),
-              ),
-            ]),
-            Text('${convs.length} conversations · $total messages · saved word for word',
-                style: CheType.caption),
-            const SizedBox(height: CheSpace.md),
-            if (recent.isEmpty)
-              Text('Nothing yet — talk to CHE and it shows up here.', style: CheType.bodyDim)
-            else
-              for (final c in recent) _LogRow(conversation: c),
+        final content = Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Icon(Icons.forum_outlined, color: CheColors.accent, size: 20),
+            const SizedBox(width: 8),
+            Expanded(child: Text('Conversation Log', style: CheType.headline)),
+            TextButton(
+              onPressed: () => Navigator.of(context)
+                  .push(CheRoute(builder: (_) => CheConversationLogScreen(controller: controller))),
+              child: Text('See all', style: CheType.label.copyWith(color: CheColors.accent)),
+            ),
           ]),
-        );
+          Text('${convs.length} conversations · $total messages · saved word for word',
+              style: CheType.caption),
+          const SizedBox(height: CheSpace.md),
+          if (recent.isEmpty)
+            Text('Nothing yet — talk to CHE and it shows up here.', style: CheType.bodyDim)
+          else
+            for (final c in recent) _LogRow(conversation: c),
+        ]);
+        // HUD look: a still glass pane; other palettes keep GlowCard.
+        if (cheHudActive) {
+          return CheGlass(radius: CheRadius.lg, padding: const EdgeInsets.all(CheSpace.lg), shadow: false, child: content);
+        }
+        return GlowCard(radius: CheRadius.lg, padding: const EdgeInsets.all(CheSpace.lg), child: content);
       },
     );
   }
@@ -302,13 +307,13 @@ class _CheConversationLogScreenState extends State<CheConversationLogScreen> {
                   hintText: 'Search everything you and CHE said',
                   hintStyle: CheType.bodyDim,
                   filled: true,
-                  fillColor: CheColors.surface,
+                  fillColor: cheHudActive ? CheHud.ice.withValues(alpha: 0.06) : CheColors.surface,
                   border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(CheRadius.md),
-                      borderSide: BorderSide(color: CheColors.stroke)),
+                      borderSide: BorderSide(color: _searchEdge)),
                   enabledBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(CheRadius.md),
-                      borderSide: BorderSide(color: CheColors.stroke)),
+                      borderSide: BorderSide(color: _searchEdge)),
                 ),
               ),
             ),
@@ -385,14 +390,14 @@ class _CheTranscriptScreenState extends State<CheTranscriptScreen> {
                   hintText: 'Search this conversation',
                   hintStyle: CheType.bodyDim,
                   filled: true,
-                  fillColor: CheColors.surface,
+                  fillColor: cheHudActive ? CheHud.ice.withValues(alpha: 0.06) : CheColors.surface,
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(CheRadius.md),
-                    borderSide: BorderSide(color: CheColors.stroke),
+                    borderSide: BorderSide(color: _searchEdge),
                   ),
                   enabledBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(CheRadius.md),
-                    borderSide: BorderSide(color: CheColors.stroke),
+                    borderSide: BorderSide(color: _searchEdge),
                   ),
                 ),
               ),

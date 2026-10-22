@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
+import '../che_ui/che_hud.dart';
 import '../che_ui/che_theme.dart';
 
 class CheCloudLogsScreen extends StatefulWidget {
@@ -66,6 +67,7 @@ class _CheCloudLogsScreenState extends State<CheCloudLogsScreen> {
         builder: (_) => Theme(
           data: CheTheme.dark(),
           child: Scaffold(
+            backgroundColor: CheColors.screen,
             appBar: AppBar(
               title: Text('${j['title'] ?? 'Conversation'}', maxLines: 1, overflow: TextOverflow.ellipsis),
               actions: [
@@ -90,6 +92,18 @@ class _CheCloudLogsScreenState extends State<CheCloudLogsScreen> {
     }
   }
 
+  // HUD look: each log is a glass pane over the backdrop; other palettes keep the solid card.
+  Widget _logCard(Widget tile) => cheHudActive
+      ? Padding(
+          padding: const EdgeInsets.all(4),
+          child: CheGlass(
+            radius: CheRadius.md,
+            shadow: false,
+            child: Material(type: MaterialType.transparency, child: tile),
+          ),
+        )
+      : Card(color: CheColors.surfaceHi, child: tile);
+
   @override
   Widget build(BuildContext context) {
     final q = _q.toLowerCase();
@@ -100,7 +114,12 @@ class _CheCloudLogsScreenState extends State<CheCloudLogsScreen> {
       data: CheTheme.dark(),
       child: Scaffold(
         backgroundColor: CheColors.screen,
-        appBar: AppBar(title: const Text('Cloud conversation logs')),
+        appBar: AppBar(
+          title: cheHudActive
+              ? CheChromeText('Cloud conversation logs',
+                  style: CheType.title.copyWith(fontSize: 20, fontWeight: FontWeight.w800), maxLines: 1)
+              : const Text('Cloud conversation logs'),
+        ),
         body: SafeArea(
           child: RefreshIndicator(
             onRefresh: _load,
@@ -116,16 +135,13 @@ class _CheCloudLogsScreenState extends State<CheCloudLogsScreen> {
                 if (_error != null) Text(_error!, style: CheType.bodyDim),
                 if (!_loading && _error == null && shown.isEmpty) Text('No cloud logs yet.', style: CheType.bodyDim),
                 for (final l in shown)
-                  Card(
-                    color: CheColors.surfaceHi,
-                    child: ListTile(
-                      onTap: () => _open(l),
-                      title: Text('${l['title'] ?? 'Conversation'}', maxLines: 1, overflow: TextOverflow.ellipsis),
-                      subtitle: Text('${l['turns'] ?? 0} turns • ${l['updated_at'] ?? ''}\n${l['preview'] ?? ''}',
-                          maxLines: 3, overflow: TextOverflow.ellipsis, style: CheType.caption),
-                      isThreeLine: true,
-                    ),
-                  ),
+                  _logCard(ListTile(
+                    onTap: () => _open(l),
+                    title: Text('${l['title'] ?? 'Conversation'}', maxLines: 1, overflow: TextOverflow.ellipsis),
+                    subtitle: Text('${l['turns'] ?? 0} turns • ${l['updated_at'] ?? ''}\n${l['preview'] ?? ''}',
+                        maxLines: 3, overflow: TextOverflow.ellipsis, style: CheType.caption),
+                    isThreeLine: true,
+                  )),
               ],
             ),
           ),

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../che_ui/che_agents.dart';
+import '../che_ui/che_hud.dart';
 import '../che_ui/che_theme.dart';
 import '../che_ui/che_widgets.dart';
 
@@ -39,45 +40,51 @@ class CheMoreTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final bottom = MediaQuery.viewPaddingOf(context).bottom;
-    return ListView(
-      padding: EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.sm, CheSpace.gutter, CheSpace.xxl + bottom),
+    final hud = cheHudActive;
+    final profile = Row(
       children: [
-        Text('Settings', style: CheType.title),
-        const SizedBox(height: 4),
-        Text('Your CHE profile and controls.', style: CheType.bodyDim),
-        const SizedBox(height: CheSpace.lg),
-        GlowCard(
-          radius: CheRadius.lg,
-          child: Row(
+        CheMiniPerson(agent: che, size: 64),
+        const SizedBox(width: CheSpace.md),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              CheMiniPerson(agent: che, size: 64),
-              const SizedBox(width: CheSpace.md),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(che.name, style: CheType.headline),
-                    Text(che.role, style: CheType.caption),
-                    const SizedBox(height: 4),
-                    Text(
-                      che.task?.isNotEmpty == true ? che.task! : 'Ready when you are, sir.',
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: CheType.bodyDim,
-                    ),
-                  ],
-                ),
+              Text(che.name, style: CheType.headline),
+              Text(che.role, style: CheType.caption),
+              const SizedBox(height: 4),
+              Text(
+                che.task?.isNotEmpty == true ? che.task! : 'Ready when you are, sir.',
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: CheType.bodyDim,
               ),
-              if (onTalkToChe != null)
-                CheIconButton(
-                  icon: Icons.chat_bubble_rounded,
-                  glow: true,
-                  onTap: onTalkToChe!,
-                  tooltip: 'Talk to CHE',
-                ),
             ],
           ),
         ),
+        if (onTalkToChe != null)
+          CheIconButton(
+            icon: Icons.chat_bubble_rounded,
+            glow: true,
+            onTap: onTalkToChe!,
+            tooltip: 'Talk to CHE',
+          ),
+      ],
+    );
+    return ListView(
+      padding: EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.sm, CheSpace.gutter, CheSpace.xxl + bottom),
+      children: [
+        // HUD look: a chrome title and glass panes; other palettes keep the earlier cards.
+        if (hud)
+          CheChromeText('Settings', style: CheType.title.copyWith(fontWeight: FontWeight.w800))
+        else
+          Text('Settings', style: CheType.title),
+        const SizedBox(height: 4),
+        Text('Your CHE profile and controls.', style: CheType.bodyDim),
+        const SizedBox(height: CheSpace.lg),
+        if (hud)
+          CheGlass(radius: CheRadius.lg, padding: const EdgeInsets.all(CheSpace.md), glow: CheHud.ice, child: profile)
+        else
+          GlowCard(radius: CheRadius.lg, child: profile),
         const SizedBox(height: CheSpace.lg),
         for (final item in items) ...[
           _MoreRow(item: item),
@@ -95,6 +102,33 @@ class _MoreRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final hue = item.hue ?? CheColors.accent;
+    final hud = cheHudActive;
+    final row = Row(
+      children: [
+        Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            color: hue.withValues(alpha: 0.14),
+            borderRadius: BorderRadius.circular(CheRadius.sm),
+            border: Border.all(color: hue.withValues(alpha: 0.45)),
+          ),
+          child: Icon(item.icon, color: hue, size: 20),
+        ),
+        const SizedBox(width: CheSpace.md),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(item.title, style: CheType.headline),
+              Text(item.subtitle, style: CheType.caption),
+            ],
+          ),
+        ),
+        Icon(Icons.chevron_right_rounded, color: hud ? CheHud.ice.withValues(alpha: 0.7) : CheColors.textFaint),
+      ],
+    );
+    const pad = EdgeInsets.symmetric(horizontal: 14, vertical: 14);
     return Semantics(
       button: true,
       label: '${item.title}. ${item.subtitle}',
@@ -104,39 +138,17 @@ class _MoreRow extends StatelessWidget {
           HapticFeedback.selectionClick();
           item.onTap();
         },
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-          decoration: BoxDecoration(
-            color: CheColors.surface,
-            borderRadius: BorderRadius.circular(CheRadius.lg),
-            border: Border.all(color: CheColors.stroke),
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 40,
-                height: 40,
+        child: hud
+            ? CheGlass(radius: CheRadius.lg, padding: pad, shadow: false, child: row)
+            : Container(
+                padding: pad,
                 decoration: BoxDecoration(
-                  color: hue.withValues(alpha: 0.14),
-                  borderRadius: BorderRadius.circular(CheRadius.sm),
-                  border: Border.all(color: hue.withValues(alpha: 0.45)),
+                  color: CheColors.surface,
+                  borderRadius: BorderRadius.circular(CheRadius.lg),
+                  border: Border.all(color: CheColors.stroke),
                 ),
-                child: Icon(item.icon, color: hue, size: 20),
+                child: row,
               ),
-              const SizedBox(width: CheSpace.md),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(item.title, style: CheType.headline),
-                    Text(item.subtitle, style: CheType.caption),
-                  ],
-                ),
-              ),
-              Icon(Icons.chevron_right_rounded, color: CheColors.textFaint),
-            ],
-          ),
-        ),
       ),
     );
   }
