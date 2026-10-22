@@ -202,7 +202,7 @@ class _CheWorkflowBuilderScreenState extends State<CheWorkflowBuilderScreen> {
       appBar: AppBar(
         backgroundColor: CheColors.screen,
         leading: const BackButton(),
-        title: Text(_id.isEmpty ? 'Build workflow' : 'Edit workflow', style: CheType.headline),
+        title: cheRoomTitle(_id.isEmpty ? 'Build workflow' : 'Edit workflow', CheType.headline),
         actions: [
           IconButton(
             tooltip: 'Read this workflow aloud',
@@ -365,12 +365,9 @@ class _StepCardState extends State<_StepCard> {
     final c = widget.command;
     final n = widget.index + 1;
     final status = c?.status ?? CheCommandStatus.unknown;
-    return Material(
-      color: CheColors.surface,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(CheRadius.md),
-        side: BorderSide(color: c?.approvalRequired == true ? CheColors.warning.withValues(alpha: 0.6) : CheColors.stroke),
-      ),
+    return cheMaterialCard(
+      edge: c?.approvalRequired == true ? CheColors.warning.withValues(alpha: 0.6) : CheColors.stroke,
+      glow: c?.approvalRequired == true ? CheColors.warning : null,
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Column(

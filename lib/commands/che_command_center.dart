@@ -9,6 +9,7 @@ import 'package:flutter/cupertino.dart' show CupertinoAlertDialog, CupertinoDial
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../che_ui/che_hud.dart';
 import '../che_ui/che_screen_awareness.dart';
 import '../che_ui/che_theme.dart';
 import 'che_command_client.dart';
@@ -942,7 +943,7 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
           icon: const Icon(Icons.arrow_back_ios_new_rounded),
           onPressed: () => Navigator.of(context).maybePop(),
         ),
-        title: Text('Commands', style: CheType.title.copyWith(fontSize: 22, fontWeight: FontWeight.w800)),
+        title: cheRoomTitle('Commands', CheType.title.copyWith(fontSize: 22, fontWeight: FontWeight.w800)),
         actions: [
           if (widget.onListen != null)
             IconButton(
@@ -1004,7 +1005,10 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
                   child: Container(
                     padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 6),
                     decoration: BoxDecoration(
-                      color: _tab == i ? CheColors.accent.withValues(alpha: 0.18) : CheColors.surface,
+                      // HUD glass: a clear tab lit ice-blue when selected, instead of a solid chip.
+                      color: _tab == i
+                          ? CheColors.accent.withValues(alpha: 0.18)
+                          : (cheHudActive ? CheColors.accent.withValues(alpha: 0.05) : CheColors.surface),
                       borderRadius: BorderRadius.circular(CheRadius.pill),
                       border: Border.all(color: _tab == i ? CheColors.accent : CheColors.stroke),
                     ),
@@ -1189,12 +1193,16 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
 
   Widget _categoryChip(String id, String title, int count) {
     final selected = _category == id;
-    return Padding(
-      padding: const EdgeInsets.only(right: 8),
-      child: ChoiceChip(
+    final chip = ChoiceChip(
         label: Text('$title $count'),
         selected: selected,
         tooltip: '$title, $count commands',
+        // HUD glass: a clear chip with an ice edge instead of a solid dark one. Other palettes keep the theme's chip.
+        color: cheHudActive
+            ? WidgetStateProperty.resolveWith(
+                (states) => states.contains(WidgetState.selected) ? CheColors.accent : CheHud.ice.withValues(alpha: 0.06))
+            : null,
+        side: cheHudActive && !selected ? BorderSide(color: CheHud.ice.withValues(alpha: 0.35)) : null,
         onSelected: (_) {
           HapticFeedback.selectionClick();
           setState(() {
@@ -1205,7 +1213,12 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
           });
           _toTop();
         },
-      ),
+      );
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      // The chip sits on a Material of the theme's canvas colour; under HUD glass that canvas is made clear so the
+      // chip is see-through like the other glass.
+      child: cheHudActive ? Theme(data: Theme.of(context).copyWith(canvasColor: Colors.transparent), child: chip) : chip,
     );
   }
 
@@ -1248,14 +1261,9 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
 
   Widget _workflowCard(CheSavedWorkflow w, {required bool saved}) {
     final chain = w.steps.map((s) => '/${s.command}').join(' → ');
-    return Container(
+    return CheRoomPanel(
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: CheColors.surface,
-        borderRadius: BorderRadius.circular(CheRadius.md),
-        border: Border.all(color: CheColors.stroke),
-      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1327,14 +1335,10 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
           Semantics(
             label: '/${r.command}${r.input.isEmpty ? '' : ' ${r.input}'}: ${cheStepStatusLabel(r.status)}. ${r.reply}',
             excludeSemantics: true,
-            child: Container(
+            child: CheRoomPanel(
               margin: const EdgeInsets.only(bottom: 8),
               padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: CheColors.surface,
-                borderRadius: BorderRadius.circular(CheRadius.sm),
-                border: Border.all(color: CheColors.stroke),
-              ),
+              radius: CheRadius.sm,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
