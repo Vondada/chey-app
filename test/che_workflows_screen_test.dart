@@ -64,6 +64,9 @@ void main() {
   });
 
   testWidgets('Workflows page: a learned candidate is promoted only by the owner\'s tap, and a failure is reported as a failure', (tester) async {
+    tester.view.physicalSize = const Size(1200, 5000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
     var fail = true;
     final client = MockClient((req) async {
       if (req.method == 'POST') {
@@ -102,5 +105,45 @@ void main() {
     expect(posts, isEmpty);
     expect(find.textContaining('looks like a password, key or token'), findsOneWidget);
     expect(cheLooksSecret('plan my week'), isFalse);
+  });
+
+  testWidgets('Workflows page: only verified capabilities are listed as working, with where they run, knowledge used, and the internal-only switch', (tester) async {
+    tester.view.physicalSize = const Size(1200, 5000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    var internalOnly = false;
+    final posts = <String>[];
+    final client = MockClient((req) async {
+      if (req.url.path == '/api/capability-engine/policy') {
+        posts.add(req.body);
+        internalOnly = (jsonDecode(req.body) as Map)['set']['internal_only'] == true;
+        return _json({'policy': {'internal_only': internalOnly}}, 200);
+      }
+      if (req.url.path == '/api/capability-engine') {
+        return _json({
+          'policy': {'internal_only': internalOnly},
+          'capabilities': [
+            {'id': 'tool.csv', 'name': 'Convert CSV to JSON', 'status': 'AVAILABLE', 'execution': 'internal', 'serving_version': 1, 'runs': 3, 'successes': 3},
+            {'id': 'tool.ocean', 'name': 'Render ocean', 'status': 'REJECTED', 'execution': 'internal', 'serving_version': null, 'runs': 0, 'successes': 0},
+          ],
+          'knowledge': {'indexed': 12, 'procedure': 2, 'experience': 3},
+          'conflicts': 1, 'stale': 0,
+          'knowledge_used': {'what': 'acquire convert CSV to JSON', 'items': ['a']},
+          'external_dependencies': [],
+        }, 200);
+      }
+      return _json(_view(), 200);
+    });
+    await tester.pumpWidget(MaterialApp(home: CheWorkflowsScreen(client: CheWorkflowsClient(baseUrl: 'https://che.test', headers: () => {}, client: client))));
+    await tester.pumpAndSettle();
+    expect(find.text('Internal capabilities (1 verified)'), findsOneWidget);
+    expect(find.bySemanticsLabel(RegExp(r'^Convert CSV to JSON, AVAILABLE, inside CHE, version 1, 3 of 3 runs worked')), findsOneWidget);
+    expect(find.textContaining('Not working capabilities: Render ocean (rejected)'), findsOneWidget);
+    expect(find.textContaining('12 indexed, 2 procedures, 3 verified outcomes, 1 conflicts'), findsOneWidget);
+    expect(find.text('External dependencies: none.'), findsOneWidget);
+    await tester.tap(find.text('Internal-only mode'));
+    await tester.pumpAndSettle();
+    expect(posts.single, contains('"internal_only":true'));
+    expect(find.text('Internal-only mode is on.'), findsOneWidget);
   });
 }
