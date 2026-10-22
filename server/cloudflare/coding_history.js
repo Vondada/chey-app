@@ -188,5 +188,5 @@ export function otherAgentWorkAsk(message) {
 export function otherAgentWorkReply(agent, jobs = [], repo = '') {
   const named = /^(?:another|other|which|what)\b/.test(agent) ? 'another agent' : agent[0].toUpperCase() + agent.slice(1);
   const own = completedWorkProof(jobs, repo).text;
-  return `I can't see ${named}'s work in my own records, sir, so I can't say who wrote it, how far it got, or whether it finished. ${own}`;
+  return `I can't see ${named}'s work in my own records, sir, so I can't say who wrote it, how far it got, or whether it reached a verified result. ${own}`;
 }
