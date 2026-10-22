@@ -1918,6 +1918,12 @@ Fix plan (needs a NEW IPA; Shorebird cannot change Swift):
 
 Owner acceptance: speak a sentence hands-free; words appear while speaking; reply first audio measured against the stated target (<1.5 s, to be agreed).
 
+## 8g. DEVICE EVIDENCE: CHE Updates screen (owner screenshot, 2026-10-22 07:45 local)
+
+- Installed: CHE 1.4.1025342820, build 3956317271501, **patch 9**. Screen says "CHE is up to date."
+- Not yet confirmed: whether patch 9 is the Shorebird patch for `a05af09` (run 39697919339, succeeded 00:27Z), or whether it carries the 2026-10-18 turn lock. Shorebird patches apply on app relaunch, so a relaunch may still be pending.
+- Next check (owner): fully close and reopen CHE, then open CHE Updates; report the patch number. If it is still 9 after a relaunch, the a05af09 patch is not on the phone, and the voice-lock question in §8e stays open.
+
 ## 8c. SOUL CHECKPOINT 3 (Claude, 2026-10-22 00:05Z) — read first, supersedes 8b's "open" items
 
 - **Merged:** PR #423 → main `d29faab` (phone Soul controls). PR #424 (Worker provenance: `served_by`, `soul.soul_applied` true only for a model reply with the Soul in its system prompt; handler replies `soul_applied:false`, route `handler`; cache bypass marked) → main `8f4bc48`, tagged `[worker-deploy]`. Required checks were green on head `82e4af0` (analyze, Worker syntax and unit tests; `Workers Builds` ignored per owner rule). 2996/2996 Worker tests; `soul_chat.test.mjs` 11/11.
