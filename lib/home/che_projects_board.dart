@@ -566,11 +566,20 @@ class _BoardSummary extends StatelessWidget {
     return s.contains('block') || s.contains('fail') || s.contains('review') || s.contains('needs');
   }
 
+  /// Finished in the Worker's own words. "Invoiced" is still active; the pipeline's "lost" is closed, not moving.
+  static bool _finished(CheBoardItem i) {
+    final s = i.statusLabel.toLowerCase();
+    return const {'complete', 'completed', 'done', 'live', 'won', 'paid'}.contains(s) ||
+        RegExp(r'^(\d+)/(\d+) done$').allMatches(s).any((m) => m.group(1) == m.group(2));
+  }
+
+  static bool _closed(CheBoardItem i) => const {'lost', 'cancelled', 'canceled', 'archived'}.contains(i.statusLabel.toLowerCase());
+
   @override
   Widget build(BuildContext context) {
     final attention = items.where(_needsAttention).length;
-    final done = items.where((i) => !_needsAttention(i) && i.progress >= 0.99).length;
-    final moving = items.length - attention - done;
+    final done = items.where((i) => !_needsAttention(i) && _finished(i)).length;
+    final moving = items.where((i) => !_needsAttention(i) && !_finished(i) && !_closed(i)).length;
     final line = items.isEmpty
         ? 'Nothing yet. Ask CHE to start a project and it appears here.'
         : '$attention need attention · $moving in progress · $done finished';

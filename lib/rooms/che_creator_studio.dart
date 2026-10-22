@@ -211,7 +211,7 @@ class _CheCreatorStudioState extends State<CheCreatorStudio> {
         if (widget.jobs.isEmpty)
           Text('Nothing rendering. Long creations run as cloud jobs and keep going when your phone is locked.', style: CheType.bodyDim)
         else
-          for (final job in widget.jobs.take(6)) _JobRow(job: job, onTap: () => widget.onOpenJob(job)),
+          for (final job in widget.jobs) _JobRow(job: job, onTap: () => widget.onOpenJob(job)),
         const SizedBox(height: CheSpace.lg),
         Text('CREATE', style: section(_magenta)),
         const SizedBox(height: CheSpace.sm),
