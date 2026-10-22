@@ -118,6 +118,7 @@ import { intentFrame, understoodAs } from './intent_frame.js';
 import { replyHijacksOwnerRequest, usageIntent, usageReport, speakUsage } from './usage_tracker.js';
 import { newestStarredIntent, speakNewestStarred, autoImproveScan, analyticalRepositoryQuestion, chatOnlyResponseIntent, currentTurnActionPolicy, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, inspirationUpgradeContext, listOwnerStarredRepos, readRepoSource, referenceSourceBlock, codingHistoryIntent, hypotheticalChange, repositoryImplementationIntent, repositoryInspectionIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, starredStudyList, studySelectionIntent } from './code_scout.js';
 import { codingHistoryReceipt, completedWorkProof, otherAgentWorkAsk, otherAgentWorkReply, proofAsked } from './coding_history.js';
+import { inventionIntent, inventionReply, planInvention, refusalReply } from './invention_studio.js';
 import { activityReceipt, activityStatusIntent } from './activity_status.js';
 import { webAppPage } from './web_app.js';
 import { learnedSkillsContext, learnedSkillsIntent, learnSkillIntent, attachmentText, condenseSkills, loadLearnedSkills, READ_FOR_SKILLS, redactSensitive, saveLearnedSkills, speakLearned, speakSkillList } from './self_skills.js';
@@ -6910,6 +6911,16 @@ export class CheState extends DurableObject {
       }
       // Explicit status/finalization for an asynchronous render, with real
       // archived media IDs. This endpoint never uploads to YouTube.
+      // Invention projects, owner only: the list (newest first) and one project in full, for the Studio page.
+      if (path === '/api/inventions' && request.method === 'GET') {
+        const projects = (await this.ctx.storage.get('invention_projects')) || [];
+        return json({ items: projects.map((p) => ({ id: p.id, title: p.title, template: p.template, created_at: p.created_at, parts: p.parts.length, concept_media_id: p.concept?.media_id || null })) });
+      }
+      const inventionPath = path.match(/^\/api\/inventions\/([A-Za-z0-9-]{4,64})$/);
+      if (inventionPath && request.method === 'GET') {
+        const project = ((await this.ctx.storage.get('invention_projects')) || []).find((p) => p.id === inventionPath[1]);
+        return project ? json(project) : json({ detail: 'No invention project with that ID.' }, 404);
+      }
       if (path === '/api/media/video/finalize' && request.method === 'POST') {
         const result = await generateVideo(this.keyEnv || this.env, this.ctx.storage, {
           task_id: body.task_id, prompt: body.prompt || 'Video render',
@@ -9572,6 +9583,39 @@ export class CheState extends DurableObject {
         // deterministic planner for every project type (project_plan.js): no model call, every figure a
         // labeled estimate, one public background page when it can be read, saved to the Brain as a
         // proposal. Weapons and harm are refused or left out by its safety layer.
+        // Invention Studio (owner, 2026-10-22): a design is planned as a project, and follow-up questions reopen the latest
+        // one. Concept pictures come from the existing media engine; the parts, costs and feasibility do not need it.
+        const invention = body.attachment ? null : inventionIntent(message);
+        if (invention) {
+          if (!ownerDevice) return ndjsonReply('Only the CHE owner can open the Invention Studio, sir. Nothing was made.', { source: 'che_invention_studio', ok: false, model_calls: 0 });
+          if (invention.kind === 'refused') return ndjsonReply(refusalReply(), { source: 'che_invention_studio', ok: false, model_calls: 0 });
+          const projects = (await this.ctx.storage.get('invention_projects')) || [];
+          const lastId = await this.ctx.storage.get('invention_last');
+          // Only a design starts a project. A follow-up (cost, sourcing, assembly, reality, plan) needs a project to answer
+          // from; with none, the message is not about an invention and the ordinary routes keep it.
+          if (invention.kind !== 'design' && !projects.some((p) => p.id === lastId)) {
+            // falls through to the other routes
+          } else if (invention.kind === 'design') {
+            const project = planInvention(invention.subject, { id: `inv-${crypto.randomUUID().slice(0, 8)}` });
+            const canDraw = Boolean(this.env.AI) || paidMediaOn(this.env);
+            if (canDraw) {
+              const made = await generateImage(this.keyEnv || this.env, this.ctx.storage, {
+                prompt: `Concept design, front, side and back views, clean engineering-style sketch: ${project.request}`.slice(0, 1800),
+                title: `${project.title}`.slice(0, 80),
+              }).catch(() => ({ detail: 'The image engine did not answer.' }));
+              project.concept = made.item
+                ? { status: 'generated', media_id: made.item.id, reason: '' }
+                : { status: 'not_generated', media_id: null, reason: made.detail || 'The image engine did not answer.' };
+            }
+            await this.ctx.storage.put('invention_projects', [project, ...projects].slice(0, 20));
+            await this.ctx.storage.put('invention_last', project.id);
+            const media = project.concept.media_id ? { media_id: project.concept.media_id, media_type: 'image', media_url: `${new URL(request.url).origin}/api/media/${project.concept.media_id}/image` } : {};
+            return ndjsonReply(inventionReply(project, 'design'), { source: 'che_invention_studio', ok: true, model_calls: 0, invention_id: project.id, open_invention: true, ...media });
+          } else {
+            const project = projects.find((p) => p.id === lastId);
+            return ndjsonReply(inventionReply(project, invention.kind), { source: 'che_invention_studio', ok: true, model_calls: 0, invention_id: project.id, open_invention: true });
+          }
+        }
         const planAsk = body.attachment ? null : projectPlanIntent(message);
         if (planAsk) {
           if (!ownerDevice) return ownerOnly();

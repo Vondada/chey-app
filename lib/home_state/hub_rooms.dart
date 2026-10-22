@@ -509,6 +509,7 @@ extension _CheHomeHubRooms on _CHEHomeState {
       imageConnected: integrations['image_generation'] == true,
       videoConnected: integrations['video_generation'] == true,
       creations: CheCreationsStrip(baseUrl: cheAgentBaseUrl, headers: _authHeaders, active: active),
+      onInventions: () => unawaited(Navigator.of(context).push(CheInventionStudioPage.route(baseUrl: cheAgentBaseUrl, headers: _authHeaders))),
       onNewProject: () {
         unawaited(_createProjectDialog());
       },
