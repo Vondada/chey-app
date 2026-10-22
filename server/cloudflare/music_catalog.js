@@ -42,7 +42,8 @@ export function classifyAsset(asset, purpose, { byOwner = false } = {}) {
 /// The owner's catalog: songs he labelled as his (or collaborations he placed there). References,
 /// samples, loops and unknown files are separate libraries and never appear here.
 export function myCatalog(projects = []) {
-  return projects.filter((p) => p && p.type === 'music' && (CATALOG_PURPOSES.has(p.music?.purpose) || (p.music?.purpose === 'COLLABORATION' && p.music?.in_catalog === true && p.music?.purpose_by_owner)));
+  // A client's, managed artist's or collaborator's workspace song is never the owner's, whatever its label.
+  return projects.filter((p) => p && p.type === 'music' && !p.music?.workspace_id && (CATALOG_PURPOSES.has(p.music?.purpose) || (p.music?.purpose === 'COLLABORATION' && p.music?.in_catalog === true && p.music?.purpose_by_owner)));
 }
 
 export function library(projects = [], purpose) {
@@ -203,8 +204,9 @@ export function consistencyCheck(feats) {
 // ─── EP / album projects (ordinary projects) ──────────────────────────────
 
 /// A proposed EP or album from the owner's catalog only. Nothing is saved until the owner keeps it.
-export function proposeCollection(projects, { kind = 'EP', size = 5 } = {}) {
-  const catalog = myCatalog(projects);
+/// `pool` scopes it to one managed artist's or client's own songs (never mixed with the owner's).
+export function proposeCollection(projects, { kind = 'EP', size = 5, pool = null } = {}) {
+  const catalog = pool || myCatalog(projects);
   const set = cohesiveSet(catalog, size);
   if (!set.chosen.length) return { ok: false, why: set.why, missing_analysis: set.missing };
   const order = sequence(set.chosen);

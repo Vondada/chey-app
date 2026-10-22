@@ -1080,3 +1080,39 @@ test('music rights by voice: add a song and a sample in chat, saved and read bac
   assert.equal(read.project.music.samples[0].name, 'Rain loop');
   assert.equal(read.readiness.items.find((i) => i.id === 'samples').ok, false);
 });
+
+test('music business by voice: a quote is a draft, a managed artist gets a private workspace, money is never invented', async () => {
+  const che = await owner();
+  const quote = await che.say('CHE, quote Jay R $250 for a mix and master');
+  assert.equal(quote.route, 'che_music_business');
+  assert.equal(quote.modelCalls, 0);
+  assert.match(quote.reply, /Draft quote for Jay R: mix and master, \$250\.00.*Nothing is sent until you approve it/);
+  const view = await che.get('/api/music/business');
+  const jay = view.workspaces.find((w) => w.name === 'Jay R');
+  assert.equal(jay.kind, 'CLIENT');
+  const deal = ((await che.get('/api/pipeline')).deals || []).find((d) => d.music_workspace_id === jay.id);
+  assert.equal(deal.stage, 'proposal', 'the quote waits in the existing pipeline for the owner');
+  const artist = await che.say("I'm managing Erica now");
+  assert.match(artist.reply, /private workspace for Erica/);
+  const dash = await che.say('How is my music business?');
+  assert.match(dash.reply, /No payments are recorded this month/);
+  assert.equal(view.dashboard.revenue_usd, null);
+});
+
+test('music business by voice: services, songs, quote approval, client feedback and delivery status, all spoken back', async () => {
+  const che = await owner();
+  assert.match((await che.say('Set my mix price to $200 with 1 revision')).reply, /mix is set at \$200\.00 with 1 revision/);
+  await che.say('Add a client called Jay R');
+  const song = await che.say('Add a song called Night Drive for Jay R');
+  assert.equal(song.route, 'che_music_business');
+  assert.match(song.reply, /not tied to a quote yet/);
+  await che.say('Quote Jay R $200 for a mix');
+  const approved = await che.say('Approve the quote for Jay R');
+  assert.match(approved.reply, /Approved the quote for Jay R: mix, \$200\.00\. It is yours to send\. Nothing was sent/);
+  const feedback = await che.say('Jay R wants changes on Night Drive: vocal louder');
+  assert.match(feedback.reply, /no version on record yet/);
+  const delivery = await che.say('Is Night Drive ready to deliver?');
+  assert.equal(delivery.route, 'che_music_business');
+  assert.match(delivery.reply, /Waiting for payment|not tied to one quote/);
+  assert.notEqual((await che.say('The bank approved my loan')).route, 'che_music_business', 'unknown names are not business actions');
+});
