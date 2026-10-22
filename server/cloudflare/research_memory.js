@@ -331,8 +331,22 @@ export function addOwnerMemory(data, text, opts = {}) {
   data.memory_records.push(record);
   // Keep detailed history bounded independently from the active short-memory
   // list. Superseded records stay available as provenance/history.
-  data.memory_records = data.memory_records.slice(-Math.max(MAX_MEMORIES * 4, 400));
+  data.memory_records = boundMemoryRecords(data.memory_records, Math.max(MAX_MEMORIES * 4, 400));
   return { added: true, memory, replaced, record };
+}
+
+/**
+ * Bounds the stored history without losing the owner's own statements. Owner-attested records are never dropped to
+ * make room (a fact he told CHE stays recallable, active or superseded); the cap trims the oldest records that the owner
+ * did not attest (CHE's notes, research, GitHub stars). Order is kept.
+ */
+export function boundMemoryRecords(records = [], cap = 400) {
+  if (!Array.isArray(records) || records.length <= cap) return records;
+  const owner = records.filter((r) => r?.verification_status === 'owner_attested');
+  const others = records.filter((r) => r && r.verification_status !== 'owner_attested');
+  const room = Math.max(0, cap - owner.length);
+  const kept = new Set([...owner, ...(room > 0 ? others.slice(-room) : [])]);
+  return records.filter((r) => kept.has(r));
 }
 
 export function listMemoryNotes(data, { limit } = {}) {

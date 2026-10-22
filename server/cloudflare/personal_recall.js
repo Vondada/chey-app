@@ -15,7 +15,8 @@ import { ownerAttestedRecords } from './memory_provenance.js';
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const STOP = new Set(['the', 'a', 'an', 'my', 'your', 'of', 'to', 'in', 'is', 'are', 'and', 'or', 'it', 'that', 'this', 'me', 'you', 'i', 'do', 'did', 'know', 'what', 'which', 'whats', 'where']);
 const PERSONAL = /^(?:what(?:'s| is| are)?|which(?: one is)?|do you (?:know|remember)|tell me|remind me|what do you know about)\s+(?:is |are |was |about )?(?:my|the owner'?s?|your owner'?s?)\s+(.{2,60})$/i;
-const LEARN = /\b(?:where|how) did you (?:learn|get|hear)\b/i;
+// Asks where a fact came from, or whether CHE really has it stored: "how do you know that", "whether you have a memory of me saying it".
+const LEARN = /\b(?:where|how) (?:did|do) you (?:learn|get|hear|know)\b|\bhow you know\b|\bwhether you (?:actually )?(?:have|remember)\b/i;
 // Trading, market, system and measurement words belong to their own routes: "what is my MAE" is not a personal fact.
 const NOT_PERSONAL = /\b(?:trad(?:e|es|ing)|paper|performance|volume|probability|mae|mfe|win|loss|streak|session|hour|price|market|portfolio|orders?|balance|chart|strateg(?:y|ies)|positions?|accounts?|rate|expectancy|drawdown|pnl|profit|eth|btc|nq|mnq|es)\b/i;
 
@@ -28,8 +29,11 @@ const NOT_A_FACT = /\?|\b(?:if|suppose|pretend|imagine|hypothetical|maybe|might|
 // "my favorite food is pizza", "my Worker URL is https://…": the owner's subject and value.
 const FACT = /^my\s+(.{2,60}?)\s+(?:is|are)\s+(.{1,300}?)\.?$/i;
 
+// British and American spellings are one subject: "favourite food" is the stored "favorite food".
+const SPELLING = { favourite: 'favorite', favourites: 'favorites' };
+
 function words(text) {
-  return String(text || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/).filter((w) => w && !STOP.has(w));
+  return String(text || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/).filter((w) => w && !STOP.has(w)).map((w) => SPELLING[w] || w);
 }
 
 /** The text with any leading wake prefix ("CHE, ", "Chay ") removed, whitespace collapsed. */
@@ -60,10 +64,13 @@ export function ownerAssertion(text) {
 
 /** The subject of a personal question, or null when the words are not asking for a personal fact. */
 export function personalFactQuestion(message) {
-  const text = stripWake(message).replace(/[?.!]+$/, '');
+  const text = stripWake(message);
   if (!text || /\b(?:story|fiction|pretend|imagine|hypothetical|poem|joke)\b/i.test(text)) return null;
   const learn = LEARN.test(text);
-  const [head] = text.split(/,|\band\b|\bwhere\b/i);
+  // The asked sentence ends at its first question mark or full stop. What follows ("Tell me how you know that…") is an
+  // instruction about the answer, never part of the subject.
+  const [asked] = text.split(/[?!.]/);
+  const [head] = asked.split(/,|\band\b|\bwhere\b/i);
   const match = PERSONAL.exec(head.trim());
   if (!match) return null;
   const subject = match[1].replace(/\b(?:and|please)\b.*$/i, '').trim();
