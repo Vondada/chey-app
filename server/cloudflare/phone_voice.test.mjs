@@ -57,13 +57,12 @@ test.beforeEach(() => { resetPreferredElevenLabsPause(); resetFishAudioState(); 
 test.afterEach(() => { globalThis.fetch = realFetch; });
 const noWait = { sleep: async () => {} };
 
-test('the first clip may use the backup voice when the chosen one fails before playback, and says so', async () => {
+test('strict ElevenLabs-only: a failing ElevenLabs first clip is silent and Fish is never called (owner, 2026-10-22)', async () => {
   const calls = fakeProviders({ eleven: () => 500 });
   const audio = await premiumVoiceSpeech(env(), 'Hello there.', { storage: memoryStorage(), ...noWait });
-  assert.equal(audio.headers.get('X-CHE-Voice'), 'fish-audio');
-  assert.equal(audio.headers.get('X-CHE-Voice-Fallback'), '1');
-  assert.match(audio.headers.get('X-CHE-Voice-Tag'), /^fish:[0-9a-f]{8}$/);
-  assert.equal(calls.eleven.length, 1);
+  assert.equal(audio, null);
+  assert.equal(calls.eleven.length, 1, 'an unlocked first clip makes one call; the retry is for locked clips');
+  assert.equal(calls.fish.length, 0, 'Fish is never a backup for conversation');
 });
 
 test('a clip locked to ElevenLabs retries a passing failure once and never uses Fish', async () => {
@@ -86,10 +85,10 @@ test('a locked ElevenLabs clip that times out stays silent: no second paid call,
 
 test('a locked clip skipped by a short server rest gets its one real call; a rate-limit rest is never skipped', async () => {
   let calls = fakeProviders({ eleven: (n) => (n === 1 ? 503 : 200) });
-  assert.equal(await premiumVoiceSpeech(env(), 'Opening.', { storage: memoryStorage(), ...noWait }).then((a) => a.headers.get('X-CHE-Voice')), 'fish-audio');
   const next = await premiumVoiceSpeech(env(), 'Next part.', { lock: 'elevenlabs', storage: memoryStorage(), ...noWait });
   assert.equal(next.headers.get('X-CHE-Voice'), 'elevenlabs-mary', 'the server rest made no call, so the retry is the clip\'s only call');
   assert.equal(calls.eleven.length, 2);
+  assert.equal(calls.fish.length, 0);
   resetPreferredElevenLabsPause();
   calls = fakeProviders({ eleven: () => 429 });
   assert.equal(await premiumVoiceSpeech(env(), 'Locked.', { lock: 'elevenlabs', storage: memoryStorage(), ...noWait }), null);
@@ -104,7 +103,7 @@ test('a locked Fish clip that times out is not asked for again', async () => {
     if (String(url).includes('fish.audio')) { calls.fish.push(String(url)); const e = new Error('timed out'); e.name = 'TimeoutError'; throw e; }
     throw new Error(`unexpected fetch ${url}`);
   };
-  assert.equal(await premiumVoiceSpeech(env(), 'Fish part.', { lock: 'fish', selectedProvider: 'fish', storage: memoryStorage(), ...noWait }), null);
+  assert.equal(await premiumVoiceSpeech(env(), 'Fish part.', { purpose: 'story', lock: 'fish', selectedProvider: 'fish', storage: memoryStorage(), ...noWait }), null);
   assert.equal(calls.fish.length, 1);
 });
 
@@ -117,7 +116,7 @@ test('a refused key is not retried: only passing failures earn the one retry', a
 
 test('a clip locked to Fish never falls back to ElevenLabs (Mary)', async () => {
   const calls = fakeProviders({ fish: () => 500 });
-  const audio = await premiumVoiceSpeech(env(), 'Fish part.', { lock: 'fish', selectedProvider: 'fish', storage: memoryStorage(), ...noWait });
+  const audio = await premiumVoiceSpeech(env(), 'Fish part.', { purpose: 'story', lock: 'fish', selectedProvider: 'fish', storage: memoryStorage(), ...noWait });
   assert.equal(audio, null);
   assert.equal(calls.eleven.length, 0, 'Mary never spoke inside a Fish reply');
   assert.equal(calls.fish.length, 2);
@@ -274,4 +273,50 @@ test('a connection lost while the audio downloads is not retried: the clip was a
   };
   assert.equal(await premiumVoiceSpeech(env(), 'Lost part.', { lock: 'elevenlabs', storage: memoryStorage(), ...noWait }), null);
   assert.equal(calls.eleven, 1);
+});
+
+// Strict ElevenLabs-only assistant speech (owner, 2026-10-22). Fish receives ZERO calls for conversation and Read This,
+// including after failures and with a saved Fish preference; authorized narration keeps its Fish voice.
+test('strict: a saved Fish preference never reaches Fish for conversation', async () => {
+  const calls = fakeProviders({ eleven: () => 200 });
+  const audio = await premiumVoiceSpeech(env(), 'Saved Fish preference.', { purpose: 'conversation', selectedProvider: 'fish', storage: memoryStorage(), ...noWait });
+  assert.equal(audio.headers.get('X-CHE-Voice'), 'elevenlabs-mary');
+  assert.equal(calls.fish.length, 0);
+});
+
+test('strict: every ElevenLabs failure kind stays silent and Fish is never called', async () => {
+  for (const code of [401, 402, 429, 500, 503]) {
+    resetPreferredElevenLabsPause();
+    const calls = fakeProviders({ eleven: () => code });
+    const audio = await premiumVoiceSpeech(env(), 'Failure part.', { purpose: 'read', selectedProvider: 'fish', storage: memoryStorage(), ...noWait });
+    assert.equal(audio, null, `status ${code}`);
+    assert.equal(calls.fish.length, 0, `status ${code}: Fish stays silent too`);
+  }
+  resetPreferredElevenLabsPause();
+  const timed = fakeProviders({ eleven: () => 'timeout' });
+  assert.equal(await premiumVoiceSpeech(env(), 'Slow part.', { purpose: 'conversation', storage: memoryStorage(), ...noWait }), null);
+  assert.equal(timed.fish.length, 0, 'a timeout does not switch to Fish');
+});
+
+test('strict: a Fish lock on conversation makes no Fish call at all', async () => {
+  const calls = fakeProviders({ fish: () => 200 });
+  assert.equal(await premiumVoiceSpeech(env(), 'Locked Fish.', { lock: 'fish', selectedProvider: 'fish', storage: memoryStorage(), ...noWait }), null);
+  assert.equal(calls.fish.length, 0);
+  assert.equal(calls.eleven.length, 0);
+});
+
+test('strict: every ElevenLabs clip of one reply has the same model, format and voice tag', async () => {
+  const urls = [];
+  const calls = fakeProviders({ eleven: () => 200 });
+  const realFake = globalThis.fetch;
+  globalThis.fetch = async (url, init) => { urls.push(String(url)); return realFake(url, init); };
+  const saved = memoryStorage();
+  const tags = [];
+  for (const part of ['One.', 'Two.', 'Three.']) {
+    const audio = await premiumVoiceSpeech(env(), part, { purpose: 'conversation', lock: 'elevenlabs', storage: saved, ...noWait });
+    tags.push(audio.headers.get('X-CHE-Voice-Tag'));
+  }
+  assert.equal(new Set(tags).size, 1, 'one voice tag for the whole reply');
+  assert.ok(urls.length >= 3 && urls.every((u) => u.includes('output_format=mp3_44100_128')), 'fixed output format on every clip');
+  assert.equal(calls.fish.length, 0);
 });
