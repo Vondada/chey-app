@@ -29,6 +29,17 @@ def run(cmd):
     return p.stdout
 
 
+def filter_graph_args(graph, workdir):
+    """The filter graph as ffmpeg arguments. Inline when it fits one argument (every ffmpeg version); a larger graph goes
+    in a file: `-/filter_complex` on ffmpeg 7+, `-filter_complex_script` (removed in ffmpeg 8) on older builds."""
+    if len(graph.encode()) < 100_000:
+        return ['-filter_complex', graph]
+    script = Path(workdir) / 'graph.txt'
+    script.write_text(graph)
+    help_text = subprocess.run(['ffmpeg', '-hide_banner', '-h', 'long'], capture_output=True, text=True).stdout
+    return ['-filter_complex_script', str(script)] if 'filter_complex_script' in help_text else ['-/filter_complex', str(script)]
+
+
 def probe(path):
     out = run(['ffprobe', '-v', 'error', '-show_streams', '-show_format', '-of', 'json', str(path)])
     return json.loads(out)
@@ -298,10 +309,9 @@ def render_video(spec, sources, out, workdir):
         graph.append(f'{mixed[0]}atrim=duration={total:.3f}[aout]')
     graph.append(f'{cur_v}trim=duration={total:.3f},setpts=PTS-STARTPTS[vout]')
     video = Path(out) / 'video.mp4'
-    script = Path(workdir) / 'graph.txt'
-    script.write_text(';\n'.join(graph))
-    run(['ffmpeg', '-y', '-hide_banner', '-loglevel', 'error', *args, '-filter_complex_script', str(script), '-map', '[vout]', '-map', '[aout]',
-         '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p', '-r', str(fps), '-c:a', 'aac', '-b:a', '160k', '-movflags', '+faststart', '-t', f'{total:.3f}', str(video)])
+    encode = ['-map', '[vout]', '-map', '[aout]', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p', '-r', str(fps),
+              '-c:a', 'aac', '-b:a', '160k', '-movflags', '+faststart', '-t', f'{total:.3f}', str(video)]
+    run(['ffmpeg', '-y', '-hide_banner', '-loglevel', 'error', *args, *filter_graph_args(';\n'.join(graph), workdir), *encode])
     facts = verify_video(video, W, H, total)
     thumb = Path(out) / 'thumbnail.png'
     run(['ffmpeg', '-y', '-hide_banner', '-loglevel', 'error', '-ss', f'{min(1.0, total / 2):.2f}', '-i', str(video), '-frames:v', '1', str(thumb)])

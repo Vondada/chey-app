@@ -80,11 +80,17 @@ jobs:
       - name: Install ffmpeg (man-db trigger off; it stalls apt on hosted runners)
         timeout-minutes: 10
         run: |
-          if ! command -v ffmpeg >/dev/null; then
-            echo 'set man-db/auto-update false' | sudo debconf-communicate >/dev/null || true
-            sudo rm -f /var/lib/man-db/auto-update
-            sudo apt-get update
-            sudo apt-get install -y --no-install-recommends ffmpeg
+          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
+            # A static build from GitHub releases (one ~100 MB download); apt mirrors have taken over 10 minutes.
+            url=https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz
+            if curl -fsSL --retry 3 --max-time 240 "$url" -o /tmp/ffmpeg.tar.xz && tar -xJf /tmp/ffmpeg.tar.xz -C /tmp; then
+              sudo install -m 755 /tmp/ffmpeg-master-latest-linux64-gpl/bin/ffmpeg /tmp/ffmpeg-master-latest-linux64-gpl/bin/ffprobe /usr/local/bin/
+            else
+              echo 'set man-db/auto-update false' | sudo debconf-communicate >/dev/null || true
+              sudo rm -f /var/lib/man-db/auto-update
+              sudo apt-get update
+              sudo apt-get install -y --no-install-recommends ffmpeg
+            fi
           fi
           ffmpeg -hide_banner -version | head -1
           python3 -m pip install --quiet pillow
