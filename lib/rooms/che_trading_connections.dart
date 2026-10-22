@@ -12,6 +12,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import '../che_ui/che_theme.dart';
+import 'che_trading_hud.dart';
 
 final _dim = CheColors.textDim;
 final _panel = CheColors.surface;
@@ -172,10 +173,12 @@ class _CheTradingConnectionsPanelState extends State<CheTradingConnectionsPanel>
     final label = '${c['name']}: $word${mode.isEmpty ? '' : ', mode $mode'}. ${feed.isEmpty ? '' : '$feed. '}$detail'
         '${options.isEmpty ? '' : ' $options'}'
         '${blocked.isEmpty ? '' : ' Steps: ${steps.join(' ')}'}${note.isEmpty ? '' : ' $note'}${link.isEmpty ? '' : ' Open an account at $link.'}';
-    return Container(
+    return CheTradingPanel(
       margin: const EdgeInsets.only(top: 8),
       padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(color: _panel, border: Border.all(color: _stroke), borderRadius: BorderRadius.circular(10)),
+      radius: 10,
+      color: _panel,
+      borderColor: _stroke,
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Semantics(
           container: true,

@@ -12,6 +12,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show HapticFeedback;
 import 'package:http/http.dart' as http;
 import '../che_ui/che_theme.dart';
+import 'che_trading_hud.dart';
 
 const _up = Color(0xFF3DDC97);
 const _down = Color(0xFFFF5C7A);
@@ -206,10 +207,11 @@ class _Card extends StatelessWidget {
         label: label,
         container: true,
         child: ExcludeSemantics(
-          child: Container(
+          child: CheTradingPanel(
             width: double.infinity,
             padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(color: _panel, border: Border.all(color: _stroke), borderRadius: BorderRadius.circular(12)),
+            color: _panel,
+            borderColor: _stroke,
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: children),
           ),
         ),

@@ -13,6 +13,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import '../che_ui/che_theme.dart';
+import '../che_ui/che_hud.dart';
+import 'che_trading_hud.dart';
 
 const _up = Color(0xFF3DDC97);
 const _down = Color(0xFFFF5C7A);
@@ -176,9 +178,11 @@ class _CheLivePaperPanelState extends State<CheLivePaperPanel> {
   Widget _stat(String label, String value, {Color? color}) => Semantics(
         label: '$label: $value',
         excludeSemantics: true,
-        child: Container(
+        child: CheTradingPanel(
           padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(color: _panel, border: Border.all(color: _stroke), borderRadius: BorderRadius.circular(10)),
+          radius: 10,
+          color: _panel,
+          borderColor: _stroke,
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: _dim, fontSize: 12)),
             const SizedBox(height: 2),
@@ -402,7 +406,8 @@ class _PaperChartPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final bars = (d['bars'] as List? ?? const []).whereType<Map>().toList();
-    final bg = Paint()..color = const Color(0xFF05080A);
+    // In the HUD look the plot is a darkened window in the glass, so the backdrop still reads through it.
+    final bg = Paint()..color = const Color(0xFF05080A).withValues(alpha: cheHudActive ? 0.55 : 1);
     canvas.drawRect(Offset.zero & size, bg);
     if (bars.isEmpty) {
       final tp = TextPainter(text: TextSpan(text: 'No bars yet', style: TextStyle(color: _dim)), textDirection: TextDirection.ltr)..layout();

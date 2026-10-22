@@ -12,10 +12,12 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
 import '../che_app_portal.dart';
+import '../che_ui/che_hud.dart';
 import '../che_ui/che_rooms.dart';
 import '../che_ui/che_theme.dart';
 import '../widgets/che_native_scene_world.dart';
 import 'che_live_chart.dart';
+import 'che_trading_hud.dart';
 import 'che_trading_room.dart';
 
 class CheQuote {
@@ -205,7 +207,7 @@ class _CheMarketsRoomState extends State<CheMarketsRoom> {
     return Theme(
       data: CheTheme.dark(),
       child: Material(
-        color: const Color(0xFF05080A),
+        color: cheTradingPage(const Color(0xFF05080A)),
         child: RefreshIndicator(
           onRefresh: () async {
             await Future.wait([_load(), _loadCandles()]);
@@ -232,7 +234,7 @@ class _CheMarketsRoomState extends State<CheMarketsRoom> {
             chartExtras: [
               Padding(
                 padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.lg, CheSpace.gutter, 0),
-                child: Text('MARKET OVERVIEW', style: CheType.overline.copyWith(color: _gold)),
+                child: Text('MARKET OVERVIEW', style: cheTradingLabel(CheType.overline.copyWith(color: _gold))),
               ),
               // The index futures chart: switch symbols and timeframes by tap, typing or voice.
               Padding(
@@ -368,7 +370,7 @@ class _CheMarketsRoomState extends State<CheMarketsRoom> {
                     Text(_source, style: CheType.caption.copyWith(fontSize: 10)),
                   ],
                   const SizedBox(height: CheSpace.lg),
-                  Text('CHARTS INSIDE CHE', style: CheType.overline.copyWith(color: _gold)),
+                  Text('CHARTS INSIDE CHE', style: cheTradingLabel(CheType.overline.copyWith(color: _gold))),
                   const SizedBox(height: CheSpace.sm),
                   Text(
                     'Opens in CHE. Official app or Safari only if you choose that from More.',
@@ -394,7 +396,7 @@ class _CheMarketsRoomState extends State<CheMarketsRoom> {
                     ],
                   ),
                   const SizedBox(height: CheSpace.lg),
-                  Text('TRADING DESK', style: CheType.overline.copyWith(color: _gold)),
+                  Text('TRADING DESK', style: cheTradingLabel(CheType.overline.copyWith(color: _gold))),
                   const SizedBox(height: CheSpace.sm),
                   for (final a in widget.actions) _DeskCard(action: a),
                   const SizedBox(height: CheSpace.sm),
@@ -461,9 +463,14 @@ class _TickerTapeState extends State<_TickerTape> with SingleTickerProviderState
                 '${q.name} ${widget.fmt(q.price!)} ${q.changePct == null ? '' : '${q.changePct! >= 0 ? '▲' : '▼'}${q.changePct!.abs().toStringAsFixed(2)}%'}')
             .join('     •     ');
     final reduced = CheMotion.reduced(context);
+    final hud = cheHudActive;
     return Container(
       height: 30,
-      color: const Color(0xFF0B1014),
+      // HUD: a thin strip of ice-lit glass across the top of the room.
+      decoration: BoxDecoration(
+        color: hud ? CheHud.ice.withValues(alpha: 0.07) : const Color(0xFF0B1014),
+        border: hud ? Border(bottom: BorderSide(color: CheHud.ice.withValues(alpha: 0.28))) : null,
+      ),
       child: ClipRect(
         child: LayoutBuilder(builder: (context, constraints) {
           return AnimatedBuilder(
@@ -478,7 +485,7 @@ class _TickerTapeState extends State<_TickerTape> with SingleTickerProviderState
                   child: Text(text,
                       maxLines: 1,
                       softWrap: false,
-                      style: const TextStyle(color: CheColors.markets, fontSize: 12, fontWeight: FontWeight.w600)),
+                      style: TextStyle(color: hud ? CheHud.ice : CheColors.markets, fontSize: 12, fontWeight: FontWeight.w600)),
                 ),
               );
             },
@@ -501,14 +508,13 @@ class _IndexPanel extends StatelessWidget {
     final color = change == null ? CheColors.textDim : (change >= 0 ? const Color(0xFF3DDC97) : const Color(0xFFFF5C7A));
     return GestureDetector(
       onTap: onTap,
-      child: Container(
+      child: CheTradingPanel(
         width: 118,
         padding: const EdgeInsets.all(CheSpace.sm),
-        decoration: BoxDecoration(
-          color: const Color(0xFF0E1418),
-          borderRadius: BorderRadius.circular(CheRadius.md),
-          border: Border.all(color: selected ? CheColors.markets : CheColors.stroke),
-        ),
+        radius: CheRadius.md,
+        color: const Color(0xFF0E1418),
+        borderColor: selected ? CheColors.markets : CheColors.stroke,
+        glow: selected ? CheHud.ice : null,
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
           Text(quote.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.caption),
           Text(quote.available ? fmt(quote.price!) : 'Unavailable',
@@ -536,19 +542,12 @@ class _DeskCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final a = action;
-    return Card(
-      color: const Color(0xFF0E1418),
-      margin: const EdgeInsets.only(bottom: CheSpace.sm),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(CheRadius.md),
-        side: BorderSide(color: CheColors.stroke),
-      ),
-      child: ListTile(
+    final tile = ListTile(
         onTap: () {
           HapticFeedback.selectionClick();
           a.onRun();
         },
-        leading: Icon(a.icon, color: CheColors.markets),
+        leading: Icon(a.icon, color: cheTradingSelect),
         title: Text(a.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.label),
         subtitle: Text(
           a.connected ? a.body : '${a.body}\nNeeds: ${a.connectorName} (not connected). CHE can still plan it with you.',
@@ -559,7 +558,22 @@ class _DeskCard extends StatelessWidget {
           a.connected ? 'CONNECTED' : 'CONNECT',
           style: TextStyle(color: a.connected ? const Color(0xFF3DDC97) : CheColors.warning, fontSize: 10, fontWeight: FontWeight.w700),
         ),
+      );
+    if (cheHudActive) {
+      return CheTradingPanel(
+        margin: const EdgeInsets.only(bottom: CheSpace.sm),
+        radius: CheRadius.md,
+        child: Material(type: MaterialType.transparency, child: tile),
+      );
+    }
+    return Card(
+      color: const Color(0xFF0E1418),
+      margin: const EdgeInsets.only(bottom: CheSpace.sm),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(CheRadius.md),
+        side: BorderSide(color: CheColors.stroke),
       ),
+      child: tile,
     );
   }
 }
@@ -636,19 +650,19 @@ class _LiveAccountCard extends StatelessWidget {
       label: live
           ? 'Live trading account. ${accountName.isEmpty ? '' : '$accountName. '}Equity ${money(primary, currency)}.'
           : 'Live trading account is not connected.',
-      child: Container(
+      child: CheTradingPanel(
         padding: const EdgeInsets.all(CheSpace.lg),
-        decoration: BoxDecoration(
-          color: const Color(0xFF090F12),
-          borderRadius: BorderRadius.circular(CheRadius.lg),
-          border: Border.all(color: live ? const Color(0xFF3DDC97) : CheColors.strokeHi),
-          boxShadow: live
-              ? [BoxShadow(color: const Color(0xFF3DDC97).withValues(alpha: 0.12), blurRadius: 24)]
-              : null,
-        ),
+        radius: CheRadius.lg,
+        color: const Color(0xFF090F12),
+        borderColor: live ? const Color(0xFF3DDC97) : CheColors.strokeHi,
+        boxShadow: live ? [BoxShadow(color: const Color(0xFF3DDC97).withValues(alpha: 0.12), blurRadius: 24)] : null,
+        glow: live ? const Color(0xFF3DDC97) : null,
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
-            Text('LIVE ACCOUNT', style: CheType.overline.copyWith(color: live ? const Color(0xFF3DDC97) : CheColors.textDim)),
+            Text('LIVE ACCOUNT',
+                style: cheHudActive
+                    ? CheHud.label.copyWith(fontSize: 11, color: live ? const Color(0xFF3DDC97) : CheHud.ice)
+                    : CheType.overline.copyWith(color: live ? const Color(0xFF3DDC97) : CheColors.textDim)),
             const Spacer(),
             Text(live ? 'LIVE' : connected ? 'CONNECTOR OFFLINE' : 'NOT CONNECTED',
                 style: CheType.caption.copyWith(color: live ? const Color(0xFF3DDC97) : CheColors.warning, fontWeight: FontWeight.w700)),

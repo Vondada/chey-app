@@ -12,6 +12,7 @@ import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import '../che_ui/che_theme.dart';
+import 'che_trading_hud.dart';
 
 const _up = Color(0xFF3DDC97);
 const _down = Color(0xFFFF5C7A);
@@ -181,9 +182,10 @@ class _LedgerCard extends StatelessWidget {
     return Semantics(
       label: summary.toString(),
       container: true,
-      child: Container(
+      child: CheTradingPanel(
         padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(color: _panel, border: Border.all(color: _stroke), borderRadius: BorderRadius.circular(12)),
+        color: _panel,
+        borderColor: _stroke,
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
             Expanded(child: ExcludeSemantics(child: Text(_label, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800)))),

@@ -14,7 +14,9 @@ import 'che_trading_chart.dart';
 import 'che_trading_connections.dart';
 import 'che_trading_intelligence.dart';
 import 'che_trading_ledgers.dart';
+import '../che_ui/che_hud.dart';
 import '../che_ui/che_theme.dart';
+import 'che_trading_hud.dart';
 
 const _gold = CheColors.markets;
 final _stroke = CheColors.stroke;
@@ -167,6 +169,7 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
 
   @override
   Widget build(BuildContext context) {
+    final hud = cheHudActive;
     return ListView(
       padding: const EdgeInsets.only(bottom: 32),
       children: [
@@ -190,16 +193,19 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
                         height: 46,
                         alignment: Alignment.center,
                         decoration: BoxDecoration(
-                          color: e.key == _section ? _gold : Colors.transparent,
+                          color: e.key == _section ? (hud ? CheHud.ice.withValues(alpha: 0.18) : _gold) : Colors.transparent,
                           borderRadius: BorderRadius.circular(10),
-                          border: Border.all(color: e.key == _section ? _gold : _stroke),
+                          border: Border.all(color: e.key == _section ? (hud ? CheHud.ice : _gold) : (hud ? CheHud.ice.withValues(alpha: 0.28) : _stroke)),
+                          boxShadow: hud && e.key == _section ? [BoxShadow(color: CheHud.ice.withValues(alpha: 0.35), blurRadius: 12)] : null,
                         ),
                         child: FittedBox(
                           fit: BoxFit.scaleDown,
                           child: Padding(
                             padding: const EdgeInsets.symmetric(horizontal: 4),
                             child: Text(e.value,
-                                style: TextStyle(color: e.key == _section ? Colors.black : Colors.white, fontWeight: FontWeight.w800, fontSize: 13, letterSpacing: 0.6)),
+                                style: hud
+                                    ? CheHud.label.copyWith(fontSize: 12.5, color: e.key == _section ? CheHud.ice : CheHud.chromeMid)
+                                    : TextStyle(color: e.key == _section ? Colors.black : Colors.white, fontWeight: FontWeight.w800, fontSize: 13, letterSpacing: 0.6)),
                           ),
                         ),
                       ),
@@ -264,11 +270,13 @@ class CheTradingRoomPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-        backgroundColor: const Color(0xFF05080A),
+        backgroundColor: cheTradingPage(const Color(0xFF05080A)),
         appBar: AppBar(
-          backgroundColor: Colors.black,
+          backgroundColor: cheTradingPage(Colors.black),
           foregroundColor: Colors.white,
-          title: const Text('Trading Room'),
+          title: cheHudActive
+              ? const CheChromeText('Trading Room', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800))
+              : const Text('Trading Room'),
           leading: IconButton(tooltip: 'Back', icon: const Icon(Icons.arrow_back), onPressed: () => Navigator.of(context).maybePop()),
         ),
         body: SafeArea(
