@@ -32,6 +32,7 @@ import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:vector_math/vector_math.dart' as vm;
 
+import '../che_ui/che_hud.dart';
 import '../che_ui/che_theme.dart';
 import '../home/che_memory_brain.dart' show CheMemoryDot, cheMemoryCategoryColor;
 import 'che_brain_navigation.dart';
@@ -1170,8 +1171,9 @@ class _CheBrainSpaceState extends State<CheBrainSpace> with SingleTickerProvider
             builder: (context, text, _) => text == null
                 ? const SizedBox.shrink()
                 : ExcludeSemantics(
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(color: const Color(0xCC071012), borderRadius: BorderRadius.circular(14)),
+                    child: cheBrainPanel(
+                      radius: 14,
+                      fill: const Color(0xCC071012),
                       child: Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                         child: Text(text, maxLines: 3, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontSize: 18, height: 1.25)),
@@ -1210,6 +1212,35 @@ class _CheBrainSpaceState extends State<CheBrainSpace> with SingleTickerProvider
       ]);
     });
   }
+}
+
+/// A panel over the brain space: the Brain's own dark panel, or in HUD glass a glossy glass pane over a deep navy
+/// underlay (so text over bright orbs stays readable), its edge lit in the memory's category colour.
+Widget cheBrainPanel({
+  required Widget child,
+  required double radius,
+  required Color fill,
+  Color? edge,
+  double edgeAlpha = .55,
+  double edgeWidth = 1,
+  double shadowAlpha = .22,
+  double shadowBlur = 24,
+}) {
+  if (cheHudActive) {
+    return DecoratedBox(
+      decoration: BoxDecoration(color: CheHud.navyMid.withValues(alpha: .94), borderRadius: BorderRadius.circular(radius)),
+      child: CheGlass(radius: radius, glow: edge, child: child),
+    );
+  }
+  return DecoratedBox(
+    decoration: BoxDecoration(
+      color: fill,
+      borderRadius: BorderRadius.circular(radius),
+      border: edge == null ? null : Border.all(color: edge.withValues(alpha: edgeAlpha), width: edgeWidth),
+      boxShadow: edge == null ? null : [BoxShadow(color: edge.withValues(alpha: shadowAlpha), blurRadius: shadowBlur)],
+    ),
+    child: child,
+  );
 }
 
 const _months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -1262,13 +1293,14 @@ class _MemoryCallout extends StatelessWidget {
           excludeSemantics: true,
           child: GestureDetector(
             onTap: onOpen,
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                color: const Color(0xE6061614),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: color.withValues(alpha: .7), width: 1.2),
-                boxShadow: [BoxShadow(color: color.withValues(alpha: .25), blurRadius: 18)],
-              ),
+            child: cheBrainPanel(
+              radius: 16,
+              fill: const Color(0xE6061614),
+              edge: color,
+              edgeAlpha: .7,
+              edgeWidth: 1.2,
+              shadowAlpha: .25,
+              shadowBlur: 18,
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
                 child: Row(children: [
@@ -1352,13 +1384,13 @@ class _MemoryCard extends StatelessWidget {
       label: 'Memory card: ${dot.title}. ${dot.category}. ${verification.$1}.',
       child: ConstrainedBox(
         constraints: BoxConstraints(maxHeight: maxHeight),
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            color: const Color(0xEE071012),
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: color.withValues(alpha: .55)),
-            boxShadow: [BoxShadow(color: color.withValues(alpha: .22), blurRadius: 24)],
-          ),
+        child: cheBrainPanel(
+          radius: 18,
+          fill: const Color(0xEE071012),
+          edge: color,
+          edgeAlpha: .55,
+          shadowAlpha: .22,
+          shadowBlur: 24,
           child: SingleChildScrollView(
             padding: const EdgeInsets.fromLTRB(14, 10, 8, 10),
             child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: [
@@ -1510,8 +1542,9 @@ class CheBrainPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     if (size.isEmpty) return;
     final cam = c.camera;
-    // Deep space with a faint teal core.
-    canvas.drawRect(Offset.zero & size, Paint()..color = const Color(0xFF020506));
+    // Deep space with a faint teal core. In HUD glass the space is clear: the navy HUD backdrop behind the room is the
+    // space, and the brain floats in it.
+    if (!cheHudActive) canvas.drawRect(Offset.zero & size, Paint()..color = const Color(0xFF020506));
     final core = cam.project(vm.Vector3.zero(), size, worldRadius: 8, margin: 400);
     if (core != null) {
       canvas.drawCircle(core.offset, math.min(core.radius * 1.4, size.longestSide), Paint()

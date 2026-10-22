@@ -15,6 +15,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../che_ui/che_hud.dart';
 import '../che_ui/che_screen_awareness.dart';
 import '../che_ui/che_theme.dart';
 
@@ -704,11 +705,19 @@ class _CheKnowledgeAtlasPageState extends State<CheKnowledgeAtlasPage> {
       case CheAtlasLineKind.formula:
         return SelectableText(l.text, key: key, style: CheType.mono.copyWith(fontSize: 17));
       case CheAtlasLineKind.code:
+        final code = SelectableText(l.text, key: key, style: CheType.mono.copyWith(fontSize: 14));
+        // HUD glass: code sits on a clear glass slate.
+        if (cheHudActive) {
+          return Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: CheGlass(radius: 8, padding: const EdgeInsets.all(10), shadow: false, child: SizedBox(width: double.infinity, child: code)),
+          );
+        }
         return Container(
           margin: const EdgeInsets.only(top: 8),
           padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(color: CheColors.surface, border: Border.all(color: CheColors.stroke), borderRadius: BorderRadius.circular(8)),
-          child: SelectableText(l.text, key: key, style: CheType.mono.copyWith(fontSize: 14)),
+          child: code,
         );
       case CheAtlasLineKind.answer:
         return Padding(padding: const EdgeInsets.only(left: 12, bottom: 8), child: Text(l.text, key: key, style: _big.copyWith(color: CheColors.success)));
@@ -817,7 +826,10 @@ class _CheKnowledgeAtlasPageState extends State<CheKnowledgeAtlasPage> {
     final card = _card;
     return Scaffold(
       backgroundColor: CheColors.screen,
-      appBar: AppBar(title: const Text('Knowledge Atlas'), backgroundColor: Colors.transparent),
+      appBar: AppBar(
+        title: cheHudActive ? CheChromeText('Knowledge Atlas', style: CheType.headline) : const Text('Knowledge Atlas'),
+        backgroundColor: Colors.transparent,
+      ),
       body: SafeArea(
         child: Column(children: [
           Expanded(
@@ -845,14 +857,27 @@ class _CheKnowledgeAtlasPageState extends State<CheKnowledgeAtlasPage> {
           if (_status.isNotEmpty)
             ConstrainedBox(
               constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.35),
-              child: Container(
-                width: double.infinity,
-                decoration: BoxDecoration(color: CheColors.surface, border: Border(top: BorderSide(color: CheColors.stroke))),
-                child: SingleChildScrollView(
+              child: () {
+                final banner = SingleChildScrollView(
                   padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
                   child: Semantics(liveRegion: true, child: Text(_status, style: _big.copyWith(color: CheColors.accent))),
-                ),
-              ),
+                );
+                // HUD glass: the banner is a glass pane over a navy underlay, so the large text stays readable.
+                if (cheHudActive) {
+                  return Padding(
+                    padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(color: CheHud.navyMid.withValues(alpha: .85), borderRadius: BorderRadius.circular(18)),
+                      child: CheGlass(radius: 18, child: SizedBox(width: double.infinity, child: banner)),
+                    ),
+                  );
+                }
+                return Container(
+                  width: double.infinity,
+                  decoration: BoxDecoration(color: CheColors.surface, border: Border(top: BorderSide(color: CheColors.stroke))),
+                  child: banner,
+                );
+              }(),
             ),
         ]),
       ),
