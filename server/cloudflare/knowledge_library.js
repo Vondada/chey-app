@@ -52,6 +52,12 @@ export const TEXT_LICENSES = Object.freeze({
 // Fiction and comics/movies are examples for creative design, never engineering instructions.
 const TECHNICAL_KINDS = new Set(['book', 'paper', 'documentation', 'transcript', 'note']);
 const CATEGORY_IDS = new Set(KNOWLEDGE_CATEGORIES.map((c) => c.id));
+// Expert-domain categories (expert_intelligence.js) sit beside the owner's 20; the 20 stay as he named them.
+const EXTRA_CATEGORIES = [];
+export function registerCategories(list = []) {
+  for (const c of list) if (c?.id && !CATEGORY_IDS.has(c.id)) { CATEGORY_IDS.add(c.id); EXTRA_CATEGORIES.push({ id: c.id, name: c.name }); }
+}
+const categoryInfo = (id) => KNOWLEDGE_CATEGORIES.find((c) => c.id === id) || EXTRA_CATEGORIES.find((c) => c.id === id);
 
 function clip(value, max) {
   return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
@@ -95,7 +101,7 @@ export class KnowledgeLibrary {
     const title = clip(input.title, 200);
     if (!title) return { error: 'A reference needs a title.' };
     const category = CATEGORY_IDS.has(input.category) ? input.category : '';
-    if (!category) return { error: 'Pick one of the 20 categories, or request a new one.' };
+    if (!category) return { error: 'Pick one of the 20 categories (or an expert domain), or request a new one.' };
     const kind = KINDS.includes(input.kind) ? input.kind : 'note';
     const key = referenceKey({ title, creator: input.creator, edition: input.edition });
     const existing = this.get(key, { byKey: true });
@@ -159,7 +165,7 @@ export class KnowledgeLibrary {
    */
   syncBrain(ref, { now = new Date().toISOString(), text = '' } = {}) {
     if (!this.sql) return null;
-    const category = KNOWLEDGE_CATEGORIES.find((c) => c.id === ref.category);
+    const category = categoryInfo(ref.category);
     const indexed = ref.access === 'indexed';
     const opening = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 300);
     const store = new CheBrainStore(this.storage);

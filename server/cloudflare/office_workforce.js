@@ -20,12 +20,19 @@ const SPECIALTIES = {
   // Music Studio roles (owner, 2026-10-22). The owner talks to CHE; CHE delegates to these and answers once.
   legal: { title: 'Legal Intelligence', capability: 'deep_reasoning', specialty: 'legal research, compliance, contracts, rights, lawful alternatives, jurisdiction differences and evidence organisation, from cited official sources: not a licensed attorney' },
   music_manager: { title: 'Music Manager', capability: 'deep_reasoning', specialty: 'catalog, releases, metadata, splits, royalties, opportunities and promotion plans' },
+  // Expert Intelligence specialists (owner, 2026-10-22). Preparation and research from cited sources, never a licence.
+  health: { title: 'Health Intelligence', capability: 'deep_reasoning', specialty: 'symptoms, records, labs, medications and guidelines from cited sources: preparation for a clinician, not a physician' },
+  finance: { title: 'Finance Intelligence', capability: 'deep_reasoning', specialty: 'finance, accounting and tax from source records and current official rules: not a CPA or adviser' },
+  engineering: { title: 'Engineering Intelligence', capability: 'deep_reasoning', specialty: 'engineering analysis from current standards and documentation: not a licensed engineer' },
 };
 
 export function specialtyFrom(text) {
   const lower = String(text || '').toLowerCase();
   if (/\b(?:music|artist|release) manager\b|\bmanage my music\b/.test(lower)) return 'music_manager';
   if (/\b(?:legal|lawyer|attorney|copyright|trademark|licens(?:e|ing)|contracts?|split sheets?)\b/.test(lower)) return 'legal';
+  if (/\b(?:medical|health|doctor|symptoms?|labs?|medications?|clinical)\b/.test(lower)) return 'health';
+  if (/\b(?:finance|financial|accounting|tax(?:es)?|bookkeeping|budget)\b/.test(lower)) return 'finance';
+  if (/\b(?:structural|mechanical|electrical|civil) engineer\w*\b/.test(lower)) return 'engineering';
   if (/cod|program|engineer|develop|implement/.test(lower)) return 'coding';
   if (/creativ|writ|design|story|idea|\bad(?:s|vertis)?\b|flyer|banner|caption/.test(lower)) return 'creative';
   if (/reason|think|logic|plan|strateg/.test(lower)) return 'reasoning';

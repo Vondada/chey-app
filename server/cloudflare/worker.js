@@ -73,8 +73,9 @@ import { condenseHistory, ownerNotificationPolicy } from './workflow_governor.js
 import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, nextTradingTickAt, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
 import { intelligenceIntent, intelligenceReport, intelligenceView, speakIntelligence, startStudy, studyAlarm, studyStep } from './historical_intelligence.js';
 import { evaluateSample, applyRightsAction, applySpokenRightsWrite, defensibility, musicRightsIntent, musicRightsWriteIntent, releaseReadiness, songFor, speakReadiness } from './music_rights.js';
-import { ACTIVITIES, JURISDICTIONS, SOURCES, LEGAL_INDEX, activitiesIn, checkUpdates, defenseArguments, findAlternatives, jurisdiction as legalPlace, legalAnswer, legalDifferences, legalIntent, loadLegal, recordDecision, recordsFor, releaseLegalCheck, saveLegal, speakDifferences, subscribe as legalSubscribe, verifyRecord } from './legal_intelligence.js';
+import { ACTIVITIES, JURISDICTIONS, SOURCES, LEGAL_INDEX, activitiesIn, placeIn, checkUpdates, defenseArguments, findAlternatives, jurisdiction as legalPlace, legalAnswer, legalDifferences, legalIntent, loadLegal, recordDecision, recordsFor, releaseLegalCheck, saveLegal, speakDifferences, subscribe as legalSubscribe, verifyRecord } from './legal_intelligence.js';
 import { analyzeContract } from './legal_contracts.js';
+import { DOMAINS, SOURCE_TIERS, addExpertSource, addProfessionalNote, addToCase, bringList, domainCoverage, expertIntent, expertPromptContext, labelInteractions, loadCases, openCase, professionalBrief, readLabs, redFlags, runExam, saveCases, speakCoverage, upgradePlan } from './expert_intelligence.js';
 import { addBeat, addLedger, addWorkspace, addWorkspaceSong, advanceAgreement, applySpokenBusiness, approveQuote, artistReport, beatListing, businessDashboard, deliveryPackage, draftQuote, musicBusinessIntent, recordBeatSale, recordFeedback, resolveSpokenBusiness, setService, workspaceById, workspaceView } from './music_business.js';
 import { matrixIntent, readMatrix, runMatrix, speakMatrix } from './backtest_matrix.js';
 import { nextStrategySimTickAt, setStrategySimCeiling, setStrategySimPaused, speakStrategySim, strategySimIntent, strategySimTick, strategySimView, strategySimWake } from './strategy_sim.js';
@@ -4037,6 +4038,67 @@ export class CheState extends DurableObject {
     } catch (_) { /* a Brain record never blocks a trading answer */ }
   }
 
+  /// Expert Intelligence by voice or typing. Briefs, checklists and notes read the owner's own cases only.
+  async expertChat(ask) {
+    const state = await loadCases(this.ctx.storage);
+    const latest = (kind) => state.cases.find((c) => c.kind === kind) || null;
+    if (ask.kind === 'open_case') {
+      const r = openCase(state, { kind: ask.case_kind, title: ask.title });
+      if (!r.ok) return { text: r.why, ok: false };
+      await saveCases(this.ctx.storage, state);
+      return { text: `${r.existing ? 'That case is already open' : `Opened a ${ask.case_kind.toLowerCase()} case called ${r.case.title}`}. It is private and kept apart from your other records. Tell me the reason, symptoms or events, medications and documents, and I will build the brief.` };
+    }
+    if (ask.kind === 'brief' || ask.kind === 'bring') {
+      const c = latest(ask.case_kind);
+      if (!c) return { text: `There is no ${ask.case_kind === 'LEGAL' ? 'legal' : ask.case_kind === 'TAX' ? 'tax' : 'medical'} case on file yet. Say "open a ${ask.case_kind === 'LEGAL' ? 'legal' : 'medical'} case called" and a name, then tell me what is going on.`, ok: false };
+      if (ask.kind === 'bring') return { text: `For ${c.title}, bring: ${bringList(c).join('; ')}.` };
+      let legal = null;
+      if (c.kind === 'LEGAL' && c.reason) {
+        const lstate = await loadLegal(this.ctx.storage);
+        const place = placeIn(c.jurisdiction || '') || lstate.settings.home;
+        if (place) legal = legalAnswer(c.reason, { jurisdictionId: place, verified: lstate.verified });
+      }
+      const b = professionalBrief(c, { legal: legal?.status === 'answered' ? legal : null });
+      return { text: b.text, extra: { brief: b.title, missing: b.missing } };
+    }
+    if (ask.kind === 'note') {
+      const kind = /attorney|lawyer/i.test(ask.who) ? 'LEGAL' : /accountant/i.test(ask.who) ? 'TAX' : 'MEDICAL';
+      const c = latest(kind);
+      if (!c) return { text: `There is no ${kind.toLowerCase()} case to add that to yet. Open one first.`, ok: false };
+      const r = addProfessionalNote(state, c.id, { who: `your ${ask.who}`, text: ask.text });
+      await saveCases(this.ctx.storage, state);
+      return { text: r.said };
+    }
+    if (ask.kind === 'coverage' || ask.kind === 'coverage_all') {
+      const exams = (await this.ctx.storage.get('expert_exams_v1')) || {};
+      const domains = ask.kind === 'coverage' ? [ask.domain] : Object.keys(DOMAINS);
+      const rows = domains.map((d) => domainCoverage(this.ctx.storage, d, { exams }));
+      return { text: ask.kind === 'coverage' ? speakCoverage(rows[0]) : `Where I stand: ${rows.map((r) => `${r.name}: ${r.level}${r.exam ? ` (${Math.round(r.exam.score * 100)}% on my last test)` : ''}`).join('; ')}. I am not a licensed professional in any of them.` };
+    }
+    if (ask.kind === 'exam') {
+      const exams = (await this.ctx.storage.get('expert_exams_v1')) || {};
+      const r = runExam(ask.domain);
+      if (!r.total) return { text: `I have no test for ${DOMAINS[ask.domain].name} yet, so I can't measure it.` };
+      exams[ask.domain] = r;
+      await this.ctx.storage.put('expert_exams_v1', exams);
+      const failed = r.results.filter((x) => !x.ok).map((x) => x.name);
+      return { text: `${DOMAINS[ask.domain].name} test: ${r.passed} of ${r.total} passed (${Math.round(r.score * 100)}%).${failed.length ? ` Failed: ${failed.join('; ')}.` : ''} A test score is evidence of what I do, not a licence.` };
+    }
+    if (ask.kind === 'upgrade') {
+      const p = upgradePlan(this.ctx.storage, ask.domain, ask.topic);
+      return { text: `${speakCoverage(p.before)} To get better at ${ask.topic || p.before.name}: ${p.steps.join(' ')} Add sources with "add to my knowledge library", or give me the documents you are licensed to share.` };
+    }
+    if (ask.kind === 'interactions') {
+      if (ask.drugs.length < 2) return { text: 'Name at least two medicines to check together.', ok: false };
+      const r = await labelInteractions(ask.drugs);
+      const said = r.findings.length
+        ? r.findings.map((f) => `The ${f.label} label mentions ${f.mentions}: "${f.quote}"`).join(' ')
+        : `I found no mention of these together in the FDA labels I could read.`;
+      return { text: `${said}${r.unread.length ? ` I could not read the label for ${r.unread.join(', ')}.` : ''} ${r.note}`, extra: { findings: r.findings } };
+    }
+    return { text: 'I did not understand that, sir.', ok: false };
+  }
+
   /// One legal question: the place it is about, live checks of the governing official sources where CHE can read
   /// them, and the compact answer. The place comes from the words, else where the owner said he is, else home.
   async legalAsk(legal, question, { jurisdictionId = null, facts = {}, verify = true, activity = null, here = false } = {}) {
@@ -7218,6 +7280,33 @@ export class CheState extends DurableObject {
         return json({ ...result, spoken: speakControlResult(result), view: await this.tradingControlsView() }, result.ok || result.needs_confirmation ? 200 : 400);
       }
       // Strategy simulation (step a): paper minute-bar strategies. Read and the kill switch are owner-only; nothing here orders or spends.
+      // Expert Intelligence (owner, 2026-10-22). Owner only: cases hold health, legal and financial records.
+      if (path === '/api/expert' && (request.method === 'GET' || request.method === 'POST')) {
+        if (!ownerDevice) return json({ detail: 'Only the CHE owner can use Expert Intelligence.' }, 403);
+        const exams = (await this.ctx.storage.get('expert_exams_v1')) || {};
+        const cases = await loadCases(this.ctx.storage);
+        if (request.method === 'GET') {
+          const id = new URL(request.url).searchParams.get('case_id');
+          if (id) { const c = cases.cases.find((x) => x.id === id); return c ? json({ case: c, brief: professionalBrief(c) }) : json({ detail: 'No such case.' }, 404); }
+          return json({ expertise: Object.keys(DOMAINS).map((d) => domainCoverage(this.ctx.storage, d, { exams })), source_tiers: SOURCE_TIERS, cases: cases.cases.map(({ id: cid, kind, title, created_at }) => ({ id: cid, kind, title, created_at })) });
+        }
+        const a = String(body.action || '');
+        let out;
+        if (a === 'add_source') out = addExpertSource(this.ctx.storage, body.source || {});
+        else if (a === 'exam') { out = runExam(String(body.domain || '')); if (out.total) { exams[out.domain] = out; await this.ctx.storage.put('expert_exams_v1', exams); } }
+        else if (a === 'open_case') out = openCase(cases, body);
+        else if (a === 'add') out = addToCase(cases, body.case_id, body.field, body.item);
+        else if (a === 'note') out = addProfessionalNote(cases, body.case_id, body);
+        else if (a === 'labs') {
+          const results = readLabs(body.text);
+          out = { ok: true, results };
+          if (body.case_id) for (const r of results) addToCase(cases, body.case_id, 'results', { ...r, source: body.source_name || 'lab report' });
+        } else if (a === 'interactions') out = { ok: true, ...(await labelInteractions(Array.isArray(body.drugs) ? body.drugs : [])) };
+        else if (a === 'upgrade') out = upgradePlan(this.ctx.storage, body.domain, body.topic || '') || { ok: false, why: 'Unknown domain.' };
+        else out = { ok: false, why: 'Unknown action.' };
+        if (['open_case', 'add', 'note', 'labs'].includes(a) && out.ok !== false) await saveCases(this.ctx.storage, cases);
+        return json(out, out.ok === false || out.error ? 400 : 200);
+      }
       // Legal Intelligence (owner, 2026-10-22). Owner only: settings, decisions, contracts and alerts are private.
       if (path === '/api/legal' && (request.method === 'GET' || request.method === 'POST')) {
         if (!ownerDevice) return json({ detail: 'Only the CHE owner can use Legal Intelligence.' }, 403);
@@ -11352,6 +11441,19 @@ export class CheState extends DurableObject {
         // Legal Intelligence (owner, 2026-10-22): "is this legal?", "can I do this here?", lawful alternatives,
         // location differences, contracts, decisions and update checks. Answered from the legal index and official
         // sources; anything not indexed is said to be a gap, never guessed.
+        // Emergency warning signs come before anything else, with no model call. Owner or guest alike.
+        const emergency = !body.attachment ? redFlags(message) : [];
+        if (emergency.length && /\b(?:i|i'm|my|me|he|she|his|her|they|someone|somebody)\b/i.test(message)) {
+          return ndjsonReply(`${emergency.map((f) => f.action).join(' ')} (${emergency.map((f) => f.source).join('; ')}.) I can stay with you and help with anything else after that.`, { source: 'che_health_urgent', model_calls: 0, red_flags: emergency.map((f) => f.id) });
+        }
+        // Expert Intelligence (owner, 2026-10-22): briefs, what to bring, after-visit notes, coverage, exams, upgrades,
+        // medication labels. Owner only: cases are private and kept per compartment.
+        const expertAsk = !body.attachment && expertIntent(message);
+        if (expertAsk) {
+          if (!ownerDevice) return ndjsonReply('Only the CHE owner can use professional preparation and cases, sir.', { source: 'che_expert', ok: false });
+          const reply = await this.expertChat(expertAsk);
+          return ndjsonReply(reply.text, { source: 'che_expert', model_calls: 0, ok: reply.ok !== false, ...(reply.extra || {}) });
+        }
         const contractUpload = body.attachment && /^text\//.test(String(body.attachment.media_type || '')) && /\b(?:contract|agreement|deal memo|terms)\b/i.test(`${message} ${body.attachment.name || ''}`);
         const legalAsk = contractUpload ? { kind: 'contract' } : !body.attachment && legalIntent(message);
         if (legalAsk) {
@@ -12590,6 +12692,7 @@ export class CheState extends DurableObject {
               redactBrainText(memoryPromptContext(ownerDevice ? data : {}), message),
               rememberedContext,
               ownerDevice ? redactBrainText(nightlyContext(data), message) : '',
+              ownerDevice ? expertPromptContext(this.ctx.storage, message, { cases: (await loadCases(this.ctx.storage)).cases }) : '',
               WORK_POLICY,
               `Autonomy is ${data.autonomy ? 'on' : 'paused'}.`,
               /\b(?:change|update|improve|fix|add|build|modify|upgrade)\b[\s\S]{0,40}\b(?:your(?:self| own)?|the app|che app|your app|your code|your screen)\b/i.test(message)
