@@ -551,6 +551,8 @@ extension _CheHomeSend on _CHEHomeState {
     }
 
     String reply;
+    // A finished file rides on the reply, so the chat plays it inline (the same as a video from chat).
+    var videoUrl = '';
     try {
       final response = await http
           .post(
@@ -569,7 +571,8 @@ extension _CheHomeSend on _CHEHomeState {
       }
       if (data['ok'] == true && CheVideo.isMediaUrl(mediaUrl)) {
         _recentVideos.insert(0, {'title': topic, 'media_url': mediaUrl});
-        reply = 'Video file: $mediaUrl';
+        videoUrl = mediaUrl;
+        reply = 'Your video is ready, sir.';
       } else if (data['pending'] == true) {
         reply = 'The video is still rendering, sir. No finished file is available yet.';
       } else {
@@ -583,7 +586,12 @@ extension _CheHomeSend on _CHEHomeState {
     }
 
     if (mounted) {
-      _set(() => messages.add({'role': 'assistant', 'text': reply}));
+      _set(() => messages.add({
+            'role': 'assistant',
+            'text': reply,
+            if (videoUrl.isNotEmpty) 'media_url': videoUrl,
+            if (videoUrl.isNotEmpty) 'media_type': 'video',
+          }));
       _scrollToBottom();
     }
     await speakText(reply, record: false);
