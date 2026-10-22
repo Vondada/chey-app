@@ -11,6 +11,7 @@ import 'package:flutter/services.dart';
 import '../brain/che_brain_navigation.dart';
 import '../brain/che_brain_space.dart';
 import '../brain/che_brain_space_model.dart';
+import '../che_ui/che_hud.dart';
 import '../che_ui/che_theme.dart';
 
 class CheMemoryDot {
@@ -399,6 +400,23 @@ Color cheMemoryCategoryColor(String category) => switch (category.toLowerCase())
   _ => CheColors.accent,
 };
 
+/// HUD glass: a one-line room title in polished chrome. A text style (not a widget), so the title stays one line of
+/// the header's rich text and VoiceOver reads the header exactly as before.
+TextStyle cheBrainChromeTitle(double size) => TextStyle(
+      fontSize: size,
+      fontWeight: FontWeight.w700,
+      letterSpacing: .3,
+      foreground: Paint()..shader = CheHud.chrome.createShader(Rect.fromLTWH(0, 0, 1, size * 1.3)),
+    );
+
+/// HUD glass: search fields are clear ice glass with a thin ice rim.
+const Color cheBrainHudFieldFill = Color(0x149FE9FF);
+
+OutlineInputBorder cheBrainFieldBorder() => OutlineInputBorder(
+      borderRadius: BorderRadius.circular(CheRadius.pill),
+      borderSide: cheHudActive ? BorderSide(color: CheHud.ice.withValues(alpha: .35)) : BorderSide.none,
+    );
+
 class CheMemoryBrainRoom extends StatefulWidget {
   const CheMemoryBrainRoom({
     super.key,
@@ -608,8 +626,9 @@ class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom> {
                         child: Text.rich(
                           TextSpan(
                             children: [
-                              TextSpan(text: title, style: CheType.label.copyWith(color: Colors.white, fontSize: 15)),
-                              TextSpan(text: '  ·  $counter', style: CheType.caption.copyWith(fontSize: 12)),
+                              // HUD glass: the room name in polished chrome, the count in ice light.
+                              TextSpan(text: title, style: cheHudActive ? cheBrainChromeTitle(15) : CheType.label.copyWith(color: Colors.white, fontSize: 15)),
+                              TextSpan(text: '  ·  $counter', style: cheHudActive ? CheType.caption.copyWith(fontSize: 12, color: CheHud.ice.withValues(alpha: .85)) : CheType.caption.copyWith(fontSize: 12)),
                             ],
                           ),
                           maxLines: 1,
@@ -645,9 +664,9 @@ class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom> {
                         prefixIcon: Icon(Icons.search_rounded, size: 18, color: CheColors.accent),
                         suffixIcon: IconButton(tooltip: 'Fly to the best match', icon: const Icon(Icons.arrow_forward_rounded, size: 18), onPressed: () => _find(_search.text)),
                         filled: true,
-                        fillColor: CheColors.surfaceHi,
+                        fillColor: cheHudActive ? cheBrainHudFieldFill : CheColors.surfaceHi,
                         contentPadding: const EdgeInsets.symmetric(vertical: 8),
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(CheRadius.pill), borderSide: BorderSide.none),
+                        border: cheBrainFieldBorder(),
                       ),
                     ),
                   ),
@@ -686,6 +705,8 @@ class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom> {
         Expanded(child: space),
       ],
     );
+    // HUD glass: the room is clear, so the navy HUD backdrop behind every page shows through.
+    if (cheHudActive) return widget.embedded ? Material(type: MaterialType.transparency, child: child) : child;
     if (!widget.embedded) return ColoredBox(color: Colors.black, child: child);
     return Material(color: Colors.black, child: child);
   }

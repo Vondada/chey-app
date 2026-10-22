@@ -12,8 +12,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../che_ui/che_hud.dart';
 import '../che_ui/che_theme.dart';
-import '../home/che_memory_brain.dart' show cheMemoryCategoryColor;
+import '../home/che_memory_brain.dart' show cheMemoryCategoryColor, cheBrainHudFieldFill, cheBrainFieldBorder;
 import 'che_brain_space.dart';
 import 'che_brain_space_model.dart';
 
@@ -51,7 +52,8 @@ class CheBrainPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final fg = selected ? CheColors.accent : dimmed ? CheColors.textFaint : CheColors.textDim;
+    final hud = cheHudActive;
+    final fg = selected ? (hud ? CheHud.ice : CheColors.accent) : dimmed ? CheColors.textFaint : CheColors.textDim;
     return Semantics(
       button: true,
       selected: selected,
@@ -71,11 +73,26 @@ class CheBrainPill extends StatelessWidget {
         child: Ink(
           height: 32,
           padding: const EdgeInsets.symmetric(horizontal: 11),
-          decoration: BoxDecoration(
-            color: selected ? CheColors.accent.withValues(alpha: .18) : CheColors.surface,
-            borderRadius: BorderRadius.circular(CheRadius.pill),
-            border: Border.all(color: selected ? CheColors.accent : CheColors.stroke),
-          ),
+          decoration: hud
+              // HUD glass: a clear ice-glass pill, lit brighter and rimmed in ice when selected.
+              ? BoxDecoration(
+                  borderRadius: BorderRadius.circular(CheRadius.pill),
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      CheHud.ice.withValues(alpha: selected ? .26 : .12),
+                      CheHud.iceDeep.withValues(alpha: selected ? .10 : .04),
+                    ],
+                  ),
+                  border: Border.all(color: CheHud.ice.withValues(alpha: selected ? .85 : .28)),
+                  boxShadow: selected ? [BoxShadow(color: CheHud.ice.withValues(alpha: .30), blurRadius: 10)] : null,
+                )
+              : BoxDecoration(
+                  color: selected ? CheColors.accent.withValues(alpha: .18) : CheColors.surface,
+                  borderRadius: BorderRadius.circular(CheRadius.pill),
+                  border: Border.all(color: selected ? CheColors.accent : CheColors.stroke),
+                ),
           child: Row(mainAxisSize: MainAxisSize.min, children: [
             if (dot != null) ...[CircleAvatar(radius: 4, backgroundColor: dot), const SizedBox(width: 6)],
             if (icon != null) ...[Icon(icon, size: 14, color: fg), const SizedBox(width: 5)],
@@ -129,9 +146,9 @@ class _CheBrainSwitcherState extends State<CheBrainSwitcher> {
                 hintText: 'Find a brain by worker or role',
                 prefixIcon: Icon(Icons.search_rounded, size: 16, color: CheColors.accent),
                 filled: true,
-                fillColor: CheColors.surfaceHi,
+                fillColor: cheHudActive ? cheBrainHudFieldFill : CheColors.surfaceHi,
                 contentPadding: const EdgeInsets.symmetric(vertical: 6),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(CheRadius.pill), borderSide: BorderSide.none),
+                border: cheBrainFieldBorder(),
               ),
             ),
           ),
@@ -246,7 +263,7 @@ class CheBrainContextBar extends StatelessWidget {
               ]),
             ),
           ),
-          ExcludeSemantics(child: Text(mode, style: CheType.caption.copyWith(fontSize: 11, color: CheColors.textFaint))),
+          ExcludeSemantics(child: Text(mode, style: cheHudActive ? CheHud.label.copyWith(fontSize: 10, letterSpacing: .8) : CheType.caption.copyWith(fontSize: 11, color: CheColors.textFaint))),
           const SizedBox(width: CheSpace.gutter),
         ]),
       ),
@@ -273,7 +290,7 @@ class CheBrainFilterPanel extends StatelessWidget {
           padding: const EdgeInsets.only(bottom: 4),
           child: Row(children: [
             const SizedBox(width: CheSpace.gutter),
-            SizedBox(width: 68, child: Text(heading, style: CheType.overline.copyWith(fontSize: 10, color: CheColors.textFaint))),
+            SizedBox(width: 68, child: Text(heading, style: cheHudActive ? CheHud.label.copyWith(fontSize: 10) : CheType.overline.copyWith(fontSize: 10, color: CheColors.textFaint))),
             Expanded(
               child: SingleChildScrollView(
                 scrollDirection: Axis.horizontal,

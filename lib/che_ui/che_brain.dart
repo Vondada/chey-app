@@ -18,6 +18,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'che_agent_chat.dart' show CheAgentController;
+import 'che_hud.dart';
 import 'che_log.dart';
 import 'che_models.dart';
 import 'che_agents.dart';
@@ -670,7 +671,7 @@ class CheBrainCard extends StatelessWidget {
     final t = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: CheColors.surface,
+        backgroundColor: cheHudActive ? CheHud.navyTop : CheColors.surface,
         title: Text('Teach CHE something', style: CheType.headline),
         content: TextField(
           controller: ctrl,
@@ -699,15 +700,16 @@ class CheBrainCard extends StatelessWidget {
       builder: (context, _) {
         final convs = controller.conversations.where((c) => c.messages.isNotEmpty).toList();
         final msgs = convs.fold<int>(0, (n, c) => n + c.messages.length);
-        return GlowCard(
-          active: controller.busy,
-          radius: CheRadius.lg,
-          padding: const EdgeInsets.all(CheSpace.lg),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        // HUD glass: a glossy glass pane, its edge lit while CHE is busy; the earlier glowing card otherwise.
+        Widget card(Widget child) => cheHudActive
+            ? CheGlass(radius: CheRadius.lg, padding: const EdgeInsets.all(CheSpace.lg), glow: controller.busy ? CheHud.ice : null, child: child)
+            : GlowCard(active: controller.busy, radius: CheRadius.lg, padding: const EdgeInsets.all(CheSpace.lg), child: child);
+        return card(
+          Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Row(children: [
               Icon(Icons.psychology_rounded, color: CheColors.accent, size: 22),
               const SizedBox(width: 8),
-              Expanded(child: Text('CHE Brain', style: CheType.headline)),
+              Expanded(child: cheHudActive ? CheChromeText('CHE Brain', style: CheType.headline) : Text('CHE Brain', style: CheType.headline)),
               CheIconButton(icon: Icons.add_rounded, size: 34, onTap: () => _addFact(context), tooltip: 'Teach CHE'),
             ]),
             const SizedBox(height: 4),
@@ -752,20 +754,29 @@ class CheBrainCard extends StatelessWidget {
               ),
             if (brain.journal.isNotEmpty) ...[
               const SizedBox(height: CheSpace.md),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(CheSpace.md),
-                decoration: BoxDecoration(
-                  color: CheColors.accent.withValues(alpha: 0.06),
-                  borderRadius: BorderRadius.circular(CheRadius.md),
-                  border: Border.all(color: CheColors.accent.withValues(alpha: 0.25)),
-                ),
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text('LATEST THOUGHT', style: CheType.overline.copyWith(color: CheColors.accent)),
+              () {
+                final thought = Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text('LATEST THOUGHT', style: cheHudActive ? CheHud.label : CheType.overline.copyWith(color: CheColors.accent)),
                   const SizedBox(height: 4),
                   Text(brain.journal.first.text, style: CheType.bodyDim.copyWith(fontSize: 14)),
-                ]),
-              ),
+                ]);
+                if (cheHudActive) {
+                  return SizedBox(
+                    width: double.infinity,
+                    child: CheGlass(radius: CheRadius.md, padding: const EdgeInsets.all(CheSpace.md), shadow: false, child: thought),
+                  );
+                }
+                return Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(CheSpace.md),
+                  decoration: BoxDecoration(
+                    color: CheColors.accent.withValues(alpha: 0.06),
+                    borderRadius: BorderRadius.circular(CheRadius.md),
+                    border: Border.all(color: CheColors.accent.withValues(alpha: 0.25)),
+                  ),
+                  child: thought,
+                );
+              }(),
             ],
             Divider(color: CheColors.stroke, height: CheSpace.xl),
             ChePressable(
@@ -829,7 +840,7 @@ class _AllFactsScreen extends StatelessWidget {
                           child: Row(children: [
                             Icon(cheKindIcons[kind], size: 16, color: CheColors.accent),
                             const SizedBox(width: 6),
-                            Text(kind.toUpperCase(), style: CheType.overline.copyWith(color: CheColors.accent)),
+                            Text(kind.toUpperCase(), style: cheHudActive ? CheHud.label : CheType.overline.copyWith(color: CheColors.accent)),
                           ]),
                         ),
                         for (final f in brain.facts.where((f) => f.kind == kind))

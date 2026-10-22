@@ -8,6 +8,9 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
+import '../che_ui/che_hud.dart';
+import '../che_ui/che_theme.dart';
+
 class CheKnowledgeLibraryScreen extends StatefulWidget {
   const CheKnowledgeLibraryScreen({
     super.key,
@@ -116,9 +119,14 @@ class _CheKnowledgeLibraryScreenState extends State<CheKnowledgeLibraryScreen> {
   Widget build(BuildContext context) {
     final indexed = _categories.fold<int>(0, (n, c) => n + c.indexed);
     final cataloged = _categories.fold<int>(0, (n, c) => n + c.cataloged);
+    final hud = cheHudActive;
+    // HUD glass: small mono ice section labels; the earlier theme headings otherwise.
+    final section = hud ? CheHud.label.copyWith(fontSize: 12) : Theme.of(context).textTheme.titleMedium;
     return Scaffold(
+      backgroundColor: hud ? CheColors.screen : null,
       appBar: AppBar(
-        title: const Text('Knowledge Library'),
+        backgroundColor: hud ? Colors.transparent : null,
+        title: hud ? CheChromeText('Knowledge Library', style: CheType.headline) : const Text('Knowledge Library'),
         actions: [
           IconButton(
             tooltip: 'Refresh the library status',
@@ -138,7 +146,7 @@ class _CheKnowledgeLibraryScreenState extends State<CheKnowledgeLibraryScreen> {
             ),
           Semantics(
             header: true,
-            child: Text('Status', style: Theme.of(context).textTheme.titleMedium),
+            child: Text('Status', style: section),
           ),
           const SizedBox(height: 4),
           if (_loading)
@@ -166,7 +174,7 @@ class _CheKnowledgeLibraryScreenState extends State<CheKnowledgeLibraryScreen> {
           const Divider(height: 32),
           Semantics(
             header: true,
-            child: Text('Ask the library', style: Theme.of(context).textTheme.titleMedium),
+            child: Text('Ask the library', style: section),
           ),
           const SizedBox(height: 8),
           Semantics(
