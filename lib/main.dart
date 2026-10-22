@@ -447,9 +447,8 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   bool _naturalVoiceServerErrored = false;
   bool _loadingAgentState = false;
   // Latency (owner, 2026-10-22: "laggy when I click on different buttons"): the 15-second state poll skips the decode
-  // and the whole-app rebuild when the Worker's state is unchanged, and the heavy syncs run at most every 5 minutes.
+  // and the whole-app rebuild when the Worker's state is unchanged.
   String? _lastAgentStateBody;
-  DateTime _lastStateSideSync = DateTime.fromMillisecondsSinceEpoch(0);
   int _speechTurn = 0;
 
   // Single authority for automatic mic restarts (see che_mic_supervisor.dart).
