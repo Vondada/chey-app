@@ -120,6 +120,7 @@ import { replyHijacksOwnerRequest, usageIntent, usageReport, speakUsage } from '
 import { newestStarredIntent, speakNewestStarred, autoImproveScan, analyticalRepositoryQuestion, chatOnlyResponseIntent, currentTurnActionPolicy, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, inspirationUpgradeContext, listOwnerStarredRepos, readRepoSource, referenceSourceBlock, codingHistoryIntent, hypotheticalChange, repositoryImplementationIntent, repositoryInspectionIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, starredStudyList, studySelectionIntent } from './code_scout.js';
 import { codingHistoryReceipt, completedWorkProof, otherAgentWorkAsk, otherAgentWorkReply, proofAsked } from './coding_history.js';
 import { inventionIntent, inventionReply, planInvention, refusalReply } from './invention_studio.js';
+import { buildDailyReflection, listReflections, saveReflection, setReflectionReply, validDay } from './reflections.js';
 import { matchShowroom, showroomIntent, showroomReply, showroomView } from './capability_showroom.js';
 import { activityReceipt, activityStatusIntent } from './activity_status.js';
 import { webAppPage } from './web_app.js';
@@ -7257,6 +7258,30 @@ export class CheState extends DurableObject {
         return json(result, result.error && !result.candles ? 400 : 200);
       }
 
+      // ─── Daily reflections: owner asks only (no schedule), owner device only ───
+      if (path.startsWith('/api/reflections') && ['GET', 'POST'].includes(request.method)) {
+        if (!ownerDevice) return json({ detail: 'Only the CHE owner can read or write reflections.' }, 403);
+        if (path === '/api/reflections' && request.method === 'GET') {
+          const day = new URL(request.url).searchParams.get('day') || '';
+          if (day && !validDay(day)) return json({ detail: 'Use day=YYYY-MM-DD.' }, 422);
+          return json({ reflections: await listReflections(this.ctx.storage, { day: day || undefined }) });
+        }
+        if (path === '/api/reflections/generate' && request.method === 'POST') {
+          if (await isLockedDown(this.ctx.storage)) return json({ detail: 'Lockdown is on; reflections are frozen.' }, 423);
+          const day = String(body.day || '');
+          if (!validDay(day)) return json({ detail: 'Use day YYYY-MM-DD.' }, 422);
+          const existing = (await listReflections(this.ctx.storage, { day }))[0];
+          if (existing) return json({ status: 'exists', reflection: existing });
+          const made = await buildDailyReflection({ day, events: body.events }, this.env);
+          if (made.status !== 'ok') return json({ status: made.status, reflection: made });
+          const saved = await saveReflection(this.ctx.storage, made);
+          return json({ status: 'ok', reflection: saved.reflection }, saved.ok ? 200 : 422);
+        }
+        if (path === '/api/reflections/reply' && request.method === 'POST') {
+          const out = await setReflectionReply(this.ctx.storage, String(body.id || ''), body.item, { reply: body.reply, reply_text: body.reply_text });
+          return json(out.ok ? { ok: true, reflection: out.reflection, item: out.item } : { detail: out.detail }, out.ok ? 200 : 422);
+        }
+      }
       // ─── Resilience: keys, AI Mailbox letters, tech folders ───────────
       if (path === '/api/keys' && request.method === 'GET') {
         // Status only; keys themselves never leave the server.
