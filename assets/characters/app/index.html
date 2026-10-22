@@ -38,13 +38,22 @@ const THREE = window.THREE;
 const GLTFLoader = window.THREE.GLTFLoader;
 // Models arrive from the app as base64 (the WebView cannot read the bundle).
 const glbHandlers = {};
+const pendingStates = {};
 function loadGlb(id, cb) { glbHandlers[id] = cb; }
+// Messages to the app (Flutter JavaScriptChannel 'CheBridge'); silent when the page is opened on its own.
+function tellApp(msg) { try { if (window.CheBridge) window.CheBridge.postMessage(JSON.stringify(msg)); } catch (_) {} }
+const loadedIds = new Set();
+const TOTAL_MODELS = 8;
+function markLoaded(id) {
+  loadedIds.add(id);
+  if (loadedIds.size === TOTAL_MODELS) tellApp({ type: 'ready', loaded: loadedIds.size });
+}
 window.CHE = window.CHE || {};
 window.CHE.supplyGlb = (id, b64) => {
   const bin = atob(b64);
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  new GLTFLoader().parse(bytes.buffer, '', (gltf) => { if (glbHandlers[id]) glbHandlers[id](gltf); }, (err) => console.error(err));
+  new GLTFLoader().parse(bytes.buffer, '', (gltf) => { if (glbHandlers[id]) glbHandlers[id](gltf); }, (err) => { console.error(err); tellApp({ type: 'error', id, message: String(err && err.message || err) }); });
 };
 
 const CLIPS = [
@@ -56,13 +65,14 @@ const ONE_SHOT = new Set(['sit', 'stand']);
 const ROOM = 5.5;
 const DESK = { x: 2.2, z: -2.5, hx: 0.8, hz: 0.35 };
 // CHE's office agents (roles from lib/che_ui/che_brain.dart), each at a spot with a looping clip.
+// Everyone starts idle; the app sets each clip from the agent's real runtime status (CHE.setStates).
 const CREW = [
-  { id: 'nova', name: 'Nova', role: 'Product and listings', at: [-2.2, -2.2], clip: 'talk', face: 0.6 },
-  { id: 'atlas', name: 'Atlas', role: 'Research and sourcing', at: [-0.9, -3.0], clip: 'think', face: 0.2 },
+  { id: 'nova', name: 'Nova', role: 'Product and listings', at: [-2.2, -2.2], clip: 'idle', face: 0.6 },
+  { id: 'atlas', name: 'Atlas', role: 'Research and sourcing', at: [-0.9, -3.0], clip: 'idle', face: 0.2 },
   { id: 'mira', name: 'Mira', role: 'Support copy and translation', at: [0.6, -3.2], clip: 'idle', face: 0 },
-  { id: 'knox', name: 'Knox', role: 'Engineering', at: [2.2, -1.6], clip: 'nod', face: -0.6 },
-  { id: 'sage', name: 'Sage', role: 'Finance reports, read only', at: [3.0, 0.2], clip: 'think', face: -1.2 },
-  { id: 'lyra', name: 'Lyra', role: 'Content and social', at: [-3.0, 0.0], clip: 'talk', face: 1.2 },
+  { id: 'knox', name: 'Knox', role: 'Engineering', at: [2.2, -1.6], clip: 'idle', face: -0.6 },
+  { id: 'sage', name: 'Sage', role: 'Finance reports, read only', at: [3.0, 0.2], clip: 'idle', face: -1.2 },
+  { id: 'lyra', name: 'Lyra', role: 'Content and social', at: [-3.0, 0.0], clip: 'idle', face: 1.2 },
   { id: 'iris', name: 'Iris', role: 'Ad Studio', at: [-2.4, 1.6], clip: 'idle', face: 2.2 },
 ];
 
@@ -148,7 +158,8 @@ loadGlb('che', (gltf) => {
   mixer = new THREE.AnimationMixer(root);
   for (const clip of gltf.animations) actions[clip.name] = mixer.clipAction(clip);
   buildButtons();
-  play('idle');
+  play(pendingStates.che ? pendingStates.che.clip : 'idle');
+  markLoaded('che');
   say('CHE is ready', 'Drag the pad to walk. Tap CHE to select her. Use the buttons to play an animation.');
 }, undefined, (err) => say('Could not load CHE', String(err && err.message || err)));
 
@@ -206,7 +217,10 @@ for (const a of CREW) {
     const m = new THREE.AnimationMixer(root);
     const acts = Object.fromEntries(gltf.animations.map((c) => [c.name, m.clipAction(c)]));
     acts[a.clip].play();
-    crew.push({ ...a, root, mixer: m, acts, cur: acts[a.clip] });
+    const member = { ...a, root, mixer: m, acts, cur: acts[a.clip], still: false };
+    crew.push(member);
+    if (pendingStates[a.id]) setCrewState(member, pendingStates[a.id]);
+    markLoaded(a.id);
   });
 }
 function greet(id) {
@@ -302,7 +316,7 @@ function update(dt) {
   hero.rotation.y = heading;
   ring.position.set(pos.x, 0.01, pos.z);
   if (mixer) mixer.update(dt);
-  for (const c of crew) c.mixer.update(dt);
+  for (const c of crew) if (!c.still) c.mixer.update(dt);
   // Camera: follows CHE from behind, orbit by dragging empty space.
   const target = new THREE.Vector3(pos.x, 0.62, pos.z);
   const want = new THREE.Vector3(target.x + Math.sin(camYaw) * 2.7, 1.45, target.z + Math.cos(camYaw) * 2.7);
@@ -325,15 +339,45 @@ function resize() {
 window.addEventListener('resize', resize);
 resize();
 
+// ---------- real states from the app: one clip per character, from its runtime status
+function setCrewState(member, st) {
+  const next = member.acts[st.clip] || member.acts.idle;
+  member.still = Boolean(st.still);
+  if (next !== member.cur) {
+    member.cur.fadeOut(0.35);
+    next.reset().fadeIn(0.35).play();
+    member.cur = next;
+  }
+}
+function setStates(states) {
+  for (const [id, st] of Object.entries(states || {})) {
+    pendingStates[id] = st;
+    if (id === 'che') { if (mixer) { sitting = st.clip === 'sit'; play(st.clip in actions ? st.clip : 'idle'); } continue; }
+    const member = crew.find((c) => c.id === id);
+    if (member) setCrewState(member, st);
+  }
+}
+
+// ---------- the render loop stops while the page is hidden or the app pauses it (no GPU work off screen)
 let last = performance.now();
+let paused = false;
+let running = false;
 function frame(now) {
+  if (paused || document.hidden) { running = false; return; }
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
   update(dt);
   renderer.render(scene, camera);
   requestAnimationFrame(frame);
 }
-requestAnimationFrame(frame);
+function resume() {
+  if (running || paused || document.hidden) return;
+  running = true;
+  last = performance.now();
+  requestAnimationFrame(frame);
+}
+document.addEventListener('visibilitychange', resume);
+resume();
 
 // Small hook for tests and for later voice or touch wiring.
 window.CHE = {
@@ -341,6 +385,9 @@ window.CHE = {
   play: (name) => choose(name),
   stick: (x, y) => setStick(x, y),
   greet: (id) => greet(id),
+  setStates: (states) => setStates(states),
+  pause: (p) => { paused = Boolean(p); resume(); },
+  get paused() { return paused || !running; },
   get crewLoaded() { return crew.length; },
   get state() { return { clip: current && Object.keys(actions).find((k) => actions[k] === current), pos: pos.toArray(), sitting, selected }; },
 };
