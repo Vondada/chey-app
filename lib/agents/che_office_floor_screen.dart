@@ -14,11 +14,13 @@ import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 
 import '../che_ui/che_agents.dart';
+import '../che_ui/che_hud.dart';
 import '../che_ui/che_rooms.dart';
 import '../che_ui/che_theme.dart';
 import '../che_ui/che_voice_actions.dart';
 import '../rooms/che_characters_room.dart';
 import 'che_agent_runtime.dart';
+import 'che_office_glass.dart';
 import 'che_office_store.dart';
 import '../widgets/che_native_scene_world.dart';
 
@@ -476,7 +478,7 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
             _ReadAloudButton(label: 'Read CHE\'s task aloud', onPressed: () => _speak('CHE is on: ${r.che.task}')),
           ]),
         const SizedBox(height: CheSpace.lg),
-        Text('YOUR CREW', style: CheType.overline.copyWith(color: CheColors.accent)),
+        Text('YOUR CREW', style: cheOfficeLabel(CheType.overline.copyWith(color: CheColors.accent))),
         const SizedBox(height: CheSpace.sm),
         _FilterPills(
           selected: _filter,
@@ -507,7 +509,7 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
               ),
             ),
         const SizedBox(height: CheSpace.lg),
-        Text('WAR ROOM', style: CheType.overline),
+        Text('WAR ROOM', style: cheOfficeLabel(CheType.overline)),
         const SizedBox(height: CheSpace.sm),
         Wrap(spacing: CheSpace.sm, runSpacing: CheSpace.sm, children: [
           OutlinedButton.icon(
@@ -649,7 +651,7 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
       return Theme(
         data: CheTheme.dark(),
         child: Material(
-          color: CheColors.bg,
+          color: CheColors.screen,
           child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.xs, CheSpace.xs, 0),
@@ -660,7 +662,10 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('The Office', maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.title),
+                        if (cheHudActive)
+                          CheChromeText('The Office', maxLines: 1, style: CheType.title)
+                        else
+                          Text('The Office', maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.title),
                         Text(
                           'Your team. Real work. Real results.',
                           maxLines: 1,
@@ -686,7 +691,7 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
         backgroundColor: CheColors.screen,
         appBar: AppBar(
           backgroundColor: Colors.transparent,
-          title: const Text('The Office'),
+          title: cheHudActive ? CheChromeText('The Office', maxLines: 1, style: CheType.title) : const Text('The Office'),
           actions: [
             ..._actions(),
             IconButton(
@@ -733,10 +738,11 @@ class CheCodingJobCard extends StatelessWidget {
       liveRegion: true,
       label: 'CHE coding job. ${status.label}. ${status.speech}',
       excludeSemantics: true,
-      child: Container(
+      child: CheOfficePanel(
         width: double.infinity,
         padding: const EdgeInsets.all(CheSpace.md),
-        decoration: BoxDecoration(
+        glow: color,
+        legacy: BoxDecoration(
           color: CheColors.surface,
           borderRadius: BorderRadius.circular(CheRadius.md),
           border: Border.all(color: color.withValues(alpha: 0.65)),
@@ -751,7 +757,7 @@ class CheCodingJobCard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text('CHE CODING · ${status.label.toUpperCase()}',
-                      style: CheType.overline.copyWith(color: color)),
+                      style: cheOfficeLabel(CheType.overline.copyWith(color: color), color: color)),
                   const SizedBox(height: 2),
                   Text(status.speech, style: CheType.caption),
                 ],
@@ -803,11 +809,16 @@ class CheOfficeHeader extends StatelessWidget {
         liveRegion: true,
         label: 'Office header. ${lines.join('. ')}.',
         excludeSemantics: true,
-        child: Container(
+        child: CheOfficePanel(
           width: double.infinity,
           margin: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.xs, CheSpace.gutter, CheSpace.xs),
-          padding: const EdgeInsets.symmetric(horizontal: CheSpace.md, vertical: CheSpace.sm),
-          decoration: BoxDecoration(
+          // The glass's corner brackets need a little more room than the old flat border did.
+          padding: cheHudActive
+              ? const EdgeInsets.symmetric(horizontal: CheSpace.md, vertical: CheSpace.md)
+              : const EdgeInsets.symmetric(horizontal: CheSpace.md, vertical: CheSpace.sm),
+          glow: color,
+          shadow: true,
+          legacy: BoxDecoration(
             color: CheColors.surface,
             borderRadius: BorderRadius.circular(CheRadius.md),
             border: Border.all(color: color.withValues(alpha: 0.6)),
@@ -851,22 +862,23 @@ class CheOfficeBoard extends StatelessWidget {
     Widget section(String title, String body, {Color? color}) => Padding(
           padding: const EdgeInsets.only(top: CheSpace.sm),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(title, style: CheType.overline),
+            Text(title, style: cheOfficeLabel(CheType.overline)),
             Text(body, style: CheType.caption.copyWith(color: color)),
           ]),
         );
     return RepaintBoundary(
-      child: Container(
+      child: CheOfficePanel(
         width: double.infinity,
-        padding: const EdgeInsets.all(CheSpace.md),
-        decoration: BoxDecoration(
+        padding: EdgeInsets.all(cheHudActive ? CheSpace.lg + 4 : CheSpace.md),
+        shadow: true,
+        legacy: BoxDecoration(
           color: CheColors.surface,
           borderRadius: BorderRadius.circular(CheRadius.lg),
           border: Border.all(color: CheColors.stroke),
         ),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
-            Expanded(child: Text('LA AGENCIA • TODAY', style: CheType.overline.copyWith(color: CheColors.accent))),
+            Expanded(child: Text('LA AGENCIA • TODAY', style: cheOfficeLabel(CheType.overline.copyWith(color: CheColors.accent)))),
             _ReadAloudButton(label: 'Read this Office to me', onPressed: onReadAloud),
           ]),
           section('STARTED TODAY (${t?.startedToday ?? 0})',
@@ -945,10 +957,12 @@ class _FilterPill extends StatelessWidget {
           duration: CheMotion.fast,
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
           decoration: BoxDecoration(
-            color: selected ? CheColors.accent : CheColors.surface,
+            color: selected
+                ? CheColors.accent
+                : (cheHudActive ? CheHud.ice.withValues(alpha: 0.08) : CheColors.surface),
             borderRadius: BorderRadius.circular(CheRadius.pill),
             border: Border.all(
-              color: selected ? CheColors.accent : CheColors.strokeHi,
+              color: selected ? CheColors.accent : (cheHudActive ? CheHud.ice.withValues(alpha: 0.40) : CheColors.strokeHi),
             ),
             boxShadow: selected
                 ? [BoxShadow(color: CheColors.accent.withValues(alpha: 0.35), blurRadius: 12)]
@@ -992,8 +1006,9 @@ class _AgentListCard extends StatelessWidget {
           onTap: onTap,
           onLongPress: onReadAloud,
           borderRadius: BorderRadius.circular(CheRadius.lg),
-          child: Ink(
+          child: CheOfficeInkPanel(
             padding: const EdgeInsets.fromLTRB(10, 10, 12, 10),
+            glow: working ? CheColors.accent : null,
             decoration: BoxDecoration(
               color: CheColors.surfaceHi,
               borderRadius: BorderRadius.circular(CheRadius.lg),
@@ -1053,6 +1068,7 @@ class _AgentListCard extends StatelessWidget {
   }
 }
 
+
 class _Banner extends StatelessWidget {
   const _Banner({required this.text, required this.color});
   final String text;
@@ -1079,14 +1095,7 @@ class _MeetingTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     const amber = CheColors.markets;
-    return Card(
-      color: CheColors.surfaceHi,
-      margin: const EdgeInsets.only(bottom: CheSpace.sm),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(CheRadius.md),
-        side: BorderSide(color: meeting.live ? amber : CheColors.stroke),
-      ),
-      child: ListTile(
+    final tile = ListTile(
         onTap: onTap,
         leading: Icon(meeting.live ? Icons.groups_rounded : Icons.fact_check_rounded, color: meeting.live ? amber : CheColors.textDim),
         title: Text(cheShortSummary(meeting.objective),
@@ -1105,7 +1114,26 @@ class _MeetingTile extends StatelessWidget {
           ),
         ]),
         trailing: _ReadAloudButton(label: 'Read this meeting aloud', onPressed: onReadAloud),
+      );
+    if (cheHudActive) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: CheSpace.sm),
+        child: CheGlass(
+          radius: CheRadius.md,
+          glow: meeting.live ? amber : null,
+          shadow: false,
+          child: Material(type: MaterialType.transparency, child: tile),
+        ),
+      );
+    }
+    return Card(
+      color: CheColors.surfaceHi,
+      margin: const EdgeInsets.only(bottom: CheSpace.sm),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(CheRadius.md),
+        side: BorderSide(color: meeting.live ? amber : CheColors.stroke),
       ),
+      child: tile,
     );
   }
 }
@@ -1333,7 +1361,7 @@ class _AgentDeskSheetState extends State<_AgentDeskSheet> {
                     child: Text(
                       'EMPLOYEE ${_agentIndex + 1} OF ${widget.agentIds.length} · SWIPE TO REVIEW',
                       textAlign: TextAlign.center,
-                      style: CheType.overline.copyWith(color: CheColors.accent),
+                      style: cheOfficeLabel(CheType.overline.copyWith(color: CheColors.accent)),
                     ),
                   ),
                   IconButton(
@@ -1401,15 +1429,15 @@ class _AgentDeskSheetState extends State<_AgentDeskSheet> {
             ),
             Semantics(
               label: 'Verified productivity for ${a.name}. ${_verifiedOutputLine(d)}. Current workflow progress ${(progress * 100).round()} percent.',
-              child: Container(
+              child: CheOfficePanel(
                 padding: const EdgeInsets.all(CheSpace.md),
-                decoration: BoxDecoration(
+                legacy: BoxDecoration(
                   color: CheColors.surfaceHi,
                   borderRadius: BorderRadius.circular(CheRadius.md),
                   border: Border.all(color: CheColors.strokeHi),
                 ),
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text('VERIFIED PRODUCTIVITY', style: CheType.overline.copyWith(color: CheColors.accent)),
+                  Text('VERIFIED PRODUCTIVITY', style: cheOfficeLabel(CheType.overline.copyWith(color: CheColors.accent))),
                   const SizedBox(height: 6),
                   LinearProgressIndicator(
                     value: progress,
@@ -1478,7 +1506,7 @@ class _AgentDeskSheetState extends State<_AgentDeskSheet> {
               ),
               const SizedBox(height: CheSpace.md),
             ],
-            Text(_isChe ? 'REQUEST TO CHE' : 'MESSAGE ${a.name.toUpperCase()}', style: CheType.overline),
+            Text(_isChe ? 'REQUEST TO CHE' : 'MESSAGE ${a.name.toUpperCase()}', style: cheOfficeLabel(CheType.overline)),
             const SizedBox(height: CheSpace.xs),
             Row(children: [
               Expanded(
@@ -1529,7 +1557,7 @@ class _AgentDeskSheetState extends State<_AgentDeskSheet> {
               ]),
             const SizedBox(height: CheSpace.lg),
             Row(children: [
-              Expanded(child: Text('WORK HISTORY', style: CheType.overline)),
+              Expanded(child: Text('WORK HISTORY', style: cheOfficeLabel(CheType.overline))),
               IconButton(tooltip: 'Refresh', onPressed: _load, icon: const Icon(Icons.refresh_rounded, size: 18)),
             ]),
             if (d.history.isEmpty)
@@ -1574,7 +1602,7 @@ class _Section extends StatelessWidget {
   Widget build(BuildContext context) => Padding(
         padding: const EdgeInsets.only(bottom: CheSpace.md),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(title, style: CheType.overline),
+          Text(title, style: cheOfficeLabel(CheType.overline)),
           const SizedBox(height: CheSpace.xs),
           SelectableText(body, style: CheType.body),
         ]),
@@ -1602,10 +1630,7 @@ class _TaskCard extends StatelessWidget {
       'cancelled' => ('Cancelled', CheColors.textFaint),
       _ => (task.status, CheColors.textDim),
     };
-    return Card(
-      color: CheColors.surfaceHi,
-      margin: const EdgeInsets.only(bottom: CheSpace.sm),
-      child: ExpansionTile(
+    final tile = ExpansionTile(
         shape: const Border(),
         title: Text(cheShortSummary(task.task),
             maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.label, semanticsLabel: task.task),
@@ -1623,12 +1648,26 @@ class _TaskCard extends StatelessWidget {
           if (task.result.isNotEmpty) SelectableText(task.result, style: CheType.body),
           if (task.cheReview.isNotEmpty) ...[
             const SizedBox(height: CheSpace.sm),
-            Text('CHE REVIEW', style: CheType.overline),
+            Text('CHE REVIEW', style: cheOfficeLabel(CheType.overline)),
             SelectableText(task.cheReview, style: CheType.bodyDim),
           ],
           if (task.error.isNotEmpty) Text(task.error, style: CheType.caption.copyWith(color: CheColors.danger)),
         ],
-      ),
+      );
+    if (cheHudActive) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: CheSpace.sm),
+        child: CheGlass(
+          radius: CheRadius.md,
+          shadow: false,
+          child: Material(type: MaterialType.transparency, child: tile),
+        ),
+      );
+    }
+    return Card(
+      color: CheColors.surfaceHi,
+      margin: const EdgeInsets.only(bottom: CheSpace.sm),
+      child: tile,
     );
   }
 }
