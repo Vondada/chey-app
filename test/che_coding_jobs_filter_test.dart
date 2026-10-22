@@ -5,7 +5,8 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   test('coding and repository jobs are identified; media and voice jobs are not', () {
-    for (final kind in ['self_development', 'software_agent', 'repo_study', 'merge_pr', 'pr_opened', 'autonomy_exam']) {
+    for (final kind in ['self_development', 'software_agent', 'repo_study', 'merge_pr', 'pr_opened', 'autonomy_exam',
+        'reasoning_exam', 'verify_app_build', 'office_skill_import']) {
       expect(cheIsCodingJob({'kind': kind, 'title': 'x'}), isTrue, reason: kind);
     }
     for (final kind in ['media', 'music', 'podcast', 'video_render', 'voiceover', null]) {

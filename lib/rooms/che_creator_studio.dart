@@ -15,11 +15,11 @@ import '../che_ui/che_screen_awareness.dart';
 import '../che_ui/che_theme.dart';
 import '../widgets/che_native_scene_world.dart';
 
-/// Coding and repository work (self-development, PRs, deploys, studies). It belongs in Projects and Office, never in the
+/// Coding and repository work (self-development, PRs, deploys, app builds, skill imports, exams). It belongs in Projects and Office, never in the
 /// Music or Create render queue (2026-10-22: the coding investigation history showed up inside Music).
 const _kCodingJobKinds = {
   'self_development', 'software_agent', 'repo_study', 'verify_deploy', 'merge_pr', 'pr_opened', 'merged',
-  'update_approved', 'autonomy_exam',
+  'update_approved', 'autonomy_exam', 'reasoning_exam', 'verify_app_build', 'office_skill_import',
 };
 
 bool cheIsCodingJob(Map<String, dynamic> job) => _kCodingJobKinds.contains('${job['kind'] ?? ''}');
