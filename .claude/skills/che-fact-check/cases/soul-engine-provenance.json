@@ -1,0 +1,12 @@
+{
+  "about": "Owner 2026-10-22, live iPhone: a model reply recited an invented Soul version and said the engine was 'CHE itself'. A model cannot see its own routing: the engine sentence is replaced by the reply's routing record, a wrong Soul version is corrected, and 'which engine answered that?' is answered from the record with no model.",
+  "owner": true,
+  "model": "I'm using Soul v1 (4898af92). The Soul version used to shape this response is indeed the one I mentioned, and it did influence the response. The engine that answered your question is CHE itself, with no other agents involved in this conversation.",
+  "turns": [
+    { "message": "Hey CHE, what's the capital of Australia?", "expect": { "route": "model", "match": "This reply came from Cloudflare Workers AI, model @cf/meta/", "not": "CHE itself|4898af92" } },
+    { "message": "Which Soul version shaped that reply, and which engine answered it?", "expect": { "route": "che_reply_provenance", "model_calls": 0, "match": "came from Cloudflare Workers AI, model @cf/meta/.*Soul v0 \\([0-9a-f]{8}\\) was in its prompt", "not": "CHE itself" } },
+    { "message": "What model answered you just now?", "expect": { "route": "che_reply_provenance", "model_calls": 0, "match": "came from Cloudflare Workers AI", "not": "CHE itself" } },
+    { "message": "/status", "expect": { "route": "che_command", "model_calls": 0 } },
+    { "message": "Which engine answered that?", "expect": { "route": "che_reply_provenance", "model_calls": 0, "match": "one of my own handlers \\(che_command\\): no model \\(deterministic\\)", "not": "CHE itself" } }
+  ]
+}
