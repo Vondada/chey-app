@@ -1228,6 +1228,8 @@ extension _CheHomeSend on _CHEHomeState {
           if (_streamUnderstoodAs != null) {
             messages[assistantIndex]['understood_as'] = _streamUnderstoodAs!;
           }
+          final details = cheResponseDetailsJson(_streamResponseDetails);
+          if (details != null) messages[assistantIndex]['response_details'] = details;
         }
         _isSending = false;
       });

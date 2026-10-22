@@ -88,6 +88,8 @@ extension _CheHomeUi on _CHEHomeState {
     final extras = <Widget>[
       if (!isLiveReply && (item['understood_as'] ?? '').isNotEmpty)
         CheUnderstoodAs(text: item['understood_as']!),
+      if (!isLiveReply && cheResponseDetailsFromJson(item['response_details']) != null)
+        CheResponseDetailsButton(details: cheResponseDetailsFromJson(item['response_details'])!),
       if (!isLiveReply)
         for (final proposal in CheUpdateProposal.findInText(text))
           CheUpdateCard(
