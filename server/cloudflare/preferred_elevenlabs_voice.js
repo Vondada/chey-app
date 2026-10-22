@@ -85,6 +85,11 @@ function classifyFailure(code, reason) {
     return { status: 'needs a paid plan', pauseMs: PAUSE_LONG_MS };
   }
   if (code === 404 || /voice_not_found/i.test(reason)) return { status: 'voice not found', pauseMs: PAUSE_LONG_MS };
+  // ElevenLabs' own words for a key that reached its per-key credit limit, which can be far below the account's credits
+  // (owner, 2026-10-22: the account had about 150,000 credits left while this key's limit of 10,000 was used up).
+  if (code === 401 && /api key[^.]*quota|quota[^.]*api key|exceeds your api key/i.test(reason)) {
+    return { status: 'key limit reached', pauseMs: PAUSE_LONG_MS };
+  }
   const outOfCredits = code === 402 || (code === 401 && /quota|credit/i.test(reason));
   if (outOfCredits) return { status: 'out of credits', pauseMs: PAUSE_LONG_MS };
   if (code === 401 || code === 403) return { status: 'unauthorized', pauseMs: PAUSE_LONG_MS };

@@ -20,6 +20,14 @@ void main() {
   });
 
   group('why Mary did not speak', () {
+    test('a key at its own credit limit is not described as an empty account', () {
+      final reason = cheMaryReason('key limit reached', 'edge-ava');
+      expect(reason, contains('API key'));
+      expect(reason, contains('may still have credits'));
+      expect(reason.toLowerCase(), isNot(contains('out of credits')));
+      expect(cheMaryStateLabel('key limit reached'), 'API key limit reached (account may still have credits)');
+    });
+
     test('no reason when Mary spoke', () {
       expect(cheMaryReason('healthy', 'elevenlabs-mary'), '');
     });
