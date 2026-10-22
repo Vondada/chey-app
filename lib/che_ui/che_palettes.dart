@@ -44,18 +44,19 @@ const kCheDarkPalette = CheColorPalette(
   accent: Color(0xFF34E0B8),
 );
 
-/// Executive look: deep black and charcoal, metallic silver accent, crisp white text.
+/// Metallic CHE (owner, 2026-10-22): layered blacks with graphite and gunmetal surfaces, brushed-silver borders and a
+/// teal-cyan energy accent. The id stays "silver_black" so the owner's saved choice now shows this look.
 const kCheSilverBlackPalette = CheColorPalette(
   id: 'silver_black',
-  label: 'Silver and black',
+  label: 'Metallic silver and teal',
   brightness: Brightness.dark,
-  bg: Color(0xFF060607),
-  surface: Color(0xFF121214),
-  surfaceHi: Color(0xFF1B1B1F),
-  stroke: Color(0xFF2C2C32),
-  text: Color(0xFFFFFFFF),
-  textDim: Color(0xFFB9BDC6),
-  accent: Color(0xFFC9CED6),
+  bg: Color(0xFF050709),
+  surface: Color(0xFF0E1418),
+  surfaceHi: Color(0xFF141A1F),
+  stroke: Color(0xFF2E4147),
+  text: Color(0xFFF3F8F9),
+  textDim: Color(0xFFA4B8BC),
+  accent: Color(0xFF3FE6D2),
 );
 
 /// Clean daylight look: white and soft gray surfaces, graphite text.

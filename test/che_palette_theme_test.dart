@@ -18,13 +18,13 @@ void main() {
     expect(built.appBarTheme.foregroundColor, current.appBarTheme.foregroundColor);
   });
 
-  test('the silver and black palette uses its own background, white text and silver accent', () {
+  test('the metallic silver palette uses its own background, text and teal accent', () {
     final t = cheThemeFor(kCheSilverBlackPalette);
     expect(t.brightness, Brightness.dark);
     expect(t.scaffoldBackgroundColor, kCheSilverBlackPalette.bg);
     expect(t.colorScheme.primary, kCheSilverBlackPalette.accent);
-    expect(t.textTheme.bodyLarge?.color, const Color(0xFFFFFFFF));
-    expect(t.appBarTheme.foregroundColor, const Color(0xFFFFFFFF));
+    expect(t.textTheme.bodyLarge?.color, kCheSilverBlackPalette.text);
+    expect(t.appBarTheme.foregroundColor, kCheSilverBlackPalette.text);
   });
 
   test('the light palette is light, with dark text on its light background', () {

@@ -1458,7 +1458,8 @@ OWNER AGENCY
           controls: const ['Talk to CHE', 'Trading Room', 'Conversations', 'Mailbox and Flagstaff', 'Keys', 'UI Controls', 'Connections', 'Change CHE’s voice', 'Voice replies', 'Projects and Businesses', 'Language and translate', 'the bottom tabs']),
       _ => CheScreenReport(page: 'Home', tab: 'Home', tabs: tabs,
           detail: '${_officeRuntime.agents.length} agents, ${_officeRuntime.working} working',
-          controls: const ['CHE avatar, to talk', 'Office status', 'Find an agent', 'War Room', 'the bottom tabs']),
+          controls: const ['Talk to CHE', 'Type to CHE', 'Voice on or off', 'The Office', 'Brain', 'Trading', 'Create',
+            'CHE World', 'Read status', 'the bottom tabs']),
     };
   }
 
@@ -1563,27 +1564,21 @@ OWNER AGENCY
       liveMeetings: _officeRuntime.meetings.where((m) => m.live).length,
       connected: _deviceToken != null && _officeRuntime.error == null,
       greeting: greeting,
+      // CHE's real state: the microphone, a reply on its way, and her own speech.
       listening: listening,
+      thinking: _isSending,
+      speaking: _isSpeaking,
       voiceRepliesOn: voiceResponsesEnabled,
       onToggleVoiceReplies: () => unawaited(_toggleVoiceReplies()),
-      deskCompact: CheUiPreferences.instance.deskCompact,
-      onStartChat: () => _goShellTab(1),
+      onTalk: toggleListening,
+      onOpenChat: () => _goShellTab(1),
       onOpenOffice: () => _goShellTab(2),
-      onVoice: toggleListening,
-      onQuickTools: () {
-        setState(() {
-          _shellTab = 2;
-          _officePane = 1;
-        });
-        unawaited(_loadAgentState(silent: true));
-      },
+      onOpenBrain: _openMemoryBrain,
+      onOpenTrading: () => _openAssistantHub(tab: 1),
+      onOpenCreate: () => _openAssistantHub(tab: 5),
+      onOpenWorld: () => _goShellTab(3),
       onOfficeStatus: () => unawaited(_speakOfficeStatus()),
-      onFindAgent: () => _goShellTab(2),
-      onWarRoom: () {
-        _goShellTab(2);
-        // Floor screen's War Room control is on the Office tab.
-      },
-      onTapAgent: (_) => _goShellTab(2),
+      onTapAgent: (agent) => _openOfficeFloor(agentName: agent.name),
     );
   }
 

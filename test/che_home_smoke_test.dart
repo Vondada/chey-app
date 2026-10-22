@@ -1,3 +1,4 @@
+import 'package:chey/che_ui/che_phone_shell.dart';
 import 'package:chey/main.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -15,19 +16,19 @@ void main() {
       await tester.pump(const Duration(milliseconds: 200));
     }
 
-    // Avatar-first Home (mockups 02 / 04).
-    expect(find.text('Start Chat'), findsOneWidget);
-    expect(find.text('Open The Office'), findsOneWidget);
-    expect(find.text('Voice Mode'), findsOneWidget);
-    expect(find.text('Quick Tools'), findsOneWidget);
+    // CHE 2.0 Home: one Talk control, the five destinations and CHE's real state (offline in a test: no device token).
+    expect(find.text('Talk to CHE'), findsOneWidget);
+    for (final destination in ['The Office', 'Brain', 'Trading', 'Create']) {
+      expect(find.text(destination), findsOneWidget, reason: destination);
+    }
+    expect(find.text('Offline'), findsOneWidget);
     expect(find.text('Voice on'), findsOneWidget);
 
-    // Bottom shell tabs.
-    expect(find.text('Home'), findsOneWidget);
-    expect(find.text('Chat'), findsOneWidget);
-    expect(find.text('Office'), findsOneWidget);
-    expect(find.text('CHE World'), findsOneWidget);
-    expect(find.text('More'), findsOneWidget);
+    // Bottom shell tabs (CHE World is also a Home destination, so the tabs are read from the bar itself).
+    final bar = find.byType(ChePhoneBottomNav);
+    for (final tab in ['Home', 'Chat', 'Office', 'CHE World', 'More']) {
+      expect(find.descendant(of: bar, matching: find.text(tab)), findsOneWidget, reason: tab);
+    }
 
     // One-tap Voice mute on Home.
     await tester.tap(find.text('Voice on'));
