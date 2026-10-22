@@ -31,3 +31,18 @@ test('an answer that is not a refusal, a memory answer, or a question about stor
   assert.equal(capabilityGap('Can you tell me my favorite food?', "I don't have a record of that, sir."), null);
   assert.equal(capabilityGap('What is my favorite food?', "I don't have anywhere to store that."), null);
 });
+
+test('an existing Projects or Office action is never queued as self-development, even when the reply refuses', () => {
+  const refusals = [
+    "I can't create projects, sir.",
+    "I cannot assign tasks to agents.",
+  ];
+  for (const reply of refusals) {
+    assert.equal(capabilityGap('CHE, create a project called Behavior Test and assign Atlas one task called "Check CHE response quality".', reply), null);
+    assert.equal(capabilityGap('Can you add a task for Atlas to check the Office board?', reply), null);
+  }
+});
+
+test('a real unsupported ability still queues after the existing actions do not cover it', () => {
+  assert.equal(capabilityGap('Can you add a dark mode switch to the Settings page?', "I don't have a way to change the Settings page, sir.")?.fields.kind, 'self_development');
+});
