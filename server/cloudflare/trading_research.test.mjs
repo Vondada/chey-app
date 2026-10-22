@@ -419,6 +419,7 @@ test('Worker: the research API matches the contract, owner only; per-timeframe e
   const best = await che.say('Which strategy is best right now?');
   assert.equal(best.done.source, 'che_trading_research');
   assert.equal(best.model_calls, 0);
+  assert.equal(best.done.workflow?.id, 'trading_desk', 'recorded by the Workflow Engine under the trading workflow');
   assert.match(best.reply, /No strategy|stale/i);
   const how = await che.say('how is the RSI reversal doing on 5 minute');
   assert.equal(how.done.source, 'che_trading_research');

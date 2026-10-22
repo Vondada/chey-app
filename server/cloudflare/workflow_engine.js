@@ -62,7 +62,7 @@ export const SYSTEM_WORKFLOWS = Object.freeze([
     ['che_knowledge', 'che_knowledge_atlas', 'che_library', 'che_research_cache', 'che_cache', 'che_topic_study', 'che_source_check', 'che_resource_finder', 'che_browse', 'che_tech'],
     { summary: 'Answers from the Knowledge Library and checked sources before any model.', blocks: ['understand', 'sources', 'verify', 'speak'], triggers: ['what is', 'explain', 'research', 'source', 'library', 'learn', 'study', 'article'], verify: 'sources', context: ['knowledge'] }),
   S('trading_desk', 'Trading desk', 'trading',
-    ['che_trading', 'che_trading_desk', 'che_trading_chart', 'che_trading_controls', 'che_trading_evidence', 'che_trading_intelligence', 'che_trading_live', 'che_trading_matrix', 'che_trading_ledgers', 'che_strategy_sim', 'che_brokerage'],
+    ['che_trading', 'che_trading_desk', 'che_trading_chart', 'che_trading_controls', 'che_trading_evidence', 'che_trading_intelligence', 'che_trading_live', 'che_trading_matrix', 'che_trading_ledgers', 'che_strategy_sim', 'che_brokerage', 'che_trading_research'],
     { summary: 'Charts, paper trades, strategies and the account, with every order held for the owner\'s yes.', blocks: ['understand', 'connector', 'records', 'money_delete_hold', 'receipt', 'speak'], triggers: ['trade', 'trading', 'chart', 'portfolio', 'position', 'strategy', 'stock', 'futures', 'buy', 'sell', 'paper'], approval: 'money', verify: 'receipt', context: ['trading'] }),
   S('coding_job', 'Coding job', 'build',
     ['che_self_development', 'che_coding_history', 'che_coding_resume', 'che_coding_cancel', 'che_code_scout', 'che_repository_analysis', 'che_repository_inspection', 'che_engineering_playbook', 'che_app_build', 'che_pipeline', 'che_github_verification', 'che_handoff'],
