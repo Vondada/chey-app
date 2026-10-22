@@ -44,8 +44,9 @@ export const TIMEFRAMES = Object.freeze([
   { id: '1M', label: '1 month', from: '1d', calendar: 'month', depth: 'Stooq daily history' },
 ]);
 
-// VWAP and the opening range are New York session rules: they need bars no longer than 30 minutes.
-const SESSION_SIGNALS = new Set(['vwap-reclaim', 'opening-range']);
+// New York session rules and the longest bar each can be tested on. The opening range is the first
+// 15 minutes, so a longer bar would put later prices inside the range.
+const SESSION_SIGNALS = new Map([['vwap-reclaim', 30 * MIN], ['opening-range', 15 * MIN]]);
 const SESSION_MAX_MS = 30 * MIN;
 
 /// Round-trip cost of one MNQ trade in index points: half the spread on each side, one tick of
@@ -106,13 +107,15 @@ export function calendarBars(daily, period, now = Date.now()) {
 const NY_HOUR = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: '2-digit', hourCycle: 'h23' });
 export function nyHour(iso) { return Number(NY_HOUR.format(new Date(iso))); }
 
-/// Every trade of one strategy on one bar series, net of costs, with the time it was entered.
-export function runStrategy(bars, strategyId, ctx) {
+/// Every trade of one strategy on bars [from, to), net of costs. A trade is entered at the signal
+/// bar's close, so `in` is that bar's close time (open time + barMs); without a bar length it is the
+/// bar's own time. A trade still open at `to` is dropped, so no result uses a price at or after `to`.
+export function runStrategy(bars, strategyId, ctx, { from = 0, to = bars.length, barMs = 0 } = {}) {
   const strat = strategyById(strategyId);
   if (!strat) return [];
   const trades = [];
   let open = null;
-  for (let i = Math.max(WARMUP, 51); i < bars.length; i++) {
+  for (let i = Math.max(from, WARMUP, 51); i < Math.min(to, bars.length); i++) {
     const k = bars[i];
     if (open) {
       const risk = open.entry - open.stop;
@@ -121,7 +124,7 @@ export function runStrategy(bars, strategyId, ctx) {
       continue;
     }
     const e = strat.entry(bars, i, ctx);
-    if (e && e.stop < e.entry && e.target > e.entry) open = { ...e, in: k.t, at: i };
+    if (e && e.stop < e.entry && e.target > e.entry) open = { ...e, in: barMs ? new Date(Date.parse(k.t) + barMs).toISOString() : k.t, at: i };
   }
   return trades;
 }
@@ -158,14 +161,17 @@ export function contextFor(bars, tf) {
 
 export function evaluateCell(bars, strategy, tf, ctx = null) {
   const signal = strategy.signal || String(strategy.id).split('|')[0];
-  if (SESSION_SIGNALS.has(signal) && !(tf.barMs && tf.barMs <= SESSION_MAX_MS)) {
-    return { strategy: strategy.id, name: strategy.name, timeframe: tf.id, applicable: false, why: 'A New York session rule; it needs bars of 30 minutes or less.' };
+  if (SESSION_SIGNALS.has(signal) && !(tf.barMs && tf.barMs <= SESSION_SIGNALS.get(signal))) {
+    return { strategy: strategy.id, name: strategy.name, timeframe: tf.id, applicable: false, why: `A New York session rule; it needs bars of ${SESSION_SIGNALS.get(signal) / MIN} minutes or less.` };
   }
   ctx ??= contextFor(bars, tf);
-  const trades = runStrategy(bars, strategy.id, ctx);
+  // The two parts are run separately: a learning trade must close before the cut, and the unseen part
+  // starts flat at the cut, so neither part's result uses the other's prices.
   const cut = Math.floor(bars.length * SPLIT);
-  const learn = trades.filter((t) => t.at < cut);
-  const unseen = trades.filter((t) => t.at >= cut);
+  const barMs = tf.barMs && tf.barMs < 24 * HOUR ? tf.barMs : 0;
+  const learn = runStrategy(bars, strategy.id, ctx, { to: cut, barMs });
+  const unseen = runStrategy(bars, strategy.id, ctx, { from: cut, barMs });
+  const trades = [...learn, ...unseen];
   const intraday = Boolean(tf.barMs && tf.barMs < 24 * HOUR);
   const hours = intraday ? byHour(trades) : null;
   return {
@@ -307,6 +313,10 @@ export function matrixIntent(message) {
   const frames = /\b(?:time ?frames?|every chart|all charts|time of (?:the )?day|best (?:hour|time)|which hours?|what hours?|matrix)\b/i;
   const trading = /\b(?:strateg\w*|backtest\w*|nq|mnq|nasdaq|trad\w*)\b/i;
   if (!frames.test(text) || !trading.test(text)) return null;
+  // This matrix is NQ only. A question about another market is not answered with NQ results.
+  const nq = /\b(?:nq|mnq|nasdaq)\b/i.test(text);
+  const other = /\b(?:es|mes|s\s*&\s*p|spx|spy|qqq|dow|ym|mym|russell|rty|m2k|gold|gc|silver|oil|cl|bitcoin|btc|ether(?:eum)?|eth|crypto|forex|eur\s*\/?\s*usd|stocks?|aapl|tsla|nvda)\b/i.test(text);
+  if (other && !nq) return null;
   if (/\b(?:run|start|begin|refresh|update|redo|re-?run|test|backtest)\b[\s\S]{0,60}\b(?:strateg\w*|time ?frames?|matrix|backtest)\b/i.test(text)) return { kind: 'run' };
   return { kind: 'summary' };
 }

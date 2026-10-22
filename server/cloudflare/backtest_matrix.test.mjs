@@ -189,3 +189,43 @@ test('run and read back: one stored value per timeframe, each under the storage 
   assert.ok(storage.map.has(`${MATRIX_KEY}:1h`));
   assert.equal(await readMatrix(new MemoryStorage()), null);
 });
+
+// Review on #454 (Codex): entry time, split leakage, opening range on 30m bars, other markets.
+test('a trade is timed at the signal bar close, so the hour of day is the hour it was entered', () => {
+  const bars = series(1200, HOUR);
+  const trades = runStrategy(bars, 'channel-20|any|2', prepare(bars), { barMs: HOUR });
+  assert.ok(trades.length > 0);
+  for (const t of trades) assert.equal(t.in, new Date(Date.parse(bars[t.at].t) + HOUR).toISOString());
+});
+
+test('the learning part never uses unseen prices, and the unseen part starts flat at the cut', () => {
+  const tf = { ...TIMEFRAMES.find((t) => t.id === '1h'), barMs: HOUR };
+  const bars = series(3000, HOUR);
+  const cut = Math.floor(bars.length * 0.7);
+  const ctx = prepare(bars);
+  const learn = runStrategy(bars, 'channel-20|any|2', ctx, { to: cut, barMs: HOUR });
+  const unseen = runStrategy(bars, 'channel-20|any|2', ctx, { from: cut, barMs: HOUR });
+  assert.ok(learn.length && unseen.length);
+  assert.ok(learn.every((t) => t.closed_at < cut), 'every learning trade closed before the cut');
+  assert.ok(unseen.every((t) => t.at >= cut), 'every unseen trade opened at or after the cut');
+  const cell = evaluateCell(bars, { id: 'channel-20|any|2', name: 'x', signal: 'channel-20' }, tf);
+  assert.equal(cell.learn.trades, learn.length);
+  assert.equal(cell.unseen.trades, unseen.length);
+  assert.equal(cell.all.trades, learn.length + unseen.length);
+});
+
+test('the 15-minute opening range is not tested on 30-minute bars; VWAP still is', () => {
+  const bars = series(400, 30 * MIN);
+  const orb = { id: 'opening-range|any|2', name: 'ORB', signal: 'opening-range' };
+  const vwap = { id: 'vwap-reclaim|any|2', name: 'VWAP', signal: 'vwap-reclaim' };
+  assert.equal(evaluateCell(bars, orb, { id: '30m', barMs: 30 * MIN }).applicable, false);
+  assert.equal(evaluateCell(series(400, 15 * MIN), orb, { id: '15m', barMs: 15 * MIN }).applicable, true);
+  assert.equal(evaluateCell(bars, vwap, { id: '30m', barMs: 30 * MIN }).applicable, true);
+});
+
+test('questions about other markets are not answered with NQ results', () => {
+  assert.equal(matrixIntent('What is the best time of day to trade ES?'), null);
+  assert.equal(matrixIntent('Backtest every strategy on every timeframe for Bitcoin'), null);
+  assert.equal(matrixIntent('Which timeframe is best for trading gold?'), null);
+  assert.deepEqual(matrixIntent('Best time of day to trade NQ, not ES?'), { kind: 'summary' });
+});
