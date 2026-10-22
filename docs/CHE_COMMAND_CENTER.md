@@ -3,7 +3,7 @@
 **Where:** CHE → **Chat** → **Commands** (top bar, next to Conversations). Or say "open commands". The Back button returns to the same chat.
 
 The page has three tabs:
-- **Library:** all 98 commands (the owner's 71, plus REA, trading, the Knowledge Atlas, six Creator Studio commands and `/che-cancel-job`). Search by name ("/trade-chart") or by goal ("find website clients"). Nine category filters, favorites, recently used. Each command has a details page with:
+- **Library:** all 99 commands (the owner's 71, plus REA, trading, the Knowledge Atlas, six Creator Studio commands and `/che-cancel-job`). Search by name ("/trade-chart") or by goal ("find website clients"). Nine category filters, favorites, recently used. Each command has a details page with:
   - what it can actually do and its live status (Ready, Needs setup, Not supported yet, Unavailable right now);
   - its requirements, with setup steps for anything missing;
   - whether it needs your approval, and its input;
@@ -58,7 +58,7 @@ A ninth category, **Creator Studio**, holds six commands over `server/cloudflare
 
 | Piece | Where | Reuses |
 |---|---|---|
-| Catalog of 98 commands (71 + REA, trading, Knowledge Atlas, Creator Studio and the coding-job cancel) | `server/cloudflare/command_catalog.js` | One entry per command. It names the existing handler and chat route it uses, its mode (EXPLORE, PLAN or BUILD), approval, input, connectors, evidence and cost. |
+| Catalog of 99 commands (71 + REA, trading and the historical study, Knowledge Atlas, Creator Studio and the coding-job cancel) | `server/cloudflare/command_catalog.js` | One entry per command. It names the existing handler and chat route it uses, its mode (EXPLORE, PLAN or BUILD), approval, input, connectors, evidence and cost. |
 | Live status | `connectorStatus()` | Real Worker secrets, the YouTube OAuth state, the NinjaTrader token and `runtimeCapabilityRegistry`. |
 | Running a command | `/name input` in chat | The request goes through the ordinary `/api/chat` route, so every money, delete and app gate, every truth guard and every receipt applies. A command name cannot bypass a permission. |
 | Approval | `confirm` in the catalog | Only `/trade-execute` (real money) and `/yt-publish` (your YouTube channel). Owner rule of September 28: everything else you ask for explicitly just runs, and money and delete gates still ask separately. Held with the same "plain yes on the next turn" hold the money gate uses, or confirmed on the page. In a workflow, an approval step can be approved only once the steps before it are done, so you decide with their results. |

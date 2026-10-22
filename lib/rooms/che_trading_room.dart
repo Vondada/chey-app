@@ -12,6 +12,7 @@ import 'che_live_paper.dart';
 import 'che_strategy_controls.dart';
 import 'che_trading_chart.dart';
 import 'che_trading_connections.dart';
+import 'che_trading_intelligence.dart';
 import 'che_trading_ledgers.dart';
 import '../che_ui/che_theme.dart';
 
@@ -142,9 +143,11 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
           _pad(CheTradingLedgersPanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, client: p.client)),
         ];
       case CheTradingSection.strategies:
-        // Limits and the registry, then each strategy's learning progress (#382), from the same panel CHE TRADES uses.
+        // Limits and the registry, the historical study, then each strategy's learning progress (#382), from the same panel CHE TRADES uses.
         return [
           _pad(CheStrategyControlsPanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, client: p.client)),
+          // Historical trading intelligence (owner, 2026-10-22): decades of history, out-of-sample ranking, paper signals.
+          _pad(CheTradingIntelligencePanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, onRead: widget.onRead, client: p.client)),
           _pad(CheLivePaperPanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, onRead: widget.onRead, client: p.client)),
         ];
       case CheTradingSection.account:

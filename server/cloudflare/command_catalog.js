@@ -403,6 +403,15 @@ export const COMMANDS = Object.freeze([
     examples: ['Replay available history'], prompt: 'Replay available history', produces: 'research receipt',
     evidence: 'Trusted execution receipt and immutable dataset/experiment identifiers.', keywords: ['replay history', 'strategy research', 'historical learning'],
   }),
+  // Historical trading intelligence (owner, 2026-10-22): historical_intelligence.js through its own chat route.
+  C('trade-history', 'trading', 'EXPLORE', 'Test the strategies on decades of Nasdaq-100 history.', {
+    does: 'Runs or reads CHE\'s historical study: free MNQ (2019 on), NQ and Nasdaq-100 index (1985 on, a labelled proxy) daily history, each verified with its range, gaps and checksum; every daily ICT rule tested with fills at the next open, a look-ahead audit and walk-forward out-of-sample ranking; regimes; this year\'s paper trades compared; paper signals journalled. Nothing is bought and no order is placed. Owner only.',
+    needs: ['market_data'], route: 'che_trading_intelligence', handler: 'historical_intelligence.intelligenceIntent → startStudy / studyStep / intelligenceView',
+    input: { name: 'question', required: false, hint: 'run, report, regimes or signals' },
+    examples: ['Run the historical strategy study', 'How did your strategies do historically on NQ?', 'Read the historical trading intelligence report'],
+    prompt: '{input} the historical strategy study', produces: 'historical study', evidence: 'Stored tests with dataset checksums only.',
+    keywords: ['historical', 'history', 'since 1999', 'walk forward', 'out of sample', 'regime', 'trading intelligence'],
+  }),
   C('trade-journal', 'trading', 'EXPLORE', 'Document trades and outcomes.', {
     does: 'Reads your paper-trading book: open and closed trades and results.',
     needs: ['office'], route: 'che_trading', handler: 'trading_lab.speakBook',
