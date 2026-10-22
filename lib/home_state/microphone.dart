@@ -169,7 +169,10 @@ extension _CheHomeMicrophone on _CHEHomeState {
     // An explicit tap on the mic is already the "wake me up" action.
     cheSleeping = false;
     if (mounted) _set(() {});
+    // Measured until the microphone call returns: the owner's Talk tap to a live microphone (or its failure).
+    final talk = CheLatency.begin(CheLatency.voiceStart);
     await _mic.runStart('mic button', _startListening);
+    talk.end();
   }
 
   bool _isWakePhrase(String raw) => cheIsWake(raw);

@@ -1187,11 +1187,17 @@ extension _CheHomeSend on _CHEHomeState {
       }
 
       late final String reply;
+      final firstWords = CheLatency.begin(CheLatency.firstReply);
+      var heardFirstWords = false;
       try {
         reply = await _streamCheResponse(
           message,
           history,
           onPartial: (partialReply) {
+            if (!heardFirstWords) {
+              heardFirstWords = true;
+              firstWords.end();
+            }
             uiBatcher.add(partialReply);
             final clean = _sanitizeCheReply(partialReply);
             for (final chunk in speechChunker.addCumulative(clean)) {
