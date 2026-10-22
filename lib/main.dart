@@ -108,6 +108,7 @@ import 'home/che_connections_screen.dart';
 import 'home/che_projects_board.dart';
 import 'home/che_memory_brain.dart';
 import 'che_ui/che_phone_shell.dart';
+import 'che_ui/che_clock.dart';
 import 'che_ui/che_i18n.dart';
 import 'local_server/activity_local.dart';
 import 'plugins/che_plugin_webapp.dart';
@@ -2483,9 +2484,16 @@ OWNER AGENCY
           ),
         ),
       ),
-      bottomNavigationBar: ChePhoneBottomNav(
-        index: _shellTab,
-        onChanged: _goShellTab,
+      // The clock is always visible above the tabs (owner, 2026-10-22). Quiet text: it never speaks.
+      bottomNavigationBar: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const CheClockStrip(),
+          ChePhoneBottomNav(
+            index: _shellTab,
+            onChanged: _goShellTab,
+          ),
+        ],
       ),
     );
   }

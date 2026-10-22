@@ -37,6 +37,8 @@ void main() {
     // More → UI Controls entry.
     await tester.tap(find.text('More'));
     await tester.pump(const Duration(milliseconds: 400));
+    // The clock strip above the tabs takes some height, so the lazy list builds this row only once it is scrolled to.
+    await tester.scrollUntilVisible(find.text('UI Controls'), 200, scrollable: find.byType(Scrollable).first);
     expect(find.text('UI Controls'), findsOneWidget);
     // The More list is lazy and now has Connections and voice rows above this one.
     await tester.scrollUntilVisible(find.textContaining('Voice replies:'), 200,
