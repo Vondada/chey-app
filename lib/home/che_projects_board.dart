@@ -563,7 +563,8 @@ class _BoardSummary extends StatelessWidget {
 
   static bool _needsAttention(CheBoardItem i) {
     final s = i.statusLabel.toLowerCase();
-    return s.contains('block') || s.contains('fail') || s.contains('review') || s.contains('needs');
+    // proposal and review are the stages the Worker's pipelineSummary calls needs_you.
+    return s.contains('block') || s.contains('fail') || s.contains('review') || s.contains('needs') || s == 'proposal';
   }
 
   /// Finished in the Worker's own words. "Invoiced" is still active; the pipeline's "lost" is closed, not moving.
@@ -663,6 +664,8 @@ class _ProjectCard extends StatelessWidget {
   /// Asks CHE to act on this item (continue, review, retry). Null hides those buttons.
   final void Function(String prompt)? onAsk;
 
+  static bool _closedStage(String s) => const {'paid', 'won', 'lost', 'closed', 'cancelled', 'archived'}.contains(s);
+
   /// Actions the item's real status allows: a blocked or failed item is retried, a finished review is reviewed, the
   /// rest continue. Open appears only when the item has a link. Details is always there.
   List<(String, IconData, VoidCallback)> _actions() {
@@ -671,6 +674,11 @@ class _ProjectCard extends StatelessWidget {
     final ask = onAsk;
     final out = <(String, IconData, VoidCallback)>[];
     if (onOpenUrl != null) out.add(('Open', Icons.open_in_new_rounded, onOpenUrl!));
+    // Closed deals (paid, won, lost) are finished or dropped: details only, never a prompt to continue them.
+    if (_closedStage(s)) {
+      out.add(('Details', Icons.info_outline_rounded, onTap));
+      return out.toSet().toList();
+    }
     if (ask != null) {
       if (s.contains('block') || s.contains('fail')) {
         out.add(('Retry', Icons.refresh_rounded, () => ask('Retry "$name" (${item.typeLabel}). Say what is blocking it first.')));

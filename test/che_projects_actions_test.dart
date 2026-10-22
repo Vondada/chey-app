@@ -64,4 +64,15 @@ void main() {
     ]);
     expect(find.text('0 need attention · 1 in progress · 0 finished'), findsOneWidget);
   });
+
+  testWidgets('a paid deal offers Details only, never Continue', (tester) async {
+    await pump(tester, [item('p', 'Acme deal', 'paid', progress: 1)], onAsk: (_) {});
+    expect(find.text('Continue'), findsNothing);
+    expect(find.text('Details'), findsOneWidget);
+  });
+
+  testWidgets('a proposal-stage deal counts as needing attention, as the Worker summary does', (tester) async {
+    await pump(tester, [item('d', 'Acme proposal', 'proposal', progress: 0.45)], onAsk: (_) {});
+    expect(find.text('1 need attention · 0 in progress · 0 finished'), findsOneWidget);
+  });
 }

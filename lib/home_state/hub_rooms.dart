@@ -183,11 +183,13 @@ extension _CheHomeHubRooms on _CHEHomeState {
     // Business is a set of things to do. Each row says what it does, whether it is connected, and gives one button.
     // Real counts come from the Projects board (businesses and pipeline deals), never from text.
     final board = _boardItems();
-    final businesses = board.where((i) => i.typeLabel.toLowerCase().contains('business')).toList();
+    // Deals carry the "Business / pipeline" label too, so businesses exclude them to avoid counting each deal twice.
+    final businesses = board.where((i) => i.kind != CheBoardKind.deal && i.typeLabel.toLowerCase().contains('business')).toList();
     final deals = board.where((i) => i.kind == CheBoardKind.deal).toList();
+    // The same stages the Worker's pipelineSummary calls needs_you (proposal and review) need the owner.
     final attention = [...businesses, ...deals].where((i) {
       final s = i.statusLabel.toLowerCase();
-      return s.contains('block') || s.contains('fail') || s.contains('review');
+      return s.contains('block') || s.contains('fail') || s == 'proposal' || s == 'review';
     }).length;
     final paymentsOn = integrations['payments'] == true;
     return _hubList(
