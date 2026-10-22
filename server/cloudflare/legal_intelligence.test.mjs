@@ -277,3 +277,39 @@ test('every seeded record names its citation, level, source, dates and confidenc
   // The report the owner asked for, printed with the run.
   for (const r of report) console.log(`LEGAL TEST | ${r.test} | ${r.jurisdiction} | ${r.date} | ${r.sources.join('; ')} | confidence ${r.confidence} | live ${r.live_verified}`);
 });
+
+// ─── Codex review of #458 ───────────────────────────────────────────────────
+
+test('bare country names resolve, and an unqualified "federal" never means the United States', () => {
+  assert.equal(placeIn('Can I use this copyrighted work under federal law in Canada?'), 'ca');
+  assert.equal(placeIn('Is sampling legal in Australia?'), 'au');
+  assert.equal(placeIn('Is it legal under federal law?'), null);
+  assert.equal(placeIn('in the United States'), 'us');
+});
+
+test('"can I" alone is not a legal question for ordinary activities', () => {
+  assert.equal(legalIntent('Can I drive to the grocery store?'), null);
+  assert.equal(legalIntent('Can we hire someone for the weekend?'), null);
+  assert.equal(legalIntent('Can I sample this song?')?.kind, 'ask');
+  assert.equal(legalIntent('Is it legal to drive with an open container here?')?.kind, 'ask');
+  // Regulatory permission questions still reach the legal engine.
+  assert.equal(legalIntent('Can I run my business from home?')?.kind, 'ask');
+  assert.equal(legalIntent('Can I collect sales tax in Louisiana?')?.kind, 'ask');
+  assert.equal(legalIntent('Can I drive with a suspended license?')?.kind, 'ask');
+  assert.equal(legalIntent('Can I fire an employee for being late?')?.kind, 'ask');
+});
+
+test('a rule that needs a fact is not reported as a coverage gap when the place changes', () => {
+  const diffs = legalDifferences({ from: 'us-la', to: 'us-ca', activities: ['recording'], date: TODAY });
+  const all = diffs.map((d) => `${d.what} ${d.why}`).join(' ');
+  assert.doesNotMatch(all, /no indexed rule for this in Louisiana/);
+  assert.match(all, /depends on a fact I don't have: Will you be part of the conversation you record\?/);
+  assert.deepEqual(diffs[0].needs_facts, ['party_to_conversation']);
+});
+
+test('a coverage gap names the jurisdiction\'s registered official sources, not "no source"', () => {
+  const au = legalAnswer('Can I use a copyrighted song in Australia?', { jurisdictionId: 'au', activity: 'copyright_use', date: TODAY });
+  assert.equal(au.status, 'coverage_gap');
+  assert.doesNotMatch(au.text, /no official source registered/);
+  assert.ok(au.sources.length > 0 && au.sources.every((x) => /legislation\.gov\.au|gov\.au/.test(x.url)), JSON.stringify(au.sources));
+});
