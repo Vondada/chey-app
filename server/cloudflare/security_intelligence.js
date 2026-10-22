@@ -548,7 +548,31 @@ export async function restoreTrustedState(storage, data) {
 // runs through the Cloudflare binding, not fetch, so CHE keeps an answer engine inside its own runtime.
 export const EGRESS_KEY = 'che:egress_policy';
 export const OWNER_COMPUTE_HOSTS = Object.freeze(['api.github.com', 'github.com', 'raw.githubusercontent.com', 'objects.githubusercontent.com', 'codeload.github.com', 'api.cloudflare.com']);
-const EGRESS = { internalOnly: false, selfHosts: new Set(), blocked: 0 };
+const EGRESS = { internalOnly: false, selfHosts: new Set(), ownerHosts: new Set(), ownerRepo: '', blocked: 0, holds: 0 };
+
+/** The owner's own compute from the Worker env: his repository (only it, on api.github.com) and his model/compute servers. */
+export function setEgressOwner(env = {}) {
+  EGRESS.ownerRepo = String(env.CHE_GITHUB_REPO || '').toLowerCase();
+  for (const own of [env.CHE_OLLAMA_URL, env.CHE_OWNER_COMPUTE_URL]) {
+    try { if (own) EGRESS.ownerHosts.add(new URL(own).hostname); } catch (_) {}
+  }
+}
+
+/** Hosts the owner controls. With his repository known, api.github.com is reachable for that repository only. */
+export function ownerHost(url) {
+  let u;
+  try { u = new URL(String(url)); } catch (_) { return false; }
+  if (EGRESS.selfHosts.has(u.hostname) || EGRESS.ownerHosts.has(u.hostname)) return true;
+  if (u.hostname === 'api.github.com' && EGRESS.ownerRepo) {
+    const path = u.pathname.toLowerCase();
+    return path === `/repos/${EGRESS.ownerRepo}` || path.startsWith(`/repos/${EGRESS.ownerRepo}/`);
+  }
+  if (/(^|\.)actions\.githubusercontent\.com$/.test(u.hostname) || /\.blob\.core\.windows\.net$/.test(u.hostname)) return true; // GitHub artifact storage
+  return OWNER_COMPUTE_HOSTS.includes(u.hostname);
+}
+
+/** A request for a project the owner said must stay inside CHE holds the guard closed while it runs (capability_engine.js). */
+export function holdEgress(delta) { EGRESS.holds = Math.max(0, EGRESS.holds + Number(delta || 0)); return EGRESS.holds; }
 
 export function setEgressPolicy(policy, selfUrl = '') {
   EGRESS.internalOnly = policy?.internal_only === true;
@@ -562,12 +586,12 @@ export function installEgressGuard() {
   if (globalThis.fetch?.cheEgressGuard) return false;
   const original = globalThis.fetch;
   const guarded = (input, init) => {
-    if (EGRESS.internalOnly) {
+    if (EGRESS.internalOnly || EGRESS.holds > 0) {
       let host = '';
       try { host = new URL(String(input?.url || input)).hostname; } catch (_) { host = ''; }
-      if (!EGRESS.selfHosts.has(host) && !OWNER_COMPUTE_HOSTS.includes(host)) {
+      if (!ownerHost(String(input?.url || input))) {
         EGRESS.blocked++;
-        return Promise.reject(new TypeError(`Internal-only mode is on, so ${host || 'that service'} was not called.`));
+        return Promise.reject(new TypeError(EGRESS.internalOnly ? `Internal-only mode is on, so ${host || 'that service'} was not called.` : `This project stays inside CHE, so ${host || 'that service'} was not called.`));
       }
     }
     return original(input, init);

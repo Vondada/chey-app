@@ -321,16 +321,20 @@ export async function generateImage(env, storage, body, fetcher = fetch) {
     version: parent ? items.filter((item) => (item.root_id || item.id) === (parent.root_id || parent.id)).length + 1 : 1,
     created_at: now(),
   };
+  // Internal-only mode (capability_engine.js): no external connector and no paid service; only the image model in the
+  // owner's own Cloudflare account. Read from Security Intelligence's egress policy, the one internal-only switch.
+  let internalOnly = false;
+  try { internalOnly = (await storage.get('che:egress_policy'))?.internal_only === true; } catch (_) { internalOnly = false; }
   const engines = [];
-  if (env.CHE_IMAGE_GEN_URL) engines.push({ id: 'Your image connector', run: async () => ({ url: await connectorImage(env, finalPrompt, fetcher) }) });
-  if (paidMediaEnabled(env) && openAiKey(env)) engines.push({ id: draft ? 'openai-gpt-image-fast' : 'openai-gpt-image-hd', paid: true, run: async () => openAiImage(env, finalPrompt, draft, fetcher) });
+  if (env.CHE_IMAGE_GEN_URL && !internalOnly) engines.push({ id: 'Your image connector', run: async () => ({ url: await connectorImage(env, finalPrompt, fetcher) }) });
+  if (!internalOnly && paidMediaEnabled(env) && openAiKey(env)) engines.push({ id: draft ? 'openai-gpt-image-fast' : 'openai-gpt-image-hd', paid: true, run: async () => openAiImage(env, finalPrompt, draft, fetcher) });
   // CHE_AI_BOUND is false when the Worker has no AI binding (routedEnv always exposes an AI member).
   if (env.AI && env.CHE_AI_BOUND !== false) engines.push({ id: draft ? 'CHE image engine (draft)' : 'CHE image engine', run: async () => {
     const result = await env.AI.run(IMAGE_MODEL, { prompt: finalPrompt.slice(0, 2048), steps: draft ? 4 : 8, seed: Math.floor(Math.random() * 2 ** 31) });
     if (!result?.image) throw new Error('The image model returned no image.');
     return { base64: result.image, mime_type: 'image/jpeg' };
   } });
-  if (paidMediaEnabled(env) && env.GEMINI_API_KEY) engines.push({ id: 'gemini-image', paid: true, run: async () => {
+  if (!internalOnly && paidMediaEnabled(env) && env.GEMINI_API_KEY) engines.push({ id: 'gemini-image', paid: true, run: async () => {
     const model = env.CHE_GEMINI_IMAGE_MODEL || 'gemini-3.1-flash-image';
     const response = await fetcher(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
       method: 'POST', signal: AbortSignal.timeout(60000),
@@ -544,7 +548,10 @@ export async function generateVideo(env, storage, body, fetcher = fetch) {
       return { pending: true, task_id: result.task_id, topic };
     } });
   }
-  if (paidMediaEnabled(env) && env.GEMINI_API_KEY && !storyboard) {
+  // Internal-only mode: the paid external video model is skipped; the free renderer on the owner's GitHub runs.
+  let videoInternalOnly = false;
+  try { videoInternalOnly = (await storage.get?.('che:egress_policy'))?.internal_only === true; } catch (_) { videoInternalOnly = false; }
+  if (!videoInternalOnly && paidMediaEnabled(env) && env.GEMINI_API_KEY && !storyboard) {
     engines.push({ id: 'gemini-omni-video', run: async () => geminiVideo(env, prompt, fetcher) });
   }
   const errors = [];
