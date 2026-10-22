@@ -199,9 +199,10 @@ class CheGlass extends StatelessWidget {
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
           colors: [
-            const Color(0xFFAAD7FF).withValues(alpha: 0.20),
-            const Color(0xFF78AAE6).withValues(alpha: 0.09),
-            const Color(0xFF3C6EB4).withValues(alpha: 0.12),
+            // Projected glass: a cyan-tinted, see-through pane, brighter at the top like a lit display.
+            const Color(0xFF9FE9FF).withValues(alpha: 0.16),
+            const Color(0xFF5FD2FF).withValues(alpha: 0.06),
+            const Color(0xFF2F7FD0).withValues(alpha: 0.10),
           ],
           stops: const [0.0, 0.38, 1.0],
         ),
@@ -265,6 +266,13 @@ class _GlassPainter extends CustomPainter {
           colors: [light.withValues(alpha: 0.22), light.withValues(alpha: 0)],
         ).createShader(pool),
     );
+    // Iron Man glass: faint scan lines across the pane, as on a projected display.
+    final scan = Paint()
+      ..color = CheHud.ice.withValues(alpha: 0.045)
+      ..strokeWidth = 1;
+    for (var y = 2.0; y < size.height; y += 4) {
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), scan);
+    }
     // A panel's own colour glows just inside its edge.
     if (glow != null) {
       canvas.drawRRect(
@@ -297,6 +305,32 @@ class _GlassPainter extends CustomPainter {
         ..strokeWidth = 1.2
         ..color = Colors.white.withValues(alpha: 0.65),
     );
+    // HUD targeting brackets just inside each corner, glowing ice. Skipped on pill-shaped bars (no corners) and on
+    // panels too small to hold them.
+    if (size.width >= 80 && size.height >= 44 && radius > 0 && radius < size.height * 0.4) {
+      final arm = math.min(16.0, math.min(size.width, size.height) * 0.18);
+      final inset = radius * 0.42 + 3;
+      final bracket = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.6
+        ..strokeCap = StrokeCap.round
+        ..color = (glow ?? CheHud.ice).withValues(alpha: 0.85)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.solid, 2);
+      for (final (cx, cy, dx, dy) in [
+        (inset, inset, 1.0, 1.0),
+        (size.width - inset, inset, -1.0, 1.0),
+        (inset, size.height - inset, 1.0, -1.0),
+        (size.width - inset, size.height - inset, -1.0, -1.0),
+      ]) {
+        canvas.drawPath(
+          Path()
+            ..moveTo(cx, cy + dy * arm)
+            ..lineTo(cx, cy)
+            ..lineTo(cx + dx * arm, cy),
+          bracket,
+        );
+      }
+    }
   }
 
   @override

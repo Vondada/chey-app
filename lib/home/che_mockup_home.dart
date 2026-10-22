@@ -299,6 +299,29 @@ class _CheStage extends StatelessWidget {
   final int working;
   final String greeting;
 
+  // HUD readouts beside the reactor, from real state only: the server link (offline mode means no connection), CHE's
+  // mode and the number of agents working. VoiceOver reads the sentence below instead.
+  Widget _hudReadouts(Widget reactor) {
+    if (!cheHudActive) return reactor;
+    final style = CheHud.label.copyWith(fontSize: 9, letterSpacing: 1.0, height: 1.45, color: const Color(0xFFBFEFFF));
+    return Stack(clipBehavior: Clip.none, alignment: Alignment.center, children: [
+      reactor,
+      Positioned(
+        left: -CheSpace.md,
+        top: -CheSpace.sm,
+        child: Text(
+          '${mode == CheHomeMode.offline ? 'LINK DOWN' : 'LINK ONLINE'}\nMODE ${mode.label.toUpperCase()}',
+          style: style,
+        ),
+      ),
+      Positioned(
+        right: -CheSpace.md,
+        top: -CheSpace.sm,
+        child: Text('AGENTS $working\n${working == 0 ? 'STANDBY' : 'ACTIVE'}', textAlign: TextAlign.right, style: style),
+      ),
+    ]);
+  }
+
   @override
   Widget build(BuildContext context) {
     final sentence = cheHomeModeSentence(mode, working: working);
@@ -313,7 +336,7 @@ class _CheStage extends StatelessWidget {
           image: true,
           label: 'CHE. $sentence',
           excludeSemantics: true,
-          child: CheEnergyRing(
+          child: _hudReadouts(CheEnergyRing(
             mode: mode,
             size: size,
             // HUD: CHE's chrome emblem (the approved concept) instead of the cropped portrait. A phone whose installed
@@ -327,7 +350,7 @@ class _CheStage extends StatelessWidget {
                     errorBuilder: (_, _, _) => CheMiniPerson(agent: che, size: size * 0.66, showDesk: false, painted: true),
                   )
                 : CheMiniPerson(agent: che, size: size * 0.66, showDesk: false, painted: true),
-          ),
+          )),
         ),
         const SizedBox(height: CheSpace.sm),
         ExcludeSemantics(
