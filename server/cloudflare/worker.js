@@ -225,6 +225,7 @@ import {
 } from './research_memory.js';
 import { APP_BUILD_KEY, appBuildIntent, appBuildRun, dispatchAppBuild, speakAppBuild } from './app_builds.js';
 import { advanceObjectives, applyMissionEvent, approvalReached, approveNode, awaitingApproval, cancelObjective, createObjective, mutateObjective, replanNode, resolveKnownNodes, retryNode, setObjectivePaused, speakObjective } from './objective_graph.js';
+import { engineView, exportWorkflows, feedbackOnLast, importWorkflows, library as workflowLibrary, loadEngine, matchLearned, noteVersion, promoteCandidate, dismissCandidate, rankWorkflows, recordRun as recordWorkflowRun, isDisabled as workflowDisabled, restoreVersion, saveEngine, setDisabled as setWorkflowDisabled, setPreferred as setWorkflowPreferred, speakEfficiency, speakLibrary, testCandidate, workflowForRun, workflowIntent } from './workflow_engine.js';
 import { CATEGORIES, COMMANDS, catalogView, commandById, commandStatus, connectorStatus, describeWorkflow, dispatchPrompt, findSavedWorkflow, normalizeSavedWorkflow, parseSlashCommand, readCommandSpeech, searchCommands, speakCommandList, speakUnavailable, suggestCommands, workflowNodes, workflowFromWords } from './command_catalog.js';
 import { handleReaRequest, loadInvestigation, parseReaRequest, reaInvestigationDetail, reaInvestigations } from './rea_runner.js';
 import { browseIntent, runSearchRoute, subAgentPlan } from './browse_chat.js';
@@ -404,6 +405,22 @@ async function withDoneFields(response, fields) {
   const lines = raw.split('\n');
   const at = lines.map((line) => { try { return JSON.parse(line); } catch (_) { return null; } }).findLastIndex((e) => e && (e.type === 'done' || (lines.filter(Boolean).length === 1 && !e.type)));
   if (at >= 0) lines[at] = JSON.stringify({ ...JSON.parse(lines[at]), ...fields });
+  return new Response(lines.join('\n'), { status: response.status, headers: response.headers });
+}
+
+// The library workflow that served this reply, on its done event. Plain-JSON held replies are left as they are.
+async function withWorkflowReceipt(response, message, data, engine) {
+  const raw = await response.text();
+  const lines = raw.split('\n');
+  const at = lines.map((line) => { try { return JSON.parse(line); } catch (_) { return null; } }).findLastIndex((e) => e && e.type === 'done');
+  if (at >= 0) {
+    const done = JSON.parse(lines[at]);
+    const slash = parseSlashCommand(message);
+    const id = workflowForRun({ source: done.source || 'model', slash: slash?.command?.id || '', workflow_id: done.workflow_id, engine_workflow: done.engine_workflow }, data, engine);
+    const wf = workflowLibrary(data, engine).find((w) => w.id === id);
+    done.workflow = { id, name: wf?.name || id, kind: wf?.kind || 'route', version: wf?.version || 1, deterministic: wf ? wf.deterministic !== false : true };
+    lines[at] = JSON.stringify(done);
+  }
   return new Response(lines.join('\n'), { status: response.status, headers: response.headers });
 }
 
@@ -5435,6 +5452,7 @@ export class CheState extends DurableObject {
     // conversation never grows the owner's shared vector memory.
     const probeRun = isChat && isMemoryProbeRequest(request, this.env);
     const sent = isChat ? request.clone().json().catch(() => null) : null;
+    const startedAt = Date.now();
     let response = await this.handleRequest(request);
     // Issue #345: a turn with a money or delete hold, or several steps with a "don't", carries how CHE
     // read it. The phone shows it as quiet text under the reply and never speaks it by itself.
@@ -5444,6 +5462,8 @@ export class CheState extends DurableObject {
     }
     if (isChat && response?.ok && OWNER_CHAT_REQUESTS.has(request) && /ndjson/i.test(response.headers.get('Content-Type') || '')) {
       response = await withSoulRecord(response, await loadSoul(this.ctx.storage), this.ctx.storage);
+      // Workflow Engine: the reply says which library workflow served it (shown as quiet text, never spoken).
+      response = await withWorkflowReceipt(response, String((await sent)?.message || ''), await this.loadData(), await loadEngine(this.ctx.storage));
     }
     // A trade alert the owner has not heard yet is said first, in the reply
     // to whatever he says next (there is no phone push for it yet).
@@ -5488,6 +5508,17 @@ export class CheState extends DurableObject {
             reply: String(held?.message || reply).slice(0, 280),
           }).catch(() => null);
         }
+        // Every owner request is recorded against the workflow that served it: outcome, model calls, time.
+        try {
+          let heldReply = null;
+          try { heldReply = JSON.parse(raw); } catch (_) { heldReply = null; }
+          const doneEvent = raw.split('\n').filter(Boolean).map((line) => { try { return JSON.parse(line); } catch (_) { return null; } }).filter((e) => e?.type === 'done').pop() || {};
+          if (message && !body?.workflow_step) {
+            const engine = await loadEngine(this.ctx.storage);
+            recordWorkflowRun(engine, { message, done: doneEvent, held: Boolean(heldReply?.held_for_owner), slash: slash?.command?.id || '', ms: Date.now() - startedAt, data: await this.loadData() });
+            await saveEngine(this.ctx.storage, engine);
+          }
+        } catch (_) {}
         const memory = await recordConversationMemory(this.ctx.storage, { message, reply });
         if (memory) {
           // The Brain keeps the whole exchange; brainmem keeps its linked summary. Same id.
@@ -5637,6 +5668,9 @@ export class CheState extends DurableObject {
       const near = searchCommands(parsed.name.replace(/-/g, ' '), { limit: 3 }).map((r) => `/${r.id}`);
       return ndjsonReply(`I don't have a /${parsed.name} command, sir.${near.length ? ` Closest: ${near.join(', ')}.` : ''} Say "open commands" to see them all. Nothing was run.`,
         { source: 'che_command', ok: false, command: parsed.name, model_calls: 0 });
+    }
+    if (workflowDisabled(await loadEngine(this.ctx.storage), `cmd:${command.id}`)) {
+      return ndjsonReply(`/${command.id} is turned off, sir, so I did not run it. Say "turn on the /${command.id} workflow" to use it again.`, { source: 'che_command', ok: false, command: command.id, model_calls: 0 });
     }
     if (String(parsed.input || '').length > 4000) return ndjsonReply('That command input exceeds 4,000 characters, sir. Nothing was cut or run; please shorten it explicitly.', { source: 'che_command', ok: false, command: command.id, model_calls: 0 });
     const status = commandStatus(command, await this.commandConnectors(data));
@@ -5820,6 +5854,112 @@ export class CheState extends DurableObject {
   // Starts a workflow on CHE's existing objective graph: each step is a
   // `command` node, independent steps run in parallel lanes, approval steps
   // wait for the owner. Nothing starts unless every step can run now.
+  // ── Workflow Engine ────────────────────────────────────────────────────
+  // The library, its measurements and the owner's controls. Running a workflow stays with the existing
+  // executors (handlers, runSlashCommand, startCommandWorkflow and the objective graph).
+  async workflowsApi(path, request, body, data) {
+    const engine = await loadEngine(this.ctx.storage);
+    if (request.method === 'GET' && path === '/api/workflows') return json(engineView(data, engine));
+    if (request.method === 'GET' && path === '/api/workflows/export') return json(exportWorkflows(data, engine));
+    if (request.method !== 'POST') return json({ detail: 'Not found.' }, 404);
+    const lib = workflowLibrary(data, engine);
+    const action = path.replace('/api/workflows/', '');
+    let out;
+    if (action === 'rank') return json({ ranked: rankWorkflows(String(body.message || ''), lib, engine, { limit: 5 }) });
+    if (action === 'disable' || action === 'enable') out = setWorkflowDisabled(engine, lib, body.id, action === 'disable');
+    else if (action === 'prefer') out = setWorkflowPreferred(engine, lib, body.id, String(body.for || ''));
+    else if (action === 'feedback') out = feedbackOnLast(engine, body.good === true);
+    else if (action === 'test') out = testCandidate(engine, String(body.id || ''), await this.commandConnectors(data));
+    else if (action === 'promote') out = promoteCandidate(engine, String(body.id || ''), await this.commandConnectors(data));
+    else if (action === 'dismiss') out = dismissCandidate(engine, String(body.id || ''));
+    else if (action === 'restore') {
+      out = restoreVersion(engine, data, String(body.id || '').replace(/^owner:/, ''), Number(body.index || 0));
+      if (out.ok) await this.ctx.storage.put('che', data);
+    } else if (action === 'import') {
+      out = { ok: true, ...importWorkflows(data, engine, body) };
+      await this.ctx.storage.put('che', data);
+    } else return json({ detail: 'Unknown workflow action.' }, 404);
+    await saveEngine(this.ctx.storage, engine);
+    if (!out.ok) return json({ detail: out.reason || 'failed', ...out }, out.reason === 'not_found' ? 404 : 409);
+    return json({ ...out, view: engineView(data, engine) });
+  }
+
+  // The owner's spoken or typed words about workflows. Every answer comes from the library and its records.
+  async workflowChat(data, ask) {
+    const engine = await loadEngine(this.ctx.storage);
+    const lib = workflowLibrary(data, engine);
+    const say = (text, extra = {}) => ndjsonReply(text, { source: 'che_workflow_engine', ok: true, model_calls: 0, workflow_action: ask.action, ...extra });
+    const save = () => saveEngine(this.ctx.storage, engine);
+    if (ask.action === 'list') return say(speakLibrary(engineView(data, engine)), ask.open ? { open_screen: 'workflows' } : {});
+    if (ask.action === 'efficiency') return say(speakEfficiency(engineView(data, engine).efficiency));
+    if (ask.action === 'explain') {
+      const ranked = rankWorkflows(ask.about, lib, engine);
+      if (!ranked.length) return say(`No workflow in your library fits that, sir, so the language model would answer it. If you ask for it often and one command covers it, I will offer a workflow for your yes.`, { ranked });
+      return say(`For that I would use ${ranked.map((r, i) => `${i + 1}. ${r.name}${r.why ? `, because it ${r.why}` : ''}`).join('; ')}.`, { ranked });
+    }
+    if (ask.action === 'disable' || ask.action === 'enable') {
+      const out = setWorkflowDisabled(engine, lib, ask.name, ask.action === 'disable');
+      if (!out.ok) {
+        return say(out.reason === 'protected' ? 'The safety gate workflow cannot be turned off, sir: it is what holds money and delete actions for your yes. Nothing was changed.'
+          : out.reason === 'built_in' ? `${out.workflow.name} is one of my built-in workflows, sir, so it cannot be turned off; you can turn off its commands or your saved workflows. Nothing was changed.`
+            : `I could not find a workflow called ${ask.name}, sir. Nothing was changed.`, { ok: false });
+      }
+      await save();
+      return say(`${out.workflow.name} is ${ask.action === 'disable' ? 'turned off; I will not use it until you turn it back on' : 'turned on again'}, sir.`);
+    }
+    if (ask.action === 'prefer') {
+      const out = setWorkflowPreferred(engine, lib, ask.name, ask.for);
+      if (!out.ok) return say(`I could not find a workflow called ${ask.name}, sir. Nothing was changed.`, { ok: false });
+      await save();
+      return say(`Done, sir: I will rank ${out.workflow.name} first${ask.for ? ` for ${ask.for}` : ''}.`);
+    }
+    if (ask.action === 'candidates') {
+      const list = engine.candidates || [];
+      if (!list.length) return say('There are no workflow candidates waiting, sir. One appears when the language model has answered the same kind of request three times and a single command covers it.');
+      return say(`${list.length} workflow candidate${list.length === 1 ? '' : 's'}: ${list.map((c, i) => `${i + 1}. ${c.name}. ${c.reason}`).join(' ')} Say "promote candidate 1" to use one, or "dismiss candidate 1".`, { candidates: list });
+    }
+    if (ask.action === 'promote' || ask.action === 'dismiss') {
+      const c = (engine.candidates || [])[ask.index - 1];
+      if (!c) return say(`There is no candidate number ${ask.index}, sir. Nothing was changed.`, { ok: false });
+      const out = ask.action === 'promote' ? promoteCandidate(engine, c.id, await this.commandConnectors(data)) : dismissCandidate(engine, c.id);
+      await save();
+      if (!out.ok) return say(`Candidate ${ask.index} failed its test, sir: ${(c.test?.issues || []).join(' ') || 'its command is not runnable now'}. It was not promoted.`, { ok: false });
+      return say(ask.action === 'promote' ? `Promoted, sir: requests like that now run ${out.workflow.name} directly, with no model planning. Say "disable the ${out.workflow.name} workflow" to stop it.` : `Dismissed candidate ${ask.index}, sir.`);
+    }
+    if (ask.action === 'feedback') {
+      const out = feedbackOnLast(engine, ask.good);
+      if (!out.ok) return say('No workflow has run yet, sir, so there is nothing to rate.', { ok: false });
+      await save();
+      const name = lib.find((w) => w.id === out.workflow)?.name || out.workflow;
+      return say(ask.good ? `Thank you, sir: noted that ${name} worked.` : `Noted, sir: ${name} was wrong. It now ranks lower${out.needs_review ? ', and with three of these it is marked for review' : ''}.`);
+    }
+    if (ask.action === 'audit') {
+      const a = (engine.audit || []).slice(0, 5);
+      return say(a.length ? `Latest workflow changes: ${a.map((x, i) => `${i + 1}. ${x.action.replace(/_/g, ' ')}: ${x.detail}`).join('; ')}.` : 'No workflow changes are recorded yet, sir.');
+    }
+    if (ask.action === 'export') {
+      const out = exportWorkflows(data, engine);
+      return say(`Your ${out.workflows.length} saved and learned workflows are ready to export, sir: on the Workflows page under More, Export copies them. No keys, tokens or passwords are in the export.`);
+    }
+    if (ask.action === 'status') {
+      const runs = commandMissions(data).filter((o) => !['complete', 'cancelled'].includes(o.status));
+      return say(runs.length ? runs.map((o, i) => `${i + 1}. ${o.spoken}`).join(' ') : 'No workflow is running or paused right now, sir.');
+    }
+    if (ask.action === 'resume') {
+      const want = ask.name.toLowerCase();
+      const objective = (data.objectives || []).find((o) => o.source === 'command_workflow' && !['complete', 'cancelled'].includes(o.status) && String(o.workflow_name || o.objective).toLowerCase().includes(want));
+      if (!objective) return say(`I found no paused or stopped ${ask.name} workflow, sir. Nothing was changed.`, { ok: false });
+      const failed = objective.nodes.find((n) => n.status === 'failed');
+      const out = objective.paused ? setObjectivePaused(objective, false) : failed ? retryNode(objective, failed.id) : { ok: false, reason: 'not_paused' };
+      if (!out.ok) return say(`${objective.workflow_name || objective.objective} is not paused or stopped, sir: ${speakObjective(objective)}`, { ok: false });
+      await this.advanceMissions(data);
+      await this.ctx.storage.put('che', data);
+      await this.scheduleWork();
+      return say(`Resumed from where it stopped, sir; finished steps are not run again. ${speakObjective(objective)}`, { objective_id: objective.id });
+    }
+    return say('I can list, explain, measure, turn off or on, prefer, promote, rate, export, show status of or resume workflows, sir.', { ok: false });
+  }
+
   async startCommandWorkflow(data, workflow, { ownerDevice = false } = {}) {
     if (!ownerDevice) return { ok: false, status: 403, spoken: 'Only the CHE owner can run command workflows, sir.' };
     const described = describeWorkflow(workflow, await this.commandConnectors(data));
@@ -8385,6 +8525,10 @@ export class CheState extends DurableObject {
         return new Response(bytes, { headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'private, max-age=3600' } });
       }
       // The Command Center catalog with live status, saved workflows and runs.
+      if (path === '/api/workflows' || path.startsWith('/api/workflows/')) {
+        if (!ownerDevice) return json({ detail: 'Only the CHE owner can see or change the workflow library.' }, 403);
+        return this.workflowsApi(path, request, body, data);
+      }
       if (path === '/api/commands' && ['GET', 'POST'].includes(request.method)) {
         // A Google Ads grant Google has not approved yet is checked again on each refresh.
         if (await googleRecheckPending(this.keyEnv || this.env, data, fetch).catch(() => false)) await this.ctx.storage.put('che', data);
@@ -8749,7 +8893,15 @@ export class CheState extends DurableObject {
         if (!saved) return json({ detail: 'A workflow needs a name and at least one real command.' }, 400);
         const list = Array.isArray(data.command_workflows) ? data.command_workflows : [];
         const earlier = list.find((w) => w.id === saved.id);
-        if (earlier) saved.created_at = earlier.created_at;
+        if (earlier) {
+          saved.created_at = earlier.created_at;
+          // The Workflow Engine keeps the version this save replaces, so the owner can restore it.
+          if (JSON.stringify(earlier.steps) !== JSON.stringify(saved.steps) || earlier.name !== saved.name) {
+            const engine = await loadEngine(this.ctx.storage);
+            noteVersion(engine, earlier);
+            await saveEngine(this.ctx.storage, engine);
+          }
+        }
         data.command_workflows = [saved, ...list.filter((w) => w.id !== saved.id)].slice(0, 30);
         await this.ctx.storage.put('che', data);
         return json({ workflow: saved, workflows: data.command_workflows });
@@ -8766,6 +8918,7 @@ export class CheState extends DurableObject {
       if (path === '/api/commands/workflow/run' && request.method === 'POST') {
         const saved = body.id ? (data.command_workflows || []).find((w) => w.id === String(body.id)) : null;
         if (body.id && !saved) return json({ detail: 'Workflow not found.' }, 404);
+        if (saved && workflowDisabled(await loadEngine(this.ctx.storage), `owner:${saved.id}`)) return json({ detail: `${saved.name} is turned off. Turn it on in Workflows to run it.` }, 409);
         const started = await this.startCommandWorkflow(data, saved || body, { ownerDevice });
         if (!started.ok) return json({ detail: started.spoken, issues: started.described?.issues || [], workflow: started.described || null }, started.status || 409);
         return json({ objective: started.objective, started: started.started, spoken: started.spoken });
@@ -9467,10 +9620,27 @@ export class CheState extends DurableObject {
             return ndjsonReply(`Saved "${workflow.name}", sir: ${workflow.steps.length} steps. Nothing was run. Say "run my ${workflow.name} workflow" to start it; approval checkpoints still apply.`, { source: 'che_command_workflow', ok: true, workflow_id: workflow.id, model_calls: 0 });
           }
           const savedWorkflow = ownerDevice ? findSavedWorkflow(data.command_workflows, rawMessage) : null;
+          if (savedWorkflow && workflowDisabled(await loadEngine(this.ctx.storage), `owner:${savedWorkflow.id}`)) {
+            return ndjsonReply(`${savedWorkflow.name} is turned off, sir, so I did not run it. Say "turn on the ${savedWorkflow.name} workflow" to use it again.`, { source: 'che_workflow_engine', ok: false, model_calls: 0 });
+          }
           if (savedWorkflow) {
             await this.dropHeldActions();
             const started = await this.startCommandWorkflow(data, savedWorkflow, { ownerDevice });
             return ndjsonReply(started.spoken, { source: 'che_command_workflow', ok: started.ok, objective_id: started.objective?.id || null, model_calls: 0 });
+          }
+          // Workflow Engine: the owner's words about the library, then a promoted learned workflow this request matches.
+          const wfAsk = ownerDevice && !body.attachment && !body.workflow_step ? workflowIntent(rawMessage) : null;
+          if (wfAsk) return this.workflowChat(data, wfAsk);
+          const learned = ownerDevice && !body.attachment && !body.workflow_step && !body.screen_context ? matchLearned(await loadEngine(this.ctx.storage), rawMessage) : null;
+          if (learned) {
+            await this.dropHeldActions();
+            const tag = { engine_workflow: learned.workflow.id };
+            if (learned.steps.length === 1) {
+              const command = commandById(learned.steps[0].command);
+              if (command) return withDoneFields(await this.runSlashCommand(request, body, data, { name: command.id, command, input: learned.steps[0].input }, { confirmed: false }), tag);
+            }
+            const started = await this.startCommandWorkflow(data, { name: learned.workflow.name, steps: learned.steps }, { ownerDevice });
+            return ndjsonReply(started.spoken, { source: 'che_command_workflow', ok: started.ok, objective_id: started.objective?.id || null, model_calls: 0, ...tag });
           }
           // "Cancel that fake commit by Che", "cancel coding job c2987a73", "cancel the last coding
           // job", or a number from the list CHE just read: the /che-cancel-job command. It runs before
