@@ -816,7 +816,7 @@ class _CheKnowledgeAtlasPageState extends State<CheKnowledgeAtlasPage> {
     final atlas = _atlas;
     final card = _card;
     return Scaffold(
-      backgroundColor: CheColors.bg,
+      backgroundColor: CheColors.screen,
       appBar: AppBar(title: const Text('Knowledge Atlas'), backgroundColor: Colors.transparent),
       body: SafeArea(
         child: Column(children: [

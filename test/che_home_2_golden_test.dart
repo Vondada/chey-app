@@ -3,6 +3,7 @@
 // bar), CHE's lit stage in three real states, the Talk control and the five destinations, at the
 // owner's iPhone size (440 x 956 points). Real text and icons are drawn with the Roboto and Material Icons fonts that
 // ship with the Flutter SDK, so the picture reads as the phone shows it.
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:chey/che_ui/che_active_palette.dart';
@@ -15,6 +16,8 @@ import 'package:chey/home/che_mockup_home.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 
 Future<void> _font(String family, String path) async {
   final file = File(path);
@@ -22,6 +25,22 @@ Future<void> _font(String family, String path) async {
   final bytes = file.readAsBytesSync();
   await (FontLoader(family)..addFont(Future.value(ByteData.view(bytes.buffer)))).load();
 }
+
+// A sample of the Worker's chart answer for the MNQ tile: 5-minute bars of one session, DELAYED as the real feed is.
+final _chart = MockClient((r) async {
+  final start = DateTime.utc(2026, 10, 22, 13, 30);
+  final bars = [
+    for (var i = 0; i < 36; i++)
+      {
+        't': start.add(Duration(minutes: 5 * i)).toIso8601String(),
+        'o': 21396.0 + i * 2.5,
+        'h': 21402.0 + i * 2.5,
+        'l': 21390.0 + i * 2.5,
+        'c': 21398.0 + i * 2.5 + (i % 3 == 0 ? -6 : 4),
+      },
+  ];
+  return http.Response(jsonEncode({'ok': true, 'bars': bars, 'feed': {'status': 'DELAYED', 'stale': false}}), 200);
+});
 
 void main() {
   setUpAll(() async {
@@ -71,6 +90,14 @@ void main() {
               onOpenWorld: () {},
               onOfficeStatus: () {},
               onToggleVoiceReplies: () {},
+              unread: 3,
+              onOpenFlagstaff: () {},
+              latencyMs: 42,
+              handsFree: true,
+              baseUrl: () => 'https://che.test',
+              headers: () => const {},
+              marketClient: _chart,
+              now: () => DateTime.utc(2026, 10, 22, 14, 41),
             ),
           ),
         ),
@@ -82,6 +109,8 @@ void main() {
             tester.element(find.byType(CheMockupHome)),
           ));
       await tester.pump(const Duration(milliseconds: 400));
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
+      await tester.pump();
       await expectLater(find.byType(MaterialApp), matchesGoldenFile('goldens/home_hud_$name.png'));
       await tester.pumpWidget(const SizedBox());
     });

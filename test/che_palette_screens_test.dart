@@ -42,7 +42,9 @@ void main() {
       await tester.pumpAndSettle();
 
       final scaffold = tester.widget<Scaffold>(find.byType(Scaffold).first);
-      expect(scaffold.backgroundColor ?? Theme.of(tester.element(find.byType(Scaffold).first)).scaffoldBackgroundColor, palette.bg);
+      // HUD glass pages are clear over the HUD backdrop each page carries; every other palette paints its background.
+      expect(scaffold.backgroundColor ?? Theme.of(tester.element(find.byType(Scaffold).first)).scaffoldBackgroundColor,
+          palette.id == kCheHudPalette.id ? Colors.transparent : palette.bg);
       await expectLater(
         find.byType(MaterialApp),
         matchesGoldenFile('goldens/appearance_${palette.id}.png'),

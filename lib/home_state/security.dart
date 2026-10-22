@@ -385,10 +385,12 @@ extension _CheHomeSecurity on _CHEHomeState {
     _loadingAgentState = true;
 
     try {
+      final watch = Stopwatch()..start();
       final response = await http.get(
         Uri.parse('$cheAgentBaseUrl/api/state'),
         headers: _authHeaders,
       );
+      _stateLatencyMs = watch.elapsedMilliseconds;
 
       if (response.statusCode == 401) {
         await _clearSecuritySession();

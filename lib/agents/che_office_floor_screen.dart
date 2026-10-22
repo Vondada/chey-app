@@ -683,7 +683,7 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
     return Theme(
       data: CheTheme.dark(),
       child: Scaffold(
-        backgroundColor: CheColors.bg,
+        backgroundColor: CheColors.screen,
         appBar: AppBar(
           backgroundColor: Colors.transparent,
           title: const Text('The Office'),

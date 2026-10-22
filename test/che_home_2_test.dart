@@ -1,6 +1,7 @@
 // CHE 2.0 Home (owner, 2026-10-22): CHE's state comes from real signals only, every destination opens its room, only
 // running work is listed, and the screen works by VoiceOver, with large text, Reduce Motion and no scrolling to reach
-// the Talk control and the five destinations on the owner's iPhone.
+// the Talk control and the five destinations on the owner's iPhone. Since 2026-10-22 the Home is the approved HUD
+// concept: Trading is the MNQ tile, the Office is the OFFICE tile, Brain, Create and CHE World are glass pills.
 import 'package:chey/che_ui/che_agents.dart';
 import 'package:chey/che_ui/che_futuristic.dart';
 import 'package:chey/home/che_mockup_home.dart';
@@ -97,7 +98,7 @@ void main() {
     await tester.pumpWidget(_home());
     await tester.pump();
     final screen = tester.getRect(find.byType(CheMockupHome));
-    for (final label in ['Talk to CHE', 'The Office', 'Brain', 'Trading', 'Create', 'CHE World']) {
+    for (final label in ['Talk to CHE', 'OFFICE', 'Brain', 'MNQ', 'Create', 'CHE World']) {
       final rect = tester.getRect(find.text(label));
       expect(rect.bottom, lessThanOrEqualTo(screen.bottom), reason: '$label is on the first screen');
     }
@@ -109,7 +110,7 @@ void main() {
     await tester.pumpWidget(_home(opened: opened));
     await tester.pump();
     for (final (label, id) in [
-      ('The Office', 'office'), ('Brain', 'brain'), ('Trading', 'trading'), ('Create', 'create'), ('CHE World', 'world'),
+      ('OFFICE', 'office'), ('Brain', 'brain'), ('MNQ', 'trading'), ('Create', 'create'), ('CHE World', 'world'),
       ('Talk to CHE', 'talk'),
     ]) {
       await tester.tap(find.text(label));
@@ -125,8 +126,8 @@ void main() {
     await _phone(tester);
     await tester.pumpWidget(_home(listening: true));
     await tester.pump(const Duration(milliseconds: 100));
-    expect(find.text('Listening'), findsOneWidget);
-    expect(find.text('CHE is listening.'), findsOneWidget);
+    expect(find.text('CHE ONLINE · LISTENING'), findsOneWidget);
+    expect(find.bySemanticsLabel('CHE. CHE is listening.'), findsOneWidget);
     expect(find.text('Stop listening'), findsOneWidget);
     expect(find.text('Talk to CHE'), findsNothing);
     await tester.pumpWidget(const SizedBox());

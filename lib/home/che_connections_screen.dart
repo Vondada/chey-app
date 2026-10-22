@@ -433,7 +433,7 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: CheColors.bg,
+      backgroundColor: CheColors.screen,
       appBar: AppBar(
         title: const Text('Connections'),
         actions: [

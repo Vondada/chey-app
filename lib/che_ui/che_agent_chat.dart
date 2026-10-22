@@ -728,7 +728,7 @@ class _CheAgentChatScreenState extends State<CheAgentChatScreen> {
   Widget build(BuildContext context) {
     final msgs = c.current.messages;
     return Scaffold(
-      backgroundColor: CheColors.bg,
+      backgroundColor: CheColors.screen,
       resizeToAvoidBottomInset: true,
       body: CheBackground(
         child: SafeArea(

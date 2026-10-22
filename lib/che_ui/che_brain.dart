@@ -801,7 +801,7 @@ class _AllFactsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: CheColors.bg,
+      backgroundColor: CheColors.screen,
       body: CheBackground(
         child: SafeArea(
           bottom: false,
@@ -866,7 +866,7 @@ class _SoulScreenState extends State<_SoulScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: CheColors.bg,
+      backgroundColor: CheColors.screen,
       body: CheBackground(
         child: SafeArea(
           child: Column(children: [

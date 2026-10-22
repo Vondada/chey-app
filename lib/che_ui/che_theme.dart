@@ -19,6 +19,9 @@ class CheColors {
   static Color get accentAlt => _p.accent;
 
   static Color get bg => _p.bg;
+  /// A room's page background: clear in the HUD look, so the HUD backdrop that every page carries shows through
+  /// (owner, 2026-10-22: the HUD style "for all her rooms"); the palette background otherwise.
+  static Color get screen => _p.id == 'hud_glass' ? Colors.transparent : _p.bg;
   static Color get bgTop => _p.bg;
   static Color get surface => _p.surface;
   static Color get surfaceHi => _p.surfaceHi;

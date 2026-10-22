@@ -782,7 +782,7 @@ class _PlatformScaffold extends StatelessWidget {
     return Theme(
       data: CheTheme.dark(),
       child: Scaffold(
-        backgroundColor: CheColors.bg,
+        backgroundColor: CheColors.screen,
         appBar: AppBar(title: Text(title)),
         body: child,
       ),

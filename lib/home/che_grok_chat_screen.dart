@@ -223,7 +223,7 @@ class _CheGrokChatScreenState extends State<CheGrokChatScreen> {
   Widget build(BuildContext context) {
     final paired = widget.baseUrl.trim().isNotEmpty && widget.deviceToken.trim().isNotEmpty;
     return Scaffold(
-      backgroundColor: CheColors.bg,
+      backgroundColor: CheColors.screen,
       appBar: AppBar(
         backgroundColor: CheColors.surface,
         foregroundColor: CheColors.text,

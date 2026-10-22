@@ -198,9 +198,9 @@ class _CheWorkflowBuilderScreenState extends State<CheWorkflowBuilderScreen> {
     final deps = cheWorkflowDependencies(_steps);
     final costs = {for (final s in _steps) widget.catalog.byId(s.command)?.cost ?? ''}.where((c) => c.isNotEmpty).toList();
     return Scaffold(
-      backgroundColor: CheColors.bg,
+      backgroundColor: CheColors.screen,
       appBar: AppBar(
-        backgroundColor: CheColors.bg,
+        backgroundColor: CheColors.screen,
         leading: const BackButton(),
         title: Text(_id.isEmpty ? 'Build workflow' : 'Edit workflow', style: CheType.headline),
         actions: [
@@ -495,8 +495,8 @@ class _CommandPickerState extends State<_CommandPicker> {
   Widget build(BuildContext context) {
     final results = _query.trim().isEmpty ? widget.catalog.commands : widget.catalog.search(_query, limit: 30);
     return Scaffold(
-      backgroundColor: CheColors.bg,
-      appBar: AppBar(backgroundColor: CheColors.bg, leading: const BackButton(), title: const Text('Add a command')),
+      backgroundColor: CheColors.screen,
+      appBar: AppBar(backgroundColor: CheColors.screen, leading: const BackButton(), title: const Text('Add a command')),
       body: SafeArea(
         child: Column(
           children: [

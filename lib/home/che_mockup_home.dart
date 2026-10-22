@@ -4,12 +4,17 @@
 // Every value comes from the app's real state: listening, a pending reply, CHE's own speech, the server connection
 // and the Office runtime's agents. Nothing here invents activity.
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:http/http.dart' as http;
 
 import '../che_ui/che_agents.dart';
 import '../che_ui/che_futuristic.dart';
+import '../che_ui/che_clock.dart';
 import '../che_ui/che_hud.dart';
+import 'che_home_tiles.dart';
 import '../che_ui/che_theme.dart';
 import '../che_ui/che_widgets.dart';
 
@@ -66,7 +71,35 @@ class CheMockupHome extends StatelessWidget {
     this.voiceRepliesOn = true,
     this.onToggleVoiceReplies,
     this.onTapAgent,
+    this.unread = 0,
+    this.onOpenFlagstaff,
+    this.latencyMs,
+    this.handsFree = false,
+    this.baseUrl,
+    this.headers,
+    this.now,
+    this.marketClient,
   });
+
+  /// The HTTP client for the MNQ tile, for tests; null uses a fresh client per request.
+  final http.Client? marketClient;
+
+  /// Flagstaff's unread count and its opener (HUD look).
+  final int unread;
+  final VoidCallback? onOpenFlagstaff;
+
+  /// The last measured round trip to CHE's server, in milliseconds; null until one is measured.
+  final int? latencyMs;
+
+  /// Hands-free wake is on, so "say CHE" is true.
+  final bool handsFree;
+
+  /// The Worker address and headers for the MNQ tile; without them the tile shows no price.
+  final String Function()? baseUrl;
+  final Map<String, String> Function()? headers;
+
+  /// The clock, for tests; null uses the device clock.
+  final DateTime Function()? now;
 
   final CheAgent che;
   final List<CheAgent> agents;
@@ -143,6 +176,9 @@ class CheMockupHome extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final m = mode;
+    // The HUD shows the clock, greeting and next market event, so it redraws each minute on its own (the app no longer
+    // rebuilds Home on every state poll). A fixed [now] (tests) needs no ticking.
+    if (cheHudActive) return now != null ? _hudHome(context, m) : _CheMinuteTick(builder: (c) => _hudHome(c, m));
     return DecoratedBox(
       // Layered depth: a dim light from above in CHE's state colour. In the HUD look the backdrop shows through.
       decoration: BoxDecoration(
@@ -684,6 +720,404 @@ class _NowPanel extends StatelessWidget {
             ),
           ),
       ]),
+    );
+  }
+}
+
+
+// ─── HUD Home (owner, 2026-10-22: "I actually like this style better", the concept render) ────────────────────────
+// The greeting and date, CHE's reactor with live readouts, one Talk bar, four glass tiles of real data, the other
+// rooms, and the work that is really running. Every value is real; a tile without data says so.
+extension on CheMockupHome {
+  Widget _hudHome(BuildContext context, CheHomeMode m) {
+    final now = this.now?.call() ?? DateTime.now();
+    final chicago = CheChicagoTime.at(now);
+    final hour = chicago.local.hour;
+    final hello = hour < 5 ? 'Good evening.' : hour < 12 ? 'Good morning.' : hour < 17 ? 'Good afternoon.' : 'Good evening.';
+    const days = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
+    const months = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+    final dateLine = '${days[chicago.local.weekday - 1]} · ${chicago.local.day} ${months[chicago.local.month - 1]} · ${cheTwelveHour(chicago.local.hour, chicago.local.minute)} ${chicago.zone}';
+    final team = agents.where((a) => !a.isChe).length;
+    final width = MediaQuery.sizeOf(context).width;
+    final reactor = (width * 0.66).clamp(220.0, 300.0);
+    final sentence = cheHomeModeSentence(m, working: working);
+    final byId = {for (final d in destinations) d.id: d};
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(CheSpace.gutter + 4, CheSpace.sm, CheSpace.gutter + 4, CheSpace.xxl),
+      children: [
+        // Date, greeting, voice switch and Flagstaff bell.
+        Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(dateLine, maxLines: 1, overflow: TextOverflow.ellipsis, style: CheHud.label.copyWith(fontSize: 10.5)),
+              const SizedBox(height: 6),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Semantics(header: true, child: CheChromeText(hello, style: const TextStyle(fontSize: 31, fontWeight: FontWeight.w700, letterSpacing: -0.8))),
+              ),
+            ]),
+          ),
+          if (onToggleVoiceReplies != null) ...[
+            _HudRoundButton(
+              icon: voiceRepliesOn ? Icons.volume_up_rounded : Icons.volume_off_rounded,
+              label: voiceRepliesOn ? 'Voice on. Double tap to mute CHE\'s replies.' : 'Voice off. Double tap to hear CHE\'s replies.',
+              onTap: onToggleVoiceReplies!,
+            ),
+            const SizedBox(width: CheSpace.sm),
+          ],
+          if (onOpenFlagstaff != null)
+            _HudRoundButton(
+              icon: Icons.mail_outline_rounded,
+              label: unread > 0 ? 'Flagstaff, $unread unread. Messages, reports and notices.' : 'Flagstaff. Messages, reports and notices.',
+              badge: unread,
+              onTap: onOpenFlagstaff!,
+            ),
+        ]),
+        const SizedBox(height: CheSpace.md),
+        // CHE's reactor, free in space, with readouts from real state.
+        Center(
+          child: Semantics(
+            container: true,
+            image: true,
+            label: 'CHE. $sentence',
+            excludeSemantics: true,
+            child: SizedBox(
+              width: reactor + 70,
+              height: reactor,
+              child: Stack(clipBehavior: Clip.none, alignment: Alignment.center, children: [
+                CheEnergyRing(
+                  mode: m,
+                  size: reactor,
+                  child: Image.asset(
+                    'assets/avatars/che_emblem.png',
+                    width: reactor * 0.64,
+                    height: reactor * 0.64,
+                    fit: BoxFit.contain,
+                    errorBuilder: (_, _, _) => CheMiniPerson(agent: che, size: reactor * 0.66, showDesk: false, painted: true),
+                  ),
+                ),
+                Positioned(
+                  left: 0,
+                  top: 6,
+                  child: Text('${m == CheHomeMode.offline ? 'LINK DOWN' : 'LINK SECURE'}\nMODE ${m.label.toUpperCase()}', style: _readout),
+                ),
+                Positioned(
+                  right: 0,
+                  top: 6,
+                  child: Text('AGENTS $working\n${latencyMs == null ? 'LAT —' : 'LAT $latencyMs ms'}', textAlign: TextAlign.right, style: _readout),
+                ),
+              ]),
+            ),
+          ),
+        ),
+        const SizedBox(height: CheSpace.sm),
+        Semantics(
+          container: true,
+          label: 'CHE is ${m.label.toLowerCase()}',
+          excludeSemantics: true,
+          child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+            Container(
+              width: 8,
+              height: 8,
+              decoration: BoxDecoration(color: m.color, shape: BoxShape.circle, boxShadow: [BoxShadow(color: m.color.withValues(alpha: 0.8), blurRadius: 8)]),
+            ),
+            const SizedBox(width: 10),
+            Flexible(
+              child: Text(
+                m == CheHomeMode.offline ? 'CHE OFFLINE' : 'CHE ONLINE · ${m.label.toUpperCase()}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: CheHud.label.copyWith(fontSize: 12, letterSpacing: 2.6, color: m.color, shadows: [Shadow(color: m.color.withValues(alpha: 0.7), blurRadius: 12)]),
+              ),
+            ),
+          ]),
+        ),
+        const SizedBox(height: CheSpace.md),
+        _HudTalkBar(listening: listening, handsFree: handsFree, onTalk: onTalk, onOpenChat: onOpenChat),
+        const SizedBox(height: CheSpace.lg),
+        // Four tiles of real data.
+        LayoutBuilder(builder: (context, box) {
+          const gap = 12.0;
+          final half = (box.maxWidth - gap) / 2;
+          final trading = byId['trading']!;
+          // Each pair of tiles keeps one height, set by the taller tile (large text grows both).
+          return Column(children: [
+            IntrinsicHeight(child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              SizedBox(
+                width: half,
+                child: baseUrl == null
+                    ? CheHudTile(
+                        semantics: '${trading.label}. ${trading.detail}. Double tap to open.',
+                        onTap: trading.onOpen,
+                        leanRight: true,
+                        height: 140,
+                        child: Text('MNQ', style: CheHud.label),
+                      )
+                    : CheHomeMarketTile(baseUrl: baseUrl!, headers: headers ?? () => const {}, onOpen: trading.onOpen, client: marketClient),
+              ),
+              const SizedBox(width: gap),
+              SizedBox(width: half, child: CheHomeFlagstaffTile(unread: unread, onOpen: onOpenFlagstaff ?? onOpenChat)),
+            ])),
+            const SizedBox(height: gap),
+            IntrinsicHeight(child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              SizedBox(width: half, child: CheHomeOfficeTile(working: working, total: team, onOpen: onOpenOffice)),
+              const SizedBox(width: gap),
+              SizedBox(width: half, child: CheHomeNextTile(now: now, onOpen: trading.onOpen)),
+            ])),
+          ]);
+        }),
+        const SizedBox(height: CheSpace.md),
+        // The rooms without a tile.
+        Row(children: [
+          for (final id in const ['brain', 'create', 'world']) ...[
+            if (id != 'brain') const SizedBox(width: CheSpace.sm),
+            Expanded(child: _HudRoomPill(item: byId[id]!)),
+          ],
+        ]),
+        const SizedBox(height: CheSpace.lg),
+        _NowPanel(
+          active: cheHomeActiveAgents(agents),
+          liveMeetings: liveMeetings,
+          onOfficeStatus: onOfficeStatus,
+          onTapAgent: onTapAgent ?? (_) => onOpenOffice(),
+        ),
+      ],
+    );
+  }
+
+  TextStyle get _readout => CheHud.label.copyWith(fontSize: 9.5, letterSpacing: 1.1, height: 1.5, color: const Color(0xFFBFEFFF));
+}
+
+/// Rebuilds [builder] at each new minute while its tab is on screen.
+class _CheMinuteTick extends StatefulWidget {
+  const _CheMinuteTick({required this.builder});
+
+  final WidgetBuilder builder;
+
+  @override
+  State<_CheMinuteTick> createState() => _CheMinuteTickState();
+}
+
+class _CheMinuteTickState extends State<_CheMinuteTick> {
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _schedule();
+  }
+
+  void _schedule() {
+    final now = DateTime.now();
+    _timer = Timer(Duration(seconds: 60 - now.second, milliseconds: -now.millisecond + 50), () {
+      if (!mounted) return;
+      if (TickerMode.valuesOf(context).enabled) setState(() {});
+      _schedule();
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.builder(context);
+}
+
+class _HudRoundButton extends StatelessWidget {
+  const _HudRoundButton({required this.icon, required this.label, required this.onTap, this.badge = 0});
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  final int badge;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      container: true,
+      button: true,
+      label: label,
+      excludeSemantics: true,
+      child: ChePressable(
+        onTap: () {
+          HapticFeedback.selectionClick();
+          onTap();
+        },
+        child: SizedBox(
+          width: 50,
+          height: 50,
+          child: Stack(clipBehavior: Clip.none, children: [
+            CheGlass(
+              radius: 25,
+              shadow: false,
+              child: Center(child: Icon(icon, size: 21, color: CheColors.text)),
+            ),
+            if (badge > 0)
+              Positioned(
+                top: -4,
+                right: -4,
+                child: Container(
+                  constraints: const BoxConstraints(minWidth: 20),
+                  height: 20,
+                  padding: const EdgeInsets.symmetric(horizontal: 5),
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(10),
+                    gradient: const LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Color(0xFFE9FBFF), Color(0xFF7FDCFF)]),
+                    boxShadow: [BoxShadow(color: CheHud.iceDeep.withValues(alpha: 0.9), blurRadius: 12)],
+                  ),
+                  child: Text(badge > 99 ? '99+' : '$badge', style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w800, color: Color(0xFF03101C))),
+                ),
+              ),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
+class _HudTalkBar extends StatelessWidget {
+  const _HudTalkBar({required this.listening, required this.handsFree, required this.onTalk, required this.onOpenChat});
+
+  final bool listening;
+  final bool handsFree;
+  final VoidCallback onTalk;
+  final VoidCallback onOpenChat;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = listening ? CheEnergy.red : CheHud.ice;
+    return CheGlass(
+      radius: 36,
+      padding: const EdgeInsets.all(8),
+      glow: listening ? CheEnergy.red : null,
+      child: Row(children: [
+        Expanded(
+          child: Semantics(
+            container: true,
+            button: true,
+            label: listening ? 'Stop listening.' : 'Talk to CHE. Starts a voice conversation.',
+            excludeSemantics: true,
+            child: ChePressable(
+              onTap: () {
+                HapticFeedback.mediumImpact();
+                onTalk();
+              },
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: 54),
+                child: Row(children: [
+                  CheChromeOrb(
+                    size: 54,
+                    color: color,
+                    child: Icon(listening ? Icons.stop_rounded : Icons.mic_rounded, color: const Color(0xFF07121E), size: 26),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerLeft,
+                        child: Text(listening ? 'Stop listening' : 'Talk to CHE', style: CheType.headline.copyWith(fontSize: 18, fontWeight: FontWeight.w700)),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        listening ? 'LISTENING' : handsFree ? 'TAP OR SAY “CHE”' : 'TAP TO TALK',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: CheHud.label.copyWith(color: color),
+                      ),
+                    ]),
+                  ),
+                  // A still waveform, brighter while listening (decoration only).
+                  ExcludeSemantics(
+                    child: SizedBox(width: 60, height: 28, child: CustomPaint(painter: _WavePainter(color: color, bright: listening))),
+                  ),
+                  const SizedBox(width: 8),
+                ]),
+              ),
+            ),
+          ),
+        ),
+        Semantics(
+          container: true,
+          button: true,
+          label: 'Type to CHE. Opens Chat.',
+          excludeSemantics: true,
+          child: ChePressable(
+            onTap: onOpenChat,
+            child: Container(
+              width: 50,
+              height: 50,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.white.withValues(alpha: 0.08),
+                border: Border.all(color: Colors.white.withValues(alpha: 0.35)),
+              ),
+              child: Icon(Icons.keyboard_rounded, color: CheColors.text, size: 22),
+            ),
+          ),
+        ),
+      ]),
+    );
+  }
+}
+
+class _WavePainter extends CustomPainter {
+  _WavePainter({required this.color, required this.bright});
+
+  final Color color;
+  final bool bright;
+  static const _heights = [6.0, 14, 22, 12, 26, 16, 9, 20, 13, 7, 17, 10];
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final step = size.width / _heights.length;
+    for (var i = 0; i < _heights.length; i++) {
+      final h = _heights[i] * size.height / 28;
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(Rect.fromCenter(center: Offset(step * i + step / 2, size.height / 2), width: 2.4, height: h), const Radius.circular(1.2)),
+        Paint()..color = color.withValues(alpha: (bright ? 0.6 : 0.35) + 0.4 * (_heights[i] / 26)),
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_WavePainter old) => old.color != color || old.bright != bright;
+}
+
+class _HudRoomPill extends StatelessWidget {
+  const _HudRoomPill({required this.item});
+
+  final CheHomeDestination item;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      container: true,
+      button: true,
+      label: '${item.label}. ${item.detail}. Double tap to open.',
+      excludeSemantics: true,
+      child: ChePressable(
+        onTap: () {
+          HapticFeedback.selectionClick();
+          item.onOpen();
+        },
+        child: CheGlass(
+          radius: 22,
+          glow: item.hue,
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+          child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+            Icon(item.icon, size: 18, color: item.hue),
+            const SizedBox(width: 6),
+            Flexible(child: Text(item.label, maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.label.copyWith(fontWeight: FontWeight.w700))),
+          ]),
+        ),
+      ),
     );
   }
 }

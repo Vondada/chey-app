@@ -3,6 +3,7 @@
 import 'package:flutter/cupertino.dart' show CupertinoPageTransitionsBuilder;
 import 'package:flutter/material.dart';
 
+import 'che_hud.dart';
 import 'che_palettes.dart';
 import 'che_theme.dart';
 
@@ -20,11 +21,15 @@ ThemeData cheThemeFor(CheColorPalette p) {
     onSurface: p.text,
   );
   TextStyle on(TextStyle base, Color color) => base.copyWith(color: color);
+  // HUD glass: pages are clear over the HUD backdrop each page carries, and cards are ice-edged glass.
+  final hud = p.id == kCheHudPalette.id;
+  const pageBuilder = CupertinoPageTransitionsBuilder();
+  const hudPageBuilder = CheHudPageTransitionsBuilder();
   return ThemeData(
     useMaterial3: true,
     brightness: p.brightness,
     colorScheme: scheme,
-    scaffoldBackgroundColor: p.bg,
+    scaffoldBackgroundColor: hud ? Colors.transparent : p.bg,
     canvasColor: p.bg,
     splashFactory: NoSplash.splashFactory,
     highlightColor: Colors.transparent,
@@ -58,9 +63,20 @@ ThemeData cheThemeFor(CheColorPalette p) {
       behavior: SnackBarBehavior.floating,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(CheRadius.md)),
     ),
-    pageTransitionsTheme: const PageTransitionsTheme(builders: {
-      TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
-      TargetPlatform.android: CupertinoPageTransitionsBuilder(),
+    pageTransitionsTheme: PageTransitionsTheme(builders: {
+      TargetPlatform.iOS: hud ? hudPageBuilder : pageBuilder,
+      TargetPlatform.android: hud ? hudPageBuilder : pageBuilder,
     }),
+    cardTheme: hud
+        ? CardThemeData(
+            color: const Color(0xFF9FE9FF).withValues(alpha: 0.07),
+            surfaceTintColor: Colors.transparent,
+            elevation: 0,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20),
+              side: BorderSide(color: const Color(0xFF9FE9FF).withValues(alpha: 0.28)),
+            ),
+          )
+        : null,
   );
 }

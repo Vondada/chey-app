@@ -934,9 +934,9 @@ class _CheCommandCenterScreenState extends State<CheCommandCenterScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: CheColors.bg,
+      backgroundColor: CheColors.screen,
       appBar: AppBar(
-        backgroundColor: CheColors.bg,
+        backgroundColor: CheColors.screen,
         leading: IconButton(
           tooltip: 'Back to Chat',
           icon: const Icon(Icons.arrow_back_ios_new_rounded),
