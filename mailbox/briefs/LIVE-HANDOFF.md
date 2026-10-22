@@ -1869,6 +1869,20 @@ Status: PROGRAM, not built. The request spans several multi-week projects (visua
 
 ---
 
+## 8d. VOICE REPAIR CHECKPOINT (Claude, 2026-10-22 ~00:45Z) — owner's iPhone recording, one consistent voice, gapless speech
+
+- **Status: investigation only. No code changed. Branch `claude/che-voice-continuity` was created from main `a05af09` with no commits.**
+- **The owner's screen recording is NOT in this sandbox.** It was not attached to the session, and a filesystem search found no video. Next session needs the file in the repo (e.g. `mailbox/attachments/`) or a timed description (clip times, which voice, where gaps and changes were heard). Without it, the cause of the voice change cannot be tied to a timestamp.
+- **What already exists (do not duplicate):** turn lock (`voiceTurnFor` in `server/cloudflare/phone_voice.js`; phone `lib/che_voice_turn.dart`); sentence-safe chunking (`cheSentenceEnd`, 640-char streamed chunks); `cheSpeakableText`; voice choice stamping (`voice_pref_v1`, `reconcileVoiceChoice`); per-clip diagnostics and "Last spoken reply" in the Voice diagnostics sheet. Source: `docs/CHE_CONNECTIONS_AND_VOICE_AUDIT.md` 2026-10-18 section.
+- **Confirmed remaining gap:** the native player still prepares each clip after the previous one ends. `lib/che_native_voice.dart` calls `playClip` per clip; `tool/bootstrap.sh` generates the Swift `AppDelegate` (AVAudioPlayer, AVAudioEngine). A gapless queue needs Swift changes in `tool/bootstrap.sh` and a new IPA. That cannot be built or run in this Linux sandbox (`xcodebuild` absent). Build and install happen only through `che-iphone-ipa.yml`, then an owner device test.
+- **Not verified here:** whether the owner's recording came from a build that already has the 2026-10-18 turn lock (check the release id/patch number against main).
+- **Next actions, in order:**
+  1. Get the recording into the repo or a timed description from the owner.
+  2. Confirm the installed release and Shorebird patch on the phone (`CHE Shorebird` run for `a05af09` succeeded at 00:27Z).
+  3. Design the Swift queue in `tool/bootstrap.sh` (AVAudioPlayer prepared on the next clip; keep one AVAudioSession; prepareToPlay before the prior clip ends; FIFO ids; stop/barge-in cancels queue) and the Dart side in `lib/che_native_voice.dart` (`playClipQueue`), with a mocked queue test.
+  4. Ship via PR, merge with `[worker-deploy]` only if Worker files change, build IPA, owner device test against the recording.
+- **Limits to report:** no device or audio evaluation from the sandbox; mocked tests do not prove audible quality; provider timbre drift across independently generated chunks is not checked (needs provider settings review and a real sample).
+
 ## 8c. SOUL CHECKPOINT 3 (Claude, 2026-10-22 00:05Z) — read first, supersedes 8b's "open" items
 
 - **Merged:** PR #423 → main `d29faab` (phone Soul controls). PR #424 (Worker provenance: `served_by`, `soul.soul_applied` true only for a model reply with the Soul in its system prompt; handler replies `soul_applied:false`, route `handler`; cache bypass marked) → main `8f4bc48`, tagged `[worker-deploy]`. Required checks were green on head `82e4af0` (analyze, Worker syntax and unit tests; `Workers Builds` ignored per owner rule). 2996/2996 Worker tests; `soul_chat.test.mjs` 11/11.
