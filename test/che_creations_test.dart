@@ -21,6 +21,17 @@ void main() {
     expect(cheCreationsFrom({'items': 'nope'}), isEmpty);
   });
 
+  test('an uploaded picture is a creation; an uploaded document is not', () {
+    final items = cheCreationsFrom({
+      'items': [
+        {'id': 'p1', 'kind': 'upload', 'mime_type': 'image/png', 'title': 'cat.png'},
+        {'id': 'd1', 'kind': 'upload', 'mime_type': 'application/pdf', 'title': 'Notes.pdf'},
+      ],
+    });
+    expect(items.map((item) => item['id']), ['p1']);
+    expect(cheCreationFileUrl(base, items.single), '$base/api/media/p1/image');
+  });
+
   test('a video plays its own file and shows its saved thumbnail; a picture is its own file', () {
     expect(cheCreationFileUrl(base, {'id': 'v1', 'kind': 'video'}), '$base/api/media/v1/video');
     expect(cheCreationFileUrl(base, {'id': 'i1', 'kind': 'image'}), '$base/api/media/i1/image');

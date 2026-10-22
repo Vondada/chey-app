@@ -39,7 +39,7 @@ import { capabilityPromptLine, inferTurnCapabilities, runtimeCapabilityRegistry 
 import { identityQuestionIntent, speakIdentity } from './che_maturity.js';
 import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, saveOwnerFile, upscaleImage, verifyMediaFile } from './media.js';
 import { loadSoul, restoreSoul, saveSoul, soulPromptBlock, soulProvenance, soulView, stripPhoneSoul } from './soul.js';
-import { mediaHoldAnswer, mediaHoldIntent, mediaKeepFor, mediaLatestReply, mediaLibraryIntent, mediaLibraryReply, mediaLibraryReport, mediaRows, mediaSaveIntent, mediaSaveReply, mediaShowLatestIntent, mediaShowReply, verifyMediaRows, wantsLatestVideo } from './media_library.js';
+import { mediaHoldAnswer, mediaHoldIntent, mediaKeepFor, mediaLatestReply, mediaLibraryIntent, mediaLibraryReply, mediaLibraryReport, mediaLatestOpenRow, mediaOpenIntent, mediaOpenMissingReply, mediaOpenReply, mediaOpenRow, mediaRows, mediaSaveIntent, mediaSaveReply, mediaShowLatestIntent, mediaShowReply, verifyMediaRows, wantsLatestVideo } from './media_library.js';
 import { capabilityGap, capabilityReply } from './capability_gap.js';
 import { CHAT_IMAGE_SOURCE, chatImageMedia, chatImageReply, makeChatImages, requestedImageCount } from './chat_images.js';
 import { memorySearchIntent, memorySearchReply, memorySearchTerms } from './memory_search.js';
@@ -117,7 +117,7 @@ import { applyModelReading, asksAboutScreen, clipKeepingLimits, interpretOwnerTu
 import { intentFrame, understoodAs } from './intent_frame.js';
 import { replyHijacksOwnerRequest, usageIntent, usageReport, speakUsage } from './usage_tracker.js';
 import { newestStarredIntent, speakNewestStarred, autoImproveScan, analyticalRepositoryQuestion, chatOnlyResponseIntent, currentTurnActionPolicy, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, inspirationUpgradeContext, listOwnerStarredRepos, readRepoSource, referenceSourceBlock, codingHistoryIntent, hypotheticalChange, repositoryImplementationIntent, repositoryInspectionIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, starredStudyList, studySelectionIntent } from './code_scout.js';
-import { codingHistoryReceipt, completedWorkProof, proofAsked } from './coding_history.js';
+import { codingHistoryReceipt, completedWorkProof, otherAgentWorkAsk, otherAgentWorkReply, proofAsked } from './coding_history.js';
 import { activityReceipt, activityStatusIntent } from './activity_status.js';
 import { webAppPage } from './web_app.js';
 import { learnedSkillsContext, learnedSkillsIntent, learnSkillIntent, attachmentText, condenseSkills, loadLearnedSkills, READ_FOR_SKILLS, redactSensitive, saveLearnedSkills, speakLearned, speakSkillList } from './self_skills.js';
@@ -9123,6 +9123,23 @@ export class CheState extends DurableObject {
             const command = commandById(studio.command);
             return this.runSlashCommand(request, body, data, { name: command.id, command, input: studio.input }, { confirmed: false });
           }
+          // "Open this same picture in my Creation Room": the picture is the one the message names, or the one the chat
+          // showed last. Read from the stored record and its bytes, so the phone opens only a file CHE can read back.
+          const openMedia = mediaOpenIntent(rawMessage);
+          if (openMedia) {
+            if (!ownerDevice) return ownerOnly();
+            const items = await listMedia(this.ctx.storage);
+            const id = openMedia.id || (openMedia.latest ? '' : String(body.last_media_id || '').trim().toLowerCase());
+            const row = openMedia.latest ? mediaLatestOpenRow(items) : mediaOpenRow(items, id);
+            if (!row) return ndjsonReply(mediaOpenMissingReply(id), { source: 'che_media_store', ok: false, media_id: id || null });
+            const check = await verifyMediaFile(this.keyEnv || this.env, this.ctx.storage, row);
+            if (!check.ok) return ndjsonReply(`I could not open ID ${row.id} in your Creation Room, sir: ${check.reason || 'its file was not checked'}.`, { source: 'che_media_store', ok: false, media_id: row.id });
+            const opened = mediaOpenReply(row, { origin: new URL(request.url).origin });
+            return ndjsonReply(opened.text, {
+              source: 'che_media_store', ok: true, media_id: opened.media_id, media_type: opened.media_type,
+              media_url: opened.media_url, open_creation: true,
+            });
+          }
           // "Show me the last picture": the newest saved picture, its bytes read back first, returned as an image for the chat.
           if (mediaShowLatestIntent(rawMessage)) {
             if (!ownerDevice) return ownerOnly();
@@ -10638,6 +10655,13 @@ export class CheState extends DurableObject {
         // a handoff, a message for another AI ("tell Claude the coding run failed") and a
         // consultation ("ask ChatGPT why the coding job failed") keep theirs.
         // A turn with an attachment is about that attachment, which this route cannot read.
+        // A question about who did coding work, when it names Claude or another AI: CHE's records never hold that work, so
+        // the model is never asked (it invented speakers and authors). Handoffs, mailbox and consultations keep their routes.
+        const otherAgent = body.attachment || handoffIntent(message) || mailboxIntent(message) || consultIntent(message) ? '' : otherAgentWorkAsk(message);
+        if (otherAgent) {
+          if (!ownerDevice) return ndjsonReply('Only the CHE owner can read coding job status, sir.', { source: 'che_coding_history', ok: false });
+          return ndjsonReply(otherAgentWorkReply(otherAgent, (await this.loadData()).jobs || [], this.env.CHE_GITHUB_REPO || ''), { source: 'che_coding_history', model_calls: 0 });
+        }
         if (!body.attachment && codingHistoryIntent(message) && !handoffIntent(message) && !mailboxIntent(message) && !consultIntent(message)) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can read coding job status, sir.', { source: 'che_coding_history', ok: false });
           const jobs = (await this.loadData()).jobs || [];

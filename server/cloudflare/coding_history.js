@@ -167,3 +167,24 @@ export function completedWorkProof(jobs = [], repo = '') {
   }
   return { ok: false, text: 'I cannot verify that I completed a coding job. My job records hold no completed PR merge or deploy with a commit SHA. Work by Claude or another agent is not mine, so I do not count it.' };
 }
+
+// The other AIs whose coding work CHE's job records never hold. Named in a question about who did coding work, the answer
+// says so, then gives CHE's own record. Handoffs, mailbox messages and consultations are routed before this (worker.js).
+const OTHER_AGENT = /\b(claude|codex|chatgpt|gpt|gemini|cursor|copilot|grok)\b|\b(?:another|other|which|what)\s+(?:agent|ai)\b/i;
+const AGENT_WORK = /\b(?:finish\w*|complet\w*|wrote|written|write|made|merged?|did|done|built|build|changed|change|changes|commit\w*|pull requests?|PRs?|coding|code|job|task|work|far\s+(?:did|has|have)|progress|get|got)\b/i;
+const AGENT_SPEECH = /\b(?:say|said|tell|told|ask|asked|message|mailbox|hand\s*off|handed|pass|send|sent|forward|consult)\b/i;
+
+/** The agent a question about coding work names ("Claude", "Codex"), or '' when it names none or is not about work. */
+export function otherAgentWorkAsk(message) {
+  const text = String(message || '').replace(/\s+/g, ' ').trim();
+  if (!text || AGENT_SPEECH.test(text)) return '';
+  const agent = OTHER_AGENT.exec(text);
+  return agent && AGENT_WORK.test(text) ? agent[0].toLowerCase() : '';
+}
+
+/** The reply to a question about another AI's coding work: CHE does not own it, and CHE's own record is given instead. */
+export function otherAgentWorkReply(agent, jobs = [], repo = '') {
+  const named = /^(?:another|other|which|what)\b/.test(agent) ? 'another agent' : agent[0].toUpperCase() + agent.slice(1);
+  const own = completedWorkProof(jobs, repo).text;
+  return `I can't see ${named}'s work in my own records, sir, so I can't say who wrote it, how far it got, or whether it finished. ${own}`;
+}

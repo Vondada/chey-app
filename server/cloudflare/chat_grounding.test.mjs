@@ -206,6 +206,27 @@ test('K4b: a completed PR merge in CHE\'s own job records is reported with its c
   assert.doesNotMatch(out.reply, /Claude/);
 });
 
+// Owner, 2026-10-22: a question about who did coding work, when it names Claude or another AI, is answered from CHE's own
+// records with no model call. The model had invented speakers and authors for these wordings.
+test('K4c: a question naming Claude or another AI about coding work never reaches the model, and says CHE cannot see that work', async () => {
+  const saved = new Map();
+  const che = await owner({ saved, model: () => 'Claude finished the coding task and merged PR 412, sir.' });
+  for (const message of ['Did Claude finish the last coding task?', 'Who made your last coding change, you or Claude?', 'CHE, which AI wrote the last merged pull request?', 'How far did Claude get?']) {
+    const out = await che.say(message);
+    assert.equal(out.meta.source, 'che_coding_history', message);
+    assert.equal(out.modelCalls, 0, message);
+    assert.match(out.reply, /I can't see (?:Claude|another agent)'s work in my own records, sir/, message);
+    assert.doesNotMatch(out.reply, /merged PR 412|finished the coding task/, message);
+  }
+});
+
+test('K4d: a handoff to Claude about a coding job is still a handoff, not a question about Claude\'s work', async () => {
+  const che = await owner({ model: () => 'I have passed the message on, sir.' });
+  const out = await che.say('Tell Claude the coding run failed and ask why.');
+  assert.notEqual(out.meta.source, 'che_coding_history');
+  assert.doesNotMatch(out.reply, /I can't see/);
+});
+
 // Test 5 (owner, 2026-10-21): an ad request that the model answers with visuals that were never rendered is
 // corrected: CHE says what exists (copy) and what does not (visuals, scheduling, publishing).
 test('K5: an ad request never describes visuals as made or posts as scheduled when none were', async () => {
