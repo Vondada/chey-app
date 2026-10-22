@@ -1449,7 +1449,7 @@ OWNER AGENCY
               '${_officeRuntime.error == null ? '' : '. Office note: ${_officeRuntime.error}'}',
           controls: const ['Crew office pane', 'Projects office pane', 'the bottom tabs: Home, Chat, Office, Apps, More'],
         ),
-      3 => CheScreenReport(page: 'Apps', tab: 'Apps', tabs: tabs, controls: const ['the app list', 'the bottom tabs']),
+      3 => CheScreenReport(page: 'CHE World', tab: 'CHE World', tabs: tabs, controls: const ['the CHE World rooms', 'the bottom tabs']),
       4 => CheScreenReport(page: 'More', tab: 'More', tabs: tabs,
           controls: const ['Talk to CHE', 'Trading Room', 'Conversations', 'Mailbox and Flagstaff', 'Keys', 'UI Controls', 'Connections', 'Change CHE’s voice', 'Voice replies', 'Projects and Businesses', 'Language and translate', 'the bottom tabs']),
       _ => CheScreenReport(page: 'Home', tab: 'Home', tabs: tabs,
@@ -1460,6 +1460,11 @@ OWNER AGENCY
 
   void _goShellTab(int i) {
     if (i < 0 || i > 4) return;
+    // CHE World opens as its own full screen, the same screen the More list opens (owner, 2026-10-22).
+    if (i == 3) {
+      _openVirtualOffice();
+      return;
+    }
     if (i == _shellTab) return;
     HapticFeedback.selectionClick();
     setState(() => _shellTab = i);
@@ -2017,11 +2022,20 @@ OWNER AGENCY
   }
 
 
-  Widget _buildAppsTab() {
-    return CheAppsHubTab(
-      onLearnPage: _learnFromBrowserPage,
-      agentBaseUrl: cheAgentBaseUrl,
-      deviceToken: _deviceToken ?? '',
+  // Web apps moved from the bottom bar into More (owner, 2026-10-22), so they stay reachable.
+  void _openWebApps() {
+    HapticFeedback.selectionClick();
+    Navigator.of(context).push(
+      CupertinoPageRoute<void>(
+        builder: (_) => Scaffold(
+          appBar: AppBar(title: const Text('Web apps')),
+          body: CheAppsHubTab(
+            onLearnPage: _learnFromBrowserPage,
+            agentBaseUrl: cheAgentBaseUrl,
+            deviceToken: _deviceToken ?? '',
+          ),
+        ),
+      ),
     );
   }
 
@@ -2151,6 +2165,13 @@ OWNER AGENCY
       che: _officeRuntime.che,
       onTalkToChe: () => _goShellTab(1),
       items: [
+        CheMoreItem(
+          icon: Icons.apps_rounded,
+          title: 'Web apps',
+          subtitle: 'Add and open web apps inside CHE',
+          onTap: _openWebApps,
+          hue: kit.CheColors.apps,
+        ),
         CheMoreItem(
           icon: Icons.candlestick_chart_rounded,
           title: 'Trading Room',
@@ -2452,7 +2473,7 @@ OWNER AGENCY
                     _buildHomeTab(agents),
                     _buildChatTab(agents),
                     _buildOfficeTab(),
-                    _buildAppsTab(),
+                    const SizedBox.shrink(),
                     _buildMoreTab(),
                   ],
                 ),
