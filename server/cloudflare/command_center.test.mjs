@@ -1050,3 +1050,16 @@ test('music rights: a sample blocks release until its licence is attached; split
   const projects = (await che.get('/api/state')).projects || [];
   assert.ok(projects.some((p) => p.id === id), 'the same record appears in Projects');
 });
+
+test('music rights by voice: add a song and a sample in chat, saved and read back, no model call', async () => {
+  const che = await owner();
+  const song = await che.say('CHE, add a song called Pressure');
+  assert.equal(song.route, 'che_music_rights');
+  assert.equal(song.modelCalls, 0);
+  const sample = await che.say('Add a sample called Rain loop to Pressure from freesound');
+  assert.match(sample.reply, /not verified yet/);
+  const id = ((await che.get('/api/state')).projects || []).find((p) => p.title === 'Pressure').id;
+  const read = await che.get(`/api/music/rights?project_id=${id}`);
+  assert.equal(read.project.music.samples[0].name, 'Rain loop');
+  assert.equal(read.readiness.items.find((i) => i.id === 'samples').ok, false);
+});
