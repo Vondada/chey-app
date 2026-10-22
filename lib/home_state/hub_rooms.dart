@@ -60,33 +60,6 @@ extension _CheHomeHubRooms on _CHEHomeState {
     );
   }
 
-  Widget _integrationCard(
-    IconData icon,
-    String title,
-    String description,
-    bool connected, {
-    VoidCallback? onTap,
-  }) {
-    return Card(
-      child: ListTile(
-        onTap: onTap,
-        leading: Icon(icon),
-        title: Text(title),
-        subtitle: Text(description),
-        trailing: Text(
-          connected ? 'CONNECTED' : (onTap != null ? 'SET UP' : 'NOT CONNECTED'),
-          style: TextStyle(
-            color: connected
-                ? CheColors.accent
-                : (onTap != null ? Colors.amberAccent : Colors.white38),
-            fontSize: 10,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-      ),
-    );
-  }
-
   void _runHubPrompt(String prompt) {
     if (!mounted) return;
     Navigator.of(context).pop();
@@ -207,25 +180,50 @@ extension _CheHomeHubRooms on _CHEHomeState {
   }
 
   Widget _hubBusinessTab() {
+    // Business is a set of things to do. Each row says what it does, whether it is connected, and gives one button.
+    // Real counts come from the Projects board (businesses and pipeline deals), never from text.
+    final board = _boardItems();
+    // Deals carry the "Business / pipeline" label too, so businesses exclude them to avoid counting each deal twice.
+    final businesses = board.where((i) => i.kind != CheBoardKind.deal && i.typeLabel.toLowerCase().contains('business')).toList();
+    final deals = board.where((i) => i.kind == CheBoardKind.deal).toList();
+    // The same stages the Worker's pipelineSummary calls needs_you (proposal and review) need the owner.
+    final attention = [...businesses, ...deals].where((i) {
+      final s = i.statusLabel.toLowerCase();
+      return s.contains('block') || s.contains('fail') || s == 'proposal' || s == 'review';
+    }).length;
+    final paymentsOn = integrations['payments'] == true;
     return _hubList(
       'Business',
-      'Run planning and operations now; connected services unlock live records, leads and payments.',
+      'What you can do here, and what is connected.',
       [
-        _integrationCard(
-          Icons.groups_rounded,
-          'Business War Room',
-          'Convene CHE’s agents on a business goal: they draft, cross-check each other and CHE delivers the plan.',
-          true,
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Text(
+              businesses.isEmpty && deals.isEmpty
+                  ? 'No business or deals yet. Start one below and it appears here.'
+                  : '${businesses.length} ${businesses.length == 1 ? 'business' : 'businesses'} · ${deals.length} ${deals.length == 1 ? 'deal' : 'deals'} · ${attention == 0 ? 'nothing waiting on you' : '$attention waiting on you'}',
+              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+            ),
+          ),
+        ),
+        _businessRow(
+          icon: Icons.groups_rounded,
+          title: 'Plan with the team',
+          what: 'Agents draft a business goal, check each other, and CHE brings you the plan.',
+          status: 'Ready',
+          action: 'Start',
           onTap: () {
             Navigator.of(context).pop();
             _openOfficeFloor();
           },
         ),
-        _integrationCard(
-          Icons.handshake_outlined,
-          'Client Pipeline',
-          'Leads → proposals → builds → Stripe payment links. CHE drafts and builds; you approve and send.',
-          true,
+        _businessRow(
+          icon: Icons.handshake_outlined,
+          title: 'Clients and deals',
+          what: 'Track leads, proposals and builds. You approve every send.',
+          status: deals.isEmpty ? 'No deals yet' : '${deals.length} in the pipeline',
+          action: 'Open',
           onTap: () {
             Navigator.of(context).push(
               MaterialPageRoute<void>(
@@ -241,11 +239,12 @@ extension _CheHomeHubRooms on _CHEHomeState {
             );
           },
         ),
-        _integrationCard(
-          Icons.storefront_outlined,
-          'CHE Studio Store',
-          'Products and classes you approve, sold through Stripe payment links. Real sales only.',
-          integrations['payments'] == true,
+        _businessRow(
+          icon: Icons.storefront_outlined,
+          title: 'Sell a product or class',
+          what: 'Products you approve, sold through Stripe payment links. Only real sales are counted.',
+          status: paymentsOn ? 'Stripe connected' : 'Needs Stripe',
+          action: paymentsOn ? 'Open' : 'Set up',
           onTap: () {
             Navigator.of(context).push(
               MaterialPageRoute<void>(
@@ -261,52 +260,62 @@ extension _CheHomeHubRooms on _CHEHomeState {
             );
           },
         ),
-        _integrationCard(
-          Icons.dashboard_customize_outlined,
-          'Business Operations',
-          'Plans, workflows, CRM, scheduling, fulfillment and operating systems.',
-          integrations['business'] == true,
-          onTap: () => _runHubPrompt(
-            'Start a business operations task with me. Help me turn the goal into an efficient plan, workflow, responsibilities, metrics and next actions.',
-          ),
-        ),
-        _integrationCard(
-          Icons.account_balance_wallet_outlined,
-          'Cash Flow',
-          'Budgets, runway, forecasts, invoices and reconciliations.',
-          integrations['business'] == true,
+        _businessRow(
+          icon: Icons.account_balance_wallet_outlined,
+          title: 'Money and cash flow',
+          what: 'Budget, runway and forecast from numbers you give CHE. No revenue is shown until a payment connector confirms it.',
+          status: paymentsOn ? 'Payments connected' : 'No revenue connected',
+          action: 'Ask CHE',
           onTap: () => _runHubPrompt(
             'Help me work through my business cash flow. Ask for only the numbers you actually need, then build the budget, runway and forecast.',
           ),
         ),
-        _integrationCard(
-          Icons.person_search_outlined,
-          'Lead Discovery',
-          'Lawful public/professional prospect research through a connected source.',
-          integrations['leads'] == true,
+        _businessRow(
+          icon: Icons.person_search_outlined,
+          title: 'Find leads',
+          what: 'Public or professional prospects from a connected lead source. No sensitive personal targeting.',
+          status: integrations['leads'] == true ? 'Connected' : 'Needs a lead source',
+          action: 'Ask CHE',
           onTap: () => _runHubPrompt(
             'Find and organize lawful public or professional leads for my business using connected lead and research tools. Do not use sensitive personal targeting.',
           ),
         ),
-        _integrationCard(
-          Icons.payments_outlined,
-          'Payments + Billing',
-          'Authorized invoicing and payment actions with explicit customer terms.',
-          integrations['payments'] == true,
+        _businessRow(
+          icon: Icons.add_circle_outline_rounded,
+          title: 'Start a business',
+          what: 'Name the business, its first offer and the next three steps. Nothing is published or paid.',
+          status: 'Ready',
+          action: 'Start',
           onTap: () => _runHubPrompt(
-            'Help me set up CHE payments and billing. Do not charge anyone unless the payment connector confirms authorization, pricing and customer terms.',
-          ),
-        ),
-        _integrationCard(
-          Icons.manage_search_outlined,
-          'Public Records',
-          'Research records that are lawfully public through an authorized source.',
-          integrations['public_records'] == true,
-          onTap: () => _runHubPrompt(
-            'Help me research lawful public records. Use a connected public-record or research source if available and clearly separate confirmed records from anything unverified.',
+            'Start a business plan with me. Help me pick the first offer, the customer, and the next three steps. Do not publish, charge or buy anything.',
           ),
         ),
       ],
+    );
+  }
+
+  /// One Business action: what it is, what is connected, and the one thing the button does.
+  Widget _businessRow({
+    required IconData icon,
+    required String title,
+    required String what,
+    required String status,
+    required String action,
+    required VoidCallback onTap,
+  }) {
+    return Card(
+      child: ListTile(
+        onTap: onTap,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        leading: Icon(icon),
+        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
+        subtitle: Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Text('$what\n$status', style: const TextStyle(height: 1.35)),
+        ),
+        isThreeLine: true,
+        trailing: FilledButton.tonal(onPressed: onTap, child: Text(action)),
+      ),
     );
   }
 
