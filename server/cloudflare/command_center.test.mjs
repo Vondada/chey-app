@@ -1171,3 +1171,26 @@ test('Expert Intelligence by voice: emergencies first, a private case, a Doctor 
   assert.equal(view.cases[0].title, 'Back and leg');
   assert.ok(view.expertise.some((e) => e.domain === 'health' && e.level === 'not built'), 'no health sources yet, so no claim');
 });
+
+// ─── Codex review of #458/#459 through /api/chat ────────────────────────────
+
+test('a guest\'s emergency gets the deterministic 911 answer before any model call', async () => {
+  const che = await owner();
+  const tenant = await che.post('/api/platform/tenants', { name: 'Guest', role: 'family' });
+  const invite = await che.post('/api/platform/enrollments', { access: 'private', tenant_id: tenant.body?.tenant?.id });
+  const guest = (await (await che.send('/api/enroll', { enrollment_token: invite.body.enrollment.token, device_name: 'guest' })).json()).device_token;
+  const before = che.inputs.length;
+  const raw = await (await che.send('/api/chat', { message: 'My dad has chest pain and shortness of breath right now', history: [] }, guest)).text();
+  assert.match(replyFromNdjson(raw), /^Chest pain with these symptoms can be a heart attack\. Call 911 now\./);
+  assert.match(raw, /"source":"che_health_urgent"/);
+  assert.equal(che.inputs.length, before, 'no model call');
+});
+
+test('location alerts compare only what the owner records show he does: no recording alert out of nowhere', async () => {
+  const che = await owner();
+  await che.say('My home state is Louisiana');
+  await che.say('Turn on location legal alerts');
+  assert.match((await che.say("I'm in California now, is there anything relevant that changed?")).reply, /Nothing I have indexed for what you're doing changes in California/);
+  await che.say("Can I record a call I'm on here?");
+  assert.match((await che.say("I'm in California now, is there anything relevant that changed?")).reply, /Cal\. Penal Code § 632/);
+});

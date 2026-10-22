@@ -630,6 +630,13 @@ extension _CheHomeSend on _CHEHomeState {
       return;
     }
 
+    // Security Intelligence: a password, key or token typed or spoken into ordinary chat never leaves the phone.
+    if (_pendingAttachment == null && cheChatLooksSecret(message)) {
+      if (mounted) _set(() => controller.clear());
+      await speakText('That looks like a password, key or token, so I did not send it anywhere. To keep a password, say save my password for, then the site; it stays in your Face ID vault on this iPhone. Keys go in the Keys tab.', record: false);
+      return;
+    }
+
     // The Command Center, while it is open, answers its own voice routes
     // first (search, numbered options, run, favorite, workflows, run
     // controls). Its reply is on its banner; CHE says it here. An empty
