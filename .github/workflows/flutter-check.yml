@@ -91,6 +91,11 @@ jobs:
           node --test server/cloudflare/rea_web_workflow.test.mjs
       - name: Video narration tests (Fish Drama 3, cache, Piper fallback)
         run: python3 -m unittest discover -s tools -p 'test_che_video_render.py'
+      - name: Visual Studio renders (real ffmpeg; verified MP4 and PNG)
+        run: |
+          command -v ffmpeg >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg; }
+          python3 -m pip install --quiet pillow
+          python3 -m unittest discover -s tools -p 'test_che_edit_render.py' -v
       - name: Claude Code project skills (.claude/skills) tests
         run: node --test .claude/skills/tests/*.test.mjs
       - name: CHE free-first coding and paid cap regression tests
