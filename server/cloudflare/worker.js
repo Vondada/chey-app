@@ -225,6 +225,8 @@ import {
 } from './research_memory.js';
 import { APP_BUILD_KEY, appBuildIntent, appBuildRun, dispatchAppBuild, speakAppBuild } from './app_builds.js';
 import { advanceObjectives, applyMissionEvent, approvalReached, approveNode, awaitingApproval, cancelObjective, createObjective, mutateObjective, replanNode, resolveKnownNodes, retryNode, setObjectivePaused, speakObjective } from './objective_graph.js';
+import { SESSION_SCOPES, bump as securityBump, checkSession, createSession, dependencyAdvisories, detectThreats, issueNonce, loadSecurity, recordFindings, redact as redactSecretText, redactDeep, respondToIncident, restoreTrustedState, revokeSessions, saveSecurity, securityIntent, snapshotTrustedState, speakStatus as speakSecurityStatus } from './security_intelligence.js';
+import { loadRegistry as loadCapabilityRegistry } from './capability_registry.js';
 import { engineView, exportWorkflows, feedbackOnLast, importWorkflows, library as workflowLibrary, loadEngine, matchLearned, noteVersion, promoteCandidate, dismissCandidate, rankWorkflows, recordRun as recordWorkflowRun, restoreVersion, saveEngine, setDisabled as setWorkflowDisabled, setPreferred as setWorkflowPreferred, speakEfficiency, speakLibrary, testCandidate, workflowForRun, workflowIntent } from './workflow_engine.js';
 import { CATEGORIES, COMMANDS, catalogView, commandById, commandStatus, connectorStatus, describeWorkflow, dispatchPrompt, findSavedWorkflow, normalizeSavedWorkflow, parseSlashCommand, readCommandSpeech, searchCommands, speakCommandList, speakUnavailable, suggestCommands, workflowNodes, workflowFromWords } from './command_catalog.js';
 import { handleReaRequest, loadInvestigation, parseReaRequest, reaInvestigationDetail, reaInvestigations } from './rea_runner.js';
@@ -5436,6 +5438,7 @@ export class CheState extends DurableObject {
     const sent = isChat ? request.clone().json().catch(() => null) : null;
     const startedAt = Date.now();
     let response = await this.handleRequest(request);
+    if (response?.status >= 500 && response.status !== 503) await this.securityCount('server_error');
     // Issue #345: a turn with a money or delete hold, or several steps with a "don't", carries how CHE
     // read it. The phone shows it as quiet text under the reply and never speaks it by itself.
     if (isChat && response?.ok && OWNER_CHAT_REQUESTS.has(request)) {
@@ -5501,7 +5504,15 @@ export class CheState extends DurableObject {
             await saveEngine(this.ctx.storage, engine);
           }
         } catch (_) {}
-        const memory = await recordConversationMemory(this.ctx.storage, { message, reply });
+        // Chat history is stored with credential-shaped values redacted; the finding is recorded, never the value.
+        const safeMessage = redactSecretText(message);
+        const safeReply = redactSecretText(reply);
+        if (safeMessage.findings.length || safeReply.findings.length) {
+          const sec = await loadSecurity(this.ctx.storage);
+          recordFindings(sec, 'chat history', [...safeMessage.findings, ...safeReply.findings].map((f) => f.kind));
+          await saveSecurity(this.ctx.storage, sec);
+        }
+        const memory = await recordConversationMemory(this.ctx.storage, { message: safeMessage.text, reply: safeReply.text });
         if (memory) {
           // The Brain keeps the whole exchange; brainmem keeps its linked summary. Same id.
           try { rememberExchange(new CheBrainStore(this.ctx.storage), { id: memory.id, message, reply, at: memory.at }); } catch (_) {}
@@ -5830,13 +5841,127 @@ export class CheState extends DurableObject {
   // Starts a workflow on CHE's existing objective graph: each step is a
   // `command` node, independent steps run in parallel lanes, approval steps
   // wait for the owner. Nothing starts unless every step can run now.
+  // ── Security Intelligence ──────────────────────────────────────────────
+  async securityCount(name) {
+    try {
+      const sec = await loadSecurity(this.ctx.storage);
+      securityBump(sec, name);
+      await saveSecurity(this.ctx.storage, sec);
+    } catch (_) {}
+  }
+
+  // One full check over CHE's own telemetry, registry and dependency manifests. Nothing outside CHE is probed.
+  async runSecurityCheck(data) {
+    const sec = await loadSecurity(this.ctx.storage);
+    const env = this.keyEnv || this.env;
+    let deploy = null;
+    let advisories = null;
+    if (env.CHE_GITHUB_TOKEN && env.CHE_GITHUB_REPO) {
+      const gh = (p) => fetch(`https://api.github.com/repos/${env.CHE_GITHUB_REPO}/${p}`, { headers: { Authorization: `Bearer ${env.CHE_GITHUB_TOKEN}`, Accept: 'application/vnd.github+json', 'User-Agent': 'CHE-Security' }, signal: AbortSignal.timeout(10000) }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+      const raw = (p) => fetch(`https://api.github.com/repos/${env.CHE_GITHUB_REPO}/contents/${p}?ref=main`, { headers: { Authorization: `Bearer ${env.CHE_GITHUB_TOKEN}`, Accept: 'application/vnd.github.raw', 'User-Agent': 'CHE-Security' }, signal: AbortSignal.timeout(10000) }).then((r) => (r.ok ? r.text() : '')).catch(() => '');
+      const head = await gh('commits/main');
+      // The running Worker's version tag is the commit it was deployed from (12 characters), set by the deploy job.
+      const live = runtimeVersion(this.env).version_tag;
+      if (head?.sha && /^[0-9a-f]{7,40}$/.test(live)) {
+        // main merely ahead of the live commit is a deploy not finished yet, not an unexpected deployment.
+        const cmp = head.sha.startsWith(live) ? { status: 'identical' } : await gh(`compare/${live}...${head.sha}`);
+        deploy = { live_sha: live, expected_sha: head.sha, relation: cmp?.status || 'unknown' };
+      }
+      const [packageJson, pubspecLock] = await Promise.all([raw('server/cloudflare/package.json'), raw('pubspec.lock')]);
+      advisories = dependencyAdvisories({ packageJson, pubspecLock });
+    }
+    const findings = detectThreats(sec, { data, deploy, registry: await loadCapabilityRegistry(this.ctx.storage), advisories });
+    await saveSecurity(this.ctx.storage, sec);
+    return { sec, findings, advisories, deploy_checked: Boolean(deploy) };
+  }
+
+  async securityApi(path, request, body, data, tokenHash) {
+    const action = path.replace(/^\/api\/security\/?/, '');
+    if (request.method === 'GET' && !action) {
+      const sec = await loadSecurity(this.ctx.storage);
+      return json({
+        status: speakSecurityStatus(sec, { lockedDown: await isLockedDown(this.ctx.storage) }),
+        events: (sec.events || []).slice(0, 50), audit: (sec.audit || []).slice(0, 30),
+        sessions: Object.values(sec.sessions || {}).filter((s) => !s.revoked_at && s.expires_at > Date.now()).map((s) => ({ scopes: s.scopes, factors: s.factors, expires_at: s.expires_at, this_device: s.device === tokenHash })),
+        internal_only: data.capability_policy?.internal_only === true,
+        scopes: SESSION_SCOPES,
+      });
+    }
+    if (request.method !== 'POST') return json({ detail: 'Not found.' }, 404);
+    const sec = await loadSecurity(this.ctx.storage);
+    const done = async (out, status = 200) => { await saveSecurity(this.ctx.storage, sec); return json(out, status); };
+    if (action === 'nonce') return done({ nonce: issueNonce(sec) });
+    // The phone's Face ID result (only ok + method) becomes a short scoped session bound to this device.
+    if (action === 'session') {
+      const out = createSession(sec, { deviceHash: tokenHash, assertion: body.assertion, scope: body.scope, nonce: String(body.nonce || '') });
+      return done(out, out.ok ? 200 : 403);
+    }
+    if (action === 'check') { const r = await this.runSecurityCheck(data); return json({ findings: r.findings, advisories: r.advisories, deploy_checked: r.deploy_checked, status: speakSecurityStatus(r.sec, { lockedDown: await isLockedDown(this.ctx.storage), findings: r.findings }) }); }
+    if (action === 'revoke_sessions') return done({ revoked: revokeSessions(sec) });
+    if (action === 'lockdown') { await setLockdown(this.ctx.storage, true); return done({ ok: true, locked: true }); }
+    if (action === 'snapshot') return done({ ok: true, ...(await snapshotTrustedState(this.ctx.storage, data)) });
+    // Sensitive: need a fresh Face ID session for exactly this scope (two factors: this device + biometric).
+    // Turning external dependencies off only lowers risk, so it needs no Face ID; turning them back on does.
+    const needs = action === 'external' && body.internal_only === true ? null : { restore: 'restore', unlock: 'lockdown_off', incident: 'security', external: 'external_dependency' }[action];
+    if (needs) {
+      const ok = checkSession(sec, request.headers.get('X-CHE-Session') || body.session, { deviceHash: tokenHash, scope: needs });
+      if (!ok.ok) return done({ detail: `This needs Face ID first (${ok.reason.replace(/_/g, ' ')}).`, reason: ok.reason, needs_scope: needs }, 401);
+    }
+    if (action === 'restore') { const r = await restoreTrustedState(this.ctx.storage, data); if (r.ok) await this.ctx.storage.put('che', data); return done(r, r.ok ? 200 : 409); }
+    if (action === 'unlock') { await setLockdown(this.ctx.storage, false); return done({ ok: true, locked: false }); }
+    if (action === 'external') { data.capability_policy = { ...(data.capability_policy || {}), internal_only: body.internal_only === true }; await this.ctx.storage.put('che', data); return done({ ok: true, internal_only: data.capability_policy.internal_only }); }
+    if (action === 'incident') {
+      const r = await respondToIncident(this.ctx.storage, sec, data, { revokeDevices: body.revoke_devices === true, keepDeviceHash: tokenHash, revokeDevice: (hash) => revokeDevice(data, ensurePlatform(data).devices[hash]?.id, { byTokenHash: tokenHash }) });
+      await this.ctx.storage.put('che', data);
+      return done(r);
+    }
+    return json({ detail: 'Unknown security action.' }, 404);
+  }
+
+  // The owner's spoken or typed security requests. Every answer reports what was actually done or found.
+  async securityChat(data, ask, tokenHash) {
+    const say = (text, extra = {}) => ndjsonReply(text, { source: 'che_security', ok: true, model_calls: 0, security_action: ask.action, ...extra });
+    if (ask.action === 'check') {
+      const r = await this.runSecurityCheck(data);
+      const tail = r.advisories ? ` Dependencies: ${r.advisories.checked} checked against ${r.advisories.coverage}; ${r.advisories.advisories.length} advisory match${r.advisories.advisories.length === 1 ? '' : 'es'}.` : ' Dependency and deploy checks need the GitHub connection, so they were not run.';
+      return say(speakSecurityStatus(r.sec, { lockedDown: await isLockedDown(this.ctx.storage), findings: r.findings }) + tail, { findings: r.findings.length });
+    }
+    const sec = await loadSecurity(this.ctx.storage);
+    if (ask.action === 'status') return say(speakSecurityStatus(sec, { lockedDown: await isLockedDown(this.ctx.storage) }));
+    if (ask.action === 'revoke') { const n = revokeSessions(sec); await saveSecurity(this.ctx.storage, sec); return say(`Revoked ${n} Face ID session${n === 1 ? '' : 's'}, sir. Your paired devices still work; say "revoke device" with its name to remove one.`); }
+    if (ask.action === 'snapshot') { const s = await snapshotTrustedState(this.ctx.storage, data); return say(`Saved a trusted snapshot of my configuration, sir, fingerprint ${s.sha256.slice(0, 12)}. It holds no keys or passwords.`); }
+    if (ask.action === 'internal_only') {
+      data.capability_policy = { ...(data.capability_policy || {}), internal_only: true };
+      await this.ctx.storage.put('che', data);
+      return say('External dependencies are off, sir: internal-only mode is on. Turning them back on needs Face ID on the Security page.', { internal_only: true });
+    }
+    if (ask.action === 'tools') {
+      const reg = await loadCapabilityRegistry(this.ctx.storage);
+      const caps = Object.values(reg.capabilities || {});
+      if (!caps.length) return say('I have no internally created tools registered yet, sir.');
+      return say(`${caps.length} internal tool${caps.length === 1 ? '' : 's'}: ${caps.slice(0, 6).map((c, i) => `${i + 1}. ${c.name}, ${c.status.toLowerCase()}, ${c.checks?.security?.ok ? 'security reviewed' : 'not security reviewed'}, network ${(c.permissions?.network || []).length ? c.permissions.network.join(', ') : 'none'}`).join('; ')}.`);
+    }
+    if (ask.action === 'knowledge') {
+      const a = (await this.ctx.storage.get('ai_audit').catch(() => [])) || [];
+      const day = a.filter((e) => Date.now() - Date.parse(e.at) < 86_400_000);
+      const providers = [...new Set(day.map((e) => e.provider).filter(Boolean))];
+      return say(day.length ? `In the last day ${day.length} model call${day.length === 1 ? '' : 's'} received context from my memory, through ${providers.join(', ') || 'unnamed engines'}; data classes sent: ${[...new Set(day.flatMap((e) => e.data_classes || []))].join(', ') || 'none'}. Withheld: ${[...new Set(day.flatMap((e) => e.withheld_classes || []))].join(', ') || 'none'}.` : 'No model received context from my memory in the last day, sir.');
+    }
+    if (ask.action === 'incident') {
+      const r = await respondToIncident(this.ctx.storage, sec, data, {});
+      await saveSecurity(this.ctx.storage, sec);
+      return say(`Incident response done, sir: ${r.done.join('; ')}. Lockdown ${r.verified_lockdown ? 'is confirmed on' : 'could not be confirmed'}. Rotate these next: ${r.rotate.join(', ')}. To remove other paired devices too, use the Security page.`);
+    }
+    return say('I can run a security check, give the status, revoke sessions, lock down, review internal tools or knowledge access, and turn off external dependencies, sir.', { ok: false });
+  }
+
   // ── Workflow Engine ────────────────────────────────────────────────────
   // The library, its measurements and the owner's controls. Running a workflow stays with the existing
   // executors (handlers, runSlashCommand, startCommandWorkflow and the objective graph).
   async workflowsApi(path, request, body, data) {
     const engine = await loadEngine(this.ctx.storage);
     if (request.method === 'GET' && path === '/api/workflows') return json(engineView(data, engine));
-    if (request.method === 'GET' && path === '/api/workflows/export') return json(exportWorkflows(data, engine));
+    if (request.method === 'GET' && path === '/api/workflows/export') return json(redactDeep(exportWorkflows(data, engine)));
     if (request.method !== 'POST') return json({ detail: 'Not found.' }, 404);
     const lib = workflowLibrary(data, engine);
     const action = path.replace('/api/workflows/', '');
@@ -6316,7 +6441,12 @@ export class CheState extends DurableObject {
       const match = /^Bearer ([A-Za-z0-9_-]{40,160})$/.exec(authorization);
       const workflowStep = WORKFLOW_STEP_REQUESTS.has(request) && path === '/api/chat';
       const tokenHash = match && !workflowStep ? await digest(match[1]) : '';
-      if (!workflowStep && !Object.hasOwn(data.devices, tokenHash)) return json({ detail: 'Pair your phone to CHE.' }, 401);
+      if (!workflowStep && !Object.hasOwn(data.devices, tokenHash)) {
+        // Security Intelligence telemetry: refused tokens are counted (never stored), revoked devices separately.
+        const revokedTry = Boolean(tokenHash && ensurePlatform(data).devices[tokenHash]?.revoked_at);
+        await this.securityCount(revokedTry ? 'revoked_device' : 'unknown_token');
+        return json({ detail: 'Pair your phone to CHE.' }, 401);
+      }
       const platformDevice = workflowStep ? null : touchDevice(data, tokenHash);
       if (platformDevice?.revoked_at) return json({ detail: 'This CHE device was revoked.' }, 401);
       const activeTenant = workflowStep ? ensurePlatform(data).tenants[OWNER_TENANT_ID] : tenantForDevice(data, tokenHash);
@@ -8497,6 +8627,10 @@ export class CheState extends DurableObject {
         return new Response(bytes, { headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'private, max-age=3600' } });
       }
       // The Command Center catalog with live status, saved workflows and runs.
+      if (path === '/api/security' || (path.startsWith('/api/security/') && path !== '/api/security/revoke_self')) {
+        if (!ownerDevice) return json({ detail: 'Only the CHE owner can see or change CHE\'s security.' }, 403);
+        return this.securityApi(path, request, body, data, tokenHash);
+      }
       if (path === '/api/workflows' || path.startsWith('/api/workflows/')) {
         if (!ownerDevice) return json({ detail: 'Only the CHE owner can see or change the workflow library.' }, 403);
         return this.workflowsApi(path, request, body, data);
@@ -9597,6 +9731,8 @@ export class CheState extends DurableObject {
             return ndjsonReply(started.spoken, { source: 'che_command_workflow', ok: started.ok, objective_id: started.objective?.id || null, model_calls: 0 });
           }
           // Workflow Engine: the owner's words about the library, then a promoted learned workflow this request matches.
+          const secAsk = ownerDevice && !body.attachment && !body.workflow_step ? securityIntent(rawMessage) : null;
+          if (secAsk) return this.securityChat(data, secAsk, tokenHash);
           const wfAsk = ownerDevice && !body.attachment && !body.workflow_step ? workflowIntent(rawMessage) : null;
           if (wfAsk) return this.workflowChat(data, wfAsk);
           const learned = ownerDevice && !body.attachment && !body.workflow_step && !body.screen_context ? matchLearned(await loadEngine(this.ctx.storage), rawMessage) : null;
