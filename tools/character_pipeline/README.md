@@ -35,8 +35,9 @@ stand, talk, think, celebrate, nod, shake. Blink is built into the looping clips
 The app embeds `assets/characters/app/index.html` through
 `lib/rooms/che_characters_room.dart`; its scripts and eight GLBs are bundled in
 `pubspec.yaml`. The separate `assets/characters/che_viewer.html` is a development
-viewer (serve over HTTP; file:// blocks module imports). The animations are a
-character demonstration, not evidence of live agent work.
+viewer (serve over HTTP; file:// blocks module imports). In the app, each character plays
+the clip for its agent's real runtime status (`lib/rooms/che_crew_states.dart`, sent with
+`CHE.setStates`); everyone starts idle, and a model with no live agent stays idle.
 
 Before packaging an export, run these dependency-free checks from the repo root:
 
@@ -56,6 +57,6 @@ Known limits:
 - No facial blend shapes (mouth does not move when talking), no IK or foot placement.
 - Hands are small mitten shapes; hair is shaped shells and curls, not strands.
 - Embedded in Flutter; rendering performance has not been measured on an iPhone.
-- The app currently announces ready before the page acknowledges asynchronous GLB
-  parsing, and the character scene does not suspend its animation loop when hidden.
+- The page reports ready to the app only after all eight GLBs parse (`CheBridge`), and its
+  render loop stops while the page is hidden or the app is in the background.
   These runtime gaps still require a scene/Flutter bridge fix and device validation.

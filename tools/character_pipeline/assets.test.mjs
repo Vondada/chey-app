@@ -42,3 +42,21 @@ test('a character whose meshes are not in the active scene would render blank, s
   assert.throws(() => validateGlb(changedModel((m) => { m.scenes[m.scene ?? 0].nodes = []; })), /active scene has no root nodes/);
   assert.throws(() => validateGlb(changedModel((m) => { for (const node of m.nodes) delete node.mesh; })), /no triangles/);
 });
+
+// The 3D crew shows real work only (owner, 2026-10-22). The page starts everyone idle, takes each character's clip
+// from the app (CHE.setStates), tells the app when every model has really loaded, and does no GPU work while hidden.
+test('the crew page starts idle, takes real states, reports real readiness and stops rendering when hidden', () => {
+  const page = readFileSync(new URL('../../assets/characters/app/index.html', import.meta.url), 'utf8');
+  const script = page.slice(page.lastIndexOf('<script>') + 8, page.lastIndexOf('</script>'));
+  assert.doesNotThrow(() => new Function(script), 'the page script parses');
+  const crew = script.slice(script.indexOf('const CREW = ['), script.indexOf('];', script.indexOf('const CREW = [')));
+  assert.equal((crew.match(/clip: '([a-z]+)'/g) || []).length, 7, 'seven crew members');
+  assert.doesNotMatch(crew, /clip: '(?!idle')/, 'no member starts on a working clip');
+  assert.match(script, /setStates: \(states\) => setStates\(states\)/);
+  assert.match(script, /pause: \(p\) =>/);
+  assert.match(script, /tellApp\(\{ type: 'ready', loaded: loadedIds\.size \}\)/);
+  assert.match(script, /tellApp\(\{ type: 'error', id/);
+  assert.match(script, /if \(paused \|\| document\.hidden\) \{ running = false; return; \}/);
+  assert.match(script, /addEventListener\('visibilitychange', resume\)/);
+  assert.match(script, /for \(const c of crew\) if \(!c\.still\) c\.mixer\.update\(dt\)/, 'offline agents stand still');
+});

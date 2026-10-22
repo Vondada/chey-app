@@ -692,7 +692,7 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
             IconButton(
               tooltip: 'Open the 3D crew',
               icon: const Icon(Icons.view_in_ar),
-              onPressed: () => CheCharactersRoom.open(context),
+              onPressed: () => CheCharactersRoom.open(context, runtime: _runtime),
             ),
           ],
         ),
