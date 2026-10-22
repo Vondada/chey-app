@@ -10,6 +10,7 @@ import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 
 import '../che_ui/che_theme.dart';
+import '../platform/che_platform_screens.dart';
 import 'che_message_split.dart';
 
 class CheMailboxScreen extends StatefulWidget {
@@ -21,7 +22,7 @@ class CheMailboxScreen extends StatefulWidget {
     this.initialTab = 0,
   });
 
-  /// 0 Flagstaff, 1 Archive, 2 Letters, 3 Keys.
+  /// 0 Flagstaff, 1 Archive, 2 Letters, 3 Keys, 4 Notices.
   final int initialTab;
   final String baseUrl;
   final Map<String, String> Function() headers;
@@ -748,13 +749,14 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 4,
-      initialIndex: widget.initialTab.clamp(0, 3),
+      length: 5,
+      initialIndex: widget.initialTab.clamp(0, 4),
       child: Scaffold(
         backgroundColor: CheColors.bg,
         appBar: AppBar(
           backgroundColor: CheColors.bg,
-          title: const Text('Mailbox'),
+          // Flagstaff is CHE's one inbox: AI messages, Office reports, letters and system notices (owner, 2026-10-22).
+          title: const Text('Flagstaff'),
           actions: [
             IconButton(
               tooltip: 'Refresh',
@@ -764,7 +766,7 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
           ],
           bottom: const TabBar(
             isScrollable: true,
-            tabs: [Tab(text: 'Flagstaff'), Tab(text: 'Archive'), Tab(text: 'Letters'), Tab(text: 'Keys')],
+            tabs: [Tab(text: 'Flagstaff'), Tab(text: 'Archive'), Tab(text: 'Letters'), Tab(text: 'Keys'), Tab(text: 'Notices')],
           ),
         ),
         body: _loading
@@ -826,6 +828,11 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
                             },
                           ),
                     _keysTab(),
+                    CheNotificationsScreen(
+                      gateway: chePlatformGateway(baseUrl: () => widget.baseUrl, headers: widget.headers),
+                      onReadAloud: widget.onSpeak,
+                      embedded: true,
+                    ),
                   ]),
                 ),
               ]),

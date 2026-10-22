@@ -141,8 +141,11 @@ extension _CheHomeConnected on _CHEHomeState {
     if (data == null || !mounted) return;
     final line = data['line']?.toString().trim() ?? '';
     final list = (data['suggestions'] as List? ?? const []).map((e) => e.toString()).where((e) => e.isNotEmpty).toList();
+    // Home shows only the time-of-day greeting. Office task titles, decisions and stalls belong in the Office and in
+    // Flagstaff, never as text on Home or Chat (owner, 2026-10-22).
+    final personal = (data['kind']?.toString() ?? '') == 'suggestion';
     _set(() {
-      if (line.isNotEmpty) _homeGreeting = line;
+      _homeGreeting = personal && line.isNotEmpty ? line : null;
       if (list.isNotEmpty) _homeSuggestions = list;
     });
     try {

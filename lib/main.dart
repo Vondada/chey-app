@@ -1443,7 +1443,7 @@ OWNER AGENCY
           detail: messages.isEmpty
               ? 'No messages yet in this chat'
               : '${messages.length} messages in this chat${lastReply.isEmpty ? '' : '; my last reply begins: "${lastReply.length > 140 ? '${lastReply.substring(0, 140)}…' : lastReply}"'}',
-          controls: ['Talk to CHE', 'Commands', 'Conversations', 'New chat', 'Mailbox and Flagstaff', 'the message box', 'the bottom tabs'],
+          controls: ['Talk to CHE', 'Commands', 'Flagstaff', 'Help', 'Chat options: Knowledge Library, Conversations, New chat', 'the message box', 'the bottom tabs'],
         ),
       2 => CheScreenReport(
           page: 'the Office',
@@ -1455,7 +1455,7 @@ OWNER AGENCY
         ),
       3 => CheScreenReport(page: 'CHE World', tab: 'CHE World', tabs: tabs, controls: const ['the CHE World rooms', 'the bottom tabs']),
       4 => CheScreenReport(page: 'More', tab: 'More', tabs: tabs,
-          controls: const ['Talk to CHE', 'Trading Room', 'Conversations', 'Mailbox and Flagstaff', 'Keys', 'UI Controls', 'Connections', 'Change CHE’s voice', 'Voice replies', 'Projects and Businesses', 'Language and translate', 'the bottom tabs']),
+          controls: const ['Talk to CHE', 'Trading Room', 'Conversations', 'Flagstaff', 'Voice IDs', 'Keys', 'UI Controls', 'Connections', 'Change CHE’s voice', 'Voice replies', 'Projects and Businesses', 'Language and translate', 'the bottom tabs']),
       _ => CheScreenReport(page: 'Home', tab: 'Home', tabs: tabs,
           detail: '${_officeRuntime.agents.length} agents, ${_officeRuntime.working} working',
           controls: const ['Talk to CHE', 'Type to CHE', 'Voice on or off', 'The Office', 'Brain', 'Trading', 'Create',
@@ -1556,7 +1556,7 @@ OWNER AGENCY
     final listening = _realtimeVoice?.connected == true || isListening;
     final greeting = _screenGreetingHidden
         ? ''
-        : (_homeGreeting ?? (suggestions.isEmpty ? null : suggestions.first) ?? '');
+        : (_homeGreeting ?? '');
     return CheMockupHome(
       che: _officeRuntime.che,
       agents: agents,
@@ -1583,13 +1583,11 @@ OWNER AGENCY
   }
 
   Widget _buildChatTab(List<CheAgent> agents) {
-    final postReplyActions = _screenChipsHidden
-        ? const <String>[]
-        : (_homeSuggestions.isNotEmpty ? _homeSuggestions : _skillPlugins.quickActions());
+    // Chat holds the conversation, real reply cards and the composer (owner, 2026-10-22). Voice IDs live in More,
+    // canned prompt chips and the always-on voice status line are gone; command suggestions appear only after a reply
+    // they belong to.
     final chat = Column(
       children: [
-        // Voice IDs opens inside Chat. Collapsed, it builds nothing and speaks nothing.
-        CheVoiceIdsSection(onSpeak: (line) => unawaited(speakText(line, record: false))),
         Expanded(
           child: AnimatedSwitcher(
             duration: const Duration(milliseconds: 260),
@@ -1629,42 +1627,7 @@ OWNER AGENCY
             messages.isNotEmpty &&
             messages.last['role'] == 'assistant' &&
             !_isSending)
-          _commandSuggestionCards()
-        else if (postReplyActions.isNotEmpty &&
-            messages.isNotEmpty &&
-            messages.last['role'] == 'assistant' &&
-            !_isSending)
-          LayoutBuilder(
-            builder: (context, constraints) => Padding(
-              padding: const EdgeInsets.fromLTRB(14, 2, 14, 6),
-              child: Wrap(
-                spacing: 8,
-                runSpacing: 6,
-                children: [
-                  for (final action in postReplyActions.take(3))
-                    ConstrainedBox(
-                      constraints: BoxConstraints(maxWidth: constraints.maxWidth),
-                      child: ActionChip(
-                        avatar: Icon(Icons.bolt_rounded, size: 16, color: kit.CheColors.accent),
-                        label: Text(action, maxLines: 1, overflow: TextOverflow.ellipsis),
-                        onPressed: () => _runPluginPrompt(action),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          ),
-        // What the microphone is really doing, from the engine flags (muted, never spoken).
-        if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 2, 16, 2),
-            child: Semantics(
-              liveRegion: false,
-              label: 'Voice status: ${_voiceHealth.wakeStatus}',
-              excludeSemantics: true,
-              child: Text(_voiceHealth.wakeStatus, textAlign: TextAlign.center, style: const TextStyle(fontSize: 14, color: Colors.white60)),
-            ),
-          ),
+          _commandSuggestionCards(),
         SafeArea(
           top: false,
           bottom: false,
@@ -1855,15 +1818,10 @@ OWNER AGENCY
   CheHttpPlatformGateway _platformGateway() =>
       chePlatformGateway(baseUrl: () => cheAgentBaseUrl, headers: () => _authHeaders);
 
+  // Flagstaff is the one notification centre (owner, 2026-10-22): notices open there, never on a page of their own.
   Future<void> _openPlatformNotifications() async {
     HapticFeedback.selectionClick();
-    await Navigator.of(context).push(MaterialPageRoute<void>(
-      builder: (_) => CheNotificationsScreen(
-        gateway: _platformGateway(),
-        onReadAloud: (text) => speakText(text, record: false, readOnDemand: true),
-      ),
-    ));
-    // The list reads what it showed, so the banner reloads to drop it.
+    await _openMailbox(tab: 4);
     if (mounted) _updateHomeState(() { _priorityBannerVersion++; });
   }
 
@@ -2148,6 +2106,26 @@ OWNER AGENCY
     )));
   }
 
+  /// Voice IDs, moved out of Chat into More (owner, 2026-10-22). Opening it is silent.
+  void _openVoiceIds() {
+    HapticFeedback.selectionClick();
+    Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => Theme(
+        data: kit.CheTheme.dark(),
+        child: Scaffold(
+          backgroundColor: kit.CheColors.bg,
+          appBar: AppBar(title: const Text('Voice IDs')),
+          body: SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: CheVoiceIdsPanel(onSpeak: (line) => unawaited(speakText(line, record: false))),
+            ),
+          ),
+        ),
+      ),
+    ));
+  }
+
   void _openVoiceSelector() {
     showModalBottomSheet<void>(
       context: context,
@@ -2193,11 +2171,18 @@ OWNER AGENCY
           hue: kit.CheColors.accent,
         ),
         CheMoreItem(
-          icon: Icons.markunread_mailbox_rounded,
-          title: 'Mailbox & Flagstaff',
-          subtitle: _mailboxUnread > 0 ? '$_mailboxUnread unread · AI conversations · letters' : 'AI conversations · archive · letters · keys',
+          icon: Icons.notifications_rounded,
+          title: 'Flagstaff',
+          subtitle: _mailboxUnread > 0 ? '$_mailboxUnread unread · messages, reports, notices' : 'Messages, reports, notices · letters · keys',
           onTap: () => unawaited(_openMailbox()),
           hue: kit.CheColors.accentAlt,
+        ),
+        CheMoreItem(
+          icon: Icons.record_voice_over_rounded,
+          title: 'Voice IDs',
+          subtitle: 'Paste a voice ID, name it, and use it',
+          onTap: _openVoiceIds,
+          hue: kit.CheColors.accent,
         ),
         CheMoreItem(
           icon: Icons.vpn_key_rounded,
@@ -2294,13 +2279,6 @@ OWNER AGENCY
           subtitle: 'Coding and trading, beginner to expert',
           onTap: _openKnowledgeAtlas,
           hue: kit.CheColors.memory,
-        ),
-        CheMoreItem(
-          icon: Icons.notifications_active_outlined,
-          title: 'Notifications',
-          subtitle: 'Newest first · priority banners only when live',
-          onTap: () => unawaited(_openPlatformNotifications()),
-          hue: kit.CheColors.warning,
         ),
         CheMoreItem(
           icon: Icons.blur_circular_rounded,
@@ -2408,17 +2386,10 @@ OWNER AGENCY
                 'Chat',
                 style: kit.CheType.title.copyWith(fontSize: 22, fontWeight: FontWeight.w800),
               ),
+              // Talk is alone on the left; Commands, Flagstaff and Help on the right; Knowledge, Conversations and New
+              // chat in one Chat options menu, so nothing sits beside the Talk control (owner, 2026-10-22).
+              leadingWidth: 64,
               actions: [
-                Semantics(
-                  button: true,
-                  label: 'Knowledge Library. Search the references CHE can quote.',
-                  excludeSemantics: true,
-                  child: IconButton(
-                    tooltip: 'Knowledge Library',
-                    icon: const Icon(Icons.menu_book_rounded),
-                    onPressed: () => unawaited(_openKnowledgeLibrary()),
-                  ),
-                ),
                 Semantics(
                   button: true,
                   label: 'Commands. Open CHE\'s command library, workflows and activity.',
@@ -2440,26 +2411,53 @@ OWNER AGENCY
                           ),
                         ),
                 ),
-                IconButton(
-                  tooltip: 'Conversations',
-                  icon: const Icon(Icons.history_rounded),
-                  onPressed: _openConversationSheet,
-                ),
-                IconButton(
-                  tooltip: 'New chat',
-                  icon: const Icon(Icons.add_rounded),
-                  onPressed: _isSending ? null : _homeNewChat,
+                // Flagstaff is the one inbox and notification centre; its unread count is the only badge.
+                Semantics(
+                  button: true,
+                  label: _mailboxUnread > 0
+                      ? 'Flagstaff, $_mailboxUnread unread. Messages, reports and notices.'
+                      : 'Flagstaff. Messages, reports and notices.',
+                  excludeSemantics: true,
+                  child: IconButton(
+                    tooltip: 'Flagstaff',
+                    icon: _mailboxUnread > 0
+                        ? Badge(
+                            label: Text('$_mailboxUnread'),
+                            child: const Icon(Icons.notifications_rounded),
+                          )
+                        : const Icon(Icons.notifications_none_rounded),
+                    onPressed: () => unawaited(_openMailbox()),
+                  ),
                 ),
                 const CheHelpButton(),
-                IconButton(
-                  tooltip: 'Mailbox and Flagstaff',
-                  icon: _mailboxUnread > 0
-                      ? Badge(
-                          label: Text('$_mailboxUnread'),
-                          child: const Icon(Icons.markunread_mailbox_rounded),
-                        )
-                      : const Icon(Icons.markunread_mailbox_rounded),
-                  onPressed: () => unawaited(_openMailbox()),
+                PopupMenuButton<String>(
+                  tooltip: 'Chat options',
+                  icon: const Icon(Icons.more_vert_rounded),
+                  onSelected: (choice) {
+                    switch (choice) {
+                      case 'knowledge':
+                        unawaited(_openKnowledgeLibrary());
+                      case 'conversations':
+                        _openConversationSheet();
+                      case 'new':
+                        if (!_isSending) _homeNewChat();
+                    }
+                  },
+                  itemBuilder: (_) => [
+                    const PopupMenuItem(
+                      value: 'knowledge',
+                      child: ListTile(leading: Icon(Icons.menu_book_rounded), title: Text('Knowledge Library')),
+                    ),
+                    const PopupMenuItem(
+                      value: 'conversations',
+                      child: ListTile(leading: Icon(Icons.history_rounded), title: Text('Conversations')),
+                    ),
+                    PopupMenuItem(
+                      value: 'new',
+                      enabled: !_isSending,
+                      child: const ListTile(leading: Icon(Icons.add_rounded), title: Text('New chat')),
+                    ),
+                  ],
                 ),
               ],
             )

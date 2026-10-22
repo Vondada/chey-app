@@ -72,8 +72,12 @@ void main() {
     await tester.pump(const Duration(milliseconds: 500));
 
     expect(find.text('What can I help with?'), findsOneWidget);
-    expect(find.byTooltip('Conversations'), findsOneWidget);
-    expect(find.byTooltip('New chat'), findsOneWidget);
+    // Conversations, New chat and Knowledge live in one Chat options menu; nothing sits beside Talk.
+    expect(find.byTooltip('Chat options'), findsOneWidget);
+    expect(find.byTooltip('Flagstaff'), findsOneWidget);
+    expect(find.byTooltip('Help'), findsWidgets);
+    expect(find.text('Commands'), findsOneWidget);
+    expect(find.byTooltip('Knowledge Library'), findsNothing, reason: 'Knowledge is in the menu, away from Talk');
     expect(find.byTooltip('Minimize chat'), findsNothing);
 
     for (final hidden in [
@@ -87,6 +91,65 @@ void main() {
     ]) {
       expect(find.text(hidden), findsNothing, reason: '$hidden should not render in normal Chat');
     }
+
+    // Owner (2026-10-22): no Voice IDs, no canned prompt chips, no repository or Office task text in Chat.
+    for (final gone in ['Voice IDs', 'Paste a voice ID, name it, and use it', 'Read me what Atlas finished',
+      'What is the Office doing?']) {
+      expect(find.text(gone), findsNothing, reason: '$gone is not in Chat');
+    }
+    expect(find.byType(ActionChip), findsNothing, reason: 'no canned prompt chips');
+    expect(find.textContaining('repository inspection report'), findsNothing);
+
+    // Talk and the first action are separate, each at least 44 points, and never overlap.
+    final talk = tester.getRect(find.byTooltip('Talk to CHE'));
+    expect(talk.width, greaterThanOrEqualTo(44));
+    expect(talk.height, greaterThanOrEqualTo(44));
+    for (final other in ['Commands', 'Flagstaff', 'Help', 'Chat options']) {
+      final f = other == 'Commands' ? find.text('Commands') : find.byTooltip(other).first;
+      final rect = tester.getRect(f);
+      expect(rect.overlaps(talk), isFalse, reason: '$other must not overlap Talk');
+      expect(rect.left - talk.right, greaterThanOrEqualTo(24), reason: '$other is well away from Talk');
+    }
+
+    // The menu holds Knowledge, Conversations and New chat.
+    await tester.tap(find.byTooltip('Chat options'));
+    await tester.pump(const Duration(milliseconds: 400));
+    for (final item in ['Knowledge Library', 'Conversations', 'New chat']) {
+      expect(find.text(item), findsOneWidget, reason: item);
+    }
+    await tester.tapAt(const Offset(10, 600));
+    await tester.pump(const Duration(milliseconds: 400));
+
+    // Flagstaff is the notification centre: it opens with a Notices tab.
+    await tester.tap(find.byTooltip('Flagstaff'));
+    for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(milliseconds: 200));
+    }
+    expect(find.text('Flagstaff'), findsWidgets);
+    expect(find.text('Notices'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('Chat stays usable with large text: the bar fits and the composer is reachable', (tester) async {
+    tester.view.physicalSize = const Size(1320, 2868);
+    tester.view.devicePixelRatio = 3;
+    tester.platformDispatcher.textScaleFactorTestValue = 1.6;
+    addTearDown(tester.view.reset);
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    SharedPreferences.setMockInitialValues({});
+
+    await tester.pumpWidget(const CHEApp());
+    for (var i = 0; i < 15; i++) {
+      await tester.pump(const Duration(milliseconds: 200));
+    }
+    await tester.tap(find.descendant(of: find.byType(ChePhoneBottomNav), matching: find.text('Chat')));
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(tester.takeException(), isNull);
+    expect(find.byTooltip('Talk to CHE'), findsOneWidget);
+    expect(find.byTooltip('Commands'), findsOneWidget, reason: 'Commands becomes an icon with large text');
+    expect(find.byTooltip('Flagstaff'), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox());
     await tester.pump(const Duration(seconds: 1));
