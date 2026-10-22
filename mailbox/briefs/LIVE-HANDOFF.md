@@ -1922,6 +1922,7 @@ Owner acceptance: speak a sentence hands-free; words appear while speaking; repl
 
 - Installed: CHE 1.4.1025342820, build 3956317271501, **patch 9**. Screen says "CHE is up to date."
 - Not yet confirmed: whether patch 9 is the Shorebird patch for `a05af09` (run 39697919339, succeeded 00:27Z), or whether it carries the 2026-10-18 turn lock. Shorebird patches apply on app relaunch, so a relaunch may still be pending.
+- Voice diagnostics (owner screenshots, 07:47 local): CHE voice (ElevenLabs) = **Out of credits**; Fish Audio (backup) = Working; last reply "Fish Audio (backup, the chosen voice failed first), 1 of 1 clips, one voice, iPhone setup about 254 ms a clip"; loudness -14.8 dBFS speech; "Why not spoken: Mary is out of credits"; hands-free Off; microphone closed. Likely cause of the recording's mid-reply switch: ElevenLabs credits ran out partway through, and the phone build did not hold the lock. Not proven. Owner decisions pending: top up ElevenLabs (spends money, owner action) or make Fish the primary voice (owner's choice).
 - Next check (owner): fully close and reopen CHE, then open CHE Updates; report the patch number. If it is still 9 after a relaunch, the a05af09 patch is not on the phone, and the voice-lock question in §8e stays open.
 
 ## 8c. SOUL CHECKPOINT 3 (Claude, 2026-10-22 00:05Z) — read first, supersedes 8b's "open" items
