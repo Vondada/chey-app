@@ -91,6 +91,7 @@ import 'che_ui/che_palette_theme.dart';
 import 'che_ui/che_palettes.dart';
 import 'che_ui/che_ui_preferences.dart';
 import 'che_ui/che_understood_as.dart' show CheUnderstoodAs, cheUnderstoodAs;
+import 'che_ui/che_response_details.dart' show CheResponseDetailsButton, cheResponseDetails, cheResponseDetailsFromJson, cheResponseDetailsJson;
 import 'che_ui/che_transitions.dart';
 import 'che_ui/che_widgets.dart' as kit show CheBackground;
 import 'che_ui/che_agents.dart' show CheAgent, CheAgentStatusLabel;
@@ -955,6 +956,8 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   String? _streamMediaType;
   // How CHE read a held or multi-step turn (issue #345), shown quietly under the reply.
   String? _streamUnderstoodAs;
+  // The reply's Soul and engine provenance (Response Details → Personality), from its done event.
+  Map<String, dynamic>? _streamResponseDetails;
   final ImagePicker _imagePicker = ImagePicker();
 
   List<String> savedMemories = [];

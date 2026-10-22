@@ -350,6 +350,7 @@ extension _CheHomeStreaming on _CHEHomeState {
     _streamMediaUrl = null;
     _streamMediaType = null;
     _streamUnderstoodAs = null;
+    _streamResponseDetails = null;
 
     await for (final line in response.stream
         .transform(utf8.decoder)
@@ -434,6 +435,7 @@ extension _CheHomeStreaming on _CHEHomeState {
 
       if (type == 'done') {
         _streamUnderstoodAs = cheUnderstoodAs(data);
+        _streamResponseDetails = cheResponseDetails(data);
         // Only the trusted deterministic trading handlers can request this room.
         if (data['open_screen'] == 'trading_room' &&
             const {'che_trading_live', 'che_trading_ledgers', 'che_trading_desk'}.contains(data['source']) &&
