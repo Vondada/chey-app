@@ -31,6 +31,7 @@ import 'che_ui/che_screen_awareness.dart';
 import 'che_ui/che_screen_capture.dart';
 import 'security/che_secret_scan.dart';
 import 'security/che_security_screen.dart';
+import 'brain/che_brain_ledger_screen.dart';
 import 'workflows/che_workflows_screen.dart';
 import 'world/che_meeting_room.dart';
 import 'world/che_meetings.dart';
@@ -621,6 +622,18 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
     await Navigator.of(context).push(MaterialPageRoute<void>(
       builder: (_) => CheSecurityScreen(
         client: CheSecurityClient(baseUrl: cheAgentBaseUrl, headers: () => _authHeaders),
+        onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
+        onListen: () => unawaited(toggleListening()),
+      ),
+    ));
+  }
+
+  /// More → Brain Ledger: what entered CHE's brain, when, by category (also asked in chat).
+  Future<void> _openBrainLedger() async {
+    HapticFeedback.selectionClick();
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => CheBrainLedgerScreen(
+        client: CheBrainLedgerClient(baseUrl: cheAgentBaseUrl, headers: () => _authHeaders),
         onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
         onListen: () => unawaited(toggleListening()),
       ),
@@ -2226,6 +2239,13 @@ OWNER AGENCY
           title: 'Security',
           subtitle: 'Security check · lockdown · sessions · internal-only mode',
           onTap: () => unawaited(_openSecurity()),
+          hue: kit.CheColors.accent,
+        ),
+        CheMoreItem(
+          icon: Icons.psychology_rounded,
+          title: 'Brain Ledger',
+          subtitle: 'What entered CHE\'s brain, when, and whether it is usable yet',
+          onTap: () => unawaited(_openBrainLedger()),
           hue: kit.CheColors.accent,
         ),
         CheMoreItem(

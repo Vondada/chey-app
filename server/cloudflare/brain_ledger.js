@@ -266,7 +266,7 @@ export class BrainLedger {
 
   /** All events (key-value fallback only reads what it keeps). */
   async all() {
-    if (this.sql) { this.init(); return this.rows('SELECT * FROM brain_ledger ORDER BY ms DESC'); }
+    if (this.sql) { this.init(); return this.rows('SELECT * FROM brain_ledger ORDER BY ms DESC, rowid DESC'); }
     const out = [];
     for (const c of CATEGORY_NAMES) out.push(...((await this.storage?.get?.(`${KV_PREFIX}${c}`)) || []));
     return out.sort((a, b) => b.ms - a.ms);
@@ -285,7 +285,7 @@ export class BrainLedger {
       if (batch_id) { where.push('batch_id = ?'); params.push(batch_id); }
       if (types?.length) { where.push(`event_type IN (${types.map(() => '?').join(',')})`); params.push(...types); }
       if (text) { where.push('(title LIKE ? OR summary LIKE ? OR subcategory LIKE ? OR category LIKE ? OR source_reference LIKE ?)'); const t = `%${text}%`; params.push(t, t, t, t, t); }
-      list = this.rows(`SELECT * FROM brain_ledger WHERE ${where.join(' AND ')} ORDER BY ms DESC LIMIT ?`, ...params, Math.max(1, Math.min(Number(limit) || 100, 2000)));
+      list = this.rows(`SELECT * FROM brain_ledger WHERE ${where.join(' AND ')} ORDER BY ms DESC, rowid DESC LIMIT ?`, ...params, Math.max(1, Math.min(Number(limit) || 100, 2000)));
     } else {
       list = (await this.all()).filter((e) => (!category || e.category === category) && (!subcategory || e.subcategory === subcategory) && (!since || e.ms >= since)
         && (!record_id || e.record_id === record_id) && (!batch_id || e.batch_id === batch_id) && (!types?.length || types.includes(e.event_type))
@@ -528,7 +528,8 @@ export async function answerLedger(storage, ask, { zone = DEFAULT_ZONE, now = Da
     for (const e of all) { const k = e.record_id || e.brain_event_id; if (!latest.has(k)) latest.set(k, e); }
     const want = [...latest.values()].filter((e) => (ask.kind === 'pending' ? e.new_state === 'PENDING' || e.event_type === 'PENDING' : e.new_state === 'FAILED' || e.event_type === 'SOURCE_FAILED'));
     if (!want.length) return { text: ask.kind === 'pending' ? 'Nothing is pending, sir: everything selected has been committed or set aside.' : 'Nothing has failed to index, sir.', events: [], cards };
-    return { text: `${plural(want.length, ask.kind === 'pending' ? 'item is' : 'item')} ${ask.kind === 'pending' ? 'still pending, not yet learned' : 'failed to index'}: ${want.slice(0, 6).map(line).join('; ')}.`.replace('items is', 'items are'), events: want.slice(0, 6) };
+    const verb = ask.kind === 'pending' ? `${want.length === 1 ? 'is' : 'are'} still pending, not yet learned` : 'failed to index';
+    return { text: `${plural(want.length, 'item')} ${verb}: ${want.slice(0, 6).map(line).join('; ')}.`, events: want.slice(0, 6) };
   }
   if (ask.kind === 'when' || ask.kind === 'where') {
     let e = null;
@@ -799,6 +800,25 @@ async function tradesBatch(storage, trades) {
     await ledger.record({ event_type: 'EVIDENCE_UPDATED', knowledge_type: 'evidence', title: `${name}${t.timeframe ? ` · ${t.timeframe}` : ''} trade closed`, summary: `${t.environment || 'paper'} · ${t.exit?.reason || 'closed'}${t.r_multiple != null ? ` · ${t.r_multiple}R` : ''}`, category, subcategory, record_id: `evr:${t.environment}:${t.portfolio}:${t.entry?.time}`, source_type: t.environment === 'backtest' ? 'BACKTEST' : 'PAPER TRADE', source_reference: 'CHE Paper Journal', batch_id: batch, new_state: 'VERIFIED', reason_saved: '+1 verified trade' });
   }
   await ledger.record({ event_type: 'BATCH_RECEIPT', knowledge_type: 'evidence', title: trades.length === 1 ? 'Trade evidence recorded' : 'Trading evidence batch', summary: Object.entries(groups).map(([n, c]) => `${n}: ${c}`).join(', '), category: 'Trading', subcategory: 'Paper Learning', source_type: 'PAPER TRADE', batch_id: batch, reason_saved: `${trades.length} closed trade records` });
+}
+
+/**
+ * The owner's decision on a pending item: commit makes it knowledge (UNDERSTOOD), reject keeps metadata only
+ * ("Not retained") and scrubs its earlier text. Only an item whose latest state is PENDING can be decided.
+ */
+export async function decidePending(storage, recordId, decision, { now = new Date() } = {}) {
+  const ledger = new BrainLedger(storage);
+  const latest = (await ledger.query({ record_id: String(recordId || ''), limit: 1 }))[0];
+  if (!latest) return { ok: false, said: 'There is no ledger record with that id.' };
+  if (latest.new_state !== 'PENDING' && latest.event_type !== 'PENDING') return { ok: false, said: `${latest.title} is not pending; it is ${statusWord(latest).toLowerCase()}.` };
+  const base = { category: latest.category, subcategory: latest.subcategory, record_id: latest.record_id, knowledge_type: latest.knowledge_type, source_type: 'OWNER', previous_state: 'PENDING', project_id: latest.project_id, workflow_id: latest.workflow_id, capability_id: latest.capability_id, knowledge_scope: latest.knowledge_scope };
+  if (decision === 'reject') {
+    await ledger.scrub(latest.record_id, now);
+    const e = await ledger.record({ ...base, event_type: 'REJECTED', title: 'Not retained', new_state: 'REJECTED', reason_saved: 'You chose not to keep it' }, now);
+    return { ok: true, event: e, said: 'Not retained, sir. Only the fact that it was set aside stays in the ledger.' };
+  }
+  const e = await ledger.record({ ...base, event_type: 'KNOWLEDGE_SAVED', title: latest.title, summary: latest.summary, new_state: 'UNDERSTOOD', reason_saved: 'You committed it' }, now);
+  return { ok: true, event: e, said: `Committed, sir: ${latest.title} is now in my ${latest.category} brain as knowledge, not yet a capability.` };
 }
 
 /** All write paths the ledger covers; the coverage test walks this list. */

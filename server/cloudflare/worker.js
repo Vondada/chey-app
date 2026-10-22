@@ -228,7 +228,7 @@ import { APP_BUILD_KEY, appBuildIntent, appBuildRun, dispatchAppBuild, speakAppB
 import { advanceObjectives, applyMissionEvent, approvalReached, approveNode, awaitingApproval, cancelObjective, createObjective, mutateObjective, replanNode, resolveKnownNodes, retryNode, setObjectivePaused, speakObjective } from './objective_graph.js';
 import { acquire as acquireCapability, applyPolicy as applyCapabilityPolicy, capabilityIntent, engineSummary as capabilityEngineSummary, learnFromOutcome, loadPolicy as loadCapabilityPolicy, populate as populateKnowledge, retrieve as retrieveKnowledge, rollbackTool, savePolicy as saveCapabilityPolicy, installEgressGuard, egressGuard, projectBlocked, speakCapabilities, speakLearned as speakLearnedKnowledge, useTool, LAST_USED_KEY as KNOWLEDGE_USED_KEY } from './capability_engine.js';
 import { loadRegistry as loadCapabilityRegistry } from './capability_registry.js';
-import { BrainLedger, answerLedger, installBrainLedger, ledgerApi, ledgerIntent as brainLedgerIntent, DEFAULT_ZONE as LEDGER_DEFAULT_ZONE } from './brain_ledger.js';
+import { BrainLedger, answerLedger, decidePending as decideBrainPending, installBrainLedger, ledgerApi, ledgerIntent as brainLedgerIntent, DEFAULT_ZONE as LEDGER_DEFAULT_ZONE } from './brain_ledger.js';
 import { EGRESS_KEY, egressRefusal as securityEgressRefusal, setEgressPolicy, storeEgressPolicy, SESSION_SCOPES, bump as securityBump, checkSession, createSession, dependencyAdvisories, detectThreats, issueNonce, loadSecurity, recordFindings, redact as redactSecretText, redactDeep, respondToIncident, restoreTrustedState, revokeSessions, saveSecurity, securityIntent, snapshotTrustedState, speakStatus as speakSecurityStatus } from './security_intelligence.js';
 import { engineView, exportWorkflows, feedbackOnLast, importWorkflows, library as workflowLibrary, loadEngine, matchLearned, noteVersion, promoteCandidate, dismissCandidate, rankWorkflows, recordRun as recordWorkflowRun, isDisabled as workflowDisabled, restoreVersion, saveEngine, setDisabled as setWorkflowDisabled, setPreferred as setWorkflowPreferred, speakEfficiency, speakLibrary, testCandidate, workflowForRun, workflowIntent } from './workflow_engine.js';
 import { CATEGORIES, COMMANDS, catalogView, commandById, commandStatus, connectorStatus, describeWorkflow, dispatchPrompt, findSavedWorkflow, normalizeSavedWorkflow, parseSlashCommand, readCommandSpeech, searchCommands, speakCommandList, speakUnavailable, suggestCommands, workflowNodes, workflowFromWords } from './command_catalog.js';
@@ -3692,7 +3692,7 @@ export class CheState extends DurableObject {
     // installed before the router captures fetch, so model providers are covered too.
     // Brain Population Ledger: every write to a watched key (owner memories, capability registry, learned workflows,
     // trading evidence) leaves a category-first, timestamped record. Brain/library/knowledge writes log themselves.
-    installBrainLedger(state.storage);
+    try { installBrainLedger(state.storage); } catch (error) { console.error('Brain ledger hook not installed:', error?.message || error); }
     this.egress = { policy: null, projectHolds: 0, env };
     installEgressGuard(egressGuard(this.egress));
     // Every text model call goes through CHE's free-engine router. Persist
@@ -7178,6 +7178,12 @@ export class CheState extends DurableObject {
         if (!ownerDevice) return json({ detail: 'Only the CHE owner can read his brain.' }, 403);
         const ledgerZone = new BrainLedger(this.ctx.storage).meta('owner_zone', LEDGER_DEFAULT_ZONE) || LEDGER_DEFAULT_ZONE;
         return json(await ledgerApi(this.ctx.storage, new URL(request.url).searchParams, { zone: ledgerZone, registry: await loadCapabilityRegistry(this.ctx.storage) }));
+      }
+      if (path === '/api/brain/ledger/decide' && request.method === 'POST') {
+        if (!ownerDevice) return json({ detail: 'Only the CHE owner can change his brain.' }, 403);
+        if (!['commit', 'reject'].includes(body.decision)) return json({ detail: 'decision must be commit or reject.' }, 400);
+        const out = await decideBrainPending(this.ctx.storage, body.record_id, body.decision);
+        return json(out, out.ok ? 200 : 409);
       }
       if (path.startsWith('/api/brain/') && ['/api/brain/status', '/api/brain/changes', '/api/brain/push', '/api/brain/search', '/api/brain/folders', '/api/brain/record', '/api/brain/conflicts', '/api/brain/conflicts/resolve', '/api/brain/review', '/api/brain/score', '/api/brain/workers', '/api/brain/recovery'].includes(path)) {
         if (!ownerDevice) return json({ detail: 'Only the CHE owner can read his brain.' }, 403);
