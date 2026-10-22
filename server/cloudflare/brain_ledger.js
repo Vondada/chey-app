@@ -466,7 +466,8 @@ export function ledgerIntent(message = '') {
   if (/^(?:show me )?what (?:entered|populated|went into) your brain(?: today)?$|^what populated your brain today$|^what did you learn today$|^show me what entered your brain$/.test(t)) return { kind: 'today' };
   if ((m = /^what (?:entered|populated) your ([a-z ]+?) brain$/.exec(t)) && CAT_WORD.has(m[1].trim())) return { kind: 'category', category: CAT_WORD.get(m[1].trim()) };
   if ((m = /^what did you learn (?:about|in) ([a-z ]+?)$/.exec(t)) && CAT_WORD.has(m[1].trim())) return { kind: 'category', category: CAT_WORD.get(m[1].trim()) };
-  if ((m = /^what did you learn (?:about|in) (.{2,80})$/.exec(t))) return { kind: 'search', text: m[1] };
+  // "What did you learn about <topic>" for anything but a category stays with the Capability Engine (layer-aware).
+  if ((m = /^what (?:entered|went into) your brain about (.{2,80})$/.exec(t))) return { kind: 'search', text: m[1] };
   if ((m = /^what did you learn from (?:that|the|my) (book|article|video|document|source|file)(?: (.{2,80}))?$/.exec(t))) return { kind: 'from_source', source: m[1], title: m[2] || '' };
   if (/^(?:show me )?(?:everything )?what did you learn from (?:my|this|the) (?:last )?project$|^show me everything you learned from (?:this|my last) project$/.test(t)) return { kind: 'project' };
   if (/^what knowledge is (?:still )?pending$|^what is still pending in your brain$/.test(t)) return { kind: 'pending' };
