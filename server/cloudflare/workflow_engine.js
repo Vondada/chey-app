@@ -9,6 +9,7 @@
 //
 // Privacy: a run keeps the route, outcome, counts and up to six content words of the request with numbers,
 // addresses and key-like strings removed. Never the message, reply, passwords or keys.
+import { BROAD_SECRET_RE } from './security_intelligence.js';
 import { COMMANDS, commandById, describeWorkflow, normalizeSavedWorkflow, searchCommands } from './command_catalog.js';
 
 export const ENGINE_VERSION = 1;
@@ -122,7 +123,8 @@ function jaccard(a, b) {
 }
 
 // Key-, token- and password-shaped text. Workflows never carry these; an import that does is refused.
-export const SECRET_RE = /\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,}|PK[A-Z0-9]{16,}|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,})|\b(?=[A-Za-z0-9+/_-]{32,}\b)(?=[^\s]*\d)(?=[^\s]*[A-Za-z])[A-Za-z0-9+/_-]{32,}\b|\b(?:password|passcode|passphrase|api[ _-]?key|secret[ _-]?key|access[ _-]?token|auth[ _-]?token|token|pin)\s*(?:is\s+|=\s*|:\s*|\s)\s*(?!is\b|for\b|the\b|a\b|to\b|and\b|of\b)\S{4,}/i;
+// One pattern set for CHE: Security Intelligence owns it (security_intelligence.js BROAD_SECRET_RE).
+export const SECRET_RE = BROAD_SECRET_RE;
 
 export function emptyState() {
   return { v: ENGINE_VERSION, stats: {}, runs: [], misses: {}, candidates: [], learned: [], prefs: { disabled: [], preferred: {} }, feedback: {}, versions: {}, audit: [] };
@@ -429,8 +431,11 @@ export function setPreferred(state, lib, words, forWhat, now = new Date().toISOS
 /** Is this workflow turned off by the owner? Checked by the executors (commands, saved and learned workflows). */
 export function isDisabled(state, id) { return (state?.prefs?.disabled || []).includes(id); }
 
+const CONTROL_SOURCES = new Set(['che_workflow_engine', 'che_security']);
+
 export function feedbackOnLast(state, good, now = new Date().toISOString()) {
-  const last = (state.runs || []).find((r) => !r.feedback_for);
+  // The owner's own control turns ("that workflow was wrong", security commands) are never what is being rated.
+  const last = (state.runs || []).find((r) => !CONTROL_SOURCES.has(r.source));
   if (!last) return { ok: false, reason: 'no_run' };
   const f = (state.feedback[last.wf] ||= { up: 0, down: 0 });
   if (good) f.up++; else f.down++;

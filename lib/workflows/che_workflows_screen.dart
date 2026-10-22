@@ -9,6 +9,10 @@ import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
+import '../security/che_secret_scan.dart';
+
+export '../security/che_secret_scan.dart' show cheLooksSecret;
+
 class CheWorkflowsClient {
   CheWorkflowsClient({required this.baseUrl, required this.headers, http.Client? client}) : _client = client ?? http.Client();
   final String baseUrl;
@@ -43,13 +47,6 @@ class CheWorkflowsClient {
       ));
 }
 
-/// Password-, key- and token-shaped text (mirrors the Worker's SECRET_RE, plus the plain "password hunter2" form).
-final _secretPattern = RegExp(
-  r'\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,}|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,})'
-  r'|\b(?:password|passcode|passphrase|api[ _-]?key|secret[ _-]?key|access[ _-]?token|auth[ _-]?token|token|pin)\s*(?:is\s+|=\s*|:\s*|\s)\s*(?!is\b|for\b|the\b|a\b|to\b|and\b|of\b)\S{4,}',
-  caseSensitive: false,
-);
-bool cheLooksSecret(String text) => _secretPattern.hasMatch(text);
 
 /// The spoken summary of the measurements, the same words CHE says for "workflow stats".
 String cheWorkflowSummary(Map<String, dynamic> e) {

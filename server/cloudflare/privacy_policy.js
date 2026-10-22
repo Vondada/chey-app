@@ -7,6 +7,7 @@
 // authorized to receive, and records an audit entry (provider, model, task,
 // memory IDs/categories, initiating agent) without logging secret values.
 
+import { redact } from './security_intelligence.js';
 import { ensureAiState, manifestById } from './provider_registry.js';
 
 export const DATA_CLASSES = [
@@ -170,7 +171,8 @@ export function bundleText(bundle) {
 const SECRETISH = /\b(?:sk-[A-Za-z0-9_-]{8,}|xai-[A-Za-z0-9_-]{8,}|hf_[A-Za-z0-9]{8,}|AIza[0-9A-Za-z_-]{10,}|Bearer\s+\S+|eyJ[A-Za-z0-9_-]{8,}(?:(?:\.|[ \t]*\n\s*\.|\.[ \t]*\n\s*)[A-Za-z0-9_-]{8,}){0,2})|-----BEGIN [A-Z0-9 ]{3,40}-----[\s\S]*?(?:-----END [A-Z0-9 ]{3,40}-----|$)/g;
 
 export function redactSecrets(value) {
-  return String(value ?? '').replace(SECRETISH, '[redacted]');
+  // The original patterns, then Security Intelligence's scanner (more key formats, assignments, high-entropy tokens).
+  return redact(String(value ?? '').replace(SECRETISH, '[redacted]')).text;
 }
 
 export function auditEntry({ provider, model, task, agent = 'CHE', memory = [], withheld = [], ok = true, route = '', latency_ms = null, agent_id = '', thread_id = '' }) {

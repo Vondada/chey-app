@@ -16,6 +16,7 @@ const SPECIALTIES = {
   coding: { title: 'Coding Specialist', capability: 'coding', specialty: 'implementation, debugging and code review' },
   creative: { title: 'Creative Specialist', capability: 'text', specialty: 'ideas, writing, concepts and creative direction' },
   analysis: { title: 'Analyst', capability: 'deep_reasoning', specialty: 'comparing results, data and evidence' },
+  security: { title: 'Security Intelligence', capability: 'deep_reasoning', specialty: 'application, infrastructure, repository and dependency security, secrets protection, malware triage, threat detection and incident response for CHE\'s own authorized systems: defensive only, never attacks or probes other systems' },
   review: { title: 'QA/Security Reviewer', capability: 'deep_reasoning', specialty: 'quality, security and correctness review' },
   // Music Studio roles (owner, 2026-10-22). The owner talks to CHE; CHE delegates to these and answers once.
   legal: { title: 'Legal Intelligence', capability: 'deep_reasoning', specialty: 'legal research, compliance, contracts, rights, lawful alternatives, jurisdiction differences and evidence organisation, from cited official sources: not a licensed attorney' },
@@ -36,6 +37,7 @@ export function specialtyFrom(text) {
   if (/cod|program|engineer|develop|implement/.test(lower)) return 'coding';
   if (/creativ|writ|design|story|idea|\bad(?:s|vertis)?\b|flyer|banner|caption/.test(lower)) return 'creative';
   if (/reason|think|logic|plan|strateg/.test(lower)) return 'reasoning';
+  if (/\b(?:malware|threat|incident|vulnerabilit\w*|secrets? scan\w*|cyber\s?security|security intelligence)\b/.test(lower)) return 'security';
   if (/review|qa|security|audit/.test(lower)) return 'review';
   if (/analy|compar/.test(lower)) return 'analysis';
   return 'research';
