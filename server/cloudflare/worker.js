@@ -129,6 +129,7 @@ import { lastSite, publishSite, saveSite, serveSite, siteBuildIntent, siteEditIn
 import { noteJobActivity } from './job_activity.js';
 import { CODING_CANCEL_SOURCE, cancelQueuedJob, codingCancelIntent, resolveCodingCancel, speakCancelResult, speakUnresolved } from './coding_cancel.js';
 import { PENDING_OWNER_ACTION_KEY, deskOwnedMoney, forbiddenAction, prohibitionSpans, withoutProhibitions, PENDING_OWNER_ACTION_MS, gateOwnerAction, grantForKinds, isOwnerYes, peerActionReply, APPS_GRANTED_KEY, PENDING_APP_ACTION_KEY, PENDING_APP_ACTION_MS, gateAppAccess, classifyAppNeed, classifyExplicitAppOpen, classifyAppAccesses } from './owner_action_gate.js';
+import { KNOWN_GRANTABLE_APPS, changeAppGrant, keepUnrevokedGrants, listGrants } from './app_grants.js';
 import { asksForCurrentOwnerLocation, executeWithReceipt, guardExecutionClaims, guardRetrievalClaims, changeHistoryIntent, guardClaimedOwnerActions, guardClaimedResearchActions, guardGroundedFacts, guardLocationWeatherReply, guardOwnerReply, loadChangeHistory, loadReceipts, OWNER_LOCATION_NOT_VERIFIED, recordReceipt, requestedCodeNames, speakChangeHistory, vagueResearchRequest, verifiedState, verifiedStatusText } from './truth_layer.js';
 import { ENGINEERING_PLAYBOOK_SPOKEN, playbookIntent } from './engineering_playbook.js';
 import { describeSkillsReport, reusableLicense, selectFilesForAgent, skillFromMarkdown, skillImportIntent, skillsReportIntent } from './skill_import.js';
@@ -7258,6 +7259,16 @@ export class CheState extends DurableObject {
       }
 
       // ─── Resilience: keys, AI Mailbox letters, tech folders ───────────
+      // Standing app grants from Connections: owner device only. Lockdown freezes grants; revoke always works.
+      if (path === '/api/app-grants' && request.method === 'GET') {
+        if (!ownerDevice) return json({ detail: 'Only the CHE owner can see app grants.' }, 403);
+        return json({ apps: await listGrants(this.ctx.storage), known: KNOWN_GRANTABLE_APPS });
+      }
+      if (path === '/api/app-grants' && request.method === 'POST') {
+        if (!ownerDevice) return json({ detail: 'Only the CHE owner can grant or revoke app access.' }, 403);
+        const out = await changeAppGrant(this.ctx.storage, body, { locked: await isLockedDown(this.ctx.storage) });
+        return json(out.body, out.status);
+      }
       if (path === '/api/keys' && request.method === 'GET') {
         // Status only; keys themselves never leave the server.
         const health = (await this.ctx.storage.get('key_health')) || {};
@@ -9547,8 +9558,8 @@ export class CheState extends DurableObject {
               message = String(heldApp.text || message);
             }
           }
-          const sentGrants = (Array.isArray(body.app_grants) ? body.app_grants : [])
-            .map((v) => String(v || '').toLowerCase().trim()).filter(Boolean);
+          // A name the owner revoked is dropped here, so a phone's stale local list cannot re-grant it.
+          const sentGrants = await keepUnrevokedGrants(this.ctx.storage, Array.isArray(body.app_grants) ? body.app_grants : []);
           if (sentGrants.length) {
             const stored = await this.ctx.storage.get(APPS_GRANTED_KEY) || [];
             const merged = [...new Set([...stored, ...sentGrants])];
@@ -14470,7 +14481,7 @@ async function routeRequest(request, env, ctx) {
   if (['/api/voice/edge', '/api/voice/synthesize', '/api/voice/report',
     '/api/voice/choices', '/api/voice/choice', '/api/voice/preview', '/api/voice/library',
     '/api/voice/library/preview', '/api/voice/favorite', '/api/voice/ids', '/api/voice/ids/save',
-    '/api/voice/ids/use', '/api/voice/ids/remove', '/api/keys'].includes(path)) {
+    '/api/voice/ids/use', '/api/voice/ids/remove', '/api/keys', '/api/app-grants'].includes(path)) {
     const owner = env.CHE_STATE.getByName('owner');
     await owner.setVoiceSecrets(voiceSecretsFrom(env));
     return owner.fetch(request);

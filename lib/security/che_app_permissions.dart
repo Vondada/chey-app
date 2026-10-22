@@ -33,4 +33,16 @@ class CheAppPermissions {
     await prefs.setStringList(_key, sorted);
     return apps;
   }
+
+  /// Forgets the grant for [app] on this phone; returns the new set. Pairs with
+  /// the Worker's revoke so a revoked app is not sent with the next chat turn.
+  static Future<Set<String>> revoke(String app) async {
+    final prefs = await SharedPreferences.getInstance();
+    final name = app.toLowerCase().trim();
+    final apps = (prefs.getStringList(_key) ?? const <String>[]).toSet();
+    if (name.isEmpty || !apps.remove(name)) return apps;
+    final sorted = apps.toList()..sort();
+    await prefs.setStringList(_key, sorted);
+    return apps;
+  }
 }

@@ -56,7 +56,7 @@ void main() {
       home: CheConnectionsScreen(baseUrl: 'https://che.test', headers: () => {'Authorization': 'Bearer x'},
         client: client, onVoiceSettings: () {}, onKeys: () {})));
     await tester.pumpAndSettle();
-    expect(paths, ['/api/commands']);
+    expect(paths, containsAll(['/api/commands', '/api/app-grants']));
     expect(find.text('YouTube channel'), findsOneWidget);
     expect(find.text('Existing YouTube channel'), findsOneWidget);
     expect(find.text('NinjaTrader / Tradovate'), findsOneWidget);

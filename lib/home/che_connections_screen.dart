@@ -11,6 +11,16 @@ import 'package:url_launcher/url_launcher.dart';
 import '../che_ui/che_hud.dart';
 import '../che_ui/che_screen_awareness.dart';
 import '../che_ui/che_theme.dart';
+import '../security/che_app_permissions.dart';
+
+// Display names where the lowercase CHE app name would read wrong.
+const _appLabels = {
+  'youtube': 'YouTube', 'linkedin': 'LinkedIn', 'chatgpt': 'ChatGPT', 'whatsapp': 'WhatsApp',
+  'paypal': 'PayPal', 'tradingview': 'TradingView', 'ninjatrader': 'NinjaTrader', 'github': 'GitHub',
+};
+
+String _appLabel(String app) => _appLabels[app] ?? app.split(' ')
+    .map((w) => w.isEmpty ? w : w[0].toUpperCase() + w.substring(1)).join(' ');
 
 /// Spoken control for the Connections page while it is the open route.
 class CheConnectionsVoice {
@@ -78,6 +88,11 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
   String? _pendingDisconnect;
   String _error = '';
   String _message = '';
+  // Standing app grants (CHE may act in these apps without asking each time).
+  List<String> _knownApps = [];
+  Set<String> _grantedApps = {};
+  String _grantError = '';
+  String _grantBusyApp = '';
 
   @override
   void initState() {
@@ -96,6 +111,7 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
           controls: const ['Back', 'Refresh verified connections', 'Connect with Google', 'Connect Gmail', 'Connect Drive', 'Connect Calendar', 'Connect NinjaTrader', 'Connect Google Ads', 'Change CHE’s voice'],
         ));
     unawaited(_refresh());
+    unawaited(_loadGrants());
     if (widget.autoConnect == 'youtube') {
       WidgetsBinding.instance.addPostFrameCallback((_) => unawaited(_connectYoutube()));
     } else if (widget.autoConnect == 'broker') {
@@ -231,6 +247,110 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
       return '';
     }
     return null;
+  }
+
+  String _plainError(Object e) => e is StateError ? e.message.toString() : 'check the connection and try again';
+
+  Future<void> _loadGrants() async {
+    try {
+      final r = await _client.get(
+        Uri.parse('${widget.baseUrl}/api/app-grants'),
+        headers: widget.headers(),
+      ).timeout(const Duration(seconds: 18));
+      final raw = jsonDecode(utf8.decode(r.bodyBytes));
+      if (r.statusCode != 200 || raw is! Map || raw['known'] is! List) {
+        throw StateError(r.statusCode == 401 ? 'Pair this iPhone to CHE first.' : 'CHE returned HTTP ${r.statusCode}');
+      }
+      final granted = [for (final g in (raw['apps'] as List? ?? const [])) if (g is Map) g['app'].toString()];
+      if (!mounted) return;
+      setState(() {
+        _knownApps = [for (final a in raw['known'] as List) a.toString()];
+        _grantedApps = granted.toSet();
+        _grantError = '';
+      });
+    } on Object catch (e) {
+      if (!mounted) return;
+      setState(() => _grantError = 'App permissions could not load: ${_plainError(e)}');
+    }
+  }
+
+  // Grant or revoke one app. The phone's own copy changes only after CHE confirms
+  // the server changed the grant, so the two never disagree on a failed request.
+  Future<void> _changeGrant(String app, bool grant) async {
+    if (_grantBusyApp.isNotEmpty) return;
+    final name = _appLabel(app);
+    setState(() => _grantBusyApp = app);
+    try {
+      final r = await _client.post(
+        Uri.parse('${widget.baseUrl}/api/app-grants'),
+        headers: {...widget.headers(), 'content-type': 'application/json'},
+        body: jsonEncode({'app': app, 'action': grant ? 'grant' : 'revoke'}),
+      ).timeout(const Duration(seconds: 18));
+      final raw = jsonDecode(utf8.decode(r.bodyBytes));
+      final data = raw is Map ? raw : <String, dynamic>{};
+      if (r.statusCode != 200 || data['ok'] != true) {
+        throw StateError((data['detail'] ?? 'CHE returned HTTP ${r.statusCode}').toString());
+      }
+      if (grant) {
+        await CheAppPermissions.grant(app);
+      } else {
+        await CheAppPermissions.revoke(app);
+      }
+      if (!mounted) return;
+      setState(() {
+        _grantBusyApp = '';
+        if (grant) {
+          _grantedApps = {..._grantedApps, app};
+        } else {
+          _grantedApps = {..._grantedApps}..remove(app);
+        }
+      });
+      _say(grant ? 'CHE can now use $name without asking each time. Permission saved.'
+          : 'CHE can no longer use $name. Permission removed.');
+    } on Object catch (e) {
+      if (!mounted) return;
+      setState(() => _grantBusyApp = '');
+      _say('Could not ${grant ? 'grant' : 'revoke'} $name: ${_plainError(e)}.');
+    }
+  }
+
+  Widget _appGrantRow(String app) {
+    final granted = _grantedApps.contains(app);
+    final name = _appLabel(app);
+    final busy = _grantBusyApp.isNotEmpty;
+    final saving = _grantBusyApp == app;
+    final onPressed = busy ? null : () => unawaited(_changeGrant(app, !granted));
+    final button = granted
+        ? OutlinedButton(
+            style: OutlinedButton.styleFrom(minimumSize: const Size(48, 48)),
+            onPressed: onPressed,
+            child: const Text('Revoke'),
+          )
+        : FilledButton(
+            style: FilledButton.styleFrom(minimumSize: const Size(48, 48)),
+            onPressed: onPressed,
+            child: const Text('Grant'),
+          );
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(children: [
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(name, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+          Text(saving ? 'Saving' : granted ? 'CHE may use this app without asking' : 'CHE asks you first',
+            style: TextStyle(color: CheColors.textDim, fontSize: 12)),
+        ])),
+        const SizedBox(width: 8),
+        // The label is spoken; the visible button is hidden from the reader so it is not announced twice.
+        Semantics(
+          container: true,
+          button: true,
+          enabled: onPressed != null,
+          label: granted ? 'Revoke CHE access to $name' : 'Grant CHE access to $name',
+          onTap: onPressed,
+          child: ExcludeSemantics(child: button),
+        ),
+      ]),
+    );
   }
 
   // Every owner-triggered connect result is shown and spoken, never only shown.
@@ -456,7 +576,9 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
         ],
       ),
       body: SafeArea(child: RefreshIndicator(
-        onRefresh: () => _refresh(announce: true),
+        onRefresh: () async {
+          await Future.wait([_refresh(announce: true), _loadGrants()]);
+        },
         child: ListView(padding: const EdgeInsets.all(16), children: [
           if (cheHudActive)
             const CheChromeText('One app. Real connections.', style: TextStyle(fontSize: 23, fontWeight: FontWeight.w800))
@@ -515,6 +637,17 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
               'CHE can serve sites in her existing system; no external hosting account is implied.'),
           _card('Client scouting', Icons.groups_outlined, 'research',
               'Public research is available. CHE cannot access private customer accounts without authorization.'),
+          _heading('Apps CHE may use'),
+          Text('Grant an app once and CHE uses it without asking each time. A grant never covers money, deleting, or sending private data out.',
+            style: TextStyle(color: CheColors.textDim, fontSize: 13, height: 1.3)),
+          const SizedBox(height: 8),
+          if (_grantError.isNotEmpty) Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Text(_grantError, style: const TextStyle(color: CheColors.warning)),
+          ),
+          if (_knownApps.isEmpty && _grantError.isEmpty)
+            Text('Loading app permissions', style: TextStyle(color: CheColors.textDim)),
+          for (final app in _knownApps) _appGrantRow(app),
           _heading('Voice'),
           _card('CHE voice', Icons.record_voice_over_outlined, 'voice',
               'Natural voice keys may be configured. Change local voices, or select a supported cloud voice inside CHE.',
