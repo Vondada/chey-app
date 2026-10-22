@@ -373,9 +373,15 @@ class _TalkControl extends StatelessWidget {
               child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
                 Icon(listening ? Icons.stop_rounded : Icons.mic_rounded, color: const Color(0xFF041014), size: 24),
                 const SizedBox(width: 10),
-                Text(
-                  label,
-                  style: const TextStyle(color: Color(0xFF041014), fontSize: 18, fontWeight: FontWeight.w800),
+                // With very large text the label shrinks to fit the button instead of overflowing it.
+                Flexible(
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      label,
+                      style: const TextStyle(color: Color(0xFF041014), fontSize: 18, fontWeight: FontWeight.w800),
+                    ),
+                  ),
                 ),
               ]),
             ),
