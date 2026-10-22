@@ -7,6 +7,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import 'che_hud.dart';
 import 'che_theme.dart';
 
 /// CHE's energy and metal colours. The palette (che_palettes.dart) gives the surfaces; these give the light.
@@ -58,7 +59,7 @@ extension CheHomeModeLook on CheHomeMode {
       };
 
   Color get color => switch (this) {
-        CheHomeMode.idle => CheEnergy.teal,
+        CheHomeMode.idle => cheHudActive ? CheHud.ice : CheEnergy.teal,
         CheHomeMode.listening => CheEnergy.cyan,
         CheHomeMode.thinking => CheEnergy.violet,
         CheHomeMode.speaking => CheEnergy.electric,
@@ -109,6 +110,8 @@ class CheMetalPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // HUD glass: the same panel as thick glossy glass (che_hud.dart).
+    if (cheHudActive) return CheGlass(glow: glow, radius: radius, padding: padding, child: child);
     final edge = glow ?? CheEnergy.silver;
     return DecoratedBox(
       decoration: BoxDecoration(
@@ -205,7 +208,9 @@ class _CheEnergyRingState extends State<CheEnergyRing> with SingleTickerProvider
       child: AnimatedBuilder(
         animation: _pulse,
         builder: (context, child) => CustomPaint(
-          painter: _EnergyRingPainter(color: widget.mode.color, t: _pulse.value, active: widget.mode.active),
+          painter: cheHudActive
+              ? CheHudReactorPainter(color: widget.mode.color, t: _pulse.value, active: widget.mode.active)
+              : _EnergyRingPainter(color: widget.mode.color, t: _pulse.value, active: widget.mode.active),
           child: child,
         ),
         child: Center(child: widget.child),

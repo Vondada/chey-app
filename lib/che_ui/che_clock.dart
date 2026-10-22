@@ -6,6 +6,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import 'che_hud.dart';
 import 'che_theme.dart';
 
 /// The US daylight-saving rule (since 2007): DST starts the second Sunday of March at 2 AM local and ends the first
@@ -158,14 +159,17 @@ class _CheClockStripState extends State<CheClockStrip> {
       child: Container(
         width: double.infinity,
         padding: const EdgeInsets.symmetric(horizontal: CheSpace.md, vertical: 4),
-        color: const Color(0xE6081012),
+        // HUD: quiet mono text straight on the backdrop.
+        color: cheHudActive ? Colors.transparent : const Color(0xE6081012),
         child: FittedBox(
           fit: BoxFit.scaleDown,
           alignment: Alignment.centerLeft,
           child: Text(
             line,
             maxLines: 1,
-            style: CheType.caption.copyWith(fontSize: 11, color: CheColors.textDim, fontFeatures: const [FontFeature.tabularFigures()]),
+            style: cheHudActive
+                ? CheHud.label.copyWith(fontSize: 10.5, letterSpacing: 1.0, color: CheColors.textDim)
+                : CheType.caption.copyWith(fontSize: 11, color: CheColors.textDim, fontFeatures: const [FontFeature.tabularFigures()]),
           ),
         ),
       ),
