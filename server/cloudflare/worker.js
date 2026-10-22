@@ -41,6 +41,7 @@ import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, saveOwn
 import { guardEngineClaims, guardSoulClaims, lastReplyRecord, loadSoul, replyProvenanceAnswer, replyProvenanceQuestion, restoreSoul, saveSoul, soulPromptBlock, soulProvenance, soulView, stripPhoneSoul } from './soul.js';
 import { mediaHoldAnswer, mediaHoldIntent, mediaKeepFor, mediaLatestReply, mediaLibraryIntent, mediaLibraryReply, mediaLibraryReport, mediaLatestOpenRow, mediaOpenIntent, mediaOpenMissingReply, mediaOpenReply, mediaOpenRow, mediaRows, mediaSaveIntent, mediaSaveReply, mediaShowLatestIntent, mediaShowReply, verifyMediaRows, wantsLatestVideo } from './media_library.js';
 import { capabilityGap, capabilityReply } from './capability_gap.js';
+import { INTERNAL_SOURCE, LAST_RENDER_KEY, internalSceneIntent, internalSceneTurn } from './internal_studio.js';
 import { CHAT_IMAGE_SOURCE, chatImageInline, chatImageMedia, chatImageReply, makeChatImages, pretendToolCall, requestedImageCount } from './chat_images.js';
 import { memorySearchIntent, memorySearchReply, memorySearchTerms } from './memory_search.js';
 import { probeVideoEngine, videoEngineStatus, videoStatusSpeech } from './video_engine.js';
@@ -10142,6 +10143,17 @@ export class CheState extends DurableObject {
           const lesson = await answerAtlas(atlas, { storage: this.ctx.storage });
           return ndjsonReply(lesson.text, { source: ATLAS_SOURCE, ok: lesson.ok, atlas_kind: lesson.kind, atlas_card: lesson.card_id || null, model_calls: 0 });
         }
+        // CHE's own renderer first (owner, 2026-10-22: "internal capability first"): a scene her renderer can make is made,
+        // verified and saved here with no external app, API or key. Other subjects keep the media engine below.
+        const internalScene = ownerDevice && !body.attachment
+          ? internalSceneIntent(message, { hasLast: await Promise.resolve().then(() => this.ctx.storage.get(LAST_RENDER_KEY)).then(Boolean, () => false) })
+          : null;
+        // Read before the interpreter (no model needed); a sentence that also asks to pay, buy or delete is left to the gate.
+        if (internalScene && gateOwnerAction(message, {}).allowed) {
+          const made = await internalSceneTurn({ storage: this.ctx.storage, env: this.keyEnv || this.env }, internalScene);
+          const inline = made.media ? { media_type: 'image', media_url: `${new URL(request.url).origin}/api/media/${made.media.id}/image`, media_id: made.media.id, media: [{ media_id: made.media.id, mime_type: 'image/png', title: made.media.title, url: `/api/media/${made.media.id}/image` }] } : {};
+          return ndjsonReply(made.text, { source: INTERNAL_SOURCE, ok: made.ok, model_calls: 0, execution: 'internal', provenance: made.media?.provenance || null, ...inline });
+        }
         // Gmail, Drive, Calendar and YouTube requests are read as written. A model
         // read here would be slow, and it could invent a meaning the owner did not mean.
         const googleTurn = ownerDevice && !body.attachment
@@ -12620,6 +12632,10 @@ export class CheState extends DurableObject {
         const learnedSkillList = await loadLearnedSkills(this.ctx.storage);
         const learnedSkills = learnedSkillsContext(learnedSkillList, message);
 
+        // Internal-only mode (owner policy): a picture the internal renderer cannot make is not sent to an external engine.
+        if (requestedCapabilities.includes('image_generation') && ownerDevice && !body.attachment && data.capability_policy?.internal_only === true) {
+          return ndjsonReply('Internal-only mode is on, sir, so I did not send this to an image engine. My own renderer can make beach scenes (day, sunset, night or stormy) right now; it cannot make this subject yet. Nothing was made.', { source: INTERNAL_SOURCE, ok: false, model_calls: 0, execution: 'internal', blocked_external: true });
+        }
         // Pictures asked for (Test 5, 2026-10-21): the real pictures are made by the media engine, each one saved, and the
         // reply is built from those results. The model is not asked here, so it cannot describe a picture that was not made.
         if (requestedCapabilities.includes('image_generation') && !requestedCapabilities.includes('video_generation') && !body.attachment) {

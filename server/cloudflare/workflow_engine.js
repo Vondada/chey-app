@@ -71,7 +71,7 @@ export const SYSTEM_WORKFLOWS = Object.freeze([
   S('rea_investigation', 'Reverse-engineering analysis (REA)', 'build', ['che_rea'],
     { summary: 'Studies an app, site or repository and maps its features against CHE.', blocks: ['understand', 'connector', 'job', 'verify', 'receipt', 'speak'], triggers: ['reverse', 'engineer', 'analyze app', 'competitor', 'rea'], verify: 'receipt', context: ['repository', 'target'] }),
   S('media_create', 'Create media', 'studio',
-    ['che_creator_studio', 'che_media_library', 'che_media_store', 'che_video_line', 'video_renderer', 'che_voice_studio', 'che_voice_test', 'che_image_generation', 'che_visual_studio', 'che_showroom', 'che_site_builder', 'che_invention_studio'],
+    ['che_creator_studio', 'che_media_library', 'che_media_store', 'che_video_line', 'video_renderer', 'che_voice_studio', 'che_voice_test', 'che_image_generation', 'che_visual_studio', 'che_internal_renderer', 'che_showroom', 'che_site_builder', 'che_invention_studio'],
     { summary: 'Makes and edits pictures, videos, voices and sites, and verifies the rendered file.', blocks: ['understand', 'job', 'render', 'verify', 'speak'], triggers: ['picture', 'image', 'video', 'edit', 'render', 'thumbnail', 'voice', 'website', 'caption', 'template'], approval: 'publish', verify: 'output', context: ['media'] }),
   S('music_business', 'Music business', 'studio', ['che_music_rights', 'che_music_business'],
     { summary: 'Songs, rights, deals and releases; nothing is signed, transferred or published without the owner.', blocks: ['understand', 'records', 'legal', 'approval', 'speak'], triggers: ['song', 'music', 'album', 'royalty', 'deal', 'release', 'label', 'split'], approval: 'publish', verify: 'receipt', context: ['music'] }),
