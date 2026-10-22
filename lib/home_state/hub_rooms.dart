@@ -507,6 +507,7 @@ extension _CheHomeHubRooms on _CHEHomeState {
       load: _loadShowroom,
       onStart: _runHubPrompt,
       onOpenRecent: _openShowroomRecent,
+      onWatchDemo: (url) => unawaited(launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication)),
     )));
   }
 

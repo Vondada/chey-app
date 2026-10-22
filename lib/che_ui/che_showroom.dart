@@ -21,10 +21,22 @@ class CheShowroomItem {
   String get statusLabel => '${json['status_label'] ?? 'Planned'}';
   String get reason => '${json['reason'] ?? ''}';
   String get start => '${json['start'] ?? ''}';
-  String get thumbnailNote => '${json['thumbnail_note'] ?? 'Concept example: an illustration.'}';
+  String get thumbnailNote =>
+      '${json['thumbnail_note'] ?? 'Concept example: an illustration.'}';
   bool get isReal => json['thumbnail'] == 'real';
-  Map<String, dynamic>? get recent => json['recent_project'] is Map ? Map<String, dynamic>.from(json['recent_project']) : null;
-  List<String> get missing => json['missing'] is List ? [for (final m in json['missing'] as List) '$m'] : const [];
+
+  /// A short demo video of how the capability is used (https only). Empty until one is made; the button then does not show.
+  String get demoVideo {
+    final v = '${json['demo_video'] ?? ''}'.trim();
+    return v.startsWith('https://') ? v : '';
+  }
+
+  Map<String, dynamic>? get recent => json['recent_project'] is Map
+      ? Map<String, dynamic>.from(json['recent_project'])
+      : null;
+  List<String> get missing => json['missing'] is List
+      ? [for (final m in json['missing'] as List) '$m']
+      : const [];
 }
 
 class CheShowroomCategory {
@@ -37,8 +49,9 @@ class CheShowroomCategory {
   String get summary => '${json['summary'] ?? ''}';
   int get number => (json['number'] as num?)?.toInt() ?? 0;
   List<CheShowroomItem> get items => [
-        for (final c in (json['capabilities'] as List? ?? const [])) if (c is Map) CheShowroomItem(Map<String, dynamic>.from(c)),
-      ];
+    for (final c in (json['capabilities'] as List? ?? const []))
+      if (c is Map) CheShowroomItem(Map<String, dynamic>.from(c)),
+  ];
 
   /// "2 ready, 3 partial": the counts by state, in words.
   String countLine() {
@@ -46,23 +59,44 @@ class CheShowroomCategory {
     for (final item in items) {
       counts[item.statusLabel] = (counts[item.statusLabel] ?? 0) + 1;
     }
-    return counts.entries.map((e) => '${e.value} ${e.key.toLowerCase()}').join(', ');
+    return counts.entries
+        .map((e) => '${e.value} ${e.key.toLowerCase()}')
+        .join(', ');
   }
 }
 
 /// The filters the owner can choose, in words. "All" is the default.
-const cheShowroomFilters = ['All', 'Ready', 'Partial', 'Needs setup', 'Unavailable', 'Planned'];
+const cheShowroomFilters = [
+  'All',
+  'Ready',
+  'Partial',
+  'Needs setup',
+  'Unavailable',
+  'Planned',
+];
 
 /// Whether a card passes the search text and the status filter. Pure, so it can be tested.
-bool cheShowroomMatches(CheShowroomItem item, {String query = '', String filter = 'All'}) {
+bool cheShowroomMatches(
+  CheShowroomItem item, {
+  String query = '',
+  String filter = 'All',
+}) {
   if (filter != 'All' && item.statusLabel != filter) return false;
   final q = query.trim().toLowerCase();
   if (q.isEmpty) return true;
-  return '${item.title} ${item.description} ${item.example} ${item.statusLabel}'.toLowerCase().contains(q);
+  return '${item.title} ${item.description} ${item.example} ${item.statusLabel}'
+      .toLowerCase()
+      .contains(q);
 }
 
 class CheShowroomPage extends StatefulWidget {
-  const CheShowroomPage({super.key, required this.load, required this.onStart, this.onOpenRecent});
+  const CheShowroomPage({
+    super.key,
+    required this.load,
+    required this.onStart,
+    this.onOpenRecent,
+    this.onWatchDemo,
+  });
 
   /// Loads the showroom JSON. The app passes GET /api/showroom with the owner's device token.
   final Future<Map<String, dynamic>> Function() load;
@@ -73,14 +107,22 @@ class CheShowroomPage extends StatefulWidget {
   /// "Open example" when the card has a real saved output: opens that record (kind: invention, video or image).
   final void Function(Map<String, dynamic> recent)? onOpenRecent;
 
+  /// "Watch how": opens a capability's demo video (an https link). Null hides the button everywhere.
+  final void Function(String url)? onWatchDemo;
+
   static Route<void> route({
     required Future<Map<String, dynamic>> Function() load,
     required void Function(String prompt) onStart,
     void Function(Map<String, dynamic> recent)? onOpenRecent,
-  }) =>
-      MaterialPageRoute<void>(
-        builder: (_) => CheShowroomPage(load: load, onStart: onStart, onOpenRecent: onOpenRecent),
-      );
+    void Function(String url)? onWatchDemo,
+  }) => MaterialPageRoute<void>(
+    builder: (_) => CheShowroomPage(
+      load: load,
+      onStart: onStart,
+      onOpenRecent: onOpenRecent,
+      onWatchDemo: onWatchDemo,
+    ),
+  );
 
   @override
   State<CheShowroomPage> createState() => _CheShowroomPageState();
@@ -105,7 +147,10 @@ class _CheShowroomPageState extends State<CheShowroomPage> {
       final json = await widget.load();
       if (!mounted) return;
       setState(() {
-        _categories = [for (final c in (json['categories'] as List? ?? const [])) if (c is Map) CheShowroomCategory(Map<String, dynamic>.from(c))];
+        _categories = [
+          for (final c in (json['categories'] as List? ?? const []))
+            if (c is Map) CheShowroomCategory(Map<String, dynamic>.from(c)),
+        ];
         _error = '';
         _loading = false;
       });
@@ -135,10 +180,13 @@ class _CheShowroomPageState extends State<CheShowroomPage> {
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error.isNotEmpty
-              ? Padding(padding: const EdgeInsets.all(CheSpace.gutter), child: Text(_error))
-              : open == null
-                  ? _categoryList()
-                  : _capabilityList(open),
+          ? Padding(
+              padding: const EdgeInsets.all(CheSpace.gutter),
+              child: Text(_error),
+            )
+          : open == null
+          ? _categoryList()
+          : _capabilityList(open),
     );
   }
 
@@ -158,7 +206,10 @@ class _CheShowroomPageState extends State<CheShowroomPage> {
           label: 'Search capabilities',
           textField: true,
           child: TextField(
-            decoration: const InputDecoration(prefixIcon: Icon(Icons.search), hintText: 'Search what CHE can do'),
+            decoration: const InputDecoration(
+              prefixIcon: Icon(Icons.search),
+              hintText: 'Search what CHE can do',
+            ),
             onChanged: (value) => setState(() => _query = value),
           ),
         ),
@@ -177,7 +228,11 @@ class _CheShowroomPageState extends State<CheShowroomPage> {
   }
 
   Widget _capabilityList(CheShowroomCategory category) {
-    final items = category.items.where((item) => cheShowroomMatches(item, query: _query, filter: _filter)).toList();
+    final items = category.items
+        .where(
+          (item) => cheShowroomMatches(item, query: _query, filter: _filter),
+        )
+        .toList();
     return ListView(
       padding: const EdgeInsets.all(CheSpace.gutter),
       children: [
@@ -195,17 +250,92 @@ class _CheShowroomPageState extends State<CheShowroomPage> {
           ],
         ),
         const SizedBox(height: CheSpace.md),
-        if (items.isEmpty) const Text('No capability matches that search and filter.'),
+        if (items.isEmpty)
+          const Text('No capability matches that search and filter.'),
         for (final item in items) _capabilityCard(item),
       ],
     );
   }
 
   Widget _capabilityCard(CheShowroomItem item) => _CapabilityCard(
-        item: item,
-        onStart: item.start.isEmpty ? null : () => widget.onStart(item.start),
-        onOpen: item.recent == null || widget.onOpenRecent == null ? null : () => widget.onOpenRecent!(item.recent!),
-      );
+    item: item,
+    onStart: item.start.isEmpty ? null : () => widget.onStart(item.start),
+    onOpen: item.recent == null || widget.onOpenRecent == null
+        ? null
+        : () => widget.onOpenRecent!(item.recent!),
+    onWatch: item.demoVideo.isEmpty || widget.onWatchDemo == null
+        ? null
+        : () => widget.onWatchDemo!(item.demoVideo),
+  );
+}
+
+/// The sticker icon for a category. Only icons the installed app already ships are used (see test/fixtures/release_icons.txt).
+IconData cheShowroomCategoryIcon(String id) => switch (id) {
+  'inventions' => Icons.lightbulb_rounded,
+  'video' => Icons.videocam_rounded,
+  'music' => Icons.music_note_rounded,
+  'code' => Icons.code_rounded,
+  'business' => Icons.insights_rounded,
+  'brain' => Icons.hub_rounded,
+  _ => Icons.auto_awesome,
+};
+
+/// A glossy sticker: a coloured tile with a large icon, the look of a showroom card's picture.
+class CheShowroomSticker extends StatelessWidget {
+  const CheShowroomSticker({
+    super.key,
+    required this.icon,
+    required this.height,
+    this.badge,
+  });
+
+  final IconData icon;
+  final double height;
+  final String? badge;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = CheColors.accent;
+    return Container(
+      height: height,
+      width: double.infinity,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(CheRadius.lg),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            accent.withValues(alpha: 0.38),
+            accent.withValues(alpha: 0.08),
+          ],
+        ),
+        border: Border.all(color: accent.withValues(alpha: 0.35)),
+      ),
+      child: Stack(
+        children: [
+          Center(
+            child: Icon(icon, size: height * 0.42, color: accent),
+          ),
+          if (badge != null)
+            Positioned(
+              top: CheSpace.sm,
+              left: CheSpace.sm,
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: CheSpace.sm,
+                  vertical: 2,
+                ),
+                decoration: BoxDecoration(
+                  color: CheColors.surface,
+                  borderRadius: BorderRadius.circular(CheRadius.pill),
+                ),
+                child: Text(badge!, style: CheType.caption),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
 }
 
 class _CategoryCard extends StatelessWidget {
@@ -218,7 +348,8 @@ class _CategoryCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Semantics(
       button: true,
-      label: '${category.number}. ${category.title}. ${category.summary} ${category.countLine()}.',
+      label:
+          '${category.number}. ${category.title}. ${category.summary} ${category.countLine()}.',
       excludeSemantics: true,
       child: Padding(
         padding: const EdgeInsets.only(bottom: CheSpace.md),
@@ -229,17 +360,33 @@ class _CategoryCard extends StatelessWidget {
             borderRadius: BorderRadius.circular(CheRadius.lg),
             onTap: onTap,
             child: ConstrainedBox(
-              constraints: const BoxConstraints(minHeight: 72),
+              constraints: const BoxConstraints(minHeight: 96),
               child: Padding(
-                padding: const EdgeInsets.all(CheSpace.lg),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                padding: const EdgeInsets.all(CheSpace.md),
+                child: Row(
                   children: [
-                    Text('${category.number}. ${category.title}', style: CheType.title),
-                    const SizedBox(height: CheSpace.xs),
-                    Text(category.summary),
-                    const SizedBox(height: CheSpace.xs),
-                    Text(category.countLine(), style: CheType.caption),
+                    SizedBox(
+                      width: 84,
+                      child: CheShowroomSticker(
+                        icon: cheShowroomCategoryIcon(category.id),
+                        height: 72,
+                      ),
+                    ),
+                    const SizedBox(width: CheSpace.md),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '${category.number}. ${category.title}',
+                            style: CheType.title,
+                          ),
+                          const SizedBox(height: CheSpace.xs),
+                          Text(category.countLine(), style: CheType.caption),
+                        ],
+                      ),
+                    ),
+                    const Icon(Icons.chevron_right_rounded),
                   ],
                 ),
               ),
@@ -252,59 +399,113 @@ class _CategoryCard extends StatelessWidget {
 }
 
 class _CapabilityCard extends StatelessWidget {
-  const _CapabilityCard({required this.item, this.onStart, this.onOpen});
+  const _CapabilityCard({
+    required this.item,
+    this.onStart,
+    this.onOpen,
+    this.onWatch,
+  });
 
   final CheShowroomItem item;
   final VoidCallback? onStart;
   final VoidCallback? onOpen;
+  final VoidCallback? onWatch;
 
   @override
   Widget build(BuildContext context) {
     final picture = item.isReal ? 'Real saved output' : 'Concept example';
+    final how = [
+      if (item.description.isNotEmpty) item.description,
+      if (item.example.isNotEmpty) 'Example: ${item.example}',
+      if (item.output.isNotEmpty) 'Output: ${item.output}',
+      if (item.reason.isNotEmpty) 'Why: ${item.reason}',
+    ];
     return Semantics(
       container: true,
-      label: '${item.title}. ${item.statusLabel}. $picture. ${item.description}',
+      label:
+          '${item.title}. ${item.statusLabel}. $picture. ${item.description}',
       child: Padding(
         padding: const EdgeInsets.only(bottom: CheSpace.md),
-        child: Container(
-          padding: const EdgeInsets.all(CheSpace.lg),
-          decoration: BoxDecoration(
-            color: CheColors.surface,
+        child: Material(
+          color: CheColors.surface,
+          shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(CheRadius.lg),
-            border: Border.all(color: CheColors.accent.withValues(alpha: 0.18)),
+            side: BorderSide(color: CheColors.accent.withValues(alpha: 0.18)),
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(children: [
-                Expanded(child: Text(item.title, style: CheType.title)),
-                Text(item.statusLabel, style: const TextStyle(fontWeight: FontWeight.w700)),
-              ]),
-              const SizedBox(height: CheSpace.xs),
-              // The picture is named in words: a real output, or an illustration.
-              Text(item.isReal ? 'Real saved output' : item.thumbnailNote, style: CheType.caption),
-              const SizedBox(height: CheSpace.sm),
-              Text(item.description),
-              if (item.example.isNotEmpty) Text('Example: ${item.example}'),
-              if (item.output.isNotEmpty) Text('Output: ${item.output}'),
-              if (item.reason.isNotEmpty) Text('Why: ${item.reason}'),
-              if (item.missing.isNotEmpty) Text('Needs: ${item.missing.join(', ')}'),
-              const SizedBox(height: CheSpace.sm),
-              Wrap(spacing: CheSpace.sm, runSpacing: CheSpace.xs, children: [
-                if (onOpen != null)
-                  OutlinedButton(
-                    style: OutlinedButton.styleFrom(minimumSize: const Size(48, 48)),
-                    onPressed: onOpen,
-                    child: const Text('Open example'),
+          clipBehavior: Clip.antiAlias,
+          child: Padding(
+            padding: const EdgeInsets.all(CheSpace.md),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // The sticker: the picture is named in words on it (a real output, or an illustration).
+                CheShowroomSticker(
+                  icon: onWatch != null
+                      ? Icons.play_circle_fill
+                      : Icons.auto_awesome,
+                  height: 120,
+                  badge: item.isReal ? 'Real saved output' : 'Concept example',
+                ),
+                const SizedBox(height: CheSpace.sm),
+                Row(
+                  children: [
+                    Expanded(child: Text(item.title, style: CheType.title)),
+                    Text(
+                      item.statusLabel,
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: CheSpace.xs),
+                Text(item.thumbnailNote, style: CheType.caption),
+                if (item.missing.isNotEmpty)
+                  Text('Needs: ${item.missing.join(', ')}'),
+                if (how.isNotEmpty)
+                  ExpansionTile(
+                    tilePadding: EdgeInsets.zero,
+                    title: const Text('How it works'),
+                    childrenPadding: const EdgeInsets.only(bottom: CheSpace.sm),
+                    children: [
+                      for (final line in how)
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(line),
+                        ),
+                    ],
                   ),
-                if (onStart != null)
-                  FilledButton(
-                    style: FilledButton.styleFrom(minimumSize: const Size(48, 48)),
-                    onPressed: onStart,
-                    child: const Text('Create your own'),
-                  ),
-              ]),
-            ],
+                Wrap(
+                  spacing: CheSpace.sm,
+                  runSpacing: CheSpace.xs,
+                  children: [
+                    if (onWatch != null)
+                      FilledButton.icon(
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size(48, 48),
+                        ),
+                        onPressed: onWatch,
+                        icon: const Icon(Icons.play_circle_fill),
+                        label: const Text('Watch how'),
+                      ),
+                    if (onOpen != null)
+                      OutlinedButton(
+                        style: OutlinedButton.styleFrom(
+                          minimumSize: const Size(48, 48),
+                        ),
+                        onPressed: onOpen,
+                        child: const Text('Open example'),
+                      ),
+                    if (onStart != null)
+                      FilledButton(
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size(48, 48),
+                        ),
+                        onPressed: onStart,
+                        child: const Text('Create your own'),
+                      ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       ),
