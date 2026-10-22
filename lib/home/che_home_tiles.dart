@@ -38,12 +38,16 @@ class CheHomeQuote {
     DateTime? time(Object? v) => v is num
         ? DateTime.fromMillisecondsSinceEpoch(v > 1e12 ? v.toInt() : (v * 1000).toInt(), isUtc: true)
         : (v is String ? DateTime.tryParse(v)?.toUtc() : null);
-    final lastDay = time(bars.last['t']);
+    // The futures trading day starts at 6 PM New York time, so a bar's trading day is its New York date six hours on.
+    DateTime? tradingDay(DateTime? t) {
+      if (t == null) return null;
+      final d = t.add(Duration(hours: _nyOffsetHours(t) + 6));
+      return DateTime.utc(d.year, d.month, d.day);
+    }
+
+    final lastDay = tradingDay(time(bars.last['t']));
     final dayOpen = bars.firstWhere(
-      (b) {
-        final t = time(b['t']);
-        return lastDay != null && t != null && t.year == lastDay.year && t.month == lastDay.month && t.day == lastDay.day;
-      },
+      (b) => lastDay != null && tradingDay(time(b['t'])) == lastDay,
       orElse: () => bars.first,
     );
     final open = (dayOpen['o'] as num).toDouble();
@@ -234,7 +238,8 @@ class _CheHomeMarketTileState extends State<CheHomeMarketTile> {
     final q = _quote;
     final up = (q?.changePct ?? 0) >= 0;
     final change = q?.changePct == null ? '' : '${up ? '+' : ''}${q!.changePct!.toStringAsFixed(2)}%';
-    final status = q == null ? '' : (q.stale ? 'STALE' : q.status);
+    // A failed refresh keeps the last price on screen but marks it stale, in text and for VoiceOver.
+    final status = q == null ? '' : (q.stale || _error != null ? 'STALE' : q.status);
     final price = q == null ? '—' : _price(q.last);
     return CheHudTile(
       semantics: q == null
