@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:chey/workflows/che_workflows_screen.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -10,6 +11,7 @@ Map<String, dynamic> _view({bool disabled = false, List<Map<String, dynamic>> ca
       'workflows': [
         {'id': 'trading_desk', 'name': 'Trading desk', 'kind': 'system', 'summary': 'Charts and paper trades.', 'approval': 'money', 'disabled': disabled, 'stats': {'runs': 5, 'success_rate': 100, 'avg_model_calls': 0}},
         {'id': 'safety_gate', 'name': 'Safety gate', 'kind': 'system', 'summary': 'Holds money and delete actions.', 'approval': 'money', 'disabled': false, 'stats': {'runs': 0}},
+        for (var i = 0; i < 100; i++) {'id': 'cmd:c$i', 'name': '/c$i', 'kind': 'command', 'summary': 'Command $i.', 'approval': 'none', 'disabled': disabled && i == 99, 'stats': {'runs': 0}},
         {'id': 'learned:ab12', 'name': 'earn today → /money-dashboard', 'kind': 'learned', 'summary': 'Learned.', 'approval': 'none', 'disabled': false, 'stats': {'runs': 1, 'success_rate': 100, 'avg_model_calls': 0}},
       ],
       'efficiency': {'requests': 8, 'via_workflow': 6, 'via_model_only': 2, 'percent_via_workflow': 75, 'avg_model_calls_workflow': 0, 'avg_model_calls_model_path': 2, 'model_calls_avoided': 12, 'learned_runs': 1},
@@ -48,10 +50,17 @@ void main() {
     await tester.pumpAndSettle();
     final safety = tester.widget<Switch>(find.descendant(of: find.bySemanticsLabel('Safety gate always stays on'), matching: find.byType(Switch)));
     expect(safety.onChanged, isNull, reason: 'the safety gate cannot be turned off');
-    await tester.tap(find.descendant(of: find.bySemanticsLabel('Use Trading desk'), matching: find.byType(Switch)));
+    final desk = tester.widget<Switch>(find.descendant(of: find.bySemanticsLabel('Trading desk always stays on'), matching: find.byType(Switch)));
+    expect(desk.onChanged, isNull, reason: 'a built-in workflow shows no switch that would not take effect');
+    await tester.tap(find.text('Commands'));
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(find.text('/c99'), 600);
+    expect(find.text('/c99'), findsOneWidget, reason: 'every workflow is listed, not the first 80');
+    await tester.tap(find.descendant(of: find.bySemanticsLabel('Use /c99'), matching: find.byType(Switch)));
     await tester.pumpAndSettle();
     expect(posts.single, startsWith('/api/workflows/disable'));
-    expect(find.text('Trading desk is off.'), findsOneWidget);
+    await tester.scrollUntilVisible(find.text('/c99 is off.'), -600);
+    expect(find.text('/c99 is off.'), findsOneWidget);
   });
 
   testWidgets('Workflows page: a learned candidate is promoted only by the owner\'s tap, and a failure is reported as a failure', (tester) async {
@@ -73,5 +82,25 @@ void main() {
     await tester.tap(find.text('Promote'));
     await tester.pumpAndSettle();
     expect(find.textContaining('Candidate 1 promoted'), findsOneWidget);
+  });
+
+  testWidgets('Import: a clipboard list holding a password is refused on the phone; nothing is sent', (tester) async {
+    final posts = <String>[];
+    final client = MockClient((req) async {
+      if (req.method == 'POST') posts.add(req.url.path);
+      return _json(_view(), 200);
+    });
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      if (call.method == 'Clipboard.getData') return {'text': jsonEncode({'workflows': [{'name': 'deploy', 'steps': [{'command': 'che-plan', 'input': 'use password hunter2'}]}]})};
+      return null;
+    });
+    addTearDown(() => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, null));
+    await tester.pumpWidget(MaterialApp(home: CheWorkflowsScreen(client: CheWorkflowsClient(baseUrl: 'https://che.test', headers: () => {}, client: client))));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Import from clipboard'));
+    await tester.pumpAndSettle();
+    expect(posts, isEmpty);
+    expect(find.textContaining('looks like a password, key or token'), findsOneWidget);
+    expect(cheLooksSecret('plan my week'), isFalse);
   });
 }

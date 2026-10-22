@@ -227,7 +227,7 @@ import { APP_BUILD_KEY, appBuildIntent, appBuildRun, dispatchAppBuild, speakAppB
 import { advanceObjectives, applyMissionEvent, approvalReached, approveNode, awaitingApproval, cancelObjective, createObjective, mutateObjective, replanNode, resolveKnownNodes, retryNode, setObjectivePaused, speakObjective } from './objective_graph.js';
 import { acquire as acquireCapability, applyPolicy as applyCapabilityPolicy, capabilityIntent, engineSummary as capabilityEngineSummary, learnFromOutcome, loadPolicy as loadCapabilityPolicy, populate as populateKnowledge, retrieve as retrieveKnowledge, rollbackTool, savePolicy as saveCapabilityPolicy, speakCapabilities, speakLearned as speakLearnedKnowledge, useTool, LAST_USED_KEY as KNOWLEDGE_USED_KEY } from './capability_engine.js';
 import { loadRegistry as loadCapabilityRegistry } from './capability_registry.js';
-import { engineView, exportWorkflows, feedbackOnLast, importWorkflows, library as workflowLibrary, loadEngine, matchLearned, noteVersion, promoteCandidate, dismissCandidate, rankWorkflows, recordRun as recordWorkflowRun, restoreVersion, saveEngine, setDisabled as setWorkflowDisabled, setPreferred as setWorkflowPreferred, speakEfficiency, speakLibrary, testCandidate, workflowForRun, workflowIntent } from './workflow_engine.js';
+import { engineView, exportWorkflows, feedbackOnLast, importWorkflows, library as workflowLibrary, loadEngine, matchLearned, noteVersion, promoteCandidate, dismissCandidate, rankWorkflows, recordRun as recordWorkflowRun, isDisabled as workflowDisabled, restoreVersion, saveEngine, setDisabled as setWorkflowDisabled, setPreferred as setWorkflowPreferred, speakEfficiency, speakLibrary, testCandidate, workflowForRun, workflowIntent } from './workflow_engine.js';
 import { CATEGORIES, COMMANDS, catalogView, commandById, commandStatus, connectorStatus, describeWorkflow, dispatchPrompt, findSavedWorkflow, normalizeSavedWorkflow, parseSlashCommand, readCommandSpeech, searchCommands, speakCommandList, speakUnavailable, suggestCommands, workflowNodes, workflowFromWords } from './command_catalog.js';
 import { handleReaRequest, loadInvestigation, parseReaRequest, reaInvestigationDetail, reaInvestigations } from './rea_runner.js';
 import { browseIntent, runSearchRoute, subAgentPlan } from './browse_chat.js';
@@ -5650,6 +5650,9 @@ export class CheState extends DurableObject {
       return ndjsonReply(`I don't have a /${parsed.name} command, sir.${near.length ? ` Closest: ${near.join(', ')}.` : ''} Say "open commands" to see them all. Nothing was run.`,
         { source: 'che_command', ok: false, command: parsed.name, model_calls: 0 });
     }
+    if (workflowDisabled(await loadEngine(this.ctx.storage), `cmd:${command.id}`)) {
+      return ndjsonReply(`/${command.id} is turned off, sir, so I did not run it. Say "turn on the /${command.id} workflow" to use it again.`, { source: 'che_command', ok: false, command: command.id, model_calls: 0 });
+    }
     if (String(parsed.input || '').length > 4000) return ndjsonReply('That command input exceeds 4,000 characters, sir. Nothing was cut or run; please shorten it explicitly.', { source: 'che_command', ok: false, command: command.id, model_calls: 0 });
     const status = commandStatus(command, await this.commandConnectors(data));
     if (status.status !== 'available') {
@@ -5946,7 +5949,11 @@ export class CheState extends DurableObject {
     }
     if (ask.action === 'disable' || ask.action === 'enable') {
       const out = setWorkflowDisabled(engine, lib, ask.name, ask.action === 'disable');
-      if (!out.ok) return say(out.reason === 'protected' ? 'The safety gate workflow cannot be turned off, sir: it is what holds money and delete actions for your yes. Nothing was changed.' : `I could not find a workflow called ${ask.name}, sir. Nothing was changed.`, { ok: false });
+      if (!out.ok) {
+        return say(out.reason === 'protected' ? 'The safety gate workflow cannot be turned off, sir: it is what holds money and delete actions for your yes. Nothing was changed.'
+          : out.reason === 'built_in' ? `${out.workflow.name} is one of my built-in workflows, sir, so it cannot be turned off; you can turn off its commands or your saved workflows. Nothing was changed.`
+            : `I could not find a workflow called ${ask.name}, sir. Nothing was changed.`, { ok: false });
+      }
       await save();
       return say(`${out.workflow.name} is ${ask.action === 'disable' ? 'turned off; I will not use it until you turn it back on' : 'turned on again'}, sir.`);
     }
@@ -8965,6 +8972,7 @@ export class CheState extends DurableObject {
       if (path === '/api/commands/workflow/run' && request.method === 'POST') {
         const saved = body.id ? (data.command_workflows || []).find((w) => w.id === String(body.id)) : null;
         if (body.id && !saved) return json({ detail: 'Workflow not found.' }, 404);
+        if (saved && workflowDisabled(await loadEngine(this.ctx.storage), `owner:${saved.id}`)) return json({ detail: `${saved.name} is turned off. Turn it on in Workflows to run it.` }, 409);
         const started = await this.startCommandWorkflow(data, saved || body, { ownerDevice });
         if (!started.ok) return json({ detail: started.spoken, issues: started.described?.issues || [], workflow: started.described || null }, started.status || 409);
         return json({ objective: started.objective, started: started.started, spoken: started.spoken });
@@ -9666,6 +9674,9 @@ export class CheState extends DurableObject {
             return ndjsonReply(`Saved "${workflow.name}", sir: ${workflow.steps.length} steps. Nothing was run. Say "run my ${workflow.name} workflow" to start it; approval checkpoints still apply.`, { source: 'che_command_workflow', ok: true, workflow_id: workflow.id, model_calls: 0 });
           }
           const savedWorkflow = ownerDevice ? findSavedWorkflow(data.command_workflows, rawMessage) : null;
+          if (savedWorkflow && workflowDisabled(await loadEngine(this.ctx.storage), `owner:${savedWorkflow.id}`)) {
+            return ndjsonReply(`${savedWorkflow.name} is turned off, sir, so I did not run it. Say "turn on the ${savedWorkflow.name} workflow" to use it again.`, { source: 'che_workflow_engine', ok: false, model_calls: 0 });
+          }
           if (savedWorkflow) {
             await this.dropHeldActions();
             const started = await this.startCommandWorkflow(data, savedWorkflow, { ownerDevice });
