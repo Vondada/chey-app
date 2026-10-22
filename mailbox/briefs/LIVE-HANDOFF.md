@@ -1869,6 +1869,18 @@ Status: PROGRAM, not built. The request spans several multi-week projects (visua
 
 ---
 
+## 8c. SOUL CHECKPOINT 3 (Claude, 2026-10-22 00:05Z) — read first, supersedes 8b's "open" items
+
+- **Merged:** PR #423 → main `d29faab` (phone Soul controls). PR #424 (Worker provenance: `served_by`, `soul.soul_applied` true only for a model reply with the Soul in its system prompt; handler replies `soul_applied:false`, route `handler`; cache bypass marked) → main `8f4bc48`, tagged `[worker-deploy]`. Required checks were green on head `82e4af0` (analyze, Worker syntax and unit tests; `Workers Builds` ignored per owner rule). 2996/2996 Worker tests; `soul_chat.test.mjs` 11/11.
+- **Deploy:** `Deploy CHE Worker` run 39697091667 queued/in progress for `8f4bc48` at 00:01Z. Verify its conclusion with `gh api repos/Vondada/chey-app/actions/runs/39697091667`. Live `/health` NOT verified from the sandbox.
+- **Open PR #425** `claude/che-soul-response-details` at `3265386` (Flutter "Response details" button → Personality sheet: Soul version/fingerprint, applied or why not, model/handler, fallback). `flutter analyze lib test` clean; `flutter test` on `test/che_response_details_test.dart` + `test/che_soul_controls_test.dart` 12/12. Checks were running at 00:02Z. Merge only when `analyze` and `Worker syntax and unit tests` are green; expectedHeadSha `3265386…` (full SHA via API). Merging a lib/** change triggers `CHE Shorebird` on main.
+- **Not done yet (Soul §8b items 3–5 and the iPhone/acceptance parts):**
+  3. Soul consistency across Voice, Memory, Trading, Coding, Media, Office, and error/fallback replies. Deterministic handlers still say nothing about the Soul beyond `soul_applied:false`; persona prompts elsewhere in `worker.js` still hard-code personality.
+  4. Publish iPhone build/patch after #425 merges (CHE Shorebird runs automatically on lib/** → main; IPA only if the owner asks). Installation on the owner's iPhone is NOT confirmed by any build.
+  5. End-to-end personality tests through `/api/chat` (sliders changed → next reply differs; model fallback with real engines is NOT tested; the sandbox has fake `AI.run` only).
+- **Owner acceptance A–F** (personality, emotional awareness, trading numbers, memory, media list, Soul configuration): not yet run end to end.
+- **Git note:** remote `claude/che-soul-routing` holds two old commits (`65d3fe8`, `502f150`) already contained in main via #422; it was NOT overwritten. Work branches: `claude/che-soul-provenance` (merged as #424), `claude/che-soul-response-details` (#425).
+
 ## 8b. SOUL CHECKPOINT 2 (Claude, 2026-10-21 23:30Z)
 
 - **Merged and deployed:** PR #422 (Worker Soul: soul.js, /api/soul, /api/soul/restore, chat prompt Soul block, model-reply provenance, media retrieval) → main `46f1dfb`. Deploy CHE Worker run 39690831421 `success`. Live `/health` NOT checked (sandbox proxy 403).
