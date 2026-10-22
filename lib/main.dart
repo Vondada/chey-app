@@ -29,6 +29,7 @@ import 'che_mic_supervisor.dart';
 import 'che_ui/che_latency.dart';
 import 'che_ui/che_screen_awareness.dart';
 import 'che_ui/che_screen_capture.dart';
+import 'workflows/che_workflows_screen.dart';
 import 'world/che_meeting_room.dart';
 import 'world/che_meetings.dart';
 import 'world/che_plan_room.dart';
@@ -608,6 +609,18 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
         baseUrl: () => cheAgentBaseUrl,
         headers: () => _authHeaders,
         onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
+      ),
+    ));
+  }
+
+  /// More → Workflows (also "open the workflows page" in chat).
+  Future<void> _openWorkflows() async {
+    HapticFeedback.selectionClick();
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => CheWorkflowsScreen(
+        client: CheWorkflowsClient(baseUrl: cheAgentBaseUrl, headers: () => _authHeaders),
+        onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
+        onListen: () => unawaited(toggleListening()),
       ),
     ));
   }
@@ -1477,7 +1490,7 @@ OWNER AGENCY
         ),
       3 => CheScreenReport(page: 'CHE World', tab: 'CHE World', tabs: tabs, controls: const ['the CHE World rooms', 'the bottom tabs']),
       4 => CheScreenReport(page: 'More', tab: 'More', tabs: tabs,
-          controls: const ['Talk to CHE', 'Trading Room', 'Conversations', 'Flagstaff', 'Voice IDs', 'Keys', 'UI Controls', 'Connections', 'Change CHE’s voice', 'Voice replies', 'Projects and Businesses', 'Language and translate', 'the bottom tabs']),
+          controls: const ['Talk to CHE', 'Workflows', 'Trading Room', 'Conversations', 'Flagstaff', 'Voice IDs', 'Keys', 'UI Controls', 'Connections', 'Change CHE’s voice', 'Voice replies', 'Projects and Businesses', 'Language and translate', 'the bottom tabs']),
       _ => CheScreenReport(page: 'Home', tab: 'Home', tabs: tabs,
           detail: '${_officeRuntime.agents.length} agents, ${_officeRuntime.working} working',
           controls: const ['Talk to CHE', 'Type to CHE', 'Voice on or off', 'The Office', 'Brain', 'Trading', 'Create',
@@ -2193,6 +2206,13 @@ OWNER AGENCY
           subtitle: 'What CHE can make, and what still needs setup',
           onTap: _openShowroom,
           hue: kit.CheColors.apps,
+        ),
+        CheMoreItem(
+          icon: Icons.account_tree_rounded,
+          title: 'Workflows',
+          subtitle: 'What CHE reuses, what it saves, and what she learned',
+          onTap: () => unawaited(_openWorkflows()),
+          hue: kit.CheColors.accent,
         ),
         CheMoreItem(
           icon: Icons.apps_rounded,

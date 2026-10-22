@@ -150,7 +150,9 @@ const PLACE_ALIASES = new Map([
   ...JURISDICTIONS.map((j) => [j.name.toLowerCase(), j.id]),
   ...US_STATES.filter(([c]) => c !== 'dc').map(([c]) => [c, `us-${c}`]),
   ['nola', 'us-la-new-orleans'], ['la county', 'us-ca-los-angeles-county'], ['the uk', 'gb'], ['uk', 'gb'], ['britain', 'gb'],
-  ['great britain', 'gb'], ['the eu', 'eu'], ['europe', 'eu'], ['the united states', 'us'], ['federal', 'us'], ['america', 'us'],
+  ['great britain', 'gb'], ['the eu', 'eu'], ['europe', 'eu'], ['the united states', 'us'], ['united states', 'us'], ['america', 'us'],
+  // Bare country names; an unqualified "federal" names no country, so it never means the United States.
+  ['canada', 'ca'], ['australia', 'au'], ['united kingdom', 'gb'],
   ['the us', 'us'], ['usa', 'us'], ['washington dc', 'us-dc'], ['d.c.', 'us-dc'], ['dc', 'us-dc'], ['washington state', 'us-wa'],
 ]);
 
@@ -226,6 +228,11 @@ export const ACTIVITIES = Object.freeze({
   employment: { name: 'Employment', category: 'employment', words: /\b(?:hire|employee|contractor|1099|w-?2|minimum wage|overtime)\b/i },
 });
 export const ALERT_CATEGORIES = Object.freeze(['driving', 'business', 'music', 'weapons', 'alcohol', 'cannabis', 'recording_privacy', 'employment', 'taxes', 'licensing', 'consumer', 'contracting']);
+
+// Activities where "can I …" is usually ordinary ("Can I drive to the store?", "Can we hire someone?"). For these a
+// "can I" question is legal only with a regulatory detail; business licences, sales tax and the rest always are.
+const ORDINARY_ACTS = new Set(['driving', 'employment', 'ai_systems']);
+const REGULATORY_DETAIL = /\b(?:without|expired|suspended|drunk|after drinking|under(?:age| the influence)|over the limit|fire|terminate|lay (?:him|her|them|someone) off|pay (?:less|cash|under)|minimum wage|overtime|contractor|monitor|track|record|scrape|copy(?:righted)?|train on|personal data)\b/i;
 
 export function activitiesIn(text) {
   return Object.entries(ACTIVITIES).filter(([, a]) => a.words.test(String(text || ''))).map(([id]) => id);
@@ -571,7 +578,9 @@ export function legalAnswer(question, { jurisdictionId = null, facts = {}, date 
   const gaps = chain.filter((j) => j.status === COVERAGE.none || ['city', 'parish', 'county'].includes(j.level) && j.coverage.local === 'none');
   const gapLine = gaps.length ? `I have not indexed ${gaps.map((j) => `${j.name}${['city', 'parish', 'county'].includes(j.level) ? ' local ordinances' : ' law'}`).join(' or ')}${gaps.some((g) => g.coverage.official_source) ? ` (official source: ${gaps.map((g) => g.coverage.official_source).filter(Boolean).join(', ')})` : ''}.` : '';
   if (!found.length) {
-    const where = Object.entries(WHERE_TO_CHECK[act] || {}).filter(([j]) => chain.some((c) => c.id === j)).flatMap(([, ids]) => ids).map((id) => source(id)).filter(Boolean);
+    let where = Object.entries(WHERE_TO_CHECK[act] || {}).filter(([j]) => chain.some((c) => c.id === j)).flatMap(([, ids]) => ids).map((id) => source(id)).filter(Boolean);
+    // No activity-specific place: the official sources registered for this jurisdiction and the layers above it.
+    if (!where.length) where = SOURCES.filter((s) => chain.some((c) => c.id === s.jurisdiction) && s.tier <= 5).slice(0, 4);
     return {
       status: 'coverage_gap', activity: act, jurisdiction: place.id, risk: RISK_LEVELS.uncertain, confidence: 'none',
       text: [
@@ -637,7 +646,9 @@ export function legalDifferences({ from, to, activities = [], categories = ALERT
     if (!ACTIVITIES[act] || !categories.includes(ACTIVITIES[act].category)) continue;
     const here = assess(act, recordsFor(act, to, { records }), { facts, date });
     const home = assess(act, recordsFor(act, from, { records }), { facts, date });
-    const key = (x) => x.governing ? `${x.governing.rule.effect}:${x.governing.rule.what}` : 'none';
+    const key = (x) => x.governing ? `${x.governing.rule.effect}:${x.governing.rule.what}` : x.ask.length ? `ask:${x.ask.join(',')}` : 'none';
+    // An indexed rule that needs a fact is not a coverage gap: say which fact, not "no indexed rule".
+    const missing = (x, name) => x.ask.length ? `In ${name}, the indexed rule depends on a fact I don't have: ${x.ask.map((k) => FACT_QUESTIONS[k] || k).join(' ')}` : `I have no indexed rule for this in ${name}.`;
     if (key(here) === key(home)) continue;
     const toName = jurisdiction(to)?.name || to;
     const fromName = jurisdiction(from)?.name || from;
@@ -645,8 +656,9 @@ export function legalDifferences({ from, to, activities = [], categories = ALERT
     out.push({
       activity: act,
       priority: here.level === RISK_LEVELS.prohibited || here.level === RISK_LEVELS.likely_restricted ? PRIORITY.important : PRIORITY.fyi,
-      what: here.governing ? `In ${toName}, ${here.governing.record.citation} ${here.governing.rule.effect === 'requires' ? 'requires' : here.governing.rule.effect === 'prohibits' ? 'prohibits' : 'allows'} ${here.governing.rule.what}.` : `I have no indexed rule for this in ${toName}.`,
-      why: home.governing ? `In ${fromName} the rule is: ${home.governing.rule.effect} ${home.governing.rule.what}.` : `I have no indexed rule for this in ${fromName}.`,
+      what: here.governing ? `In ${toName}, ${here.governing.record.citation} ${here.governing.rule.effect === 'requires' ? 'requires' : here.governing.rule.effect === 'prohibits' ? 'prohibits' : 'allows'} ${here.governing.rule.what}.` : missing(here, toName),
+      why: home.governing ? `In ${fromName} the rule is: ${home.governing.rule.effect} ${home.governing.rule.what}.` : missing(home, fromName),
+      ...(here.ask.length || home.ask.length ? { needs_facts: [...new Set([...here.ask, ...home.ask])] } : {}),
       lawful_option: alts[0] ? `${alts[0].option}: ${alts[0].steps[0]}.` : null,
       sources: [here.governing?.record.citation, home.governing?.record.citation].filter(Boolean),
     });
@@ -675,7 +687,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
 
 export async function loadLegal(storage) {
   const saved = (await storage.get('legal_v1')) || {};
-  return { settings: { ...DEFAULT_SETTINGS, ...(saved.settings || {}) }, decisions: saved.decisions || [], subscriptions: saved.subscriptions || [], verified: saved.verified || {}, alerts: saved.alerts || [], contracts: saved.contracts || [] };
+  return { settings: { ...DEFAULT_SETTINGS, ...(saved.settings || {}) }, decisions: saved.decisions || [], subscriptions: saved.subscriptions || [], verified: saved.verified || {}, alerts: saved.alerts || [], contracts: saved.contracts || [], activities_asked: saved.activities_asked || {} };
 }
 export async function saveLegal(storage, state) {
   // Bounded so the record stays well under the Durable Object value limit.
@@ -789,8 +801,12 @@ export function legalIntent(message) {
   if (/\b(?:check|any)\s+(?:for\s+)?legal (?:updates|changes)\b|\blaw changes?\b.*\b(?:my|our) (?:business|projects?)\b/i.test(t)) return { kind: 'updates' };
   m = t.match(/\blegal coverage (?:for|in)\s+(.+)$/i);
   if (m) return { kind: 'coverage', place: placeIn(m[1]) };
-  const legalWords = /\b(?:legal(?:ly)?|illegal|lawful(?:ly)?|unlawful|law|laws|allowed to|permitted|permit|licen[cs]e|get (?:me )?in trouble|can i|can we|am i allowed|do i need|what applies)\b/i.test(t);
   const acts = activitiesIn(t);
+  // "Can I …" is a legal question only for an activity that is itself a permission question (sampling, recording,
+  // weapons…); "Can I drive to the store?" or "Can we hire someone?" stays ordinary chat.
+  const permissionAct = acts.some((a) => !ORDINARY_ACTS.has(a)) || (acts.length > 0 && REGULATORY_DETAIL.test(t));
+  const legalWords = /\b(?:legal(?:ly)?|illegal|lawful(?:ly)?|unlawful|law|laws|allowed to|permitted|permit|licen[cs]e|get (?:me )?in trouble|am i allowed|do i need|what applies)\b/i.test(t)
+    || (permissionAct && /\bcan (?:i|we)\b/i.test(t));
   if (!legalWords || !acts.length) {
     if (/\b(?:is (?:this|that|it) legal|what law applies|is (?:this|that) allowed)\b/i.test(t)) return { kind: 'ask', activities: [], place: placeIn(t) };
     return null;
