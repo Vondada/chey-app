@@ -1,4 +1,5 @@
 // Owner (2026-10-21): a palette builds a theme in its own colours; the CHE dark palette builds the current dark look.
+import 'package:chey/che_ui/che_active_palette.dart';
 import 'package:chey/che_ui/che_palette_theme.dart';
 import 'package:chey/che_ui/che_palettes.dart';
 import 'package:chey/che_ui/che_theme.dart';
@@ -7,6 +8,9 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   test('the CHE dark palette builds the current dark theme: same background, accent, text and surface colours', () {
+    // CheTheme.dark() draws with the active palette, so make the dark palette active for the comparison.
+    CheActivePalette.current = kCheDarkPalette;
+    addTearDown(() => CheActivePalette.current = kCheHudPalette);
     final built = cheThemeFor(kCheDarkPalette);
     final current = CheTheme.dark();
     expect(built.brightness, Brightness.dark);
@@ -25,6 +29,14 @@ void main() {
     expect(t.colorScheme.primary, kCheSilverBlackPalette.accent);
     expect(t.textTheme.bodyLarge?.color, kCheSilverBlackPalette.text);
     expect(t.appBarTheme.foregroundColor, kCheSilverBlackPalette.text);
+  });
+
+  test('the HUD glass palette uses its own navy background, light text and ice accent', () {
+    final t = cheThemeFor(kCheHudPalette);
+    expect(t.brightness, Brightness.dark);
+    expect(t.scaffoldBackgroundColor, kCheHudPalette.bg);
+    expect(t.colorScheme.primary, kCheHudPalette.accent);
+    expect(t.textTheme.bodyLarge?.color, kCheHudPalette.text);
   });
 
   test('the light palette is light, with dark text on its light background', () {

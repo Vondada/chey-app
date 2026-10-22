@@ -97,6 +97,7 @@ import 'che_ui/che_understood_as.dart' show CheUnderstoodAs, cheUnderstoodAs;
 import 'che_ui/che_response_details.dart' show CheResponseDetailsButton, cheResponseDetails, cheResponseDetailsFromJson, cheResponseDetailsJson;
 import 'che_ui/che_transitions.dart';
 import 'che_ui/che_widgets.dart' as kit show CheBackground;
+import 'che_ui/che_hud.dart' as kit show CheChromeText, CheGlass, CheHudBackdrop, cheHudActive;
 import 'che_ui/che_agents.dart' show CheAgent, CheAgentStatusLabel;
 import 'che_ui/che_agent_chat.dart' show CheOrb, CheOrbState, CheOrbStateLabel;
 import 'che_ui/che_log.dart' show CheTranscriptScreen;
@@ -2358,19 +2359,45 @@ OWNER AGENCY
   Widget build(BuildContext context) {
     _ensureOfficeRuntime();
     final agents = [for (final p in _officeRuntime.agents) p.agent];
+    final content = SafeArea(
+      top: _shellTab != 1,
+      bottom: false,
+      child: Column(
+        children: [
+          if (_shellTab != 1) _shellStatusChrome(),
+          Expanded(
+            child: IndexedStack(
+              index: _shellTab,
+              sizing: StackFit.expand,
+              children: [
+                _buildHomeTab(agents),
+                _buildChatTab(agents),
+                _buildOfficeTab(),
+                const SizedBox.shrink(),
+                _buildMoreTab(),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
 
-    return Scaffold(
-      backgroundColor: kit.CheColors.bg,
+    // HUD glass (owner, 2026-10-22): one backdrop behind the whole shell, so the glass bars float over it seamlessly.
+    final hud = kit.cheHudActive;
+    final scaffold = Scaffold(
+      backgroundColor: hud ? Colors.transparent : kit.CheColors.bg,
       resizeToAvoidBottomInset: true,
       appBar: _shellTab == 1
           ? AppBar(
-              backgroundColor: kit.CheColors.bg.withValues(alpha: 0.72),
-              flexibleSpace: ClipRect(
-                child: BackdropFilter(
-                  filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-                  child: const SizedBox.expand(),
-                ),
-              ),
+              backgroundColor: hud ? Colors.transparent : kit.CheColors.bg.withValues(alpha: 0.72),
+              flexibleSpace: hud
+                  ? const kit.CheGlass(radius: 0, shadow: false, child: SizedBox.expand())
+                  : ClipRect(
+                      child: BackdropFilter(
+                        filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+                        child: const SizedBox.expand(),
+                      ),
+                    ),
               centerTitle: true,
               toolbarHeight: 56,
               leading: Semantics(
@@ -2382,10 +2409,12 @@ OWNER AGENCY
                   icon: CheOrb(size: 30, state: _orbState),
                 ),
               ),
-              title: Text(
-                'Chat',
-                style: kit.CheType.title.copyWith(fontSize: 22, fontWeight: FontWeight.w800),
-              ),
+              title: hud
+                  ? kit.CheChromeText('Chat', style: kit.CheType.title.copyWith(fontSize: 22, fontWeight: FontWeight.w800))
+                  : Text(
+                      'Chat',
+                      style: kit.CheType.title.copyWith(fontSize: 22, fontWeight: FontWeight.w800),
+                    ),
               // Talk is alone on the left; Commands, Flagstaff and Help on the right; Knowledge, Conversations and New
               // chat in one Chat options menu, so nothing sits beside the Talk control (owner, 2026-10-22).
               leadingWidth: 64,
@@ -2462,30 +2491,7 @@ OWNER AGENCY
               ],
             )
           : null,
-      body: kit.CheBackground(
-        child: SafeArea(
-          top: _shellTab != 1,
-          bottom: false,
-          child: Column(
-            children: [
-              if (_shellTab != 1) _shellStatusChrome(),
-              Expanded(
-                child: IndexedStack(
-                  index: _shellTab,
-                  sizing: StackFit.expand,
-                  children: [
-                    _buildHomeTab(agents),
-                    _buildChatTab(agents),
-                    _buildOfficeTab(),
-                    const SizedBox.shrink(),
-                    _buildMoreTab(),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
+      body: hud ? content : kit.CheBackground(child: content),
       // The clock is always visible above the tabs (owner, 2026-10-22). Quiet text: it never speaks.
       bottomNavigationBar: Column(
         mainAxisSize: MainAxisSize.min,
@@ -2498,6 +2504,8 @@ OWNER AGENCY
         ],
       ),
     );
+    // Chat keeps a fainter floor so the conversation stays the focus.
+    return hud ? kit.CheHudBackdrop(floor: _shellTab == 1 ? 0.45 : 1.0, child: scaffold) : scaffold;
   }
 
 }

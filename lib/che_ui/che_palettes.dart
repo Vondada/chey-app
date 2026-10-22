@@ -30,7 +30,7 @@ class CheColorPalette {
   final Color accent;
 }
 
-/// The current CHE palette: teal on near-black. Kept as the default so nothing changes until the owner picks another.
+/// The earlier CHE palette: teal on near-black. Still selectable in Settings.
 const kCheDarkPalette = CheColorPalette(
   id: 'che_dark',
   label: 'CHE dark',
@@ -59,6 +59,21 @@ const kCheSilverBlackPalette = CheColorPalette(
   accent: Color(0xFF3FE6D2),
 );
 
+/// HUD glass (owner, 2026-10-22, approved from the rendered concept): deep navy space, glossy glass panels, chrome
+/// silver lettering and ice-blue light. The glass itself is drawn by che_hud.dart; these are its solid surfaces and text.
+const kCheHudPalette = CheColorPalette(
+  id: 'hud_glass',
+  label: 'HUD glass',
+  brightness: Brightness.dark,
+  bg: Color(0xFF040A14),
+  surface: Color(0xFF0B1626),
+  surfaceHi: Color(0xFF12223A),
+  stroke: Color(0xFF2C4766),
+  text: Color(0xFFF4F8FC),
+  textDim: Color(0xFFA3B6C8),
+  accent: Color(0xFF9FE9FF),
+);
+
 /// Clean daylight look: white and soft gray surfaces, graphite text.
 const kCheLightPalette = CheColorPalette(
   id: 'che_light',
@@ -73,14 +88,14 @@ const kCheLightPalette = CheColorPalette(
   accent: Color(0xFF1F6F5C),
 );
 
-const kCheColorPalettes = <CheColorPalette>[kCheDarkPalette, kCheSilverBlackPalette, kCheLightPalette];
+const kCheColorPalettes = <CheColorPalette>[kCheHudPalette, kCheDarkPalette, kCheSilverBlackPalette, kCheLightPalette];
 
-/// The palette for a saved id, or the dark default for an unknown or missing id (never a crash).
+/// The palette for a saved id, or the HUD glass default for an unknown or missing id (never a crash).
 CheColorPalette cheColorPaletteFor(String? id) {
   for (final p in kCheColorPalettes) {
     if (p.id == id) return p;
   }
-  return kCheDarkPalette;
+  return kCheHudPalette;
 }
 
 /// WCAG 2.x contrast ratio between two colours (1.0 to 21.0).

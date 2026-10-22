@@ -4,6 +4,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'che_hud.dart';
 import 'che_theme.dart';
 
 enum ChePhoneTab { home, chat, office, apps, more }
@@ -34,7 +35,7 @@ extension ChePhoneTabX on ChePhoneTab {
   };
 }
 
-/// Glowing teal bottom navigation bar (mockups 03 / 04).
+/// Bottom navigation: a floating glass capsule in the HUD look, else the glowing teal bar (mockups 03 / 04).
 class ChePhoneBottomNav extends StatelessWidget {
   const ChePhoneBottomNav({
     super.key,
@@ -50,6 +51,34 @@ class ChePhoneBottomNav extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final bottom = MediaQuery.viewPaddingOf(context).bottom;
+    final items = [
+      for (var i = 0; i < tabs.length; i++)
+        Expanded(
+          child: _NavItem(
+            tab: tabs[i],
+            selected: i == index,
+            onTap: () {
+              if (i == index) return;
+              HapticFeedback.selectionClick();
+              onChanged(i);
+            },
+          ),
+        ),
+    ];
+    // HUD glass: a floating glass capsule over the backdrop.
+    if (cheHudActive) {
+      return Material(
+        type: MaterialType.transparency,
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(12, 4, 12, bottom > 0 ? bottom : 8),
+          child: CheGlass(
+            radius: 32,
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+            child: Row(children: items),
+          ),
+        ),
+      );
+    }
     return Material(
       color: const Color(0xE6081012),
       elevation: 0,
@@ -68,22 +97,7 @@ class ChePhoneBottomNav extends StatelessWidget {
         ),
         child: Padding(
           padding: EdgeInsets.only(bottom: bottom > 0 ? bottom : 6, top: 6),
-          child: Row(
-            children: [
-              for (var i = 0; i < tabs.length; i++)
-                Expanded(
-                  child: _NavItem(
-                    tab: tabs[i],
-                    selected: i == index,
-                    onTap: () {
-                      if (i == index) return;
-                      HapticFeedback.selectionClick();
-                      onChanged(i);
-                    },
-                  ),
-                ),
-            ],
-          ),
+          child: Row(children: items),
         ),
       ),
     );
@@ -103,6 +117,8 @@ class _NavItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final hud = cheHudActive;
+    final on = hud ? Colors.white : CheColors.accent;
     return Semantics(
       button: true,
       selected: selected,
@@ -118,13 +134,24 @@ class _NavItem extends StatelessWidget {
             children: [
               AnimatedContainer(
                 duration: CheMotion.fast,
-                width: 44,
+                width: hud ? 52 : 44,
                 height: 32,
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(CheRadius.pill),
-                  color: selected
-                      ? CheColors.accent.withValues(alpha: 0.22)
-                      : Colors.transparent,
+                  // HUD: the selected tab is a lit glass bead.
+                  gradient: hud && selected
+                      ? LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [Colors.white.withValues(alpha: 0.30), CheHud.iceDeep.withValues(alpha: 0.30)],
+                        )
+                      : null,
+                  border: hud && selected ? Border.all(color: Colors.white.withValues(alpha: 0.45)) : null,
+                  color: hud
+                      ? null
+                      : selected
+                          ? CheColors.accent.withValues(alpha: 0.22)
+                          : Colors.transparent,
                   boxShadow: selected
                       ? [
                           BoxShadow(
@@ -137,7 +164,7 @@ class _NavItem extends StatelessWidget {
                 child: Icon(
                   tab.icon,
                   size: 22,
-                  color: selected ? CheColors.accent : CheColors.textDim,
+                  color: selected ? on : CheColors.textDim,
                 ),
               ),
               const SizedBox(height: 2),
@@ -150,7 +177,7 @@ class _NavItem extends StatelessWidget {
                   style: CheType.caption.copyWith(
                     fontSize: 10.5,
                     fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                    color: selected ? CheColors.accent : CheColors.textDim,
+                    color: selected ? on : CheColors.textDim,
                   ),
                 ),
               ),

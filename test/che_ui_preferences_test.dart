@@ -1,3 +1,5 @@
+import 'package:chey/che_ui/che_active_palette.dart';
+import 'package:chey/che_ui/che_palettes.dart';
 import 'package:chey/che_ui/che_ui_preferences.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -50,5 +52,30 @@ void main() {
     await ui.setVoiceVolume(1.0);
     await ui.setAvatarStyle(CheAvatarStyle.portrait);
     await ui.setDeskDensity(CheDeskDensity.comfortable);
+  });
+
+  // Owner (2026-10-22) approved the HUD look: it shows by default and replaces the earlier dark palettes once, while
+  // the light palette and any palette chosen afterwards are kept.
+  test('HUD glass is the default and replaces an earlier dark choice once', () async {
+    final ui = CheUiPreferences.instance;
+    await ui.load();
+    expect(ui.palette.id, 'hud_glass');
+    expect(CheActivePalette.current.id, 'hud_glass');
+
+    for (final earlier in ['che_dark', 'silver_black']) {
+      SharedPreferences.setMockInitialValues({'che.ui.palette': earlier});
+      await ui.load();
+      expect(ui.palette.id, 'hud_glass', reason: earlier);
+    }
+    SharedPreferences.setMockInitialValues({'che.ui.palette': 'che_light'});
+    await ui.load();
+    expect(ui.palette.id, 'che_light', reason: 'the light palette is a deliberate choice');
+
+    SharedPreferences.setMockInitialValues({});
+    await ui.load();
+    await ui.setPalette(kCheDarkPalette);
+    await ui.load();
+    expect(ui.palette.id, 'che_dark', reason: 'a palette chosen after the HUD look shipped is kept');
+    await ui.setPalette(kCheHudPalette);
   });
 }

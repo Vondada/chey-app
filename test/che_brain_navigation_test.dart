@@ -8,6 +8,8 @@
 
 import 'dart:math' as math;
 
+import 'package:chey/che_ui/che_active_palette.dart';
+import 'package:chey/che_ui/che_palettes.dart';
 import 'package:chey/brain/che_brain_navigation.dart';
 import 'package:chey/brain/che_brain_space.dart';
 import 'package:chey/brain/che_brain_space_model.dart';
@@ -309,6 +311,9 @@ void main() {
   group('navigation (directive tests 1–14)', () {
     testWidgets('1. the CHE Brain design is unchanged: palette, background, orb space, header and controls', (tester) async {
       _useScreen(tester, _phone, dpr: 3);
+      // This pins the Brain under the CHE dark palette it was designed in; HUD glass is now the app default.
+      CheActivePalette.current = kCheDarkPalette;
+      addTearDown(() => CheActivePalette.current = kCheHudPalette);
       // The brain's palette (green, teal, cyan, blue, violet, white, amber for agents) is the one it had.
       expect(cheMemoryCategoryColor('Memory'), const Color(0xFF3EE6C9));
       expect(cheMemoryCategoryColor('Conversations'), const Color(0xFF52E89A));

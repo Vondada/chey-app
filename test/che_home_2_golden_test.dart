@@ -1,11 +1,14 @@
 // CHE 2.0 Home, rendered (owner, 2026-10-22: "show visual evidence"). The images in test/goldens are the evidence:
-// the metallic teal palette, CHE's lit stage in three real states, the Talk control and the five destinations, at the
+// the approved HUD glass look (navy backdrop with a holographic floor, glossy glass, chrome, ice light, the glass tab
+// bar), CHE's lit stage in three real states, the Talk control and the five destinations, at the
 // owner's iPhone size (440 x 956 points). Real text and icons are drawn with the Roboto and Material Icons fonts that
 // ship with the Flutter SDK, so the picture reads as the phone shows it.
 import 'dart:io';
 
 import 'package:chey/che_ui/che_active_palette.dart';
 import 'package:chey/che_ui/che_agents.dart';
+import 'package:chey/che_ui/che_hud.dart';
+import 'package:chey/che_ui/che_phone_shell.dart';
 import 'package:chey/che_ui/che_palette_theme.dart';
 import 'package:chey/che_ui/che_palettes.dart';
 import 'package:chey/home/che_mockup_home.dart';
@@ -25,8 +28,10 @@ void main() {
     final fonts = '${Platform.environment['FLUTTER_ROOT'] ?? ''}/bin/cache/artifacts/material_fonts';
     await _font('Roboto', '$fonts/Roboto-Regular.ttf');
     await _font('Roboto', '$fonts/Roboto-Bold.ttf');
+    // The HUD labels use Menlo, which iOS ships and the test machine does not; Roboto stands in for the picture.
+    await _font('Menlo', '$fonts/Roboto-Regular.ttf');
     await _font('MaterialIcons', '$fonts/MaterialIcons-Regular.otf');
-    CheActivePalette.current = kCheSilverBlackPalette;
+    CheActivePalette.current = kCheHudPalette;
   });
 
   for (final (name, listening, working, agents) in [
@@ -40,11 +45,14 @@ void main() {
     testWidgets('CHE 2.0 Home, $name', (tester) async {
       await tester.binding.setSurfaceSize(const Size(440, 956));
       addTearDown(() => tester.binding.setSurfaceSize(null));
-      final theme = cheThemeFor(kCheSilverBlackPalette);
+      final theme = cheThemeFor(kCheHudPalette);
       await tester.pumpWidget(MaterialApp(
         debugShowCheckedModeBanner: false,
         theme: theme.copyWith(textTheme: theme.textTheme.apply(fontFamily: 'Roboto')),
-        home: Scaffold(
+        home: CheHudBackdrop(
+          child: Scaffold(
+          backgroundColor: Colors.transparent,
+          bottomNavigationBar: ChePhoneBottomNav(index: 0, onChanged: (_) {}),
           body: SafeArea(
             child: CheMockupHome(
               che: CheAgent.che(),
@@ -66,14 +74,15 @@ void main() {
             ),
           ),
         ),
+        ),
       ));
       // CHE's portrait is an image asset; decode it before the picture is taken, as the phone has it on screen.
       await tester.runAsync(() => precacheImage(
-            const AssetImage('assets/avatars/che.png'),
+            const AssetImage('assets/avatars/che_emblem.png'),
             tester.element(find.byType(CheMockupHome)),
           ));
       await tester.pump(const Duration(milliseconds: 400));
-      await expectLater(find.byType(MaterialApp), matchesGoldenFile('goldens/home2_$name.png'));
+      await expectLater(find.byType(MaterialApp), matchesGoldenFile('goldens/home_hud_$name.png'));
       await tester.pumpWidget(const SizedBox());
     });
   }
