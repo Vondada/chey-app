@@ -7,10 +7,12 @@ import { registerCategories } from './knowledge_library.js';
 
 export const CORE_KEY = 'che:security_core_v1';
 export const CHE_TENANT = 'owner';
-const MAX_SIMULATIONS = 10;
+const MAX_SIMULATIONS = 5;
+// A Durable Object value holds at most 128 KB; the core store is kept well under it.
+const MAX_STORE_BYTES = 100_000;
 
 // The product name and agent name come from configuration, never from the core.
-export const CHE_SECURITY = createSecurityCore({ config: { product_name: 'Security', agent_name: 'Security', host_product: 'CHE', default_tenant: CHE_TENANT } });
+export const CHE_SECURITY = createSecurityCore({ config: { product_name: 'Security', agent_name: 'Security', host_product: 'CHE', default_tenant: CHE_TENANT, max_events_per_tenant: 120, max_incidents_per_tenant: 30 } });
 
 // Security knowledge categories in CHE's Brain (Knowledge Library). The Brain Population Ledger can register the same
 // list through its own hook once it lands (see docs/CHE_SECURITY_CORE.md, follow-ups).
@@ -38,8 +40,21 @@ export async function loadCore(storage) {
   return store;
 }
 
-export async function saveCore(storage, store) {
+/** Trims oldest drills, then resolved incidents, then oldest events until the store fits one storage value. */
+export function fitStore(store, max = MAX_STORE_BYTES) {
   store.simulations = (store.simulations || []).slice(0, MAX_SIMULATIONS);
+  const size = () => JSON.stringify(store).length;
+  for (const part of Object.values(store.tenants || {})) {
+    while (size() > max && store.simulations.length) store.simulations.pop();
+    while (size() > max && part.incidents.some((i) => i.stage === 'RESOLVED')) part.incidents.splice(part.incidents.map((i) => i.stage).lastIndexOf('RESOLVED'), 1);
+    while (size() > max && part.events.length > 20) part.events.splice(-10);
+    while (size() > max && part.knowledge.length > 5) part.knowledge.pop();
+  }
+  return size();
+}
+
+export async function saveCore(storage, store) {
+  fitStore(store);
   await storage.put(CORE_KEY, store);
 }
 
@@ -50,9 +65,12 @@ const STATUS = { benign: 'resolved', contained: 'contained', suspicious: 'open' 
 export function syncLegacyEvents(store, sec) {
   const bus = CHE_SECURITY.bus(store, CHE_TENANT);
   let added = 0;
+  // A watermark keeps an event that was trimmed from the bus from being mirrored in again.
+  const since = store.legacy_synced_at ? Date.parse(store.legacy_synced_at) : 0;
   for (const e of [...(sec?.events || [])].reverse()) {
     const id = `si_${e.id}`;
-    if (bus.get(id)) continue;
+    if (Date.parse(e.at) < since || bus.get(id)) continue;
+    if (!store.legacy_synced_at || Date.parse(e.at) > Date.parse(store.legacy_synced_at)) store.legacy_synced_at = e.at;
     bus.publish({
       event_id: id, timestamp: e.at, event_type: `che.${e.type}`, source: e.source || 'security_intelligence',
       affected_resource: e.source || '', severity: SEVERITY[e.severity] || 'info',

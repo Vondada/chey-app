@@ -302,3 +302,18 @@ test('C22. "open security" by voice opens the SECURITY page and says its state',
   assert.equal(r.done.open_screen, 'security');
   assert.match(r.reply, /^Opening Security, sir\. Security is/);
 });
+
+test('C23. the core store stays under the storage value limit, and trimmed legacy events are not mirrored again', async () => {
+  const { fitStore, syncLegacyEvents, loadCore } = await import('./security_core_che.js');
+  const store = await loadCore({ get: async () => undefined });
+  const t0 = Date.parse('2026-10-01T00:00:00Z');
+  const sec = { events: Array.from({ length: 200 }, (_, i) => ({ id: `e${i}`, at: new Date(t0 + (200 - i) * 60_000).toISOString(), type: 'unknown_tokens', severity: 'medium', classification: 'suspicious', evidence: 'x'.repeat(280), source: 'auth' })) };
+  syncLegacyEvents(store, sec);
+  assert.ok(fitStore(store) <= 100_000);
+  assert.equal(JSON.stringify(store).length <= 100_000, true);
+  const before = store.tenants.owner.events.length;
+  assert.equal(syncLegacyEvents(store, sec), 0, 'nothing older than the watermark comes back');
+  assert.equal(store.tenants.owner.events.length, before);
+  sec.events.unshift({ id: 'new', at: new Date(t0 + 300 * 60_000).toISOString(), type: 'new_device', severity: 'info', classification: 'benign', evidence: 'one', source: 'devices' });
+  assert.equal(syncLegacyEvents(store, sec), 1);
+});
