@@ -57,6 +57,23 @@ test('simple questions and natural paraphrases of the same subject recall the pi
   }
 });
 
+test('typed and spoken variations: the iPhone\'s curly apostrophe, "whats" from speech, and a follow-up question', () => {
+  const data = pizzaSaved();
+  for (const message of [
+    'What’s my favorite food?',
+    'CHE, what’s my favorite food? Tell me how you know that.',
+    'chay whats my favorite food',
+    'What\'s my favorite food? Tell me how you know.',
+    'What\'s my favorite food, and where did you learn it?',
+  ]) {
+    const q = personalFactQuestion(message);
+    assert.ok(q, message);
+    assert.equal(q.subject, 'favorite food', message);
+    assert.match(answerPersonalFact(data, q, []).answer, /^Your favorite food is pizza\./, message);
+  }
+  assert.equal(personalFactQuestion('What\'s my favorite food, and where did you learn it?').learn, true);
+});
+
 test('a paraphrase that does not name the stored subject is not guessed at: it is a miss, not a made-up answer', () => {
   const data = pizzaSaved();
   assert.equal(personalFactQuestion('what do I like to eat?'), null);

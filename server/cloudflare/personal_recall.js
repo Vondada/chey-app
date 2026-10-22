@@ -14,7 +14,8 @@ import { ownerAttestedRecords } from './memory_provenance.js';
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const STOP = new Set(['the', 'a', 'an', 'my', 'your', 'of', 'to', 'in', 'is', 'are', 'and', 'or', 'it', 'that', 'this', 'me', 'you', 'i', 'do', 'did', 'know', 'what', 'which', 'whats', 'where']);
-const PERSONAL = /^(?:what(?:'s| is| are)?|which(?: one is)?|do you (?:know|remember)|tell me|remind me|what do you know about)\s+(?:is |are |was |about )?(?:my|the owner'?s?|your owner'?s?)\s+(.{2,60})$/i;
+// "whats" without an apostrophe is how speech-to-text often writes "what's".
+const PERSONAL = /^(?:what(?:'s|s| is| are)?|which(?: one is)?|do you (?:know|remember)|tell me|remind me|what do you know about)\s+(?:is |are |was |about )?(?:my|the owner'?s?|your owner'?s?)\s+(.{2,60})$/i;
 // Asks where a fact came from, or whether CHE really has it stored: "how do you know that", "whether you have a memory of me saying it".
 const LEARN = /\b(?:where|how) (?:did|do) you (?:learn|get|hear|know)\b|\bhow you know\b|\bwhether you (?:actually )?(?:have|remember)\b/i;
 // Trading, market, system and measurement words belong to their own routes: "what is my MAE" is not a personal fact.
@@ -38,7 +39,8 @@ function words(text) {
 
 /** The text with any leading wake prefix ("CHE, ", "Chay ") removed, whitespace collapsed. */
 export function stripWake(text) {
-  return String(text || '').replace(/\s+/g, ' ').trim().replace(WAKE, '').trim();
+  // The iPhone keyboard types curly apostrophes ("What’s"); they read as the straight one.
+  return String(text || '').replace(/[‘’ʼ]/g, "'").replace(/\s+/g, ' ').trim().replace(WAKE, '').trim();
 }
 
 /** True when the text is a question or a request, so it must never be saved or quoted as a fact. */
