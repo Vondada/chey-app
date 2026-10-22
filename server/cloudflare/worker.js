@@ -778,6 +778,13 @@ async function commandCenterProbe(env, token) {
   };
 }
 
+// Emergency warning signs about a person (the speaker or someone with them): the action and its source, no model.
+function emergencyReply(message) {
+  const flags = redFlags(String(message || ''));
+  if (!flags.length || !/\b(?:i|i'm|my|me|he|she|his|her|they|someone|somebody)\b/i.test(message)) return null;
+  return ndjsonReply(`${flags.map((f) => f.action).join(' ')} (${flags.map((f) => f.source).join('; ')}.) I can stay with you and help with anything else after that.`, { source: 'che_health_urgent', model_calls: 0, red_flags: flags.map((f) => f.id) });
+}
+
 function ndjsonReply(reply, meta = {}) {
   return new Response(
     JSON.stringify({ type: 'delta', delta: reply }) + '\n' +
@@ -3632,13 +3639,18 @@ async function runChatModel(env, { model, systemPrompt, compactPrompt, turns, me
 
 /// What the owner is actually doing, from his records, for legal-difference checks: music projects with samples,
 /// a running music business, collaborators. Nothing else is assumed.
-function activeLegalActivities(data = {}) {
+function activeLegalActivities(data = {}, legal = {}) {
   const acts = new Set();
   const projects = Array.isArray(data.projects) ? data.projects : [];
   if (projects.some((p) => p?.music?.samples?.length)) acts.add('sampling');
   if (projects.some((p) => p?.type === 'music')) acts.add('copyright_use');
   if ((data.music_workspaces || []).length || (data.pipeline || []).length) { acts.add('business_license'); acts.add('endorsement'); }
-  acts.add('recording');
+  // Recording only when a record shows it: a legal decision or followed rule about recording, or a recorded
+  // interview/podcast project. Never assumed for everyone.
+  const recordsRecording = (list) => (Array.isArray(list) ? list : []).some((x) => x?.activity === 'recording' || /\b(?:record(?:ing)? (?:calls?|conversations?|interviews?)|wiretap|eavesdrop\w*|one-party consent|two-party consent|all-party consent)\b/i.test(`${x?.issue || ''} ${x?.decision || ''} ${x?.record_id || ''} ${x?.title || ''}`));
+  // Activities the owner asked CHE about in the last 90 days are his own current activities.
+  for (const [act, at] of Object.entries(legal.activities_asked || {})) if (Date.now() - Date.parse(at) < 90 * 86400000) acts.add(act);
+  if (recordsRecording(legal.decisions) || recordsRecording(legal.subscriptions) || projects.some((p) => /\b(?:podcast|interview)\b/i.test(`${p?.type || ''} ${p?.title || ''}`))) acts.add('recording');
   return [...acts];
 }
 
@@ -4153,7 +4165,7 @@ export class CheState extends DurableObject {
       legal.settings.current = ask.place;
       await saveLegal(this.ctx.storage, legal);
       if (!legal.settings.home) return { text: `Noted: you are in ${to.name}. Tell me your home state or country and I will compare the rules for what you are doing.` };
-      const activities = activeLegalActivities(await this.loadData());
+      const activities = activeLegalActivities(await this.loadData(), legal);
       const diffs = legalDifferences({ from: legal.settings.home, to: ask.place, activities, categories: legal.settings.categories });
       return { text: speakDifferences(diffs, to.name), extra: { differences: diffs } };
     }
@@ -4181,6 +4193,12 @@ export class CheState extends DurableObject {
     }
     if (ask.here && !legal.settings.current && !legal.settings.home && !ask.place) {
       return { text: 'Where are you? Tell me the state or country. I do not track your location unless you turn on location legal alerts.' };
+    }
+    // What the owner asked about is a record of what he is doing: a later location change compares those rules.
+    if (ask.activities.length) {
+      const now = new Date().toISOString();
+      legal.activities_asked = { ...(legal.activities_asked || {}), ...Object.fromEntries(ask.activities.map((a) => [a, now])) };
+      await saveLegal(this.ctx.storage, legal);
     }
     const out = await this.legalAsk(legal, message, { jurisdictionId: ask.place, facts: ask.facts || {}, here: ask.here });
     if (ask.kind === 'alternative' && out.status === 'answered' && out.alternatives?.length) {
@@ -5571,6 +5589,9 @@ export class CheState extends DurableObject {
   // tool, the owner's data, memory, mailbox, autonomy, money, messages,
   // media, code or connections; owner actions are refused with no model call.
   async guestChat(body, message, tenant) {
+    // A guest's emergency gets the same deterministic 911/988 answer as the owner's, before any model call.
+    const emergency = !body?.attachment ? emergencyReply(message) : null;
+    if (emergency) return emergency;
     if (parseSlashCommand(message)) return ndjsonReply('Only the CHE owner can run commands, sir.', { source: 'che_command', ok: false, model_calls: 0 });
     // Like POST /api/job/cancel, which a guest device cannot reach: refused, with no model call.
     if (codingCancelIntent(message)) {
@@ -11441,11 +11462,9 @@ export class CheState extends DurableObject {
         // Legal Intelligence (owner, 2026-10-22): "is this legal?", "can I do this here?", lawful alternatives,
         // location differences, contracts, decisions and update checks. Answered from the legal index and official
         // sources; anything not indexed is said to be a gap, never guessed.
-        // Emergency warning signs come before anything else, with no model call. Owner or guest alike.
-        const emergency = !body.attachment ? redFlags(message) : [];
-        if (emergency.length && /\b(?:i|i'm|my|me|he|she|his|her|they|someone|somebody)\b/i.test(message)) {
-          return ndjsonReply(`${emergency.map((f) => f.action).join(' ')} (${emergency.map((f) => f.source).join('; ')}.) I can stay with you and help with anything else after that.`, { source: 'che_health_urgent', model_calls: 0, red_flags: emergency.map((f) => f.id) });
-        }
+        // Emergency warning signs come before anything else, with no model call (guests: in guestChat).
+        const emergency = !body.attachment ? emergencyReply(message) : null;
+        if (emergency) return emergency;
         // Expert Intelligence (owner, 2026-10-22): briefs, what to bring, after-visit notes, coverage, exams, upgrades,
         // medication labels. Owner only: cases are private and kept per compartment.
         const expertAsk = !body.attachment && expertIntent(message);

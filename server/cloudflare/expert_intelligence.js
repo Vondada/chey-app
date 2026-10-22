@@ -107,13 +107,24 @@ export const domainOfCategory = (cat) => EXPERT_CATEGORIES.find((c) => c.id === 
 
 /// Words that name a domain or a specialty in it.
 const DOMAIN_WORDS = [
-  ['health', /\b(?:medical|medicine|health|doctor|physician|symptoms?|diagnos\w*|labs?|lab results?|blood (?:work|test)|mri|x-?ray|medications?|meds|prescription|dose|cardiolog\w*|neurolog\w*|orthoped\w*|pain|injury|clinic|hospital)\b/i],
+  // Pain or an injury counts only in medical phrasing ("my back pain", "pain in my knee", "I injured"), never
+  // "pain point" or "injury time": a bare word must not pull the owner's medical case into a prompt.
+  ['health', /\b(?:medical|medicine|doctor|physician|symptoms?|diagnos\w*|lab results?|blood (?:work|test)|mri|x-?ray|medications?|meds|prescription|dosage|cardiolog\w*|neurolog\w*|orthoped\w*|clinic|hospital|(?:my|chronic|back|neck|chest|joint|knee|hip|shoulder|stomach|abdominal|nerve) pain|pain (?:in (?:my|the)|when i|after|medication|management|relief)|(?:my|an|the|old|work|sports) injur(?:y|ies)|injured|i hurt my|health (?:problem|condition|issue|insurance))\b/i],
   ['law', /\b(?:legal|law|lawyer|attorney|court|lawsuit|sue|contract|statute|lease dispute)\b/i],
   ['accounting_tax', /\b(?:tax(?:es)?|irs|accountant|cpa|deduction|1099|w-?2|bookkeeping)\b/i],
   ['finance', /\b(?:invest\w*|portfolio|loan|mortgage|interest rate|budget|retirement|401k|ira)\b/i],
   ['engineering', /\b(?:engineer\w*|structural|load|circuit|torque|tolerance)\b/i],
   ['insurance', /\b(?:insurance|claim denied|policy coverage|deductible)\b/i],
   ['government_benefits', /\b(?:disability (?:benefits|claim|application)|ssdi|ssi|medicaid|medicare|benefits? appeal)\b/i],
+  ['business', /\b(?:business plan|llc|corporation|incorporat\w*|startup|small business|business (?:license|licence|loan|funding)|revenue model|cash flow)\b/i],
+  ['software', /\b(?:software|programming|source code|codebase|api|database|bug|deploy\w*|refactor\w*)\b/i],
+  ['cybersecurity', /\b(?:cyber ?security|security breach|threat model\w*|vulnerabilit\w*|malware|phishing|ransomware|penetration test\w*|encryption)\b/i],
+  ['real_estate', /\b(?:real estate|property (?:deed|title|purchase|tax)|landlord|tenant|lease|closing costs|escrow|zoning)\b/i],
+  ['intellectual_property', /\b(?:intellectual property|trademark|copyright|patent|licensing deal|royalt(?:y|ies)|infring\w*)\b/i],
+  ['music', /\b(?:music (?:theory|production|business)|mixing|mastering|chord|melody|songwriting|publishing (?:deal|rights))\b/i],
+  ['marketing', /\b(?:marketing|advertis\w*|seo|brand strategy|conversion rate|ad campaign|funnel)\b/i],
+  ['trading', /\b(?:trading|futures|options (?:trade|contract)|stock market|day trad\w*|risk management|stop loss|position siz\w*)\b/i],
+  ['science', /\b(?:scientific|peer[- ]reviewed|study (?:shows|found)|experiment|physics|chemistry|biology|research paper)\b/i],
 ];
 export function domainsIn(text) {
   return DOMAIN_WORDS.filter(([, re]) => re.test(String(text || ''))).map(([d]) => d);
@@ -139,6 +150,11 @@ export function addExpertSource(storage, input, { now = new Date().toISOString()
   const kl = new KnowledgeLibrary(storage);
   const ref = kl.catalog({ ...input, category: `expert_${domain}` }, { now });
   if (ref.error) return ref;
+  // The same reference already filed in one of the owner's own categories stays where he put it; registering it
+  // as expert here would count it as covered while expert retrieval (which searches expert_<domain>) never finds it.
+  if (ref.duplicate && ref.category !== `expert_${domain}`) {
+    return { error: `This reference is already in your library under "${ref.category}", so I did not add it as a ${DOMAINS[domain].name} expert source. Move it to the ${DOMAINS[domain].name} expert category first if you want it used that way.`, duplicate: true, ref_id: ref.id };
+  }
   let indexed = ref;
   if (input.text) {
     indexed = kl.index(ref.id, input.text, { now });
@@ -364,8 +380,16 @@ const ATTORNEY_QUESTIONS = [
   'What should I avoid doing while this is pending?',
 ];
 
+const BRIEF_TITLES = { MEDICAL: 'Doctor Brief', LEGAL: 'Attorney Brief', DISABILITY: 'Disability Claim Brief', TAX: 'Tax Brief', INSURANCE: 'Insurance Claim Brief', BUSINESS_FUNDING: 'Funding Brief' };
+const MATTER_QUESTIONS = {
+  DISABILITY: ['Which medical records best support the claim?', 'What deadlines apply to this claim or appeal?', 'What evidence is missing?', 'Should a doctor complete a functional capacity form?', 'What happens if the claim is denied?'],
+  TAX: ['Which deductions or credits apply?', 'What deadlines or penalties apply?', 'Which records are missing?', 'Should anything be amended?', 'What should I keep for an audit?'],
+  INSURANCE: ['What exactly does the policy cover here?', 'Why was the claim reduced or denied, in writing?', 'What is the appeal deadline?', 'What evidence would change the decision?', 'Is an independent adjuster or attorney worth it?'],
+  BUSINESS_FUNDING: ['What will the lender or investor ask for?', 'What terms and costs apply?', 'What personal guarantee or collateral is required?', 'What deadlines apply?', 'What alternatives fit this stage?'],
+};
+
 export function questionsFor(c) {
-  const base = c.kind === 'LEGAL' ? ATTORNEY_QUESTIONS : DOCTOR_QUESTIONS;
+  const base = c.kind === 'LEGAL' ? ATTORNEY_QUESTIONS : MATTER_QUESTIONS[c.kind] || DOCTOR_QUESTIONS;
   return [...c.questions.map((q) => q.text), ...base].slice(0, 7);
 }
 
@@ -409,10 +433,22 @@ export function professionalBrief(c, { legal = null } = {}) {
     if (legal?.sources?.length) body.push('Applicable authority (CHE research, to confirm with the attorney):', ...legal.sources.map((s) => `- ${s.citation}: ${s.summary}`));
     if (legal?.why?.conflict) body.push(`Uncertainty: conflicting authority (${legal.why.conflict.join(' vs ')}).`);
     body.push(...section('Decisions so far', c.decisions));
+  } else if (!['MEDICAL', 'DISABILITY'].includes(c.kind)) {
+    // Tax, insurance and business-funding matters: the facts, papers and deadlines, with no medical sections.
+    body.push(`${BRIEF_TITLES[c.kind].toUpperCase()}: ${c.title}`);
+    body.push(`Issue: ${c.reason || 'not stated yet'}`);
+    if (!c.reason) missing.push('the issue in one sentence');
+    body.push(...section('People and organisations', c.people));
+    body.push(...section('Timeline', sortByDate(c.timeline), (t) => `${t.date || 'undated'}: ${t.text}`));
+    body.push(...section('Documents', c.documents, (d) => `${d.text}${d.ref ? ` [${d.ref}]` : ''}`));
+    body.push(...section('Deadlines', c.deadlines));
+    body.push(...section('Decisions so far', c.decisions));
+    body.push(...section('Professional notes so far (verbatim)', c.professional_notes, (n) => `${n.date} ${n.who}: "${n.verbatim}"`));
   } else {
-    body.push(`DOCTOR BRIEF: ${c.title}`);
-    body.push(`Reason for visit: ${c.reason || 'not stated yet'}`);
-    if (!c.reason) missing.push('reason for visit');
+    body.push(`${c.kind === 'DISABILITY' ? 'DISABILITY CLAIM BRIEF' : 'DOCTOR BRIEF'}: ${c.title}`);
+    body.push(`${c.kind === 'DISABILITY' ? 'Claim' : 'Reason for visit'}: ${c.reason || 'not stated yet'}`);
+    if (!c.reason) missing.push(c.kind === 'DISABILITY' ? 'the claim in one sentence' : 'reason for visit');
+    if (c.kind === 'DISABILITY') body.push(...section('Deadlines', c.deadlines));
     body.push(...section('Symptoms', c.symptoms));
     body.push(...section('Timeline', sortByDate(c.timeline), (t) => `${t.date || 'undated'}: ${t.text}`));
     body.push(...section('Relevant history', c.history));
@@ -428,8 +464,10 @@ export function professionalBrief(c, { legal = null } = {}) {
   body.push('Questions to ask:', ...questionsFor(c).map((q, i) => `${i + 1}. ${q}`));
   body.push('Bring:', ...bringList(c).map((b) => `- ${b}`));
   if (missing.length) body.push(`Missing from the file: ${missing.join(', ')}.`);
-  body.push(c.kind === 'LEGAL' ? 'Prepared by CHE from your records for your attorney. Not legal advice.' : 'Prepared by CHE from your records for your clinician. Not a diagnosis.');
-  return { title: c.kind === 'LEGAL' ? 'Attorney Brief' : 'Doctor Brief', text: body.join('\n'), missing, referrals: refs };
+  body.push(c.kind === 'LEGAL' ? 'Prepared by CHE from your records for your attorney. Not legal advice.'
+    : c.kind === 'MEDICAL' ? 'Prepared by CHE from your records for your clinician. Not a diagnosis.'
+      : `Prepared by CHE from your records for your ${CASE_KINDS[c.kind].professional}. Not professional advice.`);
+  return { title: BRIEF_TITLES[c.kind] || 'Doctor Brief', text: body.join('\n'), missing, referrals: refs };
 }
 
 // ─── Competency tests ─────────────────────────────────────────────────────

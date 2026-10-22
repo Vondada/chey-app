@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {
   DOMAINS, SOURCE_TIERS, tierOf, addExpertSource, domainCoverage, speakCoverage, redFlags, readLabs, labelInteractions,
   openCase, addToCase, addProfessionalNote, professionalBrief, bringList, referralsFor, questionsFor, runExam,
-  expertPromptContext, expertIntent, upgradePlan, sumRecords, specialtyAsk, HIGH_STAKES_CONTRACT,
+  expertPromptContext, expertIntent, upgradePlan, sumRecords, specialtyAsk, HIGH_STAKES_CONTRACT, domainsIn,
 } from './expert_intelligence.js';
 import { KnowledgeLibrary, KNOWLEDGE_CATEGORIES } from './knowledge_library.js';
 import { legalAnswer } from './legal_intelligence.js';
@@ -206,4 +206,56 @@ test('upgrade: an evidence-based plan from current coverage, not a claim of new 
   assert.deepEqual(p.targets, ['contracts']);
   assert.equal(p.before.indexed, 0);
   assert.match(p.steps[1], /catalogue the rest as not read/);
+});
+
+// ─── Codex review of #459 ───────────────────────────────────────────────────
+
+test('a bare "pain" or "injury" is not a medical question: no medical case reaches the prompt', async () => {
+  const s = await storage();
+  const state = { cases: [], audit: [] };
+  const c = openCase(state, { kind: 'MEDICAL', title: 'Back' }).case;
+  addToCase(state, c.id, 'symptoms', 'numb left leg');
+  addToCase(state, c.id, 'medications', { text: 'gabapentin' });
+  for (const q of ['What does pain point mean in marketing?', 'How much injury time was added in the match?']) {
+    assert.ok(!domainsIn(q).includes('health'), q);
+    assert.doesNotMatch(expertPromptContext(s, q, { cases: state.cases }), /gabapentin|numb left leg/, q);
+  }
+  for (const q of ['My back pain is worse today', 'I injured my knee', 'Pain in my shoulder when I lift']) assert.ok(domainsIn(q).includes('health'), q);
+  assert.match(expertPromptContext(s, 'My back pain is worse today', { cases: state.cases }), /gabapentin/);
+});
+
+test('every declared domain is recognised, so its high-stakes contract and sources apply', async () => {
+  const samples = {
+    cybersecurity: 'What does my cybersecurity source say about threat modeling?', trading: 'How should I size a position in futures?',
+    real_estate: 'What are typical closing costs on a real estate purchase?', intellectual_property: 'Can I trademark my band name?',
+    software: 'How do I refactor this database query?', business: 'Should my startup be an LLC?', marketing: 'How do I improve my conversion rate?',
+    music: 'How do I get better at mixing and mastering?', science: 'What did the peer-reviewed study find?',
+  };
+  for (const [d, q] of Object.entries(samples)) assert.ok(domainsIn(q).includes(d), `${d}: ${q}`);
+  for (const id of Object.keys(DOMAINS)) assert.ok(Object.values(samples).concat(['legal contract', 'my doctor', 'tax deduction', 'mortgage rate', 'structural load', 'insurance claim denied', 'ssdi appeal']).some((q) => domainsIn(q).includes(id)), `${id} is recognised`);
+  const s = await storage();
+  assert.match(expertPromptContext(s, samples.cybersecurity), /HIGH-STAKES FIELD|Cybersecurity/);
+});
+
+test('briefs follow the case kind: tax, insurance and funding get no medical sections', () => {
+  const state = { cases: [], audit: [] };
+  for (const [kind, title, pro] of [['TAX', 'Tax Brief', 'accountant'], ['INSURANCE', 'Insurance Claim Brief', 'insurance adjuster or attorney'], ['BUSINESS_FUNDING', 'Funding Brief', 'lender or investor']]) {
+    const c = openCase(state, { kind, title: `${kind} matter` }).case;
+    const b = professionalBrief(c);
+    assert.equal(b.title, title);
+    assert.doesNotMatch(b.text, /Symptoms|medications|clinician|DOCTOR BRIEF/i, kind);
+    assert.match(b.text, new RegExp(`for your ${pro}\\. Not professional advice\\.$`));
+  }
+  const d = professionalBrief(openCase(state, { kind: 'DISABILITY', title: 'SSDI' }).case);
+  assert.equal(d.title, 'Disability Claim Brief');
+  assert.match(d.text, /^DISABILITY CLAIM BRIEF: SSDI[\s\S]*Current medications[\s\S]*for your disability representative/);
+});
+
+test('a reference already filed in the owner\'s own category is not silently counted as an expert source', async () => {
+  const s = await storage();
+  const kl = new KnowledgeLibrary(s);
+  kl.catalog({ title: 'Threat Modeling', creator: 'Adam Shostack', kind: 'book', category: KNOWLEDGE_CATEGORIES[0].id, license: 'all_rights_reserved' });
+  const out = addExpertSource(s, { domain: 'cybersecurity', title: 'Threat Modeling', creator: 'Adam Shostack', kind: 'book', source_type: 'textbook', license: 'all_rights_reserved' });
+  assert.match(out.error, /already in your library under/);
+  assert.equal(domainCoverage(s, 'cybersecurity').indexed ?? 0, 0);
 });
