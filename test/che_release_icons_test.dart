@@ -1,9 +1,11 @@
 // Owner, live iPhone 2026-10-22: the Chat header showed "?" boxes. The installed app's icon font holds only the icons
 // its build used (Flutter keeps just those glyphs), and a Shorebird patch cannot add glyphs. An icon first used after
 // that build draws as a "?" box until a new IPA ships. test/fixtures/release_icons.txt lists the icons compiled into
-// the build on the owner's iPhone (b81cbe4, #395 [ios-build]): only files reachable from lib/main.dart count, as in the
-// release's tree shaking. When a new IPA ships, regenerate it from that commit:
-//   node tool/release_icons.mjs <ipa-commit> > test/fixtures/release_icons.txt
+// the build on the owner's iPhone (b81cbe4, #395 [ios-build]): icons used in files reachable from lib/main.dart AND
+// present in the tree-shaken font of a real release build of that commit. When a new IPA ships, regenerate it:
+//   (worktree at <ipa-commit>) flutter create . --platforms web && flutter build web --release
+//   python3 tool/compiled_icons.py build/web/assets/fonts/MaterialIcons-Regular.otf > /tmp/compiled.txt
+//   node tool/release_icons.mjs <ipa-commit> /tmp/compiled.txt > test/fixtures/release_icons.txt
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';

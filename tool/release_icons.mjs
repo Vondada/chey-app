@@ -2,13 +2,18 @@
 // A Flutter release keeps only the icon glyphs reachable from lib/main.dart, so this walks the import, export and part
 // graph from lib/main.dart at the given commit and collects Icons.<name> from those files only. A file nothing imports
 // (dead code) contributes nothing, so an icon used only there is never treated as shipped.
-// Usage: node tool/release_icons.mjs <ipa-commit> > test/fixtures/release_icons.txt
+// A whole imported file still counts here even where the tree shaker drops some of its classes, so the list is narrowed
+// to the glyphs a real build of the same commit compiled (tool/compiled_icons.py on a web release build, which uses the
+// same icon tree shaking). An icon must be in both lists.
+// Usage: node tool/release_icons.mjs <ipa-commit> <compiled-names.txt> > test/fixtures/release_icons.txt
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
 const commit = process.argv[2];
-if (!commit) {
-  console.error('usage: node tool/release_icons.mjs <commit>');
+const compiledFile = process.argv[3];
+if (!commit || !compiledFile) {
+  console.error('usage: node tool/release_icons.mjs <commit> <compiled-names.txt>');
   process.exit(2);
 }
 const show = (file) => {
@@ -30,4 +35,5 @@ while (queue.length) {
     else if (!uri.includes(':')) queue.push(path.posix.normalize(path.posix.join(path.posix.dirname(file), uri)));
   }
 }
-process.stdout.write([...icons].sort().join('\n') + '\n');
+const compiled = new Set(readFileSync(compiledFile, 'utf8').split('\n').map((l) => l.trim()).filter(Boolean));
+process.stdout.write([...icons].filter((i) => compiled.has(i)).sort().join('\n') + '\n');
