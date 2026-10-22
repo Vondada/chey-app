@@ -9,7 +9,9 @@ import 'package:flutter/material.dart';
 import '../che_ui/che_agents.dart';
 import '../che_ui/che_rooms.dart';
 import '../che_ui/che_theme.dart';
+import '../che_ui/che_hud.dart';
 import 'che_agent_runtime.dart';
+import 'che_office_glass.dart';
 import '../widgets/che_native_scene_world.dart';
 
 class CheWarRoomScreen extends StatefulWidget {
@@ -88,7 +90,10 @@ class _CheWarRoomScreenState extends State<CheWarRoomScreen> {
       data: CheTheme.dark(),
       child: Scaffold(
         backgroundColor: CheColors.screen,
-        appBar: AppBar(backgroundColor: Colors.transparent, title: const Text('War Room')),
+        appBar: AppBar(
+          backgroundColor: Colors.transparent,
+          title: cheHudActive ? CheChromeText('War Room', maxLines: 1, style: CheType.title) : const Text('War Room'),
+        ),
         body: SafeArea(
           top: false,
           child: m == null
@@ -108,7 +113,7 @@ class _CheWarRoomScreenState extends State<CheWarRoomScreen> {
                         child: Padding(
                           padding: const EdgeInsets.all(CheSpace.md),
                           child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                            Text('OBJECTIVE', style: CheType.overline.copyWith(color: _amber)),
+                            Text('OBJECTIVE', style: cheOfficeLabel(CheType.overline.copyWith(color: _amber), color: _amber)),
                             const SizedBox(height: CheSpace.xs),
                             Text(m.summary.objective, style: CheType.headline.copyWith(color: Colors.white)),
                             const SizedBox(height: CheSpace.md),
@@ -152,7 +157,7 @@ class _CheWarRoomScreenState extends State<CheWarRoomScreen> {
                     if (m.conflicts.isNotEmpty) _ListBlock(title: 'CONFLICTS', color: CheColors.warning, items: m.conflicts),
                     if (m.recommendations.isNotEmpty) _ListBlock(title: 'RECOMMENDATIONS', color: CheColors.accentAlt, items: m.recommendations),
                     const SizedBox(height: CheSpace.lg),
-                    Text('RESPONSIBILITIES', style: CheType.overline),
+                    Text('RESPONSIBILITIES', style: cheOfficeLabel(CheType.overline)),
                     const SizedBox(height: CheSpace.xs),
                     for (final p in m.participants)
                       Padding(
@@ -160,7 +165,7 @@ class _CheWarRoomScreenState extends State<CheWarRoomScreen> {
                         child: Text('${p.name} — ${p.responsibility}', style: CheType.bodyDim),
                       ),
                     const SizedBox(height: CheSpace.lg),
-                    Text('MEETING BOARD', style: CheType.overline),
+                    Text('MEETING BOARD', style: cheOfficeLabel(CheType.overline)),
                     const SizedBox(height: CheSpace.sm),
                     for (final post in m.board) _Post(post: post, agent: post.agentId == null ? null : _agents[post.agentId]),
                     if (m.summary.live)
@@ -220,10 +225,11 @@ class _Post extends StatelessWidget {
       'brief' => 'brief',
       _ => post.kind,
     };
-    return Container(
+    return CheOfficePanel(
       margin: const EdgeInsets.only(bottom: CheSpace.sm),
       padding: const EdgeInsets.all(CheSpace.md),
-      decoration: BoxDecoration(
+      glow: color,
+      legacy: BoxDecoration(
         color: color.withValues(alpha: 0.07),
         borderRadius: BorderRadius.circular(CheRadius.md),
         border: Border.all(color: color.withValues(alpha: 0.35)),
@@ -247,16 +253,17 @@ class _Block extends StatelessWidget {
   final Color color;
   final Widget child;
   @override
-  Widget build(BuildContext context) => Container(
+  Widget build(BuildContext context) => CheOfficePanel(
         margin: const EdgeInsets.only(bottom: CheSpace.md),
         padding: const EdgeInsets.all(CheSpace.md),
-        decoration: BoxDecoration(
+        glow: color,
+        legacy: BoxDecoration(
           color: color.withValues(alpha: 0.07),
           borderRadius: BorderRadius.circular(CheRadius.md),
           border: Border.all(color: color.withValues(alpha: 0.4)),
         ),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(title, style: CheType.overline.copyWith(color: color)),
+          Text(title, style: cheOfficeLabel(CheType.overline.copyWith(color: color), color: color)),
           const SizedBox(height: CheSpace.xs),
           child,
         ]),

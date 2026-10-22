@@ -5,6 +5,8 @@
 
 import 'package:flutter/material.dart';
 
+import '../agents/che_office_glass.dart';
+import 'che_hud.dart';
 import 'che_rooms.dart';
 import 'che_theme.dart';
 import 'che_transitions.dart';
@@ -330,7 +332,11 @@ class CheSectionPage extends StatelessWidget {
       padding: EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.sm, CheSpace.gutter, CheSpace.xxl + bottom),
       children: [
         Row(children: [
-          Expanded(child: Text(title, style: CheType.title, maxLines: 2, overflow: TextOverflow.ellipsis)),
+          Expanded(
+            child: cheHudActive
+                ? CheChromeText(title, style: CheType.title, maxLines: 2)
+                : Text(title, style: CheType.title, maxLines: 2, overflow: TextOverflow.ellipsis),
+          ),
           if (action != null) action!,
         ]),
         if (description != null) ...[
@@ -359,9 +365,9 @@ class CheFeatureCard extends StatelessWidget {
     final h = hue ?? CheColors.accent;
     return ChePressable(
       onTap: onTap,
-      child: Container(
+      child: CheOfficePanel(
         padding: const EdgeInsets.all(CheSpace.lg),
-        decoration: BoxDecoration(
+        legacy: BoxDecoration(
           color: CheColors.surface,
           borderRadius: BorderRadius.circular(CheRadius.lg),
           border: Border.all(color: CheColors.stroke),

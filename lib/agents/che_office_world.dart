@@ -16,6 +16,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../che_ui/che_agents.dart';
+import '../che_ui/che_hud.dart';
 import '../che_ui/che_theme.dart';
 import 'che_agent_runtime.dart';
 
@@ -503,7 +504,8 @@ class _CheOfficeWorldState extends State<CheOfficeWorld> with TickerProviderStat
         borderRadius: BorderRadius.circular(CheRadius.lg),
         child: Container(
           height: widget.height,
-          color: CheColors.surface,
+          // HUD glass: the map floats over the navy backdrop instead of a solid slab.
+          color: cheHudActive ? CheHud.navyTop.withValues(alpha: 0.6) : CheColors.surface,
           child: LayoutBuilder(builder: (context, constraints) {
             _fit(constraints.maxWidth);
             return Semantics(

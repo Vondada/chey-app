@@ -7,6 +7,8 @@ import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../agents/che_agent_runtime.dart' show CheMeetingSummary;
+import '../agents/che_office_glass.dart';
+import '../che_ui/che_hud.dart';
 import '../che_ui/che_theme.dart';
 import '../che_ui/che_voice_actions.dart';
 import '../che_ui/che_widgets.dart';
@@ -401,13 +403,13 @@ class _CheProjectsBoardState extends State<CheProjectsBoard> {
                 ],
                 if (item.metrics != null && item.metrics!.isNotEmpty) ...[
                   const SizedBox(height: CheSpace.lg),
-                  Text('EVAL METRICS', style: CheType.overline.copyWith(color: CheColors.accent)),
+                  Text('EVAL METRICS', style: cheOfficeLabel(CheType.overline.copyWith(color: CheColors.accent))),
                   const SizedBox(height: CheSpace.sm),
                   Text(_formatMetrics(item.metrics!), style: CheType.body),
                 ],
                 if (item.tasks.isNotEmpty) ...[
                   const SizedBox(height: CheSpace.lg),
-                  Text('LIVE TASKS', style: CheType.overline.copyWith(color: CheColors.accent)),
+                  Text('LIVE TASKS', style: cheOfficeLabel(CheType.overline.copyWith(color: CheColors.accent))),
                   const SizedBox(height: CheSpace.sm),
                   for (final t in item.tasks)
                     Padding(
@@ -466,7 +468,10 @@ class _CheProjectsBoardState extends State<CheProjectsBoard> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Projects', style: CheType.title),
+                    if (cheHudActive)
+                      CheChromeText('Projects', maxLines: 1, style: CheType.title)
+                    else
+                      Text('Projects', style: CheType.title),
                     Text(
                       'Apps, websites, businesses, Roblox — live from the Worker.',
                       style: CheType.caption,
@@ -582,7 +587,7 @@ class _CheProjectsBoardState extends State<CheProjectsBoard> {
     final child = body;
 
     if (widget.embedded) {
-      return Material(color: CheColors.bg, child: child);
+      return Material(color: CheColors.screen, child: child);
     }
     return child;
   }
@@ -610,9 +615,13 @@ class _Pill extends StatelessWidget {
           duration: CheMotion.fast,
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
           decoration: BoxDecoration(
-            color: selected ? CheColors.accent : CheColors.surface,
+            color: selected
+                ? CheColors.accent
+                : (cheHudActive ? CheHud.ice.withValues(alpha: 0.08) : CheColors.surface),
             borderRadius: BorderRadius.circular(CheRadius.pill),
-            border: Border.all(color: selected ? CheColors.accent : CheColors.strokeHi),
+            border: Border.all(
+              color: selected ? CheColors.accent : (cheHudActive ? CheHud.ice.withValues(alpha: 0.40) : CheColors.strokeHi),
+            ),
             boxShadow: selected
                 ? [BoxShadow(color: CheColors.accent.withValues(alpha: 0.35), blurRadius: 12)]
                 : null,
@@ -675,8 +684,9 @@ class _ProjectCard extends StatelessWidget {
         child: InkWell(
           onTap: onTap,
           borderRadius: BorderRadius.circular(CheRadius.lg),
-          child: Ink(
+          child: CheOfficeInkPanel(
             padding: const EdgeInsets.all(CheSpace.md),
+            glow: live ? CheColors.accent : null,
             decoration: BoxDecoration(
               color: CheColors.surfaceHi,
               borderRadius: BorderRadius.circular(CheRadius.lg),
@@ -737,3 +747,4 @@ class _ProjectCard extends StatelessWidget {
     );
   }
 }
+
