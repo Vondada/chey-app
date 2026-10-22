@@ -158,8 +158,6 @@ void main() {
     expect(find.descendant(of: find.byType(CheOfficeHeader), matching: find.text(r'$0.00 · Stripe not connected')), findsOneWidget);
     expect(find.bySemanticsLabel(RegExp(r'^Office header\. Built today: 1\.')), findsOneWidget);
 
-    // The default 3D surface has a voice-accessible flat-plan fallback.
-    await tester.tap(find.text('Flat floor plan'));
     await tester.pump();
 
     // Desks: full names, roles and the real job status (never a bare Idle).
