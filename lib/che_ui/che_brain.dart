@@ -662,9 +662,12 @@ How to think and talk (this is what makes you YOU, not a script):
 // ─────────────────────────────────────────────────────────────────────────
 
 class CheBrainCard extends StatelessWidget {
-  const CheBrainCard({super.key, required this.brain, required this.controller});
+  const CheBrainCard({super.key, required this.brain, required this.controller, this.onOpenReflections});
   final CheBrain brain;
   final CheAgentController controller;
+
+  /// Opens the daily reflections page. Hidden when null (for example, before sign-in).
+  final VoidCallback? onOpenReflections;
 
   Future<void> _addFact(BuildContext context) async {
     final ctrl = TextEditingController();
@@ -799,6 +802,21 @@ class CheBrainCard extends StatelessWidget {
                 Icon(Icons.chevron_right_rounded, color: CheColors.textFaint),
               ]),
             ),
+            if (onOpenReflections != null) ...[
+              const SizedBox(height: CheSpace.md),
+              ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: 48),
+                child: ChePressable(
+                  onTap: onOpenReflections,
+                  child: Row(children: [
+                    Icon(Icons.auto_awesome_outlined, size: 18, color: CheColors.accent),
+                    const SizedBox(width: 8),
+                    Expanded(child: Text('Daily reflections — items from every room', style: CheType.label)),
+                    Icon(Icons.chevron_right_rounded, color: CheColors.textFaint),
+                  ]),
+                ),
+              ),
+            ],
           ]),
         );
       },

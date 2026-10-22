@@ -12,7 +12,10 @@ import '../che_ui/che_log.dart';
 import '../che_ui/che_theme.dart';
 
 class CheInsightsRoom extends StatefulWidget {
-  const CheInsightsRoom({super.key, required this.map, required this.brain, required this.log, this.onOpenCloudLogs});
+  const CheInsightsRoom({super.key, required this.map, required this.brain, required this.log, this.onOpenCloudLogs, this.onOpenReflections});
+
+  /// Opens the daily reflections page from the Brain card.
+  final VoidCallback? onOpenReflections;
 
   /// Primary visualization (constellation / neural map). Fills the room.
   final Widget map;
@@ -47,7 +50,7 @@ class _CheInsightsRoomState extends State<CheInsightsRoom> {
               const SizedBox(height: CheSpace.sm),
               Text('Edit CHE’s soul, teach facts, and browse what she knows — same tools as before, from this Brain room.', style: CheType.caption),
               const SizedBox(height: CheSpace.md),
-              CheBrainCard(brain: widget.brain, controller: widget.log),
+              CheBrainCard(brain: widget.brain, controller: widget.log, onOpenReflections: widget.onOpenReflections),
             ],
           ),
         );

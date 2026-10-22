@@ -82,6 +82,7 @@ import 'agents/che_office_world.dart' show CheRoomVisitors;
 import 'home/che_live_steps.dart';
 import 'home/che_insights_room.dart';
 import 'home/che_cloud_logs_screen.dart';
+import 'brain/che_reflections_page.dart';
 import 'che_ui/che_agent_chat.dart' show CheAgentController;
 import 'che_ui/che_backend.dart' show CheBackend;
 import 'che_ui/che_brain.dart' show CheBrain;
@@ -1888,6 +1889,14 @@ OWNER AGENCY
             live: CheInsightsRoom(
             brain: _brain,
             log: _brainLog,
+            onOpenReflections: _deviceToken == null
+                ? null
+                : () => Navigator.of(context).push(MaterialPageRoute<void>(
+                      builder: (_) => CheReflectionsPage(
+                        baseUrl: () => cheAgentBaseUrl,
+                        headers: () => _authHeaders,
+                      ),
+                    )),
             onOpenCloudLogs: _deviceToken == null
                 ? null
                 : () => Navigator.of(context).push(MaterialPageRoute<void>(
