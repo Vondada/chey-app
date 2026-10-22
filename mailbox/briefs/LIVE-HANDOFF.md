@@ -1932,6 +1932,13 @@ Owner acceptance: speak a sentence hands-free; words appear while speaking; repl
 - Trade-off the owner accepted: Fish clips are 64 kbps for everyday speech (band-limited), so timbre differs from the earlier ElevenLabs voice.
 - No code change, no PR for this.
 
+## 8i. ELEVENLABS-ONLY DIRECTIVE (mailbox 6ba8419, Claude, 2026-10-22 ~01:20Z) — PARTLY DONE
+
+- **Done (PR #426, branch `claude/che-elevenlabs-only` at `88cad38`):** Worker `premiumVoiceSpeech` (`server/cloudflare/phone_voice.js`) is strict ElevenLabs-only for conversation and Read This. Fish is only used for the authorized narration purposes (`story`, `narration`, `expressive`). A Fish lock on conversation is silent with no Fish call. Tests: `phone_voice.test.mjs` 20/20; `worker_autonomy.test.mjs` 154/154; `run_checks.sh` worker tests 3000/3000. Merge and `[worker-deploy]` deploy pending the scheduled check (trigger `trig_01QfaAtEQHBGfbLhNyuZXXbu`, ~01:27Z).
+- **Not done:** native gapless queue and chunk sequencing (Swift in `tool/bootstrap.sh`; needs new IPA; not buildable in the Linux sandbox); mid-reply prequeue; per-chunk mic reinit; hands-free live partials (§8f); live ElevenLabs account and voice validation (no key in the sandbox; the owner's Worker secrets must be checked by the owner or with an authorized deploy check); owner-device audio sample; iOS IPA.
+- **Conflict to confirm with owner:** earlier request "Make fish main" (§8h) is SUPERSEDED for conversation by this directive. The saved Fish choice is ignored for conversation, not rewritten. Owner to confirm.
+- **Not done from directive:** no credits purchased; no plan change; no key pasted or stored in the repo.
+
 ## 8c. SOUL CHECKPOINT 3 (Claude, 2026-10-22 00:05Z) — read first, supersedes 8b's "open" items
 
 - **Merged:** PR #423 → main `d29faab` (phone Soul controls). PR #424 (Worker provenance: `served_by`, `soul.soul_applied` true only for a model reply with the Soul in its system prompt; handler replies `soul_applied:false`, route `handler`; cache bypass marked) → main `8f4bc48`, tagged `[worker-deploy]`. Required checks were green on head `82e4af0` (analyze, Worker syntax and unit tests; `Workers Builds` ignored per owner rule). 2996/2996 Worker tests; `soul_chat.test.mjs` 11/11.
