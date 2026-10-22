@@ -46,17 +46,18 @@ Map<String, dynamic> view({String status = 'complete'}) => {
 void main() {
   testWidgets('the stored study is shown as it is, accessible, and nothing speaks by itself', (tester) async {
     final asked = <String>[];
+    final read = <String>[];
     final posts = <http.Request>[];
     final semantics = tester.ensureSemantics();
     final client = MockClient((r) async {
       if (r.method == 'POST') {
         posts.add(r);
-        return http.Response(jsonEncode({'ok': true, 'status': 'complete', 'view': view()}), 200);
+        return http.Response(jsonEncode({'ok': true, 'status': 'complete', 'spoken': 'The last historical study finished 2026-10-22.', 'view': view()}), 200);
       }
       return http.Response(jsonEncode(view()), 200);
     });
     await tester.pumpWidget(MaterialApp(
-      home: Scaffold(body: SingleChildScrollView(child: CheTradingIntelligencePanel(baseUrl: () => 'https://che.test', headers: () => {}, onAsk: asked.add, client: client))),
+      home: Scaffold(body: SingleChildScrollView(child: CheTradingIntelligencePanel(baseUrl: () => 'https://che.test', headers: () => {}, onAsk: asked.add, onRead: read.add, client: client))),
     ));
     await tester.pumpAndSettle();
     expect(find.text('Trading Intelligence'), findsOneWidget);
@@ -69,6 +70,7 @@ void main() {
     expect(find.textContaining('81 paper trades in 2026, after removing 2 duplicates'), findsOneWidget);
     expect(find.textContaining('Not tested: Dirty Trez'), findsOneWidget);
     expect(asked, isEmpty, reason: 'the panel never speaks by itself');
+    expect(read, isEmpty, reason: 'loading the study is silent');
 
     expect(find.bySemanticsLabel(RegExp(r'^Micro E-mini Nasdaq-100 futures \(MNQ\)\. Verified\. 1850 daily bars')), findsOneWidget);
     expect(find.bySemanticsLabel(RegExp(r'1\. liquidity sweep and reclaim, above the 50-day average, 2 R: 41 out-of-sample trades, 0\.08 R per trade')), findsOneWidget);
@@ -88,8 +90,24 @@ void main() {
     expect(posts, hasLength(1));
     expect(jsonDecode(posts.single.body), {'action': 'run'});
     expect(find.text('The historical study finished.'), findsOneWidget);
-    expect(asked, [kReadIntelligenceAloud], reason: 'running it does not speak');
+    expect(read, ['The historical study finished. The last historical study finished 2026-10-22.'], reason: 'the action the owner started is reported aloud');
+    expect(asked, [kReadIntelligenceAloud]);
     semantics.dispose();
+  });
+
+  testWidgets('a Run that fails is reported aloud with its reason, and nothing changes', (tester) async {
+    final read = <String>[];
+    final client = MockClient((r) async => r.method == 'POST'
+        ? http.Response(jsonEncode({'detail': 'Only the CHE owner can view or run the historical trading study.'}), 403)
+        : http.Response(jsonEncode(view()), 200));
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(body: SingleChildScrollView(child: CheTradingIntelligencePanel(baseUrl: () => 'https://che.test', headers: () => {}, onAsk: (_) {}, onRead: read.add, client: client))),
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Run study'));
+    await tester.pumpAndSettle();
+    expect(read, ['The study did not start: Only the CHE owner can view or run the historical trading study.']);
+    expect(find.textContaining('The study did not start'), findsOneWidget);
   });
 
   testWidgets('before any study and for a guest, the panel says so instead of showing numbers', (tester) async {

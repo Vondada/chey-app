@@ -147,7 +147,7 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
         return [
           _pad(CheStrategyControlsPanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, client: p.client)),
           // Historical trading intelligence (owner, 2026-10-22): decades of history, out-of-sample ranking, paper signals.
-          _pad(CheTradingIntelligencePanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, client: p.client)),
+          _pad(CheTradingIntelligencePanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, onRead: widget.onRead, client: p.client)),
           _pad(CheLivePaperPanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, onRead: widget.onRead, client: p.client)),
         ];
       case CheTradingSection.account:

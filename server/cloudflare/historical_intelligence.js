@@ -16,9 +16,9 @@
 // and again with every later bar changed: earlier trades must come out identical.
 // Ranking uses out-of-sample walk-forward results only. Daily bars can rank an idea, never
 // promote one to live trading. Paper signals are journalled; no order is ever sent.
-import { parseYahooChart } from './market_feed.js';
+import { cmeSession, parseYahooChart } from './market_feed.js';
 import {
-  CANDIDATES, COSTS, ENGINE_VERSION, FILTERS, MIN_TRADES, candleProblems, causalContext,
+  CANDIDATES, COSTS, ENGINE_VERSION, FILTERS, MIN_TRADES, candleProblems, causalContext, etParts, tradeDayOf,
   evaluateWalkForward, newPortfolio, promotionVerdict, readTrades, stepPortfolio, summarize,
 } from './trading_evidence.js';
 
@@ -83,13 +83,34 @@ export async function fetchDaily(spec, { fetcher = fetch, now = Date.now() } = {
     let res = await ask(url);
     if (!res.ok) res = await ask(url.replace('query1.', 'query2.'));
     if (!res.ok) return { error: `${spec.provider} answered HTTP ${res.status}` };
-    // A daily bar is used only once its day is over.
-    const parsed = parseYahooChart(await res.json(), now, DAY_MS);
+    // Every bar the provider sent, then only the session still trading is dropped (dailyClosed).
+    const parsed = parseYahooChart(await res.json(), now, 1);
     if (parsed.error) return { error: parsed.error };
-    return { candles: parsed.candles, url };
+    return { candles: dailyClosed(spec, parsed.candles, now), url };
   } catch (error) {
     return { error: String(error?.name === 'TimeoutError' ? `${spec.provider} did not answer within 15 seconds` : error?.message || error).slice(0, 160) };
   }
+}
+
+/**
+ * A daily bar is used only once its session is over. The last bar is dropped only while its session is
+ * still trading: for futures, while CME is open and the bar is the current trading day's; for the cash
+ * index, during New York hours on that bar's own date. After the close, overnight and on weekends the
+ * newest completed bar is kept.
+ */
+export function dailyClosed(spec, candles, now = Date.now()) {
+  const last = candles.at(-1);
+  if (!last) return candles;
+  const lastDay = etParts(last.t).day;
+  let forming;
+  if (spec.kind === 'futures') {
+    forming = cmeSession(now).open && lastDay >= tradeDayOf(new Date(now).toISOString());
+  } else {
+    const { day, mins } = etParts(new Date(now).toISOString());
+    const weekday = !['Sat', 'Sun'].includes(new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short' }).format(new Date(now)));
+    forming = weekday && lastDay === day && mins < 16 * 60;
+  }
+  return forming ? candles.slice(0, -1) : candles;
 }
 
 /**
@@ -362,7 +383,7 @@ export async function startStudy(storage, { now = Date.now(), who = 'owner' } = 
   const next = {
     status: 'running', run_id: `hist-${iso(now)}`, started_at: iso(now), started_by: who, runs: (state.runs || 0) + 1,
     queue: [...DATASET_ORDER.map((id) => `ingest:${id}`), ...DATASET_ORDER.map((id) => `test:${id}`), 'compare'],
-    done: [], datasets: {}, errors: [], last_finished_at: state.last_finished_at || null,
+    done: [], datasets: {}, errors: [], last_finished_at: state.last_finished_at || null, completed: state.completed || null,
   };
   await storage.put(HI_STATE, next);
   return { started: true, state: next };
@@ -380,12 +401,13 @@ async function step(storage, state, { fetcher, now, load }) {
     if (manifest?.ok) {
       const bars = await loadBars(storage, id);
       const result = studyDataset(DATASETS[id], manifest, bars, { recentYear: new Date(now).getUTCFullYear() });
-      await storage.put(`${RESULT_PREFIX}${id}`, { ...result, run_id: state.run_id, at: iso(now) });
+      await saveResult(storage, state.run_id, { ...result, run_id: state.run_id, at: iso(now) });
       if (id === 'MNQ') state.signals_added = (await journalSignals(storage, result, { now })).length;
     }
   } else if (kind === 'compare') {
-    const results = await readResults(storage);
-    await storage.put(`${RESULT_PREFIX}compare`, await compareWithPaper(storage, results, { year: new Date(now).getUTCFullYear() }));
+    // Only this run's results: a dataset this run could not verify is left out, never filled from an older run.
+    const results = await readResults(storage, state.run_id);
+    await storage.put(`${RESULT_PREFIX}${state.run_id}:compare`, await compareWithPaper(storage, results, { year: new Date(now).getUTCFullYear() }));
   }
   state.queue.shift();
   state.done.push(job);
@@ -410,7 +432,10 @@ export async function studyStep(storage, { fetcher = fetch, now = Date.now(), bu
     state.status = 'complete';
     state.finished_at = iso(now);
     state.last_finished_at = state.finished_at;
+    // The dashboard shows one coherent snapshot: this run's datasets, results and comparison together.
+    state.completed = { run_id: state.run_id, finished_at: state.finished_at, datasets: state.datasets, errors: state.errors };
     await storage.put(HI_STATE, state);
+    await pruneResults(storage, state.run_id);
   }
   return state;
 }
@@ -426,13 +451,65 @@ export async function studyAlarm(storage, { fetcher = fetch, now = Date.now() } 
   return studyStep(storage, { fetcher, now, budgetMs: 10_000 });
 }
 
-export async function readResults(storage) {
+// Results are stored per run and in bounded pieces: a Durable Object value holds at most 128 KiB.
+const ROWS_PER_CHUNK = 5;
+const TRADES_PER_CHUNK = 250;
+const VALUE_LIMIT = 120_000;
+
+async function putBounded(storage, key, value) {
+  const bytes = new TextEncoder().encode(JSON.stringify(value)).byteLength;
+  if (bytes > VALUE_LIMIT) throw new Error(`${key} is ${bytes} bytes, over the storage limit`);
+  await storage.put(key, value);
+}
+
+export async function saveResult(storage, runId, result) {
+  const base = `${RESULT_PREFIX}${runId}:${result.dataset}`;
+  const { rows, trades, ...meta } = result;
+  const rowChunks = Math.ceil(rows.length / ROWS_PER_CHUNK);
+  for (let i = 0; i < rowChunks; i++) await putBounded(storage, `${base}:rows:${i}`, rows.slice(i * ROWS_PER_CHUNK, (i + 1) * ROWS_PER_CHUNK));
+  const tradeChunks = {};
+  for (const [key, list] of Object.entries(trades || {})) {
+    tradeChunks[key] = Math.ceil(list.length / TRADES_PER_CHUNK);
+    for (let i = 0; i < tradeChunks[key]; i++) await putBounded(storage, `${base}:trades:${key}:${i}`, list.slice(i * TRADES_PER_CHUNK, (i + 1) * TRADES_PER_CHUNK));
+  }
+  // The meta record goes last, so a result is readable only once every piece is stored.
+  await putBounded(storage, `${base}:meta`, { ...meta, row_chunks: rowChunks, trade_chunks: tradeChunks });
+}
+
+export async function loadResult(storage, runId, id, { withTrades = false } = {}) {
+  const base = `${RESULT_PREFIX}${runId}:${id}`;
+  const meta = await storage.get(`${base}:meta`);
+  if (!meta) return null;
+  const rows = [];
+  for (let i = 0; i < meta.row_chunks; i++) rows.push(...((await storage.get(`${base}:rows:${i}`)) || []));
+  const trades = {};
+  if (withTrades) {
+    for (const [key, n] of Object.entries(meta.trade_chunks || {})) {
+      trades[key] = [];
+      for (let i = 0; i < n; i++) trades[key].push(...((await storage.get(`${base}:trades:${key}:${i}`)) || []));
+    }
+  }
+  const { row_chunks, trade_chunks, ...rest } = meta;
+  return { ...rest, rows, trades };
+}
+
+/** One run's results, in dataset order. Without a run id: the last completed study's snapshot. */
+export async function readResults(storage, runId, opts = {}) {
+  const id = runId ?? (await readState(storage)).completed?.run_id;
+  if (!id) return [];
   const out = [];
-  for (const id of DATASET_ORDER) {
-    const r = await storage.get(`${RESULT_PREFIX}${id}`);
+  for (const ds of DATASET_ORDER) {
+    const r = await loadResult(storage, id, ds, opts);
     if (r) out.push(r);
   }
   return out;
+}
+
+// Keeps only the newest completed run's results.
+async function pruneResults(storage, keepRunId) {
+  const all = await storage.list({ prefix: RESULT_PREFIX });
+  const stale = [...all.keys()].filter((k) => !k.startsWith(`${RESULT_PREFIX}${keepRunId}:`));
+  for (let i = 0; i < stale.length; i += 100) await storage.delete(stale.slice(i, i + 100));
 }
 
 // ─── Dashboard view and the auditable report ─────────────────────────────
@@ -445,14 +522,16 @@ const rowView = (r) => r && ({
 
 export async function intelligenceView(storage) {
   const state = await readState(storage);
-  const results = await readResults(storage);
-  const compare = (await storage.get(`${RESULT_PREFIX}compare`)) || null;
+  const snapshot = state.completed || null;
+  const results = await readResults(storage, snapshot?.run_id || '');
+  const compare = snapshot ? (await storage.get(`${RESULT_PREFIX}${snapshot.run_id}:compare`)) || null : null;
   const intraday = await storage.get(LIVE_BACKTEST);
   const signals = ((await storage.get(HI_SIGNALS)) || []).slice(-10).reverse();
   return {
     version: HI_VERSION, engine_version: ENGINE_VERSION,
+    snapshot: snapshot ? { run_id: snapshot.run_id, finished_at: snapshot.finished_at, errors: snapshot.errors || [] } : null,
     state: { status: state.status, run_id: state.run_id || null, started_at: state.started_at || null, finished_at: state.finished_at || null, done: state.done?.length || 0, total: (state.done?.length || 0) + (state.queue?.length || 0), errors: state.errors || [] },
-    datasets: DATASET_ORDER.map((id) => state.datasets?.[id] || { id, label: DATASETS[id].label, provider_symbol: DATASETS[id].provider_symbol, ok: false, error: 'not fetched yet' }),
+    datasets: DATASET_ORDER.map((id) => (snapshot ? snapshot.datasets?.[id] : state.datasets?.[id]) || { id, label: DATASETS[id].label, provider_symbol: DATASETS[id].provider_symbol, ok: false, error: 'not fetched yet' }),
     results: results.map((r) => ({
       dataset: r.dataset, at: r.at, configs: r.configs, ranked: r.ranking.length,
       edge_shown: r.rows.filter((x) => x.edge_shown).length,
@@ -467,7 +546,7 @@ export async function intelligenceView(storage) {
 
 export async function intelligenceReport(storage) {
   const view = await intelligenceView(storage);
-  const results = await readResults(storage);
+  const results = await readResults(storage, view.snapshot?.run_id || '', { withTrades: true });
   return {
     title: 'CHE historical trading intelligence report',
     ...view,
@@ -475,7 +554,7 @@ export async function intelligenceReport(storage) {
       engine: `trading_evidence.js stepPortfolio (${ENGINE_VERSION}), unchanged`,
       fills: 'Signal on a closed daily bar; market fill at the next open with half the spread and slippage; stop checked before target inside one bar; a plan whose next open is already past its stop or target is skipped.',
       costs: COSTS,
-      leakage: 'Each rule rerun with every bar after the 70% point removed, and again with those bars changed; trades closed before that point must be identical.',
+      leakage: 'Each rule rerun with every bar after the 70% point removed, and again with those bars scaled up and down; trades closed before that point, and entries made before it, must be identical.',
       walk_forward: `Anchored: first ${MIN_TRAIN * 100}% of bars train, then ${FOLDS} consecutive out-of-sample windows. Rules and parameters are fixed in code before the run; nothing is fitted.`,
       ranking: `Out-of-sample only: the low end of the 95% range of expectancy in R, with at least ${MIN_TRADES} out-of-sample trades and a passing leakage audit. Daily evidence can rank, never promote.`,
       multiple_testing: `${configs().length} configurations per dataset are tried, so some will look good by luck. "Edge shown" means the 95% range of out-of-sample expectancy stays above zero, which is still not proof.`,
@@ -513,7 +592,7 @@ export function speakIntelligence(view, kind = 'summary') {
   if (view.state.status === 'never run') {
     return 'No historical study has run yet, sir. Say "run the historical study" and I will fetch the free Nasdaq-100 histories, verify them and test every daily strategy. It costs nothing and places no orders.';
   }
-  if (view.state.status === 'running') lines.push(`The historical study is running: ${view.state.done} of ${view.state.total} steps done.`);
+  if (view.state.status === 'running') lines.push(`The historical study is running: ${view.state.done} of ${view.state.total} steps done.${view.snapshot ? ` These results are from the study finished ${view.snapshot.finished_at.slice(0, 10)}.` : ''}`);
   else lines.push(`The last historical study finished ${view.state.finished_at?.slice(0, 10) || 'recently'}.`);
   if (kind === 'report') {
     for (const d of view.datasets) {

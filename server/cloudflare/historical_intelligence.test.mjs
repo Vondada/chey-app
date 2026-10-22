@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  DATASETS, HI_SIGNALS, canonicalBars, configs, dedupeTrades, ingestDataset, intelligenceIntent, intelligenceReport,
+  DATASETS, HI_SIGNALS, canonicalBars, dailyClosed, configs, dedupeTrades, ingestDataset, intelligenceIntent, intelligenceReport,
   intelligenceView, leakageAudit, loadBars, readState, regimes, sha256Hex, speakIntelligence, startStudy, studyAlarm,
   studyDataset, studyStep, verifyDataset,
 } from './historical_intelligence.js';
@@ -15,10 +15,17 @@ function storage() {
   const saved = new Map();
   return {
     saved,
+    largest: 0,
     get: async (key) => (Array.isArray(key) ? new Map(key.filter((k) => saved.has(k)).map((k) => [k, saved.get(k)])) : saved.get(key)),
-    put: async (key, value) => {
-      if (typeof key === 'object') for (const [k, v] of Object.entries(key)) saved.set(k, v);
-      else saved.set(key, value);
+    async put(key, value) {
+      const entries = typeof key === 'object' ? Object.entries(key) : [[key, value]];
+      for (const [k, v] of entries) {
+        // Durable Object storage refuses a value over 128 KiB.
+        const bytes = new TextEncoder().encode(JSON.stringify(v)).byteLength;
+        if (bytes > 131072) throw new Error(`${k}: ${bytes} bytes is over the 128 KiB value limit`);
+        this.largest = Math.max(this.largest, bytes);
+        saved.set(k, v);
+      }
     },
     delete: async (keys) => { for (const k of [].concat(keys)) saved.delete(k); },
     list: async ({ prefix = '' } = {}) => new Map([...saved.keys()].filter((k) => k.startsWith(prefix)).sort().map((k) => [k, saved.get(k)])),
@@ -208,4 +215,59 @@ test('before any study, CHE says so instead of inventing results; Dirty Trez is 
   const view = await intelligenceView(storage());
   assert.match(speakIntelligence(view), /No historical study has run yet/);
   assert.match(speakIntelligence(view, 'dirty'), /no written rules for Dirty Trez/);
+});
+
+test('every stored value stays under the 128 KiB limit, even for a decades-long dataset with its trades', async () => {
+  const st = storage();
+  const long = { ...series, '^NDX': bars(10400, { seed: 21, start: '1985-10-01', price: 110 }) };
+  const fetcher = async (url) => ({ ok: true, json: async () => yahooJson(long[decodeURIComponent(String(url).split('/chart/')[1].split('?')[0])]) });
+  await startStudy(st, { now: NOW });
+  const state = await studyStep(st, { fetcher, now: NOW });
+  assert.equal(state.status, 'complete');
+  assert.deepEqual(state.errors, [], 'no result was lost to the storage limit');
+  assert.ok(st.largest < 131072, `largest value ${st.largest} bytes`);
+  const report = await intelligenceReport(st);
+  const ndx = report.results.find((r) => r.dataset === 'NDX');
+  assert.equal(ndx.rows.length, 30);
+  assert.ok(Object.values(ndx.trades).every((list) => list.length > 0), 'the top configurations keep every trade');
+});
+
+test('a later run that cannot verify a dataset never mixes in the earlier run\'s results', async () => {
+  const st = storage();
+  await startStudy(st, { now: NOW });
+  await studyStep(st, { fetcher: fakeFetch, now: NOW });
+  const first = await intelligenceView(st);
+  assert.equal(first.results.length, 3);
+  // The next day NQ is refused by the provider.
+  const later = NOW + 25 * 3600_000;
+  const refusing = async (url) => (String(url).includes('NQ%3DF') && !String(url).includes('MNQ') ? { ok: false, status: 429 } : fakeFetch(url));
+  await startStudy(st, { now: later });
+  await studyStep(st, { fetcher: refusing, now: later, budgetMs: 0 });
+  const during = await intelligenceView(st);
+  assert.equal(during.state.status, 'running');
+  assert.equal(during.results.length, 3, 'while it runs, the last finished study is shown whole');
+  assert.equal(during.snapshot.run_id, first.snapshot.run_id);
+  while ((await readState(st)).status === 'running') await studyStep(st, { fetcher: refusing, now: later });
+  const after = await intelligenceView(st);
+  assert.deepEqual(after.results.map((r) => r.dataset), ['MNQ', 'NDX'], 'NQ has no result in this run, and none is borrowed');
+  assert.equal(after.datasets.find((d) => d.id === 'NQ').ok, false);
+  assert.match(after.datasets.find((d) => d.id === 'NQ').error, /HTTP 429/);
+  assert.ok(![...st.saved.keys()].some((k) => k.startsWith(`hist_result:${first.snapshot.run_id}:`)), 'the older run is pruned');
+});
+
+test('the newest completed daily bar is kept after the close, overnight and at the weekend; a trading session is not', () => {
+  const day = (iso) => ({ t: iso, o: 1, h: 2, l: 0.5, c: 1.5, v: 1 });
+  const fut = [day('2026-10-20T04:00:00Z'), day('2026-10-21T04:00:00Z'), day('2026-10-22T04:00:00Z')];
+  // Thursday 22 Oct 12:00 New York: CME open, the 22nd's session is trading.
+  assert.equal(dailyClosed(DATASETS.MNQ, fut, Date.parse('2026-10-22T16:00:00Z')).length, 2);
+  // Thursday 17:30 New York: the daily break; the 22nd is complete.
+  assert.equal(dailyClosed(DATASETS.MNQ, fut, Date.parse('2026-10-22T21:30:00Z')).length, 3);
+  // Saturday: the week is over.
+  assert.equal(dailyClosed(DATASETS.MNQ, fut, Date.parse('2026-10-24T15:00:00Z')).length, 3);
+  // Thursday 20:00 New York: Friday's session trades, the 22nd stays complete.
+  assert.equal(dailyClosed(DATASETS.MNQ, fut, Date.parse('2026-10-23T00:00:00Z')).length, 3);
+  // Cash index: during New York hours on the bar's date it is still forming; after 16:00 it is complete.
+  assert.equal(dailyClosed(DATASETS.NDX, fut, Date.parse('2026-10-22T18:00:00Z')).length, 2);
+  assert.equal(dailyClosed(DATASETS.NDX, fut, Date.parse('2026-10-22T21:00:00Z')).length, 3);
+  assert.equal(dailyClosed(DATASETS.NDX, fut, Date.parse('2026-10-23T02:00:00Z')).length, 3);
 });

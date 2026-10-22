@@ -9,6 +9,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show HapticFeedback;
 import 'package:http/http.dart' as http;
 import '../che_ui/che_theme.dart';
 
@@ -45,10 +46,12 @@ Map<String, dynamic> _map(Object? v) => v is Map ? Map<String, dynamic>.from(v) 
 List<Map<String, dynamic>> _list(Object? v) => ((v as List?) ?? const []).whereType<Map>().map((m) => Map<String, dynamic>.from(m)).toList();
 
 class CheTradingIntelligencePanel extends StatefulWidget {
-  const CheTradingIntelligencePanel({super.key, required this.baseUrl, required this.headers, required this.onAsk, this.client});
+  const CheTradingIntelligencePanel({super.key, required this.baseUrl, required this.headers, required this.onAsk, this.onRead, this.client});
   final String Function() baseUrl;
   final Map<String, String> Function() headers;
   final void Function(String prompt) onAsk;
+  /// Speaks the outcome of an action the owner started (Run study). Passive loading never speaks.
+  final void Function(String text)? onRead;
   final http.Client? client;
 
   @override
@@ -83,9 +86,11 @@ class _CheTradingIntelligencePanelState extends State<CheTradingIntelligencePane
     }
   }
 
-  // The owner pressed Run: the result is shown as quiet text; it is read aloud only from Read aloud.
+  // The owner pressed Run: the outcome is shown, spoken and felt, success or failure (AGENTS.md: report every action).
   Future<void> _run() async {
     setState(() { _running = true; _action = 'Running the historical study. Free public data only; no order is placed.'; });
+    var ok = false;
+    var said = '';
     try {
       final r = await _http
           .post(Uri.parse('${widget.baseUrl()}/api/trading/intelligence'), headers: {...widget.headers(), 'content-type': 'application/json'}, body: jsonEncode({'action': 'run'}))
@@ -93,18 +98,28 @@ class _CheTradingIntelligencePanelState extends State<CheTradingIntelligencePane
       final j = jsonDecode(utf8.decode(r.bodyBytes));
       if (!mounted) return;
       if (r.statusCode == 200 && j is Map && j['view'] is Map) {
-        setState(() {
-          _d = Map<String, dynamic>.from(j['view'] as Map);
-          _action = j['status'] == 'complete' ? 'The historical study finished.' : 'The historical study is running; it continues on its own.';
-        });
+        ok = true;
+        final lead = j['status'] == 'complete' ? 'The historical study finished.' : 'The historical study is running; it continues on its own.';
+        said = [lead, if (j['spoken'] is String && '${j['spoken']}'.isNotEmpty) '${j['spoken']}'].join(' ');
+        setState(() { _d = Map<String, dynamic>.from(j['view'] as Map); _action = lead; });
       } else {
-        setState(() => _action = 'The study did not start: ${j is Map ? j['detail'] ?? r.statusCode : r.statusCode}.');
+        final reason = '${j is Map ? j['detail'] ?? r.statusCode : r.statusCode}'.replaceFirst(RegExp(r'\.$'), '');
+        said = 'The study did not start: $reason.';
+        setState(() => _action = said);
       }
     } catch (_) {
-      if (mounted) setState(() => _action = 'Could not reach CHE to run the study. Nothing was changed.');
+      said = 'Could not reach CHE to run the study. Nothing was changed.';
+      if (mounted) setState(() => _action = said);
     } finally {
       if (mounted) setState(() => _running = false);
     }
+    if (!mounted) return;
+    if (ok) {
+      unawaited(HapticFeedback.mediumImpact());
+    } else {
+      unawaited(HapticFeedback.heavyImpact());
+    }
+    widget.onRead?.call(said);
   }
 
   Widget _button(String label, String semantics, IconData icon, VoidCallback? onPressed) => Semantics(
