@@ -1925,6 +1925,13 @@ Owner acceptance: speak a sentence hands-free; words appear while speaking; repl
 - Voice diagnostics (owner screenshots, 07:47 local): CHE voice (ElevenLabs) = **Out of credits**; Fish Audio (backup) = Working; last reply "Fish Audio (backup, the chosen voice failed first), 1 of 1 clips, one voice, iPhone setup about 254 ms a clip"; loudness -14.8 dBFS speech; "Why not spoken: Mary is out of credits"; hands-free Off; microphone closed. Likely cause of the recording's mid-reply switch: ElevenLabs credits ran out partway through, and the phone build did not hold the lock. Not proven. Owner decisions pending: top up ElevenLabs (spends money, owner action) or make Fish the primary voice (owner's choice).
 - Next check (owner): fully close and reopen CHE, then open CHE Updates; report the patch number. If it is still 9 after a relaunch, the a05af09 patch is not on the phone, and the voice-lock question in §8e stays open.
 
+## 8h. OWNER: "MAKE FISH MAIN" (2026-10-22)
+
+- Owner authorized Fish as the main voice. Setting it is an owner-authenticated write to `/api/voice/choice` (device token), which the sandbox does not hold, so it was NOT applied from here. Owner taps it in the app: Voice Settings (`lib/che_cloud_voice_picker.dart`) → "CHE Fish voice (configured)" → Save.
+- Verify on the phone: Voice diagnostics → "Playback engine" = Fish Audio on the next reply; the reply's "Last spoken reply" shows Fish as chosen, not as backup.
+- Trade-off the owner accepted: Fish clips are 64 kbps for everyday speech (band-limited), so timbre differs from the earlier ElevenLabs voice.
+- No code change, no PR for this.
+
 ## 8c. SOUL CHECKPOINT 3 (Claude, 2026-10-22 00:05Z) — read first, supersedes 8b's "open" items
 
 - **Merged:** PR #423 → main `d29faab` (phone Soul controls). PR #424 (Worker provenance: `served_by`, `soul.soul_applied` true only for a model reply with the Soul in its system prompt; handler replies `soul_applied:false`, route `handler`; cache bypass marked) → main `8f4bc48`, tagged `[worker-deploy]`. Required checks were green on head `82e4af0` (analyze, Worker syntax and unit tests; `Workers Builds` ignored per owner rule). 2996/2996 Worker tests; `soul_chat.test.mjs` 11/11.
