@@ -322,9 +322,9 @@ export async function generateImage(env, storage, body, fetcher = fetch) {
     created_at: now(),
   };
   // Internal-only mode (capability_engine.js): no external connector and no paid service; only the image model in the
-  // owner's own Cloudflare account. Read from the AI layer's routing snapshot, the same switch the model path uses.
+  // owner's own Cloudflare account. Read from Security Intelligence's egress policy, the one internal-only switch.
   let internalOnly = false;
-  try { internalOnly = (await storage.get('ai_routing'))?.policy?.internal_only === true; } catch (_) { internalOnly = false; }
+  try { internalOnly = (await storage.get('che:egress_policy'))?.internal_only === true; } catch (_) { internalOnly = false; }
   const engines = [];
   if (env.CHE_IMAGE_GEN_URL && !internalOnly) engines.push({ id: 'Your image connector', run: async () => ({ url: await connectorImage(env, finalPrompt, fetcher) }) });
   if (!internalOnly && paidMediaEnabled(env) && openAiKey(env)) engines.push({ id: draft ? 'openai-gpt-image-fast' : 'openai-gpt-image-hd', paid: true, run: async () => openAiImage(env, finalPrompt, draft, fetcher) });
@@ -550,7 +550,7 @@ export async function generateVideo(env, storage, body, fetcher = fetch) {
   }
   // Internal-only mode: the paid external video model is skipped; the free renderer on the owner's GitHub runs.
   let videoInternalOnly = false;
-  try { videoInternalOnly = (await storage.get?.('ai_routing'))?.policy?.internal_only === true; } catch (_) { videoInternalOnly = false; }
+  try { videoInternalOnly = (await storage.get?.('che:egress_policy'))?.internal_only === true; } catch (_) { videoInternalOnly = false; }
   if (!videoInternalOnly && paidMediaEnabled(env) && env.GEMINI_API_KEY && !storyboard) {
     engines.push({ id: 'gemini-omni-video', run: async () => geminiVideo(env, prompt, fetcher) });
   }

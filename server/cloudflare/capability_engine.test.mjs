@@ -5,11 +5,12 @@ import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
 import {
   populate, retrieve, extract, deriveProgram, runTool, acquire, useTool, rollbackTool, decideExecution, projectContext,
-  learnFromOutcome, speakLearned, isStale, KnowledgeItems, defaultPolicy, policyIntent, applyPolicy, capabilityIdFor,
-  capabilityIntent, inScope, installEgressGuard, egressGuard, ownerHost, projectBlocked,
+  learnFromOutcome, loadPolicy, speakLearned, isStale, KnowledgeItems, defaultPolicy, policyIntent, applyPolicy, capabilityIdFor,
+  capabilityIntent, inScope, projectBlocked,
 } from './capability_engine.js';
 import { EXECUTION, PROMOTION_CHECKS, emptyRegistry, loadRegistry, register, recordCheck, promote, serving, speakCapability } from './capability_registry.js';
 import { KnowledgeLibrary } from './knowledge_library.js';
+import { holdEgress, installEgressGuard, ownerHost, securityIntent, setEgressOwner, setEgressPolicy } from './security_intelligence.js';
 import { replyFromNdjson } from './brain_memory.js';
 
 globalThis.fetch = async (input) => { throw new TypeError(`fetch failed (offline test: ${new URL(String(input?.url || input)).host})`); };
@@ -253,7 +254,7 @@ test('C12 + C15. internal-only mode blocks external fallbacks; external dependen
   const pass = (id) => { for (const c of PROMOTION_CHECKS) recordCheck(r, id, c, { ok: true }); promote(r, id); };
   register(r, { id: 'video.text_to_video', name: 'Text to video', description: 'generate video from text', execution: EXECUTION.EXTERNAL_PAID }); pass('video.text_to_video');
   register(r, { id: 'video.render_owner', name: 'Render video', description: 'render video timeline', execution: EXECUTION.OWNER_COMPUTE }); pass('video.render_owner');
-  const policy = applyPolicy(defaultPolicy(), policyIntent('Use only your internal capabilities'));
+  const policy = applyPolicy(defaultPolicy(), policyIntent('Enable internal-only mode'));
   const internal = decideExecution(r, 'generate a video', policy);
   assert.equal(internal.capability.capability_id, 'video.render_owner', 'internal/owner compute first');
   register(r, { id: 'only.ext', name: 'Clone voice', description: 'clone a voice', execution: EXECUTION.EXTERNAL_FREE }); pass('only.ext');
@@ -307,8 +308,7 @@ test('capability learning, end to end: gap → learn → feasibility → build �
 
 test('the owner\'s policies are read deterministically and ordinary sentences are not', () => {
   for (const [words, check] of [
-    ['Use only your internal capabilities', (p) => p.set.internal_only === true],
-    ['Do not call any external API', (p) => p.set.no_external_api === true],
+    ['Enable internal-only mode', (p) => p.set.internal_only === true],
     ['Do not use paid APIs', (p) => p.set.no_paid === true],
     ['Do not send this project outside CHE', (p) => p.set.no_export_projects[0] === '*'],
     ['Remember the method, not the private files', (p) => p.memory.method_only === true],
@@ -316,6 +316,11 @@ test('the owner\'s policies are read deterministically and ordinary sentences ar
     ['Require my approval before installing external code', (p) => p.set.require_approval_external_code === true],
     ['turn off internal-only mode', (p) => p.set.internal_only === false],
   ]) assert.ok(check(policyIntent(words)), words);
+  // "Use only your internal capabilities" and "do not call any external API" belong to Security Intelligence (one switch).
+  for (const words of ['Use only your internal capabilities', 'Do not call any external API']) {
+    assert.equal(policyIntent(words), null, words);
+    assert.equal(securityIntent(words)?.action, 'internal_only', words);
+  }
   for (const words of ['What is an API?', 'internal memo for the team', 'use my internal template']) assert.equal(policyIntent(words), null, words);
   assert.equal(capabilityIntent('CHE, what can you actually do?').action, 'capabilities');
   assert.equal(capabilityIntent('what did you learn about csv files').topic, 'csv files');
@@ -339,28 +344,37 @@ test('scoped source text never enters the global Knowledge Library or Brain sear
 });
 
 test('the egress guard blocks every external host under internal-only or a no-export project, and allows only owner-controlled hosts', async () => {
+  // One guard for the whole Worker: Security Intelligence's (security_intelligence.js); the capability policy feeds it.
   const sent = [];
+  const before = globalThis.fetch;
   globalThis.fetch = async (u) => { sent.push(String(u)); return new Response('ok'); };
-  const state = { policy: null, projectHolds: 0, env: { CHE_GITHUB_REPO: 'Vondada/chey-app', CHE_OLLAMA_URL: 'https://ollama.owner.example:11434' } };
-  const remove = installEgressGuard(egressGuard(state));
+  installEgressGuard();
+  setEgressOwner({ CHE_GITHUB_REPO: 'Vondada/chey-app', CHE_OLLAMA_URL: 'https://ollama.owner.example:11434' });
   try {
     await globalThis.fetch('https://api.duckduckgo.com/?q=x');
-    state.policy = applyPolicy(defaultPolicy(), policyIntent('Do not call any external API'));
-    await assert.rejects(globalThis.fetch('https://api.duckduckgo.com/?q=x'), /Not sent: internal-only mode is on, so the request to api\.duckduckgo\.com was blocked/);
-    await assert.rejects(globalThis.fetch('https://api.openai.com/v1/chat/completions'), /internal-only/);
-    await assert.rejects(globalThis.fetch('https://api.github.com/repos/someone/else/contents'), /internal-only/, 'only the owner\'s own repository');
+    setEgressPolicy({ internal_only: true });
+    await assert.rejects(globalThis.fetch('https://api.duckduckgo.com/?q=x'), /Internal-only mode is on, so api\.duckduckgo\.com was not called/);
+    await assert.rejects(globalThis.fetch('https://api.openai.com/v1/chat/completions'), /Internal-only/);
+    await assert.rejects(globalThis.fetch('https://api.github.com/repos/someone/else/contents'), /Internal-only/, 'only the owner\'s own repository');
     await globalThis.fetch('https://api.github.com/repos/Vondada/chey-app/actions/runs');
     await globalThis.fetch('https://ollama.owner.example:11434/api/chat');
     // A project the owner said must stay inside CHE: external hosts are blocked while it is being handled.
-    state.policy = applyPolicy(defaultPolicy(), policyIntent('Do not send this project outside CHE'));
-    assert.equal(projectBlocked(state.policy, 'p1'), true);
-    assert.equal(projectBlocked(state.policy, ''), false);
+    setEgressPolicy({ internal_only: false });
+    const noExport = applyPolicy(defaultPolicy(), policyIntent('Do not send this project outside CHE'));
+    assert.equal(projectBlocked(noExport, 'p1'), true);
+    assert.equal(projectBlocked(noExport, ''), false);
     await globalThis.fetch('https://api.duckduckgo.com/?q=y');
-    state.projectHolds = 1;
-    await assert.rejects(globalThis.fetch('https://api.duckduckgo.com/?q=z'), /this project stays inside CHE/);
-  } finally { remove(); }
-  assert.deepEqual(sent, ['https://api.duckduckgo.com/?q=x', 'https://api.github.com/repos/Vondada/chey-app/actions/runs', 'https://ollama.owner.example:11434/api/chat', 'https://api.duckduckgo.com/?q=y']);
-  assert.equal(ownerHost('https://pipelines.actions.githubusercontent.com/x', {}), true);
+    holdEgress(1);
+    try {
+      await assert.rejects(globalThis.fetch('https://api.duckduckgo.com/?q=z'), /This project stays inside CHE/);
+    } finally { holdEgress(-1); }
+  } finally {
+    setEgressPolicy({ internal_only: false });
+    globalThis.fetch = before;
+  }
+  assert.deepEqual(sent.filter((u) => !u.includes('ollama') && !u.includes('/repos/')), ['https://api.duckduckgo.com/?q=x', 'https://api.duckduckgo.com/?q=y']);
+  assert.ok(sent.includes('https://api.github.com/repos/Vondada/chey-app/actions/runs') && sent.includes('https://ollama.owner.example:11434/api/chat'));
+  assert.equal(ownerHost('https://pipelines.actions.githubusercontent.com/x'), true);
 });
 
 test('a rebuild after a rollback uses the serving version as its baseline, and a second rollback still runs', async () => {
@@ -430,17 +444,23 @@ test('Worker: learn → "what did you learn" → build by voice → "what can yo
   assert.notEqual((await che.send('/api/capability-engine', null, '', 'GET')).status, 200, 'owner only');
 });
 
-test('Worker: internal-only mode is enforced at the model path and the paid picture engines, and is said honestly', async () => {
+test('Worker: internal-only mode is one switch: on from chat, enforced on outbound requests, off only with Face ID', async () => {
   const che = await owner();
-  const on = await che.say('Use only your internal capabilities');
-  assert.match(on.reply, /Internal-only mode is on/);
-  const snap = await che.st.get('ai_routing');
-  assert.deepEqual([snap.policy.internal_only, snap.policy.local_only], [true, true]);
-  // The model path may not leave the owner's own hardware: with no local model, nothing external answers.
-  const essay = await che.say('Write me a short essay about the ocean');
-  assert.equal(essay.model_calls, 0, 'no external or cloud model was called');
-  assert.doesNotMatch(essay.reply, /A model answer/);
-  const off = await che.say('Turn off internal-only mode');
-  assert.match(off.reply, /Internal-only mode is off/);
-  assert.equal((await che.st.get('ai_routing')).policy.internal_only, false);
+  const sent = [];
+  const before = globalThis.fetch;
+  globalThis.fetch = async (u) => { sent.push(String(u?.url || u)); return new Response('{}'); };
+  try {
+    const on = await che.say('Use only your internal capabilities');
+    assert.match(on.reply, /internal-only mode is on/i);
+    assert.equal((await che.st.get('che:egress_policy')).internal_only, true);
+    assert.equal((await loadPolicy(che.st)).internal_only, true, 'the capability policy reads the same switch');
+    await assert.rejects(fetch('https://api.openai.com/v1/chat/completions'), /Internal-only mode is on/);
+    assert.ok(!sent.some((u) => u.includes('openai')), 'nothing left the Worker');
+    const off = await che.say('Turn off internal-only mode');
+    assert.match(off.reply, /needs Face ID on the Security page/);
+    assert.equal((await che.st.get('che:egress_policy')).internal_only, true, 'still on');
+  } finally {
+    setEgressPolicy({ internal_only: false });
+    globalThis.fetch = before;
+  }
 });

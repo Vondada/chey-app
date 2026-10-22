@@ -76,6 +76,8 @@ import { evaluateSample, applyRightsAction, applySpokenRightsWrite, defensibilit
 import { ACTIVITIES, JURISDICTIONS, SOURCES, LEGAL_INDEX, activitiesIn, placeIn, checkUpdates, defenseArguments, findAlternatives, jurisdiction as legalPlace, legalAnswer, legalDifferences, legalIntent, loadLegal, recordDecision, recordsFor, releaseLegalCheck, saveLegal, speakDifferences, subscribe as legalSubscribe, verifyRecord } from './legal_intelligence.js';
 import { analyzeContract } from './legal_contracts.js';
 import { DOMAINS, SOURCE_TIERS, addExpertSource, addProfessionalNote, addToCase, bringList, domainCoverage, expertIntent, expertPromptContext, labelInteractions, loadCases, openCase, professionalBrief, readLabs, redFlags, runExam, saveCases, speakCoverage, upgradePlan } from './expert_intelligence.js';
+import { renderTokenRoute, visualApi, songPromo, projectFromTemplateName, loadVisual, saveVisual, YES_WORDS as VISUAL_YES, NO_WORDS as VISUAL_NO } from './visual_api.js';
+import { visualIntent, wordsToOps } from './visual_studio.js';
 import { addBeat, addLedger, addWorkspace, addWorkspaceSong, advanceAgreement, applySpokenBusiness, approveQuote, artistReport, beatListing, businessDashboard, deliveryPackage, draftQuote, musicBusinessIntent, recordBeatSale, recordFeedback, resolveSpokenBusiness, setService, workspaceById, workspaceView } from './music_business.js';
 import { matrixIntent, readMatrix, runMatrix, speakMatrix } from './backtest_matrix.js';
 import { autoQueue as researchAutoQueue, cancelJob as cancelResearchJob, matrixView as researchMatrixView, nextResearchAt, queueJob as queueResearchJob, researchIntent, researchStep, researchView, setProfile as setResearchProfile, speakBestNow, speakHistory, speakStrategy, strategyView as researchStrategyView } from './trading_research.js';
@@ -226,10 +228,10 @@ import {
 } from './research_memory.js';
 import { APP_BUILD_KEY, appBuildIntent, appBuildRun, dispatchAppBuild, speakAppBuild } from './app_builds.js';
 import { advanceObjectives, applyMissionEvent, approvalReached, approveNode, awaitingApproval, cancelObjective, createObjective, mutateObjective, replanNode, resolveKnownNodes, retryNode, setObjectivePaused, speakObjective } from './objective_graph.js';
-import { acquire as acquireCapability, applyPolicy as applyCapabilityPolicy, capabilityIntent, engineSummary as capabilityEngineSummary, learnFromOutcome, loadPolicy as loadCapabilityPolicy, populate as populateKnowledge, retrieve as retrieveKnowledge, rollbackTool, savePolicy as saveCapabilityPolicy, installEgressGuard, egressGuard, projectBlocked, speakCapabilities, speakLearned as speakLearnedKnowledge, useTool, LAST_USED_KEY as KNOWLEDGE_USED_KEY } from './capability_engine.js';
+import { acquire as acquireCapability, applyPolicy as applyCapabilityPolicy, capabilityIntent, engineSummary as capabilityEngineSummary, learnFromOutcome, loadPolicy as loadCapabilityPolicy, populate as populateKnowledge, retrieve as retrieveKnowledge, rollbackTool, savePolicy as saveCapabilityPolicy, projectBlocked, speakCapabilities, speakLearned as speakLearnedKnowledge, useTool, LAST_USED_KEY as KNOWLEDGE_USED_KEY } from './capability_engine.js';
+import { EGRESS_KEY, holdEgress, installEgressGuard, setEgressOwner, setEgressPolicy, storeEgressPolicy, SESSION_SCOPES, bump as securityBump, checkSession, createSession, dependencyAdvisories, detectThreats, issueNonce, loadSecurity, recordFindings, redact as redactSecretText, redactDeep, respondToIncident, restoreTrustedState, revokeSessions, saveSecurity, securityIntent, snapshotTrustedState, speakStatus as speakSecurityStatus } from './security_intelligence.js';
 import { loadRegistry as loadCapabilityRegistry } from './capability_registry.js';
 import { BrainLedger, answerLedger, decidePending as decideBrainPending, installBrainLedger, ledgerApi, ledgerIntent as brainLedgerIntent, DEFAULT_ZONE as LEDGER_DEFAULT_ZONE } from './brain_ledger.js';
-import { EGRESS_KEY, egressRefusal as securityEgressRefusal, setEgressPolicy, storeEgressPolicy, SESSION_SCOPES, bump as securityBump, checkSession, createSession, dependencyAdvisories, detectThreats, issueNonce, loadSecurity, recordFindings, redact as redactSecretText, redactDeep, respondToIncident, restoreTrustedState, revokeSessions, saveSecurity, securityIntent, snapshotTrustedState, speakStatus as speakSecurityStatus } from './security_intelligence.js';
 import { engineView, exportWorkflows, feedbackOnLast, importWorkflows, library as workflowLibrary, loadEngine, matchLearned, noteVersion, promoteCandidate, dismissCandidate, rankWorkflows, recordRun as recordWorkflowRun, isDisabled as workflowDisabled, restoreVersion, saveEngine, setDisabled as setWorkflowDisabled, setPreferred as setWorkflowPreferred, speakEfficiency, speakLibrary, testCandidate, workflowForRun, workflowIntent } from './workflow_engine.js';
 import { CATEGORIES, COMMANDS, catalogView, commandById, commandStatus, connectorStatus, describeWorkflow, dispatchPrompt, findSavedWorkflow, normalizeSavedWorkflow, parseSlashCommand, readCommandSpeech, searchCommands, speakCommandList, speakUnavailable, suggestCommands, workflowNodes, workflowFromWords } from './command_catalog.js';
 import { handleReaRequest, loadInvestigation, parseReaRequest, reaInvestigationDetail, reaInvestigations } from './rea_runner.js';
@@ -3688,13 +3690,9 @@ function activeLegalActivities(data = {}, legal = {}) {
 export class CheState extends DurableObject {
   constructor(state, env) {
     super(state, env);
-    // Internal-only, no-external-API and per-project no-export are enforced at the network boundary (capability_engine.js):
-    // installed before the router captures fetch, so model providers are covered too.
     // Brain Population Ledger: every write to a watched key (owner memories, capability registry, learned workflows,
     // trading evidence) leaves a category-first, timestamped record. Brain/library/knowledge writes log themselves.
     try { installBrainLedger(state.storage); } catch (error) { console.error('Brain ledger hook not installed:', error?.message || error); }
-    this.egress = { policy: null, projectHolds: 0, env };
-    installEgressGuard(egressGuard(this.egress));
     // Every text model call goes through CHE's free-engine router. Persist
     // per-engine daily usage estimates in this owner's Durable Object.
     this.env = routedEnv(env, fetch, state.storage);
@@ -5474,22 +5472,24 @@ export class CheState extends DurableObject {
       await this.ctx.storage.deleteAll();
       return json({ ok: true, reset: true });
     }
-    // Internal-only mode (Security Intelligence) is one more guard in the same outbound check, re-installed per
-    // request so it always sits over the current fetch.
-    installEgressGuard(securityEgressRefusal);
+    // Internal-only mode (Security Intelligence): every outbound fetch is checked against the owner's policy.
+    installEgressGuard();
+    setEgressOwner(this.env);
     try { setEgressPolicy(await this.ctx.storage.get(EGRESS_KEY), request.url); } catch (_) {}
-    // The owner's egress policy, read for every request (one small storage read), so the guard is never stale.
-    try { this.egress.policy = await loadCapabilityPolicy(this.ctx.storage); } catch (_) { this.egress.policy = null; }
+    // A project the owner said must stay inside CHE holds the same guard for the length of the request.
     let projectHold = false;
-    if (request.method === 'POST' && (this.egress.policy?.no_export_projects || []).length) {
-      const peek = await request.clone().json().catch(() => null);
-      projectHold = projectBlocked(this.egress.policy, peek?.project_id || peek?.visual_project_id || '');
-    }
-    if (projectHold) this.egress.projectHolds++;
+    try {
+      const policy = await loadCapabilityPolicy(this.ctx.storage);
+      if (request.method === 'POST' && (policy.no_export_projects || []).length) {
+        const peek = await request.clone().json().catch(() => null);
+        projectHold = projectBlocked(policy, peek?.project_id || peek?.visual_project_id || '');
+      }
+    } catch (_) { projectHold = false; }
+    if (projectHold) holdEgress(1);
     try {
       return await this.fetchInner(request);
     } finally {
-      if (projectHold) this.egress.projectHolds--;
+      if (projectHold) holdEgress(-1);
     }
   }
 
@@ -5911,18 +5911,23 @@ export class CheState extends DurableObject {
   // `command` node, independent steps run in parallel lanes, approval steps
   // wait for the owner. Nothing starts unless every step can run now.
   // ── Capability Engine ──────────────────────────────────────────────────
-  // Internal-only mode also turns on the AI layer's existing local-only policy, so the model path never leaves the
-  // owner's own hardware, and paid/external picture engines are skipped (media.js reads the same snapshot).
+  // Internal-only mode has one switch: Security Intelligence's egress policy (security_intelligence.js), which guards
+  // every outbound fetch. Turning it on is allowed from here; turning it off needs Face ID on the Security page.
   async setCapabilityPolicy(data, intent) {
     const before = await loadCapabilityPolicy(this.ctx.storage);
+    if (intent.set?.internal_only === false || intent.set?.no_external_api === false) {
+      return { ...before, refused: 'Turning internal-only mode off needs Face ID on the Security page. Nothing was changed.' };
+    }
     const next = applyCapabilityPolicy(before, intent);
     await saveCapabilityPolicy(this.ctx.storage, next);
-    this.egress.policy = next;
-    if (before.internal_only !== next.internal_only || before.no_paid !== next.no_paid) {
+    if (next.internal_only && !before.internal_only) {
+      data.capability_policy = { ...(data.capability_policy || {}), internal_only: true };
+      await this.ctx.storage.put('che', data);
+      await storeEgressPolicy(this.ctx.storage, true);
+    }
+    if (next.no_paid && !before.no_paid) {
       const ai = ensureAiState(data);
-      ai.policy.local_only = next.internal_only === true;
-      ai.policy.internal_only = next.internal_only === true;
-      if (next.no_paid) ai.policy.max_cost_class = 'free';
+      ai.policy.max_cost_class = 'free';
       await this.ctx.storage.put('che', data);
       await syncRoutingSnapshot(this.ctx.storage, data);
     }
@@ -5946,7 +5951,7 @@ export class CheState extends DurableObject {
     if (action === 'outcome') return json(learnFromOutcome(storage, body, { policy }));
     if (action === 'policy') {
       const next = await this.setCapabilityPolicy(data, { set: body.set || {}, memory: body.memory || {} });
-      return json({ policy: next });
+      return next.refused ? json({ detail: next.refused }, 403) : json({ policy: next });
     }
     return json({ detail: 'Unknown capability action.' }, 404);
   }
@@ -5956,6 +5961,7 @@ export class CheState extends DurableObject {
     const say = (text, extra = {}) => ndjsonReply(text, { source: 'che_capability_engine', ok: true, model_calls: 0, capability_action: ask.action, ...extra });
     if (ask.action === 'policy') {
       const next = await this.setCapabilityPolicy(data, ask.policy);
+      if (next.refused) return say(next.refused, { ok: false });
       return say(ask.policy.said, { policy: next });
     }
     const registry = await loadCapabilityRegistry(storage);
@@ -6501,6 +6507,12 @@ export class CheState extends DurableObject {
       }
 
       const body = ['POST', 'PATCH', 'PUT'].includes(request.method) ? await bodyOf(request) : {};
+      // Visual Studio render Action: the edit document and its source files, opened only by that job's one-time,
+      // expiring token. No device token exists on the GitHub runner; nothing else is reachable with this one.
+      if (request.method === 'GET' && path.startsWith('/api/visual/render/')) {
+        const routed = await renderTokenRoute({ storage: this.ctx.storage, env: this.env }, path, request);
+        if (routed) return routed;
+      }
       // Internal release probe: only the per-deploy random token may read
       // connector readiness, with no user data, keys, or saved workflows.
       if (request.method === 'POST' && path === '/api/commands/readiness') {
@@ -7698,6 +7710,14 @@ export class CheState extends DurableObject {
         return json({ ...result, spoken: speakControlResult(result), view: await this.tradingControlsView() }, result.ok || result.needs_confirmation ? 200 : 400);
       }
       // Strategy simulation (step a): paper minute-bar strategies. Read and the kill switch are owner-only; nothing here orders or spends.
+      // Visual Studio (owner, 2026-10-22): Create → Images, Video, Templates, Projects. Owner only.
+      if (path === '/api/visual' && (request.method === 'GET' || request.method === 'POST')) {
+        if (!ownerDevice) return json({ detail: 'Only the CHE owner can use Visual Studio.' }, 403);
+        const vctx = { storage: this.ctx.storage, env: this.keyEnv || this.env, data, origin: new URL(request.url).origin, dirty: false };
+        const out = await visualApi(vctx, { method: request.method, body, query: new URL(request.url).searchParams });
+        if (vctx.dirty) await this.ctx.storage.put('che', data);
+        return json(out.body, out.status);
+      }
       // Expert Intelligence (owner, 2026-10-22). Owner only: cases hold health, legal and financial records.
       if (path === '/api/expert' && (request.method === 'GET' || request.method === 'POST')) {
         if (!ownerDevice) return json({ detail: 'Only the CHE owner can use Expert Intelligence.' }, 403);
@@ -9927,6 +9947,8 @@ export class CheState extends DurableObject {
             return ndjsonReply(started.spoken, { source: 'che_command_workflow', ok: started.ok, objective_id: started.objective?.id || null, model_calls: 0 });
           }
           // Workflow Engine: the owner's words about the library, then a promoted learned workflow this request matches.
+          const secAsk = ownerDevice && !body.attachment && !body.workflow_step ? securityIntent(rawMessage) : null;
+          if (secAsk) return this.securityChat(data, secAsk, tokenHash);
           // Capability Engine: what CHE can actually do, what she learned, owner policies (internal-only and memory).
           // Brain Population Ledger: what entered the Brain, when, where from, and whether it is usable yet.
           const ledgerAsk = ownerDevice && !body.attachment && !body.workflow_step ? brainLedgerIntent(rawMessage) : null;
@@ -9939,8 +9961,6 @@ export class CheState extends DurableObject {
           }
           const capAsk = ownerDevice && !body.attachment && !body.workflow_step ? capabilityIntent(rawMessage) : null;
           if (capAsk) return this.capabilityChat(data, capAsk);
-          const secAsk = ownerDevice && !body.attachment && !body.workflow_step ? securityIntent(rawMessage) : null;
-          if (secAsk) return this.securityChat(data, secAsk, tokenHash);
           const wfAsk = ownerDevice && !body.attachment && !body.workflow_step ? workflowIntent(rawMessage) : null;
           if (wfAsk) return this.workflowChat(data, wfAsk);
           const learned = ownerDevice && !body.attachment && !body.workflow_step && !body.screen_context ? matchLearned(await loadEngine(this.ctx.storage), rawMessage) : null;
@@ -11881,6 +11901,59 @@ export class CheState extends DurableObject {
             ledgers: ledgers.map(({ id, trades, unavailable }) => ({ id, trades, unavailable: Boolean(unavailable) })),
           });
         }
+        // Visual Studio by voice or typing: a song promo, a visualizer, platform versions, templates, render, and edits
+        // on the project open in the editor (the app sends visual_project_id, selection and playhead).
+        const visualAsk = !body.attachment && visualIntent(message);
+        const editingId = typeof body.visual_project_id === 'string' ? body.visual_project_id : null;
+        if (visualAsk || editingId) {
+          if (!ownerDevice) return ndjsonReply('Only the CHE owner can use Visual Studio, sir.', { source: 'che_visual_studio', ok: false });
+          const vctx = { storage: this.ctx.storage, env: this.keyEnv || this.env, data, origin: new URL(request.url).origin, dirty: false };
+          let reply = null;
+          const editingState = editingId && !visualAsk ? await loadVisual(this.ctx.storage, editingId) : null;
+          if (visualAsk?.kind === 'song_promo' || visualAsk?.kind === 'visualizer' || visualAsk?.kind === 'beat_preview') {
+            const r = await songPromo(vctx, { title: visualAsk.title || visualAsk.beat || null, platform: visualAsk.platform || null, kind: visualAsk.kind === 'visualizer' ? 'visualizer' : visualAsk.kind === 'beat_preview' ? 'beat' : 'promo' });
+            reply = { text: r.said, ok: r.ok, extra: r.project ? { visual_project_id: r.project.id, open: 'visual_editor' } : {} };
+          } else if (visualAsk?.kind === 'use_template') {
+            const r = await projectFromTemplateName(vctx, { name: visualAsk.name, tweak: visualAsk.tweak });
+            reply = { text: r.said, ok: r.ok, extra: r.project ? { visual_project_id: r.project.id, open: 'visual_editor' } : {} };
+          } else if (editingState?.pending && VISUAL_YES.test(message.trim())) {
+            // The removal CHE asked about in the editor; only now is it applied.
+            const out = await visualApi(vctx, { method: 'POST', body: { project_id: editingId, action: 'confirm_pending' }, query: new URLSearchParams() });
+            reply = { text: out.body.said || out.body.detail, ok: out.status === 200, extra: { visual_project_id: editingId } };
+          } else if (editingState?.pending && VISUAL_NO.test(message.trim())) {
+            const out = await visualApi(vctx, { method: 'POST', body: { project_id: editingId, action: 'cancel_pending' }, query: new URLSearchParams() });
+            reply = { text: out.body.said || out.body.detail, ok: out.status === 200, extra: { visual_project_id: editingId } };
+          } else {
+            const latest = (data.projects || []).filter((p) => p.type === 'visual').sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)))[0];
+            const pid = editingId || latest?.id;
+            if (!pid) reply = { text: 'There is no image or video project yet. Say "make me a promo video for" a song, or create one in Create.', ok: false };
+            else if (visualAsk?.kind === 'open_editor') reply = { text: 'Opening the editor.', extra: { visual_project_id: pid, open: 'visual_editor' } };
+            else {
+              const action = visualAsk?.kind === 'variants' ? { action: 'variants', presets: visualAsk.presets }
+                : visualAsk?.kind === 'save_template' ? { action: 'save_template', name: visualAsk.name }
+                  : visualAsk?.kind === 'apply_brand' ? { action: 'apply_brand' }
+                    : visualAsk?.kind === 'render' ? { action: 'render' }
+                      // A removal here already has the owner's yes when the delete gate released it (ownerGrant).
+                      : { action: 'words', text: message, selection: body.visual_selection || null, playhead: Number(body.visual_playhead) || 0, confirmed: ownerGrant.delete === true };
+              // Edits only when the words are edit instructions: anything not understood falls back to chat
+              // unless the editor is open, where CHE says what she could not do.
+              if (action.action === 'words') {
+                const state = await loadVisual(this.ctx.storage, pid);
+                const probe = state ? wordsToOps(message, state.doc, { selection: action.selection, playhead: action.playhead }) : { ops: [], unsupported: [] };
+                if (!probe.ops.length && !editingId) reply = null;
+                else {
+                  const out = await visualApi(vctx, { method: 'POST', body: { project_id: pid, ...action }, query: new URLSearchParams() });
+                  reply = { text: out.body.said || out.body.detail, ok: out.status === 200, extra: { visual_project_id: pid, understood: out.body.understood || [] } };
+                }
+              } else {
+                const out = await visualApi(vctx, { method: 'POST', body: { project_id: pid, ...action }, query: new URLSearchParams() });
+                reply = { text: out.body.said || out.body.detail, ok: out.status === 200, extra: { visual_project_id: pid, ...(out.body.variants ? { variants: out.body.variants } : {}) } };
+              }
+            }
+          }
+          if (vctx.dirty) await this.ctx.storage.put('che', data);
+          if (reply) return ndjsonReply(reply.text, { source: 'che_visual_studio', model_calls: 0, ok: reply.ok !== false, ...(reply.extra || {}) });
+        }
         // Music business by voice or typing: a client, a managed artist, a draft quote, or the dashboard.
         const bizAsk = !body.attachment && musicBusinessIntent(message);
         // Every other business action by voice or typing. Words that name no known client, artist, song
@@ -13684,7 +13757,8 @@ export class CheState extends DurableObject {
   }
 
   async alarm() {
-    installEgressGuard(securityEgressRefusal);
+    installEgressGuard();
+    setEgressOwner(this.env);
     try { setEgressPolicy(await this.ctx.storage.get(EGRESS_KEY)); } catch (_) {}
     await this.refreshKeyEnv();
     // A minute-only wake-up: the simulation's minute is the only work due. It runs that one pass and makes no

@@ -263,6 +263,8 @@ extension _CheHomeStreaming on _CHEHomeState {
       'wake_phrase': 'Chay',
       'requested_capabilities': turnCapabilities,
       'screen_context': _pendingScreenContext,
+      // The image or video project open in Visual Studio, so "make this brighter" edits that project.
+      ...CheVisualSession.chatFields(),
       'attachment': _pendingAttachment,
       'app_grants': appGrants.toList(),
       'command_confirmed': commandConfirmed,

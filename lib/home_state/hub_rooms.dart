@@ -449,6 +449,16 @@ extension _CheHomeHubRooms on _CHEHomeState {
           )),
         ),
         CheStudioAction(
+          icon: Icons.auto_awesome_rounded,
+          title: 'Visual Studio',
+          body: 'Edit photos and videos: adjust, crop, text, layers, timeline, captions, music and templates.',
+          connected: true,
+          connectorName: '',
+          onRun: () => unawaited(Navigator.of(context).push(MaterialPageRoute<void>(
+            builder: (_) => CheVisualStudio(client: CheVisualClient(baseUrl: () => cheAgentBaseUrl, headers: () => _authHeaders)),
+          ))),
+        ),
+        CheStudioAction(
           icon: Icons.movie_creation_outlined,
           title: 'Script + storyboard',
           body: 'Scenes, shot list and storyboard frames for video.',
