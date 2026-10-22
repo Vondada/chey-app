@@ -129,7 +129,7 @@ import { intentFrame, understoodAs } from './intent_frame.js';
 import { replyHijacksOwnerRequest, usageIntent, usageReport, speakUsage } from './usage_tracker.js';
 import { newestStarredIntent, speakNewestStarred, autoImproveScan, analyticalRepositoryQuestion, chatOnlyResponseIntent, currentTurnActionPolicy, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, inspirationUpgradeContext, listOwnerStarredRepos, readRepoSource, referenceSourceBlock, codingHistoryIntent, hypotheticalChange, repositoryImplementationIntent, repositoryInspectionIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, starredStudyList, studySelectionIntent } from './code_scout.js';
 import { codingHistoryReceipt, completedWorkProof, otherAgentWorkAsk, otherAgentWorkReply, proofAsked } from './coding_history.js';
-import { inventionIntent, inventionReply, planInvention, refusalReply } from './invention_studio.js';
+import { inventionFollowUpAllowed, inventionIntent, inventionReply, planInvention, refusalReply } from './invention_studio.js';
 import { matchShowroom, showroomIntent, showroomReply, showroomView } from './capability_showroom.js';
 import { activityReceipt, activityStatusIntent } from './activity_status.js';
 import { webAppPage } from './web_app.js';
@@ -10473,8 +10473,14 @@ export class CheState extends DurableObject {
           const projects = (await this.ctx.storage.get('invention_projects')) || [];
           const lastId = await this.ctx.storage.get('invention_last');
           // Only a design starts a project. A follow-up (cost, sourcing, assembly, reality, plan) needs a project to answer
-          // from; with none, the message is not about an invention and the ordinary routes keep it.
-          if (invention.kind !== 'design' && !projects.some((p) => p.id === lastId)) {
+          // from, and must name the invention or continue the owner's immediately preceding invention turn; otherwise
+          // the message is not about an invention and the ordinary routes keep it (a trading backtest never reopens a suit).
+          const lastAsk = await this.ctx.storage.get('invention_last_ask');
+          const priorUser = [...(Array.isArray(body.history) ? body.history : [])].reverse().find((h) => String(h?.role) === 'user' && String(h.content || h.text || '').trim());
+          const continuing = Boolean(lastAsk?.text) && (priorUser
+            ? String(priorUser.content || priorUser.text || '').trim() === lastAsk.text
+            : Date.now() - Date.parse(lastAsk.at || 0) < 10 * 60 * 1000);
+          if (invention.kind !== 'design' && (!projects.some((p) => p.id === lastId) || !inventionFollowUpAllowed(message, { continuing }))) {
             // falls through to the other routes
           } else if (invention.kind === 'design') {
             const project = planInvention(invention.subject, { id: `inv-${crypto.randomUUID().slice(0, 8)}` });
@@ -10490,10 +10496,12 @@ export class CheState extends DurableObject {
             }
             await this.ctx.storage.put('invention_projects', [project, ...projects].slice(0, 20));
             await this.ctx.storage.put('invention_last', project.id);
+            await this.ctx.storage.put('invention_last_ask', { text: String(message).trim(), at: new Date().toISOString() });
             const media = project.concept.media_id ? { media_id: project.concept.media_id, media_type: 'image', media_url: `${new URL(request.url).origin}/api/media/${project.concept.media_id}/image` } : {};
             return ndjsonReply(inventionReply(project, 'design'), { source: 'che_invention_studio', ok: true, model_calls: 0, invention_id: project.id, open_invention: true, ...media });
           } else {
             const project = projects.find((p) => p.id === lastId);
+            await this.ctx.storage.put('invention_last_ask', { text: String(message).trim(), at: new Date().toISOString() });
             return ndjsonReply(inventionReply(project, invention.kind), { source: 'che_invention_studio', ok: true, model_calls: 0, invention_id: project.id, open_invention: true });
           }
         }

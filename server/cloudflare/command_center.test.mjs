@@ -1194,3 +1194,14 @@ test('location alerts compare only what the owner records show he does: no recor
   await che.say("Can I record a call I'm on here?");
   assert.match((await che.say("I'm in California now, is there anything relevant that changed?")).reply, /Cal\. Penal Code § 632/);
 });
+
+// ChatGPT live iPhone report (2026-10-22): the single follow-up word "Collectively" came back as only "Stopped.".
+// The phone side is scoped per request (4001b2d, test/che_stop_state_test.dart); no Worker command reads it as a stop.
+test('"Collectively" is an ordinary follow-up: no command, no stop, and the conversation continues', () => {
+  const history = [{ role: 'user', content: 'What do these three studies say?' }, { role: 'assistant', content: 'Each one finds a small effect.' }];
+  for (const words of ['Collectively', 'Collectively?', 'collectively, what do they show?']) {
+    assert.equal(readCommandSpeech(words, history), null, words);
+    assert.equal(parseSlashCommand(words), null, words);
+    assert.equal(commandFromWords(words), null, words);
+  }
+});

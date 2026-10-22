@@ -1,5 +1,5 @@
-// Rithmic R | Protocol API, the messages CHE needs for read-only market data: login, heartbeat, logout, the
-// market-data subscription, and the last-trade and best-bid/offer updates it receives. Built from the
+// Rithmic R | Protocol API, the messages CHE needs for read-only market data: system and gateway discovery, login,
+// heartbeat, logout, the market-data subscription, and the last-trade and best-bid/offer updates it receives. Built from the
 // protocol files in Rithmic's R | Protocol API kit (version 0.90.0.0). Each WebSocket frame is one protobuf
 // message, with no length prefix. Fields are written in ascending field-number order, the same order the
 // official client produces. There is deliberately no order-entry message here: CHE's Rithmic connection
@@ -8,6 +8,12 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 class RithmicTemplate {
+  // Discovery, sent to the bootstrap endpoint before any login (request_rithmic_system_info.proto,
+  // request_rithmic_system_gateway_info.proto in the kit).
+  static const systemInfo = 16;
+  static const systemInfoResponse = 17;
+  static const gatewayInfo = 20;
+  static const gatewayInfoResponse = 21;
   static const login = 10;
   static const loginResponse = 11;
   static const logout = 12;
@@ -108,6 +114,69 @@ Uint8List encodeHeartbeat() => (_Message()..put(_templateField, (w) => w.int32(_
 
 Uint8List encodeLogout() => (_Message()..put(_templateField, (w) => w.int32(_templateField, RithmicTemplate.logout))).encode();
 
+/// Asks the bootstrap endpoint which Rithmic systems exist (for example "Rithmic Paper Trading"). No login needed.
+Uint8List encodeSystemInfoRequest({String userMsg = 'CHE'}) => (_Message()
+      ..put(132760, (w) => w.string(132760, userMsg))
+      ..put(_templateField, (w) => w.int32(_templateField, RithmicTemplate.systemInfo)))
+    .encode();
+
+/// Asks the bootstrap endpoint for the gateways (name and wss address) of one system. No login needed.
+Uint8List encodeGatewayInfoRequest({required String systemName, String userMsg = 'CHE'}) => (_Message()
+      ..put(132760, (w) => w.string(132760, userMsg))
+      ..put(153628, (w) => w.string(153628, systemName))
+      ..put(_templateField, (w) => w.int32(_templateField, RithmicTemplate.gatewayInfo)))
+    .encode();
+
+/// The answers the bootstrap endpoint sends, built the same way. Used by tests to play the server's part.
+Uint8List encodeSystemInfoResponse({required List<String> systems, List<String> rpCodes = const ['0']}) {
+  final w = _Writer();
+  for (final c in rpCodes) {
+    w.string(132766, c);
+  }
+  for (final name in systems) {
+    w.string(153628, name);
+  }
+  w.int32(_templateField, RithmicTemplate.systemInfoResponse);
+  return w.take();
+}
+
+Uint8List encodeGatewayInfoResponse({required String systemName, required List<String> names, required List<String> uris, List<String> rpCodes = const ['0']}) {
+  final w = _Writer();
+  for (final c in rpCodes) {
+    w.string(132766, c);
+  }
+  w.string(153628, systemName);
+  for (final n in names) {
+    w.string(153640, n);
+  }
+  for (final u in uris) {
+    w.string(153641, u);
+  }
+  w.int32(_templateField, RithmicTemplate.gatewayInfoResponse);
+  return w.take();
+}
+
+Uint8List encodeMarketDataResponse({List<String> rpCodes = const ['0']}) {
+  final w = _Writer();
+  for (final c in rpCodes) {
+    w.string(132766, c);
+  }
+  w.int32(_templateField, RithmicTemplate.marketDataUpdateResponse);
+  return w.take();
+}
+
+Uint8List encodeLoginResponse({List<String> rpCodes = const ['0'], double heartbeatInterval = 30}) {
+  final w = _Writer();
+  final hb = ByteData(8)..setFloat64(0, heartbeatInterval, Endian.little);
+  w._tag(153633, 1);
+  w._out.add(hb.buffer.asUint8List());
+  for (final c in rpCodes) {
+    w.string(132766, c);
+  }
+  w.int32(_templateField, RithmicTemplate.loginResponse);
+  return w.take();
+}
+
 /// Subscribes to market data for one contract. [updateBits] picks the updates wanted (see [RithmicUpdateBits]).
 Uint8List encodeMarketDataSubscribe({
   required String symbol,
@@ -207,6 +276,18 @@ class RithmicFrame {
         ibId: _string(154014) ?? '',
       );
 
+  RithmicSystemInfo toSystemInfo() => RithmicSystemInfo(rpCodes: _strings(132766), systems: _strings(153628));
+
+  RithmicGatewayInfo toGatewayInfo() => RithmicGatewayInfo(
+        rpCodes: _strings(132766),
+        systemName: _string(153628) ?? '',
+        names: _strings(153640),
+        uris: _strings(153641),
+      );
+
+  /// The answer to a market-data subscription: accepted, or the reason (for example a missing market-data permission).
+  RithmicReply toReply() => RithmicReply(_strings(132766));
+
   RithmicLastTrade toLastTrade() => RithmicLastTrade(
         symbol: _string(110100) ?? '',
         exchange: _string(110101) ?? '',
@@ -233,8 +314,34 @@ class RithmicLoginResponse {
   final String fcmId;
   final String ibId;
 
-  /// True only when the server accepted the login: no response code was returned.
-  bool get accepted => rpCodes.isEmpty;
+  /// True only when the server accepted the login. Rithmic answers success with response code "0"; no code at all is
+  /// also success. Any other code is the reason it was refused.
+  bool get accepted => rithmicAccepted(rpCodes);
+}
+
+/// Rithmic's success convention for every response: no code, or a first code of "0".
+bool rithmicAccepted(List<String> rpCodes) => rpCodes.isEmpty || rpCodes.first.trim() == '0';
+
+class RithmicReply {
+  const RithmicReply(this.rpCodes);
+  final List<String> rpCodes;
+  bool get accepted => rithmicAccepted(rpCodes);
+}
+
+class RithmicSystemInfo {
+  const RithmicSystemInfo({required this.rpCodes, required this.systems});
+  final List<String> rpCodes;
+  final List<String> systems;
+  bool get accepted => rithmicAccepted(rpCodes);
+}
+
+class RithmicGatewayInfo {
+  const RithmicGatewayInfo({required this.rpCodes, required this.systemName, required this.names, required this.uris});
+  final List<String> rpCodes;
+  final String systemName;
+  final List<String> names;
+  final List<String> uris;
+  bool get accepted => rithmicAccepted(rpCodes);
 }
 
 class RithmicLastTrade {

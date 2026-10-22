@@ -115,3 +115,37 @@ test('the Invention Studio endpoints refuse a request without the owner\'s devic
   const res = await che.get('/api/inventions', '');
   assert.equal(res.status, 401);
 });
+
+// ChatGPT live iPhone report (2026-10-22): a trading / 20-year backtest question was answered from an unrelated saved
+// Invention Studio project. A follow-up reopens the invention only when it names it or continues the previous turn.
+test('a saved invention never answers a 20-year Nasdaq futures backtest; an explicit reopen still resumes it', async () => {
+  const che = await app();
+  const made = await che.say('Design me an Iron Man-style suit');
+  const history = [
+    { role: 'user', content: 'Design me an Iron Man-style suit' }, { role: 'assistant', content: made.reply },
+    { role: 'user', content: 'What is the weather like today?' }, { role: 'assistant', content: 'Sunny.' },
+  ];
+  for (const ask of [
+    'Can you backtest Nasdaq futures over 20 years step by step?',
+    'Break it down: how did the ORB strategy do over 20 years of Nasdaq futures?',
+    'Is it realistic to backtest 20 years of MNQ data?',
+    'Give me the breakdown of the 20 year backtest results',
+  ]) {
+    const out = await che.say(ask, { history });
+    assert.notEqual(out.meta.source, 'che_invention_studio', ask);
+    assert.equal(out.meta.invention_id, undefined, ask);
+    assert.doesNotMatch(out.reply, /Powered suit|Planning bands|suit concept|exoskeleton/i, `${ask}: zero invention content`);
+  }
+  // Even straight after the invention turn, trading words win.
+  const right = await che.say('Can you backtest Nasdaq futures over 20 years step by step?', { history: history.slice(0, 2) });
+  assert.notEqual(right.meta.source, 'che_invention_studio');
+  // A generic follow-up that is not the next turn stays out of the invention too.
+  const generic = await che.say('Explain it step by step', { history });
+  assert.notEqual(generic.meta.source, 'che_invention_studio');
+  // An explicit reopen resumes the saved invention, and its immediate follow-up continues it.
+  const reopen = await che.say('Reopen my invention and show me how it assembles', { history });
+  assert.equal(reopen.meta.source, 'che_invention_studio');
+  assert.equal(reopen.meta.invention_id, made.meta.invention_id);
+  const next = await che.say('Where can I get the parts?', { history: [...history, { role: 'user', content: 'Reopen my invention and show me how it assembles' }, { role: 'assistant', content: reopen.reply }] });
+  assert.equal(next.meta.source, 'che_invention_studio', 'the immediate follow-up continues the reopened invention');
+});
