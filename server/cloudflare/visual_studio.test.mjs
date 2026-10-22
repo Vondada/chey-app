@@ -10,6 +10,7 @@ import {
 } from './visual_studio.js';
 import { checkOutput, newRenderJob, tokenOpens } from './visual_render.js';
 import { replyFromNdjson } from './brain_memory.js';
+import { encodeWav } from './music_audio.js';
 
 globalThis.fetch = async (input) => { throw new TypeError(`fetch failed (offline test: ${new URL(String(input?.url || input)).host})`); };
 
@@ -382,6 +383,28 @@ test('Worker: "make me a promo video for this song" uses the song\'s own audio f
   assert.equal(view.doc.clips[0].asset, 'cover1');
   assert.equal(view.doc.text[0].layer.text.value, 'Night Shift');
   assert.equal(view.doc.text[1].layer.text.value, 'Dee');
+});
+
+test('Worker: upload from the phone, and waveforms measured from WAV audio (other files say why not)', async () => {
+  const saved = new Map();
+  const che = await owner(saved);
+  const up = await che.post({ action: 'upload', name: 'pic.png', media_type: 'image/png', base64: PNG });
+  assert.equal(up.status, 200);
+  assert.equal(up.body.item.mime_type, 'image/png');
+  const x = new Float32Array(22050);
+  for (let i = 0; i < x.length; i++) x[i] = (i < 11025 ? 0.1 : 0.8) * Math.sin(i / 5);
+  const wav = Buffer.from(encodeWav([x], 22050)).toString('base64');
+  const items = saved.get('media_index');
+  items.unshift({ id: 'wav1', kind: 'upload', mime_type: 'audio/wav', title: 'beat', blob: 'do' });
+  saved.set('media_index', items);
+  saved.set('media:wav1', wav);
+  const p = (await che.post({ action: 'create', kind: 'image', title: 'x' })).body.project.id;
+  const w = await che.post({ action: 'waveform', project_id: p, asset: 'wav1' });
+  assert.equal(w.body.peaks.length, 240);
+  assert.ok(w.body.peaks.at(-1) > w.body.peaks[0] * 4, 'the louder second half shows in the waveform');
+  const notWav = await che.post({ action: 'waveform', project_id: p, asset: up.body.item.id });
+  assert.equal(notWav.body.peaks, null);
+  assert.match(notWav.body.why, /WAV/);
 });
 
 // A ZIP with stored (uncompressed) entries, enough for the renderer artifact checks.

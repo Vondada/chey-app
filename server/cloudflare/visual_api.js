@@ -8,7 +8,8 @@ import {
   renderSpec, nextRenderStage, timeline, duration, applyOp, layer,
 } from './visual_studio.js';
 import { newRenderJob, tokenOpens, startEditRender, editRenderStatus } from './visual_render.js';
-import { listMedia, readBlob, generateImage, verifyMediaFile } from './media.js';
+import { listMedia, readBlob, generateImage, verifyMediaFile, saveOwnerFile } from './media.js';
+import { decodeWav } from './music_audio.js';
 
 const KEY = (id) => `visual:${id}`;
 const TEMPLATES_KEY = 'visual_templates_v1';
@@ -220,6 +221,25 @@ export async function visualApi(ctx, { method, body, query }) {
     if (!r.ok) return { status: 400, body: { detail: r.why } };
     ctx.dirty = true;
     return { status: 200, body: projectView(r.project, r.state) };
+  }
+  // A photo, video or audio file from the phone, kept in the existing media store.
+  if (a === 'upload') {
+    const saved = await saveOwnerFile(ctx.env, storage, { name: body.name, media_type: body.media_type, base64: body.base64 });
+    return saved.ok ? { status: 200, body: { ok: true, item: saved.item } } : { status: 400, body: { detail: saved.reason } };
+  }
+  // Waveform peaks for the timeline, measured from the audio itself. WAV only; anything else says so.
+  if (a === 'waveform') {
+    const item = (await listMedia(storage)).find((i) => i.id === body.asset);
+    const bytes = item ? await readBlob(ctx.env, storage, item) : null;
+    if (!bytes) return { status: 404, body: { detail: 'That audio file is not in your library.' } };
+    let wav = null;
+    try { wav = decodeWav(bytes); } catch { wav = null; }
+    if (!wav?.channels?.length) return { status: 200, body: { peaks: null, why: 'Waveforms are measured from WAV files; this file is not one.' } };
+    const ch = wav.channels[0];
+    const n = Math.min(240, ch.length);
+    const step = Math.floor(ch.length / n);
+    const peaks = Array.from({ length: n }, (_, i) => { let m = 0; for (let k = i * step; k < (i + 1) * step; k++) m = Math.max(m, Math.abs(ch[k])); return Math.round(m * 1000) / 1000; });
+    return { status: 200, body: { peaks, seconds: ch.length / wav.sampleRate } };
   }
   if (a === 'brand_kit') {
     const kit = brandKit(body.kit || {});
