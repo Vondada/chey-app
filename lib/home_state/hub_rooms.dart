@@ -501,6 +501,15 @@ extension _CheHomeHubRooms on _CHEHomeState {
   }
 
   /// The Capability Showroom's real states, from the Worker (owner device token; nothing is spoken).
+  /// The Capability Showroom, reachable from the Creation Room and More. Opening it speaks nothing.
+  void _openShowroom() {
+    unawaited(Navigator.of(context).push(CheShowroomPage.route(
+      load: _loadShowroom,
+      onStart: _runHubPrompt,
+      onOpenRecent: _openShowroomRecent,
+    )));
+  }
+
   Future<Map<String, dynamic>> _loadShowroom() async {
     final res = await http.get(Uri.parse('$cheAgentBaseUrl/api/showroom'), headers: _authHeaders);
     final body = jsonDecode(res.body);
@@ -536,11 +545,7 @@ extension _CheHomeHubRooms on _CHEHomeState {
       videoConnected: integrations['video_generation'] == true,
       creations: CheCreationsStrip(baseUrl: cheAgentBaseUrl, headers: _authHeaders, active: active),
       onInventions: () => unawaited(Navigator.of(context).push(CheInventionStudioPage.route(baseUrl: cheAgentBaseUrl, headers: _authHeaders))),
-      onShowroom: () => unawaited(Navigator.of(context).push(CheShowroomPage.route(
-        load: _loadShowroom,
-        onStart: _runHubPrompt,
-        onOpenRecent: _openShowroomRecent,
-      ))),
+      onShowroom: _openShowroom,
       onNewProject: () {
         unawaited(_createProjectDialog());
       },

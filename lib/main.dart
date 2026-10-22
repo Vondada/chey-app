@@ -2171,6 +2171,13 @@ OWNER AGENCY
       items: [
         CheMoreItem(
           icon: Icons.apps_rounded,
+          title: 'Capability Showroom',
+          subtitle: 'What CHE can make, and what still needs setup',
+          onTap: _openShowroom,
+          hue: kit.CheColors.apps,
+        ),
+        CheMoreItem(
+          icon: Icons.apps_rounded,
           title: 'Web apps',
           subtitle: 'Add and open web apps inside CHE',
           onTap: _openWebApps,
