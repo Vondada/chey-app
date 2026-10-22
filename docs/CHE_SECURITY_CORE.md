@@ -138,7 +138,16 @@ Classes: camera, door lock, alarm, motion sensor, contact sensor, smoke detector
 
 ## Brain
 
-Seven security categories are registered in CHE's Knowledge Library through its existing `registerCategories` hook:
+The seven security categories are registered in CHE's Knowledge Library through its existing `registerCategories` hook. They are also filed in the Brain Population Ledger (`brain_ledger.js`) under **Security**, using the new subcategories Incidents, Policies, Access, Devices and Simulations plus the existing Threat Detection and Repository Security.
+
+The ledger receives one timestamped record per step:
+
+- every capture
+- every promotion
+- every rejection
+- every resolved real incident
+
+Records carry no secrets: the item is already redacted, and the ledger scrubs again. Private items have scope `private`. The categories are:
 
 - threats
 - incidents
@@ -148,7 +157,7 @@ Seven security categories are registered in CHE's Knowledge Library through its 
 - devices
 - simulations
 
-**Follow-up:** when the Brain Population Ledger lands, pass its category hook to `brain.registerSecurityCategories({ ledger: … })` so ledger records file under the same ids.
+
 
 ## API and voice
 
@@ -177,7 +186,7 @@ Opened from Home (a new Security destination), More → Security, or "open secur
 | File | Count | Covers |
 |---|---|---|
 | `security_core.test.mjs` | 15 + 6 | Sibling architecture/portability (S1–S15) and physical architecture (P1–P6) |
-| `security_core_che.test.mjs` | 22 | CHE integration through the real Worker and chat (C1–C22) |
+| `security_core_che.test.mjs` | 24 | CHE integration through the real Worker and chat (C1–C24, including the store size limit and the Brain Ledger) |
 | `test/che_security_core_screen_test.dart` | 7 | Page, Cyber World motion rules, lockdown preview/confirm, drills, access control, replay, Home destination |
 | `security_intelligence.test.mjs` | 29 | Unchanged and still passing |
 | `test/che_security_screen_test.dart` | 5 | Unchanged and still passing |
@@ -200,5 +209,4 @@ Opened from Home (a new Security destination), More → Security, or "open secur
 - Automatic incident advancement. Incidents open automatically, but later stages are moved by the owner or a drill.
 - Live dependency advisories beyond the vendored list (`ADVISORIES`), and live threat feeds.
 - Promotion of shared knowledge across separate deployments: there is only one deployment today.
-- Brain Population Ledger registration: pending until that ledger is on main.
 - Verification on the owner's iPhone and in production after deploy.

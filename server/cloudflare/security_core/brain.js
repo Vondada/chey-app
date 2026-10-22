@@ -11,6 +11,12 @@ export const SECURITY_BRAIN_CATEGORIES = Object.freeze([
   { id: 'security_simulations', name: 'Security: Simulations and Drills', portability: 'PRODUCT_GENERAL' },
 ]);
 
+/** The core category for a knowledge item, by its category id or a near name; defaults to threats. */
+export function securityCategory(id = '') {
+  const want = String(id || '').replace(/^security[._]/, '');
+  return SECURITY_BRAIN_CATEGORIES.find((c) => c.id === `security_${want}` || c.id === id) || SECURITY_BRAIN_CATEGORIES[0];
+}
+
 /** Calls each hook that exists (a host may have none yet); returns which ones accepted the categories. */
 export function registerSecurityCategories(hooks = {}) {
   const done = [];

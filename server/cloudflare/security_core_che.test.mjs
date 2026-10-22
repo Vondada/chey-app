@@ -317,3 +317,27 @@ test('C23. the core store stays under the storage value limit, and trimmed legac
   sec.events.unshift({ id: 'new', at: new Date(t0 + 300 * 60_000).toISOString(), type: 'new_device', severity: 'info', classification: 'benign', evidence: 'one', source: 'devices' });
   assert.equal(syncLegacyEvents(store, sec), 1);
 });
+
+test('C24. security knowledge and resolved incidents are filed in the Brain Ledger under Security, timestamped and without secrets', async () => {
+  const { BrainLedger } = await import('./brain_ledger.js');
+  const che = await owner();
+  const priv = (await che.post('/api/security/core/knowledge/capture', { title: 'Phone incident', body: `key ${GH_TOKEN}`, portability: 'CUSTOMER_PRIVATE', category: 'security_incidents' })).body.item;
+  await che.post('/api/security/core/knowledge/advance', { id: priv.knowledge_id, step: 'generalize', lesson: 'x' });
+  const shared = (await che.post('/api/security/core/knowledge/capture', { title: 'Pairing guesses', portability: 'SHARED_SECURITY', category: 'security_threats' })).body.item;
+  for (const [step, extra] of [['generalize', { lesson: 'Many wrong pairing codes mean guessing; rate limits held.' }], ['strip', {}], ['review', {}], ['test', { reviewer_note: 'ok' }], ['promote', {}]]) {
+    await che.post('/api/security/core/knowledge/advance', { id: shared.knowledge_id, step, ...extra });
+  }
+  seedLegacy(che, [{ id: 'r1', at: now(), type: 'unknown_tokens', severity: 'high', classification: 'suspicious', evidence: '25 unknown tokens.', source: 'auth' }]);
+  const inc = (await che.get('/api/security/core')).defense.active[0];
+  await che.post('/api/security/core/incident/advance', { incident_id: inc.incident_id, stage: 'RESOLVED', note: 'Tokens rotated.' });
+  const rows = await new BrainLedger({ get: async (k) => che.saved.get(k), put: async () => {} }).query({ category: 'Security', limit: 50 });
+  const mine = rows.filter((r) => String(r.source_reference).startsWith('security_core:'));
+  assert.ok(mine.length >= 4, `ledger rows: ${mine.length}`);
+  assert.ok(mine.every((r) => r.category === 'Security' && r.timestamp));
+  assert.ok(mine.some((r) => r.subcategory === 'Incidents' && /^Incident resolved/.test(r.title)));
+  assert.ok(mine.some((r) => r.subcategory === 'Threat Detection' && r.event_type === 'KNOWLEDGE_UPDATED' && /Promoted/.test(r.summary)));
+  assert.ok(mine.some((r) => r.event_type === 'REJECTED' && r.knowledge_scope === 'private'));
+  assert.ok(!JSON.stringify(rows).includes(GH_TOKEN));
+  const { knowledge } = await che.get('/api/security/core');
+  assert.ok(knowledge.registered_in.includes('brain_ledger'));
+});

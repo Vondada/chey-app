@@ -229,7 +229,7 @@ import {
 } from './research_memory.js';
 import { APP_BUILD_KEY, appBuildIntent, appBuildRun, dispatchAppBuild, speakAppBuild } from './app_builds.js';
 import { advanceObjectives, applyMissionEvent, approvalReached, approveNode, awaitingApproval, cancelObjective, createObjective, mutateObjective, replanNode, resolveKnownNodes, retryNode, setObjectivePaused, speakObjective } from './objective_graph.js';
-import { CHE_TENANT, CHE_SECURITY, access as coreAccess, coreIncidents, coreKnowledge, coreView, findAnyIncident, findKnowledge, loadCore, openIncidentsForEvents, recordCheck as recordCoreCheck, runDrill, saveCore, speakCore, syncLegacyEvents } from './security_core_che.js';
+import { CHE_TENANT, CHE_SECURITY, access as coreAccess, coreIncidents, coreKnowledge, coreView, findAnyIncident, findKnowledge, loadCore, recordInLedger, openIncidentsForEvents, recordCheck as recordCoreCheck, runDrill, saveCore, speakCore, syncLegacyEvents } from './security_core_che.js';
 import { acquire as acquireCapability, applyPolicy as applyCapabilityPolicy, capabilityIntent, engineSummary as capabilityEngineSummary, learnFromOutcome, loadPolicy as loadCapabilityPolicy, populate as populateKnowledge, retrieve as retrieveKnowledge, rollbackTool, savePolicy as saveCapabilityPolicy, projectBlocked, speakCapabilities, speakLearned as speakLearnedKnowledge, useTool, LAST_USED_KEY as KNOWLEDGE_USED_KEY } from './capability_engine.js';
 import { EGRESS_KEY, SNAPSHOT_KEY, holdEgress, installEgressGuard, setEgressOwner, setEgressPolicy, storeEgressPolicy, SESSION_SCOPES, bump as securityBump, checkSession, createSession, dependencyAdvisories, detectThreats, issueNonce, loadSecurity, recordFindings, redact as redactSecretText, redactDeep, respondToIncident, restoreTrustedState, revokeSessions, saveSecurity, securityIntent, snapshotTrustedState, speakStatus as speakSecurityStatus } from './security_intelligence.js';
 import { loadRegistry as loadCapabilityRegistry } from './capability_registry.js';
@@ -6119,6 +6119,7 @@ export class CheState extends DurableObject {
     if (action === 'incident/advance') {
       const inc = coreIncidents.findIncident(s.store, CHE_TENANT, String(body.incident_id || ''));
       const r = coreIncidents.advanceIncident(inc, String(body.stage || ''), { by: 'owner', note: String(body.note || '') });
+      if (r.ok && r.incident.stage === 'RESOLVED') await recordInLedger(st, 'incident', r.incident);
       return done(r.ok ? { ok: true, incident: r.incident } : r, r.ok ? 200 : 409);
     }
     // Lockdown is previewed first; activation needs the preview's token and an explicit confirmation.
@@ -6140,6 +6141,7 @@ export class CheState extends DurableObject {
     }
     if (action === 'knowledge/capture') {
       const item = coreKnowledge.captureExperience(s.store, CHE_TENANT, { title: body.title, body: body.body, portability: body.portability, category: body.category, source_event_ids: body.source_event_ids });
+      await recordInLedger(st, 'knowledge', item);
       return done({ item });
     }
     if (action === 'knowledge/advance') {
@@ -6152,6 +6154,7 @@ export class CheState extends DurableObject {
             : step === 'test' ? coreKnowledge.testKnowledge(item, body)
               : step === 'promote' ? coreKnowledge.promoteKnowledge(s.store, item)
                 : { ok: false, reason: 'unknown_step' };
+      if (step === 'promote' ? r.ok : r.item?.stage === 'REJECTED') await recordInLedger(st, 'knowledge', r.item || item);
       const { _identifiers, ...shown } = r.item || item;
       return done({ ...r, item: shown }, r.ok ? 200 : 409);
     }

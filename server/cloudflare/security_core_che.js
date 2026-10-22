@@ -3,6 +3,7 @@
 // CHE's agents and the owner's chain of command. The core itself never imports this file or any CHE module.
 import { access, agent, brain, createSecurityCore, detection, events as coreEvents, incidents as coreIncidents, knowledge as coreKnowledge, physical, policies, readiness, simulation, workflows } from './security_core/index.js';
 import { USABLE } from './capability_registry.js';
+import { BrainLedger } from './brain_ledger.js';
 import { registerCategories } from './knowledge_library.js';
 
 export const CORE_KEY = 'che:security_core_v1';
@@ -14,9 +15,46 @@ const MAX_STORE_BYTES = 100_000;
 // The product name and agent name come from configuration, never from the core.
 export const CHE_SECURITY = createSecurityCore({ config: { product_name: 'Security', agent_name: 'Security', host_product: 'CHE', default_tenant: CHE_TENANT, max_events_per_tenant: 120, max_incidents_per_tenant: 30 } });
 
-// Security knowledge categories in CHE's Brain (Knowledge Library). The Brain Population Ledger can register the same
-// list through its own hook once it lands (see docs/CHE_SECURITY_CORE.md, follow-ups).
-export const registeredBrainHooks = brain.registerSecurityCategories({ knowledge_library: registerCategories });
+// Security knowledge categories in CHE's Brain: the Knowledge Library takes them as categories, and the Brain
+// Population Ledger (brain_ledger.js) files every security knowledge write under Security → its subcategory.
+export const registeredBrainHooks = [...brain.registerSecurityCategories({ knowledge_library: registerCategories }), 'brain_ledger'];
+export const LEDGER_SUBCATEGORY = Object.freeze({
+  security_threats: 'Threat Detection',
+  security_incidents: 'Incidents',
+  security_policies: 'Policies',
+  security_access: 'Access',
+  security_code: 'Repository Security',
+  security_devices: 'Devices',
+  security_simulations: 'Simulations',
+});
+
+const LEDGER_EVENT = { PRIVATE: 'KNOWLEDGE_SAVED', PROMOTED: 'KNOWLEDGE_UPDATED', REJECTED: 'REJECTED' };
+
+/**
+ * One Brain Ledger record for a security knowledge write or a resolved real incident: category Security, the mapped
+ * subcategory, timestamped, with no secret or identifier (the item is already redacted; the ledger scrubs again).
+ */
+export function ledgerEntryFor(kind, item, now = new Date()) {
+  if (kind === 'incident') {
+    return { category: 'Security', subcategory: 'Incidents', event_type: 'KNOWLEDGE_SAVED', knowledge_type: 'incident', title: `Incident resolved: ${item.title}`, summary: `${item.severity} incident, ${item.steps.length} recorded steps from detection to resolution.`, source_type: 'SYSTEM EVENT', source_reference: `security_core:${item.incident_id}`, record_id: item.incident_id, agent: 'security', knowledge_scope: 'owner-global', reason_saved: 'A real security incident was resolved.', verification_status: 'verified', at: now.toISOString() };
+  }
+  const cat = brain.securityCategory(item.category);
+  const promoted = item.stage === 'PROMOTED';
+  return {
+    category: 'Security', subcategory: LEDGER_SUBCATEGORY[cat.id] || 'Threat Detection',
+    event_type: LEDGER_EVENT[item.stage] || 'KNOWLEDGE_UPDATED', knowledge_type: 'security_knowledge',
+    title: promoted ? item.general?.title || item.title : item.title,
+    summary: promoted ? `Promoted to shared security knowledge (${item.portability}).` : item.stage === 'REJECTED' ? `Not shared: ${item.history.at(-1)?.note || 'rejected'}.` : `Captured as ${item.portability}.`,
+    source_type: 'SYSTEM EVENT', source_reference: `security_core:${item.knowledge_id}`, record_id: item.knowledge_id, agent: 'security',
+    knowledge_scope: item.portability === 'CUSTOMER_PRIVATE' || item.portability === 'RESTRICTED' ? 'private' : 'owner-global',
+    reason_saved: 'Security knowledge pipeline step.', verification_status: promoted ? 'tested' : '', at: now.toISOString(),
+  };
+}
+
+/** Writes the entry to CHE's Brain Ledger; a ledger failure never blocks the security action. */
+export async function recordInLedger(storage, kind, item) {
+  try { return await new BrainLedger(storage).record(ledgerEntryFor(kind, item)); } catch (_) { return null; }
+}
 
 // What CHE's lockdown really enforces today (resilience.js setLockdown and the Worker gates that read it).
 export const CHE_LOCKDOWN_MECHANISMS = Object.freeze([
