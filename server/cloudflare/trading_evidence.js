@@ -482,6 +482,18 @@ export const INTRADAY_CANDIDATES = Object.freeze({
       return null;
     },
   },
+  'inside-bar-5m': {
+    name: 'inside bar breakout', family: 'Breakout',
+    rules: 'Inside bar: the previous bar\'s high is below the bar before it and its low above it. Long: the first close above the inside bar\'s high. Short: the first close below its low. Stop 1 tick beyond the inside bar\'s other side.',
+    entry(c, i) {
+      if (i < 3) return null;
+      const mother = c[i - 2]; const inside = c[i - 1];
+      if (!(inside.h < mother.h && inside.l > mother.l)) return null;
+      if (c[i].c > inside.h) return sized({ side: 'long', ref: c[i].c, stop: inside.l - 0.25, why: `closed above the inside bar high ${r2(inside.h)}` });
+      if (c[i].c < inside.l) return sized({ side: 'short', ref: c[i].c, stop: inside.h + 0.25, why: `closed below the inside bar low ${r2(inside.l)}` });
+      return null;
+    },
+  },
   'rsi-revert-5m': {
     name: 'RSI 30/70 reversal', family: 'Mean reversion',
     rules: 'Long: RSI(14) crosses back above 30 on an up bar. Short: crosses back below 70 on a down bar. Stop 1 tick beyond the six-bar extreme.',

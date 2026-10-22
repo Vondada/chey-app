@@ -78,6 +78,7 @@ import { analyzeContract } from './legal_contracts.js';
 import { DOMAINS, SOURCE_TIERS, addExpertSource, addProfessionalNote, addToCase, bringList, domainCoverage, expertIntent, expertPromptContext, labelInteractions, loadCases, openCase, professionalBrief, readLabs, redFlags, runExam, saveCases, speakCoverage, upgradePlan } from './expert_intelligence.js';
 import { addBeat, addLedger, addWorkspace, addWorkspaceSong, advanceAgreement, applySpokenBusiness, approveQuote, artistReport, beatListing, businessDashboard, deliveryPackage, draftQuote, musicBusinessIntent, recordBeatSale, recordFeedback, resolveSpokenBusiness, setService, workspaceById, workspaceView } from './music_business.js';
 import { matrixIntent, readMatrix, runMatrix, speakMatrix } from './backtest_matrix.js';
+import { autoQueue as researchAutoQueue, cancelJob as cancelResearchJob, matrixView as researchMatrixView, nextResearchAt, queueJob as queueResearchJob, researchIntent, researchStep, researchView, setProfile as setResearchProfile, speakBestNow, speakHistory, speakStrategy, strategyView as researchStrategyView } from './trading_research.js';
 import { nextStrategySimTickAt, setStrategySimCeiling, setStrategySimPaused, speakStrategySim, strategySimIntent, strategySimTick, strategySimView, strategySimWake } from './strategy_sim.js';
 import { evidenceIntent, evidenceReport, evidenceTick } from './trading_evidence_runner.js';
 import { readTrades } from './trading_evidence.js';
@@ -4327,6 +4328,10 @@ export class CheState extends DurableObject {
     await researchDue(this.ctx.storage, { now: opts.now }).catch((error) => console.error('Historical research failed:', error?.message || error));
     // Historical trading intelligence: finishes a study the owner started, and refreshes it once a day. No model, no orders.
     await studyAlarm(this.ctx.storage, { now: opts.now }).catch((error) => console.error('Historical intelligence step failed:', error?.message || error));
+    // Multi-timeframe research (trading_research.js): the daily refresh is queued once a day; a queued job advances
+    // inside its profile's CPU budget, checkpointing each unit. Deterministic code only, free data only, no orders.
+    await researchAutoQueue(this.ctx.storage, opts.now ?? Date.now()).catch((error) => console.error('Research queue failed:', error?.message || error));
+    await researchStep(this.ctx.storage, { now: opts.now ?? Date.now() }).catch((error) => console.error('Research step failed:', error?.message || error));
     return book;
   }
 
@@ -4372,6 +4377,8 @@ export class CheState extends DurableObject {
     if (Array.isArray(outboxPending) && outboxPending.some((m) => m.state !== 'failed')) times.push(Date.now() + 60_000);
     // Paper trading learns every hour (deterministic, no AI tokens, no money).
     times.push(Math.max(Date.now() + 250, await nextTradingTickAt(this.ctx.storage).catch(() => Date.now() + 3_600_000)));
+    const researchAt = await nextResearchAt(this.ctx.storage).catch(() => null);
+    if (researchAt) times.push(researchAt);
     const liveAt = await nextLiveTickAt(this.ctx.storage).catch(() => null);
     // The simulation's next minute (null while paused or before its first pass). Same alarm slot, earliest wins.
     const simAt = await nextStrategySimTickAt(this.ctx.storage).catch(() => null);
@@ -7715,6 +7722,38 @@ export class CheState extends DurableObject {
           return json({ ok: true, started: started.started, status: state.status, spoken: speakIntelligence(view), view });
         }
         return json({ detail: 'Not found.' }, 404);
+      }
+      // Multi-timeframe research (owner, 2026-10-22): docs/CHE_TRADING_RESEARCH_API.md. Owner only. Research and paper only.
+      if (path === '/api/trading/research' || path.startsWith('/api/trading/research/')) {
+        if (!ownerDevice) return json({ detail: 'Only the CHE owner can view or run trading research.' }, 403);
+        const url = new URL(request.url);
+        const market = ['MNQ', 'NQ'].includes(url.searchParams.get('market')) ? url.searchParams.get('market') : 'MNQ';
+        if (request.method === 'GET' && path === '/api/trading/research') return json(await researchView(this.ctx.storage));
+        if (request.method === 'GET' && path === '/api/trading/research/strategy') {
+          const view = await researchStrategyView(this.ctx.storage, url.searchParams.get('id') || '', market);
+          return view ? json(view) : json({ detail: 'Unknown strategy.' }, 404);
+        }
+        if (request.method === 'GET' && path === '/api/trading/research/matrix') return json(await researchMatrixView(this.ctx.storage, market));
+        if (request.method !== 'POST') return json({ detail: 'Not found.' }, 404);
+        const action = path.replace('/api/trading/research/', '');
+        let spoken = '';
+        if (action === 'paper_learning') {
+          const state = await setLivePaper(this.ctx.storage, body.enabled === true);
+          spoken = state.enabled ? 'Paper learning is on: CHE paper-trades the written strategies on 5-minute MNQ bars. No real order can be placed.' : 'Paper learning is off. Open paper positions were voided, never closed at an invented price.';
+        } else if (action === 'profile') {
+          const out = await setResearchProfile(this.ctx.storage, String(body.profile || ''));
+          if (!out.ok) return json({ detail: 'Profile must be LIGHT, NORMAL or DEEP.' }, 400);
+          spoken = `Research profile set to ${out.profile}.`;
+        } else if (action === 'run_job') {
+          const job = await queueResearchJob(this.ctx.storage, { market: ['MNQ', 'NQ'].includes(body.market) ? body.market : 'MNQ', timeframes: Array.isArray(body.timeframes) ? body.timeframes : undefined, strategies: Array.isArray(body.strategies) ? body.strategies : null });
+          await this.scheduleWork().catch(() => null);
+          spoken = `Queued ${job.name}: ${job.remaining.length} strategy-timeframe units. Results come in as each one finishes.`;
+        } else if (action === 'cancel_job') {
+          const out = await cancelResearchJob(this.ctx.storage, String(body.id || ''));
+          if (!out.ok) return json({ detail: 'No such running or queued job.' }, 404);
+          spoken = 'The research job is cancelled. Finished units keep their results.';
+        } else return json({ detail: 'Unknown action. Use paper_learning, profile, run_job or cancel_job.' }, 404);
+        return json({ ok: true, spoken, view: await researchView(this.ctx.storage) });
       }
       // Every trade record set, read separately and named by source (owner, 2026-10-20). Read only.
       if (path === '/api/trading/ledgers' && request.method === 'GET') {
@@ -11788,6 +11827,27 @@ export class CheState extends DurableObject {
         if (legalAsk) {
           const reply = await this.legalChat(legalAsk, message, { ownerDevice, attachment: body.attachment });
           if (reply) return ndjsonReply(reply.text, { source: 'che_legal', model_calls: 0, ok: reply.ok !== false, ...(reply.extra || {}) });
+        }
+        // Multi-timeframe research (owner, 2026-10-22): best strategy now, one strategy by timeframe, history coverage,
+        // paper learning on/off and research jobs. Answered from recorded evidence; no model call.
+        const researchAsk = !body.attachment && researchIntent(message);
+        if (researchAsk) {
+          if (!ownerDevice) return ndjsonReply('Only the CHE owner can use trading research, sir.', { source: 'che_trading_research', ok: false, model_calls: 0 });
+          const say = (text, extra = {}) => ndjsonReply(text, { source: 'che_trading_research', ok: true, model_calls: 0, ...extra });
+          if (researchAsk.kind === 'best_now') return say(speakBestNow(await researchView(this.ctx.storage)), { open_screen: 'trading_room' });
+          if (researchAsk.kind === 'history') return say(speakHistory(await researchView(this.ctx.storage), researchAsk.market));
+          if (researchAsk.kind === 'strategy') return say(speakStrategy(await researchStrategyView(this.ctx.storage, researchAsk.strategy_id, 'MNQ'), researchAsk.timeframe));
+          if (researchAsk.kind === 'paper') {
+            const state = await setLivePaper(this.ctx.storage, researchAsk.enabled);
+            await this.scheduleWork().catch(() => null);
+            return say(state.enabled ? 'Paper learning is on, sir: I paper-trade the written strategies on 5-minute MNQ bars and journal every trade. No real order can be placed.' : 'Paper learning is off, sir. Open paper positions were voided, not closed at an invented price.');
+          }
+          if (researchAsk.kind === 'run') {
+            if (researchAsk.deep) await setResearchProfile(this.ctx.storage, 'DEEP');
+            const job = await queueResearchJob(this.ctx.storage, { market: researchAsk.market });
+            await this.scheduleWork().catch(() => null);
+            return say(`Queued ${job.name}, sir: ${job.remaining.length} strategy-timeframe units, under-tested ones first, on free delayed data only. It runs in the background and resumes if interrupted; nothing is bought and no order is placed.`);
+          }
         }
         // Timeframe backtest matrix (owner, 2026-10-22): every strategy on every timeframe CHE has data for, by hour of day.
         const matrixAsk = !body.attachment && matrixIntent(message);
