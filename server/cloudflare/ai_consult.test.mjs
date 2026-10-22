@@ -61,6 +61,22 @@ test('round table: each AI reads the others and CHE writes one conclusion', asyn
   assert.match(speakRoundTable(table), /Together, my conclusion: Both agree/);
 });
 
+test('round table conclusion carries the canonical Soul; the peer builds do not need it', async () => {
+  const { roundTable } = await import('./ai_consult.js');
+  const systems = [];
+  const env = { AI: { run: async (_m, input) => {
+    systems.push({ text: input.messages[0].content, provider: input.che_provider || '' });
+    return { response: /Write the conclusion/.test(input.messages[0].content) ? 'Agreed.' : 'builds' };
+  } } };
+  const results = [{ peer: 'gemini', label: 'Gemini', text: 'a' }, { peer: 'chatgpt', label: 'ChatGPT', text: 'b' }];
+  await roundTable(env, results, 'q', 'm', 'SOUL v3: warm, direct.');
+  const conclusion = systems.find((s) => /Write the conclusion/.test(s.text));
+  assert.match(conclusion.text, /SOUL v3: warm, direct\./);
+  await roundTable(env, results, 'q', 'm');
+  const withoutSoul = systems.filter((s) => /Write the conclusion/.test(s.text)).at(-1);
+  assert.doesNotMatch(withoutSoul.text, /SOUL v3/);
+});
+
 test('round table needs at least two real answers', async () => {
   const { roundTable } = await import('./ai_consult.js');
   let calls = 0;
