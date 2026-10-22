@@ -7,5 +7,5 @@ class CheActivePalette {
   CheActivePalette._();
 
   /// Set by CheUiPreferences when the owner picks a palette, and at load from the saved id.
-  static CheColorPalette current = kCheDarkPalette;
+  static CheColorPalette current = kCheHudPalette;
 }

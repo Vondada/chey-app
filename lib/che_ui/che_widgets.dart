@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import 'che_hud.dart';
 import 'che_theme.dart';
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -24,6 +25,8 @@ class CheBackground extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // HUD glass: navy space with a holographic floor (che_hud.dart).
+    if (cheHudActive) return CheHudBackdrop(aura: auraColor, child: child);
     final aura = auraColor ?? CheColors.accent;
     return DecoratedBox(
       decoration: BoxDecoration(

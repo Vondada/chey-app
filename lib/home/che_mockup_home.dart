@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 
 import '../che_ui/che_agents.dart';
 import '../che_ui/che_futuristic.dart';
+import '../che_ui/che_hud.dart';
 import '../che_ui/che_theme.dart';
 import '../che_ui/che_widgets.dart';
 
@@ -102,7 +103,7 @@ class CheMockupHome extends StatelessWidget {
           label: 'The Office',
           detail: working == 0 ? 'Team at desks' : '$working working',
           icon: Icons.apartment_rounded,
-          hue: CheEnergy.teal,
+          hue: cheHudActive ? CheHud.ice : CheEnergy.teal,
           onOpen: onOpenOffice,
         ),
         CheHomeDestination(
@@ -143,12 +144,12 @@ class CheMockupHome extends StatelessWidget {
   Widget build(BuildContext context) {
     final m = mode;
     return DecoratedBox(
-      // Layered depth: a dim light from above in CHE's state colour over the near-black background.
+      // Layered depth: a dim light from above in CHE's state colour. In the HUD look the backdrop shows through.
       decoration: BoxDecoration(
         gradient: RadialGradient(
           center: const Alignment(0, -0.75),
           radius: 1.15,
-          colors: [m.color.withValues(alpha: 0.10), CheColors.bg],
+          colors: [m.color.withValues(alpha: 0.10), cheHudActive ? Colors.transparent : CheColors.bg],
         ),
       ),
       child: ListView(
@@ -193,10 +194,13 @@ class _HomeHeader extends StatelessWidget {
         // The CHE wordmark in brushed silver with a teal edge.
         ExcludeSemantics(
           child: ShaderMask(
-            shaderCallback: (rect) => const LinearGradient(
-              colors: [CheEnergy.silverHi, CheEnergy.silver, CheEnergy.teal],
-              stops: [0.0, 0.55, 1.0],
-            ).createShader(rect),
+            shaderCallback: (rect) => (cheHudActive
+                    ? CheHud.chrome
+                    : const LinearGradient(
+                        colors: [CheEnergy.silverHi, CheEnergy.silver, CheEnergy.teal],
+                        stops: [0.0, 0.55, 1.0],
+                      ))
+                .createShader(rect),
             child: const Text(
               'CHE',
               style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800, letterSpacing: 4, color: Colors.white),
@@ -224,23 +228,23 @@ class _HomeHeader extends StatelessWidget {
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   decoration: BoxDecoration(
-                    color: CheColors.surface,
+                    color: cheHudActive ? Colors.white.withValues(alpha: 0.06) : CheColors.surface,
                     borderRadius: BorderRadius.circular(CheRadius.pill),
                     border: Border.all(
-                      color: voiceRepliesOn ? CheEnergy.teal.withValues(alpha: 0.6) : CheEnergy.gunmetal,
+                      color: voiceRepliesOn ? (cheHudActive ? CheHud.ice : CheEnergy.teal).withValues(alpha: 0.6) : CheEnergy.gunmetal,
                     ),
                   ),
                   child: Row(mainAxisSize: MainAxisSize.min, children: [
                     Icon(
                       voiceRepliesOn ? Icons.volume_up_rounded : Icons.volume_off_rounded,
                       size: 16,
-                      color: voiceRepliesOn ? CheEnergy.teal : CheColors.textDim,
+                      color: voiceRepliesOn ? (cheHudActive ? CheHud.ice : CheEnergy.teal) : CheColors.textDim,
                     ),
                     const SizedBox(width: 6),
                     Text(
                       voiceRepliesOn ? 'Voice on' : 'Voice off',
                       style: CheType.caption.copyWith(
-                        color: voiceRepliesOn ? CheEnergy.teal : CheColors.textDim,
+                        color: voiceRepliesOn ? (cheHudActive ? CheHud.ice : CheEnergy.teal) : CheColors.textDim,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
@@ -312,7 +316,17 @@ class _CheStage extends StatelessWidget {
           child: CheEnergyRing(
             mode: mode,
             size: size,
-            child: CheMiniPerson(agent: che, size: size * 0.66, showDesk: false, painted: true),
+            // HUD: CHE's chrome emblem (the approved concept) instead of the cropped portrait. A phone whose installed
+            // build does not carry the image yet falls back to the portrait, never to a blank stage.
+            child: cheHudActive
+                ? Image.asset(
+                    'assets/avatars/che_emblem.png',
+                    width: size * 0.64,
+                    height: size * 0.64,
+                    fit: BoxFit.contain,
+                    errorBuilder: (_, _, _) => CheMiniPerson(agent: che, size: size * 0.66, showDesk: false, painted: true),
+                  )
+                : CheMiniPerson(agent: che, size: size * 0.66, showDesk: false, painted: true),
           ),
         ),
         const SizedBox(height: CheSpace.sm),
@@ -349,6 +363,7 @@ class _TalkControl extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final label = listening ? 'Stop listening' : 'Talk to CHE';
+    if (cheHudActive) return _hud(context, label);
     final colors = listening ? [CheEnergy.red, const Color(0xFFFF8A6B)] : [CheEnergy.teal, CheEnergy.cyan];
     return Row(children: [
       Expanded(
@@ -409,6 +424,80 @@ class _TalkControl extends StatelessWidget {
         ),
       ),
     ]);
+  }
+}
+
+extension on _TalkControl {
+  // HUD: one glass bar with a chrome microphone orb; the keyboard button opens Chat to type.
+  Widget _hud(BuildContext context, String label) {
+    final orbColor = listening ? CheEnergy.red : CheHud.ice;
+    return CheGlass(
+      radius: 36,
+      padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+      glow: listening ? CheEnergy.red : CheHud.iceDeep,
+      child: Row(children: [
+        Expanded(
+          child: Semantics(
+            container: true,
+            button: true,
+            label: listening ? 'Stop listening.' : 'Talk to CHE. Starts a voice conversation.',
+            excludeSemantics: true,
+            child: ChePressable(
+              onTap: () {
+                HapticFeedback.mediumImpact();
+                onTalk();
+              },
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: 54),
+                child: Row(children: [
+                  CheChromeOrb(
+                    size: 54,
+                    color: orbColor,
+                    child: Icon(listening ? Icons.stop_rounded : Icons.mic_rounded, color: const Color(0xFF07121E), size: 26),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerLeft,
+                        child: Text(label, style: CheType.headline.copyWith(fontSize: 18, fontWeight: FontWeight.w700)),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        listening ? 'LISTENING' : 'VOICE',
+                        maxLines: 1,
+                        style: CheHud.label.copyWith(color: listening ? CheEnergy.red : CheHud.ice),
+                      ),
+                    ]),
+                  ),
+                ]),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(width: CheSpace.sm),
+        Semantics(
+          container: true,
+          button: true,
+          label: 'Type to CHE. Opens Chat.',
+          excludeSemantics: true,
+          child: ChePressable(
+            onTap: onOpenChat,
+            child: Container(
+              width: 50,
+              height: 50,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.white.withValues(alpha: 0.08),
+                border: Border.all(color: Colors.white.withValues(alpha: 0.35)),
+              ),
+              child: Icon(Icons.keyboard_rounded, color: CheColors.text, size: 22),
+            ),
+          ),
+        ),
+      ]),
+    );
   }
 }
 
@@ -507,7 +596,7 @@ class _NowPanel extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(14, 12, 6, 10),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
-          Text('NOW', style: CheType.overline.copyWith(color: CheEnergy.teal, letterSpacing: 1.6)),
+          Text('NOW', style: cheHudActive ? CheHud.label : CheType.overline.copyWith(color: CheEnergy.teal, letterSpacing: 1.6)),
           const Spacer(),
           Semantics(
             container: true,
@@ -518,7 +607,7 @@ class _NowPanel extends StatelessWidget {
               onPressed: onOfficeStatus,
               icon: const Icon(Icons.volume_up_rounded, size: 18),
               label: const Text('Read status'),
-              style: TextButton.styleFrom(foregroundColor: CheEnergy.teal, minimumSize: const Size(44, 44)),
+              style: TextButton.styleFrom(foregroundColor: cheHudActive ? CheHud.ice : CheEnergy.teal, minimumSize: const Size(44, 44)),
             ),
           ),
         ]),

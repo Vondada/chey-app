@@ -24,8 +24,11 @@ class CheUiPreferences extends ChangeNotifier {
   static final CheUiPreferences instance = CheUiPreferences._();
 
   static const _themeKey = 'che.ui.themeMode';
-  // The owner's palette (che_palettes.dart ids). Saved once chosen; the dark palette is the default.
+  // The owner's palette (che_palettes.dart ids). Saved once chosen; HUD glass is the default.
   static const _paletteKey = 'che.ui.palette';
+  // Set once the owner picks a palette after the HUD look shipped. Until then, the earlier dark palettes show the
+  // HUD look the owner approved (2026-10-22); a choice made afterwards is always kept.
+  static const _paletteChosenKey = 'che.ui.paletteChosenAfterHud';
   static const _avatarKey = 'che.ui.avatarStyle';
   static const _densityKey = 'che.ui.deskDensity';
   static const _textScaleKey = 'che.ui.textScale';
@@ -37,7 +40,7 @@ class CheUiPreferences extends ChangeNotifier {
   bool _loaded = false;
   bool get isLoaded => _loaded;
 
-  CheColorPalette palette = kCheDarkPalette;
+  CheColorPalette palette = kCheHudPalette;
   // Light palettes use light system chrome; every other palette is dark.
   ThemeMode get themeMode => palette.brightness == Brightness.light ? ThemeMode.light : ThemeMode.dark;
   // Owner asked for CHE to appear as her female character by default.
@@ -86,13 +89,19 @@ class CheUiPreferences extends ChangeNotifier {
     notifyListeners();
   }
 
-  // A palette saved by id; the older dark / light / system choice maps to the dark or light palette.
+  // A palette saved by id; the older dark / light / system choice maps to HUD glass or the light palette. An earlier
+  // dark palette saved before the HUD look shipped shows HUD glass; the light palette stays light.
   CheColorPalette _paletteFromSaved(SharedPreferences prefs) {
     final id = prefs.getString(_paletteKey);
-    if (id != null) return cheColorPaletteFor(id);
+    final chosenAfterHud = prefs.getBool(_paletteChosenKey) ?? false;
+    if (id != null) {
+      final saved = cheColorPaletteFor(id);
+      if (!chosenAfterHud && (saved.id == kCheDarkPalette.id || saved.id == kCheSilverBlackPalette.id)) return kCheHudPalette;
+      return saved;
+    }
     return switch (prefs.getString(_themeKey)) {
       'light' => kCheLightPalette,
-      _ => kCheDarkPalette,
+      _ => kCheHudPalette,
     };
   }
 
@@ -103,11 +112,12 @@ class CheUiPreferences extends ChangeNotifier {
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_paletteKey, next.id);
+    await prefs.setBool(_paletteChosenKey, true);
   }
 
-  /// The older Dark / Light / System control, now choosing a palette: System keeps the dark palette.
+  /// The older Dark / Light / System control, now choosing a palette: Dark and System choose HUD glass.
   Future<void> setThemeMode(ThemeMode mode) =>
-      setPalette(mode == ThemeMode.light ? kCheLightPalette : kCheDarkPalette);
+      setPalette(mode == ThemeMode.light ? kCheLightPalette : kCheHudPalette);
 
   Future<void> setAvatarStyle(CheAvatarStyle style) async {
     if (avatarStyle == style) return;

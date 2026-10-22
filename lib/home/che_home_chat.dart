@@ -13,6 +13,7 @@ import 'package:flutter/services.dart';
 
 import '../che_ui/che_agent_chat.dart' show CheOrb, CheOrbState, CheOrbStateLabel;
 import '../che_ui/che_agents.dart';
+import '../che_ui/che_hud.dart';
 import '../che_ui/che_theme.dart';
 import '../che_ui/che_widgets.dart';
 import 'che_live_steps.dart';
@@ -125,6 +126,13 @@ class CheHomeUserBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final maxW = MediaQuery.sizeOf(context).width * 0.8;
+    final hud = cheHudActive;
+    const shape = BorderRadius.only(
+      topLeft: Radius.circular(CheRadius.lg),
+      topRight: Radius.circular(CheRadius.lg),
+      bottomLeft: Radius.circular(CheRadius.lg),
+      bottomRight: Radius.circular(6),
+    );
     return Align(
       alignment: Alignment.centerRight,
       child: GestureDetector(
@@ -136,23 +144,41 @@ class CheHomeUserBubble extends StatelessWidget {
             duration: CheMotion.d(context, CheMotion.base),
             curve: CheMotion.spring,
             builder: (_, s, child) => Transform.scale(scale: s, alignment: Alignment.bottomRight, child: child),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              decoration: BoxDecoration(
-                borderRadius: const BorderRadius.only(
-                  topLeft: Radius.circular(CheRadius.lg),
-                  topRight: Radius.circular(CheRadius.lg),
-                  bottomLeft: Radius.circular(CheRadius.lg),
-                  bottomRight: Radius.circular(6),
-                ),
-                gradient: LinearGradient(colors: [
-                  CheColors.accent.withValues(alpha: 0.20),
-                  CheColors.accentAlt.withValues(alpha: 0.12),
-                ]),
-                border: Border.all(color: CheColors.accent.withValues(alpha: 0.4)),
-              ),
-              child: SelectableText(text, style: CheType.body),
-            ),
+            child: hud
+                // HUD: the owner's words on polished chrome, dark ink for contrast.
+                ? Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 11),
+                    decoration: BoxDecoration(
+                      borderRadius: shape,
+                      gradient: const LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [Color(0xFFFFFFFF), Color(0xFFDFE9F3), Color(0xFFA9BDD1)],
+                        stops: [0.0, 0.45, 1.0],
+                      ),
+                      border: Border.all(color: Colors.white.withValues(alpha: 0.9), width: 0.8),
+                      boxShadow: [
+                        BoxShadow(color: Colors.black.withValues(alpha: 0.45), blurRadius: 22, offset: const Offset(0, 10)),
+                        BoxShadow(color: CheHud.iceDeep.withValues(alpha: 0.22), blurRadius: 16),
+                      ],
+                    ),
+                    child: SelectableText(
+                      text,
+                      style: CheType.body.copyWith(color: const Color(0xFF071320), fontWeight: FontWeight.w500),
+                    ),
+                  )
+                : Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                    decoration: BoxDecoration(
+                      borderRadius: shape,
+                      gradient: LinearGradient(colors: [
+                        CheColors.accent.withValues(alpha: 0.20),
+                        CheColors.accentAlt.withValues(alpha: 0.12),
+                      ]),
+                      border: Border.all(color: CheColors.accent.withValues(alpha: 0.4)),
+                    ),
+                    child: SelectableText(text, style: CheType.body),
+                  ),
           ),
         ),
       ),
@@ -205,7 +231,20 @@ class CheHomeAssistantMessage extends StatelessWidget {
     return GestureDetector(
       onLongPress: onLongPress,
       child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Padding(padding: const EdgeInsets.only(top: 2), child: CheOrb(size: 24, active: streaming || live)),
+        Padding(
+          padding: const EdgeInsets.only(top: 2),
+          // HUD: CHE's chrome emblem marks her replies; the orb remains the fallback and the other palettes' mark.
+          child: cheHudActive
+              ? ExcludeSemantics(
+                  child: Image.asset(
+                    'assets/avatars/che_emblem.png',
+                    width: 28,
+                    height: 28,
+                    errorBuilder: (_, _, _) => CheOrb(size: 24, active: streaming || live),
+                  ),
+                )
+              : CheOrb(size: 24, active: streaming || live),
+        ),
         const SizedBox(width: CheSpace.md),
         Expanded(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -299,7 +338,21 @@ class CheHomeComposer extends StatelessWidget {
               excludeSemantics: true,
               child: ChePressable(
                 onTap: busy ? onStop : onMic,
-                child: AnimatedContainer(
+                child: cheHudActive
+                    ? CheChromeOrb(
+                        size: 56,
+                        color: (micActive || busy) ? CheHud.iceDeep : CheHud.ice,
+                        child: Icon(
+                          busy
+                              ? Icons.stop_rounded
+                              : micActive
+                                  ? Icons.graphic_eq_rounded
+                                  : Icons.mic_rounded,
+                          size: 26,
+                          color: const Color(0xFF07121E),
+                        ),
+                      )
+                    : AnimatedContainer(
                   duration: CheMotion.d(context, CheMotion.fast),
                   width: 54,
                   height: 54,
@@ -335,11 +388,12 @@ class CheHomeComposer extends StatelessWidget {
         listenable: Listenable.merge([controller, focusNode]),
         builder: (context, _) {
           final canSend = controller.text.trim().isNotEmpty || attachmentLabel != null;
-          return GlowCard(
-            active: busy || focusNode.hasFocus,
-            radius: CheRadius.xl,
-            padding: const EdgeInsets.fromLTRB(CheSpace.md, CheSpace.sm, CheSpace.sm, CheSpace.sm),
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
+          const pad = EdgeInsets.fromLTRB(CheSpace.md, CheSpace.sm, CheSpace.sm, CheSpace.sm);
+          Widget shell(Widget child) => cheHudActive
+              // HUD: the composer is a glass slab that glows while CHE works or the owner types.
+              ? CheGlass(radius: CheRadius.xl, padding: pad, glow: (busy || focusNode.hasFocus) ? CheHud.iceDeep : null, child: child)
+              : GlowCard(active: busy || focusNode.hasFocus, radius: CheRadius.xl, padding: pad, child: child);
+          return shell(Column(mainAxisSize: MainAxisSize.min, children: [
               if (attachmentLabel != null)
                 Align(
                   alignment: Alignment.centerLeft,
@@ -445,8 +499,7 @@ class CheHomeComposer extends StatelessWidget {
                 const SizedBox(width: 4),
                 _SendButton(busy: busy, enabled: canSend, onSend: onSend, onStop: onStop),
               ]),
-            ]),
-          );
+            ]));
         },
       ),
     );

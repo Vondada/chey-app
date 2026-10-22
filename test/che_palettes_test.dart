@@ -20,12 +20,13 @@ void main() {
   }
 
   test('ids are stable and unique', () {
-    expect(kCheColorPalettes.map((p) => p.id).toList(), ['che_dark', 'silver_black', 'che_light']);
+    expect(kCheColorPalettes.map((p) => p.id).toList(), ['hud_glass', 'che_dark', 'silver_black', 'che_light']);
   });
 
-  test('an unknown or missing saved id falls back to the CHE dark palette', () {
-    expect(cheColorPaletteFor(null).id, 'che_dark');
-    expect(cheColorPaletteFor('neon_pink').id, 'che_dark');
+  test('an unknown or missing saved id falls back to HUD glass, the approved default', () {
+    expect(cheColorPaletteFor(null).id, 'hud_glass');
+    expect(cheColorPaletteFor('neon_pink').id, 'hud_glass');
+    expect(cheColorPaletteFor('che_dark').id, 'che_dark');
     expect(cheColorPaletteFor('silver_black').id, 'silver_black');
   });
 }
