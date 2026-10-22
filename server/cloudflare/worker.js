@@ -72,6 +72,7 @@ import { answerOwnerMemoryQuestion, auditMemoryProvenance, evidenceQuestion, evi
 import { condenseHistory, ownerNotificationPolicy } from './workflow_governor.js';
 import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, nextTradingTickAt, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
 import { intelligenceIntent, intelligenceReport, intelligenceView, speakIntelligence, startStudy, studyAlarm, studyStep } from './historical_intelligence.js';
+import { applyRightsAction, applySpokenRightsWrite, defensibility, musicRightsIntent, musicRightsWriteIntent, releaseReadiness, songFor, speakReadiness } from './music_rights.js';
 import { matrixIntent, readMatrix, runMatrix, speakMatrix } from './backtest_matrix.js';
 import { nextStrategySimTickAt, setStrategySimCeiling, setStrategySimPaused, speakStrategySim, strategySimIntent, strategySimTick, strategySimView, strategySimWake } from './strategy_sim.js';
 import { evidenceIntent, evidenceReport, evidenceTick } from './trading_evidence_runner.js';
@@ -7111,6 +7112,14 @@ export class CheState extends DurableObject {
         return json({ ...result, spoken: speakControlResult(result), view: await this.tradingControlsView() }, result.ok || result.needs_confirmation ? 200 : 400);
       }
       // Strategy simulation (step a): paper minute-bar strategies. Read and the kill switch are owner-only; nothing here orders or spends.
+      // Music rights (owner, 2026-10-22): samples, licences, splits, metadata and release readiness on the song's own project record.
+      if (path === '/api/music/rights' && (request.method === 'GET' || request.method === 'POST')) {
+        if (!ownerDevice) return json({ detail: 'Only the CHE owner can read or change music rights.' }, 403);
+        const ask = request.method === 'GET' ? { action: 'read', project_id: new URL(request.url).searchParams.get('project_id') } : body;
+        const result = applyRightsAction(data, ask);
+        if (request.method === 'POST' && result.status === 200 && !['read', 'readiness', 'defend'].includes(String(ask.action))) await this.ctx.storage.put('che', data);
+        return json(result.body, result.status);
+      }
       // Timeframe backtest matrix: read the stored result, or run it now. Owner only; free delayed data, no orders.
       if (path === '/api/trading/matrix' && (request.method === 'GET' || request.method === 'POST')) {
         if (!ownerDevice) return json({ detail: 'Only the CHE owner can read or run the timeframe backtest.' }, 403);
@@ -11112,6 +11121,27 @@ export class CheState extends DurableObject {
             source: LEDGER_SOURCE, ok: true, model_calls: 0, kind: ledger.kind,
             ledgers: ledgers.map(({ id, trades, unavailable }) => ({ id, trades, unavailable: Boolean(unavailable) })),
           });
+        }
+        // Music rights by voice or typing: add a song, a sample, splits or a licence on the stored record.
+        const rightsWrite = !body.attachment && musicRightsWriteIntent(message);
+        if (rightsWrite) {
+          if (!ownerDevice) return ndjsonReply('Only the CHE owner can change a song\'s rights, sir.', { source: 'che_music_rights', ok: false });
+          const done = applySpokenRightsWrite(data, rightsWrite);
+          if (done.changed) await this.ctx.storage.put('che', data);
+          return ndjsonReply(done.text, { source: 'che_music_rights', model_calls: 0, ok: done.ok });
+        }
+        // Music release readiness and "can we defend this?", from the song's stored rights records only.
+        const rightsAsk = !body.attachment && musicRightsIntent(message);
+        if (rightsAsk) {
+          if (!ownerDevice) return ndjsonReply('Only the CHE owner can check a song\'s rights, sir.', { source: 'che_music_rights', ok: false });
+          const song = songFor(data, message);
+          if (!song) return ndjsonReply('There is no song in your Music catalog yet, sir. Add one and I will check its master, artwork, metadata, splits and samples.', { source: 'che_music_rights', model_calls: 0 });
+          if (rightsAsk.kind === 'defend') {
+            const d = defensibility(song);
+            return ndjsonReply(`${song.title}: ${d.risk}. ${d.factors.join(' ')} ${d.note}`, { source: 'che_music_rights', model_calls: 0, risk: d.risk });
+          }
+          const r = releaseReadiness(song);
+          return ndjsonReply(speakReadiness(r, song.title), { source: 'che_music_rights', model_calls: 0, readiness: r });
         }
         // Timeframe backtest matrix (owner, 2026-10-22): every strategy on every timeframe CHE has data for, by hour of day.
         const matrixAsk = !body.attachment && matrixIntent(message);

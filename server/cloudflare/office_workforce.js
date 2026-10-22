@@ -17,10 +17,15 @@ const SPECIALTIES = {
   creative: { title: 'Creative Specialist', capability: 'text', specialty: 'ideas, writing, concepts and creative direction' },
   analysis: { title: 'Analyst', capability: 'deep_reasoning', specialty: 'comparing results, data and evidence' },
   review: { title: 'QA/Security Reviewer', capability: 'deep_reasoning', specialty: 'quality, security and correctness review' },
+  // Music Studio roles (owner, 2026-10-22). The owner talks to CHE; CHE delegates to these and answers once.
+  legal: { title: 'Legal Research', capability: 'deep_reasoning', specialty: 'copyright, music licensing, samples, contracts, splits and trademarks: research and organisation, not a licensed attorney' },
+  music_manager: { title: 'Music Manager', capability: 'deep_reasoning', specialty: 'catalog, releases, metadata, splits, royalties, opportunities and promotion plans' },
 };
 
 export function specialtyFrom(text) {
   const lower = String(text || '').toLowerCase();
+  if (/\b(?:music|artist|release) manager\b|\bmanage my music\b/.test(lower)) return 'music_manager';
+  if (/\b(?:legal|lawyer|attorney|copyright|trademark|licens(?:e|ing)|contracts?|split sheets?)\b/.test(lower)) return 'legal';
   if (/cod|program|engineer|develop|implement/.test(lower)) return 'coding';
   if (/creativ|writ|design|story|idea|\bad(?:s|vertis)?\b|flyer|banner|caption/.test(lower)) return 'creative';
   if (/reason|think|logic|plan|strateg/.test(lower)) return 'reasoning';
