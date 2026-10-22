@@ -32,7 +32,7 @@ const MISSION_IDS = {
   intelligence: ['che', 'che-explore', 'che-plan', 'che-build', 'che-research', 'che-verify', 'che-memory', 'che-brain-review', 'che-flagstaff-import', 'che-outside-mail', 'che-recover', 'che-cancel-job', 'che-status', 'learn'],
   youtube: ['yt-ideas', 'yt-research', 'yt-script', 'yt-video', 'yt-voice', 'yt-thumbnail', 'yt-seo', 'yt-publish', 'yt-batch', 'yt-analytics', 'yt-grow'],
   // trade-connections reads the owner-only connections of #348 (issue #350).
-  trading: ['trade-open', 'trade-chart', 'trade-setup', 'trade-liquidity', 'trade-risk', 'trade-backtest', 'trade-learning', 'trade-research', 'trade-history', 'trade-journal', 'trade-alert', 'trade-sim', 'trade-controls', 'trade-emergency', 'trade-execute', 'trade-connections'],
+  trading: ['trade-open', 'trade-chart', 'trade-setup', 'trade-liquidity', 'trade-risk', 'trade-backtest', 'trade-learning', 'trade-research', 'trade-history', 'trade-matrix', 'trade-journal', 'trade-alert', 'trade-sim', 'trade-controls', 'trade-emergency', 'trade-execute', 'trade-connections'],
   build: ['site-build', 'site-redesign', 'site-audit', 'site-publish', 'app-build', 'app-fix', 'ai-build', 'code-review', 'che-release', 'iphone-update', 'rea-inspect', 'rea-discover', 'rea-features', 'rea-explain', 'rea-debug', 'rea-compare', 'rea-rebuild', 'rea-build', 'rea-verify', 'rea-status'],
   money: ['money-dashboard', 'cashflow', 'budget', 'expenses', 'invoices', 'money-forecast', 'pricing', 'profit-report'],
   clients: ['lead-scout', 'lead-audit', 'lead-score', 'lead-match', 'lead-proposal', 'lead-outreach', 'lead-crm', 'lead-followup', 'client-deliver'],
@@ -110,9 +110,9 @@ async function owner({ saved = new Map(), model = () => 'Here is the answer, sir
 
 // ─── 1. Catalog identities ────────────────────────────────────────────────
 
-test('1. the owner\'s 71 commands exist exactly as listed, plus ten REA, six Creator Studio, two Strategy Control Center, two strategy learning commands and the historical study, in 9 categories, each fully described', () => {
-  assert.equal(COMMANDS.length, 99);
-  assert.equal(new Set(COMMANDS.map((c) => c.id)).size, 99, 'ids are unique');
+test('1. the owner\'s 71 commands exist exactly as listed, plus ten REA, six Creator Studio, two Strategy Control Center, two strategy learning commands, the historical study and the timeframe matrix, in 9 categories, each fully described', () => {
+  assert.equal(COMMANDS.length, 100);
+  assert.equal(new Set(COMMANDS.map((c) => c.id)).size, 100, 'ids are unique');
   assert.deepEqual(CATEGORIES.map((c) => c.id), Object.keys(MISSION_IDS));
   for (const [category, ids] of Object.entries(MISSION_IDS)) {
     assert.deepEqual(COMMANDS.filter((c) => c.category === category).map((c) => c.id), ids, category);
@@ -163,7 +163,7 @@ test('2. availability comes from real configuration: ready, needs setup, unsuppo
   const expired = connectorStatus({ CHE_TRADOVATE_OAUTH_CLIENT_ID: 'x', CHE_TRADOVATE_OAUTH_CLIENT_SECRET: 'y' }, { broker: { expired: true } });
   assert.equal(expired.broker.state, 'needs_reconnect');
   const view = catalogView(bare);
-  assert.equal(view.commands.length, 99);
+  assert.equal(view.commands.length, 100);
   assert.ok(view.commands.every((c) => ['available', 'setup_required', 'unsupported', 'temporarily_unavailable'].includes(c.status)));
 });
 
@@ -372,6 +372,23 @@ test('/trade-history and plain questions reach the historical study; nothing is 
   assert.equal((await che.say('Backtest NQ')).route === 'che_trading_intelligence', false, 'the existing backtest command keeps its route');
   const dirty = await che.say('Test Dirty Trez on MNQ');
   assert.match(dirty.reply, /no written rules for Dirty Trez/);
+});
+
+// Timeframe backtest matrix: typed, spoken or /trade-matrix, owner only, no model call, nothing invented offline.
+test('/trade-matrix and timeframe questions reach the matrix; offline it reports no numbers', async () => {
+  const che = await owner({ model: siteModel, env: READY_ENV });
+  const before = await che.say('Which strategy works best on which timeframe for NQ?');
+  assert.equal(before.route, 'che_trading_matrix');
+  assert.equal(before.modelCalls, 0);
+  assert.match(before.reply, /has not run yet/);
+  const run = await che.say('/trade-matrix run');
+  assert.equal(run.route, 'che_trading_matrix');
+  assert.equal(run.modelCalls, 0);
+  assert.match(run.reply, /no order was placed/);
+  const view = await che.get('/api/trading/matrix');
+  assert.equal(view.ranking.length, 0, 'no ranking without data');
+  assert.equal(view.timeframes.find((t) => t.id === '15s').available, false);
+  assert.equal((await che.say('How did your strategies do historically on NQ since 1999?')).route, 'che_trading_intelligence', 'decades questions keep their route');
 });
 
 test('a guest device cannot read or run the historical study', async () => {
@@ -735,7 +752,7 @@ test('the Flutter catalog fixture matches what the Worker serves (regenerate: no
   const { fixtureCatalog } = await import('../../tool/dump_command_catalog.mjs');
   const fixture = JSON.parse(readFileSync(new URL('../../test/fixtures/command_catalog.json', import.meta.url), 'utf8'));
   assert.deepEqual(fixture, JSON.parse(JSON.stringify(fixtureCatalog())));
-  assert.equal(fixture.commands.length, 99);
+  assert.equal(fixture.commands.length, 100);
   assert.ok(fixture.templates.length >= 4);
 });
 
@@ -854,7 +871,7 @@ test('the owner\'s six spoken phrases are answered from the catalog with no mode
   for (const words of variants('CHE, open your Commands page.')) {
     const out = await che.say(words);
     assert.equal(out.route, 'che_command_center', words);
-    assert.match(out.reply, /99 commands in 9 groups[\s\S]*2\. YouTube, 11[\s\S]*9\. Creator Studio, 6[\s\S]*Nothing was run/, words);
+    assert.match(out.reply, /100 commands in 9 groups[\s\S]*2\. YouTube, 11[\s\S]*9\. Creator Studio, 6[\s\S]*Nothing was run/, words);
   }
   for (const words of variants('CHE, search for YouTube.')) {
     const out = await che.say(words);

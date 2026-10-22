@@ -395,28 +395,15 @@ extension _CheHomeHubRooms on _CHEHomeState {
     );
   }
 
-  // Office agents who are in this room walk across the bottom of the tab.
-  Widget _withVisitors(Widget scene, Set<String> rooms) {
-    _ensureOfficeRuntime();
-    return Stack(children: [
-      Positioned.fill(child: scene),
-      Positioned(
-        left: 0,
-        right: 0,
-        bottom: 96,
-        child: CheRoomVisitors(runtime: _officeRuntime, rooms: rooms, onOpenOffice: _openOfficeFloor),
-      ),
-    ]);
-  }
-
-  Widget _hubMusicTab(bool active) => _withVisitors(_hubMusicScene(active), const {'music', 'studio'});
+  // No crew walks across the screen: agents appear where they do work (Office), not as decoration on Music.
+  Widget _hubMusicTab(bool active) => _hubMusicScene(active);
 
   Widget _hubMusicScene(bool active) {
     final musicReady = integrations['music'] == true;
     final voiceReady = integrations['natural_voice'] == true;
     return CheCreatorStudio(
       speaking: _isSpeaking,
-      jobs: backgroundJobs,
+      jobs: [for (final j in backgroundJobs) if (!cheIsCodingJob(j)) j],
       onOpenJob: (job) => unawaited(_openJob(job)),
       seriesPanel: CheSeriesStudioPanel(baseUrl: () => cheAgentBaseUrl, headers: () => _authHeaders, onAsk: _runHubPrompt),
       musicScene: MusicStudioScene(
@@ -489,7 +476,7 @@ extension _CheHomeHubRooms on _CHEHomeState {
     );
   }
 
-  Widget _hubCreateTab(bool active) => _withVisitors(_hubCreateScene(active), const {'gallery'});
+  Widget _hubCreateTab(bool active) => _hubCreateScene(active);
 
   Widget _hubCreateScene(bool active) {
     return CheRoomSegments(
