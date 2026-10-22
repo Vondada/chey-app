@@ -15,6 +15,15 @@ import '../che_ui/che_screen_awareness.dart';
 import '../che_ui/che_theme.dart';
 import '../widgets/che_native_scene_world.dart';
 
+/// Coding and repository work (self-development, PRs, deploys, app builds, skill imports, exams). It belongs in Projects and Office, never in the
+/// Music or Create render queue (2026-10-22: the coding investigation history showed up inside Music).
+const _kCodingJobKinds = {
+  'self_development', 'software_agent', 'repo_study', 'verify_deploy', 'merge_pr', 'pr_opened', 'merged',
+  'update_approved', 'autonomy_exam', 'reasoning_exam', 'verify_app_build', 'office_skill_import',
+};
+
+bool cheIsCodingJob(Map<String, dynamic> job) => _kCodingJobKinds.contains('${job['kind'] ?? ''}');
+
 class CheStudioAction {
   const CheStudioAction({
     required this.icon,
@@ -209,7 +218,7 @@ class _CheCreatorStudioState extends State<CheCreatorStudio> {
         Text('RENDER QUEUE', style: section(_cyan)),
         const SizedBox(height: CheSpace.xs),
         if (widget.jobs.isEmpty)
-          Text('Nothing rendering. Long creations run as cloud jobs and keep going when your phone is locked.', style: CheType.bodyDim)
+          Text('Nothing rendering.', style: CheType.bodyDim)
         else
           for (final job in widget.jobs) _JobRow(job: job, onTap: () => widget.onOpenJob(job)),
         const SizedBox(height: CheSpace.lg),

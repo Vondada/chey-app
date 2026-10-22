@@ -73,6 +73,7 @@ import { condenseHistory, ownerNotificationPolicy } from './workflow_governor.js
 import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, nextTradingTickAt, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
 import { intelligenceIntent, intelligenceReport, intelligenceView, speakIntelligence, startStudy, studyAlarm, studyStep } from './historical_intelligence.js';
 import { applyRightsAction, applySpokenRightsWrite, defensibility, musicRightsIntent, musicRightsWriteIntent, releaseReadiness, songFor, speakReadiness } from './music_rights.js';
+import { matrixIntent, readMatrix, runMatrix, speakMatrix } from './backtest_matrix.js';
 import { nextStrategySimTickAt, setStrategySimCeiling, setStrategySimPaused, speakStrategySim, strategySimIntent, strategySimTick, strategySimView, strategySimWake } from './strategy_sim.js';
 import { evidenceIntent, evidenceReport, evidenceTick } from './trading_evidence_runner.js';
 import { readTrades } from './trading_evidence.js';
@@ -7119,6 +7120,12 @@ export class CheState extends DurableObject {
         if (request.method === 'POST' && result.status === 200 && !['read', 'readiness', 'defend'].includes(String(ask.action))) await this.ctx.storage.put('che', data);
         return json(result.body, result.status);
       }
+      // Timeframe backtest matrix: read the stored result, or run it now. Owner only; free delayed data, no orders.
+      if (path === '/api/trading/matrix' && (request.method === 'GET' || request.method === 'POST')) {
+        if (!ownerDevice) return json({ detail: 'Only the CHE owner can read or run the timeframe backtest.' }, 403);
+        if (request.method === 'POST') return json(await runMatrix(this.ctx.storage));
+        return json((await readMatrix(this.ctx.storage)) || { status: 'never run' });
+      }
       const simOwnerOnly = () => json({ detail: 'Only the CHE owner can view or control the strategy simulation.' }, 403);
       if (path === '/api/trading/sim' && request.method === 'GET') {
         if (!ownerDevice) return simOwnerOnly();
@@ -11135,6 +11142,17 @@ export class CheState extends DurableObject {
           }
           const r = releaseReadiness(song);
           return ndjsonReply(speakReadiness(r, song.title), { source: 'che_music_rights', model_calls: 0, readiness: r });
+        }
+        // Timeframe backtest matrix (owner, 2026-10-22): every strategy on every timeframe CHE has data for, by hour of day.
+        const matrixAsk = !body.attachment && matrixIntent(message);
+        if (matrixAsk) {
+          if (!ownerDevice) return ndjsonReply('Only the CHE owner can read or run the timeframe backtest, sir.', { source: 'che_trading_matrix', ok: false });
+          if (matrixAsk.kind === 'run') {
+            const m = await runMatrix(this.ctx.storage);
+            return ndjsonReply(`Done, sir. Free delayed data only; nothing was bought and no order was placed.\n${speakMatrix(m)}`, { source: 'che_trading_matrix' });
+          }
+          const saved = await readMatrix(this.ctx.storage);
+          return ndjsonReply(saved ? speakMatrix(saved) : 'The timeframe backtest has not run yet, sir. Say "backtest every strategy on every timeframe" and I will test them on free delayed NQ data. It places no orders.', { source: 'che_trading_matrix' });
         }
         // Forward paper trading by voice (owner, 2026-10-18), answered from the journal only.
         const live = liveIntent(message);

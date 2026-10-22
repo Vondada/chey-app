@@ -1671,6 +1671,48 @@
    "optional_missing": []
   },
   {
+   "id": "trade-matrix",
+   "category": "trading",
+   "title": "Trade Matrix",
+   "summary": "Test every strategy on every timeframe and hour of day.",
+   "does": "Backtests CHE's ten strategies on free delayed NQ history at every timeframe CHE has data for (1 minute about 7 days, 5 to 30 minutes about 60 days, 1 and 4 hours about 2 years, daily, weekly and monthly from Stooq), net of MNQ costs, and ranks strategy, timeframe and New York hour only where there are at least 30 trades. 15-second bars are reported as unavailable. Nothing is bought and no order is placed. Owner only.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "question",
+    "required": false,
+    "hint": "run, or ask which strategy is best"
+   },
+   "examples": [
+    "Backtest every strategy on every timeframe",
+    "Which strategy works best on which timeframe?",
+    "What is the best time of day to trade NQ?"
+   ],
+   "needs": [
+    "market_data"
+   ],
+   "optional": [],
+   "handler": "backtest_matrix.matrixIntent → runMatrix / readMatrix",
+   "route": "che_trading_matrix",
+   "produces": "timeframe matrix",
+   "evidence": "Stored results with bar counts, dates and costs only.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "timeframe",
+    "time frame",
+    "every timeframe",
+    "time of day",
+    "best hour",
+    "matrix"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
    "id": "trade-journal",
    "category": "trading",
    "title": "Trade Journal",
