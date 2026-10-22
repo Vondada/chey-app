@@ -145,3 +145,34 @@ test('the owner\'s notes are saved, so the next reply carries them', async () =>
   assert.match(out.system, /Call me Alex at the start of a conversation\./);
   assert.match(out.system, /never override evidence, permissions or numbers/);
 });
+
+test('a model reply says the Soul applied, and names the engine that answered', async () => {
+  const che = await app();
+  const out = await che.say(PERSONALITY_PROMPT);
+  assert.equal(out.meta.soul.soul_loaded, true);
+  assert.equal(out.meta.soul.soul_applied, true);
+  assert.equal(out.meta.soul.route, 'model');
+  assert.equal(out.meta.soul.version, 0);
+  assert.match(out.meta.served_by.model, /\S/, 'the reply names the model that answered');
+  assert.equal(out.meta.served_by.fallback, false);
+});
+
+test('a reply a CHE handler builds says the Soul did not shape it, and the model was not called', async () => {
+  const che = await app();
+  const out = await che.say('CHE, list every saved media item by its actual ID, filename, type, and creation date.');
+  assert.equal(out.modelCalls, 0, 'the handler answered without the model');
+  assert.equal(out.meta.soul.soul_loaded, true);
+  assert.equal(out.meta.soul.soul_applied, false, 'a profile existing is not the Soul applying');
+  assert.equal(out.meta.soul.route, 'handler');
+  assert.match(out.meta.soul.reason, /no model call/);
+});
+
+test('switching the Soul changes the next model reply and its recorded version', async () => {
+  const che = await app();
+  await che.soul('POST', '/api/soul', { traits: { warmth: 10, playfulness: 9 } });
+  const out = await che.say(PERSONALITY_PROMPT);
+  assert.equal(out.meta.soul.version, 1);
+  assert.match(out.system, /Warmth 10\/10/);
+  assert.match(out.system, /Playfulness 9\/10/);
+  assert.equal(out.meta.soul.soul_applied, true);
+});
