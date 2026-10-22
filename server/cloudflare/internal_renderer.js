@@ -324,6 +324,64 @@ export async function encodePng(canvas, { forceStored = false, meta = PROVENANCE
   return out;
 }
 
+/**
+ * Animated PNG (APNG): every frame of an animation in one standard file that browsers play and ffmpeg decodes, so a
+ * whole animation is one media item and one video clip. Frames are RGB canvases of one size.
+ */
+export async function encodeApng(canvases, { fps = 12, loops = 0, meta = PROVENANCE } = {}) {
+  if (!canvases.length) throw new Error('An animation needs at least one frame.');
+  const { w, h } = canvases[0];
+  const rows = (c) => { const raw = new Uint8Array(h * (1 + w * 3)); for (let y = 0; y < h; y++) { const row = y * (1 + w * 3); for (let x = 0; x < w; x++) { const i = (y * w + x) * 4, o = row + 1 + x * 3; raw[o] = c.px[i]; raw[o + 1] = c.px[i + 1]; raw[o + 2] = c.px[i + 2]; } } return raw; };
+  const ihdr = new Uint8Array(13), dv = new DataView(ihdr.buffer);
+  dv.setUint32(0, w); dv.setUint32(4, h); ihdr[8] = 8; ihdr[9] = 2;
+  const actl = new Uint8Array(8); new DataView(actl.buffer).setUint32(0, canvases.length); new DataView(actl.buffer).setUint32(4, loops);
+  const parts = [new Uint8Array(SIGNATURE), chunk('IHDR', ihdr), chunk('acTL', actl), chunk('tEXt', new TextEncoder().encode(`Software\u0000${meta}`))];
+  let seq = 0;
+  for (let f = 0; f < canvases.length; f++) {
+    if (canvases[f].w !== w || canvases[f].h !== h) throw new Error('Every frame must be the same size.');
+    const fctl = new Uint8Array(26), fv = new DataView(fctl.buffer);
+    fv.setUint32(0, seq++); fv.setUint32(4, w); fv.setUint32(8, h); fv.setUint16(20, 1); fv.setUint16(22, fps);
+    parts.push(chunk('fcTL', fctl));
+    const data = await zlibDeflate(rows(canvases[f]));
+    if (f === 0) parts.push(chunk('IDAT', data));
+    else { const fd = new Uint8Array(4 + data.length); new DataView(fd.buffer).setUint32(0, seq++); fd.set(data, 4); parts.push(chunk('fdAT', fd)); }
+  }
+  parts.push(chunk('IEND', new Uint8Array()));
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let o = 0; for (const p of parts) { out.set(p, o); o += p.length; }
+  return out;
+}
+
+/** Facts about an APNG without decoding every frame: frame count, size, frame rate, and that every chunk CRC holds. */
+export function apngFacts(bytes) {
+  for (let i = 0; i < 8; i++) if (bytes[i] !== SIGNATURE[i]) return { ok: false, reason: 'not a PNG signature' };
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let o = 8, frames = 0, declared = 0, w = 0, h = 0, fps = 0;
+  while (o + 12 <= bytes.length) {
+    const len = dv.getUint32(o), type = String.fromCharCode(...bytes.subarray(o + 4, o + 8));
+    if (o + 12 + len > bytes.length || crc32(bytes, o + 4, o + 8 + len) !== dv.getUint32(o + 8 + len)) return { ok: false, reason: `chunk ${type} is damaged` };
+    if (type === 'IHDR') { w = dv.getUint32(o + 8); h = dv.getUint32(o + 12); }
+    if (type === 'acTL') declared = dv.getUint32(o + 8);
+    if (type === 'fcTL') { frames++; fps = Math.round(dv.getUint16(o + 8 + 22) / Math.max(1, dv.getUint16(o + 8 + 20))); }
+    if (type === 'IEND') return { ok: frames > 0 && frames === declared, frames, width: w, height: h, fps, seconds: Math.round((frames / Math.max(1, fps)) * 100) / 100 };
+    o += 12 + len;
+  }
+  return { ok: false, reason: 'no IEND chunk' };
+}
+
+/** The beach animation as one APNG: the waves and the shoreline move; everything else is the same recipe. */
+export async function beachAnimation(recipe, { seconds = 2, fps = 12, size = { w: 320, h: 180 }, budgetMs = 25000 } = {}) {
+  const frames = Math.max(2, Math.min(96, Math.round(seconds * fps)));
+  const started = Date.now();
+  const canvases = [];
+  for (let i = 0; i < frames; i++) {
+    const r = renderScene(beachScene({ ...recipe, phase: i / frames }), { w: size.w, h: size.h, budgetMs: Math.max(500, budgetMs - (Date.now() - started)) });
+    canvases.push(r.canvas);
+  }
+  const bytes = await encodeApng(canvases, { fps });
+  return { bytes, facts: apngFacts(bytes), ms: Date.now() - started, first: canvases[0] };
+}
+
 /** Re-opens a PNG: signature, every chunk CRC, IHDR, inflate, unfilter. Returns pixels (RGB) or a reason. */
 export async function decodePng(bytes) {
   try {

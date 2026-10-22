@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
 import {
-  Canvas, PROVENANCE, beachFrames, beachLoop, beachRecipe, beachScene, decodePng, encodePng, evaluateBeach, renderScene, verticalGradient, disc, text, hex, zlibDeflate,
+  Canvas, PROVENANCE, apngFacts, beachAnimation, beachFrames, beachLoop, beachRecipe, beachScene, decodePng, encodePng, evaluateBeach, renderScene, verticalGradient, disc, text, hex, zlibDeflate,
 } from './internal_renderer.js';
 import { RENDER_CAPABILITIES, selfTest, ensureRendererCapabilities, internalSceneIntent } from './internal_studio.js';
 import { PROMOTION_CHECKS, emptyRegistry, loadRegistry, promote, recordCheck, register, rollback, serving, executionAllowed } from './capability_registry.js';
@@ -128,6 +128,15 @@ test('video frames: the same skill animates the waves; frames differ and each is
   let diff = 0; for (let i = 0; i < decoded[0].rgb.length; i++) diff += Math.abs(decoded[0].rgb[i] - decoded[2].rgb[i]);
   assert.ok(diff / decoded[0].rgb.length > 0.5, 'the waves move between frames');
   assert.ok((await zlibDeflate(new Uint8Array(10))).length > 0);
+});
+
+test('video: the animation is one APNG with every frame, its size and frame rate; a damaged file is caught', async () => {
+  const a = await beachAnimation(beachRecipe('a day beach'), { seconds: 1, fps: 6, size: { w: 160, h: 90 } });
+  assert.deepEqual([a.facts.ok, a.facts.frames, a.facts.width, a.facts.height, a.facts.fps, a.facts.seconds], [true, 6, 160, 90, 6, 1]);
+  const first = await decodePng(a.bytes);
+  assert.equal(first.ok, true, 'the first frame opens as an ordinary PNG too');
+  const bad = a.bytes.slice(); bad[bad.length - 30] ^= 0xff;
+  assert.equal(apngFacts(bad).ok, false);
 });
 
 // ─── Through the Worker ─────────────────────────────────────────────────────
