@@ -35,7 +35,6 @@ export async function syncRoutingSnapshot(storage, data) {
   await storage.put('ai_routing', {
     policy: {
       local_only: Boolean(ai.policy.local_only),
-      internal_only: Boolean(ai.policy.internal_only),
       prefer_strongest: Boolean(ai.policy.prefer_strongest),
       max_cost_class: ai.policy.max_cost_class,
       preferred_provider: ai.policy.preferred_provider || '',

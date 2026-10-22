@@ -49,20 +49,25 @@ export function defaultPolicy() {
     updated_at: null,
   };
 }
+// Internal-only has one source of truth: Security Intelligence's egress policy, which guards every outbound fetch.
+const EGRESS_POLICY_KEY = 'che:egress_policy';
 export async function loadPolicy(storage) {
   let p = null;
+  let egress = null;
   try { p = await storage.get(POLICY_KEY); } catch (_) { p = null; }
+  try { egress = await storage.get(EGRESS_POLICY_KEY); } catch (_) { egress = null; }
   const base = defaultPolicy();
-  return p ? { ...base, ...p, memory: { ...base.memory, ...(p.memory || {}) } } : base;
+  const merged = p ? { ...base, ...p, memory: { ...base.memory, ...(p.memory || {}) } } : base;
+  return { ...merged, internal_only: egress?.internal_only === true, no_external_api: egress?.internal_only === true };
 }
 export async function savePolicy(storage, p) { await storage.put(POLICY_KEY, { ...p, updated_at: new Date().toISOString() }); }
 
 /** The owner's natural-language policies → structured changes. Returns null when the words are not a policy. */
 export function policyIntent(message = '') {
   const t = String(message || '').trim().toLowerCase().replace(/[’]/g, "'").replace(/^(?:che|chay|chey)[,\s]+/, '').replace(/[.!]+$/, '');
-  if (/^(?:turn off|disable|stop|exit|leave) internal[- ]only(?: mode)?$|^you (?:may|can) use external (?:apis|services|tools) again$/.test(t)) return { set: { internal_only: false, no_external_api: false }, said: 'Internal-only mode is off. External services still need your approval and paid ones stay as you set them.' };
-  if (/^(?:use only your internal capabilities|(?:turn on|enable|use) internal[- ]only(?: mode)?|only use your (?:own|internal) (?:tools|capabilities))$/.test(t)) return { set: { internal_only: true }, said: 'Internal-only mode is on: I use my own code and the compute you control, never an external model, API or renderer, and I tell you when something cannot be done internally.' };
-  if (/^(?:do not|don't|never) (?:call|use) (?:any )?external apis?$/.test(t)) return { set: { internal_only: true, no_external_api: true }, said: 'No external API calls from now on: internal-only mode is on.' };
+  // "Use only your internal capabilities" and "do not call any external API" are Security Intelligence's (one switch).
+  if (/^(?:turn off|disable|stop|exit|leave) internal[- ]only(?: mode)?$|^you (?:may|can) use external (?:apis|services|tools) again$/.test(t)) return { set: { internal_only: false }, said: '' };
+  if (/^(?:(?:turn on|enable|use) internal[- ]only(?: mode)?|only use your (?:own|internal) (?:tools|capabilities))$/.test(t)) return { set: { internal_only: true }, said: 'Internal-only mode is on: I call no outside service, only my own runtime and the compute you control, and I tell you when something cannot be done internally.' };
   if (/^(?:do not|don't|never) use paid apis?(?: or services)?$/.test(t)) return { set: { no_paid: true }, said: 'Paid services are off. Free and internal capabilities only.' };
   if (/^(?:do not|don't|never) send (?:this|my|the) project outside (?:che|of che|you)$/.test(t)) return { set: { no_export_projects: ['*'] }, said: 'Projects stay inside CHE: nothing from them is sent to an external service.' };
   if (/^remember the method,? not the (?:private )?files$/.test(t)) return { memory: { method_only: true }, said: 'From now on I keep the method of a verified result, never the files themselves.' };
@@ -530,59 +535,7 @@ function toolForVersion(entry, version) {
   return entry.previous?.version === version ? entry.previous : null;
 }
 
-// ─── Egress guard: internal-only, no-external-API and no-export enforced at the network boundary ─────────────
-
-// Hosts the owner controls: his own GitHub repository and Actions artifacts (owner compute), and his own model server.
-export function ownerHost(url, env = {}) {
-  let u;
-  try { u = new URL(String(url)); } catch (_) { return false; }
-  const repo = String(env.CHE_GITHUB_REPO || '').toLowerCase();
-  if (u.hostname === 'api.github.com' && repo && u.pathname.toLowerCase().startsWith(`/repos/${repo}/`)) return true;
-  if (/(^|\.)actions\.githubusercontent\.com$/.test(u.hostname) || /\.blob\.core\.windows\.net$/.test(u.hostname)) return true; // GitHub artifact storage
-  for (const own of [env.CHE_OLLAMA_URL, env.CHE_OWNER_COMPUTE_URL]) {
-    try { if (own && new URL(own).hostname === u.hostname) return true; } catch (_) {}
-  }
-  return false;
-}
-
-const GUARDS = new Set();
-let guardedFetch = null;
-/**
- * Every outbound fetch passes here. While any CHE object in this isolate has internal-only (or no-external-API) on,
- * or is handling a request for a project the owner said must stay inside CHE, a request to a host the owner does not
- * control is refused before it leaves. Fail closed: when unsure, nothing external is sent.
- */
-export function installEgressGuard(guard) {
-  GUARDS.add(guard);
-  if (guardedFetch && globalThis.fetch === guardedFetch) return () => GUARDS.delete(guard);
-  const original = globalThis.fetch;
-  guardedFetch = async (input, init) => {
-    const url = typeof input === 'string' ? input : input?.url || String(input);
-    for (const g of GUARDS) {
-      const why = g(url);
-      if (why) {
-        const err = new Error(`Not sent: ${why}. Nothing left CHE.`);
-        err.code = 'internal_only';
-        throw err;
-      }
-    }
-    return original(input, init);
-  };
-  globalThis.fetch = guardedFetch;
-  return () => GUARDS.delete(guard);
-}
-
-/** The guard for one CHE object: its cached policy and the projects it is handling right now. */
-export function egressGuard(state) {
-  return (url) => {
-    const p = state.policy;
-    if (!p || ownerHost(url, state.env || {})) return '';
-    if (p.internal_only || p.no_external_api) return `internal-only mode is on, so the request to ${hostOf(url)} was blocked`;
-    if (state.projectHolds > 0) return `this project stays inside CHE, so the request to ${hostOf(url)} was blocked`;
-    return '';
-  };
-}
-const hostOf = (url) => { try { return new URL(url).hostname; } catch (_) { return 'an external service'; } };
+// ─── Project no-export (enforced by Security Intelligence's single egress guard, holdEgress) ───────────────
 
 /** Does this request carry a project the owner said must not leave CHE? */
 export function projectBlocked(policy, projectId) {

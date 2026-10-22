@@ -78,6 +78,7 @@ import { analyzeContract } from './legal_contracts.js';
 import { DOMAINS, SOURCE_TIERS, addExpertSource, addProfessionalNote, addToCase, bringList, domainCoverage, expertIntent, expertPromptContext, labelInteractions, loadCases, openCase, professionalBrief, readLabs, redFlags, runExam, saveCases, speakCoverage, upgradePlan } from './expert_intelligence.js';
 import { addBeat, addLedger, addWorkspace, addWorkspaceSong, advanceAgreement, applySpokenBusiness, approveQuote, artistReport, beatListing, businessDashboard, deliveryPackage, draftQuote, musicBusinessIntent, recordBeatSale, recordFeedback, resolveSpokenBusiness, setService, workspaceById, workspaceView } from './music_business.js';
 import { matrixIntent, readMatrix, runMatrix, speakMatrix } from './backtest_matrix.js';
+import { autoQueue as researchAutoQueue, cancelJob as cancelResearchJob, matrixView as researchMatrixView, nextResearchAt, queueJob as queueResearchJob, researchIntent, researchStep, researchView, setProfile as setResearchProfile, speakBestNow, speakHistory, speakStrategy, strategyView as researchStrategyView } from './trading_research.js';
 import { nextStrategySimTickAt, setStrategySimCeiling, setStrategySimPaused, speakStrategySim, strategySimIntent, strategySimTick, strategySimView, strategySimWake } from './strategy_sim.js';
 import { evidenceIntent, evidenceReport, evidenceTick } from './trading_evidence_runner.js';
 import { readTrades } from './trading_evidence.js';
@@ -225,7 +226,8 @@ import {
 } from './research_memory.js';
 import { APP_BUILD_KEY, appBuildIntent, appBuildRun, dispatchAppBuild, speakAppBuild } from './app_builds.js';
 import { advanceObjectives, applyMissionEvent, approvalReached, approveNode, awaitingApproval, cancelObjective, createObjective, mutateObjective, replanNode, resolveKnownNodes, retryNode, setObjectivePaused, speakObjective } from './objective_graph.js';
-import { acquire as acquireCapability, applyPolicy as applyCapabilityPolicy, capabilityIntent, engineSummary as capabilityEngineSummary, learnFromOutcome, loadPolicy as loadCapabilityPolicy, populate as populateKnowledge, retrieve as retrieveKnowledge, rollbackTool, savePolicy as saveCapabilityPolicy, installEgressGuard, egressGuard, projectBlocked, speakCapabilities, speakLearned as speakLearnedKnowledge, useTool, LAST_USED_KEY as KNOWLEDGE_USED_KEY } from './capability_engine.js';
+import { acquire as acquireCapability, applyPolicy as applyCapabilityPolicy, capabilityIntent, engineSummary as capabilityEngineSummary, learnFromOutcome, loadPolicy as loadCapabilityPolicy, populate as populateKnowledge, retrieve as retrieveKnowledge, rollbackTool, savePolicy as saveCapabilityPolicy, projectBlocked, speakCapabilities, speakLearned as speakLearnedKnowledge, useTool, LAST_USED_KEY as KNOWLEDGE_USED_KEY } from './capability_engine.js';
+import { EGRESS_KEY, holdEgress, installEgressGuard, setEgressOwner, setEgressPolicy, storeEgressPolicy, SESSION_SCOPES, bump as securityBump, checkSession, createSession, dependencyAdvisories, detectThreats, issueNonce, loadSecurity, recordFindings, redact as redactSecretText, redactDeep, respondToIncident, restoreTrustedState, revokeSessions, saveSecurity, securityIntent, snapshotTrustedState, speakStatus as speakSecurityStatus } from './security_intelligence.js';
 import { loadRegistry as loadCapabilityRegistry } from './capability_registry.js';
 import { engineView, exportWorkflows, feedbackOnLast, importWorkflows, library as workflowLibrary, loadEngine, matchLearned, noteVersion, promoteCandidate, dismissCandidate, rankWorkflows, recordRun as recordWorkflowRun, isDisabled as workflowDisabled, restoreVersion, saveEngine, setDisabled as setWorkflowDisabled, setPreferred as setWorkflowPreferred, speakEfficiency, speakLibrary, testCandidate, workflowForRun, workflowIntent } from './workflow_engine.js';
 import { CATEGORIES, COMMANDS, catalogView, commandById, commandStatus, connectorStatus, describeWorkflow, dispatchPrompt, findSavedWorkflow, normalizeSavedWorkflow, parseSlashCommand, readCommandSpeech, searchCommands, speakCommandList, speakUnavailable, suggestCommands, workflowNodes, workflowFromWords } from './command_catalog.js';
@@ -3676,10 +3678,6 @@ function activeLegalActivities(data = {}, legal = {}) {
 export class CheState extends DurableObject {
   constructor(state, env) {
     super(state, env);
-    // Internal-only, no-external-API and per-project no-export are enforced at the network boundary (capability_engine.js):
-    // installed before the router captures fetch, so model providers are covered too.
-    this.egress = { policy: null, projectHolds: 0, env };
-    installEgressGuard(egressGuard(this.egress));
     // Every text model call goes through CHE's free-engine router. Persist
     // per-engine daily usage estimates in this owner's Durable Object.
     this.env = routedEnv(env, fetch, state.storage);
@@ -4331,6 +4329,10 @@ export class CheState extends DurableObject {
     await researchDue(this.ctx.storage, { now: opts.now }).catch((error) => console.error('Historical research failed:', error?.message || error));
     // Historical trading intelligence: finishes a study the owner started, and refreshes it once a day. No model, no orders.
     await studyAlarm(this.ctx.storage, { now: opts.now }).catch((error) => console.error('Historical intelligence step failed:', error?.message || error));
+    // Multi-timeframe research (trading_research.js): the daily refresh is queued once a day; a queued job advances
+    // inside its profile's CPU budget, checkpointing each unit. Deterministic code only, free data only, no orders.
+    await researchAutoQueue(this.ctx.storage, opts.now ?? Date.now()).catch((error) => console.error('Research queue failed:', error?.message || error));
+    await researchStep(this.ctx.storage, { now: opts.now ?? Date.now() }).catch((error) => console.error('Research step failed:', error?.message || error));
     return book;
   }
 
@@ -4376,6 +4378,8 @@ export class CheState extends DurableObject {
     if (Array.isArray(outboxPending) && outboxPending.some((m) => m.state !== 'failed')) times.push(Date.now() + 60_000);
     // Paper trading learns every hour (deterministic, no AI tokens, no money).
     times.push(Math.max(Date.now() + 250, await nextTradingTickAt(this.ctx.storage).catch(() => Date.now() + 3_600_000)));
+    const researchAt = await nextResearchAt(this.ctx.storage).catch(() => null);
+    if (researchAt) times.push(researchAt);
     const liveAt = await nextLiveTickAt(this.ctx.storage).catch(() => null);
     // The simulation's next minute (null while paused or before its first pass). Same alarm slot, earliest wins.
     const simAt = await nextStrategySimTickAt(this.ctx.storage).catch(() => null);
@@ -5453,18 +5457,24 @@ export class CheState extends DurableObject {
       await this.ctx.storage.deleteAll();
       return json({ ok: true, reset: true });
     }
-    // The owner's egress policy, read for every request (one small storage read), so the guard is never stale.
-    try { this.egress.policy = await loadCapabilityPolicy(this.ctx.storage); } catch (_) { this.egress.policy = null; }
+    // Internal-only mode (Security Intelligence): every outbound fetch is checked against the owner's policy.
+    installEgressGuard();
+    setEgressOwner(this.env);
+    try { setEgressPolicy(await this.ctx.storage.get(EGRESS_KEY), request.url); } catch (_) {}
+    // A project the owner said must stay inside CHE holds the same guard for the length of the request.
     let projectHold = false;
-    if (request.method === 'POST' && (this.egress.policy?.no_export_projects || []).length) {
-      const peek = await request.clone().json().catch(() => null);
-      projectHold = projectBlocked(this.egress.policy, peek?.project_id || peek?.visual_project_id || '');
-    }
-    if (projectHold) this.egress.projectHolds++;
+    try {
+      const policy = await loadCapabilityPolicy(this.ctx.storage);
+      if (request.method === 'POST' && (policy.no_export_projects || []).length) {
+        const peek = await request.clone().json().catch(() => null);
+        projectHold = projectBlocked(policy, peek?.project_id || peek?.visual_project_id || '');
+      }
+    } catch (_) { projectHold = false; }
+    if (projectHold) holdEgress(1);
     try {
       return await this.fetchInner(request);
     } finally {
-      if (projectHold) this.egress.projectHolds--;
+      if (projectHold) holdEgress(-1);
     }
   }
 
@@ -5476,6 +5486,7 @@ export class CheState extends DurableObject {
     const sent = isChat ? request.clone().json().catch(() => null) : null;
     const startedAt = Date.now();
     let response = await this.handleRequest(request);
+    if (response?.status >= 500 && response.status !== 503) await this.securityCount('server_error');
     // Issue #345: a turn with a money or delete hold, or several steps with a "don't", carries how CHE
     // read it. The phone shows it as quiet text under the reply and never speaks it by itself.
     if (isChat && response?.ok && OWNER_CHAT_REQUESTS.has(request)) {
@@ -5541,10 +5552,18 @@ export class CheState extends DurableObject {
             await saveEngine(this.ctx.storage, engine);
           }
         } catch (_) {}
-        const memory = await recordConversationMemory(this.ctx.storage, { message, reply });
+        // Chat history is stored with credential-shaped values redacted; the finding is recorded, never the value.
+        const safeMessage = redactSecretText(message);
+        const safeReply = redactSecretText(reply);
+        if (safeMessage.findings.length || safeReply.findings.length) {
+          const sec = await loadSecurity(this.ctx.storage);
+          recordFindings(sec, 'chat history', [...safeMessage.findings, ...safeReply.findings].map((f) => f.kind));
+          await saveSecurity(this.ctx.storage, sec);
+        }
+        const memory = await recordConversationMemory(this.ctx.storage, { message: safeMessage.text, reply: safeReply.text });
         if (memory) {
           // The Brain keeps the whole exchange; brainmem keeps its linked summary. Same id.
-          try { rememberExchange(new CheBrainStore(this.ctx.storage), { id: memory.id, message, reply, at: memory.at }); } catch (_) {}
+          try { rememberExchange(new CheBrainStore(this.ctx.storage), { id: memory.id, message: safeMessage.text, reply: safeReply.text, at: memory.at }); } catch (_) {}
           await storeVectorMemory(this.keyEnv || this.env, {
             external_id: `conversation:${memory.id}`,
             kind: 'conversation',
@@ -5877,18 +5896,23 @@ export class CheState extends DurableObject {
   // `command` node, independent steps run in parallel lanes, approval steps
   // wait for the owner. Nothing starts unless every step can run now.
   // ── Capability Engine ──────────────────────────────────────────────────
-  // Internal-only mode also turns on the AI layer's existing local-only policy, so the model path never leaves the
-  // owner's own hardware, and paid/external picture engines are skipped (media.js reads the same snapshot).
+  // Internal-only mode has one switch: Security Intelligence's egress policy (security_intelligence.js), which guards
+  // every outbound fetch. Turning it on is allowed from here; turning it off needs Face ID on the Security page.
   async setCapabilityPolicy(data, intent) {
     const before = await loadCapabilityPolicy(this.ctx.storage);
+    if (intent.set?.internal_only === false || intent.set?.no_external_api === false) {
+      return { ...before, refused: 'Turning internal-only mode off needs Face ID on the Security page. Nothing was changed.' };
+    }
     const next = applyCapabilityPolicy(before, intent);
     await saveCapabilityPolicy(this.ctx.storage, next);
-    this.egress.policy = next;
-    if (before.internal_only !== next.internal_only || before.no_paid !== next.no_paid) {
+    if (next.internal_only && !before.internal_only) {
+      data.capability_policy = { ...(data.capability_policy || {}), internal_only: true };
+      await this.ctx.storage.put('che', data);
+      await storeEgressPolicy(this.ctx.storage, true);
+    }
+    if (next.no_paid && !before.no_paid) {
       const ai = ensureAiState(data);
-      ai.policy.local_only = next.internal_only === true;
-      ai.policy.internal_only = next.internal_only === true;
-      if (next.no_paid) ai.policy.max_cost_class = 'free';
+      ai.policy.max_cost_class = 'free';
       await this.ctx.storage.put('che', data);
       await syncRoutingSnapshot(this.ctx.storage, data);
     }
@@ -5912,7 +5936,7 @@ export class CheState extends DurableObject {
     if (action === 'outcome') return json(learnFromOutcome(storage, body, { policy }));
     if (action === 'policy') {
       const next = await this.setCapabilityPolicy(data, { set: body.set || {}, memory: body.memory || {} });
-      return json({ policy: next });
+      return next.refused ? json({ detail: next.refused }, 403) : json({ policy: next });
     }
     return json({ detail: 'Unknown capability action.' }, 404);
   }
@@ -5922,6 +5946,7 @@ export class CheState extends DurableObject {
     const say = (text, extra = {}) => ndjsonReply(text, { source: 'che_capability_engine', ok: true, model_calls: 0, capability_action: ask.action, ...extra });
     if (ask.action === 'policy') {
       const next = await this.setCapabilityPolicy(data, ask.policy);
+      if (next.refused) return say(next.refused, { ok: false });
       return say(ask.policy.said, { policy: next });
     }
     const registry = await loadCapabilityRegistry(storage);
@@ -5946,13 +5971,128 @@ export class CheState extends DurableObject {
     return say('I can tell you what I can actually do, what I learned about something, which knowledge I used, or build an internal tool.', { ok: false });
   }
 
+  // ── Security Intelligence ──────────────────────────────────────────────
+  async securityCount(name) {
+    try {
+      const sec = await loadSecurity(this.ctx.storage);
+      securityBump(sec, name);
+      await saveSecurity(this.ctx.storage, sec);
+    } catch (_) {}
+  }
+
+  // One full check over CHE's own telemetry, registry and dependency manifests. Nothing outside CHE is probed.
+  async runSecurityCheck(data) {
+    const sec = await loadSecurity(this.ctx.storage);
+    const env = this.keyEnv || this.env;
+    let deploy = null;
+    let advisories = null;
+    if (env.CHE_GITHUB_TOKEN && env.CHE_GITHUB_REPO) {
+      const gh = (p) => fetch(`https://api.github.com/repos/${env.CHE_GITHUB_REPO}/${p}`, { headers: { Authorization: `Bearer ${env.CHE_GITHUB_TOKEN}`, Accept: 'application/vnd.github+json', 'User-Agent': 'CHE-Security' }, signal: AbortSignal.timeout(10000) }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+      const raw = (p) => fetch(`https://api.github.com/repos/${env.CHE_GITHUB_REPO}/contents/${p}?ref=main`, { headers: { Authorization: `Bearer ${env.CHE_GITHUB_TOKEN}`, Accept: 'application/vnd.github.raw', 'User-Agent': 'CHE-Security' }, signal: AbortSignal.timeout(10000) }).then((r) => (r.ok ? r.text() : '')).catch(() => '');
+      const head = await gh('commits/main');
+      // The running Worker's version tag is the commit it was deployed from (12 characters), set by the deploy job.
+      const live = runtimeVersion(this.env).version_tag;
+      if (head?.sha && /^[0-9a-f]{7,40}$/.test(live)) {
+        // main merely ahead of the live commit is a deploy not finished yet, not an unexpected deployment.
+        const cmp = head.sha.startsWith(live) ? { status: 'identical' } : await gh(`compare/${live}...${head.sha}`);
+        deploy = { live_sha: live, expected_sha: head.sha, relation: cmp?.status || 'unknown' };
+      }
+      const [packageJson, pubspecLock] = await Promise.all([raw('server/cloudflare/package.json'), raw('pubspec.lock')]);
+      advisories = dependencyAdvisories({ packageJson, pubspecLock });
+    }
+    const findings = detectThreats(sec, { data, deploy, registry: await loadCapabilityRegistry(this.ctx.storage), advisories });
+    await saveSecurity(this.ctx.storage, sec);
+    return { sec, findings, advisories, deploy_checked: Boolean(deploy) };
+  }
+
+  async securityApi(path, request, body, data, tokenHash) {
+    const action = path.replace(/^\/api\/security\/?/, '');
+    if (request.method === 'GET' && !action) {
+      const sec = await loadSecurity(this.ctx.storage);
+      return json({
+        status: speakSecurityStatus(sec, { lockedDown: await isLockedDown(this.ctx.storage) }),
+        events: (sec.events || []).slice(0, 50), audit: (sec.audit || []).slice(0, 30),
+        sessions: Object.values(sec.sessions || {}).filter((s) => !s.revoked_at && s.expires_at > Date.now()).map((s) => ({ scopes: s.scopes, factors: s.factors, expires_at: s.expires_at, this_device: s.device === tokenHash })),
+        internal_only: (await this.ctx.storage.get(EGRESS_KEY))?.internal_only === true,
+        scopes: SESSION_SCOPES,
+      });
+    }
+    if (request.method !== 'POST') return json({ detail: 'Not found.' }, 404);
+    const sec = await loadSecurity(this.ctx.storage);
+    const done = async (out, status = 200) => { await saveSecurity(this.ctx.storage, sec); return json(out, status); };
+    if (action === 'nonce') return done({ nonce: issueNonce(sec) });
+    // The phone's Face ID result (only ok + method) becomes a short scoped session bound to this device.
+    if (action === 'session') {
+      const out = createSession(sec, { deviceHash: tokenHash, assertion: body.assertion, scope: body.scope, nonce: String(body.nonce || '') });
+      return done(out, out.ok ? 200 : 403);
+    }
+    if (action === 'check') { const r = await this.runSecurityCheck(data); return json({ findings: r.findings, advisories: r.advisories, deploy_checked: r.deploy_checked, status: speakSecurityStatus(r.sec, { lockedDown: await isLockedDown(this.ctx.storage), findings: r.findings }) }); }
+    if (action === 'revoke_sessions') return done({ revoked: revokeSessions(sec) });
+    if (action === 'lockdown') { await setLockdown(this.ctx.storage, true); return done({ ok: true, locked: true }); }
+    if (action === 'snapshot') return done({ ok: true, ...(await snapshotTrustedState(this.ctx.storage, data)) });
+    // Sensitive: need a fresh Face ID session for exactly this scope (two factors: this device + biometric).
+    // Turning external dependencies off only lowers risk, so it needs no Face ID; turning them back on does.
+    const needs = action === 'external' && body.internal_only === true ? null : { restore: 'restore', unlock: 'lockdown_off', incident: 'security', external: 'external_dependency' }[action];
+    if (needs) {
+      const ok = checkSession(sec, request.headers.get('X-CHE-Session') || body.session, { deviceHash: tokenHash, scope: needs });
+      if (!ok.ok) return done({ detail: `This needs Face ID first (${ok.reason.replace(/_/g, ' ')}).`, reason: ok.reason, needs_scope: needs }, 401);
+    }
+    if (action === 'restore') { const r = await restoreTrustedState(this.ctx.storage, data); if (r.ok) await this.ctx.storage.put('che', data); return done(r, r.ok ? 200 : 409); }
+    if (action === 'unlock') { await setLockdown(this.ctx.storage, false); return done({ ok: true, locked: false }); }
+    if (action === 'external') { data.capability_policy = { ...(data.capability_policy || {}), internal_only: body.internal_only === true }; await this.ctx.storage.put('che', data); await storeEgressPolicy(this.ctx.storage, body.internal_only === true); return done({ ok: true, internal_only: data.capability_policy.internal_only }); }
+    if (action === 'incident') {
+      const r = await respondToIncident(this.ctx.storage, sec, data, { revokeDevices: body.revoke_devices === true, keepDeviceHash: tokenHash, revokeDevice: (hash) => revokeDevice(data, ensurePlatform(data).devices[hash]?.id, { byTokenHash: tokenHash }) });
+      await this.ctx.storage.put('che', data);
+      return done(r);
+    }
+    return json({ detail: 'Unknown security action.' }, 404);
+  }
+
+  // The owner's spoken or typed security requests. Every answer reports what was actually done or found.
+  async securityChat(data, ask, tokenHash) {
+    const say = (text, extra = {}) => ndjsonReply(text, { source: 'che_security', ok: true, model_calls: 0, security_action: ask.action, ...extra });
+    if (ask.action === 'check') {
+      const r = await this.runSecurityCheck(data);
+      const tail = r.advisories ? ` Dependencies: ${r.advisories.checked} checked against ${r.advisories.coverage}; ${r.advisories.advisories.length} advisory match${r.advisories.advisories.length === 1 ? '' : 'es'}.` : ' Dependency and deploy checks need the GitHub connection, so they were not run.';
+      return say(speakSecurityStatus(r.sec, { lockedDown: await isLockedDown(this.ctx.storage), findings: r.findings }) + tail, { findings: r.findings.length });
+    }
+    const sec = await loadSecurity(this.ctx.storage);
+    if (ask.action === 'status') return say(speakSecurityStatus(sec, { lockedDown: await isLockedDown(this.ctx.storage) }));
+    if (ask.action === 'revoke') { const n = revokeSessions(sec); await saveSecurity(this.ctx.storage, sec); return say(`Revoked ${n} Face ID session${n === 1 ? '' : 's'}, sir. Your paired devices still work; say "revoke device" with its name to remove one.`); }
+    if (ask.action === 'snapshot') { const s = await snapshotTrustedState(this.ctx.storage, data); return say(`Saved a trusted snapshot of my configuration, sir, fingerprint ${s.sha256.slice(0, 12)}. It holds no keys or passwords.`); }
+    if (ask.action === 'internal_only') {
+      data.capability_policy = { ...(data.capability_policy || {}), internal_only: true };
+      await this.ctx.storage.put('che', data);
+      await storeEgressPolicy(this.ctx.storage, true);
+      return say('External dependencies are off, sir: internal-only mode is on. I now call no outside service; only my own runtime and your GitHub and Cloudflare. Answers come from my Cloudflare engine. Turning them back on needs Face ID on the Security page.', { internal_only: true });
+    }
+    if (ask.action === 'tools') {
+      const reg = await loadCapabilityRegistry(this.ctx.storage);
+      const caps = Object.values(reg.capabilities || {});
+      if (!caps.length) return say('I have no internally created tools registered yet, sir.');
+      return say(`${caps.length} internal tool${caps.length === 1 ? '' : 's'}: ${caps.slice(0, 6).map((c, i) => `${i + 1}. ${c.name}, ${c.status.toLowerCase()}, ${c.checks?.security?.ok ? 'security reviewed' : 'not security reviewed'}, network ${(c.permissions?.network || []).length ? c.permissions.network.join(', ') : 'none'}`).join('; ')}.`);
+    }
+    if (ask.action === 'knowledge') {
+      const a = (await this.ctx.storage.get('ai_audit').catch(() => [])) || [];
+      const day = a.filter((e) => Date.now() - Date.parse(e.at) < 86_400_000);
+      const providers = [...new Set(day.map((e) => e.provider).filter(Boolean))];
+      return say(day.length ? `In the last day ${day.length} model call${day.length === 1 ? '' : 's'} received context from my memory, through ${providers.join(', ') || 'unnamed engines'}; data classes sent: ${[...new Set(day.flatMap((e) => e.data_classes || []))].join(', ') || 'none'}. Withheld: ${[...new Set(day.flatMap((e) => e.withheld_classes || []))].join(', ') || 'none'}.` : 'No model received context from my memory in the last day, sir.');
+    }
+    if (ask.action === 'incident') {
+      const r = await respondToIncident(this.ctx.storage, sec, data, {});
+      await saveSecurity(this.ctx.storage, sec);
+      return say(`Incident response done, sir: ${r.done.join('; ')}. Lockdown ${r.verified_lockdown ? 'is confirmed on' : 'could not be confirmed'}. Rotate these next: ${r.rotate.join(', ')}. To remove other paired devices too, use the Security page.`);
+    }
+    return say('I can run a security check, give the status, revoke sessions, lock down, review internal tools or knowledge access, and turn off external dependencies, sir.', { ok: false });
+  }
+
   // ── Workflow Engine ────────────────────────────────────────────────────
   // The library, its measurements and the owner's controls. Running a workflow stays with the existing
   // executors (handlers, runSlashCommand, startCommandWorkflow and the objective graph).
   async workflowsApi(path, request, body, data) {
     const engine = await loadEngine(this.ctx.storage);
     if (request.method === 'GET' && path === '/api/workflows') return json(engineView(data, engine));
-    if (request.method === 'GET' && path === '/api/workflows/export') return json(exportWorkflows(data, engine));
+    if (request.method === 'GET' && path === '/api/workflows/export') return json(redactDeep(exportWorkflows(data, engine)));
     if (request.method !== 'POST') return json({ detail: 'Not found.' }, 404);
     const lib = workflowLibrary(data, engine);
     const action = path.replace('/api/workflows/', '');
@@ -6436,7 +6576,12 @@ export class CheState extends DurableObject {
       const match = /^Bearer ([A-Za-z0-9_-]{40,160})$/.exec(authorization);
       const workflowStep = WORKFLOW_STEP_REQUESTS.has(request) && path === '/api/chat';
       const tokenHash = match && !workflowStep ? await digest(match[1]) : '';
-      if (!workflowStep && !Object.hasOwn(data.devices, tokenHash)) return json({ detail: 'Pair your phone to CHE.' }, 401);
+      if (!workflowStep && !Object.hasOwn(data.devices, tokenHash)) {
+        // Security Intelligence telemetry: refused tokens are counted (never stored), revoked devices separately.
+        const revokedTry = Boolean(tokenHash && ensurePlatform(data).devices[tokenHash]?.revoked_at);
+        await this.securityCount(revokedTry ? 'revoked_device' : 'unknown_token');
+        return json({ detail: 'Pair your phone to CHE.' }, 401);
+      }
       const platformDevice = workflowStep ? null : touchDevice(data, tokenHash);
       if (platformDevice?.revoked_at) return json({ detail: 'This CHE device was revoked.' }, 401);
       const activeTenant = workflowStep ? ensurePlatform(data).tenants[OWNER_TENANT_ID] : tenantForDevice(data, tokenHash);
@@ -7674,6 +7819,38 @@ export class CheState extends DurableObject {
         }
         return json({ detail: 'Not found.' }, 404);
       }
+      // Multi-timeframe research (owner, 2026-10-22): docs/CHE_TRADING_RESEARCH_API.md. Owner only. Research and paper only.
+      if (path === '/api/trading/research' || path.startsWith('/api/trading/research/')) {
+        if (!ownerDevice) return json({ detail: 'Only the CHE owner can view or run trading research.' }, 403);
+        const url = new URL(request.url);
+        const market = ['MNQ', 'NQ'].includes(url.searchParams.get('market')) ? url.searchParams.get('market') : 'MNQ';
+        if (request.method === 'GET' && path === '/api/trading/research') return json(await researchView(this.ctx.storage));
+        if (request.method === 'GET' && path === '/api/trading/research/strategy') {
+          const view = await researchStrategyView(this.ctx.storage, url.searchParams.get('id') || '', market);
+          return view ? json(view) : json({ detail: 'Unknown strategy.' }, 404);
+        }
+        if (request.method === 'GET' && path === '/api/trading/research/matrix') return json(await researchMatrixView(this.ctx.storage, market));
+        if (request.method !== 'POST') return json({ detail: 'Not found.' }, 404);
+        const action = path.replace('/api/trading/research/', '');
+        let spoken = '';
+        if (action === 'paper_learning') {
+          const state = await setLivePaper(this.ctx.storage, body.enabled === true);
+          spoken = state.enabled ? 'Paper learning is on: CHE paper-trades the written strategies on 5-minute MNQ bars. No real order can be placed.' : 'Paper learning is off. Open paper positions were voided, never closed at an invented price.';
+        } else if (action === 'profile') {
+          const out = await setResearchProfile(this.ctx.storage, String(body.profile || ''));
+          if (!out.ok) return json({ detail: 'Profile must be LIGHT, NORMAL or DEEP.' }, 400);
+          spoken = `Research profile set to ${out.profile}.`;
+        } else if (action === 'run_job') {
+          const job = await queueResearchJob(this.ctx.storage, { market: ['MNQ', 'NQ'].includes(body.market) ? body.market : 'MNQ', timeframes: Array.isArray(body.timeframes) ? body.timeframes : undefined, strategies: Array.isArray(body.strategies) ? body.strategies : null });
+          await this.scheduleWork().catch(() => null);
+          spoken = `Queued ${job.name}: ${job.remaining.length} strategy-timeframe units. Results come in as each one finishes.`;
+        } else if (action === 'cancel_job') {
+          const out = await cancelResearchJob(this.ctx.storage, String(body.id || ''));
+          if (!out.ok) return json({ detail: 'No such running or queued job.' }, 404);
+          spoken = 'The research job is cancelled. Finished units keep their results.';
+        } else return json({ detail: 'Unknown action. Use paper_learning, profile, run_job or cancel_job.' }, 404);
+        return json({ ok: true, spoken, view: await researchView(this.ctx.storage) });
+      }
       // Every trade record set, read separately and named by source (owner, 2026-10-20). Read only.
       if (path === '/api/trading/ledgers' && request.method === 'GET') {
         if (!ownerDevice) return ownerOnly();
@@ -8620,6 +8797,10 @@ export class CheState extends DurableObject {
       if (path === '/api/capability-engine' || path.startsWith('/api/capability-engine/')) {
         if (!ownerDevice) return json({ detail: 'Only the CHE owner can see or change capabilities.' }, 403);
         return this.capabilitiesApi(path, request, body, data);
+      }
+      if (path === '/api/security' || (path.startsWith('/api/security/') && path !== '/api/security/revoke_self')) {
+        if (!ownerDevice) return json({ detail: 'Only the CHE owner can see or change CHE\'s security.' }, 403);
+        return this.securityApi(path, request, body, data, tokenHash);
       }
       if (path === '/api/workflows' || path.startsWith('/api/workflows/')) {
         if (!ownerDevice) return json({ detail: 'Only the CHE owner can see or change the workflow library.' }, 403);
@@ -9725,6 +9906,8 @@ export class CheState extends DurableObject {
             return ndjsonReply(started.spoken, { source: 'che_command_workflow', ok: started.ok, objective_id: started.objective?.id || null, model_calls: 0 });
           }
           // Workflow Engine: the owner's words about the library, then a promoted learned workflow this request matches.
+          const secAsk = ownerDevice && !body.attachment && !body.workflow_step ? securityIntent(rawMessage) : null;
+          if (secAsk) return this.securityChat(data, secAsk, tokenHash);
           // Capability Engine: what CHE can actually do, what she learned, owner policies (internal-only and memory).
           const capAsk = ownerDevice && !body.attachment && !body.workflow_step ? capabilityIntent(rawMessage) : null;
           if (capAsk) return this.capabilityChat(data, capAsk);
@@ -11748,6 +11931,27 @@ export class CheState extends DurableObject {
           const reply = await this.legalChat(legalAsk, message, { ownerDevice, attachment: body.attachment });
           if (reply) return ndjsonReply(reply.text, { source: 'che_legal', model_calls: 0, ok: reply.ok !== false, ...(reply.extra || {}) });
         }
+        // Multi-timeframe research (owner, 2026-10-22): best strategy now, one strategy by timeframe, history coverage,
+        // paper learning on/off and research jobs. Answered from recorded evidence; no model call.
+        const researchAsk = !body.attachment && researchIntent(message);
+        if (researchAsk) {
+          if (!ownerDevice) return ndjsonReply('Only the CHE owner can use trading research, sir.', { source: 'che_trading_research', ok: false, model_calls: 0 });
+          const say = (text, extra = {}) => ndjsonReply(text, { source: 'che_trading_research', ok: true, model_calls: 0, ...extra });
+          if (researchAsk.kind === 'best_now') return say(speakBestNow(await researchView(this.ctx.storage)), { open_screen: 'trading_room' });
+          if (researchAsk.kind === 'history') return say(speakHistory(await researchView(this.ctx.storage), researchAsk.market));
+          if (researchAsk.kind === 'strategy') return say(speakStrategy(await researchStrategyView(this.ctx.storage, researchAsk.strategy_id, 'MNQ'), researchAsk.timeframe));
+          if (researchAsk.kind === 'paper') {
+            const state = await setLivePaper(this.ctx.storage, researchAsk.enabled);
+            await this.scheduleWork().catch(() => null);
+            return say(state.enabled ? 'Paper learning is on, sir: I paper-trade the written strategies on 5-minute MNQ bars and journal every trade. No real order can be placed.' : 'Paper learning is off, sir. Open paper positions were voided, not closed at an invented price.');
+          }
+          if (researchAsk.kind === 'run') {
+            if (researchAsk.deep) await setResearchProfile(this.ctx.storage, 'DEEP');
+            const job = await queueResearchJob(this.ctx.storage, { market: researchAsk.market });
+            await this.scheduleWork().catch(() => null);
+            return say(`Queued ${job.name}, sir: ${job.remaining.length} strategy-timeframe units, under-tested ones first, on free delayed data only. It runs in the background and resumes if interrupted; nothing is bought and no order is placed.`);
+          }
+        }
         // Timeframe backtest matrix (owner, 2026-10-22): every strategy on every timeframe CHE has data for, by hour of day.
         const matrixAsk = !body.attachment && matrixIntent(message);
         if (matrixAsk) {
@@ -13450,6 +13654,9 @@ export class CheState extends DurableObject {
   }
 
   async alarm() {
+    installEgressGuard();
+    setEgressOwner(this.env);
+    try { setEgressPolicy(await this.ctx.storage.get(EGRESS_KEY)); } catch (_) {}
     await this.refreshKeyEnv();
     // A minute-only wake-up: the simulation's minute is the only work due. It runs that one pass and makes no
     // mailbox (GitHub), job, Tradovate, hourly or live call. Those keep their own wake-up times and run on them.
