@@ -56,4 +56,12 @@ void main() {
     await pump(tester, const []);
     expect(find.textContaining('Nothing yet'), findsOneWidget);
   });
+
+  testWidgets('a lost deal is neither moving nor finished; an invoiced deal is still moving', (tester) async {
+    await pump(tester, [
+      item('l', 'Lost lead', 'lost', progress: 0),
+      item('i', 'Invoice sent', 'invoiced', progress: 1),
+    ]);
+    expect(find.text('0 need attention · 1 in progress · 0 finished'), findsOneWidget);
+  });
 }
