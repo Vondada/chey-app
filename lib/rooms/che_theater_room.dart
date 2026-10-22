@@ -20,8 +20,6 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import '../agents/che_agent_runtime.dart';
-import '../che_ui/che_agents.dart' show CheAgentStatus;
-import '../agents/che_office_world.dart' show CheRoomVisitors;
 import '../che_ui/che_theme.dart';
 import '../browser/che_browser.dart';
 import '../browser/che_embedded_app_shell.dart';
@@ -606,7 +604,6 @@ class _CheTheaterRoomState extends State<CheTheaterRoom> {
               child: _Theater3DStage(runtime: widget.runtime, compact: true, onScreenTap: _openTheaterScreen),
             ),
           ),
-        CheRoomVisitors(runtime: widget.runtime, rooms: const {'theater'}, onOpenOffice: widget.onOpenOffice),
       ]),
     );
   }
@@ -627,14 +624,14 @@ class _Theater3DStage extends StatelessWidget {
   List<CheSceneEntity> _visitors() {
     final visitors = <CheSceneEntity>[
       for (final p in runtime.agents)
-        if (p.room == 'theater' || p.agent.status == CheAgentStatus.idle)
+        // Only real occupants: an agent working in another room is not a seat visitor.
+        if (p.room == 'theater')
           CheSceneEntity(
             id: p.agent.id,
             label: p.agent.name,
-            description:
-                p.room == 'theater' ? 'Watching in the Theater' : 'Available seat visitor',
+            description: 'Watching in the Theater',
             color: p.agent.color,
-            state: p.room == 'theater' ? 'working' : 'idle',
+            state: 'working',
           ),
     ];
     if (visitors.isEmpty) {
