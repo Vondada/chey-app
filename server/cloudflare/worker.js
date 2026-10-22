@@ -9816,7 +9816,7 @@ export class CheState extends DurableObject {
         // CHE's own renderer first (owner, 2026-10-22: "internal capability first"): a scene her renderer can make is made,
         // verified and saved here with no external app, API or key. Other subjects keep the media engine below.
         const internalScene = ownerDevice && !body.attachment
-          ? internalSceneIntent(message, { hasLast: Boolean(await this.ctx.storage.get(LAST_RENDER_KEY).catch(() => null)) })
+          ? internalSceneIntent(message, { hasLast: await Promise.resolve().then(() => this.ctx.storage.get(LAST_RENDER_KEY)).then(Boolean, () => false) })
           : null;
         // Read before the interpreter (no model needed); a sentence that also asks to pay, buy or delete is left to the gate.
         if (internalScene && gateOwnerAction(message, {}).allowed) {
