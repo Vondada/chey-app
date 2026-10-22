@@ -26,7 +26,7 @@ void main() {
     expect(find.text('Home'), findsOneWidget);
     expect(find.text('Chat'), findsOneWidget);
     expect(find.text('Office'), findsOneWidget);
-    expect(find.text('Apps'), findsOneWidget);
+    expect(find.text('CHE World'), findsOneWidget);
     expect(find.text('More'), findsOneWidget);
 
     // One-tap Voice mute on Home.

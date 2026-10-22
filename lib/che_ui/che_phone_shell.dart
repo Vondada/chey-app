@@ -10,28 +10,28 @@ enum ChePhoneTab { home, chat, office, apps, more }
 
 extension ChePhoneTabX on ChePhoneTab {
   String get label => switch (this) {
-        ChePhoneTab.home => 'Home',
-        ChePhoneTab.chat => 'Chat',
-        ChePhoneTab.office => 'Office',
-        ChePhoneTab.apps => 'Apps',
-        ChePhoneTab.more => 'More',
-      };
+    ChePhoneTab.home => 'Home',
+    ChePhoneTab.chat => 'Chat',
+    ChePhoneTab.office => 'Office',
+    ChePhoneTab.apps => 'CHE World',
+    ChePhoneTab.more => 'More',
+  };
 
   IconData get icon => switch (this) {
-        ChePhoneTab.home => Icons.home_rounded,
-        ChePhoneTab.chat => Icons.chat_bubble_rounded,
-        ChePhoneTab.office => Icons.apartment_rounded,
-        ChePhoneTab.apps => Icons.apps_rounded,
-        ChePhoneTab.more => Icons.more_horiz_rounded,
-      };
+    ChePhoneTab.home => Icons.home_rounded,
+    ChePhoneTab.chat => Icons.chat_bubble_rounded,
+    ChePhoneTab.office => Icons.apartment_rounded,
+    ChePhoneTab.apps => Icons.dashboard_rounded,
+    ChePhoneTab.more => Icons.more_horiz_rounded,
+  };
 
   String get semanticsLabel => switch (this) {
-        ChePhoneTab.home => 'Home tab',
-        ChePhoneTab.chat => 'Chat tab',
-        ChePhoneTab.office => 'Office tab',
-        ChePhoneTab.apps => 'Apps tab',
-        ChePhoneTab.more => 'More tab',
-      };
+    ChePhoneTab.home => 'Home tab',
+    ChePhoneTab.chat => 'Chat tab',
+    ChePhoneTab.office => 'Office tab',
+    ChePhoneTab.apps => 'CHE World tab',
+    ChePhoneTab.more => 'More tab',
+  };
 }
 
 /// Glowing teal bottom navigation bar (mockups 03 / 04).
@@ -141,12 +141,17 @@ class _NavItem extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 2),
-              Text(
-                tab.label,
-                style: CheType.caption.copyWith(
-                  fontSize: 10.5,
-                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                  color: selected ? CheColors.accent : CheColors.textDim,
+              // One line, shrunk if needed: a wrapped label would overflow the fixed nav height.
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  tab.label,
+                  maxLines: 1,
+                  style: CheType.caption.copyWith(
+                    fontSize: 10.5,
+                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                    color: selected ? CheColors.accent : CheColors.textDim,
+                  ),
                 ),
               ),
             ],

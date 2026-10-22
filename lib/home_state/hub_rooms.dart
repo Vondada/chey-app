@@ -508,6 +508,7 @@ extension _CheHomeHubRooms on _CHEHomeState {
       researchConnected: integrations['web_research'] == true,
       imageConnected: integrations['image_generation'] == true,
       videoConnected: integrations['video_generation'] == true,
+      creations: CheCreationsStrip(baseUrl: cheAgentBaseUrl, headers: _authHeaders, active: active),
       onNewProject: () {
         unawaited(_createProjectDialog());
       },

@@ -85,11 +85,19 @@ extension _CheHomeUi on _CHEHomeState {
     final display = CheUpdateProposal.stripBlocks(
       text.replaceAll(RegExp(r'```che-plugin[\s\S]*?(```|$)'), '').trim(),
     );
-    final extras = <Widget>[
+    // Quiet metadata sits under one collapsed "Details" control (owner, 2026-10-22: less clutter in Chat).
+    final details = <Widget>[
       if (!isLiveReply && (item['understood_as'] ?? '').isNotEmpty)
         CheUnderstoodAs(text: item['understood_as']!),
       if (!isLiveReply && cheResponseDetailsFromJson(item['response_details']) != null)
         CheResponseDetailsButton(details: cheResponseDetailsFromJson(item['response_details'])!),
+      if (!isLiveReply && (item['thought_ms'] != null || (item['steps'] ?? '').trim().isNotEmpty))
+        CheThoughtLine(
+          thoughtMs: int.tryParse(item['thought_ms'] ?? ''),
+          steps: (item['steps'] ?? '').split('\n').where((l) => l.trim().isNotEmpty).toList(),
+        ),
+    ];
+    final extras = <Widget>[
       if (!isLiveReply)
         for (final proposal in CheUpdateProposal.findInText(text))
           CheUpdateCard(
@@ -162,8 +170,9 @@ extension _CheHomeUi on _CHEHomeState {
       streaming: isLiveReply,
       liveStart: isLiveReply ? _replyStartedAt : null,
       liveSteps: isLiveReply ? List.of(_liveSteps) : const [],
-      finishedSteps: (item['steps'] ?? '').split('\n').where((l) => l.trim().isNotEmpty).toList(),
-      thoughtMs: int.tryParse(item['thought_ms'] ?? ''),
+      finishedSteps: const [],
+      thoughtMs: null,
+      details: details,
       agents: agents,
       extras: extras,
       onTapAgent: (_) => _openOfficeFloor(),

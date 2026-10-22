@@ -19,6 +19,7 @@ class CreateGalleryScene extends StatefulWidget {
     required this.onResearch,
     required this.onImage,
     required this.onVideo,
+    this.creations,
   });
 
   final bool active;
@@ -33,6 +34,8 @@ class CreateGalleryScene extends StatefulWidget {
   final VoidCallback onResearch;
   final VoidCallback onImage;
   final VoidCallback onVideo;
+  // The pictures and videos CHE made, shown so the owner can see and play them here.
+  final Widget? creations;
 
   @override
   State<CreateGalleryScene> createState() => _CreateGallerySceneState();
@@ -253,6 +256,20 @@ class _CreateGallerySceneState extends State<CreateGalleryScene>
                             );
                           },
                         ),
+                      if (widget.creations != null) ...[
+                        const SizedBox(height: 26),
+                        const Text(
+                          'RECENT CREATIONS',
+                          style: TextStyle(
+                            color: Colors.white60,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 1.2,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        widget.creations!,
+                      ],
                       const SizedBox(height: 26),
                       const Text(
                         'GALLERY WORKBENCH',
