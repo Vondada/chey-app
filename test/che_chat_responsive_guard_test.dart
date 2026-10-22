@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('Flagstaff root network is viewport-driven and Chat suggestions wrap', () {
+  test('Flagstaff root network is viewport-driven and Chat has no canned suggestion chips', () {
     final mailbox = File('lib/mailbox/che_mailbox_screen.dart').readAsStringSync();
     final main = File('lib/main.dart').readAsStringSync();
 
@@ -22,9 +22,8 @@ void main() {
     final chatEnd = main.indexOf('Future<void> _persistLanguages', chatStart);
     final chat = main.substring(chatStart, chatEnd);
 
-    expect(chat, contains("messages.last['role'] == 'assistant'"));
-    expect(chat, contains('postReplyActions.take(3)'));
-    expect(chat, contains('Wrap('));
+    // The canned post-reply chips were removed (owner, 2026-10-22): Chat holds the conversation and real cards only.
+    expect(chat, isNot(contains('postReplyActions')));
     expect(chat, isNot(contains('scrollDirection: Axis.horizontal')));
     expect(chat, isNot(contains('FractionallySizedBox(')));
   });

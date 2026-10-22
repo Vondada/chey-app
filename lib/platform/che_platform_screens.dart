@@ -107,10 +107,14 @@ class _ChePriorityNotificationBannerState extends State<ChePriorityNotificationB
 }
 
 class CheNotificationsScreen extends StatefulWidget {
-  const CheNotificationsScreen({super.key, required this.gateway, this.onReadAloud});
+  const CheNotificationsScreen({super.key, required this.gateway, this.onReadAloud, this.embedded = false});
 
   final ChePlatformGateway gateway;
   final ValueChanged<String>? onReadAloud;
+
+  /// Shown inside Flagstaff's Notices tab (owner, 2026-10-22: Flagstaff is the one notification centre), so it draws
+  /// no page or app bar of its own.
+  final bool embedded;
 
   @override
   State<CheNotificationsScreen> createState() => _CheNotificationsScreenState();
@@ -146,9 +150,7 @@ class _CheNotificationsScreenState extends State<CheNotificationsScreen> {
   @override
   Widget build(BuildContext context) {
     final page = _page;
-    return _PlatformScaffold(
-      title: 'CHE Notifications',
-      child: _loading
+    final body = _loading
           ? const _Loading(label: 'Loading CHE notifications')
           : RefreshIndicator(
               onRefresh: _load,
@@ -165,8 +167,8 @@ class _CheNotificationsScreenState extends State<CheNotificationsScreen> {
                     for (final item in page.items) _NotificationTile(item: item, onReadAloud: widget.onReadAloud),
                 ],
               ),
-            ),
-    );
+            );
+    return widget.embedded ? body : _PlatformScaffold(title: 'CHE Notifications', child: body);
   }
 }
 
