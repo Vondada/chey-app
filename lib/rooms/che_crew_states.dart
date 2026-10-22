@@ -3,7 +3,7 @@
 // idle, walk, run, wave, sit, stand, talk, think, celebrate, nod, shake.
 import '../che_ui/che_agents.dart';
 
-/// The eight bundled crew models (assets/characters/crew/<id>.glb).
+/// The eight bundled crew models (`assets/characters/crew/<id>.glb`).
 const List<String> cheCrewModelIds = ['che', 'nova', 'atlas', 'mira', 'knox', 'sage', 'lyra', 'iris'];
 
 /// The clips every crew model carries.
