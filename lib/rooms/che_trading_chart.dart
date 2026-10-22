@@ -235,8 +235,7 @@ class CheTradingChartState extends State<CheTradingChart> {
   Future<void> load({bool quiet = false}) async {
     final seq = ++_seq;
     if (!quiet) setState(() => _state = 'loading');
-    // Futures name the contract too (NQ or MNQ); the Worker answers with the symbol it actually charted.
-    final q = {'account': _account, 'tf': _tf, if (_symbol.isNotEmpty && (_account == 'alpaca_paper' || const {'NQ', 'MNQ'}.contains(_symbol))) 'symbol': _symbol};
+    final q = {'account': _account, 'tf': _tf, if (_account == 'alpaca_paper' && _symbol.isNotEmpty) 'symbol': _symbol};
     try {
       final r = await _http
           .get(Uri.parse('${widget.baseUrl()}/api/trading/chart').replace(queryParameters: q), headers: widget.headers())

@@ -113,7 +113,8 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
 
   void _setMarket(String m) {
     setState(() => _market = m);
-    _chart.show(account: 'futures_paper', symbol: m);
+    // CHE's live futures feed is MNQ; the chart shows MNQ for both, and says so when NQ research is chosen.
+    _chart.show(account: 'futures_paper', symbol: 'MNQ');
   }
 
   Widget _pad(Widget child) => Padding(padding: const EdgeInsets.fromLTRB(12, 12, 12, 0), child: child);
@@ -141,6 +142,9 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
             child: Wrap(spacing: 12, runSpacing: 6, crossAxisAlignment: WrapCrossAlignment.center, children: [
               Semantics(header: true, child: const Text('LIVE MARKET', style: TextStyle(color: _gold, fontWeight: FontWeight.w800, fontSize: 13, letterSpacing: 1.1))),
               CheMarketToggle(market: _market, onChanged: _setMarket),
+              if (_market == 'NQ')
+                const Text('Live chart: MNQ (CHE\'s live futures feed). Research below uses NQ history.',
+                    key: Key('nq_chart_note'), style: TextStyle(color: Colors.white, fontSize: 14)),
             ]),
           ),
           _pad(CheTradingChart(

@@ -314,7 +314,12 @@ class _CheTradingResearchStripState extends State<CheTradingResearchStrip> {
   @override
   void didUpdateWidget(covariant CheTradingResearchStrip old) {
     super.didUpdateWidget(old);
-    if (old.market != widget.market) unawaited(_load());
+    if (old.market != widget.market) {
+      // The old market's evidence is never shown under the new market's name, not even while loading.
+      _data = null;
+      _error = null;
+      unawaited(_load());
+    }
   }
 
   Future<void> _load() async {
@@ -325,7 +330,7 @@ class _CheTradingResearchStripState extends State<CheTradingResearchStrip> {
       setState(() { _data = d; _error = null; });
     } catch (e) {
       if (!mounted || seq != _seq) return;
-      setState(() => _error = '$e');
+      setState(() { _data = null; _error = '$e'; });
     }
   }
 

@@ -101,10 +101,12 @@ class _Api {
   String profile = 'NORMAL';
   bool best = true;
   bool fail = false;
+  bool failNq = false;
 
   late final client = MockClient((r) async {
     requests.add(r);
     final p = r.url.path;
+    if (p == '/api/trading/research' && failNq && r.url.queryParameters['market'] == 'NQ') return _json({'detail': 'NQ history not cached yet'}, 503);
     if (p == '/api/trading/research') return _json(_overview(r.url.queryParameters['market'] ?? 'MNQ', best: best, learning: learning, profile: profile));
     if (p == '/api/trading/research/strategy') return _json(_strategy());
     if (p == '/api/trading/research/matrix') return _json(_matrix());
@@ -217,9 +219,10 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
     expect(api.at('/api/trading/research').last.url.queryParameters['market'], 'NQ');
+    // The live feed is MNQ only: the chart stays on futures and the page says so instead of pairing NQ research with an unlabeled MNQ chart.
     final chartCalls = api.at('/api/trading/chart').toList();
     expect(chartCalls.last.url.queryParameters['account'], 'futures_paper');
-    expect(chartCalls.last.url.queryParameters['symbol'], 'NQ');
+    expect(find.byKey(const Key('nq_chart_note')), findsOneWidget);
     expect(find.bySemanticsLabel('NQ market, selected'), findsOneWidget);
     await tester.tap(find.text('15m').first);
     await tester.pump();
@@ -368,5 +371,31 @@ void main() {
     expect(spokenR(-0.05), 'minus 0.05 R');
     expect(ResearchBucket({'tf': '4h', 'trades': 18}).evidenceLine, '18 / 30 trades · NOT READY');
     expect(ResearchBucket({'tf': '5m', 'trades': 30, 'status': 'QUALIFIED'}).evidenceLine, '30 trades · QUALIFIED');
+  });
+
+  testWidgets('switching market clears the old evidence; a failed load says so instead of showing the wrong contract', (tester) async {
+    final api = _Api()..failNq = true;
+    final client = api.client;
+    tester.view.physicalSize = const Size(390, 844) * 3;
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(MaterialApp(
+      theme: ThemeData.dark(),
+      home: Scaffold(body: CheTradingRoom(baseUrl: () => 'https://che.test', headers: () => const {}, onAsk: (_) {}, client: client, initialAccount: 'futures_paper', initialSymbol: 'MNQ')),
+    ));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    await _scrollTo(tester, find.text('BEST NOW · MNQ', skipOffstage: false));
+    expect(find.text('BEST NOW · MNQ'), findsOneWidget);
+    await tester.drag(find.byType(ListView).first, const Offset(0, 5000));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('market_NQ')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    await _scrollTo(tester, find.text('Strategy research is unavailable: NQ history not cached yet', skipOffstage: false));
+    expect(find.text('Strategy research is unavailable: NQ history not cached yet'), findsOneWidget);
+    expect(find.text('BEST NOW · NQ', skipOffstage: false), findsNothing, reason: 'MNQ evidence is never relabeled NQ');
+    expect(find.byKey(const Key('best_now'), skipOffstage: false), findsNothing);
+    await tester.pumpWidget(const SizedBox());
   });
 }
