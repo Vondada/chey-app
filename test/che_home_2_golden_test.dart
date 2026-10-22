@@ -67,6 +67,11 @@ void main() {
           ),
         ),
       ));
+      // CHE's portrait is an image asset; decode it before the picture is taken, as the phone has it on screen.
+      await tester.runAsync(() => precacheImage(
+            const AssetImage('assets/avatars/che.png'),
+            tester.element(find.byType(CheMockupHome)),
+          ));
       await tester.pump(const Duration(milliseconds: 400));
       await expectLater(find.byType(MaterialApp), matchesGoldenFile('goldens/home2_$name.png'));
       await tester.pumpWidget(const SizedBox());
