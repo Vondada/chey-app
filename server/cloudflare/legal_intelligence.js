@@ -229,7 +229,10 @@ export const ACTIVITIES = Object.freeze({
 });
 export const ALERT_CATEGORIES = Object.freeze(['driving', 'business', 'music', 'weapons', 'alcohol', 'cannabis', 'recording_privacy', 'employment', 'taxes', 'licensing', 'consumer', 'contracting']);
 
-const ORDINARY_ACTS = new Set(['driving', 'employment', 'ai_systems', 'business_license', 'sales_tax']);
+// Activities where "can I …" is usually ordinary ("Can I drive to the store?", "Can we hire someone?"). For these a
+// "can I" question is legal only with a regulatory detail; business licences, sales tax and the rest always are.
+const ORDINARY_ACTS = new Set(['driving', 'employment', 'ai_systems']);
+const REGULATORY_DETAIL = /\b(?:without|expired|suspended|drunk|after drinking|under(?:age| the influence)|over the limit|fire|terminate|lay (?:him|her|them|someone) off|pay (?:less|cash|under)|minimum wage|overtime|contractor|monitor|track|record|scrape|copy(?:righted)?|train on|personal data)\b/i;
 
 export function activitiesIn(text) {
   return Object.entries(ACTIVITIES).filter(([, a]) => a.words.test(String(text || ''))).map(([id]) => id);
@@ -801,7 +804,7 @@ export function legalIntent(message) {
   const acts = activitiesIn(t);
   // "Can I …" is a legal question only for an activity that is itself a permission question (sampling, recording,
   // weapons…); "Can I drive to the store?" or "Can we hire someone?" stays ordinary chat.
-  const permissionAct = acts.some((a) => !ORDINARY_ACTS.has(a));
+  const permissionAct = acts.some((a) => !ORDINARY_ACTS.has(a)) || (acts.length > 0 && REGULATORY_DETAIL.test(t));
   const legalWords = /\b(?:legal(?:ly)?|illegal|lawful(?:ly)?|unlawful|law|laws|allowed to|permitted|permit|licen[cs]e|get (?:me )?in trouble|am i allowed|do i need|what applies)\b/i.test(t)
     || (permissionAct && /\bcan (?:i|we)\b/i.test(t));
   if (!legalWords || !acts.length) {

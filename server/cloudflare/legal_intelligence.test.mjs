@@ -292,6 +292,11 @@ test('"can I" alone is not a legal question for ordinary activities', () => {
   assert.equal(legalIntent('Can we hire someone for the weekend?'), null);
   assert.equal(legalIntent('Can I sample this song?')?.kind, 'ask');
   assert.equal(legalIntent('Is it legal to drive with an open container here?')?.kind, 'ask');
+  // Regulatory permission questions still reach the legal engine.
+  assert.equal(legalIntent('Can I run my business from home?')?.kind, 'ask');
+  assert.equal(legalIntent('Can I collect sales tax in Louisiana?')?.kind, 'ask');
+  assert.equal(legalIntent('Can I drive with a suspended license?')?.kind, 'ask');
+  assert.equal(legalIntent('Can I fire an employee for being late?')?.kind, 'ask');
 });
 
 test('a rule that needs a fact is not reported as a coverage gap when the place changes', () => {

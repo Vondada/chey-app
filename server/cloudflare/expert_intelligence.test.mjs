@@ -220,7 +220,7 @@ test('a bare "pain" or "injury" is not a medical question: no medical case reach
     assert.ok(!domainsIn(q).includes('health'), q);
     assert.doesNotMatch(expertPromptContext(s, q, { cases: state.cases }), /gabapentin|numb left leg/, q);
   }
-  for (const q of ['My back pain is worse today', 'I injured my knee', 'Pain in my shoulder when I lift']) assert.ok(domainsIn(q).includes('health'), q);
+  for (const q of ['My back pain is worse today', 'I injured my knee', 'Pain in my shoulder when I lift', 'What do my labs mean?', 'Is this dose safe?']) assert.ok(domainsIn(q).includes('health'), q);
   assert.match(expertPromptContext(s, 'My back pain is worse today', { cases: state.cases }), /gabapentin/);
 });
 

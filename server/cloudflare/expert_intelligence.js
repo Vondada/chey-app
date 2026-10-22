@@ -109,7 +109,7 @@ export const domainOfCategory = (cat) => EXPERT_CATEGORIES.find((c) => c.id === 
 const DOMAIN_WORDS = [
   // Pain or an injury counts only in medical phrasing ("my back pain", "pain in my knee", "I injured"), never
   // "pain point" or "injury time": a bare word must not pull the owner's medical case into a prompt.
-  ['health', /\b(?:medical|medicine|doctor|physician|symptoms?|diagnos\w*|lab results?|blood (?:work|test)|mri|x-?ray|medications?|meds|prescription|dosage|cardiolog\w*|neurolog\w*|orthoped\w*|clinic|hospital|(?:my|chronic|back|neck|chest|joint|knee|hip|shoulder|stomach|abdominal|nerve) pain|pain (?:in (?:my|the)|when i|after|medication|management|relief)|(?:my|an|the|old|work|sports) injur(?:y|ies)|injured|i hurt my|health (?:problem|condition|issue|insurance))\b/i],
+  ['health', /\b(?:medical|medicine|doctor|physician|symptoms?|diagnos\w*|labs?|lab results?|blood (?:work|test)|mri|x-?ray|medications?|meds|prescription|doses?|dosage|cardiolog\w*|neurolog\w*|orthoped\w*|clinic|hospital|(?:my|chronic|back|neck|chest|joint|knee|hip|shoulder|stomach|abdominal|nerve) pain|pain (?:in (?:my|the)|when i|after|medication|management|relief)|(?:my|an|the|old|work|sports) injur(?:y|ies)|injured|i hurt my|health (?:problem|condition|issue|insurance))\b/i],
   ['law', /\b(?:legal|law|lawyer|attorney|court|lawsuit|sue|contract|statute|lease dispute)\b/i],
   ['accounting_tax', /\b(?:tax(?:es)?|irs|accountant|cpa|deduction|1099|w-?2|bookkeeping)\b/i],
   ['finance', /\b(?:invest\w*|portfolio|loan|mortgage|interest rate|budget|retirement|401k|ira)\b/i],
