@@ -1020,3 +1020,33 @@ test('comprehension audit: "what commands do you have?" is answered from the cat
   assert.deepEqual(readCommandSpeech('open commands'), { kind: 'open' });
   assert.equal(readCommandSpeech('what commands should I use for youtube'), null);
 });
+
+// Music rights (owner, 2026-10-22): one song record in Projects carries samples, licences, splits and readiness.
+test('music rights: a sample blocks release until its licence is attached; splits never invented; no model call', async () => {
+  const che = await owner();
+  const created = await che.post('/api/music/rights', { action: 'create_song', title: 'Midnight' });
+  assert.equal(created.status, 200);
+  const id = created.body.project.id;
+  assert.equal(created.body.project.type, 'music', 'the song is an ordinary project record');
+  const added = await che.post('/api/music/rights', { action: 'add_sample', project_id: id, sample: { name: 'Soul vocal', provenance: 'LICENSED', source: 'a site' } });
+  assert.equal(added.body.evaluation.state, 'unresolved');
+  const splits = await che.post('/api/music/rights', { action: 'set_splits', project_id: id, splits: [{ group: 'songwriting', name: 'Owner', percent: 60, agreement: 'signed' }, { group: 'songwriting', name: 'Feature', percent: 30, agreement: 'signed' }] });
+  assert.ok(splits.body.check.issues.includes('Songwriting shares total 90%, not 100%.'));
+  const ask = await che.say('Is Midnight ready to release? Check my samples and splits.');
+  assert.equal(ask.route, 'che_music_rights');
+  assert.equal(ask.modelCalls, 0);
+  assert.match(ask.reply, /Midnight is not ready to release/);
+  assert.match(ask.reply, /Soul vocal/);
+  assert.match(ask.reply, /90%, not 100%/);
+  assert.doesNotMatch(ask.reply, /\bsafe\b|cannot be sued|guarantee/i);
+  const lic = await che.post('/api/music/rights', { action: 'attach_license', project_id: id, sample_id: added.body.sample.id, license: { license_type: 'Royalty-free pack licence', license_ref: 'invoice 1042', commercial_use: true } });
+  assert.equal(lic.body.evaluation.state, 'documented');
+  const read = await che.get(`/api/music/rights?project_id=${id}`);
+  assert.equal(read.readiness.items.find((i) => i.id === 'samples').ok, true, 'the licence was saved on the song');
+  assert.equal(read.readiness.ready, false, 'still no master, artwork or reconciled splits');
+  const defend = await che.say('Can we defend Midnight? How risky is this song?');
+  assert.equal(defend.route, 'che_music_rights');
+  assert.match(defend.reply, /UNCLEAR|LOWER RISK|HIGHER RISK|ATTORNEY REVIEW RECOMMENDED/);
+  const projects = (await che.get('/api/state')).projects || [];
+  assert.ok(projects.some((p) => p.id === id), 'the same record appears in Projects');
+});
