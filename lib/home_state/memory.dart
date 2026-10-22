@@ -69,7 +69,11 @@ extension _CheHomeMemory on _CHEHomeState {
     final CheBrainSyncReceipt receipt;
     try {
       receipt = await _brainReplica.sync(cheAgentBaseUrl, _authHeaders, get: _brainGet, post: _brainPost);
-      if (mounted) _set(() {});
+      // Rebuild only when the replica changed: this runs after every state poll, and an empty sync redrew the whole
+      // app every 15 seconds (latency, owner 2026-10-22).
+      if (mounted && (receipt.pulled > 0 || receipt.pushed > 0 || receipt.acknowledged > 0 || receipt.conflicts > 0 || receipt.rejected > 0)) {
+        _set(() {});
+      }
     } catch (_) {
       return null;
     } finally {

@@ -136,8 +136,21 @@ class _CheOfficeWorldState extends State<CheOfficeWorld> with TickerProviderStat
     }
     _placeAll(initial: true);
     _wander = Timer.periodic(const Duration(seconds: 1), (_) => _wanderStep());
-    CheIdleLifeClock.instance.retain();
-    _holdingIdle = true;
+  }
+
+  // The shared idle clock is held only while this floor is on screen (TickerMode on); a hidden Office tab draws
+  // nothing (latency, owner 2026-10-22).
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final visible = TickerMode.valuesOf(context).enabled;
+    if (visible && !_holdingIdle) {
+      CheIdleLifeClock.instance.retain();
+      _holdingIdle = true;
+    } else if (!visible && _holdingIdle) {
+      CheIdleLifeClock.instance.release();
+      _holdingIdle = false;
+    }
   }
 
   @override

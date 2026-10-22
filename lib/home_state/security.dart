@@ -44,6 +44,7 @@ extension _CheHomeSecurity on _CHEHomeState {
   }
 
   Future<void> _clearSecuritySession() async {
+    _lastAgentStateBody = null;
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('che_agent_device_token');
 
@@ -401,7 +402,23 @@ extension _CheHomeSecurity on _CHEHomeState {
       unawaited(_syncBrainReplica());
       unawaited(_refreshMailboxBadge());
 
-      final data = jsonDecode(response.body);
+      // Unchanged state: nothing to decode and nothing to rebuild. Home Base still gets the snapshot, so one that was
+      // configured later, or missed a delivery, is not left waiting for the Worker's state to change.
+      if (silent && response.body == _lastAgentStateBody) {
+        if (_homeBaseUrl.isNotEmpty) {
+          unawaited(_postSnapshotToHomeBase({
+            'team': team,
+            'team_tasks': teamTasks,
+            'projects': projects,
+            'vault_items': vaultItems,
+            'jobs': backgroundJobs,
+          }));
+        }
+        return;
+      }
+      _lastAgentStateBody = response.body;
+      // A large state is decoded off the UI thread so taps and animations never wait for it.
+      final data = response.body.length > 32 * 1024 ? await compute(jsonDecode, response.body) : jsonDecode(response.body);
 
       final memoryData = (data['memories'] as List?) ?? const [];
       final memoryRecordData = (data['memory_records'] as List?) ?? const [];
