@@ -57,6 +57,22 @@ class EditRender(unittest.TestCase):
         self.assertEqual(kinds, {'video': 'h264', 'audio': 'aac'})
         self.assertTrue((out / 'thumbnail.png').exists())
 
+    def frame(self, path, at):
+        return subprocess.run(['ffmpeg', '-v', 'error', '-ss', str(at), '-i', str(path), '-frames:v', '1', '-vf', 'scale=64:-1,format=gray', '-f', 'rawvideo', '-'], check=True, capture_output=True).stdout
+
+    def test_freeze_holds_the_requested_frame_not_the_last(self):
+        spec, m, out = self.render('freeze')
+        self.assertEqual(m['status'], 'verified')
+        self.assertAlmostEqual(m['duration_seconds'], 5.5, delta=0.2)
+        diff = lambda x, y: sum(abs(p - q) for p, q in zip(x, y)) / len(x)
+        held_a, held_b = self.frame(out / 'video.mp4', 1.2), self.frame(out / 'video.mp4', 2.3)
+        moving = self.frame(out / 'video.mp4', 3.4)
+        self.assertLess(diff(held_a, held_b), 0.5, 'the frame at 1 s is held for 1.5 s')
+        self.assertGreater(diff(held_a, moving), diff(held_a, held_b) + 0.5, 'playback resumes after the freeze')
+        source_at_1 = subprocess.run(['ffmpeg', '-v', 'error', '-ss', '1.0', '-i', str(self.src / 'clipA.mp4'), '-frames:v', '1', '-vf', 'scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,scale=64:-1,format=gray', '-f', 'rawvideo', '-'], check=True, capture_output=True).stdout
+        source_end = subprocess.run(['ffmpeg', '-v', 'error', '-sseof', '-0.1', '-i', str(self.src / 'clipA.mp4'), '-frames:v', '1', '-vf', 'scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,scale=64:-1,format=gray', '-f', 'rawvideo', '-'], check=True, capture_output=True).stdout
+        self.assertLess(diff(held_a, source_at_1), diff(held_a, source_end), 'the held frame is the one at 1 s, not the last frame')
+
     def test_color_adjustment_changes_the_rendered_pixels(self):
         _, _, out = self.render('video')
         _, _, plain = self.render('video_plain')

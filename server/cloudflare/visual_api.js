@@ -8,6 +8,7 @@ import {
   renderSpec, nextRenderStage, timeline, duration, applyOp, layer,
 } from './visual_studio.js';
 import { newRenderJob, tokenOpens, startEditRender, editRenderStatus } from './visual_render.js';
+import { githubVideoFile } from './github_video_renderer.js';
 import { listMedia, readBlob, generateImage, verifyMediaFile, saveOwnerFile } from './media.js';
 import { decodeWav } from './music_audio.js';
 
@@ -152,6 +153,10 @@ async function startRender(ctx, project, state) {
   return { ok: true, render: project.render };
 }
 
+const REMOVE_OPS = new Set(['delete_clip', 'delete_layer']);
+export const YES_WORDS = /^(?:yes|yeah|yep|do it|go ahead|confirm|remove it|delete it)\b/i;
+export const NO_WORDS = /^(?:no|nope|cancel|keep it|don't)\b/i;
+
 async function pollRender(ctx, project, state) {
   const job = state.render;
   if (!job || ['ready', 'failed'].includes(job.stage)) return job;
@@ -163,7 +168,19 @@ async function pollRender(ctx, project, state) {
     const item = job.kind === 'video'
       ? { id, root_id: id, kind: 'video', mode: 'edit', title: `${project.title} (edit)`, mime_type: 'video/mp4', blob: 'github-artifact', github_artifact_id: status.artifact_id, github_filename: 'video.mp4', verified: true, width: status.verification.width, height: status.verification.height, duration_seconds: status.verification.seconds, created_at: new Date().toISOString(), visual_project: project.id, workspace_id: project.workspace_id || null }
       : { id, root_id: id, kind: 'image', mode: 'edit', title: `${project.title} (edit)`, mime_type: 'image/png', blob: 'github-artifact', github_artifact_id: status.artifact_id, github_filename: 'edited.png', verified: true, width: status.verification.width, height: status.verification.height, created_at: new Date().toISOString(), visual_project: project.id, workspace_id: project.workspace_id || null };
-    const check = await verifyMediaFile(ctx.env, ctx.storage, item);
+    // GitHub keeps artifacts for 30 days: with the R2 bucket bound, the bytes are archived there first, so a
+    // finished export does not disappear. A failed archive records no finished file.
+    let archived = true;
+    if (ctx.env.CHE_DATA_BUCKET) {
+      try {
+        const bytes = await githubVideoFile(ctx.env, status.artifact_id, item.github_filename, ctx.fetcher || fetch);
+        if (!bytes) throw new Error('missing');
+        const key = `media/${id}.${job.kind === 'video' ? 'mp4' : 'png'}`;
+        await ctx.env.CHE_DATA_BUCKET.put(key, bytes, { httpMetadata: { contentType: item.mime_type } });
+        item.blob = 'r2'; item.blob_key = key;
+      } catch (_) { archived = false; }
+    }
+    const check = archived ? await verifyMediaFile(ctx.env, ctx.storage, item) : { ok: false, reason: 'it could not be archived to the R2 bucket' };
     if (!check.ok) next = { ...job, stage: 'failed', error: `The rendered file could not be read back (${check.reason}).`, retryable: true };
     else {
       const items = await listMedia(ctx.storage);
@@ -262,11 +279,30 @@ export async function visualApi(ctx, { method, body, query }) {
   else if (a === 'duplicate_version') { const v = state.versions.find((x) => x.id === body.version); if (!v) return { status: 404, body: { detail: 'No such version.' } }; const r = await newProject(storage, data, { kind: v.doc.kind, title: `${p.title} (copy)`, workspace_id: p.workspace_id }, personal); const s2 = await loadVisual(storage, r.project.id); s2.doc = JSON.parse(JSON.stringify(v.doc)); s2.versions[0].doc = s2.doc; await saveVisual(storage, r.project.id, s2); extra.project_id = r.project.id; said = ['Duplicated as a new project.']; }
   else if (a === 'compare') { const va = state.versions.find((x) => x.id === (body.a || 'v0')); const vb = body.b ? state.versions.find((x) => x.id === body.b) : { doc: state.doc }; if (!va || !vb) return { status: 404, body: { detail: 'No such version.' } }; extra = { a: va.doc, b: vb.doc, differences: compareDocs(va.doc, vb.doc) }; said = [extra.differences.length ? extra.differences.join('; ') : 'No differences.']; }
   else if (a === 'improve') said = [improve(state, body.id).said];
+  else if (a === 'words' && state.pending && YES_WORDS.test(String(body.text || '').trim())) return visualApi(ctx, { method, body: { ...body, action: 'confirm_pending' }, query });
+  else if (a === 'words' && state.pending && NO_WORDS.test(String(body.text || '').trim())) return visualApi(ctx, { method, body: { ...body, action: 'cancel_pending' }, query });
   else if (a === 'words') {
     const w = wordsToOps(body.text, state.doc, { selection: body.selection || null, playhead: Number(body.playhead) || 0 });
-    said = await runOps(ctx, p, state, w.ops, { brands });
+    // Removing a clip or layer by voice waits for the owner's yes (AGENTS.md: ask before deleting anything).
+    // The edits before it in the same sentence run now; the removal and anything after it wait with it.
+    const at = body.confirmed === true ? -1 : w.ops.findIndex((o) => REMOVE_OPS.has(o.op));
+    said = await runOps(ctx, p, state, at < 0 ? w.ops : w.ops.slice(0, at), { brands });
+    if (at >= 0) {
+      const held = w.ops.slice(at);
+      state.pending = { ops: held, understood: w.understood.slice(at), at: Date.now() };
+      said.push(`${w.understood.slice(at).join(', ').replace(/^\w/, (c) => c.toUpperCase())}? Say yes to remove it. Nothing was removed yet.`);
+      extra.needs_confirmation = true;
+    }
     said.push(...w.unsupported);
     extra.understood = w.understood;
+  } else if (a === 'confirm_pending') {
+    const pending = state.pending;
+    state.pending = null;
+    if (!pending || Date.now() - pending.at > 10 * 60 * 1000) said = ['There is no removal waiting for your yes. Nothing was removed.'];
+    else { said = await runOps(ctx, p, state, pending.ops, { brands }); extra.understood = pending.understood; }
+  } else if (a === 'cancel_pending') {
+    said = [state.pending ? 'Cancelled. Nothing was removed.' : 'Nothing was waiting.'];
+    state.pending = null;
   } else if (a === 'variants') {
     const made = [];
     for (const preset of (body.presets || []).filter((x) => PRESETS[x])) {
@@ -323,13 +359,36 @@ export async function songPromo(ctx, { title, platform = 'tiktok', kind = 'promo
     artwork = gen?.item || null;
     if (!artwork) return { ok: false, said: `${song.title} has no artwork and I could not generate a cover (${gen?.detail || 'no image engine'}). Add artwork to continue.` };
   }
-  const template = kind === 'visualizer' ? 'visualizer-wave' : 'music-promo';
-  const preset = { tiktok: 'tiktok', reel: 'reels', short: 'shorts', youtube: 'youtube' }[platform] || 'tiktok';
-  const r = await newProject(ctx.storage, ctx.data, { kind: 'video', template_id: template, title: `${song.title} ${kind === 'visualizer' ? 'visualizer' : 'promo'}`, workspace_id: song.music?.workspace_id || null, fill: { artwork: artwork.id, title: song.title, artist: song.music?.metadata?.artist || '', song: { media_id: audio.media_id, project_id: song.id, title: song.title } } }, []);
+  const template = kind === 'visualizer' ? 'visualizer-wave' : kind === 'beat' ? 'beat-preview' : 'music-promo';
+  const label = kind === 'visualizer' ? 'visualizer' : kind === 'beat' ? 'beat preview' : 'promo';
+  // A beat preview keeps its template's square size unless a platform was named.
+  const preset = { tiktok: 'tiktok', reel: 'reels', short: 'shorts', youtube: 'youtube' }[platform] || (kind === 'beat' ? TEMPLATES.find((t) => t.id === template).preset : 'tiktok');
+  const r = await newProject(ctx.storage, ctx.data, { kind: 'video', template_id: template, title: `${song.title} ${label}`, workspace_id: song.music?.workspace_id || null, fill: { artwork: artwork.id, title: song.title, artist: song.music?.metadata?.artist || '', song: { media_id: audio.media_id, project_id: song.id, title: song.title } } }, []);
   if (!r.ok) return { ok: false, said: r.why };
   if (preset !== TEMPLATES.find((t) => t.id === template).preset) { r.state.doc = smartResize(r.state.doc, preset); r.state.versions[0].doc = r.state.doc; await saveVisual(ctx.storage, r.project.id, r.state); }
   ctx.dirty = true;
   return { ok: true, project: r.project, said: `Made "${r.project.title}": ${PRESETS[preset].label}, ${artwork.mode === 'thumbnail' ? 'artwork' : 'cover art'}, the title, and ${song.title} as the audio. Say "edit" to open the timeline, or "render it" to make the MP4.` };
+}
+
+/// "Use my Album Drop template but make it blue": a new project from a system or saved template, then the tweak
+/// as ordinary edits. The template's placeholders stay empty until the owner fills them.
+export async function projectFromTemplateName(ctx, { name, tweak = null }) {
+  const personal = (await ctx.storage.get(TEMPLATES_KEY)) || [];
+  const want = String(name || '').toLowerCase().trim();
+  const all = [...personal, ...TEMPLATES];
+  const t = all.find((x) => x.name.toLowerCase() === want) || all.find((x) => x.name.toLowerCase().includes(want) || want.includes(x.name.toLowerCase()));
+  if (!t) return { ok: false, said: `I found no template called ${name}. Say "open templates" to hear the list.` };
+  const r = await newProject(ctx.storage, ctx.data, { template_id: t.id, title: t.name }, personal);
+  if (!r.ok) return { ok: false, said: r.why };
+  ctx.dirty = true;
+  let said = [`Made a new project from ${t.name}.`];
+  if (tweak) {
+    const w = wordsToOps(tweak, r.state.doc, {});
+    const safe = w.ops.filter((o) => !REMOVE_OPS.has(o.op));
+    said = said.concat(await runOps(ctx, r.project, r.state, safe, { brands: [] }), w.unsupported);
+    await saveVisual(ctx.storage, r.project.id, r.state);
+  }
+  return { ok: true, project: r.project, said: said.join(' ') };
 }
 
 /// Text layer from words, for the "add text" quick action.

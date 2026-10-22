@@ -47,6 +47,12 @@ const docs = {
   image: () => image(),
   image_plain: () => image({ withEdits: false }),
   youtube: () => smartResize(video(), 'youtube'),
+  freeze: () => {
+    const s = editState(newVideoDoc({ preset: 'youtube' }));
+    const A = must(edit(s, { op: 'add_clip', clip: { asset: a.clipA, name: 'Clip A', duration: 4 } })).id;
+    must(edit(s, { op: 'clip', clip: A, freeze: { at: 1, duration: 1.5 } }));
+    return s.doc;
+  },
   template: () => { const d = useTemplate(TEMPLATES.find((t) => t.id === 'music-promo'), { artwork: a.photo, title: 'Night Shift', artist: 'CHE', song: { media_id: a.song, title: 'Night Shift' } }); d.clips[0].out = 5; d.clips[0].source_duration = 5; d.text.forEach((t) => { t.end = 5; }); return d; },
 };
 const doc = docs[scenario]();

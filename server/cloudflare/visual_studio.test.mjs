@@ -9,6 +9,7 @@ import {
   renderSpec, nextRenderStage, compact, visualIntent, PRESETS,
 } from './visual_studio.js';
 import { checkOutput, newRenderJob, tokenOpens } from './visual_render.js';
+import { visualApi } from './visual_api.js';
 import { replyFromNdjson } from './brain_memory.js';
 import { encodeWav } from './music_audio.js';
 
@@ -433,3 +434,120 @@ function storedZip(files) {
   for (const p of all) { out.set(p, at); at += p.length; }
   return out;
 }
+
+// ─── Codex review of #460 ───────────────────────────────────────────────────
+
+test('version ids never repeat after old versions are dropped, so every later version can be restored', () => {
+  const s = editState(newImageDoc({ asset: 'p' }));
+  for (let i = 1; i <= 20; i++) { must(edit(s, { op: 'adjust', key: 'brightness', value: i })); saveVersion(s, `Edit ${i}`); }
+  const ids = s.versions.map((v) => v.id);
+  assert.equal(new Set(ids).size, ids.length, 'unique ids');
+  assert.equal(ids[0], 'v0', 'the Original is kept');
+  assert.equal(ids.at(-1), 'v20');
+  must(restoreVersion(s, 'v19'));
+  assert.equal(s.doc.adjust.brightness, 19, 'the newer version is the one restored');
+  const restored = compact(s);
+  must(edit(restored, { op: 'adjust', key: 'brightness', value: 1 }));
+  assert.equal(saveVersion(restored, 'after compact').id, 'v21', 'compaction cannot reuse an id');
+});
+
+test('saving a template keeps layout only: template media, logos and video text layers lose their assets', () => {
+  const art = useTemplate(TEMPLATES.find((t) => t.id === 'album-cover') || TEMPLATES.find((t) => t.kind === 'image'), { artwork: 'ownerPhoto' });
+  assert.ok(art.layers.some((l) => l.asset === 'ownerPhoto'), 'the filled template uses the owner\'s photo');
+  const t = templateFromDoc(art, { name: 'Mine' });
+  assert.ok(t.doc.layers.every((l) => !l.asset), 'no asset survives');
+  assert.ok(t.doc.layers.filter((l) => l.placeholder).length >= 1);
+  const v = editState(newVideoDoc({ preset: 'tiktok' }));
+  must(edit(v, { op: 'add_clip', clip: { asset: 'clip1', name: 'A', duration: 3 } }));
+  must(edit(v, { op: 'add_layer', layer: { type: 'logo', name: 'Logo', asset: 'brandLogo' }, start: 0, end: 3 }));
+  const vt = templateFromDoc(v.doc, { name: 'Video' });
+  assert.ok(!JSON.stringify(vt.doc).includes('brandLogo') && !JSON.stringify(vt.doc).includes('clip1'), 'video logos and clips are stripped');
+});
+
+test('Worker: removing a clip by words waits for the owner\'s yes, in the editor and in chat; edits before it run now', async () => {
+  const saved = new Map();
+  seedMedia(saved, [['photo1']]);
+  const che = await owner(saved);
+  const id = (await che.post({ action: 'create', kind: 'video', preset: 'tiktok', title: 'V' })).body.project.id;
+  await che.post({ action: 'ops', project_id: id, ops: [1, 2, 3].map((n) => ({ op: 'add_clip', clip: { asset: 'photo1', name: `C${n}`, duration: 2, kind: 'image' } })) });
+  const clips = () => saved.get(`visual:${id}`).doc.clips.length;
+  // The editor's own words field (no chat delete gate on this path).
+  const w = await che.post({ action: 'words', project_id: id, text: 'make it brighter and delete the first clip' });
+  assert.match(w.body.said, /Brightness 15.*Say yes to remove it\. Nothing was removed yet/);
+  assert.equal(clips(), 3, 'nothing removed before the yes');
+  assert.match((await che.post({ action: 'words', project_id: id, text: 'no' })).body.said, /Cancelled\. Nothing was removed/);
+  assert.equal(clips(), 3);
+  await che.post({ action: 'words', project_id: id, text: 'delete the last clip' });
+  assert.match((await che.post({ action: 'words', project_id: id, text: 'yes' })).body.said, /Removed C3/);
+  assert.equal(clips(), 2);
+  // A yes with nothing waiting removes nothing.
+  assert.match((await che.post({ action: 'confirm_pending', project_id: id })).body.said, /no removal waiting/);
+  // In chat, CHE's delete gate asks once; its yes removes the clip with no second question.
+  const held = await (await che.raw('/api/chat', { message: 'Delete the first clip', history: [], visual_project_id: id }, che.token)).json();
+  assert.equal(held.held_for_owner, true);
+  assert.equal(clips(), 2);
+  const yes = await che.say('yes', { visual_project_id: id });
+  assert.match(yes.reply, /Removed C1/);
+  assert.equal(clips(), 1);
+});
+
+test('Worker: "use my template" and "create a preview video for my beat" run by voice or typing', async () => {
+  const saved = new Map();
+  seedMedia(saved, [['beatfile', { kind: 'upload', mime_type: 'audio/wav' }], ['cover1'], ['photo2']]);
+  const che = await owner(saved);
+  const data = saved.get('che');
+  data.projects = [{ id: 'beat_1', type: 'music', title: 'Midnight Drill', music: { versions: [{ kind: 'master', media_id: 'beatfile' }], artwork_media_id: 'cover1', metadata: { artist: 'Dee' } } }];
+  saved.set('che', data);
+  const beat = await che.say('Create a preview video for my beat Midnight Drill');
+  assert.equal(beat.route, 'che_visual_studio');
+  assert.match(beat.reply, /Made "Midnight Drill beat preview": Square/);
+  const view = await che.get(`/api/visual?project_id=${beat.done.visual_project_id}`);
+  assert.equal(view.doc.audio[0].asset, 'beatfile');
+  const base = (await che.post({ action: 'create', kind: 'image', preset: 'square', asset: 'photo2', title: 'Drop' })).body.project.id;
+  await che.post({ action: 'save_template', project_id: base, name: 'Album Drop' });
+  const used = await che.say('Use my Album Drop template but make it brighter');
+  assert.equal(used.route, 'che_visual_studio');
+  assert.match(used.reply, /Made a new project from Album Drop\. Brightness 15/);
+  assert.equal(used.done.open, 'visual_editor');
+  assert.match((await che.say('Use my Nonexistent Thing template')).reply, /no template called Nonexistent Thing/);
+});
+
+test('Worker: a verified render is archived to R2 when the bucket is bound, so it outlives GitHub\'s 30 days', async () => {
+  const tiny = newVideoDoc();
+  tiny.canvas = { w: 108, h: 192, fps: 15 };
+  tiny.clips.push({ id: 'c1', asset: 'm1', kind: 'video', name: 'x', in: 0, out: 2, source_duration: 2, speed: 1, transition: { type: 'cut', duration: 0 }, adjust: {} });
+  const { job } = await newRenderJob(renderSpec(tiny).spec);
+  const mp4 = new Uint8Array(readFileSync(new URL('../../test/fixtures/edit_render_tiny.mp4', import.meta.url)));
+  const zip = storedZip({ 'video.mp4': mp4, 'manifest.json': new TextEncoder().encode('{"status":"verified"}') });
+  const fetcher = async (url) => {
+    const u = String(url);
+    if (u.includes('/runs?')) return Response.json({ workflow_runs: [{ id: 7, display_title: `CHE edit render ${job.id}`, status: 'completed', conclusion: 'success' }] });
+    if (u.includes('/runs/7/artifacts')) return Response.json({ artifacts: [{ id: 99, name: `che-edit-${job.id}`, expired: false }] });
+    if (u.endsWith('/artifacts/99/zip')) return new Response(zip);
+    throw new Error(`unexpected ${u}`);
+  };
+  const r2 = new Map();
+  const bucket = {
+    put: async (k, v) => { r2.set(k, new Uint8Array(v)); },
+    get: async (k, o) => { const b = r2.get(k); if (!b) return null; const part = o?.range ? b.slice(o.range.offset, o.range.offset + o.range.length) : b; return { size: b.length, arrayBuffer: async () => part.buffer.slice(part.byteOffset, part.byteOffset + part.byteLength) }; },
+  };
+  const saved = new Map();
+  const storage = storageFor(saved);
+  const data = { projects: [{ id: 'vis_1', type: 'visual', kind: 'video', title: 'Promo' }] };
+  saved.set('visual:vis_1', { doc: tiny, undo: [], redo: [], versions: [{ id: 'v0', doc: tiny }], render: { ...job, stage: 'rendering' } });
+  const env = { CHE_GITHUB_REPO: 'Vondada/chey-app', CHE_GITHUB_TOKEN: 't', CHE_DATA_BUCKET: bucket };
+  const out = await visualApi({ storage, env, data, fetcher }, { method: 'GET', query: new URLSearchParams({ project_id: 'vis_1' }) });
+  assert.equal(out.body.project.render.stage, 'ready', out.body.project.render.error || '');
+  const item = saved.get('media_index')[0];
+  assert.equal(item.blob, 'r2');
+  assert.equal(item.blob_key, `media/${item.id}.mp4`);
+  assert.equal(r2.get(item.blob_key).length, mp4.length, 'the whole verified file is in R2');
+  // A failed archive records no finished file.
+  saved.set('visual:vis_1', { doc: tiny, undo: [], redo: [], versions: [{ id: 'v0', doc: tiny }], render: { ...job, stage: 'rendering' } });
+  saved.delete('media_index');
+  const broken = { ...env, CHE_DATA_BUCKET: { put: async () => { throw new Error('R2 down'); }, get: async () => null } };
+  const failed = await visualApi({ storage, env: broken, data, fetcher }, { method: 'GET', query: new URLSearchParams({ project_id: 'vis_1' }) });
+  assert.equal(failed.body.project.render.stage, 'failed');
+  assert.match(failed.body.project.render.error, /could not be archived/);
+  assert.equal(saved.get('media_index'), undefined);
+});

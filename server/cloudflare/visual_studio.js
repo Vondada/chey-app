@@ -420,7 +420,8 @@ export function redo(state) {
 }
 
 export function saveVersion(state, label) {
-  const n = state.versions.length;
+  // Ids never repeat, even after the oldest edits are dropped: they count every save, not the kept ones.
+  const n = state.version_seq = Math.max(Number(state.version_seq) || 0, ...state.versions.map((x) => Number(String(x.id).slice(1)) || 0)) + 1;
   const v = { id: `v${n}`, label: clip(label, 40) || `Edit v${n}`, doc: copy(state.doc), at: new Date().toISOString() };
   state.versions.push(v);
   if (state.versions.length > 12) state.versions.splice(1, 1); // the Original is never dropped
@@ -595,7 +596,10 @@ export function useTemplate(template, fill = {}) {
 /// "Save as Template": the layout with the owner's own media removed and replaced by placeholders.
 export function templateFromDoc(doc, { name, category = 'Custom' }) {
   const t = copy(doc);
-  for (const l of t.layers || []) if (l.asset && !l.placeholder) { l.placeholder = l.type === 'logo' ? 'logo' : 'artwork'; l.asset = null; }
+  // Layout only: every media asset is cleared, keeping (or giving) each its placeholder to fill later.
+  const strip = (l) => { if (l && (l.asset || l.placeholder)) { l.placeholder ||= l.type === 'logo' ? 'logo' : 'artwork'; l.asset = null; } };
+  for (const l of t.layers || []) strip(l);
+  for (const x of t.text || []) strip(x.layer);
   for (const c of t.clips || []) { c.placeholder ||= 'scene'; c.asset = null; }
   if (t.audio) t.audio = [];
   t.captions && (t.captions.cues = []);

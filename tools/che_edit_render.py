@@ -184,9 +184,15 @@ def render_video(spec, sources, out, workdir):
         if (c.get('opacity', 1)) < 1:
             o = c['opacity']
             vf.append(f'colorchannelmixer=rr={o}:gg={o}:bb={o}')
+        vf.append(f'fps={fps}')
         if c.get('freeze'):
-            vf.append(f"tpad=stop_mode=clone:stop_duration={c['freeze']['duration']:.3f}")
-        vf += [f'fps={fps}', 'format=yuv420p', 'setsar=1', f'trim=duration={L:.3f}', 'setpts=PTS-STARTPTS']
+            # Hold the frame at freeze.at (seconds into the clip's source) for freeze.duration, then play on.
+            fz = c['freeze']
+            at = max(0.0, min(float(fz.get('at') or 0), src_len))
+            at = (src_len - at) if c.get('reverse') else at
+            start = int(round(at / speed * fps))
+            vf += [f"loop=loop={max(1, int(round(float(fz['duration']) * fps)))}:size=1:start={start}", f'setpts=N/({fps}*TB)']
+        vf += ['format=yuv420p', 'setsar=1', f'trim=duration={L:.3f}', 'setpts=PTS-STARTPTS']
         graph.append(f'[{idx}:v]' + ','.join(vf) + f'[v{i}]')
         if c.get('kind') != 'image' and not c.get('muted') and has_audio(path):
             af = (['areverse'] if c.get('reverse') else []) + atempo(speed) + [f"volume={c.get('volume', 1):.3f}", 'aresample=48000', 'aformat=channel_layouts=stereo', 'apad', f'atrim=duration={L:.3f}', 'asetpts=PTS-STARTPTS']
