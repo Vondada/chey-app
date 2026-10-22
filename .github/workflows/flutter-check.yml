@@ -67,10 +67,36 @@ jobs:
       - name: Validate bundled offline 3D characters
         run: node --test tools/character_pipeline/assets.test.mjs
 
+  visual-studio-renders:
+    # Own job so a slow ffmpeg install never eats the Worker job's budget.
+    name: Visual Studio renders
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install ffmpeg (man-db trigger off; it stalls apt on hosted runners)
+        timeout-minutes: 10
+        run: |
+          if ! command -v ffmpeg >/dev/null; then
+            echo 'set man-db/auto-update false' | sudo debconf-communicate >/dev/null || true
+            sudo rm -f /var/lib/man-db/auto-update
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends ffmpeg
+          fi
+          ffmpeg -hide_banner -version | head -1
+          python3 -m pip install --quiet pillow
+      - name: Visual Studio renders (real ffmpeg; verified MP4 and PNG)
+        timeout-minutes: 6
+        env:
+          PYTHONUNBUFFERED: '1'
+        run: python3 -m unittest discover -s tools -p 'test_che_edit_render.py' -v
   worker-unit:
     name: Worker syntax and unit tests
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
