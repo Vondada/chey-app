@@ -12,6 +12,7 @@ import { CheLibrary, queryTerms } from './library.js';
 import { BRAIN_REGIONS, CheBrainStore, fnv1a32 } from './brain_store.js';
 import { linkRelated } from './brain_rooms.js';
 import { expandByLinks } from './brain_relations.js';
+import { fromLibrary } from './brain_ledger.js';
 
 export const KNOWLEDGE_CATEGORIES = Object.freeze([
   { id: 'ai_agents', name: 'AI and Autonomous Agents' },
@@ -132,6 +133,7 @@ export class KnowledgeLibrary {
     ref.id, ref.key, ref.category, ref.subcategory, ref.kind, ref.title, ref.creator, ref.source_url, ref.published,
     ref.edition, ref.license, ref.access, ref.topics, ref.trust, ref.note, ref.added);
     this.syncBrain(ref, { now });
+    fromLibrary(this.storage, ref, 'NOT READ', { now });
     return ref;
   }
 
@@ -147,14 +149,15 @@ export class KnowledgeLibrary {
       return { error: `Only the text of owner, public-domain or openly licensed references is stored. "${ref.title}" stays catalogued (licence: ${ref.license}).` };
     }
     const body = String(text || '');
-    if (body.trim().length < 20) return { error: 'There was nothing readable to index.' };
+    if (body.trim().length < 20) { fromLibrary(this.storage, ref, 'FAILED', { reason: 'nothing readable to index', now }); return { error: 'There was nothing readable to index.' }; }
     if (ref.doc_id) this.lib.remove(ref.doc_id);
     const saved = this.lib.add({ title: ref.title, text: body, source: ref.source_url || ref.license });
-    if (saved.error) return saved;
+    if (saved.error) { fromLibrary(this.storage, ref, 'FAILED', { reason: saved.error, now }); return saved; }
     this.sql.exec(`UPDATE kl_refs SET doc_id = ?, access = 'indexed', trust = ?, indexed_at = ?, revision = revision + 1 WHERE id = ?`,
       saved.id, trustOf(ref), now, ref.id);
     const updated = this.get(ref.id);
     this.syncBrain(updated, { now, text: body });
+    fromLibrary(this.storage, updated, 'INDEXED', { reason: `${saved.chunks} passages`, now });
     return { ...updated, chunks: saved.chunks, chars: saved.chars };
   }
 
