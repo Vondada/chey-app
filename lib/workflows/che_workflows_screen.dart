@@ -39,6 +39,13 @@ class CheWorkflowsClient {
   }
 
   Future<Map<String, dynamic>> view() => _decode(() => _client.get(Uri.parse('$baseUrl/api/workflows'), headers: headers()));
+  /// Verified internal capabilities, knowledge used and external dependencies (capability_engine.js).
+  Future<Map<String, dynamic>> capabilities() => _decode(() => _client.get(Uri.parse('$baseUrl/api/capability-engine'), headers: headers()));
+  Future<Map<String, dynamic>> capabilityPolicy(Map<String, dynamic> set) => _decode(() => _client.post(
+        Uri.parse('$baseUrl/api/capability-engine/policy'),
+        headers: {...headers(), 'Content-Type': 'application/json'},
+        body: jsonEncode({'set': set}),
+      ));
   Future<Map<String, dynamic>> exportAll() => _decode(() => _client.get(Uri.parse('$baseUrl/api/workflows/export'), headers: headers()));
   Future<Map<String, dynamic>> action(String name, Map<String, dynamic> body) => _decode(() => _client.post(
         Uri.parse('$baseUrl/api/workflows/$name'),
@@ -75,6 +82,7 @@ class CheWorkflowsScreen extends StatefulWidget {
 
 class _CheWorkflowsScreenState extends State<CheWorkflowsScreen> {
   Map<String, dynamic>? _view;
+  Map<String, dynamic>? _caps;
   String? _error;
   String _status = '';
   String _kind = 'all';
@@ -91,8 +99,14 @@ class _CheWorkflowsScreenState extends State<CheWorkflowsScreen> {
   Future<void> _load() async {
     try {
       final v = await widget.client.view();
+      Map<String, dynamic>? caps;
+      try {
+        caps = await widget.client.capabilities();
+      } catch (_) {
+        caps = null; // The library still shows; the capability section says it could not load.
+      }
       if (!mounted) return;
-      setState(() { _view = v; _error = null; });
+      setState(() { _view = v; _caps = caps; _error = null; });
     } catch (e) {
       if (!mounted) return;
       setState(() => _error = 'I could not load the workflow library: ${e.toString().replaceFirst('Exception: ', '')}');
@@ -203,6 +217,8 @@ class _CheWorkflowsScreenState extends State<CheWorkflowsScreen> {
                         padding: const EdgeInsets.only(top: 12),
                         child: Semantics(liveRegion: true, child: Text(_status, style: Theme.of(context).textTheme.titleMedium)),
                       ),
+                    const SizedBox(height: 20),
+                    ..._capabilitySection(),
                     if (candidates.isNotEmpty) ...[
                       const SizedBox(height: 20),
                       Text('Learned candidates (${candidates.length})', style: Theme.of(context).textTheme.titleLarge),
@@ -224,6 +240,68 @@ class _CheWorkflowsScreenState extends State<CheWorkflowsScreen> {
                   ],
                 ),
     );
+  }
+
+  static const _where = {'internal': 'inside CHE', 'local': 'on your device', 'owner_compute': 'on compute you control', 'external_free': 'approved free service', 'external_paid': 'approved paid service'};
+
+  /// Internal Capabilities, Knowledge Used and External Dependencies: only verified capabilities are called working.
+  List<Widget> _capabilitySection() {
+    final c = _caps;
+    final theme = Theme.of(context).textTheme;
+    if (c == null) return [Text('Internal capabilities could not be loaded just now.', style: theme.titleMedium)];
+    final caps = [for (final x in (c['capabilities'] as List? ?? const [])) Map<String, dynamic>.from(x as Map)];
+    final working = caps.where((x) => x['serving_version'] != null).toList();
+    final other = caps.where((x) => x['serving_version'] == null).toList();
+    final policy = Map<String, dynamic>.from(c['policy'] as Map? ?? const {});
+    final internalOnly = policy['internal_only'] == true;
+    final used = c['knowledge_used'] is Map ? Map<String, dynamic>.from(c['knowledge_used'] as Map) : null;
+    final deps = (c['external_dependencies'] as List? ?? const []).length;
+    final knowledge = Map<String, dynamic>.from(c['knowledge'] as Map? ?? const {});
+    return [
+      Text('Internal capabilities (${working.length} verified)', style: theme.titleLarge),
+      SwitchListTile(
+        contentPadding: EdgeInsets.zero,
+        title: const Text('Internal-only mode'),
+        subtitle: Text(internalOnly ? 'On: no external model, API or renderer is used.' : 'Off: approved external services may be used.'),
+        value: internalOnly,
+        onChanged: _busy
+            ? null
+            : (on) async {
+                try {
+                  await widget.client.capabilityPolicy({'internal_only': on});
+                  _report('Internal-only mode is ${on ? 'on' : 'off'}.', ok: true);
+                  await _load();
+                } catch (e) {
+                  _report('That did not work: ${e.toString().replaceFirst('Exception: ', '')}', ok: false);
+                }
+              },
+      ),
+      if (working.isEmpty) Text('No verified internal capabilities yet. Described or indexed knowledge is not counted as a capability.', style: theme.bodyLarge),
+      for (final x in working)
+        Semantics(
+          container: true,
+          label: '${x['name']}, ${x['status']}, ${_where[x['execution']] ?? x['execution']}, version ${x['serving_version']}, ${x['successes']} of ${x['runs']} runs worked',
+          child: ExcludeSemantics(
+            child: ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.check_circle_rounded),
+              title: Text('${x['name']}'),
+              subtitle: Text('${_where[x['execution']] ?? x['execution']} · v${x['serving_version']} · ${x['successes']}/${x['runs']} runs worked'),
+            ),
+          ),
+        ),
+      if (other.isNotEmpty) Text('Not working capabilities: ${other.map((x) => '${x['name']} (${'${x['status']}'.toLowerCase()})').join(', ')}', style: theme.bodyMedium),
+      const SizedBox(height: 8),
+      Semantics(
+        container: true,
+        child: Text(
+          'Knowledge: ${knowledge['indexed'] ?? 0} indexed, ${knowledge['procedure'] ?? 0} procedures, ${knowledge['experience'] ?? 0} verified outcomes, ${c['conflicts'] ?? 0} conflicts, ${c['stale'] ?? 0} possibly outdated.',
+          style: theme.bodyLarge,
+        ),
+      ),
+      if (used != null) Text('Knowledge used last: ${used['what']} (${(used['items'] as List? ?? const []).length} items).', style: theme.bodyLarge),
+      Text(deps == 0 ? 'External dependencies: none.' : 'External dependencies: $deps, each used only with your approval.', style: theme.bodyLarge),
+    ];
   }
 
   Widget _candidate(int n, Map<String, dynamic> c) {

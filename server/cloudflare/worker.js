@@ -41,6 +41,7 @@ import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, saveOwn
 import { guardEngineClaims, guardSoulClaims, lastReplyRecord, loadSoul, replyProvenanceAnswer, replyProvenanceQuestion, restoreSoul, saveSoul, soulPromptBlock, soulProvenance, soulView, stripPhoneSoul } from './soul.js';
 import { mediaHoldAnswer, mediaHoldIntent, mediaKeepFor, mediaLatestReply, mediaLibraryIntent, mediaLibraryReply, mediaLibraryReport, mediaLatestOpenRow, mediaOpenIntent, mediaOpenMissingReply, mediaOpenReply, mediaOpenRow, mediaRows, mediaSaveIntent, mediaSaveReply, mediaShowLatestIntent, mediaShowReply, verifyMediaRows, wantsLatestVideo } from './media_library.js';
 import { capabilityGap, capabilityReply } from './capability_gap.js';
+import { INTERNAL_SOURCE, LAST_RENDER_KEY, internalSceneIntent, internalSceneTurn } from './internal_studio.js';
 import { CHAT_IMAGE_SOURCE, chatImageInline, chatImageMedia, chatImageReply, makeChatImages, pretendToolCall, requestedImageCount } from './chat_images.js';
 import { memorySearchIntent, memorySearchReply, memorySearchTerms } from './memory_search.js';
 import { probeVideoEngine, videoEngineStatus, videoStatusSpeech } from './video_engine.js';
@@ -229,7 +230,8 @@ import {
 import { APP_BUILD_KEY, appBuildIntent, appBuildRun, dispatchAppBuild, speakAppBuild } from './app_builds.js';
 import { advanceObjectives, applyMissionEvent, approvalReached, approveNode, awaitingApproval, cancelObjective, createObjective, mutateObjective, replanNode, resolveKnownNodes, retryNode, setObjectivePaused, speakObjective } from './objective_graph.js';
 import { CHE_TENANT, CHE_SECURITY, access as coreAccess, coreIncidents, coreKnowledge, coreView, findAnyIncident, findKnowledge, loadCore, openIncidentsForEvents, recordCheck as recordCoreCheck, runDrill, saveCore, speakCore, syncLegacyEvents } from './security_core_che.js';
-import { EGRESS_KEY, SNAPSHOT_KEY, installEgressGuard, setEgressPolicy, storeEgressPolicy, SESSION_SCOPES, bump as securityBump, checkSession, createSession, dependencyAdvisories, detectThreats, issueNonce, loadSecurity, recordFindings, redact as redactSecretText, redactDeep, respondToIncident, restoreTrustedState, revokeSessions, saveSecurity, securityIntent, snapshotTrustedState, speakStatus as speakSecurityStatus } from './security_intelligence.js';
+import { acquire as acquireCapability, applyPolicy as applyCapabilityPolicy, capabilityIntent, engineSummary as capabilityEngineSummary, learnFromOutcome, loadPolicy as loadCapabilityPolicy, populate as populateKnowledge, retrieve as retrieveKnowledge, rollbackTool, savePolicy as saveCapabilityPolicy, projectBlocked, speakCapabilities, speakLearned as speakLearnedKnowledge, useTool, LAST_USED_KEY as KNOWLEDGE_USED_KEY } from './capability_engine.js';
+import { EGRESS_KEY, SNAPSHOT_KEY, holdEgress, installEgressGuard, setEgressOwner, setEgressPolicy, storeEgressPolicy, SESSION_SCOPES, bump as securityBump, checkSession, createSession, dependencyAdvisories, detectThreats, issueNonce, loadSecurity, recordFindings, redact as redactSecretText, redactDeep, respondToIncident, restoreTrustedState, revokeSessions, saveSecurity, securityIntent, snapshotTrustedState, speakStatus as speakSecurityStatus } from './security_intelligence.js';
 import { loadRegistry as loadCapabilityRegistry } from './capability_registry.js';
 import { engineView, exportWorkflows, feedbackOnLast, importWorkflows, library as workflowLibrary, loadEngine, matchLearned, noteVersion, promoteCandidate, dismissCandidate, rankWorkflows, recordRun as recordWorkflowRun, isDisabled as workflowDisabled, restoreVersion, saveEngine, setDisabled as setWorkflowDisabled, setPreferred as setWorkflowPreferred, speakEfficiency, speakLibrary, testCandidate, workflowForRun, workflowIntent } from './workflow_engine.js';
 import { CATEGORIES, COMMANDS, catalogView, commandById, commandStatus, connectorStatus, describeWorkflow, dispatchPrompt, findSavedWorkflow, normalizeSavedWorkflow, parseSlashCommand, readCommandSpeech, searchCommands, speakCommandList, speakUnavailable, suggestCommands, workflowNodes, workflowFromWords } from './command_catalog.js';
@@ -5461,7 +5463,26 @@ export class CheState extends DurableObject {
     }
     // Internal-only mode (Security Intelligence): every outbound fetch is checked against the owner's policy.
     installEgressGuard();
+    setEgressOwner(this.env);
     try { setEgressPolicy(await this.ctx.storage.get(EGRESS_KEY), request.url); } catch (_) {}
+    // A project the owner said must stay inside CHE holds the same guard for the length of the request.
+    let projectHold = false;
+    try {
+      const policy = await loadCapabilityPolicy(this.ctx.storage);
+      if (request.method === 'POST' && (policy.no_export_projects || []).length) {
+        const peek = await request.clone().json().catch(() => null);
+        projectHold = projectBlocked(policy, peek?.project_id || peek?.visual_project_id || '');
+      }
+    } catch (_) { projectHold = false; }
+    if (projectHold) holdEgress(1);
+    try {
+      return await this.fetchInner(request);
+    } finally {
+      if (projectHold) holdEgress(-1);
+    }
+  }
+
+  async fetchInner(request) {
     const isChat = request.method === 'POST' && new URL(request.url).pathname === '/api/chat';
     // The deploy's memory-truth check talks to its own isolated CHE; its test
     // conversation never grows the owner's shared vector memory.
@@ -5878,6 +5899,82 @@ export class CheState extends DurableObject {
   // Starts a workflow on CHE's existing objective graph: each step is a
   // `command` node, independent steps run in parallel lanes, approval steps
   // wait for the owner. Nothing starts unless every step can run now.
+  // ── Capability Engine ──────────────────────────────────────────────────
+  // Internal-only mode has one switch: Security Intelligence's egress policy (security_intelligence.js), which guards
+  // every outbound fetch. Turning it on is allowed from here; turning it off needs Face ID on the Security page.
+  async setCapabilityPolicy(data, intent) {
+    const before = await loadCapabilityPolicy(this.ctx.storage);
+    if (intent.set?.internal_only === false || intent.set?.no_external_api === false) {
+      return { ...before, refused: 'Turning internal-only mode off needs Face ID on the Security page. Nothing was changed.' };
+    }
+    const next = applyCapabilityPolicy(before, intent);
+    await saveCapabilityPolicy(this.ctx.storage, next);
+    if (next.internal_only && !before.internal_only) {
+      data.capability_policy = { ...(data.capability_policy || {}), internal_only: true };
+      await this.ctx.storage.put('che', data);
+      await storeEgressPolicy(this.ctx.storage, true);
+    }
+    if (next.no_paid && !before.no_paid) {
+      const ai = ensureAiState(data);
+      ai.policy.max_cost_class = 'free';
+      await this.ctx.storage.put('che', data);
+      await syncRoutingSnapshot(this.ctx.storage, data);
+    }
+    return next;
+  }
+
+  async capabilitiesApi(path, request, body, data) {
+    const storage = this.ctx.storage;
+    if (request.method === 'GET' && path === '/api/capability-engine') return json(await capabilityEngineSummary(storage));
+    if (request.method !== 'POST') return json({ detail: 'Not found.' }, 404);
+    const action = path.replace('/api/capability-engine/', '');
+    const policy = await loadCapabilityPolicy(storage);
+    if (action === 'learn') {
+      const out = populateKnowledge(storage, body, { policy });
+      return out.error ? json({ detail: out.error }, 400) : json(out);
+    }
+    if (action === 'retrieve') return json(retrieveKnowledge(storage, await loadCapabilityRegistry(storage), String(body.query || ''), { project_id: body.project_id || '' }));
+    if (action === 'acquire') return json(await acquireCapability(storage, String(body.operation || ''), { sample: body.sample ?? null, ctx: { project_id: body.project_id || '' } }));
+    if (action === 'use') return json(await useTool(storage, String(body.id || ''), body.input));
+    if (action === 'rollback') return json(await rollbackTool(storage, String(body.id || '')));
+    if (action === 'outcome') return json(learnFromOutcome(storage, body, { policy }));
+    if (action === 'policy') {
+      const next = await this.setCapabilityPolicy(data, { set: body.set || {}, memory: body.memory || {} });
+      return next.refused ? json({ detail: next.refused }, 403) : json({ policy: next });
+    }
+    return json({ detail: 'Unknown capability action.' }, 404);
+  }
+
+  async capabilityChat(data, ask) {
+    const storage = this.ctx.storage;
+    const say = (text, extra = {}) => ndjsonReply(text, { source: 'che_capability_engine', ok: true, model_calls: 0, capability_action: ask.action, ...extra });
+    if (ask.action === 'policy') {
+      const next = await this.setCapabilityPolicy(data, ask.policy);
+      if (next.refused) return say(next.refused, { ok: false });
+      return say(ask.policy.said, { policy: next });
+    }
+    const registry = await loadCapabilityRegistry(storage);
+    if (ask.action === 'capabilities') return say(speakCapabilities(registry));
+    if (ask.action === 'learned') {
+      const k = retrieveKnowledge(storage, registry, ask.topic, {});
+      const used = [...k.facts, ...k.concepts, ...k.procedures].slice(0, 8);
+      await storage.put(KNOWLEDGE_USED_KEY, { at: new Date().toISOString(), what: `what did you learn about ${ask.topic}`, items: used.map((s) => s.item.id), sources: [...new Map(used.map((s) => [s.item.provenance?.ref_id, s.item.provenance])).values()].filter(Boolean).slice(0, 5) });
+      return say(speakLearnedKnowledge(k));
+    }
+    if (ask.action === 'informed') {
+      let last = null;
+      try { last = await storage.get(KNOWLEDGE_USED_KEY); } catch (_) { last = null; }
+      if (!last) return say('I have no record of knowledge used for a recent answer yet.', { ok: false });
+      const titles = (last.sources || []).map((p) => p?.title).filter(Boolean);
+      return say(`For "${last.what}" I used ${(last.items || []).length} item${(last.items || []).length === 1 ? '' : 's'} from my knowledge${titles.length ? `, from: ${[...new Set(titles)].join(', ')}` : ''}${last.capability ? `, and the verified tool ${last.capability}` : ''}.`);
+    }
+    if (ask.action === 'acquire') {
+      const out = await acquireCapability(storage, ask.operation);
+      return say(out.said, { ok: out.ok, capability_id: out.capability?.capability_id || null });
+    }
+    return say('I can tell you what I can actually do, what I learned about something, which knowledge I used, or build an internal tool.', { ok: false });
+  }
+
   // ── Security Intelligence ──────────────────────────────────────────────
   async securityCount(name) {
     try {
@@ -8847,6 +8944,10 @@ export class CheState extends DurableObject {
         return new Response(bytes, { headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'private, max-age=3600' } });
       }
       // The Command Center catalog with live status, saved workflows and runs.
+      if (path === '/api/capability-engine' || path.startsWith('/api/capability-engine/')) {
+        if (!ownerDevice) return json({ detail: 'Only the CHE owner can see or change capabilities.' }, 403);
+        return this.capabilitiesApi(path, request, body, data);
+      }
       if (path === '/api/security' || (path.startsWith('/api/security/') && path !== '/api/security/revoke_self')) {
         if (!ownerDevice) return json({ detail: 'Only the CHE owner can see or change CHE\'s security.' }, 403);
         return this.securityApi(path, request, body, data, tokenHash);
@@ -9957,6 +10058,9 @@ export class CheState extends DurableObject {
           // Workflow Engine: the owner's words about the library, then a promoted learned workflow this request matches.
           const secAsk = ownerDevice && !body.attachment && !body.workflow_step ? securityIntent(rawMessage) : null;
           if (secAsk) return this.securityChat(data, secAsk, tokenHash);
+          // Capability Engine: what CHE can actually do, what she learned, owner policies (internal-only and memory).
+          const capAsk = ownerDevice && !body.attachment && !body.workflow_step ? capabilityIntent(rawMessage) : null;
+          if (capAsk) return this.capabilityChat(data, capAsk);
           const wfAsk = ownerDevice && !body.attachment && !body.workflow_step ? workflowIntent(rawMessage) : null;
           if (wfAsk) return this.workflowChat(data, wfAsk);
           const learned = ownerDevice && !body.attachment && !body.workflow_step && !body.screen_context ? matchLearned(await loadEngine(this.ctx.storage), rawMessage) : null;
@@ -10171,6 +10275,17 @@ export class CheState extends DurableObject {
           }
           const lesson = await answerAtlas(atlas, { storage: this.ctx.storage });
           return ndjsonReply(lesson.text, { source: ATLAS_SOURCE, ok: lesson.ok, atlas_kind: lesson.kind, atlas_card: lesson.card_id || null, model_calls: 0 });
+        }
+        // CHE's own renderer first (owner, 2026-10-22: "internal capability first"): a scene her renderer can make is made,
+        // verified and saved here with no external app, API or key. Other subjects keep the media engine below.
+        const internalScene = ownerDevice && !body.attachment
+          ? internalSceneIntent(message, { hasLast: await Promise.resolve().then(() => this.ctx.storage.get(LAST_RENDER_KEY)).then(Boolean, () => false) })
+          : null;
+        // Read before the interpreter (no model needed); a sentence that also asks to pay, buy or delete is left to the gate.
+        if (internalScene && gateOwnerAction(message, {}).allowed) {
+          const made = await internalSceneTurn({ storage: this.ctx.storage, env: this.keyEnv || this.env }, internalScene);
+          const inline = made.media ? { media_type: 'image', media_url: `${new URL(request.url).origin}/api/media/${made.media.id}/image`, media_id: made.media.id, media: [{ media_id: made.media.id, mime_type: 'image/png', title: made.media.title, url: `/api/media/${made.media.id}/image` }] } : {};
+          return ndjsonReply(made.text, { source: INTERNAL_SOURCE, ok: made.ok, model_calls: 0, execution: 'internal', provenance: made.media?.provenance || null, ...inline });
         }
         // Gmail, Drive, Calendar and YouTube requests are read as written. A model
         // read here would be slow, and it could invent a meaning the owner did not mean.
@@ -12650,6 +12765,10 @@ export class CheState extends DurableObject {
         const learnedSkillList = await loadLearnedSkills(this.ctx.storage);
         const learnedSkills = learnedSkillsContext(learnedSkillList, message);
 
+        // Internal-only mode (owner policy): a picture the internal renderer cannot make is not sent to an external engine.
+        if (requestedCapabilities.includes('image_generation') && ownerDevice && !body.attachment && data.capability_policy?.internal_only === true) {
+          return ndjsonReply('Internal-only mode is on, sir, so I did not send this to an image engine. My own renderer can make beach scenes (day, sunset, night or stormy) right now; it cannot make this subject yet. Nothing was made.', { source: INTERNAL_SOURCE, ok: false, model_calls: 0, execution: 'internal', blocked_external: true });
+        }
         // Pictures asked for (Test 5, 2026-10-21): the real pictures are made by the media engine, each one saved, and the
         // reply is built from those results. The model is not asked here, so it cannot describe a picture that was not made.
         if (requestedCapabilities.includes('image_generation') && !requestedCapabilities.includes('video_generation') && !body.attachment) {
@@ -13754,6 +13873,7 @@ export class CheState extends DurableObject {
 
   async alarm() {
     installEgressGuard();
+    setEgressOwner(this.env);
     try { setEgressPolicy(await this.ctx.storage.get(EGRESS_KEY)); } catch (_) {}
     await this.refreshKeyEnv();
     // A minute-only wake-up: the simulation's minute is the only work due. It runs that one pass and makes no

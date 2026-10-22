@@ -71,7 +71,7 @@ export const SYSTEM_WORKFLOWS = Object.freeze([
   S('rea_investigation', 'Reverse-engineering analysis (REA)', 'build', ['che_rea'],
     { summary: 'Studies an app, site or repository and maps its features against CHE.', blocks: ['understand', 'connector', 'job', 'verify', 'receipt', 'speak'], triggers: ['reverse', 'engineer', 'analyze app', 'competitor', 'rea'], verify: 'receipt', context: ['repository', 'target'] }),
   S('media_create', 'Create media', 'studio',
-    ['che_creator_studio', 'che_media_library', 'che_media_store', 'che_video_line', 'video_renderer', 'che_voice_studio', 'che_voice_test', 'che_image_generation', 'che_visual_studio', 'che_showroom', 'che_site_builder', 'che_invention_studio'],
+    ['che_creator_studio', 'che_media_library', 'che_media_store', 'che_video_line', 'video_renderer', 'che_voice_studio', 'che_voice_test', 'che_image_generation', 'che_visual_studio', 'che_internal_renderer', 'che_showroom', 'che_site_builder', 'che_invention_studio'],
     { summary: 'Makes and edits pictures, videos, voices and sites, and verifies the rendered file.', blocks: ['understand', 'job', 'render', 'verify', 'speak'], triggers: ['picture', 'image', 'video', 'edit', 'render', 'thumbnail', 'voice', 'website', 'caption', 'template'], approval: 'publish', verify: 'output', context: ['media'] }),
   S('music_business', 'Music business', 'studio', ['che_music_rights', 'che_music_business'],
     { summary: 'Songs, rights, deals and releases; nothing is signed, transferred or published without the owner.', blocks: ['understand', 'records', 'legal', 'approval', 'speak'], triggers: ['song', 'music', 'album', 'royalty', 'deal', 'release', 'label', 'split'], approval: 'publish', verify: 'receipt', context: ['music'] }),
@@ -99,6 +99,65 @@ export const SYSTEM_WORKFLOWS = Object.freeze([
   S('open_conversation', 'Open conversation (language model)', 'intelligence', ['model', 'owner_chat', 'ai_layer', 'che_chat_only'],
     { summary: 'No reusable workflow fit, so the language model answered. These runs are what the engine learns from.', blocks: ['understand', 'model', 'speak'], triggers: [], context: ['request', 'recent_turns'], deterministic: false }),
 ]);
+
+// Loop categories (owner, 2026-10-22). A loop is a reusable behaviour unit; a workflow is a composition of loops.
+export const LOOP_CATEGORIES = Object.freeze(['Core', 'Reasoning', 'Context', 'Knowledge', 'Memory', 'Search', 'Files', 'Projects', 'Agents', 'Coding',
+  'Testing', 'Deployment', 'Music', 'Audio', 'Video', 'Rendering', 'Images', 'Scene Creation', 'Business', 'Legal', 'Health', 'Trading',
+  'Communication', 'Connections', 'Authentication', 'Biometrics', 'Credentials', 'Security', 'Malware', 'Integrity', 'Recovery', 'Approvals',
+  'Verification', 'Capability Learning', 'Internal Tool Creation', 'Knowledge Population']);
+
+// Foundational and verification loops: data over the functions that already do the work (named in `implementation`).
+// Each has a termination condition, a retry limit and a checkpoint, so no loop can run forever.
+const L = (id, name, category, implementation, extra = {}) => Object.freeze({
+  id: `loop:${id}`, name, category, kind: 'loop', version: 1, sources: Object.freeze([]), implementation,
+  summary: extra.summary || name, blocks: Object.freeze(extra.blocks || ['understand', 'verify']), triggers: Object.freeze(extra.triggers || []),
+  approval: extra.approval || 'none', verify: extra.verify || 'handler', context: Object.freeze(extra.context || ['request']),
+  max_iterations: extra.max_iterations ?? 3, retry_policy: extra.retry_policy || 'retry once, then the next fallback',
+  success_condition: extra.success || 'its verification passed', failure_condition: extra.failure || 'verification failed after the retry limit',
+  fallback_loop: extra.fallback || null, checkpoint: extra.checkpoint !== false, deterministic: true,
+});
+export const LOOP_WORKFLOWS = Object.freeze([
+  L('understand_goal', 'Understand goal', 'Core', 'intent_frame.js + chat routing'),
+  L('retrieve_knowledge', 'Retrieve internal knowledge', 'Knowledge', 'capability_engine.retrieve', { context: ['knowledge'], triggers: ['know', 'learned', 'knowledge'] }),
+  L('check_applicability', 'Check applicability', 'Knowledge', 'capability_engine.retrieve (scope, freshness, conflicts)'),
+  L('select_internal_capability', 'Select internal capability', 'Capability Learning', 'capability_engine.decideExecution', { context: ['capabilities'] }),
+  L('create_internal_tool', 'Create internal tool', 'Internal Tool Creation', 'capability_engine.acquire', { approval: 'none', max_iterations: 1, fallback: 'loop:request_approval', triggers: ['tool', 'build'] }),
+  L('security_check', 'Security check', 'Security', 'capability_registry.recordCheck(security)'),
+  L('check_authorization', 'Check authorization', 'Approvals', 'owner_action_gate.js + app permission gate', { approval: 'owner' }),
+  L('execute', 'Execute', 'Core', 'capability_engine.useTool / existing handlers'),
+  L('verify', 'Verify', 'Verification', 'capability_registry.promote / evidence receipts'),
+  L('repair', 'Repair', 'Recovery', 'objective_graph.recoverNode / retryNode', { max_iterations: 2 }),
+  L('request_approval', 'Request approval', 'Approvals', 'objective_graph.approveNode', { approval: 'owner', max_iterations: 1 }),
+  L('save_result', 'Save result', 'Memory', 'media index / project records'),
+  L('populate_brain', 'Populate brain', 'Knowledge Population', 'capability_engine.populate / learnFromOutcome', { context: ['knowledge'] }),
+  L('report_result', 'Report result', 'Communication', 'ndjsonReply'),
+  L('learn_capability', 'Learn capability', 'Capability Learning', 'capability_engine.acquire', { max_iterations: 1 }),
+  L('verify_file_exists', 'File exists', 'Verification', 'media.verifyMediaFile'),
+  L('verify_media_decodes', 'Media decodes', 'Verification', 'visual_render.checkOutput / mp4Facts'),
+  L('verify_test_suite', 'Test suite', 'Verification', 'CI: Worker syntax and unit tests'),
+  L('verify_knowledge_provenance', 'Knowledge provenance', 'Verification', 'capability_engine item provenance'),
+  L('verify_internal_tool', 'Internal tool status', 'Verification', 'capability_registry.serving'),
+  L('verify_capability_test', 'Capability test', 'Verification', 'capability_engine.acquire checks'),
+  L('verify_license', 'License check', 'Verification', 'knowledge_library.textAllowed'),
+  L('verify_memory_population', 'Memory population', 'Verification', 'capability_engine.retrieve after populate'),
+]);
+
+/** The full loop schema for any library entry (owner, 2026-10-22). Built from the definition; nothing is invented. */
+export function loopSchema(w) {
+  return {
+    loop_id: w.id, name: w.name, category: w.category, version: w.version || 1, purpose: w.summary || '',
+    inputs: w.inputs || ['request'], required_context: [...(w.context || [])], knowledge_queries: w.knowledge_queries || (w.context || []).filter((c) => c !== 'request'),
+    conditions: w.conditions || [], steps: [...(w.blocks || [])], internal_tools: w.internal_tools || (w.implementation ? [w.implementation] : []),
+    external_tools: w.external_tools || [], agents: w.agents || [], outputs: w.outputs || [], verification: w.verify || 'handler',
+    success_condition: w.success_condition || 'its verification passed', failure_condition: w.failure_condition || 'its handler reported failure',
+    retry_policy: w.retry_policy || 'one retry, then report', max_iterations: w.max_iterations ?? 1, timeout: w.timeout || '60 s',
+    fallback_loop: w.fallback_loop || null, approval_gate: w.approval || 'none', authorization_scope: w.approval === 'owner' || w.approval === 'money' ? 'owner device' : 'owner',
+    credential_scope: w.credential_scope || 'none', security_profile: w.security_profile || (w.approval === 'money' ? 'money hold' : 'standard'),
+    reauthentication_policy: w.reauthentication_policy || 'none', risk_level: w.approval === 'money' || w.approval === 'publish' ? 'high' : w.approval === 'none' ? 'low' : 'medium',
+    cost_profile: w.deterministic === false ? 'model calls' : 'no model calls', memory_population_policy: w.memory_population_policy || 'verified results only',
+    knowledge_scope: w.knowledge_scope || 'owner-global', capability_dependencies: w.capability_dependencies || [], history: w.history || [],
+  };
+}
 
 const BY_SOURCE = new Map(SYSTEM_WORKFLOWS.flatMap((w) => w.sources.map((s) => [s, w])));
 const STOP = new Set('a an and are as at be but by can che chey chay could did do does doing for from get give have how i i\'m in is it its just let me my no not now of on or our please show so tell that the then there this to up us was we what when where which who why will with would you your yeah ok okay hey sir'.split(' '));
@@ -173,6 +232,7 @@ export function library(data = {}, state = emptyState()) {
   const disabled = new Set(state.prefs?.disabled || []);
   const all = [
     ...SYSTEM_WORKFLOWS.map((w) => ({ ...w })),
+    ...LOOP_WORKFLOWS.map((w) => ({ ...w })),
     ...COMMANDS.map(commandWorkflow),
     ...(Array.isArray(data.command_workflows) ? data.command_workflows : []).map((w) => ownerWorkflow(w, state)),
     ...(state.learned || []).map((w) => ({ ...w, kind: 'learned' })),
@@ -333,7 +393,7 @@ export function rankWorkflows(message, lib, state = emptyState(), { limit = 3 } 
   const preferred = Object.entries(state.prefs?.preferred || {}).filter(([k]) => k && jaccard(k, sig) >= 0.5).map(([, v]) => v);
   const scored = [];
   for (const w of lib) {
-    if (w.disabled || w.id === 'open_conversation') continue;
+    if (w.disabled || w.id === 'open_conversation' || w.kind === 'loop') continue;
     const hits = (w.triggers || []).filter((t) => t && (text.includes(` ${t} `) || (t.length > 4 && text.includes(` ${t}`))));
     // A workflow's name counts only through its distinctive words ("check", "run", "report" name many).
     const nameHits = String(w.name).toLowerCase().split(/[^a-z]+/).filter((t) => t.length > 3 && !GENERIC_NAME_WORDS.has(t) && text.includes(` ${t}`));
@@ -503,7 +563,8 @@ export function engineView(data = {}, state = emptyState()) {
   return {
     version: ENGINE_VERSION,
     blocks: Object.entries(BLOCKS).map(([id, b]) => ({ id, ...b })),
-    workflows: lib.map((w) => ({ id: w.id, name: w.name, kind: w.kind, category: w.category, version: w.version, summary: w.summary, blocks: w.blocks, approval: w.approval, verify: w.verify, context: w.context, deterministic: w.deterministic !== false, disabled: w.disabled, stats: w.stats, feedback: w.feedback, steps: w.steps || null })),
+    workflows: lib.map((w) => ({ id: w.id, name: w.name, kind: w.kind, category: w.category, version: w.version, summary: w.summary, blocks: w.blocks, approval: w.approval, verify: w.verify, context: w.context, deterministic: w.deterministic !== false, disabled: w.disabled, stats: w.stats, feedback: w.feedback, steps: w.steps || null, loop: loopSchema(w) })),
+    loop_categories: LOOP_CATEGORIES,
     efficiency: efficiency(state),
     candidates: state.candidates || [],
     gaps,
@@ -545,7 +606,7 @@ const numberWord = (w) => (/^\d+$/.test(w) ? Number(w) : { one: 1, two: 2, three
 export function speakLibrary(view, count = 6) {
   const used = view.workflows.filter((w) => w.stats.runs).sort((a, b) => b.stats.runs - a.stats.runs).slice(0, count);
   const kinds = view.workflows.reduce((m, w) => ((m[w.kind] = (m[w.kind] || 0) + 1), m), {});
-  const head = `Your workflow library has ${view.workflows.length} workflows: ${kinds.system || 0} built in, ${kinds.command || 0} commands, ${kinds.owner || 0} you saved and ${kinds.learned || 0} learned.`;
+  const head = `Your workflow library has ${view.workflows.length} workflows: ${kinds.system || 0} built in, ${kinds.command || 0} commands, ${kinds.owner || 0} you saved, ${kinds.learned || 0} learned and ${kinds.loop || 0} reusable loops.`;
   if (!used.length) return `${head} None has run since recording started.`;
   return `${head} Most used: ${used.map((w, i) => `${i + 1}. ${w.name}, ${w.stats.runs} runs, ${w.stats.success_rate} percent succeeded`).join('; ')}.`;
 }
