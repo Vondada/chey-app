@@ -22,7 +22,6 @@ import '../rooms/che_characters_room.dart';
 import 'che_agent_runtime.dart';
 import 'che_office_glass.dart';
 import 'che_office_store.dart';
-import '../widgets/che_native_scene_world.dart';
 
 /// Short, glanceable version of an agent's task or a meeting objective: the
 /// first clause, cut at a word boundary. The full text stays one tap (or one
@@ -75,13 +74,12 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
   CheOfficeToday? _lastBoard;
   String _filter = 'All'; // All | Research | Trading | Content
 
-  // Flat floor plan kept as a fallback when the WebView 3D surface fails.
+  // The office is the flat floor plan: no 3D crowd (2026-10-22 owner cleanup).
   late final Widget _floorPlan = CheOfficeFloorPlan(
     store: _store,
     onTapDesk: _openDesk,
     onWarRoom: _warRoom,
   );
-  bool _useFlatPlan = false;
 
   /// Deep link: open the requested agent's desk once the roster is known.
   /// Missing agents are shown visually, without unsolicited narration.
@@ -337,62 +335,6 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
   }
 
 
-  List<CheSceneEntity> _officeSceneEntities() {
-    CheSceneEntity entity(CheAgent agent) => CheSceneEntity(
-          id: agent.id,
-          label: agent.name,
-          description:
-              '${agent.role}. ${agent.task?.isNotEmpty == true ? agent.task : agent.status.label}.',
-          color: agent.color,
-          state: agent.status.name,
-          appearance: agent.appearance,
-        );
-    return [
-      entity(_runtime.che),
-      for (final p in _runtime.agents) entity(p.agent),
-    ];
-  }
-
-  Widget _officeStage() {
-    if (_useFlatPlan || !_runtime.loaded) return _floorPlan;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        ValueListenableBuilder<CheSceneQuality>(
-          valueListenable: CheSceneQualityStore.value,
-          builder: (context, quality, _) => CheNativeSceneWorld(
-            mode: CheSceneMode.office,
-            quality: quality,
-            entities: _officeSceneEntities(),
-            height: 420,
-            semanticsLabel: 'Immersive Office. Real agent state only.',
-            onEntityTap: (id) {
-              if (id.toLowerCase() == 'che') {
-                if (widget.onTalkToChe != null) {
-                  if (!widget.embedded) Navigator.of(context).pop();
-                  widget.onTalkToChe!();
-                }
-                return;
-              }
-              _openDesk(id);
-            },
-          ),
-        ),
-        Wrap(
-          alignment: WrapAlignment.end,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            const CheSceneQualityButton(),
-            TextButton(
-              onPressed: () => setState(() => _useFlatPlan = true),
-              child: const Text('Flat floor plan'),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-
   String _officeSummary() {
     final r = _runtime;
     final working = r.agents.where((p) => p.working).length;
@@ -423,14 +365,14 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
           actions: [
             CheVoiceAction(
               number: 1,
-              label: 'Office status',
+              label: 'Status',
               icon: Icons.mic_rounded,
               onTap: () => _speak('${cheOfficeBoardSpeech(r.today, r.connection)} ${_officeSummary()}'),
               semantics: '1. Office status',
             ),
             CheVoiceAction(
               number: 2,
-              label: 'Find an agent',
+              label: 'Find agent',
               icon: Icons.groups_rounded,
               onTap: () {
                 HapticFeedback.selectionClick();
@@ -460,7 +402,7 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
           ],
         ),
         const SizedBox(height: CheSpace.md),
-        _officeStage(),
+        _floorPlan,
         const SizedBox(height: CheSpace.sm),
         if (r.codingJob != null) ...[
           CheCodingJobCard(
@@ -735,7 +677,6 @@ class CheCodingJobCard extends StatelessWidget {
     };
     return Semantics(
       container: true,
-      liveRegion: true,
       label: 'CHE coding job. ${status.label}. ${status.speech}',
       excludeSemantics: true,
       child: CheOfficePanel(

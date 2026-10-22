@@ -57,6 +57,32 @@ class CheVoiceActionList extends StatelessWidget {
   }
 }
 
+class _ActionBadge extends StatelessWidget {
+  const _ActionBadge({required this.action, required this.compact});
+  final CheVoiceAction action;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: compact ? 28 : 32,
+      height: compact ? 28 : 32,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: CheColors.accent.withValues(alpha: 0.18),
+        border: Border.all(color: CheColors.accent.withValues(alpha: 0.7)),
+        boxShadow: [
+          BoxShadow(
+            color: CheColors.accent.withValues(alpha: 0.35),
+            blurRadius: 10,
+          ),
+        ],
+      ),
+      child: Icon(action.icon, size: compact ? 14 : 16, color: CheColors.accent),
+    );
+  }
+}
+
 class _VoiceActionTile extends StatelessWidget {
   const _VoiceActionTile({required this.action, this.compact = false});
   final CheVoiceAction action;
@@ -78,8 +104,8 @@ class _VoiceActionTile extends StatelessWidget {
           },
           borderRadius: BorderRadius.circular(CheRadius.md),
           child: Ink(
-            height: compact ? 52 : 54,
-            padding: EdgeInsets.symmetric(horizontal: compact ? 10 : 14),
+            height: compact ? 84 : 54,
+            padding: EdgeInsets.symmetric(horizontal: compact ? 6 : 14, vertical: compact ? 6 : 0),
             decoration: BoxDecoration(
               color: CheColors.surfaceHi,
               borderRadius: BorderRadius.circular(CheRadius.md),
@@ -91,38 +117,35 @@ class _VoiceActionTile extends StatelessWidget {
                 ),
               ],
             ),
-            child: Row(
-              children: [
-                Container(
-                  width: compact ? 28 : 32,
-                  height: compact ? 28 : 32,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: CheColors.accent.withValues(alpha: 0.18),
-                    border: Border.all(color: CheColors.accent.withValues(alpha: 0.7)),
-                    boxShadow: [
-                      BoxShadow(
-                        color: CheColors.accent.withValues(alpha: 0.35),
-                        blurRadius: 10,
+            child: compact
+                ? Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      _ActionBadge(action: action, compact: true),
+                      const SizedBox(height: 4),
+                      // Compact tiles wrap the label instead of cutting it off ("1. O…").
+                      Text(
+                        label,
+                        maxLines: 2,
+                        textAlign: TextAlign.center,
+                        style: CheType.label.copyWith(fontSize: 12, color: CheColors.text),
+                      ),
+                    ],
+                  )
+                : Row(
+                    children: [
+                      _ActionBadge(action: action, compact: false),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: CheType.label.copyWith(fontSize: 15, color: CheColors.text),
+                        ),
                       ),
                     ],
                   ),
-                  child: Icon(action.icon, size: compact ? 14 : 16, color: CheColors.accent),
-                ),
-                SizedBox(width: compact ? 8 : 12),
-                Expanded(
-                  child: Text(
-                    label,
-                    maxLines: compact ? 2 : 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: CheType.label.copyWith(
-                      fontSize: compact ? 12.5 : 15,
-                      color: CheColors.text,
-                    ),
-                  ),
-                ),
-              ],
-            ),
           ),
         ),
       ),
