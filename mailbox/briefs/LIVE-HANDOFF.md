@@ -1883,6 +1883,23 @@ Status: PROGRAM, not built. The request spans several multi-week projects (visua
   4. Ship via PR, merge with `[worker-deploy]` only if Worker files change, build IPA, owner device test against the recording.
 - **Limits to report:** no device or audio evaluation from the sandbox; mocked tests do not prove audible quality; provider timbre drift across independently generated chunks is not checked (needs provider settings review and a real sample).
 
+## 8e. VOICE REPAIR — MEASURED CAUSE (Claude, 2026-10-22 ~01:05Z) — supersedes 8d's "recording missing" for the measurements
+
+Owner's measured recording (68.5 s, Strategy Control Center read aloud): pitch 198–203 Hz to 0:34, then 222–239 Hz with wider swings; energy above 8 kHz drops 10–50× after 0:34 (band-limited); switch lands on a clip boundary; digital-silence gaps at 0:23.6 (0.62 s), 0:33.9 (0.40 s), 0:53.7 (0.39 s); first audio at 5.2 s; clips 1–3 s after 0:34.
+
+Code facts (main a05af09):
+- ElevenLabs clips: `mp3_44100_128` (`server/cloudflare/preferred_elevenlabs_voice.js:207`), full band.
+- Fish clips: MP3 at 64 kbps for everyday speech, 128 kbps only for story/narration (`server/cloudflare/fish_audio_voice.js:454`). A 64 kbps Fish clip is band-limited and is a different voice ID and model: consistent with the 0:34 switch.
+- Turn lock (server `voiceTurnFor`/`premiumVoiceSpeech`; phone `lib/che_voice_turn.dart`): the lock is set only when the first clip reports its engine (`cheVoiceProviderOf`). Later clips send `lock` and get 204 instead of a different voice. So a provider switch mid-reply happens only if the phone never sent the lock.
+- Fish fallback from expressive to everyday model exists (`fishAudioSpeech`), but is disabled when `locked`.
+- Native player: `playClip` per clip; digital-silence gaps match re-prepare per clip (confirmed in audit).
+
+Most likely cause (NOT yet proven): the phone build that recorded did not carry the Dart turn lock, so each clip picked ElevenLabs or Fish on its own. Check against the installed release (Shorebird patch for a05af09 succeeded 00:27Z; the recording's build must be read from the phone).
+
+Decisive evidence to request from the owner: the Voice diagnostics sheet "Last spoken reply" line for that reply (provider tags per clip, switches, lock). If it shows an unlocked clip change, the fix is in the phone lock path; if it shows the lock held and Fish still spoke, the fix is in the Worker.
+
+Work not started (needs the evidence above or native code): gapless native queue (Swift in `tool/bootstrap.sh`, IPA build); list/number/arrow segmentation in `lib/che_spoken_text.dart` `cheSentenceEnd` and `lib/che_stream_batcher.dart` (can be a Shorebird Dart patch); first-audio latency (first chunk size 240 chars exists; ElevenLabs 8 s timeout).
+
 ## 8c. SOUL CHECKPOINT 3 (Claude, 2026-10-22 00:05Z) — read first, supersedes 8b's "open" items
 
 - **Merged:** PR #423 → main `d29faab` (phone Soul controls). PR #424 (Worker provenance: `served_by`, `soul.soul_applied` true only for a model reply with the Soul in its system prompt; handler replies `soul_applied:false`, route `handler`; cache bypass marked) → main `8f4bc48`, tagged `[worker-deploy]`. Required checks were green on head `82e4af0` (analyze, Worker syntax and unit tests; `Workers Builds` ignored per owner rule). 2996/2996 Worker tests; `soul_chat.test.mjs` 11/11.
