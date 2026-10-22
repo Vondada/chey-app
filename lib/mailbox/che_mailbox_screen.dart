@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 
+import '../che_ui/che_hud.dart';
 import '../che_ui/che_theme.dart';
 import '../platform/che_platform_screens.dart';
 import 'che_message_split.dart';
@@ -274,7 +275,8 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
           padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 8),
           constraints: BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width * 0.72),
           decoration: BoxDecoration(
-            color: fromChe ? CheColors.accent : CheColors.surfaceHi,
+            color: fromChe ? CheColors.accent : (cheHudActive ? CheHud.ice.withValues(alpha: 0.10) : CheColors.surfaceHi),
+            border: !fromChe && cheHudActive ? Border.all(color: CheHud.ice.withValues(alpha: 0.32)) : null,
             borderRadius: BorderRadius.only(
               topLeft: round,
               topRight: round,
@@ -349,7 +351,7 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
       ]);
     }
     return ListView(padding: const EdgeInsets.all(12), children: [
-      Row(children: [
+      _hudPane(Row(children: [
         Icon(open ? Icons.lock_open_rounded : Icons.lock_rounded, color: open ? CheColors.success : CheColors.warning, size: 20),
         const SizedBox(width: 8),
         Expanded(child: Text('Flagstaff 369 · ${open ? 'Open' : 'Locked'}', style: CheType.label)),
@@ -373,8 +375,8 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
           onSelected: _flagAction,
           itemBuilder: (_) => const [PopupMenuItem(value: 'new-link', child: Text('Make a new link'))],
         ),
-      ]),
-      const Divider(height: 16),
+      ]), padding: const EdgeInsets.only(left: 12)),
+      if (cheHudActive) const SizedBox(height: 12) else const Divider(height: 16),
       if (threads.isEmpty)
         Padding(padding: EdgeInsets.all(20), child: Text('No messages yet.', style: CheType.bodyDim))
       else
@@ -382,7 +384,7 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
           Semantics(
             button: true,
             label: '${_nice(entry.key)}. ${entry.value.length} messages. Last: ${entry.value.last['text']}',
-            child: ListTile(
+            child: _hudPane(margin: const EdgeInsets.only(bottom: 8), padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2), ListTile(
               contentPadding: const EdgeInsets.symmetric(horizontal: 4),
               leading: _AiLogo(name: entry.key, size: 42),
               title: Text(_nice(entry.key), style: CheType.label),
@@ -394,9 +396,24 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
               ),
               trailing: Text(_when(entry.value.last['at']), style: CheType.caption),
               onTap: () => setState(() => _openThread = entry.key),
-            ),
+            )),
           ),
     ]);
+  }
+
+  /// Under HUD glass, a glass pane with a clear Material on top (so a row's ink shows); under other palettes the
+  /// child unchanged, as before.
+  Widget _hudPane(Widget child, {EdgeInsetsGeometry margin = EdgeInsets.zero, EdgeInsetsGeometry padding = EdgeInsets.zero}) {
+    if (!cheHudActive) return child;
+    return Padding(
+      padding: margin,
+      child: CheGlass(
+        radius: CheRadius.md,
+        padding: padding,
+        shadow: false,
+        child: Material(type: MaterialType.transparency, child: child),
+      ),
+    );
   }
 
   Map<String, int> _archiveConnections() {
@@ -422,11 +439,11 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
           ? 'Saved AI root network. CHE is the center. No archived AI connections yet.'
           : 'Saved AI root network. CHE is the center, connected to ${connections.length} AIs across $total saved messages.',
       child: Card(
-        color: CheColors.surface,
+        color: cheHudActive ? null : CheColors.surface,
         child: Padding(
           padding: const EdgeInsets.all(12),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('CONNECTED AI ROOT NETWORK', style: CheType.overline),
+            Text('CONNECTED AI ROOT NETWORK', style: cheHudActive ? CheHud.label : CheType.overline),
             const SizedBox(height: 4),
             Text(
               connections.isEmpty
@@ -466,7 +483,7 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
             final when = '${session['locked_at'] ?? ''}'.replaceFirst('T', ' ');
             final shown = when.length > 16 ? when.substring(0, 16) : when;
             return Card(
-              color: CheColors.surface,
+              color: cheHudActive ? null : CheColors.surface,
               child: ExpansionTile(
                 leading: Icon(Icons.inventory_2_rounded, color: CheColors.accentAlt),
                 title: Text('Session $shown', style: CheType.label),
@@ -716,7 +733,7 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
                           ? '${p['name']}: ${_statusWords(status)}. Server secret, read only. Double tap to hear its status.'
                           : '${p['name']}: ${_statusWords(status)}. Double tap to add or replace the key.',
                       child: Card(
-                        color: CheColors.surface,
+                        color: cheHudActive ? null : CheColors.surface,
                         child: ListTile(
                           leading: Icon(
                             ok
@@ -756,7 +773,7 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
         appBar: AppBar(
           backgroundColor: CheColors.screen,
           // Flagstaff is CHE's one inbox: AI messages, Office reports, letters and system notices (owner, 2026-10-22).
-          title: const Text('Flagstaff'),
+          title: cheHudActive ? const CheChromeText('Flagstaff', style: TextStyle()) : const Text('Flagstaff'),
           actions: [
             IconButton(
               tooltip: 'Refresh',
@@ -777,7 +794,8 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
                     liveRegion: true,
                     child: Container(
                       width: double.infinity,
-                      color: CheColors.surfaceHi,
+                      // HUD glass: a clear ice-lit banner instead of a solid bar.
+                      color: cheHudActive ? CheHud.ice.withValues(alpha: 0.10) : CheColors.surfaceHi,
                       padding: const EdgeInsets.all(12),
                       child: Row(children: [
                         Expanded(child: Text(_status, style: CheType.body)),
@@ -807,10 +825,12 @@ class _CheMailboxScreenState extends State<CheMailboxScreen> {
                                 button: true,
                                 label: '${unread ? 'Unread. ' : ''}From ${l['tray']}. ${l['subject']}. Double tap to read aloud.',
                                 child: Card(
-                                  color: CheColors.surface,
+                                  color: cheHudActive ? null : CheColors.surface,
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(14),
-                                    side: BorderSide(color: unread ? color : CheColors.stroke),
+                                    side: BorderSide(
+                                      color: unread ? color : (cheHudActive ? CheHud.ice.withValues(alpha: 0.28) : CheColors.stroke),
+                                    ),
                                   ),
                                   child: ListTile(
                                     leading: Icon(unread ? Icons.mail_rounded : Icons.drafts_rounded, color: color),

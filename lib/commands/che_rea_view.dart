@@ -11,6 +11,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../che_ui/che_hud.dart';
 import '../che_ui/che_screen_awareness.dart';
 import '../che_ui/che_theme.dart';
 import 'che_command_client.dart';
@@ -356,7 +357,7 @@ class _CheReaInvestigationsScreenState extends State<CheReaInvestigationsScreen>
           icon: const Icon(Icons.arrow_back_ios_new_rounded),
           onPressed: () => Navigator.of(context).maybePop(),
         ),
-        title: Text('Investigations', style: CheType.title.copyWith(fontSize: 22, fontWeight: FontWeight.w800)),
+        title: cheRoomTitle('Investigations', CheType.title.copyWith(fontSize: 22, fontWeight: FontWeight.w800)),
         actions: [
           IconButton(
             tooltip: 'Read this list aloud',
@@ -421,19 +422,20 @@ class _CheReaInvestigationsScreenState extends State<CheReaInvestigationsScreen>
         hint: 'Opens the investigation',
         onTap: () => _open(inv),
         excludeSemantics: true,
-        child: Material(
-          color: CheColors.surface,
-          borderRadius: BorderRadius.circular(CheRadius.md),
+        child: cheTileSurface(
+          glow: _stateColor(inv.state),
           child: InkWell(
             borderRadius: BorderRadius.circular(CheRadius.md),
             onTap: () => _open(inv),
             child: Container(
               width: double.infinity,
               padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(CheRadius.md),
-                border: Border.all(color: _stateColor(inv.state).withValues(alpha: 0.45)),
-              ),
+              decoration: cheHudActive
+                  ? null
+                  : BoxDecoration(
+                      borderRadius: BorderRadius.circular(CheRadius.md),
+                      border: Border.all(color: _stateColor(inv.state).withValues(alpha: 0.45)),
+                    ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -765,7 +767,7 @@ class _CheReaInvestigationScreenState extends State<CheReaInvestigationScreen> {
           icon: const Icon(Icons.arrow_back_ios_new_rounded),
           onPressed: () => Navigator.of(context).maybePop(),
         ),
-        title: Text('Investigation', style: CheType.title.copyWith(fontSize: 22, fontWeight: FontWeight.w800)),
+        title: cheRoomTitle('Investigation', CheType.title.copyWith(fontSize: 22, fontWeight: FontWeight.w800)),
       ),
       body: SafeArea(
         child: ListView(
@@ -934,6 +936,11 @@ class _CheReaInvestigationScreenState extends State<CheReaInvestigationScreen> {
     ];
   }
 
+  /// The feature card's surface, lit with the accent while chosen. A Material sits under the content either way, so
+  /// the checkbox row's ink shows.
+  Widget _featureSurface({required bool chosen, required Widget child}) =>
+      cheMaterialCard(edge: chosen ? CheColors.accent : CheColors.stroke, glow: chosen ? CheColors.accent : null, child: child);
+
   Widget _featureCard(int n, CheReaFeature f) {
     final chosen = _selected.contains(f.id);
     String list(List<String> items) => items.join(', ');
@@ -941,12 +948,8 @@ class _CheReaInvestigationScreenState extends State<CheReaInvestigationScreen> {
     return Padding(
       key: ValueKey('rea-feature-${f.id}'),
       padding: const EdgeInsets.only(bottom: 12),
-      child: Material(
-        color: CheColors.surface,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(CheRadius.md),
-          side: BorderSide(color: chosen ? CheColors.accent : CheColors.stroke),
-        ),
+      child: _featureSurface(
+        chosen: chosen,
         child: Padding(
           padding: const EdgeInsets.all(14),
           child: Column(
@@ -1155,14 +1158,12 @@ class _ScreenshotView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    Widget failed(String why) => Container(
+    Widget failed(String why) => CheRoomPanel(
           width: double.infinity,
           padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: CheColors.surface,
-            borderRadius: BorderRadius.circular(CheRadius.sm),
-            border: Border.all(color: CheColors.warning.withValues(alpha: 0.5)),
-          ),
+          radius: CheRadius.sm,
+          borderColor: CheColors.warning.withValues(alpha: 0.5),
+          glow: CheColors.warning,
           child: Text('$label could not be shown: $why', style: _bodyLarge.copyWith(color: CheColors.warning)),
         );
     final u = uri;

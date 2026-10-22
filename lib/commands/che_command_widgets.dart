@@ -4,8 +4,69 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../che_ui/che_hud.dart';
 import '../che_ui/che_theme.dart';
 import 'che_command_models.dart';
+
+/// A panel in a Commands or Flagstaff room. Under the owner's HUD glass palette it is a glass pane (no blur, so long
+/// lists stay fast); under the other palettes it keeps the earlier solid card. Decoration only: it never changes the
+/// child, its semantics or its size rules.
+class CheRoomPanel extends StatelessWidget {
+  const CheRoomPanel({
+    super.key,
+    required this.child,
+    this.radius = CheRadius.md,
+    this.padding = EdgeInsets.zero,
+    this.margin = EdgeInsets.zero,
+    this.color,
+    this.borderColor,
+    this.glow,
+    this.width,
+  });
+
+  final Widget child;
+  final double radius;
+  final EdgeInsetsGeometry padding;
+  final EdgeInsetsGeometry margin;
+
+  /// The solid fill outside HUD (default CheColors.surface).
+  final Color? color;
+
+  /// The edge outside HUD (default CheColors.stroke).
+  final Color? borderColor;
+
+  /// A coloured edge glow inside HUD glass (a status colour, for example).
+  final Color? glow;
+  final double? width;
+
+  @override
+  Widget build(BuildContext context) {
+    if (cheHudActive) {
+      return Padding(
+        padding: margin,
+        child: SizedBox(
+          width: width,
+          child: CheGlass(radius: radius, padding: padding, glow: glow, shadow: false, child: child),
+        ),
+      );
+    }
+    return Container(
+      width: width,
+      margin: margin,
+      padding: padding,
+      decoration: BoxDecoration(
+        color: color ?? CheColors.surface,
+        borderRadius: BorderRadius.circular(radius),
+        border: Border.all(color: borderColor ?? CheColors.stroke),
+      ),
+      child: child,
+    );
+  }
+}
+
+/// A room title: polished chrome under HUD glass, plain text otherwise. Still ordinary text for VoiceOver.
+Widget cheRoomTitle(String text, TextStyle style, {int? maxLines}) =>
+    cheHudActive ? CheChromeText(text, style: style, maxLines: maxLines) : Text(text, style: style, maxLines: maxLines);
 
 Color cheStatusColor(CheCommandStatus status) => switch (status) {
       CheCommandStatus.available => CheColors.success,
@@ -71,7 +132,7 @@ class CheSectionHeader extends StatelessWidget {
           Expanded(
             child: Semantics(
               header: true,
-              child: Text(text.toUpperCase(), style: CheType.overline.copyWith(color: CheColors.accent)),
+              child: Text(text.toUpperCase(), style: cheHudActive ? CheHud.label : CheType.overline.copyWith(color: CheColors.accent)),
             ),
           ),
           ?trailing,
@@ -108,9 +169,7 @@ class CheCommandTile extends StatelessWidget {
     ].map((p) => p.replaceFirst(RegExp(r'[.\s]+$'), '')).join('. ')}.';
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
-      child: Material(
-        color: CheColors.surface,
-        borderRadius: BorderRadius.circular(CheRadius.md),
+      child: cheTileSurface(
         child: InkWell(
           borderRadius: BorderRadius.circular(CheRadius.md),
           onTap: () {
@@ -119,10 +178,12 @@ class CheCommandTile extends StatelessWidget {
           },
           child: Container(
             padding: const EdgeInsets.fromLTRB(14, 12, 6, 12),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(CheRadius.md),
-              border: Border.all(color: CheColors.stroke),
-            ),
+            decoration: cheHudActive
+                ? null
+                : BoxDecoration(
+                    borderRadius: BorderRadius.circular(CheRadius.md),
+                    border: Border.all(color: CheColors.stroke),
+                  ),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -177,6 +238,37 @@ class CheCommandTile extends StatelessWidget {
   }
 }
 
+/// The tile's surface: HUD glass with a clear ink layer on top (so the tap ripple shows over the glass), or the
+/// earlier solid surface.
+Widget cheTileSurface({required Widget child, Color? glow}) {
+  final shape = BorderRadius.circular(CheRadius.md);
+  if (!cheHudActive) return Material(color: CheColors.surface, borderRadius: shape, child: child);
+  return CheGlass(
+    radius: CheRadius.md,
+    shadow: false,
+    glow: glow,
+    child: Material(type: MaterialType.transparency, borderRadius: shape, child: child),
+  );
+}
+
+/// A card whose content needs a Material under it (checkboxes, list tiles, ink): HUD glass with a clear Material
+/// on top, or the earlier solid Material card with an [edge] colour.
+Widget cheMaterialCard({required Widget child, required Color edge, Color? glow}) {
+  if (cheHudActive) {
+    return CheGlass(
+      radius: CheRadius.md,
+      shadow: false,
+      glow: glow,
+      child: Material(type: MaterialType.transparency, child: child),
+    );
+  }
+  return Material(
+    color: CheColors.surface,
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(CheRadius.md), side: BorderSide(color: edge)),
+    child: child,
+  );
+}
+
 /// A workflow run on CHE's mission graph, with the owner's controls.
 class CheMissionCard extends StatelessWidget {
   const CheMissionCard({super.key, required this.mission, required this.onControl, this.busy = false});
@@ -187,14 +279,11 @@ class CheMissionCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final state = mission.paused && !mission.finished ? 'paused' : mission.status;
-    return Container(
+    return CheRoomPanel(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: CheColors.surface,
-        borderRadius: BorderRadius.circular(CheRadius.md),
-        border: Border.all(color: cheStepColor(state).withValues(alpha: 0.45)),
-      ),
+      borderColor: cheStepColor(state).withValues(alpha: 0.45),
+      glow: cheStepColor(state),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -340,14 +429,10 @@ class CheCommandSuggestionCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final chain = card.commands.map((c) => '/${c.id}').join(', then ');
-    return Container(
+    return CheRoomPanel(
       margin: const EdgeInsets.fromLTRB(14, 2, 14, 8),
       padding: const EdgeInsets.fromLTRB(12, 8, 4, 10),
-      decoration: BoxDecoration(
-        color: CheColors.surface,
-        borderRadius: BorderRadius.circular(CheRadius.md),
-        border: Border.all(color: CheColors.accent.withValues(alpha: 0.35)),
-      ),
+      borderColor: CheColors.accent.withValues(alpha: 0.35),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
