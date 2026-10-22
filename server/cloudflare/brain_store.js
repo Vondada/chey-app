@@ -16,6 +16,7 @@
 
 import { BROKER_KEY_RE, SENSITIVE_RE, hasSecretShape } from './research_memory.js';
 import { classifyItem } from './privacy_policy.js';
+import { fromBrainWrite } from './brain_ledger.js';
 
 export const MAX_BODY_CHARS = 1_500_000;
 const MAX_TITLE_CHARS = 200;
@@ -331,7 +332,8 @@ export class CheBrainStore {
     const at = now || new Date().toISOString();
     const seq = this.nextSeq();
     const hash = deleted ? '' : contentHash(record);
-    const existing = this.rows('SELECT id FROM brain_records WHERE id = ?', record.id).length > 0;
+    const previous = this.ledgered === false ? null : this.get(record.id);
+    const existing = previous ? true : this.rows('SELECT id FROM brain_records WHERE id = ?', record.id).length > 0;
     const values = [
       record.kind, record.region, record.path, deleted ? '' : record.title, deleted ? '' : record.body,
       JSON.stringify(deleted ? { deleted_at: at } : record.source || {}), record.verification,
@@ -350,6 +352,10 @@ export class CheBrainStore {
         this.sql.exec('INSERT OR IGNORE INTO brain_places (record_id, region, path) VALUES (?, ?, ?)', record.id, place.region, place.path || '');
       }
       if (this.fts) this.sql.exec('INSERT INTO brain_fts (title, body, id) VALUES (?, ?, ?)', record.title, record.body.slice(0, 200_000), record.id);
+    }
+    // Brain Population Ledger: every Brain write leaves a category-first, timestamped record of what changed.
+    if (this.ledgered !== false) {
+      try { fromBrainWrite(this.storage, previous, { ...record, hash }, { deleted, origin, now: at }); } catch (_) { /* never blocks a Brain write */ }
     }
     return { rev, seq, hash, updated_at: at };
   }
@@ -487,10 +493,15 @@ export class CheBrainStore {
     // The content is the same as at content_rev (as amendSource records), so the phone's next edit of
     // the text it saw is an update, never a conflict the auditor caused.
     const source = { ...(current.source || {}), content_rev: Number.isFinite(Number(current.source?.content_rev)) ? Number(current.source.content_rev) : current.rev };
-    const written = this.write(
-      { ...current, significance: next, source, places: this.rows('SELECT region, path FROM brain_places WHERE record_id = ?', id) },
-      { rev: current.rev + 1, origin: current.origin || origin, now, updatedAt: current.updated_at },
-    );
+    // A score is bookkeeping, not knowledge entering the Brain: no ledger event.
+    this.ledgered = false;
+    let written;
+    try {
+      written = this.write(
+        { ...current, significance: next, source, places: this.rows('SELECT region, path FROM brain_places WHERE record_id = ?', id) },
+        { rev: current.rev + 1, origin: current.origin || origin, now, updatedAt: current.updated_at },
+      );
+    } finally { this.ledgered = true; }
     return { outcome: 'reassessed', record: this.get(id), rev: written.rev };
   }
 
