@@ -6,7 +6,7 @@ import { _clearCodeIndexCache, buildCodeIndex, loadCodeIndex, parseTar } from '.
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 // A real GitHub-style tarball of this repository (top folder + pax header).
-const TARBALL = execSync('git -c core.autocrlf=false archive --format=tar.gz --prefix=Vondada-chey-app-abc1234/ HEAD', { cwd: ROOT, maxBuffer: 64 * 1024 * 1024 });
+const TARBALL = execSync('git -c core.autocrlf=false archive --format=tar.gz --prefix=Vondada-chey-app-abc1234/ HEAD', { cwd: ROOT, maxBuffer: 256 * 1024 * 1024 });
 const HEAD_SHA = execSync('git rev-parse HEAD', { cwd: ROOT }).toString().trim();
 const ENV = { CHE_GITHUB_TOKEN: 't', CHE_GITHUB_REPO: 'o/r' };
 

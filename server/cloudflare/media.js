@@ -323,14 +323,14 @@ export async function generateImage(env, storage, body, fetcher = fetch) {
   };
   const engines = [];
   if (env.CHE_IMAGE_GEN_URL) engines.push({ id: 'Your image connector', run: async () => ({ url: await connectorImage(env, finalPrompt, fetcher) }) });
-  if (paidMediaEnabled(env) && openAiKey(env)) engines.push({ id: draft ? 'openai-gpt-image-fast' : 'openai-gpt-image-hd', run: async () => openAiImage(env, finalPrompt, draft, fetcher) });
+  if (paidMediaEnabled(env) && openAiKey(env)) engines.push({ id: draft ? 'openai-gpt-image-fast' : 'openai-gpt-image-hd', paid: true, run: async () => openAiImage(env, finalPrompt, draft, fetcher) });
   // CHE_AI_BOUND is false when the Worker has no AI binding (routedEnv always exposes an AI member).
   if (env.AI && env.CHE_AI_BOUND !== false) engines.push({ id: draft ? 'CHE image engine (draft)' : 'CHE image engine', run: async () => {
     const result = await env.AI.run(IMAGE_MODEL, { prompt: finalPrompt.slice(0, 2048), steps: draft ? 4 : 8, seed: Math.floor(Math.random() * 2 ** 31) });
     if (!result?.image) throw new Error('The image model returned no image.');
     return { base64: result.image, mime_type: 'image/jpeg' };
   } });
-  if (paidMediaEnabled(env) && env.GEMINI_API_KEY) engines.push({ id: 'gemini-image', run: async () => {
+  if (paidMediaEnabled(env) && env.GEMINI_API_KEY) engines.push({ id: 'gemini-image', paid: true, run: async () => {
     const model = env.CHE_GEMINI_IMAGE_MODEL || 'gemini-3.1-flash-image';
     const response = await fetcher(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
       method: 'POST', signal: AbortSignal.timeout(60000),
@@ -353,7 +353,10 @@ export async function generateImage(env, storage, body, fetcher = fetch) {
     catch (error) { errors.push(`${engine.id}: ${error.message}`); console.log('CHE image error:', engine.id, error.message); }
   }
   if (!generated) {
-    const paidReady = Boolean(openAiKey(env) || env.GEMINI_API_KEY) && !paidMediaEnabled(env);
+    // The free engines' own errors are what the owner needs. The paid-switch message is only true when no free engine
+    // ran; before, it hid a failed free engine behind "HD disabled" whenever paid keys were present (owner, 2026-10-22).
+    const freeTried = engines.some((engine) => !engine.paid);
+    const paidReady = Boolean(openAiKey(env) || env.GEMINI_API_KEY) && !paidMediaEnabled(env) && !freeTried;
     return {
       status: engines.length ? 502 : paidReady ? 402 : 503,
       detail: paidReady
