@@ -21,7 +21,6 @@ import 'package:webview_flutter/webview_flutter.dart';
 
 import '../agents/che_agent_runtime.dart';
 import '../che_ui/che_agents.dart' show CheAgentStatus;
-import '../agents/che_office_world.dart' show CheRoomVisitors;
 import '../che_ui/che_theme.dart';
 import '../browser/che_browser.dart';
 import '../browser/che_embedded_app_shell.dart';
@@ -606,7 +605,6 @@ class _CheTheaterRoomState extends State<CheTheaterRoom> {
               child: _Theater3DStage(runtime: widget.runtime, compact: true, onScreenTap: _openTheaterScreen),
             ),
           ),
-        CheRoomVisitors(runtime: widget.runtime, rooms: const {'theater'}, onOpenOffice: widget.onOpenOffice),
       ]),
     );
   }

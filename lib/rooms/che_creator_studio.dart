@@ -6,8 +6,6 @@
 // CHE_VIDEO_RENDER_URL). Pending tasks are not finished MP4 files.
 // Pictures live in Art Studio (FLUX / CHE_IMAGE_GEN_URL).
 
-import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -67,11 +65,10 @@ class CheCreatorStudio extends StatefulWidget {
   State<CheCreatorStudio> createState() => _CheCreatorStudioState();
 }
 
-class _CheCreatorStudioState extends State<CheCreatorStudio> with SingleTickerProviderStateMixin {
+class _CheCreatorStudioState extends State<CheCreatorStudio> {
   static const _magenta = Color(0xFFFF3D8B);
   static const _cyan = Color(0xFF3FD0F0);
 
-  late final AnimationController _c = AnimationController(vsync: this, duration: const Duration(seconds: 2))..repeat();
   int _view = 0;
   Object? _screen;
 
@@ -100,7 +97,6 @@ class _CheCreatorStudioState extends State<CheCreatorStudio> with SingleTickerPr
   @override
   void dispose() {
     CheScreenAwareness.unregister(_screen);
-    _c.dispose();
     super.dispose();
   }
 
@@ -162,7 +158,6 @@ class _CheCreatorStudioState extends State<CheCreatorStudio> with SingleTickerPr
   }
   Widget _studio(BuildContext context) {
     final onAir = widget.speaking || _rendering;
-    final reduced = CheMotion.reduced(context);
     final hud = cheHudActive;
     Widget onAirPanel(Widget child) => hud
         ? CheGlass(radius: CheRadius.lg, padding: const EdgeInsets.all(CheSpace.md), child: child)
@@ -178,41 +173,6 @@ class _CheCreatorStudioState extends State<CheCreatorStudio> with SingleTickerPr
     return ListView(
       padding: const EdgeInsets.fromLTRB(CheSpace.gutter, 0, CheSpace.gutter, CheSpace.xxl),
       children: [
-        ValueListenableBuilder<CheSceneQuality>(
-          valueListenable: CheSceneQualityStore.value,
-          builder: (context, quality, _) => CheNativeSceneWorld(
-            mode: CheSceneMode.creator,
-            quality: quality,
-            height: 250,
-            semanticsLabel: 'Immersive Creator Studio',
-            entities: [
-              CheSceneEntity(
-                id: 'che',
-                label: 'CHE',
-                description: widget.speaking
-                    ? 'Speaking in the Creator Studio'
-                    : (_rendering ? 'Managing active render jobs' : 'Studio ready'),
-                color: _cyan,
-                state: onAir ? 'working' : 'idle',
-              ),
-              for (final job in widget.jobs.take(8))
-                CheSceneEntity(
-                  id: '${job['id'] ?? job['title']}',
-                  label: '${job['title'] ?? 'Render job'}',
-                  description: '${job['status'] ?? 'queued'}',
-                  color: _magenta,
-                  state: '${job['status'] ?? 'queued'}',
-                ),
-            ],
-            onEntityTap: (id) {
-              final matches = widget.jobs.where(
-                (job) => '${job['id'] ?? job['title']}' == id,
-              );
-              if (matches.isNotEmpty) widget.onOpenJob(matches.first);
-            },
-          ),
-        ),
-        const SizedBox(height: CheSpace.md),
         onAirPanel(
               Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
                 Row(children: [
@@ -237,21 +197,6 @@ class _CheCreatorStudioState extends State<CheCreatorStudio> with SingleTickerPr
                     ),
                   ),
                 ]),
-                const SizedBox(height: CheSpace.md),
-                SizedBox(
-                  height: 70,
-                  child: AnimatedBuilder(
-                    animation: _c,
-                    builder: (context, _) => CustomPaint(
-                      painter: _MeterPainter(
-                        t: reduced ? 0.3 : _c.value,
-                        level: widget.speaking ? 1.0 : _rendering ? 0.45 : 0.06,
-                        a: _magenta,
-                        b: _cyan,
-                      ),
-                    ),
-                  ),
-                ),
               ]),
         ),
         if (widget.seriesPanel != null) ...[
@@ -336,30 +281,4 @@ class _JobRow extends StatelessWidget {
       trailing: const Icon(Icons.chevron_right_rounded),
     );
   }
-}
-
-class _MeterPainter extends CustomPainter {
-  _MeterPainter({required this.t, required this.level, required this.a, required this.b});
-  final double t;
-  final double level;
-  final Color a;
-  final Color b;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    const bars = 28;
-    final w = size.width / bars;
-    for (var i = 0; i < bars; i++) {
-      final wave = 0.5 + 0.5 * math.sin(t * math.pi * 2 * (1 + i % 5 * 0.3) + i * 0.7);
-      final h = size.height * (0.06 + level * 0.94 * wave);
-      final color = Color.lerp(a, b, i / bars)!;
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(Rect.fromLTWH(i * w + w * 0.2, size.height - h, w * 0.6, h), const Radius.circular(2)),
-        Paint()..color = color.withValues(alpha: 0.35 + 0.6 * level),
-      );
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _MeterPainter old) => old.t != t || old.level != level;
 }

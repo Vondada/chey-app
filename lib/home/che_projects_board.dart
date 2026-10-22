@@ -12,7 +12,6 @@ import '../che_ui/che_hud.dart';
 import '../che_ui/che_theme.dart';
 import '../che_ui/che_voice_actions.dart';
 import '../che_ui/che_widgets.dart';
-import '../widgets/che_native_scene_world.dart';
 
 enum CheBoardKind { project, goal, scout, deal, meeting }
 
@@ -491,44 +490,7 @@ class _CheProjectsBoardState extends State<CheProjectsBoard> {
         ),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: CheSpace.gutter),
-          child: ValueListenableBuilder<CheSceneQuality>(
-            valueListenable: CheSceneQualityStore.value,
-            builder: (context, quality, _) => CheNativeSceneWorld(
-              mode: CheSceneMode.projects,
-              quality: quality,
-              entities: [
-                CheSceneEntity(
-                  id: 'che',
-                  label: 'CHE',
-                  description: 'Office Boss on the project floor',
-                  color: CheColors.accent,
-                  state: 'working',
-                ),
-                for (final item in rows.take(12))
-                  CheSceneEntity(
-                    id: item.id,
-                    label: item.title,
-                    description:
-                        '${item.typeLabel}. ${item.statusLabel}. ${(item.progress * 100).round()} percent.',
-                    color: item.progress >= 1
-                        ? CheColors.success
-                        : (item.progress > .05
-                            ? CheColors.accent
-                            : CheColors.textDim),
-                    state: item.statusLabel,
-                    importance:
-                        (1 + (item.progress.clamp(0.0, 1.0) * 4).round())
-                            .clamp(1, 5),
-                  ),
-              ],
-              height: 300,
-              semanticsLabel: 'Immersive native Projects build floor',
-              onEntityTap: (id) {
-                final match = rows.where((item) => item.id == id);
-                if (match.isNotEmpty) _openDetail(match.first);
-              },
-            ),
-          ),
+          child: _BoardSummary(items: widget.items),
         ),
         const SizedBox(height: CheSpace.sm),
         SizedBox(
@@ -590,6 +552,50 @@ class _CheProjectsBoardState extends State<CheProjectsBoard> {
       return Material(color: CheColors.screen, child: child);
     }
     return child;
+  }
+}
+
+/// What the owner needs to know before tapping anything: how many items are blocked or waiting for review, how many
+/// are moving, and how many are finished. Counts come from the Worker's real statuses only.
+class _BoardSummary extends StatelessWidget {
+  const _BoardSummary({required this.items});
+  final List<CheBoardItem> items;
+
+  static bool _needsAttention(CheBoardItem i) {
+    final s = i.statusLabel.toLowerCase();
+    return s.contains('block') || s.contains('fail') || s.contains('review') || s.contains('needs');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final attention = items.where(_needsAttention).length;
+    final done = items.where((i) => !_needsAttention(i) && i.progress >= 0.99).length;
+    final moving = items.length - attention - done;
+    final line = items.isEmpty
+        ? 'Nothing yet. Ask CHE to start a project and it appears here.'
+        : '$attention need attention · $moving in progress · $done finished';
+    return Semantics(
+      label: 'Projects summary. $line',
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: CheSpace.md, vertical: CheSpace.sm),
+        decoration: BoxDecoration(
+          color: attention > 0 ? CheColors.warning.withValues(alpha: 0.10) : CheColors.surfaceHi,
+          borderRadius: BorderRadius.circular(CheRadius.md),
+          border: Border.all(color: attention > 0 ? CheColors.warning.withValues(alpha: 0.5) : CheColors.stroke),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              attention > 0 ? Icons.priority_high_rounded : Icons.check_circle_outline_rounded,
+              size: 18,
+              color: attention > 0 ? CheColors.warning : CheColors.success,
+            ),
+            const SizedBox(width: CheSpace.sm),
+            Expanded(child: Text(line, style: CheType.caption.copyWith(color: CheColors.text))),
+          ],
+        ),
+      ),
+    );
   }
 }
 
