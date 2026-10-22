@@ -96,6 +96,17 @@ function bandOf(value) {
   return value <= 3 ? 'low' : value <= 6 ? 'mid' : 'high';
 }
 
+// How the Soul sounds in ordinary conversation (owner, 2026-10-22: replies read like a compliance report). This is
+// presentation only and is not part of the hash: it never touches a fact, a number, a tool result or a receipt.
+export const SOUL_VOICE = [
+  'HOW YOU SOUND: talk like a familiar, capable assistant who knows the owner well, not a help desk and not a compliance report. Use contractions and plain words.',
+  'Never narrate your own settings or process ("the Soul version used to shape this response", "as an AI", "I have processed your request", "it is worth noting"). The Soul label above is internal: do not recite its version or hash unless the owner asks, and never claim which engine or model answered; CHE\'s routing record answers that.',
+  'Say each thing once. Do not echo the owner\'s question back, restate the same point in other words, or reuse the same opener, closer or offer you used in your recent replies.',
+  'Casual chat: relaxed and lightly playful when it fits; a real, small touch of wit, never a forced joke or slang. Serious matters (money, health, legal, security, failures): calm, precise, professional.',
+  '"Sir" now and then, where it sounds natural; not in every reply.',
+  'Tone never changes a fact, number, quoted tool result, receipt, permission or a money/delete hold: copy those exactly.',
+].join('\n');
+
 // The instructions the model receives for this Soul. Built only from the traits and the owner's notes.
 export function soulPromptBlock(profile) {
   const view = soulView(profile);
@@ -106,7 +117,106 @@ export function soulPromptBlock(profile) {
     'Manner, set by the owner:',
     ...lines,
     notes,
+    SOUL_VOICE,
   ].filter(Boolean).join('\n');
+}
+
+// Engine provenance, from routing data only. served_by is what runChatModel (or the rescue/repair call) recorded:
+// { provider, model, route, fallback }. CHE is the product, never an engine, so "CHE itself" is never an answer.
+const PROVIDER_NAMES = {
+  cloudflare: 'Cloudflare Workers AI', openai: 'OpenAI', xai: 'xAI', anthropic: 'Anthropic', ollama: 'your local Ollama server',
+  groq: 'Groq', gemini: 'Google Gemini', cerebras: 'Cerebras', mistral: 'Mistral', github: 'GitHub Models',
+  sambanova: 'SambaNova', huggingface: 'Hugging Face', openrouter: 'OpenRouter',
+};
+
+function oneEngine(part) {
+  const provider = PROVIDER_NAMES[String(part.provider || '').toLowerCase()] || String(part.provider || '').trim();
+  const model = String(part.model || '').trim();
+  return provider && model ? `${provider}, model ${model}` : provider || `model ${model}`;
+}
+
+// Every engine that wrote part of the reply (served_by.parts: the first answer, then any continuation or later
+// call), named once each, in order.
+export function engineLabel(servedBy) {
+  const parts = (Array.isArray(servedBy?.parts) && servedBy.parts.length ? servedBy.parts : [servedBy || {}])
+    .filter((part) => part && (part.model || part.provider));
+  if (!parts.length) return 'no model (deterministic)';
+  const names = [...new Set(parts.map(oneEngine))];
+  return names.length === 1 ? names[0] : `${names.slice(0, -1).join('; ')}; and ${names.at(-1)}`;
+}
+
+// The clause in a model reply where it names CHE as its own engine. Only the self-reference itself is matched, so
+// the rest of the sentence (a receipt, a number, a tool result) stays byte-identical.
+//   "the engine is CHE" / "the model that answered was CHE itself" -> the noun phrase and verb are kept, CHE is replaced
+//   "CHE itself answered" -> CHE itself is replaced
+const ENGINE_IS_SELF = /\b((?:engines?|models?|providers?|llms?)\b[^.!?\n,;]{0,60}?\b(?:is|was)\s+)(?:simply\s+|just\s+)?(?:CHE|me)(?:\s+(?:itself|herself|myself))?\b(?!['’]s)/gi;
+const SELF_ANSWERED = /\bCHE\s+(?:itself|herself)(?=\s+(?:answered|generated|produced|wrote)\b)/gi;
+
+// A model cannot see its own routing, so where it names itself ("CHE itself") as the engine, that clause names this
+// reply's real engine from its routing record instead. Nothing else in the reply changes.
+export function guardEngineClaims(reply, servedBy) {
+  const text = String(reply || '');
+  const label = engineLabel(servedBy);
+  let replaced = 0;
+  const fixed = text
+    .replace(ENGINE_IS_SELF, (_whole, lead) => { replaced += 1; return `${lead}${label}`; })
+    .replace(SELF_ANSWERED, () => { replaced += 1; return label; });
+  return { text: replaced ? fixed : text, replaced };
+}
+
+// A Soul version or hash a model writes is checked against the Soul record: a version that never existed, or a hash
+// that is not that version's, is corrected to the Soul this reply really had. Real history versions are left alone.
+const OWN_SOUL = /\b(?:my|our|your|her|CHE['’]s|the current|current)\s+Soul\b|\bI(?:['’]m| am)\s+(?:using|on|running)\s+Soul\b|\bI\s+(?:use|run)\s+Soul\b|\bSoul\s+v\d+[^.!?\n]*\b(?:shap|personalit|version used|applied|in (?:my|the|its) prompt|is (?:on|active))|\b(?:personalit|shaped|version used|I(?:['’]m| am) (?:using|on))[^.!?\n]*\bSoul\s+v\d+/i;
+
+export function guardSoulClaims(reply, profile) {
+  const view = soulView(profile);
+  const known = new Map([[view.version, view.hash], ...view.history.map((entry) => [entry.version, entry.hash])]);
+  let corrected = 0;
+  // Only a sentence about CHE's own Soul is checked; "the Soul v2 headphones" is someone else's product.
+  const text = String(reply || '').replace(/[^.!?\n]+[.!?]?/g, (sentence) => (OWN_SOUL.test(sentence) ? sentence.replace(/\bSoul\s+v(\d+)(\s*\(([0-9a-f]{6,10})\))?/gi, (whole, version, withHash, hash) => {
+    if (known.has(Number(version)) && (!hash || hash === known.get(Number(version)))) return whole;
+    corrected += 1;
+    return `Soul v${view.version}${withHash ? ` (${view.hash})` : ''}`;
+  }) : sentence));
+  return { text, corrected };
+}
+
+// "Which engine answered that?" / "What Soul version shaped it?": an explicit question about CHE's own previous reply.
+// Advice questions ("which model should I use", "what's the best engine") are not provenance questions.
+export function replyProvenanceQuestion(message) {
+  const text = String(message || '').trim();
+  if (!text || text.length > 240) return null;
+  if (/\b(?:should|best|better|recommend|compare|switch(?:ing)? to|cheapest|fastest|for (?:coding|trading|images?|video))\b/i.test(text)) return null;
+  const engine = /\b(?:which|what)\s+(?:ai\s+|language\s+)?(?:engines?|models?|providers?|llms?)\b[^?]{0,60}\b(?:answer(?:ed|ing|s)?|repl(?:ied|ying)|respond(?:ed|ing)?|produc(?:ed|ing)|wr(?:o|i)te|written|generat(?:ed|ing)|power(?:ed|ing|s)|serv(?:ed|ing)|behind|did\s+(?:that|this|it))\b/i.test(text)
+      && /\b(?:that|this|it|you|your|last|just|previous|earlier)\b/i.test(text)
+    || /\b(?:which|what)\s+(?:ai\s+)?(?:engines?|models?|providers?|llms?)\s+(?:are|were)\s+you\s+(?:using|running|on)\b/i.test(text)
+    || /\bwho\s+(?:answered|wrote|generated|produced)\s+(?:that|this|your (?:last )?(?:reply|answer))\b/i.test(text);
+  const soul = /\b(?:which|what)\s+soul(?:\s+version)?\b|\bsoul\s+version\b/i.test(text) && /\?|\b(?:which|what|tell me)\b/i.test(text);
+  return engine || soul ? { engine, soul } : null;
+}
+
+// The deterministic answer, built only from the previous reply's routing record and the current Soul. Nothing here
+// comes from a model, so this answer itself is "no model (deterministic)".
+export function replyProvenanceAnswer(record, profile, { engine = true, soul = true } = {}) {
+  const view = soulView(profile);
+  if (!record) {
+    return 'I don\'t have a routing record for an earlier reply yet, sir, so I won\'t guess which engine answered. Ask me again right after a reply and I\'ll tell you exactly.';
+  }
+  const parts = [];
+  const served = record.served_by;
+  if (engine) {
+    if (record.route === 'cache') parts.push('That last reply came from my answer cache, so no model ran for it.');
+    else if (served?.model || served?.provider) parts.push(`That last reply came from ${engineLabel(served)}${served.fallback ? ', a fallback after the first engine didn\'t answer' : ''}.`);
+    else parts.push(`That last reply came from one of my own handlers${record.source ? ` (${record.source})` : ''}: no model (deterministic).`);
+  }
+  if (soul) {
+    const s = record.soul;
+    if (s && s.soul_applied) parts.push(`Soul v${s.version} (${s.hash}) was in its prompt.`);
+    else if (s) parts.push(`Soul v${s.version} (${s.hash}) was on record, but it didn't shape those words${s.reason ? `: ${s.reason}` : ''}.`);
+    else parts.push(`Your current Soul is v${view.version} (${view.hash}).`);
+  }
+  parts.push('This answer is straight from the routing record, no model involved.');
+  return parts.join(' ');
 }
 
 // What a reply records about its Soul. "applied" is true only when the Soul text was in the prompt the model received.
@@ -119,6 +229,23 @@ export function soulProvenance(profile, { applied, route = 'model', reason = '' 
     soul_applied: Boolean(applied),
     route,
     reason: applied ? '' : reason || 'this reply was not generated by the model',
+  };
+}
+
+// What a finished reply records for the next "which engine answered that?" question: its source, its engine and its
+// Soul, from the done event only. Model text never reaches this record.
+export function lastReplyRecord(done = {}, { at = new Date().toISOString() } = {}) {
+  const served = done.served_by && (done.served_by.model || done.served_by.provider) ? done.served_by : null;
+  const route = done.soul?.route === 'cache' ? 'cache' : served ? 'model' : 'handler';
+  return {
+    at,
+    route,
+    source: String(done.source || (served ? 'model' : '') || '').slice(0, 80),
+    served_by: served ? {
+      provider: String(served.provider || ''), model: String(served.model || ''), route: String(served.route || ''), fallback: Boolean(served.fallback),
+      ...(Array.isArray(served.parts) && served.parts.length ? { parts: served.parts.slice(0, 12).map((part) => ({ provider: String(part.provider || ''), model: String(part.model || '') })) } : {}),
+    } : null,
+    soul: done.soul ? { version: done.soul.version, hash: done.soul.hash, soul_applied: Boolean(done.soul.soul_applied), reason: String(done.soul.reason || '') } : null,
   };
 }
 

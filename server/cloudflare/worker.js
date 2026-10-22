@@ -38,7 +38,7 @@ import { discoverKeylessModels, engineStatus, paidAllowed, routedEnv } from './a
 import { capabilityPromptLine, inferTurnCapabilities, runtimeCapabilityRegistry } from './cognitive_capabilities.js';
 import { identityQuestionIntent, speakIdentity } from './che_maturity.js';
 import { deleteMedia, generateImage, generateVideo, listMedia, readBlob, saveOwnerFile, upscaleImage, verifyMediaFile } from './media.js';
-import { loadSoul, restoreSoul, saveSoul, soulPromptBlock, soulProvenance, soulView, stripPhoneSoul } from './soul.js';
+import { guardEngineClaims, guardSoulClaims, lastReplyRecord, loadSoul, replyProvenanceAnswer, replyProvenanceQuestion, restoreSoul, saveSoul, soulPromptBlock, soulProvenance, soulView, stripPhoneSoul } from './soul.js';
 import { mediaHoldAnswer, mediaHoldIntent, mediaKeepFor, mediaLatestReply, mediaLibraryIntent, mediaLibraryReply, mediaLibraryReport, mediaLatestOpenRow, mediaOpenIntent, mediaOpenMissingReply, mediaOpenReply, mediaOpenRow, mediaRows, mediaSaveIntent, mediaSaveReply, mediaShowLatestIntent, mediaShowReply, verifyMediaRows, wantsLatestVideo } from './media_library.js';
 import { capabilityGap, capabilityReply } from './capability_gap.js';
 import { CHAT_IMAGE_SOURCE, chatImageMedia, chatImageReply, makeChatImages, requestedImageCount } from './chat_images.js';
@@ -403,7 +403,9 @@ async function withDoneFields(response, fields) {
 
 // A reply that no model call produced (a CHE handler, a saved job) still says which Soul was on record and that it
 // did not shape the words. Replies that already carry a Soul record (model or cache) are left as they are.
-async function withSoulRecord(response, profile) {
+// The finished reply's routing (source, engine, Soul) is kept as the one record "which engine answered that?" reads.
+const LAST_REPLY_KEY = 'che_last_reply_provenance';
+async function withSoulRecord(response, profile, storage = null) {
   const raw = await response.text();
   const lines = raw.split('\n');
   const at = lines.map((line) => { try { return JSON.parse(line); } catch (_) { return null; } }).findLastIndex((e) => e && e.type === 'done');
@@ -413,6 +415,8 @@ async function withSoulRecord(response, profile) {
       done.soul = soulProvenance(profile, { applied: false, route: 'handler', reason: 'no model call produced this reply' });
       lines[at] = JSON.stringify(done);
     }
+    // A provenance answer describes itself ("no model involved"), so it never replaces the record it reported on.
+    if (storage && done.source !== 'che_reply_provenance') await Promise.resolve().then(() => storage.put(LAST_REPLY_KEY, lastReplyRecord(done))).catch(() => null);
   }
   return new Response(lines.join('\n'), { status: response.status, headers: response.headers });
 }
@@ -3513,9 +3517,10 @@ function cappedBrain(text, max) {
   return cut.includes('<<<UNTRUSTED_BRAIN') && !cut.includes('UNTRUSTED_BRAIN>>>') ? `${cut}\nUNTRUSTED_BRAIN>>>` : cut;
 }
 
-function compactChatPrompt({ clientClock, brainContext, vectorMemoryContext, officeResults, skillResults, memories, remembered }) {
+function compactChatPrompt({ clientClock, brainContext, vectorMemoryContext, officeResults, skillResults, memories, remembered, soul = '' }) {
   return [
     'You are CHE, Cognitive Horizon Engine, the owner\'s private AI. Address the owner as sir naturally, not every sentence.',
+    soul,
     'Your own tools, which you run yourself when the owner asks: the free GitHub video renderer (a 5 to 90 second faceless MP4 with a thumbnail and voice, kept as a 30-day artifact and never uploaded), read-only repository inspection, the installed skill search, and background coding jobs for owner-authorized BUILD requests. Publishing to YouTube and any spending need the owner\'s direct yes. Never say a free tool of yours needs the owner\'s OK to run.',
     'Be warm, sharp, concise and natural. Read the room: playful when casual, focused for work, money, health, legal and technical topics.',
     'Never claim an external action, live research, trade, payment or device control happened unless a tool result below confirms it.',
@@ -3529,6 +3534,16 @@ function compactChatPrompt({ clientClock, brainContext, vectorMemoryContext, off
     typeof memories === 'string' ? memories.slice(0, 2500) : `Owner memories: ${JSON.stringify(memories || []).slice(0, 1500)}`,
     remembered ? String(remembered).slice(0, 3500) : '',
   ].filter(Boolean).join('\n');
+}
+
+// Which engine produced a reply, from the router's own result (ai_router.js sets engine and model on every answer).
+function servedBy(answer, requestedModel, route, fallback) {
+  return {
+    provider: String(answer?.engine || ''),
+    model: String(answer?.model || requestedModel || ''),
+    route,
+    fallback: Boolean(fallback),
+  };
 }
 
 // Runs the chat model. Route/model selection may change on failure;
@@ -3566,6 +3581,8 @@ async function runChatModel(env, { model, systemPrompt, compactPrompt, turns, me
       });
 
       let reply = String(answer?.response || answer?.choices?.[0]?.message?.content || '').trim();
+      // Every engine that wrote part of this reply, in order: a continuation may be served by a different engine.
+      const parts = [{ provider: String(answer?.engine || ''), model: String(answer?.model || attempt.model || '') }];
       // Some reasoning/free-tier engines spend most of a small completion
       // budget thinking and then stop mid-sentence. Finish the reply
       // automatically instead of showing the owner a dangling "However".
@@ -3589,10 +3606,12 @@ async function runChatModel(env, { model, systemPrompt, compactPrompt, turns, me
         const more = String(continued?.response || continued?.choices?.[0]?.message?.content || '').trim();
         if (!more) break;
         reply = mergeReplyContinuation(reply, more);
+        parts.push({ provider: String(continued?.engine || ''), model: String(continued?.model || attempt.model || '') });
         answer = { ...continued, response: reply };
       }
       // Which engine actually answered, and whether it was a fallback past the first choice (Soul provenance).
-      return { ...answer, response: reply, served_by: { model: attempt.model, route: attempt.route, fallback: attempt !== attempts[0] } };
+      // provider/model are what the router actually used (ai_router.js sets engine/model), not only what was asked for.
+      return { ...answer, response: reply, served_by: { ...servedBy({ engine: parts[0].provider, model: parts[0].model }, attempt.model, attempt.route, attempt !== attempts[0]), parts } };
     } catch (error) {
       // A busy or failing engine on an earlier attempt is the truer reason than a later "too long"
       // from engines that were left (review of #349).
@@ -3693,18 +3712,33 @@ export class CheState extends DurableObject {
     }
     const plan = subAgentPlan(message, { url: intent.url });
     if (plan.length) parts.push(await this.queueBrowseSubAgents(plan));
+    // Every model call the loop made, so the reply's provenance names the real engines (never "no model").
+    const served = [];
+    let soulProfile = null;
     if (intent.search) {
       // A model failure is no plan, so the loop stops and says so; it never becomes an invented answer.
       const complete = async ({ system, user }) => {
-        const answer = await runChatModel(this.env, { systemPrompt: system, turns: [], message: user, maxTokens: 400, preferFast: true }).catch(() => ({ response: '' }));
+        // The fast model by name: without one, the call reached the router with no model, and no model could be recorded.
+        const answer = await runChatModel(this.env, { model: this.env.CHE_FAST_MODEL || FAST_MODEL, systemPrompt: system, turns: [], message: user, maxTokens: 400, preferFast: true }).catch(() => ({ response: '' }));
+        if (answer?.served_by) served.push(answer.served_by);
         return String(answer?.response || '');
       };
-      const searched = await runSearchRoute(message, { complete, soul: String(body.soul || '').slice(0, 1500) });
+      // The Worker's Soul is the one personality; the phone's copy (body.soul) is not a second source (soul.js).
+      soulProfile = await loadSoul(this.ctx.storage);
+      const searched = await runSearchRoute(message, { complete, soul: soulPromptBlock(soulProfile) });
       // Every page the run read is kept as a research page: kept until the owner asks for it to be forgotten.
       const kept = storeLoopReads(new CheBrainStore(this.ctx.storage), { question: message, observations: searched.observations, now: new Date().toISOString() }).kept.length;
       parts.push(kept ? `${searched.text}\nI kept ${kept} page${kept === 1 ? '' : 's'} I read as research pages.` : searched.text);
     }
-    return { text: parts.filter(Boolean).join('\n\n') };
+    const text = parts.filter(Boolean).join('\n\n');
+    if (!served.length) return { text };
+    // The Soul was in every planner prompt (soulPlannerPrompt), so it shaped the words those calls wrote.
+    const allParts = served.flatMap((entry) => entry.parts?.length ? entry.parts : [{ provider: entry.provider, model: entry.model }]);
+    return {
+      text,
+      served_by: { ...served[0], route: 'browse', fallback: served.some((entry) => entry.fallback), parts: allParts },
+      soul: soulProvenance(soulProfile, { applied: true, route: 'model' }),
+    };
   }
 
   async queueBrowseSubAgents(plan) {
@@ -5221,7 +5255,7 @@ export class CheState extends DurableObject {
       if (understood) response = await withDoneFields(response, { understood_as: understood });
     }
     if (isChat && response?.ok && OWNER_CHAT_REQUESTS.has(request) && /ndjson/i.test(response.headers.get('Content-Type') || '')) {
-      response = await withSoulRecord(response, await loadSoul(this.ctx.storage));
+      response = await withSoulRecord(response, await loadSoul(this.ctx.storage), this.ctx.storage);
     }
     // A trade alert the owner has not heard yet is said first, in the reply
     // to whatever he says next (there is no phone push for it yet).
@@ -6374,6 +6408,8 @@ export class CheState extends DurableObject {
               'You are CHE — Cognitive Horizon Engine, the owner’s private conversational AI.',
               'The voice session is already active. Never ask the owner to say “Hey [assistant name]”, “Ok [assistant name]”, or any generic wake phrase. CHE/Chay wake detection is handled by the iPhone client before you receive the turn.',
               'Address the owner as sir naturally when it fits, not in every sentence.',
+              // The same canonical Soul as typed chat, so voice and typing sound like one CHE (owner, 2026-10-22).
+              soulPromptBlock(await loadSoul(this.ctx.storage)),
               'Your own tools, which you run yourself when the owner asks: the free GitHub video renderer (a 5 to 90 second faceless MP4 with a thumbnail and voice, kept as a 30-day artifact and never uploaded), read-only repository inspection, the installed skill search, and background coding jobs for owner-authorized BUILD requests. Publishing to YouTube and any spending need the owner\'s direct yes. Never say a free tool of yours needs the owner\'s OK to run.',
               'Sound bright, warm, confident, current and natural — like a sharp friend, not a help desk.',
               'Default to one or two short sentences. Lead with exactly what the owner needs. No preamble, recap, or extra explanation unless it is necessary or he asks for more.',
@@ -9091,7 +9127,7 @@ export class CheState extends DurableObject {
         // back to CHE. A plain yes, a money request and a delete never match these words, so they keep their holds.
         if (!body.attachment && !body.workflow_step) {
           const browsed = await this.browseTurn(rawMessage, body).catch((error) => ({ text: `That did not run: ${String(error?.message || error).slice(0, 160)}` }));
-          if (browsed?.text) return ndjsonReply(browsed.text, { source: 'che_browse', ok: true, code_review_passed: false, owner_approval_required: false });
+          if (browsed?.text) return ndjsonReply(browsed.text, { source: 'che_browse', ok: true, code_review_passed: false, owner_approval_required: false, ...(browsed.served_by ? { served_by: browsed.served_by, soul: browsed.soul } : {}) });
         }
 
         // Command Center: a plain yes releases a held command (once, fresh);
@@ -9236,6 +9272,14 @@ export class CheState extends DurableObject {
         }
         // Always-on speech learning: corrections teach her how the owner's voice
         // gets misheard; learned fixes apply when the context matches.
+        // "Which engine answered that? Which Soul shaped it?": answered from the previous reply's routing record
+        // (withSoulRecord), never by a model, which cannot see its own routing (owner, 2026-10-22: "CHE itself").
+        const provenanceAsk = ownerDevice && !body.attachment ? replyProvenanceQuestion(rawMessage) : null;
+        if (provenanceAsk) {
+          const record = await Promise.resolve().then(() => this.ctx.storage.get(LAST_REPLY_KEY)).catch(() => null);
+          const text = replyProvenanceAnswer(record || null, await loadSoul(this.ctx.storage), provenanceAsk);
+          return ndjsonReply(text, { source: 'che_reply_provenance', model_calls: 0, engine: 'no model (deterministic)', previous_reply: record || null });
+        }
         // Office task lines are not the owner's conversation, so they never reach the model as history (agent_task_guard.js).
         const ownerHistory = dropAgentTaskTurns(Array.isArray(body.history) ? body.history : [], (await this.loadData().catch(() => ({}))).team_tasks || []);
         // Evaluate references before the interpreter expands "the last one"
@@ -12095,11 +12139,11 @@ export class CheState extends DurableObject {
                 : explainLevel === 'normal'
                   ? 'EXPLANATION LEVEL: normal. Clear and complete, no jargon without a quick explanation.'
                   : 'EXPLANATION LEVEL: simple. Explain like the owner is five: short sentences, everyday words, one idea at a time. He can say \u201cgo deeper\u201d for more.',
-              'NEXT STEP: when you finish a task or answer, end with ONE short offer of the single best next step (for example \u201cWant me to turn this into a plan?\u201d). Never list several options unless asked.',
+              'NEXT STEP: when you finish real work and a useful next step exists, end with ONE short offer of it. Skip it in casual chat or when nothing useful follows, never repeat the offer from your last reply, and never list several options unless asked.',
               madeAcrossRooms
                 ? `ONE CONNECTED WORLD: things made across CHE\u2019s rooms (newest first): ${madeAcrossRooms}. When the owner refers to something made in any room (\u201cthe song Mira made\u201d), use this list; if it is not here, say so honestly.`
                 : '',
-              'CHE is the user-facing product. Never present yourself as Gemini, Cloudflare, or another provider. Models and services are replaceable internal engines behind CHE.',
+              'CHE is the user-facing product. Never present yourself as Gemini, Cloudflare, or another provider. Models and services are replaceable internal engines behind CHE. CHE is not an engine: never say the engine or model was "CHE itself". You cannot see which engine runs this reply; CHE\u2019s routing record answers "which engine/model answered" questions.',
               capabilityPromptLine(capabilityRegistry),
               'MATURE TOOL USE: infer the owner’s goal, then use the best available capability without waiting for the owner to name a model, provider, agent, or tool. Search/retrieve when knowledge may be current or missing. Use stored owner context only when relevant. For independent complex subtasks, parallelize only when it materially helps.',
               activeTenant?.role === 'parental_guidance'
@@ -12115,7 +12159,7 @@ export class CheState extends DurableObject {
               'DATA + COMPUTE: core owner state is persisted in CHE storage. Large media, datasets, model artifacts and generated files should use CHE object storage when connected. If storage is not connected, say the item is temporary instead of pretending it was archived.',
               'PROMPT COMPRESSION: preserve meaning exactly. Long stored prompts/logs use lossless gzip and are decompressed before use. Never drop a requirement, number, name, URL, exception, safety rule, or dependency merely to shorten text. If a semantic shortening cannot be verified equivalent, keep the original.',
               'Use a local-first and owner-controlled architecture: built-in CHE behavior first, CHE-hosted services second, optional provider infrastructure only when required for compute or data.',
-              'PERSONALITY: bright, warm, confident, current, direct, useful and lightly playful. Default to one or two short sentences. Keep each sentence to one idea; do not pile clauses together with and/but/so/which. When there are three or more items, use a short list. Lead with exactly what the owner needs; no preamble, recap, disclaimers, warnings or extra suggestions unless genuinely necessary. If he asks for more detail, go deep and hold nothing useful back.',
+              'PERSONALITY: the SOUL above is who you are in every reply: bright, warm, confident, direct, useful and lightly playful, in natural conversational sentences, never a report. Default to one or two short sentences. When there are three or more items, use a short list. Lead with exactly what the owner needs; no preamble, recap, disclaimers, warnings or extra suggestions unless genuinely necessary. If he asks for more detail, go deep and hold nothing useful back.',
               'OPEN CONVERSATION: understand slang, profanity, dark humor, mature, controversial, offensive or unusual topics without acting shocked, preachy, prudish or moralizing. Be candid and direct while still respecting real safety, privacy, consent, security and legal boundaries.',
               'LANGUAGE STYLE: understand profanity, slang and mature language without acting shocked or sanitizing ordinary speech. ' + (replyLanguageSystemLine(body?.reply_language || data?.reply_language || 'en') ? replyLanguageSystemLine(body?.reply_language || data?.reply_language || 'en') + ' ' : '') + ' You may swear naturally back at the adult owner when it fits his tone, but do not force profanity, imitate slurs, threaten, harass, or let edgy language reduce accuracy.',
               'MATURE TOPICS: when the adult owner discusses explicit or sensitive adult topics, be direct and context-aware rather than prudish, while still respecting consent, safety, privacy, law and the system safeguards that govern the assistant.',
@@ -12338,6 +12382,7 @@ export class CheState extends DurableObject {
             skillResults,
             memories: redactBrainText(memoryPromptContext(ownerDevice ? data : {}), message),
             remembered: rememberedContext,
+            soul: soulPromptBlock(soulProfile),
           }).replace(/POSTGRES \+ PGVECTOR RAG[\s\S]*?(?=\n(?:Office results|Plugin tool results|Owner memories))/, '')
             // Fast turns carry only the taught skills that fit this message.
             + (learnedSkillList.length ? `\n${learnedSkillsContext(learnedSkillList, message, 2, { onlyFit: true })}` : '')
@@ -12368,7 +12413,7 @@ export class CheState extends DurableObject {
               che_audit: { task: String(message).slice(0, 160), agent: 'CHE', route: 'owner_chat_rescue' },
             });
             const rescued = String(rescue?.response || rescue?.choices?.[0]?.message?.content || '').trim();
-            if (rescued) answer = { ...rescue, served_by: { model: FAST_MODEL, route: 'rescue', fallback: true } };
+            if (rescued) answer = { ...rescue, served_by: servedBy(rescue, FAST_MODEL, 'rescue', true) };
           } catch (_) { /* fall through to the saved job */ }
         }
         if (!answer) {
@@ -12434,7 +12479,8 @@ export class CheState extends DurableObject {
             ).trim();
             if (repaired && !replyHijacksOwnerRequest(message, repaired)) {
               reply = repaired;
-              answer = repair;
+              // The repair prompt carries the same system prompt (and Soul); its engine is the one recorded.
+              answer = { ...repair, served_by: servedBy(repair, FAST_MODEL, 'repair', true) };
             }
           } catch (_) {
             // The phone-side local model is the final answer path below.
@@ -12596,6 +12642,8 @@ export class CheState extends DurableObject {
         ];
         // Final owner-facing boundary: keep internal provider/model failover chatter out of chat and TTS.
         reply = guardExecutionClaims(sanitizeOwnerText(reply, { truncate: false }), { message: rawMessage, receipts: skillResults.map((r) => r.execution_receipt), documentRead: Boolean(multimodal?.summary || body.screen_context || pastedText), verifiedText: brainContext }).text;
+        // A model cannot see its own routing: "the engine was CHE itself" becomes this reply's real engine (soul.js).
+        if (answer?.served_by) reply = guardSoulClaims(guardEngineClaims(reply, answer.served_by).text, soulProfile).text;
         // The owner hears which vision engine saw the attachment, or that none did (owner, 2026-10-20).
         if (body.attachment) reply = `${reply} ${multimodal?.summary ? `(Seen with ${multimodal.engine || 'the connected vision engine'}.)` : `(Vision: the attachment was not analyzed${multimodal?.error ? `: ${multimodal.error}` : ''})`}`.trim();
         // This answer's own receipt, keyed to its text, for "how do you know that?".
