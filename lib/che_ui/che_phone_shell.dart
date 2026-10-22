@@ -136,9 +136,24 @@ class _NavItem extends StatelessWidget {
                 duration: CheMotion.fast,
                 width: hud ? 52 : 44,
                 height: 32,
-                decoration: BoxDecoration(
+                // HUD: the selected tab is an angled chip of light, cut like the panels.
+                decoration: hud
+                    ? ShapeDecoration(
+                        shape: BeveledRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                          side: selected ? BorderSide(color: CheHud.ice.withValues(alpha: 0.8)) : BorderSide.none,
+                        ),
+                        gradient: selected
+                            ? LinearGradient(
+                                begin: Alignment.topCenter,
+                                end: Alignment.bottomCenter,
+                                colors: [CheHud.ice.withValues(alpha: 0.32), CheHud.iceDeep.withValues(alpha: 0.10)],
+                              )
+                            : null,
+                        shadows: selected ? [BoxShadow(color: CheHud.iceDeep.withValues(alpha: 0.5), blurRadius: 14)] : null,
+                      )
+                    : BoxDecoration(
                   borderRadius: BorderRadius.circular(CheRadius.pill),
-                  // HUD: the selected tab is a lit glass bead.
                   gradient: hud && selected
                       ? LinearGradient(
                           begin: Alignment.topCenter,

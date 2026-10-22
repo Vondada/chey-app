@@ -4,6 +4,8 @@
 // Every value comes from the app's real state: listening, a pending reply, CHE's own speech, the server connection
 // and the Office runtime's agents. Nothing here invents activity.
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
@@ -174,7 +176,9 @@ class CheMockupHome extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final m = mode;
-    if (cheHudActive) return _hudHome(context, m);
+    // The HUD shows the clock, greeting and next market event, so it redraws each minute on its own (the app no longer
+    // rebuilds Home on every state poll). A fixed [now] (tests) needs no ticking.
+    if (cheHudActive) return now != null ? _hudHome(context, m) : _CheMinuteTick(builder: (c) => _hudHome(c, m));
     return DecoratedBox(
       // Layered depth: a dim light from above in CHE's state colour. In the HUD look the backdrop shows through.
       decoration: BoxDecoration(
@@ -884,6 +888,44 @@ extension on CheMockupHome {
   }
 
   TextStyle get _readout => CheHud.label.copyWith(fontSize: 9.5, letterSpacing: 1.1, height: 1.5, color: const Color(0xFFBFEFFF));
+}
+
+/// Rebuilds [builder] at each new minute while its tab is on screen.
+class _CheMinuteTick extends StatefulWidget {
+  const _CheMinuteTick({required this.builder});
+
+  final WidgetBuilder builder;
+
+  @override
+  State<_CheMinuteTick> createState() => _CheMinuteTickState();
+}
+
+class _CheMinuteTickState extends State<_CheMinuteTick> {
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _schedule();
+  }
+
+  void _schedule() {
+    final now = DateTime.now();
+    _timer = Timer(Duration(seconds: 60 - now.second, milliseconds: -now.millisecond + 50), () {
+      if (!mounted) return;
+      if (TickerMode.valuesOf(context).enabled) setState(() {});
+      _schedule();
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.builder(context);
 }
 
 class _HudRoundButton extends StatelessWidget {
