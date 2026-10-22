@@ -225,6 +225,8 @@ import {
 } from './research_memory.js';
 import { APP_BUILD_KEY, appBuildIntent, appBuildRun, dispatchAppBuild, speakAppBuild } from './app_builds.js';
 import { advanceObjectives, applyMissionEvent, approvalReached, approveNode, awaitingApproval, cancelObjective, createObjective, mutateObjective, replanNode, resolveKnownNodes, retryNode, setObjectivePaused, speakObjective } from './objective_graph.js';
+import { acquire as acquireCapability, applyPolicy as applyCapabilityPolicy, capabilityIntent, engineSummary as capabilityEngineSummary, learnFromOutcome, loadPolicy as loadCapabilityPolicy, populate as populateKnowledge, retrieve as retrieveKnowledge, rollbackTool, savePolicy as saveCapabilityPolicy, speakCapabilities, speakLearned as speakLearnedKnowledge, useTool, LAST_USED_KEY as KNOWLEDGE_USED_KEY } from './capability_engine.js';
+import { loadRegistry as loadCapabilityRegistry } from './capability_registry.js';
 import { engineView, exportWorkflows, feedbackOnLast, importWorkflows, library as workflowLibrary, loadEngine, matchLearned, noteVersion, promoteCandidate, dismissCandidate, rankWorkflows, recordRun as recordWorkflowRun, restoreVersion, saveEngine, setDisabled as setWorkflowDisabled, setPreferred as setWorkflowPreferred, speakEfficiency, speakLibrary, testCandidate, workflowForRun, workflowIntent } from './workflow_engine.js';
 import { CATEGORIES, COMMANDS, catalogView, commandById, commandStatus, connectorStatus, describeWorkflow, dispatchPrompt, findSavedWorkflow, normalizeSavedWorkflow, parseSlashCommand, readCommandSpeech, searchCommands, speakCommandList, speakUnavailable, suggestCommands, workflowNodes, workflowFromWords } from './command_catalog.js';
 import { handleReaRequest, loadInvestigation, parseReaRequest, reaInvestigationDetail, reaInvestigations } from './rea_runner.js';
@@ -5830,6 +5832,75 @@ export class CheState extends DurableObject {
   // Starts a workflow on CHE's existing objective graph: each step is a
   // `command` node, independent steps run in parallel lanes, approval steps
   // wait for the owner. Nothing starts unless every step can run now.
+  // ── Capability Engine ──────────────────────────────────────────────────
+  // Internal-only mode also turns on the AI layer's existing local-only policy, so the model path never leaves the
+  // owner's own hardware, and paid/external picture engines are skipped (media.js reads the same snapshot).
+  async setCapabilityPolicy(data, intent) {
+    const before = await loadCapabilityPolicy(this.ctx.storage);
+    const next = applyCapabilityPolicy(before, intent);
+    await saveCapabilityPolicy(this.ctx.storage, next);
+    if (before.internal_only !== next.internal_only || before.no_paid !== next.no_paid) {
+      const ai = ensureAiState(data);
+      ai.policy.local_only = next.internal_only === true;
+      ai.policy.internal_only = next.internal_only === true;
+      if (next.no_paid) ai.policy.max_cost_class = 'free';
+      await this.ctx.storage.put('che', data);
+      await syncRoutingSnapshot(this.ctx.storage, data);
+    }
+    return next;
+  }
+
+  async capabilitiesApi(path, request, body, data) {
+    const storage = this.ctx.storage;
+    if (request.method === 'GET' && path === '/api/capability-engine') return json(await capabilityEngineSummary(storage));
+    if (request.method !== 'POST') return json({ detail: 'Not found.' }, 404);
+    const action = path.replace('/api/capability-engine/', '');
+    const policy = await loadCapabilityPolicy(storage);
+    if (action === 'learn') {
+      const out = populateKnowledge(storage, body, { policy });
+      return out.error ? json({ detail: out.error }, 400) : json(out);
+    }
+    if (action === 'retrieve') return json(retrieveKnowledge(storage, await loadCapabilityRegistry(storage), String(body.query || ''), { project_id: body.project_id || '' }));
+    if (action === 'acquire') return json(await acquireCapability(storage, String(body.operation || ''), { sample: body.sample ?? null, ctx: { project_id: body.project_id || '' } }));
+    if (action === 'use') return json(await useTool(storage, String(body.id || ''), body.input));
+    if (action === 'rollback') return json(await rollbackTool(storage, String(body.id || '')));
+    if (action === 'outcome') return json(learnFromOutcome(storage, body, { policy }));
+    if (action === 'policy') {
+      const next = await this.setCapabilityPolicy(data, { set: body.set || {}, memory: body.memory || {} });
+      return json({ policy: next });
+    }
+    return json({ detail: 'Unknown capability action.' }, 404);
+  }
+
+  async capabilityChat(data, ask) {
+    const storage = this.ctx.storage;
+    const say = (text, extra = {}) => ndjsonReply(text, { source: 'che_capability_engine', ok: true, model_calls: 0, capability_action: ask.action, ...extra });
+    if (ask.action === 'policy') {
+      const next = await this.setCapabilityPolicy(data, ask.policy);
+      return say(ask.policy.said, { policy: next });
+    }
+    const registry = await loadCapabilityRegistry(storage);
+    if (ask.action === 'capabilities') return say(speakCapabilities(registry));
+    if (ask.action === 'learned') {
+      const k = retrieveKnowledge(storage, registry, ask.topic, {});
+      const used = [...k.facts, ...k.concepts, ...k.procedures].slice(0, 8);
+      await storage.put(KNOWLEDGE_USED_KEY, { at: new Date().toISOString(), what: `what did you learn about ${ask.topic}`, items: used.map((s) => s.item.id), sources: [...new Map(used.map((s) => [s.item.provenance?.ref_id, s.item.provenance])).values()].filter(Boolean).slice(0, 5) });
+      return say(speakLearnedKnowledge(k));
+    }
+    if (ask.action === 'informed') {
+      let last = null;
+      try { last = await storage.get(KNOWLEDGE_USED_KEY); } catch (_) { last = null; }
+      if (!last) return say('I have no record of knowledge used for a recent answer yet.', { ok: false });
+      const titles = (last.sources || []).map((p) => p?.title).filter(Boolean);
+      return say(`For "${last.what}" I used ${(last.items || []).length} item${(last.items || []).length === 1 ? '' : 's'} from my knowledge${titles.length ? `, from: ${[...new Set(titles)].join(', ')}` : ''}${last.capability ? `, and the verified tool ${last.capability}` : ''}.`);
+    }
+    if (ask.action === 'acquire') {
+      const out = await acquireCapability(storage, ask.operation);
+      return say(out.said, { ok: out.ok, capability_id: out.capability?.capability_id || null });
+    }
+    return say('I can tell you what I can actually do, what I learned about something, which knowledge I used, or build an internal tool.', { ok: false });
+  }
+
   // ── Workflow Engine ────────────────────────────────────────────────────
   // The library, its measurements and the owner's controls. Running a workflow stays with the existing
   // executors (handlers, runSlashCommand, startCommandWorkflow and the objective graph).
@@ -8497,6 +8568,10 @@ export class CheState extends DurableObject {
         return new Response(bytes, { headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'private, max-age=3600' } });
       }
       // The Command Center catalog with live status, saved workflows and runs.
+      if (path === '/api/capability-engine' || path.startsWith('/api/capability-engine/')) {
+        if (!ownerDevice) return json({ detail: 'Only the CHE owner can see or change capabilities.' }, 403);
+        return this.capabilitiesApi(path, request, body, data);
+      }
       if (path === '/api/workflows' || path.startsWith('/api/workflows/')) {
         if (!ownerDevice) return json({ detail: 'Only the CHE owner can see or change the workflow library.' }, 403);
         return this.workflowsApi(path, request, body, data);
@@ -9597,6 +9672,9 @@ export class CheState extends DurableObject {
             return ndjsonReply(started.spoken, { source: 'che_command_workflow', ok: started.ok, objective_id: started.objective?.id || null, model_calls: 0 });
           }
           // Workflow Engine: the owner's words about the library, then a promoted learned workflow this request matches.
+          // Capability Engine: what CHE can actually do, what she learned, owner policies (internal-only and memory).
+          const capAsk = ownerDevice && !body.attachment && !body.workflow_step ? capabilityIntent(rawMessage) : null;
+          if (capAsk) return this.capabilityChat(data, capAsk);
           const wfAsk = ownerDevice && !body.attachment && !body.workflow_step ? workflowIntent(rawMessage) : null;
           if (wfAsk) return this.workflowChat(data, wfAsk);
           const learned = ownerDevice && !body.attachment && !body.workflow_step && !body.screen_context ? matchLearned(await loadEngine(this.ctx.storage), rawMessage) : null;
