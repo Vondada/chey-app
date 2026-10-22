@@ -1120,7 +1120,8 @@ extension _CheHomeSend on _CHEHomeState {
       _lastUserMessage = message;
       _stopRequested = false;
     });
-    _requestGate.begin();
+    // This request's own session: only a stop tapped while this request is in flight can say "Stopped." below.
+    final requestSession = _requestGate.begin();
 
     _scrollToBottom();
 
@@ -1187,11 +1188,17 @@ extension _CheHomeSend on _CHEHomeState {
       }
 
       late final String reply;
+      final firstWords = CheLatency.begin(CheLatency.firstReply);
+      var heardFirstWords = false;
       try {
         reply = await _streamCheResponse(
           message,
           history,
           onPartial: (partialReply) {
+            if (!heardFirstWords) {
+              heardFirstWords = true;
+              firstWords.end();
+            }
             uiBatcher.add(partialReply);
             final clean = _sanitizeCheReply(partialReply);
             for (final chunk in speechChunker.addCumulative(clean)) {
@@ -1204,7 +1211,7 @@ extension _CheHomeSend on _CHEHomeState {
         uiBatcher.dispose();
       }
 
-      final stopped = _stopRequested;
+      final stopped = requestSession.cancelled;
       _stopRequested = false;
       final finalReply = reply.isEmpty
           ? (stopped ? 'Stopped.' : 'I could not generate a response, sir.')

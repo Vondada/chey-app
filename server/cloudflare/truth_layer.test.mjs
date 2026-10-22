@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
-import { asksForCurrentOwnerLocation, guardLocationWeatherReply, guardOwnerReply, OWNER_LOCATION_NOT_VERIFIED, verifiedState, verifiedStatusText } from './truth_layer.js';
+import { asksForCurrentOwnerLocation, guardClaimedResearchActions, guardLocationWeatherReply, guardOwnerReply, OWNER_LOCATION_NOT_VERIFIED, verifiedState, verifiedStatusText } from './truth_layer.js';
 import { collaborationIntent, parallelPreference, statusIntent } from './collaboration.js';
 
 const generated = new URL('./.truth_layer.test.generated.mjs', import.meta.url);
@@ -770,4 +770,32 @@ test('review #356: draft request does not excuse a fabricated send outside draft
   });
   assert.doesNotMatch(preface.text, /^I sent the email/i);
   assert.match(preface.text, /Here is your text: I bought the tickets/i);
+});
+
+test('a learned-from-research provenance claim with no receipt is corrected, not shown (2026-10-22 Cortana test)', () => {
+  const claim = 'A good personal assistant answers fast and remembers context. I learned this from research and studies on Microsoft Cortana and Google Assistant.';
+  const out = guardClaimedResearchActions(claim, { research: null, tools: [], message: 'what makes a good personal AI assistant' });
+  assert.equal(out.corrected, true);
+  assert.doesNotMatch(out.text, /Cortana/);
+});
+
+test('general knowledge without a provenance claim passes through untouched', () => {
+  const answer = 'A good personal assistant is fast, remembers what you asked for, and says plainly when it does not know.';
+  const out = guardClaimedResearchActions(answer, { research: null, tools: [], message: 'what makes a good personal AI assistant' });
+  assert.equal(out.corrected, false);
+  assert.equal(out.text, answer);
+});
+
+test('a provenance claim is kept when a research receipt from this turn backs it', () => {
+  const claim = 'I learned this from research and studies on voice assistants.';
+  const research = { summary: 'Sources read', cached: false, sources: ['https://example.org/voice-assistants'] };
+  const out = guardClaimedResearchActions(claim, { research, tools: [], message: 'what makes a good personal AI assistant' });
+  assert.equal(out.corrected, false);
+});
+
+test('a provenance claim is not backed by an unrelated successful tool such as a calculator', () => {
+  const claim = 'I learned this from research and studies on voice assistants.';
+  const tools = [{ ok: true, plugin: 'calculator', tool: 'calculate' }];
+  const out = guardClaimedResearchActions(claim, { research: null, tools, message: 'what makes a good personal AI assistant' });
+  assert.equal(out.corrected, true);
 });

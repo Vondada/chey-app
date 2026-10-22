@@ -9,6 +9,15 @@ const REFUSAL = /\b(?:I|CHE)\s+(?:do\s+not|don['’]t|cannot|can['’]t|can\s+no
 const RECORD = /\b(?:records?|memor(?:y|ies)|confirm(?:ed|ation)?)\b/i;
 // Never queued: money (paying, buying, ordering, booking, subscribing, transferring), deletion and secrets.
 const NEVER = /\b(?:passwords?|passcodes?|secrets?|tokens?|api\s*keys?|credentials?|keychain|pay|paying|payments?|purchases?|buy|buying|orders?|ordering|book|booking|subscribe|subscription|transfers?|transferring|money|bank|delete|deleting|remove|removing|erase|wipe)\b/i;
+// Actions CHE already has: creating or assigning a Project or Office task, or handing work to a named agent. A refusal
+// to one of these is a routing miss, not a missing ability, so it is never queued as a self-development job (2026-10-22:
+// "create a project called Behavior Test and assign Atlas one task" was queued as "adding that ability to myself").
+// Only the action itself is exempt: "store my project pictures" is still a missing ability.
+const EXISTING_ACTION = new RegExp([
+  String.raw`\b(?:create|make|start|open|new|add|set\s+up)\s+(?:a|an|the|one|new)?\s*(?:new\s+)?(?:projects?|tasks?|office\s+tasks?)\b`,
+  String.raw`\bassign(?:s|ed|ing)?\b`,
+  String.raw`\b(?:give|tell|ask|have|put|send)\s+(?:nova|atlas|mira|knox|sage|lyra|iris)\b`,
+].join('|'), 'i');
 // An actionable request from the owner, not a question about what CHE already knows.
 const ASKS = /\b(?:can\s+you|could\s+you|would\s+you|please|make|create|build|add|store|save|keep|hold|set\s+up|learn|track|give\s+me|i\s+want|i\s+need)\b/i;
 
@@ -17,7 +26,7 @@ export function capabilityGap(message, reply) {
   const text = String(message || '').replace(/\s+/g, ' ').trim();
   const answer = String(reply || '');
   if (!text || text.length > 1200 || !REFUSAL.test(answer) || RECORD.test(answer)) return null;
-  if (NEVER.test(text) || !ASKS.test(text)) return null;
+  if (NEVER.test(text) || !ASKS.test(text) || EXISTING_ACTION.test(text)) return null;
   const ask = text.slice(0, 300);
   const key = `capability:${ask.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().slice(0, 120)}`;
   return {

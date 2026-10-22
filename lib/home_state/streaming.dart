@@ -77,7 +77,9 @@ extension _CheHomeStreaming on _CHEHomeState {
     required void Function(String text) onPartial,
   }) async {
     debugPrint('TRACE skill: enter _streamCheResponse');
-    await _cognitionReady;
+    // The brain restore is local and normally instant. The owner's first reply is never held past 800 ms for it:
+    // a slow restore just means that turn starts without the restored context, as a failed restore already does.
+    await _cognitionReady.timeout(const Duration(milliseconds: 800), onTimeout: () {});
     debugPrint('TRACE skill: cognition ready');
     if (!await _ensurePaired()) {
       final local = await _tryLocalOfflineResponse(
