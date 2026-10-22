@@ -183,8 +183,13 @@ class _HomeHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
+    // A wrap, not a row: with large text the voice switch moves to the next line instead of overflowing.
+    return Wrap(
+      alignment: WrapAlignment.spaceBetween,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      runSpacing: CheSpace.sm,
       children: [
+        Row(mainAxisSize: MainAxisSize.min, children: [
         // The CHE wordmark in brushed silver with a teal edge.
         ExcludeSemantics(
           child: ShaderMask(
@@ -200,13 +205,15 @@ class _HomeHeader extends StatelessWidget {
         ),
         const SizedBox(width: CheSpace.md),
         Semantics(
+          container: true,
           label: 'CHE is ${mode.label.toLowerCase()}',
           excludeSemantics: true,
           child: _StateChip(mode: mode),
         ),
-        const Spacer(),
+        ]),
         if (onToggleVoiceReplies != null)
           Semantics(
+            container: true,
             button: true,
             label: voiceRepliesOn ? 'Voice on. Double tap to mute CHE\'s replies.' : 'Voice off. Double tap to hear CHE\'s replies.',
             excludeSemantics: true,
@@ -298,6 +305,7 @@ class _CheStage extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(CheSpace.lg, CheSpace.lg, CheSpace.lg, CheSpace.lg),
       child: Column(children: [
         Semantics(
+          container: true,
           image: true,
           label: 'CHE. $sentence',
           excludeSemantics: true,
@@ -345,6 +353,7 @@ class _TalkControl extends StatelessWidget {
     return Row(children: [
       Expanded(
         child: Semantics(
+          container: true,
           button: true,
           label: listening ? 'Stop listening.' : 'Talk to CHE. Starts a voice conversation.',
           excludeSemantics: true,
@@ -375,6 +384,7 @@ class _TalkControl extends StatelessWidget {
       ),
       const SizedBox(width: CheSpace.sm),
       Semantics(
+        container: true,
         button: true,
         label: 'Type to CHE. Opens Chat.',
         excludeSemantics: true,
@@ -425,6 +435,7 @@ class _Portal extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Semantics(
+      container: true,
       button: true,
       label: '${item.label}. ${item.detail}. Double tap to open.',
       excludeSemantics: true,
@@ -493,6 +504,7 @@ class _NowPanel extends StatelessWidget {
           Text('NOW', style: CheType.overline.copyWith(color: CheEnergy.teal, letterSpacing: 1.6)),
           const Spacer(),
           Semantics(
+            container: true,
             button: true,
             label: 'Read the Office status aloud.',
             excludeSemantics: true,
@@ -519,6 +531,7 @@ class _NowPanel extends StatelessWidget {
           ),
         for (final a in active)
           Semantics(
+            container: true,
             button: true,
             label: '${a.name}, ${a.status.label}${a.task == null || a.task!.isEmpty ? '' : ': ${a.task}'}. Double tap to open the Office.',
             excludeSemantics: true,
