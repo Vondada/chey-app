@@ -295,6 +295,17 @@ export async function saveOwnerFile(env, storage, { name = '', media_type = '', 
   }
 }
 
+/** A picture CHE made with her own renderer (internal_renderer.js): stored like any other picture, labelled procedural. */
+export async function saveRenderedImage(env, storage, { bytes, title = 'Scene', prompt = '', width = 0, height = 0, provenance = '', engine = '', parent_id = null, recipe = null } = {}) {
+  const id = crypto.randomUUID();
+  let text = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) text += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  const stored = await storeBlob(env, storage, id, btoa(text), 'image/png', 'image');
+  const item = { id, root_id: parent_id || id, parent_id, kind: 'image', mode: parent_id ? 'variation' : 'procedural', mime_type: 'image/png', title: String(title).slice(0, 120), prompt: String(prompt).slice(0, 500), width, height, provenance, engine, recipe, created_at: now(), source: 'che_internal_renderer', ...stored };
+  await saveIndex(storage, [item, ...(await listMedia(storage))]);
+  return item;
+}
+
 // mode: new | variation | refine. parent_id links versions of one piece.
 export async function generateImage(env, storage, body, fetcher = fetch) {
   const prompt = String(body.prompt || '').trim().slice(0, 2000);
