@@ -119,6 +119,7 @@ import { replyHijacksOwnerRequest, usageIntent, usageReport, speakUsage } from '
 import { newestStarredIntent, speakNewestStarred, autoImproveScan, analyticalRepositoryQuestion, chatOnlyResponseIntent, currentTurnActionPolicy, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, inspirationUpgradeContext, listOwnerStarredRepos, readRepoSource, referenceSourceBlock, codingHistoryIntent, hypotheticalChange, repositoryImplementationIntent, repositoryInspectionIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, starredStudyList, studySelectionIntent } from './code_scout.js';
 import { codingHistoryReceipt, completedWorkProof, otherAgentWorkAsk, otherAgentWorkReply, proofAsked } from './coding_history.js';
 import { inventionIntent, inventionReply, planInvention, refusalReply } from './invention_studio.js';
+import { matchShowroom, showroomIntent, showroomReply, showroomView } from './capability_showroom.js';
 import { activityReceipt, activityStatusIntent } from './activity_status.js';
 import { webAppPage } from './web_app.js';
 import { learnedSkillsContext, learnedSkillsIntent, learnSkillIntent, attachmentText, condenseSkills, loadLearnedSkills, READ_FOR_SKILLS, redactSensitive, saveLearnedSkills, speakLearned, speakSkillList } from './self_skills.js';
@@ -5307,6 +5308,26 @@ export class CheState extends DurableObject {
   // ── Command Center ─────────────────────────────────────────────────────
   // Live readiness of every connector a command can need, from the Worker's
   // real configuration (secrets, OAuth tokens, engines). Never guessed.
+  // The Showroom's real examples: the newest saved invention, video and picture, each only when it exists. The showroom
+  // shows these as the real output; without one, the card stays a labelled concept example.
+  async showroomView() {
+    const data = await this.loadData();
+    const connectors = await this.commandConnectors(data);
+    const projects = (await this.ctx.storage.get('invention_projects')) || [];
+    const media = await listMedia(this.ctx.storage);
+    const newest = (rows) => rows.slice().sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))[0];
+    const video = newest(media.filter((m) => m.kind === 'video'));
+    const picture = newest(media.filter((m) => /^image\//.test(String(m.mime_type || '')) || m.kind === 'image'));
+    const recent = {
+      invention: projects[0] ? { id: projects[0].id, title: projects[0].title } : null,
+      video: video ? { id: video.id, title: video.title || 'Video' } : null,
+      picture: picture ? { id: picture.id, title: picture.title || 'Picture' } : null,
+    };
+    // Proof files are checked by capability_showroom.test.mjs in CI, where the repository is readable; the runtime
+    // cannot read them, so it trusts the test that names them.
+    return showroomView(connectors, { recent, hasProofFile: () => true });
+  }
+
   async commandConnectors(data) {
     const env = this.keyEnv || this.env;
     const registry = runtimeCapabilityRegistry(env, data).capabilities || [];
@@ -6911,6 +6932,10 @@ export class CheState extends DurableObject {
       }
       // Explicit status/finalization for an asynchronous render, with real
       // archived media IDs. This endpoint never uploads to YouTube.
+      // The Capability Showroom (owner addendum, 2026-10-22): every category and capability with its real state.
+      if (path === '/api/showroom' && request.method === 'GET') {
+        return json(await this.showroomView());
+      }
       // Invention projects, owner only: the list (newest first) and one project in full, for the Studio page.
       if (path === '/api/inventions' && request.method === 'GET') {
         const projects = (await this.ctx.storage.get('invention_projects')) || [];
@@ -9583,6 +9608,18 @@ export class CheState extends DurableObject {
         // deterministic planner for every project type (project_plan.js): no model call, every figure a
         // labeled estimate, one public background page when it can be read, saved to the Brain as a
         // proposal. Weapons and harm are refused or left out by its safety layer.
+        // "What can you create?", "Show me an example of an animated video", "Which features need setup?": answered from the
+        // Capability Showroom's real states. An example or render question takes this route only when a capability matches;
+        // any other question keeps its ordinary route.
+        const showroom = body.attachment ? null : showroomIntent(message);
+        if (showroom) {
+          const view = await this.showroomView();
+          const matched = showroom.kind === 'example' || showroom.kind === 'can_render' ? matchShowroom(view, showroom.query) : ['overview', 'needs_setup'];
+          if (matched.length) {
+            if (!ownerDevice) return ndjsonReply('Only the CHE owner can open the Capability Showroom, sir.', { source: 'che_showroom', ok: false, model_calls: 0 });
+            return ndjsonReply(showroomReply(view, showroom), { source: 'che_showroom', ok: true, model_calls: 0, showroom_total: view.total });
+          }
+        }
         // Invention Studio (owner, 2026-10-22): a design is planned as a project, and follow-up questions reopen the latest
         // one. Concept pictures come from the existing media engine; the parts, costs and feasibility do not need it.
         const invention = body.attachment ? null : inventionIntent(message);

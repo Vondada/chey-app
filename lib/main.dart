@@ -65,6 +65,7 @@ import 'che_app_portal.dart';
 import 'che_video.dart';
 import 'che_creations.dart';
 import 'rooms/che_invention_studio.dart';
+import 'che_ui/che_showroom.dart';
 import 'che_video_page.dart';
 import 'che_plugin_manager.dart';
 import 'che_theme.dart';

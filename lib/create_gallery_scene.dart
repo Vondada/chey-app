@@ -21,6 +21,7 @@ class CreateGalleryScene extends StatefulWidget {
     required this.onVideo,
     this.creations,
     this.onInventions,
+    this.onShowroom,
   });
 
   final bool active;
@@ -39,6 +40,8 @@ class CreateGalleryScene extends StatefulWidget {
   final Widget? creations;
   // Opens the Invention Studio: concept, parts, costs, feasibility and stages for saved invention projects.
   final VoidCallback? onInventions;
+  // Opens the Capability Showroom: what CHE can create, with each capability's real readiness.
+  final VoidCallback? onShowroom;
 
   @override
   State<CreateGalleryScene> createState() => _CreateGallerySceneState();
@@ -292,6 +295,14 @@ class _CreateGallerySceneState extends State<CreateGalleryScene>
                         active: true,
                         onTap: widget.onVault,
                       ),
+                      if (widget.onShowroom != null)
+                        _WorkbenchRow(
+                          icon: Icons.apps_rounded,
+                          title: 'Capability Showroom',
+                          subtitle: 'See what CHE can create, with examples and each feature’s real status.',
+                          active: true,
+                          onTap: widget.onShowroom!,
+                        ),
                       if (widget.onInventions != null)
                         _WorkbenchRow(
                           icon: Icons.precision_manufacturing_outlined,

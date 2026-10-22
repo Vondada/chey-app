@@ -500,6 +500,32 @@ extension _CheHomeHubRooms on _CHEHomeState {
     );
   }
 
+  /// The Capability Showroom's real states, from the Worker (owner device token; nothing is spoken).
+  Future<Map<String, dynamic>> _loadShowroom() async {
+    final res = await http.get(Uri.parse('$cheAgentBaseUrl/api/showroom'), headers: _authHeaders);
+    final body = jsonDecode(res.body);
+    if (res.statusCode != 200 || body is! Map) throw StateError('HTTP ${res.statusCode}');
+    return Map<String, dynamic>.from(body);
+  }
+
+  /// "Open example" on a card with a real saved output: the invention, video or picture it names.
+  void _openShowroomRecent(Map<String, dynamic> recent) {
+    final id = '${recent['id'] ?? ''}';
+    if (id.isEmpty) return;
+    final route = switch ('${recent['kind'] ?? ''}') {
+      'invention' => CheInventionStudioPage.route(baseUrl: cheAgentBaseUrl, headers: _authHeaders),
+      'video' || 'image' => MaterialPageRoute<void>(
+          builder: (_) => CheCreationViewer(
+            item: {'id': id, 'kind': recent['kind'], 'title': '${recent['title'] ?? 'Creation'}'},
+            baseUrl: cheAgentBaseUrl,
+            headers: _authHeaders,
+          ),
+        ),
+      _ => null,
+    };
+    if (route != null) unawaited(Navigator.of(context).push(route));
+  }
+
   Widget _createProjectsScene(bool active) {
     return CreateGalleryScene(
       active: active,
@@ -510,6 +536,11 @@ extension _CheHomeHubRooms on _CHEHomeState {
       videoConnected: integrations['video_generation'] == true,
       creations: CheCreationsStrip(baseUrl: cheAgentBaseUrl, headers: _authHeaders, active: active),
       onInventions: () => unawaited(Navigator.of(context).push(CheInventionStudioPage.route(baseUrl: cheAgentBaseUrl, headers: _authHeaders))),
+      onShowroom: () => unawaited(Navigator.of(context).push(CheShowroomPage.route(
+        load: _loadShowroom,
+        onStart: _runHubPrompt,
+        onOpenRecent: _openShowroomRecent,
+      ))),
       onNewProject: () {
         unawaited(_createProjectDialog());
       },
