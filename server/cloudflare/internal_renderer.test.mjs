@@ -182,6 +182,10 @@ test('Worker: "create a beach scene" renders, verifies and saves to Create; vari
   assert.match(vary.reply, /Made the variation, sir: a sunset beach/);
   assert.equal(che.saved.get('media_index')[0].parent_id, item.id);
   assert.equal(che.saved.get('che:render_recipes').length, 2, 'both recipes kept as reusable knowledge');
+  const caps = await che.say('what can your renderer do');
+  assert.match(caps.reply, /I can render procedural pictures with my own code; verified .*I can create beach scenes with my own code.*not internal capabilities yet/);
+  const run = che.saved.get('che:workflow_engine')?.runs?.[0];
+  if (run) assert.equal(run.wf, 'media_create', 'the Workflow Engine records it under Create media');
   const how = await che.say('how did you make that');
   assert.match(how.reply, /my own renderer inside CHE, renderer version 1.*sunset beach.*Built from sky, sun, ocean/);
   assert.equal(how.model_calls, 0);

@@ -2,7 +2,7 @@
 // saved in Create like any picture → the recipe kept as reusable knowledge. Registered in the capability registry
 // only after its self-test proves each promotion check, with the evidence recorded. No external app, API or key.
 import { PROVENANCE, RENDERER_VERSION, beachLoop, beachRecipe, describeRecipe, decodePng, evaluateBeach, beachScene } from './internal_renderer.js';
-import { EXECUTION, PROMOTION_CHECKS, loadRegistry, promote, recordCheck, recordUse, register, saveRegistry, serving } from './capability_registry.js';
+import { EXECUTION, PROMOTION_CHECKS, loadRegistry, promote, recordCheck, recordUse, register, saveRegistry, serving, speakCapability } from './capability_registry.js';
 import { saveRenderedImage } from './media.js';
 
 export const RECIPES_KEY = 'che:render_recipes';
@@ -81,6 +81,7 @@ export function internalSceneIntent(message, { hasLast = false } = {}) {
   if (hasLast && /\b(?:how did you (?:make|draw|render|create) (?:that|it|this)|what did you use to (?:make|draw|render) (?:that|it|this)|which (?:renderer|components) did you use)\b/.test(t)) return { kind: 'explain' };
   const vary = t.match(/\b(?:render|make|draw|do|paint|show)\s+(?:that|it|this|the (?:beach|scene))(?:\s+again)?\s+(?:as|at|in|with)\s+(?:a\s+)?(sunset|night|nighttime|stormy|storm|daytime|day)\b|\bsame (?:scene|beach|picture) but (?:at\s+)?(sunset|night|stormy|day)\b/);
   if (hasLast && vary) return { kind: 'variation', look: { nighttime: 'night', storm: 'stormy', daytime: 'day' }[vary[1] || vary[2]] || vary[1] || vary[2] };
+  if (/^(?:what can (?:your|you) (?:own )?renderer (?:do|make|draw)|what can you (?:render|draw) (?:yourself|on your own|internally)|which (?:rendering )?capabilities do you have)$/.test(t)) return { kind: 'capabilities' };
   if (/\b(?:create|make|draw|render|paint|generate|show me|give me|design)\b/.test(t) && beachRecipe(t)) return { kind: 'create', recipe: beachRecipe(t) };
   return null;
 }
@@ -99,6 +100,10 @@ export async function internalSceneTurn(ctx, ask) {
     return { ok: true, text: `I made it with my own renderer inside CHE, renderer version ${last.renderer_version}, no external app, API or key: ${describeRecipe(last.recipe, last.components)}. It ran in ${last.ms} milliseconds and was verified as a ${last.width} by ${last.height} PNG.` };
   }
   const registry = await ensureRendererCapabilities(storage);
+  if (ask.kind === 'capabilities') {
+    const lines = [...RENDER_CAPABILITIES.map((c) => speakCapability(serving(registry, c.id) || registry.capabilities[c.id])), 'Photorealistic pictures and text-to-video are not internal capabilities yet; for those I would need your approval to use another engine.'];
+    return { ok: true, text: lines.join(' ') };
+  }
   const cap = serving(registry, 'scene.beach');
   if (!cap) return { ok: false, text: 'My beach-scene renderer did not pass its self-test, so I did not make the picture and I will not pretend I did.' };
   let recipe = ask.recipe;
