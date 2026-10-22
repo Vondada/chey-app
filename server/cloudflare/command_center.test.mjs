@@ -1151,3 +1151,23 @@ test('Legal Intelligence by voice: home, "can I record somebody here?", a locati
   assert.match(ex.reply, /Smoke is not ready for an exclusive sale at \$500\.00\. Legal: 1 lease is already sold \(Mike\)/);
   assert.notEqual((await che.say('Can I trade NQ now?')).route, 'che_legal');
 });
+
+test('Expert Intelligence by voice: emergencies first, a private case, a Doctor Brief, a note kept verbatim, a measured test', async () => {
+  const che = await owner();
+  const urgent = await che.say('My dad has chest pain and shortness of breath right now');
+  assert.equal(urgent.route, 'che_health_urgent');
+  assert.equal(urgent.modelCalls, 0);
+  assert.match(urgent.reply, /^Chest pain with these symptoms can be a heart attack\. Call 911 now\./);
+  assert.match((await che.say("Prepare me for my doctor's appointment")).reply, /There is no medical case on file yet/);
+  assert.match((await che.say('Open a medical case called Back and leg')).reply, /private and kept apart/);
+  const brief = await che.say("Prepare me for my doctor's appointment");
+  assert.equal(brief.route, 'che_expert');
+  assert.match(brief.reply, /DOCTOR BRIEF: Back and leg[\s\S]*Missing from the file: reason for visit/);
+  assert.match((await che.say('My doctor said ordered an MRI of the lumbar spine')).reply, /Saved your doctor note word for word\. I added: ordered an MRI of the lumbar spine/);
+  const exam = await che.say('Test your legal knowledge');
+  assert.match(exam.reply, /Law test: 8 of 8 passed \(100%\)\. A test score is evidence of what I do, not a licence/);
+  assert.match((await che.say('How good are you at law?')).reply, /Latest test: 8 of 8 passed/);
+  const view = await che.get('/api/expert');
+  assert.equal(view.cases[0].title, 'Back and leg');
+  assert.ok(view.expertise.some((e) => e.domain === 'health' && e.level === 'not built'), 'no health sources yet, so no claim');
+});
