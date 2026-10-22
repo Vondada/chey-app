@@ -38,7 +38,8 @@ it does not make CHE unhackable, and CHE never says it does.
 | Internal tool permissions; a new tool starts with nothing | `checkToolAccess` |
 | Incident response: revoke sessions, optionally revoke other devices, lockdown, rotation list, verify, report | `respondToIncident` |
 | Backup and rollback: a hashed trusted snapshot of config, workflows and the registry (no secrets). A tampered snapshot is refused. | `snapshotTrustedState`, `restoreTrustedState` |
-| Internal-only mode | `data.capability_policy.internal_only`, `externalCallAllowed` |
+| Internal-only mode, enforced on every outbound `fetch` (allowed: CHE's own origin, the owner's GitHub and Cloudflare; the model answers through the Workers AI binding) | `installEgressGuard`, `che:egress_policy` |
+| Phone-side: a password or key typed or spoken into ordinary chat never leaves the phone | `cheChatLooksSecret` in `send.dart` |
 
 **Threat detection signals:**
 - pairing failures

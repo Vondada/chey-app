@@ -350,3 +350,15 @@ test('engine view: library, efficiency, candidates, gaps and audit in one page p
   assert.ok(v.workflows.length && v.efficiency && Array.isArray(v.candidates) && Array.isArray(v.audit));
   assert.equal(v.gaps[0].sig, signature('write me a sonnet about rain'));
 });
+
+test('feedback rates the workflow that served the owner, never the feedback or security command itself', () => {
+  const s = emptyState();
+  recordRun(s, { message: 'show my positions', done: { source: 'che_trading_desk', model_calls: 0 } });
+  for (let i = 0; i < 3; i++) {
+    const out = feedbackOnLast(s, false);
+    assert.equal(out.workflow, 'trading_desk');
+    recordRun(s, { message: 'that workflow was wrong', done: { source: 'che_workflow_engine', model_calls: 0 } });
+  }
+  assert.equal(s.feedback.trading_desk.down, 3);
+  assert.equal(feedbackOnLast(s, false).needs_review, true);
+});

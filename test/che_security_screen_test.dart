@@ -45,6 +45,15 @@ void main() {
     expect(cheLooksSecret('plan my week'), isFalse);
   });
 
+  test('ordinary chat: passwords and keys are caught before sending; normal sentences about passwords are not', () {
+    for (final s in ['my password hunter2', 'my gmail password is Tr0ub4dor!', 'password: s3cretvalue', 'the key is sk-proj-aB3dE6gH9jK2mN5pQ8sT', 'use ghp_${'a' * 32}']) {
+      expect(cheChatLooksSecret(s), isTrue, reason: s);
+    }
+    for (final s in ['send me a password reset email', 'what is my password manager called', 'my pin code expired', 'plan my week']) {
+      expect(cheChatLooksSecret(s), isFalse, reason: s);
+    }
+  });
+
   testWidgets('Security page: status as large text, Read Aloud on request, actions report real results', (tester) async {
     tester.view.physicalSize = const Size(1200, 3000);
     tester.view.devicePixelRatio = 1;

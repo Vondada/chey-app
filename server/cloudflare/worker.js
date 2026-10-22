@@ -225,7 +225,7 @@ import {
 } from './research_memory.js';
 import { APP_BUILD_KEY, appBuildIntent, appBuildRun, dispatchAppBuild, speakAppBuild } from './app_builds.js';
 import { advanceObjectives, applyMissionEvent, approvalReached, approveNode, awaitingApproval, cancelObjective, createObjective, mutateObjective, replanNode, resolveKnownNodes, retryNode, setObjectivePaused, speakObjective } from './objective_graph.js';
-import { SESSION_SCOPES, bump as securityBump, checkSession, createSession, dependencyAdvisories, detectThreats, issueNonce, loadSecurity, recordFindings, redact as redactSecretText, redactDeep, respondToIncident, restoreTrustedState, revokeSessions, saveSecurity, securityIntent, snapshotTrustedState, speakStatus as speakSecurityStatus } from './security_intelligence.js';
+import { EGRESS_KEY, installEgressGuard, setEgressPolicy, storeEgressPolicy, SESSION_SCOPES, bump as securityBump, checkSession, createSession, dependencyAdvisories, detectThreats, issueNonce, loadSecurity, recordFindings, redact as redactSecretText, redactDeep, respondToIncident, restoreTrustedState, revokeSessions, saveSecurity, securityIntent, snapshotTrustedState, speakStatus as speakSecurityStatus } from './security_intelligence.js';
 import { loadRegistry as loadCapabilityRegistry } from './capability_registry.js';
 import { engineView, exportWorkflows, feedbackOnLast, importWorkflows, library as workflowLibrary, loadEngine, matchLearned, noteVersion, promoteCandidate, dismissCandidate, rankWorkflows, recordRun as recordWorkflowRun, isDisabled as workflowDisabled, restoreVersion, saveEngine, setDisabled as setWorkflowDisabled, setPreferred as setWorkflowPreferred, speakEfficiency, speakLibrary, testCandidate, workflowForRun, workflowIntent } from './workflow_engine.js';
 import { CATEGORIES, COMMANDS, catalogView, commandById, commandStatus, connectorStatus, describeWorkflow, dispatchPrompt, findSavedWorkflow, normalizeSavedWorkflow, parseSlashCommand, readCommandSpeech, searchCommands, speakCommandList, speakUnavailable, suggestCommands, workflowNodes, workflowFromWords } from './command_catalog.js';
@@ -5449,6 +5449,9 @@ export class CheState extends DurableObject {
       await this.ctx.storage.deleteAll();
       return json({ ok: true, reset: true });
     }
+    // Internal-only mode (Security Intelligence): every outbound fetch is checked against the owner's policy.
+    installEgressGuard();
+    try { setEgressPolicy(await this.ctx.storage.get(EGRESS_KEY), request.url); } catch (_) {}
     const isChat = request.method === 'POST' && new URL(request.url).pathname === '/api/chat';
     // The deploy's memory-truth check talks to its own isolated CHE; its test
     // conversation never grows the owner's shared vector memory.
@@ -5533,7 +5536,7 @@ export class CheState extends DurableObject {
         const memory = await recordConversationMemory(this.ctx.storage, { message: safeMessage.text, reply: safeReply.text });
         if (memory) {
           // The Brain keeps the whole exchange; brainmem keeps its linked summary. Same id.
-          try { rememberExchange(new CheBrainStore(this.ctx.storage), { id: memory.id, message, reply, at: memory.at }); } catch (_) {}
+          try { rememberExchange(new CheBrainStore(this.ctx.storage), { id: memory.id, message: safeMessage.text, reply: safeReply.text, at: memory.at }); } catch (_) {}
           await storeVectorMemory(this.keyEnv || this.env, {
             external_id: `conversation:${memory.id}`,
             kind: 'conversation',
@@ -5907,7 +5910,7 @@ export class CheState extends DurableObject {
         status: speakSecurityStatus(sec, { lockedDown: await isLockedDown(this.ctx.storage) }),
         events: (sec.events || []).slice(0, 50), audit: (sec.audit || []).slice(0, 30),
         sessions: Object.values(sec.sessions || {}).filter((s) => !s.revoked_at && s.expires_at > Date.now()).map((s) => ({ scopes: s.scopes, factors: s.factors, expires_at: s.expires_at, this_device: s.device === tokenHash })),
-        internal_only: data.capability_policy?.internal_only === true,
+        internal_only: (await this.ctx.storage.get(EGRESS_KEY))?.internal_only === true,
         scopes: SESSION_SCOPES,
       });
     }
@@ -5933,7 +5936,7 @@ export class CheState extends DurableObject {
     }
     if (action === 'restore') { const r = await restoreTrustedState(this.ctx.storage, data); if (r.ok) await this.ctx.storage.put('che', data); return done(r, r.ok ? 200 : 409); }
     if (action === 'unlock') { await setLockdown(this.ctx.storage, false); return done({ ok: true, locked: false }); }
-    if (action === 'external') { data.capability_policy = { ...(data.capability_policy || {}), internal_only: body.internal_only === true }; await this.ctx.storage.put('che', data); return done({ ok: true, internal_only: data.capability_policy.internal_only }); }
+    if (action === 'external') { data.capability_policy = { ...(data.capability_policy || {}), internal_only: body.internal_only === true }; await this.ctx.storage.put('che', data); await storeEgressPolicy(this.ctx.storage, body.internal_only === true); return done({ ok: true, internal_only: data.capability_policy.internal_only }); }
     if (action === 'incident') {
       const r = await respondToIncident(this.ctx.storage, sec, data, { revokeDevices: body.revoke_devices === true, keepDeviceHash: tokenHash, revokeDevice: (hash) => revokeDevice(data, ensurePlatform(data).devices[hash]?.id, { byTokenHash: tokenHash }) });
       await this.ctx.storage.put('che', data);
@@ -5957,7 +5960,8 @@ export class CheState extends DurableObject {
     if (ask.action === 'internal_only') {
       data.capability_policy = { ...(data.capability_policy || {}), internal_only: true };
       await this.ctx.storage.put('che', data);
-      return say('External dependencies are off, sir: internal-only mode is on. Turning them back on needs Face ID on the Security page.', { internal_only: true });
+      await storeEgressPolicy(this.ctx.storage, true);
+      return say('External dependencies are off, sir: internal-only mode is on. I now call no outside service; only my own runtime and your GitHub and Cloudflare. Answers come from my Cloudflare engine. Turning them back on needs Face ID on the Security page.', { internal_only: true });
     }
     if (ask.action === 'tools') {
       const reg = await loadCapabilityRegistry(this.ctx.storage);
@@ -13487,6 +13491,8 @@ export class CheState extends DurableObject {
   }
 
   async alarm() {
+    installEgressGuard();
+    try { setEgressPolicy(await this.ctx.storage.get(EGRESS_KEY)); } catch (_) {}
     await this.refreshKeyEnv();
     // A minute-only wake-up: the simulation's minute is the only work due. It runs that one pass and makes no
     // mailbox (GitHub), job, Tradovate, hourly or live call. Those keep their own wake-up times and run on them.

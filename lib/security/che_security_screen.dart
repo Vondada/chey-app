@@ -138,7 +138,7 @@ class _CheSecurityScreenState extends State<CheSecurityScreen> {
               : ListView(padding: const EdgeInsets.all(16), children: [
                   Semantics(container: true, label: 'Security status. $status', child: ExcludeSemantics(child: Text(status, style: text.titleMedium))),
                   const SizedBox(height: 8),
-                  Text(internalOnly ? 'Internal-only mode is on: no external services are called.' : 'External services are allowed when you approve them.', style: text.titleMedium),
+                  Text(internalOnly ? 'Internal-only mode is on: CHE calls no outside service, only its own runtime and your GitHub and Cloudflare.' : 'External services are allowed when you approve them.', style: text.titleMedium),
                   const SizedBox(height: 12),
                   Wrap(spacing: 8, runSpacing: 8, children: [
                     OutlinedButton.icon(

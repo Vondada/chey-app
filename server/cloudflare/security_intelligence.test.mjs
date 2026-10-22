@@ -380,3 +380,31 @@ test('Office has a Security Intelligence specialist for security work; ordinary 
   assert.equal(specialtyFrom('scan the repo for exposed secrets with secret scanning'), 'security');
   assert.equal(specialtyFrom('review this pull request'), 'review');
 });
+
+// ─── Codex review of #464 ───────────────────────────────────────────────────
+
+test('internal-only mode is enforced on real outbound requests, not just stored: outside hosts are refused, the owner\'s GitHub is not', async () => {
+  const che = await owner();
+  const seen = [];
+  const before = globalThis.fetch;
+  globalThis.fetch = async (input) => { seen.push(String(input?.url || input)); return new Response('{}', { status: 200 }); };
+  try {
+    await che.say('disable external dependencies');   // installs the guard over this fetch and turns the mode on
+    await assert.rejects(fetch('https://api.openai.com/v1/chat/completions'), /Internal-only mode is on, so api\.openai\.com was not called/);
+    await assert.rejects(fetch('https://duckduckgo.com/?q=x'), /was not called/);
+    assert.equal((await fetch('https://api.github.com/repos/Vondada/chey-app')).status, 200, 'the owner\'s own GitHub stays reachable');
+    assert.deepEqual(seen, ['https://api.github.com/repos/Vondada/chey-app'], 'nothing else left the Worker');
+    // The model still answers through the Cloudflare binding inside CHE's runtime.
+    const r = await che.say('write one sentence about the sea');
+    assert.ok(r.reply.length > 0);
+    assert.equal((await che.get('/api/security')).internal_only, true);
+  } finally {
+    globalThis.fetch = before;
+  }
+});
+
+test('"my password hunter2" (no separator) is caught by the server scanner; ordinary sentences about passwords are not', () => {
+  assert.ok(scanSecrets('please remember my password hunter2').some((f) => f.kind === 'password_plain'));
+  assert.ok(scanSecrets('my gmail password Tr0ub4dor!').some((f) => f.kind === 'password_plain'));
+  for (const s of ['send me a password reset email', 'my password manager is good', 'my pin expired']) assert.equal(scanSecrets(s).length, 0, s);
+});

@@ -32,6 +32,9 @@ const SECRET_PATTERNS = [
   ['bearer_token', /\bBearer\s+[A-Za-z0-9._~+/=-]{20,}/g],
   ['private_key', /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g],
   ['password_assignment', /\b(?:password|passwd|passcode|pwd)\s*(?:is|=|:)\s*["']?[^\s"']{6,}/gi],
+  // "my password hunter2": a password stated without a separator; the value must contain a digit or symbol, so
+  // ordinary words ("my password reset") are left alone.
+  ['password_plain', /\bmy\s+(?:\w+\s+)?(?:password|passcode|passphrase|pin)\s+(?:is\s+)?(?=[^\s]*[\d!@#$%^&*])[^\s]{4,}/gi],
   ['secret_assignment', /\b(?:api[ _-]?key|secret|access[ _-]?token|client[ _-]?secret|auth[ _-]?token)\s*(?:is|=|:)\s*["']?[A-Za-z0-9._~+/=-]{12,}/gi],
 ];
 
@@ -538,6 +541,49 @@ export async function restoreTrustedState(storage, data) {
 }
 
 // ─── External calls ─────────────────────────────────────────────────────────
+
+// Internal-only mode is enforced on every outbound request CHE's Worker makes: one guard wraps fetch. CHE's own
+// origin and the owner's own compute (his GitHub repository and Actions, his Cloudflare account) stay reachable;
+// every other host (model providers, search, media, brokers, any API) is refused before a byte leaves. Workers AI
+// runs through the Cloudflare binding, not fetch, so CHE keeps an answer engine inside its own runtime.
+export const EGRESS_KEY = 'che:egress_policy';
+export const OWNER_COMPUTE_HOSTS = Object.freeze(['api.github.com', 'github.com', 'raw.githubusercontent.com', 'objects.githubusercontent.com', 'codeload.github.com', 'api.cloudflare.com']);
+const EGRESS = { internalOnly: false, selfHosts: new Set(), blocked: 0 };
+
+export function setEgressPolicy(policy, selfUrl = '') {
+  EGRESS.internalOnly = policy?.internal_only === true;
+  try { if (selfUrl) EGRESS.selfHosts.add(new URL(selfUrl).hostname); } catch (_) {}
+  return EGRESS.internalOnly;
+}
+
+export function egressBlockedCount() { return EGRESS.blocked; }
+
+export function installEgressGuard() {
+  if (globalThis.fetch?.cheEgressGuard) return false;
+  const original = globalThis.fetch;
+  const guarded = (input, init) => {
+    if (EGRESS.internalOnly) {
+      let host = '';
+      try { host = new URL(String(input?.url || input)).hostname; } catch (_) { host = ''; }
+      if (!EGRESS.selfHosts.has(host) && !OWNER_COMPUTE_HOSTS.includes(host)) {
+        EGRESS.blocked++;
+        return Promise.reject(new TypeError(`Internal-only mode is on, so ${host || 'that service'} was not called.`));
+      }
+    }
+    return original(input, init);
+  };
+  guarded.cheEgressGuard = true;
+  globalThis.fetch = guarded;
+  return true;
+}
+
+/** Turns internal-only mode on or off for this Worker now and for every later request and background pass. */
+export async function storeEgressPolicy(storage, internalOnly) {
+  const policy = { internal_only: internalOnly === true, at: new Date().toISOString() };
+  await storage.put(EGRESS_KEY, policy);
+  setEgressPolicy(policy);
+  return policy;
+}
 
 /** Internal-only mode: no external API, app or provider is called; CHE's own runtime and the owner's compute only. */
 export function externalCallAllowed(policy = {}, target = '', { ownerCompute = [] } = {}) {
