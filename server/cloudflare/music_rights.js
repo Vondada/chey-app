@@ -223,9 +223,16 @@ export function applyRightsAction(data, body = {}, now = new Date().toISOString(
     if (!kinds.includes(v.kind)) return { status: 400, body: { detail: `A version needs a kind: ${kinds.join(', ')}.` } };
     if (!/^[0-9a-f]{64}$/i.test(String(v.sha256 || ''))) return { status: 400, body: { detail: 'A version needs the SHA-256 checksum of its file.' } };
     const inputs = (Array.isArray(v.inputs) ? v.inputs : []).map((i) => ({ provenance: PROVENANCE.includes(i?.provenance) ? i.provenance : 'UNKNOWN', name: String(i?.name || '').slice(0, 120) }));
-    const version = { id: `ver_${crypto.randomUUID()}`, kind: v.kind, label: String(v.label || v.kind).slice(0, 80), sha256: v.sha256.toLowerCase(), inputs, added_at: now, ...(v.derived_from ? { derived_from: String(v.derived_from) } : {}) };
+    const version = { id: `ver_${crypto.randomUUID()}`, kind: v.kind, label: String(v.label || v.kind).slice(0, 80), sha256: v.sha256.toLowerCase(), inputs, added_at: now, ...(v.derived_from ? { derived_from: String(v.derived_from) } : {}), ...(/^[\w-]{8,80}$/.test(String(v.media_id || '')) ? { media_id: String(v.media_id) } : {}) };
     m.versions.push(version); // versions are only ever added: an earlier file record is never replaced
     return { status: 200, body: { version } };
+  }
+  // The song's artwork as a link to the media file already stored; nothing is copied.
+  if (action === 'set_artwork') {
+    if (!/^[\w-]{8,80}$/.test(String(body.media_id || ''))) return { status: 400, body: { detail: 'Artwork needs the media id of a stored image.' } };
+    m.artwork_media_id = String(body.media_id);
+    m.artwork = m.artwork || 'On file';
+    return { status: 200, body: { artwork_media_id: m.artwork_media_id } };
   }
   if (action === 'readiness') {
     const r = releaseReadiness(project, Date.parse(now));

@@ -76,6 +76,8 @@ import { evaluateSample, applyRightsAction, applySpokenRightsWrite, defensibilit
 import { ACTIVITIES, JURISDICTIONS, SOURCES, LEGAL_INDEX, activitiesIn, placeIn, checkUpdates, defenseArguments, findAlternatives, jurisdiction as legalPlace, legalAnswer, legalDifferences, legalIntent, loadLegal, recordDecision, recordsFor, releaseLegalCheck, saveLegal, speakDifferences, subscribe as legalSubscribe, verifyRecord } from './legal_intelligence.js';
 import { analyzeContract } from './legal_contracts.js';
 import { DOMAINS, SOURCE_TIERS, addExpertSource, addProfessionalNote, addToCase, bringList, domainCoverage, expertIntent, expertPromptContext, labelInteractions, loadCases, openCase, professionalBrief, readLabs, redFlags, runExam, saveCases, speakCoverage, upgradePlan } from './expert_intelligence.js';
+import { renderTokenRoute, visualApi, songPromo, projectFromTemplateName, loadVisual, saveVisual, YES_WORDS as VISUAL_YES, NO_WORDS as VISUAL_NO } from './visual_api.js';
+import { visualIntent, wordsToOps } from './visual_studio.js';
 import { addBeat, addLedger, addWorkspace, addWorkspaceSong, advanceAgreement, applySpokenBusiness, approveQuote, artistReport, beatListing, businessDashboard, deliveryPackage, draftQuote, musicBusinessIntent, recordBeatSale, recordFeedback, resolveSpokenBusiness, setService, workspaceById, workspaceView } from './music_business.js';
 import { matrixIntent, readMatrix, runMatrix, speakMatrix } from './backtest_matrix.js';
 import { autoQueue as researchAutoQueue, cancelJob as cancelResearchJob, matrixView as researchMatrixView, nextResearchAt, queueJob as queueResearchJob, researchIntent, researchStep, researchView, setProfile as setResearchProfile, speakBestNow, speakHistory, speakStrategy, strategyView as researchStrategyView } from './trading_research.js';
@@ -6396,6 +6398,12 @@ export class CheState extends DurableObject {
       }
 
       const body = ['POST', 'PATCH', 'PUT'].includes(request.method) ? await bodyOf(request) : {};
+      // Visual Studio render Action: the edit document and its source files, opened only by that job's one-time,
+      // expiring token. No device token exists on the GitHub runner; nothing else is reachable with this one.
+      if (request.method === 'GET' && path.startsWith('/api/visual/render/')) {
+        const routed = await renderTokenRoute({ storage: this.ctx.storage, env: this.env }, path, request);
+        if (routed) return routed;
+      }
       // Internal release probe: only the per-deploy random token may read
       // connector readiness, with no user data, keys, or saved workflows.
       if (request.method === 'POST' && path === '/api/commands/readiness') {
@@ -7582,6 +7590,14 @@ export class CheState extends DurableObject {
         return json({ ...result, spoken: speakControlResult(result), view: await this.tradingControlsView() }, result.ok || result.needs_confirmation ? 200 : 400);
       }
       // Strategy simulation (step a): paper minute-bar strategies. Read and the kill switch are owner-only; nothing here orders or spends.
+      // Visual Studio (owner, 2026-10-22): Create → Images, Video, Templates, Projects. Owner only.
+      if (path === '/api/visual' && (request.method === 'GET' || request.method === 'POST')) {
+        if (!ownerDevice) return json({ detail: 'Only the CHE owner can use Visual Studio.' }, 403);
+        const vctx = { storage: this.ctx.storage, env: this.keyEnv || this.env, data, origin: new URL(request.url).origin, dirty: false };
+        const out = await visualApi(vctx, { method: request.method, body, query: new URL(request.url).searchParams });
+        if (vctx.dirty) await this.ctx.storage.put('che', data);
+        return json(out.body, out.status);
+      }
       // Expert Intelligence (owner, 2026-10-22). Owner only: cases hold health, legal and financial records.
       if (path === '/api/expert' && (request.method === 'GET' || request.method === 'POST')) {
         if (!ownerDevice) return json({ detail: 'Only the CHE owner can use Expert Intelligence.' }, 403);
@@ -11747,6 +11763,59 @@ export class CheState extends DurableObject {
             source: LEDGER_SOURCE, ok: true, model_calls: 0, kind: ledger.kind,
             ledgers: ledgers.map(({ id, trades, unavailable }) => ({ id, trades, unavailable: Boolean(unavailable) })),
           });
+        }
+        // Visual Studio by voice or typing: a song promo, a visualizer, platform versions, templates, render, and edits
+        // on the project open in the editor (the app sends visual_project_id, selection and playhead).
+        const visualAsk = !body.attachment && visualIntent(message);
+        const editingId = typeof body.visual_project_id === 'string' ? body.visual_project_id : null;
+        if (visualAsk || editingId) {
+          if (!ownerDevice) return ndjsonReply('Only the CHE owner can use Visual Studio, sir.', { source: 'che_visual_studio', ok: false });
+          const vctx = { storage: this.ctx.storage, env: this.keyEnv || this.env, data, origin: new URL(request.url).origin, dirty: false };
+          let reply = null;
+          const editingState = editingId && !visualAsk ? await loadVisual(this.ctx.storage, editingId) : null;
+          if (visualAsk?.kind === 'song_promo' || visualAsk?.kind === 'visualizer' || visualAsk?.kind === 'beat_preview') {
+            const r = await songPromo(vctx, { title: visualAsk.title || visualAsk.beat || null, platform: visualAsk.platform || null, kind: visualAsk.kind === 'visualizer' ? 'visualizer' : visualAsk.kind === 'beat_preview' ? 'beat' : 'promo' });
+            reply = { text: r.said, ok: r.ok, extra: r.project ? { visual_project_id: r.project.id, open: 'visual_editor' } : {} };
+          } else if (visualAsk?.kind === 'use_template') {
+            const r = await projectFromTemplateName(vctx, { name: visualAsk.name, tweak: visualAsk.tweak });
+            reply = { text: r.said, ok: r.ok, extra: r.project ? { visual_project_id: r.project.id, open: 'visual_editor' } : {} };
+          } else if (editingState?.pending && VISUAL_YES.test(message.trim())) {
+            // The removal CHE asked about in the editor; only now is it applied.
+            const out = await visualApi(vctx, { method: 'POST', body: { project_id: editingId, action: 'confirm_pending' }, query: new URLSearchParams() });
+            reply = { text: out.body.said || out.body.detail, ok: out.status === 200, extra: { visual_project_id: editingId } };
+          } else if (editingState?.pending && VISUAL_NO.test(message.trim())) {
+            const out = await visualApi(vctx, { method: 'POST', body: { project_id: editingId, action: 'cancel_pending' }, query: new URLSearchParams() });
+            reply = { text: out.body.said || out.body.detail, ok: out.status === 200, extra: { visual_project_id: editingId } };
+          } else {
+            const latest = (data.projects || []).filter((p) => p.type === 'visual').sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)))[0];
+            const pid = editingId || latest?.id;
+            if (!pid) reply = { text: 'There is no image or video project yet. Say "make me a promo video for" a song, or create one in Create.', ok: false };
+            else if (visualAsk?.kind === 'open_editor') reply = { text: 'Opening the editor.', extra: { visual_project_id: pid, open: 'visual_editor' } };
+            else {
+              const action = visualAsk?.kind === 'variants' ? { action: 'variants', presets: visualAsk.presets }
+                : visualAsk?.kind === 'save_template' ? { action: 'save_template', name: visualAsk.name }
+                  : visualAsk?.kind === 'apply_brand' ? { action: 'apply_brand' }
+                    : visualAsk?.kind === 'render' ? { action: 'render' }
+                      // A removal here already has the owner's yes when the delete gate released it (ownerGrant).
+                      : { action: 'words', text: message, selection: body.visual_selection || null, playhead: Number(body.visual_playhead) || 0, confirmed: ownerGrant.delete === true };
+              // Edits only when the words are edit instructions: anything not understood falls back to chat
+              // unless the editor is open, where CHE says what she could not do.
+              if (action.action === 'words') {
+                const state = await loadVisual(this.ctx.storage, pid);
+                const probe = state ? wordsToOps(message, state.doc, { selection: action.selection, playhead: action.playhead }) : { ops: [], unsupported: [] };
+                if (!probe.ops.length && !editingId) reply = null;
+                else {
+                  const out = await visualApi(vctx, { method: 'POST', body: { project_id: pid, ...action }, query: new URLSearchParams() });
+                  reply = { text: out.body.said || out.body.detail, ok: out.status === 200, extra: { visual_project_id: pid, understood: out.body.understood || [] } };
+                }
+              } else {
+                const out = await visualApi(vctx, { method: 'POST', body: { project_id: pid, ...action }, query: new URLSearchParams() });
+                reply = { text: out.body.said || out.body.detail, ok: out.status === 200, extra: { visual_project_id: pid, ...(out.body.variants ? { variants: out.body.variants } : {}) } };
+              }
+            }
+          }
+          if (vctx.dirty) await this.ctx.storage.put('che', data);
+          if (reply) return ndjsonReply(reply.text, { source: 'che_visual_studio', model_calls: 0, ok: reply.ok !== false, ...(reply.extra || {}) });
         }
         // Music business by voice or typing: a client, a managed artist, a draft quote, or the dashboard.
         const bizAsk = !body.attachment && musicBusinessIntent(message);
