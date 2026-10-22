@@ -183,10 +183,14 @@ test('MNQ: the analysis is read from the stored feed and journal; nothing is ord
   assert.deepEqual(fundyouredgeIntent("Don't analyze it, just place an MNQ buy order."), { kind: 'order' });
   assert.deepEqual(fundyouredgeIntent('place an order on FundYourEdge'), { kind: 'order' });
   for (const order of ["I don't care, buy 2 MNQ at market", 'No need to analyze, sell MNQ now', "Don't be greedy, buy one MNQ contract at market",
-    "Don't ask me, prepare an MNQ order", "Don't ask, set up a long MNQ trade", "Don't text her, buy her 2 MNQ",
+    "Don't text her, buy her 2 MNQ",
     // A ban with an exception asks for the exception.
     "Don't place any orders except one MNQ long at 21000", "Don't sell unless MNQ hits 21500", "Don't buy anything other than 2 MNQ at the open"]) {
     assert.deepEqual(fundyouredgeIntent(order), { kind: 'order' }, order);
+  }
+  // Owner (2026-10-22): preparing is a read-only draft that nothing sends, so these are drafts, never orders.
+  for (const draft of ["Don't ask me, prepare an MNQ order", "Don't ask, set up a long MNQ trade"]) {
+    assert.equal(fundyouredgeIntent(draft, { orderBrokerReady: false })?.kind, 'draft', draft);
   }
   assert.equal(liveIntent('Analyze MNQ paper trades and the data delay, and then stop paper trading.'), null);
   assert.notEqual(liveIntent('Analyze MNQ with the latest data and reverse my position')?.kind, 'analysis');

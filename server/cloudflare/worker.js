@@ -153,7 +153,7 @@ import {
   googleTurnContext, youtubeChatIntent,
   googleStates, startGoogleConnect,
 } from './google_services.js';
-import { fundyouredgeReply } from './fundyouredge.js';
+import { FYE_STATUS, fundyouredgeDraft, fundyouredgeDraftReply, fundyouredgeIntent, fundyouredgeReply } from './fundyouredge.js';
 import { CheCodingRuntime, codingRuntimeEnabled, ownerRequiresMergeApproval, recoverableRuntimeFailure, runtimeState, runtimeStateClass, speakRuntimeStatus } from './coding_runtime.js';
 import { newMissionAction, RESUME_LIMIT, resumeAction, resumeDecision } from './coding_failover.mjs';
 import { handoffIntent, readLiveHandoff, latestHandoff, unseenReplies, relayText, listThreads, mailboxHead, mailboxIntent, readAllMail, readThread, sendMail, speakThreads } from './mailbox.js';
@@ -7055,6 +7055,12 @@ export class CheState extends DurableObject {
         return json({ detail: 'Unknown action. Use start, stop, tick or backtest.' }, 400);
       }
       // Strategy Control Center (owner, 2026-10-20): limits, pause/resume, Emergency Stop and the audit trail.
+      // The latest FundYourEdge draft (owner, 2026-10-22). Read-only: there is no send path behind it.
+      if (path === '/api/trading/fye/draft' && request.method === 'GET') {
+        if (!ownerDevice) return ownerOnly();
+        const draft = await Promise.resolve().then(() => this.ctx.storage.get('fye_draft')).catch(() => null);
+        return json({ ok: true, status: FYE_STATUS, draft: draft || null, order_sent: false });
+      }
       if (path === '/api/trading/controls' && request.method === 'GET') {
         if (!ownerDevice) return ownerOnly();
         return json(await this.tradingControlsView());
@@ -9417,6 +9423,10 @@ export class CheState extends DurableObject {
           // vaguer question first. Only a whole sentence that is one order cancel qualifies.
           const chartOwnedDelete = !body.attachment && Boolean(cancelOrderIntent(message));
           const deskGrant = stockTurn?.paper || deskOwned ? { ...ownerGrant, money: true } : ownerGrant;
+          // A FundYourEdge order is refused before the money hold: there is nothing a "yes" could approve, and no
+          // pending action is stored. (orderBrokerReady: true keeps a generic futures order out of this check.)
+          const fyeOrder = ownerDevice && !body.attachment && fundyouredgeIntent(message, { orderBrokerReady: true })?.kind === 'order';
+          if (fyeOrder) return ndjsonReply(fundyouredgeReply(message, { orderBrokerReady: true }), { source: 'che_brokerage', ok: false, model_calls: 0, order_sent: false });
           const ownerGate = gateOwnerAction(message, chartOwnedDelete ? { ...deskGrant, delete: true } : deskGrant);
           if (!ownerGate.allowed) {
             await this.ctx.storage.put(PENDING_OWNER_ACTION_KEY, { kinds: ownerGate.kinds, text: message, at: Date.now() });
@@ -10047,6 +10057,13 @@ export class CheState extends DurableObject {
         // prepares or places an order for it.
         const orderBrokerReady = ownerDevice && !chatOnlyEvaluation
           ? (await brokerConnection(this.ctx.storage).catch(() => ({ connected: false })))?.connected === true : false;
+        // A trade draft (owner, 2026-10-22) is prepared read-only and stored as a record only: nothing is sent.
+        const brokerIntent = ownerDevice && !chatOnlyEvaluation ? fundyouredgeIntent(message, { orderBrokerReady }) : null;
+        if (brokerIntent?.kind === 'draft') {
+          const draft = fundyouredgeDraft(message, { account: brokerIntent.account });
+          await this.ctx.storage.put('fye_draft', draft);
+          return ndjsonReply(fundyouredgeDraftReply(draft), { source: 'che_fye_draft', ok: true, model_calls: 0, order_sent: false });
+        }
         const brokerReply = ownerDevice && !chatOnlyEvaluation ? fundyouredgeReply(message, { orderBrokerReady }) : null;
         if (brokerReply) return ndjsonReply(brokerReply, { source: 'che_brokerage', ok: false, model_calls: 0 });
         const exam = ownerDevice && !chatOnlyEvaluation && !isExistingChangeCommand(selfUpdateChatIntent(message)) ? examIntent(message) : null;
