@@ -207,7 +207,9 @@ class _CheMiniPersonState extends State<CheMiniPerson> with SingleTickerProvider
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    final reduced = CheMotion.reduced(context);
+    // A hidden tab (TickerMode off) counts as still: the shared idle clock is a timer, not a ticker, so it would keep
+    // redrawing figures nobody can see (latency, owner 2026-10-22).
+    final reduced = CheMotion.reduced(context) || !TickerMode.valuesOf(context).enabled;
     final first = !_depsReady;
     _depsReady = true;
     if (first || reduced != _reduced) {

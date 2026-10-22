@@ -44,6 +44,7 @@ extension _CheHomeSecurity on _CHEHomeState {
   }
 
   Future<void> _clearSecuritySession() async {
+    _lastAgentStateBody = null;
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('che_agent_device_token');
 
@@ -396,12 +397,21 @@ extension _CheHomeSecurity on _CHEHomeState {
 
       if (response.statusCode != 200) return;
 
-      // Keep the phone's copy of CHE's library current for offline recall.
-      unawaited(_offlineLibrary.sync(cheAgentBaseUrl, _authHeaders));
-      unawaited(_syncBrainReplica());
-      unawaited(_refreshMailboxBadge());
+      // Keep the phone's copy of CHE's library and Brain current for offline recall, at most every 5 minutes (a
+      // requested refresh always syncs). The mailbox badge has its own 45-second timer.
+      final now = DateTime.now();
+      if (!silent || now.difference(_lastStateSideSync) >= const Duration(minutes: 5)) {
+        _lastStateSideSync = now;
+        unawaited(_offlineLibrary.sync(cheAgentBaseUrl, _authHeaders));
+        unawaited(_syncBrainReplica());
+        unawaited(_refreshMailboxBadge());
+      }
 
-      final data = jsonDecode(response.body);
+      // Unchanged state: nothing to decode and nothing to rebuild.
+      if (silent && response.body == _lastAgentStateBody) return;
+      _lastAgentStateBody = response.body;
+      // A large state is decoded off the UI thread so taps and animations never wait for it.
+      final data = response.body.length > 32 * 1024 ? await compute(jsonDecode, response.body) : jsonDecode(response.body);
 
       final memoryData = (data['memories'] as List?) ?? const [];
       final memoryRecordData = (data['memory_records'] as List?) ?? const [];

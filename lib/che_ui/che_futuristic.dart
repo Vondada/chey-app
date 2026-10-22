@@ -202,7 +202,8 @@ class _CheEnergyRingState extends State<CheEnergyRing> with SingleTickerProvider
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
+    // Its own layer: the ring's frames never repaint the panel, the glass or the screen around it.
+    return RepaintBoundary(child: SizedBox(
       width: widget.size,
       height: widget.size,
       child: AnimatedBuilder(
@@ -215,7 +216,7 @@ class _CheEnergyRingState extends State<CheEnergyRing> with SingleTickerProvider
         ),
         child: Center(child: widget.child),
       ),
-    );
+    ));
   }
 }
 

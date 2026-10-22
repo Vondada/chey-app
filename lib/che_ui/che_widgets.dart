@@ -100,8 +100,14 @@ class _GlowCardState extends State<GlowCard> with SingleTickerProviderStateMixin
     if (old.active != widget.active && !CheMotion.reduced(context)) _sync();
   }
 
+  // The border turns only while the card is active; an idle card is drawn still (latency, owner 2026-10-22: an always
+  // spinning border on every idle card kept the phone drawing frames for nothing).
   void _sync() {
-    _c.duration = Duration(milliseconds: widget.active ? 1600 : 6000);
+    if (!widget.active) {
+      _c.stop();
+      return;
+    }
+    _c.duration = const Duration(milliseconds: 1600);
     _c.repeat(); // restart so the new speed applies immediately
   }
 
@@ -110,7 +116,7 @@ class _GlowCardState extends State<GlowCard> with SingleTickerProviderStateMixin
     super.didChangeDependencies();
     if (CheMotion.reduced(context)) {
       _c.stop();
-    } else if (!_c.isAnimating) {
+    } else if (widget.active && !_c.isAnimating) {
       _c.repeat();
     }
   }

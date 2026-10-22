@@ -446,6 +446,10 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   String _fishStatus = '';
   bool _naturalVoiceServerErrored = false;
   bool _loadingAgentState = false;
+  // Latency (owner, 2026-10-22: "laggy when I click on different buttons"): the 15-second state poll skips the decode
+  // and the whole-app rebuild when the Worker's state is unchanged, and the heavy syncs run at most every 5 minutes.
+  String? _lastAgentStateBody;
+  DateTime _lastStateSideSync = DateTime.fromMillisecondsSinceEpoch(0);
   int _speechTurn = 0;
 
   // Single authority for automatic mic restarts (see che_mic_supervisor.dart).
@@ -1958,11 +1962,14 @@ OWNER AGENCY
             index: _officePane,
             sizing: StackFit.expand,
             children: [
-              CheOfficeFloorScreen(
+              TickerMode(
+                enabled: _officePane == 0,
+                child: CheOfficeFloorScreen(
                 client: _agentRuntime,
                 embedded: true,
                 onSpeak: (text) => speakText(text, record: false, readOnDemand: true),
                 onTalkToChe: () => _goShellTab(1),
+                ),
               ),
               CheProjectsBoard(
                 embedded: true,
@@ -2369,12 +2376,18 @@ OWNER AGENCY
             child: IndexedStack(
               index: _shellTab,
               sizing: StackFit.expand,
+              // Hidden tabs keep their state but not their animations: IndexedStack alone leaves every tab's tickers
+              // running, so the Office crew, CHE's orb and glowing cards animated off screen and slowed every tap.
+              // Each tab also repaints on its own layer.
               children: [
-                _buildHomeTab(agents),
-                _buildChatTab(agents),
-                _buildOfficeTab(),
-                const SizedBox.shrink(),
-                _buildMoreTab(),
+                for (final (i, tab) in [
+                  _buildHomeTab(agents),
+                  _buildChatTab(agents),
+                  _buildOfficeTab(),
+                  const SizedBox.shrink(),
+                  _buildMoreTab(),
+                ].indexed)
+                  TickerMode(enabled: i == _shellTab, child: RepaintBoundary(child: tab)),
               ],
             ),
           ),

@@ -74,8 +74,9 @@ class CheHudBackdrop extends StatelessWidget {
   Widget build(BuildContext context) {
     return CustomPaint(
       painter: _HudBackdropPainter(aura: aura ?? CheHud.iceDeep, floor: floor),
-      // Fills its space like the earlier background did.
-      child: SizedBox.expand(child: child),
+      // Fills its space like the earlier background did. The content repaints on its own layer, so a moving part
+      // (CHE's reactor, a typing caret) never repaints the backdrop.
+      child: SizedBox.expand(child: RepaintBoundary(child: child)),
     );
   }
 }
@@ -175,7 +176,7 @@ class CheGlass extends StatelessWidget {
     this.radius = 24,
     this.padding = EdgeInsets.zero,
     this.glow,
-    this.blur = true,
+    this.blur = false,
     this.tint,
     this.shadow = true,
   });
@@ -184,6 +185,8 @@ class CheGlass extends StatelessWidget {
   final double radius;
   final EdgeInsetsGeometry padding;
   final Color? glow;
+  /// Frosts what is behind the pane. Off by default: CHE's panes sit over the painted backdrop, not over moving
+  /// content, and a blur on every panel costs the iPhone a full-screen pass per panel per frame (owner, 2026-10-22: laggy).
   final bool blur;
   final Color? tint;
   final bool shadow;
