@@ -72,7 +72,7 @@ import { answerOwnerMemoryQuestion, auditMemoryProvenance, evidenceQuestion, evi
 import { condenseHistory, ownerNotificationPolicy } from './workflow_governor.js';
 import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, nextTradingTickAt, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
 import { intelligenceIntent, intelligenceReport, intelligenceView, speakIntelligence, startStudy, studyAlarm, studyStep } from './historical_intelligence.js';
-import { applyRightsAction, defensibility, musicRightsIntent, releaseReadiness, songFor, speakReadiness } from './music_rights.js';
+import { applyRightsAction, applySpokenRightsWrite, defensibility, musicRightsIntent, musicRightsWriteIntent, releaseReadiness, songFor, speakReadiness } from './music_rights.js';
 import { nextStrategySimTickAt, setStrategySimCeiling, setStrategySimPaused, speakStrategySim, strategySimIntent, strategySimTick, strategySimView, strategySimWake } from './strategy_sim.js';
 import { evidenceIntent, evidenceReport, evidenceTick } from './trading_evidence_runner.js';
 import { readTrades } from './trading_evidence.js';
@@ -11114,6 +11114,14 @@ export class CheState extends DurableObject {
             source: LEDGER_SOURCE, ok: true, model_calls: 0, kind: ledger.kind,
             ledgers: ledgers.map(({ id, trades, unavailable }) => ({ id, trades, unavailable: Boolean(unavailable) })),
           });
+        }
+        // Music rights by voice or typing: add a song, a sample, splits or a licence on the stored record.
+        const rightsWrite = !body.attachment && musicRightsWriteIntent(message);
+        if (rightsWrite) {
+          if (!ownerDevice) return ndjsonReply('Only the CHE owner can change a song\'s rights, sir.', { source: 'che_music_rights', ok: false });
+          const done = applySpokenRightsWrite(data, rightsWrite);
+          if (done.changed) await this.ctx.storage.put('che', data);
+          return ndjsonReply(done.text, { source: 'che_music_rights', model_calls: 0, ok: done.ok });
         }
         // Music release readiness and "can we defend this?", from the song's stored rights records only.
         const rightsAsk = !body.attachment && musicRightsIntent(message);

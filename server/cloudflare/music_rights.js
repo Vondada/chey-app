@@ -108,6 +108,8 @@ export function validateSplits(splits = []) {
     if (unsigned.length) issues.push(`${label}: no signed agreement on file for ${unsigned.map((r) => r.name || 'unnamed').join(', ')}.`);
   }
   if (!splits.length) issues.push('No collaborators or splits are recorded.');
+  const unknown = splits.filter((r) => !r || !Object.hasOwn(SPLIT_GROUPS, r.group));
+  if (unknown.length) issues.push(`${unknown.length} split row${unknown.length === 1 ? ' has' : 's have'} no recognised group (songwriting, publishing or master).`);
   return { ok: issues.length === 0, issues, totals };
 }
 
@@ -215,13 +217,23 @@ export function applyRightsAction(data, body = {}, now = new Date().toISOString(
     if (typeof body.artwork === 'string') m.artwork = body.artwork;
     return { status: 200, body: { metadata: m.metadata, artwork: m.artwork } };
   }
+  if (action === 'add_version') {
+    const v = body.version || {};
+    const kinds = ['original', 'stem', 'mix', 'master', 'album_master', 'instrumental', 'clean', 'preview'];
+    if (!kinds.includes(v.kind)) return { status: 400, body: { detail: `A version needs a kind: ${kinds.join(', ')}.` } };
+    if (!/^[0-9a-f]{64}$/i.test(String(v.sha256 || ''))) return { status: 400, body: { detail: 'A version needs the SHA-256 checksum of its file.' } };
+    const inputs = (Array.isArray(v.inputs) ? v.inputs : []).map((i) => ({ provenance: PROVENANCE.includes(i?.provenance) ? i.provenance : 'UNKNOWN', name: String(i?.name || '').slice(0, 120) }));
+    const version = { id: `ver_${crypto.randomUUID()}`, kind: v.kind, label: String(v.label || v.kind).slice(0, 80), sha256: v.sha256.toLowerCase(), inputs, added_at: now, ...(v.derived_from ? { derived_from: String(v.derived_from) } : {}) };
+    m.versions.push(version); // versions are only ever added: an earlier file record is never replaced
+    return { status: 200, body: { version } };
+  }
   if (action === 'readiness') {
     const r = releaseReadiness(project, Date.parse(now));
     return { status: 200, body: { readiness: r, speech: speakReadiness(r, project.title) } };
   }
   if (action === 'defend') return { status: 200, body: defensibility(project, Date.parse(now)) };
   if (action === 'read') return { status: 200, body: { project, readiness: releaseReadiness(project, Date.parse(now)) } };
-  return { status: 400, body: { detail: 'Unknown action. Use create_song, add_sample, attach_license, set_splits, set_metadata, readiness, defend or read.' } };
+  return { status: 400, body: { detail: 'Unknown action. Use create_song, add_version, add_sample, attach_license, set_splits, set_metadata, readiness, defend or read.' } };
 }
 
 /// "Is Midnight ready to release?", "check my samples and splits", "can we defend this song?".
@@ -238,5 +250,70 @@ export function musicRightsIntent(message) {
 export function songFor(data, message) {
   const songs = (data.projects || []).filter((p) => p && p.type === 'music');
   const lower = String(message || '').toLowerCase();
-  return songs.find((p) => p.title && lower.includes(String(p.title).toLowerCase())) || songs[0] || null;
+  // The longest title the message names wins, so "Love Again" is never answered as "Love".
+  const named = songs.filter((p) => p.title && lower.includes(String(p.title).toLowerCase()))
+    .sort((a, b) => String(b.title).length - String(a.title).length);
+  return named[0] || songs[0] || null;
+}
+
+/// Owner writes by voice or typing, turned into the same actions the API uses:
+///   "Add a song called Midnight"
+///   "Add a sample called Soul vocal to Midnight from Example Sounds"
+///   "Set the splits for Midnight: Owner 60, Feature 40, all signed"   (songwriting unless a group is named)
+///   "Attach the licence for Soul vocal on Midnight: invoice 1042, royalty-free, commercial use allowed"
+export function musicRightsWriteIntent(message) {
+  const text = String(message || '').trim().replace(/[.!?]+$/, '');
+  const unq = (x) => String(x || '').trim().replace(/^["“']|["”']$/g, '').trim();
+  let m = text.match(/^(?:che,?\s*)?(?:add|create|start)\s+(?:a\s+)?(?:new\s+)?song\s+(?:called|named|titled)\s+(.+)$/i);
+  if (m) return { action: 'create_song', title: unq(m[1]) };
+  m = text.match(/^(?:che,?\s*)?add\s+(?:a\s+)?sample\s+(?:called|named)\s+(.+?)\s+to\s+(.+?)(?:\s+from\s+(.+))?$/i);
+  if (m) return { action: 'add_sample', song: unq(m[2]), sample: { name: unq(m[1]), provenance: 'LICENSED', ...(m[3] ? { source: unq(m[3]) } : {}) } };
+  m = text.match(/^(?:che,?\s*)?(?:set|record|enter)\s+(?:the\s+)?(songwriting|publishing|master)?\s*splits?\s+(?:for|on)\s+(.+?):\s*(.+)$/i);
+  if (m) {
+    const group = (m[1] || 'songwriting').toLowerCase();
+    const signed = /\ball signed\b/i.test(m[3]);
+    const rows = m[3].replace(/,?\s*all signed\b/i, '').split(/,|\band\b/).map((p) => p.trim()).filter(Boolean).map((p) => {
+      const r = p.match(/^(.+?)\s+(\d+(?:\.\d+)?)\s*(?:%|percent)?$/i);
+      return r ? { group, name: r[1].trim(), percent: Number(r[2]), agreement: signed ? 'signed' : 'pending' } : { group, name: p, percent: null, agreement: signed ? 'signed' : 'pending' };
+    });
+    return { action: 'set_splits', song: unq(m[2]), splits: rows };
+  }
+  m = text.match(/^(?:che,?\s*)?(?:attach|add|record)\s+(?:the\s+)?licen[cs]e\s+for\s+(.+?)\s+on\s+(.+?):\s*(.+)$/i);
+  if (m) {
+    const detail = m[3];
+    const commercial = /\b(?:non[- ]?commercial|no commercial|NC\b)/i.test(detail) ? false : /\bcommercial(?: use)?(?: is)? (?:allowed|ok|okay|permitted|yes)\b/i.test(detail) ? true : null;
+    const cc = detail.match(/\bCC[\s-]?BY(?:[\s-](?:SA|NC|ND))*(?:[\s-]\d\.\d)?/i);
+    const type = cc ? cc[0].toUpperCase() : /royalty[- ]free/i.test(detail) ? 'Royalty-free licence' : /public domain/i.test(detail) ? 'Public domain' : 'Licence on file';
+    return { action: 'attach_license', song: unq(m[2]), sample_name: unq(m[1]), license: { license_type: type, license_ref: detail.trim(), commercial_use: commercial } };
+  }
+  return null;
+}
+
+/// Runs a spoken write against the stored records and says plainly what changed and what is still missing.
+export function applySpokenRightsWrite(data, intent, now = new Date().toISOString()) {
+  if (intent.action === 'create_song') {
+    const r = applyRightsAction(data, intent, now);
+    return r.status === 200 ? { ok: true, changed: true, text: `Added the song ${intent.title} to your Music catalog, sir. It has no versions, samples or splits yet.` } : { ok: false, text: r.body.detail };
+  }
+  const song = songFor(data, intent.song);
+  if (!song || String(song.title).toLowerCase() !== String(intent.song).toLowerCase()) return { ok: false, text: `I could not find a song called ${intent.song}, sir. Nothing was changed.` };
+  if (intent.action === 'add_sample') {
+    const r = applyRightsAction(data, { action: 'add_sample', project_id: song.id, sample: intent.sample }, now);
+    const e = r.body.evaluation;
+    return { ok: true, changed: true, text: `Added the sample ${intent.sample.name} to ${song.title}. Its rights are not verified yet: it needs ${e.missing.join(', ')}.` };
+  }
+  if (intent.action === 'set_splits') {
+    const r = applyRightsAction(data, { action: 'set_splits', project_id: song.id, splits: intent.splits }, now);
+    const c = r.body.check;
+    return { ok: true, changed: true, text: `Recorded the splits for ${song.title}. ${c.ok ? 'They reconcile and are signed.' : c.issues.join(' ')}` };
+  }
+  if (intent.action === 'attach_license') {
+    const sample = (song.music?.samples || []).find((x) => String(x.name).toLowerCase() === String(intent.sample_name).toLowerCase());
+    if (!sample) return { ok: false, text: `${song.title} has no sample called ${intent.sample_name}, sir. Nothing was changed.` };
+    const r = applyRightsAction(data, { action: 'attach_license', project_id: song.id, sample_id: sample.id, license: intent.license }, now);
+    const e = r.body.evaluation;
+    const state = e.state === 'documented' ? 'Its licence is now documented.' : e.state === 'blocked' ? `It cannot go in a release: ${e.problems.join(' ')}` : `It still needs ${e.missing.join(', ')}.`;
+    return { ok: true, changed: true, text: `Recorded the licence for ${sample.name} on ${song.title}. ${state}` };
+  }
+  return { ok: false, text: 'I did not understand that change, sir. Nothing was changed.' };
 }

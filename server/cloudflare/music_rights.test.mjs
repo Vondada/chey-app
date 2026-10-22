@@ -128,3 +128,52 @@ test('Legal and Music Manager are Office roles CHE can staff', () => {
   assert.equal(specialtyFrom('hire a coding specialist'), 'coding');
   assert.equal(specialtyFrom('find me research on markets'), 'research');
 });
+
+// Review on #455 (Codex): unknown split groups, overlapping titles, recording versions, voice/typed writes.
+import { applyRightsAction, songFor, musicRightsWriteIntent, applySpokenRightsWrite } from './music_rights.js';
+
+test('a split row with an unrecognised group never passes as reconciled', () => {
+  const r = validateSplits([{ group: 'songwritting', name: 'Owner', percent: 100, agreement: 'signed' }]);
+  assert.equal(r.ok, false);
+  assert.match(r.issues.join(' '), /no recognised group/);
+});
+
+test('the longest title the owner names wins ("Love Again" is never answered as "Love")', () => {
+  const data = { projects: [{ id: 'a', type: 'music', title: 'Love' }, { id: 'b', type: 'music', title: 'Love Again' }] };
+  assert.equal(songFor(data, 'Is Love Again ready to release?').id, 'b');
+  assert.equal(songFor(data, 'Is Love ready to release?').id, 'a');
+});
+
+test('versions can be recorded (append only, with a checksum), so a song can reach its Master check', () => {
+  const data = { projects: [] };
+  const id = applyRightsAction(data, { action: 'create_song', title: 'Midnight' }).body.project.id;
+  assert.equal(applyRightsAction(data, { action: 'add_version', project_id: id, version: { kind: 'master', sha256: 'nope' } }).status, 400);
+  const v1 = applyRightsAction(data, { action: 'add_version', project_id: id, version: { kind: 'original', sha256: 'b'.repeat(64), inputs: [{ provenance: 'OWNER_ORIGINAL' }] } });
+  const v2 = applyRightsAction(data, { action: 'add_version', project_id: id, version: { kind: 'master', label: 'Master v1', sha256: 'a'.repeat(64), inputs: [{ provenance: 'OWNER_ORIGINAL' }], derived_from: v1.body.version.id } });
+  assert.equal(v2.status, 200);
+  const r = releaseReadiness(data.projects[0], NOW);
+  assert.equal(r.items.find((i) => i.id === 'master').ok, true);
+  assert.equal(data.projects[0].music.versions.length, 2, 'the original is kept next to the master');
+});
+
+test('every rights write works by voice or typing, and says what is still missing', () => {
+  const data = { projects: [] };
+  const say = (t) => applySpokenRightsWrite(data, musicRightsWriteIntent(t), '2026-10-22T12:00:00Z');
+  assert.match(say('CHE, add a song called Midnight').text, /Added the song Midnight/);
+  const sample = say('Add a sample called Soul vocal to Midnight from Example Sounds');
+  assert.match(sample.text, /not verified yet: it needs the licence type/);
+  const splits = say('Set the splits for Midnight: Owner 60, Feature 30, all signed');
+  assert.match(splits.text, /Songwriting shares total 90%, not 100%/);
+  assert.match(say('Set the splits for Midnight: Owner 60, Feature 40, all signed').text, /reconcile and are signed/);
+  const nc = say('Attach the licence for Soul vocal on Midnight: CC BY-NC 4.0 from freesound');
+  assert.match(nc.text, /cannot go in a release: The licence does not allow commercial use/);
+  const ok = say('Attach the licence for Soul vocal on Midnight: invoice 1042, royalty-free, commercial use allowed');
+  assert.match(ok.text, /licence is now documented/);
+  assert.match(say('Add a sample called X to Nowhere').text, /could not find a song called Nowhere.*Nothing was changed/);
+  assert.equal(musicRightsWriteIntent('What time is it?'), null);
+  // The same records drive readiness: add a master, artwork and metadata, and the song is READY.
+  const song = data.projects[0];
+  applyRightsAction(data, { action: 'add_version', project_id: song.id, version: { kind: 'master', sha256: 'c'.repeat(64), inputs: [{ provenance: 'OWNER_ORIGINAL' }] } });
+  applyRightsAction(data, { action: 'set_metadata', project_id: song.id, metadata: { artist: 'Owner', genre: 'Hip-Hop', explicit: false }, artwork: 'art.png' });
+  assert.equal(releaseReadiness(song, NOW).status, 'READY');
+});
