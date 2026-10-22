@@ -72,7 +72,9 @@ import { answerOwnerMemoryQuestion, auditMemoryProvenance, evidenceQuestion, evi
 import { condenseHistory, ownerNotificationPolicy } from './workflow_governor.js';
 import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, nextTradingTickAt, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
 import { intelligenceIntent, intelligenceReport, intelligenceView, speakIntelligence, startStudy, studyAlarm, studyStep } from './historical_intelligence.js';
-import { applyRightsAction, applySpokenRightsWrite, defensibility, musicRightsIntent, musicRightsWriteIntent, releaseReadiness, songFor, speakReadiness } from './music_rights.js';
+import { evaluateSample, applyRightsAction, applySpokenRightsWrite, defensibility, musicRightsIntent, musicRightsWriteIntent, releaseReadiness, songFor, speakReadiness } from './music_rights.js';
+import { ACTIVITIES, JURISDICTIONS, SOURCES, LEGAL_INDEX, activitiesIn, checkUpdates, defenseArguments, findAlternatives, jurisdiction as legalPlace, legalAnswer, legalDifferences, legalIntent, loadLegal, recordDecision, recordsFor, releaseLegalCheck, saveLegal, speakDifferences, subscribe as legalSubscribe, verifyRecord } from './legal_intelligence.js';
+import { analyzeContract } from './legal_contracts.js';
 import { addBeat, addLedger, addWorkspace, addWorkspaceSong, advanceAgreement, applySpokenBusiness, approveQuote, artistReport, beatListing, businessDashboard, deliveryPackage, draftQuote, musicBusinessIntent, recordBeatSale, recordFeedback, resolveSpokenBusiness, setService, workspaceById, workspaceView } from './music_business.js';
 import { matrixIntent, readMatrix, runMatrix, speakMatrix } from './backtest_matrix.js';
 import { nextStrategySimTickAt, setStrategySimCeiling, setStrategySimPaused, speakStrategySim, strategySimIntent, strategySimTick, strategySimView, strategySimWake } from './strategy_sim.js';
@@ -3627,6 +3629,18 @@ async function runChatModel(env, { model, systemPrompt, compactPrompt, turns, me
   throw lastError;
 }
 
+/// What the owner is actually doing, from his records, for legal-difference checks: music projects with samples,
+/// a running music business, collaborators. Nothing else is assumed.
+function activeLegalActivities(data = {}) {
+  const acts = new Set();
+  const projects = Array.isArray(data.projects) ? data.projects : [];
+  if (projects.some((p) => p?.music?.samples?.length)) acts.add('sampling');
+  if (projects.some((p) => p?.type === 'music')) acts.add('copyright_use');
+  if ((data.music_workspaces || []).length || (data.pipeline || []).length) { acts.add('business_license'); acts.add('endorsement'); }
+  acts.add('recording');
+  return [...acts];
+}
+
 export class CheState extends DurableObject {
   constructor(state, env) {
     super(state, env);
@@ -4021,6 +4035,97 @@ export class CheState extends DurableObject {
       const event = paperOrderRefusedEvent(order, placed, { via });
       if (event) await queueRoomEvent(this.ctx.storage, event);
     } catch (_) { /* a Brain record never blocks a trading answer */ }
+  }
+
+  /// One legal question: the place it is about, live checks of the governing official sources where CHE can read
+  /// them, and the compact answer. The place comes from the words, else where the owner said he is, else home.
+  async legalAsk(legal, question, { jurisdictionId = null, facts = {}, verify = true, activity = null, here = false } = {}) {
+    const placeId = jurisdictionId || legal.settings.current || legal.settings.home || null;
+    if (!placeId) return legalAnswer(question, { facts, activity });
+    const act = activity || activitiesIn(question)[0] || null;
+    const verified = { ...legal.verified };
+    if (verify && act) {
+      const records = recordsFor(act, placeId).slice(0, 6);
+      const checks = await Promise.all(records.map((r) => verifyRecord(r, { previous: legal.verified[r.id], timeoutMs: 4000 })));
+      for (const c of checks) if (c.verified) { verified[c.id] = c; legal.verified[c.id] = { hash: c.hash, amended: c.amended, retrieved: c.retrieved, excerpt: c.excerpt }; }
+      if (checks.some((c) => c.verified)) await saveLegal(this.ctx.storage, legal);
+    }
+    const out = legalAnswer(question, { jurisdictionId: placeId, facts, verified, activity: act });
+    if (here && !jurisdictionId && !legal.settings.current) out.text = `I'm using ${legalPlace(placeId)?.name}, your home. If you're somewhere else, tell me where. ${out.text}`;
+    return out;
+  }
+
+  /// Legal by voice or typing. Returns { text, ok, extra } or null when the words were not a legal request.
+  async legalChat(ask, message, { ownerDevice, attachment } = {}) {
+    const legal = await loadLegal(this.ctx.storage);
+    const ownerOnly = { text: 'Only the CHE owner can change legal settings or read the legal log, sir.', ok: false };
+    if (ask.kind === 'contract') {
+      if (!ownerDevice) return ownerOnly;
+      let text = '';
+      try { text = new TextDecoder().decode(Uint8Array.from(atob(String(attachment.base64 || '')), (c) => c.charCodeAt(0))); } catch { text = ''; }
+      const out = analyzeContract(text, { name: attachment.name || 'Contract', home: legalPlace(legal.settings.home)?.name || null });
+      if (!out.ok) return { text: out.why, ok: false };
+      legal.contracts.push(out);
+      await saveLegal(this.ctx.storage, legal);
+      return { text: out.spoken, extra: { flags: out.flags, missing: out.missing } };
+    }
+    if (ask.kind === 'setting' || ask.kind === 'home' || ask.kind === 'location' || ask.kind === 'decisions' || ask.kind === 'updates') {
+      if (!ownerDevice) return ownerOnly;
+    }
+    if (ask.kind === 'setting') {
+      legal.settings[ask.key] = ask.value;
+      if (ask.key === 'location_differences' && !ask.value) legal.settings.current = null;
+      await saveLegal(this.ctx.storage, legal);
+      return { text: `${ask.key === 'location_differences' ? 'Location-aware legal differences' : 'Proactive legal warnings'} are ${ask.value ? 'on' : 'off'}, sir.${ask.key === 'location_differences' && ask.value ? ' I only use the state or country you tell me or that your phone shares, never a precise location, and only for what you are doing.' : ''}` };
+    }
+    if (ask.kind === 'home') {
+      legal.settings.home = ask.place;
+      await saveLegal(this.ctx.storage, legal);
+      return { text: `Got it: ${legalPlace(ask.place).name} is your home jurisdiction for legal answers.` };
+    }
+    if (ask.kind === 'location') {
+      const to = legalPlace(ask.place);
+      if (!legal.settings.location_differences) {
+        return { text: `Location-aware legal differences are off, so I have not saved where you are. Say "turn on location legal alerts" and I will check what changes in ${to.name} for what you are doing.` };
+      }
+      legal.settings.current = ask.place;
+      await saveLegal(this.ctx.storage, legal);
+      if (!legal.settings.home) return { text: `Noted: you are in ${to.name}. Tell me your home state or country and I will compare the rules for what you are doing.` };
+      const activities = activeLegalActivities(await this.loadData());
+      const diffs = legalDifferences({ from: legal.settings.home, to: ask.place, activities, categories: legal.settings.categories });
+      return { text: speakDifferences(diffs, to.name), extra: { differences: diffs } };
+    }
+    if (ask.kind === 'decisions') {
+      if (!legal.decisions.length) return { text: 'No legal decisions are recorded yet.' };
+      return { text: legal.decisions.slice(-5).reverse().map((d) => `${d.project ? `${d.project}: ` : ''}${d.issue}. Decision: ${d.decision}.${d.evidence ? ` Evidence: ${d.evidence}.` : ''} ${d.at.slice(0, 10)}.`).join(' ') };
+    }
+    if (ask.kind === 'updates') {
+      if (!legal.subscriptions.length) return { text: 'No laws are being followed yet. When a project relies on a rule, I follow that rule for changes.' };
+      const r = await checkUpdates(legal);
+      await saveLegal(this.ctx.storage, legal);
+      const fresh = r.alerts.filter((x) => Date.parse(x.at) > Date.now() - 60_000);
+      return { text: `Checked ${r.checked} followed rule${r.checked === 1 ? '' : 's'}; ${r.verified} read live from the official source${r.failed.length ? `, ${r.failed.length} could not be read (${r.failed[0].why})` : ''}. ${fresh.length ? fresh.map((x) => x.text).join(' ') : 'No material changes found.'}` };
+    }
+    if (ask.kind === 'coverage') {
+      const j = ask.place ? legalPlace(ask.place) : null;
+      if (!j) return { text: 'Which state or country?' };
+      const c = j.coverage;
+      const count = LEGAL_INDEX.filter((r) => r.jurisdiction === j.id).length;
+      return { text: `${j.name}: ${j.status}. Statutes ${c.statutes}, regulations ${c.regulations}, courts ${c.courts}, local law ${c.local}. ${count} indexed record${count === 1 ? '' : 's'}. ${c.official_source ? `Official source: ${c.official_source}.` : 'No official source registered yet.'}` };
+    }
+    // ask / alternative
+    if (!ask.activities.length && !ask.place) {
+      return { text: 'What are you planning to do, and where? Tell me the activity and the state or country, and I will check the rule, how sure I am, and a lawful way to do it.' };
+    }
+    if (ask.here && !legal.settings.current && !legal.settings.home && !ask.place) {
+      return { text: 'Where are you? Tell me the state or country. I do not track your location unless you turn on location legal alerts.' };
+    }
+    const out = await this.legalAsk(legal, message, { jurisdictionId: ask.place, facts: ask.facts || {}, here: ask.here });
+    if (ask.kind === 'alternative' && out.status === 'answered' && out.alternatives?.length) {
+      const list = out.alternatives.slice(0, 3).map((x, i) => `${i + 1}. ${x.option}: ${x.steps.join('; ')}${x.approver && x.approver !== 'none' ? ` (approval: ${x.approver})` : ''}.`).join(' ');
+      return { text: `${out.text} Lawful ways to reach the same goal: ${list}`, extra: { risk: out.risk, sources: out.sources } };
+    }
+    return { text: out.text, extra: { risk: out.risk || null, sources: out.sources || [], confidence: out.confidence || null } };
   }
 
   async tradingControl(change, { who = 'owner', confirm = false } = {}) {
@@ -7113,6 +7218,39 @@ export class CheState extends DurableObject {
         return json({ ...result, spoken: speakControlResult(result), view: await this.tradingControlsView() }, result.ok || result.needs_confirmation ? 200 : 400);
       }
       // Strategy simulation (step a): paper minute-bar strategies. Read and the kill switch are owner-only; nothing here orders or spends.
+      // Legal Intelligence (owner, 2026-10-22). Owner only: settings, decisions, contracts and alerts are private.
+      if (path === '/api/legal' && (request.method === 'GET' || request.method === 'POST')) {
+        if (!ownerDevice) return json({ detail: 'Only the CHE owner can use Legal Intelligence.' }, 403);
+        const legal = await loadLegal(this.ctx.storage);
+        if (request.method === 'GET') {
+          return json({
+            settings: legal.settings, decisions: legal.decisions.slice(-50), alerts: legal.alerts, subscriptions: legal.subscriptions,
+            contracts: legal.contracts.map(({ name, analyzed_at, flags, found, missing, attorney }) => ({ name, analyzed_at, flags, found, missing, attorney })),
+            coverage: JURISDICTIONS.map((j) => ({ id: j.id, name: j.name, level: j.level, status: j.status, ...j.coverage, last_indexed: LEGAL_INDEX.filter((r) => r.jurisdiction === j.id).length ? 'with this release' : null })),
+            sources: SOURCES, index: LEGAL_INDEX.map(({ id, jurisdiction: jid, citation, title, kind, effective, repealed, confidence }) => ({ id, jurisdiction: jid, citation, title, kind, effective, repealed, confidence, last_verified: legal.verified[id]?.retrieved || null })),
+          });
+        }
+        const a = String(body.action || '');
+        let out;
+        if (a === 'ask' || a === 'alternatives') {
+          out = await this.legalAsk(legal, String(body.question || ''), { jurisdictionId: body.jurisdiction || null, facts: body.facts || {}, verify: body.verify !== false, activity: body.activity || null });
+          if (a === 'alternatives' && out.status === 'answered') out = { ...out, goal: String(body.goal || '').slice(0, 300) || null };
+        } else if (a === 'differences') {
+          const diffs = legalDifferences({ from: body.from || legal.settings.home, to: body.to, activities: body.activities || [], categories: legal.settings.categories, facts: body.facts || {} });
+          out = { ok: true, differences: diffs, spoken: speakDifferences(diffs, legalPlace(body.to)?.name || body.to) };
+        } else if (a === 'settings') {
+          for (const [k, v] of Object.entries(body.settings || {})) if (Object.hasOwn(legal.settings, k)) legal.settings[k] = v;
+          out = { ok: true, settings: legal.settings };
+        } else if (a === 'decision') out = recordDecision(legal, body);
+        else if (a === 'subscribe') out = legalSubscribe(legal, body);
+        else if (a === 'check_updates') out = { ok: true, ...(await checkUpdates(legal)) };
+        else if (a === 'contract') {
+          out = analyzeContract(body.text, { name: body.name, home: legalPlace(legal.settings.home)?.name || null });
+          if (out.ok) legal.contracts.push({ ...out });
+        } else out = { ok: false, why: 'Unknown action.' };
+        if (a !== 'ask' && a !== 'alternatives' && a !== 'differences') await saveLegal(this.ctx.storage, legal);
+        return json(out, out.ok === false ? 400 : 200);
+      }
       // Music business (owner, 2026-10-22): clients, managed artists, services, quotes, revisions, delivery, beats, money.
       // Owner only. Every write is a preparation or a record; nothing is sent, charged, signed or released here.
       if (path === '/api/music/business' && (request.method === 'GET' || request.method === 'POST')) {
@@ -11200,10 +11338,25 @@ export class CheState extends DurableObject {
           if (!song) return ndjsonReply('There is no song in your Music catalog yet, sir. Add one and I will check its master, artwork, metadata, splits and samples.', { source: 'che_music_rights', model_calls: 0 });
           if (rightsAsk.kind === 'defend') {
             const d = defensibility(song);
-            return ndjsonReply(`${song.title}: ${d.risk}. ${d.factors.join(' ')} ${d.note}`, { source: 'che_music_rights', model_calls: 0, risk: d.risk });
+            // Legal works behind Music: the arguments the records support, graded, for the owner's place.
+            const legal = await loadLegal(this.ctx.storage);
+            const args = defenseArguments({ project: song, jurisdictionId: legal.settings.home || 'us', samples: (song.music?.samples || []).map((s) => ({ s, e: evaluateSample(s) })) });
+            const said = args.arguments.slice(0, 4).map((a) => `${a.grade}: ${a.argument}. ${a.why}`).join(' ');
+            return ndjsonReply(`${song.title}: ${d.risk}. ${d.factors.join(' ')} ${said} ${args.note}`, { source: 'che_music_rights', model_calls: 0, risk: d.risk, arguments: args.arguments });
           }
           const r = releaseReadiness(song);
-          return ndjsonReply(speakReadiness(r, song.title), { source: 'che_music_rights', model_calls: 0, readiness: r });
+          const legalCheck = releaseLegalCheck(song);
+          const legalLine = legalCheck.ok ? '' : ` Legal: ${legalCheck.items.map((i) => i.text).join(' ')}`;
+          return ndjsonReply(`${speakReadiness(r, song.title)}${legalLine}`, { source: 'che_music_rights', model_calls: 0, readiness: { ...r, legal: legalCheck } });
+        }
+        // Legal Intelligence (owner, 2026-10-22): "is this legal?", "can I do this here?", lawful alternatives,
+        // location differences, contracts, decisions and update checks. Answered from the legal index and official
+        // sources; anything not indexed is said to be a gap, never guessed.
+        const contractUpload = body.attachment && /^text\//.test(String(body.attachment.media_type || '')) && /\b(?:contract|agreement|deal memo|terms)\b/i.test(`${message} ${body.attachment.name || ''}`);
+        const legalAsk = contractUpload ? { kind: 'contract' } : !body.attachment && legalIntent(message);
+        if (legalAsk) {
+          const reply = await this.legalChat(legalAsk, message, { ownerDevice, attachment: body.attachment });
+          if (reply) return ndjsonReply(reply.text, { source: 'che_legal', model_calls: 0, ok: reply.ok !== false, ...(reply.extra || {}) });
         }
         // Timeframe backtest matrix (owner, 2026-10-22): every strategy on every timeframe CHE has data for, by hour of day.
         const matrixAsk = !body.attachment && matrixIntent(message);

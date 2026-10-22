@@ -771,7 +771,8 @@ test('chat: a coding request is durably accepted before engines run; an outage r
     // Only the words the owner sees/hears (the metadata carries a random job id).
     const text = (await res.text()).trim().split('\n').map((l) => JSON.parse(l)).filter((l) => l.type === 'delta').map((l) => l.delta).join('');
     assert.equal(res.status, 200);
-    assert.doesNotMatch(text, /429|503|groq|gemini|diagnostic|token|provide the source|filename/i);
+    // The random hex job id can itself contain "503" or "429" (b50301d9): leave it out of the check.
+    assert.doesNotMatch(text.replace(/\bjob [0-9a-f]{8}\b/gi, 'job <id>'), /429|503|groq|gemini|diagnostic|token|provide the source|filename/i);
     assert.match(text, /accepted coding job/i);
     assert.match(text, /queued, not running yet/i);
     assert.doesNotMatch(text, /engine/i, 'no engine talk to the owner');
@@ -899,7 +900,7 @@ test('end-to-end: "make one small real improvement" → recover → review → a
     await state.processJobs();
     const proposal = saved.get('che').jobs.find((j) => j.kind === 'self_development')?.owner_message || '';
     assert.doesNotMatch(proposal, /```|export default/);
-    assert.doesNotMatch(proposal, /provide|paste|filename|not provided|cannot inspect|503/i);
+    assert.doesNotMatch(proposal.replace(/\b[0-9a-f]{7,40}\b/gi, '<id>'), /provide|paste|filename|not provided|cannot inspect|503/i);
     // 2. Full autonomy: after independent review CHE opens the draft PR
     //    herself and reports the real PR; merging stays the owner's.
     assert.match(proposal, /independently reviewed[\s\S]*Real draft PR #77 is open[\s\S]*say "merge"/, proposal);
@@ -1004,7 +1005,7 @@ test('one-button "Update CHE": one approval → PR → merge after CI → verifi
     const proposal = saved.get('che').jobs.find((j) => j.kind === 'self_development')?.owner_message || '';
     assert.match(proposal, /Real draft PR #77 is open/, proposal);
     assert.doesNotMatch(proposal, /```|export default/);
-    assert.doesNotMatch(proposal, /provide|paste|filename|not provided|cannot inspect|503/i);
+    assert.doesNotMatch(proposal.replace(/\b[0-9a-f]{7,40}\b/gi, '<id>'), /provide|paste|filename|not provided|cannot inspect|503/i);
     // 2. One owner approval: PR opens and the merge is authorized together.
     const shipped = await replyOf(await chat('Update CHE'));
     // The PR is already open (CHE opened it); "Update CHE" is the merge approval.

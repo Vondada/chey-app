@@ -18,7 +18,7 @@ const SPECIALTIES = {
   analysis: { title: 'Analyst', capability: 'deep_reasoning', specialty: 'comparing results, data and evidence' },
   review: { title: 'QA/Security Reviewer', capability: 'deep_reasoning', specialty: 'quality, security and correctness review' },
   // Music Studio roles (owner, 2026-10-22). The owner talks to CHE; CHE delegates to these and answers once.
-  legal: { title: 'Legal Research', capability: 'deep_reasoning', specialty: 'copyright, music licensing, samples, contracts, splits and trademarks: research and organisation, not a licensed attorney' },
+  legal: { title: 'Legal Intelligence', capability: 'deep_reasoning', specialty: 'legal research, compliance, contracts, rights, lawful alternatives, jurisdiction differences and evidence organisation, from cited official sources: not a licensed attorney' },
   music_manager: { title: 'Music Manager', capability: 'deep_reasoning', specialty: 'catalog, releases, metadata, splits, royalties, opportunities and promotion plans' },
 };
 

@@ -1116,3 +1116,38 @@ test('music business by voice: services, songs, quote approval, client feedback 
   assert.match(delivery.reply, /Waiting for payment|not tied to one quote/);
   assert.notEqual((await che.say('The bank approved my loan')).route, 'che_music_business', 'unknown names are not business actions');
 });
+
+test('Legal Intelligence by voice: home, "can I record somebody here?", a location change, a contract upload and one exclusive-sale answer', async () => {
+  const che = await owner();
+  assert.match((await che.say('Can I record somebody here?')).reply, /Where are you\? .*I do not track your location/);
+  assert.match((await che.say('My home state is Louisiana')).reply, /Louisiana is your home jurisdiction/);
+  const ask = await che.say('Can I record somebody here?');
+  assert.equal(ask.route, 'che_legal');
+  assert.equal(ask.modelCalls, 0);
+  assert.match(ask.reply, /Will you be part of the conversation you record\?/);
+  const mine = await che.say("Can I record a call I'm on here?");
+  assert.match(mine.reply, /Probably yes\. Louisiana law \(La\. R\.S\. 15:1303\) allows recording a conversation you take part in.*not checked live today/);
+  // Location stays off until the owner turns it on; then only his activities are compared.
+  assert.match((await che.say("I'm in California now, is there anything relevant that changed?")).reply, /Location-aware legal differences are off/);
+  assert.match((await che.say('Turn on location legal alerts')).reply, /never a precise location/);
+  const moved = await che.say("I'm in California now, is there anything relevant that changed?");
+  assert.match(moved.reply, /Legal difference \(IMPORTANT\): In California, Cal\. Penal Code § 632 requires the consent of everyone/);
+  assert.match(moved.reply, /Lawful option: Ask everyone for consent/);
+  // A contract upload: terms quoted from the text, flags, nothing invented.
+  const text = 'This producer agreement is made by and between Beat Lab LLC and the Artist. Artist assigns all right, title and interest in the master recordings to Beat Lab LLC. Beat Lab LLC shall pay Artist $500. This agreement shall be governed by the laws of the State of New York.';
+  const up = await che.say('Check this contract', { attachment: { name: 'producer-agreement.txt', media_type: 'text/plain', base64: Buffer.from(text).toString('base64') } });
+  assert.equal(up.route, 'che_legal');
+  assert.match(up.reply, /HIGH RISK: Assignment of all right, title and interest/);
+  assert.match(up.reply, /Not found in the text: .*Termination/);
+  const stored = await che.get('/api/legal');
+  assert.equal(stored.contracts[0].name, 'producer-agreement.txt');
+  assert.ok(stored.coverage.find((c) => c.id === 'us-la-new-orleans').status === 'NOT YET INDEXED');
+  // Sell a beat exclusively: Music, Business and Legal answer together.
+  await che.say('Add a beat called Smoke, basic lease $30, exclusive $500');
+  await che.say('Sold a basic lease of Smoke to Mike, payment cs_1');
+  assert.equal((await che.say('Sell Smoke exclusively')).route, 'held', 'an instruction to sell is a money action: it waits for the owner');
+  const ex = await che.say('Can I sell Smoke exclusively?');
+  assert.equal(ex.route, 'che_music_business');
+  assert.match(ex.reply, /Smoke is not ready for an exclusive sale at \$500\.00\. Legal: 1 lease is already sold \(Mike\)/);
+  assert.notEqual((await che.say('Can I trade NQ now?')).route, 'che_legal');
+});
