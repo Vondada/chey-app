@@ -15,6 +15,8 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'che_theme.dart';
+import 'che_ui/che_hud.dart';
+import 'che_ui/che_theme.dart' as kit show CheColors;
 import 'world/che_world_globe.dart';
 
 class CheBuilding {
@@ -123,13 +125,13 @@ class CheWorldHubScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: CheColors.bgDeep,
-      body: CheBackdrop(
-        child: SafeArea(
+    // HUD glass: the page shows the HUD backdrop the route already paints (navy space, floor grid, fixed specks of
+    // light), so the room adds no backdrop or starfield of its own. Other palettes keep the earlier deep-space look.
+    final hud = cheHudActive;
+    final content = SafeArea(
           child: Stack(
             children: [
-              const Positioned.fill(child: _CheStarfield()),
+              if (!hud) const Positioned.fill(child: _CheStarfield()),
               Column(
                 children: [
                   _WorldHeader(state: state),
@@ -154,11 +156,13 @@ class CheWorldHubScreen extends StatelessWidget {
                               button: true,
                               label: 'Open ${b.title}. ${b.subtitle}',
                               excludeSemantics: true,
-                              child: ActionChip(
-                                avatar: Icon(b.icon, size: 16, color: b.color),
-                                label: Text(b.title),
-                                onPressed: () => onOpenTab(b.tab),
-                              ),
+                              child: hud
+                                  ? _HudRoomChip(building: b, onPressed: () => onOpenTab(b.tab))
+                                  : ActionChip(
+                                      avatar: Icon(b.icon, size: 16, color: b.color),
+                                      label: Text(b.title),
+                                      onPressed: () => onOpenTab(b.tab),
+                                    ),
                             ),
                           ),
                       ],
@@ -167,6 +171,40 @@ class CheWorldHubScreen extends StatelessWidget {
                 ],
               ),
             ],
+          ),
+        );
+    return Scaffold(
+      backgroundColor: hud ? kit.CheColors.screen : CheColors.bgDeep,
+      body: hud ? content : CheBackdrop(child: content),
+    );
+  }
+}
+
+/// A room button on the HUD: a small glass pill with the room's light on its icon. Same action and label as the chip.
+class _HudRoomChip extends StatelessWidget {
+  const _HudRoomChip({required this.building, required this.onPressed});
+  final CheBuilding building;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: 44),
+      child: CheGlass(
+        radius: 22,
+        shadow: false,
+        child: Material(
+          type: MaterialType.transparency,
+          child: InkWell(
+            onTap: onPressed,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(building.icon, size: 16, color: building.color),
+                const SizedBox(width: 8),
+                Text(building.title, style: TextStyle(color: CheColors.textPrimary, fontSize: 14, fontWeight: FontWeight.w600)),
+              ]),
+            ),
           ),
         ),
       ),
@@ -196,11 +234,13 @@ class _WorldHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final hud = cheHudActive;
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 20, 4),
       child: Row(
         children: [
           IconButton(
+            tooltip: 'Back',
             onPressed: () => Navigator.of(context).maybePop(),
             icon: Icon(Icons.arrow_back_ios_new, color: CheColors.textPrimary, size: 18),
           ),
@@ -209,15 +249,21 @@ class _WorldHeader extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  'CHE VIRTUAL OFFICE',
-                  style: TextStyle(
-                    color: CheColors.textPrimary,
-                    fontWeight: FontWeight.w800,
-                    fontSize: 18,
-                    letterSpacing: 2,
+                if (hud)
+                  const CheChromeText(
+                    'CHE VIRTUAL OFFICE',
+                    style: TextStyle(fontWeight: FontWeight.w800, fontSize: 18, letterSpacing: 2),
+                  )
+                else
+                  Text(
+                    'CHE VIRTUAL OFFICE',
+                    style: TextStyle(
+                      color: CheColors.textPrimary,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 18,
+                      letterSpacing: 2,
+                    ),
                   ),
-                ),
                 Row(
                   children: [
                     Container(
@@ -234,12 +280,14 @@ class _WorldHeader extends StatelessWidget {
                     ),
                     Text(
                       _statusLabel,
-                      style: TextStyle(
-                        color: _statusColor,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 1.5,
-                      ),
+                      style: hud
+                          ? CheHud.label.copyWith(color: _statusColor)
+                          : TextStyle(
+                              color: _statusColor,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 1.5,
+                            ),
                     ),
                   ],
                 ),

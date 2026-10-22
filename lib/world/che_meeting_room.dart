@@ -20,6 +20,7 @@ import '../agents/che_agent_runtime.dart';
 import '../che_ui/che_agents.dart';
 import 'che_meetings.dart';
 import 'che_scene_model.dart';
+import '../che_ui/che_hud.dart';
 import '../che_ui/che_theme.dart';
 
 class CheMeetingRoom extends StatefulWidget {
@@ -293,7 +294,17 @@ class _Table extends StatelessWidget {
       return Stack(children: [
         Positioned(
           left: center.dx - rx, top: center.dy - ry, width: rx * 2, height: ry * 2,
-          child: DecoratedBox(decoration: BoxDecoration(shape: BoxShape.circle, color: const Color(0xFF3A2A1C), border: Border.all(color: const Color(0xFF6B4E33), width: 4))),
+          // HUD glass: a lit glass table with an ice rim. Other palettes keep the wooden table.
+          child: DecoratedBox(
+            decoration: cheHudActive
+                ? BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: RadialGradient(colors: [CheHud.iceDeep.withValues(alpha: 0.22), CheHud.navyTop.withValues(alpha: 0.75)]),
+                    border: Border.all(color: CheHud.ice.withValues(alpha: 0.6), width: 2),
+                    boxShadow: [BoxShadow(color: CheHud.ice.withValues(alpha: 0.25), blurRadius: 18)],
+                  )
+                : BoxDecoration(shape: BoxShape.circle, color: const Color(0xFF3A2A1C), border: Border.all(color: const Color(0xFF6B4E33), width: 4)),
+          ),
         ),
         // Centre display: the objective, replaced by the recommended path once CHE has one.
         Positioned(

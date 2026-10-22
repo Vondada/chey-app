@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'widgets/che_native_scene_world.dart';
+import 'che_ui/che_hud.dart';
 import 'che_ui/che_theme.dart';
 
 class CreateGalleryScene extends StatefulWidget {
@@ -51,6 +52,12 @@ class _CreateGallerySceneState extends State<CreateGalleryScene>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
   static final _teal = CheColors.accent;
+  static const _sectionStyle = TextStyle(
+    color: Colors.white60,
+    fontSize: 10,
+    fontWeight: FontWeight.w900,
+    letterSpacing: 1.2,
+  );
 
   @override
   void initState() {
@@ -59,15 +66,19 @@ class _CreateGallerySceneState extends State<CreateGalleryScene>
       vsync: this,
       duration: const Duration(seconds: 8),
     );
-    if (widget.active) _controller.repeat();
+    if (_animate) _controller.repeat();
   }
+
+  // The slow spotlight and frame shimmer belong to the gilded gallery look. HUD glass draws neither, so the room
+  // does not rebuild every frame for them there (owner, 2026-10-22: the app felt laggy).
+  bool get _animate => widget.active && !cheHudActive;
 
   @override
   void didUpdateWidget(covariant CreateGalleryScene oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.active && !_controller.isAnimating) {
+    if (_animate && !_controller.isAnimating) {
       _controller.repeat();
-    } else if (!widget.active && _controller.isAnimating) {
+    } else if (!_animate && _controller.isAnimating) {
       _controller.stop();
     }
   }
@@ -131,8 +142,12 @@ class _CreateGallerySceneState extends State<CreateGalleryScene>
       animation: _controller,
       builder: (context, _) {
         final phase = _controller.value;
+        final hud = cheHudActive;
+        // HUD glass: the page's HUD backdrop shows through; other palettes keep the gallery wall.
         return DecoratedBox(
-          decoration: const BoxDecoration(
+          decoration: hud
+              ? const BoxDecoration()
+              : const BoxDecoration(
             gradient: LinearGradient(
               colors: [
                 Color(0xFF242422),
@@ -189,11 +204,12 @@ class _CreateGallerySceneState extends State<CreateGalleryScene>
                 Expanded(
                   child: Stack(
               children: [
-                Positioned.fill(
-                  child: CustomPaint(
-                    painter: _GalleryRoomPainter(phase: phase),
+                if (!hud)
+                  Positioned.fill(
+                    child: CustomPaint(
+                      painter: _GalleryRoomPainter(phase: phase),
+                    ),
                   ),
-                ),
                 SingleChildScrollView(
                   physics: const BouncingScrollPhysics(),
                   padding: const EdgeInsets.fromLTRB(16, 15, 16, 32),
@@ -206,15 +222,21 @@ class _CreateGallerySceneState extends State<CreateGalleryScene>
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text(
-                                  'CHE ART GALLERY',
-                                  style: TextStyle(
-                                    color: _teal,
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w900,
-                                    letterSpacing: 1.5,
+                                if (hud)
+                                  const CheChromeText(
+                                    'CHE ART GALLERY',
+                                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, letterSpacing: 1.6),
+                                  )
+                                else
+                                  Text(
+                                    'CHE ART GALLERY',
+                                    style: TextStyle(
+                                      color: _teal,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w900,
+                                      letterSpacing: 1.5,
+                                    ),
                                   ),
-                                ),
                                 SizedBox(height: 3),
                                 Text(
                                   'Projects hang here like finished and evolving pieces.',
@@ -264,27 +286,17 @@ class _CreateGallerySceneState extends State<CreateGalleryScene>
                         ),
                       if (widget.creations != null) ...[
                         const SizedBox(height: 26),
-                        const Text(
+                        Text(
                           'RECENT CREATIONS',
-                          style: TextStyle(
-                            color: Colors.white60,
-                            fontSize: 10,
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: 1.2,
-                          ),
+                          style: hud ? CheHud.label : _sectionStyle,
                         ),
                         const SizedBox(height: 10),
                         widget.creations!,
                       ],
                       const SizedBox(height: 26),
-                      const Text(
+                      Text(
                         'GALLERY WORKBENCH',
-                        style: TextStyle(
-                          color: Colors.white60,
-                          fontSize: 10,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: 1.2,
-                        ),
+                        style: hud ? CheHud.label : _sectionStyle,
                       ),
                       const SizedBox(height: 10),
                       _WorkbenchRow(
@@ -321,7 +333,7 @@ class _CreateGallerySceneState extends State<CreateGalleryScene>
                         onTap: () {
                           showModalBottomSheet<void>(
                             context: context,
-                            backgroundColor: const Color(0xF51A1D20),
+                            backgroundColor: hud ? null : const Color(0xF51A1D20),
                             showDragHandle: true,
                             builder: (context) => const Padding(
                               padding: EdgeInsets.fromLTRB(20, 4, 20, 28),
@@ -401,6 +413,7 @@ class _GalleryFrame extends StatelessWidget {
     final type = project['type']?.toString() ?? 'project';
     final glow = .13 +
         .05 * math.sin((phase * math.pi * 2) + index * .7).abs();
+    if (cheHudActive) return _hud(title, type);
 
     return GestureDetector(
       onTap: onTap,
@@ -511,11 +524,105 @@ class _GalleryFrame extends StatelessWidget {
   }
 }
 
+extension on _GalleryFrame {
+  /// The HUD look: the piece on a glass pane, with its title and date on a glass plate below.
+  Widget _hud(String title, String type) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Column(
+        children: [
+          Expanded(
+            child: Hero(
+              tag: heroTag,
+              child: CheGlass(
+                radius: 18,
+                child: Center(
+                  child: Icon(_galleryIcon(type, invention: true), size: 40, color: CheHud.ice),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          CheGlass(
+            radius: 12,
+            shadow: false,
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+            child: SizedBox(
+              width: double.infinity,
+              child: Column(
+                children: [
+                  Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: CheColors.text, fontWeight: FontWeight.w800, fontSize: 10.5),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(dateLabel, style: CheHud.label.copyWith(fontSize: 8, letterSpacing: .9)),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+IconData _galleryIcon(String type, {required bool invention}) =>
+    type.contains('book') || type.contains('screen')
+        ? Icons.menu_book_rounded
+        : type.contains('app') || type.contains('web')
+            ? Icons.widgets_rounded
+            : invention && type.contains('invention')
+                ? Icons.lightbulb_rounded
+                : Icons.auto_awesome_rounded;
+
 class _EmptyGalleryFrame extends StatelessWidget {
   const _EmptyGalleryFrame();
 
   @override
   Widget build(BuildContext context) {
+    if (cheHudActive) {
+      return Center(
+        child: SizedBox(
+          width: 230,
+          height: 300,
+          child: Column(
+            children: [
+              const Expanded(
+                child: CheGlass(
+                  radius: 20,
+                  child: Center(
+                    child: Icon(Icons.add_photo_alternate_outlined, color: CheHud.ice, size: 48),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              CheGlass(
+                radius: 12,
+                shadow: false,
+                padding: const EdgeInsets.all(9),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: Column(
+                    children: [
+                      Text(
+                        'Your first piece goes here.',
+                        style: TextStyle(color: CheColors.text, fontWeight: FontWeight.w800, fontSize: 11),
+                      ),
+                      const SizedBox(height: 3),
+                      Text('No projects yet', style: TextStyle(color: CheColors.textDim, fontSize: 9)),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
     return Center(
       child: SizedBox(
         width: 230,
@@ -604,13 +711,12 @@ class _WorkbenchRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final teal = CheColors.accent;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Material(
-        color: const Color(0xCC15191B),
-        borderRadius: BorderRadius.circular(8),
+    final hud = cheHudActive;
+    final row = Material(
+        color: hud ? Colors.transparent : const Color(0xCC15191B),
+        borderRadius: BorderRadius.circular(hud ? 14 : 8),
         child: InkWell(
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(hud ? 14 : 8),
           onTap: onTap,
           child: Padding(
             padding: const EdgeInsets.all(11),
@@ -652,7 +758,10 @@ class _WorkbenchRow extends StatelessWidget {
             ),
           ),
         ),
-      ),
+      );
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: hud ? CheGlass(radius: 14, shadow: false, child: row) : row,
     );
   }
 }
@@ -743,8 +852,9 @@ class _GalleryProjectPage extends StatelessWidget {
     final content = project['content']?.toString() ?? '';
     final type = project['type']?.toString() ?? 'project';
 
+    final hud = cheHudActive;
     return Scaffold(
-      backgroundColor: const Color(0xFF171918),
+      backgroundColor: hud ? CheColors.screen : const Color(0xFF171918),
       appBar: AppBar(
         title: const Text('CHE GALLERY'),
       ),
@@ -755,7 +865,17 @@ class _GalleryProjectPage extends StatelessWidget {
           children: [
             Hero(
               tag: heroTag,
-              child: Container(
+              child: hud
+                  ? SizedBox(
+                      height: 300,
+                      child: CheGlass(
+                        radius: 22,
+                        child: Center(
+                          child: Icon(_galleryIcon(type, invention: false), size: 76, color: CheHud.ice),
+                        ),
+                      ),
+                    )
+                  : Container(
                 height: 300,
                 padding: const EdgeInsets.all(10),
                 decoration: const BoxDecoration(
@@ -802,11 +922,13 @@ class _GalleryProjectPage extends StatelessWidget {
             const SizedBox(height: 5),
             Text(
               dateLabel,
-              style: const TextStyle(
-                color: Color(0xFFD7B26D),
-                fontSize: 10,
-                letterSpacing: 1.2,
-              ),
+              style: hud
+                  ? CheHud.label
+                  : const TextStyle(
+                      color: Color(0xFFD7B26D),
+                      fontSize: 10,
+                      letterSpacing: 1.2,
+                    ),
             ),
             const SizedBox(height: 18),
             Text(

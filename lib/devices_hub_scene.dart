@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'che_ui/che_hud.dart';
 import 'che_ui/che_theme.dart';
 
 class DevicesHubScene extends StatefulWidget {
@@ -238,7 +239,7 @@ class _DevicesHubSceneState extends State<DevicesHubScene>
   void _openDevice(_DeviceNode node) {
     showModalBottomSheet<void>(
       context: context,
-      backgroundColor: const Color(0xF5121C25),
+      backgroundColor: cheHudActive ? null : const Color(0xF5121C25),
       showDragHandle: true,
       builder: (context) => SafeArea(
         top: false,
@@ -308,9 +309,13 @@ class _DevicesHubSceneState extends State<DevicesHubScene>
   @override
   Widget build(BuildContext context) {
     final nodes = _nodes();
+    final hud = cheHudActive;
 
+    // HUD glass: the page's HUD backdrop shows through; other palettes keep the garage's dark wash.
     return DecoratedBox(
-      decoration: const BoxDecoration(
+      decoration: hud
+          ? const BoxDecoration()
+          : const BoxDecoration(
         gradient: LinearGradient(
           colors: [
             Color(0xFF071018),
@@ -331,12 +336,14 @@ class _DevicesHubSceneState extends State<DevicesHubScene>
                 alignment: Alignment.centerLeft,
                 child: Text(
                   'CONNECTED GARAGE',
-                  style: TextStyle(
-                    color: _teal,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: 1.5,
-                  ),
+                  style: hud
+                      ? CheHud.label.copyWith(fontSize: 12)
+                      : TextStyle(
+                          color: _teal,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 1.5,
+                        ),
                 ),
               ),
             ),
@@ -390,7 +397,20 @@ class _DevicesHubSceneState extends State<DevicesHubScene>
                               Positioned(
                                 left: core.dx - 52,
                                 top: core.dy - 52,
-                                child: Container(
+                                child: hud
+                                    ? const CheChromeOrb(
+                                        size: 104,
+                                        child: Text(
+                                          'CHE',
+                                          style: TextStyle(
+                                            color: Color(0xFF0A1626),
+                                            fontWeight: FontWeight.w900,
+                                            fontSize: 18,
+                                            letterSpacing: 2,
+                                          ),
+                                        ),
+                                      )
+                                    : Container(
                                   width: 104,
                                   height: 104,
                                   decoration: BoxDecoration(
@@ -450,33 +470,21 @@ class _DevicesHubSceneState extends State<DevicesHubScene>
                 },
               ),
             ),
-            Container(
-              height: 144,
-              margin: const EdgeInsets.fromLTRB(14, 8, 14, 14),
-              padding: const EdgeInsets.fromLTRB(10, 10, 10, 8),
-              decoration: BoxDecoration(
-                color: const Color(0xFF101820),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: Colors.white10),
-                boxShadow: const [
-                  BoxShadow(
-                    color: Colors.black38,
-                    blurRadius: 16,
-                    offset: Offset(0, 8),
-                  ),
-                ],
-              ),
+            _rack(
+              hud: hud,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
                     'CHE SYSTEMS RACK',
-                    style: TextStyle(
-                      color: _teal,
-                      fontSize: 9.5,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: 1.1,
-                    ),
+                    style: hud
+                        ? CheHud.label.copyWith(fontSize: 9.5)
+                        : TextStyle(
+                            color: _teal,
+                            fontSize: 9.5,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 1.1,
+                          ),
                   ),
                   const SizedBox(height: 8),
                   Expanded(
@@ -501,6 +509,38 @@ class _DevicesHubSceneState extends State<DevicesHubScene>
     );
   }
 }
+
+/// The systems rack: a glass shelf on the HUD, the dark panel otherwise. Same size and padding either way.
+Widget _rack({required bool hud, required Widget child}) => hud
+    ? Padding(
+        padding: const EdgeInsets.fromLTRB(14, 8, 14, 14),
+        child: SizedBox(
+          height: 144,
+          child: CheGlass(
+            radius: 16,
+            padding: const EdgeInsets.fromLTRB(10, 10, 10, 8),
+            child: child,
+          ),
+        ),
+      )
+    : Container(
+        height: 144,
+        margin: const EdgeInsets.fromLTRB(14, 8, 14, 14),
+        padding: const EdgeInsets.fromLTRB(10, 10, 10, 8),
+        decoration: BoxDecoration(
+          color: const Color(0xFF101820),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.white10),
+          boxShadow: const [
+            BoxShadow(
+              color: Colors.black38,
+              blurRadius: 16,
+              offset: Offset(0, 8),
+            ),
+          ],
+        ),
+        child: child,
+      );
 
 class _SystemModule {
   const _SystemModule(
@@ -531,7 +571,7 @@ class _SystemRackTile extends StatelessWidget {
           () {
             showModalBottomSheet<void>(
               context: context,
-              backgroundColor: const Color(0xF5121C25),
+              backgroundColor: cheHudActive ? null : const Color(0xF5121C25),
               showDragHandle: true,
               builder: (context) => Padding(
                 padding: const EdgeInsets.fromLTRB(20, 4, 20, 28),
@@ -565,20 +605,10 @@ class _SystemRackTile extends StatelessWidget {
               ),
             );
           },
-      child: Container(
-        width: 112,
-        padding: const EdgeInsets.all(9),
-        decoration: BoxDecoration(
-          color: module.connected
-              ? const Color(0xFF142A2A)
-              : const Color(0xFF151A20),
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(
-            color: module.connected
-                ? teal.withValues(alpha: .36)
-                : Colors.white10,
-          ),
-        ),
+      child: _tile(
+        hud: cheHudActive,
+        connected: module.connected,
+        teal: teal,
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
@@ -614,6 +644,28 @@ class _SystemRackTile extends StatelessWidget {
       ),
     );
   }
+
+  static Widget _tile({required bool hud, required bool connected, required Color teal, required Widget child}) => hud
+      ? SizedBox(
+          width: 112,
+          child: CheGlass(
+            radius: 12,
+            shadow: false,
+            glow: connected ? teal : null,
+            padding: const EdgeInsets.all(9),
+            child: child,
+          ),
+        )
+      : Container(
+          width: 112,
+          padding: const EdgeInsets.all(9),
+          decoration: BoxDecoration(
+            color: connected ? const Color(0xFF142A2A) : const Color(0xFF151A20),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: connected ? teal.withValues(alpha: .36) : Colors.white10),
+          ),
+          child: child,
+        );
 }
 
 class _DeviceBadge extends StatelessWidget {
@@ -627,6 +679,20 @@ class _DeviceBadge extends StatelessWidget {
       width: 88,
       child: Column(
         children: [
+          if (cheHudActive)
+            SizedBox(
+              width: 58,
+              height: 58,
+              child: CheGlass(
+                radius: 18,
+                shadow: false,
+                glow: node.connected ? teal : null,
+                child: Center(
+                  child: Icon(node.icon, color: node.connected ? teal : Colors.white30, size: 29),
+                ),
+              ),
+            )
+          else
           Container(
             width: 58,
             height: 58,

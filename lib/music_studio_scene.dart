@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'widgets/che_native_scene_world.dart';
+import 'che_ui/che_hud.dart';
 import 'che_ui/che_theme.dart';
 
 class MusicStudioScene extends StatefulWidget {
@@ -65,9 +66,19 @@ class _MusicStudioSceneState extends State<MusicStudioScene>
     double phase = 0,
     bool spin = false,
   }) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
+    final hud = cheHudActive;
+    Widget panel(Widget child) => hud
+        ? ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 94),
+            child: CheGlass(
+              radius: 14,
+              shadow: false,
+              glow: connected ? _teal : null,
+              padding: const EdgeInsets.all(12),
+              child: child,
+            ),
+          )
+        : Container(
         constraints: const BoxConstraints(minHeight: 94),
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
@@ -98,7 +109,11 @@ class _MusicStudioSceneState extends State<MusicStudioScene>
             ),
           ],
         ),
-        child: Row(
+        child: child,
+      );
+    return GestureDetector(
+      onTap: onTap,
+      child: panel(Row(
           children: [
             Container(
               width: 54,
@@ -160,6 +175,18 @@ class _MusicStudioSceneState extends State<MusicStudioScene>
     );
   }
 
+  /// A studio panel: glass on the HUD, the given solid [decoration] otherwise.
+  Widget _panel({
+    required bool hud,
+    required double radius,
+    required EdgeInsets padding,
+    required BoxDecoration decoration,
+    required Widget child,
+  }) =>
+      hud
+          ? CheGlass(radius: radius, shadow: false, padding: padding, child: child)
+          : Container(padding: padding, decoration: decoration, child: child);
+
   @override
   Widget build(BuildContext context) {
     final playing = widget.musicConnected;
@@ -168,9 +195,13 @@ class _MusicStudioSceneState extends State<MusicStudioScene>
       animation: _controller,
       builder: (context, _) {
         final phase = _controller.value;
+        final hud = cheHudActive;
 
+        // HUD glass: the page's HUD backdrop shows through; other palettes keep the studio's dark wash.
         return DecoratedBox(
-          decoration: const BoxDecoration(
+          decoration: hud
+              ? const BoxDecoration()
+              : const BoxDecoration(
             gradient: LinearGradient(
               colors: [
                 Color(0xFF120F18),
@@ -222,12 +253,14 @@ class _MusicStudioSceneState extends State<MusicStudioScene>
                           children: [
                             Text(
                               'RECORDING STUDIO',
-                              style: TextStyle(
-                                color: _teal,
-                                fontSize: 12,
-                                fontWeight: FontWeight.w900,
-                                letterSpacing: 1.5,
-                              ),
+                              style: hud
+                                  ? CheHud.label.copyWith(fontSize: 12)
+                                  : TextStyle(
+                                      color: _teal,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w900,
+                                      letterSpacing: 1.5,
+                                    ),
                             ),
                             SizedBox(height: 3),
                             Text(
@@ -272,23 +305,38 @@ class _MusicStudioSceneState extends State<MusicStudioScene>
                     ],
                   ),
                   const SizedBox(height: 14),
-                  Container(
-                    height: 110,
-                    clipBehavior: Clip.antiAlias,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(16),
-                      color: const Color(0xFF15111A),
-                      border: Border.all(color: Colors.white10),
-                    ),
-                    child: CustomPaint(
-                      painter: _FoamWallPainter(
-                        phase: phase,
+                  if (hud)
+                    SizedBox(
+                      height: 110,
+                      child: CheGlass(
+                        radius: 16,
+                        shadow: false,
+                        child: CustomPaint(
+                          painter: _FoamWallPainter(phase: phase, hud: true),
+                          child: const SizedBox.expand(),
+                        ),
                       ),
-                      child: const SizedBox.expand(),
+                    )
+                  else
+                    Container(
+                      height: 110,
+                      clipBehavior: Clip.antiAlias,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(16),
+                        color: const Color(0xFF15111A),
+                        border: Border.all(color: Colors.white10),
+                      ),
+                      child: CustomPaint(
+                        painter: _FoamWallPainter(
+                          phase: phase,
+                        ),
+                        child: const SizedBox.expand(),
+                      ),
                     ),
-                  ),
                   const SizedBox(height: 12),
-                  Container(
+                  _panel(
+                    hud: hud,
+                    radius: 18,
                     padding: const EdgeInsets.fromLTRB(12, 14, 12, 12),
                     decoration: BoxDecoration(
                       gradient: const LinearGradient(
@@ -364,7 +412,9 @@ class _MusicStudioSceneState extends State<MusicStudioScene>
                     onTap: widget.onCar,
                   ),
                   const SizedBox(height: 10),
-                  Container(
+                  _panel(
+                    hud: hud,
+                    radius: 14,
                     padding: const EdgeInsets.all(14),
                     decoration: BoxDecoration(
                       color: const Color(0xFF241B27),
@@ -542,14 +592,20 @@ class _StudioMonitor extends StatelessWidget {
 class _FoamWallPainter extends CustomPainter {
   const _FoamWallPainter({
     required this.phase,
+    this.hud = false,
   });
 
   final double phase;
 
+  /// HUD glass: faint ice tiles over the glass instead of a solid purple foam wall.
+  final bool hud;
+
   @override
   void paint(Canvas canvas, Size size) {
-    final base = Paint()..color = const Color(0xFF15111A);
-    canvas.drawRect(Offset.zero & size, base);
+    if (!hud) {
+      final base = Paint()..color = const Color(0xFF15111A);
+      canvas.drawRect(Offset.zero & size, base);
+    }
 
     const tile = 22.0;
     for (var y = -1; y < (size.height / tile).ceil() + 1; y++) {
@@ -563,9 +619,11 @@ class _FoamWallPainter extends CustomPainter {
         canvas.drawRRect(
           RRect.fromRectAndRadius(rect, const Radius.circular(3)),
           Paint()
-            ..color = (x + y).isEven
-                ? const Color(0xFF21172A)
-                : const Color(0xFF18131F),
+            ..color = hud
+                ? CheHud.ice.withValues(alpha: (x + y).isEven ? .07 : .035)
+                : (x + y).isEven
+                    ? const Color(0xFF21172A)
+                    : const Color(0xFF18131F),
         );
       }
     }
@@ -604,5 +662,5 @@ class _FoamWallPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _FoamWallPainter oldDelegate) =>
-      oldDelegate.phase != phase;
+      oldDelegate.phase != phase || oldDelegate.hud != hud;
 }
