@@ -281,7 +281,7 @@ extension _CheHomeHubRooms on _CHEHomeState {
           ),
         ),
         _businessRow(
-          icon: Icons.add_business_rounded,
+          icon: Icons.add_circle_outline_rounded,
           title: 'Start a business',
           what: 'Name the business, its first offer and the next three steps. Nothing is published or paid.',
           status: 'Ready',

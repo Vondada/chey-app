@@ -676,7 +676,7 @@ class _ProjectCard extends StatelessWidget {
     if (onOpenUrl != null) out.add(('Open', Icons.open_in_new_rounded, onOpenUrl!));
     // Closed deals (paid, won, lost) are finished or dropped: details only, never a prompt to continue them.
     if (_closedStage(s)) {
-      out.add(('Details', Icons.info_outline_rounded, onTap));
+      out.add(('Details', Icons.description_outlined, onTap));
       return out.toSet().toList();
     }
     if (ask != null) {
@@ -685,12 +685,12 @@ class _ProjectCard extends StatelessWidget {
       } else if (s.contains('review')) {
         out.add(('Review', Icons.fact_check_outlined, () => ask('Review "$name" (${item.typeLabel}) and tell me what needs my approval.')));
       } else if (s.contains('complete') || s.contains('done') || s == 'live') {
-        out.add(('Details', Icons.info_outline_rounded, onTap));
+        out.add(('Details', Icons.description_outlined, onTap));
       } else {
         out.add(('Continue', Icons.play_arrow_rounded, () => ask('Continue "$name" (${item.typeLabel}). Tell me the next step.')));
       }
     }
-    out.add(('Details', Icons.info_outline_rounded, onTap));
+    out.add(('Details', Icons.description_outlined, onTap));
     return out.toSet().toList();
   }
 
