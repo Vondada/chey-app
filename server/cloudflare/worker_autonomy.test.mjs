@@ -2875,7 +2875,7 @@ const FISH_ENV = {
   CHE_FISH_PREFERRED: '1',
 };
 
-test('Fish, the backup voice, speaks when ElevenLabs is not set up, says "Chay", and caches the clip', async () => {
+test('strict ElevenLabs-only: conversation is silent when ElevenLabs is not set up and Fish is not called; authorized story narration still uses Fish, says "Chay", and caches (owner, 2026-10-22)', async () => {
   const { resetFishAudioState } = await import('./fish_audio_voice.js');
   const { resetPreferredElevenLabsPause } = await import('./preferred_elevenlabs_voice.js');
   resetFishAudioState();
@@ -2894,27 +2894,27 @@ test('Fish, the backup voice, speaks when ElevenLabs is not set up, says "Chay",
     return new Response(new Uint8Array([0x49, 0x44, 0x33, 0x04]), { headers: { 'Content-Type': 'audio/mpeg' } });
   };
   try {
-    const edge = await api('/api/voice/edge', { text: 'CHE here, sir.' });
+    const silent = await api('/api/voice/edge', { text: 'CHE here, sir.', premium_only: true });
+    assert.equal(silent.status, 204, 'conversation never falls back to Fish');
+    assert.equal(calls.length, 0, 'zero Fish calls for conversation');
+    const edge = await api('/api/voice/edge', { text: 'CHE here, sir.', purpose: 'story' });
     assert.equal(edge.status, 200);
-    assert.equal(edge.headers.get('X-CHE-Voice'), 'fish-audio');
+    assert.equal(edge.headers.get('X-CHE-Voice'), 'fish-audio', 'authorized story narration may use Fish');
     assert.equal(edge.headers.get('X-CHE-Mary'), 'not set up', 'the phone hears why ElevenLabs did not speak');
-    const synth = await api('/api/voice/synthesize', { text: 'CHE here, sir.' });
+    const synth = await api('/api/voice/synthesize', { text: 'CHE here, sir.', purpose: 'story' });
     assert.equal(synth.headers.get('X-CHE-Voice'), 'fish-audio');
     assert.equal(synth.headers.get('X-CHE-Cache'), 'hit', 'the second route reuses the first route\'s audio');
     assert.equal(calls.length, 1, 'one Fish request');
     assert.equal(calls[0].url, 'https://api.fish.audio/v1/tts');
-    assert.equal(calls[0].headers.model, 's2.1-pro-free');
+    assert.equal(calls[0].headers.model, 'drama-3');
     const { decodeMsgpack } = await import('./msgpack_decode_for_tests.mjs');
     assert.equal(decodeMsgpack(calls[0].body).text, 'Chay here, sir.');
-    const story = await api('/api/voice/synthesize', { text: 'Once upon a time, sir.', purpose: 'story' });
-    assert.equal(story.headers.get('X-CHE-Fish-Model'), 'drama-3', 'the owner can ask for a story voice');
-    assert.equal(calls[1].headers.model, 'drama-3');
   } finally {
     globalThis.fetch = original;
   }
 });
 
-test('ElevenLabs speaks first on both iPhone voice routes; Fish speaks only when ElevenLabs gives no audio', async () => {
+test('ElevenLabs speaks on both iPhone voice routes; when ElevenLabs is out of credits, conversation stays silent and Fish is never called', async () => {
   const { resetFishAudioState } = await import('./fish_audio_voice.js');
   const { resetPreferredElevenLabsPause } = await import('./preferred_elevenlabs_voice.js');
   resetFishAudioState();
@@ -2947,15 +2947,17 @@ test('ElevenLabs speaks first on both iPhone voice routes; Fish speaks only when
     }
     assert.ok(seen.every((u) => u.includes('api.elevenlabs.io')), 'no Fish call while ElevenLabs speaks');
     elevenLabsDown = true;
-    const backup = await api('/api/voice/edge', { text: 'Hello again sir', premium_only: true });
-    assert.equal(backup.headers.get('X-CHE-Voice'), 'fish-audio');
-    assert.equal(backup.headers.get('X-CHE-Mary'), 'out of credits');
+    const silent = await api('/api/voice/edge', { text: 'Hello again sir', premium_only: true });
+    assert.equal(silent.status, 204, 'no Fish substitute in an assistant reply');
+    assert.equal(silent.headers.get('X-CHE-Voice'), 'none');
+    assert.equal(silent.headers.get('X-CHE-Mary'), 'out of credits');
+    assert.ok(seen.every((u) => !u.includes('fish.audio')), 'Fish never called');
   } finally {
     globalThis.fetch = original;
   }
 });
 
-test('when ElevenLabs and Fish both fail, the phone gets silence and both reasons, never a free voice', async () => {
+test('when ElevenLabs fails for conversation, the phone gets silence and the reason, never Fish or a free voice', async () => {
   const { resetFishAudioState } = await import('./fish_audio_voice.js');
   const { resetPreferredElevenLabsPause } = await import('./preferred_elevenlabs_voice.js');
   resetFishAudioState();
@@ -2985,11 +2987,11 @@ test('when ElevenLabs and Fish both fail, the phone gets silence and both reason
       assert.equal(response.status, 204, path);
       assert.equal(response.headers.get('X-CHE-Voice'), 'none');
       assert.equal(response.headers.get('X-CHE-Mary'), 'unauthorized');
-      assert.equal(response.headers.get('X-CHE-Fish'), 'unauthorized');
+      assert.equal(response.headers.get('X-CHE-Fish'), 'not tried yet', 'conversation never tries Fish (strict ElevenLabs-only)');
     }
     assert.equal(freeVoice, 0, 'no free server voice');
-    assert.ok(seen.every((u) => u.includes('elevenlabs') || u.includes('fish.audio')), 'only the two voices were called');
-    assert.equal(seen.filter((u) => u.includes('fish.audio')).length, 1, 'a refused Fish key is not retried');
+    assert.ok(seen.every((u) => u.includes('elevenlabs')), 'only ElevenLabs was called for conversation');
+    assert.equal(seen.filter((u) => u.includes('fish.audio')).length, 0, 'Fish was never called');
   } finally {
     globalThis.fetch = original;
   }

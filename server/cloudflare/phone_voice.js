@@ -90,12 +90,20 @@ function labelled(response, env, provider, extra = {}) {
  * that provider is tried. Each response carries both voices' status words, the
  * voice tag, and X-CHE-Voice-Fallback when the backup voice answered.
  */
+// Owner rule (2026-10-22): CHE's assistant speech is ElevenLabs only. Fish speaks only for the purposes the owner
+// authorized for expressive narration (stories and narration, as fish_audio_voice.js defines them). Conversation
+// and Read This never reach Fish: not as the chosen voice, not as a backup, not for a saved Fish preference.
+const FISH_AUTHORIZED_PURPOSES = new Set(['story', 'narration', 'expressive']);
+
 export async function premiumVoiceSpeech(env = {}, text, {
   purpose, character, storage, selectedProvider, lock = '', turn = null,
   retryDelayMs = 400, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 } = {}) {
-  const primary = selectedProvider === 'fish' ? 'fish' : 'elevenlabs';
-  const backup = primary === 'fish' ? 'elevenlabs' : 'fish';
+  const fishAuthorized = FISH_AUTHORIZED_PURPOSES.has(String(purpose || '').toLowerCase());
+  // Under the strict rule, a Fish lock on assistant speech is silence: no Fish call is made.
+  if (lock === 'fish' && !fishAuthorized) return null;
+  const primary = fishAuthorized && selectedProvider === 'fish' ? 'fish' : 'elevenlabs';
+  const backup = fishAuthorized && primary === 'elevenlabs' ? 'fish' : null;
   // Each attempt reports its own outcome, so a clip running alongside cannot decide this one's retry.
   let outcome = null;
   const onOutcome = (o) => { outcome = o; };
@@ -118,6 +126,7 @@ export async function premiumVoiceSpeech(env = {}, text, {
   }
   const first = await attempt(primary);
   if (first) return labelled(first, env, primary);
+  if (!backup) return null;
   const second = await attempt(backup);
   return second ? labelled(second, env, backup, { 'X-CHE-Voice-Fallback': '1' }) : null;
 }
