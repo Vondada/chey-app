@@ -5,6 +5,8 @@
 // Shared contract for the Capability Engine, the internal renderer and Security Intelligence: each registers its
 // capabilities here and nowhere else.
 
+import { vetoCapability } from './security_core/capability_security.js';
+
 export const CAPABILITY_REGISTRY_KEY = 'che:capabilities_v1';
 
 export const STATUSES = Object.freeze(['DISCOVERED', 'INDEXED', 'UNDERSTOOD', 'PROTOTYPED', 'TESTING', 'VERIFIED', 'AVAILABLE', 'DEGRADED', 'RETIRED', 'REJECTED']);
@@ -114,6 +116,14 @@ export function promote(registry, id, now = new Date().toISOString()) {
     return { ok: false, reason: 'failed_checks', failed, serving: cap.previous ? cap.previous.version : null };
   }
   if (missing.length) return { ok: false, reason: 'missing_checks', missing };
+  // Security veto (Security Core): even with every check recorded, wildcard access, a stored credential or a risky
+  // action without owner approval keeps the candidate out of service.
+  const veto = vetoCapability(cap);
+  if (!veto.ok) {
+    cap.status = 'REJECTED';
+    cap.history.unshift({ at: now, event: 'security_veto', reasons: veto.reasons });
+    return { ok: false, reason: 'security_veto', vetoed: veto.reasons, serving: cap.previous ? cap.previous.version : null };
+  }
   cap.status = 'VERIFIED';
   cap.test_status = 'passed';
   cap.last_verified = now;

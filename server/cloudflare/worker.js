@@ -226,7 +226,8 @@ import {
 } from './research_memory.js';
 import { APP_BUILD_KEY, appBuildIntent, appBuildRun, dispatchAppBuild, speakAppBuild } from './app_builds.js';
 import { advanceObjectives, applyMissionEvent, approvalReached, approveNode, awaitingApproval, cancelObjective, createObjective, mutateObjective, replanNode, resolveKnownNodes, retryNode, setObjectivePaused, speakObjective } from './objective_graph.js';
-import { EGRESS_KEY, installEgressGuard, setEgressPolicy, storeEgressPolicy, SESSION_SCOPES, bump as securityBump, checkSession, createSession, dependencyAdvisories, detectThreats, issueNonce, loadSecurity, recordFindings, redact as redactSecretText, redactDeep, respondToIncident, restoreTrustedState, revokeSessions, saveSecurity, securityIntent, snapshotTrustedState, speakStatus as speakSecurityStatus } from './security_intelligence.js';
+import { CHE_TENANT, CHE_SECURITY, access as coreAccess, coreIncidents, coreKnowledge, coreView, findAnyIncident, findKnowledge, loadCore, openIncidentsForEvents, recordCheck as recordCoreCheck, runDrill, saveCore, speakCore, syncLegacyEvents } from './security_core_che.js';
+import { EGRESS_KEY, SNAPSHOT_KEY, installEgressGuard, setEgressPolicy, storeEgressPolicy, SESSION_SCOPES, bump as securityBump, checkSession, createSession, dependencyAdvisories, detectThreats, issueNonce, loadSecurity, recordFindings, redact as redactSecretText, redactDeep, respondToIncident, restoreTrustedState, revokeSessions, saveSecurity, securityIntent, snapshotTrustedState, speakStatus as speakSecurityStatus } from './security_intelligence.js';
 import { loadRegistry as loadCapabilityRegistry } from './capability_registry.js';
 import { engineView, exportWorkflows, feedbackOnLast, importWorkflows, library as workflowLibrary, loadEngine, matchLearned, noteVersion, promoteCandidate, dismissCandidate, rankWorkflows, recordRun as recordWorkflowRun, isDisabled as workflowDisabled, restoreVersion, saveEngine, setDisabled as setWorkflowDisabled, setPreferred as setWorkflowPreferred, speakEfficiency, speakLibrary, testCandidate, workflowForRun, workflowIntent } from './workflow_engine.js';
 import { CATEGORIES, COMMANDS, catalogView, commandById, commandStatus, connectorStatus, describeWorkflow, dispatchPrompt, findSavedWorkflow, normalizeSavedWorkflow, parseSlashCommand, readCommandSpeech, searchCommands, speakCommandList, speakUnavailable, suggestCommands, workflowNodes, workflowFromWords } from './command_catalog.js';
@@ -5911,6 +5912,7 @@ export class CheState extends DurableObject {
 
   async securityApi(path, request, body, data, tokenHash) {
     const action = path.replace(/^\/api\/security\/?/, '');
+    if (action === 'core' || action.startsWith('core/')) return this.securityCoreApi(action.replace(/^core\/?/, ''), request, body, data);
     if (request.method === 'GET' && !action) {
       const sec = await loadSecurity(this.ctx.storage);
       return json({
@@ -5952,6 +5954,137 @@ export class CheState extends DurableObject {
     return json({ detail: 'Unknown security action.' }, 404);
   }
 
+  // ── Security Core (portable engine, CHE product layer in security_core_che.js) ──
+  async securityCoreState(data) {
+    const st = this.ctx.storage;
+    const [store, sec, registry, lockedDown, egress, snapshot, apps] = await Promise.all([
+      loadCore(st), loadSecurity(st), loadCapabilityRegistry(st), isLockedDown(st),
+      st.get(EGRESS_KEY).catch(() => null), st.get(SNAPSHOT_KEY).catch(() => null), st.get(APPS_GRANTED_KEY).catch(() => []),
+    ]);
+    syncLegacyEvents(store, sec);
+    openIncidentsForEvents(store);
+    const view = () => coreView({ store, sec, data, registry, appsGranted: Array.isArray(apps) ? apps : [], lockedDown, internalOnly: egress?.internal_only === true, repo: String(this.env.CHE_GITHUB_REPO || ''), snapshot, legacyStatus: speakSecurityStatus(sec, { lockedDown }) });
+    return { store, sec, registry, lockedDown, view };
+  }
+
+  // A full check through the existing Security Intelligence loop, recorded in the core with its time and counts.
+  async securityCoreCheck(data) {
+    const r = await this.runSecurityCheck(data);
+    const s = await this.securityCoreState(data);
+    const devices = CHE_SECURITY.engines.device.review(Object.values(data.platform?.devices || {}));
+    const bus = CHE_SECURITY.bus(s.store, CHE_TENANT);
+    for (const e of devices.events) bus.publish({ ...e, verification: 'verified' });
+    recordCoreCheck(s.store, { findings: r.findings.length, advisories: r.advisories ? r.advisories.advisories.length : null });
+    openIncidentsForEvents(s.store);
+    await saveCore(this.ctx.storage, s.store);
+    return { ...s, findings: r.findings, advisories: r.advisories };
+  }
+
+  async securityCoreApi(action, request, body, data) {
+    const st = this.ctx.storage;
+    if (request.method === 'GET' && !action) {
+      const s = await this.securityCoreState(data);
+      await saveCore(st, s.store);
+      const view = s.view();
+      return json({ ...view, spoken: speakCore(view) });
+    }
+    if (request.method !== 'POST') return json({ detail: 'Not found.' }, 404);
+    if (action === 'check') {
+      const s = await this.securityCoreCheck(data);
+      const view = s.view();
+      return json({ ...view, findings: s.findings.length, spoken: speakCore(view) });
+    }
+    const s = await this.securityCoreState(data);
+    const done = async (out, status = 200) => { await saveCore(st, s.store); return json(out, status); };
+    if (action === 'simulate') {
+      const r = runDrill(s.store, String(body.scenario || ''));
+      return done(r, r.ok ? 200 : 404);
+    }
+    if (action === 'replay') {
+      const inc = findAnyIncident(s.store, String(body.incident_id || ''));
+      return inc ? done({ replay: coreIncidents.replayIncident(inc) }) : done({ detail: 'No incident with that id.' }, 404);
+    }
+    if (action === 'incident/advance') {
+      const inc = coreIncidents.findIncident(s.store, CHE_TENANT, String(body.incident_id || ''));
+      const r = coreIncidents.advanceIncident(inc, String(body.stage || ''), { by: 'owner', note: String(body.note || '') });
+      return done(r.ok ? { ok: true, incident: r.incident } : r, r.ok ? 200 : 409);
+    }
+    // Lockdown is previewed first; activation needs the preview's token and an explicit confirmation.
+    if (action === 'lockdown/preview') {
+      const view = s.view();
+      const preview = await coreAccess.previewLockdown({ mechanisms: view.lockdown.mechanisms, keeps: view.lockdown.keeps, principals: view.access.principals, active: s.lockedDown });
+      s.store.tenants[CHE_TENANT].lockdown = preview;
+      return done({ preview });
+    }
+    if (action === 'lockdown/confirm') {
+      const preview = s.store.tenants[CHE_TENANT]?.lockdown || null;
+      const r = await coreAccess.confirmLockdown({ token: String(body.token || ''), confirm: body.confirm === true, preview });
+      if (!r.ok) return done(r, 409);
+      await setLockdown(st, true, 'owner confirmed lockdown preview');
+      const verified = await isLockedDown(st);
+      CHE_SECURITY.bus(s.store, CHE_TENANT).publish({ event_type: 'access.lockdown', source: 'owner', severity: 'info', confidence: 1, summary: `Lockdown turned on after the owner confirmed the preview (${r.effects.length} effects).`, status: 'resolved', actions_taken: ['lockdown on'], verification: verified ? 'verified' : 'failed' });
+      s.store.tenants[CHE_TENANT].lockdown = null;
+      return done({ ok: verified, locked: verified, effects: r.effects });
+    }
+    if (action === 'knowledge/capture') {
+      const item = coreKnowledge.captureExperience(s.store, CHE_TENANT, { title: body.title, body: body.body, portability: body.portability, category: body.category, source_event_ids: body.source_event_ids });
+      return done({ item });
+    }
+    if (action === 'knowledge/advance') {
+      const item = findKnowledge(s.store, String(body.id || ''));
+      if (!item) return done({ detail: 'No knowledge item with that id.' }, 404);
+      const step = String(body.step || '');
+      const r = step === 'generalize' ? coreKnowledge.generalize(item, body)
+        : step === 'strip' ? coreKnowledge.stripIdentifiers(item, { identifiers: [...(Array.isArray(body.identifiers) ? body.identifiers : []), ...Object.values(data.platform?.devices || {}).map((d) => d?.name).filter(Boolean)] })
+          : step === 'review' ? coreKnowledge.reviewKnowledge(item)
+            : step === 'test' ? coreKnowledge.testKnowledge(item, body)
+              : step === 'promote' ? coreKnowledge.promoteKnowledge(s.store, item)
+                : { ok: false, reason: 'unknown_step' };
+      const { _identifiers, ...shown } = r.item || item;
+      return done({ ...r, item: shown }, r.ok ? 200 : 409);
+    }
+    if (action === 'policy/evaluate') return done(CHE_SECURITY.engines.policies.evaluate({ verb: body.verb, target: body.target, owned: s.view().systems.map((n) => n.id) }));
+    return done({ detail: 'Unknown security core action.' }, 404);
+  }
+
+  // Security Core answers by voice or typing: status, readiness, lockdown preview, incidents, the team and drills.
+  async securityCoreChat(data, ask, say) {
+    const s = await this.securityCoreState(data);
+    const view = s.view();
+    const done = async (text, extra = {}) => { await saveCore(this.ctx.storage, s.store); return say(text, extra); };
+    if (ask.action === 'status') return done(`${speakCore(view)} ${view.status.replace(/ This lowers risk; no system can be made unhackable\.$/, '')}`, { security_state: view.protection.state, readiness: view.readiness.score });
+    if (ask.action === 'open') return done(`Opening Security, sir. ${speakCore(view)}`, { open_screen: 'security' });
+    if (ask.action === 'readiness') {
+      const r = view.readiness;
+      if (r.score == null) return done('I cannot score readiness yet, sir: nothing has been measured. Say "run a security check" first.');
+      return done(`Security readiness is ${r.score} out of 100, sir. ${r.components.map((c, i) => `${i + 1}. ${c.label}: ${c.status === 'unknown' ? 'not measured' : c.status}, ${c.evidence}.`).join(' ')} ${r.how}`, { readiness: r.score });
+    }
+    if (ask.action === 'lockdown_preview') {
+      const preview = await coreAccess.previewLockdown({ mechanisms: view.lockdown.mechanisms, keeps: view.lockdown.keeps, principals: view.access.principals, active: s.lockedDown });
+      s.store.tenants[CHE_TENANT].lockdown = preview;
+      if (s.lockedDown) return done('Lockdown is already on, sir. Say "end lockdown" to resume.');
+      return done(`If I lock down, sir: ${preview.effects.map((e, i) => `${i + 1}. ${e.effect}`).join(' ')} What stays: ${preview.unaffected.join(' ')} Nothing has changed yet. Say "lock down" to turn it on, or confirm it on the Security page.`, { lockdown_preview: true });
+    }
+    if (ask.action === 'incidents') {
+      const open = view.defense.active;
+      if (!open.length) return done(`No open security incidents, sir. ${view.defense.recent.length} resolved recently.`);
+      return done(`${open.length} open incident${open.length === 1 ? '' : 's'}, sir: ${open.slice(0, 5).map((i, n) => `${n + 1}. ${i.title}, ${i.severity}, ${i.stage.toLowerCase()}`).join('; ')}.`);
+    }
+    if (ask.action === 'team') {
+      const chain = view.agent.chain;
+      return done(`My security chain of command, sir: you, then me, then ${chain[2].name}, my second-in-command for security, who directs ${chain.length - 3} specialists: ${chain.slice(3).map((c) => c.name).join(', ')}. Atlas is separate: Atlas codes and is not part of the security chain. ${chain[2].name} is ${view.protection.state.toLowerCase()} right now.`);
+    }
+    if (ask.action === 'drill') {
+      const want = String(ask.scenario || '').toLowerCase();
+      const scenarios = view.simulations.scenarios;
+      const pick = scenarios.find((x) => want && (x.id.replace(/_/g, ' ').includes(want) || x.name.toLowerCase().includes(want))) || (want ? null : scenarios[0]);
+      if (!pick) return done(`I have these drills, sir: ${scenarios.map((x, i) => `${i + 1}. ${x.name}`).join('; ')}. Say "run a drill for" and the name.`, { ok: false });
+      const r = runDrill(s.store, pick.id);
+      return done(`SIMULATION, sir: ${r.name}. It ran in an isolated sandbox and touched no real system. ${r.replay.frames.length} steps from detected to resolved: ${r.replay.frames.map((f) => f.stage.toLowerCase()).join(', ')}. You can replay it on the Security page.`, { simulation: true });
+    }
+    return done('I can give the security status, readiness, a lockdown preview, open incidents, the security team, or run a safe drill, sir.', { ok: false });
+  }
+
   // The owner's spoken or typed security requests. Every answer reports what was actually done or found.
   async securityChat(data, ask, tokenHash) {
     const say = (text, extra = {}) => ndjsonReply(text, { source: 'che_security', ok: true, model_calls: 0, security_action: ask.action, ...extra });
@@ -5960,8 +6093,8 @@ export class CheState extends DurableObject {
       const tail = r.advisories ? ` Dependencies: ${r.advisories.checked} checked against ${r.advisories.coverage}; ${r.advisories.advisories.length} advisory match${r.advisories.advisories.length === 1 ? '' : 'es'}.` : ' Dependency and deploy checks need the GitHub connection, so they were not run.';
       return say(speakSecurityStatus(r.sec, { lockedDown: await isLockedDown(this.ctx.storage), findings: r.findings }) + tail, { findings: r.findings.length });
     }
+    if (['status', 'readiness', 'lockdown_preview', 'incidents', 'team', 'drill', 'open'].includes(ask.action)) return this.securityCoreChat(data, ask, say);
     const sec = await loadSecurity(this.ctx.storage);
-    if (ask.action === 'status') return say(speakSecurityStatus(sec, { lockedDown: await isLockedDown(this.ctx.storage) }));
     if (ask.action === 'revoke') { const n = revokeSessions(sec); await saveSecurity(this.ctx.storage, sec); return say(`Revoked ${n} Face ID session${n === 1 ? '' : 's'}, sir. Your paired devices still work; say "revoke device" with its name to remove one.`); }
     if (ask.action === 'snapshot') { const s = await snapshotTrustedState(this.ctx.storage, data); return say(`Saved a trusted snapshot of my configuration, sir, fingerprint ${s.sha256.slice(0, 12)}. It holds no keys or passwords.`); }
     if (ask.action === 'internal_only') {

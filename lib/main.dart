@@ -615,7 +615,7 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
     ));
   }
 
-  /// More → Security (Security Intelligence).
+  /// SECURITY: Home → Security, More → Security, and "open security" by voice.
   Future<void> _openSecurity() async {
     HapticFeedback.selectionClick();
     await Navigator.of(context).push(MaterialPageRoute<void>(
@@ -1508,7 +1508,7 @@ OWNER AGENCY
       _ => CheScreenReport(page: 'Home', tab: 'Home', tabs: tabs,
           detail: '${_officeRuntime.agents.length} agents, ${_officeRuntime.working} working',
           controls: const ['Talk to CHE', 'Type to CHE', 'Voice on or off', 'The Office', 'Brain', 'Trading', 'Create',
-            'CHE World', 'Read status', 'the bottom tabs']),
+            'CHE World', 'Security', 'Read status', 'the bottom tabs']),
     };
   }
 
@@ -1640,6 +1640,7 @@ OWNER AGENCY
       onOpenTrading: () => _openAssistantHub(tab: 1),
       onOpenCreate: () => _openAssistantHub(tab: 5),
       onOpenWorld: () => _goShellTab(3),
+      onOpenSecurity: () => unawaited(_openSecurity()),
       onOfficeStatus: () => unawaited(_speakOfficeStatus()),
       onTapAgent: (agent) => _openOfficeFloor(agentName: agent.name),
       unread: _mailboxUnread,
@@ -2224,7 +2225,7 @@ OWNER AGENCY
         CheMoreItem(
           icon: Icons.security_rounded,
           title: 'Security',
-          subtitle: 'Security check · lockdown · sessions · internal-only mode',
+          subtitle: 'Protection status · Cyber World · incidents · access · lockdown preview',
           onTap: () => unawaited(_openSecurity()),
           hue: kit.CheColors.accent,
         ),

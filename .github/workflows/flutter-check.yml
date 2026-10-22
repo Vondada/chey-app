@@ -77,7 +77,7 @@ jobs:
         with:
           node-version: 22
       - name: Check Worker syntax
-        run: for f in server/cloudflare/*.js; do node --check "$f" || exit 1; done
+        run: for f in server/cloudflare/*.js server/cloudflare/security_core/*.js; do node --check "$f" || exit 1; done
       - name: Run Worker unit tests
         run: node --test server/cloudflare/*.test.mjs
       # The unit run above skips the website observer's browser tests; this installs the

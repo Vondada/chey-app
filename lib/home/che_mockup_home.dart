@@ -64,6 +64,7 @@ class CheMockupHome extends StatelessWidget {
     required this.onOpenTrading,
     required this.onOpenCreate,
     required this.onOpenWorld,
+    this.onOpenSecurity,
     required this.onOfficeStatus,
     this.listening = false,
     this.thinking = false,
@@ -114,6 +115,8 @@ class CheMockupHome extends StatelessWidget {
   final VoidCallback onOpenTrading;
   final VoidCallback onOpenCreate;
   final VoidCallback onOpenWorld;
+  /// SECURITY, a top-level destination (owner, 2026-10-22). Optional so older callers keep five destinations.
+  final VoidCallback? onOpenSecurity;
   final VoidCallback onOfficeStatus;
   final bool listening;
   final bool thinking;
@@ -171,6 +174,15 @@ class CheMockupHome extends StatelessWidget {
           hue: CheEnergy.cyan,
           onOpen: onOpenWorld,
         ),
+        if (onOpenSecurity != null)
+          CheHomeDestination(
+            id: 'security',
+            label: 'Security',
+            detail: 'Protection',
+            icon: Icons.security_rounded,
+            hue: CheEnergy.teal,
+            onOpen: onOpenSecurity!,
+          ),
       ];
 
   @override
@@ -871,7 +883,7 @@ extension on CheMockupHome {
         const SizedBox(height: CheSpace.md),
         // The rooms without a tile.
         Row(children: [
-          for (final id in const ['brain', 'create', 'world']) ...[
+          for (final id in ['brain', 'create', 'world', if (byId.containsKey('security')) 'security']) ...[
             if (id != 'brain') const SizedBox(width: CheSpace.sm),
             Expanded(child: _HudRoomPill(item: byId[id]!)),
           ],

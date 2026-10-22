@@ -6,6 +6,12 @@
 // One storage key holds its state: findings (never the secret itself), authorization sessions, nonces, telemetry
 // counters, quarantine, trusted snapshots metadata and the audit log.
 import { setLockdown, isLockedDown } from './resilience.js';
+// The generic engines live in the portable Security Core (security_core/); this module is CHE's adapter over them
+// and keeps its exports so existing callers are unchanged.
+import { redact, redactDeep, scanSecrets } from './security_core/secrets.js';
+import { sha256 } from './security_core/supply_chain.js';
+export { BROAD_SECRET_RE, guardModelInput, looksSecret, redact, redactDeep, scanSecrets } from './security_core/secrets.js';
+export { ADVISORIES, checkTargetIdentity, checkToolAccess, dependencyAdvisories, inspectArtifacts, inspectFile, mayExecute, reviewGeneratedCode, securityCheckForCapability, sha256 } from './security_core/supply_chain.js';
 
 export const SECURITY_KEY = 'che:security_v1';
 export const SNAPSHOT_KEY = 'che:trusted_snapshot_v1';
@@ -14,126 +20,6 @@ const SESSION_TTL_MS = 10 * 60 * 1000;
 const NONCE_TTL_MS = 5 * 60 * 1000;
 
 const clip = (v, n) => String(v ?? '').slice(0, n);
-
-// ─── Secret scanning and redaction ──────────────────────────────────────────
-
-// Each kind names a credential format; `entropy` is a high-randomness token with no known prefix.
-const SECRET_PATTERNS = [
-  ['openai_key', /\bsk-(?:proj-)?[A-Za-z0-9_-]{16,}/g],
-  ['xai_key', /\bxai-[A-Za-z0-9_-]{16,}/g],
-  ['huggingface_token', /\bhf_[A-Za-z0-9]{20,}/g],
-  ['google_api_key', /\bAIza[0-9A-Za-z_-]{30,}/g],
-  ['github_token', /\b(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,})/g],
-  ['aws_access_key', /\bAKIA[0-9A-Z]{16}\b/g],
-  ['slack_token', /\bxox[baprs]-[A-Za-z0-9-]{10,}/g],
-  ['alpaca_key', /\b(?:PK|AK)[A-Z0-9]{16,}\b/g],
-  ['stripe_key', /\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}/g],
-  ['jwt', /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{8,}/g],
-  ['bearer_token', /\bBearer\s+[A-Za-z0-9._~+/=-]{20,}/g],
-  ['private_key', /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g],
-  ['password_assignment', /\b(?:password|passwd|passcode|pwd)\s*(?:is|=|:)\s*["']?[^\s"']{6,}/gi],
-  // "my password hunter2": a password stated without a separator; the value must contain a digit or symbol, so
-  // ordinary words ("my password reset") are left alone.
-  ['password_plain', /\bmy\s+(?:\w+\s+)?(?:password|passcode|passphrase|pin)\s+(?:is\s+)?(?=[^\s]*[\d!@#$%^&*])[^\s]{4,}/gi],
-  ['secret_assignment', /\b(?:api[ _-]?key|secret|access[ _-]?token|client[ _-]?secret|auth[ _-]?token)\s*(?:is|=|:)\s*["']?[A-Za-z0-9._~+/=-]{12,}/gi],
-];
-
-// The broad check used where a false positive only refuses (workflow import/export, saved inputs): it also catches
-// plain forms such as "password hunter2", "api key abc123" and "token: xyz". Model prompts and logs use the precise
-// patterns above, so ordinary prose ("the token expires") is never altered there. Mirrored on the phone in
-// lib/security/che_secret_scan.dart.
-export const BROAD_SECRET_RE = /\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,}|PK[A-Z0-9]{16,}|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,})|\b(?=[A-Za-z0-9+/_-]{32,}\b)(?=[^\s]*\d)(?=[^\s]*[A-Za-z])[A-Za-z0-9+/_-]{32,}\b|\b(?:password|passcode|passphrase|api[ _-]?key|secret[ _-]?key|access[ _-]?token|auth[ _-]?token|token|pin)\s*(?:is\s+|=\s*|:\s*|\s)\s*(?!is\b|for\b|the\b|a\b|to\b|and\b|of\b)\S{4,}/i;
-
-/** True when the text looks like it holds a credential. `broad` adds the plain-word forms. */
-export function looksSecret(value, { broad = false } = {}) {
-  const text = String(value ?? '');
-  return scanSecrets(text).length > 0 || (broad && BROAD_SECRET_RE.test(text));
-}
-
-function entropy(s) {
-  const counts = {};
-  for (const c of s) counts[c] = (counts[c] || 0) + 1;
-  return Object.values(counts).reduce((h, n) => h - (n / s.length) * Math.log2(n / s.length), 0);
-}
-
-// A random-looking 32–200 character token with letters and digits. Git SHAs, other pure hex hashes, UUIDs, data: URIs
-// and paths are not secrets and are left alone (coding prompts are full of them).
-function entropyHits(text) {
-  const hits = [];
-  for (const m of text.matchAll(/(?<![\w/:.-])[A-Za-z0-9_+=-]{32,200}(?![\w/.-])/g)) {
-    const t = m[0];
-    if (/^[0-9a-f]+$/i.test(t) || /^[0-9a-f-]{36}$/i.test(t)) continue;
-    if (!/[A-Z]/.test(t) || !/[a-z]/.test(t) || !/\d/.test(t)) continue;
-    if (entropy(t) < 4.2) continue;
-    hits.push({ kind: 'high_entropy_token', index: m.index, length: t.length });
-  }
-  return hits;
-}
-
-/** Finds credential-shaped text. A finding records its kind, position and length — never the value. */
-export function scanSecrets(value) {
-  const text = String(value ?? '');
-  const findings = [];
-  for (const [kind, re] of SECRET_PATTERNS) {
-    for (const m of text.matchAll(re)) findings.push({ kind, index: m.index, length: m[0].length });
-  }
-  for (const hit of entropyHits(text)) {
-    if (!findings.some((f) => hit.index >= f.index && hit.index < f.index + f.length)) findings.push(hit);
-  }
-  return findings.sort((a, b) => a.index - b.index);
-}
-
-/** The text with every finding replaced by [redacted:kind]. */
-export function redact(value) {
-  const text = String(value ?? '');
-  const findings = scanSecrets(text);
-  if (!findings.length) return { text, findings };
-  let out = '';
-  let at = 0;
-  for (const f of findings) {
-    if (f.index < at) continue;
-    out += text.slice(at, f.index) + `[redacted:${f.kind}]`;
-    at = f.index + f.length;
-  }
-  return { text: out + text.slice(at), findings };
-}
-
-/** Deep redaction of any JSON-like value (logs, exports, generated files, chat history). */
-export function redactDeep(value, found = []) {
-  if (typeof value === 'string') {
-    if (value.startsWith('data:')) return value;
-    const r = redact(value);
-    found.push(...r.findings.map((f) => f.kind));
-    return r.text;
-  }
-  if (Array.isArray(value)) return value.map((v) => redactDeep(v, found));
-  if (value && typeof value === 'object') {
-    const out = {};
-    for (const [k, v] of Object.entries(value)) out[k] = /^(?:image_url|image|audio|b64_json)$/.test(k) ? v : redactDeep(v, found);
-    return out;
-  }
-  return value;
-}
-
-/**
- * The final guard before any language-model provider call: every text part of the request is redacted, so a secret
- * can never reach a model even if an earlier layer missed it. Images and audio are left as they are.
- */
-export function guardModelInput(input) {
-  if (!input || typeof input !== 'object') return { input, findings: [] };
-  const found = [];
-  const guarded = { ...input };
-  if (Array.isArray(input.messages)) {
-    guarded.messages = input.messages.map((m) => {
-      if (!m || typeof m !== 'object') return m;
-      if (typeof m.content === 'string') return { ...m, content: redactDeep(m.content, found) };
-      if (Array.isArray(m.content)) return { ...m, content: m.content.map((p) => (p && p.type === 'text' ? { ...p, text: redactDeep(p.text, found) } : p)) };
-      return m;
-    });
-  }
-  if (typeof input.prompt === 'string') guarded.prompt = redactDeep(input.prompt, found);
-  return { input: guarded, findings: found };
-}
 
 // ─── State ──────────────────────────────────────────────────────────────────
 
@@ -245,194 +131,6 @@ export function revokeSessions(state, { deviceHash = null } = {}, now = Date.now
   }
   audit(state, 'sessions_revoked', `${n} session(s)`);
   return n;
-}
-
-// ─── Identity of the target: app, domain, account ───────────────────────────
-
-function registrable(host) {
-  const parts = String(host || '').toLowerCase().replace(/\.$/, '').split('.');
-  const twoLevel = /^(?:co|com|org|net|gov|ac)\.[a-z]{2}$/.test(parts.slice(-2).join('.'));
-  return parts.slice(twoLevel ? -3 : -2).join('.');
-}
-
-/**
- * Before acting in an app, on a site or in an account, the target must be exactly the one the owner authorized.
- * Look-alike domains (punycode, extra labels such as paypal.com.evil.io, other registrable domains) and another
- * signed-in account stop the action.
- */
-export function checkTargetIdentity({ expected = {}, actual = {} }) {
-  const problems = [];
-  if (expected.app && String(actual.app || '').toLowerCase() !== String(expected.app).toLowerCase()) problems.push(`the app is ${actual.app || 'unknown'}, not ${expected.app}`);
-  if (expected.domain) {
-    let host = '';
-    try { host = new URL(String(actual.url || '')).hostname.toLowerCase(); } catch (_) { host = String(actual.domain || '').toLowerCase(); }
-    const want = String(expected.domain).toLowerCase();
-    if (!host) problems.push('the site address is unknown');
-    else if (/(^|\.)xn--/.test(host)) problems.push(`${host} uses a look-alike (punycode) name`);
-    else if (registrable(host) !== registrable(want) || !(host === want || host.endsWith(`.${want}`) || registrable(want) === want && host.endsWith(`.${want}`))) problems.push(`the site is ${host}, not ${want}`);
-    if (actual.url && !/^https:/i.test(String(actual.url))) problems.push('the connection is not HTTPS');
-  }
-  if (expected.account && String(actual.account || '').toLowerCase() !== String(expected.account).toLowerCase()) problems.push('a different account is signed in');
-  return problems.length ? { ok: false, problems } : { ok: true, problems: [] };
-}
-
-// ─── Internal tool permissions ──────────────────────────────────────────────
-
-const ACCESS_KINDS = ['files', 'projects', 'network', 'credentials', 'devices', 'actions'];
-
-/**
- * A capability may touch only what its `permissions` list names. An internally created tool starts with nothing, so
- * every file, project, host, credential, device or action it asks for must have been granted explicitly.
- */
-export function checkToolAccess(cap, request = {}) {
-  if (!cap) return { ok: false, denied: ['unknown tool'] };
-  const perms = cap.permissions || {};
-  const denied = [];
-  for (const kind of ACCESS_KINDS) {
-    const allowed = Array.isArray(perms[kind]) ? perms[kind] : [];
-    for (const want of [].concat(request[kind] || [])) {
-      const w = String(want);
-      const ok = allowed.some((a) => {
-        const g = String(a);
-        if (kind === 'files' || kind === 'projects') return g.endsWith('/*') ? w.startsWith(g.slice(0, -1)) && !w.includes('..') : w === g;
-        if (kind === 'network') { let host = w; try { host = new URL(w).hostname; } catch (_) {} return host === g; }
-        return w === g;
-      });
-      if (!ok) denied.push(`${kind}: ${clip(redact(w).text, 80)}`);
-    }
-  }
-  return denied.length ? { ok: false, denied } : { ok: true, denied: [] };
-}
-
-// ─── Malware and supply-chain safety ────────────────────────────────────────
-
-async function sha256(bytes) {
-  const d = await crypto.subtle.digest('SHA-256', bytes);
-  return Array.from(new Uint8Array(d), (b) => b.toString(16).padStart(2, '0')).join('');
-}
-
-const BINARY_MAGIC = [
-  ['ELF executable', [0x7f, 0x45, 0x4c, 0x46]], ['Windows executable', [0x4d, 0x5a]],
-  ['Mach-O executable', [0xcf, 0xfa, 0xed, 0xfe]], ['Mach-O executable', [0xfe, 0xed, 0xfa, 0xcf]], ['Mach-O universal binary', [0xca, 0xfe, 0xba, 0xbe]],
-  ['WebAssembly module', [0x00, 0x61, 0x73, 0x6d]], ['Java class', [0xca, 0xfe, 0xba, 0xbe]],
-];
-const PERMISSIVE = /\b(?:MIT|Apache[- ]2\.0|BSD|ISC|Zlib|Unlicense|CC0|MPL[- ]2\.0)\b/i;
-const COPYLEFT = /\b(?:GPL|AGPL|LGPL)[- ]?v?\d/i;
-
-/** Static inspection of one file. Nothing is executed. */
-export function inspectFile({ path = '', text = null, bytes = null }) {
-  const issues = [];
-  const b = bytes instanceof Uint8Array ? bytes : text != null ? new TextEncoder().encode(String(text)) : new Uint8Array();
-  for (const [label, magic] of BINARY_MAGIC) if (magic.every((x, i) => b[i] === x)) { issues.push({ severity: 'high', what: `${label} (${path}): never run in production` }); break; }
-  const s = text != null ? String(text) : new TextDecoder('utf-8', { fatal: false }).decode(b.slice(0, 200_000));
-  if (/package\.json$/.test(path)) {
-    try {
-      const pkg = JSON.parse(s);
-      for (const hook of ['preinstall', 'install', 'postinstall', 'prepare']) if (pkg.scripts?.[hook]) issues.push({ severity: 'medium', what: `install script "${hook}" in ${path}` });
-    } catch (_) { issues.push({ severity: 'low', what: `${path} is not valid JSON` }); }
-  }
-  if (/\b(?:curl|wget)\b[^\n|]*\|\s*(?:ba|z)?sh\b/.test(s)) issues.push({ severity: 'high', what: `${path} pipes a download into a shell` });
-  if (/\beval\s*\(\s*(?:atob|Buffer\.from|unescape|String\.fromCharCode)/.test(s) || /(?:\\x[0-9a-f]{2}){40,}/i.test(s)) issues.push({ severity: 'high', what: `${path} decodes and runs hidden code` });
-  if (/[A-Za-z0-9+/]{2000,}={0,2}/.test(s) && !/\.(?:png|jpe?g|gif|woff2?|ttf|lock)$/i.test(path)) issues.push({ severity: 'medium', what: `${path} carries a large encoded blob` });
-  if (/\b(?:xmrig|stratum\+tcp|coinhive|cryptonight)\b/i.test(s)) issues.push({ severity: 'high', what: `${path} references crypto-mining` });
-  if (/(?:~\/\.ssh|id_rsa|\.aws\/credentials|keychain|process\.env)[\s\S]{0,200}(?:fetch|https?\.request|axios|XMLHttpRequest|curl)/i.test(s)) issues.push({ severity: 'high', what: `${path} reads credentials and sends network requests` });
-  if (/child_process|subprocess\.Popen|os\.system|Runtime\.getRuntime\(\)\.exec/.test(s)) issues.push({ severity: 'low', what: `${path} starts processes` });
-  if (/\b(?:fetch|axios|https?\.request|XMLHttpRequest|urllib|requests\.(?:get|post))\b/.test(s)) issues.push({ severity: 'info', what: `${path} makes network requests` });
-  for (const f of scanSecrets(s)) issues.push({ severity: 'medium', what: `${path} contains a credential-shaped value (${f.kind})` });
-  return issues;
-}
-
-/**
- * MALWARE SAFETY LOOP for a repository or file set: identity → hashes → static inspection → dependency review →
- * license review → verdict allow / quarantine / reject / owner_review. Nothing from the source is executed.
- */
-export async function inspectArtifacts({ source = '', files = [], license = '', identity = {}, paths = [] } = {}) {
-  const hashes = [];
-  const issues = [];
-  // Prebuilt executables in the file list are never trusted, read or not.
-  const executables = paths.filter((p) => /\.(?:exe|dll|so|dylib|bin|jar|msi|apk|ipa|scr|bat|cmd|ps1)$/i.test(String(p))).slice(0, 10);
-  if (executables.length) issues.push({ severity: 'medium', what: `prebuilt executable files (${executables.slice(0, 3).join(', ')}): never run in production` });
-  for (const f of files.slice(0, 2000)) {
-    const bytes = f.bytes instanceof Uint8Array ? f.bytes : new TextEncoder().encode(String(f.text ?? ''));
-    hashes.push({ path: clip(f.path, 200), sha256: await sha256(bytes), size: bytes.length });
-    issues.push(...inspectFile({ path: f.path, text: f.text ?? null, bytes: f.bytes ?? null }));
-  }
-  const licenseText = license || files.find((f) => /^(?:LICENSE|COPYING)(?:\.\w+)?$/i.test(String(f.path).split('/').pop()))?.text || '';
-  const licenseKind = !licenseText ? 'none' : PERMISSIVE.test(licenseText) ? 'permissive' : COPYLEFT.test(licenseText) ? 'copyleft' : 'unknown';
-  if (licenseKind === 'none') issues.push({ severity: 'medium', what: 'no license: the code may not be reused' });
-  if (licenseKind === 'copyleft') issues.push({ severity: 'medium', what: 'copyleft license: reuse needs the owner\'s decision' });
-  if (licenseKind === 'unknown') issues.push({ severity: 'medium', what: 'unrecognised license' });
-  if (identity.expected && identity.actual && identity.expected !== identity.actual) issues.push({ severity: 'high', what: `the repository is ${identity.actual}, not ${identity.expected}` });
-  const high = issues.filter((i) => i.severity === 'high').length;
-  const medium = issues.filter((i) => i.severity === 'medium').length;
-  const verdict = high >= 2 || issues.some((i) => /hidden code|pipes a download|crypto-mining|not .* expected|credentials and sends/.test(i.what) && i.severity === 'high') ? 'reject'
-    : high ? 'quarantine'
-      : medium ? 'owner_review'
-        : 'allow';
-  return { source: clip(source, 200), verdict, license: licenseKind, hashes: hashes.slice(0, 200), issues: issues.slice(0, 100), executed: false };
-}
-
-/** Unknown binaries and unreviewed code never run in CHE's production runtime; a sandbox run needs an allow verdict. */
-export function mayExecute(report, environment = 'production') {
-  if (!report || report.verdict !== 'allow') return { ok: false, reason: `the safety verdict is ${report?.verdict || 'missing'}` };
-  if (environment === 'production' && report.issues.some((i) => /executable|binary|WebAssembly/.test(i.what))) return { ok: false, reason: 'unknown executables never run in production' };
-  return { ok: true };
-}
-
-/** The registry's 'security' promotion check (capability_registry.recordCheck). */
-export async function securityCheckForCapability(cap, files = []) {
-  const report = await inspectArtifacts({ source: cap?.capability_id, files, license: cap?.license_profile || '' });
-  const wide = cap ? [].concat(cap.permissions?.network || [], cap.permissions?.credentials || []) : [];
-  const ok = Boolean(cap) && report.verdict === 'allow' && !wide.includes('*');
-  return { ok, evidence: ok ? `static review clean (${report.hashes.length} file(s), ${report.license} license, no wildcard access)` : `verdict ${report.verdict}; ${report.issues.filter((i) => i.severity !== 'info').map((i) => i.what).slice(0, 3).join('; ') || 'wildcard network or credential access'}`, report };
-}
-
-/** Generated code reaches production only with clean checks, passing tests and the owner's review. */
-export async function reviewGeneratedCode({ files = [], syntax_ok = false, tests_passed = false, owner_approved = false } = {}) {
-  const report = await inspectArtifacts({ source: 'generated code', files, license: 'MIT (CHE original code)' });
-  const blockers = [];
-  if (!syntax_ok) blockers.push('syntax checks have not passed');
-  if (!tests_passed) blockers.push('tests have not passed');
-  if (report.verdict !== 'allow') blockers.push(`security review: ${report.verdict}`);
-  if (!owner_approved) blockers.push('the owner has not approved it');
-  return { may_enter_production: blockers.length === 0, blockers, report };
-}
-
-// Small vendored advisory list (checked without any network). It is not a full advisory database: the report says so.
-export const ADVISORIES = Object.freeze([
-  { ecosystem: 'npm', name: 'lodash', below: '4.17.21', id: 'CVE-2021-23337', severity: 'high' },
-  { ecosystem: 'npm', name: 'minimist', below: '1.2.6', id: 'CVE-2021-44906', severity: 'high' },
-  { ecosystem: 'npm', name: 'node-fetch', below: '2.6.7', id: 'CVE-2022-0235', severity: 'medium' },
-  { ecosystem: 'npm', name: 'ws', below: '8.17.1', id: 'CVE-2024-37890', severity: 'high' },
-  { ecosystem: 'npm', name: 'axios', below: '1.7.4', id: 'CVE-2024-39338', severity: 'high' },
-  { ecosystem: 'npm', name: 'event-stream', exact: '3.3.6', id: 'malicious flatmap-stream', severity: 'critical' },
-  { ecosystem: 'pub', name: 'http', below: '0.13.3', id: 'GHSA CRLF injection', severity: 'medium' },
-]);
-
-function semverLess(a, b) {
-  const pa = String(a).replace(/^[^\d]*/, '').split(/[.+-]/).map((x) => Number.parseInt(x, 10) || 0);
-  const pb = String(b).split('.').map(Number);
-  for (let i = 0; i < 3; i++) if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) < (pb[i] || 0);
-  return false;
-}
-
-/** Dependency advisories from package.json / package-lock / pubspec.lock content. */
-export function dependencyAdvisories({ packageJson = '', pubspecLock = '' } = {}) {
-  const deps = [];
-  try {
-    const pkg = JSON.parse(packageJson || '{}');
-    for (const [name, v] of Object.entries({ ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) })) deps.push({ ecosystem: 'npm', name, version: String(v) });
-  } catch (_) {}
-  for (const m of String(pubspecLock).matchAll(/^ {2}([a-z0-9_]+):\n(?:(?: {4}.*)\n)*? {4}version: "([^"]+)"/gm)) deps.push({ ecosystem: 'pub', name: m[1], version: m[2] });
-  const hits = [];
-  for (const d of deps) {
-    for (const a of ADVISORIES) {
-      if (a.ecosystem !== d.ecosystem || a.name !== d.name) continue;
-      const v = d.version.replace(/^[\^~>=<\s]+/, '');
-      if ((a.exact && v === a.exact) || (a.below && semverLess(v, a.below))) hits.push({ ...a, version: d.version });
-    }
-  }
-  return { checked: deps.length, advisories: hits, coverage: `a small built-in list of ${ADVISORIES.length} known advisories, not a full database` };
 }
 
 // ─── THREAT DETECTION LOOP ──────────────────────────────────────────────────
@@ -599,7 +297,14 @@ export function externalCallAllowed(policy = {}, target = '', { ownerCompute = [
 export function securityIntent(message = '') {
   const t = String(message || '').trim().toLowerCase().replace(/[’]/g, "'").replace(/^(?:(?:hey|hi|ok|okay)[\s,.!]+)?(?:che|chey|chay)\b[\s,.:;!?-]*/, '').replace(/^(?:please|can you|could you)\s+/, '').replace(/[.!?]+$/, '').trim();
   if (/^(?:run|do|start) (?:a |the )?(?:full )?security (?:check|scan|audit)$|^check (?:your|che's) security$/.test(t)) return { action: 'check' };
-  if (/^(?:security status|how(?:'s| is) (?:your|che's|my) security|are you secure)$/.test(t)) return { action: 'status' };
+  if (/^(?:(?:what(?:'s| is) )?(?:my |your |the )?security status|how(?:'s| is) (?:your|che's|my) security|are you secure|am i secure)$/.test(t)) return { action: 'status' };
+  if (/^(?:what(?:'s| is) )?(?:my |the |your )?security (?:readiness|score)$|^how ready is (?:my |your |the )?security$/.test(t)) return { action: 'readiness' };
+  if (/^(?:preview|show(?: me)?) (?:the )?lock ?down(?: preview)?$|^what (?:would|does|will) (?:a )?lock ?down do$/.test(t)) return { action: 'lockdown_preview' };
+  if (/^(?:show|list|read|any) (?:me )?(?:my |the )?(?:open |active )?(?:security )?incidents$/.test(t)) return { action: 'incidents' };
+  if (/^(?:who(?:'s| is) (?:on )?(?:my|your|the) security team|(?:show )?(?:the )?security chain of command)$/.test(t)) return { action: 'team' };
+  if (/^(?:open|show(?: me)?|go to|take me to) (?:the |my )?security(?: page| center| command center| screen)?$/.test(t)) return { action: 'open' };
+  const drill = t.match(/^run (?:a |the )?(?:safe )?(?:security )?(?:drill|simulation)(?: (?:of|for) (?:a |an |the )?(.+))?$/);
+  if (drill) return { action: 'drill', scenario: drill[1] || '' };
   if (/^(?:revoke|end|kill) (?:all )?(?:my |the )?(?:face id |authorization )?sessions$/.test(t)) return { action: 'revoke' };
   if (/^(?:review|show|list) (?:your |the |my )?internal tools$/.test(t)) return { action: 'tools' };
   if (/^(?:review|show) (?:the )?knowledge access$/.test(t)) return { action: 'knowledge' };
