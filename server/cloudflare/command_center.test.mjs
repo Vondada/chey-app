@@ -32,7 +32,7 @@ const MISSION_IDS = {
   intelligence: ['che', 'che-explore', 'che-plan', 'che-build', 'che-research', 'che-verify', 'che-memory', 'che-brain-review', 'che-flagstaff-import', 'che-outside-mail', 'che-recover', 'che-cancel-job', 'che-status', 'learn'],
   youtube: ['yt-ideas', 'yt-research', 'yt-script', 'yt-video', 'yt-voice', 'yt-thumbnail', 'yt-seo', 'yt-publish', 'yt-batch', 'yt-analytics', 'yt-grow'],
   // trade-connections reads the owner-only connections of #348 (issue #350).
-  trading: ['trade-open', 'trade-chart', 'trade-setup', 'trade-liquidity', 'trade-risk', 'trade-backtest', 'trade-learning', 'trade-research', 'trade-journal', 'trade-alert', 'trade-sim', 'trade-controls', 'trade-emergency', 'trade-execute', 'trade-connections'],
+  trading: ['trade-open', 'trade-chart', 'trade-setup', 'trade-liquidity', 'trade-risk', 'trade-backtest', 'trade-learning', 'trade-research', 'trade-history', 'trade-journal', 'trade-alert', 'trade-sim', 'trade-controls', 'trade-emergency', 'trade-execute', 'trade-connections'],
   build: ['site-build', 'site-redesign', 'site-audit', 'site-publish', 'app-build', 'app-fix', 'ai-build', 'code-review', 'che-release', 'iphone-update', 'rea-inspect', 'rea-discover', 'rea-features', 'rea-explain', 'rea-debug', 'rea-compare', 'rea-rebuild', 'rea-build', 'rea-verify', 'rea-status'],
   money: ['money-dashboard', 'cashflow', 'budget', 'expenses', 'invoices', 'money-forecast', 'pricing', 'profit-report'],
   clients: ['lead-scout', 'lead-audit', 'lead-score', 'lead-match', 'lead-proposal', 'lead-outreach', 'lead-crm', 'lead-followup', 'client-deliver'],
@@ -110,9 +110,9 @@ async function owner({ saved = new Map(), model = () => 'Here is the answer, sir
 
 // ─── 1. Catalog identities ────────────────────────────────────────────────
 
-test('1. the owner\'s 71 commands exist exactly as listed, plus ten REA, six Creator Studio, two Strategy Control Center and two strategy learning commands, in 9 categories, each fully described', () => {
-  assert.equal(COMMANDS.length, 98);
-  assert.equal(new Set(COMMANDS.map((c) => c.id)).size, 98, 'ids are unique');
+test('1. the owner\'s 71 commands exist exactly as listed, plus ten REA, six Creator Studio, two Strategy Control Center, two strategy learning commands and the historical study, in 9 categories, each fully described', () => {
+  assert.equal(COMMANDS.length, 99);
+  assert.equal(new Set(COMMANDS.map((c) => c.id)).size, 99, 'ids are unique');
   assert.deepEqual(CATEGORIES.map((c) => c.id), Object.keys(MISSION_IDS));
   for (const [category, ids] of Object.entries(MISSION_IDS)) {
     assert.deepEqual(COMMANDS.filter((c) => c.category === category).map((c) => c.id), ids, category);
@@ -163,7 +163,7 @@ test('2. availability comes from real configuration: ready, needs setup, unsuppo
   const expired = connectorStatus({ CHE_TRADOVATE_OAUTH_CLIENT_ID: 'x', CHE_TRADOVATE_OAUTH_CLIENT_SECRET: 'y' }, { broker: { expired: true } });
   assert.equal(expired.broker.state, 'needs_reconnect');
   const view = catalogView(bare);
-  assert.equal(view.commands.length, 98);
+  assert.equal(view.commands.length, 99);
   assert.ok(view.commands.every((c) => ['available', 'setup_required', 'unsupported', 'temporarily_unavailable'].includes(c.status)));
 });
 
@@ -351,6 +351,38 @@ test('the strategy simulation answers plain speech, owner only, with no model ca
     assert.notEqual((await che.say(words)).route, 'che_strategy_sim', words);
   }
   assert.equal((await che.get('/api/trading/sim')).status, 'running', 'none of those changed it');
+});
+
+// Historical trading intelligence: typed, spoken or /trade-history, owner only, answered from stored tests with no model call.
+test('/trade-history and plain questions reach the historical study; nothing is invented while it has no data', async () => {
+  const che = await owner({ model: siteModel, env: READY_ENV });
+  const before = await che.say('How did your strategies do historically on NQ since 1999?');
+  assert.equal(before.route, 'che_trading_intelligence');
+  assert.equal(before.modelCalls, 0);
+  assert.match(before.reply, /No historical study has run yet/);
+  // Offline here: the provider cannot be reached, so the study records that and reports no numbers.
+  const run = await che.say('/trade-history run');
+  assert.equal(run.route, 'che_trading_intelligence');
+  assert.equal(run.modelCalls, 0);
+  const view = await che.get('/api/trading/intelligence');
+  assert.equal(view.state.status, 'complete');
+  assert.ok(view.datasets.every((d) => d.ok === false && d.error), 'each dataset says why it was not verified');
+  assert.equal(view.results.length, 0, 'no result without verified data');
+  assert.doesNotMatch(run.reply, /out-of-sample trades/);
+  assert.equal((await che.say('Backtest NQ')).route === 'che_trading_intelligence', false, 'the existing backtest command keeps its route');
+  const dirty = await che.say('Test Dirty Trez on MNQ');
+  assert.match(dirty.reply, /no written rules for Dirty Trez/);
+});
+
+test('a guest device cannot read or run the historical study', async () => {
+  const che = await owner();
+  const tenant = await che.post('/api/platform/tenants', { name: 'Guest', role: 'family' });
+  const invite = await che.post('/api/platform/enrollments', { access: 'private', tenant_id: tenant.body.tenant.id });
+  const guestToken = (await (await che.send('/api/enroll', { enrollment_token: invite.body.enrollment.token, device_name: 'guest' })).json()).device_token;
+  const spoken = await che.send('/api/chat', { message: 'Run the historical strategy study', history: [] }, guestToken);
+  assert.doesNotMatch(replyFromNdjson(await spoken.text()), /historical study is finished|the historical study, sir/);
+  assert.equal((await che.send('/api/trading/intelligence', null, guestToken, 'GET')).status, 403);
+  assert.equal((await che.get('/api/trading/intelligence')).state.status, 'never run', 'the guest started nothing');
 });
 
 test('a guest device cannot pause the strategy simulation through /trade-sim', async () => {
@@ -703,7 +735,7 @@ test('the Flutter catalog fixture matches what the Worker serves (regenerate: no
   const { fixtureCatalog } = await import('../../tool/dump_command_catalog.mjs');
   const fixture = JSON.parse(readFileSync(new URL('../../test/fixtures/command_catalog.json', import.meta.url), 'utf8'));
   assert.deepEqual(fixture, JSON.parse(JSON.stringify(fixtureCatalog())));
-  assert.equal(fixture.commands.length, 98);
+  assert.equal(fixture.commands.length, 99);
   assert.ok(fixture.templates.length >= 4);
 });
 
@@ -822,7 +854,7 @@ test('the owner\'s six spoken phrases are answered from the catalog with no mode
   for (const words of variants('CHE, open your Commands page.')) {
     const out = await che.say(words);
     assert.equal(out.route, 'che_command_center', words);
-    assert.match(out.reply, /98 commands in 9 groups[\s\S]*2\. YouTube, 11[\s\S]*9\. Creator Studio, 6[\s\S]*Nothing was run/, words);
+    assert.match(out.reply, /99 commands in 9 groups[\s\S]*2\. YouTube, 11[\s\S]*9\. Creator Studio, 6[\s\S]*Nothing was run/, words);
   }
   for (const words of variants('CHE, search for YouTube.')) {
     const out = await che.say(words);

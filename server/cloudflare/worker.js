@@ -71,6 +71,7 @@ import { recordReliability, reliabilityIntent, reliabilitySummary, speakReliabil
 import { answerOwnerMemoryQuestion, auditMemoryProvenance, evidenceQuestion, evidenceReferent, evidenceRequestSplit, explainEvidenceFor, findAnswerEvidence, brainRecordForProvenance, guardOwnerAttributions, guardRememberBlock, guardSpeakerAttributions, latestAnswerEvidence, loadRetractions, memoryPromptContext, ownerFactCorrection, ownerMemoryQuestion, ownerWords, recordAnswerEvidence, recordRetractions, storedSpeaker, storyRequested } from './memory_provenance.js';
 import { condenseHistory, ownerNotificationPolicy } from './workflow_governor.js';
 import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, nextTradingTickAt, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
+import { intelligenceIntent, intelligenceReport, intelligenceView, speakIntelligence, startStudy, studyAlarm, studyStep } from './historical_intelligence.js';
 import { nextStrategySimTickAt, setStrategySimCeiling, setStrategySimPaused, speakStrategySim, strategySimIntent, strategySimTick, strategySimView, strategySimWake } from './strategy_sim.js';
 import { evidenceIntent, evidenceReport, evidenceTick } from './trading_evidence_runner.js';
 import { readTrades } from './trading_evidence.js';
@@ -4083,6 +4084,8 @@ export class CheState extends DurableObject {
     const simRun = await strategySimTick(this.ctx.storage, { now: opts.now, force: opts.force }).catch((error) => { console.error('Strategy simulation tick failed:', error?.message || error); return null; });
     if (simRun?.closed > 0) await queueRoomEvent(this.ctx.storage, { room: 'trading', kind: 'simulation_trades', key: `simulation:${simRun.at}`, title: `${simRun.closed} strategy simulation trade${simRun.closed === 1 ? '' : 's'} closed`, body: `The strategy simulation (1-minute paper strategies) closed ${simRun.closed} trade${simRun.closed === 1 ? '' : 's'} at ${simRun.at}; ${simRun.stored} stored in total. Read the ledger for the numbers.`, status: 'verified', evidence: [`strategy_sim_state ${simRun.at}`], refs: { ledger: 'strategy_simulation', run_at: simRun.at } }).catch(() => null);
     await researchDue(this.ctx.storage, { now: opts.now }).catch((error) => console.error('Historical research failed:', error?.message || error));
+    // Historical trading intelligence: finishes a study the owner started, and refreshes it once a day. No model, no orders.
+    await studyAlarm(this.ctx.storage, { now: opts.now }).catch((error) => console.error('Historical intelligence step failed:', error?.message || error));
     return book;
   }
 
@@ -7095,6 +7098,20 @@ export class CheState extends DurableObject {
           return json(result, result.ok ? 200 : 400);
         }
         return json({ detail: 'Unknown action. Use pause, resume, tick or ceiling.' }, 400);
+      }
+      // Historical trading intelligence: the Trading Room dashboard, the auditable report, and the owner's run. Owner only.
+      if (path.startsWith('/api/trading/intelligence')) {
+        if (!ownerDevice) return json({ detail: 'Only the CHE owner can view or run the historical trading study.' }, 403);
+        if (path === '/api/trading/intelligence' && request.method === 'GET') return json(await intelligenceView(this.ctx.storage));
+        if (path === '/api/trading/intelligence/report' && request.method === 'GET') return json(await intelligenceReport(this.ctx.storage));
+        if (path === '/api/trading/intelligence' && request.method === 'POST') {
+          if (body.action !== 'run') return json({ detail: 'Unknown action. Use run.' }, 400);
+          const started = await startStudy(this.ctx.storage, { who: 'owner (iPhone)' });
+          const state = await studyStep(this.ctx.storage, { budgetMs: 20_000 });
+          const view = await intelligenceView(this.ctx.storage);
+          return json({ ok: true, started: started.started, status: state.status, spoken: speakIntelligence(view), view });
+        }
+        return json({ detail: 'Not found.' }, 404);
       }
       // Every trade record set, read separately and named by source (owner, 2026-10-20). Read only.
       if (path === '/api/trading/ledgers' && request.method === 'GET') {
@@ -11294,6 +11311,21 @@ export class CheState extends DurableObject {
           }
         }
 
+        // Historical trading intelligence (owner, 2026-10-22): decades of free Nasdaq-100 history, answered from stored tests only.
+        const historyAsk = !body.attachment && intelligenceIntent(message);
+        if (historyAsk) {
+          if (!ownerDevice) return ndjsonReply('Only the CHE owner can read or run the historical trading study, sir.', { source: 'che_trading_intelligence', ok: false });
+          let lead = '';
+          if (historyAsk.kind === 'run') {
+            const started = await startStudy(this.ctx.storage, { who: 'owner' });
+            const state = await studyStep(this.ctx.storage, { budgetMs: 20_000 });
+            lead = state.status === 'complete'
+              ? 'The historical study is finished, sir. Free public data only; nothing was bought and no order was placed.'
+              : `${started.started ? 'Started' : 'Continued'} the historical study, sir: ${state.done.length} of ${state.done.length + state.queue.length} steps done. It keeps going on its own and I will have the results in the Trading Room.`;
+          }
+          const view = await intelligenceView(this.ctx.storage);
+          return ndjsonReply([lead, speakIntelligence(view, historyAsk.kind === 'run' ? 'summary' : historyAsk.kind)].filter(Boolean).join('\n'), { source: 'che_trading_intelligence' });
+        }
         // The owner's evidence questions are answered from recorded runs only, never from a guess.
         if (!body.attachment && evidenceIntent(message)) {
           return ndjsonReply(await evidenceReport(this.ctx.storage), { source: 'che_trading_evidence' });
