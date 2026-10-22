@@ -1,0 +1,39 @@
+{
+  "about": "Owner 2026-10-22, live iPhone: \"When do me a picture of a dog in this chat right now\" went to the model, which printed a fake dalle.text2im tool call as JSON instead of a picture. A picture request in everyday words goes to the picture engine; a model reply that is a pretend picture-tool call is never shown as text.",
+  "owner": true,
+  "model": "{\n  \"action\": \"dalle.text2im\",\n  \"action_input\": \"{ \\\"prompt\\\": \\\"A friendly dog sitting in a sunny park, high quality, realistic style.\\\" }\",\n  \"thought\": \"I am generating an image of a dog for you now.\"\n}",
+  "turns": [
+    {
+      "message": "When do me a picture of a dog in this chat right now",
+      "expect": {
+        "route": "che_image_generation",
+        "not": "action_input|dalle"
+      }
+    },
+    {
+      "message": "Can you show me a picture of a red sports car?",
+      "expect": {
+        "route": "che_image_generation"
+      }
+    },
+    {
+      "message": "paint me a sunset over the ocean",
+      "expect": {
+        "route": "che_image_generation"
+      }
+    },
+    {
+      "message": "Tell me about dogs",
+      "expect": {
+        "not": "action_input|dalle\\.text2im",
+        "route": "model"
+      }
+    },
+    {
+      "message": "Can you send me a photo of a golden retriever puppy?",
+      "expect": {
+        "route": "che_image_generation"
+      }
+    }
+  ]
+}
