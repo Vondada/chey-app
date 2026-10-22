@@ -78,7 +78,6 @@ import 'agents/che_agent_runtime.dart';
 import 'agents/che_office_floor_screen.dart';
 import 'home/che_activity_feed.dart';
 import 'home/che_ui_controls_screen.dart';
-import 'agents/che_office_world.dart' show CheRoomVisitors;
 import 'home/che_live_steps.dart';
 import 'home/che_insights_room.dart';
 import 'home/che_cloud_logs_screen.dart';
