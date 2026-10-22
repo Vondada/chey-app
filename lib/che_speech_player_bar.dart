@@ -63,14 +63,14 @@ class CheSpeechPlayerBar extends StatelessWidget {
                 ),
                 _button(Icons.stop_rounded, 'Stop $label completely.', playback.stop),
                 _button(Icons.replay_rounded, 'Play $label from the beginning.', () => _report(playback.replay())),
-                _button(Icons.skip_next_rounded, 'Skip the rest of $label.', playback.skipRemaining),
+                _button(Icons.fast_forward, 'Skip the rest of $label.', playback.skipRemaining),
               ]),
               Row(children: [
                 for (final seconds in const [10, 15, 30])
-                  _button(Icons.replay_10_rounded, 'Rewind $label $seconds seconds.',
+                  _button(Icons.replay_rounded, 'Rewind $label $seconds seconds.',
                       () => _report(playback.seekBy(-Duration(seconds: seconds))), enabled: canSeek),
                 for (final seconds in const [10, 15, 30])
-                  _button(Icons.forward_10_rounded, 'Fast-forward $label $seconds seconds.',
+                  _button(Icons.arrow_forward_rounded, 'Fast-forward $label $seconds seconds.',
                       () => _report(playback.seekBy(Duration(seconds: seconds))), enabled: canSeek),
               ]),
               Semantics(

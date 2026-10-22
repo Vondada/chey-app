@@ -2172,7 +2172,7 @@ OWNER AGENCY
           hue: kit.CheColors.accent,
         ),
         CheMoreItem(
-          icon: Icons.notifications_rounded,
+          icon: Icons.mail_rounded,
           title: 'Flagstaff',
           subtitle: _mailboxUnread > 0 ? '$_mailboxUnread unread · messages, reports, notices' : 'Messages, reports, notices · letters · keys',
           onTap: () => unawaited(_openMailbox()),
@@ -2452,16 +2452,16 @@ OWNER AGENCY
                     icon: _mailboxUnread > 0
                         ? Badge(
                             label: Text('$_mailboxUnread'),
-                            child: const Icon(Icons.notifications_rounded),
+                            child: const Icon(Icons.mail_rounded),
                           )
-                        : const Icon(Icons.notifications_none_rounded),
+                        : const Icon(Icons.mail_outline_rounded),
                     onPressed: () => unawaited(_openMailbox()),
                   ),
                 ),
                 const CheHelpButton(),
                 PopupMenuButton<String>(
                   tooltip: 'Chat options',
-                  icon: const Icon(Icons.more_vert_rounded),
+                  icon: const Icon(Icons.more_horiz_rounded),
                   onSelected: (choice) {
                     switch (choice) {
                       case 'knowledge':
