@@ -142,25 +142,39 @@ class _CheShowroomPageState extends State<CheShowroomPage> {
     );
   }
 
-  Widget _categoryList() => ListView(
-        padding: const EdgeInsets.all(CheSpace.gutter),
-        children: [
-          Semantics(
-            label: 'Search capabilities',
-            textField: true,
-            child: TextField(
-              decoration: const InputDecoration(prefixIcon: Icon(Icons.search), hintText: 'Search what CHE can do'),
-              onChanged: (value) => setState(() => _query = value),
-            ),
+  /// The category list. While the owner has typed a search, the matching capabilities from every category show
+  /// instead, so search reaches the whole showroom.
+  Widget _categoryList() {
+    final searching = _query.trim().isNotEmpty;
+    final matches = [
+      for (final category in _categories)
+        for (final item in category.items)
+          if (cheShowroomMatches(item, query: _query)) item,
+    ];
+    return ListView(
+      padding: const EdgeInsets.all(CheSpace.gutter),
+      children: [
+        Semantics(
+          label: 'Search capabilities',
+          textField: true,
+          child: TextField(
+            decoration: const InputDecoration(prefixIcon: Icon(Icons.search), hintText: 'Search what CHE can do'),
+            onChanged: (value) => setState(() => _query = value),
           ),
-          const SizedBox(height: CheSpace.md),
+        ),
+        const SizedBox(height: CheSpace.md),
+        if (searching) ...[
+          if (matches.isEmpty) const Text('No capability matches that search.'),
+          for (final item in matches) _capabilityCard(item),
+        ] else
           for (final category in _categories)
             _CategoryCard(
               category: category,
               onTap: () => setState(() => _open = category),
             ),
-        ],
-      );
+      ],
+    );
+  }
 
   Widget _capabilityList(CheShowroomCategory category) {
     final items = category.items.where((item) => cheShowroomMatches(item, query: _query, filter: _filter)).toList();
@@ -182,15 +196,16 @@ class _CheShowroomPageState extends State<CheShowroomPage> {
         ),
         const SizedBox(height: CheSpace.md),
         if (items.isEmpty) const Text('No capability matches that search and filter.'),
-        for (final item in items)
-          _CapabilityCard(
-            item: item,
-            onStart: item.start.isEmpty ? null : () => widget.onStart(item.start),
-            onOpen: item.recent == null || widget.onOpenRecent == null ? null : () => widget.onOpenRecent!(item.recent!),
-          ),
+        for (final item in items) _capabilityCard(item),
       ],
     );
   }
+
+  Widget _capabilityCard(CheShowroomItem item) => _CapabilityCard(
+        item: item,
+        onStart: item.start.isEmpty ? null : () => widget.onStart(item.start),
+        onOpen: item.recent == null || widget.onOpenRecent == null ? null : () => widget.onOpenRecent!(item.recent!),
+      );
 }
 
 class _CategoryCard extends StatelessWidget {
