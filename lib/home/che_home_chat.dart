@@ -171,6 +171,7 @@ class CheHomeAssistantMessage extends StatelessWidget {
     required this.thoughtMs,
     required this.agents,
     required this.extras,
+    this.details = const [],
     this.onTapAgent,
     this.onRedo,
     this.onReadAloud,
@@ -189,6 +190,8 @@ class CheHomeAssistantMessage extends StatelessWidget {
 
   /// Plugin install cards, update cards, generated media.
   final List<Widget> extras;
+  // Quiet metadata for this reply (thinking time, steps, understood-as, response details): one collapsed control.
+  final List<Widget> details;
   final void Function(CheAgent agent)? onTapAgent;
   final VoidCallback? onRedo;
 
@@ -214,13 +217,9 @@ class CheHomeAssistantMessage extends StatelessWidget {
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   for (final s in liveSteps) StepLine(label: s.text, status: StepStatus.done),
                 ]),
-              )
-            else if (!live && (finishedSteps.isNotEmpty || thoughtMs != null))
-              Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: CheThoughtLine(thoughtMs: thoughtMs, steps: finishedSteps),
               ),
             if (text.isNotEmpty) CheRichText(text: text, streaming: streaming),
+            if (!live && details.isNotEmpty) CheReplyDetails(children: details),
             ...extras,
           ]),
         ),
@@ -659,4 +658,45 @@ class _BigChip extends StatelessWidget {
           ),
         ),
       );
+}
+
+/// One quiet "Details" control under a reply. Collapsed by default, so Chat shows the words and little else.
+class CheReplyDetails extends StatefulWidget {
+  const CheReplyDetails({super.key, required this.children});
+  final List<Widget> children;
+  @override
+  State<CheReplyDetails> createState() => _CheReplyDetailsState();
+}
+
+class _CheReplyDetailsState extends State<CheReplyDetails> {
+  bool _open = false;
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Semantics(
+          button: true,
+          expanded: _open,
+          label: _open ? 'Hide details' : 'Show details for this reply',
+          excludeSemantics: true,
+          child: GestureDetector(
+            onTap: () => setState(() => _open = !_open),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Text('Details', style: CheType.caption),
+                Icon(_open ? Icons.expand_less_rounded : Icons.expand_more_rounded, size: 16, color: CheColors.textDim),
+              ]),
+            ),
+          ),
+        ),
+        if (_open)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: widget.children),
+          ),
+      ],
+    );
+  }
 }
