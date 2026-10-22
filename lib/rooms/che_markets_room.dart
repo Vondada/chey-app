@@ -221,6 +221,9 @@ class _CheMarketsRoomState extends State<CheMarketsRoom> {
             onRead: widget.onRead,
             client: widget.client,
             header: _TickerTape(quotes: _quotes, fmt: _fmt),
+            // The live market the owner trades: MNQ futures first (NQ by the toggle).
+            initialAccount: 'futures_paper',
+            initialSymbol: 'MNQ',
             accountExtras: [
               Padding(
                 padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.md, CheSpace.gutter, 0),
