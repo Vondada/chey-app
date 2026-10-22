@@ -1900,6 +1900,24 @@ Decisive evidence to request from the owner: the Voice diagnostics sheet "Last s
 
 Work not started (needs the evidence above or native code): gapless native queue (Swift in `tool/bootstrap.sh`, IPA build); list/number/arrow segmentation in `lib/che_spoken_text.dart` `cheSentenceEnd` and `lib/che_stream_batcher.dart` (can be a Shorebird Dart patch); first-audio latency (first chunk size 240 chars exists; ElevenLabs 8 s timeout).
 
+## 8f. HANDS-FREE INPUT: NO LIVE TRANSCRIPT, LONG WAIT (Claude, 2026-10-22 ~01:20Z) — owner report, not yet fixed
+
+Owner: when talking hands-free, CHE's reply starts late, and his words are not transcribed live. He needs both.
+
+Causes found (main a05af09):
+1. **No partial text reaches the app on iPhone.** `tool/bootstrap.sh` `handleRecognition` requests partial results (`shouldReportPartialResults = true`) but only emits `wake_signal`, `barge_in` and, after the end-of-turn pause, `utterance`. `lib/home_state/voice.dart` (`type == 'utterance'`) is the only transcript consumer. So the composer stays empty until the turn is sent.
+2. **Partials are dropped while CHE speaks.** `if assistantSpeaking && !bargeInDetected { return }` runs before any emit, so what he says during her speech is not shown until barge-in.
+3. **Long end-of-turn wait (native path).** `endOfTurnPause` is 1.6 s (finished sentence with 4+ words), 1.8 s (≤2 words), 2.4 s (default), 3.6 s (trailing word). The Flutter-only "quick end of turn" (`cheQuickEndOfTurn`, `lib/home_state/microphone.dart`) is not used on the iPhone native path.
+4. **Reply start time** adds: Worker model latency + TTS first clip (measured 5.2 s to first audio in the owner's recording). Not measured per stage yet.
+
+Fix plan (needs a NEW IPA; Shorebird cannot change Swift):
+- Native: emit `{type:"partial", text, final:false}` from `handleRecognition` before the speaking guard, throttled to changes only; keep barge-in logic unchanged.
+- Flutter `lib/home_state/voice.dart`: on `partial`, show words in the composer/live caption as quiet text (no send, no speech).
+- Tune `endOfTurnPause` only with telemetry (measure end-of-speech → utterance → first audio). Do not cut the owner off mid-thought.
+- Bundle with the gapless-queue native work so one IPA covers both. Tests: Dart widget test for partial display; native behavior verified only on device.
+
+Owner acceptance: speak a sentence hands-free; words appear while speaking; reply first audio measured against the stated target (<1.5 s, to be agreed).
+
 ## 8c. SOUL CHECKPOINT 3 (Claude, 2026-10-22 00:05Z) — read first, supersedes 8b's "open" items
 
 - **Merged:** PR #423 → main `d29faab` (phone Soul controls). PR #424 (Worker provenance: `served_by`, `soul.soul_applied` true only for a model reply with the Soul in its system prompt; handler replies `soul_applied:false`, route `handler`; cache bypass marked) → main `8f4bc48`, tagged `[worker-deploy]`. Required checks were green on head `82e4af0` (analyze, Worker syntax and unit tests; `Workers Builds` ignored per owner rule). 2996/2996 Worker tests; `soul_chat.test.mjs` 11/11.
