@@ -117,3 +117,11 @@ class EditRender(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class FilterGraphArgs(unittest.TestCase):
+    def test_small_graph_goes_inline_so_any_ffmpeg_version_accepts_it(self):
+        # ffmpeg 8 removed -filter_complex_script; ffmpeg 6.1 (Ubuntu 24.04) has no -/filter_complex.
+        sys.path.insert(0, str(ROOT / 'tools'))
+        import che_edit_render
+        self.assertEqual(che_edit_render.filter_graph_args('[0:v]null[vout]', tempfile.mkdtemp()), ['-filter_complex', '[0:v]null[vout]'])

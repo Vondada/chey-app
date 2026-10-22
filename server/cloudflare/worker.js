@@ -232,6 +232,7 @@ import { advanceObjectives, applyMissionEvent, approvalReached, approveNode, awa
 import { acquire as acquireCapability, applyPolicy as applyCapabilityPolicy, capabilityIntent, engineSummary as capabilityEngineSummary, learnFromOutcome, loadPolicy as loadCapabilityPolicy, populate as populateKnowledge, retrieve as retrieveKnowledge, rollbackTool, savePolicy as saveCapabilityPolicy, projectBlocked, speakCapabilities, speakLearned as speakLearnedKnowledge, useTool, LAST_USED_KEY as KNOWLEDGE_USED_KEY } from './capability_engine.js';
 import { EGRESS_KEY, holdEgress, installEgressGuard, setEgressOwner, setEgressPolicy, storeEgressPolicy, SESSION_SCOPES, bump as securityBump, checkSession, createSession, dependencyAdvisories, detectThreats, issueNonce, loadSecurity, recordFindings, redact as redactSecretText, redactDeep, respondToIncident, restoreTrustedState, revokeSessions, saveSecurity, securityIntent, snapshotTrustedState, speakStatus as speakSecurityStatus } from './security_intelligence.js';
 import { loadRegistry as loadCapabilityRegistry } from './capability_registry.js';
+import { BrainLedger, answerLedger, decidePending as decideBrainPending, installBrainLedger, ledgerApi, ledgerIntent as brainLedgerIntent, DEFAULT_ZONE as LEDGER_DEFAULT_ZONE } from './brain_ledger.js';
 import { engineView, exportWorkflows, feedbackOnLast, importWorkflows, library as workflowLibrary, loadEngine, matchLearned, noteVersion, promoteCandidate, dismissCandidate, rankWorkflows, recordRun as recordWorkflowRun, isDisabled as workflowDisabled, restoreVersion, saveEngine, setDisabled as setWorkflowDisabled, setPreferred as setWorkflowPreferred, speakEfficiency, speakLibrary, testCandidate, workflowForRun, workflowIntent } from './workflow_engine.js';
 import { CATEGORIES, COMMANDS, catalogView, commandById, commandStatus, connectorStatus, describeWorkflow, dispatchPrompt, findSavedWorkflow, normalizeSavedWorkflow, parseSlashCommand, readCommandSpeech, searchCommands, speakCommandList, speakUnavailable, suggestCommands, workflowNodes, workflowFromWords } from './command_catalog.js';
 import { handleReaRequest, loadInvestigation, parseReaRequest, reaInvestigationDetail, reaInvestigations } from './rea_runner.js';
@@ -807,6 +808,15 @@ function emergencyReply(message) {
   const flags = redFlags(String(message || ''));
   if (!flags.length || !/\b(?:i|i'm|my|me|he|she|his|her|they|someone|somebody)\b/i.test(message)) return null;
   return ndjsonReply(`${flags.map((f) => f.action).join(' ')} (${flags.map((f) => f.source).join('; ')}.) I can stay with you and help with anything else after that.`, { source: 'che_health_urgent', model_calls: 0, red_flags: flags.map((f) => f.id) });
+}
+
+// The subject of CHE's last reply ("when did you learn that?"): its first sentence's content words.
+function lastAssistantSubject(history = []) {
+  const last = [...(Array.isArray(history) ? history : [])].reverse().find((h) => String(h?.role) === 'assistant');
+  const text = String(last?.content || last?.text || '').replace(/\s+/g, ' ').trim();
+  const first = text.split(/(?<=[.!?])\s/)[0] || '';
+  const words = first.toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(' ').filter((w) => w.length > 4 && !/^(about|which|there|their|these|those|would|could|should|sir)$/.test(w));
+  return words.slice(0, 2).join(' ') || null;
 }
 
 function ndjsonReply(reply, meta = {}) {
@@ -3681,6 +3691,9 @@ function activeLegalActivities(data = {}, legal = {}) {
 export class CheState extends DurableObject {
   constructor(state, env) {
     super(state, env);
+    // Brain Population Ledger: every write to a watched key (owner memories, capability registry, learned workflows,
+    // trading evidence) leaves a category-first, timestamped record. Brain/library/knowledge writes log themselves.
+    try { installBrainLedger(state.storage); } catch (error) { console.error('Brain ledger hook not installed:', error?.message || error); }
     // Every text model call goes through CHE's free-engine router. Persist
     // per-engine daily usage estimates in this owner's Durable Object.
     this.env = routedEnv(env, fetch, state.storage);
@@ -7174,6 +7187,17 @@ export class CheState extends DurableObject {
       // ─── Brain: the one logical Brain the phone replicates ──────────────
       // Reads and writes are the owner's only. /changes and /push are the two
       // halves of the phone's incremental sync; /status gives real counts.
+      if (path === '/api/brain/ledger' && request.method === 'GET') {
+        if (!ownerDevice) return json({ detail: 'Only the CHE owner can read his brain.' }, 403);
+        const ledgerZone = new BrainLedger(this.ctx.storage).meta('owner_zone', LEDGER_DEFAULT_ZONE) || LEDGER_DEFAULT_ZONE;
+        return json(await ledgerApi(this.ctx.storage, new URL(request.url).searchParams, { zone: ledgerZone, registry: await loadCapabilityRegistry(this.ctx.storage) }));
+      }
+      if (path === '/api/brain/ledger/decide' && request.method === 'POST') {
+        if (!ownerDevice) return json({ detail: 'Only the CHE owner can change his brain.' }, 403);
+        if (!['commit', 'reject'].includes(body.decision)) return json({ detail: 'decision must be commit or reject.' }, 400);
+        const out = await decideBrainPending(this.ctx.storage, body.record_id, body.decision);
+        return json(out, out.ok ? 200 : 409);
+      }
       if (path.startsWith('/api/brain/') && ['/api/brain/status', '/api/brain/changes', '/api/brain/push', '/api/brain/search', '/api/brain/folders', '/api/brain/record', '/api/brain/conflicts', '/api/brain/conflicts/resolve', '/api/brain/review', '/api/brain/score', '/api/brain/workers', '/api/brain/recovery'].includes(path)) {
         if (!ownerDevice) return json({ detail: 'Only the CHE owner can read his brain.' }, 403);
         const brain = new CheBrainStore(this.ctx.storage);
@@ -9679,6 +9703,7 @@ export class CheState extends DurableObject {
 
       if (path === '/api/proactive/check') {
         const clientClock = formatClientTime(body.client_time);
+        if (ownerDevice && clientClock?.zone) { try { const l = new BrainLedger(this.ctx.storage); if (l.meta('owner_zone', '') !== clientClock.zone) l.setMeta('owner_zone', clientClock.zone); } catch (_) {} }
         const memories = Array.isArray(data.memories) ? data.memories.slice(-20) : [];
         const knowledge = Array.isArray(data.learned_knowledge) ? data.learned_knowledge.slice(-10) : [];
         const priorSuggestions = Array.isArray(data.suggestions) ? data.suggestions.slice(-10) : [];
@@ -9926,6 +9951,15 @@ export class CheState extends DurableObject {
           const secAsk = ownerDevice && !body.attachment && !body.workflow_step ? securityIntent(rawMessage) : null;
           if (secAsk) return this.securityChat(data, secAsk, tokenHash);
           // Capability Engine: what CHE can actually do, what she learned, owner policies (internal-only and memory).
+          // Brain Population Ledger: what entered the Brain, when, where from, and whether it is usable yet.
+          const ledgerAsk = ownerDevice && !body.attachment && !body.workflow_step ? brainLedgerIntent(rawMessage) : null;
+          if (ledgerAsk) {
+            const ledger = new BrainLedger(this.ctx.storage);
+            const zone = String(body.client_time?.timezone_name || '').trim() || ledger.meta('owner_zone', LEDGER_DEFAULT_ZONE) || LEDGER_DEFAULT_ZONE;
+            const lastSubject = ledgerAsk.kind === 'when' || ledgerAsk.kind === 'where' ? lastAssistantSubject(body.history) : null;
+            const answer = await answerLedger(this.ctx.storage, ledgerAsk, { zone, registry: await loadCapabilityRegistry(this.ctx.storage), lastSubject });
+            return ndjsonReply(answer.text, { source: 'che_brain_ledger', ok: true, model_calls: 0, ledger_kind: ledgerAsk.kind, ledger_events: (answer.events || []).map((e) => e.brain_event_id).slice(0, 10), ...(answer.level ? { knowledge_level: answer.level } : {}) });
+          }
           const capAsk = ownerDevice && !body.attachment && !body.workflow_step ? capabilityIntent(rawMessage) : null;
           if (capAsk) return this.capabilityChat(data, capAsk);
           const wfAsk = ownerDevice && !body.attachment && !body.workflow_step ? workflowIntent(rawMessage) : null;

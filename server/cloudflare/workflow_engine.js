@@ -57,7 +57,7 @@ export const SYSTEM_WORKFLOWS = Object.freeze([
     ['che_activity_status', 'che_mission_status', 'che_verified_status', 'che_usage', 'che_engines', 'che_devices', 'device_clock', 'che_change_history', 'che_self_update', 'che_youtube_status', 'che_github_actions_deploy_status'],
     { summary: 'Says what is running, finished, deployed or used, from CHE\'s own records.', blocks: ['understand', 'records', 'speak'], triggers: ['doing', 'status', 'running', 'finished', 'deployed', 'usage', 'version', 'time', 'devices'], context: ['jobs', 'deploys'] }),
   S('memory_recall', 'Memory recall', 'intelligence',
-    ['explicit_memory', 'che_memory', 'che_memory_search', 'che_memory_provenance', 'che_memory_setup', 'che_personal_recall', 'che_reply_provenance', 'location_provenance', 'che_identity'],
+    ['explicit_memory', 'che_memory', 'che_memory_search', 'che_memory_provenance', 'che_memory_setup', 'che_personal_recall', 'che_reply_provenance', 'location_provenance', 'che_identity', 'che_brain_ledger'],
     { summary: 'Remembers or recalls what the owner told CHE, with where each memory came from.', blocks: ['understand', 'memory', 'verify', 'speak'], triggers: ['remember', 'recall', 'memory', 'told', 'forget', 'who', 'my name'], verify: 'provenance', context: ['memory'] }),
   S('knowledge_answer', 'Knowledge answer', 'intelligence',
     ['che_knowledge', 'che_knowledge_atlas', 'che_library', 'che_research_cache', 'che_cache', 'che_topic_study', 'che_source_check', 'che_resource_finder', 'che_browse', 'che_tech'],

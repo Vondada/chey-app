@@ -16,6 +16,7 @@
 // and time limits and no access to storage, network or credentials. CHE never evaluates generated code. A capability
 // that needs new code goes through the reviewed self-development path (capability_gap.js), never straight to production.
 import { KnowledgeLibrary, textAllowed } from './knowledge_library.js';
+import { fromKnowledgeItem, BrainLedger } from './brain_ledger.js';
 import {
   EXECUTION, EXECUTION_ORDER, PROMOTION_CHECKS, USABLE, executionAllowed, loadRegistry, promote, recordCheck, recordUse,
   register, rollback, saveRegistry, serving,
@@ -113,14 +114,29 @@ export class KnowledgeItems {
   }
   put(item) {
     if (!this.init()) return null;
+    const previous = this.get(item.id);
     const s = (v) => JSON.stringify(v ?? null);
     this.sql.exec(`INSERT OR REPLACE INTO ce_items (id, key, layer, kind, title, body, domain, scope, project_id, provenance, confidence, applicability, status, version, conflicts, links, freshness, steps, created, updated)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     item.id, item.key, item.layer, item.kind, item.title, item.body, item.domain, item.scope, item.project_id || '', s(item.provenance), item.confidence,
     s(item.applicability), item.status, item.version, s(item.conflicts), s(item.links), s(item.freshness), s(item.steps), item.created, item.updated);
+    // Brain Population Ledger: each layer change (source → indexed → procedure …) is its own timestamped event.
+    try { fromKnowledgeItem(this.storage, previous, item, { now: item.updated }); } catch (_) { /* never blocks the write */ }
     return item;
   }
-  remove(id) { if (this.init()) this.sql.exec('DELETE FROM ce_items WHERE id = ?', id); }
+  remove(id) {
+    if (!this.init()) return;
+    const previous = this.get(id);
+    this.sql.exec('DELETE FROM ce_items WHERE id = ?', id);
+    // Removal keeps metadata only; the item's earlier ledger text is scrubbed.
+    if (previous) {
+      try {
+        const ledger = new BrainLedger(this.storage);
+        ledger.scrub(id);
+        ledger.record({ event_type: 'REMOVED', knowledge_type: 'knowledge', title: 'Removed item', record_id: id, category: previous.project_id ? 'Projects' : '', domain: previous.domain, project_id: previous.project_id || '', knowledge_scope: previous.scope, new_state: 'REMOVED', reason_saved: 'Owner request' });
+      } catch (_) { /* never blocks the removal */ }
+    }
+  }
 }
 
 const TRUST_CONFIDENCE = { owner: 0.9, official: 0.85, open: 0.7, catalog_only: 0.4, unknown: 0.5 };
