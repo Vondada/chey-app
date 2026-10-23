@@ -957,13 +957,15 @@ export async function forwardEvidence(storage) {
 // ─── Views for the API ───────────────────────────────────────────────────────
 
 function strategyCard(def, units, paper, owner) {
-  if (!def.defined) return { strategy_id: def.strategy_id, name: def.name, defined: false, best_timeframe: null, qualified_buckets: 0, expectancy_r: null, win_rate: null, status: 'UNDEFINED', readiness: 'NOT TESTABLE', why: def.why };
+  if (!def.defined) return { strategy_id: def.strategy_id, name: def.name, defined: false, best_timeframe: null, qualified_buckets: 0, expectancy_r: null, win_rate: null, status: 'UNDEFINED', readiness: 'NOT TESTABLE', why: def.why, sample_trades: 0, paper_trades: 0 };
   const mine = units.filter((u) => u.strategy_id === def.strategy_id && u.ok);
   const qualified = mine.filter((u) => evidenceState(u) === 'QUALIFIED');
   const best = [...qualified].sort((a, b) => b.oos.expectancy_r - a.oos.expectancy_r)[0] || [...mine].sort((a, b) => b.all.trades - a.all.trades)[0];
   return { strategy_id: def.strategy_id, name: def.name, family: def.family, defined: true, best_timeframe: best?.timeframe || null, qualified_buckets: qualified.length,
     expectancy_r: best ? (qualified.length ? best.oos.expectancy_r : best.all.expectancy_r) : null, win_rate: best?.all.win_rate ?? null,
-    status: statusOf(mine, owner), readiness: readinessOf(mine, paper) };
+    status: statusOf(mine, owner), readiness: readinessOf(mine, paper),
+    // Sample sizes behind those numbers, so a setup's evidence badge can show them (Signal Mode).
+    sample_trades: best?.all.trades ?? 0, paper_trades: paper?.trades ?? 0 };
 }
 
 export async function researchView(storage, { now = Date.now() } = {}) {

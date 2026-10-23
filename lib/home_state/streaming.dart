@@ -491,6 +491,14 @@ extension _CheHomeStreaming on _CHEHomeState {
         }
         // "Open Alpaca chart", "CHE, show EMA trades", "Draw a line at 21,450": the Trading Room on
         // the section, account, symbol and strategy the Worker named (Build 1).
+        // "What setups are ready?": the setups live on this iPhone, so the answer is read from the
+        // Signal Mode desk here and added to the Worker's reply (an explicit question, so it is spoken).
+        final setupsAsk = data['chart'] is Map ? data['chart'] as Map : const {};
+        if (data['open_view'] == 'trading_chart' && setupsAsk['section'] == 'setups' && setupsAsk['answer'] == 'ready') {
+          if (complete.isNotEmpty) complete.write(' ');
+          complete.write((CheSetupDesk.instance..attach()).spokenSummary());
+          onPartial(complete.toString());
+        }
         if (data['open_view'] == 'trading_chart' && mounted) {
           unawaited(Navigator.of(context).push(CheTradingRoomPage.route(
             baseUrl: () => cheAgentBaseUrl,

@@ -136,6 +136,7 @@ import 'rooms/che_markets_room.dart';
 import 'rooms/che_alpaca_paper.dart';
 import 'rooms/che_strategy_controls.dart';
 import 'rooms/che_trading_room.dart';
+import 'trading/che_setup_desk.dart';
 import 'che_ui/che_help.dart';
 import 'rooms/che_store_room.dart';
 import 'rooms/che_pipeline_room.dart';

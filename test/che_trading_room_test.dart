@@ -129,7 +129,7 @@ void main() {
     final s = _Server();
     final spoken = <String>[];
     await _pumpRoom(tester, s, spoken: spoken);
-    for (final label in ['CHART', 'CHE TRADES', 'STRATEGIES', 'ACCOUNT']) {
+    for (final label in ['CHART', 'SETUPS', 'CHE TRADES', 'STRATEGIES', 'ACCOUNT']) {
       expect(find.text(label), findsWidgets);
     }
     expect(find.text('PAPER'), findsOneWidget);
@@ -334,5 +334,6 @@ void main() {
     expect(cheTradingSectionNamed('strategies'), CheTradingSection.strategies);
     expect(cheTradingSectionNamed('che_trades'), CheTradingSection.cheTrades);
     expect(cheTradingSectionNamed(null), CheTradingSection.chart);
+    expect(cheTradingSectionNamed('setups'), CheTradingSection.setups);
   });
 }
