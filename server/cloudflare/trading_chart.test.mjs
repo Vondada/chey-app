@@ -239,6 +239,15 @@ test('the owner\'s chart words through /api/chat', sqlite, async () => {
   assert.equal(progress.done.chart.section, 'strategies');
   const alpaca = await che.say('show me my Alpaca trades');
   assert.equal(alpaca.done.open_view, 'alpaca_paper', 'the Alpaca dashboard keeps its route');
+  // Side by side (owner, 2026-10-23): the room opens on SIDE BY SIDE by voice, and nothing is sent.
+  for (const phrase of ['Open side by side.', 'Show my trades next to CHE\'s.', 'Compare my trade with CHE\'s trade.', 'Open the live order preview.']) {
+    const sbs = await che.say(phrase);
+    assert.equal(sbs.route, 'che_trading_chart', phrase);
+    assert.equal(sbs.done.open_view, 'trading_chart', phrase);
+    assert.equal(sbs.done.chart.section, 'compare', phrase);
+    assert.equal(sbs.modelCalls, 0, phrase);
+    assert.match(sbs.reply, /Live orders stay disabled/, phrase);
+  }
 });
 
 test('a market order needs a current Alpaca price; limit orders still queue (Build 1: block entries on a stale feed)', async () => {
