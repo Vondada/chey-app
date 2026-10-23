@@ -72,3 +72,8 @@ NOT started by Claude. Research first: `rg -n "CONNECT|Connect " lib/rooms lib/s
 4. Chart shows dashed overnight high/low lines, labelled "CHE approximation, not the P2P indicator".
 5. Say "Disable the 86 model" / "Enable the 86 model": spoken result matches the Strategies screen.
 After PRs 1–2 merge (not yet): "What is my favorite drink, and where did you learn that?" → Sprite plus where it was stored; "What changed in commit f37bc3ac, and what can I test on my iPhone?" → the commit's changes, not a status recital.
+
+## Update 12:25 UTC (Claude)
+- **#475 Film Studio MERGED** as `346fc51` (owner-approved). Worker deploy run 39953032802 VERIFIED live; Shorebird run 39953032825 was in progress at handoff time.
+- Why #475 kept failing: (1) "feature" counted as a film word (Worker test B1); (2) `test/che_command_center_e2e_test.dart` pinned "All 100". That test only runs where the e2e server runs (CI), so local checks never saw it.
+- **PR #483** (`claude/che-ci-command-count`) makes the fix permanent: the e2e counts come from `test/fixtures/command_catalog.json`, and `run_checks.sh` starts the e2e server like CI. It is test and tooling only; nothing to deploy. Merge needs owner approval. One local run had one unidentified Flutter failure; the next two runs passed 868/868. Watch its CI for a flaky test.
