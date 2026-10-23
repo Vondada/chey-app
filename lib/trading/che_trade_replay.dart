@@ -16,9 +16,13 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
+import '../che_ui/che_hud.dart';
+import '../rooms/che_trading_hud.dart';
+
 const _dim = Color(0xFFB8C2CC);
 const _panel = Color(0xFF0E1418);
 const _stroke = Color(0xFF2A3540);
+// Black, silver and white; the HUD palette swaps panels for chrome glass (CheTradingPanel).
 const _win = Color(0xFF34D399);
 const _loss = Color(0xFFF87171);
 const _entryColor = Color(0xFF60A5FA);
@@ -82,6 +86,32 @@ class CheTradeEvidence {
   DateTime? get replayStart => bars.isEmpty ? null : bars.first.t;
   DateTime? get replayEnd => bars.isEmpty ? null : bars.last.t.add(tf);
 
+  /// A record already in hand (a chart marker or a list row: id, label, strategy, symbol, timeframe, side,
+  /// entry_time/price, exit_time/price, stop, target, result, r, net). Shown at once while the full record and
+  /// its bars load; it has no bars, so nothing is drawn from it.
+  static CheTradeEvidence? fromSummary(Map<String, dynamic>? j) {
+    if (j == null || j['id'] is! String) return null;
+    return CheTradeEvidence(
+      id: j['id'] as String,
+      label: (j['label'] ?? j['evidence_label'] ?? '').toString(),
+      strategy: (j['strategy'] ?? 'unknown strategy').toString(),
+      symbol: (j['symbol'] ?? '').toString(),
+      timeframe: (j['timeframe'] ?? '').toString(),
+      side: (j['side'] ?? '').toString(),
+      bars: const [],
+      timeframeMs: 300000,
+      entryTime: _t(j['entry_time']),
+      entryPrice: _d(j['entry_price']),
+      exitTime: _t(j['exit_time']),
+      exitPrice: _d(j['exit_price']),
+      stop: _d(j['stop']),
+      target: _d(j['target']),
+      result: j['result']?.toString(),
+      r: _d(j['r']),
+      net: _d(j['net']),
+    );
+  }
+
   static CheTradeEvidence? fromJson(Object? j) {
     if (j is! Map || j['ok'] == false || j['id'] is! String) return null;
     Map m(Object? v) => v is Map ? v : const {};
@@ -134,6 +164,17 @@ CheReplayFrame cheReplayFrame(CheTradeEvidence e, DateTime clock) {
   );
 }
 
+/// The simulated order's status at [clock]. CHE places no broker order: paper and backtest fills are simulated at
+/// the next bar open, and the label says so.
+String cheOrderStatus(CheTradeEvidence e, DateTime clock) {
+  final f = cheReplayFrame(e, clock);
+  final sim = e.label == 'BROKER-CONFIRMED' ? '' : ' (simulated, no broker order)';
+  if (f.exit) return 'Closed${e.exitReason == null ? '' : ' on the ${e.exitReason}'} at ${_price(e.exitPrice)}$sim';
+  if (f.entry) return 'Filled at ${_price(e.entryPrice)}$sim · working stop ${_price(e.stop)}, target ${_price(e.target)}';
+  if (f.signal) return 'Signal confirmed · order queued for the next bar open$sim';
+  return 'Waiting for the signal bar to close';
+}
+
 String _price(double? v) => v == null ? 'unknown' : (v == v.roundToDouble() ? v.toStringAsFixed(0) : v.toStringAsFixed(2));
 String _money(double? v) => v == null ? 'unknown' : '${v < 0 ? '−' : v > 0 ? '+' : ''}\$${v.abs().toStringAsFixed(2)}';
 String _r(double? v) => v == null ? 'unknown' : '${v > 0 ? '+' : ''}${v.toStringAsFixed(2)}R';
@@ -158,7 +199,7 @@ String cheTradeSpoken(CheTradeEvidence e) {
 }
 
 class CheTradeReplayPage extends StatefulWidget {
-  const CheTradeReplayPage({super.key, required this.tradeId, required this.baseUrl, required this.headers, this.onRead, this.client, this.initial});
+  const CheTradeReplayPage({super.key, required this.tradeId, required this.baseUrl, required this.headers, this.onRead, this.client, this.initial, this.preview});
 
   final String tradeId;
   final String Function() baseUrl;
@@ -168,10 +209,14 @@ class CheTradeReplayPage extends StatefulWidget {
   /// Already-loaded evidence (tests, or a caller that has it); skips the network read.
   final CheTradeEvidence? initial;
 
-  static Route<void> route({required String tradeId, required String Function() baseUrl, required Map<String, String> Function() headers, void Function(String words)? onRead}) =>
+  /// The record the caller already has (a chart marker): shown at once while the full record loads.
+  final CheTradeEvidence? preview;
+
+  /// The deep link is `/trade-replay?id=<tradeId>`; the route name is `trade_replay/<tradeId>`.
+  static Route<void> route({required String tradeId, required String Function() baseUrl, required Map<String, String> Function() headers, void Function(String words)? onRead, Map<String, dynamic>? summary}) =>
       MaterialPageRoute<void>(
         settings: RouteSettings(name: 'trade_replay/$tradeId'),
-        builder: (_) => CheTradeReplayPage(tradeId: tradeId, baseUrl: baseUrl, headers: headers, onRead: onRead),
+        builder: (_) => CheTradeReplayPage(tradeId: tradeId, baseUrl: baseUrl, headers: headers, onRead: onRead, preview: CheTradeEvidence.fromSummary(summary)),
       );
 
   @override
@@ -184,6 +229,7 @@ class _CheTradeReplayPageState extends State<CheTradeReplayPage> {
   CheTradeEvidence? _e;
   String? _error;
   bool _loading = true;
+  bool _full = false;
   DateTime? _clockAt;
   Timer? _timer;
   double _speed = 1;
@@ -195,6 +241,7 @@ class _CheTradeReplayPageState extends State<CheTradeReplayPage> {
     if (widget.initial != null) {
       _set(widget.initial!);
     } else {
+      _e = widget.preview;
       unawaited(_load());
     }
   }
@@ -218,6 +265,7 @@ class _CheTradeReplayPageState extends State<CheTradeReplayPage> {
         if (e == null) {
           _error = body is Map && body['error'] != null ? body['error'].toString() : 'This trade could not be read (HTTP ${r.statusCode}).';
           _loading = false;
+          _e = null;
         } else {
           _set(e);
         }
@@ -227,6 +275,7 @@ class _CheTradeReplayPageState extends State<CheTradeReplayPage> {
       setState(() {
         _error = 'This trade could not be read: $error';
         _loading = false;
+        _e = null;
       });
     } finally {
       if (widget.client == null) client.close();
@@ -297,13 +346,21 @@ class _CheTradeReplayPageState extends State<CheTradeReplayPage> {
   @override
   Widget build(BuildContext context) {
     final e = _e;
+    final page = cheTradingPage(Colors.black);
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: page,
       appBar: AppBar(
-        backgroundColor: Colors.black,
+        backgroundColor: page,
         foregroundColor: Colors.white,
-        title: Semantics(header: true, child: Text(e == null ? 'Trade replay' : 'Trade ${e.id}', style: const TextStyle(fontWeight: FontWeight.w800))),
+        title: Semantics(header: true, child: CheChromeText(e == null ? 'Trade replay' : 'Trade ${e.id}', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w300))),
         actions: [
+          if (e != null && e.replaySupported)
+            IconButton(
+              key: const Key('trade_replay_fullscreen'),
+              tooltip: _full ? 'Leave full screen' : 'Full screen chart',
+              icon: Icon(_full ? Icons.zoom_out_map_rounded : Icons.open_in_full_rounded),
+              onPressed: () => setState(() => _full = !_full),
+            ),
           if (e != null && widget.onRead != null)
             IconButton(
               key: const Key('trade_replay_read'),
@@ -314,14 +371,27 @@ class _CheTradeReplayPageState extends State<CheTradeReplayPage> {
         ],
       ),
       body: SafeArea(
-        child: _loading
-            ? Center(child: Semantics(label: 'Loading the trade', child: const CircularProgressIndicator()))
-            : e == null
-                ? Padding(padding: const EdgeInsets.all(20), child: Text(_error ?? 'This trade could not be read.', style: const TextStyle(color: Colors.white, fontSize: 16)))
+        child: e == null
+            ? (_loading
+                ? Center(child: Semantics(label: 'Loading the trade', child: const CircularProgressIndicator()))
+                : Padding(padding: const EdgeInsets.all(20), child: Text(_error ?? 'This trade could not be read.', style: const TextStyle(color: Colors.white, fontSize: 16))))
+            : _full && e.replaySupported
+                ? Padding(
+                    padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                      _header(e),
+                      const SizedBox(height: 6),
+                      Expanded(child: _chart(e, height: null)),
+                      const SizedBox(height: 6),
+                      _controls(e),
+                    ]),
+                  )
                 : ListView(padding: const EdgeInsets.fromLTRB(14, 8, 14, 24), children: [
                     _header(e),
                     const SizedBox(height: 10),
-                    if (e.replaySupported) ...[_chart(e), const SizedBox(height: 8), _controls(e)] else _noData(e),
+                    if (e.replaySupported) ...[_chart(e), const SizedBox(height: 8), _controls(e)]
+                    else if (_loading) Semantics(label: 'Loading the market data for this trade', child: const LinearProgressIndicator())
+                    else _noData(e),
                     const SizedBox(height: 12),
                     _facts(e),
                   ]),
@@ -347,14 +417,15 @@ class _CheTradeReplayPageState extends State<CheTradeReplayPage> {
     ]);
   }
 
-  Widget _noData(CheTradeEvidence e) => Container(
+  Widget _noData(CheTradeEvidence e) => CheTradingPanel(
         key: const Key('trade_replay_no_data'),
         padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(color: _panel, border: Border.all(color: _stroke), borderRadius: BorderRadius.circular(10)),
+        color: _panel,
+        borderColor: _stroke,
         child: Text(e.noData ?? 'No recorded market data for this trade.', style: const TextStyle(color: Colors.white, fontSize: 15)),
       );
 
-  Widget _chart(CheTradeEvidence e) {
+  Widget _chart(CheTradeEvidence e, {double? height = 300}) {
     final frame = cheReplayFrame(e, _clockAt!);
     final shown = '${frame.bars.length} of ${e.bars.length} bars shown';
     return Semantics(
@@ -362,11 +433,10 @@ class _CheTradeReplayPageState extends State<CheTradeReplayPage> {
           '${frame.entry ? ' Entry at ${_price(e.entryPrice)}.' : ' Not entered yet.'}'
           '${frame.exit ? ' Exit at ${_price(e.exitPrice)}.' : ''}',
       excludeSemantics: true,
-      child: Container(
+      child: SizedBox(
         key: const Key('trade_replay_chart'),
-        height: 300,
-        decoration: BoxDecoration(color: _panel, border: Border.all(color: _stroke), borderRadius: BorderRadius.circular(10)),
-        child: CustomPaint(painter: _ReplayPainter(e, frame), size: Size.infinite),
+        height: height,
+        child: CheTradingPanel(color: _panel, borderColor: _stroke, radius: 10, child: CustomPaint(painter: _ReplayPainter(e, frame), size: Size.infinite)),
       ),
     );
   }
@@ -382,6 +452,8 @@ class _CheTradeReplayPageState extends State<CheTradeReplayPage> {
         );
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       Text('Replay clock ${_clock(_clockAt)} · ${cheReplayFrame(e, _clockAt!).bars.length} of ${e.bars.length} bars', key: const Key('trade_replay_clock'), style: const TextStyle(color: _dim, fontSize: 13)),
+      const SizedBox(height: 2),
+      Text('Order: ${cheOrderStatus(e, _clockAt!)}', key: const Key('trade_replay_order'), style: const TextStyle(color: Colors.white, fontSize: 13.5)),
       Semantics(
         label: 'Replay timeline',
         value: '${(pos * 100).round()} percent',
@@ -416,7 +488,7 @@ class _CheTradeReplayPageState extends State<CheTradeReplayPage> {
       ('Market data', e.barsSource ?? 'none recorded'),
       ('Brain evidence', e.brainRef ?? 'trade:${e.id}'),
     ];
-    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+    return CheTradingPanel(padding: const EdgeInsets.all(12), color: _panel, borderColor: _stroke, child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       for (final (k, v) in rows)
         Semantics(
           label: '$k: $v',
@@ -429,7 +501,7 @@ class _CheTradeReplayPageState extends State<CheTradeReplayPage> {
             ]),
           ),
         ),
-    ]);
+    ]));
   }
 }
 
@@ -479,8 +551,20 @@ class _ReplayPainter extends CustomPainter {
       if (t == null || p == null) return;
       canvas.drawCircle(Offset(xAt(t), y(p)), 5, Paint()..color = c);
     }
+    void tag(DateTime? t, double? p, String text, Color c) {
+      if (t == null || p == null) return;
+      final tp = TextPainter(text: TextSpan(text: text, style: TextStyle(color: c, fontSize: 11, fontWeight: FontWeight.w900)), textDirection: TextDirection.ltr)..layout();
+      tp.paint(canvas, Offset(math.min(xAt(t) + 7, size.width - tp.width - 2), y(p) - tp.height - 2));
+    }
     if (frame.entry) dot(e.entryTime, e.entryPrice, _entryColor);
-    if (frame.exit) dot(e.exitTime, e.exitPrice, e.result == 'loss' ? _loss : _win);
+    // Green W for a recorded win, red L for a recorded loss, OPEN while the trade has not exited at the replay clock.
+    if (frame.exit) {
+      final c = e.result == 'loss' ? _loss : e.result == 'win' ? _win : _dim;
+      dot(e.exitTime, e.exitPrice, c);
+      tag(e.exitTime, e.exitPrice, e.result == 'win' ? 'W' : e.result == 'loss' ? 'L' : '=', c);
+    } else if (frame.entry) {
+      tag(e.entryTime, e.entryPrice, 'OPEN', _entryColor);
+    }
   }
 
   @override

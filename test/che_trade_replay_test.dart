@@ -52,6 +52,14 @@ void main() {
     }
   });
 
+  test('the order status follows the replay clock and says the fill is simulated', () {
+    final e = CheTradeEvidence.fromJson(_json())!;
+    expect(cheOrderStatus(e, _start.add(const Duration(minutes: 12))), 'Waiting for the signal bar to close');
+    expect(cheOrderStatus(e, _start.add(const Duration(minutes: 15))), startsWith('Filled at 21003.50 (simulated, no broker order)'));
+    expect(cheOrderStatus(e, _start.add(const Duration(minutes: 39))), contains('working stop 20993.50, target 21023.50'));
+    expect(cheOrderStatus(e, _start.add(const Duration(minutes: 40))), 'Closed on the target at 21020 (simulated, no broker order)');
+  });
+
   test('missing values stay unknown, never 0', () {
     final j = _json()..remove('stop')..remove('outcome');
     final e = CheTradeEvidence.fromJson(j)!;
@@ -106,6 +114,15 @@ void main() {
     await tester.pump();
     expect(clock(), contains('6 of 12 bars'), reason: 'halfway along the timeline');
 
+    expect(find.byKey(const Key('trade_replay_order')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('trade_replay_fullscreen')));
+    await tester.pump();
+    expect(find.byType(ListView), findsNothing, reason: 'full screen shows only the chart and its controls');
+    expect(find.byKey(const Key('trade_replay_chart')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('trade_replay_fullscreen')));
+    await tester.pump();
+    expect(find.byType(ListView), findsOneWidget);
+
     await tester.tap(find.byKey(const Key('trade_replay_read')));
     expect(spoken.single, startsWith('Trade T0K3J9QW1ZX7AB, FORWARD PAPER. ema-pullback-5m long on MNQ 5m.'));
     await tester.pumpWidget(const SizedBox());
@@ -137,5 +154,23 @@ void main() {
     await tester.pumpWidget(MaterialApp(theme: ThemeData(splashFactory: NoSplash.splashFactory), home: CheTradeReplayPage(tradeId: 'TNOPE', baseUrl: () => 'https://che.test', headers: () => const {}, client: client)));
     await tester.pumpAndSettle();
     expect(find.text('No CHE trade has the ID TNOPE.'), findsOneWidget);
+  });
+
+  testWidgets('a chart marker opens the record at once; the bars follow; missing bars are said, never drawn', (tester) async {
+    final client = MockClient((r) async {
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      return http.Response(jsonEncode({'ok': true, 'trade': _json(bars: false)}), 200);
+    });
+    await tester.pumpWidget(MaterialApp(theme: ThemeData(splashFactory: NoSplash.splashFactory), home: CheTradeReplayPage(
+      tradeId: 'T0K3J9QW1ZX7AB', baseUrl: () => 'https://che.test', headers: () => const {}, client: client,
+      preview: CheTradeEvidence.fromSummary({'id': 'T0K3J9QW1ZX7AB', 'label': 'FORWARD PAPER', 'strategy': 'ema-pullback-5m', 'symbol': 'MNQ', 'timeframe': '5m', 'side': 'long', 'result': 'win', 'r': 1.62}),
+    )));
+    await tester.pump();
+    expect(find.byKey(const Key('trade_replay_label')), findsOneWidget, reason: 'the record shows before the network answers');
+    expect(find.text('Trade ID'), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
+    expect(find.text('No recorded market data for this trade.'), findsOneWidget);
+    expect(find.byKey(const Key('trade_replay_chart')), findsNothing);
   });
 }
