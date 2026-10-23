@@ -9,6 +9,19 @@ export const CONTRACTS = Object.freeze({
   NQ: { name: 'NQ', tick: 0.25, pointValue: 20 },
 });
 
+// Crypto spot pairs for Orion's 24/7 research and paper trading (crypto_markets.js), kept apart from the futures
+// contracts so nothing that lists CONTRACTS starts naming them. Quantity is in coins and a point is one dollar.
+// The futures risk band (6 to 60 index points) means nothing on a $100,000 coin, so a crypto setup's stop must be
+// 0.1% to 1% of the entry price instead.
+const cryptoBand = (ref) => [ref * 0.001, ref * 0.01];
+export const CRYPTO_CONTRACTS = Object.freeze({
+  BTC: Object.freeze({ name: 'BTC', product: 'BTC-USD', tick: 0.01, pointValue: 1, market: 'crypto', riskBand: cryptoBand }),
+  ETH: Object.freeze({ name: 'ETH', product: 'ETH-USD', tick: 0.01, pointValue: 1, market: 'crypto', riskBand: cryptoBand }),
+});
+export const contractOf = (code) => CONTRACTS[code] || CRYPTO_CONTRACTS[code] || null;
+/** A journal record from the crypto market. Every other journal reader sees futures records only. */
+export const isCryptoRecord = (t) => t?.market === 'crypto';
+
 // Assumed costs: round planning numbers, not a broker's schedule. Each portfolio and
 // trade record stores the values it used. A change of costs is a new strategy version,
 // so experiments with different costs never share a result.
@@ -90,14 +103,19 @@ export function exitOn(pos, bar, contract, costs = COSTS) {
 }
 
 // Long or short (position.side). Costs are in dollars for `qty` contracts.
-export function settleTrade(position, exit, qty, contract, costs = COSTS) {
+// Crypto venues charge a share of the traded value instead of a fee per contract: `takerPct` on market orders
+// (the entry, stops and time exits) and `makerPct` on a resting target, when the costs carry them.
+export function settleTrade(position, exit, qty, contract, costs = COSTS, reason = null) {
   const pv = contract.pointValue * qty;
   const dir = position.side === 'short' ? -1 : 1;
   const gross = dir * (exit.raw - position.entry.raw) * pv;
   const spread = (position.entry.spread + exit.spread) * pv;
   const slippage = (position.entry.slippage + exit.slippage) * pv;
   const commissions = 2 * qty * costs.commissionPerSide;
-  const fees = 2 * qty * costs.feePerSide;
+  const pct = Number.isFinite(costs.takerPct)
+    ? (position.entry.raw * costs.takerPct + exit.raw * (reason === 'target' && Number.isFinite(costs.makerPct) ? costs.makerPct : costs.takerPct)) * pv
+    : 0;
+  const fees = 2 * qty * costs.feePerSide + pct;
   const net = gross - spread - slippage - commissions - fees;
   const riskDollars = dir * (position.entry.raw - position.stop) * pv;
   return {
@@ -115,9 +133,7 @@ export function settleTrade(position, exit, qty, contract, costs = COSTS) {
 // New York session of an intraday bar. Daily bars are simply 'daily'.
 export function sessionOf(time, resolution = 'daily') {
   if (resolution === 'daily' || !/T\d/.test(String(time))) return 'daily';
-  const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
-    .formatToParts(new Date(time)).reduce((o, p) => ({ ...o, [p.type]: p.value }), {});
-  const mins = Number(parts.hour) * 60 + Number(parts.minute);
+  const { mins } = etParts(time);
   if (mins === 510) return 'econ-0830';          // the 8:30 AM release bar
   if (mins < 570) return 'pre-open';             // before 9:30 AM
   if (mins < 600) return 'opening-30m';
@@ -234,9 +250,18 @@ export const FILTERS = Object.freeze({
 // Every value at bar i uses bars up to and including bar i only (no future data, no
 // repainting). Times are New York; the CME trading day starts at 18:00 New York.
 const ET = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+// Intl formatting costs about half a millisecond per call, and the same bar times are converted on every pass,
+// so results are remembered (bounded). The answer for a time never changes.
+const etMemo = new Map();
 export function etParts(time) {
+  const key = typeof time === 'string' ? time : new Date(time).toISOString();
+  const hit = etMemo.get(key);
+  if (hit) return { ...hit };
   const p = ET.formatToParts(new Date(time)).reduce((o, x) => ({ ...o, [x.type]: x.value }), {});
-  return { day: `${p.year}-${p.month}-${p.day}`, mins: Number(p.hour) * 60 + Number(p.minute) };
+  const out = { day: `${p.year}-${p.month}-${p.day}`, mins: Number(p.hour) * 60 + Number(p.minute) };
+  if (etMemo.size >= 50_000) etMemo.clear();
+  etMemo.set(key, out);
+  return { ...out };
 }
 // Minutes since the CME day opened at 18:00 New York (0 … 1379; the break is 17:00–18:00).
 export const tradeMins = (etMins) => (etMins - 1080 + 1440) % 1440;
@@ -327,9 +352,12 @@ export function intradayContext(candles, { swingN = 3 } = {}) {
 // trip is about 2.5 points); above the ceiling, one trade risks too much of a small account.
 const MIN_RISK = 6;
 const MAX_RISK = 60;
+// A contract with its own band (crypto) sets it for the length of one stepPortfolio call; everything else keeps 6–60.
+let riskBand = null;
 const sized = (sig) => {
   const risk = Math.abs(sig.ref - sig.stop);
-  return risk >= MIN_RISK && risk <= MAX_RISK ? sig : null;
+  const [lo, hi] = riskBand ? riskBand(sig.ref) : [MIN_RISK, MAX_RISK];
+  return risk >= lo && risk <= hi ? sig : null;
 };
 // Fair value gaps between bars j and j+2, newest first, that no later bar has filled.
 function openGaps(c, i, from) {
@@ -650,7 +678,7 @@ export function newPortfolio(candidateId, filterId, {
 } = {}) {
   if (!candidateOf(candidateId)) throw new Error(`unknown candidate ${candidateId}`);
   if (!filterOf(filterId)) throw new Error(`unknown filter ${filterId}`);
-  if (!CONTRACTS[contract]) throw new Error(`unknown contract ${contract}`);
+  if (!contractOf(contract)) throw new Error(`unknown contract ${contract}`);
   if (!['backtest', 'paper'].includes(source)) throw new Error(`source ${source} is not a research environment`);
   if (!(qty > 0)) throw new Error('quantity must be positive');
   const fullCosts = { ...COSTS, ...costs };
@@ -684,12 +712,18 @@ function noteSkip(pf, time, reason, sig) {
  * fresh, authenticated and subscribed real-time delivery, no new signal is taken and a pending
  * order is cancelled before it fills. Open positions are still managed to their exit.
  */
-export function stepPortfolio(pf, candles, ctx = causalContext(candles), gate = null, { allowEntries = true, blockReason = null } = {}) {
+export function stepPortfolio(pf, candles, ctx = causalContext(candles), gate = null, opts = {}) {
+  const band = riskBand;
+  riskBand = contractOf(pf.contract)?.riskBand || null;
+  try { return stepBars(pf, candles, ctx, gate, opts); } finally { riskBand = band; }
+}
+
+function stepBars(pf, candles, ctx, gate, { allowEntries = true, blockReason = null } = {}) {
   const problems = candleProblems(candles);
   if (problems.length) throw new Error(`candles refused: ${problems.join('; ')}`);
   const cand = candidateOf(pf.candidate);
   const filter = filterOf(pf.filter);
-  const contract = CONTRACTS[pf.contract];
+  const contract = contractOf(pf.contract);
   const closed = [];
   const start = pf.last_bar_time == null ? 0 : candles.findIndex((b) => b.t > pf.last_bar_time);
   if (start < 0) return closed;
@@ -782,8 +816,8 @@ export function stepPortfolio(pf, candles, ctx = causalContext(candles), gate = 
 
 function closeAt(pf, bar, hit) {
   const pos = pf.open;
-  const contract = CONTRACTS[pf.contract];
-  const settled = settleTrade(pos, hit.exit, pf.qty, contract, pf.costs);
+  const contract = contractOf(pf.contract);
+  const settled = settleTrade(pos, hit.exit, pf.qty, contract, pf.costs, hit.reason);
   const short = pos.side === 'short';
   const riskPts = short ? pos.stop - pos.entry.raw : pos.entry.raw - pos.stop;
   const up = short ? pos.entry.raw - pos.min_low : pos.max_high - pos.entry.raw;
@@ -1043,7 +1077,10 @@ export async function appendTrades(storage, trades) {
   return result;
 }
 
-export async function readTrades(storage, filter = () => true) {
+// One journal for every market. `market` keeps them apart: 'futures' (the default, so every existing reader keeps
+// seeing NQ/MNQ only), 'crypto', or 'all' (the strategy governor, which judges each market as its own unit).
+export async function readTrades(storage, filter = () => true, { market = 'futures' } = {}) {
   const map = await storage.list({ prefix: RECORD_PREFIX });
-  return [...map.values()].filter(filter).sort(byEntry);
+  const inMarket = market === 'all' ? () => true : market === 'crypto' ? isCryptoRecord : (t) => !isCryptoRecord(t);
+  return [...map.values()].filter((t) => inMarket(t) && filter(t)).sort(byEntry);
 }
