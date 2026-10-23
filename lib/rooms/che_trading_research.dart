@@ -11,6 +11,8 @@ import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
+import '../che_ui/che_chrome_status.dart';
+import '../che_ui/che_hud.dart';
 import '../che_ui/che_theme.dart';
 
 const _gold = CheColors.markets;
@@ -393,7 +395,8 @@ class _CheTradingResearchStripState extends State<CheTradingResearchStrip> {
   }
 }
 
-/// Mode, Data, P&L, Win Rate, Open, Current Regime: a compact row of what the Worker reports.
+/// P&L, Win Rate, Open, Drawdown (owner, 2026-10-23): one compact row of what the Worker reports. Mode and data
+/// source live in the chart header, so they are not repeated here. Fixed-width tiles: a new value never reflows the row.
 class CheTradingStatusRow extends StatelessWidget {
   const CheTradingStatusRow({super.key, required this.data});
   final Map<String, dynamic> data;
@@ -402,29 +405,42 @@ class CheTradingStatusRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final live = data['live'] is Map ? _map(data['live']) : data;
     final pnl = live['pnl_today'] ?? (live['pnl'] is Map ? _map(live['pnl'])['today'] : live['pnl']);
-    final regime = live['regime'] is Map ? _map(live['regime'])['label'] : live['regime'];
-    final dataLabel = live['data_source'] ?? _map(live['data'])['status'];
+    final dd = live['max_drawdown'] ?? live['drawdown'] ?? _map(live['totals'])['max_drawdown'];
+    String money(Object? v) => _num(v) == null ? '—' : '${_num(v)! >= 0 ? '+' : '−'}\$${_num(v)!.abs().toStringAsFixed(2)}';
     final items = <(String, String)>[
-      ('Mode', _str(live['mode'], '—')),
-      ('Data', '${_str(dataLabel, '—')}${live['stale'] == true ? ' · STALE' : ''}'),
-      ('P&L', _num(pnl) == null ? '—' : '${_num(pnl)! >= 0 ? '+' : '−'}\$${_num(pnl)!.abs().toStringAsFixed(2)}'),
+      ('P&L', money(pnl)),
       ('Win Rate', fmtPct(live['win_rate'])),
       ('Open', _str(live['open_positions'], '—')),
-      ('Regime', researchWords(regime)),
+      ('Drawdown', _num(dd) == null ? '—' : '\$${_num(dd)!.abs().toStringAsFixed(2)}'),
     ];
-    return Wrap(spacing: 8, runSpacing: 8, children: [
+    return Row(key: const Key('trading_status_row'), children: [
       for (final (k, v) in items)
-        Semantics(
-        container: true,
-          label: '$k: $v',
-          excludeSemantics: true,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            decoration: BoxDecoration(borderRadius: BorderRadius.circular(10), border: Border.all(color: CheColors.stroke)),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-              Text(k.toUpperCase(), style: const TextStyle(color: _dim, fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 0.8)),
-              Text(v, style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w800)),
-            ]),
+        Expanded(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 3),
+            child: Semantics(
+              container: true,
+              label: '$k: $v',
+              excludeSemantics: true,
+              child: Container(
+                // A minimum, not a fixed height: large text grows the row once; a new value never changes it.
+                constraints: const BoxConstraints(minHeight: 54),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                decoration: BoxDecoration(borderRadius: BorderRadius.circular(10), border: Border.all(color: cheHudActive ? CheHud.ice.withValues(alpha: 0.28) : CheColors.stroke)),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisAlignment: MainAxisAlignment.center, children: [
+                  Text(k.toUpperCase(), maxLines: 1, overflow: TextOverflow.clip, style: CheHud.label.copyWith(fontSize: 10)),
+                  FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    // P&L in the chrome status tone of its sign (the + or − sign says it too).
+                    child: k == 'P&L' && _num(pnl) != null && _num(pnl) != 0
+                        ? CheStatusText(v, tone: _num(pnl)! > 0 ? CheStatusTone.success : CheStatusTone.failure,
+                            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800, fontFeatures: [FontFeature.tabularFigures()]))
+                        : Text(v, maxLines: 1, style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w800, fontFeatures: [FontFeature.tabularFigures()])),
+                  ),
+                ]),
+              ),
+            ),
           ),
         ),
     ]);
@@ -492,35 +508,66 @@ class CheBestNowCard extends StatelessWidget {
   }
 }
 
-/// One strategy: best timeframe, qualified trades on that timeframe, expectancy, win rate, evidence status.
-class CheStrategyCard extends StatelessWidget {
+/// One strategy (owner, 2026-10-23): name, status, trades, expectancy and win rate on a small card. A tap expands it in
+/// place; the full drill-down opens from the expanded card, so nothing is repeated on the page.
+class CheStrategyCard extends StatefulWidget {
   const CheStrategyCard({super.key, required this.strategy, required this.onTap});
   final ResearchStrategy strategy;
+
+  /// Opens the strategy's full details.
   final VoidCallback onTap;
 
   @override
+  State<CheStrategyCard> createState() => _CheStrategyCardState();
+}
+
+class _CheStrategyCardState extends State<CheStrategyCard> {
+  bool _open = false;
+
+  @override
   Widget build(BuildContext context) {
-    final s = strategy;
-    return Semantics(
-        container: true,
-      button: true,
-      label: '${s.spoken} Opens details.',
-      excludeSemantics: true,
-      child: InkWell(
-        key: Key('strategy_card_${s.id}'),
-        borderRadius: BorderRadius.circular(14),
-        onTap: onTap,
-        child: _panel(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(s.name, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800)),
-            const SizedBox(height: 4),
-            Text(s.bestLine, style: const TextStyle(color: Colors.white, fontSize: 14)),
-            Text('${fmtR(s.expectancy)} · ${fmtPct(s.winRate)} WR', style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w700)),
-            const SizedBox(height: 4),
-            Text(_humanStatus(s.status), style: TextStyle(color: statusColor(s.status), fontSize: 13, fontWeight: FontWeight.w800, letterSpacing: 0.6)),
-          ]),
+    final s = widget.strategy;
+    return _panel(
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Semantics(
+          container: true,
+          button: true,
+          expanded: _open,
+          label: '${s.spoken} ${_open ? 'Collapse' : 'Expand'}.',
+          excludeSemantics: true,
+          child: InkWell(
+            key: Key('strategy_card_${s.id}'),
+            borderRadius: BorderRadius.circular(10),
+            onTap: () => setState(() => _open = !_open),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: 48),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Row(children: [
+                  Expanded(child: Text(s.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w800))),
+                  Icon(_open ? Icons.expand_less_rounded : Icons.expand_more_rounded, color: Colors.white70, size: 20),
+                ]),
+                const SizedBox(height: 2),
+                Text(_humanStatus(s.status), maxLines: 1, style: TextStyle(color: statusColor(s.status), fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 0.6)),
+                Text(s.bestLine, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontSize: 13)),
+                Text('${fmtR(s.expectancy)} · ${fmtPct(s.winRate)} WR',
+                    maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w700, fontFeatures: [FontFeature.tabularFigures()])),
+              ]),
+            ),
+          ),
         ),
-      ),
+        if (_open) ...[
+          const SizedBox(height: 6),
+          Text('${s.qualifiedBuckets} timeframe${s.qualifiedBuckets == 1 ? '' : 's'} qualified', style: const TextStyle(color: Colors.white70, fontSize: 13)),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton(
+              key: Key('strategy_open_${s.id}'),
+              onPressed: widget.onTap,
+              child: Text('Open details', semanticsLabel: 'Open ${s.name} details'),
+            ),
+          ),
+        ],
+      ]),
     );
   }
 }

@@ -15,6 +15,7 @@ Order: **reproduce → locate → fix narrowly → prove → review.** Do not ed
   - The case format, including how to seed a screenshot's earlier turns as `history`, is in `reference/replay-format.md`.
   - Ready examples: `.claude/skills/che-fact-check/cases/*.json`.
 - **Flutter:** write a failing test under `test/` that uses the owner's exact words.
+- **Lag or slowness:** `node tools/che_perf_bench.mjs` times each benchmark turn and polled GET and counts its storage operations; `--worker <dir>` runs another checkout for a before/after. Budgets and causes found so far: `docs/CHE_PERFORMANCE.md`.
 - It counts as reproduced only when the output shows the wrong behavior. Keep the case: it becomes the regression test.
 
 ## 2. Locate

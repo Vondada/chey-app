@@ -85,7 +85,7 @@ export function subAgentPlan(message, { url = '' } = {}) {
   return [{ ...research, next: content }];
 }
 
-// Who takes a job, in order: the named roster first (Nova, Atlas, Mira, Knox, Sage, Lyra, Iris, from office_company.js),
+// Who takes a job, in order: the named roster first (the department heads, from office_company.js),
 // then any other named agent, and partners last. Within a tier the best job-description match wins. Null when no one fits.
 export function isPartnerAgent(agent = {}) {
   return /partner|reviewer/i.test(String(agent.role || ''));

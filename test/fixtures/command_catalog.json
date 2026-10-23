@@ -384,6 +384,44 @@
    "optional_missing": []
   },
   {
+   "id": "che-performance",
+   "category": "intelligence",
+   "title": "CHE performance",
+   "summary": "Hear how fast CHE is running, measured.",
+   "does": "Reads CHE’s own measured timings per route (typical and slowest 5 percent), compares them with her performance budget, and names the slowest step. Says so when nothing has been measured yet.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Are you lagging?",
+    "Performance report",
+    "Why are you slow?"
+   ],
+   "needs": [
+    "memory"
+   ],
+   "optional": [],
+   "handler": "perf_watch.performanceIntent → performanceReport → speakPerformance",
+   "route": "che_performance",
+   "produces": "report",
+   "evidence": "Every number is a measured request timing from the live window; zero model calls.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "performance",
+    "lag",
+    "lagging",
+    "slow",
+    "speed",
+    "latency"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
    "id": "che-flagstaff-import",
    "category": "intelligence",
    "title": "CHE Flagstaff import",
@@ -499,6 +537,50 @@
     "failed",
     "interrupted",
     "stuck"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "che-improve",
+   "category": "intelligence",
+   "title": "Che Improve",
+   "summary": "Tell CHE what feels wrong; she fixes it or opens a coding task.",
+   "does": "A supported layout or look change (layout density, chart size and shape, success color, text size) is stored, read back and applied on the iPhone with no new build, then marked Verified when the app confirms it; \"undo that\" puts it back. Anything else becomes a tracked task with acceptance criteria, sent to CHE's coding pipeline. Money, trading, security, credentials, deleting and publishing are never changed automatically.",
+   "mode": "BUILD",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "what",
+    "required": false,
+    "hint": "What feels wrong, for example \"the chart is too big\""
+   },
+   "examples": [
+    "This page is too cramped",
+    "Make the chart smaller",
+    "Use chrome green for successful actions",
+    "Undo that",
+    "What improvements are open?"
+   ],
+   "needs": [],
+   "optional": [],
+   "handler": "owner_improvements.improvementIntent → handleImprovement (coding through selfDevelopmentReply)",
+   "route": "che_owner_improvement",
+   "produces": "improvement task",
+   "evidence": "The stored setting read back, and the value the iPhone reports it applied; for code, the coding job id the pipeline returned.",
+   "cost": "Free for settings: no AI engine is used. A coding task uses the coding pipeline.",
+   "keywords": [
+    "improve",
+    "improvement",
+    "too cramped",
+    "too big",
+    "too small",
+    "fix this",
+    "owner improvements",
+    "undo that"
    ],
    "status": "available",
    "missing": [],
@@ -1548,6 +1630,42 @@
    "optional_missing": []
   },
   {
+   "id": "trade-paper-account",
+   "category": "trading",
+   "title": "Trade Paper Account",
+   "summary": "CHE paper account: balance, positions and trade details.",
+   "does": "Opens CHE's simulated paper account on your iPhone: balance, open and closed CHE positions and each trade's detail. \"Set CHE paper balance to 500\" opens the change for you to confirm; nothing changes without your confirmation.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Show CHE positions",
+    "Set CHE paper balance to 500",
+    "Open CHE's paper account"
+   ],
+   "needs": [
+    "office"
+   ],
+   "optional": [],
+   "handler": "trading_chart.paperAccountIntent → phone ChePaperAccountPanel",
+   "route": "che_trading_chart",
+   "produces": "paper account view",
+   "evidence": "The paper engine records on the phone; prices only from live Rithmic trades.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "paper",
+    "balance",
+    "che positions",
+    "paper account"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
    "id": "trade-chart",
    "category": "trading",
    "title": "Trade Chart",
@@ -2301,6 +2419,51 @@
     "duplicates",
     "look-ahead",
     "trade audit"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "trade-crypto",
+   "category": "trading",
+   "title": "Orion Crypto Desk",
+   "summary": "Orion: BTC and ETH research and paper trading, 24/7.",
+   "does": "Reads, pauses or resumes Orion's crypto desk: BTC-USD and ETH-USD from Coinbase Exchange public candles (5-minute, 15-minute and hourly; Kraken cross-check), every CHE strategy paper traded on LIVE bars around the clock including weekends, net of 0.6% taker and 0.4% maker fees, journalled as crypto in the forward journal and judged by the strategy governor; plus volatility, liquidity and session research and an out-of-sample backtest. No model, no exchange account, no order.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "action",
+    "required": false,
+    "hint": "pause, resume or status"
+   },
+   "examples": [
+    "Have Orion research BTC and ETH, compare strategies, and continue paper trading during the weekend.",
+    "Pause Orion crypto research",
+    "Resume Orion crypto research",
+    "How is the crypto paper trading going?"
+   ],
+   "needs": [
+    "market_data"
+   ],
+   "optional": [],
+   "handler": "crypto_markets.cryptoIntent → setCryptoPaper / cryptoView",
+   "route": "che_crypto",
+   "produces": "crypto desk status",
+   "evidence": "Stored exchange bars, runs, budget counters and journal records only.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "crypto",
+    "bitcoin",
+    "btc",
+    "ethereum",
+    "eth",
+    "orion",
+    "weekend",
+    "24/7"
    ],
    "status": "available",
    "missing": [],
@@ -4157,6 +4320,114 @@
     "delegate",
     "office task",
     "assign"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "office-org",
+   "category": "office",
+   "title": "Office Departments",
+   "summary": "See who heads each Office department.",
+   "does": "Reads the Office roster: you lead, CHE reports to you, and the nine department heads (Nova, Atlas, Mira, Knox, Sage, Lyra, Orion, Iris, Vale) report to CHE, each with responsibilities, tools, permissions, work queue and recorded performance. Changes nothing.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Who runs the Office departments?",
+    "Show me the Office org chart"
+   ],
+   "needs": [
+    "office"
+   ],
+   "optional": [],
+   "handler": "office_org.officeOrg (LA_AGENCIA_ROLES departments)",
+   "route": "office:org",
+   "produces": "org chart",
+   "evidence": "The roster and stored Office tasks only; tool status is configured, not configured or not checked.",
+   "cost": "Free: no AI engine is used.",
+   "keywords": [
+    "org chart",
+    "departments",
+    "department heads",
+    "chain of command",
+    "who runs"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "office-coordinate",
+   "category": "office",
+   "title": "Coordinated Office Job",
+   "summary": "Have Nova coordinate a multi-department job.",
+   "does": "Nova plans one job across departments (for example Iris design, Atlas engineering, Knox security review, then Vale verification), names one accountable owner, and hands each finished stage to the next with a recorded handoff the receiving head must accept. CHE reports the result only after Vale verifies it.",
+   "mode": "BUILD",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "task",
+    "required": true,
+    "hint": "The work and which departments it involves"
+   },
+   "examples": [
+    "Have Nova coordinate a cleaner Trading Room chart with design, engineering, security review and testing"
+   ],
+   "needs": [
+    "office"
+   ],
+   "optional": [],
+   "handler": "office_jobs.planOfficeJob → advanceOfficeJobs → agent_runtime tasks",
+   "route": "office:job",
+   "produces": "office job",
+   "evidence": "Job id, stage task ids, every handoff with its acceptance checks, and Vale's verdict.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "coordinate",
+    "handoff",
+    "office job",
+    "departments",
+    "nova"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "office-jobs",
+   "category": "office",
+   "title": "Office Jobs",
+   "summary": "Status of coordinated Office jobs.",
+   "does": "Reads the latest coordinated Office job (or the one you name): its stages, who holds each, handoffs, blockers and whether Vale verified it. Changes nothing.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "What is the status of the Office jobs?"
+   ],
+   "needs": [
+    "office"
+   ],
+   "optional": [],
+   "handler": "office_jobs.speakOfficeJob",
+   "route": "office:jobStatus",
+   "produces": "job status",
+   "evidence": "The stored job record only.",
+   "cost": "Free: no AI engine is used.",
+   "keywords": [
+    "office jobs",
+    "job status",
+    "handoffs"
    ],
    "status": "available",
    "missing": [],

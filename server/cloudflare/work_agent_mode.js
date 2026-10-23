@@ -2,7 +2,7 @@
 //
 // When the phone sends agent_mode=full (home composer Agent | Chat → Agent),
 // CHE plans, uses real Worker tools, and delegates to La Agencia specialists
-// (Nova/Atlas/Mira/Knox/Sage/Lyra/Iris) plus ephemeral provider workers when
+// (the department heads: Nova/Atlas/Mira/Knox/Sage/Lyra/Orion/Iris/Vale) plus ephemeral provider workers when
 // needed. This is NOT Cursor cloud agents or a Grok Bot box — only capabilities
 // wired in this Worker (office_company, agent_runtime, plugin_runtime,
 // CHE_COMPUTER_URL, Twilio, memory, research, media connectors).
@@ -32,13 +32,15 @@ chat for the owner inside CHE — using CHE's real Worker capabilities, not by p
 to be another product.
 
 She coordinates and delegates to:
-- Nova — Product / listings
-- Atlas — Research / sourcing
-- Mira — Customer support copy / translation
-- Knox — Engineering / Codex / Roblox Luau
-- Sage — Finance / Stripe reports (read-only)
-- Lyra — Content / social
-- Iris — Ad Studio / paid-social creatives
+- Nova — Chief Operations Officer: coordinates Office jobs and handoffs; products / listings
+- Atlas — Chief Technology Officer: engineering / Codex / Roblox Luau
+- Mira — Research and Education: research, sourcing, lessons, customer copy / translation
+- Knox — Office Security Chief: security reviews (defensive only)
+- Sage — Intelligence and Strategy: evidence analysis; Stripe reports (read-only)
+- Lyra — Creative Production: content, social, ads, video
+- Orion — Markets and Trading Research: research and paper trading only
+- Iris — Experience and Accessibility: UX, layouts, VoiceOver
+- Vale — Quality Assurance: independent verification
 
 Specialists report to CHE. CHE reports to the owner.
 CHE assigns work, steers jobs, accepts or rejects handoffs, and owns outcomes.
@@ -75,7 +77,7 @@ desktop shell unless CHE_COMPUTER_URL (or another connected connector) proves it
 // comma or a work verb), so "Sage green" and "Iris flowers" are words.
 export const WORK_VERBS = 'build|research|draft|write|fix|implement|code|compare|scout|analy[sz]e|design|create|ship|make|find|prepare|plan|translate|list|post|send|look into|put together|set up|summari[sz]e|outline|review|audit|test|edit|rewrite|produce|generate|investigate|update';
 const WORK_CLAUSE = new RegExp(String.raw`(?:^|[,.;:]\s*|\band\s+(?:then\s+)?|\bthen\s+|\b(?:can|could|would|will)\s+you\s+(?:please\s+)?|\bplease\s+|\b(?:you|someone|them)\s+to\s+)(?:${WORK_VERBS})\b|^(?:(?:hey|ok(?:ay)?)\s+)?(?:(?:che|chay|chey)[,:]?\s+)?(?:please\s+)?do\s+(?:a|an|the|some|me\s+a)\s+\w+`, 'i');
-const OFFICE_AGENT_NAMES = 'Nova|Atlas|Mira|Knox|Sage|Lyra|Iris';
+const OFFICE_AGENT_NAMES = 'Nova|Atlas|Mira|Knox|Sage|Lyra|Orion|Iris|Vale';
 const NAMED_WORKER = new RegExp(String.raw`\b(?:${OFFICE_AGENT_NAMES})(?:\s+and\s+(?:${OFFICE_AGENT_NAMES}))*(?:,|\s+(?:to\s+|please\s+|can\s+you\s+|could\s+you\s+)?(?:${WORK_VERBS})\b)`);
 const HANDS_WORK = new RegExp(String.raw`^(?:(?:hey|ok(?:ay)?)\s+)?(?:(?:che|chay|chey)[,:]?\s+)?(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?(?:have|ask|get|tell|let)\s+(?:someone|somebody|the\s+(?:office|team|crew|agents)|(?:${OFFICE_AGENT_NAMES}))\b`, 'i');
 const QUESTION_START = /^(?:(?:hey|ok(?:ay)?)\s+)?(?:(?:che|chay|chey)[,:]?\s+)?(?:who|what|what's|whats|when|where|why|how|which|is|are|am|was|were|does|did|can|could|would|should|will|has|explain|do\s+(?:you|i|we)|have\s+(?:you|i|we))\b/i;
@@ -133,13 +135,15 @@ export function laAgenciaPanelNeeds(message) {
   const steps = splitGoal(message);
   const names = [...new Set(steps.map((s) => s.agent))];
   const focusByName = {
-    Nova: 'Product/listings slice: offers, pricing, sales-page structure. Do not invent live store data.',
-    Atlas: 'Research slice: what to verify, sources, unknowns. Do not pretend live research ran unless tool results exist.',
-    Mira: 'Support/copy/translate slice: customer-facing wording, tone, locale notes.',
-    Knox: 'Engineering slice: implementation plan, files, tests, risks. Do not claim code was merged.',
-    Sage: 'Finance slice: Stripe/reporting framing only if connected; otherwise say the blocker.',
-    Lyra: 'Content/social slice: posts, captions, campaign outline.',
-    Iris: 'Ad Studio slice: creative brief, headlines, CTA, asset list for a tonight pack style deliverable.',
+    Nova: 'Operations slice: owners, dependencies, order of work; offers, pricing, sales-page structure. Do not invent live store data.',
+    Atlas: 'Engineering slice: implementation plan, files, tests, risks. Do not claim code was merged.',
+    Mira: 'Research slice: what to verify, sources, unknowns; customer-facing wording. Do not pretend live research ran unless tool results exist.',
+    Knox: 'Security slice: access, secrets, permissions and failure modes. Defensive only; do not claim a check ran unless its record exists.',
+    Sage: 'Intelligence slice: evidence, trade-offs, decision; Stripe reporting only if connected, otherwise say the blocker.',
+    Lyra: 'Creative slice: posts, captions, campaign outline, ad creative brief, headlines, CTA.',
+    Orion: 'Markets slice: data sources and their freshness, strategy evidence, risks. Paper only; never claim a live trade.',
+    Iris: 'Experience slice: layout, flow, accessibility and VoiceOver notes.',
+    Vale: 'Verification slice: acceptance criteria and how each will be checked. Do not claim a test ran unless its record exists.',
   };
   return names
     .filter((name) => focusByName[name])

@@ -24,7 +24,7 @@ void main() {
     expect(find.bySemanticsLabel(RegExp(r'^Voice on\.')), findsOneWidget);
     // On this smaller iPhone the room pills sit just below the tiles, one short scroll down.
     final homeList = find.descendant(of: find.byType(CheMockupHome), matching: find.byType(Scrollable)).first;
-    for (final destination in ['OFFICE', 'MNQ', 'Brain', 'Create']) {
+    for (final destination in ['OFFICE', 'MNQ · RITHMIC', 'Brain', 'Create']) {
       await tester.scrollUntilVisible(find.text(destination), 120, scrollable: homeList);
       expect(find.text(destination), findsOneWidget, reason: destination);
     }
@@ -162,4 +162,30 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
   });
 
+
+  test('CHE follows the iPhone Larger Text size and multiplies it by her own Text size setting', () {
+    expect(cheEffectiveTextScale(TextScaler.noScaling, 1.0), 1.0);
+    expect(cheEffectiveTextScale(const TextScaler.linear(1.15), 1.0), closeTo(1.15, 0.001), reason: 'Larger Text applies in CHE');
+    expect(cheEffectiveTextScale(const TextScaler.linear(1.15), 1.18), 1.3, reason: 'and CHE Large adds to it, up to the cap');
+    expect(cheEffectiveTextScale(const TextScaler.linear(3.1), 1.18), 1.3, reason: 'held to the 1.3x the responsive guard verifies');
+  });
+
+  testWidgets('the system text size reaches CHE screens', (tester) async {
+    tester.view.physicalSize = const Size(1320, 2868);
+    tester.view.devicePixelRatio = 3;
+    tester.platformDispatcher.textScaleFactorTestValue = 1.5;
+    addTearDown(tester.view.reset);
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    SharedPreferences.setMockInitialValues({});
+    await tester.pumpWidget(const CHEApp());
+    for (var i = 0; i < 15; i++) {
+      await tester.pump(const Duration(milliseconds: 200));
+    }
+    final context = tester.element(find.text('Talk to CHE'));
+    // 1.5 system size is above the verified 1.3 cap, so CHE draws at 1.3 (14 * 1.3 = 18.2).
+    expect(MediaQuery.textScalerOf(context).scale(14), closeTo(18.2, 0.01));
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(const Duration(seconds: 1));
+  });
 }

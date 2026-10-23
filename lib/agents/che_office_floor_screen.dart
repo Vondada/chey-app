@@ -41,6 +41,7 @@ class CheOfficeFloorScreen extends StatefulWidget {
   const CheOfficeFloorScreen({
     super.key,
     required this.client,
+    this.runtime,
     this.onTalkToChe,
     this.onSpeak,
     this.embedded = false,
@@ -48,6 +49,10 @@ class CheOfficeFloorScreen extends StatefulWidget {
   });
 
   final CheAgentRuntimeClient client;
+
+  /// The app's own Office runtime, when it already has one: the floor shows it instead of starting a second set of
+  /// polls on the same endpoints. Without it the floor runs (and disposes) its own.
+  final CheAgentRuntimeController? runtime;
 
   /// Opens CHE's chat from her desk sheet (Talk to CHE).
   final VoidCallback? onTalkToChe;
@@ -67,7 +72,8 @@ class CheOfficeFloorScreen extends StatefulWidget {
 }
 
 class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
-  late final CheAgentRuntimeController _runtime = CheAgentRuntimeController(widget.client)..addListener(_changed);
+  late final bool _ownsRuntime = widget.runtime == null;
+  late final CheAgentRuntimeController _runtime = (widget.runtime ?? CheAgentRuntimeController(widget.client))..addListener(_changed);
 
   /// One store for the floor: desks update individually, the plan only
   /// rebuilds when desks are added or removed.
@@ -92,6 +98,12 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
     super.initState();
     _pendingAgentName = widget.initialAgentName;
     _runtime.start();
+    // A shared runtime may already hold the roster; show it now rather than after its next poll.
+    if (_runtime.loaded) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _changed();
+      });
+    }
   }
 
   void _openInitialAgent() {
@@ -118,7 +130,7 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
   @override
   void dispose() {
     _runtime.removeListener(_changed);
-    _runtime.dispose();
+    if (_ownsRuntime) _runtime.dispose();
     _store.dispose();
     super.dispose();
   }
@@ -535,7 +547,7 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
           maxLines: 3,
           decoration: const InputDecoration(
             labelText: 'Goal',
-            hintText: 'CHE splits it into jobs for Nova, Atlas, Mira, Knox, Sage, Lyra and Iris.',
+            hintText: 'CHE splits it into jobs for Nova, Atlas, Mira, Knox, Sage, Lyra, Orion, Iris and Vale.',
           ),
         ),
         actions: [
@@ -564,6 +576,25 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
       await _report('CHE here. The Office did not stand down: $e', ok: false);
     }
   }
+
+  Widget _officeTitle() => Semantics(
+        header: true,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (cheHudActive)
+              CheChromeText('The Office', maxLines: 1, style: CheType.title)
+            else
+              Text('The Office', maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.title),
+            Text(
+              'Your team. Real work. Real results.',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: CheType.caption,
+            ),
+          ],
+        ),
+      );
 
   List<Widget> _actions() => [
         Semantics(
@@ -598,29 +629,14 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
           child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.xs, CheSpace.xs, 0),
-              child: Row(children: [
-                Expanded(
-                  child: Semantics(
-                    header: true,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        if (cheHudActive)
-                          CheChromeText('The Office', maxLines: 1, style: CheType.title)
-                        else
-                          Text('The Office', maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.title),
-                        Text(
-                          'Your team. Real work. Real results.',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: CheType.caption,
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                ..._actions(),
-              ]),
+              // With Larger Text the actions move under the title instead of pushing past the screen edge; at
+              // ordinary sizes the header stays one row.
+              child: MediaQuery.textScalerOf(context).scale(1) > 1.25
+                  ? Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      _officeTitle(),
+                      Wrap(crossAxisAlignment: WrapCrossAlignment.center, children: _actions()),
+                    ])
+                  : Row(children: [Expanded(child: _officeTitle()), ..._actions()]),
             ),
             CheOfficeHeader(today: r.today, connection: r.connection),
             Expanded(child: list),
@@ -771,7 +787,7 @@ class CheOfficeHeader extends StatelessWidget {
               Row(mainAxisSize: MainAxisSize.min, children: [
                 Icon(Icons.circle, size: 10, color: color),
                 const SizedBox(width: 4),
-                Text(lines[3], style: CheType.label.copyWith(color: color)),
+                Flexible(child: Text(lines[3], style: CheType.label.copyWith(color: color))),
               ]),
             ]),
             const SizedBox(height: 2),

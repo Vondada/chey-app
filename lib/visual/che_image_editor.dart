@@ -13,6 +13,7 @@ import 'che_image_canvas.dart';
 import 'che_visual_adjust.dart';
 import 'che_visual_client.dart';
 import 'che_visual_session.dart';
+import '../che_ui/che_foreground.dart';
 
 const _accent = Color(0xFF7FF5E6);
 
@@ -126,7 +127,7 @@ class _CheImageEditorState extends State<CheImageEditor> {
   void _watchRender() {
     _poll?.cancel();
     _poll = Timer.periodic(const Duration(seconds: 8), (_) async {
-      if (!mounted) return;
+      if (!mounted || !cheAppInForeground()) return;
       try {
         final v = await widget.client.project(widget.projectId);
         final r = (v['project'] as Map?)?['render'] as Map?;

@@ -41,13 +41,13 @@ final _worker = MockClient((r) async {
     return http.Response(
         jsonEncode({
           'ok': true,
-          'account': 'alpaca_paper',
+          'account': 'futures_paper',
           'state': 'verified',
-          'symbol': 'AAPL',
+          'symbol': 'MNQ',
           'timeframe': '5m',
           'timeframes': ['1m', '5m', '15m', '1h', '1d'],
           'bars': bars,
-          'feed': {'provider': 'Alpaca IEX', 'status': 'REALTIME', 'last_bar_time': start.add(const Duration(minutes: 195)).toIso8601String(), 'age_s': 60, 'stale': false},
+          'feed': {'provider': 'Yahoo MNQ=F', 'status': 'DELAYED', 'last_bar_time': start.add(const Duration(minutes: 195)).toIso8601String(), 'age_s': 60, 'stale': false},
           'entries_allowed': true,
           'market_orders_allowed': true,
           'entries_blocked_reason': '',
@@ -112,7 +112,8 @@ void main() {
     await tester.pump(const Duration(milliseconds: 200));
     // The room's controls keep their VoiceOver names in the HUD look.
     expect(find.bySemanticsLabel('CHART section, open'), findsOneWidget);
-    expect(find.bySemanticsLabel('STRATEGIES section'), findsOneWidget);
+    expect(find.bySemanticsLabel('STRATEGY LAB section'), findsOneWidget);
+    expect(find.bySemanticsLabel('REPLAY'), findsOneWidget);
     expect(find.text('Trading Room'), findsNothing);
     await expectLater(find.byType(MaterialApp), matchesGoldenFile('goldens/hud_trading_room.png'));
     await tester.pumpWidget(const SizedBox());

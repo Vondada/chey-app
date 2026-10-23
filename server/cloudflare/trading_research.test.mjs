@@ -451,3 +451,17 @@ test('Signal Mode: every strategy card carries the sample sizes behind its numbe
   }
   assert.ok(view.strategies.every((s) => s.sample_trades === 0), 'an empty ledger reports zero samples, never a made-up count');
 });
+
+test('every strategy card lists every timeframe bucket, so the page shows them without a search', async () => {
+  const view = await researchView(memoryStorage());
+  assert.ok(view.strategies.length > 0);
+  for (const s of view.strategies.filter((x) => x.defined !== false)) {
+    assert.deepEqual(s.timeframes.map((t) => t.tf), TF_IDS, s.strategy_id);
+    for (const t of s.timeframes) {
+      assert.equal(typeof t.historical_trades, 'number', `${s.strategy_id} ${t.tf}`);
+      assert.equal(typeof t.forward_trades, 'number', `${s.strategy_id} ${t.tf}`);
+      assert.equal(t.min_required, MIN_CLOSED_TRADES);
+    }
+  }
+  for (const s of view.strategies.filter((x) => x.defined !== false)) assert.ok(s.timeframes.every((t) => t.historical_trades === 0 && t.forward_trades === 0), `${s.strategy_id}: an empty ledger counts zero, never invented`);
+});

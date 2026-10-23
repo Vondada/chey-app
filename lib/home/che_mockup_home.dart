@@ -15,6 +15,8 @@ import '../che_ui/che_futuristic.dart';
 import '../che_ui/che_clock.dart';
 import '../che_ui/che_hud.dart';
 import 'che_home_tiles.dart';
+import '../trading/che_live_chart_card.dart';
+import '../trading/che_live_feed_hub.dart';
 import '../che_ui/che_theme.dart';
 import '../che_ui/che_widgets.dart';
 
@@ -73,6 +75,7 @@ class CheMockupHome extends StatelessWidget {
     this.onToggleVoiceReplies,
     this.onTapAgent,
     this.unread = 0,
+    this.flagstaffLatest = const [],
     this.onOpenFlagstaff,
     this.latencyMs,
     this.handsFree = false,
@@ -80,13 +83,23 @@ class CheMockupHome extends StatelessWidget {
     this.headers,
     this.now,
     this.marketClient,
+    this.liveFeed,
+    this.onConnectRithmic,
   });
+
+  /// The live chart's channels (tests pass a hub over a fake feed). Null uses the app-wide hub.
+  final CheLiveFeedHub? liveFeed;
+
+  /// Opens the Rithmic connection screen from the live chart.
+  final VoidCallback? onConnectRithmic;
 
   /// The HTTP client for the MNQ tile, for tests; null uses a fresh client per request.
   final http.Client? marketClient;
 
   /// Flagstaff's unread count and its opener (HUD look).
   final int unread;
+  /// The opening of the newest unread messages, for the Flagstaff tile's gist.
+  final List<CheFlagstaffGist> flagstaffLatest;
   final VoidCallback? onOpenFlagstaff;
 
   /// The last measured round trip to CHE's server, in milliseconds; null until one is measured.
@@ -208,6 +221,8 @@ class CheMockupHome extends StatelessWidget {
           _CheStage(che: che, mode: m, working: working, greeting: greeting.trim()),
           const SizedBox(height: CheSpace.md),
           _TalkControl(listening: listening, onTalk: onTalk, onOpenChat: onOpenChat),
+          const SizedBox(height: CheSpace.lg),
+          _liveChart(),
           const SizedBox(height: CheSpace.lg),
           _Destinations(items: destinations),
           const SizedBox(height: CheSpace.lg),
@@ -741,6 +756,19 @@ class _NowPanel extends StatelessWidget {
 // The greeting and date, CHE's reactor with live readouts, one Talk bar, four glass tiles of real data, the other
 // rooms, and the work that is really running. Every value is real; a tile without data says so.
 extension on CheMockupHome {
+  /// The live chart card. Delayed data is offered only as an explicit choice inside it, labelled DELAYED.
+  Widget _liveChart({double chartHeight = 150}) => CheLiveChartCard(
+        key: const ValueKey('che-home-live-chart'),
+        hub: liveFeed,
+        now: now,
+        chartHeight: chartHeight,
+        onOpen: onOpenTrading,
+        onConnect: onConnectRithmic,
+        delayedBuilder: baseUrl == null
+            ? null
+            : (_) => CheHomeMarketTile(baseUrl: baseUrl!, headers: headers ?? () => const {}, onOpen: onOpenTrading, client: marketClient, delayedOnly: true),
+      );
+
   Widget _hudHome(BuildContext context, CheHomeMode m) {
     final now = this.now?.call() ?? DateTime.now();
     final chicago = CheChicagoTime.at(now);
@@ -849,45 +877,34 @@ extension on CheMockupHome {
         const SizedBox(height: CheSpace.md),
         _HudTalkBar(listening: listening, handsFree: handsFree, onTalk: onTalk, onOpenChat: onOpenChat),
         const SizedBox(height: CheSpace.lg),
-        // Four tiles of real data.
+        // Real data: the live chart first (owner, 2026-10-23: live Rithmic data by default, never delayed data on its
+        // own), then Flagstaff and the Office, then every market's open and close.
         LayoutBuilder(builder: (context, box) {
           const gap = 12.0;
           final half = (box.maxWidth - gap) / 2;
           final trading = byId['trading']!;
           // Each pair of tiles keeps one height, set by the taller tile (large text grows both).
           return Column(children: [
-            IntrinsicHeight(child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-              SizedBox(
-                width: half,
-                child: baseUrl == null
-                    ? CheHudTile(
-                        semantics: '${trading.label}. ${trading.detail}. Double tap to open.',
-                        onTap: trading.onOpen,
-                        leanRight: true,
-                        height: 140,
-                        child: Text('MNQ', style: CheHud.label),
-                      )
-                    : CheHomeMarketTile(baseUrl: baseUrl!, headers: headers ?? () => const {}, onOpen: trading.onOpen, client: marketClient),
-              ),
-              const SizedBox(width: gap),
-              SizedBox(width: half, child: CheHomeFlagstaffTile(unread: unread, onOpen: onOpenFlagstaff ?? onOpenChat)),
-            ])),
+            _liveChart(chartHeight: 130),
+            const SizedBox(height: CheSpace.md),
+            // The rooms stay on the first screen, right under the live chart.
+            Row(children: [
+              for (final id in ['brain', 'create', 'world', if (byId.containsKey('security')) 'security']) ...[
+                if (id != 'brain') const SizedBox(width: CheSpace.sm),
+                Expanded(child: _HudRoomPill(item: byId[id]!)),
+              ],
+            ]),
             const SizedBox(height: gap),
             IntrinsicHeight(child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-              SizedBox(width: half, child: CheHomeOfficeTile(working: working, total: team, onOpen: onOpenOffice)),
+              SizedBox(width: half, child: CheHomeFlagstaffTile(unread: unread, latest: flagstaffLatest, onOpen: onOpenFlagstaff ?? onOpenOffice)),
               const SizedBox(width: gap),
-              SizedBox(width: half, child: CheHomeNextTile(now: now, onOpen: trading.onOpen)),
+              SizedBox(width: half, child: CheHomeOfficeTile(working: working, total: team, onOpen: onOpenOffice)),
             ])),
+            const SizedBox(height: CheSpace.md),
+            CheHomeMarketsTile(now: now, onOpen: trading.onOpen),
           ]);
         }),
         const SizedBox(height: CheSpace.md),
-        // The rooms without a tile.
-        Row(children: [
-          for (final id in ['brain', 'create', 'world', if (byId.containsKey('security')) 'security']) ...[
-            if (id != 'brain') const SizedBox(width: CheSpace.sm),
-            Expanded(child: _HudRoomPill(item: byId[id]!)),
-          ],
-        ]),
         const SizedBox(height: CheSpace.lg),
         _NowPanel(
           active: cheHomeActiveAgents(agents),
@@ -1021,12 +1038,12 @@ class _HudTalkBar extends StatelessWidget {
                 onTalk();
               },
               child: ConstrainedBox(
-                constraints: const BoxConstraints(minHeight: 54),
+                constraints: const BoxConstraints(minHeight: 44),
                 child: Row(children: [
                   CheChromeOrb(
-                    size: 54,
+                    size: 44,
                     color: color,
-                    child: Icon(listening ? Icons.stop_rounded : Icons.mic_rounded, color: const Color(0xFF07121E), size: 26),
+                    child: Icon(listening ? Icons.stop_rounded : Icons.mic_rounded, color: const Color(0xFF07121E), size: 22),
                   ),
                   const SizedBox(width: 14),
                   Expanded(
@@ -1034,7 +1051,7 @@ class _HudTalkBar extends StatelessWidget {
                       FittedBox(
                         fit: BoxFit.scaleDown,
                         alignment: Alignment.centerLeft,
-                        child: Text(listening ? 'Stop listening' : 'Talk to CHE', style: CheType.headline.copyWith(fontSize: 18, fontWeight: FontWeight.w700)),
+                        child: Text(listening ? 'Stop listening' : 'Talk to CHE', style: CheType.headline.copyWith(fontSize: 15, fontWeight: FontWeight.w700)),
                       ),
                       const SizedBox(height: 2),
                       Text(
@@ -1123,10 +1140,11 @@ class _HudRoomPill extends StatelessWidget {
           radius: 22,
           glow: item.hue,
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
-          child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
             Icon(item.icon, size: 18, color: item.hue),
-            const SizedBox(width: 6),
-            Flexible(child: Text(item.label, maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.label.copyWith(fontWeight: FontWeight.w700))),
+            const SizedBox(height: 4),
+            // Never cut off: the full name wraps onto a second line when the tile is narrow.
+            Text(item.label, textAlign: TextAlign.center, style: CheType.label.copyWith(fontWeight: FontWeight.w700, fontSize: 11)),
           ]),
         ),
       ),

@@ -97,6 +97,21 @@ List<CheMarketSession> cheMarketSessions(DateTime instant) {
   return sessions;
 }
 
+/// When a market next changes state (opens or closes) after [instant], found by scanning the same calendar in 5-minute
+/// steps (every session boundary falls on that grid), for up to eight days.
+DateTime? cheNextSessionChange(String name, DateTime instant) {
+  final now = instant.toUtc();
+  final open = cheMarketSessions(now).firstWhere((s) => s.name == name).open;
+  // Boundaries fall on the 5-minute grid, so the scan starts at the first grid point after [now].
+  var at = DateTime.utc(now.year, now.month, now.day, now.hour, now.minute - now.minute % 5).add(const Duration(minutes: 5));
+  final end = now.add(const Duration(days: 8));
+  while (at.isBefore(end)) {
+    if (cheMarketSessions(at).firstWhere((s) => s.name == name).open != open) return at;
+    at = at.add(const Duration(minutes: 5));
+  }
+  return null;
+}
+
 /// CME micro Nasdaq futures: open Sunday 6:00 PM to Friday 5:00 PM New York time, with a daily 5:00 to 6:00 PM break.
 bool cheFuturesOpen(DateTime utc) {
   final newYorkDst = _usDst(utc.toUtc(), startHourUtc: 7, endHourUtc: 6);

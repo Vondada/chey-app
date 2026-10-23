@@ -15,6 +15,7 @@ import '../che_ui/che_clock.dart';
 import '../che_ui/che_hud.dart';
 import '../che_ui/che_theme.dart';
 import '../che_ui/che_widgets.dart';
+import '../che_ui/che_foreground.dart';
 
 /// MNQ as the Worker's chart feed reports it.
 class CheHomeQuote {
@@ -173,13 +174,17 @@ class _TileLabel extends StatelessWidget {
 
 /// MNQ from the Worker's chart feed, refreshed each minute while Home is on screen.
 class CheHomeMarketTile extends StatefulWidget {
-  const CheHomeMarketTile({super.key, required this.baseUrl, required this.headers, required this.onOpen, this.client, this.height = 140});
+  const CheHomeMarketTile({super.key, required this.baseUrl, required this.headers, required this.onOpen, this.client, this.height = 140, this.delayedOnly = false});
 
   final String Function() baseUrl;
   final Map<String, String> Function() headers;
   final VoidCallback onOpen;
   final http.Client? client;
   final double height;
+
+  /// Inside the live chart card, after the owner chose delayed data: no tile frame of its own, and always labelled
+  /// DELAYED whatever the Worker's feed says, so it can never pass for live.
+  final bool delayedOnly;
 
   @override
   State<CheHomeMarketTile> createState() => _CheHomeMarketTileState();
@@ -197,7 +202,7 @@ class _CheHomeMarketTileState extends State<CheHomeMarketTile> {
     unawaited(_load());
     // Only while this tile's tab is on screen (TickerMode), so a hidden Home makes no requests.
     _timer = Timer.periodic(const Duration(seconds: 60), (_) {
-      if (mounted && TickerMode.valuesOf(context).enabled) unawaited(_load());
+      if (mounted && cheAppInForeground() && TickerMode.valuesOf(context).enabled) unawaited(_load());
     });
   }
 
@@ -239,16 +244,14 @@ class _CheHomeMarketTileState extends State<CheHomeMarketTile> {
     final up = (q?.changePct ?? 0) >= 0;
     final change = q?.changePct == null ? '' : '${up ? '+' : ''}${q!.changePct!.toStringAsFixed(2)}%';
     // A failed refresh keeps the last price on screen but marks it stale, in text and for VoiceOver.
-    final status = q == null ? '' : (q.stale || _error != null ? 'STALE' : q.status);
+    final status = widget.delayedOnly
+        ? (q != null && (q.stale || _error != null) ? 'DELAYED · STALE' : 'DELAYED')
+        : (q == null ? '' : (q.stale || _error != null ? 'STALE' : q.status));
     final price = q == null ? '—' : _price(q.last);
-    return CheHudTile(
-      semantics: q == null
-          ? 'Trading. MNQ: ${_error ?? 'loading'}. Double tap to open.'
-          : 'Trading. MNQ $price, ${change.isEmpty ? '' : '${q.changePct!.toStringAsFixed(2)} percent today, '}${status.toLowerCase()} data. Double tap to open.',
-      onTap: widget.onOpen,
-      leanRight: true,
-      height: widget.height,
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+    final semantics = q == null
+        ? 'Trading. MNQ${widget.delayedOnly ? ', delayed' : ''}: ${_error ?? 'loading'}. Double tap to open.'
+        : 'Trading. MNQ $price, ${change.isEmpty ? '' : '${q.changePct!.toStringAsFixed(2)} percent today, '}${status.toLowerCase()} data. Double tap to open.';
+    final body = Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           _TileLabel(Icons.show_chart_rounded, status.isEmpty ? 'MNQ' : 'MNQ · $status'),
           const SizedBox(height: 8),
           FittedBox(
@@ -269,8 +272,11 @@ class _CheHomeMarketTileState extends State<CheHomeMarketTile> {
             const SizedBox(height: 6),
             SizedBox(height: 34, width: double.infinity, child: ExcludeSemantics(child: CustomPaint(painter: _SparkPainter(q.closes)))),
           ],
-        ]),
-    );
+        ]);
+    if (widget.delayedOnly) {
+      return Semantics(container: true, button: true, label: semantics, excludeSemantics: true, child: GestureDetector(onTap: widget.onOpen, child: body));
+    }
+    return CheHudTile(semantics: semantics, onTap: widget.onOpen, leanRight: true, height: widget.height, child: body);
   }
 
   static String _price(double v) {
@@ -353,18 +359,43 @@ class _SparkPainter extends CustomPainter {
   bool shouldRepaint(_SparkPainter old) => old.values != values;
 }
 
-/// Flagstaff: the real unread count.
+/// One unread Flagstaff message, as the Worker sends it: the sender and the opening of the real text.
+class CheFlagstaffGist {
+  const CheFlagstaffGist({this.id = '', required this.from, required this.text});
+
+  final String id;
+  final String from;
+  final String text;
+}
+
+/// True when the gist differs in any message: a new newest message changes it even when the unread count does not.
+bool cheGistChanged(List<CheFlagstaffGist> a, List<CheFlagstaffGist> b) {
+  if (a.length != b.length) return true;
+  for (var i = 0; i < a.length; i++) {
+    if (a[i].id != b[i].id || a[i].from != b[i].from || a[i].text != b[i].text) return true;
+  }
+  return false;
+}
+
+/// Flagstaff: the real unread count and the opening of the newest messages. Nothing is summarised or invented.
 class CheHomeFlagstaffTile extends StatelessWidget {
-  const CheHomeFlagstaffTile({super.key, required this.unread, required this.onOpen, this.height = 140});
+  const CheHomeFlagstaffTile({super.key, required this.unread, required this.latest, required this.onOpen, this.height = 118});
 
   final int unread;
+  final List<CheFlagstaffGist> latest;
   final VoidCallback onOpen;
   final double height;
 
   @override
   Widget build(BuildContext context) {
+    final shown = latest.take(1).toList();
     return CheHudTile(
-      semantics: unread > 0 ? 'Flagstaff, $unread unread. Double tap to open.' : 'Flagstaff, nothing unread. Double tap to open.',
+      // The sender and the opening of each shown message are read out with the tile; the label is not a live region.
+      semantics: [
+        unread > 0 ? 'Flagstaff, $unread new.' : 'Flagstaff, no new messages.',
+        for (final m in shown) '${m.from}: ${m.text}.',
+        'Double tap to open.',
+      ].join(' '),
       onTap: onOpen,
       leanRight: false,
       height: height,
@@ -374,10 +405,17 @@ class CheHomeFlagstaffTile extends StatelessWidget {
         FittedBox(
           fit: BoxFit.scaleDown,
           alignment: Alignment.centerLeft,
-          child: CheChromeText(unread > 0 ? '$unread unread' : 'All read', style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w700)),
+          child: CheChromeText(unread > 0 ? '$unread new' : 'No new messages', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
         ),
-        const SizedBox(height: 6),
-        Text('Messages, reports and notices', maxLines: 2, overflow: TextOverflow.ellipsis, style: CheType.caption.copyWith(color: CheColors.textDim, fontSize: 12.5)),
+        const SizedBox(height: 4),
+        if (shown.isEmpty)
+          Text('Messages, reports and notices', maxLines: 2, overflow: TextOverflow.ellipsis, style: CheType.caption.copyWith(color: CheColors.textDim, fontSize: 12))
+        else
+          for (final m in shown)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 2),
+              child: Text('${m.from}: ${m.text}', maxLines: 2, overflow: TextOverflow.ellipsis, style: CheType.caption.copyWith(color: CheColors.textDim, fontSize: 12)),
+            ),
       ]),
     );
   }
@@ -396,7 +434,7 @@ class CheHomeOfficeTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final share = total == 0 ? 0.0 : (working / total).clamp(0.0, 1.0);
     return CheHudTile(
-      semantics: 'The Office. $working of $total agents working. Double tap to open.',
+      semantics: 'The Office. $working working now, $total on staff. Double tap to open.',
       onTap: onOpen,
       leanRight: true,
       height: height,
@@ -408,8 +446,8 @@ class CheHomeOfficeTile extends StatelessWidget {
           const SizedBox(width: 10),
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-              FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerLeft, child: Text('$working / $total', style: CheType.headline.copyWith(fontSize: 19, fontWeight: FontWeight.w700))),
-              Text('AGENTS ACTIVE', maxLines: 1, style: CheHud.label.copyWith(fontSize: 9.5, color: CheColors.textDim)),
+              FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerLeft, child: Text('$working working', style: CheType.headline.copyWith(fontSize: 19, fontWeight: FontWeight.w700))),
+              Text('$total ON STAFF', maxLines: 2, overflow: TextOverflow.ellipsis, style: CheHud.label.copyWith(fontSize: 9.5, color: CheColors.textDim)),
             ]),
           ),
         ]),
@@ -444,9 +482,10 @@ class _RingPainter extends CustomPainter {
   bool shouldRepaint(_RingPainter old) => old.share != share;
 }
 
-/// Next: the New York open or close, with a countdown from the market clock.
-class CheHomeNextTile extends StatelessWidget {
-  const CheHomeNextTile({super.key, required this.now, required this.onOpen, this.height = 106});
+/// Markets: each session (Tokyo, London, New York cash and CME micro Nasdaq futures) open or closed now, with its next
+/// change in Central time and a countdown. Calendar: che_clock.dart.
+class CheHomeMarketsTile extends StatelessWidget {
+  const CheHomeMarketsTile({super.key, required this.now, required this.onOpen, this.height = 106});
 
   final DateTime now;
   final VoidCallback onOpen;
@@ -454,21 +493,42 @@ class CheHomeNextTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final next = cheNextMarketEvent(now);
-    final chicago = CheChicagoTime.at(next.at);
-    final time = cheTwelveHour(chicago.local.hour, chicago.local.minute);
-    final countdown = cheCountdown(now, next.at);
+    final rows = [
+      for (final s in cheMarketSessions(now))
+        (session: s, next: cheNextSessionChange(s.name, now)),
+    ];
     return CheHudTile(
-      semantics: 'Next: ${next.label == 'NY OPEN' ? 'New York opens' : 'New York closes'} at $time ${chicago.zone}. Double tap to open Trading.',
+      semantics: 'Markets. ${rows.map((r) => '${r.session.name} ${r.session.open ? 'open' : 'closed'}${r.next == null ? '' : ', ${r.session.open ? 'closes' : 'opens'} ${_central(r.next!)}, ${cheCountdown(now, r.next!)}'}').join('. ')}. Double tap to open Trading.',
       onTap: onOpen,
       leanRight: false,
       height: height,
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const _TileLabel(Icons.calendar_month_rounded, 'NEXT'),
+        const _TileLabel(Icons.calendar_month_rounded, 'MARKETS'),
         const SizedBox(height: 8),
-        FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerLeft, child: CheChromeText(time, style: const TextStyle(fontSize: 21, fontWeight: FontWeight.w700))),
-        Text('${next.label} · $countdown', maxLines: 1, overflow: TextOverflow.ellipsis, style: CheHud.label.copyWith(fontSize: 10, letterSpacing: 1, color: CheColors.textDim)),
+        for (final r in rows)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 5),
+            child: Row(children: [
+              Container(width: 7, height: 7, decoration: BoxDecoration(shape: BoxShape.circle, color: r.session.open ? CheColors.success : CheColors.textDim)),
+              const SizedBox(width: 8),
+              Expanded(flex: 4, child: Text(r.session.name, maxLines: 2, style: CheType.label.copyWith(fontWeight: FontWeight.w700, fontSize: 12))),
+              const SizedBox(width: 6),
+              Expanded(
+                flex: 6,
+                child: Text(
+                  r.next == null ? (r.session.open ? 'OPEN' : 'CLOSED') : '${r.session.open ? 'OPEN · closes' : 'CLOSED · opens'} ${_central(r.next!)} ${cheCountdown(now, r.next!)}',
+                  maxLines: 2,
+                  style: CheHud.label.copyWith(fontSize: 10, letterSpacing: 0.6, color: r.session.open ? CheColors.success : CheColors.textDim),
+                ),
+              ),
+            ]),
+          ),
       ]),
     );
+  }
+
+  static String _central(DateTime at) {
+    final c = CheChicagoTime.at(at);
+    return '${cheTwelveHour(c.local.hour, c.local.minute)} ${c.zone}';
   }
 }

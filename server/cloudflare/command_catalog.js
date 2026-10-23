@@ -156,6 +156,15 @@ export const COMMANDS = Object.freeze([
     prompt: 'Read me my brain review',
     produces: 'review', evidence: 'Every line comes from the stored review record, computed from Brain records; zero model calls.', keywords: ['brain review', 'morning review', 'daily review', 'audit', 'conclusions'],
   }),
+  C('che-performance', 'intelligence', 'EXPLORE', 'Hear how fast CHE is running, measured.', {
+    title: 'CHE performance',
+    does: 'Reads CHE’s own measured timings per route (typical and slowest 5 percent), compares them with her performance budget, and names the slowest step. Says so when nothing has been measured yet.',
+    needs: ['memory'], route: 'che_performance', handler: 'perf_watch.performanceIntent → performanceReport → speakPerformance',
+    input: null,
+    examples: ['Are you lagging?', 'Performance report', 'Why are you slow?'],
+    prompt: 'Performance report',
+    produces: 'report', evidence: 'Every number is a measured request timing from the live window; zero model calls.', keywords: ['performance', 'lag', 'lagging', 'slow', 'speed', 'latency'],
+  }),
   C('che-flagstaff-import', 'intelligence', 'BUILD', 'Bring the Flagstaff mailbox history into the Brain.', {
     title: 'CHE Flagstaff import',
     does: 'Reads every message file on the che-mailbox branch, archive included, and keeps each message in your Brain as outside correspondence with its file, message id, sender, recipient and time. Never as your words, an instruction or Office worker experience. Safe to repeat: a message already there is skipped, one you deleted stays deleted, and a long import carries on where it stopped.',
@@ -186,6 +195,15 @@ export const COMMANDS = Object.freeze([
   }),
   // Owner, 2026-10-19 ("Cancel that fake commit by Che"): the voice and typed route to the
   // owner-only POST /api/job/cancel. Cancelling a queued job deletes nothing, so it asks nothing first.
+  // Owner Improvements (owner, 2026-10-23): "this page is too cramped", "make the chart smaller", "undo that".
+  C('che-improve', 'intelligence', 'BUILD', 'Tell CHE what feels wrong; she fixes it or opens a coding task.', {
+    does: 'A supported layout or look change (layout density, chart size and shape, success color, text size) is stored, read back and applied on the iPhone with no new build, then marked Verified when the app confirms it; "undo that" puts it back. Anything else becomes a tracked task with acceptance criteria, sent to CHE\'s coding pipeline. Money, trading, security, credentials, deleting and publishing are never changed automatically.',
+    needs: [], route: 'che_owner_improvement', local: 'owner_improvement', handler: 'owner_improvements.improvementIntent → handleImprovement (coding through selfDevelopmentReply)',
+    input: { name: 'what', required: false, hint: 'What feels wrong, for example "the chart is too big"' },
+    examples: ['This page is too cramped', 'Make the chart smaller', 'Use chrome green for successful actions', 'Undo that', 'What improvements are open?'],
+    prompt: '{input}', produces: 'improvement task', evidence: 'The stored setting read back, and the value the iPhone reports it applied; for code, the coding job id the pipeline returned.',
+    cost: 'Free for settings: no AI engine is used. A coding task uses the coding pipeline.', keywords: ['improve', 'improvement', 'too cramped', 'too big', 'too small', 'fix this', 'owner improvements', 'undo that'],
+  }),
   C('che-cancel-job', 'intelligence', 'BUILD', 'Cancel a coding job that has not started.', {
     does: 'Cancels a queued coding job: by its id, or the one CHE last accepted. A running, finished or failed job is left alone and CHE says so. The job record is kept, marked cancelled with who cancelled it and when. Nothing is deleted.',
     needs: ['jobs'], route: 'che_coding_cancel', local: 'coding_cancel', handler: 'coding_cancel.cancelQueuedJob (shared with POST /api/job/cancel)',
@@ -402,6 +420,13 @@ export const COMMANDS = Object.freeze([
     prompt: 'Analyze the {input} chart for the New York open',
     produces: 'market read', evidence: 'Candle data with its source and time.', keywords: ['open', 'new york', 'nq', 'premarket', 'briefing', 'market'],
   }),
+  // CHE PAPER ACCOUNT (owner, 2026-10-23): lives on the iPhone; the Worker opens it, the phone confirms any balance change.
+  C('trade-paper-account', 'trading', 'EXPLORE', 'CHE paper account: balance, positions and trade details.', {
+    does: "Opens CHE's simulated paper account on your iPhone: balance, open and closed CHE positions and each trade's detail. \"Set CHE paper balance to 500\" opens the change for you to confirm; nothing changes without your confirmation.",
+    needs: ['office'], route: 'che_trading_chart', handler: 'trading_chart.paperAccountIntent → phone ChePaperAccountPanel', input: null,
+    examples: ['Show CHE positions', 'Set CHE paper balance to 500', "Open CHE's paper account"],
+    prompt: 'Show CHE positions', produces: 'paper account view', evidence: 'The paper engine records on the phone; prices only from live Rithmic trades.', keywords: ['paper', 'balance', 'che positions', 'paper account'],
+  }),
   C('trade-chart', 'trading', 'EXPLORE', 'Analyze NQ/MNQ market structure.', {
     does: 'Analyzes trend, swing highs and lows and candle patterns from real candles.',
     needs: ['market_data'], route: 'che_trading', handler: 'trading_lab.analyze',
@@ -551,6 +576,16 @@ export const COMMANDS = Object.freeze([
     needs: ['office'], route: 'che_trading_visual', handler: 'trading_visual.auditTrades', input: null,
     examples: ['Audit the trades', 'Run a trade audit'],
     prompt: 'Audit the trades.', produces: 'audit', evidence: 'Real counts from the stored records; nothing is altered.', keywords: ['audit', 'duplicates', 'look-ahead', 'trade audit'],
+  }),
+  // Orion's crypto desk (owner master mission, 2026-10-23): crypto_markets.js through its own chat route.
+  C('trade-crypto', 'trading', 'EXPLORE', "Orion: BTC and ETH research and paper trading, 24/7.", {
+    title: 'Orion Crypto Desk',
+    does: 'Reads, pauses or resumes Orion\'s crypto desk: BTC-USD and ETH-USD from Coinbase Exchange public candles (5-minute, 15-minute and hourly; Kraken cross-check), every CHE strategy paper traded on LIVE bars around the clock including weekends, net of 0.6% taker and 0.4% maker fees, journalled as crypto in the forward journal and judged by the strategy governor; plus volatility, liquidity and session research and an out-of-sample backtest. No model, no exchange account, no order.',
+    needs: ['market_data'], route: 'che_crypto', handler: 'crypto_markets.cryptoIntent → setCryptoPaper / cryptoView',
+    input: { name: 'action', required: false, hint: 'pause, resume or status' },
+    examples: ['Have Orion research BTC and ETH, compare strategies, and continue paper trading during the weekend.', 'Pause Orion crypto research', 'Resume Orion crypto research', 'How is the crypto paper trading going?'],
+    prompt: 'Orion crypto research {input}', produces: 'crypto desk status', evidence: 'Stored exchange bars, runs, budget counters and journal records only.',
+    keywords: ['crypto', 'bitcoin', 'btc', 'ethereum', 'eth', 'orion', 'weekend', '24/7'],
   }),
   C('trade-replay', 'trading', 'EXPLORE', "Replay one of CHE's trades on its own chart.", {
     does: 'Opens a trade by its ID (or CHE\'s last forward paper trade) on the exact bars it was traded on: entry, exit, stop, target, times and outcome, labelled BACKTEST, SIMULATION, FORWARD PAPER or BROKER-CONFIRMED. Replay shows a bar only once it has closed. Without recorded bars it says so and draws nothing.',
@@ -919,6 +954,37 @@ export const COMMANDS = Object.freeze([
     input: { name: 'task', required: true, hint: 'What the Office should do' },
     examples: ['Tell the office to research barbershops in Phoenix'],
     prompt: 'Tell the office to {input}', produces: 'office jobs', evidence: 'Office job ids.', keywords: ['delegate', 'office task', 'assign'],
+  }),
+  // The Office organisation and coordinated jobs (owner master mission, 2026-10-23).
+  C('office-org', 'office', 'EXPLORE', 'See who heads each Office department.', {
+    title: 'Office Departments',
+    does: 'Reads the Office roster: you lead, CHE reports to you, and the nine department heads (Nova, Atlas, Mira, Knox, Sage, Lyra, Orion, Iris, Vale) report to CHE, each with responsibilities, tools, permissions, work queue and recorded performance. Changes nothing.',
+    needs: ['office'], route: 'office:org', handler: 'office_org.officeOrg (LA_AGENCIA_ROLES departments)',
+    input: null,
+    examples: ['Who runs the Office departments?', 'Show me the Office org chart'],
+    prompt: 'Who runs the Office departments?', produces: 'org chart',
+    evidence: 'The roster and stored Office tasks only; tool status is configured, not configured or not checked.',
+    cost: 'Free: no AI engine is used.', keywords: ['org chart', 'departments', 'department heads', 'chain of command', 'who runs'],
+  }),
+  C('office-coordinate', 'office', 'BUILD', 'Have Nova coordinate a multi-department job.', {
+    title: 'Coordinated Office Job',
+    does: 'Nova plans one job across departments (for example Iris design, Atlas engineering, Knox security review, then Vale verification), names one accountable owner, and hands each finished stage to the next with a recorded handoff the receiving head must accept. CHE reports the result only after Vale verifies it.',
+    needs: ['office'], route: 'office:job', handler: 'office_jobs.planOfficeJob → advanceOfficeJobs → agent_runtime tasks',
+    input: { name: 'task', required: true, hint: 'The work and which departments it involves' },
+    examples: ['Have Nova coordinate a cleaner Trading Room chart with design, engineering, security review and testing'],
+    prompt: 'Have Nova coordinate {input}', produces: 'office job',
+    evidence: 'Job id, stage task ids, every handoff with its acceptance checks, and Vale\'s verdict.',
+    keywords: ['coordinate', 'handoff', 'office job', 'departments', 'nova'],
+  }),
+  C('office-jobs', 'office', 'EXPLORE', 'Status of coordinated Office jobs.', {
+    title: 'Office Jobs',
+    does: 'Reads the latest coordinated Office job (or the one you name): its stages, who holds each, handoffs, blockers and whether Vale verified it. Changes nothing.',
+    needs: ['office'], route: 'office:jobStatus', handler: 'office_jobs.speakOfficeJob',
+    input: null,
+    examples: ['What is the status of the Office jobs?'],
+    prompt: 'What is the status of the Office jobs?', produces: 'job status',
+    evidence: 'The stored job record only.',
+    cost: 'Free: no AI engine is used.', keywords: ['office jobs', 'job status', 'handoffs'],
   }),
   C('warroom', 'office', 'PLAN', 'Coordinate complex multi-agent work.', {
     does: 'Puts a hard question to Gemini, ChatGPT and Grok and gives each answer; an engine that cannot be reached is named, never faked.',

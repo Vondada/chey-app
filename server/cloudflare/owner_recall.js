@@ -160,3 +160,132 @@ export function importChatgptBatch(store, turns = [], { now = new Date().toISOSt
   }
   return out;
 }
+
+// ─── The phone's Brain notes ────────────────────────────────────────────────────────────────────────────────────────
+// Owner report (2026-10-23, after #491): "What's my favorite drink?" → "no record exists", with Sprite in his Brain.
+// Facts in the phone's Brain (facts.json: the ones he types in the Brain and the ```che-remember lines CHE saves) never
+// reach the Worker's stores; they arrive only inside each request's brain_context, under "[CHE BRAIN — what you know,
+// by category]". Recall read every Worker store and none of those lines, so a fact kept only on the phone was "no
+// record". These are the notes, as statements recall can match ("[People] The owner's favorite drink is Sprite" →
+// "my favorite drink is Sprite"), each keeping the note's own words.
+
+const FACTS_HEADER = /^\[CHE BRAIN — what you know, by category\]/;
+
+/** The phone's Brain notes sent with this request: [{ text, note, phone: true }]. Anything else in brain_context is skipped. */
+export function phoneBrainNotes(brainContext) {
+  const blocks = Array.isArray(brainContext) ? brainContext.map(String) : [];
+  const notes = [];
+  for (const block of blocks) {
+    const lines = block.split('\n');
+    if (!FACTS_HEADER.test(lines[0] || '')) continue;
+    for (const line of lines.slice(1)) {
+      const m = /^\s*-\s+(.{2,400})$/.exec(line);
+      if (!m) continue;
+      const note = m[1].trim();
+      notes.push({ text: noteAsStatement(note), note: note.replace(/^\[[A-Za-z]+\]\s*/, ''), phone: true });
+    }
+  }
+  return notes;
+}
+
+/** A Brain note in the owner's own grammar: the category tag dropped, "The owner's" / "His" read as "My". */
+export function noteAsStatement(note) {
+  return String(note || '')
+    .replace(/^\s*\[[A-Za-z]+\]\s*/, '')
+    .replace(/^(?:the\s+)?(?:owner|user)(?:['’]s)\s+/i, 'My ')
+    .replace(/^(?:his|her|their)\s+/i, 'My ')
+    .trim();
+}
+
+// ─── "Show a saved Brain record" ────────────────────────────────────────────────────────────────────────────────────
+// Owner report (2026-10-23): "Show a saved Brain record" and "Inspect your memory system" went to the language model,
+// so a busy engine gave "I couldn't finish that answer". Both are reads of CHE's own stores and never need a model.
+
+/** "Show a saved Brain record", "open my latest brain record", "show me a memory record about Sprite". */
+export function brainRecordIntent(message) {
+  const t = stripWake(message).replace(/[?.!]+$/, '').replace(/\s+/g, ' ').trim();
+  const m = /^(?:can you |could you |please )?(?:show|open|read|give|pull up|bring up)(?: me| up)? (?:a|one|the|my|your|any|the latest|the newest|the most recent|my latest|your latest|a recent)? ?(?:saved |stored |latest |newest |recent |random )?(?:brain|memory) (?:record|entry|note)s?(?: (?:about|on|for|with) (.{2,60}))?$/i.exec(t);
+  if (!m) return null;
+  return { term: (m[1] || '').trim() };
+}
+
+/** One real Brain record, newest first (or the newest that mentions the term), with its id, kind, source and status. */
+export function speakBrainRecord(store, ask = {}) {
+  if (!store?.init?.()) {
+    return { text: "I can't open the Brain store right now, sir, so I can't show a record. Nothing was changed. Ask me again in a minute; if it keeps failing, the Brain store on the Worker is down.", record: null, available: false };
+  }
+  let record = null;
+  try {
+    if (ask.term) {
+      const needle = ask.term.toLowerCase();
+      const row = store.rows('SELECT id FROM brain_records WHERE deleted = 0 AND (lower(title) LIKE ? OR lower(body) LIKE ?) ORDER BY seq DESC LIMIT 1', `%${needle}%`, `%${needle}%`)[0];
+      record = row ? store.get(row.id) : null;
+    } else {
+      record = (store.list({ limit: 1 }).records || [])[0] || null;
+    }
+  } catch (_) {
+    return { text: "I couldn't read a record from the Brain store just now, sir. The store answered with an error, so I have no record to show. Nothing was changed.", record: null, available: false };
+  }
+  if (!record) {
+    return {
+      text: ask.term ? `There's no saved Brain record that mentions "${ask.term}", sir. Say "search my memory for ${ask.term}" and I'll check every store, not just the Brain.` : 'Your Brain on the Worker has no saved records yet, sir, so there is nothing to show.',
+      record: null, available: true,
+    };
+  }
+  const said = /You said:\s*([\s\S]*?)(?:\n(?:CHE|ChatGPT) answered:|$)/.exec(String(record.body || ''));
+  const body = clip(said ? `You said: ${said[1]}` : record.body, 280);
+  const when = day(record.updated_at || record.created_at);
+  const source = String(record.source?.kind || 'unknown source').replace(/_/g, ' ');
+  const status = String(record.verification || 'unverified').replace(/_/g, ' ');
+  const title = clip(record.title || '', 90).replace(/[.!?]+$/, '');
+  const text = `Here's ${ask.term ? `the newest Brain record about "${ask.term}"` : 'the newest saved Brain record'}, sir. ${title ? `"${title}". ` : ''}It's a ${String(record.kind || 'record').replace(/_/g, ' ')} from ${source}${when ? `, saved ${when}` : ''}, status ${status}. It says: "${body}" Record ${String(record.id).slice(0, 24)}. It's linked below to open in the Brain.`;
+  return { text, record, available: true };
+}
+
+// ─── "Inspect your memory system" ───────────────────────────────────────────────────────────────────────────────────
+
+/** "Inspect your memory system", "check your memory", "how is your memory doing", "memory status", "brain status". */
+export function memoryInspectIntent(message) {
+  const t = stripWake(message).replace(/[?.!]+$/, '').replace(/\s+/g, ' ').trim();
+  if (t.length > 120) return false;
+  if (/\b(?:build|fix|change|delete|remove|clear|wipe|reset|code|repo|pull request)\b/i.test(t)) return false;
+  return /^(?:can you |could you |please )?(?:inspect|check|audit|diagnose|test|examine|review|scan) (?:your|che'?s|the|my) (?:memory|brain)(?: (?:system|stores?|status|health))?$/i.test(t)
+    || /^(?:what(?:'s| is) )?(?:your|che'?s|the) (?:memory|brain) (?:status|health)$/i.test(t)
+    || /^(?:memory|brain) (?:status|health|system status)$/i.test(t)
+    || /^how(?:'s| is) your (?:memory|brain)(?: system)?(?: doing| working)?$/i.test(t);
+}
+
+/** Every memory store with a real count, the Brain's own status, and what was not readable. No model, no guesses. */
+export function inspectMemory(data = {}, store = null, { phoneNotes = [] } = {}) {
+  const records = Array.isArray(data.memory_records) ? data.memory_records.filter((r) => r && r.active !== false) : [];
+  const ownerAttested = records.filter((r) => r.verification_status === 'owner_attested').length;
+  const legacy = Array.isArray(data.memories) ? data.memories.length : 0;
+  let brain = null;
+  try { brain = store?.status?.() || null; } catch (_) { brain = null; }
+  return {
+    memory_records: records.length,
+    owner_attested: ownerAttested,
+    saved_preferences: legacy,
+    brain: brain && brain.available ? {
+      records: brain.records, by_kind: brain.by_kind || {}, by_verification: brain.by_verification || {},
+      open_conflicts: brain.open_conflicts || 0, full_text_search: Boolean(brain.full_text_search),
+    } : null,
+    phone_notes_sent: phoneNotes.length,
+    checked_at: new Date().toISOString(),
+  };
+}
+
+export function speakMemoryInspection(r) {
+  const parts = [
+    `Memory records: ${r.memory_records}, ${r.owner_attested} of them in your own words.`,
+    `Saved preferences: ${r.saved_preferences}.`,
+  ];
+  if (r.brain) {
+    const kinds = Object.entries(r.brain.by_kind).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([k, n]) => `${n} ${k.replace(/_/g, ' ')}`).join(', ');
+    parts.push(`Brain on the Worker: ${r.brain.records} records${kinds ? ` (${kinds})` : ''}, ${r.brain.open_conflicts} open conflict${r.brain.open_conflicts === 1 ? '' : 's'}, search ${r.brain.full_text_search ? 'indexed' : 'without the full-text index'}.`);
+  } else {
+    parts.push('Brain on the Worker: not readable right now, so I have no count for it.');
+  }
+  parts.push(r.phone_notes_sent ? `Your phone sent ${r.phone_notes_sent} Brain note${r.phone_notes_sent === 1 ? '' : 's'} with this message; those live only on the phone.` : 'Your phone sent no Brain notes with this message.');
+  return `I checked my memory stores just now, sir. ${parts.join(' ')} Ask "search my memory for" a word to see the records themselves.`;
+}

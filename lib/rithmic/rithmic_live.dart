@@ -119,10 +119,9 @@ class CheRithmicLive extends ChangeNotifier {
   void attach(RithmicMarketFeed feed, {required String symbol, required String exchange}) {
     unawaited(_sub?.cancel());
     if (!identical(feed, _feed) && _feed != null) unawaited(_feed!.close());
-    if (symbol != this.symbol) {
-      book.clear();
-      lastReceivedAt = null;
-    }
+    if (symbol != this.symbol) book.clear();
+    // A new session is not live until its own first trade arrives (the candles from before stay).
+    lastReceivedAt = null;
     _closeGap();
     _feed = feed;
     this.symbol = symbol;
