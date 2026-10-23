@@ -286,6 +286,15 @@ List<CheBrainEvidence> cheBrainEvidenceOf(CheMemoryDot d) {
   return out.values.toList();
 }
 
+/// Evidence the app opens itself (Lane E's trade replay); every other kind opens as a web link.
+const cheInAppEvidenceKinds = {CheEvidenceKind.trade, CheEvidenceKind.replay};
+
+/// The Brain record ids a chat reply rests on (`record_ids` on the Worker's done event), or empty.
+List<String> cheRecordIdsOf(Object? raw) => <String>{
+  for (final v in (raw is List ? raw : const []))
+    if ('$v'.trim().isNotEmpty && '$v'.length <= 200) '$v'.trim(),
+}.take(12).toList();
+
 /// An action's state as the record proves it. "Done" is only claimed with evidence attached.
 enum CheActionProof { proven, claimedNoEvidence, failed, inProgress, unknown }
 

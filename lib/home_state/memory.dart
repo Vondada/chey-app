@@ -121,6 +121,30 @@ extension _CheHomeMemory on _CHEHomeState {
 
   /// Replica records for the Brain room. Loaded once; before that the list is empty, never
   /// invented. The first load redraws the room once, so the dots appear without a tap.
+  /// One Brain record on this phone as the list shows it, or null when it has not synced yet.
+  CheMemoryDot? _brainDotById(String id) {
+    for (final r in _brainReplicaRecords()) {
+      if ('${r['id']}' != id) continue;
+      final dots = cheBuildMemoryDots(savedMemories: const [], memoryNotes: const [], learnedPersonality: const [], learnedKnowledge: const [], brainRecords: [r]);
+      return dots.isEmpty ? null : dots.first;
+    }
+    return null;
+  }
+
+  /// Opens in-app evidence from a Brain record: a trade and its replay open Lane E's replay page by the
+  /// trade's stable id. Anything else is a web link, which the tile opens itself.
+  Future<bool> _openBrainEvidence(CheBrainEvidence e) async {
+    if (!mounted || e.id.isEmpty) return false;
+    if (e.kind != CheEvidenceKind.trade && e.kind != CheEvidenceKind.replay) return false;
+    unawaited(Navigator.of(context).push(CheTradeReplayPage.route(
+      tradeId: e.id,
+      baseUrl: () => cheAgentBaseUrl,
+      headers: () => _authHeaders,
+      onRead: (words) { speakText(words, record: false, readOnDemand: true); },
+    )));
+    return true;
+  }
+
   List<Map<String, dynamic>> _brainReplicaRecords() {
     if (!_brainLoadKicked) {
       _brainLoadKicked = true;
