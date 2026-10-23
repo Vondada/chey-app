@@ -11,6 +11,7 @@ import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
+import '../che_ui/che_chrome_status.dart';
 import '../che_ui/che_hud.dart';
 import '../che_ui/che_theme.dart';
 
@@ -431,7 +432,11 @@ class CheTradingStatusRow extends StatelessWidget {
                   FittedBox(
                     fit: BoxFit.scaleDown,
                     alignment: Alignment.centerLeft,
-                    child: Text(v, maxLines: 1, style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w800, fontFeatures: [FontFeature.tabularFigures()])),
+                    // P&L in the chrome status tone of its sign (the + or − sign says it too).
+                    child: k == 'P&L' && _num(pnl) != null && _num(pnl) != 0
+                        ? CheStatusText(v, tone: _num(pnl)! > 0 ? CheStatusTone.success : CheStatusTone.failure,
+                            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800, fontFeatures: [FontFeature.tabularFigures()]))
+                        : Text(v, maxLines: 1, style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w800, fontFeatures: [FontFeature.tabularFigures()])),
                   ),
                 ]),
               ),

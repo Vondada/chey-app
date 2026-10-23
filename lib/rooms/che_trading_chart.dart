@@ -24,6 +24,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
+import '../che_ui/che_chrome_status.dart';
 import '../che_ui/che_hud.dart';
 import '../rithmic/rithmic_candles.dart';
 import '../rithmic/rithmic_live.dart';
@@ -1505,8 +1506,10 @@ class _ChartPainter extends CustomPainter {
           if (g.markerPoint(m) case final p?) (m, p),
       ]);
 
-  static const _win = Color(0xFF3DDC97);
-  static const _loss = Color(0xFFFF5C6C);
+  // The shared chrome status tones (lib/che_ui/che_chrome_status.dart): green success, red failure. The letter W or L
+  // always carries the meaning too, so colour is never the only signal.
+  static Color get _win => CheStatusPalette.success.base;
+  static Color get _loss => CheStatusPalette.failure.base;
 
   void _paintOutcome(Canvas canvas, Offset p, ChartMarker m) {
     final win = m.outcome == 'win';
