@@ -70,7 +70,28 @@ The model is one entry in CHE's existing strategy set, so the existing systems c
 - **Chart.** Futures chart API `levels` sends the overnight high and low, the bias, the stage and, only when triggered, the entry, stop and target. The chart draws them dashed and labelled "86-style approx."; Read Aloud and VoiceOver say "CHE approximation, not the P2P indicator".
 - **Live trading.** Real-money trading stays disabled.
 
-## 5. Not verified
+## 5. First measured results (2026-10-23, CI run 39895730060 on this PR)
+
+Data: Yahoo Finance 5-minute bars (public, DELAYED), 2026-08-14 → 2026-10-23; MNQ=F 13,373 bars, NQ=F 13,383 bars. Costs: CHE NORMAL profile. 49 full New York sessions.
+
+- **CHE's measured frequencies.** These are not the indicator's probabilities:
+  - MNQ: New York took an overnight extreme on 40/49 sessions (81.6%). The 86-style bias side went first 28/49 (57.1%). The second side followed the first 4/40 (10.0%).
+  - NQ: 42/49 (85.7%), 29/49 (59.2%), 4/42 (9.5%).
+  - 49 sessions is a small sample.
+- **CHE's approximation as a trade:**
+  - MNQ: 0 trades.
+  - NQ: 1 trade (a loss, −1.02R, −$1,154 for 1 NQ contract).
+- **Why so few trades (MNQ, 49 days):**
+  - 17: the target extreme was taken before the trigger.
+  - 15: triggered, but the target was under 1R away.
+  - 8: invalidated.
+  - 7: expired.
+  - 2: risk outside 6–60 points.
+- **Verdict.** The written rules are too restrictive to produce evidence. Under 30 trades is not evidence, and the rules were **not** loosened to manufacture trades.
+  - Any change, such as a tighter stop or an earlier trigger, is a new version and must be tested out of sample.
+  - The other strategies were measured on the same bars in the same run; the table is in the CI job summary.
+
+## 6. Not verified
 
 - The original's actual rules, session times and probabilities.
 - Whether CHE's approximation behaves like the indicator. It cannot be compared, because the indicator is closed.
