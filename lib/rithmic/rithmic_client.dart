@@ -22,7 +22,7 @@ const kRithmicAppName = 'CHE';
 const kRithmicAppVersion = '1.0';
 
 /// Why a Rithmic connection did not come up. Each kind has its own plain message for the owner.
-enum RithmicFailure { badLogin, systemUnavailable, marketDataPermission, gatewayDiscovery, subscription, connection }
+enum RithmicFailure { protocolVersion, applicationIdentity, loginRejected, badLogin, systemUnavailable, marketDataPermission, gatewayDiscovery, subscription, connection }
 
 class RithmicException implements Exception {
   const RithmicException(this.kind, this.message);
@@ -38,11 +38,22 @@ String _codes(List<String> rpCodes) => rpCodes.where((c) => c.trim().isNotEmpty)
 RithmicException rithmicLoginFailure(List<String> rpCodes, {String system = ''}) {
   final text = rpCodes.join(' ').toLowerCase();
   final codes = _codes(rpCodes);
+  if (rpCodes.any((c) => RegExp(r'\b1084\b').hasMatch(c)) || text.contains('template version')) {
+    return RithmicException(RithmicFailure.protocolVersion,
+        'Rithmic rejected the login protocol template version ($codes). This is not evidence of a bad password. Update CHE or check gateway protocol compatibility. Nothing was saved.');
+  }
+  if (RegExp(r'(?:app(?:lication)?[ _-]*(?:name|version|identity))').hasMatch(text)) {
+    return RithmicException(RithmicFailure.applicationIdentity,
+        'Rithmic rejected the application identity ($codes). Check the app name/version authorized for this gateway; credentials were not changed. Nothing was saved.');
+  }
   if (RegExp(r'unavailable|not available|maintenance|no such system|unknown system|invalid system').hasMatch(text)) {
     return RithmicException(RithmicFailure.systemUnavailable,
         'The Rithmic system${system.isEmpty ? '' : ' "$system"'} is not available right now ($codes). Nothing was saved.');
   }
-  return RithmicException(RithmicFailure.badLogin, 'Rithmic rejected the username or password ($codes). Nothing was saved.');
+  if (RegExp(r'password|username|user name|invalid user|bad login').hasMatch(text)) {
+    return RithmicException(RithmicFailure.badLogin, 'Rithmic rejected the username or password ($codes). Nothing was saved.');
+  }
+  return RithmicException(RithmicFailure.loginRejected, 'Rithmic rejected the login ($codes). The cause is not confirmed as a password problem. Nothing was saved.');
 }
 
 /// A refused market-data subscription: a missing permission, or a symbol Rithmic would not subscribe to.
@@ -242,6 +253,12 @@ class RithmicClient implements RithmicMarketFeed {
     required String symbol,
     required String exchange,
   }) async {
+    if (uri.scheme != 'wss' || uri.host.isEmpty || uri.userInfo.isNotEmpty || uri.hasQuery || uri.hasFragment) {
+      throw const RithmicException(RithmicFailure.connection, 'The market-data gateway must be a secure wss address without credentials or query parameters. Nothing was sent.');
+    }
+    if ([systemName, appName, appVersion].any((value) => value.trim().isEmpty)) {
+      throw const RithmicException(RithmicFailure.applicationIdentity, 'Rithmic system name, application name and application version must be present. Nothing was sent.');
+    }
     final RithmicChannel channel;
     try {
       channel = await _open(uri, connectTimeout);
@@ -250,7 +267,7 @@ class RithmicClient implements RithmicMarketFeed {
     }
     _channel = channel;
     _incoming = channel.frames.listen(_onFrame, onError: (Object e) => log?.call('Rithmic connection error: $e'), onDone: _onDone);
-    channel.send(encodeLogin(user: user, password: password, systemName: systemName, appName: appName, appVersion: appVersion));
+    channel.send(encodeLogin(user: user, password: password, systemName: systemName, appName: appName, appVersion: appVersion, templateVersion: kRithmicTemplateVersion));
     final RithmicLoginResponse answer;
     try {
       answer = await _loginWait.future.timeout(connectTimeout);
