@@ -387,7 +387,7 @@ export function deadlineFrom(text) {
   return s == null ? null : { seconds: s, words: m[1] };
 }
 
-const FILM_WORD = /\b(?:movie|film|feature)\b/i;
+const FILM_WORD = /\b(?:movie|film)\b/i; // not "feature": "build the search feature" is a coding order
 /**
  * The owner's Film Studio words, or null. Strict on purpose: "what's a good movie" and "watch a film" are not orders.
  * Kinds: make, plan (ETA only), status, remake, cancel, farm, open.
@@ -406,7 +406,7 @@ export function filmIntent(message = '') {
   const seconds = lengthFrom(t);
   const deadline = deadlineFrom(t.replace(/\b\d+(?:\.\d+)?[- ](?:hours?|minutes?)\s+(?:movie|film)\b/i, ''));
   if (/\bhow long\b|\bhow fast\b|\bcould you\b.*\bin\b|\bcan you make\b.*\bin\b/i.test(t) && seconds && !/\b(?:please|now|go ahead)\b/i.test(t)) return { kind: 'plan', seconds, deadline };
-  const make = /\b(?:make|create|produce|direct|shoot|render|generate|build)\s+(?:me\s+|us\s+)?(?:a|an|the|my)?\s*(?:[\w-]+\s+){0,4}(?:movie|film|feature)\b/i.test(t);
+  const make = /\b(?:make|create|produce|direct|shoot|render|generate|build)\s+(?:me\s+|us\s+)?(?:a|an|the|my)?\s*(?:[\w-]+\s+){0,4}(?:movie|film)\b/i.test(t);
   if (!make) return null;
   const about = /\b(?:about|on|of|starring|featuring|where|in which)\s+(.{3,300}?)[.!?]*$/i.exec(t);
   const topic = (about ? about[1] : '').replace(/\b(?:in|within|under|by)\s+(?:about\s+)?(?:\d+|an?|one|half)\b.*$/i, '').replace(/\s+as fast as (?:possible|you can).*$/i, '').trim();

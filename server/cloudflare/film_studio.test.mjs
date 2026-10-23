@@ -230,7 +230,7 @@ test('the owner\'s film words are read deterministically; ordinary movie talk is
   assert.equal(filmIntent('render farm status').kind, 'farm');
   assert.equal(filmIntent('open the film studio').kind, 'open');
   assert.equal(filmIntent('How long would a 2-hour movie take?').kind, 'plan');
-  for (const words of ["What's a good movie to watch tonight?", 'I watched a film yesterday', 'the movie was great', 'make me a sandwich', 'film the meeting']) assert.equal(filmIntent(words), null, words);
+  for (const words of ["What's a good movie to watch tonight?", 'I watched a film yesterday', 'the movie was great', 'make me a sandwich', 'film the meeting', 'Build the search feature into your app.']) assert.equal(filmIntent(words), null, words);
   assert.equal(lengthFrom('an hour and a half'), 5400);
   assert.equal(deadlineFrom('in seconds').seconds, 0);
 });
