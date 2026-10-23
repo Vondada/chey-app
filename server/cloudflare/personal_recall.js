@@ -169,8 +169,9 @@ export function legacyPreferences(data = {}) {
  * ("my favorite color is red", after "blue") replaces the old value. Questions and other non-assertions are skipped here
  * even when an older record holds them.
  */
-export function recallPersonalFact(data = {}, question = {}, brainRecords = []) {
-  const records = [...legacyPreferences(data), ...ownerAttestedRecords(data), ...statementsFromBrain(brainRecords)].filter((r) => r.text);
+export function recallPersonalFact(data = {}, question = {}, brainRecords = [], phoneNotes = []) {
+  // Phone notes come first: they carry no date, so any dated or legacy record of the same fact wins over them.
+  const records = [...phoneNotes, ...legacyPreferences(data), ...ownerAttestedRecords(data), ...statementsFromBrain(brainRecords)].filter((r) => r.text);
   const matches = [];
   for (const r of records) {
     for (const fact of ownerFacts(r.text)) {
@@ -200,8 +201,8 @@ export function statementsFromBrain(records = []) {
 }
 
 /** The reply and the records it rests on. A miss says so and never guesses; a hit gives the stored subject and value. */
-export function answerPersonalFact(data = {}, question = {}, brainRecords = []) {
-  const record = recallPersonalFact(data, question, brainRecords);
+export function answerPersonalFact(data = {}, question = {}, brainRecords = [], phoneNotes = []) {
+  const record = recallPersonalFact(data, question, brainRecords, phoneNotes);
   if (!record) {
     return {
       kind: 'none',
@@ -213,6 +214,11 @@ export function answerPersonalFact(data = {}, question = {}, brainRecords = []) 
   // The owner's own words are quoted whenever they are not just "my X is Y", or he asks where it came from.
   const plain = /^my\s+.{2,60}?\s+(?:is|are)\s+[^,;]+$/i.test(record.quote || '');
   const quoted = record.quote && (question.learn || !plain || record.confidence !== 'high') ? ` In your words: "${record.quote}."` : '';
+  // A note from the phone's Brain says only what it holds: the phone does not send who wrote it or when.
+  if (record.phone) {
+    const lead = record.confidence === 'high' ? `Your ${String(question.subject || record.subject).replace(/\bfav(?:ourite|orite|e)?\b/gi, 'favorite')} is ${record.value}.` : `Your Brain notes say your ${question.subject} is ${record.value}.`;
+    return { kind: 'brain_note', records: [], record, answer: `${lead} That is from the Brain notes on your phone: "${record.note}". The note has no date, and it doesn't say whether you typed it or I saved it from a chat.` };
+  }
   const told = record.legacy
     ? (when ? ` I saved it from our chat on ${when}.` : ' I saved it from our chat; that older note has no date.')
     : (when ? ` You told me that on ${when}.` : '');
