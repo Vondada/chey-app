@@ -127,6 +127,10 @@ class ChePaperEngine extends ChangeNotifier {
   String _lastTickKey = '';
   Future<void> _writes = Future.value();
 
+  /// No live trade for longer than this, while a CHE paper trade is open or waiting, is a feed gap.
+  final Duration gapThreshold = const Duration(seconds: 90);
+  final Map<String, DateTime> _lastSeen = {};
+
   /// The phone's account, loaded once.
   static Future<ChePaperEngine>? _shared;
   static Future<ChePaperEngine> shared() => _shared ??= load(ChePaperFileStore());
@@ -266,9 +270,9 @@ class ChePaperEngine extends ChangeNotifier {
       if (perContract > snap.available) {
         why = 'skipped: risk exceeds balance — one ${c.root} contract risks \$${perContract.toStringAsFixed(2)} at this stop, the CHE paper account has \$${snap.available.toStringAsFixed(2)} available';
       } else if (perContract > perTradeCap) {
-        why = 'skipped: risk exceeds the per-trade limit — \$${perContract.toStringAsFixed(2)} is more than ${_limits.maxRiskPerTradePct.toStringAsFixed(0)}% of equity (\$${perTradeCap.toStringAsFixed(2)}); the stop was not moved to fit';
+        why = 'skipped: risk exceeds limit — one ${c.root} contract risks \$${perContract.toStringAsFixed(2)}, more than the ${_pct(_limits.maxRiskPerTradePct)} per-trade limit (\$${perTradeCap.toStringAsFixed(2)}); the stop was not moved to fit';
       } else if (perContract > openRiskCap) {
-        why = 'skipped: total open risk would pass ${_limits.maxOpenRiskPct.toStringAsFixed(0)}% of equity';
+        why = 'skipped: risk exceeds limit — total open risk would pass ${_pct(_limits.maxOpenRiskPct)} of equity';
       } else {
         qty = [_limits.maxContracts, (perTradeCap / perContract).floor(), (openRiskCap / perContract).floor()].reduce((a, b) => a < b ? a : b);
       }
@@ -328,12 +332,21 @@ class ChePaperEngine extends ChangeNotifier {
     if (key == _lastTickKey) return;
     _lastTickKey = key;
     final root = CheContractSpec.forSymbol(t.symbol)?.root;
+    if (root == null) return;
+    final seen = _lastSeen[root];
+    _lastSeen[root] = t.time;
     var touched = false;
     for (final p in _positions) {
       if (!p.status.isOpen || p.contract.root != root) continue;
       // Only prices traded after the order existed.
       if (t.time.isBefore(p.createdAt)) continue;
       touched = true;
+      // The last live price CHE saw for this trade: the later of the previous trade and the order itself.
+      final since = seen == null || seen.isBefore(p.createdAt) ? p.createdAt : seen;
+      if (t.time.difference(since) > gapThreshold) {
+        _reconcileGap(p, since, t);
+        continue;
+      }
       if (p.status == ChePositionStatus.pendingEntry) {
         _fillEntry(p, t);
       } else {
@@ -342,6 +355,52 @@ class ChePaperEngine extends ChangeNotifier {
     }
     if (touched) _changed();
   }
+
+  /// Live prices stopped (app in the background, feed dropped) and came back. CHE never marks a stop,
+  /// target or fill on prices it did not see: a waiting order is cancelled, an open trade whose
+  /// resume price is beyond its stop or target becomes unresolved (no result), and one still inside
+  /// keeps going with the gap recorded on it.
+  void _reconcileGap(ChePaperPosition p, DateTime from, ChePriceTick t) {
+    final gap = CheFeedGap(from, t.time, t.price);
+    final window = '${_hm(from)}–${_hm(t.time)}';
+    if (p.status == ChePositionStatus.pendingEntry) {
+      p
+        ..status = ChePositionStatus.cancelled
+        ..exitAt = t.time
+        ..exitReason = 'feed gap $window before the order filled; the setup is stale';
+      p.gaps.add(gap);
+      _journal.add(CheJournalEntry(at: t.time, positionId: p.id, kind: 'closed', text: 'Paper order cancelled, not filled: feed gap $window; CHE does not fill on prices it never saw.'));
+      _audit('feed_gap', {'position_id': p.id, ...gap.toJson(), 'outcome': 'order cancelled'});
+      return;
+    }
+    p.gaps.add(gap);
+    final beyondStop = (t.price - p.stop) * p.side.sign <= 0;
+    final beyondTarget = (t.price - p.target) * p.side.sign >= 0;
+    if (beyondStop || beyondTarget) {
+      p
+        ..status = ChePositionStatus.unresolved
+        ..exitAt = t.time
+        ..lastPrice = t.price
+        ..lastPriceAt = t.time
+        ..exitReason = 'feed gap $window; price came back at ${t.price}, beyond the ${beyondStop ? 'stop' : 'target'}. Whether and when the stop or target traded is unknown.';
+      _journal.add(CheJournalEntry(at: t.time, positionId: p.id, kind: 'closed', text: 'Unresolved: ${p.exitReason} Not counted as a win or a loss.'));
+      _audit('feed_gap', {'position_id': p.id, ...gap.toJson(), 'outcome': 'unresolved, no result'});
+      _alert('feed_gap', 'CHE paper trade unresolved after a feed gap', '${p.contract.root} ${p.side.label}: feed gap $window; stop/target status unknown for that window. No result is recorded.', t.time, p.id);
+      return;
+    }
+    _journal.add(CheJournalEntry(
+        at: t.time, positionId: p.id, kind: 'remains_open', text: 'Feed gap $window; stop/target status unknown for that window. Price is back at ${t.price}, inside the stop and target, so the trade continues on live prices; its result will carry this gap.'));
+    _audit('feed_gap', {'position_id': p.id, ...gap.toJson(), 'outcome': 'continues'});
+    _alert('feed_gap', 'Feed gap on a CHE paper trade', '${p.contract.root} ${p.side.label}: feed gap $window; stop/target status unknown for that window.', t.time, p.id);
+    _mark(p, t);
+  }
+
+  static String _hm(DateTime t) {
+    final l = t.toLocal();
+    return '${l.hour.toString().padLeft(2, '0')}:${l.minute.toString().padLeft(2, '0')}';
+  }
+
+  static String _pct(double v) => '${v == v.roundToDouble() ? v.toStringAsFixed(0) : v.toStringAsFixed(1)}%';
 
   double _adverse(ChePaperPosition p, {required bool entering}) {
     final ticks = p.costs.spreadTicks / 2 + p.costs.slippageTicks;
@@ -552,7 +611,9 @@ class ChePaperEngine extends ChangeNotifier {
   /// New risk limits, kept in the audit. Open trades keep the risk they were opened with.
   String? setLimits(ChePaperRiskLimits l, {required bool confirmed}) {
     if (!confirmed) return 'Confirm the new limits first. Nothing changed.';
-    if (l.maxRiskPerTradePct <= 0 || l.maxRiskPerTradePct > 100 || l.maxDailyLossPct <= 0 || l.maxContracts < 1) return 'Those limits are out of range.';
+    if (l.maxRiskPerTradePct <= 0 || l.maxRiskPerTradePct > 100 || l.maxOpenRiskPct <= 0 || l.maxOpenRiskPct > 100 || l.maxDailyLossPct <= 0 || l.maxDailyLossPct > 100 || l.maxContracts < 1 || l.maxContracts > 50) {
+      return 'Those limits are out of range: percentages above 0 and up to 100, 1 to 50 contracts.';
+    }
     _audit('limits_change', {'previous': _limits.toJson(), 'next': l.toJson()});
     _limits = l;
     _changed();

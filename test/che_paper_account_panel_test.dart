@@ -12,7 +12,11 @@ ChePaperSignal sig() => ChePaperSignal(
       conditions: const [CheSetupCondition('Price above EMA 20', 'satisfied'), CheSetupCondition('Volume confirmation', 'pending')],
     );
 
-Future<ChePaperEngine> engine() => ChePaperEngine.load(ChePaperMemoryStore(), clock: () => t0);
+Future<ChePaperEngine> engine({bool wide = true}) async {
+  final e = await ChePaperEngine.load(ChePaperMemoryStore(), clock: () => t0);
+  if (wide) e.setLimits(const ChePaperRiskLimits(maxRiskPerTradePct: 25, maxOpenRiskPct: 50, maxDailyLossPct: 50), confirmed: true);
+  return e;
+}
 
 Widget host(ChePaperEngine e, {void Function(String)? onRead, bool compact = false}) => MaterialApp(
       home: Scaffold(body: SingleChildScrollView(child: ChePaperAccountPanel(engine: e, onRead: onRead, compact: compact))),
@@ -20,7 +24,7 @@ Widget host(ChePaperEngine e, {void Function(String)? onRead, bool compact = fal
 
 void main() {
   testWidgets('shows the CHE PAPER ACCOUNT figures with the default 100 dollar balance and an honest risk note', (tester) async {
-    final e = await engine();
+    final e = await engine(wide: false);
     final read = <String>[];
     await tester.pumpWidget(host(e, onRead: read.add));
     await tester.pumpAndSettle();
@@ -31,8 +35,10 @@ void main() {
     for (final k in ['paper_available', 'paper_equity', 'paper_unrealized', 'paper_realized', 'paper_risk', 'paper_drawdown', 'paper_equity_chart']) {
       expect(find.byKey(Key(k)), findsOneWidget, reason: k);
     }
-    // $25.50 for one MNQ at a 10-point stop is over 25% of $100: said plainly.
-    expect(find.textContaining('never resized by moving the stop'), findsOneWidget);
+    // One MNQ point is $2: a 15–25 point stop is 36–56% of $100, against a 2% limit. Said plainly.
+    expect(find.textContaining('On MNQ one point is \$2. A typical 15–25 point stop risks \$35.50–\$55.50'), findsOneWidget);
+    expect(find.textContaining('"skipped: risk exceeds limit"'), findsOneWidget);
+    expect(find.textContaining('no MNQ stop fits'), findsOneWidget);
     expect(find.textContaining('delayed prices never fill them'), findsOneWidget);
     expect(read, isEmpty, reason: 'the panel never speaks on its own');
     await tester.tap(find.byKey(const Key('paper_read')));
@@ -126,5 +132,56 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('paper_error')), findsOneWidget);
     expect(find.textContaining('\$100.00'), findsNothing);
+  });
+
+  testWidgets('presets are offered, not applied, and risk limits change only on confirmation', (tester) async {
+    final e = await engine(wide: false);
+    await tester.pumpWidget(host(e));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('paper_change_balance')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('balance_preset_2500')));
+    await tester.pumpAndSettle();
+    expect(e.snapshot().balance, 100, reason: 'a preset only fills the form');
+    await tester.tap(find.byKey(const Key('balance_review')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('balance_confirm')));
+    await tester.pumpAndSettle();
+    expect(e.snapshot().balance, 2500);
+    expect(e.balanceHistory.last.type, CheBalanceChangeType.simulationSetting);
+
+    await tester.ensureVisible(find.byKey(const Key('paper_limits')));
+    await tester.tap(find.byKey(const Key('paper_limits')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('limit_trade')), '150');
+    await tester.tap(find.byKey(const Key('limits_confirm')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('limits_error')), findsOneWidget);
+    expect(e.limits.maxRiskPerTradePct, 2);
+    await tester.enterText(find.byKey(const Key('limit_trade')), '1');
+    await tester.tap(find.byKey(const Key('limits_confirm')));
+    await tester.pumpAndSettle();
+    expect(e.limits.maxRiskPerTradePct, 1);
+  });
+
+  testWidgets('an unresolved trade after a feed gap says so and shows no result', (tester) async {
+    final e = await engine();
+    final p = e.onSignal(sig()).position!;
+    e.onTick(ChePriceTick(symbol: 'MNQZ6', price: 21000.5, time: t0.add(const Duration(seconds: 1)), source: 'rithmic'));
+    e.onTick(ChePriceTick(symbol: 'MNQZ6', price: 20990, time: t0.add(const Duration(minutes: 35)), source: 'rithmic'));
+    await tester.pumpWidget(host(e));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const Key('paper_filter_closed')));
+    await tester.tap(find.byKey(const Key('paper_filter_closed')));
+    await tester.pumpAndSettle();
+    final row = find.byKey(Key('paper_position_${p.id}'));
+    await tester.ensureVisible(row);
+    expect(find.descendant(of: row, matching: find.text('Unresolved (feed gap)')), findsOneWidget);
+    expect(find.descendant(of: row, matching: find.textContaining('stop/target status unknown')), findsOneWidget);
+    await tester.tap(row);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('No result (unresolved (feed gap))'), findsOneWidget);
+    await tester.scrollUntilVisible(find.byKey(const Key('paper_unresolved_reason')), 200);
+    expect(find.textContaining('Stop/target status unknown for that window'), findsOneWidget);
   });
 }

@@ -33,9 +33,11 @@ ChePaperSignal sig({
 ChePriceTick tick(double price, int sec, {String source = 'rithmic'}) =>
     ChePriceTick(symbol: 'MNQZ6', price: price, time: t0.add(Duration(seconds: sec)), source: source);
 
-Future<(ChePaperEngine, ChePaperMemoryStore, List<ChePaperAlert>)> engine({DateTime? now}) async {
+Future<(ChePaperEngine, ChePaperMemoryStore, List<ChePaperAlert>)> engine({DateTime? now, bool wide = true}) async {
   final store = ChePaperMemoryStore();
   final e = await ChePaperEngine.load(store, clock: () => now ?? t0);
+  // Most tests check fills and costs on the default $100, so they use wide limits; the defaults have their own test.
+  if (wide) e.setLimits(const ChePaperRiskLimits(maxRiskPerTradePct: 25, maxOpenRiskPct: 50, maxDailyLossPct: 50), confirmed: true);
   final alerts = <ChePaperAlert>[];
   e.alerts.listen(alerts.add);
   return (e, store, alerts);
@@ -43,7 +45,7 @@ Future<(ChePaperEngine, ChePaperMemoryStore, List<ChePaperAlert>)> engine({DateT
 
 void main() {
   test('a new CHE paper account starts at the default 100 dollars, recorded and audited', () async {
-    final (e, store, _) = await engine();
+    final (e, store, _) = await engine(wide: false);
     await e.flush();
     final s = e.snapshot();
     expect(s.balance, 100);
@@ -108,7 +110,7 @@ void main() {
     // 10-point MNQ stop: $20 + $4 fees + $1.50 spread/slippage = $25.50 > 25% of $100.
     final d = e.onSignal(sig(stop: 20990));
     expect(d.accepted, isFalse);
-    expect(d.reason, contains('risk exceeds the per-trade limit'));
+    expect(d.reason, startsWith('skipped: risk exceeds limit'));
     expect(e.positions, isEmpty);
     expect(e.journal.last.kind, 'skipped');
     expect(alerts.last.kind, 'trade_skipped');
@@ -243,5 +245,62 @@ void main() {
     expect(p.plannedRewardRisk, 2);
     expect(p.age(t0.add(const Duration(seconds: 260))), const Duration(seconds: 60));
     expect(p.path, isNotEmpty);
+  });
+
+  test('default limits are 2% per trade, 6% open and 6% daily: a 100 dollar account skips MNQ setups, a 2,500 dollar setting takes them', () async {
+    final (e, _, _) = await engine(wide: false);
+    expect(e.limits.maxRiskPerTradePct, 2);
+    expect(e.limits.maxOpenRiskPct, 6);
+    expect(e.limits.maxDailyLossPct, 6);
+    final d = e.onSignal(sig());
+    expect(d.accepted, isFalse);
+    expect(d.reason, startsWith('skipped: risk exceeds limit'));
+    expect(d.reason, contains('the stop was not moved to fit'));
+    expect(e.changeBalance(type: CheBalanceChangeType.simulationSetting, amount: 2500, reason: 'preset', confirmed: true), isNull);
+    final ok = e.onSignal(sig(id: 's2'));
+    expect(ok.accepted, isTrue, reason: ok.reason);
+    expect(ok.position!.qty, 1);
+    expect(ok.position!.stop, 20995, reason: 'the stop is exactly the setup stop');
+  });
+
+  test('a feed gap never fills a stop or target on unseen prices: beyond a level the trade is unresolved, with no result', () async {
+    final (e, store, alerts) = await engine();
+    final p = e.onSignal(sig()).position!;
+    e.onTick(tick(21000.5, 1));
+    // Two minutes with no live price (app in the background), then price is back below the stop.
+    e.onTick(tick(20990, 125));
+    expect(p.status, ChePositionStatus.unresolved);
+    expect(p.netPnl, isNull);
+    expect(p.exitFill, isNull);
+    expect(p.gaps.single.length, const Duration(seconds: 124));
+    expect(e.snapshot().balance, 100);
+    expect(e.snapshot().closedTrades, 0);
+    expect(alerts.last.kind, 'feed_gap');
+    expect(alerts.last.message, contains('stop/target status unknown for that window'));
+    expect(e.journal.last.text, contains('Not counted as a win or a loss'));
+    await e.flush();
+    expect(store.audit.where((a) => a['kind'] == 'feed_gap'), hasLength(1));
+  });
+
+  test('a feed gap with price back inside the levels keeps the trade, recorded with the gap', () async {
+    final (e, _, _) = await engine();
+    final p = e.onSignal(sig()).position!;
+    e.onTick(tick(21000.5, 1));
+    e.onTick(tick(21002, 300));
+    expect(p.status, ChePositionStatus.open);
+    expect(p.gaps, hasLength(1));
+    expect(e.journal.last.text, contains('stop/target status unknown for that window'));
+    e.onTick(tick(21010.25, 301));
+    expect(p.status, ChePositionStatus.targetHit);
+    expect(p.gaps, hasLength(1));
+  });
+
+  test('an order still waiting when the feed stops is cancelled at the gap, never filled late', () async {
+    final (e, _, _) = await engine();
+    final p = e.onSignal(sig()).position!;
+    e.onTick(tick(21000.5, 600));
+    expect(p.status, ChePositionStatus.cancelled);
+    expect(p.entryFill, isNull);
+    expect(p.exitReason, contains('feed gap'));
   });
 }

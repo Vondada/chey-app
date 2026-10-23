@@ -183,6 +183,17 @@ class CheJournalEntry {
       CheJournalEntry(at: DateTime.parse('${j['at']}'), positionId: '${j['position_id'] ?? ''}', kind: '${j['kind']}', text: '${j['text']}');
 }
 
+/// A stretch with no live prices while a position was open or waiting (app in the background,
+/// feed disconnected). What price did in it is unknown to CHE.
+class CheFeedGap {
+  const CheFeedGap(this.from, this.to, this.resumePrice);
+  final DateTime from, to;
+  final double resumePrice;
+  Duration get length => to.difference(from);
+  Map<String, Object?> toJson() => {'from': from.toUtc().toIso8601String(), 'to': to.toUtc().toIso8601String(), 'resume_price': resumePrice};
+  factory CheFeedGap.fromJson(Map<String, dynamic> j) => CheFeedGap(DateTime.parse('${j['from']}'), DateTime.parse('${j['to']}'), _d(j['resume_price'])!);
+}
+
 /// A sampled traded price while a position is open (at most one every few seconds), so the detail
 /// view can draw the real price path with entry, stop and target lines.
 class ChePricePoint {
@@ -193,7 +204,7 @@ class ChePricePoint {
   factory ChePricePoint.fromJson(Map<String, dynamic> j) => ChePricePoint(DateTime.parse('${j['t']}'), _d(j['p'])!);
 }
 
-enum ChePositionStatus { pendingEntry, open, targetHit, stopped, closed, cancelled }
+enum ChePositionStatus { pendingEntry, open, targetHit, stopped, closed, cancelled, unresolved }
 
 extension ChePositionStatusX on ChePositionStatus {
   String get label => switch (this) {
@@ -203,6 +214,7 @@ extension ChePositionStatusX on ChePositionStatus {
         ChePositionStatus.stopped => 'Stopped out',
         ChePositionStatus.closed => 'Closed',
         ChePositionStatus.cancelled => 'Cancelled',
+        ChePositionStatus.unresolved => 'Unresolved (feed gap)',
       };
   bool get isOpen => this == ChePositionStatus.open || this == ChePositionStatus.pendingEntry;
 }
@@ -241,7 +253,9 @@ class ChePaperPosition {
     this.period,
     List<CheSetupCondition>? currentConditions,
     this.conditionsAt,
+    List<CheFeedGap>? gaps,
   })  : currentConditions = currentConditions ?? [],
+        gaps = gaps ?? [],
         adjustments = adjustments ?? [],
         path = path ?? [];
 
@@ -269,6 +283,9 @@ class ChePaperPosition {
   /// (the original ones stay in [signal]); empty until it reports.
   List<CheSetupCondition> currentConditions;
   DateTime? conditionsAt;
+
+  /// Feed gaps while this trade was open; a result with gaps is flagged wherever it is shown.
+  final List<CheFeedGap> gaps;
 
   CheSide get side => signal.side;
   String get symbol => signal.symbol;
@@ -341,6 +358,7 @@ class ChePaperPosition {
         'period': period,
         'current_conditions': [for (final c in currentConditions) c.toJson()],
         'conditions_at': conditionsAt?.toUtc().toIso8601String(),
+        'gaps': [for (final g in gaps) g.toJson()],
         'label': kChePaperLabel,
       };
 
@@ -367,13 +385,14 @@ class ChePaperPosition {
         period: (j['period'] as num?)?.toInt(),
         currentConditions: [for (final c in (j['current_conditions'] as List? ?? const [])) CheSetupCondition.fromJson(Map<String, dynamic>.from(c as Map))],
         conditionsAt: _t(j['conditions_at']),
+        gaps: [for (final g in (j['gaps'] as List? ?? const [])) CheFeedGap.fromJson(Map<String, dynamic>.from(g as Map))],
       );
 }
 
-/// Limits the risk engine enforces. A trade whose stop risk breaks one is skipped, never resized
-/// by moving the stop.
+/// Limits the risk engine enforces, as % of equity (defaults 2% per trade, 6% open, 6% daily loss).
+/// A trade whose stop risk breaks one is skipped, never resized by moving the stop.
 class ChePaperRiskLimits {
-  const ChePaperRiskLimits({this.maxRiskPerTradePct = 25, this.maxOpenRiskPct = 50, this.maxDailyLossPct = 50, this.maxContracts = 1, this.maxOpenPositions = 3});
+  const ChePaperRiskLimits({this.maxRiskPerTradePct = 2, this.maxOpenRiskPct = 6, this.maxDailyLossPct = 6, this.maxContracts = 1, this.maxOpenPositions = 3});
   final double maxRiskPerTradePct, maxOpenRiskPct, maxDailyLossPct;
   final int maxContracts, maxOpenPositions;
 
@@ -382,9 +401,9 @@ class ChePaperRiskLimits {
         'max_contracts': maxContracts, 'max_open_positions': maxOpenPositions,
       };
   factory ChePaperRiskLimits.fromJson(Map<String, dynamic> j) => ChePaperRiskLimits(
-        maxRiskPerTradePct: _d(j['max_risk_per_trade_pct']) ?? 25,
-        maxOpenRiskPct: _d(j['max_open_risk_pct']) ?? 50,
-        maxDailyLossPct: _d(j['max_daily_loss_pct']) ?? 50,
+        maxRiskPerTradePct: _d(j['max_risk_per_trade_pct']) ?? 2,
+        maxOpenRiskPct: _d(j['max_open_risk_pct']) ?? 6,
+        maxDailyLossPct: _d(j['max_daily_loss_pct']) ?? 6,
         maxContracts: (j['max_contracts'] as num?)?.toInt() ?? 1,
         maxOpenPositions: (j['max_open_positions'] as num?)?.toInt() ?? 3,
       );

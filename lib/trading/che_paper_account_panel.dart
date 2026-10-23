@@ -66,6 +66,7 @@ class ChePaperBadge extends StatelessWidget {
       ChePositionStatus.stopped => (icon: Icons.block, color: _down),
       ChePositionStatus.closed => (icon: Icons.check_circle_outline, color: Colors.white70),
       ChePositionStatus.cancelled => (icon: Icons.cancel_outlined, color: Colors.white70),
+      ChePositionStatus.unresolved => (icon: Icons.help_outline, color: _warn),
     };
 
 /// Loads the phone's CHE paper account (or a given one) and keeps it attached to the live feed.
@@ -168,6 +169,15 @@ class _ChePaperAccountPanelState extends State<ChePaperAccountPanel> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(result)));
   }
 
+  Future<void> _changeLimits() async {
+    final e = _engine;
+    if (e == null) return;
+    final result = await showDialog<String>(context: context, builder: (_) => _LimitsDialog(engine: e));
+    if (result == null || !mounted) return;
+    HapticFeedback.mediumImpact();
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(result)));
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_error.isNotEmpty) {
@@ -205,6 +215,7 @@ class _ChePaperAccountPanelState extends State<ChePaperAccountPanel> {
       const SizedBox(height: 10),
       Wrap(spacing: 8, runSpacing: 8, children: [
         _button(key: 'paper_change_balance', icon: Icons.account_balance_wallet_outlined, label: 'Change CHE paper balance', onTap: _changeBalance),
+        _button(key: 'paper_limits', icon: Icons.tune, label: 'Risk limits', onTap: _changeLimits),
         if (widget.onRead != null) _button(key: 'paper_read', icon: Icons.volume_up_outlined, label: 'Read aloud', onTap: () => widget.onRead!(_summary(e))),
       ]),
       const SizedBox(height: 8),
@@ -276,17 +287,24 @@ class _ChePaperAccountPanelState extends State<ChePaperAccountPanel> {
     });
   }
 
-  /// Plain words on what the balance allows: one MNQ contract at a typical 10-point stop.
+  /// Plain words on what the balance allows (owner, 2026-10-23): one MNQ point is $2, so a typical
+  /// 15–25 point stop risks $30–50 plus costs. Figures come from the engine's own risk formula.
   Widget _riskNote(ChePaperEngine e, ChePaperSnapshot s) {
-    final one = e.riskPerContract(CheContractSpec.mnq, 0, 10);
     final cap = s.equity * e.limits.maxRiskPerTradePct / 100;
-    final text = one > cap
-        ? 'One MNQ contract with a 10-point stop risks ${cheMoney(one)} with costs — more than the ${e.limits.maxRiskPerTradePct.toStringAsFixed(0)}% per-trade limit (${cheMoney(cap)}) on this balance. Such setups are skipped, never resized by moving the stop.'
-        : 'One MNQ contract with a 10-point stop risks ${cheMoney(one)} with costs; the per-trade limit is ${cheMoney(cap)} (${e.limits.maxRiskPerTradePct.toStringAsFixed(0)}% of equity).';
+    final r15 = e.riskPerContract(CheContractSpec.mnq, 0, 15), r25 = e.riskPerContract(CheContractSpec.mnq, 0, 25);
+    final fixed = e.riskPerContract(CheContractSpec.mnq, 0, 0);
+    final maxStop = (cap - fixed) / CheContractSpec.mnq.pointValue;
+    int pct(double r) => s.equity <= 0 ? 0 : (r / s.equity * 100).round();
+    final fits = maxStop >= 15;
+    final text = [
+      'On MNQ one point is \$2. A typical 15–25 point stop risks ${cheMoney(r15)}–${cheMoney(r25)} with costs: ${pct(r15)}–${pct(r25)}% of this ${cheMoney(s.equity)} account on one trade.',
+      'The per-trade limit is ${e.limits.maxRiskPerTradePct.toStringAsFixed(e.limits.maxRiskPerTradePct % 1 == 0 ? 0 : 1)}% (${cheMoney(cap)}), so ${maxStop <= 0 ? 'no MNQ stop fits' : 'stops up to ${maxStop.toStringAsFixed(1)} points fit'}.',
+      if (!fits) 'Setups that need more are logged "skipped: risk exceeds limit" — never traded anyway and never made to fit by moving the stop. A larger simulated balance or a higher limit is your choice.',
+    ].join(' ');
     return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Icon(one > cap ? Icons.warning_amber_rounded : Icons.info_outline, size: 18, color: one > cap ? _warn : _dim),
+      Icon(fits ? Icons.info_outline : Icons.warning_amber_rounded, size: 18, color: fits ? _dim : _warn),
       const SizedBox(width: 6),
-      Expanded(child: Text(text, key: const Key('paper_risk_note'), style: TextStyle(color: one > cap ? _warn : _dim, fontSize: 13.5))),
+      Expanded(child: Text(text, key: const Key('paper_risk_note'), style: TextStyle(color: fits ? _dim : _warn, fontSize: 13.5))),
     ]);
   }
 
@@ -375,6 +393,12 @@ class _ChePaperAccountPanelState extends State<ChePaperAccountPanel> {
             Wrap(spacing: 14, runSpacing: 2, children: [
               for (final (k, v) in rows) Text('$k $v', style: const TextStyle(color: Colors.white, fontSize: 13.5, fontFeatures: [FontFeature.tabularFigures()])),
             ]),
+            if (p.gaps.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text('Feed gap${p.gaps.length == 1 ? '' : 's'} during this trade: stop/target status unknown for ${p.gaps.length == 1 ? 'that window' : 'those windows'}.',
+                    style: const TextStyle(color: _warn, fontSize: 13)),
+              ),
             if (pnl != null) ...[
               const SizedBox(height: 4),
               Text('${p.status.isOpen ? 'Unrealized' : 'Net'} ${_signed(pnl)} ${pnl >= 0 ? '(gain)' : '(loss)'}',
@@ -477,6 +501,19 @@ class _BalanceDialogState extends State<_BalanceDialog> {
               for (final t in const [CheBalanceChangeType.simulationSetting, CheBalanceChangeType.deposit, CheBalanceChangeType.withdrawal, CheBalanceChangeType.reset])
                 ChoiceChip(key: Key('balance_type_${t.name}'), label: Text(t.label), selected: _type == t, onSelected: (_) => setState(() => _type = t)),
             ]),
+            const SizedBox(height: 6),
+            Text('Optional presets (simulation settings, recorded in the history):', style: TextStyle(color: _dim, fontSize: 12.5)),
+            Wrap(spacing: 6, children: [
+              for (final v in const [2500.0, 50000.0])
+                ActionChip(
+                  key: Key('balance_preset_${v.toInt()}'),
+                  label: Text(v == 2500 ? '\$2,500' : '\$50,000 (prop-style)'),
+                  onPressed: () => setState(() {
+                    _type = CheBalanceChangeType.simulationSetting;
+                    _amount.text = v.toStringAsFixed(2);
+                  }),
+                ),
+            ]),
             TextField(
               key: const Key('balance_amount'),
               controller: _amount,
@@ -524,6 +561,68 @@ class _BalanceDialogState extends State<_BalanceDialog> {
       ],
     );
   }
+}
+
+/// Per-trade, open and daily-loss limits as % of equity, and the contract cap. Confirmed, audited.
+class _LimitsDialog extends StatefulWidget {
+  const _LimitsDialog({required this.engine});
+  final ChePaperEngine engine;
+  @override
+  State<_LimitsDialog> createState() => _LimitsDialogState();
+}
+
+class _LimitsDialogState extends State<_LimitsDialog> {
+  late final l = widget.engine.limits;
+  late final _trade = TextEditingController(text: '${l.maxRiskPerTradePct}');
+  late final _open = TextEditingController(text: '${l.maxOpenRiskPct}');
+  late final _daily = TextEditingController(text: '${l.maxDailyLossPct}');
+  late final _contracts = TextEditingController(text: '${l.maxContracts}');
+  String _error = '';
+
+  Widget _field(String key, String label, TextEditingController c) => TextField(
+        key: Key(key),
+        controller: c,
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        style: const TextStyle(color: Colors.white),
+        decoration: InputDecoration(labelText: label, labelStyle: TextStyle(color: _dim)),
+      );
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        backgroundColor: _panel,
+        title: const Text('CHE paper risk limits', style: TextStyle(color: Colors.white)),
+        content: SingleChildScrollView(
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const ChePaperBadge(),
+            _field('limit_trade', 'Risk per trade, % of equity (default 2)', _trade),
+            _field('limit_open', 'Total open risk, % of equity (default 6)', _open),
+            _field('limit_daily', 'Daily loss limit, % (default 6)', _daily),
+            _field('limit_contracts', 'Most contracts per trade (default 1)', _contracts),
+            const SizedBox(height: 6),
+            Text('Open trades keep the risk they were opened with. Stops are never moved to fit a limit.', style: TextStyle(color: _dim, fontSize: 12.5)),
+            if (_error.isNotEmpty) Text(_error, key: const Key('limits_error'), style: const TextStyle(color: _warn)),
+          ]),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
+          FilledButton(
+            key: const Key('limits_confirm'),
+            onPressed: () {
+              final next = ChePaperRiskLimits(
+                maxRiskPerTradePct: double.tryParse(_trade.text) ?? -1,
+                maxOpenRiskPct: double.tryParse(_open.text) ?? -1,
+                maxDailyLossPct: double.tryParse(_daily.text) ?? -1,
+                maxContracts: int.tryParse(_contracts.text) ?? 0,
+                maxOpenPositions: l.maxOpenPositions,
+              );
+              final refused = widget.engine.setLimits(next, confirmed: true);
+              if (refused != null) return setState(() => _error = refused);
+              Navigator.of(context).pop('CHE paper risk limits saved: ${next.maxRiskPerTradePct}% per trade, ${next.maxOpenRiskPct}% open, ${next.maxDailyLossPct}% daily loss.');
+            },
+            child: const Text('Confirm limits'),
+          ),
+        ],
+      );
 }
 
 /// One CHE paper trade: its price path with entry, stop and target, the setup then and now,
@@ -668,7 +767,8 @@ class _ChePaperTradeDetailPageState extends State<ChePaperTradeDetailPage> {
           line('Stop / target', '${_px(p.stop)} / ${_px(p.target)}'),
           line('Current price', p.status.isOpen ? '${_px(p.lastPrice)} at ${_when(p.lastPriceAt)}' : 'Closed at ${_px(p.exitFill)} (traded ${_px(p.exitRaw)}) at ${_when(p.exitAt)}'),
           line('Risk / reward', '${cheMoney(p.riskDollars)} / ${cheMoney(p.rewardDollars)} · planned ${p.plannedRewardRisk} : 1 · ${p.riskPctOfEquity}% of equity at entry'),
-          line(p.status.isOpen ? 'Unrealized P&L' : 'Net P&L', p.status.isOpen ? _signed(p.unrealizedPnl) : '${_signed(p.netPnl)} (gross ${_signed(p.grossPnl)}, costs ${cheMoney(p.costDollars)})'),
+          line(p.status.isOpen ? 'Unrealized P&L' : 'Net P&L',
+              p.status.isOpen ? _signed(p.unrealizedPnl) : p.netPnl == null ? 'No result (${p.status.label.toLowerCase()})' : '${_signed(p.netPnl)} (gross ${_signed(p.grossPnl)}, costs ${cheMoney(p.costDollars)})'),
           line('Trade age', cheDuration(p.entryAt == null ? null : (p.exitAt ?? now).difference(p.entryAt!))),
         ]),
         if (p.status.isOpen && p.lastPrice != null)
@@ -679,6 +779,12 @@ class _ChePaperTradeDetailPageState extends State<ChePaperTradeDetailPage> {
             progress('Progress toward target', p.progressToTarget, _up, 'paper_progress_target'),
             progress('Progress toward invalidation (stop)', p.progressToStop, _down, 'paper_progress_stop'),
             Text('Progress is distance travelled, not a probability; it does not predict the outcome.', style: TextStyle(color: _dim, fontSize: 12.5)),
+          ]),
+        if (p.gaps.isNotEmpty || p.status == ChePositionStatus.unresolved)
+          section('FEED GAPS', [
+            for (final g in p.gaps)
+              line('${_when(g.from)} – ${_when(g.to)}', 'No live prices for ${cheDuration(g.length)}; price came back at ${_px(g.resumePrice)}. Stop/target status unknown for that window.'),
+            if (p.status == ChePositionStatus.unresolved) Text(p.exitReason ?? '', key: const Key('paper_unresolved_reason'), style: const TextStyle(color: _warn, fontSize: 14)),
           ]),
         section('SETUP WHEN THE TRADE WAS TAKEN', [
           line('Setup', '${s.strategy} · ${s.timeframe} · stage ${s.stage}'),
