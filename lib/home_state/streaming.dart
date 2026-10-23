@@ -452,6 +452,7 @@ extension _CheHomeStreaming on _CHEHomeState {
         if (data['open_screen'] == 'app_details' && data['source'] == 'che_runtime_status' && mounted) unawaited(_openAppVersionDetails());
         if (data['open_screen'] == 'workflows' && data['source'] == 'che_workflow_engine' && mounted) unawaited(_openWorkflows());
         if (data['open_screen'] == 'security' && data['source'] == 'che_security' && mounted) unawaited(_openSecurity());
+        if (data['open_screen'] == 'film_studio' && data['source'] == 'che_film_studio' && mounted) unawaited(_openFilmStudio());
         // Only the trusted deterministic trading handlers can request this room.
         if (data['open_screen'] == 'trading_room' &&
             const {'che_trading_live', 'che_trading_ledgers', 'che_trading_desk'}.contains(data['source']) &&

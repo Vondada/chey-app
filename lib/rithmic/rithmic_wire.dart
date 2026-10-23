@@ -298,17 +298,24 @@ class RithmicFrame {
         symbol: _string(110100) ?? '',
         exchange: _string(110101) ?? '',
         price: _double(100006),
-        size: _int(159008),
+        // trade_size is 100178 in the public LastTrade schema; 159008 (64-bit size) is kept as a fallback.
+        size: _int(100178) ?? _int(159008),
         ssboe: _int(150100),
+        usecs: _int(150101),
+        sourceSsboe: _int(150400),
+        sourceUsecs: _int(150401),
+        aggressor: _int(112003),
+        isSnapshot: (_int(110121) ?? 0) != 0,
+        presenceBits: _int(149138),
       );
 
   RithmicBestBidOffer toBestBidOffer() => RithmicBestBidOffer(
         symbol: _string(110100) ?? '',
         exchange: _string(110101) ?? '',
         bidPrice: _double(100022),
-        bidSize: _int(159000),
+        bidSize: _int(100030) ?? _int(159000),
         askPrice: _double(100025),
-        askSize: _int(159002),
+        askSize: _int(100031) ?? _int(159002),
         ssboe: _int(150100),
       );
 }
@@ -351,12 +358,42 @@ class RithmicGatewayInfo {
 }
 
 class RithmicLastTrade {
-  const RithmicLastTrade({required this.symbol, required this.exchange, required this.price, required this.size, required this.ssboe});
+  const RithmicLastTrade({
+    required this.symbol,
+    required this.exchange,
+    required this.price,
+    required this.size,
+    required this.ssboe,
+    this.usecs,
+    this.sourceSsboe,
+    this.sourceUsecs,
+    this.aggressor,
+    this.isSnapshot = false,
+    this.presenceBits,
+  });
   final String symbol;
   final String exchange;
   final double? price;
   final int? size;
   final int? ssboe;
+
+  /// Microseconds past [ssboe] (field 150101), when Rithmic sent them.
+  final int? usecs;
+
+  /// The exchange's own time for the trade (fields 150400/150401), when sent; preferred over [ssboe].
+  final int? sourceSsboe, sourceUsecs;
+
+  /// Who hit: 1 buyer, 2 seller (field 112003), when sent.
+  final int? aggressor;
+
+  /// The last trade replayed when the subscription starts (field 110121), not a new trade.
+  final bool isSnapshot;
+
+  /// Which values this update carries (field 149138); bit 1 is a trade. Null when absent.
+  final int? presenceBits;
+
+  /// False for an update that only carries other values (volume, VWAP) and no trade.
+  bool get isTrade => presenceBits == null || presenceBits! & 1 == 1;
 }
 
 class RithmicBestBidOffer {
