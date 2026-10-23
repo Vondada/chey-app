@@ -103,6 +103,7 @@ function spokenPick(message, n) {
   return k >= 1 && k <= n ? k : 0;
 }
 import { ATLAS_SOURCE, answerAtlas, atlasHiddenAction, atlasIntent, atlasQuizAnswerTurn, atlasPromptContext, atlasResetAsk, atlasResetIntent, projectAtlasToBrain, resetAtlasProgress } from './knowledge_atlas.js';
+import { CRYPTO_SOURCE, cryptoIntent, cryptoTick, cryptoView, nextCryptoTickAt, setCryptoPaper, speakCrypto } from './crypto_markets.js';
 import { LIVE_BACKTEST, LIVE_RUNS, LIVE_STATE, haltLivePaper, liveSpecs, liveBacktest, liveDashboard, livePaperSummary, liveTick, nextLiveTickAt, readLivePortfolios, researchDue, setLivePaper } from './trading_live.js';
 import { governorAction, queueAllocationFollowUp, readDecisions, runGovernor, speakGovernor, tradeDecisions } from './strategy_governor.js';
 import { ICT_CONCEPTS, applyControlChange, controlsView, noteAuditEffect, readControls, strategyRegistry, resolveStep, speakControlResult, speakControlsView, speakSkipReasons, stockOrderProblem } from './trading_controls.js';
@@ -151,7 +152,7 @@ import { describeSkillsReport, reusableLicense, selectFilesForAgent, skillFromMa
 import { describeTopicStudyStart, starredStudyTargets, matchTopicSections, namedRepoStudyIntent, starredLibraryIntent, readTutorial, readmeSections, sectionTutorials, studyBatchIntent, topicBuildRequest, topicTitles, wantsSerialStudy } from './topic_study.js';
 import { buildCollaborationPacket, collaborationIntent, collaborationSessionId, parallelPreference, planParallelLanes, statusIntent } from './collaboration.js';
 import { consultEngine, consultIntent, roundTable, shareIntent, speakConsult, speakRoundTable } from './ai_consult.js';
-import { markOwnerSeen, readArchive as flagstaffArchive, unreadIncoming } from './web_mailbox.js';
+import { gistRows, markOwnerSeen, readArchive as flagstaffArchive, unreadIncoming } from './web_mailbox.js';
 import { loadPackedJson, savePackedJson } from './prompt_compaction.js';
 import { githubWorkshopPieces, workshopAvatar, workshopAvatarIntent, workshopSnapshot } from './workshop.js';
 import { flushOutbox, handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, openMailbox, transcript as flagstaffTranscript, mailboxCode, mailboxLink, postWebMail, readWebMail, rotateMailboxCode } from './web_mailbox.js';
@@ -184,6 +185,8 @@ import {
   laAgenciaPanelNeeds,
 } from './work_agent_mode.js';
 import { matchOfficePhrase, speakGoalPlan, speakOfficeBoard } from './office_phrases.js';
+import { advanceOfficeJobs, officeJobView, officeJobsView, planOfficeJob, speakOfficeJob } from './office_jobs.js';
+import { headRecord, officeOrg, speakOfficeOrg } from './office_org.js';
 import { assertOwnerTalksToCheOnly, codexWorkPacket } from './office_router.js';
 import {
   mlProjectFromResult,
@@ -236,7 +239,9 @@ import {
 } from './research_memory.js';
 import { APP_BUILD_KEY, appBuildIntent, appBuildRun, dispatchAppBuild, speakAppBuild } from './app_builds.js';
 import { advanceObjectives, applyMissionEvent, approvalReached, approveNode, awaitingApproval, cancelObjective, createObjective, mutateObjective, replanNode, resolveKnownNodes, retryNode, setObjectivePaused, speakObjective } from './objective_graph.js';
-import { CHE_TENANT, CHE_SECURITY, access as coreAccess, coreIncidents, coreKnowledge, coreView, findAnyIncident, findKnowledge, loadCore, recordInLedger, openIncidentsForEvents, recordCheck as recordCoreCheck, runDrill, saveCore, speakCore, syncLegacyEvents } from './security_core_che.js';
+import { CHE_TENANT, CHE_SECURITY, access as coreAccess, coreEvents, coreIncidents, coreKnowledge, coreView, findAnyIncident, findKnowledge, loadCore, recordInLedger, openIncidentsForEvents, recordCheck as recordCoreCheck, runDrill, saveCore, speakCore, syncLegacyEvents } from './security_core_che.js';
+import { securityVisibility, speakVisibility } from './security_visibility.js';
+import { securityChief, securityChiefIntent, speakChiefReport } from './security_chief.js';
 import { acquire as acquireCapability, applyPolicy as applyCapabilityPolicy, capabilityIntent, engineSummary as capabilityEngineSummary, learnFromOutcome, loadPolicy as loadCapabilityPolicy, populate as populateKnowledge, retrieve as retrieveKnowledge, rollbackTool, savePolicy as saveCapabilityPolicy, projectBlocked, speakCapabilities, speakLearned as speakLearnedKnowledge, useTool, LAST_USED_KEY as KNOWLEDGE_USED_KEY } from './capability_engine.js';
 import { EGRESS_KEY, SNAPSHOT_KEY, holdEgress, installEgressGuard, setEgressOwner, setEgressPolicy, storeEgressPolicy, SESSION_SCOPES, bump as securityBump, checkSession, createSession, dependencyAdvisories, detectThreats, issueNonce, loadSecurity, recordFindings, redact as redactSecretText, redactDeep, respondToIncident, restoreTrustedState, revokeSessions, saveSecurity, securityIntent, snapshotTrustedState, speakStatus as speakSecurityStatus } from './security_intelligence.js';
 import { loadRegistry as loadCapabilityRegistry } from './capability_registry.js';
@@ -4393,6 +4398,9 @@ export class CheState extends DurableObject {
     // (not the immutable archive's timestamp), so a reused dataset is not downloaded again on every deploy.
     const research = await researchDue(this.ctx.storage).catch((error) => ({ ok: false, error: String(error?.message || error) }));
     const d = await this.liveTradingDashboard();
+    // One real crypto pass from production: proves the exchange feed answers the deployed Worker.
+    const cryptoRun = await cryptoTick(this.ctx.storage, { force: true }).catch((error) => ({ ok: false, error: String(error?.message || error).slice(0, 160) }));
+    const cryptoNow = await cryptoView(this.ctx.storage).catch(() => null);
     const brief = (t) => ({ strategy: t.strategy, filter: t.filter, side: t.side, signal: t.signal?.time, entry: t.entry?.time, entry_fill: t.entry?.fill,
       exit: t.exit?.time, exit_fill: t.exit?.fill, reason: t.exit?.reason, net: t.net_pnl, feed: t.data?.feed?.status });
     return {
@@ -4407,6 +4415,13 @@ export class CheState extends DurableObject {
       signals: d.signals.slice(-10),
       broker: { ...d.broker, alpaca: await alpacaStatus(this.keyEnv || this.env) },
       learning: d.learning,
+      crypto: {
+        enabled: cryptoNow?.enabled ?? null, run_at: cryptoRun.at || null, ok: Boolean(cryptoRun.ok), error: cryptoRun.error || null, requests: cryptoRun.requests ?? 0,
+        series: (cryptoRun.series || []).map((x) => ({ coin: x.coin, tf: x.tf, status: x.status || null, last_bar: x.last_bar || null, last_close: x.last_close ?? null, bars: x.bars ?? 0, reason: x.reason || x.skipped || null })),
+        cross_check: cryptoRun.cross_check || null,
+        passes_recorded: cryptoNow?.schedule.runs_recorded ?? 0, last_scheduled_run: cryptoNow?.schedule.last_run_at || null,
+        closed_trades: cryptoNow?.simulated.closed_trades ?? 0, open_positions: cryptoNow?.simulated.open_positions.length ?? 0, budget: cryptoNow?.budget || null,
+      },
       research: { skipped: research?.skipped || null, ok: research?.skipped ? null : Boolean(research?.ok), reused: Boolean(research?.reused), error: research?.error || null },
       backtest: d.backtest ? {
         at: d.backtest.at, ok: d.backtest.ok, error: d.backtest.error || null, data: d.backtest.data,
@@ -4425,6 +4440,8 @@ export class CheState extends DurableObject {
     await evidenceTick(this.ctx.storage, { now: opts.now, force: opts.force }).catch((error) => console.error('Trading evidence tick failed:', error?.message || error));
     // Forward paper trading on 5-minute NQ/MNQ bars, every minute while it is on and CME is open.
     const liveRun = await this.runForwardPaper({ now: opts.now }).catch((error) => { console.error('Live paper tick failed:', error?.message || error); return null; });
+    // Orion's crypto desk (owner master mission, 2026-10-23): BTC and ETH paper trading and research, around the clock.
+    await cryptoTick(this.ctx.storage, { now: opts.now ?? Date.now() }).catch((error) => console.error('Crypto tick failed:', error?.message || error));
     // A journalled trade is a verified Trading Room event the Brain records (owner, 2026-10-20); the ledger stays authoritative.
     if (liveRun?.closed > 0 && !liveRun.skipped) await queueRoomEvent(this.ctx.storage, { room: 'trading', kind: 'journal_trades', key: `journal:${liveRun.at}`, title: `${liveRun.closed} forward paper trade${liveRun.closed === 1 ? '' : 's'} closed`, body: `The forward paper journal (MNQ 5-minute) closed ${liveRun.closed} trade${liveRun.closed === 1 ? '' : 's'} at ${liveRun.at}${liveRun.rejected ? `; ${liveRun.rejected} record${liveRun.rejected === 1 ? '' : 's'} refused by the journal` : ''}. Read the ledger for the numbers.`, status: 'verified', evidence: [`live_paper_runs ${liveRun.at}`], refs: { ledger: 'forward_paper_journal', run_at: liveRun.at } }).catch(() => null);
     // Strategy simulation (paper, minute bars): one alarm slot, so it runs here when due and scheduleWork arms its next minute.
@@ -4488,6 +4505,9 @@ export class CheState extends DurableObject {
     times.push(Math.max(Date.now() + 250, await nextTradingTickAt(this.ctx.storage).catch(() => Date.now() + 3_600_000)));
     const researchAt = await nextResearchAt(this.ctx.storage).catch(() => null);
     if (researchAt) times.push(researchAt);
+    // Orion's crypto desk wakes after every 5-minute close, weekends included (null while the owner paused it).
+    const cryptoAt = await nextCryptoTickAt(this.ctx.storage).catch(() => null);
+    if (cryptoAt) times.push(cryptoAt);
     const liveAt = await nextLiveTickAt(this.ctx.storage).catch(() => null);
     // The simulation's next minute (null while paused or before its first pass). Same alarm slot, earliest wins.
     const simAt = await nextStrategySimTickAt(this.ctx.storage).catch(() => null);
@@ -4608,30 +4628,8 @@ export class CheState extends DurableObject {
     for (const step of splitGoal(goal)) {
       const agent = data.team.find((a) => a.name === step.agent && !a.retired);
       if (!agent) continue;
-      // Permission flags are checked before the job is queued.
-      let refused = '';
-      try {
-        assertAgentMayRun(agent, { task: step.task });
-      } catch (error) {
-        refused = permissionBlocker(agent, error);
-      }
-      const task = queueAgentTask(data, agent, step.task, 'owner_goal', { job_id: goalId });
-      task.work_packet = codexWorkPacket(agent, task);
-      let blocker = refused || agentActionGuard(agent, step.task) || officeToolBlocker(this.keyEnv || this.env, agent, task.task);
-      // Codex desks get a real work packet: own thread id and workspace,
-      // persisted here. The owner Codex token stays on the Worker.
-      if (!refused && agent.provider_preference === 'openai') {
-        const packet = savePacket(data, startCodexJob(this.keyEnv || this.env, makeWorkPacket({
-          jobId: task.id, agentId: agent.name, goal: step.task,
-        })));
-        task.packet_id = packet.packet_id;
-        if (!blocker && packet.status.startsWith('Blocked:')) blocker = packet.status;
-      }
-      if (blocker) {
-        task.status = 'blocked';
-        task.error = blocker;
-      }
-      jobs.push({ id: task.id, agent: agent.name, task: task.task, status: task.status, blocker });
+      const task = this.queueOfficeStep(data, agent, step.task, 'owner_goal', { job_id: goalId });
+      jobs.push({ id: task.id, agent: agent.name, task: task.task, status: task.status, blocker: task.status === 'blocked' ? task.error : '' });
     }
     data.office_goals = Array.isArray(data.office_goals) ? data.office_goals : [];
     data.office_goals.push({ id: goalId, goal, job_ids: jobs.map((j) => j.id), created_at: new Date().toISOString() });
@@ -4640,6 +4638,63 @@ export class CheState extends DurableObject {
     if (jobs.some((j) => j.status === 'queued')) await this.scheduleWork();
     this.broadcastAgents(data);
     return { goal_id: goalId, jobs, reply: speakGoalPlan(jobs) };
+  }
+
+  // One Office step, queued the same way for a split goal and for a stage of a coordinated job: permission flags
+  // and tool blockers are checked before it runs, and a Codex desk gets its real work packet (own thread id and
+  // workspace; the owner Codex token stays on the Worker).
+  queueOfficeStep(data, agent, text, source, options = {}) {
+    let refused = '';
+    try {
+      assertAgentMayRun(agent, { task: text });
+    } catch (error) {
+      refused = permissionBlocker(agent, error);
+    }
+    const task = queueAgentTask(data, agent, text, source, options);
+    task.work_packet = codexWorkPacket(agent, task);
+    let blocker = refused || agentActionGuard(agent, text) || officeToolBlocker(this.keyEnv || this.env, agent, task.task);
+    if (!refused && agent.provider_preference === 'openai') {
+      const packet = savePacket(data, startCodexJob(this.keyEnv || this.env, makeWorkPacket({
+        jobId: task.id, agentId: agent.name, goal: text,
+      })));
+      task.packet_id = packet.packet_id;
+      if (!blocker && packet.status.startsWith('Blocked:')) blocker = packet.status;
+    }
+    if (blocker) {
+      task.status = 'blocked';
+      task.error = blocker;
+    }
+    return task;
+  }
+
+  officeJobHooks(data) {
+    const env = this.keyEnv || this.env;
+    return {
+      queueStep: (agent, text, options) => this.queueOfficeStep(data, agent, text, 'office_job', options),
+      blocker: (agent, text) => agentActionGuard(agent, text) || officeToolBlocker(env, agent, text),
+    };
+  }
+
+  // A coordinated Office job (owner master mission, Phase 3): Nova plans it, the first stage is handed off now,
+  // and the alarm hands each finished stage to the next department.
+  async officeCoordinate(data, body = {}) {
+    await this.staffOffice(data);
+    const planned = planOfficeJob(data, body);
+    if (planned.error) return { error: planned.error };
+    advanceOfficeJobs(data, this.officeJobHooks(data));
+    await this.ctx.storage.put('che', data);
+    if (data.team_tasks.some((t) => t.office_job_id === planned.job.id && t.status === 'queued')) await this.scheduleWork();
+    this.broadcastAgents(data);
+    return { job: officeJobView(planned.job), reply: speakOfficeJob(planned.job) };
+  }
+
+  // Hands finished stages of coordinated jobs to the next department. Bookkeeping only; no model call.
+  async advanceOfficeWork() {
+    const data = await this.loadData();
+    if (!advanceOfficeJobs(data, this.officeJobHooks(data))) return false;
+    await this.ctx.storage.put('che', data);
+    this.broadcastAgents(data);
+    return true;
   }
 
   // Ensure Iris (Ad Studio) is on the La Agencia roster; optionally queue a first task.
@@ -4692,25 +4747,25 @@ export class CheState extends DurableObject {
     writeResearchMemoryNote(data, {
       force: true,
       task: { kind: 'ml_eval', task: phrase.task || kind, id: parentNote.id },
-      agent: { name: 'Atlas', role: 'Research' },
+      agent: { name: 'Mira', role: 'Research / education' },
       result: speakMlPlan(result),
       sources: [],
     });
 
-    // Queue Atlas to retrieve prior ML notes and distill learning (not memorize-only).
+    // Queue Mira (research) to retrieve prior ML notes and distill learning (not memorize-only).
     const jobs = [];
-    const atlas = data.team.find((a) => a.name === 'Atlas' && !a.retired);
+    const researcher = data.team.find((a) => a.name === 'Mira' && !a.retired);
     const goalId = crypto.randomUUID();
-    if (atlas) {
+    if (researcher) {
       let refused = '';
-      try { assertAgentMayRun(atlas, { task: 'Retrieve ML metrics and distill learning notes' }); }
-      catch (error) { refused = permissionBlocker(atlas, error); }
-      const task = queueAgentTask(data, atlas,
+      try { assertAgentMayRun(researcher, { task: 'Retrieve ML metrics and distill learning notes' }); }
+      catch (error) { refused = permissionBlocker(researcher, error); }
+      const task = queueAgentTask(data, researcher,
         `Retrieve prior ml_eval memory_notes and Brain graph links. Compare to these metrics: ${JSON.stringify(result.metrics).slice(0, 600)}. Distill what was learned (patterns, failure modes). Do not invent numbers.`,
         'ml_eval', { job_id: goalId, kind: 'ml_eval' });
-      let blocker = refused || officeToolBlocker(this.keyEnv || this.env, atlas, task.task);
+      let blocker = refused || officeToolBlocker(this.keyEnv || this.env, researcher, task.task);
       if (blocker) { task.status = 'blocked'; task.error = blocker; }
-      jobs.push({ id: task.id, agent: atlas.name, task: task.task, status: task.status, blocker });
+      jobs.push({ id: task.id, agent: researcher.name, task: task.task, status: task.status, blocker });
     }
 
     data.office_goals = Array.isArray(data.office_goals) ? data.office_goals : [];
@@ -4769,11 +4824,12 @@ export class CheState extends DurableObject {
     const brief = String(taskText || `Start Roblox ${cat} studio line tonight`).replace(/\s+/g, ' ').trim().slice(0, 500);
     const goalText = `Roblox ${cat} studio: ${brief}`;
     const jobs = [];
-    const knox = data.team.find((a) => a.name === 'Knox' && !a.retired);
+    // Engineering is Atlas's (CTO) since the 2026-10-23 reorganisation; Knox reviews security independently.
+    const engineer = data.team.find((a) => a.name === 'Atlas' && !a.retired);
     const nova = data.team.find((a) => a.name === 'Nova' && !a.retired);
     const lyra = data.team.find((a) => a.name === 'Lyra' && !a.retired);
     const steps = [];
-    if (knox) steps.push({ agent: knox, task: buildRobloxJobBrief(brief, cat), kind: 'roblox_studio' });
+    if (engineer) steps.push({ agent: engineer, task: buildRobloxJobBrief(brief, cat), kind: 'roblox_studio' });
     if (nova) steps.push({ agent: nova, task: `Product/listing plan for Roblox ${cat}: ${brief}. Include monetization (passes) and publish checklist. Owner confirm before upload/spend.`, kind: 'roblox_studio' });
     if (lyra && (cat === 'clothing' || cat === 'avatar' || cat === 'ugc' || cat === 'game')) {
       steps.push({ agent: lyra, task: `Creative/UGC brief for Roblox ${cat}: ${brief}. Mood, palette, asset list. No publish without owner confirm.`, kind: 'roblox_studio' });
@@ -4856,7 +4912,7 @@ export class CheState extends DurableObject {
     writeResearchMemoryNote(data, {
       force: true,
       task: { kind: 'roblox_studio', task: brief, id: goalId },
-      agent: { name: 'Knox', role: 'Engineering / Codex jobs' },
+      agent: { name: 'Atlas', role: 'Engineering / Codex jobs' },
       result: robloxNoteBody,
       sources: [],
     });
@@ -4884,11 +4940,12 @@ export class CheState extends DurableObject {
     const goalId = crypto.randomUUID();
     const q = String(query || 'AI ad buyers').replace(/\s+/g, ' ').trim().slice(0, 200) || 'AI ad buyers';
     const jobs = [];
-    const atlas = data.team.find((a) => a.name === 'Atlas' && !a.retired);
-    const iris = data.team.find((a) => a.name === 'Iris' && !a.retired);
+    // Research is Mira's and ad-buyer fit is Lyra's (creative) since the 2026-10-23 reorganisation.
+    const researcher = data.team.find((a) => a.name === 'Mira' && !a.retired);
+    const creative = data.team.find((a) => a.name === 'Lyra' && !a.retired);
     const steps = [];
-    if (atlas) steps.push({ agent: atlas, task: buildFiverrScoutTask(q), kind: 'fiverr_scout' });
-    if (iris) steps.push({ agent: iris, task: buildFiverrFitTask(q), kind: 'fiverr_scout' });
+    if (researcher) steps.push({ agent: researcher, task: buildFiverrScoutTask(q), kind: 'fiverr_scout' });
+    if (creative) steps.push({ agent: creative, task: buildFiverrFitTask(q), kind: 'fiverr_scout' });
     for (const step of steps) {
       let refused = '';
       try {
@@ -4939,14 +4996,15 @@ export class CheState extends DurableObject {
     const goalId = crypto.randomUUID();
     const ch = normalizeOpportunityChannel(channel);
     const q = String(query || 'AI service buyers').replace(/\s+/g, ' ').trim().slice(0, 200) || 'AI service buyers';
-    // Dedicated Fiverr path keeps existing Iris/Atlas Fiverr playbook wiring.
+    // Dedicated Fiverr path keeps the Fiverr playbook wiring (research, then creative fit).
     if (ch === 'fiverr') return this.officeFiverrScout(data, q);
     const jobs = [];
-    const atlas = data.team.find((a) => a.name === 'Atlas' && !a.retired);
-    const iris = data.team.find((a) => a.name === 'Iris' && !a.retired);
+    // Research is Mira's and ad-buyer fit is Lyra's (creative) since the 2026-10-23 reorganisation.
+    const researcher = data.team.find((a) => a.name === 'Mira' && !a.retired);
+    const creative = data.team.find((a) => a.name === 'Lyra' && !a.retired);
     const steps = [];
-    if (atlas) steps.push({ agent: atlas, task: buildOpportunityScoutTask(q, ch), kind: 'opportunity_scout' });
-    if (iris) steps.push({ agent: iris, task: buildOpportunityFitTask(q, ch), kind: 'opportunity_scout' });
+    if (researcher) steps.push({ agent: researcher, task: buildOpportunityScoutTask(q, ch), kind: 'opportunity_scout' });
+    if (creative) steps.push({ agent: creative, task: buildOpportunityFitTask(q, ch), kind: 'opportunity_scout' });
     for (const step of steps) {
       let refused = '';
       try {
@@ -6161,7 +6219,7 @@ export class CheState extends DurableObject {
 
   async securityApi(path, request, body, data, tokenHash) {
     const action = path.replace(/^\/api\/security\/?/, '');
-    if (action === 'core' || action.startsWith('core/')) return this.securityCoreApi(action.replace(/^core\/?/, ''), request, body, data);
+    if (action === 'core' || action.startsWith('core/')) return this.securityCoreApi(action.replace(/^core\/?/, ''), request, body, data, tokenHash);
     if (request.method === 'GET' && !action) {
       const sec = await loadSecurity(this.ctx.storage);
       return json({
@@ -6223,19 +6281,47 @@ export class CheState extends DurableObject {
     const devices = CHE_SECURITY.engines.device.review(Object.values(data.platform?.devices || {}));
     const bus = CHE_SECURITY.bus(s.store, CHE_TENANT);
     for (const e of devices.events) bus.publish({ ...e, verification: 'verified' });
-    recordCoreCheck(s.store, { findings: r.findings.length, advisories: r.advisories ? r.advisories.advisories.length : null });
+    recordCoreCheck(s.store, { findings: r.findings.length, advisories: r.advisories ? r.advisories.advisories.length : null, deploy_checked: r.deploy_checked === true });
     openIncidentsForEvents(s.store);
     await saveCore(this.ctx.storage, s.store);
     return { ...s, findings: r.findings, advisories: r.advisories };
   }
 
-  async securityCoreApi(action, request, body, data) {
+  // Security Room visibility: every count with the exact entries behind it (security_visibility.js).
+  async securityVisibilityFor(s, data, tokenHash) {
+    const view = s.view();
+    const part = coreEvents.tenantState(s.store, CHE_TENANT);
+    const connectors = await this.commandConnectors(data).catch(() => ({}));
+    const catalog = catalogView(connectors);
+    const now = Date.now();
+    return securityVisibility({
+      principals: view.access.principals, review: view.access.review, team: data.team || [],
+      commands: catalog.commands, connectors: catalog.connectors,
+      sessions: Object.values(s.sec.sessions || {}).filter((x) => !x.revoked_at && x.expires_at > now).map((x) => ({ scopes: x.scopes, factors: x.factors, created_at: x.created_at, expires_at: x.expires_at, this_device: x.device === tokenHash })),
+      events: part.events || [], audit: s.sec.audit || [], checks: part.checks || [],
+      advisoriesChecked: part.checks?.[0]?.advisories != null, deployChecked: part.checks?.[0]?.deploy_checked === true, now,
+    });
+  }
+
+  // Knox, the Office Security Chief: one identity and activity record (security_chief.js) for Office, Security and chat.
+  chiefFor(s, data, vis) {
+    const view = s.view();
+    const part = coreEvents.tenantState(s.store, CHE_TENANT);
+    return securityChief(data, { principal: view.access.principals.find((p) => p.id === 'security'), coverage: vis.coverage, state: view.protection, audit: s.sec.audit || [], checks: part.checks || [] });
+  }
+
+  async securityCoreApi(action, request, body, data, tokenHash = '') {
     const st = this.ctx.storage;
     if (request.method === 'GET' && !action) {
       const s = await this.securityCoreState(data);
       await saveCore(st, s.store);
       const view = s.view();
-      return json({ ...view, spoken: speakCore(view) });
+      const visibility = await this.securityVisibilityFor(s, data, tokenHash);
+      return json({ ...view, visibility, chief: this.chiefFor(s, data, visibility), spoken: speakCore(view) });
+    }
+    if (request.method === 'GET' && action === 'visibility') {
+      const s = await this.securityCoreState(data);
+      return json(await this.securityVisibilityFor(s, data, tokenHash));
     }
     if (request.method !== 'POST') return json({ detail: 'Not found.' }, 404);
     if (action === 'check') {
@@ -6324,7 +6410,7 @@ export class CheState extends DurableObject {
     }
     if (ask.action === 'team') {
       const chain = view.agent.chain;
-      return done(`My security chain of command, sir: you, then me, then ${chain[2].name}, my second-in-command for security, who directs ${chain.length - 3} specialists: ${chain.slice(3).map((c) => c.name).join(', ')}. Atlas is separate: Atlas codes and is not part of the security chain. ${chain[2].name} is ${view.protection.state.toLowerCase()} right now.`);
+      return done(`My security chain of command, sir: you, then me, then ${chain[2].name}, the Office Security Chief and my second-in-command for security, who directs ${chain.length - 3} specialists: ${chain.slice(3).map((c) => c.name).join(', ')}. Atlas is separate: Atlas codes and is not part of the security chain. Security status right now: ${view.protection.state.toLowerCase()}.`);
     }
     if (ask.action === 'drill') {
       const want = String(ask.scenario || '').toLowerCase();
@@ -6430,6 +6516,18 @@ export class CheState extends DurableObject {
       return say(speakSecurityStatus(r.sec, { lockedDown: await isLockedDown(this.ctx.storage), findings: r.findings }) + tail, { findings: r.findings.length });
     }
     if (['status', 'readiness', 'lockdown_preview', 'incidents', 'team', 'drill', 'open'].includes(ask.action)) return this.securityCoreChat(data, ask, say);
+    // "CHE, have Knox check security": the real Security Intelligence + Security Core checks, reported through CHE.
+    if (ask.action === 'chief_check') {
+      const s = await this.securityCoreCheck(data);
+      const vis = await this.securityVisibilityFor(s, data, tokenHash);
+      const chief = this.chiefFor(s, data, vis);
+      const findings = (s.findings || []).map((f) => `${String(f.type || 'finding').replace(/_/g, ' ')}${f.severity ? ` (${f.severity})` : ''}`);
+      return say(speakChiefReport(chief, { findings, coverage: vis.coverage }), { open_screen: 'security', security_section: 'chief', security_chief: chief.name, findings: findings.length, checks_ran: vis.coverage.checked });
+    }
+    if (ask.action === 'access' || ask.action === 'findings') {
+      const vis = await this.securityVisibilityFor(await this.securityCoreState(data), data, tokenHash);
+      return say(speakVisibility(vis, ask.action), { open_screen: 'security', security_section: ask.action === 'access' ? 'agents' : 'threats' });
+    }
     const sec = await loadSecurity(this.ctx.storage);
     if (ask.action === 'revoke') { const n = revokeSessions(sec); await saveSecurity(this.ctx.storage, sec); return say(`Revoked ${n} Face ID session${n === 1 ? '' : 's'}, sir. Your paired devices still work; say "revoke device" with its name to remove one.`); }
     if (ask.action === 'snapshot') { const s = await snapshotTrustedState(this.ctx.storage, data); return say(`Saved a trusted snapshot of my configuration, sir, fingerprint ${s.sha256.slice(0, 12)}. It holds no keys or passwords.`); }
@@ -7367,7 +7465,7 @@ export class CheState extends DurableObject {
               'Sound bright, warm, confident, current and natural — like a sharp friend, not a help desk.',
               'Default to one or two short sentences. Lead with exactly what the owner needs. No preamble, recap, or extra explanation unless it is necessary or he asks for more.',
               'Understand slang, profanity, dark humor, mature and controversial topics without acting shocked, preachy or prudish. Be candid and direct while still respecting real safety, privacy, consent, security and legal limits.',
-              'CHE is the Office Boss — the owner’s primary liaison. Specialists (Nova, Atlas, Mira, Knox, Sage, Lyra, Iris) report to CHE; CHE reports to the owner. CHE assigns, steers, accepts/rejects handoffs, and owns outcomes.',
+              'CHE is the Office Boss — the owner’s primary liaison. Department heads (Nova operations, Atlas engineering, Mira research and education, Knox security, Sage intelligence and strategy, Lyra creative, Orion markets, Iris experience and accessibility, Vale quality assurance) report to CHE; CHE reports to the owner. CHE assigns, steers, accepts/rejects handoffs, and owns outcomes.',
               WORK_AGENT_MODE_POLICY,
               'Never create fake busywork. Delegate only when a specialist materially improves accuracy, execution, research, creativity, speed or verification, and only for work tied to the owner’s request, real goals, projects, responsibilities, learning, finances, business, creative work, technology or organization.',
               'When delegating, require a concrete useful deliverable, review the result, and never call a failed or unverified result complete.',
@@ -8087,6 +8185,21 @@ export class CheState extends DurableObject {
         const draft = await Promise.resolve().then(() => this.ctx.storage.get('fye_draft')).catch(() => null);
         return json({ ok: true, status: FYE_STATUS, draft: draft || null, order_sent: false });
       }
+      // Orion's crypto desk (owner master mission, 2026-10-23): feeds, schedule, budget, simulated trades and research.
+      if (path === '/api/trading/crypto' && request.method === 'GET') {
+        if (!ownerDevice) return ownerOnly();
+        const view = await cryptoView(this.ctx.storage);
+        return json({ ...view, spoken: speakCrypto(view) });
+      }
+      if (path === '/api/trading/crypto' && request.method === 'POST') {
+        if (!ownerDevice) return ownerOnly();
+        if (body.action === 'pause' || body.action === 'resume') await setCryptoPaper(this.ctx.storage, body.action === 'resume');
+        else if (body.action === 'tick') await cryptoTick(this.ctx.storage, { force: true });
+        else return json({ detail: 'Unknown action. Use pause, resume or tick.' }, 400);
+        await this.scheduleWork().catch(() => null);
+        const view = await cryptoView(this.ctx.storage);
+        return json({ ok: true, ...view, spoken: speakCrypto(view, { action: body.action === 'pause' ? 'paused' : body.action === 'resume' ? 'resumed' : null }) });
+      }
       // Owner Improvements (owner, 2026-10-23): the ledger, the live UI preferences, and the iPhone's apply receipt.
       if (path === '/api/owner/improvements' && request.method === 'GET') {
         if (!ownerDevice) return ownerOnly();
@@ -8581,7 +8694,7 @@ export class CheState extends DurableObject {
         const letters = (await listLetters(this.ctx.storage)).filter((l) => !l.read);
         const important = letters.filter((l) => l.severity === 'danger' || l.severity === 'action').length
           + flag.latest.filter((m) => /urgent|error|danger|failed|attack/i.test(m.text)).length;
-        return json({ unread: flag.count + letters.length, incoming: flag.count, letters_unread: letters.length, important });
+        return json({ unread: flag.count + letters.length, incoming: flag.count, letters_unread: letters.length, important, latest: gistRows(flag.latest) });
       }
 
       // ─── Token usage tracker ──────────────────────────────────────────
@@ -9269,6 +9382,25 @@ export class CheState extends DurableObject {
           })
           .filter(Boolean);
         return json({ packets });
+      }
+      // The Office organisation and coordinated jobs (owner master mission, 2026-10-23).
+      if (path === '/api/office/org' && request.method === 'GET') {
+        await this.staffOffice(data);
+        return json({ org: officeOrg(data, this.keyEnv || this.env) });
+      }
+      const headPath = /^\/api\/office\/org\/([A-Za-z]{2,20})$/.exec(path);
+      if (headPath && request.method === 'GET') {
+        await this.staffOffice(data);
+        const agent = data.team.find((a) => !a.retired && a.name.toLowerCase() === headPath[1].toLowerCase() && LA_AGENCIA_ROLES[a.name]);
+        return agent ? json({ head: headRecord(data, this.keyEnv || this.env, agent) }) : json({ detail: 'That is not an Office department head.' }, 404);
+      }
+      if (path === '/api/office/jobs' && request.method === 'GET') {
+        return json({ jobs: officeJobsView(data) });
+      }
+      const jobPath = /^\/api\/office\/jobs\/(oj-[0-9a-f]{8})$/.exec(path);
+      if (jobPath && request.method === 'GET') {
+        const job = (data.office_goals || []).find((g) => g?.coordinated && g.id === jobPath[1]);
+        return job ? json({ job: officeJobView(job) }) : json({ detail: 'There is no Office job with that id.' }, 404);
       }
       if (path === '/api/office/today' && request.method === 'GET') {
         return json({ board: await this.officeBoard(data) });
@@ -10242,6 +10374,10 @@ export class CheState extends DurableObject {
         if (typeof body.enabled !== 'boolean') return json({ detail: 'enabled must be boolean.' }, 400);
         return json({ autonomy: body.enabled, reply: await this.setAutonomy(body.enabled) });
       }
+      if (path === '/api/office/jobs' && request.method === 'POST') {
+        const result = await this.officeCoordinate(data, body);
+        return result.error ? json({ detail: result.error }, 400) : json(result);
+      }
       if (path === '/api/office/goals' && request.method === 'POST') {
         const goal = String(body.goal || '').trim().slice(0, 2000);
         if (!goal) return json({ detail: 'Goal required.' }, 400);
@@ -10449,7 +10585,7 @@ export class CheState extends DurableObject {
             return ndjsonReply(started.spoken, { source: 'che_command_workflow', ok: started.ok, objective_id: started.objective?.id || null, model_calls: 0 });
           }
           // Workflow Engine: the owner's words about the library, then a promoted learned workflow this request matches.
-          const secAsk = ownerDevice && !body.attachment && !body.workflow_step ? securityIntent(rawMessage) : null;
+          const secAsk = ownerDevice && !body.attachment && !body.workflow_step ? (securityIntent(rawMessage) || securityChiefIntent(rawMessage)) : null;
           if (secAsk) return this.securityChat(data, secAsk, tokenHash);
           // Film Studio: make, plan, status, remake, pause/resume/stop and the free render farm (film_studio.filmIntent).
           const filmAsk = ownerDevice && !body.attachment && !body.workflow_step ? filmIntent(rawMessage) : null;
@@ -10666,6 +10802,9 @@ export class CheState extends DurableObject {
         // "what's the formula for VWAP". Answered from the curated cards and CHE's own trade records
         // with no model, before the interpreter can rewrite them; a sentence that asks to pay, buy or
         // delete is never one (atlasIntent), so it still reaches the owner's gate below.
+        // /security-access and /security-findings arrive as command requests, which skip the spoken-intent block above.
+        const secCommand = COMMAND_REQUESTS.has(request) && ownerDevice && !body.attachment ? (securityIntent(rawMessage) || securityChiefIntent(rawMessage)) : null;
+        if (secCommand && ['access', 'findings', 'chief_check'].includes(secCommand.action)) return this.securityChat(data, secCommand, tokenHash);
         const atlas = ownerDevice && !body.attachment && !memoryRoute ? atlasIntent(message, ownerHistory, { explainLevel: body.explain_level }) : null;
         if (atlas) {
           // Like any other turn, a lesson replaces a held request (money, delete, app, or a Gmail,
@@ -11631,6 +11770,20 @@ export class CheState extends DurableObject {
           const plan = await this.officeGoal(data, officePhrase.goal);
           return ndjsonReply(plan.reply, { office: 'goal', jobs: plan.jobs.length });
         }
+        if (officePhrase?.type === 'officeOrg') {
+          await this.staffOffice(data);
+          return ndjsonReply(speakOfficeOrg(officeOrg(data, this.keyEnv || this.env)), { office: 'org' });
+        }
+        if (officePhrase?.type === 'officeJob') {
+          const result = await this.officeCoordinate(data, { request: officePhrase.request });
+          return ndjsonReply(result.error ? `CHE here. ${result.error}` : result.reply, { office: 'job', job_id: result.job?.id || null });
+        }
+        if (officePhrase?.type === 'officeJobStatus') {
+          const jobs = (data.office_goals || []).filter((g) => g?.coordinated);
+          const job = officePhrase.id ? jobs.find((g) => g.id === officePhrase.id) : jobs[jobs.length - 1];
+          const reply = job ? speakOfficeJob(job) : (officePhrase.id ? `CHE here. There is no Office job ${officePhrase.id}.` : 'CHE here. There are no coordinated Office jobs yet.');
+          return ndjsonReply(reply, { office: 'jobStatus', job_id: job?.id || null });
+        }
         if (officePhrase?.type === 'hireIris') {
           const hired = await this.officeHireIris(data, officePhrase.task || '');
           return ndjsonReply(hired.reply, { office: 'hireIris', jobs: hired.jobs.length, agent: hired.agent?.name || 'Iris' });
@@ -12442,6 +12595,21 @@ export class CheState extends DurableObject {
           await drainRoomEvents(this.ctx.storage, crossStore).catch(() => null);
           const answer = await answerCrossRoom({ store: crossStore, storage: this.ctx.storage, env: this.keyEnv || this.env, intent: cross, screen: seen });
           return ndjsonReply(answer.text, { source: BRAIN_ROOMS_SOURCE, ok: answer.ok, model_calls: 0, rooms: answer.rooms, hits: answer.hits, kind: cross.kind });
+        }
+        // Orion's crypto desk by voice (owner master mission, 2026-10-23): "Have Orion research BTC and ETH … during the
+        // weekend", "pause Orion crypto research", "how is crypto paper trading going". Stored records only, no model.
+        const cryptoAsk = body.attachment ? null : cryptoIntent(message);
+        if (cryptoAsk) {
+          if (!ownerDevice) return ndjsonReply('Only the CHE owner can run or read Orion\'s crypto desk.', { source: CRYPTO_SOURCE, ok: false, model_calls: 0 });
+          let action = null;
+          if (cryptoAsk.kind === 'pause') { await setCryptoPaper(this.ctx.storage, false); action = 'paused'; }
+          if (cryptoAsk.kind === 'resume') {
+            const before = (await cryptoView(this.ctx.storage)).enabled;
+            if (!before) { await setCryptoPaper(this.ctx.storage, true); action = 'resumed'; }
+            await this.scheduleWork().catch(() => null);
+          }
+          const view = await cryptoView(this.ctx.storage);
+          return ndjsonReply(speakCrypto(view, { action }), { source: CRYPTO_SOURCE, ok: true, model_calls: 0, kind: cryptoAsk.kind, open_view: 'trading_crypto', crypto: { enabled: view.enabled, closed_trades: view.simulated.closed_trades, open_positions: view.simulated.open_positions.length } });
         }
         // "Why are there no new trades?": five facts from the stored journal and scheduler records (owner, 2026-10-21).
         const whyNoTrades = body.attachment ? null : newTradesIntent(message);
@@ -13727,7 +13895,7 @@ export class CheState extends DurableObject {
               'SPEED MODE: minimize unnecessary serial work. Batch compatible reads, run independent tool calls concurrently, reuse trusted context, and escalate to heavier compute only when the task actually benefits from it.',
               'BACKGROUND WORK: cloud-side tasks may continue independently of the visible phone UI only when a real CHE backend job or connected service supports it. Do not claim iOS itself is running unrestricted background work.',
               'SUPPORTED-WORKAROUND MODE: when a platform, API, entitlement, permission or device limitation blocks the direct route, actively look for the fastest legitimate alternative such as an official API, App Intent, deep link, Shortcut, companion service, cloud job or approved integration. Never bypass security controls, access controls, safety rules or law, and never call an unsupported bypass a loophole.',
-              'CHE OFFICE: CHE is the Office Boss — the owner’s primary liaison and in-charge manager of every internal AI coworker (Nova, Atlas, Mira, Knox, Sage, Lyra, Iris). Specialists report to CHE; CHE reports to the owner. CHE assigns, steers, accepts or rejects handoffs, and owns outcomes. Handle ordinary conversation yourself. Delegate only when specialization materially improves the result. Every delegated task must be tied to the owner’s request or real goals and must have a concrete useful deliverable. Never create busywork just to make the Office look active. Review coworker output, catch weak assumptions, and never mark failed or unverified work complete.',
+              'CHE OFFICE: CHE is the Office Boss — the owner’s primary liaison and in-charge manager of every internal AI coworker. Department heads: Nova operations, Atlas engineering, Mira research and education, Knox security, Sage intelligence and strategy, Lyra creative, Orion markets, Iris experience and accessibility, Vale quality assurance. Specialists report to CHE; CHE reports to the owner. CHE assigns, steers, accepts or rejects handoffs, and owns outcomes. Handle ordinary conversation yourself. Delegate only when specialization materially improves the result. Every delegated task must be tied to the owner’s request or real goals and must have a concrete useful deliverable. Never create busywork just to make the Office look active. Review coworker output, catch weak assumptions, and never mark failed or unverified work complete.',
               WORK_AGENT_MODE_POLICY,
               workAgentMode
                 ? 'This turn is Work Agent Mode (agent_mode=full). Prefer planning + tool use + Office delegation over chat-only answers when the owner asked for real work.'
@@ -14398,6 +14566,7 @@ export class CheState extends DurableObject {
     const officeData = await this.loadData();
     if (recoverStaleWork(officeData)) await this.ctx.storage.put('che', officeData);
     if (autonomyOn) {
+      await this.advanceOfficeWork().catch((error) => console.error('Office job advance failed:', error?.message || error));
       await processAgentWork({
         env: this.env,
         load: () => this.loadData(),
@@ -14410,6 +14579,8 @@ export class CheState extends DurableObject {
         // Office tasks, War Room meetings and research notes report to the Brain when they happen (owner, Build 2).
         roomEvent: (event) => (event ? queueRoomEvent(this.ctx.storage, event).catch(() => false) : Promise.resolve(false)),
       });
+      // A stage finished in this pass is handed to the next department now, so scheduleWork sees its task.
+      await this.advanceOfficeWork().catch((error) => console.error('Office job advance failed:', error?.message || error));
     }
     // A retry or mailbox watch may be due later, so always compute the next alarm.
     await this.scheduleWork();

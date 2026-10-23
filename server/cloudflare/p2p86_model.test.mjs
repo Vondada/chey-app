@@ -6,7 +6,7 @@ import {
   INTRADAY_CANDIDATES, P86_NAME, intradayContext, newPortfolio, overnightLevels, overnightStats, p2p86Plan, stepPortfolio,
 } from './trading_evidence.js';
 import { definitionOf, strategyDefinitions } from './trading_research.js';
-import { ICT_CONCEPTS, scopeFromWords, strategyRegistry } from './trading_controls.js';
+import { ICT_CONCEPTS, controlIntent, scopeFromWords, strategyRegistry } from './trading_controls.js';
 
 const ID = 'p2p86-style-5m';
 const DAY = 86400000;
@@ -150,6 +150,27 @@ test('labels: an independent approximation everywhere, never the original indica
   assert.ok(ICT_CONCEPTS.find((k) => k.id === 'overnight_range').strategies.includes(ID));
   assert.equal(scopeFromWords('disable the 86 model'), ID);
   assert.equal(scopeFromWords('enable p2p'), ID);
+});
+
+test('owner voice: the 86 model toggles through the controls route, not the model', () => {
+  // Routing bug seen on the iPhone: "Disable the 86 model" fell through to the model, which refused.
+  for (const [sentence, kind] of [
+    ['Disable the 86 model', 'disable'],
+    ['Enable the 86 model', 'enable'],
+    ['Turn off the 86 model', 'disable'],
+    ['Turn on the 86 model', 'enable'],
+    ['CHE, disable the P2P 86 model', 'disable'],
+  ]) {
+    assert.deepEqual(controlIntent(sentence), { kind: 'controls', change: { kind, scope: ID } }, sentence);
+  }
+  // Asking about it is a question, not a control change.
+  assert.equal(controlIntent('What is the 86 model?'), null);
+});
+
+test('86 in an ordinary sentence never becomes a strategy control change', () => {
+  assert.equal(controlIntent("I'm 86 years old, enable notifications"), null);
+  assert.equal(controlIntent('Turn on the 86 degree heater'), null);
+  assert.equal(controlIntent('Disable the 86 inch TV alarm'), null);
 });
 
 test('chart levels and measured frequencies are CHE\'s own, with their sample size', () => {

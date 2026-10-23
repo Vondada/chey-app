@@ -14,18 +14,25 @@ extension _CheMailboxBadge on _CHEHomeState {
       final data = jsonDecode(response.body);
       if (data is! Map) return;
       final count = (data['unread'] as num?)?.toInt() ?? 0;
+      final latest = [
+        for (final m in (data['latest'] as List? ?? const []))
+          if (m is Map) CheFlagstaffGist(id: '${m['id'] ?? ''}', from: '${m['from'] ?? ''}', text: '${m['text'] ?? ''}'),
+      ];
       final previous = _mailboxUnread;
-      if (count == previous) return;
-      _updateHomeState(() => _mailboxUnread = count);
+      if (count == previous && !cheGistChanged(latest, _mailboxLatest)) return;
+      _updateHomeState(() {
+        _mailboxUnread = count;
+        _mailboxLatest = latest;
+      });
       if (!announce || count <= previous) return;
       final fresh = count - previous;
       HapticFeedback.mediumImpact();
-      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-        SnackBar(
-          behavior: SnackBarBehavior.floating,
-          content: Text(fresh == 1 ? 'New message in your Mailbox' : '$fresh new messages in your Mailbox'),
-          action: SnackBarAction(label: 'Open', onPressed: () => _openMailbox()),
-        ),
+      if (!mounted) return;
+      showCheFlagstaffBanner(
+        context,
+        title: fresh == 1 ? 'New message in Flagstaff' : '$fresh new messages in Flagstaff',
+        detail: latest.isEmpty ? null : '${latest.first.from}: ${latest.first.text}',
+        onOpen: () => _openMailbox(),
       );
     } catch (_) {}
   }

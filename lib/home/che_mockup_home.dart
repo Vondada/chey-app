@@ -75,6 +75,7 @@ class CheMockupHome extends StatelessWidget {
     this.onToggleVoiceReplies,
     this.onTapAgent,
     this.unread = 0,
+    this.flagstaffLatest = const [],
     this.onOpenFlagstaff,
     this.latencyMs,
     this.handsFree = false,
@@ -97,6 +98,8 @@ class CheMockupHome extends StatelessWidget {
 
   /// Flagstaff's unread count and its opener (HUD look).
   final int unread;
+  /// The opening of the newest unread messages, for the Flagstaff tile's gist.
+  final List<CheFlagstaffGist> flagstaffLatest;
   final VoidCallback? onOpenFlagstaff;
 
   /// The last measured round trip to CHE's server, in milliseconds; null until one is measured.
@@ -875,7 +878,7 @@ extension on CheMockupHome {
         _HudTalkBar(listening: listening, handsFree: handsFree, onTalk: onTalk, onOpenChat: onOpenChat),
         const SizedBox(height: CheSpace.lg),
         // Real data: the live chart first (owner, 2026-10-23: live Rithmic data by default, never delayed data on its
-        // own), then the Office and the next market event. Flagstaff lives in the bell above.
+        // own), then Flagstaff and the Office, then every market's open and close.
         LayoutBuilder(builder: (context, box) {
           const gap = 12.0;
           final half = (box.maxWidth - gap) / 2;
@@ -883,22 +886,25 @@ extension on CheMockupHome {
           // Each pair of tiles keeps one height, set by the taller tile (large text grows both).
           return Column(children: [
             _liveChart(chartHeight: 130),
+            const SizedBox(height: CheSpace.md),
+            // The rooms stay on the first screen, right under the live chart.
+            Row(children: [
+              for (final id in ['brain', 'create', 'world', if (byId.containsKey('security')) 'security']) ...[
+                if (id != 'brain') const SizedBox(width: CheSpace.sm),
+                Expanded(child: _HudRoomPill(item: byId[id]!)),
+              ],
+            ]),
             const SizedBox(height: gap),
             IntrinsicHeight(child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-              SizedBox(width: half, child: CheHomeOfficeTile(working: working, total: team, onOpen: onOpenOffice)),
+              SizedBox(width: half, child: CheHomeFlagstaffTile(unread: unread, latest: flagstaffLatest, onOpen: onOpenFlagstaff ?? onOpenOffice)),
               const SizedBox(width: gap),
-              SizedBox(width: half, child: CheHomeNextTile(now: now, onOpen: trading.onOpen)),
+              SizedBox(width: half, child: CheHomeOfficeTile(working: working, total: team, onOpen: onOpenOffice)),
             ])),
+            const SizedBox(height: CheSpace.md),
+            CheHomeMarketsTile(now: now, onOpen: trading.onOpen),
           ]);
         }),
         const SizedBox(height: CheSpace.md),
-        // The rooms without a tile.
-        Row(children: [
-          for (final id in ['brain', 'create', 'world', if (byId.containsKey('security')) 'security']) ...[
-            if (id != 'brain') const SizedBox(width: CheSpace.sm),
-            Expanded(child: _HudRoomPill(item: byId[id]!)),
-          ],
-        ]),
         const SizedBox(height: CheSpace.lg),
         _NowPanel(
           active: cheHomeActiveAgents(agents),
@@ -1032,12 +1038,12 @@ class _HudTalkBar extends StatelessWidget {
                 onTalk();
               },
               child: ConstrainedBox(
-                constraints: const BoxConstraints(minHeight: 54),
+                constraints: const BoxConstraints(minHeight: 44),
                 child: Row(children: [
                   CheChromeOrb(
-                    size: 54,
+                    size: 44,
                     color: color,
-                    child: Icon(listening ? Icons.stop_rounded : Icons.mic_rounded, color: const Color(0xFF07121E), size: 26),
+                    child: Icon(listening ? Icons.stop_rounded : Icons.mic_rounded, color: const Color(0xFF07121E), size: 22),
                   ),
                   const SizedBox(width: 14),
                   Expanded(
@@ -1045,7 +1051,7 @@ class _HudTalkBar extends StatelessWidget {
                       FittedBox(
                         fit: BoxFit.scaleDown,
                         alignment: Alignment.centerLeft,
-                        child: Text(listening ? 'Stop listening' : 'Talk to CHE', style: CheType.headline.copyWith(fontSize: 18, fontWeight: FontWeight.w700)),
+                        child: Text(listening ? 'Stop listening' : 'Talk to CHE', style: CheType.headline.copyWith(fontSize: 15, fontWeight: FontWeight.w700)),
                       ),
                       const SizedBox(height: 2),
                       Text(
@@ -1134,10 +1140,11 @@ class _HudRoomPill extends StatelessWidget {
           radius: 22,
           glow: item.hue,
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
-          child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
             Icon(item.icon, size: 18, color: item.hue),
-            const SizedBox(width: 6),
-            Flexible(child: Text(item.label, maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.label.copyWith(fontWeight: FontWeight.w700))),
+            const SizedBox(height: 4),
+            // Never cut off: the full name wraps onto a second line when the tile is narrow.
+            Text(item.label, textAlign: TextAlign.center, style: CheType.label.copyWith(fontWeight: FontWeight.w700, fontSize: 11)),
           ]),
         ),
       ),

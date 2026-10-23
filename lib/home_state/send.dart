@@ -670,6 +670,17 @@ extension _CheHomeSend on _CHEHomeState {
       }
     }
 
+    // The Security Room, while open, opens its lists, searches and reads entries by voice.
+    final securityVoice = CheSecurityRoomVoice.handler;
+    if (securityVoice != null && _pendingAttachment == null && !cheIsAppStatusRequest(message)) {
+      final reply = await securityVoice(message);
+      if (reply != null) {
+        if (mounted) _set(() => controller.clear());
+        if (reply.isNotEmpty) await speakText(reply, record: false);
+        return;
+      }
+    }
+
     // The rendering benchmark, while it is open, answers run, read and copy.
     final benchVoice = CheRenderBenchScreen.voiceHandler;
     if (benchVoice != null && _pendingAttachment == null) {

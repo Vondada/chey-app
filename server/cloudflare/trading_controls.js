@@ -335,7 +335,8 @@ export function controlIntent(message) {
   // The strategy simulation (che_strategy_sim) has its own pause, resume and status words.
   if (/\bsim(?:ulation)?s?\b/.test(text) && !/\b(?:ict|ema|emergency|kill switch|entries)\b/.test(text)) return null;
   const question = /^\s*(?:what|how|is|are|does|do|can|could|explain|tell me what)\b/.test(text);
-  const trading = /\b(?:strateg(?:y|ies)|ict|ema|rsi|vwap|entries|entry|trades?|trading|positions?|orders?|silver bullet|order blocks?|fvg|opening range)\b/.test(text);
+  // "86 model" (not a bare "86", which is a number in ordinary sentences) and P2P / overnight range name the 86-style model.
+  const trading = /\b(?:strateg(?:y|ies)|ict|ema|rsi|vwap|entries|entry|trades?|trading|positions?|orders?|silver bullet|order blocks?|fvg|opening range)\b/.test(text) || /\b86 model\b|\bp2p\b|\bovernight range\b/.test(text);
   if (/\bwhy\b[\s\S]{0,60}\b(?:skip(?:ped)?|did ?n[o']t (?:take|enter|trade)|no trades?|not trade|blocked)\b/.test(text) && trading) {
     return { kind: 'controls_why', scope: scopeFromWords(text) };
   }

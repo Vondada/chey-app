@@ -231,6 +231,37 @@ export const COMMANDS = Object.freeze([
     evidence: 'The card and revision it came from; trading figures only from journal or backtest records; zero model calls.',
     cost: 'Free: no AI engine is used.', keywords: ['learn', 'lesson', 'teach me', 'explain', 'formula', 'quiz', 'concept', 'beginner', 'expert', 'atlas'],
   }),
+  // Security Room visibility (owner, 2026-10-23): every count opens the exact entries behind it.
+  C('security-access', 'intelligence', 'EXPLORE', 'See who and what has access to CHE.', {
+    title: 'Security Access',
+    does: 'Opens Security on its access list: agents, tools, apps, devices, Face ID sessions and every granted permission, each with what it can do, its last activity and whether that access is more than it needs. Shows what was not checked. Changes nothing.',
+    needs: [], route: 'che_security', handler: 'security_intelligence.securityIntent → security_visibility.securityVisibility',
+    input: null,
+    examples: ['Open security access', 'Who has access to CHE?', 'What do you have access to?'],
+    prompt: 'Open security access', produces: 'access list',
+    evidence: 'Counts and lists come from the same registry query; token and credential values are never shown.',
+    cost: 'Free: no AI engine is used.', keywords: ['security', 'access', 'permissions', 'who has access', 'least privilege'],
+  }),
+  C('security-chief', 'intelligence', 'EXPLORE', 'Have Knox, the Security Chief, run a security check.', {
+    title: 'Security Chief Check',
+    does: 'Knox, the Office Security Chief who reports to CHE, runs CHE\'s real security checks (threats, access, paired devices, and dependencies and deployment when GitHub is connected). CHE then reports which checks ran, when, their findings, and what was not checked. Changes nothing.',
+    needs: [], route: 'che_security', handler: 'security_chief.securityChiefIntent → securityCoreCheck',
+    input: null,
+    examples: ['CHE, have Knox check security', 'Ask Knox to run a security check', 'Knox, check security'],
+    prompt: 'Have Knox check security', produces: 'security report',
+    evidence: 'Each check carries the time it ran; a check that did not run is reported as not checked.',
+    cost: 'Free: no AI engine is used.', keywords: ['knox', 'security chief', 'security check', 'security scan', 'security review'],
+  }),
+  C('security-findings', 'intelligence', 'EXPLORE', 'Read and open CHE\'s security findings.', {
+    title: 'Security Findings',
+    does: 'Opens Security on its findings: each with severity, the affected resource, when it happened, its evidence and the recommended action, plus which checks ran and which did not. Changes nothing; removing access always asks you first.',
+    needs: [], route: 'che_security', handler: 'security_intelligence.securityIntent → security_visibility.securityVisibility',
+    input: null,
+    examples: ['Show security findings', 'What are my security findings?'],
+    prompt: 'Show security findings', produces: 'findings',
+    evidence: 'Findings come from recorded security events and the access review; zero findings is not reported as all-clear unless every check ran.',
+    cost: 'Free: no AI engine is used.', keywords: ['security', 'findings', 'threats', 'risks', 'coverage'],
+  }),
 
   // ── YouTube ───────────────────────────────────────────────────────────
   C('yt-ideas', 'youtube', 'EXPLORE', 'Research promising video ideas.', {
@@ -545,6 +576,16 @@ export const COMMANDS = Object.freeze([
     needs: ['office'], route: 'che_trading_visual', handler: 'trading_visual.auditTrades', input: null,
     examples: ['Audit the trades', 'Run a trade audit'],
     prompt: 'Audit the trades.', produces: 'audit', evidence: 'Real counts from the stored records; nothing is altered.', keywords: ['audit', 'duplicates', 'look-ahead', 'trade audit'],
+  }),
+  // Orion's crypto desk (owner master mission, 2026-10-23): crypto_markets.js through its own chat route.
+  C('trade-crypto', 'trading', 'EXPLORE', "Orion: BTC and ETH research and paper trading, 24/7.", {
+    title: 'Orion Crypto Desk',
+    does: 'Reads, pauses or resumes Orion\'s crypto desk: BTC-USD and ETH-USD from Coinbase Exchange public candles (5-minute, 15-minute and hourly; Kraken cross-check), every CHE strategy paper traded on LIVE bars around the clock including weekends, net of 0.6% taker and 0.4% maker fees, journalled as crypto in the forward journal and judged by the strategy governor; plus volatility, liquidity and session research and an out-of-sample backtest. No model, no exchange account, no order.',
+    needs: ['market_data'], route: 'che_crypto', handler: 'crypto_markets.cryptoIntent → setCryptoPaper / cryptoView',
+    input: { name: 'action', required: false, hint: 'pause, resume or status' },
+    examples: ['Have Orion research BTC and ETH, compare strategies, and continue paper trading during the weekend.', 'Pause Orion crypto research', 'Resume Orion crypto research', 'How is the crypto paper trading going?'],
+    prompt: 'Orion crypto research {input}', produces: 'crypto desk status', evidence: 'Stored exchange bars, runs, budget counters and journal records only.',
+    keywords: ['crypto', 'bitcoin', 'btc', 'ethereum', 'eth', 'orion', 'weekend', '24/7'],
   }),
   C('trade-replay', 'trading', 'EXPLORE', "Replay one of CHE's trades on its own chart.", {
     does: 'Opens a trade by its ID (or CHE\'s last forward paper trade) on the exact bars it was traded on: entry, exit, stop, target, times and outcome, labelled BACKTEST, SIMULATION, FORWARD PAPER or BROKER-CONFIRMED. Replay shows a bar only once it has closed. Without recorded bars it says so and draws nothing.',
@@ -913,6 +954,37 @@ export const COMMANDS = Object.freeze([
     input: { name: 'task', required: true, hint: 'What the Office should do' },
     examples: ['Tell the office to research barbershops in Phoenix'],
     prompt: 'Tell the office to {input}', produces: 'office jobs', evidence: 'Office job ids.', keywords: ['delegate', 'office task', 'assign'],
+  }),
+  // The Office organisation and coordinated jobs (owner master mission, 2026-10-23).
+  C('office-org', 'office', 'EXPLORE', 'See who heads each Office department.', {
+    title: 'Office Departments',
+    does: 'Reads the Office roster: you lead, CHE reports to you, and the nine department heads (Nova, Atlas, Mira, Knox, Sage, Lyra, Orion, Iris, Vale) report to CHE, each with responsibilities, tools, permissions, work queue and recorded performance. Changes nothing.',
+    needs: ['office'], route: 'office:org', handler: 'office_org.officeOrg (LA_AGENCIA_ROLES departments)',
+    input: null,
+    examples: ['Who runs the Office departments?', 'Show me the Office org chart'],
+    prompt: 'Who runs the Office departments?', produces: 'org chart',
+    evidence: 'The roster and stored Office tasks only; tool status is configured, not configured or not checked.',
+    cost: 'Free: no AI engine is used.', keywords: ['org chart', 'departments', 'department heads', 'chain of command', 'who runs'],
+  }),
+  C('office-coordinate', 'office', 'BUILD', 'Have Nova coordinate a multi-department job.', {
+    title: 'Coordinated Office Job',
+    does: 'Nova plans one job across departments (for example Iris design, Atlas engineering, Knox security review, then Vale verification), names one accountable owner, and hands each finished stage to the next with a recorded handoff the receiving head must accept. CHE reports the result only after Vale verifies it.',
+    needs: ['office'], route: 'office:job', handler: 'office_jobs.planOfficeJob → advanceOfficeJobs → agent_runtime tasks',
+    input: { name: 'task', required: true, hint: 'The work and which departments it involves' },
+    examples: ['Have Nova coordinate a cleaner Trading Room chart with design, engineering, security review and testing'],
+    prompt: 'Have Nova coordinate {input}', produces: 'office job',
+    evidence: 'Job id, stage task ids, every handoff with its acceptance checks, and Vale\'s verdict.',
+    keywords: ['coordinate', 'handoff', 'office job', 'departments', 'nova'],
+  }),
+  C('office-jobs', 'office', 'EXPLORE', 'Status of coordinated Office jobs.', {
+    title: 'Office Jobs',
+    does: 'Reads the latest coordinated Office job (or the one you name): its stages, who holds each, handoffs, blockers and whether Vale verified it. Changes nothing.',
+    needs: ['office'], route: 'office:jobStatus', handler: 'office_jobs.speakOfficeJob',
+    input: null,
+    examples: ['What is the status of the Office jobs?'],
+    prompt: 'What is the status of the Office jobs?', produces: 'job status',
+    evidence: 'The stored job record only.',
+    cost: 'Free: no AI engine is used.', keywords: ['office jobs', 'job status', 'handoffs'],
   }),
   C('warroom', 'office', 'PLAN', 'Coordinate complex multi-agent work.', {
     does: 'Puts a hard question to Gemini, ChatGPT and Grok and gives each answer; an engine that cannot be reached is named, never faked.',

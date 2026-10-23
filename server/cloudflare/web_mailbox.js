@@ -357,3 +357,15 @@ export async function markOwnerSeen(storage, env = null, fetcher = fetch) {
   if (incoming.length) await storage.put(OWNER_SEEN, incoming[incoming.length - 1].id);
   return true;
 }
+
+/**
+ * The newest unread messages for Home's Flagstaff gist, newest first. Only the sender and the opening of the real
+ * text are returned (whitespace collapsed, cut to 240 characters): nothing is summarised or invented.
+ */
+export function gistRows(messages, limit = 3) {
+  return messages.slice(-limit).reverse().map((m) => ({
+    id: String(m.id || ''),
+    from: String(m.from || ''),
+    text: String(m.text || '').replace(/\s+/g, ' ').trim().slice(0, 240),
+  }));
+}

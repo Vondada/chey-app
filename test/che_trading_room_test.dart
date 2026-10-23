@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:async';
 
 import 'package:chey/rooms/che_trading_chart.dart';
+import 'package:chey/rooms/che_alpaca_paper.dart';
 import 'package:chey/rooms/che_trading_room.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -93,7 +94,9 @@ class _Server {
   Iterable<http.Request> to(String path) => requests.where((r) => r.url.path == path && r.method != 'GET');
 }
 
-Future<void> _pumpRoom(WidgetTester tester, _Server s, {CheTradingSection section = CheTradingSection.chart, List<String>? spoken, String? strategy, String account = 'alpaca_paper'}) async {
+/// The room, and (by default) its chart expanded: drawing, orders, zoom and the legend live in the expanded chart.
+Future<void> _pumpRoom(WidgetTester tester, _Server s,
+    {CheTradingSection section = CheTradingSection.chart, List<String>? spoken, String? strategy, String account = 'alpaca_paper', bool expand = true}) async {
   tester.view.physicalSize = const Size(1170, 2532);
   tester.view.devicePixelRatio = 3;
   addTearDown(tester.view.reset);
@@ -114,6 +117,10 @@ Future<void> _pumpRoom(WidgetTester tester, _Server s, {CheTradingSection sectio
   ));
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 50));
+  if (expand && section == CheTradingSection.chart) {
+    await tester.tap(find.byTooltip('Expand the chart'));
+    await tester.pumpAndSettle();
+  }
 }
 
 Future<void> _tap(WidgetTester tester, Finder f) async {
@@ -125,12 +132,16 @@ Future<void> _tap(WidgetTester tester, Finder f) async {
 Finder _chartArea() => find.byWidgetPredicate((w) => w is CustomPaint && w.painter.runtimeType.toString() == '_ChartPainter');
 
 void main() {
+  // The Alpaca tests below need the panel and chart account visible; the hidden-account test turns it off itself.
+  setUp(() => kShowAlpacaPaper = true);
+  tearDown(() => kShowAlpacaPaper = false);
+  alpacaHiddenTests();
   testWidgets('four sections; the chart opens first, silent, with every marker source, feed health and PAPER', (tester) async {
     final s = _Server();
     final spoken = <String>[];
     await _pumpRoom(tester, s, spoken: spoken);
-    for (final label in ['CHART', 'SETUPS', 'CHE TRADES', 'STRATEGIES', 'ACCOUNT']) {
-      expect(find.text(label), findsWidgets);
+    for (final label in ['CHART', 'SETUPS', 'JOURNAL', 'HISTORY', 'STRATEGY LAB', 'ACCOUNT', 'REPLAY', 'SIDE BY SIDE']) {
+      expect(find.text(label, skipOffstage: false), findsWidgets);
     }
     expect(find.text('PAPER'), findsOneWidget);
     expect(_chartArea(), findsOneWidget);
@@ -247,10 +258,10 @@ void main() {
   testWidgets('"show EMA trades" keeps only that strategy among CHE markers', (tester) async {
     final s = _Server();
     await _pumpRoom(tester, s, strategy: 'ema', account: 'futures_paper');
-    expect(find.textContaining('Showing CHE trades for EMA only'), findsOneWidget);
+    expect(find.textContaining('EMA only'), findsOneWidget);
     final state = tester.state<CheTradingChartState>(find.byType(CheTradingChart));
     expect(state.summary, contains('1 CHE forward paper'));
-    await _tap(tester, find.text('Show all strategies'));
+    await _tap(tester, find.textContaining('EMA only'));
     await tester.pump();
     expect(state.summary, contains('2 CHE forward paper'));
   });
@@ -308,13 +319,12 @@ void main() {
     await tester.pump();
     expect(find.byTooltip('Jump to the latest bar'), findsOneWidget);
     expect(state.summary, before); // the summary speaks of the latest bar, not the window
-    await tester.drag(find.byType(ListView).first, const Offset(0, 3000));
+    // Back in the room: the sections switch.
+    await tester.tap(find.byTooltip('Close the expanded chart'));
     await tester.pumpAndSettle();
-    await _tap(tester, find.text('STRATEGIES'));
+    await _tap(tester, find.text('STRATEGY LAB'));
     await tester.pump();
     expect(find.byType(CheTradingChart), findsNothing);
-    await tester.drag(find.byType(ListView).first, const Offset(0, 3000));
-    await tester.pumpAndSettle();
     await _tap(tester, find.text('CHART'));
     await tester.pump();
     expect(find.byType(CheTradingChart), findsOneWidget);
@@ -322,7 +332,7 @@ void main() {
 
   testWidgets('a voice reply naming a section switches the open room to it', (tester) async {
     final s = _Server();
-    await _pumpRoom(tester, s);
+    await _pumpRoom(tester, s, expand: false);
     expect(find.byType(CheTradingChart), findsOneWidget);
     CheTradingRoom.requestedSection.value = CheTradingSection.strategies;
     await tester.pump();
@@ -335,5 +345,24 @@ void main() {
     expect(cheTradingSectionNamed('che_trades'), CheTradingSection.cheTrades);
     expect(cheTradingSectionNamed(null), CheTradingSection.chart);
     expect(cheTradingSectionNamed('setups'), CheTradingSection.setups);
+  });
+}
+
+// Owner (2026-10-23): "I don't want to see the alpaca at all. I just want to see mine and Che's paper trades."
+// The Alpaca PAPER panel and chart account stay in the code behind kShowAlpacaPaper, so restoring them is one line.
+void alpacaHiddenTests() {
+  testWidgets('Trading Room shows no Alpaca panel or chart account; both paper accounts are there', (tester) async {
+    kShowAlpacaPaper = false;
+    final s = _Server();
+    await _pumpRoom(tester, s, section: CheTradingSection.account);
+    expect(find.textContaining('Alpaca'), findsNothing);
+    expect(find.byKey(const Key('che_paper_account_compact')), findsOneWidget);
+    expect(find.byType(CheAlpacaPaperPanel), findsNothing);
+
+    // Rebuild from nothing: initialSection only applies to a new room.
+    await tester.pumpWidget(const SizedBox());
+    await _pumpRoom(tester, s, section: CheTradingSection.chart);
+    expect(find.text('Alpaca PAPER'), findsNothing);
+    expect(find.text('MNQ PAPER'), findsOneWidget);
   });
 }

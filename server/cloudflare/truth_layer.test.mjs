@@ -345,7 +345,7 @@ test('skills: the report says exactly which agent has which skill — or that no
   saved.set('che', data);
   const some = await chat('Which skills did you give your agents from the agency-agents repo?');
   assert.match(some.text, /Knox: Frontend build checklist/);
-  assert.match(some.text, /Knox \(Engineering \/ Codex jobs\): assigned Frontend build checklist/);
+  assert.match(some.text, /Knox \(Security \/ protection\): assigned Frontend build checklist/);
   assert.match(some.text, /have no skills yet/);
 });
 

@@ -1,6 +1,7 @@
 // CHE's product layer over the portable Security Core (security_core/). Everything CHE-specific lives here: where
 // CHE keeps its security state, which of CHE's systems appear in the Cyber World, what CHE's lockdown really does,
 // CHE's agents and the owner's chain of command. The core itself never imports this file or any CHE module.
+import { SECURITY_CHIEF_NAME, SECURITY_CHIEF_TITLE } from './security_chief.js';
 import { access, agent, brain, createSecurityCore, detection, events as coreEvents, incidents as coreIncidents, knowledge as coreKnowledge, physical, policies, readiness, simulation, workflows } from './security_core/index.js';
 import { USABLE } from './capability_registry.js';
 import { BrainLedger } from './brain_ledger.js';
@@ -13,7 +14,7 @@ const MAX_SIMULATIONS = 5;
 const MAX_STORE_BYTES = 100_000;
 
 // The product name and agent name come from configuration, never from the core.
-export const CHE_SECURITY = createSecurityCore({ config: { product_name: 'Security', agent_name: 'Security', host_product: 'CHE', default_tenant: CHE_TENANT, max_events_per_tenant: 120, max_incidents_per_tenant: 30 } });
+export const CHE_SECURITY = createSecurityCore({ config: { product_name: 'Security', agent_name: SECURITY_CHIEF_NAME, host_product: 'CHE', default_tenant: CHE_TENANT, max_events_per_tenant: 120, max_incidents_per_tenant: 30 } });
 
 // Security knowledge categories in CHE's Brain: the Knowledge Library takes them as categories, and the Brain
 // Population Ledger (brain_ledger.js) files every security knowledge write under Security → its subcategory.
@@ -136,7 +137,7 @@ export function openIncidentsForEvents(store, now = new Date().toISOString()) {
 export function chePrincipals({ data = {}, registry = { capabilities: {} }, appsGranted = [] } = {}) {
   const list = [
     access.principal({ id: 'che', kind: 'agent', name: 'CHE', scopes: ['chat', 'memory', 'apps:granted', 'money:ask_first', 'delete:ask_first'], note: 'Lead assistant; asks first before money or deletion.' }),
-    access.principal({ id: 'security', kind: 'agent', name: 'Security', scopes: ['security:read', 'sessions:revoke', 'lockdown:preview', 'incidents:manage'], note: 'Second-in-command for security; lockdown needs the owner\'s confirmation.' }),
+    access.principal({ id: 'security', kind: 'agent', name: SECURITY_CHIEF_NAME, scopes: ['security:read', 'sessions:revoke', 'lockdown:preview', 'incidents:manage'], note: `${SECURITY_CHIEF_TITLE}, reporting to CHE; lockdown needs the owner's confirmation.` }),
     access.principal({ id: 'atlas', kind: 'agent', name: 'Atlas', scopes: ['code:repository', 'github:pull_requests'], note: 'Coding agent; separate from the security chain.' }),
   ];
   for (const cap of Object.values(registry.capabilities || {})) {
@@ -205,9 +206,9 @@ export function cheMetrics({ store, sec = {}, principals = [], registry = { capa
 }
 
 /** Records a completed check (time and counts only). */
-export function recordCheck(store, { findings = 0, advisories = null } = {}, now = new Date().toISOString()) {
+export function recordCheck(store, { findings = 0, advisories = null, deploy_checked = false } = {}, now = new Date().toISOString()) {
   const part = coreEvents.tenantState(store, CHE_TENANT);
-  part.checks = [{ at: now, findings, advisories }, ...(part.checks || [])].slice(0, 20);
+  part.checks = [{ at: now, findings, advisories, deploy_checked: deploy_checked === true }, ...(part.checks || [])].slice(0, 20);
 }
 
 /** Runs a drill and keeps its labelled result apart from real state. */
@@ -276,4 +277,4 @@ export function speakCore(view) {
   return parts.join(' ');
 }
 
-export { access, coreIncidents, coreKnowledge, detection, simulation };
+export { access, coreEvents, coreIncidents, coreKnowledge, detection, simulation };
