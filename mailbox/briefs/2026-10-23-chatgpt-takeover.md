@@ -61,7 +61,7 @@ NOT started by Claude. Research first: `rg -n "CONNECT|Connect " lib/rooms lib/s
 `release_status.mjs --sha <sha>` gives the deploy and the Shorebird run per merge. As of 83c2d67: everything merged is on both. A Shorebird patch cannot add native code or new icon glyphs (hence the icon guard test). Native changes need an IPA (`[ios-build]`).
 
 ### Also open
-- **PR #475 Film Studio** (owner: "fix ASAP"). Cause: `filmIntent` treated "build the search **feature**" as a film order, so test B1 failed and CI went red. Claude merged main and removed "feature" from `FILM_WORD` and the make regex (Film tests 25/25), then pushed. Check the PR's CI, then ask the owner before merging.
+- **PR #475 Film Studio** (owner: "fix ASAP"). Cause: `filmIntent` treated "build the search **feature**" as a film order, so test B1 failed and CI went red. Fixed in `86238a3` (main merged in; Worker suite 3513/3513, dart analyze clean locally). The owner explicitly said to merge #475 when green: if Claude has not merged it, squash-merge with the full head SHA once the 3 gating checks pass, then verify the deploy with release_status.mjs.
 - Uninvestigated: "publish: failure, runtime: failure" checks on 0049056.
 - Agents the owner stopped (brain reliability, lag, Film, Hybrid, trading-visual): do not resume their branches without an owner request. Exception: #475, which the owner asked to fix.
 
