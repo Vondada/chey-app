@@ -22,7 +22,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 final Map<String, dynamic> fixture = jsonDecode(File('test/fixtures/command_catalog.json').readAsStringSync()) as Map<String, dynamic>;
 final List<Map<String, dynamic>> _fixtureCommands = (fixture['commands'] as List).cast<Map<String, dynamic>>();
-final String _allLabel = 'All ${_fixtureCommands.length}';
 final String _intelligenceLabel = 'Intelligence & Control ${_fixtureCommands.where((c) => c['category'] == 'intelligence').length}';
 
 class FakeChe {
