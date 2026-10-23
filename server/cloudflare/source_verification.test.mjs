@@ -183,7 +183,16 @@ test('two outlets carrying the story are reported as corroboration', async () =>
   assert.match(out.reply, /2 independent outlets I opened report it\./);
 });
 
-test('an invented headline or publication date is caught against the real page', async () => {
+test('an invented headline or publication date is caught against the real page', async (t) => {
+  // "This week" is judged against the clock: freeze it the day after the page was published (Oct 15, 2026),
+  // or the test fails once that week has passed.
+  const RealDate = globalThis.Date;
+  const fixed = RealDate.parse('2026-10-16T15:00:00Z');
+  globalThis.Date = class extends RealDate {
+    constructor(...a) { super(...(a.length ? a : [fixed])); }
+    static now() { return fixed; }
+  };
+  t.after(() => { globalThis.Date = RealDate; });
   useWeb({ list: listings({ gdelt: [MEDGEMMA_LISTING] }) });
   const headline = await (await owner({
     model: () => `Google Research reported "Google AI Beats Doctors At Every Diagnosis" this week: ${MEDGEMMA_URL}. It is a big step for medicine, sir.`,
