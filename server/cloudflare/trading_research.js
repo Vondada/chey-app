@@ -313,7 +313,7 @@ export const regimeLabel = (g) => (!g || g.structure === 'unknown' ? 'Not enough
 // ─── Strategy definitions (only written rules are tested) ─────────────────────
 
 const INTRADAY_TFS = ['15s', '30s', '1m', '2m', '5m', '15m', '30m', '1h'];
-const MAX_TF = { 'orb-15m': '5m', 'silver-bullet-5m': '15m', 'vwap-revert-5m': '30m', 'pdhl-sweep-5m': '1h' };
+const MAX_TF = { 'p2p86-style-5m': '15m', 'orb-15m': '5m', 'silver-bullet-5m': '15m', 'vwap-revert-5m': '30m', 'pdhl-sweep-5m': '1h' };
 const DAILY_TFS = ['1D', '1W', '1M'];
 export const UNDEFINED_STRATEGIES = Object.freeze([
   { strategy_id: 'dirty-trez', name: 'Dirty Trez', why: 'No written entry, stop, target or timeframe rules exist in CHE. It is never backtested until the rules are written down.' },
@@ -327,8 +327,8 @@ export function strategyDefinitions() {
     defs.push({
       strategy_id: id, name: c.name, family: c.family || '', version: strategyVersion(id, 'any', { target_r: 2 }), defined: true, markets: [...MARKETS],
       direction: 'long and short', entry_rule: c.rules, exit_rule: 'stop, target or time: flat by 16:55 New York (ORB 15:55), before the CME break',
-      stop_rule: 'as written in the entry rule (1 tick beyond the setup extreme)', target_rule: c.flat ? 'the R multiple of the portfolio (2R default)' : (id === 'vwap-revert-5m' ? 'session VWAP' : 'the R multiple of the portfolio (2R default)'),
-      time_filter: id === 'silver-bullet-5m' ? '10:00–11:00 and 14:00–15:00 New York' : id === 'orb-15m' ? '9:45–11:30 New York' : 'none beyond the flat time',
+      stop_rule: 'as written in the entry rule (1 tick beyond the setup extreme)', target_rule: c.flat ? 'the R multiple of the portfolio (2R default)' : (id === 'vwap-revert-5m' ? 'session VWAP' : id === 'p2p86-style-5m' ? 'the overnight high or low (at least 1R away)' : 'the R multiple of the portfolio (2R default)'),
+      time_filter: id === 'silver-bullet-5m' ? '10:00–11:00 and 14:00–15:00 New York' : id === 'p2p86-style-5m' ? 'entries 9:35–11:00 New York; overnight range 18:00–9:30' : id === 'orb-15m' ? '9:45–11:30 New York' : 'none beyond the flat time',
       session_filter: 'none (sessions are measured, not filtered)', regime_filter: 'none (regimes are measured, not filtered)',
       position_sizing: '1 contract', max_holding: 'same CME trading day', risk_bounds: '6 to 60 index points of risk, otherwise skipped',
       data_requirements: 'intraday bars with real timestamps', context_timeframes: [], common_rules: INTRADAY_COMMON_RULES,
@@ -1076,7 +1076,7 @@ export function tfFromWords(words) {
   const m = /^(\d+)\s*(s|m|h|d)$/.exec(w.replace(/\s+/g, ''));
   return m ? ({ s: `${m[1]}s`, m: `${m[1]}m`, h: `${m[1]}h`, d: '1D' }[m[2]]) : null;
 }
-const STRATEGY_WORDS = [[/ema|pullback/, 'ema-pullback-5m'], [/vwap/, 'vwap-revert-5m'], [/rsi/, 'rsi-revert-5m'], [/opening range|\borb\b/, 'orb-15m'], [/silver bullet/, 'silver-bullet-5m'],
+const STRATEGY_WORDS = [[/\b86\b|p2p|overnight range/, 'p2p86-style-5m'], [/ema|pullback/, 'ema-pullback-5m'], [/vwap/, 'vwap-revert-5m'], [/rsi/, 'rsi-revert-5m'], [/opening range|\borb\b/, 'orb-15m'], [/silver bullet/, 'silver-bullet-5m'],
   [/order block/, 'order-block-5m'], [/fair value|\bfvg\b/, 'fvg-retest-5m'], [/structure shift|\bmss\b/, 'sweep-mss-5m'], [/previous day|pdh|pdl/, 'pdhl-sweep-5m'], [/sweep|reclaim|liquidity/, 'sweep-reclaim-5m']];
 export function strategyFromWords(words) { const w = String(words || '').toLowerCase(); return STRATEGY_WORDS.find(([re]) => re.test(w))?.[1] || null; }
 

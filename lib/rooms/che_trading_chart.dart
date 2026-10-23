@@ -12,6 +12,9 @@
 // - Tapping a price opens a PAPER order ticket. Preview shows cost, buying power after and any
 //   limit that blocks it; only the explicit "Yes, place paper order" sends it. Open orders can be
 //   cancelled, and every answer is the broker's record.
+// - MNQ PAPER with Rithmic connected (owner, 2026-10-23): 1- and 5-minute candles built on this phone from real
+//   Rithmic trades (lib/rithmic/rithmic_candles.dart) replace the Worker's delayed Yahoo bars from the first Rithmic
+//   candle on; earlier Yahoo history stays, drawn dimmer and labelled delayed. Every bar keeps its source.
 // The chart is silent on open; "Read chart" reads its summary only when asked.
 import 'dart:async';
 import 'dart:convert';
@@ -21,6 +24,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import '../che_ui/che_hud.dart';
+import '../rithmic/rithmic_candles.dart';
+import '../rithmic/rithmic_live.dart';
 import '../che_ui/che_theme.dart';
 import 'che_trading_hud.dart';
 
@@ -31,6 +36,7 @@ final _dim = CheColors.textDim;
 final _panel = CheColors.surface;
 final _stroke = CheColors.stroke;
 const _draw = Color(0xFF7FD3FF);
+const _level = Color(0xFFFFC857); // 86-style overnight levels
 
 /// The four marker sources, in the order the legend shows them.
 const kMarkerSources = <String, String>{
@@ -57,10 +63,16 @@ DateTime? _time(Object? v) {
 double? _num(Object? v) => v is num ? v.toDouble() : double.tryParse('${v ?? ''}');
 
 class ChartBar {
-  const ChartBar(this.t, this.o, this.h, this.l, this.c);
+  const ChartBar(this.t, this.o, this.h, this.l, this.c, {this.source = kBarHistory});
   final DateTime t;
   final double o, h, l, c;
+
+  /// Where the bar came from: [kBarRithmic] (built on this phone from Rithmic trades) or [kBarHistory] (the Worker).
+  final String source;
 }
+
+const kBarRithmic = 'rithmic';
+const kBarHistory = 'history';
 
 class ChartMarker {
   ChartMarker(this.raw)
@@ -111,6 +123,50 @@ class ChartDrawing {
       };
 }
 
+/// One level from CHE's 86-style overnight range model (an independent approximation, not the P2P indicator):
+/// the overnight high and low, and the entry, stop and target only when the written rules produced a signal.
+class ChartLevel {
+  const ChartLevel(this.kind, this.price, this.label);
+  final String kind; // overnight_high, overnight_low, entry, stop, target
+  final double price;
+  final String label;
+}
+
+/// The chart's overnight levels and a plain-language line for Read Aloud and VoiceOver.
+/// Says "approximation" every time: the original P2P indicator is closed source and not reproduced.
+class CheOvernightLevels {
+  const CheOvernightLevels(this.levels, this.spoken);
+  final List<ChartLevel> levels;
+  final String spoken;
+
+  static const none = CheOvernightLevels([], '');
+
+  static CheOvernightLevels fromJson(Object? j) {
+    if (j is! Map) return none;
+    final hi = _num(j['onHigh']), lo = _num(j['onLow']);
+    if (hi == null || lo == null) {
+      final why = j['reason']?.toString() ?? '';
+      return CheOvernightLevels(const [], why.isEmpty ? '' : '86-style overnight range (approximation): $why');
+    }
+    final out = <ChartLevel>[
+      ChartLevel('overnight_high', hi, 'ON high ${_fmt(hi)} · 86-style approx.'),
+      ChartLevel('overnight_low', lo, 'ON low ${_fmt(lo)} · 86-style approx.'),
+    ];
+    final sig = j['signal'];
+    if (sig is Map) {
+      for (final (k, name) in const [('ref', 'entry'), ('stop', 'stop'), ('target', 'target')]) {
+        final v = _num(sig[k]);
+        if (v != null) out.add(ChartLevel(name, v, '${name[0].toUpperCase()}${name.substring(1)} ${_fmt(v)}'));
+      }
+    }
+    final bias = j['bias']?.toString() ?? 'none';
+    final stage = '${j['stage'] ?? ''}'.replaceAll('_', ' ');
+    final reason = j['reason']?.toString() ?? '';
+    return CheOvernightLevels(out,
+        '86-style overnight range (CHE approximation, not the P2P indicator): high ${_fmt(hi)}, low ${_fmt(lo)}, bias $bias, stage $stage. $reason'.trim());
+  }
+}
+
 String _fmt(double v) => v >= 1000 ? v.toStringAsFixed(2).replaceAllMapped(RegExp(r'\B(?=(\d{3})+(?!\d))'), (m) => ',') : v.toStringAsFixed(2);
 String _clock(DateTime t) {
   final l = t.toLocal();
@@ -133,6 +189,19 @@ class CheTradingChartController extends ChangeNotifier {
     level = price;
     notifyListeners();
   }
+
+  /// The side-by-side view keeps two charts on one timeframe and zoom when synced (owner, 2026-10-23).
+  String? timeframe;
+  double? zoomFactor;
+  void showTimeframe(String tf) {
+    timeframe = tf;
+    notifyListeners();
+  }
+
+  void zoomBy(double factor) {
+    zoomFactor = factor;
+    notifyListeners();
+  }
 }
 
 enum _Tool { none, line, hline, box, text }
@@ -149,6 +218,7 @@ class CheTradingChart extends StatefulWidget {
     this.initialSymbol = '',
     this.initialStrategy,
     this.height = 340,
+    this.live,
   });
 
   final String Function() baseUrl;
@@ -164,6 +234,9 @@ class CheTradingChart extends StatefulWidget {
   final String? initialStrategy;
   final double height;
 
+  /// The shared Rithmic session (lib/rithmic/rithmic_live.dart); tests pass their own.
+  final CheRithmicLive? live;
+
   @override
   State<CheTradingChart> createState() => CheTradingChartState();
 }
@@ -175,8 +248,12 @@ class CheTradingChartState extends State<CheTradingChart> {
   String _tf = '5m';
   List<String> _timeframes = const ['1m', '5m', '15m', '1h', '1d'];
   List<ChartBar> _bars = const [];
+  List<ChartBar> _history = const [];
+  String _historyTf = '';
+  Timer? _liveRebuild;
   List<ChartMarker> _markers = const [];
   List<ChartDrawing> _drawings = [];
+  CheOvernightLevels _levels = CheOvernightLevels.none;
   List<Map<String, dynamic>> _openOrders = const [];
   Map<String, dynamic> _feed = const {};
   String _state = 'loading';
@@ -201,6 +278,7 @@ class CheTradingChartState extends State<CheTradingChart> {
     super.initState();
     _symbolField.text = _symbol;
     widget.controller?.addListener(_onController);
+    _live.addListener(_onLive);
     unawaited(load());
     _timer = Timer.periodic(const Duration(seconds: 30), (_) => unawaited(load(quiet: true)));
   }
@@ -208,6 +286,8 @@ class CheTradingChartState extends State<CheTradingChart> {
   @override
   void dispose() {
     _timer?.cancel();
+    _liveRebuild?.cancel();
+    _live.removeListener(_onLive);
     widget.controller?.removeListener(_onController);
     _symbolField.dispose();
     super.dispose();
@@ -221,6 +301,21 @@ class CheTradingChartState extends State<CheTradingChart> {
       _addDrawing(ChartDrawing(id: 'hline-${DateTime.now().millisecondsSinceEpoch}', kind: 'hline', points: [(null, price)]));
       return;
     }
+    if (c.zoomFactor != null) {
+      final factor = c.zoomFactor!;
+      c.zoomFactor = null;
+      if (_bars.isNotEmpty) zoom(factor);
+      return;
+    }
+    if (c.timeframe != null) {
+      final tf = c.timeframe!;
+      c.timeframe = null;
+      if (tf != _tf) {
+        setState(() => _tf = tf);
+        unawaited(load());
+      }
+      return;
+    }
     setState(() {
       if (c.account != null && kChartAccounts.containsKey(c.account)) _account = c.account!;
       if (c.symbol != null && c.symbol!.isNotEmpty) _symbol = c.symbol!.toUpperCase();
@@ -231,6 +326,80 @@ class CheTradingChartState extends State<CheTradingChart> {
   }
 
   String get accountLabel => kChartAccounts[_account] ?? _account;
+
+  // ─── Rithmic live candles (MNQ PAPER only) ────────────────────────────
+
+  CheRithmicLive get _live => widget.live ?? CheRithmicLive.instance;
+
+  /// Rithmic candles can be drawn: MNQ PAPER, and a Rithmic session that is connected or already recorded trades.
+  bool get _rithmicChart => _account == 'futures_paper' && (_live.attached || !_live.book.isEmpty);
+
+  /// The Rithmic source and status lines show once Rithmic is in play (connecting, connected, dropped or recorded).
+  /// Before that the feed line already names the delayed provider, and the layout stays as it was.
+  bool get _rithmicHeader => _account == 'futures_paper' && (_live.status != RithmicLiveStatus.off || !_live.book.isEmpty);
+
+  /// Trades arrive many times a second; the chart redraws at most four times a second.
+  void _onLive() {
+    if (!mounted || _account != 'futures_paper' || _liveRebuild != null) return;
+    _liveRebuild = Timer(const Duration(milliseconds: 250), () {
+      _liveRebuild = null;
+      if (!mounted) return;
+      setState(() {
+        _offerOneMinute();
+        _bars = _merged();
+      });
+    });
+  }
+
+  void _offerOneMinute() {
+    if (_rithmicChart && !_timeframes.contains('1m')) _timeframes = ['1m', ..._timeframes];
+  }
+
+  /// The bars to draw: Worker history, then Rithmic candles from the first one on. History of another
+  /// timeframe (the Worker answers 5m for a 1m request) is never stretched into this one.
+  List<ChartBar> _merged() {
+    final history = _historyTf == _tf ? _history : const <ChartBar>[];
+    final minutes = _tf == '1m' ? 1 : _tf == '5m' ? 5 : 0;
+    if (!_rithmicChart || minutes == 0) return history;
+    final live = [
+      for (final c in _live.book.candles(minutes)) ChartBar(c.t, c.o, c.h, c.l, c.c, source: kBarRithmic),
+    ];
+    if (live.isEmpty) return history;
+    final from = live.first.t;
+    return [...history.where((b) => b.t.isBefore(from)), ...live];
+  }
+
+  /// "Rithmic live — MNQZ6", or what the history really is: never "live" for delayed bars.
+  String get sourceLabel {
+    final provider = '${_feed['provider'] ?? ''}';
+    final history = provider.toLowerCase().contains('yahoo') ? 'Yahoo Finance (delayed)' : (provider.isEmpty ? 'Worker history' : provider);
+    if (_account != 'futures_paper') return provider.isEmpty ? 'Feed' : provider;
+    final rithmicBars = _bars.where((b) => b.source == kBarRithmic).length;
+    final historyBars = _bars.length - rithmicBars;
+    if (rithmicBars == 0) return 'Source: $history';
+    final live = _live.isLive ? 'Rithmic live — ${_live.symbol}' : 'Rithmic ${_live.symbol} (recorded on this phone)';
+    return historyBars == 0 ? 'Source: $live' : 'Source: $live from ${_clock(_bars.firstWhere((b) => b.source == kBarRithmic).t)}; earlier bars $history';
+  }
+
+  String _seconds(DateTime t) {
+    final l = t.toLocal();
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${two(l.hour)}:${two(l.minute)}:${two(l.second)}';
+  }
+
+  /// Connection status and last update for the Rithmic line in the header.
+  String get rithmicLine {
+    final parts = [_live.statusLabel, CheRithmicLive.backgroundNote.replaceFirst(RegExp(r'\.$'), '')];
+    final at = _live.lastTradeAt;
+    if (at != null) parts.add('last trade ${_seconds(at)}');
+    final got = _live.lastReceivedAt;
+    if (got != null) parts.add('updated ${_seconds(got)}');
+    final minutes = _tf == '1m' ? 1 : _tf == '5m' ? 5 : 0;
+    if (_bars.isNotEmpty && _bars.last.source == kBarRithmic && minutes > 0 && RithmicCandleBook.forming(_live.book.candles(minutes).last, minutes, DateTime.now())) {
+      parts.add('last candle forming');
+    }
+    return parts.join(' · ');
+  }
 
   Future<void> load({bool quiet = false}) async {
     final seq = ++_seq;
@@ -268,18 +437,24 @@ class CheTradingChartState extends State<CheTradingChart> {
       _symbolField.text = sym;
     }
     if (_account == 'futures_paper') _symbol = sym ?? 'MNQ';
-    _tf = '${j['timeframe'] ?? _tf}';
+    final served = '${j['timeframe'] ?? _tf}';
+    // The Worker has no 1-minute MNQ bars; with Rithmic, 1m stays chosen and is drawn from Rithmic candles alone.
+    if (!(_tf == '1m' && _rithmicChart)) _tf = served;
     _timeframes = [for (final t in (j['timeframes'] is List ? j['timeframes'] as List : _timeframes)) '$t'];
-    _bars = [
+    _offerOneMinute();
+    _historyTf = served;
+    _history = [
       for (final b in (j['bars'] is List ? j['bars'] as List : const []))
         if (b is Map && _time(b['t']) != null && _num(b['o']) != null && _num(b['h']) != null && _num(b['l']) != null && _num(b['c']) != null)
           ChartBar(_time(b['t'])!, _num(b['o'])!, _num(b['h'])!, _num(b['l'])!, _num(b['c'])!),
     ];
+    _bars = _merged();
     _markers = [
       for (final m in (j['markers'] is List ? j['markers'] as List : const []))
         if (m is Map<String, dynamic>) ChartMarker(m),
     ];
     _drawings = [for (final d in (j['drawings'] is List ? j['drawings'] as List : const [])) ?ChartDrawing.fromJson(d)];
+    _levels = CheOvernightLevels.fromJson(j['levels']);
     _openOrders = [for (final o in (j['open_orders'] is List ? j['open_orders'] as List : const [])) if (o is Map<String, dynamic>) o];
     _feed = j['feed'] is Map<String, dynamic> ? j['feed'] as Map<String, dynamic> : const {};
     _entriesAllowed = j['entries_allowed'] == true;
@@ -570,9 +745,12 @@ class CheTradingChartState extends State<CheTradingChart> {
       counts[m.source] = (counts[m.source] ?? 0) + 1;
     }
     final marks = counts.isEmpty ? 'No markers.' : 'Markers: ${counts.entries.map((e) => '${e.value} ${kMarkerSources[e.key] ?? e.key}').join(', ')}.';
-    final feed = '${_feed['provider'] ?? 'Feed'} is ${_feed['status'] ?? 'unknown'}${_feed['age_s'] is num ? ', last bar ${_age(_feed['age_s'] as num)} old' : ''}.';
+    final feed = _account == 'futures_paper'
+        ? '$sourceLabel. $rithmicLine.'
+        : '${_feed['provider'] ?? 'Feed'} is ${_feed['status'] ?? 'unknown'}${_feed['age_s'] is num ? ', last bar ${_age(_feed['age_s'] as num)} old' : ''}.';
     return '$accountLabel, $_symbol, $_tf candles. Last close ${_fmt(last.c)} at ${_clock(last.t)}. $marks $feed '
         '${_drawings.isEmpty ? '' : '${_drawings.length} drawing${_drawings.length == 1 ? '' : 's'}: ${_drawings.map((d) => d.spoken).join('; ')}. '}'
+        '${_levels.spoken.isEmpty ? '' : '${_levels.spoken} '}'
         '${_entriesAllowed ? (_marketAllowed ? 'Paper entries allowed.' : 'Limit orders only: $_blocked') : 'New entries blocked: $_blocked'}';
   }
 
@@ -691,6 +869,25 @@ class CheTradingChartState extends State<CheTradingChart> {
             }, semantics: 'Timeframe $t'),
         ]),
         const SizedBox(height: 8),
+        // MNQ PAPER: the active source, the Rithmic connection and its last update. Visible, never spoken unless asked.
+        if (_rithmicHeader) ...[
+          Text(sourceLabel, key: const ValueKey('chart-source'), style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 2),
+          Text(
+            rithmicLine,
+            key: const ValueKey('chart-rithmic'),
+            style: TextStyle(
+              color: switch (_live.status) {
+                RithmicLiveStatus.connected => _up,
+                RithmicLiveStatus.disconnected || RithmicLiveStatus.loginFailed => _down,
+                _ => _gold,
+              },
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 2),
+        ],
         // Feed health: always visible, never spoken unless asked.
         Semantics(
           liveRegion: false,
@@ -845,6 +1042,7 @@ class CheTradingChartState extends State<CheTradingChart> {
               bars: _window,
               markers: _shownMarkers,
               drawings: _drawings,
+              levels: _levels.levels,
               pending: _first,
             ),
           ),
@@ -904,10 +1102,11 @@ class _Geometry {
 }
 
 class _ChartPainter extends CustomPainter {
-  _ChartPainter({required this.bars, required this.markers, required this.drawings, required this.pending});
+  _ChartPainter({required this.bars, required this.markers, required this.drawings, this.levels = const [], required this.pending});
   final List<ChartBar> bars;
   final List<ChartMarker> markers;
   final List<ChartDrawing> drawings;
+  final List<ChartLevel> levels;
   final (DateTime?, double)? pending;
 
   @override
@@ -923,9 +1122,12 @@ class _ChartPainter extends CustomPainter {
       _text(canvas, _fmt(p), Offset(g.plotW + 4, y - 7), label);
     }
     final w = math.max(1.0, g.barW * 0.7);
+    // With Rithmic candles on screen, the delayed history candles are drawn dimmer so the two never look alike.
+    final mixed = bars.any((b) => b.source == kBarRithmic);
     for (var i = 0; i < bars.length; i++) {
       final b = bars[i];
-      final color = b.c >= b.o ? _up : _down;
+      final base = b.c >= b.o ? _up : _down;
+      final color = mixed && b.source != kBarRithmic ? base.withValues(alpha: 0.4) : base;
       final x = g.x(i);
       canvas.drawLine(Offset(x, g.y(b.h)), Offset(x, g.y(b.l)), Paint()..color = color..strokeWidth = 1);
       final top = g.y(math.max(b.o, b.c)), bottom = g.y(math.min(b.o, b.c));
@@ -964,6 +1166,19 @@ class _ChartPainter extends CustomPainter {
           canvas.drawCircle(pts.first, 3, Paint()..color = _draw);
       }
     }
+    // CHE's 86-style overnight levels (approximation): dashed, labelled, only when inside the visible prices.
+    for (final lv in levels) {
+      if (lv.price < g.min || lv.price > g.max) continue;
+      final color = switch (lv.kind) { 'stop' => _down, 'target' => _up, 'entry' => Colors.white, _ => _level };
+      final y = g.y(lv.price);
+      final dash = Paint()
+        ..color = color
+        ..strokeWidth = 1.2;
+      for (var x = 0.0; x < g.plotW; x += 10) {
+        canvas.drawLine(Offset(x, y), Offset(math.min(x + 6, g.plotW), y), dash);
+      }
+      _text(canvas, lv.label, Offset(g.plotW - 150, y - 15), TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w700));
+    }
     if (pending != null) {
       final px = g.xOfTime(pending!.$1);
       if (px != null) canvas.drawCircle(Offset(px, g.y(pending!.$2)), 5, ink);
@@ -997,7 +1212,7 @@ class _ChartPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _ChartPainter old) =>
-      old.bars != bars || old.markers != markers || old.drawings != drawings || old.pending != pending;
+      old.bars != bars || old.markers != markers || old.drawings != drawings || old.levels != levels || old.pending != pending;
 }
 
 /// One glyph per source so they never look alike: CHE forward a triangle, CHE simulation a hollow

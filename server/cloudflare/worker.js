@@ -86,6 +86,7 @@ import { nextStrategySimTickAt, setStrategySimCeiling, setStrategySimPaused, spe
 import { evidenceIntent, evidenceReport, evidenceTick } from './trading_evidence_runner.js';
 import { readTrades } from './trading_evidence.js';
 import { cancelCandidates, cancelConfirmation, cancelOrderIntent, chartIntent, chartView, drawIntent, futuresOrderIntent, marketOrderFeedProblem, readDrawings, saveDrawings, speakOrder } from './trading_chart.js';
+import { readRithmicCandles, storeRithmicCandles } from './rithmic_dataset.js';
 // A spoken cancel of one Alpaca PAPER order waiting for the owner's yes, or for his pick from a numbered list.
 const CHART_CANCEL_PENDING = 'trading_chart_cancel_pending';
 // "Number 2", "2", "the second one": a pick from a numbered list of n. 0 when the turn picks nothing.
@@ -235,6 +236,8 @@ import { acquire as acquireCapability, applyPolicy as applyCapabilityPolicy, cap
 import { EGRESS_KEY, SNAPSHOT_KEY, holdEgress, installEgressGuard, setEgressOwner, setEgressPolicy, storeEgressPolicy, SESSION_SCOPES, bump as securityBump, checkSession, createSession, dependencyAdvisories, detectThreats, issueNonce, loadSecurity, recordFindings, redact as redactSecretText, redactDeep, respondToIncident, restoreTrustedState, revokeSessions, saveSecurity, securityIntent, snapshotTrustedState, speakStatus as speakSecurityStatus } from './security_intelligence.js';
 import { loadRegistry as loadCapabilityRegistry } from './capability_registry.js';
 import { BrainLedger, answerLedger, decidePending as decideBrainPending, installBrainLedger, ledgerApi, ledgerIntent as brainLedgerIntent, DEFAULT_ZONE as LEDGER_DEFAULT_ZONE } from './brain_ledger.js';
+import { FilmStore, filmIntent, filmProgress, farmProviders, loadRates, loadUsage, speakFarm, speakPlan, speakStatus as speakFilmStatus } from './film_studio.js';
+import { FILM_ACTIVE_STATES, filmPlan, filmTick, filmTokenRoute, refreshValidation as refreshFilmValidation, remakeShot, setFilmState, startFilm } from './film_pipeline.js';
 import { engineView, exportWorkflows, feedbackOnLast, importWorkflows, library as workflowLibrary, loadEngine, matchLearned, noteVersion, promoteCandidate, dismissCandidate, rankWorkflows, recordRun as recordWorkflowRun, isDisabled as workflowDisabled, restoreVersion, saveEngine, setDisabled as setWorkflowDisabled, setPreferred as setWorkflowPreferred, speakEfficiency, speakLibrary, testCandidate, workflowForRun, workflowIntent } from './workflow_engine.js';
 import { CATEGORIES, COMMANDS, catalogView, commandById, commandStatus, connectorStatus, describeWorkflow, dispatchPrompt, findSavedWorkflow, normalizeSavedWorkflow, parseSlashCommand, readCommandSpeech, searchCommands, speakCommandList, speakUnavailable, suggestCommands, workflowNodes, workflowFromWords } from './command_catalog.js';
 import { handleReaRequest, loadInvestigation, parseReaRequest, reaInvestigationDetail, reaInvestigations } from './rea_runner.js';
@@ -4381,6 +4384,9 @@ export class CheState extends DurableObject {
     // autonomy on or off: recovery only corrects statuses, it never starts work.
     times.push(...data.team_tasks.filter((t) => ['running', 'reviewing'].includes(t.status))
       .map((t) => Math.max(Date.now() + 250, (Date.parse(t.updated_at) || Date.now()) + 5 * 60_000 + 1000)));
+    // Film Studio: an active film asks for its next pass.
+    const filmWake = Number(await this.ctx.storage.get('film:wake')) || 0;
+    if (filmWake) times.push(Math.max(Date.now() + 250, filmWake));
     // While Flagstaff is open, do one cheap GitHub-head check every 30 seconds.
     // The AI only runs when a genuinely new message addressed to CHE appears.
     const flagstaffInitialized = Boolean(await this.ctx.storage.get('web_mailbox_code'));
@@ -5853,6 +5859,13 @@ export class CheState extends DurableObject {
   // existing functions, answered from real results only.
   async runLocalCommand(command, input, request, data, pin = null, body = {}) {
     const env = this.keyEnv || this.env;
+    // Film Studio: the command's own words go through the same intent the owner's chat uses.
+    if (command.local === 'film_make' || command.local === 'film_status') {
+      if (!OWNER_CHAT_REQUESTS.has(request)) return ndjsonReply('Only the CHE owner can run Film Studio. Nothing was started.', { source: 'che_film_studio', ok: false, command: command.id, model_calls: 0 });
+      const ask = filmIntent(dispatchPrompt(command, input)) || (command.local === 'film_status' ? { kind: 'status' } : null);
+      if (!ask) return ndjsonReply('Say the length and the subject, for example "/film-make 10-minute movie about a lighthouse keeper".', { source: 'che_film_studio', ok: false, command: command.id, model_calls: 0 });
+      return withDoneFields(await this.filmChat(request, ask), { command: command.id });
+    }
     if (command.local === 'coding_cancel') {
       // Owner only, like POST /api/job/cancel: checked here too, not only by the guest gate in front.
       if (!OWNER_CHAT_REQUESTS.has(request)) return ndjsonReply('Only the CHE owner can cancel coding jobs. Nothing was changed.', { source: CODING_CANCEL_SOURCE, ok: false, model_calls: 0 });
@@ -6223,6 +6236,90 @@ export class CheState extends DurableObject {
   }
 
   // The owner's spoken or typed security requests. Every answer reports what was actually done or found.
+  // ── Film Studio ────────────────────────────────────────────────────────
+  // What every film step needs. The owner's own computer is never part of it (owner, 2026-10-22).
+  async filmCtx(request = null) {
+    const storage = this.ctx.storage;
+    if (request) { try { await storage.put('film:base', new URL(request.url).origin); } catch (_) {} }
+    let internalOnly = false; let noExport = false;
+    try { internalOnly = (await storage.get(EGRESS_KEY))?.internal_only === true; } catch (_) {}
+    try { noExport = ((await loadCapabilityPolicy(storage)).no_export_projects || []).length > 0; } catch (_) {}
+    let keys = {};
+    try { keys = await storedKeys(storage); } catch (_) {}
+    const env = this.keyEnv || this.env;
+    const writer = async (messages) => {
+      const out = await this.env.AI.run(this.env.CHE_STRONG_MODEL || STRONG_MODEL, { messages, max_tokens: 3000 });
+      return String(out?.response ?? out ?? '');
+    };
+    return { storage, env, keys, writer, base: (await storage.get('film:base')) || '', internalOnly, noExport, fetcher: fetch };
+  }
+
+  /** One alarm pass of film work: quick steps run back to back for up to ~25 seconds, then CHE sleeps until due. */
+  async filmPass() {
+    if (!(await this.ctx.storage.get('film:wake'))) return;
+    const ctx = await this.filmCtx();
+    const started = Date.now();
+    let next = null;
+    do { ctx.now = Date.now(); next = await filmTick(ctx); } while (next != null && next <= 1000 && Date.now() - started < 25_000);
+    if (next == null) await this.ctx.storage.delete('film:wake');
+    else await this.ctx.storage.put('film:wake', Date.now() + next);
+  }
+
+  async wakeFilm() {
+    await this.ctx.storage.put('film:wake', Date.now() + 500);
+    const alarm = await this.ctx.storage.getAlarm();
+    if (!alarm || alarm > Date.now() + 1000) await this.ctx.storage.setAlarm(Date.now() + 500);
+  }
+
+  async filmView(request) {
+    const ctx = await this.filmCtx(request);
+    const store = new FilmStore(ctx.storage);
+    const film = await store.latest();
+    const shots = film?.shot_count ? await store.shots(film.id, film.shot_count) : [];
+    const { rates, measured } = await loadRates(ctx.storage);
+    return {
+      film: film ? { id: film.id, title: film.title, topic: film.topic, state: film.state, target_s: film.target_s, deadline_s: film.deadline_s, plan: film.plan, stats: film.stats, notes: film.notes || [], errors: (film.errors || []).slice(-3), waiting: film.waiting || '', result: film.result, created_at: film.created_at } : null,
+      progress: film ? filmProgress(film, shots) : null,
+      spoken: speakFilmStatus(film, shots),
+      shots: shots.slice(0, 400).map((s) => ({ n: s.n, scene: s.scene, tier: s.tier, status: s.status, description: s.description.slice(0, 160), still_key: s.still_of === s.n ? s.still_key : '', reuses: s.still_of, reason: s.check?.ok === false ? s.check.reason : '', downgraded: s.downgraded || '' })),
+      films: (await store.index()).slice(0, 20),
+      providers: await farmProviders(ctx.env, ctx.storage, ctx),
+      rates, measured, usage: await loadUsage(ctx.storage),
+    };
+  }
+
+  async filmAction(request, body) {
+    const ctx = await this.filmCtx(request);
+    const action = String(body.action || '');
+    if (action === 'make') {
+      const out = await startFilm(ctx, { topic: String(body.topic || '').slice(0, 300), seconds: Math.max(20, Math.min(14400, Number(body.seconds) || 300)), deadline: body.deadline_s == null ? null : { seconds: Math.max(0, Number(body.deadline_s)), words: String(body.deadline_words || '').slice(0, 40) } });
+      if (out.ok) await this.wakeFilm();
+      return { ok: out.ok, said: out.said, film_id: out.film?.id || null };
+    }
+    if (action === 'plan') {
+      await refreshFilmValidation(ctx);
+      const { plan } = await filmPlan(ctx, { seconds: Math.max(20, Math.min(14400, Number(body.seconds) || 300)), deadline: body.deadline_s == null ? null : { seconds: Number(body.deadline_s) } });
+      return { ok: plan.ok, said: speakPlan(plan, { asked: String(body.deadline_words || '').slice(0, 40) }), plan };
+    }
+    if (action === 'farm') { await refreshFilmValidation(ctx, { force: true }); return { ok: true, said: speakFarm(await farmProviders(ctx.env, ctx.storage, ctx)) }; }
+    if (['pause', 'resume', 'cancel'].includes(action)) { const out = await setFilmState(ctx, action); if (out.ok && action === 'resume') await this.wakeFilm(); return { ok: out.ok, said: out.said }; }
+    if (action === 'remake') { const out = await remakeShot(ctx, Number(body.shot)); if (out.ok) await this.wakeFilm(); return { ok: out.ok, said: out.said }; }
+    return { ok: false, status: 400, said: 'Unknown Film Studio action.' };
+  }
+
+  async filmChat(request, ask) {
+    const say = (text, extra = {}) => ndjsonReply(text, { source: 'che_film_studio', ok: true, model_calls: 0, film_action: ask.kind, ...extra });
+    if (ask.kind === 'open') return say('Opening Film Studio.', { open_screen: 'film_studio' });
+    if (ask.kind === 'status') {
+      const store = new FilmStore(this.ctx.storage);
+      const film = await store.latest();
+      return say(speakFilmStatus(film, film?.shot_count ? await store.shots(film.id, film.shot_count) : []));
+    }
+    const map = { make: 'make', plan: 'plan', farm: 'farm', pause: 'pause', resume: 'resume', cancel: 'cancel', remake: 'remake' };
+    const out = await this.filmAction(request, { action: map[ask.kind], topic: ask.topic, seconds: ask.seconds, deadline_s: ask.deadline ? ask.deadline.seconds : undefined, deadline_words: ask.deadline?.words || '', shot: ask.shot });
+    return say(out.said, { ok: out.ok !== false, ...(out.film_id ? { film_id: out.film_id } : {}) });
+  }
+
   async securityChat(data, ask, tokenHash) {
     const say = (text, extra = {}) => ndjsonReply(text, { source: 'che_security', ok: true, model_calls: 0, security_action: ask.action, ...extra });
     if (ask.action === 'check') {
@@ -6665,6 +6762,12 @@ export class CheState extends DurableObject {
         });
       }
 
+      // Film Studio runners and farm GPUs: each route opens only with its own expiring job or farm token, and reads
+      // its body itself (film parts and clips are binary), so these come before the JSON body is parsed.
+      if (path.startsWith('/api/film/render/') || path.startsWith('/api/film/farm/')) {
+        const routed = await filmTokenRoute(await this.filmCtx(request), path, request);
+        if (routed) return routed;
+      }
       const body = ['POST', 'PATCH', 'PUT'].includes(request.method) ? await bodyOf(request) : {};
       // Visual Studio render Action: the edit document and its source files, opened only by that job's one-time,
       // expiring token. No device token exists on the GitHub runner; nothing else is reachable with this one.
@@ -8107,6 +8210,19 @@ export class CheState extends DurableObject {
         if (view.ok && view.account === 'alpaca_paper' && view.symbol) await this.ctx.storage.put('trading_chart_last_symbol', view.symbol);
         return json(view, view.ok ? 200 : 400);
       }
+      // CHE's own forward-recorded Rithmic minutes (owner, 2026-10-23): closed 1-minute candles the owner's iPhone
+      // built from real Rithmic trades. Market data only; the Rithmic login never reaches the Worker.
+      if (path === '/api/trading/rithmic/candles' && request.method === 'POST') {
+        if (!ownerDevice) return tradingOwnerOnly();
+        const saved = await storeRithmicCandles(this.ctx.storage, body.candles);
+        return json(saved, saved.ok ? 200 : 400);
+      }
+      if (path === '/api/trading/rithmic/candles' && request.method === 'GET') {
+        if (!ownerDevice) return tradingOwnerOnly();
+        const q = new URL(request.url).searchParams;
+        const read = await readRithmicCandles(this.ctx.storage, { symbol: (q.get('symbol') || '').trim().toUpperCase().slice(0, 8), from: q.get('from'), to: q.get('to') });
+        return json(read, read.ok ? 200 : 400);
+      }
       if (path === '/api/trading/chart/drawings' && request.method === 'PUT') {
         if (!ownerDevice) return tradingOwnerOnly();
         const saved = await saveDrawings(this.ctx.storage, String(body.account || ''), String(body.symbol || ''), body.drawings);
@@ -8164,6 +8280,20 @@ export class CheState extends DurableObject {
       }
 
       // ─── Resilience: keys, AI Mailbox letters, tech folders ───────────
+      // ─── Film Studio (owner): films, progress, the free farm, and the owner's controls ───
+      if (path === '/api/film' && request.method === 'GET') return ownerDevice ? json(await this.filmView(request)) : json({ detail: 'Only the CHE owner can open Film Studio.' }, 403);
+      if (path === '/api/film' && request.method === 'POST') {
+        if (!ownerDevice) return json({ detail: 'Only the CHE owner can run Film Studio.' }, 403);
+        const out = await this.filmAction(request, body);
+        return json(out, out.ok === false && out.status ? out.status : 200);
+      }
+      if (path === '/api/film/still' && request.method === 'GET' && ownerDevice) {
+        const q = new URL(request.url).searchParams;
+        const key = String(q.get('key') || '');
+        if (!/^film\/film_[a-f0-9]{16}\/(?:stills|clips)\/[0-9]{1,5}\.(?:jpg|mp4)$/.test(key) || !this.env.CHE_DATA_BUCKET) return json({ detail: 'Not found.' }, 404);
+        const obj = await this.env.CHE_DATA_BUCKET.get(key);
+        return obj ? new Response(obj.body, { headers: { 'Content-Type': obj.httpMetadata?.contentType || 'image/jpeg', 'Cache-Control': 'private, max-age=3600' } }) : json({ detail: 'Not found.' }, 404);
+      }
       if (path === '/api/keys' && request.method === 'GET') {
         // Status only; keys themselves never leave the server.
         const health = (await this.ctx.storage.get('key_health')) || {};
@@ -10125,6 +10255,9 @@ export class CheState extends DurableObject {
           // Workflow Engine: the owner's words about the library, then a promoted learned workflow this request matches.
           const secAsk = ownerDevice && !body.attachment && !body.workflow_step ? securityIntent(rawMessage) : null;
           if (secAsk) return this.securityChat(data, secAsk, tokenHash);
+          // Film Studio: make, plan, status, remake, pause/resume/stop and the free render farm (film_studio.filmIntent).
+          const filmAsk = ownerDevice && !body.attachment && !body.workflow_step ? filmIntent(rawMessage) : null;
+          if (filmAsk) return this.filmChat(request, filmAsk);
           // Capability Engine: what CHE can actually do, what she learned, owner policies (internal-only and memory).
           // Brain Population Ledger: what entered the Brain, when, where from, and whether it is usable yet.
           const ledgerAsk = ownerDevice && !body.attachment && !body.workflow_step ? brainLedgerIntent(rawMessage) : null;
@@ -12366,7 +12499,7 @@ export class CheState extends DurableObject {
             { source: 'che_trading_chart', ok: saved.ok, model_calls: 0, open_view: 'trading_chart', chart: { account, symbol } });
         }
         if (chartAsk?.kind === 'chart_open') {
-          const where = chartAsk.section === 'strategies' ? 'Opening Strategies, sir.' : `Opening the ${chartAsk.account === 'alpaca_paper' ? 'Alpaca PAPER' : chartAsk.account === 'futures_paper' ? 'MNQ paper' : ''} chart${chartAsk.symbol ? ` for ${chartAsk.symbol}` : ''}${chartAsk.filter?.strategy ? `, showing only ${chartAsk.filter.strategy.toUpperCase()} trades` : ''}, sir.`;
+          const where = chartAsk.section === 'strategies' ? 'Opening Strategies, sir.' : chartAsk.section === 'compare' ? 'Opening Side by Side, sir: your account beside CHE\'s paper account. Live orders stay disabled.' : `Opening the ${chartAsk.account === 'alpaca_paper' ? 'Alpaca PAPER' : chartAsk.account === 'futures_paper' ? 'MNQ paper' : ''} chart${chartAsk.symbol ? ` for ${chartAsk.symbol}` : ''}${chartAsk.filter?.strategy ? `, showing only ${chartAsk.filter.strategy.toUpperCase()} trades` : ''}, sir.`;
           return ndjsonReply(where.replace('the  chart', 'the chart'), { source: 'che_trading_chart', ok: true, model_calls: 0, open_view: 'trading_chart', chart: { section: chartAsk.section, account: chartAsk.account || null, symbol: chartAsk.symbol || null, filter: chartAsk.filter || null } });
         }
         const desk = body.attachment ? null : deskIntent(message);
@@ -13990,6 +14123,7 @@ export class CheState extends DurableObject {
       if (kept.length) await this.ctx.storage.setAlarm(Math.min(...kept));
       return;
     }
+    await this.filmPass().catch((error) => console.error('Film Studio pass failed:', error?.message || error));
     // Flagstaff stays responsive even when Office autonomy is paused. Incoming
     // AI messages are advice only and cannot authorize consequential actions.
     await this.processFlagstaffInbox().catch((error) => {

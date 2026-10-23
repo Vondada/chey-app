@@ -1,0 +1,147 @@
+name: CHE Film Render
+run-name: CHE film render ${{ inputs.job_id }}
+# Film Studio assembly (server/cloudflare/film_render.js). One runner per segment, up to 20 at once (the free-plan
+# limit); each fetches its segment spec and files from CHE with the job's one-time token and renders with
+# tools/che_film_render.py. The final job joins the segments without re-encoding and uploads the film to CHE's R2 in
+# parts. CHE checks the stored file itself before it calls the film done.
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: Film assembly job id (fgha_...)
+        required: true
+        type: string
+      source:
+        description: CHE Worker base URL
+        required: true
+        type: string
+      token:
+        description: One-time assembly token (expires; opens only this job)
+        required: true
+        type: string
+      segments:
+        description: Number of segments
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: film-render-${{ inputs.job_id }}
+  cancel-in-progress: false
+env:
+  JOB: ${{ inputs.job_id }}
+  SOURCE: ${{ inputs.source }}
+  TOKEN: ${{ inputs.token }}
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    outputs:
+      segments: ${{ steps.list.outputs.segments }}
+    steps:
+      - name: Check inputs and list segments
+        id: list
+        run: |
+          echo "::add-mask::$TOKEN"
+          [[ "$JOB" =~ ^fgha_[a-f0-9]{32}$ ]] || { echo "bad job id"; exit 1; }
+          [[ "$SOURCE" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?$ ]] || { echo "bad source"; exit 1; }
+          n="${{ inputs.segments }}"
+          [[ "$n" =~ ^[0-9]{1,3}$ && "$n" -ge 1 && "$n" -le 200 ]] || { echo "bad segment count"; exit 1; }
+          echo "segments=$(python3 -c "import json;print(json.dumps(list(range($n))))")" >> "$GITHUB_OUTPUT"
+  segment:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: true
+      max-parallel: 20
+      matrix:
+        index: ${{ fromJSON(needs.plan.outputs.segments) }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Hide the one-time token in logs
+        run: echo "::add-mask::$TOKEN"
+      - name: Install ffmpeg (static build; apt fallback)
+        timeout-minutes: 10
+        run: |
+          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
+            url=https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz
+            if curl -fsSL --retry 3 --max-time 240 "$url" -o /tmp/ffmpeg.tar.xz && tar -xJf /tmp/ffmpeg.tar.xz -C /tmp; then
+              sudo install -m 755 /tmp/ffmpeg-master-latest-linux64-gpl/bin/ffmpeg /tmp/ffmpeg-master-latest-linux64-gpl/bin/ffprobe /usr/local/bin/
+            else
+              sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+            fi
+          fi
+          sudo apt-get install -y --no-install-recommends fonts-dejavu-core >/dev/null 2>&1 || true
+      - name: Fetch the segment spec and its files
+        run: |
+          set -euo pipefail
+          mkdir -p sources
+          curl -fsS --retry 3 --max-time 60 -H "X-CHE-Render-Token: $TOKEN" "$SOURCE/api/film/render/$JOB/segment/${{ matrix.index }}" -o spec.json
+          python3 - <<'PY'
+          import json, os, re, subprocess, concurrent.futures
+          spec = json.load(open('spec.json'))
+          def get(key):
+              assert re.fullmatch(r'film/film_[a-f0-9]{16}/[a-z]+/[A-Za-z0-9_.-]{1,80}', key), key
+              os.makedirs(os.path.dirname('sources/' + key), exist_ok=True)
+              subprocess.run(['curl', '-fsS', '--retry', '3', '--max-time', '300', '-G', '--data-urlencode', f'key={key}', '-H', f"X-CHE-Render-Token: {os.environ['TOKEN']}",
+                              f"{os.environ['SOURCE']}/api/film/render/{os.environ['JOB']}/asset", '-o', 'sources/' + key], check=True)
+          with concurrent.futures.ThreadPoolExecutor(16) as pool:
+              list(pool.map(get, spec['assets']))
+          PY
+      - name: Render the segment
+        run: |
+          python3 tools/che_film_render.py segment --spec spec.json --sources sources --out "segment-$(printf %03d ${{ matrix.index }}).mp4" --report report.json
+          curl -fsS --max-time 30 -X POST -H "X-CHE-Render-Token: $TOKEN" -H 'Content-Type: application/json' --data @report.json "$SOURCE/api/film/render/$JOB/report" || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: film-segment-${{ matrix.index }}
+          path: segment-*.mp4
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+  join:
+    needs: segment
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Hide the one-time token in logs
+        run: echo "::add-mask::$TOKEN"
+      - name: Install ffmpeg (static build; apt fallback)
+        timeout-minutes: 10
+        run: |
+          url=https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz
+          if curl -fsSL --retry 3 --max-time 240 "$url" -o /tmp/ffmpeg.tar.xz && tar -xJf /tmp/ffmpeg.tar.xz -C /tmp; then
+            sudo install -m 755 /tmp/ffmpeg-master-latest-linux64-gpl/bin/ffmpeg /tmp/ffmpeg-master-latest-linux64-gpl/bin/ffprobe /usr/local/bin/
+          else
+            sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+          fi
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: film-segment-*
+          merge-multiple: true
+          path: segments
+      - name: Join without re-encoding and measure
+        run: |
+          set -euo pipefail
+          python3 tools/che_film_render.py concat --out film.mp4 $(ls segments/segment-*.mp4 | sort) | tee facts.json
+      - name: Upload the film to CHE in parts
+        run: |
+          set -euo pipefail
+          start=$(date +%s)
+          id=$(curl -fsS --retry 3 --max-time 60 -X POST -H "X-CHE-Render-Token: $TOKEN" "$SOURCE/api/film/render/$JOB/upload/start" | python3 -c 'import json,sys;print(json.load(sys.stdin)["upload_id"])')
+          split -b 50m -d -a 4 film.mp4 part-
+          parts='['
+          n=0
+          for f in $(ls part-* | sort); do
+            n=$((n+1))
+            etag=$(curl -fsS --retry 3 --max-time 600 -X PUT -H "X-CHE-Render-Token: $TOKEN" -H 'Content-Type: application/octet-stream' --data-binary @"$f" \
+              "$SOURCE/api/film/render/$JOB/upload/part?upload_id=$id&n=$n" | python3 -c 'import json,sys;print(json.load(sys.stdin)["etag"])')
+            parts="$parts{\"n\":$n,\"etag\":\"$etag\"},"
+          done
+          parts="${parts%,}]"
+          curl -fsS --max-time 30 -X POST -H "X-CHE-Render-Token: $TOKEN" -H 'Content-Type: application/json' \
+            --data "{\"finish_s\": $(( $(date +%s) - start )), \"segment\": \"final\"}" "$SOURCE/api/film/render/$JOB/report" || true
+          curl -fsS --max-time 300 -X POST -H "X-CHE-Render-Token: $TOKEN" -H 'Content-Type: application/json' \
+            --data "{\"upload_id\":\"$id\",\"parts\":$parts}" "$SOURCE/api/film/render/$JOB/upload/complete"
