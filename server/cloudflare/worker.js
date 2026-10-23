@@ -114,6 +114,7 @@ import { PLAN_SOURCE, answerPlanFollowUp, buildPlan, classifyProject, listPlans,
 import { BRAIN_ROOMS_SOURCE, ROOMS as BRAIN_ROOMS, answerCrossRoom, crossRoomIntent, drainRoomEvents, imageReference, pointsAtScreen, prFollowUp, recentScreen, relinkRecords, rememberScreen, screenDeictic, screenFollowUp, screenRoomContext, screenRoomFor, statusLabel } from './brain_rooms.js';
 import { controlChangeEvent, meetingEvent, officeTaskEvent, paperOrderRefusedEvent, phoneRoomEvent, queueRoomEvent, researchEvent } from './room_events.js';
 import { cloudDailyLimit, sanitizeOwnerText } from './che_errors.js';
+import { commitIntent, commitReceipt, speakReceipt } from './deploy_receipt.js';
 import { CHE_UPDATE_GUIDE, mergeSelfUpdatePr, openSelfUpdatePr, rollbackLastUpdate, selfUpdateGitHubAccess, selfUpdateStatus, workerDeploymentStatus, latestWorkerDeploymentIntent, latestWorkerDeploymentStatus, speakLatestWorkerDeployment, appStatusIntent, appStatusReport } from './self_update.js';
 import { FAILURE_CLASS, backoffMs, classifyFailure, idempotencyKey, ownerEngineeringMessage, stableHash, stripOwnerHomework } from './recovery_policy.js';
 import { handleMobileUpdateRequest, isMobileUpdatePath } from './mobile_update.js';
@@ -10006,6 +10007,20 @@ export class CheState extends DurableObject {
         // Owner asks for the latest deployment receipt: query GitHub Actions
         // before any source-code inspection. Reading a workflow YAML or the
         // CHE-only last_self_update_deploy key cannot prove deployment history.
+        // "What changed in commit X / what can I test on my iPhone / verify the deployment / is the latest commit
+        // live": GitHub's commit, PR and run records plus this Worker's own version tag and the phone's own report,
+        // each with its link (deploy_receipt.js). Checked before the status route, which once swallowed these.
+        const commitAsk = !body.attachment && !body.workflow_step ? commitIntent(rawMessage, body.history) : null;
+        if (commitAsk) {
+          await this.dropHeldActions();
+          const receipt = await commitReceipt(this.env, { ref: commitAsk.ref, changes: commitAsk.changes, verify: commitAsk.verify, runtime: runtimeVersion(this.env), client: body.client_app, fetcher: fetch })
+            .catch(() => ({ commit: null, evidence: [], missing: ['The commit lookup failed inside CHE; nothing is verified.'] }));
+          return ndjsonReply(speakReceipt(receipt, commitAsk), {
+            source: 'che_commit_receipt', ok: Boolean(receipt.commit), model_calls: 0, deploy_receipt: receipt,
+            evidence_links: receipt.evidence,
+            execution_receipt: receipt.commit ? { tool: 'github', operation: 'read_commit_and_runs', status: 'success', source: receipt.commit.url, commit_sha: receipt.commit.sha } : null,
+          });
+        }
         const runtimeStatusAsk = !body.attachment && !body.workflow_step ? appStatusIntent(rawMessage) : null;
         if (runtimeStatusAsk) {
           if (!ownerDevice) return ownerOnly();

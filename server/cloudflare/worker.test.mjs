@@ -104,6 +104,50 @@ test('paired iPhone voice request gets a live deployment receipt before speech i
   }
 });
 
+test('"what changed in commit X and what can I test on my iPhone" gets the commit receipt, not the status text', async () => {
+  const saved = new Map();
+  const sha = 'f37bc3ac9315936e8d7e31aaa898611414629e40';
+  const env = {
+    CHE_PAIR_CODE: '123456', CHE_GITHUB_TOKEN: 'test-only', CHE_GITHUB_REPO: 'Vondada/chey-app',
+    CF_VERSION_METADATA: { id: '662e75ae-36c3-41fc-8120-1ea8dcdb7c09', tag: sha.slice(0, 12) },
+    AI: { run: async () => ({ response: 'MODEL ANSWER' }) },
+  };
+  const state = new CheState({ storage: { get: async (k) => saved.get(k), put: async (k, v) => saved.set(k, v), delete: async (k) => saved.delete(k), setAlarm: async () => {} } }, env);
+  env.CHE_STATE = { getByName: () => state };
+  const post = (path, message, token = '') => worker.fetch(new Request('https://che.example' + path, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) }, body: JSON.stringify(message),
+  }), env);
+  const token = (await (await post('/api/pair', { code: '123456' })).json()).device_token;
+  const originalFetch = globalThis.fetch;
+  const body = (data) => new Response(JSON.stringify(data), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes('/pulls')) return body([{ number: 473, title: 'Retrieve app and backend versions', html_url: 'https://github.com/Vondada/chey-app/pull/473', merged_at: 'x' }]);
+    if (u.includes('/commits/')) return body({ sha, html_url: 'https://github.com/Vondada/chey-app/commit/' + sha, commit: { message: 'Retrieve app and backend versions [worker-deploy] (#473)', committer: { date: '2026-10-23T03:22:50Z' } }, stats: { additions: 10, deletions: 2 }, files: [{ filename: 'server/cloudflare/self_update.js', additions: 10, deletions: 2 }] });
+    if (u.includes('/actions/runs?head_sha=')) return body({ workflow_runs: [{ id: 39894698904, path: '.github/workflows/che-worker-deploy.yml', status: 'completed', conclusion: 'success', html_url: 'https://github.com/Vondada/chey-app/actions/runs/39894698904', created_at: 'a' }] });
+    if (u.startsWith('https://api.github.com/')) return body({});
+    return originalFetch(url);
+  };
+  try {
+    const history = [];
+    for (const message of ['What changed in commit f37bc3ac and what can I test on my iPhone?', 'What can I test on my iPhone from that commit?']) {
+      const result = await post('/api/chat', { message, history: [...history] }, token);
+      const spoken = await result.text();
+      assert.match(spoken, /che_commit_receipt/, message);
+      assert.doesNotMatch(spoken, /che_runtime_status|MODEL ANSWER/, message);
+      assert.match(spoken, /pull request 473/);
+      assert.match(spoken, /this commit is live/);
+      assert.match(spoken, /actions\/runs\/39894698904/);
+      history.push({ role: 'user', content: message }, { role: 'assistant', content: 'Commit f37bc3ac9315 was checked.' });
+    }
+    // A real status question still gets the status route.
+    const status = await (await post('/api/chat', { message: 'What version of CHE am I running?', history: [] }, token)).text();
+    assert.match(status, /che_runtime_status/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('latest Worker deployment receipt uses current GitHub run; stale/local state is never substituted', async () => {
   const repository = 'Vondada/chey-app';
   const env = { CHE_GITHUB_REPO: repository, CHE_GITHUB_TOKEN: 'fixture' };
