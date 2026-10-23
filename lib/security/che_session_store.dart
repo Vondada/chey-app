@@ -111,8 +111,9 @@ class CheSessionStore {
       await _kv.write(tokenKey, token);
       await prefs.remove(tokenKey);
     } catch (_) {
-      // No Keychain (tests, or a platform without one): keep the old behaviour rather than losing the sign-in.
-      await prefs.setString(tokenKey, token);
+      // The Keychain refused the write: the sign-in works for this run from memory only. It is never written to plain
+      // storage; the next launch asks to pair again rather than keep a token unprotected.
+      await prefs.remove(tokenKey);
     }
   }
 

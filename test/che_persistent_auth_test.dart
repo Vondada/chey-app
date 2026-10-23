@@ -94,6 +94,14 @@ void main() {
       expect(cheSessionEndMessage(CheSessionEnd.unpaired), contains('signed this phone out'));
     });
 
+    test('a Keychain that refuses the write never pushes the token into plain storage', () async {
+      keychain.locked = true;
+      final store = coldStart();
+      await store.save(token);
+      expect(store.cached, token, reason: 'this run keeps working');
+      expect((await SharedPreferences.getInstance()).getString(CheSessionStore.tokenKey), isNull);
+    });
+
     test('pairing again clears the signed-out note', () async {
       final store = coldStart();
       await store.clear(CheSessionEnd.revoked);
