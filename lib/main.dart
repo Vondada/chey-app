@@ -36,6 +36,7 @@ import 'security/che_session_store.dart';
 import 'brain/che_brain_ledger_screen.dart';
 import 'brain/che_brain_list.dart' show CheBrainRecordLinks;
 import 'brain/che_brain_sections.dart' show CheBrainEvidence, CheEvidenceKind, cheRecordIdsOf;
+import 'che_ui/che_owner_improvements.dart';
 import 'workflows/che_workflows_screen.dart';
 import 'film/che_film_studio_screen.dart';
 import 'world/che_meeting_room.dart';
@@ -660,6 +661,18 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
     await Navigator.of(context).push(MaterialPageRoute<void>(
       builder: (_) => CheBrainLedgerScreen(
         client: CheBrainLedgerClient(baseUrl: cheAgentBaseUrl, headers: () => _authHeaders),
+        onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
+        onListen: () => unawaited(toggleListening()),
+      ),
+    ));
+  }
+
+  /// More → Owner Improvements (also "open owner improvements" in chat): what the owner asked CHE to change.
+  Future<void> _openOwnerImprovements() async {
+    HapticFeedback.selectionClick();
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => CheOwnerImprovementsScreen(
+        client: CheOwnerImprovementsClient(baseUrl: cheAgentBaseUrl, headers: () => _authHeaders),
         onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
         onListen: () => unawaited(toggleListening()),
       ),
@@ -1703,6 +1716,7 @@ OWNER AGENCY
       onOpenOffice: () => _goShellTab(2),
       onOpenBrain: _openMemoryBrain,
       onOpenTrading: () => _openAssistantHub(tab: 1),
+      onConnectRithmic: () => unawaited(_openRithmic()),
       onOpenCreate: () => _openAssistantHub(tab: 5),
       onOpenWorld: () => _goShellTab(3),
       onOpenSecurity: () => unawaited(_openSecurity()),
@@ -2301,6 +2315,13 @@ OWNER AGENCY
           title: 'Brain Ledger',
           subtitle: 'What entered CHE\'s brain, when, and whether it is usable yet',
           onTap: () => unawaited(_openBrainLedger()),
+          hue: kit.CheColors.accent,
+        ),
+        CheMoreItem(
+          icon: Icons.tune_rounded,
+          title: 'Owner Improvements',
+          subtitle: 'What you asked CHE to change, where it stands, and undo',
+          onTap: () => unawaited(_openOwnerImprovements()),
           hue: kit.CheColors.accent,
         ),
         CheMoreItem(

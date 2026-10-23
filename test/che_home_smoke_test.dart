@@ -24,7 +24,7 @@ void main() {
     expect(find.bySemanticsLabel(RegExp(r'^Voice on\.')), findsOneWidget);
     // On this smaller iPhone the room pills sit just below the tiles, one short scroll down.
     final homeList = find.descendant(of: find.byType(CheMockupHome), matching: find.byType(Scrollable)).first;
-    for (final destination in ['OFFICE', 'MNQ', 'Brain', 'Create']) {
+    for (final destination in ['OFFICE', 'MNQ · RITHMIC', 'Brain', 'Create']) {
       await tester.scrollUntilVisible(find.text(destination), 120, scrollable: homeList);
       expect(find.text(destination), findsOneWidget, reason: destination);
     }

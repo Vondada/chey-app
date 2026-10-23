@@ -119,6 +119,7 @@ import { BRAIN_ROOMS_SOURCE, ROOMS as BRAIN_ROOMS, answerCrossRoom, crossRoomInt
 import { controlChangeEvent, meetingEvent, officeTaskEvent, paperOrderRefusedEvent, phoneRoomEvent, queueRoomEvent, researchEvent } from './room_events.js';
 import { cloudDailyLimit, sanitizeOwnerText } from './che_errors.js';
 import { commitIntent, commitReceipt, speakReceipt } from './deploy_receipt.js';
+import { UI_CONFIG, handleImprovement, improvementIntent, loadImprovements, recordApplied, startLoggedTask, startTaskIntent, summary as improvementSummary, uiConfigPayload, undoTask, withJobStates } from './owner_improvements.js';
 import { CHE_UPDATE_GUIDE, mergeSelfUpdatePr, openSelfUpdatePr, rollbackLastUpdate, selfUpdateGitHubAccess, selfUpdateStatus, workerDeploymentStatus, latestWorkerDeploymentIntent, latestWorkerDeploymentStatus, speakLatestWorkerDeployment, appStatusIntent, appStatusReport } from './self_update.js';
 import { FAILURE_CLASS, backoffMs, classifyFailure, idempotencyKey, ownerEngineeringMessage, stableHash, stripOwnerHomework } from './recovery_policy.js';
 import { handleMobileUpdateRequest, isMobileUpdatePath } from './mobile_update.js';
@@ -5960,6 +5961,13 @@ export class CheState extends DurableObject {
       if (!ask) return ndjsonReply('Say the length and the subject, for example "/film-make 10-minute movie about a lighthouse keeper".', { source: 'che_film_studio', ok: false, command: command.id, model_calls: 0 });
       return withDoneFields(await this.filmChat(request, ask), { command: command.id });
     }
+    // Owner Improvements: the command's words go through the same intent the owner's chat uses.
+    if (command.local === 'owner_improvement') {
+      if (!OWNER_CHAT_REQUESTS.has(request)) return ndjsonReply('Only the CHE owner can change CHE. Nothing was changed.', { source: 'che_owner_improvement', ok: false, command: command.id, model_calls: 0 });
+      const ask = improvementIntent(String(input || '')) || startTaskIntent(String(input || '')) || (String(input || '').trim() ? null : { kind: 'list' });
+      if (!ask) return ndjsonReply('Tell me what feels wrong, for example "/che-improve the chart is too big". Nothing was changed.', { source: 'che_owner_improvement', ok: false, command: command.id, model_calls: 0 });
+      return withDoneFields(await this.improvementChat(body || {}, ask), { command: command.id });
+    }
     if (command.local === 'coding_cancel') {
       // Owner only, like POST /api/job/cancel: checked here too, not only by the guest gate in front.
       if (!OWNER_CHAT_REQUESTS.has(request)) return ndjsonReply('Only the CHE owner can cancel coding jobs. Nothing was changed.', { source: CODING_CANCEL_SOURCE, ok: false, model_calls: 0 });
@@ -8078,6 +8086,34 @@ export class CheState extends DurableObject {
         if (!ownerDevice) return ownerOnly();
         const draft = await Promise.resolve().then(() => this.ctx.storage.get('fye_draft')).catch(() => null);
         return json({ ok: true, status: FYE_STATUS, draft: draft || null, order_sent: false });
+      }
+      // Owner Improvements (owner, 2026-10-23): the ledger, the live UI preferences, and the iPhone's apply receipt.
+      if (path === '/api/owner/improvements' && request.method === 'GET') {
+        if (!ownerDevice) return ownerOnly();
+        const state = await loadImprovements(this.ctx.storage);
+        const tasks = withJobStates(state.tasks, (await this.loadData().catch(() => ({ jobs: [] }))).jobs);
+        return json({ tasks, config: uiConfigPayload(state), schema: UI_CONFIG, summary: improvementSummary({ tasks }) });
+      }
+      if (path === '/api/owner/ui-config' && request.method === 'GET') {
+        if (!ownerDevice) return ownerOnly();
+        return json(uiConfigPayload(await loadImprovements(this.ctx.storage)));
+      }
+      const improvementAct = /^\/api\/owner\/improvements\/(imp-\d{8}-\d{3})\/(applied|undo|start)$/.exec(path);
+      if (improvementAct && request.method === 'POST') {
+        if (!ownerDevice) return ownerOnly();
+        const [, id, act] = improvementAct;
+        if (act === 'applied') {
+          const out = await recordApplied(this.ctx.storage, id, body);
+          return json(out.body, out.status);
+        }
+        if (act === 'undo') {
+          const out = await undoTask(this.ctx.storage, id);
+          return json({ ok: out.ok, spoken: out.text, task: out.task || null, ...(out.fields || {}) }, out.ok ? 200 : 409);
+        }
+        const reply = await this.improvementChat({}, { kind: 'start', id });
+        const lines = (await reply.text()).split('\n').filter(Boolean).map((l) => JSON.parse(l));
+        const done = lines.find((l) => l.type === 'done') || {};
+        return json({ ok: done.ok !== false, spoken: lines.filter((l) => l.type === 'delta').map((l) => l.delta).join(''), improvement_id: id, improvement_status: done.improvement_status || null, job_id: done.job_id || null });
       }
       // Strategy governor (owner, 2026-10-23): which strategies may trade forward paper, why, and every decision with its evidence.
       if (path === '/api/trading/governor' && request.method === 'GET') {
@@ -10314,6 +10350,14 @@ export class CheState extends DurableObject {
             evidence_links: receipt.evidence,
             execution_receipt: receipt.commit ? { tool: 'github', operation: 'read_commit_and_runs', status: 'success', source: receipt.commit.url, commit_sha: receipt.commit.sha } : null,
           });
+        }
+        // Owner Improvements (owner, 2026-10-23): "this page is too cramped", "make the chart smaller", "undo that".
+        // A supported setting is changed, read back and sent to the iPhone; code work goes to the coding pipeline.
+        const improveAsk = !body.attachment && !body.workflow_step
+          ? (startTaskIntent(rawMessage) || improvementIntent(rawMessage, { visualOpen: Boolean(body.visual_project_id) })) : null;
+        if (improveAsk) {
+          const reply = await this.improvementChat(body, improveAsk);
+          if (reply) return reply;
         }
         const runtimeStatusAsk = !body.attachment && !body.workflow_step ? appStatusIntent(rawMessage) : null;
         if (runtimeStatusAsk) {
@@ -15059,6 +15103,36 @@ export class CheState extends DurableObject {
 
   // Owner chat reply for a coding request. Proposal → short summary;
   // failures → one human-level sentence (diagnostics stay on the Worker).
+  // Owner Improvements: one request, answered from the ledger in owner_improvements.js. Code work goes through
+  // selfDevelopmentReply, and the task keeps the job id that pipeline really returned.
+  async improvementChat(body, ask) {
+    const delegate = async (brief) => {
+      const text = await (await this.selfDevelopmentReply(brief)).text();
+      let said = '';
+      let done = {};
+      for (const line of text.split('\n')) {
+        try {
+          const event = JSON.parse(line);
+          if (event.type === 'delta') said += event.delta || '';
+          if (event.type === 'done') done = event;
+        } catch (_) {}
+      }
+      const jobId = done.job_id || done.background_job_id || null;
+      return { ok: done.ok !== false && !done.failure_class && done.source === 'che_self_development', job_id: jobId, text: said };
+    };
+    const screen = String(body.active_screen || '').slice(0, 60);
+    const out = ask.kind === 'start'
+      ? await startLoggedTask(this.ctx.storage, ask.id, { delegate })
+      : await handleImprovement(this.ctx.storage, ask, { screen, delegate });
+    if (!out) return null;
+    return ndjsonReply(out.text, {
+      source: 'che_owner_improvement', ok: out.ok !== false, model_calls: 0, improvement_action: ask.kind,
+      ...(out.task ? { improvement_id: out.task.id, improvement_status: out.task.status } : {}),
+      ...(out.job_id ? { job_id: out.job_id } : {}),
+      ...(out.fields || {}),
+    });
+  }
+
   async selfDevelopmentReply(message, { vectorRecall = {}, onAccepted = null } = {}) {
     const policy = currentTurnActionPolicy(message);
     if (!policy.codingJobAllowed) {
