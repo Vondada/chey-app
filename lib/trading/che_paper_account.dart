@@ -238,6 +238,7 @@ class ChePaperPosition {
     List<CheTradeAdjustment>? adjustments,
     List<ChePricePoint>? path,
     this.riskAlerted = false,
+    this.period,
   })  : adjustments = adjustments ?? [],
         path = path ?? [];
 
@@ -256,6 +257,10 @@ class ChePaperPosition {
   final List<CheTradeAdjustment> adjustments;
   final List<ChePricePoint> path;
   bool riskAlerted;
+
+  /// The balance period (the seq of the opening balance or reset) the trade closed in; a reset
+  /// starts a new period without touching earlier trades.
+  int? period;
 
   CheSide get side => signal.side;
   String get symbol => signal.symbol;
@@ -325,6 +330,7 @@ class ChePaperPosition {
         'exit_at': exitAt?.toUtc().toIso8601String(), 'exit_reason': exitReason, 'last_price': lastPrice,
         'last_price_at': lastPriceAt?.toUtc().toIso8601String(), 'net_pnl': netPnl, 'gross_pnl': grossPnl, 'cost_dollars': costDollars,
         'adjustments': [for (final a in adjustments) a.toJson()], 'path': [for (final p in path) p.toJson()], 'risk_alerted': riskAlerted,
+        'period': period,
         'label': kChePaperLabel,
       };
 
@@ -348,6 +354,7 @@ class ChePaperPosition {
         adjustments: [for (final a in (j['adjustments'] as List? ?? const [])) CheTradeAdjustment.fromJson(Map<String, dynamic>.from(a as Map))],
         path: [for (final p in (j['path'] as List? ?? const [])) ChePricePoint.fromJson(Map<String, dynamic>.from(p as Map))],
         riskAlerted: j['risk_alerted'] == true,
+        period: (j['period'] as num?)?.toInt(),
       );
 }
 
