@@ -239,7 +239,10 @@ class ChePaperPosition {
     List<ChePricePoint>? path,
     this.riskAlerted = false,
     this.period,
-  })  : adjustments = adjustments ?? [],
+    List<CheSetupCondition>? currentConditions,
+    this.conditionsAt,
+  })  : currentConditions = currentConditions ?? [],
+        adjustments = adjustments ?? [],
         path = path ?? [];
 
   final String id;
@@ -261,6 +264,11 @@ class ChePaperPosition {
   /// The balance period (the seq of the opening balance or reset) the trade closed in; a reset
   /// starts a new period without touching earlier trades.
   int? period;
+
+  /// The setup's conditions as the signal engine last re-checked them while the trade is open
+  /// (the original ones stay in [signal]); empty until it reports.
+  List<CheSetupCondition> currentConditions;
+  DateTime? conditionsAt;
 
   CheSide get side => signal.side;
   String get symbol => signal.symbol;
@@ -331,6 +339,8 @@ class ChePaperPosition {
         'last_price_at': lastPriceAt?.toUtc().toIso8601String(), 'net_pnl': netPnl, 'gross_pnl': grossPnl, 'cost_dollars': costDollars,
         'adjustments': [for (final a in adjustments) a.toJson()], 'path': [for (final p in path) p.toJson()], 'risk_alerted': riskAlerted,
         'period': period,
+        'current_conditions': [for (final c in currentConditions) c.toJson()],
+        'conditions_at': conditionsAt?.toUtc().toIso8601String(),
         'label': kChePaperLabel,
       };
 
@@ -355,6 +365,8 @@ class ChePaperPosition {
         path: [for (final p in (j['path'] as List? ?? const [])) ChePricePoint.fromJson(Map<String, dynamic>.from(p as Map))],
         riskAlerted: j['risk_alerted'] == true,
         period: (j['period'] as num?)?.toInt(),
+        currentConditions: [for (final c in (j['current_conditions'] as List? ?? const [])) CheSetupCondition.fromJson(Map<String, dynamic>.from(c as Map))],
+        conditionsAt: _t(j['conditions_at']),
       );
 }
 

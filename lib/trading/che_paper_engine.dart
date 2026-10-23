@@ -131,6 +131,9 @@ class ChePaperEngine extends ChangeNotifier {
   static Future<ChePaperEngine>? _shared;
   static Future<ChePaperEngine> shared() => _shared ??= load(ChePaperFileStore());
 
+  /// After a failed load, so the next open tries again.
+  static void forgetShared() => _shared = null;
+
   static Future<ChePaperEngine> load(ChePaperStore store, {DateTime Function()? clock}) async {
     final e = ChePaperEngine._(store, clock ?? DateTime.now);
     final s = await store.readState();
@@ -477,6 +480,27 @@ class ChePaperEngine extends ChangeNotifier {
     _journal.add(CheJournalEntry(at: now, positionId: p.id, kind: 'adjusted', text: 'Stop $newStop, target $newTarget: $reason'));
     _changed();
     return null;
+  }
+
+  /// The signal engine re-checked an open trade's setup: its conditions now. Changes are journaled.
+  void updateConditions(String signalId, List<CheSetupCondition> now) {
+    final p = _positions.where((p) => p.signal.id == signalId && p.status == ChePositionStatus.open).firstOrNull;
+    if (p == null) return;
+    String sig(List<CheSetupCondition> l) => l.map((c) => '${c.name}=${c.status}').join('|');
+    if (sig(p.currentConditions) == sig(now)) return;
+    final failed = now.where((c) => c.status == 'failed').map((c) => c.name).toList();
+    p
+      ..currentConditions = List.of(now)
+      ..conditionsAt = _clock();
+    _journal.add(CheJournalEntry(
+      at: _clock(),
+      positionId: p.id,
+      kind: 'remains_open',
+      text: failed.isEmpty
+          ? 'Setup re-checked: conditions still hold; the trade stays open with stop ${p.stop} and target ${p.target}.'
+          : 'Setup re-checked: ${failed.join(', ')} no longer holds. The trade stays open on its stop ${p.stop}; CHE does not close early without a rule.',
+    ));
+    _changed();
   }
 
   /// A journal note on why an open trade stays open.
