@@ -436,7 +436,14 @@ class _CheOrbState extends State<CheOrb> with SingleTickerProviderStateMixin {
   // Only a live orb (the presence orb, or one on a reply being written)
   // animates. The small orbs beside finished messages are painted once, so a
   // long chat doesn't run dozens of animations while scrolling.
-  bool get _animate => widget.state != null || widget.active;
+  // An idle presence orb (sleeping, awake, completed) is drawn still: animating it kept every tab drawing 60 frames a
+  // second with nothing happening (measured 2026-10-23, stability mission). It moves while CHE listens, thinks,
+  // speaks or works.
+  bool get _animate {
+    final st = widget.state;
+    if (st == null) return widget.active;
+    return st != CheOrbState.sleeping && st != CheOrbState.awake && st != CheOrbState.completed;
+  }
 
   @override
   void initState() {

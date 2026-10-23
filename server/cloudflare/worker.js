@@ -161,7 +161,7 @@ import { chatgptHistoryIntent, importChatgptBatch, ownerMemorySearchIntent, owne
 import { adRequest, adStatusLines, assetTruthReply } from './asset_truth.js';
 import { dropAgentTaskTurns, replyRepeatsAgentTask } from './agent_task_guard.js';
 import { openKnowledgeLibrary, seedKnowledgeCatalog } from './knowledge_catalog_seed.js';
-import { CheBrainStore, backfillConversations, displayCopy, isSafeText, ownerMemoryRecord, projectLegacyState, rememberExchange, retrievableOwnerRecord, retrievalBody, sameDisplayCopy } from './brain_store.js';
+import { CheBrainStore, backfillConversations, forgetBrainSchema, displayCopy, isSafeText, ownerMemoryRecord, projectLegacyState, rememberExchange, retrievableOwnerRecord, retrievalBody, sameDisplayCopy } from './brain_store.js';
 import { brainReviewIntent, latestReview, ownerScore, runBrainMaintenance, speakReview } from './brain_audit.js';
 import { answerCorrespondenceQuestion, archiveTasks, correspondenceStatus, importOutsideCorrespondence, outsideCorrespondenceIntent, projectOfficeExperience, recoverHistory, speakCorrespondenceCount, speakCorrespondenceImport, workerBrains } from './brain_office.js';
 import { fetchYouTubeKnowledge, mergeCaptionLines, normalizeCaptionLines, youtubeVideoId } from './youtube_learning.js';
@@ -242,6 +242,7 @@ import { loadRegistry as loadCapabilityRegistry } from './capability_registry.js
 import { BrainLedger, answerLedger, decidePending as decideBrainPending, installBrainLedger, ledgerApi, ledgerIntent as brainLedgerIntent, DEFAULT_ZONE as LEDGER_DEFAULT_ZONE } from './brain_ledger.js';
 import { FilmStore, filmIntent, filmProgress, farmProviders, loadRates, loadUsage, speakFarm, speakPlan, speakStatus as speakFilmStatus } from './film_studio.js';
 import { FILM_ACTIVE_STATES, filmPlan, filmTick, filmTokenRoute, refreshValidation as refreshFilmValidation, remakeShot, setFilmState, startFilm } from './film_pipeline.js';
+import { performanceBanner, performanceIntent, performanceReport, recordTiming, routeKey as perfRouteKey, speakPerformance } from './perf_watch.js';
 import { engineView, exportWorkflows, feedbackOnLast, importWorkflows, library as workflowLibrary, loadEngine, matchLearned, noteVersion, promoteCandidate, dismissCandidate, rankWorkflows, recordRun as recordWorkflowRun, isDisabled as workflowDisabled, restoreVersion, saveEngine, setDisabled as setWorkflowDisabled, setPreferred as setWorkflowPreferred, speakEfficiency, speakLibrary, testCandidate, workflowForRun, workflowIntent } from './workflow_engine.js';
 import { CATEGORIES, COMMANDS, catalogView, commandById, commandStatus, connectorStatus, describeWorkflow, dispatchPrompt, findSavedWorkflow, normalizeSavedWorkflow, parseSlashCommand, readCommandSpeech, searchCommands, speakCommandList, speakUnavailable, suggestCommands, workflowNodes, workflowFromWords } from './command_catalog.js';
 import { handleReaRequest, loadInvestigation, parseReaRequest, reaInvestigationDetail, reaInvestigations } from './rea_runner.js';
@@ -426,7 +427,7 @@ async function withDoneFields(response, fields) {
 }
 
 // The library workflow that served this reply, on its done event. Plain-JSON held replies are left as they are.
-async function withWorkflowReceipt(response, message, data, engine) {
+async function withWorkflowReceipt(response, message, data, engine, onDone = null) {
   const raw = await response.text();
   const lines = raw.split('\n');
   const at = lines.map((line) => { try { return JSON.parse(line); } catch (_) { return null; } }).findLastIndex((e) => e && e.type === 'done');
@@ -437,6 +438,7 @@ async function withWorkflowReceipt(response, message, data, engine) {
     const wf = workflowLibrary(data, engine).find((w) => w.id === id);
     done.workflow = { id, name: wf?.name || id, kind: wf?.kind || 'route', version: wf?.version || 1, deterministic: wf ? wf.deterministic !== false : true };
     lines[at] = JSON.stringify(done);
+    if (onDone) onDone(done);
   }
   return new Response(lines.join('\n'), { status: response.status, headers: response.headers });
 }
@@ -3697,12 +3699,37 @@ function activeLegalActivities(data = {}, legal = {}) {
   return [...acts];
 }
 
+// Calls onWrite before any write that can change `che` (put, delete, deleteAll, a transaction). Installed once per
+// storage object; a second CheState over the same storage (a restart in tests) adds its listener to the same hook.
+function watchCheWrites(storage, onWrite) {
+  if (!storage || typeof storage.put !== 'function') return;
+  if (!storage.__cheWriteListeners) {
+    const listeners = new Set();
+    Object.defineProperty(storage, '__cheWriteListeners', { value: listeners });
+    const touches = (key) => key === 'che' || (Array.isArray(key) ? key.includes('che') : Boolean(key && typeof key === 'object' && 'che' in key));
+    const fire = () => { for (const f of listeners) { try { f(); } catch (_) { /* a listener never breaks a write */ } } };
+    const wrap = (name, always) => {
+      const original = typeof storage[name] === 'function' ? storage[name].bind(storage) : null;
+      if (!original) return;
+      storage[name] = function cheCounted(key, ...rest) { if (always || touches(key)) fire(); return original(key, ...rest); };
+    };
+    wrap('put', false);
+    wrap('delete', false);
+    wrap('deleteAll', true);
+    wrap('transaction', true);
+  }
+  storage.__cheWriteListeners.add(onWrite);
+}
+
 export class CheState extends DurableObject {
   constructor(state, env) {
     super(state, env);
     // Brain Population Ledger: every write to a watched key (owner memories, capability registry, learned workflows,
     // trading evidence) leaves a category-first, timestamped record. Brain/library/knowledge writes log themselves.
     try { installBrainLedger(state.storage); } catch (error) { console.error('Brain ledger hook not installed:', error?.message || error); }
+    // Performance (owner, 2026-10-22): counts writes to `che` so peekData() can share one read per request.
+    this.cheWrites = 0;
+    try { watchCheWrites(state.storage, () => { this.cheWrites += 1; }); } catch (_) { /* a storage without methods to wrap */ }
     // Every text model call goes through CHE's free-engine router. Persist
     // per-engine daily usage estimates in this owner's Durable Object.
     this.env = routedEnv(env, fetch, state.storage);
@@ -3838,6 +3865,18 @@ export class CheState extends DurableObject {
     await this.ctx.storage.put('che', data);
     await this.scheduleWork();
     return lines.join(' ');
+  }
+
+  // One read of `che` per request for callers that only read it (the workflow receipt, the history filter): each
+  // storage.get deserializes the whole owner state, which grows with the brain (docs/CHE_PERFORMANCE.md). Any write to
+  // `che` drops the copy. Never mutate what this returns; use loadData() to change and save.
+  async peekData() {
+    const stamp = this.cheWrites;
+    const snap = this.cheSnapshot;
+    if (snap && snap.stamp === stamp && snap.request === this.currentRequest && this.currentRequest) return snap.data;
+    const data = await this.loadData();
+    this.cheSnapshot = stamp === this.cheWrites ? { stamp, request: this.currentRequest, data } : null;
+    return data;
   }
 
   async loadData() {
@@ -5536,6 +5575,7 @@ export class CheState extends DurableObject {
   // Every owner ↔ CHE exchange becomes a brain memory, after the reply is
   // sent (never in front of it), whatever route inside /api/chat answered.
   async fetch(request) {
+    this.currentRequest = request;
     // The deploy's memory check starts its isolated test CHE fresh each run, so the records each
     // run leaves behind cannot grow it past what storage accepts. Only the per-deploy random token
     // opens this, only the memory check sends it, and never to an object named anything else.
@@ -5544,6 +5584,7 @@ export class CheState extends DurableObject {
       // so the owner's CHE can never be reached by this route.
       if (!isMemoryProbeRequest(request, this.env) || this.ctx.id?.name !== MEMORY_PROBE_OBJECT) return json({ detail: 'Not found.' }, 404);
       await this.ctx.storage.deleteAll();
+      forgetBrainSchema(this.ctx.storage);
       return json({ ok: true, reset: true });
     }
     // Internal-only mode (Security Intelligence): every outbound fetch is checked against the owner's policy.
@@ -5575,6 +5616,8 @@ export class CheState extends DurableObject {
     const sent = isChat ? request.clone().json().catch(() => null) : null;
     const startedAt = Date.now();
     let response = await this.handleRequest(request);
+    const handlerMs = Date.now() - startedAt;
+    let modelCalls = null;
     if (response?.status >= 500 && response.status !== 503) await this.securityCount('server_error');
     // Issue #345: a turn with a money or delete hold, or several steps with a "don't", carries how CHE
     // read it. The phone shows it as quiet text under the reply and never speaks it by itself.
@@ -5585,7 +5628,7 @@ export class CheState extends DurableObject {
     if (isChat && response?.ok && OWNER_CHAT_REQUESTS.has(request) && /ndjson/i.test(response.headers.get('Content-Type') || '')) {
       response = await withSoulRecord(response, await loadSoul(this.ctx.storage), this.ctx.storage);
       // Workflow Engine: the reply says which library workflow served it (shown as quiet text, never spoken).
-      response = await withWorkflowReceipt(response, String((await sent)?.message || ''), await this.loadData(), await loadEngine(this.ctx.storage));
+      response = await withWorkflowReceipt(response, String((await sent)?.message || ''), await this.peekData(), await loadEngine(this.ctx.storage), (done) => { modelCalls = done.model_calls != null && Number.isFinite(Number(done.model_calls)) ? Number(done.model_calls) : (!done.source || done.source === 'model') ? 1 : null; });
     }
     // A trade alert the owner has not heard yet is said first, in the reply
     // to whatever he says next (there is no phone push for it yet).
@@ -5637,7 +5680,7 @@ export class CheState extends DurableObject {
           const doneEvent = raw.split('\n').filter(Boolean).map((line) => { try { return JSON.parse(line); } catch (_) { return null; } }).filter((e) => e?.type === 'done').pop() || {};
           if (message && !body?.workflow_step) {
             const engine = await loadEngine(this.ctx.storage);
-            recordWorkflowRun(engine, { message, done: doneEvent, held: Boolean(heldReply?.held_for_owner), slash: slash?.command?.id || '', ms: Date.now() - startedAt, data: await this.loadData() });
+            recordWorkflowRun(engine, { message, done: doneEvent, held: Boolean(heldReply?.held_for_owner), slash: slash?.command?.id || '', ms: Date.now() - startedAt, data: await this.peekData() });
             await saveEngine(this.ctx.storage, engine);
           }
         } catch (_) {}
@@ -5663,6 +5706,13 @@ export class CheState extends DurableObject {
           }).catch(() => null);
         }
       })().catch(() => null));
+    }
+    // Performance watch (perf_watch.js): route and milliseconds only, flushed at most once a minute, never in the reply's way.
+    if (!probeRun && this.ctx.waitUntil) {
+      const url = new URL(request.url);
+      const key = perfRouteKey(request.method, url.pathname, { modelCalls });
+      const total = Date.now() - startedAt;
+      if (key) this.ctx.waitUntil(recordTiming(this.ctx.storage, key, { total, stages: { handler: handlerMs, finishing: total - handlerMs } }).catch(() => null));
     }
     return response;
   }
@@ -7665,10 +7715,17 @@ export class CheState extends DurableObject {
         }
         return json({ detail: 'Method not allowed.' }, 405);
       }
+      // Performance watch: measured timings per route against the budget (owner device only).
+      if (request.method === 'GET' && path === '/api/performance') {
+        if (!ownerDevice) return json({ detail: 'Not found.' }, 404);
+        return json(await performanceReport(this.ctx.storage));
+      }
       if (request.method === 'GET' && path === '/api/state') {
         const capabilityRegistry = runtimeCapabilityRegistry(this.env, data);
         return json({
           capability_registry: capabilityRegistry,
+          // One quiet line for the app when CHE is over her performance budget; { status: 'ok' } otherwise.
+          ...(ownerDevice ? { performance: performanceBanner(await performanceReport(this.ctx.storage).catch(() => null)) } : {}),
           memories: data.memories,
           memory_records: data.memory_records || [],
           memory_notes: listMemoryNotes(data),
@@ -10480,7 +10537,7 @@ export class CheState extends DurableObject {
           return ndjsonReply(text, { source: 'che_reply_provenance', model_calls: 0, engine: 'no model (deterministic)', previous_reply: record || null });
         }
         // Office task lines are not the owner's conversation, so they never reach the model as history (agent_task_guard.js).
-        const ownerHistory = dropAgentTaskTurns(Array.isArray(body.history) ? body.history : [], (await this.loadData().catch(() => ({}))).team_tasks || []);
+        const ownerHistory = dropAgentTaskTurns(Array.isArray(body.history) ? body.history : [], (await this.peekData().catch(() => ({}))).team_tasks || []);
         // Evaluate references before the interpreter expands "the last one"
         // into a new question. Route it later, after permission handling.
         const asksForEvidence = evidenceQuestion(rawMessage, ownerHistory) ||
@@ -11701,6 +11758,11 @@ export class CheState extends DurableObject {
         // A question about what the owner himself said ("what have I told you about my brain
         // review") is his memory question, below, never the review.
         const memoryQuestion = ownerDevice && !body.attachment ? ownerMemoryQuestion(rawMessage) : null;
+        // "Are you lagging?" / "performance report" / /che-performance: measured timings, never an estimate (perf_watch.js).
+        if (ownerDevice && !body.attachment && performanceIntent(rawMessage)) {
+          const report = await performanceReport(this.ctx.storage);
+          return ndjsonReply(speakPerformance(report), { source: 'che_performance', ok: true, model_calls: 0, performance_status: report.status });
+        }
         if (ownerDevice && !body.attachment && !memoryQuestion && brainReviewIntent(rawMessage)) {
           const latest = latestReview(new CheBrainStore(this.ctx.storage));
           return ndjsonReply(speakReview(latest), { source: 'che_brain_review', model_calls: 0, review_id: latest.review?.id || null });
@@ -13517,7 +13579,7 @@ export class CheState extends DurableObject {
         }
         // Preserve supplied conversation state; capacity checks must skip a
         // small engine instead of silently dropping the owner's earlier turns.
-        const history = dropAgentTaskTurns(Array.isArray(body.history) ? body.history : [], (await this.loadData().catch(() => ({}))).team_tasks || []);
+        const history = dropAgentTaskTurns(Array.isArray(body.history) ? body.history : [], (await this.peekData().catch(() => ({}))).team_tasks || []);
         const { turns, condensed: earlierContext } = condenseHistory(history, { keep: 12 });
         if (turns.length &&
             turns[turns.length - 1].role === 'user' &&

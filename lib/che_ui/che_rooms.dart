@@ -9,10 +9,12 @@
 //   core       → CHE's own teal command space (default)
 // 2.5D, lightweight and 60fps on iPhone; honors Reduce Motion (static frame).
 
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import 'che_foreground.dart';
 import 'che_theme.dart';
 
 enum CheRoom { core, studio, office, conference, brain, markets, art }
@@ -55,23 +57,38 @@ class CheRoomBackdrop extends StatefulWidget {
   State<CheRoomBackdrop> createState() => _CheRoomBackdropState();
 }
 
-class _CheRoomBackdropState extends State<CheRoomBackdrop> with SingleTickerProviderStateMixin {
-  late final AnimationController _c = AnimationController(vsync: this, duration: const Duration(seconds: 24));
+class _CheRoomBackdropState extends State<CheRoomBackdrop> {
+  // The scene drifts over 24 seconds. It is redrawn 8 times a second, not every frame: a full-screen paint at 60 frames
+  // a second kept the Office and every room drawing nonstop (measured 2026-10-23, stability mission). It holds still
+  // with Reduce Motion, on a hidden tab and while CHE is in the background.
+  static const _loop = Duration(seconds: 24);
+  static const _step = Duration(milliseconds: 125);
+  final ValueNotifier<double> _t = ValueNotifier<double>(0);
+  final Stopwatch _clock = Stopwatch();
+  Timer? _timer;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (CheMotion.reduced(context)) {
-      _c.stop();
-      _c.value = 0.3;
-    } else if (!_c.isAnimating) {
-      _c.repeat();
+    final still = CheMotion.reduced(context) || !TickerMode.valuesOf(context).enabled;
+    if (still) {
+      _timer?.cancel();
+      _timer = null;
+      _clock.stop();
+      if (CheMotion.reduced(context)) _t.value = 0.3;
+    } else if (_timer == null) {
+      _clock.start();
+      _timer = Timer.periodic(_step, (_) {
+        if (!cheAppInForeground()) return;
+        _t.value = (_clock.elapsedMilliseconds % _loop.inMilliseconds) / _loop.inMilliseconds;
+      });
     }
   }
 
   @override
   void dispose() {
-    _c.dispose();
+    _timer?.cancel();
+    _t.dispose();
     super.dispose();
   }
 
@@ -79,9 +96,9 @@ class _CheRoomBackdropState extends State<CheRoomBackdrop> with SingleTickerProv
   Widget build(BuildContext context) {
     final layers = [
       RepaintBoundary(
-        child: AnimatedBuilder(
-          animation: _c,
-          builder: (_, _) => CustomPaint(painter: _painterFor(widget.room, _c.value)),
+        child: ValueListenableBuilder<double>(
+          valueListenable: _t,
+          builder: (_, t, _) => CustomPaint(painter: _painterFor(widget.room, t)),
         ),
       ),
       IgnorePointer(
