@@ -87,7 +87,7 @@ import { evidenceIntent, evidenceReport, evidenceTick } from './trading_evidence
 import { readTrades, tradeDayOf } from './trading_evidence.js';
 import { TRADE_EVIDENCE_SOURCE, lastTrade, readTradeEvidence, speakTradeReplay, tradeBars, tradeEvidenceOf, tradeList, tradeReplayIntent } from './trade_evidence.js';
 import { DAILY_TARGET, EXECUTION_TYPES, VISUAL_SOURCE, auditTrades, compareWindows, currentLeader, dailyEvidence, dailyPnl, filterTrades, historyChart, journalView, lastForwardBar, metricsOf, openPositions, rankStrategies, readSkips, readVisualTrades, replayFrame, speakAudit, speakEvidence, speakCard, speakLeader, speakPnl, tradingVisualIntent } from './trading_visual.js';
-import { cancelCandidates, cancelConfirmation, cancelOrderIntent, chartIntent, chartView, drawIntent, futuresOrderIntent, marketOrderFeedProblem, readDrawings, saveDrawings, speakOrder } from './trading_chart.js';
+import { cancelCandidates, cancelConfirmation, cancelOrderIntent, chartIntent, chartView, drawIntent, futuresOrderIntent, marketOrderFeedProblem, paperAccountIntent, readDrawings, saveDrawings, speakOrder } from './trading_chart.js';
 import { readRithmicCandles, storeRithmicCandles } from './rithmic_dataset.js';
 // A spoken cancel of one Alpaca PAPER order waiting for the owner's yes, or for his pick from a numbered list.
 const CHART_CANCEL_PENDING = 'trading_chart_cancel_pending';
@@ -119,6 +119,7 @@ import { BRAIN_ROOMS_SOURCE, ROOMS as BRAIN_ROOMS, answerCrossRoom, crossRoomInt
 import { controlChangeEvent, meetingEvent, officeTaskEvent, paperOrderRefusedEvent, phoneRoomEvent, queueRoomEvent, researchEvent } from './room_events.js';
 import { cloudDailyLimit, sanitizeOwnerText } from './che_errors.js';
 import { commitIntent, commitReceipt, speakReceipt } from './deploy_receipt.js';
+import { UI_CONFIG, handleImprovement, improvementIntent, loadImprovements, recordApplied, startLoggedTask, startTaskIntent, summary as improvementSummary, uiConfigPayload, undoTask, withJobStates } from './owner_improvements.js';
 import { CHE_UPDATE_GUIDE, mergeSelfUpdatePr, openSelfUpdatePr, rollbackLastUpdate, selfUpdateGitHubAccess, selfUpdateStatus, workerDeploymentStatus, latestWorkerDeploymentIntent, latestWorkerDeploymentStatus, speakLatestWorkerDeployment, appStatusIntent, appStatusReport } from './self_update.js';
 import { FAILURE_CLASS, backoffMs, classifyFailure, idempotencyKey, ownerEngineeringMessage, stableHash, stripOwnerHomework } from './recovery_policy.js';
 import { handleMobileUpdateRequest, isMobileUpdatePath } from './mobile_update.js';
@@ -157,7 +158,7 @@ import { flushOutbox, handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, op
 import { CheLibrary, fetchReadable, libraryContext, libraryIntent } from './library.js';
 import { KnowledgeLibrary, knowledgeIntent, knowledgeReply, knowledgeTaskContext } from './knowledge_library.js';
 import { answerPersonalFact, answerStoredStatement, groundedReply, isQuestionLike, needsStrongEngine, personalFactQuestion, storedStatementQuestion } from './personal_recall.js';
-import { chatgptHistoryIntent, importChatgptBatch, ownerMemorySearchIntent, ownerStatementCandidates, searchOwnerMemory, speakChatgptHistory, speakMemorySearch } from './owner_recall.js';
+import { brainRecordIntent, chatgptHistoryIntent, importChatgptBatch, inspectMemory, memoryInspectIntent, ownerMemorySearchIntent, ownerStatementCandidates, phoneBrainNotes, searchOwnerMemory, speakBrainRecord, speakChatgptHistory, speakMemoryInspection, speakMemorySearch } from './owner_recall.js';
 import { adRequest, adStatusLines, assetTruthReply } from './asset_truth.js';
 import { dropAgentTaskTurns, replyRepeatsAgentTask } from './agent_task_guard.js';
 import { openKnowledgeLibrary, seedKnowledgeCatalog } from './knowledge_catalog_seed.js';
@@ -6002,6 +6003,13 @@ export class CheState extends DurableObject {
       if (!ask) return ndjsonReply('Say the length and the subject, for example "/film-make 10-minute movie about a lighthouse keeper".', { source: 'che_film_studio', ok: false, command: command.id, model_calls: 0 });
       return withDoneFields(await this.filmChat(request, ask), { command: command.id });
     }
+    // Owner Improvements: the command's words go through the same intent the owner's chat uses.
+    if (command.local === 'owner_improvement') {
+      if (!OWNER_CHAT_REQUESTS.has(request)) return ndjsonReply('Only the CHE owner can change CHE. Nothing was changed.', { source: 'che_owner_improvement', ok: false, command: command.id, model_calls: 0 });
+      const ask = improvementIntent(String(input || '')) || startTaskIntent(String(input || '')) || (String(input || '').trim() ? null : { kind: 'list' });
+      if (!ask) return ndjsonReply('Tell me what feels wrong, for example "/che-improve the chart is too big". Nothing was changed.', { source: 'che_owner_improvement', ok: false, command: command.id, model_calls: 0 });
+      return withDoneFields(await this.improvementChat(body || {}, ask), { command: command.id });
+    }
     if (command.local === 'coding_cancel') {
       // Owner only, like POST /api/job/cancel: checked here too, not only by the guest gate in front.
       if (!OWNER_CHAT_REQUESTS.has(request)) return ndjsonReply('Only the CHE owner can cancel coding jobs. Nothing was changed.', { source: CODING_CANCEL_SOURCE, ok: false, model_calls: 0 });
@@ -8160,6 +8168,34 @@ export class CheState extends DurableObject {
         if (!ownerDevice) return ownerOnly();
         const draft = await Promise.resolve().then(() => this.ctx.storage.get('fye_draft')).catch(() => null);
         return json({ ok: true, status: FYE_STATUS, draft: draft || null, order_sent: false });
+      }
+      // Owner Improvements (owner, 2026-10-23): the ledger, the live UI preferences, and the iPhone's apply receipt.
+      if (path === '/api/owner/improvements' && request.method === 'GET') {
+        if (!ownerDevice) return ownerOnly();
+        const state = await loadImprovements(this.ctx.storage);
+        const tasks = withJobStates(state.tasks, (await this.loadData().catch(() => ({ jobs: [] }))).jobs);
+        return json({ tasks, config: uiConfigPayload(state), schema: UI_CONFIG, summary: improvementSummary({ tasks }) });
+      }
+      if (path === '/api/owner/ui-config' && request.method === 'GET') {
+        if (!ownerDevice) return ownerOnly();
+        return json(uiConfigPayload(await loadImprovements(this.ctx.storage)));
+      }
+      const improvementAct = /^\/api\/owner\/improvements\/(imp-\d{8}-\d{3})\/(applied|undo|start)$/.exec(path);
+      if (improvementAct && request.method === 'POST') {
+        if (!ownerDevice) return ownerOnly();
+        const [, id, act] = improvementAct;
+        if (act === 'applied') {
+          const out = await recordApplied(this.ctx.storage, id, body);
+          return json(out.body, out.status);
+        }
+        if (act === 'undo') {
+          const out = await undoTask(this.ctx.storage, id);
+          return json({ ok: out.ok, spoken: out.text, task: out.task || null, ...(out.fields || {}) }, out.ok ? 200 : 409);
+        }
+        const reply = await this.improvementChat({}, { kind: 'start', id });
+        const lines = (await reply.text()).split('\n').filter(Boolean).map((l) => JSON.parse(l));
+        const done = lines.find((l) => l.type === 'done') || {};
+        return json({ ok: done.ok !== false, spoken: lines.filter((l) => l.type === 'delta').map((l) => l.delta).join(''), improvement_id: id, improvement_status: done.improvement_status || null, job_id: done.job_id || null });
       }
       // Strategy governor (owner, 2026-10-23): which strategies may trade forward paper, why, and every decision with its evidence.
       if (path === '/api/trading/governor' && request.method === 'GET') {
@@ -10420,6 +10456,14 @@ export class CheState extends DurableObject {
             execution_receipt: receipt.commit ? { tool: 'github', operation: 'read_commit_and_runs', status: 'success', source: receipt.commit.url, commit_sha: receipt.commit.sha } : null,
           });
         }
+        // Owner Improvements (owner, 2026-10-23): "this page is too cramped", "make the chart smaller", "undo that".
+        // A supported setting is changed, read back and sent to the iPhone; code work goes to the coding pipeline.
+        const improveAsk = !body.attachment && !body.workflow_step
+          ? (startTaskIntent(rawMessage) || improvementIntent(rawMessage, { visualOpen: Boolean(body.visual_project_id) })) : null;
+        if (improveAsk) {
+          const reply = await this.improvementChat(body, improveAsk);
+          if (reply) return reply;
+        }
         const runtimeStatusAsk = !body.attachment && !body.workflow_step ? appStatusIntent(rawMessage) : null;
         if (runtimeStatusAsk) {
           if (!ownerDevice) return ownerOnly();
@@ -11927,6 +11971,25 @@ export class CheState extends DurableObject {
         // "Search my memory for Sprite": every store CHE keeps of the owner's words (memory records, saved
         // preferences, the Brain, the ChatGPT import), each with its count, and the raw matching records with id,
         // source and date, so the owner can see whether a record exists at all (owner_recall.js).
+        // "Show a saved Brain record" and "Inspect your memory system" (owner, 2026-10-23: both reached the model and
+        // came back "I couldn't finish that answer" when it was busy). Both read CHE's own stores; no model.
+        const recordAsk = ownerDevice && !body.attachment && !memoryQuestion ? brainRecordIntent(rawMessage) : null;
+        if (recordAsk) {
+          let store = null;
+          try { store = new CheBrainStore(this.ctx.storage); } catch (_) { store = null; }
+          const shown = speakBrainRecord(store, recordAsk);
+          const ids = shown.record ? [shown.record.id] : [];
+          await recordAnswerEvidence(this.ctx.storage, shown.text, { kind: shown.record ? 'tool_result' : 'none', tools: ['brain/record'] }, { records: ids }).catch(() => null);
+          return ndjsonReply(shown.text, { source: 'che_brain_record', model_calls: 0, ok: shown.available, records: ids.length, record_ids: ids });
+        }
+        if (ownerDevice && !body.attachment && !memoryQuestion && memoryInspectIntent(rawMessage)) {
+          let store = null;
+          try { store = new CheBrainStore(this.ctx.storage); } catch (_) { store = null; }
+          const report = inspectMemory(data, store, { phoneNotes: phoneBrainNotes(body.brain_context) });
+          const text = speakMemoryInspection(report);
+          await recordAnswerEvidence(this.ctx.storage, text, { kind: 'tool_result', tools: ['brain/status', 'memory_records'] }).catch(() => null);
+          return ndjsonReply(text, { source: 'che_memory_inspection', model_calls: 0, ok: Boolean(report.brain), memory_inspection: report });
+        }
         const ownerSearch = ownerDevice && !body.attachment ? ownerMemorySearchIntent(rawMessage) : null;
         if (ownerSearch) {
           let store = null;
@@ -12701,7 +12764,8 @@ export class CheState extends DurableObject {
           return ndjsonReply(saved ? speakMatrix(saved) : 'The timeframe backtest has not run yet, sir. Say "backtest every strategy on every timeframe" and I will test them on free delayed NQ data. It places no orders.', { source: 'che_trading_matrix' });
         }
         // Forward paper trading by voice (owner, 2026-10-18), answered from the journal only.
-        const live = liveIntent(message);
+        // "Set CHE paper balance to 500" / "show CHE positions" belong to the phone's CHE paper account (chart route below).
+        const live = paperAccountIntent(message) ? null : liveIntent(message);
         if (live && !body.attachment) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can use the Trading Room.', { source: 'che_trading_live', ok: false });
           if (live.kind === 'research') {
@@ -12784,7 +12848,15 @@ export class CheState extends DurableObject {
           const ev = tradeEvidenceOf(trade, await tradeBars(this.ctx.storage, trade));
           return ndjsonReply(speakTradeReplay(ev), { source: TRADE_EVIDENCE_SOURCE, ok: true, model_calls: 0, open_view: 'trade_replay', trade_id: ev.id, replay_supported: ev.replay.supported });
         }
-        const chartAsk = body.attachment || !ownerDevice ? null : (drawIntent(message) || chartIntent(message) || futuresOrderIntent(message));
+        const chartAsk = body.attachment || !ownerDevice ? null : (paperAccountIntent(message) || drawIntent(message) || chartIntent(message) || futuresOrderIntent(message));
+        // The CHE PAPER ACCOUNT is on the iPhone: open it there; a balance change waits for the owner's confirmation on the phone.
+        if (chartAsk?.kind === 'paper_balance' || chartAsk?.kind === 'paper_open') {
+          const amount = chartAsk.amount;
+          const reply = chartAsk.kind === 'paper_balance'
+            ? `Opening the CHE PAPER ACCOUNT with a balance change to $${amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} for you to confirm, sir. Nothing changes until you confirm it on the phone.`
+            : 'Opening the CHE PAPER ACCOUNT positions, sir. It is a simulated account, separate from yours.';
+          return ndjsonReply(reply, { source: 'che_trading_chart', ok: true, model_calls: 0, open_view: 'trading_chart', chart: { section: 'che_trades' }, ...(amount ? { paper_balance: amount } : {}) });
+        }
         if (chartAsk?.kind === 'futures_order') return ndjsonReply(chartAsk.reply, { source: 'che_trading_chart', ok: false, model_calls: 0, order_sent: false });
         if (chartAsk?.kind === 'draw') {
           const account = /^(MNQ|NQ)$/.test(chartAsk.symbol) || (!chartAsk.symbol && chartAsk.drawing.points[0].price > 5000) ? 'futures_paper' : 'alpaca_paper';
@@ -13965,16 +14037,16 @@ export class CheState extends DurableObject {
           try { store = new CheBrainStore(this.ctx.storage); } catch (_) { store = null; }
           // The newest Brain turns plus the ones that mention the asked words, so an old statement is never out of reach.
           const brainStatements = ownerStatementCandidates(store, rawMessage);
-          const answer = personal ? answerPersonalFact(data, personal, brainStatements) : answerStoredStatement(data, statementAsk, brainStatements);
+          const answer = personal ? answerPersonalFact(data, personal, brainStatements, phoneBrainNotes(body.brain_context)) : answerStoredStatement(data, statementAsk, brainStatements);
           if (answer) {
             const receipt = answerEvidenceReceipt({ ownerAttested: answer.kind === 'owner_attested' });
             await Promise.resolve().then(() => this.ctx.storage.put(LAST_ANSWER_EVIDENCE_KEY, receipt)).catch(() => null);
             const r = answer.record || null;
-            const store = r ? (r.legacy ? 'saved_preferences' : r.brain ? 'brain' : 'memory_records') : '';
+            const store = r ? (r.phone ? 'phone_brain_notes' : r.legacy ? 'saved_preferences' : r.brain ? 'brain' : 'memory_records') : '';
             await recordAnswerEvidence(this.ctx.storage, answer.answer, { ...receipt, kind: answer.kind }, { records: answer.records, cited: r ? [{ text: r.quote || r.statement || r.text, created_at: r.created_at, store }] : [] });
             return ndjsonReply(answer.answer, {
               source: 'che_personal_recall', model_calls: 0, records: answer.records.length, record_ids: answer.records,
-              recall_receipt: r ? { record_id: r.id || null, stored_at: r.created_at || null, store, owner_attested: !r.legacy } : null,
+              recall_receipt: r ? { record_id: r.id || null, stored_at: r.created_at || null, store, owner_attested: !r.legacy && !r.phone } : null,
             });
           }
         }
@@ -15175,6 +15247,36 @@ export class CheState extends DurableObject {
 
   // Owner chat reply for a coding request. Proposal → short summary;
   // failures → one human-level sentence (diagnostics stay on the Worker).
+  // Owner Improvements: one request, answered from the ledger in owner_improvements.js. Code work goes through
+  // selfDevelopmentReply, and the task keeps the job id that pipeline really returned.
+  async improvementChat(body, ask) {
+    const delegate = async (brief) => {
+      const text = await (await this.selfDevelopmentReply(brief)).text();
+      let said = '';
+      let done = {};
+      for (const line of text.split('\n')) {
+        try {
+          const event = JSON.parse(line);
+          if (event.type === 'delta') said += event.delta || '';
+          if (event.type === 'done') done = event;
+        } catch (_) {}
+      }
+      const jobId = done.job_id || done.background_job_id || null;
+      return { ok: done.ok !== false && !done.failure_class && done.source === 'che_self_development', job_id: jobId, text: said };
+    };
+    const screen = String(body.active_screen || '').slice(0, 60);
+    const out = ask.kind === 'start'
+      ? await startLoggedTask(this.ctx.storage, ask.id, { delegate })
+      : await handleImprovement(this.ctx.storage, ask, { screen, delegate });
+    if (!out) return null;
+    return ndjsonReply(out.text, {
+      source: 'che_owner_improvement', ok: out.ok !== false, model_calls: 0, improvement_action: ask.kind,
+      ...(out.task ? { improvement_id: out.task.id, improvement_status: out.task.status } : {}),
+      ...(out.job_id ? { job_id: out.job_id } : {}),
+      ...(out.fields || {}),
+    });
+  }
+
   async selfDevelopmentReply(message, { vectorRecall = {}, onAccepted = null } = {}) {
     const policy = currentTurnActionPolicy(message);
     if (!policy.codingJobAllowed) {

@@ -428,6 +428,8 @@ extension _CheHomeSecurity on _CHEHomeState {
       unawaited(_offlineLibrary.sync(cheAgentBaseUrl, _authHeaders));
       unawaited(_syncBrainReplica());
       unawaited(_refreshMailboxBadge());
+      // The owner's preferences set by voice (Owner Improvements) apply on startup and refresh, with no new build.
+      unawaited(CheOwnerConfigSync.refresh(CheOwnerImprovementsClient(baseUrl: cheAgentBaseUrl, headers: () => _authHeaders)));
 
       // Unchanged state: nothing to decode and nothing to rebuild. Home Base still gets the snapshot, so one that was
       // configured later, or missed a delivery, is not left waiting for the Worker's state to change.

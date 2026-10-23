@@ -165,9 +165,9 @@ void main() {
 
   test('CHE follows the iPhone Larger Text size and multiplies it by her own Text size setting', () {
     expect(cheEffectiveTextScale(TextScaler.noScaling, 1.0), 1.0);
-    expect(cheEffectiveTextScale(const TextScaler.linear(1.5), 1.0), 1.5, reason: 'Larger Text applies in CHE');
-    expect(cheEffectiveTextScale(const TextScaler.linear(1.5), 1.18), closeTo(1.77, 0.001), reason: 'and CHE Large adds to it');
-    expect(cheEffectiveTextScale(const TextScaler.linear(3.1), 1.18), 2.0, reason: 'held where the layouts are tested');
+    expect(cheEffectiveTextScale(const TextScaler.linear(1.15), 1.0), closeTo(1.15, 0.001), reason: 'Larger Text applies in CHE');
+    expect(cheEffectiveTextScale(const TextScaler.linear(1.15), 1.18), 1.3, reason: 'and CHE Large adds to it, up to the cap');
+    expect(cheEffectiveTextScale(const TextScaler.linear(3.1), 1.18), 1.3, reason: 'held to the 1.3x the responsive guard verifies');
   });
 
   testWidgets('the system text size reaches CHE screens', (tester) async {
@@ -182,7 +182,8 @@ void main() {
       await tester.pump(const Duration(milliseconds: 200));
     }
     final context = tester.element(find.text('Talk to CHE'));
-    expect(MediaQuery.textScalerOf(context).scale(14), closeTo(21, 0.01));
+    // 1.5 system size is above the verified 1.3 cap, so CHE draws at 1.3 (14 * 1.3 = 18.2).
+    expect(MediaQuery.textScalerOf(context).scale(14), closeTo(18.2, 0.01));
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
     await tester.pump(const Duration(seconds: 1));

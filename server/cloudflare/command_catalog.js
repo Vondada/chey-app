@@ -195,6 +195,15 @@ export const COMMANDS = Object.freeze([
   }),
   // Owner, 2026-10-19 ("Cancel that fake commit by Che"): the voice and typed route to the
   // owner-only POST /api/job/cancel. Cancelling a queued job deletes nothing, so it asks nothing first.
+  // Owner Improvements (owner, 2026-10-23): "this page is too cramped", "make the chart smaller", "undo that".
+  C('che-improve', 'intelligence', 'BUILD', 'Tell CHE what feels wrong; she fixes it or opens a coding task.', {
+    does: 'A supported layout or look change (layout density, chart size and shape, success color, text size) is stored, read back and applied on the iPhone with no new build, then marked Verified when the app confirms it; "undo that" puts it back. Anything else becomes a tracked task with acceptance criteria, sent to CHE\'s coding pipeline. Money, trading, security, credentials, deleting and publishing are never changed automatically.',
+    needs: [], route: 'che_owner_improvement', local: 'owner_improvement', handler: 'owner_improvements.improvementIntent → handleImprovement (coding through selfDevelopmentReply)',
+    input: { name: 'what', required: false, hint: 'What feels wrong, for example "the chart is too big"' },
+    examples: ['This page is too cramped', 'Make the chart smaller', 'Use chrome green for successful actions', 'Undo that', 'What improvements are open?'],
+    prompt: '{input}', produces: 'improvement task', evidence: 'The stored setting read back, and the value the iPhone reports it applied; for code, the coding job id the pipeline returned.',
+    cost: 'Free for settings: no AI engine is used. A coding task uses the coding pipeline.', keywords: ['improve', 'improvement', 'too cramped', 'too big', 'too small', 'fix this', 'owner improvements', 'undo that'],
+  }),
   C('che-cancel-job', 'intelligence', 'BUILD', 'Cancel a coding job that has not started.', {
     does: 'Cancels a queued coding job: by its id, or the one CHE last accepted. A running, finished or failed job is left alone and CHE says so. The job record is kept, marked cancelled with who cancelled it and when. Nothing is deleted.',
     needs: ['jobs'], route: 'che_coding_cancel', local: 'coding_cancel', handler: 'coding_cancel.cancelQueuedJob (shared with POST /api/job/cancel)',
@@ -410,6 +419,13 @@ export const COMMANDS = Object.freeze([
     examples: ["What's NQ doing at the open?", 'Give me the New York open briefing'],
     prompt: 'Analyze the {input} chart for the New York open',
     produces: 'market read', evidence: 'Candle data with its source and time.', keywords: ['open', 'new york', 'nq', 'premarket', 'briefing', 'market'],
+  }),
+  // CHE PAPER ACCOUNT (owner, 2026-10-23): lives on the iPhone; the Worker opens it, the phone confirms any balance change.
+  C('trade-paper-account', 'trading', 'EXPLORE', 'CHE paper account: balance, positions and trade details.', {
+    does: "Opens CHE's simulated paper account on your iPhone: balance, open and closed CHE positions and each trade's detail. \"Set CHE paper balance to 500\" opens the change for you to confirm; nothing changes without your confirmation.",
+    needs: ['office'], route: 'che_trading_chart', handler: 'trading_chart.paperAccountIntent → phone ChePaperAccountPanel', input: null,
+    examples: ['Show CHE positions', 'Set CHE paper balance to 500', "Open CHE's paper account"],
+    prompt: 'Show CHE positions', produces: 'paper account view', evidence: 'The paper engine records on the phone; prices only from live Rithmic trades.', keywords: ['paper', 'balance', 'che positions', 'paper account'],
   }),
   C('trade-chart', 'trading', 'EXPLORE', 'Analyze NQ/MNQ market structure.', {
     does: 'Analyzes trend, swing highs and lows and candle patterns from real candles.',
