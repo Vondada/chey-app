@@ -385,6 +385,15 @@ export const COMMANDS = Object.freeze([
     examples: ['Any entry points on NQ?', 'Find setups on MNQ'],
     prompt: 'Analyze {input} entry points on the chart', produces: 'setups', keywords: ['setup', 'entry', 'entries', 'signal'],
   }),
+  // Signal Mode (owner, 2026-10-23): the Setup Progress Board the iPhone runs on live Rithmic candles.
+  C('trade-setups', 'trading', 'EXPLORE', 'Open the Setup Progress Board and its signals.', {
+    does: 'Opens the Setup Progress Board: every setup CHE follows on the live Rithmic candles on this iPhone, its stage, the conditions met, pending or failed, and the CHE PAPER ACCOUNT signals. Asking which are ready reads them. Places no order.',
+    needs: ['office'], route: 'che_trading_chart', handler: 'trading_chart.chartIntent (setups section)',
+    input: null,
+    examples: ['Show setups', 'What setups are ready?', 'Show the setup progress board'],
+    prompt: 'Show my setups', produces: 'setup board', evidence: 'Stages computed on this iPhone from real Rithmic candles; signals carry their data source and evidence sample size.',
+    keywords: ['setups', 'setup progress', 'signal mode', 'signals', 'ready setups'],
+  }),
   C('trade-liquidity', 'trading', 'EXPLORE', 'Analyze VWAP, liquidity, order blocks, and key levels.', {
     does: 'Marks swing highs and lows (where liquidity rests) from real candles. VWAP and order-block math are not computed yet; CHE says so instead of guessing.',
     needs: ['market_data'], route: 'che_trading', handler: 'trading_lab.analyze (swings)',

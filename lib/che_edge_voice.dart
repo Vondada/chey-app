@@ -8,6 +8,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
+import 'security/che_session_store.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'che_speech_pipeline.dart';
@@ -230,7 +231,7 @@ class CheEdgeVoice {
           'CHE_AGENT_URL',
           defaultValue: 'https://chey-app.henryjavoni.workers.dev',
         );
-    final token = prefs.getString('che_agent_device_token') ?? '';
+    final token = (await CheSessionStore.instance.deviceToken()) ?? '';
     if (base.trim().isEmpty || token.isEmpty) {
       return const CheEdgeResult(failure: 'this iPhone is not paired with CHE\'s server');
     }
@@ -301,7 +302,7 @@ class CheEdgeVoice {
       final prefs = await SharedPreferences.getInstance();
       final base = prefs.getString('che_agent_base_url') ??
           const String.fromEnvironment('CHE_AGENT_URL', defaultValue: 'https://chey-app.henryjavoni.workers.dev');
-      final token = prefs.getString('che_agent_device_token') ?? '';
+      final token = (await CheSessionStore.instance.deviceToken()) ?? '';
       if (base.trim().isEmpty || token.isEmpty) return;
       await http
           .post(

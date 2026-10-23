@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:chey/che_ui/che_theme.dart';
 import 'package:chey/che_voice_studio.dart';
+import 'package:chey/security/che_session_store.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -37,6 +38,9 @@ Future<void> _pump(WidgetTester tester, http.Client client, {List<String>? spoke
 }
 
 void main() {
+  // Widget tests have no Keychain plugin: the sign-in lives in memory, fresh for every test.
+  setUp(() => CheSessionStore.instance = CheSessionStore(kv: CheMemoryKv()));
+
   setUp(() {
     SharedPreferences.setMockInitialValues({
       'che_agent_base_url': 'https://che.test',
