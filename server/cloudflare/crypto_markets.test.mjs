@@ -200,6 +200,11 @@ test('pause keeps records and stops the schedule; resume starts again from the n
   assert.equal(await nextCryptoTickAt(storage, SAT + 2000), null);
   assert.equal((await cryptoTick(storage, { fetcher: exchange({ now: () => SAT + 600_000 }), now: SAT + 600_000 })).skipped, 'Orion crypto research is paused');
   assert.equal((await storage.get(CRYPTO_RUNS)).length, 1, 'records are kept');
+  // The deploy check's forced pass reads the feed while paused but steps no portfolio.
+  const forced = await cryptoTick(storage, { fetcher: exchange({ now: () => SAT + 650_000 }), now: SAT + 650_000, force: true });
+  assert.ok(forced.series.some((x) => x.status === 'LIVE'));
+  assert.equal(forced.signals, 0);
+  assert.equal(storage.saved.has('crypto_pf:BTC:5m') ? Object.values(storage.saved.get('crypto_pf:BTC:5m')).some((pf) => pf.open || pf.pending) : false, false);
   await setCryptoPaper(storage, true, SAT + 700_000);
   assert.ok(await nextCryptoTickAt(storage, SAT + 700_000));
 });
@@ -210,6 +215,8 @@ test('intent: the owner\'s words reach the crypto desk; plain price questions an
   assert.deepEqual(cryptoIntent('Resume Orion crypto research'), { kind: 'resume' });
   assert.deepEqual(cryptoIntent('How is the crypto paper trading going?'), { kind: 'status' });
   assert.deepEqual(cryptoIntent('Show me the bitcoin paper trades'), { kind: 'status' });
+  assert.deepEqual(cryptoIntent('Did any bitcoin paper trades hit their stop?'), { kind: 'status' }, 'a stop-loss question never pauses the desk');
+  assert.deepEqual(cryptoIntent('Stop the crypto paper trading'), { kind: 'pause' });
   for (const no of ["What's the price of bitcoin?", 'Should I buy ethereum?', 'Pause the strategy simulation', 'How is MNQ paper trading going?', 'Tell me about Orion the constellation', 'Research the history of cryptography']) {
     assert.equal(cryptoIntent(no), null, no);
   }

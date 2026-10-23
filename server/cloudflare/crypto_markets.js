@@ -22,6 +22,8 @@ export const CRYPTO_STATE = 'crypto_state';
 export const CRYPTO_RUNS = 'crypto_runs';
 export const CRYPTO_BUDGET = 'crypto_budget';
 export const CRYPTO_RESEARCH = 'crypto_research';
+// Positions voided by a pause: kept with their reason, never counted as results.
+export const CRYPTO_EXCLUDED = 'crypto_excluded';
 const barsKey = (coin, tf) => `crypto_bars:${coin}:${tf}`;
 const pfKey = (coin, tf) => `crypto_pf:${coin}:${tf}`;
 
@@ -84,7 +86,7 @@ export async function setCryptoPaper(storage, enabled, now = Date.now()) {
         const saved = await storage.get(pfKey(coin, tf));
         if (!saved) continue;
         for (const pf of Object.values(saved)) {
-          if (pf.open) voided.push({ portfolio: pf.key, strategy: pf.candidate, open: pf.open });
+          if (pf.open) voided.push({ kind: 'voided', at: iso(now), portfolio: pf.key, strategy: pf.candidate, open: pf.open, reason: 'Orion crypto research was paused while this position was open; it was not closed at a market price and is not a result' });
           pf.open = null; pf.pending = null;
         }
         await storage.put(pfKey(coin, tf), saved);
@@ -101,6 +103,7 @@ export async function setCryptoPaper(storage, enabled, now = Date.now()) {
       }
     }
   }
+  if (voided.length) await storage.put(CRYPTO_EXCLUDED, [...((await storage.get(CRYPTO_EXCLUDED)) || []), ...voided].slice(-200));
   const next = enabled
     ? { ...state, enabled: true, resumed_at: iso(now), paused_at: null, started_at: state.started_at || iso(now) }
     : { ...state, enabled: false, paused_at: iso(now) };
@@ -230,6 +233,8 @@ export async function cryptoTick(storage, { fetcher = fetch, now = Date.now(), f
   const state = await readCryptoState(storage);
   if (!state.enabled && !force) return { skipped: 'Orion crypto research is paused' };
   const run = { at: iso(now), ok: true, series: [], requests: 0, closed: 0, signals: 0 };
+  // A forced pass (the deploy check, "tick") reads the feeds while paused, but only trades while the desk is on.
+  const trade = Boolean(state.enabled);
   const due = force ? Object.keys(TIMEFRAMES).flatMap((tf) => Object.keys(COINS).map((coin) => ({ coin, tf }))) : dueSeries(state, now);
   if (!due.length) return { skipped: 'no new bar has closed yet' };
   const controls = await readControls(storage);
@@ -258,7 +263,7 @@ export async function cryptoTick(storage, { fetcher = fetch, now = Date.now(), f
         last_bar: bars.at(-1)?.t || null, last_close: bars.at(-1)?.c ?? null, bars: bars.length, age_s: feed.age_s ?? null });
       fetched[`${coin}:${tf}`] = now;
       await storage.put(barsKey(coin, tf), { bars, status: row.status, reason: row.reason, checked_at: iso(now), source: 'Coinbase Exchange', product: COINS[coin].product, cross_check: stored.cross_check || null });
-      if (!problems.length) {
+      if (!problems.length && trade) {
         // The newest 600 bars are plenty for every indicator (50 EMA, swings, the previous day) and keep a pass cheap.
         const res = stepSeries(await readPortfolios(storage, coin, tf), coin, tf, bars.slice(-STEP_WINDOW), row.status, gate);
         await storage.put(pfKey(coin, tf), Object.fromEntries(res.portfolios.map((pf) => [pf.key, pf])));
@@ -524,7 +529,9 @@ export function cryptoIntent(message) {
   const orion = /\borion\b/.test(t);
   if (!CRYPTO_WORD.test(t) && !(orion && /\bcrypto|weekend\b/.test(t))) return null;
   if (!DESK_WORD.test(t)) return null;
-  if (/\b(?:pause|stop|halt|turn off|switch off|disable)\b/.test(t) && !/\bstop(?:s|ped)?\s+(?:loss|out)\b/.test(t)) return { kind: 'pause' };
-  if (/\b(?:resume|restart|start|turn on|switch on|enable|continue|keep)\b/.test(t)) return { kind: 'resume' };
+  // A verb only counts when it acts on the desk ("pause Orion crypto research"), never "did a trade hit its stop?".
+  const OBJ = "(?:the\\s+|orion'?s?\\s+|my\\s+|your\\s+|weekend\\s+|24\\/7\\s+)*(?:orion|crypto|bitcoin|btc|ethereum|eth|research|paper|trading|desk|simulat)";
+  if (new RegExp(`\\b(?:pause|stop|halt|turn off|switch off|disable)\\s+${OBJ}`).test(t)) return { kind: 'pause' };
+  if (new RegExp(`\\b(?:resume|restart|start|turn on|switch on|enable|continue|keep)\\s+(?:\\w+\\s+){0,2}${OBJ}`).test(t)) return { kind: 'resume' };
   return { kind: 'status' };
 }
