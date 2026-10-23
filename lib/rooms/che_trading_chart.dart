@@ -28,6 +28,7 @@ import '../che_ui/che_chrome_status.dart';
 import '../che_ui/che_hud.dart';
 import '../rithmic/rithmic_candles.dart';
 import '../rithmic/rithmic_live.dart';
+import '../trading/che_trade_replay.dart';
 import '../che_ui/che_theme.dart';
 import 'che_trading_hud.dart';
 
@@ -149,6 +150,29 @@ String cheMarkerTitle(ChartMarker m) {
     'loss' => 'Loss · $from',
     'open' => 'Open position · $from',
     _ => '$from · ${m.kind}',
+  };
+}
+
+/// A marker as Trade Replay's summary: the record it names, shown at once while the full record loads. Only what the
+/// marker itself recorded; an entry marker carries no exit.
+Map<String, dynamic> cheMarkerSummary(ChartMarker m) {
+  final r = m.raw;
+  final exit = m.kind == 'exit';
+  return {
+    'id': m.tradeId,
+    'label': m.isSim ? 'SIMULATION' : 'CHE FORWARD PAPER',
+    if (m.strategy.isNotEmpty) 'strategy': m.strategy,
+    if (r['symbol'] != null) 'symbol': '${r['symbol']}',
+    if (m.side.isNotEmpty) 'side': m.side,
+    if (!exit && m.time != null) 'entry_time': m.time!.toIso8601String(),
+    if (!exit && m.price != null) 'entry_price': m.price,
+    if (exit && m.time != null) 'exit_time': m.time!.toIso8601String(),
+    if (exit && m.price != null) 'exit_price': m.price,
+    if (r['stop'] != null) 'stop': r['stop'],
+    if (r['target'] != null) 'target': r['target'],
+    if (m.outcome == 'win' || m.outcome == 'loss') 'result': m.outcome,
+    if (r['r'] != null) 'r': r['r'],
+    if (r['net_pnl'] != null) 'net': r['net_pnl'],
   };
 }
 
@@ -327,8 +351,8 @@ class CheTradingChart extends StatefulWidget {
   /// Opens the expanded (portrait) chart. Never rotates the phone.
   final VoidCallback? onExpand;
 
-  /// Opens a CHE trade's full record (Trade Replay, `/trade-replay?id=`) when that page is installed; until then the
-  /// chart shows the marker's recorded receipt.
+  /// Opens a CHE trade's full record. The app opens Trade Replay (`/trade-replay?id=`, route `trade_replay/<id>`);
+  /// tests replace it to see which record was asked for.
   static void Function(BuildContext context, ChartMarker marker)? openTradeRecord;
 
   /// CHE PAPER ACCOUNT signals from the setup desk on this phone (source 'che_signal'), drawn on
@@ -767,17 +791,23 @@ class CheTradingChartState extends State<CheTradingChart> {
   @visibleForTesting
   Offset? markerOffset(ChartMarker m, Size size) => _geometry(size)?.markerPoint(m);
 
-  /// The markers currently drawn.
-  @visibleForTesting
+  /// The markers currently drawn (REPLAY picks the latest closed CHE trade from them).
   List<ChartMarker> get shownMarkers => _shownMarkers;
 
   /// Opens a marker's trade record: Trade Replay when installed, otherwise the recorded receipt.
   Future<void> openRecord(ChartMarker m) async {
-    final open = CheTradingChart.openTradeRecord;
-    if (open != null && m.source.startsWith('che_') && m.tradeId.isNotEmpty) {
-      open(context, m);
+    if (m.source.startsWith('che_') && m.tradeId.isNotEmpty) {
+      final open = CheTradingChart.openTradeRecord;
+      if (open != null) {
+        open(context, m);
+        return;
+      }
+      // The marker is the summary, so the record shows at once while its bars load.
+      await Navigator.of(context).push(CheTradeReplayPage.route(
+          tradeId: m.tradeId, baseUrl: widget.baseUrl, headers: widget.headers, onRead: widget.onSpeak, summary: cheMarkerSummary(m)));
       return;
     }
+    // Alpaca orders and fills are broker records, not CHE trades: their receipt.
     await _showMarker(m);
   }
 

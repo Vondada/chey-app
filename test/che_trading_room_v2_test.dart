@@ -11,6 +11,7 @@ import 'package:chey/rooms/che_trading_chart.dart';
 import 'package:chey/rooms/che_trading_expanded.dart';
 import 'package:chey/rooms/che_trading_room.dart';
 import 'package:chey/trading/che_setup_desk.dart';
+import 'package:chey/trading/che_trade_replay.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -66,6 +67,15 @@ http.Client _client() => MockClient((r) async {
     });
 
 ChartMarker _m(Map<String, dynamic> raw) => ChartMarker(raw);
+
+class _Routes extends NavigatorObserver {
+  _Routes(this.names);
+  final List<String> names;
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    if (route.settings.name != null) names.add(route.settings.name!);
+  }
+}
 
 void main() {
   group('markers', () {
@@ -139,6 +149,42 @@ void main() {
     await tester.tapAt(tester.getTopLeft(area) + at!);
     await tester.pump();
     expect(opened, ['win-1']);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('without an override a marker opens Trade Replay on its record; REPLAY opens the latest closed trade', (tester) async {
+    tester.view.physicalSize = const Size(1179, 2556);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+    final pushed = <String>[];
+    await tester.pumpWidget(MaterialApp(
+      theme: ThemeData.dark(),
+      navigatorObservers: [_Routes(pushed)],
+      home: Scaffold(
+        body: CheTradingRoom(baseUrl: () => 'https://che.example', headers: () => const {}, onAsk: (_) {}, client: _client(), setupDesk: CheSetupDesk()),
+      ),
+    ));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    final chart = tester.state<CheTradingChartState>(find.byType(CheTradingChart));
+    final area = find.byKey(const Key('chart_area'));
+    final win = chart.shownMarkers.firstWhere((m) => m.tradeId == 'win-1');
+    await tester.tapAt(tester.getTopLeft(area) + chart.markerOffset(win, tester.getSize(area))!);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(pushed.last, 'trade_replay/win-1');
+    expect(cheMarkerSummary(win), containsPair('result', 'win'));
+    expect(cheMarkerSummary(win), isNot(contains('entry_price')), reason: 'an exit marker never invents its entry');
+    Navigator.of(tester.element(find.byType(CheTradeReplayPage))).pop();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 600));
+    expect(find.byType(CheTradeReplayPage), findsNothing);
+    final before = pushed.length;
+    await tester.tap(find.byKey(const Key('trading_nav_replay')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(pushed.length, before + 1);
+    expect(pushed.last, 'trade_replay/sim-1', reason: 'the latest recorded exit on the chart');
     await tester.pumpWidget(const SizedBox());
   });
 

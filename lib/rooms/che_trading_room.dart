@@ -107,9 +107,6 @@ class CheTradingRoom extends StatefulWidget {
   /// sets this; the open room switches to it, and a room built afterwards starts on it.
   static final requestedSection = ValueNotifier<CheTradingSection?>(null);
 
-  /// Opens Trade Replay (`/trade-replay`) when that page is installed; until then the REPLAY button explains how to
-  /// replay a trade from its marker or record.
-  static void Function(BuildContext context, {String? id})? openReplay;
 
   @override
   State<CheTradingRoom> createState() => _CheTradingRoomState();
@@ -198,16 +195,20 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
     ));
   }
 
+  /// REPLAY opens Trade Replay on CHE's latest recorded closed trade on the chart; with none, it says so in History.
   void _openReplay() {
-    final open = CheTradingRoom.openReplay;
-    if (open != null) {
-      open(context);
+    HapticFeedback.selectionClick();
+    final exits = [
+      for (final m in _compact.currentState?.shownMarkers ?? const <ChartMarker>[])
+        if (m.source.startsWith('che_') && m.kind == 'exit' && m.tradeId.isNotEmpty) m,
+    ]..sort((a, b) => (b.time ?? DateTime(0)).compareTo(a.time ?? DateTime(0)));
+    if (exits.isNotEmpty) {
+      unawaited(_compact.currentState!.openRecord(exits.first));
       return;
     }
-    HapticFeedback.selectionClick();
     setState(() {
       _section = CheTradingSection.history;
-      _note = 'To replay a trade, tap its W or L marker on the chart, or open it in Trade History.';
+      _note = 'No closed CHE trade is on the chart to replay. Ask "replay my last trade", or tap a W or L marker.';
     });
   }
 
