@@ -133,7 +133,7 @@ class CheEventWarningChip extends StatelessWidget {
             border: Border.all(color: event.highImpact ? const Color(0xFFE0A030) : Colors.white38),
           ),
           child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Icon(event.highImpact ? Icons.warning_amber_rounded : Icons.event_note_rounded, size: 18, color: Colors.white),
+            Icon(event.highImpact ? Icons.priority_high_rounded : Icons.event_note_rounded, size: 18, color: Colors.white),
             const SizedBox(width: 6),
             Flexible(
               child: Text('${event.highImpact ? 'HIGH IMPACT · ' : ''}${event.label} ${event.when}',
@@ -232,8 +232,8 @@ class _CheMarketContextStripState extends State<CheMarketContextStrip> {
       'discovered' => ('DISCOVERED', Icons.travel_explore_rounded),
       'rules_documented' => ('RULES DOCUMENTED', Icons.description_outlined),
       'implemented' => ('IMPLEMENTED', Icons.build_circle_outlined),
-      'backtested' => ('BACKTESTED', Icons.query_stats_rounded),
-      'forward_tested' => ('FORWARD TESTED', Icons.fast_forward_rounded),
+      'backtested' => ('BACKTESTED', Icons.insights_rounded),
+      'forward_tested' => ('FORWARD TESTED', Icons.show_chart_rounded),
       'paper_active' => ('PAPER ACTIVE', Icons.play_circle_outline_rounded),
       _ => (stage.toUpperCase(), Icons.help_outline_rounded),
     };

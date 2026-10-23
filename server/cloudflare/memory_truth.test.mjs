@@ -567,3 +567,40 @@ test('G: everyday ways of claiming a search never reach the owner without a rece
   const brainstorm = await owner({ model: () => 'I researched the market and three websites agree it is growing.' });
   assert.match((await brainstorm.say('Brainstorm business ideas for me.')).reply, /do not have execution receipts/);
 });
+
+
+test('legitimate installed/backend status questions bypass the model and explain absent sources', async () => {
+  const che = await owner({ model: () => 'I deployed commit 1234567890abcdef. Installed version 9.9.9 build 999.' });
+  for (const prompt of [
+    'What version of CHE am I running?', 'What’s my installed build number?',
+    'What backend version are you connected to?', 'Open Settings and show my app version.',
+    'What GitHub commit is deployed?',
+  ]) {
+    const out = await che.say(prompt);
+    assert.equal(out.modelCalls, 0, prompt);
+    assert.equal(out.meta.source, 'che_runtime_status', prompt);
+    assert.match(out.reply, /unavailable/);
+    assert.doesNotMatch(out.reply, /9\.9\.9|999|1234567890abcdef|Model-written commands/);
+  }
+  const deployed = await che.say('Did you successfully deploy a change?');
+  assert.doesNotMatch(deployed.reply, /I (?:successfully )?deployed|completed successfully/);
+});
+
+test('fresh native metadata is returned as device-reported and never confused with a published build', async () => {
+  const che = await owner();
+  const out = await che.say('What version of CHE am I running?', { client_app: { source: 'ios_bundle', version: '1.2.345', build: '67890', checked_at: new Date().toISOString() } });
+  assert.match(out.reply, /installed CHE version 1\.2\.345, build 67890/);
+  assert.equal(out.meta.status_receipt.installed.source, 'ios_bundle');
+  assert.equal(out.modelCalls, 0);
+});
+
+test('a status question clears unrelated held consequential confirmations', async () => {
+  const saved = new Map();
+  const che = await owner({ saved });
+  saved.set('che:pending_owner_action', { kinds: ['money'], text: 'buy a subscription', at: Date.now() });
+  saved.set('che:pending_app_action', { app: 'external app', at: Date.now() });
+  const settings = await che.say('Open Settings and show my app version.');
+  assert.equal(settings.meta.open_screen, 'app_details');
+  assert.equal(saved.get('che:pending_owner_action'), null);
+  assert.equal(saved.get('che:pending_app_action'), null);
+});

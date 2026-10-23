@@ -248,6 +248,7 @@ export function tradeDayOf(time) {
   return d.toISOString().slice(0, 10);
 }
 const FLAT_TD = tradeMins(16 * 60 + 55); // flat by 16:55 New York, before the daily break
+const NY_OPEN_TD = tradeMins(9 * 60 + 30); // 9:30 New York, in minutes of the CME day
 const isSwingHigh = (c, j, n) => {
   for (let m = j - n; m <= j + n; m++) if (m !== j && c[m].h >= c[j].h) return false;
   return true;
@@ -284,6 +285,9 @@ export function intradayContext(candles, { swingN = 3 } = {}) {
   let pv = 0; let vol = 0; let pv2 = 0; let count = 0;
   let curDay = null; let dayHigh = -Infinity; let dayLow = Infinity; let prevHigh = null; let prevLow = null;
   let orH = null; let orL = null; let orDay = null;
+  // Overnight range (CME 18:00 to 9:30 New York) and the 9:30 open, known from the first bar that starts at or after 9:30.
+  const onHigh = new Array(n).fill(null); const onLow = new Array(n).fill(null); const nyOpen = new Array(n).fill(null);
+  let onDay = null; let onH = -Infinity; let onL = Infinity; let openDay = null; let openPx = null;
   for (let i = 0; i < n; i++) {
     const b = candles[i];
     const parts = etParts(b.t);
@@ -308,11 +312,16 @@ export function intradayContext(candles, { swingN = 3 } = {}) {
       if (orDay !== parts.day) { orDay = parts.day; orH = b.h; orL = b.l; } else { orH = Math.max(orH, b.h); orL = Math.min(orL, b.l); }
     }
     if (orDay === parts.day && parts.mins >= 585) { orHigh[i] = orH; orLow[i] = orL; }
+    if (onDay !== dkey) { onDay = dkey; onH = -Infinity; onL = Infinity; }
+    if (td[i] < NY_OPEN_TD) { onH = Math.max(onH, b.h); onL = Math.min(onL, b.l); } else if (onH > -Infinity) {
+      if (openDay !== dkey) { openDay = dkey; openPx = b.o; }
+      onHigh[i] = onH; onLow[i] = onL; nyOpen[i] = openPx;
+    }
     const j = i - swingN;
     if (j - swingN >= 0 && isSwingHigh(candles, j, swingN)) confirmedHigh = candles[j].h;
     lastHigh[i] = confirmedHigh;
   }
-  return { ...base, ema20, ema50, rsi14, lastHigh, day, td, et, vwap, vwapSd, sessionBars, orHigh, orLow, pdh, pdl };
+  return { ...base, ema20, ema50, rsi14, lastHigh, day, td, et, vwap, vwapSd, sessionBars, orHigh, orLow, pdh, pdl, onHigh, onLow, nyOpen };
 }
 // Risk bounds in index points: below the floor, costs are most of the risk (MNQ's round
 // trip is about 2.5 points); above the ceiling, one trade risks too much of a small account.
@@ -348,6 +357,97 @@ function gapRetest(c, i, gaps, label) {
   }
   return null;
 }
+// ─── CHE 86-style overnight range model (independent approximation — not the P2P indicator) ─────────
+// Built only on the published idea of the P2P 86 Model (GloWizzy, TradingView, closed source): New York tends to
+// take the overnight high (buy-side liquidity) or the overnight low (sell-side liquidity). Every number and rule
+// below is CHE's own choice, written down and tested; the indicator's probability calculations are not published,
+// so none are copied or imitated. docs/CHE_P2P_86_MODEL.md.
+export const P86_NAME = 'CHE 86-style overnight range model (independent approximation — not the P2P indicator)';
+export const P86_WINDOW = Object.freeze({ from: 9 * 60 + 35, to: 11 * 60 }); // entries 9:35–11:00 New York (CHE's choice)
+const p86Trigger = (c, k, long, open) => (long ? c[k].c > open && c[k].c > c[k - 1].h : c[k].c < open && c[k].c < c[k - 1].l);
+/**
+ * The model's state on bar i from bar i and earlier bars only: the overnight levels, the 9:30 bias, the stage
+ * (waiting, no_bias, watching, forming, triggered, triggered_earlier, invalidated, target_taken, expired) and,
+ * when triggered, the signal (entry reference, stop, target).
+ */
+export function p2p86Plan(c, i, x) {
+  const onHigh = x.onHigh?.[i]; const onLow = x.onLow?.[i]; const open = x.nyOpen?.[i];
+  if (onHigh == null || onLow == null || open == null) return { stage: 'waiting', bias: null, signal: null, reason: 'The overnight range is complete at 9:30 New York.' };
+  const mid = (onHigh + onLow) / 2;
+  const base = { onHigh, onLow, mid: r2(mid), nyOpen: open };
+  if (open === mid) return { ...base, stage: 'no_bias', bias: 'none', signal: null, reason: 'The New York open is exactly at the overnight midpoint: no bias, no trade today.' };
+  const long = open > mid;
+  const target = long ? onHigh : onLow; const opposite = long ? onLow : onHigh;
+  const bias = long ? 'buy-side: the overnight high' : 'sell-side: the overnight low';
+  const out = { ...base, bias, side: long ? 'long' : 'short', target, invalidation: opposite };
+  let first = i;
+  while (first > 0 && x.day[first - 1] === x.day[i] && x.td[first - 1] >= NY_OPEN_TD) first--;
+  const inWindow = (k) => x.et[k] >= P86_WINDOW.from && x.et[k] < P86_WINDOW.to;
+  const took = (k, level, up) => (up ? c[k].h >= level : c[k].l <= level);
+  for (let k = first; k < i; k++) {
+    if (took(k, opposite, !long)) return { ...out, stage: 'invalidated', signal: null, reason: `The ${long ? 'overnight low' : 'overnight high'} ${r2(opposite)} was taken first.` };
+    if (took(k, target, long)) return { ...out, stage: 'target_taken', signal: null, reason: `The ${long ? 'overnight high' : 'overnight low'} ${r2(target)} was taken without an entry.` };
+    if (k > 0 && inWindow(k) && p86Trigger(c, k, long, open)) return { ...out, stage: 'triggered_earlier', signal: null, reason: 'Today\'s one setup already triggered.' };
+  }
+  if (x.et[i] < P86_WINDOW.from) return { ...out, stage: 'watching', signal: null, reason: 'Entries start at 9:35 New York.' };
+  if (x.et[i] >= P86_WINDOW.to) return { ...out, stage: 'expired', signal: null, reason: 'No entry by 11:00 New York: expired for today.' };
+  if (took(i, opposite, !long)) return { ...out, stage: 'invalidated', signal: null, reason: `The ${long ? 'overnight low' : 'overnight high'} ${r2(opposite)} was taken first.` };
+  if (took(i, target, long)) return { ...out, stage: 'target_taken', signal: null, reason: `The ${long ? 'overnight high' : 'overnight low'} ${r2(target)} was taken without an entry.` };
+  if (i < 1 || !p86Trigger(c, i, long, open)) return { ...out, stage: 'forming', signal: null, reason: `Waiting for a close ${long ? 'above' : 'below'} the New York open ${r2(open)} and the prior bar's ${long ? 'high' : 'low'}.` };
+  let extreme = long ? Infinity : -Infinity;
+  for (let k = first; k <= i; k++) extreme = long ? Math.min(extreme, c[k].l) : Math.max(extreme, c[k].h);
+  const stop = long ? extreme - 0.25 : extreme + 0.25;
+  const risk = Math.abs(c[i].c - stop); const reward = long ? target - c[i].c : c[i].c - target;
+  if (reward < risk) return { ...out, stage: 'triggered', signal: null, reason: `Triggered, but the ${long ? 'overnight high' : 'overnight low'} is under 1R away (${r2(reward)} vs ${r2(risk)} points): skipped.` };
+  const signal = sized({ side: out.side, ref: c[i].c, stop, target: r2(target),
+    why: `86-style approximation: NY open ${r2(open)} ${long ? 'above' : 'below'} the overnight midpoint ${r2(mid)}; closed ${long ? 'above' : 'below'} the open and the prior bar toward the ${long ? 'overnight high' : 'overnight low'} ${r2(target)}` });
+  return { ...out, stage: 'triggered', signal, stop, reason: signal ? 'Triggered: entry at the next bar open.' : `Triggered, but the risk (${r2(risk)} points) is outside 6–60 points: skipped.` };
+}
+/**
+ * CHE's own measured frequencies (never the indicator's): for each CME day with an overnight range and a New York
+ * session (9:30–16:00), which overnight extreme New York took first, and whether it then took the other.
+ * A bar that takes both extremes counts as "same bar" (order unknown inside the bar).
+ */
+export function overnightStats(candles) {
+  const x = intradayContext(candles);
+  const days = new Map();
+  for (let i = 0; i < candles.length; i++) {
+    if (x.onHigh[i] == null || x.et[i] >= 16 * 60 || x.et[i] < 9 * 60 + 30) continue;
+    const d = days.get(x.day[i]) || { day: x.day[i], onHigh: x.onHigh[i], onLow: x.onLow[i], open: x.nyOpen[i], first: null, second: false, bars: 0 };
+    d.bars++;
+    const hi = candles[i].h >= d.onHigh; const lo = candles[i].l <= d.onLow;
+    if (!d.first) d.first = hi && lo ? 'same_bar' : hi ? 'high' : lo ? 'low' : null;
+    else if (!d.second && ((d.first === 'high' && lo) || (d.first === 'low' && hi))) d.second = true;
+    days.set(x.day[i], d);
+  }
+  const list = [...days.values()].filter((d) => d.bars >= 70); // a full 9:30–16:00 session on 5-minute bars has 78
+  const n = list.length;
+  const pct = (k, of) => (of ? Math.round((k / of) * 1000) / 10 : null);
+  const either = list.filter((d) => d.first).length;
+  const biased = list.filter((d) => d.open !== (d.onHigh + d.onLow) / 2);
+  const biasFirst = biased.filter((d) => d.first === ((d.open > (d.onHigh + d.onLow) / 2) ? 'high' : 'low')).length;
+  const firstClear = list.filter((d) => d.first === 'high' || d.first === 'low');
+  const second = firstClear.filter((d) => d.second).length;
+  return {
+    label: 'CHE measured frequencies (not the P2P indicator\'s probabilities)', days: n,
+    ny_took_either: { count: either, of: n, pct: pct(either, n) },
+    bias_side_first: { count: biasFirst, of: biased.length, pct: pct(biasFirst, biased.length) },
+    same_bar_both: list.filter((d) => d.first === 'same_bar').length,
+    second_side_after_first: { count: second, of: firstClear.length, pct: pct(second, firstClear.length) },
+    enough: n >= 30,
+  };
+}
+/** The latest overnight levels and the model's stage on the newest bar, for the chart. */
+export function overnightLevels(candles) {
+  if (!candles?.length) return null;
+  const x = intradayContext(candles);
+  const i = candles.length - 1;
+  const plan = p2p86Plan(candles, i, x);
+  if (plan.stage === 'waiting') return { label: P86_NAME, day: x.day[i], stage: 'waiting', reason: plan.reason };
+  const { signal, ...rest } = plan;
+  return { label: P86_NAME, day: x.day[i], ...rest, signal: signal ? { side: signal.side, ref: signal.ref, stop: signal.stop, target: signal.target } : null };
+}
+
 export const INTRADAY_COMMON_RULES = 'All strategies: entries are market orders at the next bar open, checked after costs; a signal with risk under 6 or over 60 index points is skipped; positions are flat by 16:55 New York, before the CME daily break; one position per portfolio.';
 const inSilverBullet = (m) => (m >= 600 && m < 660) || (m >= 840 && m < 900);
 export const INTRADAY_CANDIDATES = Object.freeze({
@@ -493,6 +593,11 @@ export const INTRADAY_CANDIDATES = Object.freeze({
       if (c[i].c < inside.l) return sized({ side: 'short', ref: c[i].c, stop: inside.h + 0.25, why: `closed below the inside bar low ${r2(inside.l)}` });
       return null;
     },
+  },
+  'p2p86-style-5m': {
+    name: P86_NAME, family: 'ICT', approximation: true,
+    rules: 'CHE\'s own rules on the published idea of the P2P 86 Model (closed source; its calculations are not published and not copied): New York tends to take the overnight high or low. Overnight range: high and low from 18:00 to 9:30 New York. Bias at 9:30: the New York open above the range midpoint aims at the overnight high (long), below it at the overnight low (short); exactly at the midpoint, no trade. Invalidation: the opposite overnight extreme is taken first, or the target is taken before entry. Entry, 9:35–11:00 New York only: the first bar that closes beyond the New York open and the prior bar\'s high (long) or low (short); market order at the next open. Stop: 1 tick beyond the New York session extreme so far. Target: the overnight extreme, only if at least 1R away. Expiry: no entry by 11:00. One setup per day.',
+    entry: (c, i, x) => p2p86Plan(c, i, x).signal,
   },
   'rsi-revert-5m': {
     name: 'RSI 30/70 reversal', family: 'Mean reversion',

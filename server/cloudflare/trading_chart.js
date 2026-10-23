@@ -9,7 +9,7 @@
 // orders are refused because no futures paper broker is connected. Live orders stay disabled.
 import { alpacaPaperDashboard, alpacaPaperOrder, openAlpacaPaperOrders, previewAlpacaPaperOrder } from './broker_alpaca.js';
 import { readSimState, readStoredTrades } from './strategy_sim.js';
-import { readTrades } from './trading_evidence.js';
+import { readTrades, overnightLevels } from './trading_evidence.js';
 import { LIVE_FEED, readLivePortfolios } from './trading_live.js';
 
 export const ACCOUNTS = Object.freeze({
@@ -138,6 +138,8 @@ export async function chartView(storage, env, { account = 'alpaca_paper', symbol
   return {
     ...base, state: five.length ? 'verified' : 'no_data', symbol: sym, bars: bars.map(({ t, o, h, l, c, v }) => ({ t, o, h, l, c, v })), feed,
     markers: chartMarkers({ journal, portfolios, simTrades, symbol: sym }),
+    // The overnight high/low and the 86-style bias (CHE's independent approximation, never the P2P indicator).
+    levels: five.length ? overnightLevels(five) : null,
     entries_allowed: false, market_orders_allowed: false,
     entries_blocked_reason: 'No futures paper broker is connected (Tradovate is not signed in), so CHE takes no manual futures orders. CHE\'s MNQ trades here are research on DELAYED data.',
   };
@@ -202,6 +204,12 @@ export function drawIntent(message) {
 export function chartIntent(message) {
   const t = String(message || '').toLowerCase().replace(/[’']/g, "'").replace(/^\s*(?:hey\s+)?(?:che|chey|chay)[,\s]+/, '');
   if (/^(?:show|open|bring up|pull up|go to)\b[\s\S]{0,25}\bstrateg(?:y|ies)\s+(?:progress|section|page)\b/.test(t)) return { kind: 'chart_open', section: 'strategies' };
+  // Side by side (owner, 2026-10-23): "open side by side", "show my trades next to CHE's", "compare my trade with CHE's",
+  // "open the live order preview". Opens the room's SIDE BY SIDE section; nothing is sent or placed.
+  if (/^(?:show|open|bring up|pull up|go to|see)\b[\s\S]{0,30}\b(?:side[\s-]by[\s-]side|both accounts|live order preview|my (?:trades?|positions?|account) (?:next to|beside|vs\.?|versus|against) (?:che|chey|chay))\b/.test(t)
+    || /^compare\b[\s\S]{0,30}\b(?:my|mine)\b[\s\S]{0,30}\b(?:che|chey|chay)(?:'s)?\b/.test(t)) {
+    return { kind: 'chart_open', section: 'compare' };
+  }
   const strat = /\b(ema|vwap|rsi|orb|opening range|silver bullet|order block|fvg|ict)\b[\s\S]{0,15}\btrades?\b/.exec(t);
   if (/^(?:show|open|bring up|pull up|go to|see)\b/.test(t) && strat) {
     return { kind: 'chart_open', section: 'chart', account: 'futures_paper', filter: { strategy: strat[1] } };
