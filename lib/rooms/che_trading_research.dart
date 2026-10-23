@@ -258,13 +258,15 @@ Widget _panel({required Widget child, Key? key}) => Material(
 
 /// NQ | MNQ, the market the research and the live chart follow.
 class CheMarketToggle extends StatelessWidget {
-  const CheMarketToggle({super.key, required this.market, required this.onChanged});
+  const CheMarketToggle({super.key, required this.market, required this.onChanged, this.markets = const ['NQ', 'MNQ']});
   final String market;
   final ValueChanged<String> onChanged;
+  /// The Trading Room adds CRYPTO (Orion's BTC and ETH desk); research views keep the futures pair.
+  final List<String> markets;
 
   @override
   Widget build(BuildContext context) => Wrap(spacing: 8, runSpacing: 6, children: [
-        for (final m in const ['NQ', 'MNQ'])
+        for (final m in markets)
           Padding(
             padding: EdgeInsets.zero,
             child: Semantics(

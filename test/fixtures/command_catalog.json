@@ -2203,6 +2203,51 @@
    "optional_missing": []
   },
   {
+   "id": "trade-crypto",
+   "category": "trading",
+   "title": "Orion Crypto Desk",
+   "summary": "Orion: BTC and ETH research and paper trading, 24/7.",
+   "does": "Reads, pauses or resumes Orion's crypto desk: BTC-USD and ETH-USD from Coinbase Exchange public candles (5-minute, 15-minute and hourly; Kraken cross-check), every CHE strategy paper traded on LIVE bars around the clock including weekends, net of 0.6% taker and 0.4% maker fees, journalled as crypto in the forward journal and judged by the strategy governor; plus volatility, liquidity and session research and an out-of-sample backtest. No model, no exchange account, no order.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "action",
+    "required": false,
+    "hint": "pause, resume or status"
+   },
+   "examples": [
+    "Have Orion research BTC and ETH, compare strategies, and continue paper trading during the weekend.",
+    "Pause Orion crypto research",
+    "Resume Orion crypto research",
+    "How is the crypto paper trading going?"
+   ],
+   "needs": [
+    "market_data"
+   ],
+   "optional": [],
+   "handler": "crypto_markets.cryptoIntent → setCryptoPaper / cryptoView",
+   "route": "che_crypto",
+   "produces": "crypto desk status",
+   "evidence": "Stored exchange bars, runs, budget counters and journal records only.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "crypto",
+    "bitcoin",
+    "btc",
+    "ethereum",
+    "eth",
+    "orion",
+    "weekend",
+    "24/7"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
    "id": "trade-replay",
    "category": "trading",
    "title": "Trade Replay",

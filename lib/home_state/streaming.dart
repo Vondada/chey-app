@@ -522,6 +522,16 @@ extension _CheHomeStreaming on _CHEHomeState {
             onRead: (words) { speakText(words, record: false, readOnDemand: true); },
           )));
         }
+        // "Have Orion research BTC and ETH…", "how is crypto paper trading going": the Trading Room on its CRYPTO market.
+        if (data['open_view'] == 'trading_crypto' && mounted) {
+          unawaited(Navigator.of(context).push(CheTradingRoomPage.route(
+            baseUrl: () => cheAgentBaseUrl,
+            headers: () => _authHeaders,
+            onAsk: _runHubPrompt,
+            onRead: (words) { speakText(words, record: false, readOnDemand: true); },
+            chart: const {'section': 'chart', 'symbol': 'CRYPTO'},
+          )));
+        }
         if (data['open_view'] == 'alpaca_paper' && mounted) {
           unawaited(Navigator.of(context).push(CheAlpacaPaperPage.route(baseUrl: () => cheAgentBaseUrl, headers: () => _authHeaders, onAsk: _runHubPrompt)));
         }
