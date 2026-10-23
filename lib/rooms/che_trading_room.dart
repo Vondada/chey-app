@@ -29,7 +29,7 @@ import 'che_trading_hud.dart';
 const _gold = CheColors.markets;
 final _stroke = CheColors.stroke;
 
-enum CheTradingSection { chart, setups, cheTrades, strategies, account, compare }
+enum CheTradingSection { chart, setups, cheTrades, strategies, account, compare, crypto }
 
 const kTradingSectionLabels = <CheTradingSection, String>{
   CheTradingSection.chart: 'CHART',
@@ -39,6 +39,8 @@ const kTradingSectionLabels = <CheTradingSection, String>{
   CheTradingSection.account: 'ACCOUNT',
   // MY ACCOUNT beside the CHE PAPER ACCOUNT, and the Live Order Preview (owner, 2026-10-23).
   CheTradingSection.compare: 'SIDE BY SIDE',
+  // Orion's crypto desk: BTC and ETH, researched and paper traded around the clock (owner master mission, 2026-10-23).
+  CheTradingSection.crypto: 'CRYPTO',
 };
 
 /// The section a Worker reply names ("chart", "strategies", ...); chart when unknown.
@@ -48,6 +50,7 @@ CheTradingSection cheTradingSectionNamed(String? name) => switch ((name ?? '').t
       'strategies' || 'strategy' => CheTradingSection.strategies,
       'account' => CheTradingSection.account,
       'compare' || 'sidebyside' || 'side' => CheTradingSection.compare,
+      'crypto' || 'bitcoin' || 'btc' || 'eth' || 'orion' => CheTradingSection.crypto,
       _ => CheTradingSection.chart,
     };
 
@@ -131,24 +134,16 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
   /// Recorded strategy evidence for the setup badges; without it they say "No recorded evidence".
   Future<void> _loadEvidence() async {
     try {
-      _desk.applyEvidence(await _research.overview(_futures));
+      _desk.applyEvidence(await _research.overview(_market));
     } catch (_) {}
   }
   late final CheTradingResearchClient _research = CheTradingResearchClient(baseUrl: widget.baseUrl, headers: widget.headers, client: widget.client);
 
-  /// The market the CHART section shows: NQ or MNQ futures, or CRYPTO (Orion's BTC and ETH desk).
-  late String _market = switch (widget.initialSymbol.toUpperCase()) {
-    'NQ' || 'MNQ' => widget.initialSymbol.toUpperCase(),
-    'CRYPTO' || 'BTC' || 'ETH' || 'BTC-USD' || 'ETH-USD' => 'CRYPTO',
-    _ => 'MNQ',
-  };
-
-  /// The futures market research follows; crypto research lives in the crypto desk itself.
-  String get _futures => _market == 'CRYPTO' ? 'MNQ' : _market;
+  /// The futures market the research and the live chart follow.
+  late String _market = const {'NQ', 'MNQ'}.contains(widget.initialSymbol.toUpperCase()) ? widget.initialSymbol.toUpperCase() : 'MNQ';
 
   void _setMarket(String m) {
     setState(() => _market = m);
-    if (m == 'CRYPTO') return;
     // CHE's live futures feed is MNQ; the chart shows MNQ for both, and says so when NQ research is chosen.
     _chart.show(account: 'futures_paper', symbol: 'MNQ');
   }
@@ -177,14 +172,13 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
             padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
             child: Wrap(spacing: 12, runSpacing: 6, crossAxisAlignment: WrapCrossAlignment.center, children: [
               Semantics(header: true, child: const Text('LIVE MARKET', style: TextStyle(color: _gold, fontWeight: FontWeight.w800, fontSize: 13, letterSpacing: 1.1))),
-              CheMarketToggle(market: _market, onChanged: _setMarket, markets: const ['NQ', 'MNQ', 'CRYPTO']),
+              CheMarketToggle(market: _market, onChanged: _setMarket),
               if (_market == 'NQ')
                 const Text('Live chart: MNQ (CHE\'s live futures feed). Research below uses NQ history.',
                     key: Key('nq_chart_note'), style: TextStyle(color: Colors.white, fontSize: 14)),
             ]),
           ),
-          if (_market == 'CRYPTO') _pad(CheCryptoDeskPanel(baseUrl: p.baseUrl, headers: p.headers, client: p.client, onRead: widget.onRead)),
-          if (_market != 'CRYPTO') _pad(CheTradingChart(
+          _pad(CheTradingChart(
             baseUrl: p.baseUrl,
             headers: p.headers,
             client: p.client,
@@ -196,7 +190,7 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
             height: widget.chartHeight,
             signalMarkers: _desk.markerFeed,
           )),
-          if (_market != 'CRYPTO') CheTradingResearchStrip(key: const Key('research_strip'), client: _research, market: _market, onRead: widget.onRead),
+          CheTradingResearchStrip(key: const Key('research_strip'), client: _research, market: _market, onRead: widget.onRead),
           // The older overview (index chart, quotes, 3D scene) is folded so nothing heavy builds until asked for.
           if (widget.chartExtras.isNotEmpty)
             Padding(
@@ -222,7 +216,7 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
       case CheTradingSection.strategies:
         // Limits and the registry, the historical study, then each strategy's learning progress (#382), from the same panel CHE TRADES uses.
         return [
-          _pad(CheTradingResearchDashboard(client: _research, market: _futures, onRead: widget.onRead)),
+          _pad(CheTradingResearchDashboard(client: _research, market: _market, onRead: widget.onRead)),
           _pad(CheStrategyControlsPanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, client: p.client)),
           // Historical trading intelligence (owner, 2026-10-22): decades of history, out-of-sample ranking, paper signals.
           _pad(CheTradingIntelligencePanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, onRead: widget.onRead, client: p.client)),
@@ -236,6 +230,8 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
         ];
       case CheTradingSection.compare:
         return [_pad(CheSideBySideView(baseUrl: p.baseUrl, headers: p.headers, client: p.client, onRead: widget.onRead))];
+      case CheTradingSection.crypto:
+        return [_pad(CheCryptoDeskPanel(baseUrl: p.baseUrl, headers: p.headers, client: p.client, onRead: widget.onRead))];
     }
   }
 

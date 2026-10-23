@@ -71,6 +71,7 @@ This is the same engine, journal and governor with a crypto feed. There is no se
   - The owner's Test A sentence turns the desk on if it was off or paused.
   - The reply gives the real schedule state, the last pass, each feed's status and freshness, the actual simulated trade count (zero is said as zero), performance with sample size, and the best out-of-sample result once one has 30 trades.
   - Guests are refused.
+- **Trading Room:** a **CRYPTO** section beside the existing ones shows the desk: feed status as words with chrome status colours, last pass and next pass, request budget, simulated trades, research, Pause/Resume and Read aloud. Chat replies open it, and it is silent on open. A section was chosen over a third chip in the NQ/MNQ toggle, which pushed the CHART section's market overview out of reach.
 
 ## 3. Costs assumed (stored on every portfolio and trade)
 

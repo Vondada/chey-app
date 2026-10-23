@@ -529,7 +529,7 @@ extension _CheHomeStreaming on _CHEHomeState {
             headers: () => _authHeaders,
             onAsk: _runHubPrompt,
             onRead: (words) { speakText(words, record: false, readOnDemand: true); },
-            chart: const {'section': 'chart', 'symbol': 'CRYPTO'},
+            chart: const {'section': 'crypto'},
           )));
         }
         if (data['open_view'] == 'alpaca_paper' && mounted) {

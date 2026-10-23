@@ -106,23 +106,21 @@ void main() {
     expect(cheCryptoTone('NOT STARTED'), CheStatusTone.neutral);
   });
 
-  testWidgets('the Trading Room market selector has CRYPTO, which swaps the futures chart for the crypto desk', (tester) async {
+  testWidgets('the Trading Room has a CRYPTO section that opens the crypto desk, and voice names reach it', (tester) async {
     final s = _Server();
     tester.view.physicalSize = const Size(1170, 2532);
     tester.view.devicePixelRatio = 3;
     addTearDown(tester.view.reset);
+    expect(cheTradingSectionNamed('crypto'), CheTradingSection.crypto);
+    expect(cheTradingSectionNamed('Orion'), CheTradingSection.crypto);
+    expect(kTradingSectionLabels[CheTradingSection.crypto], 'CRYPTO');
     await tester.pumpWidget(MaterialApp(
       theme: ThemeData.dark(),
-      home: Scaffold(body: CheTradingRoom(baseUrl: () => 'https://che.example', headers: () => const {}, onAsk: (_) {}, client: s.client, initialSymbol: 'CRYPTO')),
+      home: Scaffold(body: CheTradingRoom(baseUrl: () => 'https://che.example', headers: () => const {}, onAsk: (_) {}, client: s.client, initialSection: CheTradingSection.crypto)),
     ));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
-    expect(find.byKey(const Key('market_CRYPTO')), findsOneWidget);
     expect(find.byKey(const Key('crypto_desk')), findsOneWidget);
-    expect(find.byKey(const Key('research_strip')), findsNothing);
-    expect(find.bySemanticsLabel('CRYPTO market, selected'), findsOneWidget);
-    await tester.tap(find.byKey(const Key('market_MNQ')));
-    await tester.pump(const Duration(milliseconds: 50));
-    expect(find.byKey(const Key('crypto_desk')), findsNothing);
+    expect(find.bySemanticsLabel(RegExp(r'^CRYPTO section, open')), findsOneWidget);
   });
 }
