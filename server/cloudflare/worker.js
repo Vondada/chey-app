@@ -146,6 +146,7 @@ import { lastSite, publishSite, saveSite, serveSite, siteBuildIntent, siteEditIn
 import { noteJobActivity } from './job_activity.js';
 import { CODING_CANCEL_SOURCE, cancelQueuedJob, codingCancelIntent, resolveCodingCancel, speakCancelResult, speakUnresolved } from './coding_cancel.js';
 import { PENDING_OWNER_ACTION_KEY, deskOwnedMoney, forbiddenAction, prohibitionSpans, withoutProhibitions, PENDING_OWNER_ACTION_MS, gateOwnerAction, grantForKinds, isOwnerYes, peerActionReply, APPS_GRANTED_KEY, PENDING_APP_ACTION_KEY, PENDING_APP_ACTION_MS, gateAppAccess, classifyAppNeed, classifyExplicitAppOpen, classifyAppAccesses } from './owner_action_gate.js';
+import { placedOrdersLine, recordDeviceInstall } from './action_receipts.js';
 import { auditLedger, knowVsGuessQuestion, knowVsGuessReply, MEMORY_CLAIM_MS, memorySavedQuestion, memorySavedReply } from './hallucination_auditor.js';
 import { verifyReply } from './truth_pipeline.js';
 import { asksForCurrentOwnerLocation, executeWithReceipt, guardExecutionClaims, guardRetrievalClaims, changeHistoryIntent, guardClaimedOwnerActions, guardClaimedResearchActions, guardGroundedFacts, guardLocationWeatherReply, guardOwnerReply, loadChangeHistory, loadReceipts, OWNER_LOCATION_NOT_VERIFIED, recordReceipt, requestedCodeNames, speakChangeHistory, vagueResearchRequest, verifiedState, verifiedStatusText } from './truth_layer.js';
@@ -4174,7 +4175,7 @@ export class CheState extends DurableObject {
     try {
       if (placed?.ok && !placed.repeated && placed.receipt?.id) {
         const r = placed.receipt;
-        await recordReceipt(this.ctx.storage, { kind: 'paper_order_placed', key: `alpaca_paper:${r.id}`, symbol: r.symbol, side: r.side, qty: r.qty, client_order_id: r.client_order_id, detail: String(placed.detail || `Alpaca PAPER accepted the order (${r.status}).`).slice(0, 300) });
+        await recordReceipt(this.ctx.storage, { kind: 'paper_order_placed', key: `alpaca_paper:${r.id}`, order_id: String(r.id), account: 'paper', symbol: r.symbol, side: r.side, qty: r.qty, client_order_id: r.client_order_id, detail: String(placed.detail || `Alpaca PAPER accepted the order (${r.status}).`).slice(0, 300) });
         return;
       }
       const event = paperOrderRefusedEvent(order, placed, { via });
@@ -7105,6 +7106,14 @@ export class CheState extends DurableObject {
         return json({ detail: 'Only the CHE owner can use that. This profile can chat, read aloud, and manage its own notifications.' }, 403);
       }
 
+      // The paired phone reports the build it is running. That receipt is the only evidence behind
+      // "the update is installed on your iPhone" (hallucination_auditor.js); nothing else may claim it.
+      if (path === '/api/device/installed' && request.method === 'POST') {
+        if (!ownerDevice) return ownerOnly();
+        const receipt = await recordDeviceInstall(this.ctx.storage, { version: body?.version, build: body?.build, patch: body?.patch });
+        if (!receipt) return json({ detail: 'version and build are required (letters, digits, dots, plus and dashes; up to 40 characters).' }, 400);
+        return json({ ok: true, receipt: { version: receipt.version, build: receipt.build, patch: receipt.patch, at: receipt.at } });
+      }
       // Owner voice selection: account-scoped catalog, consent-gated previews,
       // and a persistent choice actually used by Chat and Read This.
       if (path === '/api/voice/choices' && request.method === 'GET') {
@@ -12878,7 +12887,9 @@ export class CheState extends DurableObject {
           const dash = await this.liveTradingDashboard();
           const opens = (live.kinds || [live.kind]).some((kind) => ['open', 'chart', 'trades', 'positions', 'learning'].includes(kind));
           // A compound question ("won and lost, which strategy is best, is it still on?") gets every part.
-          return ndjsonReply(liveAnswer(live, dash, { message, already }), {
+          // "What trades did you execute?" also hears the orders CHE actually sent, from receipts (action_receipts.js).
+          const sentOrders = (live.kinds || [live.kind]).includes('trades') ? await placedOrdersLine(this.ctx.storage).catch(() => '') : '';
+          return ndjsonReply([liveAnswer(live, dash, { message, already }), sentOrders].filter(Boolean).join(' '), {
             source: 'che_trading_live', model_calls: 0, ...(opens ? { open_screen: 'trading_room' } : {}),
             // "Show strategy progress": the Trading Room opens on its STRATEGIES section (Build 1).
             ...((live.kinds || [live.kind]).includes('learning') ? { chart: { section: 'strategies' } } : {}),
@@ -13093,7 +13104,8 @@ export class CheState extends DurableObject {
             // Any other yes, such as "yes, place it", is refused here and names the phrase to say; nothing is placed.
             if (!desk.place || !desk.live) return ndjsonReply(speakTakeNeedsYes(await readDesk(this.ctx.storage)), { source: 'che_trading_desk', ok: false, model_calls: 0, order_sent: false });
             const taken = await takeTrade(this.ctx.storage);
-            if (taken.ok) await recordReceipt(this.ctx.storage, { kind: 'trade_placed', key: `trade_placed:${Date.now()}`, detail: taken.reply.slice(0, 300) }).catch(() => null);
+            // The broker's order id and the account mode make this receipt evidence; the sentence alone is not.
+            if (taken.ok) await recordReceipt(this.ctx.storage, { kind: 'trade_placed', key: `trade_placed:${taken.order_id || Date.now()}`, order_id: String(taken.order_id || ''), account: String(taken.account || ''), account_mode: taken.mode || '', detail: taken.reply.slice(0, 300) }).catch(() => null);
             return ndjsonReply(taken.reply, { source: 'che_trading_desk', ok: Boolean(taken.ok) });
           }
           if (desk.kind === 'accounts') {

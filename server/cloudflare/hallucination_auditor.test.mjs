@@ -143,7 +143,9 @@ test('evidence comes from receipts: a merge needs a SHA, a deploy failure is cou
       receipt('merged', { number: 512, sha: 'abc123' }),
       receipt('merged', { number: 513, sha: '' }),
       receipt('deploy_failed', { sha: 'bad' }),
+      // Only the video_verified receipt (action_receipts.js, written after the real file check) proves a file.
       receipt('video_render', { task_id: 'v1', status: 'complete', mp4_verified: true, playable: true }),
+      receipt('video_verified', { task_id: 'v1', status: 'complete', mp4_verified: true, playable: true }),
     ],
   });
   const evidence = await auditEvidenceFrom(storage, { executions: [{ invocation_id: 'i1', status: 'success' }], now: NOW });
