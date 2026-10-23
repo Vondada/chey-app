@@ -1445,6 +1445,43 @@
    "optional_missing": []
   },
   {
+   "id": "trade-setups",
+   "category": "trading",
+   "title": "Trade Setups",
+   "summary": "Open the Setup Progress Board and its signals.",
+   "does": "Opens the Setup Progress Board: every setup CHE follows on the live Rithmic candles on this iPhone, its stage, the conditions met, pending or failed, and the CHE PAPER ACCOUNT signals. Asking which are ready reads them. Places no order.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Show setups",
+    "What setups are ready?",
+    "Show the setup progress board"
+   ],
+   "needs": [
+    "office"
+   ],
+   "optional": [],
+   "handler": "trading_chart.chartIntent (setups section)",
+   "route": "che_trading_chart",
+   "produces": "setup board",
+   "evidence": "Stages computed on this iPhone from real Rithmic candles; signals carry their data source and evidence sample size.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "setups",
+    "setup progress",
+    "signal mode",
+    "signals",
+    "ready setups"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
    "id": "trade-liquidity",
    "category": "trading",
    "title": "Trade Liquidity",

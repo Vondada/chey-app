@@ -77,6 +77,7 @@ class CheTradeAudit {
 
   /// Every entry so far, oldest first. The list is a copy; it cannot change the log.
   Future<List<CheAuditEntry>> entries() async {
+    await _queue;
     await _load();
     return List.unmodifiable(_entries);
   }
@@ -122,6 +123,7 @@ class CheTradeAudit {
 
   /// Checks sequence and chain. Returns problems in plain words; empty means intact.
   Future<List<String>> verify() async {
+    await _queue;
     await _load();
     final problems = <String>[];
     var previous = '';

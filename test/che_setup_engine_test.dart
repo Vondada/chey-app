@@ -190,6 +190,22 @@ void main() {
     expect(bad.conditions.firstWhere((c) => c.id == 'reclaim').state, CheConditionState.pending);
   });
 
+  test('VWAP 2-sigma reversion: a stretch below the lower band, then an up bar back inside, targets VWAP', () {
+    final bars = [for (var i = 0; i < 20; i++) _bar(i, 20000, 20002, 19998, 20000)];
+    bars.add(_bar(20, 19999, 20000, 19955, 19960)); // closes far below VWAP − 2σ
+    final forming = cheEvaluateSetup('vwap-revert-5m', bars);
+    expect(forming.side, 'long');
+    expect(forming.stage, CheSetupStage.forming, reason: 'a close beyond the band starts the setup');
+    final back = _bar(21, 19962, 19992, 19958, 19990);
+    final ev = cheEvaluateSetup('vwap-revert-5m', [...bars, back]);
+    expect(ev.stage, CheSetupStage.triggered);
+    expect(ev.stop, 19955 - 0.25);
+    expect(ev.target, greaterThan(back.close), reason: 'the target is the session VWAP above the entry');
+    final weak = _bar(21, 19995, 19996, 19958, 19990); // back inside, but a down bar
+    final bad = cheEvaluateSetup('vwap-revert-5m', [...bars, weak]);
+    expect(bad.stage, CheSetupStage.invalidated);
+  });
+
   test('evidence: sufficient samples report expectancy with the sample size; none is never a confidence', () {
     const none = CheStrategyEvidence(strategyId: 'x', sampleTrades: 0);
     expect(none.status, 'No recorded evidence');

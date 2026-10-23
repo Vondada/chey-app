@@ -202,6 +202,9 @@ export function drawIntent(message) {
 export function chartIntent(message) {
   const t = String(message || '').toLowerCase().replace(/[’']/g, "'").replace(/^\s*(?:hey\s+)?(?:che|chey|chay)[,\s]+/, '');
   if (/^(?:show|open|bring up|pull up|go to)\b[\s\S]{0,25}\bstrateg(?:y|ies)\s+(?:progress|section|page)\b/.test(t)) return { kind: 'chart_open', section: 'strategies' };
+  // Signal Mode: "show setups", "show the setup progress board", "what setups are ready?". The board lives on the iPhone.
+  if (/^(?:what|which|any)\b[\s\S]{0,25}\bsetups?\b[\s\S]{0,25}\b(?:ready|forming|triggered|active|near entry|right now)\b/.test(t)) return { kind: 'chart_open', section: 'setups', answer: 'ready' };
+  if (/^(?:show|open|bring up|pull up|go to|see)\b[\s\S]{0,20}\b(?:setups|setup (?:progress|board)|signal mode|(?:trade |paper )?signals)\b/.test(t)) return { kind: 'chart_open', section: 'setups' };
   const strat = /\b(ema|vwap|rsi|orb|opening range|silver bullet|order block|fvg|ict)\b[\s\S]{0,15}\btrades?\b/.exec(t);
   if (/^(?:show|open|bring up|pull up|go to|see)\b/.test(t) && strat) {
     return { kind: 'chart_open', section: 'chart', account: 'futures_paper', filter: { strategy: strat[1] } };
