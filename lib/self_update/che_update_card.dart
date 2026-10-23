@@ -11,6 +11,7 @@ import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 
 import '../che_ui/che_theme.dart';
+import '../che_ui/che_foreground.dart';
 
 class CheUpdateProposal {
   const CheUpdateProposal({
@@ -164,7 +165,9 @@ class _CheUpdateCardState extends State<CheUpdateCard> {
     if (_prNumber == null) return;
     unawaited(_refresh());
     _poll?.cancel();
-    _poll = Timer.periodic(const Duration(seconds: 15), (_) => unawaited(_refresh()));
+    _poll = Timer.periodic(const Duration(seconds: 15), (_) {
+      if (cheAppInForeground()) unawaited(_refresh());
+    });
   }
 
   Future<void> _refresh() async {

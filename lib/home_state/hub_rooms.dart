@@ -578,6 +578,7 @@ extension _CheHomeHubRooms on _CHEHomeState {
       MaterialPageRoute<void>(
         builder: (_) => CheOfficeFloorScreen(
           client: _agentRuntime,
+          runtime: _officeRuntime,
           onSpeak: (text) => speakText(text, record: false, readOnDemand: true),
           initialAgentName: agentName,
           // Tapping CHE's desk returns to the conversation.
@@ -592,6 +593,7 @@ extension _CheHomeHubRooms on _CHEHomeState {
     // War Room, with read-aloud on every summary.
     return CheOfficeFloorScreen(
       client: _agentRuntime,
+      runtime: _officeRuntime,
       embedded: true,
       onSpeak: (text) => speakText(text, record: false, readOnDemand: true),
       onTalkToChe: () => Navigator.of(context).popUntil((route) => route.isFirst),

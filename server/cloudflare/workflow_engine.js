@@ -94,7 +94,7 @@ export const SYSTEM_WORKFLOWS = Object.freeze([
     ['che_held_action', 'owner_approved', 'credential_safety', 'che_secret_refused', 'che_keys', 'che_lockdown', 'che_guest', 'che_clarify'],
     { summary: 'Holds money and delete actions for a yes, refuses secrets in chat, and keeps guests apart.', blocks: ['understand', 'money_delete_hold', 'owner_only', 'speak'], triggers: ['yes', 'confirm', 'key', 'password', 'approve'], approval: 'money', context: ['request'] }),
   S('self_review', 'Self review', 'intelligence',
-    ['che_brain_review', 'che_autonomy_exam', 'che_five_layer_exam', 'che_reliability', 'che_evidence_receipt', 'che_strategy_review'],
+    ['che_brain_review', 'che_autonomy_exam', 'che_five_layer_exam', 'che_reliability', 'che_evidence_receipt', 'che_strategy_review', 'che_performance'],
     { summary: 'CHE checks her own reliability, exams and evidence and reports the measured result.', blocks: ['understand', 'records', 'verify', 'speak'], triggers: ['reliability', 'exam', 'evidence', 'proof', 'review yourself'], verify: 'receipt', context: ['ledger'] }),
   S('open_conversation', 'Open conversation (language model)', 'intelligence', ['model', 'owner_chat', 'ai_layer', 'che_chat_only'],
     { summary: 'No reusable workflow fit, so the language model answered. These runs are what the engine learns from.', blocks: ['understand', 'model', 'speak'], triggers: [], context: ['request', 'recent_turns'], deterministic: false }),

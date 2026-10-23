@@ -12,6 +12,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
+import '../che_ui/che_foreground.dart';
 
 class CheFilmClient {
   CheFilmClient({required this.baseUrl, required this.headers, http.Client? client}) : _client = client ?? http.Client();
@@ -87,7 +88,7 @@ class _CheFilmStudioScreenState extends State<CheFilmStudioScreen> {
     unawaited(_load());
     _timer = Timer.periodic(widget.refreshEvery, (_) {
       final state = (_view?['film'] as Map?)?['state'];
-      if (_active.contains(state)) unawaited(_load());
+      if (_active.contains(state) && cheAppInForeground()) unawaited(_load());
     });
   }
 

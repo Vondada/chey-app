@@ -15,6 +15,7 @@ import '../che_ui/che_clock.dart';
 import '../che_ui/che_hud.dart';
 import '../che_ui/che_theme.dart';
 import '../che_ui/che_widgets.dart';
+import '../che_ui/che_foreground.dart';
 
 /// MNQ as the Worker's chart feed reports it.
 class CheHomeQuote {
@@ -173,13 +174,17 @@ class _TileLabel extends StatelessWidget {
 
 /// MNQ from the Worker's chart feed, refreshed each minute while Home is on screen.
 class CheHomeMarketTile extends StatefulWidget {
-  const CheHomeMarketTile({super.key, required this.baseUrl, required this.headers, required this.onOpen, this.client, this.height = 140});
+  const CheHomeMarketTile({super.key, required this.baseUrl, required this.headers, required this.onOpen, this.client, this.height = 140, this.delayedOnly = false});
 
   final String Function() baseUrl;
   final Map<String, String> Function() headers;
   final VoidCallback onOpen;
   final http.Client? client;
   final double height;
+
+  /// Inside the live chart card, after the owner chose delayed data: no tile frame of its own, and always labelled
+  /// DELAYED whatever the Worker's feed says, so it can never pass for live.
+  final bool delayedOnly;
 
   @override
   State<CheHomeMarketTile> createState() => _CheHomeMarketTileState();
@@ -197,7 +202,7 @@ class _CheHomeMarketTileState extends State<CheHomeMarketTile> {
     unawaited(_load());
     // Only while this tile's tab is on screen (TickerMode), so a hidden Home makes no requests.
     _timer = Timer.periodic(const Duration(seconds: 60), (_) {
-      if (mounted && TickerMode.valuesOf(context).enabled) unawaited(_load());
+      if (mounted && cheAppInForeground() && TickerMode.valuesOf(context).enabled) unawaited(_load());
     });
   }
 
@@ -239,16 +244,14 @@ class _CheHomeMarketTileState extends State<CheHomeMarketTile> {
     final up = (q?.changePct ?? 0) >= 0;
     final change = q?.changePct == null ? '' : '${up ? '+' : ''}${q!.changePct!.toStringAsFixed(2)}%';
     // A failed refresh keeps the last price on screen but marks it stale, in text and for VoiceOver.
-    final status = q == null ? '' : (q.stale || _error != null ? 'STALE' : q.status);
+    final status = widget.delayedOnly
+        ? (q != null && (q.stale || _error != null) ? 'DELAYED · STALE' : 'DELAYED')
+        : (q == null ? '' : (q.stale || _error != null ? 'STALE' : q.status));
     final price = q == null ? '—' : _price(q.last);
-    return CheHudTile(
-      semantics: q == null
-          ? 'Trading. MNQ: ${_error ?? 'loading'}. Double tap to open.'
-          : 'Trading. MNQ $price, ${change.isEmpty ? '' : '${q.changePct!.toStringAsFixed(2)} percent today, '}${status.toLowerCase()} data. Double tap to open.',
-      onTap: widget.onOpen,
-      leanRight: true,
-      height: widget.height,
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+    final semantics = q == null
+        ? 'Trading. MNQ${widget.delayedOnly ? ', delayed' : ''}: ${_error ?? 'loading'}. Double tap to open.'
+        : 'Trading. MNQ $price, ${change.isEmpty ? '' : '${q.changePct!.toStringAsFixed(2)} percent today, '}${status.toLowerCase()} data. Double tap to open.';
+    final body = Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           _TileLabel(Icons.show_chart_rounded, status.isEmpty ? 'MNQ' : 'MNQ · $status'),
           const SizedBox(height: 8),
           FittedBox(
@@ -269,8 +272,11 @@ class _CheHomeMarketTileState extends State<CheHomeMarketTile> {
             const SizedBox(height: 6),
             SizedBox(height: 34, width: double.infinity, child: ExcludeSemantics(child: CustomPaint(painter: _SparkPainter(q.closes)))),
           ],
-        ]),
-    );
+        ]);
+    if (widget.delayedOnly) {
+      return Semantics(container: true, button: true, label: semantics, excludeSemantics: true, child: GestureDetector(onTap: widget.onOpen, child: body));
+    }
+    return CheHudTile(semantics: semantics, onTap: widget.onOpen, leanRight: true, height: widget.height, child: body);
   }
 
   static String _price(double v) {
