@@ -7,6 +7,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'che_ui/che_foreground.dart';
 
 import 'che_ui/che_ui_preferences.dart';
 
@@ -59,7 +60,9 @@ class _CheJobActivityBannerState extends State<CheJobActivityBanner> {
       _status = '';
     });
     unawaited(_poll());
-    _timer = Timer.periodic(const Duration(seconds: 4), (_) => unawaited(_poll()));
+    _timer = Timer.periodic(const Duration(seconds: 4), (_) {
+      if (cheAppInForeground()) unawaited(_poll());
+    });
   }
 
   Future<void> _poll() async {

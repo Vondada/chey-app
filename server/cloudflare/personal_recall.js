@@ -316,6 +316,8 @@ function storedDates(records = []) {
  * with an honest "I don't have that date" line. Returns { text, removed } so the caller can log what was caught.
  */
 export function groundedReply(reply, { records = [], message = '' } = {}) {
+  // Most replies hold no date: skip formatting every record's dates (a cost per memory, on every reply).
+  if (!(String(reply || '').match(DATE_RE) || []).length) return { text: reply, removed: [] };
   const allowed = storedDates(records);
   for (const d of String(message || '').match(DATE_RE) || []) allowed.add(d);
   const invented = (String(reply || '').match(DATE_RE) || []).filter((d) => !allowed.has(d));

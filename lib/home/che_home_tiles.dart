@@ -15,6 +15,7 @@ import '../che_ui/che_clock.dart';
 import '../che_ui/che_hud.dart';
 import '../che_ui/che_theme.dart';
 import '../che_ui/che_widgets.dart';
+import '../che_ui/che_foreground.dart';
 
 /// MNQ as the Worker's chart feed reports it.
 class CheHomeQuote {
@@ -197,7 +198,7 @@ class _CheHomeMarketTileState extends State<CheHomeMarketTile> {
     unawaited(_load());
     // Only while this tile's tab is on screen (TickerMode), so a hidden Home makes no requests.
     _timer = Timer.periodic(const Duration(seconds: 60), (_) {
-      if (mounted && TickerMode.valuesOf(context).enabled) unawaited(_load());
+      if (mounted && cheAppInForeground() && TickerMode.valuesOf(context).enabled) unawaited(_load());
     });
   }
 

@@ -156,6 +156,15 @@ export const COMMANDS = Object.freeze([
     prompt: 'Read me my brain review',
     produces: 'review', evidence: 'Every line comes from the stored review record, computed from Brain records; zero model calls.', keywords: ['brain review', 'morning review', 'daily review', 'audit', 'conclusions'],
   }),
+  C('che-performance', 'intelligence', 'EXPLORE', 'Hear how fast CHE is running, measured.', {
+    title: 'CHE performance',
+    does: 'Reads CHE’s own measured timings per route (typical and slowest 5 percent), compares them with her performance budget, and names the slowest step. Says so when nothing has been measured yet.',
+    needs: ['memory'], route: 'che_performance', handler: 'perf_watch.performanceIntent → performanceReport → speakPerformance',
+    input: null,
+    examples: ['Are you lagging?', 'Performance report', 'Why are you slow?'],
+    prompt: 'Performance report',
+    produces: 'report', evidence: 'Every number is a measured request timing from the live window; zero model calls.', keywords: ['performance', 'lag', 'lagging', 'slow', 'speed', 'latency'],
+  }),
   C('che-flagstaff-import', 'intelligence', 'BUILD', 'Bring the Flagstaff mailbox history into the Brain.', {
     title: 'CHE Flagstaff import',
     does: 'Reads every message file on the che-mailbox branch, archive included, and keeps each message in your Brain as outside correspondence with its file, message id, sender, recipient and time. Never as your words, an instruction or Office worker experience. Safe to repeat: a message already there is skipped, one you deleted stays deleted, and a long import carries on where it stopped.',
