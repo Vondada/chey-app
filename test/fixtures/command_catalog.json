@@ -1324,6 +1324,85 @@
    ]
   },
   {
+   "id": "film-make",
+   "category": "studio",
+   "title": "Film Make",
+   "summary": "Make a film from one sentence, free.",
+   "does": "Writes a screenplay, makes every shot with free compute (pictures and voices on Workers AI, moving clips on a connected free GPU farm) and assembles the film on GitHub Actions. Before starting CHE says the real ETA and the mix; a film is done only when its MP4 is stored and verified.",
+   "mode": "BUILD",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "film",
+    "required": true,
+    "hint": "Length and subject, for example \"10-minute movie about a lighthouse keeper\""
+   },
+   "examples": [
+    "Make me a 10-minute movie about a lighthouse keeper",
+    "Make me a 2-hour movie about a heist in Tokyo"
+   ],
+   "needs": [
+    "video_renderer"
+   ],
+   "optional": [],
+   "handler": "film_studio.filmIntent → film_pipeline.startFilm (alarm passes) → che-film-render.yml",
+   "route": "che_film_studio",
+   "produces": "video",
+   "evidence": "The MP4 read back from R2: length, frame size and codecs; shots that failed their checks are listed.",
+   "cost": "Free: Workers AI daily allowance, GitHub Actions free minutes, and free GPU quotas you connect. Hard caps; nothing paid.",
+   "keywords": [
+    "movie",
+    "film",
+    "feature",
+    "film studio"
+   ],
+   "status": "setup_required",
+   "missing": [
+    {
+     "id": "video_renderer",
+     "label": "Video renderer",
+     "state": "not_connected",
+     "setup": "Needs CHE_VIDEO_RENDER_URL, or CHE_GITHUB_TOKEN with CHE_GITHUB_REPO for the free GitHub renderer.",
+     "detail": "No video renderer is configured."
+    }
+   ],
+   "optional_missing": []
+  },
+  {
+   "id": "film-status",
+   "category": "studio",
+   "title": "Film Status",
+   "summary": "Film progress, ETA and the free render farm.",
+   "does": "Says where the current film is (shots done, elapsed time against the estimate) and, when asked, which free GPUs are connected and how much free quota is left.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "How's my movie going?",
+    "Render farm status"
+   ],
+   "needs": [],
+   "optional": [],
+   "handler": "film_studio.speakStatus / speakFarm",
+   "route": "che_film_studio",
+   "produces": "film status",
+   "evidence": "The stored film state and shot checks.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "movie status",
+    "film progress",
+    "render farm"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
    "id": "trade-open",
    "category": "trading",
    "title": "Trade Open",

@@ -158,4 +158,52 @@ void main() {
       expect(live.status, RithmicLiveStatus.disconnected);
     });
   });
+
+  test('exchange time wins over Rithmic time; snapshots and non-trade updates make no candle', () {
+    final book = RithmicCandleBook();
+    final exchange = t(0, 10);
+    expect(
+        book.addTrade(RithmicLastTrade(
+            symbol: 'MNQZ6', exchange: 'CME', price: 21000, size: 1, ssboe: t(1, 0).millisecondsSinceEpoch ~/ 1000, sourceSsboe: exchange.millisecondsSinceEpoch ~/ 1000, sourceUsecs: 0)),
+        isTrue);
+    expect(book.candles(1).single.t, t(0));
+    expect(book.addTrade(RithmicLastTrade(symbol: 'MNQZ6', exchange: 'CME', price: 20000, size: 9, ssboe: t(0, 20).millisecondsSinceEpoch ~/ 1000, isSnapshot: true)), isFalse);
+    expect(book.addTrade(RithmicLastTrade(symbol: 'MNQZ6', exchange: 'CME', price: 20000, size: 9, ssboe: t(0, 20).millisecondsSinceEpoch ~/ 1000, presenceBits: 8)), isFalse);
+    expect(book.candles(1).single.l, 21000, reason: 'the replayed or non-trade price never entered the candle');
+  });
+
+  test('delta counts only trades Rithmic flagged; unknown stays unknown', () {
+    final book = RithmicCandleBook();
+    RithmicLastTrade flagged(double p, DateTime at, int size, int? side) =>
+        RithmicLastTrade(symbol: 'MNQZ6', exchange: 'CME', price: p, size: size, ssboe: at.millisecondsSinceEpoch ~/ 1000, aggressor: side);
+    book.addTrade(flagged(21000, t(0, 1), 3, 1));
+    book.addTrade(flagged(21001, t(0, 2), 1, 2));
+    book.addTrade(flagged(21002, t(0, 3), 5, null));
+    book.addTrade(flagged(21003, t(1, 3), 2, null));
+    book.addTrade(flagged(21004, t(2, 3), 4, 2));
+    final m = book.candles(1);
+    expect([m[0].buyVolume, m[0].sellVolume, m[0].delta, m[0].v], [3, 1, 2, 9]);
+    expect(m[1].delta, isNull, reason: 'no trade in that minute carried the flag');
+    final five = book.candles(5).single;
+    expect([five.buyVolume, five.sellVolume, five.delta], [3, 5, -2]);
+  });
+
+  test('background and a dropped connection are recorded gaps, closed on return', () async {
+    var now = t(0);
+    final live = CheRithmicLive(clock: () => now);
+    live.attach(_Feed(), symbol: 'MNQZ6', exchange: 'CME');
+    live.appLifecycle(foreground: false);
+    expect(live.inBackground, isTrue);
+    now = t(7);
+    live.appLifecycle(foreground: true);
+    expect(live.gaps.single.from, t(0));
+    expect(live.gaps.single.to, t(7));
+    expect(live.gaps.single.reason, contains('background'));
+    await live.disconnect();
+    expect(live.gaps.last.to, isNull, reason: 'open until a connection exists again');
+    now = t(9);
+    live.attach(_Feed(), symbol: 'MNQZ6', exchange: 'CME');
+    expect(live.gaps.last.to, t(9));
+    expect(CheRithmicLive.backgroundNote, 'Live feed pauses when CHE is in the background.');
+  });
 }

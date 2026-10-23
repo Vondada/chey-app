@@ -4,6 +4,7 @@ import 'dart:async';
 
 import 'package:chey/rithmic/che_rithmic_screen.dart';
 import 'package:chey/rithmic/rithmic_client.dart';
+import 'package:chey/rithmic/rithmic_live.dart';
 import 'package:chey/rithmic/rithmic_wire.dart';
 import 'package:chey/security/che_password_vault.dart';
 
@@ -85,6 +86,10 @@ final october = DateTime.utc(2026, 10, 22);
 
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
+  // A connection is shared with the Trading Room chart and outlives the screen; each test starts without one.
+  tearDown(() async {
+    if (CheRithmicLive.instance.attached) await CheRithmicLive.instance.disconnect();
+  });
 
   testWidgets('the owner connects with only a username and password: system, gateway and contract are found', (tester) async {
     final store = FakeStore();
@@ -210,6 +215,7 @@ void main() {
     expect(feed!.user, 'trader1');
     expect(feed!.password, 'pw');
 
+    await CheRithmicLive.instance.disconnect(); // the first login's connection is still shared; end it
     final finder = FakeFinder();
     await pump(tester, CheRithmicScreen(key: UniqueKey(), store: FakeStore(), routeFinder: finder, now: () => october, feedFactory: (_) => FakeFeed()));
     await fill(tester, 'Username or trader code', 'trader1');
@@ -225,5 +231,28 @@ void main() {
     await connect(tester);
     expect(find.textContaining('Rithmic has not confirmed it yet'), findsOneWidget);
     expect(find.textContaining('confirmed by Rithmic'), findsNothing);
+  });
+
+  testWidgets('leaving the screen keeps the connection streaming to the Trading Room chart; Disconnect ends it', (tester) async {
+    final store = FakeStore();
+    FakeFeed? feed;
+    await pump(tester, CheRithmicScreen(store: store, routeFinder: FakeFinder(), now: () => october, feedFactory: (_) => feed = FakeFeed()));
+    await fill(tester, 'Username or trader code', 'trader1');
+    await fill(tester, 'Password', 'pw-secret-1');
+    await connect(tester);
+    expect(find.textContaining('Trading Room MNQ PAPER chart now builds 1- and 5-minute candles'), findsOneWidget);
+    expect(CheRithmicLive.instance.attached, isTrue);
+    expect(CheRithmicLive.instance.symbol, 'MNQZ6');
+
+    await tester.pumpWidget(const SizedBox()); // the owner leaves the screen
+    expect(feed!.closed, isFalse, reason: 'the chart keeps using the connection');
+    expect(CheRithmicLive.instance.attached, isTrue);
+
+    await pump(tester, CheRithmicScreen(store: store, routeFinder: FakeFinder(), now: () => october, feedFactory: (_) => FakeFeed()));
+    expect(find.text('Connected.'), findsOneWidget, reason: 'coming back shows the running connection');
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Disconnect'));
+    await tester.pumpAndSettle();
+    expect(feed!.closed, isTrue);
+    expect(CheRithmicLive.instance.attached, isFalse);
   });
 }

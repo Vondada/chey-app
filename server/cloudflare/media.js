@@ -306,6 +306,14 @@ export async function saveRenderedImage(env, storage, { bytes, title = 'Scene', 
   return item;
 }
 
+/** A Film Studio film already stored in R2 and verified from the file (film_render.verifyFilmObject). */
+export async function saveFilmVideo(storage, { key, title = 'Film', prompt = '', seconds = 0, width = 0, height = 0, bytes = 0, film_id = '' } = {}) {
+  const id = crypto.randomUUID();
+  const item = { id, root_id: id, parent_id: null, kind: 'video', mode: 'film', mime_type: 'video/mp4', title: String(title).slice(0, 120), prompt: String(prompt).slice(0, 500), width, height, seconds, bytes, film_id, blob: 'r2', blob_key: key, durable: true, verified: true, duration_verified: true, created_at: now(), source: 'che_film_studio' };
+  await saveIndex(storage, [item, ...(await listMedia(storage))]);
+  return item;
+}
+
 // mode: new | variation | refine. parent_id links versions of one piece.
 export async function generateImage(env, storage, body, fetcher = fetch) {
   const prompt = String(body.prompt || '').trim().slice(0, 2000);

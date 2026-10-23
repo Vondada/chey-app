@@ -65,6 +65,31 @@ void main() {
     expect(RithmicFrame.parse(_hex('80d24d03')).toLastTrade().size, 3);
   });
 
+  test('trade size, aggressor, snapshot, presence and exchange time decode from the public LastTrade field numbers', () {
+    // async_rithmic@a985931 last_trade.proto: trade_size 100178, aggressor 112003 (1 buy, 2 sell), is_snapshot 110121,
+    // presence_bits 149138 (bit 1 = trade), source_ssboe 150400, source_usecs 150401.
+    List<int> varint(int v) {
+      final out = <int>[];
+      while (v >= 0x80) {
+        out.add((v & 0x7f) | 0x80);
+        v >>= 7;
+      }
+      return out..add(v);
+    }
+    List<int> field(int n, int v) => [...varint(n << 3), ...varint(v)];
+    final bytes = Uint8List.fromList([
+      ...field(100178, 4),
+      ...field(112003, 2),
+      ...field(110121, 1),
+      ...field(149138, 1),
+      ...field(150400, 1700000123),
+      ...field(150401, 250000),
+    ]);
+    final t = RithmicFrame.parse(bytes).toLastTrade();
+    expect([t.size, t.aggressor, t.isSnapshot, t.presenceBits, t.isTrade, t.sourceSsboe, t.sourceUsecs], [4, 2, true, 1, true, 1700000123, 250000]);
+    expect(RithmicFrame.parse(Uint8List.fromList(field(149138, 8))).toLastTrade().isTrade, isFalse, reason: 'a volume-only update is not a trade');
+  });
+
   test('a successful login response is accepted and carries the heartbeat interval', () {
     final response = RithmicFrame.parse(_hex('89824b0000000000003e40ea994b0346434df2994b02494298b64b0b')).toLoginResponse();
     expect(response.accepted, isTrue);
