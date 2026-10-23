@@ -21,6 +21,9 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 final Map<String, dynamic> fixture = jsonDecode(File('test/fixtures/command_catalog.json').readAsStringSync()) as Map<String, dynamic>;
+final List<Map<String, dynamic>> _fixtureCommands = (fixture['commands'] as List).cast<Map<String, dynamic>>();
+final String _allLabel = 'All ${_fixtureCommands.length}';
+final String _intelligenceLabel = 'Intelligence & Control ${_fixtureCommands.where((c) => c['category'] == 'intelligence').length}';
 
 class FakeChe {
   FakeChe({this.offline = false});
@@ -151,8 +154,8 @@ void main() {
     final che = FakeChe();
     await openCenter(tester, che: che);
     expect(find.text('Commands'), findsOneWidget);
-    expect(find.text('All 112'), findsOneWidget);
-    for (final label in ['Intelligence & Control 16', 'YouTube 11', 'Trading 23', 'Websites, Apps & AI 20', 'Money Management 8',
+    expect(find.text(_allLabel), findsOneWidget);
+    for (final label in [_intelligenceLabel, 'YouTube 11', 'Trading 23', 'Websites, Apps & AI 20', 'Money Management 8',
       'Client Scouting & Delivery 9', 'Marketing & Sales 7', 'Office & Automation 8', 'Creator Studio 8']) {
       expect(find.text(label), findsOneWidget, reason: label);
     }
@@ -265,7 +268,7 @@ void main() {
     final offline = FakeChe(offline: true);
     await openCenter(tester, che: offline);
     expect(find.textContaining('Showing the last list CHE sent; statuses may be out of date'), findsOneWidget);
-    expect(find.text('All 112'), findsOneWidget);
+    expect(find.text(_allLabel), findsOneWidget);
   });
 
   testWidgets('offline with nothing cached says so instead of showing an empty success', (tester) async {
