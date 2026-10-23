@@ -9,6 +9,7 @@ import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
+import '../che_ui/che_chrome_status.dart';
 import 'che_visual_adjust.dart';
 import 'che_visual_client.dart';
 import 'che_visual_session.dart';
@@ -300,8 +301,9 @@ class _CheVideoEditorState extends State<CheVideoEditor> {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
       child: Row(children: [
-        if (label != null && stage != 'ready' && stage != 'failed') const Padding(padding: EdgeInsets.only(right: 8), child: SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))),
-        Expanded(child: Text(text, style: TextStyle(color: stage == 'failed' ? Colors.redAccent : Colors.white70), maxLines: 3)),
+        if (label != null && cheRenderStatus(stage).$2 == CheActivity.running)
+          Padding(padding: const EdgeInsets.only(right: 8), child: SizedBox(width: 56, child: CheChromeProgress(label: 'Render $label'))),
+        Expanded(child: Text(text, style: TextStyle(color: label == null ? Colors.white70 : CheStatusPalette.of(cheRenderStatus(stage).$1).base), maxLines: 3)),
         if (stage == 'failed') TextButton(onPressed: () => _run(() => widget.client.post({'action': 'retry_render', 'project_id': widget.projectId})), child: const Text('Retry')),
       ]),
     );

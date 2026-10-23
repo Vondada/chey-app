@@ -12,6 +12,7 @@ import 'package:flutter/services.dart';
 import 'che_backend.dart';
 import '../memory/che_brain_replica.dart';
 import 'che_brain.dart';
+import 'che_chrome_status.dart';
 import 'che_log.dart';
 import 'che_models.dart';
 import 'che_plugins.dart';
@@ -1151,7 +1152,7 @@ class _LiveTimerState extends State<_LiveTimer> {
     final ms = DateTime.now().difference(widget.start).inMilliseconds;
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
-      child: ThinkingShimmer(text: 'Thinking…  ${(ms / 1000).toStringAsFixed(1)}s', style: CheType.caption),
+      child: CheThinkingIndicator(label: 'Thinking…  ${(ms / 1000).toStringAsFixed(1)}s', style: CheType.caption),
     );
   }
 }

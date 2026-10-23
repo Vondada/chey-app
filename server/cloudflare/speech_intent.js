@@ -56,7 +56,7 @@ const PLAN_RE = /\b(plan|should i|what should|next steps?|strategy|roadmap|help 
 // An action verb counts only where it is asked for: at the start of the request,
 // after a lead like "can you" or "let me", or in "can you <verb>". So "why did the
 // build fail" stays a question, because "build" is a noun there.
-const ACTION_VERB = 'open|launch|send|post|play|search|find|read|write|draft|make|create|build|fix|update|merge|deploy|publish|delete|remove|buy|order|pay|set|remind|call|text|email|schedule|book|run|check|generate|upload|download|install|restart|cancel|look up|research|translate|summari[sz]e|save|share|add|change|turn on|turn off|start|ask|tell|show|put';
+const ACTION_VERB = 'open|launch|send|post|play|replay|rewind|search|find|read|write|draft|make|create|build|fix|update|merge|deploy|publish|delete|remove|buy|order|pay|set|remind|call|text|email|schedule|book|run|check|generate|upload|download|install|restart|cancel|look up|research|translate|summari[sz]e|save|share|add|change|turn on|turn off|start|ask|tell|show|put';
 const ACTION_LEAD = "(?:(?:please|pls|just|also|and|ok|okay|so|now|then|go ahead and|let me|i need you to|i want you to|i want to|i need to|i have to|i would like to|i'd like to|we need to|help me|can you|could you|would you|will you)\\s+)*";
 const ACTION_START_RE = new RegExp(`^${ACTION_LEAD}(?:${ACTION_VERB})\\b`);
 const ACTION_ANYWHERE_RE = new RegExp(`\\b(?:can|could|would|will) you (?:${ACTION_VERB})\\b`);

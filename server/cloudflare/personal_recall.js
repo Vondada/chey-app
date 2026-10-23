@@ -31,7 +31,7 @@ const NOT_A_FACT = /\?|\b(?:if|suppose|pretend|imagine|hypothetical|maybe|might|
 const FACT = /^my\s+(.{2,60}?)\s+(?:is|are)\s+(.{1,300}?)\.?$/i;
 
 // British and American spellings are one subject: "favourite food" is the stored "favorite food".
-const SPELLING = { favourite: 'favorite', favourites: 'favorites' };
+const SPELLING = { favourite: 'favorite', favourites: 'favorites', fav: 'favorite', fave: 'favorite', favs: 'favorites' };
 
 function words(text) {
   return String(text || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/).filter((w) => w && !STOP.has(w)).map((w) => SPELLING[w] || w);
@@ -49,19 +49,63 @@ export function isQuestionLike(text) {
   return body.endsWith('?') || ASKS_OR_ORDERS.test(body) || /\?/.test(String(text || ''));
 }
 
+// Values that point at something else rather than naming it: "this is my house" names no value.
+const POINTER = /^(?:this|that|it|he|she|they|there|here|what|which|who|one)$/i;
+// A hypothetical, a guess, a fiction or a quote of CHE's answer is never the owner's statement of fact.
+const HEDGED = /\b(?:if|suppose|pretend|imagine|hypothetical|maybe|might|perhaps|probably|i think|i guess|i(?:'m| am) not sure|not sure|story|poem|joke|you said|you told me|che answered|che said)\b/i;
+// "I like to drink Sprite the most": the activity names the favourite's subject.
+const ACTIVITY = { drink: 'drink', eat: 'food', wear: 'clothes', watch: 'show', play: 'game', read: 'book', 'listen to': 'music' };
+// "this test fact: …" is how the owner introduces a statement, never part of it.
+const LEAD_IN = /^(?:(?:this|a|the following|my)\s+)?(?:test\s+)?(?:fact|note|information|detail)s?\s*[:,-]\s*/i;
+
+/** The statement as the owner meant it, without the wake word, "remember" or a "this test fact:" lead-in. */
+export function statementText(text) {
+  return stripWake(text).replace(/^remember(?: that| this)?\s*[:,-]?\s*/i, '').replace(LEAD_IN, '').replace(/\s+/g, ' ').trim();
+}
+
 /**
- * The fact an owner statement asserts, or null. Only a plain statement "my <subject> is <value>" qualifies: a question,
- * request, hypothetical, guess, quote or fiction does not. The subject keeps its words; the value keeps the owner's own.
+ * Every fact one owner statement asserts, each { subject, subjectWords, value, text, confidence }. The forms (owner live
+ * test, 2026-10-23, "what is my favorite drink" → "I don't have a record" although he had said it):
+ *   "my favorite drink is Sprite", "my fav drink is sprite", "Sprite is my favorite drink",
+ *   "I love Sprite, it's my favorite drink", "my favorite drink? Sprite.",
+ *   "my favorite food is pizza, my favorite drink is Sprite, and my favorite color is red" (three facts),
+ *   "I like to drink Sprite the most" (medium confidence: the owner never said the word "favorite"),
+ *   and CHE's own older saved forms "Favorite drink: Sprite" and "Likes: Sprite, it's my favorite drink".
+ * A question, request, hypothetical, guess, quote or fiction asserts nothing. Records are read as stored: this runs at
+ * recall, so statements the owner made before this fix are found without rewriting them.
  */
+export function ownerFacts(text) {
+  let body = statementText(text);
+  if (!body) return [];
+  body = body.replace(/^favou?rite\s+([a-z][a-z ]{1,30}):\s*/i, 'my favorite $1 is ').replace(/^(?:likes|preference):\s*/i, 'I like ');
+  if (HEDGED.test(body)) return [];
+  const quote = body.replace(/[.!]+$/, '');
+  const facts = [];
+  const add = (subject, value, confidence) => {
+    const subj = String(subject || '').trim();
+    const val = String(value || '').trim().replace(/^(?:definitely|probably|just)\s+/i, '').replace(/[.!,;]+$/, '');
+    if (!words(subj).length || NOT_PERSONAL.test(subj) || !val || POINTER.test(val) || val.split(/\s+/).length > 40) return;
+    facts.push({ subject: subj, subjectWords: words(subj), value: val, text: quote, confidence });
+  };
+  // "my favorite drink? Sprite.": the owner answers his own question.
+  const qa = /^my\s+(.{2,60}?)\s*\?\s*(.{1,100}?)\.?$/i.exec(body);
+  if (qa && !/\?/.test(qa[2])) { add(qa[1], qa[2], 'high'); return facts; }
+  if (/\?/.test(body) || ASKS_OR_ORDERS.test(body)) return [];
+  for (const clause of body.split(/\s*;\s*|\.\s+|\s*,\s*(?:and\s+)?(?=my\s)|\s+and\s+(?=my\s)/i)) {
+    let m;
+    if ((m = /^my\s+(.{2,60}?)\s+(?:is|are|was|=)\s+(.{1,300}?)[.!]*$/i.exec(clause))) add(m[1], m[2], 'high');
+    else if ((m = /^my\s+(.{2,60}?)'s\s+(.{1,300}?)[.!]*$/i.exec(clause))) add(m[1], m[2], 'high');
+    else if ((m = /^i\s+(?:really\s+)?(?:love|like|prefer|enjoy)\s+(.{1,60}?)\s*[,;]?\s+(?:and\s+)?(?:it'?s|it is|that'?s|that is|which is|thats)\s+my\s+(.{2,60}?)[.!]*$/i.exec(clause))) add(m[2], m[1], 'high');
+    else if ((m = /^i\s+(?:really\s+)?(?:like|love|prefer)\s+to\s+(drink|eat|wear|watch|play|read|listen to)\s+(.{1,60}?)\s+(?:the\s+)?(?:most|best)[.!]*$/i.exec(clause))) add(`favorite ${ACTIVITY[m[1].toLowerCase()]}`, m[2], 'medium');
+    else if ((m = /^(.{1,60}?)\s+(?:is|are)\s+my\s+(.{2,60}?)[.!]*$/i.exec(clause)) && !/^my\b/i.test(m[1])) add(m[2], m[1], 'high');
+  }
+  return facts;
+}
+
+/** The first fact an owner statement asserts, or null (see ownerFacts). */
 export function ownerAssertion(text) {
-  const body = stripWake(text).replace(/^remember(?: that)?\s+/i, '').trim();
-  if (!body || isQuestionLike(text) || ASKS_OR_ORDERS.test(body) || NOT_A_FACT.test(body)) return null;
-  const match = FACT.exec(body);
-  if (!match) return null;
-  const subject = match[1].trim();
-  const value = match[2].trim();
-  if (!words(subject).length || NOT_PERSONAL.test(subject) || !value) return null;
-  return { subject, subjectWords: words(subject), value, text: body.replace(/[.!]+$/, '') };
+  if (isQuestionLike(text) && !/^my\s+.{2,60}?\s*\?\s*[^?]+$/i.test(statementText(text))) return null;
+  return ownerFacts(text)[0] || null;
 }
 
 /** The subject of a personal question, or null when the words are not asking for a personal fact. */
@@ -107,17 +151,36 @@ function sameSubject(a, b) {
 }
 
 /**
- * The owner's stored statement of this fact: an assertion whose subject is exactly the asked subject. The newest match
- * wins. Questions and other non-assertions are skipped here even when an older record holds them.
+ * CHE's own older saved preferences ("Favorite drink: Sprite"), written from the owner's chat before memory records
+ * existed. They are inferred from his words, so an answer from one says it was saved from the chat.
+ */
+export function legacyPreferences(data = {}) {
+  const dated = (Array.isArray(data.preference_memory) ? data.preference_memory : [])
+    .filter((p) => p?.text).map((p) => ({ id: p.id, text: String(p.text), created_at: p.created_at, legacy: true }));
+  const seen = new Set(dated.map((p) => p.text.toLowerCase()));
+  const plain = (Array.isArray(data.memories) ? data.memories : [])
+    .map(String).filter((t) => t && !seen.has(t.toLowerCase())).map((t) => ({ text: t, legacy: true }));
+  return [...plain, ...dated];
+}
+
+/**
+ * The owner's stored statement of this fact: an assertion whose subject is exactly the asked subject, from memory
+ * records, the Brain's kept owner turns and CHE's older saved preferences. The newest dated match wins, so a correction
+ * ("my favorite color is red", after "blue") replaces the old value. Questions and other non-assertions are skipped here
+ * even when an older record holds them.
  */
 export function recallPersonalFact(data = {}, question = {}, brainRecords = []) {
-  const records = [...ownerAttestedRecords(data), ...statementsFromBrain(brainRecords)].filter((r) => r.text);
+  const records = [...legacyPreferences(data), ...ownerAttestedRecords(data), ...statementsFromBrain(brainRecords)].filter((r) => r.text);
   const matches = [];
   for (const r of records) {
-    const fact = ownerAssertion(r.text);
-    if (fact && sameSubject(fact.subjectWords, question.words)) matches.push({ ...r, subject: fact.subject, value: fact.value });
+    for (const fact of ownerFacts(r.text)) {
+      if (sameSubject(fact.subjectWords, question.words)) matches.push({ ...r, subject: fact.subject, value: fact.value, confidence: fact.confidence, quote: fact.text });
+    }
   }
-  return matches.length ? matches[matches.length - 1] : null;
+  if (!matches.length) return null;
+  const time = (m) => { const t = Date.parse(String(m.created_at || m.recorded || '')); return Number.isFinite(t) ? t : -Infinity; };
+  // Stable: equal times keep their order, so the newest of the undated legacy entries still comes last.
+  return matches.map((m, i) => ({ m, i })).sort((a, b) => (time(a.m) - time(b.m)) || (a.i - b.i)).at(-1).m;
 }
 
 /**
@@ -126,10 +189,12 @@ export function recallPersonalFact(data = {}, question = {}, brainRecords = []) 
  */
 export function statementsFromBrain(records = []) {
   return (Array.isArray(records) ? records : [])
-    .filter((r) => r && !r.deleted && r.verification === 'owner_attested' && r.source?.kind === 'owner_chat')
+    .filter((r) => r && !r.deleted && r.verification === 'owner_attested' && ['owner_chat', 'chatgpt_export'].includes(r.source?.kind))
     .map((r) => {
-      const said = /You said:\s*([\s\S]*?)(?:\nCHE answered:|$)/.exec(String(r.body || ''));
-      return { id: r.id, text: said ? said[1].replace(/\s+/g, ' ').trim() : '', created_at: r.created_at };
+      const said = /You said:\s*([\s\S]*?)(?:\n(?:CHE|ChatGPT) answered:|$)/.exec(String(r.body || ''));
+      // A ChatGPT turn keeps the time the owner wrote it there, not the import time.
+      const at = r.source?.kind === 'chatgpt_export' ? (r.source.message_at || r.created_at) : r.created_at;
+      return { id: r.id, text: said ? said[1].replace(/\s+/g, ' ').trim() : '', created_at: at, brain: true, origin: r.source?.kind, title: r.source?.conversation_title || '' };
     })
     .filter((r) => r.text);
 }
@@ -145,9 +210,87 @@ export function answerPersonalFact(data = {}, question = {}, brainRecords = []) 
     };
   }
   const when = spokenStoredDate(record);
-  const source = question.learn ? ' I learned it from you in this chat.' : '';
-  const answer = `Your ${record.subject} is ${record.value}.${when ? ` You told me that on ${when}.` : ''}${source}`;
-  return { kind: 'owner_attested', records: [record.id].filter(Boolean), answer };
+  // The owner's own words are quoted whenever they are not just "my X is Y", or he asks where it came from.
+  const plain = /^my\s+.{2,60}?\s+(?:is|are)\s+[^,;]+$/i.test(record.quote || '');
+  const quoted = record.quote && (question.learn || !plain || record.confidence !== 'high') ? ` In your words: "${record.quote}."` : '';
+  const told = record.legacy
+    ? (when ? ` I saved it from our chat on ${when}.` : ' I saved it from our chat; that older note has no date.')
+    : (when ? ` You told me that on ${when}.` : '');
+  const source = question.learn ? (record.legacy ? ' It came from you in a chat, as a saved preference, not from anywhere else.' : ' I learned it from you in this chat.') : '';
+  const subject = String(question.subject || record.subject).replace(/\bfav(?:ourite|orite|e)?\b/gi, 'favorite');
+  const lead = record.confidence === 'high' ? `Your ${subject} is ${record.value}.` : `It sounds like your ${subject} is ${record.value}, from what you told me.`;
+  return { kind: 'owner_attested', records: [record.id].filter(Boolean), record, answer: `${lead}${told}${quoted}${source}` };
+}
+
+// ─── Stored statements that are not "my X is Y" ─────────────────────────────────────────────────────────────────────
+// Owner live test (2026-10-23): "Remember this test fact: The fictional project Blue Lantern uses the internal code word
+// Magnolia Seven", then, in a new conversation, "What is the secret code word for the fictional Blue Lantern project?".
+// The record was stored and even sat in the model's context, but no route answered from it, so the reply was whatever
+// the model wrote ("I don't know" on the iPhone; an invented code word in replay). A question whose words name a stored
+// statement now gets that statement, quoted with its date, and the model is never asked.
+
+// Question and filler words that say nothing about which record is meant.
+const ASK_WORDS = new Set(['who', 'whom', 'whose', 'when', 'why', 'how', 'was', 'were', 'does', 'can', 'could', 'would', 'should', 'will', 'tell', 'remind', 'remember', 'recall', 'say', 'said', 'told', 'please', 'again', 'exactly', 'actually', 'secret', 'called', 'stored', 'saved', 'about', 'for', 'with', 'from', 'on', 'at', 'by', 'have', 'has', 'had', 'be', 'been', 'any', 'there', 'thing', 'things', 'sir', 'che', 'use', 'uses', 'used', 'using']);
+
+function keyWords(text) {
+  return [...new Set(words(text).filter((w) => w.length > 1 && !ASK_WORDS.has(w)))];
+}
+
+/** The words of a question that could name a stored statement, or null. Only questions qualify. */
+export function storedStatementQuestion(message) {
+  const text = stripWake(message);
+  if (!text || !isQuestionLike(text)) return null;
+  if (/\b(?:story|pretend|imagine|hypothetical|poem|joke)\b/i.test(text)) return null;
+  const asked = keyWords(text.split(/[?!]/)[0]);
+  return asked.length >= 2 ? { words: asked, learn: LEARN.test(text) } : null;
+}
+
+/**
+ * The owner's stored statement a question names, or the candidates when two differ. A match shares at least three of
+ * the question's key words (all of them when it has fewer) and at least 60% of them, and the statement says more than
+ * the question does: that remainder is the answer.
+ */
+export function recallStoredStatement(data = {}, question = {}, brainRecords = []) {
+  const asked = new Set(question.words || []);
+  if (asked.size < 2) return { kind: 'none', matches: [] };
+  // The Brain's copy of a turn first, so the owner's memory record of the same words (the one its receipt named) wins.
+  const records = [...statementsFromBrain(brainRecords), ...ownerAttestedRecords(data)].filter((r) => r.text && !isQuestionLike(r.text));
+  const scored = [];
+  for (const r of records) {
+    const text = statementText(r.text);
+    if (!text || HEDGED.test(text)) continue;
+    const own = keyWords(text);
+    const shared = own.filter((w) => asked.has(w)).length;
+    const extra = own.filter((w) => !asked.has(w)).length;
+    if (shared >= Math.min(3, asked.size) && shared / asked.size >= 0.6 && extra > 0) scored.push({ ...r, statement: text, score: shared / asked.size });
+  }
+  if (!scored.length) return { kind: 'none', matches: [] };
+  const best = Math.max(...scored.map((x) => x.score));
+  // The newest record of each distinct statement wins; older copies of the same words are one memory.
+  const top = new Map();
+  for (const x of scored.filter((y) => y.score === best)) top.set(x.statement.toLowerCase().replace(/[.!]+$/, ''), x);
+  const matches = [...top.values()];
+  return { kind: matches.length === 1 ? 'one' : 'several', matches };
+}
+
+/** The reply for a stored-statement question: the statement with its date, the candidates, or null to let others answer. */
+export function answerStoredStatement(data = {}, question = {}, brainRecords = []) {
+  const found = recallStoredStatement(data, question, brainRecords);
+  if (found.kind === 'none') return null;
+  const said = (r) => r.statement.replace(/[.!]+$/, '');
+  if (found.kind === 'one') {
+    const r = found.matches[0];
+    const when = spokenStoredDate(r);
+    return {
+      kind: 'owner_attested', records: [r.id].filter(Boolean), record: r,
+      answer: `From what you told me, sir: "${said(r)}."${when ? ` You told me that on ${when}.` : ''} That's your own statement saved in my memory, not an outside fact I checked.`,
+    };
+  }
+  const list = found.matches.slice(0, 3).map((r, i) => `${i + 1}. "${said(r)}"`).join(' ');
+  return {
+    kind: 'owner_attested', records: found.matches.slice(0, 3).map((r) => r.id).filter(Boolean),
+    answer: `I have ${found.matches.length} things you told me that fit, sir: ${list}. Which one do you mean?`,
+  };
 }
 
 // Dates and attributions a reply may show: only what a stored record holds. Anything else is removed.

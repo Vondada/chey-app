@@ -32,6 +32,7 @@ import 'che_ui/che_screen_awareness.dart';
 import 'che_ui/che_screen_capture.dart';
 import 'security/che_secret_scan.dart';
 import 'security/che_security_screen.dart';
+import 'security/che_session_store.dart';
 import 'brain/che_brain_ledger_screen.dart';
 import 'workflows/che_workflows_screen.dart';
 import 'film/che_film_studio_screen.dart';
@@ -137,6 +138,8 @@ import 'rooms/che_markets_room.dart';
 import 'rooms/che_alpaca_paper.dart';
 import 'rooms/che_strategy_controls.dart';
 import 'rooms/che_trading_room.dart';
+import 'trading/che_setup_desk.dart';
+import 'trading/che_trade_replay.dart';
 import 'che_ui/che_help.dart';
 import 'rooms/che_store_room.dart';
 import 'rooms/che_pipeline_room.dart';
@@ -171,6 +174,7 @@ import 'che_web_voice_stub.dart'
 import 'knowledge/che_knowledge_library_screen.dart';
 import 'rithmic/che_rithmic_screen.dart';
 import 'rithmic/rithmic_live.dart';
+import 'rithmic/rithmic_session.dart';
 import 'rithmic/rithmic_recorder.dart';
 
 part 'home_state/connected.dart';
@@ -537,6 +541,9 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   String? _realtimePendingMediaType;
 
   String? _deviceToken;
+
+  /// Why the sign-in ended (shown quietly until the owner pairs again); empty while signed in.
+  String _sessionNotice = '';
   String _agentBaseUrl = _defaultAgentBaseUrl;
   // A free sample asked for by voice; it plays after CHE finishes the spoken reply.
   String? _pendingVoicePreviewId;
@@ -1356,6 +1363,8 @@ OWNER AGENCY
     _wireBrowser();
     initializeVoice();
     _loadSecuritySession();
+    // The Rithmic session the owner left on comes back by itself (login from the on-device vault; off after Disconnect).
+    if (!kIsWeb) unawaited(cheRithmicResume());
     _jobPollTimer = Timer.periodic(const Duration(seconds: 15), (_) {
       if (_appForeground && _statePollDue()) unawaited(_loadAgentState(silent: true));
     });
@@ -1423,6 +1432,8 @@ OWNER AGENCY
     // The Rithmic feed lives on this phone and pauses while CHE is off screen; the chart marks that stretch as a gap.
     if (state == AppLifecycleState.resumed || state == AppLifecycleState.paused || state == AppLifecycleState.hidden) {
       CheRithmicLive.instance.appLifecycle(foreground: state == AppLifecycleState.resumed);
+      // iOS may have dropped the socket while CHE was away: reconnect the session the owner left on.
+      if (state == AppLifecycleState.resumed && !CheRithmicLive.instance.attached) unawaited(cheRithmicResume());
     }
     if (state == AppLifecycleState.resumed) {
       _updateHomeState(() { _priorityBannerVersion++; });

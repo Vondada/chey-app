@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
+import 'package:shorebird_code_push/shorebird_code_push.dart';
 
 // Models and the update-service client for CHE's iPhone builds. The screen,
 // banners and the update controller live in their own files.
@@ -26,10 +27,24 @@ class CheInstalledBuild {
   }
 
   /// A device report accompanies only explicit status requests; it is not backend attestation.
-  Map<String, String> chatMetadata() => {
+  /// `patch` is the Shorebird patch this copy runs ("none" when it runs the bare release); omitted when unreadable.
+  Map<String, String> chatMetadata({String? patch}) => {
     'version': version, 'build': build, 'source': 'ios_bundle',
     'checked_at': DateTime.now().toUtc().toIso8601String(),
+    'patch': ?patch,
   };
+
+  /// The running Shorebird patch number, "none" for no patch, or null when the updater cannot say.
+  static Future<String?> readPatch({ShorebirdUpdater? updater}) async {
+    try {
+      final u = updater ?? ShorebirdUpdater();
+      if (!u.isAvailable) return null;
+      final patch = await u.readCurrentPatch();
+      return patch == null ? 'none' : '${patch.number}';
+    } catch (_) {
+      return null;
+    }
+  }
 
   static Future<CheInstalledBuild?> read() async {
     try {
