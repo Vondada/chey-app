@@ -22,7 +22,7 @@ extension _CheHomeStreaming on _CHEHomeState {
     // Live repository/status claims require receipts from the connected
     // Worker/GitHub path. Never let an offline model invent files, workflows,
     // SHAs, jobs, or deployment state when that evidence is unavailable.
-    if (isInstalledSkillRequest(userMessage) ||
+    if (isInstalledSkillRequest(userMessage) || cheIsAppStatusRequest(userMessage) ||
         cheTurnRequiresVerifiedRemoteEvidence(userMessage, history)) {
       return null;
     }
@@ -97,7 +97,7 @@ extension _CheHomeStreaming on _CHEHomeState {
       (item) => (item['content'] ?? item['text'] ?? '').trim().isNotEmpty,
     );
     final requiresVerifiedRemoteEvidence =
-        cheTurnRequiresVerifiedRemoteEvidence(trimmedRequest, history);
+        cheIsAppStatusRequest(trimmedRequest) || cheTurnRequiresVerifiedRemoteEvidence(trimmedRequest, history);
     final turnCapabilities = _homeMode == 0
         ? _requestedCapabilitiesForTurn(trimmedRequest, history)
         : const <String>[];
@@ -252,8 +252,12 @@ extension _CheHomeStreaming on _CHEHomeState {
     // The Worker enforces the app ask-first gate against these grants, so
     // every turn carries what the owner has already said yes to.
     final appGrants = await CheAppPermissions.granted();
+    final installedBuild = cheIsAppStatusRequest(userMessage)
+        ? await CheInstalledBuild.read().timeout(const Duration(seconds: 2), onTimeout: () => null)
+        : null;
     request.body = jsonEncode({
       'message': userMessage,
+      if (installedBuild != null) 'client_app': installedBuild.chatMetadata(),
       'history': history,
       'last_media_id': _lastMediaId(),
       'request_id': _requestGate.current.requestId,
@@ -442,6 +446,7 @@ extension _CheHomeStreaming on _CHEHomeState {
         _streamUnderstoodAs = cheUnderstoodAs(data);
         _streamResponseDetails = cheResponseDetails(data);
         // "Open the workflows page": only the Workflow Engine's own reply opens it.
+        if (data['open_screen'] == 'app_details' && data['source'] == 'che_runtime_status' && mounted) unawaited(_openAppVersionDetails());
         if (data['open_screen'] == 'workflows' && data['source'] == 'che_workflow_engine' && mounted) unawaited(_openWorkflows());
         if (data['open_screen'] == 'security' && data['source'] == 'che_security' && mounted) unawaited(_openSecurity());
         if (data['open_screen'] == 'film_studio' && data['source'] == 'che_film_studio' && mounted) unawaited(_openFilmStudio());

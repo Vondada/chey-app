@@ -239,6 +239,15 @@ test('the owner\'s chart words through /api/chat', sqlite, async () => {
   assert.equal(progress.done.chart.section, 'strategies');
   const alpaca = await che.say('show me my Alpaca trades');
   assert.equal(alpaca.done.open_view, 'alpaca_paper', 'the Alpaca dashboard keeps its route');
+  // Side by side (owner, 2026-10-23): the room opens on SIDE BY SIDE by voice, and nothing is sent.
+  for (const phrase of ['Open side by side.', 'Show my trades next to CHE\'s.', 'Compare my trade with CHE\'s trade.', 'Open the live order preview.']) {
+    const sbs = await che.say(phrase);
+    assert.equal(sbs.route, 'che_trading_chart', phrase);
+    assert.equal(sbs.done.open_view, 'trading_chart', phrase);
+    assert.equal(sbs.done.chart.section, 'compare', phrase);
+    assert.equal(sbs.modelCalls, 0, phrase);
+    assert.match(sbs.reply, /Live orders stay disabled/, phrase);
+  }
 });
 
 test('a market order needs a current Alpaca price; limit orders still queue (Build 1: block entries on a stale feed)', async () => {
@@ -399,4 +408,22 @@ test('cancel by voice through /api/chat: one match is read back and cancelled on
     assert.match(guest.reply, /Only the CHE owner can cancel Alpaca PAPER orders\. Nothing was cancelled\./);
     assert.equal(deletes().length, 1);
   } finally { globalThis.fetch = prior; }
+});
+
+test('POST /api/trading/rithmic/candles stores the iPhone\'s closed Rithmic minutes; GET reads them; guests change nothing', sqlite, async () => {
+  const che = await owner();
+  await che.say('Hello CHE.');
+  const t = new Date(Math.floor((Date.now() - 10 * 60000) / 60000) * 60000).toISOString();
+  const candle = { t, symbol: 'MNQZ6', exchange: 'CME', o: 21000, h: 21004, l: 20998, c: 21002, v: 9, trades: 5, buy_volume: 5, sell_volume: 4, delta: 1, source: 'rithmic' };
+  const post = await che.raw('/api/trading/rithmic/candles', 'POST', { candles: [candle, { ...candle, source: 'yahoo' }] });
+  assert.equal(post.status, 200);
+  const saved = await post.json();
+  assert.deepEqual([saved.stored, saved.refused], [1, 1]);
+  const read = await che.api('/api/trading/rithmic/candles?symbol=MNQZ6');
+  assert.equal(read.candles.length, 1);
+  assert.equal(read.candles[0].source, 'rithmic');
+  assert.equal(read.candles[0].delta, 1);
+  const guest = await che.raw('/api/trading/rithmic/candles', 'POST', { candles: [{ ...candle, t: new Date(Date.parse(t) + 60000).toISOString() }] }, '');
+  assert.notEqual(guest.status, 200);
+  assert.equal((await che.api('/api/trading/rithmic/candles?symbol=MNQZ6')).candles.length, 1);
 });

@@ -145,6 +145,25 @@ extension _CheHomeSend on _CHEHomeState {
     return true;
   }
 
+  Future<void> _openAppVersionDetails() async {
+    final installed = await CheInstalledBuild.read().timeout(const Duration(seconds: 2), onTimeout: () => null);
+    if (!mounted) return;
+    final reply = installed == null
+        ? 'Opening CHE app and update details. The native installed version and build could not be read; I will not substitute the latest published version.'
+        : 'Opening CHE app and update details. This iPhone reports installed CHE version ${installed.version}, build ${installed.build}. A Shorebird patch is listed separately when available.';
+    _set(() { messages.add({'role': 'assistant', 'text': reply}); });
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
+      content: Text(reply, style: const TextStyle(fontSize: 18)),
+      duration: const Duration(seconds: 10),
+    ));
+    HapticFeedback.mediumImpact();
+    unawaited(speakText(reply, record: false, readOnDemand: true));
+    await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => CheMobileUpdateScreen(
+      baseUrl: cheAgentBaseUrl, onSpeak: (text) => speakText(text, record: false, readOnDemand: true),
+    )));
+    return;
+  }
+
   Future<bool> _handleLocalNavigation(String message) async {
     final lower = message.toLowerCase();
 
@@ -642,7 +661,7 @@ extension _CheHomeSend on _CHEHomeState {
     // controls). Its reply is on its banner; CHE says it here. An empty
     // reply means the command went to Chat, which speaks the real result.
     final commandsVoice = CheCommandCenterVoice.handler;
-    if (commandsVoice != null && _pendingAttachment == null) {
+    if (commandsVoice != null && _pendingAttachment == null && !cheIsAppStatusRequest(message)) {
       final reply = await commandsVoice(message);
       if (reply != null) {
         if (mounted) _set(() => controller.clear());
@@ -781,7 +800,7 @@ extension _CheHomeSend on _CHEHomeState {
 
     // Voice navigation inside the CHE browser/app that is open right now.
     final browserVoice = CheBrowserActions.voice;
-    if (browserVoice != null && _pendingAttachment == null) {
+    if (browserVoice != null && _pendingAttachment == null && !cheIsAppStatusRequest(message)) {
       final reply = await browserVoice(message);
       if (reply != null) {
         if (mounted) _set(() => controller.clear());
