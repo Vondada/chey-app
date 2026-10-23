@@ -213,6 +213,37 @@ export const COMMANDS = Object.freeze([
     evidence: 'The card and revision it came from; trading figures only from journal or backtest records; zero model calls.',
     cost: 'Free: no AI engine is used.', keywords: ['learn', 'lesson', 'teach me', 'explain', 'formula', 'quiz', 'concept', 'beginner', 'expert', 'atlas'],
   }),
+  // Security Room visibility (owner, 2026-10-23): every count opens the exact entries behind it.
+  C('security-access', 'intelligence', 'EXPLORE', 'See who and what has access to CHE.', {
+    title: 'Security Access',
+    does: 'Opens Security on its access list: agents, tools, apps, devices, Face ID sessions and every granted permission, each with what it can do, its last activity and whether that access is more than it needs. Shows what was not checked. Changes nothing.',
+    needs: [], route: 'che_security', handler: 'security_intelligence.securityIntent → security_visibility.securityVisibility',
+    input: null,
+    examples: ['Open security access', 'Who has access to CHE?', 'What do you have access to?'],
+    prompt: 'Open security access', produces: 'access list',
+    evidence: 'Counts and lists come from the same registry query; token and credential values are never shown.',
+    cost: 'Free: no AI engine is used.', keywords: ['security', 'access', 'permissions', 'who has access', 'least privilege'],
+  }),
+  C('security-chief', 'intelligence', 'EXPLORE', 'Have Knox, the Security Chief, run a security check.', {
+    title: 'Security Chief Check',
+    does: 'Knox, the Office Security Chief who reports to CHE, runs CHE\'s real security checks (threats, access, paired devices, and dependencies and deployment when GitHub is connected). CHE then reports which checks ran, when, their findings, and what was not checked. Changes nothing.',
+    needs: [], route: 'che_security', handler: 'security_chief.securityChiefIntent → securityCoreCheck',
+    input: null,
+    examples: ['CHE, have Knox check security', 'Ask Knox to run a security check', 'Knox, check security'],
+    prompt: 'Have Knox check security', produces: 'security report',
+    evidence: 'Each check carries the time it ran; a check that did not run is reported as not checked.',
+    cost: 'Free: no AI engine is used.', keywords: ['knox', 'security chief', 'security check', 'security scan', 'security review'],
+  }),
+  C('security-findings', 'intelligence', 'EXPLORE', 'Read and open CHE\'s security findings.', {
+    title: 'Security Findings',
+    does: 'Opens Security on its findings: each with severity, the affected resource, when it happened, its evidence and the recommended action, plus which checks ran and which did not. Changes nothing; removing access always asks you first.',
+    needs: [], route: 'che_security', handler: 'security_intelligence.securityIntent → security_visibility.securityVisibility',
+    input: null,
+    examples: ['Show security findings', 'What are my security findings?'],
+    prompt: 'Show security findings', produces: 'findings',
+    evidence: 'Findings come from recorded security events and the access review; zero findings is not reported as all-clear unless every check ran.',
+    cost: 'Free: no AI engine is used.', keywords: ['security', 'findings', 'threats', 'risks', 'coverage'],
+  }),
 
   // ── YouTube ───────────────────────────────────────────────────────────
   C('yt-ideas', 'youtube', 'EXPLORE', 'Research promising video ideas.', {

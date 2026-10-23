@@ -29,7 +29,7 @@ const { default: worker, CheState } = mod;
 const MISSION_IDS = {
   // 'learn' is the Knowledge Atlas (issue #346), one entry over knowledge_atlas.js.
   // 'che-cancel-job' cancels a queued coding job by voice or typing (owner, 2026-10-19).
-  intelligence: ['che', 'che-explore', 'che-plan', 'che-build', 'che-research', 'che-verify', 'che-memory', 'che-brain-review', 'che-flagstaff-import', 'che-outside-mail', 'che-recover', 'che-cancel-job', 'che-status', 'learn'],
+  intelligence: ['che', 'che-explore', 'che-plan', 'che-build', 'che-research', 'che-verify', 'che-memory', 'che-brain-review', 'che-flagstaff-import', 'che-outside-mail', 'che-recover', 'che-cancel-job', 'che-status', 'learn', 'security-access', 'security-chief', 'security-findings'],
   youtube: ['yt-ideas', 'yt-research', 'yt-script', 'yt-video', 'yt-voice', 'yt-thumbnail', 'yt-seo', 'yt-publish', 'yt-batch', 'yt-analytics', 'yt-grow'],
   // trade-connections reads the owner-only connections of #348 (issue #350).
   // trade-setups opens the Signal Mode Setup Progress Board (owner, 2026-10-23).
@@ -111,9 +111,9 @@ async function owner({ saved = new Map(), model = () => 'Here is the answer, sir
 
 // ─── 1. Catalog identities ────────────────────────────────────────────────
 
-test('1. the owner\'s 71 commands exist exactly as listed, plus ten REA, six Creator Studio, two Strategy Control Center, two strategy learning commands, the historical study and the timeframe matrix, in 9 categories, each fully described', () => {
-  assert.equal(COMMANDS.length, 103);
-  assert.equal(new Set(COMMANDS.map((c) => c.id)).size, 103, 'ids are unique');
+test('1. the owner\'s 71 commands exist exactly as listed, plus ten REA, six Creator Studio, two Strategy Control Center, two strategy learning commands, the historical study, the timeframe matrix and three Security Room commands, in 9 categories, each fully described', () => {
+  assert.equal(COMMANDS.length, 106);
+  assert.equal(new Set(COMMANDS.map((c) => c.id)).size, 106, 'ids are unique');
   assert.deepEqual(CATEGORIES.map((c) => c.id), Object.keys(MISSION_IDS));
   for (const [category, ids] of Object.entries(MISSION_IDS)) {
     assert.deepEqual(COMMANDS.filter((c) => c.category === category).map((c) => c.id), ids, category);
@@ -164,7 +164,7 @@ test('2. availability comes from real configuration: ready, needs setup, unsuppo
   const expired = connectorStatus({ CHE_TRADOVATE_OAUTH_CLIENT_ID: 'x', CHE_TRADOVATE_OAUTH_CLIENT_SECRET: 'y' }, { broker: { expired: true } });
   assert.equal(expired.broker.state, 'needs_reconnect');
   const view = catalogView(bare);
-  assert.equal(view.commands.length, 103);
+  assert.equal(view.commands.length, 106);
   assert.ok(view.commands.every((c) => ['available', 'setup_required', 'unsupported', 'temporarily_unavailable'].includes(c.status)));
 });
 
@@ -753,7 +753,7 @@ test('the Flutter catalog fixture matches what the Worker serves (regenerate: no
   const { fixtureCatalog } = await import('../../tool/dump_command_catalog.mjs');
   const fixture = JSON.parse(readFileSync(new URL('../../test/fixtures/command_catalog.json', import.meta.url), 'utf8'));
   assert.deepEqual(fixture, JSON.parse(JSON.stringify(fixtureCatalog())));
-  assert.equal(fixture.commands.length, 103);
+  assert.equal(fixture.commands.length, 106);
   assert.ok(fixture.templates.length >= 4);
 });
 
@@ -872,7 +872,7 @@ test('the owner\'s six spoken phrases are answered from the catalog with no mode
   for (const words of variants('CHE, open your Commands page.')) {
     const out = await che.say(words);
     assert.equal(out.route, 'che_command_center', words);
-    assert.match(out.reply, /103 commands in 9 groups[\s\S]*2\. YouTube, 11[\s\S]*9\. Creator Studio, 8[\s\S]*Nothing was run/, words);
+    assert.match(out.reply, /106 commands in 9 groups[\s\S]*2\. YouTube, 11[\s\S]*9\. Creator Studio, 8[\s\S]*Nothing was run/, words);
   }
   for (const words of variants('CHE, search for YouTube.')) {
     const out = await che.say(words);
@@ -1222,4 +1222,43 @@ test('Signal Mode: /trade-setups and plain questions open the Setup Progress Boa
     assert.equal(out.done.order_sent, undefined, said);
   }
   assert.notEqual((await che.say('Find setups on MNQ')).done?.chart?.section, 'setups', 'the learned-strategy analysis keeps its own command');
+});
+
+test('Security Room: /security-access and /security-findings open Security on the right list, with no model and no secret', async () => {
+  for (const id of ['security-access', 'security-findings']) {
+    const c = commandById(id);
+    assert.equal(c.route, 'che_security', id);
+    assert.equal(c.confirm, '', id);
+  }
+  const che = await owner();
+  for (const [said, section] of [['/security-access', 'agents'], ['Open security access', 'agents'], ['Who has access to CHE?', 'agents'], ['/security-findings', 'threats'], ['Show security findings', 'threats']]) {
+    const out = await che.say(said);
+    assert.equal(out.route, 'che_security', said);
+    assert.equal(out.modelCalls, 0, said);
+    assert.equal(out.done.open_screen, 'security', said);
+    assert.equal(out.done.security_section, section, said);
+    assert.match(out.reply, /not an all-clear|every check ran|not checked|not visible/, `${said}: coverage is stated`);
+  }
+});
+
+test('Security Chief: "have Knox check security" runs the real checks through CHE; sentences that only mention Knox are not caught', async () => {
+  const c = commandById('security-chief');
+  assert.equal(c.route, 'che_security');
+  const che = await owner();
+  for (const said of ['/security-chief', 'CHE, have Knox check security', 'Ask Knox to run a security check', 'Knox, check security']) {
+    const out = await che.say(said);
+    assert.equal(out.route, 'che_security', said);
+    assert.equal(out.modelCalls, 0, said);
+    assert.equal(out.done.security_action, 'chief_check', said);
+    assert.equal(out.done.security_chief, 'Knox', said);
+    assert.match(out.reply, /^Knox ran the security check at \d{4}-\d\d-\d\d \d\d:\d\d UTC, sir\./, said);
+    assert.match(out.reply, /Checked: threat and access check/, said);
+    assert.match(out.reply, /Not checked: .*dependency advisories/, `${said}: an unrun check says not checked`);
+  }
+  const core = await che.get('/api/security/core');
+  assert.ok(core.chief.recent_verified_activity.some((a) => a.kind === 'check'), 'the check is in Knox\'s verified activity');
+  for (const said of ['Knox fixed the bug', 'Have Knox check the website', 'What did Knox say about security?', "Knox's notes on security", 'check security of my website with my brother']) {
+    const out = await che.say(said);
+    assert.notEqual(out.done.security_action, 'chief_check', said);
+  }
 });

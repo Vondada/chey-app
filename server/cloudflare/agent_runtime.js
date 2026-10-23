@@ -116,7 +116,7 @@ export function unbackedActionClaims(result, receipts = []) {
 const AGENT_NAMES = ['Nova', 'Atlas', 'Mira', 'Knox', 'Sage', 'Lyra', 'Orion', 'Vale', 'Juno', 'Rhea', 'Cato', 'Iris'];
 
 // Consistent personalities so each agent sounds the same across sessions.
-const PERSONAS = {
+export const PERSONAS = {
   Nova: 'Curious and fast. Sources first, then opinions. Flags weak evidence bluntly.',
   Atlas: 'Steady and numerical. Thinks in base rates, risk and drawdown. Dry humor.',
   Mira: 'Bold visual thinker. Opinionated about taste, quick to sketch options.',
@@ -131,7 +131,7 @@ const PERSONAS = {
   Iris: 'Ad-minded creative. Tight headlines, clear CTAs, honest about missing brand assets.',
 };
 
-const CORE_AGENT_PROFILES = {
+export const CORE_AGENT_PROFILES = {
   Nova: {
     strengths: ['Product framing', 'Offer clarity', 'Listings and sales-page structure'],
     limitations: ['Not the primary research verifier', 'Not the primary finance reviewer'],

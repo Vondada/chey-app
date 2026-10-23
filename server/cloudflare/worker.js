@@ -231,7 +231,9 @@ import {
 } from './research_memory.js';
 import { APP_BUILD_KEY, appBuildIntent, appBuildRun, dispatchAppBuild, speakAppBuild } from './app_builds.js';
 import { advanceObjectives, applyMissionEvent, approvalReached, approveNode, awaitingApproval, cancelObjective, createObjective, mutateObjective, replanNode, resolveKnownNodes, retryNode, setObjectivePaused, speakObjective } from './objective_graph.js';
-import { CHE_TENANT, CHE_SECURITY, access as coreAccess, coreIncidents, coreKnowledge, coreView, findAnyIncident, findKnowledge, loadCore, recordInLedger, openIncidentsForEvents, recordCheck as recordCoreCheck, runDrill, saveCore, speakCore, syncLegacyEvents } from './security_core_che.js';
+import { CHE_TENANT, CHE_SECURITY, access as coreAccess, coreEvents, coreIncidents, coreKnowledge, coreView, findAnyIncident, findKnowledge, loadCore, recordInLedger, openIncidentsForEvents, recordCheck as recordCoreCheck, runDrill, saveCore, speakCore, syncLegacyEvents } from './security_core_che.js';
+import { securityVisibility, speakVisibility } from './security_visibility.js';
+import { securityChief, securityChiefIntent, speakChiefReport } from './security_chief.js';
 import { acquire as acquireCapability, applyPolicy as applyCapabilityPolicy, capabilityIntent, engineSummary as capabilityEngineSummary, learnFromOutcome, loadPolicy as loadCapabilityPolicy, populate as populateKnowledge, retrieve as retrieveKnowledge, rollbackTool, savePolicy as saveCapabilityPolicy, projectBlocked, speakCapabilities, speakLearned as speakLearnedKnowledge, useTool, LAST_USED_KEY as KNOWLEDGE_USED_KEY } from './capability_engine.js';
 import { EGRESS_KEY, SNAPSHOT_KEY, holdEgress, installEgressGuard, setEgressOwner, setEgressPolicy, storeEgressPolicy, SESSION_SCOPES, bump as securityBump, checkSession, createSession, dependencyAdvisories, detectThreats, issueNonce, loadSecurity, recordFindings, redact as redactSecretText, redactDeep, respondToIncident, restoreTrustedState, revokeSessions, saveSecurity, securityIntent, snapshotTrustedState, speakStatus as speakSecurityStatus } from './security_intelligence.js';
 import { loadRegistry as loadCapabilityRegistry } from './capability_registry.js';
@@ -6039,7 +6041,7 @@ export class CheState extends DurableObject {
 
   async securityApi(path, request, body, data, tokenHash) {
     const action = path.replace(/^\/api\/security\/?/, '');
-    if (action === 'core' || action.startsWith('core/')) return this.securityCoreApi(action.replace(/^core\/?/, ''), request, body, data);
+    if (action === 'core' || action.startsWith('core/')) return this.securityCoreApi(action.replace(/^core\/?/, ''), request, body, data, tokenHash);
     if (request.method === 'GET' && !action) {
       const sec = await loadSecurity(this.ctx.storage);
       return json({
@@ -6101,19 +6103,47 @@ export class CheState extends DurableObject {
     const devices = CHE_SECURITY.engines.device.review(Object.values(data.platform?.devices || {}));
     const bus = CHE_SECURITY.bus(s.store, CHE_TENANT);
     for (const e of devices.events) bus.publish({ ...e, verification: 'verified' });
-    recordCoreCheck(s.store, { findings: r.findings.length, advisories: r.advisories ? r.advisories.advisories.length : null });
+    recordCoreCheck(s.store, { findings: r.findings.length, advisories: r.advisories ? r.advisories.advisories.length : null, deploy_checked: r.deploy_checked === true });
     openIncidentsForEvents(s.store);
     await saveCore(this.ctx.storage, s.store);
     return { ...s, findings: r.findings, advisories: r.advisories };
   }
 
-  async securityCoreApi(action, request, body, data) {
+  // Security Room visibility: every count with the exact entries behind it (security_visibility.js).
+  async securityVisibilityFor(s, data, tokenHash) {
+    const view = s.view();
+    const part = coreEvents.tenantState(s.store, CHE_TENANT);
+    const connectors = await this.commandConnectors(data).catch(() => ({}));
+    const catalog = catalogView(connectors);
+    const now = Date.now();
+    return securityVisibility({
+      principals: view.access.principals, review: view.access.review, team: data.team || [],
+      commands: catalog.commands, connectors: catalog.connectors,
+      sessions: Object.values(s.sec.sessions || {}).filter((x) => !x.revoked_at && x.expires_at > now).map((x) => ({ scopes: x.scopes, factors: x.factors, created_at: x.created_at, expires_at: x.expires_at, this_device: x.device === tokenHash })),
+      events: part.events || [], audit: s.sec.audit || [], checks: part.checks || [],
+      advisoriesChecked: part.checks?.[0]?.advisories != null, deployChecked: part.checks?.[0]?.deploy_checked === true, now,
+    });
+  }
+
+  // Knox, the Office Security Chief: one identity and activity record (security_chief.js) for Office, Security and chat.
+  chiefFor(s, data, vis) {
+    const view = s.view();
+    const part = coreEvents.tenantState(s.store, CHE_TENANT);
+    return securityChief(data, { principal: view.access.principals.find((p) => p.id === 'security'), coverage: vis.coverage, state: view.protection, audit: s.sec.audit || [], checks: part.checks || [] });
+  }
+
+  async securityCoreApi(action, request, body, data, tokenHash = '') {
     const st = this.ctx.storage;
     if (request.method === 'GET' && !action) {
       const s = await this.securityCoreState(data);
       await saveCore(st, s.store);
       const view = s.view();
-      return json({ ...view, spoken: speakCore(view) });
+      const visibility = await this.securityVisibilityFor(s, data, tokenHash);
+      return json({ ...view, visibility, chief: this.chiefFor(s, data, visibility), spoken: speakCore(view) });
+    }
+    if (request.method === 'GET' && action === 'visibility') {
+      const s = await this.securityCoreState(data);
+      return json(await this.securityVisibilityFor(s, data, tokenHash));
     }
     if (request.method !== 'POST') return json({ detail: 'Not found.' }, 404);
     if (action === 'check') {
@@ -6202,7 +6232,7 @@ export class CheState extends DurableObject {
     }
     if (ask.action === 'team') {
       const chain = view.agent.chain;
-      return done(`My security chain of command, sir: you, then me, then ${chain[2].name}, my second-in-command for security, who directs ${chain.length - 3} specialists: ${chain.slice(3).map((c) => c.name).join(', ')}. Atlas is separate: Atlas codes and is not part of the security chain. ${chain[2].name} is ${view.protection.state.toLowerCase()} right now.`);
+      return done(`My security chain of command, sir: you, then me, then ${chain[2].name}, the Office Security Chief and my second-in-command for security, who directs ${chain.length - 3} specialists: ${chain.slice(3).map((c) => c.name).join(', ')}. Atlas is separate: Atlas codes and is not part of the security chain. Security status right now: ${view.protection.state.toLowerCase()}.`);
     }
     if (ask.action === 'drill') {
       const want = String(ask.scenario || '').toLowerCase();
@@ -6308,6 +6338,18 @@ export class CheState extends DurableObject {
       return say(speakSecurityStatus(r.sec, { lockedDown: await isLockedDown(this.ctx.storage), findings: r.findings }) + tail, { findings: r.findings.length });
     }
     if (['status', 'readiness', 'lockdown_preview', 'incidents', 'team', 'drill', 'open'].includes(ask.action)) return this.securityCoreChat(data, ask, say);
+    // "CHE, have Knox check security": the real Security Intelligence + Security Core checks, reported through CHE.
+    if (ask.action === 'chief_check') {
+      const s = await this.securityCoreCheck(data);
+      const vis = await this.securityVisibilityFor(s, data, tokenHash);
+      const chief = this.chiefFor(s, data, vis);
+      const findings = (s.findings || []).map((f) => `${String(f.type || 'finding').replace(/_/g, ' ')}${f.severity ? ` (${f.severity})` : ''}`);
+      return say(speakChiefReport(chief, { findings, coverage: vis.coverage }), { open_screen: 'security', security_section: 'chief', security_chief: chief.name, findings: findings.length, checks_ran: vis.coverage.checked });
+    }
+    if (ask.action === 'access' || ask.action === 'findings') {
+      const vis = await this.securityVisibilityFor(await this.securityCoreState(data), data, tokenHash);
+      return say(speakVisibility(vis, ask.action), { open_screen: 'security', security_section: ask.action === 'access' ? 'agents' : 'threats' });
+    }
     const sec = await loadSecurity(this.ctx.storage);
     if (ask.action === 'revoke') { const n = revokeSessions(sec); await saveSecurity(this.ctx.storage, sec); return say(`Revoked ${n} Face ID session${n === 1 ? '' : 's'}, sir. Your paired devices still work; say "revoke device" with its name to remove one.`); }
     if (ask.action === 'snapshot') { const s = await snapshotTrustedState(this.ctx.storage, data); return say(`Saved a trusted snapshot of my configuration, sir, fingerprint ${s.sha256.slice(0, 12)}. It holds no keys or passwords.`); }
@@ -10248,7 +10290,7 @@ export class CheState extends DurableObject {
             return ndjsonReply(started.spoken, { source: 'che_command_workflow', ok: started.ok, objective_id: started.objective?.id || null, model_calls: 0 });
           }
           // Workflow Engine: the owner's words about the library, then a promoted learned workflow this request matches.
-          const secAsk = ownerDevice && !body.attachment && !body.workflow_step ? securityIntent(rawMessage) : null;
+          const secAsk = ownerDevice && !body.attachment && !body.workflow_step ? (securityIntent(rawMessage) || securityChiefIntent(rawMessage)) : null;
           if (secAsk) return this.securityChat(data, secAsk, tokenHash);
           // Film Studio: make, plan, status, remake, pause/resume/stop and the free render farm (film_studio.filmIntent).
           const filmAsk = ownerDevice && !body.attachment && !body.workflow_step ? filmIntent(rawMessage) : null;
@@ -10465,6 +10507,9 @@ export class CheState extends DurableObject {
         // "what's the formula for VWAP". Answered from the curated cards and CHE's own trade records
         // with no model, before the interpreter can rewrite them; a sentence that asks to pay, buy or
         // delete is never one (atlasIntent), so it still reaches the owner's gate below.
+        // /security-access and /security-findings arrive as command requests, which skip the spoken-intent block above.
+        const secCommand = COMMAND_REQUESTS.has(request) && ownerDevice && !body.attachment ? (securityIntent(rawMessage) || securityChiefIntent(rawMessage)) : null;
+        if (secCommand && ['access', 'findings', 'chief_check'].includes(secCommand.action)) return this.securityChat(data, secCommand, tokenHash);
         const atlas = ownerDevice && !body.attachment && !memoryRoute ? atlasIntent(message, ownerHistory, { explainLevel: body.explain_level }) : null;
         if (atlas) {
           // Like any other turn, a lesson replaces a held request (money, delete, app, or a Gmail,

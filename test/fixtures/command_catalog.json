@@ -629,6 +629,110 @@
    "optional_missing": []
   },
   {
+   "id": "security-access",
+   "category": "intelligence",
+   "title": "Security Access",
+   "summary": "See who and what has access to CHE.",
+   "does": "Opens Security on its access list: agents, tools, apps, devices, Face ID sessions and every granted permission, each with what it can do, its last activity and whether that access is more than it needs. Shows what was not checked. Changes nothing.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Open security access",
+    "Who has access to CHE?",
+    "What do you have access to?"
+   ],
+   "needs": [],
+   "optional": [],
+   "handler": "security_intelligence.securityIntent → security_visibility.securityVisibility",
+   "route": "che_security",
+   "produces": "access list",
+   "evidence": "Counts and lists come from the same registry query; token and credential values are never shown.",
+   "cost": "Free: no AI engine is used.",
+   "keywords": [
+    "security",
+    "access",
+    "permissions",
+    "who has access",
+    "least privilege"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "security-chief",
+   "category": "intelligence",
+   "title": "Security Chief Check",
+   "summary": "Have Knox, the Security Chief, run a security check.",
+   "does": "Knox, the Office Security Chief who reports to CHE, runs CHE's real security checks (threats, access, paired devices, and dependencies and deployment when GitHub is connected). CHE then reports which checks ran, when, their findings, and what was not checked. Changes nothing.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "CHE, have Knox check security",
+    "Ask Knox to run a security check",
+    "Knox, check security"
+   ],
+   "needs": [],
+   "optional": [],
+   "handler": "security_chief.securityChiefIntent → securityCoreCheck",
+   "route": "che_security",
+   "produces": "security report",
+   "evidence": "Each check carries the time it ran; a check that did not run is reported as not checked.",
+   "cost": "Free: no AI engine is used.",
+   "keywords": [
+    "knox",
+    "security chief",
+    "security check",
+    "security scan",
+    "security review"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "security-findings",
+   "category": "intelligence",
+   "title": "Security Findings",
+   "summary": "Read and open CHE's security findings.",
+   "does": "Opens Security on its findings: each with severity, the affected resource, when it happened, its evidence and the recommended action, plus which checks ran and which did not. Changes nothing; removing access always asks you first.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Show security findings",
+    "What are my security findings?"
+   ],
+   "needs": [],
+   "optional": [],
+   "handler": "security_intelligence.securityIntent → security_visibility.securityVisibility",
+   "route": "che_security",
+   "produces": "findings",
+   "evidence": "Findings come from recorded security events and the access review; zero findings is not reported as all-clear unless every check ran.",
+   "cost": "Free: no AI engine is used.",
+   "keywords": [
+    "security",
+    "findings",
+    "threats",
+    "risks",
+    "coverage"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
    "id": "yt-ideas",
    "category": "youtube",
    "title": "Yt Ideas",
