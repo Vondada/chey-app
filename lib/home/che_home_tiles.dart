@@ -361,10 +361,20 @@ class _SparkPainter extends CustomPainter {
 
 /// One unread Flagstaff message, as the Worker sends it: the sender and the opening of the real text.
 class CheFlagstaffGist {
-  const CheFlagstaffGist({required this.from, required this.text});
+  const CheFlagstaffGist({this.id = '', required this.from, required this.text});
 
+  final String id;
   final String from;
   final String text;
+}
+
+/// True when the gist differs in any message: a new newest message changes it even when the unread count does not.
+bool cheGistChanged(List<CheFlagstaffGist> a, List<CheFlagstaffGist> b) {
+  if (a.length != b.length) return true;
+  for (var i = 0; i < a.length; i++) {
+    if (a[i].id != b[i].id || a[i].from != b[i].from || a[i].text != b[i].text) return true;
+  }
+  return false;
 }
 
 /// Flagstaff: the real unread count and the opening of the newest messages. Nothing is summarised or invented.
@@ -380,7 +390,12 @@ class CheHomeFlagstaffTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final shown = latest.take(1).toList();
     return CheHudTile(
-      semantics: unread > 0 ? 'Flagstaff, $unread unread. Double tap to open.' : 'Flagstaff, no new messages. Double tap to open.',
+      // The sender and the opening of each shown message are read out with the tile; the label is not a live region.
+      semantics: [
+        unread > 0 ? 'Flagstaff, $unread new.' : 'Flagstaff, no new messages.',
+        for (final m in shown) '${m.from}: ${m.text}.',
+        'Double tap to open.',
+      ].join(' '),
       onTap: onOpen,
       leanRight: false,
       height: height,

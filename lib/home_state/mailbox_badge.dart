@@ -16,10 +16,10 @@ extension _CheMailboxBadge on _CHEHomeState {
       final count = (data['unread'] as num?)?.toInt() ?? 0;
       final latest = [
         for (final m in (data['latest'] as List? ?? const []))
-          if (m is Map) CheFlagstaffGist(from: '${m['from'] ?? ''}', text: '${m['text'] ?? ''}'),
+          if (m is Map) CheFlagstaffGist(id: '${m['id'] ?? ''}', from: '${m['from'] ?? ''}', text: '${m['text'] ?? ''}'),
       ];
       final previous = _mailboxUnread;
-      if (count == previous && latest.length == _mailboxLatest.length) return;
+      if (count == previous && !cheGistChanged(latest, _mailboxLatest)) return;
       _updateHomeState(() {
         _mailboxUnread = count;
         _mailboxLatest = latest;

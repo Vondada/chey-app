@@ -83,6 +83,11 @@ class _FlagstaffBannerState extends State<_FlagstaffBanner> {
                 container: true,
                 button: true,
                 label: '${widget.title}. ${widget.detail ?? ''} Double tap to open Flagstaff. Swipe up to dismiss.',
+                // Excluding the child semantics also drops InkWell's tap action, so VoiceOver's double tap opens Flagstaff here.
+                onTap: () {
+                  _dismiss();
+                  widget.onOpen();
+                },
                 excludeSemantics: true,
                 child: Material(
                   color: Colors.transparent,

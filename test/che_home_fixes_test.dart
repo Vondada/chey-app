@@ -1,5 +1,6 @@
 import 'package:chey/che_ui/che_clock.dart';
 import 'package:chey/che_ui/che_theme.dart';
+import 'package:chey/home/che_flagstaff_banner.dart';
 import 'package:chey/home/che_home_tiles.dart';
 import 'package:chey/home/che_mockup_home.dart';
 import 'package:chey/main.dart';
@@ -110,5 +111,64 @@ void main() {
   test('theme tokens exist for the status colours the tiles use', () {
     expect(CheColors.success, isNotNull);
     expect(CheColors.textDim, isNotNull);
+  });
+
+  group('Codex review on #506', () {
+    testWidgets('the Flagstaff banner has a VoiceOver tap action that opens Flagstaff', (tester) async {
+      final handle = tester.ensureSemantics();
+      var opened = 0;
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => ElevatedButton(
+              onPressed: () => showCheFlagstaffBanner(context, title: 'New message in Flagstaff', detail: 'chatgpt: hello', onOpen: () => opened++),
+              child: const Text('show'),
+            ),
+          ),
+        ),
+      ));
+      await tester.tap(find.text('show'));
+      await tester.pump(const Duration(milliseconds: 400));
+      // The node VoiceOver reads: a Semantics widget whose label names the banner and whose onTap opens Flagstaff.
+      final semantics = tester.widget<Semantics>(find.byWidgetPredicate(
+        (w) => w is Semantics && (w.properties.label ?? '').contains('New message in Flagstaff'),
+      ));
+      expect(semantics.properties.onTap, isNotNull, reason: 'VoiceOver double tap needs a tap action');
+      semantics.properties.onTap!();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(opened, 1);
+      // Let the banner's own timers finish so the test ends cleanly.
+      await tester.pump(const Duration(seconds: 6));
+      await tester.pump(const Duration(seconds: 1));
+      handle.dispose();
+    });
+
+    test('the gist refreshes when the newest message changes but the count does not', () {
+      const old = [CheFlagstaffGist(id: 'a', from: 'chatgpt', text: 'First.')];
+      const same = [CheFlagstaffGist(id: 'a', from: 'chatgpt', text: 'First.')];
+      const newest = [CheFlagstaffGist(id: 'b', from: 'gemini', text: 'Second.')];
+      expect(cheGistChanged(old, same), isFalse);
+      expect(cheGistChanged(old, newest), isTrue, reason: 'same count, new newest message');
+      expect(cheGistChanged(old, const []), isTrue);
+    });
+
+    testWidgets('the Flagstaff tile label includes the sender and the preview', (tester) async {
+      final handle = tester.ensureSemantics();
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 180,
+            child: CheHomeFlagstaffTile(
+              unread: 1,
+              latest: const [CheFlagstaffGist(id: 'x', from: 'chatgpt', text: 'Try caching the voices.')],
+              onOpen: () {},
+            ),
+          ),
+        ),
+      ));
+      expect(find.bySemanticsLabel(RegExp('chatgpt: Try caching the voices')), findsOneWidget);
+      expect(find.bySemanticsLabel(RegExp('Flagstaff, 1 new')), findsOneWidget);
+      handle.dispose();
+    });
   });
 }
