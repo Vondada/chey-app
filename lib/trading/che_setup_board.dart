@@ -19,16 +19,16 @@ import 'che_trade_signal.dart';
 const _paperTag = CheTradeSignal.account;
 
 IconData cheStageIcon(CheSetupStage s) => switch (s) {
-  CheSetupStage.watching => Icons.visibility_outlined,
-  CheSetupStage.forming => Icons.hourglass_top_rounded,
-  CheSetupStage.nearEntry => Icons.near_me_outlined,
+  CheSetupStage.watching => Icons.radio_button_unchecked,
+  CheSetupStage.forming => Icons.hourglass_top,
+  CheSetupStage.nearEntry => Icons.radio_button_checked,
   CheSetupStage.ready => Icons.check_circle_outline,
   CheSetupStage.triggered => Icons.bolt_rounded,
   CheSetupStage.active => Icons.play_circle_outline,
   CheSetupStage.targetHit => Icons.flag_rounded,
   CheSetupStage.stopped => Icons.block_rounded,
-  CheSetupStage.invalidated => Icons.cancel_outlined,
-  CheSetupStage.expired => Icons.timer_off_outlined,
+  CheSetupStage.invalidated => Icons.cancel,
+  CheSetupStage.expired => Icons.hourglass_empty_rounded,
 };
 
 Color cheStageColor(CheSetupStage s) => switch (s) {
@@ -137,7 +137,7 @@ class _CheSetupBoardState extends State<CheSetupBoard> {
       excludeSemantics: true,
       child: Row(
         children: [
-          Icon(live ? Icons.sensors_rounded : Icons.sensors_off_rounded, color: live ? CheColors.success : CheColors.warning, size: 18),
+          Icon(live ? Icons.cloud_rounded : Icons.cloud_off_outlined, color: live ? CheColors.success : CheColors.warning, size: 18),
           const SizedBox(width: 6),
           Expanded(
             child: Text(
@@ -480,7 +480,7 @@ class _CheSetupBoardState extends State<CheSetupBoard> {
             IconButton(
               tooltip: d.alerts.muted ? 'Alerts muted. Unmute alerts' : 'Mute all alerts',
               onPressed: () => unawaited(d.alerts.setMuted(!d.alerts.muted)),
-              icon: Icon(d.alerts.muted ? Icons.notifications_off_outlined : Icons.notifications_none_rounded, color: Colors.white),
+              icon: Icon(d.alerts.muted ? Icons.volume_off_rounded : Icons.notifications_active_outlined, color: Colors.white),
             ),
             IconButton(
               tooltip: 'Alert settings',
