@@ -9,7 +9,7 @@
 // orders are refused because no futures paper broker is connected. Live orders stay disabled.
 import { alpacaPaperDashboard, alpacaPaperOrder, openAlpacaPaperOrders, previewAlpacaPaperOrder } from './broker_alpaca.js';
 import { readSimState, readStoredTrades } from './strategy_sim.js';
-import { readTrades } from './trading_evidence.js';
+import { readTrades, overnightLevels } from './trading_evidence.js';
 import { LIVE_FEED, readLivePortfolios } from './trading_live.js';
 
 export const ACCOUNTS = Object.freeze({
@@ -138,6 +138,8 @@ export async function chartView(storage, env, { account = 'alpaca_paper', symbol
   return {
     ...base, state: five.length ? 'verified' : 'no_data', symbol: sym, bars: bars.map(({ t, o, h, l, c, v }) => ({ t, o, h, l, c, v })), feed,
     markers: chartMarkers({ journal, portfolios, simTrades, symbol: sym }),
+    // The overnight high/low and the 86-style bias (CHE's independent approximation, never the P2P indicator).
+    levels: five.length ? overnightLevels(five) : null,
     entries_allowed: false, market_orders_allowed: false,
     entries_blocked_reason: 'No futures paper broker is connected (Tradovate is not signed in), so CHE takes no manual futures orders. CHE\'s MNQ trades here are research on DELAYED data.',
   };
