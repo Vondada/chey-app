@@ -69,6 +69,22 @@ void main() {
     expect(response.ibId, 'IB');
   });
 
+  test('Rithmic answers a good login with response code "0": that is accepted, any other first code is not', () {
+    expect(RithmicFrame.parse(encodeLoginResponse(rpCodes: const ['0'])).toLoginResponse().accepted, isTrue);
+    expect(RithmicFrame.parse(encodeLoginResponse(rpCodes: const ['13', 'permission denied'])).toLoginResponse().accepted, isFalse);
+  });
+
+  test('discovery requests and answers round-trip: systems, then one system\'s gateways', () {
+    expect(RithmicFrame.parse(encodeSystemInfoRequest()).templateId(), RithmicTemplate.systemInfo);
+    final ask = RithmicFrame.parse(encodeGatewayInfoRequest(systemName: 'Rithmic Paper Trading'));
+    expect(ask.templateId(), RithmicTemplate.gatewayInfo);
+    final systems = RithmicFrame.parse(encodeSystemInfoResponse(systems: ['Rithmic Test', 'Rithmic Paper Trading'])).toSystemInfo();
+    expect(systems.accepted, isTrue);
+    expect(systems.systems, ['Rithmic Test', 'Rithmic Paper Trading']);
+    final gateways = RithmicFrame.parse(encodeGatewayInfoResponse(systemName: 'Rithmic Paper Trading', names: ['Chicago Area'], uris: ['wss://g.example:443'])).toGatewayInfo();
+    expect([gateways.systemName, gateways.names.single, gateways.uris.single], ['Rithmic Paper Trading', 'Chicago Area', 'wss://g.example:443']);
+  });
+
   test('a refused login is never accepted, and its reason is kept', () {
     final response = RithmicFrame.parse(_hex('f2e9400133f2e9400c6261642070617373776f726498b64b0b')).toLoginResponse();
     expect(response.accepted, isFalse);
