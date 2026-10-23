@@ -593,3 +593,13 @@ test('fresh native metadata is returned as device-reported and never confused wi
   assert.equal(out.meta.status_receipt.installed.source, 'ios_bundle');
   assert.equal(out.modelCalls, 0);
 });
+
+test('a status question clears unrelated held consequential confirmations', async () => {
+  const saved = new Map();
+  const che = await owner({ saved });
+  saved.set('che:pending_owner_action', { kinds: ['money'], text: 'buy a subscription', at: Date.now() });
+  saved.set('che:pending_app_action', { app: 'external app', at: Date.now() });
+  await che.say('What version of CHE am I running?');
+  assert.equal(saved.get('che:pending_owner_action'), null);
+  assert.equal(saved.get('che:pending_app_action'), null);
+});
