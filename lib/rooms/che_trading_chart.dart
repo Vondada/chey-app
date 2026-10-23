@@ -20,6 +20,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
@@ -44,12 +45,14 @@ const kMarkerSources = <String, String>{
   'che_sim': 'CHE simulation',
   'alpaca_order': 'Alpaca order',
   'alpaca_fill': 'Alpaca fill',
+  'che_signal': 'CHE signal (paper)',
 };
 const kMarkerColors = <String, Color>{
   'che_forward': _gold,
   'che_sim': Color(0xFFB794F6),
   'alpaca_order': Color(0xFF7FD3FF),
   'alpaca_fill': _up,
+  'che_signal': Color(0xFFFFA94D),
 };
 const kChartAccounts = <String, String>{'alpaca_paper': 'Alpaca PAPER', 'futures_paper': 'MNQ PAPER'};
 const kQuickSymbols = ['SPY', 'QQQ', 'AAPL', 'MSFT', 'NVDA', 'TSLA'];
@@ -218,8 +221,13 @@ class CheTradingChart extends StatefulWidget {
     this.initialSymbol = '',
     this.initialStrategy,
     this.height = 340,
+    this.signalMarkers,
     this.live,
   });
+
+  /// CHE PAPER ACCOUNT signals from the setup desk on this phone (source 'che_signal'), drawn on
+  /// the MNQ PAPER chart only.
+  final ValueListenable<List<Map<String, dynamic>>>? signalMarkers;
 
   final String Function() baseUrl;
   final Map<String, String> Function() headers;
@@ -278,6 +286,7 @@ class CheTradingChartState extends State<CheTradingChart> {
     super.initState();
     _symbolField.text = _symbol;
     widget.controller?.addListener(_onController);
+    widget.signalMarkers?.addListener(_onSignals);
     _live.addListener(_onLive);
     unawaited(load());
     _timer = Timer.periodic(const Duration(seconds: 30), (_) => unawaited(load(quiet: true)));
@@ -289,6 +298,7 @@ class CheTradingChartState extends State<CheTradingChart> {
     _liveRebuild?.cancel();
     _live.removeListener(_onLive);
     widget.controller?.removeListener(_onController);
+    widget.signalMarkers?.removeListener(_onSignals);
     _symbolField.dispose();
     super.dispose();
   }
@@ -473,8 +483,18 @@ class CheTradingChartState extends State<CheTradingChart> {
   void zoom(double factor) => setState(() => _visible = (_visible / factor).round().clamp(15, math.max(15, _bars.length)));
   void scroll(int bars) => setState(() => _endOffset = (_endOffset + bars).clamp(0, math.max(0, _bars.length - 10)));
 
+  void _onSignals() {
+    if (mounted) setState(() {});
+  }
+
+  List<ChartMarker> get _allMarkers => [
+        ..._markers,
+        if (_account == 'futures_paper')
+          for (final m in widget.signalMarkers?.value ?? const <Map<String, dynamic>>[]) ChartMarker(m),
+      ];
+
   List<ChartMarker> get _shownMarkers => [
-        for (final m in _markers)
+        for (final m in _allMarkers)
           if (!_hidden.contains(m.source) &&
               (_strategy == null || !m.source.startsWith('che_') || m.strategy.toLowerCase().contains(_strategy!.toLowerCase())))
             m,
@@ -625,6 +645,10 @@ class CheTradingChartState extends State<CheTradingChart> {
       if (r['net_pnl'] != null) 'Net P&L: \$${r['net_pnl']}',
       if (r['r'] != null) 'R: ${r['r']}',
       if (r['order_id'] != null) 'Alpaca order id: ${r['order_id']}',
+      if (r['account'] != null) 'Account: ${r['account']}',
+      if (r['timeframe'] != null) 'Timeframe: ${r['timeframe']}',
+      if (r['data_source'] != null) 'Data: ${r['data_source']}',
+      if (r['evidence'] != null) 'Evidence: ${r['evidence']}',
     ];
     return parts.join('\n');
   }
@@ -934,7 +958,7 @@ class CheTradingChartState extends State<CheTradingChart> {
         // Legend: one toggle per source, with how many markers it has.
         Wrap(spacing: 6, runSpacing: 6, children: [
           for (final e in kMarkerSources.entries)
-            _legend(e.key, e.value, _markers.where((m) => m.source == e.key).length),
+            _legend(e.key, e.value, _allMarkers.where((m) => m.source == e.key).length),
         ]),
         if (_strategy != null)
           Padding(
@@ -1241,6 +1265,11 @@ class _MarkerGlyph extends CustomPainter {
         canvas.drawCircle(Offset.zero, h * 0.85, line);
       case 'alpaca_order':
         canvas.drawRect(Rect.fromCenter(center: Offset.zero, width: size * 0.8, height: size * 0.8), line);
+      case 'che_signal':
+        // A crosshair in a ring: a planned paper entry, not a fill.
+        canvas.drawCircle(Offset.zero, h * 0.9, line);
+        canvas.drawLine(Offset(-h, 0), Offset(h, 0), line);
+        canvas.drawLine(Offset(0, -h), Offset(0, h), line);
       default:
         canvas.drawPath(Path()..moveTo(0, -h)..lineTo(h, 0)..lineTo(0, h)..lineTo(-h, 0)..close(), fill);
     }

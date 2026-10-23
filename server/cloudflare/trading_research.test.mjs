@@ -441,3 +441,13 @@ test('voice intents are read deterministically; ordinary sentences are not taken
   assert.equal(researchIntent('what is the best pizza right now'), null);
   assert.equal(researchIntent('how is my mom doing'), null);
 });
+
+test('Signal Mode: every strategy card carries the sample sizes behind its numbers', async () => {
+  const view = await researchView(memoryStorage());
+  assert.ok(view.strategies.length > 0);
+  for (const s of view.strategies) {
+    assert.equal(typeof s.sample_trades, 'number', s.strategy_id);
+    assert.equal(typeof s.paper_trades, 'number', s.strategy_id);
+  }
+  assert.ok(view.strategies.every((s) => s.sample_trades === 0), 'an empty ledger reports zero samples, never a made-up count');
+});

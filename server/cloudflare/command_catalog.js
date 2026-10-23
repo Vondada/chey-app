@@ -345,6 +345,22 @@ export const COMMANDS = Object.freeze([
     input: null, examples: ['Show the growth experiments', 'How is the pilot doing?'],
     prompt: 'Show the growth experiments.', produces: 'growth report', evidence: 'Only statistics a platform returned.', keywords: ['audience growth', 'growth experiments', 'pilot views'],
   }),
+  // Film Studio (owner handoff 2026-10-22): long films from a sentence on free compute only, answered from
+  // film_studio.js / film_pipeline.js with no model for the plan and status. The plan states the real ETA and mix.
+  C('film-make', 'studio', 'BUILD', 'Make a film from one sentence, free.', {
+    does: 'Writes a screenplay, makes every shot with free compute (pictures and voices on Workers AI, moving clips on a connected free GPU farm) and assembles the film on GitHub Actions. Before starting CHE says the real ETA and the mix; a film is done only when its MP4 is stored and verified.',
+    needs: ['video_renderer'], route: 'che_film_studio', local: 'film_make', handler: 'film_studio.filmIntent → film_pipeline.startFilm (alarm passes) → che-film-render.yml',
+    input: { name: 'film', required: true, hint: 'Length and subject, for example "10-minute movie about a lighthouse keeper"' },
+    examples: ['Make me a 10-minute movie about a lighthouse keeper', 'Make me a 2-hour movie about a heist in Tokyo'],
+    prompt: 'Make me a {input}', produces: 'video', evidence: 'The MP4 read back from R2: length, frame size and codecs; shots that failed their checks are listed.',
+    cost: 'Free: Workers AI daily allowance, GitHub Actions free minutes, and free GPU quotas you connect. Hard caps; nothing paid.', keywords: ['movie', 'film', 'feature', 'film studio'],
+  }),
+  C('film-status', 'studio', 'EXPLORE', 'Film progress, ETA and the free render farm.', {
+    does: 'Says where the current film is (shots done, elapsed time against the estimate) and, when asked, which free GPUs are connected and how much free quota is left.',
+    needs: [], route: 'che_film_studio', local: 'film_status', handler: 'film_studio.speakStatus / speakFarm',
+    input: null, examples: ["How's my movie going?", 'Render farm status'],
+    prompt: "How's my movie going?", produces: 'film status', evidence: 'The stored film state and shot checks.', keywords: ['movie status', 'film progress', 'render farm'],
+  }),
 
   // ── Trading ───────────────────────────────────────────────────────────
   C('trade-open', 'trading', 'EXPLORE', 'New York session market briefing.', {
@@ -375,6 +391,15 @@ export const COMMANDS = Object.freeze([
     input: { name: 'symbol', required: false, hint: 'NQ by default' },
     examples: ['Any entry points on NQ?', 'Find setups on MNQ'],
     prompt: 'Analyze {input} entry points on the chart', produces: 'setups', keywords: ['setup', 'entry', 'entries', 'signal'],
+  }),
+  // Signal Mode (owner, 2026-10-23): the Setup Progress Board the iPhone runs on live Rithmic candles.
+  C('trade-setups', 'trading', 'EXPLORE', 'Open the Setup Progress Board and its signals.', {
+    does: 'Opens the Setup Progress Board: every setup CHE follows on the live Rithmic candles on this iPhone, its stage, the conditions met, pending or failed, and the CHE PAPER ACCOUNT signals. Asking which are ready reads them. Places no order.',
+    needs: ['office'], route: 'che_trading_chart', handler: 'trading_chart.chartIntent (setups section)',
+    input: null,
+    examples: ['Show setups', 'What setups are ready?', 'Show the setup progress board'],
+    prompt: 'Show my setups', produces: 'setup board', evidence: 'Stages computed on this iPhone from real Rithmic candles; signals carry their data source and evidence sample size.',
+    keywords: ['setups', 'setup progress', 'signal mode', 'signals', 'ready setups'],
   }),
   C('trade-liquidity', 'trading', 'EXPLORE', 'Analyze VWAP, liquidity, order blocks, and key levels.', {
     does: 'Marks swing highs and lows (where liquidity rests) from real candles. VWAP and order-block math are not computed yet; CHE says so instead of guessing.',

@@ -204,6 +204,9 @@ export function drawIntent(message) {
 export function chartIntent(message) {
   const t = String(message || '').toLowerCase().replace(/[’']/g, "'").replace(/^\s*(?:hey\s+)?(?:che|chey|chay)[,\s]+/, '');
   if (/^(?:show|open|bring up|pull up|go to)\b[\s\S]{0,25}\bstrateg(?:y|ies)\s+(?:progress|section|page)\b/.test(t)) return { kind: 'chart_open', section: 'strategies' };
+  // Signal Mode: "show setups", "show the setup progress board", "what setups are ready?". The board lives on the iPhone.
+  if (/^(?:what|which|any)\b[\s\S]{0,25}\bsetups?\b[\s\S]{0,25}\b(?:ready|forming|triggered|active|near entry|right now)\b/.test(t)) return { kind: 'chart_open', section: 'setups', answer: 'ready' };
+  if (/^(?:show|open|bring up|pull up|go to|see)\b[\s\S]{0,20}\b(?:setups|setup (?:progress|board)|signal mode|(?:trade |paper )?signals)\b/.test(t)) return { kind: 'chart_open', section: 'setups' };
   // Side by side (owner, 2026-10-23): "open side by side", "show my trades next to CHE's", "compare my trade with CHE's",
   // "open the live order preview". Opens the room's SIDE BY SIDE section; nothing is sent or placed.
   if (/^(?:show|open|bring up|pull up|go to|see)\b[\s\S]{0,30}\b(?:side[\s-]by[\s-]side|both accounts|live order preview|my (?:trades?|positions?|account) (?:next to|beside|vs\.?|versus|against) (?:che|chey|chay))\b/.test(t)

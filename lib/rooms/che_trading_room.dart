@@ -7,6 +7,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
+import 'dart:async';
+
+import '../trading/che_setup_board.dart';
+import '../trading/che_setup_desk.dart';
 import 'che_alpaca_paper.dart';
 import 'che_fye_draft.dart';
 import 'che_live_paper.dart';
@@ -25,10 +29,11 @@ import 'che_trading_hud.dart';
 const _gold = CheColors.markets;
 final _stroke = CheColors.stroke;
 
-enum CheTradingSection { chart, cheTrades, strategies, account, compare }
+enum CheTradingSection { chart, setups, cheTrades, strategies, account, compare }
 
 const kTradingSectionLabels = <CheTradingSection, String>{
   CheTradingSection.chart: 'CHART',
+  CheTradingSection.setups: 'SETUPS',
   CheTradingSection.cheTrades: 'CHE TRADES',
   CheTradingSection.strategies: 'STRATEGIES',
   CheTradingSection.account: 'ACCOUNT',
@@ -39,6 +44,7 @@ const kTradingSectionLabels = <CheTradingSection, String>{
 /// The section a Worker reply names ("chart", "strategies", ...); chart when unknown.
 CheTradingSection cheTradingSectionNamed(String? name) => switch ((name ?? '').toLowerCase().replaceAll(RegExp(r'[^a-z]'), '')) {
       'chetrades' || 'trades' => CheTradingSection.cheTrades,
+      'setups' || 'setup' || 'signals' || 'signal' => CheTradingSection.setups,
       'strategies' || 'strategy' => CheTradingSection.strategies,
       'account' => CheTradingSection.account,
       'compare' || 'sidebyside' || 'side' => CheTradingSection.compare,
@@ -62,7 +68,11 @@ class CheTradingRoom extends StatefulWidget {
     this.chartExtras = const [],
     this.accountExtras = const [],
     this.chartHeight = 340,
+    this.setupDesk,
   });
+
+  /// The Signal Mode desk (tests pass their own; the app uses the shared one on the live feed).
+  final CheSetupDesk? setupDesk;
 
   final String Function() baseUrl;
   final Map<String, String> Function() headers;
@@ -94,6 +104,11 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
   @override
   void initState() {
     super.initState();
+    if (widget.setupDesk == null) _desk.attach();
+    // Audible alerts (only the types the owner turned on) speak through the room's reader.
+    final read = widget.onRead;
+    if (read != null) _desk.alerts.speak ??= (t) async => read(t);
+    unawaited(_loadEvidence());
     CheTradingRoom.requestedSection.value = null;
     CheTradingRoom.requestedSection.addListener(_onRequest);
   }
@@ -111,6 +126,14 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
     CheTradingRoom.requestedSection.value = null;
   }
   late final CheTradingChartController _chart = widget.chartController ?? CheTradingChartController();
+  late final CheSetupDesk _desk = widget.setupDesk ?? CheSetupDesk.instance;
+
+  /// Recorded strategy evidence for the setup badges; without it they say "No recorded evidence".
+  Future<void> _loadEvidence() async {
+    try {
+      _desk.applyEvidence(await _research.overview(_market));
+    } catch (_) {}
+  }
   late final CheTradingResearchClient _research = CheTradingResearchClient(baseUrl: widget.baseUrl, headers: widget.headers, client: widget.client);
 
   /// The futures market the research and the live chart follow.
@@ -162,6 +185,7 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
             initialSymbol: widget.initialSymbol,
             initialStrategy: widget.initialStrategy,
             height: widget.chartHeight,
+            signalMarkers: _desk.markerFeed,
           )),
           CheTradingResearchStrip(key: const Key('research_strip'), client: _research, market: _market, onRead: widget.onRead),
           // The older overview (index chart, quotes, 3D scene) is folded so nothing heavy builds until asked for.
@@ -178,6 +202,8 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
               ),
             ),
         ];
+      case CheTradingSection.setups:
+        return [_pad(CheSetupBoard(desk: _desk, onRead: widget.onRead))];
       case CheTradingSection.cheTrades:
         return [
           // CHE's own simulated account on live Rithmic prices (owner, 2026-10-23): balance, positions, trade details.
