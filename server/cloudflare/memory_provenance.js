@@ -162,7 +162,9 @@ const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 
 function spokenDate(iso) {
   const at = new Date(String(iso || ''));
   if (!Number.isFinite(at.getTime())) return '';
-  return `${MONTHS[at.getUTCMonth()]} ${at.getUTCDate()}`;
+  // The owner's calendar day (America/Chicago), the same day personal recall says, never the UTC one.
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', month: 'numeric', day: 'numeric' }).formatToParts(at).map((x) => [x.type, x.value]));
+  return `${MONTHS[Number(p.month) - 1]} ${Number(p.day)}`;
 }
 
 function howRecorded(record) {
@@ -444,6 +446,8 @@ export async function recordAnswerEvidence(storage, reply, receipt = {}, extra =
     sources: Array.isArray(receipt.sources) ? receipt.sources.slice(0, 5) : [],
     tools: Array.isArray(receipt.tools) ? receipt.tools.slice(0, 5) : [],
     records: Array.isArray(extra.records) ? extra.records.slice(0, 5) : [],
+    // The owner's words the answer quoted, with their stored date, for records outside memory_records (the Brain, saved preferences).
+    cited: Array.isArray(extra.cited) ? extra.cited.slice(0, 3).map((c) => ({ text: clip(c?.text, 300), created_at: c?.created_at || null, store: String(c?.store || '').slice(0, 40) })) : [],
     meta: extra.meta === true,
     attributions_removed: Number(extra.attributions_removed || 0),
   };
@@ -625,7 +629,8 @@ export function explainEvidenceFor({ referent = null, entry = null, records = []
     return { retract: [], text: `${quote}I do not have a recent evidence record for that answer, sir. I cannot honestly claim it was fact-checked.` };
   }
   if (entry.kind === 'owner_attested') {
-    const cited = records.filter((r) => entry.records?.includes(r.id));
+    const fromRecords = records.filter((r) => entry.records?.includes(r.id));
+    const cited = fromRecords.length ? fromRecords : (entry.cited || []).filter((c) => c.text).map((c) => ({ text: c.text, created_at: c.created_at, source: c.store === 'saved_preferences' ? 'inferred_text' : 'owner_chat' }));
     return {
       retract: [],
       text: `${quote}That came from what you told me${cited.length ? `: ${cited.map(quoteRecord).join(' ')}` : '.'} It is your own statement, not an independently verified outside fact.`,
