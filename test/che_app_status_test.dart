@@ -40,4 +40,26 @@ void main() {
     expect(cheIsAppStatusRequest('What version was running when Rithmic was added?'), isFalse);
     expect(cheIsAppStatusRequest('What deployed commit added Rithmic?'), isFalse);
   });
+
+  test('commit and deployment receipt questions attach the device report; unrelated version questions do not', () {
+    for (final phrase in [
+      'What changed in commit f37bc3ac and what can I test on my iPhone?',
+      'What can I test on my iPhone from that commit?',
+      'Verify the deployment',
+      'Is the latest commit live?',
+    ]) {
+      expect(cheIsCommitReceiptRequest(phrase), isTrue, reason: phrase);
+      expect(cheIsAppStatusRequest(phrase), isTrue, reason: phrase);
+    }
+    for (final phrase in ['What version of Python should my project use?', 'Which version of the song is on my playlist?', 'Is it live on YouTube?']) {
+      expect(cheIsAppStatusRequest(phrase), isFalse, reason: phrase);
+    }
+  });
+
+  test('the Shorebird patch rides along only when it was read', () {
+    const build = CheInstalledBuild('1.4.1', '3956');
+    expect(build.chatMetadata(patch: '7')['patch'], '7');
+    expect(build.chatMetadata(patch: 'none')['patch'], 'none');
+    expect(build.chatMetadata().containsKey('patch'), isFalse);
+  });
 }

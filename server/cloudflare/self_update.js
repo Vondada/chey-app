@@ -684,10 +684,14 @@ export function appStatusIntent(message = '') {
     .replace(/^(?:(?:hey|hi)\s+)?(?:che|chay|chey)[, :]+/, '').replace(/[.!?]+$/, '');
   if (/^(?:fix|change|set|install|update|deploy|build|release|publish|run|start)\b/.test(t) || latestWorkerDeploymentIntent(t)) return null;
   if (/\b(?:added|introduced|was running|used to|previously|back then|at the time|when .*was)\b/.test(t)) return null;
+  // "What changed in commit X and what can I test on my iPhone" asks about a commit's content (deploy_receipt.js),
+  // not the running version; "my iPhone" plus "commit" once matched here and repeated the status answer.
+  if (/\bwhat(?:'s| is| was)? (?:changed|new|in)\b|\bchanged in\b|\bchanges? (?:in|from|made)\b|\bsummar(?:y|ize|ise)\b|\bwhat (?:can|should|do) i test\b|\bto test\b/.test(t)) return null;
   if (/^(?:open|show)(?: me)? (?:settings|about)(?:\s*(?:\/|and)\s*(?:about|show(?: me)?))?.*\b(?:app )?version\b/.test(t)) return { kind: 'settings' };
   if (!/^(?:what(?:'s| is| are)?|which|tell me|show me|check|read|give me)\b/.test(t)) return null;
+  // The subject must be CHE itself: "what version of Python should my project use" is not a status question.
   if (/\b(?:version|build number|deployment (?:identifier|id|status)|commit|sha)\b/.test(t)
-    && /\b(?:my|installed|backend|worker|connected|deployed|deployment|running)\b/.test(t)) return { kind: /\b(?:commit|sha|last verified deployment|deployment status)\b/.test(t) ? 'deployment' : 'runtime' };
+    && /\b(?:installed|backend|worker|connected|deployed|deployment|running|che|(?:my|the|this) (?:app|build|iphone app|phone app))\b/.test(t)) return { kind: /\b(?:commit|sha|last verified deployment|deployment status)\b/.test(t) ? 'deployment' : 'runtime' };
   return null;
 }
 

@@ -102,6 +102,7 @@ function spokenPick(message, n) {
 }
 import { ATLAS_SOURCE, answerAtlas, atlasHiddenAction, atlasIntent, atlasQuizAnswerTurn, atlasPromptContext, atlasResetAsk, atlasResetIntent, projectAtlasToBrain, resetAtlasProgress } from './knowledge_atlas.js';
 import { LIVE_BACKTEST, LIVE_RUNS, LIVE_STATE, haltLivePaper, liveSpecs, liveBacktest, liveDashboard, livePaperSummary, liveTick, nextLiveTickAt, readLivePortfolios, researchDue, setLivePaper } from './trading_live.js';
+import { governorAction, queueAllocationFollowUp, readDecisions, runGovernor, speakGovernor, tradeDecisions } from './strategy_governor.js';
 import { ICT_CONCEPTS, applyControlChange, controlsView, noteAuditEffect, readControls, strategyRegistry, resolveStep, speakControlResult, speakControlsView, speakSkipReasons, stockOrderProblem } from './trading_controls.js';
 import { cmeSession, frontMonth, loadIntraday, TradovateMarketStream, connectMarketSocket } from './market_feed.js';
 import { alpacaKeys, alpacaPaperDashboard, cancelAlpacaPaperOrder, haltAlpacaPaper, previewAlpacaPaperOrder, alpacaPaperOrders, alpacaPaperPositions, alpacaPaperEquity, alpacaStockBars, AlpacaStockStream, AlpacaOrderStream, alpacaStatus, speakAlpacaDashboard, liveKeyProblem, placeAlpacaPaperOrder, removeAlpacaPaperKeys, saveAlpacaPaperKeys } from './broker_alpaca.js';
@@ -115,6 +116,7 @@ import { PLAN_SOURCE, answerPlanFollowUp, buildPlan, classifyProject, listPlans,
 import { BRAIN_ROOMS_SOURCE, ROOMS as BRAIN_ROOMS, answerCrossRoom, crossRoomIntent, drainRoomEvents, imageReference, pointsAtScreen, prFollowUp, recentScreen, relinkRecords, rememberScreen, screenDeictic, screenFollowUp, screenRoomContext, screenRoomFor, statusLabel } from './brain_rooms.js';
 import { controlChangeEvent, meetingEvent, officeTaskEvent, paperOrderRefusedEvent, phoneRoomEvent, queueRoomEvent, researchEvent } from './room_events.js';
 import { cloudDailyLimit, sanitizeOwnerText } from './che_errors.js';
+import { commitIntent, commitReceipt, speakReceipt } from './deploy_receipt.js';
 import { CHE_UPDATE_GUIDE, mergeSelfUpdatePr, openSelfUpdatePr, rollbackLastUpdate, selfUpdateGitHubAccess, selfUpdateStatus, workerDeploymentStatus, latestWorkerDeploymentIntent, latestWorkerDeploymentStatus, speakLatestWorkerDeployment, appStatusIntent, appStatusReport } from './self_update.js';
 import { FAILURE_CLASS, backoffMs, classifyFailure, idempotencyKey, ownerEngineeringMessage, stableHash, stripOwnerHomework } from './recovery_policy.js';
 import { handleMobileUpdateRequest, isMobileUpdatePath } from './mobile_update.js';
@@ -4353,6 +4355,7 @@ export class CheState extends DurableObject {
     // Multi-timeframe research (trading_research.js): the daily refresh is queued once a day; a queued job advances
     // inside its profile's CPU budget, checkpointing each unit. Deterministic code only, free data only, no orders.
     await researchAutoQueue(this.ctx.storage, opts.now ?? Date.now()).catch((error) => console.error('Research queue failed:', error?.message || error));
+    await queueAllocationFollowUp(this.ctx.storage, opts.now ?? Date.now()).catch((error) => console.error('Governor follow-up failed:', error?.message || error));
     await researchStep(this.ctx.storage, { now: opts.now ?? Date.now() }).catch((error) => console.error('Research step failed:', error?.message || error));
     return book;
   }
@@ -7412,6 +7415,17 @@ export class CheState extends DurableObject {
         });
       }
 
+      // Coding evidence (owner, 2026-10-23): the Brain and Chat open a commit's receipt by its stable id
+      // `commit:<sha>`: the commit, its PR, the deploy run, the running Worker's tag and the Shorebird/IPA runs,
+      // each with its link, and "missing" naming whatever could not be read. Rebuilt from GitHub, never stored.
+      const commitEvidence = /^\/api\/evidence\/commit\/([0-9a-f]{7,40})$/i.exec(path);
+      if (commitEvidence && request.method === 'GET') {
+        if (!ownerDevice) return ownerOnly();
+        const receipt = await commitReceipt(this.env, { ref: commitEvidence[1].toLowerCase(), runtime: runtimeVersion(this.env), fetcher: fetch })
+          .catch(() => ({ id: null, commit: null, evidence: [], missing: ['The commit lookup failed inside CHE; nothing is verified.'] }));
+        return json({ ...receipt, status: receipt.commit ? (receipt.missing.length ? 'partial' : 'verified') : 'unavailable' }, receipt.commit ? 200 : 404);
+      }
+
       // The phone's rooms report what happened there (owner, Build 2, 2026-10-20): a track played, a Help
       // explanation or walkthrough, a screen looked at. Owner device only; an allowlisted kind per room, a
       // stable key (a retry is never a second record), bounded safe text, and for the screen only its name and
@@ -7966,6 +7980,26 @@ export class CheState extends DurableObject {
         if (!ownerDevice) return ownerOnly();
         const draft = await Promise.resolve().then(() => this.ctx.storage.get('fye_draft')).catch(() => null);
         return json({ ok: true, status: FYE_STATUS, draft: draft || null, order_sent: false });
+      }
+      // Strategy governor (owner, 2026-10-23): which strategies may trade forward paper, why, and every decision with its evidence.
+      if (path === '/api/trading/governor' && request.method === 'GET') {
+        if (!ownerDevice) return ownerOnly();
+        const view = await runGovernor(this.ctx.storage, { record: false });
+        return json({ ...view, spoken: speakGovernor(view) });
+      }
+      if (path === '/api/trading/governor/decisions' && request.method === 'GET') {
+        if (!ownerDevice) return ownerOnly();
+        return json({ decisions: await readDecisions(this.ctx.storage, { limit: Number(new URL(request.url).searchParams.get('limit')) || 100 }) });
+      }
+      if (path === '/api/trading/governor/trades' && request.method === 'GET') {
+        if (!ownerDevice) return ownerOnly();
+        const q = new URL(request.url).searchParams;
+        return json({ items: tradeDecisions(await readLivePortfolios(this.ctx.storage), { strategy: q.get('strategy') || null, limit: Number(q.get('limit')) || 50 }) });
+      }
+      if (path === '/api/trading/governor' && request.method === 'POST') {
+        if (!ownerDevice) return ownerOnly();
+        const result = await governorAction(this.ctx.storage, body);
+        return json(result, result.ok ? 200 : 400);
       }
       if (path === '/api/trading/controls' && request.method === 'GET') {
         if (!ownerDevice) return ownerOnly();
@@ -10163,6 +10197,20 @@ export class CheState extends DurableObject {
         // Owner asks for the latest deployment receipt: query GitHub Actions
         // before any source-code inspection. Reading a workflow YAML or the
         // CHE-only last_self_update_deploy key cannot prove deployment history.
+        // "What changed in commit X / what can I test on my iPhone / verify the deployment / is the latest commit
+        // live": GitHub's commit, PR and run records plus this Worker's own version tag and the phone's own report,
+        // each with its link (deploy_receipt.js). Checked before the status route, which once swallowed these.
+        const commitAsk = !body.attachment && !body.workflow_step ? commitIntent(rawMessage, body.history) : null;
+        if (commitAsk) {
+          await this.dropHeldActions();
+          const receipt = await commitReceipt(this.env, { ref: commitAsk.ref, changes: commitAsk.changes, verify: commitAsk.verify, runtime: runtimeVersion(this.env), client: body.client_app, fetcher: fetch })
+            .catch(() => ({ commit: null, evidence: [], missing: ['The commit lookup failed inside CHE; nothing is verified.'] }));
+          return ndjsonReply(speakReceipt(receipt, commitAsk), {
+            source: 'che_commit_receipt', ok: Boolean(receipt.commit), model_calls: 0, deploy_receipt: receipt,
+            evidence_links: receipt.evidence,
+            execution_receipt: receipt.commit ? { tool: 'github', operation: 'read_commit_and_runs', status: 'success', source: receipt.commit.url, commit_sha: receipt.commit.sha } : null,
+          });
+        }
         const runtimeStatusAsk = !body.attachment && !body.workflow_step ? appStatusIntent(rawMessage) : null;
         if (runtimeStatusAsk) {
           if (!ownerDevice) return ownerOnly();
@@ -12499,8 +12547,10 @@ export class CheState extends DurableObject {
             { source: 'che_trading_chart', ok: saved.ok, model_calls: 0, open_view: 'trading_chart', chart: { account, symbol } });
         }
         if (chartAsk?.kind === 'chart_open') {
-          const where = chartAsk.section === 'strategies' ? 'Opening Strategies, sir.' : chartAsk.section === 'compare' ? 'Opening Side by Side, sir: your account beside CHE\'s paper account. Live orders stay disabled.' : `Opening the ${chartAsk.account === 'alpaca_paper' ? 'Alpaca PAPER' : chartAsk.account === 'futures_paper' ? 'MNQ paper' : ''} chart${chartAsk.symbol ? ` for ${chartAsk.symbol}` : ''}${chartAsk.filter?.strategy ? `, showing only ${chartAsk.filter.strategy.toUpperCase()} trades` : ''}, sir.`;
-          return ndjsonReply(where.replace('the  chart', 'the chart'), { source: 'che_trading_chart', ok: true, model_calls: 0, open_view: 'trading_chart', chart: { section: chartAsk.section, account: chartAsk.account || null, symbol: chartAsk.symbol || null, filter: chartAsk.filter || null } });
+          const where = chartAsk.section === 'setups'
+            ? (chartAsk.answer === 'ready' ? 'Here are the setups CHE is following on this iPhone, sir.' : 'Opening the Setup Progress Board, sir. These are CHE PAPER ACCOUNT setups from the live Rithmic candles.')
+            : chartAsk.section === 'strategies' ? 'Opening Strategies, sir.' : chartAsk.section === 'compare' ? 'Opening Side by Side, sir: your account beside CHE\'s paper account. Live orders stay disabled.' : `Opening the ${chartAsk.account === 'alpaca_paper' ? 'Alpaca PAPER' : chartAsk.account === 'futures_paper' ? 'MNQ paper' : ''} chart${chartAsk.symbol ? ` for ${chartAsk.symbol}` : ''}${chartAsk.filter?.strategy ? `, showing only ${chartAsk.filter.strategy.toUpperCase()} trades` : ''}, sir.`;
+          return ndjsonReply(where.replace('the  chart', 'the chart'), { source: 'che_trading_chart', ok: true, model_calls: 0, open_view: 'trading_chart', chart: { section: chartAsk.section, account: chartAsk.account || null, symbol: chartAsk.symbol || null, filter: chartAsk.filter || null, ...(chartAsk.answer ? { answer: chartAsk.answer } : {}) } });
         }
         const desk = body.attachment ? null : deskIntent(message);
         if (desk && ['controls', 'controls_view', 'controls_why'].includes(desk.kind)) {

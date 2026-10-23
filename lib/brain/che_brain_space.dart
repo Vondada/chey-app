@@ -36,6 +36,7 @@ import '../che_ui/che_hud.dart';
 import '../che_ui/che_theme.dart';
 import '../home/che_memory_brain.dart' show CheMemoryDot, cheMemoryCategoryColor;
 import 'che_brain_navigation.dart';
+import 'che_brain_sections.dart';
 import 'che_brain_space_model.dart';
 import 'che_frame_budget.dart';
 
@@ -804,7 +805,36 @@ class CheBrainSpaceController {
         CheBrainAction.centerSelected => centerOnSelected(),
         CheBrainAction.openWorker => setScope(command.worker),
         CheBrainAction.lens => setLens(command.lens ?? CheBrainLens.none),
+        CheBrainAction.list => showList(command.section),
+        CheBrainAction.space => showSpace(),
       };
+
+  // ─── List view (owner, 2026-10-23) ─────────────────────────────────────
+
+  /// True while the Brain Room shows the searchable list instead of the neural view.
+  bool listMode = false;
+
+  /// The list's section, or null for every section.
+  CheBrainSection? listSection;
+
+  /// Shows the list (one section or all) and says what it holds, from the real records.
+  String showList([CheBrainSection? section]) {
+    listMode = true;
+    listSection = section;
+    state.value++;
+    final counts = cheBrainSectionCounts(_dots);
+    if (section != null) {
+      final n = counts[section] ?? 0;
+      return '${section.label}: $n record${n == 1 ? '' : 's'}. ${section.meaning}';
+    }
+    return 'The Brain list: ${[for (final s in CheBrainSection.values) '${counts[s]} ${s.label.toLowerCase()}'].join(', ')}.';
+  }
+
+  String showSpace() {
+    listMode = false;
+    state.value++;
+    return 'Back to the neural view.';
+  }
 
   // ─── Hit testing ───────────────────────────────────────────────────────
 
