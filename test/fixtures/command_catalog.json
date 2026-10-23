@@ -543,6 +543,50 @@
    "optional_missing": []
   },
   {
+   "id": "che-improve",
+   "category": "intelligence",
+   "title": "Che Improve",
+   "summary": "Tell CHE what feels wrong; she fixes it or opens a coding task.",
+   "does": "A supported layout or look change (layout density, chart size and shape, success color, text size) is stored, read back and applied on the iPhone with no new build, then marked Verified when the app confirms it; \"undo that\" puts it back. Anything else becomes a tracked task with acceptance criteria, sent to CHE's coding pipeline. Money, trading, security, credentials, deleting and publishing are never changed automatically.",
+   "mode": "BUILD",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "what",
+    "required": false,
+    "hint": "What feels wrong, for example \"the chart is too big\""
+   },
+   "examples": [
+    "This page is too cramped",
+    "Make the chart smaller",
+    "Use chrome green for successful actions",
+    "Undo that",
+    "What improvements are open?"
+   ],
+   "needs": [],
+   "optional": [],
+   "handler": "owner_improvements.improvementIntent → handleImprovement (coding through selfDevelopmentReply)",
+   "route": "che_owner_improvement",
+   "produces": "improvement task",
+   "evidence": "The stored setting read back, and the value the iPhone reports it applied; for code, the coding job id the pipeline returned.",
+   "cost": "Free for settings: no AI engine is used. A coding task uses the coding pipeline.",
+   "keywords": [
+    "improve",
+    "improvement",
+    "too cramped",
+    "too big",
+    "too small",
+    "fix this",
+    "owner improvements",
+    "undo that"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
    "id": "che-cancel-job",
    "category": "intelligence",
    "title": "Che Cancel Job",
