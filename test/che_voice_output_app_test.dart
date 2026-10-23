@@ -9,6 +9,7 @@ import 'dart:convert';
 import 'package:chey/che_ui/che_ui_preferences.dart';
 import 'package:chey/home/che_ui_controls_screen.dart';
 import 'package:chey/main.dart';
+import 'package:chey/security/che_session_store.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -18,6 +19,9 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  // Widget tests have no Keychain plugin: the sign-in lives in memory, fresh for every test.
+  setUp(() => CheSessionStore.instance = CheSessionStore(kv: CheMemoryKv()));
+
   testWidgets('a spoken reply reaches the iPhone player with its words, the Voice Volume and the output choice', (tester) async {
     SharedPreferences.setMockInitialValues({
       'che_agent_base_url': 'https://che.test',

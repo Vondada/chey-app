@@ -32,7 +32,7 @@ extension _CheHomeMemory on _CHEHomeState {
     }
 
     if (response.statusCode == 401) {
-      await _clearSecuritySession();
+      await _onUnauthorized(response);
       return 'failed';
     }
     if (response.statusCode != 200) return response.statusCode == 400 ? 'refused' : 'failed';
@@ -196,7 +196,7 @@ extension _CheHomeMemory on _CHEHomeState {
     }
 
     if (response.statusCode == 401) {
-      await _clearSecuritySession();
+      await _onUnauthorized(response);
       return;
     }
 
@@ -237,7 +237,7 @@ extension _CheHomeMemory on _CHEHomeState {
     }
 
     if (response.statusCode == 401) {
-      await _clearSecuritySession();
+      await _onUnauthorized(response);
       return;
     }
 
@@ -360,8 +360,8 @@ extension _CheHomeMemory on _CHEHomeState {
     );
 
     if (response.statusCode == 401) {
-      await _clearSecuritySession();
-      throw const _CHEAgentException('Pair this device again, sir.');
+      if (await _onUnauthorized(response)) throw const _CHEAgentException('Pair this device again, sir.');
+      throw const _CHEAgentException('That needs Face ID first. You are still signed in.');
     }
 
     final data = response.body.isEmpty
