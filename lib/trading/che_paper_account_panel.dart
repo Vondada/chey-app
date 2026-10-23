@@ -62,11 +62,11 @@ class ChePaperBadge extends StatelessWidget {
 ({IconData icon, Color color}) _statusLook(ChePositionStatus s) => switch (s) {
       ChePositionStatus.pendingEntry => (icon: Icons.hourglass_top, color: _warn),
       ChePositionStatus.open => (icon: Icons.play_circle_outline, color: _gold),
-      ChePositionStatus.targetHit => (icon: Icons.flag, color: _up),
+      ChePositionStatus.targetHit => (icon: Icons.flag_rounded, color: _up),
       ChePositionStatus.stopped => (icon: Icons.block, color: _down),
       ChePositionStatus.closed => (icon: Icons.check_circle_outline, color: Colors.white70),
-      ChePositionStatus.cancelled => (icon: Icons.cancel_outlined, color: Colors.white70),
-      ChePositionStatus.unresolved => (icon: Icons.help_outline, color: _warn),
+      ChePositionStatus.cancelled => (icon: Icons.cancel, color: Colors.white70),
+      ChePositionStatus.unresolved => (icon: Icons.help_outline_rounded, color: _warn),
     };
 
 /// Loads the phone's CHE paper account (or a given one) and keeps it attached to the live feed.
@@ -197,7 +197,7 @@ class _ChePaperAccountPanelState extends State<ChePaperAccountPanel> {
         label: 'Price source for paper fills: ${feed.sourceLabel}, ${feed.statusLabel}',
         excludeSemantics: true,
         child: Row(children: [
-          Icon(feed.isLive ? Icons.sensors : Icons.sensors_off, size: 16, color: feed.isLive ? _up : _warn),
+          Icon(feed.isLive ? Icons.radio_button_checked : Icons.link_off, size: 16, color: feed.isLive ? _up : _warn),
           const SizedBox(width: 6),
           Expanded(
             child: Text(
@@ -216,7 +216,7 @@ class _ChePaperAccountPanelState extends State<ChePaperAccountPanel> {
       Wrap(spacing: 8, runSpacing: 8, children: [
         _button(key: 'paper_change_balance', icon: Icons.account_balance_wallet_outlined, label: 'Change CHE paper balance', onTap: _changeBalance),
         _button(key: 'paper_limits', icon: Icons.tune, label: 'Risk limits', onTap: _changeLimits),
-        if (widget.onRead != null) _button(key: 'paper_read', icon: Icons.volume_up_outlined, label: 'Read aloud', onTap: () => widget.onRead!(_summary(e))),
+        if (widget.onRead != null) _button(key: 'paper_read', icon: Icons.volume_up_rounded, label: 'Read aloud', onTap: () => widget.onRead!(_summary(e))),
       ]),
       const SizedBox(height: 8),
       _riskNote(e, s),
@@ -302,7 +302,7 @@ class _ChePaperAccountPanelState extends State<ChePaperAccountPanel> {
       if (!fits) 'Setups that need more are logged "skipped: risk exceeds limit" — never traded anyway and never made to fit by moving the stop. A larger simulated balance or a higher limit is your choice.',
     ].join(' ');
     return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Icon(fits ? Icons.info_outline : Icons.warning_amber_rounded, size: 18, color: fits ? _dim : _warn),
+      Icon(fits ? Icons.radio_button_unchecked : Icons.warning_amber, size: 18, color: fits ? _dim : _warn),
       const SizedBox(width: 6),
       Expanded(child: Text(text, key: const Key('paper_risk_note'), style: TextStyle(color: fits ? _dim : _warn, fontSize: 13.5))),
     ]);
@@ -738,7 +738,7 @@ class _ChePaperTradeDetailPageState extends State<ChePaperTradeDetailPage> {
         title: Text('${p.symbol} ${p.side.label} · CHE paper', style: const TextStyle(color: Colors.white)),
         actions: [
           if (widget.onRead != null)
-            IconButton(key: const Key('paper_detail_read'), tooltip: 'Read aloud', icon: const Icon(Icons.volume_up_outlined), onPressed: () => widget.onRead!(_words(p, now))),
+            IconButton(key: const Key('paper_detail_read'), tooltip: 'Read aloud', icon: const Icon(Icons.volume_up_rounded), onPressed: () => widget.onRead!(_words(p, now))),
         ],
       ),
       body: ListView(padding: const EdgeInsets.all(16), children: [
