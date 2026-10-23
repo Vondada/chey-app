@@ -260,6 +260,10 @@ class CheTradingChartState extends State<CheTradingChart> {
   /// Rithmic candles can be drawn: MNQ PAPER, and a Rithmic session that is connected or already recorded trades.
   bool get _rithmicChart => _account == 'futures_paper' && (_live.attached || !_live.book.isEmpty);
 
+  /// The Rithmic source and status lines show once Rithmic is in play (connecting, connected, dropped or recorded).
+  /// Before that the feed line already names the delayed provider, and the layout stays as it was.
+  bool get _rithmicHeader => _account == 'futures_paper' && (_live.status != RithmicLiveStatus.off || !_live.book.isEmpty);
+
   /// Trades arrive many times a second; the chart redraws at most four times a second.
   void _onLive() {
     if (!mounted || _account != 'futures_paper' || _liveRebuild != null) return;
@@ -790,7 +794,7 @@ class CheTradingChartState extends State<CheTradingChart> {
         ]),
         const SizedBox(height: 8),
         // MNQ PAPER: the active source, the Rithmic connection and its last update. Visible, never spoken unless asked.
-        if (_account == 'futures_paper') ...[
+        if (_rithmicHeader) ...[
           Text(sourceLabel, key: const ValueKey('chart-source'), style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w700)),
           const SizedBox(height: 2),
           Text(
