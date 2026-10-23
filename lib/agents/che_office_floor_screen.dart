@@ -40,6 +40,7 @@ class CheOfficeFloorScreen extends StatefulWidget {
   const CheOfficeFloorScreen({
     super.key,
     required this.client,
+    this.runtime,
     this.onTalkToChe,
     this.onSpeak,
     this.embedded = false,
@@ -47,6 +48,10 @@ class CheOfficeFloorScreen extends StatefulWidget {
   });
 
   final CheAgentRuntimeClient client;
+
+  /// The app's own Office runtime, when it already has one: the floor shows it instead of starting a second set of
+  /// polls on the same endpoints. Without it the floor runs (and disposes) its own.
+  final CheAgentRuntimeController? runtime;
 
   /// Opens CHE's chat from her desk sheet (Talk to CHE).
   final VoidCallback? onTalkToChe;
@@ -66,7 +71,8 @@ class CheOfficeFloorScreen extends StatefulWidget {
 }
 
 class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
-  late final CheAgentRuntimeController _runtime = CheAgentRuntimeController(widget.client)..addListener(_changed);
+  late final bool _ownsRuntime = widget.runtime == null;
+  late final CheAgentRuntimeController _runtime = (widget.runtime ?? CheAgentRuntimeController(widget.client))..addListener(_changed);
 
   /// One store for the floor: desks update individually, the plan only
   /// rebuilds when desks are added or removed.
@@ -91,6 +97,12 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
     super.initState();
     _pendingAgentName = widget.initialAgentName;
     _runtime.start();
+    // A shared runtime may already hold the roster; show it now rather than after its next poll.
+    if (_runtime.loaded) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _changed();
+      });
+    }
   }
 
   void _openInitialAgent() {
@@ -117,7 +129,7 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
   @override
   void dispose() {
     _runtime.removeListener(_changed);
-    _runtime.dispose();
+    if (_ownsRuntime) _runtime.dispose();
     _store.dispose();
     super.dispose();
   }

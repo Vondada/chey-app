@@ -2073,6 +2073,7 @@ OWNER AGENCY
                 enabled: _officePane == 0,
                 child: CheOfficeFloorScreen(
                 client: _agentRuntime,
+                runtime: _officeRuntime,
                 embedded: true,
                 onSpeak: (text) => speakText(text, record: false, readOnDemand: true),
                 onTalkToChe: () => _goShellTab(1),

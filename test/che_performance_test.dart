@@ -3,7 +3,6 @@
 // The over-budget note from the Worker is quiet text, never a live region or speech.
 import 'package:chey/che_ui/che_performance_note.dart';
 import 'package:chey/security/che_cyber_world.dart';
-import 'dart:ui' show SemanticsFlag;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -41,7 +40,7 @@ void main() {
     await tester.pumpWidget(const MaterialApp(home: Scaffold(body: ChePerformanceNote(note: 'CHE is slower than her budget on replies.'))));
     final node = tester.getSemantics(find.bySemanticsLabel(RegExp('^Performance: ')));
     expect(node.label, contains('Performance: CHE is slower'));
-    expect(node.hasFlag(SemanticsFlag.isLiveRegion), isFalse);
+    expect(node.getSemanticsData().flagsCollection.isLiveRegion, isFalse);
     await tester.pump(const Duration(milliseconds: 100));
     expect(tester.binding.hasScheduledFrame, isFalse, reason: 'the note does not animate');
     handle.dispose();

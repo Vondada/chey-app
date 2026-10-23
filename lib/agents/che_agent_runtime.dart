@@ -8,6 +8,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart' show AppLifecycleState, WidgetsBinding, WidgetsBindingObserver;
 import 'package:http/http.dart' as http;
 
 import '../che_ui/che_agents.dart';
@@ -758,7 +759,7 @@ class CheAgentRuntimeClient {
 
 /// Mirrors the live roster. Polls quickly while work is running and slowly
 /// when the Office is quiet; stops when no screen is listening.
-class CheAgentRuntimeController extends ChangeNotifier {
+class CheAgentRuntimeController extends ChangeNotifier with WidgetsBindingObserver {
   CheAgentRuntimeController(this.client);
 
   final CheAgentRuntimeClient client;
@@ -787,8 +788,20 @@ class CheAgentRuntimeController extends ChangeNotifier {
 
   bool get busy => working > 0 || che.status != CheAgentStatus.idle || meetings.any((m) => m.live);
 
+  // Polls run only while CHE is in the foreground (owner, 2026-10-23 stability mission): in the background they kept
+  // asking the Worker for the roster, board and coding status every few seconds for nothing.
+  bool _started = false;
+  bool _suspended = false;
+
   void start() {
-    if (_timer != null) return;
+    if (_started || _disposed) return;
+    _started = true;
+    WidgetsBinding.instance.addObserver(this);
+    _resume();
+  }
+
+  void _resume() {
+    _suspended = false;
     unawaited(refresh());
     unawaited(refreshBoard());
     unawaited(refreshCodingStatus());
@@ -800,7 +813,7 @@ class CheAgentRuntimeController extends ChangeNotifier {
     _codingTimer = Timer.periodic(const Duration(seconds: 20), (_) => unawaited(refreshCodingStatus()));
   }
 
-  void stop() {
+  void _cancelTimers() {
     _timer?.cancel();
     _timer = null;
     _boardTimer?.cancel();
@@ -809,9 +822,27 @@ class CheAgentRuntimeController extends ChangeNotifier {
     _codingTimer = null;
   }
 
+  void stop() {
+    _cancelTimers();
+    if (_started) WidgetsBinding.instance.removeObserver(this);
+    _started = false;
+    _suspended = false;
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (!_started || _disposed) return;
+    if (state == AppLifecycleState.resumed) {
+      if (_suspended) _resume();
+    } else if (state == AppLifecycleState.paused || state == AppLifecycleState.hidden || state == AppLifecycleState.detached) {
+      _suspended = true;
+      _cancelTimers();
+    }
+  }
+
   void _schedule() {
     _timer?.cancel();
-    if (_disposed) return;
+    if (_disposed || _suspended || !_started) return;
     _timer = Timer(busy ? const Duration(milliseconds: 1500) : const Duration(seconds: 6), () => unawaited(refresh()));
   }
 
