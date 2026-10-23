@@ -529,7 +529,8 @@ class CheHeader extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               ShaderMask(
-                shaderCallback: (r) => CheColors.accentGradient.createShader(r),
+                // HUD: the Home greeting's chrome; other palettes keep their accent.
+                shaderCallback: (r) => (cheHudActive ? CheHud.chrome : CheColors.accentGradient).createShader(r),
                 child: Text(title,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
