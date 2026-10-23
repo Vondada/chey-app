@@ -36,6 +36,7 @@ final _dim = CheColors.textDim;
 final _panel = CheColors.surface;
 final _stroke = CheColors.stroke;
 const _draw = Color(0xFF7FD3FF);
+const _level = Color(0xFFFFC857); // 86-style overnight levels
 
 /// The four marker sources, in the order the legend shows them.
 const kMarkerSources = <String, String>{
@@ -122,6 +123,50 @@ class ChartDrawing {
       };
 }
 
+/// One level from CHE's 86-style overnight range model (an independent approximation, not the P2P indicator):
+/// the overnight high and low, and the entry, stop and target only when the written rules produced a signal.
+class ChartLevel {
+  const ChartLevel(this.kind, this.price, this.label);
+  final String kind; // overnight_high, overnight_low, entry, stop, target
+  final double price;
+  final String label;
+}
+
+/// The chart's overnight levels and a plain-language line for Read Aloud and VoiceOver.
+/// Says "approximation" every time: the original P2P indicator is closed source and not reproduced.
+class CheOvernightLevels {
+  const CheOvernightLevels(this.levels, this.spoken);
+  final List<ChartLevel> levels;
+  final String spoken;
+
+  static const none = CheOvernightLevels([], '');
+
+  static CheOvernightLevels fromJson(Object? j) {
+    if (j is! Map) return none;
+    final hi = _num(j['onHigh']), lo = _num(j['onLow']);
+    if (hi == null || lo == null) {
+      final why = j['reason']?.toString() ?? '';
+      return CheOvernightLevels(const [], why.isEmpty ? '' : '86-style overnight range (approximation): $why');
+    }
+    final out = <ChartLevel>[
+      ChartLevel('overnight_high', hi, 'ON high ${_fmt(hi)} · 86-style approx.'),
+      ChartLevel('overnight_low', lo, 'ON low ${_fmt(lo)} · 86-style approx.'),
+    ];
+    final sig = j['signal'];
+    if (sig is Map) {
+      for (final (k, name) in const [('ref', 'entry'), ('stop', 'stop'), ('target', 'target')]) {
+        final v = _num(sig[k]);
+        if (v != null) out.add(ChartLevel(name, v, '${name[0].toUpperCase()}${name.substring(1)} ${_fmt(v)}'));
+      }
+    }
+    final bias = j['bias']?.toString() ?? 'none';
+    final stage = '${j['stage'] ?? ''}'.replaceAll('_', ' ');
+    final reason = j['reason']?.toString() ?? '';
+    return CheOvernightLevels(out,
+        '86-style overnight range (CHE approximation, not the P2P indicator): high ${_fmt(hi)}, low ${_fmt(lo)}, bias $bias, stage $stage. $reason'.trim());
+  }
+}
+
 String _fmt(double v) => v >= 1000 ? v.toStringAsFixed(2).replaceAllMapped(RegExp(r'\B(?=(\d{3})+(?!\d))'), (m) => ',') : v.toStringAsFixed(2);
 String _clock(DateTime t) {
   final l = t.toLocal();
@@ -142,6 +187,19 @@ class CheTradingChartController extends ChangeNotifier {
 
   void addLevel(double price) {
     level = price;
+    notifyListeners();
+  }
+
+  /// The side-by-side view keeps two charts on one timeframe and zoom when synced (owner, 2026-10-23).
+  String? timeframe;
+  double? zoomFactor;
+  void showTimeframe(String tf) {
+    timeframe = tf;
+    notifyListeners();
+  }
+
+  void zoomBy(double factor) {
+    zoomFactor = factor;
     notifyListeners();
   }
 }
@@ -195,6 +253,7 @@ class CheTradingChartState extends State<CheTradingChart> {
   Timer? _liveRebuild;
   List<ChartMarker> _markers = const [];
   List<ChartDrawing> _drawings = [];
+  CheOvernightLevels _levels = CheOvernightLevels.none;
   List<Map<String, dynamic>> _openOrders = const [];
   Map<String, dynamic> _feed = const {};
   String _state = 'loading';
@@ -240,6 +299,21 @@ class CheTradingChartState extends State<CheTradingChart> {
       final price = c.level!;
       c.level = null;
       _addDrawing(ChartDrawing(id: 'hline-${DateTime.now().millisecondsSinceEpoch}', kind: 'hline', points: [(null, price)]));
+      return;
+    }
+    if (c.zoomFactor != null) {
+      final factor = c.zoomFactor!;
+      c.zoomFactor = null;
+      if (_bars.isNotEmpty) zoom(factor);
+      return;
+    }
+    if (c.timeframe != null) {
+      final tf = c.timeframe!;
+      c.timeframe = null;
+      if (tf != _tf) {
+        setState(() => _tf = tf);
+        unawaited(load());
+      }
       return;
     }
     setState(() {
@@ -380,6 +454,7 @@ class CheTradingChartState extends State<CheTradingChart> {
         if (m is Map<String, dynamic>) ChartMarker(m),
     ];
     _drawings = [for (final d in (j['drawings'] is List ? j['drawings'] as List : const [])) ?ChartDrawing.fromJson(d)];
+    _levels = CheOvernightLevels.fromJson(j['levels']);
     _openOrders = [for (final o in (j['open_orders'] is List ? j['open_orders'] as List : const [])) if (o is Map<String, dynamic>) o];
     _feed = j['feed'] is Map<String, dynamic> ? j['feed'] as Map<String, dynamic> : const {};
     _entriesAllowed = j['entries_allowed'] == true;
@@ -675,6 +750,7 @@ class CheTradingChartState extends State<CheTradingChart> {
         : '${_feed['provider'] ?? 'Feed'} is ${_feed['status'] ?? 'unknown'}${_feed['age_s'] is num ? ', last bar ${_age(_feed['age_s'] as num)} old' : ''}.';
     return '$accountLabel, $_symbol, $_tf candles. Last close ${_fmt(last.c)} at ${_clock(last.t)}. $marks $feed '
         '${_drawings.isEmpty ? '' : '${_drawings.length} drawing${_drawings.length == 1 ? '' : 's'}: ${_drawings.map((d) => d.spoken).join('; ')}. '}'
+        '${_levels.spoken.isEmpty ? '' : '${_levels.spoken} '}'
         '${_entriesAllowed ? (_marketAllowed ? 'Paper entries allowed.' : 'Limit orders only: $_blocked') : 'New entries blocked: $_blocked'}';
   }
 
@@ -966,6 +1042,7 @@ class CheTradingChartState extends State<CheTradingChart> {
               bars: _window,
               markers: _shownMarkers,
               drawings: _drawings,
+              levels: _levels.levels,
               pending: _first,
             ),
           ),
@@ -1025,10 +1102,11 @@ class _Geometry {
 }
 
 class _ChartPainter extends CustomPainter {
-  _ChartPainter({required this.bars, required this.markers, required this.drawings, required this.pending});
+  _ChartPainter({required this.bars, required this.markers, required this.drawings, this.levels = const [], required this.pending});
   final List<ChartBar> bars;
   final List<ChartMarker> markers;
   final List<ChartDrawing> drawings;
+  final List<ChartLevel> levels;
   final (DateTime?, double)? pending;
 
   @override
@@ -1088,6 +1166,19 @@ class _ChartPainter extends CustomPainter {
           canvas.drawCircle(pts.first, 3, Paint()..color = _draw);
       }
     }
+    // CHE's 86-style overnight levels (approximation): dashed, labelled, only when inside the visible prices.
+    for (final lv in levels) {
+      if (lv.price < g.min || lv.price > g.max) continue;
+      final color = switch (lv.kind) { 'stop' => _down, 'target' => _up, 'entry' => Colors.white, _ => _level };
+      final y = g.y(lv.price);
+      final dash = Paint()
+        ..color = color
+        ..strokeWidth = 1.2;
+      for (var x = 0.0; x < g.plotW; x += 10) {
+        canvas.drawLine(Offset(x, y), Offset(math.min(x + 6, g.plotW), y), dash);
+      }
+      _text(canvas, lv.label, Offset(g.plotW - 150, y - 15), TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w700));
+    }
     if (pending != null) {
       final px = g.xOfTime(pending!.$1);
       if (px != null) canvas.drawCircle(Offset(px, g.y(pending!.$2)), 5, ink);
@@ -1121,7 +1212,7 @@ class _ChartPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _ChartPainter old) =>
-      old.bars != bars || old.markers != markers || old.drawings != drawings || old.pending != pending;
+      old.bars != bars || old.markers != markers || old.drawings != drawings || old.levels != levels || old.pending != pending;
 }
 
 /// One glyph per source so they never look alike: CHE forward a triangle, CHE simulation a hollow

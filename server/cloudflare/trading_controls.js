@@ -304,6 +304,7 @@ export function controlsView(controls, portfolios = [], now = Date.now()) {
 // Called by the trading desk's own intent parser (trading_desk.js deskIntent), so there is no
 // second router. A question about a control ("what does Emergency Stop do?") is not a command.
 const NAMES = [
+  [/\b86\b|\bp2p\b|\bovernight range\b/, 'p2p86-style-5m'],
   [/\bict\b/, 'family:ICT'],
   [/\bema\b|\bpullback\b/, 'ema-pullback-5m'],
   [/\brsi\b/, 'rsi-revert-5m'],
@@ -409,6 +410,7 @@ export const ICT_CONCEPTS = Object.freeze([
   { id: 'order_block', name: 'Order blocks', strategies: ['order-block-5m'] },
   { id: 'displacement', name: 'Displacement (a bar body of at least 1.5 ATR)', strategies: ['order-block-5m'] },
   { id: 'ny_session', name: 'New York session filter (Silver Bullet: 10:00–11:00 and 14:00–15:00)', strategies: ['silver-bullet-5m'] },
+  { id: 'overnight_range', name: 'Overnight high/low as New York liquidity (CHE 86-style approximation, not the P2P indicator)', strategies: ['p2p86-style-5m'] },
   { id: 'london_session', name: 'London session filter', strategies: [], note: 'Not implemented: no strategy filters on the London session yet.' },
   { id: 'premium_discount', name: 'Premium / discount (dealing range)', strategies: [], note: 'Not implemented: no strategy checks premium or discount yet.' },
 ]);
@@ -429,12 +431,13 @@ export function strategyRegistry({ specs = [], trades = [], backtest = null } = 
       description: c.name,
       rules: c.rules,
       common_rules: INTRADAY_COMMON_RULES,
-      target: id === 'vwap-revert-5m' ? 'VWAP' : `${targets.map((t) => `${t}R`).join(' or ')} (a multiple of the risk to the stop)`,
+      target: id === 'vwap-revert-5m' ? 'VWAP' : id === 'p2p86-style-5m' ? 'The overnight high or low (only if at least 1R away)' : `${targets.map((t) => `${t}R`).join(' or ')} (a multiple of the risk to the stop)`,
       exit: `At the stop, at the target, or flat by ${c.flat != null ? '15:55' : '16:55'} New York, whichever comes first.`,
-      timeframe: id === 'orb-15m' ? '5-minute bars; the range is 9:30–9:45 New York' : '5-minute bars',
+      timeframe: id === 'orb-15m' ? '5-minute bars; the range is 9:30–9:45 New York' : id === 'p2p86-style-5m' ? '5-minute bars; overnight range 18:00–9:30 New York, entries 9:35–11:00' : '5-minute bars',
       data: DATA_SOURCE,
       variants: mine.map((x) => `${INTRADAY_FILTERS[x.f]?.name || x.f}, ${x.target_r}R`),
       ict_concepts: ICT_CONCEPTS.filter((k) => k.strategies.includes(id)).map((k) => k.name),
+      ...(c.approximation ? { approximation: 'Independent approximation written by CHE from the published idea only; not the original closed-source indicator. docs/CHE_P2P_86_MODEL.md' } : {}),
       paper: { trades: paper.trades, wins: paper.wins, losses: paper.losses, net_pnl: paper.net_pnl, expectancy_r: paper.expectancy_r, enough: paper.trades >= MIN_TRADES, min_trades: MIN_TRADES },
       backtest: bt.length ? { at: backtest.at, data: backtest.data, variants: bt } : null,
     };
