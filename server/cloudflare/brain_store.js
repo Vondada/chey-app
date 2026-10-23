@@ -261,6 +261,15 @@ function rowToRecord(row) {
 // storage → { seq, values }: see CheBrainStore.cached().
 const WHOLE_TABLE_CACHE = new WeakMap();
 
+// The schema is created once per storage, not once per store: worker.js opens a new store at each use, and every
+// open re-ran nine CREATE statements, up to three times per chat turn (stability mission, 2026-10-23). The value is
+// whether full-text search is available. Call forgetBrainSchema after storage.deleteAll(), which drops the tables.
+const SCHEMA_READY = new WeakMap();
+
+export function forgetBrainSchema(storage) {
+  if (storage?.sql) SCHEMA_READY.delete(storage.sql);
+}
+
 export class CheBrainStore {
   constructor(storage) {
     this.storage = storage && typeof storage === 'object' ? storage : null;
@@ -271,6 +280,11 @@ export class CheBrainStore {
 
   init() {
     if (this.ready || !this.sql) return Boolean(this.sql);
+    if (SCHEMA_READY.has(this.sql)) {
+      this.fts = SCHEMA_READY.get(this.sql);
+      this.ready = true;
+      return true;
+    }
     this.sql.exec('CREATE TABLE IF NOT EXISTS brain_records (id TEXT PRIMARY KEY, kind TEXT, region TEXT, path TEXT, title TEXT, body TEXT, source TEXT, verification TEXT, significance TEXT, links TEXT, rev INTEGER, hash TEXT, created_at TEXT, updated_at TEXT, origin TEXT, deleted INTEGER DEFAULT 0, seq INTEGER)');
     this.sql.exec('CREATE INDEX IF NOT EXISTS brain_records_seq ON brain_records (seq)');
     this.sql.exec('CREATE INDEX IF NOT EXISTS brain_records_kind ON brain_records (kind, deleted)');
@@ -284,6 +298,7 @@ export class CheBrainStore {
       this.fts = true;
     } catch (_) { this.fts = false; }
     this.ready = true;
+    SCHEMA_READY.set(this.sql, this.fts);
     return true;
   }
 

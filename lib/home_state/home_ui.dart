@@ -89,6 +89,13 @@ extension _CheHomeUi on _CHEHomeState {
     final details = <Widget>[
       if (!isLiveReply && (item['understood_as'] ?? '').isNotEmpty)
         CheUnderstoodAs(text: item['understood_as']!),
+      if (!isLiveReply && (item['record_ids'] ?? '').trim().isNotEmpty)
+        CheBrainRecordLinks(
+          ids: (item['record_ids'] ?? '').split('\n').where((l) => l.trim().isNotEmpty).toList(),
+          resolve: _brainDotById,
+          onReadAloud: (t) => speakText(t, record: false, readOnDemand: true),
+          onOpenEvidence: _openBrainEvidence,
+        ),
       if (!isLiveReply && cheResponseDetailsFromJson(item['response_details']) != null)
         CheResponseDetailsButton(details: cheResponseDetailsFromJson(item['response_details'])!),
       if (!isLiveReply && (item['thought_ms'] != null || (item['steps'] ?? '').trim().isNotEmpty))

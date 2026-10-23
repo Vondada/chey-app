@@ -248,6 +248,18 @@ test('the owner\'s chart words through /api/chat', sqlite, async () => {
     assert.equal(sbs.modelCalls, 0, phrase);
     assert.match(sbs.reply, /Live orders stay disabled/, phrase);
   }
+  // The CHE PAPER ACCOUNT lives on the phone: the Worker opens it and proposes the change; it never claims the balance changed.
+  const bal = await che.say('Set CHE paper balance to 500');
+  assert.equal(bal.route, 'che_trading_chart');
+  assert.equal(bal.modelCalls, 0);
+  assert.equal(bal.done.open_view, 'trading_chart');
+  assert.deepEqual(bal.done.chart, { section: 'che_trades' });
+  assert.equal(bal.done.paper_balance, 500);
+  assert.match(bal.reply, /balance change to \$500\.00 for you to confirm[\s\S]*Nothing changes until you confirm/);
+  const pos = await che.say('Show CHE positions');
+  assert.equal(pos.route, 'che_trading_chart');
+  assert.equal(pos.done.paper_balance, undefined);
+  assert.match(pos.reply, /CHE PAPER ACCOUNT positions[\s\S]*simulated account, separate from yours/);
 });
 
 test('a market order needs a current Alpaca price; limit orders still queue (Build 1: block entries on a stale feed)', async () => {
@@ -426,4 +438,16 @@ test('POST /api/trading/rithmic/candles stores the iPhone\'s closed Rithmic minu
   const guest = await che.raw('/api/trading/rithmic/candles', 'POST', { candles: [{ ...candle, t: new Date(Date.parse(t) + 60000).toISOString() }] }, '');
   assert.notEqual(guest.status, 200);
   assert.equal((await che.api('/api/trading/rithmic/candles?symbol=MNQZ6')).candles.length, 1);
+});
+
+test('CHE paper account by voice: opens the phone account; a balance change is only proposed for confirmation', async () => {
+  const { paperAccountIntent } = await import('./trading_chart.js');
+  assert.deepEqual(paperAccountIntent('Set CHE paper balance to 500'), { kind: 'paper_balance', amount: 500 });
+  assert.deepEqual(paperAccountIntent("CHE, change your paper balance to $2,500"), { kind: 'paper_balance', amount: 2500 });
+  assert.deepEqual(paperAccountIntent("set che's paper balance to 50k"), { kind: 'paper_balance', amount: 50000 });
+  assert.deepEqual(paperAccountIntent('Show CHE positions'), { kind: 'paper_open' });
+  assert.deepEqual(paperAccountIntent("open CHE's paper account"), { kind: 'paper_open' });
+  for (const other of ['show my Alpaca paper balance', 'set my paper balance to 500', 'show my positions', 'what is CHE', 'open the MNQ chart', 'paper trading is on?']) {
+    assert.equal(paperAccountIntent(other), null, other);
+  }
 });

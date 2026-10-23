@@ -17,6 +17,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
+import '../che_ui/che_responsive.dart';
 import '../che_ui/che_help.dart';
 import 'che_trading_ledgers.dart' show EquityCurvePainter;
 import '../che_ui/che_hud.dart';
@@ -202,28 +203,28 @@ class _CheAlpacaPaperPanelState extends State<CheAlpacaPaperPanel> {
             ? 'Last read ${_clock(_readAt!.toIso8601String())}; the latest refresh failed, so these may be out of date'
             : 'Read from Alpaca ${age!.inSeconds < 60 ? '${age.inSeconds} seconds' : '${age.inMinutes} minutes'} ago';
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Row(children: [
-        Semantics(
-          label: 'Paper account. No real money.',
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-            decoration: BoxDecoration(color: _gold.withValues(alpha: 0.18), borderRadius: BorderRadius.circular(6), border: Border.all(color: _gold)),
-            child: const ExcludeSemantics(child: Text('PAPER', style: TextStyle(color: _gold, fontWeight: FontWeight.w900, letterSpacing: 1.2))),
+      CheTitleRow(
+        leading: [
+          Semantics(
+            label: 'Paper account. No real money.',
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(color: _gold.withValues(alpha: 0.18), borderRadius: BorderRadius.circular(6), border: Border.all(color: _gold)),
+              child: const ExcludeSemantics(child: Text('PAPER', style: TextStyle(color: _gold, fontWeight: FontWeight.w900, letterSpacing: 1.2))),
+            ),
           ),
-        ),
-        const SizedBox(width: 8),
-        const Expanded(child: Text('Alpaca stocks', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w800))),
-        CheHelpButton(color: _dim, dense: true),
-        // Shrinks before it overflows inside a narrow card.
-        Flexible(
-          child: TextButton.icon(
-            style: TextButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal: 6)),
+        ],
+        title: const Text('Alpaca stocks', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w800)),
+        actions: [
+          CheHelpButton(color: _dim, dense: true),
+          TextButton.icon(
+            style: TextButton.styleFrom(minimumSize: const Size(44, 44), padding: const EdgeInsets.symmetric(horizontal: 6)),
             onPressed: () => widget.onAsk(kReadAlpacaAloud),
             icon: const Icon(Icons.record_voice_over, size: 18),
-            label: const Text('Read aloud', overflow: TextOverflow.ellipsis),
+            label: const Text('Read aloud'),
           ),
-        ),
-      ]),
+        ],
+      ),
       Semantics(
         liveRegion: false,
         child: Row(children: [

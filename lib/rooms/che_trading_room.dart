@@ -24,6 +24,9 @@ import 'che_trading_ledgers.dart';
 import 'che_trading_research.dart';
 import 'che_trading_side_by_side.dart';
 import '../che_ui/che_hud.dart';
+import '../trading/che_paper_account_panel.dart';
+import '../che_ui/che_screen_awareness.dart';
+import '../che_ui/che_ui_preferences.dart';
 import '../che_ui/che_theme.dart';
 import 'che_trading_hud.dart';
 
@@ -125,11 +128,20 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
     unawaited(_loadEvidence());
     CheTradingRoom.requestedSection.value = null;
     CheTradingRoom.requestedSection.addListener(_onRequest);
+    CheUiPreferences.instance.addListener(_onPrefs);
+    _screen = CheScreenAwareness.register(context, () => CheScreenReport(page: 'Trading Room', tab: _section.name));
+  }
+
+  Object? _screen;
+  void _onPrefs() {
+    if (mounted) setState(() {});
   }
 
   @override
   void dispose() {
     CheTradingRoom.requestedSection.removeListener(_onRequest);
+    CheUiPreferences.instance.removeListener(_onPrefs);
+    CheScreenAwareness.unregister(_screen);
     super.dispose();
   }
 
@@ -159,7 +171,11 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
     _chart.show(account: 'futures_paper', symbol: 'MNQ');
   }
 
-  Widget _pad(Widget child) => Padding(padding: const EdgeInsets.fromLTRB(12, 10, 12, 0), child: child);
+  // The owner's layout density (Owner Improvements: "this page is too cramped") scales the room's spacing.
+  Widget _pad(Widget child) {
+    final g = 12 * CheUiPreferences.instance.spacing;
+    return Padding(padding: EdgeInsets.fromLTRB(g, g, g, 0), child: child);
+  }
 
   /// A small expandable card: its title and one line first, the full panel only when opened (owner, 2026-10-23).
   Widget _fold(String key, String title, String summary, Widget child, {bool open = false}) => _pad(CheTradingFold(
@@ -253,6 +269,9 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
         return [_pad(CheSetupBoard(desk: _desk, onRead: widget.onRead))];
       case CheTradingSection.cheTrades:
         return [
+          // CHE's own simulated account on live Rithmic prices (owner, 2026-10-23): balance, positions, trade details.
+          _fold('che_paper', 'CHE PAPER ACCOUNT', 'Simulated balance and positions on live Rithmic prices',
+              ChePaperAccountPanel(key: const Key('che_paper_account'), onRead: widget.onRead), open: true),
           _fold('journal', 'PAPER JOURNAL', 'CHE PAPER ACCOUNT trades and totals',
               CheLivePaperPanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, onRead: widget.onRead, client: p.client), open: true),
           _fold('fye', 'FUNDYOUREDGE DRAFT', 'Order drafts; nothing is sent', CheFyeDraftCard(baseUrl: p.baseUrl, headers: p.headers, client: p.client)),
@@ -276,6 +295,8 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
         ];
       case CheTradingSection.account:
         return [
+          _fold('che_paper_compact', 'CHE PAPER ACCOUNT', 'Simulated balance and limits',
+              ChePaperAccountPanel(key: const Key('che_paper_account_compact'), onRead: widget.onRead, compact: true), open: true),
           _fold('alpaca', 'ALPACA PAPER', 'Paper balance, orders and fills (delayed data)',
               CheAlpacaPaperPanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, client: p.client), open: true),
           _fold('connections', 'CONNECTIONS', 'Broker and data connections',

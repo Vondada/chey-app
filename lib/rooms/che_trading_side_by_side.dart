@@ -15,6 +15,9 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
 import '../che_account_bridge.dart';
+import '../trading/che_paper_account.dart';
+import '../trading/che_paper_compare.dart';
+import '../trading/che_paper_engine.dart';
 import '../trading/che_account_kind.dart';
 import '../trading/che_live_order.dart';
 import '../trading/che_market_feed.dart';
@@ -80,6 +83,7 @@ class CheSideBySideView extends StatefulWidget {
     this.faceId,
     this.audit,
     this.now,
+    this.paperEngine,
   });
 
   final String Function() baseUrl;
@@ -98,6 +102,9 @@ class CheSideBySideView extends StatefulWidget {
   final CheLiveOrderAudit? audit;
   final DateTime Function()? now;
 
+  /// CHE's own paper account on this phone (tests pass one; the app loads the shared one).
+  final ChePaperEngine? paperEngine;
+
   @override
   State<CheSideBySideView> createState() => CheSideBySideViewState();
 }
@@ -111,6 +118,7 @@ class CheSideBySideViewState extends State<CheSideBySideView> {
   CheMarketSnapshot? _snap;
 
   Map<String, dynamic>? _live;
+  ChePaperEngine? _paper;
   String _liveError = '';
   List<CheTradeView> _mine = const [];
   bool _loading = true;
@@ -137,10 +145,27 @@ class CheSideBySideViewState extends State<CheSideBySideView> {
       _snap = null;
     }
     unawaited(load());
+    unawaited(_loadPaper());
+  }
+
+  Future<void> _loadPaper() async {
+    try {
+      final e = widget.paperEngine ?? await ChePaperEngine.shared();
+      if (!mounted) return;
+      e.addListener(_paperChanged);
+      setState(() => _paper = e);
+    } catch (_) {
+      ChePaperEngine.forgetShared();
+    }
+  }
+
+  void _paperChanged() {
+    if (mounted) setState(() {});
   }
 
   @override
   void dispose() {
+    _paper?.removeListener(_paperChanged);
     unawaited(_feedSub?.cancel());
     _mineChart.dispose();
     _cheChart.dispose();
@@ -180,10 +205,13 @@ class CheSideBySideViewState extends State<CheSideBySideView> {
   List<CheTradeView> get _minePositions => [for (final t in _mine) t.isOpen ? t.withUnrealized(cheUnrealizedAt(t, _livePrice)) : t];
 
   List<CheTradeView> get _chePositions => [
+        // The CHE PAPER ACCOUNT on live Rithmic prices first, then the delayed forward-paper journal (each labelled by source).
+        for (final p in _paper?.openPositions ?? const <ChePaperPosition>[]) cheTradeViewFromPaper(p),
         for (final p in _live?['positions'] as List? ?? const []) if (p is Map) CheTradeView.fromLivePosition(Map<String, dynamic>.from(p)),
       ];
 
   List<CheTradeView> get _cheClosed => [
+        for (final p in _paper?.closedPositions ?? const <ChePaperPosition>[]) cheTradeViewFromPaper(p),
         for (final t in _live?['trades'] as List? ?? const []) if (t is Map) CheTradeView.fromLiveTrade(Map<String, dynamic>.from(t)),
       ];
 
@@ -231,7 +259,8 @@ class CheSideBySideViewState extends State<CheSideBySideView> {
   }
 
   CheAccountSummary get _mineSummary => CheAccountSummary.fromOwnerTrades(_minePositions);
-  CheAccountSummary? get _cheSummary => _live == null ? null : CheAccountSummary.fromLiveDashboard(_live!);
+  // The CHE PAPER ACCOUNT holds a balance; the delayed journal does not, so it is the fallback only.
+  CheAccountSummary? get _cheSummary => _paper != null ? cheAccountSummaryFromPaper(_paper!) : _live == null ? null : CheAccountSummary.fromLiveDashboard(_live!);
 
   // ─── Sync ───────────────────────────────────────────────────────────────────────────────────────
 

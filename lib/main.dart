@@ -26,6 +26,7 @@ import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:url_launcher/url_launcher.dart';
 import 'che_job_activity_banner.dart';
 import 'che_mic_supervisor.dart';
+import 'che_ui/che_performance_note.dart';
 import 'che_ui/che_latency.dart';
 import 'che_ui/che_screen_awareness.dart';
 import 'che_ui/che_screen_capture.dart';
@@ -33,6 +34,9 @@ import 'security/che_secret_scan.dart';
 import 'security/che_security_screen.dart';
 import 'security/che_session_store.dart';
 import 'brain/che_brain_ledger_screen.dart';
+import 'brain/che_brain_list.dart' show CheBrainRecordLinks;
+import 'brain/che_brain_sections.dart' show CheBrainEvidence, CheEvidenceKind, cheRecordIdsOf;
+import 'che_ui/che_owner_improvements.dart';
 import 'workflows/che_workflows_screen.dart';
 import 'film/che_film_studio_screen.dart';
 import 'world/che_meeting_room.dart';
@@ -175,6 +179,7 @@ import 'rithmic/che_rithmic_screen.dart';
 import 'rithmic/rithmic_live.dart';
 import 'rithmic/rithmic_session.dart';
 import 'rithmic/rithmic_recorder.dart';
+import 'trading/che_paper_account_panel.dart';
 
 part 'home_state/connected.dart';
 part 'home_state/home_ui.dart';
@@ -210,6 +215,10 @@ const String _defaultAgentBaseUrl = String.fromEnvironment(
 void main() {
   runApp(const CHEApp());
 }
+
+/// The text scale CHE draws with: the system's accessibility size times CHE's own setting, held to 0.85-2.0 so every
+/// screen keeps its controls reachable (the layouts are tested up to 2.0).
+double cheEffectiveTextScale(TextScaler system, double app) => (system.scale(1) * app).clamp(0.85, 2.0).toDouble();
 
 class CHEApp extends StatefulWidget {
   const CHEApp({super.key});
@@ -257,7 +266,9 @@ class _CHEAppState extends State<CHEApp> {
             final mq = MediaQuery.of(context);
             // "Look at my screen" captures from here: every page, sheet and dialog.
             return CheScreenCapture.wrap(MediaQuery(
-              data: mq.copyWith(textScaler: TextScaler.linear(_ui.textScale)),
+              // The iPhone's own text size (Settings > Accessibility > Larger Text) times CHE's Text size setting.
+              // Before 2026-10-23 CHE's setting replaced the system size, so Larger Text did nothing in CHE.
+              data: mq.copyWith(textScaler: TextScaler.linear(cheEffectiveTextScale(mq.textScaler, _ui.textScale))),
               child: child ?? const SizedBox.shrink(),
             ));
           },
@@ -482,6 +493,8 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   String? _lastAgentStateBody;
   // The last measured round trip of the state poll, shown as the Home reactor's LAT readout (real, never estimated).
   int? _stateLatencyMs;
+  /// The Worker's quiet over-budget line (che_ui/che_performance_note.dart); null while within budget.
+  String? _performanceNote;
   int _speechTurn = 0;
 
   // Single authority for automatic mic restarts (see che_mic_supervisor.dart).
@@ -648,6 +661,18 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
     await Navigator.of(context).push(MaterialPageRoute<void>(
       builder: (_) => CheBrainLedgerScreen(
         client: CheBrainLedgerClient(baseUrl: cheAgentBaseUrl, headers: () => _authHeaders),
+        onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
+        onListen: () => unawaited(toggleListening()),
+      ),
+    ));
+  }
+
+  /// More → Owner Improvements (also "open owner improvements" in chat): what the owner asked CHE to change.
+  Future<void> _openOwnerImprovements() async {
+    HapticFeedback.selectionClick();
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => CheOwnerImprovementsScreen(
+        client: CheOwnerImprovementsClient(baseUrl: cheAgentBaseUrl, headers: () => _authHeaders),
         onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
         onListen: () => unawaited(toggleListening()),
       ),
@@ -1050,6 +1075,9 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   String? _streamUnderstoodAs;
   // The reply's Soul and engine provenance (Response Details → Personality), from its done event.
   Map<String, dynamic>? _streamResponseDetails;
+
+  /// The Brain records the streamed reply rests on (`record_ids`), shown as links under it.
+  List<String> _streamRecordIds = const [];
   final ImagePicker _imagePicker = ImagePicker();
 
   List<String> savedMemories = [];
@@ -1646,6 +1674,7 @@ OWNER AGENCY
             const CheHelpButton(color: Colors.white, dense: true),
           ]),
         ),
+        if (_performanceNote != null) ChePerformanceNote(note: _performanceNote!),
         if (_actionApprovals.isNotEmpty)
           ConstrainedBox(
             constraints: const BoxConstraints(maxHeight: 150),
@@ -1687,6 +1716,7 @@ OWNER AGENCY
       onOpenOffice: () => _goShellTab(2),
       onOpenBrain: _openMemoryBrain,
       onOpenTrading: () => _openAssistantHub(tab: 1),
+      onConnectRithmic: () => unawaited(_openRithmic()),
       onOpenCreate: () => _openAssistantHub(tab: 5),
       onOpenWorld: () => _goShellTab(3),
       onOpenSecurity: () => unawaited(_openSecurity()),
@@ -2023,6 +2053,7 @@ OWNER AGENCY
               onReadAloud: (t) => speakText(t, record: false, readOnDemand: true),
               onRefresh: () => _loadAgentState(silent: true),
               onOpenAgent: (name) => _openOfficeFloor(agentName: name),
+              onOpenEvidence: _openBrainEvidence,
             ),
             ),
             offline: const CheOfflineBrainPanel(compact: true),
@@ -2080,6 +2111,7 @@ OWNER AGENCY
                 enabled: _officePane == 0,
                 child: CheOfficeFloorScreen(
                 client: _agentRuntime,
+                runtime: _officeRuntime,
                 embedded: true,
                 onSpeak: (text) => speakText(text, record: false, readOnDemand: true),
                 onTalkToChe: () => _goShellTab(1),
@@ -2283,6 +2315,13 @@ OWNER AGENCY
           title: 'Brain Ledger',
           subtitle: 'What entered CHE\'s brain, when, and whether it is usable yet',
           onTap: () => unawaited(_openBrainLedger()),
+          hue: kit.CheColors.accent,
+        ),
+        CheMoreItem(
+          icon: Icons.tune_rounded,
+          title: 'Owner Improvements',
+          subtitle: 'What you asked CHE to change, where it stands, and undo',
+          onTap: () => unawaited(_openOwnerImprovements()),
           hue: kit.CheColors.accent,
         ),
         CheMoreItem(
