@@ -146,6 +146,7 @@ import { lastSite, publishSite, saveSite, serveSite, siteBuildIntent, siteEditIn
 import { noteJobActivity } from './job_activity.js';
 import { CODING_CANCEL_SOURCE, cancelQueuedJob, codingCancelIntent, resolveCodingCancel, speakCancelResult, speakUnresolved } from './coding_cancel.js';
 import { PENDING_OWNER_ACTION_KEY, deskOwnedMoney, forbiddenAction, prohibitionSpans, withoutProhibitions, PENDING_OWNER_ACTION_MS, gateOwnerAction, grantForKinds, isOwnerYes, peerActionReply, APPS_GRANTED_KEY, PENDING_APP_ACTION_KEY, PENDING_APP_ACTION_MS, gateAppAccess, classifyAppNeed, classifyExplicitAppOpen, classifyAppAccesses } from './owner_action_gate.js';
+import { auditEvidenceFrom, auditLedger, auditReply, claimKindsIn, guardRemovalEntries, knowVsGuessQuestion, knowVsGuessReply, memorySavedQuestion, memorySavedReply, recordAudit } from './hallucination_auditor.js';
 import { asksForCurrentOwnerLocation, executeWithReceipt, guardExecutionClaims, guardRetrievalClaims, changeHistoryIntent, guardClaimedOwnerActions, guardClaimedResearchActions, guardGroundedFacts, guardLocationWeatherReply, guardOwnerReply, loadChangeHistory, loadReceipts, OWNER_LOCATION_NOT_VERIFIED, recordReceipt, requestedCodeNames, speakChangeHistory, vagueResearchRequest, verifiedState, verifiedStatusText } from './truth_layer.js';
 import { ENGINEERING_PLAYBOOK_SPOKEN, playbookIntent } from './engineering_playbook.js';
 import { describeSkillsReport, reusableLicense, selectFilesForAgent, skillFromMarkdown, skillImportIntent, skillsReportIntent } from './skill_import.js';
@@ -4575,6 +4576,8 @@ export class CheState extends DurableObject {
       if (!verified) throw new Error('memory read-back did not match');
       const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verified.text));
       const hash = [...new Uint8Array(digest)].slice(0, 8).map((b) => b.toString(16).padStart(2, '0')).join('');
+      // The receipt is what lets "Did you save that memory?" be answered yes later (hallucination_auditor.js).
+      await recordReceipt(this.ctx.storage, { kind: 'memory_saved', key: `memory_saved:${verified.id}`, record_id: verified.id, text: String(verified.text).slice(0, 120), text_sha256_16: hash }).catch(() => null);
       return ndjsonReply('I’ll remember that, sir.', { source: 'che_memory', ok: true, model_calls: 0,
         memory_receipt: { record_id: verified.id, store: 'che.memory_records', status: 'stored', recorded_at: verified.created_at || null, checked_at: new Date().toISOString(), text_sha256_16: hash } });
     } catch (_) {
@@ -11950,6 +11953,19 @@ export class CheState extends DurableObject {
             source: 'che_evidence_receipt', model_calls: 0, retracted: explained.retract.length,
           });
         }
+        // "Did you save that memory?" is answered from the memory_saved receipt, and "what do you know versus
+        // what are you guessing?" from owner records and the audit ledger. A model can only guess at either.
+        // Each answer records its own evidence, so "show your evidence for that" explains it instead of retracting a true statement.
+        if (ownerDevice && !body.attachment && memorySavedQuestion(rawMessage)) {
+          const answer = await memorySavedReply(this.ctx.storage);
+          await recordAnswerEvidence(this.ctx.storage, answer.text, { kind: answer.saved ? 'owner_attested' : 'none' }, { records: answer.saved ? [answer.saved.record_id] : [] });
+          return ndjsonReply(answer.text, { source: 'che_memory_receipt', model_calls: 0, memory_receipt: answer.saved });
+        }
+        if (ownerDevice && !body.attachment && knowVsGuessQuestion(rawMessage)) {
+          const answer = knowVsGuessReply({ records: data.memory_records || [], ledger: await auditLedger(this.ctx.storage), lastEvidence: await latestAnswerEvidence(this.ctx.storage).catch(() => null) });
+          await recordAnswerEvidence(this.ctx.storage, answer.text, { kind: answer.owned ? 'owner_attested' : 'none' }, { records: answer.ownedIds });
+          return ndjsonReply(answer.text, { source: 'che_know_vs_guess', model_calls: 0, owner_records: answer.owned, audit: answer.health });
+        }
         // "Read me my brain review": the next-morning review, spoken from its stored
         // record, every line computed from the day's Brain records. No model.
         // A question about what the owner himself said ("what have I told you about my brain
@@ -14238,6 +14254,10 @@ export class CheState extends DurableObject {
           }, 503);
         }
 
+        // One request id and one removal list for every guard below, so the audit ledger (hallucination_auditor.js)
+        // records what each guard removed, not only what the final auditor saw.
+        const auditRequestId = crypto.randomUUID();
+        const guardRemovals = [];
         // Truth layer: a model sentence can never promote execution state.
         // Unsupported action claims and owner "homework" are removed and
         // replaced with what the receipts actually show.
@@ -14249,6 +14269,7 @@ export class CheState extends DurableObject {
           });
           if (guarded.removed.length) {
             console.log('CHE truth layer removed claims', JSON.stringify(guarded.removed).slice(0, 1500));
+            guardRemovals.push(...guardRemovalEntries('truth_layer', guarded.removed, { requestId: auditRequestId }));
             let note = '';
             if (guarded.homework) {
               const last = await Promise.resolve().then(() => this.ctx.storage.get(LAST_ENGINEERING_REQUEST_KEY)).catch(() => null);
@@ -14290,6 +14311,7 @@ export class CheState extends DurableObject {
           records: [body.screen_context, JSON.stringify(skillResults), JSON.stringify(actionResults), JSON.stringify(plugins), JSON.stringify(officeResults)],
         });
         if (unclaimed.removed.length) console.log('CHE truth layer removed action claims', JSON.stringify(unclaimed.removed).slice(0, 800));
+        guardRemovals.push(...guardRemovalEntries('owner_actions', unclaimed.removed, { requestId: auditRequestId }));
         reply = unclaimed.text;
         // Every link, headline, outlet and date in the reply must match a page
         // CHE opened this turn; a news answer's events must appear in one.
@@ -14304,6 +14326,7 @@ export class CheState extends DurableObject {
           return { text: reply, removed: [], used: [], disproven: [] };
         });
         if (sourced.removed.length) console.log('CHE source check removed', JSON.stringify(sourced.removed).slice(0, 1500));
+        guardRemovals.push(...guardRemovalEntries('citations', sourced.removed, { requestId: auditRequestId }));
         reply = sourced.text;
         if (sourced.disproven.length) await this.recordDisprovenClaims(data, sourced.disproven);
         // Nothing the owner did not say becomes "you told me" or "you
@@ -14312,11 +14335,13 @@ export class CheState extends DurableObject {
         // Every date in a reply must be one a stored record holds (personal_recall.js). An invented date is never shown.
         const grounded = groundedReply(reply, { records: data.memory_records || [], message: rawMessage });
         if (grounded.removed.length) console.log('CHE grounding removed dates', JSON.stringify(grounded.removed));
+        guardRemovals.push(...guardRemovalEntries('grounding', grounded.removed, { requestId: auditRequestId }));
         reply = grounded.text;
         // A visual exists only when a record of this request made it, and a post only when one was published (asset_truth.js).
         // An ad request always ends with the three facts: copy written, visuals made, nothing scheduled or published.
         const asset = assetTruthReply(reply, { made: 0, published: 0 });
         if (asset.removed.length) console.log('CHE asset check removed', JSON.stringify(asset.removed).slice(0, 800));
+        guardRemovals.push(...guardRemovalEntries('asset_truth', asset.removed, { requestId: auditRequestId }));
         reply = adRequest(rawMessage) ? [asset.text, adStatusLines({ copy: Boolean(asset.text), made: 0, published: 0 })].filter(Boolean).join('\n') : asset.text;
         // A missing ability is never refused: CHE queues it for herself as a self-development job and says so (capability_gap.js).
         // Owner only; money, deletion and secrets are never queued.
@@ -14335,6 +14360,7 @@ export class CheState extends DurableObject {
         const speakers = guardSpeakerAttributions(attribution.text, { records: provenanceRecords, message: rawMessage });
         const removedAttributions = [...attribution.removed, ...speakers.removed];
         if (removedAttributions.length) console.log('CHE memory truth removed', redactGoogleIds(JSON.stringify(removedAttributions)).slice(0, 800));
+        guardRemovals.push(...guardRemovalEntries('attribution', removedAttributions, { requestId: auditRequestId }));
         reply = guardRememberBlock(speakers.text, {
           ownerTurns: ownerTurnsNow, retracted: await loadRetractions(this.ctx.storage),
         }).text;
@@ -14383,7 +14409,21 @@ export class CheState extends DurableObject {
           reply = 'That came out as an internal tool request instead of an answer, sir, so nothing was run. Ask me again and I will answer it directly.';
         }
         // Final owner-facing boundary: keep internal provider/model failover chatter out of chat and TTS.
-        reply = guardExecutionClaims(sanitizeOwnerText(reply, { truncate: false }), { message: rawMessage, receipts: skillResults.map((r) => r.execution_receipt), documentRead: Boolean(multimodal?.summary || body.screen_context || pastedText), verifiedText: brainContext }).text;
+        const executionGuard = guardExecutionClaims(sanitizeOwnerText(reply, { truncate: false }), { message: rawMessage, receipts: skillResults.map((r) => r.execution_receipt), documentRead: Boolean(multimodal?.summary || body.screen_context || pastedText), verifiedText: brainContext });
+        guardRemovals.push(...guardRemovalEntries('execution_claims', executionGuard.removed, { requestId: auditRequestId }));
+        reply = executionGuard.text;
+        // Hallucination auditor (hallucination_auditor.js): each completion claim must match a receipt from this request.
+        // An unreadable evidence list fails closed. The ledger keeps ids, labels and outcomes, never the reply text.
+        try {
+          const audit = auditReply(reply, { evidence: await auditEvidenceFrom(this.ctx.storage, { executions: skillResults.map((r) => r.execution_receipt) }), requestId: auditRequestId, fiction: storyRequested(rawMessage) });
+          if (audit.outcome === 'corrected' || audit.outcome === 'blocked') console.log('CHE hallucination auditor', audit.outcome, JSON.stringify(audit.claims).slice(0, 400));
+          reply = audit.text;
+          await recordAudit(this.ctx.storage, [...guardRemovals, ...audit.entries]);
+        } catch (error) {
+          console.log('CHE hallucination auditor unavailable', error?.message || error);
+          if (claimKindsIn(reply).length) reply = auditReply(reply, { evidence: null, requestId: auditRequestId, fiction: storyRequested(rawMessage) }).text;
+          await recordAudit(this.ctx.storage, guardRemovals).catch(() => null);
+        }
         // A model cannot see its own routing: "the engine was CHE itself" becomes this reply's real engine (soul.js).
         if (answer?.served_by) reply = guardSoulClaims(guardEngineClaims(reply, answer.served_by).text, soulProfile).text;
         // The owner hears which vision engine saw the attachment, or that none did (owner, 2026-10-20).
