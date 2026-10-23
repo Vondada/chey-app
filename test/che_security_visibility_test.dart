@@ -7,6 +7,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:chey/agents/che_agent_runtime.dart';
+import 'package:chey/che_ui/che_screen_awareness.dart';
 import 'package:chey/security/che_security_visibility.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -117,5 +118,36 @@ void main() {
     expect(profile.agent.name, chief['name']);
     expect(profile.departmentTitle, chief['title']);
     expect(chief['agent_id'], 'a-knox');
+  });
+
+  testWidgets('review fix: every category, search and entry is reachable by voice, and the page is described', (tester) async {
+    tester.view.physicalSize = const Size(800, 6000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(MaterialApp(theme: ThemeData.dark(), home: CheSecurityCategoryScreen(visibility: visibility, initial: 'agents')));
+    await tester.pumpAndSettle();
+    final voice = CheSecurityRoomVoice.handler!;
+    for (final c in categories) {
+      for (final said in ['show ${'${c['title']}'.toLowerCase()}', 'CHE, open the ${c['id']} list.']) {
+        final reply = await voice(said);
+        await tester.pumpAndSettle();
+        expect(reply, startsWith('${c['title']}'), reason: said);
+        expect(find.text('${c['title']} (${c['count']})'), findsOneWidget, reason: said);
+        expect(find.byType(CheSecurityItemTile), findsNWidgets(c['count'] as int), reason: said);
+      }
+    }
+    expect(CheScreenAwareness.describe(), contains('You are on Security'));
+    await voice('show agents');
+    await tester.pumpAndSettle();
+    final found = await voice('search for knox');
+    await tester.pumpAndSettle();
+    expect(found, contains('Agents, 1 matching knox: 1. Knox'));
+    expect(find.byType(CheSecurityItemTile), findsOneWidget);
+    expect(await voice('read number 1'), startsWith('Knox, AI agent.'));
+    expect(await voice('read number 9'), contains('There is no number 9'));
+    await voice('clear search');
+    expect(await voice('tell me a joke'), isNull, reason: 'ordinary chat is not caught');
+    await tester.pumpWidget(const SizedBox());
+    expect(CheSecurityRoomVoice.handler, isNull, reason: 'the handler leaves with the page');
   });
 }

@@ -118,10 +118,37 @@ class _CheSecurityScreenState extends State<CheSecurityScreen> {
   String _status = '';
   bool _busy = false;
 
+  Object? _voice;
+
   @override
   void initState() {
     super.initState();
     unawaited(_load());
+    // "Show tools", "open physical security": the Security Room's lists by voice. A category page pushed on top
+    // registers its own handler, which takes over until it closes.
+    _voice = CheSecurityRoomVoice.register(_onVoice);
+  }
+
+  @override
+  void dispose() {
+    CheSecurityRoomVoice.unregister(_voice);
+    super.dispose();
+  }
+
+  Future<String?> _onVoice(String said) async {
+    final v = _visibility;
+    if (v == null) return null;
+    if (RegExp(r'^(?:open|show|go to)(?: the| my)? physical security(?: page)?[.!]?$', caseSensitive: false).hasMatch(said.trim()) && v['physical'] is Map) {
+      unawaited(Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => CheSecurityPhysicalScreen(physical: Map<String, dynamic>.from(v['physical'] as Map)))));
+      final p = Map<String, dynamic>.from(v['physical'] as Map);
+      return 'Opening Physical Security. ${p['headline']}. ${p['note'] ?? ''}'.trim();
+    }
+    final cats = [for (final c in (v['categories'] as List? ?? const [])) Map<String, dynamic>.from(c as Map)];
+    final id = CheSecurityRoomVoice.categoryFor(said, cats);
+    if (id == null) return null;
+    final cat = cats.firstWhere((c) => c['id'] == id);
+    _openCategory(id);
+    return 'Opening ${cat['title']}: ${cat['count']}. Say read the list, search for a name, or read number 1.';
   }
 
   Future<void> _load() async {

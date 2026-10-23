@@ -153,3 +153,30 @@ test('spoken access and findings answers give counts and state what was not chec
   assert.match(f, /security finding/);
   assert.match(f, /not checked or not visible|not an all-clear/);
 });
+
+test('review fix: every real finding a check produced is a Threat, including che.* capability and device findings', () => {
+  const events = ['che.unreviewed_capability', 'che.wide_capability_access', 'che.new_device', 'capability.unreviewed', 'device.new', 'identity.long_session'].map((t, i) => ({ event_id: `e${i}`, event_type: t, severity: i % 2 ? 'medium' : 'info', status: 'open', summary: t, timestamp: '2026-10-23T12:00:00Z', verification: 'verified' }));
+  events.push({ event_id: 'closed', event_type: 'che.session_created', severity: 'info', status: 'resolved', summary: 'x', timestamp: '2026-10-23T12:00:00Z' });
+  events.push({ event_id: 'drill', event_type: 'che.new_device', severity: 'high', status: 'open', summary: 'x', timestamp: '2026-10-23T12:00:00Z', verification: 'simulation' });
+  const v = securityVisibility({ events, now: NOW });
+  const threats = v.categories.find((c) => c.id === 'threats');
+  assert.equal(threats.count, 6);
+  assert.doesNotMatch(speakVisibility(v, 'findings'), /No security findings/);
+});
+
+test('review fix: Office agents show their real runtime activity time', () => {
+  const v = securityVisibility({ team: [{ id: 'n', name: 'Nova', runtime_updated_at: '2026-10-23T09:00:00Z', updated_at: '2026-10-01T00:00:00Z' }, { id: 'm', name: 'Mira', updated_at: '2026-10-02T00:00:00Z' }], now: NOW });
+  const agents = v.categories.find((c) => c.id === 'agents').items;
+  assert.equal(agents.find((a) => a.name === 'Nova').last_activity, '2026-10-23T09:00:00Z');
+  assert.equal(agents.find((a) => a.name === 'Mira').last_activity, '2026-10-02T00:00:00Z');
+});
+
+test('review fix: a stale last check marks every row it produced stale, and none of them count as checked', () => {
+  const c = coverage({ checks: [{ at: '2026-10-20T00:00:00Z', advisories: 0, deploy_checked: true }], advisoriesChecked: true, deployChecked: true, findings: 0, now: NOW });
+  for (const id of ['security_check', 'dependencies', 'deploy', 'devices']) assert.equal(c.checks.find((x) => x.id === id).stale, true, id);
+  assert.equal(c.checked, 0);
+  assert.match(c.summary, /not an all-clear/);
+  const fresh = coverage({ checks: [{ at: '2026-10-23T14:00:00Z' }], findings: 0, now: NOW });
+  assert.equal(fresh.checks.find((x) => x.id === 'devices').stale, false);
+  assert.equal(fresh.checked, 2);
+});

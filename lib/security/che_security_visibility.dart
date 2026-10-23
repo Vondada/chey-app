@@ -6,6 +6,8 @@
 // because the Worker builds both from the same array. Nothing here holds a token or credential value.
 import 'package:flutter/material.dart';
 
+import '../che_ui/che_screen_awareness.dart';
+
 import '../che_ui/che_chrome_status.dart';
 import '../che_ui/che_hud.dart';
 
@@ -25,6 +27,54 @@ CheStatusTone cheSecurityTone(String? word) {
 
 String _word(String? s) => (s ?? 'unknown').replaceAll('_', ' ');
 
+/// Spoken control for the Security Room while one of its pages is open, called from the chat send path
+/// (lib/home_state/send.dart) before anything else handles the words. A null reply lets the turn continue.
+class CheSecurityRoomVoice {
+  CheSecurityRoomVoice._();
+  static final _stack = <(Object, Future<String?> Function(String))>[];
+
+  static Future<String?> Function(String)? get handler => _stack.isEmpty ? null : _stack.last.$2;
+
+  static Object register(Future<String?> Function(String) h) {
+    final token = Object();
+    _stack.add((token, h));
+    return token;
+  }
+
+  static void unregister(Object? token) => _stack.removeWhere((e) => identical(e.$1, token));
+
+  static String _clean(String said) => said.trim().toLowerCase().replaceAll(RegExp(r'[.!?,]+$'), '').replaceFirst(RegExp(r'^(?:(?:hey|ok|okay)\s+)?(?:che|chey|chay)[,\s]+'), '').trim();
+
+  /// "show tools", "open the devices list", "go to permissions" → the category id, or null.
+  static String? categoryFor(String said, List<Map<String, dynamic>> cats) {
+    final m = RegExp(r'^(?:show|open|go to|list|read)(?: me)?(?: the| my)? (\w+)(?: list| category)?$').firstMatch(_clean(said));
+    if (m == null) return null;
+    final w = m.group(1)!;
+    for (final c in cats) {
+      final id = '${c['id']}';
+      final title = '${c['title']}'.toLowerCase();
+      if (w == id || w == title || '${w}s' == id || w == id.replaceAll(RegExp(r's$'), '')) return id;
+    }
+    if (w == 'findings') return 'threats';
+    if (w == 'access') return 'agents';
+    return null;
+  }
+
+  static String? searchFor(String said) => RegExp(r'^(?:search|find|filter)(?: for)? (.+)$').firstMatch(_clean(said))?.group(1)?.trim();
+
+  static int? numberFor(String said) {
+    final m = RegExp(r'^(?:open|read|expand)(?: number)? (\d+|one|two|three|four|five|six|seven|eight|nine|ten)$').firstMatch(_clean(said));
+    if (m == null) return null;
+    const words = ['one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
+    final g = m.group(1)!;
+    return int.tryParse(g) ?? words.indexOf(g) + 1;
+  }
+
+  static bool isReadList(String said) => RegExp(r"^(?:read(?: (?:this|the list|it|them))?(?: aloud)?|what(?:'s| is) (?:on|in) (?:this|the) list)$").hasMatch(_clean(said));
+
+  static bool isClearSearch(String said) => RegExp(r'^(?:clear|cancel|reset)(?: the)? search$').hasMatch(_clean(said));
+}
+
 /// One category's exact entries, searchable, with filters to jump between categories.
 class CheSecurityCategoryScreen extends StatefulWidget {
   const CheSecurityCategoryScreen({super.key, required this.visibility, required this.initial});
@@ -38,21 +88,98 @@ class CheSecurityCategoryScreen extends StatefulWidget {
 class _CheSecurityCategoryScreenState extends State<CheSecurityCategoryScreen> {
   late String _category = widget.initial;
   String _query = '';
+  final _search = TextEditingController();
+  Object? _voice;
+  Object? _aware;
+
+  List<Map<String, dynamic>> get _cats => _maps(widget.visibility['categories']);
+  Map<String, dynamic> get _cat => _cats.firstWhere((c) => c['id'] == _category, orElse: () => _cats.isEmpty ? const <String, dynamic>{} : _cats.first);
+  List<Map<String, dynamic>> get _shown {
+    final items = _maps(_cat['items']);
+    final q = _query.trim().toLowerCase();
+    return q.isEmpty
+        ? items
+        : items.where((i) => '${i['name']} ${i['type']} ${i['source']} ${i['status']} ${(i['permission_words'] as List? ?? const []).join(' ')}'.toLowerCase().contains(q)).toList();
+  }
+
+  String _spokenList() {
+    final shown = _shown;
+    if (shown.isEmpty) return '${_cat['title']}: nothing recorded${_query.isEmpty ? '' : ' matching $_query'}.';
+    final first = shown.take(10).toList();
+    return '${_cat['title']}, ${shown.length}${_query.isEmpty ? '' : ' matching $_query'}: ${[for (final (n, i) in first.indexed) '${n + 1}. ${i['name']}, ${_word('${i['severity'] ?? i['verdict'] ?? i['status']}')}'].join('; ')}.${shown.length > 10 ? ' Say search for a name to narrow the list.' : ''}';
+  }
+
+  String _spokenItem(Map<String, dynamic> i) => [
+        '${i['name']}, ${i['type']}.',
+        if ('${i['plain'] ?? ''}'.isNotEmpty) '${i['plain']}',
+        'Source ${i['source']}. Status ${_word('${i['status']}')}. Last activity ${_when(i['last_activity'])}.',
+        if ('${i['recommendation'] ?? ''}'.isNotEmpty) 'Recommended: ${i['recommendation']}',
+      ].join(' ');
+
+  Future<String?> _onVoice(String said) async {
+    final cat = CheSecurityRoomVoice.categoryFor(said, _cats);
+    if (cat != null) {
+      setState(() { _category = cat; _query = ''; _search.clear(); });
+      return _spokenList();
+    }
+    if (CheSecurityRoomVoice.isClearSearch(said)) {
+      setState(() { _query = ''; _search.clear(); });
+      return _spokenList();
+    }
+    final q = CheSecurityRoomVoice.searchFor(said);
+    if (q != null) {
+      setState(() { _query = q; _search.text = q; });
+      return _spokenList();
+    }
+    final n = CheSecurityRoomVoice.numberFor(said);
+    if (n != null) {
+      final shown = _shown;
+      if (n < 1 || n > shown.length) return 'There is no number $n here; the list has ${shown.length}.';
+      return _spokenItem(shown[n - 1]);
+    }
+    if (CheSecurityRoomVoice.isReadList(said)) return _spokenList();
+    return null;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _voice = CheSecurityRoomVoice.register(_onVoice);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _aware ??= CheScreenAwareness.register(context, () => CheScreenReport(
+          page: 'Security',
+          tab: '${_cat['title']}',
+          tabs: [for (final c in _cats) '${c['title']} ${c['count']}'],
+          controls: const ['Search', 'Category filters', 'Each entry expands to its details'],
+          detail: '${_shown.length} ${'${_cat['title']}'.toLowerCase()} shown${_query.isEmpty ? '' : ' matching $_query'}. Say show tools, search for a name, read number 2, or read the list',
+        ));
+  }
+
+  @override
+  void dispose() {
+    CheSecurityRoomVoice.unregister(_voice);
+    CheScreenAwareness.unregister(_aware);
+    _search.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final cats = _maps(widget.visibility['categories']);
-    final cat = cats.firstWhere((c) => c['id'] == _category, orElse: () => cats.isEmpty ? const <String, dynamic>{} : cats.first);
+    final cats = _cats;
+    final cat = _cat;
     final items = _maps(cat['items']);
     final q = _query.trim().toLowerCase();
-    final shown = q.isEmpty
-        ? items
-        : items.where((i) => '${i['name']} ${i['type']} ${i['source']} ${i['status']} ${(i['permission_words'] as List? ?? const []).join(' ')}'.toLowerCase().contains(q)).toList();
+    final shown = _shown;
     final text = Theme.of(context).textTheme;
     return Scaffold(
       appBar: AppBar(title: Text('${cat['title'] ?? 'Security'} (${cat['count'] ?? items.length})')),
       body: ListView(padding: const EdgeInsets.fromLTRB(16, 8, 16, 24), children: [
         TextField(
+          controller: _search,
           decoration: const InputDecoration(labelText: 'Search', prefixIcon: Icon(Icons.search_rounded)),
           onChanged: (v) => setState(() => _query = v),
         ),

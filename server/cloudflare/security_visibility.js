@@ -73,6 +73,13 @@ export function leastPrivilege({ name, kind, scopes = [], last_used_at = null, s
   return { verdict, plain: `${name} (${kind}) can: ${can}. ${why}`, broad };
 }
 
+/** A recorded event the owner should see as a finding: real, and either open or above info severity. */
+export function isFinding(e) {
+  if (!e || e.verification === 'simulation') return false;
+  const closed = ['resolved', 'dismissed'].includes(e.status);
+  return !(closed && (e.severity || 'info') === 'info');
+}
+
 const iso = (v) => (v == null ? null : typeof v === 'number' ? new Date(v).toISOString() : String(v));
 
 function item(category, { id, name, type, permissions = [], source, last_activity = null, status, detail = '', severity = null, evidence = null, recommendation = '', plain = '', verdict = null }) {
@@ -91,8 +98,9 @@ export function securityVisibility({ principals = [], review = { findings: [] },
     // An Office agent who is also a security principal (Knox, the Security Chief) is one entry, not two.
     ...team.filter((a) => a && !a.retired && !principals.some((p) => p.kind === 'agent' && String(p.name).toLowerCase() === String(a.name || '').toLowerCase())).map((a) => {
       const scopes = ['office:assigned_jobs'];
-      const l = leastPrivilege({ name: a.name, kind: 'office worker', scopes, last_used_at: a.last_active_at || null }, now);
-      return item('agents', { id: `office:${a.id}`, name: a.name || a.id, type: `Office worker${a.role ? ` · ${a.role}` : ''}`, permissions: scopes, source: 'Office team', last_activity: a.last_active_at || null, status: a.runtime_status || 'idle', detail: `AI provider: ${a.provider_preference || 'auto'}`, plain: l.plain, verdict: l.verdict });
+      const lastActive = a.runtime_updated_at || a.updated_at || null;
+      const l = leastPrivilege({ name: a.name, kind: 'office worker', scopes, last_used_at: lastActive }, now);
+      return item('agents', { id: `office:${a.id}`, name: a.name || a.id, type: `Office worker${a.role ? ` · ${a.role}` : ''}`, permissions: scopes, source: 'Office team', last_activity: lastActive, status: a.runtime_status || 'idle', detail: `AI provider: ${a.provider_preference || 'auto'}`, plain: l.plain, verdict: l.verdict });
     }),
   ];
 
@@ -135,7 +143,9 @@ export function securityVisibility({ principals = [], review = { findings: [] },
         plain: l.plain,
       });
     }),
-    ...events.filter((e) => e.verification !== 'simulation' && /threat|pairing|unknown_token|error_spike|unexpected_deploy|revoked|secret|malware|quarantine|dependency/.test(e.event_type || '')).map((e) => item('threats', {
+    // Every real event a check produced (Security Intelligence's che.* mirror and the core engines'), except a
+    // purely informational one already closed. Drills never count.
+    ...events.filter(isFinding).map((e) => item('threats', {
       id: `event:${e.event_id}`, name: e.summary || e.event_type, type: 'Security event', source: e.source || 'Security Core', last_activity: e.timestamp, status: e.status || 'open', severity: e.severity || 'info',
       evidence: { event_id: e.event_id, event_type: e.event_type, affected_resource: e.affected_resource || '', evidence_refs: e.evidence_refs || [], actions_taken: e.actions_taken || [], verification: e.verification || 'unverified', confidence: e.confidence ?? null },
       recommendation: ['high', 'critical'].includes(e.severity) ? 'Open the incident and follow its steps; lockdown is available and needs your confirmation.' : 'Review the evidence; no automatic change was made.',
@@ -161,9 +171,10 @@ export function securityVisibility({ principals = [], review = { findings: [] },
 export function coverage({ checks = [], advisoriesChecked = false, deployChecked = false, findings = 0, now = Date.now() } = {}) {
   const last = checks[0]?.at || null;
   const fresh = last && now - Date.parse(last) < 86_400_000;
-  const ran = (at) => (at ? { state: 'checked', at } : { state: 'not_checked', at: null });
+  // Every row that comes from the last check shares its staleness; a stale row is not counted as checked.
+  const ran = (at) => (at ? { state: 'checked', at, stale: Boolean(!fresh) } : { state: 'not_checked', at: null });
   const list = [
-    { id: 'security_check', label: 'Threat and access check', ...ran(last), stale: Boolean(last && !fresh) },
+    { id: 'security_check', label: 'Threat and access check', ...ran(last) },
     { id: 'dependencies', label: 'Dependency advisories', ...(advisoriesChecked || checks[0]?.advisories != null ? ran(last) : { state: 'not_checked', at: null }) },
     { id: 'deploy', label: 'Deployment matches the repository', ...(deployChecked ? ran(last) : { state: 'not_checked', at: null }) },
     { id: 'devices', label: 'Paired device review', ...ran(last) },
