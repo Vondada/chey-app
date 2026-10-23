@@ -39,7 +39,7 @@ test('questions, requests, hypotheticals, guesses, quotes and fiction are never 
 test('a plain statement asserts its subject and value, with the wake prefix stripped', () => {
   assert.deepEqual(
     ownerAssertion('CHE, remember that my favorite food is pizza.'),
-    { subject: 'favorite food', subjectWords: ['favorite', 'food'], value: 'pizza', text: 'my favorite food is pizza' },
+    { subject: 'favorite food', subjectWords: ['favorite', 'food'], value: 'pizza', text: 'my favorite food is pizza', confidence: 'high' },
   );
   assert.equal(ownerAssertion('Chay: my favorite food is pizza').value, 'pizza');
   assert.equal(ownerAssertion('Shay, my favorite food is pizza').value, 'pizza');

@@ -409,6 +409,12 @@ async function saveDataset(storage, market, tf, bars, manifest) {
   const entries = Object.entries(puts);
   for (let i = 0; i < entries.length; i += 100) await storage.put(Object.fromEntries(entries.slice(i, i + 100)));
 }
+/** The stored dataset manifests for one market, by timeframe (no bars are read). */
+export async function datasetManifests(storage, market) {
+  const keys = TF_IDS.map((tf) => `${DS_PREFIX}${market}:${tf}`);
+  const got = await storage.get(keys);
+  return Object.fromEntries(TF_IDS.filter((tf, i) => got.get(keys[i])).map((tf, i) => [tf, got.get(`${DS_PREFIX}${market}:${tf}`)]));
+}
 export async function loadDataset(storage, market, tf) {
   const manifest = await storage.get(`${DS_PREFIX}${market}:${tf}`);
   if (!manifest) return null;
