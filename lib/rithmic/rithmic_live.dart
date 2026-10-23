@@ -11,6 +11,18 @@ import 'rithmic_wire.dart';
 
 enum RithmicLiveStatus { off, connected, waiting, quiet, disconnected, loginFailed }
 
+/// A stretch with no live data: CHE was in the background, or the connection was down. Candles are never filled in
+/// across it, with Yahoo or anything else.
+class RithmicFeedGap {
+  RithmicFeedGap(this.from, this.reason, [this.to]);
+  final DateTime from;
+  DateTime? to;
+  final String reason;
+
+  @override
+  String toString() => 'No live data from ${from.toIso8601String()} to ${to?.toIso8601String() ?? 'now'}: $reason';
+}
+
 class CheRithmicLive extends ChangeNotifier {
   CheRithmicLive({DateTime Function()? clock}) : _clock = clock ?? DateTime.now;
 
@@ -20,6 +32,15 @@ class CheRithmicLive extends ChangeNotifier {
   final book = RithmicCandleBook();
   RithmicMarketFeed? _feed;
   StreamSubscription<RithmicLastTrade>? _sub;
+  StreamSubscription<RithmicBestBidOffer>? _quoteSub;
+  final _accepted = StreamController<RithmicLastTrade>.broadcast();
+  final _quotes = StreamController<RithmicBestBidOffer>.broadcast();
+
+  /// Every real trade that entered the candle book (the forward recorder stores these).
+  Stream<RithmicLastTrade> get acceptedTrades => _accepted.stream;
+
+  /// Best bid/offer updates for this contract, as Rithmic sends them.
+  Stream<RithmicBestBidOffer> get quotes => _quotes.stream;
   String symbol = '', exchange = '';
   String detail = '';
   bool _attached = false, _dropped = false, _loginFailed = false;
@@ -27,6 +48,45 @@ class CheRithmicLive extends ChangeNotifier {
   /// When this phone last received a trade from Rithmic (device clock), and when that trade happened (Rithmic time).
   DateTime? lastReceivedAt;
   DateTime? get lastTradeAt => book.lastTradeAt;
+
+  /// The Rithmic socket lives in this app on the iPhone (the password never leaves the phone, so the Worker cannot hold
+  /// the session). CHE declares only the audio and fetch background modes (tool/bootstrap.sh), and iOS suspends an
+  /// app shortly after it leaves the screen unless audio is playing, so the feed stops then.
+  static const backgroundNote = 'Live feed pauses when CHE is in the background.';
+
+  /// Stretches without live data, newest last (at most [maxGaps]).
+  final gaps = <RithmicFeedGap>[];
+  static const maxGaps = 200;
+  RithmicFeedGap? _open;
+  bool _background = false;
+
+  /// True while CHE is off screen.
+  bool get inBackground => _background;
+
+  void _openGap(String reason) {
+    if (_open != null) return;
+    _open = RithmicFeedGap(_clock().toUtc(), reason);
+    gaps.add(_open!);
+    if (gaps.length > maxGaps) gaps.removeAt(0);
+  }
+
+  void _closeGap() {
+    _open?.to = _clock().toUtc();
+    _open = null;
+  }
+
+  /// Called from the app's lifecycle (lib/main.dart). Leaving the screen opens a gap while a session exists; coming
+  /// back closes it. If iOS dropped the socket meanwhile, the connection reads as disconnected.
+  void appLifecycle({required bool foreground}) {
+    if (!foreground && !_background) {
+      _background = true;
+      if (_attached) _openGap('CHE was in the background; iOS pauses the live feed');
+    } else if (foreground && _background) {
+      _background = false;
+      if (_attached) _closeGap();
+    }
+    notifyListeners();
+  }
 
   /// No trade for this long while connected reads "no trades": the market may be closed or paused.
   static const quietAfter = Duration(seconds: 90);
@@ -63,6 +123,7 @@ class CheRithmicLive extends ChangeNotifier {
       book.clear();
       lastReceivedAt = null;
     }
+    _closeGap();
     _feed = feed;
     this.symbol = symbol;
     this.exchange = exchange;
@@ -71,6 +132,10 @@ class CheRithmicLive extends ChangeNotifier {
     _loginFailed = false;
     detail = '';
     _sub = feed.trades.listen(_onTrade);
+    unawaited(_quoteSub?.cancel());
+    _quoteSub = feed.quotes.listen((q) {
+      if (q.symbol.isEmpty || q.symbol == this.symbol) _quotes.add(q);
+    });
     if (feed is RithmicClient) {
       unawaited(feed.done.then((_) {
         if (identical(_feed, feed) && _attached) _drop('the connection closed');
@@ -83,12 +148,17 @@ class CheRithmicLive extends ChangeNotifier {
     if (t.symbol.isNotEmpty && symbol.isNotEmpty && t.symbol != symbol) return;
     if (!book.addTrade(t)) return;
     lastReceivedAt = _clock();
+    _accepted.add(t);
     notifyListeners();
   }
 
   void _drop(String why) {
+    _closeGap();
+    _openGap('Rithmic $why');
     unawaited(_sub?.cancel());
     _sub = null;
+    unawaited(_quoteSub?.cancel());
+    _quoteSub = null;
     _feed = null;
     _attached = false;
     _dropped = true;

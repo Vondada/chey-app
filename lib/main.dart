@@ -168,6 +168,8 @@ import 'che_web_voice_stub.dart'
     if (dart.library.js_interop) 'che_web_voice_web.dart' as che_web_voice;
 import 'knowledge/che_knowledge_library_screen.dart';
 import 'rithmic/che_rithmic_screen.dart';
+import 'rithmic/rithmic_live.dart';
+import 'rithmic/rithmic_recorder.dart';
 
 part 'home_state/connected.dart';
 part 'home_state/home_ui.dart';
@@ -1316,6 +1318,8 @@ OWNER AGENCY
   void initState() {
     super.initState();
     CheSoulClient.configure(baseUrl: () => cheAgentBaseUrl, headers: () => _authHeaders);
+    // Rithmic forward recorder: market data only (trades, bid/offer, closed 1-minute candles), never credentials.
+    CheRithmicRecorder.instance.configure(baseUrl: () => cheAgentBaseUrl, headers: () => _authHeaders);
     _screenToken = CheScreenAwareness.register(context, _shellScreenReport);
     unawaited(CheNotifications.requestPermission());
     unawaited(_syncUiVoicePrefs());
@@ -1394,6 +1398,10 @@ OWNER AGENCY
     if (kIsWeb || !mounted) return;
 
     _appForeground = state == AppLifecycleState.resumed;
+    // The Rithmic feed lives on this phone and pauses while CHE is off screen; the chart marks that stretch as a gap.
+    if (state == AppLifecycleState.resumed || state == AppLifecycleState.paused || state == AppLifecycleState.hidden) {
+      CheRithmicLive.instance.appLifecycle(foreground: state == AppLifecycleState.resumed);
+    }
     if (state == AppLifecycleState.resumed) {
       _updateHomeState(() { _priorityBannerVersion++; });
       unawaited(_loadAgentState(silent: true));

@@ -8,8 +8,11 @@ import 'rithmic_wire.dart';
 
 /// One candle. [t] is the period's start, in UTC.
 class RithmicCandle {
-  RithmicCandle._(this.t, double price, int size, DateTime at)
-      : o = price,
+  RithmicCandle._(this.t, double price, int size, DateTime at, [int? aggressor])
+      : buyVolume = aggressor == 1 ? size : 0,
+        sellVolume = aggressor == 2 ? size : 0,
+        flagged = aggressor == 1 || aggressor == 2 ? 1 : 0,
+        o = price,
         h = price,
         l = price,
         c = price,
@@ -21,12 +24,20 @@ class RithmicCandle {
   final DateTime t;
   double o, h, l, c;
   int v, trades;
+
+  /// Volume bought at the ask and sold at the bid, from trades that carried Rithmic's aggressor flag, and how many
+  /// trades did. [delta] is null when no trade in the candle carried the flag: unknown, never guessed.
+  int buyVolume, sellVolume, flagged;
+  int? get delta => flagged == 0 ? null : buyVolume - sellVolume;
   DateTime _openAt, _closeAt;
 
   /// When the last trade in this candle happened.
   DateTime get lastTradeAt => _closeAt;
 
-  void _add(double price, int size, DateTime at) {
+  void _add(double price, int size, DateTime at, [int? aggressor]) {
+    if (aggressor == 1 || aggressor == 2) flagged++;
+    if (aggressor == 1) buyVolume += size;
+    if (aggressor == 2) sellVolume += size;
     if (price > h) h = price;
     if (price < l) l = price;
     v += size;
@@ -46,12 +57,19 @@ class RithmicCandle {
     ..l = l
     ..c = c
     ..trades = trades
-    .._closeAt = _closeAt;
+    .._closeAt = _closeAt
+    ..buyVolume = buyVolume
+    ..sellVolume = sellVolume
+    ..flagged = flagged;
 }
 
-/// The exchange-side time of a Rithmic trade: seconds since the epoch plus microseconds, or null when the
-/// update carried no timestamp (such an update is never placed in a candle).
+/// When a Rithmic trade happened: the exchange's time (source_ssboe/source_usecs) when sent, else Rithmic's
+/// (ssboe/usecs); null when the update carried no timestamp (such an update is never placed in a candle).
 DateTime? rithmicTradeTime(RithmicLastTrade t) {
+  final exchange = t.sourceSsboe;
+  if (exchange != null && exchange > 0) {
+    return DateTime.fromMicrosecondsSinceEpoch(exchange * 1000000 + (t.sourceUsecs ?? 0).clamp(0, 999999), isUtc: true);
+  }
   final s = t.ssboe;
   if (s == null || s <= 0) return null;
   return DateTime.fromMicrosecondsSinceEpoch(s * 1000000 + (t.usecs ?? 0).clamp(0, 999999), isUtc: true);
@@ -73,28 +91,30 @@ class RithmicCandleBook {
 
   /// Adds one real trade. Returns false when it cannot be placed (no price, no timestamp).
   bool addTrade(RithmicLastTrade trade) {
+    // The subscription's replay of the last trade, and updates that carry no trade, are not new trades.
+    if (trade.isSnapshot || !trade.isTrade) return false;
     final price = trade.price;
     final at = rithmicTradeTime(trade);
     if (price == null || !price.isFinite || price <= 0 || at == null) {
       refused++;
       return false;
     }
-    addPrice(price, trade.size ?? 0, at);
+    addPrice(price, trade.size ?? 0, at, aggressor: trade.aggressor);
     return true;
   }
 
-  void addPrice(double price, int size, DateTime at) {
+  void addPrice(double price, int size, DateTime at, {int? aggressor}) {
     final utc = at.toUtc();
     final key = utc.millisecondsSinceEpoch ~/ 60000;
     final bar = _minutes[key];
     if (bar == null) {
-      _minutes[key] = RithmicCandle._(DateTime.fromMillisecondsSinceEpoch(key * 60000, isUtc: true), price, size < 0 ? 0 : size, utc);
+      _minutes[key] = RithmicCandle._(DateTime.fromMillisecondsSinceEpoch(key * 60000, isUtc: true), price, size < 0 ? 0 : size, utc, aggressor);
       if (_minutes.length > maxMinutes) {
         final oldest = _minutes.keys.reduce((a, b) => a < b ? a : b);
         _minutes.remove(oldest);
       }
     } else {
-      bar._add(price, size < 0 ? 0 : size, utc);
+      bar._add(price, size < 0 ? 0 : size, utc, aggressor);
     }
     if (lastTradeAt == null || utc.isAfter(lastTradeAt!)) lastTradeAt = utc;
   }
@@ -119,6 +139,9 @@ class RithmicCandleBook {
         if (m.l < cur.l) cur.l = m.l;
         cur.v += m.v;
         cur.trades += m.trades;
+        cur.buyVolume += m.buyVolume;
+        cur.sellVolume += m.sellVolume;
+        cur.flagged += m.flagged;
         cur.c = m.c;
         cur._closeAt = m._closeAt;
       }
