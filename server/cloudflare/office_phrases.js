@@ -38,6 +38,19 @@ export function matchOfficePhrase(raw) {
   if (who && AGENTS.includes(who[1])) return { type: 'agentStatus', agentId: who[1] };
   if (/^(?:office )?stand down\b|\boffice,? stand down\b/.test(t)) return { type: 'standDown' };
 
+  // The Office organisation (owner, 2026-10-23): "Who runs the Office departments?", "show the Office org chart".
+  if (/^(?:who (?:runs|leads|heads|is in charge of) (?:the |my |each )?(?:office(?: departments?)?|departments?|office's departments)|(?:show|read|open|tell)(?: me)? (?:the |my )?office(?:'s)? (?:org(?:ani[sz]ation)?(?: chart)?|hierarchy|departments|department heads|chain of command)|what(?:'s|s| is) the office(?:'s)? (?:org chart|chain of command|hierarchy))\b/.test(t)) {
+    return { type: 'officeOrg' };
+  }
+  // A coordinated, multi-department Office job: "Have Nova coordinate a redesign of the chart with design,
+  // engineering, security and testing".
+  const coordinate = original.match(/^(?:(?:hey )?(?:che|chay|chey)[, ]+)?(?:please )?(?:have|ask|get|let) (?:nova|the office) (?:to )?(?:coordinate|run|work together on) (.{6,})$/i);
+  if (coordinate) return { type: 'officeJob', request: coordinate[1].replace(/[.!?]+$/, '').trim() };
+  const jobId = t.match(/\boffice job (oj [0-9a-f]{8}|oj-[0-9a-f]{8})\b/) || original.match(/\b(oj-[0-9a-f]{8})\b/i);
+  if (jobId || /\b(?:status of (?:the |my )?(?:coordinated )?office jobs?|(?:coordinated )?office jobs? status|how (?:is|are) (?:the |my )?(?:coordinated )?office jobs? (?:going|doing))\b/.test(t)) {
+    return { type: 'officeJobStatus', id: jobId ? jobId[1].replace(' ', '-').toLowerCase() : '' };
+  }
+
   const ml = parseMlPhrase(original, t);
   if (ml) return ml;
   const translate = parseTranslatePhrase(original, t);

@@ -65,10 +65,10 @@ test('C2. only the paired owner can read or change security; an unpaired caller 
   assert.ok([401, 403].includes(p.status));
 });
 
-test('C3. chain of command: owner → CHE → Security → specialists, with Atlas separate', async () => {
+test('C3. chain of command: owner → CHE → Knox (Security Chief) → specialists, with Atlas separate', async () => {
   const che = await owner();
   const { agent } = await che.get('/api/security/core');
-  assert.deepEqual(agent.chain.slice(0, 3).map((c) => c.name), ['Owner', 'CHE', 'Security']);
+  assert.deepEqual(agent.chain.slice(0, 3).map((c) => c.name), ['Owner', 'CHE', 'Knox']);
   assert.ok(agent.chain.slice(3).every((c) => c.reports_to === 'security'));
   assert.deepEqual(agent.separate.map((s) => s.name), ['Atlas']);
   assert.ok(['MONITORING', 'SECURED'].includes(agent.state.state));
@@ -220,7 +220,7 @@ test('C15. readiness, team and incidents answer by voice from real state', async
   assert.match(r.reply, /Security readiness is \d+ out of 100/);
   assert.match(r.reply, /1\. Security check in the last day: pass/);
   const t = await che.say('who is on my security team');
-  assert.match(t.reply, /you, then me, then Security/);
+  assert.match(t.reply, /you, then me, then Knox, the Office Security Chief/);
   assert.match(t.reply, /Atlas is separate/);
   const i = await che.say('show open incidents');
   assert.match(i.reply, /No open security incidents/);

@@ -547,7 +547,7 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
           maxLines: 3,
           decoration: const InputDecoration(
             labelText: 'Goal',
-            hintText: 'CHE splits it into jobs for Nova, Atlas, Mira, Knox, Sage, Lyra and Iris.',
+            hintText: 'CHE splits it into jobs for Nova, Atlas, Mira, Knox, Sage, Lyra, Orion, Iris and Vale.',
           ),
         ),
         actions: [
@@ -1415,6 +1415,7 @@ class _AgentDeskSheetState extends State<_AgentDeskSheet> {
             const SizedBox(height: CheSpace.md),
             if (a.personality.isNotEmpty) _Section('PERSONALITY', a.personality),
             if (a.specialty.isNotEmpty) _Section('JOB / SPECIALTY', a.specialty),
+            if (p.departmentTitle.isNotEmpty) _Section('DEPARTMENT', '${p.departmentTitle}. Reports to CHE.'),
             if (p.mission.isNotEmpty) _Section('MISSION', p.mission),
             _Section(
               'CAPABILITIES',

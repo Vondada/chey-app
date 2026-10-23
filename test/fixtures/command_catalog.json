@@ -711,6 +711,110 @@
    "optional_missing": []
   },
   {
+   "id": "security-access",
+   "category": "intelligence",
+   "title": "Security Access",
+   "summary": "See who and what has access to CHE.",
+   "does": "Opens Security on its access list: agents, tools, apps, devices, Face ID sessions and every granted permission, each with what it can do, its last activity and whether that access is more than it needs. Shows what was not checked. Changes nothing.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Open security access",
+    "Who has access to CHE?",
+    "What do you have access to?"
+   ],
+   "needs": [],
+   "optional": [],
+   "handler": "security_intelligence.securityIntent → security_visibility.securityVisibility",
+   "route": "che_security",
+   "produces": "access list",
+   "evidence": "Counts and lists come from the same registry query; token and credential values are never shown.",
+   "cost": "Free: no AI engine is used.",
+   "keywords": [
+    "security",
+    "access",
+    "permissions",
+    "who has access",
+    "least privilege"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "security-chief",
+   "category": "intelligence",
+   "title": "Security Chief Check",
+   "summary": "Have Knox, the Security Chief, run a security check.",
+   "does": "Knox, the Office Security Chief who reports to CHE, runs CHE's real security checks (threats, access, paired devices, and dependencies and deployment when GitHub is connected). CHE then reports which checks ran, when, their findings, and what was not checked. Changes nothing.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "CHE, have Knox check security",
+    "Ask Knox to run a security check",
+    "Knox, check security"
+   ],
+   "needs": [],
+   "optional": [],
+   "handler": "security_chief.securityChiefIntent → securityCoreCheck",
+   "route": "che_security",
+   "produces": "security report",
+   "evidence": "Each check carries the time it ran; a check that did not run is reported as not checked.",
+   "cost": "Free: no AI engine is used.",
+   "keywords": [
+    "knox",
+    "security chief",
+    "security check",
+    "security scan",
+    "security review"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "security-findings",
+   "category": "intelligence",
+   "title": "Security Findings",
+   "summary": "Read and open CHE's security findings.",
+   "does": "Opens Security on its findings: each with severity, the affected resource, when it happened, its evidence and the recommended action, plus which checks ran and which did not. Changes nothing; removing access always asks you first.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Show security findings",
+    "What are my security findings?"
+   ],
+   "needs": [],
+   "optional": [],
+   "handler": "security_intelligence.securityIntent → security_visibility.securityVisibility",
+   "route": "che_security",
+   "produces": "findings",
+   "evidence": "Findings come from recorded security events and the access review; zero findings is not reported as all-clear unless every check ran.",
+   "cost": "Free: no AI engine is used.",
+   "keywords": [
+    "security",
+    "findings",
+    "threats",
+    "risks",
+    "coverage"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
    "id": "yt-ideas",
    "category": "youtube",
    "title": "Yt Ideas",
@@ -4216,6 +4320,114 @@
     "delegate",
     "office task",
     "assign"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "office-org",
+   "category": "office",
+   "title": "Office Departments",
+   "summary": "See who heads each Office department.",
+   "does": "Reads the Office roster: you lead, CHE reports to you, and the nine department heads (Nova, Atlas, Mira, Knox, Sage, Lyra, Orion, Iris, Vale) report to CHE, each with responsibilities, tools, permissions, work queue and recorded performance. Changes nothing.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Who runs the Office departments?",
+    "Show me the Office org chart"
+   ],
+   "needs": [
+    "office"
+   ],
+   "optional": [],
+   "handler": "office_org.officeOrg (LA_AGENCIA_ROLES departments)",
+   "route": "office:org",
+   "produces": "org chart",
+   "evidence": "The roster and stored Office tasks only; tool status is configured, not configured or not checked.",
+   "cost": "Free: no AI engine is used.",
+   "keywords": [
+    "org chart",
+    "departments",
+    "department heads",
+    "chain of command",
+    "who runs"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "office-coordinate",
+   "category": "office",
+   "title": "Coordinated Office Job",
+   "summary": "Have Nova coordinate a multi-department job.",
+   "does": "Nova plans one job across departments (for example Iris design, Atlas engineering, Knox security review, then Vale verification), names one accountable owner, and hands each finished stage to the next with a recorded handoff the receiving head must accept. CHE reports the result only after Vale verifies it.",
+   "mode": "BUILD",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "task",
+    "required": true,
+    "hint": "The work and which departments it involves"
+   },
+   "examples": [
+    "Have Nova coordinate a cleaner Trading Room chart with design, engineering, security review and testing"
+   ],
+   "needs": [
+    "office"
+   ],
+   "optional": [],
+   "handler": "office_jobs.planOfficeJob → advanceOfficeJobs → agent_runtime tasks",
+   "route": "office:job",
+   "produces": "office job",
+   "evidence": "Job id, stage task ids, every handoff with its acceptance checks, and Vale's verdict.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "coordinate",
+    "handoff",
+    "office job",
+    "departments",
+    "nova"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "office-jobs",
+   "category": "office",
+   "title": "Office Jobs",
+   "summary": "Status of coordinated Office jobs.",
+   "does": "Reads the latest coordinated Office job (or the one you name): its stages, who holds each, handoffs, blockers and whether Vale verified it. Changes nothing.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "What is the status of the Office jobs?"
+   ],
+   "needs": [
+    "office"
+   ],
+   "optional": [],
+   "handler": "office_jobs.speakOfficeJob",
+   "route": "office:jobStatus",
+   "produces": "job status",
+   "evidence": "The stored job record only.",
+   "cost": "Free: no AI engine is used.",
+   "keywords": [
+    "office jobs",
+    "job status",
+    "handoffs"
    ],
    "status": "available",
    "missing": [],

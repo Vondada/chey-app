@@ -1,5 +1,5 @@
 // The Office in CHE's Brain: CHE at the center, one brain per internal Office
-// worker (Nova, Atlas, Mira, Knox, Sage, Lyra, Iris and any other registered
+// worker (the department heads in office_company.js and any other registered
 // internal worker), every worker's experience kept as Brain records with real
 // attribution, and the historical recovery that fills them from every source
 // CHE already has.

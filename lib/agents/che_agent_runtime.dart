@@ -76,9 +76,13 @@ class CheAgentProfile {
     this.strengths = const [],
     this.limitations = const [],
     this.capabilityRequirements = const [],
+    this.departmentTitle = '',
   });
 
   final CheAgent agent;
+
+  /// Department head title from the shared Office roster ("Office Security Chief" for Knox), or empty.
+  final String departmentTitle;
   final String mission;
   final List<String> responsibilities;
   final String modelTier; // fast | strong
@@ -124,6 +128,7 @@ class CheAgentProfile {
       capabilityRequirements: [
         for (final x in (j['capability_requirements'] as List? ?? const [])) '$x'
       ],
+      departmentTitle: '${(j['department'] is Map ? (j['department'] as Map)['title'] : null) ?? ''}',
     );
   }
 }
