@@ -183,6 +183,8 @@ import {
   laAgenciaPanelNeeds,
 } from './work_agent_mode.js';
 import { matchOfficePhrase, speakGoalPlan, speakOfficeBoard } from './office_phrases.js';
+import { advanceOfficeJobs, officeJobView, officeJobsView, planOfficeJob, speakOfficeJob } from './office_jobs.js';
+import { headRecord, officeOrg, speakOfficeOrg } from './office_org.js';
 import { assertOwnerTalksToCheOnly, codexWorkPacket } from './office_router.js';
 import {
   mlProjectFromResult,
@@ -4570,30 +4572,8 @@ export class CheState extends DurableObject {
     for (const step of splitGoal(goal)) {
       const agent = data.team.find((a) => a.name === step.agent && !a.retired);
       if (!agent) continue;
-      // Permission flags are checked before the job is queued.
-      let refused = '';
-      try {
-        assertAgentMayRun(agent, { task: step.task });
-      } catch (error) {
-        refused = permissionBlocker(agent, error);
-      }
-      const task = queueAgentTask(data, agent, step.task, 'owner_goal', { job_id: goalId });
-      task.work_packet = codexWorkPacket(agent, task);
-      let blocker = refused || agentActionGuard(agent, step.task) || officeToolBlocker(this.keyEnv || this.env, agent, task.task);
-      // Codex desks get a real work packet: own thread id and workspace,
-      // persisted here. The owner Codex token stays on the Worker.
-      if (!refused && agent.provider_preference === 'openai') {
-        const packet = savePacket(data, startCodexJob(this.keyEnv || this.env, makeWorkPacket({
-          jobId: task.id, agentId: agent.name, goal: step.task,
-        })));
-        task.packet_id = packet.packet_id;
-        if (!blocker && packet.status.startsWith('Blocked:')) blocker = packet.status;
-      }
-      if (blocker) {
-        task.status = 'blocked';
-        task.error = blocker;
-      }
-      jobs.push({ id: task.id, agent: agent.name, task: task.task, status: task.status, blocker });
+      const task = this.queueOfficeStep(data, agent, step.task, 'owner_goal', { job_id: goalId });
+      jobs.push({ id: task.id, agent: agent.name, task: task.task, status: task.status, blocker: task.status === 'blocked' ? task.error : '' });
     }
     data.office_goals = Array.isArray(data.office_goals) ? data.office_goals : [];
     data.office_goals.push({ id: goalId, goal, job_ids: jobs.map((j) => j.id), created_at: new Date().toISOString() });
@@ -4602,6 +4582,63 @@ export class CheState extends DurableObject {
     if (jobs.some((j) => j.status === 'queued')) await this.scheduleWork();
     this.broadcastAgents(data);
     return { goal_id: goalId, jobs, reply: speakGoalPlan(jobs) };
+  }
+
+  // One Office step, queued the same way for a split goal and for a stage of a coordinated job: permission flags
+  // and tool blockers are checked before it runs, and a Codex desk gets its real work packet (own thread id and
+  // workspace; the owner Codex token stays on the Worker).
+  queueOfficeStep(data, agent, text, source, options = {}) {
+    let refused = '';
+    try {
+      assertAgentMayRun(agent, { task: text });
+    } catch (error) {
+      refused = permissionBlocker(agent, error);
+    }
+    const task = queueAgentTask(data, agent, text, source, options);
+    task.work_packet = codexWorkPacket(agent, task);
+    let blocker = refused || agentActionGuard(agent, text) || officeToolBlocker(this.keyEnv || this.env, agent, task.task);
+    if (!refused && agent.provider_preference === 'openai') {
+      const packet = savePacket(data, startCodexJob(this.keyEnv || this.env, makeWorkPacket({
+        jobId: task.id, agentId: agent.name, goal: text,
+      })));
+      task.packet_id = packet.packet_id;
+      if (!blocker && packet.status.startsWith('Blocked:')) blocker = packet.status;
+    }
+    if (blocker) {
+      task.status = 'blocked';
+      task.error = blocker;
+    }
+    return task;
+  }
+
+  officeJobHooks(data) {
+    const env = this.keyEnv || this.env;
+    return {
+      queueStep: (agent, text, options) => this.queueOfficeStep(data, agent, text, 'office_job', options),
+      blocker: (agent, text) => agentActionGuard(agent, text) || officeToolBlocker(env, agent, text),
+    };
+  }
+
+  // A coordinated Office job (owner master mission, Phase 3): Nova plans it, the first stage is handed off now,
+  // and the alarm hands each finished stage to the next department.
+  async officeCoordinate(data, body = {}) {
+    await this.staffOffice(data);
+    const planned = planOfficeJob(data, body);
+    if (planned.error) return { error: planned.error };
+    advanceOfficeJobs(data, this.officeJobHooks(data));
+    await this.ctx.storage.put('che', data);
+    if (data.team_tasks.some((t) => t.office_job_id === planned.job.id && t.status === 'queued')) await this.scheduleWork();
+    this.broadcastAgents(data);
+    return { job: officeJobView(planned.job), reply: speakOfficeJob(planned.job) };
+  }
+
+  // Hands finished stages of coordinated jobs to the next department. Bookkeeping only; no model call.
+  async advanceOfficeWork() {
+    const data = await this.loadData();
+    if (!advanceOfficeJobs(data, this.officeJobHooks(data))) return false;
+    await this.ctx.storage.put('che', data);
+    this.broadcastAgents(data);
+    return true;
   }
 
   // Ensure Iris (Ad Studio) is on the La Agencia roster; optionally queue a first task.
@@ -4654,25 +4691,25 @@ export class CheState extends DurableObject {
     writeResearchMemoryNote(data, {
       force: true,
       task: { kind: 'ml_eval', task: phrase.task || kind, id: parentNote.id },
-      agent: { name: 'Atlas', role: 'Research' },
+      agent: { name: 'Mira', role: 'Research / education' },
       result: speakMlPlan(result),
       sources: [],
     });
 
-    // Queue Atlas to retrieve prior ML notes and distill learning (not memorize-only).
+    // Queue Mira (research) to retrieve prior ML notes and distill learning (not memorize-only).
     const jobs = [];
-    const atlas = data.team.find((a) => a.name === 'Atlas' && !a.retired);
+    const researcher = data.team.find((a) => a.name === 'Mira' && !a.retired);
     const goalId = crypto.randomUUID();
-    if (atlas) {
+    if (researcher) {
       let refused = '';
-      try { assertAgentMayRun(atlas, { task: 'Retrieve ML metrics and distill learning notes' }); }
-      catch (error) { refused = permissionBlocker(atlas, error); }
-      const task = queueAgentTask(data, atlas,
+      try { assertAgentMayRun(researcher, { task: 'Retrieve ML metrics and distill learning notes' }); }
+      catch (error) { refused = permissionBlocker(researcher, error); }
+      const task = queueAgentTask(data, researcher,
         `Retrieve prior ml_eval memory_notes and Brain graph links. Compare to these metrics: ${JSON.stringify(result.metrics).slice(0, 600)}. Distill what was learned (patterns, failure modes). Do not invent numbers.`,
         'ml_eval', { job_id: goalId, kind: 'ml_eval' });
-      let blocker = refused || officeToolBlocker(this.keyEnv || this.env, atlas, task.task);
+      let blocker = refused || officeToolBlocker(this.keyEnv || this.env, researcher, task.task);
       if (blocker) { task.status = 'blocked'; task.error = blocker; }
-      jobs.push({ id: task.id, agent: atlas.name, task: task.task, status: task.status, blocker });
+      jobs.push({ id: task.id, agent: researcher.name, task: task.task, status: task.status, blocker });
     }
 
     data.office_goals = Array.isArray(data.office_goals) ? data.office_goals : [];
@@ -4731,11 +4768,12 @@ export class CheState extends DurableObject {
     const brief = String(taskText || `Start Roblox ${cat} studio line tonight`).replace(/\s+/g, ' ').trim().slice(0, 500);
     const goalText = `Roblox ${cat} studio: ${brief}`;
     const jobs = [];
-    const knox = data.team.find((a) => a.name === 'Knox' && !a.retired);
+    // Engineering is Atlas's (CTO) since the 2026-10-23 reorganisation; Knox reviews security independently.
+    const engineer = data.team.find((a) => a.name === 'Atlas' && !a.retired);
     const nova = data.team.find((a) => a.name === 'Nova' && !a.retired);
     const lyra = data.team.find((a) => a.name === 'Lyra' && !a.retired);
     const steps = [];
-    if (knox) steps.push({ agent: knox, task: buildRobloxJobBrief(brief, cat), kind: 'roblox_studio' });
+    if (engineer) steps.push({ agent: engineer, task: buildRobloxJobBrief(brief, cat), kind: 'roblox_studio' });
     if (nova) steps.push({ agent: nova, task: `Product/listing plan for Roblox ${cat}: ${brief}. Include monetization (passes) and publish checklist. Owner confirm before upload/spend.`, kind: 'roblox_studio' });
     if (lyra && (cat === 'clothing' || cat === 'avatar' || cat === 'ugc' || cat === 'game')) {
       steps.push({ agent: lyra, task: `Creative/UGC brief for Roblox ${cat}: ${brief}. Mood, palette, asset list. No publish without owner confirm.`, kind: 'roblox_studio' });
@@ -4818,7 +4856,7 @@ export class CheState extends DurableObject {
     writeResearchMemoryNote(data, {
       force: true,
       task: { kind: 'roblox_studio', task: brief, id: goalId },
-      agent: { name: 'Knox', role: 'Engineering / Codex jobs' },
+      agent: { name: 'Atlas', role: 'Engineering / Codex jobs' },
       result: robloxNoteBody,
       sources: [],
     });
@@ -4846,11 +4884,12 @@ export class CheState extends DurableObject {
     const goalId = crypto.randomUUID();
     const q = String(query || 'AI ad buyers').replace(/\s+/g, ' ').trim().slice(0, 200) || 'AI ad buyers';
     const jobs = [];
-    const atlas = data.team.find((a) => a.name === 'Atlas' && !a.retired);
-    const iris = data.team.find((a) => a.name === 'Iris' && !a.retired);
+    // Research is Mira's and ad-buyer fit is Lyra's (creative) since the 2026-10-23 reorganisation.
+    const researcher = data.team.find((a) => a.name === 'Mira' && !a.retired);
+    const creative = data.team.find((a) => a.name === 'Lyra' && !a.retired);
     const steps = [];
-    if (atlas) steps.push({ agent: atlas, task: buildFiverrScoutTask(q), kind: 'fiverr_scout' });
-    if (iris) steps.push({ agent: iris, task: buildFiverrFitTask(q), kind: 'fiverr_scout' });
+    if (researcher) steps.push({ agent: researcher, task: buildFiverrScoutTask(q), kind: 'fiverr_scout' });
+    if (creative) steps.push({ agent: creative, task: buildFiverrFitTask(q), kind: 'fiverr_scout' });
     for (const step of steps) {
       let refused = '';
       try {
@@ -4901,14 +4940,15 @@ export class CheState extends DurableObject {
     const goalId = crypto.randomUUID();
     const ch = normalizeOpportunityChannel(channel);
     const q = String(query || 'AI service buyers').replace(/\s+/g, ' ').trim().slice(0, 200) || 'AI service buyers';
-    // Dedicated Fiverr path keeps existing Iris/Atlas Fiverr playbook wiring.
+    // Dedicated Fiverr path keeps the Fiverr playbook wiring (research, then creative fit).
     if (ch === 'fiverr') return this.officeFiverrScout(data, q);
     const jobs = [];
-    const atlas = data.team.find((a) => a.name === 'Atlas' && !a.retired);
-    const iris = data.team.find((a) => a.name === 'Iris' && !a.retired);
+    // Research is Mira's and ad-buyer fit is Lyra's (creative) since the 2026-10-23 reorganisation.
+    const researcher = data.team.find((a) => a.name === 'Mira' && !a.retired);
+    const creative = data.team.find((a) => a.name === 'Lyra' && !a.retired);
     const steps = [];
-    if (atlas) steps.push({ agent: atlas, task: buildOpportunityScoutTask(q, ch), kind: 'opportunity_scout' });
-    if (iris) steps.push({ agent: iris, task: buildOpportunityFitTask(q, ch), kind: 'opportunity_scout' });
+    if (researcher) steps.push({ agent: researcher, task: buildOpportunityScoutTask(q, ch), kind: 'opportunity_scout' });
+    if (creative) steps.push({ agent: creative, task: buildOpportunityFitTask(q, ch), kind: 'opportunity_scout' });
     for (const step of steps) {
       let refused = '';
       try {
@@ -7351,7 +7391,7 @@ export class CheState extends DurableObject {
               'Sound bright, warm, confident, current and natural — like a sharp friend, not a help desk.',
               'Default to one or two short sentences. Lead with exactly what the owner needs. No preamble, recap, or extra explanation unless it is necessary or he asks for more.',
               'Understand slang, profanity, dark humor, mature and controversial topics without acting shocked, preachy or prudish. Be candid and direct while still respecting real safety, privacy, consent, security and legal limits.',
-              'CHE is the Office Boss — the owner’s primary liaison. Specialists (Nova, Atlas, Mira, Knox, Sage, Lyra, Iris) report to CHE; CHE reports to the owner. CHE assigns, steers, accepts/rejects handoffs, and owns outcomes.',
+              'CHE is the Office Boss — the owner’s primary liaison. Department heads (Nova operations, Atlas engineering, Mira research and education, Knox security, Sage intelligence and strategy, Lyra creative, Orion markets, Iris experience and accessibility, Vale quality assurance) report to CHE; CHE reports to the owner. CHE assigns, steers, accepts/rejects handoffs, and owns outcomes.',
               WORK_AGENT_MODE_POLICY,
               'Never create fake busywork. Delegate only when a specialist materially improves accuracy, execution, research, creativity, speed or verification, and only for work tied to the owner’s request, real goals, projects, responsibilities, learning, finances, business, creative work, technology or organization.',
               'When delegating, require a concrete useful deliverable, review the result, and never call a failed or unverified result complete.',
@@ -9219,6 +9259,25 @@ export class CheState extends DurableObject {
           .filter(Boolean);
         return json({ packets });
       }
+      // The Office organisation and coordinated jobs (owner master mission, 2026-10-23).
+      if (path === '/api/office/org' && request.method === 'GET') {
+        await this.staffOffice(data);
+        return json({ org: officeOrg(data, this.keyEnv || this.env) });
+      }
+      const headPath = /^\/api\/office\/org\/([A-Za-z]{2,20})$/.exec(path);
+      if (headPath && request.method === 'GET') {
+        await this.staffOffice(data);
+        const agent = data.team.find((a) => !a.retired && a.name.toLowerCase() === headPath[1].toLowerCase() && LA_AGENCIA_ROLES[a.name]);
+        return agent ? json({ head: headRecord(data, this.keyEnv || this.env, agent) }) : json({ detail: 'That is not an Office department head.' }, 404);
+      }
+      if (path === '/api/office/jobs' && request.method === 'GET') {
+        return json({ jobs: officeJobsView(data) });
+      }
+      const jobPath = /^\/api\/office\/jobs\/(oj-[0-9a-f]{8})$/.exec(path);
+      if (jobPath && request.method === 'GET') {
+        const job = (data.office_goals || []).find((g) => g?.coordinated && g.id === jobPath[1]);
+        return job ? json({ job: officeJobView(job) }) : json({ detail: 'There is no Office job with that id.' }, 404);
+      }
       if (path === '/api/office/today' && request.method === 'GET') {
         return json({ board: await this.officeBoard(data) });
       }
@@ -10190,6 +10249,10 @@ export class CheState extends DurableObject {
       if (path === '/api/autonomy' && request.method === 'POST') {
         if (typeof body.enabled !== 'boolean') return json({ detail: 'enabled must be boolean.' }, 400);
         return json({ autonomy: body.enabled, reply: await this.setAutonomy(body.enabled) });
+      }
+      if (path === '/api/office/jobs' && request.method === 'POST') {
+        const result = await this.officeCoordinate(data, body);
+        return result.error ? json({ detail: result.error }, 400) : json(result);
       }
       if (path === '/api/office/goals' && request.method === 'POST') {
         const goal = String(body.goal || '').trim().slice(0, 2000);
@@ -11574,6 +11637,20 @@ export class CheState extends DurableObject {
         if (officePhrase?.type === 'goal') {
           const plan = await this.officeGoal(data, officePhrase.goal);
           return ndjsonReply(plan.reply, { office: 'goal', jobs: plan.jobs.length });
+        }
+        if (officePhrase?.type === 'officeOrg') {
+          await this.staffOffice(data);
+          return ndjsonReply(speakOfficeOrg(officeOrg(data, this.keyEnv || this.env)), { office: 'org' });
+        }
+        if (officePhrase?.type === 'officeJob') {
+          const result = await this.officeCoordinate(data, { request: officePhrase.request });
+          return ndjsonReply(result.error ? `CHE here. ${result.error}` : result.reply, { office: 'job', job_id: result.job?.id || null });
+        }
+        if (officePhrase?.type === 'officeJobStatus') {
+          const jobs = (data.office_goals || []).filter((g) => g?.coordinated);
+          const job = officePhrase.id ? jobs.find((g) => g.id === officePhrase.id) : jobs[jobs.length - 1];
+          const reply = job ? speakOfficeJob(job) : (officePhrase.id ? `CHE here. There is no Office job ${officePhrase.id}.` : 'CHE here. There are no coordinated Office jobs yet.');
+          return ndjsonReply(reply, { office: 'jobStatus', job_id: job?.id || null });
         }
         if (officePhrase?.type === 'hireIris') {
           const hired = await this.officeHireIris(data, officePhrase.task || '');
@@ -13638,7 +13715,7 @@ export class CheState extends DurableObject {
               'SPEED MODE: minimize unnecessary serial work. Batch compatible reads, run independent tool calls concurrently, reuse trusted context, and escalate to heavier compute only when the task actually benefits from it.',
               'BACKGROUND WORK: cloud-side tasks may continue independently of the visible phone UI only when a real CHE backend job or connected service supports it. Do not claim iOS itself is running unrestricted background work.',
               'SUPPORTED-WORKAROUND MODE: when a platform, API, entitlement, permission or device limitation blocks the direct route, actively look for the fastest legitimate alternative such as an official API, App Intent, deep link, Shortcut, companion service, cloud job or approved integration. Never bypass security controls, access controls, safety rules or law, and never call an unsupported bypass a loophole.',
-              'CHE OFFICE: CHE is the Office Boss — the owner’s primary liaison and in-charge manager of every internal AI coworker (Nova, Atlas, Mira, Knox, Sage, Lyra, Iris). Specialists report to CHE; CHE reports to the owner. CHE assigns, steers, accepts or rejects handoffs, and owns outcomes. Handle ordinary conversation yourself. Delegate only when specialization materially improves the result. Every delegated task must be tied to the owner’s request or real goals and must have a concrete useful deliverable. Never create busywork just to make the Office look active. Review coworker output, catch weak assumptions, and never mark failed or unverified work complete.',
+              'CHE OFFICE: CHE is the Office Boss — the owner’s primary liaison and in-charge manager of every internal AI coworker. Department heads: Nova operations, Atlas engineering, Mira research and education, Knox security, Sage intelligence and strategy, Lyra creative, Orion markets, Iris experience and accessibility, Vale quality assurance. Specialists report to CHE; CHE reports to the owner. CHE assigns, steers, accepts or rejects handoffs, and owns outcomes. Handle ordinary conversation yourself. Delegate only when specialization materially improves the result. Every delegated task must be tied to the owner’s request or real goals and must have a concrete useful deliverable. Never create busywork just to make the Office look active. Review coworker output, catch weak assumptions, and never mark failed or unverified work complete.',
               WORK_AGENT_MODE_POLICY,
               workAgentMode
                 ? 'This turn is Work Agent Mode (agent_mode=full). Prefer planning + tool use + Office delegation over chat-only answers when the owner asked for real work.'
@@ -14309,6 +14386,7 @@ export class CheState extends DurableObject {
     const officeData = await this.loadData();
     if (recoverStaleWork(officeData)) await this.ctx.storage.put('che', officeData);
     if (autonomyOn) {
+      await this.advanceOfficeWork().catch((error) => console.error('Office job advance failed:', error?.message || error));
       await processAgentWork({
         env: this.env,
         load: () => this.loadData(),
@@ -14321,6 +14399,8 @@ export class CheState extends DurableObject {
         // Office tasks, War Room meetings and research notes report to the Brain when they happen (owner, Build 2).
         roomEvent: (event) => (event ? queueRoomEvent(this.ctx.storage, event).catch(() => false) : Promise.resolve(false)),
       });
+      // A stage finished in this pass is handed to the next department now, so scheduleWork sees its task.
+      await this.advanceOfficeWork().catch((error) => console.error('Office job advance failed:', error?.message || error));
     }
     // A retry or mailbox watch may be due later, so always compute the next alarm.
     await this.scheduleWork();

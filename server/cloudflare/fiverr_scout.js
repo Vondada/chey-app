@@ -84,11 +84,12 @@ export function speakFiverrScoutPlan(jobs, query) {
 
 export function speakHireIris(agent, taskNote = '') {
   if (!agent) {
-    return 'CHE here. Iris is not on the roster yet. Opening the Office will staff Ad Studio.';
+    return 'CHE here. Iris is not on the roster yet. Opening the Office will staff her desk.';
   }
-  const role = agent.role || 'Ad Studio / paid-social creatives';
+  const role = agent.role || 'Experience / accessibility';
+  // Since the 2026-10-23 reorganisation Iris heads Experience and Accessibility; ad creatives are Lyra's.
   const next = taskNote
     ? taskNote
-    : 'Say draft tonight pack for a business, or tell the Office your creative goal.';
-  return `CHE here. Iris is hired on Ad Studio — ${role}. ${next}`;
+    : 'Ask Iris for a layout or accessibility review. Ad creatives and tonight packs go to Lyra.';
+  return `CHE here. Iris is on the roster — ${role}. ${next}`;
 }

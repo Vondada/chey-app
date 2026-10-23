@@ -133,37 +133,37 @@ export const PERSONAS = {
 
 export const CORE_AGENT_PROFILES = {
   Nova: {
-    strengths: ['Product framing', 'Offer clarity', 'Listings and sales-page structure'],
-    limitations: ['Not the primary research verifier', 'Not the primary finance reviewer'],
+    strengths: ['Product framing', 'Coordination: owners, dependencies and handoffs', 'Offer clarity and listings'],
+    limitations: ['Coordinates work rather than doing each department\'s part', 'Not the primary finance reviewer'],
     appearance: { body_type: 'standard', face: 'oval', skin_tone: 'warm', hair: 'waves', eyes: 'hazel', outfit: 'jacket-teal', accessory: 'chain', animation: 'confident' },
   },
   Atlas: {
-    strengths: ['Research depth', 'Source comparison', 'Competitive checks'],
-    limitations: ['Slower when evidence is thin', 'Not the primary visual creative'],
+    strengths: ['Implementation', 'Codex packets and coding jobs', 'Numerical, risk-aware planning'],
+    limitations: ['Never reviews the security of its own work (Knox does)', 'Cannot merge or deploy without the owner'],
     appearance: { body_type: 'tall', face: 'square', skin_tone: 'deep', hair: 'close', eyes: 'brown', outfit: 'suit', accessory: 'glasses', animation: 'focused' },
   },
   Mira: {
-    strengths: ['Customer empathy', 'Support copy', 'Translation and multilingual drafts'],
-    limitations: ['Not the primary implementation engineer', 'Needs verified facts for policy-sensitive replies'],
+    strengths: ['Research depth and source comparison', 'Lessons and explanations', 'Support copy and translation'],
+    limitations: ['Slower when evidence is thin', 'Not the primary implementation engineer'],
     appearance: { body_type: 'compact', face: 'round', skin_tone: 'golden', hair: 'curls', eyes: 'green', outfit: 'jacket-red', accessory: 'none', animation: 'calm' },
   },
   Knox: {
-    strengths: ['Implementation', 'Testing and debugging', 'Failure-mode and security review'],
-    limitations: ['Can over-focus on failure cases', 'Not the primary brand or social writer'],
+    strengths: ['Failure-mode and security review', 'Access and permission checks', 'Directing the Security Core specialists'],
+    limitations: ['Defensive only: monitors, warns and records', 'Not the implementation engineer'],
     appearance: { body_type: 'tall', face: 'square', skin_tone: 'brown', hair: 'locs', eyes: 'dark', outfit: 'tech', accessory: 'headset', animation: 'focused' },
   },
   Sage: {
-    strengths: ['Financial summaries', 'Read-only Stripe reporting', 'Claim and goal verification'],
+    strengths: ['Evidence and decision analysis', 'Read-only Stripe reporting', 'Claim and goal verification'],
     limitations: ['Read-only money access', 'Cannot spend, transfer, or open payouts'],
     appearance: { body_type: 'standard', face: 'oval', skin_tone: 'tan', hair: 'bun', eyes: 'brown', outfit: 'suit', accessory: 'glasses', animation: 'calm' },
   },
   Lyra: {
-    strengths: ['Clear writing', 'Social content', 'Turning rough notes into human language'],
+    strengths: ['Clear writing', 'Social content and ad creatives', 'Turning rough notes into human language'],
     limitations: ['Not the primary finance analyst', 'Needs source facts before making factual claims'],
     appearance: { body_type: 'compact', face: 'round', skin_tone: 'light', hair: 'braids', eyes: 'blue', outfit: 'studio', accessory: 'none', animation: 'confident' },
   },
   Iris: {
-    strengths: ['Ad concepts', 'Headlines and CTAs', 'Paid-social creative packages'],
+    strengths: ['Layouts and flows', 'Accessibility and VoiceOver reviews', 'Visual briefs'],
     limitations: ['Needs brand assets for exact visual matching', 'Not the primary code reviewer'],
     appearance: { body_type: 'standard', face: 'oval', skin_tone: 'golden', hair: 'curls', eyes: 'hazel', outfit: 'jacket-red', accessory: 'hat', animation: 'confident' },
   },

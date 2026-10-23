@@ -535,7 +535,7 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
           maxLines: 3,
           decoration: const InputDecoration(
             labelText: 'Goal',
-            hintText: 'CHE splits it into jobs for Nova, Atlas, Mira, Knox, Sage, Lyra and Iris.',
+            hintText: 'CHE splits it into jobs for Nova, Atlas, Mira, Knox, Sage, Lyra, Orion, Iris and Vale.',
           ),
         ),
         actions: [
