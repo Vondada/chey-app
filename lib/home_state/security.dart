@@ -445,6 +445,7 @@ extension _CheHomeSecurity on _CHEHomeState {
       final ownerContextData = (data['owner_context'] as List?) ?? const [];
       final personalSourceData = (data['personal_sources'] as Map?) ?? const {};
       final integrationData = (data['integrations'] as Map?) ?? const {};
+      _performanceNote = chePerformanceNote(data['performance']);
 
       savedMemories = memoryData.map((e) => e.toString()).toList();
       memoryRecords = memoryRecordData

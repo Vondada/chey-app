@@ -26,6 +26,7 @@ import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:url_launcher/url_launcher.dart';
 import 'che_job_activity_banner.dart';
 import 'che_mic_supervisor.dart';
+import 'che_ui/che_performance_note.dart';
 import 'che_ui/che_latency.dart';
 import 'che_ui/che_screen_awareness.dart';
 import 'che_ui/che_screen_capture.dart';
@@ -478,6 +479,8 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   String? _lastAgentStateBody;
   // The last measured round trip of the state poll, shown as the Home reactor's LAT readout (real, never estimated).
   int? _stateLatencyMs;
+  /// The Worker's quiet over-budget line (che_ui/che_performance_note.dart); null while within budget.
+  String? _performanceNote;
   int _speechTurn = 0;
 
   // Single authority for automatic mic restarts (see che_mic_supervisor.dart).
@@ -1635,6 +1638,7 @@ OWNER AGENCY
             const CheHelpButton(color: Colors.white, dense: true),
           ]),
         ),
+        if (_performanceNote != null) ChePerformanceNote(note: _performanceNote!),
         if (_actionApprovals.isNotEmpty)
           ConstrainedBox(
             constraints: const BoxConstraints(maxHeight: 150),

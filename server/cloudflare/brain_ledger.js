@@ -324,7 +324,10 @@ const CAP_STATES = new Set(['VERIFIED', 'AVAILABLE']);
 /** Category cards: item, procedure and verified-capability counts, and the last population time. */
 export async function categoryCards(storage, { zone = DEFAULT_ZONE, now = Date.now() } = {}) {
   const ledger = new BrainLedger(storage);
-  const all = await ledger.all();
+  // Only the columns the cards count: SELECT * parsed every event's detail JSON, a cost per ledger row on each view.
+  const all = ledger.sql
+    ? (ledger.init(), [...ledger.sql.exec('SELECT category, subcategory, record_id, capability_id, brain_event_id, event_type, new_state, knowledge_type, ms FROM brain_ledger ORDER BY ms DESC, rowid DESC')].map((r) => ({ ...r, ms: Number(r.ms) })))
+    : await ledger.all();
   const cards = {};
   for (const c of CATEGORY_NAMES) cards[c] = { category: c, items: new Set(), procedures: new Set(), capabilities: new Set(), last_ms: 0, pending: 0, failed: 0, subcategories: {} };
   const latestByItem = new Map();
@@ -695,6 +698,22 @@ export function installBrainLedger(storage) {
   return storage;
 }
 
+function sameSnapshot(a, b) {
+  if (a === b) return true;
+  if (!a || !b || typeof a !== 'object' || typeof b !== 'object') return JSON.stringify(a) === JSON.stringify(b);
+  const ka = Object.keys(a);
+  if (ka.length !== Object.keys(b).length) return false;
+  for (const k of ka) {
+    const x = a[k];
+    const y = b[k];
+    if (x === y) continue;
+    if (!x || !y || typeof x !== 'object' || typeof y !== 'object') return false;
+    for (const f of Object.keys(x)) if (x[f] !== y[f]) return false;
+    if (Object.keys(x).length !== Object.keys(y).length) return false;
+  }
+  return true;
+}
+
 async function diffKey(storage, key, value) {
   let snaps = SNAPSHOT.get(storage);
   if (!snaps) { snaps = new Map(); SNAPSHOT.set(storage, snaps); }
@@ -704,7 +723,9 @@ async function diffKey(storage, key, value) {
   const { next, events } = WATCHED[key](prev, value);
   for (const e of events) await ledger.record(e);
   snaps.set(key, next);
-  if (ledger.sql) ledger.setMeta(`snap:${key}`, next);
+  // The snapshot holds one entry per watched item; rewriting it unchanged on every save cost a full JSON encode and
+  // SQL write per `che` write. It is saved only when it differs from the one before.
+  if (ledger.sql && (events.length || !sameSnapshot(prev, next))) ledger.setMeta(`snap:${key}`, next);
 }
 
 /** Owner memories in `che`: new, superseded (correction), removed — metadata only for removals. */
@@ -715,6 +736,9 @@ function diffOwnerMemories(prev, data) {
   if (!prev) return { next, events }; // first sight: a baseline, never a flood of invented "new" events
   for (const r of records) {
     const before = prev[r.id];
+    // Only a new or newly inactive record is classified: categorize() and the regexes are the cost of every `che`
+    // write, and an owner with thousands of memories paid them for each one on every save (performance, 2026-10-22).
+    if (before && !(before.a && r.active === false)) continue;
     const explicit = ['owner', 'owner_chat', 'explicit_memory', 'owner_approved'].includes(String(r.source || ''));
     const pref = /\b(prefer|favorite|like|love|hate|always|never)\b/i.test(r.text || '');
     const [topic, topicSub] = categorize(r.text);
