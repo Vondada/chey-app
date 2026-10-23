@@ -8,7 +8,7 @@ router, planner or agent. The existing executors stay the executors.
 | Existing system | Where | In the engine |
 |---|---|---|
 | Deterministic chat handlers (~106 `done.source` routes) | `worker.js` chat branches | 17 built-in workflows (`SYSTEM_WORKFLOWS`). Each one owns its handlers' routes, its blocks, its approval gate, its verification and its context scope. An unmapped route is still recorded as `route:<source>`. |
-| Command Center (100 commands) | `command_catalog.js` | One `cmd:<id>` workflow per command |
+| Command Center (103 commands) | `command_catalog.js` | One `cmd:<id>` workflow per command |
 | Saved command workflows | `data.command_workflows`, objective graph | `owner:<id>` workflows, migrated in place (not copied). Each save keeps the version it replaces, and earlier versions can be restored. |
 | Multi-step / slash workflows | `workflowFromWords`, `startCommandWorkflow`, `objective_graph.js` | These still run them: approvals, recovery, retry and pause/resume. "resume my X workflow" calls `setObjectivePaused` / `retryNode`. |
 | REA | `rea_runner.js`, `che_rea` route | `rea_investigation` plus the `cmd:rea-*` commands |
