@@ -31,6 +31,7 @@ import 'che_ui/che_screen_awareness.dart';
 import 'che_ui/che_screen_capture.dart';
 import 'security/che_secret_scan.dart';
 import 'security/che_security_screen.dart';
+import 'security/che_security_visibility.dart';
 import 'security/che_session_store.dart';
 import 'brain/che_brain_ledger_screen.dart';
 import 'workflows/che_workflows_screen.dart';
