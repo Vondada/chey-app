@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
 import '../che_ui/che_chrome_status.dart';
+import '../che_ui/che_foreground.dart';
 import '../che_ui/che_hud.dart';
 
 double? _num(Object? v) => v is num ? v.toDouble() : double.tryParse('${v ?? ''}');
@@ -57,7 +58,10 @@ class _CheCryptoDeskPanelState extends State<CheCryptoDeskPanel> {
   void initState() {
     super.initState();
     _load();
-    _timer = Timer.periodic(widget.refresh, (_) => _load());
+    // No polling while CHE is in the background (stability mission, 2026-10-23).
+    _timer = Timer.periodic(widget.refresh, (_) {
+      if (cheAppInForeground()) unawaited(_load());
+    });
   }
 
   @override
