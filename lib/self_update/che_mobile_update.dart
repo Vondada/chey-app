@@ -25,6 +25,12 @@ class CheInstalledBuild {
     return CheInstalledBuild(version, build);
   }
 
+  /// A device report accompanies only explicit status requests; it is not backend attestation.
+  Map<String, String> chatMetadata() => {
+    'version': version, 'build': build, 'source': 'ios_bundle',
+    'checked_at': DateTime.now().toUtc().toIso8601String(),
+  };
+
   static Future<CheInstalledBuild?> read() async {
     try {
       final raw = await _shell.invokeMapMethod<String, dynamic>('appVersion');

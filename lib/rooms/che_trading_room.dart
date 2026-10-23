@@ -1,5 +1,5 @@
-// The Trading Room in four sections (owner, 2026-10-20, Build 1): CHART, CHE TRADES, STRATEGIES
-// and ACCOUNT. CHART leads with the live market (NQ | MNQ), then the status row, BEST NOW and the
+// The Trading Room in sections (owner, 2026-10-20, Build 1): CHART, CHE TRADES, STRATEGIES
+// ACCOUNT and SIDE BY SIDE (2026-10-23). CHART leads with the live market (NQ | MNQ), then the status row, BEST NOW and the
 // strategy cards with per-timeframe evidence (owner, 2026-10-22); the older market overview is folded. Each section holds panels that already exist; nothing here reads or trades on its
 // own. The Markets tab shows it, and voice ("Open Alpaca chart", "CHE, show EMA trades", "Show
 // strategy progress") opens it as a page on the section asked for. Silent on open.
@@ -20,6 +20,7 @@ import 'che_trading_connections.dart';
 import 'che_trading_intelligence.dart';
 import 'che_trading_ledgers.dart';
 import 'che_trading_research.dart';
+import 'che_trading_side_by_side.dart';
 import '../che_ui/che_hud.dart';
 import '../che_ui/che_theme.dart';
 import 'che_trading_hud.dart';
@@ -27,7 +28,7 @@ import 'che_trading_hud.dart';
 const _gold = CheColors.markets;
 final _stroke = CheColors.stroke;
 
-enum CheTradingSection { chart, setups, cheTrades, strategies, account }
+enum CheTradingSection { chart, setups, cheTrades, strategies, account, compare }
 
 const kTradingSectionLabels = <CheTradingSection, String>{
   CheTradingSection.chart: 'CHART',
@@ -35,6 +36,8 @@ const kTradingSectionLabels = <CheTradingSection, String>{
   CheTradingSection.cheTrades: 'CHE TRADES',
   CheTradingSection.strategies: 'STRATEGIES',
   CheTradingSection.account: 'ACCOUNT',
+  // MY ACCOUNT beside the CHE PAPER ACCOUNT, and the Live Order Preview (owner, 2026-10-23).
+  CheTradingSection.compare: 'SIDE BY SIDE',
 };
 
 /// The section a Worker reply names ("chart", "strategies", ...); chart when unknown.
@@ -43,6 +46,7 @@ CheTradingSection cheTradingSectionNamed(String? name) => switch ((name ?? '').t
       'setups' || 'setup' || 'signals' || 'signal' => CheTradingSection.setups,
       'strategies' || 'strategy' => CheTradingSection.strategies,
       'account' => CheTradingSection.account,
+      'compare' || 'sidebyside' || 'side' => CheTradingSection.compare,
       _ => CheTradingSection.chart,
     };
 
@@ -220,6 +224,8 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
           _details(CheTradingConnectionsPanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, client: p.client)),
           ...widget.accountExtras,
         ];
+      case CheTradingSection.compare:
+        return [_pad(CheSideBySideView(baseUrl: p.baseUrl, headers: p.headers, client: p.client, onRead: widget.onRead))];
     }
   }
 
