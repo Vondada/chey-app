@@ -539,6 +539,9 @@ extension _CheHomeStreaming on _CHEHomeState {
           onPartial(complete.toString());
         }
         if (data['open_view'] == 'trading_chart' && mounted) {
+          // "Set CHE paper balance to 500": the CHE PAPER ACCOUNT opens the change for the owner to confirm.
+          final paperBalance = data['paper_balance'];
+          if (data['source'] == 'che_trading_chart' && paperBalance is num && paperBalance > 0) ChePaperAccountPanel.requestedBalance.value = paperBalance.toDouble();
           unawaited(Navigator.of(context).push(CheTradingRoomPage.route(
             baseUrl: () => cheAgentBaseUrl,
             headers: () => _authHeaders,

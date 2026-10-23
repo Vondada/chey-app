@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:async';
 
 import 'package:chey/rooms/che_trading_chart.dart';
+import 'package:chey/rooms/che_alpaca_paper.dart';
 import 'package:chey/rooms/che_trading_room.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -125,6 +126,10 @@ Future<void> _tap(WidgetTester tester, Finder f) async {
 Finder _chartArea() => find.byWidgetPredicate((w) => w is CustomPaint && w.painter.runtimeType.toString() == '_ChartPainter');
 
 void main() {
+  // The Alpaca tests below need the panel and chart account visible; the hidden-account test turns it off itself.
+  setUp(() => kShowAlpacaPaper = true);
+  tearDown(() => kShowAlpacaPaper = false);
+  alpacaHiddenTests();
   testWidgets('four sections; the chart opens first, silent, with every marker source, feed health and PAPER', (tester) async {
     final s = _Server();
     final spoken = <String>[];
@@ -335,5 +340,24 @@ void main() {
     expect(cheTradingSectionNamed('che_trades'), CheTradingSection.cheTrades);
     expect(cheTradingSectionNamed(null), CheTradingSection.chart);
     expect(cheTradingSectionNamed('setups'), CheTradingSection.setups);
+  });
+}
+
+// Owner (2026-10-23): "I don't want to see the alpaca at all. I just want to see mine and Che's paper trades."
+// The Alpaca PAPER panel and chart account stay in the code behind kShowAlpacaPaper, so restoring them is one line.
+void alpacaHiddenTests() {
+  testWidgets('Trading Room shows no Alpaca panel or chart account; both paper accounts are there', (tester) async {
+    kShowAlpacaPaper = false;
+    final s = _Server();
+    await _pumpRoom(tester, s, section: CheTradingSection.account);
+    expect(find.textContaining('Alpaca'), findsNothing);
+    expect(find.byKey(const Key('che_paper_account_compact')), findsOneWidget);
+    expect(find.byType(CheAlpacaPaperPanel), findsNothing);
+
+    // Rebuild from nothing: initialSection only applies to a new room.
+    await tester.pumpWidget(const SizedBox());
+    await _pumpRoom(tester, s, section: CheTradingSection.chart);
+    expect(find.text('Alpaca PAPER'), findsNothing);
+    expect(find.text('MNQ PAPER'), findsOneWidget);
   });
 }

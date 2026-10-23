@@ -87,7 +87,7 @@ import { evidenceIntent, evidenceReport, evidenceTick } from './trading_evidence
 import { readTrades, tradeDayOf } from './trading_evidence.js';
 import { TRADE_EVIDENCE_SOURCE, lastTrade, readTradeEvidence, speakTradeReplay, tradeBars, tradeEvidenceOf, tradeList, tradeReplayIntent } from './trade_evidence.js';
 import { DAILY_TARGET, EXECUTION_TYPES, VISUAL_SOURCE, auditTrades, compareWindows, currentLeader, dailyEvidence, dailyPnl, filterTrades, historyChart, journalView, lastForwardBar, metricsOf, openPositions, rankStrategies, readSkips, readVisualTrades, replayFrame, speakAudit, speakEvidence, speakCard, speakLeader, speakPnl, tradingVisualIntent } from './trading_visual.js';
-import { cancelCandidates, cancelConfirmation, cancelOrderIntent, chartIntent, chartView, drawIntent, futuresOrderIntent, marketOrderFeedProblem, readDrawings, saveDrawings, speakOrder } from './trading_chart.js';
+import { cancelCandidates, cancelConfirmation, cancelOrderIntent, chartIntent, chartView, drawIntent, futuresOrderIntent, marketOrderFeedProblem, paperAccountIntent, readDrawings, saveDrawings, speakOrder } from './trading_chart.js';
 import { readRithmicCandles, storeRithmicCandles } from './rithmic_dataset.js';
 // A spoken cancel of one Alpaca PAPER order waiting for the owner's yes, or for his pick from a numbered list.
 const CHART_CANCEL_PENDING = 'trading_chart_cancel_pending';
@@ -12688,7 +12688,8 @@ export class CheState extends DurableObject {
           return ndjsonReply(saved ? speakMatrix(saved) : 'The timeframe backtest has not run yet, sir. Say "backtest every strategy on every timeframe" and I will test them on free delayed NQ data. It places no orders.', { source: 'che_trading_matrix' });
         }
         // Forward paper trading by voice (owner, 2026-10-18), answered from the journal only.
-        const live = liveIntent(message);
+        // "Set CHE paper balance to 500" / "show CHE positions" belong to the phone's CHE paper account (chart route below).
+        const live = paperAccountIntent(message) ? null : liveIntent(message);
         if (live && !body.attachment) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can use the Trading Room.', { source: 'che_trading_live', ok: false });
           if (live.kind === 'research') {
@@ -12771,7 +12772,15 @@ export class CheState extends DurableObject {
           const ev = tradeEvidenceOf(trade, await tradeBars(this.ctx.storage, trade));
           return ndjsonReply(speakTradeReplay(ev), { source: TRADE_EVIDENCE_SOURCE, ok: true, model_calls: 0, open_view: 'trade_replay', trade_id: ev.id, replay_supported: ev.replay.supported });
         }
-        const chartAsk = body.attachment || !ownerDevice ? null : (drawIntent(message) || chartIntent(message) || futuresOrderIntent(message));
+        const chartAsk = body.attachment || !ownerDevice ? null : (paperAccountIntent(message) || drawIntent(message) || chartIntent(message) || futuresOrderIntent(message));
+        // The CHE PAPER ACCOUNT is on the iPhone: open it there; a balance change waits for the owner's confirmation on the phone.
+        if (chartAsk?.kind === 'paper_balance' || chartAsk?.kind === 'paper_open') {
+          const amount = chartAsk.amount;
+          const reply = chartAsk.kind === 'paper_balance'
+            ? `Opening the CHE PAPER ACCOUNT with a balance change to $${amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} for you to confirm, sir. Nothing changes until you confirm it on the phone.`
+            : 'Opening the CHE PAPER ACCOUNT positions, sir. It is a simulated account, separate from yours.';
+          return ndjsonReply(reply, { source: 'che_trading_chart', ok: true, model_calls: 0, open_view: 'trading_chart', chart: { section: 'che_trades' }, ...(amount ? { paper_balance: amount } : {}) });
+        }
         if (chartAsk?.kind === 'futures_order') return ndjsonReply(chartAsk.reply, { source: 'che_trading_chart', ok: false, model_calls: 0, order_sent: false });
         if (chartAsk?.kind === 'draw') {
           const account = /^(MNQ|NQ)$/.test(chartAsk.symbol) || (!chartAsk.symbol && chartAsk.drawing.points[0].price > 5000) ? 'futures_paper' : 'alpaca_paper';

@@ -23,6 +23,7 @@ import 'che_trading_ledgers.dart';
 import 'che_trading_research.dart';
 import 'che_trading_side_by_side.dart';
 import '../che_ui/che_hud.dart';
+import '../trading/che_paper_account_panel.dart';
 import '../che_ui/che_screen_awareness.dart';
 import '../che_ui/che_ui_preferences.dart';
 import '../che_ui/che_theme.dart';
@@ -224,6 +225,8 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
         return [_pad(CheSetupBoard(desk: _desk, onRead: widget.onRead))];
       case CheTradingSection.cheTrades:
         return [
+          // CHE's own simulated account on live Rithmic prices (owner, 2026-10-23): balance, positions, trade details.
+          _pad(ChePaperAccountPanel(key: const Key('che_paper_account'), onRead: widget.onRead)),
           _pad(CheLivePaperPanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, onRead: widget.onRead, client: p.client)),
           _pad(CheFyeDraftCard(baseUrl: p.baseUrl, headers: p.headers, client: p.client)),
           _pad(CheTradingLedgersPanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, client: p.client)),
@@ -239,7 +242,10 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
         ];
       case CheTradingSection.account:
         return [
-          _pad(CheAlpacaPaperPanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, client: p.client)),
+          // The CHE paper balance and its controls, beside the broker paper account.
+          _pad(ChePaperAccountPanel(key: const Key('che_paper_account_compact'), onRead: widget.onRead, compact: true)),
+          // Hidden while kShowAlpacaPaper is false (owner, 2026-10-23); the panel and its data path are kept.
+          if (kShowAlpacaPaper) _pad(CheAlpacaPaperPanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, client: p.client)),
           _details(CheTradingConnectionsPanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, client: p.client)),
           ...widget.accountExtras,
         ];

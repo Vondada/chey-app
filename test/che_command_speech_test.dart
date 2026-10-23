@@ -128,9 +128,9 @@ void main() {
     expect(await say('how many YouTube commands need setup'), startsWith('4 of the 11 YouTube commands are not ready. 1. /yt-video: '));
     expect(await say('read them again'), startsWith('4 of the 11 YouTube commands are not ready.'));
     expect(await say('Show me the YouTube commands that need setup'), startsWith('4 of the 11 YouTube commands are not ready.'));
-    expect(await say('which commands are there for trading'), startsWith('Trading: 23 commands.'));
+    expect(await say('which commands are there for trading'), startsWith('Trading: 24 commands.'));
     // A topic in a readiness question is that topic, not the last list.
-    expect(await say('are the trading ones ready?'), startsWith('22 of the 23 Trading commands are ready.'));
+    expect(await say('are the trading ones ready?'), startsWith('23 of the 24 Trading commands are ready.'));
     expect(find.text('/trade-execute'), findsNothing, reason: 'the screen lists only what CHE read: the ready ones');
     expect(await say('which money ones need setup'), 'All 8 Money Management commands are ready.');
     expect(await say('show me 0 YouTube commands'), contains('Say "more" for the next 5.'), reason: 'zero is not a page size');
@@ -146,7 +146,7 @@ void main() {
     che.offline = true;
     final offline = (await say('show me five trading commands'))!;
     expect(offline, startsWith('CHE could not be reached just now, so these states are from when this page last loaded and may be out of date. '
-        'Trading: 23 commands. 1. /trade-open: '));
+        'Trading: 24 commands. 1. /trade-open: '));
   });
 
   testWidgets('Chat: "open your Commands page and show me five commands…" opens Commands and reads states, no model', (tester) async {
