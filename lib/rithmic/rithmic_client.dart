@@ -232,6 +232,10 @@ class RithmicClient implements RithmicMarketFeed {
   final _subscribeWait = Completer<RithmicReply>();
   StreamSubscription<Uint8List>? _incoming;
   bool _confirmed = false;
+  final _closed = Completer<void>();
+
+  /// Completes when the gateway connection ends, for any reason, so the chart can say the feed dropped.
+  Future<void> get done => _closed.future;
 
   @override
   Stream<RithmicLastTrade> get trades => _trades.stream;
@@ -325,6 +329,7 @@ class RithmicClient implements RithmicMarketFeed {
 
   void _onDone() {
     _heartbeat?.cancel();
+    if (!_closed.isCompleted) _closed.complete();
     if (!_loginWait.isCompleted) _loginWait.completeError(StateError('Rithmic closed before the login answer.'));
     log?.call('Rithmic connection closed.');
   }
@@ -346,5 +351,6 @@ class RithmicClient implements RithmicMarketFeed {
     }
     await _incoming?.cancel();
     _incoming = null;
+    if (!_closed.isCompleted) _closed.complete();
   }
 }
