@@ -208,6 +208,10 @@ void main() {
   runApp(const CHEApp());
 }
 
+/// The text scale CHE draws with: the system's accessibility size times CHE's own setting, held to 0.85-2.0 so every
+/// screen keeps its controls reachable (the layouts are tested up to 2.0).
+double cheEffectiveTextScale(TextScaler system, double app) => (system.scale(1) * app).clamp(0.85, 2.0).toDouble();
+
 class CHEApp extends StatefulWidget {
   const CHEApp({super.key});
 
@@ -254,7 +258,9 @@ class _CHEAppState extends State<CHEApp> {
             final mq = MediaQuery.of(context);
             // "Look at my screen" captures from here: every page, sheet and dialog.
             return CheScreenCapture.wrap(MediaQuery(
-              data: mq.copyWith(textScaler: TextScaler.linear(_ui.textScale)),
+              // The iPhone's own text size (Settings > Accessibility > Larger Text) times CHE's Text size setting.
+              // Before 2026-10-23 CHE's setting replaced the system size, so Larger Text did nothing in CHE.
+              data: mq.copyWith(textScaler: TextScaler.linear(cheEffectiveTextScale(mq.textScaler, _ui.textScale))),
               child: child ?? const SizedBox.shrink(),
             ));
           },

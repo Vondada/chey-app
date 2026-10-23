@@ -609,8 +609,10 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
           child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.xs, CheSpace.xs, 0),
-              child: Row(children: [
-                Expanded(
+              // With Larger Text the actions move under the title instead of pushing past the screen edge.
+              child: Wrap(alignment: WrapAlignment.spaceBetween, crossAxisAlignment: WrapCrossAlignment.center, children: [
+                ConstrainedBox(
+                  constraints: const BoxConstraints(minWidth: 160, maxWidth: 260),
                   child: Semantics(
                     header: true,
                     child: Column(
@@ -630,7 +632,7 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
                     ),
                   ),
                 ),
-                ..._actions(),
+                Wrap(crossAxisAlignment: WrapCrossAlignment.center, children: _actions()),
               ]),
             ),
             CheOfficeHeader(today: r.today, connection: r.connection),
@@ -782,7 +784,7 @@ class CheOfficeHeader extends StatelessWidget {
               Row(mainAxisSize: MainAxisSize.min, children: [
                 Icon(Icons.circle, size: 10, color: color),
                 const SizedBox(width: 4),
-                Text(lines[3], style: CheType.label.copyWith(color: color)),
+                Flexible(child: Text(lines[3], style: CheType.label.copyWith(color: color))),
               ]),
             ]),
             const SizedBox(height: 2),

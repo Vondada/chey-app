@@ -41,7 +41,9 @@ class CheVoiceActionList extends StatelessWidget {
         children: [
           for (var i = 0; i < actions.length; i++) ...[
             if (i > 0) const SizedBox(width: CheSpace.sm),
-            Expanded(child: _VoiceActionTile(action: actions[i], compact: true)),
+            Expanded(
+              child: _VoiceActionTile(action: actions[i], compact: true),
+            ),
           ],
         ],
       );
@@ -78,7 +80,11 @@ class _ActionBadge extends StatelessWidget {
           ),
         ],
       ),
-      child: Icon(action.icon, size: compact ? 14 : 16, color: CheColors.accent),
+      child: Icon(
+        action.icon,
+        size: compact ? 14 : 16,
+        color: CheColors.accent,
+      ),
     );
   }
 }
@@ -93,7 +99,8 @@ class _VoiceActionTile extends StatelessWidget {
     final label = '${action.number}. ${action.label}';
     return Semantics(
       button: true,
-      label: action.semantics ?? 'Voice action ${action.number}: ${action.label}',
+      label:
+          action.semantics ?? 'Voice action ${action.number}: ${action.label}',
       excludeSemantics: true,
       child: Material(
         color: Colors.transparent,
@@ -103,13 +110,18 @@ class _VoiceActionTile extends StatelessWidget {
             action.onTap();
           },
           borderRadius: BorderRadius.circular(CheRadius.md),
+          // A minimum height, not a fixed one: with Larger Text the label needs more room (it overflowed).
           child: Ink(
-            height: compact ? 84 : 54,
-            padding: EdgeInsets.symmetric(horizontal: compact ? 6 : 14, vertical: compact ? 6 : 0),
+            padding: EdgeInsets.symmetric(
+              horizontal: compact ? 6 : 14,
+              vertical: compact ? 6 : 0,
+            ),
             decoration: BoxDecoration(
               color: CheColors.surfaceHi,
               borderRadius: BorderRadius.circular(CheRadius.md),
-              border: Border.all(color: CheColors.accent.withValues(alpha: 0.35)),
+              border: Border.all(
+                color: CheColors.accent.withValues(alpha: 0.35),
+              ),
               boxShadow: [
                 BoxShadow(
                   color: CheColors.accent.withValues(alpha: 0.10),
@@ -117,35 +129,45 @@ class _VoiceActionTile extends StatelessWidget {
                 ),
               ],
             ),
-            child: compact
-                ? Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      _ActionBadge(action: action, compact: true),
-                      const SizedBox(height: 4),
-                      // Compact tiles wrap the label instead of cutting it off ("1. O…").
-                      Text(
-                        label,
-                        maxLines: 2,
-                        textAlign: TextAlign.center,
-                        style: CheType.label.copyWith(fontSize: 12, color: CheColors.text),
-                      ),
-                    ],
-                  )
-                : Row(
-                    children: [
-                      _ActionBadge(action: action, compact: false),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minHeight: compact ? 72 : 54),
+              child: compact
+                  ? Column(
+                      mainAxisSize: MainAxisSize.min,
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        _ActionBadge(action: action, compact: true),
+                        const SizedBox(height: 4),
+                        // Compact tiles wrap the label instead of cutting it off ("1. O…").
+                        Text(
                           label,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: CheType.label.copyWith(fontSize: 15, color: CheColors.text),
+                          maxLines: 2,
+                          textAlign: TextAlign.center,
+                          style: CheType.label.copyWith(
+                            fontSize: 12,
+                            color: CheColors.text,
+                          ),
                         ),
-                      ),
-                    ],
-                  ),
+                      ],
+                    )
+                  : Row(
+                      children: [
+                        _ActionBadge(action: action, compact: false),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            label,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: CheType.label.copyWith(
+                              fontSize: 15,
+                              color: CheColors.text,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+            ),
           ),
         ),
       ),
