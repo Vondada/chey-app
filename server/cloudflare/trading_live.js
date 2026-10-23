@@ -12,7 +12,8 @@ import {
   evaluateWalkForward, intradayContext, newPortfolio, readTrades, stepPortfolio, summarize, validateTradeRecord, tradeDayOf,
 } from './trading_evidence.js';
 import { makeEntryGate, readControls } from './trading_controls.js';
-import { governedGate, pausedUnits, runGovernor } from './strategy_governor.js';
+import { decisionsEvent, governedGate, pausedUnits, runGovernor, tradeDecisions } from './strategy_governor.js';
+import { queueRoomEvent } from './room_events.js';
 import { MAX_DELAYED_BAR_AGE_MS, readDelayedTraining, resetDelayedTraining, runDelayedTraining } from './trading_delayed_training.js';
 
 export const LIVE_STATE = 'live_paper_state';
@@ -223,6 +224,7 @@ export async function liveTick(storage, { fetcher = fetch, now = Date.now(), for
         const gate = governedGate(makeEntryGate(controls, { realized_today: realizedToday, open_positions: portfolios.filter((pf) => pf.open || pf.pending).length }), await pausedUnits(storage));
         const closed = [];
         run.missed_windows = portfolios.filter((pf) => pf.last_bar_time && pf.last_bar_time < bars[0].t).length;
+        const before = new Map(portfolios.map((pf) => [pf.key, pf.last_bar_time]));
         for (const pf of portfolios) {
           pf.feed = feedOf(feed);
           // A size change applies from the next entry, never to an open position or a placed order.
@@ -232,6 +234,11 @@ export async function liveTick(storage, { fetcher = fetch, now = Date.now(), for
           closed.push(...stepPortfolio(pf, bars, ctx, gate, { allowEntries, blockReason }));
           run.signals = (run.signals || 0) + pf.counts.signals - before;
         }
+        // This pass's enter and skip decisions, one bounded Brain event (the full list stays in each portfolio).
+        const fresh = tradeDecisions(portfolios.map((pf) => ({ ...pf, signals: (pf.signals || []).filter((x) => x.time > (before.get(pf.key) || '')), skips: (pf.skips || []).filter((x) => x.time > (before.get(pf.key) || '')) })), { limit: 500 });
+        run.decisions = { entered: fresh.filter((x) => x.decision === 'taken').length, skipped: fresh.filter((x) => x.decision === 'skipped').length };
+        const brainEvent = decisionsEvent(fresh, run.at);
+        if (brainEvent) await queueRoomEvent(storage, brainEvent).catch(() => false);
         const valid = [];
         const rejected = [];
         for (const t of closed) {

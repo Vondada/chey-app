@@ -43,12 +43,12 @@ Half of the research budget is spread evenly over every defined strategy, so non
       "forward_paper_allowed": false,
       "reason": "Expectancy −0.21R per trade on 41 independent trades; even the optimistic 95% bound (−0.04R) is below zero.",
       "stats": { "trades": 41, "raw_trades": 118, "wins": 13, "losses": 28, "win_rate": 31.71, "avg_r": -0.21, "expectancy_r": -0.21,
-                 "expectancy_r_upper": -0.04, "profit_factor": 0.71, "max_drawdown_r": 9.4, "fees_usd": 225.5, "max_consecutive_losses": 7,
+                 "expectancy_r_upper": -0.04, "profit_factor": 0.71, "max_drawdown_r": 9.4, "fees_usd": 164, "slippage_usd": 41, "spread_usd": 20.5, "costs_usd": 225.5, "max_consecutive_losses": 7,
                  "net_pnl": -812.5 },
       "loss_causes": { "cost_drag_r": 0.31, "losers_after_1r_in_favour": 6, "losers_immediately_against": 11, "same_bar_stop_and_target": 1,
                        "time_exits": 4, "gross_expectancy_r": 0.1 },
       "by_session": { "NY AM": { "trades": 20, "expectancy_r": -0.1 } },
-      "by_condition": { "uptrend|high-vol": { "trades": 9, "expectancy_r": -0.6 } },
+      "by_regime": { "above-50d|high-vol": { "trades": 9, "expectancy_r": -0.6 } },
       "revalidation": { "required": "30+ out-of-sample trades with expectancy > 0, ≥60% profitable walk-forward folds, look-ahead audit passed", "met": false, "research": { "oos_trades": 190, "oos_expectancy_r": -0.2, "folds_positive": 1, "folds_total": 4, "look_ahead": "passed" } }
     }
   ],
@@ -77,3 +77,7 @@ Half of the research budget is spread evenly over every defined strategy, so non
 `POST /api/trading/governor` with `{ "action": "settings", "settings": { "z_pause": 1.96 } }` changes the settings, and `{ "action": "resume" | "pause", "strategy": "…", "market": "MNQ", "timeframe": "5m", "reason": "…" }` records an owner override. An owner resume is logged as `by: "owner"`. The governor re-pauses at the next run if the evidence still says so, and logs that too.
 
 The governor runs inside the forward paper tick (`trading_live.liveTick`), before entries are allowed. A paused strategy's setups are journalled as skipped with the reason `the strategy governor paused it from forward paper: …`.
+
+## Brain
+
+Every governor decision is queued as a Trading-room Brain event (`room_events.queueRoomEvent`, kind `governor`). The event carries the reason, the evidence numbers and `refs.decision` / `refs.route`, so the Brain can open the log entry. Each forward-paper pass with new decisions queues one bounded `trade_decision` event, listing up to 12 lines of entered and skipped setups with their reasons; `refs.route` points to the full list. Both are status `verified`, because they restate CHE's own records.

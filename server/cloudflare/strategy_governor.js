@@ -7,6 +7,7 @@
 // or reject is appended to a log with its evidence. Nothing here can reach a broker. See docs/CHE_STRATEGY_GOVERNOR.md.
 import { CONTRACTS, COSTS, INTRADAY_CANDIDATES, readTrades, validateTradeRecord } from './trading_evidence.js';
 import { MIN_CLOSED_TRADES, queueJob, readUnits } from './trading_research.js';
+import { queueRoomEvent } from './room_events.js';
 
 export const GOV_SETTINGS = 'gov_settings';
 export const GOV_STATE = 'gov_state';
@@ -105,7 +106,11 @@ export function performance(trades, { z = DEFAULT_GOV_SETTINGS.z_pause } = {}) {
     expectancy_r_lower: se == null ? null : r4(mean - z * se),
     profit_factor: gl ? r2(gw / gl) : null,
     max_drawdown_r: r4(dd),
-    fees_usd: r2(trades.reduce((a, t) => a + costOf(t), 0)),
+    // Costs kept apart: slippage (execution) is not a fee, and a strategy can lose to either.
+    fees_usd: r2(trades.reduce((a, t) => a + (t.costs ? t.costs.commissions + t.costs.fees : 0), 0)),
+    slippage_usd: r2(trades.reduce((a, t) => a + (t.costs?.slippage || 0), 0)),
+    spread_usd: r2(trades.reduce((a, t) => a + (t.costs?.spread || 0), 0)),
+    costs_usd: r2(trades.reduce((a, t) => a + costOf(t), 0)),
     max_consecutive_losses: maxStreak,
     current_consecutive_losses: streak,
     net_pnl: r2(trades.reduce((a, t) => a + t.net_pnl, 0)),
@@ -275,11 +280,44 @@ export async function queueAllocationFollowUp(storage, now = Date.now(), { top =
 
 // ─── The run ────────────────────────────────────────────────────────────────
 
+const ACTION_WORDS = { pause: 'paused from forward paper', resume: 'resumed in forward paper', watch: 'put on watch', 'clear-watch': 'taken off watch', modify: 'settings changed', reject: 'rejected' };
+
+/** A governor decision as a Brain event (Trading room, kind governor): what, why, and the log entry that proves it. */
+export function governorEvent(d) {
+  const who = d.strategy === '*' ? 'Strategy governor' : `${nameOf(d.strategy)} (${d.market} ${d.timeframe})`;
+  const st = d.evidence?.stats;
+  return {
+    room: 'trading', kind: 'governor', key: `governor:${d.id}`,
+    title: `${who}: ${ACTION_WORDS[d.action] || d.action}${d.by === 'owner' ? ' by the owner' : ''}`.slice(0, 200),
+    body: `${d.reason}${st ? ` Evidence: ${st.trades} independent forward-paper trades, expectancy ${st.expectancy_r}R, win rate ${st.win_rate}%, profit factor ${st.profit_factor ?? 'n/a'}, fees $${st.fees_usd}, slippage $${st.slippage_usd}.` : ''} Paper only; live trading stays off; no result promises future profit.`,
+    status: 'verified', evidence: [`governor decision ${d.id}`], refs: { decision: d.id, route: '/api/trading/governor/decisions', strategy: d.strategy }, at: d.at,
+  };
+}
+
 async function appendDecision(storage, d) {
   let id = `${GOV_DECISION_PREFIX}${d.at}:${unitKey(d)}`;
   for (let i = 1; (await storage.get(id)) !== undefined; i++) id = `${GOV_DECISION_PREFIX}${d.at}:${unitKey(d)}:${i}`;
   await storage.put(id, { id, ...d });
+  // The Brain shows every decision with its provenance; the log above stays the record of truth.
+  await queueRoomEvent(storage, governorEvent({ id, ...d })).catch(() => false);
   return id;
+}
+
+/**
+ * New enter and skip decisions from one forward-paper pass as one Brain event (bounded: one per pass, at most 12 lines),
+ * so the Brain can open them without flooding its queue. The full list stays at /api/trading/governor/trades.
+ */
+export function decisionsEvent(items, at) {
+  if (!items.length) return null;
+  const entered = items.filter((x) => x.decision === 'taken');
+  const skipped = items.filter((x) => x.decision === 'skipped');
+  const lines = items.slice(0, 12).map((x) => `${x.time} ${nameOf(x.strategy)} ${x.side}: ${x.decision === 'taken' ? 'entered' : 'skipped'} (${String(x.why).slice(0, 140)})`);
+  return {
+    room: 'trading', kind: 'trade_decision', key: `decisions:${at}`,
+    title: `Forward paper: ${entered.length} setup${entered.length === 1 ? '' : 's'} entered, ${skipped.length} skipped`,
+    body: `${lines.join('\n')}${items.length > 12 ? `\n…and ${items.length - 12} more.` : ''}\nPaper only; no broker order.`,
+    status: 'verified', evidence: [`forward paper run ${at}`], refs: { route: '/api/trading/governor/trades', run: at }, at,
+  };
 }
 
 export async function readDecisions(storage, { limit = 100 } = {}) {
@@ -321,7 +359,8 @@ export async function runGovernor(storage, { now = Date.now(), trades = null, un
     strategies.push({
       strategy, name: nameOf(strategy), market, timeframe, status: v.status, forward_paper_allowed: v.status !== 'paused', reason: v.reason,
       stats: { ...stats, raw_trades: ind.raw }, loss_causes: lossCauses(ind.trades),
-      by_session: groupBy(ind.trades, (t) => t.session || 'unknown', { z: settings.z_pause }), by_condition: groupBy(ind.trades, conditionKey, { z: settings.z_pause }),
+      // Regime = the market condition recorded when the signal formed (50-bar trend × volatility), never inferred later.
+      by_session: groupBy(ind.trades, (t) => t.session || 'unknown', { z: settings.z_pause }), by_regime: groupBy(ind.trades, conditionKey, { z: settings.z_pause }),
       revalidation: reval, since: prior?.status === v.status ? prior.since : asOf,
     });
     const priorStatus = prior?.status || 'gathering';

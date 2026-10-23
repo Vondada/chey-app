@@ -4,6 +4,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { COSTS, readTrades } from './trading_evidence.js';
+import { ROOM_EVENTS_KEY } from './room_events.js';
+import { roomEventRecord } from './brain_rooms.js';
 import { liveTick, readLivePortfolios, setLivePaper } from './trading_live.js';
 import { matrixState } from './trading_research.js';
 import {
@@ -64,7 +66,10 @@ test('statistics: expectancy with a one-sided bound, profit factor, drawdown, fe
   assert.ok(Math.abs(p.expectancy_r - (10 * 2 - 30 * 1.275) / 40) < 1e-3);
   assert.ok(p.expectancy_r_upper < 0, 'the 95% upper bound is below zero');
   assert.equal(p.max_consecutive_losses, 3);
-  assert.equal(p.fees_usd, 40 * 5.5);
+  assert.equal(p.fees_usd, 40 * 4, 'commissions and exchange fees');
+  assert.equal(p.slippage_usd, 40 * 1, 'slippage is tracked apart from fees');
+  assert.equal(p.spread_usd, 40 * 0.5);
+  assert.equal(p.costs_usd, 40 * 5.5);
   assert.ok(p.profit_factor < 1);
   assert.equal(streakProbability(1, 1, 0.5), 0.5);
   assert.ok(Math.abs(streakProbability(2, 2, 0.5) - 0.25) < 1e-12);
@@ -131,6 +136,15 @@ test('the run pauses a losing strategy once, logs it with evidence, and never us
   assert.equal(log2[0].action, 'resume');
   assert.equal(log2[0].evidence.revalidation.met, true);
   assert.match(speakGovernor(view), /paused from forward paper: trend pullback to the 20 EMA.*Live trading stays off/);
+  assert.ok(view.strategies[0].by_regime['above-50d|normal-vol'], 'performance by market regime');
+  // Every decision reaches the Brain as a Trading-room record with its provenance.
+  const events = storage.saved.get(ROOM_EVENTS_KEY).filter((e) => e.kind === 'governor');
+  assert.deepEqual(events.map((e) => e.title), ['trend pullback to the 20 EMA (MNQ 5m): paused from forward paper', 'trend pullback to the 20 EMA (MNQ 5m): resumed in forward paper']);
+  const rec = roomEventRecord(events[0]);
+  assert.equal(rec.source.room, 'trading');
+  assert.equal(rec.source.refs.route, '/api/trading/governor/decisions');
+  assert.match(rec.body, /Evidence: governor decision gd:/);
+  assert.match(events[0].body, /no result promises future profit/);
 });
 
 test('loss causes, recurring losing setups and repeated mistakes come from the records', () => {
@@ -210,6 +224,10 @@ test('in the real forward-paper tick a paused strategy is not traded and its set
   assert.equal((await sweep(storage)).length, 0, 'the paused strategy did not trade forward paper');
   const items = tradeDecisions(await readLivePortfolios(storage), { strategy: 'pdhl-sweep-5m' });
   assert.ok(items.some((x) => x.decision === 'skipped' && /strategy governor paused it from forward paper: test pause/.test(x.why)));
+  // Each pass's enter and skip decisions reach the Brain as one bounded event.
+  const brain = storage.saved.get(ROOM_EVENTS_KEY).filter((e) => e.kind === 'trade_decision');
+  assert.ok(brain.length >= 1);
+  assert.match(brain.map((e) => e.body).join('\n'), /previous-day high\/low sweep long: skipped \(blocked: the strategy governor paused it/);
 });
 
 test('matrix: fewer than 15 unseen trades is "Not enough unseen data", not Weak', () => {
