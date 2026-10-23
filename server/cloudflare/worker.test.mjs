@@ -140,6 +140,14 @@ test('"what changed in commit X and what can I test on my iPhone" gets the commi
       assert.match(spoken, /actions\/runs\/39894698904/);
       history.push({ role: 'user', content: message }, { role: 'assistant', content: 'Commit f37bc3ac9315 was checked.' });
     }
+    // The Brain opens the same receipt by its stable id; a guest cannot.
+    const get = (path, tok = '') => worker.fetch(new Request('https://che.example' + path, { headers: tok ? { Authorization: 'Bearer ' + tok } : {} }), env);
+    const ev = await (await get('/api/evidence/commit/' + sha, token)).json();
+    assert.equal(ev.id, 'commit:' + sha);
+    assert.equal(ev.commit.sha, sha);
+    assert.equal(ev.backend.live, 'live');
+    assert.ok(['verified', 'partial'].includes(ev.status));
+    assert.ok([401, 403].includes((await get('/api/evidence/commit/' + sha)).status));
     // A real status question still gets the status route.
     const status = await (await post('/api/chat', { message: 'What version of CHE am I running?', history: [] }, token)).text();
     assert.match(status, /che_runtime_status/);

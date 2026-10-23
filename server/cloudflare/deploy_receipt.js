@@ -155,7 +155,7 @@ async function shorebirdPublished(env, run, fetcher) {
 export async function commitReceipt(env, { ref = 'main', changes = true, verify = true, runtime = {}, client = null, fetcher = fetch } = {}) {
   const evidence = [];
   const missing = [];
-  const receipt = { ref, commit: null, changes: null, testable: null, backend: null, iphone: null, evidence, missing };
+  const receipt = { id: null, ref, commit: null, changes: null, testable: null, backend: null, iphone: null, evidence, missing };
   if (!ref) {
     missing.push('I could not tell which commit you mean: say its SHA, or "the latest commit".');
     return receipt;
@@ -168,6 +168,8 @@ export async function commitReceipt(env, { ref = 'main', changes = true, verify 
   const sha = String(c.data?.sha || '');
   const message = String(c.data?.commit?.message || '');
   const [title, ...bodyLines] = message.split('\n');
+  // Stable evidence id the Brain and Chat link to: GET /api/evidence/commit/<sha> rebuilds this receipt.
+  receipt.id = `commit:${sha}`;
   receipt.commit = { sha, title: title.trim(), date: String(c.data?.commit?.committer?.date || c.data?.commit?.author?.date || ''), url: String(c.data?.html_url || '') };
   if (receipt.commit.url) evidence.push({ claim: `commit ${shortSha(sha)}`, url: receipt.commit.url });
 

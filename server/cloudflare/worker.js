@@ -7391,6 +7391,17 @@ export class CheState extends DurableObject {
         });
       }
 
+      // Coding evidence (owner, 2026-10-23): the Brain and Chat open a commit's receipt by its stable id
+      // `commit:<sha>`: the commit, its PR, the deploy run, the running Worker's tag and the Shorebird/IPA runs,
+      // each with its link, and "missing" naming whatever could not be read. Rebuilt from GitHub, never stored.
+      const commitEvidence = /^\/api\/evidence\/commit\/([0-9a-f]{7,40})$/i.exec(path);
+      if (commitEvidence && request.method === 'GET') {
+        if (!ownerDevice) return ownerOnly();
+        const receipt = await commitReceipt(this.env, { ref: commitEvidence[1].toLowerCase(), runtime: runtimeVersion(this.env), fetcher: fetch })
+          .catch(() => ({ id: null, commit: null, evidence: [], missing: ['The commit lookup failed inside CHE; nothing is verified.'] }));
+        return json({ ...receipt, status: receipt.commit ? (receipt.missing.length ? 'partial' : 'verified') : 'unavailable' }, receipt.commit ? 200 : 404);
+      }
+
       // The phone's rooms report what happened there (owner, Build 2, 2026-10-20): a track played, a Help
       // explanation or walkthrough, a screen looked at. Owner device only; an allowlisted kind per room, a
       // stable key (a retry is never a second record), bounded safe text, and for the screen only its name and
