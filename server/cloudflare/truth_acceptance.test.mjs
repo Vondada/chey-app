@@ -119,6 +119,17 @@ test('7 and 8: know-versus-guess and evidence are answered from records and rece
   assert.doesNotMatch(evidence.reply, /verified them on GitHub/);
 });
 
+test('Codex review (#509): a requested story keeps its narration, and "did you save the file?" is not a memory-receipt question', async () => {
+  const story = await owner({ model: () => 'I read the book by candlelight and finished the last chapter at dawn.' });
+  const out = await story.say('Write a short first-person story about reading a book.');
+  assert.match(out.reply, /read the book by candlelight/);
+  assert.doesNotMatch(out.reply, /I have not read that book/);
+  const file = await owner();
+  const asked = await file.say('Did you save the file?');
+  assert.notEqual(asked.meta.source, 'che_memory_receipt');
+  assert.doesNotMatch(asked.reply, /^No, sir\. I have no confirmed memory write/);
+});
+
 test('a lie that reaches the model path is removed and lands in the audit ledger without the reply text', async () => {
   const che = await owner({ model: () => 'Claude merged PR #999 into main and the Worker was deployed. Also the sky is blue.' });
   const out = await che.say('Tell me something about the weather today in one line please.');

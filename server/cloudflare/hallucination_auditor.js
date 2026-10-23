@@ -109,8 +109,11 @@ function labelClaim(kind, sentence, evidence, now) {
  * A null evidence makes every claim UNVERIFIED (fail closed).
  * Returns { text, outcome, claims, entries }: outcome is 'none' | 'pass' | 'corrected' | 'blocked'.
  */
-export function auditReply(reply, { evidence = null, requestId = '', now = Date.now() } = {}) {
+export function auditReply(reply, { evidence = null, requestId = '', now = Date.now(), fiction = false } = {}) {
   const source = String(reply || '');
+  // A story, poem or role-play the owner asked for narrates in its own voice ("I read the book by candlelight").
+  // The older guards exempt it through storyRequested(message); the auditor keeps that same exemption.
+  if (fiction) return { text: source, outcome: 'none', claims: [], entries: [] };
   const proof = evidence || {};
   const kept = [];
   const corrections = [];
@@ -121,19 +124,26 @@ export function auditReply(reply, { evidence = null, requestId = '', now = Date.
     const hits = /\?\s*$/.test(sentence) || NEGATED.test(sentence) ? [] : CLAIMS.filter((c) => c.re.test(sentence));
     if (!hits.length) { kept.push(sentence); continue; }
     sawClaim = true;
-    const kind = hits[0].kind;
-    const { label, refs } = labelClaim(kind, sentence, proof, now);
-    claims.push({ kind, label });
-    const entry = { at: new Date(now).toISOString(), request_id: String(requestId || ''), claim_type: kind, evidence_refs: refs.slice(0, 5), verdict: label, contradiction: label === 'CONTRADICTED' ? kind : '', correction: '', outcome: '' };
-    if (label === 'VERIFIED') { kept.push(sentence); entry.outcome = 'kept'; }
-    else if (label === 'INFERRED') { kept.push(`${sentence} (inference, not verified)`); entry.outcome = 'kept_as_inference'; }
-    else {
-      const line = CORRECTION[kind];
-      if (!corrections.includes(line)) corrections.push(line);
-      entry.correction = line;
-      entry.outcome = 'removed';
+    // Every claim type in the sentence is judged: one receipt cannot carry an unrelated claim in the same sentence.
+    const verdicts = hits.map(({ kind }) => ({ kind, ...labelClaim(kind, sentence, proof, now) }));
+    let removed = false;
+    let inferred = false;
+    for (const { kind, label, refs } of verdicts) {
+      claims.push({ kind, label });
+      const entry = { at: new Date(now).toISOString(), request_id: String(requestId || ''), claim_type: kind, evidence_refs: refs.slice(0, 5), verdict: label, contradiction: label === 'CONTRADICTED' ? kind : '', correction: '', outcome: '' };
+      if (label === 'VERIFIED') entry.outcome = 'kept';
+      else if (label === 'INFERRED') { inferred = true; entry.outcome = 'kept_as_inference'; }
+      else {
+        const line = CORRECTION[kind];
+        if (!corrections.includes(line)) corrections.push(line);
+        entry.correction = line;
+        entry.outcome = 'removed';
+        removed = true;
+      }
+      entries.push(entry);
     }
-    entries.push(entry);
+    if (removed) continue;
+    kept.push(inferred ? `${sentence} (inference, not verified)` : sentence);
   }
   if (!sawClaim) return { text: source, outcome: 'none', claims, entries };
   const removed = entries.some((e) => e.outcome === 'removed');
@@ -165,7 +175,9 @@ export async function auditEvidenceFrom(storage, { executions = [], prices = [],
 // "Did you save that memory?" and "What do you know versus what are you guessing?" are questions about
 // CHE's own evidence. A model can only guess at the answer, so these read the receipts and the ledger.
 export const MEMORY_CLAIM_MS = 30 * 60_000;
-const MEMORY_SAVED_ASK = /^(?:did|have) you (?:actually |really )?(?:save|saved|store|stored|remember|remembered|keep|kept) (?:that|this|it|the|my)\b[^?]{0,40}?(?:memory|note|fact|that|this|it)?\s*\??$/i;
+// The object must be a memory ("that memory", "my notes") or a bare pronoun for the last thing said. "Did you save
+// the file?" or "my document" is about a file, not CHE's memory, and is answered elsewhere.
+const MEMORY_SAVED_ASK = /^(?:did|have) you (?:actually |really )?(?:save|saved|store|stored|remember|remembered|keep|kept) (?:(?:that|this|it)(?: (?:memory|note|fact|one))?|(?:the|my|that|this|those|these) (?:last |latest |new |recent )?(?:memory|memories|note|notes|fact|facts))\s*\??$/i;
 const KNOW_VS_GUESS_ASK = /\bwhat do you (?:actually |really )?know\b.{0,30}\b(?:vers(?:us|es)|vs\.?|compared (?:to|with)|and what (?:are you|do you))\b.{0,30}\b(?:guess\w*|assum\w*|infer\w*|think\w*)|\bwhat are you (?:just )?(?:guessing|assuming|inferring)\b|\bwhat do you know for (?:sure|certain)\b/i;
 const plain = (m) => String(m || '').trim().replace(/^(?:che|chey|hey che|okay|ok|so|sir)[,\s]+/i, '').replace(/[,\s]+sir\s*\??$/i, '?');
 

@@ -108,6 +108,26 @@ test('hedged wording is INFERRED, never upgraded to verified', () => {
   assert.match(out.text, /\(inference, not verified\)/);
 });
 
+test('a requested story keeps its first-person narration (Codex review, #509)', () => {
+  const story = 'I read the book by candlelight. Then I merged the PR in my dream.';
+  const out = auditReply(story, { evidence: {}, now: NOW, fiction: true });
+  assert.equal(out.outcome, 'none');
+  assert.equal(out.text, story);
+  assert.deepEqual(out.entries, []);
+  assert.equal(auditReply(story, { evidence: {}, now: NOW }).outcome, 'blocked', 'the same text outside a story is still audited');
+});
+
+test('every claim type in one sentence is judged: a deploy receipt cannot carry a live-price claim (Codex review, #509)', () => {
+  const out = auditReply('The Worker was deployed and the live price is 20100.', { evidence: { deploys: [{ id: 'deployed:f00', sha: 'f00' }], prices: [] }, now: NOW });
+  assert.equal(out.outcome, 'blocked');
+  assert.deepEqual(out.claims.map((c) => `${c.kind}:${c.label}`).sort(), ['live_price:UNVERIFIED', 'worker_deployed:VERIFIED']);
+  assert.doesNotMatch(out.text, /live price is 20100/);
+  assert.match(out.text, /cannot give a live price/);
+  assert.equal(out.entries.length, 2, 'both claims are in the ledger');
+  const both = auditReply('The Worker was deployed and the live price is 20100.', { evidence: { deploys: [{ id: 'deployed:f00', sha: 'f00' }], prices: [{ id: 'p', live: true, delayed: false, at: new Date(NOW).toISOString() }] }, now: NOW });
+  assert.equal(both.outcome, 'pass');
+});
+
 test('denials, questions and plain facts are not claims', () => {
   for (const text of ['I did not merge the PR.', 'Did Claude merge the PR?', 'The weather is mild today.', 'I cannot verify a deploy from here.']) {
     const out = auditReply(text, { evidence: {}, now: NOW });
@@ -171,7 +191,9 @@ import { knowVsGuessQuestion, knowVsGuessReply, memorySavedQuestion, memorySaved
 
 test('"Did you save that memory?" is recognised in the owner\'s phrasings and nothing else', () => {
   for (const q of ['Did you save that memory?', 'did you save that?', 'Have you stored that memory, sir?', 'CHE, did you remember that?', 'Did you actually save it?']) assert.equal(memorySavedQuestion(q), true, q);
-  for (const q of ['Save that memory.', 'What did you save?', 'Did you save money on the order?', 'Remember my favorite drink is Sprite']) assert.equal(memorySavedQuestion(q), false, q);
+  for (const q of ['Did you save my notes?', 'Did you keep that fact?']) assert.equal(memorySavedQuestion(q), true, q);
+  // Codex review (#509): a file or document is not CHE's memory, so these are not memory-receipt questions.
+  for (const q of ['Save that memory.', 'What did you save?', 'Did you save money on the order?', 'Remember my favorite drink is Sprite', 'Did you save the file?', 'Did you save my document?', 'Did you save the draft to Drive?']) assert.equal(memorySavedQuestion(q), false, q);
 });
 
 test('a memory_saved receipt in the window answers yes with the record; none answers no', async () => {

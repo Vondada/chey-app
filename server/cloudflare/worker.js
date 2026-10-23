@@ -14415,13 +14415,13 @@ export class CheState extends DurableObject {
         // Hallucination auditor (hallucination_auditor.js): each completion claim must match a receipt from this request.
         // An unreadable evidence list fails closed. The ledger keeps ids, labels and outcomes, never the reply text.
         try {
-          const audit = auditReply(reply, { evidence: await auditEvidenceFrom(this.ctx.storage, { executions: skillResults.map((r) => r.execution_receipt) }), requestId: auditRequestId });
+          const audit = auditReply(reply, { evidence: await auditEvidenceFrom(this.ctx.storage, { executions: skillResults.map((r) => r.execution_receipt) }), requestId: auditRequestId, fiction: storyRequested(rawMessage) });
           if (audit.outcome === 'corrected' || audit.outcome === 'blocked') console.log('CHE hallucination auditor', audit.outcome, JSON.stringify(audit.claims).slice(0, 400));
           reply = audit.text;
           await recordAudit(this.ctx.storage, [...guardRemovals, ...audit.entries]);
         } catch (error) {
           console.log('CHE hallucination auditor unavailable', error?.message || error);
-          if (claimKindsIn(reply).length) reply = auditReply(reply, { evidence: null, requestId: auditRequestId }).text;
+          if (claimKindsIn(reply).length) reply = auditReply(reply, { evidence: null, requestId: auditRequestId, fiction: storyRequested(rawMessage) }).text;
           await recordAudit(this.ctx.storage, guardRemovals).catch(() => null);
         }
         // A model cannot see its own routing: "the engine was CHE itself" becomes this reply's real engine (soul.js).
