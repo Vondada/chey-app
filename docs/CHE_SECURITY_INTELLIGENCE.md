@@ -82,3 +82,7 @@ it does not make CHE unhackable, and CHE never says it does.
   existing outbound call through it is the Capability Engine's work.
 - **Advisories.** The list is small and built in. It is not a live CVE feed.
 - **Deploy comparison.** It needs `CHE_GITHUB_TOKEN` and the deploy job's version tag.
+
+## Security Core
+
+The generic engines (secret scanning, target identity, tool access, malware and dependency review) now live in the portable Security Core; this module is CHE's adapter over it. See docs/CHE_SECURITY_CORE.md.

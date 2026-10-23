@@ -29,7 +29,8 @@ export const CATEGORIES = Object.freeze({
   'Coding': ['CHE Code', 'Repositories', 'REA', 'Engineering'],
   'Legal': ['Contracts', 'Copyright', 'Regulation', 'Jurisdictions'],
   'Health': ['Symptoms', 'Medications', 'Labs', 'Fitness'],
-  'Security': ['Malware', 'Authentication', 'Repository Security', 'Threat Detection', 'Secrets'],
+  // The last five are the Security Core's Brain categories (security_core/brain.js, mapped in security_core_che.js).
+  'Security': ['Malware', 'Authentication', 'Repository Security', 'Threat Detection', 'Secrets', 'Incidents', 'Policies', 'Access', 'Devices', 'Simulations'],
   'Business': ['Clients', 'Finance', 'Marketing', 'Opportunities'],
   'Create': ['Rendering', 'Templates', 'Writing', 'Media'],
   'Video': ['Rendering', 'Editing', 'YouTube'],
