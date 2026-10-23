@@ -14,6 +14,7 @@ import 'package:http/http.dart' as http;
 import '../che_account_bridge.dart';
 import 'che_cyber_world.dart';
 import 'che_security_panels.dart';
+import 'che_security_visibility.dart';
 
 typedef CheBiometricCheck = Future<bool> Function(String reason);
 
@@ -93,10 +94,16 @@ const _stateColors = {
 };
 
 class CheSecurityScreen extends StatefulWidget {
-  const CheSecurityScreen({super.key, required this.client, this.onSpeak, this.onListen});
+  const CheSecurityScreen({super.key, required this.client, this.onSpeak, this.onListen, this.initialSection, this.onOpenAgent});
   final CheSecurityClient client;
   final ValueChanged<String>? onSpeak;
   final VoidCallback? onListen;
+
+  /// A visibility category to open once loaded ("agents", "threats", …), from "open security access" by voice.
+  final String? initialSection;
+
+  /// Opens an Office agent's desk by name (Knox, the Security Chief): the same record as the Office.
+  final ValueChanged<String>? onOpenAgent;
 
   @override
   State<CheSecurityScreen> createState() => _CheSecurityScreenState();
@@ -121,6 +128,11 @@ class _CheSecurityScreenState extends State<CheSecurityScreen> {
     try {
       final results = await Future.wait([widget.client.status(), widget.client.core()]);
       if (mounted) setState(() { _view = results[0]; _core = results[1]; _error = null; });
+      final want = widget.initialSection;
+      if (!_openedInitial && want != null && mounted && _visibility != null && want != 'chief') {
+        _openedInitial = true;
+        _openCategory(want);
+      }
     } catch (e) {
       if (mounted) setState(() => _error = 'I could not load security status: ${e.toString().replaceFirst('Exception: ', '')}');
     }
@@ -188,6 +200,42 @@ class _CheSecurityScreenState extends State<CheSecurityScreen> {
     } catch (e) {
       if (mounted) setState(() => _status = 'That replay did not open: ${e.toString().replaceFirst('Exception: ', '')}');
     }
+  }
+
+  bool _openedInitial = false;
+
+  Map<String, dynamic>? get _visibility => _core?['visibility'] is Map ? Map<String, dynamic>.from(_core!['visibility'] as Map) : null;
+
+  void _openCategory(String id) {
+    final v = _visibility;
+    if (v == null) return;
+    unawaited(Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => CheSecurityCategoryScreen(visibility: v, initial: id))));
+  }
+
+  List<Widget> _visibilitySections(Map<String, dynamic> c) {
+    final v = _visibility;
+    final chief = c['chief'] is Map ? Map<String, dynamic>.from(c['chief'] as Map) : null;
+    final text = Theme.of(context).textTheme;
+    return [
+      if (chief != null) ...[CheSecurityChiefCard(chief: chief, onOpenAgent: widget.onOpenAgent), const SizedBox(height: 12)],
+      if (v != null) ...[
+        Semantics(header: true, child: Text('What CHE can access', style: text.titleLarge)),
+        const SizedBox(height: 6),
+        CheSecurityCounts(visibility: v, onOpen: _openCategory),
+        const SizedBox(height: 12),
+        if (v['coverage'] is Map) CheSecurityCoverageCard(coverage: Map<String, dynamic>.from(v['coverage'] as Map)),
+        if (v['physical'] is Map)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              icon: const Icon(Icons.videocam_outlined),
+              label: Text('Physical Security: ${(v['physical'] as Map)['headline'] ?? ''}'),
+              onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => CheSecurityPhysicalScreen(physical: Map<String, dynamic>.from(v['physical'] as Map)))),
+            ),
+          ),
+        const SizedBox(height: 12),
+      ],
+    ];
   }
 
   List<Map<String, dynamic>> _list(Object? v) => [for (final e in (v as List? ?? const [])) Map<String, dynamic>.from(e as Map)];
@@ -387,7 +435,7 @@ class _CheSecurityScreenState extends State<CheSecurityScreen> {
           : v == null
               ? const Center(child: CircularProgressIndicator(semanticsLabel: 'Loading security status'))
               : ListView(padding: const EdgeInsets.all(16), children: [
-                  if (c != null) ...[_protection(c), const SizedBox(height: 12)],
+                  if (c != null) ...[_protection(c), const SizedBox(height: 12), ..._visibilitySections(c)],
                   Semantics(container: true, label: 'Security status. $status', child: ExcludeSemantics(child: Text(status, style: text.titleMedium))),
                   const SizedBox(height: 8),
                   Text(internalOnly ? 'Internal-only mode is on: CHE calls no outside service, only its own runtime and your GitHub and Cloudflare.' : 'External services are allowed when you approve them.', style: text.titleMedium),

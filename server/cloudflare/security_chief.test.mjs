@@ -79,3 +79,12 @@ test('the report names the checks that ran, when, the findings, and what was not
   const none = speakChiefReport(securityChief({}), { findings: [], coverage: coverage({ checks: [], findings: 0 }) });
   assert.match(none, /No check completed\./);
 });
+
+test('the Security Room access list shows Knox once, even though Knox is both an Office agent and the security principal', async () => {
+  const { securityVisibility } = await import('./security_visibility.js');
+  const principals = chePrincipals({});
+  const v = securityVisibility({ principals, review: access.reviewAccess(principals), team: [knox, { id: 'a-nova', name: 'Nova' }] });
+  const agents = v.categories.find((c) => c.id === 'agents').items;
+  assert.equal(agents.filter((a) => a.name === 'Knox').length, 1);
+  assert.equal(agents.filter((a) => a.name === 'Nova').length, 1);
+});

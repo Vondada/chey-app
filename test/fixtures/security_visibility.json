@@ -1,0 +1,884 @@
+{
+ "visibility": {
+  "categories": [
+   {
+    "id": "agents",
+    "title": "Agents",
+    "count": 3,
+    "items": [
+     {
+      "id": "agents:che",
+      "category": "agents",
+      "name": "CHE",
+      "type": "AI agent",
+      "permissions": [
+       "chat",
+       "memory",
+       "apps:granted",
+       "money:ask_first",
+       "delete:ask_first"
+      ],
+      "permission_words": [
+       "talk with you",
+       "read and save memories",
+       "open apps you granted",
+       "money actions, only after asking you",
+       "delete things, only after asking you"
+      ],
+      "source": "Security Core access registry",
+      "last_activity": null,
+      "status": "active",
+      "detail": "Lead assistant; asks first before money or deletion.",
+      "severity": null,
+      "evidence": null,
+      "recommendation": "",
+      "plain": "CHE (agent) can: talk with you; read and save memories; open apps you granted; money actions, only after asking you; delete things, only after asking you. Each permission matches a job it does.",
+      "verdict": "appropriate"
+     },
+     {
+      "id": "agents:security",
+      "category": "agents",
+      "name": "Knox",
+      "type": "AI agent",
+      "permissions": [
+       "security:read",
+       "sessions:revoke",
+       "lockdown:preview",
+       "incidents:manage"
+      ],
+      "permission_words": [
+       "read security status",
+       "end Face ID sessions",
+       "preview a lockdown (you confirm it)",
+       "manage security incidents"
+      ],
+      "source": "Security Core access registry",
+      "last_activity": null,
+      "status": "active",
+      "detail": "Office Security Chief, reporting to CHE; lockdown needs the owner's confirmation.",
+      "severity": null,
+      "evidence": null,
+      "recommendation": "",
+      "plain": "Knox (agent) can: read security status; end Face ID sessions; preview a lockdown (you confirm it); manage security incidents. Each permission matches a job it does.",
+      "verdict": "appropriate"
+     },
+     {
+      "id": "agents:atlas",
+      "category": "agents",
+      "name": "Atlas",
+      "type": "AI agent",
+      "permissions": [
+       "code:repository",
+       "github:pull_requests"
+      ],
+      "permission_words": [
+       "change code in the repository",
+       "open and update pull requests"
+      ],
+      "source": "Security Core access registry",
+      "last_activity": null,
+      "status": "active",
+      "detail": "Coding agent; separate from the security chain.",
+      "severity": null,
+      "evidence": null,
+      "recommendation": "",
+      "plain": "Atlas (agent) can: change code in the repository; open and update pull requests. Each permission matches a job it does.",
+      "verdict": "appropriate"
+     }
+    ]
+   },
+   {
+    "id": "tools",
+    "title": "Tools",
+    "count": 2,
+    "items": [
+     {
+      "id": "tools:tool:scraper",
+      "category": "tools",
+      "name": "Scraper",
+      "type": "Internal tool",
+      "permissions": [
+       "network:*"
+      ],
+      "permission_words": [
+       "reach any website"
+      ],
+      "source": "Capability registry",
+      "last_activity": null,
+      "status": "active",
+      "detail": "",
+      "severity": null,
+      "evidence": null,
+      "recommendation": "",
+      "plain": "Scraper (tool) can: reach any website. reach any website is wider than any one job needs; narrow it to the specific sites it uses.",
+      "verdict": "excessive"
+     },
+     {
+      "id": "tools:command:trade-chart",
+      "category": "tools",
+      "name": "/trade-chart",
+      "type": "Command · EXPLORE",
+      "permissions": [],
+      "permission_words": [],
+      "source": "Command catalog",
+      "last_activity": null,
+      "status": "available",
+      "detail": "Open the chart.",
+      "severity": null,
+      "evidence": null,
+      "recommendation": "",
+      "plain": "/trade-chart Open the chart.",
+      "verdict": null
+     }
+    ]
+   },
+   {
+    "id": "apps",
+    "title": "Apps",
+    "count": 2,
+    "items": [
+     {
+      "id": "apps:app:Safari",
+      "category": "apps",
+      "name": "Safari",
+      "type": "App you granted",
+      "permissions": [
+       "open",
+       "act_with_permission"
+      ],
+      "permission_words": [
+       "open the app",
+       "act in the app after you allow it"
+      ],
+      "source": "App permissions",
+      "last_activity": null,
+      "status": "active",
+      "detail": "",
+      "severity": null,
+      "evidence": null,
+      "recommendation": "",
+      "plain": "Safari (app) can: open the app; act in the app after you allow it. Each permission matches a job it does.",
+      "verdict": "appropriate"
+     },
+     {
+      "id": "apps:connector:youtube",
+      "category": "apps",
+      "name": "YouTube",
+      "type": "Connection",
+      "permissions": [
+       "connector:youtube"
+      ],
+      "permission_words": [
+       "use the youtube connection"
+      ],
+      "source": "Connections",
+      "last_activity": null,
+      "status": "not_connected",
+      "detail": "",
+      "severity": null,
+      "evidence": null,
+      "recommendation": "",
+      "plain": "",
+      "verdict": null
+     }
+    ]
+   },
+   {
+    "id": "devices",
+    "title": "Devices",
+    "count": 1,
+    "items": [
+     {
+      "id": "devices:device:d1",
+      "category": "devices",
+      "name": "Owner iPhone",
+      "type": "Owner device",
+      "permissions": [
+       "owner"
+      ],
+      "permission_words": [
+       "full owner access"
+      ],
+      "source": "Paired devices",
+      "last_activity": "2026-10-23T14:00:00Z",
+      "status": "active",
+      "detail": "",
+      "severity": null,
+      "evidence": null,
+      "recommendation": "",
+      "plain": "Owner iPhone (device) can: full owner access. Each permission matches a job it does.",
+      "verdict": "appropriate"
+     }
+    ]
+   },
+   {
+    "id": "sessions",
+    "title": "Sessions",
+    "count": 0,
+    "items": []
+   },
+   {
+    "id": "permissions",
+    "title": "Permissions",
+    "count": 15,
+    "items": [
+     {
+      "id": "permissions:che:chat",
+      "category": "permissions",
+      "name": "CHE: talk with you",
+      "type": "agent grant",
+      "permissions": [
+       "chat"
+      ],
+      "permission_words": [
+       "talk with you"
+      ],
+      "source": "Security Core access registry",
+      "last_activity": null,
+      "status": "active",
+      "detail": "",
+      "severity": null,
+      "evidence": null,
+      "recommendation": "",
+      "plain": "CHE can talk with you.",
+      "verdict": "appropriate"
+     },
+     {
+      "id": "permissions:che:memory",
+      "category": "permissions",
+      "name": "CHE: read and save memories",
+      "type": "agent grant",
+      "permissions": [
+       "memory"
+      ],
+      "permission_words": [
+       "read and save memories"
+      ],
+      "source": "Security Core access registry",
+      "last_activity": null,
+      "status": "active",
+      "detail": "",
+      "severity": null,
+      "evidence": null,
+      "recommendation": "",
+      "plain": "CHE can read and save memories.",
+      "verdict": "appropriate"
+     },
+     {
+      "id": "permissions:che:apps:granted",
+      "category": "permissions",
+      "name": "CHE: open apps you granted",
+      "type": "agent grant",
+      "permissions": [
+       "apps:granted"
+      ],
+      "permission_words": [
+       "open apps you granted"
+      ],
+      "source": "Security Core access registry",
+      "last_activity": null,
+      "status": "active",
+      "detail": "",
+      "severity": null,
+      "evidence": null,
+      "recommendation": "",
+      "plain": "CHE can open apps you granted.",
+      "verdict": "appropriate"
+     },
+     {
+      "id": "permissions:che:money:ask_first",
+      "category": "permissions",
+      "name": "CHE: money actions, only after asking you",
+      "type": "agent grant",
+      "permissions": [
+       "money:ask_first"
+      ],
+      "permission_words": [
+       "money actions, only after asking you"
+      ],
+      "source": "Security Core access registry",
+      "last_activity": null,
+      "status": "active",
+      "detail": "",
+      "severity": null,
+      "evidence": null,
+      "recommendation": "",
+      "plain": "CHE can money actions, only after asking you.",
+      "verdict": "appropriate"
+     },
+     {
+      "id": "permissions:che:delete:ask_first",
+      "category": "permissions",
+      "name": "CHE: delete things, only after asking you",
+      "type": "agent grant",
+      "permissions": [
+       "delete:ask_first"
+      ],
+      "permission_words": [
+       "delete things, only after asking you"
+      ],
+      "source": "Security Core access registry",
+      "last_activity": null,
+      "status": "active",
+      "detail": "",
+      "severity": null,
+      "evidence": null,
+      "recommendation": "",
+      "plain": "CHE can delete things, only after asking you.",
+      "verdict": "appropriate"
+     },
+     {
+      "id": "permissions:security:security:read",
+      "category": "permissions",
+      "name": "Knox: read security status",
+      "type": "agent grant",
+      "permissions": [
+       "security:read"
+      ],
+      "permission_words": [
+       "read security status"
+      ],
+      "source": "Security Core access registry",
+      "last_activity": null,
+      "status": "active",
+      "detail": "",
+      "severity": null,
+      "evidence": null,
+      "recommendation": "",
+      "plain": "Knox can read security status.",
+      "verdict": "appropriate"
+     },
+     {
+      "id": "permissions:security:sessions:revoke",
+      "category": "permissions",
+      "name": "Knox: end Face ID sessions",
+      "type": "agent grant",
+      "permissions": [
+       "sessions:revoke"
+      ],
+      "permission_words": [
+       "end Face ID sessions"
+      ],
+      "source": "Security Core access registry",
+      "last_activity": null,
+      "status": "active",
+      "detail": "",
+      "severity": null,
+      "evidence": null,
+      "recommendation": "",
+      "plain": "Knox can end Face ID sessions.",
+      "verdict": "appropriate"
+     },
+     {
+      "id": "permissions:security:lockdown:preview",
+      "category": "permissions",
+      "name": "Knox: preview a lockdown (you confirm it)",
+      "type": "agent grant",
+      "permissions": [
+       "lockdown:preview"
+      ],
+      "permission_words": [
+       "preview a lockdown (you confirm it)"
+      ],
+      "source": "Security Core access registry",
+      "last_activity": null,
+      "status": "active",
+      "detail": "",
+      "severity": null,
+      "evidence": null,
+      "recommendation": "",
+      "plain": "Knox can preview a lockdown (you confirm it).",
+      "verdict": "appropriate"
+     },
+     {
+      "id": "permissions:security:incidents:manage",
+      "category": "permissions",
+      "name": "Knox: manage security incidents",
+      "type": "agent grant",
+      "permissions": [
+       "incidents:manage"
+      ],
+      "permission_words": [
+       "manage security incidents"
+      ],
+      "source": "Security Core access registry",
+      "last_activity": null,
+      "status": "active",
+      "detail": "",
+      "severity": null,
+      "evidence": null,
+      "recommendation": "",
+      "plain": "Knox can manage security incidents.",
+      "verdict": "appropriate"
+     },
+     {
+      "id": "permissions:atlas:code:repository",
+      "category": "permissions",
+      "name": "Atlas: change code in the repository",
+      "type": "agent grant",
+      "permissions": [
+       "code:repository"
+      ],
+      "permission_words": [
+       "change code in the repository"
+      ],
+      "source": "Security Core access registry",
+      "last_activity": null,
+      "status": "active",
+      "detail": "",
+      "severity": null,
+      "evidence": null,
+      "recommendation": "",
+      "plain": "Atlas can change code in the repository.",
+      "verdict": "appropriate"
+     },
+     {
+      "id": "permissions:atlas:github:pull_requests",
+      "category": "permissions",
+      "name": "Atlas: open and update pull requests",
+      "type": "agent grant",
+      "permissions": [
+       "github:pull_requests"
+      ],
+      "permission_words": [
+       "open and update pull requests"
+      ],
+      "source": "Security Core access registry",
+      "last_activity": null,
+      "status": "active",
+      "detail": "",
+      "severity": null,
+      "evidence": null,
+      "recommendation": "",
+      "plain": "Atlas can open and update pull requests.",
+      "verdict": "appropriate"
+     },
+     {
+      "id": "permissions:app:Safari:open",
+      "category": "permissions",
+      "name": "Safari: open the app",
+      "type": "app grant",
+      "permissions": [
+       "open"
+      ],
+      "permission_words": [
+       "open the app"
+      ],
+      "source": "Security Core access registry",
+      "last_activity": null,
+      "status": "active",
+      "detail": "",
+      "severity": null,
+      "evidence": null,
+      "recommendation": "",
+      "plain": "Safari can open the app.",
+      "verdict": "appropriate"
+     },
+     {
+      "id": "permissions:app:Safari:act_with_permission",
+      "category": "permissions",
+      "name": "Safari: act in the app after you allow it",
+      "type": "app grant",
+      "permissions": [
+       "act_with_permission"
+      ],
+      "permission_words": [
+       "act in the app after you allow it"
+      ],
+      "source": "Security Core access registry",
+      "last_activity": null,
+      "status": "active",
+      "detail": "",
+      "severity": null,
+      "evidence": null,
+      "recommendation": "",
+      "plain": "Safari can act in the app after you allow it.",
+      "verdict": "appropriate"
+     },
+     {
+      "id": "permissions:device:d1:owner",
+      "category": "permissions",
+      "name": "Owner iPhone: full owner access",
+      "type": "device grant",
+      "permissions": [
+       "owner"
+      ],
+      "permission_words": [
+       "full owner access"
+      ],
+      "source": "Security Core access registry",
+      "last_activity": "2026-10-23T14:00:00Z",
+      "status": "active",
+      "detail": "",
+      "severity": null,
+      "evidence": null,
+      "recommendation": "",
+      "plain": "Owner iPhone can full owner access.",
+      "verdict": "appropriate"
+     },
+     {
+      "id": "permissions:tool:scraper:network:*",
+      "category": "permissions",
+      "name": "Scraper: reach any website",
+      "type": "tool grant",
+      "permissions": [
+       "network:*"
+      ],
+      "permission_words": [
+       "reach any website"
+      ],
+      "source": "Security Core access registry",
+      "last_activity": null,
+      "status": "active",
+      "detail": "",
+      "severity": "high",
+      "evidence": null,
+      "recommendation": "",
+      "plain": "Scraper holds a broad grant: reach any website. That is more than any one job needs.",
+      "verdict": "excessive"
+     }
+    ]
+   },
+   {
+    "id": "threats",
+    "title": "Threats",
+    "count": 1,
+    "items": [
+     {
+      "id": "threats:event:ev_1",
+      "category": "threats",
+      "name": "Unknown token used",
+      "type": "Security event",
+      "permissions": [],
+      "permission_words": [],
+      "source": "worker",
+      "last_activity": "2026-10-23T12:00:00Z",
+      "status": "open",
+      "detail": "api",
+      "severity": "high",
+      "evidence": {
+       "event_id": "ev_1",
+       "event_type": "unknown_token",
+       "affected_resource": "api",
+       "evidence_refs": [
+        "req:abc"
+       ],
+       "actions_taken": [],
+       "verification": "verified",
+       "confidence": null
+      },
+      "recommendation": "Open the incident and follow its steps; lockdown is available and needs your confirmation.",
+      "plain": "",
+      "verdict": null
+     }
+    ]
+   },
+   {
+    "id": "history",
+    "title": "History",
+    "count": 1,
+    "items": [
+     {
+      "id": "history:check:0",
+      "category": "history",
+      "name": "Security check",
+      "type": "Check",
+      "permissions": [],
+      "permission_words": [],
+      "source": "Security Core checks",
+      "last_activity": "2026-10-23T14:00:00Z",
+      "status": "completed",
+      "detail": "1 finding, dependencies not checked",
+      "severity": null,
+      "evidence": null,
+      "recommendation": "",
+      "plain": "",
+      "verdict": null
+     }
+    ]
+   }
+  ],
+  "findings": [
+   {
+    "id": "threats:event:ev_1",
+    "category": "threats",
+    "name": "Unknown token used",
+    "type": "Security event",
+    "permissions": [],
+    "permission_words": [],
+    "source": "worker",
+    "last_activity": "2026-10-23T12:00:00Z",
+    "status": "open",
+    "detail": "api",
+    "severity": "high",
+    "evidence": {
+     "event_id": "ev_1",
+     "event_type": "unknown_token",
+     "affected_resource": "api",
+     "evidence_refs": [
+      "req:abc"
+     ],
+     "actions_taken": [],
+     "verification": "verified",
+     "confidence": null
+    },
+    "recommendation": "Open the incident and follow its steps; lockdown is available and needs your confirmation.",
+    "plain": "",
+    "verdict": null
+   }
+  ],
+  "coverage": {
+   "checks": [
+    {
+     "id": "security_check",
+     "label": "Threat and access check",
+     "state": "checked",
+     "at": "2026-10-23T14:00:00Z",
+     "stale": false
+    },
+    {
+     "id": "dependencies",
+     "label": "Dependency advisories",
+     "state": "not_checked",
+     "at": null
+    },
+    {
+     "id": "deploy",
+     "label": "Deployment matches the repository",
+     "state": "not_checked",
+     "at": null
+    },
+    {
+     "id": "devices",
+     "label": "Paired device review",
+     "state": "checked",
+     "at": "2026-10-23T14:00:00Z"
+    },
+    {
+     "id": "vault",
+     "label": "Password vault",
+     "state": "unknown",
+     "at": null,
+     "why": "It lives only on your iPhone; the server never sees it."
+    },
+    {
+     "id": "phone_secret_scan",
+     "label": "On-phone secret scan",
+     "state": "unknown",
+     "at": null,
+     "why": "Runs on the phone; its results are not reported to the server."
+    },
+    {
+     "id": "physical",
+     "label": "Cameras, locks, alarms and sensors",
+     "state": "not_monitored",
+     "at": null,
+     "why": "No physical security integration is connected."
+    }
+   ],
+   "checked": 2,
+   "not_checked": 2,
+   "unknown": 3,
+   "all_checked": false,
+   "summary": "1 finding from 2 checks; 5 areas not checked or not visible."
+  },
+  "physical": {
+   "architecture_only": true,
+   "adapters": [],
+   "devices": [],
+   "note": "Physical security is architecture only: no camera, lock, alarm or sensor is connected.",
+   "headline": "No supported integrations yet",
+   "candidates": [
+    {
+     "id": "google_nest",
+     "name": "Google Nest (cameras, doorbells, thermostats)",
+     "api": "Smart Device Management API (Device Access program)",
+     "source": "https://developers.google.com/nest/device-access",
+     "classes": [
+      "camera"
+     ],
+     "status": "unsupported",
+     "status_word": "Unsupported"
+    },
+    {
+     "id": "smartthings",
+     "name": "Samsung SmartThings (locks, sensors, alarms)",
+     "api": "SmartThings REST API",
+     "source": "https://developer.smartthings.com/docs/api/public",
+     "classes": [
+      "door_lock",
+      "motion_sensor",
+      "contact_sensor",
+      "alarm"
+     ],
+     "status": "unsupported",
+     "status_word": "Unsupported"
+    },
+    {
+     "id": "home_assistant",
+     "name": "Home Assistant (hub for many brands)",
+     "api": "Home Assistant REST and WebSocket API",
+     "source": "https://developers.home-assistant.io/docs/api/rest/",
+     "classes": [
+      "camera",
+      "door_lock",
+      "alarm",
+      "motion_sensor",
+      "contact_sensor",
+      "smoke_detector"
+     ],
+     "status": "unsupported",
+     "status_word": "Unsupported"
+    },
+    {
+     "id": "apple_homekit",
+     "name": "Apple Home (HomeKit accessories)",
+     "api": "HomeKit framework (on the iPhone)",
+     "source": "https://developer.apple.com/documentation/homekit",
+     "classes": [
+      "camera",
+      "door_lock",
+      "alarm",
+      "motion_sensor",
+      "contact_sensor"
+     ],
+     "status": "unsupported",
+     "status_word": "Unsupported"
+    }
+   ],
+   "rules": [
+    "A device shows Verified connected only after an authorized handshake succeeds and is recorded.",
+    "CHE may notify you and record events on its own.",
+    "Unlocking, disarming, opening, or turning off power needs your confirmation with Face ID every time.",
+    "CHE never blocks an alarm's own emergency behavior and never disables smoke or life-safety devices."
+   ]
+  }
+ },
+ "chief": {
+  "name": "Knox",
+  "title": "Office Security Chief",
+  "on_roster": true,
+  "agent_id": "a-knox",
+  "roster_note": "",
+  "office_role": "Engineering / Codex jobs",
+  "supervisor": "CHE",
+  "reports_to": "CHE",
+  "chain": [
+   "Owner",
+   "CHE",
+   "Knox",
+   "Specialists"
+  ],
+  "personality": "Skeptical by default. Hunts for failure modes, security holes and bad assumptions.",
+  "appearance": {
+   "body_type": "tall",
+   "face": "square",
+   "skin_tone": "brown",
+   "hair": "locs",
+   "eyes": "dark",
+   "outfit": "tech",
+   "accessory": "headset",
+   "animation": "focused"
+  },
+  "strengths": [
+   "Implementation",
+   "Testing and debugging",
+   "Failure-mode and security review"
+  ],
+  "responsibilities": [
+   "Runs CHE's security checks and reports the results to CHE",
+   "Directs the eight security specialists",
+   "Reviews who and what has access, and flags access wider than needed",
+   "Opens and tracks security incidents; lockdown and other protective controls need the owner's confirmation"
+  ],
+  "conduct": [
+   "Monitors, warns and records; never harms, threatens, traps, confronts or retaliates.",
+   "Physical security is monitoring, warnings, recording and owner-confirmed protective controls only.",
+   "Never disables an alarm's emergency behavior or any smoke or life-safety device."
+  ],
+  "specialists": [
+   {
+    "id": "threat",
+    "name": "Threat analyst",
+    "reports_to": "Knox"
+   },
+   {
+    "id": "malware",
+    "name": "Malware reviewer",
+    "reports_to": "Knox"
+   },
+   {
+    "id": "identity",
+    "name": "Identity guard",
+    "reports_to": "Knox"
+   },
+   {
+    "id": "access",
+    "name": "Access warden",
+    "reports_to": "Knox"
+   },
+   {
+    "id": "device",
+    "name": "Device monitor",
+    "reports_to": "Knox"
+   },
+   {
+    "id": "code",
+    "name": "Repository and dependency reviewer",
+    "reports_to": "Knox"
+   },
+   {
+    "id": "incident",
+    "name": "Incident lead",
+    "reports_to": "Knox"
+   },
+   {
+    "id": "knowledge",
+    "name": "Security librarian",
+    "reports_to": "Knox"
+   }
+  ],
+  "permissions_configured": [
+   {
+    "scope": "security:read",
+    "words": "read security status"
+   },
+   {
+    "scope": "sessions:revoke",
+    "words": "end Face ID sessions"
+   },
+   {
+    "scope": "lockdown:preview",
+    "words": "preview a lockdown (you confirm it)"
+   },
+   {
+    "scope": "incidents:manage",
+    "words": "manage security incidents"
+   }
+  ],
+  "integrations_verified": [
+   {
+    "id": "security_check",
+    "label": "Threat and access check",
+    "at": "2026-10-23T14:00:00Z"
+   },
+   {
+    "id": "devices",
+    "label": "Paired device review",
+    "at": "2026-10-23T14:00:00Z"
+   }
+  ],
+  "status": {
+   "state": "MONITORING",
+   "reason": "x"
+  },
+  "recent_verified_activity": [
+   {
+    "at": "2026-10-23T14:00:00Z",
+    "kind": "check",
+    "text": "Security check: 1 finding; dependencies not checked; deployment not checked",
+    "verified": true
+   }
+  ]
+ }
+}

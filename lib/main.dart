@@ -630,13 +630,16 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   }
 
   /// SECURITY: Home → Security, More → Security, and "open security" by voice.
-  Future<void> _openSecurity() async {
+  Future<void> _openSecurity({String? section}) async {
     HapticFeedback.selectionClick();
     await Navigator.of(context).push(MaterialPageRoute<void>(
       builder: (_) => CheSecurityScreen(
         client: CheSecurityClient(baseUrl: cheAgentBaseUrl, headers: () => _authHeaders),
         onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
         onListen: () => unawaited(toggleListening()),
+        initialSection: section,
+        // Knox, the Security Chief, opens the same Office desk as the Office floor.
+        onOpenAgent: (name) => _openOfficeFloor(agentName: name),
       ),
     ));
   }

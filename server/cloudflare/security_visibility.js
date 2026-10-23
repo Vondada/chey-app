@@ -88,7 +88,8 @@ export function securityVisibility({ principals = [], review = { findings: [] },
 
   const agents = [
     ...principals.filter((p) => p.kind === 'agent').map((p) => { const l = lp(p); return item('agents', { id: p.id, name: p.name, type: 'AI agent', permissions: p.scopes, source: 'Security Core access registry', last_activity: p.last_used_at, status: p.status, detail: p.note, plain: l.plain, verdict: l.verdict }); }),
-    ...team.filter((a) => a && !a.retired).map((a) => {
+    // An Office agent who is also a security principal (Knox, the Security Chief) is one entry, not two.
+    ...team.filter((a) => a && !a.retired && !principals.some((p) => p.kind === 'agent' && String(p.name).toLowerCase() === String(a.name || '').toLowerCase())).map((a) => {
       const scopes = ['office:assigned_jobs'];
       const l = leastPrivilege({ name: a.name, kind: 'office worker', scopes, last_used_at: a.last_active_at || null }, now);
       return item('agents', { id: `office:${a.id}`, name: a.name || a.id, type: `Office worker${a.role ? ` · ${a.role}` : ''}`, permissions: scopes, source: 'Office team', last_activity: a.last_active_at || null, status: a.runtime_status || 'idle', detail: `AI provider: ${a.provider_preference || 'auto'}`, plain: l.plain, verdict: l.verdict });
