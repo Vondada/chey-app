@@ -108,3 +108,15 @@ test('an unreadable stamp gives no date rather than an invented one', () => {
   assert.equal(spokenDate({ created_at: 'not a date' }), '');
   assert.equal(spokenDate({}), '');
 });
+
+// Owner (2026-10-23, iPhone): "What's my favfavorite drink" (a typo) and "What's my favorite drink" were both answered
+// "I don't have a record" although a drink was stored. A doubled "fav" from a typo is the same subject.
+test('a typed "favfavorite drink" finds the stored favorite drink, same as "favorite drink"', () => {
+  const brain = [brainSaid('conv:drink', 'my favorite drink is Sprite')];
+  for (const asked of ['What\'s my favfavorite drink', 'What’s my favorite drink?', 'what is my favorite drink']) {
+    const out = answerPersonalFact({}, personalFactQuestion(asked), brain);
+    assert.equal(out.kind !== 'none', true, asked);
+    assert.match(out.answer, /Sprite/, asked);
+    assert.doesNotMatch(out.answer, /don't have a record/, asked);
+  }
+});

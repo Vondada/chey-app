@@ -33,8 +33,15 @@ const FACT = /^my\s+(.{2,60}?)\s+(?:is|are)\s+(.{1,300}?)\.?$/i;
 // British and American spellings are one subject: "favourite food" is the stored "favorite food".
 const SPELLING = { favourite: 'favorite', favourites: 'favorites', fav: 'favorite', fave: 'favorite', favs: 'favorites' };
 
+// Typed forms of the same word: "favfavorite" (a doubled "fav" from a typo) is "favorite"; any word that contains
+// "favorite" with more letters around it is the same subject. Other typos fall through unchanged.
+function canonical(w) {
+  if (SPELLING[w]) return SPELLING[w];
+  return w.length > 'favorite'.length && w.includes('favorite') ? 'favorite' : w;
+}
+
 function words(text) {
-  return String(text || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/).filter((w) => w && !STOP.has(w)).map((w) => SPELLING[w] || w);
+  return String(text || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/).filter((w) => w && !STOP.has(w)).map(canonical);
 }
 
 /** The text with any leading wake prefix ("CHE, ", "Chay ") removed, whitespace collapsed. */
