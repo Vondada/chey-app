@@ -500,6 +500,16 @@ extension _CheHomeStreaming on _CHEHomeState {
             chart: data['chart'] is Map<String, dynamic> ? data['chart'] as Map<String, dynamic> : null,
           )));
         }
+        // "Replay my last trade", "replay trade T0…": the trade on its own stored bars (owner mission, Priority 5).
+        final replayId = data['trade_id']?.toString().trim() ?? '';
+        if (data['open_view'] == 'trade_replay' && replayId.isNotEmpty && mounted) {
+          unawaited(Navigator.of(context).push(CheTradeReplayPage.route(
+            tradeId: replayId,
+            baseUrl: () => cheAgentBaseUrl,
+            headers: () => _authHeaders,
+            onRead: (words) { speakText(words, record: false, readOnDemand: true); },
+          )));
+        }
         if (data['open_view'] == 'alpaca_paper' && mounted) {
           unawaited(Navigator.of(context).push(CheAlpacaPaperPage.route(baseUrl: () => cheAgentBaseUrl, headers: () => _authHeaders, onAsk: _runHubPrompt)));
         }
