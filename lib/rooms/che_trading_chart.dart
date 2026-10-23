@@ -1134,6 +1134,9 @@ class _Geometry {
   }
 }
 
+/// True when a marker's point lies inside the chart box, so its glyph can be drawn there.
+bool markerOnChart(Offset p, Size size) => p.dx >= 0 && p.dx <= size.width && p.dy >= 0 && p.dy <= size.height;
+
 class _ChartPainter extends CustomPainter {
   _ChartPainter({required this.bars, required this.markers, required this.drawings, this.levels = const [], required this.pending});
   final List<ChartBar> bars;
@@ -1217,10 +1220,13 @@ class _ChartPainter extends CustomPainter {
       if (px != null) canvas.drawCircle(Offset(px, g.y(pending!.$2)), 5, ink);
     }
 
-    // Markers by source.
+    // Markers by source. A marker whose price is outside the visible range is not drawn: unclipped, it
+    // stacked a column of glyphs down the screen over the text above and below the chart.
+    canvas.save();
+    canvas.clipRect(Offset.zero & size);
     for (final m in markers) {
       final p = g.markerPoint(m);
-      if (p == null) continue;
+      if (p == null || !markerOnChart(p, size)) continue;
       final color = kMarkerColors[m.source] ?? Colors.white;
       if (m.source == 'alpaca_order') {
         // A working order is a dashed line at its price, with its side.
@@ -1236,6 +1242,7 @@ class _ChartPainter extends CustomPainter {
       _MarkerGlyph.paintGlyph(canvas, m.source, color, true, buy: m.isBuy, exit: m.kind == 'exit', size: 12);
       canvas.restore();
     }
+    canvas.restore();
   }
 
   void _text(Canvas canvas, String s, Offset at, TextStyle style) {
