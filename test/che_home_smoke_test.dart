@@ -162,4 +162,29 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
   });
 
+
+  test('CHE follows the iPhone Larger Text size and multiplies it by her own Text size setting', () {
+    expect(cheEffectiveTextScale(TextScaler.noScaling, 1.0), 1.0);
+    expect(cheEffectiveTextScale(const TextScaler.linear(1.5), 1.0), 1.5, reason: 'Larger Text applies in CHE');
+    expect(cheEffectiveTextScale(const TextScaler.linear(1.5), 1.18), closeTo(1.77, 0.001), reason: 'and CHE Large adds to it');
+    expect(cheEffectiveTextScale(const TextScaler.linear(3.1), 1.18), 2.0, reason: 'held where the layouts are tested');
+  });
+
+  testWidgets('the system text size reaches CHE screens', (tester) async {
+    tester.view.physicalSize = const Size(1320, 2868);
+    tester.view.devicePixelRatio = 3;
+    tester.platformDispatcher.textScaleFactorTestValue = 1.5;
+    addTearDown(tester.view.reset);
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    SharedPreferences.setMockInitialValues({});
+    await tester.pumpWidget(const CHEApp());
+    for (var i = 0; i < 15; i++) {
+      await tester.pump(const Duration(milliseconds: 200));
+    }
+    final context = tester.element(find.text('Talk to CHE'));
+    expect(MediaQuery.textScalerOf(context).scale(14), closeTo(21, 0.01));
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(const Duration(seconds: 1));
+  });
 }
