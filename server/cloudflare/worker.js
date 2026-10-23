@@ -81,6 +81,8 @@ import { renderTokenRoute, visualApi, songPromo, projectFromTemplateName, loadVi
 import { visualIntent, wordsToOps } from './visual_studio.js';
 import { addBeat, addLedger, addWorkspace, addWorkspaceSong, advanceAgreement, applySpokenBusiness, approveQuote, artistReport, beatListing, businessDashboard, deliveryPackage, draftQuote, musicBusinessIntent, recordBeatSale, recordFeedback, resolveSpokenBusiness, setService, workspaceById, workspaceView } from './music_business.js';
 import { matrixIntent, readMatrix, runMatrix, speakMatrix } from './backtest_matrix.js';
+import { DATA_SOURCE_FINDINGS, comparisonView as researchComparisonView, orderFlowReadiness } from './strategy_research.js';
+import { marketSpec } from './trading_market_spec.js';
 import { autoQueue as researchAutoQueue, cancelJob as cancelResearchJob, matrixView as researchMatrixView, nextResearchAt, queueJob as queueResearchJob, researchIntent, researchStep, researchView, setProfile as setResearchProfile, speakBestNow, speakHistory, speakStrategy, strategyView as researchStrategyView } from './trading_research.js';
 import { nextStrategySimTickAt, setStrategySimCeiling, setStrategySimPaused, speakStrategySim, strategySimIntent, strategySimTick, strategySimView, strategySimWake } from './strategy_sim.js';
 import { DRAFT_PROMPT, activeDefinitions as libraryActiveDefinitions, approveEntry as libraryApprove, definitionProblems as libraryDefinitionProblems, duplicateEntry as libraryDuplicate, libraryView, readAudit as libraryAudit, recordResults as libraryRecordResults, registerEntry as libraryRegister, resolveName as libraryResolve, setFlag as librarySetFlag, speakCompare as librarySpeakCompare, speakLibrary as speakStrategyLibrary, strategyLibraryIntent, takeDraftAllowance } from './strategy_library.js';
@@ -8063,6 +8065,14 @@ export class CheState extends DurableObject {
           return view ? json(view) : json({ detail: 'Unknown strategy.' }, 404);
         }
         if (request.method === 'GET' && path === '/api/trading/research/matrix') return json(await researchMatrixView(this.ctx.storage, market));
+        // Strategy comparison (strategy_research.js): stored backtests on one shared dataset, in-sample beside out-of-sample.
+        if (request.method === 'GET' && path === '/api/trading/research/compare') {
+          const tf = url.searchParams.get('tf') || '5m';
+          const ids = (url.searchParams.get('ids') || '').split(',').map((x) => x.trim()).filter(Boolean);
+          return json(await researchComparisonView(this.ctx.storage, { market, tf, ids: ids.length ? ids : null }));
+        }
+        if (request.method === 'GET' && path === '/api/trading/research/order-flow') return json({ ...(await orderFlowReadiness(this.ctx.storage)), data_sources: DATA_SOURCE_FINDINGS });
+        if (request.method === 'GET' && path === '/api/trading/research/spec') return json(marketSpec());
         if (request.method !== 'POST') return json({ detail: 'Not found.' }, 404);
         const action = path.replace('/api/trading/research/', '');
         let spoken = '';

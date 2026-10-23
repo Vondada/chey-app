@@ -2,7 +2,9 @@
 // import line here; entries are checked by strategy_library.entryProblems in strategy_library.test.mjs.
 // An id must be unique across files; the first file listed wins on a clash (the test fails on one).
 import { ENTRIES as CORE } from './core.js';
+import { ENTRIES as RESEARCH } from './research.js';
 
 export const LIBRARY_SEEDS = Object.freeze([
   ...CORE,
+  ...RESEARCH,
 ]);

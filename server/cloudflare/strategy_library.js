@@ -21,6 +21,7 @@ import { UNDEFINED_STRATEGIES, forwardEvidence, readUnits, strategyDefinitions }
 import { SIM_STRATEGIES } from './strategy_sim.js';
 import { STRATEGIES as LAB_STRATEGIES } from './trading_lab.js';
 import { LIBRARY_SEEDS } from './library_seeds/index.js';
+import { RESEARCH_SOURCES } from './library_seeds/research.js';
 
 export const SCHEMA = 'che.strategy/1';
 export const ENTRY_SCHEMA = 'che.library_entry/1';
@@ -170,6 +171,7 @@ export function notRunningReason(e, stage) {
   if (stage === 'discovered') return 'Only a name or idea: no written rules exist in CHE yet, so it cannot be tested.';
   if (stage === 'rules_documented') return 'Rules are written down but no engine runs them yet.';
   if (e.kind === 'market_context') return 'A market-context model describes conditions; it does not place paper trades by itself.';
+  if (e.research) return stage === 'implemented' ? 'A research strategy: implemented, waiting for its first backtest. Forward paper is not wired for research strategies yet and will need the owner\'s yes.' : 'A research strategy: backtested only. Forward paper is not wired for research strategies yet and will need the owner\'s yes.';
   if (e.engine === 'strategy_sim' || e.engine === 'trading_lab') return 'Runs in its own simulator or lab, not in the forward paper engine.';
   if (stage === 'implemented') return 'Implemented but not backtested yet.';
   return 'Not enabled for forward paper testing.';
@@ -177,20 +179,25 @@ export function notRunningReason(e, stage) {
 
 // ─── Built-in entries (from the code that runs them) ───────────────────────────
 
+const isIntradayDef = (d) => !d.timeframes.every((t) => ['4h', '1D', '1W', '1M'].includes(t));
 const repo = (file, what) => ({ type: 'repo_code', title: `${file}: ${what}`, file });
 
 export function builtinEntries() {
   const out = [];
   for (const d of strategyDefinitions()) {
     const intraday = Boolean(INTRADAY_CANDIDATES[d.strategy_id]);
+    // Research strategies (lane T8) carry their public sources and every parameter CHE chose (library_seeds/research.js).
+    const cited = RESEARCH_SOURCES[d.strategy_id];
+    const table = intraday ? 'INTRADAY_CANDIDATES' : CANDIDATES[d.strategy_id] ? 'CANDIDATES' : isIntradayDef(d) ? 'RESEARCH_INTRADAY_CANDIDATES' : 'RESEARCH_DAILY_CANDIDATES';
     out.push({
-      id: d.strategy_id, kind: 'strategy', name: intraday ? d.name : d.name, category: categoryOfFamily(d.family, d.name), family: d.family,
-      engine: 'trading_evidence', builtin: true, ict: ICT_FAMILY(d.family),
-      sources: [repo('server/cloudflare/trading_evidence.js', intraday ? `INTRADAY_CANDIDATES["${d.strategy_id}"]` : `CANDIDATES["${d.strategy_id}"]`)],
+      id: d.strategy_id, kind: 'strategy', name: intraday ? d.name : d.name, category: cited?.category || categoryOfFamily(d.family, d.name), family: d.family,
+      engine: 'trading_evidence', builtin: true, ict: ICT_FAMILY(d.family), research: Boolean(d.research),
+      sources: [repo('server/cloudflare/trading_evidence.js', `${table}["${d.strategy_id}"]`), ...(cited?.sources || [])],
       rules: [d.entry_rule, `Stop: ${d.stop_rule}.`, `Target: ${d.target_rule}.`, `Exit: ${d.exit_rule}.`, ...(d.time_filter && d.time_filter !== 'none' ? [`Time filter: ${d.time_filter}.`] : [])],
-      assumptions: [d.common_rules || '', `Costs: ${JSON.stringify(d.cost_assumptions)}`].filter(Boolean),
+      assumptions: [d.common_rules || '', `Costs: ${JSON.stringify(d.cost_assumptions)}`, ...(cited?.assumptions || [])].filter(Boolean),
       timeframes: d.timeframes, data_requirements: [d.data_requirements], event_dependencies: [],
-      limitations: intraday ? ['Research bars are delayed public data (Yahoo), not exchange-direct.'] : ['Daily bars only; long side only.'],
+      limitations: [...(isIntradayDef(d) ? ['Research bars are delayed public data (Yahoo), not exchange-direct.'] : ['Daily bars only; long side only.']), ...(cited?.limitations || []),
+        ...(d.research ? ['A research strategy: backtested only; forward paper runs only after the owner enables it in the paper engine.'] : [])],
       symbols: d.markets,
     });
   }
@@ -389,7 +396,7 @@ export async function libraryView(storage, { q = '', category = '', kind = '', l
     const approvedBuiltIn = e.builtin ? { ...e, approval: { state: 'approved' } } : e;
     const stage = lifecycleOf(approvedBuiltIn, { running });
     entries.push({
-      id, kind: e.kind, name: e.name, category: e.category, family: e.family || '', origin: e.origin || 'owner', engine: e.engine || 'none',
+      id, kind: e.kind, name: e.name, category: e.category, family: e.family || '', origin: e.origin || 'owner', engine: e.engine || 'none', research: Boolean(e.research),
       lifecycle: stage, lifecycle_label: LIFECYCLE_LABEL[stage], not_running: notRunningReason(approvedBuiltIn, stage),
       sources: e.sources || [], rules: e.rules || [], assumptions: e.assumptions || [], timeframes: e.timeframes || [], data_requirements: e.data_requirements || [],
       event_dependencies: e.event_dependencies || [], limitations: e.limitations || [], results: e.results || {}, symbols: e.symbols || [],
