@@ -6,6 +6,7 @@ import 'dart:convert';
 
 import 'package:chey/agents/che_agent_runtime.dart';
 import 'package:chey/agents/che_office_floor_screen.dart';
+import 'package:chey/che_job_activity_banner.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -79,5 +80,36 @@ void main() {
     await tester.pump(const Duration(seconds: 6));
     expect(calls['/api/agents'], 4, reason: 'closing the tab does not stop or dispose the shared runtime');
     shared.dispose();
+  });
+
+  testWidgets('the job activity line stops asking the Worker while CHE is in the background', (tester) async {
+    var polls = 0;
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: CheJobActivityBanner(
+          fetch: (path, body) async {
+            polls++;
+            return {'status': 'running', 'activity': [{'text': 'Step $polls'}]};
+          },
+          speak: (_) async {},
+        ),
+      ),
+    ));
+    cheWatchedJobId.value = 'job-1';
+    await tester.pump(const Duration(seconds: 9));
+    final onScreen = polls;
+    expect(onScreen, greaterThanOrEqualTo(3), reason: 'on screen it follows the job every 4 seconds');
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.pump(const Duration(minutes: 2));
+    expect(polls, onScreen, reason: 'in the background it waits');
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump(const Duration(seconds: 5));
+    expect(polls, greaterThan(onScreen), reason: 'and resumes on return');
+    cheWatchedJobId.value = null;
+    await tester.pumpWidget(const SizedBox());
   });
 }
