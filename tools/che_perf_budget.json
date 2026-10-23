@@ -1,0 +1,25 @@
+{
+  "_doc": "CHE performance budgets, checked in CI by server/cloudflare/perf_budget.test.mjs. Measured 2026-10-23 on the benchmark brain (3000 memories): see docs/CHE_PERFORMANCE.md. Raise a number only on purpose, in the same PR as the feature that needs it, with the reason in that PR.",
+  "memories": 3000,
+  "chat_turn": {
+    "che_reads": 2,
+    "che_writes": 0,
+    "storage_gets": 60,
+    "storage_puts": 14,
+    "sql_ops": 80,
+    "median_ms": 250
+  },
+  "get_route": {
+    "che_reads": 1,
+    "storage_gets": 12,
+    "median_ms": 200
+  },
+  "worker_js_bytes": 1100000,
+  "cold_import_ms": 4000,
+  "runtime": {
+    "_doc": "Live watch (perf_watch.js): p95 of the last samples per route, deterministic replies only for chat.",
+    "min_samples": 10,
+    "chat_deterministic_p95_ms": 1500,
+    "get_p95_ms": 800
+  }
+}

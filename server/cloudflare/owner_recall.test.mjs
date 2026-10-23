@@ -225,3 +225,90 @@ test('a guest never gets the owner\'s stored statements', async () => {
   const res = await worker.fetch(new Request('https://che.example/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: 'What is the secret code word for the fictional Blue Lantern project?', history: [] }) }), env);
   assert.doesNotMatch(await res.text(), /Magnolia/);
 });
+
+// ─── Owner report, 2026-10-23 evening (after #491) ───────────────────────────────────────────────────────────────────
+// "Show a saved Brain record" and "Inspect your memory system" → "I couldn't finish that answer" (both went to a busy
+// model); "What's my favorite drink?" → "no record" while Sprite was in the phone's Brain notes, which reach the Worker
+// only as brain_context. An engine that is down must not matter for any of the three.
+const DOWN = () => { throw Object.assign(new Error('upstream 503'), { status: 503 }); };
+const PHONE_NOTES = (...lines) => ({ brain_context: [`[CHE BRAIN — what you know, by category]\nPeople:\n${lines.map((l) => `- ${l}`).join('\n')}`] });
+
+test('a fact kept only in the phone Brain notes is recalled, labelled as a phone note, with no model', async () => {
+  for (const note of ["[People] The owner's favorite drink is Sprite", 'Favorite drink: Sprite', 'My favorite drink is Sprite']) {
+    const che = await owner({ model: DOWN });
+    const out = await che.say("What's my favorite drink?", { ...fresh, ...PHONE_NOTES('[Projects] CHE app on iPhone', note) });
+    assert.match(out.reply, /^Your favorite drink is Sprite\. That is from the Brain notes on your phone/, note);
+    assert.doesNotMatch(out.reply, /You told me|don't have a record/i);
+    assert.equal(out.meta.source, 'che_personal_recall');
+    assert.equal(out.meta.recall_receipt.store, 'phone_brain_notes');
+    assert.equal(out.meta.recall_receipt.owner_attested, false);
+    assert.equal(out.modelCalls, 0);
+  }
+});
+
+test('a dated record of the fact wins over an undated phone note; no note and no record is still an honest miss', async () => {
+  const che = await owner({ model: WRONG });
+  await che.say('My favorite drink is Sprite', fresh);
+  const out = await che.say("What's my favorite drink?", { ...fresh, ...PHONE_NOTES('Favorite drink: Coke') });
+  assert.match(out.reply, /^Your favorite drink is Sprite\. You told me that on /);
+  const none = await (await owner({ model: DOWN })).say("What's my favorite drink?", { ...fresh, ...PHONE_NOTES('Favorite food: pizza') });
+  assert.match(none.reply, /don't have a record of your favorite drink/);
+  assert.equal(none.modelCalls, 0);
+});
+
+test('"Show a saved Brain record" opens the newest real record with its id, and says so when there is none', async () => {
+  const empty = await owner({ model: DOWN });
+  const nothing = await empty.say('Show a saved Brain record', fresh);
+  assert.equal(nothing.meta.source, 'che_brain_record');
+  assert.match(nothing.reply, /no saved records yet/);
+  assert.doesNotMatch(nothing.reply, /couldn't finish/i);
+  assert.deepEqual(nothing.meta.record_ids, []);
+
+  const che = await owner({ model: WRONG });
+  await che.say('My favorite drink is Sprite', fresh);
+  const out = await che.say('Show a saved Brain record', fresh);
+  assert.equal(out.meta.source, 'che_brain_record');
+  assert.equal(out.modelCalls, 0);
+  assert.equal(out.meta.record_ids.length, 1);
+  assert.match(out.reply, /My favorite drink is Sprite/);
+  assert.match(out.reply, new RegExp(`Record ${out.meta.record_ids[0].slice(0, 24).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+  // The id the reply links is the record the Brain serves under that id, and it holds the owner's words.
+  const opened = await che.post('/api/brain/record', { id: out.meta.record_ids[0] });
+  assert.equal(opened.record?.id ?? opened.id, out.meta.record_ids[0]);
+  assert.match(JSON.stringify(opened), /My favorite drink is Sprite/);
+});
+
+test('"Show me my brain record about Sprite" opens a matching record; an unknown topic is a specific miss', async () => {
+  const che = await owner({ model: WRONG });
+  await che.say('My favorite drink is Sprite', fresh);
+  await che.say('Remember that my dog is named Rex', fresh);
+  const out = await che.say('Show me my brain record about Sprite', fresh);
+  assert.match(out.reply, /about "Sprite"/);
+  assert.match(out.reply, /Sprite/);
+  const miss = await che.say('Show me a brain record about zeppelins', fresh);
+  assert.match(miss.reply, /no saved Brain record that mentions "zeppelins".*search my memory for zeppelins/);
+  assert.equal(miss.modelCalls, 0);
+});
+
+test('"Inspect your memory system" completes with real counts while the model is down', async () => {
+  const che = await owner({ model: WRONG });
+  await che.say('My favorite drink is Sprite', fresh);
+  const down = await owner({ saved: che.saved, model: DOWN });
+  for (const asked of ['Inspect your memory system', 'CHE, check your memory', 'memory status', 'How is your memory doing?']) {
+    const out = await down.say(asked, { ...fresh, ...PHONE_NOTES('Favorite drink: Sprite') });
+    assert.equal(out.meta.source, 'che_memory_inspection', asked);
+    assert.equal(out.modelCalls, 0);
+    assert.match(out.reply, /^I checked my memory stores just now, sir\. Memory records: \d+/);
+    assert.match(out.reply, /Brain on the Worker: \d+ records/);
+    assert.match(out.reply, /Your phone sent 1 Brain note/);
+    assert.ok(out.meta.memory_inspection.brain.records >= 1);
+  }
+});
+
+test('ordinary sentences are not caught by the record or inspection routes', async () => {
+  const { brainRecordIntent, memoryInspectIntent } = await import('./owner_recall.js');
+  for (const t of ['Show me the record for MNQ today', 'Check your email', 'Fix your memory system', 'Delete my brain records', 'Show me a video about brains', 'My memory is bad lately']) {
+    assert.equal(brainRecordIntent(t), null, t);
+    assert.equal(memoryInspectIntent(t), false, t);
+  }
+});

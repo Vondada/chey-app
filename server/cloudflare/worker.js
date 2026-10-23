@@ -120,6 +120,7 @@ import { BRAIN_ROOMS_SOURCE, ROOMS as BRAIN_ROOMS, answerCrossRoom, crossRoomInt
 import { controlChangeEvent, meetingEvent, officeTaskEvent, paperOrderRefusedEvent, phoneRoomEvent, queueRoomEvent, researchEvent } from './room_events.js';
 import { cloudDailyLimit, sanitizeOwnerText } from './che_errors.js';
 import { commitIntent, commitReceipt, speakReceipt } from './deploy_receipt.js';
+import { UI_CONFIG, handleImprovement, improvementIntent, loadImprovements, recordApplied, startLoggedTask, startTaskIntent, summary as improvementSummary, uiConfigPayload, undoTask, withJobStates } from './owner_improvements.js';
 import { CHE_UPDATE_GUIDE, mergeSelfUpdatePr, openSelfUpdatePr, rollbackLastUpdate, selfUpdateGitHubAccess, selfUpdateStatus, workerDeploymentStatus, latestWorkerDeploymentIntent, latestWorkerDeploymentStatus, speakLatestWorkerDeployment, appStatusIntent, appStatusReport } from './self_update.js';
 import { FAILURE_CLASS, backoffMs, classifyFailure, idempotencyKey, ownerEngineeringMessage, stableHash, stripOwnerHomework } from './recovery_policy.js';
 import { handleMobileUpdateRequest, isMobileUpdatePath } from './mobile_update.js';
@@ -158,11 +159,11 @@ import { flushOutbox, handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, op
 import { CheLibrary, fetchReadable, libraryContext, libraryIntent } from './library.js';
 import { KnowledgeLibrary, knowledgeIntent, knowledgeReply, knowledgeTaskContext } from './knowledge_library.js';
 import { answerPersonalFact, answerStoredStatement, groundedReply, isQuestionLike, needsStrongEngine, personalFactQuestion, storedStatementQuestion } from './personal_recall.js';
-import { chatgptHistoryIntent, importChatgptBatch, ownerMemorySearchIntent, ownerStatementCandidates, searchOwnerMemory, speakChatgptHistory, speakMemorySearch } from './owner_recall.js';
+import { brainRecordIntent, chatgptHistoryIntent, importChatgptBatch, inspectMemory, memoryInspectIntent, ownerMemorySearchIntent, ownerStatementCandidates, phoneBrainNotes, searchOwnerMemory, speakBrainRecord, speakChatgptHistory, speakMemoryInspection, speakMemorySearch } from './owner_recall.js';
 import { adRequest, adStatusLines, assetTruthReply } from './asset_truth.js';
 import { dropAgentTaskTurns, replyRepeatsAgentTask } from './agent_task_guard.js';
 import { openKnowledgeLibrary, seedKnowledgeCatalog } from './knowledge_catalog_seed.js';
-import { CheBrainStore, backfillConversations, displayCopy, isSafeText, ownerMemoryRecord, projectLegacyState, rememberExchange, retrievableOwnerRecord, retrievalBody, sameDisplayCopy } from './brain_store.js';
+import { CheBrainStore, backfillConversations, forgetBrainSchema, displayCopy, isSafeText, ownerMemoryRecord, projectLegacyState, rememberExchange, retrievableOwnerRecord, retrievalBody, sameDisplayCopy } from './brain_store.js';
 import { brainReviewIntent, latestReview, ownerScore, runBrainMaintenance, speakReview } from './brain_audit.js';
 import { answerCorrespondenceQuestion, archiveTasks, correspondenceStatus, importOutsideCorrespondence, outsideCorrespondenceIntent, projectOfficeExperience, recoverHistory, speakCorrespondenceCount, speakCorrespondenceImport, workerBrains } from './brain_office.js';
 import { fetchYouTubeKnowledge, mergeCaptionLines, normalizeCaptionLines, youtubeVideoId } from './youtube_learning.js';
@@ -243,6 +244,7 @@ import { loadRegistry as loadCapabilityRegistry } from './capability_registry.js
 import { BrainLedger, answerLedger, decidePending as decideBrainPending, installBrainLedger, ledgerApi, ledgerIntent as brainLedgerIntent, DEFAULT_ZONE as LEDGER_DEFAULT_ZONE } from './brain_ledger.js';
 import { FilmStore, filmIntent, filmProgress, farmProviders, loadRates, loadUsage, speakFarm, speakPlan, speakStatus as speakFilmStatus } from './film_studio.js';
 import { FILM_ACTIVE_STATES, filmPlan, filmTick, filmTokenRoute, refreshValidation as refreshFilmValidation, remakeShot, setFilmState, startFilm } from './film_pipeline.js';
+import { performanceBanner, performanceIntent, performanceReport, recordTiming, routeKey as perfRouteKey, speakPerformance } from './perf_watch.js';
 import { engineView, exportWorkflows, feedbackOnLast, importWorkflows, library as workflowLibrary, loadEngine, matchLearned, noteVersion, promoteCandidate, dismissCandidate, rankWorkflows, recordRun as recordWorkflowRun, isDisabled as workflowDisabled, restoreVersion, saveEngine, setDisabled as setWorkflowDisabled, setPreferred as setWorkflowPreferred, speakEfficiency, speakLibrary, testCandidate, workflowForRun, workflowIntent } from './workflow_engine.js';
 import { CATEGORIES, COMMANDS, catalogView, commandById, commandStatus, connectorStatus, describeWorkflow, dispatchPrompt, findSavedWorkflow, normalizeSavedWorkflow, parseSlashCommand, readCommandSpeech, searchCommands, speakCommandList, speakUnavailable, suggestCommands, workflowNodes, workflowFromWords } from './command_catalog.js';
 import { handleReaRequest, loadInvestigation, parseReaRequest, reaInvestigationDetail, reaInvestigations } from './rea_runner.js';
@@ -427,7 +429,7 @@ async function withDoneFields(response, fields) {
 }
 
 // The library workflow that served this reply, on its done event. Plain-JSON held replies are left as they are.
-async function withWorkflowReceipt(response, message, data, engine) {
+async function withWorkflowReceipt(response, message, data, engine, onDone = null) {
   const raw = await response.text();
   const lines = raw.split('\n');
   const at = lines.map((line) => { try { return JSON.parse(line); } catch (_) { return null; } }).findLastIndex((e) => e && e.type === 'done');
@@ -438,6 +440,7 @@ async function withWorkflowReceipt(response, message, data, engine) {
     const wf = workflowLibrary(data, engine).find((w) => w.id === id);
     done.workflow = { id, name: wf?.name || id, kind: wf?.kind || 'route', version: wf?.version || 1, deterministic: wf ? wf.deterministic !== false : true };
     lines[at] = JSON.stringify(done);
+    if (onDone) onDone(done);
   }
   return new Response(lines.join('\n'), { status: response.status, headers: response.headers });
 }
@@ -3698,12 +3701,37 @@ function activeLegalActivities(data = {}, legal = {}) {
   return [...acts];
 }
 
+// Calls onWrite before any write that can change `che` (put, delete, deleteAll, a transaction). Installed once per
+// storage object; a second CheState over the same storage (a restart in tests) adds its listener to the same hook.
+function watchCheWrites(storage, onWrite) {
+  if (!storage || typeof storage.put !== 'function') return;
+  if (!storage.__cheWriteListeners) {
+    const listeners = new Set();
+    Object.defineProperty(storage, '__cheWriteListeners', { value: listeners });
+    const touches = (key) => key === 'che' || (Array.isArray(key) ? key.includes('che') : Boolean(key && typeof key === 'object' && 'che' in key));
+    const fire = () => { for (const f of listeners) { try { f(); } catch (_) { /* a listener never breaks a write */ } } };
+    const wrap = (name, always) => {
+      const original = typeof storage[name] === 'function' ? storage[name].bind(storage) : null;
+      if (!original) return;
+      storage[name] = function cheCounted(key, ...rest) { if (always || touches(key)) fire(); return original(key, ...rest); };
+    };
+    wrap('put', false);
+    wrap('delete', false);
+    wrap('deleteAll', true);
+    wrap('transaction', true);
+  }
+  storage.__cheWriteListeners.add(onWrite);
+}
+
 export class CheState extends DurableObject {
   constructor(state, env) {
     super(state, env);
     // Brain Population Ledger: every write to a watched key (owner memories, capability registry, learned workflows,
     // trading evidence) leaves a category-first, timestamped record. Brain/library/knowledge writes log themselves.
     try { installBrainLedger(state.storage); } catch (error) { console.error('Brain ledger hook not installed:', error?.message || error); }
+    // Performance (owner, 2026-10-22): counts writes to `che` so peekData() can share one read per request.
+    this.cheWrites = 0;
+    try { watchCheWrites(state.storage, () => { this.cheWrites += 1; }); } catch (_) { /* a storage without methods to wrap */ }
     // Every text model call goes through CHE's free-engine router. Persist
     // per-engine daily usage estimates in this owner's Durable Object.
     this.env = routedEnv(env, fetch, state.storage);
@@ -3839,6 +3867,18 @@ export class CheState extends DurableObject {
     await this.ctx.storage.put('che', data);
     await this.scheduleWork();
     return lines.join(' ');
+  }
+
+  // One read of `che` per request for callers that only read it (the workflow receipt, the history filter): each
+  // storage.get deserializes the whole owner state, which grows with the brain (docs/CHE_PERFORMANCE.md). Any write to
+  // `che` drops the copy. Never mutate what this returns; use loadData() to change and save.
+  async peekData() {
+    const stamp = this.cheWrites;
+    const snap = this.cheSnapshot;
+    if (snap && snap.stamp === stamp && snap.request === this.currentRequest && this.currentRequest) return snap.data;
+    const data = await this.loadData();
+    this.cheSnapshot = stamp === this.cheWrites ? { stamp, request: this.currentRequest, data } : null;
+    return data;
   }
 
   async loadData() {
@@ -5552,6 +5592,7 @@ export class CheState extends DurableObject {
   // Every owner ↔ CHE exchange becomes a brain memory, after the reply is
   // sent (never in front of it), whatever route inside /api/chat answered.
   async fetch(request) {
+    this.currentRequest = request;
     // The deploy's memory check starts its isolated test CHE fresh each run, so the records each
     // run leaves behind cannot grow it past what storage accepts. Only the per-deploy random token
     // opens this, only the memory check sends it, and never to an object named anything else.
@@ -5560,6 +5601,7 @@ export class CheState extends DurableObject {
       // so the owner's CHE can never be reached by this route.
       if (!isMemoryProbeRequest(request, this.env) || this.ctx.id?.name !== MEMORY_PROBE_OBJECT) return json({ detail: 'Not found.' }, 404);
       await this.ctx.storage.deleteAll();
+      forgetBrainSchema(this.ctx.storage);
       return json({ ok: true, reset: true });
     }
     // Internal-only mode (Security Intelligence): every outbound fetch is checked against the owner's policy.
@@ -5591,6 +5633,8 @@ export class CheState extends DurableObject {
     const sent = isChat ? request.clone().json().catch(() => null) : null;
     const startedAt = Date.now();
     let response = await this.handleRequest(request);
+    const handlerMs = Date.now() - startedAt;
+    let modelCalls = null;
     if (response?.status >= 500 && response.status !== 503) await this.securityCount('server_error');
     // Issue #345: a turn with a money or delete hold, or several steps with a "don't", carries how CHE
     // read it. The phone shows it as quiet text under the reply and never speaks it by itself.
@@ -5601,7 +5645,7 @@ export class CheState extends DurableObject {
     if (isChat && response?.ok && OWNER_CHAT_REQUESTS.has(request) && /ndjson/i.test(response.headers.get('Content-Type') || '')) {
       response = await withSoulRecord(response, await loadSoul(this.ctx.storage), this.ctx.storage);
       // Workflow Engine: the reply says which library workflow served it (shown as quiet text, never spoken).
-      response = await withWorkflowReceipt(response, String((await sent)?.message || ''), await this.loadData(), await loadEngine(this.ctx.storage));
+      response = await withWorkflowReceipt(response, String((await sent)?.message || ''), await this.peekData(), await loadEngine(this.ctx.storage), (done) => { modelCalls = done.model_calls != null && Number.isFinite(Number(done.model_calls)) ? Number(done.model_calls) : (!done.source || done.source === 'model') ? 1 : null; });
     }
     // A trade alert the owner has not heard yet is said first, in the reply
     // to whatever he says next (there is no phone push for it yet).
@@ -5653,7 +5697,7 @@ export class CheState extends DurableObject {
           const doneEvent = raw.split('\n').filter(Boolean).map((line) => { try { return JSON.parse(line); } catch (_) { return null; } }).filter((e) => e?.type === 'done').pop() || {};
           if (message && !body?.workflow_step) {
             const engine = await loadEngine(this.ctx.storage);
-            recordWorkflowRun(engine, { message, done: doneEvent, held: Boolean(heldReply?.held_for_owner), slash: slash?.command?.id || '', ms: Date.now() - startedAt, data: await this.loadData() });
+            recordWorkflowRun(engine, { message, done: doneEvent, held: Boolean(heldReply?.held_for_owner), slash: slash?.command?.id || '', ms: Date.now() - startedAt, data: await this.peekData() });
             await saveEngine(this.ctx.storage, engine);
           }
         } catch (_) {}
@@ -5679,6 +5723,13 @@ export class CheState extends DurableObject {
           }).catch(() => null);
         }
       })().catch(() => null));
+    }
+    // Performance watch (perf_watch.js): route and milliseconds only, flushed at most once a minute, never in the reply's way.
+    if (!probeRun && this.ctx.waitUntil) {
+      const url = new URL(request.url);
+      const key = perfRouteKey(request.method, url.pathname, { modelCalls });
+      const total = Date.now() - startedAt;
+      if (key) this.ctx.waitUntil(recordTiming(this.ctx.storage, key, { total, stages: { handler: handlerMs, finishing: total - handlerMs } }).catch(() => null));
     }
     return response;
   }
@@ -5925,6 +5976,13 @@ export class CheState extends DurableObject {
       const ask = filmIntent(dispatchPrompt(command, input)) || (command.local === 'film_status' ? { kind: 'status' } : null);
       if (!ask) return ndjsonReply('Say the length and the subject, for example "/film-make 10-minute movie about a lighthouse keeper".', { source: 'che_film_studio', ok: false, command: command.id, model_calls: 0 });
       return withDoneFields(await this.filmChat(request, ask), { command: command.id });
+    }
+    // Owner Improvements: the command's words go through the same intent the owner's chat uses.
+    if (command.local === 'owner_improvement') {
+      if (!OWNER_CHAT_REQUESTS.has(request)) return ndjsonReply('Only the CHE owner can change CHE. Nothing was changed.', { source: 'che_owner_improvement', ok: false, command: command.id, model_calls: 0 });
+      const ask = improvementIntent(String(input || '')) || startTaskIntent(String(input || '')) || (String(input || '').trim() ? null : { kind: 'list' });
+      if (!ask) return ndjsonReply('Tell me what feels wrong, for example "/che-improve the chart is too big". Nothing was changed.', { source: 'che_owner_improvement', ok: false, command: command.id, model_calls: 0 });
+      return withDoneFields(await this.improvementChat(body || {}, ask), { command: command.id });
     }
     if (command.local === 'coding_cancel') {
       // Owner only, like POST /api/job/cancel: checked here too, not only by the guest gate in front.
@@ -7681,10 +7739,17 @@ export class CheState extends DurableObject {
         }
         return json({ detail: 'Method not allowed.' }, 405);
       }
+      // Performance watch: measured timings per route against the budget (owner device only).
+      if (request.method === 'GET' && path === '/api/performance') {
+        if (!ownerDevice) return json({ detail: 'Not found.' }, 404);
+        return json(await performanceReport(this.ctx.storage));
+      }
       if (request.method === 'GET' && path === '/api/state') {
         const capabilityRegistry = runtimeCapabilityRegistry(this.env, data);
         return json({
           capability_registry: capabilityRegistry,
+          // One quiet line for the app when CHE is over her performance budget; { status: 'ok' } otherwise.
+          ...(ownerDevice ? { performance: performanceBanner(await performanceReport(this.ctx.storage).catch(() => null)) } : {}),
           memories: data.memories,
           memory_records: data.memory_records || [],
           memory_notes: listMemoryNotes(data),
@@ -8052,6 +8117,34 @@ export class CheState extends DurableObject {
         await this.scheduleWork().catch(() => null);
         const view = await cryptoView(this.ctx.storage);
         return json({ ok: true, ...view, spoken: speakCrypto(view, { action: body.action === 'pause' ? 'paused' : body.action === 'resume' ? 'resumed' : null }) });
+      }
+      // Owner Improvements (owner, 2026-10-23): the ledger, the live UI preferences, and the iPhone's apply receipt.
+      if (path === '/api/owner/improvements' && request.method === 'GET') {
+        if (!ownerDevice) return ownerOnly();
+        const state = await loadImprovements(this.ctx.storage);
+        const tasks = withJobStates(state.tasks, (await this.loadData().catch(() => ({ jobs: [] }))).jobs);
+        return json({ tasks, config: uiConfigPayload(state), schema: UI_CONFIG, summary: improvementSummary({ tasks }) });
+      }
+      if (path === '/api/owner/ui-config' && request.method === 'GET') {
+        if (!ownerDevice) return ownerOnly();
+        return json(uiConfigPayload(await loadImprovements(this.ctx.storage)));
+      }
+      const improvementAct = /^\/api\/owner\/improvements\/(imp-\d{8}-\d{3})\/(applied|undo|start)$/.exec(path);
+      if (improvementAct && request.method === 'POST') {
+        if (!ownerDevice) return ownerOnly();
+        const [, id, act] = improvementAct;
+        if (act === 'applied') {
+          const out = await recordApplied(this.ctx.storage, id, body);
+          return json(out.body, out.status);
+        }
+        if (act === 'undo') {
+          const out = await undoTask(this.ctx.storage, id);
+          return json({ ok: out.ok, spoken: out.text, task: out.task || null, ...(out.fields || {}) }, out.ok ? 200 : 409);
+        }
+        const reply = await this.improvementChat({}, { kind: 'start', id });
+        const lines = (await reply.text()).split('\n').filter(Boolean).map((l) => JSON.parse(l));
+        const done = lines.find((l) => l.type === 'done') || {};
+        return json({ ok: done.ok !== false, spoken: lines.filter((l) => l.type === 'delta').map((l) => l.delta).join(''), improvement_id: id, improvement_status: done.improvement_status || null, job_id: done.job_id || null });
       }
       // Strategy governor (owner, 2026-10-23): which strategies may trade forward paper, why, and every decision with its evidence.
       if (path === '/api/trading/governor' && request.method === 'GET') {
@@ -10289,6 +10382,14 @@ export class CheState extends DurableObject {
             execution_receipt: receipt.commit ? { tool: 'github', operation: 'read_commit_and_runs', status: 'success', source: receipt.commit.url, commit_sha: receipt.commit.sha } : null,
           });
         }
+        // Owner Improvements (owner, 2026-10-23): "this page is too cramped", "make the chart smaller", "undo that".
+        // A supported setting is changed, read back and sent to the iPhone; code work goes to the coding pipeline.
+        const improveAsk = !body.attachment && !body.workflow_step
+          ? (startTaskIntent(rawMessage) || improvementIntent(rawMessage, { visualOpen: Boolean(body.visual_project_id) })) : null;
+        if (improveAsk) {
+          const reply = await this.improvementChat(body, improveAsk);
+          if (reply) return reply;
+        }
         const runtimeStatusAsk = !body.attachment && !body.workflow_step ? appStatusIntent(rawMessage) : null;
         if (runtimeStatusAsk) {
           if (!ownerDevice) return ownerOnly();
@@ -10511,7 +10612,7 @@ export class CheState extends DurableObject {
           return ndjsonReply(text, { source: 'che_reply_provenance', model_calls: 0, engine: 'no model (deterministic)', previous_reply: record || null });
         }
         // Office task lines are not the owner's conversation, so they never reach the model as history (agent_task_guard.js).
-        const ownerHistory = dropAgentTaskTurns(Array.isArray(body.history) ? body.history : [], (await this.loadData().catch(() => ({}))).team_tasks || []);
+        const ownerHistory = dropAgentTaskTurns(Array.isArray(body.history) ? body.history : [], (await this.peekData().catch(() => ({}))).team_tasks || []);
         // Evaluate references before the interpreter expands "the last one"
         // into a new question. Route it later, after permission handling.
         const asksForEvidence = evidenceQuestion(rawMessage, ownerHistory) ||
@@ -11732,6 +11833,11 @@ export class CheState extends DurableObject {
         // A question about what the owner himself said ("what have I told you about my brain
         // review") is his memory question, below, never the review.
         const memoryQuestion = ownerDevice && !body.attachment ? ownerMemoryQuestion(rawMessage) : null;
+        // "Are you lagging?" / "performance report" / /che-performance: measured timings, never an estimate (perf_watch.js).
+        if (ownerDevice && !body.attachment && performanceIntent(rawMessage)) {
+          const report = await performanceReport(this.ctx.storage);
+          return ndjsonReply(speakPerformance(report), { source: 'che_performance', ok: true, model_calls: 0, performance_status: report.status });
+        }
         if (ownerDevice && !body.attachment && !memoryQuestion && brainReviewIntent(rawMessage)) {
           const latest = latestReview(new CheBrainStore(this.ctx.storage));
           return ndjsonReply(speakReview(latest), { source: 'che_brain_review', model_calls: 0, review_id: latest.review?.id || null });
@@ -11774,6 +11880,25 @@ export class CheState extends DurableObject {
         // "Search my memory for Sprite": every store CHE keeps of the owner's words (memory records, saved
         // preferences, the Brain, the ChatGPT import), each with its count, and the raw matching records with id,
         // source and date, so the owner can see whether a record exists at all (owner_recall.js).
+        // "Show a saved Brain record" and "Inspect your memory system" (owner, 2026-10-23: both reached the model and
+        // came back "I couldn't finish that answer" when it was busy). Both read CHE's own stores; no model.
+        const recordAsk = ownerDevice && !body.attachment && !memoryQuestion ? brainRecordIntent(rawMessage) : null;
+        if (recordAsk) {
+          let store = null;
+          try { store = new CheBrainStore(this.ctx.storage); } catch (_) { store = null; }
+          const shown = speakBrainRecord(store, recordAsk);
+          const ids = shown.record ? [shown.record.id] : [];
+          await recordAnswerEvidence(this.ctx.storage, shown.text, { kind: shown.record ? 'tool_result' : 'none', tools: ['brain/record'] }, { records: ids }).catch(() => null);
+          return ndjsonReply(shown.text, { source: 'che_brain_record', model_calls: 0, ok: shown.available, records: ids.length, record_ids: ids });
+        }
+        if (ownerDevice && !body.attachment && !memoryQuestion && memoryInspectIntent(rawMessage)) {
+          let store = null;
+          try { store = new CheBrainStore(this.ctx.storage); } catch (_) { store = null; }
+          const report = inspectMemory(data, store, { phoneNotes: phoneBrainNotes(body.brain_context) });
+          const text = speakMemoryInspection(report);
+          await recordAnswerEvidence(this.ctx.storage, text, { kind: 'tool_result', tools: ['brain/status', 'memory_records'] }).catch(() => null);
+          return ndjsonReply(text, { source: 'che_memory_inspection', model_calls: 0, ok: Boolean(report.brain), memory_inspection: report });
+        }
         const ownerSearch = ownerDevice && !body.attachment ? ownerMemorySearchIntent(rawMessage) : null;
         if (ownerSearch) {
           let store = null;
@@ -13563,7 +13688,7 @@ export class CheState extends DurableObject {
         }
         // Preserve supplied conversation state; capacity checks must skip a
         // small engine instead of silently dropping the owner's earlier turns.
-        const history = dropAgentTaskTurns(Array.isArray(body.history) ? body.history : [], (await this.loadData().catch(() => ({}))).team_tasks || []);
+        const history = dropAgentTaskTurns(Array.isArray(body.history) ? body.history : [], (await this.peekData().catch(() => ({}))).team_tasks || []);
         const { turns, condensed: earlierContext } = condenseHistory(history, { keep: 12 });
         if (turns.length &&
             turns[turns.length - 1].role === 'user' &&
@@ -13827,16 +13952,16 @@ export class CheState extends DurableObject {
           try { store = new CheBrainStore(this.ctx.storage); } catch (_) { store = null; }
           // The newest Brain turns plus the ones that mention the asked words, so an old statement is never out of reach.
           const brainStatements = ownerStatementCandidates(store, rawMessage);
-          const answer = personal ? answerPersonalFact(data, personal, brainStatements) : answerStoredStatement(data, statementAsk, brainStatements);
+          const answer = personal ? answerPersonalFact(data, personal, brainStatements, phoneBrainNotes(body.brain_context)) : answerStoredStatement(data, statementAsk, brainStatements);
           if (answer) {
             const receipt = answerEvidenceReceipt({ ownerAttested: answer.kind === 'owner_attested' });
             await Promise.resolve().then(() => this.ctx.storage.put(LAST_ANSWER_EVIDENCE_KEY, receipt)).catch(() => null);
             const r = answer.record || null;
-            const store = r ? (r.legacy ? 'saved_preferences' : r.brain ? 'brain' : 'memory_records') : '';
+            const store = r ? (r.phone ? 'phone_brain_notes' : r.legacy ? 'saved_preferences' : r.brain ? 'brain' : 'memory_records') : '';
             await recordAnswerEvidence(this.ctx.storage, answer.answer, { ...receipt, kind: answer.kind }, { records: answer.records, cited: r ? [{ text: r.quote || r.statement || r.text, created_at: r.created_at, store }] : [] });
             return ndjsonReply(answer.answer, {
               source: 'che_personal_recall', model_calls: 0, records: answer.records.length, record_ids: answer.records,
-              recall_receipt: r ? { record_id: r.id || null, stored_at: r.created_at || null, store, owner_attested: !r.legacy } : null,
+              recall_receipt: r ? { record_id: r.id || null, stored_at: r.created_at || null, store, owner_attested: !r.legacy && !r.phone } : null,
             });
           }
         }
@@ -15034,6 +15159,36 @@ export class CheState extends DurableObject {
 
   // Owner chat reply for a coding request. Proposal → short summary;
   // failures → one human-level sentence (diagnostics stay on the Worker).
+  // Owner Improvements: one request, answered from the ledger in owner_improvements.js. Code work goes through
+  // selfDevelopmentReply, and the task keeps the job id that pipeline really returned.
+  async improvementChat(body, ask) {
+    const delegate = async (brief) => {
+      const text = await (await this.selfDevelopmentReply(brief)).text();
+      let said = '';
+      let done = {};
+      for (const line of text.split('\n')) {
+        try {
+          const event = JSON.parse(line);
+          if (event.type === 'delta') said += event.delta || '';
+          if (event.type === 'done') done = event;
+        } catch (_) {}
+      }
+      const jobId = done.job_id || done.background_job_id || null;
+      return { ok: done.ok !== false && !done.failure_class && done.source === 'che_self_development', job_id: jobId, text: said };
+    };
+    const screen = String(body.active_screen || '').slice(0, 60);
+    const out = ask.kind === 'start'
+      ? await startLoggedTask(this.ctx.storage, ask.id, { delegate })
+      : await handleImprovement(this.ctx.storage, ask, { screen, delegate });
+    if (!out) return null;
+    return ndjsonReply(out.text, {
+      source: 'che_owner_improvement', ok: out.ok !== false, model_calls: 0, improvement_action: ask.kind,
+      ...(out.task ? { improvement_id: out.task.id, improvement_status: out.task.status } : {}),
+      ...(out.job_id ? { job_id: out.job_id } : {}),
+      ...(out.fields || {}),
+    });
+  }
+
   async selfDevelopmentReply(message, { vectorRecall = {}, onAccepted = null } = {}) {
     const policy = currentTurnActionPolicy(message);
     if (!policy.codingJobAllowed) {

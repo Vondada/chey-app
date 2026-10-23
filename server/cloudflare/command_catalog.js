@@ -156,6 +156,15 @@ export const COMMANDS = Object.freeze([
     prompt: 'Read me my brain review',
     produces: 'review', evidence: 'Every line comes from the stored review record, computed from Brain records; zero model calls.', keywords: ['brain review', 'morning review', 'daily review', 'audit', 'conclusions'],
   }),
+  C('che-performance', 'intelligence', 'EXPLORE', 'Hear how fast CHE is running, measured.', {
+    title: 'CHE performance',
+    does: 'Reads CHE’s own measured timings per route (typical and slowest 5 percent), compares them with her performance budget, and names the slowest step. Says so when nothing has been measured yet.',
+    needs: ['memory'], route: 'che_performance', handler: 'perf_watch.performanceIntent → performanceReport → speakPerformance',
+    input: null,
+    examples: ['Are you lagging?', 'Performance report', 'Why are you slow?'],
+    prompt: 'Performance report',
+    produces: 'report', evidence: 'Every number is a measured request timing from the live window; zero model calls.', keywords: ['performance', 'lag', 'lagging', 'slow', 'speed', 'latency'],
+  }),
   C('che-flagstaff-import', 'intelligence', 'BUILD', 'Bring the Flagstaff mailbox history into the Brain.', {
     title: 'CHE Flagstaff import',
     does: 'Reads every message file on the che-mailbox branch, archive included, and keeps each message in your Brain as outside correspondence with its file, message id, sender, recipient and time. Never as your words, an instruction or Office worker experience. Safe to repeat: a message already there is skipped, one you deleted stays deleted, and a long import carries on where it stopped.',
@@ -186,6 +195,15 @@ export const COMMANDS = Object.freeze([
   }),
   // Owner, 2026-10-19 ("Cancel that fake commit by Che"): the voice and typed route to the
   // owner-only POST /api/job/cancel. Cancelling a queued job deletes nothing, so it asks nothing first.
+  // Owner Improvements (owner, 2026-10-23): "this page is too cramped", "make the chart smaller", "undo that".
+  C('che-improve', 'intelligence', 'BUILD', 'Tell CHE what feels wrong; she fixes it or opens a coding task.', {
+    does: 'A supported layout or look change (layout density, chart size and shape, success color, text size) is stored, read back and applied on the iPhone with no new build, then marked Verified when the app confirms it; "undo that" puts it back. Anything else becomes a tracked task with acceptance criteria, sent to CHE\'s coding pipeline. Money, trading, security, credentials, deleting and publishing are never changed automatically.',
+    needs: [], route: 'che_owner_improvement', local: 'owner_improvement', handler: 'owner_improvements.improvementIntent → handleImprovement (coding through selfDevelopmentReply)',
+    input: { name: 'what', required: false, hint: 'What feels wrong, for example "the chart is too big"' },
+    examples: ['This page is too cramped', 'Make the chart smaller', 'Use chrome green for successful actions', 'Undo that', 'What improvements are open?'],
+    prompt: '{input}', produces: 'improvement task', evidence: 'The stored setting read back, and the value the iPhone reports it applied; for code, the coding job id the pipeline returned.',
+    cost: 'Free for settings: no AI engine is used. A coding task uses the coding pipeline.', keywords: ['improve', 'improvement', 'too cramped', 'too big', 'too small', 'fix this', 'owner improvements', 'undo that'],
+  }),
   C('che-cancel-job', 'intelligence', 'BUILD', 'Cancel a coding job that has not started.', {
     does: 'Cancels a queued coding job: by its id, or the one CHE last accepted. A running, finished or failed job is left alone and CHE says so. The job record is kept, marked cancelled with who cancelled it and when. Nothing is deleted.',
     needs: ['jobs'], route: 'che_coding_cancel', local: 'coding_cancel', handler: 'coding_cancel.cancelQueuedJob (shared with POST /api/job/cancel)',

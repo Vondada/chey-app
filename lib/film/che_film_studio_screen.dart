@@ -12,6 +12,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
+import '../che_ui/che_foreground.dart';
 
 class CheFilmClient {
   CheFilmClient({required this.baseUrl, required this.headers, http.Client? client}) : _client = client ?? http.Client();
@@ -87,7 +88,7 @@ class _CheFilmStudioScreenState extends State<CheFilmStudioScreen> {
     unawaited(_load());
     _timer = Timer.periodic(widget.refreshEvery, (_) {
       final state = (_view?['film'] as Map?)?['state'];
-      if (_active.contains(state)) unawaited(_load());
+      if (_active.contains(state) && cheAppInForeground()) unawaited(_load());
     });
   }
 
@@ -227,7 +228,8 @@ class _CheFilmStudioScreenState extends State<CheFilmStudioScreen> {
                 OutlinedButton(onPressed: _busy ? null : () => _act({'action': 'cancel'}), child: const Text('Stop film')),
             ]),
             const SizedBox(height: 8),
-            Row(children: [
+            // Wraps at narrow widths and large text instead of pushing the button off screen.
+            Wrap(spacing: 8, runSpacing: 8, crossAxisAlignment: WrapCrossAlignment.end, children: [
               SizedBox(
                 width: 120,
                 child: TextField(
@@ -236,7 +238,6 @@ class _CheFilmStudioScreenState extends State<CheFilmStudioScreen> {
                   decoration: const InputDecoration(labelText: 'Shot number'),
                 ),
               ),
-              const SizedBox(width: 8),
               OutlinedButton(onPressed: _busy ? null : _remake, child: const Text('Remake this shot')),
             ]),
           ],

@@ -1271,6 +1271,7 @@ extension _CheHomeSend on _CHEHomeState {
           }
           final details = cheResponseDetailsJson(_streamResponseDetails);
           if (details != null) messages[assistantIndex]['response_details'] = details;
+          if (_streamRecordIds.isNotEmpty) messages[assistantIndex]['record_ids'] = _streamRecordIds.join('\n');
         }
         _isSending = false;
       });
