@@ -300,6 +300,7 @@ class RithmicFrame {
         price: _double(100006),
         size: _int(159008),
         ssboe: _int(150100),
+        usecs: _int(150101),
       );
 
   RithmicBestBidOffer toBestBidOffer() => RithmicBestBidOffer(
@@ -351,12 +352,15 @@ class RithmicGatewayInfo {
 }
 
 class RithmicLastTrade {
-  const RithmicLastTrade({required this.symbol, required this.exchange, required this.price, required this.size, required this.ssboe});
+  const RithmicLastTrade({required this.symbol, required this.exchange, required this.price, required this.size, required this.ssboe, this.usecs});
   final String symbol;
   final String exchange;
   final double? price;
   final int? size;
   final int? ssboe;
+
+  /// Microseconds past [ssboe] (field 150101), when Rithmic sent them.
+  final int? usecs;
 }
 
 class RithmicBestBidOffer {
