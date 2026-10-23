@@ -167,6 +167,7 @@ import 'che_web_voice_stub.dart'
     if (dart.library.js_interop) 'che_web_voice_web.dart' as che_web_voice;
 import 'knowledge/che_knowledge_library_screen.dart';
 import 'rithmic/che_rithmic_screen.dart';
+import 'rithmic/rithmic_live.dart';
 
 part 'home_state/connected.dart';
 part 'home_state/home_ui.dart';
@@ -1393,6 +1394,10 @@ OWNER AGENCY
     if (kIsWeb || !mounted) return;
 
     _appForeground = state == AppLifecycleState.resumed;
+    // The Rithmic feed lives on this phone and pauses while CHE is off screen; the chart marks that stretch as a gap.
+    if (state == AppLifecycleState.resumed || state == AppLifecycleState.paused || state == AppLifecycleState.hidden) {
+      CheRithmicLive.instance.appLifecycle(foreground: state == AppLifecycleState.resumed);
+    }
     if (state == AppLifecycleState.resumed) {
       _updateHomeState(() { _priorityBannerVersion++; });
       unawaited(_loadAgentState(silent: true));

@@ -311,7 +311,7 @@ class CheTradingChartState extends State<CheTradingChart> {
 
   /// Connection status and last update for the Rithmic line in the header.
   String get rithmicLine {
-    final parts = [_live.statusLabel];
+    final parts = [_live.statusLabel, CheRithmicLive.backgroundNote.replaceFirst(RegExp(r'\.$'), '')];
     final at = _live.lastTradeAt;
     if (at != null) parts.add('last trade ${_seconds(at)}');
     final got = _live.lastReceivedAt;

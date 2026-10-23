@@ -35,6 +35,9 @@ class CheCandle {
     required this.closed,
     required this.source,
     required this.symbol,
+    this.buyVolume = 0,
+    this.sellVolume = 0,
+    this.delta,
   });
 
   /// Period start, UTC.
@@ -49,6 +52,11 @@ class CheCandle {
   /// Always 'rithmic' for this feed.
   final String source;
   final String symbol;
+
+  /// Aggressor volume from trades Rithmic flagged as bought at the ask or sold at the bid. [delta] is null when no
+  /// trade in the candle carried the flag.
+  final int buyVolume, sellVolume;
+  final int? delta;
 
   DateTime get end => start.add(Duration(minutes: minutes));
 
@@ -68,6 +76,7 @@ class CheMarketSnapshot {
     required this.lastPrice,
     required this.lastTradeAt,
     required this.lastUpdate,
+    this.gaps = const [],
   });
 
   final String symbol, exchange;
@@ -89,6 +98,12 @@ class CheMarketSnapshot {
 
   /// When this phone last received a trade.
   final DateTime? lastUpdate;
+
+  /// Stretches without live data (CHE in the background, connection down). Never filled in.
+  final List<RithmicFeedGap> gaps;
+
+  /// Always true on the iPhone: see [CheRithmicLive.backgroundNote].
+  String get backgroundNote => CheRithmicLive.backgroundNote;
 }
 
 class CheMarketFeed {
@@ -147,6 +162,7 @@ class CheMarketFeed {
       lastPrice: last,
       lastTradeAt: _live.lastTradeAt,
       lastUpdate: _live.lastReceivedAt,
+      gaps: List.unmodifiable(_live.gaps),
     );
   }
 
@@ -164,6 +180,9 @@ class CheMarketFeed {
         closed: closed,
         source: 'rithmic',
         symbol: _live.symbol,
+        buyVolume: c.buyVolume,
+        sellVolume: c.sellVolume,
+        delta: c.delta,
       );
 
   static CheFeedConnection _connection(RithmicLiveStatus s) => switch (s) {

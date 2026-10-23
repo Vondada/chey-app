@@ -83,7 +83,7 @@ void main() {
   testWidgets('without Rithmic the MNQ chart says Yahoo Finance (delayed), never live', (tester) async {
     final chart = await pump(tester, CheRithmicLive());
     expect(text(tester, 'chart-source'), 'Source: Yahoo Finance (delayed)');
-    expect(text(tester, 'chart-rithmic'), 'Rithmic not connected');
+    expect(text(tester, 'chart-rithmic'), 'Rithmic not connected · Live feed pauses when CHE is in the background');
     expect(chart.summary, isNot(contains('Rithmic live')));
     expect(find.textContaining('live', findRichText: true).evaluate().where((e) => (e.widget as Text).data!.contains('Yahoo') && (e.widget as Text).data!.contains('live')), isEmpty);
     await tester.pumpWidget(const SizedBox());
@@ -107,6 +107,7 @@ void main() {
     final status = text(tester, 'chart-rithmic');
     expect(status, startsWith('Rithmic live — MNQZ6 · connected'));
     expect(status, contains('last trade '));
+    expect(status, contains('Live feed pauses when CHE is in the background'));
     expect(status, contains('updated '));
     expect(chart.summary, contains('Rithmic live — MNQZ6'));
 
