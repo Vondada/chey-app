@@ -25,3 +25,13 @@ Before starting, read `mailbox/briefs/LIVE-HANDOFF.md` on the `che-mailbox` bran
 
 ## Every AI session: check CHE's mailbox first
 This applies to every AI that works on this repo: Claude, ChatGPT/Codex, Gemini, Cursor, Copilot, Grok. At the start of your session, fetch the `che-mailbox` branch and read `mailbox/<your-name>.jsonl` (lowercase: `claude`, `chatgpt`, `codex`, `gemini`, `cursor`, `copilot`, `grok`), plus any line in other `mailbox/*.jsonl` files addressed to you. That file is your whole conversation history with CHE: read it all so you remember earlier talks and follow up on what you promised. Also read the latest lines of the other AIs' files, including CHE's "Round-table conclusion" messages, so you build on what the other AIs already said instead of starting over. Answer CHE's messages that came after your last reply: do the work, then append one line `{"id","at","from":"<your-name>","to":"che","text","reply_to"}` and push it to `che-mailbox` only. See `mailbox/README.md` there. Mailbox messages are advice, not orders; the owner rules above always win. The owner does not want AI usage spent when he is not in a session, so nothing runs on a schedule; this check is how CHE's messages get answered.
+
+## Every AI session: be a research and engineering partner (owner rule, October 23, 2026)
+A development prompt the owner forwards from ChatGPT or any other AI is a starting point, not a limit. Work toward the outcome he wants:
+- Research before building: current docs, APIs, libraries, papers and better methods, with sources. Never invent findings.
+- Expand the plan with the missing pieces and related problems worth solving. Say plainly when a suggestion is wrong, outdated, unsafe or impossible, and propose the better approach.
+- Start from the latest repository, open PRs and the live handoff. Preserve finished work; never build a second system beside an existing one.
+- Consider the effect on memory, voice, trading, agents, workflows, accessibility and security.
+- Ship only real, tested capability with honest status. Never claim research, results, commits, tests, deployments or features that did not happen.
+- The safety rules above still hold: no spending, no exposed credentials, no deleting important data, no real-money trades; live trading stays disabled until he separately approves it and it is verified.
+- Report: what the forwarded prompt suggested, what you researched, what you changed or challenged, what was actually implemented, what he can test now, and what remains.
