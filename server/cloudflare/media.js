@@ -2,6 +2,7 @@
 import { moneyPrinterVideo, moneyPrinterStatus, verifyVideoMedia } from './moneyprinter.js';
 import { createFacelessVideo } from './faceless_video.js';
 import { githubVideoConfigured, startGithubVideo, githubVideoStatus, githubVideoFile } from './github_video_renderer.js';
+import { mediaStore } from './che_media_store.js';
 //   - Owner image connector (CHE_IMAGE_GEN_URL) wins when configured.
 //   - Otherwise Workers AI FLUX.1 [schnell] generates the image on the CHE
 //     server itself (highest step count unless the owner picks draft).
@@ -61,7 +62,11 @@ async function storeBlob(env, storage, id, base64, mimeType = 'image/jpeg', kind
     return { blob: 'r2', blob_key: key };
   }
   if (kind === 'video') {
-    throw new Error('Generated video storage needs CHE_DATA_BUCKET (R2).');
+    // Videos go to CHE's own store (or R2 when bound, above): the same quota and checks as film files.
+    const key = `media/${id}.${extensionForMime(mimeType)}`;
+    const saved = await mediaStore(env, storage).put(key, b64ToBytes(base64), { contentType: mimeType });
+    if (!saved.ok) throw new Error(saved.error);
+    return { blob: 'che_store', blob_key: key };
   }
   await storage.put(`media:${id}`, base64);
   return { blob: 'do' };
@@ -81,6 +86,10 @@ export async function readBlob(env, storage, item) {
     } catch {
       return null; // Expired artifact or unavailable GitHub download.
     }
+  }
+  if (item.blob === 'che_store') {
+    const object = await mediaStore(env, storage).get(item.blob_key || `media/${item.id}.mp4`);
+    return object ? object.body : null;
   }
   if (item.blob === 'r2' && env.CHE_DATA_BUCKET) {
     const key = item.blob_key || `media/${item.id}.jpg`;

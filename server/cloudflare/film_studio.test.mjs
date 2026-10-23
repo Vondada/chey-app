@@ -40,6 +40,7 @@ function r2() {
     objects,
     put: async (key, body, opts = {}) => { objects.set(key, { bytes: await toBytes(body), meta: opts.httpMetadata || {} }); },
     head: async (key) => (objects.has(key) ? { size: objects.get(key).bytes.length } : null),
+    delete: async (key) => { objects.delete(key); },
     get: async (key, opts = {}) => {
       const o = objects.get(key); if (!o) return null;
       const r = opts.range; const bytes = r ? o.bytes.subarray(r.offset, r.offset + r.length) : o.bytes;

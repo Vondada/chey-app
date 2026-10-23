@@ -11,6 +11,7 @@ import {
 import { farmTokenOpens, hfClip, kaggleSessionStatus, newFarmToken, startKaggleSession, validateKaggle, ensureHfSpace, HF_SPACE_FILES } from './film_farm.js';
 import { assemblyTokenOpens, filmRenderStatus, newAssemblyJob, startFilmRender, validateGithub, verifyFilmObject } from './film_render.js';
 import { mp4Facts } from './github_video_renderer.js';
+import { assembleUpload, mediaStore, partKey, sha256Hex } from './che_media_store.js';
 import { saveFilmVideo } from './media.js';
 import { redact } from './security_intelligence.js';
 
@@ -134,7 +135,7 @@ async function farmLedger(storage, film) { return (await storage.get(`film:${fil
 async function makeStep(ctx, store, film) {
   const { env, storage } = ctx;
   const now = ctx.now || Date.now();
-  if (!env.CHE_DATA_BUCKET) return fail(store, film, 'no R2 bucket is bound, so the pictures and the film cannot be stored');
+  const media = mediaStore(env, storage);
   const shots = await store.shots(film.id, film.shot_count);
   const byN = new Map(shots.map((s) => [s.n, s]));
   // Owner remakes queued since the last pass, and clips the farm delivered.
@@ -153,7 +154,7 @@ async function makeStep(ctx, store, film) {
   const stillsPaid = wantStill.length ? await reserve(storage, 'neurons', NEURONS.still, wantStill.length, { now }) : 0;
   if (wantStill.length && !stillsPaid) film.waiting = 'Waiting for tomorrow\'s free picture allowance (it resets at midnight UTC).';
   if (stillsPaid) {
-    const started = Date.now(); let made = 0;
+    const started = Date.now(); let made = 0; let storeError = null;
     await Promise.all(wantStill.slice(0, stillsPaid).map(async (shot) => {
       let bytes = null; let check;
       try {
@@ -163,7 +164,8 @@ async function makeStep(ctx, store, film) {
       } catch (error) { check = { ok: false, reason: String(error?.message || error).slice(0, 120) }; }
       if (check.ok) {
         const key = `film/${film.id}/stills/${shot.n}.jpg`;
-        await env.CHE_DATA_BUCKET.put(key, bytes, { httpMetadata: { contentType: 'image/jpeg' } });
+        const saved = await media.put(key, bytes, { contentType: 'image/jpeg' });
+        if (!saved.ok) { storeError = saved.error; return; }
         Object.assign(shot, { still_key: key, check });
         film.stats.stills_made += 1; made += 1;
       } else {
@@ -172,6 +174,7 @@ async function makeStep(ctx, store, film) {
         if (shot.attempts >= MAX_ATTEMPTS) { shot.status = 'failed'; film.stats.stills_failed += 1; }
       }
     }));
+    if (storeError) return fail(store, film, storeError);
     if (made) {
       await recordRate(storage, 'images_per_s', made / Math.max(0.5, (Date.now() - started) / 1000), now);
       await storage.put(FILM_VALIDATION_KEY, { ...((await storage.get(FILM_VALIDATION_KEY)) || {}), workers_ai: { ok: true, checked_ms: now } });
@@ -194,7 +197,8 @@ async function makeStep(ctx, store, film) {
         const seconds = bytes ? mp3Seconds(bytes) : 0;
         if (!seconds) throw new Error('the voice model returned no speech');
         const key = `film/${film.id}/voice/${s.n}-${i}.mp3`;
-        await env.CHE_DATA_BUCKET.put(key, bytes, { httpMetadata: { contentType: 'audio/mpeg' } });
+        const saved = await media.put(key, bytes, { contentType: 'audio/mpeg' });
+        if (!saved.ok) throw new Error(saved.error);
         Object.assign(s.dialogue[i], { audio_key: key, audio_s: seconds });
         audio += seconds; film.stats.lines_voiced += 1;
       } catch (error) {
@@ -429,25 +433,31 @@ export async function filmTokenRoute(ctx, path, request) {
       await ctx.storage.put(`film:${film.id}:reports`, [...reports, { segment: r.segment ?? 'final', encode_s: r.encode_s, video_s: r.video_s, finish_s: r.finish_s }].slice(-40));
       return json({ ok: true });
     }
-    if (!ctx.env.CHE_DATA_BUCKET) return json({ detail: 'No R2 bucket.' }, 503);
+    const media = mediaStore(ctx.env, ctx.storage);
     const key = `film/${film.id}/film.mp4`;
     if (action === 'upload/start' && request.method === 'POST') {
-      const up = await ctx.env.CHE_DATA_BUCKET.createMultipartUpload(key, { httpMetadata: { contentType: 'video/mp4' } });
-      await ctx.storage.put(`film:${film.id}:upload`, { upload_id: up.uploadId, started_ms: ctx.now || Date.now() });
-      return json({ upload_id: up.uploadId });
+      const uploadId = crypto.randomUUID();
+      await ctx.storage.put(`film:${film.id}:upload`, { upload_id: uploadId, started_ms: ctx.now || Date.now(), parts: {} });
+      return json({ upload_id: uploadId, provider: media.provider });
     }
     if (action === 'upload/part' && request.method === 'PUT') {
       const n = Number(url.searchParams.get('n'));
       const upload = await ctx.storage.get(`film:${film.id}:upload`);
       if (!upload || url.searchParams.get('upload_id') !== upload.upload_id || !(n >= 1 && n <= 10000)) return json({ detail: 'Wrong upload.' }, 400);
-      const part = await ctx.env.CHE_DATA_BUCKET.resumeMultipartUpload(key, upload.upload_id).uploadPart(n, request.body);
-      return json({ n, etag: part.etag });
+      const bytes = new Uint8Array(await request.arrayBuffer());
+      const saved = await media.put(partKey(film.id, upload.upload_id, n), bytes, { contentType: 'application/octet-stream' });
+      if (!saved.ok) return json({ detail: saved.error }, 507);
+      const etag = await sha256Hex(bytes);
+      upload.parts = { ...(upload.parts || {}), [n]: { etag, size: bytes.length } };
+      await ctx.storage.put(`film:${film.id}:upload`, upload);
+      return json({ n, etag });
     }
     if (action === 'upload/complete' && request.method === 'POST') {
       const body = await request.json().catch(() => ({}));
       const upload = await ctx.storage.get(`film:${film.id}:upload`);
       if (!upload || body.upload_id !== upload.upload_id) return json({ detail: 'Wrong upload.' }, 400);
-      await ctx.env.CHE_DATA_BUCKET.resumeMultipartUpload(key, upload.upload_id).complete((body.parts || []).map((p) => ({ partNumber: Number(p.n), etag: String(p.etag) })));
+      const built = await assembleUpload(media, { filmId: film.id, uploadId: upload.upload_id, upload, claimed: body.parts || [], finalKey: key });
+      if (!built.ok) { await fail(store, film, `the upload could not be assembled: ${built.error}`); return json({ ok: false, verified: false, detail: built.error }, 422); }
       const done = await finishFilm(ctx, store, film, key);
       return json({ ok: done.ok, verified: done.ok, detail: done.ok ? 'verified' : done.error }, done.ok ? 200 : 422);
     }
@@ -480,7 +490,8 @@ export async function filmTokenRoute(ctx, path, request) {
       return json({ ok: false, detail: 'That is not a usable clip.' }, 422);
     }
     const key = `film/${film.id}/clips/${n}.mp4`;
-    await ctx.env.CHE_DATA_BUCKET.put(key, bytes, { httpMetadata: { contentType: 'video/mp4' } });
+    const saved = await mediaStore(ctx.env, ctx.storage).put(key, bytes, { contentType: 'video/mp4' });
+    if (!saved.ok) return json({ ok: false, detail: saved.error }, 507);
     ledger[n] = { ...(ledger[n] || {}), key, seconds: facts.seconds, at: ctx.now || Date.now() };
     await ctx.storage.put(ledgerKey, ledger);
     if (Number(url.searchParams.get('seconds')) > 0 && film.farm.provider === 'kaggle') await recordRate(ctx.storage, 'kaggle_clip_s', Number(url.searchParams.get('seconds')));
@@ -495,15 +506,15 @@ export async function filmTokenRoute(ctx, path, request) {
 
 async function assetResponse(ctx, film, key) {
   if (!key || !key.startsWith(`film/${film.id}/`) || key.includes('..')) return json({ detail: 'Not found.' }, 404);
-  const obj = await ctx.env.CHE_DATA_BUCKET?.get(key);
+  const obj = await mediaStore(ctx.env, ctx.storage).get(key);
   if (!obj) return json({ detail: 'Not found.' }, 404);
-  return new Response(obj.body, { headers: { 'Content-Type': obj.httpMetadata?.contentType || 'application/octet-stream' } });
+  return new Response(obj.body, { headers: { 'Content-Type': obj.contentType || 'application/octet-stream' } });
 }
 
 /** The film exists only when the stored MP4 reads back and passes its checks; then it joins the media library. */
 async function finishFilm(ctx, store, film, key) {
   film.state = 'verifying'; await store.save(film);
-  const facts = await verifyFilmObject(ctx.env, key, { expectedSeconds: film.assembly.total_s });
+  const facts = await verifyFilmObject(mediaStore(ctx.env, ctx.storage), key, { expectedSeconds: film.assembly.total_s });
   if (!facts.ok) { await fail(store, film, `the uploaded film did not pass its checks: ${facts.error}`); return facts; }
   const item = await saveFilmVideo(ctx.storage, { key, title: film.title, prompt: film.topic, seconds: facts.seconds, width: facts.width, height: facts.height, bytes: facts.bytes, film_id: film.id });
   film.state = 'done';

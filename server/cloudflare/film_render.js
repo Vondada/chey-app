@@ -64,18 +64,18 @@ export async function validateGithub(env, fetcher = fetch) {
 }
 
 /**
- * Reads the stored film back from R2 and checks it the way verifyVideoMedia checks a renderer's file, then further:
+ * Reads the stored film back from storage and checks it the way verifyVideoMedia checks a renderer's file, then further:
  * a real MP4 (ftyp), H.264 video and AAC audio, the planned frame size, and a length within 2% of the assembled
- * timeline. The file is written with +faststart, so its index is in the first bytes read.
+ * timeline. The file is written with +faststart, so its index is in the first bytes read. `media` is the store from
+ * che_media_store.js (CHE's own store, or R2 when bound); this check does not depend on which one.
  */
-export async function verifyFilmObject(env, key, { expectedSeconds, width = 1280, height = 720 } = {}) {
-  if (!env.CHE_DATA_BUCKET) return { ok: false, error: 'No R2 bucket is bound, so the film cannot be stored or checked.' };
-  const head = await env.CHE_DATA_BUCKET.head(key).catch(() => null);
-  if (!head) return { ok: false, error: 'The film file is not in R2.' };
+export async function verifyFilmObject(media, key, { expectedSeconds, width = 1280, height = 720 } = {}) {
+  const head = await media.head(key).catch(() => null);
+  if (!head) return { ok: false, error: 'The film file is not in storage.' };
   const take = Math.min(head.size, 24 * 1024 * 1024);
-  const obj = await env.CHE_DATA_BUCKET.get(key, { range: { offset: 0, length: take } }).catch(() => null);
-  if (!obj) return { ok: false, error: 'The film file could not be read back from R2.' };
-  const bytes = new Uint8Array(await obj.arrayBuffer());
+  const obj = await media.get(key, { length: take }).catch(() => null);
+  if (!obj) return { ok: false, error: 'The film file could not be read back from storage.' };
+  const bytes = obj.body;
   const facts = mp4Facts(bytes);
   if (!facts.ok) return { ok: false, error: 'The stored file is not a playable MP4 with H.264 video and AAC audio.', facts };
   if (facts.width !== width || facts.height !== height) return { ok: false, error: `The film is ${facts.width}x${facts.height}, not ${width}x${height}.`, facts };
