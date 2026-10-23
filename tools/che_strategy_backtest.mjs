@@ -8,6 +8,7 @@
 import { writeFileSync, appendFileSync } from 'node:fs';
 import { acquireDataset, evaluateUnit, runEngine, strategyDefinitions } from '../server/cloudflare/trading_research.js';
 import { intradayContext, overnightStats, p2p86Plan } from '../server/cloudflare/trading_evidence.js';
+import { lossCauses, performance, verdict } from '../server/cloudflare/strategy_governor.js';
 
 const arg = (name, fallback) => { const i = process.argv.indexOf(`--${name}`); return i > 0 ? process.argv[i + 1] : fallback; };
 const market = arg('market', 'MNQ'); const tf = arg('tf', '5m'); const out = arg('json', null);
@@ -28,7 +29,10 @@ for (const def of strategyDefinitions().filter((d) => d.timeframes.includes(tf))
   if (!unit.ok) continue;
   const raw = runEngine(def.strategy_id, bars, tf, { market });
   const net = raw.reduce((a, t) => a + (t.net_pnl || 0), 0);
-  rows.push({ id: def.strategy_id, name: def.name, ...unit.all, oos_trades: unit.oos.trades, oos_expectancy_r: unit.oos.expectancy_r, net_usd: Math.round(net * 100) / 100, look_ahead: unit.look_ahead });
+  // Where the losses come from, and what the strategy governor would decide on these trades (paper status shown, not applied).
+  const causes = lossCauses(raw);
+  const gov = verdict(performance(raw));
+  rows.push({ id: def.strategy_id, name: def.name, ...unit.all, oos_trades: unit.oos.trades, oos_expectancy_r: unit.oos.expectancy_r, net_usd: Math.round(net * 100) / 100, look_ahead: unit.look_ahead, causes, governor: gov.status });
 }
 rows.sort((a, b) => (b.expectancy_r ?? -99) - (a.expectancy_r ?? -99));
 const on = overnightStats(bars);
@@ -55,6 +59,12 @@ const lines = [
   '| Strategy | Trades | Win rate | Expectancy (R) | Profit factor | Max DD (R) | Net $ | OOS trades | OOS exp. (R) | Look-ahead audit |',
   '|---|---:|---:|---:|---:|---:|---:|---:|---:|---|',
   ...rows.map((r) => `| ${r.name}${r.trades < 30 ? ' *(under 30 trades: not evidence)*' : ''} | ${r.trades} | ${r.win_rate == null ? '—' : `${(r.win_rate * 100).toFixed(1)}%`} | ${fmt(r.expectancy_r, 3)} | ${fmt(r.pf)} | ${fmt(r.max_dd_r)} | ${fmt(r.net_usd)} | ${r.oos_trades} | ${fmt(r.oos_expectancy_r, 3)} | ${r.look_ahead} |`),
+  '',
+  '### Where the losses come from (gross = before costs; cost drag = gross − net, in R per trade)',
+  '',
+  '| Strategy | Gross exp. (R) | Net exp. (R) | Cost drag (R) | Losers | Losers after +1R | Losers never +0.3R | Stop / target / time exits | Governor |',
+  '|---|---:|---:|---:|---:|---:|---:|---|---|',
+  ...rows.filter((r) => r.trades).map((r) => `| ${r.name} | ${fmt(r.causes.gross_expectancy_r, 3)} | ${fmt(r.causes.net_expectancy_r, 3)} | ${fmt(r.causes.cost_drag_r, 3)} | ${r.causes.losers} | ${r.causes.losers_after_1r_in_favour} | ${r.causes.losers_immediately_against} | ${r.causes.stop_exits} / ${r.causes.target_exits} / ${r.causes.time_exits} | ${r.governor} |`),
   '',
   `### ${on.label}`,
   `Full New York sessions: ${on.days}${on.enough ? '' : ' (under 30: not evidence)'}. New York took an overnight extreme: ${on.ny_took_either.count}/${on.ny_took_either.of} (${fmt(on.ny_took_either.pct, 1)}%). The 86-style bias side first: ${on.bias_side_first.count}/${on.bias_side_first.of} (${fmt(on.bias_side_first.pct, 1)}%). Both in one bar (order unknown): ${on.same_bar_both}. Second side after the first: ${on.second_side_after_first.count}/${on.second_side_after_first.of} (${fmt(on.second_side_after_first.pct, 1)}%).`,

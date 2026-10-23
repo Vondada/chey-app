@@ -12,6 +12,7 @@ import {
   evaluateWalkForward, intradayContext, newPortfolio, readTrades, stepPortfolio, summarize, validateTradeRecord, tradeDayOf,
 } from './trading_evidence.js';
 import { makeEntryGate, readControls } from './trading_controls.js';
+import { governedGate, pausedUnits, runGovernor } from './strategy_governor.js';
 import { MAX_DELAYED_BAR_AGE_MS, readDelayedTraining, resetDelayedTraining, runDelayedTraining } from './trading_delayed_training.js';
 
 export const LIVE_STATE = 'live_paper_state';
@@ -218,7 +219,8 @@ export async function liveTick(storage, { fetcher = fetch, now = Date.now(), for
         const today = tradeDayOf(now);
         const realizedToday = (await readTrades(storage, isLive))
           .filter((t) => tradeDayOf(t.exit?.time || 0) === today).reduce((sum, t) => sum + (Number(t.net_pnl) || 0), 0);
-        const gate = makeEntryGate(controls, { realized_today: realizedToday, open_positions: portfolios.filter((pf) => pf.open || pf.pending).length });
+        // The strategy governor restricts forward paper only; simulation (delayed training, research) keeps every strategy.
+        const gate = governedGate(makeEntryGate(controls, { realized_today: realizedToday, open_positions: portfolios.filter((pf) => pf.open || pf.pending).length }), await pausedUnits(storage));
         const closed = [];
         run.missed_windows = portfolios.filter((pf) => pf.last_bar_time && pf.last_bar_time < bars[0].t).length;
         for (const pf of portfolios) {
@@ -239,6 +241,10 @@ export async function liveTick(storage, { fetcher = fetch, now = Date.now(), for
           else valid.push(t);
         }
         run.journal = await appendTrades(storage, valid);
+        // New closed trades: the governor re-judges every unit and records any pause or resume with its evidence.
+        if (run.journal.written) {
+          try { run.governor = (await runGovernor(storage, { now })).changes.map((c) => `${c.action} ${c.strategy}`); } catch (error) { run.governor_error = String(error?.message || error).slice(0, 160); }
+        }
         // Separate chronological DELAYED-bar research: never loosen verified LIVE
         // entry eligibility or mix hypothetical delayed fills with the forward journal.
         if (feed.status === 'DELAYED') {

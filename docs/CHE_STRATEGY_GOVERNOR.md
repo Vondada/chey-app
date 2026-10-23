@@ -26,7 +26,7 @@ Settings, stored under `gov_settings` and changeable by the owner: `min_trades` 
 
 ## Simulation allocation
 
-Every defined strategy keeps at least 10% of the research share. The remainder is split in proportion to the lower bound of each strategy's out-of-sample evidence. Better-supported ideas are researched more often. This is a research budget, not a forecast: past results do not promise future profit.
+Half of the research budget is spread evenly over every defined strategy, so none stops being simulated. The other half is split in proportion to the lower bound of each strategy's out-of-sample evidence. Better-supported ideas are researched more often. This is a research budget, not a forecast: past results do not promise future profit.
 
 ## API (owner-authenticated, like every `/api/trading/*` route)
 

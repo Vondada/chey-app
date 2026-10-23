@@ -623,12 +623,17 @@ export function evidenceState(unit) {
   const oosOk = unit.oos.trades >= 15 && unit.oos.expectancy_r > 0;
   return oosOk && unit.look_ahead !== 'FAILED' ? 'QUALIFIED' : 'MONITOR';
 }
+// The rating uses only out-of-sample (unseen) trades. Fewer than this many unseen trades is too few to rate.
+export const MIN_OOS_TRADES = 15;
 export function matrixState(unit) {
   const st = evidenceState(unit);
   if (st === 'NO DATA' || st === 'N/A') return 'No data';
   if (st === 'NOT READY') return 'Learning';
   if (st === 'QUALIFIED') return unit.oos.expectancy_r >= 0.3 && (unit.oos.pf ?? 0) >= 1.3 ? 'Strong' : 'Good';
-  return (unit.oos.expectancy_r ?? -1) > -0.05 ? 'Fair' : 'Weak';
+  // MONITOR covers three different things; only a real negative unseen result is Weak.
+  if ((unit.oos?.trades || 0) < MIN_OOS_TRADES) return 'Not enough unseen data';
+  if (unit.look_ahead === 'FAILED') return 'Audit failed';
+  return unit.oos.expectancy_r > -0.05 ? 'Fair' : 'Weak';
 }
 export function decayOf(unit) {
   if (!unit?.recent || unit.recent.trades < 15 || unit.all.trades < MIN_CLOSED_TRADES) return 'INSUFFICIENT DATA';
