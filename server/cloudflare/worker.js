@@ -103,6 +103,7 @@ function spokenPick(message, n) {
   return k >= 1 && k <= n ? k : 0;
 }
 import { ATLAS_SOURCE, answerAtlas, atlasHiddenAction, atlasIntent, atlasQuizAnswerTurn, atlasPromptContext, atlasResetAsk, atlasResetIntent, projectAtlasToBrain, resetAtlasProgress } from './knowledge_atlas.js';
+import { CRYPTO_SOURCE, cryptoIntent, cryptoTick, cryptoView, nextCryptoTickAt, setCryptoPaper, speakCrypto } from './crypto_markets.js';
 import { LIVE_BACKTEST, LIVE_RUNS, LIVE_STATE, haltLivePaper, liveSpecs, liveBacktest, liveDashboard, livePaperSummary, liveTick, nextLiveTickAt, readLivePortfolios, researchDue, setLivePaper } from './trading_live.js';
 import { governorAction, queueAllocationFollowUp, readDecisions, runGovernor, speakGovernor, tradeDecisions } from './strategy_governor.js';
 import { ICT_CONCEPTS, applyControlChange, controlsView, noteAuditEffect, readControls, strategyRegistry, resolveStep, speakControlResult, speakControlsView, speakSkipReasons, stockOrderProblem } from './trading_controls.js';
@@ -4397,6 +4398,9 @@ export class CheState extends DurableObject {
     // (not the immutable archive's timestamp), so a reused dataset is not downloaded again on every deploy.
     const research = await researchDue(this.ctx.storage).catch((error) => ({ ok: false, error: String(error?.message || error) }));
     const d = await this.liveTradingDashboard();
+    // One real crypto pass from production: proves the exchange feed answers the deployed Worker.
+    const cryptoRun = await cryptoTick(this.ctx.storage, { force: true }).catch((error) => ({ ok: false, error: String(error?.message || error).slice(0, 160) }));
+    const cryptoNow = await cryptoView(this.ctx.storage).catch(() => null);
     const brief = (t) => ({ strategy: t.strategy, filter: t.filter, side: t.side, signal: t.signal?.time, entry: t.entry?.time, entry_fill: t.entry?.fill,
       exit: t.exit?.time, exit_fill: t.exit?.fill, reason: t.exit?.reason, net: t.net_pnl, feed: t.data?.feed?.status });
     return {
@@ -4411,6 +4415,13 @@ export class CheState extends DurableObject {
       signals: d.signals.slice(-10),
       broker: { ...d.broker, alpaca: await alpacaStatus(this.keyEnv || this.env) },
       learning: d.learning,
+      crypto: {
+        enabled: cryptoNow?.enabled ?? null, run_at: cryptoRun.at || null, ok: Boolean(cryptoRun.ok), error: cryptoRun.error || null, requests: cryptoRun.requests ?? 0,
+        series: (cryptoRun.series || []).map((x) => ({ coin: x.coin, tf: x.tf, status: x.status || null, last_bar: x.last_bar || null, last_close: x.last_close ?? null, bars: x.bars ?? 0, reason: x.reason || x.skipped || null })),
+        cross_check: cryptoRun.cross_check || null,
+        passes_recorded: cryptoNow?.schedule.runs_recorded ?? 0, last_scheduled_run: cryptoNow?.schedule.last_run_at || null,
+        closed_trades: cryptoNow?.simulated.closed_trades ?? 0, open_positions: cryptoNow?.simulated.open_positions.length ?? 0, budget: cryptoNow?.budget || null,
+      },
       research: { skipped: research?.skipped || null, ok: research?.skipped ? null : Boolean(research?.ok), reused: Boolean(research?.reused), error: research?.error || null },
       backtest: d.backtest ? {
         at: d.backtest.at, ok: d.backtest.ok, error: d.backtest.error || null, data: d.backtest.data,
@@ -4429,6 +4440,8 @@ export class CheState extends DurableObject {
     await evidenceTick(this.ctx.storage, { now: opts.now, force: opts.force }).catch((error) => console.error('Trading evidence tick failed:', error?.message || error));
     // Forward paper trading on 5-minute NQ/MNQ bars, every minute while it is on and CME is open.
     const liveRun = await this.runForwardPaper({ now: opts.now }).catch((error) => { console.error('Live paper tick failed:', error?.message || error); return null; });
+    // Orion's crypto desk (owner master mission, 2026-10-23): BTC and ETH paper trading and research, around the clock.
+    await cryptoTick(this.ctx.storage, { now: opts.now ?? Date.now() }).catch((error) => console.error('Crypto tick failed:', error?.message || error));
     // A journalled trade is a verified Trading Room event the Brain records (owner, 2026-10-20); the ledger stays authoritative.
     if (liveRun?.closed > 0 && !liveRun.skipped) await queueRoomEvent(this.ctx.storage, { room: 'trading', kind: 'journal_trades', key: `journal:${liveRun.at}`, title: `${liveRun.closed} forward paper trade${liveRun.closed === 1 ? '' : 's'} closed`, body: `The forward paper journal (MNQ 5-minute) closed ${liveRun.closed} trade${liveRun.closed === 1 ? '' : 's'} at ${liveRun.at}${liveRun.rejected ? `; ${liveRun.rejected} record${liveRun.rejected === 1 ? '' : 's'} refused by the journal` : ''}. Read the ledger for the numbers.`, status: 'verified', evidence: [`live_paper_runs ${liveRun.at}`], refs: { ledger: 'forward_paper_journal', run_at: liveRun.at } }).catch(() => null);
     // Strategy simulation (paper, minute bars): one alarm slot, so it runs here when due and scheduleWork arms its next minute.
@@ -4492,6 +4505,9 @@ export class CheState extends DurableObject {
     times.push(Math.max(Date.now() + 250, await nextTradingTickAt(this.ctx.storage).catch(() => Date.now() + 3_600_000)));
     const researchAt = await nextResearchAt(this.ctx.storage).catch(() => null);
     if (researchAt) times.push(researchAt);
+    // Orion's crypto desk wakes after every 5-minute close, weekends included (null while the owner paused it).
+    const cryptoAt = await nextCryptoTickAt(this.ctx.storage).catch(() => null);
+    if (cryptoAt) times.push(cryptoAt);
     const liveAt = await nextLiveTickAt(this.ctx.storage).catch(() => null);
     // The simulation's next minute (null while paused or before its first pass). Same alarm slot, earliest wins.
     const simAt = await nextStrategySimTickAt(this.ctx.storage).catch(() => null);
@@ -8168,6 +8184,21 @@ export class CheState extends DurableObject {
         if (!ownerDevice) return ownerOnly();
         const draft = await Promise.resolve().then(() => this.ctx.storage.get('fye_draft')).catch(() => null);
         return json({ ok: true, status: FYE_STATUS, draft: draft || null, order_sent: false });
+      }
+      // Orion's crypto desk (owner master mission, 2026-10-23): feeds, schedule, budget, simulated trades and research.
+      if (path === '/api/trading/crypto' && request.method === 'GET') {
+        if (!ownerDevice) return ownerOnly();
+        const view = await cryptoView(this.ctx.storage);
+        return json({ ...view, spoken: speakCrypto(view) });
+      }
+      if (path === '/api/trading/crypto' && request.method === 'POST') {
+        if (!ownerDevice) return ownerOnly();
+        if (body.action === 'pause' || body.action === 'resume') await setCryptoPaper(this.ctx.storage, body.action === 'resume');
+        else if (body.action === 'tick') await cryptoTick(this.ctx.storage, { force: true });
+        else return json({ detail: 'Unknown action. Use pause, resume or tick.' }, 400);
+        await this.scheduleWork().catch(() => null);
+        const view = await cryptoView(this.ctx.storage);
+        return json({ ok: true, ...view, spoken: speakCrypto(view, { action: body.action === 'pause' ? 'paused' : body.action === 'resume' ? 'resumed' : null }) });
       }
       // Owner Improvements (owner, 2026-10-23): the ledger, the live UI preferences, and the iPhone's apply receipt.
       if (path === '/api/owner/improvements' && request.method === 'GET') {
@@ -12564,6 +12595,21 @@ export class CheState extends DurableObject {
           await drainRoomEvents(this.ctx.storage, crossStore).catch(() => null);
           const answer = await answerCrossRoom({ store: crossStore, storage: this.ctx.storage, env: this.keyEnv || this.env, intent: cross, screen: seen });
           return ndjsonReply(answer.text, { source: BRAIN_ROOMS_SOURCE, ok: answer.ok, model_calls: 0, rooms: answer.rooms, hits: answer.hits, kind: cross.kind });
+        }
+        // Orion's crypto desk by voice (owner master mission, 2026-10-23): "Have Orion research BTC and ETH … during the
+        // weekend", "pause Orion crypto research", "how is crypto paper trading going". Stored records only, no model.
+        const cryptoAsk = body.attachment ? null : cryptoIntent(message);
+        if (cryptoAsk) {
+          if (!ownerDevice) return ndjsonReply('Only the CHE owner can run or read Orion\'s crypto desk.', { source: CRYPTO_SOURCE, ok: false, model_calls: 0 });
+          let action = null;
+          if (cryptoAsk.kind === 'pause') { await setCryptoPaper(this.ctx.storage, false); action = 'paused'; }
+          if (cryptoAsk.kind === 'resume') {
+            const before = (await cryptoView(this.ctx.storage)).enabled;
+            if (!before) { await setCryptoPaper(this.ctx.storage, true); action = 'resumed'; }
+            await this.scheduleWork().catch(() => null);
+          }
+          const view = await cryptoView(this.ctx.storage);
+          return ndjsonReply(speakCrypto(view, { action }), { source: CRYPTO_SOURCE, ok: true, model_calls: 0, kind: cryptoAsk.kind, open_view: 'trading_crypto', crypto: { enabled: view.enabled, closed_trades: view.simulated.closed_trades, open_positions: view.simulated.open_positions.length } });
         }
         // "Why are there no new trades?": five facts from the stored journal and scheduler records (owner, 2026-10-21).
         const whyNoTrades = body.attachment ? null : newTradesIntent(message);

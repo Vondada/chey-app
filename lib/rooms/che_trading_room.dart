@@ -9,6 +9,7 @@ import 'package:http/http.dart' as http;
 
 import 'dart:async';
 
+import '../trading/che_crypto_desk.dart';
 import '../trading/che_setup_board.dart';
 import '../trading/che_setup_desk.dart';
 import 'che_alpaca_paper.dart';
@@ -31,7 +32,7 @@ import 'che_trading_hud.dart';
 const _gold = CheColors.markets;
 final _stroke = CheColors.stroke;
 
-enum CheTradingSection { chart, setups, cheTrades, strategies, account, compare }
+enum CheTradingSection { chart, setups, cheTrades, strategies, account, compare, crypto }
 
 const kTradingSectionLabels = <CheTradingSection, String>{
   CheTradingSection.chart: 'CHART',
@@ -41,6 +42,8 @@ const kTradingSectionLabels = <CheTradingSection, String>{
   CheTradingSection.account: 'ACCOUNT',
   // MY ACCOUNT beside the CHE PAPER ACCOUNT, and the Live Order Preview (owner, 2026-10-23).
   CheTradingSection.compare: 'SIDE BY SIDE',
+  // Orion's crypto desk: BTC and ETH, researched and paper traded around the clock (owner master mission, 2026-10-23).
+  CheTradingSection.crypto: 'CRYPTO',
 };
 
 /// The section a Worker reply names ("chart", "strategies", ...); chart when unknown.
@@ -50,6 +53,7 @@ CheTradingSection cheTradingSectionNamed(String? name) => switch ((name ?? '').t
       'strategies' || 'strategy' => CheTradingSection.strategies,
       'account' => CheTradingSection.account,
       'compare' || 'sidebyside' || 'side' => CheTradingSection.compare,
+      'crypto' || 'bitcoin' || 'btc' || 'eth' || 'orion' => CheTradingSection.crypto,
       _ => CheTradingSection.chart,
     };
 
@@ -247,6 +251,8 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
         ];
       case CheTradingSection.compare:
         return [_pad(CheSideBySideView(baseUrl: p.baseUrl, headers: p.headers, client: p.client, onRead: widget.onRead))];
+      case CheTradingSection.crypto:
+        return [_pad(CheCryptoDeskPanel(baseUrl: p.baseUrl, headers: p.headers, client: p.client, onRead: widget.onRead))];
     }
   }
 

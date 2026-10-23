@@ -577,6 +577,16 @@ export const COMMANDS = Object.freeze([
     examples: ['Audit the trades', 'Run a trade audit'],
     prompt: 'Audit the trades.', produces: 'audit', evidence: 'Real counts from the stored records; nothing is altered.', keywords: ['audit', 'duplicates', 'look-ahead', 'trade audit'],
   }),
+  // Orion's crypto desk (owner master mission, 2026-10-23): crypto_markets.js through its own chat route.
+  C('trade-crypto', 'trading', 'EXPLORE', "Orion: BTC and ETH research and paper trading, 24/7.", {
+    title: 'Orion Crypto Desk',
+    does: 'Reads, pauses or resumes Orion\'s crypto desk: BTC-USD and ETH-USD from Coinbase Exchange public candles (5-minute, 15-minute and hourly; Kraken cross-check), every CHE strategy paper traded on LIVE bars around the clock including weekends, net of 0.6% taker and 0.4% maker fees, journalled as crypto in the forward journal and judged by the strategy governor; plus volatility, liquidity and session research and an out-of-sample backtest. No model, no exchange account, no order.',
+    needs: ['market_data'], route: 'che_crypto', handler: 'crypto_markets.cryptoIntent → setCryptoPaper / cryptoView',
+    input: { name: 'action', required: false, hint: 'pause, resume or status' },
+    examples: ['Have Orion research BTC and ETH, compare strategies, and continue paper trading during the weekend.', 'Pause Orion crypto research', 'Resume Orion crypto research', 'How is the crypto paper trading going?'],
+    prompt: 'Orion crypto research {input}', produces: 'crypto desk status', evidence: 'Stored exchange bars, runs, budget counters and journal records only.',
+    keywords: ['crypto', 'bitcoin', 'btc', 'ethereum', 'eth', 'orion', 'weekend', '24/7'],
+  }),
   C('trade-replay', 'trading', 'EXPLORE', "Replay one of CHE's trades on its own chart.", {
     does: 'Opens a trade by its ID (or CHE\'s last forward paper trade) on the exact bars it was traded on: entry, exit, stop, target, times and outcome, labelled BACKTEST, SIMULATION, FORWARD PAPER or BROKER-CONFIRMED. Replay shows a bar only once it has closed. Without recorded bars it says so and draws nothing.',
     needs: ['office'], route: 'che_trade_evidence', handler: 'trade_evidence.readTradeEvidence',
