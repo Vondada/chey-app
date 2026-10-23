@@ -146,7 +146,7 @@ import { lastSite, publishSite, saveSite, serveSite, siteBuildIntent, siteEditIn
 import { noteJobActivity } from './job_activity.js';
 import { CODING_CANCEL_SOURCE, cancelQueuedJob, codingCancelIntent, resolveCodingCancel, speakCancelResult, speakUnresolved } from './coding_cancel.js';
 import { PENDING_OWNER_ACTION_KEY, deskOwnedMoney, forbiddenAction, prohibitionSpans, withoutProhibitions, PENDING_OWNER_ACTION_MS, gateOwnerAction, grantForKinds, isOwnerYes, peerActionReply, APPS_GRANTED_KEY, PENDING_APP_ACTION_KEY, PENDING_APP_ACTION_MS, gateAppAccess, classifyAppNeed, classifyExplicitAppOpen, classifyAppAccesses } from './owner_action_gate.js';
-import { auditEvidenceFrom, auditLedger, auditReply, claimKindsIn, guardRemovalEntries, knowVsGuessQuestion, knowVsGuessReply, memorySavedQuestion, memorySavedReply, recordAudit } from './hallucination_auditor.js';
+import { auditEvidenceFrom, auditLedger, auditReply, auditText, claimKindsIn, guardRemovalEntries, knowVsGuessQuestion, knowVsGuessReply, memorySavedQuestion, memorySavedReply, recordAudit } from './hallucination_auditor.js';
 import { asksForCurrentOwnerLocation, executeWithReceipt, guardExecutionClaims, guardRetrievalClaims, changeHistoryIntent, guardClaimedOwnerActions, guardClaimedResearchActions, guardGroundedFacts, guardLocationWeatherReply, guardOwnerReply, loadChangeHistory, loadReceipts, OWNER_LOCATION_NOT_VERIFIED, recordReceipt, requestedCodeNames, speakChangeHistory, vagueResearchRequest, verifiedState, verifiedStatusText } from './truth_layer.js';
 import { ENGINEERING_PLAYBOOK_SPOKEN, playbookIntent } from './engineering_playbook.js';
 import { describeSkillsReport, reusableLicense, selectFilesForAgent, skillFromMarkdown, skillImportIntent, skillsReportIntent } from './skill_import.js';
@@ -5466,6 +5466,8 @@ export class CheState extends DurableObject {
       }
       // flagOnly keeps every sentence, so the note explains the marks instead of claiming a cut.
       const honesty = (grounded.removed.length ? ' Anything marked [NOT VERIFIED] is a file, link, code quote or job I could not confirm in the repository.' : '') + (codeProblems.length ? ` The code above still has a syntax problem I could not fix in one pass: ${codeProblems[0]}.` : '');
+      // The completion-claim auditor runs on the text that leaves for the outside AI, as it does for owner replies.
+      grounded = { ...grounded, text: (await auditText(this.ctx.storage, grounded.text || '', { fiction: storyRequested(incoming) })).text };
       // Never a bare refusal: when nothing can be pinned, say where to look.
       const searchTerms = [...new Set(incoming.match(/[A-Za-z_$][\w$]{3,}/g) || [])].slice(0, 4).join(', ') || 'the key words of the question';
       // The reply leaves for an outside AI: a Google ID never leaves in it (eighth review of #354).
@@ -5897,7 +5899,9 @@ export class CheState extends DurableObject {
         max_tokens: 700,
         che_audit: { task: message.slice(0, 160), agent: 'CHE', route: 'guest_chat' },
       });
-      const reply = String(answer?.response || answer?.choices?.[0]?.message?.content || '').trim();
+      // A guest's model has no receipts, so every completion claim in its reply fails closed and is removed.
+      const raw = String(answer?.response || answer?.choices?.[0]?.message?.content || '').trim();
+      const reply = raw ? (await auditText(this.ctx.storage, raw, { evidence: null })).text : '';
       return ndjsonReply(reply || 'I could not answer that just now. Please try again.', { source: 'che_guest', ok: Boolean(reply), model_calls: 1 });
     } catch (_) {
       return ndjsonReply('I could not reach my engines just now. Please try again in a moment.', { source: 'che_guest', ok: false, model_calls: 1 });
@@ -10139,7 +10143,7 @@ export class CheState extends DurableObject {
         // foreground chat-only turn to project creation before /api/chat can
         // apply the authoritative current-turn policy.
         if (brief && currentTurnActionPolicy(brief).terminalChatOnly) {
-          const reply = await this.answerTerminalChatOnly(brief);
+          const reply = (await auditText(this.ctx.storage, await this.answerTerminalChatOnly(brief), { fiction: storyRequested(brief) })).text;
           // Non-2xx on purpose: installed clients throw on it and speak
           // `detail` (the answer) instead of announcing a project that was
           // never created. Nothing is persisted.
@@ -11294,7 +11298,7 @@ export class CheState extends DurableObject {
           // A question about the code is answered from the source it was read from; the file index is not the answer.
           if (analyticalRepositoryQuestion(repositoryInspectionRequest) && !historicalCauseRequested) {
             const analysis = await this.answerFromRepositoryEvidence(repositoryInspectionRequest, inspected).catch(() => '');
-            if (analysis) return ndjsonReply(analysis, { source: 'che_repository_analysis', repository_research: true, repository_sha: inspected.head_sha, evidence_mode: 'pinned_repository', execution_mode: turnActionPolicy.mode });
+            if (analysis) return ndjsonReply((await auditText(this.ctx.storage, analysis, { fiction: storyRequested(repositoryInspectionRequest) })).text, { source: 'che_repository_analysis', repository_research: true, repository_sha: inspected.head_sha, evidence_mode: 'pinned_repository', execution_mode: turnActionPolicy.mode });
             // The model did not answer: say so. Source listings are never sent in place of an answer.
             return ndjsonReply(`I read the source at commit ${String(inspected.head_sha).slice(0, 12)}, sir, but the reasoning model did not return an answer, so I cannot give that analysis just now. Nothing was changed and no coding job was started. Ask again in a moment.`, { source: 'che_repository_analysis', ok: false, repository_sha: inspected.head_sha, execution_mode: turnActionPolicy.mode });
           }
@@ -11338,7 +11342,7 @@ export class CheState extends DurableObject {
         if (chatOnlyEvaluation && /\b(?:chat[- ]only|this\s+chat\s+only|answer\b[\s\S]{0,80}\bthis\s+chat|zero\s+repository\s+changes?)\b/i.test(message)) {
           const answer = await this.answerTerminalChatOnly(message).catch(() => '');
           if (answer) {
-            return ndjsonReply(answer, {
+            return ndjsonReply((await auditText(this.ctx.storage, answer, { fiction: storyRequested(message) })).text, {
               source: 'che_chat_only',
               execution_mode: turnActionPolicy.mode,
               ok: true,
@@ -14175,7 +14179,7 @@ export class CheState extends DurableObject {
           return json({
             // A paused autonomy never runs the saved job: say so instead of "shortly".
             detail: fresh.autonomy === false
-              ? 'I saved that, sir, but autonomy is paused, so I will finish it when you say "resume".'
+              ? 'I queued that request, sir, but autonomy is paused, so I will run it when you say "resume". This is not a memory save.'
               : BUSY_REPLY,
             category: 'temporary_cloud_unavailable',
             retryable: true,
