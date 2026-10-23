@@ -51,3 +51,25 @@ These go through `/api/chat` with no model call, and through the Command Center 
 - "Compact trading dashboard"
 
 Card commands return `open_view: trading_visual` with `visual: {card, size}` for the app.
+
+## Trade evidence and replay (owner mission, 2026-10-23, Priority 5)
+
+`server/cloudflare/trade_evidence.js` and `lib/trading/che_trade_replay.dart`.
+
+- **Trade ID.** `trading_visual.tradeIdOf(naturalKey(trade))` is `T` plus 13 base-36 characters, an FNV-1a 64-bit hash of the record set, strategy variant (portfolio), market, timeframe, side and entry time. It comes from the trade itself, so it is the same after every restart and on every device; no ID table is stored.
+- **One trade per ID.** A second stored record with the same natural key is never shown as another trade. `view=audit` reports it under `ids` as `duplicate` (identical) or `conflict` (same entry, different outcome). The first stored record is kept, and nothing is deleted.
+- **Labels.** `BACKTEST` (historical_backtest), `SIMULATION` (simulation), `FORWARD PAPER` (forward_paper, daily_paper) and `BROKER-CONFIRMED` (broker_paper; live stays disabled).
+- **API.**
+  - `GET /api/trading/visual?view=trade&id=<ID|last>` returns the record, its stored bars and links. It is owner only and read only.
+  - `view=trades` lists the IDs, newest first.
+  - Bars come from the first stored source that contains the entry bar: the research dataset, then the forward DELAYED feed (5m), then the iPhone-recorded Rithmic minutes (1m). Sources are never mixed and nothing is filled in.
+  - With none of them, the record still opens and says "No recorded market data for this trade."
+- **Deep link (stable).** `/trade-replay?id=<ID>` opens `CheTradeReplayPage` (route name `trade_replay/<ID>`). The chat's `open_view: trade_replay` with `trade_id` opens it.
+  - Chart markers pass their summary (`CheTradeReplayPage.route(..., summary: marker)`), so the record shows at once while the bars load.
+  - `links.brain.ref` is `trade:<ID>` for the Brain.
+- **Replay rule.**
+  - A bar shows once it has closed (open time plus timeframe at or before the clock). The signal shows when its bar closes, the fill at the next bar open, and the exit once its bar closes.
+  - At 1× the clock moves one bar per second, and `+10s` skips ten seconds of playback.
+  - Controls: Play, Pause, Restart, +10s, 1×/2×/4×/8×, a scrub timeline and full screen.
+  - The order status line says each fill is simulated; there is no broker order.
+- **Voice.** "Replay my last trade" (CHE's newest closed forward paper trade, else its newest simulation trade, never a backtest) and "Replay trade T…". In the Command Center it is `/trade-replay`. Neither uses a model call.
