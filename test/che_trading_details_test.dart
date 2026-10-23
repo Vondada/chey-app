@@ -28,12 +28,10 @@ void main() {
     ));
     await tester.pump(const Duration(milliseconds: 300));
 
-    final details = find.byKey(const Key('trading_details'));
-    expect(details, findsOneWidget);
-    expect(find.text('Details'), findsOneWidget);
-    expect(tester.widget<ExpansionTile>(details).initiallyExpanded, isFalse);
-
-    await tester.tap(find.text('Details'));
+    // CONNECTIONS is a small card, collapsed by default; the panel is not built until it opens.
+    expect(find.byKey(const Key('fold_connections')), findsOneWidget);
+    expect(find.byType(CheTradingConnectionsPanel), findsNothing);
+    await tester.tap(find.text('CONNECTIONS'));
     await tester.pumpAndSettle();
     expect(find.byType(CheTradingConnectionsPanel), findsOneWidget, reason: 'the diagnostics open under Details');
   });

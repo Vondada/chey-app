@@ -191,10 +191,12 @@ void main() {
     expect(find.text('EMA Pullback'), findsWidgets);
     expect(find.text('5m · NY Morning · Trend up'), findsOneWidget);
     expect(find.text('Evidence 84/100 · 143 trades · +0.31R'), findsOneWidget);
-    expect(find.bySemanticsLabel(RegExp(r'^Mode: PAPER$')), findsOneWidget);
-    expect(find.bySemanticsLabel(RegExp(r'^Regime: Trending bullish · normal volatility$')), findsOneWidget);
-    expect(find.bySemanticsLabel(RegExp(r'^Data: Yahoo NQ=F \(delayed\)$')), findsOneWidget);
+    // One status row: P&L, win rate, open, drawdown (mode and data source live in the chart header, not repeated).
     expect(find.bySemanticsLabel(RegExp(r'^Win Rate: 55%$')), findsOneWidget);
+    expect(find.bySemanticsLabel(RegExp(r'^P&L: ')), findsOneWidget);
+    expect(find.bySemanticsLabel(RegExp(r'^Open: ')), findsOneWidget);
+    expect(find.bySemanticsLabel(RegExp(r'^Drawdown: ')), findsOneWidget);
+    expect(find.bySemanticsLabel(RegExp(r'^Mode: ')), findsNothing);
     expect(read, isEmpty, reason: 'nothing is spoken on open');
     // One card per strategy even when the answer repeats one; the count is per timeframe, never global.
     await _scrollTo(tester, find.byKey(const Key('strategy_card_dirty-trez'), skipOffstage: false));
@@ -224,10 +226,11 @@ void main() {
     expect(chartCalls.last.url.queryParameters['account'], 'futures_paper');
     expect(find.byKey(const Key('nq_chart_note')), findsOneWidget);
     expect(find.bySemanticsLabel('NQ market, selected'), findsOneWidget);
-    await tester.tap(find.text('15m').first);
+    // The compact chart offers 1m and 5m; every other timeframe is in the expanded chart.
+    await tester.tap(find.text('1m').first);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
-    expect(api.at('/api/trading/chart').last.url.queryParameters['tf'], '15m');
+    expect(api.at('/api/trading/chart').last.url.queryParameters['tf'], '1m');
     await tester.pumpWidget(const SizedBox());
   });
 
@@ -303,11 +306,13 @@ void main() {
     expect(find.bySemanticsLabel(RegExp(r'^MNQ daily data: 7\.4 years, from 2019-05-06')), findsOneWidget);
     expect(find.bySemanticsLabel(RegExp(r'^NQ daily data: 20 years, from 2006-10-23')), findsOneWidget);
     expect(find.textContaining('NQ historical · EMA · 30m: running, 4 of 10'), findsOneWidget);
+    await tester.ensureVisible(find.byKey(const Key('paper_learning_switch')));
     await tester.tap(find.byKey(const Key('paper_learning_switch')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
     expect(find.text('Paper learning is on for MNQ. PAPER only.'), findsOneWidget);
     expect(api.learning, isTrue);
+    await tester.ensureVisible(find.byKey(const Key('profile_DEEP')));
     await tester.tap(find.byKey(const Key('profile_DEEP')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
@@ -315,6 +320,7 @@ void main() {
     expect(find.bySemanticsLabel('DEEP resource profile, selected'), findsOneWidget);
     // A refusal is reported as a refusal, and nothing changes.
     api.fail = true;
+    await tester.ensureVisible(find.byKey(const Key('paper_learning_switch')));
     await tester.tap(find.byKey(const Key('paper_learning_switch')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
@@ -333,6 +339,11 @@ void main() {
         await tester.ensureVisible(find.byKey(const Key('strategy_card_ema-pullback')));
         await tester.pump();
         await tester.tap(find.byKey(const Key('strategy_card_ema-pullback')));
+        await tester.pump();
+        expect(tester.takeException(), isNull, reason: 'the expanded card fits');
+        await tester.ensureVisible(find.byKey(const Key('strategy_open_ema-pullback')));
+        await tester.pump();
+        await tester.tap(find.byKey(const Key('strategy_open_ema-pullback')));
         await tester.pumpAndSettle();
         await _scrollTo(tester, find.byKey(const Key('tf_row_1M'), skipOffstage: false));
         expect(tester.takeException(), isNull);

@@ -108,7 +108,7 @@ class ChartMarker {
     return r > 0 ? 'win' : 'loss';
   }
 
-  /// The entry of a closed CHE trade: its exit already carries the W or L, so the entry is not drawn.
+  /// The entry of a closed CHE trade, whose exit carries the W or L.
   bool get isClosedCheEntry => source.startsWith('che_') && kind == 'entry' && status == 'closed';
 }
 
@@ -121,7 +121,13 @@ class CheMarkerFilter {
   CheMarkerFilter copyWith({bool? wins, bool? losses, bool? open, bool? paper, bool? sim}) => CheMarkerFilter(
       wins: wins ?? this.wins, losses: losses ?? this.losses, open: open ?? this.open, paper: paper ?? this.paper, sim: sim ?? this.sim, strategy: strategy);
 
-  bool admits(ChartMarker m) {
+  /// The markers to draw from [all]: a closed CHE entry is left out only when its own exit (same record) is there.
+  List<ChartMarker> apply(Iterable<ChartMarker> all) {
+    final exits = {for (final m in all) if (m.kind == 'exit' && m.tradeId.isNotEmpty) '${m.source}|${m.tradeId}'};
+    return [for (final m in all) if (admits(m, exitShown: exits.contains('${m.source}|${m.tradeId}'))) m];
+  }
+
+  bool admits(ChartMarker m, {bool exitShown = false}) {
     if (!(m.isSim ? sim : paper)) return false;
     final st = strategy;
     if (st != null && st.isNotEmpty && m.source.startsWith('che_') && !m.strategy.toLowerCase().contains(st.toLowerCase())) return false;
@@ -129,7 +135,7 @@ class CheMarkerFilter {
       'win' => wins,
       'loss' => losses,
       'open' => open,
-      _ => !m.isClosedCheEntry,
+      _ => !(m.isClosedCheEntry && exitShown),
     };
   }
 }
@@ -437,6 +443,10 @@ class CheTradingChartState extends State<CheTradingChart> {
 
   String get accountLabel => kChartAccounts[_account] ?? _account;
 
+  /// The account and symbol on screen (the expanded chart opens on the same ones).
+  String get account => _account;
+  String get symbol => _symbol;
+
   // ─── Rithmic live candles (MNQ PAPER only) ────────────────────────────
 
   CheRithmicLive get _live => widget.live ?? CheRithmicLive.instance;
@@ -597,7 +607,7 @@ class CheTradingChartState extends State<CheTradingChart> {
 
   List<ChartMarker> get _shownMarkers {
     final f = CheMarkerFilter(wins: _filter.wins, losses: _filter.losses, open: _filter.open, paper: _filter.paper, sim: _filter.sim, strategy: _strategy);
-    return [for (final m in _allMarkers) if (!_hidden.contains(m.source) && f.admits(m)) m];
+    return f.apply([for (final m in _allMarkers) if (!_hidden.contains(m.source)) m]);
   }
 
   // ─── Drawings ─────────────────────────────────────────────────────────
@@ -751,6 +761,14 @@ class CheTradingChartState extends State<CheTradingChart> {
     ];
     return parts.join('\n');
   }
+
+  /// Where [m] is drawn inside a chart area of [size], or null when it is off screen (tests tap it there).
+  @visibleForTesting
+  Offset? markerOffset(ChartMarker m, Size size) => _geometry(size)?.markerPoint(m);
+
+  /// The markers currently drawn.
+  @visibleForTesting
+  List<ChartMarker> get shownMarkers => _shownMarkers;
 
   /// Opens a marker's trade record: Trade Replay when installed, otherwise the recorded receipt.
   Future<void> openRecord(ChartMarker m) async {
@@ -975,6 +993,14 @@ class CheTradingChartState extends State<CheTradingChart> {
   Widget _filterChips() => SizedBox(
         height: 48,
         child: ListView(scrollDirection: Axis.horizontal, children: [
+          // The strategy filter first, so it is never scrolled out of sight.
+          if (_strategy != null)
+            Center(
+              child: TextButton(
+                onPressed: () => setState(() => _strategy = null),
+                child: Text('${_strategy!.toUpperCase()} only · show all', semanticsLabel: 'Showing ${_strategy!} trades only. Show all strategies'),
+              ),
+            ),
           for (final (label, on, next, say) in [
             ('Wins', _filter.wins, _filter.copyWith(wins: !_filter.wins), 'winning trades'),
             ('Losses', _filter.losses, _filter.copyWith(losses: !_filter.losses), 'losing trades'),
@@ -1008,13 +1034,6 @@ class CheTradingChartState extends State<CheTradingChart> {
                 ),
               ),
             ),
-          if (_strategy != null)
-            Center(
-              child: TextButton(
-                onPressed: () => setState(() => _strategy = null),
-                child: Text('${_strategy!.toUpperCase()} only · show all', semanticsLabel: 'Showing ${_strategy!} trades only. Show all strategies'),
-              ),
-            ),
         ]),
       );
 
@@ -1038,22 +1057,23 @@ class CheTradingChartState extends State<CheTradingChart> {
       radius: 16,
       padding: const EdgeInsets.fromLTRB(10, 4, 4, 8),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        SizedBox(
-          height: 48,
+        // Header and feed line: their size depends only on the text scale, never on prices, so ticks cannot move them.
+        ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 48),
           child: Row(children: [
-            Flexible(
-              child: Semantics(
-                header: true,
-                child: CheChromeText(_symbol.isEmpty ? accountLabel : _symbol, maxLines: 1, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
-              ),
+            Expanded(
+              child: Wrap(spacing: 8, runSpacing: 2, crossAxisAlignment: WrapCrossAlignment.center, children: [
+                Semantics(
+                  header: true,
+                  child: CheChromeText(_symbol.isEmpty ? accountLabel : _symbol, maxLines: 1, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(border: Border.all(color: _gold), borderRadius: BorderRadius.circular(6)),
+                  child: Text('PAPER', semanticsLabel: 'Paper mode. Live trading is off.', style: CheHud.label.copyWith(color: _gold, fontSize: 11)),
+                ),
+              ]),
             ),
-            const SizedBox(width: 8),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-              decoration: BoxDecoration(border: Border.all(color: _gold), borderRadius: BorderRadius.circular(6)),
-              child: Text('PAPER', semanticsLabel: 'Paper mode. Live trading is off.', style: CheHud.label.copyWith(color: _gold, fontSize: 11)),
-            ),
-            const Spacer(),
             for (final t in tfs)
               Padding(
                 padding: const EdgeInsets.only(left: 4),
@@ -1063,11 +1083,11 @@ class CheTradingChartState extends State<CheTradingChart> {
                   unawaited(load());
                 }, semantics: 'Timeframe $t'),
               ),
-            _iconButton(Icons.open_in_full_rounded, 'Expand the chart', widget.onExpand),
+            if (widget.onExpand != null) _iconButton(Icons.open_in_full_rounded, 'Expand the chart', widget.onExpand),
           ]),
         ),
         SizedBox(
-          height: 18,
+          height: MediaQuery.textScalerOf(context).scale(11) * 1.45,
           child: Semantics(
             liveRegion: false,
             child: Text(live, key: const ValueKey('chart-feed-line'), maxLines: 1, overflow: TextOverflow.ellipsis,

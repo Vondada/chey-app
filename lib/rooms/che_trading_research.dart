@@ -422,7 +422,8 @@ class CheTradingStatusRow extends StatelessWidget {
               label: '$k: $v',
               excludeSemantics: true,
               child: Container(
-                height: 54,
+                // A minimum, not a fixed height: large text grows the row once; a new value never changes it.
+                constraints: const BoxConstraints(minHeight: 54),
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
                 decoration: BoxDecoration(borderRadius: BorderRadius.circular(10), border: Border.all(color: cheHudActive ? CheHud.ice.withValues(alpha: 0.28) : CheColors.stroke)),
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisAlignment: MainAxisAlignment.center, children: [
@@ -542,7 +543,8 @@ class _CheStrategyCardState extends State<CheStrategyCard> {
                 ]),
                 const SizedBox(height: 2),
                 Text(_humanStatus(s.status), maxLines: 1, style: TextStyle(color: statusColor(s.status), fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 0.6)),
-                Text('${s.bestTrades == null ? '— trades' : '${s.bestTrades} trades'} · ${fmtR(s.expectancy)}',
+                Text(s.bestLine, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontSize: 13)),
+                Text('${fmtR(s.expectancy)} · ${fmtPct(s.winRate)} WR',
                     maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w700, fontFeatures: [FontFeature.tabularFigures()])),
               ]),
             ),
@@ -550,9 +552,7 @@ class _CheStrategyCardState extends State<CheStrategyCard> {
         ),
         if (_open) ...[
           const SizedBox(height: 6),
-          Text(s.bestLine, style: const TextStyle(color: Colors.white, fontSize: 13)),
-          Text('${fmtPct(s.winRate)} win rate', style: const TextStyle(color: Colors.white, fontSize: 13)),
-          const SizedBox(height: 4),
+          Text('${s.qualifiedBuckets} timeframe${s.qualifiedBuckets == 1 ? '' : 's'} qualified', style: const TextStyle(color: Colors.white70, fontSize: 13)),
           Align(
             alignment: Alignment.centerLeft,
             child: TextButton(

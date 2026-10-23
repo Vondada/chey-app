@@ -190,8 +190,8 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
         headers: widget.headers,
         client: widget.client,
         onRead: widget.onRead,
-        account: _chart.account ?? widget.initialAccount,
-        symbol: (_chart.symbol ?? (widget.initialSymbol.isEmpty ? 'MNQ' : widget.initialSymbol)),
+        account: _compact.currentState?.account ?? widget.initialAccount,
+        symbol: _compact.currentState?.symbol ?? widget.initialSymbol,
         strategy: widget.initialStrategy,
         signalMarkers: _desk.markerFeed,
       ),
@@ -212,6 +212,7 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
   }
 
   String _note = '';
+  final _compact = GlobalKey<CheTradingChartState>();
 
   List<Widget> _sectionChildren() {
     final p = (baseUrl: widget.baseUrl, headers: widget.headers, onAsk: widget.onAsk, client: widget.client);
@@ -227,6 +228,7 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
           ])),
           _pad(LayoutBuilder(
             builder: (context, box) => CheTradingChart(
+              key: _compact,
               baseUrl: p.baseUrl,
               headers: p.headers,
               client: p.client,
