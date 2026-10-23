@@ -136,3 +136,16 @@ test('Flagstaff live delivery callback can reply immediately and preserves reply
   assert.equal(board[1].reply_to, board[0].id);
   assert.match(await response.text(), /CHE replied as message/);
 });
+
+test('Flagstaff gist: newest unread first, real text only, cut to 240 characters', async () => {
+  const { gistRows } = await import('./web_mailbox.js');
+  const rows = gistRows([
+    { id: 'a', from: 'chatgpt', text: 'Old note.' },
+    { id: 'b', from: 'gemini', text: 'Line one\n\n  line   two.' },
+    { id: 'c', from: 'codex', text: 'x'.repeat(400) },
+  ]);
+  assert.deepEqual(rows.map((r) => r.id), ['c', 'b', 'a']);
+  assert.equal(rows[1].text, 'Line one line two.');
+  assert.equal(rows[0].text.length, 240);
+  assert.deepEqual(gistRows([]), []);
+});
