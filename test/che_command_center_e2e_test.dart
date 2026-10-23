@@ -20,6 +20,13 @@ final _url = Platform.environment['CHE_E2E_URL'] ?? '';
 final _token = Platform.environment['CHE_E2E_TOKEN'] ?? '';
 final _required = Platform.environment['CHE_E2E_REQUIRED'] == '1';
 
+// Counts come from the catalog fixture (kept in sync with the Worker by command_center.test.mjs), never
+// hard-coded: this test only runs where the e2e server runs, so a pinned number went stale unseen.
+final Map<String, dynamic> _fixture = jsonDecode(File('test/fixtures/command_catalog.json').readAsStringSync()) as Map<String, dynamic>;
+final _commands = (_fixture['commands'] as List).cast<Map<String, dynamic>>();
+final _allLabel = 'All ${_commands.length}';
+final _tradingLabel = 'Trading ${_commands.where((c) => c['category'] == 'trading').length}';
+
 /// Lets real network IO finish (the test clock does not run it), then
 /// pumps until [finder] shows up.
 Future<void> waitFor(WidgetTester tester, Finder finder, {int tries = 60}) async {
@@ -93,10 +100,10 @@ void main() {
       ),
     ));
     await tester.tap(find.text('Chat host'));
-    await waitFor(tester, find.text('All 103'));
+    await waitFor(tester, find.text(_allLabel));
 
     // The catalog and its live status come from the Worker.
-    expect(find.text('Trading 18'), findsOneWidget);
+    expect(find.text(_tradingLabel), findsOneWidget);
     await tester.enterText(find.byType(TextField).first, 'trade-journal');
     await tester.pumpAndSettle();
     await tester.tap(find.text('/trade-journal').first);
@@ -112,7 +119,7 @@ void main() {
 
     // A workflow built on the page runs on CHE's mission queue.
     await tester.tap(find.text('Chat host'));
-    await waitFor(tester, find.text('All 103'));
+    await waitFor(tester, find.text(_allLabel));
     await settle(tester);
     await tester.tap(find.text('Workflows'));
     await tester.pumpAndSettle();
