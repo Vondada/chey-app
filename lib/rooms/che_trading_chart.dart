@@ -25,6 +25,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import '../che_ui/che_hud.dart';
+import '../che_ui/che_ui_preferences.dart';
 import '../rithmic/rithmic_candles.dart';
 import '../rithmic/rithmic_live.dart';
 import '../che_ui/che_theme.dart';
@@ -930,7 +931,15 @@ class CheTradingChartState extends State<CheTradingChart> {
             child: Text(_entriesAllowed ? 'Limit orders only: $_blocked' : 'New entries blocked: $_blocked', style: const TextStyle(color: _gold, fontSize: 13)),
           ),
         const SizedBox(height: 8),
-        SizedBox(height: widget.height, child: _chartArea()),
+        // The owner's chart size and portrait preference (Owner Improvements), applied live with no new build.
+        ListenableBuilder(
+          listenable: CheUiPreferences.instance,
+          builder: (context, child) => SizedBox(
+            height: CheUiPreferences.instance.chartHeightFor(widget.height, screen: MediaQuery.maybeSizeOf(context)),
+            child: child,
+          ),
+          child: _chartArea(),
+        ),
         const SizedBox(height: 6),
         Wrap(crossAxisAlignment: WrapCrossAlignment.center, children: [
           _iconButton(Icons.zoom_in_rounded, 'Zoom in', _bars.isEmpty ? null : () => zoom(1.5)),

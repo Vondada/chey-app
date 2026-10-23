@@ -22,6 +22,8 @@ import 'che_trading_ledgers.dart';
 import 'che_trading_research.dart';
 import 'che_trading_side_by_side.dart';
 import '../che_ui/che_hud.dart';
+import '../che_ui/che_screen_awareness.dart';
+import '../che_ui/che_ui_preferences.dart';
 import '../che_ui/che_theme.dart';
 import 'che_trading_hud.dart';
 
@@ -110,11 +112,20 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
     unawaited(_loadEvidence());
     CheTradingRoom.requestedSection.value = null;
     CheTradingRoom.requestedSection.addListener(_onRequest);
+    CheUiPreferences.instance.addListener(_onPrefs);
+    _screen = CheScreenAwareness.register(context, () => CheScreenReport(page: 'Trading Room', tab: _section.name));
+  }
+
+  Object? _screen;
+  void _onPrefs() {
+    if (mounted) setState(() {});
   }
 
   @override
   void dispose() {
     CheTradingRoom.requestedSection.removeListener(_onRequest);
+    CheUiPreferences.instance.removeListener(_onPrefs);
+    CheScreenAwareness.unregister(_screen);
     super.dispose();
   }
 
@@ -144,7 +155,11 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
     _chart.show(account: 'futures_paper', symbol: 'MNQ');
   }
 
-  Widget _pad(Widget child) => Padding(padding: const EdgeInsets.fromLTRB(12, 12, 12, 0), child: child);
+  // The owner's layout density (Owner Improvements: "this page is too cramped") scales the room's spacing.
+  Widget _pad(Widget child) {
+    final g = 12 * CheUiPreferences.instance.spacing;
+    return Padding(padding: EdgeInsets.fromLTRB(g, g, g, 0), child: child);
+  }
 
   /// Technical diagnostics sit under one collapsed "Details" section (owner, 2026-10-21), so the screen stays short.
   Widget _details(Widget child) => Padding(

@@ -13,6 +13,12 @@ enum CheDeskDensity { comfortable, compact }
 
 enum CheTextScalePref { small, defaultScale, large }
 
+/// Spacing of the screens that read it (Trading Room, Owner Improvements, Office desks).
+enum CheLayoutDensity { compact, comfortable, spacious }
+
+/// The Trading Room chart's size.
+enum CheChartHeight { compact, standard, tall }
+
 /// Where CHE's voice plays. [auto]: the loudspeaker, or the headphones,
 /// Bluetooth, AirPlay or car the owner connected. [speaker]: always the
 /// loudspeaker. [receiver]: the earpiece, held to the ear.
@@ -36,6 +42,12 @@ class CheUiPreferences extends ChangeNotifier {
   static const _voiceVolumeKey = 'che.ui.voiceVolume';
   static const _handsFreeKey = 'che.ui.handsFreeWake';
   static const _audioOutputKey = 'che.ui.audioOutput';
+  // Owner Improvements (server/cloudflare/owner_improvements.js UI_CONFIG): the owner's preferences set by voice.
+  static const _layoutDensityKey = 'che.ui.layoutDensity';
+  static const _chartHeightKey = 'che.ui.chartHeight';
+  static const _chartPortraitKey = 'che.ui.chartPortrait';
+  static const _successColorKey = 'che.ui.successColor';
+  static const _ownerConfigRevKey = 'che.ui.ownerConfigRev';
 
   bool _loaded = false;
   bool get isLoaded => _loaded;
@@ -53,6 +65,13 @@ class CheUiPreferences extends ChangeNotifier {
   // Owner rule: the mic never opens by itself when CHE launches. Hands-free
   // wake listening is opt-in ("turn on hands-free").
   bool handsFreeWake = false;
+  CheLayoutDensity layoutDensity = CheLayoutDensity.comfortable;
+  CheChartHeight chartHeight = CheChartHeight.standard;
+  // "Remember that I prefer portrait charts": a tall chart while the iPhone is upright. Nothing rotates the screen.
+  bool chartPortrait = false;
+  // 'mint' (default), 'chrome_green', 'ice' or 'silver'. Status always carries a word too, never color alone.
+  String successColorId = 'mint';
+  int ownerConfigRev = 0;
 
   double get textScale => switch (textScalePref) {
         CheTextScalePref.small => 0.90,
@@ -61,6 +80,37 @@ class CheUiPreferences extends ChangeNotifier {
       };
 
   bool get deskCompact => deskDensity == CheDeskDensity.compact;
+
+  /// Multiplies padding and gaps on the screens that read the layout density.
+  double get spacing => switch (layoutDensity) {
+        CheLayoutDensity.compact => 0.6,
+        CheLayoutDensity.comfortable => 1.0,
+        CheLayoutDensity.spacious => 1.5,
+      };
+
+  /// The chart height for a screen that asked for [base]. Portrait preference makes it a tall chart while upright.
+  double chartHeightFor(double base, {Size? screen}) {
+    final scaled = base *
+        switch (chartHeight) {
+          CheChartHeight.compact => 0.7,
+          CheChartHeight.standard => 1.0,
+          CheChartHeight.tall => 1.35,
+        };
+    if (chartPortrait && screen != null && screen.height > screen.width) {
+      return scaled < screen.height * 0.55 ? screen.height * 0.55 : scaled;
+    }
+    return scaled;
+  }
+
+  static const Map<String, Color> successColors = {
+    'mint': Color(0xFF8FF5C9),
+    'chrome_green': Color(0xFF6FF0B4),
+    'ice': Color(0xFF9FE9FF),
+    'silver': Color(0xFF9FB0C2),
+  };
+
+  /// The color of a finished, successful action.
+  Color get successColor => successColors[successColorId] ?? successColors['mint']!;
 
   Future<void> load() async {
     final prefs = await SharedPreferences.getInstance();
@@ -85,8 +135,68 @@ class CheUiPreferences extends ChangeNotifier {
       (o) => o.name == prefs.getString(_audioOutputKey),
       orElse: () => CheAudioOutput.auto,
     );
+    layoutDensity = CheLayoutDensity.values.firstWhere((d) => d.name == prefs.getString(_layoutDensityKey), orElse: () => CheLayoutDensity.comfortable);
+    chartHeight = CheChartHeight.values.firstWhere((h) => h.name == prefs.getString(_chartHeightKey), orElse: () => CheChartHeight.standard);
+    chartPortrait = prefs.getBool(_chartPortraitKey) ?? false;
+    final color = prefs.getString(_successColorKey);
+    successColorId = successColors.containsKey(color) ? color! : 'mint';
+    ownerConfigRev = prefs.getInt(_ownerConfigRevKey) ?? 0;
     _loaded = true;
     notifyListeners();
+  }
+
+  /// The owner's preference values (owner_improvements.js UI_CONFIG) as this app uses them right now.
+  Map<String, String> ownerConfigSnapshot() => {
+        'layout.density': layoutDensity.name,
+        'chart.height': chartHeight.name,
+        'chart.orientation': chartPortrait ? 'portrait' : 'follow_device',
+        'status.success_color': successColorId,
+        'text.size': switch (textScalePref) {
+          CheTextScalePref.small => 'small',
+          CheTextScalePref.defaultScale => 'default',
+          CheTextScalePref.large => 'large',
+        },
+      };
+
+  /// Applies the owner's stored preferences from CHE's server. Only a newer revision applies, so a change made
+  /// later on this phone (UI Controls) is not overwritten by an older server copy. Unknown keys and values are
+  /// ignored. Returns what this app now uses, read back from its own state.
+  Future<Map<String, String>> applyOwnerConfig(Map<String, dynamic> values, {required int rev, bool force = false}) async {
+    if (!force && rev <= ownerConfigRev) return ownerConfigSnapshot();
+    final prefs = await SharedPreferences.getInstance();
+    String? v(String key) => values[key] is String ? values[key] as String : null;
+    final density = CheLayoutDensity.values.where((d) => d.name == v('layout.density')).firstOrNull;
+    if (density != null) {
+      layoutDensity = density;
+      await prefs.setString(_layoutDensityKey, density.name);
+      // The Office desks have two sizes: compact, or roomy for comfortable and spacious.
+      await setDeskDensity(density == CheLayoutDensity.compact ? CheDeskDensity.compact : CheDeskDensity.comfortable);
+    }
+    final height = CheChartHeight.values.where((h) => h.name == v('chart.height')).firstOrNull;
+    if (height != null) {
+      chartHeight = height;
+      await prefs.setString(_chartHeightKey, height.name);
+    }
+    if (v('chart.orientation') == 'portrait' || v('chart.orientation') == 'follow_device') {
+      chartPortrait = v('chart.orientation') == 'portrait';
+      await prefs.setBool(_chartPortraitKey, chartPortrait);
+    }
+    final color = v('status.success_color');
+    if (color != null && successColors.containsKey(color)) {
+      successColorId = color;
+      await prefs.setString(_successColorKey, color);
+    }
+    final text = switch (v('text.size')) {
+      'small' => CheTextScalePref.small,
+      'default' => CheTextScalePref.defaultScale,
+      'large' => CheTextScalePref.large,
+      _ => null,
+    };
+    if (text != null) await setTextScalePref(text);
+    ownerConfigRev = rev > ownerConfigRev ? rev : ownerConfigRev;
+    await prefs.setInt(_ownerConfigRevKey, ownerConfigRev);
+    notifyListeners();
+    return ownerConfigSnapshot();
   }
 
   // A palette saved by id; the older dark / light / system choice maps to HUD glass or the light palette. An earlier

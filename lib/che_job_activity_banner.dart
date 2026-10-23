@@ -8,6 +8,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'che_ui/che_ui_preferences.dart';
+
 /// The job the owner is watching. Set when a background job is started.
 final ValueNotifier<String?> cheWatchedJobId = ValueNotifier<String?>(null);
 
@@ -107,7 +109,8 @@ class _CheJobActivityBannerState extends State<CheJobActivityBanner> {
               child: Icon(
                 done ? Icons.check_circle_outline : Icons.autorenew,
                 size: 14,
-                color: muted,
+                // A finished, successful job takes the owner's success color (Owner Improvements); the words say it too.
+                color: _status == 'complete' ? CheUiPreferences.instance.successColor : muted,
               ),
             ),
             const SizedBox(width: 6),

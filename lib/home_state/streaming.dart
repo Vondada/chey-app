@@ -2,6 +2,31 @@ part of '../main.dart';
 
 // Split out of main.dart: _CHEHomeState members (streaming).
 extension _CheHomeStreaming on _CHEHomeState {
+  /// A setting CHE changed at the owner's request: applied on this iPhone now, reported back so the improvement is
+  /// Verified only when the app really uses it, and shown as a banner with a haptic (the reply itself is spoken).
+  Future<void> _applyOwnerUiConfig(Map<String, dynamic> uiConfig) async {
+    final status = await CheOwnerConfigSync.applyReply(
+      uiConfig,
+      CheOwnerImprovementsClient(baseUrl: cheAgentBaseUrl, headers: () => _authHeaders),
+    );
+    if (!mounted || uiConfig['task_id'] == null) return;
+    final ok = status == 'verified';
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Semantics(
+        liveRegion: true,
+        child: Text(
+          ok
+              ? 'Applied on this iPhone and verified (${uiConfig['task_id']}).'
+              : status == 'failed'
+                  ? 'This iPhone could not apply it, so CHE put it back.'
+                  : 'Applied on this iPhone; CHE could not record the confirmation yet.',
+          style: const TextStyle(fontSize: 17),
+        ),
+      ),
+    ));
+    unawaited(_statusHaptic(ok ? 3 : 4));
+  }
+
   /// Plays the held free sample. If it cannot play, CHE says so on screen and aloud.
   Future<void> _playPendingVoicePreview({String? requestedVoiceId}) async {
     final voiceId = requestedVoiceId ?? _pendingVoicePreviewId;
@@ -270,6 +295,8 @@ extension _CheHomeStreaming on _CHEHomeState {
       'wake_phrase': 'Chay',
       'requested_capabilities': turnCapabilities,
       'screen_context': _pendingScreenContext,
+      // The page in front of the owner, so "this page is too cramped" knows which page (Owner Improvements).
+      if (CheScreenAwareness.current?.page case final String page) 'active_screen': page,
       // The image or video project open in Visual Studio, so "make this brighter" edits that project.
       ...CheVisualSession.chatFields(),
       'attachment': _pendingAttachment,
@@ -453,6 +480,12 @@ extension _CheHomeStreaming on _CHEHomeState {
         if (data['open_screen'] == 'workflows' && data['source'] == 'che_workflow_engine' && mounted) unawaited(_openWorkflows());
         if (data['open_screen'] == 'security' && data['source'] == 'che_security' && mounted) unawaited(_openSecurity());
         if (data['open_screen'] == 'film_studio' && data['source'] == 'che_film_studio' && mounted) unawaited(_openFilmStudio());
+        // Owner Improvements: a setting CHE changed applies here at once, and the app reports what it now uses.
+        if (data['source'] == 'che_owner_improvement') {
+          if (data['open_screen'] == 'owner_improvements' && mounted) unawaited(_openOwnerImprovements());
+          final uiConfig = data['ui_config'];
+          if (uiConfig is Map) unawaited(_applyOwnerUiConfig(Map<String, dynamic>.from(uiConfig)));
+        }
         // Only the trusted deterministic trading handlers can request this room.
         if (data['open_screen'] == 'trading_room' &&
             const {'che_trading_live', 'che_trading_ledgers', 'che_trading_desk'}.contains(data['source']) &&
