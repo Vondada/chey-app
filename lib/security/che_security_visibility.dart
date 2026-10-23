@@ -226,7 +226,7 @@ class CheSecurityChiefCard extends StatelessWidget {
                 child: ConstrainedBox(
                   constraints: const BoxConstraints(minHeight: 48),
                   child: Row(children: [
-                    const Icon(Icons.shield_rounded, size: 32),
+                    const Icon(Icons.security_rounded, size: 32),
                     const SizedBox(width: 10),
                     Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                       CheChromeText(name, style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w700)),
