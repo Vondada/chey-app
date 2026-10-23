@@ -146,6 +146,24 @@ extension _CheHomeSend on _CHEHomeState {
   }
 
   Future<bool> _handleLocalNavigation(String message) async {
+    if (cheOpensAppVersion(message)) {
+      final installed = await CheInstalledBuild.read().timeout(const Duration(seconds: 2), onTimeout: () => null);
+      if (!mounted) return true;
+      final reply = installed == null
+          ? 'Opening CHE app and update details. The native installed version and build could not be read; I will not substitute the latest published version.'
+          : 'Opening CHE app and update details. This iPhone reports installed CHE version ${installed.version}, build ${installed.build}. A Shorebird patch is listed separately when available.';
+      _set(() { messages.add({'role': 'assistant', 'text': reply}); });
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
+        content: Text(reply, style: const TextStyle(fontSize: 18)),
+        duration: const Duration(seconds: 10),
+      ));
+      HapticFeedback.mediumImpact();
+      unawaited(speakText(reply, record: false, readOnDemand: true));
+      await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => CheMobileUpdateScreen(
+        baseUrl: cheAgentBaseUrl, onSpeak: (text) => speakText(text, record: false, readOnDemand: true),
+      )));
+      return true;
+    }
     final lower = message.toLowerCase();
 
     if (CheVideo.isRecentCommand(message)) {

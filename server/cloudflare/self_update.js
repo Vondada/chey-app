@@ -677,3 +677,35 @@ export async function rollbackLastUpdate(env, fetcher = fetch) {
 }
 
 export const CHE_UPDATE_GUIDE = `SELF-DEVELOPMENT RULE: CHE has a real GitHub self-development toolchain. For owner-requested engineering, read the latest repository, delegate to the internal engineering team, inspect real source, implement, independently review, and present a reviewable proposal. CHE may edit normal Flutter/Worker/test/docs/office3d/web/native-source files on a dedicated branch after owner approval. Never write credentials, signing material, entitlements, secret files, GitHub workflows, or dependency/deployment control files automatically. Never push directly to main. Owner-approved changes open a REAL DRAFT PR through CHE_GITHUB_TOKEN; report the real PR number, URL, branch and commit SHA returned by GitHub. If GitHub rejects an operation, report the exact API status/message instead of guessing that access is missing. Merge/deploy still requires the owner's explicit instruction and CI. CHE may continually research and prepare improvements, but may not silently merge them.`;
+
+/** Read-only runtime questions. A request to change/deploy software is never a status lookup. */
+export function appStatusIntent(message = '') {
+  const t = String(message).replace(/[’]/g, "'").trim().toLowerCase()
+    .replace(/^(?:(?:hey|hi)\s+)?(?:che|chay|chey)[, :]+/, '').replace(/[.!?]+$/, '');
+  if (/^(?:fix|change|set|install|update|deploy|build|release|publish|run|start)\b/.test(t)) return null;
+  if (/^(?:open|show)(?: me)? (?:settings|about)(?:\s*(?:\/|and)\s*(?:about|show(?: me)?))?.*\b(?:app )?version\b/.test(t)) return { kind: 'settings' };
+  if (!/^(?:what(?:'s| is| are)?|which|tell me|show me|check|read|give me)\b/.test(t)) return null;
+  if (/\b(?:version|build number|deployment (?:identifier|id|status)|commit|sha)\b/.test(t)
+    && /\b(?:che|my|installed|app|backend|worker|connected|deployed|deployment|running)\b/.test(t)) return { kind: /\b(?:commit|sha|last verified deployment|deployment status)\b/.test(t) ? 'deployment' : 'runtime' };
+  return null;
+}
+
+/** Metadata values come from the current Worker binding and paired device, never from a model or release listing. */
+export function appStatusReport({ runtime = {}, client = null, deployment = null, now = Date.now() } = {}) {
+  const deploymentId = typeof runtime.version_id === 'string' && /^[a-zA-Z0-9-]{1,80}$/.test(runtime.version_id) ? runtime.version_id : null;
+  const tag = typeof runtime.version_tag === 'string' && /^[a-f0-9]{7,40}$/i.test(runtime.version_tag) ? runtime.version_tag : null;
+  const at = Date.parse(client?.checked_at || '');
+  const native = client?.source === 'ios_bundle' && Number.isFinite(at) && now - at >= -5000 && now - at <= 300000
+    && typeof client.version === 'string' && /^\d+(?:\.\d+){1,4}$/.test(client.version)
+    && typeof client.build === 'string' && /^\d{1,64}$/.test(client.build) ? client : null;
+  const full = tag?.length === 40 ? tag : deployment?.production_version_verified === true
+    && /^[a-f0-9]{40}$/i.test(deployment.commit_sha || '') && tag && deployment.commit_sha.startsWith(tag) ? deployment.commit_sha : null;
+  const parts = [native ? `This iPhone reports installed CHE version ${native.version}, build ${native.build}, from its iOS bundle at ${native.checked_at}. This does not identify a Shorebird patch.`
+    : 'Installed iPhone version and build are unavailable: this request has no fresh native iOS bundle report. The backend cannot infer them from the latest published app.'];
+  parts.push(deploymentId ? `Connected Worker deployment identifier: ${deploymentId}.` : 'Connected Worker deployment identifier is unavailable: CF_VERSION_METADATA.id was not supplied.');
+  parts.push(full ? `Backend commit SHA: ${full}.` : tag ? `Backend commit tag: ${tag}. A full commit SHA is not verified by this runtime metadata.` : 'Backend commit is unavailable: CF_VERSION_METADATA.tag was not supplied as a commit identifier.');
+  if (deployment) parts.push(speakLatestWorkerDeployment(deployment));
+  else parts.push('This reads the running version only; it does not prove that CHE deployed a change or that the latest deployment workflow succeeded.');
+  return { text: parts.join(' '), checked_at: new Date(now).toISOString(), source: 'current Worker CF_VERSION_METADATA; native bundle values are device-reported', installed: native ? { version: native.version, build: native.build, checked_at: native.checked_at, source: native.source } : null,
+    backend: { deployment_id: deploymentId, commit_tag: tag, commit_sha: full }, deployment };
+}

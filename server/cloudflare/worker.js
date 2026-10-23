@@ -114,7 +114,7 @@ import { PLAN_SOURCE, answerPlanFollowUp, buildPlan, classifyProject, listPlans,
 import { BRAIN_ROOMS_SOURCE, ROOMS as BRAIN_ROOMS, answerCrossRoom, crossRoomIntent, drainRoomEvents, imageReference, pointsAtScreen, prFollowUp, recentScreen, relinkRecords, rememberScreen, screenDeictic, screenFollowUp, screenRoomContext, screenRoomFor, statusLabel } from './brain_rooms.js';
 import { controlChangeEvent, meetingEvent, officeTaskEvent, paperOrderRefusedEvent, phoneRoomEvent, queueRoomEvent, researchEvent } from './room_events.js';
 import { cloudDailyLimit, sanitizeOwnerText } from './che_errors.js';
-import { CHE_UPDATE_GUIDE, mergeSelfUpdatePr, openSelfUpdatePr, rollbackLastUpdate, selfUpdateGitHubAccess, selfUpdateStatus, workerDeploymentStatus, latestWorkerDeploymentIntent, latestWorkerDeploymentStatus, speakLatestWorkerDeployment } from './self_update.js';
+import { CHE_UPDATE_GUIDE, mergeSelfUpdatePr, openSelfUpdatePr, rollbackLastUpdate, selfUpdateGitHubAccess, selfUpdateStatus, workerDeploymentStatus, latestWorkerDeploymentIntent, latestWorkerDeploymentStatus, speakLatestWorkerDeployment, appStatusIntent, appStatusReport } from './self_update.js';
 import { FAILURE_CLASS, backoffMs, classifyFailure, idempotencyKey, ownerEngineeringMessage, stableHash, stripOwnerHomework } from './recovery_policy.js';
 import { handleMobileUpdateRequest, isMobileUpdatePath } from './mobile_update.js';
 import { definitionAnswer, inspectRepositoryContext, lookupAnswer, prepareSelfUpdate, recordLesson, recoveryRequestIntent, refusesAnswer, SOURCE_RETRY_NOTE } from './self_development.js';
@@ -10006,6 +10006,17 @@ export class CheState extends DurableObject {
         // Owner asks for the latest deployment receipt: query GitHub Actions
         // before any source-code inspection. Reading a workflow YAML or the
         // CHE-only last_self_update_deploy key cannot prove deployment history.
+        const runtimeStatusAsk = !body.attachment && !body.workflow_step ? appStatusIntent(rawMessage) : null;
+        if (runtimeStatusAsk) {
+          if (!ownerDevice) return ownerOnly();
+          const runtime = runtimeVersion(this.env);
+          const deployment = runtimeStatusAsk.kind === 'deployment'
+            ? await latestWorkerDeploymentStatus(this.env, fetch, runtime).catch(() => ({ status: 503, detail: 'Deployment history lookup failed. No successful deployment is verified.' })) : null;
+          const report = appStatusReport({ runtime, client: body.client_app, deployment });
+          const text = runtimeStatusAsk.kind === 'settings' ? `${report.text} The backend cannot open Settings on your phone; use CHE's on-device app/update details screen.` : report.text;
+          return ndjsonReply(text, { source: 'che_runtime_status', ok: true, model_calls: 0, status_receipt: report });
+        }
+
         if (!body.attachment && !body.workflow_step && latestWorkerDeploymentIntent(rawMessage)) {
           if (!ownerDevice) return ownerOnly();
           // A different owner turn retires pending payment/delete approvals.
