@@ -403,6 +403,13 @@ export const COMMANDS = Object.freeze([
     examples: ['Replay available history'], prompt: 'Replay available history', produces: 'research receipt',
     evidence: 'Trusted execution receipt and immutable dataset/experiment identifiers.', keywords: ['replay history', 'strategy research', 'historical learning'],
   }),
+  // Strategy Matrix legend (owner, 2026-10-23): what the boxes, numbers and ratings mean, with the owner's own counts.
+  C('trade-matrix-explain', 'trading', 'EXPLORE', 'Explain the Strategy Matrix numbers and ratings.', {
+    does: 'Says what each Strategy Matrix box means: the number is simulated backtest trades, a rating needs 30 of them and at least 15 unseen (out-of-sample) trades, and Strong, Good, Fair and Weak come from the unseen result after costs. Ends with how many boxes have each rating now. No model call. Owner only.',
+    needs: [], route: 'che_trading_research', handler: 'trading_research.researchIntent → explainMatrix', input: null,
+    examples: ['Explain the strategy matrix', 'What do the matrix numbers mean?'], prompt: 'Explain the strategy matrix', produces: 'explanation',
+    evidence: 'Stored research results only.', keywords: ['matrix', 'strategy matrix', 'good fair weak', 'what do the numbers mean'],
+  }),
   // Historical trading intelligence (owner, 2026-10-22): historical_intelligence.js through its own chat route.
   C('trade-history', 'trading', 'EXPLORE', 'Test the strategies on decades of Nasdaq-100 history.', {
     does: 'Runs or reads CHE\'s historical study: free MNQ (2019 on), NQ and Nasdaq-100 index (1985 on, a labelled proxy) daily history, each verified with its range, gaps and checksum; every daily ICT rule tested with fills at the next open, a look-ahead audit and walk-forward out-of-sample ranking; regimes; this year\'s paper trades compared; paper signals journalled. Nothing is bought and no order is placed. Owner only.',

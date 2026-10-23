@@ -9,7 +9,7 @@ import {
   classifyRegimes, strategyDefinitions, UNDEFINED_STRATEGIES, evaluateUnit, runEngine, evidenceState, matrixState, decayOf, readinessOf,
   evidenceScore, selectStrategies, updateChampions, tradeCandidate, freshness, closedHigherBar, portfolioSim, monteCarlo, acquireDataset,
   importDataset, loadDataset, queueJob, researchStep, readUnits, forwardEvidence, researchView, strategyView, matrixView, researchIntent,
-  COST_PROFILES, cacheKey, readState, periodsFor,
+  COST_PROFILES, cacheKey, readState, periodsFor, MIN_OOS_TRADES, matrixReason, evidenceBadge, cellDetail, explainMatrix,
 } from './trading_research.js';
 import { appendTrades, newPortfolio } from './trading_evidence.js';
 import { fixtureBars, fixtureDaily } from './test_fixtures/trading_fixture.mjs';
@@ -415,7 +415,31 @@ test('Worker: the research API matches the contract, owner only; per-timeframe e
   assert.ok(sv.periods.find((p) => p.window === '10y').available === false);
   const mx = (await che.get('/api/trading/research/matrix?market=MNQ')).body;
   assert.equal(mx.timeframes.length, 12);
-  assert.ok(mx.rows.find((r) => r.strategy_id === 'rsi-revert-5m').cells['5m'].trades > 0);
+  const c5 = mx.rows.find((r) => r.strategy_id === 'rsi-revert-5m').cells['5m'];
+  assert.ok(c5.trades > 0);
+  assert.equal(c5.evidence.kind, 'SIMULATED BACKTEST', 'a backtest cell is never labelled as real fills');
+  assert.match(c5.evidence.provider, /TEST FIXTURE/);
+  assert.ok(typeof c5.reason === 'string' && c5.reason.length > 10 && Number.isInteger(c5.oos_trades));
+  const cell = (await che.get('/api/trading/research/cell?id=rsi-revert-5m&market=MNQ&tf=5m')).body;
+  assert.equal(cell.available, true);
+  assert.equal(cell.state, c5.state);
+  assert.equal(cell.trades_total, c5.trades);
+  assert.equal(cell.dollars_recorded, true, 'new research records dollars per trade');
+  assert.ok(cell.trades.every((t) => Number.isFinite(t.ep) && Number.isFinite(t.xp) && Number.isFinite(t.pnl) && t.c > 0), 'fills, net dollars and costs on every stored trade');
+  assert.equal(cell.money.all.net_pnl, Math.round(cell.trades.reduce((a, t) => a + t.pnl, 0) * 100) / 100);
+  assert.equal(cell.point_value, 2);
+  assert.ok(cell.bars.length > 0 && cell.bars.every((b) => ['t', 'o', 'h', 'l', 'c'].every((k) => k in b)), 'the bars the test used');
+  assert.ok(cell.bars.length <= 1500);
+  assert.ok(Date.parse(cell.bars[0].t) <= Date.parse(cell.trades[0].t) || /last 1500 bars/.test(cell.bars_note), 'the chart covers the first stored trade, or says it shows only the last bars');
+  assert.ok(Date.parse(cell.bars.at(-1).t) >= Date.parse(cell.trades.at(-1).t), 'and always the latest trade');
+  assert.equal((await che.get('/api/trading/research/cell?id=rsi-revert-5m&market=MNQ&tf=1D')).body.available, false);
+  assert.ok(JSON.stringify(che.s.m.get([...che.s.m.keys()].find((k) => k.startsWith('trd_ev:') && k.includes('rsi-revert-5m')))).length < 120_000, 'a stored unit stays under the 128 KB value limit');
+  const ex = await che.say('Explain the strategy matrix');
+  assert.equal(ex.done.source, 'che_trading_research');
+  assert.equal(ex.model_calls, 0);
+  assert.match(ex.reply, /simulated backtest/);
+  assert.match(ex.reply, /needs 30 backtest trades/);
+  assert.match(ex.reply, /unseen/);
   const best = await che.say('Which strategy is best right now?');
   assert.equal(best.done.source, 'che_trading_research');
   assert.equal(best.model_calls, 0);
@@ -432,7 +456,42 @@ test('Worker: the research API matches the contract, owner only; per-timeframe e
   assert.equal((await che.post('/api/trading/research/profile', { profile: 'TURBO' })).status, 400);
 });
 
+test('Strategy Matrix ratings: every boundary, a reason from the real numbers, and too few unseen trades is never Weak', () => {
+  const u = (o) => mk({ n: 120, oosN: o.n, oosExp: o.exp, pf: o.pf ?? 1.1, ...o.extra });
+  assert.equal(matrixState(mk({ n: 29 })), 'Learning');
+  assert.match(matrixReason(mk({ n: 29 })), /29 of 30 backtest trades/);
+  // The old classification called these Weak: an empty or tiny unseen sample.
+  assert.equal(matrixState(u({ n: 0, exp: null })), 'Not enough unseen data');
+  assert.equal(matrixState(u({ n: MIN_OOS_TRADES - 1, exp: -0.4 })), 'Not enough unseen data');
+  assert.match(matrixReason(u({ n: 3, exp: null })), /only 3 unseen trades.*at least 15/);
+  assert.equal(matrixState(u({ n: 15, exp: -0.05 })), 'Weak', 'exactly -0.05R is Weak');
+  assert.equal(matrixState(u({ n: 15, exp: -0.049 })), 'Fair');
+  assert.equal(matrixState(u({ n: 15, exp: 0 })), 'Fair', 'zero is not above zero');
+  assert.equal(matrixState(u({ n: 15, exp: 0.01 })), 'Good');
+  assert.equal(matrixState(u({ n: 15, exp: 0.3, pf: 1.29 })), 'Good');
+  assert.equal(matrixState(u({ n: 15, exp: 0.3, pf: 1.3 })), 'Strong');
+  assert.equal(matrixState({ ...u({ n: 20, exp: 0.5 }), look_ahead: 'FAILED' }), 'Audit failed', 'a failed look-ahead audit is never rated');
+  assert.equal(matrixReason(u({ n: 38, exp: 0.12, pf: 1.15 })), 'Good: +0.12R per trade on 38 unseen trades, profit factor 1.15, look-ahead audit passed (Strong needs +0.30R and 1.3).');
+  assert.match(matrixReason(u({ n: 40, exp: -0.2 })), /^Weak: −0\.20R per trade on 40 unseen trades/);
+  // Evidence badge: always a simulated backtest; gaps and a thin audit make it incomplete; a proxy says so.
+  const b = evidenceBadge({ ...mk({}), dataset: { provider: 'Yahoo Finance chart (public, free, delayed)', first: '2026-08-25T13:30:00Z', last: '2026-10-22T20:00:00Z', sha256: 'h', bars: 9000 } }, { sha256: 'h', missing: 12 });
+  assert.equal(b.kind, 'SIMULATED BACKTEST');
+  assert.equal(b.days, 58);
+  assert.equal(b.incomplete, true);
+  assert.match(b.incomplete_why[0], /12 expected bars missing/);
+  assert.equal(evidenceBadge({ ...mk({}), look_ahead: 'not enough bars', dataset: { provider: 'x', sha256: 'h' } }, null).incomplete, true);
+  assert.equal(evidenceBadge({ ...mk({}), dataset: { provider: 'x', sha256: 'h', proxy: 'NDX index' } }, { sha256: 'other', missing: 99 }).missing_bars, null, 'gaps from a different dataset are not claimed');
+  assert.equal(evidenceBadge({ ...mk({}), dataset: { provider: 'x', proxy: 'NDX index' } }).proxy, true);
+  // The spoken explanation counts this account's own cells.
+  const say = explainMatrix({ market: 'MNQ', rows: [{ cells: { '5m': { state: 'Good' }, '1m': { state: 'Not enough unseen data' }, '1D': { state: 'No data' } } }] });
+  assert.match(say, /MNQ right now: 1 good, 1 not enough unseen data\./);
+});
+
 test('voice intents are read deterministically; ordinary sentences are not taken', () => {
+  assert.equal(researchIntent('Explain the strategy matrix').kind, 'explain_matrix');
+  assert.equal(researchIntent('what do the matrix numbers mean').kind, 'explain_matrix');
+  assert.equal(researchIntent('Backtest every strategy on every timeframe'), null, 'the timeframe backtest keeps its own route');
+  assert.equal(researchIntent('I watched the Matrix last night'), null);
   assert.equal(researchIntent('Which strategy is best right now?').kind, 'best_now');
   assert.equal(researchIntent('what strategies look strongest today').kind, 'best_now');
   assert.deepEqual(researchIntent('how is EMA pullback doing on 5 minute'), { kind: 'strategy', strategy_id: 'ema-pullback-5m', timeframe: '5m' });

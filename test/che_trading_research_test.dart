@@ -79,16 +79,39 @@ Map<String, dynamic> _strategy() => {
       'receipts': [{'id': 'r1', 'timeframe': '5m', 'provider': 'Yahoo MNQ=F', 'data_hash': 'abc', 'cost_model': 'NORMAL', 'look_ahead': 'passed'}],
     };
 
+const _ev = {'kind': 'SIMULATED BACKTEST', 'provider': 'Yahoo Finance chart (public, free, delayed)', 'first': '2026-08-25T13:30:00Z', 'last': '2026-10-22T20:00:00Z', 'days': 58, 'incomplete': false, 'incomplete_why': <String>[], 'proxy': false};
+
+Map<String, dynamic> _cell() => {
+      'strategy_id': 'ema-pullback', 'name': 'EMA Pullback', 'market': 'MNQ', 'timeframe': '5m', 'available': true, 'state': 'Strong',
+      'reason': 'Strong: +0.38R per trade on 38 unseen trades, profit factor 1.5 (Strong needs +0.30R and 1.3).', 'evidence': _ev,
+      'all': {'trades': 143, 'win_rate': 0.48, 'expectancy_r': 0.31, 'pf': 1.4, 'max_dd_r': 6.5}, 'oos': {'trades': 38, 'win_rate': 0.5, 'expectancy_r': 0.38, 'pf': 1.5, 'max_dd_r': 3},
+      'folds_positive': 3, 'folds_total': 4, 'look_ahead': 'passed', 'period': {'first': '2026-08-25T13:30:00Z', 'last': '2026-10-22T20:00:00Z'},
+      'cost_profile': 'NORMAL', 'costs': {'spreadTicks': 1, 'slippageTicks': 1, 'commissionPerSide': 1.5, 'feePerSide': 0.5}, 'point_value': 2,
+      'trades_total': 143, 'trades_kept': 2, 'dollars_recorded': true,
+      'dollars_note': 'Dollar figures cover the 2 stored trades, 1 MNQ contract at \$2 a point, after the NORMAL cost model.',
+      'money': {'all': {'net_pnl': 31.5, 'costs': 9.0, 'trades': 2}, 'oos': {'net_pnl': 40.25, 'costs': 4.5, 'trades': 1}},
+      'trades': [
+        {'t': '2026-10-22T14:35:00Z', 'x': '2026-10-22T14:50:00Z', 'r': -0.4, 'side': 'long', 'ep': 21450.25, 'xp': 21446.5, 'pnl': -8.75, 'c': 4.5, 'oos': false, 'reason': 'stop'},
+        {'t': '2026-10-22T15:05:00Z', 'x': '2026-10-22T15:30:00Z', 'r': 1.9, 'side': 'short', 'ep': 21470.0, 'xp': 21450.0, 'pnl': 40.25, 'c': 4.5, 'oos': true, 'reason': 'target'},
+      ],
+      'bars': [
+        for (var i = 0; i < 20; i++) {'t': DateTime.utc(2026, 10, 22, 14, 30).add(Duration(minutes: 5 * i)).toIso8601String(), 'o': 21450.0 + i, 'h': 21455.0 + i, 'l': 21445.0 + i, 'c': 21452.0 + i},
+      ],
+    };
+
 Map<String, dynamic> _matrix() => {
+      'min_closed_trades': 30,
+      'min_oos_trades': 15,
       'timeframes': ['15s', '1m', '5m', '4h', '1W'],
       'rows': [
         {
           'strategy_id': 'ema-pullback',
           'name': 'EMA Pullback',
           'cells': {
-            '15s': {'state': 'Learning', 'trades': 29},
-            '1m': {'state': 'Fair', 'trades': 217, 'expectancy_r': 0.11},
-            '5m': {'state': 'Strong', 'trades': 143, 'expectancy_r': 0.38},
+            '15s': {'state': 'Learning', 'trades': 29, 'reason': 'Learning: 29 of 30 backtest trades needed before any rating.'},
+            '1m': {'state': 'Fair', 'trades': 217, 'oos_trades': 60, 'expectancy_r': -0.01, 'oos_expectancy_r': -0.01, 'reason': 'Fair: −0.01R per trade on 60 unseen trades, about break-even after costs (Good needs above 0).', 'evidence': _ev},
+            '5m': {'state': 'Strong', 'trades': 143, 'oos_trades': 38, 'expectancy_r': 0.38, 'oos_expectancy_r': 0.38, 'pf': 1.5, 'reason': 'Strong: +0.38R per trade on 38 unseen trades, profit factor 1.5 (Strong needs +0.30R and 1.3).', 'evidence': _ev},
+            '4h': {'state': 'Not enough unseen data', 'trades': 154, 'oos_trades': 4, 'expectancy_r': 0.2, 'oos_expectancy_r': null, 'reason': 'Not rated: only 4 unseen trades; a rating needs at least 15 trades the strategy was not tuned on.', 'evidence': {..._ev, 'incomplete': true, 'incomplete_why': ['12 expected bars missing from the data']}},
             '1W': {'state': 'No data', 'trades': 0},
           },
         },
@@ -110,6 +133,7 @@ class _Api {
     if (p == '/api/trading/research') return _json(_overview(r.url.queryParameters['market'] ?? 'MNQ', best: best, learning: learning, profile: profile));
     if (p == '/api/trading/research/strategy') return _json(_strategy());
     if (p == '/api/trading/research/matrix') return _json(_matrix());
+    if (p == '/api/trading/research/cell') return _json(_cell());
     if (p == '/api/trading/research/paper_learning') {
       if (fail) return _json({'detail': 'No futures feed is connected'}, 409);
       learning = (jsonDecode(r.body) as Map)['enabled'] == true;
@@ -283,15 +307,106 @@ void main() {
 
   testWidgets('Strategy Matrix: every cell reads its strategy, timeframe, state, trades and expectancy', (tester) async {
     final api = _Api();
-    await _pump(tester, api);
+    await _pump(tester, api, size: const Size(390, 3200));
     await _scrollTo(tester, find.byKey(const Key('open_matrix'), skipOffstage: false));
     await tester.tap(find.byKey(const Key('open_matrix')));
     await tester.pumpAndSettle();
     expect(find.text('Strategy Matrix · MNQ'), findsOneWidget);
-    expect(find.bySemanticsLabel('EMA Pullback, 5 minute, Strong, 143 trades, plus 0.38 R'), findsOneWidget);
-    expect(find.bySemanticsLabel('EMA Pullback, 15 second, learning, 29 of 30 trades'), findsOneWidget);
-    expect(find.bySemanticsLabel('EMA Pullback, 4 hour, learning, 0 of 30 trades'), findsOneWidget);
-    expect(find.bySemanticsLabel('EMA Pullback, weekly, no data'), findsOneWidget);
+    expect(find.bySemanticsLabel(RegExp(r'^EMA Pullback, 5 minute, Strong, 143 backtest trades, 38 tested on unseen data, plus 0\.38 R per unseen trade, Strong: \+0\.38R per trade on 38 unseen trades.*simulated$')), findsOneWidget);
+    expect(find.bySemanticsLabel(RegExp(r'^EMA Pullback, 15 second, Learning, 29 of 30 trades needed, Learning: 29 of 30')), findsOneWidget);
+    expect(find.bySemanticsLabel(RegExp(r'^EMA Pullback, 4 hour, Not enough unseen data, 154 backtest trades, 4 tested on unseen data, Not rated: only 4 unseen trades.*simulated, incomplete$')), findsOneWidget,
+        reason: 'too few unseen trades is not rated, never shown as Weak');
+    expect(find.bySemanticsLabel(RegExp(r'^EMA Pullback, weekly, no data')), findsOneWidget);
+    expect(find.text('143 backtest trades'), findsOneWidget, reason: 'the number says what it counts');
+    expect(find.text('29 of 30 trades needed'), findsOneWidget);
+    expect(find.text('38 tested on unseen data'), findsOneWidget);
+    expect(find.textContaining('Strong: +0.38R per trade on 38 unseen trades'), findsOneWidget, reason: 'the phone list shows the reason');
+    expect(find.text('SIMULATED · INCOMPLETE'), findsOneWidget);
+    expect(find.byIcon(Icons.trending_up_rounded), findsWidgets, reason: 'status has an icon, not color alone');
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('Strategy Matrix: the legend explains the numbers in plain words; filters and the grid layout work', (tester) async {
+    final api = _Api();
+    final read = <String>[];
+    await _pump(tester, api, read: read, size: const Size(390, 3200));
+    await _scrollTo(tester, find.byKey(const Key('open_matrix'), skipOffstage: false));
+    await tester.tap(find.byKey(const Key('open_matrix')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('matrix_help')));
+    await tester.pumpAndSettle();
+    expect(find.text('What do these mean?'), findsOneWidget);
+    expect(find.textContaining('How many trades the strategy took in that backtest'), findsOneWidget);
+    expect(find.textContaining('never Weak'), findsOneWidget);
+    await tester.tap(find.byTooltip('Read the legend aloud'));
+    expect(read.single, startsWith('Each box: One strategy on one timeframe'));
+    Navigator.of(tester.element(find.text('What do these mean?'))).pop();
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('rating_Not rated')));
+    await tester.pumpAndSettle();
+    expect(find.text('143 backtest trades'), findsNothing, reason: 'Strong is filtered out');
+    expect(find.text('154 backtest trades'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('rating_All')));
+    await tester.tap(find.byKey(const Key('matrix_enough')));
+    await tester.pumpAndSettle();
+    expect(find.text('29 of 30 trades needed'), findsNothing, reason: 'only boxes with 30 trades and 15 unseen');
+    expect(find.text('154 backtest trades'), findsNothing);
+    expect(find.text('143 backtest trades'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('matrix_layout')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Strong: +0.38R'), findsNothing, reason: 'the grid keeps boxes short; the reason is in the label and the detail');
+    expect(find.bySemanticsLabel(RegExp(r'^EMA Pullback, 5 minute, Strong, 143 backtest trades')), findsOneWidget);
+    await tester.tap(find.byTooltip('Read the matrix aloud'));
+    expect(read.last, contains('Every box is a simulated backtest'));
+    expect(read.last, contains('1 strong, 1 fair, 1 not enough unseen data, 1 learning'));
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  for (final (size, scale, label) in [(const Size(390, 844), 2.0, 'iPhone with the largest text'), (const Size(1024, 1366), 1.0, 'iPad grid')]) {
+    testWidgets('Strategy Matrix lays out without overflow: $label', (tester) async {
+      final api = _Api();
+      await _pump(tester, api, size: size, textScale: scale);
+      await _scrollTo(tester, find.byKey(const Key('open_matrix'), skipOffstage: false));
+      await tester.tap(find.byKey(const Key('open_matrix')));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.byKey(const Key('matrix_help')), findsOneWidget);
+      await tester.tap(find.bySemanticsLabel(RegExp(r'^EMA Pullback, 1 minute, Fair')).first);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.byKey(const Key('cell_reason')), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+    });
+  }
+
+  testWidgets('Strategy Matrix: a box opens its reason, evidence, all vs unseen results in R and dollars, the chart with entries and exits, and the trades', (tester) async {
+    final api = _Api();
+    final read = <String>[];
+    await _pump(tester, api, read: read, size: const Size(390, 3200));
+    await _scrollTo(tester, find.byKey(const Key('open_matrix'), skipOffstage: false));
+    await tester.tap(find.byKey(const Key('open_matrix')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.bySemanticsLabel(RegExp(r'^EMA Pullback, 5 minute, Strong')));
+    await tester.pumpAndSettle();
+    expect(api.requests.any((r) => r.url.path == '/api/trading/research/cell' && r.url.queryParameters['id'] == 'ema-pullback' && r.url.queryParameters['tf'] == '5m'), isTrue);
+    expect(find.text('EMA Pullback · 5m'), findsOneWidget);
+    expect(find.byKey(const Key('cell_reason')), findsOneWidget);
+    expect(find.textContaining('SIMULATED BACKTEST'), findsOneWidget);
+    expect(find.textContaining('Yahoo Finance chart (public, free, delayed), 2026-08-25 → 2026-10-22, 58 days'), findsOneWidget);
+    expect(find.textContaining('not broker executions'), findsOneWidget);
+    expect(find.bySemanticsLabel(RegExp(r'Trades\s*143\s*38')), findsOneWidget, reason: 'all trades beside unseen trades');
+    expect(find.bySemanticsLabel(RegExp(r'Net P&L\s*\+\$31\.50\s*\+\$40\.25')), findsOneWidget);
+    expect(find.bySemanticsLabel(RegExp(r'Commissions, fees, slippage\s*\$9\.00\s*\$4\.50')), findsOneWidget);
+    expect(find.bySemanticsLabel(RegExp(r'Walk-forward folds positive\s*3 of 4')), findsOneWidget);
+    await tester.scrollUntilVisible(find.byKey(const Key('cell_chart')), 300, scrollable: find.byType(Scrollable).last);
+    expect(find.bySemanticsLabel('Chart of 20 5 minute bars from 2026-10-22 to 2026-10-22, with 2 simulated entries and 2 exits.'), findsOneWidget);
+    await tester.scrollUntilVisible(find.byKey(const Key('cell_truncated')), 300, scrollable: find.byType(Scrollable).last);
+    expect(find.text('Showing the last 2 of 143 trades; all 143 are in the figures above.'), findsOneWidget);
+    expect(find.textContaining('Short'), findsWidgets);
+    expect(find.textContaining('entry 21470.0 → exit 21450.0 · +1.90R · +\$40.25 · unseen · target'), findsOneWidget);
+    await tester.tap(find.byTooltip('Read this box aloud'));
+    expect(read.single, startsWith('EMA Pullback, 5 minute. Strong: +0.38R'));
+    expect(read.single, contains('Simulated backtest on Yahoo Finance'));
     await tester.pumpWidget(const SizedBox());
   });
 

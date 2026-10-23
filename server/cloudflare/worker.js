@@ -81,7 +81,7 @@ import { renderTokenRoute, visualApi, songPromo, projectFromTemplateName, loadVi
 import { visualIntent, wordsToOps } from './visual_studio.js';
 import { addBeat, addLedger, addWorkspace, addWorkspaceSong, advanceAgreement, applySpokenBusiness, approveQuote, artistReport, beatListing, businessDashboard, deliveryPackage, draftQuote, musicBusinessIntent, recordBeatSale, recordFeedback, resolveSpokenBusiness, setService, workspaceById, workspaceView } from './music_business.js';
 import { matrixIntent, readMatrix, runMatrix, speakMatrix } from './backtest_matrix.js';
-import { autoQueue as researchAutoQueue, cancelJob as cancelResearchJob, matrixView as researchMatrixView, nextResearchAt, queueJob as queueResearchJob, researchIntent, researchStep, researchView, setProfile as setResearchProfile, speakBestNow, speakHistory, speakStrategy, strategyView as researchStrategyView } from './trading_research.js';
+import { autoQueue as researchAutoQueue, cancelJob as cancelResearchJob, cellDetail as researchCellDetail, explainMatrix as explainResearchMatrix, matrixView as researchMatrixView, nextResearchAt, queueJob as queueResearchJob, researchIntent, researchStep, researchView, setProfile as setResearchProfile, speakBestNow, speakHistory, speakStrategy, strategyView as researchStrategyView } from './trading_research.js';
 import { nextStrategySimTickAt, setStrategySimCeiling, setStrategySimPaused, speakStrategySim, strategySimIntent, strategySimTick, strategySimView, strategySimWake } from './strategy_sim.js';
 import { evidenceIntent, evidenceReport, evidenceTick } from './trading_evidence_runner.js';
 import { readTrades } from './trading_evidence.js';
@@ -8007,6 +8007,7 @@ export class CheState extends DurableObject {
           return view ? json(view) : json({ detail: 'Unknown strategy.' }, 404);
         }
         if (request.method === 'GET' && path === '/api/trading/research/matrix') return json(await researchMatrixView(this.ctx.storage, market));
+        if (request.method === 'GET' && path === '/api/trading/research/cell') return json(await researchCellDetail(this.ctx.storage, url.searchParams.get('id') || '', market, url.searchParams.get('tf') || ''));
         if (request.method !== 'POST') return json({ detail: 'Not found.' }, 404);
         const action = path.replace('/api/trading/research/', '');
         let spoken = '';
@@ -12210,6 +12211,7 @@ export class CheState extends DurableObject {
           const say = (text, extra = {}) => ndjsonReply(text, { source: 'che_trading_research', ok: true, model_calls: 0, ...extra });
           if (researchAsk.kind === 'best_now') return say(speakBestNow(await researchView(this.ctx.storage)), { open_screen: 'trading_room' });
           if (researchAsk.kind === 'history') return say(speakHistory(await researchView(this.ctx.storage), researchAsk.market));
+          if (researchAsk.kind === 'explain_matrix') return say(explainResearchMatrix(await researchMatrixView(this.ctx.storage, 'MNQ')));
           if (researchAsk.kind === 'strategy') return say(speakStrategy(await researchStrategyView(this.ctx.storage, researchAsk.strategy_id, 'MNQ'), researchAsk.timeframe));
           if (researchAsk.kind === 'paper') {
             const state = await setLivePaper(this.ctx.storage, researchAsk.enabled);

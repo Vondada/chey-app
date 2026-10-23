@@ -32,6 +32,8 @@ const EV_PREFIX = 'trd_ev:';
 const RECEIPTS_KEY = 'trd_receipts';
 const BRAIN_KEY = 'trd_brain';
 const CHUNK_BARS = 1200;                      // ≈ 90 KB a key: a Durable Object value is limited to 128 KB
+// Stored trades carry fill prices and dollars since t2; the next refresh re-records older units once (same data, same R).
+const TRADE_RECORD = 't2';
 const KEEP_TRADES = 400;                      // compact trades kept per bucket for recomputation
 const MIN = 60_000;
 const HOUR = 60 * MIN;
@@ -548,7 +550,9 @@ export function runEngine(strategyId, bars, tf, { costs = COSTS, target_r = 2, m
 const compact = (t, tf, regimeAt) => {
   const g = regimeAt(t.signal.time);
   return { t: t.entry.time, x: t.exit.time, r: r4(t.r_net), side: t.side, s: sessionAt(t.entry.time, tf), g: g?.structure || 'unknown', v: g?.volatility || 'unknown',
-    h: isIntraday(tf) ? Number(etParts(t.entry.time).mins / 60 | 0) : null, w: WEEKDAYS[new Date(`${etParts(t.entry.time).day}T12:00:00Z`).getUTCDay()], reason: t.exit.reason };
+    h: isIntraday(tf) ? Number(etParts(t.entry.time).mins / 60 | 0) : null, w: WEEKDAYS[new Date(`${etParts(t.entry.time).day}T12:00:00Z`).getUTCDay()], reason: t.exit.reason,
+    // Fill prices, net dollars and total costs, so a stored trade can be drawn and summed in dollars (Strategy Matrix detail).
+    ep: r2(t.entry.fill), xp: r2(t.exit.fill), pnl: r2(t.net_pnl), c: r2(Object.values(t.costs || {}).reduce((a, v) => a + (Number(v) || 0), 0)) };
 };
 function breakdownBy(list, key) {
   const groups = {};
@@ -623,12 +627,52 @@ export function evidenceState(unit) {
   const oosOk = unit.oos.trades >= 15 && unit.oos.expectancy_r > 0;
   return oosOk && unit.look_ahead !== 'FAILED' ? 'QUALIFIED' : 'MONITOR';
 }
+// The rating uses only out-of-sample (unseen) trades. Fewer than this many unseen trades is too few to rate.
+export const MIN_OOS_TRADES = 15;
 export function matrixState(unit) {
   const st = evidenceState(unit);
   if (st === 'NO DATA' || st === 'N/A') return 'No data';
   if (st === 'NOT READY') return 'Learning';
   if (st === 'QUALIFIED') return unit.oos.expectancy_r >= 0.3 && (unit.oos.pf ?? 0) >= 1.3 ? 'Strong' : 'Good';
-  return (unit.oos.expectancy_r ?? -1) > -0.05 ? 'Fair' : 'Weak';
+  // MONITOR covers three different things; only a real negative unseen result is Weak.
+  if ((unit.oos?.trades || 0) < MIN_OOS_TRADES) return 'Not enough unseen data';
+  if (unit.look_ahead === 'FAILED') return 'Audit failed';
+  return unit.oos.expectancy_r > -0.05 ? 'Fair' : 'Weak';
+}
+
+const sR = (v) => (v == null ? 'n/a' : `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(2)}R`);
+/** One plain sentence saying why a cell has its rating, from its own numbers. */
+export function matrixReason(unit) {
+  const state = matrixState(unit);
+  if (state === 'No data') return unit?.applicable === false ? 'This strategy\'s rules are not written for this timeframe.' : `No result: ${unit?.reason || 'not researched yet'}.`;
+  const n = unit.all.trades; const o = unit.oos || {}; const pf = o.pf == null ? 'n/a' : o.pf;
+  const unseen = `${o.trades || 0} unseen trade${o.trades === 1 ? '' : 's'}`;
+  switch (state) {
+    case 'Learning': return `Learning: ${n} of ${MIN_CLOSED_TRADES} backtest trades needed before any rating.`;
+    case 'Not enough unseen data': return `Not rated: only ${unseen}; a rating needs at least ${MIN_OOS_TRADES} trades the strategy was not tuned on.`;
+    case 'Audit failed': return `Not rated: the look-ahead audit failed, so these results may use information the strategy could not have had.`;
+    case 'Strong': return `Strong: ${sR(o.expectancy_r)} per trade on ${unseen}, profit factor ${pf} (Strong needs +0.30R and 1.3).`;
+    case 'Good': return `Good: ${sR(o.expectancy_r)} per trade on ${unseen}, profit factor ${pf}, look-ahead audit ${unit.look_ahead} (Strong needs +0.30R and 1.3).`;
+    case 'Fair': return `Fair: ${sR(o.expectancy_r)} per trade on ${unseen}, about break-even after costs (Good needs above 0).`;
+    default: return `Weak: ${sR(o.expectancy_r)} per trade on ${unseen}, losing after costs.`;
+  }
+}
+
+/** What kind of evidence a cell is: always a simulated backtest, with its data source, coverage and gaps. */
+export function evidenceBadge(unit, manifest = null) {
+  if (!unit?.ok) return null;
+  const d = unit.dataset || {};
+  const days = d.first && d.last ? Math.max(1, Math.round((Date.parse(d.last) - Date.parse(d.first)) / DAY)) : null;
+  const same = manifest && manifest.sha256 && manifest.sha256 === d.sha256;
+  const missing = same ? manifest.missing || 0 : null;
+  const incomplete = [];
+  if (unit.look_ahead === 'not enough bars') incomplete.push('too few bars for the look-ahead audit');
+  if (missing) incomplete.push(`${missing} expected bars missing from the data`);
+  return {
+    kind: 'SIMULATED BACKTEST', provider: d.provider || 'unknown source', first: d.first || null, last: d.last || null, days, bars: d.bars || null,
+    proxy: Boolean(d.proxy), incomplete: incomplete.length > 0, incomplete_why: incomplete, missing_bars: missing, cost_profile: unit.profile || 'NORMAL',
+    note: 'Simulated fills on historical bars, not broker executions.',
+  };
 }
 export function decayOf(unit) {
   if (!unit?.recent || unit.recent.trades < 15 || unit.all.trades < MIN_CLOSED_TRADES) return 'INSUFFICIENT DATA';
@@ -800,7 +844,7 @@ export async function readUnits(storage, filter = () => true) {
   const map = await storage.list({ prefix: EV_PREFIX });
   return [...map.values()].filter(filter);
 }
-export const cacheKey = ({ strategyId, market, tf, sha256, profile, deep }) => `${strategyId}|${market}|${tf}|${sha256}|${COST_PROFILES[profile] ? profile : 'NORMAL'}|${deep ? 'deep' : 'std'}|${RESEARCH_VERSION}|${definitionOf(strategyId)?.version || ''}`;
+export const cacheKey = ({ strategyId, market, tf, sha256, profile, deep }) => `${strategyId}|${market}|${tf}|${sha256}|${COST_PROFILES[profile] ? profile : 'NORMAL'}|${deep ? 'deep' : 'std'}|${RESEARCH_VERSION}|${definitionOf(strategyId)?.version || ''}|${TRADE_RECORD}`;
 
 async function addReceipt(storage, unit) {
   const list = (await storage.get(RECEIPTS_KEY)) || [];
@@ -1038,16 +1082,63 @@ export async function strategyView(storage, id, market = 'MNQ') {
   };
 }
 
+async function manifestsFor(storage, market) {
+  const keys = TF_IDS.map((tf) => `${DS_PREFIX}${market}:${tf}`);
+  const got = await storage.get(keys);
+  return Object.fromEntries(TF_IDS.map((tf, i) => [tf, (got instanceof Map ? got.get(keys[i]) : got?.[keys[i]]) || null]));
+}
+
 export async function matrixView(storage, market = 'MNQ') {
   const units = await readUnits(storage, (u) => u.market === market);
+  const manifests = await manifestsFor(storage, market);
   const defs = strategyDefinitions();
   return {
-    market, timeframes: [...TF_IDS], min_closed_trades: MIN_CLOSED_TRADES,
+    market, timeframes: [...TF_IDS], min_closed_trades: MIN_CLOSED_TRADES, min_oos_trades: MIN_OOS_TRADES,
     rows: defs.map((d) => ({ strategy_id: d.strategy_id, name: d.name, cells: Object.fromEntries(TF_IDS.map((tf) => {
-      if (!d.timeframes.includes(tf)) return [tf, { state: 'No data', trades: 0, expectancy_r: null, applicable: false }];
+      if (!d.timeframes.includes(tf)) return [tf, { state: 'No data', trades: 0, expectancy_r: null, applicable: false, reason: 'This strategy\'s rules are not written for this timeframe.' }];
       const u = units.find((x) => x.strategy_id === d.strategy_id && x.timeframe === tf);
-      return [tf, { state: u ? matrixState(u) : 'No data', trades: u?.ok ? u.all.trades : 0, expectancy_r: u?.ok ? (u.oos.trades ? u.oos.expectancy_r : u.all.expectancy_r) : null }];
+      if (!u) return [tf, { state: 'No data', trades: 0, expectancy_r: null, reason: 'Not researched yet.' }];
+      return [tf, { state: matrixState(u), trades: u.ok ? u.all.trades : 0, oos_trades: u.ok ? u.oos.trades : 0,
+        expectancy_r: u.ok ? (u.oos.trades ? u.oos.expectancy_r : u.all.expectancy_r) : null, oos_expectancy_r: u.ok ? u.oos.expectancy_r : null, pf: u.ok ? u.oos.pf ?? null : null,
+        look_ahead: u.look_ahead || null, reason: matrixReason(u), evidence: evidenceBadge(u, manifests[tf]) }];
     })) })),
+  };
+}
+
+const POINT_VALUE = { MNQ: 2, NQ: 20 };
+const CHART_BARS = 1500;
+/** Everything one Strategy Matrix cell is built from: its rating and why, its evidence, both samples, its stored trades in dollars, and the bars to draw them on. */
+export async function cellDetail(storage, id, market, tf) {
+  const def = definitionOf(id);
+  const u = (await readUnits(storage, (x) => x.strategy_id === id && x.market === market && x.timeframe === tf))[0];
+  if (!def || !u) return { strategy_id: id, timeframe: tf, state: 'No data', reason: def && !def.timeframes.includes(tf) ? 'This strategy\'s rules are not written for this timeframe.' : 'Not researched yet.', available: false };
+  if (!u.ok) return { strategy_id: id, timeframe: tf, state: matrixState(u), reason: matrixReason(u), available: false };
+  const manifest = (await manifestsFor(storage, market))[tf];
+  const trades = u.trades || [];
+  const dollars = trades.length > 0 && trades.every((t) => Number.isFinite(t.pnl));
+  const sum = (list, k) => r2(list.reduce((a, t) => a + (t[k] || 0), 0));
+  const money = (list) => (dollars ? { net_pnl: sum(list, 'pnl'), costs: sum(list, 'c'), trades: list.length } : null);
+  let bars = [];
+  let barsNote = null;
+  if (trades.length) {
+    const ds = await loadDataset(storage, market, tf);
+    if (!ds || ds.manifest.sha256 !== u.dataset.sha256) barsNote = 'The bars this test used are no longer stored, so no chart is drawn.';
+    else {
+      const from = Date.parse(trades[0].t);
+      const inRange = ds.bars.filter((b) => Date.parse(b.t) >= from - 20 * (tfOf(tf)?.ms || 0));
+      bars = inRange.slice(-CHART_BARS).map((b) => ({ t: b.t, o: b.o, h: b.h, l: b.l, c: b.c }));
+      if (inRange.length > CHART_BARS) barsNote = `Chart shows the last ${CHART_BARS} bars; earlier trades are in the list.`;
+    }
+  }
+  return {
+    strategy_id: id, name: def.name, market, timeframe: tf, available: true, state: matrixState(u), reason: matrixReason(u), evidence: evidenceBadge(u, manifest),
+    all: u.all, oos: u.oos, folds_positive: u.folds_positive ?? null, folds_total: u.folds_total ?? null, look_ahead: u.look_ahead,
+    period: { first: u.dataset.first, last: u.dataset.last }, cost_profile: u.profile || 'NORMAL', costs: COST_PROFILES[u.profile] || COSTS,
+    point_value: POINT_VALUE[market] || null, contract: market, qty: 1,
+    trades_total: u.all.trades, trades_kept: trades.length,
+    dollars_recorded: dollars, dollars_note: dollars ? `Dollar figures cover the ${trades.length} stored trades, 1 ${market} contract at $${POINT_VALUE[market]} a point, after the ${u.profile || 'NORMAL'} cost model.` : 'This result was recorded before CHE kept dollar amounts per trade; re-run research to record them. R figures are complete.',
+    money: { all: money(trades), oos: money(trades.filter((t) => t.oos)) },
+    trades, bars, bars_note: barsNote,
   };
 }
 
@@ -1059,6 +1150,7 @@ export function researchIntent(message) {
   if (/\b(?:which|what) strateg(?:y|ies) (?:is|are|looks?) (?:the )?best (?:right )?now\b|\bbest strategy (?:right )?now\b/.test(t)) return { kind: 'best_now' };
   if (/\bwhat strateg(?:y|ies) (?:look|looks|are|is) (?:the )?strongest (?:today|now)\b/.test(t)) return { kind: 'best_now', today: true };
   let m;
+  if (/\b(?:explain|what (?:do|does)|what are|how do i read|help me (?:read|understand))\b.{0,40}\b(?:strategy )?matrix\b|\bmatrix\b.{0,30}\b(?:mean|means|numbers?|ratings?)\b/.test(t)) return { kind: 'explain_matrix' };
   if ((m = /\bwhat (?:historical )?(?:history|data) (?:do you have|have you got) (?:for|on) (mnq|nq)\b/.exec(t))) return { kind: 'history', market: m[1].toUpperCase() };
   if (/\b(?:start|turn on|enable|resume) (?:the )?paper learning\b/.test(t)) return { kind: 'paper', enabled: true };
   if (/\b(?:stop|turn off|disable|pause) (?:the )?paper learning\b/.test(t)) return { kind: 'paper', enabled: false };
@@ -1093,6 +1185,23 @@ export function speakStrategy(sv, tf = null) {
   if (!rows.length) return `${name} has no research results yet. Say "run historical research on MNQ" to start.`;
   return `${name}: ${rows.map((r) => (r.evidence === 'NO DATA' ? `${r.tf}, no data (${r.why})` : r.evidence === 'N/A' ? `${r.tf}, not defined` : r.trades < MIN_CLOSED_TRADES ? `${r.tf}, ${r.trades} of ${MIN_CLOSED_TRADES} trades, not ready` : `${r.tf}, ${r.trades} trades, ${Math.round((r.win_rate || 0) * 100)}% wins, ${r.avg_r}R average, out-of-sample ${r.oos_expectancy_r}R, ${r.evidence.toLowerCase()}`)).join('; ')}. Overall ${sv.decay.toLowerCase()}.`;
 }
+/** "Explain the strategy matrix": what the numbers and ratings mean, then this account's own counts. No model call. */
+export function explainMatrix(view) {
+  const counts = {};
+  for (const r of view.rows || []) for (const c of Object.values(r.cells || {})) if (c.state !== 'No data') counts[c.state] = (counts[c.state] || 0) + 1;
+  const order = ['Strong', 'Good', 'Fair', 'Weak', 'Not enough unseen data', 'Audit failed', 'Learning'];
+  const tally = order.filter((k) => counts[k]).map((k) => `${counts[k]} ${k.toLowerCase()}`).join(', ');
+  return [
+    'Each box is one strategy on one timeframe. The number is how many trades the strategy took in a simulated backtest on historical bars, not real fills.',
+    `A box needs ${MIN_CLOSED_TRADES} backtest trades before it gets any rating; until then it says Learning.`,
+    `The rating uses only the unseen trades, the later part of history the strategy was not tuned on, and needs at least ${MIN_OOS_TRADES} of them.`,
+    'R means profit or loss as a multiple of the risk on each trade, after costs.',
+    'Strong is plus 0.3 R or better per unseen trade with a profit factor of at least 1.3. Good is above zero with a passed look-ahead audit. Fair is about break-even. Weak is losing after costs.',
+    tally ? `${view.market} right now: ${tally}.` : `${view.market} has no rated results yet.`,
+    'Tap any box to see its trades, chart and reason.',
+  ].join(' ');
+}
+
 export function speakHistory(view, market) {
   const rows = view.dashboard.coverage.filter((c) => c.market === market);
   if (!rows.length) return `I have not fetched any ${market} history yet. Say "run historical research on ${market}" to fetch and verify it.`;

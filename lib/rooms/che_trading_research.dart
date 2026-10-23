@@ -12,6 +12,7 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
 import '../che_ui/che_theme.dart';
+import 'che_trading_chart.dart';
 
 const _gold = CheColors.markets;
 const _up = Color(0xFF3DDC97);
@@ -85,7 +86,8 @@ String _humanStatus(String s) => s.replaceAll('_', ' ').toUpperCase();
 
 Color statusColor(String status) {
   final s = status.toUpperCase();
-  if (s.contains('NOT READY') || s.contains('LEARNING') || s.contains('INSUFFICIENT')) return _dim;
+  if (s.contains('NOT READY') || s.contains('LEARNING') || s.contains('INSUFFICIENT') || s.contains('NOT ENOUGH')) return _dim;
+  if (s.contains('AUDIT FAILED')) return _down;
   if (s.contains('STRONG') || s.contains('QUALIFIED') || s.contains('VERIFIED') || s.contains('READY') || s.contains('GOOD') || s.contains('IMPROVING') || s.contains('STABLE')) return _up;
   if (s.contains('WEAK') || s.contains('POOR') || s.contains('RETIRED') || s.contains('DEPRIORITIZED')) return _down;
   return _gold;
@@ -129,6 +131,7 @@ class CheTradingResearchClient {
   Future<Map<String, dynamic>> overview(String market) => _send(() => _http.get(_u('/api/trading/research', {'market': market}), headers: headers()));
   Future<Map<String, dynamic>> strategy(String id, String market) => _send(() => _http.get(_u('/api/trading/research/strategy', {'id': id, 'market': market}), headers: headers()));
   Future<Map<String, dynamic>> matrix(String market) => _send(() => _http.get(_u('/api/trading/research/matrix', {'market': market}), headers: headers()));
+  Future<Map<String, dynamic>> cell(String id, String tf, String market) => _send(() => _http.get(_u('/api/trading/research/cell', {'id': id, 'tf': tf, 'market': market}), headers: headers()));
   Future<Map<String, dynamic>> action(String name, Map<String, dynamic> body) => _send(() => _http.post(
         _u('/api/trading/research/$name'),
         headers: {...headers(), 'Content-Type': 'application/json'},
@@ -369,7 +372,7 @@ class _CheTradingResearchStripState extends State<CheTradingResearchStrip> {
           _overline('STRATEGIES'),
           TextButton(
             key: const Key('open_matrix'),
-            onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => CheStrategyMatrixPage(client: widget.client, market: widget.market))),
+            onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => CheStrategyMatrixPage(client: widget.client, market: widget.market, onRead: widget.onRead))),
             child: const Text('Strategy Matrix', semanticsLabel: 'Open the Strategy Matrix'),
           ),
         ]),
@@ -690,18 +693,92 @@ class _CheStrategyDetailPageState extends State<CheStrategyDetailPage> {
 }
 
 /// Strategies × timeframes, each cell an evidence state. Every cell reads in full for VoiceOver.
+/// A Strategy Matrix rating in words, with its icon: status is never told by color alone.
+IconData matrixStateIcon(String state) => switch (state.toLowerCase()) {
+      'strong' => Icons.trending_up_rounded,
+      'good' => Icons.check_circle_outline_rounded,
+      'fair' => Icons.remove_circle_outline_rounded,
+      'weak' => Icons.trending_down_rounded,
+      'learning' => Icons.hourglass_bottom_rounded,
+      'not enough unseen data' => Icons.help_outline_rounded,
+      'audit failed' => Icons.report_gmailerrorred_rounded,
+      _ => Icons.block_rounded,
+    };
+
+/// "154 backtest trades" or "12 of 30 trades needed": the cell number with its meaning.
+String matrixTradesLabel(int trades, [int min = 30]) => trades >= min ? '$trades backtest trade${trades == 1 ? '' : 's'}' : '$trades of $min trades needed';
+
+const _ratedStates = {'Strong', 'Good', 'Fair', 'Weak'};
+
+/// The plain-words legend the help sheet shows and Read Aloud speaks.
+const kMatrixLegend = [
+  ('Each box', 'One strategy on one timeframe, tested on historical bars. It is a simulated backtest: fills are calculated, not real orders.'),
+  ('The number', 'How many trades the strategy took in that backtest. A box needs 30 before it gets any rating; until then it says "12 of 30 trades needed" and Learning.'),
+  ('Unseen trades', 'The later part of history the strategy was never tuned on (out-of-sample). The rating uses only these, and needs at least 15 of them. Fewer says "Not enough unseen data", never Weak.'),
+  ('R', 'Profit or loss as a multiple of the risk on each trade, after commissions, fees and slippage. +0.30R means about 30% of the risk gained per trade on average.'),
+  ('Profit factor', 'Money won divided by money lost. Above 1 makes money; 1.3 means \$1.30 won for every \$1 lost.'),
+  ('Strong', 'At least +0.30R per unseen trade and a profit factor of at least 1.3.'),
+  ('Good', 'Above zero per unseen trade, with a passed look-ahead audit, but below the Strong bar.'),
+  ('Fair', 'About break-even after costs: between −0.05R and zero.'),
+  ('Weak', 'Losing after costs: −0.05R or worse per unseen trade.'),
+  ('Simulated, incomplete, proxy', 'Every box is a simulated backtest. INCOMPLETE means the data had gaps or too few bars to audit. PROXY means a related market stood in for this one.'),
+];
+
+Future<void> showMatrixLegend(BuildContext context, {void Function(String text)? onRead}) => showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF0B1114),
+      builder: (context) => SafeArea(
+        child: DraggableScrollableSheet(
+          expand: false,
+          initialChildSize: 0.8,
+          builder: (context, scroll) => ListView(controller: scroll, padding: const EdgeInsets.all(16), children: [
+            Row(children: [
+              Expanded(child: Semantics(header: true, child: const Text('What do these mean?', style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w800)))),
+              if (onRead != null)
+                IconButton(
+                  tooltip: 'Read the legend aloud',
+                  icon: const Icon(Icons.record_voice_over_rounded, color: Colors.white),
+                  onPressed: () => onRead([for (final (k, v) in kMatrixLegend) '$k: $v'].join(' ')),
+                ),
+            ]),
+            const SizedBox(height: 8),
+            for (final (k, v) in kMatrixLegend)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: MergeSemantics(
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text(k, style: const TextStyle(color: _gold, fontSize: 16, fontWeight: FontWeight.w800)),
+                    Text(v, style: const TextStyle(color: Colors.white, fontSize: 16, height: 1.35)),
+                  ]),
+                ),
+              ),
+          ]),
+        ),
+      ),
+    );
+
+/// The Strategy Matrix: every strategy × timeframe box with its trade count, its unseen-trade count, its rating and why.
 class CheStrategyMatrixPage extends StatefulWidget {
-  const CheStrategyMatrixPage({super.key, required this.client, required this.market});
+  const CheStrategyMatrixPage({super.key, required this.client, required this.market, this.onRead});
   final CheTradingResearchClient client;
   final String market;
+  final void Function(String text)? onRead;
 
   @override
   State<CheStrategyMatrixPage> createState() => _CheStrategyMatrixPageState();
 }
 
+enum _MatrixSort { catalog, trades, unseenR }
+
 class _CheStrategyMatrixPageState extends State<CheStrategyMatrixPage> {
   Map<String, dynamic>? _m;
   String? _error;
+  String _rating = 'All';
+  String? _tf;
+  bool _enoughOnly = false;
+  bool? _layout;
+  _MatrixSort _sort = _MatrixSort.catalog;
 
   @override
   void initState() {
@@ -716,11 +793,55 @@ class _CheStrategyMatrixPageState extends State<CheStrategyMatrixPage> {
     }());
   }
 
+  int get _minTrades => _int(_m?['min_closed_trades'] ?? 30) == 0 ? 30 : _int(_m?['min_closed_trades'] ?? 30);
+  int get _minOos => _int(_m?['min_oos_trades'] ?? 15) == 0 ? 15 : _int(_m?['min_oos_trades'] ?? 15);
+
+  Map<String, Map<String, dynamic>> _cellsOf(Map<String, dynamic> r) => r['cells'] is Map
+      ? {for (final e in _map(r['cells']).entries) e.key: _map(e.value)}
+      : {for (final c in _list(r['cells'])) _str(c['tf']): c};
+
+  bool _keep(Map<String, dynamic>? c) {
+    final state = _str(c?['state'], 'No data');
+    if (_enoughOnly && !(_int(c?['trades']) >= _minTrades && _int(c?['oos_trades']) >= _minOos)) return false;
+    return switch (_rating) {
+      'All' => true,
+      'Strong or Good' => state == 'Strong' || state == 'Good',
+      'Not rated' => !_ratedStates.contains(state),
+      _ => state == _rating,
+    };
+  }
+
+  String _summary(List<Map<String, dynamic>> rows) {
+    final counts = <String, int>{};
+    for (final r in rows) {
+      for (final c in _cellsOf(r).values) {
+        final s = _str(c['state'], 'No data');
+        if (s != 'No data') counts[s] = (counts[s] ?? 0) + 1;
+      }
+    }
+    final order = ['Strong', 'Good', 'Fair', 'Weak', 'Not enough unseen data', 'Audit failed', 'Learning'];
+    final tally = [for (final k in order) if (counts[k] != null) '${counts[k]} ${k.toLowerCase()}'].join(', ');
+    return 'Strategy Matrix, ${widget.market}. Every box is a simulated backtest. ${tally.isEmpty ? 'No box has a result yet.' : '$tally.'} '
+        'The number in a box is its backtest trades; a rating needs $_minTrades trades and $_minOos unseen trades. Open a box for its trades, chart and reason.';
+  }
+
   @override
   Widget build(BuildContext context) {
     final m = _m;
     final tfs = m == null ? const <String>[] : [for (final t in (m['timeframes'] is List ? m['timeframes'] as List : kResearchTimeframes.keys)) '$t'];
-    final rows = m == null ? const <Map<String, dynamic>>[] : _list(m['rows']);
+    var rows = m == null ? const <Map<String, dynamic>>[] : _list(m['rows']);
+    final shownTfs = _tf == null ? tfs : [_tf!];
+    if (_sort != _MatrixSort.catalog) {
+      num score(Map<String, dynamic> r) {
+        final cells = _cellsOf(r).entries.where((e) => shownTfs.contains(e.key)).map((e) => e.value);
+        return _sort == _MatrixSort.trades
+            ? cells.fold<num>(0, (a, c) => a + _int(c['trades']))
+            : cells.where((c) => _int(c['oos_trades']) >= _minOos).fold<num>(-999, (a, c) => (_num(c['oos_expectancy_r']) ?? -999) > a ? _num(c['oos_expectancy_r'])! : a);
+      }
+      rows = [...rows]..sort((a, b) => score(b).compareTo(score(a)));
+    }
+    final narrow = MediaQuery.sizeOf(context).width < 430;
+    final listMode = _layout ?? narrow;
     return Scaffold(
       backgroundColor: const Color(0xFF05080A),
       appBar: AppBar(
@@ -728,75 +849,340 @@ class _CheStrategyMatrixPageState extends State<CheStrategyMatrixPage> {
         foregroundColor: Colors.white,
         title: Text('Strategy Matrix · ${widget.market}'),
         leading: IconButton(tooltip: 'Back', icon: const Icon(Icons.arrow_back), onPressed: () => Navigator.of(context).maybePop()),
+        actions: [
+          IconButton(key: const Key('matrix_help'), tooltip: 'What do these mean?', icon: const Icon(Icons.help_outline_rounded), onPressed: () => showMatrixLegend(context, onRead: widget.onRead)),
+          IconButton(
+            key: const Key('matrix_layout'),
+            tooltip: listMode ? 'Show as a grid' : 'Show as a list',
+            icon: Icon(listMode ? Icons.grid_view_rounded : Icons.view_list_rounded),
+            onPressed: () => setState(() => _layout = !listMode),
+          ),
+          if (widget.onRead != null && m != null)
+            IconButton(tooltip: 'Read the matrix aloud', icon: const Icon(Icons.record_voice_over_rounded), onPressed: () => widget.onRead!(_summary(rows))),
+        ],
       ),
       body: m == null
           ? Center(child: Text(_error == null ? 'Loading the matrix…' : 'Could not load the matrix: $_error', style: const TextStyle(color: Colors.white, fontSize: 16)))
           : rows.isEmpty
               ? const Center(child: Text('No strategy has research results yet.', style: TextStyle(color: Colors.white, fontSize: 16)))
-              : ListView.builder(
-                  padding: const EdgeInsets.all(12),
-                  itemCount: rows.length,
-                  itemBuilder: (context, i) {
-                    final r = rows[i];
-                    final name = _str(r['name'] ?? r['strategy_id'] ?? r['id']);
-                    // Cells arrive keyed by timeframe ({"5m": {...}}), or as a list with a tf field.
-                    final cells = r['cells'] is Map
-                        ? {for (final e in _map(r['cells']).entries) e.key: _map(e.value)}
-                        : {for (final c in _list(r['cells'])) _str(c['tf']): c};
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
-                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                        Semantics(header: true, child: Text(name, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800))),
-                        const SizedBox(height: 6),
-                        Wrap(spacing: 6, runSpacing: 6, children: [
-                          for (final tf in tfs) _cell(name, tf, cells[tf]),
-                        ]),
-                      ]),
-                    );
-                  },
-                ),
+              : ListView(padding: const EdgeInsets.all(12), children: [
+                  Text('Every box is a simulated backtest on historical bars. The number is backtest trades; the rating uses only unseen trades.',
+                      style: const TextStyle(color: _dim, fontSize: 14, height: 1.3)),
+                  const SizedBox(height: 8),
+                  _filters(tfs),
+                  const SizedBox(height: 8),
+                  for (final r in rows) ..._row(r, shownTfs, listMode),
+                ]),
     );
   }
 
-  Widget _cell(String name, String tf, Map<String, dynamic>? c) {
-    final state = c == null ? 'Learning' : _str(c['state'] ?? c['status'], 'Learning');
-    if (state.toLowerCase() == 'no data') {
-      return Semantics(
-        container: true,
-        key: Key('cell_${name}_$tf'),
-        label: '$name, ${researchTfSpoken(tf)}, no data',
-        excludeSemantics: true,
-        child: Container(
-          width: 74,
-          padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
-          decoration: BoxDecoration(borderRadius: BorderRadius.circular(8), border: Border.all(color: CheColors.stroke)),
-          child: Column(children: [
-            Text(researchTfLabel(tf), style: const TextStyle(color: _dim, fontSize: 12, fontWeight: FontWeight.w700)),
-            const Text('No data', style: TextStyle(color: _dim, fontSize: 13)),
-          ]),
+  Widget _filters(List<String> tfs) => Wrap(spacing: 8, runSpacing: 4, crossAxisAlignment: WrapCrossAlignment.center, children: [
+        for (final r in const ['All', 'Strong or Good', 'Fair', 'Weak', 'Not rated'])
+          ChoiceChip(key: Key('rating_$r'), label: Text(r), selected: _rating == r, onSelected: (_) => setState(() => _rating = r)),
+        DropdownButton<String?>(
+          key: const Key('matrix_tf'),
+          value: _tf,
+          dropdownColor: const Color(0xFF0B1114),
+          style: const TextStyle(color: Colors.white, fontSize: 15),
+          hint: const Text('All timeframes', style: TextStyle(color: Colors.white)),
+          items: [
+            const DropdownMenuItem<String?>(value: null, child: Text('All timeframes')),
+            for (final t in tfs) DropdownMenuItem<String?>(value: t, child: Text(researchTfSpoken(t))),
+          ],
+          onChanged: (v) => setState(() => _tf = v),
         ),
-      );
-    }
+        DropdownButton<_MatrixSort>(
+          key: const Key('matrix_sort'),
+          value: _sort,
+          dropdownColor: const Color(0xFF0B1114),
+          style: const TextStyle(color: Colors.white, fontSize: 15),
+          items: const [
+            DropdownMenuItem(value: _MatrixSort.catalog, child: Text('Strategy order')),
+            DropdownMenuItem(value: _MatrixSort.trades, child: Text('Most trades')),
+            DropdownMenuItem(value: _MatrixSort.unseenR, child: Text('Best unseen result')),
+          ],
+          onChanged: (v) => setState(() => _sort = v ?? _MatrixSort.catalog),
+        ),
+        Row(mainAxisSize: MainAxisSize.min, children: [
+          Switch(key: const Key('matrix_enough'), value: _enoughOnly, onChanged: (v) => setState(() => _enoughOnly = v)),
+          Flexible(child: Text('Only enough evidence ($_minTrades trades, $_minOos unseen)', style: const TextStyle(color: Colors.white, fontSize: 14))),
+        ]),
+      ]);
+
+  List<Widget> _row(Map<String, dynamic> r, List<String> tfs, bool listMode) {
+    final name = _str(r['name'] ?? r['strategy_id'] ?? r['id']);
+    final id = _str(r['strategy_id'] ?? r['id']);
+    final cells = _cellsOf(r);
+    final shown = [for (final tf in tfs) if (_keep(cells[tf])) tf];
+    if (shown.isEmpty) return const [];
+    return [
+      Padding(
+        padding: const EdgeInsets.only(top: 8, bottom: 6),
+        child: Semantics(header: true, child: Text(name, style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w800))),
+      ),
+      if (listMode)
+        for (final tf in shown) _cell(id, name, tf, cells[tf], wide: true)
+      else
+        Wrap(spacing: 6, runSpacing: 6, children: [for (final tf in shown) _cell(id, name, tf, cells[tf])]),
+    ];
+  }
+
+  Widget _cell(String id, String name, String tf, Map<String, dynamic>? c, {bool wide = false}) {
+    final state = c == null ? 'Learning' : _str(c['state'] ?? c['status'], 'Learning');
     final trades = c == null ? 0 : _int(c['trades']);
-    final ready = trades >= 30;
-    final spoken = c == null || !ready
-        ? '$name, ${researchTfSpoken(tf)}, ${state.toLowerCase()}, $trades of 30 trades'
-        : '$name, ${researchTfSpoken(tf)}, $state, $trades trades, ${spokenR(c['expectancy_r'])}';
+    final oos = _int(c?['oos_trades']);
+    final noData = state.toLowerCase() == 'no data';
+    final ev = _map(c?['evidence']);
+    final flags = [if (ev.isNotEmpty) 'SIMULATED', if (ev['incomplete'] == true) 'INCOMPLETE', if (ev['proxy'] == true) 'PROXY'];
+    final reason = _str(c?['reason']);
+    final color = noData ? _dim : statusColor(state);
+    final countLine = noData ? 'No data' : matrixTradesLabel(trades, _minTrades);
+    final oosLine = noData || trades < _minTrades ? null : '$oos tested on unseen data';
+    final spoken = noData
+        ? '$name, ${researchTfSpoken(tf)}, no data${reason.isEmpty ? '' : '. $reason'}'
+        : [
+            '$name, ${researchTfSpoken(tf)}, $state',
+            countLine,
+            ?oosLine,
+            if (oosLine != null && _num(c?['oos_expectancy_r']) != null) '${spokenR(c?['oos_expectancy_r'])} per unseen trade',
+            if (reason.isNotEmpty) reason,
+            if (flags.isNotEmpty) flags.join(', ').toLowerCase(),
+          ].join(', ');
+    final body = Column(crossAxisAlignment: wide ? CrossAxisAlignment.start : CrossAxisAlignment.center, mainAxisSize: MainAxisSize.min, children: [
+      Text(wide ? researchTfSpoken(tf) : researchTfLabel(tf), style: const TextStyle(color: _dim, fontSize: 13, fontWeight: FontWeight.w700)),
+      Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(matrixStateIcon(state), size: 16, color: color),
+        const SizedBox(width: 4),
+        Flexible(child: Text(state, style: TextStyle(color: color, fontSize: 14, fontWeight: FontWeight.w800), textAlign: wide ? TextAlign.start : TextAlign.center)),
+      ]),
+      Text(countLine, style: const TextStyle(color: Colors.white, fontSize: 13), textAlign: wide ? TextAlign.start : TextAlign.center),
+      if (oosLine != null) Text(oosLine, style: const TextStyle(color: Colors.white70, fontSize: 12), textAlign: wide ? TextAlign.start : TextAlign.center),
+      if (wide && reason.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 4), child: Text(reason, style: const TextStyle(color: Colors.white, fontSize: 14, height: 1.3))),
+      if (flags.isNotEmpty)
+        Padding(padding: const EdgeInsets.only(top: 2), child: Text(flags.join(' · '), style: const TextStyle(color: _dim, fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 0.4))),
+    ]);
     return Semantics(
-        container: true,
+      container: true,
+      button: !noData,
       key: Key('cell_${name}_$tf'),
       label: spoken,
       excludeSemantics: true,
-      child: Container(
-        width: 74,
-        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
-        decoration: BoxDecoration(borderRadius: BorderRadius.circular(8), border: Border.all(color: statusColor(state).withValues(alpha: 0.7))),
-        child: Column(children: [
-          Text(researchTfLabel(tf), style: const TextStyle(color: _dim, fontSize: 12, fontWeight: FontWeight.w700)),
-          FittedBox(fit: BoxFit.scaleDown, child: Text(state, style: TextStyle(color: statusColor(state), fontSize: 13, fontWeight: FontWeight.w800))),
-          Text(ready ? '$trades' : '$trades/30', style: const TextStyle(color: Colors.white, fontSize: 12)),
+      onTapHint: noData ? null : 'open its trades, chart and reason',
+      child: InkWell(
+        onTap: noData
+            ? null
+            : () => Navigator.of(context).push(MaterialPageRoute<void>(
+                builder: (_) => CheMatrixCellPage(client: widget.client, id: id, name: name, tf: tf, market: widget.market, onRead: widget.onRead))),
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          width: wide ? double.infinity : 118,
+          margin: wide ? const EdgeInsets.only(bottom: 6) : EdgeInsets.zero,
+          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
+          decoration: BoxDecoration(borderRadius: BorderRadius.circular(8), border: Border.all(color: noData ? CheColors.stroke : color.withValues(alpha: 0.7))),
+          child: body,
+        ),
+      ),
+    );
+  }
+}
+
+String _money(Object? v) {
+  final n = _num(v);
+  if (n == null) return '—';
+  final s = n.abs().toStringAsFixed(2).replaceAllMapped(RegExp(r'\B(?=(\d{3})+(?!\d))'), (m) => ',');
+  return '${n < 0 ? '−' : n > 0 ? '+' : ''}\$$s';
+}
+
+String _day(Object? iso) => _str(iso).length >= 10 ? _str(iso).substring(0, 10) : _str(iso, '—');
+
+/// One Strategy Matrix box opened: its rating and why, what kind of evidence it is, every number side by side
+/// for all trades and unseen trades, the bars it was tested on with each stored entry and exit, and the trade list.
+class CheMatrixCellPage extends StatefulWidget {
+  const CheMatrixCellPage({super.key, required this.client, required this.id, required this.name, required this.tf, required this.market, this.onRead});
+  final CheTradingResearchClient client;
+  final String id, name, tf, market;
+  final void Function(String text)? onRead;
+
+  @override
+  State<CheMatrixCellPage> createState() => _CheMatrixCellPageState();
+}
+
+class _CheMatrixCellPageState extends State<CheMatrixCellPage> {
+  Map<String, dynamic>? _d;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(() async {
+      try {
+        final d = await widget.client.cell(widget.id, widget.tf, widget.market);
+        if (mounted) setState(() => _d = d);
+      } catch (e) {
+        if (mounted) setState(() => _error = '$e');
+      }
+    }());
+  }
+
+  String _spoken(Map<String, dynamic> d) {
+    final all = _map(d['all']);
+    final oos = _map(d['oos']);
+    final ev = _map(d['evidence']);
+    final money = _map(_map(d['money'])['all']);
+    return [
+      '${widget.name}, ${researchTfSpoken(widget.tf)}. ${_str(d['reason'])}',
+      'Simulated backtest on ${_str(ev['provider'], 'unknown data')}, ${_day(_map(d['period'])['first'])} to ${_day(_map(d['period'])['last'])}.',
+      '${_int(all['trades'])} trades, ${fmtPct(all['win_rate'])} wins, ${spokenR(all['expectancy_r'])} per trade. Unseen: ${_int(oos['trades'])} trades, ${spokenR(oos['expectancy_r'])}.',
+      if (d['dollars_recorded'] == true) 'Net ${_money(money['net_pnl'])} after ${_money(money['costs']).replaceAll('+', '')} in costs on the stored trades.' else _str(d['dollars_note']),
+      if (ev['incomplete'] == true) 'Incomplete: ${[for (final w in (ev['incomplete_why'] is List ? ev['incomplete_why'] as List : const [])) '$w'].join(', ')}.',
+    ].where((s) => s.trim().isNotEmpty).join(' ');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final d = _d;
+    return Scaffold(
+      backgroundColor: const Color(0xFF05080A),
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        foregroundColor: Colors.white,
+        title: Text('${widget.name} · ${researchTfLabel(widget.tf)}'),
+        leading: IconButton(tooltip: 'Back', icon: const Icon(Icons.arrow_back), onPressed: () => Navigator.of(context).maybePop()),
+        actions: [
+          IconButton(tooltip: 'What do these mean?', icon: const Icon(Icons.help_outline_rounded), onPressed: () => showMatrixLegend(context, onRead: widget.onRead)),
+          if (widget.onRead != null && d != null && d['available'] == true)
+            IconButton(tooltip: 'Read this box aloud', icon: const Icon(Icons.record_voice_over_rounded), onPressed: () => widget.onRead!(_spoken(d))),
+        ],
+      ),
+      body: d == null
+          ? Center(child: Text(_error == null ? 'Loading…' : 'Could not load this box: $_error', style: const TextStyle(color: Colors.white, fontSize: 16)))
+          : d['available'] != true
+              ? Padding(padding: const EdgeInsets.all(16), child: Text(_str(d['reason'], 'No result for this box.'), style: const TextStyle(color: Colors.white, fontSize: 16)))
+              : _body(d),
+    );
+  }
+
+  Widget _body(Map<String, dynamic> d) {
+    final state = _str(d['state']);
+    final ev = _map(d['evidence']);
+    final all = _map(d['all']);
+    final oos = _map(d['oos']);
+    final money = _map(d['money']);
+    final dollars = d['dollars_recorded'] == true;
+    final trades = _list(d['trades']);
+    final total = _int(d['trades_total']);
+    final kept = _int(d['trades_kept']);
+    final bars = [
+      for (final b in _list(d['bars']))
+        if (DateTime.tryParse(_str(b['t'])) != null && _num(b['o']) != null && _num(b['h']) != null && _num(b['l']) != null && _num(b['c']) != null)
+          ChartBar(DateTime.parse(_str(b['t'])), _num(b['o'])!.toDouble(), _num(b['h'])!.toDouble(), _num(b['l'])!.toDouble(), _num(b['c'])!.toDouble()),
+    ];
+    final markers = <ChartMarker>[
+      for (final t in trades) ...[
+        if (_num(t['ep']) != null) ChartMarker({'source': 'che_sim', 'kind': 'entry', 'time': t['t'], 'price': t['ep'], 'side': t['side']}),
+        if (_num(t['xp']) != null) ChartMarker({'source': 'che_sim', 'kind': 'exit', 'time': t['x'], 'price': t['xp'], 'side': t['side']}),
+      ],
+    ];
+    final color = statusColor(state);
+    final why = [for (final w in (ev['incomplete_why'] is List ? ev['incomplete_why'] as List : const [])) '$w'];
+    Widget row(String label, String a, String b) => MergeSemantics(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Row(children: [
+              Expanded(flex: 5, child: Text(label, style: const TextStyle(color: _dim, fontSize: 15))),
+              Expanded(flex: 4, child: Text(a, style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w700), textAlign: TextAlign.end)),
+              Expanded(flex: 4, child: Text(b, style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w700), textAlign: TextAlign.end)),
+            ]),
+          ),
+        );
+    return ListView(padding: const EdgeInsets.all(16), children: [
+      MergeSemantics(
+        child: Row(children: [
+          Icon(matrixStateIcon(state), color: color),
+          const SizedBox(width: 8),
+          Text(state, style: TextStyle(color: color, fontSize: 22, fontWeight: FontWeight.w800)),
         ]),
       ),
+      const SizedBox(height: 6),
+      Text(_str(d['reason']), key: const Key('cell_reason'), style: const TextStyle(color: Colors.white, fontSize: 16, height: 1.35)),
+      const SizedBox(height: 12),
+      Container(
+        key: const Key('cell_evidence'),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(borderRadius: BorderRadius.circular(10), border: Border.all(color: CheColors.stroke)),
+        child: MergeSemantics(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text([_str(ev['kind'], 'SIMULATED BACKTEST'), if (ev['incomplete'] == true) 'INCOMPLETE', if (ev['proxy'] == true) 'PROXY'].join(' · '),
+                style: const TextStyle(color: _gold, fontSize: 14, fontWeight: FontWeight.w800, letterSpacing: 0.5)),
+            const SizedBox(height: 4),
+            Text('${_str(ev['provider'], 'Unknown source')}, ${_day(_map(d['period'])['first'])} → ${_day(_map(d['period'])['last'])}${ev['days'] == null ? '' : ', ${ev['days']} days'}${ev['bars'] == null ? '' : ', ${ev['bars']} bars'}.',
+                style: const TextStyle(color: Colors.white, fontSize: 15)),
+            Text(_str(ev['note'], 'Simulated fills on historical bars, not broker executions.'), style: const TextStyle(color: _dim, fontSize: 14)),
+            if (why.isNotEmpty) Text('Incomplete: ${why.join('; ')}.', style: const TextStyle(color: Colors.white, fontSize: 14)),
+            Text('Costs: ${_str(d['cost_profile'], 'NORMAL')} model, per side \$${_str(_map(d['costs'])['commissionPerSide'])} commission + \$${_str(_map(d['costs'])['feePerSide'])} fees, ${_str(_map(d['costs'])['slippageTicks'])} tick slippage.',
+                style: const TextStyle(color: _dim, fontSize: 14)),
+          ]),
+        ),
+      ),
+      const SizedBox(height: 16),
+      _overline('RESULTS'),
+      row('', 'All trades', 'Unseen'),
+      row('Trades', '${_int(all['trades'])}', '${_int(oos['trades'])}'),
+      row('Win rate', fmtPct(all['win_rate']), fmtPct(oos['win_rate'])),
+      row('Per trade', fmtR(all['expectancy_r']), fmtR(oos['expectancy_r'])),
+      row('Profit factor', _str(all['pf'], '—'), _str(oos['pf'], '—')),
+      row('Max drawdown', all['max_dd_r'] == null ? '—' : '${_str(all['max_dd_r'])}R', oos['max_dd_r'] == null ? '—' : '${_str(oos['max_dd_r'])}R'),
+      if (dollars) ...[
+        row('Net P&L', _money(_map(money['all'])['net_pnl']), _money(_map(money['oos'])['net_pnl'])),
+        row('Commissions, fees, slippage', _money(_map(money['all'])['costs']).replaceAll('+', ''), _money(_map(money['oos'])['costs']).replaceAll('+', '')),
+      ],
+      Padding(padding: const EdgeInsets.only(top: 6), child: Text(_str(d['dollars_note']), style: const TextStyle(color: _dim, fontSize: 14))),
+      row('Testing period', '${_day(_map(d['period'])['first'])} →', _day(_map(d['period'])['last'])),
+      if (d['folds_total'] != null) row('Walk-forward folds positive', '${_int(d['folds_positive'])} of ${_int(d['folds_total'])}', ''),
+      row('Look-ahead audit', _str(d['look_ahead'], '—'), ''),
+      const SizedBox(height: 16),
+      _overline('CHART'),
+      if (bars.isEmpty)
+        Text(_str(d['bars_note'], 'No bars are stored for this test, so no chart is drawn.'), style: const TextStyle(color: Colors.white, fontSize: 15))
+      else ...[
+        CheStaticBarsChart(
+          key: const Key('cell_chart'),
+          bars: bars,
+          markers: markers,
+          semanticsLabel: 'Chart of ${bars.length} ${researchTfSpoken(widget.tf)} bars from ${_day(bars.first.t.toIso8601String())} to ${_day(bars.last.t.toIso8601String())}, '
+              'with ${markers.where((m) => m.kind == 'entry').length} simulated entries and ${markers.where((m) => m.kind == 'exit').length} exits.',
+        ),
+        if (_str(d['bars_note']).isNotEmpty) Text(_str(d['bars_note']), style: const TextStyle(color: _dim, fontSize: 14)),
+        const Text('Hollow circles are simulated backtest entries and exits.', style: TextStyle(color: _dim, fontSize: 13)),
+      ],
+      const SizedBox(height: 16),
+      _overline('TRADES'),
+      if (kept < total) Text('Showing the last $kept of $total trades; all $total are in the figures above.', key: const Key('cell_truncated'), style: const TextStyle(color: _dim, fontSize: 14)),
+      for (final t in trades.reversed) _trade(t, dollars),
+    ]);
+  }
+
+  Widget _trade(Map<String, dynamic> t, bool dollars) {
+    final side = _str(t['side']) == 'short' ? 'Short' : 'Long';
+    final r = _num(t['r']);
+    final when = DateTime.tryParse(_str(t['t']))?.toLocal();
+    final out = DateTime.tryParse(_str(t['x']))?.toLocal();
+    String hm(DateTime? v) => v == null ? '—' : '${v.month}/${v.day} ${v.hour.toString().padLeft(2, '0')}:${v.minute.toString().padLeft(2, '0')}';
+    final line = [
+      '$side ${hm(when)} → ${hm(out)}',
+      if (_num(t['ep']) != null) 'entry ${_str(t['ep'])} → exit ${_str(t['xp'])}',
+      fmtR(r),
+      if (dollars) _money(t['pnl']),
+      t['oos'] == true ? 'unseen' : 'in-sample',
+      if (_str(t['reason']).isNotEmpty) _str(t['reason']),
+    ].join(' · ');
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Icon((r ?? 0) > 0 ? Icons.arrow_upward_rounded : (r ?? 0) < 0 ? Icons.arrow_downward_rounded : Icons.remove_rounded, size: 16, color: (r ?? 0) > 0 ? _up : (r ?? 0) < 0 ? _down : _dim),
+        const SizedBox(width: 6),
+        Expanded(child: Text(line, style: const TextStyle(color: Colors.white, fontSize: 14, height: 1.3))),
+      ]),
     );
   }
 }

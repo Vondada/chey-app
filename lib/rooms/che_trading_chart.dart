@@ -854,6 +854,28 @@ class CheTradingChartState extends State<CheTradingChart> {
   }
 }
 
+/// A read-only candlestick chart of given bars and markers, on the same painter as the live chart.
+/// Used where the bars are already known (a Strategy Matrix backtest), so nothing is fetched or drawn by the owner.
+class CheStaticBarsChart extends StatelessWidget {
+  const CheStaticBarsChart({super.key, required this.bars, this.markers = const [], this.height = 260, required this.semanticsLabel});
+  final List<ChartBar> bars;
+  final List<ChartMarker> markers;
+  final double height;
+  final String semanticsLabel;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+        image: true,
+        label: semanticsLabel,
+        excludeSemantics: true,
+        child: SizedBox(
+          height: height,
+          width: double.infinity,
+          child: CustomPaint(painter: _ChartPainter(bars: bars, markers: markers, drawings: const [], pending: null)),
+        ),
+      );
+}
+
 /// Maps bars to pixels: x by bar index, y by the visible price range.
 class _Geometry {
   _Geometry(this.bars, this.size) {

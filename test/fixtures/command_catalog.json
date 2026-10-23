@@ -1628,6 +1628,39 @@
    "optional_missing": []
   },
   {
+   "id": "trade-matrix-explain",
+   "category": "trading",
+   "title": "Trade Matrix Explain",
+   "summary": "Explain the Strategy Matrix numbers and ratings.",
+   "does": "Says what each Strategy Matrix box means: the number is simulated backtest trades, a rating needs 30 of them and at least 15 unseen (out-of-sample) trades, and Strong, Good, Fair and Weak come from the unseen result after costs. Ends with how many boxes have each rating now. No model call. Owner only.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Explain the strategy matrix",
+    "What do the matrix numbers mean?"
+   ],
+   "needs": [],
+   "optional": [],
+   "handler": "trading_research.researchIntent → explainMatrix",
+   "route": "che_trading_research",
+   "produces": "explanation",
+   "evidence": "Stored research results only.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "matrix",
+    "strategy matrix",
+    "good fair weak",
+    "what do the numbers mean"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
    "id": "trade-history",
    "category": "trading",
    "title": "Trade History",
