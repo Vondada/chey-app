@@ -22,7 +22,7 @@ extension _CheHomeStreaming on _CHEHomeState {
     // Live repository/status claims require receipts from the connected
     // Worker/GitHub path. Never let an offline model invent files, workflows,
     // SHAs, jobs, or deployment state when that evidence is unavailable.
-    if (cheIsAppStatusRequest(userMessage) || isInstalledSkillRequest(userMessage) ||
+    if (isInstalledSkillRequest(userMessage) || cheIsAppStatusRequest(userMessage) ||
         cheTurnRequiresVerifiedRemoteEvidence(userMessage, history)) {
       return null;
     }
