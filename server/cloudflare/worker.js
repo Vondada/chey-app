@@ -84,7 +84,9 @@ import { matrixIntent, readMatrix, runMatrix, speakMatrix } from './backtest_mat
 import { autoQueue as researchAutoQueue, cancelJob as cancelResearchJob, matrixView as researchMatrixView, nextResearchAt, queueJob as queueResearchJob, researchIntent, researchStep, researchView, setProfile as setResearchProfile, speakBestNow, speakHistory, speakStrategy, strategyView as researchStrategyView } from './trading_research.js';
 import { nextStrategySimTickAt, setStrategySimCeiling, setStrategySimPaused, speakStrategySim, strategySimIntent, strategySimTick, strategySimView, strategySimWake } from './strategy_sim.js';
 import { evidenceIntent, evidenceReport, evidenceTick } from './trading_evidence_runner.js';
-import { readTrades } from './trading_evidence.js';
+import { readTrades, tradeDayOf } from './trading_evidence.js';
+import { TRADE_EVIDENCE_SOURCE, lastTrade, readTradeEvidence, speakTradeReplay, tradeBars, tradeEvidenceOf, tradeList, tradeReplayIntent } from './trade_evidence.js';
+import { DAILY_TARGET, EXECUTION_TYPES, VISUAL_SOURCE, auditTrades, compareWindows, currentLeader, dailyEvidence, dailyPnl, filterTrades, historyChart, journalView, lastForwardBar, metricsOf, openPositions, rankStrategies, readSkips, readVisualTrades, replayFrame, speakAudit, speakEvidence, speakCard, speakLeader, speakPnl, tradingVisualIntent } from './trading_visual.js';
 import { cancelCandidates, cancelConfirmation, cancelOrderIntent, chartIntent, chartView, drawIntent, futuresOrderIntent, marketOrderFeedProblem, readDrawings, saveDrawings, speakOrder } from './trading_chart.js';
 import { readRithmicCandles, storeRithmicCandles } from './rithmic_dataset.js';
 // A spoken cancel of one Alpaca PAPER order waiting for the owner's yes, or for his pick from a numbered list.
@@ -155,7 +157,8 @@ import { githubWorkshopPieces, workshopAvatar, workshopAvatarIntent, workshopSna
 import { flushOutbox, handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, openMailbox, transcript as flagstaffTranscript, mailboxCode, mailboxLink, postWebMail, readWebMail, rotateMailboxCode } from './web_mailbox.js';
 import { CheLibrary, fetchReadable, libraryContext, libraryIntent } from './library.js';
 import { KnowledgeLibrary, knowledgeIntent, knowledgeReply, knowledgeTaskContext } from './knowledge_library.js';
-import { answerPersonalFact, groundedReply, isQuestionLike, needsStrongEngine, personalFactQuestion } from './personal_recall.js';
+import { answerPersonalFact, answerStoredStatement, groundedReply, isQuestionLike, needsStrongEngine, personalFactQuestion, storedStatementQuestion } from './personal_recall.js';
+import { chatgptHistoryIntent, importChatgptBatch, ownerMemorySearchIntent, ownerStatementCandidates, searchOwnerMemory, speakChatgptHistory, speakMemorySearch } from './owner_recall.js';
 import { adRequest, adStatusLines, assetTruthReply } from './asset_truth.js';
 import { dropAgentTaskTurns, replyRepeatsAgentTask } from './agent_task_guard.js';
 import { openKnowledgeLibrary, seedKnowledgeCatalog } from './knowledge_catalog_seed.js';
@@ -3875,6 +3878,45 @@ export class CheState extends DurableObject {
   // OAuth sign-in as stored, FundYourEdge as not connected (Rithmic needs a licence), and
   // live orders disabled. Nothing is assumed about balances or firm rules.
   // Every trading connection as its own system reports it (issue #344); nothing here changes a mode.
+  /** GET /api/trading/visual?view=…: one read of the trade records, projected for the view asked for. */
+  async tradingVisualView(q) {
+    const view = q.get('view') || 'summary';
+    const filters = Object.fromEntries(['instrument', 'timeframe', 'strategy', 'from', 'to', 'execution_type', 'side', 'result'].map((k) => [k, (q.get(k) || '').slice(0, 40)]).filter(([, v]) => v));
+    const { trades, records, duplicates, sources, research } = await readVisualTrades(this.ctx.storage);
+    const shown = filterTrades(trades, filters);
+    const today = tradeDayOf(new Date().toISOString());
+    const base = { ok: true, view, paper_only: true, live_orders: 'disabled', today, filters, sources, research, execution_types: EXECUTION_TYPES };
+    if (view === 'evidence') {
+      const rows = dailyEvidence(shown, { skips: await readSkips(this.ctx.storage), today });
+      return { ...base, target: DAILY_TARGET, target_rule: 'A daily target, never a quota: trades are never forced, and a day below it says why.', rows: rows.slice(0, 400), total_rows: rows.length };
+    }
+    if (view === 'pnl') {
+      const pnl = dailyPnl({ trades, positions: await openPositions(this.ctx.storage), lastBar: await lastForwardBar(this.ctx.storage), day: q.get('day') || today });
+      return { ...base, pnl, spoken: speakPnl(pnl) };
+    }
+    if (view === 'replay') {
+      const tf = q.get('timeframe') || '5m';
+      const chart = await historyChart(this.ctx.storage, { market: q.get('instrument') || 'MNQ', tf, at: q.get('cursor'), trades });
+      return { ...base, ...replayFrame({ bars: chart.bars, trades: filterTrades(shown, { timeframe: tf, instrument: chart.symbol }), cursor: q.get('cursor'), timeframe: tf }), provenance: chart.provenance || null };
+    }
+    if (view === 'compare') return { ...base, windows: compareWindows(shown) };
+    if (view === 'leader') { const l = currentLeader(trades); return { ...base, ...l, spoken: speakLeader(l) }; }
+    if (view === 'journal') return { ...base, ...journalView(trades, await readSkips(this.ctx.storage), { ...filters, include_skips: q.get('skips') !== '0' }) };
+    if (view === 'audit') { const a = auditTrades(records); return { ...base, ...a, ids: { unique_trades: trades.length, duplicates_hidden: duplicates.filter((d) => d.kind === 'duplicate').length, conflicts_hidden: duplicates.filter((d) => d.kind === 'conflict').length, examples: duplicates.slice(0, 10) }, spoken: speakAudit(a) }; }
+    // Trade evidence (Priority 5): one trade by its stable ID, with its own stored bars; or the list of IDs.
+    if (view === 'trade') {
+      const want = (q.get('id') || '').trim().toUpperCase();
+      const trade = want === 'LAST' ? lastTrade(trades) : trades.find((t) => t.id === want);
+      if (!trade) return { ...base, ok: false, error: want === 'LAST' ? 'CHE has no closed forward paper or simulation trade yet.' : `No CHE trade has the ID ${want || '(none)'}.` };
+      return { ...base, trade: tradeEvidenceOf(trade, await tradeBars(this.ctx.storage, trade)) };
+    }
+    if (view === 'trades') return { ...base, ...tradeList(shown, { limit: Math.min(200, Number(q.get('limit')) || 100) }) };
+    if (view === 'ranking') return { ...base, ranking: rankStrategies(shown, { executionType: filters.execution_type || 'forward_paper' }), rule: 'Ranked by the lower end of the 95% expectancy range in R, never by win rate; under 30 trades is provisional.' };
+    const l = currentLeader(trades);
+    return { ...base, totals: metricsOf(shown), leader: l.leader, headline: l.headline, provisional: l.provisional,
+      pnl: dailyPnl({ trades, positions: await openPositions(this.ctx.storage), lastBar: await lastForwardBar(this.ctx.storage), day: today }) };
+  }
+
   async tradingConnectionsView() {
     const env = this.keyEnv || this.env;
     const [paper, desk, conn, alpaca] = await Promise.all([
@@ -4458,6 +4500,27 @@ export class CheState extends DurableObject {
       : 0;
     if (changed) await this.saveChatData(data);
     return changed + invalidated;
+  }
+
+  // "I'll remember that" only after the record is read back from durable storage (from Codex's
+  // codex/brain-reliability-takeover, 94f09a8). The receipt names the record, when it was written, and a hash of
+  // the stored words, so a restart test can check the same record comes back.
+  async rememberOwnerStatement(data, text) {
+    const added = addOwnerMemory(data, text, { source: 'owner_chat', category: 'Memory', scope: 'owner', confidence: 1 });
+    const record = added.record || (data.memory_records || []).find((r) => r.active !== false && r.text?.toLowerCase() === String(text).trim().toLowerCase());
+    if (!record) return ndjsonReply('I could not save that as a safe memory, sir. Nothing was confirmed stored.', { source: 'che_memory', ok: false, model_calls: 0 });
+    try {
+      if (added.added || added.replaced?.length) await this.saveChatData(data);
+      const persisted = await this.ctx.storage.get('che');
+      const verified = persisted?.memory_records?.find((r) => r.id === record.id && r.text === record.text && r.active !== false);
+      if (!verified) throw new Error('memory read-back did not match');
+      const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verified.text));
+      const hash = [...new Uint8Array(digest)].slice(0, 8).map((b) => b.toString(16).padStart(2, '0')).join('');
+      return ndjsonReply('I’ll remember that, sir.', { source: 'che_memory', ok: true, model_calls: 0,
+        memory_receipt: { record_id: verified.id, store: 'che.memory_records', status: 'stored', recorded_at: verified.created_at || null, checked_at: new Date().toISOString(), text_sha256_16: hash } });
+    } catch (_) {
+      return ndjsonReply('I could not verify the memory write, sir. It is not confirmed saved; please try again.', { source: 'che_memory', ok: false, model_calls: 0 });
+    }
   }
 
   async saveChatData(data) {
@@ -7459,7 +7522,7 @@ export class CheState extends DurableObject {
         const out = await decideBrainPending(this.ctx.storage, body.record_id, body.decision);
         return json(out, out.ok ? 200 : 409);
       }
-      if (path.startsWith('/api/brain/') && ['/api/brain/status', '/api/brain/changes', '/api/brain/push', '/api/brain/search', '/api/brain/folders', '/api/brain/record', '/api/brain/conflicts', '/api/brain/conflicts/resolve', '/api/brain/review', '/api/brain/score', '/api/brain/workers', '/api/brain/recovery'].includes(path)) {
+      if (path.startsWith('/api/brain/') && ['/api/brain/status', '/api/brain/changes', '/api/brain/push', '/api/brain/search', '/api/brain/folders', '/api/brain/record', '/api/brain/conflicts', '/api/brain/conflicts/resolve', '/api/brain/review', '/api/brain/score', '/api/brain/workers', '/api/brain/recovery', '/api/brain/import/chatgpt'].includes(path)) {
         if (!ownerDevice) return json({ detail: 'Only the CHE owner can read his brain.' }, 403);
         const brain = new CheBrainStore(this.ctx.storage);
         const q = new URL(request.url).searchParams;
@@ -7485,6 +7548,11 @@ export class CheState extends DurableObject {
           const page = brain.changes({ since: q.get('since'), limit: q.get('limit') });
           // The phone checks the digest only after the last page, so only the last page carries it.
           return json(page.more ? page : { ...page, digest: brain.digest() });
+        }
+        // The owner's ChatGPT export, parsed and redacted on the phone, in batches (owner_recall.js). Idempotent by message id.
+        if (path === '/api/brain/import/chatgpt' && request.method === 'POST') {
+          const result = importChatgptBatch(brain, body.turns);
+          return json({ ok: true, ...result, total: (() => { try { return Number(brain.rows("SELECT COUNT(*) AS n FROM brain_records WHERE deleted = 0 AND source LIKE '%\"chatgpt_export\"%'")[0]?.n) || 0; } catch (_) { return null; } })() });
         }
         if (path === '/api/brain/push' && request.method === 'POST') {
           const ops = Array.isArray(body.ops) ? body.ops.slice(0, 500) : [];
@@ -8248,7 +8316,7 @@ export class CheState extends DurableObject {
       if (path === '/api/trading/chart' && request.method === 'GET') {
         if (!ownerDevice) return tradingOwnerOnly();
         const q = new URL(request.url).searchParams;
-        const view = await chartView(this.ctx.storage, this.keyEnv || this.env, { account: q.get('account') || 'alpaca_paper', symbol: (q.get('symbol') || '').trim().toUpperCase().slice(0, 8), tf: q.get('tf') || '5m' });
+        const view = await chartView(this.ctx.storage, this.keyEnv || this.env, { account: q.get('account') || 'alpaca_paper', symbol: (q.get('symbol') || '').trim().toUpperCase().slice(0, 8), tf: q.get('tf') || '5m', at: q.get('at') || null });
         if (view.ok) view.drawings = await readDrawings(this.ctx.storage, view.account, view.symbol || '');
         if (view.ok && view.account === 'alpaca_paper' && view.symbol) await this.ctx.storage.put('trading_chart_last_symbol', view.symbol);
         return json(view, view.ok ? 200 : 400);
@@ -8265,6 +8333,12 @@ export class CheState extends DurableObject {
         const q = new URL(request.url).searchParams;
         const read = await readRithmicCandles(this.ctx.storage, { symbol: (q.get('symbol') || '').trim().toUpperCase().slice(0, 8), from: q.get('from'), to: q.get('to') });
         return json(read, read.ok ? 200 : 400);
+      }
+      // Visual trading evidence (owner, 2026-10-23): daily evidence, daily P&L, replay, comparisons, the
+      // current leader, the journal and the audit, all read from the stored trade records. Read only.
+      if (path === '/api/trading/visual' && request.method === 'GET') {
+        if (!ownerDevice) return tradingOwnerOnly();
+        return json(await this.tradingVisualView(new URL(request.url).searchParams));
       }
       if (path === '/api/trading/chart/drawings' && request.method === 'PUT') {
         if (!ownerDevice) return tradingOwnerOnly();
@@ -11702,6 +11776,24 @@ export class CheState extends DurableObject {
           await recordAnswerEvidence(this.ctx.storage, answer.text, { kind: answer.records.length ? 'outside_correspondence' : 'none' }, { records: answer.records });
           return ndjsonReply(answer.text, { source, model_calls: 0, records: answer.records.length, record_ids: answer.records, verification: 'external_correspondence' });
         }
+        // "What did I tell ChatGPT about X?": only an imported ChatGPT export can answer, quoted with its title and
+        // date; with none imported CHE says the history is not connected (owner_recall.js). Never the model.
+        const gptAsk = ownerDevice && !body.attachment ? chatgptHistoryIntent(rawMessage) : null;
+        if (gptAsk) {
+          let store = null;
+          try { store = new CheBrainStore(this.ctx.storage); } catch (_) { store = null; }
+          return ndjsonReply(speakChatgptHistory(store, gptAsk), { source: 'che_chatgpt_history', model_calls: 0 });
+        }
+        // "Search my memory for Sprite": every store CHE keeps of the owner's words (memory records, saved
+        // preferences, the Brain, the ChatGPT import), each with its count, and the raw matching records with id,
+        // source and date, so the owner can see whether a record exists at all (owner_recall.js).
+        const ownerSearch = ownerDevice && !body.attachment ? ownerMemorySearchIntent(rawMessage) : null;
+        if (ownerSearch) {
+          let store = null;
+          try { store = new CheBrainStore(this.ctx.storage); } catch (_) { store = null; }
+          const found = searchOwnerMemory(data, store, ownerSearch.term);
+          return ndjsonReply(speakMemorySearch(found), { source: 'che_memory_search', model_calls: 0, memory_search: found });
+        }
         // The owner's memory search reads the Brain store and the Flagstaff archive and names what matched, with
         // ids, dates and the sender as stored. The model is never asked, so it cannot say a search ran or invent
         // records (owner, 2026-10-21: "I found two records dated February 10 and March 15, 2023").
@@ -11771,11 +11863,10 @@ export class CheState extends DurableObject {
           // used to be fetched as a web page instead of remembered).
           const savedFact = rememberFact ? await rememberOwnerFact(this.ctx.storage, rememberFact[1]).catch(() => null) : null;
           if (savedFact) {
-            const added = addOwnerMemory(data, rememberFact[1].trim().slice(0, 500), { source: 'owner_chat', category: 'Memory', scope: 'owner', confidence: 1 });
-            if (added.added || added.replaced?.length) await this.saveChatData(data);
-            return ndjsonReply('I’ll remember that, sir.', { source: 'che_memory', model_calls: 0 });
+            return this.rememberOwnerStatement(data, rememberFact[1].trim().slice(0, 500));
           }
-          const known = rememberFact ? null : await knownAnswer(this.ctx.storage, message, { memories: data.memories }).catch(() => null);
+          // "Where did you learn that?" needs the record's date and source, which the personal recall below gives.
+          const known = rememberFact || personalFactQuestion(rawMessage)?.learn ? null : await knownAnswer(this.ctx.storage, message, { memories: data.memories }).catch(() => null);
           if (known) {
             await Promise.resolve().then(() => this.ctx.storage.put(LAST_ANSWER_EVIDENCE_KEY,
               answerEvidenceReceipt({ ownerAttested: true, at: Date.now() }))).catch(() => null);
@@ -12285,6 +12376,16 @@ export class CheState extends DurableObject {
           const result = await analyzeStrategy(this.ctx.storage, analysis);
           return ndjsonReply(result.text, { source: ANALYSIS_SOURCE, ok: result.ok, model_calls: 0, kind: 'analysis', strategy: analysis.strategy, windows: analysis.windows, overlap: analysis.overlap, trades: result.trades ?? null });
         }
+        // Visual trading evidence by voice: "show today's P&L", "who is the current leader", "audit the trades".
+        const tradeVisualAsk = body.attachment ? null : tradingVisualIntent(message);
+        if (tradeVisualAsk) {
+          if (!ownerDevice) return ndjsonReply('Only the CHE owner can read the trading records.', { source: VISUAL_SOURCE, ok: false, model_calls: 0 });
+          if (tradeVisualAsk.kind === 'card') return ndjsonReply(speakCard(tradeVisualAsk), { source: VISUAL_SOURCE, ok: true, model_calls: 0, open_view: 'trading_visual', visual: { card: tradeVisualAsk.card, size: tradeVisualAsk.size } });
+          const params = new URLSearchParams({ view: tradeVisualAsk.kind });
+          const v = await this.tradingVisualView(params);
+          const text = tradeVisualAsk.kind === 'evidence' ? speakEvidence(v.rows, v.today) : v.spoken;
+          return ndjsonReply(text, { source: VISUAL_SOURCE, ok: true, model_calls: 0, open_view: 'trading_visual', visual: { view: tradeVisualAsk.kind } });
+        }
         const ledger = body.attachment ? null : ledgerIntent(message);
         if (ledger) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can read the trading records, sir.', { source: LEDGER_SOURCE, ok: false, model_calls: 0 });
@@ -12534,6 +12635,15 @@ export class CheState extends DurableObject {
             { ...meta, ok: true, open_orders: list, needs_choice: true });
         }
         // The Trading Room chart by voice: "draw a line at 21,450", "open Alpaca chart", "show EMA trades".
+        // "Replay my last trade", "replay trade T0…": the trade's own chart and replay (Priority 5). Owner only, read only.
+        const replayAsk = body.attachment || !ownerDevice ? null : tradeReplayIntent(message);
+        if (replayAsk) {
+          const { trades: all } = await readVisualTrades(this.ctx.storage);
+          const trade = replayAsk.id ? all.find((t) => t.id === replayAsk.id) : lastTrade(all);
+          if (!trade) return ndjsonReply(replayAsk.id ? `No CHE trade has the ID ${replayAsk.id}. Nothing was opened.` : 'CHE has no closed forward paper or simulation trade to replay yet. Nothing was opened.', { source: TRADE_EVIDENCE_SOURCE, ok: false, model_calls: 0 });
+          const ev = tradeEvidenceOf(trade, await tradeBars(this.ctx.storage, trade));
+          return ndjsonReply(speakTradeReplay(ev), { source: TRADE_EVIDENCE_SOURCE, ok: true, model_calls: 0, open_view: 'trade_replay', trade_id: ev.id, replay_supported: ev.replay.supported });
+        }
         const chartAsk = body.attachment || !ownerDevice ? null : (drawIntent(message) || chartIntent(message) || futuresOrderIntent(message));
         if (chartAsk?.kind === 'futures_order') return ndjsonReply(chartAsk.reply, { source: 'che_trading_chart', ok: false, model_calls: 0, order_sent: false });
         if (chartAsk?.kind === 'draw') {
@@ -13443,20 +13553,11 @@ export class CheState extends DurableObject {
         const remember = rememberAsked;
         if (remember) {
           const memory = remember[1].trim().slice(0, 500);
-          const reply = /password|passcode|security code|social security|credit card/i.test(memory)
-            ? 'I should not save that kind of secret, sir.'
-            : 'I’ll remember that, sir.';
-          if (reply.startsWith('I’ll')) {
-            const added = addOwnerMemory(data, memory, {
-              source: 'owner_chat',
-              category: 'Memory',
-              scope: 'owner',
-              confidence: 1,
-            });
-            if (added.added || added.replaced?.length) await this.saveChatData(data);
+          if (/password|passcode|security code|social security|credit card/i.test(memory)) {
+            return ndjsonReply('I should not save that kind of secret, sir.', { source: 'che_memory', model_calls: 0 });
           }
           // Named like the remember route above, so the phone and the audit see which route kept it.
-          return ndjsonReply(reply, { source: 'che_memory', model_calls: 0 });
+          return this.rememberOwnerStatement(data, memory);
         }
         // Preserve supplied conversation state; capacity checks must skip a
         // small engine instead of silently dropping the owner's earlier turns.
@@ -13717,14 +13818,25 @@ export class CheState extends DurableObject {
         // a record". The model is never asked, so it cannot invent a memory, a date or a source (personal_recall.js).
         // Only when no route above answered: every deterministic route keeps its own questions.
         const personal = ownerDevice && !body.attachment && !memoryQuestion ? personalFactQuestion(rawMessage) : null;
-        if (personal) {
-          let brainStatements = [];
-          try { brainStatements = new CheBrainStore(this.ctx.storage).list({ limit: 500 }).records || []; } catch (_) { brainStatements = []; }
-          const answer = answerPersonalFact(data, personal, brainStatements);
-          const receipt = answerEvidenceReceipt({ ownerAttested: answer.kind === 'owner_attested' });
-          await Promise.resolve().then(() => this.ctx.storage.put(LAST_ANSWER_EVIDENCE_KEY, receipt)).catch(() => null);
-          await recordAnswerEvidence(this.ctx.storage, answer.answer, { ...receipt, kind: answer.kind }, { records: answer.records });
-          return ndjsonReply(answer.answer, { source: 'che_personal_recall', model_calls: 0, records: answer.records.length });
+        // A stored statement that is not "my X is Y" ("Blue Lantern uses the code word Magnolia Seven"), named by the question.
+        const statementAsk = ownerDevice && !body.attachment && !memoryQuestion && !personal ? storedStatementQuestion(rawMessage) : null;
+        if (personal || statementAsk) {
+          let store = null;
+          try { store = new CheBrainStore(this.ctx.storage); } catch (_) { store = null; }
+          // The newest Brain turns plus the ones that mention the asked words, so an old statement is never out of reach.
+          const brainStatements = ownerStatementCandidates(store, rawMessage);
+          const answer = personal ? answerPersonalFact(data, personal, brainStatements) : answerStoredStatement(data, statementAsk, brainStatements);
+          if (answer) {
+            const receipt = answerEvidenceReceipt({ ownerAttested: answer.kind === 'owner_attested' });
+            await Promise.resolve().then(() => this.ctx.storage.put(LAST_ANSWER_EVIDENCE_KEY, receipt)).catch(() => null);
+            const r = answer.record || null;
+            const store = r ? (r.legacy ? 'saved_preferences' : r.brain ? 'brain' : 'memory_records') : '';
+            await recordAnswerEvidence(this.ctx.storage, answer.answer, { ...receipt, kind: answer.kind }, { records: answer.records, cited: r ? [{ text: r.quote || r.statement || r.text, created_at: r.created_at, store }] : [] });
+            return ndjsonReply(answer.answer, {
+              source: 'che_personal_recall', model_calls: 0, records: answer.records.length, record_ids: answer.records,
+              recall_receipt: r ? { record_id: r.id || null, stored_at: r.created_at || null, store, owner_attested: !r.legacy } : null,
+            });
+          }
         }
         let answer;
         const reusable = officeResults.length === 0 && skillResults.length === 0

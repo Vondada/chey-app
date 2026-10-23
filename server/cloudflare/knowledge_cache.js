@@ -289,7 +289,11 @@ export function evidenceFollowup(message) {
   // research subject is specified in "research a fact".
   const genericResearch = /(?: research a fact check (?:your |the )?sources and explain what you verified)?/;
   if (new RegExp('^how do you know(?: that| this| it| that s correct| that is correct| it s correct| whether that is true)?' + genericResearch.source + '$').test(q)) return true;
-  return /^(?:where did you get (?:that|this|the information)|what(?: is| are)? (?:your|the) sources?(?: for that)?|can you (?:cite|verify|fact check) (?:that|this|your answer)|show (?:me )?(?:the )?(?:sources?|evidence)(?: for that)?)$/i.test(q);
+  if (/^(?:where did you get (?:that|this|the information)|what(?: is| are)? (?:your|the) sources?(?: for that)?|can you (?:cite|verify|fact check) (?:that|this|your answer)|show (?:me )?(?:the )?(?:sources?|evidence)(?: for that)?)$/i.test(q)) return true;
+  // "Where did that come from and when did you learn it?" (owner retrieval test, 2026-10-23): one or two parts, each
+  // about the last answer, never about a new subject.
+  const part = '(?:where did (?:that|this|it) come from|where did you (?:learn|get|hear) (?:that|this|it)|when did you (?:learn|hear|get|save|store) (?:that|this|it)|when did i tell you (?:that|this|it)|how do you know (?:that|this|it))';
+  return new RegExp(`^${part}(?: and ${part})?$`).test(q);
 }
 
 // "The last one" refers to the preceding fact-check discussion, not to an

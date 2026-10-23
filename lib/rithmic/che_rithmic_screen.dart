@@ -6,7 +6,8 @@
 //
 // The password is saved in the on-device vault (lib/security/che_password_vault.dart), and only after Rithmic accepted
 // it. It is never sent to the Worker, a model or a log. The label and Advanced overrides are not secret and are kept in
-// preferences. Nothing connects until the owner presses Connect.
+// preferences. Nothing connects until the owner presses Connect the first time; after that the session comes back by
+// itself when CHE launches (rithmic_session.dart) until he presses Disconnect.
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -18,25 +19,10 @@ import '../security/che_password_vault.dart';
 import 'rithmic_client.dart';
 import 'rithmic_live.dart';
 import 'rithmic_recorder.dart';
+import 'rithmic_session.dart';
 import 'rithmic_wire.dart';
 
-const kRithmicVaultSite = 'rithmic';
-
-typedef RithmicFeedFactory = RithmicMarketFeed Function(Uri gateway);
-
-/// Where the Rithmic login lives: the on-device vault in the app, a fake in tests.
-abstract class RithmicCredentialStore {
-  Future<CheVaultEntry?> find(String site);
-  Future<void> save(CheVaultEntry entry);
-}
-
-class CheVaultCredentialStore implements RithmicCredentialStore {
-  const CheVaultCredentialStore();
-  @override
-  Future<CheVaultEntry?> find(String site) => CheVault.instance.find(site);
-  @override
-  Future<void> save(CheVaultEntry entry) => CheVault.instance.save(entry);
-}
+export 'rithmic_session.dart' show kRithmicVaultSite, RithmicFeedFactory, RithmicCredentialStore, CheVaultCredentialStore;
 
 class CheRithmicScreen extends StatefulWidget {
   const CheRithmicScreen({super.key, this.feedFactory, this.routeFinder, this.store, this.preferences, this.now, this.live});
@@ -146,42 +132,28 @@ class _CheRithmicScreenState extends State<CheRithmicScreen> {
       final user = _login.text.trim().isNotEmpty ? _login.text.trim() : (saved?.username ?? '');
       final typed = _password.text;
       final password = typed.isNotEmpty ? typed : (saved != null && saved.username == user ? saved.password : '');
-      if (user.isEmpty) throw const RithmicException(RithmicFailure.badLogin, 'Enter your Rithmic username or trader code.');
-      if (password.isEmpty) throw const RithmicException(RithmicFailure.badLogin, 'Enter your Rithmic password.');
-
-      // The route: the Advanced override when one is set, otherwise Rithmic's own discovery.
-      final RithmicRoute route;
-      final manual = _gateway.text.trim();
-      if (manual.isNotEmpty) {
-        final uri = Uri.tryParse(manual);
-        if (uri == null || uri.scheme != 'wss') {
-          throw const RithmicException(RithmicFailure.connection, 'The Advanced gateway address must start with wss://. Leave it blank to find it automatically.');
-        }
-        if (_system.text.trim().isEmpty) {
-          throw const RithmicException(RithmicFailure.systemUnavailable, 'With a manual gateway, also enter the system name under Advanced.');
-        }
-        route = RithmicRoute(system: _system.text.trim(), gatewayName: 'manual', gatewayUri: uri);
-      } else {
-        final preferPaper = RegExp(r'fund\s*your\s*edge|fye|paper|evaluation|prop', caseSensitive: false).hasMatch(_label.text);
-        final found = await (widget.routeFinder ?? RithmicBootstrapDiscovery()).find(preferPaper: preferPaper);
-        route = _system.text.trim().isEmpty
-            ? found
-            : RithmicRoute(system: _system.text.trim(), gatewayName: found.gatewayName, gatewayUri: found.gatewayUri);
-      }
-      final symbol = _symbol.text.trim().isEmpty ? _autoSymbol : _symbol.text.trim().toUpperCase();
-      final exchange = _exchange.text.trim().isEmpty ? 'CME' : _exchange.text.trim().toUpperCase();
-
-      feed = widget.feedFactory?.call(route.gatewayUri) ?? RithmicClient(uri: route.gatewayUri);
-      _feed = feed;
-      await feed.connect(
+      final settings = RithmicSettings(
+        label: _label.text.trim(),
+        gateway: _gateway.text.trim(),
+        system: _system.text.trim(),
+        symbolOverride: _symbol.text.trim(),
+        exchange: _exchange.text.trim(),
+        appName: _appName.text.trim(),
+        appVersion: _appVersion.text.trim(),
+      );
+      final opened = await cheRithmicOpen(
         user: user,
         password: password,
-        systemName: route.system,
-        appName: _appName.text.trim().isEmpty ? kRithmicAppName : _appName.text.trim(),
-        appVersion: _appVersion.text.trim().isEmpty ? kRithmicAppVersion : _appVersion.text.trim(),
-        symbol: symbol,
-        exchange: exchange,
+        settings: settings,
+        routeFinder: widget.routeFinder,
+        feedFactory: widget.feedFactory,
+        now: widget.now,
+        onFeed: (f) => _feed = feed = f,
       );
+      final route = opened.route;
+      final symbol = opened.symbol;
+      final exchange = opened.exchange;
+      final connected = opened.feed;
 
       // Rithmic accepted the login: only now is it saved, in the vault on this phone.
       if (typed.isNotEmpty || saved?.username != user) {
@@ -189,21 +161,17 @@ class _CheRithmicScreenState extends State<CheRithmicScreen> {
       }
       _password.clear();
       final prefs = await (widget.preferences?.call() ?? SharedPreferences.getInstance());
-      await prefs.setString('che_rithmic_label', _label.text.trim());
-      await prefs.setString('che_rithmic_gateway', manual);
-      await prefs.setString('che_rithmic_system', _system.text.trim());
-      await prefs.setString('che_rithmic_symbol_override', _symbol.text.trim());
-      await prefs.setString('che_rithmic_exchange', exchange);
-      await prefs.setString('che_rithmic_app_name', _appName.text.trim());
-      await prefs.setString('che_rithmic_app_version', _appVersion.text.trim());
+      await settings.save(prefs, exchangeUsed: exchange);
+      // Signed in: CHE reconnects by itself on the next launch until the owner presses Disconnect.
+      await prefs.setBool(kRithmicAutoConnectKey, true);
 
-      _live.attach(feed, symbol: symbol, exchange: exchange);
-      _tradeSub = feed.trades.listen((t) {
+      _live.attach(connected, symbol: symbol, exchange: exchange);
+      _tradeSub = connected.trades.listen((t) {
         if (!mounted || t.price == null) return;
         setState(() => _lastPrice = t.price);
       });
       if (!mounted) return;
-      final live = feed.subscriptionConfirmed
+      final live = connected.subscriptionConfirmed
           ? 'Live data: $symbol on $exchange, confirmed by Rithmic.'
           : 'Live data: $symbol on $exchange requested; Rithmic has not confirmed it yet.';
       setState(() {
@@ -218,7 +186,7 @@ class _CheRithmicScreenState extends State<CheRithmicScreen> {
           CheRithmicRecorder.keptNote,
           'Read-only prices. Balances and orders are not connected here.',
         ];
-        _savedNote = 'Your login is saved in the vault on this phone.';
+        _savedNote = 'Your login is saved in the vault on this phone. CHE reconnects by itself when it opens, until you press Disconnect.';
       });
       _report('Rithmic connected on ${route.system}. $live', ok: true);
     } catch (e) {
@@ -242,6 +210,9 @@ class _CheRithmicScreenState extends State<CheRithmicScreen> {
   }
 
   Future<void> _disconnect() async {
+    // Disconnect is the owner's sign-out: no automatic reconnect until he presses Connect again.
+    final prefs = await (widget.preferences?.call() ?? SharedPreferences.getInstance());
+    await prefs.setBool(kRithmicAutoConnectKey, false);
     // The subscription is dropped first; closing the feed is what stops the stream, so it is not held behind the cancel.
     unawaited(_tradeSub?.cancel());
     _tradeSub = null;

@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'che_active_palette.dart';
+import 'che_chrome_status.dart';
+import 'che_hud.dart';
 import 'che_palettes.dart';
 
 enum CheAvatarStyle { mini, portrait }
@@ -102,11 +104,12 @@ class CheUiPreferences extends ChangeNotifier {
     return scaled;
   }
 
-  static const Map<String, Color> successColors = {
-    'mint': Color(0xFF8FF5C9),
-    'chrome_green': Color(0xFF6FF0B4),
-    'ice': Color(0xFF9FE9FF),
-    'silver': Color(0xFF9FB0C2),
+  // The chrome status tones (che_chrome_status.dart), plus the HUD mint that was CHE's success color before.
+  static final Map<String, Color> successColors = {
+    'mint': CheHud.mint,
+    'chrome_green': CheStatusPalette.success.base,
+    'ice': CheStatusPalette.active.base,
+    'silver': CheStatusPalette.neutral.base,
   };
 
   /// The color of a finished, successful action.

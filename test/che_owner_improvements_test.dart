@@ -104,10 +104,10 @@ void main() {
     );
     await tester.pumpWidget(MaterialApp(home: CheOwnerImprovementsScreen(client: client, onSpeak: spoken.add)));
     await tester.pumpAndSettle();
-    expect(find.text('TESTING'), findsOneWidget);
-    expect(find.text('VERIFIED'), findsOneWidget);
-    expect(find.text('REQUESTED'), findsOneWidget);
-    expect(find.textContaining('imp-20261023-002 · Verified'), findsOneWidget);
+    expect(find.text('TESTING'), findsNWidgets(2), reason: 'group header and status pill');
+    expect(find.text('VERIFIED'), findsNWidgets(2));
+    expect(find.text('REQUESTED'), findsNWidgets(2));
+    expect(find.textContaining('imp-20261023-002 · Trading Room'), findsOneWidget);
     expect(spoken, isEmpty, reason: 'loading the page is silent');
 
     await tester.tap(find.textContaining('imp-20261023-001'));
@@ -118,7 +118,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(spoken.single, 'Undone. The chart size is back to standard.');
     expect(CheUiPreferences.instance.chartHeight, CheChartHeight.standard);
-    expect(find.text('FAILED OR BLOCKED'), findsOneWidget);
+    expect(find.text('FAILED OR BLOCKED'), findsNWidgets(2));
 
     // A logged coding task offers "Send to engineers".
     await tester.tap(find.textContaining('imp-20261023-003'));

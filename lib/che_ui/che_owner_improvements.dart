@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
+import 'che_chrome_status.dart';
 import 'che_hud.dart';
 import 'che_screen_awareness.dart';
 import 'che_ui_preferences.dart';
@@ -248,7 +249,19 @@ class _CheOwnerImprovementsScreenState extends State<CheOwnerImprovementsScreen>
     final status = t['status']?.toString() ?? '';
     final verified = status == 'verified';
     final failed = status == 'failed';
-    final color = verified ? _prefs.successColor : failed ? const Color(0xFFFF7A86) : CheHud.ice;
+    final tone = verified
+        ? CheStatusTone.success
+        : failed
+            ? CheStatusTone.failure
+            : status == 'awaiting_approval'
+                ? CheStatusTone.warning
+                : status == 'requested'
+                    ? CheStatusTone.neutral
+                    : CheStatusTone.active;
+    // Verified uses the owner's success color; the other tones come from the shared chrome status palette.
+    final color = verified ? _prefs.successColor : CheStatusPalette.of(tone).base;
+    // Motion only for real work in progress: a coding job the queue reports as running.
+    final activity = t['job_status'] == 'running' ? CheActivity.running : verified ? CheActivity.done : failed ? CheActivity.failed : CheActivity.idle;
     final icon = verified ? Icons.verified_rounded : failed ? Icons.error_outline_rounded : status == 'coding' ? Icons.build_rounded : status == 'awaiting_approval' ? Icons.schedule_rounded : status == 'investigating' ? Icons.search_rounded : Icons.tune_rounded;
     final history = [for (final h in (t['history'] as List? ?? const [])) Map<String, dynamic>.from(h as Map)];
     final evidence = [for (final e in (t['evidence'] as List? ?? const [])) e.toString()];
@@ -273,8 +286,14 @@ class _CheOwnerImprovementsScreenState extends State<CheOwnerImprovementsScreen>
             collapsedIconColor: Colors.white70,
             leading: Icon(icon, color: color, semanticLabel: cheImprovementStatusLabel(status)),
             title: Text(t['request']?.toString() ?? '', style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600), maxLines: 2, overflow: TextOverflow.ellipsis),
-            subtitle: Text('$id · ${cheImprovementStatusLabel(status)}${t['screen'] != null && '${t['screen']}'.isNotEmpty ? ' · ${t['screen']}' : ''}',
-                style: CheHud.label.copyWith(fontSize: 11, color: color)),
+            subtitle: Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Wrap(spacing: 8, runSpacing: 4, crossAxisAlignment: WrapCrossAlignment.center, children: [
+                CheStatusPill(label: cheImprovementStatusLabel(status), tone: tone, activity: activity, compact: true),
+                Text('$id${t['screen'] != null && '${t['screen']}'.isNotEmpty ? ' · ${t['screen']}' : ''}',
+                    style: CheHud.label.copyWith(fontSize: 11, color: color)),
+              ]),
+            ),
             expandedCrossAxisAlignment: CrossAxisAlignment.start,
             children: [
               if (t['job_id'] != null) Text('Coding job ${t['job_id']}${t['job_status'] != null ? ' (${t['job_status']})' : ''}', style: body),

@@ -15,7 +15,7 @@ The owner's request (2026-10-23): "I should be able to tell CHE what feels wrong
    | `layout.density` | compact, comfortable, spacious | Trading Room spacing, Owner Improvements cards, Office desks (compact vs roomy) |
    | `chart.height` | compact, standard, tall | `CheTradingChart` height (×0.7, ×1, ×1.35) |
    | `chart.orientation` | follow_device, portrait | Portrait: a tall chart (55% of the screen) while the iPhone is upright. Nothing rotates the screen. |
-   | `status.success_color` | mint, chrome_green, ice, silver | The finished-job banner icon and Verified cards. A word always goes with the color. |
+   | `status.success_color` | mint, chrome_green, ice, silver (the #488 chrome status tones) | The finished-job banner icon and Verified cards. A word always goes with the color. |
    | `text.size` | small, default, large | All of CHE's text (the existing text scale) |
 
    Anything else gets an honest answer: "That isn't configurable yet. I logged it as imp-…. I can open a coding task for it".
@@ -59,7 +59,7 @@ Command Center: `/che-improve <what feels wrong>` (`command_catalog.js`, route `
 | 1 | Understand owner feedback | PARTIAL | `lib/che_ui/che_ui_voice_command.dart:21` parsed short phone-side UI commands ("dark mode", "make the text bigger", "compact desks"). Nothing turned a complaint ("too cramped", "the chart is too big") into a task, and nothing on the Worker did. |
 | 2 | Prefer configuration over coding | PARTIAL | `lib/che_ui/che_ui_preferences.dart:22` kept palette, avatar, desk density, text scale and voice on the phone only. Chart size, chart shape, success color and app-wide density did not exist. CHE's server could not change or read them. |
 | 3 | Repair workflow (inspect → change → verify → correct → remember) | MISSING for UI | The phone applied its own commands without a read-back or a ledger. There was no undo beyond Visual Studio's (`server/cloudflare/visual_studio.js:383`) and trading controls' restore (`server/cloudflare/trading_controls.js:350`). |
-| 4 | Delegate real engineering work | DONE (reused) | `worker.selfDevelopmentReply` (worker.js) → OpenCode runtime or the built-in coding team (`self_development.js`), the che-update approval card, `merge_pr` and `verify_deploy` jobs. "Atlas" is the Knowledge Atlas (`knowledge_atlas.js`), not a coding agent; the coding pipeline above is the real one. |
+| 4 | Delegate real engineering work | DONE (reused) | `worker.selfDevelopmentReply` (worker.js) → OpenCode runtime or the built-in coding team (`self_development.js`), the che-update approval card, `merge_pr` and `verify_deploy` jobs. "Atlas" is an Office agent (`office_router.js`) and the Knowledge Atlas (`knowledge_atlas.js`); the code work itself runs on this coding engine, which is what Owner Improvements delegates to. |
 | 5 | Learn from repeated corrections | PARTIAL | Coding lessons and failed strategies exist (`self_development.js` `recordLesson`, `recovery_policy.js` `strategyFingerprint`). Nothing tracked the owner's own repeated UI complaints. |
 | 6 | Owner Improvements dashboard | MISSING | Jobs show in the Office and the job banner (`lib/che_job_activity_banner.dart`). There was no per-request view with history, evidence and undo. |
 | 7 | Safety and authority | DONE (reused) | The money/delete holds and owner-only gates (AGENTS.md) and `currentTurnActionPolicy` (`code_scout.js:310`). This change adds the allow-list, and an approval hold on coding requests that touch high-impact areas. |

@@ -17,7 +17,13 @@ extension _CheHomeSecurity on _CHEHomeState {
     _homeBaseUrl = savedHomeBaseUrl.endsWith('/')
         ? savedHomeBaseUrl.substring(0, savedHomeBaseUrl.length - 1)
         : savedHomeBaseUrl;
-    _deviceToken = prefs.getString('che_agent_device_token');
+    // The sign-in lives in the Keychain (moved there once from an older build's plain storage).
+    _deviceToken = await CheSessionStore.instance.deviceToken();
+    if (_deviceToken == null || _deviceToken!.isEmpty) {
+      final ended = await CheSessionStore.instance.lastEnd();
+      _sessionNotice = cheSessionEndMessage(ended);
+      _showSessionNotice();
+    }
 
     if (_deviceToken != null && _deviceToken!.isNotEmpty) {
       await _loadAgentState(silent: true);
@@ -43,10 +49,28 @@ extension _CheHomeSecurity on _CHEHomeState {
     if (mounted) _set(() {});
   }
 
-  Future<void> _clearSecuritySession() async {
+  /// Shows why the sign-in ended as quiet text (never spoken unprompted; the owner can ask CHE to read it).
+  void _showSessionNotice() {
+    if (!mounted || _sessionNotice.isEmpty) return;
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
+      content: Semantics(liveRegion: false, child: Text(_sessionNotice, maxLines: 4, overflow: TextOverflow.ellipsis)),
+      duration: const Duration(seconds: 8),
+    ));
+  }
+
+  /// A 401 from the Worker. Only an unknown or revoked device ends the sign-in; "needs Face ID first" keeps it.
+  /// Returns true when the sign-in ended.
+  Future<bool> _onUnauthorized(http.Response response) async {
+    if (!cheSessionRevoked(response.statusCode, response.body)) return false;
+    await _clearSecuritySession(CheSessionEnd.revoked);
+    return true;
+  }
+
+  Future<void> _clearSecuritySession(CheSessionEnd why) async {
     _lastAgentStateBody = null;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('che_agent_device_token');
+    await CheSessionStore.instance.clear(why);
+    _sessionNotice = cheSessionEndMessage(why);
+    if (why == CheSessionEnd.revoked) _showSessionNotice();
 
     _deviceToken = null;
     savedMemories = [];
@@ -79,7 +103,7 @@ extension _CheHomeSecurity on _CHEHomeState {
       );
 
       if (response.statusCode == 401) {
-        await _clearSecuritySession();
+        await _onUnauthorized(response);
         return;
       }
       if (response.statusCode != 200) return;
@@ -183,7 +207,8 @@ extension _CheHomeSecurity on _CHEHomeState {
                   final homeBase = homeBaseController.text.trim().replaceFirst(RegExp(r'/$'), '');
                   final prefs = await SharedPreferences.getInstance();
                   if (address != cheAgentBaseUrl) {
-                    await prefs.remove('che_agent_device_token');
+                    await CheSessionStore.instance.clear(CheSessionEnd.serverChanged);
+                    _sessionNotice = cheSessionEndMessage(CheSessionEnd.serverChanged);
                     _deviceToken = null;
                     savedMemories = [];
                     learnedPersonality = [];
@@ -287,9 +312,9 @@ extension _CheHomeSecurity on _CHEHomeState {
                   throw Exception('The agent did not return a device token.');
                 }
 
-                final prefs = await SharedPreferences.getInstance();
-                await prefs.setString('che_agent_device_token', token);
+                await CheSessionStore.instance.save(token);
                 _deviceToken = token;
+                _sessionNotice = '';
 
                 if (!context.mounted) return;
                 Navigator.of(context).pop(true);
@@ -393,7 +418,7 @@ extension _CheHomeSecurity on _CHEHomeState {
       _stateLatencyMs = watch.elapsedMilliseconds;
 
       if (response.statusCode == 401) {
-        await _clearSecuritySession();
+        await _onUnauthorized(response);
         return;
       }
 
@@ -800,7 +825,7 @@ extension _CheHomeSecurity on _CHEHomeState {
                                   );
                                 } catch (_) {}
 
-                                await _clearSecuritySession();
+                                await _clearSecuritySession(CheSessionEnd.unpaired);
                                 if (!context.mounted) return;
                                 Navigator.pop(context);
                               },
