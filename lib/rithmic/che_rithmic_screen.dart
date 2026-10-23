@@ -16,6 +16,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../security/che_password_vault.dart';
 import 'rithmic_client.dart';
+import 'rithmic_live.dart';
 import 'rithmic_wire.dart';
 
 const kRithmicVaultSite = 'rithmic';
@@ -37,7 +38,7 @@ class CheVaultCredentialStore implements RithmicCredentialStore {
 }
 
 class CheRithmicScreen extends StatefulWidget {
-  const CheRithmicScreen({super.key, this.feedFactory, this.routeFinder, this.store, this.preferences, this.now});
+  const CheRithmicScreen({super.key, this.feedFactory, this.routeFinder, this.store, this.preferences, this.now, this.live});
 
   /// Tests inject a fake feed and route finder; the app uses the real client over the phone's network.
   final RithmicFeedFactory? feedFactory;
@@ -45,6 +46,9 @@ class CheRithmicScreen extends StatefulWidget {
   final RithmicCredentialStore? store;
   final Future<SharedPreferences> Function()? preferences;
   final DateTime Function()? now;
+
+  /// The shared live session the Trading Room chart draws from; tests pass their own.
+  final CheRithmicLive? live;
 
   @override
   State<CheRithmicScreen> createState() => _CheRithmicScreenState();
@@ -63,6 +67,7 @@ class _CheRithmicScreenState extends State<CheRithmicScreen> {
   final _appVersion = TextEditingController(text: kRithmicAppVersion);
 
   RithmicCredentialStore get _vault => widget.store ?? const CheVaultCredentialStore();
+  CheRithmicLive get _live => widget.live ?? CheRithmicLive.instance;
   RithmicMarketFeed? _feed;
   StreamSubscription<RithmicLastTrade>? _tradeSub;
   String _status = 'Not connected.';
@@ -80,13 +85,20 @@ class _CheRithmicScreenState extends State<CheRithmicScreen> {
   @override
   void initState() {
     super.initState();
+    // A connection made earlier keeps streaming to the chart after this screen closes; coming back shows it.
+    if (_live.attached) {
+      _up = true;
+      _status = 'Connected.';
+      _details = ['Live data: ${_live.symbol} on ${_live.exchange}, streaming to the Trading Room chart.', 'Read-only prices. Balances and orders are not connected here.'];
+    }
     _load();
   }
 
   @override
   void dispose() {
     _tradeSub?.cancel();
-    _feed?.close();
+    // The connected feed belongs to the shared live session (the chart keeps using it); only an unhanded one closes.
+    if (_feed != null && !_live.attached) _feed?.close();
     for (final c in _all) {
       c.dispose();
     }
@@ -184,6 +196,7 @@ class _CheRithmicScreenState extends State<CheRithmicScreen> {
       await prefs.setString('che_rithmic_app_name', _appName.text.trim());
       await prefs.setString('che_rithmic_app_version', _appVersion.text.trim());
 
+      _live.attach(feed, symbol: symbol, exchange: exchange);
       _tradeSub = feed.trades.listen((t) {
         if (!mounted || t.price == null) return;
         setState(() => _lastPrice = t.price);
@@ -199,6 +212,7 @@ class _CheRithmicScreenState extends State<CheRithmicScreen> {
           'System: ${route.system}',
           'Account: ${_label.text.trim().isEmpty ? 'Rithmic' : _label.text.trim()}',
           live,
+          'The Trading Room MNQ PAPER chart now builds 1- and 5-minute candles from these trades.',
           'Read-only prices. Balances and orders are not connected here.',
         ];
         _savedNote = 'Your login is saved in the vault on this phone.';
@@ -210,6 +224,7 @@ class _CheRithmicScreenState extends State<CheRithmicScreen> {
       await (feed ?? _feed)?.close();
       _feed = null;
       final said = e is RithmicException ? e.message : 'Rithmic did not connect: $e. Nothing was saved.';
+      _live.loginFailed(said);
       if (mounted) {
         setState(() {
           _up = false;
@@ -229,7 +244,11 @@ class _CheRithmicScreenState extends State<CheRithmicScreen> {
     _tradeSub = null;
     final feed = _feed;
     _feed = null;
-    await feed?.close();
+    if (_live.attached) {
+      await _live.disconnect();
+    } else {
+      await feed?.close();
+    }
     if (mounted) {
       setState(() {
         _up = false;
