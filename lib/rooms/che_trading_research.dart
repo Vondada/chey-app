@@ -12,6 +12,7 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
 import '../che_ui/che_theme.dart';
+import 'che_strategy_compare.dart';
 
 const _gold = CheColors.markets;
 const _up = Color(0xFF3DDC97);
@@ -128,6 +129,11 @@ class CheTradingResearchClient {
 
   Future<Map<String, dynamic>> overview(String market) => _send(() => _http.get(_u('/api/trading/research', {'market': market}), headers: headers()));
   Future<Map<String, dynamic>> strategy(String id, String market) => _send(() => _http.get(_u('/api/trading/research/strategy', {'id': id, 'market': market}), headers: headers()));
+  /// Stored backtests compared on one shared dataset (strategy_research.js), in-sample beside out-of-sample.
+  Future<Map<String, dynamic>> compare(String market, String tf, {List<String> ids = const []}) =>
+      _send(() => _http.get(_u('/api/trading/research/compare', {'market': market, 'tf': tf, if (ids.isNotEmpty) 'ids': ids.join(',')}), headers: headers()));
+  /// Recorded Rithmic order-flow sessions and the history sources CHE could use.
+  Future<Map<String, dynamic>> orderFlow() => _send(() => _http.get(_u('/api/trading/research/order-flow'), headers: headers()));
   Future<Map<String, dynamic>> matrix(String market) => _send(() => _http.get(_u('/api/trading/research/matrix', {'market': market}), headers: headers()));
   Future<Map<String, dynamic>> action(String name, Map<String, dynamic> body) => _send(() => _http.post(
         _u('/api/trading/research/$name'),
@@ -371,6 +377,11 @@ class _CheTradingResearchStripState extends State<CheTradingResearchStrip> {
             key: const Key('open_matrix'),
             onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => CheStrategyMatrixPage(client: widget.client, market: widget.market))),
             child: const Text('Strategy Matrix', semanticsLabel: 'Open the Strategy Matrix'),
+          ),
+          TextButton(
+            key: const Key('open_compare'),
+            onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => CheStrategyComparePage(client: widget.client, market: widget.market, onRead: widget.onRead))),
+            child: const Text('Compare', semanticsLabel: 'Compare strategies on the same period'),
           ),
         ]),
       ),

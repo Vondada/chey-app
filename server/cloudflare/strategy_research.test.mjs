@@ -190,7 +190,7 @@ test('R10 stored comparison view reads only backtests for the asked market and t
   const v = await comparisonView(st, { market: 'MNQ', tf: '5m' });
   assert.deepEqual(v.rows.map((r) => r.strategy_id).sort(), ['orb-15m', 'supertrend-5m']);
   const none = await comparisonView(memoryStorage(), { market: 'MNQ', tf: '5m' });
-  assert.equal(none.ok, false);
+  assert.equal(none.available, false);
   assert.match(none.reason, /No backtest results/);
 });
 
@@ -228,6 +228,7 @@ test('R12 library: research seeds pass the library check, cite sources, and reac
   assert.equal(by['inverse-fvg'].lifecycle, 'discovered');
   assert.equal(by['judas-swing'].lifecycle, 'discovered');
   assert.equal(by['value-area-80-rule'].lifecycle, 'rules_documented');
+  assert.equal(by['ict-2022-model'].origin, 'seed:T5', 'T5 keeps its own seed; T8 does not duplicate it');
   assert.equal(by['vix-vxn-regime'].kind, 'market_context');
   for (const id of RESEARCH_IDS) assert.notEqual(by[id].lifecycle, 'paper_active', `${id} never paper trades on its own`);
 });

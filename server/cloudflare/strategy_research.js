@@ -133,5 +133,6 @@ export function compareStrategies({ market = 'MNQ', tf, bars, manifest, strategy
 export async function comparisonView(storage, { market = 'MNQ', tf = '5m', ids = null } = {}) {
   const units = await readUnits(storage, (u) => (u.mode || 'BACKTEST') === 'BACKTEST' && u.market === market && u.timeframe === tf && (!ids || ids.includes(u.strategy_id)));
   const out = compareUnits(units);
-  return { market, timeframe: tf, ...out };
+  // "Nothing to compare yet" is an answer, not an error: the phone shows the reason.
+  return out.ok ? { market, timeframe: tf, available: true, ...out } : { market, timeframe: tf, available: false, reason: out.reason, live_trading: 'disabled' };
 }

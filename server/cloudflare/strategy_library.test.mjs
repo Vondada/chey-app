@@ -9,7 +9,7 @@ import {
   libraryView, lifecycleOf, readAudit, recordResults, registerEntry, resolveName, setFlag, strategyLibraryIntent,
 } from './strategy_library.js';
 import { LIBRARY_SEEDS } from './library_seeds/index.js';
-import { INTRADAY_CANDIDATES, CANDIDATES } from './trading_evidence.js';
+import { INTRADAY_CANDIDATES, CANDIDATES, RESEARCH_DAILY_CANDIDATES, RESEARCH_INTRADAY_CANDIDATES } from './trading_evidence.js';
 import { SIM_STRATEGIES } from './strategy_sim.js';
 import { STRATEGIES as LAB } from './trading_lab.js';
 import { UNDEFINED_STRATEGIES } from './trading_research.js';
@@ -46,7 +46,7 @@ const ENTRY = { id: 'owner-ema-test', kind: 'strategy', name: 'Owner EMA test', 
 test('every built-in strategy in the code is in the library, counted exactly once', () => {
   const ids = builtinEntries().map((e) => e.id);
   assert.equal(new Set(ids).size, ids.length, 'no duplicate ids');
-  const expected = Object.keys(INTRADAY_CANDIDATES).length + Object.keys(CANDIDATES).length + SIM_STRATEGIES.length + Object.keys(LAB).length + UNDEFINED_STRATEGIES.length;
+  const expected = Object.keys(INTRADAY_CANDIDATES).length + Object.keys(CANDIDATES).length + Object.keys(RESEARCH_INTRADAY_CANDIDATES).length + Object.keys(RESEARCH_DAILY_CANDIDATES).length + SIM_STRATEGIES.length + Object.keys(LAB).length + UNDEFINED_STRATEGIES.length;
   assert.equal(ids.length, expected);
   for (const id of [...Object.keys(INTRADAY_CANDIDATES), ...Object.keys(CANDIDATES)]) assert.ok(ids.includes(id), id);
 });
@@ -167,7 +167,8 @@ test('search and filters: by words, category, kind and stage; favorites first', 
   assert.equal(all.entries[0].id, 'vwap-revert-5m');
   assert.ok((await libraryView(storage, { q: 'silver bullet' })).entries.some((e) => e.id === 'silver-bullet-5m'));
   assert.ok((await libraryView(storage, { category: 'ict_smc' })).entries.every((e) => e.category === 'ict_smc'));
-  assert.deepEqual((await libraryView(storage, { kind: 'market_context' })).entries.map((e) => e.id), ['amd-power-of-three']);
+  const contexts = (await libraryView(storage, { kind: 'market_context' })).entries;
+  assert.ok(contexts.length && contexts.every((e) => e.kind === 'market_context') && contexts.some((e) => e.id === 'amd-power-of-three'));
   assert.ok((await libraryView(storage, { lifecycle: 'discovered' })).entries.every((e) => e.lifecycle === 'discovered'));
 });
 
@@ -230,7 +231,7 @@ test('chat: "show the strategy library" answers from the registry with zero mode
   const out = await che.say('Show the strategy library');
   assert.equal(out.meta.source, 'che_strategy_library');
   assert.equal(out.modelCalls, 0);
-  assert.match(out.reply, /named strategies and 1 market-context model/);
+  assert.match(out.reply, /named strategies and \d+ market-context models?\./);
   assert.match(out.reply, /have executable rules/);
   assert.match(out.reply, /Live trading is off/);
 });

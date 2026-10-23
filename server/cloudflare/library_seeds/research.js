@@ -32,7 +32,7 @@ export const RESEARCH_SOURCES = Object.freeze({
     category: 'volatility',
     sources: [web('LuxAlgo: TTM Squeeze', 'https://www.luxalgo.com/library/concept/ttm-squeeze/'), tv('TTM Squeeze Pro (open-source script)', 'https://www.tradingview.com/script/0drMdHsO-TTM-Squeeze-Pro')],
     assumptions: ['Direction from the close against the 20-bar average, not John Carter\'s momentum histogram.', 'At least 6 squeeze bars in a row; Keltner basis is the 20-bar simple average with a 20-bar average true range.', 'Stop 1 tick beyond the 6-bar extreme; 2R target.'],
-    limitations: ['An approximation of the TTM Squeeze, not Carter\'s indicator; no code was copied.'],
+    limitations: ['An approximation of the TTM Squeeze, not Carter\'s indicator; no code was copied.', 'Not the same as the bollinger-squeeze seed (Bollinger\'s own bandwidth squeeze), which is not implemented.'],
   },
   'supertrend-5m': {
     category: 'trend',
@@ -54,6 +54,7 @@ export const RESEARCH_SOURCES = Object.freeze({
   },
 });
 
+// ICT 2022 and AMD / Power of Three are T5's seeds (core.js); not repeated here.
 const idea = (e) => ({ kind: 'strategy', lane: 'T8', ...e });
 
 export const ENTRIES = [
@@ -62,21 +63,11 @@ export const ENTRIES = [
     rules: ['Open outside the prior regular session\'s value area.', 'Re-enter it and hold for two consecutive 30-minute periods.', 'Target the opposite side of the value area; invalid if price leaves again on the entry side.'],
     timeframes: [30], data_requirements: ['The prior session\'s value area: a TPO profile built from 30-minute bars, or volume at price.'], event_dependencies: [],
     limitations: ['Its sources repeat the 80% figure without testing it; the origin is disputed (Dalton\'s Profile Reports vs Steidlmayer).', 'Not implemented yet: CHE has no value-area calculation.'] }),
-  idea({ id: 'ict-2022-model', name: 'ICT 2022 mentorship model', category: 'ict_smc',
-    sources: [web('LuxAlgo: Model 2022', 'https://www.luxalgo.com/library/concept/model-2022/')],
-    rules: ['A liquidity raid of an old high or low.', 'Displacement that closes through the opposing swing (market structure shift).', 'Entry on the retracement into the fair value gap the displacement left; stop beyond the raid; target the opposite liquidity.'],
-    timeframes: [1, 5], data_requirements: ['Intraday bars, plus a higher timeframe for the draw on liquidity.'], event_dependencies: ['London and New York morning killzones.'],
-    limitations: ['Community shorthand rather than a formal specification; secondhand summaries only.', 'The higher-timeframe draw on liquidity and the premium/discount filter are discretionary. CHE\'s sweep-then-structure-shift strategy covers the first two steps, not the gap entry.'] }),
   idea({ id: 'judas-swing', name: 'Judas swing', category: 'ict_smc', lifecycle_requested: 'discovered',
     sources: [tv('Judas Swing Detector (open-source script)', 'https://in.tradingview.com/script/fgkVI3nD-Judas-Swing-Detector-AGPro-Series/'), web('LuxAlgo: ICT Killzones', 'https://www.luxalgo.com/library/indicator/5zSOg8zv-ict-killzones/')],
     assumptions: ['A false move at the London or New York open that traps traders before the session\'s real direction, often read against the New York midnight open.'],
     timeframes: [1, 5], data_requirements: ['Intraday bars.'], event_dependencies: ['Session opens.'],
     limitations: ['The sources disagree on the killzone hours and none is ICT\'s own material.', 'No testable rule: which move counts as the swing, and when it is confirmed, is not defined.'] }),
-  idea({ id: 'power-of-three-amd', name: 'Power of Three (AMD)', category: 'ict_smc', lifecycle_requested: 'discovered',
-    sources: [web('LuxAlgo: Power of 3 ICT 01 (TradingFinder)', 'https://www.luxalgo.com/library/indicator/5thZ7SVC-power-of-3-ict-01-amd-ict-smc-accumulations/')],
-    assumptions: ['Accumulation, then manipulation (a liquidity sweep), then distribution; each indicator author picks different session windows.'],
-    timeframes: [5, 60, 1440], data_requirements: ['Intraday bars.'], event_dependencies: ['Session windows.'],
-    limitations: ['No testable rule until the windows and the sweep confirmation are written down.'] }),
   idea({ id: 'breaker-block', name: 'Breaker block', category: 'ict_smc', lifecycle_requested: 'discovered',
     sources: [web('FXNX: ICT mitigation vs breaker block', 'https://fxnx.com/en/blog/ict-mitigation-vs-breaker-block-trader-s-guide')],
     assumptions: ['An order block that fails: price trades through it, structure breaks the other way and the failed block flips role.'],
