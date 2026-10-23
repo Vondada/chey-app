@@ -706,6 +706,6 @@ export function appStatusReport({ runtime = {}, client = null, deployment = null
   parts.push(full ? `Backend commit SHA: ${full}.` : tag ? `Backend commit tag: ${tag}. A full commit SHA is not verified by this runtime metadata.` : 'Backend commit is unavailable: CF_VERSION_METADATA.tag was not supplied as a commit identifier.');
   if (deployment) parts.push(speakLatestWorkerDeployment(deployment));
   else parts.push('This reads the running version only; it does not prove that CHE deployed a change or that the latest deployment workflow succeeded.');
-  return { text: parts.join(' '), checked_at: new Date(now).toISOString(), source: 'current Worker CF_VERSION_METADATA; native bundle values are device-reported', installed: native ? { version: native.version, build: native.build, checked_at: native.checked_at, source: native.source } : null,
+  return { status: native || deploymentId || tag ? 'available' : 'unavailable', operation: 'read_runtime_metadata', text: parts.join(' '), checked_at: new Date(now).toISOString(), source: 'current Worker CF_VERSION_METADATA; native bundle values are device-reported', installed: native ? { version: native.version, build: native.build, checked_at: native.checked_at, source: native.source } : null,
     backend: { deployment_id: deploymentId, commit_tag: tag, commit_sha: full }, deployment };
 }

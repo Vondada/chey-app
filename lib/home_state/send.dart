@@ -655,6 +655,13 @@ extension _CheHomeSend on _CHEHomeState {
       return;
     }
 
+    // An explicit app-details request wins over underlying browser/app voice handlers.
+    if (_pendingAttachment == null && cheOpensAppVersion(message)) {
+      await _handleLocalNavigation(message);
+      if (mounted) controller.clear();
+      return;
+    }
+
     // The Command Center, while it is open, answers its own voice routes
     // first (search, numbered options, run, favorite, workflows, run
     // controls). Its reply is on its banner; CHE says it here. An empty
