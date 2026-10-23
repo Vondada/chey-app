@@ -11,10 +11,10 @@
 // - DISCONNECTED with the reason (Rithmic not connected, login refused, connection dropped).
 // - DELAYED only when the owner chose delayed data on purpose. It is never called live.
 //
-// The look (colour, pulse) goes through [CheLiveTone], a thin adapter over the HUD palette that the shared chrome status
-// components can replace without touching the states.
+// The look comes from the shared chrome status components (lib/che_ui/che_chrome_status.dart) through [CheLiveTone].
 import 'package:flutter/material.dart';
 
+import '../che_ui/che_chrome_status.dart';
 import '../che_ui/che_clock.dart';
 import '../che_ui/che_hud.dart';
 import 'che_market_feed.dart';
@@ -117,105 +117,51 @@ class CheLiveStatus {
   }
 }
 
-/// The colour and motion for a state. A thin adapter over the HUD palette, swappable for the shared chrome status
-/// components: green-mint live, ice connecting, amber reconnecting or delayed, silver quiet, red disconnected.
+/// The chrome status tone and activity for a state (lib/che_ui/che_chrome_status.dart, #488): success-green live,
+/// active-cyan connecting, amber reconnecting or delayed, silver quiet, red disconnected. Only states that are really
+/// changing animate: live data arriving, or a connection in progress.
 class CheLiveTone {
   CheLiveTone._();
 
-  static const amber = Color(0xFFFFC46B);
-  static const red = Color(0xFFFF7A90);
-
-  static Color color(CheLiveState s) => switch (s) {
-        CheLiveState.live => CheHud.mint,
-        CheLiveState.connecting => CheHud.ice,
-        CheLiveState.reconnecting => amber,
-        CheLiveState.delayed => amber,
-        CheLiveState.quiet => CheHud.chromeMid,
-        CheLiveState.disconnected => red,
+  static CheStatusTone tone(CheLiveState s) => switch (s) {
+        CheLiveState.live => CheStatusTone.success,
+        CheLiveState.connecting => CheStatusTone.active,
+        CheLiveState.reconnecting => CheStatusTone.warning,
+        CheLiveState.delayed => CheStatusTone.warning,
+        CheLiveState.quiet => CheStatusTone.neutral,
+        CheLiveState.disconnected => CheStatusTone.failure,
       };
 
-  /// Only states that are really changing pulse: live data arriving, or a connection in progress.
-  static bool pulses(CheLiveState s) => s == CheLiveState.live || s == CheLiveState.connecting || s == CheLiveState.reconnecting;
+  static CheActivity activity(CheLiveState s) => switch (s) {
+        CheLiveState.live || CheLiveState.connecting || CheLiveState.reconnecting => CheActivity.running,
+        CheLiveState.disconnected => CheActivity.disconnected,
+        CheLiveState.quiet => CheActivity.paused,
+        CheLiveState.delayed => CheActivity.idle,
+      };
+
+  static Color color(CheLiveState s) => CheStatusPalette.of(tone(s)).base;
+
+  static bool pulses(CheLiveState s) => activity(s) == CheActivity.running;
 }
 
-/// The state as a dot and its word, with the detail beneath. Pulses gently while live or connecting; still with Reduce
-/// Motion. Silent: it never speaks.
-class CheLiveStatusBadge extends StatefulWidget {
+/// The state as a chrome status pill with its word, and the detail beneath. Silent: it never speaks.
+class CheLiveStatusBadge extends StatelessWidget {
   const CheLiveStatusBadge({super.key, required this.status, this.showDetail = true});
 
   final CheLiveStatus status;
   final bool showDetail;
 
   @override
-  State<CheLiveStatusBadge> createState() => _CheLiveStatusBadgeState();
-}
-
-class _CheLiveStatusBadgeState extends State<CheLiveStatusBadge> with SingleTickerProviderStateMixin {
-  late final AnimationController _pulse = AnimationController(vsync: this, duration: const Duration(milliseconds: 1600));
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    _sync();
-  }
-
-  @override
-  void didUpdateWidget(CheLiveStatusBadge old) {
-    super.didUpdateWidget(old);
-    _sync();
-  }
-
-  void _sync() {
-    final still = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
-    if (!still && CheLiveTone.pulses(widget.status.state)) {
-      if (!_pulse.isAnimating) _pulse.repeat(reverse: true);
-    } else {
-      _pulse.stop();
-      _pulse.value = 1;
-    }
-  }
-
-  @override
-  void dispose() {
-    _pulse.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final s = widget.status;
-    final color = CheLiveTone.color(s.state);
+    final s = status;
     return Semantics(
       container: true,
-      liveRegion: false,
       label: '${s.word.toLowerCase()}. ${s.detail}',
       excludeSemantics: true,
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-        Row(mainAxisSize: MainAxisSize.min, children: [
-          RepaintBoundary(
-            child: AnimatedBuilder(
-              animation: _pulse,
-              builder: (_, _) {
-                final t = 0.45 + 0.55 * _pulse.value;
-                return Container(
-                  width: 8,
-                  height: 8,
-                  decoration: BoxDecoration(
-                    color: color.withValues(alpha: t),
-                    shape: BoxShape.circle,
-                    boxShadow: [BoxShadow(color: color.withValues(alpha: 0.6 * t), blurRadius: 8)],
-                  ),
-                );
-              },
-            ),
-          ),
-          const SizedBox(width: 7),
-          Flexible(
-            child: Text(s.word, key: const ValueKey('che-live-word'), maxLines: 1, overflow: TextOverflow.ellipsis, style: CheHud.label.copyWith(fontSize: 11, letterSpacing: 1.8, color: color)),
-          ),
-        ]),
-        if (widget.showDetail && s.detail.isNotEmpty) ...[
-          const SizedBox(height: 3),
+        CheStatusPill(key: const ValueKey('che-live-word'), label: s.word, tone: CheLiveTone.tone(s.state), activity: CheLiveTone.activity(s.state), compact: true),
+        if (showDetail && s.detail.isNotEmpty) ...[
+          const SizedBox(height: 4),
           Text(s.detail, maxLines: 1, overflow: TextOverflow.ellipsis, style: CheHud.label.copyWith(fontSize: 9.5, letterSpacing: 0.8, color: CheHud.chromeMid)),
         ],
       ]),

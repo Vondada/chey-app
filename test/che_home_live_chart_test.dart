@@ -2,6 +2,7 @@
 // delayed only by choice and never called live, one subscription per timeframe, stable zoom on live ticks.
 import 'dart:async';
 
+import 'package:chey/che_ui/che_chrome_status.dart';
 import 'package:chey/rithmic/rithmic_client.dart';
 import 'package:chey/rithmic/rithmic_live.dart';
 import 'package:chey/rithmic/rithmic_wire.dart';
@@ -96,9 +97,13 @@ void main() {
       expect(d.detail, startsWith('Not live'), reason: 'delayed data says it is not live');
     });
 
-    test('every state has its own colour, and only changing states pulse', () {
-      expect(CheLiveTone.color(CheLiveState.live), isNot(CheLiveTone.color(CheLiveState.disconnected)));
-      expect(CheLiveTone.color(CheLiveState.delayed), isNot(CheLiveTone.color(CheLiveState.live)));
+    test('each state has its chrome status tone, and only changing states pulse', () {
+      expect(CheLiveTone.tone(CheLiveState.live), CheStatusTone.success);
+      expect(CheLiveTone.tone(CheLiveState.connecting), CheStatusTone.active);
+      expect(CheLiveTone.tone(CheLiveState.reconnecting), CheStatusTone.warning);
+      expect(CheLiveTone.tone(CheLiveState.delayed), CheStatusTone.warning);
+      expect(CheLiveTone.tone(CheLiveState.disconnected), CheStatusTone.failure);
+      expect(CheLiveTone.activity(CheLiveState.disconnected), CheActivity.disconnected);
       expect(CheLiveTone.pulses(CheLiveState.disconnected), isFalse);
       expect(CheLiveTone.pulses(CheLiveState.delayed), isFalse);
       expect(CheLiveTone.pulses(CheLiveState.quiet), isFalse);
