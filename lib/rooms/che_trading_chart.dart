@@ -133,6 +133,19 @@ class CheTradingChartController extends ChangeNotifier {
     level = price;
     notifyListeners();
   }
+
+  /// The side-by-side view keeps two charts on one timeframe and zoom when synced (owner, 2026-10-23).
+  String? timeframe;
+  double? zoomFactor;
+  void showTimeframe(String tf) {
+    timeframe = tf;
+    notifyListeners();
+  }
+
+  void zoomBy(double factor) {
+    zoomFactor = factor;
+    notifyListeners();
+  }
 }
 
 enum _Tool { none, line, hline, box, text }
@@ -219,6 +232,21 @@ class CheTradingChartState extends State<CheTradingChart> {
       final price = c.level!;
       c.level = null;
       _addDrawing(ChartDrawing(id: 'hline-${DateTime.now().millisecondsSinceEpoch}', kind: 'hline', points: [(null, price)]));
+      return;
+    }
+    if (c.zoomFactor != null) {
+      final factor = c.zoomFactor!;
+      c.zoomFactor = null;
+      if (_bars.isNotEmpty) zoom(factor);
+      return;
+    }
+    if (c.timeframe != null) {
+      final tf = c.timeframe!;
+      c.timeframe = null;
+      if (tf != _tf) {
+        setState(() => _tf = tf);
+        unawaited(load());
+      }
       return;
     }
     setState(() {

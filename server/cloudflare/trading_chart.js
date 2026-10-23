@@ -202,6 +202,12 @@ export function drawIntent(message) {
 export function chartIntent(message) {
   const t = String(message || '').toLowerCase().replace(/[’']/g, "'").replace(/^\s*(?:hey\s+)?(?:che|chey|chay)[,\s]+/, '');
   if (/^(?:show|open|bring up|pull up|go to)\b[\s\S]{0,25}\bstrateg(?:y|ies)\s+(?:progress|section|page)\b/.test(t)) return { kind: 'chart_open', section: 'strategies' };
+  // Side by side (owner, 2026-10-23): "open side by side", "show my trades next to CHE's", "compare my trade with CHE's",
+  // "open the live order preview". Opens the room's SIDE BY SIDE section; nothing is sent or placed.
+  if (/^(?:show|open|bring up|pull up|go to|see)\b[\s\S]{0,30}\b(?:side[\s-]by[\s-]side|both accounts|live order preview|my (?:trades?|positions?|account) (?:next to|beside|vs\.?|versus|against) (?:che|chey|chay))\b/.test(t)
+    || /^compare\b[\s\S]{0,30}\b(?:my|mine)\b[\s\S]{0,30}\b(?:che|chey|chay)(?:'s)?\b/.test(t)) {
+    return { kind: 'chart_open', section: 'compare' };
+  }
   const strat = /\b(ema|vwap|rsi|orb|opening range|silver bullet|order block|fvg|ict)\b[\s\S]{0,15}\btrades?\b/.exec(t);
   if (/^(?:show|open|bring up|pull up|go to|see)\b/.test(t) && strat) {
     return { kind: 'chart_open', section: 'chart', account: 'futures_paper', filter: { strategy: strat[1] } };
