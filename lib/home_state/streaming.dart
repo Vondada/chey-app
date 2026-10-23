@@ -255,9 +255,12 @@ extension _CheHomeStreaming on _CHEHomeState {
     final installedBuild = cheIsAppStatusRequest(userMessage)
         ? await CheInstalledBuild.read().timeout(const Duration(seconds: 2), onTimeout: () => null)
         : null;
+    final installedPatch = installedBuild == null
+        ? null
+        : await CheInstalledBuild.readPatch().timeout(const Duration(seconds: 2), onTimeout: () => null);
     request.body = jsonEncode({
       'message': userMessage,
-      if (installedBuild != null) 'client_app': installedBuild.chatMetadata(),
+      if (installedBuild != null) 'client_app': installedBuild.chatMetadata(patch: installedPatch),
       'history': history,
       'last_media_id': _lastMediaId(),
       'request_id': _requestGate.current.requestId,
