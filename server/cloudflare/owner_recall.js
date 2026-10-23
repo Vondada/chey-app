@@ -93,7 +93,7 @@ export function speakMemorySearch(found) {
 
 // ─── The owner's ChatGPT history ────────────────────────────────────────────────────────────────────────────────────
 
-export const NOT_CONNECTED = 'Your ChatGPT history isn\'t connected to me, sir, so I can\'t see what you told ChatGPT. To connect it, export it from ChatGPT (Settings, Data controls, Export data), then share the file to CHE and choose Import ChatGPT history. I won\'t guess what you said there.';
+export const NOT_CONNECTED = 'Your ChatGPT history isn\'t connected to me, sir, so I can\'t see what you told ChatGPT. ChatGPT gives me no way to read it directly, and the iPhone screen that imports a ChatGPT data export isn\'t built yet, so nothing from ChatGPT is in my memory. I won\'t guess what you said there.';
 
 /** "What did I tell ChatGPT about my trading rules?", "Did I ask ChatGPT about Sprite?": the owner's words to ChatGPT. */
 export function chatgptHistoryIntent(message) {

@@ -183,6 +183,7 @@ test('ChatGPT history: not connected says so; an imported export is quoted with 
   const before = await che.say('What did I tell ChatGPT about my trading rules last week?', fresh);
   assert.equal(before.meta.source, 'che_chatgpt_history');
   assert.match(before.reply, /ChatGPT history isn't connected/);
+  assert.doesNotMatch(before.reply, /choose Import/, 'no import screen exists on the phone yet; never point the owner at one');
   assert.doesNotMatch(before.reply, /short answers/);
   assert.equal(before.modelCalls, 0);
   // The batch the phone sends after parsing and redacting conversations.json.
