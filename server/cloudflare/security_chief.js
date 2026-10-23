@@ -13,11 +13,14 @@
 // threatens, traps, confronts or retaliates, and never weakens life-safety protections (security_core/physical.js).
 
 import { CORE_AGENT_PROFILES, PERSONAS, agentView } from './agent_runtime.js';
+import { departmentHead } from './office_company.js';
 import { SPECIALISTS } from './security_core/agent.js';
 import { scopeWords } from './security_visibility.js';
 
-export const SECURITY_CHIEF_NAME = 'Knox';
-export const SECURITY_CHIEF_TITLE = 'Office Security Chief';
+// The identity lives in the shared Office roster (office_company.js LA_AGENCIA_ROLES, `department`); this reads it.
+const HEAD = departmentHead('security');
+export const SECURITY_CHIEF_NAME = HEAD?.name || 'Knox';
+export const SECURITY_CHIEF_TITLE = HEAD?.title || 'Office Security Chief';
 
 export const SECURITY_CHIEF_RESPONSIBILITIES = Object.freeze([
   'Runs CHE\'s security checks and reports the results to CHE',

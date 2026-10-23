@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { SECURITY_CHIEF_NAME, chiefAgent, securityChief, securityChiefIntent, speakChiefReport } from './security_chief.js';
 import { CHE_SECURITY, access, chePrincipals } from './security_core_che.js';
 import { hierarchy, SPECIALISTS } from './security_core/agent.js';
-import { LA_AGENCIA_ROLES } from './office_company.js';
+import { LA_AGENCIA_ROLES, departmentHead, ensureLaAgenciaRoster } from './office_company.js';
 import { coverage } from './security_visibility.js';
 
 const knox = { id: 'a-knox', name: 'Knox', role: 'Engineering / Codex jobs', runtime_status: 'idle' };
@@ -87,4 +87,17 @@ test('the Security Room access list shows Knox once, even though Knox is both an
   const agents = v.categories.find((c) => c.id === 'agents').items;
   assert.equal(agents.filter((a) => a.name === 'Knox').length, 1);
   assert.equal(agents.filter((a) => a.name === 'Nova').length, 1);
+});
+
+test('the chief identity is stored on the shared Office roster, so the Office and an Org lane read the same record', () => {
+  assert.deepEqual(departmentHead('security'), { name: 'Knox', id: 'security', title: 'Office Security Chief' });
+  const data = { team: [] };
+  ensureLaAgenciaRoster(data);
+  const k = data.team.filter((a) => a.name === 'Knox');
+  assert.equal(k.length, 1, 'staffing the Office creates one Knox, no duplicate');
+  assert.deepEqual(k[0].department, { id: 'security', title: 'Office Security Chief' });
+  assert.equal(data.team.filter((a) => a.department?.id === 'security').length, 1, 'one security head');
+  ensureLaAgenciaRoster(data);
+  assert.equal(data.team.filter((a) => a.name === 'Knox').length, 1, 'idempotent');
+  assert.equal(securityChief(data).agent_id, k[0].id);
 });

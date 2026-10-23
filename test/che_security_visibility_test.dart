@@ -6,6 +6,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:chey/agents/che_agent_runtime.dart';
 import 'package:chey/security/che_security_visibility.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -110,4 +111,11 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   }
+
+  test('Office desk and Security Room carry the same Knox identity from the shared roster', () {
+    final profile = CheAgentProfile.fromJson({'id': 'a-knox', 'name': 'Knox', 'role': 'Engineering / Codex jobs', 'department': {'id': 'security', 'title': 'Office Security Chief'}});
+    expect(profile.agent.name, chief['name']);
+    expect(profile.departmentTitle, chief['title']);
+    expect(chief['agent_id'], 'a-knox');
+  });
 }

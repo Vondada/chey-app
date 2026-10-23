@@ -5,7 +5,10 @@ export const LA_AGENCIA_ROLES = {
   Nova: { role: 'Product / listings', specialty: 'Product offers, listings and sales-page drafts', provider_preference: 'openai', capability_requirements: ['coding'] },
   Atlas: { role: 'Research / scout', specialty: 'Research, sourcing, competitive checks, and trend topics from connected feeds. Does not invent demand.', provider_preference: 'auto', capability_requirements: ['deep_reasoning'] },
   Mira: { role: 'Customer / support copy', specialty: 'Customer-facing support, service copy, and translation / multilingual drafts', provider_preference: 'auto', capability_requirements: ['text'] },
-  Knox: { role: 'Engineering / Codex jobs', specialty: 'Implementation, tests, Codex packets, and Roblox/Luau experience drafts (games, weapons, UGC clothing, passes)', provider_preference: 'openai', model_preference: 'gpt-5.3-codex', capability_requirements: ['coding'] },
+  Knox: { role: 'Engineering / Codex jobs', specialty: 'Implementation, tests, Codex packets, and Roblox/Luau experience drafts (games, weapons, UGC clothing, passes)', provider_preference: 'openai', model_preference: 'gpt-5.3-codex', capability_requirements: ['coding'],
+    // Department head (owner, 2026-10-23): Knox is the Office Security Chief over the Security Core. The Org lane
+    // extends this same field for other heads; there is one roster and one identity per agent.
+    department: { id: 'security', title: 'Office Security Chief' } },
   Sage: { role: 'Finance / Stripe reports', specialty: 'Read-only Stripe reporting and finance summaries', provider_preference: 'auto', capability_requirements: ['payments_read'] },
   Lyra: { role: 'Content / social', specialty: 'Content, social copy and campaign drafts', provider_preference: 'auto', capability_requirements: ['text'] },
   Iris: { role: 'Ad Studio / paid-social creatives', specialty: 'Ad creatives, visual briefs, captions and same-night social packages', provider_preference: 'auto', capability_requirements: ['text'] },
@@ -31,6 +34,7 @@ export function ensureLaAgenciaRoster(data) {
     agent.provider_preference = spec.provider_preference;
     agent.model_preference = spec.model_preference || agent.model_preference || '';
     agent.capability_requirements = spec.capability_requirements;
+    if (spec.department) agent.department = { ...spec.department };
     agent.permissions = ['office_workspace', 'che_memory_read_filtered'];
     agent.reports_to = 'CHE';
     agent.owner_messaging = false;
@@ -121,4 +125,10 @@ export function agentActionGuard(agent, text) {
     }
   }
   return '';
+}
+
+/** The roster name and department record of the agent heading a department ('security' → Knox), or null. */
+export function departmentHead(departmentId) {
+  const hit = Object.entries(LA_AGENCIA_ROLES).find(([, spec]) => spec.department?.id === departmentId);
+  return hit ? { name: hit[0], ...hit[1].department } : null;
 }

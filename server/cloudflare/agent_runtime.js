@@ -358,6 +358,7 @@ export function agentView(agent, data) {
     name: agent.name,
     role: agent.role,
     specialty: agent.specialty || '',
+    department: agent.department ? { id: agent.department.id, title: agent.department.title } : null,
     mission: agent.mission || '',
     personality: agent.personality,
     strengths: agentProfileTraits(agent).strengths,
