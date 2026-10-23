@@ -443,6 +443,15 @@ export const COMMANDS = Object.freeze([
     prompt: 'Strategy simulation {input}', produces: 'simulation status', evidence: 'Stored simulation state and trades only.',
     keywords: ['strategy simulation', 'simulation', 'pause simulation', 'resume simulation', 'paper strategies'],
   }),
+  // Strategy Library (owner, 2026-10-23): strategy_library.js through its own chat route.
+  C('trade-library', 'trading', 'EXPLORE', 'Show every strategy CHE knows, can execute and is testing.', {
+    does: 'Reads the Strategy Library: every named strategy and market-context model with its stage (discovered, rules documented, implemented, backtested, forward tested, paper active), counted from the code and the recorded ledgers. Compares two strategies, favorites one, approves a custom strategy only after your spoken yes, and drafts a new one from your words for your approval. Paper only; live trading stays off. Owner only.',
+    needs: ['office'], route: 'che_strategy_library', handler: 'strategy_library.strategyLibraryIntent → libraryView / strategyLibraryAction',
+    input: { name: 'request', required: false, hint: 'show, compare A and B, approve X, add a strategy that …' },
+    examples: ['Show the strategy library', 'Compare EMA pullback and VWAP reversion', 'Favorite Silver Bullet', 'Approve MACD signal cross'],
+    prompt: 'Strategy library: {input}', produces: 'strategy library', evidence: 'The registry and the recorded backtest and paper ledgers only; zero model calls except when drafting.',
+    keywords: ['strategy library', 'all strategies', 'every strategy', 'how many strategies', 'compare strategies', 'custom strategy', 'add a strategy'],
+  }),
   // Strategy Control Center (owner, 2026-10-20): trading_controls.js through the desk's own intent parser.
   C('trade-controls', 'trading', 'EXPLORE', 'Read or change your paper strategy limits.', {
     does: 'Reads each paper strategy\'s limits and state (maximum trades per day, default 30; size; paused or running), or changes them in your words: pause or resume one strategy, the ICT group or all; set or raise the daily maximum; stop new entries; restore the previous settings. A change that raises risk is read back with its impact and applied only after "yes, confirm". Every change is audited. Paper only.',

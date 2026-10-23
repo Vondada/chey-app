@@ -1823,6 +1823,50 @@
    "optional_missing": []
   },
   {
+   "id": "trade-library",
+   "category": "trading",
+   "title": "Trade Library",
+   "summary": "Show every strategy CHE knows, can execute and is testing.",
+   "does": "Reads the Strategy Library: every named strategy and market-context model with its stage (discovered, rules documented, implemented, backtested, forward tested, paper active), counted from the code and the recorded ledgers. Compares two strategies, favorites one, approves a custom strategy only after your spoken yes, and drafts a new one from your words for your approval. Paper only; live trading stays off. Owner only.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "request",
+    "required": false,
+    "hint": "show, compare A and B, approve X, add a strategy that …"
+   },
+   "examples": [
+    "Show the strategy library",
+    "Compare EMA pullback and VWAP reversion",
+    "Favorite Silver Bullet",
+    "Approve MACD signal cross"
+   ],
+   "needs": [
+    "office"
+   ],
+   "optional": [],
+   "handler": "strategy_library.strategyLibraryIntent → libraryView / strategyLibraryAction",
+   "route": "che_strategy_library",
+   "produces": "strategy library",
+   "evidence": "The registry and the recorded backtest and paper ledgers only; zero model calls except when drafting.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "strategy library",
+    "all strategies",
+    "every strategy",
+    "how many strategies",
+    "compare strategies",
+    "custom strategy",
+    "add a strategy"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
    "id": "trade-controls",
    "category": "trading",
    "title": "Trade Controls",

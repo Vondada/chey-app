@@ -83,7 +83,7 @@ import { addBeat, addLedger, addWorkspace, addWorkspaceSong, advanceAgreement, a
 import { matrixIntent, readMatrix, runMatrix, speakMatrix } from './backtest_matrix.js';
 import { autoQueue as researchAutoQueue, cancelJob as cancelResearchJob, matrixView as researchMatrixView, nextResearchAt, queueJob as queueResearchJob, researchIntent, researchStep, researchView, setProfile as setResearchProfile, speakBestNow, speakHistory, speakStrategy, strategyView as researchStrategyView } from './trading_research.js';
 import { nextStrategySimTickAt, setStrategySimCeiling, setStrategySimPaused, speakStrategySim, strategySimIntent, strategySimTick, strategySimView, strategySimWake } from './strategy_sim.js';
-import { DRAFT_PROMPT, activeDefinitions as libraryActiveDefinitions, approveEntry as libraryApprove, definitionProblems as libraryDefinitionProblems, duplicateEntry as libraryDuplicate, libraryView, readAudit as libraryAudit, recordResults as libraryRecordResults, registerEntry as libraryRegister, resolveName as libraryResolve, setFlag as librarySetFlag, speakCompare as librarySpeakCompare, speakLibrary, strategyLibraryIntent, takeDraftAllowance } from './strategy_library.js';
+import { DRAFT_PROMPT, activeDefinitions as libraryActiveDefinitions, approveEntry as libraryApprove, definitionProblems as libraryDefinitionProblems, duplicateEntry as libraryDuplicate, libraryView, readAudit as libraryAudit, recordResults as libraryRecordResults, registerEntry as libraryRegister, resolveName as libraryResolve, setFlag as librarySetFlag, speakCompare as librarySpeakCompare, speakLibrary as speakStrategyLibrary, strategyLibraryIntent, takeDraftAllowance } from './strategy_library.js';
 import { evidenceIntent, evidenceReport, evidenceTick } from './trading_evidence_runner.js';
 import { readTrades } from './trading_evidence.js';
 import { cancelCandidates, cancelConfirmation, cancelOrderIntent, chartIntent, chartView, drawIntent, futuresOrderIntent, marketOrderFeedProblem, readDrawings, saveDrawings, speakOrder } from './trading_chart.js';
@@ -12566,7 +12566,7 @@ export class CheState extends DurableObject {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can use the strategy library, sir.', { source: 'che_strategy_library', ok: false });
           const view = await libraryView(this.ctx.storage);
           const reply = (text, extra = {}) => ndjsonReply(text, { source: 'che_strategy_library', open_view: 'strategy_library', ...extra });
-          if (libIntent.kind === 'list') return reply(speakLibrary(view));
+          if (libIntent.kind === 'list') return reply(speakStrategyLibrary(view));
           if (libIntent.kind === 'identify') return reply('You identified "86" as the P2P 86 Model (TradingView script "P2P 86 Model Probability Map"). Its rules are being researched; it is not implemented yet. "AMD" usually means ICT\'s Power of Three (accumulation, manipulation, distribution), which is in the library as a market-context model with no executable rules. Neither is paper trading.');
           if (libIntent.kind === 'draft') {
             const out = await this.strategyLibraryAction('draft', { text: libIntent.text }, { who: 'owner (chat)' });
