@@ -24,10 +24,12 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
+import '../che_ui/che_chrome_status.dart';
 import '../che_ui/che_hud.dart';
 import '../che_ui/che_ui_preferences.dart';
 import '../rithmic/rithmic_candles.dart';
 import '../rithmic/rithmic_live.dart';
+import '../trading/che_trade_replay.dart';
 import '../che_ui/che_theme.dart';
 import 'che_trading_hud.dart';
 
@@ -100,6 +102,117 @@ class ChartMarker {
   String get strategy => '${raw['strategy'] ?? ''}';
   String get status => '${raw['status'] ?? ''}';
   bool get isBuy => side == 'buy' || side == 'long';
+
+  /// The record this marker belongs to (a CHE journal trade, a simulation trade or an Alpaca order).
+  String get tradeId => '${raw['id'] ?? raw['order_id'] ?? ''}';
+
+  /// CHE's simulation (never a paper or broker execution).
+  bool get isSim => source == 'che_sim';
+
+  /// What the recorded trade says about its result: 'win' or 'loss' only on an exit with a recorded R or net P&L,
+  /// 'open' for an open position, '' otherwise. Never inferred from the chart.
+  String get outcome {
+    if (kind == 'open' || (kind == 'entry' && status == 'open')) return 'open';
+    if (kind != 'exit') return '';
+    final r = _num(raw['r']) ?? _num(raw['net_pnl']);
+    if (r == null || r == 0) return '';
+    return r > 0 ? 'win' : 'loss';
+  }
+
+  /// The entry of a closed CHE trade, whose exit carries the W or L.
+  bool get isClosedCheEntry => source.startsWith('che_') && kind == 'entry' && status == 'closed';
+}
+
+/// The chart's marker filters (owner, 2026-10-23): Wins, Losses, Open, Paper, Simulation, and one strategy.
+class CheMarkerFilter {
+  const CheMarkerFilter({this.wins = true, this.losses = true, this.open = true, this.paper = true, this.sim = true, this.strategy});
+  final bool wins, losses, open, paper, sim;
+  final String? strategy;
+
+  CheMarkerFilter copyWith({bool? wins, bool? losses, bool? open, bool? paper, bool? sim}) => CheMarkerFilter(
+      wins: wins ?? this.wins, losses: losses ?? this.losses, open: open ?? this.open, paper: paper ?? this.paper, sim: sim ?? this.sim, strategy: strategy);
+
+  /// The markers to draw from [all]: a closed CHE entry is left out only when its own exit (same record) is there.
+  List<ChartMarker> apply(Iterable<ChartMarker> all) {
+    final exits = {for (final m in all) if (m.kind == 'exit' && m.tradeId.isNotEmpty) '${m.source}|${m.tradeId}'};
+    return [for (final m in all) if (admits(m, exitShown: exits.contains('${m.source}|${m.tradeId}'))) m];
+  }
+
+  bool admits(ChartMarker m, {bool exitShown = false}) {
+    if (!(m.isSim ? sim : paper)) return false;
+    final st = strategy;
+    if (st != null && st.isNotEmpty && m.source.startsWith('che_') && !m.strategy.toLowerCase().contains(st.toLowerCase())) return false;
+    return switch (m.outcome) {
+      'win' => wins,
+      'loss' => losses,
+      'open' => open,
+      _ => !(m.isClosedCheEntry && exitShown),
+    };
+  }
+}
+
+/// A marker's one-line name for lists, receipts and VoiceOver: its recorded outcome first, then where it came from.
+String cheMarkerTitle(ChartMarker m) {
+  final from = kMarkerSources[m.source] ?? m.source;
+  return switch (m.outcome) {
+    'win' => 'Win · $from',
+    'loss' => 'Loss · $from',
+    'open' => 'Open position · $from',
+    _ => '$from · ${m.kind}',
+  };
+}
+
+/// A marker as Trade Replay's summary: the record it names, shown at once while the full record loads. Only what the
+/// marker itself recorded; an entry marker carries no exit.
+Map<String, dynamic> cheMarkerSummary(ChartMarker m) {
+  final r = m.raw;
+  final exit = m.kind == 'exit';
+  return {
+    'id': m.tradeId,
+    'label': m.isSim ? 'SIMULATION' : 'CHE FORWARD PAPER',
+    if (m.strategy.isNotEmpty) 'strategy': m.strategy,
+    if (r['symbol'] != null) 'symbol': '${r['symbol']}',
+    if (m.side.isNotEmpty) 'side': m.side,
+    if (!exit && m.time != null) 'entry_time': m.time!.toIso8601String(),
+    if (!exit && m.price != null) 'entry_price': m.price,
+    if (exit && m.time != null) 'exit_time': m.time!.toIso8601String(),
+    if (exit && m.price != null) 'exit_price': m.price,
+    if (r['stop'] != null) 'stop': r['stop'],
+    if (r['target'] != null) 'target': r['target'],
+    if (m.outcome == 'win' || m.outcome == 'loss') 'result': m.outcome,
+    if (r['r'] != null) 'r': r['r'],
+    if (r['net_pnl'] != null) 'net': r['net_pnl'],
+  };
+}
+
+/// Markers close together on screen, drawn as one counted badge at low zoom so they never pile up.
+class CheMarkerCluster {
+  CheMarkerCluster(this.at, this.members);
+  final Offset at;
+  final List<ChartMarker> members;
+}
+
+/// Groups placed markers whose centres lie within [radius] pixels of a cluster's first marker. Pure, for tests.
+List<CheMarkerCluster> cheClusterMarkers(Iterable<(ChartMarker, Offset)> placed, {double radius = 16}) {
+  final sorted = placed.toList()..sort((a, b) => a.$2.dx.compareTo(b.$2.dx));
+  final out = <CheMarkerCluster>[];
+  for (final (m, p) in sorted) {
+    CheMarkerCluster? hit;
+    for (var i = out.length - 1; i >= 0; i--) {
+      final c = out[i];
+      if (p.dx - c.at.dx > radius) break;
+      if ((c.at - p).distance <= radius) {
+        hit = c;
+        break;
+      }
+    }
+    if (hit == null) {
+      out.add(CheMarkerCluster(p, [m]));
+    } else {
+      hit.members.add(m);
+    }
+  }
+  return out;
 }
 
 class ChartDrawing {
@@ -232,7 +345,24 @@ class CheTradingChart extends StatefulWidget {
     this.height = 340,
     this.signalMarkers,
     this.live,
+    this.compact = false,
+    this.onExpand,
+    this.onMarkers,
   });
+
+  /// The recorded markers after each load (the expanded chart lists the recent trades from them).
+  final void Function(List<ChartMarker> markers)? onMarkers;
+
+  /// The compact preview (owner, 2026-10-23): symbol, timeframe, feed line, the chart and the marker filters, with
+  /// fixed heights so live ticks never move the page. Drawing, orders and the full legend live in the expanded chart.
+  final bool compact;
+
+  /// Opens the expanded (portrait) chart. Never rotates the phone.
+  final VoidCallback? onExpand;
+
+  /// Opens a CHE trade's full record. The app opens Trade Replay (`/trade-replay?id=`, route `trade_replay/<id>`);
+  /// tests replace it to see which record was asked for.
+  static void Function(BuildContext context, ChartMarker marker)? openTradeRecord;
 
   /// CHE PAPER ACCOUNT signals from the setup desk on this phone (source 'che_signal'), drawn on
   /// the MNQ PAPER chart only.
@@ -278,6 +408,7 @@ class CheTradingChartState extends State<CheTradingChart> {
   bool _entriesAllowed = false, _marketAllowed = false;
   String _blocked = '';
   final Set<String> _hidden = {};
+  CheMarkerFilter _filter = const CheMarkerFilter();
   late String? _strategy = widget.initialStrategy;
   _Tool _tool = _Tool.none;
   (DateTime?, double)? _first;
@@ -345,6 +476,10 @@ class CheTradingChartState extends State<CheTradingChart> {
   }
 
   String get accountLabel => kChartAccounts[_account] ?? _account;
+
+  /// The account and symbol on screen (the expanded chart opens on the same ones).
+  String get account => _account;
+  String get symbol => _symbol;
 
   // ─── Rithmic live candles (MNQ PAPER only) ────────────────────────────
 
@@ -472,6 +607,8 @@ class CheTradingChartState extends State<CheTradingChart> {
       for (final m in (j['markers'] is List ? j['markers'] as List : const []))
         if (m is Map<String, dynamic>) ChartMarker(m),
     ];
+    final markers = _markers;
+    if (widget.onMarkers != null) scheduleMicrotask(() => widget.onMarkers?.call(markers));
     _drawings = [for (final d in (j['drawings'] is List ? j['drawings'] as List : const [])) ?ChartDrawing.fromJson(d)];
     _levels = CheOvernightLevels.fromJson(j['levels']);
     _openOrders = [for (final o in (j['open_orders'] is List ? j['open_orders'] as List : const [])) if (o is Map<String, dynamic>) o];
@@ -502,12 +639,10 @@ class CheTradingChartState extends State<CheTradingChart> {
           for (final m in widget.signalMarkers?.value ?? const <Map<String, dynamic>>[]) ChartMarker(m),
       ];
 
-  List<ChartMarker> get _shownMarkers => [
-        for (final m in _allMarkers)
-          if (!_hidden.contains(m.source) &&
-              (_strategy == null || !m.source.startsWith('che_') || m.strategy.toLowerCase().contains(_strategy!.toLowerCase())))
-            m,
-      ];
+  List<ChartMarker> get _shownMarkers {
+    final f = CheMarkerFilter(wins: _filter.wins, losses: _filter.losses, open: _filter.open, paper: _filter.paper, sim: _filter.sim, strategy: _strategy);
+    return f.apply([for (final m in _allMarkers) if (!_hidden.contains(m.source)) m]);
+  }
 
   // ─── Drawings ─────────────────────────────────────────────────────────
 
@@ -575,19 +710,17 @@ class CheTradingChartState extends State<CheTradingChart> {
     final price = g.priceAt(at.dy);
     final time = g.timeAt(at.dx);
     if (_tool != _Tool.none) return _drawAt(time, price);
-    // A marker near the tap shows its receipt.
-    ChartMarker? best;
+    // A marker (or a cluster of them) near the tap opens its trade record.
+    CheMarkerCluster? best;
     var bestD = 22.0;
-    for (final m in _shownMarkers) {
-      final p = g.markerPoint(m);
-      if (p == null) continue;
-      final d = (p - at).distance;
+    for (final c in _ChartPainter.clustersFor(g, _shownMarkers)) {
+      final d = (c.at - at).distance;
       if (d < bestD) {
         bestD = d;
-        best = m;
+        best = c;
       }
     }
-    if (best != null) return _showMarker(best);
+    if (best != null) return best.members.length == 1 ? openRecord(best.members.single) : _showCluster(best);
     await openTicket(price: double.parse(price.toStringAsFixed(2)));
   }
 
@@ -641,7 +774,8 @@ class CheTradingChartState extends State<CheTradingChart> {
   String _markerText(ChartMarker m) {
     final r = m.raw;
     final parts = <String>[
-      '${kMarkerSources[m.source] ?? m.source} · ${m.kind}',
+      cheMarkerTitle(m),
+      if (m.tradeId.isNotEmpty) 'Record: ${m.tradeId}',
       if (m.side.isNotEmpty) 'Side: ${m.side}',
       if (r['qty'] != null) 'Quantity: ${r['qty']}',
       if (m.price != null) 'Price: ${_fmt(m.price!)}',
@@ -661,6 +795,50 @@ class CheTradingChartState extends State<CheTradingChart> {
     ];
     return parts.join('\n');
   }
+
+  /// Where [m] is drawn inside a chart area of [size], or null when it is off screen (tests tap it there).
+  @visibleForTesting
+  Offset? markerOffset(ChartMarker m, Size size) => _geometry(size)?.markerPoint(m);
+
+  /// The markers currently drawn (REPLAY picks the latest closed CHE trade from them).
+  List<ChartMarker> get shownMarkers => _shownMarkers;
+
+  /// Opens a marker's trade record: Trade Replay when installed, otherwise the recorded receipt.
+  Future<void> openRecord(ChartMarker m) async {
+    if (m.source.startsWith('che_') && m.tradeId.isNotEmpty) {
+      final open = CheTradingChart.openTradeRecord;
+      if (open != null) {
+        open(context, m);
+        return;
+      }
+      // The marker is the summary, so the record shows at once while its bars load.
+      await Navigator.of(context).push(CheTradeReplayPage.route(
+          tradeId: m.tradeId, baseUrl: widget.baseUrl, headers: widget.headers, onRead: widget.onSpeak, summary: cheMarkerSummary(m)));
+      return;
+    }
+    // Alpaca orders and fills are broker records, not CHE trades: their receipt.
+    await _showMarker(m);
+  }
+
+  Future<void> _showCluster(CheMarkerCluster c) => showModalBottomSheet<void>(
+        context: context,
+        backgroundColor: _panel,
+        builder: (ctx) => SafeArea(
+          child: ListView(shrinkWrap: true, padding: const EdgeInsets.all(12), children: [
+            Text('${c.members.length} markers here', style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w800)),
+            for (final m in c.members)
+              ListTile(
+                minTileHeight: 52,
+                title: Text(cheMarkerTitle(m), style: const TextStyle(color: Colors.white, fontSize: 16)),
+                subtitle: Text([if (m.time != null) _clock(m.time!), if (m.price != null) _fmt(m.price!)].join(' · '), style: TextStyle(color: _dim)),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  unawaited(openRecord(m));
+                },
+              ),
+          ]),
+        ),
+      );
 
   Future<void> _showMarker(ChartMarker m) => showModalBottomSheet<void>(
         context: context,
@@ -844,8 +1022,128 @@ class CheTradingChartState extends State<CheTradingChart> {
     unawaited(load());
   }
 
+  /// The feed's provider, status, last bar and age on one line.
+  String get feedLine => [
+        '${_feed['provider'] ?? 'Feed'}: ${_feed['status'] ?? (_state == 'loading' ? 'checking' : 'UNAVAILABLE')}${_feed['stale'] == true ? ' · STALE' : ''}',
+        if (_feed['last_bar_time'] != null && _time(_feed['last_bar_time']) != null) 'last bar ${_clock(_time(_feed['last_bar_time'])!)}',
+        if (_feed['age_s'] is num) '${_age(_feed['age_s'] as num)} old',
+      ].join(' · ');
+
+  /// Wins, Losses, Open, Paper, Simulation: one row of filter chips (the strategy filter comes from voice or a card).
+  Widget _filterChips() => SizedBox(
+        height: 48,
+        child: ListView(scrollDirection: Axis.horizontal, children: [
+          // The strategy filter first, so it is never scrolled out of sight.
+          if (_strategy != null)
+            Center(
+              child: TextButton(
+                onPressed: () => setState(() => _strategy = null),
+                child: Text('${_strategy!.toUpperCase()} only · show all', semanticsLabel: 'Showing ${_strategy!} trades only. Show all strategies'),
+              ),
+            ),
+          for (final (label, on, next, say) in [
+            ('Wins', _filter.wins, _filter.copyWith(wins: !_filter.wins), 'winning trades'),
+            ('Losses', _filter.losses, _filter.copyWith(losses: !_filter.losses), 'losing trades'),
+            ('Open', _filter.open, _filter.copyWith(open: !_filter.open), 'open positions'),
+            ('Paper', _filter.paper, _filter.copyWith(paper: !_filter.paper), 'paper and broker markers'),
+            ('Simulation', _filter.sim, _filter.copyWith(sim: !_filter.sim), 'simulation markers'),
+          ])
+            Padding(
+              padding: const EdgeInsets.only(right: 6),
+              child: Center(
+                child: Semantics(
+                  button: true,
+                  toggled: on,
+                  label: '$label filter, ${on ? 'showing' : 'hiding'} $say',
+                  excludeSemantics: true,
+                  child: InkWell(
+                    key: Key('marker_filter_${label.toLowerCase()}'),
+                    borderRadius: BorderRadius.circular(18),
+                    onTap: () => setState(() => _filter = next),
+                    child: Container(
+                      constraints: const BoxConstraints(minHeight: 40),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: on ? cheTradingSelect.withValues(alpha: 0.18) : Colors.transparent,
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(color: on ? cheTradingSelect : _stroke),
+                      ),
+                      child: Text(label, style: TextStyle(color: on ? Colors.white : _dim, fontWeight: FontWeight.w700, fontSize: 13)),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ]),
+      );
+
+  /// The compact preview: every row has a fixed height, so a live tick changes pixels inside the chart and nothing else.
+  Widget _buildCompact() {
+    final stale = _feed['stale'] == true;
+    final feedColor = _feed['status'] == 'REALTIME' && !stale ? _up : _feed['status'] == 'UNAVAILABLE' ? _down : _gold;
+    final live = _rithmicHeader ? rithmicLine : feedLine;
+    final liveColor = _rithmicHeader
+        ? switch (_live.status) {
+            RithmicLiveStatus.connected => _up,
+            RithmicLiveStatus.disconnected || RithmicLiveStatus.loginFailed => _down,
+            _ => _gold,
+          }
+        : feedColor;
+    final tfs = _timeframes.where((t) => t == '1m' || t == '5m').toList();
+    return CheTradingPanel(
+      key: const Key('chart_compact'),
+      color: _panel,
+      borderColor: _stroke,
+      radius: 16,
+      padding: const EdgeInsets.fromLTRB(10, 4, 4, 8),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        // Header and feed line: their size depends only on the text scale, never on prices, so ticks cannot move them.
+        ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 48),
+          child: Row(children: [
+            Expanded(
+              child: Wrap(spacing: 8, runSpacing: 2, crossAxisAlignment: WrapCrossAlignment.center, children: [
+                Semantics(
+                  header: true,
+                  child: CheChromeText(_symbol.isEmpty ? accountLabel : _symbol, maxLines: 1, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(border: Border.all(color: _gold), borderRadius: BorderRadius.circular(6)),
+                  child: Text('PAPER', semanticsLabel: 'Paper mode. Live trading is off.', style: CheHud.label.copyWith(color: _gold, fontSize: 11)),
+                ),
+              ]),
+            ),
+            for (final t in tfs)
+              Padding(
+                padding: const EdgeInsets.only(left: 4),
+                child: _chip(t, _tf == t, () {
+                  if (_tf == t) return;
+                  setState(() => _tf = t);
+                  unawaited(load());
+                }, semantics: 'Timeframe $t'),
+              ),
+            if (widget.onExpand != null) _iconButton(Icons.open_in_full_rounded, 'Expand the chart', widget.onExpand),
+          ]),
+        ),
+        SizedBox(
+          height: MediaQuery.textScalerOf(context).scale(11) * 1.45,
+          child: Semantics(
+            liveRegion: false,
+            child: Text(live, key: const ValueKey('chart-feed-line'), maxLines: 1, overflow: TextOverflow.ellipsis,
+                style: CheHud.label.copyWith(color: liveColor, fontSize: 11, fontFeatures: const [FontFeature.tabularFigures()])),
+          ),
+        ),
+        const SizedBox(height: 6),
+        SizedBox(key: const Key('chart_area'), height: widget.height, child: _chartArea()),
+        _filterChips(),
+      ]),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (widget.compact) return _buildCompact();
     final stale = _feed['stale'] == true;
     final feedColor = _feed['status'] == 'REALTIME' && !stale ? _up : _feed['status'] == 'UNAVAILABLE' ? _down : _gold;
     return CheTradingPanel(
@@ -904,11 +1202,13 @@ class CheTradingChartState extends State<CheTradingChart> {
         const SizedBox(height: 8),
         // MNQ PAPER: the active source, the Rithmic connection and its last update. Visible, never spoken unless asked.
         if (_rithmicHeader) ...[
-          Text(sourceLabel, key: const ValueKey('chart-source'), style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w700)),
+          Text(sourceLabel, key: const ValueKey('chart-source'), maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w700)),
           const SizedBox(height: 2),
           Text(
             rithmicLine,
             key: const ValueKey('chart-rithmic'),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
             style: TextStyle(
               color: switch (_live.status) {
                 RithmicLiveStatus.connected => _up,
@@ -924,14 +1224,7 @@ class CheTradingChartState extends State<CheTradingChart> {
         // Feed health: always visible, never spoken unless asked.
         Semantics(
           liveRegion: false,
-          child: Text(
-            [
-              '${_feed['provider'] ?? 'Feed'}: ${_feed['status'] ?? (_state == 'loading' ? 'checking' : 'UNAVAILABLE')}${stale ? ' · STALE' : ''}',
-              if (_feed['last_bar_time'] != null && _time(_feed['last_bar_time']) != null) 'last bar ${_clock(_time(_feed['last_bar_time'])!)}',
-              if (_feed['age_s'] is num) '${_age(_feed['age_s'] as num)} old',
-            ].join(' · '),
-            style: TextStyle(color: feedColor, fontSize: 13, fontWeight: FontWeight.w700),
-          ),
+          child: Text(feedLine, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: feedColor, fontSize: 13, fontWeight: FontWeight.w700)),
         ),
         if (_blocked.isNotEmpty)
           Padding(
@@ -943,11 +1236,13 @@ class CheTradingChartState extends State<CheTradingChart> {
         ListenableBuilder(
           listenable: CheUiPreferences.instance,
           builder: (context, child) => SizedBox(
+            key: const Key('chart_area'),
             height: CheUiPreferences.instance.chartHeightFor(widget.height, screen: MediaQuery.maybeSizeOf(context)),
             child: child,
           ),
           child: _chartArea(),
         ),
+        _filterChips(),
         const SizedBox(height: 6),
         Wrap(crossAxisAlignment: WrapCrossAlignment.center, children: [
           _iconButton(Icons.zoom_in_rounded, 'Zoom in', _bars.isEmpty ? null : () => zoom(1.5)),
@@ -977,14 +1272,6 @@ class CheTradingChartState extends State<CheTradingChart> {
           for (final e in kMarkerSources.entries)
             if (kShowAlpacaPaper || !e.key.startsWith('alpaca_')) _legend(e.key, e.value, _allMarkers.where((m) => m.source == e.key).length),
         ]),
-        if (_strategy != null)
-          Padding(
-            padding: const EdgeInsets.only(top: 6),
-            child: Row(children: [
-              Expanded(child: Text('Showing CHE trades for ${_strategy!.toUpperCase()} only', style: const TextStyle(color: _gold, fontSize: 13))),
-              TextButton(onPressed: () => setState(() => _strategy = null), child: const Text('Show all strategies')),
-            ]),
-          ),
         if (_openOrders.isNotEmpty) ...[
           const SizedBox(height: 10),
           const Text('OPEN PAPER ORDERS', style: TextStyle(color: _gold, fontWeight: FontWeight.w800, letterSpacing: 1.2, fontSize: 12)),
@@ -1077,7 +1364,9 @@ class CheTradingChartState extends State<CheTradingChart> {
               scroll(moved);
             }
           },
-          child: CustomPaint(
+          // The chart repaints on its own layer: a tick never repaints the page around it.
+          child: RepaintBoundary(
+           child: CustomPaint(
             size: size,
             painter: _ChartPainter(
               bars: _window,
@@ -1086,6 +1375,7 @@ class CheTradingChartState extends State<CheTradingChart> {
               levels: _levels.levels,
               pending: _first,
             ),
+           ),
           ),
         ),
       );
@@ -1225,11 +1515,23 @@ class _ChartPainter extends CustomPainter {
       if (px != null) canvas.drawCircle(Offset(px, g.y(pending!.$2)), 5, ink);
     }
 
-    // Markers by source.
-    for (final m in markers) {
-      final p = g.markerPoint(m);
-      if (p == null) continue;
+    // Markers: W and L for recorded wins and losses, OPEN for open positions, a counted badge where they crowd.
+    for (final c in clustersFor(g, markers)) {
+      final p = c.at;
+      if (c.members.length > 1) {
+        _paintCount(canvas, p, c.members);
+        continue;
+      }
+      final m = c.members.single;
       final color = kMarkerColors[m.source] ?? Colors.white;
+      if (m.outcome == 'win' || m.outcome == 'loss') {
+        _paintOutcome(canvas, p, m);
+        continue;
+      }
+      if (m.outcome == 'open') {
+        _paintOpen(canvas, p, m);
+        continue;
+      }
       if (m.source == 'alpaca_order') {
         // A working order is a dashed line at its price, with its side.
         final dash = Paint()
@@ -1244,6 +1546,59 @@ class _ChartPainter extends CustomPainter {
       _MarkerGlyph.paintGlyph(canvas, m.source, color, true, buy: m.isBuy, exit: m.kind == 'exit', size: 12);
       canvas.restore();
     }
+  }
+
+  /// The on-screen clusters for [markers]: the same grouping the painter draws and a tap hits.
+  static List<CheMarkerCluster> clustersFor(_Geometry g, List<ChartMarker> markers) => cheClusterMarkers([
+        for (final m in markers)
+          if (g.markerPoint(m) case final p?) (m, p),
+      ]);
+
+  // The shared chrome status tones (lib/che_ui/che_chrome_status.dart): green success, red failure. The letter W or L
+  // always carries the meaning too, so colour is never the only signal.
+  static Color get _win => CheStatusPalette.success.base;
+  static Color get _loss => CheStatusPalette.failure.base;
+
+  void _paintOutcome(Canvas canvas, Offset p, ChartMarker m) {
+    final win = m.outcome == 'win';
+    final color = win ? _win : _loss;
+    // Recorded paper trades are solid; simulation is an outline, so the two never look alike.
+    canvas.drawCircle(p, 8, Paint()..color = m.isSim ? Colors.black.withValues(alpha: 0.6) : color);
+    canvas.drawCircle(p, 8, Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.6);
+    _centred(canvas, win ? 'W' : 'L', p, TextStyle(color: m.isSim ? color : Colors.black, fontSize: 10, fontWeight: FontWeight.w900));
+  }
+
+  void _paintOpen(Canvas canvas, Offset p, ChartMarker m) {
+    final tp = TextPainter(
+      text: const TextSpan(text: 'OPEN', style: TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 0.8)),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    final r = RRect.fromRectAndRadius(Rect.fromCenter(center: p, width: tp.width + 10, height: tp.height + 4), const Radius.circular(4));
+    canvas.drawRRect(r, Paint()..color = Colors.black.withValues(alpha: 0.75));
+    canvas.drawRRect(r, Paint()
+      ..color = m.isSim ? kMarkerColors['che_sim']! : const Color(0xFFD9E2EC)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2);
+    tp.paint(canvas, Offset(p.dx - tp.width / 2, p.dy - tp.height / 2));
+  }
+
+  void _paintCount(Canvas canvas, Offset p, List<ChartMarker> members) {
+    final wins = members.where((m) => m.outcome == 'win').length, losses = members.where((m) => m.outcome == 'loss').length;
+    final ring = wins > losses ? _win : losses > wins ? _loss : const Color(0xFFD9E2EC);
+    canvas.drawCircle(p, 10, Paint()..color = Colors.black.withValues(alpha: 0.8));
+    canvas.drawCircle(p, 10, Paint()
+      ..color = ring
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.6);
+    _centred(canvas, '${members.length}', p, const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w900, fontFeatures: [FontFeature.tabularFigures()]));
+  }
+
+  void _centred(Canvas canvas, String s, Offset c, TextStyle style) {
+    final tp = TextPainter(text: TextSpan(text: s, style: style), textDirection: TextDirection.ltr)..layout();
+    tp.paint(canvas, Offset(c.dx - tp.width / 2, c.dy - tp.height / 2));
   }
 
   void _text(Canvas canvas, String s, Offset at, TextStyle style) {

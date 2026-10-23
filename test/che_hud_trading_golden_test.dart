@@ -112,7 +112,8 @@ void main() {
     await tester.pump(const Duration(milliseconds: 200));
     // The room's controls keep their VoiceOver names in the HUD look.
     expect(find.bySemanticsLabel('CHART section, open'), findsOneWidget);
-    expect(find.bySemanticsLabel('STRATEGIES section'), findsOneWidget);
+    expect(find.bySemanticsLabel('STRATEGY LAB section'), findsOneWidget);
+    expect(find.bySemanticsLabel('REPLAY'), findsOneWidget);
     expect(find.text('Trading Room'), findsNothing);
     await expectLater(find.byType(MaterialApp), matchesGoldenFile('goldens/hud_trading_room.png'));
     await tester.pumpWidget(const SizedBox());

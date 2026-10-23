@@ -94,7 +94,9 @@ class _Server {
   Iterable<http.Request> to(String path) => requests.where((r) => r.url.path == path && r.method != 'GET');
 }
 
-Future<void> _pumpRoom(WidgetTester tester, _Server s, {CheTradingSection section = CheTradingSection.chart, List<String>? spoken, String? strategy, String account = 'alpaca_paper'}) async {
+/// The room, and (by default) its chart expanded: drawing, orders, zoom and the legend live in the expanded chart.
+Future<void> _pumpRoom(WidgetTester tester, _Server s,
+    {CheTradingSection section = CheTradingSection.chart, List<String>? spoken, String? strategy, String account = 'alpaca_paper', bool expand = true}) async {
   tester.view.physicalSize = const Size(1170, 2532);
   tester.view.devicePixelRatio = 3;
   addTearDown(tester.view.reset);
@@ -115,6 +117,10 @@ Future<void> _pumpRoom(WidgetTester tester, _Server s, {CheTradingSection sectio
   ));
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 50));
+  if (expand && section == CheTradingSection.chart) {
+    await tester.tap(find.byTooltip('Expand the chart'));
+    await tester.pumpAndSettle();
+  }
 }
 
 Future<void> _tap(WidgetTester tester, Finder f) async {
@@ -134,8 +140,8 @@ void main() {
     final s = _Server();
     final spoken = <String>[];
     await _pumpRoom(tester, s, spoken: spoken);
-    for (final label in ['CHART', 'SETUPS', 'CHE TRADES', 'STRATEGIES', 'ACCOUNT']) {
-      expect(find.text(label), findsWidgets);
+    for (final label in ['CHART', 'SETUPS', 'JOURNAL', 'HISTORY', 'STRATEGY LAB', 'ACCOUNT', 'REPLAY', 'SIDE BY SIDE']) {
+      expect(find.text(label, skipOffstage: false), findsWidgets);
     }
     expect(find.text('PAPER'), findsOneWidget);
     expect(_chartArea(), findsOneWidget);
@@ -252,10 +258,10 @@ void main() {
   testWidgets('"show EMA trades" keeps only that strategy among CHE markers', (tester) async {
     final s = _Server();
     await _pumpRoom(tester, s, strategy: 'ema', account: 'futures_paper');
-    expect(find.textContaining('Showing CHE trades for EMA only'), findsOneWidget);
+    expect(find.textContaining('EMA only'), findsOneWidget);
     final state = tester.state<CheTradingChartState>(find.byType(CheTradingChart));
     expect(state.summary, contains('1 CHE forward paper'));
-    await _tap(tester, find.text('Show all strategies'));
+    await _tap(tester, find.textContaining('EMA only'));
     await tester.pump();
     expect(state.summary, contains('2 CHE forward paper'));
   });
@@ -313,13 +319,12 @@ void main() {
     await tester.pump();
     expect(find.byTooltip('Jump to the latest bar'), findsOneWidget);
     expect(state.summary, before); // the summary speaks of the latest bar, not the window
-    await tester.drag(find.byType(ListView).first, const Offset(0, 3000));
+    // Back in the room: the sections switch.
+    await tester.tap(find.byTooltip('Close the expanded chart'));
     await tester.pumpAndSettle();
-    await _tap(tester, find.text('STRATEGIES'));
+    await _tap(tester, find.text('STRATEGY LAB'));
     await tester.pump();
     expect(find.byType(CheTradingChart), findsNothing);
-    await tester.drag(find.byType(ListView).first, const Offset(0, 3000));
-    await tester.pumpAndSettle();
     await _tap(tester, find.text('CHART'));
     await tester.pump();
     expect(find.byType(CheTradingChart), findsOneWidget);
@@ -327,7 +332,7 @@ void main() {
 
   testWidgets('a voice reply naming a section switches the open room to it', (tester) async {
     final s = _Server();
-    await _pumpRoom(tester, s);
+    await _pumpRoom(tester, s, expand: false);
     expect(find.byType(CheTradingChart), findsOneWidget);
     CheTradingRoom.requestedSection.value = CheTradingSection.strategies;
     await tester.pump();

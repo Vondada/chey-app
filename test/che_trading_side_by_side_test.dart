@@ -266,7 +266,7 @@ void main() {
 
   group('side-by-side view', () {
     for (final (name, size, key) in [
-      ('phone', const Size(390, 2400), 'sbs_stacked'),
+      ('phone', const Size(390, 2400), 'sbs_phone_split'),
       ('tablet', const Size(820, 2400), 'sbs_side_by_side'),
       ('desktop', const Size(1280, 2400), 'sbs_side_by_side'),
     ]) {

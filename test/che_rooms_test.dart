@@ -26,13 +26,13 @@ void _phone(WidgetTester tester) {
 
 /// The older market overview (index chart, quotes, 3D scene) is folded under the research cards; open it.
 Future<void> _openOverview(WidgetTester tester) async {
-  for (var i = 0; i < 20 && find.text('Market overview', skipOffstage: false).evaluate().isEmpty; i++) {
+  for (var i = 0; i < 20 && find.text('MARKET OVERVIEW', skipOffstage: false).evaluate().isEmpty; i++) {
     await tester.drag(find.byType(ListView).first, const Offset(0, -300));
     await tester.pump();
   }
-  await tester.ensureVisible(find.text('Market overview', skipOffstage: false));
+  await tester.ensureVisible(find.text('MARKET OVERVIEW', skipOffstage: false));
   await tester.pump();
-  await tester.tap(find.text('Market overview'));
+  await tester.tap(find.text('MARKET OVERVIEW'));
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 300));
 }

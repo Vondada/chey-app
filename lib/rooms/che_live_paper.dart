@@ -8,6 +8,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 import 'che_strategy_learning.dart';
+import 'che_trading_research.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -76,9 +77,31 @@ class _CheLivePaperPanelState extends State<CheLivePaperPanel> {
     super.dispose();
   }
 
+  /// Every timeframe's evidence bucket per strategy (the research overview, #109), refreshed at most every five minutes.
+  Map<String, List<Map<String, dynamic>>> _timeframes = const {};
+  DateTime? _timeframesAt;
+
+  Future<void> _loadTimeframes() async {
+    final at = _timeframesAt;
+    if (at != null && DateTime.now().difference(at) < const Duration(minutes: 5)) return;
+    try {
+      final overview = await CheTradingResearchClient(baseUrl: widget.baseUrl, headers: widget.headers, client: widget.client).overview('MNQ');
+      final by = <String, List<Map<String, dynamic>>>{};
+      for (final row in (overview['strategies'] as List? ?? const [])) {
+        if (row is Map && row['strategy_id'] != null) {
+          by['${row['strategy_id']}'] = [for (final t in (row['timeframes'] as List? ?? const [])) if (t is Map) Map<String, dynamic>.from(t)];
+        }
+      }
+      if (mounted) setState(() { _timeframes = by; _timeframesAt = DateTime.now(); });
+    } catch (_) {
+      // Quiet: the card says the timeframes are not loaded yet, and the next refresh tries again.
+    }
+  }
+
   Future<void> _load() async {
     if (_loading) return;
     _loading = true;
+    unawaited(_loadTimeframes());
     try {
       final r = await _http.get(Uri.parse('${widget.baseUrl()}/api/trading/live'), headers: widget.headers()).timeout(const Duration(seconds: 20));
       final j = jsonDecode(utf8.decode(r.bodyBytes));
@@ -224,7 +247,7 @@ class _CheLivePaperPanelState extends State<CheLivePaperPanel> {
       if (_status.isNotEmpty) Text(_status, style: const TextStyle(color: Colors.white, fontSize: 16)),
       if (_error.isNotEmpty) Text('Stale records: $_error', style: const TextStyle(color: _gold)),
       if (d['learning'] is Map) CheStrategyLearningDashboard(
-        data: Map<String, dynamic>.from(d['learning'] as Map), onAsk: widget.onAsk, onRead: widget.onRead, onResearch: _busy ? null : _research,
+        data: Map<String, dynamic>.from(d['learning'] as Map), onAsk: widget.onAsk, onRead: widget.onRead, onResearch: _busy ? null : _research, timeframes: _timeframes,
         chart: Semantics(label: 'Five-minute ${feed['status']} paper chart with recorded entry and exit markers.',
           child: SizedBox(height: 240, child: CustomPaint(painter: _PaperChartPainter(d)))),
       ),
@@ -313,19 +336,7 @@ class _CheLivePaperPanelState extends State<CheLivePaperPanel> {
       const SizedBox(height: 12),
       const Text('Portfolio variants (correlated forward paper)', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800)),
       if (ranking.isEmpty) Padding(padding: EdgeInsets.symmetric(vertical: 6), child: Text('No strategy has closed a trade yet.', style: TextStyle(color: _dim))),
-      for (final s in ranking.take(12))
-        Semantics(
-          label: '${s['name']}, ${s['filter']}, ${s['target_r']} R target: ${s['trades']} trades, win rate ${s['win_rate'] ?? 'not measured'} percent, net ${_money(s['net_pnl'])}${s['ranked'] == true ? '' : ', too few trades to rank'}',
-          excludeSemantics: true,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 3),
-            child: Row(children: [
-              Expanded(child: Text('${s['name']} · ${s['filter']} · ${s['target_r']}R', style: const TextStyle(color: Colors.white))),
-              Text('${s['trades']} tr · ${s['win_rate'] ?? '—'}% · ${_money(s['net_pnl'])}${s['ranked'] == true ? '' : ' ·'}', style: TextStyle(color: _dim, fontFeatures: [FontFeature.tabularFigures()])),
-              if (s['ranked'] != true) const Text(' small sample', style: TextStyle(color: _gold, fontSize: 12)),
-            ]),
-          ),
-        ),
+      for (final s in ranking.take(12)) CheStrategyRankRow(row: s, money: _money),
       const SizedBox(height: 12),
       Text('Trade history (${trades.length})', style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800)),
       if (trades.isEmpty) Padding(padding: EdgeInsets.symmetric(vertical: 6), child: Text('No paper trade has closed yet. Each one appears here with its receipt the moment it is recorded.', style: TextStyle(color: _dim))),
