@@ -72,6 +72,14 @@ Then, on GitHub:
 
 **ChatGPT 2026-10-20 owner-directed end-to-end continuation:** Current main `295a9cde` (PRs #393 and #392 merged). Claude PR #394 false-completion fix is open: CI green on inspected commit `6984aa1`, but unresolved Codex review threads remain for `office_workforce.js` (`review_pending` must keep temporary agents busy) and `office_board.js` (desk statuses for `review_pending`, `needs_review`, `rejected`); original passive-claims thread is outdated but should be rechecked. DO NOT MERGE #394 before current-head review and checks pass. ChatGPT created PR #395 from main `chatgpt/chart-malformed-response-20261020` commit `2865b6e` to guard malformed scalar API collection fields (`points`, `timeframes`, `bars`, `markers`, `drawings`, `open_orders`) in `lib/rooms/che_trading_chart.dart`, resolving the owner's observed `int` cast crash. PR #395 CI Flutter / UI Analyze in progress (`39540411941`, `39540411947`); not merged, not installed, no live iPhone test. Actual live FundYourEdge/Tradesea Rithmic market-data and broker paper-order integration NOT CONNECTED; existing futures `/api/trading/chart` uses stored delayed research bars and blocks futures orders. Next: add chart malformed-payload regression, obtain valid Rithmic API access/terms and separate simulated account permission; test read-only stream, then simulated orders only; no credentials shared in chat and no paid purchases. Owner requested end-to-end finish, but third-party API authorization is a real external blocker.
 
+## 2. Current position (Claude, 2026-10-23 ~12:00 UTC — HANDOFF TO CHATGPT/CODEX; read `mailbox/briefs/2026-10-23-chatgpt-takeover.md`)
+
+- main `83c2d67` (#478) deployed and VERIFIED live; Shorebird 39898570143 success (carries #478/#479/#481).
+- Owner (latest): **do not merge or deploy without owner approval**; prepare focused PRs; never enable live-money orders.
+- Priority: (1) commit-analysis misroute → `claude/che-github-receipts` b0ed700 WIP; (2) memory recall + attribution → `claude/che-recall-fix` c08d5b6 WIP; (3) trading lanes integration (#480 dirty, paper-account, strategy-library, market-context, strategy-research, matrix-clarity, p2p-86-seed); (4) one Connections page, no duplicate CONNECT cards (not started); (5) Worker vs iPhone receipts.
+- #475 Film: B1 misroute fixed ("feature" no longer a film word) + main merged; pushed to `claude/che-film-studio`; awaiting CI and owner approval to merge.
+- All WIP commits are UNVERIFIED; run `bash .claude/skills/che-debug/scripts/run_checks.sh` before any PR.
+
 ## 2. Current position (Claude, 2026-10-23 — #473 analyze fixed; five lanes running)
 
 - main `da55bf2` green (#474 Rithmic merged by Codex).
