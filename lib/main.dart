@@ -33,6 +33,8 @@ import 'security/che_secret_scan.dart';
 import 'security/che_security_screen.dart';
 import 'security/che_session_store.dart';
 import 'brain/che_brain_ledger_screen.dart';
+import 'brain/che_brain_list.dart' show CheBrainRecordLinks;
+import 'brain/che_brain_sections.dart' show CheBrainEvidence, CheEvidenceKind, cheRecordIdsOf;
 import 'che_ui/che_owner_improvements.dart';
 import 'workflows/che_workflows_screen.dart';
 import 'film/che_film_studio_screen.dart';
@@ -1063,6 +1065,9 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   String? _streamUnderstoodAs;
   // The reply's Soul and engine provenance (Response Details → Personality), from its done event.
   Map<String, dynamic>? _streamResponseDetails;
+
+  /// The Brain records the streamed reply rests on (`record_ids`), shown as links under it.
+  List<String> _streamRecordIds = const [];
   final ImagePicker _imagePicker = ImagePicker();
 
   List<String> savedMemories = [];
@@ -2036,6 +2041,7 @@ OWNER AGENCY
               onReadAloud: (t) => speakText(t, record: false, readOnDemand: true),
               onRefresh: () => _loadAgentState(silent: true),
               onOpenAgent: (name) => _openOfficeFloor(agentName: name),
+              onOpenEvidence: _openBrainEvidence,
             ),
             ),
             offline: const CheOfflineBrainPanel(compact: true),

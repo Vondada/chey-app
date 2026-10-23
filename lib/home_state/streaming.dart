@@ -391,6 +391,7 @@ extension _CheHomeStreaming on _CHEHomeState {
     _streamMediaType = null;
     _streamUnderstoodAs = null;
     _streamResponseDetails = null;
+    _streamRecordIds = const [];
 
     await for (final line in response.stream
         .transform(utf8.decoder)
@@ -476,6 +477,7 @@ extension _CheHomeStreaming on _CHEHomeState {
       if (type == 'done') {
         _streamUnderstoodAs = cheUnderstoodAs(data);
         _streamResponseDetails = cheResponseDetails(data);
+        _streamRecordIds = cheRecordIdsOf(data['record_ids']);
         // "Open the workflows page": only the Workflow Engine's own reply opens it.
         if (data['open_screen'] == 'app_details' && data['source'] == 'che_runtime_status' && mounted) unawaited(_openAppVersionDetails());
         if (data['open_screen'] == 'workflows' && data['source'] == 'che_workflow_engine' && mounted) unawaited(_openWorkflows());
