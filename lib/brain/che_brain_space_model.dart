@@ -14,6 +14,7 @@ import 'dart:ui' show Offset, Size;
 import 'package:vector_math/vector_math.dart' as vm;
 
 import '../home/che_memory_brain.dart' show CheMemoryDot, cheRelatedMemoryEdges;
+import 'che_brain_sections.dart';
 
 /// Fixed category order: each gets its own lobe (direction) in the brain.
 const List<String> cheBrainCategories = [
@@ -373,6 +374,8 @@ enum CheBrainAction {
   open, inside, overview, backOut, filter, clearFilter, find, openSelected, expand, collapse, agentStatus,
   // Navigation (same controller, by touch or by voice).
   zoomIn, zoomOut, fit, back, centerChe, centerSelected, openWorker, lens,
+  // The searchable list (owner, 2026-10-23) and back to the neural view.
+  list, space,
 }
 
 /// Which brain is in view and what is shown of it: the owner's place in the
@@ -515,7 +518,7 @@ class CheBrainLens {
 }
 
 class CheBrainCommand {
-  const CheBrainCommand(this.action, {this.category, this.query, this.agent, this.worker, this.lens});
+  const CheBrainCommand(this.action, {this.category, this.query, this.agent, this.worker, this.lens, this.section});
   final CheBrainAction action;
   final String? category;
   final String? query;
@@ -528,6 +531,21 @@ class CheBrainCommand {
 
   /// A facet to show ("show verified memories only").
   final CheBrainLens? lens;
+
+  /// A list section ("show the brain's actions").
+  final CheBrainSection? section;
+
+  static const Map<String, CheBrainSection> _sectionWords = {
+    'conversations': CheBrainSection.conversations,
+    'conversation': CheBrainSection.conversations,
+    'research': CheBrainSection.research,
+    'knowledge': CheBrainSection.knowledge,
+    'memory': CheBrainSection.memory,
+    'memories': CheBrainSection.memory,
+    'actions': CheBrainSection.actions,
+    'action': CheBrainSection.actions,
+    'completed actions': CheBrainSection.actions,
+  };
 
   /// CHE plus the Office roster, matched against live agent-task sources.
   static const List<String> crew = ['che', 'nova', 'atlas', 'mira', 'knox', 'sage', 'lyra', 'iris'];
@@ -573,6 +591,15 @@ class CheBrainCommand {
     if (RegExp(r'^(?:show|see) (?:me )?(?:the |my |your )?(?:whole|entire|full) brain$|^(?:brain )?overview$|^reset (?:the )?(?:brain|view)$').hasMatch(t)) {
       return const CheBrainCommand(CheBrainAction.overview);
     }
+    // The list view: "show the brain list", "show the brain's actions", "show my actions in the brain".
+    if (RegExp(r'^(?:show|open|switch to) (?:me )?(?:the |my |your )?brain (?:as a )?list(?: view)?$|^(?:show|open|switch to) (?:the |my |your )?list view$').hasMatch(t)) {
+      return const CheBrainCommand(CheBrainAction.list);
+    }
+    final sectionAsked = RegExp(r"^(?:show|open|list) (?:me )?(?:my |your |the )?brain(?:['’]s)? (completed actions|conversations|research|knowledge|memories|memory|actions)$|^(?:show|open|list) (?:me )?(?:my |your |the )?(completed actions|conversations|research|knowledge|memories|memory|actions) (?:in|from) (?:the |my |your )?brain$").firstMatch(t);
+    if (sectionAsked != null) {
+      return CheBrainCommand(CheBrainAction.list, section: _sectionWords[sectionAsked.group(1) ?? sectionAsked.group(2)!]);
+    }
+    if (RegExp(r'^(?:show|open|switch to|back to) (?:the |my |your )?(?:neural|3d|brain|orb) view$').hasMatch(t)) return const CheBrainCommand(CheBrainAction.space);
     if (RegExp(r'^(?:back out|go back out|pull back)$').hasMatch(t)) return const CheBrainCommand(CheBrainAction.backOut);
     if (RegExp(r'^(?:zoom out|zoom out a bit|farther|further out|move (?:back|away))$').hasMatch(t)) return const CheBrainCommand(CheBrainAction.zoomOut);
     if (RegExp(r'^(?:zoom in|zoom in a bit|closer|move closer|come closer)$').hasMatch(t)) return const CheBrainCommand(CheBrainAction.zoomIn);
