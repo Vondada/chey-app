@@ -37,5 +37,7 @@ void main() {
     expect(cheIsAppStatusRequest('Install app version 9'), isFalse);
     expect(cheIsAppStatusRequest('What commit added the app status tests?'), isFalse);
     expect(cheIsAppStatusRequest('What version of the CHE app added Rithmic?'), isFalse);
+    expect(cheIsAppStatusRequest('What version was running when Rithmic was added?'), isFalse);
+    expect(cheIsAppStatusRequest('What deployed commit added Rithmic?'), isFalse);
   });
 }

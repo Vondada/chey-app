@@ -10014,8 +10014,8 @@ export class CheState extends DurableObject {
           const deployment = runtimeStatusAsk.kind === 'deployment'
             ? await latestWorkerDeploymentStatus(this.env, fetch, runtime).catch(() => ({ status: 503, detail: 'Deployment history lookup failed. No successful deployment is verified.' })) : null;
           const report = appStatusReport({ runtime, client: body.client_app, deployment });
-          const text = runtimeStatusAsk.kind === 'settings' ? `${report.text} The backend cannot open Settings on your phone; use CHE's on-device app/update details screen.` : report.text;
-          return ndjsonReply(text, { source: 'che_runtime_status', ok: true, model_calls: 0, status_receipt: report });
+          const text = runtimeStatusAsk.kind === 'settings' ? `${report.text} Your app can open CHE's app/update details screen for this request.` : report.text;
+          return ndjsonReply(text, { source: 'che_runtime_status', ok: true, model_calls: 0, status_receipt: report, ...(runtimeStatusAsk.kind === 'settings' ? { open_screen: 'app_details' } : {}) });
         }
 
         if (!body.attachment && !body.workflow_step && latestWorkerDeploymentIntent(rawMessage)) {

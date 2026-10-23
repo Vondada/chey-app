@@ -446,6 +446,7 @@ extension _CheHomeStreaming on _CHEHomeState {
         _streamUnderstoodAs = cheUnderstoodAs(data);
         _streamResponseDetails = cheResponseDetails(data);
         // "Open the workflows page": only the Workflow Engine's own reply opens it.
+        if (data['open_screen'] == 'app_details' && data['source'] == 'che_runtime_status' && mounted) unawaited(_openAppVersionDetails());
         if (data['open_screen'] == 'workflows' && data['source'] == 'che_workflow_engine' && mounted) unawaited(_openWorkflows());
         if (data['open_screen'] == 'security' && data['source'] == 'che_security' && mounted) unawaited(_openSecurity());
         // Only the trusted deterministic trading handlers can request this room.

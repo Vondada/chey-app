@@ -351,6 +351,7 @@ bool cheIsAppStatusRequest(String raw) {
   final text = raw.replaceAll('’', "'").trim().toLowerCase()
       .replaceFirst(RegExp(r'^(?:(?:hey|hi)\s+)?(?:che|chay|chey)[, :]+'), '')
       .replaceFirst(RegExp(r'[.!?]+$'), '');
+  if (RegExp(r'\b(?:added|introduced|was running|used to|previously|back then|at the time|when .*was)\b').hasMatch(text)) return false;
   if (cheOpensAppVersion(text)) return true;
   return RegExp(r"^(?:what(?:'s| is| are)?|which|tell me|show me|check|read|give me)\b").hasMatch(text) &&
       RegExp(r'\b(?:version|build number|deployment (?:identifier|id|status)|commit|sha)\b').hasMatch(text) &&

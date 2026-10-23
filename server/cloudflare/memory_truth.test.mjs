@@ -599,7 +599,8 @@ test('a status question clears unrelated held consequential confirmations', asyn
   const che = await owner({ saved });
   saved.set('che:pending_owner_action', { kinds: ['money'], text: 'buy a subscription', at: Date.now() });
   saved.set('che:pending_app_action', { app: 'external app', at: Date.now() });
-  await che.say('What version of CHE am I running?');
+  const settings = await che.say('Open Settings and show my app version.');
+  assert.equal(settings.meta.open_screen, 'app_details');
   assert.equal(saved.get('che:pending_owner_action'), null);
   assert.equal(saved.get('che:pending_app_action'), null);
 });

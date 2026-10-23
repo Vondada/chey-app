@@ -683,6 +683,7 @@ export function appStatusIntent(message = '') {
   const t = String(message).replace(/[’]/g, "'").trim().toLowerCase()
     .replace(/^(?:(?:hey|hi)\s+)?(?:che|chay|chey)[, :]+/, '').replace(/[.!?]+$/, '');
   if (/^(?:fix|change|set|install|update|deploy|build|release|publish|run|start)\b/.test(t) || latestWorkerDeploymentIntent(t)) return null;
+  if (/\b(?:added|introduced|was running|used to|previously|back then|at the time|when .*was)\b/.test(t)) return null;
   if (/^(?:open|show)(?: me)? (?:settings|about)(?:\s*(?:\/|and)\s*(?:about|show(?: me)?))?.*\b(?:app )?version\b/.test(t)) return { kind: 'settings' };
   if (!/^(?:what(?:'s| is| are)?|which|tell me|show me|check|read|give me)\b/.test(t)) return null;
   if (/\b(?:version|build number|deployment (?:identifier|id|status)|commit|sha)\b/.test(t)
