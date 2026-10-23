@@ -146,7 +146,8 @@ import { lastSite, publishSite, saveSite, serveSite, siteBuildIntent, siteEditIn
 import { noteJobActivity } from './job_activity.js';
 import { CODING_CANCEL_SOURCE, cancelQueuedJob, codingCancelIntent, resolveCodingCancel, speakCancelResult, speakUnresolved } from './coding_cancel.js';
 import { PENDING_OWNER_ACTION_KEY, deskOwnedMoney, forbiddenAction, prohibitionSpans, withoutProhibitions, PENDING_OWNER_ACTION_MS, gateOwnerAction, grantForKinds, isOwnerYes, peerActionReply, APPS_GRANTED_KEY, PENDING_APP_ACTION_KEY, PENDING_APP_ACTION_MS, gateAppAccess, classifyAppNeed, classifyExplicitAppOpen, classifyAppAccesses } from './owner_action_gate.js';
-import { auditEvidenceFrom, auditLedger, auditReply, claimKindsIn, guardRemovalEntries, knowVsGuessQuestion, knowVsGuessReply, memorySavedQuestion, memorySavedReply, recordAudit } from './hallucination_auditor.js';
+import { auditLedger, knowVsGuessQuestion, knowVsGuessReply, MEMORY_CLAIM_MS, memorySavedQuestion, memorySavedReply } from './hallucination_auditor.js';
+import { verifyReply } from './truth_pipeline.js';
 import { asksForCurrentOwnerLocation, executeWithReceipt, guardExecutionClaims, guardRetrievalClaims, changeHistoryIntent, guardClaimedOwnerActions, guardClaimedResearchActions, guardGroundedFacts, guardLocationWeatherReply, guardOwnerReply, loadChangeHistory, loadReceipts, OWNER_LOCATION_NOT_VERIFIED, recordReceipt, requestedCodeNames, speakChangeHistory, vagueResearchRequest, verifiedState, verifiedStatusText } from './truth_layer.js';
 import { ENGINEERING_PLAYBOOK_SPOKEN, playbookIntent } from './engineering_playbook.js';
 import { describeSkillsReport, reusableLicense, selectFilesForAgent, skillFromMarkdown, skillImportIntent, skillsReportIntent } from './skill_import.js';
@@ -4574,15 +4575,34 @@ export class CheState extends DurableObject {
       const persisted = await this.ctx.storage.get('che');
       const verified = persisted?.memory_records?.find((r) => r.id === record.id && r.text === record.text && r.active !== false);
       if (!verified) throw new Error('memory read-back did not match');
-      const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verified.text));
-      const hash = [...new Uint8Array(digest)].slice(0, 8).map((b) => b.toString(16).padStart(2, '0')).join('');
-      // The receipt is what lets "Did you save that memory?" be answered yes later (hallucination_auditor.js).
-      await recordReceipt(this.ctx.storage, { kind: 'memory_saved', key: `memory_saved:${verified.id}`, record_id: verified.id, text: String(verified.text).slice(0, 120), text_sha256_16: hash }).catch(() => null);
+      const hash = await this.recordMemorySaved(verified);
       return ndjsonReply('I’ll remember that, sir.', { source: 'che_memory', ok: true, model_calls: 0,
         memory_receipt: { record_id: verified.id, store: 'che.memory_records', status: 'stored', recorded_at: verified.created_at || null, checked_at: new Date().toISOString(), text_sha256_16: hash } });
     } catch (_) {
       return ndjsonReply('I could not verify the memory write, sir. It is not confirmed saved; please try again.', { source: 'che_memory', ok: false, model_calls: 0 });
     }
+  }
+
+  // One memory_saved receipt per confirmed write, from every path that stores an owner memory (the chat "remember",
+  // a correction, the app's /api/memory/add). The receipt is what lets "Did you save that memory?" be answered
+  // yes later (hallucination_auditor.js), so it is keyed per record and per minute: repeating a save the owner
+  // made an hour ago is a fresh confirmation, not the stale receipt (Codex, #510/#511/#512).
+  async recordMemorySaved(record) {
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(record.text ?? '')));
+    const hash = [...new Uint8Array(digest)].slice(0, 8).map((b) => b.toString(16).padStart(2, '0')).join('');
+    // Idempotent inside the half-hour window a "did you save it?" question reads; a later repeat is a new receipt.
+    const fresh = (await loadReceipts(this.ctx.storage, { sinceMs: MEMORY_CLAIM_MS }).catch(() => []))
+      .find((r) => r.kind === 'memory_saved' && r.record_id === record.id && r.text_sha256_16 === hash);
+    if (fresh) return hash;
+    await recordReceipt(this.ctx.storage, { kind: 'memory_saved', key: `memory_saved:${record.id}:${Date.now()}`, record_id: record.id, text: String(record.text ?? '').slice(0, 120), text_sha256_16: hash }).catch(() => null);
+    return hash;
+  }
+
+  // The record as durable storage holds it now, or null. Only a read-back earns a memory_saved receipt.
+  async readBackMemory(record) {
+    if (!record?.id) return null;
+    const persisted = await this.ctx.storage.get('che').catch(() => null);
+    return persisted?.memory_records?.find((r) => r.id === record.id && r.text === record.text && r.active !== false) || null;
   }
 
   async saveChatData(data) {
@@ -9543,6 +9563,10 @@ export class CheState extends DurableObject {
         // list already has this entry, the Brain still gets the full text under that row's id, so
         // "saved" is true for the Brain as well.
         const brainRow = added.added ? added.record : added.reason === 'duplicate' ? data.memory_records.find((item) => sameDisplayCopy(item.text, memory)) : null;
+        // The app's save path writes the same memory_saved receipt as the chat path, after a read-back, so
+        // "Did you save that memory?" answers yes for a memory saved from the Memory screen (Codex, #512).
+        const verifiedRow = await this.readBackMemory(brainRow);
+        if (verifiedRow) await this.recordMemorySaved(verifiedRow);
         if (brainRow) {
           const fullText = String(body.memory || '').trim();
           try {
@@ -12084,6 +12108,9 @@ export class CheState extends DurableObject {
           await rememberOwnerFact(this.ctx.storage, correctedFact).catch(() => null);
           const added = addOwnerMemory(data, correctedFact, { source: 'owner_chat', category: 'Memory', scope: 'owner', confidence: 1 });
           if (added.added || added.replaced?.length) await this.saveChatData(data);
+          // A correction is a memory write too: its receipt is what "Did you save that memory?" reads (Codex, #511).
+          const verifiedCorrection = await this.readBackMemory(added.record);
+          if (verifiedCorrection) await this.recordMemorySaved(verifiedCorrection);
           const said = correctedFact.replace(/^my\s+/i, 'your ');
           const reply = `Updated, sir: ${said}. I've kept your earlier answer as history, so I'll use the new one from now on.`;
           await recordAnswerEvidence(this.ctx.storage, reply, answerEvidenceReceipt({ ownerAttested: true }),
@@ -14254,182 +14281,20 @@ export class CheState extends DurableObject {
           }, 503);
         }
 
-        // One request id and one removal list for every guard below, so the audit ledger (hallucination_auditor.js)
-        // records what each guard removed, not only what the final auditor saw.
-        const auditRequestId = crypto.randomUUID();
-        const guardRemovals = [];
-        // Truth layer: a model sentence can never promote execution state.
-        // Unsupported action claims and owner "homework" are removed and
-        // replaced with what the receipts actually show.
-        {
-          const state = await this.currentVerifiedState(data);
-          const guarded = guardOwnerReply(reply, state, {
-            repoAvailable: Boolean(this.env.CHE_GITHUB_TOKEN && this.env.CHE_GITHUB_REPO),
-            turnEvidence: officeResults.length > 0 || skillResults.length > 0,
-          });
-          if (guarded.removed.length) {
-            console.log('CHE truth layer removed claims', JSON.stringify(guarded.removed).slice(0, 1500));
-            guardRemovals.push(...guardRemovalEntries('truth_layer', guarded.removed, { requestId: auditRequestId }));
-            let note = '';
-            if (guarded.homework) {
-              const last = await Promise.resolve().then(() => this.ctx.storage.get(LAST_ENGINEERING_REQUEST_KEY)).catch(() => null);
-              const lastAt = Date.parse(last?.at || '');
-              const lastAuthorized = Boolean(
-                last?.request
-                && last?.integrate === true
-                && (!Number.isFinite(lastAt) || Date.now() - lastAt < 6 * 3600_000)
-              );
-              const explicitContinuation = /\b(?:what\s+do\s+you\s+need\s+from\s+me|continue|resume|finish|repo\s+upgrade|coding\s+job|engineering\s+job)\b/i.test(message);
-              if (last?.request && this.env.CHE_GITHUB_TOKEN
-                && (turnActionPolicy.codingJobAllowed || (!chatOnlyEvaluation && lastAuthorized && explicitContinuation))) {
-                const queued = await this.queueSelfDevelopment({ request: last.request, groundedRequest: last.request });
-                await recordReceipt(this.ctx.storage, { kind: 'job_started', key: `job:${queued.job.id}`, job_id: queued.job.id, job_kind: 'self_development' });
-                note = `I'll read my own source from GitHub. Coding job ${queued.job.id.slice(0, 8)} is ${queued.job.status === 'running' ? 'running' : 'queued'} for your request.`;
-              } else {
-                note = 'I read my own source from GitHub myself; you never need to paste code for me.';
-              }
-            }
-            const statusNow = verifiedStatusText(await this.currentVerifiedState(data));
-            reply = [guarded.text, note, guarded.text.length < 40 || guarded.removed.some((r) => r.rule !== 'owner_homework') ? statusNow : ''].filter(Boolean).join(' ').trim();
-          }
-        }
-        // A chat model cannot create execution evidence by claiming it
-        // searched or compared sources. Successful real tools are the only
-        // basis for those past-tense claims.
-        // Text the owner pasted (code, an article) has been read: it is in his
-        // own words in this conversation.
-        const pastedText = [rawMessage, ...ownerHistory.filter((turn) => turn?.role === 'user').slice(-4).map((turn) => String(turn.content ?? turn.text ?? ''))]
-          .some((words) => words.length > 400 || /```|^\s*(?:def |function |class |import |const |let |var |final |public |<\w+)/m.test(words));
-        reply = guardClaimedResearchActions(reply, {
-          research, tools: skillResults, documentRead: Boolean(multimodal?.summary || body.screen_context || pastedText), message: rawMessage,
-        }).text;
-        // Nothing on this path sends, buys, deletes, uploads, renders, trades or opens anything (connector
-        // actions above only wait for approval), so a model sentence saying it did is removed.
-        // This turn's connector, tool and screen results are the only records that can back "according to your calendar".
-        const unclaimed = guardClaimedOwnerActions(reply, {
-          message: rawMessage,
-          records: [body.screen_context, JSON.stringify(skillResults), JSON.stringify(actionResults), JSON.stringify(plugins), JSON.stringify(officeResults)],
+        // Truth pipeline (truth_pipeline.js): every owner-facing guard, in one ordered list, one request id and one
+        // audit ledger write. A stage that throws fails closed: the reply still reaches the later stages and the auditor.
+        const verified = await verifyReply(reply, {
+          self: this, storage: this.ctx.storage, env: this.env, keyEnv: this.keyEnv, data, request, body, answer,
+          message, rawMessage, ownerHistory, research, multimodal, disproven, soulProfile, brainContext,
+          skillResults, actionResults, plugins, officeResults, createdPartners, officePeerReview, workerBrainHits,
+          ownerDevice, turnActionPolicy, chatOnlyEvaluation,
+          helpers: { ndjsonReply, enqueueJob }, keys: { LAST_ENGINEERING_REQUEST_KEY },
         });
-        if (unclaimed.removed.length) console.log('CHE truth layer removed action claims', JSON.stringify(unclaimed.removed).slice(0, 800));
-        guardRemovals.push(...guardRemovalEntries('owner_actions', unclaimed.removed, { requestId: auditRequestId }));
-        reply = unclaimed.text;
-        // Every link, headline, outlet and date in the reply must match a page
-        // CHE opened this turn; a news answer's events must appear in one.
-        // A broken citation is recorded so it is never repeated as fact.
-        const sourced = await guardCitations(reply, {
-          research, message: rawMessage, disproven, fiction: storyRequested(rawMessage),
-          // Links the owner gave or a connector returned are their own receipts.
-          trusted: [rawMessage, body.screen_context, JSON.stringify(skillResults), JSON.stringify(actionResults), JSON.stringify(plugins),
-            ...ownerHistory.filter((turn) => turn?.role === 'user').slice(-6).map((turn) => String(turn.content ?? turn.text ?? ''))],
-        }).catch((error) => {
-          console.log('CHE source check failed', error?.message || error);
-          return { text: reply, removed: [], used: [], disproven: [] };
-        });
-        if (sourced.removed.length) console.log('CHE source check removed', JSON.stringify(sourced.removed).slice(0, 1500));
-        guardRemovals.push(...guardRemovalEntries('citations', sourced.removed, { requestId: auditRequestId }));
-        reply = sourced.text;
-        if (sourced.disproven.length) await this.recordDisprovenClaims(data, sourced.disproven);
-        // Nothing the owner did not say becomes "you told me" or "you
-        // confirmed", and a fact the model inferred never reaches the phone's
-        // brain as a saved memory.
-        // Every date in a reply must be one a stored record holds (personal_recall.js). An invented date is never shown.
-        const grounded = groundedReply(reply, { records: data.memory_records || [], message: rawMessage });
-        if (grounded.removed.length) console.log('CHE grounding removed dates', JSON.stringify(grounded.removed));
-        guardRemovals.push(...guardRemovalEntries('grounding', grounded.removed, { requestId: auditRequestId }));
-        reply = grounded.text;
-        // A visual exists only when a record of this request made it, and a post only when one was published (asset_truth.js).
-        // An ad request always ends with the three facts: copy written, visuals made, nothing scheduled or published.
-        const asset = assetTruthReply(reply, { made: 0, published: 0 });
-        if (asset.removed.length) console.log('CHE asset check removed', JSON.stringify(asset.removed).slice(0, 800));
-        guardRemovals.push(...guardRemovalEntries('asset_truth', asset.removed, { requestId: auditRequestId }));
-        reply = adRequest(rawMessage) ? [asset.text, adStatusLines({ copy: Boolean(asset.text), made: 0, published: 0 })].filter(Boolean).join('\n') : asset.text;
-        // A missing ability is never refused: CHE queues it for herself as a self-development job and says so (capability_gap.js).
-        // Owner only; money, deletion and secrets are never queued.
-        const gap = ownerDevice ? capabilityGap(rawMessage, reply) : null;
-        if (gap) {
-          const { job } = enqueueJob(data, gap.fields);
-          await this.ctx.storage.put('che', data);
-          await this.scheduleWork();
-          reply = capabilityReply(job.id);
-        }
-        const ownerTurnsNow = ownerWords(ownerHistory, rawMessage);
-        // Owner evidence: the owner's own turns, the owner-attested memory records and the owner-attested Brain records
-        // retrieved this turn. Every other named speaker (Claude, Atlas, …) needs its own stored record.
-        const provenanceRecords = [...(data.memory_records || []), ...workerBrainHits.map(brainRecordForProvenance)];
-        const attribution = guardOwnerAttributions(reply, { records: provenanceRecords, ownerTurns: ownerTurnsNow, message: rawMessage });
-        const speakers = guardSpeakerAttributions(attribution.text, { records: provenanceRecords, message: rawMessage });
-        const removedAttributions = [...attribution.removed, ...speakers.removed];
-        if (removedAttributions.length) console.log('CHE memory truth removed', redactGoogleIds(JSON.stringify(removedAttributions)).slice(0, 800));
-        guardRemovals.push(...guardRemovalEntries('attribution', removedAttributions, { requestId: auditRequestId }));
-        reply = guardRememberBlock(speakers.text, {
-          ownerTurns: ownerTurnsNow, retracted: await loadRetractions(this.ctx.storage),
-        }).text;
-        // An Office task is never shown as CHE's own reply; the owner finds it in the Office view.
-        if (replyRepeatsAgentTask(reply, data.team_tasks || [])) {
-          reply = 'That is an internal Office task, sir, so I am not repeating it here. It is in the Office view.';
-        }
-        // Persist the actual answer-provenance receipt, not a model-invented
-        // bibliography. Source-backed research may be reused; model-only text
-        // cannot become verified memory by repetition.
-        const answerReceipt = answerEvidenceReceipt({
-          research: sourced.used.length ? { ...research, sources: sourced.used.map((page) => page.final_url || page.url) } : research,
-          tools: skillResults,
-        });
-        await Promise.resolve().then(() => this.ctx.storage.put(LAST_ANSWER_EVIDENCE_KEY, answerReceipt)).catch(() => null);
-        // Never cache an unverified language-model answer as a reusable fact.
-        // Source-backed research is already saved by knowledge_cache.js with
-        // provenance, expiry and supersession; owner facts use owner_memory.
-        if (/\[assistant name\]/i.test(reply) ||
-            (/start the conversation/i.test(reply) && /say\s+[“"'']?hey\b/i.test(reply))) {
-          reply = 'I’m awake, sir. What do you need?';
-        }
-        const steps = [
-          ...createdPartners.map((item) => ({ type: 'step', text: `Added ${item.name} (${item.role}) to the Office` })),
-          ...officeResults.map((item) => ({
-            type: 'step',
-            agent_id: item.partner_id,
-            agent: item.partner_name,
-            text: item.error ? `${item.partner_name} couldn’t finish` : `✓ ${item.partner_name} delivered (${item.role})`,
-          })),
-          ...(officePeerReview ? [{ type: 'step', text: '✓ Cross-checked the team’s findings' }] : []),
-          ...skillResults.map((item) => ({
-            type: 'step',
-            text: item.ok ? `✓ Used ${item.plugin} · ${item.tool}` : `${item.plugin} · ${item.tool} failed: ${item.error}`,
-          })),
-        ];
-        // A reply that is only a pretend tool call is never shown (owner, 2026-10-22: a "dalle.text2im" JSON object
-        // appeared instead of a dog picture). When the owner asked for a picture, the real engine makes it from the
-        // model's own prompt; otherwise CHE says plainly that nothing ran.
-        const pretend = pretendToolCall(reply);
-        if (pretend) {
-          if (pretend.picture && pretend.prompt && ownerDevice && !body.attachment && /\b(pictures?|images?|photos?|pics?|draw|paint|sketch|illustrat\w*|portraits?)\b/i.test(rawMessage)) {
-            const results = await makeChatImages(this.keyEnv || this.env, this.ctx.storage, { message: pretend.prompt, count: 1 });
-            return ndjsonReply(chatImageReply(results), { source: CHAT_IMAGE_SOURCE, ok: results.some((r) => r.ok), model_calls: 1, media: chatImageMedia(results), ...chatImageInline(results, new URL(request.url).origin), served_by: answer?.served_by || null });
-          }
-          reply = 'That came out as an internal tool request instead of an answer, sir, so nothing was run. Ask me again and I will answer it directly.';
-        }
-        // Final owner-facing boundary: keep internal provider/model failover chatter out of chat and TTS.
-        const executionGuard = guardExecutionClaims(sanitizeOwnerText(reply, { truncate: false }), { message: rawMessage, receipts: skillResults.map((r) => r.execution_receipt), documentRead: Boolean(multimodal?.summary || body.screen_context || pastedText), verifiedText: brainContext });
-        guardRemovals.push(...guardRemovalEntries('execution_claims', executionGuard.removed, { requestId: auditRequestId }));
-        reply = executionGuard.text;
-        // Hallucination auditor (hallucination_auditor.js): each completion claim must match a receipt from this request.
-        // An unreadable evidence list fails closed. The ledger keeps ids, labels and outcomes, never the reply text.
-        try {
-          const audit = auditReply(reply, { evidence: await auditEvidenceFrom(this.ctx.storage, { executions: skillResults.map((r) => r.execution_receipt) }), requestId: auditRequestId, fiction: storyRequested(rawMessage) });
-          if (audit.outcome === 'corrected' || audit.outcome === 'blocked') console.log('CHE hallucination auditor', audit.outcome, JSON.stringify(audit.claims).slice(0, 400));
-          reply = audit.text;
-          await recordAudit(this.ctx.storage, [...guardRemovals, ...audit.entries]);
-        } catch (error) {
-          console.log('CHE hallucination auditor unavailable', error?.message || error);
-          if (claimKindsIn(reply).length) reply = auditReply(reply, { evidence: null, requestId: auditRequestId, fiction: storyRequested(rawMessage) }).text;
-          await recordAudit(this.ctx.storage, guardRemovals).catch(() => null);
-        }
-        // A model cannot see its own routing: "the engine was CHE itself" becomes this reply's real engine (soul.js).
-        if (answer?.served_by) reply = guardSoulClaims(guardEngineClaims(reply, answer.served_by).text, soulProfile).text;
-        // The owner hears which vision engine saw the attachment, or that none did (owner, 2026-10-20).
-        if (body.attachment) reply = `${reply} ${multimodal?.summary ? `(Seen with ${multimodal.engine || 'the connected vision engine'}.)` : `(Vision: the attachment was not analyzed${multimodal?.error ? `: ${multimodal.error}` : ''})`}`.trim();
+        if (verified.earlyResponse) return verified.earlyResponse;
+        reply = verified.text;
+        const { steps, answerReceipt, sourced } = verified;
         // This answer's own receipt, keyed to its text, for "how do you know that?".
-        await recordAnswerEvidence(this.ctx.storage, reply, answerReceipt, { attributions_removed: attribution.removed.length });
+        await recordAnswerEvidence(this.ctx.storage, reply, answerReceipt, { attributions_removed: verified.attributionRemoved });
         // Sentence-sized deltas: the Flutter client paints/speaks the first
         // sentence as soon as it arrives instead of waiting for one big blob.
         const deltaLines = splitReplyDeltas(reply).map((delta) => JSON.stringify({ type: 'delta', delta }));
