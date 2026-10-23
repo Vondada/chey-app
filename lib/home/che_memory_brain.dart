@@ -8,6 +8,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../brain/che_brain_list.dart';
 import '../brain/che_brain_navigation.dart';
 import '../brain/che_brain_space.dart';
 import '../brain/che_brain_space_model.dart';
@@ -37,6 +38,7 @@ class CheMemoryDot {
     this.workers = const [],
     this.project = '',
     this.archived = false,
+    this.sourceInfo = const {},
   });
 
   final String id;
@@ -72,6 +74,10 @@ class CheMemoryDot {
 
   /// Historical or archived: no longer live work.
   final bool archived;
+
+  /// The unified Brain record's `source` map as stored (its kind, refs, URLs, status), or empty.
+  /// The Brain list reads evidence only from here and the record's own text.
+  final Map<dynamic, dynamic> sourceInfo;
 
   bool get isVerified => verification == 'owner_attested' || verification == 'verified_source';
 
@@ -316,6 +322,7 @@ List<CheMemoryDot> cheBuildMemoryDots({
         workers: workers,
         project: region == 'Projects and Proposals' ? path : '${src['project'] ?? ''}',
         archived: src['archived'] == true || path == 'Historical' || path.toLowerCase().contains('archive'),
+        sourceInfo: src,
       ),
     );
     drawn.add(id);
@@ -432,9 +439,14 @@ class CheMemoryBrainRoom extends StatefulWidget {
     this.offline = false,
     this.pendingSync = 0,
     this.error,
+    this.onOpenEvidence,
   });
 
   final List<CheMemoryDot> dots;
+
+  /// Opens in-app evidence from the list view (a trade, its replay, a coding job); null shows those
+  /// items as "evidence not available yet".
+  final CheOpenBrainEvidence? onOpenEvidence;
 
   /// Related links from Worker `/api/state` brain_graph (clustering + similarity).
   final List<Map<String, dynamic>> brainLinks;
@@ -466,6 +478,9 @@ class CheMemoryBrainRoom extends StatefulWidget {
 enum _BrainPanel { none, search, filters, brains, view }
 
 class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom> {
+  /// The searchable list (owner, 2026-10-23) instead of the neural view; kept on the controller so
+  /// voice ("show the brain's actions") and touch switch the same view.
+  bool get _list => _space.listMode;
   late final CheBrainSpaceController _space;
   final _search = TextEditingController();
   _BrainPanel _panel = _BrainPanel.none;
@@ -637,16 +652,22 @@ class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom> {
                         ),
                       ),
                     ),
+                    _iconButton(_list ? Icons.view_in_ar_rounded : Icons.menu_book_rounded, _list ? 'Show the neural view' : 'Show the searchable list: conversations, research, knowledge, memory and actions', () {
+                      setState(() => _panel = _BrainPanel.none);
+                      _list ? _space.showSpace() : _space.showList();
+                    }, on: _list),
+                    if (!_list) ...[
                     _iconButton(Icons.search_rounded, _panel == _BrainPanel.search ? 'Hide memory search' : 'Find a memory', () => _toggle(_BrainPanel.search), on: _panel == _BrainPanel.search),
                     _iconButton(Icons.tune_rounded, _panel == _BrainPanel.filters ? 'Hide filters' : 'Filter the brain', () => _toggle(_BrainPanel.filters), on: _panel == _BrainPanel.filters || c.filter.isNotEmpty || !c.lens.isEmpty),
                     _iconButton(Icons.hub_outlined, _panel == _BrainPanel.brains ? 'Hide the brain switcher' : 'Switch brain: CHE or an Office worker', () => _toggle(_BrainPanel.brains), on: _panel == _BrainPanel.brains || c.scope != null),
                     _iconButton(Icons.zoom_in_map_rounded, _panel == _BrainPanel.view ? 'Hide view controls' : 'View controls: zoom, fit, center, inside, back', () => _toggle(_BrainPanel.view), on: _panel == _BrainPanel.view),
+                    ],
                     if (widget.onRefresh != null) _iconButton(Icons.refresh_rounded, 'Refresh memories', () => widget.onRefresh!()),
                     const SizedBox(width: 4),
                   ],
                 ),
               ),
-              CheBrainContextBar(controller: c, onSpeak: _say),
+              if (!_list) CheBrainContextBar(controller: c, onSpeak: _say),
               if (_panel == _BrainPanel.search)
                 Padding(
                   padding: const EdgeInsets.fromLTRB(CheSpace.gutter, 2, CheSpace.gutter, 6),
@@ -702,7 +723,20 @@ class _CheMemoryBrainRoomState extends State<CheMemoryBrainRoom> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         chrome,
-        Expanded(child: space),
+        Expanded(
+          child: ValueListenableBuilder<int>(
+            valueListenable: _space.state,
+            builder: (context, _, _) => _list
+                ? CheBrainList(
+                    key: ValueKey(_space.listSection),
+                    dots: widget.dots,
+                    initialSection: _space.listSection,
+                    onReadAloud: widget.onReadAloud,
+                    onOpenEvidence: widget.onOpenEvidence,
+                  )
+                : space,
+          ),
+        ),
       ],
     );
     // HUD glass: the room is clear, so the navy HUD backdrop behind every page shows through.

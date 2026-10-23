@@ -177,8 +177,8 @@ extension _CheHomeStreaming on _CHEHomeState {
             : {'request': userMessage.trim()}),
       );
       if (response.statusCode == 401) {
-        await _clearSecuritySession();
-        throw const _CHEAgentException('Pair this device again, sir.');
+        if (await _onUnauthorized(response)) throw const _CHEAgentException('Pair this device again, sir.');
+        throw const _CHEAgentException('That needs Face ID first. You are still signed in.');
       }
       Map<String, dynamic> result = const {};
       try {
@@ -255,9 +255,12 @@ extension _CheHomeStreaming on _CHEHomeState {
     final installedBuild = cheIsAppStatusRequest(userMessage)
         ? await CheInstalledBuild.read().timeout(const Duration(seconds: 2), onTimeout: () => null)
         : null;
+    final installedPatch = installedBuild == null
+        ? null
+        : await CheInstalledBuild.readPatch().timeout(const Duration(seconds: 2), onTimeout: () => null);
     request.body = jsonEncode({
       'message': userMessage,
-      if (installedBuild != null) 'client_app': installedBuild.chatMetadata(),
+      if (installedBuild != null) 'client_app': installedBuild.chatMetadata(patch: installedPatch),
       'history': history,
       'last_media_id': _lastMediaId(),
       'request_id': _requestGate.current.requestId,
@@ -320,10 +323,11 @@ extension _CheHomeStreaming on _CHEHomeState {
     }
 
     if (response.statusCode == 401) {
-      await _clearSecuritySession();
-      throw const _CHEAgentException(
-        'Your CHE security session expired. Pair this device again.',
-      );
+      final body = await response.stream.bytesToString();
+      if (await _onUnauthorized(http.Response(body, 401))) {
+        throw const _CHEAgentException('This phone was signed out of CHE. Pair this device again.');
+      }
+      throw const _CHEAgentException('That needs Face ID first. You are still signed in.');
     }
 
     if (response.statusCode != 200) {
@@ -509,6 +513,16 @@ extension _CheHomeStreaming on _CHEHomeState {
             onAsk: _runHubPrompt,
             onRead: (words) { speakText(words, record: false, readOnDemand: true); },
             chart: data['chart'] is Map<String, dynamic> ? data['chart'] as Map<String, dynamic> : null,
+          )));
+        }
+        // "Replay my last trade", "replay trade T0…": the trade on its own stored bars (owner mission, Priority 5).
+        final replayId = data['trade_id']?.toString().trim() ?? '';
+        if (data['open_view'] == 'trade_replay' && replayId.isNotEmpty && mounted) {
+          unawaited(Navigator.of(context).push(CheTradeReplayPage.route(
+            tradeId: replayId,
+            baseUrl: () => cheAgentBaseUrl,
+            headers: () => _authHeaders,
+            onRead: (words) { speakText(words, record: false, readOnDemand: true); },
           )));
         }
         if (data['open_view'] == 'alpaca_paper' && mounted) {

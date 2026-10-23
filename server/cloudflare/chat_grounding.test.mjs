@@ -85,7 +85,9 @@ test('1b: a stored food is quoted with the date it was stored, and where it came
   // and no invented value or date appears.
   assert.match(out.reply, /pizza/);
   assert.doesNotMatch(out.reply, /pasta|April 12/);
-  for (const date of out.reply.match(/[A-Z][a-z]+ \d{1,2}, \d{4}/g) || []) assert.equal(date, 'October 21, 2026');
+  // The only date allowed is the day the memory was stored: today (the test once pinned the day it was written).
+  const stored = spokenStoredDate({ created_at: new Date().toISOString() });
+  for (const date of out.reply.match(/[A-Z][a-z]+ \d{1,2}, \d{4}/g) || []) assert.equal(date, stored);
 });
 
 test('1c: the stored date is the only date in the reply, and it is a real one', () => {
