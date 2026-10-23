@@ -409,6 +409,12 @@ async function saveDataset(storage, market, tf, bars, manifest) {
   const entries = Object.entries(puts);
   for (let i = 0; i < entries.length; i += 100) await storage.put(Object.fromEntries(entries.slice(i, i + 100)));
 }
+/** The stored dataset manifests for one market, by timeframe (no bars are read). */
+export async function datasetManifests(storage, market) {
+  const keys = TF_IDS.map((tf) => `${DS_PREFIX}${market}:${tf}`);
+  const got = await storage.get(keys);
+  return Object.fromEntries(TF_IDS.filter((tf, i) => got.get(keys[i])).map((tf, i) => [tf, got.get(`${DS_PREFIX}${market}:${tf}`)]));
+}
 export async function loadDataset(storage, market, tf) {
   const manifest = await storage.get(`${DS_PREFIX}${market}:${tf}`);
   if (!manifest) return null;
@@ -623,12 +629,17 @@ export function evidenceState(unit) {
   const oosOk = unit.oos.trades >= 15 && unit.oos.expectancy_r > 0;
   return oosOk && unit.look_ahead !== 'FAILED' ? 'QUALIFIED' : 'MONITOR';
 }
+// The rating uses only out-of-sample (unseen) trades. Fewer than this many unseen trades is too few to rate.
+export const MIN_OOS_TRADES = 15;
 export function matrixState(unit) {
   const st = evidenceState(unit);
   if (st === 'NO DATA' || st === 'N/A') return 'No data';
   if (st === 'NOT READY') return 'Learning';
   if (st === 'QUALIFIED') return unit.oos.expectancy_r >= 0.3 && (unit.oos.pf ?? 0) >= 1.3 ? 'Strong' : 'Good';
-  return (unit.oos.expectancy_r ?? -1) > -0.05 ? 'Fair' : 'Weak';
+  // MONITOR covers three different things; only a real negative unseen result is Weak.
+  if ((unit.oos?.trades || 0) < MIN_OOS_TRADES) return 'Not enough unseen data';
+  if (unit.look_ahead === 'FAILED') return 'Audit failed';
+  return unit.oos.expectancy_r > -0.05 ? 'Fair' : 'Weak';
 }
 export function decayOf(unit) {
   if (!unit?.recent || unit.recent.trades < 15 || unit.all.trades < MIN_CLOSED_TRADES) return 'INSUFFICIENT DATA';
@@ -952,13 +963,15 @@ export async function forwardEvidence(storage) {
 // ─── Views for the API ───────────────────────────────────────────────────────
 
 function strategyCard(def, units, paper, owner) {
-  if (!def.defined) return { strategy_id: def.strategy_id, name: def.name, defined: false, best_timeframe: null, qualified_buckets: 0, expectancy_r: null, win_rate: null, status: 'UNDEFINED', readiness: 'NOT TESTABLE', why: def.why };
+  if (!def.defined) return { strategy_id: def.strategy_id, name: def.name, defined: false, best_timeframe: null, qualified_buckets: 0, expectancy_r: null, win_rate: null, status: 'UNDEFINED', readiness: 'NOT TESTABLE', why: def.why, sample_trades: 0, paper_trades: 0 };
   const mine = units.filter((u) => u.strategy_id === def.strategy_id && u.ok);
   const qualified = mine.filter((u) => evidenceState(u) === 'QUALIFIED');
   const best = [...qualified].sort((a, b) => b.oos.expectancy_r - a.oos.expectancy_r)[0] || [...mine].sort((a, b) => b.all.trades - a.all.trades)[0];
   return { strategy_id: def.strategy_id, name: def.name, family: def.family, defined: true, best_timeframe: best?.timeframe || null, qualified_buckets: qualified.length,
     expectancy_r: best ? (qualified.length ? best.oos.expectancy_r : best.all.expectancy_r) : null, win_rate: best?.all.win_rate ?? null,
-    status: statusOf(mine, owner), readiness: readinessOf(mine, paper) };
+    status: statusOf(mine, owner), readiness: readinessOf(mine, paper),
+    // Sample sizes behind those numbers, so a setup's evidence badge can show them (Signal Mode).
+    sample_trades: best?.all.trades ?? 0, paper_trades: paper?.trades ?? 0 };
 }
 
 export async function researchView(storage, { now = Date.now() } = {}) {

@@ -385,6 +385,15 @@ export const COMMANDS = Object.freeze([
     examples: ['Any entry points on NQ?', 'Find setups on MNQ'],
     prompt: 'Analyze {input} entry points on the chart', produces: 'setups', keywords: ['setup', 'entry', 'entries', 'signal'],
   }),
+  // Signal Mode (owner, 2026-10-23): the Setup Progress Board the iPhone runs on live Rithmic candles.
+  C('trade-setups', 'trading', 'EXPLORE', 'Open the Setup Progress Board and its signals.', {
+    does: 'Opens the Setup Progress Board: every setup CHE follows on the live Rithmic candles on this iPhone, its stage, the conditions met, pending or failed, and the CHE PAPER ACCOUNT signals. Asking which are ready reads them. Places no order.',
+    needs: ['office'], route: 'che_trading_chart', handler: 'trading_chart.chartIntent (setups section)',
+    input: null,
+    examples: ['Show setups', 'What setups are ready?', 'Show the setup progress board'],
+    prompt: 'Show my setups', produces: 'setup board', evidence: 'Stages computed on this iPhone from real Rithmic candles; signals carry their data source and evidence sample size.',
+    keywords: ['setups', 'setup progress', 'signal mode', 'signals', 'ready setups'],
+  }),
   C('trade-liquidity', 'trading', 'EXPLORE', 'Analyze VWAP, liquidity, order blocks, and key levels.', {
     does: 'Marks swing highs and lows (where liquidity rests) from real candles. VWAP and order-block math are not computed yet; CHE says so instead of guessing.',
     needs: ['market_data'], route: 'che_trading', handler: 'trading_lab.analyze (swings)',
@@ -492,6 +501,32 @@ export const COMMANDS = Object.freeze([
     examples: ['What are my trading connections?', 'Which brokers are connected?'],
     prompt: 'What are my trading connections?', produces: 'connections', evidence: 'Each connection\'s stored state and its provider\'s own check; never a key.',
     keywords: ['connections', 'broker', 'brokers', 'alpaca', 'tradovate', 'connected'],
+  }),
+  // Visual trading evidence (owner, 2026-10-23): trading_visual.js through its own chat route. Read only.
+  C('trade-pnl', 'trading', 'EXPLORE', "Today's paper P&L, realized and open.", {
+    does: 'Reads today\'s forward paper P&L from the journal: realized from closed trades, unrealized marked at the last stored DELAYED bar, commissions and slippage, and the intraday P&L curve on the Trading page. No balance is assumed.',
+    needs: ['office'], route: 'che_trading_visual', handler: 'trading_visual.dailyPnl', input: null,
+    examples: ["Show today's P&L", 'How much am I up today?'],
+    prompt: "Show today's P&L.", produces: 'daily pnl', evidence: 'Closed journal trades and the last stored bar only.', keywords: ['p&l', 'pnl', 'profit and loss', 'today', 'daily pnl'],
+  }),
+  C('trade-leader', 'trading', 'EXPLORE', 'The best verified strategy, or why there is none.', {
+    does: 'Names the current leader only when one strategy and timeframe meets every written rule (30 forward paper trades, positive expectancy range after costs, profit factor above 1.2, and historical backing); otherwise says "No verified leader yet" and what each candidate is missing. Never by win rate alone.',
+    needs: ['office'], route: 'che_trading_visual', handler: 'trading_visual.currentLeader', input: null,
+    examples: ['Who is the current leader?', 'What is the best verified strategy?'],
+    prompt: 'Who is the current leader?', produces: 'leader', evidence: 'Forward paper and historical backtest records, ranked by the lower expectancy bound.', keywords: ['leader', 'best strategy', 'verified strategy', 'ranking'],
+  }),
+  C('trade-audit', 'trading', 'EXPLORE', 'Audit every stored trade record.', {
+    does: 'Counts the stored trade records by execution type and checks them for exact duplicates, entries shared across variants, look-ahead, fills that disagree with their own costs, missing labels and P&L that does not add up. Changes nothing.',
+    needs: ['office'], route: 'che_trading_visual', handler: 'trading_visual.auditTrades', input: null,
+    examples: ['Audit the trades', 'Run a trade audit'],
+    prompt: 'Audit the trades.', produces: 'audit', evidence: 'Real counts from the stored records; nothing is altered.', keywords: ['audit', 'duplicates', 'look-ahead', 'trade audit'],
+  }),
+  C('trade-replay', 'trading', 'EXPLORE', "Replay one of CHE's trades on its own chart.", {
+    does: 'Opens a trade by its ID (or CHE\'s last forward paper trade) on the exact bars it was traded on: entry, exit, stop, target, times and outcome, labelled BACKTEST, SIMULATION, FORWARD PAPER or BROKER-CONFIRMED. Replay shows a bar only once it has closed. Without recorded bars it says so and draws nothing.',
+    needs: ['office'], route: 'che_trade_evidence', handler: 'trade_evidence.readTradeEvidence',
+    input: { name: 'trade', required: false, hint: 'A trade ID such as T0ABC…, or leave empty for the last trade' },
+    examples: ['Replay my last trade', 'Replay trade T0K3J9QW1ZX7A'],
+    prompt: 'Replay trade {input}', produces: 'trade replay', evidence: 'Stored trade records and stored bars only; nothing is invented.', keywords: ['replay', 'trade replay', 'last trade', 'trade evidence'],
   }),
 
   // ── Websites, Apps & AI ───────────────────────────────────────────────

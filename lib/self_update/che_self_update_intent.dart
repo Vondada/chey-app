@@ -353,9 +353,22 @@ bool cheIsAppStatusRequest(String raw) {
       .replaceFirst(RegExp(r'[.!?]+$'), '');
   if (RegExp(r'\b(?:added|introduced|was running|used to|previously|back then|at the time|when .*was)\b').hasMatch(text)) return false;
   if (cheOpensAppVersion(text)) return true;
+  // Commit and deployment receipts need the phone's own build and patch report too (deploy_receipt.js).
+  if (cheIsCommitReceiptRequest(text)) return true;
   return RegExp(r"^(?:what(?:'s| is| are)?|which|tell me|show me|check|read|give me)\b").hasMatch(text) &&
       RegExp(r'\b(?:version|build number|deployment (?:identifier|id|status)|commit|sha)\b').hasMatch(text) &&
-      RegExp(r'\b(?:my|installed|backend|worker|connected|deployed|deployment|running)\b').hasMatch(text);
+      RegExp(r'\b(?:installed|backend|worker|connected|deployed|deployment|running|che|(?:my|the|this) (?:app|build|iphone app|phone app))\b').hasMatch(text);
+}
+
+/// "What changed in commit X", "what can I test on my iPhone", "verify the deployment", "is the latest commit live".
+/// Mirrors deploy_receipt.js commitIntent closely enough to attach the device report; the Worker decides the route.
+bool cheIsCommitReceiptRequest(String raw) {
+  final text = raw.replaceAll('’', "'").trim().toLowerCase()
+      .replaceFirst(RegExp(r'^(?:(?:hey|hi)\s+)?(?:che|chay|chey)[, :]+'), '');
+  final commit = RegExp(r'\bcommit\b|\bsha\b|\b[0-9a-f]{7,40}\b').hasMatch(text);
+  final asks = RegExp(r"\bwhat(?:'s| is| was)? (?:changed|new|in)\b|\bchanged in\b|\bwhat (?:can|should|do) i test\b|\btest(?:able)? on (?:my|the) (?:iphone|phone)\b").hasMatch(text);
+  final verify = RegExp(r'\b(?:verify|confirm|check)\b[\s\S]{0,40}\bdeploy(?:ment|ed)?\b|\bis (?:the latest |the |this |that )?(?:commit|change|sha)\b[\s\S]{0,30}\blive\b|\bwas (?:the (?:latest |last )?commit|this commit|that commit) deployed\b').hasMatch(text);
+  return verify || (asks && (commit || RegExp(r'\b(?:that|this|the latest|the last) (?:commit|change|update)\b').hasMatch(text)));
 }
 
 bool cheOpensAppVersion(String raw) => RegExp(
