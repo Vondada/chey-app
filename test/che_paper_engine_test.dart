@@ -27,7 +27,7 @@ ChePaperSignal sig({
       stage: stage,
       detectedAt: t0,
       dataSource: source,
-      conditions: const [CheSetupCondition('Price above EMA 20', 'satisfied'), CheSetupCondition('Pullback to EMA', 'satisfied')],
+      conditions: const [ChePaperCondition('Price above EMA 20', 'satisfied'), ChePaperCondition('Pullback to EMA', 'satisfied')],
     );
 
 ChePriceTick tick(double price, int sec, {String source = 'rithmic'}) =>

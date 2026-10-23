@@ -698,7 +698,7 @@ class _ChePaperTradeDetailPageState extends State<ChePaperTradeDetailPage> {
             ]),
           ),
         );
-    Widget condition(CheSetupCondition c) {
+    Widget condition(ChePaperCondition c) {
       final (icon, color, word) = switch (c.status) {
         'satisfied' => (Icons.check_circle, _up, 'met'),
         'failed' => (Icons.cancel, _down, 'failed'),

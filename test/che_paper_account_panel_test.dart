@@ -9,7 +9,7 @@ final t0 = DateTime.utc(2026, 10, 23, 14, 30);
 ChePaperSignal sig() => ChePaperSignal(
       id: 's1', symbol: 'MNQZ6', side: CheSide.long, entry: 21000, stop: 20995, target: 21010, strategy: 'EMA 20 pullback',
       timeframe: '5m', stage: 'triggered', detectedAt: t0, dataSource: 'rithmic', evidence: 'provisional: 12 paper trades',
-      conditions: const [CheSetupCondition('Price above EMA 20', 'satisfied'), CheSetupCondition('Volume confirmation', 'pending')],
+      conditions: const [ChePaperCondition('Price above EMA 20', 'satisfied'), ChePaperCondition('Volume confirmation', 'pending')],
     );
 
 Future<ChePaperEngine> engine({bool wide = true}) async {

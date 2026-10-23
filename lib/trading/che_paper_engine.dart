@@ -542,10 +542,10 @@ class ChePaperEngine extends ChangeNotifier {
   }
 
   /// The signal engine re-checked an open trade's setup: its conditions now. Changes are journaled.
-  void updateConditions(String signalId, List<CheSetupCondition> now) {
+  void updateConditions(String signalId, List<ChePaperCondition> now) {
     final p = _positions.where((p) => p.signal.id == signalId && p.status == ChePositionStatus.open).firstOrNull;
     if (p == null) return;
-    String sig(List<CheSetupCondition> l) => l.map((c) => '${c.name}=${c.status}').join('|');
+    String sig(List<ChePaperCondition> l) => l.map((c) => '${c.name}=${c.status}').join('|');
     if (sig(p.currentConditions) == sig(now)) return;
     final failed = now.where((c) => c.status == 'failed').map((c) => c.name).toList();
     p

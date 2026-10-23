@@ -67,15 +67,15 @@ extension CheSideX on CheSide {
 }
 
 /// A setup condition as the signal engine reported it ("Price above EMA 20": satisfied).
-class CheSetupCondition {
-  const CheSetupCondition(this.name, this.status);
+class ChePaperCondition {
+  const ChePaperCondition(this.name, this.status);
   final String name;
 
   /// satisfied, pending or failed.
   final String status;
 
   Map<String, Object?> toJson() => {'name': name, 'status': status};
-  factory CheSetupCondition.fromJson(Map<String, dynamic> j) => CheSetupCondition('${j['name'] ?? ''}', '${j['status'] ?? 'pending'}');
+  factory ChePaperCondition.fromJson(Map<String, dynamic> j) => ChePaperCondition('${j['name'] ?? ''}', '${j['status'] ?? 'pending'}');
 }
 
 /// What the paper engine needs from a trade signal. The signals lane (che_trade_signal.dart) adapts
@@ -104,7 +104,7 @@ class ChePaperSignal {
   /// WATCHING … READY, TRIGGERED … (lowercase). Only ready or triggered may open a paper trade.
   final String stage;
   final DateTime detectedAt;
-  final List<CheSetupCondition> conditions;
+  final List<ChePaperCondition> conditions;
 
   bool get tradable => stage == 'ready' || stage == 'triggered';
 
@@ -118,7 +118,7 @@ class ChePaperSignal {
         entry: _d(j['entry'])!, stop: _d(j['stop'])!, target: _d(j['target'])!, strategy: '${j['strategy'] ?? ''}',
         timeframe: '${j['timeframe'] ?? ''}', stage: '${j['stage'] ?? ''}', detectedAt: DateTime.parse('${j['detected_at']}'),
         dataSource: '${j['data_source'] ?? ''}',
-        conditions: [for (final c in (j['conditions'] as List? ?? const [])) CheSetupCondition.fromJson(Map<String, dynamic>.from(c as Map))],
+        conditions: [for (final c in (j['conditions'] as List? ?? const [])) ChePaperCondition.fromJson(Map<String, dynamic>.from(c as Map))],
         evidence: '${j['evidence'] ?? ''}',
       );
 }
@@ -251,7 +251,7 @@ class ChePaperPosition {
     List<ChePricePoint>? path,
     this.riskAlerted = false,
     this.period,
-    List<CheSetupCondition>? currentConditions,
+    List<ChePaperCondition>? currentConditions,
     this.conditionsAt,
     List<CheFeedGap>? gaps,
   })  : currentConditions = currentConditions ?? [],
@@ -281,7 +281,7 @@ class ChePaperPosition {
 
   /// The setup's conditions as the signal engine last re-checked them while the trade is open
   /// (the original ones stay in [signal]); empty until it reports.
-  List<CheSetupCondition> currentConditions;
+  List<ChePaperCondition> currentConditions;
   DateTime? conditionsAt;
 
   /// Feed gaps while this trade was open; a result with gaps is flagged wherever it is shown.
@@ -383,7 +383,7 @@ class ChePaperPosition {
         path: [for (final p in (j['path'] as List? ?? const [])) ChePricePoint.fromJson(Map<String, dynamic>.from(p as Map))],
         riskAlerted: j['risk_alerted'] == true,
         period: (j['period'] as num?)?.toInt(),
-        currentConditions: [for (final c in (j['current_conditions'] as List? ?? const [])) CheSetupCondition.fromJson(Map<String, dynamic>.from(c as Map))],
+        currentConditions: [for (final c in (j['current_conditions'] as List? ?? const [])) ChePaperCondition.fromJson(Map<String, dynamic>.from(c as Map))],
         conditionsAt: _t(j['conditions_at']),
         gaps: [for (final g in (j['gaps'] as List? ?? const [])) CheFeedGap.fromJson(Map<String, dynamic>.from(g as Map))],
       );
