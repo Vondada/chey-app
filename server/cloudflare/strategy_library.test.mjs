@@ -167,7 +167,7 @@ test('search and filters: by words, category, kind and stage; favorites first', 
   assert.equal(all.entries[0].id, 'vwap-revert-5m');
   assert.ok((await libraryView(storage, { q: 'silver bullet' })).entries.some((e) => e.id === 'silver-bullet-5m'));
   assert.ok((await libraryView(storage, { category: 'ict_smc' })).entries.every((e) => e.category === 'ict_smc'));
-  assert.deepEqual((await libraryView(storage, { kind: 'market_context' })).entries.map((e) => e.id), ['amd-power-of-three']);
+  assert.deepEqual((await libraryView(storage, { kind: 'market_context' })).entries.map((e) => e.id).sort(), ['amd-power-of-three', 'p2p-86-model-original']);
   assert.ok((await libraryView(storage, { lifecycle: 'discovered' })).entries.every((e) => e.lifecycle === 'discovered'));
 });
 
@@ -230,7 +230,7 @@ test('chat: "show the strategy library" answers from the registry with zero mode
   const out = await che.say('Show the strategy library');
   assert.equal(out.meta.source, 'che_strategy_library');
   assert.equal(out.modelCalls, 0);
-  assert.match(out.reply, /named strategies and 1 market-context model/);
+  assert.match(out.reply, /named strategies and 2 market-context models/);
   assert.match(out.reply, /have executable rules/);
   assert.match(out.reply, /Live trading is off/);
 });
