@@ -14,6 +14,7 @@ import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 
 import '../che_ui/che_agents.dart';
+import '../che_ui/che_chrome_status.dart';
 import '../che_ui/che_hud.dart';
 import '../che_ui/che_rooms.dart';
 import '../che_ui/che_theme.dart';
@@ -668,13 +669,9 @@ class CheCodingJobCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = switch (status.state) {
-      'merged' || 'no_change' || 'approved_waiting_owner' => CheColors.success,
-      'review_rejected' || 'tests_failed' || 'rolled_back' || 'blocked' ||
-      'failed' || 'cancelled' || 'dead_letter' || 'opencode_failed' || 'deliver_failed' || 'interrupted' => CheColors.danger,
-      'reviewing' || 'pr_open' => CheColors.accent,
-      _ => CheColors.warning,
-    };
+    // Tone and motion come from the coding runtime's real state: queued or waiting never animates as running.
+    final (tone, activity) = cheCodingStatus(status.state);
+    final color = CheStatusPalette.of(tone).base;
     return Semantics(
       container: true,
       label: 'CHE coding job. ${status.label}. ${status.speech}',
@@ -701,6 +698,10 @@ class CheCodingJobCard extends StatelessWidget {
                       style: cheOfficeLabel(CheType.overline.copyWith(color: color), color: color)),
                   const SizedBox(height: 2),
                   Text(status.speech, style: CheType.caption),
+                  if (activity == CheActivity.running) ...[
+                    const SizedBox(height: 6),
+                    CheChromeProgress(tone: tone, label: status.label),
+                  ],
                 ],
               ),
             ),
@@ -1556,7 +1557,8 @@ class _TaskCard extends StatelessWidget {
   final VoidCallback onReadAloud;
   @override
   Widget build(BuildContext context) {
-    final (label, color) = switch (task.status) {
+    final (tone, activity) = cheTaskStatus(task.status, verified: task.verifiedByChe);
+    final (label, _) = switch (task.status) {
       'queued' => ('Queued', CheColors.textDim),
       'running' => ('Working', CheColors.accent),
       'reviewing' => ('CHE reviewing', CheColors.accentAlt),
@@ -1576,7 +1578,7 @@ class _TaskCard extends StatelessWidget {
         title: Text(cheShortSummary(task.task),
             maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.label, semanticsLabel: task.task),
         subtitle: Row(children: [
-          Flexible(child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.caption.copyWith(color: color))),
+          Flexible(child: CheStatusPill(label: label, tone: tone, activity: activity, compact: true, uppercase: false)),
           _ReadAloudButton(label: 'Read this task aloud', onPressed: onReadAloud),
         ]),
         childrenPadding: const EdgeInsets.fromLTRB(CheSpace.lg, 0, CheSpace.lg, CheSpace.md),
