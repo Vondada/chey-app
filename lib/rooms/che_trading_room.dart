@@ -19,6 +19,7 @@ import 'che_trading_research.dart';
 import '../che_ui/che_hud.dart';
 import '../che_ui/che_theme.dart';
 import 'che_trading_hud.dart';
+import '../trading/che_market_context.dart';
 
 const _gold = CheColors.markets;
 final _stroke = CheColors.stroke;
@@ -107,6 +108,7 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
   }
   late final CheTradingChartController _chart = widget.chartController ?? CheTradingChartController();
   late final CheTradingResearchClient _research = CheTradingResearchClient(baseUrl: widget.baseUrl, headers: widget.headers, client: widget.client);
+  late final CheMarketContextClient _context = CheMarketContextClient(baseUrl: widget.baseUrl, headers: widget.headers, client: widget.client);
 
   /// The futures market the research and the live chart follow.
   late String _market = const {'NQ', 'MNQ'}.contains(widget.initialSymbol.toUpperCase()) ? widget.initialSymbol.toUpperCase() : 'MNQ';
@@ -159,6 +161,8 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
             height: widget.chartHeight,
           )),
           CheTradingResearchStrip(key: const Key('research_strip'), client: _research, market: _market, onRead: widget.onRead),
+          // Upcoming scheduled events for every strategy (owner, 2026-10-23); the full Market Context page opens from here.
+          CheMarketContextStrip(key: const Key('market_context_strip'), client: _context, onRead: widget.onRead),
           // The older overview (index chart, quotes, 3D scene) is folded so nothing heavy builds until asked for.
           if (widget.chartExtras.isNotEmpty)
             Padding(

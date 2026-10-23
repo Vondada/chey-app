@@ -23,6 +23,7 @@ import 'package:http/http.dart' as http;
 import '../che_ui/che_hud.dart';
 import '../che_ui/che_theme.dart';
 import 'che_trading_hud.dart';
+import '../trading/che_market_context.dart';
 
 const _up = Color(0xFF3DDC97);
 const _down = Color(0xFFFF5C7A);
@@ -31,6 +32,7 @@ final _dim = CheColors.textDim;
 final _panel = CheColors.surface;
 final _stroke = CheColors.stroke;
 const _draw = Color(0xFF7FD3FF);
+const _event = Color(0xFFE0A030); // market events: amber dotted line with a text tag (never color alone)
 
 /// The four marker sources, in the order the legend shows them.
 const kMarkerSources = <String, String>{
@@ -176,6 +178,9 @@ class CheTradingChartState extends State<CheTradingChart> {
   List<String> _timeframes = const ['1m', '5m', '15m', '1h', '1d'];
   List<ChartBar> _bars = const [];
   List<ChartMarker> _markers = const [];
+  // Market events (scheduled releases, expirations, cited posts) on the futures chart, with their sources.
+  List<CheEventAnnotation> _events = const [];
+  String _eventsNote = '';
   List<ChartDrawing> _drawings = [];
   List<Map<String, dynamic>> _openOrders = const [];
   Map<String, dynamic> _feed = const {};
@@ -245,6 +250,7 @@ class CheTradingChartState extends State<CheTradingChart> {
       if (j is! Map<String, dynamic>) throw const FormatException('The chart answer was not readable.');
       if (r.statusCode != 200 || j['ok'] == false) throw Exception('${j['error'] ?? j['detail'] ?? 'The chart is unavailable.'}');
       setState(() => _apply(j));
+      unawaited(_loadEvents(seq));
 
     } catch (e) {
       if (seq != _seq || !mounted) return;
@@ -258,6 +264,50 @@ class CheTradingChartState extends State<CheTradingChart> {
       });
     }
   }
+
+  /// Event annotations for the visible futures series. A failure leaves the chart as it is and says so in the summary.
+  Future<void> _loadEvents(int seq) async {
+    if (_account != 'futures_paper' || _bars.isEmpty) {
+      if (_events.isNotEmpty || _eventsNote.isNotEmpty) _setEvents(const [], '');
+      return;
+    }
+    try {
+      final list = await CheMarketContextClient(baseUrl: widget.baseUrl, headers: widget.headers, client: _http)
+          .annotations(market: _symbol == 'NQ' ? 'NQ' : 'MNQ', from: _bars.first.t, to: _bars.last.t.add(const Duration(days: 1)));
+      if (seq != _seq || !mounted) return;
+      _setEvents(list, '');
+    } catch (_) {
+      if (seq != _seq || !mounted) return;
+      _setEvents(const [], 'Market events could not be loaded.');
+    }
+  }
+
+  void _setEvents(List<CheEventAnnotation> list, String note) => setState(() {
+        _events = list;
+        _eventsNote = note;
+      });
+
+  Future<void> _showEvent(CheEventAnnotation e) => showModalBottomSheet<void>(
+        context: context,
+        backgroundColor: _panel,
+        builder: (ctx) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              Text('Market event · ${e.tag}', style: const TextStyle(color: _event, fontSize: 20, fontWeight: FontWeight.w800)),
+              const SizedBox(height: 8),
+              Text('${e.label}\n${e.title}\n${_clock(e.time)}${e.dateOnly ? ' (date only)' : ''}\nSource: ${e.sourceName} (${e.verified})\nObserved: ${e.reaction}\nA possible catalyst, not a prediction.',
+                  style: const TextStyle(color: Colors.white, fontSize: 17, height: 1.4)),
+              const SizedBox(height: 12),
+              if (widget.onSpeak != null)
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(onPressed: () => widget.onSpeak!(e.receipt), icon: const Icon(Icons.volume_up_rounded), label: const Text('Read event')),
+                ),
+            ]),
+          ),
+        ),
+      );
 
   void _apply(Map<String, dynamic> j) {
     _state = '${j['state'] ?? 'verified'}';
@@ -384,6 +434,20 @@ class CheTradingChartState extends State<CheTradingChart> {
       }
     }
     if (best != null) return _showMarker(best);
+    // The event tags sit in a band along the top of the chart.
+    if (at.dy < 26) {
+      CheEventAnnotation? ev;
+      var evD = 18.0;
+      for (final e in _events) {
+        final px = g.xOfTime(e.time);
+        if (px == null) continue;
+        if ((px - at.dx).abs() < evD) {
+          evD = (px - at.dx).abs();
+          ev = e;
+        }
+      }
+      if (ev != null) return _showEvent(ev);
+    }
     await openTicket(price: double.parse(price.toStringAsFixed(2)));
   }
 
@@ -570,8 +634,9 @@ class CheTradingChartState extends State<CheTradingChart> {
       counts[m.source] = (counts[m.source] ?? 0) + 1;
     }
     final marks = counts.isEmpty ? 'No markers.' : 'Markers: ${counts.entries.map((e) => '${e.value} ${kMarkerSources[e.key] ?? e.key}').join(', ')}.';
+    final events = _events.isEmpty ? (_eventsNote.isEmpty ? '' : '$_eventsNote ') : '${_events.length} market event${_events.length == 1 ? '' : 's'} on this chart: ${_events.take(3).map((e) => '${e.label} at ${_clock(e.time)}').join('; ')}. ';
     final feed = '${_feed['provider'] ?? 'Feed'} is ${_feed['status'] ?? 'unknown'}${_feed['age_s'] is num ? ', last bar ${_age(_feed['age_s'] as num)} old' : ''}.';
-    return '$accountLabel, $_symbol, $_tf candles. Last close ${_fmt(last.c)} at ${_clock(last.t)}. $marks $feed '
+    return '$accountLabel, $_symbol, $_tf candles. Last close ${_fmt(last.c)} at ${_clock(last.t)}. $marks $events$feed '
         '${_drawings.isEmpty ? '' : '${_drawings.length} drawing${_drawings.length == 1 ? '' : 's'}: ${_drawings.map((d) => d.spoken).join('; ')}. '}'
         '${_entriesAllowed ? (_marketAllowed ? 'Paper entries allowed.' : 'Limit orders only: $_blocked') : 'New entries blocked: $_blocked'}';
   }
@@ -844,6 +909,7 @@ class CheTradingChartState extends State<CheTradingChart> {
             painter: _ChartPainter(
               bars: _window,
               markers: _shownMarkers,
+              events: _events,
               drawings: _drawings,
               pending: _first,
             ),
@@ -904,9 +970,10 @@ class _Geometry {
 }
 
 class _ChartPainter extends CustomPainter {
-  _ChartPainter({required this.bars, required this.markers, required this.drawings, required this.pending});
+  _ChartPainter({required this.bars, required this.markers, required this.drawings, required this.pending, this.events = const []});
   final List<ChartBar> bars;
   final List<ChartMarker> markers;
+  final List<CheEventAnnotation> events;
   final List<ChartDrawing> drawings;
   final (DateTime?, double)? pending;
 
@@ -969,6 +1036,20 @@ class _ChartPainter extends CustomPainter {
       if (px != null) canvas.drawCircle(Offset(px, g.y(pending!.$2)), 5, ink);
     }
 
+    // Market events: a dotted vertical line at the moment the information became public, tagged at the top.
+    final evInk = Paint()
+      ..color = _event
+      ..strokeWidth = 1;
+    for (final e in events) {
+      final px = g.xOfTime(e.time);
+      if (px == null) continue;
+      for (var y = 22.0; y < size.height; y += 7) {
+        canvas.drawLine(Offset(px, y), Offset(px, math.min(y + 3, size.height)), evInk);
+      }
+      canvas.drawRRect(RRect.fromRectAndRadius(Rect.fromCenter(center: Offset(px, 10), width: 30, height: 16), const Radius.circular(4)), Paint()..color = _event);
+      _text(canvas, e.tag, Offset(px - 12, 3), const TextStyle(color: Colors.black, fontSize: 10, fontWeight: FontWeight.w800));
+    }
+
     // Markers by source.
     for (final m in markers) {
       final p = g.markerPoint(m);
@@ -997,7 +1078,7 @@ class _ChartPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _ChartPainter old) =>
-      old.bars != bars || old.markers != markers || old.drawings != drawings || old.pending != pending;
+      old.bars != bars || old.markers != markers || old.drawings != drawings || old.pending != pending || old.events != events;
 }
 
 /// One glyph per source so they never look alike: CHE forward a triangle, CHE simulation a hollow

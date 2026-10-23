@@ -744,6 +744,7 @@ export async function contextView(storage, { now = Date.now() } = {}) {
 export function contextIntent(message) {
   const t = String(message || '').toLowerCase().replace(/[’]/g, "'").replace(/^(?:hey |ok |okay )?(?:che|chey|chay)[,:]?\s*/, '').trim();
   if (/\b(?:refresh|update|fetch|reload) (?:the |my )?(?:market|economic) (?:calendar|events|context)\b/.test(t)) return { kind: 'refresh' };
+  if (/\b(?:refresh|reload)\b/.test(t) && /\b(?:market|economic) (?:calendar|events|context)\b/.test(t)) return { kind: 'refresh' };
   if (/\b(?:what|which|any) (?:market|economic|macro|news) events?\b|\b(?:market|economic) (?:events|calendar) (?:today|coming up|this week)\b|\bis there (?:a |an )?(?:fomc|cpi|fed|jobs report|nfp)\b/.test(t)) return { kind: 'upcoming' };
   return null;
 }

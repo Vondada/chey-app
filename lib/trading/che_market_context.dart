@@ -19,6 +19,7 @@ class CheContextException implements Exception {
 Map<String, dynamic> _map(Object? v) => v is Map ? Map<String, dynamic>.from(v) : <String, dynamic>{};
 List<Map<String, dynamic>> _list(Object? v) => [for (final x in (v is List ? v : const [])) if (x is Map) Map<String, dynamic>.from(x)];
 String _s(Object? v, [String fallback = '']) => v == null ? fallback : '$v';
+List<String> _strings(Object? v) => [for (final x in (v is List ? v : const [])) '$x'];
 
 class CheMarketContextClient {
   CheMarketContextClient({required this.baseUrl, required this.headers, http.Client? client}) : _http = client ?? http.Client();
@@ -134,8 +135,10 @@ class CheEventWarningChip extends StatelessWidget {
           child: Row(mainAxisSize: MainAxisSize.min, children: [
             Icon(event.highImpact ? Icons.warning_amber_rounded : Icons.event_note_rounded, size: 18, color: Colors.white),
             const SizedBox(width: 6),
-            Text('${event.highImpact ? 'HIGH IMPACT · ' : ''}${event.label} ${event.when}',
-                style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w700)),
+            Flexible(
+              child: Text('${event.highImpact ? 'HIGH IMPACT · ' : ''}${event.label} ${event.when}',
+                  style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w700)),
+            ),
           ]),
         ),
       );
@@ -188,9 +191,8 @@ class _CheMarketContextStripState extends State<CheMarketContextStrip> {
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
+        Wrap(crossAxisAlignment: WrapCrossAlignment.center, spacing: 4, children: [
           Semantics(header: true, child: const Text('MARKET EVENTS', style: TextStyle(color: Color(0xFFE0A030), fontWeight: FontWeight.w800, fontSize: 13, letterSpacing: 1.1))),
-          const Spacer(),
           if (widget.onRead != null && _spoken.isNotEmpty)
             IconButton(
               key: const Key('context_read'),
@@ -375,7 +377,7 @@ class _CheMarketContextPageState extends State<CheMarketContextPage> {
                 Padding(
                   padding: const EdgeInsets.only(bottom: 4),
                   child: Text('${_s(_map(e.value)['label'])}: ${_map(e.value)['count'] ?? 0}'
-                      '${_list(_map(e.value)['sources']).isEmpty && (_map(e.value)['sources'] as List?)?.isNotEmpty != true ? '' : ' — ${(_map(e.value)['sources'] as List).join('; ')}'}',
+                      '${_strings(_map(e.value)['sources']).isEmpty ? '' : ' — ${_strings(_map(e.value)['sources']).join('; ')}'}',
                       style: const TextStyle(color: Colors.white, fontSize: 14)),
                 ),
               _heading('STUDIES'),
@@ -441,7 +443,7 @@ class _ModelCard extends StatelessWidget {
           const SizedBox(height: 4),
           Text('Rules: ${_s(model['rules'])}', style: const TextStyle(color: Colors.white70, fontSize: 13)),
           if (sources.isNotEmpty) Text('Sources: ${sources.map((x) => _s(x['name'])).join('; ')}', style: const TextStyle(color: Colors.white70, fontSize: 13)),
-          Text('Limits: ${_list(model['limitations']).isEmpty ? (model['limitations'] as List? ?? const []).join(' ') : ''}', style: const TextStyle(color: Colors.white70, fontSize: 13)),
+          Text('Limits: ${_strings(model['limitations']).join(' ')}', style: const TextStyle(color: Colors.white70, fontSize: 13)),
         ]),
       ),
     );
