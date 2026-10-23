@@ -158,7 +158,7 @@ import { flushOutbox, handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, op
 import { CheLibrary, fetchReadable, libraryContext, libraryIntent } from './library.js';
 import { KnowledgeLibrary, knowledgeIntent, knowledgeReply, knowledgeTaskContext } from './knowledge_library.js';
 import { answerPersonalFact, answerStoredStatement, groundedReply, isQuestionLike, needsStrongEngine, personalFactQuestion, storedStatementQuestion } from './personal_recall.js';
-import { chatgptHistoryIntent, importChatgptBatch, ownerMemorySearchIntent, ownerStatementCandidates, searchOwnerMemory, speakChatgptHistory, speakMemorySearch } from './owner_recall.js';
+import { brainRecordIntent, chatgptHistoryIntent, importChatgptBatch, inspectMemory, memoryInspectIntent, ownerMemorySearchIntent, ownerStatementCandidates, phoneBrainNotes, searchOwnerMemory, speakBrainRecord, speakChatgptHistory, speakMemoryInspection, speakMemorySearch } from './owner_recall.js';
 import { adRequest, adStatusLines, assetTruthReply } from './asset_truth.js';
 import { dropAgentTaskTurns, replyRepeatsAgentTask } from './agent_task_guard.js';
 import { openKnowledgeLibrary, seedKnowledgeCatalog } from './knowledge_catalog_seed.js';
@@ -11849,6 +11849,25 @@ export class CheState extends DurableObject {
         // "Search my memory for Sprite": every store CHE keeps of the owner's words (memory records, saved
         // preferences, the Brain, the ChatGPT import), each with its count, and the raw matching records with id,
         // source and date, so the owner can see whether a record exists at all (owner_recall.js).
+        // "Show a saved Brain record" and "Inspect your memory system" (owner, 2026-10-23: both reached the model and
+        // came back "I couldn't finish that answer" when it was busy). Both read CHE's own stores; no model.
+        const recordAsk = ownerDevice && !body.attachment && !memoryQuestion ? brainRecordIntent(rawMessage) : null;
+        if (recordAsk) {
+          let store = null;
+          try { store = new CheBrainStore(this.ctx.storage); } catch (_) { store = null; }
+          const shown = speakBrainRecord(store, recordAsk);
+          const ids = shown.record ? [shown.record.id] : [];
+          await recordAnswerEvidence(this.ctx.storage, shown.text, { kind: shown.record ? 'tool_result' : 'none', tools: ['brain/record'] }, { records: ids }).catch(() => null);
+          return ndjsonReply(shown.text, { source: 'che_brain_record', model_calls: 0, ok: shown.available, records: ids.length, record_ids: ids });
+        }
+        if (ownerDevice && !body.attachment && !memoryQuestion && memoryInspectIntent(rawMessage)) {
+          let store = null;
+          try { store = new CheBrainStore(this.ctx.storage); } catch (_) { store = null; }
+          const report = inspectMemory(data, store, { phoneNotes: phoneBrainNotes(body.brain_context) });
+          const text = speakMemoryInspection(report);
+          await recordAnswerEvidence(this.ctx.storage, text, { kind: 'tool_result', tools: ['brain/status', 'memory_records'] }).catch(() => null);
+          return ndjsonReply(text, { source: 'che_memory_inspection', model_calls: 0, ok: Boolean(report.brain), memory_inspection: report });
+        }
         const ownerSearch = ownerDevice && !body.attachment ? ownerMemorySearchIntent(rawMessage) : null;
         if (ownerSearch) {
           let store = null;
@@ -13887,16 +13906,16 @@ export class CheState extends DurableObject {
           try { store = new CheBrainStore(this.ctx.storage); } catch (_) { store = null; }
           // The newest Brain turns plus the ones that mention the asked words, so an old statement is never out of reach.
           const brainStatements = ownerStatementCandidates(store, rawMessage);
-          const answer = personal ? answerPersonalFact(data, personal, brainStatements) : answerStoredStatement(data, statementAsk, brainStatements);
+          const answer = personal ? answerPersonalFact(data, personal, brainStatements, phoneBrainNotes(body.brain_context)) : answerStoredStatement(data, statementAsk, brainStatements);
           if (answer) {
             const receipt = answerEvidenceReceipt({ ownerAttested: answer.kind === 'owner_attested' });
             await Promise.resolve().then(() => this.ctx.storage.put(LAST_ANSWER_EVIDENCE_KEY, receipt)).catch(() => null);
             const r = answer.record || null;
-            const store = r ? (r.legacy ? 'saved_preferences' : r.brain ? 'brain' : 'memory_records') : '';
+            const store = r ? (r.phone ? 'phone_brain_notes' : r.legacy ? 'saved_preferences' : r.brain ? 'brain' : 'memory_records') : '';
             await recordAnswerEvidence(this.ctx.storage, answer.answer, { ...receipt, kind: answer.kind }, { records: answer.records, cited: r ? [{ text: r.quote || r.statement || r.text, created_at: r.created_at, store }] : [] });
             return ndjsonReply(answer.answer, {
               source: 'che_personal_recall', model_calls: 0, records: answer.records.length, record_ids: answer.records,
-              recall_receipt: r ? { record_id: r.id || null, stored_at: r.created_at || null, store, owner_attested: !r.legacy } : null,
+              recall_receipt: r ? { record_id: r.id || null, stored_at: r.created_at || null, store, owner_attested: !r.legacy && !r.phone } : null,
             });
           }
         }
