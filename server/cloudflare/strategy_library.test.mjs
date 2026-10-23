@@ -283,3 +283,9 @@ test('HTTP: owner only; register validates; enable of a built-in goes through th
   const controls = (await che.api('/api/trading/controls', { method: 'GET' })).body;
   assert.equal(JSON.stringify(controls).includes('silver-bullet-5m'), true);
 });
+
+test('the Dart validator fixture lists every executable seed (regenerate: node tool/dump_strategy_seeds.mjs)', async () => {
+  const { seedDefinitions } = await import('../../tool/dump_strategy_seeds.mjs');
+  const fixture = JSON.parse(readFileSync(new URL('../../test/fixtures/strategy_seeds.json', import.meta.url), 'utf8'));
+  assert.deepEqual(fixture, JSON.parse(JSON.stringify(seedDefinitions())));
+});

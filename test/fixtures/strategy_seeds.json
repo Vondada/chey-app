@@ -1,0 +1,341 @@
+[
+  {
+    "schema": "che.strategy/1",
+    "id": "ema-9-21-cross",
+    "name": "EMA 9 / 21 crossover",
+    "category": "trend",
+    "timeframes": [
+      1,
+      5
+    ],
+    "series": {
+      "ema9": {
+        "fn": "ema",
+        "period": 9
+      },
+      "ema21": {
+        "fn": "ema",
+        "period": 21
+      },
+      "ema50": {
+        "fn": "ema",
+        "period": 50
+      },
+      "lo5": {
+        "fn": "lowest",
+        "of": "low",
+        "period": 5
+      },
+      "hi5": {
+        "fn": "highest",
+        "of": "high",
+        "period": 5
+      }
+    },
+    "long": {
+      "conditions": [
+        {
+          "id": "trend",
+          "label": "Price above the 50 EMA",
+          "group": "trend",
+          "when": {
+            "gt": [
+              "close",
+              "ema50"
+            ]
+          }
+        },
+        {
+          "id": "cross",
+          "label": "9 EMA crosses above the 21 EMA",
+          "group": "trigger",
+          "when": {
+            "cross_above": [
+              "ema9",
+              "ema21"
+            ]
+          }
+        }
+      ],
+      "stop": {
+        "sub": [
+          "lo5",
+          0.25
+        ]
+      },
+      "target": {
+        "r": 2
+      },
+      "near": "ema21"
+    },
+    "short": {
+      "conditions": [
+        {
+          "id": "trend",
+          "label": "Price below the 50 EMA",
+          "group": "trend",
+          "when": {
+            "lt": [
+              "close",
+              "ema50"
+            ]
+          }
+        },
+        {
+          "id": "cross",
+          "label": "9 EMA crosses below the 21 EMA",
+          "group": "trigger",
+          "when": {
+            "cross_below": [
+              "ema9",
+              "ema21"
+            ]
+          }
+        }
+      ],
+      "stop": {
+        "add": [
+          "hi5",
+          0.25
+        ]
+      },
+      "target": {
+        "r": 2
+      },
+      "near": "ema21"
+    },
+    "risk": {
+      "min_points": 6,
+      "max_points": 60,
+      "max_trades_per_day": 5
+    }
+  },
+  {
+    "schema": "che.strategy/1",
+    "id": "macd-signal-cross",
+    "name": "MACD signal-line cross",
+    "category": "momentum",
+    "timeframes": [
+      5
+    ],
+    "series": {
+      "macd": {
+        "fn": "macd",
+        "fast": 12,
+        "slow": 26,
+        "signal": 9,
+        "part": "line"
+      },
+      "sig": {
+        "fn": "macd",
+        "fast": 12,
+        "slow": 26,
+        "signal": 9,
+        "part": "signal"
+      }
+    },
+    "long": {
+      "conditions": [
+        {
+          "id": "below0",
+          "label": "MACD below zero",
+          "group": "indicator",
+          "when": {
+            "lt": [
+              "macd",
+              0
+            ]
+          }
+        },
+        {
+          "id": "cross",
+          "label": "MACD crosses above its signal line",
+          "group": "trigger",
+          "when": {
+            "cross_above": [
+              "macd",
+              "sig"
+            ]
+          }
+        }
+      ],
+      "stop": {
+        "sub": [
+          {
+            "level": "swing_low"
+          },
+          0.25
+        ]
+      },
+      "target": {
+        "r": 2
+      }
+    },
+    "short": {
+      "conditions": [
+        {
+          "id": "above0",
+          "label": "MACD above zero",
+          "group": "indicator",
+          "when": {
+            "gt": [
+              "macd",
+              0
+            ]
+          }
+        },
+        {
+          "id": "cross",
+          "label": "MACD crosses below its signal line",
+          "group": "trigger",
+          "when": {
+            "cross_below": [
+              "macd",
+              "sig"
+            ]
+          }
+        }
+      ],
+      "stop": {
+        "add": [
+          {
+            "level": "swing_high"
+          },
+          0.25
+        ]
+      },
+      "target": {
+        "r": 2
+      }
+    },
+    "risk": {
+      "min_points": 6,
+      "max_points": 60,
+      "max_trades_per_day": 5
+    }
+  },
+  {
+    "schema": "che.strategy/1",
+    "id": "bollinger-reversion",
+    "name": "Bollinger Band reversion to the middle band",
+    "category": "reversal",
+    "timeframes": [
+      5
+    ],
+    "series": {
+      "up": {
+        "fn": "bb",
+        "period": 20,
+        "k": 2,
+        "part": "upper"
+      },
+      "mid": {
+        "fn": "bb",
+        "period": 20,
+        "k": 2,
+        "part": "mid"
+      },
+      "dn": {
+        "fn": "bb",
+        "period": 20,
+        "k": 2,
+        "part": "lower"
+      },
+      "lo3": {
+        "fn": "lowest",
+        "of": "low",
+        "period": 3
+      },
+      "hi3": {
+        "fn": "highest",
+        "of": "high",
+        "period": 3
+      }
+    },
+    "long": {
+      "conditions": [
+        {
+          "id": "outside",
+          "label": "Previous bar closed below the lower band",
+          "group": "indicator",
+          "when": {
+            "lt": [
+              {
+                "bar": "close",
+                "ago": 1
+              },
+              {
+                "series": "dn",
+                "ago": 1
+              }
+            ]
+          }
+        },
+        {
+          "id": "back",
+          "label": "This bar closes back inside the lower band",
+          "group": "trigger",
+          "when": {
+            "gt": [
+              "close",
+              "dn"
+            ]
+          }
+        }
+      ],
+      "stop": {
+        "sub": [
+          "lo3",
+          0.25
+        ]
+      },
+      "target": "mid",
+      "near": "dn"
+    },
+    "short": {
+      "conditions": [
+        {
+          "id": "outside",
+          "label": "Previous bar closed above the upper band",
+          "group": "indicator",
+          "when": {
+            "gt": [
+              {
+                "bar": "close",
+                "ago": 1
+              },
+              {
+                "series": "up",
+                "ago": 1
+              }
+            ]
+          }
+        },
+        {
+          "id": "back",
+          "label": "This bar closes back inside the upper band",
+          "group": "trigger",
+          "when": {
+            "lt": [
+              "close",
+              "up"
+            ]
+          }
+        }
+      ],
+      "stop": {
+        "add": [
+          "hi3",
+          0.25
+        ]
+      },
+      "target": "mid",
+      "near": "up"
+    },
+    "risk": {
+      "min_points": 6,
+      "max_points": 60,
+      "max_trades_per_day": 5
+    }
+  }
+]

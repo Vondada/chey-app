@@ -494,6 +494,13 @@ extension _CheHomeStreaming on _CHEHomeState {
             chart: data['chart'] is Map<String, dynamic> ? data['chart'] as Map<String, dynamic> : null,
           )));
         }
+        // "Show the strategy library": the Worker's registry, searchable, paper only (owner, 2026-10-23).
+        if (data['open_view'] == 'strategy_library' && data['source'] == 'che_strategy_library' && mounted) {
+          unawaited(Navigator.of(context).push(CheStrategyLibraryPage.route(
+            client: CheStrategyLibraryClient(baseUrl: () => cheAgentBaseUrl, headers: () => _authHeaders),
+            onRead: (words) { speakText(words, record: false, readOnDemand: true); },
+          )));
+        }
         if (data['open_view'] == 'alpaca_paper' && mounted) {
           unawaited(Navigator.of(context).push(CheAlpacaPaperPage.route(baseUrl: () => cheAgentBaseUrl, headers: () => _authHeaders, onAsk: _runHubPrompt)));
         }
