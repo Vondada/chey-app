@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import 'che_chrome_status.dart';
 import 'che_hud.dart';
 import 'che_theme.dart';
 
@@ -707,12 +708,12 @@ class StepLine extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final Widget icon = switch (status) {
-      StepStatus.done => const Icon(Icons.check_rounded, size: 15, color: CheColors.success),
-      StepStatus.error => const Icon(Icons.error_outline_rounded, size: 15, color: CheColors.danger),
+      StepStatus.done => Icon(Icons.check_rounded, size: 15, color: CheStatusPalette.success.base),
+      StepStatus.error => Icon(Icons.error_outline_rounded, size: 15, color: CheStatusPalette.failure.base),
       StepStatus.running => SizedBox(
           width: 12,
           height: 12,
-          child: CircularProgressIndicator(strokeWidth: 1.6, color: CheColors.accent),
+          child: CircularProgressIndicator(strokeWidth: 1.6, color: CheStatusPalette.active.base),
         ),
     };
     return TweenAnimationBuilder<double>(
@@ -730,7 +731,7 @@ class StepLine extends StatelessWidget {
           const SizedBox(width: 8),
           Expanded(
             child: status == StepStatus.running
-                ? ThinkingShimmer(text: label, style: CheType.bodyDim.copyWith(fontSize: 13.5))
+                ? CheThinkingIndicator(label: label, style: CheType.bodyDim.copyWith(fontSize: 13.5))
                 : Text(label,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,

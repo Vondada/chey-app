@@ -177,8 +177,8 @@ extension _CheHomeStreaming on _CHEHomeState {
             : {'request': userMessage.trim()}),
       );
       if (response.statusCode == 401) {
-        await _clearSecuritySession();
-        throw const _CHEAgentException('Pair this device again, sir.');
+        if (await _onUnauthorized(response)) throw const _CHEAgentException('Pair this device again, sir.');
+        throw const _CHEAgentException('That needs Face ID first. You are still signed in.');
       }
       Map<String, dynamic> result = const {};
       try {
@@ -255,9 +255,12 @@ extension _CheHomeStreaming on _CHEHomeState {
     final installedBuild = cheIsAppStatusRequest(userMessage)
         ? await CheInstalledBuild.read().timeout(const Duration(seconds: 2), onTimeout: () => null)
         : null;
+    final installedPatch = installedBuild == null
+        ? null
+        : await CheInstalledBuild.readPatch().timeout(const Duration(seconds: 2), onTimeout: () => null);
     request.body = jsonEncode({
       'message': userMessage,
-      if (installedBuild != null) 'client_app': installedBuild.chatMetadata(),
+      if (installedBuild != null) 'client_app': installedBuild.chatMetadata(patch: installedPatch),
       'history': history,
       'last_media_id': _lastMediaId(),
       'request_id': _requestGate.current.requestId,
@@ -320,10 +323,11 @@ extension _CheHomeStreaming on _CHEHomeState {
     }
 
     if (response.statusCode == 401) {
-      await _clearSecuritySession();
-      throw const _CHEAgentException(
-        'Your CHE security session expired. Pair this device again.',
-      );
+      final body = await response.stream.bytesToString();
+      if (await _onUnauthorized(http.Response(body, 401))) {
+        throw const _CHEAgentException('This phone was signed out of CHE. Pair this device again.');
+      }
+      throw const _CHEAgentException('That needs Face ID first. You are still signed in.');
     }
 
     if (response.statusCode != 200) {
