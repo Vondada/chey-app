@@ -231,7 +231,7 @@ class _CheStrategyComparePageState extends State<CheStrategyComparePage> {
               Padding(
                 padding: const EdgeInsets.only(top: 6),
                 child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  const Icon(Icons.warning_amber_rounded, color: Color(0xFFFFC857), size: 18),
+                  const Icon(Icons.warning_amber, color: Color(0xFFFFC857), size: 18),
                   const SizedBox(width: 6),
                   Expanded(child: Text('Warning: $warn', style: const TextStyle(color: Colors.white, fontSize: 13))),
                 ]),
