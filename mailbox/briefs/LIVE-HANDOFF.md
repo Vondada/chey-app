@@ -72,6 +72,17 @@ Then, on GitHub:
 
 **ChatGPT 2026-10-20 owner-directed end-to-end continuation:** Current main `295a9cde` (PRs #393 and #392 merged). Claude PR #394 false-completion fix is open: CI green on inspected commit `6984aa1`, but unresolved Codex review threads remain for `office_workforce.js` (`review_pending` must keep temporary agents busy) and `office_board.js` (desk statuses for `review_pending`, `needs_review`, `rejected`); original passive-claims thread is outdated but should be rechecked. DO NOT MERGE #394 before current-head review and checks pass. ChatGPT created PR #395 from main `chatgpt/chart-malformed-response-20261020` commit `2865b6e` to guard malformed scalar API collection fields (`points`, `timeframes`, `bars`, `markers`, `drawings`, `open_orders`) in `lib/rooms/che_trading_chart.dart`, resolving the owner's observed `int` cast crash. PR #395 CI Flutter / UI Analyze in progress (`39540411941`, `39540411947`); not merged, not installed, no live iPhone test. Actual live FundYourEdge/Tradesea Rithmic market-data and broker paper-order integration NOT CONNECTED; existing futures `/api/trading/chart` uses stored delayed research bars and blocks futures orders. Next: add chart malformed-payload regression, obtain valid Rithmic API access/terms and separate simulated account permission; test read-only stream, then simulated orders only; no credentials shared in chat and no paid purchases. Owner requested end-to-end finish, but third-party API authorization is a real external blocker.
 
+## 2. Current position (Claude, 2026-10-23 — Truth Engine WIP; hallucination auditor)
+
+- Branch `claude/che-latency-optimization-8ruaus` at `5dc5f16` (WIP, pushed, fast-forward on main `cb38cf7`). NOT merged, NOT deployed, no PR.
+- Built: `server/cloudflare/hallucination_auditor.js` (deterministic claim labels VERIFIED/INFERRED/UNVERIFIED/CONTRADICTED/STALE; removes unbacked completion claims; fails closed on null evidence; ledger stores ids and labels only). Wired into `worker.js` at the chat boundary after `guardExecutionClaims`.
+- Verified: auditor tests 18/18; full Worker suite 3679 pass / 0 fail / 0 skipped (`node --test` in server/cloudflare). Overhead measured locally: ~0.006 ms per reply (20,000 runs).
+- Not verified: chat-route tests through /api/chat with a fake model, iPhone, production.
+- Known gaps: no memory-write receipt (memory claims fail closed); video receipts lack a verified-MP4 flag (video claims fail closed); trade proof is "order id exists"; no Brain Room Truth & Verification section; ordinary sentences like "I created a video script idea" may be removed (false positive, untested).
+- Brain benchmark: 1k and 10k complete (10k: write 1.75 ms/record); 100k timed out with no result. No 100k claim.
+- Next: chat-route regression tests for the 8 acceptance questions; ledger retention controls; Brain Room section; then PR only when the owner asks.
+- Restrictions unchanged: no spending, no data deletion, no live orders, no schedules.
+
 ## 2. Current position (Claude, 2026-10-23 ~12:00 UTC — HANDOFF TO CHATGPT/CODEX; read `mailbox/briefs/2026-10-23-chatgpt-takeover.md`)
 
 - main `83c2d67` (#478) deployed and VERIFIED live; Shorebird 39898570143 success (carries #478/#479/#481).
