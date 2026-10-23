@@ -85,6 +85,7 @@ import { autoQueue as researchAutoQueue, cancelJob as cancelResearchJob, matrixV
 import { nextStrategySimTickAt, setStrategySimCeiling, setStrategySimPaused, speakStrategySim, strategySimIntent, strategySimTick, strategySimView, strategySimWake } from './strategy_sim.js';
 import { evidenceIntent, evidenceReport, evidenceTick } from './trading_evidence_runner.js';
 import { readTrades, tradeDayOf } from './trading_evidence.js';
+import { TRADE_EVIDENCE_SOURCE, lastTrade, readTradeEvidence, speakTradeReplay, tradeBars, tradeEvidenceOf, tradeList, tradeReplayIntent } from './trade_evidence.js';
 import { DAILY_TARGET, EXECUTION_TYPES, VISUAL_SOURCE, auditTrades, compareWindows, currentLeader, dailyEvidence, dailyPnl, filterTrades, historyChart, journalView, lastForwardBar, metricsOf, openPositions, rankStrategies, readSkips, readVisualTrades, replayFrame, speakAudit, speakEvidence, speakCard, speakLeader, speakPnl, tradingVisualIntent } from './trading_visual.js';
 import { cancelCandidates, cancelConfirmation, cancelOrderIntent, chartIntent, chartView, drawIntent, futuresOrderIntent, marketOrderFeedProblem, readDrawings, saveDrawings, speakOrder } from './trading_chart.js';
 import { readRithmicCandles, storeRithmicCandles } from './rithmic_dataset.js';
@@ -3877,7 +3878,7 @@ export class CheState extends DurableObject {
   async tradingVisualView(q) {
     const view = q.get('view') || 'summary';
     const filters = Object.fromEntries(['instrument', 'timeframe', 'strategy', 'from', 'to', 'execution_type', 'side', 'result'].map((k) => [k, (q.get(k) || '').slice(0, 40)]).filter(([, v]) => v));
-    const { trades, sources, research } = await readVisualTrades(this.ctx.storage);
+    const { trades, records, duplicates, sources, research } = await readVisualTrades(this.ctx.storage);
     const shown = filterTrades(trades, filters);
     const today = tradeDayOf(new Date().toISOString());
     const base = { ok: true, view, paper_only: true, live_orders: 'disabled', today, filters, sources, research, execution_types: EXECUTION_TYPES };
@@ -3897,7 +3898,15 @@ export class CheState extends DurableObject {
     if (view === 'compare') return { ...base, windows: compareWindows(shown) };
     if (view === 'leader') { const l = currentLeader(trades); return { ...base, ...l, spoken: speakLeader(l) }; }
     if (view === 'journal') return { ...base, ...journalView(trades, await readSkips(this.ctx.storage), { ...filters, include_skips: q.get('skips') !== '0' }) };
-    if (view === 'audit') { const a = auditTrades(trades); return { ...base, ...a, spoken: speakAudit(a) }; }
+    if (view === 'audit') { const a = auditTrades(records); return { ...base, ...a, ids: { unique_trades: trades.length, duplicates_hidden: duplicates.filter((d) => d.kind === 'duplicate').length, conflicts_hidden: duplicates.filter((d) => d.kind === 'conflict').length, examples: duplicates.slice(0, 10) }, spoken: speakAudit(a) }; }
+    // Trade evidence (Priority 5): one trade by its stable ID, with its own stored bars; or the list of IDs.
+    if (view === 'trade') {
+      const want = (q.get('id') || '').trim().toUpperCase();
+      const trade = want === 'LAST' ? lastTrade(trades) : trades.find((t) => t.id === want);
+      if (!trade) return { ...base, ok: false, error: want === 'LAST' ? 'CHE has no closed forward paper or simulation trade yet.' : `No CHE trade has the ID ${want || '(none)'}.` };
+      return { ...base, trade: tradeEvidenceOf(trade, await tradeBars(this.ctx.storage, trade)) };
+    }
+    if (view === 'trades') return { ...base, ...tradeList(shown, { limit: Math.min(200, Number(q.get('limit')) || 100) }) };
     if (view === 'ranking') return { ...base, ranking: rankStrategies(shown, { executionType: filters.execution_type || 'forward_paper' }), rule: 'Ranked by the lower end of the 95% expectancy range in R, never by win rate; under 30 trades is provisional.' };
     const l = currentLeader(trades);
     return { ...base, totals: metricsOf(shown), leader: l.leader, headline: l.headline, provisional: l.provisional,
@@ -12490,6 +12499,15 @@ export class CheState extends DurableObject {
             { ...meta, ok: true, open_orders: list, needs_choice: true });
         }
         // The Trading Room chart by voice: "draw a line at 21,450", "open Alpaca chart", "show EMA trades".
+        // "Replay my last trade", "replay trade T0…": the trade's own chart and replay (Priority 5). Owner only, read only.
+        const replayAsk = body.attachment || !ownerDevice ? null : tradeReplayIntent(message);
+        if (replayAsk) {
+          const { trades: all } = await readVisualTrades(this.ctx.storage);
+          const trade = replayAsk.id ? all.find((t) => t.id === replayAsk.id) : lastTrade(all);
+          if (!trade) return ndjsonReply(replayAsk.id ? `No CHE trade has the ID ${replayAsk.id}. Nothing was opened.` : 'CHE has no closed forward paper or simulation trade to replay yet. Nothing was opened.', { source: TRADE_EVIDENCE_SOURCE, ok: false, model_calls: 0 });
+          const ev = tradeEvidenceOf(trade, await tradeBars(this.ctx.storage, trade));
+          return ndjsonReply(speakTradeReplay(ev), { source: TRADE_EVIDENCE_SOURCE, ok: true, model_calls: 0, open_view: 'trade_replay', trade_id: ev.id, replay_supported: ev.replay.supported });
+        }
         const chartAsk = body.attachment || !ownerDevice ? null : (drawIntent(message) || chartIntent(message) || futuresOrderIntent(message));
         if (chartAsk?.kind === 'futures_order') return ndjsonReply(chartAsk.reply, { source: 'che_trading_chart', ok: false, model_calls: 0, order_sent: false });
         if (chartAsk?.kind === 'draw') {

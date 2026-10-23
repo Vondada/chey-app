@@ -2166,6 +2166,45 @@
    "optional_missing": []
   },
   {
+   "id": "trade-replay",
+   "category": "trading",
+   "title": "Trade Replay",
+   "summary": "Replay one of CHE's trades on its own chart.",
+   "does": "Opens a trade by its ID (or CHE's last forward paper trade) on the exact bars it was traded on: entry, exit, stop, target, times and outcome, labelled BACKTEST, SIMULATION, FORWARD PAPER or BROKER-CONFIRMED. Replay shows a bar only once it has closed. Without recorded bars it says so and draws nothing.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "trade",
+    "required": false,
+    "hint": "A trade ID such as T0ABC…, or leave empty for the last trade"
+   },
+   "examples": [
+    "Replay my last trade",
+    "Replay trade T0K3J9QW1ZX7A"
+   ],
+   "needs": [
+    "office"
+   ],
+   "optional": [],
+   "handler": "trade_evidence.readTradeEvidence",
+   "route": "che_trade_evidence",
+   "produces": "trade replay",
+   "evidence": "Stored trade records and stored bars only; nothing is invented.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "replay",
+    "trade replay",
+    "last trade",
+    "trade evidence"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
    "id": "site-build",
    "category": "build",
    "title": "Site Build",

@@ -326,3 +326,120 @@ test('the owner\'s words through /api/chat reach the records with no model call;
   assert.notEqual(g.route, 'che_trading_visual', 'a guest never reaches the records');
   assert.doesNotMatch(g.reply, /realized|unrealized/);
 });
+
+// ─── Trade evidence and replay (owner mission, 2026-10-23, Priority 5) ───
+import { EVIDENCE_LABELS, assignTradeIds, tradeIdOf } from './trading_visual.js';
+import { NO_DATA, lastTrade, readTradeEvidence, tradeReplayIntent } from './trade_evidence.js';
+
+test('trade IDs: derived from the trade itself, stable across restarts, unique, and one trade per ID', async () => {
+  const a = rec({ signal: '2026-10-21T14:00:00Z', entry: '2026-10-21T14:05:00Z', exit: '2026-10-21T14:30:00Z' });
+  const b = rec({ signal: '2026-10-21T15:00:00Z', entry: '2026-10-21T15:05:00Z', exit: '2026-10-21T15:20:00Z', exitRaw: 20990, reason: 'stop' });
+  const storage = memStorage();
+  for (const t of [a, b]) await storage.put(recordKey(t), t);
+  const first = (await readVisualTrades(storage)).trades;
+  const again = (await readVisualTrades(memStorage(new Map(storage.saved)))).trades; // a fresh read, as after a restart
+  assert.equal(first.length, 2);
+  assert.deepEqual(first.map((t) => t.id), again.map((t) => t.id), 'the same records give the same IDs');
+  assert.ok(first.every((t) => /^T[0-9A-Z]{13}$/.test(t.id)), first.map((t) => t.id).join());
+  assert.notEqual(first[0].id, first[1].id);
+  assert.equal(tradeIdOf('x'), tradeIdOf('x'));
+  assert.notEqual(tradeIdOf('x'), tradeIdOf('y'));
+  // The same trade stored twice is one trade; a different outcome for the same entry is a reported conflict.
+  const t1 = fromEvidence(a, 'forward_paper');
+  const dup = fromEvidence(structuredClone(a), 'forward_paper');
+  const conflict = fromEvidence({ ...structuredClone(a), net_pnl: -99, r_net: -5 }, 'forward_paper');
+  const out = assignTradeIds([t1, dup, conflict]);
+  assert.equal(out.trades.length, 1, 'no duplicate trade is ever shown');
+  assert.deepEqual(out.duplicates.map((d) => d.kind), ['duplicate', 'conflict']);
+  assert.equal(out.trades[0].net, t1.net, 'the first stored record is kept');
+  // The same entry under another variant or record set is another trade.
+  const other = fromEvidence({ ...structuredClone(a), portfolio: 'ema-pullback-5m|any@v1|3' }, 'forward_paper');
+  assert.equal(assignTradeIds([t1, other]).trades.length, 2);
+  assert.equal(assignTradeIds([t1, fromEvidence(structuredClone(a), 'historical_backtest')]).trades.length, 2);
+});
+
+test('trade labels: BACKTEST, SIMULATION, FORWARD PAPER, BROKER-CONFIRMED', () => {
+  assert.deepEqual(EVIDENCE_LABELS, { historical_backtest: 'BACKTEST', simulation: 'SIMULATION', forward_paper: 'FORWARD PAPER', daily_paper: 'FORWARD PAPER', broker_paper: 'BROKER-CONFIRMED', live: 'BROKER-CONFIRMED' });
+  const [bt, fp] = assignTradeIds([
+    fromEvidence(rec({ env: 'backtest', signal: '2026-09-01T14:00:00Z', entry: '2026-09-01T14:05:00Z', exit: '2026-09-01T14:30:00Z' }), 'historical_backtest'),
+    fromEvidence(rec({ signal: '2026-10-21T14:00:00Z', entry: '2026-10-21T14:05:00Z', exit: '2026-10-21T14:30:00Z' }), 'forward_paper'),
+  ]).trades;
+  assert.equal(bt.evidence_label, 'BACKTEST');
+  assert.equal(fp.evidence_label, 'FORWARD PAPER');
+  assert.equal(lastTrade([bt, fp]).id, fp.id, 'a backtest is never "my last trade"');
+  assert.equal(lastTrade([bt]), null);
+});
+
+test('trade evidence: the exact stored bars, entry, exit, stop, target and outcome; no data means no chart', async () => {
+  const storage = memStorage();
+  const bars = five('2026-10-20T13:00:00Z', 60);
+  await storage.put('trd_ds:NQ:5m', { market: 'NQ', timeframe: '5m', provider: 'Yahoo Finance chart (public, free, delayed)', symbol: 'NQ=F', first: bars[0].t, last: bars.at(-1).t, bars: 60, missing: 0, sha256: 'abc', chunks: 1 });
+  await storage.put('trd_ds:NQ:5m:0', bars);
+  const t = rec({ env: 'backtest', signal: '2026-10-20T15:00:00Z', entry: '2026-10-20T15:05:00Z', exit: '2026-10-20T15:30:00Z' });
+  t.symbol = 'NQ'; t.contract = 'NQ';
+  const far = rec({ env: 'backtest', signal: '2026-06-01T15:00:00Z', entry: '2026-06-01T15:05:00Z', exit: '2026-06-01T15:30:00Z' });
+  far.symbol = 'NQ'; far.contract = 'NQ';
+  for (const x of [t, far]) await storage.put(recordKey(x), x);
+  const { trades } = await readVisualTrades(storage);
+  const id = trades.find((x) => x.entry_time === t.entry.time).id;
+  const e = await readTradeEvidence(storage, id.toLowerCase());
+  assert.equal(e.ok, true);
+  assert.equal(e.id, id);
+  assert.equal(e.label, 'BACKTEST');
+  assert.deepEqual([e.entry.time, e.exit.time, e.stop, e.target, e.outcome.result], [t.entry.time, t.exit.time, t.stop, t.target, t.result]);
+  assert.equal(e.entry.price, t.entry.fill);
+  assert.equal(e.bars_source.kind, 'research_dataset');
+  assert.ok(e.bars.length > 0 && e.bars.every((b) => bars.some((s) => s.t === b.t && s.c === b.c)), 'every bar is a stored bar');
+  assert.ok(e.bars[0].t <= t.signal.time && e.bars.at(-1).t >= t.exit.time, 'the window covers the signal and the exit');
+  assert.equal(e.replay.supported, true);
+  assert.equal(e.links.replay_route, `/trade-replay?id=${id}`);
+  assert.equal(e.links.brain.ref, `trade:${id}`);
+  assert.equal(e.links.strategy.id, t.strategy);
+  assert.equal(e.live_orders, 'disabled');
+  const none = await readTradeEvidence(storage, trades.find((x) => x.entry_time === far.entry.time).id);
+  assert.equal(none.ok, true);
+  assert.deepEqual(none.bars, []);
+  assert.equal(none.no_data, NO_DATA);
+  assert.equal(none.replay.supported, false);
+  const missing = await readTradeEvidence(storage, 'T0000000000000');
+  assert.equal(missing.ok, false);
+  assert.match(missing.error, /No CHE trade has the ID T0000000000000/);
+});
+
+test('replay words', () => {
+  assert.deepEqual(tradeReplayIntent('Replay my last trade'), { kind: 'trade_replay', id: null });
+  assert.deepEqual(tradeReplayIntent('CHE, replay the latest paper trade.'), { kind: 'trade_replay', id: null });
+  assert.deepEqual(tradeReplayIntent('Replay trade t0k3j9qw1zx7ab'), { kind: 'trade_replay', id: 'T0K3J9QW1ZX7AB' });
+  assert.deepEqual(tradeReplayIntent('Replay trade'), { kind: 'trade_replay', id: null }, 'the Command Center with no input');
+  for (const s of ['Replay that song', 'Show the replay card', 'What was my last trade?', 'Replay the meeting', 'trade replay is cool']) assert.equal(tradeReplayIntent(s), null, s);
+});
+
+test('"Replay my last trade" through /api/chat: no model call, the trade\'s ID, its evidence by API; a guest is refused', sqlite, async () => {
+  const che = await owner({ model: (o) => { if (process.env.DBGM) console.error('MODEL', JSON.stringify(o).slice(0, 600)); return 'ok'; } });
+  const empty = await che.say('Replay my last trade.');
+  assert.equal(empty.route, 'che_trade_evidence', empty.reply);
+  assert.equal(empty.modelCalls, 0);
+  assert.match(empty.reply, /no closed forward paper or simulation trade to replay yet\. Nothing was opened\./);
+  const t = rec({ signal: '2026-10-22T14:10:00Z', entry: '2026-10-22T14:15:00Z', exit: '2026-10-22T14:35:00Z' });
+  che.saved.set(recordKey(t), t);
+  che.saved.set('live_paper_feed', { provider: 'Yahoo MNQ=F', bars: five('2026-10-22T13:00:00Z', 30) });
+  const r = await che.say('Replay my last trade.');
+  assert.equal(r.route, 'che_trade_evidence', r.reply);
+  assert.equal(r.modelCalls, 0);
+  assert.equal(r.done.open_view, 'trade_replay');
+  assert.match(r.done.trade_id, /^T[0-9A-Z]{13}$/);
+  assert.equal(r.done.replay_supported, true);
+  assert.match(r.reply, new RegExp(`trade ${r.done.trade_id}: FORWARD PAPER, ema-pullback-5m long on MNQ 5m`));
+  const v = await che.api(`/api/trading/visual?view=trade&id=${r.done.trade_id}`);
+  assert.equal(v.trade.id, r.done.trade_id);
+  assert.equal(v.trade.bars_source.kind, 'forward_feed');
+  const last = await che.api('/api/trading/visual?view=trade&id=last');
+  assert.equal(last.trade.id, r.done.trade_id);
+  const list = await che.api('/api/trading/visual?view=trades');
+  assert.deepEqual(list.trades.map((x) => [x.id, x.label]), [[r.done.trade_id, 'FORWARD PAPER']]);
+  const unknown = await che.say('Replay trade T0000000000000');
+  assert.match(unknown.reply, /No CHE trade has the ID T0000000000000\. Nothing was opened\./);
+  const g = await che.guest('Replay my last trade');
+  assert.notEqual(g.route, 'che_trade_evidence');
+  assert.ok(!g.raw.includes(r.done.trade_id));
+});

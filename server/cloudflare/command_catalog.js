@@ -512,6 +512,13 @@ export const COMMANDS = Object.freeze([
     examples: ['Audit the trades', 'Run a trade audit'],
     prompt: 'Audit the trades.', produces: 'audit', evidence: 'Real counts from the stored records; nothing is altered.', keywords: ['audit', 'duplicates', 'look-ahead', 'trade audit'],
   }),
+  C('trade-replay', 'trading', 'EXPLORE', "Replay one of CHE's trades on its own chart.", {
+    does: 'Opens a trade by its ID (or CHE\'s last forward paper trade) on the exact bars it was traded on: entry, exit, stop, target, times and outcome, labelled BACKTEST, SIMULATION, FORWARD PAPER or BROKER-CONFIRMED. Replay shows a bar only once it has closed. Without recorded bars it says so and draws nothing.',
+    needs: ['office'], route: 'che_trade_evidence', handler: 'trade_evidence.readTradeEvidence',
+    input: { name: 'trade', required: false, hint: 'A trade ID such as T0ABC…, or leave empty for the last trade' },
+    examples: ['Replay my last trade', 'Replay trade T0K3J9QW1ZX7A'],
+    prompt: 'Replay trade {input}', produces: 'trade replay', evidence: 'Stored trade records and stored bars only; nothing is invented.', keywords: ['replay', 'trade replay', 'last trade', 'trade evidence'],
+  }),
 
   // ── Websites, Apps & AI ───────────────────────────────────────────────
   C('site-build', 'build', 'BUILD', 'Create websites.', {

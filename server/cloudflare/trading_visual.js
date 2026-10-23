@@ -123,7 +123,53 @@ export async function readVisualTrades(storage) {
   sources.push({ execution_type: 'broker_paper', label: EXECUTION_TYPES.broker_paper.label, read: false, trades: null, note: EXECUTION_TYPES.broker_paper.note });
   sources.push({ execution_type: 'live', label: EXECUTION_TYPES.live.label, read: true, trades: 0, note: EXECUTION_TYPES.live.note });
   trades.sort((a, b) => String(a.entry_time).localeCompare(String(b.entry_time)));
-  return { trades, sources, research };
+  const { trades: unique, duplicates } = assignTradeIds(trades);
+  return { trades: unique, records: trades, duplicates, sources, research };
+}
+
+// ─── Trade identity and evidence labels (owner mission, 2026-10-23, Priority 5) ───
+
+/** What kind of evidence a trade is, in the owner's four words. Broker-confirmed is only ever an Alpaca PAPER fill read live; live orders stay disabled. */
+export const EVIDENCE_LABELS = Object.freeze({
+  historical_backtest: 'BACKTEST', simulation: 'SIMULATION', forward_paper: 'FORWARD PAPER', daily_paper: 'FORWARD PAPER', broker_paper: 'BROKER-CONFIRMED', live: 'BROKER-CONFIRMED',
+});
+
+/** The fields that make one trade that trade: same record set, same strategy variant, same market, timeframe, side and entry. */
+export function naturalKey(t) {
+  const raw = t._raw || {};
+  const owner = t.execution_type === 'simulation' ? `sim:${raw.id ?? ''}` : (raw.portfolio || `${t.strategy}|${t.variant}`);
+  return [t.execution_type, owner, t.symbol, t.timeframe, t.side, t.entry_time].join('|');
+}
+
+/** A short ID derived only from the trade's natural key (FNV-1a, 64-bit), so it is the same after every restart and on every device. */
+export function tradeIdOf(key) {
+  let h = 0xcbf29ce484222325n;
+  for (const ch of new TextEncoder().encode(String(key))) h = BigInt.asUintN(64, (h ^ BigInt(ch)) * 0x100000001b3n);
+  return `T${h.toString(36).toUpperCase().padStart(13, '0')}`;
+}
+
+/**
+ * One trade per ID. A second record with the same natural key is never shown as another trade: it is
+ * reported as a duplicate (identical) or a conflict (same entry, different outcome), and the first stored
+ * record is kept. Nothing is deleted from storage.
+ */
+export function assignTradeIds(trades) {
+  const seen = new Map();
+  const unique = []; const duplicates = [];
+  for (const t of trades) {
+    const key = naturalKey(t);
+    const id = tradeIdOf(key);
+    const first = seen.get(id);
+    if (first) {
+      const same = first.exit_time === t.exit_time && first.exit_price === t.exit_price && first.net === t.net && first.r === t.r;
+      duplicates.push({ id, kind: same ? 'duplicate' : 'conflict', execution_type: t.execution_type, entry_time: t.entry_time });
+      continue;
+    }
+    const withId = { ...t, id, key, evidence_label: EVIDENCE_LABELS[t.execution_type] || 'SIMULATION' };
+    seen.set(id, withId);
+    unique.push(withId);
+  }
+  return { trades: unique, duplicates };
 }
 
 /** Skipped and blocked signals the forward engine kept, with their reasons (never traded, never deleted). */
