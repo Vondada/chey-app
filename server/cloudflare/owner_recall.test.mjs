@@ -312,3 +312,24 @@ test('ordinary sentences are not caught by the record or inspection routes', asy
     assert.equal(memoryInspectIntent(t), false, t);
   }
 });
+
+// Codex review of #499 (merged a7c1062), three P1 threads. Each fails before the fix.
+test('a phone-note answer keeps its provenance when the owner asks how CHE knows it', async () => {
+  const che = await owner({ model: DOWN });
+  const notes = PHONE_NOTES('[People] The owner\'s favorite drink is Sprite');
+  await che.say("What's my favorite drink?", notes);
+  const out = await che.say('How do you know that?', notes);
+  assert.match(out.reply, /phone/i, out.reply);
+  assert.match(out.reply, /no date|undated/i, out.reply);
+  assert.doesNotMatch(out.reply, /language model alone/, 'must not claim the model alone');
+  assert.doesNotMatch(out.reply, /you told me/i, 'a phone note is not attested as the owner\'s own words');
+});
+
+test('a third-person note is never recalled as the owner\'s fact', async () => {
+  for (const note of ['His favorite drink is Coke', "Sam's favorite drink is Coke", 'Her favorite drink is Coke']) {
+    const che = await owner({ model: DOWN });
+    const out = await che.say("What's my favorite drink?", { ...fresh, ...PHONE_NOTES(note) });
+    assert.doesNotMatch(out.reply, /Coke/, note);
+    assert.match(out.reply, /don't have a record of your favorite drink/, note);
+  }
+});

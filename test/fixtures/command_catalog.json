@@ -348,6 +348,75 @@
    "optional_missing": []
   },
   {
+   "id": "che-brain-record",
+   "category": "intelligence",
+   "title": "Che Brain Record",
+   "summary": "Open a saved Brain record.",
+   "does": "Shows the newest real Brain record, or the newest about a topic you name, with its title, kind, source, status, date and id. Says so when the Brain is empty, nothing matches, or the store cannot be read.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Show a saved Brain record",
+    "Show a memory record about Sprite"
+   ],
+   "needs": [
+    "memory"
+   ],
+   "optional": [],
+   "handler": "owner_recall.brainRecordIntent → speakBrainRecord",
+   "route": "che_brain_record",
+   "produces": "record",
+   "evidence": "The stored Brain record itself, with its id; zero model calls.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "brain record",
+    "saved record",
+    "memory record",
+    "open record"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "che-memory-inspect",
+   "category": "intelligence",
+   "title": "Che Memory Inspect",
+   "summary": "Inspect CHE’s memory system.",
+   "does": "Counts what each store holds (memory records, saved preferences, the Brain, and the phone notes sent with the message) and names any store it could not read. Zero model calls.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Inspect your memory system"
+   ],
+   "needs": [
+    "memory"
+   ],
+   "optional": [],
+   "handler": "owner_recall.inspectMemory → speakMemoryInspection",
+   "route": "che_memory_inspection",
+   "produces": "inspection",
+   "evidence": "Real counts read from each store on this request; zero model calls.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "inspect memory",
+    "memory system",
+    "memory status",
+    "what is in memory"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
    "id": "che-brain-review",
    "category": "intelligence",
    "title": "Che Brain Review",

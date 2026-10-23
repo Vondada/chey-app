@@ -648,6 +648,10 @@ export function explainEvidenceFor({ referent = null, entry = null, records = []
   if (entry.kind === 'none') {
     return { retract: [], text: `${quote}That was me telling you I had no record to cite, sir. There is no evidence behind it because I did not claim anything.` };
   }
+  // A fact read from the phone's Brain notes: undated, its author unrecorded, not the owner's attested words.
+  if (entry.kind === 'brain_note') {
+    return { retract: [], text: `${quote}That came from the Brain notes on your phone, not from a dated record. The note has no date, and it does not say whether you typed it or I saved it from a chat. It is not independently verified.` };
+  }
   return { retract: [], text: `${quote}That answer came from my language model alone. It was not independently verified, and I have no source, tool result or record of yours behind it.` };
 }
 

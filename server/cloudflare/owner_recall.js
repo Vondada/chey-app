@@ -182,19 +182,27 @@ export function phoneBrainNotes(brainContext) {
       const m = /^\s*-\s+(.{2,400})$/.exec(line);
       if (!m) continue;
       const note = m[1].trim();
-      notes.push({ text: noteAsStatement(note), note: note.replace(/^\[[A-Za-z]+\]\s*/, ''), phone: true });
+      const text = noteAsStatement(note);
+      // A note about someone else ("His favorite drink is Coke") is not the owner's fact: it is never recalled as one.
+      if (text == null) continue;
+      notes.push({ text, note: note.replace(/^\[[A-Za-z]+\]\s*/, ''), phone: true });
     }
   }
   return notes;
 }
 
-/** A Brain note in the owner's own grammar: the category tag dropped, "The owner's" / "His" read as "My". */
+// A note that starts with another person: "His …", "Her …", "Their …", "Sam's …", "The team's …".
+const OTHER_PERSON = /^(?:his|her|their|its|(?:the\s+)?[A-Za-z][\w-]*['’]s)\b/i;
+
+/**
+ * A Brain note in the owner's own grammar: the category tag dropped, and only "The owner's" / "The user's" read as "My".
+ * Returns null for a note about someone else, so it is never recalled as the owner's fact.
+ */
 export function noteAsStatement(note) {
-  return String(note || '')
-    .replace(/^\s*\[[A-Za-z]+\]\s*/, '')
-    .replace(/^(?:the\s+)?(?:owner|user)(?:['’]s)\s+/i, 'My ')
-    .replace(/^(?:his|her|their)\s+/i, 'My ')
-    .trim();
+  const text = String(note || '').replace(/^\s*\[[A-Za-z]+\]\s*/, '').trim();
+  if (/^(?:the\s+)?(?:owner|user)(?:['’]s)\s+/i.test(text)) return text.replace(/^(?:the\s+)?(?:owner|user)(?:['’]s)\s+/i, 'My ');
+  if (OTHER_PERSON.test(text)) return null;
+  return text;
 }
 
 // ─── "Show a saved Brain record" ────────────────────────────────────────────────────────────────────────────────────

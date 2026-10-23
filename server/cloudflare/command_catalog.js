@@ -148,6 +148,22 @@ export const COMMANDS = Object.freeze([
     prompt: 'What have I told you about {input}?',
     produces: 'memories', evidence: 'Only owner-attested records; zero model calls.', keywords: ['remember', 'memory', 'recall', 'what did i say', 'confirmed'],
   }),
+  C('che-brain-record', 'intelligence', 'EXPLORE', 'Open a saved Brain record.', {
+    does: 'Shows the newest real Brain record, or the newest about a topic you name, with its title, kind, source, status, date and id. Says so when the Brain is empty, nothing matches, or the store cannot be read.',
+    needs: ['memory'], route: 'che_brain_record', handler: 'owner_recall.brainRecordIntent → speakBrainRecord',
+    input: null,
+    examples: ['Show a saved Brain record', 'Show a memory record about Sprite'],
+    prompt: 'Show a saved Brain record',
+    produces: 'record', evidence: 'The stored Brain record itself, with its id; zero model calls.', keywords: ['brain record', 'saved record', 'memory record', 'open record'],
+  }),
+  C('che-memory-inspect', 'intelligence', 'EXPLORE', 'Inspect CHE’s memory system.', {
+    does: 'Counts what each store holds (memory records, saved preferences, the Brain, and the phone notes sent with the message) and names any store it could not read. Zero model calls.',
+    needs: ['memory'], route: 'che_memory_inspection', handler: 'owner_recall.inspectMemory → speakMemoryInspection',
+    input: null,
+    examples: ['Inspect your memory system'],
+    prompt: 'Inspect your memory system',
+    produces: 'inspection', evidence: 'Real counts read from each store on this request; zero model calls.', keywords: ['inspect memory', 'memory system', 'memory status', 'what is in memory'],
+  }),
   C('che-brain-review', 'intelligence', 'EXPLORE', 'Hear the morning Brain review.', {
     does: 'Reads the latest daily review computed from your Brain’s own records: facts, inferences with their rules, hypotheses marked as such, recommendations, one interpretation, and what is unknown. Says so when there is none yet.',
     needs: ['memory'], route: 'che_brain_review', handler: 'brain_audit.brainReviewIntent → latestReview → speakReview',
