@@ -102,6 +102,7 @@ function spokenPick(message, n) {
 }
 import { ATLAS_SOURCE, answerAtlas, atlasHiddenAction, atlasIntent, atlasQuizAnswerTurn, atlasPromptContext, atlasResetAsk, atlasResetIntent, projectAtlasToBrain, resetAtlasProgress } from './knowledge_atlas.js';
 import { LIVE_BACKTEST, LIVE_RUNS, LIVE_STATE, haltLivePaper, liveSpecs, liveBacktest, liveDashboard, livePaperSummary, liveTick, nextLiveTickAt, readLivePortfolios, researchDue, setLivePaper } from './trading_live.js';
+import { governorAction, queueAllocationFollowUp, readDecisions, runGovernor, speakGovernor, tradeDecisions } from './strategy_governor.js';
 import { ICT_CONCEPTS, applyControlChange, controlsView, noteAuditEffect, readControls, strategyRegistry, resolveStep, speakControlResult, speakControlsView, speakSkipReasons, stockOrderProblem } from './trading_controls.js';
 import { cmeSession, frontMonth, loadIntraday, TradovateMarketStream, connectMarketSocket } from './market_feed.js';
 import { alpacaKeys, alpacaPaperDashboard, cancelAlpacaPaperOrder, haltAlpacaPaper, previewAlpacaPaperOrder, alpacaPaperOrders, alpacaPaperPositions, alpacaPaperEquity, alpacaStockBars, AlpacaStockStream, AlpacaOrderStream, alpacaStatus, speakAlpacaDashboard, liveKeyProblem, placeAlpacaPaperOrder, removeAlpacaPaperKeys, saveAlpacaPaperKeys } from './broker_alpaca.js';
@@ -4352,6 +4353,7 @@ export class CheState extends DurableObject {
     // Multi-timeframe research (trading_research.js): the daily refresh is queued once a day; a queued job advances
     // inside its profile's CPU budget, checkpointing each unit. Deterministic code only, free data only, no orders.
     await researchAutoQueue(this.ctx.storage, opts.now ?? Date.now()).catch((error) => console.error('Research queue failed:', error?.message || error));
+    await queueAllocationFollowUp(this.ctx.storage, opts.now ?? Date.now()).catch((error) => console.error('Governor follow-up failed:', error?.message || error));
     await researchStep(this.ctx.storage, { now: opts.now ?? Date.now() }).catch((error) => console.error('Research step failed:', error?.message || error));
     return book;
   }
@@ -7939,6 +7941,26 @@ export class CheState extends DurableObject {
         if (!ownerDevice) return ownerOnly();
         const draft = await Promise.resolve().then(() => this.ctx.storage.get('fye_draft')).catch(() => null);
         return json({ ok: true, status: FYE_STATUS, draft: draft || null, order_sent: false });
+      }
+      // Strategy governor (owner, 2026-10-23): which strategies may trade forward paper, why, and every decision with its evidence.
+      if (path === '/api/trading/governor' && request.method === 'GET') {
+        if (!ownerDevice) return ownerOnly();
+        const view = await runGovernor(this.ctx.storage, { record: false });
+        return json({ ...view, spoken: speakGovernor(view) });
+      }
+      if (path === '/api/trading/governor/decisions' && request.method === 'GET') {
+        if (!ownerDevice) return ownerOnly();
+        return json({ decisions: await readDecisions(this.ctx.storage, { limit: Number(new URL(request.url).searchParams.get('limit')) || 100 }) });
+      }
+      if (path === '/api/trading/governor/trades' && request.method === 'GET') {
+        if (!ownerDevice) return ownerOnly();
+        const q = new URL(request.url).searchParams;
+        return json({ items: tradeDecisions(await readLivePortfolios(this.ctx.storage), { strategy: q.get('strategy') || null, limit: Number(q.get('limit')) || 50 }) });
+      }
+      if (path === '/api/trading/governor' && request.method === 'POST') {
+        if (!ownerDevice) return ownerOnly();
+        const result = await governorAction(this.ctx.storage, body);
+        return json(result, result.ok ? 200 : 400);
       }
       if (path === '/api/trading/controls' && request.method === 'GET') {
         if (!ownerDevice) return ownerOnly();
