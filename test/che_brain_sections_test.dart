@@ -250,4 +250,62 @@ void main() {
     expect(cheBrainIsSimulated(byId('job:abc123')), isFalse);
     expect(CheBrainStatus.values.map((s) => s.label), ['Pending', 'Verified', 'Failed', 'Unverified']);
   });
+
+  test('record ids from a chat reply: trimmed, deduplicated, capped', () {
+    expect(cheRecordIdsOf(['mem:drink', ' mem:drink ', '', 'conv:1']), ['mem:drink', 'conv:1']);
+    expect(cheRecordIdsOf(null), isEmpty);
+    expect(cheRecordIdsOf([for (var i = 0; i < 20; i++) 'r$i']).length, 12);
+  });
+
+  testWidgets('a chat reply links to its Brain record; an unsynced one says so instead of opening', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: CheBrainRecordLinks(ids: const ['mem:drink', 'brain:not-here'], resolve: (id) => dots.where((d) => d.id == id).firstOrNull),
+        ),
+      ),
+    );
+    expect(find.text('Brain record 2 (not synced yet)'), findsOneWidget);
+    await tester.tap(find.text('Brain record 2 (not synced yet)'));
+    await tester.pump();
+    expect(find.textContaining('not on this phone yet'), findsOneWidget);
+    await tester.tap(find.text('Brain record 1'));
+    await tester.pumpAndSettle();
+    expect(find.text('Favorite drink'), findsOneWidget);
+    expect(find.text('Category  '), findsNothing);
+    expect(find.textContaining('Memory'), findsWidgets);
+  });
+
+  testWidgets('trade and replay evidence open in the app by the trade id; nothing else is routed there', (tester) async {
+    final opened = <CheBrainEvidence>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: CheBrainRecordSheet(
+            dot: byId('room:trading:t1'),
+            onOpenEvidence: (e) async {
+              opened.add(e);
+              return true;
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Evidence not available yet'), findsNothing);
+    await tester.tap(find.text('Replay trade mnq-5m-ema20-0042'));
+    await tester.pumpAndSettle();
+    expect(opened.single.kind, CheEvidenceKind.replay);
+    expect(opened.single.id, 'mnq-5m-ema20-0042');
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: CheBrainRecordSheet(dot: byId('job:abc123'), onOpenEvidence: (e) async => true),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Evidence not available yet'), findsOneWidget, reason: 'a coding job has no screen of its own yet; its commit, PR and run open as links');
+  });
 }
