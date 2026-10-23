@@ -84,7 +84,8 @@ import { matrixIntent, readMatrix, runMatrix, speakMatrix } from './backtest_mat
 import { autoQueue as researchAutoQueue, cancelJob as cancelResearchJob, matrixView as researchMatrixView, nextResearchAt, queueJob as queueResearchJob, researchIntent, researchStep, researchView, setProfile as setResearchProfile, speakBestNow, speakHistory, speakStrategy, strategyView as researchStrategyView } from './trading_research.js';
 import { nextStrategySimTickAt, setStrategySimCeiling, setStrategySimPaused, speakStrategySim, strategySimIntent, strategySimTick, strategySimView, strategySimWake } from './strategy_sim.js';
 import { evidenceIntent, evidenceReport, evidenceTick } from './trading_evidence_runner.js';
-import { readTrades } from './trading_evidence.js';
+import { readTrades, tradeDayOf } from './trading_evidence.js';
+import { DAILY_TARGET, EXECUTION_TYPES, VISUAL_SOURCE, auditTrades, compareWindows, currentLeader, dailyEvidence, dailyPnl, filterTrades, historyChart, journalView, lastForwardBar, metricsOf, openPositions, rankStrategies, readSkips, readVisualTrades, replayFrame, speakAudit, speakEvidence, speakCard, speakLeader, speakPnl, tradingVisualIntent } from './trading_visual.js';
 import { cancelCandidates, cancelConfirmation, cancelOrderIntent, chartIntent, chartView, drawIntent, futuresOrderIntent, marketOrderFeedProblem, readDrawings, saveDrawings, speakOrder } from './trading_chart.js';
 import { readRithmicCandles, storeRithmicCandles } from './rithmic_dataset.js';
 // A spoken cancel of one Alpaca PAPER order waiting for the owner's yes, or for his pick from a numbered list.
@@ -3872,6 +3873,37 @@ export class CheState extends DurableObject {
   // OAuth sign-in as stored, FundYourEdge as not connected (Rithmic needs a licence), and
   // live orders disabled. Nothing is assumed about balances or firm rules.
   // Every trading connection as its own system reports it (issue #344); nothing here changes a mode.
+  /** GET /api/trading/visual?view=…: one read of the trade records, projected for the view asked for. */
+  async tradingVisualView(q) {
+    const view = q.get('view') || 'summary';
+    const filters = Object.fromEntries(['instrument', 'timeframe', 'strategy', 'from', 'to', 'execution_type', 'side', 'result'].map((k) => [k, (q.get(k) || '').slice(0, 40)]).filter(([, v]) => v));
+    const { trades, sources, research } = await readVisualTrades(this.ctx.storage);
+    const shown = filterTrades(trades, filters);
+    const today = tradeDayOf(new Date().toISOString());
+    const base = { ok: true, view, paper_only: true, live_orders: 'disabled', today, filters, sources, research, execution_types: EXECUTION_TYPES };
+    if (view === 'evidence') {
+      const rows = dailyEvidence(shown, { skips: await readSkips(this.ctx.storage), today });
+      return { ...base, target: DAILY_TARGET, target_rule: 'A daily target, never a quota: trades are never forced, and a day below it says why.', rows: rows.slice(0, 400), total_rows: rows.length };
+    }
+    if (view === 'pnl') {
+      const pnl = dailyPnl({ trades, positions: await openPositions(this.ctx.storage), lastBar: await lastForwardBar(this.ctx.storage), day: q.get('day') || today });
+      return { ...base, pnl, spoken: speakPnl(pnl) };
+    }
+    if (view === 'replay') {
+      const tf = q.get('timeframe') || '5m';
+      const chart = await historyChart(this.ctx.storage, { market: q.get('instrument') || 'MNQ', tf, at: q.get('cursor'), trades });
+      return { ...base, ...replayFrame({ bars: chart.bars, trades: filterTrades(shown, { timeframe: tf, instrument: chart.symbol }), cursor: q.get('cursor'), timeframe: tf }), provenance: chart.provenance || null };
+    }
+    if (view === 'compare') return { ...base, windows: compareWindows(shown) };
+    if (view === 'leader') { const l = currentLeader(trades); return { ...base, ...l, spoken: speakLeader(l) }; }
+    if (view === 'journal') return { ...base, ...journalView(trades, await readSkips(this.ctx.storage), { ...filters, include_skips: q.get('skips') !== '0' }) };
+    if (view === 'audit') { const a = auditTrades(trades); return { ...base, ...a, spoken: speakAudit(a) }; }
+    if (view === 'ranking') return { ...base, ranking: rankStrategies(shown, { executionType: filters.execution_type || 'forward_paper' }), rule: 'Ranked by the lower end of the 95% expectancy range in R, never by win rate; under 30 trades is provisional.' };
+    const l = currentLeader(trades);
+    return { ...base, totals: metricsOf(shown), leader: l.leader, headline: l.headline, provisional: l.provisional,
+      pnl: dailyPnl({ trades, positions: await openPositions(this.ctx.storage), lastBar: await lastForwardBar(this.ctx.storage), day: today }) };
+  }
+
   async tradingConnectionsView() {
     const env = this.keyEnv || this.env;
     const [paper, desk, conn, alpaca] = await Promise.all([
@@ -8178,7 +8210,7 @@ export class CheState extends DurableObject {
       if (path === '/api/trading/chart' && request.method === 'GET') {
         if (!ownerDevice) return tradingOwnerOnly();
         const q = new URL(request.url).searchParams;
-        const view = await chartView(this.ctx.storage, this.keyEnv || this.env, { account: q.get('account') || 'alpaca_paper', symbol: (q.get('symbol') || '').trim().toUpperCase().slice(0, 8), tf: q.get('tf') || '5m' });
+        const view = await chartView(this.ctx.storage, this.keyEnv || this.env, { account: q.get('account') || 'alpaca_paper', symbol: (q.get('symbol') || '').trim().toUpperCase().slice(0, 8), tf: q.get('tf') || '5m', at: q.get('at') || null });
         if (view.ok) view.drawings = await readDrawings(this.ctx.storage, view.account, view.symbol || '');
         if (view.ok && view.account === 'alpaca_paper' && view.symbol) await this.ctx.storage.put('trading_chart_last_symbol', view.symbol);
         return json(view, view.ok ? 200 : 400);
@@ -8195,6 +8227,12 @@ export class CheState extends DurableObject {
         const q = new URL(request.url).searchParams;
         const read = await readRithmicCandles(this.ctx.storage, { symbol: (q.get('symbol') || '').trim().toUpperCase().slice(0, 8), from: q.get('from'), to: q.get('to') });
         return json(read, read.ok ? 200 : 400);
+      }
+      // Visual trading evidence (owner, 2026-10-23): daily evidence, daily P&L, replay, comparisons, the
+      // current leader, the journal and the audit, all read from the stored trade records. Read only.
+      if (path === '/api/trading/visual' && request.method === 'GET') {
+        if (!ownerDevice) return tradingOwnerOnly();
+        return json(await this.tradingVisualView(new URL(request.url).searchParams));
       }
       if (path === '/api/trading/chart/drawings' && request.method === 'PUT') {
         if (!ownerDevice) return tradingOwnerOnly();
@@ -12192,6 +12230,16 @@ export class CheState extends DurableObject {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can read the trading records, sir.', { source: ANALYSIS_SOURCE, ok: false, model_calls: 0 });
           const result = await analyzeStrategy(this.ctx.storage, analysis);
           return ndjsonReply(result.text, { source: ANALYSIS_SOURCE, ok: result.ok, model_calls: 0, kind: 'analysis', strategy: analysis.strategy, windows: analysis.windows, overlap: analysis.overlap, trades: result.trades ?? null });
+        }
+        // Visual trading evidence by voice: "show today's P&L", "who is the current leader", "audit the trades".
+        const tradeVisualAsk = body.attachment ? null : tradingVisualIntent(message);
+        if (tradeVisualAsk) {
+          if (!ownerDevice) return ndjsonReply('Only the CHE owner can read the trading records.', { source: VISUAL_SOURCE, ok: false, model_calls: 0 });
+          if (tradeVisualAsk.kind === 'card') return ndjsonReply(speakCard(tradeVisualAsk), { source: VISUAL_SOURCE, ok: true, model_calls: 0, open_view: 'trading_visual', visual: { card: tradeVisualAsk.card, size: tradeVisualAsk.size } });
+          const params = new URLSearchParams({ view: tradeVisualAsk.kind });
+          const v = await this.tradingVisualView(params);
+          const text = tradeVisualAsk.kind === 'evidence' ? speakEvidence(v.rows, v.today) : v.spoken;
+          return ndjsonReply(text, { source: VISUAL_SOURCE, ok: true, model_calls: 0, open_view: 'trading_visual', visual: { view: tradeVisualAsk.kind } });
         }
         const ledger = body.attachment ? null : ledgerIntent(message);
         if (ledger) {

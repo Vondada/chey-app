@@ -2060,6 +2060,112 @@
    "optional_missing": []
   },
   {
+   "id": "trade-pnl",
+   "category": "trading",
+   "title": "Trade Pnl",
+   "summary": "Today's paper P&L, realized and open.",
+   "does": "Reads today's forward paper P&L from the journal: realized from closed trades, unrealized marked at the last stored DELAYED bar, commissions and slippage, and the intraday P&L curve on the Trading page. No balance is assumed.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Show today's P&L",
+    "How much am I up today?"
+   ],
+   "needs": [
+    "office"
+   ],
+   "optional": [],
+   "handler": "trading_visual.dailyPnl",
+   "route": "che_trading_visual",
+   "produces": "daily pnl",
+   "evidence": "Closed journal trades and the last stored bar only.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "p&l",
+    "pnl",
+    "profit and loss",
+    "today",
+    "daily pnl"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "trade-leader",
+   "category": "trading",
+   "title": "Trade Leader",
+   "summary": "The best verified strategy, or why there is none.",
+   "does": "Names the current leader only when one strategy and timeframe meets every written rule (30 forward paper trades, positive expectancy range after costs, profit factor above 1.2, and historical backing); otherwise says \"No verified leader yet\" and what each candidate is missing. Never by win rate alone.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Who is the current leader?",
+    "What is the best verified strategy?"
+   ],
+   "needs": [
+    "office"
+   ],
+   "optional": [],
+   "handler": "trading_visual.currentLeader",
+   "route": "che_trading_visual",
+   "produces": "leader",
+   "evidence": "Forward paper and historical backtest records, ranked by the lower expectancy bound.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "leader",
+    "best strategy",
+    "verified strategy",
+    "ranking"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "trade-audit",
+   "category": "trading",
+   "title": "Trade Audit",
+   "summary": "Audit every stored trade record.",
+   "does": "Counts the stored trade records by execution type and checks them for exact duplicates, entries shared across variants, look-ahead, fills that disagree with their own costs, missing labels and P&L that does not add up. Changes nothing.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Audit the trades",
+    "Run a trade audit"
+   ],
+   "needs": [
+    "office"
+   ],
+   "optional": [],
+   "handler": "trading_visual.auditTrades",
+   "route": "che_trading_visual",
+   "produces": "audit",
+   "evidence": "Real counts from the stored records; nothing is altered.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "audit",
+    "duplicates",
+    "look-ahead",
+    "trade audit"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
    "id": "site-build",
    "category": "build",
    "title": "Site Build",

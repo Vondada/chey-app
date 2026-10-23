@@ -126,7 +126,7 @@ void main() {
   testWidgets('screen reports: Commands tabs, a page on top that does not report itself, Connections', (tester) async {
     final che = center.FakeChe();
     await center.openCenter(tester, che: che);
-    expect(CheScreenAwareness.describe(), startsWith('You are on Commands, Library tab. Tabs: 1. Library, 2. Workflows, 3. Activity. All 102 commands'));
+    expect(CheScreenAwareness.describe(), startsWith('You are on Commands, Library tab. Tabs: 1. Library, 2. Workflows, 3. Activity. All 105 commands'));
     await CheCommandCenterVoice.handler!('show workflows');
     await tester.pumpAndSettle();
     expect(CheScreenAwareness.describe(), startsWith('You are on Commands, Workflows tab.'));

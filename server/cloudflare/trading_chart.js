@@ -11,10 +11,13 @@ import { alpacaPaperDashboard, alpacaPaperOrder, openAlpacaPaperOrders, previewA
 import { readSimState, readStoredTrades } from './strategy_sim.js';
 import { readTrades, overnightLevels } from './trading_evidence.js';
 import { LIVE_FEED, readLivePortfolios } from './trading_live.js';
+import { historyChart, provenanceOf } from './trading_visual.js';
 
 export const ACCOUNTS = Object.freeze({
   alpaca_paper: { label: 'Alpaca PAPER', asset: 'stocks', mode: 'PAPER' },
   futures_paper: { label: 'MNQ futures PAPER (CHE research)', asset: 'futures', mode: 'PAPER' },
+  // NQ or MNQ candles from CHE's stored research datasets (owner, 2026-10-23): study only, no orders.
+  futures_history: { label: 'NQ/MNQ history (stored research data)', asset: 'futures', mode: 'HISTORICAL' },
 });
 // Alpaca timeframes and how far back each reads; futures are built from the stored 5-minute bars.
 export const TIMEFRAMES = Object.freeze({
@@ -103,8 +106,9 @@ function feedHealth({ provider, status, lastBarTime, now, tf }) {
 }
 
 /** The chart for one account, symbol and timeframe: bars, feed health, the entry gate and markers. */
-export async function chartView(storage, env, { account = 'alpaca_paper', symbol = '', tf = '5m', now = Date.now(), fetcher = fetch } = {}) {
+export async function chartView(storage, env, { account = 'alpaca_paper', symbol = '', tf = '5m', at = null, now = Date.now(), fetcher = fetch } = {}) {
   if (!ACCOUNTS[account]) return { ok: false, error: `Choose an account: ${Object.keys(ACCOUNTS).join(' or ')}.` };
+  if (account === 'futures_history') return historyChart(storage, { market: symbol || 'MNQ', tf, at });
   const offered = account === 'futures_paper' ? FUTURES_TIMEFRAMES : Object.keys(TIMEFRAMES);
   // A timeframe the account does not offer (futures at 1m) answers with 5-minute bars, labelled 5m.
   const frame = offered.includes(tf) ? tf : '5m';
@@ -137,6 +141,7 @@ export async function chartView(storage, env, { account = 'alpaca_paper', symbol
   const feed = feedHealth({ provider: stored.provider || 'Yahoo MNQ=F', status: stored.status, lastBarTime: stored.last_bar_time || five.at(-1)?.t, now, tf: frame });
   return {
     ...base, state: five.length ? 'verified' : 'no_data', symbol: sym, bars: bars.map(({ t, o, h, l, c, v }) => ({ t, o, h, l, c, v })), feed,
+    provenance: provenanceOf({ dataType: 'live-paper', source: stored.provider || 'Yahoo MNQ=F', delay: stored.delayed_by_min != null ? `about ${stored.delayed_by_min} minutes (DELAYED)` : 'DELAYED', bars, tf: frame }),
     markers: chartMarkers({ journal, portfolios, simTrades, symbol: sym }),
     // The overnight high/low and the 86-style bias (CHE's independent approximation, never the P2P indicator).
     levels: five.length ? overnightLevels(five) : null,
