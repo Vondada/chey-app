@@ -165,11 +165,11 @@ export function lifecycleOf(e, { running = false } = {}) {
 /** Why an entry is not paper trading right now, in plain words (null when it is). */
 export function notRunningReason(e, stage) {
   if (stage === 'paper_active') return null;
+  if (e.engine === 'dsl' && e.approval?.state !== 'approved') return 'Waiting for the owner\'s approval before it may paper trade.';
   if (e.enabled === false) return 'Disabled by the owner.';
   if (stage === 'discovered') return 'Only a name or idea: no written rules exist in CHE yet, so it cannot be tested.';
   if (stage === 'rules_documented') return 'Rules are written down but no engine runs them yet.';
   if (e.kind === 'market_context') return 'A market-context model describes conditions; it does not place paper trades by itself.';
-  if (e.engine === 'dsl' && e.approval?.state !== 'approved') return 'Waiting for the owner\'s approval before it may paper trade.';
   if (e.engine === 'strategy_sim' || e.engine === 'trading_lab') return 'Runs in its own simulator or lab, not in the forward paper engine.';
   if (stage === 'implemented') return 'Implemented but not backtested yet.';
   return 'Not enabled for forward paper testing.';
@@ -466,6 +466,12 @@ Every side needs a stop and a target. Never reference future bars. If the idea i
 export function strategyLibraryIntent(message) {
   const text = String(message || '').toLowerCase().replace(/[’']/g, "'").replace(/^\s*(?:hey\s+)?(?:che|chey|chay)[,\s]+/, '').trim();
   if (!text) return null;
+  // The /trade-library command sends "Strategy library: <request>"; a request it does not recognise reads the library.
+  const command = /^strategy library:\s*([\s\S]*)$/.exec(text);
+  if (command) {
+    const rest = String(message).replace(/^[\s\S]*?strategy library:\s*/i, '');
+    return (command[1] ? strategyLibraryIntent(rest) : null) || { kind: 'list' };
+  }
   const add = /^(?:please\s+)?(?:add|create|make|write|build)\s+(?:me\s+)?(?:a\s+|an\s+)?(?:new\s+)?(?:custom\s+)?strategy\b[\s:,-]*(?:that|which|where|when|to|for)?\s*([\s\S]{8,})$/.exec(text);
   if (add) return { kind: 'draft', text: String(message).slice(String(message).length - add[1].length).trim() };
   const yes = /^(?:yes|yeah|yep|confirm(?:ed)?)[,\s]+(?:please\s+)?approve\s+(?:the\s+)?(.+?)(?:\s+strategy)?[.!]?$/.exec(text);
