@@ -7,6 +7,9 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+/// R | Protocol login template version; independent of CHE's application version.
+const kRithmicTemplateVersion = '3.9';
+
 class RithmicTemplate {
   // Discovery, sent to the bootstrap endpoint before any login (request_rithmic_system_info.proto,
   // request_rithmic_system_gateway_info.proto in the kit).
@@ -95,9 +98,12 @@ Uint8List encodeLogin({
   required String systemName,
   required String appName,
   required String appVersion,
-  String templateVersion = '',
+  String templateVersion = kRithmicTemplateVersion,
   int infraType = RithmicInfra.ticker,
 }) {
+  if (!RegExp(r'^\d+\.\d+$').hasMatch(templateVersion)) {
+    throw ArgumentError('A non-empty Rithmic protocol template version is required.');
+  }
   final m = _Message()
     ..put(130002, (w) => w.string(130002, appName))
     ..put(130004, (w) => w.string(130004, password))
@@ -106,7 +112,7 @@ Uint8List encodeLogin({
     ..put(153621, (w) => w.int32(153621, infraType))
     ..put(153628, (w) => w.string(153628, systemName))
     ..put(_templateField, (w) => w.int32(_templateField, RithmicTemplate.login));
-  if (templateVersion.isNotEmpty) m.put(153634, (w) => w.string(153634, templateVersion));
+  m.put(153634, (w) => w.string(153634, templateVersion));
   return m.encode();
 }
 
