@@ -216,9 +216,14 @@ void main() {
   runApp(const CHEApp());
 }
 
-/// The text scale CHE draws with: the system's accessibility size times CHE's own setting, held to 0.85-2.0 so every
-/// screen keeps its controls reachable (the layouts are tested up to 2.0).
-double cheEffectiveTextScale(TextScaler system, double app) => (system.scale(1) * app).clamp(0.85, 2.0).toDouble();
+/// The text-scale range every CHE screen is verified at: the responsive guard (che_responsive_layout_test.dart) draws
+/// each guarded screen at 1.0 and 1.3. Larger text beyond this overflowed and overlapped (2026-10-23).
+const double kCheMinTextScale = 0.9;
+const double kCheMaxTextScale = 1.3;
+
+/// The text scale CHE draws with: the system's accessibility size times CHE's own setting, held to the verified range.
+double cheEffectiveTextScale(TextScaler system, double app) =>
+    (system.scale(1) * app).clamp(kCheMinTextScale, kCheMaxTextScale).toDouble();
 
 class CHEApp extends StatefulWidget {
   const CHEApp({super.key});

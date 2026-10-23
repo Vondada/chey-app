@@ -58,6 +58,14 @@ const kMarkerColors = <String, Color>{
   'che_signal': Color(0xFFFFA94D),
 };
 const kChartAccounts = <String, String>{'alpaca_paper': 'Alpaca PAPER', 'futures_paper': 'MNQ PAPER'};
+/// The Alpaca PAPER chart account is hidden from the owner's Trading Room (owner, 2026-10-23: "I don't want to see the
+/// alpaca at all. I just want to see mine and Che's paper trades"). Set to true to show it again; the data path stays.
+bool kShowAlpacaPaper = false; // not const, so tests can show it again
+/// The chart account to open: the requested one when it is visible, otherwise the MNQ PAPER chart while Alpaca is hidden.
+String visibleChartAccount(String id) {
+  if (!kChartAccounts.containsKey(id) || (id == 'alpaca_paper' && !kShowAlpacaPaper)) return kShowAlpacaPaper ? 'alpaca_paper' : 'futures_paper';
+  return id;
+}
 const kQuickSymbols = ['SPY', 'QQQ', 'AAPL', 'MSFT', 'NVDA', 'TSLA'];
 
 DateTime? _time(Object? v) {
@@ -382,7 +390,7 @@ class CheTradingChart extends StatefulWidget {
 
 class CheTradingChartState extends State<CheTradingChart> {
   late final http.Client _http = widget.client ?? http.Client();
-  late String _account = kChartAccounts.containsKey(widget.initialAccount) ? widget.initialAccount : 'alpaca_paper';
+  late String _account = visibleChartAccount(widget.initialAccount);
   late String _symbol = widget.initialSymbol.toUpperCase();
   String _tf = '5m';
   List<String> _timeframes = const ['1m', '5m', '15m', '1h', '1d'];
@@ -988,7 +996,7 @@ class CheTradingChartState extends State<CheTradingChart> {
       );
 
   void _setAccount(String a) {
-    if (a == _account) return;
+    if (a == _account || visibleChartAccount(a) != a) return;
     setState(() {
       _account = a;
       _symbol = a == 'futures_paper' ? 'MNQ' : (_symbolField.text.trim().toUpperCase());
@@ -1161,7 +1169,7 @@ class CheTradingChartState extends State<CheTradingChart> {
         ]),
         const SizedBox(height: 8),
         Wrap(spacing: 8, runSpacing: 8, children: [
-          for (final e in kChartAccounts.entries) _chip(e.value, _account == e.key, () => _setAccount(e.key), semantics: 'Show the ${e.value} chart'),
+          for (final e in kChartAccounts.entries) if (kShowAlpacaPaper || e.key != 'alpaca_paper') _chip(e.value, _account == e.key, () => _setAccount(e.key), semantics: 'Show the ${e.value} chart'),
         ]),
         if (_account == 'alpaca_paper') ...[
           const SizedBox(height: 8),
@@ -1262,7 +1270,7 @@ class CheTradingChartState extends State<CheTradingChart> {
         // Legend: one toggle per source, with how many markers it has.
         Wrap(spacing: 6, runSpacing: 6, children: [
           for (final e in kMarkerSources.entries)
-            _legend(e.key, e.value, _allMarkers.where((m) => m.source == e.key).length),
+            if (kShowAlpacaPaper || !e.key.startsWith('alpaca_')) _legend(e.key, e.value, _allMarkers.where((m) => m.source == e.key).length),
         ]),
         if (_openOrders.isNotEmpty) ...[
           const SizedBox(height: 10),

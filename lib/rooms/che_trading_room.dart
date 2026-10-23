@@ -297,7 +297,8 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
         return [
           _fold('che_paper_compact', 'CHE PAPER ACCOUNT', 'Simulated balance and limits',
               ChePaperAccountPanel(key: const Key('che_paper_account_compact'), onRead: widget.onRead, compact: true), open: true),
-          _fold('alpaca', 'ALPACA PAPER', 'Paper balance, orders and fills (delayed data)',
+          // Hidden while kShowAlpacaPaper is false (owner, 2026-10-23); the panel and its data path are kept.
+          if (kShowAlpacaPaper) _fold('alpaca', 'ALPACA PAPER', 'Paper balance, orders and fills (delayed data)',
               CheAlpacaPaperPanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, client: p.client), open: true),
           _fold('connections', 'CONNECTIONS', 'Broker and data connections',
               CheTradingConnectionsPanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, client: p.client)),
