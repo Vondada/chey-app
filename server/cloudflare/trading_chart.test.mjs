@@ -400,3 +400,21 @@ test('cancel by voice through /api/chat: one match is read back and cancelled on
     assert.equal(deletes().length, 1);
   } finally { globalThis.fetch = prior; }
 });
+
+test('POST /api/trading/rithmic/candles stores the iPhone\'s closed Rithmic minutes; GET reads them; guests change nothing', sqlite, async () => {
+  const che = await owner();
+  await che.say('Hello CHE.');
+  const t = new Date(Math.floor((Date.now() - 10 * 60000) / 60000) * 60000).toISOString();
+  const candle = { t, symbol: 'MNQZ6', exchange: 'CME', o: 21000, h: 21004, l: 20998, c: 21002, v: 9, trades: 5, buy_volume: 5, sell_volume: 4, delta: 1, source: 'rithmic' };
+  const post = await che.raw('/api/trading/rithmic/candles', 'POST', { candles: [candle, { ...candle, source: 'yahoo' }] });
+  assert.equal(post.status, 200);
+  const saved = await post.json();
+  assert.deepEqual([saved.stored, saved.refused], [1, 1]);
+  const read = await che.api('/api/trading/rithmic/candles?symbol=MNQZ6');
+  assert.equal(read.candles.length, 1);
+  assert.equal(read.candles[0].source, 'rithmic');
+  assert.equal(read.candles[0].delta, 1);
+  const guest = await che.raw('/api/trading/rithmic/candles', 'POST', { candles: [{ ...candle, t: new Date(Date.parse(t) + 60000).toISOString() }] }, '');
+  assert.notEqual(guest.status, 200);
+  assert.equal((await che.api('/api/trading/rithmic/candles?symbol=MNQZ6')).candles.length, 1);
+});

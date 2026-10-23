@@ -17,6 +17,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../security/che_password_vault.dart';
 import 'rithmic_client.dart';
 import 'rithmic_live.dart';
+import 'rithmic_recorder.dart';
 import 'rithmic_wire.dart';
 
 const kRithmicVaultSite = 'rithmic';
@@ -213,6 +214,8 @@ class _CheRithmicScreenState extends State<CheRithmicScreen> {
           'Account: ${_label.text.trim().isEmpty ? 'Rithmic' : _label.text.trim()}',
           live,
           'The Trading Room MNQ PAPER chart now builds 1- and 5-minute candles from these trades.',
+          CheRithmicLive.backgroundNote,
+          CheRithmicRecorder.keptNote,
           'Read-only prices. Balances and orders are not connected here.',
         ];
         _savedNote = 'Your login is saved in the vault on this phone.';

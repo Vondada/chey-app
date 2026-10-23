@@ -168,6 +168,7 @@ import 'che_web_voice_stub.dart'
 import 'knowledge/che_knowledge_library_screen.dart';
 import 'rithmic/che_rithmic_screen.dart';
 import 'rithmic/rithmic_live.dart';
+import 'rithmic/rithmic_recorder.dart';
 
 part 'home_state/connected.dart';
 part 'home_state/home_ui.dart';
@@ -1316,6 +1317,8 @@ OWNER AGENCY
   void initState() {
     super.initState();
     CheSoulClient.configure(baseUrl: () => cheAgentBaseUrl, headers: () => _authHeaders);
+    // Rithmic forward recorder: market data only (trades, bid/offer, closed 1-minute candles), never credentials.
+    CheRithmicRecorder.instance.configure(baseUrl: () => cheAgentBaseUrl, headers: () => _authHeaders);
     _screenToken = CheScreenAwareness.register(context, _shellScreenReport);
     unawaited(CheNotifications.requestPermission());
     unawaited(_syncUiVoicePrefs());

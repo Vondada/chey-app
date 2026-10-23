@@ -32,6 +32,15 @@ class CheRithmicLive extends ChangeNotifier {
   final book = RithmicCandleBook();
   RithmicMarketFeed? _feed;
   StreamSubscription<RithmicLastTrade>? _sub;
+  StreamSubscription<RithmicBestBidOffer>? _quoteSub;
+  final _accepted = StreamController<RithmicLastTrade>.broadcast();
+  final _quotes = StreamController<RithmicBestBidOffer>.broadcast();
+
+  /// Every real trade that entered the candle book (the forward recorder stores these).
+  Stream<RithmicLastTrade> get acceptedTrades => _accepted.stream;
+
+  /// Best bid/offer updates for this contract, as Rithmic sends them.
+  Stream<RithmicBestBidOffer> get quotes => _quotes.stream;
   String symbol = '', exchange = '';
   String detail = '';
   bool _attached = false, _dropped = false, _loginFailed = false;
@@ -123,6 +132,10 @@ class CheRithmicLive extends ChangeNotifier {
     _loginFailed = false;
     detail = '';
     _sub = feed.trades.listen(_onTrade);
+    unawaited(_quoteSub?.cancel());
+    _quoteSub = feed.quotes.listen((q) {
+      if (q.symbol.isEmpty || q.symbol == this.symbol) _quotes.add(q);
+    });
     if (feed is RithmicClient) {
       unawaited(feed.done.then((_) {
         if (identical(_feed, feed) && _attached) _drop('the connection closed');
@@ -135,6 +148,7 @@ class CheRithmicLive extends ChangeNotifier {
     if (t.symbol.isNotEmpty && symbol.isNotEmpty && t.symbol != symbol) return;
     if (!book.addTrade(t)) return;
     lastReceivedAt = _clock();
+    _accepted.add(t);
     notifyListeners();
   }
 
@@ -143,6 +157,8 @@ class CheRithmicLive extends ChangeNotifier {
     _openGap('Rithmic $why');
     unawaited(_sub?.cancel());
     _sub = null;
+    unawaited(_quoteSub?.cancel());
+    _quoteSub = null;
     _feed = null;
     _attached = false;
     _dropped = true;

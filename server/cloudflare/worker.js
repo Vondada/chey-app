@@ -86,6 +86,7 @@ import { nextStrategySimTickAt, setStrategySimCeiling, setStrategySimPaused, spe
 import { evidenceIntent, evidenceReport, evidenceTick } from './trading_evidence_runner.js';
 import { readTrades } from './trading_evidence.js';
 import { cancelCandidates, cancelConfirmation, cancelOrderIntent, chartIntent, chartView, drawIntent, futuresOrderIntent, marketOrderFeedProblem, readDrawings, saveDrawings, speakOrder } from './trading_chart.js';
+import { readRithmicCandles, storeRithmicCandles } from './rithmic_dataset.js';
 // A spoken cancel of one Alpaca PAPER order waiting for the owner's yes, or for his pick from a numbered list.
 const CHART_CANCEL_PENDING = 'trading_chart_cancel_pending';
 // "Number 2", "2", "the second one": a pick from a numbered list of n. 0 when the turn picks nothing.
@@ -8079,6 +8080,19 @@ export class CheState extends DurableObject {
         if (view.ok) view.drawings = await readDrawings(this.ctx.storage, view.account, view.symbol || '');
         if (view.ok && view.account === 'alpaca_paper' && view.symbol) await this.ctx.storage.put('trading_chart_last_symbol', view.symbol);
         return json(view, view.ok ? 200 : 400);
+      }
+      // CHE's own forward-recorded Rithmic minutes (owner, 2026-10-23): closed 1-minute candles the owner's iPhone
+      // built from real Rithmic trades. Market data only; the Rithmic login never reaches the Worker.
+      if (path === '/api/trading/rithmic/candles' && request.method === 'POST') {
+        if (!ownerDevice) return tradingOwnerOnly();
+        const saved = await storeRithmicCandles(this.ctx.storage, body.candles);
+        return json(saved, saved.ok ? 200 : 400);
+      }
+      if (path === '/api/trading/rithmic/candles' && request.method === 'GET') {
+        if (!ownerDevice) return tradingOwnerOnly();
+        const q = new URL(request.url).searchParams;
+        const read = await readRithmicCandles(this.ctx.storage, { symbol: (q.get('symbol') || '').trim().toUpperCase().slice(0, 8), from: q.get('from'), to: q.get('to') });
+        return json(read, read.ok ? 200 : 400);
       }
       if (path === '/api/trading/chart/drawings' && request.method === 'PUT') {
         if (!ownerDevice) return tradingOwnerOnly();
