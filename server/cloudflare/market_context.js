@@ -697,6 +697,33 @@ export function contextModels(events, studies) {
   });
 }
 
+const LIB_SOURCE_TYPE = { fomc: 'economic_calendar', bls: 'economic_calendar', bea: 'economic_calendar', dol: 'economic_calendar', fred_target: 'economic_calendar', fed_presser: 'website',
+  cme_spec: 'market_event', cme_options_rule: 'market_event', ndx_method: 'market_event' };
+// Models whose events CHE can obtain by itself (a published rule or an official machine-readable calendar).
+const INGESTIBLE = new Set(['ctx-fomc-decision', 'ctx-fomc-presser', 'ctx-cpi', 'ctx-nfp', 'ctx-ppi', 'ctx-opex-monthly', 'ctx-quarterly', 'ctx-holiday']);
+/**
+ * Strategy-library entries (kind market_context), in the library's che.library_entry/1 shape. A model without an
+ * ingestible event source asks for no more than RULES DOCUMENTED; the library computes anything higher from evidence.
+ */
+export function libraryEntries() {
+  return MODEL_DEFS.map((d) => ({
+    id: d.id, kind: 'market_context', name: d.name, category: 'other', lane: 'T7', engine: INGESTIBLE.has(d.id) ? 'market_context' : 'none',
+    sources: [
+      ...d.sources.map((k) => (SOURCES[k].url.startsWith('repo:') ? { type: 'repo_code', title: SOURCES[k].name, file: 'server/cloudflare/trading_research.js' } : { type: LIB_SOURCE_TYPE[k] || 'website', title: SOURCES[k].name, url: SOURCES[k].url })),
+      ...(d.kinds.includes('political_statement') || d.kinds.includes('geopolitical') ? [{ type: 'news', title: 'Owner-cited news or wire reports that quote the original item with its timestamp' }] : []),
+      ...(d.kinds.includes('earnings') ? [{ type: 'market_event', title: 'Company earnings dates and report times (before open / after close), from a cited calendar' }] : []),
+    ].concat(d.sources.length ? [] : [{ type: 'description', title: 'CHE event-study design (docs/CHE_MARKET_CONTEXT.md)' }]),
+    rules: [STUDY_SPEC(d.kinds[0], d.window)],
+    assumptions: ['Event time and first-available time come from the cited source or published rule.', "Prices are CHE's verified dataset bars, with the provider shown on each study.", 'Costs: CHE NORMAL cost profile (1 tick spread, 1 tick slippage per side, $1.50 commission and $0.50 fees per side).'],
+    timeframes: d.tf.map((t) => ({ '1m': 1, '5m': 5, '1D': 1440 }[t])).filter(Boolean),
+    data_requirements: [`NQ/MNQ bars at ${d.tf.join(' or ')} covering the events`, `events of kind ${d.kinds.join(', ')} with their first-available time`],
+    event_dependencies: d.kinds,
+    limitations: ['Association, not causation.', 'Free delayed data has about 59 days of 5-minute history, so intraday studies are usually small.', 'Same-day news is not separated out.',
+      ...(d.missing ? [d.missing] : []), ...(d.source_limits ? [d.source_limits] : [])],
+    ...(INGESTIBLE.has(d.id) ? {} : { lifecycle_requested: 'rules_documented' }),
+  }));
+}
+
 /** The whole page: counts by kind and stage, sources, models, upcoming events. */
 export async function contextView(storage, { now = Date.now() } = {}) {
   const events = await readEvents(storage);
