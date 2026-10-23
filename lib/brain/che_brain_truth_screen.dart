@@ -55,7 +55,7 @@ class CheBrainTruthRow {
     final t = DateTime.tryParse(at)?.toLocal();
     if (t == null) return 'unknown time';
     final h = t.hour % 12 == 0 ? 12 : t.hour % 12;
-    return '${t.month}/${t.day} ${h}:${t.minute.toString().padLeft(2, '0')} ${t.hour < 12 ? 'AM' : 'PM'}';
+    return '${t.month}/${t.day} $h:${t.minute.toString().padLeft(2, '0')} ${t.hour < 12 ? 'AM' : 'PM'}';
   }
 }
 
