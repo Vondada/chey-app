@@ -416,6 +416,14 @@ jobs:
           const line = `Paper trading ${report.state?.enabled ? 'ON' : 'OFF'} (${report.account}); feed ${f.status || 'none'} ${f.symbol || ''} ${report.contract || ''}, last bar ${f.last_bar || '-'}${f.error ? `, error: ${f.error}` : ''}; market ${report.session?.state}; signals ${report.counts?.signals ?? 0}, entries ${report.counts?.filled ?? 0}, closed ${report.totals?.trades ?? 0} (${report.totals?.wins ?? 0} won, ${report.totals?.losses ?? 0} lost, net ${report.totals?.net_pnl ?? 0}), open ${(report.positions || []).length}`;
           console.log(`::notice title=Forward paper trading::${line}`);
           summary(`**Forward paper trading (live Worker):** ${line}.`);
+          const cx = report.crypto;
+          if (cx) {
+            const feeds = (cx.series || []).map((x) => `${x.coin} ${x.tf} ${x.status || 'not read'}${x.last_bar ? ` last bar ${x.last_bar} close ${x.last_close}` : ''}${x.reason ? ` (${x.reason})` : ''}`).join('; ');
+            const check = cx.cross_check ? (cx.cross_check.diff_pct != null ? `Kraken cross-check ${cx.cross_check.coin} ${cx.cross_check.diff_pct}%` : `Kraken cross-check: ${cx.cross_check.error}`) : 'no Kraken cross-check';
+            const cline = `Orion crypto ${cx.enabled ? 'ON' : 'PAUSED'}; this pass ${cx.ok ? 'read the exchange' : `failed${cx.error ? `: ${cx.error}` : ''}`} with ${cx.requests} requests: ${feeds || 'no series due'}; ${check}; scheduled passes recorded ${cx.passes_recorded} (last ${cx.last_scheduled_run || 'none'}); simulated trades closed ${cx.closed_trades}, open ${cx.open_positions}; requests today ${cx.budget?.requests ?? '?'} of ${cx.budget?.limit ?? '?'}`;
+            console.log(`::notice title=Orion crypto desk (paper)::${cline}`);
+            summary(`**Orion crypto desk (live Worker, paper):** ${cline}.`);
+          }
           const bt = report.backtest;
           if (bt?.ok) {
             const rows = bt.rows || [];

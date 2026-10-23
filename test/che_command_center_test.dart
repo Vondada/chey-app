@@ -139,11 +139,11 @@ Future<void> openCenter(
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
-  test('the fixture is the whole catalog: 112 commands in 9 categories', () {
+  test('the fixture is the whole catalog: 119 commands in 9 categories', () {
     final catalog = CheCommandCatalog.fromJson(fixture);
-    expect(catalog.commands.length, 112);
+    expect(catalog.commands.length, 119);
     expect(catalog.categories.length, 9);
-    expect(catalog.commands.map((c) => c.id).toSet().length, 112);
+    expect(catalog.commands.map((c) => c.id).toSet().length, 119);
     expect(catalog.byId('/trade-chart')?.title, isNotEmpty);
     expect(catalog.search('find website clients').take(3).map((c) => c.id), contains('lead-scout'));
     expect(catalog.search('how much should I charge').take(3).map((c) => c.id), contains('pricing'));
@@ -154,14 +154,14 @@ void main() {
     final che = FakeChe();
     await openCenter(tester, che: che);
     expect(find.text('Commands'), findsOneWidget);
-    expect(find.text(_allLabel), findsOneWidget);
-    for (final label in [_intelligenceLabel, 'YouTube 11', 'Trading 23', 'Websites, Apps & AI 20', 'Money Management 8',
-      'Client Scouting & Delivery 9', 'Marketing & Sales 7', 'Office & Automation 8', 'Creator Studio 8']) {
+    expect(find.text('All 119'), findsOneWidget);
+    for (final label in [_intelligenceLabel, 'YouTube 11', 'Trading 24', 'Websites, Apps & AI 20', 'Money Management 8',
+      'Client Scouting & Delivery 9', 'Marketing & Sales 7', 'Office & Automation 11', 'Creator Studio 8']) {
       expect(find.text(label), findsOneWidget, reason: label);
     }
-    await tester.ensureVisible(find.text('Trading 23'));
+    await tester.ensureVisible(find.text('Trading 24'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Trading 23'));
+    await tester.tap(find.text('Trading 24'));
     await tester.pumpAndSettle();
     final library = find.descendant(of: find.byKey(const ValueKey('command-library')), matching: find.byType(Scrollable)).first;
     for (final id in ['trade-open', 'trade-chart', 'trade-setup', 'trade-liquidity', 'trade-risk', 'trade-backtest', 'trade-journal', 'trade-alert', 'trade-execute', 'trade-connections']) {
@@ -258,7 +258,7 @@ void main() {
     final reloaded = CheCommandStore();
     await reloaded.load();
     expect(reloaded.favorites, ['che']);
-    expect(reloaded.cachedCatalog?.commands.length, 112, reason: 'the catalog is cached for offline use');
+    expect(reloaded.cachedCatalog?.commands.length, 119, reason: 'the catalog is cached for offline use');
   });
 
   testWidgets('offline: the cached library still opens and says it may be out of date', (tester) async {
@@ -268,7 +268,7 @@ void main() {
     final offline = FakeChe(offline: true);
     await openCenter(tester, che: offline);
     expect(find.textContaining('Showing the last list CHE sent; statuses may be out of date'), findsOneWidget);
-    expect(find.text(_allLabel), findsOneWidget);
+    expect(find.text('All 119'), findsOneWidget);
   });
 
   testWidgets('offline with nothing cached says so instead of showing an empty success', (tester) async {
@@ -409,8 +409,8 @@ void main() {
   testWidgets('no automatic speech: opening, browsing and searching stay silent; Read This speaks', (tester) async {
     final spoken = <String>[];
     await openCenter(tester, che: FakeChe(), spoken: spoken);
-    await tester.ensureVisible(find.text('Trading 23'));
-    await tester.tap(find.text('Trading 23'));
+    await tester.ensureVisible(find.text('Trading 24'));
+    await tester.tap(find.text('Trading 24'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Workflows'));
     await tester.pumpAndSettle();
@@ -419,7 +419,7 @@ void main() {
     expect(spoken, isEmpty);
     await tester.tap(find.byTooltip('Read this page aloud'));
     await tester.pumpAndSettle();
-    expect(spoken.single, startsWith('Commands. 112 commands in 9 categories.'));
+    expect(spoken.single, startsWith('Commands. 119 commands in 9 categories.'));
   });
 
   testWidgets('VoiceOver labels and large Dynamic Type', (tester) async {
@@ -428,9 +428,9 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.bySemanticsLabel(RegExp(r'^/trade chart\. Analyze NQ/MNQ market structure\. (Ready|Needs setup)')), findsNothing,
         reason: 'not on screen until scrolled');
-    await tester.ensureVisible(find.text('Trading 23'));
+    await tester.ensureVisible(find.text('Trading 24'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Trading 23'));
+    await tester.tap(find.text('Trading 24'));
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
     expect(find.bySemanticsLabel(RegExp(r'^/trade chart\. Analyze NQ/MNQ market structure\. Ready\.')), findsOneWidget);
@@ -663,7 +663,7 @@ void main() {
     }
 
     final screen = (await say("what's on screen"))!;
-    expect(screen, contains('112 commands in 9 categories'));
+    expect(screen, contains('119 commands in 9 categories'));
     expect(screen, contains('Tabs: 1. Library, 2. Workflows, 3. Activity.'));
     final found = (await say('search for trade chart'))!;
     expect(found, contains('1. /trade-chart: '));

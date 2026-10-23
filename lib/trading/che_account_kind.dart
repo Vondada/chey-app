@@ -60,23 +60,34 @@ class CheAccountBand extends StatelessWidget {
           borderRadius: BorderRadius.circular(8),
           border: Border.all(color: c, width: kind == CheAccountKind.live ? 3 : 1.5),
         ),
-        child: Row(children: [
-          Icon(kind.icon, color: c, size: 20),
-          const SizedBox(width: 8),
-          Flexible(
-            child: Text(kind.label, style: TextStyle(color: c, fontWeight: FontWeight.w900, fontSize: 14, letterSpacing: 1.1)),
-          ),
-          if (kind == CheAccountKind.chePaper) ...[
-            const SizedBox(width: 6),
-            Text('SIMULATED', style: TextStyle(color: c, fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 0.8)),
-          ],
-          if (detail.isNotEmpty) ...[
+        // A narrow pane (the phone's side-by-side split) stacks the words instead of clipping them.
+        child: LayoutBuilder(builder: (context, box) {
+          final narrow = box.maxWidth < 240;
+          final title = Text(kind.label, style: TextStyle(color: c, fontWeight: FontWeight.w900, fontSize: narrow ? 12 : 14, letterSpacing: narrow ? 0.6 : 1.1));
+          final simulated = Text('SIMULATED', style: TextStyle(color: c, fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 0.8));
+          if (narrow) {
+            return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(children: [Icon(kind.icon, color: c, size: 16), const SizedBox(width: 6), Flexible(child: title)]),
+              if (kind == CheAccountKind.chePaper) simulated,
+              if (detail.isNotEmpty) Text(detail, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white70, fontSize: 11)),
+            ]);
+          }
+          return Row(children: [
+            Icon(kind.icon, color: c, size: 20),
             const SizedBox(width: 8),
-            Expanded(
-              child: Text(detail, textAlign: TextAlign.end, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white70, fontSize: 12)),
-            ),
-          ],
-        ]),
+            Flexible(child: title),
+            if (kind == CheAccountKind.chePaper) ...[
+              const SizedBox(width: 6),
+              simulated,
+            ],
+            if (detail.isNotEmpty) ...[
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(detail, textAlign: TextAlign.end, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white70, fontSize: 12)),
+              ),
+            ],
+          ]);
+        }),
       ),
     );
   }

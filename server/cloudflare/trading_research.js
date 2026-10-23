@@ -962,7 +962,7 @@ export async function forwardEvidence(storage) {
 
 // ─── Views for the API ───────────────────────────────────────────────────────
 
-function strategyCard(def, units, paper, owner) {
+function strategyCard(def, units, paper, owner, forwardByTf = {}) {
   if (!def.defined) return { strategy_id: def.strategy_id, name: def.name, defined: false, best_timeframe: null, qualified_buckets: 0, expectancy_r: null, win_rate: null, status: 'UNDEFINED', readiness: 'NOT TESTABLE', why: def.why, sample_trades: 0, paper_trades: 0 };
   const mine = units.filter((u) => u.strategy_id === def.strategy_id && u.ok);
   const qualified = mine.filter((u) => evidenceState(u) === 'QUALIFIED');
@@ -971,13 +971,20 @@ function strategyCard(def, units, paper, owner) {
     expectancy_r: best ? (qualified.length ? best.oos.expectancy_r : best.all.expectancy_r) : null, win_rate: best?.all.win_rate ?? null,
     status: statusOf(mine, owner), readiness: readinessOf(mine, paper),
     // Sample sizes behind those numbers, so a setup's evidence badge can show them (Signal Mode).
-    sample_trades: best?.all.trades ?? 0, paper_trades: paper?.trades ?? 0 };
+    sample_trades: best?.all.trades ?? 0, paper_trades: paper?.trades ?? 0,
+    // Every timeframe's evidence bucket (#109), not only the best one: historical trades per timeframe from the same
+    // units, and forward paper trades per timeframe. Paper runs on 5-minute bars only, so other timeframes show zero there.
+    timeframes: TF_IDS.map((tf) => {
+      const u = mine.find((x) => x.timeframe === tf);
+      return { tf, historical_trades: u?.all.trades ?? 0, evidence: u ? evidenceState(u) : 'NOT RESEARCHED', forward_trades: forwardByTf[tf] ?? 0, min_required: MIN_CLOSED_TRADES };
+    }) };
 }
 
 export async function researchView(storage, { now = Date.now() } = {}) {
   const [state, units, forward, liveFeed, liveState] = await Promise.all([readState(storage), readUnits(storage), forwardEvidence(storage), storage.get('live_paper_feed'), storage.get('live_paper_state')]);
   const defs = [...strategyDefinitions(), ...UNDEFINED_STRATEGIES.map((u) => ({ ...u, defined: false }))];
   const paperBy = Object.fromEntries(forward.filter((f) => f.mode === 'PAPER').map((f) => [`${f.strategy_id}|${f.timeframe}`, f]));
+  const paperByTf = (id) => forward.filter((f) => f.mode === 'PAPER' && f.strategy_id === id).reduce((a, f) => ({ ...a, [f.timeframe]: (a[f.timeframe] ?? 0) + f.trades }), {});
   const paperOf = (id) => forward.filter((f) => f.mode === 'PAPER' && f.strategy_id === id).reduce((a, f) => ({ trades: a.trades + f.trades, expectancy_r: f.trades ? f.expectancy_r : a.expectancy_r }), { trades: 0, expectancy_r: null });
   const bars = liveFeed?.bars || [];
   const last = bars.at(-1);
@@ -1000,7 +1007,7 @@ export async function researchView(storage, { now = Date.now() } = {}) {
       regime: { label: regimeLabel(regime), features: regime || {} } },
     best_now: sel.decision === 'CANDIDATES' ? sel.ranked.slice(0, 3) : [],
     best_now_reason: sel.decision === 'CANDIDATES' ? null : sel.reason,
-    strategies: defs.map((d) => strategyCard(d, units, paperOf(d.strategy_id), state.owner[d.strategy_id] || {})),
+    strategies: defs.map((d) => strategyCard(d, units, paperOf(d.strategy_id), state.owner[d.strategy_id] || {}, paperByTf(d.strategy_id))),
     dashboard: {
       strategies_tested: new Set(units.filter((u) => u.ok).map((u) => u.strategy_id)).size,
       buckets_qualified: units.filter((u) => evidenceState(u) === 'QUALIFIED').length,

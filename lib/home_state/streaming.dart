@@ -481,7 +481,7 @@ extension _CheHomeStreaming on _CHEHomeState {
         // "Open the workflows page": only the Workflow Engine's own reply opens it.
         if (data['open_screen'] == 'app_details' && data['source'] == 'che_runtime_status' && mounted) unawaited(_openAppVersionDetails());
         if (data['open_screen'] == 'workflows' && data['source'] == 'che_workflow_engine' && mounted) unawaited(_openWorkflows());
-        if (data['open_screen'] == 'security' && data['source'] == 'che_security' && mounted) unawaited(_openSecurity());
+        if (data['open_screen'] == 'security' && data['source'] == 'che_security' && mounted) unawaited(_openSecurity(section: data['security_section']?.toString()));
         if (data['open_screen'] == 'film_studio' && data['source'] == 'che_film_studio' && mounted) unawaited(_openFilmStudio());
         // Owner Improvements: a setting CHE changed applies here at once, and the app reports what it now uses.
         if (data['source'] == 'che_owner_improvement') {
@@ -558,6 +558,16 @@ extension _CheHomeStreaming on _CHEHomeState {
             baseUrl: () => cheAgentBaseUrl,
             headers: () => _authHeaders,
             onRead: (words) { speakText(words, record: false, readOnDemand: true); },
+          )));
+        }
+        // "Have Orion research BTC and ETH…", "how is crypto paper trading going": the Trading Room on its CRYPTO market.
+        if (data['open_view'] == 'trading_crypto' && mounted) {
+          unawaited(Navigator.of(context).push(CheTradingRoomPage.route(
+            baseUrl: () => cheAgentBaseUrl,
+            headers: () => _authHeaders,
+            onAsk: _runHubPrompt,
+            onRead: (words) { speakText(words, record: false, readOnDemand: true); },
+            chart: const {'section': 'crypto'},
           )));
         }
         if (data['open_view'] == 'alpaca_paper' && mounted) {

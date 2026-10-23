@@ -63,9 +63,10 @@ test('Agent Mode: work for named agents is queued for those agents; their chat i
   globalThis.fetch = async () => { throw new TypeError('offline'); };
   t.after(() => { globalThis.fetch = realFetch; });
   const che = await owner();
-  await che.say('Have Atlas research lamp prices and Mira write a product description from it.');
+  // Orion and Mira run on the default engine; Atlas (engineering) needs Codex, which this test has not connected.
+  await che.say('Have Orion research lamp prices and Mira write a product description from it.');
   const queued = che.tasks().filter((x) => x.status === 'queued').map((x) => x.partner_name).sort();
-  assert.deepEqual(queued, ['Atlas', 'Mira']);
+  assert.deepEqual(queued, ['Mira', 'Orion']);
   assert.ok(!che.tasks().some((x) => x.status === 'complete'), 'nothing is complete before CHE reviews it');
   for (const advice of che.tasks().filter((x) => x.status === 'advisory')) assert.equal(advice.verified_by_che, false);
 });
@@ -124,7 +125,7 @@ test('status questions and follow-ups about earlier work are questions; plain co
 test('splitGoal gives a named agent its own slice', () => {
   assert.deepEqual(splitGoal('Have Atlas research lamp prices and Mira write a product description from it.').map((s) => s.agent), ['Atlas', 'Mira']);
   assert.deepEqual(splitGoal('Knox, fix the failing Worker test').map((s) => s.agent), ['Knox']);
-  assert.deepEqual(splitGoal('Build the landing page and write the FAQ').map((s) => s.agent), ['Knox', 'Mira']);
+  assert.deepEqual(splitGoal('Build the landing page and write the FAQ').map((s) => s.agent), ['Atlas', 'Mira'], 'engineering belongs to Atlas, the CTO');
 });
 
 test('voice: "stop the Atlas task" cancels it in storage, and "review it again" re-reviews a held result', async (t) => {
@@ -132,10 +133,10 @@ test('voice: "stop the Atlas task" cancels it in storage, and "review it again" 
   globalThis.fetch = async () => { throw new TypeError('offline'); };
   t.after(() => { globalThis.fetch = realFetch; });
   const che = await owner();
-  await che.say('Have Atlas research lamp prices and Mira write a product description from it.');
-  const atlasTask = che.tasks().find((x) => x.partner_name === 'Atlas' && x.status === 'queued');
+  await che.say('Have Orion research lamp prices and Mira write a product description from it.');
+  const atlasTask = che.tasks().find((x) => x.partner_name === 'Orion' && x.status === 'queued');
   assert.ok(atlasTask);
-  await che.say('Stop the Atlas task.');
+  await che.say('Stop the Orion task.');
   assert.equal(che.tasks().find((x) => x.id === atlasTask.id).status, 'cancelled');
   assert.equal(che.tasks().find((x) => x.partner_name === 'Mira' && x.task.startsWith('Mira')).status, 'queued', "Mira's task is untouched");
   // A held result, then "review Mira's task again".

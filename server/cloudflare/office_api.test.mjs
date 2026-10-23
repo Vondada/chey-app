@@ -88,7 +88,7 @@ test('CHE speaks Office answers from the live board through /api/chat', async ()
   const o = await office();
   // Opening the Office staffs the roster; Stripe is not connected.
   const empty = await o.board();
-  assert.deepEqual(empty.agents.map((a) => a.name), ['Nova', 'Atlas', 'Mira', 'Knox', 'Sage', 'Lyra', 'Iris']);
+  assert.deepEqual(empty.agents.map((a) => a.name), ['Nova', 'Atlas', 'Mira', 'Knox', 'Sage', 'Lyra', 'Orion', 'Iris', 'Vale']);
   assert.equal(empty.stripe.connected, false);
 
   const happening = await o.say("What's happening in the Office?");
@@ -100,18 +100,18 @@ test('CHE speaks Office answers from the live board through /api/chat', async ()
   const money = await o.say('How much did we make today?');
   assert.equal(money, 'CHE here. Stripe not connected. Earned today $0.00.');
 
-  // No provider credentials: Knox's Codex tool is honestly blocked.
-  const knox = await o.say('What is Knox doing?');
-  assert.equal(knox, 'CHE here. Knox — Blocked: tool not configured (Codex).');
+  // No provider credentials: Atlas's Codex tool (engineering) is honestly blocked.
+  const atlasNow = await o.say('What is Atlas doing?');
+  assert.equal(atlasNow, 'CHE here. Atlas — Blocked: tool not configured (Codex).');
 
   const full = await o.say('Read this Office to me');
   assert.match(full, /^CHE here\. Office board\./);
   assert.match(full, /Stripe not connected\. Earned today \$0\.00\./);
-  for (const name of ['Nova', 'Atlas', 'Mira', 'Knox', 'Sage', 'Lyra', 'Iris']) assert.match(full, new RegExp(`\\d\\. ${name}: `));
-  // Nova/Knox need Codex; Sage needs Stripe. Iris/Atlas/Mira/Lyra are auto → Idle is OK.
-  assert.match(full, /Knox: Blocked: tool not configured \(Codex\)/);
-  assert.match(full, /Sage: Blocked: tool not configured \(Stripe not connected\)/);
-  assert.match(full, /Atlas: Idle/);
+  for (const name of ['Nova', 'Atlas', 'Mira', 'Knox', 'Sage', 'Lyra', 'Orion', 'Iris', 'Vale']) assert.match(full, new RegExp(`\\d\\. ${name}: `));
+  // Atlas (engineering) needs Codex; Sage's Stripe reports need Stripe, but Sage's analysis does not. The rest are auto → Idle is OK.
+  assert.match(full, /Atlas: Blocked: tool not configured \(Codex\)/);
+  assert.match(full, /Knox: Idle/);
+  assert.match(full, /Sage: Idle/);
   assert.match(full, /Iris: Idle/);
 
   const standDown = await o.say('Stand down');
@@ -121,39 +121,39 @@ test('CHE speaks Office answers from the live board through /api/chat', async ()
 
 test('CHE splits an owner goal into persisted jobs; missing tools are blockers', async () => {
   assert.deepEqual(splitGoal('Research competitors in Houston and build a landing page, then post it on Instagram'), [
-    { agent: 'Atlas', task: 'Research competitors in Houston' },
-    { agent: 'Knox', task: 'Build a landing page' },
+    { agent: 'Mira', task: 'Research competitors in Houston' },
+    { agent: 'Atlas', task: 'Build a landing page' },
     { agent: 'Lyra', task: 'Post it on Instagram' },
   ]);
 
   assert.deepEqual(splitGoal('Draft a tonight pack of ad creatives for the cafe'), [
-    { agent: 'Iris', task: 'Draft a tonight pack of ad creatives for the cafe' },
+    { agent: 'Lyra', task: 'Draft a tonight pack of ad creatives for the cafe' },
   ]);
 
   const o = await office({ CHE_ALLOW_PAID_AI: '1', XAI_API_KEY: 'xai-test' });
   const reply = await o.say('Tell the Office to research competitors in Houston and build a landing page');
-  assert.match(reply, /^CHE here\. I split that into 2 jobs\. 1\. Atlas: Research competitors in Houston\. 2\. Knox: Build a landing page — Blocked: tool not configured \(Codex\)\./);
+  assert.match(reply, /^CHE here\. I split that into 2 jobs\. 1\. Mira: Research competitors in Houston\. 2\. Atlas: Build a landing page — Blocked: tool not configured \(Codex\)\./);
 
   const stored = JSON.parse(o.saved.get('che'));
   const jobs = stored.team_tasks.filter((t) => t.source === 'owner_goal');
   assert.equal(jobs.length, 2);
   assert.equal(new Set(jobs.map((t) => t.job_id)).size, 1, 'jobs share the goal id');
   assert.equal(stored.office_goals.length, 1);
-  assert.equal(jobs.find((t) => t.partner_name === 'Atlas').status, 'queued');
-  assert.equal(jobs.find((t) => t.partner_name === 'Knox').status, 'blocked');
+  assert.equal(jobs.find((t) => t.partner_name === 'Mira').status, 'queued');
+  assert.equal(jobs.find((t) => t.partner_name === 'Atlas').status, 'blocked');
 
   const b = await o.board();
   assert.equal(b.started_today, 2);
   assert.equal(b.agents_working, 1);
   assert.equal(b.blockers[0].detail, 'Blocked: tool not configured (Codex)');
-  assert.equal(b.agents.find((a) => a.name === 'Atlas').status, 'Up next: Research competitors in Houston');
-  assert.match(await o.say('What is Knox doing?'), /Knox — Blocked: tool not configured \(Codex\)/);
-  assert.match(await o.say('What is Atlas doing?'), /Atlas — Up next: Research competitors in Houston/);
+  assert.equal(b.agents.find((a) => a.name === 'Mira').status, 'Up next: Research competitors in Houston');
+  assert.match(await o.say('What is Atlas doing?'), /Atlas — Blocked: tool not configured \(Codex\)/);
+  assert.match(await o.say('What is Mira doing?'), /Mira — Up next: Research competitors in Houston/);
 
   // The runtime also refuses to run a La Agencia job whose tool is missing.
   const fresh = JSON.parse(o.saved.get('che'));
-  const knox = fresh.team.find((a) => a.name === 'Knox');
-  fresh.team_tasks.push({ id: 'k2', partner_id: knox.id, partner_name: 'Knox', task: 'Fix the checkout bug', status: 'queued', created_at: new Date().toISOString(), updated_at: new Date().toISOString() });
+  const knox = fresh.team.find((a) => a.name === 'Atlas');
+  fresh.team_tasks.push({ id: 'k2', partner_id: knox.id, partner_name: 'Atlas', task: 'Fix the checkout bug', status: 'queued', created_at: new Date().toISOString(), updated_at: new Date().toISOString() });
   fresh.team_tasks = fresh.team_tasks.filter((t) => t.id === 'k2');
   o.saved.set('che', JSON.stringify(fresh));
   await o.state.alarm();
@@ -240,14 +240,14 @@ test('a long Office message keeps its start, its late "don\'t" and a visible mar
   assert.equal(JSON.parse(o.saved.get('che')).office_inbox.length, 2, 'nothing is stored from a refused message');
 });
 
-test('Office Atlas prefers auto; pinned xai still tags Grok with office/<agent>/<job> thread', async () => {
+test('Office Mira prefers auto; pinned xai still tags Grok with office/<agent>/<job> thread', async () => {
   const data = { team: [] };
   ensureLaAgenciaRoster(data);
-  const atlas = data.team.find((a) => a.name === 'Atlas');
+  const atlas = data.team.find((a) => a.name === 'Mira');
   assert.equal(atlas.provider_preference, 'auto');
   const autoRouting = routingForAgent(atlas, data, { id: 'job-42', task: 'Research competitors' });
-  assert.equal(autoRouting.che_agent_id, 'atlas');
-  assert.equal(autoRouting.che_thread_id, 'office/atlas/job-42');
+  assert.equal(autoRouting.che_agent_id, 'mira');
+  assert.equal(autoRouting.che_thread_id, 'office/mira/job-42');
   assert.equal(autoRouting.che_provider, undefined);
 
   // Explicit xai pin (owner-set) still routes through CHE with Grok thread headers.
@@ -267,11 +267,11 @@ test('Office Atlas prefers auto; pinned xai still tags Grok with office/<agent>/
   }, storage);
   assert.equal(result.engine, 'xai');
   assert.equal(calls[0].url, 'https://api.x.ai/v1/chat/completions');
-  assert.equal(calls[0].headers['x-grok-conv-id'], 'office/atlas/job-42');
-  assert.equal(calls[0].body.user, 'office/atlas/job-42');
+  assert.equal(calls[0].headers['x-grok-conv-id'], 'office/mira/job-42');
+  assert.equal(calls[0].body.user, 'office/mira/job-42');
   const audit = saved.get('ai_audit')[0];
-  assert.equal(audit.agent_id, 'atlas');
-  assert.equal(audit.thread_id, 'office/atlas/job-42');
+  assert.equal(audit.agent_id, 'mira');
+  assert.equal(audit.thread_id, 'office/mira/job-42');
   assert.ok(!JSON.stringify(audit).includes('xai-test'), 'the credential never enters the audit');
 });
 
@@ -283,12 +283,12 @@ test('spoken board never invents money', () => {
 test('hire Iris via chat staffs Ad Studio; Fiverr scout queues shortlist-only jobs', async () => {
   const o = await office({ CHE_ALLOW_PAID_AI: '1', XAI_API_KEY: 'xai-test' });
   const hired = await o.say('hire Iris');
-  assert.match(hired, /Iris is hired on Ad Studio/i);
+  assert.match(hired, /Iris is on the roster — Experience \/ accessibility/i);
   const board = await o.board();
   assert.ok(board.agents.some((a) => a.name === 'Iris' && a.core === true));
 
   const pack = await o.say('draft tonight pack for Cafe Luna');
-  assert.match(pack, /Iris:/);
+  assert.match(pack, /Lyra:/, 'ad creatives are Lyra\'s since the reorganisation');
   assert.match(pack, /tonight pack/i);
 
   const scout = await o.say('scout Fiverr for AI ad buyers');
@@ -340,4 +340,78 @@ test('opportunity scout queues shortlist-only jobs (Pinterest); memory write-bac
   assert.ok(stored.memory_notes?.length >= 1);
   assert.equal(stored.memories?.some((m) => /Opportunity|pinterest|planner/i.test(m)), false, 'agent ideas must not become verified owner facts');
   assert.equal(stored.memory_notes[0].verification_status, 'unverified_research_lead');
+});
+
+// Owner master mission, Test E: a feature needing design, engineering, security and testing goes through Iris,
+// Atlas, Knox and Vale with real recorded handoffs, coordinated by Nova, on the real Office runtime and CHE review.
+test('Test E: a coordinated Office job runs Iris → Atlas → Knox → Vale through the job API and the runtime', async (t) => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => { throw new TypeError('offline'); };
+  t.after(() => { globalThis.fetch = realFetch; });
+  const ai = {
+    run: async (_model, input) => {
+      const text = JSON.stringify(input?.messages || input?.prompt || '');
+      // CHE's review of a delegated result comes first (its system prompt asks for a verdict on the work).
+      if (/APPROVED|NEEDS[ _]WORK/.test(JSON.stringify(input?.messages?.[0] || ''))) return { response: 'APPROVED\nThe stage result answers its brief.' };
+      if (/Independently verify the finished stages/.test(text)) return { response: 'VERDICT: PASS\n1. met: the recorded stages cover it.' };
+      return { response: 'Stage result: plan written with files, tests and risks.' };
+    },
+  };
+  const o = await office({ CODEX_OWNER_TOKEN: 'tok-test-only', AI: ai });
+  const made = await (await o.send('/api/office/jobs', 'POST', { request: 'Improve the Trading Room chart with a cleaner layout, the engineering change, a security review and testing' })).json();
+  assert.match(made.job.id, /^oj-[0-9a-f]{8}$/);
+  assert.deepEqual(made.job.stages.map((s) => s.agent), ['Iris', 'Atlas', 'Knox', 'Vale']);
+  assert.equal(made.job.accountable, 'Atlas');
+  assert.equal(made.job.stages[0].status, 'running', 'Iris accepted the first handoff and has a task');
+  for (let i = 0; i < 24; i++) {
+    await o.state.alarm();
+    const now = (await (await o.send(`/api/office/jobs/${made.job.id}`)).json()).job;
+    if (now.status !== 'running') break;
+  }
+  const job = (await (await o.send(`/api/office/jobs/${made.job.id}`)).json()).job;
+  assert.equal(job.status, 'verified', JSON.stringify(job.history.slice(-4)));
+  assert.deepEqual(job.handoffs.map((h) => `${h.from_agent_name}->${h.to_agent_name}:${h.accepted}`), ['Nova->Iris:true', 'Iris->Atlas:true', 'Atlas->Knox:true', 'Knox->Vale:true']);
+  const stored = JSON.parse(o.saved.get('che'));
+  const stageTasks = stored.team_tasks.filter((x) => x.office_job_id === job.id);
+  assert.deepEqual(stageTasks.map((x) => x.status), ['complete', 'complete', 'complete', 'complete']);
+  assert.ok(stored.office_packets.some((p) => p.agent_id === 'atlas'), 'Atlas worked through the Codex desk');
+  assert.equal(job.verification.by, 'Vale');
+  // CHE reports it, by voice or typing.
+  assert.match(await o.say('What is the status of the Office jobs?'), new RegExp(`^CHE here\\. Office job ${job.id}: verified\\.`));
+});
+
+test('the Office organisation: Owner → CHE → nine heads, each with tools, permissions, queue and recorded performance', async () => {
+  const o = await office();
+  const { org } = await (await o.send('/api/office/org')).json();
+  assert.equal(org.che.name, 'CHE');
+  assert.deepEqual(org.heads.map((h) => `${h.name}:${h.department}`), ['Nova:operations', 'Atlas:engineering', 'Mira:research', 'Knox:security', 'Sage:intelligence', 'Lyra:creative', 'Orion:markets', 'Iris:experience', 'Vale:qa']);
+  for (const head of org.heads) {
+    assert.equal(head.reports_to, 'CHE');
+    assert.ok(head.title && head.responsibilities.length && head.tools.length, head.name);
+    assert.ok(head.tools.every((tool) => ['configured', 'not configured', 'not checked'].includes(tool.status)), 'a tool is never called verified here');
+    assert.equal(head.permissions.can_merge_code, false);
+    assert.equal(head.permissions.can_spend_money, false);
+    assert.equal(head.performance.completed, null, 'no records, no numbers');
+  }
+  const knox = org.heads.find((h) => h.name === 'Knox');
+  assert.equal(knox.specialists.filter((s) => s.kind === 'Security Core specialist').length, 8);
+  assert.equal(org.heads.find((h) => h.name === 'Atlas').tools.find((tool) => tool.id === 'codex_desk').status, 'not configured');
+  const one = await (await o.send('/api/office/org/knox')).json();
+  assert.equal(one.head.name, 'Knox');
+  assert.equal((await o.send('/api/office/org/bob')).status, 404);
+  const said = await o.say('Who runs the Office departments?');
+  assert.match(said, /^CHE here\. You lead; I report to you\. 9 department heads report to me: Nova, Chief Operations Officer; Atlas, Chief Technology Officer;/);
+  assert.match(said, /Knox, Office Security Chief/);
+  assert.equal(new Set(org.heads.map((h) => h.name)).size, 9, 'no duplicate agents');
+});
+
+test('"Have Nova coordinate …" by voice plans a real job; an ordinary sentence about Nova is not one', async () => {
+  const o = await office();
+  const reply = await o.say('Have Nova coordinate a cleaner Security Room layout with a security review and testing');
+  assert.match(reply, /^CHE here\. Office job oj-[0-9a-f]{8}: running\. Nova coordinates;/);
+  const stored = JSON.parse(o.saved.get('che'));
+  const job = stored.office_goals.find((g) => g.coordinated);
+  assert.deepEqual(job.stages.map((s) => s.agent), ['Iris', 'Knox', 'Vale']);
+  assert.equal(matchOfficePhrase('Nova coordinated the launch last week, right?'), null);
+  assert.equal(matchOfficePhrase('Who runs the country?'), null);
 });

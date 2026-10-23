@@ -60,10 +60,10 @@ test('/api/chat refuses owner messages not addressed to CHE and any agent sender
 test('a goal that asks an agent to merge is blocked by permission flags before it runs', async () => {
   const o = await office({ CODEX_OWNER_TOKEN: 'tok-test-only' });
   const plan = await (await o.send('/api/office/goals', 'POST', { goal: 'merge the checkout code into main' })).json();
-  const knox = plan.jobs.find((j) => j.agent === 'Knox');
+  const knox = plan.jobs.find((j) => j.agent === 'Atlas');
   assert.ok(knox, JSON.stringify(plan));
   assert.equal(knox.status, 'blocked');
-  assert.match(knox.blocker, /Knox cannot merge code/);
+  assert.match(knox.blocker, /Atlas cannot merge code/);
   assert.match(plan.reply, /^CHE here\./);
 });
 
@@ -81,13 +81,13 @@ test('Codex jobs get a persisted work packet with their own thread and workspace
   const secret = 'codex-owner-secret-for-test';
   const o = await office({ CODEX_OWNER_TOKEN: secret });
   const plan = await (await o.send('/api/office/goals', 'POST', { goal: 'build the checkout page' })).json();
-  const job = plan.jobs.find((j) => j.agent === 'Knox');
+  const job = plan.jobs.find((j) => j.agent === 'Atlas');
   assert.ok(job, JSON.stringify(plan));
   const packets = (await (await o.send('/api/office/packets')).json()).packets;
   const packet = packets.find((p) => p.job_id === job.id);
   assert.ok(packet);
-  assert.equal(packet.thread_id, `office/knox/${job.id}`);
-  assert.equal(packet.workspace, `codex-ws/knox/${job.id}`);
+  assert.equal(packet.thread_id, `office/atlas/${job.id}`);
+  assert.equal(packet.workspace, `codex-ws/atlas/${job.id}`);
   assert.equal(packet.status, 'running');
   const everything = JSON.stringify([plan, packets, await o.board(), o.stored()]);
   assert.ok(!everything.includes(secret), 'owner Codex token never leaves the Worker env');
@@ -96,7 +96,7 @@ test('Codex jobs get a persisted work packet with their own thread and workspace
 test('without Codex the packet and job are honestly blocked', async () => {
   const o = await office();
   const plan = await (await o.send('/api/office/goals', 'POST', { goal: 'build the checkout page' })).json();
-  const job = plan.jobs.find((j) => j.agent === 'Knox');
+  const job = plan.jobs.find((j) => j.agent === 'Atlas');
   assert.equal(job.status, 'blocked');
   assert.equal(job.blocker, 'Blocked: tool not configured (Codex)');
   const packet = (await (await o.send('/api/office/packets')).json()).packets.find((p) => p.job_id === job.id);
@@ -106,7 +106,7 @@ test('without Codex the packet and job are honestly blocked', async () => {
 test('CHE announces a new blocker unprompted, once', async () => {
   const o = await office();
   const first = await o.board();
-  assert.ok(first.che_announcements.some((l) => /Knox cannot start until Codex is connected on the Worker/.test(l)),
+  assert.ok(first.che_announcements.some((l) => /Atlas cannot start until Codex is connected on the Worker/.test(l)),
     JSON.stringify(first.che_announcements));
   for (const line of first.che_announcements) assert.ok(line.startsWith('CHE here.'));
   const second = await o.board();
@@ -121,13 +121,13 @@ test('the six Office phrases work after the wake word, spoken by CHE', async () 
     'Chay what did they build today',
     'CHE, how much did we make today?',
     'Chay read this Office to me',
-    'Hey Chay what is Knox doing?',
+    'Hey Chay what is Atlas doing?',
   ];
   for (const line of lines) {
     const reply = await o.say(line);
     assert.match(reply, /^CHE here\./, line);
   }
   assert.match(await o.say('CHE, how much did we make today?'), /Stripe not connected\. Earned today \$0\.00\./);
-  assert.match(await o.say('Hey Chay what is Knox doing?'), /Knox — Blocked: tool not configured \(Codex\)/);
+  assert.match(await o.say('Hey Chay what is Atlas doing?'), /Atlas — Blocked: tool not configured \(Codex\)/);
   assert.match(await o.say('Chay, stand down'), /^CHE here\. Office standing down\./);
 });

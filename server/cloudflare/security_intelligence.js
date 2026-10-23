@@ -326,6 +326,8 @@ export function securityIntent(message = '') {
   if (/^(?:preview|show(?: me)?) (?:the )?lock ?down(?: preview)?$|^what (?:would|does|will) (?:a )?lock ?down do$/.test(t)) return { action: 'lockdown_preview' };
   if (/^(?:show|list|read|any) (?:me )?(?:my |the )?(?:open |active )?(?:security )?incidents$/.test(t)) return { action: 'incidents' };
   if (/^(?:who(?:'s| is) (?:on )?(?:my|your|the) security team|(?:show )?(?:the )?security chain of command)$/.test(t)) return { action: 'team' };
+  if (/^(?:open|show(?: me)?|go to|take me to) (?:the |my )?security access(?: list)?$|^who has access to (?:che|you|my (?:che|accounts|data))$|^what (?:does che|do you) have access to$/.test(t)) return { action: 'access' };
+  if (/^(?:open|show(?: me)?|list|read|go to) (?:the |my )?security findings$|^(?:what are )?(?:the |my )?security findings$/.test(t)) return { action: 'findings' };
   if (/^(?:open|show(?: me)?|go to|take me to) (?:the |my )?security(?: page| center| command center| screen)?$/.test(t)) return { action: 'open' };
   const drill = t.match(/^run (?:a |the )?(?:safe )?(?:security )?(?:drill|simulation)(?: (?:of|for) (?:a |an |the )?(.+))?$/);
   if (drill) return { action: 'drill', scenario: drill[1] || '' };

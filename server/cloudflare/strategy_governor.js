@@ -5,7 +5,7 @@
 // confidence bounds on expectancy in R over independent closed trades, never a win rate alone, and a pause is lifted
 // only by out-of-sample + walk-forward research (the existing OOS VERIFIED rules). Every pause, resume, watch, modify
 // or reject is appended to a log with its evidence. Nothing here can reach a broker. See docs/CHE_STRATEGY_GOVERNOR.md.
-import { CONTRACTS, COSTS, INTRADAY_CANDIDATES, readTrades, validateTradeRecord } from './trading_evidence.js';
+import { CONTRACTS, COSTS, INTRADAY_CANDIDATES, contractOf, readTrades, validateTradeRecord } from './trading_evidence.js';
 import { MIN_CLOSED_TRADES, queueJob, readUnits } from './trading_research.js';
 import { queueRoomEvent } from './room_events.js';
 
@@ -45,7 +45,7 @@ export function cleanSettings(input = {}) {
 export function fillProblems(t) {
   const problems = [...validateTradeRecord(t)];
   if (problems.length) return problems;
-  const c = CONTRACTS[t.contract] || CONTRACTS.MNQ;
+  const c = contractOf(t.contract) || CONTRACTS.MNQ;
   const costs = t.cost_assumptions || COSTS;
   const maxEntry = ((costs.spreadTicks ?? 1) / 2 + (costs.slippageTicks ?? 1)) * c.tick + 1e-6;
   if (Math.abs(t.entry.fill - t.entry.raw) > maxEntry) problems.push('entry fill further from the bar open than costs allow');
@@ -335,7 +335,8 @@ const timeframeOf = (t) => (t.data?.resolution === 'daily' ? '1D' : t.data?.reso
 export async function runGovernor(storage, { now = Date.now(), trades = null, units = null, record = true } = {}) {
   const settings = await readGovSettings(storage);
   const asOf = new Date(now).toISOString();
-  const journal = (trades || (await readTrades(storage, isForward))).filter((t) => Date.parse(t.exit?.time) <= now);
+  // Every market's forward paper (MNQ and Orion's crypto): units are per strategy, market and timeframe, so they never mix.
+  const journal = (trades || (await readTrades(storage, isForward, { market: 'all' }))).filter((t) => Date.parse(t.exit?.time) <= now);
   const excluded = [];
   const clean = [];
   for (const t of journal) {

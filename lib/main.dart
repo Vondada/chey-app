@@ -32,6 +32,7 @@ import 'che_ui/che_screen_awareness.dart';
 import 'che_ui/che_screen_capture.dart';
 import 'security/che_secret_scan.dart';
 import 'security/che_security_screen.dart';
+import 'security/che_security_visibility.dart';
 import 'security/che_session_store.dart';
 import 'brain/che_brain_ledger_screen.dart';
 import 'brain/che_brain_list.dart' show CheBrainRecordLinks;
@@ -119,6 +120,8 @@ import 'home/screen_command.dart';
 import 'home/che_inline_preview.dart';
 import 'home/che_grok_chat_screen.dart';
 import 'home/che_mockup_home.dart';
+import 'home/che_home_tiles.dart';
+import 'home/che_flagstaff_banner.dart';
 import 'home/che_more_tab.dart';
 import 'home/che_connections_screen.dart';
 import 'home/che_projects_board.dart';
@@ -216,9 +219,14 @@ void main() {
   runApp(const CHEApp());
 }
 
-/// The text scale CHE draws with: the system's accessibility size times CHE's own setting, held to 0.85-2.0 so every
-/// screen keeps its controls reachable (the layouts are tested up to 2.0).
-double cheEffectiveTextScale(TextScaler system, double app) => (system.scale(1) * app).clamp(0.85, 2.0).toDouble();
+/// The text-scale range every CHE screen is verified at: the responsive guard (che_responsive_layout_test.dart) draws
+/// each guarded screen at 1.0 and 1.3. Larger text beyond this overflowed and overlapped (2026-10-23).
+const double kCheMinTextScale = 0.9;
+const double kCheMaxTextScale = 1.3;
+
+/// The text scale CHE draws with: the system's accessibility size times CHE's own setting, held to the verified range.
+double cheEffectiveTextScale(TextScaler system, double app) =>
+    (system.scale(1) * app).clamp(kCheMinTextScale, kCheMaxTextScale).toDouble();
 
 class CHEApp extends StatefulWidget {
   const CHEApp({super.key});
@@ -526,6 +534,7 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
 
   // Unread INCOMING mailbox messages (badge on the Chat mailbox icon).
   int _mailboxUnread = 0;
+  List<CheFlagstaffGist> _mailboxLatest = const [];
   // Changing this rebuilds the priority banner, so it reloads what is unread.
   int _priorityBannerVersion = 0;
   Timer? _mailboxBadgeTimer;
@@ -644,13 +653,16 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   }
 
   /// SECURITY: Home → Security, More → Security, and "open security" by voice.
-  Future<void> _openSecurity() async {
+  Future<void> _openSecurity({String? section}) async {
     HapticFeedback.selectionClick();
     await Navigator.of(context).push(MaterialPageRoute<void>(
       builder: (_) => CheSecurityScreen(
         client: CheSecurityClient(baseUrl: cheAgentBaseUrl, headers: () => _authHeaders),
         onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
         onListen: () => unawaited(toggleListening()),
+        initialSection: section,
+        // Knox, the Security Chief, opens the same Office desk as the Office floor.
+        onOpenAgent: (name) => _openOfficeFloor(agentName: name),
       ),
     ));
   }
@@ -1723,6 +1735,7 @@ OWNER AGENCY
       onOfficeStatus: () => unawaited(_speakOfficeStatus()),
       onTapAgent: (agent) => _openOfficeFloor(agentName: agent.name),
       unread: _mailboxUnread,
+      flagstaffLatest: _mailboxLatest,
       onOpenFlagstaff: () => unawaited(_openMailbox()),
       latencyMs: _stateLatencyMs,
       handsFree: CheUiPreferences.instance.handsFreeWake,
