@@ -113,6 +113,11 @@ test('MNQ portfolios keep their exact strategy versions (crypto costs never touc
 test('a Saturday pass: real schedule, budget counted, forward-only start, nothing invented', async () => {
   const storage = memoryStorage();
   const calls = [];
+  // Nothing runs until the owner starts it.
+  assert.equal((await cryptoTick(storage, { fetcher: exchange({ now: () => SAT, calls }), now: SAT })).skipped, 'Orion crypto research is paused');
+  assert.equal(await nextCryptoTickAt(storage, SAT), null);
+  assert.equal(calls.length, 0);
+  await setCryptoPaper(storage, true, SAT - 1000);
   const run = await cryptoTick(storage, { fetcher: exchange({ now: () => SAT, calls }), now: SAT });
   assert.equal(run.ok, true);
   assert.ok(run.requests <= 6 && run.requests >= 1, `requests per pass are capped (${run.requests})`);
@@ -144,6 +149,7 @@ test('an unreachable exchange is DISCONNECTED: no entries, no throw, the reason 
 
 test('the daily request budget stops fetching instead of overspending', async () => {
   const storage = memoryStorage();
+  await setCryptoPaper(storage, true, SAT - 1000);
   await storage.put(CRYPTO_BUDGET, { day: new Date(SAT).toISOString().slice(0, 10), requests: DAILY_REQUEST_LIMIT, limit: DAILY_REQUEST_LIMIT });
   const calls = [];
   const run = await cryptoTick(storage, { fetcher: exchange({ now: () => SAT, calls }), now: SAT });
@@ -155,6 +161,7 @@ test('a weekend of passes: crypto trades reach the shared journal labelled crypt
   const storage = memoryStorage();
   let now = SAT - 3 * 86_400_000; // start Wednesday so stored history covers the weekend
   const fetcher = exchange({ now: () => now });
+  await setCryptoPaper(storage, true, now);
   for (let i = 0; i < 700; i++) { await cryptoTick(storage, { fetcher, now }); now += 300_000; }
   const crypto = await readTrades(storage, () => true, { market: 'crypto' });
   const futures = await readTrades(storage);
@@ -195,6 +202,7 @@ test('research: volatility regime, liquidity screen, sessions and an out-of-samp
 
 test('pause keeps records and stops the schedule; resume starts again from the newest bar', async () => {
   const storage = memoryStorage();
+  await setCryptoPaper(storage, true, SAT - 1000);
   await cryptoTick(storage, { fetcher: exchange({ now: () => SAT }), now: SAT });
   await setCryptoPaper(storage, false, SAT + 1000);
   assert.equal(await nextCryptoTickAt(storage, SAT + 2000), null);

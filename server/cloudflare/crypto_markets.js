@@ -72,8 +72,9 @@ function freshPortfolio(coin, tf, spec, source = 'paper') {
 export async function readCryptoState(storage) {
   const saved = await storage.get(CRYPTO_STATE);
   if (saved) return saved;
-  // On unless the owner pauses it: the master mission makes crypto a primary 24/7 paper market.
-  return { enabled: true, started_by: 'owner master mission, 2026-10-23: research BTC and ETH and paper trade them around the clock', started_at: null, fetched: {} };
+  // Off until the owner starts it ("Have Orion research BTC and ETH … during the weekend"): nothing runs on a schedule
+  // the owner did not ask for (AGENTS.md). Once on, it runs around the clock until he pauses it.
+  return { enabled: false, never_started: true, started_at: null, fetched: {} };
 }
 
 /** Pause or resume by the owner. Pausing keeps every record; an open position is voided, never closed at a later price. */
@@ -105,7 +106,7 @@ export async function setCryptoPaper(storage, enabled, now = Date.now()) {
   }
   if (voided.length) await storage.put(CRYPTO_EXCLUDED, [...((await storage.get(CRYPTO_EXCLUDED)) || []), ...voided].slice(-200));
   const next = enabled
-    ? { ...state, enabled: true, resumed_at: iso(now), paused_at: null, started_at: state.started_at || iso(now) }
+    ? { ...state, enabled: true, never_started: false, resumed_at: iso(now), paused_at: null, started_at: state.started_at || iso(now), started_by: state.started_by || 'the owner, by voice or the Trading Room' }
     : { ...state, enabled: false, paused_at: iso(now) };
   await storage.put(CRYPTO_STATE, next);
   return { state: next, voided: voided.length };
@@ -300,7 +301,7 @@ export async function cryptoTick(storage, { fetcher = fetch, now = Date.now(), f
   }
   if (rejected.length) run.rejected = rejected.slice(0, 3);
   run.ok = run.series.some((s) => s.status === 'LIVE' || s.status === 'DELAYED');
-  await storage.put(CRYPTO_STATE, { ...state, fetched, started_at: state.started_at || (state.enabled ? run.at : null), last_run_at: run.at, last_ok_at: run.ok ? run.at : state.last_ok_at || null });
+  await storage.put(CRYPTO_STATE, { ...state, fetched, last_run_at: run.at, last_ok_at: run.ok ? run.at : state.last_ok_at || null });
   const runs = (await storage.get(CRYPTO_RUNS)) || [];
   await storage.put(CRYPTO_RUNS, [...runs, run].slice(-RUN_LIMIT));
   // Research refresh, one series per pass, at most every six hours each (no network: stored bars only).
@@ -475,7 +476,7 @@ export async function cryptoView(storage, now = Date.now()) {
   const research = (await storage.get(CRYPTO_RESEARCH)) || { series: {} };
   const budget = await readBudget(storage, now);
   return {
-    market: 'crypto', desk: 'Orion', enabled: Boolean(state.enabled), started_at: state.started_at || null, paused_at: state.paused_at || null,
+    market: 'crypto', desk: 'Orion', enabled: Boolean(state.enabled), never_started: Boolean(state.never_started), started_at: state.started_at || null, paused_at: state.paused_at || null,
     schedule: { runs_on: 'the Worker alarm, every 5-minute close plus 20 seconds, with the app open or closed', next_at: state.enabled ? iso(await nextCryptoTickAt(storage, now)) : null,
       last_run_at: state.last_run_at || null, last_ok_at: state.last_ok_at || null, runs_recorded: runs.length, model_calls: 0 },
     budget,
@@ -497,7 +498,9 @@ export function speakCrypto(v, { now = Date.now(), action = null } = {}) {
   const parts = [];
   if (action === 'paused') parts.push('Orion\'s crypto research and paper trading are paused. Every record is kept; nothing fetches or trades until you say resume.');
   else if (action === 'resumed') parts.push('Orion\'s crypto research and paper trading are on: BTC and ETH, 5-minute, 15-minute and hourly bars, around the clock including the weekend.');
-  else parts.push(v.enabled ? 'Orion\'s crypto desk is on: BTC and ETH paper trading and research, around the clock including the weekend.' : 'Orion\'s crypto desk is paused. Say "resume Orion crypto research" to start it.');
+  else if (v.enabled) parts.push('Orion\'s crypto desk is on: BTC and ETH paper trading and research, around the clock including the weekend.');
+  else if (v.never_started) parts.push('Orion\'s crypto desk has not been started. Say "have Orion research BTC and ETH" to start it.');
+  else parts.push('Orion\'s crypto desk is paused. Say "resume Orion crypto research" to start it.');
   parts.push('Paper only: no exchange account, no key and no order path exist.');
   if (v.schedule.last_run_at) parts.push(`Last pass ${ago(v.schedule.last_run_at, now)}; ${v.schedule.runs_recorded} passes recorded, no AI model used.`);
   else parts.push(v.enabled ? 'No pass has run yet; the first one runs on the next 5-minute close.' : 'No pass has run yet.');

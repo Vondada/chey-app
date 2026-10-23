@@ -47,7 +47,8 @@ This is the same engine, journal and governor with a crypto feed. There is no se
   - Only LIVE bars may open a paper position.
   - Nothing is ever substituted. On failure the status is stored with its reason.
 - **Schedule:**
-  - The Durable Object alarm wakes 20 seconds after every 5-minute close, weekends included, whether the app is open or closed.
+  - **Off until the owner starts it.** Saying the Test A sentence (or "resume Orion crypto research", or Resume in the Trading Room) turns it on. Nothing runs on a schedule the owner did not ask for (AGENTS.md).
+  - Once on, the Durable Object alarm wakes 20 seconds after every 5-minute close, weekends included, whether the app is open or closed.
   - The 15-minute and hourly series are fetched when their bucket closes.
   - The owner can pause and resume it by voice ("pause Orion crypto research"), from Command Center `/trade-crypto`, or with `POST /api/trading/crypto {action}`.
   - Pausing voids an open position without inventing a close price. Resuming starts from the newest bar.
@@ -67,7 +68,7 @@ This is the same engine, journal and governor with a crypto feed. There is no se
   - A backtest of every strategy over the stored window, with a 70/30 in-sample/out-of-sample split and walk-forward folds.
   - Results under 30 trades are flagged "not enough data".
 - **Chat and voice** (`che_crypto` route, no model):
-  - The owner's Test A sentence turns the desk on if it was paused.
+  - The owner's Test A sentence turns the desk on if it was off or paused.
   - The reply gives the real schedule state, the last pass, each feed's status and freshness, the actual simulated trade count (zero is said as zero), performance with sample size, and the best out-of-sample result once one has 30 trades.
   - Guests are refused.
 
@@ -109,7 +110,7 @@ At these fees a round trip costs about 1% of the traded value. Most 5-minute set
   - intent positives and negatives
   - Test A through `/api/chat`
 - **Generated test bars only.** The build container cannot reach `api.exchange.coinbase.com` or `api.kraken.com` (proxy 403), so tests use bars generated in the test file, never stored as market data.
-- **Production check:** the deploy's trading check (`/api/trading/probe`) runs one real crypto pass from the live Worker and prints each series' status, last bar and the Kraken cross-check.
+- **Production check:** the deploy's trading check (`/api/trading/probe`) runs one real crypto feed read from the live Worker and prints each series' status, last bar and the Kraken cross-check. While the desk is off or paused that pass reads the feed only and trades nothing.
 - **Not verified yet:**
   - the real exchange responses from Cloudflare's network, until that deploy check runs
   - any closed crypto paper trade from real data
