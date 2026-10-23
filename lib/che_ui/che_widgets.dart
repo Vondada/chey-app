@@ -263,7 +263,8 @@ class PillToggle extends StatelessWidget {
     required this.options,
     required this.index,
     required this.onChanged,
-    this.height = 38,
+    // 52 leaves each choice a 44-point touch target inside the 1-point border and 3-point rim (iOS minimum).
+    this.height = 52,
   });
   final List<String> options;
   final int index;
@@ -530,7 +531,8 @@ class CheHeader extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               ShaderMask(
-                shaderCallback: (r) => CheColors.accentGradient.createShader(r),
+                // HUD: the Home greeting's chrome; other palettes keep their accent.
+                shaderCallback: (r) => (cheHudActive ? CheHud.chrome : CheColors.accentGradient).createShader(r),
                 child: Text(title,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,

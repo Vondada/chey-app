@@ -227,7 +227,8 @@ class _CheFilmStudioScreenState extends State<CheFilmStudioScreen> {
                 OutlinedButton(onPressed: _busy ? null : () => _act({'action': 'cancel'}), child: const Text('Stop film')),
             ]),
             const SizedBox(height: 8),
-            Row(children: [
+            // Wraps at narrow widths and large text instead of pushing the button off screen.
+            Wrap(spacing: 8, runSpacing: 8, crossAxisAlignment: WrapCrossAlignment.end, children: [
               SizedBox(
                 width: 120,
                 child: TextField(
@@ -236,7 +237,6 @@ class _CheFilmStudioScreenState extends State<CheFilmStudioScreen> {
                   decoration: const InputDecoration(labelText: 'Shot number'),
                 ),
               ),
-              const SizedBox(width: 8),
               OutlinedButton(onPressed: _busy ? null : _remake, child: const Text('Remake this shot')),
             ]),
           ],

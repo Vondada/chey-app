@@ -54,6 +54,7 @@ extension _CheHomeHubRooms on _CHEHomeState {
         onReadAloud: (t) => speakText(t, record: false, readOnDemand: true),
         onRefresh: () => _loadAgentState(silent: true),
         onOpenAgent: (name) => _openOfficeFloor(agentName: name),
+        onOpenEvidence: _openBrainEvidence,
       ),
       ),
       offline: CheOfflineBrainPanel(compact: true, replicaLine: _brainReplicaLine()),

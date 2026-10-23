@@ -352,7 +352,7 @@ class CheEvidenceTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final e = evidence;
     final web = e.url.isNotEmpty;
-    final available = web || onOpenEvidence != null;
+    final available = web || (onOpenEvidence != null && cheInAppEvidenceKinds.contains(e.kind));
     final detail = web ? Uri.tryParse(e.url)?.host ?? e.url : (available ? 'Opens in CHE' : 'Evidence not available yet');
     return Semantics(
       button: available,
@@ -381,5 +381,49 @@ class CheEvidenceTile extends StatelessWidget {
       ok = false;
     }
     if (!ok) messenger?.showSnackBar(SnackBar(content: Text('Could not open ${evidence.label}.')));
+  }
+}
+
+/// Under a chat reply: the Brain records it rests on (owner, 2026-10-23: chat claims link to records).
+/// [resolve] finds a record on this phone; one that has not synced yet says so instead of opening.
+class CheBrainRecordLinks extends StatelessWidget {
+  const CheBrainRecordLinks({super.key, required this.ids, required this.resolve, this.onReadAloud, this.onOpenEvidence});
+
+  final List<String> ids;
+  final CheMemoryDot? Function(String id) resolve;
+  final Future<void> Function(String text)? onReadAloud;
+  final CheOpenBrainEvidence? onOpenEvidence;
+
+  @override
+  Widget build(BuildContext context) {
+    if (ids.isEmpty) return const SizedBox.shrink();
+    return Wrap(spacing: 6, children: [for (final (i, id) in ids.indexed) _link(context, i, id)]);
+  }
+
+  Widget _link(BuildContext context, int i, String id) {
+    final dot = resolve(id);
+    final name = ids.length == 1 ? 'Brain record' : 'Brain record ${i + 1}';
+    return Semantics(
+      button: true,
+      label: dot == null ? '$name: not on this phone yet. It opens once the Brain syncs.' : '$name: ${dot.title}. Opens the record and its evidence.',
+      excludeSemantics: true,
+      child: TextButton.icon(
+        icon: Icon(Icons.hub_outlined, size: 16, color: dot == null ? CheColors.textDim : CheColors.accent),
+        label: Text(dot == null ? '$name (not synced yet)' : name, style: CheType.label),
+        onPressed: () {
+          if (dot == null) {
+            ScaffoldMessenger.maybeOf(context)
+                ?.showSnackBar(const SnackBar(content: Text('That Brain record is not on this phone yet. It opens once the Brain syncs.')));
+            return;
+          }
+          showModalBottomSheet<void>(
+            context: context,
+            isScrollControlled: true,
+            backgroundColor: CheColors.surface,
+            builder: (_) => CheBrainRecordSheet(dot: dot, onReadAloud: onReadAloud, onOpenEvidence: onOpenEvidence),
+          );
+        },
+      ),
+    );
   }
 }
