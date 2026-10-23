@@ -239,6 +239,86 @@ void main() {
       await tester.pump(const Duration(minutes: 10));
     });
 
+    testWidgets('VoiceOver hears the real state in the header, never "live" when it is not', (tester) async {
+      final handle = tester.ensureSemantics();
+      final hub = CheLiveFeedHub(feed: CheMarketFeed(live: CheRithmicLive()), throttle: Duration.zero, haptic: (_) {});
+      await tester.pumpWidget(_app(CheLiveChartCard(hub: hub, now: () => _open, onOpen: () {}, delayedBuilder: (_) => const SizedBox())));
+      expect(find.bySemanticsLabel('Trading. MNQ chart, disconnected, not current. Double tap to open.'), findsOneWidget);
+      await tester.tap(find.text('Delayed'));
+      await tester.pump();
+      expect(find.bySemanticsLabel('Trading. MNQ chart, delayed data, not live. Double tap to open.'), findsOneWidget);
+      expect(find.bySemanticsLabel(RegExp(r'live chart')), findsNothing);
+      await tester.pumpWidget(const SizedBox());
+      handle.dispose();
+    });
+
+    testWidgets('one haptic per real connection change, none per tick or on first reading', (tester) async {
+      var now = _open;
+      final live = CheRithmicLive(clock: () => now);
+      final felt = <CheLiveState>[];
+      final hub = CheLiveFeedHub(feed: CheMarketFeed(live: live, clock: () => now), throttle: Duration.zero, haptic: felt.add);
+      final rithmic = _Feed();
+      live.attach(rithmic, symbol: 'MNQZ6', exchange: 'CME');
+      // Home and the Trading Room both show the chart: still one haptic per change.
+      await tester.pumpWidget(_app(Column(children: [CheLiveChartCard(hub: hub, now: () => now), CheLiveChartCard(hub: hub, now: () => now)])));
+      expect(felt, isEmpty, reason: 'opening the screen is passive');
+      for (var i = 0; i < 5; i++) {
+        await tester.runAsync(() async {
+          rithmic.trade(21000 + i.toDouble(), now.add(Duration(seconds: i + 1)));
+          await Future<void>.delayed(Duration.zero);
+        });
+        await tester.pump();
+      }
+      expect(felt, [CheLiveState.live], reason: 'connecting → live once; later trades are ticks');
+      await tester.runAsync(live.disconnect);
+      await tester.pump();
+      expect(felt, [CheLiveState.live, CheLiveState.disconnected]);
+      live.attach(_Feed(), symbol: 'MNQZ6', exchange: 'CME');
+      await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+      await tester.pump();
+      expect(felt.last, CheLiveState.reconnecting, reason: 'not live again until a new trade arrives');
+      expect(felt, hasLength(3));
+      await tester.pumpWidget(const SizedBox());
+      now = now.add(const Duration(hours: 1));
+      await tester.pump(const Duration(minutes: 10));
+    });
+
+    testWidgets('a scrolled-back view stays on the same candles when the oldest drop off the end', (tester) async {
+      var now = _open;
+      final live = CheRithmicLive(clock: () => now);
+      final hub = CheLiveFeedHub(feed: CheMarketFeed(live: live, clock: () => now, closeGrace: Duration.zero), throttle: Duration.zero, haptic: (_) {});
+      final rithmic = _Feed();
+      live.attach(rithmic, symbol: 'MNQZ6', exchange: 'CME');
+      var minute = 0;
+      Future<void> trades(int n) async {
+        await tester.runAsync(() async {
+          for (var i = 0; i < n; i++, minute++) {
+            now = _open.add(Duration(minutes: minute, seconds: 1));
+            rithmic.trade(21000 + minute.toDouble(), now);
+            await Future<void>.delayed(Duration.zero);
+          }
+        });
+        await tester.pump();
+      }
+
+      await tester.pumpWidget(_app(CheLiveChartCard(hub: hub, now: () => now)));
+      await trades(CheLiveFeedHub.maxCandles + 5);
+      final state = tester.state<CheLiveChartCardState>(find.byType(CheLiveChartCard));
+      final candles = hub.acquire(1);
+      expect(candles.channel.candles, hasLength(CheLiveFeedHub.maxCandles), reason: 'full: each new candle evicts one');
+      state.panFromRight = 10;
+      DateTime rightmost() => candles.channel.candles[candles.channel.candles.length - 1 - state.panFromRight].start;
+      final before = rightmost();
+      await trades(4);
+      expect(candles.channel.candles, hasLength(CheLiveFeedHub.maxCandles));
+      expect(rightmost(), before, reason: 'tracked by time, not by count');
+      expect(state.panFromRight, 14);
+      candles.release();
+      await tester.pumpWidget(const SizedBox());
+      now = now.add(const Duration(hours: 1));
+      await tester.pump(const Duration(minutes: 10));
+    });
+
     testWidgets('the timeframe is remembered; the source never is', (tester) async {
       final hub = CheLiveFeedHub(feed: CheMarketFeed(live: CheRithmicLive()), throttle: Duration.zero);
       await tester.pumpWidget(_app(CheLiveChartCard(hub: hub, now: () => _open)));

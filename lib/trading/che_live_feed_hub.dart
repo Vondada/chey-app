@@ -9,7 +9,9 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 
+import 'che_live_status.dart';
 import 'che_market_feed.dart';
 
 /// The candles and the latest snapshot for one timeframe.
@@ -104,7 +106,9 @@ class CheLiveLease {
 }
 
 class CheLiveFeedHub {
-  CheLiveFeedHub({CheMarketFeed? feed, this.throttle = const Duration(milliseconds: 250)}) : _feed = feed; // ignore: prefer_initializing_formals
+  CheLiveFeedHub({CheMarketFeed? feed, this.throttle = const Duration(milliseconds: 250), void Function(CheLiveState)? haptic})
+      : _feed = feed, // ignore: prefer_initializing_formals
+        _haptic = haptic ?? _defaultHaptic;
 
   /// The app-wide hub over the app-wide feed.
   static final instance = CheLiveFeedHub();
@@ -116,6 +120,27 @@ class CheLiveFeedHub {
   final Duration throttle;
 
   final _channels = <int, CheLiveChannel>{};
+
+  // ─── Connection haptics (AGENTS.md: status pairs a visible banner with a haptic, never forced speech) ──────────
+  final void Function(CheLiveState) _haptic;
+  CheLiveState? _lastState;
+
+  /// Every live chart reports the state it shows. One haptic per real change of the feed's state, app-wide (Home and
+  /// the Trading Room share it): never for the first reading, a repeat or a tick, and never for delayed data, which
+  /// is the owner's own choice.
+  void noteState(CheLiveState state) {
+    if (state == CheLiveState.delayed) return;
+    final before = _lastState;
+    _lastState = state;
+    if (before == null || before == state) return;
+    _haptic(state);
+  }
+
+  static void _defaultHaptic(CheLiveState s) => unawaited(switch (s) {
+        CheLiveState.live => HapticFeedback.mediumImpact(),
+        CheLiveState.disconnected => HapticFeedback.heavyImpact(),
+        _ => HapticFeedback.selectionClick(),
+      });
 
   /// Open channels and how many screens hold each: for tests and diagnostics.
   Map<int, int> get activeRefs => {for (final e in _channels.entries) e.key: e.value._refs};

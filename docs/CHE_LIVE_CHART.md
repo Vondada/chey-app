@@ -16,7 +16,7 @@ is the **Rithmic feed on the iPhone** (`lib/trading/che_market_feed.dart`, #478)
 |---|---|---|
 | Live | LIVE | Rithmic trades are arriving now |
 | Connecting | CONNECTING | connected, before the first trade of a session |
-| Reconnecting | RECONNECTING | a new session over candles already on screen (they stay, marked NOT CURRENT) |
+| Reconnecting | RECONNECTING | a new session over candles already on screen, until its own first trade (the candles stay, marked NOT CURRENT) |
 | Quiet | MARKET CLOSED / NO TRADES | connected, no trades for 90 s; MARKET CLOSED when CME futures are shut |
 | Disconnected | DISCONNECTED | Rithmic not connected, login refused, or connection dropped, with the reason and the last update time |
 | Delayed | DELAYED | only after the owner taps "Delayed"; detail starts "Not live" |
@@ -39,3 +39,12 @@ speaks.
 There is one channel per timeframe (one candle and one status subscription), shared by every screen that shows it. The
 last screen to leave closes it. A Rithmic reconnect adds no subscriptions. Updates are coalesced to at most 4 per
 second.
+
+## Haptics
+
+There is one haptic for each real change of the feed's state, app-wide (`CheLiveFeedHub.noteState`):
+- medium when it turns LIVE, heavy when it turns DISCONNECTED, and a light click for the others
+- none for the first reading, for live ticks, or for the owner's own switch to delayed
+- no speech
+
+The status pill is the visible banner.

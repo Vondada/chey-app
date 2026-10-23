@@ -64,8 +64,11 @@ class CheLiveChartCardState extends State<CheLiveChartCard> {
 
   /// Candles across the width, and how many of the newest are scrolled off to the right.
   int visible = 48;
-  int panFromRight = 0;
-  int _lastCount = 0;
+  int _panFromRight = 0;
+
+  /// While scrolled back: the start time of the rightmost candle in view. New candles and the oldest dropping off the
+  /// end move the index, never the view (tracked by time, not by count).
+  DateTime? _anchor;
   int _scaleStartVisible = 48;
   double _dragCarry = 0;
 
@@ -73,13 +76,24 @@ class CheLiveChartCardState extends State<CheLiveChartCard> {
   int get minutes => _minutes;
   bool get showingDelayed => _showDelayed;
 
+  int get panFromRight => _panFromRight;
+  set panFromRight(int v) {
+    final candles = _lease?.channel.candles ?? const <CheCandle>[];
+    _panFromRight = v.clamp(0, math.max(0, candles.length - 1));
+    final end = candles.length - _panFromRight;
+    _anchor = _panFromRight == 0 || end <= 0 ? null : candles[end - 1].start;
+  }
+
   @override
   void initState() {
     super.initState();
     _attach(_minutes);
     unawaited(_restoreMinutes());
+    _hub.noteState(status.state); // the first reading: no haptic
     _recheck = Timer.periodic(widget.recheckEvery, (_) {
-      if (mounted && TickerMode.valuesOf(context).enabled) setState(() {});
+      if (!mounted || !TickerMode.valuesOf(context).enabled) return;
+      _hub.noteState(status.state); // a quiet market turns from LIVE to NO TRADES without a new trade
+      setState(() {});
     });
   }
 
@@ -98,15 +112,18 @@ class CheLiveChartCardState extends State<CheLiveChartCard> {
     _lease?.release();
     _lease = _hub.acquire(minutes);
     _lease!.channel.addListener(_onChannel);
-    _lastCount = _lease!.channel.candles.length;
   }
 
   void _onChannel() {
     if (!mounted) return;
-    final count = _lease!.channel.candles.length;
-    // Scrolled back: keep the same candles in view when a new one arrives.
-    if (panFromRight > 0 && count > _lastCount) panFromRight += count - _lastCount;
-    _lastCount = count;
+    final anchor = _anchor;
+    if (anchor != null) {
+      // Scrolled back: keep the same candles in view. If the anchor itself dropped off, hold the oldest.
+      final candles = _lease!.channel.candles;
+      final i = candles.lastIndexWhere((c) => !c.start.isAfter(anchor));
+      _panFromRight = i < 0 ? math.max(0, candles.length - 1) : candles.length - 1 - i;
+    }
+    _hub.noteState(status.state);
     setState(() {});
   }
 
@@ -182,7 +199,8 @@ class CheLiveChartCardState extends State<CheLiveChartCard> {
         child: Semantics(
           header: true,
           button: widget.onOpen != null,
-          label: 'Trading. $symbol live chart. Double tap to open.',
+          // The real state, never "live" unless it is: delayed, disconnected and quiet say so.
+          label: 'Trading. $symbol chart, ${_showDelayed ? 'delayed data, not live' : '${s.word.toLowerCase()}${s.isCurrent ? '' : ', not current'}'}. Double tap to open.',
           excludeSemantics: true,
           child: InkWell(
             onTap: widget.onOpen,
@@ -282,7 +300,7 @@ class CheLiveChartCardState extends State<CheLiveChartCard> {
               final step = _dragCarry.truncate();
               if (step != 0) {
                 _dragCarry -= step;
-                panFromRight = (panFromRight + step).clamp(0, math.max(0, candles.length - 12));
+                panFromRight = (panFromRight + step).clamp(0, math.max(0, candles.length - 12)).toInt();
               }
             }
           });
