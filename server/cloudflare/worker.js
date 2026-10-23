@@ -83,6 +83,7 @@ import { addBeat, addLedger, addWorkspace, addWorkspaceSong, advanceAgreement, a
 import { matrixIntent, readMatrix, runMatrix, speakMatrix } from './backtest_matrix.js';
 import { autoQueue as researchAutoQueue, cancelJob as cancelResearchJob, matrixView as researchMatrixView, nextResearchAt, queueJob as queueResearchJob, researchIntent, researchStep, researchView, setProfile as setResearchProfile, speakBestNow, speakHistory, speakStrategy, strategyView as researchStrategyView } from './trading_research.js';
 import { nextStrategySimTickAt, setStrategySimCeiling, setStrategySimPaused, speakStrategySim, strategySimIntent, strategySimTick, strategySimView, strategySimWake } from './strategy_sim.js';
+import { DRAFT_PROMPT, activeDefinitions as libraryActiveDefinitions, approveEntry as libraryApprove, definitionProblems as libraryDefinitionProblems, duplicateEntry as libraryDuplicate, libraryView, readAudit as libraryAudit, recordResults as libraryRecordResults, registerEntry as libraryRegister, resolveName as libraryResolve, setFlag as librarySetFlag, speakCompare as librarySpeakCompare, speakLibrary, strategyLibraryIntent, takeDraftAllowance } from './strategy_library.js';
 import { evidenceIntent, evidenceReport, evidenceTick } from './trading_evidence_runner.js';
 import { readTrades } from './trading_evidence.js';
 import { cancelCandidates, cancelConfirmation, cancelOrderIntent, chartIntent, chartView, drawIntent, futuresOrderIntent, marketOrderFeedProblem, readDrawings, saveDrawings, speakOrder } from './trading_chart.js';
@@ -4246,6 +4247,46 @@ export class CheState extends DurableObject {
     return { text: out.text, extra: { risk: out.risk || null, sources: out.sources || [], confidence: out.confidence || null } };
   }
 
+  /**
+   * Strategy Library actions (owner, 2026-10-23), for the /api/trading/library routes and chat alike. Built-in research
+   * strategies are enabled and disabled through the Strategy Control Center (one switch per strategy, not two).
+   */
+  async strategyLibraryAction(action, body = {}, { who = 'owner' } = {}) {
+    const storage = this.ctx.storage;
+    const id = String(body.id || '').slice(0, 80);
+    if (action === 'register') return libraryRegister(storage, body.entry, { who });
+    if (action === 'approve') return libraryApprove(storage, id, { confirm: body.confirm === true, who });
+    if (action === 'duplicate') return libraryDuplicate(storage, id, String(body.new_id || '').slice(0, 80), { who });
+    if (action === 'results') return libraryRecordResults(storage, id, String(body.kind || ''), body.summary || {}, { source: body.source });
+    if (['enable', 'disable', 'favorite', 'unfavorite'].includes(action)) {
+      const view = await libraryView(storage);
+      const entry = view.entries.find((e) => e.id === id);
+      if ((action === 'enable' || action === 'disable') && entry?.engine === 'trading_evidence') {
+        const result = await this.tradingControl({ kind: action, scope: id }, { who, confirm: body.confirm === true });
+        return { ...result, via: 'trading_controls', spoken: speakControlResult(result) };
+      }
+      return librarySetFlag(storage, id, action, { who });
+    }
+    if (action === 'draft') {
+      const text = String(body.text || '').trim().slice(0, 2000);
+      if (text.length < 8) return { ok: false, error: 'Describe the strategy in a sentence or more.' };
+      const allowance = await takeDraftAllowance(storage);
+      if (!allowance.ok) return { ok: false, error: `The daily limit of ${allowance.limit} strategy drafts is used. Try again tomorrow, or write the rules yourself.` };
+      const res = await this.env.AI.run(this.env.CHE_STRONG_MODEL || STRONG_MODEL, { messages: [{ role: 'system', content: DRAFT_PROMPT }, { role: 'user', content: text }], max_tokens: 1800 });
+      const raw = String(res?.response || res?.choices?.[0]?.message?.content || '').trim();
+      let doc = null;
+      try { doc = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1)); } catch { doc = null; }
+      const problems = doc ? libraryDefinitionProblems(doc) : ['the draft was not valid JSON'];
+      if (problems.length) return { ok: false, drafted: false, problems, error: `I could not turn that into valid rules: ${problems.slice(0, 3).join('; ')}. Nothing was saved.` };
+      const entry = { id: doc.id, kind: 'strategy', name: doc.name, category: doc.category, timeframes: doc.timeframes.map((t) => `${t}m`),
+        sources: [{ type: 'owner', title: `Your words: "${text.slice(0, 200)}"` }], rules: [text], assumptions: doc.description ? [String(doc.description).slice(0, 600)] : [],
+        data_requirements: ['bars at the listed timeframes'], event_dependencies: [], limitations: ['Drafted from plain language by a model: read the rules before approving.'], definition: doc };
+      const out = await libraryRegister(storage, entry, { who: `${who} (drafted)` });
+      return out.ok ? { ...out, drafted: true, definition: doc } : { ...out, drafted: false, error: `The draft did not register: ${out.problems.join('; ')}` };
+    }
+    return { ok: false, error: 'Unknown library action.' };
+  }
+
   async tradingControl(change, { who = 'owner', confirm = false } = {}) {
     const resolved = resolveStep(await readControls(this.ctx.storage), change || {});
     if (resolved.error) return { ok: false, error: resolved.error };
@@ -7995,6 +8036,21 @@ export class CheState extends DurableObject {
           return json({ ok: true, started: started.started, status: state.status, spoken: speakIntelligence(view), view });
         }
         return json({ detail: 'Not found.' }, 404);
+      }
+      // Strategy Library (owner, 2026-10-23): docs/CHE_STRATEGY_LIBRARY.md. Owner only. Paper and research only.
+      if (path === '/api/trading/library' || path.startsWith('/api/trading/library/')) {
+        if (!ownerDevice) return json({ detail: 'Only the CHE owner can view or change the strategy library.' }, 403);
+        const url = new URL(request.url);
+        if (request.method === 'GET' && path === '/api/trading/library') {
+          const q = (k) => String(url.searchParams.get(k) || '').slice(0, 80);
+          return json(await libraryView(this.ctx.storage, { q: q('q'), category: q('category'), kind: q('kind'), lifecycle: q('lifecycle') }));
+        }
+        if (request.method === 'GET' && path === '/api/trading/library/active') return json(await libraryActiveDefinitions(this.ctx.storage));
+        if (request.method === 'GET' && path === '/api/trading/library/audit') return json({ audit: await libraryAudit(this.ctx.storage, { limit: 200 }) });
+        if (request.method !== 'POST') return json({ detail: 'Not found.' }, 404);
+        const action = path.replace('/api/trading/library/', '');
+        const out = await this.strategyLibraryAction(action, body, { who: String(body.who || 'owner (iPhone)').slice(0, 40) });
+        return json(out, out.ok || out.needs_confirmation ? 200 : 400);
       }
       // Multi-timeframe research (owner, 2026-10-22): docs/CHE_TRADING_RESEARCH_API.md. Owner only. Research and paper only.
       if (path === '/api/trading/research' || path.startsWith('/api/trading/research/')) {
@@ -12503,6 +12559,39 @@ export class CheState extends DurableObject {
             : sim.kind === 'resume' ? 'Resumed the strategy simulation, sir. It runs again on the next minute.' : '';
           const view = await strategySimView(this.ctx.storage);
           return ndjsonReply([lead, speakStrategySim(view)].filter(Boolean).join('\n'), { source: 'che_strategy_sim' });
+        }
+        // Strategy Library by voice or typing: list, compare, favorite, approve (with a spoken yes), draft from words.
+        const libIntent = strategyLibraryIntent(message);
+        if (libIntent) {
+          if (!ownerDevice) return ndjsonReply('Only the CHE owner can use the strategy library, sir.', { source: 'che_strategy_library', ok: false });
+          const view = await libraryView(this.ctx.storage);
+          const reply = (text, extra = {}) => ndjsonReply(text, { source: 'che_strategy_library', open_view: 'strategy_library', ...extra });
+          if (libIntent.kind === 'list') return reply(speakLibrary(view));
+          if (libIntent.kind === 'identify') return reply('You identified "86" as the P2P 86 Model (TradingView script "P2P 86 Model Probability Map"). Its rules are being researched; it is not implemented yet. "AMD" usually means ICT\'s Power of Three (accumulation, manipulation, distribution), which is in the library as a market-context model with no executable rules. Neither is paper trading.');
+          if (libIntent.kind === 'draft') {
+            const out = await this.strategyLibraryAction('draft', { text: libIntent.text }, { who: 'owner (chat)' });
+            return reply(out.ok ? `I wrote that up as "${out.definition.name}", sir. It is saved as version ${out.version} and waits for your approval: nothing paper trades until you say "yes, approve ${out.definition.name}". Open the Strategy Library to read its rules.` : out.error, { ok: Boolean(out.ok) });
+          }
+          if (libIntent.kind === 'compare') {
+            const [a, b] = libIntent.names.map((n) => libraryResolve(view.entries, n));
+            if (!a.match || !b.match) {
+              const which = !a.match ? [libIntent.names[0], a] : [libIntent.names[1], b];
+              return reply(which[1].candidates.length ? `"${which[0]}" could mean ${which[1].candidates.map((e) => e.name).join(', or ')}. Which one?` : `I have no strategy called "${which[0]}" in the library.`, { ok: false });
+            }
+            return reply(librarySpeakCompare(a.match, b.match), { compare: [a.match.id, b.match.id] });
+          }
+          const found = libraryResolve(view.entries, libIntent.name);
+          if (!found.match) return reply(found.candidates.length ? `"${libIntent.name}" could mean ${found.candidates.map((e) => e.name).join(', or ')}. Which one?` : `I have no strategy called "${libIntent.name}" in the library.`, { ok: false });
+          const e = found.match;
+          if (libIntent.kind === 'approve') {
+            const out = await this.strategyLibraryAction('approve', { id: e.id, confirm: libIntent.confirm }, { who: 'owner (chat)' });
+            if (out.needs_confirmation) return reply(`${out.summary} Say "yes, approve ${e.name}" to approve it. Nothing has changed yet.`);
+            return reply(out.ok ? `Approved ${e.name} version ${out.version}, sir. It may paper trade once you enable it. Live trading stays off.` : out.error, { ok: Boolean(out.ok) });
+          }
+          const out = await this.strategyLibraryAction(libIntent.flag, { id: e.id }, { who: 'owner (chat)' });
+          if (out.via === 'trading_controls') return reply(out.spoken, { ok: Boolean(out.ok) });
+          const did = { enable: 'enabled for paper testing', disable: 'disabled', favorite: 'added to your favorites', unfavorite: 'removed from your favorites' }[libIntent.flag];
+          return reply(out.ok ? `${e.name} is ${did}, sir.` : out.error, { ok: Boolean(out.ok) });
         }
         const trade = tradingIntent(message);
         if (trade) {
