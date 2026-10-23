@@ -165,7 +165,8 @@ class _StrategyCardState extends State<_StrategyCard> {
                   borderRadius: BorderRadius.circular(10),
                   onTap: () => setState(() => _open = !_open),
                   child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                    if (featured || secondary) Text(featured ? 'FEATURED' : 'COMPARE', style: const TextStyle(color: _teal, fontSize: 11, fontWeight: FontWeight.w800, letterSpacing: 0.8)),
+                    Text([if (featured) 'FEATURED' else if (secondary) 'COMPARE', 'Live locked'].where((e) => e.isNotEmpty).join(' · '),
+                        style: const TextStyle(color: _teal, fontSize: 11, fontWeight: FontWeight.w800, letterSpacing: 0.8)),
                     Text(name, key: Key('strategy_name_${row['id']}'), maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w800)),
                   ]),
                 ),
@@ -182,10 +183,14 @@ class _StrategyCardState extends State<_StrategyCard> {
           Semantics(container: true, label: '$name: $count of 30 unique forward trades', excludeSemantics: true,
             child: LinearProgressIndicator(value: fraction, minHeight: 8, color: _teal, backgroundColor: const Color(0xFF1B2E36))),
           const SizedBox(height: 4),
-          // A Wrap, so the count and its label move to a second line at a narrow width or large text, never overflow.
-          Wrap(crossAxisAlignment: WrapCrossAlignment.end, children: [
-            Text('$count', style: _bold),
-            const Text(' / 30 unique forward trades', style: TextStyle(color: Colors.white, fontSize: 15)),
+          // One text: the bold count, then its label. A Wrap-free Row would need a second line at large text, so the
+          // Text itself wraps; the net P&L sits at the right in bold.
+          Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+            Expanded(child: Text.rich(TextSpan(children: [
+              TextSpan(text: '$count', style: _bold),
+              const TextSpan(text: ' / 30 unique forward trades', style: TextStyle(color: Colors.white, fontSize: 15)),
+            ]))),
+            Text(_money(forward['net_pnl']), style: _bold.copyWith(fontSize: 16)),
           ]),
           const SizedBox(height: 8),
           _timeframeStrip(),
