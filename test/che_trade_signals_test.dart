@@ -154,7 +154,8 @@ void main() {
     await audit.append('setup_stage', account: 'CHE PAPER ACCOUNT', data: {'to': 'READY'});
     expect(await CheTradeAudit(file: () async => f).verify(), isEmpty);
     final lines = f.readAsLinesSync();
-    f.writeAsStringSync('${[lines[0], lines[1].replaceFirst('250', '2500'), lines[2]].join('\n')}\n');
+    // Change the amount itself: a bare '250' can match the timestamp's milliseconds, which Dart reads back as the same instant.
+    f.writeAsStringSync('${[lines[0], lines[1].replaceFirst('"to":250', '"to":2500'), lines[2]].join('\n')}\n');
     expect(await CheTradeAudit(file: () async => f).verify(), isNotEmpty);
     f.writeAsStringSync('${[lines[0], lines[2]].join('\n')}\n');
     final problems = await CheTradeAudit(file: () async => f).verify();
