@@ -119,6 +119,8 @@ import 'home/screen_command.dart';
 import 'home/che_inline_preview.dart';
 import 'home/che_grok_chat_screen.dart';
 import 'home/che_mockup_home.dart';
+import 'home/che_home_tiles.dart';
+import 'home/che_flagstaff_banner.dart';
 import 'home/che_more_tab.dart';
 import 'home/che_connections_screen.dart';
 import 'home/che_projects_board.dart';
@@ -526,6 +528,7 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
 
   // Unread INCOMING mailbox messages (badge on the Chat mailbox icon).
   int _mailboxUnread = 0;
+  List<CheFlagstaffGist> _mailboxLatest = const [];
   // Changing this rebuilds the priority banner, so it reloads what is unread.
   int _priorityBannerVersion = 0;
   Timer? _mailboxBadgeTimer;
@@ -1723,6 +1726,7 @@ OWNER AGENCY
       onOfficeStatus: () => unawaited(_speakOfficeStatus()),
       onTapAgent: (agent) => _openOfficeFloor(agentName: agent.name),
       unread: _mailboxUnread,
+      flagstaffLatest: _mailboxLatest,
       onOpenFlagstaff: () => unawaited(_openMailbox()),
       latencyMs: _stateLatencyMs,
       handsFree: CheUiPreferences.instance.handsFreeWake,

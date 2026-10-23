@@ -151,7 +151,7 @@ import { describeSkillsReport, reusableLicense, selectFilesForAgent, skillFromMa
 import { describeTopicStudyStart, starredStudyTargets, matchTopicSections, namedRepoStudyIntent, starredLibraryIntent, readTutorial, readmeSections, sectionTutorials, studyBatchIntent, topicBuildRequest, topicTitles, wantsSerialStudy } from './topic_study.js';
 import { buildCollaborationPacket, collaborationIntent, collaborationSessionId, parallelPreference, planParallelLanes, statusIntent } from './collaboration.js';
 import { consultEngine, consultIntent, roundTable, shareIntent, speakConsult, speakRoundTable } from './ai_consult.js';
-import { markOwnerSeen, readArchive as flagstaffArchive, unreadIncoming } from './web_mailbox.js';
+import { gistRows, markOwnerSeen, readArchive as flagstaffArchive, unreadIncoming } from './web_mailbox.js';
 import { loadPackedJson, savePackedJson } from './prompt_compaction.js';
 import { githubWorkshopPieces, workshopAvatar, workshopAvatarIntent, workshopSnapshot } from './workshop.js';
 import { flushOutbox, handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, openMailbox, transcript as flagstaffTranscript, mailboxCode, mailboxLink, postWebMail, readWebMail, rotateMailboxCode } from './web_mailbox.js';
@@ -8581,7 +8581,7 @@ export class CheState extends DurableObject {
         const letters = (await listLetters(this.ctx.storage)).filter((l) => !l.read);
         const important = letters.filter((l) => l.severity === 'danger' || l.severity === 'action').length
           + flag.latest.filter((m) => /urgent|error|danger|failed|attack/i.test(m.text)).length;
-        return json({ unread: flag.count + letters.length, incoming: flag.count, letters_unread: letters.length, important });
+        return json({ unread: flag.count + letters.length, incoming: flag.count, letters_unread: letters.length, important, latest: gistRows(flag.latest) });
       }
 
       // ─── Token usage tracker ──────────────────────────────────────────
