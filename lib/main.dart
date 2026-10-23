@@ -128,6 +128,7 @@ import 'memory/che_brain_replica.dart';
 import 'memory/che_knowledge_cache.dart';
 import 'self_update/che_patch_banner.dart';
 import 'self_update/che_update_screen.dart';
+import 'self_update/che_mobile_update.dart';
 import 'self_update/che_update_card.dart';
 import 'self_update/che_self_update_intent.dart';
 import 'rooms/che_markets_room.dart';

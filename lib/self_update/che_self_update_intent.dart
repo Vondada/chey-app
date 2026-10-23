@@ -345,3 +345,20 @@ bool cheIsTerminalChatOnlyRequest(String raw) {
   ).hasMatch(text);
   return responseDirective && prohibition;
 }
+
+/// Current app/runtime metadata must never fall back to a language model.
+bool cheIsAppStatusRequest(String raw) {
+  final text = raw.replaceAll('’', "'").trim().toLowerCase()
+      .replaceFirst(RegExp(r'^(?:(?:hey|hi)\s+)?(?:che|chay|chey)[, :]+'), '')
+      .replaceFirst(RegExp(r'[.!?]+$'), '');
+  if (RegExp(r'\b(?:added|introduced|was running|used to|previously|back then|at the time|when .*was)\b').hasMatch(text)) return false;
+  if (cheOpensAppVersion(text)) return true;
+  return RegExp(r"^(?:what(?:'s| is| are)?|which|tell me|show me|check|read|give me)\b").hasMatch(text) &&
+      RegExp(r'\b(?:version|build number|deployment (?:identifier|id|status)|commit|sha)\b').hasMatch(text) &&
+      RegExp(r'\b(?:my|installed|backend|worker|connected|deployed|deployment|running)\b').hasMatch(text);
+}
+
+bool cheOpensAppVersion(String raw) => RegExp(
+  r'^(?:(?:che|chay|chey)[, :]+)?(?:open|show)(?: me)? (?:settings|about)(?:\s*(?:/|and)\s*(?:about|show(?: me)?))?.*\b(?:app )?version\b[.!?]*$',
+  caseSensitive: false,
+).hasMatch(raw.trim());

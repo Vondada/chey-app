@@ -1,0 +1,60 @@
+{
+  "turns": [
+    {
+      "turn": 1,
+      "message": "What version of CHE am I running?",
+      "status": 200,
+      "route": "model",
+      "model_calls": 1,
+      "ms": 339,
+      "reply": "CHE app version 9.9.9 build 999 is installed. Nothing is running right now, sir: no coding job, repository study or AI request is in progress."
+    },
+    {
+      "turn": 2,
+      "message": "What’s my installed build number?",
+      "status": 200,
+      "route": "che_personal_recall",
+      "model_calls": 0,
+      "ms": 88,
+      "reply": "I don't have a record of your installed build number, sir, so I don't know it. Tell me and I'll remember it."
+    },
+    {
+      "turn": 3,
+      "message": "What backend version are you connected to?",
+      "status": 200,
+      "route": "model",
+      "model_calls": 1,
+      "ms": 48,
+      "reply": "CHE app version 9.9.9 build 999 is installed. Nothing is running right now, sir: no coding job, repository study or AI request is in progress."
+    },
+    {
+      "turn": 4,
+      "message": "Open Settings and show my app version.",
+      "status": 200,
+      "route": "model",
+      "model_calls": 1,
+      "ms": 21,
+      "reply": "CHE app version 9.9.9 build 999 is installed. Nothing is running right now, sir: no coding job, repository study or AI request is in progress."
+    },
+    {
+      "turn": 5,
+      "message": "What GitHub commit is deployed?",
+      "status": 200,
+      "route": "che_self_update",
+      "model_calls": 0,
+      "ms": 8,
+      "reply": "Sir, I could not verify the Worker deployment from GitHub. CHE GitHub access is not configured. The Worker needs CHE_GITHUB_TOKEN and CHE_GITHUB_REPO; no live deployment lookup ran."
+    },
+    {
+      "turn": 6,
+      "message": "Did you successfully deploy a change?",
+      "status": 200,
+      "route": "che_self_update",
+      "model_calls": 0,
+      "ms": 8,
+      "reply": "Sir, I could not verify the Worker deployment from GitHub. CHE GitHub access is not configured. The Worker needs CHE_GITHUB_TOKEN and CHE_GITHUB_REPO; no live deployment lookup ran."
+    }
+  ],
+  "blocked_hosts": [],
+  "failed_expectations": 0
+}

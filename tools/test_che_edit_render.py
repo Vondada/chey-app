@@ -24,7 +24,7 @@ class EditRender(unittest.TestCase):
         src.mkdir()
         ff('-f', 'lavfi', '-i', 'testsrc=size=1280x720:rate=30:duration=4', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=4', '-shortest', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', str(src / 'clipA.mp4'))
         ff('-f', 'lavfi', '-i', 'testsrc2=size=640x480:rate=30:duration=3', '-f', 'lavfi', '-i', 'sine=frequency=660:duration=3', '-shortest', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', str(src / 'clipB.mp4'))
-        ff('-f', 'lavfi', '-i', 'gradients=size=800x600:duration=1', '-frames:v', '1', str(src / 'photo.png'))
+        ff('-f', 'lavfi', '-i', 'gradients=size=800x600:duration=1:seed=7', '-frames:v', '1', str(src / 'photo.png'))
         ff('-f', 'lavfi', '-i', 'sine=frequency=220:duration=12', '-ac', '2', str(src / 'song.wav'))
         cls.assets = json.dumps({'clipA': 'clipA', 'clipB': 'clipB', 'photo': 'photo', 'song': 'song'})
         cls.src = src
