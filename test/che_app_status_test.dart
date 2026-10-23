@@ -35,5 +35,7 @@ void main() {
     expect(cheOpensAppVersion('Open Settings and show my app version.'), isTrue);
     expect(cheIsAppStatusRequest('Deploy a new version of CHE'), isFalse);
     expect(cheIsAppStatusRequest('Install app version 9'), isFalse);
+    expect(cheIsAppStatusRequest('What commit added the app status tests?'), isFalse);
+    expect(cheIsAppStatusRequest('What version of the CHE app added Rithmic?'), isFalse);
   });
 }

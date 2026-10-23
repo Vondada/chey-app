@@ -10009,6 +10009,7 @@ export class CheState extends DurableObject {
         const runtimeStatusAsk = !body.attachment && !body.workflow_step ? appStatusIntent(rawMessage) : null;
         if (runtimeStatusAsk) {
           if (!ownerDevice) return ownerOnly();
+          await this.dropHeldActions();
           const runtime = runtimeVersion(this.env);
           const deployment = runtimeStatusAsk.kind === 'deployment'
             ? await latestWorkerDeploymentStatus(this.env, fetch, runtime).catch(() => ({ status: 503, detail: 'Deployment history lookup failed. No successful deployment is verified.' })) : null;

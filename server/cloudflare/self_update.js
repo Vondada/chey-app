@@ -686,7 +686,7 @@ export function appStatusIntent(message = '') {
   if (/^(?:open|show)(?: me)? (?:settings|about)(?:\s*(?:\/|and)\s*(?:about|show(?: me)?))?.*\b(?:app )?version\b/.test(t)) return { kind: 'settings' };
   if (!/^(?:what(?:'s| is| are)?|which|tell me|show me|check|read|give me)\b/.test(t)) return null;
   if (/\b(?:version|build number|deployment (?:identifier|id|status)|commit|sha)\b/.test(t)
-    && /\b(?:che|my|installed|app|backend|worker|connected|deployed|deployment|running)\b/.test(t)) return { kind: /\b(?:commit|sha|last verified deployment|deployment status)\b/.test(t) ? 'deployment' : 'runtime' };
+    && /\b(?:my|installed|backend|worker|connected|deployed|deployment|running)\b/.test(t)) return { kind: /\b(?:commit|sha|last verified deployment|deployment status)\b/.test(t) ? 'deployment' : 'runtime' };
   return null;
 }
 

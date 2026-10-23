@@ -354,7 +354,7 @@ bool cheIsAppStatusRequest(String raw) {
   if (cheOpensAppVersion(text)) return true;
   return RegExp(r"^(?:what(?:'s| is| are)?|which|tell me|show me|check|read|give me)\b").hasMatch(text) &&
       RegExp(r'\b(?:version|build number|deployment (?:identifier|id|status)|commit|sha)\b').hasMatch(text) &&
-      RegExp(r'\b(?:che|my|installed|app|backend|worker|connected|deployed|deployment|running)\b').hasMatch(text);
+      RegExp(r'\b(?:my|installed|backend|worker|connected|deployed|deployment|running)\b').hasMatch(text);
 }
 
 bool cheOpensAppVersion(String raw) => RegExp(

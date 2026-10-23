@@ -10,7 +10,7 @@ const client = { source: 'ios_bundle', version: '1.4.5678', build: '123456', che
 
 test('status intents are read-only and leave software changes on existing approval routes', () => {
   for (const prompt of ['What version of CHE am I running?', 'What’s my installed build number?', 'What backend version are you connected to?', 'Open Settings and show my app version.', 'What GitHub commit is deployed?']) assert.ok(appStatusIntent(prompt), prompt);
-  for (const prompt of ['Deploy a new version of CHE', 'Install app version 9', 'Build a version dashboard', 'Did you successfully deploy a change?']) assert.equal(appStatusIntent(prompt), null, prompt);
+  for (const prompt of ['Deploy a new version of CHE', 'Install app version 9', 'Build a version dashboard', 'Did you successfully deploy a change?', 'What commit added the app status tests?', 'What version of the CHE app added Rithmic?']) assert.equal(appStatusIntent(prompt), null, prompt);
 });
 
 test('current runtime and native device reports remain separate from deployment success', () => {
