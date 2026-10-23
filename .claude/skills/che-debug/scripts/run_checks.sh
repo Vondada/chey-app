@@ -37,7 +37,12 @@ fi
 if has '^(lib|test)/|^pubspec\.yaml|^analysis_options\.yaml'; then
   if command -v dart >/dev/null && command -v flutter >/dev/null; then
     if out="$(dart analyze --fatal-infos lib test 2>&1)"; then note "dart analyze: PASS"; else printf '%s\n' "$out" | grep -E '^\s*(error|warning|info) ' | head -30; note "dart analyze: FAIL"; status=1; fi
+    # Like CI: run the Command Center e2e test against the real Worker code; without the server it skips silently.
+    e2e="$(mktemp -d)"; node tool/command_center_e2e_server.mjs --out "$e2e/e2e.json" >"$e2e/log" 2>&1 & e2e_pid=$!
+    for _ in $(seq 1 100); do [ -s "$e2e/e2e.json" ] && break; sleep 0.2; done
+    export CHE_E2E_URL="$(node -p "require(process.argv[1]).url" "$e2e/e2e.json" 2>/dev/null)" CHE_E2E_TOKEN="$(node -p "require(process.argv[1]).token" "$e2e/e2e.json" 2>/dev/null)" CHE_E2E_REQUIRED=1
     if out="$(flutter test 2>&1)"; then note "flutter test: PASS ($(printf '%s' "$out" | grep -Eo '\+[0-9]+' | tail -1))"; else printf '%s\n' "$out" | grep -E 'FAILED|Expected|Actual|Error' | head -40; note "flutter test: FAIL"; status=1; fi
+    kill "$e2e_pid" 2>/dev/null || true
     git checkout -q -- analysis_options.yaml 2>/dev/null || true
   else
     note "flutter: NOT RUN here (no flutter/dart on PATH); CI runs it, so do not call it verified"
