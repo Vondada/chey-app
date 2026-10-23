@@ -491,6 +491,9 @@ extension _CheHomeStreaming on _CHEHomeState {
         // "Open Alpaca chart", "CHE, show EMA trades", "Draw a line at 21,450": the Trading Room on
         // the section, account, symbol and strategy the Worker named (Build 1).
         if (data['open_view'] == 'trading_chart' && mounted) {
+          // "Set CHE paper balance to 500": the CHE PAPER ACCOUNT opens the change for the owner to confirm.
+          final paperBalance = data['paper_balance'];
+          if (data['source'] == 'che_trading_chart' && paperBalance is num && paperBalance > 0) ChePaperAccountPanel.requestedBalance.value = paperBalance.toDouble();
           unawaited(Navigator.of(context).push(CheTradingRoomPage.route(
             baseUrl: () => cheAgentBaseUrl,
             headers: () => _authHeaders,

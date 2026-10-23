@@ -170,6 +170,7 @@ import 'knowledge/che_knowledge_library_screen.dart';
 import 'rithmic/che_rithmic_screen.dart';
 import 'rithmic/rithmic_live.dart';
 import 'rithmic/rithmic_recorder.dart';
+import 'trading/che_paper_account_panel.dart';
 
 part 'home_state/connected.dart';
 part 'home_state/home_ui.dart';

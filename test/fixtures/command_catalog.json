@@ -1365,6 +1365,42 @@
    "optional_missing": []
   },
   {
+   "id": "trade-paper-account",
+   "category": "trading",
+   "title": "Trade Paper Account",
+   "summary": "CHE paper account: balance, positions and trade details.",
+   "does": "Opens CHE's simulated paper account on your iPhone: balance, open and closed CHE positions and each trade's detail. \"Set CHE paper balance to 500\" opens the change for you to confirm; nothing changes without your confirmation.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Show CHE positions",
+    "Set CHE paper balance to 500",
+    "Open CHE's paper account"
+   ],
+   "needs": [
+    "office"
+   ],
+   "optional": [],
+   "handler": "trading_chart.paperAccountIntent → phone ChePaperAccountPanel",
+   "route": "che_trading_chart",
+   "produces": "paper account view",
+   "evidence": "The paper engine records on the phone; prices only from live Rithmic trades.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "paper",
+    "balance",
+    "che positions",
+    "paper account"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
    "id": "trade-chart",
    "category": "trading",
    "title": "Trade Chart",
