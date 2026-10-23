@@ -33,6 +33,7 @@ import 'security/che_secret_scan.dart';
 import 'security/che_security_screen.dart';
 import 'brain/che_brain_ledger_screen.dart';
 import 'workflows/che_workflows_screen.dart';
+import 'film/che_film_studio_screen.dart';
 import 'world/che_meeting_room.dart';
 import 'world/che_meetings.dart';
 import 'world/che_plan_room.dart';
@@ -640,6 +641,18 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
     await Navigator.of(context).push(MaterialPageRoute<void>(
       builder: (_) => CheBrainLedgerScreen(
         client: CheBrainLedgerClient(baseUrl: cheAgentBaseUrl, headers: () => _authHeaders),
+        onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
+        onListen: () => unawaited(toggleListening()),
+      ),
+    ));
+  }
+
+  /// More → Film Studio (also "open the film studio" in chat).
+  Future<void> _openFilmStudio() async {
+    HapticFeedback.selectionClick();
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => CheFilmStudioScreen(
+        client: CheFilmClient(baseUrl: cheAgentBaseUrl, headers: () => _authHeaders),
         onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
         onListen: () => unawaited(toggleListening()),
       ),
@@ -1529,7 +1542,7 @@ OWNER AGENCY
         ),
       3 => CheScreenReport(page: 'CHE World', tab: 'CHE World', tabs: tabs, controls: const ['the CHE World rooms', 'the bottom tabs']),
       4 => CheScreenReport(page: 'More', tab: 'More', tabs: tabs,
-          controls: const ['Talk to CHE', 'Security', 'Workflows', 'Trading Room', 'Conversations', 'Flagstaff', 'Voice IDs', 'Keys', 'UI Controls', 'Connections', 'Change CHE’s voice', 'Voice replies', 'Projects and Businesses', 'Language and translate', 'the bottom tabs']),
+          controls: const ['Talk to CHE', 'Security', 'Film Studio', 'Workflows', 'Trading Room', 'Conversations', 'Flagstaff', 'Voice IDs', 'Keys', 'UI Controls', 'Connections', 'Change CHE’s voice', 'Voice replies', 'Projects and Businesses', 'Language and translate', 'the bottom tabs']),
       _ => CheScreenReport(page: 'Home', tab: 'Home', tabs: tabs,
           detail: '${_officeRuntime.agents.length} agents, ${_officeRuntime.working} working',
           controls: const ['Talk to CHE', 'Type to CHE', 'Voice on or off', 'The Office', 'Brain', 'Trading', 'Create',
@@ -2260,6 +2273,13 @@ OWNER AGENCY
           subtitle: 'What entered CHE\'s brain, when, and whether it is usable yet',
           onTap: () => unawaited(_openBrainLedger()),
           hue: kit.CheColors.accent,
+        ),
+        CheMoreItem(
+          icon: Icons.movie_rounded,
+          title: 'Film Studio',
+          subtitle: 'Films from one sentence on free compute, with real progress',
+          onTap: () => unawaited(_openFilmStudio()),
+          hue: kit.CheColors.apps,
         ),
         CheMoreItem(
           icon: Icons.account_tree_rounded,

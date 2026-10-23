@@ -16,7 +16,9 @@ export const KEY_PROVIDERS = {
   sambanova: { name: 'SambaNova', env: 'SAMBANOVA_API_KEY', page: 'https://cloud.sambanova.ai/apis', test: 'https://api.sambanova.ai/v1/models', accounts: 'one account per person' },
   openai: { name: 'OpenAI (Codex)', env: 'CHE_OPENAI_API_KEY', page: 'https://platform.openai.com/api-keys', test: 'https://api.openai.com/v1/models', accounts: 'uses your OpenAI account (paid, separate from a ChatGPT subscription)' },
   xai: { name: 'xAI (Grok)', env: 'XAI_API_KEY', page: 'https://console.x.ai', test: 'https://api.x.ai/v1/models', accounts: 'uses your X/xAI account' },
-  huggingface: { name: 'Hugging Face', env: 'HF_TOKEN', page: 'https://huggingface.co/settings/tokens', test: 'https://huggingface.co/api/whoami-v2', accounts: 'one account per person' },
+  huggingface: { name: 'Hugging Face', env: 'HF_TOKEN', page: 'https://huggingface.co/settings/tokens', test: 'https://huggingface.co/api/whoami-v2', accounts: 'one account per person; Film Studio needs write access to create its free ZeroGPU Space' },
+  // Film Studio's free GPU farm. Pasted as username:token; the test reads the real weekly GPU quota (a call that needs auth).
+  kaggle: { name: 'Kaggle (free GPU for Film Studio)', env: 'KAGGLE_API_TOKEN', page: 'https://www.kaggle.com/settings/api', test: 'https://api.kaggle.com/v1/kernels.KernelsApiService/GetAcceleratorQuotaStatistics', method: 'POST', accounts: 'paste as username:token; GPU sessions with internet need a phone-verified Kaggle account' },
   youtube: { name: 'YouTube · @Cognitive.Horizon.Engine', env: 'YOUTUBE_GOOGLE_SIGNIN', page: 'https://console.cloud.google.com/apis/credentials', test: null, accounts: 'connected with Google sign-in (Connect YouTube), not a pasted key' },
 };
 
@@ -41,6 +43,7 @@ export function providerByName(text) {
   if (/\bgithub\b/.test(t)) return 'github';
   if (/\bsamba ?nova\b/.test(t)) return 'sambanova';
   if (/\bhugging ?face\b/.test(t)) return 'huggingface';
+  if (/\bkaggle\b/.test(t)) return 'kaggle';
   if (/\b(?:codex|openai|open ai|chat ?gpt)\b/.test(t)) return 'openai';
   if (/\b(?:grok|x\.?ai)\b/.test(t)) return 'xai';
   if (/\byou ?tube\b|cognitive\.horizon\.engine/i.test(t)) return 'youtube';
@@ -79,6 +82,15 @@ export function withStoredKeys(env, keys) {
   return merged;
 }
 
+// Kaggle accepts "username:token": a new API token goes as Bearer, a legacy 32-hex key as Basic with the username.
+function authHeader(provider, key) {
+  if (provider !== 'kaggle') return `Bearer ${key}`;
+  const at = key.indexOf(':');
+  const user = at > 0 ? key.slice(0, at) : '';
+  const secret = at > 0 ? key.slice(at + 1) : key;
+  return /^[a-f0-9]{32}$/i.test(secret) && user ? `Basic ${btoa(`${user}:${secret}`)}` : `Bearer ${secret}`;
+}
+
 // Minimal authenticated request (model list / whoami): proves the key works
 // without spending inference allowance.
 export async function testKey(provider, key, fetcher = fetch) {
@@ -87,7 +99,9 @@ export async function testKey(provider, key, fetcher = fetch) {
   const started = Date.now();
   try {
     const response = await fetcher(p.test, {
-      headers: { Authorization: `Bearer ${key}`, Accept: 'application/json' },
+      method: p.method || 'GET',
+      headers: { Authorization: authHeader(provider, key), Accept: 'application/json', ...(p.method === 'POST' ? { 'Content-Type': 'application/json' } : {}) },
+      ...(p.method === 'POST' ? { body: '{}' } : {}),
       signal: AbortSignal.timeout(8000),
     });
     const ms = Date.now() - started;
