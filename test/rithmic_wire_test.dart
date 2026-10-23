@@ -17,7 +17,7 @@ Uint8List _hex(String text) {
 String _toHex(Uint8List bytes) => bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
 
 void main() {
-  test('login request matches the official client byte for byte', () {
+  test('login fixture encodes required protocol version separately from app version', () {
     final bytes = encodeLogin(
       user: 'user1',
       password: 'pass1',
@@ -26,7 +26,11 @@ void main() {
       appVersion: '1.0',
       infraType: RithmicInfra.ticker,
     );
-    expect(_toHex(bytes), '92bd3f03434845a2bd3f057061737331dafb3f057573657231daad4003312e30a8814b01e2814b0c526974686d6963205465737498b64b0a');
+    expect(_toHex(bytes), '92bd3f03434845a2bd3f057061737331dafb3f057573657231daad4003312e30a8814b01e2814b0c526974686d6963205465737492824b03332e3998b64b0a');
+  });
+
+  test('an empty template version cannot produce an incomplete login frame', () {
+    expect(() => encodeLogin(user: 'fixture', password: 'fixture', systemName: 'Rithmic Paper Trading', appName: 'CHE', appVersion: '1.0', templateVersion: ''), throwsArgumentError);
   });
 
   test('heartbeat request matches the official client', () {

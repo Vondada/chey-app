@@ -13,6 +13,7 @@ class FakeChannel implements RithmicChannel {
   final List<Uint8List> Function(RithmicFrame request) answer;
   final _in = StreamController<Uint8List>.broadcast();
   final sent = <int?>[];
+  final sentFrames = <Uint8List>[];
   bool closed = false;
   @override
   Stream<Uint8List> get frames => _in.stream;
@@ -20,6 +21,7 @@ class FakeChannel implements RithmicChannel {
   void send(Uint8List frame) {
     final request = RithmicFrame.parse(frame);
     sent.add(request.templateId());
+    sentFrames.add(Uint8List.fromList(frame));
     for (final reply in answer(request)) {
       scheduleMicrotask(() {
         if (!closed) _in.add(reply);
@@ -93,6 +95,39 @@ void main() {
     expect(opened.single.closed, isFalse);
     await client.close();
     expect(opened.single.closed, isTrue);
+  });
+
+  test('the actual login socket frame contains the template version and preserves app/system identity', () async {
+    final opened = <FakeChannel>[];
+    final client = RithmicClient(uri: Uri.parse('wss://gateway.example:443'), open: opener(opened, (r) {
+      if (r.templateId() == RithmicTemplate.login) return [encodeLoginResponse(rpCodes: const ['0'])];
+      if (r.templateId() == RithmicTemplate.marketDataUpdate) return [encodeMarketDataResponse()];
+      return const [];
+    }));
+    await client.connect(user: 'fixture-user', password: 'fixture-password', systemName: 'Rithmic Paper Trading', appName: 'CHE', appVersion: '1.0', symbol: 'MNQZ6', exchange: 'CME');
+    final frame = opened.single.sentFrames.first;
+    final hex = frame.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+    // Field 153634, wire type 2, length 3, UTF-8 "3.9"; not app_version field 131803.
+    expect(hex, contains('92824b03332e39'));
+    expect(hex, contains('daad4003312e30'));
+    expect(String.fromCharCodes(frame), contains('Rithmic Paper Trading'));
+    expect(opened.single.sent, [RithmicTemplate.login, RithmicTemplate.marketDataUpdate]);
+    await client.close();
+  });
+
+  test('1084 closes the connection and reports protocol incompatibility without blaming credentials', () async {
+    final opened = <FakeChannel>[];
+    final client = RithmicClient(uri: Uri.parse('wss://gateway.example:443'), open: opener(opened, (_) => [encodeLoginResponse(rpCodes: const ['1084', 'template version field is not received'])]));
+    await expectLater(client.connect(user: 'fixture-user', password: 'fixture-password', systemName: 'Rithmic Paper Trading', appName: 'CHE', appVersion: '1.0', symbol: 'MNQZ6', exchange: 'CME'),
+      throwsA(isA<RithmicException>().having((e) => e.kind, 'kind', RithmicFailure.protocolVersion).having((e) => e.message, 'reason', contains('1084'))));
+    expect(opened.single.closed, isTrue);
+    expect(client.subscriptionConfirmed, isFalse);
+    expect(opened.single.sent, isNot(contains(RithmicTemplate.marketDataUpdate)));
+  });
+
+  test('application rejection and unknown refusals are not mislabeled as bad passwords', () {
+    expect(rithmicLoginFailure(['application name not permitted']).kind, RithmicFailure.applicationIdentity);
+    expect(rithmicLoginFailure(['9999', 'unspecified refusal']).kind, RithmicFailure.loginRejected);
   });
 
   test('a refused login is a bad-login error and closes the connection', () async {
