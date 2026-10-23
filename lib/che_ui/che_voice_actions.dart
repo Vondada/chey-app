@@ -110,8 +110,11 @@ class _VoiceActionTile extends StatelessWidget {
             action.onTap();
           },
           borderRadius: BorderRadius.circular(CheRadius.md),
-          // A minimum height, not a fixed one: with Larger Text the label needs more room (it overflowed).
+          // The usual fixed height, but with Larger Text the tile grows instead (the label overflowed).
           child: Ink(
+            height: MediaQuery.textScalerOf(context).scale(1) > 1.25
+                ? null
+                : (compact ? 84 : 54),
             padding: EdgeInsets.symmetric(
               horizontal: compact ? 6 : 14,
               vertical: compact ? 6 : 0,

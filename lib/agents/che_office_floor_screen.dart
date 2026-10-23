@@ -577,6 +577,25 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
     }
   }
 
+  Widget _officeTitle() => Semantics(
+        header: true,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (cheHudActive)
+              CheChromeText('The Office', maxLines: 1, style: CheType.title)
+            else
+              Text('The Office', maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.title),
+            Text(
+              'Your team. Real work. Real results.',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: CheType.caption,
+            ),
+          ],
+        ),
+      );
+
   List<Widget> _actions() => [
         Semantics(
           button: true,
@@ -610,31 +629,14 @@ class _CheOfficeFloorScreenState extends State<CheOfficeFloorScreen> {
           child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(CheSpace.gutter, CheSpace.xs, CheSpace.xs, 0),
-              // With Larger Text the actions move under the title instead of pushing past the screen edge.
-              child: Wrap(alignment: WrapAlignment.spaceBetween, crossAxisAlignment: WrapCrossAlignment.center, children: [
-                ConstrainedBox(
-                  constraints: const BoxConstraints(minWidth: 160, maxWidth: 260),
-                  child: Semantics(
-                    header: true,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        if (cheHudActive)
-                          CheChromeText('The Office', maxLines: 1, style: CheType.title)
-                        else
-                          Text('The Office', maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.title),
-                        Text(
-                          'Your team. Real work. Real results.',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: CheType.caption,
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                Wrap(crossAxisAlignment: WrapCrossAlignment.center, children: _actions()),
-              ]),
+              // With Larger Text the actions move under the title instead of pushing past the screen edge; at
+              // ordinary sizes the header stays one row.
+              child: MediaQuery.textScalerOf(context).scale(1) > 1.25
+                  ? Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      _officeTitle(),
+                      Wrap(crossAxisAlignment: WrapCrossAlignment.center, children: _actions()),
+                    ])
+                  : Row(children: [Expanded(child: _officeTitle()), ..._actions()]),
             ),
             CheOfficeHeader(today: r.today, connection: r.connection),
             Expanded(child: list),

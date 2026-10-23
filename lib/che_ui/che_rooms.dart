@@ -63,7 +63,7 @@ class _CheRoomBackdropState extends State<CheRoomBackdrop> {
   // with Reduce Motion, on a hidden tab and while CHE is in the background.
   static const _loop = Duration(seconds: 24);
   static const _step = Duration(milliseconds: 125);
-  final ValueNotifier<double> _t = ValueNotifier<double>(0.3);
+  final ValueNotifier<double> _t = ValueNotifier<double>(0);
   final Stopwatch _clock = Stopwatch();
   Timer? _timer;
 
@@ -75,11 +75,12 @@ class _CheRoomBackdropState extends State<CheRoomBackdrop> {
       _timer?.cancel();
       _timer = null;
       _clock.stop();
+      if (CheMotion.reduced(context)) _t.value = 0.3;
     } else if (_timer == null) {
       _clock.start();
       _timer = Timer.periodic(_step, (_) {
         if (!cheAppInForeground()) return;
-        _t.value = 0.3 + (_clock.elapsedMilliseconds % _loop.inMilliseconds) / _loop.inMilliseconds;
+        _t.value = (_clock.elapsedMilliseconds % _loop.inMilliseconds) / _loop.inMilliseconds;
       });
     }
   }
@@ -97,7 +98,7 @@ class _CheRoomBackdropState extends State<CheRoomBackdrop> {
       RepaintBoundary(
         child: ValueListenableBuilder<double>(
           valueListenable: _t,
-          builder: (_, t, _) => CustomPaint(painter: _painterFor(widget.room, t % 1.0)),
+          builder: (_, t, _) => CustomPaint(painter: _painterFor(widget.room, t)),
         ),
       ),
       IgnorePointer(
