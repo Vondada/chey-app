@@ -22,9 +22,9 @@ extension CheAccountKindLabel on CheAccountKind {
       };
 
   IconData get icon => switch (this) {
-        CheAccountKind.mine => Icons.person_rounded,
+        CheAccountKind.mine => Icons.person_outline_rounded,
         CheAccountKind.chePaper => Icons.science_outlined,
-        CheAccountKind.live => Icons.warning_amber_rounded,
+        CheAccountKind.live => Icons.warning_amber,
       };
 
   /// A colour that pairs with the words and icon; it never carries the meaning by itself.

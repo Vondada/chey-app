@@ -420,7 +420,7 @@ class CheSideBySideViewState extends State<CheSideBySideView> {
                     style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
               ),
               Text(t.isOpen ? 'OPEN' : 'CLOSED', style: const TextStyle(color: _dim, fontWeight: FontWeight.w700, fontSize: 12)),
-              if (selected) const Padding(padding: EdgeInsets.only(left: 6), child: Icon(Icons.compare_arrows, color: Colors.white, size: 18)),
+              if (selected) const Padding(padding: EdgeInsets.only(left: 6), child: Icon(Icons.compare_arrows_rounded, color: Colors.white, size: 18)),
             ]),
             const SizedBox(height: 4),
             Text(
@@ -614,7 +614,7 @@ class CheSideBySideViewState extends State<CheSideBySideView> {
                 priceSource: _snap?.sourceLabel ?? 'No live feed',
               ),
             )),
-            icon: const Icon(Icons.warning_amber_rounded),
+            icon: const Icon(Icons.warning_amber),
             label: const Text('Live Order Preview (sending disabled)'),
           ),
         ),
