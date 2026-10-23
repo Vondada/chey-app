@@ -240,7 +240,8 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
         return [
           // The CHE paper balance and its controls, beside the broker paper account.
           _pad(ChePaperAccountPanel(key: const Key('che_paper_account_compact'), onRead: widget.onRead, compact: true)),
-          _pad(CheAlpacaPaperPanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, client: p.client)),
+          // Hidden while kShowAlpacaPaper is false (owner, 2026-10-23); the panel and its data path are kept.
+          if (kShowAlpacaPaper) _pad(CheAlpacaPaperPanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, client: p.client)),
           _details(CheTradingConnectionsPanel(baseUrl: p.baseUrl, headers: p.headers, onAsk: p.onAsk, client: p.client)),
           ...widget.accountExtras,
         ];
