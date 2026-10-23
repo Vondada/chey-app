@@ -38,7 +38,8 @@ const kCheTradingViewLabels = <CheTradingView, String>{
   CheTradingView.watchlist: 'Watchlisted setups',
 };
 
-/// Phone under 600 points wide: one pane at a time or both stacked. Wider: side by side.
+/// Phone under 600 points wide (portrait): a compact horizontal split, or one pane; rotating the phone (the owner's own
+/// choice, never forced) gives the full side-by-side layout. Wider: side by side. Two charts are never stacked.
 enum CheSideBySideLayout { phone, tablet, desktop }
 
 CheSideBySideLayout cheSideBySideLayoutFor(double width) =>
@@ -529,16 +530,25 @@ class CheSideBySideViewState extends State<CheSideBySideView> {
         Expanded(child: _pane(CheAccountKind.chePaper, h)),
       ]);
     }
-    return Column(key: const Key('sbs_stacked'), crossAxisAlignment: CrossAxisAlignment.start, children: [
+    return Column(key: const Key('sbs_phone_split'), crossAxisAlignment: CrossAxisAlignment.start, children: [
+      const Padding(
+        padding: EdgeInsets.only(bottom: 6),
+        child: Text('Turn your phone sideways for larger side-by-side charts.', key: Key('sbs_rotate_hint'), style: TextStyle(color: Colors.white70, fontSize: 13)),
+      ),
       Wrap(spacing: 6, runSpacing: 6, children: [
-        _chip('Both', _phonePane == 0, () => setState(() => _phonePane = 0), semantics: 'Show both accounts stacked', key: const Key('sbs_phone_both')),
+        _chip('Both', _phonePane == 0, () => setState(() => _phonePane = 0), semantics: 'Show both accounts side by side', key: const Key('sbs_phone_both')),
         _chip('Mine', _phonePane == 1, () => setState(() => _phonePane = 1), semantics: 'Show my account only', key: const Key('sbs_phone_mine')),
         _chip('CHE paper', _phonePane == 2, () => setState(() => _phonePane = 2), semantics: 'Show CHE paper account only', key: const Key('sbs_phone_che')),
       ]),
       const SizedBox(height: 8),
-      if (_phonePane != 2) _pane(CheAccountKind.mine, h),
-      if (_phonePane == 0) const SizedBox(height: 10),
-      if (_phonePane != 1) _pane(CheAccountKind.chePaper, h),
+      if (_phonePane == 0)
+        Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Expanded(child: _pane(CheAccountKind.mine, 170)),
+          const SizedBox(width: 6),
+          Expanded(child: _pane(CheAccountKind.chePaper, 170)),
+        ])
+      else
+        _pane(_phonePane == 1 ? CheAccountKind.mine : CheAccountKind.chePaper, h),
     ]);
   }
 

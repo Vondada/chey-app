@@ -307,7 +307,11 @@ class CheTradingChart extends StatefulWidget {
     this.live,
     this.compact = false,
     this.onExpand,
+    this.onMarkers,
   });
+
+  /// The recorded markers after each load (the expanded chart lists the recent trades from them).
+  final void Function(List<ChartMarker> markers)? onMarkers;
 
   /// The compact preview (owner, 2026-10-23): symbol, timeframe, feed line, the chart and the marker filters, with
   /// fixed heights so live ticks never move the page. Drawing, orders and the full legend live in the expanded chart.
@@ -559,6 +563,8 @@ class CheTradingChartState extends State<CheTradingChart> {
       for (final m in (j['markers'] is List ? j['markers'] as List : const []))
         if (m is Map<String, dynamic>) ChartMarker(m),
     ];
+    final markers = _markers;
+    if (widget.onMarkers != null) scheduleMicrotask(() => widget.onMarkers?.call(markers));
     _drawings = [for (final d in (j['drawings'] is List ? j['drawings'] as List : const [])) ?ChartDrawing.fromJson(d)];
     _levels = CheOvernightLevels.fromJson(j['levels']);
     _openOrders = [for (final o in (j['open_orders'] is List ? j['open_orders'] as List : const [])) if (o is Map<String, dynamic>) o];
