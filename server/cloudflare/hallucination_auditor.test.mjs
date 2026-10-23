@@ -165,3 +165,49 @@ test('health counts come only from ledger rows; coverage is null with no rows', 
   assert.equal(h.corrected, 2);
   assert.equal(h.evidence_coverage, 1 / 3);
 });
+
+// ─── The two owner questions answered from records ────────────────────────────
+import { knowVsGuessQuestion, knowVsGuessReply, memorySavedQuestion, memorySavedReply } from './hallucination_auditor.js';
+
+test('"Did you save that memory?" is recognised in the owner\'s phrasings and nothing else', () => {
+  for (const q of ['Did you save that memory?', 'did you save that?', 'Have you stored that memory, sir?', 'CHE, did you remember that?', 'Did you actually save it?']) assert.equal(memorySavedQuestion(q), true, q);
+  for (const q of ['Save that memory.', 'What did you save?', 'Did you save money on the order?', 'Remember my favorite drink is Sprite']) assert.equal(memorySavedQuestion(q), false, q);
+});
+
+test('a memory_saved receipt in the window answers yes with the record; none answers no', async () => {
+  const none = await memorySavedReply(memStorage({ che_receipts: [] }), { now: NOW });
+  assert.match(none.text, /^No, sir/);
+  assert.equal(none.saved, null);
+  const old = receipt('memory_saved', { at: new Date(NOW - 3600_000).toISOString(), record_id: 'old', text: 'x' });
+  assert.match((await memorySavedReply(memStorage({ che_receipts: [old] }), { now: NOW })).text, /^No, sir/, 'an hour-old write is not this conversation');
+  const fresh = receipt('memory_saved', { record_id: 'abcdef12-3456', text: 'My favorite drink is Sprite' });
+  const yes = await memorySavedReply(memStorage({ che_receipts: [fresh] }), { now: NOW });
+  assert.match(yes.text, /^Yes, sir\. I saved "My favorite drink is Sprite"/);
+  assert.match(yes.text, /record abcdef12/);
+});
+
+test('a memory_saved receipt is auditor evidence only inside the conversation window', async () => {
+  const storage = memStorage({ che_receipts: [receipt('memory_saved', { record_id: 'm1', text: 't' }), receipt('memory_saved', { at: new Date(NOW - 3600_000).toISOString(), record_id: 'm0', text: 't' })] });
+  const evidence = await auditEvidenceFrom(storage, { now: NOW });
+  assert.deepEqual(evidence.memory_writes.map((w) => w.id), ['memory:m1']);
+  assert.equal(auditReply('I have saved that to your memory.', { evidence, now: NOW }).outcome, 'pass');
+});
+
+test('"what do you know versus what are you guessing?" is answered from owner records and the ledger', () => {
+  for (const q of ['What do you know versus what are you guessing?', 'what do you know vs what are you assuming', 'What do you know for sure?', 'What are you guessing?']) assert.equal(knowVsGuessQuestion(q), true, q);
+  assert.equal(knowVsGuessQuestion('Do you know my favorite drink?'), false);
+  const records = [
+    { text: 'My favorite drink is Sprite', source: 'owner_chat', verification_status: 'owner_attested', created_at: '2026-10-23T11:00:00Z' },
+    { text: 'The owner likes jazz', source: 'inferred_text', verification_status: 'unverified', created_at: '2026-10-23T11:00:00Z' },
+  ];
+  const ledger = [{ at: new Date(NOW - 1000).toISOString(), verdict: 'VERIFIED', outcome: 'kept' }, { at: new Date(NOW - 1000).toISOString(), verdict: 'UNVERIFIED', outcome: 'removed' }];
+  const out = knowVsGuessReply({ records, ledger, lastEvidence: { kind: 'owner_attested' }, now: NOW });
+  assert.equal(out.owned, 1, 'only the owner-attested record counts as known');
+  assert.match(out.text, /1 fact you told me yourself.*"My favorite drink is Sprite"/);
+  assert.doesNotMatch(out.text, /jazz/);
+  assert.match(out.text, /checked 2 claims: 1 verified, 0 labelled inference, 1 removed/);
+  assert.match(out.text, /previous answer was built from your own records/);
+  const empty = knowVsGuessReply({ records: [], ledger: [], now: NOW });
+  assert.match(empty.text, /nothing yet in your own words/);
+  assert.match(empty.text, /checked no completion claims/);
+});

@@ -6,6 +6,7 @@
 // that execution code wrote. A missing or unreadable evidence list fails closed, so a claim is removed, not approved.
 // The ledger keeps ids, labels and outcomes, never the reply or the owner's words.
 
+import { isOwnerAttested } from './memory_provenance.js';
 import { loadReceipts } from './truth_layer.js';
 
 export const AUDIT_LEDGER_KEY = 'che_hallucination_audit_v1';
@@ -154,8 +155,63 @@ export async function auditEvidenceFrom(storage, { executions = [], prices = [],
     trades: byKind('trade_placed').map((r) => ({ id: `trade:${r.key || r.order_id || ''}`, order_id: r.order_id || '' })),
     trade_failures: byKind('trade_failed').length,
     executions: executions.filter(Boolean).map((x) => ({ id: `execution:${x.invocation_id || ''}`, status: x.status })),
-    prices, tasks, memory_writes: memoryWrites, device_installs: [], book_reads: [],
+    // A memory write backs "I saved it" only inside this conversation's window, not for a week.
+    memory_writes: [...memoryWrites, ...byKind('memory_saved').filter((r) => now - Date.parse(r.at || 0) <= MEMORY_CLAIM_MS).map((r) => ({ id: `memory:${r.record_id || ''}`, confirmed: true }))],
+    prices, tasks, device_installs: [], book_reads: [],
   };
+}
+
+// ─── Two owner questions answered from records, never from a model ──────────
+// "Did you save that memory?" and "What do you know versus what are you guessing?" are questions about
+// CHE's own evidence. A model can only guess at the answer, so these read the receipts and the ledger.
+export const MEMORY_CLAIM_MS = 30 * 60_000;
+const MEMORY_SAVED_ASK = /^(?:did|have) you (?:actually |really )?(?:save|saved|store|stored|remember|remembered|keep|kept) (?:that|this|it|the|my)\b[^?]{0,40}?(?:memory|note|fact|that|this|it)?\s*\??$/i;
+const KNOW_VS_GUESS_ASK = /\bwhat do you (?:actually |really )?know\b.{0,30}\b(?:vers(?:us|es)|vs\.?|compared (?:to|with)|and what (?:are you|do you))\b.{0,30}\b(?:guess\w*|assum\w*|infer\w*|think\w*)|\bwhat are you (?:just )?(?:guessing|assuming|inferring)\b|\bwhat do you know for (?:sure|certain)\b/i;
+const plain = (m) => String(m || '').trim().replace(/^(?:che|chey|hey che|okay|ok|so|sir)[,\s]+/i, '').replace(/[,\s]+sir\s*\??$/i, '?');
+
+export function memorySavedQuestion(message) { return MEMORY_SAVED_ASK.test(plain(message)); }
+export function knowVsGuessQuestion(message) { return KNOW_VS_GUESS_ASK.test(plain(message)); }
+
+const when = (iso) => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? 'an unknown time' : d.toISOString().replace('T', ' at ').slice(0, 19) + ' UTC'; };
+const clip = (text, n = 90) => { const t = String(text || '').replace(/\s+/g, ' ').trim(); return t.length > n ? `${t.slice(0, n - 1)}…` : t; };
+
+/** The newest memory_saved receipt in the conversation window, or an honest no. */
+export async function memorySavedReply(storage, { now = Date.now() } = {}) {
+  const receipts = await loadReceipts(storage, { sinceMs: MEMORY_CLAIM_MS, now });
+  const saved = receipts.filter((r) => r.kind === 'memory_saved').at(-1);
+  if (!saved) return { text: 'No, sir. I have no confirmed memory write on record in the last half hour, so nothing from this conversation was saved. Tell me again and I will confirm it only after reading it back from storage.', saved: null };
+  return { text: `Yes, sir. I saved "${clip(saved.text)}" at ${when(saved.at)} and read it back from storage${saved.record_id ? ` as record ${String(saved.record_id).slice(0, 8)}` : ''}. That is a confirmed write, not a promise.`, saved };
+}
+
+/** What CHE knows (owner records, receipts) against what she infers, from counts of real rows only. */
+export function knowVsGuessReply({ records = [], ledger = [], lastEvidence = null, now = Date.now() } = {}) {
+  const owned = records.filter((r) => r.active !== false && isOwnerAttested(r));
+  const newest = [...owned].sort((a, b) => Date.parse(b.created_at || 0) - Date.parse(a.created_at || 0)).slice(0, 2);
+  const health = auditHealth(ledger.filter((row) => now - Date.parse(row.at || 0) <= 86_400_000));
+  const lines = [];
+  lines.push(owned.length
+    ? `What I know, sir: ${owned.length} ${owned.length === 1 ? 'fact' : 'facts'} you told me yourself, in your own words${newest.length ? `, for example ${newest.map((r) => `"${clip(r.text, 60)}"`).join(' and ')}` : ''}. Those are owner-confirmed records, each with a date.`
+    : 'What I know, sir: nothing yet in your own words. I have no owner-confirmed memory records.');
+  lines.push('I also know what a receipt proves: a merge with its commit, a deployment, a saved memory read back from storage, a tool that returned a result. Anything else I say is inference from the model, and I label it as inference.');
+  if (lastEvidence?.kind) {
+    const kind = { owner_attested: 'built from your own records', source_backed: 'backed by sources I opened', tool_result: 'backed by a tool result', none: 'a statement that I had no record', unverified: 'unverified' }[lastEvidence.kind] || lastEvidence.kind;
+    lines.push(`My previous answer was ${kind}.`);
+  }
+  lines.push(health.checked
+    ? `In the last day my auditor checked ${health.checked} ${health.checked === 1 ? 'claim' : 'claims'}: ${health.verified} verified, ${health.inferred} labelled inference, ${health.unverified + health.contradicted + health.stale} removed for lack of evidence.`
+    : 'My auditor has checked no completion claims in the last day, so I have no counts to give you.');
+  return { text: lines.join(' '), owned: owned.length, ownedIds: owned.map((r) => r.id).filter(Boolean).slice(0, 5), health };
+}
+
+// The older guards (truth_layer.js, memory_provenance.js, source_verification.js, asset_truth.js) remove claims
+// before the auditor runs. Their removals become ledger rows too, so one ledger holds every removed claim.
+// Only the guard and rule names are kept, never the removed sentence.
+export function guardRemovalEntries(guard, removed = [], { requestId = '', now = Date.now() } = {}) {
+  const list = Array.isArray(removed) ? removed : removed ? [removed] : [];
+  return list.slice(0, 20).map((item) => {
+    const rule = typeof item === 'object' && item ? String(item.rule || item.kind || item.reason || item.type || '') : '';
+    return { at: new Date(now).toISOString(), request_id: String(requestId || ''), claim_type: rule ? `${guard}:${rule}` : guard, evidence_refs: [], verdict: 'UNVERIFIED', contradiction: '', correction: guard, outcome: 'removed' };
+  });
 }
 
 // Ledger: one row per checked claim. It stores ids, labels and outcomes only, so no reply or owner text is kept.

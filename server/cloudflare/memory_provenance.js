@@ -503,7 +503,8 @@ const EVIDENCE_ASK = [
   '(?:is|was) (?:that|this|it) (?:really )?(?:verified|confirmed|true|correct|accurate|real|right|a fact)',
   'did i (?:really |actually |ever )?(?:confirm|say|tell you|verify|approve|test) (?:that|this|it)(?: to you)?',
   'can you (?:prove|back up|verify|cite|source|fact check) (?:that|this|it|your answer|that answer)(?: for me)?',
-  'show (?:me )?(?:the |your )?(?:evidence|proof|sources?|receipts?)(?: (?:for|behind) (?:that|this|it))?',
+  // "Show your evidence for that answer" (owner acceptance question 8, 2026-10-23) names the answer, like line 500 does.
+  'show (?:me )?(?:the |your )?(?:evidence|proof|sources?|receipts?)(?: (?:for|behind) (?:that|this|it|your answer|that answer|the answer))?',
   'what makes you (?:think|say|so sure)(?: (?:that|so|this))?',
 ].map((core) => new RegExp(`^${ASK_LEAD}${core}${ASK_TAIL}$`));
 const REFERENT_ONLY = /^(?:the |that |your )?(?:last|previous|first|earlier) (?:one|answer|thing|claim|statement)(?: (?:we were|you were|i was) (?:just )?(?:talking|speaking) about| you (?:just )?(?:said|mentioned|told me))?$|^(?:the one|what) (?:we were|you were) (?:just )?(?:talking|speaking) about$|^what you (?:just )?said$/;
