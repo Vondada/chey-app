@@ -229,6 +229,27 @@ export function chartIntent(message) {
   return { kind: 'chart_open', section: 'chart', account, symbol };
 }
 
+/**
+ * "Set CHE paper balance to 500", "show CHE positions", "open CHE's paper account": the CHE PAPER
+ * ACCOUNT lives on the owner's iPhone, so the Worker only opens it there. A balance change is never
+ * made here: the phone shows the change for the owner to confirm. Null otherwise.
+ */
+export function paperAccountIntent(message) {
+  const t = String(message || '').toLowerCase().replace(/[’']/g, "'").replace(/^\s*(?:hey\s+)?(?:che|chey|chay)[,\s]+/, '');
+  // CHE's own account only: "my Alpaca paper balance" stays with the Alpaca dashboard.
+  if (/\b(?:alpaca|my|tradovate|fye|fund ?your ?edge|rithmic)\b/.test(t)) return null;
+  if (!/\b(?:che|chey|chay|your)(?:'s)?\s+(?:paper\b|positions?\b)/.test(t)) return null;
+  const set = /\b(?:set|change|make|put|reset)\b[\s\S]{0,40}\bbalance\b[\s\S]{0,12}?\b(?:to|at)\s+\$?\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)\s*(k|thousand)?\b/.exec(t);
+  if (set) {
+    let amount = Number(set[1].replace(/,/g, ''));
+    if (set[2]) amount *= 1000;
+    if (!Number.isFinite(amount) || amount <= 0) return null;
+    return { kind: 'paper_balance', amount: Math.round(amount * 100) / 100 };
+  }
+  if (/^(?:show|open|bring up|pull up|go to|see|what are|list)\b/.test(t) && /\b(?:positions?|trades?|account|balance)\b/.test(t)) return { kind: 'paper_open' };
+  return null;
+}
+
 /** "Buy 1 MNQ at 21,400": a manual futures paper order, which CHE cannot place (no futures paper broker). */
 export function futuresOrderIntent(message) {
   const t = String(message || '').toLowerCase();

@@ -389,6 +389,13 @@ export const COMMANDS = Object.freeze([
     prompt: 'Analyze the {input} chart for the New York open',
     produces: 'market read', evidence: 'Candle data with its source and time.', keywords: ['open', 'new york', 'nq', 'premarket', 'briefing', 'market'],
   }),
+  // CHE PAPER ACCOUNT (owner, 2026-10-23): lives on the iPhone; the Worker opens it, the phone confirms any balance change.
+  C('trade-paper-account', 'trading', 'EXPLORE', 'CHE paper account: balance, positions and trade details.', {
+    does: "Opens CHE's simulated paper account on your iPhone: balance, open and closed CHE positions and each trade's detail. \"Set CHE paper balance to 500\" opens the change for you to confirm; nothing changes without your confirmation.",
+    needs: ['office'], route: 'che_trading_chart', handler: 'trading_chart.paperAccountIntent → phone ChePaperAccountPanel', input: null,
+    examples: ['Show CHE positions', 'Set CHE paper balance to 500', "Open CHE's paper account"],
+    prompt: 'Show CHE positions', produces: 'paper account view', evidence: 'The paper engine records on the phone; prices only from live Rithmic trades.', keywords: ['paper', 'balance', 'che positions', 'paper account'],
+  }),
   C('trade-chart', 'trading', 'EXPLORE', 'Analyze NQ/MNQ market structure.', {
     does: 'Analyzes trend, swing highs and lows and candle patterns from real candles.',
     needs: ['market_data'], route: 'che_trading', handler: 'trading_lab.analyze',
