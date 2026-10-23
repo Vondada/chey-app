@@ -7,6 +7,7 @@
 // - The session ends only when the Worker says this device is unknown or revoked, or when the owner unpairs. Offline,
 //   timeouts, server errors and "needs Face ID first" never sign the owner out.
 // - The token is never logged, spoken, shown or sent anywhere but the Worker's Authorization header.
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -33,6 +34,18 @@ class CheKeychainKv implements CheSecureKv {
   Future<void> write(String key, String value) => _storage.write(key: key, value: value);
   @override
   Future<void> delete(String key) => _storage.delete(key: key);
+}
+
+/// An in-memory store for tests (widget tests have no Keychain plugin).
+@visibleForTesting
+class CheMemoryKv implements CheSecureKv {
+  final items = <String, String>{};
+  @override
+  Future<String?> read(String key) async => items[key];
+  @override
+  Future<void> write(String key, String value) async => items[key] = value;
+  @override
+  Future<void> delete(String key) async => items.remove(key);
 }
 
 /// Why the last session ended, so the app can say so plainly.

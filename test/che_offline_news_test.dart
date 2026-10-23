@@ -6,6 +6,7 @@ import 'dart:io';
 
 import 'package:chey/main.dart';
 import 'package:chey/self_update/che_self_update_intent.dart';
+import 'package:chey/security/che_session_store.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -15,6 +16,9 @@ import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  // Widget tests have no Keychain plugin: the sign-in lives in memory, fresh for every test.
+  setUp(() => CheSessionStore.instance = CheSessionStore(kv: CheMemoryKv()));
+
   testWidgets('offline, a news question gets "I can\'t check", never an on-device guess', (tester) async {
     // Paired, but CHE's server cannot be reached.
     SharedPreferences.setMockInitialValues({'che_agent_base_url': 'https://che.test', 'che_agent_device_token': 'test-device'});
