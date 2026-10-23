@@ -8,6 +8,7 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../che_ui/che_hud.dart';
 import '../che_ui/che_theme.dart';
 import '../home/che_memory_brain.dart' show CheMemoryDot, cheBrainFieldBorder;
 import 'che_brain_sections.dart';
@@ -192,15 +193,15 @@ class _CheBrainListState extends State<CheBrainList> {
 
   Widget _row(CheMemoryDot d) {
     final section = cheBrainSectionOf(d);
-    final evidence = section == CheBrainSection.actions || section == CheBrainSection.research ? cheBrainEvidenceOf(d) : const <CheBrainEvidence>[];
-    final proof = section == CheBrainSection.actions ? cheActionProofLabel(cheActionProofOf(d, evidence)) : cheBrainTrustOf(d);
+    final evidence = cheBrainEvidenceOf(d);
+    final status = cheBrainStatusOf(d, evidence).label;
+    final simulated = cheBrainIsSimulated(d) ? ' · Simulated' : '';
+    final proof = '$status$simulated';
     final origin = cheBrainOriginOf(d);
-    final evidenceWords = section == CheBrainSection.actions || evidence.isNotEmpty
-        ? ' ${evidence.length} evidence item${evidence.length == 1 ? '' : 's'}.'
-        : '';
+    final evidenceWords = evidence.isEmpty ? ' No evidence recorded.' : ' ${evidence.length} evidence item${evidence.length == 1 ? '' : 's'}.';
     return Semantics(
       button: true,
-      label: '${section.label}. ${d.title}. From $origin. $proof.$evidenceWords ${_when(d.at)}. Opens the record.',
+      label: '${section.label}. ${d.title}. Source: $origin. Status: $proof.$evidenceWords ${_when(d.at)}. Opens the record.',
       excludeSemantics: true,
       child: InkWell(
         onTap: () => _open(d),
@@ -263,9 +264,10 @@ class CheBrainRecordSheet extends StatelessWidget {
     final isAction = section == CheBrainSection.actions;
     final proof = isAction ? cheActionProofOf(d, evidence) : null;
     final facts = <(String, String)>[
-      ('Section', section.label),
-      ('From', cheBrainOriginOf(d)),
-      ('Trust', cheBrainTrustOf(d)),
+      ('Category', section.label),
+      ('Source', cheBrainOriginOf(d)),
+      ('Status', '${cheBrainStatusOf(d, evidence).label}${cheBrainIsSimulated(d) ? ' (simulated, not a live or broker result)' : ''}'),
+      ('Fact check', cheBrainTrustOf(d)),
       if (proof != null) ('Outcome', cheActionProofLabel(proof)),
       ('Recorded', _when(d.at)),
       if (d.region.isNotEmpty) ('Folder', d.path.isEmpty ? d.region : '${d.region} / ${d.path}'),
@@ -291,7 +293,10 @@ class CheBrainRecordSheet extends StatelessWidget {
             Row(
               children: [
                 Expanded(
-                  child: Semantics(header: true, child: Text(d.title, style: CheType.headline)),
+                  child: Semantics(
+                    header: true,
+                    child: cheHudActive ? CheChromeText(d.title, style: CheType.headline) : Text(d.title, style: CheType.headline),
+                  ),
                 ),
                 IconButton(tooltip: 'Close', icon: const Icon(Icons.close_rounded), onPressed: () => Navigator.of(context).maybePop()),
               ],

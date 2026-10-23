@@ -95,6 +95,35 @@ final records = <Map<String, dynamic>>[
     },
     'created_at': '2026-10-23T13:00:00Z',
   },
+  {
+    'id': 'conv:fix1',
+    'region': 'Conversations and Corrections',
+    'kind': 'correction',
+    'path': 'Corrections',
+    'title': 'My favorite color is red, not blue',
+    'body': 'You said: my favorite color is red, not blue.',
+    'verification': 'owner_attested',
+    'source': {'kind': 'owner_chat'},
+  },
+  {
+    'id': 'handoff:nova-atlas-1',
+    'region': 'Office Agents',
+    'kind': 'handoff',
+    'title': 'Nova handed the chart task to Atlas',
+    'body': 'Nova handed the chart task to Atlas.',
+    'verification': 'unverified_reference',
+    'source': {'kind': 'handoff', 'from': 'Nova', 'to': 'Atlas'},
+  },
+  {
+    'id': 'room:trading:gd-ema',
+    'region': 'Trading and Market Research',
+    'kind': 'room_strategy_decision',
+    'title': 'Paused EMA 20 pullback (MNQ 5m) from forward paper',
+    'body': 'Expectancy -0.21R on 41 independent trades.',
+    'verification': 'derived',
+    'source': {'kind': 'room_event', 'room': 'trading', 'event_kind': 'strategy_decision', 'status': 'derived', 'paper': true},
+    'created_at': '2026-10-23T14:00:00Z',
+  },
 ];
 
 void main() {
@@ -147,7 +176,7 @@ void main() {
 
   test('search matches every word, newest first, within a section', () {
     expect(cheBrainSearch(dots, 'sprite').map((d) => d.id), ['mem:drink']);
-    expect(cheBrainSearch(dots, '', section: CheBrainSection.actions).first.id, 'room:trading:t1');
+    expect(cheBrainSearch(dots, '', section: CheBrainSection.actions).first.id, 'room:trading:gd-ema');
     expect(cheBrainSearch(dots, 'film misroute').single.id, 'job:abc123');
   });
 
@@ -161,7 +190,7 @@ void main() {
       ),
     );
     expect(find.text('All ${dots.length}'), findsOneWidget);
-    await tester.tap(find.text('Actions 3'));
+    await tester.tap(find.text('Actions 4'));
     await tester.pumpAndSettle();
     expect(find.text('Paper trade closed'), findsOneWidget);
     expect(find.text('Favorite drink'), findsNothing);
@@ -199,8 +228,26 @@ void main() {
     final said = c.execute(p("show the brain's actions")!);
     expect(c.listMode, isTrue);
     expect(c.listSection, CheBrainSection.actions);
-    expect(said, startsWith('Actions: 3 records.'));
+    expect(said, startsWith('Actions: 4 records.'));
     c.execute(p('show the neural view')!);
     expect(c.listMode, isFalse);
+  });
+
+  test('owner categories: corrections are memory, agent handoffs are conversations, strategy decisions are actions', () {
+    expect(cheBrainSectionOf(byId('conv:fix1')), CheBrainSection.memory);
+    expect(cheBrainSectionOf(byId('handoff:nova-atlas-1')), CheBrainSection.conversations);
+    expect(cheBrainSectionOf(byId('room:trading:gd-ema')), CheBrainSection.actions);
+  });
+
+  test('status is exactly Pending, Verified, Failed or Unverified, and simulated is never real', () {
+    expect(cheBrainStatusOf(byId('job:abc123')), CheBrainStatus.verified);
+    expect(cheBrainStatusOf(byId('job:nothing')), CheBrainStatus.unverified);
+    expect(cheBrainStatusOf(byId('mem:drink')), CheBrainStatus.verified);
+    expect(cheBrainStatusOf(byId('flagstaff:9')), CheBrainStatus.unverified);
+    expect(cheBrainStatusOf(const CheMemoryDot(id: 'r', title: 'Render', body: '', category: 'Agents', status: 'running')), CheBrainStatus.pending);
+    expect(cheBrainStatusOf(const CheMemoryDot(id: 'f', title: 'Deploy', body: '', category: 'Agents', status: 'failed')), CheBrainStatus.failed);
+    expect(cheBrainIsSimulated(byId('room:trading:gd-ema')), isTrue);
+    expect(cheBrainIsSimulated(byId('job:abc123')), isFalse);
+    expect(CheBrainStatus.values.map((s) => s.label), ['Pending', 'Verified', 'Failed', 'Unverified']);
   });
 }

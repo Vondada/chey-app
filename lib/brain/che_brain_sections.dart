@@ -33,13 +33,12 @@ extension CheBrainSectionLabel on CheBrainSection {
   };
 }
 
+// Execution records: trades, coding jobs, deployments, renders, evidence runs, strategy decisions.
 const _actionKinds = {
   'job',
   'team_task',
   'agent_work_log',
-  'handoff',
   'trading_evidence_run',
-  'rea_investigation',
   'experiment',
   'sim_run',
   'trade',
@@ -48,7 +47,12 @@ const _actionKinds = {
   'deployment',
   'commit',
   'coding_job',
+  'strategy_decision',
 };
+// Recorded talk between CHE, the owner, AI providers and the Office workers.
+const _conversationKinds = {'conversation', 'owner_chat', 'flagstaff_exchange', 'brainmem', 'handoff', 'correspondence_import', 'meeting'};
+// Retrieved or analysed material: articles, sites, books, videos, documents, investigations.
+const _researchKinds = {'web_read', 'knowledge_reference', 'library', 'rea_investigation', 'memory_note'};
 const _researchRegions = {
   'Trading and Market Research',
   'YouTube and Media',
@@ -58,15 +62,23 @@ const _researchRegions = {
   'Projects and Proposals',
 };
 
-/// The section a record belongs to. Order matters: an outside AI's message is a conversation even
-/// when it sits in a research folder, and a job is an action wherever it is filed.
+/// The section a record belongs to (owner, 2026-10-23):
+/// - Conversations: recorded talk between the owner, CHE, AI providers and Office workers.
+/// - Research: articles, websites, books, videos and documents retrieved or analysed.
+/// - Knowledge: indexed information with its sources and verification state.
+/// - Memory: the owner's preferences, lessons, corrections and history.
+/// - Actions: trades, coding jobs, deployments, generated videos and other execution records.
+/// Order matters: a correction is memory even though it was said in chat; an outside AI's message is
+/// a conversation wherever it is filed; an execution record is an action wherever it is filed.
 CheBrainSection cheBrainSectionOf(CheMemoryDot d) {
   final kind = d.kind.toLowerCase();
   final sourceKind = '${d.sourceInfo['kind'] ?? ''}'.toLowerCase();
-  if (kind == 'conversation' ||
-      sourceKind == 'owner_chat' ||
-      sourceKind == 'flagstaff_exchange' ||
-      sourceKind == 'brainmem' ||
+  final room = '${d.sourceInfo['room'] ?? ''}';
+  if (kind == 'correction' || d.path == 'Corrections') return CheBrainSection.memory;
+  if (_conversationKinds.contains(kind) ||
+      _conversationKinds.contains(sourceKind) ||
+      room == 'meetings' ||
+      room == 'chat' ||
       d.verification == 'external_correspondence' ||
       d.region == 'Conversations and Corrections' ||
       d.category == 'Conversations') {
@@ -77,20 +89,52 @@ CheBrainSection cheBrainSectionOf(CheMemoryDot d) {
       kind.startsWith('room_') ||
       sourceKind == 'room_event' ||
       d.region == 'Active and Historical Tasks' ||
-      d.status.isNotEmpty) {
+      (d.status.isNotEmpty && !_researchKinds.contains(sourceKind))) {
     return CheBrainSection.actions;
   }
-  if (d.region == 'Personal Memory' || d.category == 'Memory' || d.category == 'About you' || d.category == 'Suggestion') {
+  if (d.region == 'Personal Memory' ||
+      d.region == 'Experiments and Lessons' ||
+      d.category == 'Memory' ||
+      d.category == 'About you' ||
+      d.category == 'Suggestion') {
     return CheBrainSection.memory;
   }
-  if (_researchRegions.contains(d.region) ||
-      d.category == 'Research' ||
-      sourceKind == 'web_read' ||
-      sourceKind == 'knowledge_reference' ||
-      sourceKind == 'library') {
+  if (_researchKinds.contains(sourceKind) || _researchKinds.contains(kind) || _researchRegions.contains(d.region) || d.category == 'Research') {
     return CheBrainSection.research;
   }
   return CheBrainSection.knowledge;
+}
+
+/// The record's status, exactly one of four words (owner, 2026-10-23).
+enum CheBrainStatus { pending, verified, failed, unverified }
+
+extension CheBrainStatusLabel on CheBrainStatus {
+  String get label => switch (this) {
+    CheBrainStatus.pending => 'Pending',
+    CheBrainStatus.verified => 'Verified',
+    CheBrainStatus.failed => 'Failed',
+    CheBrainStatus.unverified => 'Unverified',
+  };
+}
+
+/// Simulated, backtest or paper work: shown as such, never as a real (broker or live) result.
+bool cheBrainIsSimulated(CheMemoryDot d) {
+  final src = d.sourceInfo;
+  final kind = '${d.kind} ${src['kind'] ?? ''} ${src['evidence'] ?? ''} ${src['mode'] ?? ''}'.toLowerCase();
+  return src['paper'] == true || src['simulated'] == true || RegExp(r'\b(?:sim_run|simulated|simulation|backtest|paper)\b').hasMatch(kind);
+}
+
+/// Verified only with proof: the owner's word or a checked source for a fact, a recorded result for an
+/// action. Everything else is Unverified; running work is Pending; failed work is Failed.
+CheBrainStatus cheBrainStatusOf(CheMemoryDot d, [List<CheBrainEvidence>? evidence]) {
+  if (d.outcome == 'failed') return CheBrainStatus.failed;
+  if (d.outcome == 'live') return CheBrainStatus.pending;
+  if (cheBrainSectionOf(d) == CheBrainSection.actions) {
+    final proof = cheActionProofOf(d, evidence);
+    if (proof == CheActionProof.proven) return CheBrainStatus.verified;
+    if (proof == CheActionProof.claimedNoEvidence) return CheBrainStatus.unverified;
+  }
+  return const {'owner_attested', 'verified_source', 'derived'}.contains(d.verification) ? CheBrainStatus.verified : CheBrainStatus.unverified;
 }
 
 /// Who a record came from, in words: the owner, CHE, an Office worker, an outside AI or a source.
