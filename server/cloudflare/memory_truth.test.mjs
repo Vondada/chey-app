@@ -567,3 +567,79 @@ test('G: everyday ways of claiming a search never reach the owner without a rece
   const brainstorm = await owner({ model: () => 'I researched the market and three websites agree it is growing.' });
   assert.match((await brainstorm.say('Brainstorm business ideas for me.')).reply, /do not have execution receipts/);
 });
+
+test('brain assessment: inventory counts never come from a dishonest model', async () => {
+  const che = await owner({ model: () => 'I indexed 12345 sources and verified 777 capabilities from Nature.' });
+  const out = await che.say('How many sources have you indexed, understood, and verified? Show the actual record IDs.');
+  assert.equal(out.modelCalls, 0);
+  assert.equal(out.meta.source, 'che_brain_ledger');
+  assert.doesNotMatch(out.reply, /12345|777|Nature/);
+  assert.ok(out.meta.inventory_receipt?.checked_at);
+  assert.match(out.reply, /unavailable|recorded|storage/i);
+});
+
+test('random owner association survives a new runtime with empty conversation and original record evidence', async () => {
+  const subject = `Lantern ${crypto.randomUUID().slice(0, 8)}`;
+  const value = `Magnolia ${crypto.randomUUID().slice(0, 8)}`;
+  const saved = new Map();
+  const first = await owner({ saved });
+  const write = await first.say(`Remember that ${subject} means ${value}.`);
+  assert.ok(write.meta.memory_receipt?.record_id, 'trusted durable write receipt');
+  const original = saved.get('che').memory_records.find((r) => r.id === write.meta.memory_receipt.record_id);
+  assert.ok(original?.text.includes(value));
+  const second = await owner({ saved, model: () => 'I do not know.' });
+  const read = await second.say(`What does ${subject} mean?`, { history: [] });
+  assert.equal(read.modelCalls, 0);
+  assert.ok(read.reply.includes(value));
+  assert.ok(read.meta.record_ids.includes(original.id));
+  assert.equal(saved.get('che').memory_records.find((r) => r.id === original.id).text, original.text);
+});
+
+test('model knowledge inventory and publication-attribution claims are blocked on ordinary chat', async () => {
+  for (const invented of [
+    'I have indexed 12345 sources and verified 777 capabilities.',
+    'My Knowledge Library contains 9000 indexed publications.',
+    'I learned this from Nature and my Knowledge Library.',
+  ]) {
+    const che = await owner({ model: () => invented });
+    const out = await che.say('Explain how leaves work.');
+    assert.doesNotMatch(out.reply, /12345|777|9000|learned this from Nature/);
+  }
+});
+
+test('a rejected or failed memory write never acknowledges successful storage', async () => {
+  const saved = new Map();
+  const che = await owner({ saved });
+  const rejected = await che.say('Remember that my password is unsafe-example.');
+  assert.equal(rejected.meta.ok, false);
+  assert.equal(rejected.meta.memory_receipt, undefined);
+  const put = saved.set.bind(saved);
+  saved.set = (key, value) => { if (key === 'che') throw Error('controlled storage unavailable'); return put(key, value); };
+  const failed = await che.say('Remember that Cedar Beacon means Silver Orchard.');
+  assert.doesNotMatch(failed.reply, /I.ll remember/);
+  assert.match(failed.reply, /could not verify the memory write/);
+  assert.equal(failed.meta.memory_receipt, undefined);
+});
+
+test('all owner preference subjects retrieve their own stored values after runtime restart', async () => {
+  const saved = new Map();
+  const che = await owner({ saved });
+  for (const [subject, value] of [['favorite food', 'pizza'], ['favorite drink', 'Sprite'], ['favorite color', 'blue']]) {
+    const written = await che.say(`Remember that my ${subject} is ${value}`);
+    assert.ok(written.meta.memory_receipt.record_id);
+  }
+  const restarted = await owner({ saved });
+  for (const [subject, value] of [['favorite food', 'pizza'], ['favorite drink', 'Sprite'], ['favorite color', 'blue']]) {
+    const read = await restarted.say(`What is my ${subject}?`, { history: [] });
+    assert.ok(read.reply.toLowerCase().includes(value.toLowerCase()));
+    assert.equal(read.modelCalls, 0);
+    assert.ok(read.meta.record_ids?.length);
+  }
+});
+
+test('unsaved ordinary definitions still use the existing conversation model', async () => {
+  const che = await owner({ model: () => 'Photosynthesis converts light into chemical energy.' });
+  const answer = await che.say('What does photosynthesis mean?');
+  assert.ok(answer.modelCalls > 0);
+  assert.match(answer.reply, /light into chemical energy/);
+});

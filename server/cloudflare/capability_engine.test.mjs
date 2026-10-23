@@ -6,7 +6,7 @@ import test from 'node:test';
 import {
   populate, retrieve, extract, deriveProgram, runTool, acquire, useTool, rollbackTool, decideExecution, projectContext,
   learnFromOutcome, loadPolicy, speakLearned, isStale, KnowledgeItems, defaultPolicy, policyIntent, applyPolicy, capabilityIdFor,
-  capabilityIntent, inScope, projectBlocked,
+  capabilityIntent, inScope, projectBlocked, knowledgeInventory,
 } from './capability_engine.js';
 import { EXECUTION, PROMOTION_CHECKS, emptyRegistry, loadRegistry, register, recordCheck, promote, serving, speakCapability } from './capability_registry.js';
 import { KnowledgeLibrary } from './knowledge_library.js';
@@ -463,4 +463,27 @@ test('Worker: internal-only mode is one switch: on from chat, enforced on outbou
     setEgressPolicy({ internal_only: false });
     globalThis.fetch = before;
   }
+});
+
+
+test('inventory queries current SQLite records and never equates catalogue or event counts with understanding', async () => {
+  const s = await storage();
+  const kl = new KnowledgeLibrary(s);
+  const catalog = kl.catalog({ title: 'Unread Test Reference', kind: 'book', category: 'software_engineering', license: 'unknown' });
+  assert.ok(catalog.id);
+  const before = await knowledgeInventory(s);
+  assert.equal(before.status, 'verified');
+  assert.equal(before.counts.discovered_sources, 1);
+  assert.equal(before.counts.indexed_sources, 0);
+  assert.equal(before.counts.understood_records, 0);
+  assert.equal(before.counts.verified_capabilities, 0);
+  assert.ok(before.records.some((r) => r.id === catalog.id));
+  const ref = kl.catalog({ title: 'Owner CSV Reference', kind: 'note', category: 'software_engineering', license: 'owner' });
+  assert.ok(!kl.index(ref.id, CSV_DOC).error);
+  const after = await knowledgeInventory(s);
+  assert.equal(after.counts.discovered_sources, 2);
+  assert.equal(after.counts.indexed_sources, 1);
+  assert.equal(after.counts.understood_records, 0);
+  assert.equal(after.counts.available_capabilities, 0);
+  assert.match(after.text, /overlapping stages/);
 });

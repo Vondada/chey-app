@@ -230,7 +230,7 @@ import {
 import { APP_BUILD_KEY, appBuildIntent, appBuildRun, dispatchAppBuild, speakAppBuild } from './app_builds.js';
 import { advanceObjectives, applyMissionEvent, approvalReached, approveNode, awaitingApproval, cancelObjective, createObjective, mutateObjective, replanNode, resolveKnownNodes, retryNode, setObjectivePaused, speakObjective } from './objective_graph.js';
 import { CHE_TENANT, CHE_SECURITY, access as coreAccess, coreIncidents, coreKnowledge, coreView, findAnyIncident, findKnowledge, loadCore, recordInLedger, openIncidentsForEvents, recordCheck as recordCoreCheck, runDrill, saveCore, speakCore, syncLegacyEvents } from './security_core_che.js';
-import { acquire as acquireCapability, applyPolicy as applyCapabilityPolicy, capabilityIntent, engineSummary as capabilityEngineSummary, learnFromOutcome, loadPolicy as loadCapabilityPolicy, populate as populateKnowledge, retrieve as retrieveKnowledge, rollbackTool, savePolicy as saveCapabilityPolicy, projectBlocked, speakCapabilities, speakLearned as speakLearnedKnowledge, useTool, LAST_USED_KEY as KNOWLEDGE_USED_KEY } from './capability_engine.js';
+import { acquire as acquireCapability, applyPolicy as applyCapabilityPolicy, capabilityIntent, engineSummary as capabilityEngineSummary, knowledgeInventory, learnFromOutcome, loadPolicy as loadCapabilityPolicy, populate as populateKnowledge, retrieve as retrieveKnowledge, rollbackTool, savePolicy as saveCapabilityPolicy, projectBlocked, speakCapabilities, speakLearned as speakLearnedKnowledge, useTool, LAST_USED_KEY as KNOWLEDGE_USED_KEY } from './capability_engine.js';
 import { EGRESS_KEY, SNAPSHOT_KEY, holdEgress, installEgressGuard, setEgressOwner, setEgressPolicy, storeEgressPolicy, SESSION_SCOPES, bump as securityBump, checkSession, createSession, dependencyAdvisories, detectThreats, issueNonce, loadSecurity, recordFindings, redact as redactSecretText, redactDeep, respondToIncident, restoreTrustedState, revokeSessions, saveSecurity, securityIntent, snapshotTrustedState, speakStatus as speakSecurityStatus } from './security_intelligence.js';
 import { loadRegistry as loadCapabilityRegistry } from './capability_registry.js';
 import { BrainLedger, answerLedger, decidePending as decideBrainPending, installBrainLedger, ledgerApi, ledgerIntent as brainLedgerIntent, DEFAULT_ZONE as LEDGER_DEFAULT_ZONE } from './brain_ledger.js';
@@ -4448,6 +4448,23 @@ export class CheState extends DurableObject {
       : 0;
     if (changed) await this.saveChatData(data);
     return changed + invalidated;
+  }
+
+  // Acknowledgement follows a durable read-back, never a model sentence or in-memory mutation.
+  async rememberOwnerStatement(data, text) {
+    const added = addOwnerMemory(data, text, { source: 'owner_chat', category: 'Memory', scope: 'owner', confidence: 1 });
+    const record = added.record || (data.memory_records || []).find((r) => r.active !== false && r.text?.toLowerCase() === String(text).trim().toLowerCase());
+    if (!record) return ndjsonReply('I could not save that as a safe memory, sir. Nothing was confirmed stored.', { source: 'che_memory', ok: false, model_calls: 0 });
+    try {
+      if (added.added || added.replaced?.length) await this.saveChatData(data);
+      const persisted = await this.ctx.storage.get('che');
+      const verified = persisted?.memory_records?.find((r) => r.id === record.id && r.text === record.text && r.active !== false);
+      if (!verified) throw new Error('Memory read-back did not match');
+      return ndjsonReply('I’ll remember that, sir.', { source: 'che_memory', ok: true, model_calls: 0,
+        memory_receipt: { record_id: verified.id, source: 'owner_chat', collection: 'che.memory_records', status: 'stored', checked_at: new Date().toISOString(), recorded_at: verified.created_at } });
+    } catch (_) {
+      return ndjsonReply('I could not verify the memory write, sir. It is not confirmed saved; please try again.', { source: 'che_memory', ok: false, model_calls: 0 });
+    }
   }
 
   async saveChatData(data) {
@@ -10090,6 +10107,10 @@ export class CheState extends DurableObject {
           // Brain Population Ledger: what entered the Brain, when, where from, and whether it is usable yet.
           const ledgerAsk = ownerDevice && !body.attachment && !body.workflow_step ? brainLedgerIntent(rawMessage) : null;
           if (ledgerAsk) {
+            if (ledgerAsk.kind === 'inventory') {
+              const inventory = await knowledgeInventory(this.ctx.storage).catch(() => ({ status: 'unavailable', checked_at: new Date().toISOString(), counts: null, records: [], text: 'Knowledge inventory query failed. I cannot verify the counts.' }));
+              return ndjsonReply(inventory.text, { source: 'che_brain_ledger', ok: inventory.status === 'verified', model_calls: 0, inventory_receipt: inventory });
+            }
             const ledger = new BrainLedger(this.ctx.storage);
             const zone = String(body.client_time?.timezone_name || '').trim() || ledger.meta('owner_zone', LEDGER_DEFAULT_ZONE) || LEDGER_DEFAULT_ZONE;
             const lastSubject = ledgerAsk.kind === 'when' || ledgerAsk.kind === 'where' ? lastAssistantSubject(body.history) : null;
@@ -11534,9 +11555,7 @@ export class CheState extends DurableObject {
           // used to be fetched as a web page instead of remembered).
           const savedFact = rememberFact ? await rememberOwnerFact(this.ctx.storage, rememberFact[1]).catch(() => null) : null;
           if (savedFact) {
-            const added = addOwnerMemory(data, rememberFact[1].trim().slice(0, 500), { source: 'owner_chat', category: 'Memory', scope: 'owner', confidence: 1 });
-            if (added.added || added.replaced?.length) await this.saveChatData(data);
-            return ndjsonReply('I’ll remember that, sir.', { source: 'che_memory', model_calls: 0 });
+            return this.rememberOwnerStatement(data, rememberFact[1].trim().slice(0, 500));
           }
           const known = rememberFact ? null : await knownAnswer(this.ctx.storage, message, { memories: data.memories }).catch(() => null);
           if (known) {
@@ -11544,7 +11563,7 @@ export class CheState extends DurableObject {
               answerEvidenceReceipt({ ownerAttested: true, at: Date.now() }))).catch(() => null);
             await recordAnswerEvidence(this.ctx.storage, known.answer, answerEvidenceReceipt({ ownerAttested: true }));
             await recordReliability(this.ctx.storage, { kind: 'retrieval', workflow: 'instant_answer', outcome: 'answered_from_memory', tokens_saved: 1500 });
-            return ndjsonReply(known.answer, { source: 'che_memory', model_calls: 0 });
+            return ndjsonReply(known.answer, { source: 'che_memory', model_calls: 0, record_ids: known.record_key ? [known.record_key] : [], verified_at: known.verified_at });
           }
           // A research question CHE already answered and verified (still
           // fresh: 30 minutes for prices/news, 7 days otherwise) ends here:
@@ -13203,21 +13222,7 @@ export class CheState extends DurableObject {
         }
         const remember = rememberAsked;
         if (remember) {
-          const memory = remember[1].trim().slice(0, 500);
-          const reply = /password|passcode|security code|social security|credit card/i.test(memory)
-            ? 'I should not save that kind of secret, sir.'
-            : 'I’ll remember that, sir.';
-          if (reply.startsWith('I’ll')) {
-            const added = addOwnerMemory(data, memory, {
-              source: 'owner_chat',
-              category: 'Memory',
-              scope: 'owner',
-              confidence: 1,
-            });
-            if (added.added || added.replaced?.length) await this.saveChatData(data);
-          }
-          // Named like the remember route above, so the phone and the audit see which route kept it.
-          return ndjsonReply(reply, { source: 'che_memory', model_calls: 0 });
+          return this.rememberOwnerStatement(data, remember[1].trim().slice(0, 500));
         }
         // Preserve supplied conversation state; capacity checks must skip a
         // small engine instead of silently dropping the owner's earlier turns.
@@ -13482,10 +13487,13 @@ export class CheState extends DurableObject {
           let brainStatements = [];
           try { brainStatements = new CheBrainStore(this.ctx.storage).list({ limit: 500 }).records || []; } catch (_) { brainStatements = []; }
           const answer = answerPersonalFact(data, personal, brainStatements);
+          // Ordinary vocabulary questions remain useful; an exact saved association wins deterministically.
+          if (!personal.association || answer.kind !== 'none') {
           const receipt = answerEvidenceReceipt({ ownerAttested: answer.kind === 'owner_attested' });
           await Promise.resolve().then(() => this.ctx.storage.put(LAST_ANSWER_EVIDENCE_KEY, receipt)).catch(() => null);
           await recordAnswerEvidence(this.ctx.storage, answer.answer, { ...receipt, kind: answer.kind }, { records: answer.records });
-          return ndjsonReply(answer.answer, { source: 'che_personal_recall', model_calls: 0, records: answer.records.length });
+          return ndjsonReply(answer.answer, { source: 'che_personal_recall', model_calls: 0, records: answer.records.length, record_ids: answer.records });
+          }
         }
         let answer;
         const reusable = officeResults.length === 0 && skillResults.length === 0

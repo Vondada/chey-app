@@ -267,7 +267,7 @@ export async function knownAnswer(storage, message, { now = Date.now(), memories
     .filter((text) => words.every((w) => text.includes(w)));
   const newest = mentions[mentions.length - 1];
   if (!newest || !newest.includes(record.answer.toLowerCase())) return null;
-  return { answer: `Your ${subject.replace(/ s\b/g, "'s")} is ${record.answer}, sir.`, source: record.source, verified_at: record.verified_at };
+  return { answer: `Your ${subject.replace(/ s\b/g, "'s")} is ${record.answer}, sir.`, source: record.source, verified_at: record.verified_at, record_key: entryKey(record.key) };
 }
 
 /** "remember that my X is Y" also becomes a verified owner fact. */

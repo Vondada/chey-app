@@ -671,3 +671,33 @@ export async function engineSummary(storage) {
 }
 
 export { USABLE };
+
+/** Current persisted inventory; model text and historical event totals are never inventory. */
+export async function knowledgeInventory(storage, { now = new Date().toISOString() } = {}) {
+  const ledger = new BrainLedger(storage);
+  if (!storage?.sql) return { checked_at: now, status: 'unavailable', source: 'Durable Object SQLite',
+    counts: null, records: [], text: 'Knowledge inventory storage is unavailable in this runtime. I cannot verify counts; no model estimate was substituted.' };
+  const items = new KnowledgeItems(storage); items.init();
+  const library = new KnowledgeLibrary(storage); library.init(); ledger.init();
+  const sql = storage.sql;
+  const count = (q) => Number([...sql.exec(q)][0]?.n || 0);
+  const registry = await loadRegistry(storage);
+  const caps = Object.values(registry.capabilities || {});
+  const verified = caps.map((c) => serving(registry, c.capability_id)).filter(Boolean);
+  const counts = {
+    discovered_sources: count('SELECT COUNT(*) AS n FROM kl_refs'),
+    indexed_sources: count("SELECT COUNT(*) AS n FROM kl_refs WHERE access = 'indexed' AND doc_id IS NOT NULL AND indexed_at != ''"),
+    indexed_items: count("SELECT COUNT(*) AS n FROM ce_items WHERE layer = 'indexed'"),
+    understood_records: count("SELECT COUNT(*) AS n FROM (SELECT new_state, ROW_NUMBER() OVER (PARTITION BY record_id ORDER BY ms DESC, rowid DESC) AS rn FROM brain_ledger WHERE record_id != '') WHERE rn = 1 AND new_state = 'UNDERSTOOD'"),
+    procedures: count("SELECT COUNT(*) AS n FROM ce_items WHERE layer = 'procedure'"),
+    tested_capabilities: caps.filter((c) => c.test_status === 'passed').length,
+    verified_capabilities: verified.length,
+    available_capabilities: verified.filter((c) => c.status === 'AVAILABLE').length,
+  };
+  const sources = [...sql.exec('SELECT id, title, source_url, access, indexed_at FROM kl_refs ORDER BY added DESC LIMIT 8')];
+  const records = sources.map((r) => ({ collection: 'kl_refs', ...r }));
+  records.push(...[...sql.exec("SELECT id, layer, updated FROM ce_items WHERE layer IN ('indexed', 'procedure') ORDER BY updated DESC LIMIT 8")].map((r) => ({ collection: 'ce_items', ...r })));
+  records.push(...verified.slice(0, 8).map((c) => ({ collection: 'che:capabilities_v1', id: c.capability_id, status: c.status, last_verified: c.last_verified })));
+  const text = `Recorded inventory checked ${now}: ${counts.discovered_sources} discovered/catalogued sources; ${counts.indexed_sources} indexed sources; ${counts.indexed_items} indexed facts/concepts; ${counts.understood_records} records explicitly marked understood; ${counts.procedures} procedures; ${counts.tested_capabilities} tested capability candidates; ${counts.verified_capabilities} verified serving capabilities; ${counts.available_capabilities} available capabilities. These are separate, overlapping stages, not a sum or proof of general understanding. ${records.length ? `Sample record IDs: ${records.map((r) => `${r.collection}:${r.id}`).join(', ')}.` : 'No source or verified-capability record IDs were found.'} Counts cover the current retained storage, not everything ever learned. Catalogue entries alone do not prove their text was read or retrieved.`;
+  return { status: 'verified', checked_at: now, source: 'Durable Object SQLite kl_refs, ce_items, brain_ledger and capability registry', counts, records, text };
+}

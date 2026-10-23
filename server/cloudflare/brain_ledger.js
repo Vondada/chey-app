@@ -464,6 +464,8 @@ const CAT_WORD = new Map([
 export function ledgerIntent(message = '') {
   const t = String(message || '').trim().toLowerCase().replace(/[’]/g, "'").replace(/^(?:(?:hey|hi|ok|okay)[\s,.!]+)?(?:che|chay|chey|shay)\b[\s,.:;!?-]*/, '').replace(/[?.!]+$/, '').trim();
   let m;
+  if (/\b(?:how many|counts?|inventory|totals?)\b/.test(t) && /\b(?:your|you|brain|knowledge|library)\b/.test(t)
+    && /\b(?:indexed|understood|verified|sources?|knowledge|capabilities|brain|library)\b/.test(t)) return { kind: 'inventory' };
   if (/^(?:show me )?what (?:entered|populated|went into) your brain(?: today)?$|^what populated your brain today$|^what did you learn today$|^show me what entered your brain$/.test(t)) return { kind: 'today' };
   if ((m = /^what (?:entered|populated) your ([a-z ]+?) brain$/.exec(t)) && CAT_WORD.has(m[1].trim())) return { kind: 'category', category: CAT_WORD.get(m[1].trim()) };
   if ((m = /^what did you learn (?:about|in) ([a-z ]+?)$/.exec(t)) && CAT_WORD.has(m[1].trim())) return { kind: 'category', category: CAT_WORD.get(m[1].trim()) };

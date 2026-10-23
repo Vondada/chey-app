@@ -56,6 +56,10 @@ export function isQuestionLike(text) {
 export function ownerAssertion(text) {
   const body = stripWake(text).replace(/^remember(?: that)?\s+/i, '').trim();
   if (!body || isQuestionLike(text) || ASKS_OR_ORDERS.test(body) || NOT_A_FACT.test(body)) return null;
+  const association = /^(.{2,60}?)\s+means\s+(.{1,300}?)\.?$/i.exec(body);
+  if (association && words(association[1]).length) {
+    return { subject: association[1].trim(), subjectWords: words(association[1]), value: association[2].trim(), text: body.replace(/[.!]+$/, ''), association: true };
+  }
   const match = FACT.exec(body);
   if (!match) return null;
   const subject = match[1].trim();
@@ -73,6 +77,8 @@ export function personalFactQuestion(message) {
   // instruction about the answer, never part of the subject.
   const [asked] = text.split(/[?!.]/);
   const [head] = asked.split(/,|\band\b|\bwhere\b/i);
+  const association = /^what does (.{2,60}?) mean$/i.exec(head.trim());
+  if (association && words(association[1]).length) return { subject: association[1], words: words(association[1]), learn, association: true };
   const match = PERSONAL.exec(head.trim());
   if (!match) return null;
   const subject = match[1].replace(/\b(?:and|please)\b.*$/i, '').trim();
@@ -115,7 +121,7 @@ export function recallPersonalFact(data = {}, question = {}, brainRecords = []) 
   const matches = [];
   for (const r of records) {
     const fact = ownerAssertion(r.text);
-    if (fact && sameSubject(fact.subjectWords, question.words)) matches.push({ ...r, subject: fact.subject, value: fact.value });
+    if (fact && Boolean(fact.association) === Boolean(question.association) && sameSubject(fact.subjectWords, question.words)) matches.push({ ...r, subject: fact.subject, value: fact.value, association: fact.association });
   }
   return matches.length ? matches[matches.length - 1] : null;
 }
@@ -141,12 +147,12 @@ export function answerPersonalFact(data = {}, question = {}, brainRecords = []) 
     return {
       kind: 'none',
       records: [],
-      answer: `I don't have a record of your ${question.subject}, sir, so I don't know it. Tell me and I'll remember it.${question.learn ? ' I also don\'t know where it came from.' : ''}`,
+      answer: `I don't have a record of ${question.association ? "the meaning of " : "your "}${question.subject}, sir, so I don't know it. Tell me and I'll remember it.${question.learn ? ' I also don\'t know where it came from.' : ''}`,
     };
   }
   const when = spokenStoredDate(record);
   const source = question.learn ? ' I learned it from you in this chat.' : '';
-  const answer = `Your ${record.subject} is ${record.value}.${when ? ` You told me that on ${when}.` : ''}${source}`;
+  const answer = `${record.association ? record.subject : `Your ${record.subject}`} ${record.association ? "means" : "is"} ${record.value}.${when ? ` You told me that on ${when}.` : ''}${source}`;
   return { kind: 'owner_attested', records: [record.id].filter(Boolean), answer };
 }
 

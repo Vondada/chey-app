@@ -100,7 +100,10 @@ const TOOL_SUCCESS = /\b(?:I|we|CHE)\s+(?:\w+\s+){0,2}(?:ran|invoked|executed)\s
 const REVIEW_DONE = /\b(?:I|we|CHE)\s+(?:\w+\s+){0,2}reviewed\s+(?:your|the|CHE's|my)\s+(?:code|codebase|repository|repo)\b|\b(?:my|CHE's)\s+(?:code\s+)?review\b[^\n.!?]{0,40}\b(?:found\s+no|passed|complete|no\s+issues|clean)\b|\bthe\s+code\s+review\s+(?:found\s+no\s+issues|passed|is\s+complete|came\s+back\s+clean)\b/i;
 // The model never sees record ids (Brain lines carry only room, status, speaker and date), so any id it writes is invented.
 const BRAIN_RECORD_ID = /\b(?:mem|conv|office|atlas|brain|flagstaff|record)[:#][\w.-]{3,}|\brecord\s+(?:id|ids)\s*[:#]?\s*[\w.-]{4,}/i;
-const RETRIEVAL_RULES = [['retrieval', RETRIEVAL_VERB], ['found_records', FOUND_RECORDS], ['brain_record_id', BRAIN_RECORD_ID], ['retrieval_source', RETRIEVAL_SOURCE], ['storage_key', STORAGE_KEY], ['record_id', RECORD_ID], ['tool_success', TOOL_SUCCESS], ['review_done', REVIEW_DONE]];
+// Stored knowledge is a first-person capability claim, not a model's estimate.
+const KNOWLEDGE_INVENTORY = /\b(?:I|we|CHE)\s+(?:(?:have|has|already|successfully)\s+)*(?:indexed|understood|verified|learned|tested|catalogued|cataloged)\s+(?:[\d,]+|hundreds?|thousands?|millions?|one|two|three|four|five|six|seven|eight|nine|ten)\b|\b(?:my|CHE's)\s+(?:knowledge\s+)?(?:library|brain|inventory)\s+(?:contains?|has|holds?|includes?)\b/i;
+const KNOWLEDGE_SOURCE = /\bI\s+(?:have\s+)?learned\b[^.!?\n]{0,100}\bfrom\s+(?!(?:you|the owner)\b)[A-Z]|\b(?:indexed|retrieved|read)\b[^.!?\n]{0,80}\b(?:in|from) my (?:knowledge )?library\b/i;
+const RETRIEVAL_RULES = [['knowledge_inventory', KNOWLEDGE_INVENTORY], ['knowledge_source', KNOWLEDGE_SOURCE], ['retrieval', RETRIEVAL_VERB], ['found_records', FOUND_RECORDS], ['brain_record_id', BRAIN_RECORD_ID], ['retrieval_source', RETRIEVAL_SOURCE], ['storage_key', STORAGE_KEY], ['record_id', RECORD_ID], ['tool_success', TOOL_SUCCESS], ['review_done', REVIEW_DONE]];
 export const RETRIEVAL_NOT_EVIDENCE = 'I cannot verify that from a real record, sir: no storage read, lookup, tool or review ran for this answer, and a model-written record, key, identifier, date, profit or result is not evidence. Ask for the record by its source and I will read it from storage.';
 export const RETRIEVAL_NOTE = 'I took out a record claim I cannot back, sir: no storage read or tool ran for this answer. Ask for the record by its source and I will read it from storage.';
 
@@ -148,12 +151,12 @@ function retrievalClaimIn(sentence, { keys = true, documentRead = false, verifie
  */
 export function guardRetrievalClaims(reply, { receipts = [], flagOnly = false, keys = true, documentRead = false, verifiedText = '' } = {}) {
   const text = String(reply || '');
-  if (receipts.some(isExecutionReceipt)) return { text, removed: [] };
+  const executed = receipts.some(isExecutionReceipt);
   const removed = [];
   const kept = [];
   for (const sentence of splitSentences(text)) {
     const rule = retrievalClaimIn(sentence, { keys, documentRead, verifiedText });
-    if (!rule) { kept.push(sentence); continue; }
+    if (!rule || (executed && !rule.startsWith('knowledge_'))) { kept.push(sentence); continue; }
     removed.push({ rule, sentence: sentence.trim() });
     if (flagOnly) kept.push(`${sentence.trimEnd()} ${NOT_VERIFIED}${/\s$/.test(sentence) ? sentence.slice(sentence.trimEnd().length) : ''}`);
   }
