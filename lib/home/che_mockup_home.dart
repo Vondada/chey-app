@@ -15,6 +15,8 @@ import '../che_ui/che_futuristic.dart';
 import '../che_ui/che_clock.dart';
 import '../che_ui/che_hud.dart';
 import 'che_home_tiles.dart';
+import '../trading/che_live_chart_card.dart';
+import '../trading/che_live_feed_hub.dart';
 import '../che_ui/che_theme.dart';
 import '../che_ui/che_widgets.dart';
 
@@ -80,7 +82,15 @@ class CheMockupHome extends StatelessWidget {
     this.headers,
     this.now,
     this.marketClient,
+    this.liveFeed,
+    this.onConnectRithmic,
   });
+
+  /// The live chart's channels (tests pass a hub over a fake feed). Null uses the app-wide hub.
+  final CheLiveFeedHub? liveFeed;
+
+  /// Opens the Rithmic connection screen from the live chart.
+  final VoidCallback? onConnectRithmic;
 
   /// The HTTP client for the MNQ tile, for tests; null uses a fresh client per request.
   final http.Client? marketClient;
@@ -208,6 +218,8 @@ class CheMockupHome extends StatelessWidget {
           _CheStage(che: che, mode: m, working: working, greeting: greeting.trim()),
           const SizedBox(height: CheSpace.md),
           _TalkControl(listening: listening, onTalk: onTalk, onOpenChat: onOpenChat),
+          const SizedBox(height: CheSpace.lg),
+          _liveChart(),
           const SizedBox(height: CheSpace.lg),
           _Destinations(items: destinations),
           const SizedBox(height: CheSpace.lg),
@@ -741,6 +753,19 @@ class _NowPanel extends StatelessWidget {
 // The greeting and date, CHE's reactor with live readouts, one Talk bar, four glass tiles of real data, the other
 // rooms, and the work that is really running. Every value is real; a tile without data says so.
 extension on CheMockupHome {
+  /// The live chart card. Delayed data is offered only as an explicit choice inside it, labelled DELAYED.
+  Widget _liveChart({double chartHeight = 150}) => CheLiveChartCard(
+        key: const ValueKey('che-home-live-chart'),
+        hub: liveFeed,
+        now: now,
+        chartHeight: chartHeight,
+        onOpen: onOpenTrading,
+        onConnect: onConnectRithmic,
+        delayedBuilder: baseUrl == null
+            ? null
+            : (_) => CheHomeMarketTile(baseUrl: baseUrl!, headers: headers ?? () => const {}, onOpen: onOpenTrading, client: marketClient, delayedOnly: true),
+      );
+
   Widget _hudHome(BuildContext context, CheHomeMode m) {
     final now = this.now?.call() ?? DateTime.now();
     final chicago = CheChicagoTime.at(now);
@@ -849,29 +874,15 @@ extension on CheMockupHome {
         const SizedBox(height: CheSpace.md),
         _HudTalkBar(listening: listening, handsFree: handsFree, onTalk: onTalk, onOpenChat: onOpenChat),
         const SizedBox(height: CheSpace.lg),
-        // Four tiles of real data.
+        // Real data: the live chart first (owner, 2026-10-23: live Rithmic data by default, never delayed data on its
+        // own), then the Office and the next market event. Flagstaff lives in the bell above.
         LayoutBuilder(builder: (context, box) {
           const gap = 12.0;
           final half = (box.maxWidth - gap) / 2;
           final trading = byId['trading']!;
           // Each pair of tiles keeps one height, set by the taller tile (large text grows both).
           return Column(children: [
-            IntrinsicHeight(child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-              SizedBox(
-                width: half,
-                child: baseUrl == null
-                    ? CheHudTile(
-                        semantics: '${trading.label}. ${trading.detail}. Double tap to open.',
-                        onTap: trading.onOpen,
-                        leanRight: true,
-                        height: 140,
-                        child: Text('MNQ', style: CheHud.label),
-                      )
-                    : CheHomeMarketTile(baseUrl: baseUrl!, headers: headers ?? () => const {}, onOpen: trading.onOpen, client: marketClient),
-              ),
-              const SizedBox(width: gap),
-              SizedBox(width: half, child: CheHomeFlagstaffTile(unread: unread, onOpen: onOpenFlagstaff ?? onOpenChat)),
-            ])),
+            _liveChart(chartHeight: 130),
             const SizedBox(height: gap),
             IntrinsicHeight(child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
               SizedBox(width: half, child: CheHomeOfficeTile(working: working, total: team, onOpen: onOpenOffice)),

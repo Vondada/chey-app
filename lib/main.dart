@@ -1702,6 +1702,7 @@ OWNER AGENCY
       onOpenOffice: () => _goShellTab(2),
       onOpenBrain: _openMemoryBrain,
       onOpenTrading: () => _openAssistantHub(tab: 1),
+      onConnectRithmic: () => unawaited(_openRithmic()),
       onOpenCreate: () => _openAssistantHub(tab: 5),
       onOpenWorld: () => _goShellTab(3),
       onOpenSecurity: () => unawaited(_openSecurity()),

@@ -98,7 +98,10 @@ void main() {
     await tester.pumpWidget(_home());
     await tester.pump();
     final screen = tester.getRect(find.byType(CheMockupHome));
-    for (final label in ['Talk to CHE', 'OFFICE', 'Brain', 'MNQ', 'Create', 'CHE World']) {
+    // Home opens on the live chart (owner, 2026-10-23), never on delayed data.
+    expect(find.byKey(const ValueKey('che-home-live-chart')), findsOneWidget);
+    expect(find.text('MNQ · DELAYED'), findsNothing);
+    for (final label in ['Talk to CHE', 'OFFICE', 'Brain', 'MNQ · RITHMIC', 'Create', 'CHE World']) {
       final rect = tester.getRect(find.text(label));
       expect(rect.bottom, lessThanOrEqualTo(screen.bottom), reason: '$label is on the first screen');
     }
@@ -110,7 +113,7 @@ void main() {
     await tester.pumpWidget(_home(opened: opened));
     await tester.pump();
     for (final (label, id) in [
-      ('OFFICE', 'office'), ('Brain', 'brain'), ('MNQ', 'trading'), ('Create', 'create'), ('CHE World', 'world'),
+      ('OFFICE', 'office'), ('Brain', 'brain'), ('MNQ · RITHMIC', 'trading'), ('Create', 'create'), ('CHE World', 'world'),
       ('Talk to CHE', 'talk'),
     ]) {
       await tester.tap(find.text(label));
