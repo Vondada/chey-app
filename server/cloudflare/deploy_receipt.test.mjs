@@ -70,6 +70,12 @@ test('"that commit" and "it" follow-ups resolve the last SHA in the conversation
   assert.equal(commitIntent('What changed in that?', []), null);
 });
 
+test('an article link with a numeric path is not a commit: "summarize this article" stays off the commit route', () => {
+  assert.equal(commitIntent('Summarize this article: https://www.technologyreview.com/2026/10/15/1123456/google-ai-beats-human-professionals-medical-imaging/'), null);
+  assert.equal(commitIntent('What changed in 1123456?'), null);
+  assert.ok(commitIntent('What changed in commit f37bc3ac?'));
+});
+
 test('real status questions keep the status route; unrelated version/build/deploy sentences take neither', () => {
   for (const ask of ['What version of CHE am I running?', 'What’s my installed build number?', 'What backend version are you connected to?', 'What GitHub commit is deployed?']) {
     assert.ok(appStatusIntent(ask), ask);

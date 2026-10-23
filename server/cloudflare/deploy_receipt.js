@@ -23,7 +23,8 @@ const TEST_ASK = /\bwhat (?:can|should|do) i test\b|\bwhat(?:'s| is) (?:there )?
 const VERIFY_ASK = /\b(?:verify|confirm|check)\b[\s\S]{0,40}\bdeploy(?:ment|ed)?\b(?![\s\S]{0,30}\b(?:website|site|vercel|netlify|app store|testflight)\b)|\bis (?:the latest |the |this |that )?(?:commit|change|sha|[0-9a-f]{7,40})\b[\s\S]{0,30}\blive\b|\bwas (?:the (?:latest |last )?commit|commit \S+|this commit|that commit|[0-9a-f]{7,40}) deployed\b|\bdeployment receipt\b/;
 // "Is it live", "was it deployed": only right after a commit came up in the conversation.
 const PRONOUN_VERIFY = /\b(?:is|was) (?:it|that|this) (?:deployed|live)\b/;
-const COMMIT_REF = /\bcommit\b|\bsha\b|\b[0-9a-f]{7,40}\b/;
+// A bare hex run counts as a SHA only with both a letter and a digit: "1123456" in an article URL is not a commit.
+const COMMIT_REF = /\bcommit\b|\bsha\b|\b(?=[0-9a-f]*[a-f])(?=[0-9a-f]*\d)[0-9a-f]{7,40}\b/;
 const LATEST = /\b(?:latest|last|newest|most recent|current) (?:commit|change|merge)\b/;
 const THAT_STRICT = /\b(?:that|this|the same) (?:commit|change|merge|update)\b/;
 const PRONOUN = /\bfrom (?:it|that)\b|\b(?:it|that|this)\b/;
@@ -46,8 +47,9 @@ export function shaFromHistory(history = []) {
  * deployed/live; null otherwise. `ref` is a SHA, 'main' (latest) or null (no commit could be resolved).
  */
 export function commitIntent(message, history = []) {
-  const t = norm(message);
-  if (!t || /^(?:fix|change|implement|deploy|revert|roll ?back|merge|build|start|run|create|open)\b/.test(t)) return null;
+  // Links are the owner's input, never a commit reference ("summarize this article: https://…/1123456/…").
+  const t = norm(message).replace(/https?:\/\/\S+/g, ' ');
+  if (!t.trim() || /^(?:fix|change|implement|deploy|revert|roll ?back|merge|build|start|run|create|open)\b/.test(t)) return null;
   // "Check GitHub Actions for the latest Worker deployment" keeps its own route (latest deploy run).
   if (latestWorkerDeploymentIntent(message)) return null;
   const hasRef = COMMIT_REF.test(t) || LATEST.test(t) || THAT_STRICT.test(t) || (PRONOUN.test(t) && Boolean(recentSha(history)));
