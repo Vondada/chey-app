@@ -187,7 +187,7 @@ test('an invented headline or publication date is caught against the real page',
   useWeb({ list: listings({ gdelt: [MEDGEMMA_LISTING] }) });
   const headline = await (await owner({
     model: () => `Google Research reported "Google AI Beats Doctors At Every Diagnosis" this week: ${MEDGEMMA_URL}. It is a big step for medicine, sir.`,
-  })).say('What did Google Research publish about medical AI this week? Any news?');
+  })).say('What did Google Research publish about medical AI on October 15, 2026? Any news?');
   assert.doesNotMatch(headline.reply, /Beats Doctors/);
   assert.match(headline.reply, /the research\.google page is titled "MedGemma: open models for medical text and image comprehension", not the headline I gave/);
 
