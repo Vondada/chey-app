@@ -64,14 +64,14 @@ void main() {
 
   testWidgets('controls: restart, play, pause, +10s, speed and scrubbing move the clock as labelled; silent on open', (tester) async {
     final spoken = <String>[];
-    await tester.pumpWidget(MaterialApp(home: CheTradeReplayPage(
+    await tester.pumpWidget(MaterialApp(theme: ThemeData(splashFactory: NoSplash.splashFactory), home: CheTradeReplayPage(
       tradeId: 'T0K3J9QW1ZX7AB', baseUrl: () => 'https://che.test', headers: () => const {}, onRead: spoken.add,
       initial: CheTradeEvidence.fromJson(_json()),
     )));
     await tester.pump();
     expect(find.text('FORWARD PAPER'), findsOneWidget);
     expect(find.byKey(const Key('trade_replay_chart')), findsOneWidget);
-    expect(spoken, isEmpty, 'nothing speaks on open');
+    expect(spoken, isEmpty, reason: 'nothing speaks on open');
     String clock() => (tester.widget(find.byKey(const Key('trade_replay_clock'))) as Text).data!;
     expect(clock(), contains('12 of 12 bars'), reason: 'opens on the whole trade');
 
@@ -112,7 +112,7 @@ void main() {
   });
 
   testWidgets('no stored bars: says so and draws no chart or replay controls', (tester) async {
-    await tester.pumpWidget(MaterialApp(home: CheTradeReplayPage(
+    await tester.pumpWidget(MaterialApp(theme: ThemeData(splashFactory: NoSplash.splashFactory), home: CheTradeReplayPage(
       tradeId: 'T0K3J9QW1ZX7AB', baseUrl: () => 'https://che.test', headers: () => const {},
       initial: CheTradeEvidence.fromJson(_json(bars: false)),
     )));
@@ -130,11 +130,11 @@ void main() {
       final id = r.url.queryParameters['id'];
       return http.Response(jsonEncode(id == 'T0K3J9QW1ZX7AB' ? {'ok': true, 'trade': _json()} : {'ok': false, 'error': 'No CHE trade has the ID $id.'}), 200);
     });
-    await tester.pumpWidget(MaterialApp(home: CheTradeReplayPage(tradeId: 'T0K3J9QW1ZX7AB', baseUrl: () => 'https://che.test', headers: () => const {}, client: client)));
+    await tester.pumpWidget(MaterialApp(theme: ThemeData(splashFactory: NoSplash.splashFactory), home: CheTradeReplayPage(tradeId: 'T0K3J9QW1ZX7AB', baseUrl: () => 'https://che.test', headers: () => const {}, client: client)));
     await tester.pumpAndSettle();
     expect(asked.single.queryParameters, {'view': 'trade', 'id': 'T0K3J9QW1ZX7AB'});
     expect(find.text('FORWARD PAPER'), findsOneWidget);
-    await tester.pumpWidget(MaterialApp(home: CheTradeReplayPage(tradeId: 'TNOPE', baseUrl: () => 'https://che.test', headers: () => const {}, client: client)));
+    await tester.pumpWidget(MaterialApp(theme: ThemeData(splashFactory: NoSplash.splashFactory), home: CheTradeReplayPage(tradeId: 'TNOPE', baseUrl: () => 'https://che.test', headers: () => const {}, client: client)));
     await tester.pumpAndSettle();
     expect(find.text('No CHE trade has the ID TNOPE.'), findsOneWidget);
   });

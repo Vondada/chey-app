@@ -234,6 +234,23 @@ class _CheTradeReplayPageState extends State<CheTradeReplayPage> {
   }
 
   @override
+  void didUpdateWidget(CheTradeReplayPage old) {
+    super.didUpdateWidget(old);
+    if (old.tradeId == widget.tradeId) return;
+    _pause();
+    setState(() {
+      _e = null;
+      _error = null;
+      _loading = true;
+    });
+    if (widget.initial != null) {
+      _set(widget.initial!);
+    } else {
+      unawaited(_load());
+    }
+  }
+
+  @override
   void dispose() {
     _timer?.cancel();
     super.dispose();
