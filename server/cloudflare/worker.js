@@ -146,6 +146,7 @@ import { lastSite, publishSite, saveSite, serveSite, siteBuildIntent, siteEditIn
 import { noteJobActivity } from './job_activity.js';
 import { CODING_CANCEL_SOURCE, cancelQueuedJob, codingCancelIntent, resolveCodingCancel, speakCancelResult, speakUnresolved } from './coding_cancel.js';
 import { PENDING_OWNER_ACTION_KEY, deskOwnedMoney, forbiddenAction, prohibitionSpans, withoutProhibitions, PENDING_OWNER_ACTION_MS, gateOwnerAction, grantForKinds, isOwnerYes, peerActionReply, APPS_GRANTED_KEY, PENDING_APP_ACTION_KEY, PENDING_APP_ACTION_MS, gateAppAccess, classifyAppNeed, classifyExplicitAppOpen, classifyAppAccesses } from './owner_action_gate.js';
+import { auditEvidenceFrom, auditReply, claimKindsIn, recordAudit } from './hallucination_auditor.js';
 import { asksForCurrentOwnerLocation, executeWithReceipt, guardExecutionClaims, guardRetrievalClaims, changeHistoryIntent, guardClaimedOwnerActions, guardClaimedResearchActions, guardGroundedFacts, guardLocationWeatherReply, guardOwnerReply, loadChangeHistory, loadReceipts, OWNER_LOCATION_NOT_VERIFIED, recordReceipt, requestedCodeNames, speakChangeHistory, vagueResearchRequest, verifiedState, verifiedStatusText } from './truth_layer.js';
 import { ENGINEERING_PLAYBOOK_SPOKEN, playbookIntent } from './engineering_playbook.js';
 import { describeSkillsReport, reusableLicense, selectFilesForAgent, skillFromMarkdown, skillImportIntent, skillsReportIntent } from './skill_import.js';
@@ -14384,6 +14385,18 @@ export class CheState extends DurableObject {
         }
         // Final owner-facing boundary: keep internal provider/model failover chatter out of chat and TTS.
         reply = guardExecutionClaims(sanitizeOwnerText(reply, { truncate: false }), { message: rawMessage, receipts: skillResults.map((r) => r.execution_receipt), documentRead: Boolean(multimodal?.summary || body.screen_context || pastedText), verifiedText: brainContext }).text;
+        // Hallucination auditor (hallucination_auditor.js): each completion claim must match a receipt from this request.
+        // An unreadable evidence list fails closed. The ledger keeps ids, labels and outcomes, never the reply text.
+        const auditRequestId = crypto.randomUUID();
+        try {
+          const audit = auditReply(reply, { evidence: await auditEvidenceFrom(this.ctx.storage, { executions: skillResults.map((r) => r.execution_receipt) }), requestId: auditRequestId });
+          if (audit.outcome === 'corrected' || audit.outcome === 'blocked') console.log('CHE hallucination auditor', audit.outcome, JSON.stringify(audit.claims).slice(0, 400));
+          reply = audit.text;
+          await recordAudit(this.ctx.storage, audit.entries);
+        } catch (error) {
+          console.log('CHE hallucination auditor unavailable', error?.message || error);
+          if (claimKindsIn(reply).length) reply = auditReply(reply, { evidence: null, requestId: auditRequestId }).text;
+        }
         // A model cannot see its own routing: "the engine was CHE itself" becomes this reply's real engine (soul.js).
         if (answer?.served_by) reply = guardSoulClaims(guardEngineClaims(reply, answer.served_by).text, soulProfile).text;
         // The owner hears which vision engine saw the attachment, or that none did (owner, 2026-10-20).
