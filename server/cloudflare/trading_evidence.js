@@ -515,7 +515,167 @@ export const INTRADAY_FILTERS = Object.freeze({
   trend: { name: 'with the 50 EMA trend', ok: (c, i, x, side) => x.ema50[i] != null && x.ema50[i - 3] != null
     && (side === 'short' ? c[i].c < x.ema50[i] && x.ema50[i] < x.ema50[i - 3] : c[i].c > x.ema50[i] && x.ema50[i] > x.ema50[i - 3]) },
 });
-const candidateOf = (id) => CANDIDATES[id] || INTRADAY_CANDIDATES[id];
+// ─── Research candidates (owner, 2026-10-23): published strategies, backtest only ─────
+// Written from public sources (strategy_research.js lists each source, access date and every parameter CHE chose).
+// They are NOT in INTRADAY_CANDIDATES or CANDIDATES, so the live paper grid (trading_live.js), the owner's controls
+// and the delayed-training portfolios never run them: forward paper needs the owner to enable one. Indicators are
+// computed once per candle series from that bar and earlier bars only.
+const STUDIES = new WeakMap();
+function studiesOf(c, x) {
+  const hit = STUDIES.get(c);
+  if (hit && hit.n === c.length) return hit;
+  const n = c.length;
+  const tr = c.map((b, i) => (i === 0 ? b.h - b.l : Math.max(b.h - b.l, Math.abs(b.h - c[i - 1].c), Math.abs(b.l - c[i - 1].c))));
+  const sma = (len, at = (i) => c[i].c) => {
+    const out = new Array(n).fill(null); let s = 0;
+    for (let i = 0; i < n; i++) { s += at(i); if (i >= len) s -= at(i - len); if (i >= len - 1) out[i] = s / len; }
+    return out;
+  };
+  // Wilder's moving average, seeded with the simple average of the first `len` values.
+  const rma = (len, at) => {
+    const out = new Array(n).fill(null); let v = null; let seed = 0;
+    for (let i = 0; i < n; i++) {
+      if (i < len) { seed += at(i); if (i === len - 1) { v = seed / len; out[i] = v; } continue; }
+      v = (v * (len - 1) + at(i)) / len; out[i] = v;
+    }
+    return out;
+  };
+  const sma20 = sma(20); const sma5 = sma(5); const sma200 = sma(200);
+  const atr20 = sma(20, (i) => tr[i]);
+  const sd20 = new Array(n).fill(null);
+  for (let i = 19; i < n; i++) {
+    let s = 0; for (let j = i - 19; j <= i; j++) s += (c[j].c - sma20[i]) ** 2;
+    sd20[i] = Math.sqrt(s / 20);
+  }
+  // TTM squeeze state: Bollinger (20, 2σ) inside Keltner (20, 1.5 × ATR20), and how many bars in a row.
+  const squeeze = new Array(n).fill(false); const run = new Array(n).fill(0);
+  for (let i = 0; i < n; i++) {
+    if (sma20[i] == null || atr20[i] == null) continue;
+    squeeze[i] = 2 * sd20[i] < 1.5 * atr20[i];
+    run[i] = squeeze[i] ? (i ? run[i - 1] : 0) + 1 : 0;
+  }
+  // Supertrend (10, 3): median ± 3 × Wilder ATR(10); the bands only ratchet toward price; the trend flips on a close
+  // through the active band.
+  const atr10 = rma(10, (i) => tr[i]);
+  const stUp = new Array(n).fill(null); const stDn = new Array(n).fill(null); const stTrend = new Array(n).fill(0);
+  for (let i = 0; i < n; i++) {
+    if (atr10[i] == null) continue;
+    const mid = (c[i].h + c[i].l) / 2;
+    const bu = mid + 3 * atr10[i]; const bl = mid - 3 * atr10[i];
+    const pu = stUp[i - 1]; const pl = stDn[i - 1];
+    stUp[i] = pu == null || bu < pu || c[i - 1].c > pu ? bu : pu;
+    stDn[i] = pl == null || bl > pl || c[i - 1].c < pl ? bl : pl;
+    const prev = stTrend[i - 1] || 1;
+    stTrend[i] = prev === 1 ? (c[i].c < stDn[i] ? -1 : 1) : (c[i].c > stUp[i] ? 1 : -1);
+  }
+  // RSI(2), Wilder smoothing, and the Turtle N: (19 × previous N + true range) / 20.
+  const rsi2 = new Array(n).fill(null);
+  { let g = 0; let l = 0;
+    for (let i = 1; i < n; i++) {
+      const ch = c[i].c - c[i - 1].c; const up = Math.max(0, ch); const dn = Math.max(0, -ch);
+      if (i <= 2) { g += up / 2; l += dn / 2; } else { g = (g + up) / 2; l = (l + dn) / 2; }
+      if (i >= 2) rsi2[i] = l === 0 ? 100 : 100 - 100 / (1 + g / l);
+    } }
+  const turtleN = rma(20, (i) => tr[i]);
+  const high20 = new Array(n).fill(null);
+  for (let i = 20; i < n; i++) { let h = -Infinity; for (let j = i - 20; j < i; j++) h = Math.max(h, c[j].h); high20[i] = h; }
+  // Initial balance (9:30–10:30 New York): known from the first bar at or after 10:30, only when the session's bars
+  // start at 9:30 and reach the second half hour (a gap in the data leaves no balance, never a partial one).
+  const ibHigh = new Array(n).fill(null); const ibLow = new Array(n).fill(null);
+  if (x?.et && x?.day) {
+    let day = null; let h = null; let l = null; let first = false; let last = false;
+    for (let i = 0; i < n; i++) {
+      if (x.day[i] !== day) { day = x.day[i]; h = null; l = null; first = false; last = false; }
+      const m = x.et[i];
+      if (m >= 570 && m < 630) {
+        if (m === 570) first = true;
+        if (m >= 600) last = true;
+        h = h == null ? c[i].h : Math.max(h, c[i].h); l = l == null ? c[i].l : Math.min(l, c[i].l);
+      } else if (m >= 630 && m < 960 && first && last) { ibHigh[i] = h; ibLow[i] = l; }
+    }
+  }
+  const out = { n, sma5, sma20, sma200, squeeze, run, stUp, stDn, stTrend, rsi2, turtleN, high20, ibHigh, ibLow };
+  STUDIES.set(c, out);
+  return out;
+}
+const extremeOf = (c, i, k, side) => (side === 'long' ? Math.min(...c.slice(i - k + 1, i + 1).map((b) => b.l)) - 0.25 : Math.max(...c.slice(i - k + 1, i + 1).map((b) => b.h)) + 0.25);
+const firstSince = (c, i, x, from, test) => { for (let k = i - 1; k >= 0 && x.day[k] === x.day[i] && x.et[k] >= from; k--) if (test(k)) return false; return true; };
+
+export const RESEARCH_INTRADAY_CANDIDATES = Object.freeze({
+  'orb5-first-candle-5m': {
+    name: 'first 5-minute candle breakout (Zarattini & Aziz 2023)', family: 'Breakout', timeframes: ['5m'],
+    rules: 'The 9:30–9:35 New York bar sets the direction: an up bar is long, a down bar short, a bar with no body (under 1 tick) no trade. Entry: market order at the 9:35 open. Stop: the other side of the first bar. Target: 10 times the risk, otherwise flat at 15:55 New York.',
+    flat: tradeMins(15 * 60 + 55),
+    entry(c, i, x) {
+      if (x.et[i] !== 570) return null;
+      const body = c[i].c - c[i].o;
+      if (Math.abs(body) < 0.25) return null;
+      const side = body > 0 ? 'long' : 'short';
+      const stop = side === 'long' ? c[i].l : c[i].h;
+      const risk = Math.abs(c[i].c - stop);
+      return sized({ side, ref: c[i].c, stop, target: r4(side === 'long' ? c[i].c + 10 * risk : c[i].c - 10 * risk), why: `the first 5-minute bar closed ${side === 'long' ? 'up' : 'down'} ${r2(Math.abs(body))} points` });
+    },
+  },
+  'ib-breakout-5m': {
+    name: 'initial balance breakout (9:30–10:30 New York)', family: 'Market profile', timeframes: ['1m', '2m', '5m', '15m', '30m'],
+    rules: 'Initial balance: high and low of 9:30–10:30 New York. Entry: the first close above the high (long) or below the low (short) between 10:30 and 12:00. Stop: the middle of the balance. Target: the R multiple of the portfolio. Flat by 15:55 New York.',
+    flat: tradeMins(15 * 60 + 55),
+    entry(c, i, x) {
+      const s = studiesOf(c, x);
+      const hi = s.ibHigh[i]; const lo = s.ibLow[i];
+      if (hi == null || x.et[i] >= 720) return null;
+      const mid = (hi + lo) / 2;
+      if (c[i].c > hi && firstSince(c, i, x, 630, (k) => c[k].c > hi)) return sized({ side: 'long', ref: c[i].c, stop: mid, why: `closed above the initial balance high ${r2(hi)}` });
+      if (c[i].c < lo && firstSince(c, i, x, 630, (k) => c[k].c < lo)) return sized({ side: 'short', ref: c[i].c, stop: mid, why: `closed below the initial balance low ${r2(lo)}` });
+      return null;
+    },
+  },
+  'squeeze-5m': {
+    name: 'volatility squeeze release (TTM-style)', family: 'Volatility', timeframes: ['1m', '2m', '5m', '15m', '30m', '1h'],
+    rules: 'Squeeze: Bollinger Bands (20, 2σ) inside Keltner Channels (20, 1.5 × ATR20) for at least 6 bars in a row. Release: the first bar the Bollinger Bands are back outside. Direction: close above the 20-bar average is long, below is short. Stop: 1 tick beyond the six-bar extreme. Target: the R multiple of the portfolio.',
+    entry(c, i, x) {
+      if (i < 26) return null;
+      const s = studiesOf(c, x);
+      if (s.squeeze[i] || s.run[i - 1] < 6 || s.sma20[i] == null || c[i].c === s.sma20[i]) return null;
+      const side = c[i].c > s.sma20[i] ? 'long' : 'short';
+      return sized({ side, ref: c[i].c, stop: extremeOf(c, i, 6, side), why: `a ${s.run[i - 1]}-bar squeeze released ${side === 'long' ? 'above' : 'below'} the 20-bar average` });
+    },
+  },
+  'supertrend-5m': {
+    name: 'Supertrend (10, 3) flip', family: 'Trend', timeframes: ['1m', '2m', '5m', '15m', '30m', '1h'],
+    rules: 'Supertrend: median price ± 3 × Wilder ATR(10), bands that only move toward price. Entry: the close that flips the trend (long on a flip up, short on a flip down). Stop: 1 tick beyond the new trend line. Target: the R multiple of the portfolio.',
+    entry(c, i, x) {
+      if (i < 30) return null;
+      const s = studiesOf(c, x);
+      if (s.stTrend[i] === 1 && s.stTrend[i - 1] === -1) return sized({ side: 'long', ref: c[i].c, stop: s.stDn[i] - 0.25, why: `closed above the Supertrend line ${r2(s.stUp[i - 1])}` });
+      if (s.stTrend[i] === -1 && s.stTrend[i - 1] === 1) return sized({ side: 'short', ref: c[i].c, stop: s.stUp[i] + 0.25, why: `closed below the Supertrend line ${r2(s.stDn[i - 1])}` });
+      return null;
+    },
+  },
+});
+export const RESEARCH_DAILY_CANDIDATES = Object.freeze({
+  'rsi2-connors': {
+    name: 'RSI(2) pullback above the 200-day average (Connors)',
+    rules: 'Long only: the close is above the 200-day simple average and RSI(2) is below 10. Entry at the next open. Target: the 5-day simple average at the signal (Connors exits on a close above it). Stop: 2 × ATR(14) below the signal close (CHE\'s choice; Connors publishes no stop).',
+    entry(c, i, x) {
+      if (i < 200) return null;
+      const s = studiesOf(c, x);
+      if (s.sma200[i] == null || s.rsi2[i] == null || x.atr14[i] == null || !(c[i].c > s.sma200[i] && s.rsi2[i] < 10)) return null;
+      return { ref: c[i].c, stop: r4(c[i].c - 2 * x.atr14[i]), target: r4(s.sma5[i]), why: `RSI(2) ${r2(s.rsi2[i])} above the 200-day average ${r2(s.sma200[i])}` };
+    },
+  },
+  'donchian-20': {
+    name: '20-day breakout (Turtle System 1 entry)',
+    rules: 'Long only: the first close above the highest high of the prior 20 days. Entry at the next open. Stop: 2 N below the signal close, N = (19 × previous N + true range) / 20. Target: the R multiple of the portfolio. The Turtle 10-day-low exit, the skip-after-a-winner rule, shorts and pyramiding are NOT implemented.',
+    entry(c, i, x) {
+      if (i < 22) return null;
+      const s = studiesOf(c, x);
+      if (s.high20[i] == null || s.turtleN[i] == null || !(c[i].c > s.high20[i]) || c[i - 1].c > s.high20[i - 1]) return null;
+      return { ref: c[i].c, stop: r4(c[i].c - 2 * s.turtleN[i]), why: `closed above the 20-day high ${r2(s.high20[i])}` };
+    },
+  },
+});
+const candidateOf = (id) => CANDIDATES[id] || INTRADAY_CANDIDATES[id] || RESEARCH_INTRADAY_CANDIDATES[id] || RESEARCH_DAILY_CANDIDATES[id];
 const filterOf = (id) => FILTERS[id] || INTRADAY_FILTERS[id];
 
 function conditionOf(c, k, x) {

@@ -14,7 +14,8 @@
 // Nothing here can place an order: research portfolios are 'backtest' or 'paper' sources, which newPortfolio
 // refuses to change, and no broker module is imported. No readiness level authorizes live trading.
 import {
-  CANDIDATES, CONTRACTS, COSTS, INTRADAY_CANDIDATES, INTRADAY_COMMON_RULES, MIN_TRADES, causalContext, candleProblems,
+  CANDIDATES, CONTRACTS, COSTS, INTRADAY_CANDIDATES, INTRADAY_COMMON_RULES, MIN_TRADES, RESEARCH_DAILY_CANDIDATES,
+  RESEARCH_INTRADAY_CANDIDATES, causalContext, candleProblems,
   etParts, evaluateWalkForward, intradayContext, newPortfolio, readTrades, stepPortfolio, strategyVersion, summarize,
   tradeDayOf, tradeMins,
 } from './trading_evidence.js';
@@ -343,8 +344,32 @@ export function strategyDefinitions() {
       data_requirements: 'daily or longer bars', context_timeframes: [], cost_assumptions: { ...COSTS }, timeframes: ['4h', ...DAILY_TFS], engine: 'trading_evidence.stepPortfolio',
     });
   }
+  // Published strategies added for research (strategy_research.js has each source). Backtest only: the live paper
+  // grid never runs them, so `paper` says what forward testing needs.
+  for (const [id, c] of Object.entries(RESEARCH_INTRADAY_CANDIDATES)) {
+    defs.push({
+      strategy_id: id, name: c.name, family: c.family || '', version: strategyVersion(id, 'any', { target_r: 2 }), defined: true, markets: [...MARKETS],
+      direction: 'long and short', entry_rule: c.rules, exit_rule: `stop, target or time: flat by ${c.flat ? '15:55' : '16:55'} New York`,
+      stop_rule: 'as written in the entry rule', target_rule: id === 'orb5-first-candle-5m' ? '10 times the risk' : 'the R multiple of the portfolio (2R default)',
+      time_filter: 'as written in the entry rule', session_filter: 'none (sessions are measured, not filtered)', regime_filter: 'none (regimes are measured, not filtered)',
+      position_sizing: '1 contract', max_holding: 'same CME trading day', risk_bounds: '6 to 60 index points of risk, otherwise skipped',
+      data_requirements: 'intraday bars with real timestamps', context_timeframes: [], common_rules: INTRADAY_COMMON_RULES,
+      cost_assumptions: { ...COSTS }, timeframes: [...c.timeframes], engine: 'trading_evidence.stepPortfolio', research: true,
+      paper: 'not running: a research strategy runs forward paper only after the owner enables it',
+    });
+  }
+  for (const [id, c] of Object.entries(RESEARCH_DAILY_CANDIDATES)) {
+    defs.push({
+      strategy_id: id, name: `${c.name} (daily)`, family: 'Daily', version: strategyVersion(id, 'any', { target_r: 2 }), defined: true, markets: [...MARKETS],
+      direction: 'long', entry_rule: c.rules, exit_rule: 'stop or target', stop_rule: 'as written in the entry rule', target_rule: id === 'rsi2-connors' ? 'the 5-day average at the signal' : '2R',
+      time_filter: 'none', session_filter: 'n/a (daily)', regime_filter: 'none', position_sizing: '1 contract', max_holding: 'until stop or target',
+      data_requirements: 'daily bars, at least 200 for RSI(2)', context_timeframes: [], cost_assumptions: { ...COSTS }, timeframes: ['1D'], engine: 'trading_evidence.stepPortfolio', research: true,
+      paper: 'not running: a research strategy runs forward paper only after the owner enables it',
+    });
+  }
   return defs;
 }
+const RESEARCH_IDS = new Set([...Object.keys(RESEARCH_INTRADAY_CANDIDATES), ...Object.keys(RESEARCH_DAILY_CANDIDATES)]);
 export const definitionOf = (id) => strategyDefinitions().find((d) => d.strategy_id === id) || null;
 
 // ─── Costs ───────────────────────────────────────────────────────────────────
@@ -561,7 +586,7 @@ function breakdownBy(list, key) {
  * Train and out-of-sample (anchored walk-forward folds) are kept apart; the leakage audit, roll guard, Monte Carlo,
  * stress costs and target sensitivity are recorded with it.
  */
-export function evaluateUnit({ strategyId, market, tf, bars, manifest, profile = 'NORMAL', deep = false }) {
+export function evaluateUnit({ strategyId, market, tf, bars, manifest, profile = 'NORMAL', deep = false, keepTrades = KEEP_TRADES }) {
   const def = definitionOf(strategyId);
   if (!def) return { ok: false, reason: 'unknown strategy' };
   if (!def.timeframes.includes(tf)) return { ok: false, applicable: false, reason: `${def.name} is not defined for ${tf} bars (its rules need ${def.timeframes.join(', ')}).` };
@@ -611,7 +636,7 @@ export function evaluateUnit({ strategyId, market, tf, bars, manifest, profile =
     session_regime: breakdownBy(all.map((t) => ({ ...t, sr: `${t.s}|${t.g}` })), 'sr'),
     periods: periodsFor(manifest, all), monte_carlo: monteCarlo(all.map((t) => t.r)), stress: stress ? { expectancy_r: stress.expectancy_r, trades: stress.trades } : null,
     sensitivity, roll_excluded: guarded.excluded, look_ahead: audit.ok ? 'passed' : audit.reason === 'too few bars to audit' ? 'not enough bars' : 'FAILED',
-    trades: all.slice(-KEEP_TRADES),
+    trades: all.slice(-keepTrades),
   };
 }
 
@@ -700,7 +725,8 @@ export function evidenceScore(unit, ctx = {}, paper = null) {
 export function selectStrategies(units, ctx = {}, paperBy = {}) {
   if (ctx.stale) return { decision: 'NO TRADE', reason: `The market data is stale${ctx.staleWhy ? ` (${ctx.staleWhy})` : ''}, so no strategy is selected.`, ranked: [] };
   const ranked = units
-    .filter((u) => u?.ok && (!ctx.market || u.market === ctx.market) && (!ctx.timeframe || u.timeframe === ctx.timeframe))
+    // Research strategies (strategy_research.js) are compared, never selected: they cannot trade until the owner enables one.
+    .filter((u) => u?.ok && !RESEARCH_IDS.has(u.strategy_id) && (!ctx.market || u.market === ctx.market) && (!ctx.timeframe || u.timeframe === ctx.timeframe))
     .map((u) => {
       const paper = paperBy[`${u.strategy_id}|${u.timeframe}`] || null;
       const e = evidenceScore(u, ctx, paper);
