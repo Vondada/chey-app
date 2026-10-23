@@ -81,7 +81,8 @@ import { renderTokenRoute, visualApi, songPromo, projectFromTemplateName, loadVi
 import { visualIntent, wordsToOps } from './visual_studio.js';
 import { addBeat, addLedger, addWorkspace, addWorkspaceSong, advanceAgreement, applySpokenBusiness, approveQuote, artistReport, beatListing, businessDashboard, deliveryPackage, draftQuote, musicBusinessIntent, recordBeatSale, recordFeedback, resolveSpokenBusiness, setService, workspaceById, workspaceView } from './music_business.js';
 import { matrixIntent, readMatrix, runMatrix, speakMatrix } from './backtest_matrix.js';
-import { autoQueue as researchAutoQueue, cancelJob as cancelResearchJob, matrixView as researchMatrixView, nextResearchAt, queueJob as queueResearchJob, researchIntent, researchStep, researchView, setProfile as setResearchProfile, speakBestNow, speakHistory, speakStrategy, strategyView as researchStrategyView } from './trading_research.js';
+import { addSource as addContextSource, annotationsFor as contextAnnotations, appendEvents as appendContextEvents, contextIntent, contextView, dayRegimes, eventStudy, makeEvent as makeContextEvent, readEvents as readContextEvents, readSeries as readContextSeries, readStudies as readContextStudies, refreshContext, saveStudy as saveContextStudy, speakUpcoming, upcomingEvents } from './market_context.js';
+import { autoQueue as researchAutoQueue, cancelJob as cancelResearchJob, loadDataset as loadResearchDataset, matrixView as researchMatrixView, nextResearchAt, queueJob as queueResearchJob, researchIntent, researchStep, researchView, setProfile as setResearchProfile, speakBestNow, speakHistory, speakStrategy, strategyView as researchStrategyView } from './trading_research.js';
 import { nextStrategySimTickAt, setStrategySimCeiling, setStrategySimPaused, speakStrategySim, strategySimIntent, strategySimTick, strategySimView, strategySimWake } from './strategy_sim.js';
 import { evidenceIntent, evidenceReport, evidenceTick } from './trading_evidence_runner.js';
 import { readTrades } from './trading_evidence.js';
@@ -7996,6 +7997,63 @@ export class CheState extends DurableObject {
         }
         return json({ detail: 'Not found.' }, 404);
       }
+      // Market context (owner, 2026-10-23): docs/CHE_MARKET_CONTEXT.md. Events as possible catalysts, never predictions.
+      // Owner only. Fetches only on request; no order path exists here.
+      if (path === '/api/trading/context' || path.startsWith('/api/trading/context/')) {
+        if (!ownerDevice) return json({ detail: 'Only the CHE owner can view or change market context.' }, 403);
+        const url = new URL(request.url);
+        const market = ['MNQ', 'NQ'].includes(url.searchParams.get('market') || body.market) ? (url.searchParams.get('market') || body.market) : 'NQ';
+        const st = this.ctx.storage;
+        if (request.method === 'GET' && path === '/api/trading/context') return json(await contextView(st));
+        if (request.method === 'GET' && path === '/api/trading/context/events') {
+          const kinds = url.searchParams.get('kind') ? url.searchParams.get('kind').split(',') : null;
+          return json({ events: await readContextEvents(st, { from: url.searchParams.get('from'), to: url.searchParams.get('to'), kinds }) });
+        }
+        if (request.method === 'GET' && path === '/api/trading/context/annotations') {
+          return json({ market, annotations: contextAnnotations(await readContextEvents(st), await readContextStudies(st), { from: url.searchParams.get('from'), to: url.searchParams.get('to'), market }) });
+        }
+        if (request.method === 'GET' && path === '/api/trading/context/upcoming') {
+          const list = upcomingEvents(await readContextEvents(st), Date.now(), Math.min(7 * 1440, Number(url.searchParams.get('minutes')) || 1440));
+          return json({ upcoming: list, spoken: speakUpcoming(list) });
+        }
+        if (request.method === 'GET' && path === '/api/trading/context/regimes') {
+          const ds = await loadResearchDataset(st, market, '1D');
+          if (!ds?.bars?.length) return json({ market, regimes: [], detail: `No verified daily ${market} dataset is stored yet. Run trading research first.` });
+          const series = await readContextSeries(st, 'DFEDTARU');
+          const regimes = dayRegimes(ds.bars, { events: await readContextEvents(st), fedSeries: series?.points || null });
+          return json({ market, data: { provider: ds.manifest.provider, first: ds.manifest.first, last: ds.manifest.last }, fed_source: series?.source || null, regimes: regimes.slice(-Math.min(2000, Number(url.searchParams.get('days')) || 260)) });
+        }
+        if (request.method === 'GET' && path === '/api/trading/context/study') {
+          const all = await readContextStudies(st);
+          return json({ studies: all.filter((x) => (!url.searchParams.get('kind') || x.kind === url.searchParams.get('kind')) && x.market === market) });
+        }
+        if (request.method !== 'POST') return json({ detail: 'Not found.' }, 404);
+        const action = path.replace('/api/trading/context/', '');
+        if (action === 'event') {
+          const e = makeContextEvent({ ...body, instruments: Array.isArray(body.instruments) ? body.instruments : ['NQ', 'MNQ'] }, { method: 'owner' });
+          const out = await appendContextEvents(st, [e]);
+          if (out.refused.length) return json({ detail: `Not stored: ${out.refused[0].problems.join('; ')}.`, problems: out.refused[0].problems }, 400);
+          return json({ ok: true, stored: out.added === 1, existing: out.existing === 1, event: e, spoken: out.added ? `Stored ${e.title}, with its source and time. It is an owner-cited event, not verified by CHE.` : 'That event was already stored; the original record is kept.' });
+        }
+        if (action === 'source') {
+          const out = await addContextSource(st, body);
+          if (!out.ok) return json({ detail: `Not added: ${out.problems.join('; ')}.`, problems: out.problems }, 400);
+          return json({ ok: true, source: out.source, spoken: out.source.machine_readable ? `Added ${out.source.name}. Say "refresh the market calendar" to read it.` : `Added ${out.source.name} for reference. CHE cannot read that type automatically.` });
+        }
+        if (action === 'refresh') {
+          const report = await refreshContext(st, { fromYear: body.from_year, toYear: body.to_year });
+          return json({ ok: true, report, view: await contextView(st) });
+        }
+        if (action === 'study') {
+          const kind = String(body.kind || ''); const tf = ['1m', '5m', '15m', '1h', '1D'].includes(body.timeframe) ? body.timeframe : '1D';
+          const ds = await loadResearchDataset(st, market, tf);
+          if (!ds?.bars?.length) return json({ detail: `No verified ${tf} ${market} dataset is stored. Run trading research for ${market} first; CHE never studies invented bars.` }, 409);
+          const study = eventStudy({ events: await readContextEvents(st), bars: ds.bars, tf, market, kind, manifest: ds.manifest });
+          if (!study.ok) return json({ detail: study.reason }, 400);
+          return json({ ok: true, study: await saveContextStudy(st, study) });
+        }
+        return json({ detail: 'Unknown action. Use event, source, refresh or study.' }, 404);
+      }
       // Multi-timeframe research (owner, 2026-10-22): docs/CHE_TRADING_RESEARCH_API.md. Owner only. Research and paper only.
       if (path === '/api/trading/research' || path.startsWith('/api/trading/research/')) {
         if (!ownerDevice) return json({ detail: 'Only the CHE owner can view or run trading research.' }, 403);
@@ -12210,6 +12268,17 @@ export class CheState extends DurableObject {
             await this.scheduleWork().catch(() => null);
             return say(`Queued ${job.name}, sir: ${job.remaining.length} strategy-timeframe units, under-tested ones first, on free delayed data only. It runs in the background and resumes if interrupted; nothing is bought and no order is placed.`);
           }
+        }
+        // Market context by voice (owner, 2026-10-23): upcoming scheduled events and an on-demand calendar refresh. No model call.
+        const contextAsk = !body.attachment && contextIntent(message);
+        if (contextAsk) {
+          if (!ownerDevice) return ndjsonReply('Only the CHE owner can use market context, sir.', { source: 'che_market_context', ok: false, model_calls: 0 });
+          if (contextAsk.kind === 'refresh') {
+            const r = await refreshContext(this.ctx.storage);
+            const fetched = r.sources.filter((x) => x.status === 'fetched').length; const failed = r.sources.filter((x) => x.status === 'failed');
+            return ndjsonReply(`Market calendar refreshed, sir: ${r.rules.added} rule-based dates added, ${fetched} official source${fetched === 1 ? '' : 's'} read${failed.length ? `, ${failed.length} failed (${failed.map((x) => x.name.split(' — ')[0]).join(', ')})` : ''}. Events are possible catalysts, not predictions.`, { source: 'che_market_context', model_calls: 0, ok: failed.length === 0 });
+          }
+          return ndjsonReply(speakUpcoming(upcomingEvents(await readContextEvents(this.ctx.storage))), { source: 'che_market_context', model_calls: 0 });
         }
         // Timeframe backtest matrix (owner, 2026-10-22): every strategy on every timeframe CHE has data for, by hour of day.
         const matrixAsk = !body.attachment && matrixIntent(message);
