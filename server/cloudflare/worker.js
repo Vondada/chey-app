@@ -30,7 +30,7 @@ import {
 } from './ai_layer.js';
 import { promoteManually } from './model_discovery.js';
 import { createProviderEmployee, retireIdleTemporaries, startPairedJob, taskEnvelope } from './office_workforce.js';
-import { fineTuneDisclosure, setProviderPermission } from './privacy_policy.js';
+import { auditView, fineTuneDisclosure, setProviderPermission } from './privacy_policy.js';
 import {
   accountsView, approveProviderPlugin, authorizeProvider, ensureAiState, proposeProviderPlugin,
 } from './provider_registry.js';
@@ -5930,7 +5930,7 @@ export class CheState extends DurableObject {
       const answer = await this.env.AI.run(this.env.CHE_FAST_MODEL || FAST_MODEL, {
         messages: [{ role: 'system', content: system }, ...history, { role: 'user', content: message }],
         max_tokens: 700,
-        che_audit: { task: message.slice(0, 160), agent: 'CHE', route: 'guest_chat' },
+        che_audit: { tenant_id: tenant?.id, agent: 'CHE', route: 'guest_chat' },
       });
       const reply = String(answer?.response || answer?.choices?.[0]?.message?.content || '').trim();
       return ndjsonReply(reply || 'I could not answer that just now. Please try again.', { source: 'che_guest', ok: Boolean(reply), model_calls: 1 });
@@ -9182,7 +9182,7 @@ export class CheState extends DurableObject {
         return json({ accounts: accountsView(this.env, data) });
       }
       if (path === '/api/ai/audit' && request.method === 'GET') {
-        return json({ calls: ((await this.ctx.storage.get('ai_audit')) || []).slice(0, 100) });
+        return json(auditView(await this.ctx.storage.get('ai_audit')));
       }
       const envelopeMatch = /^\/api\/office\/tasks\/([A-Za-z0-9-]{8,64})\/envelope$/.exec(path);
       if (envelopeMatch && request.method === 'GET') {
