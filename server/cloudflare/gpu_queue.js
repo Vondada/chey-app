@@ -480,14 +480,21 @@ function trimRig(g) {
   }
   return {
     ok: g.ok === true, bones: num(g.bones), weighted_vertices: num(g.weighted_vertices),
-    clips: (Array.isArray(g.clips) ? g.clips : []).slice(0, 16).map((c) => ({ name: String(c?.name || '').slice(0, 40), seconds: num(c?.seconds) })),
+    clips: rigClips(g.clips).map((c) => ({ name: c.name, seconds: num(c.seconds) })),
     morphs: (Array.isArray(g.morphs) ? g.morphs : []).slice(0, 32).map((x) => String(x).slice(0, 40)), checks,
   };
 }
 
 /** "53 bones, 4 clips (idle, walk, wave, talk), 5 face shapes". */
+/** Clips as [{name, seconds}]: verify_glb.py writes them keyed by name ({walk: {duration_s, ...}}); an array is also accepted. */
+export function rigClips(clips) {
+  const list = Array.isArray(clips) ? clips
+    : Object.entries(clips && typeof clips === 'object' ? clips : {}).map(([name, c]) => ({ name, seconds: c?.duration_s ?? c?.seconds }));
+  return list.slice(0, 16).map((c) => ({ name: String(c?.name || '').slice(0, 40), seconds: c?.seconds ?? c?.duration_s }));
+}
+
 export function rigLine(rig) {
-  const clips = rig.clips || [];
+  const clips = rigClips(rig.clips);
   return `${rig.bones} bones, ${clips.length} clip${clips.length === 1 ? '' : 's'}${clips.length ? ` (${clips.map((c) => c.name).join(', ')})` : ''}`
     + `${rig.morphs?.length ? `, ${rig.morphs.length} face shape${rig.morphs.length === 1 ? '' : 's'}` : ''}`;
 }
@@ -497,7 +504,7 @@ export function publicJob(j) {
   const model = j.model ? { bytes: j.model.bytes, sha256: j.model.sha256, uploaded_at: j.model.uploaded_at, url: `/api/gpu/jobs/${j.id}/model.glb` } : null;
   const g = j.receipt?.model?.rig;
   // The rig only counts as verified once the job completed with it (the receipt's ok alone is the runner's claim).
-  const rig = g ? { ok: g.ok === true && j.state === 'completed', bones: g.bones, clips: (g.clips || []).map((c) => c.name), morphs: g.morphs || [],
+  const rig = g ? { ok: g.ok === true && j.state === 'completed', bones: g.bones, clips: rigClips(g.clips).map((c) => c.name), morphs: g.morphs || [],
     mode: j.receipt.model.mode || null } : null;
   return { ...rest, kind: j.kind || 'face_preview', model, rig, worker_id: lease?.worker_id || null, worker_class: lease?.class || null,
     lease_expires: lease ? iso(lease.expires_ms) : null, priority: j.priority || 'normal', requires: { gpu: j.requires?.gpu || (j.kind === 'person_model' ? 'preferred' : 'required') },

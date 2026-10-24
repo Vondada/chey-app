@@ -404,6 +404,9 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
         });
       case 'done':
         setState(() => playing = m['playing'] == null ? null : '${m['playing']}');
+        final w = _waiting;
+        _waiting = null;
+        if (w != null && !w.isCompleted) w.complete(m);
       case 'error':
         _report(false, '${m['message'] ?? 'The model could not be shown.'}');
     }
@@ -526,6 +529,23 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
       ? 'CHE'
       : '${id[0].toUpperCase()}${id.substring(1)}';
 
+  Completer<Map<String, dynamic>>? _waiting;
+
+  /// Sends one command to the viewport and waits for its own answer ({ok, note}); null when it never answered. Spoken
+  /// confirmations come from this answer, so CHE never reports a viewport change that did not happen (review of #521).
+  Future<Map<String, dynamic>?> _runViewport(Map<String, Object> cmd) async {
+    final w = Completer<Map<String, dynamic>>();
+    _waiting = w;
+    try {
+      await _viewport.command(cmd);
+      return await w.future.timeout(const Duration(seconds: 3));
+    } catch (_) {
+      return null;
+    } finally {
+      if (identical(_waiting, w)) _waiting = null;
+    }
+  }
+
   Future<String> _post(String path, [Map<String, dynamic>? body]) async {
     setState(() => busy = true);
     final d = await _call('POST', path, body);
@@ -538,12 +558,20 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
     }
     final ok = d['ok'] == true && (d['_status'] as int? ?? 500) < 300;
     if (d['project'] is Map) setState(() => project = Map<String, dynamic>.from(d['project'] as Map));
-    final said = '${d['spoken'] ?? d['detail'] ?? (ok ? 'Done.' : 'That did not work.')}';
-    _say(ok, said);
+    var said = '${d['spoken'] ?? d['detail'] ?? (ok ? 'Done.' : 'That did not work.')}';
+    var done = ok;
     if (d['viewport'] is Map) {
+      // The viewport acts first; its own answer decides what is reported.
       final cmd = Map<String, Object>.from(d['viewport'] as Map);
-      await _viewport.command(cmd).catchError((_) {});
+      final r = shown.source == 'none' ? {'ok': false, 'note': 'There is no model in the viewport yet.'} : await _runViewport(cmd);
+      if (r == null || r['ok'] != true) {
+        done = false;
+        said = 'That did not work: ${'${r?['note'] ?? ''}'.trim().isEmpty ? 'the 3D view did not answer.' : r!['note']}';
+      } else if ('${r['note'] ?? ''}'.trim().isNotEmpty) {
+        said = '${r['note']}';
+      }
     }
+    _say(done, said);
     if (ok) await refresh();
     return said;
   }
@@ -567,7 +595,12 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
       _say(false, msg);
       return msg;
     }
-    await _viewport.command(cmd).catchError((_) {});
+    final r = await _runViewport(cmd);
+    if (r == null || r['ok'] != true) {
+      final msg = 'That did not work: ${'${r?['note'] ?? ''}'.trim().isEmpty ? 'the 3D view did not answer.' : r!['note']}';
+      _say(false, msg);
+      return msg;
+    }
     final a = cmd['action'];
     final msg = switch (a) {
       'rotate' =>
@@ -577,7 +610,7 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
       'view' => '${_viewNames['${cmd['deg']}'] ?? 'Back'} view.',
       'spin' => cmd['on'] == false ? 'Turntable off.' : 'Turntable on.',
       'stop' => 'Animation stopped.',
-      _ => 'Done.',
+      _ => '${r['note'] ?? ''}'.trim().isEmpty ? 'Done.' : '${r['note']}',
     };
     _say(true, msg);
     return msg;
@@ -592,7 +625,12 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
       return msg;
     }
     final want = clip != null && clips.contains(clip) ? clip : (clips.contains('idle') ? 'idle' : clips.first);
-    await _viewport.command({'action': 'animate', 'clip': want}).catchError((_) {});
+    final r = await _runViewport({'action': 'animate', 'clip': want});
+    if (r == null || r['ok'] != true) {
+      final msg = 'That did not work: ${'${r?['note'] ?? ''}'.trim().isEmpty ? 'the 3D view did not answer.' : r!['note']}';
+      _say(false, msg);
+      return msg;
+    }
     setState(() => playing = want);
     final msg = 'Playing the $want animation on the ${shown.source == 'generated' ? 'model' : 'bundled model'}.';
     _say(true, msg);

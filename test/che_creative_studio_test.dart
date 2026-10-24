@@ -87,7 +87,7 @@ http.Client _gpuClient() => MockClient((r) async {
       return http.Response('{}', 404);
     });
 
-Widget _studio(_Calls calls, {List<CheStudioActivity> activity = const [], List<String>? read, bool creations = true, String engine = 'offline', Key? key}) => MaterialApp(
+Widget _studio(_Calls calls, {List<CheStudioActivity> activity = const [], List<String>? read, bool creations = true, String engine = 'offline', Key? key, Future<String> Function(Map<String, Object>)? saveEngine}) => MaterialApp(
       debugShowCheckedModeBanner: false,
       theme: ThemeData(brightness: Brightness.dark, fontFamily: 'Roboto'),
       home: Scaffold(
@@ -101,6 +101,7 @@ Widget _studio(_Calls calls, {List<CheStudioActivity> activity = const [], List<
           videoConnected: false,
           onRead: read?.add,
           loadCreations: () async => _creationsView(engine: engine),
+          saveEngineSettings: saveEngine,
           creations: creations
               ? const CheCreationsTiles(
                   items: [
@@ -301,6 +302,33 @@ void main() {
     expect(said, startsWith('Creation Engine Ready. CHE starts free cloud workers herself.'));
     expect(said, contains('Up to 3 jobs at once.'));
     expect(await key.currentState!.voice('is the creation engine running'), said);
+  });
+
+  test('spoken Creation Engine settings are understood; other sentences are not', () {
+    expect(cheEngineSettingFromWords('Start cloud workers automatically.'), {'auto_cloud': true});
+    expect(cheEngineSettingFromWords('turn on free cloud workers'), {'auto_cloud': true});
+    expect(cheEngineSettingFromWords('stop starting cloud workers'), {'auto_cloud': false});
+    expect(cheEngineSettingFromWords('turn off cloud workers'), {'auto_cloud': false});
+    expect(cheEngineSettingFromWords('allow 4 cloud workers at once'), {'max_cloud_workers': 4});
+    expect(cheEngineSettingFromWords('set cloud workers to 2'), {'max_cloud_workers': 2});
+    expect(cheEngineSettingFromWords('what are cloud workers'), isNull);
+    expect(cheEngineSettingFromWords('start the video'), isNull);
+  });
+
+  testWidgets('Creation Engine settings by voice reach the Worker and speak its answer (review of #521)', (tester) async {
+    await _phone(tester);
+    final key = GlobalKey<CheCreativeStudioState>();
+    final sent = <Map<String, Object>>[];
+    await tester.pumpWidget(_studio(_Calls(), engine: 'cloud', key: key, saveEngine: (c) async {
+      sent.add(c);
+      return 'Creation Engine set: up to ${c['max_cloud_workers'] ?? 3} cloud workers at once. Spending limit stays at zero dollars.';
+    }));
+    await tester.pumpAndSettle();
+    final said = await key.currentState!.voice('allow 4 cloud workers');
+    expect(sent.single, {'max_cloud_workers': 4});
+    expect(said, 'Creation Engine set: up to 4 cloud workers at once. Spending limit stays at zero dollars.');
+    expect(await key.currentState!.voice('stop starting cloud workers'), isNotNull);
+    expect(sent.last, {'auto_cloud': false});
   });
 
   testWidgets('projects: newest first, four shown, See all lists every one and opens the editor', (tester) async {

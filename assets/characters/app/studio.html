@@ -48,7 +48,7 @@ floor.rotation.x = -Math.PI / 2; scene.add(floor);
 const ring = new THREE.Mesh(new THREE.RingGeometry(0.985, 1, 96), new THREE.MeshBasicMaterial({ color: 0x2fd6c8, transparent: true, opacity: 0.35 }));
 ring.rotation.x = -Math.PI / 2; scene.add(ring);
 
-let model = null, mixer = null, actions = {}, playing = null;
+let model = null, mixer = null, actions = {}, playing = null, bones = null, speed = 1, held = false;
 let radius = 1, target = new THREE.Vector3();
 // Orbit state: yaw/pitch in radians, distance as a multiple of the framing distance.
 const orbit = { yaw: 0.35, pitch: 0.12, dist: 1, home: { yaw: 0.35, pitch: 0.12, dist: 1 }, spin: false };
@@ -74,7 +74,7 @@ function report() {
 
 function clearModel() {
   if (!model) return;
-  scene.remove(model);
+  scene.remove(model); if (bones) { scene.remove(bones); bones = null; } speed = 1; held = false;
   model.traverse((o) => { if (o.geometry) o.geometry.dispose(); const m = o.material; for (const x of Array.isArray(m) ? m : m ? [m] : []) { for (const t of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap']) x[t]?.dispose?.(); x.dispose(); } });
   model = null; mixer = null; actions = {}; playing = null;
 }
@@ -140,9 +140,29 @@ function view(cmd = {}) {
   else if (a === 'spin') { orbit.spin = cmd.on !== false; }
   else if (a === 'animate') { ok = play(cmd.clip); note = ok ? `Playing ${playing}.` : 'This model has no animation clips.'; }
   else if (a === 'stop') { if (mixer) { mixer.stopAllAction(); playing = null; } }
+  else if (a === 'skeleton') {
+    let rigged = false; if (model) model.traverse((o) => { if (o.isSkinnedMesh) rigged = true; });
+    if (!rigged) { ok = false; note = 'This model has no skeleton.'; }
+    else if (cmd.on === false) { if (bones) { scene.remove(bones); bones = null; } note = 'Skeleton hidden.'; }
+    else { if (!bones) { bones = new THREE.SkeletonHelper(model); scene.add(bones); } note = 'Skeleton shown.'; }
+  }
+  else if (['pause', 'play', 'replay', 'seek', 'speed'].includes(a)) {
+    const act = playing && actions[playing];
+    if (!act) { ok = false; note = mixer ? 'Nothing is playing; say animate walking first.' : 'This model has no animation clips.'; }
+    else if (a === 'pause') { held = true; note = `Paused ${playing}.`; }
+    else if (a === 'play') { held = false; note = `Playing ${playing}.`; }
+    else if (a === 'replay') { act.reset().play(); held = false; note = `Replaying ${playing}.`; }
+    else if (a === 'seek') {
+      const dur = act.getClip().duration, d = Number(cmd.delta) || 0;
+      act.time = Math.max(0, Math.min(dur, act.time + d)); mixer.update(0);
+      note = `${d < 0 ? 'Back' : 'Ahead'} to ${act.time.toFixed(1)} of ${dur.toFixed(1)} seconds.`;
+    }
+    else { speed = Math.max(0.25, Math.min(2, speed * (Number(cmd.mul) || 1))); note = `Speed ${+speed.toFixed(2)}×.`; }
+    if (mixer) mixer.timeScale = held ? 0 : speed;
+  }
   else { ok = false; note = 'Unknown viewport command.'; }
   clampOrbit(); place(); dirty = true;
-  tellApp({ type: 'done', action: a, ok, note, playing, clips: Object.keys(actions) });
+  tellApp({ type: 'done', action: a, ok, note, playing, paused: held, speed, skeleton: Boolean(bones), clips: Object.keys(actions) });
   report();
 }
 

@@ -4,6 +4,7 @@
 // lapse, retries failures, and completes honestly as CPU. All GitHub traffic goes to a fake fetcher.
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
 import { creationRoute } from './creation_studio.js';
 import { DISPATCH_WINDOW_MS, ensureCapacity } from './creation_orchestrator.js';
 import { GpuQueue, LEASE_MS, gpuOwnerRoute, gpuWorkerRoute } from './gpu_queue.js';
@@ -101,7 +102,8 @@ test('Create Person on a public repo: CHE dispatches the free cloud worker; it c
   const media = [...s.storage.m.entries()].find(([k]) => k === 'media:index' || k === 'media')?.[1] || [];
   assert.ok(!JSON.stringify(media).includes('Colab T4 GPU'), 'CPU previews are never labelled GPU');
 
-  const rig = { ok: true, bones: 53, weighted_vertices: 9000, clips: [{ name: 'idle', seconds: 4 }, { name: 'walk', seconds: 1.2 }], morphs: ['jaw_open'] };
+  // The rig receipt exactly as tools/avatar_body/verify_glb.py wrote it on a real CPU run (clips keyed by name).
+  const rig = JSON.parse(readFileSync(new URL('./fixtures/full_body_rig_receipt.json', import.meta.url), 'utf8'));
   const views = Object.fromEntries([0, 45, 90].map((v) => [v, { status: 'ok', device: CPU_DEV, render_seconds: 60, sha256: 'b'.repeat(64) }]));
   const done = await s.worker('complete', { worker_id: wid, job_id: id, status: 'complete',
     receipt: { status: 'complete', device: 'CPU', cores: 4, blender_version: 'Blender 5.0.1', views, model: { status: 'ok', sha256: sha, bytes: model.length, mode: 'full_body', rig } } });
@@ -110,6 +112,10 @@ test('Create Person on a public repo: CHE dispatches the free cloud worker; it c
   assert.match(done.body.job.history.at(-1).note, /CPU of a GitHub cloud runner \(4 cores\)/);
   assert.doesNotMatch(done.body.job.history.at(-1).note, /GPU/);
   assert.equal(done.body.job.display_state, 'Completed');
+  // The verifier's keyed clips survive into the job (review of #521): 5 named clips with their real durations.
+  const job = (await s.call(`/api/creations/${p.id}`)).body.project.job;
+  assert.deepEqual(job.rig.clips, ['idle', 'walk', 'run', 'wave', 'talk']);
+  assert.ok(JSON.stringify(done.body.job.history).includes('53 bones, 5 clips (idle, walk, run, wave, talk)'), JSON.stringify(done.body.job.history.map((h) => h.note)));
   assert.ok(!JSON.stringify([...s.storage.m.values()]).includes(ENV.CHE_GITHUB_TOKEN), 'the GitHub token is never stored');
 });
 

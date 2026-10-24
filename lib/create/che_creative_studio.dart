@@ -30,6 +30,27 @@ class CheStudioColors {
   static const Color tealDeep = Color(0xFF0E5F59);
 }
 
+/// Spoken Creation Engine settings: "start cloud workers automatically", "stop starting cloud workers",
+/// "allow 4 cloud workers", "set cloud workers to 2". Null for anything else.
+Map<String, Object>? cheEngineSettingFromWords(String words) {
+  final t = words.trim().toLowerCase().replaceAll(RegExp(r'[.!?]+$'), '');
+  if (RegExp(
+    r'^(?:turn on|start|enable) (?:the )?(?:automatic |free )?cloud workers(?: automatically)?$|^start (?:free )?cloud workers automatically$',
+  ).hasMatch(t)) {
+    return {'auto_cloud': true};
+  }
+  if (RegExp(
+    r'^(?:turn off|stop|disable) (?:the )?(?:automatic |free )?cloud workers$|^stop starting (?:free )?cloud workers(?: automatically)?$',
+  ).hasMatch(t)) {
+    return {'auto_cloud': false};
+  }
+  final n = RegExp(
+    r'^(?:set|allow|use) (?:the )?(?:max(?:imum)? )?(?:number of )?(?:cloud workers (?:to )?(\d{1,2})|(\d{1,2}) cloud workers(?: at once)?)$',
+  ).firstMatch(t);
+  if (n != null) return {'max_cloud_workers': int.parse(n.group(1) ?? n.group(2)!)};
+  return null;
+}
+
 /// A real piece of work in progress, from a backend status (never simulated).
 class CheStudioActivity {
   const CheStudioActivity({required this.title, required this.status, this.detail = '', this.onTap});
@@ -107,6 +128,7 @@ class CheCreativeStudio extends StatefulWidget {
     required this.vaultCount,
     this.activity = const [],
     this.loadCreations,
+    this.saveEngineSettings,
     this.creations,
     this.imageConnected = false,
     this.videoConnected = false,
@@ -125,6 +147,9 @@ class CheCreativeStudio extends StatefulWidget {
   /// GET /api/creations (creation_studio.js): the owner's creation projects, the Creation Engine's state and which kinds
   /// of creation are built. Null keeps the six choices with no engine bar (tests, or no Worker).
   final Future<Map<String, dynamic>?> Function()? loadCreations;
+
+  /// Saves Creation Engine settings ({auto_cloud} or {max_cloud_workers}) and returns CHE's spoken result.
+  final Future<String> Function(Map<String, Object> change)? saveEngineSettings;
 
   /// The pictures and videos CHE made (CheCreationsStrip), shown in Projects.
   final Widget? creations;
@@ -315,6 +340,14 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
       final c = _choices;
       if (n < 1 || n > c.length) return 'There is no choice $n. $spokenSummary';
       return _runChoice(n - 1);
+    }
+    final setting = cheEngineSettingFromWords(t);
+    if (setting != null) {
+      final save = widget.saveEngineSettings;
+      if (save == null) return 'I cannot change the Creation Engine settings from here. Say open the creation engine.';
+      final said = await save(setting);
+      unawaited(loadCreations());
+      return said;
     }
     if (RegExp(
       r"^(?:what(?:'s| is) (?:the )?)?creation engine status$|^(?:is|how is) (?:the )?creation engine(?: doing| working| running| ready)?$",

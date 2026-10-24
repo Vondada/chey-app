@@ -242,11 +242,8 @@ class CheEngineStatusCardState extends State<CheEngineStatusCard> {
             ),
           ),
           const SizedBox(height: 6),
-          Semantics(
-            container: true,
-            toggled: auto,
-            label: 'Start free cloud workers automatically',
-            excludeSemantics: true,
+          // The switch keeps its own semantics (label, toggled state and tap action) so VoiceOver can operate it.
+          MergeSemantics(
             child: SwitchListTile.adaptive(
               key: const ValueKey('engine-auto-cloud'),
               contentPadding: EdgeInsets.zero,
@@ -259,18 +256,13 @@ class CheEngineStatusCardState extends State<CheEngineStatusCard> {
           Row(
             children: [
               const Expanded(child: Text('Most cloud workers at once', style: body)),
-              Semantics(
-                container: true,
-                button: true,
-                label: 'One fewer cloud worker at once',
-                excludeSemantics: true,
-                child: IconButton(
-                  key: const ValueKey('engine-workers-less'),
-                  onPressed: _busy || maxWorkers <= 1
-                      ? null
-                      : () => unawaited(save({'max_cloud_workers': maxWorkers - 1})),
-                  icon: const Icon(Icons.remove, color: CheStudioColors.silver),
-                ),
+              IconButton(
+                key: const ValueKey('engine-workers-less'),
+                tooltip: 'One fewer cloud worker at once',
+                onPressed: _busy || maxWorkers <= 1
+                    ? null
+                    : () => unawaited(save({'max_cloud_workers': maxWorkers - 1})),
+                icon: const Icon(Icons.remove, color: CheStudioColors.silver),
               ),
               Semantics(
                 label: '$maxWorkers cloud workers at once',
@@ -278,18 +270,13 @@ class CheEngineStatusCardState extends State<CheEngineStatusCard> {
                   child: Text('$maxWorkers', key: const ValueKey('engine-workers'), style: title),
                 ),
               ),
-              Semantics(
-                container: true,
-                button: true,
-                label: 'One more cloud worker at once',
-                excludeSemantics: true,
-                child: IconButton(
-                  key: const ValueKey('engine-workers-more'),
-                  onPressed: _busy || maxWorkers >= 10
-                      ? null
-                      : () => unawaited(save({'max_cloud_workers': maxWorkers + 1})),
-                  icon: const Icon(Icons.add, color: CheStudioColors.silver),
-                ),
+              IconButton(
+                key: const ValueKey('engine-workers-more'),
+                tooltip: 'One more cloud worker at once',
+                onPressed: _busy || maxWorkers >= 10
+                    ? null
+                    : () => unawaited(save({'max_cloud_workers': maxWorkers + 1})),
+                icon: const Icon(Icons.add, color: CheStudioColors.silver),
               ),
             ],
           ),

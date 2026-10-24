@@ -16,9 +16,12 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 class _FakeViewport implements CheViewportDriver {
-  _FakeViewport(this.onMessage, {this.clips = const []});
+  _FakeViewport(this.onMessage, {this.clips = const [], this.unsupported = const {}});
   final void Function(Map<String, dynamic>) onMessage;
   final List<String> clips;
+
+  /// Actions this fake page answers with ok: false, like studio.html's "Unknown viewport command."
+  final Set<String> unsupported;
   final loads = <String>[];
   final bytes = <int>[];
   final cmds = <Map<String, Object>>[];
@@ -36,6 +39,10 @@ class _FakeViewport implements CheViewportDriver {
   @override
   Future<void> command(Map<String, Object> cmd) async {
     cmds.add(cmd);
+    if (unsupported.contains(cmd['action'])) {
+      onMessage({'type': 'done', 'action': cmd['action'], 'ok': false, 'note': 'Unknown viewport command.', 'playing': null});
+      return;
+    }
     onMessage({'type': 'done', 'action': cmd['action'], 'ok': true, 'playing': cmd['action'] == 'animate' ? cmd['clip'] : null});
   }
 
@@ -108,6 +115,10 @@ class _Worker {
           bodies.add(body);
           if (p.endsWith('/edit')) {
             final t = '${body['text']}'.toLowerCase();
+            if (t.contains('skeleton')) {
+              return http.Response(jsonEncode({'ok': true, 'changed': false, 'applied': [], 'unsupported': [],
+                'viewport': {'action': 'skeleton', 'on': true}, 'spoken': 'Showing the skeleton.', 'project': project}), 200);
+            }
             if (t.contains('office')) {
               return http.Response(jsonEncode({'ok': true, 'changed': false, 'applied': [], 'unsupported': ['Putting creations in the Office is not built yet.'],
                 'viewport': null, 'spoken': 'Putting creations in the Office is not built yet.', 'project': project}), 200);
@@ -152,7 +163,7 @@ void main() {
     await _font('MaterialIcons', '$fonts/MaterialIcons-Regular.otf');
   });
 
-  Widget studio(_Worker w, {List<String>? read, List<String>? spoken, List<_FakeViewport>? vp, List<String> clips = const [], CheLiveStudioMode mode = CheLiveStudioMode.person}) =>
+  Widget studio(_Worker w, {List<String>? read, List<String>? spoken, List<_FakeViewport>? vp, List<String> clips = const [], CheLiveStudioMode mode = CheLiveStudioMode.person, Set<String> unsupported = const {}}) =>
       MaterialApp(
         debugShowCheckedModeBanner: false,
         theme: ThemeData(brightness: Brightness.dark, fontFamily: 'Roboto'),
@@ -165,7 +176,7 @@ void main() {
           onRead: read?.add,
           onSpeak: spoken?.add,
           viewport: (onMessage) {
-            final v = _FakeViewport(onMessage, clips: clips);
+            final v = _FakeViewport(onMessage, clips: clips, unsupported: unsupported);
             vp?.add(v);
             return v;
           },
@@ -225,6 +236,29 @@ void main() {
     expect(read.single, contains('Creation Engine Ready.'));
     expect(read.single, contains('Creation Engine job: Starting a cloud worker. CHE started a free cloud worker'));
     await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('a viewport change is reported only after the viewport confirms it; a refusal is spoken as a failure (review of #521)', (tester) async {
+    await _phone(tester);
+    for (final refuse in [false, true]) {
+      final spoken = <String>[];
+      final vp = <_FakeViewport>[];
+      await tester.pumpWidget(studio(_Worker(_project(job: _job(), engine: 'online')), spoken: spoken, vp: vp, unsupported: refuse ? {'skeleton'} : {}));
+      await tester.pumpAndSettle();
+      final state = tester.state<CheLiveStudioState>(find.byType(CheLiveStudio));
+      final said = await state.applyEdit('show the skeleton');
+      await tester.pumpAndSettle();
+      expect(vp.single.cmds.last, {'action': 'skeleton', 'on': true});
+      if (refuse) {
+        expect(said, 'That did not work: Unknown viewport command.');
+        expect(spoken.single, 'That did not work: Unknown viewport command.');
+        expect(spoken.any((s) => s.contains('Showing the skeleton')), isFalse);
+      } else {
+        expect(said, 'Showing the skeleton.');
+        expect(spoken.single, 'Showing the skeleton.');
+      }
+      await tester.pumpWidget(const SizedBox());
+    }
   });
 
   test('job states read as Creating, Waiting for Resources, Paused, Completed', () {

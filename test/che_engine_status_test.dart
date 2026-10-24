@@ -5,6 +5,7 @@ import 'dart:convert';
 
 import 'package:chey/create/che_engine_status.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -65,6 +66,14 @@ void main() {
     expect(find.textContaining('Google does not allow remote start'), findsOneWidget);
     expect(find.text('Spending limit: \$0. Nothing paid can start.'), findsOneWidget);
     expect(find.bySemanticsLabel('Start free cloud workers automatically'), findsOneWidget);
+
+    // VoiceOver can operate every control: each exposes a tap action of its own (review of #521).
+    final handle = tester.ensureSemantics();
+    for (final k in ['engine-auto-cloud', 'engine-workers-more', 'engine-workers-less']) {
+      expect(tester.getSemantics(find.byKey(ValueKey(k))).getSemanticsData().hasAction(SemanticsAction.tap), isTrue, reason: k);
+    }
+    expect(find.byTooltip('One more cloud worker at once'), findsOneWidget);
+    handle.dispose();
 
     await tester.tap(find.byKey(const ValueKey('engine-workers-more')));
     await tester.pumpAndSettle();
