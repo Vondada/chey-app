@@ -37,7 +37,7 @@ function setup() {
   const ctx = { storage, env: {}, now };
   const call = async (path, method = 'GET', body) => {
     const req = new Request(`https://che.example${path}`, { method, headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
-    const res = await creationRoute(ctx, path, req, body || {});
+    const res = await creationRoute(ctx, path.split('?')[0], req, body || {});
     return { status: res.status, body: await res.json() };
   };
   const worker = async (route, body, token, query = '', bytes = null) => {
@@ -293,4 +293,18 @@ test('render settings: full body by default; bust, detail, lighting and low-poly
   const gen = await call(`/api/creations/${p.id}/generate`, 'POST', {});
   assert.deepEqual([gen.body.job.settings.MODEL_MODE, gen.body.job.settings.QUALITY, gen.body.job.settings.LIGHTING], ['bust', 'draft', 'cinematic']);
   assert.equal(gen.body.job.samples, 16); assert.equal(gen.body.job.res, 360);
+});
+
+test('planning routes: a pre-job estimate and the scale scenarios, read-only, with assumptions and R2 status', async () => {
+  const { call } = setup();
+  const est = await call('/api/creations/estimate?minutes=30&profile=hybrid&gpus=20');
+  assert.equal(est.status, 200);
+  assert.equal(est.body.estimate.segments, 180);
+  assert.match(est.body.spoken, /On free capacity it costs nothing; paid capacity would be about \$\d/);
+  const cap = await call('/api/creations/capacity');
+  assert.equal(cap.status, 200);
+  assert.ok(cap.body.scenarios.users_1m && cap.body.scenarios.videos_1m_30min.hybrid);
+  assert.ok(cap.body.assumptions.gpu_h100_hour.source);
+  assert.equal(cap.body.storage.ok, false); assert.match(cap.body.storage.reason, /not enabled/);
+  assert.equal((await call('/api/creations/capacity', 'POST', {})).status, 405);
 });

@@ -17,6 +17,8 @@
 // "pause", "skip ahead 10 seconds") drive the viewport only. A full-body job completes only when the runner re-imported
 // the exported GLB and verified its skeleton, clips and face shapes (gpu_queue.js), so CHE never says a model moves
 // until it was measured moving.
+import { ASSUMPTIONS, PROFILES, estimateVideo, scenarios } from './capacity_model.js';
+import { r2Status } from './object_storage.js';
 import { BUILT_IN, HAIR_BUILT, STYLES, STYLE_LABELS, listIdentities, skinOk, toSettings, validate } from './avatar_identity.js';
 import { GpuQueue, VIEW_NAMES, engineRecord, engineSettingsOf, gpuOwnerRoute, rigLine } from './gpu_queue.js';
 import { cloudUsable, engineRoute, ensureCapacity } from './creation_orchestrator.js';
@@ -533,6 +535,7 @@ export async function creationRoute(ctx, path, request, body = {}) {
   if (path !== '/api/creations' && !path.startsWith('/api/creations/')) return null;
   const engine = await engineRoute(ctx, path, request, body);
   if (engine) return engine;
+  if (path === '/api/creations/estimate' || path === '/api/creations/capacity') return planningRoute(path, request, env);
   const studio = new CreationStudio(storage, now, { env, fetcher });
   const send = (out, okStatus = 200) => json(out, out.ok === false ? (out.status || (/^No such/.test(out.detail || '') ? 404 : 409)) : okStatus);
   if (path === '/api/creations') {
@@ -551,6 +554,22 @@ export async function creationRoute(ctx, path, request, body = {}) {
     return send(await studio.edit(m[1], text.slice(0, 300)));
   }
   return send(await studio.step(m[1], m[2]));
+}
+
+/**
+ * Planning, read-only (capacity_model.js): GET /api/creations/estimate?minutes=30&profile=hybrid&gpu=h100&gpus=20 is
+ * the pre-job estimate (GPU-hours, wall time, storage, the $0 free path and the paid figure); GET
+ * /api/creations/capacity is the five scale scenarios with their assumptions. Nothing is queued, bought or started.
+ */
+function planningRoute(path, request, env) {
+  if (request.method !== 'GET') return json({ detail: 'Use GET.' }, 405);
+  if (path === '/api/creations/capacity') return json({ ok: true, scenarios: scenarios(), assumptions: ASSUMPTIONS, storage: r2Status(env) });
+  const q = new URL(request.url).searchParams;
+  const minutes = Math.min(Math.max(Number(q.get('minutes')) || 1, 0.1), 120);
+  const profile = PROFILES[q.get('profile')] ? q.get('profile') : 'hybrid';
+  const gpu = ['h100', 'l4', 't4'].includes(q.get('gpu')) ? q.get('gpu') : 'h100';
+  const e = estimateVideo({ minutes, profile, gpu, gpus: Math.min(Math.max(Number(q.get('gpus')) || 1, 1), 1000) });
+  return json({ ok: true, estimate: e, spoken: `A ${e.minutes}-minute ${profile} video is about ${e.gpu_hours} ${gpu.toUpperCase()} GPU-hours and ${Math.round(e.storage_mb.final)} MB when finished. On ${e.gpus} GPU${e.gpus === 1 ? '' : 's'} it takes about ${e.wall_minutes} minutes. On free capacity it costs nothing; paid capacity would be about $${e.cost_usd.paid}, which needs your approval. This is an estimate; the job's receipt has the real numbers.` });
 }
 
 /** worker.js's one owner entry for the studio and the GPU queue under it (/api/creations*, then /api/gpu*). */
