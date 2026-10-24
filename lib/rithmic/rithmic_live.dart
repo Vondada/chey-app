@@ -107,7 +107,7 @@ class CheRithmicLive extends ChangeNotifier {
 
   /// The header text for the status, never stronger than the evidence.
   String get statusLabel => switch (status) {
-        RithmicLiveStatus.off => 'Rithmic not connected',
+        RithmicLiveStatus.off => 'Rithmic not connected${detail.isEmpty ? '' : ': $detail'}',
         RithmicLiveStatus.connected => 'Rithmic live — $symbol · connected',
         RithmicLiveStatus.waiting => 'Rithmic $symbol · connected, waiting for the first trade',
         RithmicLiveStatus.quiet => 'Rithmic $symbol · connected, no trades for ${_clock().difference(lastReceivedAt!).inMinutes} min (market may be closed)',
@@ -170,6 +170,14 @@ class CheRithmicLive extends ChangeNotifier {
     final feed = _feed;
     _drop('disconnected on this phone');
     await feed?.close();
+  }
+
+  /// Why no session was started on its own (no saved login, the automatic reconnect is off), so "not connected" says
+  /// why. Only while nothing is attached and no drop or refusal is being reported.
+  void notConnected(String why) {
+    if (_attached || _dropped || _loginFailed || detail == why) return;
+    detail = why;
+    notifyListeners();
   }
 
   /// A refused login. While an earlier connection is still streaming, that connection's state stands.

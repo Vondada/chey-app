@@ -146,9 +146,15 @@ Future<RithmicResume> cheRithmicResume({
   final session = live ?? CheRithmicLive.instance;
   if (session.attached) return RithmicResume.alreadyLive;
   final prefs = await (preferences?.call() ?? SharedPreferences.getInstance());
-  if (prefs.getBool(kRithmicAutoConnectKey) != true) return RithmicResume.notWanted;
+  if (prefs.getBool(kRithmicAutoConnectKey) != true) {
+    session.notConnected('the automatic reconnect is off (Disconnect was pressed, or no session was started yet). Open Rithmic and press Connect');
+    return RithmicResume.notWanted;
+  }
   final saved = await store.find(kRithmicVaultSite);
-  if (saved == null || saved.username.isEmpty || saved.password.isEmpty) return RithmicResume.noSavedLogin;
+  if (saved == null || saved.username.isEmpty || saved.password.isEmpty) {
+    session.notConnected('no Rithmic login is saved on this phone. Open Rithmic and sign in');
+    return RithmicResume.noSavedLogin;
+  }
   if (_resuming) return RithmicResume.failed;
   _resuming = true;
   try {

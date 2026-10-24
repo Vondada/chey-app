@@ -140,18 +140,34 @@ export async function chartView(storage, env, { account = 'alpaca_paper', symbol
   const stored = (await storage.get(LIVE_FEED)) || {};
   const five = Array.isArray(stored.bars) ? stored.bars : [];
   const minutes = TIMEFRAMES[frame].minutes;
-  const bars = minutes <= 5 ? five : rollUp(five, minutes);
+  let bars = minutes <= 5 ? five : rollUp(five, minutes);
+  // The owner's blank gray chart (2026-10-24): with no stored forward bars, draw Yahoo's delayed MNQ=F candles (the
+  // same public source, labelled DELAYED), and when that fails too, say exactly why instead of an empty chart.
+  let fallback = null;
+  if (!bars.length) {
+    const universe = await marketUniverse(storage, { fetcher, now }).catch(() => null);
+    const item = universe ? resolveTicker(universe, 'MNQ') : null;
+    const view = item ? await universeCandles(storage, item, frame, { fetcher, now }).catch((e) => ({ bars: [], feed: { status: 'UNAVAILABLE', error: String(e?.message || e) } })) : null;
+    fallback = view;
+    bars = (view?.bars || []).map(({ t, o, h, l, c, v }) => ({ t, o, h, l, c, v }));
+  }
+  const noDataReason = bars.length ? null
+    : `CHE's forward paper engine has stored no MNQ bars yet${stored.error ? ` (${String(stored.error).slice(0, 120)})` : ''}, and Yahoo's delayed MNQ=F chart could not be read${fallback?.feed?.error || fallback?.error ? `: ${String(fallback.feed?.error || fallback.error).slice(0, 160)}` : ''}. No candle was made up.`;
   const journal = await readTrades(storage, (t) => t.environment === 'paper' && t.data?.resolution === '5m');
   const portfolios = await readLivePortfolios(storage);
   const sim = await readSimState(storage).catch(() => null);
   const simTrades = sim ? (await readStoredTrades(storage, sim.trades).catch(() => [])).filter((t) => t.symbol === sym) : [];
-  const feed = feedHealth({ provider: stored.provider || 'Yahoo MNQ=F', status: stored.status, lastBarTime: stored.last_bar_time || five.at(-1)?.t, now, tf: frame });
+  const feed = fallback
+    ? feedHealth({ provider: fallback.provider || 'Yahoo Finance MNQ=F (delayed)', status: bars.length ? 'DELAYED' : 'UNAVAILABLE', lastBarTime: bars.at(-1)?.t, now, tf: frame })
+    : feedHealth({ provider: stored.provider || 'Yahoo MNQ=F', status: stored.status, lastBarTime: stored.last_bar_time || five.at(-1)?.t, now, tf: frame });
   return {
-    ...base, state: five.length ? 'verified' : 'no_data', symbol: sym, bars: bars.map(({ t, o, h, l, c, v }) => ({ t, o, h, l, c, v })), feed,
-    provenance: provenanceOf({ dataType: 'live-paper', source: stored.provider || 'Yahoo MNQ=F', delay: stored.delayed_by_min != null ? `about ${stored.delayed_by_min} minutes (DELAYED)` : 'DELAYED', bars, tf: frame }),
+    ...base, state: bars.length ? 'verified' : 'no_data', symbol: sym, bars: bars.map(({ t, o, h, l, c, v }) => ({ t, o, h, l, c, v })), feed,
+    ...(noDataReason ? { error: noDataReason, no_data_reason: noDataReason } : {}),
+    ...(fallback && bars.length ? { bars_source: 'Yahoo delayed MNQ=F (the forward engine has stored no bars yet)' } : {}),
+    provenance: provenanceOf({ dataType: 'live-paper', source: fallback ? (fallback.provider || 'Yahoo Finance MNQ=F (delayed)') : stored.provider || 'Yahoo MNQ=F', delay: stored.delayed_by_min != null ? `about ${stored.delayed_by_min} minutes (DELAYED)` : fallback?.delayed_by_min != null ? `about ${fallback.delayed_by_min} minutes (DELAYED)` : 'DELAYED', bars, tf: frame }),
     markers: chartMarkers({ journal, portfolios, simTrades, symbol: sym }),
     // The overnight high/low and the 86-style bias (CHE's independent approximation, never the P2P indicator).
-    levels: five.length ? overnightLevels(five) : null,
+    levels: five.length ? overnightLevels(five) : bars.length ? overnightLevels(bars) : null,
     entries_allowed: false, market_orders_allowed: false,
     entries_blocked_reason: 'No futures paper broker is connected (Tradovate is not signed in), so CHE takes no manual futures orders. CHE\'s MNQ trades here are research on DELAYED data.',
   };

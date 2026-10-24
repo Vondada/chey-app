@@ -106,7 +106,7 @@ function spokenPick(message, n) {
 }
 import { ATLAS_SOURCE, answerAtlas, atlasHiddenAction, atlasIntent, atlasQuizAnswerTurn, atlasPromptContext, atlasResetAsk, atlasResetIntent, projectAtlasToBrain, resetAtlasProgress } from './knowledge_atlas.js';
 import { CRYPTO_SOURCE, cryptoIntent, cryptoTick, cryptoView, nextCryptoTickAt, setCryptoPaper, speakCrypto } from './crypto_markets.js';
-import { LIVE_BACKTEST, LIVE_RUNS, LIVE_STATE, haltLivePaper, liveSpecs, liveBacktest, liveDashboard, livePaperSummary, liveTick, nextLiveTickAt, readLivePortfolios, researchDue, setLivePaper } from './trading_live.js';
+import { LIVE_BACKTEST, LIVE_FEED, LIVE_RUNS, LIVE_STATE, haltLivePaper, liveSpecs, liveBacktest, liveDashboard, livePaperSummary, liveTick, nextLiveTickAt, readLivePortfolios, researchDue, setLivePaper } from './trading_live.js';
 import { governorAction, queueAllocationFollowUp, readDecisions, runGovernor, speakGovernor, tradeDecisions } from './strategy_governor.js';
 import { ICT_CONCEPTS, applyControlChange, controlsView, noteAuditEffect, readControls, strategyRegistry, resolveStep, speakControlResult, speakControlsView, speakSkipReasons, stockOrderProblem } from './trading_controls.js';
 import { cmeSession, frontMonth, loadIntraday, TradovateMarketStream, connectMarketSocket } from './market_feed.js';
@@ -4124,13 +4124,14 @@ export class CheState extends DurableObject {
     const controls = await readControls(this.ctx.storage);
     const portfolios = await readLivePortfolios(this.ctx.storage);
     const { previous, audit, ...rest } = controls;
+    const [liveState, feed] = await Promise.all([this.ctx.storage.get(LIVE_STATE), this.ctx.storage.get(LIVE_FEED)]);
     const trades = await readTrades(this.ctx.storage, (t) => t.environment === 'paper' && t.data?.resolution === '5m');
     const registry = strategyRegistry({ specs: liveSpecs(), trades, backtest: await this.ctx.storage.get(LIVE_BACKTEST) });
     return {
-      controls: rest, strategies: controlsView(controls, portfolios).map((r) => ({ ...r, ...registry[r.id] })), audit: audit.slice(-50).reverse(),
+      controls: rest, strategies: controlsView(controls, portfolios, Date.now(), { enabled: Boolean(liveState?.enabled), feed }).map((r) => ({ ...r, ...registry[r.id] })), audit: audit.slice(-50).reverse(),
       ict_concepts: ICT_CONCEPTS.map((k) => ({ name: k.name, implemented: k.strategies.length > 0, strategies: k.strategies, note: k.note || '' })),
       can_restore: Boolean(previous), paper_only: true, live_orders: 'disabled',
-      live_paper_enabled: Boolean((await this.ctx.storage.get(LIVE_STATE))?.enabled),
+      live_paper_enabled: Boolean(liveState?.enabled),
     };
   }
 

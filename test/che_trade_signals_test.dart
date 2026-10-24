@@ -227,4 +227,20 @@ void main() {
     final s = desk.setups.firstWhere((s) => s.strategyId == 'ema-pullback-5m');
     expect(s.evidence.status, '140 trades, +0.12R expectancy, 38% wins (30+ SAMPLE)');
   });
+
+  // Owner audit (2026-10-24): the EMA watcher waiting for Rithmic candles must never read as evaluating signals.
+  test('without live Rithmic trades the desk says it is not evaluating, in the feed\'s own words', () async {
+    final (desk, _, _, _, _) = await _desk(dir);
+    expect(desk.evaluating, isTrue);
+    expect(desk.notEvaluatingReason, '');
+    desk.snapshot = const CheMarketSnapshot(
+      symbol: 'MNQZ6', exchange: 'CME', source: 'rithmic', sourceLabel: 'Rithmic', connection: CheFeedConnection.off,
+      statusLabel: 'Rithmic not connected: no Rithmic login is saved on this phone. Open Rithmic and sign in', isLive: false,
+      lastPrice: null, lastTradeAt: null, lastUpdate: null,
+    );
+    expect(desk.evaluating, isFalse);
+    expect(desk.notEvaluatingReason, startsWith('Rithmic not connected: no Rithmic login is saved'));
+    expect(desk.spokenSummary(), contains('CHE is not evaluating setups right now, because Rithmic candles are not arriving.'));
+    expect(desk.spokenSummary(), isNot(contains('setups are ready')));
+  });
 }
