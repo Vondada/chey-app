@@ -112,7 +112,7 @@ ramp = nt.nodes.new('ShaderNodeValToRGB'); nt.links.new(rad.outputs['Value'], ra
 cr = ramp.color_ramp; cr.interpolation = 'LINEAR'
 # A human iris is about 11.7 mm across on a 24 mm eye (radius 0.49 of the eye's); the sclera is an off-white that
 # darkens toward the corners, never paper white.
-stops = [(0.0, (0.004, 0.003, 0.003)), (0.15, (0.004, 0.003, 0.003)), (0.17, (0.03, 0.014, 0.006)), (0.38, (0.055, 0.026, 0.011)),
+stops = [(0.0, (0.004, 0.003, 0.003)), (0.15, (0.004, 0.003, 0.003)), (0.17, (0.018, 0.008, 0.004)), (0.38, (0.035, 0.016, 0.007)),
          (0.47, (0.018, 0.011, 0.008)), (0.52, (0.42, 0.36, 0.32)), (0.75, (0.40, 0.33, 0.29)), (1.0, (0.24, 0.15, 0.13))]
 cr.elements[0].position, cr.elements[0].color = stops[0][0], (*stops[0][1], 1)
 cr.elements[1].position, cr.elements[1].color = stops[1][0], (*stops[1][1], 1)
@@ -121,7 +121,7 @@ for pos, col in stops[2:]:
 # iris fibres: a stretched noise mixed in over the iris
 nz = nt.nodes.new('ShaderNodeTexNoise'); nz.inputs['Scale'].default_value = 60; nz.inputs['Detail'].default_value = 4
 nt.links.new(tc.outputs['Object'], nz.inputs['Vector'])
-mix = nt.nodes.new('ShaderNodeMix'); mix.data_type = 'RGBA'; mix.blend_type = 'OVERLAY'; mix.inputs['Factor'].default_value = 0.35
+mix = nt.nodes.new('ShaderNodeMix'); mix.data_type = 'RGBA'; mix.blend_type = 'OVERLAY'; mix.inputs['Factor'].default_value = 0.2
 nt.links.new(ramp.outputs['Color'], mix.inputs[6]); nt.links.new(nz.outputs['Color'], mix.inputs[7])
 nt.links.new(mix.outputs[2], eb.inputs['Base Color']); eb.inputs['Roughness'].default_value = 0.3
 eyes = []
@@ -225,7 +225,7 @@ if os.environ.get('CORNEA'):
 else:
     eb.inputs['Coat Weight'].default_value = 1.0; eb.inputs['Coat IOR'].default_value = 1.376
     eb.inputs['Coat Roughness'].default_value = 0.03; eb.inputs['Roughness'].default_value = 0.35
-lashes = lash_strands(fwd, up, length_scale=float(os.environ.get('LASH_LEN', '0.7'))); brows = brow_strands(fwd, up)
+lashes = lash_strands(fwd, up, length_scale=float(os.environ.get('LASH_LEN', '0.7'))); brows = brow_strands(fwd, up, per_brow=int(os.environ.get('BROW_N', '420')))
 check('lashes built', len(lashes.data.curves) > 100, f'{len(lashes.data.curves)} strands')
 check('brows built', len(brows.data.curves) > 300, f'{len(brows.data.curves)} strands')
 if not os.environ.get('NOHAIR'):
@@ -246,7 +246,7 @@ def area(name, pos, size, energy):
 
 
 k = che_gap / 0.06
-area('Key', eye_mid + (fwd * 1.2 + right * 0.8 + up * 0.6) * k, 1.2 * k, 60 * k * k)
+area('Key', eye_mid + (fwd * 1.2 + right * 0.8 + up * 0.6) * k, float(os.environ.get('KEY_SIZE', '1.2')) * k, 60 * k * k)
 area('Fill', eye_mid + (fwd * 1.2 - right * 0.9 + up * 0.1) * k, 1.5 * k, 28 * k * k)
 area('Rim', eye_mid + (-fwd * 1.0 + right * 0.3 + up * 0.7) * k, 0.6 * k, 25 * k * k)
 w = sc.world or bpy.data.worlds.new('W'); sc.world = w; w.use_nodes = True
