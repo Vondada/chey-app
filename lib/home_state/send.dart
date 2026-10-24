@@ -246,6 +246,26 @@ extension _CheHomeSend on _CHEHomeState {
       _openAssistantHub(tab: 4);
       return true;
     }
+    // Creative Studio (Create tab): a studio by name scrolls to it; "create new" opens the Create New choices.
+    final studio = RegExp(r'\b(?:open|show|go to)\s+(?:the\s+|my\s+)?(creative studio|code studio|coding studio|art (?:and|&) character studio|character studio|art studio|projects)\b')
+        .firstMatch(lower);
+    if (studio != null) {
+      final name = studio.group(1)!;
+      _openCreativeStudio(
+        section: name.startsWith('code') || name.startsWith('coding')
+            ? CheStudioSection.code
+            : name.contains('art') || name.contains('character')
+                ? CheStudioSection.art
+                : name == 'projects'
+                    ? CheStudioSection.projects
+                    : null,
+      );
+      return true;
+    }
+    if (RegExp(r'^\W*(?:(?:che|chey|chay)[,:]?\s+)?(?:create (?:something )?new|new creation|start a new creation)\W*$').hasMatch(lower)) {
+      _openCreativeStudio(createNew: true);
+      return true;
+    }
     if (RegExp(r'\b(open|show|go to)\s+(create|innovation|creator)\b').hasMatch(lower)) {
       _openAssistantHub(tab: 5);
       return true;
