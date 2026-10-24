@@ -88,6 +88,7 @@ import { evidenceIntent, evidenceReport, evidenceTick } from './trading_evidence
 import { readTrades, tradeDayOf } from './trading_evidence.js';
 import { TRADE_EVIDENCE_SOURCE, lastTrade, readTradeEvidence, speakTradeReplay, tradeBars, tradeEvidenceOf, tradeList, tradeReplayIntent } from './trade_evidence.js';
 import { DAILY_TARGET, EXECUTION_TYPES, VISUAL_SOURCE, auditTrades, compareWindows, currentLeader, dailyEvidence, dailyPnl, filterTrades, historyChart, journalView, lastForwardBar, metricsOf, openPositions, rankStrategies, readSkips, readVisualTrades, replayFrame, speakAudit, speakEvidence, speakCard, speakLeader, speakPnl, tradingVisualIntent } from './trading_visual.js';
+import { CALENDAR_SOURCE, calendarIntent, learningWindows, officeCalendar, speakOfficeCalendar, speakTradingCalendar, tradingCalendar } from './che_calendars.js';
 import { cancelCandidates, cancelConfirmation, cancelOrderIntent, chartIntent, chartOpenReply, chartView, drawIntent, futuresOrderIntent, marketOrderFeedProblem, paperAccountIntent, readDrawings, saveDrawings, speakOrder } from './trading_chart.js';
 import { marketUniverse, searchUniverse } from './market_universe.js';
 import { readRithmicCandles, storeRithmicCandles } from './rithmic_dataset.js';
@@ -8571,6 +8572,13 @@ export class CheState extends DurableObject {
       }
       // Visual trading evidence (owner, 2026-10-23): daily evidence, daily P&L, replay, comparisons, the
       // current leader, the journal and the audit, all read from the stored trade records. Read only.
+      // Trading P&L calendar and learning windows (che_calendars.js): read only, sim/paper/broker never summed.
+      if ((path === '/api/trading/calendar' || path === '/api/trading/learning') && request.method === 'GET') {
+        if (!ownerDevice) return tradingOwnerOnly();
+        const q = new URL(request.url).searchParams;
+        const out = path.endsWith('learning') ? await learningWindows(this.ctx.storage) : await tradingCalendar(this.ctx.storage, { month: q.get('month') || '', day: q.get('day') || '', source: q.get('source') || 'paper', basis: q.get('basis') || 'owner', env: this.env });
+        return json(out, out.status || 200);
+      }
       if (path === '/api/trading/visual' && request.method === 'GET') {
         if (!ownerDevice) return tradingOwnerOnly();
         return json(await this.tradingVisualView(new URL(request.url).searchParams));
@@ -9281,6 +9289,10 @@ export class CheState extends DurableObject {
         return json({ videos: Array.isArray(data.youtube_learning) ? data.youtube_learning : [] });
       }
 
+      if (path === '/api/office/calendar' && request.method === 'GET') {
+        const q = new URL(request.url).searchParams;
+        return json(await officeCalendar(this.ctx.storage, data, { month: q.get('month') || '', day: q.get('day') || '', env: this.env }));
+      }
       if (path === '/api/office/workshop' && request.method === 'GET') {
         const github = await githubWorkshopPieces(this.env, fetch);
         return json(workshopSnapshot(data, github));
@@ -12750,6 +12762,13 @@ export class CheState extends DurableObject {
           return ndjsonReply(status.text, { source: TRADING_STATUS_SOURCE, ok: status.ok, model_calls: 0, kind: whyNoTrades.kind, trades: status.trades ?? null });
         }
         // One named strategy by session and/or across its variants, from the forward paper journal (owner, 2026-10-20).
+        // The trading P&L calendar and the Office calendar by voice (che_calendars.js): read only, no model.
+        const calAsk = body.attachment ? null : calendarIntent(message, { tz: ownerTimeZone(this.env) });
+        if (calAsk) {
+          if (!ownerDevice) return ndjsonReply('Only the CHE owner can read the calendars.', { source: CALENDAR_SOURCE, ok: false, model_calls: 0 });
+          const v = calAsk.kind === 'trading' ? await tradingCalendar(this.ctx.storage, { ...calAsk, env: this.env }) : await officeCalendar(this.ctx.storage, data, { ...calAsk, env: this.env });
+          return ndjsonReply(calAsk.kind === 'trading' ? speakTradingCalendar(v) : speakOfficeCalendar(v), { source: CALENDAR_SOURCE, ok: v.ok, model_calls: 0, open_view: `${calAsk.kind}_calendar`, calendar: calAsk });
+        }
         const analysis = body.attachment ? null : strategyAnalysisIntent(message);
         if (analysis) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can read the trading records, sir.', { source: ANALYSIS_SOURCE, ok: false, model_calls: 0 });

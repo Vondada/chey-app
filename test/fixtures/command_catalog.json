@@ -2494,6 +2494,42 @@
    "optional_missing": []
   },
   {
+   "id": "trade-calendar",
+   "category": "trading",
+   "title": "Trading P&L Calendar",
+   "summary": "The monthly P&L calendar, per record set.",
+   "does": "Reads this month's closed trades day by day: net P&L, wins and losses, win rate, weekly subtotals and the month. Simulation (in R), forward paper and broker are separate and never added together. Tapping a day lists its trades, each opening its replay. Changes nothing.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Open my trading calendar",
+    "Show the P&L calendar for the simulation"
+   ],
+   "needs": [
+    "office"
+   ],
+   "optional": [],
+   "handler": "che_calendars.tradingCalendar",
+   "route": "che_calendars",
+   "produces": "pnl calendar",
+   "evidence": "Stored trade records only, one per trade ID; an empty month stays empty.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "calendar",
+    "p&l calendar",
+    "pnl calendar",
+    "monthly",
+    "trading calendar"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
    "id": "trade-crypto",
    "category": "trading",
    "title": "Orion Crypto Desk",
@@ -4425,6 +4461,41 @@
     "department heads",
     "chain of command",
     "who runs"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "office-calendar",
+   "category": "office",
+   "title": "Office Calendar",
+   "summary": "What the Office did, day by day.",
+   "does": "Reads each day's recorded work: completed jobs, active jobs, pending tasks, approvals, failures, milestones and who finished what, green, yellow or red. Tapping a day opens its jobs with their receipts. Changes nothing.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Show the office calendar for September",
+    "What did we do yesterday?"
+   ],
+   "needs": [
+    "office"
+   ],
+   "optional": [],
+   "handler": "che_calendars.officeCalendar",
+   "route": "che_calendars",
+   "produces": "office calendar",
+   "evidence": "Stored jobs, Office tasks, objectives, approvals and reliability counts only.",
+   "cost": "Free: no AI engine is used.",
+   "keywords": [
+    "office calendar",
+    "what did we do",
+    "accomplished",
+    "work calendar"
    ],
    "status": "available",
    "missing": [],

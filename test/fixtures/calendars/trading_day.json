@@ -1,0 +1,153 @@
+{
+ "ok": true,
+ "source": "paper",
+ "source_label": "Forward paper",
+ "unit": "USD",
+ "note": "Simulated fills on DELAYED 5-minute bars as they arrived; no broker order.",
+ "time_zone": "America/Chicago",
+ "basis": "owner",
+ "basis_label": "Calendar day in America/Chicago, by exit time",
+ "break_even": {
+  "unit": "USD",
+  "within": 25
+ },
+ "paper_only": true,
+ "live_orders": "disabled",
+ "sources": [
+  "sim",
+  "paper",
+  "broker"
+ ],
+ "day": "2026-09-22",
+ "totals": {
+  "net": -1016,
+  "trades": 3,
+  "wins": 1,
+  "losses": 2,
+  "flat": 0,
+  "win_rate": 33.33,
+  "missing_values": 0
+ },
+ "color": "red",
+ "trades": [
+  {
+   "id": "T0J5YUMZMA043C",
+   "strategy": "ema-pullback-5m",
+   "symbol": "MNQ",
+   "market": "futures",
+   "timeframe": "5m",
+   "side": "long",
+   "entry_time": "2026-09-22T14:05:00Z",
+   "exit_time": "2026-09-22T14:30:00Z",
+   "entry_price": 21000.375,
+   "exit_price": 21009.875,
+   "stop": 20990,
+   "target": 21020,
+   "exit_reason": "target",
+   "result": "win",
+   "net": 15,
+   "r": 0.75,
+   "unit": "USD",
+   "day": "2026-09-22",
+   "cme_trade_day": "2026-09-22",
+   "evidence_label": "FORWARD PAPER",
+   "replay": true,
+   "replay_note": ""
+  },
+  {
+   "id": "T05OZOVWA6PB0L",
+   "strategy": "ema-pullback-5m",
+   "symbol": "MNQ",
+   "market": "futures",
+   "timeframe": "5m",
+   "side": "long",
+   "entry_time": "2026-09-22T15:05:00Z",
+   "exit_time": "2026-09-22T15:20:00Z",
+   "entry_price": 21000.375,
+   "exit_price": 20989.875,
+   "stop": 20990,
+   "target": 21020,
+   "exit_reason": "stop",
+   "result": "loss",
+   "net": -25.5,
+   "r": -1.275,
+   "unit": "USD",
+   "day": "2026-09-22",
+   "cme_trade_day": "2026-09-22",
+   "evidence_label": "FORWARD PAPER",
+   "replay": true,
+   "replay_note": ""
+  },
+  {
+   "id": "T0CAEWMQXCEOLV",
+   "strategy": "orb-5m",
+   "symbol": "MNQ",
+   "market": "futures",
+   "timeframe": "5m",
+   "side": "long",
+   "entry_time": "2026-09-22T16:05:00Z",
+   "exit_time": "2026-09-22T16:40:00Z",
+   "entry_price": 21000.375,
+   "exit_price": 20499.875,
+   "stop": 20990,
+   "target": 21020,
+   "exit_reason": "stop",
+   "result": "loss",
+   "net": -1005.5,
+   "r": -50.275,
+   "unit": "USD",
+   "day": "2026-09-22",
+   "cme_trade_day": "2026-09-22",
+   "evidence_label": "FORWARD PAPER",
+   "replay": true,
+   "replay_note": ""
+  }
+ ],
+ "strategies": [
+  {
+   "strategy": "ema-pullback-5m",
+   "net": -10.5,
+   "trades": 2,
+   "wins": 1,
+   "losses": 1,
+   "flat": 0,
+   "win_rate": 50,
+   "missing_values": 0
+  },
+  {
+   "strategy": "orb-5m",
+   "net": -1005.5,
+   "trades": 1,
+   "wins": 0,
+   "losses": 1,
+   "flat": 0,
+   "win_rate": 0,
+   "missing_values": 0
+  }
+ ],
+ "journal": [],
+ "audit": {
+  "rows": 3,
+  "sum": -1016,
+  "duplicates_not_counted": 0,
+  "other_basis": {
+   "basis": "cme",
+   "rows": 3,
+   "sum": -1016
+  }
+ },
+ "read": [
+  {
+   "execution_type": "forward_paper",
+   "label": "Forward paper (CHE engine)",
+   "read": true,
+   "trades": 4
+  },
+  {
+   "execution_type": "forward_paper",
+   "label": "Forward paper (crypto)",
+   "read": true,
+   "trades": 0
+  }
+ ]
+}
