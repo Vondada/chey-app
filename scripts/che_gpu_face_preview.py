@@ -1,34 +1,169 @@
-import bpy, sys, os, json, time
-from pathlib import Path
-args=sys.argv[sys.argv.index('--')+1:]
-out=Path(args[args.index('--output')+1])
-scene=bpy.context.scene
-scene.render.engine='CYCLES'
-prefs=bpy.context.preferences.addons['cycles'].preferences
-selected=None
-for backend in ('OPTIX','CUDA'):
+"""CHE face preview on a GPU (Colab T4): one resumable job, GPU only, with an execution receipt.
+
+  python3 scripts/che_gpu_face_preview.py --blender BLENDER --project DIR --out DIR
+        [--views 0,45,90] [--device auto|OPTIX|CUDA] [--samples 64] [--res 480] [--settings settings.json]
+
+--project holds che.blend, fit.json (face_fit.py winner) and che_landmarks.npz. MPFB (env) points at the MakeHuman /
+MPFB2 data directory. The face itself is built by tools/avatar_face/mpfb_dress.py inside the official Blender binary
+(via tools/avatar_face/bl_run.py), the same script the CPU tests use, so CPU and GPU previews stay comparable.
+
+Rules:
+- GPU only. The device is probed first (OptiX, then CUDA); with no GPU the job stops with exit 3 and a receipt saying
+  so. Every render must print a DEVICE line naming the GPU or the view is marked failed; nothing falls back to the CPU.
+- Resumable. The job folder is named by a hash of the inputs and settings; a view whose PNG and receipt already exist
+  is not rendered again, so a disconnected Colab session continues where it stopped.
+- The pre-render geometry and colour checks in mpfb_dress.py still run; a failed check stops the job (exit 2).
+Exit codes: 0 done, 2 checks failed, 3 no GPU, 4 render failed.
+"""
+import argparse
+import datetime
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+FACE = os.path.join(ROOT, 'tools', 'avatar_face')
+
+# The current approved checkpoint of CHE's face (face test v6): the fitted MPFB2 head, her own skin, eyes, lashes,
+# brows, hair and the features the owner described in words. Override any key with --settings.
+DEFAULTS = {
+    'RACE': 'african=0.7,caucasian=0.3', 'MATURE': '0.1', 'TARGET_SRGB': '80,46,32', 'LASH_LEN': '0.55',
+    'BROW_N': '700', 'KEY_SIZE': '0.5', 'PORES': '0.22',
+    'FACE': 'lr:eyes/eye-eyefold-down=0.4,lr:eyes/eye-corner2-up=0.2,nose/nose-point-width-incr=0.3,'
+            'nose/nose-scale-horiz-decr=0.2,mouth/mouth-upperlip-volume-incr=0.3,mouth/mouth-lowerlip-volume-incr=0.5,'
+            'mouth/mouth-cupidsbow-incr=0.5,lr:cheek/cheek-volume-incr=0.3,chin/chin-width-decr=0.2',
+}
+VIEW_NAMES = {0: 'front', 45: 'three-quarter', 90: 'side'}
+
+
+def sha256(path):
+    h = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for chunk in iter(lambda: f.read(1 << 20), b''): h.update(chunk)
+    return h.hexdigest()
+
+
+def write_json(path, data):
+    tmp = path + '.tmp'
+    with open(tmp, 'w') as f: json.dump(data, f, indent=1)
+    os.replace(tmp, path)
+
+
+def now():
+    return datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+
+def run(cmd, env, log, timeout):
+    """Run a command, stream its output into the log, and return (exit code, [(seconds since start, line)])."""
+    lines, t0 = [], time.monotonic()
+    with open(log, 'a') as lf:
+        lf.write(f'\n$ {" ".join(cmd)}\n')
+        p = subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+        try:
+            for line in p.stdout:
+                lf.write(line); lines.append((time.monotonic() - t0, line.rstrip('\n')))
+            p.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            p.kill(); lf.write('TIMEOUT\n'); return 124, lines
+    return p.returncode, lines
+
+
+def probe_gpu(blender, project, device, env, log):
+    """Ask Cycles which GPUs it sees, using check_project.py (it also checks Blender 5.0 and CHE's scene)."""
+    for kind in (['OPTIX', 'CUDA'] if device == 'auto' else [device]):
+        code, lines = run([blender, '-b', '--factory-startup', '-P', os.path.join(FACE, 'bl_run.py'), '--',
+                           os.path.join(FACE, 'colab', 'check_project.py'), os.path.join(project, 'che.blend')],
+                          dict(env, REQUIRE_GPU=kind), log, 600)
+        checks = [l for _, l in lines if l.startswith(('CHECK', 'DEVICES'))]
+        names = next((l.split(' ', 2)[2] for l in checks if l.startswith(f'DEVICES {kind} ') and 'none' not in l), '')
+        if code == 0:
+            return kind, names, checks
+    return None, '', checks
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--blender', required=True); ap.add_argument('--project', required=True); ap.add_argument('--out', required=True)
+    ap.add_argument('--views', default='0,45,90'); ap.add_argument('--device', default='auto', choices=['auto', 'OPTIX', 'CUDA'])
+    ap.add_argument('--samples', type=int, default=64); ap.add_argument('--res', type=int, default=480)
+    ap.add_argument('--settings'); ap.add_argument('--timeout', type=int, default=1800)
+    a = ap.parse_args()
+
+    settings = dict(DEFAULTS, **(json.load(open(a.settings)) if a.settings else {}))
+    inputs = {n: sha256(os.path.join(a.project, n)) for n in ('che.blend', 'fit.json')}
+    tools_rev = subprocess.run(['git', '-C', ROOT, 'rev-parse', '--short', 'HEAD'], capture_output=True, text=True).stdout.strip() or 'unknown'
+    key = json.dumps({'inputs': inputs, 'settings': settings, 'samples': a.samples, 'res': a.res, 'tools': tools_rev}, sort_keys=True)
+    job_id = time.strftime('%Y%m%d') + '-' + hashlib.sha256(key.encode()).hexdigest()[:10]
+    job = os.path.join(a.out, job_id); os.makedirs(job, exist_ok=True)
+    log, receipt_path = os.path.join(job, 'log.txt'), os.path.join(job, 'receipt.json')
+    receipt = json.load(open(receipt_path)) if os.path.exists(receipt_path) else {
+        'job_id': job_id, 'created_at': now(), 'tools_commit': tools_rev, 'inputs_sha256': inputs, 'settings': settings,
+        'samples': a.samples, 'long_edge_px': a.res, 'views': {}}
+    receipt['resumed_at'] = now() if receipt.get('views') else None
     try:
-        prefs.compute_device_type=backend
-        prefs.get_devices()
-        gpus=[d for d in prefs.devices if d.type in ('OPTIX','CUDA')]
-        if gpus:
-            for d in prefs.devices: d.use=(d in gpus)
-            selected={'backend':backend,'gpus':[d.name for d in gpus]}
-            break
-    except Exception: pass
-if not selected: raise RuntimeError('GPU unavailable; refusing CPU fallback')
-scene.cycles.device='GPU'
-scene.render.resolution_x=480
-scene.render.resolution_y=480
-scene.render.resolution_percentage=100
-scene.cycles.samples=24
-scene.cycles.use_denoising=True
-scene.render.image_settings.file_format='PNG'
-out.parent.mkdir(parents=True,exist_ok=True)
-scene.render.filepath=str(out)
-start=time.monotonic()
-bpy.ops.render.render(write_still=True)
-if not out.is_file() or out.stat().st_size==0: raise RuntimeError('Missing preview')
-receipt={'status':'render_completed','configured_gpu':selected,'elapsed_seconds':round(time.monotonic()-start,2),'output':str(out)}
-Path(str(out)+'.json').write_text(json.dumps(receipt,indent=2))
-print('CHE_GPU_RECEIPT',json.dumps(receipt))
+        smi = subprocess.run(['nvidia-smi', '--query-gpu=name,driver_version,memory.total', '--format=csv,noheader'],
+                             capture_output=True, text=True)
+        receipt['nvidia_smi'] = smi.stdout.strip() or f'unavailable: {smi.stderr.strip()[:200]}'
+    except OSError as e:
+        receipt['nvidia_smi'] = f'unavailable: {e}'
+    receipt['blender_version'] = subprocess.run([a.blender, '--version'], capture_output=True, text=True).stdout.splitlines()[0]
+    env = dict(os.environ, CHE=os.path.join(a.project, 'che.blend'), FIT=os.path.join(a.project, 'fit.json'),
+               SAMPLES=str(a.samples), TEST_RES=str(a.res), **settings)
+    env.pop('NOHAIR', None); env.pop('FORCE', None)   # previews always carry the full face and every check
+
+    kind, names, checks = probe_gpu(a.blender, a.project, a.device, env, log)
+    receipt['project_checks'] = checks
+    if not kind:
+        receipt.update(status='gpu_unavailable', finished_at=now()); write_json(receipt_path, receipt)
+        print('NO GPU: Cycles found no OptiX or CUDA device; nothing rendered (no CPU fallback).', flush=True)
+        return 3
+    receipt.update(device=kind, cycles_gpus=names)
+    print(f'GPU {kind}: {names}', flush=True)
+
+    views = [int(v) for v in a.views.split(',')]
+    todo = [v for v in views if not (os.path.exists(os.path.join(job, f'view_{v:02d}.png'))
+                                     and receipt['views'].get(str(v), {}).get('status') == 'ok')]
+    for v in views:
+        if v not in todo: print(f'SKIP view {v} ({VIEW_NAMES.get(v, v)}): already rendered in this job', flush=True)
+    if todo:
+        tmp = os.path.join(job, 'tmp'); os.makedirs(tmp, exist_ok=True)
+        code, lines = run([a.blender, '-b', '--factory-startup', '-P', os.path.join(FACE, 'bl_run.py'), '--',
+                           os.path.join(FACE, 'mpfb_dress.py')],
+                          dict(env, OUT_DIR=tmp, VIEWS=','.join(map(str, todo)), CYCLES_DEVICE=kind), log, a.timeout)
+        dev = next((l for _, l in lines if l.startswith('DEVICE ')), '')
+        receipt['render_device_line'] = dev
+        receipt['checks'] = [l for _, l in lines if l.startswith('CHECK')]
+        if any(l.startswith('CHECKS FAILED') for _, l in lines):
+            receipt.update(status='checks_failed', finished_at=now()); write_json(receipt_path, receipt)
+            print('CHECKS FAILED: nothing rendered; see receipt.json', flush=True); return 2
+        if not re.match(rf'DEVICE {kind} \[.+\]', dev) or 'CPU' in dev.split(']')[0]:
+            receipt.update(status='not_gpu', finished_at=now()); write_json(receipt_path, receipt)
+            print(f'REFUSED: render did not report a {kind} GPU ({dev!r})', flush=True); return 4
+        t_dev = next(t for t, l in lines if l.startswith('DEVICE '))
+        last = t_dev
+        for t, l in lines:
+            m = re.match(r'WROTE (.*dress_(\d+)\.png)$', l)
+            if not m: continue
+            v = int(m.group(2)); dst = os.path.join(job, f'view_{v:02d}.png')
+            shutil.move(m.group(1), dst)
+            secs, last = round(t - last, 1), t
+            receipt['views'][str(v)] = {'status': 'ok', 'name': VIEW_NAMES.get(v, f'{v} deg'), 'file': os.path.basename(dst),
+                                       'sha256': sha256(dst), 'render_seconds': secs, 'device': dev, 'rendered_at': now()}
+            write_json(receipt_path, receipt)   # after every view, so an interruption keeps finished views
+            print(f'VIEW {v} ({VIEW_NAMES.get(v, v)}) {secs:.0f}s -> {dst}', flush=True)
+        receipt['process_seconds'] = round(lines[-1][0], 1) if lines else None
+        if code != 0 or any(str(v) not in receipt['views'] for v in todo):
+            receipt.update(status='render_failed', exit_code=code, finished_at=now()); write_json(receipt_path, receipt)
+            print(f'RENDER FAILED (exit {code}); finished views are kept, rerun to resume', flush=True); return 4
+    receipt.update(status='complete', finished_at=now()); write_json(receipt_path, receipt)
+    print('RECEIPT', receipt_path, flush=True)
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
