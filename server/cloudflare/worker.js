@@ -4601,7 +4601,8 @@ export class CheState extends DurableObject {
   // The record as durable storage holds it now, or null. Only a read-back earns a memory_saved receipt.
   async readBackMemory(record) {
     if (!record?.id) return null;
-    const persisted = await this.ctx.storage.get('che').catch(() => null);
+    let persisted = null;
+    try { persisted = await this.ctx.storage.get('che'); } catch (_) { return null; }
     return persisted?.memory_records?.find((r) => r.id === record.id && r.text === record.text && r.active !== false) || null;
   }
 
