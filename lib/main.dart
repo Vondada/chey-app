@@ -92,7 +92,7 @@ import 'che_world_hub.dart';
 import 'che_immersive_hub_shell.dart';
 import 'devices_hub_scene.dart';
 import 'music_studio_scene.dart';
-import 'create_gallery_scene.dart';
+import 'create/che_creative_studio.dart';
 import 'agents/che_agent_runtime.dart';
 import 'agents/che_office_floor_screen.dart';
 import 'home/che_activity_feed.dart';
@@ -156,7 +156,6 @@ import 'rooms/che_pipeline_room.dart';
 import 'rooms/che_creator_studio.dart';
 import 'rooms/che_series_studio.dart';
 import 'rooms/che_art_studio.dart';
-import 'rooms/che_room_segments.dart';
 import 'rooms/che_theater_room.dart';
 import 'rooms/che_workshop_room.dart';
 import 'security/che_app_permissions.dart';
@@ -574,6 +573,8 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
     baseUrl: () => cheAgentBaseUrl,
     headers: () => _authHeaders,
   );
+  // The Creative Studio on the Create tab, so a voice route can scroll it to a studio or open Create New.
+  final _creativeStudioKey = GlobalKey<CheCreativeStudioState>();
   late final CheAgentRuntimeController _officeRuntime =
       CheAgentRuntimeController(_agentRuntime)..addListener(_onOfficeChanged);
   bool _officeRuntimeStarted = false;

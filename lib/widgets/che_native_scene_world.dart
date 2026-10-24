@@ -119,6 +119,18 @@ class CheSceneEntity {
   final Map<String, dynamic> appearance;
 }
 
+/// The finished crew character for an agent entity ("agent:nova", "che" or a label naming a crew member), from
+/// assets/characters/crew/. Anything else (projects, work items) has no character and is drawn as a work marker.
+const cheCrewModelIds = {'che', 'nova', 'atlas', 'mira', 'knox', 'sage', 'lyra', 'iris'};
+
+String? cheCrewModelAsset(CheSceneEntity entity) {
+  final id = entity.id.toLowerCase();
+  final key = id.startsWith('agent:') ? id.substring(6) : (id == 'che' ? 'che' : entity.label.trim().toLowerCase());
+  final isAgent = id.startsWith('agent:') || id == 'che';
+  if (!isAgent || !cheCrewModelIds.contains(key)) return null;
+  return 'assets/characters/crew/$key.glb';
+}
+
 class CheSceneLink {
   const CheSceneLink(this.from, this.to);
 
@@ -617,7 +629,7 @@ class _CheNativeSceneWorldState extends State<CheNativeSceneWorld> {
     );
 
     var loadedModel = false;
-    final asset = entity.modelAsset?.trim();
+    final asset = (entity.modelAsset?.trim().isNotEmpty ?? false) ? entity.modelAsset!.trim() : cheCrewModelAsset(entity);
     if (asset != null && asset.isNotEmpty) {
       try {
         final model = await Node.fromGlbAsset(asset);
@@ -633,7 +645,7 @@ class _CheNativeSceneWorldState extends State<CheNativeSceneWorld> {
       if (widget.mode == CheSceneMode.brain) {
         _addBrainNode(root, entity);
       } else {
-        _addProceduralPerson(root, entity);
+        _addWorkMarker(root, entity);
       }
     }
 
@@ -652,199 +664,51 @@ class _CheNativeSceneWorldState extends State<CheNativeSceneWorld> {
     return root;
   }
 
-  void _addProceduralPerson(Node root, CheSceneEntity entity) {
+  /// A work item, project or agent without a real character model is shown as what it is: a lit pedestal with a
+  /// glass tile in its colour, and a status light when it is working or speaking. The generic capsule-and-sphere
+  /// "mannequin" people that used to stand in every room were removed (owner, 2026-10-24: no placeholder figures).
+  void _addWorkMarker(Node root, CheSceneEntity entity) {
     final realistic = widget.quality == CheSceneQuality.realistic;
     final segments = realistic
         ? 32
         : widget.quality == CheSceneQuality.balanced
             ? 20
             : 12;
-    final look = entity.appearance;
-    final bodyColor = _outfitColor(look, entity.color);
-    final skin = _skinToneColor(look);
-    final dark = const Color(0xFF14191B);
-
-    switch ('${look['body_type'] ?? 'standard'}') {
-      case 'compact':
-        root.scale = vm.Vector3(.92, .92, .92);
-        break;
-      case 'tall':
-        root.scale = vm.Vector3(.96, 1.08, .96);
-        break;
-    }
-
     root.add(
       Node(
         mesh: Mesh(
-          CapsuleGeometry(
-            radius: .28,
-            height: .78,
+          CylinderGeometry(
+            bottomRadius: .34,
+            topRadius: .30,
+            height: .12,
             radialSegments: segments,
           ),
-          _pbr(
-            bodyColor,
-            roughness: realistic ? .34 : .56,
-            metallic: realistic ? .12 : .03,
-          ),
+          _pbr(const Color(0xFFB9C2C8), roughness: realistic ? .22 : .4, metallic: realistic ? .78 : .3),
         ),
-        localTransform: vm.Matrix4.translation(vm.Vector3(0, .86, 0)),
+        localTransform: vm.Matrix4.translation(vm.Vector3(0, .06, 0)),
       ),
     );
     root.add(
       Node(
         mesh: Mesh(
-          SphereGeometry(
-            radius: .25,
-            segments: segments,
-            rings: math.max(8, segments ~/ 2),
-          ),
-          _pbr(skin, roughness: realistic ? .48 : .68),
+          CuboidGeometry(vm.Vector3(.52, .70, .06)),
+          _pbr(entity.color, roughness: realistic ? .18 : .36, metallic: realistic ? .25 : .08),
         ),
-        localTransform: vm.Matrix4.translation(vm.Vector3(0, 1.64, 0)),
+        localTransform: vm.Matrix4.translation(vm.Vector3(0, .62, 0)),
       ),
     );
-    _addCharacterDetails(root, look, segments, realistic);
-
-    for (final side in const [-1.0, 1.0]) {
-      root.add(
-        Node(
-          mesh: Mesh(
-            CapsuleGeometry(
-              radius: .095,
-              height: .58,
-              radialSegments: math.max(8, segments ~/ 2),
-            ),
-            _pbr(bodyColor, roughness: .52),
-          ),
-          localTransform:
-              vm.Matrix4.translation(vm.Vector3(side * .39, .90, 0)),
-        ),
-      );
-      root.add(
-        Node(
-          mesh: Mesh(
-            CapsuleGeometry(
-              radius: .11,
-              height: .66,
-              radialSegments: math.max(8, segments ~/ 2),
-            ),
-            _pbr(dark, roughness: .62),
-          ),
-          localTransform:
-              vm.Matrix4.translation(vm.Vector3(side * .16, .18, 0)),
-        ),
-      );
-    }
-
-    if (entity.speaking ||
-        entity.state == 'working' ||
-        entity.state == 'thinking') {
+    if (entity.speaking || entity.state == 'working' || entity.state == 'thinking') {
       root.add(
         Node(
           mesh: Mesh(
             SphereGeometry(
-              radius: entity.speaking ? .14 : .10,
+              radius: entity.speaking ? .09 : .07,
               segments: segments,
               rings: math.max(8, segments ~/ 2),
             ),
-            UnlitMaterial()
-              ..baseColorFactor = _colorVector(
-                entity.speaking
-                    ? CheColors.markets
-                    : entity.color,
-              ),
+            UnlitMaterial()..baseColorFactor = _colorVector(entity.speaking ? CheColors.markets : entity.color),
           ),
-          localTransform: vm.Matrix4.translation(vm.Vector3(0, 1.03, .30)),
-        ),
-      );
-    }
-  }
-
-  Color _skinToneColor(Map<String, dynamic> look) {
-    return switch ('${look['skin_tone'] ?? ''}'.toLowerCase()) {
-      'deep' => const Color(0xFF4A2418),
-      'brown' => const Color(0xFF74432D),
-      'warm' => const Color(0xFF9A6245),
-      'tan' => const Color(0xFFB9825E),
-      'golden' => const Color(0xFFC99666),
-      'light' => const Color(0xFFE0B395),
-      _ => const Color(0xFFB77A5D),
-    };
-  }
-
-  Color _outfitColor(Map<String, dynamic> look, Color fallback) {
-    return switch ('${look['outfit'] ?? ''}'.toLowerCase()) {
-      'suit' => const Color(0xFF202B34),
-      'jacket-red' => const Color(0xFF9E2F3B),
-      'jacket-teal' => const Color(0xFF177C76),
-      'hoodie' => const Color(0xFF3A4148),
-      'studio' => const Color(0xFF7D285A),
-      'tech' => const Color(0xFF243D58),
-      'che' => const Color(0xFF1F8F84),
-      _ => fallback,
-    };
-  }
-
-  void _addCharacterDetails(
-    Node root,
-    Map<String, dynamic> look,
-    int segments,
-    bool realistic,
-  ) {
-    final hair = '${look['hair'] ?? ''}'.toLowerCase();
-    if (hair.isNotEmpty && hair != 'bald' && hair != 'close') {
-      final scale = hair == 'bun' ? vm.Vector3(.23, .23, .23) : vm.Vector3(.29, .18, .29);
-      final hairNode = Node(
-        mesh: Mesh(
-          SphereGeometry(
-            radius: 1,
-            segments: math.max(10, segments ~/ 2),
-            rings: math.max(8, segments ~/ 3),
-          ),
-          _pbr(const Color(0xFF171311), roughness: realistic ? .46 : .68),
-        ),
-        localTransform: vm.Matrix4.compose(
-          vm.Vector3(0, hair == 'bun' ? 1.94 : 1.83, -.03),
-          vm.Quaternion.identity(),
-          scale,
-        ),
-      );
-      root.add(hairNode);
-    }
-
-    final accessory = '${look['accessory'] ?? ''}'.toLowerCase();
-    if (accessory == 'chain') {
-      root.add(
-        Node(
-          mesh: Mesh(
-            TorusGeometry(
-              radius: .20,
-              tubeRadius: .025,
-              radialSegments: math.max(12, segments),
-              tubularSegments: 6,
-            ),
-            _pbr(
-              const Color(0xFFD8A72D),
-              roughness: .22,
-              metallic: .82,
-            ),
-          ),
-          localTransform: vm.Matrix4.translation(vm.Vector3(0, 1.26, .20)),
-        ),
-      );
-    } else if (accessory == 'hat') {
-      root.add(
-        Node(
-          mesh: Mesh(
-            CylinderGeometry(
-              bottomRadius: .34,
-              topRadius: .30,
-              height: .14,
-              radialSegments: math.max(12, segments),
-            ),
-            _pbr(const Color(0xFF171A1D), roughness: .48),
-          ),
-          localTransform: vm.Matrix4.translation(vm.Vector3(0, 1.91, 0)),
+          localTransform: vm.Matrix4.translation(vm.Vector3(0, 1.10, 0)),
         ),
       );
     }
