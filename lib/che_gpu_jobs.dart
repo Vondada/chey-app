@@ -157,10 +157,10 @@ class CheGpuJobsCardState extends State<CheGpuJobsCard> {
           spacing: 8,
           runSpacing: 8,
           children: [
-            _button('Read aloud', 'Read the GPU jobs aloud', Icons.volume_up_outlined,
+            _button('Read aloud', 'Read the GPU jobs aloud', Icons.refresh,
                 widget.onRead == null || _view['spoken'] == null ? null : () => widget.onRead!('${_view['spoken']}')),
             _button('Refresh', 'Refresh the GPU jobs', Icons.refresh, () => unawaited(load())),
-            _button(paired ? 'Pair Colab again' : 'Pair Colab', 'Make the Colab worker token', Icons.link, () => unawaited(pairColab())),
+            _button(paired ? 'Pair Colab again' : 'Pair Colab', 'Make the Colab worker token', Icons.refresh, () => unawaited(pairColab())),
           ],
         ),
         const SizedBox(height: 8),
@@ -225,7 +225,7 @@ class CheGpuJobsCardState extends State<CheGpuJobsCard> {
                 _button('Cancel', 'Cancel ${j['title'] ?? 'this GPU job'}', Icons.close,
                     () => unawaited(_post('/api/gpu/jobs/cancel', {'id': j['id']}, 'Cancelled. Finished views stay in Drive.'))),
               if (['failed', 'cancelled'].contains(state))
-                _button('Retry', 'Retry ${j['title'] ?? 'this GPU job'}', Icons.replay,
+                _button('Retry', 'Retry ${j['title'] ?? 'this GPU job'}', Icons.refresh,
                     () => unawaited(_post('/api/gpu/jobs/retry', {'id': j['id']}, 'Queued again. It renders in your next Colab session.'))),
             ]),
           ],
