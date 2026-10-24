@@ -6,7 +6,8 @@ import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
 import { decodePng } from './internal_renderer.js';
 import { planInvention } from './invention_studio.js';
-import { MAX_VISUAL_VERSIONS, buildGlb, conceptSheet, inventionVisualIntent, makeModel, paletteFor, partsFor, readGlb, visualTurn } from './invention_visuals.js';
+import { MAX_VISUAL_VERSIONS, buildGlb, conceptSheet, inventionVisualIntent, inventionVisualRoute, makeModel, paletteFor, partsFor, readGlb, refinedOf, visualTurn } from './invention_visuals.js';
+import { GpuQueue } from './gpu_queue.js';
 
 function memStorage() {
   const m = new Map();
@@ -61,8 +62,20 @@ test('visual turns save versions on the project and say exactly what was built',
   assert.equal(project.concept.media_id, shown.image.media_id);
   const opened = await visualTurn(env, storage, project, { kind: 'model' });
   assert.equal(opened.open3d, true); assert.equal(opened.model.v, 1);
-  assert.match(opened.spoken, /Built a procedural 3D concept model .* with 30 parts and saved it as version 1/);
+  assert.match(opened.spoken, /Built an instant box-parts placeholder model .* with 30 parts and saved it as version 1/);
   assert.match(opened.model.sha256, /^[0-9a-f]{64}$/);
+  // The same parts go to the Creation Engine as an invention_model job: the refined Blender model, said as queued.
+  assert.equal(opened.refined.ok, true); assert.match(opened.spoken, /refined Blender model is queued .* instant placeholder/);
+  const job = (await new GpuQueue(storage).jobs()).find((j) => j.id === opened.refined.job_id);
+  assert.equal(job.kind, 'invention_model'); assert.equal(job.requires.gpu, 'none'); assert.equal(job.state, 'queued');
+  const spec = JSON.parse(job.settings.SPEC);
+  assert.equal(spec.parts.length, 30); assert.equal(spec.template, project.template);
+  assert.deepEqual(spec.parts.map((p) => p.name), partsFor(project.template).map((p) => p.name));
+  assert.match((await refinedOf(storage, project)).display_state, /^Waiting/);
+  await storage.put('invention_projects', [project]);
+  const noModel = await inventionVisualRoute({ env, storage }, `/api/inventions/${project.id}/model.glb`,
+    new Request(`https://che.example/api/inventions/${project.id}/model.glb?refined=1`));
+  assert.equal(noModel.status, 404); assert.match((await noModel.json()).detail, /not built yet/);
   const again = await visualTurn(env, storage, project, { kind: 'viewport', viewport: { action: 'rotate', deg: 45 } });
   assert.match(again.spoken, /^Opening 3D model version 1/); assert.deepEqual(again.viewport, { action: 'rotate', deg: 45 });
   const blue = await visualTurn(env, storage, project, { kind: 'colour', colour: 'blue' });

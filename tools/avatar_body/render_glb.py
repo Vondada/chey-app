@@ -2,15 +2,20 @@
 
   python3 render_glb.py MODEL.glb     env: OUT_DIR, VIEWS ("0,45,90,180"), STRIPS ("walk:4,wave:4"), POSE_CLIP (idle),
                                       POSE_FRAME (0), LIGHTING (studio | cinematic), SAMPLES, TEST_RES, CYCLES_DEVICE,
-                                      CPU_THREADS, CAM_DIST, SIZE ("400x600")
+                                      CPU_THREADS, CAM_DIST, SIZE ("400x600"), RENDER_PROFILE (legacy | final |
+                                      preview) and its settings (render_profiles.py)
 
 Imports the GLB with Blender's glTF importer (skin, skeleton, clips, morph targets), poses it in one clip by NLA solo
 and renders in Cycles on the device render_device.py reports (DEVICE line). Each view prints WROTE <OUT_DIR>/body_<deg>.png;
 STRIPS renders N evenly spaced frames of a clip and joins them side by side: WROTE <OUT_DIR>/strip_<clip>.png.
+RENDER_PROFILE preview writes quick looks instead: PREVIEW_WROTE <OUT_DIR>/preview_<deg>.png (never a WROTE line, so a
+quick look is never taken for a finished view). Every view also prints RENDERED <deg> <seconds>. All views of a run
+render in one Blender session (the GLB is imported once; the final profile keeps the scene data between views).
 """
 import math
 import os
 import sys
+import time
 
 import bpy
 import numpy as np
@@ -20,6 +25,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE); sys.path.insert(0, os.path.join(HERE, '..', 'avatar_face'))
 from mpfb_body import FPS, stage  # noqa: E402
 from render_device import setup as render_setup  # noqa: E402
+import render_profiles  # noqa: E402
 
 
 def load(path):
@@ -64,26 +70,36 @@ def render(path):
     cam, tgt = stage(sc, arm, lighting)
     w, h = (int(x) for x in os.environ.get('SIZE', '400x600').split('x'))
     render_setup(sc, (w, h))
-    sc.cycles.samples = int(os.environ.get('SAMPLES', '32')); sc.cycles.use_denoising = True
+    profile = render_profiles.profile_name()
+    gpu = os.environ.get('CYCLES_DEVICE', 'CPU').upper() != 'CPU'
+    render_profiles.apply(sc, profile, int(os.environ.get('SAMPLES', '32')), gpu)
+    if profile == 'final': render_profiles.upgrade_materials(sc.objects)
     if os.environ.get('CPU_THREADS'):
         sc.render.threads_mode = 'FIXED'; sc.render.threads = int(os.environ['CPU_THREADS'])
     sc.view_settings.view_transform = 'AgX'
     out = os.environ.get('OUT_DIR', '.'); os.makedirs(out, exist_ok=True)
     dist = float(os.environ.get('CAM_DIST', '3.1'))
-    tgt.location = (0, 0, 0.9)
+    tgt.location = (0, 0, float(os.environ.get('TARGET_Z', '0.9')))   # TARGET_Z 1.62, CAM_Z 1.62, CAM_DIST 0.7: a face close-up
+    cam_z = float(os.environ.get('CAM_Z', '1.0'))
 
     def shoot(deg, filepath):
         a = math.radians(deg)
-        cam.location = Vector((math.sin(a) * dist, -math.cos(a) * dist, 1.0))
+        cam.location = Vector((math.sin(a) * dist, -math.cos(a) * dist, cam_z))
         sc.render.filepath = filepath
+        t0 = time.monotonic()
         bpy.ops.render.render(write_still=True)
+        print('RENDERED', deg, f'{time.monotonic() - t0:.2f}', flush=True)
 
     views = [int(d) for d in os.environ.get('VIEWS', '0').split(',') if d.strip()]
     if views:
         pose(sc, arm, os.environ.get('POSE_CLIP', 'idle'), int(os.environ.get('POSE_FRAME', '0')))
         for deg in views:
-            p = os.path.join(out, f'body_{deg:02d}.png'); shoot(deg, p)
-            print('WROTE', p, flush=True)
+            if profile == 'preview':
+                p = os.path.join(out, f'preview_{deg:02d}.png'); shoot(deg, p)
+                print('PREVIEW_WROTE', p, flush=True)
+            else:
+                p = os.path.join(out, f'body_{deg:02d}.png'); shoot(deg, p)
+                print('WROTE', p, flush=True)
     for item in [x for x in os.environ.get('STRIPS', '').split(',') if x.strip()]:
         name, n = (item.split(':') + ['4'])[:2]; n = int(n)
         total = clip_frames(sc, arm, name)

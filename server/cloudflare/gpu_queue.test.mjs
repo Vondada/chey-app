@@ -224,8 +224,8 @@ test('spoken GPU questions reach the catalog command; other cloud phrases keep t
 
 test('object_model and room_model are queue kinds any worker may take (requires.gpu none), on the same queue and routes', async () => {
   const { JOB_KINDS, MODEL_KINDS, compatible, needOf } = await import('./gpu_queue.js');
-  assert.deepEqual(JOB_KINDS, ['face_preview', 'person_model', 'object_model', 'room_model']);
-  assert.deepEqual(MODEL_KINDS, ['person_model', 'object_model', 'room_model']);
+  assert.deepEqual(JOB_KINDS, ['face_preview', 'person_model', 'object_model', 'room_model', 'invention_model']);
+  assert.deepEqual(MODEL_KINDS, ['person_model', 'object_model', 'room_model', 'invention_model']);
   for (const kind of ['object_model', 'room_model']) {
     assert.equal(needOf({ kind }), 'none');
     assert.equal(compatible({ kind }, false, true), true, 'a CPU worker takes it even while a GPU is online');

@@ -48,9 +48,13 @@ export const MAX_MODEL_BYTES = 16 * 1024 * 1024;
 // (a GLB the worker exports from the same Blender build, uploaded the moment it exists, before the renders finish).
 // object_model and room_model (Create Object, Create Room; creation_objects.js): a procedural GLB any worker may build,
 // CPU included (requires.gpu none), complete only with the model uploaded and its measurement (receipt.model.verify).
-export const JOB_KINDS = ['face_preview', 'person_model', 'object_model', 'room_model'];
-export const MODEL_KINDS = ['person_model', 'object_model', 'room_model'];
-const DEFAULT_NEED = { person_model: 'preferred', object_model: 'none', room_model: 'none' };
+// invention_model (invention_visuals.js): an invention's refined Blender model from the same named parts as the
+// Worker's instant box-parts placeholder; built, measured and rendered like an object (scripts/che_creation_job.py).
+export const JOB_KINDS = ['face_preview', 'person_model', 'object_model', 'room_model', 'invention_model'];
+export const MODEL_KINDS = ['person_model', 'object_model', 'room_model', 'invention_model'];
+// The kinds built by scripts/che_creation_job.py: a measured procedural GLB (receipt.model.verify) and previews.
+export const THING_KINDS = ['object_model', 'room_model', 'invention_model'];
+const DEFAULT_NEED = { person_model: 'preferred', object_model: 'none', room_model: 'none', invention_model: 'none' };
 /** What compute a job needs: its own requires.gpu, else its kind's default (face previews need a GPU). */
 export const needOf = (j) => j?.requires?.gpu || DEFAULT_NEED[j?.kind] || 'required';
 export const VIEW_NAMES = { 0: 'front', 45: 'three-quarter', 90: 'side' };
@@ -97,7 +101,7 @@ function cleanSettings(s) {
   const out = {};
   if (!s || typeof s !== 'object') return out;
   for (const [k, v] of Object.entries(s)) {
-    if (/^[A-Z][A-Z0-9_]{0,31}$/.test(k) && ['string', 'number'].includes(typeof v) && String(v).length <= (k === 'FACE' ? 1200 : 400)) out[k] = String(v);
+    if (/^[A-Z][A-Z0-9_]{0,31}$/.test(k) && ['string', 'number'].includes(typeof v) && String(v).length <= (k === 'FACE' ? 1200 : k === 'SPEC' ? 12000 : 400)) out[k] = String(v);
   }
   return out;
 }
@@ -115,6 +119,11 @@ export function isGlb(bytes) {
 }
 
 const modelKey = (id) => `gpu/models/${id}.glb`;
+// Files a job exports beside its GLB (tools/avatar_body/roblox_export.py): the Roblox R15 character and its walk clip.
+export const EXPORT_FORMATS = { fbx_r15: 'Roblox R15 character (FBX)', fbx_r15_walk: 'Roblox R15 walk animation (FBX)' };
+const exportKey = (id, format) => `gpu/exports/${id}/${format}.fbx`;
+const FBX_MAGIC = 'Kaydara FBX Binary';
+export function isFbx(bytes) { return bytes?.length > 27 && new TextDecoder().decode(bytes.subarray(0, FBX_MAGIC.length)) === FBX_MAGIC; }
 
 function note(job, now, state, text) {
   job.state = state; job.updated_at = iso(now);
@@ -356,8 +365,10 @@ export class GpuQueue {
     return { ok: true };
   }
 
-  /** Worker: one view's picture, stored in CHE's media library (Creation Room) with its GPU provenance. */
-  async preview(env, workerId, id, view, bytes) {
+  /** Worker: one view's picture, stored in CHE's media library (Creation Room) with its GPU provenance. A quick look
+   * (quick: the fast preview rendered before the final view) is kept apart in quick_previews: it is shown while the
+   * final view renders and never counts as that view. */
+  async preview(env, workerId, id, view, bytes, { quick = false } = {}) {
     const { jobs, j } = await this.held(workerId, id);
     if (!j) return { ok: false, detail: 'This worker does not hold that job.' };
     if (!j.views.includes(view)) return { ok: false, detail: 'That view is not part of this job.' };
@@ -366,6 +377,19 @@ export class GpuQueue {
     const name = VIEW_NAMES[view] || `${view} degrees`;
     // Labelled by the compute that holds the job: CPU output is never called GPU.
     const cpu = j.lease?.class === 'github_cpu';
+    if (quick) {
+      const on = cpu ? 'GitHub cloud CPU' : 'Colab GPU';
+      const item = await saveRenderedImage(env, this.storage, {
+        bytes, title: `${j.title.replace(/:.*$/, '')}: ${name} quick look (${on})`, prompt: `Quick look ${j.id}, view ${view}`,
+        provenance: `Quick low-sample preview rendered with Blender on the ${on} while the final view renders, job ${j.id}`,
+        engine: cpu ? 'blender-preview-cpu' : 'blender-preview-gpu', source: cpu ? 'github_cpu' : 'colab_gpu', mode: 'quick_preview',
+      });
+      j.quick_previews = { ...(j.quick_previews || {}), [view]: item.id };
+      note(j, this.now(), j.state, `Quick look ${name} arrived; the final render continues.`);
+      j.lease.expires_ms = this.now() + LEASE_MS;
+      await this.save(jobs);
+      return { ok: true, media_id: item.id, quick: true };
+    }
     const item = await saveRenderedImage(env, this.storage, cpu ? {
       bytes, title: `${j.title.replace(/:.*$/, '')}: ${name} (GitHub cloud CPU)`, prompt: `CPU preview ${j.id}, view ${view}`,
       provenance: `Rendered with Blender Cycles on a GitHub-hosted CPU runner (che-creation-worker.yml), job ${j.id}`, engine: 'blender-cycles-cpu', source: 'github_cpu', mode: 'cpu_render',
@@ -395,6 +419,33 @@ export class GpuQueue {
     note(j, t, j.state, `Geometry ready: the 3D model arrived (${kb} KB). Renders continue.`);
     await this.save(jobs);
     return { ok: true, bytes: bytes.length, sha256: j.model.sha256 };
+  }
+
+  /** Worker: an exported file (EXPORT_FORMATS: a binary FBX, at most 16 MB) for the job it holds, stored beside the GLB. */
+  async exportFile(env, workerId, id, format, bytes) {
+    const { jobs, j } = await this.held(workerId, id);
+    if (!j) return { ok: false, detail: 'This worker does not hold that job.' };
+    if (!EXPORT_FORMATS[format]) return { ok: false, detail: `Unknown export format; known: ${Object.keys(EXPORT_FORMATS).join(', ')}.` };
+    if (!bytes?.length || bytes.length > MAX_MODEL_BYTES) return { ok: false, detail: 'The file is empty or larger than 16 MB.' };
+    if (!isFbx(bytes)) return { ok: false, detail: 'Only binary FBX files are accepted.' };
+    const key = exportKey(j.id, format);
+    const saved = await mediaStore(env, this.storage).put(key, bytes, { contentType: 'application/octet-stream' });
+    if (!saved.ok) return { ok: false, detail: saved.error || 'The file could not be stored.' };
+    const t = this.now();
+    j.exports = { ...(j.exports || {}), [format]: { key, bytes: bytes.length, sha256: await sha256Hex(bytes), uploaded_at: iso(t) } };
+    j.lease.expires_ms = t + LEASE_MS;
+    note(j, t, j.state, `${EXPORT_FORMATS[format]} saved (${Math.round(bytes.length / 1024)} KB).`);
+    await this.save(jobs);
+    return { ok: true, bytes: bytes.length, sha256: j.exports[format].sha256 };
+  }
+
+  /** Owner: an exported file's bytes, or null. */
+  async exportBytes(env, id, format) {
+    const j = (await this.jobs()).find((x) => x.id === id);
+    const e = j?.exports?.[format];
+    if (!e?.key) return null;
+    const got = await mediaStore(env, this.storage).get(e.key);
+    return got?.body?.length ? got.body : null;
   }
 
   /** Worker: the GLB it uploaded earlier for the job it now holds (a resume), or null. */
@@ -435,7 +486,7 @@ export class GpuQueue {
       // An object or room is complete only once the runner re-read the GLB and measured it (verify_glb.py --static):
       // meshes, triangles, materials and a bounding box matching the size asked for, of this very file.
       const v = j.receipt?.model?.verify;
-      const measureBad = (j.kind === 'object_model' || j.kind === 'room_model') && !modelBad && !(v?.ok === true && v.sha256 === j.model.sha256);
+      const measureBad = THING_KINDS.includes(j.kind) && !modelBad && !(v?.ok === true && v.sha256 === j.model.sha256);
       // A full-body person model also needs its skeleton verified: the runner re-imported the GLB and measured its
       // bones, weights, clips and morphs (verify_glb.py). A model that only claims to move is not accepted.
       const rigBad = j.kind === 'person_model' && wantsRig(j) && !modelBad && j.receipt?.model?.rig?.ok !== true;
@@ -451,7 +502,7 @@ export class GpuQueue {
         if (rig?.ok) {
           j.history = [...(j.history || []), { at: iso(t), state: j.state, note: `Skeleton verified: ${rigLine(rig)}.` }].slice(-20);
         }
-        if (v?.ok && (j.kind === 'object_model' || j.kind === 'room_model')) {
+        if (v?.ok && THING_KINDS.includes(j.kind)) {
           j.history = [...(j.history || []), { at: iso(t), state: j.state, note: `Model verified: ${verifyLine(v)}.` }].slice(-20);
         }
         j.progress = { views_done: [...j.views], message: `All views rendered on the ${cpu ? 'CPU' : 'GPU'}.`, pct: 100, stage: 'save' };
@@ -465,7 +516,7 @@ export class GpuQueue {
       // views kept, up to MAX_FAILURES attempts; then it fails with the real reason.
       j.failures += 1; j.error = String(body.error || status || 'render failed').slice(0, 300);
       const final = status === 'checks_failed' || j.failures >= MAX_FAILURES;
-      note(j, t, final ? 'failed' : 'queued', `${status === 'checks_failed' ? (j.kind === 'object_model' || j.kind === 'room_model' ? 'The spec or model check failed' : 'A face check failed before rendering') : 'The render failed'}: ${j.error}${final ? '' : ` Attempt ${j.failures} of ${MAX_FAILURES}; queued again with finished work kept.`}`);
+      note(j, t, final ? 'failed' : 'queued', `${status === 'checks_failed' ? (THING_KINDS.includes(j.kind) ? 'The spec or model check failed' : 'A face check failed before rendering') : 'The render failed'}: ${j.error}${final ? '' : ` Attempt ${j.failures} of ${MAX_FAILURES}; queued again with finished work kept.`}`);
     }
     await this.save(jobs);
     return { ok: true, job: publicJob(j) };
@@ -473,14 +524,14 @@ export class GpuQueue {
 }
 
 function trimReceipt(r) {
-  const keep = ['job_id', 'status', 'nvidia_smi', 'device', 'cores', 'threads', 'cycles_gpus', 'render_device_line', 'blender_version', 'samples', 'long_edge_px', 'face_code_sha256', 'created_at', 'finished_at', 'process_seconds', 'last_run'];
+  const keep = ['job_id', 'status', 'nvidia_smi', 'device', 'cores', 'threads', 'cycles_gpus', 'render_device_line', 'blender_version', 'samples', 'long_edge_px', 'face_code_sha256', 'created_at', 'finished_at', 'process_seconds', 'last_run', 'stage_seconds', 'render_profile'];
   const out = {};
   for (const k of keep) if (r[k] !== undefined) out[k] = typeof r[k] === 'string' ? r[k].slice(0, 300) : r[k];
   if (r.model && typeof r.model === 'object') {
     const m = r.model;
     out.model = { status: String(m.status || ''), file: String(m.file || '').slice(0, 120), sha256: String(m.sha256 || '').slice(0, 64), bytes: Number(m.bytes) || 0,
       vertices: Number(m.vertices) || 0, exported_at: String(m.exported_at || '').slice(0, 40), contents: String(m.contents || '').slice(0, 200),
-      mode: ['bust', 'full_body', 'object', 'room'].includes(m.mode) ? m.mode : '' };
+      mode: ['bust', 'full_body', 'object', 'room', 'invention'].includes(m.mode) ? m.mode : '' };
     if (m.rig && typeof m.rig === 'object') out.model.rig = trimRig(m.rig);
     if (m.verify && typeof m.verify === 'object') out.model.verify = trimVerify(m.verify);
     if (m.layout && typeof m.layout === 'object') {
@@ -488,6 +539,16 @@ function trimReceipt(r) {
       out.model.layout = { placed: (Array.isArray(m.layout.placed) ? m.layout.placed : []).slice(0, 12).map(item),
         skipped: (Array.isArray(m.layout.skipped) ? m.layout.skipped : []).slice(0, 12).map(item) };
     }
+  }
+  if (r.quick_previews && typeof r.quick_previews === 'object') {
+    out.quick_previews = {};
+    for (const [v, q] of Object.entries(r.quick_previews).slice(0, 8)) out.quick_previews[v] = { engine: String(q?.engine || '').slice(0, 40), seconds: Number(q?.seconds) || 0 };
+  }
+  if (r.roblox && typeof r.roblox === 'object') {
+    const x = r.roblox; const list = (a, n, len) => (Array.isArray(a) ? a : []).slice(0, n).map((f) => String(f).slice(0, len));
+    out.roblox = { ok: x.ok === true, studio_import_ready: x.studio_import_ready === true, marketplace_ready: x.marketplace_ready === true,
+      triangles_total: Number(x.triangles_total) || 0, failures: list(x.failures, 8, 200), marketplace_missing: list(x.marketplace_missing, 6, 160),
+      not_exported: list(x.not_exported, 6, 160) };
   }
   out.views = {};
   for (const [v, info] of Object.entries(r.views || {}).slice(0, 8)) {
@@ -545,6 +606,8 @@ export function rigLine(rig) {
 export function publicJob(j) {
   const { lease, ...rest } = j;
   const model = j.model ? { bytes: j.model.bytes, sha256: j.model.sha256, uploaded_at: j.model.uploaded_at, url: `/api/gpu/jobs/${j.id}/model.glb` } : null;
+  const exports = Object.fromEntries(Object.entries(j.exports || {}).map(([f, e]) => [f, { label: EXPORT_FORMATS[f] || f, bytes: e.bytes, sha256: e.sha256,
+    uploaded_at: e.uploaded_at, url: `/api/gpu/jobs/${j.id}/${f}.fbx` }]));
   const g = j.receipt?.model?.rig;
   // The rig only counts as verified once the job completed with it (the receipt's ok alone is the runner's claim).
   const rig = g ? { ok: g.ok === true && j.state === 'completed', bones: g.bones, clips: rigClips(g.clips).map((c) => c.name), morphs: g.morphs || [],
@@ -552,7 +615,7 @@ export function publicJob(j) {
   // The measured model (objects and rooms): counted as verified only once the job completed with it.
   const mv = j.receipt?.model?.verify;
   const measured = mv ? { ok: mv.ok === true && j.state === 'completed', line: verifyLine(mv), size_m: mv.bbox_m?.size || [], triangles: mv.triangles, materials: (mv.materials || []).length } : null;
-  return { ...rest, kind: j.kind || 'face_preview', model, rig, worker_id: lease?.worker_id || null, worker_class: lease?.class || null,
+  return { ...rest, kind: j.kind || 'face_preview', model, rig, exports, quick_previews: { ...(j.quick_previews || {}) }, worker_id: lease?.worker_id || null, worker_class: lease?.class || null,
     lease_expires: lease ? iso(lease.expires_ms) : null, priority: j.priority || 'normal', requires: { gpu: needOf(j) }, measured,
     checkpoints: { ...(j.checkpoints || {}) }, ...displayOf(j) };
 }
@@ -631,7 +694,7 @@ export function workerIdOk(auth, id) {
 }
 
 export async function gpuWorkerRoute(ctx, path, request) {
-  const m = /^\/api\/gpu\/worker\/(heartbeat|claim|progress|preview|model|complete)$/.exec(path);
+  const m = /^\/api\/gpu\/worker\/(heartbeat|claim|progress|preview|model|export|complete)$/.exec(path);
   if (!m) return null;
   const out = await workerRouteInner(ctx, m[1], request);
   // A lease that lapsed while this request read the queue paused a job: find it a worker now (creation_orchestrator.js).
@@ -651,7 +714,17 @@ async function workerRouteInner(ctx, route, request) {
     if (request.method !== 'PUT') return done(json({ detail: 'Use PUT.' }, 405));
     if (!workerIdOk(auth, wid)) return done(json({ detail: 'That worker id does not belong to this caller.' }, 403));
     const bytes = new Uint8Array(await request.arrayBuffer());
-    const out = await q.preview(env, wid, String(url.searchParams.get('job') || ''), Number(url.searchParams.get('view')), bytes);
+    const out = await q.preview(env, wid, String(url.searchParams.get('job') || ''), Number(url.searchParams.get('view')), bytes,
+      { quick: url.searchParams.get('stage') === 'quick' });
+    return done(json(out, out.ok ? 200 : 409));
+  }
+  if (route === 'export') {
+    if (request.method !== 'PUT') return done(json({ detail: 'Use PUT.' }, 405));
+    if (!workerIdOk(auth, wid)) return done(json({ detail: 'That worker id does not belong to this caller.' }, 403));
+    const len = Number(request.headers.get('Content-Length') || 0);
+    if (len > MAX_MODEL_BYTES) return done(json({ ok: false, detail: 'The file is larger than 16 MB.' }, 413));
+    const bytes = new Uint8Array(await request.arrayBuffer());
+    const out = await q.exportFile(env, wid, String(url.searchParams.get('job') || ''), String(url.searchParams.get('format') || ''), bytes);
     return done(json(out, out.ok ? 200 : 409));
   }
   if (route === 'model' && request.method === 'GET') {
@@ -683,12 +756,19 @@ async function workerRouteInner(ctx, route, request) {
   return done(json(out, out.ok ? 200 : 409));
 }
 
-/** The owner's routes (/api/gpu, /api/gpu/jobs, /api/gpu/jobs/cancel|retry, /api/gpu/jobs/<id>/model.glb, /api/gpu/worker-token[/revoke], /api/gpu/identities*). */
+/** The owner's routes (/api/gpu, /api/gpu/jobs, /api/gpu/jobs/cancel|retry, /api/gpu/jobs/<id>/model.glb, /api/gpu/jobs/<id>/<format>.fbx, /api/gpu/worker-token[/revoke], /api/gpu/identities*). */
 export async function gpuOwnerRoute(ctx, path, request, body) {
   const { storage, env = {}, now } = ctx;
   if (path !== '/api/gpu' && !path.startsWith('/api/gpu/')) return null;
   const q = new GpuQueue(storage, now);
   const glb = /^\/api\/gpu\/jobs\/(gpu_[a-f0-9]{12})\/model\.glb$/.exec(path);
+  const fbx = /^\/api\/gpu\/jobs\/(gpu_[a-f0-9]{12})\/([a-z0-9_]{1,24})\.fbx$/.exec(path);
+  if (fbx && request.method === 'GET') {
+    const bytes = await q.exportBytes(env, fbx[1], fbx[2]);
+    if (!bytes) return json({ detail: 'No such export for that job.' }, 404);
+    return new Response(bytes, { status: 200, headers: { 'Content-Type': 'application/octet-stream', 'Content-Length': String(bytes.length),
+      'Content-Disposition': `attachment; filename="${fbx[1]}_${fbx[2]}.fbx"`, 'Cache-Control': 'private, max-age=3600' } });
+  }
   if (glb && request.method === 'GET') {
     const bytes = await q.modelBytes(env, glb[1]);
     if (!bytes) return json({ detail: 'No 3D model for that job yet.' }, 404);

@@ -30,6 +30,14 @@ Rules:
 - --device cpu (CHE's GitHub CPU workers): Cycles on the CPU with one thread per core; the receipt says device CPU and
   every view's device line must start with "DEVICE CPU". A CPU job never reuses a GPU job's folder and vice versa.
 Only job ids, stage and checkpoint lines are printed; identity settings stay in the receipt and the Blender log.
+- Render profile and progressive previews (job settings from server/cloudflare/creation_profiles.js): RENDER_PROFILE
+  (legacy | final, tools/avatar_body/render_profiles.py) is passed to the renders; PREVIEW=1 renders a quick look of
+  every view still to render first (EEVEE when it can start, else 4-sample Cycles; its own process) and prints
+  QUICK <view> <path> for each, so CHE shows the real model in seconds while the final views render. Quick looks are
+  kept in the job folder (quick_<view>.png) and the receipt (quick_previews); they never count as finished views.
+- EXPORT_ROBLOX=1 (a Roblox character): after the views, tools/avatar_body/roblox_export.py turns the verified GLB into
+  an R15 FBX and walk clip, reads them back and validates them (receipt.roblox); EXPORT <format> <path> lines hand the
+  files to the worker. Reused while the model's sha256 is unchanged; a failed export is recorded, not hidden.
 Exit codes: 0 done, 2 checks failed (also a rig that fails verification), 3 no GPU, 4 render failed.
 """
 import argparse
@@ -460,8 +468,10 @@ def full_body(a, job, receipt, receipt_path, env, log, kind, views, threads):
     # ── render: the previews come from the verified GLB ──────────────────────────────────────────────────────────────
     todo = views_todo(job, receipt, views, kind)
     receipt['last_run'].update(rendered=todo, reused=[v for v in views if v not in todo])
+    receipt['render_profile'] = env.get('RENDER_PROFILE', 'legacy')
     if todo:
         print('STAGE render', flush=True)
+        if env.get('PREVIEW', '0') == '1': quick_looks(a, job, receipt, receipt_path, env, log, kind, todo, blender, tmp)
         live = {'dev': '', 'last': None}
         t0 = time.monotonic()
         code, lines = run(blender + [os.path.join(BODY, 'render_glb.py'), model_path],
@@ -477,9 +487,61 @@ def full_body(a, job, receipt, receipt_path, env, log, kind, views, threads):
             receipt['exit_code'] = code
             return fail('render_failed', f'RENDER FAILED (exit {code}); finished views are kept, rerun to resume', 4)
     print('STAGE save', flush=True)
+    if env.get('EXPORT_ROBLOX') == '1': roblox(a, job, receipt, receipt_path, env, log, blender, model_path)
     receipt.update(status='complete', finished_at=now()); write_json(receipt_path, receipt)
     print('RECEIPT', receipt_path, flush=True)
     return 0
+
+
+def quick_looks(a, job, receipt, receipt_path, env, log, kind, todo, blender, tmp):
+    """The progressive preview: every view still to render gets a fast quick look first (render_glb.py RENDER_PROFILE
+    preview), printed as QUICK <view> <path> so the worker shows it in CHE at once. EEVEE is tried first when asked
+    (PREVIEW_ENGINE auto or eevee) in its own process, because Blender aborts outright where it has no OpenGL/EGL
+    context; then the 4-sample Cycles quick look. A quick look that fails never fails the job: the final views follow."""
+    quick = receipt.setdefault('quick_previews', {})
+    want = [v for v in todo if str(v) not in quick or not os.path.isfile(os.path.join(job, f'quick_{v:02d}.png'))]
+    if not want: return
+    engines = (['eevee', 'cycles'] if env.get('PREVIEW_ENGINE', 'auto') in ('auto', 'eevee') else ['cycles'])
+    for engine in engines:
+        seen = {'t': 0.0}
+
+        def on_line(t, l, engine=engine):
+            m = re.match(r'PREVIEW_WROTE (.*preview_(-?\d+)\.png)$', l)
+            if m and os.path.isfile(m.group(1)):
+                v = int(m.group(2)); dst = os.path.join(job, f'quick_{v:02d}.png'); shutil.move(m.group(1), dst)
+                quick[str(v)] = {'engine': engine, 'seconds': round(t - seen['t'], 1), 'sha256': sha256(dst), 'at': now()}
+                seen['t'] = t; write_json(receipt_path, receipt)
+                print(f'QUICK {v} {dst}', flush=True)
+        code, _ = run(blender + [os.path.join(BODY, 'render_glb.py'), os.path.join(job, 'model.glb')],
+                      dict(env, OUT_DIR=tmp, VIEWS=','.join(map(str, want)), STRIPS='', CYCLES_DEVICE=kind, RENDER_PROFILE='preview', PREVIEW_ENGINE=engine),
+                      log, min(a.timeout, 600), on_line)
+        want = [v for v in want if str(v) not in quick]
+        if not want: return
+        print(f'QUICK LOOK {engine} unavailable here (exit {code}); ' + ('trying the Cycles quick look' if engine == 'eevee' else 'the final views follow'), flush=True)
+
+
+def roblox(a, job, receipt, receipt_path, env, log, blender, model_path):
+    """The Roblox Studio export (roblox_export.py) from the verified GLB, reused while the model's sha256 is the same.
+    Prints EXPORT <format> <path> for each file so the worker stores it in CHE. A failed export is recorded and said;
+    the character itself is still complete."""
+    out = os.path.join(job, 'roblox'); have = receipt.get('roblox') or {}
+    files = {'fbx_r15': os.path.join(out, 'character_r15.fbx'), 'fbx_r15_walk': os.path.join(out, 'walk_r15.fbx')}
+    if have.get('model_sha256') == receipt['model']['sha256'] and have.get('ok') and all(os.path.isfile(p) for p in files.values()):
+        print('SKIP roblox: verified export of this model already made', flush=True)
+    else:
+        print('ROBLOX export: R15 skeleton, 15 parts, triangle budget', flush=True)
+        code, lines = run(blender + [os.path.join(BODY, 'roblox_export.py'), model_path], dict(env, OUT_DIR=out, CLIP='walk'), log, min(a.timeout, 900))
+        line = next((l for _, l in reversed(lines) if l.startswith('ROBLOX_RECEIPT ')), '')
+        try: rec = json.loads(line[len('ROBLOX_RECEIPT '):]) if line else {'ok': False, 'failures': [f'export printed no receipt (exit {code})']}
+        except ValueError: rec = {'ok': False, 'failures': ['export receipt is not JSON']}
+        rec.pop('measured', None)
+        have = dict(rec, model_sha256=receipt['model']['sha256'], exit_code=code)
+        receipt['roblox'] = have; write_json(receipt_path, receipt)
+        print(f"ROBLOX {'OK' if have.get('ok') else 'FAILED'}: {have.get('triangles_total')} triangles; "
+              + ('; '.join(have.get('failures', []))[:300] or 'Studio import ready, not Marketplace ready'), flush=True)
+    if have.get('ok'):
+        for fmt, p in files.items():
+            if os.path.isfile(p): print(f'EXPORT {fmt} {p}', flush=True)
 
 
 if __name__ == '__main__':

@@ -337,6 +337,22 @@ void main() {
     handle.dispose();
   });
 
+  testWidgets('a quick look shows for each view until its final render arrives, and says so', (tester) async {
+    await _phone(tester);
+    final handle = tester.ensureSemantics();
+    final w = _Worker(_project(job: {..._job(), 'quick_previews': {'0': 'q_front', '45': 'q_three'}}, engine: 'online'));
+    await tester.pumpWidget(studio(w));
+    await tester.pumpAndSettle();
+    // Front has its final render (the quick look is replaced); three-quarter is still the quick look.
+    expect(find.bySemanticsLabel('Front preview render from the Creation Engine'), findsOneWidget);
+    expect(find.bySemanticsLabel('Three-quarter quick look from the Creation Engine; the final render is still in progress'), findsOneWidget);
+    final s = tester.state<CheLiveStudioState>(find.byType(CheLiveStudio));
+    expect(s.previews, {'0': 'm_front', '45': 'q_three'});
+    expect(s.spokenSummary, contains('1 preview picture ready. 1 quick look showing while the final render continues.'));
+    await tester.pumpWidget(const SizedBox());
+    handle.dispose();
+  });
+
   testWidgets('typed edit makes a new version; undo and generate go to the Worker; results show in the banner', (tester) async {
     await _phone(tester);
     final w = _Worker(_project());

@@ -1,0 +1,104 @@
+name: CHE Creation Benchmark
+run-name: Creation Engine benchmark (${{ github.event_name }})
+# The Creation Engine before and after the speed and photorealism upgrade, on the SAME scene and the SAME machine: a
+# free GitHub-hosted runner, the exact Blender and MPFB2 the creation worker uses (che-creation-worker.yml). It builds
+# CHE's full-body character once, renders it with the legacy and final render profiles in alternating rounds, renders
+# the quick look (EEVEE if this runner can start it, else Cycles), the face close-up in both pipelines and each
+# pipeline's converged reference, then exports the Roblox R15 FBX and validates it. Every number in results.json comes
+# from this run (tools/creation_benchmark.py); the pictures, the JSON and the Roblox receipt are uploaded together.
+#
+# Cost: standard GitHub-hosted runners are free for this public repository. No secret is used.
+on:
+  workflow_dispatch:
+    inputs:
+      samples:
+        description: Cycles samples (the Standard preset is 64)
+        default: '64'
+      repeat:
+        description: legacy/final rounds
+        default: '3'
+  pull_request:
+    paths:
+      - tools/creation_benchmark.py
+      - tools/avatar_body/render_glb.py
+      - tools/avatar_body/render_profiles.py
+      - tools/avatar_body/roblox_export.py
+      - tools/avatar_body/roblox_rig.py
+      - .github/workflows/che-creation-benchmark.yml
+permissions:
+  contents: read
+env:
+  BLENDER_VERSION: '5.0.1'
+  MPFB_COMMIT: b1a2dc98776da9d1eea751b159d42cf61778fe2e
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache Blender and MPFB2
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/blender
+            ~/mpfb2
+          key: che-blender-${{ env.BLENDER_VERSION }}-mpfb-${{ env.MPFB_COMMIT }}
+      - name: Blender (checked against blender.org's SHA-256) and MPFB2 (CC0, pinned)
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          name="blender-${BLENDER_VERSION}-linux-x64"; base="https://download.blender.org/release/Blender${BLENDER_VERSION%.*}"
+          curl -fsSL --retry 3 "$base/$name.tar.xz" -o /tmp/blender.tar.xz
+          want=$(curl -fsSL --retry 3 "$base/blender-${BLENDER_VERSION}.sha256" | awk -v f="$name.tar.xz" '$2==f{print $1}')
+          echo "$want  /tmp/blender.tar.xz" | sha256sum -c -
+          mkdir -p ~/blender && tar -xf /tmp/blender.tar.xz -C ~/blender --strip-components=1
+          git clone -q --filter=blob:none https://github.com/makehumancommunity/mpfb2 ~/mpfb2
+          git -C ~/mpfb2 checkout -q "$MPFB_COMMIT"
+      - name: System libraries for headless Blender (the same as the creation worker)
+        run: sudo apt-get -qq install -y libxi6 libxkbcommon0 libsm6 libxrender1 libgl1 libegl1 libxxf86vm1 libxfixes3 > /dev/null
+      - name: Benchmark tools
+        run: python3 -c "import numpy" 2>/dev/null || python3 -m pip install --quiet numpy
+      - name: Legacy vs upgraded pipeline, same scene, this runner
+        timeout-minutes: 75
+        run: |
+          set -euo pipefail
+          export MPFB="$HOME/mpfb2/src/mpfb/data"
+          python3 tools/creation_benchmark.py --blender "$HOME/blender/blender" --out "$RUNNER_TEMP/bench" --build \
+            --views 0,45,90 --samples "${{ inputs.samples || '64' }}" --res 480 --ref-samples 512 --repeat "${{ inputs.repeat || '3' }}" --try-eevee
+      - name: Roblox R15 export of the same character, read back and validated
+        run: |
+          set -euo pipefail
+          export MPFB="$HOME/mpfb2/src/mpfb/data"
+          OUT_DIR="$RUNNER_TEMP/bench/roblox" CLIP=walk "$HOME/blender/blender" -b --factory-startup -P tools/avatar_face/bl_run.py -- \
+            tools/avatar_body/roblox_export.py "$RUNNER_TEMP/bench/scene.glb" | tee "$RUNNER_TEMP/bench/roblox.log" | grep -E '^ROBLOX_RECEIPT' \
+            | sed 's/^ROBLOX_RECEIPT //' > "$RUNNER_TEMP/bench/roblox_receipt.json"
+      - name: Summary
+        if: always()
+        run: |
+          python3 - "$RUNNER_TEMP/bench" <<'EOF' >> "$GITHUB_STEP_SUMMARY"
+          import json, os, sys
+          d = sys.argv[1]
+          try: r = json.load(open(os.path.join(d, 'results.json')))
+          except Exception as e: print(f'No results.json: {e}'); sys.exit(0)
+          c = r.get('comparison', {}); m = r.get('machine', {})
+          print(f"### Creation Engine benchmark\n\nMachine: {m.get('cpu')} x{m.get('cores')}, {m.get('ram_gib')} GiB, {m.get('blender')}\n")
+          for k, v in c.items(): print(f'- **{k}**: `{json.dumps(v)}`')
+          q = r.get('quality', {})
+          for k in ('legacy', 'final'):
+              if 'vs_own_reference' in q.get(k, {}): print(f"- **{k} vs its 512-sample reference**: `{json.dumps(q[k]['vs_own_reference'])}`")
+          try:
+              rb = json.load(open(os.path.join(d, 'roblox_receipt.json')))
+              print(f"- **Roblox R15**: ok={rb.get('ok')}, {rb.get('triangles_total')} triangles, failures={rb.get('failures')}, marketplace_missing={rb.get('marketplace_missing')}")
+          except Exception as e: print(f'- **Roblox R15**: no receipt ({e})')
+          EOF
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: che-creation-benchmark
+          path: |
+            ${{ runner.temp }}/bench/**/*.png
+            ${{ runner.temp }}/bench/*.json
+            ${{ runner.temp }}/bench/*.log
+            ${{ runner.temp }}/bench/roblox/*.fbx
+          retention-days: 14

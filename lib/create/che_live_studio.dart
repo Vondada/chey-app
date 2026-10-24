@@ -808,8 +808,16 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
       if (s is Map) Map<String, dynamic>.from(s),
   ];
 
+  /// Finished preview renders by view, plus a quick look (the fast preview the Creation Engine renders first) for each
+  /// view whose final render has not arrived yet; [quickOnly] says which views are still quick looks.
   Map<String, String> get previews => {
+    for (final e in ((job?['quick_previews']) as Map? ?? const {}).entries) '${e.key}': '${e.value}',
     for (final e in ((job?['previews'] ?? project['previews']) as Map? ?? const {}).entries) '${e.key}': '${e.value}',
+  };
+
+  Set<String> get quickOnly => {
+    for (final k in ((job?['quick_previews']) as Map? ?? const {}).keys)
+      if (!(((job?['previews'] ?? project['previews']) as Map?)?.containsKey(k) ?? false)) '$k',
   };
 
   /// Read aloud: what is on screen, from real state only.
@@ -825,7 +833,12 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
     final work = j == null
         ? 'No model has been generated for this version yet. Say generate the model.'
         : 'Creation Engine job: ${cheJobDisplayState(j)}. ${'${j['status_line'] ?? ''}'.trim().isNotEmpty ? j['status_line'] : '${j['progress'] is Map ? (j['progress'] as Map)['message'] ?? '' : ''}'}';
-    final pics = previews.isEmpty ? '' : ' ${previews.length} preview picture${previews.length == 1 ? '' : 's'} ready.';
+    final quick = quickOnly.length;
+    final done = previews.length - quick;
+    final pics = previews.isEmpty
+        ? ''
+        : '${done > 0 ? ' $done preview picture${done == 1 ? '' : 's'} ready.' : ''}'
+            '${quick > 0 ? ' $quick quick look${quick == 1 ? '' : 's'} showing while the final render continues.' : ''}';
     if (kind != 'person') {
       // Objects and rooms: what this version is, and the real measurement once the build is verified.
       final what = '${project['described'] ?? ''}'.trim();
@@ -1251,7 +1264,9 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
                     container: true,
                     image: true,
                     excludeSemantics: true,
-                    label: '${_viewNames[e.key] ?? '${e.key} degree'} preview render from the Creation Engine',
+                    label: quickOnly.contains(e.key)
+                        ? '${_viewNames[e.key] ?? '${e.key} degree'} quick look from the Creation Engine; the final render is still in progress'
+                        : '${_viewNames[e.key] ?? '${e.key} degree'} preview render from the Creation Engine',
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(14),
                       child: Image.network(
