@@ -25,9 +25,10 @@ from mpfb_base import load_base, macro_woman, slider_deltas, apply_sliders, to_b
 OUT = os.environ.get('OUT_DIR', '.')
 verts, uvs, faces, groups = load_base()
 race = {k: float(w) for k, w in (kv.split('=') for kv in os.environ.get('RACE', 'african=1').split(','))}
-v = macro_woman(verts, race)
-# FIT: face_fit.py's json; its winning identity sliders are applied.
-weights = json.load(open(os.environ['FIT']))['winner']['weights'] if os.environ.get('FIT') else {}
+# FIT: face_fit.py's json; its winning youth blend and identity sliders are applied.
+win = json.load(open(os.environ['FIT']))['winner'] if os.environ.get('FIT') else {}
+weights = win.get('weights', {})
+v = macro_woman(verts, race, youth=win.get('youth', 0.0))
 v = apply_sliders(v, slider_deltas(len(v)), weights)
 applied = [f'{k}={w}' for k, w in weights.items()]
 for item in [s for s in os.environ.get('FACE', '').split(',') if s.strip()]:

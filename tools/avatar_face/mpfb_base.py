@@ -27,6 +27,12 @@ SLIDERS = [
     ('chin_h', 'chin/chin-height-incr', 'chin/chin-height-decr'),
     ('chin_prom', 'chin/chin-prominent-incr', 'chin/chin-prominent-decr'),
     ('cheek_bones', 'lr:cheek/cheek-bones-incr', 'lr:cheek/cheek-bones-decr'),
+    ('cheek_vol', 'lr:cheek/cheek-volume-incr', 'lr:cheek/cheek-volume-decr'),
+    ('brow_fwd', 'eyebrows/eyebrows-trans-forward', 'eyebrows/eyebrows-trans-backward'),
+    ('forehead_fwd', 'forehead/forehead-trans-forward', 'forehead/forehead-trans-backward'),
+    ('forehead_h', 'forehead/forehead-scale-vert-incr', 'forehead/forehead-scale-vert-decr'),
+    ('mouth_fwd', 'mouth/mouth-trans-forward', 'mouth/mouth-trans-backward'),
+    ('chin_prog', 'chin/chin-prognathism-incr', 'chin/chin-prognathism-decr'),
 ]
 
 
@@ -69,12 +75,16 @@ def exists(path):
     return os.path.exists(os.path.join(T, path + '.target.gz'))
 
 
-def macro_woman(verts, race=None):
-    """Young adult woman: race mix, universal female-young-average body, half-way to ideal proportions."""
+def macro_woman(verts, race=None, youth=0.0, mature=0.0):
+    """Young adult woman: race mix, universal female-young-average body, half-way to ideal proportions.
+    youth (0..0.4) blends toward MakeHuman's child shape the way its age slider does below 25 (0.2 is about 21);
+    mature (0..0.3) blends toward its old shape the way the slider does above 25 (0.1 is about 31)."""
     v = verts.copy(); n = len(v)
-    for r, w in (race or {'african': 1.0}).items():
-        v += target(f'macrodetails/{r}-female-young', n) * w
-    v += target('macrodetails/universal-female-young-averagemuscle-averageweight', n)
+    for age, aw in (('young', 1.0 - youth - mature), ('child', youth), ('old', mature)):
+        if not aw: continue
+        for r, w in (race or {'african': 1.0}).items():
+            v += target(f'macrodetails/{r}-female-{age}', n) * w * aw
+        v += target(f'macrodetails/universal-female-{age}-averagemuscle-averageweight', n) * aw
     v += target('macrodetails/proportions/female-young-averagemuscle-averageweight-idealproportions', n) * 0.5
     return v
 

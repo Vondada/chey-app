@@ -104,7 +104,7 @@ def add_corneas(fwd):
     return made
 
 
-def lash_strands(fwd, up, seed=11):
+def lash_strands(fwd, up, seed=11, length_scale=1.0):
     random.seed(seed)
     bvh = _body_bvh()
     strands = []
@@ -122,7 +122,7 @@ def lash_strands(fwd, up, seed=11):
                 hit = bvh.find_nearest(rim)
                 root = hit[0] if hit and hit[0] is not None and (hit[0] - rim).length < r * 0.6 else rim
                 outer = 0.5 + 0.5 * (t + 0.9) / 1.8  # longer toward the outer corner
-                length = (0.0115 if upper else 0.006) * (0.7 + 0.6 * outer)
+                length = (0.0115 if upper else 0.006) * (0.7 + 0.6 * outer) * length_scale
                 d = (fwd * 0.9 + up * (0.35 if upper else -0.25) + side * 0.25 * t).normalized()
                 for _ in range(5 if upper else 3):
                     j = Vector((random.gauss(0, 0.0003), random.gauss(0, 0.0003), random.gauss(0, 0.0002)))

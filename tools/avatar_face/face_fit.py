@@ -19,7 +19,8 @@ che = np.load(sys.argv[1])
 goal = measure(che['P'], float(che['gap']), che['lips'])
 verts, _, faces, groups = load_base()
 n = len(verts)
-base = macro_woman(verts)
+bases = {y: macro_woman(verts, youth=y) for y in (0.0, 0.15, 0.3)}
+base = bases[0.0]
 deltas = slider_deltas(n)
 names = sorted(deltas)
 body = np.array(sorted({i for g, vi, _ in faces if g == 'body' for i in vi}))
@@ -28,8 +29,8 @@ lips_all = opened > np.quantile(opened[body], 0.995) * 0.6
 lips = lips_all[body]
 
 
-def landmarks(w):
-    v = base.copy()
+def landmarks(w, youth=0.0):
+    v = bases[youth].copy()
     for k, x in w.items():
         if x: v += deltas[k][0] * x if x > 0 else deltas[k][1] * -x
     P, gap = face_frame(v, groups)
@@ -42,9 +43,9 @@ def error(m):
     return float(np.sqrt(np.mean(np.square(r))) * 100)
 
 
-def fit(reg):
+def fit(reg, youth):
     w = {k: 0.0 for k in names}
-    cost = lambda w: error(landmarks(w)) + reg * 100 * float(np.mean(np.square(list(w.values()))))
+    cost = lambda w: error(landmarks(w, youth)) + reg * 100 * float(np.mean(np.square(list(w.values()))))
     best = cost(w)
     for step in (0.4, 0.2, 0.1, 0.05):
         improved = True
@@ -63,15 +64,15 @@ start = landmarks({k: 0.0 for k in names})
 print('CHE      ', {k: round(goal[k], 3) for k in NAMES})
 print('MPFB base', {k: round(start[k], 3) for k in NAMES}, 'error %.1f%%' % error(start))
 cands = []
-for reg in (0.05, 0.15, 0.4, 1.0):
-    w = fit(reg)
-    m = landmarks(w)
+for youth, reg in [(y, r) for y in bases for r in (0.05, 0.15, 0.4)]:
+    w = fit(reg, youth)
+    m = landmarks(w, youth)
     plausible = max(abs(x) for x in w.values()) <= 0.8
-    cands.append({'reg': reg, 'error': round(error(m), 2), 'plausible': plausible, 'max_slider': round(max(abs(x) for x in w.values()), 2),
+    cands.append({'youth': youth, 'reg': reg, 'error': round(error(m), 2), 'plausible': plausible, 'max_slider': round(max(abs(x) for x in w.values()), 2),
                   'weights': {k: round(x, 2) for k, x in w.items() if x}, 'landmarks': {k: round(m[k], 3) for k in NAMES}})
-    print('reg %.2f error %.1f%% plausible %s max %.2f' % (reg, cands[-1]['error'], plausible, cands[-1]['max_slider']), cands[-1]['weights'])
+    print('youth %.2f reg %.2f error %.1f%% plausible %s max %.2f' % (youth, reg, cands[-1]['error'], plausible, cands[-1]['max_slider']), cands[-1]['weights'])
 ok = [c for c in cands if c['plausible']] or cands[-1:]
 win = min(ok, key=lambda c: c['error'])
-print('WINNER reg', win['reg'], 'error', win['error'])
+print('WINNER youth', win['youth'], 'reg', win['reg'], 'error', win['error'])
 json.dump({'goal': {k: round(goal[k], 3) for k in NAMES}, 'base_error': round(error(start), 2), 'candidates': cands, 'winner': win},
           open(sys.argv[2], 'w'), indent=1)

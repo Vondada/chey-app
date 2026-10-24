@@ -15,17 +15,19 @@ from mathutils import Vector
 from mathutils.bvhtree import BVHTree
 
 
-def lip_gloss():
+def lip_gloss(mask=None):
+    """mask: per-vertex lip weights (0..1); by default found from the 'mouth_open' shape key's strongest movers."""
     body = bpy.data.objects['Body']
-    keys = body.data.shape_keys
-    kb = keys.key_blocks.get('mouth_open') if keys else None
-    if not kb:
-        return False
-    basis = keys.key_blocks[0]
-    deltas = [(kb.data[i].co - basis.data[i].co).length for i in range(len(basis.data))]
-    top = sorted(deltas)[int(len(deltas) * 0.995)] or 1e-6
-    # Lips move most; the chin and jaw move too, so only the strongest movers count, softly.
-    mask = [max(0.0, min(1.0, (d / top - 0.35) / 0.4)) for d in deltas]
+    if mask is None:
+        keys = body.data.shape_keys
+        kb = keys.key_blocks.get('mouth_open') if keys else None
+        if not kb:
+            return False
+        basis = keys.key_blocks[0]
+        deltas = [(kb.data[i].co - basis.data[i].co).length for i in range(len(basis.data))]
+        top = sorted(deltas)[int(len(deltas) * 0.995)] or 1e-6
+        # Lips move most; the chin and jaw move too, so only the strongest movers count, softly.
+        mask = [max(0.0, min(1.0, (d / top - 0.35) / 0.4)) for d in deltas]
     attr = body.data.attributes.get('lipmask') or body.data.attributes.new('lipmask', 'FLOAT', 'POINT')
     attr.data.foreach_set('value', mask)
     m = bpy.data.materials['Skin']; nt = m.node_tree

@@ -5,7 +5,8 @@ gap: distance between the eye centres. lips: boolean mask of the lip vertices (t
 """
 import numpy as np
 
-NAMES = ('cheek_w', 'jaw_w', 'mouth_w', 'lip_h', 'eye_mouth', 'nose_y', 'nose_proj', 'nose_w', 'chin_y')
+NAMES = ('cheek_w', 'jaw_w', 'mouth_w', 'lip_h', 'eye_mouth', 'nose_y', 'nose_proj', 'nose_w', 'chin_y',
+         'brow_proj', 'cheek_proj', 'mouth_proj', 'chin_proj', 'head_top')
 
 
 def _width(P, g, y, zmin):
@@ -32,4 +33,17 @@ def measure(P, gap, lips):
         'nose_proj': float(tip[2]) / g,
         'nose_w': float(np.ptp(ala[:, 0])) / g if len(ala) else 0.0,
         'chin_y': -float(chin[:, 1].min()) / g if len(chin) else 0.0,
+        # Depth: how far the brow ridge, cheeks, lips and chin come forward of the eye centres (feminine faces have a
+        # flat brow ridge and fuller cheeks), and the skull top above the eyes (face length).
+        'brow_proj': _front(P, g, (-0.6, 0.6), (0.15, 0.45)),
+        'cheek_proj': _front(P, g, (0.55, 0.85), (-0.6, -0.3)),
+        'mouth_proj': float(L[:, 2].max()) / g,
+        'chin_proj': float(chin[:, 2].max()) / g if len(chin) else 0.0,
+        'head_top': float(P[np.abs(P[:, 0]) < 0.5 * g][:, 1].max()) / g,
     }
+
+
+def _front(P, g, xs, ys):
+    zone = P[(np.abs(P[:, 0]) >= xs[0] * g if xs[0] > 0 else P[:, 0] >= xs[0] * g) & (np.abs(P[:, 0]) <= abs(xs[1]) * g)
+             & (P[:, 1] > ys[0] * g) & (P[:, 1] < ys[1] * g)]
+    return float(zone[:, 2].max()) / g if len(zone) else 0.0
