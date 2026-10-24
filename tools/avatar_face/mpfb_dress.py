@@ -65,8 +65,14 @@ verts, uvs, faces, groups = load_base()
 n = len(verts)
 # RACE ("african=0.7,caucasian=0.3"): MakeHuman's own ethnic mix; MATURE (0.1 is about 31 years old).
 race = {k: float(x) for k, x in (kv.split('=') for kv in os.environ.get('RACE', 'african=1').split(','))}
-v = apply_sliders(macro_woman(verts, race, youth=win.get('youth', 0.0), mature=float(os.environ.get('MATURE', '0'))),
-                  slider_deltas(n), win['weights'])
+# SEX (0 woman .. 1 man) and FIT_W (how much of CHE's own landmark fit to apply: 1 for CHE, 0 for the crew, whose faces
+# come only from their preset sliders) come from the identity preset (tools/avatar_face/identity.py). Without an
+# IDENTITY the old single-face behaviour (full fit) holds.
+fitw = float(os.environ.get('FIT_W', '0' if os.environ.get('IDENTITY') else '1'))
+v = apply_sliders(macro_woman(verts, race, youth=win.get('youth', 0.0) * fitw, mature=float(os.environ.get('MATURE', '0')),
+                              sex=float(os.environ.get('SEX', '0'))),
+                  slider_deltas(n), {k: w * fitw for k, w in win['weights'].items()})
+print('IDENTITY', os.environ.get('IDENTITY', '(none)'), 'fit', fitw, flush=True)
 # FACE ("lr:eyes/eye-eyefold-down=0.4,mouth/mouth-cupidsbow-incr=0.5"): extra MakeHuman targets on top of the fit,
 # for features written out in words; "lr:" applies the l- and r- versions.
 # STYLE (owner, 2026-10-24): one CHE, three looks from the same fitted head, rig and face keys. photoreal is the
@@ -76,17 +82,22 @@ v = apply_sliders(macro_woman(verts, race, youth=win.get('youth', 0.0), mature=f
 STYLE = os.environ.get('STYLE', 'photoreal')
 STYLE_FACE = {
     'photoreal': '',
-    'hybrid': 'lr:eyes/eye-scale-incr=0.35,nose/nose-scale-horiz-decr=0.15,chin/chin-width-decr=0.1',
-    'stylized': 'lr:eyes/eye-scale-incr=0.9,nose/nose-scale-horiz-decr=0.5,nose/nose-scale-vert-decr=0.45,'
+    'hybrid': 'lr:eyes/eye-scale-incr=0.6,nose/nose-scale-horiz-decr=0.15,chin/chin-width-decr=0.1',
+    'stylized': 'lr:eyes/eye-scale-incr=1.6,nose/nose-scale-horiz-decr=0.6,nose/nose-scale-vert-decr=0.5,'
                 'lr:cheek/cheek-volume-incr=0.45,head/head-round=0.45,chin/chin-height-decr=0.35,mouth/mouth-scale-horiz-decr=0.15',
 }
 if STYLE not in STYLE_FACE: raise SystemExit(f'unknown STYLE {STYLE!r}: photoreal, hybrid or stylized')
 print('STYLE', STYLE, flush=True)
-for item in [x for x in (os.environ.get('FACE', '') + ',' + STYLE_FACE[STYLE]).split(',') if x.strip()]:
+for item in [x for x in os.environ.get('FACE', '').split(',') if x.strip()]:
+    tname, tw = item.split('='); v = v + target(tname.strip(), n) * float(tw)
+# The head is placed and scaled by its eye centres. They are measured before the style targets, so a style that
+# enlarges the eyes or rounds the head changes the face instead of being scaled away with the whole head.
+co0 = to_blender(v)
+el, er = co0[sorted(groups['helper-l-eye'])].mean(0), co0[sorted(groups['helper-r-eye'])].mean(0)
+mid, gap = (el + er) / 2, float(np.linalg.norm(el - er))
+for item in [x for x in STYLE_FACE[STYLE].split(',') if x.strip()]:
     tname, tw = item.split('='); v = v + target(tname.strip(), n) * float(tw)
 co = to_blender(v)
-el, er = co[sorted(groups['helper-l-eye'])].mean(0), co[sorted(groups['helper-r-eye'])].mean(0)
-mid, gap = (el + er) / 2, float(np.linalg.norm(el - er))
 yaw = math.atan2(fwd.y, fwd.x) - math.atan2(-1.0, 0.0)   # the MPFB face looks along -Y
 place = Matrix.Translation(che_mid) @ Matrix.Rotation(yaw, 4, 'Z') @ Matrix.Scale(che_gap / gap, 4) @ Matrix.Translation(Vector(-mid))
 opened = target('expression/units/african/mouth-open', n)
@@ -126,8 +137,19 @@ cr = ramp.color_ramp; cr.interpolation = 'LINEAR'
 # A human iris is about 11.7 mm across on a 24 mm eye (radius 0.49 of the eye's); the sclera is an off-white that
 # darkens toward the corners, never paper white.
 iw = float(os.environ.get('IRIS', '1.0'))   # iris brightness: 1.0 is the v6 near-black brown; 2-3 reads brown at a distance
-stops = [(0.0, (0.004, 0.003, 0.003)), (0.15, (0.004, 0.003, 0.003)), (0.17, (0.018 * iw, 0.008 * iw, 0.004 * iw)), (0.38, (0.035 * iw, 0.016 * iw, 0.007 * iw)),
-         (0.47, (0.018 * iw, 0.011 * iw, 0.008 * iw)), (0.52, (0.42, 0.36, 0.32)), (0.75, (0.40, 0.33, 0.29)), (1.0, (0.24, 0.15, 0.13))]
+if os.environ.get('IRIS_SRGB'):
+    # The preset's iris colour (sRGB) is the iris body; the ring by the pupil is darker and warmer, the limbal ring at the
+    # edge is a dark rim. Scaled so CHE's brown at IRIS 2.5 matches the v7 iris she was approved with.
+    # The MakeHuman eyeball is larger than its lid opening, so at the old 0.47 radius the iris filled only a quarter of
+    # the opening and the eye read as all white; the iris now reaches 0.64 of the sphere radius (about 40% of the
+    # opening, as on a real face), the pupil 0.2, and the sclera is a clean warm white that greys toward the corners.
+    ic = [((c / 255) / 12.92 if c / 255 <= 0.04045 else ((c / 255 + 0.055) / 1.055) ** 2.4) * iw * 0.4
+          for c in (float(x) for x in os.environ['IRIS_SRGB'].split(','))]
+    stops = [(0.0, (0.004, 0.003, 0.003)), (0.19, (0.004, 0.003, 0.003)), (0.22, tuple(x * 0.55 for x in ic)), (0.5, tuple(ic)),
+             (0.62, tuple(x * 0.3 for x in ic)), (0.67, (0.62, 0.56, 0.52)), (0.82, (0.58, 0.5, 0.46)), (1.0, (0.36, 0.26, 0.23))]
+else:
+    stops = [(0.0, (0.004, 0.003, 0.003)), (0.15, (0.004, 0.003, 0.003)), (0.17, (0.018 * iw, 0.008 * iw, 0.004 * iw)), (0.38, (0.035 * iw, 0.016 * iw, 0.007 * iw)),
+             (0.47, (0.018 * iw, 0.011 * iw, 0.008 * iw)), (0.52, (0.42, 0.36, 0.32)), (0.75, (0.40, 0.33, 0.29)), (1.0, (0.24, 0.15, 0.13))]
 cr.elements[0].position, cr.elements[0].color = stops[0][0], (*stops[0][1], 1)
 cr.elements[1].position, cr.elements[1].color = stops[1][0], (*stops[1][1], 1)
 for pos, col in stops[2:]:
@@ -228,11 +250,11 @@ b.subsurface_method = 'RANDOM_WALK_SKIN'
 b.inputs['Subsurface Weight'].default_value = 0.2
 b.inputs['Subsurface Radius'].default_value = (1.0, 0.35, 0.18)
 b.inputs['Subsurface Scale'].default_value = 0.0025
-b.inputs['Specular IOR Level'].default_value = 0.4
+b.inputs['Specular IOR Level'].default_value = 0.32   # less mirror-like sheen on the forehead and cheeks
 # Skin shine varies across the face (oilier and smoother in places): roughness 0.46..0.62 from a broad noise.
 rn = nt.nodes.new('ShaderNodeTexNoise'); rn.inputs['Scale'].default_value = 45; rn.inputs['Detail'].default_value = 3
 nt.links.new(tc.outputs['Object'], rn.inputs['Vector'])
-rmr = nt.nodes.new('ShaderNodeMapRange'); rmr.inputs['To Min'].default_value = 0.46; rmr.inputs['To Max'].default_value = 0.62
+rmr = nt.nodes.new('ShaderNodeMapRange'); rmr.inputs['To Min'].default_value = 0.5; rmr.inputs['To Max'].default_value = 0.66
 nt.links.new(rn.outputs['Fac'], rmr.inputs['Value']); nt.links.new(rmr.outputs['Result'], b.inputs['Roughness'])
 b.inputs['Coat Weight'].default_value = 0.0
 b.inputs['Sheen Weight'].default_value = 0.04
@@ -271,7 +293,8 @@ nt.links.new(scm.outputs[2], b.inputs['Base Color'])
 check('scalp tinted under the hair', sum(1 for x in scalp if x > 0.5) > 40, f'{sum(1 for x in scalp if x > 0.5)} verts')
 lip_gloss(lip_mask)
 check('lip mask on the lips only', 60 < sum(1 for x in lip_mask if x > 0.5) < 400, f'{sum(1 for x in lip_mask if x > 0.5)} verts')
-check('skin albedo near target', abs(sum(albedo) / 3 - sum(lin(x) for x in (96, 55, 38)) / 3) < 0.03,
+# Any human skin tone: linear albedo between very deep (about 0.01) and very fair (about 0.6), red >= green >= blue.
+check('skin albedo is a human skin tone', 0.008 < sum(albedo) / 3 < 0.6 and albedo[0] >= albedo[1] >= albedo[2],
       'linear ' + ', '.join(f'{x:.3f}' for x in albedo))
 
 # ── Eyes, lashes, brows, hair ─────────────────────────────────────────────────────────────────────────────────────
@@ -281,14 +304,34 @@ check('skin albedo near target', abs(sum(albedo) / 3 - sum(lin(x) for x in (96, 
 if os.environ.get('CORNEA'):
     add_corneas(fwd)
 else:
-    eb.inputs['Coat Weight'].default_value = 1.0; eb.inputs['Coat IOR'].default_value = 1.376
+    eb.inputs['Coat Weight'].default_value = 0.7; eb.inputs['Coat IOR'].default_value = 1.376
     eb.inputs['Coat Roughness'].default_value = 0.03; eb.inputs['Roughness'].default_value = 0.35
+    # The iris and sclera lie under the cornea, so all the shine comes from the clear coat; a base specular layer as
+    # well put a grey haze over the pupil (it rendered as a blue-grey disc) and washed the iris out.
+    eb.inputs['Specular IOR Level'].default_value = 0.0
 lashes = lash_strands(fwd, up, length_scale=float(os.environ.get('LASH_LEN', '0.7'))); brows = brow_strands(fwd, up, per_brow=int(os.environ.get('BROW_N', '420')), width_scale=float(os.environ.get('BROW_W', '1.0')))
 check('lashes built', len(lashes.data.curves) > 100, f'{len(lashes.data.curves)} strands')
 check('brows built', len(brows.data.curves) > 300, f'{len(brows.data.curves)} strands')
-if not os.environ.get('NOHAIR'):
+if os.environ.get('NOHAIR'):
+    # Hair styles whose strand sets are not built yet render close-cropped: CHE's hair cards are hidden and the dark
+    # scalp tint stays (HAIR_STYLE names the style the preset asks for; the job receipt reports it as not built).
+    if hair_o: hair_o.hide_render = True
+    print('HAIR', os.environ.get('HAIR_STYLE', 'none'), 'not built: close-cropped', flush=True)
+else:
     hair = build_strand_hair(sc, strands_per_card=int(os.environ.get('STRANDS', '90')), parent_bone=None)
     check('hair built', len(hair.data.curves) > 2000, f'{len(hair.data.curves)} strands')
+    if os.environ.get('HAIR_SRGB'):
+        # The preset's hair colour: dark natural colours stay on the melanin model (realistic dark hair), anything
+        # brighter or dyed uses the direct colour model.
+        hc = [float(x) / 255 for x in os.environ['HAIR_SRGB'].split(',')]
+        hn = hair.data.materials[0].node_tree.nodes['Principled Hair BSDF']
+        if max(hc) - min(hc) < 0.12 and max(hc) < 0.35:
+            hn.inputs['Melanin'].default_value = min(1.0, 1.0 - sum(hc) / 3 * 1.6)
+            hn.inputs['Melanin Redness'].default_value = min(1.0, max(0.0, (hc[0] - hc[2]) * 6))
+        else:
+            hn.parametrization = 'COLOR'
+            hn.inputs['Color'].default_value = (*[(c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4) for c in hc], 1)
+        hn.inputs['Roughness'].default_value = 0.35
     print('cleared face strands', clear_face_strands(fwd, up, eye_mid), flush=True)
     print('baby hairs', baby_hairs(fwd, up, eye_mid), flush=True)
 

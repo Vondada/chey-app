@@ -28,13 +28,14 @@ function setup() {
   return { storage, clock, q: new GpuQueue(storage, clock.now) };
 }
 
-test('the queue seeds Jay\'s v7 face job once, queued and waiting for a Colab session', async () => {
+test('the queue seeds CHE\'s preset face jobs once (one per look), queued and waiting for a Colab session', async () => {
   const { q } = setup();
   const jobs = await q.jobs();
   assert.equal(jobs.length, SEED_JOBS.length);
   assert.equal(jobs[0].state, 'queued');
   assert.deepEqual(jobs[0].views, [0, 45, 90]);
   assert.equal(jobs[0].settings.BROW_W, '1.8');
+  assert.equal(jobs[0].settings.IDENTITY, 'che', 'the identity preset is part of the job settings');
   assert.deepEqual(jobs.map((j) => j.settings.STYLE), ['photoreal', 'hybrid', 'stylized'], 'one job per look');
   assert.equal((await q.jobs()).length, SEED_JOBS.length, 'seeded only once');
 });
@@ -121,7 +122,9 @@ test('no GPU in the session puts the job back in the queue instead of failing it
 
 test('the same request is not queued twice while it waits', async () => {
   const { q } = setup();
-  const a = await q.enqueue({ views: '0,45,90', settings: { BROW_N: '1000', BROW_W: '1.8', IRIS: '2.5', STYLE: 'photoreal' } });
+  // The seed jobs' settings now come from CHE's identity preset (avatar_identity.js), so the duplicate is the same
+  // preset settings, not the older hand-written v7 subset.
+  const a = await q.enqueue({ views: '0,45,90', settings: { ...SEED_JOBS[0].settings } });
   assert.equal(a.duplicate, true);
   assert.equal((await q.enqueue({ views: [0], settings: { BAD_key: 'x', IRIS: 3 } })).job.settings.IRIS, '3');
   assert.equal((await q.jobs()).length, SEED_JOBS.length + 1);

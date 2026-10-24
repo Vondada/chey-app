@@ -75,17 +75,20 @@ def exists(path):
     return os.path.exists(os.path.join(T, path + '.target.gz'))
 
 
-def macro_woman(verts, race=None, youth=0.0, mature=0.0):
-    """Young adult woman: race mix, universal female-young-average body, half-way to ideal proportions.
+def macro_woman(verts, race=None, youth=0.0, mature=0.0, sex=0.0):
+    """Young adult: race mix, universal average body, half-way to ideal proportions. sex runs 0 (woman) .. 1 (man) and
+    blends MakeHuman's female and male shapes the way its gender slider does.
     youth (0..0.4) blends toward MakeHuman's child shape the way its age slider does below 25 (0.2 is about 21);
     mature (0..0.3) blends toward its old shape the way the slider does above 25 (0.1 is about 31)."""
     v = verts.copy(); n = len(v)
-    for age, aw in (('young', 1.0 - youth - mature), ('child', youth), ('old', mature)):
-        if not aw: continue
-        for r, w in (race or {'african': 1.0}).items():
-            v += target(f'macrodetails/{r}-female-{age}', n) * w * aw
-        v += target(f'macrodetails/universal-female-{age}-averagemuscle-averageweight', n) * aw
-    v += target('macrodetails/proportions/female-young-averagemuscle-averageweight-idealproportions', n) * 0.5
+    for g, gw in (('female', 1.0 - sex), ('male', sex)):
+        if not gw: continue
+        for age, aw in (('young', 1.0 - youth - mature), ('child', youth), ('old', mature)):
+            if not aw: continue
+            for r, w in (race or {'african': 1.0}).items():
+                v += target(f'macrodetails/{r}-{g}-{age}', n) * w * aw * gw
+            v += target(f'macrodetails/universal-{g}-{age}-averagemuscle-averageweight', n) * aw * gw
+        v += target(f'macrodetails/proportions/{g}-young-averagemuscle-averageweight-idealproportions', n) * 0.5 * gw
     return v
 
 

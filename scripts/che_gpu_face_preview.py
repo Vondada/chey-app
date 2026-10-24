@@ -149,7 +149,8 @@ def main():
     receipt['blender_version'] = subprocess.run([a.blender, '--version'], capture_output=True, text=True).stdout.splitlines()[0]
     env = dict(os.environ, CHE=os.path.join(a.project, 'che.blend'), FIT=os.path.join(a.project, 'fit.json'),
                SAMPLES=str(a.samples), TEST_RES=str(a.res), **settings)
-    env.pop('NOHAIR', None); env.pop('FORCE', None)   # previews always carry the full face and every check
+    env.pop('FORCE', None)   # previews always carry every check
+    if not settings.get('IDENTITY'): env.pop('NOHAIR', None)   # an identity preset whose hair style is not built yet renders close-cropped
 
     kind, names, checks = probe_gpu(a.blender, a.project, a.device, env, log)
     receipt['project_checks'] = checks

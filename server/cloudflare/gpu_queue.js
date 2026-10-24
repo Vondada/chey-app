@@ -12,6 +12,7 @@
 //
 // The worker token is the owner's to create (POST /api/gpu/worker-token from his device); it is shown once, stored
 // only as a SHA-256 hash, opens only /api/gpu/worker/* and is revoked by creating a new one or by /revoke.
+import { BUILT_IN, STYLES, STYLE_LABELS, identityRoute, toSettings } from './avatar_identity.js';
 import { saveRenderedImage } from './media.js';
 
 export const LEASE_MS = 3 * 60_000;           // a claimed job pauses after 3 minutes without a heartbeat
@@ -26,17 +27,15 @@ const WORKERS_KEY = 'gpu:workers';
 const TOKEN_KEY = 'gpu:token';
 const SEEDED_KEY = 'gpu:seeded';
 
-// The first job, queued once when the queue is first read: Jay's face v7 (feathered brows, warmer iris), the
-// checkpoint whose CPU probe the owner saw on 2026-10-24. Face only until the owner approves body work.
-// CHE's face in three looks from one model and rig (STYLE in tools/avatar_face/mpfb_dress.py). The style is part of
-// the settings, so each look is its own content-named job and never reuses another look's pictures.
-const V7 = { BROW_N: '1000', BROW_W: '1.8', IRIS: '2.5' };
-export const SEED_JOBS = [
-  ['photoreal', 'photorealistic'], ['hybrid', 'hybrid game'], ['stylized', 'stylized animated'],
-].map(([style, label]) => ({
-  title: `CHE's face v7, ${label}: front, three-quarter and side`,
+// The first jobs, queued once when the queue is first read: CHE's face in three looks from one model and rig (STYLE in
+// tools/avatar_face/mpfb_dress.py), built from her identity preset (avatar_identity.js), so the identity and look are
+// part of the settings and each look is its own content-named job that never reuses another look's pictures.
+// Face only until the owner approves body work.
+const CHE = BUILT_IN.find((p) => p.id === 'che');
+export const SEED_JOBS = STYLES.map((style) => ({
+  title: `CHE's face, ${STYLE_LABELS[style]}: front, three-quarter and side`,
   kind: 'face_preview', views: [0, 45, 90], samples: 64, res: 480,
-  settings: { ...V7, STYLE: style },
+  settings: toSettings(CHE, style),
   queued_by: 'Claude (PR #517)',
 }));
 
@@ -58,7 +57,7 @@ function cleanSettings(s) {
   const out = {};
   if (!s || typeof s !== 'object') return out;
   for (const [k, v] of Object.entries(s)) {
-    if (/^[A-Z][A-Z0-9_]{0,31}$/.test(k) && ['string', 'number'].includes(typeof v) && String(v).length <= 400) out[k] = String(v);
+    if (/^[A-Z][A-Z0-9_]{0,31}$/.test(k) && ['string', 'number'].includes(typeof v) && String(v).length <= (k === 'FACE' ? 1200 : 400)) out[k] = String(v);
   }
   return out;
 }
@@ -326,11 +325,13 @@ export async function gpuWorkerRoute({ storage, env, now }, path, request) {
   return json(out, out.ok ? 200 : 409);
 }
 
-/** The owner's routes (/api/gpu, /api/gpu/jobs, /api/gpu/jobs/cancel|retry, /api/gpu/worker-token[/revoke]). */
+/** The owner's routes (/api/gpu, /api/gpu/jobs, /api/gpu/jobs/cancel|retry, /api/gpu/worker-token[/revoke], /api/gpu/identities*). */
 export async function gpuOwnerRoute({ storage, now }, path, request, body) {
   if (path !== '/api/gpu' && !path.startsWith('/api/gpu/')) return null;
   const q = new GpuQueue(storage, now);
   if (path === '/api/gpu' && request.method === 'GET') { const v = await q.view(); return json({ ...v, spoken: speakGpuSummary(v) }); }
+  const ident = await identityRoute(storage, q, path, request, body);
+  if (ident) return ident;
   if (request.method !== 'POST') return json({ detail: 'Use POST.' }, 405);
   if (path === '/api/gpu/jobs') { const out = await q.enqueue(body || {}); return json(out, out.ok ? 202 : 422); }
   const act = /^\/api\/gpu\/jobs\/(cancel|retry)$/.exec(path);

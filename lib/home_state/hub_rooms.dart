@@ -505,15 +505,41 @@ extension _CheHomeHubRooms on _CHEHomeState {
             ),
         () => SingleChildScrollView(
               padding: const EdgeInsets.all(16),
-              child: CheGpuJobsCard(
-                baseUrl: cheAgentBaseUrl,
-                headers: _authHeaders,
-                active: active,
-                onRead: (text) => speakText(text, record: false, readOnDemand: true),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Semantics(
+                    button: true,
+                    label: 'Open the Character Generator: edit CHE and the agents, then preview them on the GPU',
+                    excludeSemantics: true,
+                    child: FilledButton.icon(
+                      onPressed: _openCharacterGenerator,
+                      icon: const Icon(Icons.face_retouching_natural),
+                      label: const Text('Character Generator'),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  CheGpuJobsCard(
+                    baseUrl: cheAgentBaseUrl,
+                    headers: _authHeaders,
+                    active: active,
+                    onRead: (text) => speakText(text, record: false, readOnDemand: true),
+                  ),
+                ],
               ),
             ),
       ],
     );
+  }
+
+  /// The Character Generator (lib/avatar/che_character_generator.dart). Opening it speaks nothing.
+  void _openCharacterGenerator() {
+    HapticFeedback.selectionClick();
+    unawaited(Navigator.of(context).push(CheCharacterGenerator.route(
+      baseUrl: cheAgentBaseUrl,
+      headers: _authHeaders,
+      onRead: (text) => speakText(text, record: false, readOnDemand: true),
+    )));
   }
 
   /// The Capability Showroom's real states, from the Worker (owner device token; nothing is spoken).

@@ -217,6 +217,11 @@ extension _CheHomeSend on _CHEHomeState {
       return true;
     }
 
+    if (RegExp(r'\b(open|show|go to|start)\s+(the\s+|my\s+)?(character|avatar)\s+(generator|creator|maker|builder)\b').hasMatch(lower) ||
+        RegExp(r'^\W*(?:(?:che|chey|chay)[,:]?\s+)?(character|avatar)\s+generator\W*$').hasMatch(lower)) {
+      _openCharacterGenerator();
+      return true;
+    }
     if (RegExp(r'\b(open|show|go to)\s+(my\s+)?(memories?|brain|brain constellation)\b').hasMatch(lower)) {
       _openAssistantHub(tab: 0);
       return true;
