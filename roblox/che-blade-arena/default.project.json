@@ -10,7 +10,7 @@
           "Anchored": true,
           "Locked": true,
           "Size": [256, 2, 256],
-          "CFrame": { "position": [0, -1, 0], "orientation": [[1, 0, 0], [0, 1, 0], [0, 0, 1]] },
+          "CFrame": { "CFrame": { "position": [0, -1, 0], "orientation": [[1, 0, 0], [0, 1, 0], [0, 0, 1]] } },
           "Color": [0.36, 0.54, 0.36],
           "Material": "Grass"
         }
@@ -20,7 +20,7 @@
         "$properties": {
           "Anchored": true,
           "Size": [8, 1, 8],
-          "CFrame": { "position": [0, 0.5, 0], "orientation": [[1, 0, 0], [0, 1, 0], [0, 0, 1]] },
+          "CFrame": { "CFrame": { "position": [0, 0.5, 0], "orientation": [[1, 0, 0], [0, 1, 0], [0, 0, 1]] } },
           "Duration": 0
         }
       }
