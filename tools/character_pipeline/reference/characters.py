@@ -50,8 +50,8 @@ CHE = {
     "brow": {"lift": 0.017, "arch": 0.009, "tail": 0.011},
     "wing": {"length": 0.010, "angle": 24},
     # Production sheet: waist-length, voluminous loose waves with a deep side part on her right.
-    "hair": {"style": "long_waves", "length": 0.8, "volume": 1.0, "part": "side_right", "clumps": 74,
-             "per_clump": 5, "row": 0.036, "wave": 0.026, "wavelength": 0.1, "card_width": (0.03, 0.045)},
+    "hair": {"style": "long_waves", "length": 0.8, "volume": 0.6, "part": "side_right", "clumps": 64,
+             "per_clump": 3, "row": 0.02, "wave": 0.014, "wavelength": 0.17, "card_width": (0.05, 0.075)},
     # Stiletto heels (degrees the foot turns down at the ankle).
     "heels": 24,
     "outfit": "executive_suit",

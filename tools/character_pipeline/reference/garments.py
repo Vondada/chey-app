@@ -166,6 +166,49 @@ class Regions:
         return i not in self.hidden_faces
 
 
+def boundary(faces):
+    count = {}
+    for f in faces:
+        for k in range(len(f)):
+            e = tuple(sorted((f[k], f[(k + 1) % len(f)])))
+            count[e] = count.get(e, 0) + 1
+    out = set()
+    for (a, b), n in count.items():
+        if n == 1:
+            out.update((a, b))
+    return out
+
+
+def make_piece(c, bd, name, cover, offset, materials, mat_of_face=None, smooth=5, min_off=0.003):
+    """A garment panel: the body faces under cover, pushed out along the normals by offset, smoothed, kept off the skin."""
+    faces = [f for f in bd.faces if all(cover[v] for v in f)]
+    used = sorted({v for f in faces for v in f})
+    local = {v: k for k, v in enumerate(used)}
+    P = c.V[used] + bd.normals[used] * offset[used][:, None]
+    edge_vs = boundary(faces)
+    nb = [[local[u] for u in bd.nbrs.get(v, ()) if u in local] for v in used]
+    lam = np.array([0.25 if v in edge_vs else 0.6 for v in used])
+    for _ in range(smooth):
+        mean = np.array([P[n].mean(axis=0) if n else P[k] for k, n in enumerate(nb)])
+        P = P + lam[:, None] * (mean - P)
+    for k, v in enumerate(used):
+        need = max(min_off, offset[v] * 0.7)
+        loc, nor, _, _ = bd.tree.find_nearest(Vector(P[k]))
+        if loc is not None and (Vector(P[k]) - loc).dot(nor) < need:
+            P[k] = np.array(loc + nor * need)
+    me = bpy.data.meshes.new(name)
+    me.from_pydata([tuple(p) for p in P], [], [[local[v] for v in f] for f in faces])
+    for poly, f in zip(me.polygons, faces):
+        poly.use_smooth = True
+        if mat_of_face:
+            poly.material_index = mat_of_face(f)
+    ob = bpy.data.objects.new(name, me)
+    bpy.context.scene.collection.objects.link(ob)
+    for m in materials:
+        ob.data.materials.append(m)
+    return ob, np.array(used)
+
+
 def bm_cut(ob, co, no, keep=lambda centre: True, clear=True):
     """Cut a mesh with a plane, removing the side the normal points to (among faces whose centre passes keep)."""
     bm = bmesh.new()

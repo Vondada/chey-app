@@ -29,6 +29,19 @@ EXPRESSIONS = {
     "brows_worry": [("eyebrows-left-inner-up", 1.0), ("eyebrows-right-inner-up", 1.0)],
     "blink_l": [("eye-left-closure", 1.0)],
     "blink_r": [("eye-right-closure", 1.0)],
+    # Expression units for the runtime facial system (che_animator.js): each face (laugh, alert, skeptical,
+    # surprised, concerned...) is a mix of these, so the faces stay distinct without a key per emotion.
+    "eyes_wide": [("eye-left-opened-up", 0.8), ("eye-right-opened-up", 0.8)],
+    "squint": [("eye-left-slit", 0.6), ("eye-right-slit", 0.6)],
+    "brow_up_l": [("eyebrows-left-up", 1.0)],
+    "brow_up_r": [("eyebrows-right-up", 1.0)],
+    "brow_outer_up": [("eyebrows-left-extern-up", 1.0), ("eyebrows-right-extern-up", 1.0)],
+    "mouth_frown": [("mouth-depression", 0.8)],
+    "mouth_upper_up": [("mouth-elevation", 0.7)],
+    "nose_sneer": [("nose-left-elevation", 0.6), ("nose-right-elevation", 0.6)],
+    # Visemes the lip sync needs beyond open, wide, round and press: lower lip tucked (F, V) and teeth (S, T, TH).
+    "viseme_fv": [("mouth-eversion", -0.6), ("mouth-upward-retraction", 0.4), ("mouth-open", 0.08)],
+    "viseme_s": [("mouth-retraction", 0.5), ("mouth-parling", 0.4), ("mouth-open", 0.06)],
 }
 
 FACE_GROUPS = ["body", "helper-upper-teeth", "helper-lower-teeth", "helper-tongue"]

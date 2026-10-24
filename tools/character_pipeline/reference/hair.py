@@ -76,8 +76,9 @@ class Groom:
         back = _smooth(self.hc.y - 0.01, self.hc.y + 0.07, root.y)
         front = 1 - _smooth(self.eye_y + 0.03, self.eye_y + 0.08, root.y)
         lateral = Vector((side, 0, 0))
-        d = lateral * (0.25 + 1.1 * top) + self.down * (0.35 + 0.9 * (1 - top) + 0.4 * back) + \
-            Vector((0, 1, 0)) * (0.25 * back) + Vector((0, -0.15 * front, 0))
+        # Front roots sweep sideways and back, off the face; the crown parts away from the parting line.
+        d = lateral * (0.25 + 1.1 * top + 0.6 * front) + self.down * (0.35 + 0.9 * (1 - top) + 0.4 * back) + \
+            Vector((0, 1, 0)) * (0.25 * back + 0.45 * front)
         d = d - n0 * d.dot(n0)
         return d.normalized()
 
@@ -106,12 +107,20 @@ class Groom:
                 p = q
                 if p.z < self.ear_z or (p.y > self.hc.y + 0.075 and p.z < self.hc.z) or s > 0.22:
                     on_head = False
+                    # Leave the head along its surface and downward, never sticking out (no loops over the crown).
+                    if loc is not None:
+                        d = (d - nor * max(0.0, d.dot(nor))).normalized()
+                    d = (d + self.down * 0.6).normalized()
             else:
                 g = 0.6 + 1.0 * min(1.0, s / 0.3)
                 d = (d + self.down * g * ds * 5.0).normalized()
                 if p.z < self.shoulder_z + 0.1:
+                    # Over the shoulder to the front, or down the back; then the lengths hang close to the body.
                     pull = Vector((0, -1, 0)) if front else Vector((0, 1, 0))
-                    d = (d + pull * 0.06).normalized()
+                    k = 0.05 if p.z > self.shoulder_z - 0.04 else 0.0
+                    axis = Vector((p.x * 0.5, p.y - self.hc.y, 0))
+                    inward = -axis.normalized() * 0.035 if axis.length > 0.09 else Vector()
+                    d = (d + pull * k + inward).normalized()
                 p = p + d * ds
                 if p.y < self.eye_y + 0.02 and self.chin_z - 0.04 < p.z < self.brow_z and abs(p.x) < 0.078:
                     p.x = math.copysign(0.078, p.x if abs(p.x) > 1e-4 else side)
@@ -127,11 +136,15 @@ class Groom:
         return self.finish(path, phase, layer, margin)
 
     def finish(self, path, phase, layer, margin):
+        # Smooth the grown path, then resample it at a fixed spacing so waves are drawn with enough rows to be curves.
+        for _ in range(3):
+            path = [path[0]] + [(path[k - 1] + path[k] * 2 + path[k + 1]) / 4 for k in range(1, len(path) - 1)] + [path[-1]]
+        row = self.spec.get("row", 0.02)
         pts = [path[0]]
         acc = 0.0
         for k in range(1, len(path)):
             acc += (path[k] - path[k - 1]).length
-            if acc >= self.spec.get("row", 0.032) or k == len(path) - 1:
+            if acc >= row or k == len(path) - 1:
                 pts.append(path[k])
                 acc = 0.0
         out, frames = [], []
