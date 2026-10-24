@@ -130,8 +130,10 @@ extension _CheHomeSecurity on _CHEHomeState {
       });
 
       _scrollToBottom();
-      if (voiceResponsesEnabled && openConversation) {
-        await speakText(suggestion);
+      // Timer-driven, so passive: it shows quietly and speaks only while the owner is awake in a voice conversation.
+      if (voiceResponsesEnabled &&
+          chePassiveNoticeMaySpeak(activeConversation: _inActiveVoiceConversation, speaking: _isSpeaking, sending: _isSending)) {
+        await speakText(suggestion, record: false);
       }
     } catch (_) {}
   }

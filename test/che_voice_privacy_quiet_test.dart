@@ -1,6 +1,6 @@
 // Pins the voice fixes of 2026-10-24:
-// 1. Passive polls (finished jobs, pending approvals, the first poll at
-//    launch) never start CHE speech unless the owner is in a live voice
+// 1. Passive polls (finished jobs, pending approvals, proactive suggestions,
+//    the first poll at launch) never start CHE speech unless the owner is in a live voice
 //    conversation (owner rule 2026-10-11).
 // 2. A password turn never stays on live voice (OpenAI Realtime): CHE drops it
 //    from the live session, switches to the iPhone recognizer and holds live
@@ -48,6 +48,15 @@ void main() {
       final before = security.substring(approvalAt - 400, approvalAt);
       expect(before, contains('chePassiveNoticeMaySpeak(activeConversation: _inActiveVoiceConversation'));
       expect(security, contains("title: 'CHE needs your approval'"));
+    });
+
+    test('the 10-minute proactive suggestion is shown quietly and never speaks on standby', () {
+      final security = File('lib/home_state/security.dart').readAsStringSync();
+      final proactive = _body(security, 'Future<void> _checkProactiveSuggestion()');
+      expect(proactive, contains('chePassiveNoticeMaySpeak(activeConversation: _inActiveVoiceConversation'));
+      expect(proactive, isNot(contains('voiceResponsesEnabled && openConversation)')),
+          reason: 'openConversation is also true on wake standby, which is passive');
+      expect(proactive, contains("'role': 'assistant'"), reason: 'the suggestion is still shown as text');
     });
   });
 
