@@ -146,6 +146,19 @@ for (c, r), name in zip(eyes, ('left', 'right')):
     front = c + fwd * r
     near = bvh.find_nearest(front)[3]
     check(f'{name} eye in socket', near < 0.004, f'nearest skin to eye front {near * 1000:.1f} mm')
+# Aim each eye through the middle of its lid opening (looking straight at it, the heights where no skin covers the
+# eyeball), so the iris sits centred between the lids instead of tucked under the upper lid.
+for (c, r), name in zip(eyes, ('Eye_l', 'Eye_r')):
+    seen = []
+    for k in range(-40, 41):
+        h = r * k / 42
+        loc, _, _, dist = bvh.ray_cast(c + up * h + fwd * 2 * r, -fwd, 4 * r)
+        if loc is None or dist >= 2 * r - math.sqrt(r * r - h * h) - 0.0002: seen.append(h)
+    if seen:
+        hm = (min(seen) + max(seen)) / 2
+        gaze = (up * hm + fwd * math.sqrt(r * r - hm * hm)).normalized()
+        bpy.data.objects[name].rotation_euler = gaze.to_track_quat('Z', 'Y').to_euler()
+        print('GAZE', name, f'opening {min(seen) * 1000:.1f}..{max(seen) * 1000:.1f} mm, tilt {math.degrees(math.asin(hm / r)):.1f} deg', flush=True)
 
 # ── Skin: reference-matched albedo, subsurface, pores, lips, tone variation ──────────────────────────────────────
 from lips_hairline import lip_gloss, clear_face_strands, baby_hairs  # noqa: E402
@@ -204,7 +217,14 @@ check('skin albedo near target', abs(sum(albedo) / 3 - sum(lin(x) for x in (96, 
       'linear ' + ', '.join(f'{x:.3f}' for x in albedo))
 
 # ── Eyes, lashes, brows, hair ─────────────────────────────────────────────────────────────────────────────────────
-add_corneas(fwd)
+# The glass cornea from eyes_brows encloses the whole eye, so it acts as a ball lens on this larger MakeHuman eye
+# (pupil pushed up, iris washed grey). The wet corneal shine comes from a clear coat on the eye instead; CORNEA=1 keeps
+# the glass for comparison.
+if os.environ.get('CORNEA'):
+    add_corneas(fwd)
+else:
+    eb.inputs['Coat Weight'].default_value = 1.0; eb.inputs['Coat IOR'].default_value = 1.376
+    eb.inputs['Coat Roughness'].default_value = 0.03; eb.inputs['Roughness'].default_value = 0.35
 lashes = lash_strands(fwd, up, length_scale=float(os.environ.get('LASH_LEN', '0.7'))); brows = brow_strands(fwd, up)
 check('lashes built', len(lashes.data.curves) > 100, f'{len(lashes.data.curves)} strands')
 check('brows built', len(brows.data.curves) > 300, f'{len(brows.data.curves)} strands')

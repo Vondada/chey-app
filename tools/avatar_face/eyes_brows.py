@@ -104,6 +104,21 @@ def add_corneas(fwd):
     return made
 
 
+def _lid_edge(bvh, c, r, fwd, up, side, x, upper):
+    """Where the lid margin really is at sideways offset x: looking straight at the eye, step up (or down) from its
+    centre until skin first covers the eyeball; the lashes root on that skin. None when no margin is found."""
+    sgn = 1 if upper else -1
+    for k in range(1, 60):
+        h = sgn * r * k / 60
+        q2 = x * x + h * h
+        if q2 >= r * r: return None
+        start = c + side * x + up * h + fwd * 2 * r
+        loc, _, _, dist = bvh.ray_cast(start, -fwd, 4 * r)
+        if loc is not None and dist < 2 * r - math.sqrt(r * r - q2) - 0.0002:
+            return loc
+    return None
+
+
 def lash_strands(fwd, up, seed=11, length_scale=1.0):
     random.seed(seed)
     bvh = _body_bvh()
@@ -121,6 +136,8 @@ def lash_strands(fwd, up, seed=11, length_scale=1.0):
                 rim = c + fwd * r * 0.92 + side * math.sin(ang) * r * 0.98 + up * lift * r
                 hit = bvh.find_nearest(rim)
                 root = hit[0] if hit and hit[0] is not None and (hit[0] - rim).length < r * 0.6 else rim
+                edge = _lid_edge(bvh, c, r, fwd, up, side, math.sin(ang) * r * 0.9, upper)
+                if edge is not None: root = edge
                 outer = 0.5 + 0.5 * (t + 0.9) / 1.8  # longer toward the outer corner
                 length = (0.0115 if upper else 0.006) * (0.7 + 0.6 * outer) * length_scale
                 d = (fwd * 0.9 + up * (0.35 if upper else -0.25) + side * 0.25 * t).normalized()
