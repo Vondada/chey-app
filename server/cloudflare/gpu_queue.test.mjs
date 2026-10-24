@@ -35,7 +35,8 @@ test('the queue seeds Jay\'s v7 face job once, queued and waiting for a Colab se
   assert.equal(jobs[0].state, 'queued');
   assert.deepEqual(jobs[0].views, [0, 45, 90]);
   assert.equal(jobs[0].settings.BROW_W, '1.8');
-  assert.equal((await q.jobs()).length, 1, 'seeded only once');
+  assert.deepEqual(jobs.map((j) => j.settings.STYLE), ['photoreal', 'hybrid', 'stylized'], 'one job per look');
+  assert.equal((await q.jobs()).length, SEED_JOBS.length, 'seeded only once');
 });
 
 test('a worker without a GPU is never handed a job', async () => {
@@ -120,10 +121,10 @@ test('no GPU in the session puts the job back in the queue instead of failing it
 
 test('the same request is not queued twice while it waits', async () => {
   const { q } = setup();
-  const a = await q.enqueue({ views: '0,45,90', settings: { BROW_N: '1000', BROW_W: '1.8', IRIS: '2.5' } });
+  const a = await q.enqueue({ views: '0,45,90', settings: { BROW_N: '1000', BROW_W: '1.8', IRIS: '2.5', STYLE: 'photoreal' } });
   assert.equal(a.duplicate, true);
   assert.equal((await q.enqueue({ views: [0], settings: { BAD_key: 'x', IRIS: 3 } })).job.settings.IRIS, '3');
-  assert.equal((await q.jobs()).length, 2);
+  assert.equal((await q.jobs()).length, SEED_JOBS.length + 1);
 });
 
 test('worker routes open only with the paired token; owner routes create it, list jobs and speak a summary', async () => {
@@ -145,7 +146,7 @@ test('worker routes open only with the paired token; owner routes create it, lis
   assert.equal(view.counts.rendering, 1); assert.equal(view.worker_paired, true);
   assert.equal(view.workers[0].online, true); assert.equal(view.workers[0].gpu, GPU);
   assert.match(view.spoken, /1 rendering/); assert.match(view.spoken, /online on Tesla T4/); assert.match(view.spoken, /costs nothing/);
-  assert.ok(view.jobs[0].previews['0']);
+  assert.ok(view.jobs.find((j) => j.id === claim.job.id).previews['0']);
   await gpuOwnerRoute(ctx, '/api/gpu/worker-token/revoke', req('/api/gpu/worker-token/revoke', {}), {});
   assert.equal((await gpuWorkerRoute(ctx, '/api/gpu/worker/heartbeat', req('/api/gpu/worker/heartbeat', { worker_id: 'colab-1' }, token))).status, 404);
 });

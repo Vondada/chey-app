@@ -69,7 +69,20 @@ v = apply_sliders(macro_woman(verts, race, youth=win.get('youth', 0.0), mature=f
                   slider_deltas(n), win['weights'])
 # FACE ("lr:eyes/eye-eyefold-down=0.4,mouth/mouth-cupidsbow-incr=0.5"): extra MakeHuman targets on top of the fit,
 # for features written out in words; "lr:" applies the l- and r- versions.
-for item in [x for x in os.environ.get('FACE', '').split(',') if x.strip()]:
+# STYLE (owner, 2026-10-24): one CHE, three looks from the same fitted head, rig and face keys. photoreal is the
+# approved face unchanged; hybrid is a realistic game character (slightly larger eyes, smoother skin); stylized is an
+# expressive animated look (large eyes, small nose, round cheeks and head, soft shading). Only MakeHuman targets and
+# material values change, so every look keeps the same topology, shape keys and lip sync.
+STYLE = os.environ.get('STYLE', 'photoreal')
+STYLE_FACE = {
+    'photoreal': '',
+    'hybrid': 'lr:eyes/eye-scale-incr=0.35,nose/nose-scale-horiz-decr=0.15,chin/chin-width-decr=0.1',
+    'stylized': 'lr:eyes/eye-scale-incr=0.9,nose/nose-scale-horiz-decr=0.5,nose/nose-scale-vert-decr=0.45,'
+                'lr:cheek/cheek-volume-incr=0.45,head/head-round=0.45,chin/chin-height-decr=0.35,mouth/mouth-scale-horiz-decr=0.15',
+}
+if STYLE not in STYLE_FACE: raise SystemExit(f'unknown STYLE {STYLE!r}: photoreal, hybrid or stylized')
+print('STYLE', STYLE, flush=True)
+for item in [x for x in (os.environ.get('FACE', '') + ',' + STYLE_FACE[STYLE]).split(',') if x.strip()]:
     tname, tw = item.split('='); v = v + target(tname.strip(), n) * float(tw)
 co = to_blender(v)
 el, er = co[sorted(groups['helper-l-eye'])].mean(0), co[sorted(groups['helper-r-eye'])].mean(0)
@@ -146,7 +159,8 @@ bvh = BVHTree.FromPolygons([x.co.copy() for x in bme.vertices], [p.vertices[:] f
 for (c, r), name in zip(eyes, ('left', 'right')):
     front = c + fwd * r
     near = bvh.find_nearest(front)[3]
-    check(f'{name} eye in socket', near < 0.004, f'nearest skin to eye front {near * 1000:.1f} mm')
+    # 4 mm on a real-size eye (radius about 12 mm); larger stylized eyes get the same limit relative to their size
+    check(f'{name} eye in socket', near < max(0.004, r / 3), f'nearest skin to eye front {near * 1000:.1f} mm (eye radius {r * 1000:.1f} mm)')
 # Aim each eye through the middle of its lid opening (looking straight at it, the heights where no skin covers the
 # eyeball), so the iris sits centred between the lids instead of tucked under the upper lid.
 for (c, r), name in zip(eyes, ('Eye_l', 'Eye_r')):
@@ -229,7 +243,12 @@ fine = nt.nodes.new('ShaderNodeTexNoise'); fine.inputs['Scale'].default_value = 
 nt.links.new(tc.outputs['Object'], fine.inputs['Vector'])
 hsum = nt.nodes.new('ShaderNodeMath'); hsum.operation = 'MULTIPLY_ADD'; hsum.inputs[1].default_value = 0.5
 nt.links.new(fine.outputs['Fac'], hsum.inputs[0]); nt.links.new(vor.outputs['Distance'], hsum.inputs[2])
-bump = nt.nodes.new('ShaderNodeBump'); bump.inputs['Strength'].default_value = float(os.environ.get('PORES', '0.12')); bump.inputs['Distance'].default_value = 0.0004
+bump = nt.nodes.new('ShaderNodeBump'); bump.inputs['Distance'].default_value = 0.0004
+bump.inputs['Strength'].default_value = {'photoreal': 1.0, 'hybrid': 0.3, 'stylized': 0.0}[STYLE] * float(os.environ.get('PORES', '0.12'))
+if STYLE != 'photoreal':   # smoother, even skin: no tone mottling, one roughness, softer subsurface
+    mr.inputs['To Min'].default_value = mr.inputs['To Max'].default_value = 1.0
+    rmr.inputs['To Min'].default_value = rmr.inputs['To Max'].default_value = 0.52 if STYLE == 'hybrid' else 0.62
+    b.inputs['Subsurface Weight'].default_value = 0.25 if STYLE == 'hybrid' else 0.35
 nt.links.new(hsum.outputs['Value'], bump.inputs['Height']); nt.links.new(bump.outputs['Normal'], b.inputs['Normal'])
 body.data.materials.append(skin)
 # Scalp under the hair: where CHE's hair cards lie within about 1-2 cm of the skin above the brows, the skin is tinted to
@@ -287,9 +306,12 @@ def area(name, pos, size, energy):
 k = che_gap / 0.06
 area('Key', eye_mid + (fwd * 1.2 + right * 0.8 + up * 0.6) * k, float(os.environ.get('KEY_SIZE', '1.2')) * k, 60 * k * k)
 area('Fill', eye_mid + (fwd * 1.2 - right * 0.9 + up * 0.1) * k, 1.5 * k, 28 * k * k)
-area('Rim', eye_mid + (-fwd * 1.0 + right * 0.3 + up * 0.7) * k, 0.6 * k, 25 * k * k)
+area('Rim', eye_mid + (-fwd * 1.0 + right * 0.3 + up * 0.7) * k, 0.6 * k, {'photoreal': 25, 'hybrid': 40, 'stylized': 70}[STYLE] * k * k)
+if STYLE == 'stylized':   # CHE's glowing-blue rim from the other side, as in the app's look
+    area('RimBlue', eye_mid + (-fwd * 1.0 - right * 0.6 + up * 0.3) * k, 0.6 * k, 45 * k * k)
+    bpy.data.objects['RimBlue'].data.color = (0.35, 0.6, 1.0)
 w = sc.world or bpy.data.worlds.new('W'); sc.world = w; w.use_nodes = True
-w.node_tree.nodes['Background'].inputs['Color'].default_value = (0.18, 0.18, 0.19, 1)
+w.node_tree.nodes['Background'].inputs['Color'].default_value = (0.18, 0.18, 0.19, 1) if STYLE == 'photoreal' else (0.03, 0.05, 0.12, 1)
 w.node_tree.nodes['Background'].inputs['Strength'].default_value = 0.6
 cam = bpy.data.objects.new('Cam', bpy.data.cameras.new('Cam')); sc.collection.objects.link(cam); sc.camera = cam
 cam.data.lens = 85

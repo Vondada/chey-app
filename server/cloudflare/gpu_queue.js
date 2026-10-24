@@ -28,12 +28,17 @@ const SEEDED_KEY = 'gpu:seeded';
 
 // The first job, queued once when the queue is first read: Jay's face v7 (feathered brows, warmer iris), the
 // checkpoint whose CPU probe the owner saw on 2026-10-24. Face only until the owner approves body work.
-export const SEED_JOBS = [{
-  title: "Jay's face v7: front, three-quarter and side",
+// CHE's face in three looks from one model and rig (STYLE in tools/avatar_face/mpfb_dress.py). The style is part of
+// the settings, so each look is its own content-named job and never reuses another look's pictures.
+const V7 = { BROW_N: '1000', BROW_W: '1.8', IRIS: '2.5' };
+export const SEED_JOBS = [
+  ['photoreal', 'photorealistic'], ['hybrid', 'hybrid game'], ['stylized', 'stylized animated'],
+].map(([style, label]) => ({
+  title: `CHE's face v7, ${label}: front, three-quarter and side`,
   kind: 'face_preview', views: [0, 45, 90], samples: 64, res: 480,
-  settings: { BROW_N: '1000', BROW_W: '1.8', IRIS: '2.5' },
+  settings: { ...V7, STYLE: style },
   queued_by: 'Claude (PR #517)',
-}];
+}));
 
 /** A GPU model name as nvidia-smi prints it ("Tesla T4, 550.54, 15360 MiB"); an error message is not one. */
 export function isGpuName(name) {

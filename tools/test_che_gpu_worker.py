@@ -53,7 +53,8 @@ class GpuWorkerTest(unittest.TestCase):
         return p.returncode, p.stdout + p.stderr
 
     def job(self):
-        return self.api('/api/gpu')['jobs'][0]
+        # the first seeded look (photoreal) is the one a worker claims first
+        return next(j for j in self.api('/api/gpu')['jobs'] if (j.get('settings') or {}).get('STYLE') == 'photoreal')
 
     def calls_made(self):
         return open(self.calls).read().split() if os.path.exists(self.calls) else []
@@ -70,8 +71,15 @@ class GpuWorkerTest(unittest.TestCase):
         self.assertIn("DEVICE OPTIX ['Tesla T4']", j['receipt']['views']['0']['device'])
         self.assertTrue(j['drive_path'].startswith(self.out) or 'CHE_GPU/jobs/face-' in j['drive_path'])
         self.assertEqual(self.job()['settings']['BROW_W'], '1.8')
+        first = j['id']
+        for _ in range(2):                                    # the hybrid and stylized looks are their own jobs
+            code, out = self.work('--once')
+            self.assertNotIn(first, out, 'the finished photoreal job never renders again')
+        looks = {x['settings']['STYLE']: x for x in self.api('/api/gpu')['jobs']}
+        self.assertEqual({k: v['state'] for k, v in looks.items()}, {'photoreal': 'completed', 'hybrid': 'completed', 'stylized': 'completed'})
+        self.assertEqual(len({v['drive_path'] for v in looks.values()}), 3, 'each look has its own content-named job folder')
         code, out = self.work('--once')                       # nothing left: the next run renders nothing
-        self.assertNotIn('JOB gpu_', out); self.assertEqual(self.calls_made(), ['0,45,90'])
+        self.assertNotIn('JOB gpu_', out); self.assertEqual(self.calls_made(), ['0,45,90'] * 3)
 
     def test_disconnect_pauses_and_the_next_session_resumes_without_redoing_finished_views(self):
         # A session that dies after the front view: the runner stops mid-job and no outcome reaches CHE.
