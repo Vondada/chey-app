@@ -181,6 +181,14 @@ extension _CheHomeSend on _CHEHomeState {
       r'^(?:(?:chay|chey|shay|che)[, ]+)?(?:please\s+)?(?:update yourself|check\s+(?:for\s+)?(?:(?:an|any|my|the|new|che)\s+)*updates?|install (?:the )?che update|download (?:the )?che update)(?:,?\s+please)?\s*[.!?]*$',
       caseSensitive: false,
     );
+    // "Diagnose Rithmic", "why isn't Rithmic connecting": the four checks on this phone, read out with their real
+    // results. The password never leaves the phone and is never spoken.
+    if (cheRithmicDiagnoseCommand(message)) {
+      await speakText('Checking Rithmic: the saved login, the automatic reconnect, the connection and the login answer.', record: false, show: true);
+      final checks = await cheRithmicDiagnose();
+      await speakText(cheRithmicDiagnosisText(checks), record: false, show: true);
+      return true;
+    }
     if (updateCommand.hasMatch(message.trim())) {
       await speakText('Checking CHE updates now, sir.', record: false, show: true);
       if (!mounted) return true;

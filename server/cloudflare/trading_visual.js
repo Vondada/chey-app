@@ -493,10 +493,33 @@ export const UNAVAILABLE_TIMEFRAMES = Object.freeze({
 
 const WAKE = /^\s*(?:(?:hey\s+)?(?:che|chey|chay)[,:]?\s+)?/i;
 /** "Show today's P&L", "who is the current leader", "audit the trades", "show daily evidence". Null otherwise. */
-export function tradingVisualIntent(message) {
+const MONTHS = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
+/** A spoken or typed calendar date as YYYY-MM-DD; a date without a year is its latest occurrence not after [now]. */
+export function dayFromWords(t, now = Date.now()) {
+  const pad = (n) => String(n).padStart(2, '0');
+  const ok = (y, m, d) => m >= 1 && m <= 12 && d >= 1 && d <= 31 && new Date(Date.UTC(y, m - 1, d)).getUTCDate() === d;
+  const iso = /\b(20\d\d)-(\d\d)-(\d\d)\b/.exec(t);
+  if (iso && ok(+iso[1], +iso[2], +iso[3])) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  const named = new RegExp(`\\b(${MONTHS.join('|')}|sept|${MONTHS.map((m) => m.slice(0, 3)).join('|')})\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:,?\\s+(20\\d\\d))?\\b`).exec(t);
+  const slash = /\b(\d{1,2})\/(\d{1,2})(?:\/(20\d\d))?\b/.exec(t);
+  const parts = named ? [MONTHS.findIndex((m) => m.startsWith(named[1].slice(0, 3))) + 1, +named[2], named[3] ? +named[3] : null]
+    : slash ? [+slash[1], +slash[2], slash[3] ? +slash[3] : null] : null;
+  if (!parts) return null;
+  const [m, d, y] = parts;
+  const today = new Date(now);
+  let year = y ?? today.getUTCFullYear();
+  if (!ok(year, m, d)) return null;
+  if (y == null && Date.UTC(year, m - 1, d) > now) year -= 1;
+  return ok(year, m, d) ? `${year}-${pad(m)}-${pad(d)}` : null;
+}
+
+export function tradingVisualIntent(message, now = Date.now()) {
   const t = String(message || '').replace(/[’']/g, "'").replace(WAKE, '').trim().toLowerCase();
   if (/\b(?:today'?s?|daily|intraday)\s+(?:paper\s+)?(?:p\s*&\s*l|pnl|profit and loss)\b|\bhow\s+(?:much\s+)?(?:am\s+i|are\s+we|did\s+(?:we|i))\s+(?:up|down|make|made)\s+today\b/.test(t)) return { kind: 'pnl' };
   if (/\b(?:current|verified)\s+(?:strategy\s+)?leader\b|\bbest\s+verified\s+strategy\b|\bwho(?:'s|\s+is)\s+(?:the\s+)?leader\b/.test(t)) return { kind: 'leader' };
+  // "Audit September 22", "audit the trades for 9/22", "audit 2026-09-22": the audit with that day computed three ways.
+  const auditDay = /\baudit\b/.test(t) ? dayFromWords(t, now) : null;
+  if (auditDay) return { kind: 'audit', day: auditDay };
   if (/\baudit\b[\s\S]{0,30}\btrades?\b|\btrade\s+audit\b/.test(t)) return { kind: 'audit' };
   if (/\bdaily\s+evidence\b|\bevidence\s+(?:by|per)\s+day\b/.test(t)) return { kind: 'evidence' };
   // Card sizes on the Trading page: "expand the P&L card", "make the chart full screen", "compact view".

@@ -75,7 +75,8 @@ test('September 22, 2026: the day\'s P&L is the sum of its stored rows; a duplic
   const broker = await tradingCalendar(s, { month: '2026-09', source: 'broker' });
   assert.equal(broker.totals.net, null);
   assert.equal(broker.empty, true);
-  assert.match(broker.note, /no broker P&L/);
+  assert.equal(broker.fills_kept.fills, 0);
+  assert.match(broker.note, /Paper account; no money at risk/);
 
   const month = await tradingCalendar(s, { month: '2026-09', source: 'paper' });
   assert.equal(month.totals.net, -1016);
@@ -243,4 +244,56 @@ test('routes: the owner reads both calendars through the Worker; a bad source is
     assert.equal(done.open_view, view, said);
     assert.equal(done.model_calls, 0, said);
   }
+  // September 22 reconciliation by voice: the audit with that day three ways, and the day page on the CME basis.
+  const chat = async (said) => (await (await send('/api/chat', { method: 'POST', body: { message: said, history: [] }, token })).text()).split('\n').filter(Boolean).map((l) => JSON.parse(l)).find((e) => e.type === 'done') || {};
+  const audit = await chat('CHE, audit September 22');
+  assert.equal(audit.source, 'che_trading_visual');
+  assert.equal(audit.visual.day, '2026-09-22');
+  assert.equal(audit.model_calls, 0);
+  const cme = await chat('Show the trading calendar for September 22 by CME day');
+  assert.equal(cme.source, 'che_calendars');
+  assert.deepEqual([cme.calendar.day, cme.calendar.basis], ['2026-09-22', 'cme']);
+});
+
+test('broker: Alpaca PAPER fills are kept once each, and the calendar shows realized P&L on the closing fill\'s day', async () => {
+  const { storeAlpacaFills, realizedClosesFromFills } = await import('./broker_alpaca.js');
+  const s = memStorage();
+  const fill = (id, side, qty, price, time) => ({ id, order_id: `o-${id}`, symbol: 'AAPL', side, qty, price, time });
+  const fills = [fill('f1', 'buy', 10, 200, '2026-09-22T14:00:00Z'), fill('f2', 'sell', 4, 205, '2026-09-22T15:00:00Z'), fill('f3', 'sell', 6, 190, '2026-09-23T15:00:00Z')];
+  assert.deepEqual(await storeAlpacaFills(s, fills.slice(0, 2)), { added: 2, total: 2 });
+  assert.deepEqual(await storeAlpacaFills(s, fills), { added: 1, total: 3 }, 'a re-read adds only the new fill');
+  assert.deepEqual(realizedClosesFromFills(fills).map((c) => c.pnl), [20, -60]);
+  const month = await tradingCalendar(s, { month: '2026-09', source: 'broker', env: { CHE_OWNER_TIMEZONE: 'America/New_York' } });
+  const cells = Object.fromEntries(month.weeks.flatMap((w) => w.days).map((d) => [d.date, d]));
+  assert.deepEqual([cells['2026-09-22'].net, cells['2026-09-22'].color, cells['2026-09-23'].net, cells['2026-09-23'].color], [20, 'yellow', -60, 'red']);
+  assert.equal(month.totals.net, -40);
+  assert.equal(month.fills_kept.fills, 3);
+  const day = await tradingCalendar(s, { day: '2026-09-23', source: 'broker', env: { CHE_OWNER_TIMEZONE: 'America/New_York' } });
+  assert.equal(day.trades.length, 1);
+  assert.deepEqual([day.trades[0].entry_price, day.trades[0].exit_price, day.trades[0].net, day.trades[0].evidence_label], [200, 190, -60, 'BROKER-CONFIRMED (PAPER)']);
+});
+
+test('Office rollup: finished work outlives the 120-row job list; days before the rollup say "no record kept"', async () => {
+  const s = memStorage();
+  const now = Date.parse('2026-10-20T12:00:00Z');
+  const data = { team_tasks: [
+    { id: 't1', task: 'Write the release notes', partner_name: 'Nova', status: 'complete', result: 'Notes saved.', created_at: '2026-10-18T14:00:00Z', updated_at: '2026-10-18T15:00:00Z' },
+    { id: 't2', task: 'Check the deploy logs', partner_name: 'Atlas', status: 'failed', error: 'GitHub answered 403', created_at: '2026-10-19T16:00:00Z', updated_at: '2026-10-19T16:10:00Z' },
+    { id: 't3', task: 'Research suppliers', partner_name: 'Mira', status: 'running', created_at: '2026-10-19T17:00:00Z', updated_at: '2026-10-19T17:00:00Z' },
+  ] };
+  await officeCalendar(s, data, { month: '2026-10', now });
+  // Only finished and failed work is kept, once each, on its own day.
+  assert.deepEqual(s.saved.get('office_day:2026-10-18').items.map((x) => x.id), ['t1']);
+  assert.deepEqual(s.saved.get('office_day:2026-10-19').items.map((x) => [x.id, x.state]), [['t2', 'failed']]);
+  await officeCalendar(s, data, { month: '2026-10', now });
+  assert.equal(s.saved.get('office_day:2026-10-18').items.length, 1, 'a second read adds nothing');
+  // The live lists drop them (as cloudJobs' cap would); the month still shows them, from the rollup.
+  const later = await officeCalendar(s, { team_tasks: [] }, { month: '2026-10', now: now + 86_400_000 });
+  const cell = (d) => later.weeks.flatMap((w) => w.days).find((x) => x.date === d);
+  assert.deepEqual([cell('2026-10-18').done, cell('2026-10-19').failed, cell('2026-10-19').color], [1, 1, 'red']);
+  const d18 = await officeCalendar(s, { team_tasks: [] }, { day: '2026-10-18', now });
+  assert.equal(d18.items[0].receipt, 'Notes saved.');
+  // Before the rollup began, an empty day says so instead of looking like a quiet day.
+  assert.equal(cell('2026-10-01').record, 'no record kept');
+  assert.equal(cell('2026-10-21').record, null);
 });
