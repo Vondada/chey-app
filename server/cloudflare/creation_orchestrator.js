@@ -79,6 +79,12 @@ export async function ensureCapacity(env = {}, { storage, now, fetcher = fetch, 
   const recent = log.filter((d) => t - Date.parse(d.at) < DISPATCH_WINDOW_MS);
   const want = Math.min(Math.max(0, settings.max_cloud_workers - cap.cloud_busy), cap.cpu_runnable.length);
   const have = cap.cloud_idle + recent.length;
+  // "Ready" must be true before the first Generate, so the repository's visibility is read (cached hourly) whenever
+  // automatic cloud workers are on, not only while a job waits; otherwise the app could only offer the Colab notebook.
+  if (!cap.cpu_runnable.length && settings.auto_cloud && settings.spend_limit_usd === 0 && repoState(env).ok) {
+    const vis = await visibility(env, rec, t, fetcher);
+    if (vis.changed) { rec.visibility = vis.v; recChanged = true; }
+  }
   if (cap.cpu_runnable.length) {
     const repo = repoState(env);
     if (!settings.auto_cloud) reason = 'Automatic cloud workers are off (Settings, Creation Engine), so this waits for a worker you start.';
@@ -117,7 +123,9 @@ export async function ensureCapacity(env = {}, { storage, now, fetcher = fetch, 
   for (const j of jobs) {
     if (j.state !== 'queued' && j.state !== 'paused') continue;
     const next = cpuIds.has(j.id) ? (cloudState ? { state: cloudState, reason: '', at: recent.filter((d) => d.ok).at(-1)?.at || iso(t) } : reason ? { state: 'waiting', reason, at: iso(t) } : null)
-      : (j.requires?.gpu === 'preferred' && cap.gpu_online ? { state: 'waiting', reason: 'A GPU worker is online and takes it next.', at: iso(t) } : null);
+      : j.requires?.gpu === 'preferred' && cap.gpu_online ? { state: 'waiting', reason: 'A GPU worker is online and takes it next.', at: iso(t) }
+        : (j.requires?.gpu || 'required') === 'required' && !cap.gpu_online
+          ? { state: 'waiting_gpu', reason: 'This needs a GPU, and none is online. It resumes from its saved stages when your Colab GPU checks in.', at: iso(t) } : null;
     const same = JSON.stringify({ ...(j.cloud || {}), at: 0 }) === JSON.stringify({ ...(next || {}), at: 0 }) && Boolean(j.cloud) === Boolean(next);
     if (!same) { j.cloud = next; jobsChanged = true; }
   }
