@@ -170,7 +170,7 @@ void main() {
   testWidgets('project character replaces the startup CHE preview', (tester) async {
     final vp = <_FakeViewport>[];
     final w = _Worker({..._project(), 'base_id': 'nova'});
-    await tester.pumpWidget(studioForCharacter(w, vp));
+    await tester.pumpWidget(_studioForCharacter(w, vp));
     await tester.pumpAndSettle();
     expect(vp.single.loads.last, contains('Nova'));
   });
@@ -675,7 +675,7 @@ void main() {
   });
 }
 
-Widget studioForCharacter(_Worker worker, List<_FakeViewport> viewports) => MaterialApp(home: CheLiveStudio(
+Widget _studioForCharacter(_Worker worker, List<_FakeViewport> viewports) => MaterialApp(home: CheLiveStudio(
   baseUrl: 'https://che.test', headers: const {}, projectId: 'cr_1', client: worker.client(),
   loadBundled: (_) async => _glb,
   viewport: (message) { final v = _FakeViewport(message); viewports.add(v); return v; },
