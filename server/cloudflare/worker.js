@@ -5806,6 +5806,12 @@ export class CheState extends DurableObject {
     return response;
   }
 
+  // Market data cache options (markets.js): last good values survive isolate restarts in this Durable Object's
+  // storage, and background refreshes outlive the request that started them.
+  marketCacheOptions() {
+    return { store: this.ctx.storage, background: (p) => this.ctx.waitUntil?.(p) };
+  }
+
   // One Office video pass. It reloads the store so it sees the uploads of the
   // pass before it. The YouTube token is checked before any render, and fetched
   // again right before the upload, so a long render cannot outlive it.
@@ -8308,7 +8314,7 @@ export class CheState extends DurableObject {
 
       // ─── Markets desk (real quotes only; unavailable says so) ───────────
       if (path === '/api/markets/snapshot' && request.method === 'GET') {
-        return json(await marketSnapshot(this.env));
+        return json(await marketSnapshot(this.env, fetch, this.marketCacheOptions()));
       }
       if (path === '/api/trading/account' && request.method === 'GET') {
         return json(await marketAccountSnapshot(this.env));
@@ -8747,7 +8753,7 @@ export class CheState extends DurableObject {
       }
       if (path === '/api/markets/candles' && request.method === 'GET') {
         const symbol = new URL(request.url).searchParams.get('symbol') || '^spx';
-        const result = await marketCandles(symbol);
+        const result = await marketCandles(symbol, fetch, this.marketCacheOptions());
         return json(result, result.error && !result.candles ? 400 : 200);
       }
 
@@ -8875,7 +8881,8 @@ export class CheState extends DurableObject {
 
       // ─── Unread / importance badge for the app ────────────────────────
       if (path === '/api/mailbox/badge' && request.method === 'GET') {
-        const flag = await unreadIncoming(this.ctx.storage, this.env);
+        // The badge polls: a stale GitHub read is answered from the last read and refreshed in the background.
+        const flag = await unreadIncoming(this.ctx.storage, this.env, fetch, { background: (p) => this.ctx.waitUntil?.(p) });
         const letters = (await listLetters(this.ctx.storage)).filter((l) => !l.read);
         const important = letters.filter((l) => l.severity === 'danger' || l.severity === 'action').length
           + flag.latest.filter((m) => /urgent|error|danger|failed|attack/i.test(m.text)).length;

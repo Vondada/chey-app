@@ -23,6 +23,7 @@ import { appendAudit, auditEntry } from './privacy_policy.js';
 import { guardModelInput, loadSecurity, recordFindings, saveSecurity } from './security_intelligence.js';
 import { storedKeys, withStoredKeys } from './resilience.js';
 import { addTokens } from './usage_tracker.js';
+import { recordTiming } from './perf_watch.js';
 import { classifyHttpStatus, cooldownMsFor, makeEngineError, parseRetryAfter } from './che_errors.js';
 import { loadCooldowns, saveCooldowns, saveHealth, noteProviderOutcome, shouldHoldCapacity } from './provider_health_store.js';
 
@@ -946,6 +947,13 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
       .filter((e) => !/skipped|resting|daily budget|context budget|deadline|cooldown active/i.test(e))
       .map((e) => String(e).split(':')[0].trim()).filter(Boolean))];
     const failovers = Math.max(failedProviderAttempts, failedEngines.length);
+    // Provider wait, kept apart from CHE's own time (perf_watch.js): the whole time spent in this router, by the
+    // engine that answered, plus how much of it went on engines that failed first. Route and milliseconds only.
+    const waited = Date.now() - started;
+    await recordTiming(usageStorage, ownerChat ? 'provider:owner_chat' : 'provider:internal', {
+      total: waited,
+      stages: { [answer?.engine ? `engine:${answer.engine}` : 'engine:none']: waited, failovers: failovers ? waited : 0 },
+    }).catch(() => null);
     await recordReliability(usageStorage, {
       kind: 'route',
       workflow,

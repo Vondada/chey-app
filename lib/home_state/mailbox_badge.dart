@@ -1,11 +1,16 @@
 part of '../main.dart';
 
 // Mailbox badge (iOS-style unread count) and the keyboard on/off switch.
+
+/// One badge request at a time: the poll timer, app resume and security refresh can all ask at once.
+bool _cheBadgeInFlight = false;
+
 extension _CheMailboxBadge on _CHEHomeState {
   /// Checks CHE's server for unread mailbox messages and letters. When the
   /// count goes up, CHE taps the phone and shows a banner, like iOS Mail.
   Future<void> _refreshMailboxBadge({bool announce = true}) async {
-    if (_deviceToken == null) return;
+    if (_deviceToken == null || _cheBadgeInFlight) return;
+    _cheBadgeInFlight = true;
     try {
       final response = await http
           .get(Uri.parse('$cheAgentBaseUrl/api/mailbox/badge'), headers: _authHeaders)
@@ -34,7 +39,10 @@ extension _CheMailboxBadge on _CHEHomeState {
         detail: latest.isEmpty ? null : '${latest.first.from}: ${latest.first.text}',
         onOpen: () => _openMailbox(),
       );
-    } catch (_) {}
+    } catch (_) {
+    } finally {
+      _cheBadgeInFlight = false;
+    }
   }
 
   Future<void> _openMailbox({int tab = 0}) async {
@@ -46,7 +54,8 @@ extension _CheMailboxBadge on _CHEHomeState {
         initialTab: tab,
       ),
     ));
-    await _refreshMailboxBadge(announce: false);
+    // Returning from the mailbox never waits on the network.
+    unawaited(_refreshMailboxBadge(announce: false));
   }
 
   Future<void> _loadTypingPref() async {

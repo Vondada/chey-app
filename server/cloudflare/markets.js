@@ -15,17 +15,81 @@ const CRYPTO = [
   { id: 'solana', symbol: 'SOL', name: 'Solana' },
 ];
 
+// Cache (owner perf report 2026-10-24: snapshot and candle p95 were ~7 s, the full upstream timeout).
+// - Fresh values answer at once. A stale good value also answers at once, labelled with when it was fetched, while
+//   one refresh runs in the background (stale-while-revalidate).
+// - Concurrent callers share one upstream request per key (no stampede when the ticker and the chart ask together).
+// - With nothing to show, a caller waits at most COLD_WAIT_MS; the fetch keeps going and fills the cache for the next.
+// - A failed refresh never replaces a good value; failures are remembered briefly so a dead source is not retried
+//   on every poll.
+// - With a `store` (CHE's Durable Object storage), the last good value survives isolate restarts.
+// Nothing here changes a price or a date: values are the source's, with `fetched_at` and `stale` added.
 const cache = new Map();
+const inflight = new Map();
+export const COLD_WAIT_MS = 2500;
+const FAIL_TTL_MS = 60_000;
+const STORE_PREFIX = 'markets_cache_v1:';
+const LOADING = Symbol('loading');
 
-async function cached(key, ttlMs, load) {
-  const hit = cache.get(key);
-  if (hit && Date.now() - hit.at < ttlMs) return hit.value;
-  const value = await load();
-  cache.set(key, { at: Date.now(), value });
-  return value;
+export function _resetMarketCache() { cache.clear(); inflight.clear(); }
+
+function labelled(entry, now = Date.now()) {
+  const value = entry.value;
+  if (!value || typeof value !== 'object') return value;
+  // A value built from older inputs (the snapshot from stale candles) carries their fetch time and stays stale
+  // however recently it was put together, so the app never shows an old index price as fresh.
+  const sourceAt = Number.isFinite(value.source_fetched_ms) ? Math.min(value.source_fetched_ms, entry.at) : entry.at;
+  const { source_fetched_ms: _drop, ...rest } = value;
+  return { ...rest, fetched_at: new Date(sourceAt).toISOString(), stale: !!entry.stale || sourceAt < entry.at, age_s: Math.max(0, Math.round((now - sourceAt) / 1000)) };
 }
 
-async function fetchText(url, fetcher, timeoutMs = 7000) {
+async function cached(key, ttlMs, load, { isOk = () => true, store = null, background = null, waitMs = COLD_WAIT_MS, loading = null, swr = true } = {}) {
+  const now = Date.now();
+  let hit = cache.get(key);
+  if (!hit && store) {
+    try {
+      const saved = await store.get(STORE_PREFIX + key);
+      if (saved && saved.value && Number.isFinite(saved.at)) { hit = { at: saved.at, value: saved.value, ok: true }; cache.set(key, hit); }
+    } catch (_) { /* storage is an optimisation only */ }
+  }
+  if (hit && hit.ok && now - hit.at < ttlMs) return labelled(hit, now);
+  if (hit && !hit.ok && now - hit.at < FAIL_TTL_MS) return hit.good ? labelled({ ...hit.good, stale: true }, now) : labelled(hit, now);
+  let p = inflight.get(key);
+  if (!p) {
+    p = (async () => {
+      let value;
+      try { value = await load(); } catch (e) { value = { error: String(e?.message || e) }; }
+      const ok = isOk(value);
+      const prev = cache.get(key);
+      if (ok) {
+        const entry = { at: Date.now(), value, ok: true };
+        cache.set(key, entry);
+        if (store) { try { await store.put(STORE_PREFIX + key, { at: entry.at, value }); } catch (_) {} }
+        return labelled(entry);
+      }
+      if (prev && (prev.ok || prev.good)) {
+        // Keep the last good value; note the failed refresh so it is not retried for FAIL_TTL_MS.
+        const good = prev.good || prev;
+        cache.set(key, { at: Date.now(), value: good.value, ok: false, good });
+        return labelled({ ...good, stale: true });
+      }
+      const entry = { at: Date.now(), value, ok: false };
+      cache.set(key, entry);
+      return labelled(entry);
+    })().finally(() => inflight.delete(key));
+    inflight.set(key, p);
+    if (background) background(p.catch(() => null));
+  }
+  const good = hit && (hit.ok ? hit : hit.good);
+  if (good && swr) return labelled({ ...good, stale: true }, now);
+  let handle;
+  const timer = new Promise((resolve) => { handle = setTimeout(() => resolve(LOADING), waitMs); });
+  const value = await Promise.race([p, timer]).finally(() => clearTimeout(handle));
+  if (value !== LOADING) return value;
+  return { ...(loading ? loading() : { error: 'The market source is slow to answer; still loading.' }), loading: true };
+}
+
+async function fetchText(url, fetcher, timeoutMs = 6000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -46,9 +110,14 @@ export function parseStooqCsv(text) {
   }).filter((row) => row.date && [row.open, row.high, row.low, row.close].every(Number.isFinite));
 }
 
-export async function candles(symbol, fetcher = fetch) {
+export async function candles(symbol, fetcher = fetch, { store = null, background = null } = {}) {
   const clean = String(symbol || '').toLowerCase();
   if (!/^\^?[a-z0-9.]{1,12}$/.test(clean)) return { error: 'Unknown symbol.' };
+  const opts = {
+    store, background,
+    isOk: (v) => Array.isArray(v?.candles) && v.candles.length > 0,
+    loading: () => ({ symbol: clean, candles: [], error: 'The delayed index source is slow to answer; still loading. Try again in a few seconds.' }),
+  };
   return cached(`candles:${clean}`, 10 * 60_000, async () => {
     try {
       const text = await fetchText(`https://stooq.com/q/d/l/?s=${encodeURIComponent(clean)}&i=d`, fetcher);
@@ -58,11 +127,13 @@ export async function candles(symbol, fetcher = fetch) {
     } catch (_) {
       return { symbol: clean, candles: [], error: 'Delayed index source unavailable.' };
     }
-  });
+  }, opts);
 }
 
 async function connectorSnapshot(env, fetcher) {
+  // Bounded like the public sources: a hung connector falls back to them instead of holding the request.
   const response = await fetcher(env.CHE_MARKET_DATA_URL, {
+    signal: AbortSignal.timeout(Number(env.CHE_MARKET_DATA_TIMEOUT_MS) || 4000),
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -76,17 +147,30 @@ async function connectorSnapshot(env, fetcher) {
   return { quotes: data.quotes.slice(0, 20), source: 'Your market data connector', live: true };
 }
 
-export async function snapshot(env, fetcher = fetch) {
+export async function snapshot(env, fetcher = fetch, { store = null, background = null } = {}) {
+  const opts = {
+    store, background,
+    isOk: (v) => Array.isArray(v?.quotes) && v.quotes.some((q) => q && q.status !== 'unavailable'),
+    loading: () => ({
+      quotes: [...INDICES.map((i) => ({ symbol: i.symbol, name: i.name, status: 'unavailable', note: 'Still loading' })),
+        ...CRYPTO.map((c) => ({ symbol: c.symbol, name: c.name, status: 'unavailable', note: 'Still loading' }))],
+      source: 'Public sources: Stooq (delayed indices), CoinGecko (crypto)',
+      live: false,
+    }),
+  };
   return cached('snapshot', 60_000, async () => {
     if (env.CHE_MARKET_DATA_URL) {
       try {
         return await connectorSnapshot(env, fetcher);
       } catch (_) { /* fall back to public sources, labeled */ }
     }
+    let oldestSource = Infinity;
     const indexQuotes = await Promise.all(INDICES.map(async (item) => {
-      const data = await candles(item.symbol, fetcher);
+      const data = await candles(item.symbol, fetcher, { store, background });
       const rows = data.candles || [];
       if (rows.length < 2) return { symbol: item.symbol, name: item.name, status: 'unavailable', note: data.error || 'No data' };
+      // Keep how fresh the candles really were: stale candles make a stale quote and a stale snapshot.
+      if (data.stale && data.fetched_at) oldestSource = Math.min(oldestSource, Date.parse(data.fetched_at));
       const last = rows[rows.length - 1];
       const prev = rows[rows.length - 2];
       return {
@@ -96,6 +180,7 @@ export async function snapshot(env, fetcher = fetch) {
         change_pct: prev.close ? ((last.close - prev.close) / prev.close) * 100 : 0,
         as_of: last.date,
         status: 'delayed',
+        ...(data.stale ? { stale: true, fetched_at: data.fetched_at } : {}),
       };
     }));
     let cryptoQuotes;
@@ -121,8 +206,9 @@ export async function snapshot(env, fetcher = fetch) {
       quotes: [...indexQuotes, ...cryptoQuotes],
       source: 'Public sources: Stooq (delayed indices), CoinGecko (crypto)',
       live: false,
+      ...(Number.isFinite(oldestSource) ? { source_fetched_ms: oldestSource } : {}),
     };
-  });
+  }, opts);
 }
 
 
@@ -187,7 +273,7 @@ export async function accountSnapshot(env, fetcher = fetch) {
         detail: `Live account unavailable: ${String(error?.message || error).slice(0, 180)}`,
       };
     }
-  });
+  }, { swr: false, waitMs: 15_000 });   // an account balance is never shown stale; the request waits for the broker as before
 }
 
 // ─── Live chart (Trading Room) ───────────────────────────────────────────────
@@ -288,5 +374,5 @@ export async function quote(id, fetcher = fetch) {
     } catch (_) {
       return { id: String(id).toUpperCase(), error: 'Price source unavailable right now.' };
     }
-  });
+  }, { isOk: (v) => !v?.error && Number.isFinite(v?.price), loading: () => ({ id: String(id).toUpperCase(), error: 'The price source is slow to answer; still loading.' }) });
 }
