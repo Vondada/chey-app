@@ -550,7 +550,20 @@ extension _CheHomeHubRooms on _CHEHomeState {
       researchConnected: integrations['web_research'] == true,
       imageConnected: integrations['image_generation'] == true,
       videoConnected: integrations['video_generation'] == true,
-      creations: CheCreationsStrip(baseUrl: cheAgentBaseUrl, headers: _authHeaders, active: active),
+      creations: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          CheCreationsStrip(baseUrl: cheAgentBaseUrl, headers: _authHeaders, active: active),
+          const SizedBox(height: 20),
+          // GPU jobs on the owner's Colab T4 (gpu_queue.js); quiet until he presses Read aloud.
+          CheGpuJobsCard(
+            baseUrl: cheAgentBaseUrl,
+            headers: _authHeaders,
+            active: active,
+            onRead: (text) => speakText(text, record: false, readOnDemand: true),
+          ),
+        ],
+      ),
       onInventions: () => unawaited(Navigator.of(context).push(CheInventionStudioPage.route(baseUrl: cheAgentBaseUrl, headers: _authHeaders))),
       onShowroom: _openShowroom,
       onNewProject: () {

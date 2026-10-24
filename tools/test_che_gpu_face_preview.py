@@ -39,7 +39,7 @@ FAKE = textwrap.dedent('''\
         for i, v in enumerate(os.environ['VIEWS'].split(',')):
             if i == stop: sys.exit(1)
             p = os.path.join(os.environ['OUT_DIR'], f'dress_{int(v):02d}.png')
-            open(p, 'wb').write(b'png' + v.encode()); print('WROTE', p, flush=True)
+            open(p, 'wb').write(b'\\x89PNG\\r\\n\\x1a\\n' + v.encode()); print('WROTE', p, flush=True)
         sys.exit(0)
     sys.exit(9)
 ''')
