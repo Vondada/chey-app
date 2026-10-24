@@ -978,6 +978,8 @@ export async function routeText(env, model, input, fetcher = fetch, usageStorage
           route: audit?.route || (quality ? 'owner_chat' : 'internal'),
           agent_id: office?.agent_id || '',
           thread_id: office?.thread_id || '',
+          tenant_id: audit?.tenant_id || '',
+          est_tokens: plan.scores.est_tokens,
           memory: used.provided.map((item) => ({ id: item.id, section: item.section, data_class: item.data_class })),
           withheld: used.withheld.map((item) => ({ id: item.id, data_class: item.data_class })),
           latency_ms: Date.now() - started,
