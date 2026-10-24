@@ -278,6 +278,11 @@ extension _CheHomeSend on _CHEHomeState {
         (source.last['text'] ?? '').trim() == currentMessage.trim()) {
       source.removeLast();
     }
+    // First request after a relaunch: the home chat is empty, but the owner may
+    // be answering what CHE said just before the app closed ("No, strawberry
+    // Sprite."). The last turns of the conversation her log restored are that
+    // request's history while they are still fresh (che_agent_chat.dart).
+    if (source.isEmpty) return _brainLog.restoredTurnsForHistory();
     // Earlier names, requirements and approvals remain part of this request.
     // The Worker selects an engine that can receive the complete history.
     return source
@@ -519,6 +524,7 @@ extension _CheHomeSend on _CHEHomeState {
         return command.text == 'run' ? 'Opening the rendering benchmark and measuring, sir.' : 'Opening the rendering benchmark, sir.';
       case ScreenOp.clearChat:
         messages.clear();
+        _brainLog.dropRestoredContext();
         return 'Chat cleared, sir.';
       case ScreenOp.removeLast:
         if (messages.isEmpty) return 'There is no message to remove, sir.';
@@ -1180,6 +1186,7 @@ extension _CheHomeSend on _CHEHomeState {
 
       _scrollToBottom();
       await speakText(reply);
+      _sendHeldSpeechNext();
       return;
     }
 
@@ -1366,6 +1373,8 @@ extension _CheHomeSend on _CHEHomeState {
       await speakText(errorReply);
     } finally {
       _isSending = false;
+      // Words he spoke over this answer go next, with this reply in history.
+      _sendHeldSpeechNext();
     }
   }
 

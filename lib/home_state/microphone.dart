@@ -534,6 +534,13 @@ extension _CheHomeMicrophone on _CHEHomeState {
             return;
           }
 
+          // A finished sentence that lands while CHE is still answering is
+          // held for the next turn instead of being ignored (see voice.dart).
+          if (result.finalResult && !_autoSentCurrentTurn && _isSending) {
+            if (!_isSleepPhrase(spokenWords)) _holdSpokenWhileSending(spokenWords);
+            return;
+          }
+
           if (result.finalResult && !_autoSentCurrentTurn && !_isSending) {
             _autoSentCurrentTurn = true;
             _heldSpeech = '';

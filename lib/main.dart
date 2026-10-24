@@ -483,6 +483,9 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   bool _autoSentCurrentTurn = false;
   // Words held open while the owner pauses mid-thought (see microphone.dart).
   String _heldSpeech = '';
+  // Words the owner spoke while CHE was still answering; sent as the next turn
+  // when the current one finishes (voice.dart, send.dart).
+  final CheHeldUtterance _pendingSpokenText = CheHeldUtterance();
   int _heldSpeechRestarts = 0;
   Timer? _quickEndTimer;
   String? _lastVoiceEngine;
@@ -625,6 +628,8 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
     }
     if (!_isSending) return;
     HapticFeedback.lightImpact();
+    // Stop ends this turn; words he said over it are not sent as the next one.
+    _pendingSpokenText.drop();
     setState(() => _stopRequested = true);
     _requestGate.cancelCurrent();
   }
@@ -633,6 +638,7 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
   void _homeNewChat() {
     if (_isSending) return;
     HapticFeedback.selectionClick();
+    _pendingSpokenText.drop();
     setState(() {
       messages.clear();
       _liveSteps.clear();

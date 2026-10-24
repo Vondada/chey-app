@@ -350,6 +350,7 @@ class CheTradingChart extends StatefulWidget {
     this.initialAccount = 'alpaca_paper',
     this.initialSymbol = '',
     this.initialStrategy,
+    this.initialTimeframe,
     this.height = 340,
     this.signalMarkers,
     this.live,
@@ -387,6 +388,10 @@ class CheTradingChart extends StatefulWidget {
 
   /// "CHE, show EMA trades": only CHE's markers for this strategy (Alpaca markers stay).
   final String? initialStrategy;
+
+  /// "And the 15 minute?": the bar size CHE named when she opened this chart by voice ('15m'). It wins over the saved
+  /// timeframe, so the chart shows what CHE said; null keeps the default.
+  final String? initialTimeframe;
   final double height;
 
   /// The shared Rithmic session (lib/rithmic/rithmic_live.dart); tests pass their own.
@@ -400,7 +405,7 @@ class CheTradingChartState extends State<CheTradingChart> {
   late final http.Client _http = widget.client ?? http.Client();
   late String _account = visibleChartAccount(widget.initialAccount);
   late String _symbol = widget.initialSymbol.toUpperCase();
-  String _tf = '5m';
+  late String _tf = (widget.initialTimeframe ?? '').isNotEmpty ? widget.initialTimeframe! : '5m';
   List<String> _timeframes = const ['1m', '5m', '15m', '1h', '1d'];
   List<ChartBar> _bars = const [];
   List<ChartBar> _history = const [];
@@ -472,7 +477,7 @@ class CheTradingChartState extends State<CheTradingChart> {
     if (market) {
       if (_symbol.isEmpty) _symbol = _prefs.last;
       final tf = _prefs.timeframe;
-      if (tf != null) _tf = tf;
+      if (tf != null && (widget.initialTimeframe ?? '').isEmpty) _tf = tf;
       await load();
     }
   }
@@ -536,6 +541,7 @@ class CheTradingChartState extends State<CheTradingChart> {
   /// The account and symbol on screen (the expanded chart opens on the same ones).
   String get account => _account;
   String get symbol => _symbol;
+  String get timeframe => _tf;
 
   // ─── Rithmic live candles (MNQ PAPER only) ────────────────────────────
 

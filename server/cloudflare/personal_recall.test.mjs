@@ -2,7 +2,7 @@
 // hypotheticals, guesses, quotes and fiction are never facts; the wake prefix is stripped; nothing is invented.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { answerPersonalFact, isQuestionLike, ownerAssertion, personalFactQuestion, stripWake } from './personal_recall.js';
+import { activeFactSubject, answerPersonalFact, isQuestionLike, ownerAssertion, ownerFactTurn, personalFactQuestion, stripWake } from './personal_recall.js';
 
 const brainSaid = (id, said, extra = {}) => ({
   id, verification: 'owner_attested', source: { kind: 'owner_chat' }, created_at: '2026-10-21T18:00:00.000Z',
@@ -107,4 +107,67 @@ test('daylight-saving transition: the offset changes on the owner calendar, the 
 test('an unreadable stamp gives no date rather than an invented one', () => {
   assert.equal(spokenDate({ created_at: 'not a date' }), '');
   assert.equal(spokenDate({}), '');
+});
+
+// ─── The fact under discussion (owner recording, 2026-10-24: "No, strawberry Sprite." after "Your favorite drink is Sprite.") ───
+const ASKED = { role: 'user', content: "What's my favorite drink?" };
+const ANSWERED = { role: 'assistant', content: 'Your favorite drink is Sprite. You told me that on October 23, 2026.' };
+const NO_RECORD = { role: 'assistant', content: "I don't have a record of your favorite drink, sir, so I don't know it. Tell me and I'll remember it." };
+
+test('the subject under discussion is read from CHE\'s own answer, her "no record" reply, or the owner\'s question', () => {
+  assert.deepEqual(activeFactSubject([ASKED, ANSWERED]), { subject: 'favorite drink', words: ['favorite', 'drink'], value: 'Sprite', from: 'assistant', index: -1 });
+  assert.equal(activeFactSubject([ASKED, NO_RECORD]).value, '');
+  assert.equal(activeFactSubject([ASKED]).subject, 'favorite drink');
+  assert.equal(activeFactSubject([{ role: 'user', content: 'Open the chart' }, { role: 'assistant', content: 'The chart is open.' }]), null);
+  // Only the newest topic counts: an older fact never captures a later remark.
+  assert.equal(activeFactSubject([ASKED, ANSWERED, { role: 'user', content: 'open my calendar' }, { role: 'assistant', content: 'Your calendar is open, sir.' }, { role: 'user', content: 'thanks' }, { role: 'assistant', content: 'Of course.' }]), null);
+});
+
+test('the owner\'s short correction, in every spoken and typed form, names the fact under discussion', () => {
+  for (const said of ['No, strawberry Sprite.', 'no strawberry sprite', 'It’s strawberry Sprite.', 'its strawberry sprite', 'Actually, it\'s strawberry Sprite', 'CHE, no, strawberry Sprite', 'Strawberry Sprite.', 'strawberry Sprite, not Sprite', 'I said strawberry Sprite', 'Wrong, it should be strawberry Sprite']) {
+    const out = ownerFactTurn(said, { history: [ASKED, ANSWERED] });
+    assert.equal(out?.kind, 'correction', said);
+    assert.match(out.statement, /^my favorite drink is strawberry sprite$/i, said);
+    assert.equal(out.previous, 'Sprite');
+  }
+});
+
+test('a value given after "I don\'t have a record" is the fact itself; a plain value with no fact under discussion is nothing', () => {
+  assert.equal(ownerFactTurn('Pizza.', { history: [{ role: 'user', content: 'what is my favorite food?' }, { role: 'assistant', content: "I don't have a record of your favorite food, sir, so I don't know it." }] }).statement, 'my favorite food is Pizza');
+  assert.equal(ownerFactTurn('No, strawberry Sprite.', { history: [] }), null);
+  assert.equal(ownerFactTurn('Pizza.', { history: [{ role: 'user', content: 'open the chart' }, { role: 'assistant', content: 'Done.' }] }), null);
+});
+
+test('a question, an order, a pointer or a call-off is never a correction of the fact', () => {
+  for (const said of ['What about my favorite food?', 'Open the chart', 'cancel that', 'No, cancel that', 'yes', 'okay', 'the other one', 'No, delete it', 'Is it Sprite?', 'No, read my mailbox']) {
+    assert.equal(ownerFactTurn(said, { history: [ASKED, ANSWERED] }), null, said);
+  }
+});
+
+test('"that\'s not what I meant" / "fix that" asks for the right value and changes nothing; the same value is confirmed, not re-saved', () => {
+  for (const said of ["That's not what I meant.", 'Fix that.', 'Wrong.', 'No, that\'s not right']) {
+    const out = ownerFactTurn(said, { history: [ASKED, ANSWERED] });
+    assert.equal(out.kind, 'clarify', said);
+    assert.match(out.text, /favorite drink stored as Sprite/);
+  }
+  const same = ownerFactTurn('No, Sprite.', { history: [ASKED, ANSWERED] });
+  assert.equal(same.kind, 'clarify');
+  assert.match(same.text, /That is what I have, sir: your favorite drink is Sprite/);
+  // With no fact under discussion, the interpreter keeps handling "fix that".
+  assert.equal(ownerFactTurn('Fix that.', { history: [{ role: 'user', content: 'open the chart' }, { role: 'assistant', content: 'Done.' }] }), null);
+});
+
+test('"no, the one I just told you" takes the value from the owner\'s own recent turn, or asks when there is none', () => {
+  const told = [{ role: 'user', content: 'my favorite drink is strawberry Sprite' }, { role: 'assistant', content: 'Noted.' }, ASKED, ANSWERED];
+  assert.equal(ownerFactTurn('No, the one I just told you.', { history: told }).statement, 'my favorite drink is strawberry Sprite');
+  assert.equal(ownerFactTurn('Like I just said.', { history: told }).statement, 'my favorite drink is strawberry Sprite');
+  const none = ownerFactTurn('No, the one I just told you.', { history: [ASKED, ANSWERED] });
+  assert.equal(none.kind, 'clarify');
+  assert.match(none.text, /don't see the value in your recent messages/);
+});
+
+test('the long form still goes through the record-matched correction', () => {
+  const records = [{ id: 'm1', text: 'my favorite drink is Sprite', source: 'owner_chat', verification_status: 'owner_attested', active: true }];
+  const out = ownerFactTurn('No, my favorite drink is strawberry Sprite.', { records, history: [] });
+  assert.deepEqual(out, { kind: 'correction', statement: 'my favorite drink is strawberry Sprite', short: false });
 });

@@ -30,8 +30,36 @@ function distance(a, b) {
 
 // Finds a correction in the owner's message. `previous` is his last message,
 // used when he only says what he meant ("I meant Grok").
+// "That's not what I meant", "No, not that one", "not that, this": the owner rejects an answer without naming a misheard
+// word. These are never a word correction (subject-loss audit, 2026-10-24: they were learned as heard→meant pairs and
+// re-ran the previous request verbatim, swallowing the correction).
+const NOT_A_WORD = /^(?:no|nope|yes|yeah|ok|okay|right|wrong|that|this|it|one|that'?s|thats|this one|that one|the other one|the one|what i (?:meant|mean|said)|i meant|i said|not that|never mind|wait|please|sir|che|chay|chey)$/i;
+const notWords = (...parts) => parts.some((w) => !w || NOT_A_WORD.test(String(w).trim()) || /\bwhat i\b/i.test(w));
+
 export function detectCorrection(message, previous = '') {
   const text = String(message || '').trim();
+  const found = detectCorrectionRaw(text, previous);
+  if (!found || notWords(found.heard, found.meant)) return null;
+  // With the previous turn at hand, a correction names a word that turn contains; otherwise there is nothing to correct.
+  if (previous && !words(previous).includes(found.heard.toLowerCase()) && !words(previous).includes(found.heard.toLowerCase().replace(/\s+/g, ''))) {
+    const inPrevious = new RegExp(`\\b${found.heard.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(previous);
+    if (!inPrevious) return null;
+  }
+  return found;
+}
+
+/**
+ * The previous request with the misheard word replaced, or '' when that request does not contain the word: only a word
+ * the previous turn really contains is corrected and re-run; otherwise the turn is read as itself (a "that's not what I
+ * meant" used to replay the previous request unchanged: subject-loss audit, 2026-10-24).
+ */
+export function correctedPrevious(correction, previous = '') {
+  if (!correction?.heard || !previous) return '';
+  const word = `\\b${correction.heard.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`;
+  return new RegExp(word, 'i').test(previous) ? previous.replace(new RegExp(word, 'gi'), correction.meant) : '';
+}
+
+function detectCorrectionRaw(text, previous = '') {
   let m = /\bwhen i say\s+["“]?([a-z0-9' ]{2,30}?)["”]?\s*,?\s*i mean\s+["“]?([a-z0-9' ]{2,30}?)["”]?[.!?]*$/i.exec(text);
   if (m) return { heard: m[1].trim().toLowerCase(), meant: m[2].trim() };
   m = /^(?:no[,.!]?\s+)?(?:i\s+(?:meant|mean|said)\s+)?["“]?([a-z0-9' ]{2,30}?)["”]?\s*,?\s+not\s+["“]?([a-z0-9' ]{2,30}?)["”]?[.!?]*$/i.exec(text);

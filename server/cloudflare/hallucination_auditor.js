@@ -192,7 +192,9 @@ const MEMORY_SAVED_ASK = /^(?:did|have) you (?:actually |really )?(?:save|saved|
 const KNOW_VS_GUESS_ASK = /\bwhat do you (?:actually |really )?know\b.{0,30}\b(?:vers(?:us|es)|vs\.?|compared (?:to|with)|and what (?:are you|do you))\b.{0,30}\b(?:guess\w*|assum\w*|infer\w*|think\w*)|\bwhat are you (?:just )?(?:guessing|assuming|inferring)\b|\bwhat do you know for (?:sure|certain)\b/i;
 const plain = (m) => String(m || '').trim().replace(/^(?:che|chey|hey che|okay|ok|so|sir)[,\s]+/i, '').replace(/[,\s]+sir\s*\??$/i, '?');
 
-export function memorySavedQuestion(message) { return MEMORY_SAVED_ASK.test(plain(message)); }
+// "What did you save?" / "what did you just remember?" reads the same receipt (subject-loss audit, 2026-10-24).
+const MEMORY_SAVED_WHAT = /^what did you (?:just |actually )?(?:save|store|remember|keep)(?: (?:just now|for me|there|as a memory))?\s*\??$/i;
+export function memorySavedQuestion(message) { const p = plain(message); return MEMORY_SAVED_ASK.test(p) || MEMORY_SAVED_WHAT.test(p); }
 export function knowVsGuessQuestion(message) { return KNOW_VS_GUESS_ASK.test(plain(message)); }
 
 const when = (iso) => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? 'an unknown time' : d.toISOString().replace('T', ' at ').slice(0, 19) + ' UTC'; };

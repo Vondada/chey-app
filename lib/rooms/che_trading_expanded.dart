@@ -58,6 +58,7 @@ class CheTradingChartExpandedPage extends StatefulWidget {
     this.account = 'futures_paper',
     this.symbol = 'MNQ',
     this.strategy,
+    this.timeframe,
     this.signalMarkers,
   });
 
@@ -67,6 +68,9 @@ class CheTradingChartExpandedPage extends StatefulWidget {
   final void Function(String text)? onRead;
   final String account, symbol;
   final String? strategy;
+
+  /// The bar size the compact chart was on, so expanding keeps it.
+  final String? timeframe;
   final ValueListenable<List<Map<String, dynamic>>>? signalMarkers;
 
   @override
@@ -105,6 +109,7 @@ class _CheTradingChartExpandedPageState extends State<CheTradingChartExpandedPag
               initialAccount: widget.account,
               initialSymbol: widget.symbol,
               initialStrategy: widget.strategy,
+              initialTimeframe: widget.timeframe,
               signalMarkers: widget.signalMarkers,
               height: chartH,
               onMarkers: (m) {

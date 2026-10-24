@@ -2476,7 +2476,8 @@ test('memory-first: a verified owner fact is answered with zero AI engine calls'
     aiCalls = 0;
     providerCalls = 0;
     const reply = replyFromNdjson(await (await chat("What's my Worker URL?")).text());
-    assert.equal(reply, 'Your worker url is https://che.example.workers.dev, sir.');
+    // The dated owner record answers (personal_recall.js), so "when did I tell you that?" has a date to cite.
+    assert.match(reply, /^Your Worker URL is https:\/\/che\.example\.workers\.dev\. You told me that on \w+ \d+, \d{4}\.$/);
     assert.equal(aiCalls, 0, 'no Workers AI call');
     assert.equal(providerCalls, 0, 'no external provider call');
     const ledger = saved.get('che_reliability_ledger');
