@@ -133,6 +133,11 @@ jobs:
           node --test server/cloudflare/rea_web_workflow.test.mjs
       - name: Video narration tests (Fish Drama 3, cache, Piper fallback)
         run: python3 -m unittest discover -s tools -p 'test_che_video_render.py'
+      - name: Creation Engine render profiles, benchmark measures and Roblox R15 rules
+        run: |
+          python3 -c "import numpy" 2>/dev/null || python3 -m pip install --quiet numpy
+          python3 -m unittest discover -s tools -p 'test_creation_benchmark.py'
+          python3 -m unittest discover -s tools -p 'test_roblox_rig.py'
       - name: Claude Code project skills (.claude/skills) tests
         run: node --test .claude/skills/tests/*.test.mjs
       - name: CHE free-first coding and paid cap regression tests

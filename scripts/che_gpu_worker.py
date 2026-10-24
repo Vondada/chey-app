@@ -156,6 +156,25 @@ def send_preview(che, job, v, path, sent):
     if r.get('ok'): sent.add(v)
 
 
+def send_quick(che, job, v, path, sent):
+    """A quick look (the fast preview rendered before the final view) into CHE at once; CHE keeps it apart from the
+    finished view and replaces it on screen when the final view arrives."""
+    if v in sent or not os.path.isfile(path): return
+    with open(path, 'rb') as f: data = f.read()
+    r = che.call('preview', data=data, method='PUT', query=f"?worker={che.worker_id}&job={job['id']}&view={v}&stage=quick")
+    print(f"QUICK LOOK view {v}: {'shown in CHE' if r.get('ok') else r.get('detail', r)}", flush=True)
+    if r.get('ok'): sent.add(v)
+
+
+def send_export(che, job, fmt, path, sent):
+    """An exported file (the Roblox R15 FBX and its walk clip) into CHE beside the job's GLB."""
+    if fmt in sent or not os.path.isfile(path): return
+    with open(path, 'rb') as f: data = f.read()
+    r = che.call('export', data=data, method='PUT', query=f"?worker={che.worker_id}&job={job['id']}&format={fmt}", content_type='application/octet-stream')
+    print(f"EXPORT {fmt}: {'saved in CHE' if r.get('ok') else r.get('detail', r)} ({len(data)} bytes)", flush=True)
+    if r.get('ok'): sent.add(fmt)
+
+
 def send_model(che, job, path, state):
     """The 3D model (GLB) into CHE as soon as Blender exports it: the Live Studio's viewport loads the real geometry
     while the views are still rendering."""
@@ -181,7 +200,7 @@ def run_job(che, job, a, log):
     if resume: cmd += ['--resume-model', resume[0], '--resume-sha', resume[1]]
     # Its own process group, so stopping the job stops Blender too (Blender is the runner's child, not ours).
     p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
-    stop = threading.Event(); state = {'stopped': False, 'done': [], 'sent': set(), 'model_sent': False}
+    stop = threading.Event(); state = {'stopped': False, 'done': [], 'sent': set(), 'model_sent': False, 'quick': set(), 'exports': set()}
 
     def beat():
         while not stop.wait(HEARTBEAT_S):
@@ -199,6 +218,13 @@ def run_job(che, job, a, log):
             state['done'].append(int(m.group(1)))
             che.call('progress', {'job_id': job['id'], 'views_done': state['done'], 'message': line.strip()[:200]})
             if not state['stopped']: send_preview(che, job, int(m.group(1)), m.group(3), state['sent'])
+        elif re.match(r'QUICK -?\d+ ', line) and not state['stopped']:
+            v, path = line.split(' ', 2)[1:]
+            send_quick(che, job, int(v), path.strip(), state['quick'])
+            che.call('progress', {'job_id': job['id'], 'views_done': state['done'], 'stage': 'render', 'message': f'Quick look of view {v} is ready; the final render continues.'})
+        elif re.match(r'EXPORT [a-z0-9_]+ ', line) and not state['stopped']:
+            fmt, path = line.split(' ', 2)[1:]
+            send_export(che, job, fmt, path.strip(), state['exports'])
         elif line.startswith('MODEL READY '):
             che.call('progress', {'job_id': job['id'], 'views_done': state['done'], 'message': 'Geometry ready: the 3D model was exported.'})
             if not state['stopped']: send_model(che, job, line[len('MODEL READY '):].strip(), state)

@@ -22,6 +22,7 @@ import { r2Status } from './object_storage.js';
 import { BUILT_IN, HAIR_BUILT, STYLES, STYLE_LABELS, listIdentities, skinOk, toSettings, validate } from './avatar_identity.js';
 import { GpuQueue, VIEW_NAMES, engineRecord, engineSettingsOf, gpuOwnerRoute, rigLine } from './gpu_queue.js';
 import { cloudUsable, engineRoute, ensureCapacity } from './creation_orchestrator.js';
+import { CREATION_PROFILES, profileSettings } from './creation_profiles.js';
 
 export const PROJECTS_KEY = 'creations:projects';
 export const MAX_PROJECTS = 100;
@@ -63,6 +64,7 @@ export function renderOf(v) {
   if (!QUALITY[r.quality] && r.quality !== 'custom') r.quality = DEFAULT_RENDER.quality;
   if (!LIGHTINGS[r.lighting]) r.lighting = DEFAULT_RENDER.lighting;
   if (r.quality !== 'custom') delete r.custom;
+  if (r.target !== 'roblox') delete r.target;   // target: roblox also exports the Roblox R15 FBX (creation_profiles.js)
   return r;
 }
 
@@ -86,7 +88,9 @@ export function resourceLine(r) {
 /** The extra job settings the Creation Engine reads beside the identity (strings, as cleanSettings keeps them). */
 export function renderSettings(r) {
   const q = qualityOf(r);
-  return { MODEL_MODE: r.mode, QUALITY: q.id, LIGHTING: r.lighting, SUBDIV: String(q.subdiv), TEXTURE_PX: String(q.texture_px), STRANDS: String(q.strands) };
+  // The tools for this kind of creation (quick look, final profile, Roblox export): creation_profiles.js.
+  return { ...profileSettings(r.target === 'roblox' ? 'roblox' : 'person'), MODEL_MODE: r.mode, QUALITY: q.id, LIGHTING: r.lighting,
+    SUBDIV: String(q.subdiv), TEXTURE_PX: String(q.texture_px), STRANDS: String(q.strands) };
 }
 
 const iso = (ms) => new Date(ms).toISOString();
@@ -217,6 +221,13 @@ function renderIntent(t, render, applied, unsupported) {
   if (/\bcinematic\b/.test(t)) r.lighting = 'cinematic';
   else if (/\b(?:studio|neutral|even) (?:light|lighting)\b/.test(t)) r.lighting = 'studio';
   if (r.lighting !== render.lighting) applied.push(`Lighting changed to ${r.lighting}${r.lighting === 'cinematic' ? ': a stronger key, deeper shadows and a rim light' : ': soft, even light'}.`);
+  if (/\b(?:no|not for|without|stop)(?: the)? roblox\b/.test(t)) delete r.target;
+  else if (/\broblox\b/.test(t)) r.target = 'roblox';
+  if ((r.target || '') !== (render.target || '')) {
+    applied.push(r.target === 'roblox'
+      ? `Roblox export on. Generate also makes a Roblox Studio file: ${CREATION_PROFILES.roblox.note}`
+      : 'Roblox export off.');
+  }
   return r;
 }
 
