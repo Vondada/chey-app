@@ -86,6 +86,10 @@ class CheStudioActions {
     this.onOpenCreation,
     this.onConnectEngine,
     this.onContinueCreating,
+    this.onOpenCodeWorkspace,
+    this.onOpenProjectManager,
+    this.onCreateObject,
+    this.onCreateRoom,
   });
 
   final VoidCallback onOpenFilmStudio;
@@ -120,6 +124,17 @@ class CheStudioActions {
 
   /// "Continue creating": reopens the newest creation in its live 3D view and returns what CHE says.
   final Future<String> Function()? onContinueCreating;
+
+  /// Code Studio: the dedicated coding workspace (lib/create/che_code_workspace.dart), never Home or Chat.
+  final VoidCallback? onOpenCodeWorkspace;
+
+  /// Active Projects: the project manager (lib/create/che_project_manager.dart).
+  final VoidCallback? onOpenProjectManager;
+
+  /// Create Object and Create Room: their workflows, used only once the Worker reports them built; until then the
+  /// studio says honestly that they are not available.
+  final VoidCallback? onCreateObject;
+  final VoidCallback? onCreateRoom;
 }
 
 /// Section keys, so voice routes and tests can scroll straight to a studio.
@@ -285,17 +300,35 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
   /// The room's numbered choices, in the order Read aloud announces them.
   List<(String, VoidCallback)> get _choices => [
     ('Create Person', () => unawaited(showCreatePerson())),
-    ('Create Object', () => _notBuilt('object', 'Create Object')),
-    ('Create Room', () => _notBuilt('room', 'Create Room')),
+    ('Create Object', () => _runChoice(1)),
+    ('Create Room', () => _runChoice(2)),
     ('Create Animation', () => widget.actions.onCreateAnimation?.call()),
     ('My Creations', () => unawaited(showMyCreations())),
-    ('Active Projects', () => unawaited(showActiveProjects())),
+    ('Active Projects', () => _runChoice(5)),
     ('More to create', () => unawaited(showCreateNew())),
-    ('Film Studio', () => scrollTo(CheStudioSection.film)),
-    ('Music Studio', () => scrollTo(CheStudioSection.music)),
-    ('Code Studio', () => scrollTo(CheStudioSection.code)),
-    ('Art and Character Studio', () => scrollTo(CheStudioSection.art)),
+    ('Film Studio', () => _runChoice(7)),
+    ('Music Studio', () => _runChoice(8)),
+    ('Code Studio', () => _runChoice(9)),
+    ('Art Studio', () => _runChoice(10)),
   ];
+
+  /// Create Object / Create Room: the workflow once the Worker reports it built, otherwise the honest not-built answer.
+  String _createKind(String id, String title, VoidCallback? open) {
+    final (status, detail) = capability(id);
+    if (open == null || status == 'unavailable') return _notBuilt(id, title);
+    _tap(open);
+    return 'Opening $title. $detail';
+  }
+
+  /// Code Studio opens the coding workspace; without one in this build, the section with its buttons.
+  void _openCode() {
+    final open = widget.actions.onOpenCodeWorkspace;
+    if (open != null) {
+      _tap(open);
+    } else {
+      scrollTo(CheStudioSection.code);
+    }
+  }
 
   String _notBuilt(String id, String title) {
     final (_, detail) = capability(id);
@@ -409,7 +442,9 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
         'a new app, site or game',
         a.onNewApp,
       ),
-      RegExp(r'^(?:open )?coding jobs$'): ('coding jobs in the Office', a.onOpenOffice),
+      RegExp(r'^(?:open )?(?:the )?(?:code studio|coding workspace|coding jobs)$'): ('Code Studio', a.onOpenCodeWorkspace ?? a.onOpenOffice),
+      RegExp(r'^(?:open )?(?:the )?(?:project manager|projects)$'): ('the project manager', a.onOpenProjectManager),
+      RegExp(r'^(?:open )?(?:the )?office$'): ('the Office', a.onOpenOffice),
       RegExp(r'^(?:open )?(?:the )?command(?:s| center)$'): ('the Command Center', a.onOpenCommandCenter),
       RegExp(r'^(?:open )?(?:the )?character generator$'): ('the Character Generator', a.onCharacterGenerator),
       RegExp(r'^(?:open )?(?:the )?art studio$'): ('Art Studio', a.onOpenArtStudio),
@@ -436,9 +471,9 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
         unawaited(showCreatePerson());
         return 'Create Person. Choose who to start from: say a number.';
       case 1:
-        return _notBuilt('object', 'Create Object');
+        return _createKind('object', 'Create Object', a.onCreateObject);
       case 2:
-        return _notBuilt('room', 'Create Room');
+        return _createKind('room', 'Create Room', a.onCreateRoom);
       case 3:
         if (a.onCreateAnimation == null) return 'Create Animation is not connected in this build.';
         _tap(a.onCreateAnimation!);
@@ -450,23 +485,27 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
             ? 'You have no 3D creations yet. Say create person.'
             : 'My Creations: $n. Say a number to open one.';
       case 5:
+        if (a.onOpenProjectManager != null) {
+          _tap(a.onOpenProjectManager!);
+          return 'Opening Projects: active, paused, completed and archived, with creative work apart from AI, code and research.';
+        }
         unawaited(showActiveProjects());
         return 'Active Projects. Say a number to open one.';
       case 6:
         unawaited(showCreateNew());
         return _sheetSummaryFor('Create new', _createNewItems());
       case 7:
-        scrollTo(CheStudioSection.film);
-        return 'Film Studio. Say: open Film Studio, new video, or Theater.';
+        _tap(a.onOpenFilmStudio);
+        return 'Opening Film Studio.';
       case 8:
-        scrollTo(CheStudioSection.music);
-        return 'Music Studio. Say: open Music Studio, or new song.';
+        _tap(a.onOpenMusic);
+        return 'Opening Music Studio.';
       case 9:
-        scrollTo(CheStudioSection.code);
-        return 'Code Studio. Say: new app, coding jobs, or commands.';
+        _openCode();
+        return a.onOpenCodeWorkspace != null ? 'Opening Code Studio.' : 'Code Studio. Say: new app, coding jobs, or commands.';
       default:
-        scrollTo(CheStudioSection.art);
-        return 'Art and Character Studio. Say: character generator, art studio, or new image. GPU jobs and Pair Colab are in Settings, Connections, Cloud Computer.';
+        _tap(a.onOpenArtStudio);
+        return 'Opening Art Studio for images. The Character Generator and 3D people are Create Person and the Character Generator.';
     }
   }
 
@@ -508,7 +547,7 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
     final c = _choices;
     return 'Creation Room, managed by Vale. $eng'
         'Say or choose: ${[for (var i = 0; i < c.length; i++) '${i + 1} ${c[i].$1}'].join(', ')}. '
-        'Create Object and Create Room are not built yet. $work '
+        '${capability('object').$1 == 'unavailable' ? 'Create Object is not built yet. ' : ''}${capability('room').$1 == 'unavailable' ? 'Create Room is not built yet. ' : ''}$work '
         'You have ${creationProjects.length} 3D creation${creationProjects.length == 1 ? '' : 's'}, '
         '$n project${n == 1 ? '' : 's'} and ${widget.vaultCount} saved file${widget.vaultCount == 1 ? '' : 's'}.';
   }
@@ -553,7 +592,32 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
             Icons.view_in_ar_rounded,
             open == null ? null : () => open('${p['id']}'),
           ),
+        // The pictures and videos CHE saved (the Worker's media library), on their own page.
+        if (widget.creations != null)
+          ('Pictures and videos', 'The images and videos CHE saved', Icons.photo_library_outlined, showSavedVisuals),
       ],
+    );
+  }
+
+  /// My Creations → Pictures and videos: the real media library tiles (CheCreationsStrip), nothing placeholder.
+  void showSavedVisuals() {
+    final strip = widget.creations;
+    if (strip == null) return;
+    unawaited(
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => Scaffold(
+            key: const ValueKey('saved-visuals'),
+            backgroundColor: CheStudioColors.bg,
+            appBar: AppBar(
+              backgroundColor: CheStudioColors.bg,
+              foregroundColor: CheStudioColors.text,
+              title: Semantics(header: true, child: const Text('Pictures and videos')),
+            ),
+            body: Padding(padding: const EdgeInsets.all(16), child: strip),
+          ),
+        ),
+      ),
     );
   }
 
@@ -935,9 +999,10 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
               title: 'Code Studio',
               tagline: 'Apps, websites, games and software, built as coding jobs you can follow.',
               tags: const ['Apps', 'Websites', 'Games', 'Software', 'Coding jobs'],
-              primary: ('New app, site or game', a.onNewApp),
+              primary: ('Open Code Studio', _openCode),
               secondary: [
-                ('Coding jobs', Icons.workspaces_outline, a.onOpenOffice),
+                ('New app, site or game', Icons.add_rounded, a.onNewApp),
+                ('The crew', Icons.workspaces_outline, a.onOpenOffice),
                 ('Commands', Icons.apps_rounded, a.onOpenCommandCenter),
               ],
             ),

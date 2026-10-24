@@ -527,25 +527,20 @@ extension _CheHomeHubRooms on _CHEHomeState {
           creations: CheCreationsStrip(baseUrl: cheAgentBaseUrl, headers: _authHeaders, active: active),
           onRead: (text) => speakText(text, record: false, readOnDemand: true),
           actions: CheStudioActions(
+            // Every studio button opens its own workspace, never Home or Chat (owner, 2026-10-24).
             onOpenFilmStudio: () => unawaited(_openFilmStudio()),
-            onNewVideo: () => _runHubPrompt(
-              'Create a video for me. Ask only for any essential missing detail, then use the connected CHE video generator if available.',
-            ),
+            onNewVideo: () => unawaited(_openFilmStudio()),
             onOpenTheater: () => _switchHubRoom(8),
-            onOpenMusic: () => _switchHubRoom(4),
-            onNewSong: () => _runHubPrompt(
-              'Make a song or beat with me in the Music Studio. Ask only for any essential missing detail first.',
-            ),
-            onNewApp: () => _runHubPrompt(
-              'Start a coding job: build an app, website or game for me. Ask only for any essential missing detail first.',
-            ),
+            onOpenMusic: _openMusicWorkspace,
+            onNewSong: _openMusicWorkspace,
+            onNewApp: _openCodeWorkspace,
+            onOpenCodeWorkspace: _openCodeWorkspace,
+            onOpenProjectManager: _openProjectManager,
             onOpenCommandCenter: () => unawaited(_openCommandCenter()),
             onOpenOffice: _openOfficeFloor,
             onCharacterGenerator: _openCharacterGenerator,
             onOpenArtStudio: _openArtStudio,
-            onNewImage: () => _runHubPrompt(
-              'Create an image for me. Ask only for any essential missing detail, then use the connected CHE image generator if available.',
-            ),
+            onNewImage: _openArtStudio,
             onNewProject: () => unawaited(_createProjectDialog()),
             onOpenProject: _openProjectEditor,
             onVault: () => unawaited(_openVault()),
@@ -750,6 +745,54 @@ extension _CheHomeHubRooms on _CHEHomeState {
     Future<void>.delayed(const Duration(milliseconds: 180), () {
       if (mounted) _openAssistantHub(tab: tab);
     });
+  }
+
+  /// Music Studio's one entry point: the Music room (hub tab 4). The recording workspace replaces it here, in one place.
+  void _openMusicWorkspace() => _switchHubRoom(4);
+
+  /// Code Studio: the coding workspace (lib/create/che_code_workspace.dart) over the real coding jobs.
+  void _openCodeWorkspace() {
+    HapticFeedback.selectionClick();
+    unawaited(
+      Navigator.of(context).push(
+        CheCodeWorkspace.route(
+          baseUrl: cheAgentBaseUrl,
+          headers: () => _authHeaders,
+          loadJobs: () async {
+            await _loadAgentState(silent: true);
+            return backgroundJobs;
+          },
+          onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
+          onOpenOffice: _openOfficeFloor,
+          onOpenCommandCenter: () => unawaited(_openCommandCenter()),
+        ),
+      ),
+    );
+  }
+
+  /// Active Projects: the project manager (lib/create/che_project_manager.dart) over /api/projects/library.
+  void _openProjectManager() {
+    HapticFeedback.selectionClick();
+    unawaited(
+      Navigator.of(context)
+          .push(
+            CheProjectManager.route(
+              baseUrl: cheAgentBaseUrl,
+              headers: () => _authHeaders,
+              onOpenProject: (id) async {
+                var p = projects.where((x) => '${x['id']}' == id).firstOrNull;
+                if (p == null) {
+                  await _loadAgentState(silent: true);
+                  p = projects.where((x) => '${x['id']}' == id).firstOrNull;
+                }
+                if (p != null) await _openProjectEditor(p);
+              },
+              onOpenCreation: (id) => unawaited(_openCreation(id)),
+              onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
+            ),
+          )
+          .then((_) => _loadAgentState(silent: true)),
+    );
   }
 
   /// The Art Studio (pieces, engine, upscaler, save to vault) as its own page, opened from Art & Character Studio.

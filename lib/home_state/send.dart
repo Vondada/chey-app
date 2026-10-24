@@ -739,6 +739,17 @@ extension _CheHomeSend on _CHEHomeState {
       }
     }
 
+    // The Code Studio workspace and the project manager, while open, take their own spoken actions.
+    for (final pageVoice in [CheCodeWorkspace.voiceHandler, CheProjectManager.voiceHandler]) {
+      if (pageVoice == null || _pendingAttachment != null) continue;
+      final reply = await pageVoice(message);
+      if (reply != null) {
+        if (mounted) _set(() => controller.clear());
+        if (reply.isNotEmpty) await speakText(reply, record: false);
+        return;
+      }
+    }
+
     // The Creative Studio, while it is on screen, takes its numbered choices and named actions by voice or typing.
     final studioVoice = CheCreativeStudio.voiceHandler;
     if (studioVoice != null && _pendingAttachment == null && CheCharacterGenerator.voiceHandler == null && CheLiveStudio.voiceHandler == null) {

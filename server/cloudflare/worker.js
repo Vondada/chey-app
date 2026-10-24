@@ -4770,7 +4770,13 @@ export class CheState extends DurableObject {
     // Projects board entry so phone UI shows live progress tonight.
     data.projects = Array.isArray(data.projects) ? data.projects : [];
     const now = new Date().toISOString();
-    const project = {
+    // The same request again continues its project instead of adding another identical "tonight" card.
+    const same = data.projects.find((p) => p.title === `Roblox ${cat} studio — tonight` && String(p.brief || '').split('\n\n')[0] === brief && p.status !== 'archived');
+    if (same) {
+      Object.assign(same, { job_ids: [...(same.job_ids || []), ...jobs.map((j) => j.id)], status: 'in_progress', updated_at: now });
+      same.history = [...(same.history || []), { at: now, event: 'Asked again: crew tasks added to this project', via: 'owner' }].slice(-40);
+    }
+    const project = same || {
       id: crypto.randomUUID(),
       title: `Roblox ${cat} studio — tonight`,
       type: robloxProjectTypeFor(brief),
@@ -4798,8 +4804,10 @@ export class CheState extends DurableObject {
       created_at: now,
       updated_at: now,
     };
-    data.projects.unshift(project);
-    data.projects = data.projects.slice(0, 50);
+    if (!same) {
+      data.projects.unshift(project);
+      data.projects = data.projects.slice(0, 50);
+    }
 
     const robloxNoteBody = [
       `Roblox ${cat} studio queued for tonight.`,
