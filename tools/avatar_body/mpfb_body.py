@@ -222,13 +222,18 @@ def build():
             for r, n_it in passes.items():
                 sel = (vr == r) & ~edge_v if it < n_it else None
                 if sel is not None: pos[sel] += lam * d[sel]
-    # The chest: a spatial Gaussian average (3 cm), which does not care how dense the skin's quads are, so a top lies
-    # over the bust as one smooth shape instead of following the nipples.
+    # The chest: a spatial Gaussian average (5 cm, twice), which does not care how dense the skin's quads are, so a
+    # top hangs over the bust as one soft shape and never shows chest detail through the fabric.
     tsel = np.where((vr == 'torso') & ~edge_v)[0]; samp = np.where(np.isin(vr, ('torso', 'top')))[0]
-    for chunk in np.array_split(tsel, max(1, len(tsel) // 400)):
-        d2 = ((pos[chunk, None, :] - pos[None, samp, :]) ** 2).sum(-1)
-        w = np.exp(-d2 / (2 * 0.03 ** 2)); w[d2 > 0.08 ** 2] = 0
-        pos[chunk] = (w @ pos[samp]) / w.sum(1, keepdims=True)
+    for _ in range(2):
+        ref = pos.copy()
+        for chunk in np.array_split(tsel, max(1, len(tsel) // 400)):
+            d2 = ((ref[chunk, None, :] - ref[None, samp, :]) ** 2).sum(-1)
+            w = np.exp(-d2 / (2 * 0.05 ** 2)); w[d2 > 0.12 ** 2] = 0
+            smooth = (w @ ref[samp]) / w.sum(1, keepdims=True)
+            # Fade out toward the collar (full effect 8 cm below the neck), so the neckline meets the fabric cleanly.
+            fade = np.clip((neck.z - 0.02 - ref[chunk, 2]) / 0.06, 0.0, 1.0)[:, None]
+            pos[chunk] = ref[chunk] * (1 - fade) + smooth * fade
     pos[:, 2] = np.maximum(pos[:, 2], 0.0)
     for k, vx in enumerate(me.vertices):
         if vregion[k] != 'skin': vx.co = Vector(pos[k])
