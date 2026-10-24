@@ -147,6 +147,7 @@ import { noteJobActivity } from './job_activity.js';
 import { CODING_CANCEL_SOURCE, cancelQueuedJob, codingCancelIntent, resolveCodingCancel, speakCancelResult, speakUnresolved } from './coding_cancel.js';
 import { PENDING_OWNER_ACTION_KEY, deskOwnedMoney, forbiddenAction, prohibitionSpans, withoutProhibitions, PENDING_OWNER_ACTION_MS, gateOwnerAction, grantForKinds, isOwnerYes, peerActionReply, APPS_GRANTED_KEY, PENDING_APP_ACTION_KEY, PENDING_APP_ACTION_MS, gateAppAccess, classifyAppNeed, classifyExplicitAppOpen, classifyAppAccesses } from './owner_action_gate.js';
 import { placedOrdersLine, recordDeviceInstall } from './action_receipts.js';
+import { brainTruthSummary, brainTruthView, truthScreenAsk } from './brain_truth.js';
 import { auditLedger, knowVsGuessQuestion, knowVsGuessReply, MEMORY_CLAIM_MS, memorySavedQuestion, memorySavedReply } from './hallucination_auditor.js';
 import { verifyReply } from './truth_pipeline.js';
 import { asksForCurrentOwnerLocation, executeWithReceipt, guardExecutionClaims, guardRetrievalClaims, changeHistoryIntent, guardClaimedOwnerActions, guardClaimedResearchActions, guardGroundedFacts, guardLocationWeatherReply, guardOwnerReply, loadChangeHistory, loadReceipts, OWNER_LOCATION_NOT_VERIFIED, recordReceipt, requestedCodeNames, speakChangeHistory, vagueResearchRequest, verifiedState, verifiedStatusText } from './truth_layer.js';
@@ -7703,6 +7704,11 @@ export class CheState extends DurableObject {
         const out = await decideBrainPending(this.ctx.storage, body.record_id, body.decision);
         return json(out, out.ok ? 200 : 409);
       }
+      // Brain Room → Truth & Verification: audit-ledger and receipt counts only (brain_truth.js).
+      if (path === '/api/brain/truth' && request.method === 'GET') {
+        if (!ownerDevice) return json({ detail: 'Only the CHE owner can read his brain.' }, 403);
+        return json(await brainTruthView(this.ctx.storage));
+      }
       if (path.startsWith('/api/brain/') && ['/api/brain/status', '/api/brain/changes', '/api/brain/push', '/api/brain/search', '/api/brain/folders', '/api/brain/record', '/api/brain/conflicts', '/api/brain/conflicts/resolve', '/api/brain/review', '/api/brain/score', '/api/brain/workers', '/api/brain/recovery', '/api/brain/import/chatgpt'].includes(path)) {
         if (!ownerDevice) return json({ detail: 'Only the CHE owner can read his brain.' }, 403);
         const brain = new CheBrainStore(this.ctx.storage);
@@ -11994,6 +12000,11 @@ export class CheState extends DurableObject {
           const answer = await memorySavedReply(this.ctx.storage);
           await recordAnswerEvidence(this.ctx.storage, answer.text, { kind: answer.saved ? 'owner_attested' : 'none' }, { records: answer.saved ? [answer.saved.record_id] : [] });
           return ndjsonReply(answer.text, { source: 'che_memory_receipt', model_calls: 0, memory_receipt: answer.saved });
+        }
+        // "Open Truth and Verification": the Brain Room section opens on the phone and CHE speaks its summary.
+        if (ownerDevice && !body.attachment && truthScreenAsk(rawMessage)) {
+          const view = await brainTruthView(this.ctx.storage);
+          return ndjsonReply(`Opening Truth and Verification, sir. ${brainTruthSummary(view)}`, { source: 'che_brain_truth', ok: true, model_calls: 0, open_screen: 'brain_truth' });
         }
         if (ownerDevice && !body.attachment && knowVsGuessQuestion(rawMessage)) {
           const answer = knowVsGuessReply({ records: data.memory_records || [], ledger: await auditLedger(this.ctx.storage), lastEvidence: await latestAnswerEvidence(this.ctx.storage).catch(() => null) });
