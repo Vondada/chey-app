@@ -36,6 +36,7 @@ const MAX_OUTBOX_ATTEMPTS = 6;
 
 import { hasGitHubMailbox, readAllMail, sendMail } from './mailbox.js';
 import { redactGoogleIds } from './research_memory.js';
+import { byMailTime } from './mailbox_time.js';
 
 // GitHub side of the board: messages from every thread on the che-mailbox
 // branch since the board was last locked. Cached briefly so a busy link does
@@ -56,7 +57,10 @@ function refreshGithubBoard(storage, env, fetcher) {
   let p = GH_INFLIGHT.get(storage);
   if (!p) {
     p = (async () => {
-      const all = await readAllMail(env, fetcher).catch(() => ({ error: 'read failed', messages: [] }));
+      // When the Worker first saw each line is carried from the last read, so a message keeps one received_at.
+      const cached = await storage.get(GH_CACHE_KEY);
+      const seen = new Map((Array.isArray(cached?.messages) ? cached.messages : []).filter((m) => m?.received_at).map((m) => [m.id, m.received_at]));
+      const all = await readAllMail(env, fetcher, { seen }).catch(() => ({ error: 'read failed', messages: [] }));
       const messages = Array.isArray(all.messages) ? all.messages.slice(-MAX_MESSAGES) : [];
       if (!all.error) await storage.put(GH_CACHE_KEY, { at: Date.now(), messages });
       return { messages, error: all.error || null };
@@ -224,7 +228,7 @@ export async function readWebMail(storage, limit = 50, env = null, fetcher = fet
   const ids = new Set(remote.map((m) => m?.id));
   const pending = (await outbox(storage)).filter((m) => !ids.has(m.id) && m.state !== 'failed')
     .map((m) => ({ ...m, pending: true }));
-  return [...remote, ...pending].sort((a, b) => String(a.at).localeCompare(String(b.at))).slice(-limit);
+  return [...remote, ...pending].sort(byMailTime).slice(-limit);
 }
 
 // Delivers outbox messages to GitHub (bounded retries) and migrates any
