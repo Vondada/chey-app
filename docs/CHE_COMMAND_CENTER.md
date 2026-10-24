@@ -54,6 +54,10 @@ A ninth category, **Creator Studio**, holds six commands over `server/cloudflare
 - **Growth** reports only YouTube's own counters for a posted pilot. Anything else is "no data".
 - The phone's Creator Studio room shows the same view (`GET /api/studio`, `lib/rooms/che_series_studio.dart`). It loads silently, and its buttons ask CHE in chat.
 
+## Cloud Computer (owner, 2026-10-24)
+
+Eight Office commands sit over `server/cloudflare/cloud_computer.js`, each answering with no model (`done.source = che_cloud_computer`): `/cloud-open`, `/cloud-blender`, `/cloud-render`, `/cloud-tests`, `/cloud-prs`, `/cloud-install`, `/cloud-agents` and `/cloud-control`. Their spoken forms reach the same commands through `cloudIntent`. Repository tests wait for an approval record before anything is dispatched, because GitHub Actions free usage is not verified. See `docs/CHE_CLOUD_COMPUTER.md`.
+
 ## How it works (no second assistant)
 
 | Piece | Where | Reuses |

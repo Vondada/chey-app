@@ -4732,6 +4732,296 @@
    "status": "available",
    "missing": [],
    "optional_missing": []
+  },
+  {
+   "id": "cloud-open",
+   "category": "office",
+   "title": "Cloud Computer",
+   "summary": "Open the Cloud Computer Room.",
+   "does": "Opens the Cloud Computer Room and says what each environment has: the Worker, the GitHub runners, the isolated browser and the film farm, with their real status, jobs, approvals and costs.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Open your cloud computer"
+   ],
+   "needs": [],
+   "optional": [],
+   "handler": "cloud_computer.cloudView + speakCloudSummary",
+   "route": "che_cloud_computer",
+   "produces": "cloud status",
+   "evidence": "Provider checks from the Worker configuration and the stored job records.",
+   "cost": "Free: no AI engine is used.",
+   "keywords": [
+    "cloud computer",
+    "environments",
+    "runners",
+    "compute"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "cloud-blender",
+   "category": "office",
+   "title": "Cloud Blender",
+   "summary": "Create a Blender animation on the cloud computer.",
+   "does": "Checks every environment for Blender. None has it today, so CHE says so, names what she already has (the bpy character pipeline) and the smallest addition that would make it work. Nothing is started.",
+   "mode": "BUILD",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "animation",
+    "required": false,
+    "hint": "What the animation shows"
+   },
+   "examples": [
+    "Create a Blender animation",
+    "Make a Blender animation of a spinning logo"
+   ],
+   "needs": [],
+   "optional": [],
+   "handler": "cloud_computer.selectProvider (blender_render template)",
+   "route": "che_cloud_computer",
+   "produces": "plan",
+   "evidence": "The provider capability list read from the workflow files.",
+   "cost": "Free: nothing runs.",
+   "keywords": [
+    "blender",
+    "animation",
+    "3d render",
+    "bpy"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "cloud-render",
+   "category": "office",
+   "title": "Cloud Render",
+   "summary": "Plan a YouTube video render on the cloud computer.",
+   "does": "Says where a video renders (the free che-video-render.yml path), and the real state of the latest render on record. A new render starts with \"make a faceless video about…\".",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Render my YouTube video"
+   ],
+   "needs": [],
+   "optional": [],
+   "handler": "cloud_computer.selectProvider (video_render) + cloudJobs",
+   "route": "che_cloud_computer",
+   "produces": "render plan",
+   "evidence": "The media index and dispatch records.",
+   "cost": "Free: nothing runs.",
+   "keywords": [
+    "render video",
+    "youtube render",
+    "video render"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "cloud-tests",
+   "category": "office",
+   "title": "Cloud Tests",
+   "summary": "Run CHE's repository tests on the cloud computer.",
+   "does": "Prepares a flutter-check.yml run (flutter analyze and flutter test) on a GitHub runner. GitHub minutes are not verified as free, so it waits for your approval; then CHE dispatches it, follows the run and reports pass or fail from GitHub.",
+   "mode": "BUILD",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Run your coding tests"
+   ],
+   "needs": [
+    "github"
+   ],
+   "optional": [],
+   "handler": "cloud_computer.requestCloudWork → processJobs runCloudTask (gh dispatch)",
+   "route": "che_cloud_computer",
+   "produces": "test result",
+   "evidence": "The GitHub run id and its conclusion.",
+   "cost": "GitHub Actions minutes; free usage for this repository is not verified, so it asks first.",
+   "keywords": [
+    "run tests",
+    "coding tests",
+    "flutter tests",
+    "ci"
+   ],
+   "status": "setup_required",
+   "missing": [
+    {
+     "id": "github",
+     "label": "GitHub connection",
+     "state": "not_connected",
+     "setup": "Add CHE_GITHUB_TOKEN and CHE_GITHUB_REPO as Worker secrets.",
+     "detail": "GitHub is not connected."
+    }
+   ],
+   "optional_missing": []
+  },
+  {
+   "id": "cloud-prs",
+   "category": "office",
+   "title": "Cloud Prs",
+   "summary": "Check CHE's open pull requests.",
+   "does": "Reads the open pull requests on CHE's repository from GitHub and lists them by number and title. Changes nothing.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Check your open pull requests"
+   ],
+   "needs": [
+    "github"
+   ],
+   "optional": [],
+   "handler": "cloud_computer.openPullRequests (coding_runtime.gh)",
+   "route": "che_cloud_computer",
+   "produces": "pull requests",
+   "evidence": "GitHub's own pull request list.",
+   "cost": "Free: one GitHub read.",
+   "keywords": [
+    "pull requests",
+    "open prs",
+    "prs"
+   ],
+   "status": "setup_required",
+   "missing": [
+    {
+     "id": "github",
+     "label": "GitHub connection",
+     "state": "not_connected",
+     "setup": "Add CHE_GITHUB_TOKEN and CHE_GITHUB_REPO as Worker secrets.",
+     "detail": "GitHub is not connected."
+    }
+   ],
+   "optional_missing": []
+  },
+  {
+   "id": "cloud-install",
+   "category": "office",
+   "title": "Cloud Install",
+   "summary": "Ask for a free tool on the cloud computer.",
+   "does": "Lists the software each environment already has. CHE never installs anything quietly: a new tool is a workflow change she opens as a pull request for your review.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "tool",
+    "required": false,
+    "hint": "The tool you want"
+   },
+   "examples": [
+    "Install a compatible free tool",
+    "Install ImageMagick on your cloud computer"
+   ],
+   "needs": [],
+   "optional": [],
+   "handler": "cloud_computer.speakInstall + providerStatuses",
+   "route": "che_cloud_computer",
+   "produces": "software list",
+   "evidence": "The software read from the workflow files.",
+   "cost": "Free: nothing is installed.",
+   "keywords": [
+    "install",
+    "free tool",
+    "software",
+    "package"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "cloud-agents",
+   "category": "office",
+   "title": "Cloud Agents",
+   "summary": "Show what the agents are running.",
+   "does": "Reads every cloud job that is waiting, queued or running, grouped by the agent that asked for it, and opens the Cloud Computer Room.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Show me what your agents are working on"
+   ],
+   "needs": [],
+   "optional": [],
+   "handler": "cloud_computer.cloudJobs + speakAgentWork",
+   "route": "che_cloud_computer",
+   "produces": "job list",
+   "evidence": "The stored job records only.",
+   "cost": "Free: no AI engine is used.",
+   "keywords": [
+    "agents working",
+    "cloud jobs",
+    "what are agents doing"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "cloud-control",
+   "category": "office",
+   "title": "Cloud Control",
+   "summary": "Approve, cancel, stop or retry a cloud job.",
+   "does": "Approves a cloud job that waits for you, cancels one that has not been dispatched, stops a GitHub run, or retries a failed job, then reads back the real result.",
+   "mode": "BUILD",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": {
+    "name": "action",
+    "required": true,
+    "hint": "approve, cancel, stop or retry, then the job id"
+   },
+   "examples": [
+    "Approve the cloud job",
+    "Stop cloud job 1a2b3c4d",
+    "Retry cloud job 1a2b3c4d"
+   ],
+   "needs": [
+    "jobs"
+   ],
+   "optional": [],
+   "handler": "cloud_computer.approveCloudJob / cancelCloudJob / stopCloudJob / retryCloudJob",
+   "route": "che_cloud_computer",
+   "produces": "status",
+   "evidence": "The job record read back after the change.",
+   "cost": "Free; an approved test run uses GitHub Actions minutes.",
+   "keywords": [
+    "approve cloud job",
+    "stop cloud job",
+    "retry cloud job"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
   }
  ],
  "templates": [

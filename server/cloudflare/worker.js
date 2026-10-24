@@ -45,7 +45,7 @@ import { INTERNAL_SOURCE, LAST_RENDER_KEY, internalSceneIntent, internalSceneTur
 import { CHAT_IMAGE_SOURCE, chatImageInline, chatImageMedia, chatImageReply, makeChatImages, pretendToolCall, requestedImageCount } from './chat_images.js';
 import { memorySearchIntent, memorySearchReply, memorySearchTerms } from './memory_search.js';
 import { probeVideoEngine, videoEngineStatus, videoStatusSpeech } from './video_engine.js';
-import { githubVideoDiagnosis, mp4Facts } from './github_video_renderer.js';
+import { githubVideoDiagnosis, mp4Facts, startGithubVideo } from './github_video_renderer.js';
 import { handleEdgeVoice } from './edge_route.js';
 import { marySecretsFrom, preferredElevenLabsDiagnostics, preferredElevenLabsKeyStatus, preferredElevenLabsLastOutcome, preferredElevenLabsSpeech, withMarySecrets } from './preferred_elevenlabs_voice.js';
 import { availableVoiceChoices, reconcileVoiceChoice, saveVoiceChoice, validateVoiceChoice, voiceEnvForSelection } from './voice_choices.js';
@@ -148,6 +148,7 @@ import { CODING_CANCEL_SOURCE, cancelQueuedJob, codingCancelIntent, resolveCodin
 import { PENDING_OWNER_ACTION_KEY, deskOwnedMoney, forbiddenAction, prohibitionSpans, withoutProhibitions, PENDING_OWNER_ACTION_MS, gateOwnerAction, grantForKinds, isOwnerYes, peerActionReply, APPS_GRANTED_KEY, PENDING_APP_ACTION_KEY, PENDING_APP_ACTION_MS, gateAppAccess, classifyAppNeed, classifyExplicitAppOpen, classifyAppAccesses } from './owner_action_gate.js';
 import { placedOrdersLine, recordDeviceInstall } from './action_receipts.js';
 import { brainTruthSummary, brainTruthView, truthScreenAsk } from './brain_truth.js';
+import { CLOUD_JOB_KIND, CLOUD_SOURCE, approveCloudJob, cancelCloudJob, cloudIntent, cloudJobs, cloudView, latestCloudJob, openPullRequests, parseControl, providerStatuses, requestCloudWork, retryCloudJob, runCloudTask, runFileJob, selectProvider, speakAgentWork, speakBlocked, speakCloudSummary, speakControl, speakInstall, speakPullRequests, speakRender, speakRequest, speakStartResult, startCloudTask, stopCloudJob } from './cloud_computer.js';
 import { auditLedger, knowVsGuessQuestion, knowVsGuessReply, MEMORY_CLAIM_MS, memorySavedQuestion, memorySavedReply } from './hallucination_auditor.js';
 import { verifyReply } from './truth_pipeline.js';
 import { asksForCurrentOwnerLocation, executeWithReceipt, guardExecutionClaims, guardRetrievalClaims, changeHistoryIntent, guardClaimedOwnerActions, guardClaimedResearchActions, guardGroundedFacts, guardLocationWeatherReply, guardOwnerReply, loadChangeHistory, loadReceipts, OWNER_LOCATION_NOT_VERIFIED, recordReceipt, requestedCodeNames, speakChangeHistory, vagueResearchRequest, verifiedState, verifiedStatusText } from './truth_layer.js';
@@ -1721,7 +1722,8 @@ export function enqueueJob(data, fields) {
 // Two imports both update office_skills/team and must never race snapshots.
 // Jobs the owner authorized directly ("Update CHE", "merge it"); they run even
 // while Office autonomy is paused.
-const OWNER_APPROVED_JOB_KINDS = new Set(['merge_pr', 'verify_deploy', 'verify_app_build', 'command']);
+// A cloud_task is queued only after the owner approved it (or needed no approval), so it is owner-authorized work.
+const OWNER_APPROVED_JOB_KINDS = new Set(['merge_pr', 'verify_deploy', 'verify_app_build', 'command', 'cloud_task']);
 
 export function selectReadyJobs(jobs, now = Date.now(), limit = 4) {
   const all = Array.isArray(jobs) ? jobs : [];
@@ -5893,6 +5895,7 @@ export class CheState extends DurableObject {
     if (codingCancelIntent(message)) {
       return ndjsonReply('Only the CHE owner can cancel coding jobs. Nothing was changed.', { source: CODING_CANCEL_SOURCE, ok: false, model_calls: 0 });
     }
+    if (cloudIntent(message)) return ndjsonReply('Only the CHE owner can use the cloud computer. Nothing was started.', { source: CLOUD_SOURCE, ok: false, model_calls: 0 });
     if (cancelOrderIntent(message)) return ndjsonReply('Only the CHE owner can cancel Alpaca PAPER orders. Nothing was cancelled.', { source: 'che_trading_chart', ok: false, model_calls: 0, order_cancelled: false });
     if (GUEST_OWNER_ACTION.test(message)) {
       return ndjsonReply('Only the CHE owner can do that. Nothing was changed. I can still talk it through with you.', { source: 'che_guest', ok: false, model_calls: 0 });
@@ -6052,6 +6055,10 @@ export class CheState extends DurableObject {
       if (!ask) return ndjsonReply('Tell me what feels wrong, for example "/che-improve the chart is too big". Nothing was changed.', { source: 'che_owner_improvement', ok: false, command: command.id, model_calls: 0 });
       return withDoneFields(await this.improvementChat(body || {}, ask), { command: command.id });
     }
+    if (String(command.local).startsWith('cloud_')) {
+      if (!OWNER_CHAT_REQUESTS.has(request)) return ndjsonReply('Only the CHE owner can use the cloud computer. Nothing was started.', { source: CLOUD_SOURCE, ok: false, command: command.id, model_calls: 0 });
+      return this.cloudCommand(command, input);
+    }
     if (command.local === 'coding_cancel') {
       // Owner only, like POST /api/job/cancel: checked here too, not only by the guest gate in front.
       if (!OWNER_CHAT_REQUESTS.has(request)) return ndjsonReply('Only the CHE owner can cancel coding jobs. Nothing was changed.', { source: CODING_CANCEL_SOURCE, ok: false, model_calls: 0 });
@@ -6102,6 +6109,90 @@ export class CheState extends DurableObject {
       return ndjsonReply(text, { source: 'che_creator_studio', command: command.id, model_calls: 0, ...done });
     }
     return ndjsonReply(`/${command.id} has no runner, sir. Nothing was run.`, { source: 'che_command', ok: false, model_calls: 0 });
+  }
+
+  // ─── Cloud Computer (cloud_computer.js) ─────────────────────────────────
+  // One manager over the existing compute. Handoff kinds go to their existing starters; repo tests become a
+  // cloud_task job in this queue that waits for the owner's approval; file inspection finishes on the Worker.
+  async cloudStart(kind, params = {}, { agent = 'CHE', confirmed = false } = {}) {
+    const env = this.keyEnv || this.env;
+    const plan = selectProvider(kind, { env });
+    if (plan.blocked) return { ok: false, blocked: true, plan, spoken: speakBlocked(plan) };
+    if (plan.run === 'handoff') {
+      const result = await startCloudTask(kind, params, {
+        env, confirmed,
+        queueSelfDevelopment: (args) => this.queueSelfDevelopment(args),
+        rea: (text) => handleReaRequest(this.ctx.storage, env, text, this.reaOptions({ history: [], owner: true })),
+        startVideo: (topic, seconds) => startGithubVideo(env, topic, seconds),
+      });
+      return { ...result, plan, spoken: speakStartResult(result) };
+    }
+    const data = await this.loadData();
+    if (plan.run === 'inline') {
+      const out = await runFileJob(data, { agent, name: String(params.name || ''), base64: String(params.base64 || ''), text: String(params.text || '') }, { env, enqueue: enqueueJob });
+      if (out.job) await this.ctx.storage.put('che', data);
+      return { ...out, spoken: out.ok ? out.job.result : out.facts?.error || speakRequest(out) };
+    }
+    const out = requestCloudWork(data, { agent, kind, params }, { env, enqueue: enqueueJob });
+    if (out.job && !out.deduplicated) await this.ctx.storage.put('che', data);
+    if (out.job && !out.needs_approval) await this.scheduleWork();
+    return { ...out, spoken: speakRequest(out) };
+  }
+
+  async cloudControl(action, id = '') {
+    const env = this.keyEnv || this.env;
+    const data = await this.loadData();
+    const states = { approve: ['awaiting_approval'], cancel: ['awaiting_approval', 'queued'], stop: ['running', 'queued'], retry: ['failed', 'cancelled'] }[action] || [];
+    const target = String(id || '').trim() || latestCloudJob(data, states)?.id || '';
+    if (!target) return { ok: false, job: null, reason: 'no job', spoken: `I have no cloud job to ${action}, sir. Nothing changed.` };
+    let out;
+    if (action === 'approve') out = approveCloudJob(data, target);
+    else if (action === 'cancel') out = cancelCloudJob(data, target);
+    else if (action === 'stop') out = await stopCloudJob(data, target, { env });
+    else if (action === 'retry') out = retryCloudJob(data, target, enqueueJob);
+    else return { ok: false, job: null, reason: 'unknown action', spoken: 'I can approve, cancel, stop or retry a cloud job. Nothing changed.' };
+    if (out.ok) {
+      await this.ctx.storage.put('che', data);
+      if (action === 'approve' || action === 'retry') await this.scheduleWork();
+    }
+    return { ok: out.ok, job: out.job || null, reason: out.reason || '', spoken: speakControl(action, out) };
+  }
+
+  // The catalog's cloud-* commands (spoken forms arrive through cloudIntent). Deterministic, no model.
+  async cloudCommand(command, input) {
+    const env = this.keyEnv || this.env;
+    const reply = (text, extra = {}) => ndjsonReply(text, { source: CLOUD_SOURCE, ok: true, command: command.id, model_calls: 0, ...extra });
+    if (command.local === 'cloud_open') {
+      const view = await cloudView(this.ctx.storage, env);
+      return reply(`Opening my cloud computer, sir. ${speakCloudSummary(view)}`, { open_screen: 'cloud_computer' });
+    }
+    if (command.local === 'cloud_blender') {
+      const plan = selectProvider('blender_render', { env });
+      return reply(speakBlocked(plan), { ok: false, blocked: true, missing_capability: plan.missing_capability || '' });
+    }
+    if (command.local === 'cloud_render') {
+      const plan = selectProvider('video_render', { env });
+      return reply(speakRender(await cloudJobs(this.ctx.storage, env), plan), { ok: !plan.blocked });
+    }
+    if (command.local === 'cloud_tests') {
+      const out = await this.cloudStart('repo_tests', {}, { agent: 'CHE' });
+      return reply(out.spoken, { ok: out.ok, needs_approval: Boolean(out.needs_approval), cloud_job_id: out.job?.id || null });
+    }
+    if (command.local === 'cloud_prs') {
+      const result = await openPullRequests(env);
+      return reply(speakPullRequests(result), { ok: result.ok, pull_requests: result.prs || [] });
+    }
+    if (command.local === 'cloud_install') return reply(speakInstall(providerStatuses(env), input), { installed: false });
+    if (command.local === 'cloud_agents') {
+      return reply(speakAgentWork(await cloudJobs(this.ctx.storage, env)), { open_screen: 'cloud_computer' });
+    }
+    if (command.local === 'cloud_control') {
+      const ctl = parseControl(input);
+      if (!ctl) return reply('Say approve, cancel, stop or retry, then "cloud job" and its id, sir. Nothing changed.', { ok: false });
+      const out = await this.cloudControl(ctl.action, ctl.id);
+      return reply(out.spoken, { ok: out.ok, cloud_job_id: out.job?.id || null });
+    }
+    return reply('That cloud computer command has no handler. Nothing was run.', { ok: false });
   }
 
   // /che-cancel-job and its spoken forms. The job is found in a fresh copy of the store, cancelled
@@ -7708,6 +7799,28 @@ export class CheState extends DurableObject {
       if (path === '/api/brain/truth' && request.method === 'GET') {
         if (!ownerDevice) return json({ detail: 'Only the CHE owner can read his brain.' }, 403);
         return json(await brainTruthView(this.ctx.storage));
+      }
+      // Cloud Computer Manager (cloud_computer.js): one view and one set of controls over CHE's existing compute.
+      // Owner-only, like /api/trading/*. Reads never reach GitHub; jobs live in the existing job queue, and starts go
+      // through the existing starters or the one allowlisted workflow. Every reply carries `spoken` for the app.
+      if (path === '/api/cloud-computer' || path.startsWith('/api/cloud-computer/')) {
+        if (!ownerDevice) return json({ detail: 'Only the CHE owner can use the cloud computer.' }, 403);
+        const cloudEnv = this.keyEnv || this.env;
+        if (path === '/api/cloud-computer' && request.method === 'GET') {
+          const view = await cloudView(this.ctx.storage, cloudEnv);
+          return json({ ...view, spoken: speakCloudSummary(view) });
+        }
+        if (request.method !== 'POST') return json({ detail: 'Use POST for cloud computer actions.' }, 405);
+        const action = path.slice('/api/cloud-computer/'.length);
+        if (action === 'start') {
+          const out = await this.cloudStart(String(body.kind || ''), body.params && typeof body.params === 'object' ? body.params : {}, { agent: String(body.agent || 'CHE'), confirmed: body.confirmed === true });
+          return json(out, out.ok ? 202 : out.needs_confirmation || out.needs_approval ? 409 : 422);
+        }
+        if (['approve', 'cancel', 'stop', 'retry'].includes(action)) {
+          const out = await this.cloudControl(action, String(body.id || ''));
+          return json(out, out.ok ? 200 : 409);
+        }
+        return json({ detail: 'Unknown cloud computer route.' }, 404);
       }
       if (path.startsWith('/api/brain/') && ['/api/brain/status', '/api/brain/changes', '/api/brain/push', '/api/brain/search', '/api/brain/folders', '/api/brain/record', '/api/brain/conflicts', '/api/brain/conflicts/resolve', '/api/brain/review', '/api/brain/score', '/api/brain/workers', '/api/brain/recovery', '/api/brain/import/chatgpt'].includes(path)) {
         if (!ownerDevice) return json({ detail: 'Only the CHE owner can read his brain.' }, 403);
@@ -10657,6 +10770,15 @@ export class CheState extends DurableObject {
             }
             const started = await this.startCommandWorkflow(data, { name: learned.workflow.name, steps: learned.steps }, { ownerDevice });
             return ndjsonReply(started.spoken, { source: 'che_command_workflow', ok: started.ok, objective_id: started.objective?.id || null, model_calls: 0, ...tag });
+          }
+          // Cloud Computer: "open your cloud computer", "run your coding tests", "create a Blender animation",
+          // "approve the cloud job"… Each runs its catalog command (command_catalog.js cloud-*), so the spoken and
+          // slash forms share one handler. Before the coding-job cancel: "cancel cloud job …" is a cloud job.
+          const cloudAsk = body.attachment || body.workflow_step ? null : cloudIntent(rawMessage);
+          if (cloudAsk) {
+            await this.dropHeldActions();
+            const command = commandById(cloudAsk.command);
+            return this.runSlashCommand(request, body, data, { name: command.id, command, input: cloudAsk.input }, { confirmed: false });
           }
           // "Cancel that fake commit by Che", "cancel coding job c2987a73", "cancel the last coding
           // job", or a number from the list CHE just read: the /che-cancel-job command. It runs before
@@ -15576,6 +15698,7 @@ export class CheState extends DurableObject {
           if (job.kind === 'verify_deploy') return await this.runVerifyDeployJob(job);
           if (job.kind === 'verify_app_build') return await this.runVerifyAppBuildJob(job);
           if (job.kind === 'command') return await this.runCommandJob(job);
+          if (job.kind === CLOUD_JOB_KIND) return await runCloudTask(job, { env: this.keyEnv || this.env });
           if (!job.steps?.length && /\b(then|multi.step|step.by.step|end.to.end)\b/i.test(job.prompt)) {
             const plan = await this.env.AI.run(this.env.CHE_FAST_MODEL || FAST_MODEL, {
               messages: [
@@ -15679,7 +15802,9 @@ export class CheState extends DurableObject {
       const job = fresh.jobs.find((item) => item.id === outcome.id);
       if (!job || job.status === 'cancelled') continue;
       if (outcome.step_results) { job.step_results = outcome.step_results; job.step_index = outcome.step_index; }
-      noteJobActivity(job, outcome.error
+      noteJobActivity(job, outcome.cloud?.log?.length
+        ? String(outcome.cloud.log.at(-1)).slice(9)
+        : outcome.error
         ? `Problem: ${outcome.error}${outcome.status === 'queued' ? ' Trying again.' : ''}`
         : outcome.status === 'complete'
           ? 'Finished. Result received.'
@@ -15697,6 +15822,8 @@ export class CheState extends DurableObject {
       if (outcome.owner_message !== undefined) job.owner_message = outcome.owner_message;
       if (outcome.failure_class !== undefined) job.failure_class = outcome.failure_class;
       if (outcome.verification) job.verification = outcome.verification;
+      // Cloud Computer jobs keep their GitHub run id, phase, logs and outputs (cloud_computer.js runCloudTask).
+      if (outcome.cloud) job.cloud = { ...(job.cloud || {}), ...outcome.cloud };
       // A checkpoint lives only while the job is retrying; a finished job drops it.
       if (outcome.checkpoint) job.checkpoint = outcome.checkpoint;
       else if (job.status !== 'queued') delete job.checkpoint;
