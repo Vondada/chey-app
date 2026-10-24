@@ -11,7 +11,7 @@ import { alpacaPaperDashboard, alpacaPaperOrder, openAlpacaPaperOrders, previewA
 import { readSimState, readStoredTrades } from './strategy_sim.js';
 import { readTrades, overnightLevels } from './trading_evidence.js';
 import { LIVE_FEED, readLivePortfolios } from './trading_live.js';
-import { historyChart, provenanceOf } from './trading_visual.js';
+import { fromEvidence, fromSim, historyChart, naturalKey, provenanceOf, tradeIdOf } from './trading_visual.js';
 import { INTERVALS, describeFeed, marketUniverse, resolveTicker, universeCandles } from './market_universe.js';
 import { intervalFromWords, intervalLabel, symbolFromFollowup } from './trading_lab.js';
 
@@ -55,7 +55,8 @@ export function chartMarkers({ journal = [], portfolios = [], simTrades = [], or
   for (const t of journal) {
     if (sym && String(t.symbol || '').toUpperCase() !== sym) continue;
     const id = `${t.portfolio}|${t.entry?.time}`;
-    const base = { source: 'che_forward', id, symbol: t.symbol, strategy: t.strategy, variant: t.filter, side: t.side || 'long', stop: t.stop, target: t.target };
+    // trade_id is the ledger ID Trade Replay opens (trading_visual.tradeIdOf over the same natural key); id stays the record's own.
+    const base = { source: 'che_forward', id, trade_id: tradeIdOf(naturalKey(fromEvidence(t, 'forward_paper'))), symbol: t.symbol, strategy: t.strategy, variant: t.filter, side: t.side || 'long', stop: t.stop, target: t.target };
     add({ ...base, kind: 'entry', time: t.entry?.time, price: num(t.entry?.raw), status: 'closed' });
     add({ ...base, kind: 'exit', time: t.exit?.time, price: num(t.exit?.raw), status: 'closed', reason: t.exit?.reason, net_pnl: num(t.net_pnl), r: num(t.r_net) });
   }
@@ -66,7 +67,8 @@ export function chartMarkers({ journal = [], portfolios = [], simTrades = [], or
   }
   for (const t of simTrades) {
     if (sym && String(t.symbol || '').toUpperCase() !== sym) continue;
-    const base = { source: 'che_sim', id: t.id, symbol: t.symbol, strategy: t.strategy, side: 'long', stop: t.stop, target: t.target };
+    // Only a closed simulation trade is in the ledger, so only it carries the ID Trade Replay opens.
+    const base = { source: 'che_sim', id: t.id, ...(t.exit_t ? { trade_id: tradeIdOf(naturalKey(fromSim(t))) } : {}), symbol: t.symbol, strategy: t.strategy, side: 'long', stop: t.stop, target: t.target };
     add({ ...base, kind: 'entry', time: t.entry_t, price: num(t.entry_raw), status: t.exit_t ? 'closed' : 'open' });
     if (t.exit_t) add({ ...base, kind: 'exit', time: t.exit_t, price: num(t.exit_raw), status: 'closed', reason: t.exit_reason, r: num(t.r) });
   }

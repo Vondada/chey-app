@@ -84,9 +84,10 @@ import { matrixIntent, readMatrix, runMatrix, speakMatrix } from './backtest_mat
 import { autoQueue as researchAutoQueue, cancelJob as cancelResearchJob, matrixView as researchMatrixView, nextResearchAt, queueJob as queueResearchJob, researchIntent, researchStep, researchView, setProfile as setResearchProfile, speakBestNow, speakHistory, speakStrategy, strategyView as researchStrategyView } from './trading_research.js';
 import { nextStrategySimTickAt, setStrategySimCeiling, setStrategySimPaused, speakStrategySim, strategySimIntent, strategySimTick, strategySimView, strategySimWake } from './strategy_sim.js';
 import { evidenceIntent, evidenceReport, evidenceTick } from './trading_evidence_runner.js';
-import { readTrades, tradeDayOf } from './trading_evidence.js';
-import { TRADE_EVIDENCE_SOURCE, lastTrade, readTradeEvidence, speakTradeReplay, tradeBars, tradeEvidenceOf, tradeList, tradeReplayIntent } from './trade_evidence.js';
-import { DAILY_TARGET, EXECUTION_TYPES, VISUAL_SOURCE, auditTrades, compareWindows, currentLeader, dailyEvidence, dailyPnl, filterTrades, historyChart, journalView, lastForwardBar, metricsOf, openPositions, rankStrategies, readSkips, readVisualTrades, replayFrame, speakAudit, speakEvidence, speakCard, speakLeader, speakPnl, tradingVisualIntent } from './trading_visual.js';
+import { readTrades } from './trading_evidence.js';
+import { tradingCapabilities } from './trading_capabilities.js';
+import { TRADE_EVIDENCE_SOURCE, lastTrade, readTradeEvidence, speakTradeReplay, tradeBars, tradeEvidenceOf, tradeReplayIntent, tradingVisualViewOf } from './trade_evidence.js';
+import { VISUAL_SOURCE, readVisualTrades, speakEvidence, speakCard, tradingVisualIntent } from './trading_visual.js';
 import { cancelCandidates, cancelConfirmation, cancelOrderIntent, chartIntent, chartOpenReply, chartView, drawIntent, futuresOrderIntent, marketOrderFeedProblem, paperAccountIntent, readDrawings, saveDrawings, speakOrder } from './trading_chart.js';
 import { marketUniverse, searchUniverse } from './market_universe.js';
 import { readRithmicCandles, storeRithmicCandles } from './rithmic_dataset.js';
@@ -3931,44 +3932,8 @@ export class CheState extends DurableObject {
   // OAuth sign-in as stored, FundYourEdge as not connected (Rithmic needs a licence), and
   // live orders disabled. Nothing is assumed about balances or firm rules.
   // Every trading connection as its own system reports it (issue #344); nothing here changes a mode.
-  /** GET /api/trading/visual?view=…: one read of the trade records, projected for the view asked for. */
-  async tradingVisualView(q) {
-    const view = q.get('view') || 'summary';
-    const filters = Object.fromEntries(['instrument', 'timeframe', 'strategy', 'from', 'to', 'execution_type', 'side', 'result'].map((k) => [k, (q.get(k) || '').slice(0, 40)]).filter(([, v]) => v));
-    const { trades, records, duplicates, sources, research } = await readVisualTrades(this.ctx.storage);
-    const shown = filterTrades(trades, filters);
-    const today = tradeDayOf(new Date().toISOString());
-    const base = { ok: true, view, paper_only: true, live_orders: 'disabled', today, filters, sources, research, execution_types: EXECUTION_TYPES };
-    if (view === 'evidence') {
-      const rows = dailyEvidence(shown, { skips: await readSkips(this.ctx.storage), today });
-      return { ...base, target: DAILY_TARGET, target_rule: 'A daily target, never a quota: trades are never forced, and a day below it says why.', rows: rows.slice(0, 400), total_rows: rows.length };
-    }
-    if (view === 'pnl') {
-      const pnl = dailyPnl({ trades, positions: await openPositions(this.ctx.storage), lastBar: await lastForwardBar(this.ctx.storage), day: q.get('day') || today });
-      return { ...base, pnl, spoken: speakPnl(pnl) };
-    }
-    if (view === 'replay') {
-      const tf = q.get('timeframe') || '5m';
-      const chart = await historyChart(this.ctx.storage, { market: q.get('instrument') || 'MNQ', tf, at: q.get('cursor'), trades });
-      return { ...base, ...replayFrame({ bars: chart.bars, trades: filterTrades(shown, { timeframe: tf, instrument: chart.symbol }), cursor: q.get('cursor'), timeframe: tf }), provenance: chart.provenance || null };
-    }
-    if (view === 'compare') return { ...base, windows: compareWindows(shown) };
-    if (view === 'leader') { const l = currentLeader(trades); return { ...base, ...l, spoken: speakLeader(l) }; }
-    if (view === 'journal') return { ...base, ...journalView(trades, await readSkips(this.ctx.storage), { ...filters, include_skips: q.get('skips') !== '0' }) };
-    if (view === 'audit') { const a = auditTrades(records); return { ...base, ...a, ids: { unique_trades: trades.length, duplicates_hidden: duplicates.filter((d) => d.kind === 'duplicate').length, conflicts_hidden: duplicates.filter((d) => d.kind === 'conflict').length, examples: duplicates.slice(0, 10) }, spoken: speakAudit(a) }; }
-    // Trade evidence (Priority 5): one trade by its stable ID, with its own stored bars; or the list of IDs.
-    if (view === 'trade') {
-      const want = (q.get('id') || '').trim().toUpperCase();
-      const trade = want === 'LAST' ? lastTrade(trades) : trades.find((t) => t.id === want);
-      if (!trade) return { ...base, ok: false, error: want === 'LAST' ? 'CHE has no closed forward paper or simulation trade yet.' : `No CHE trade has the ID ${want || '(none)'}.` };
-      return { ...base, trade: tradeEvidenceOf(trade, await tradeBars(this.ctx.storage, trade)) };
-    }
-    if (view === 'trades') return { ...base, ...tradeList(shown, { limit: Math.min(200, Number(q.get('limit')) || 100) }) };
-    if (view === 'ranking') return { ...base, ranking: rankStrategies(shown, { executionType: filters.execution_type || 'forward_paper' }), rule: 'Ranked by the lower end of the 95% expectancy range in R, never by win rate; under 30 trades is provisional.' };
-    const l = currentLeader(trades);
-    return { ...base, totals: metricsOf(shown), leader: l.leader, headline: l.headline, provisional: l.provisional,
-      pnl: dailyPnl({ trades, positions: await openPositions(this.ctx.storage), lastBar: await lastForwardBar(this.ctx.storage), day: today }) };
-  }
+  /** GET /api/trading/visual?view=…, read through trade_evidence.js. */
+  tradingVisualView(q) { return tradingVisualViewOf(this.ctx.storage, q); }
 
   async tradingConnectionsView() {
     const env = this.keyEnv || this.env;
@@ -8632,6 +8597,11 @@ export class CheState extends DurableObject {
         return json(await studioView(this.studioContext(request, data)));
       }
       const tradingOwnerOnly = () => json({ detail: 'Only the CHE owner can use trading connections.' }, 403);
+      // The desk's Analyze Markets, Backtesting Lab and Custom Indicators cards: CHE's own engines run on real bars.
+      if (path === '/api/trading/capabilities' && request.method === 'GET') {
+        if (!ownerDevice) return tradingOwnerOnly();
+        return json(await tradingCapabilities(this.ctx.storage, this.keyEnv || this.env));
+      }
       if (path === '/api/trading/connections' && request.method === 'GET') {
         if (!ownerDevice) return tradingOwnerOnly();
         const view = await this.tradingConnectionsView();
