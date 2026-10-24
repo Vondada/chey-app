@@ -77,6 +77,19 @@ Then, on GitHub:
 
 ## 2. Current position
 
+**Claude, 2026-10-25 — RESUME mission: parallel lanes running; main `0c43197` (#523, merged by Codex), no open PRs.**
+- **Verified live (deploy run 40143945084, creation_check):** Generate → free GitHub CPU worker → Blender 5.0.1 → GLB in 1.7 min (job gpu_aa40ade12d98, GLB 1,149,516 bytes, sha matches the receipt, 53 bones, rig verified, clips idle/walk/run/wave/talk) → viewport loaded 7 meshes and played walk. Memory truth 22/22, voice, Command Center 5/5, Atlas 11/11. Defect: the notice names the worker "?" (creation-gaps lane fixing).
+- Trading audit now 1,109 closed / 9 open, −8,144.41 R = gross −216.55 R − costs 7,927.86 R (325 cost>risk; the 9 new ones closed from positions opened before the cost gate — to confirm).
+- **Lanes (local branches in .claude/worktrees, merged by Claude into `claude/che-latency-optimization-8ruaus`):**
+  - lane/brain-visual — Brain Room immersive redesign (owner reference image; 3D navigation, 11 regions, Live Activity, connected screens). Owns lib/brain/**, insights_brain_scene.dart.
+  - lane/music-gaps — M4A export, MP3/M4A import, monitoring, pitch test (native → IPA). Owns lib/music existing files.
+  - lane/studio-engine — new lib/music files: beat producer, Engineer Mode/Bring Me Back, BandLab preset import, vocal analysis.
+  - lane/studio-tutorials — real MP4 tutorial pipeline from the actual studio UI + Studio Tutorials screen.
+  - lane/creation-gaps — free-form objects, suit quality, CC0 textures, Roblox/benchmark CI, Code Studio Stop, worker name.
+  - lane/trading-gaps — crypto paper replay, Office daily rollups, Alpaca paper fills/broker P&L, "audit September 22", Diagnose Rithmic.
+  - lane/reliability — full suites + CI baseline, replay checks on owner phrases, a11y sweep (outside other lanes' files).
+- **Next:** after music-gaps commits, an integration lane wires the studio engine into the new tabs (Record/Tracks/Beats/Effects/Mixer/Master) + Engineer Mode UI; rerun tutorials; one PR with [worker-deploy] if Worker changed and [ios-build] for native audio. Public IPA release still needs the owner's yes.
+
 **Claude, 2026-10-24T23:45:28.726Z — resumed after the session limit; #523 is merged (Codex finished it). First real production audit numbers below.**
 - Branch `claude/che-latency-optimization-8ruaus` synced to main `0c43197` (065af55, no diff).
 - **Trading audit (live deploy 40135088611, read-only):** the simulation has 1,100 closed and 18 open (0 on retired feeds). Its total is −8,061.76 R, made of gross −227.82 R from price moves and −7,833.94 R in costs; 316 trades had costs larger than their risk. There are 0 record problems. Journal: paper:futures 219 records, 0 problems. Research: 92 units, 13,215 backtest trades, 0 fixture units, 0 failed look-ahead, 0 without a data hash. **2026-09-22: UTC 0, New York 0, CME day 0**, so the owner's ≈ −$1,018 is in none of the sim, journal or research ledgers. Next: check the broker (Alpaca paper) and any other P&L store.
