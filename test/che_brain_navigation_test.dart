@@ -314,13 +314,14 @@ void main() {
       // This pins the Brain under the CHE dark palette it was designed in; HUD glass is now the app default.
       CheActivePalette.current = kCheDarkPalette;
       addTearDown(() => CheActivePalette.current = kCheHudPalette);
-      // The brain's palette (green, teal, cyan, blue, violet, white, amber for agents) is the one it had.
-      expect(cheMemoryCategoryColor('Memory'), const Color(0xFF3EE6C9));
-      expect(cheMemoryCategoryColor('Conversations'), const Color(0xFF52E89A));
-      expect(cheMemoryCategoryColor('Learning'), const Color(0xFF4FB8FF));
-      expect(cheMemoryCategoryColor('Research'), const Color(0xFF7CF0FF));
-      expect(cheMemoryCategoryColor('Knowledge'), const Color(0xFF6E8CFF));
-      expect(cheMemoryCategoryColor('Agents'), const Color(0xFFFFB54D));
+      // The brain's palette is the owner's colour key (2026-10-24, his original Brain Room reference): blue memories,
+      // cyan conversations, purple knowledge, yellow agents (che_brain_regions.dart has all ten regions).
+      expect(cheMemoryCategoryColor('Memory'), const Color(0xFF3D7BFF));
+      expect(cheMemoryCategoryColor('Conversations'), const Color(0xFF22E4F2));
+      expect(cheMemoryCategoryColor('Learning'), const Color(0xFFB57BFF));
+      expect(cheMemoryCategoryColor('Research'), const Color(0xFF9A7BFF));
+      expect(cheMemoryCategoryColor('Knowledge'), const Color(0xFFA35BFF));
+      expect(cheMemoryCategoryColor('Agents'), const Color(0xFFFFD23F));
       expect(cheMemoryCategoryColor('anything else'), CheColors.accent);
       expect(CheColors.accent, const Color(0xFF34E0B8));
       expect(CheColors.bg, const Color(0xFF030607));

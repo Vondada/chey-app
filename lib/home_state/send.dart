@@ -222,6 +222,21 @@ extension _CheHomeSend on _CHEHomeState {
       _openCharacterGenerator();
       return true;
     }
+    // Brain Room phrases off the Brain screen ("search my brain for red", "show live activity", "what is CHE
+    // learning"): open the Brain, then let its handler answer, so the same words work everywhere.
+    final brainPhrase = CheBrainOverview.voiceHandler == null ? CheBrainOverview.parse(message) : null;
+    if (brainPhrase != null && (brainPhrase.query != null || brainPhrase.learning || brainPhrase.section == CheBrainNav.activity)) {
+      if (_assistantHubOpen && mounted) Navigator.of(context).pop();
+      _openAssistantHub(tab: 0);
+      for (var i = 0; i < 14 && CheBrainOverview.voiceHandler == null; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 150));
+      }
+      final handler = CheBrainOverview.voiceHandler;
+      final reply = handler == null ? 'I opened your brain, sir, but it did not finish loading. Ask again in a moment.' : (await handler(message)) ?? '';
+      if (mounted) _set(() => controller.clear());
+      if (reply.isNotEmpty) await speakText(reply, record: false);
+      return true;
+    }
     if (RegExp(r'\b(open|show|go to)\s+(my\s+)?(memories?|brain|brain constellation)\b').hasMatch(lower)) {
       _openAssistantHub(tab: 0);
       return true;
@@ -721,6 +736,17 @@ extension _CheHomeSend on _CHEHomeState {
     final securityVoice = CheSecurityRoomVoice.handler;
     if (securityVoice != null && _pendingAttachment == null && !cheIsAppStatusRequest(message)) {
       final reply = await securityVoice(message);
+      if (reply != null) {
+        if (mounted) _set(() => controller.clear());
+        if (reply.isNotEmpty) await speakText(reply, record: false);
+        return;
+      }
+    }
+
+    // The Brain Room, while it is on screen, opens its sections, searches the Brain and says what CHE is learning.
+    final brainRoomVoice = CheBrainOverview.voiceHandler;
+    if (brainRoomVoice != null && _pendingAttachment == null && !cheIsAppStatusRequest(message)) {
+      final reply = await brainRoomVoice(message);
       if (reply != null) {
         if (mounted) _set(() => controller.clear());
         if (reply.isNotEmpty) await speakText(reply, record: false);

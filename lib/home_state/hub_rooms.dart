@@ -28,32 +28,50 @@ extension _CheHomeHubRooms on _CHEHomeState {
                   builder: (_) => CheCloudLogsScreen(baseUrl: () => cheAgentBaseUrl, headers: () => _authHeaders),
                 ),
               ),
-        map: CheMemoryBrainRoom(
-          active: active,
-          dots: cheBuildMemoryDots(
-            savedMemories: savedMemories,
-            memoryRecords: memoryRecords,
-            memoryNotes: memoryNotes,
-            learnedPersonality: learnedPersonality,
-            learnedKnowledge: learnedKnowledge,
-            brainLinks: brainLinks,
-            suggestions: suggestions,
-            conversationMemories: conversationMemories,
-            brainRecords: _brainReplicaRecords(),
-          ),
-          brainLinks: brainLinks,
-          roster: team,
-          loading: _brainSyncing,
-          offline: _brainReplica.lastReceipt?.unreachable == true,
-          error: _brainReplica.lastReceipt?.syncNotice,
-          pendingSync: _brainReplica.pendingOps,
-          onReadAloud: (t) => speakText(t, record: false, readOnDemand: true),
-          onRefresh: () => _loadAgentState(silent: true),
-          onOpenAgent: (name) => _openOfficeFloor(agentName: name),
-          onOpenEvidence: _openBrainEvidence,
-        ),
+        map: _brainOverview(active),
+        chipsBottomInset: cheBrainOverviewChipsInset,
       ),
       offline: CheOfflineBrainPanel(compact: true, replicaLine: _brainReplicaLine()),
+    );
+  }
+
+  /// The Brain Room (owner, 2026-10-24, his original reference): the neural Brain framed by the sidebar,
+  /// Real-Time Learning from the Brain Ledger and the dashboard cards. Both Brain screens use this one builder.
+  Widget _brainOverview(bool active) {
+    final dots = cheBuildMemoryDots(
+      savedMemories: savedMemories,
+      memoryRecords: memoryRecords,
+      memoryNotes: memoryNotes,
+      learnedPersonality: learnedPersonality,
+      learnedKnowledge: learnedKnowledge,
+      brainLinks: brainLinks,
+      suggestions: suggestions,
+      conversationMemories: conversationMemories,
+      brainRecords: _brainReplicaRecords(),
+    );
+    final ledger = _deviceToken == null ? null : CheBrainLedgerClient(baseUrl: cheAgentBaseUrl, headers: () => _authHeaders);
+    return CheBrainOverview(
+      active: active,
+      dots: dots,
+      brainLinks: brainLinks,
+      loadLearning: ledger?.overview,
+      onReadAloud: (t) => speakText(t, record: false, readOnDemand: true),
+      onOpenEvidence: _openBrainEvidence,
+      onOpenLedger: () => unawaited(_openBrainLedger()),
+      brain: CheMemoryBrainRoom(
+        active: active,
+        dots: dots,
+        brainLinks: brainLinks,
+        roster: team,
+        loading: _brainSyncing,
+        offline: _brainReplica.lastReceipt?.unreachable == true,
+        error: _brainReplica.lastReceipt?.syncNotice,
+        pendingSync: _brainReplica.pendingOps,
+        onReadAloud: (t) => speakText(t, record: false, readOnDemand: true),
+        onRefresh: () => _loadAgentState(silent: true),
+        onOpenAgent: (name) => _openOfficeFloor(agentName: name),
+        onOpenEvidence: _openBrainEvidence,
+      ),
     );
   }
 
