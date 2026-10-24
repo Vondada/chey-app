@@ -77,8 +77,8 @@ w.node_tree.nodes['Background'].inputs['Strength'].default_value = 0.6
 cam = bpy.data.objects.new('Cam', bpy.data.cameras.new('Cam')); sc.collection.objects.link(cam); sc.camera = cam
 cam.data.lens = 85
 tr = cam.constraints.new('TRACK_TO'); tr.target = tgt; tr.track_axis = 'TRACK_NEGATIVE_Z'; tr.up_axis = 'UP_Y'
-sc.render.engine = 'CYCLES'; sc.cycles.device = 'CPU'; sc.cycles.samples = int(os.environ.get('SAMPLES', '16')); sc.cycles.use_denoising = True
-sc.render.resolution_x, sc.render.resolution_y = 360, 450
+from render_device import setup as render_setup  # noqa: E402
+render_setup(sc, (360, 450)); sc.cycles.samples = int(os.environ.get('SAMPLES', '16')); sc.cycles.use_denoising = True
 sc.view_settings.view_transform = 'AgX'; sc.view_settings.look = 'None'
 for deg in (0, 90):
     a = math.radians(deg)

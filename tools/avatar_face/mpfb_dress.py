@@ -210,7 +210,7 @@ if not os.environ.get('NOHAIR'):
 
 # ── Neutral studio light (same as the clay stage) ──────────────────────────────────────────────────────────────────
 right = fwd.cross(up).normalized()
-tgt = bpy.data.objects.new('HeadTarget', None); sc.collection.objects.link(tgt); tgt.location = eye_mid - up * 0.035 * (che_gap / 0.06)
+tgt = bpy.data.objects.new('HeadTarget', None); sc.collection.objects.link(tgt); tgt.location = eye_mid - up * float(os.environ.get('AIM_DROP', '0.035')) * (che_gap / 0.06)
 
 
 def area(name, pos, size, energy):
@@ -229,8 +229,8 @@ w.node_tree.nodes['Background'].inputs['Strength'].default_value = 0.6
 cam = bpy.data.objects.new('Cam', bpy.data.cameras.new('Cam')); sc.collection.objects.link(cam); sc.camera = cam
 cam.data.lens = 85
 tr = cam.constraints.new('TRACK_TO'); tr.target = tgt; tr.track_axis = 'TRACK_NEGATIVE_Z'; tr.up_axis = 'UP_Y'
-sc.render.engine = 'CYCLES'; sc.cycles.device = 'CPU'; sc.cycles.samples = int(os.environ.get('SAMPLES', '32')); sc.cycles.use_denoising = True
-sc.render.resolution_x, sc.render.resolution_y = 400, 500
+from render_device import setup as render_setup  # noqa: E402
+render_setup(sc, (400, 500)); sc.cycles.samples = int(os.environ.get('SAMPLES', '32')); sc.cycles.use_denoising = True
 sc.view_settings.view_transform = 'AgX'; sc.view_settings.look = 'None'
 
 sub.show_viewport = False; bpy.context.view_layer.update()  # compare vertex for vertex, without the subdivision
@@ -245,7 +245,7 @@ if os.environ.get('SAVE'):
     bpy.ops.wm.save_as_mainfile(filepath=os.environ['SAVE'], copy=True)
 for deg in [int(d) for d in os.environ.get('VIEWS', '0,30').split(',')]:
     a = math.radians(deg)
-    cam.location = tgt.location + (fwd * math.cos(a) + right * math.sin(a)) * 0.75 * k + up * 0.02 * k
+    cam.location = tgt.location + (fwd * math.cos(a) + right * math.sin(a)) * float(os.environ.get('CAM_DIST', '0.75')) * k + up * 0.02 * k
     sc.render.filepath = os.path.join(OUT, f'dress_{deg:02d}.png')
     bpy.ops.render.render(write_still=True)
     print('WROTE', sc.render.filepath, flush=True)

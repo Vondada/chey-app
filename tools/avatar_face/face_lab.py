@@ -185,10 +185,9 @@ cam.location = tgt.location + (fwd * math.cos(a) + right * math.sin(a)) * dist +
 tr = cam.constraints.new('TRACK_TO'); tr.target = tgt; tr.track_axis = 'TRACK_NEGATIVE_Z'; tr.up_axis = 'UP_Y'
 cam.data.dof.use_dof = True; cam.data.dof.focus_object = tgt; cam.data.dof.aperture_fstop = float(os.environ.get('FSTOP', '2.0'))
 
-sc.render.engine = 'CYCLES'; sc.cycles.device = 'CPU'
+from render_device import setup as render_setup  # noqa: E402
+render_setup(sc, tuple(int(x) for x in os.environ.get('RES', '480x600').split('x')))
 sc.cycles.samples = int(os.environ.get('SAMPLES', '32')); sc.cycles.use_denoising = True
-rx, ry = (int(x) for x in os.environ.get('RES', '480x600').split('x'))
-sc.render.resolution_x, sc.render.resolution_y = rx, ry
 sc.view_settings.view_transform = 'AgX'; sc.view_settings.look = 'AgX - Medium High Contrast'
 sc.view_settings.exposure = float(os.environ.get('EXPOSURE', '0.0'))
 if os.environ.get('SAVE'):
