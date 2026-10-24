@@ -32,6 +32,14 @@ rig.animation_data_create(); rig.animation_data.action = act
 if getattr(act, 'slots', None):
     rig.animation_data.action_slot = act.slots[0]
 sc.frame_set(12); bpy.context.view_layer.update()
+# EXPR="jawOpen=0.4,mouthSmileLeft=0.8": hold an expression for the still (ARKit names after face_rig.py).
+if os.environ.get('EXPR'):
+    sk = bpy.data.objects['Body'].data.shape_keys
+    if sk.animation_data: sk.animation_data.action = None
+    for pair in os.environ['EXPR'].split(','):
+        name, val = pair.split('=')
+        sk.key_blocks[name.strip()].value = float(val)
+    bpy.context.view_layer.update()
 
 
 def srgb_to_linear(c):
