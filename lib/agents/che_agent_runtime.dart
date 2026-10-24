@@ -596,6 +596,19 @@ class CheAgentRuntimeClient {
   /// One Office job of a headquarters room in full: each stage's own result and the verification state, from records.
   Future<Map<String, dynamic>> hqJob(String jobId) => _send('GET', '/api/office/hq/job/$jobId');
 
+  /// CHE's room proposals and the rooms she has built, from the Office record.
+  Future<Map<String, dynamic>> roomProposals() => _send('GET', '/api/office/rooms/proposals');
+
+  /// The owner asks CHE for a room; she designs it from a reviewed template. Nothing is built yet.
+  Future<Map<String, dynamic>> proposeRoom(String need) => _send('POST', '/api/office/rooms/proposals', {'need': need});
+
+  /// The owner's decision: approve (build and verify), modify (name or purpose, then approval again) or reject.
+  Future<Map<String, dynamic>> decideRoomProposal(String proposalId, String decision, {Map<String, String> changes = const {}}) =>
+      _send('POST', '/api/office/rooms/proposals/$proposalId/decision', {'decision': decision, 'changes': changes});
+
+  /// Restores a built room's previous version (or retires it when it has none).
+  Future<Map<String, dynamic>> rollBackRoom(String roomId) => _send('POST', '/api/office/rooms/$roomId/rollback');
+
   Future<CheOfficeToday> officeToday() async {
     final j = await _send('GET', '/api/office/today');
     return CheOfficeToday.fromJson(Map<String, dynamic>.from(j['board'] as Map? ?? const {}));

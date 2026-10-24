@@ -18,14 +18,17 @@ export 'che_crew_states.dart' show cheCrewModelIds;
 // (che_crew_states.dart); the page says when every model has really loaded,
 // and its render loop stops while the room is hidden or the app is in the background.
 class CheCharactersRoom extends StatefulWidget {
-  const CheCharactersRoom({super.key, this.runtime});
+  const CheCharactersRoom({super.key, this.runtime, this.previewProposal});
 
   /// The Office's live runtime. Without it every character stands idle: nothing is shown as working.
   final CheAgentRuntimeController? runtime;
 
-  static Future<void> open(BuildContext context, {CheAgentRuntimeController? runtime}) {
+  /// A room CHE proposed (from the Worker's record). Drawn in the scene once the page is ready, never built.
+  final Map<String, dynamic>? previewProposal;
+
+  static Future<void> open(BuildContext context, {CheAgentRuntimeController? runtime, Map<String, dynamic>? previewProposal}) {
     return Navigator.of(context).push(
-      MaterialPageRoute<void>(builder: (_) => CheCharactersRoom(runtime: runtime)),
+      MaterialPageRoute<void>(builder: (_) => CheCharactersRoom(runtime: runtime, previewProposal: previewProposal)),
     );
   }
 
@@ -92,6 +95,11 @@ class _CheCharactersRoomState extends State<CheCharactersRoom> with WidgetsBindi
   Future<void> _sendModels() async {
     final controller = _controller;
     if (controller == null) return;
+    final preview = widget.previewProposal;
+    if (preview != null) {
+      // The proposal is JSON from the Worker; as JavaScript it is an object literal.
+      unawaited(controller.runJavaScript('window.CHE && window.CHE.preview && window.CHE.preview(${jsonEncode(preview)});'));
+    }
     // Real states first, so no character starts on a clip that is not true.
     _sent = const {};
     await _sendStates();
