@@ -185,7 +185,7 @@ nt.links.new(ao.outputs['AO'], aom.inputs['Value'])
 f = nt.nodes.new('ShaderNodeMath'); f.operation = 'MULTIPLY'
 nt.links.new(mr.outputs['Result'], f.inputs[0]); nt.links.new(aom.outputs['Result'], f.inputs[1])
 base = nt.nodes.new('ShaderNodeRGB'); base.outputs[0].default_value = (*albedo, 1)
-lips_col = nt.nodes.new('ShaderNodeRGB'); lips_col.outputs[0].default_value = (albedo[0] * 0.75, albedo[1] * 0.42, albedo[2] * 0.45, 1)
+lips_col = nt.nodes.new('ShaderNodeRGB'); lips_col.outputs[0].default_value = (albedo[0] * 0.62, albedo[1] * 0.42, albedo[2] * 0.55, 1)
 lipat = nt.nodes.new('ShaderNodeAttribute'); lipat.attribute_name = 'lipmask'
 # Lips: the lip mask runs 0 at the skin to 1 in the lip centre. The colour follows it through a ramp: a darker rim
 # (the natural lip line), the lip colour, and a lighter, rosier centre of each lip, broken up by a fine noise.
@@ -231,6 +231,24 @@ nt.links.new(fine.outputs['Fac'], hsum.inputs[0]); nt.links.new(vor.outputs['Dis
 bump = nt.nodes.new('ShaderNodeBump'); bump.inputs['Strength'].default_value = float(os.environ.get('PORES', '0.12')); bump.inputs['Distance'].default_value = 0.0004
 nt.links.new(hsum.outputs['Value'], bump.inputs['Height']); nt.links.new(bump.outputs['Normal'], b.inputs['Normal'])
 body.data.materials.append(skin)
+# Scalp under the hair: where CHE's hair cards lie within about 1-2 cm of the skin above the brows, the skin is tinted to
+# a dark scalp, so the part and any thin patch show dark scalp instead of bare face-coloured skin.
+hair_o = bpy.data.objects.get('Hair'); scalp = [0.0] * len(body.data.vertices)
+if hair_o and hair_o.type == 'MESH':
+    dg = bpy.context.evaluated_depsgraph_get(); hev = hair_o.evaluated_get(dg); hme = hev.to_mesh(); hme.transform(hair_o.matrix_world)
+    hb = BVHTree.FromPolygons([x.co.copy() for x in hme.vertices], [q.vertices[:] for q in hme.polygons]); hev.to_mesh_clear()
+    for vt in body.data.vertices:
+        wco = body.matrix_world @ vt.co
+        rise = (wco.z - che_mid.z - 0.95 * che_gap) / (0.3 * che_gap)   # fades in above the forehead, never on it
+        if rise > 0:
+            d = hb.find_nearest(wco)[3]
+            scalp[vt.index] = max(0.0, min(1.0, (0.022 - d) / 0.012)) * min(1.0, rise) if d is not None else 0.0
+sat = body.data.attributes.new('scalp', 'FLOAT', 'POINT'); sat.data.foreach_set('value', scalp)
+sca = nt.nodes.new('ShaderNodeAttribute'); sca.attribute_name = 'scalp'
+scm = nt.nodes.new('ShaderNodeMix'); scm.data_type = 'RGBA'; scm.inputs[7].default_value = (0.012, 0.008, 0.006, 1)
+nt.links.new(sca.outputs['Fac'], scm.inputs['Factor']); nt.links.new(mul.outputs[2], scm.inputs[6])
+nt.links.new(scm.outputs[2], b.inputs['Base Color'])
+check('scalp tinted under the hair', sum(1 for x in scalp if x > 0.5) > 40, f'{sum(1 for x in scalp if x > 0.5)} verts')
 lip_gloss(lip_mask)
 check('lip mask on the lips only', 60 < sum(1 for x in lip_mask if x > 0.5) < 400, f'{sum(1 for x in lip_mask if x > 0.5)} verts')
 check('skin albedo near target', abs(sum(albedo) / 3 - sum(lin(x) for x in (96, 55, 38)) / 3) < 0.03,
