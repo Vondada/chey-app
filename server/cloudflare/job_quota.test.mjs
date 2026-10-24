@@ -127,3 +127,14 @@ test('load: 300 tenants and 5 GPU workers through the real queue: quotas hold, l
   const p95 = claimMs[Math.floor(claimMs.length * 0.95)];
   assert.ok(p95 < 50, `p95 claim ${p95.toFixed(1)} ms`);
 });
+
+test('customer credits: paid capacity runs only on the customer\'s own credits, with margin; free capacity costs none', async () => {
+  const { creditsFor, creditGate } = await import('./job_quota.js');
+  const est = estimateVideo({ minutes: 30, profile: 'hybrid' });
+  const need = creditsFor(est);
+  assert.equal(need, Math.ceil(est.cost_usd.paid * 1.3 / 0.01));
+  assert.equal(creditsFor({ cost_usd: { paid: 0 } }), 0);
+  assert.equal(creditGate(est, need).ok, true);
+  const short = creditGate(est, need - 1);
+  assert.equal(short.ok, false); assert.match(short.reason, /run on free capacity instead/);
+});

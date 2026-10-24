@@ -172,3 +172,16 @@ Not done, on purpose:
 1. **R2 is not enabled on CHE's Cloudflare account.** The API answers "Please enable R2 through the Cloudflare Dashboard". Enabling it (free tier, billing profile required) and creating an R2 API token are the owner's decisions. Until then, `r2Status()` says so and uploads stay in CHE's own store, up to 40 MB each.
 2. **`CHE_TENANT_KEK`** (a 32+ character platform key secret) must be set before tenant data keys are issued.
 3. **Paid GPU capacity** at any stage needs the owner's approval and a spending limit above $0. Until then a job that needs it is refused with its estimate.
+
+## 8. Who pays for video (owner rule, 2026-10-24)
+
+CHE's own spending stays **$0**. These numbers are projections for future customers, not a budget. Free capacity
+(GitHub CPU workers, the owner's Colab) is always tried first and costs nothing. When paid capacity is added at a
+later stage, with the owner's approval, customers cover their own renders:
+
+- **Subscriptions:** each plan in `job_quota.js` `PLANS` includes a monthly allowance of video minutes and storage.
+- **Usage credits:** `creditsFor(estimate)` prices paid compute at 1 credit = $0.01, with a 1.3× margin.
+  `creditGate(estimate, balance)` runs a paid job only when the customer's own balance covers it. Otherwise it offers
+  the free, slower path. CHE always shows the estimate first (`/api/creations/estimate`).
+- **Not built yet, and needs the owner:** a payment processor, credit purchase and billing records. Nothing is sold
+  until he approves it.

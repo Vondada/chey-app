@@ -104,6 +104,25 @@ export function admit(request = {}, ctx = {}) {
   return { ok: true, plan: plan.id, bucket: rl.state, path: spend.path, max_parallel_segments: plan.max_parallel_segments };
 }
 
+/** Usage credits: 1 credit = $0.01 of estimated paid compute, with a margin so the platform never pays for a
+ * customer's render. Free-capacity jobs cost no credits. Credits are sold only once the owner approves billing. */
+export const CREDIT_USD = 0.01;
+export const CREDIT_MARGIN = 1.3;
+export function creditsFor(estimate) {
+  const paid = Number(estimate?.cost_usd?.paid) || 0;
+  return paid > 0 ? Math.ceil((paid * CREDIT_MARGIN) / CREDIT_USD) : 0;
+}
+
+/**
+ * Customer-funded paid compute: a job on paid capacity runs only if the tenant's own credit balance covers it, so the
+ * owner's spending stays $0. Returns { ok, credits, reason? }.
+ */
+export function creditGate(estimate, balance = 0) {
+  const credits = creditsFor(estimate);
+  if (credits <= (Number(balance) || 0)) return { ok: true, credits };
+  return { ok: false, credits, reason: `This needs ${credits} credits on paid capacity and the balance is ${Number(balance) || 0}. Nothing was started; it can run on free capacity instead, more slowly.` };
+}
+
 /**
  * The spending gate for one job's estimate (capacity_model.estimateVideo). With the default $0 limit, a job runs only
  * on free capacity (slower); if it would need paid compute it is refused with the estimate. Never spends silently.
