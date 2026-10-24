@@ -40,17 +40,51 @@ import { redactGoogleIds } from './research_memory.js';
 // GitHub side of the board: messages from every thread on the che-mailbox
 // branch since the board was last locked. Cached briefly so a busy link does
 // not burn GitHub API calls.
-async function githubBoard(storage, env, fetcher) {
+// After a send or a lock the cached board is out of date. It is marked stale rather than deleted, so the next full
+// read still happens before the board is shown, while the badge can keep answering from the last read.
+async function markGithubStale(storage) {
+  GH_INFLIGHT.delete(storage);   // a read that began before this change must not be handed to the next caller
+  const cached = await storage.get(GH_CACHE_KEY);
+  if (cached && Array.isArray(cached.messages)) await storage.put(GH_CACHE_KEY, { ...cached, at: 0 });
+  else await storage.delete(GH_CACHE_KEY);
+}
+
+// One GitHub read at a time per mailbox: concurrent callers (the badge polls, Flagstaff, chat) share it.
+const GH_INFLIGHT = new WeakMap();
+
+function refreshGithubBoard(storage, env, fetcher) {
+  let p = GH_INFLIGHT.get(storage);
+  if (!p) {
+    p = (async () => {
+      const all = await readAllMail(env, fetcher).catch(() => ({ error: 'read failed', messages: [] }));
+      const messages = Array.isArray(all.messages) ? all.messages.slice(-MAX_MESSAGES) : [];
+      if (!all.error) await storage.put(GH_CACHE_KEY, { at: Date.now(), messages });
+      return { messages, error: all.error || null };
+    })().finally(() => GH_INFLIGHT.delete(storage));
+    GH_INFLIGHT.set(storage, p);
+  }
+  return p;
+}
+
+/**
+ * The GitHub board. A fresh cache (20 s) answers directly. When it is stale, callers that pass `background` (the app
+ * badge, which polls) get the last read at once and the refresh runs in the background, so a slow GitHub never stalls
+ * the badge; everyone else waits for the fresh read, as before, so a message just sent is never missing from the board.
+ */
+async function githubBoard(storage, env, fetcher, { background = null } = {}) {
   if (!hasGitHubMailbox(env)) return [];
   const now = Date.now();
   const cached = await storage.get(GH_CACHE_KEY);
+  const usable = cached && Array.isArray(cached.messages);
   let messages;
-  if (cached && now - Number(cached.at || 0) < GH_CACHE_MS && Array.isArray(cached.messages)) {
+  if (usable && now - Number(cached.at || 0) < GH_CACHE_MS) {
     messages = cached.messages;
+  } else if (usable && background) {
+    messages = cached.messages;
+    background(refreshGithubBoard(storage, env, fetcher).catch(() => null));
   } else {
-    const all = await readAllMail(env, fetcher).catch(() => ({ messages: [] }));
-    messages = Array.isArray(all.messages) ? all.messages.slice(-MAX_MESSAGES) : [];
-    if (!all.error) await storage.put(GH_CACHE_KEY, { at: now, messages });
+    const fresh = await refreshGithubBoard(storage, env, fetcher);
+    messages = fresh.error && usable ? cached.messages : fresh.messages;
   }
   const since = String((await storage.get(SESSION_KEY)) || '');
   return since ? messages.filter((m) => String(m.at) > since) : messages;
@@ -110,7 +144,7 @@ export async function lockMailbox(storage, env = null, fetcher = fetch) {
   // GitHub files are never deleted (they are the permanent record in the
   // repo); the board just starts showing messages after this moment.
   await storage.put(SESSION_KEY, new Date().toISOString());
-  await storage.delete(GH_CACHE_KEY);
+  await markGithubStale(storage);
   if (messages.length) {
     // Private archive: SQLite keeps one row per locked session so the neural
     // history can keep growing instead of throwing away old sessions.
@@ -179,14 +213,14 @@ async function outbox(storage) {
   return Array.isArray(list) ? list : [];
 }
 
-export async function readWebMail(storage, limit = 50, env = null, fetcher = fetch) {
+export async function readWebMail(storage, limit = 50, env = null, fetcher = fetch, { background = null } = {}) {
   if (!hasGitHubMailbox(env)) {
     const box = (await storage.get(BOX_KEY)) || [];
     return (Array.isArray(box) ? box : []).slice(-limit);
   }
   // GitHub is the mailbox. Messages still waiting for GitHub are shown,
   // clearly marked, so nothing looks delivered before it is.
-  const remote = await githubBoard(storage, env, fetcher).catch(() => []);
+  const remote = await githubBoard(storage, env, fetcher, { background }).catch(() => []);
   const ids = new Set(remote.map((m) => m?.id));
   const pending = (await outbox(storage)).filter((m) => !ids.has(m.id) && m.state !== 'failed')
     .map((m) => ({ ...m, pending: true }));
@@ -219,7 +253,7 @@ export async function flushOutbox(storage, env = null, fetcher = fetch) {
     next.push({ ...m, attempts, last_error: String(out.detail || out.status).slice(0, 200), state: attempts >= MAX_OUTBOX_ATTEMPTS || out.status === 400 ? 'failed' : 'pending' });
   }
   await storage.put(OUTBOX_KEY, next.slice(-MAX_MESSAGES));
-  if (sent) await storage.delete(GH_CACHE_KEY);
+  if (sent) await markGithubStale(storage);
   return { sent, pending: next.filter((m) => m.state !== 'failed').length };
 }
 
@@ -246,7 +280,7 @@ export async function postWebMail(storage, { from, text, to = 'che', reply_to = 
   // GitHub is the mailbox: the message exists once GitHub has it.
   const github = await sendMail(env, { from: message.from, to: message.to, text: message.text, replyTo: message.reply_to, id: message.id }, fetcher)
     .catch((e) => ({ status: 502, detail: String(e?.message || e) }));
-  await storage.delete(GH_CACHE_KEY);
+  await markGithubStale(storage);
   if (github.status === 200) return { status: 200, message, github: 'saved', delivered: true };
   if (github.status === 400) return { status: 400, detail: github.detail };
   // Not delivered yet: queue for automatic retry; it is NOT sent.
@@ -341,8 +375,8 @@ export async function handleWebMailbox(request, storage, env = null, fetcher = f
 // (from other AIs, not CHE's own) that the owner hasn't opened yet.
 const OWNER_SEEN = 'web_mailbox_owner_seen';
 
-export async function unreadIncoming(storage, env = null, fetcher = fetch) {
-  const box = await readWebMail(storage, MAX_MESSAGES, env, fetcher);
+export async function unreadIncoming(storage, env = null, fetcher = fetch, { background = null } = {}) {
+  const box = await readWebMail(storage, MAX_MESSAGES, env, fetcher, { background });
   const incoming = box.filter((m) => m.from !== 'che');
   const seenId = String((await storage.get(OWNER_SEEN)) || '');
   if (!seenId) return { count: incoming.length, latest: incoming.slice(-5) };
