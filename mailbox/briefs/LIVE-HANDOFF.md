@@ -77,6 +77,8 @@ Then, on GitHub:
 
 ## 2. Current position
 
+**Claude, 2026-10-24 14:40 UTC.** PR #517 MERGED as d698c20 (`[worker-deploy]`), after green gating checks on 86420bf and fixes for all 6 Codex findings (threads answered and resolved). Deploy + Shorebird for d698c20 being verified (see release_status.mjs --sha d698c20). Contents: Colab T4 GPU queue (`/api/gpu/*`), Create -> GPU Jobs -> Pair Colab (worker token, shown once -> Colab secret CHE_GPU_TOKEN, then rerun notebook cells 3 and 7), identity presets for CHE + 9 agents in 3 looks (tools/avatar_face/identities.json, identity.py, server/cloudflare/avatar_identity.js; parity-tested), eye/skin/hair fixes, Character Generator (Generate/Preview/Save/Apply, full voice routes). NOT verified: any GPU render (no worker heartbeat seen yet), iPhone install. Owner's reference photos of real private people (some likely a minor, school setting) were DECLINED as face references; nothing stored. Next: Creative Studio redesign + mannequin audit on branch claude/che-creative-studio (worktree scratchpad/studiowt), merge main into it, PR, screenshots.
+
 **PROGRESS DASHBOARD (Claude, 2026-10-24 ~11:35Z). Verified statuses only; UNKNOWN means not checked.**
 
 | Workstream | Status | Last verified result | Next action |
