@@ -13,6 +13,7 @@ import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import '../che_ui/che_foreground.dart';
+import '../rooms/che_creator_studio.dart' show CheStudioAction;
 
 class CheFilmClient {
   CheFilmClient({required this.baseUrl, required this.headers, http.Client? client}) : _client = client ?? http.Client();
@@ -58,8 +59,16 @@ String cheFilmDuration(num seconds) {
 }
 
 class CheFilmStudioScreen extends StatefulWidget {
-  const CheFilmStudioScreen({super.key, required this.client, this.onSpeak, this.onListen, this.refreshEvery = const Duration(seconds: 15)});
+  const CheFilmStudioScreen({super.key, required this.client, this.onSpeak, this.onListen, this.refreshEvery = const Duration(seconds: 15), this.series, this.tools = const []});
   final CheFilmClient client;
+
+  /// The video series (Street Smart Explainers: bible, pilot script, render, platform exports), moved here from
+  /// the Music room on 2026-10-24: video belongs in Film, songs in Music.
+  final Widget? series;
+
+  /// The other video tools that used to sit in the Music room (script and storyboard, generate video, Visual Studio,
+  /// presentation), with their real connection state.
+  final List<CheStudioAction> tools;
   final ValueChanged<String>? onSpeak;
   final VoidCallback? onListen;
   final Duration refreshEvery;
@@ -196,6 +205,28 @@ class _CheFilmStudioScreenState extends State<CheFilmStudioScreen> {
               child: Semantics(liveRegion: true, child: Text(_status, style: text.titleMedium)),
             ),
           if (_error != null) Padding(padding: const EdgeInsets.only(top: 12), child: Text(_error!, style: text.titleMedium)),
+          if (widget.series != null) ...[
+            const SizedBox(height: 16),
+            Text('Video series', style: text.titleLarge),
+            const SizedBox(height: 8),
+            widget.series!,
+          ],
+          if (widget.tools.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            Text('Video tools', style: text.titleLarge),
+            for (final a in widget.tools)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(a.icon),
+                title: Text(a.title),
+                subtitle: Text(a.connected ? a.body : '${a.body}\nNeeds: ${a.connectorName}. CHE writes the plan until it is connected.'),
+                trailing: Text(a.connected ? 'READY' : 'CONNECT'),
+                onTap: () {
+                  HapticFeedback.selectionClick();
+                  a.onRun();
+                },
+              ),
+          ],
           const SizedBox(height: 16),
           Text('Current film', style: text.titleLarge),
           const SizedBox(height: 8),
