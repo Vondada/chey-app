@@ -8,6 +8,7 @@
 | "How do you know that?" / "The last one…" | `evidenceQuestion`, `evidenceRequestSplit`, `evidenceReferent`, `explainEvidenceFor` | Explains that answer's own ledger entry (`che_answer_ledger_v1`). An unsupported owner claim is retracted (`che_retracted_claims_v1`). |
 | Unsupported "you told me / you confirmed" | `guardOwnerAttributions` | Removes the sentence and says so. Questions, hypotheticals and requested fiction pass. |
 | Model-invented memories | `guardRememberBlock` | Keeps only `che-remember` lines found in the owner's own words that were not retracted. |
+| "What memories / records do you have about X?", "which memory IDs did you retrieve?" | `owner_recall.js` `ownerMemorySearchIntent` → `ownerSearchTurn` (route `che_memory_search`, 0 model calls) | Reads the stores this turn; names only real ids, newest confirmed value first with what it replaced; `done.read_receipt` is the proof. Numbered memory records in model text are removed (`truth_layer.js` rule `memory_id`). |
 | Claimed search, compare, verify or review | `truth_layer.js` `guardClaimedResearchActions` | Needs a successful tool, research sources or a document read from this turn. |
 | "Research a fact" with no subject | `vagueResearchRequest` | Asks which fact. Nothing is researched. |
 | Owner corrects his own fact | `ownerFactCorrection` + `addOwnerMemory` | The old record is kept as history (`superseded_by`). |

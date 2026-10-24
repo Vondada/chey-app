@@ -100,7 +100,11 @@ const TOOL_SUCCESS = /\b(?:I|we|CHE)\s+(?:\w+\s+){0,2}(?:ran|invoked|executed)\s
 const REVIEW_DONE = /\b(?:I|we|CHE)\s+(?:\w+\s+){0,2}reviewed\s+(?:your|the|CHE's|my)\s+(?:code|codebase|repository|repo)\b|\b(?:my|CHE's)\s+(?:code\s+)?review\b[^\n.!?]{0,40}\b(?:found\s+no|passed|complete|no\s+issues|clean)\b|\bthe\s+code\s+review\s+(?:found\s+no\s+issues|passed|is\s+complete|came\s+back\s+clean)\b/i;
 // The model never sees record ids (Brain lines carry only room, status, speaker and date), so any id it writes is invented.
 const BRAIN_RECORD_ID = /\b(?:mem|conv|office|atlas|brain|flagstaff|record)[:#][\w.-]{3,}|\brecord\s+(?:id|ids)\s*[:#]?\s*[\w.-]{4,}/i;
-const RETRIEVAL_RULES = [['retrieval', RETRIEVAL_VERB], ['found_records', FOUND_RECORDS], ['brain_record_id', BRAIN_RECORD_ID], ['retrieval_source', RETRIEVAL_SOURCE], ['storage_key', STORAGE_KEY], ['record_id', RECORD_ID], ['tool_success', TOOL_SUCCESS], ['review_done', REVIEW_DONE]];
+// Numbered memory records (owner, 2026-10-24: "I retrieved memory IDs 8829, 8830 and 8831 from storage"; "Record 8829
+// says your favorite color is blue"). Real memory ids are UUIDs and reach the owner only from a store read on a
+// deterministic route, so a numbered memory, record or entry in model text is invented. "A record 1,500 people" stays.
+const MEMORY_ID = /\b(?:memor(?:y|ies)|brain|stored|saved)\s+(?:records?\s+|entr(?:y|ies)\s+|notes?\s+|items?\s+)?(?:ids?|numbers?|nos?\.?|#)\s*[:#]?\s*\d{2,}|\b(?:memory|brain|stored|saved)\s+(?:records?|entr(?:y|ies)|notes?)\s*#?\s*\d{2,}\b|\brecords?\s+(?:ids?|numbers?|nos?\.?|#)\s*[:#]?\s*\d{2,}|^\s*(?:memory\s+(?:records?\s+|entr(?:y|ies)\s+)?|records?\s+|entr(?:y|ies)\s+)#?\d{3,}\b|\b(?:I|we|CHE)\b[^.!?\n]{0,60}\b(?:records?|entr(?:y|ies)|memor(?:y|ies))\s+#?\d{3,}\b/i;
+const RETRIEVAL_RULES = [['retrieval', RETRIEVAL_VERB], ['found_records', FOUND_RECORDS], ['memory_id', MEMORY_ID], ['brain_record_id', BRAIN_RECORD_ID], ['retrieval_source', RETRIEVAL_SOURCE], ['storage_key', STORAGE_KEY], ['record_id', RECORD_ID], ['tool_success', TOOL_SUCCESS], ['review_done', REVIEW_DONE]];
 export const RETRIEVAL_NOT_EVIDENCE = 'I cannot verify that from a real record, sir: no storage read, lookup, tool or review ran for this answer, and a model-written record, key, identifier, date, profit or result is not evidence. Ask for the record by its source and I will read it from storage.';
 export const RETRIEVAL_NOTE = 'I took out a record claim I cannot back, sir: no storage read or tool ran for this answer. Ask for the record by its source and I will read it from storage.';
 
@@ -158,7 +162,9 @@ export function guardRetrievalClaims(reply, { receipts = [], flagOnly = false, k
     if (flagOnly) kept.push(`${sentence.trimEnd()} ${NOT_VERIFIED}${/\s$/.test(sentence) ? sentence.slice(sentence.trimEnd().length) : ''}`);
   }
   if (!removed.length) return { text, removed };
-  const out = kept.join('').trim();
+  // A number a removed memory-id claim gave a record ("8829") is invented wherever it appears, so no other sentence keeps it.
+  const invented = new Set(removed.filter((r) => r.rule === 'memory_id').flatMap((r) => r.sentence.match(/\b\d{3,}\b/g) || []));
+  const out = (invented.size && !flagOnly ? kept.filter((s) => !(s.match(/\b\d{3,}\b/g) || []).some((n) => invented.has(n))) : kept).join('').trim();
   return { text: out || (flagOnly ? text : RETRIEVAL_NOT_EVIDENCE), removed };
 }
 export const PEERS = ['claude', 'chatgpt', 'codex', 'gemini', 'grok', 'copilot', 'cursor'];

@@ -1,0 +1,17 @@
+{
+  "about": "Owner report 2026-10-24: CHE invented memory IDs 8829, 8830, 8831 and said she retrieved them from storage when no store read ran. Memory record questions are answered by owner_recall.ownerSearchTurn from a real store read (route che_memory_search, done.read_receipt) with real ids; on the model path truth_layer's memory_id rule removes any numbered memory record and every other sentence that repeats its number. Newest owner-confirmed value wins (blue Oct 1 -> red Oct 20), and the replaced value is named.",
+  "owner": true,
+  "model": "I retrieved memory IDs 8829, 8830 and 8831 from storage, sir. Record 8829 says your favorite color is blue.",
+  "records": [
+    { "text": "My favorite color is blue", "source": "owner_chat", "verification_status": "owner_attested", "created_at": "2026-10-01T15:00:00.000Z" },
+    { "text": "Actually my favorite color is red", "source": "owner_chat", "verification_status": "owner_attested", "created_at": "2026-10-20T15:00:00.000Z" }
+  ],
+  "turns": [
+    { "message": "what memories do you have about my favorite color", "expect": { "route": "che_memory_search", "model_calls": 0, "match": "latest confirmed favorite color is red \\(record replay-1.*replaces blue \\(record replay-0", "not": "8829|8830|8831" } },
+    { "message": "pull my memory records about colors", "expect": { "route": "che_memory_search", "model_calls": 0, "match": "red", "not": "8829|8830|8831" } },
+    { "message": "show me the memory IDs you retrieved", "expect": { "route": "che_memory_search", "model_calls": 0, "match": "record replay-0.*record replay-1", "not": "8829|8830|8831" } },
+    { "message": "what is my favorite color", "expect": { "route": "che_personal_recall", "model_calls": 0, "match": "Your favorite color is red.*Earlier.*blue", "not": "8829" } },
+    { "message": "tell me everything you know about colors", "expect": { "route": "model", "not": "8829|8830|8831" } },
+    { "message": "Ensure user corrections override outdated preferences. My latest confirmed favorite color is red.", "expect": { "route": "che_memory", "model_calls": 0, "match": "favorite color is red" } }
+  ]
+}
