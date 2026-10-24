@@ -29,7 +29,7 @@ Each reply passes through these steps, in this order:
 5. `sanitizeOwnerText`
 6. `recordAnswerEvidence`
 
-`claim_check.mjs` runs steps 1, 3 and 4. Step 2 opens pages, so it is tested through `/api/chat` against a simulated web in `server/cloudflare/source_verification.test.mjs`. Other guards, such as location/weather and `guardOwnerReply`, run on their own paths.
+`claim_check.mjs` runs steps 1, 3 and 4, then the chat pipeline's `execution_claims` stage (`guardExecutionClaims`: invented record ids, storage reads, tool runs). Step 2 opens pages, so it is tested through `/api/chat` against a simulated web in `server/cloudflare/source_verification.test.mjs`. Other guards, such as location/weather and `guardOwnerReply`, run on their own paths.
 
 A fake search, browse or comparison claim replaces the **whole** reply. Anything else in it may rest on the search that never ran, so harmless lines are lost as well. An unsupported owner attribution removes only its sentence.
 
