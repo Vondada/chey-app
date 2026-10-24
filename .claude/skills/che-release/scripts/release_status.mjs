@@ -111,7 +111,7 @@ export async function releaseStatus({ pr = null, sha = null, fetcher = fetch, to
               // Only CHE's own notices (the deploy writes them); runner and
               // action-version notices are noise here.
               out.deploy.notices = (notes.data || [])
-                .filter((a) => a.annotation_level === 'notice' && /^(?:Live CHE commit|Memory truth|CHE voice|Command Center|Knowledge Atlas|Creation Engine)/i.test(a.title || ''))
+                .filter((a) => a.annotation_level === 'notice' && /^(?:Live CHE commit|Memory truth|CHE voice|Command Center|Knowledge Atlas|Creation Engine|Projects audit)/i.test(a.title || ''))
                 .map((a) => `${a.title ? `${a.title}: ` : ''}${a.message}`.slice(0, 300));
               out.deploy.errors = (notes.data || []).filter((a) => a.annotation_level === 'failure').map((a) => `${a.title}: ${a.message}`.slice(0, 300));
             }

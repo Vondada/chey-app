@@ -366,7 +366,8 @@ function summary(p, jobs) {
   return {
     id: p.id, kind: p.kind, title: p.title, base_id: p.base_id, version: v.n, versions: p.versions.length,
     can_undo: p.current > 0, can_redo: p.current < p.versions.length - 1, saved_at: p.saved_at, updated_at: p.updated_at, style: v.style,
-    job: j ? { id: j.id, state: j.state, pct: j.progress?.pct ?? 0, message: j.progress?.message || '', updated_at: j.updated_at } : null,
+    job: j ? { id: j.id, state: j.state, pct: j.progress?.pct ?? 0, message: j.progress?.message || '', updated_at: j.updated_at,
+      owner_paused: Boolean(j.owner_paused), display_state: j.display_state || null, status_line: j.status_line || null } : null,
     previews: j ? { ...(j.previews || {}) } : {}, model_url: j?.model?.url || null,
     render: { ...renderOf(v), quality_label: qualityOf(renderOf(v)).label }, rig: j?.rig || null,
   };

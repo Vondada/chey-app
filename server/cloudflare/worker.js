@@ -258,6 +258,7 @@ import { FilmStore, filmIntent, filmProgress, farmProviders, loadRates, loadUsag
 import { GpuQueue, gpuWorkerRoute, speakGpuSummary } from './gpu_queue.js';
 import { CreationStudio, studioOwnerRoute } from './creation_studio.js';
 import { creationProbeRoute } from './creation_probe.js';
+import { projectAudit, projectLibraryRoute } from './project_library.js';
 import { FILM_ACTIVE_STATES, filmPlan, filmTick, filmTokenRoute, refreshValidation as refreshFilmValidation, remakeShot, setFilmState, startFilm } from './film_pipeline.js';
 import { performanceBanner, performanceIntent, performanceReport, recordTiming, routeKey as perfRouteKey, speakPerformance } from './perf_watch.js';
 import { engineView, exportWorkflows, feedbackOnLast, importWorkflows, library as workflowLibrary, loadEngine, matchLearned, noteVersion, promoteCandidate, dismissCandidate, rankWorkflows, recordRun as recordWorkflowRun, isDisabled as workflowDisabled, restoreVersion, saveEngine, setDisabled as setWorkflowDisabled, setPreferred as setWorkflowPreferred, speakEfficiency, speakLibrary, testCandidate, workflowForRun, workflowIntent } from './workflow_engine.js';
@@ -6982,6 +6983,7 @@ export class CheState extends DurableObject {
         if (!isMemoryProbeRequest(request, this.env)) return json({ detail: 'Not found.' }, 404);
         return creationProbeRoute({ storage: this.ctx.storage, env: this.keyEnv || this.env }, path, request);
       }
+      if (path === '/api/projects/probe/audit') return isMemoryProbeRequest(request, this.env) ? json(projectAudit(await this.loadData())) : json({ detail: 'Not found.' }, 404);
       if (path.startsWith('/api/gpu/worker/')) return (await gpuWorkerRoute({ storage: this.ctx.storage, env: this.keyEnv || this.env }, path, request)) || json({ detail: 'Not found.' }, 404);
       const body = ['POST', 'PATCH', 'PUT'].includes(request.method) ? await bodyOf(request) : {};
       // Visual Studio render Action: the edit document and its source files, opened only by that job's one-time,
@@ -7701,6 +7703,26 @@ export class CheState extends DurableObject {
       if (/^\/api\/(gpu|creations)(\/|$)/.test(path)) {
         if (!ownerDevice) return json({ detail: 'Only the CHE owner can use the GPU queue.' }, 403);
         return (await studioOwnerRoute({ storage: this.ctx.storage, env: this.keyEnv || this.env }, path, request, body)) || json({ detail: 'Not found.' }, 404);
+      }
+      // Project manager (project_library.js): cards over data.projects, the crew's tasks and 3D creations; Roblox recovery.
+      if (path.startsWith('/api/projects/')) {
+        if (!ownerDevice) return json({ detail: 'Only the CHE owner can open his projects.' }, 403);
+        const creations = async () => (await new CreationStudio(this.ctx.storage, undefined, { env: this.keyEnv || this.env }).list().catch(() => ({ projects: [] }))).projects;
+        const continueProject = async (p, brief) => {
+          await this.staffOffice(data);
+          const a = data.team.find((x) => x.name === 'Atlas' && !x.retired);
+          if (!a) return { ok: false, detail: 'Atlas is not on the team, so no crew task was queued.' };
+          let blocker = '';
+          try { assertAgentMayRun(a, { task: brief }); } catch (error) { blocker = permissionBlocker(a, error); }
+          blocker ||= officeToolBlocker(this.keyEnv || this.env, a, brief);
+          if (blocker) return { ok: false, detail: `Nothing was queued: ${blocker}` };
+          const t = queueAgentTask(data, a, brief, 'roblox_studio', { job_id: p.goal_id || p.id, kind: 'roblox_studio' });
+          Object.assign(t, { owner_confirm_required: true, outbound_allowed: false, auto_publish: false });
+          p.job_ids = [...(p.job_ids || []), t.id]; p.updated_at = t.created_at;
+          await this.ctx.storage.put('che', data); await this.scheduleWork();
+          return { ok: true, task_id: t.id, agent: a.name };
+        };
+        return (await projectLibraryRoute({ data, save: () => this.ctx.storage.put('che', data), creations, continueProject }, path, request, body)) || json({ detail: 'Not found.' }, 404);
       }
       // Cloud Computer Manager (cloud_computer.js): one view and one set of controls over CHE's existing compute.
       // Owner-only, like /api/trading/*. Reads never reach GitHub; jobs live in the existing job queue, and starts go
