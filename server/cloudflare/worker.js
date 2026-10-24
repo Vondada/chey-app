@@ -64,7 +64,8 @@ import {
 import { activityFeed, creations, findCreations, greeting, suggestions, stalledTasks, decisionsNeeded, nextActions } from './activity.js';
 import { accountSnapshot as marketAccountSnapshot, candles as marketCandles, chartPage as marketChartPage, quote as marketQuote, snapshot as marketSnapshot } from './markets.js';
 import { CALLBACK_PATH as TRADOVATE_CALLBACK, accountBalance, connectLink, listAccounts, connection as brokerConnection, handleCallback as tradovateCallback, renewToken, tradovateConfigured, marketDataAccess } from './broker_tradovate.js';
-import { MODE_NAME, STOCK_ACCOUNT, speakPlaceNeedsYes, chooseAccount, clearStockOrder, confirmLive, confirmStockOrder, deskIntent, dropStockOrder, pendingStockOrder, speakStaleStockOrder, rememberListed, deskTick, pendingAlert, readDesk, requestLive, requestStockOrder, setMode, setRiskLimits, setSize, skipTrade, speakAlert, speakDeskStatus, speakLiveRequest, speakStockOrder, speakStockReceipt, speakTakeNeedsYes, takeAnnouncement, takeTrade } from './trading_desk.js';
+import { MODE_NAME, STOCK_ACCOUNT, speakPlaceNeedsYes, chooseAccount, clearStockOrder, confirmLive, confirmStockOrder, deskIntent, dropStockOrder, pendingStockOrder, speakStaleStockOrder, rememberListed, deskTick, pendingAlert, readDesk, requestLive, requestStockOrder, setMode, setRiskLimits, setSize, skipTrade, speakAlert, speakDeskStatus, speakStockOrder, speakStockReceipt, speakTakeNeedsYes, takeAnnouncement, takeTrade } from './trading_desk.js';
+import { liveOrdersStatus } from './trading_environments.js';
 import { externalGrounding } from './external_grounding.js';
 import { answerEvidenceReceipt, cachedResearch, evidenceReferenceFollowup, factKey, forgetKnowledge, invalidateKnowledge, knownAnswer, LAST_ANSWER_EVIDENCE_KEY, ownerFactQuestion, markPureResearch, rememberOwnerFact, researchHit, researchKey } from './knowledge_cache.js';
 import { claimMatcher, disprovenContext, downgradeDisproven, externalCorrection, guardCitations, loadDisproven, newsQuestion, newsResearch, reopenArticles, recheckExternalClaim, recordDisproven, verifiedSourcesContext } from './source_verification.js';
@@ -3803,7 +3804,7 @@ export class CheState extends DurableObject {
     const { trades, records, duplicates, sources, research } = await readVisualTrades(this.ctx.storage);
     const shown = filterTrades(trades, filters);
     const today = tradeDayOf(new Date().toISOString());
-    const base = { ok: true, view, paper_only: true, live_orders: 'disabled', today, filters, sources, research, execution_types: EXECUTION_TYPES };
+    const base = { ok: true, view, paper_only: true, live_orders: liveOrdersStatus(), today, filters, sources, research, execution_types: EXECUTION_TYPES };
     if (view === 'evidence') {
       const rows = dailyEvidence(shown, { skips: await readSkips(this.ctx.storage), today });
       return { ...base, target: DAILY_TARGET, target_rule: 'A daily target, never a quota: trades are never forced, and a day below it says why.', rows: rows.slice(0, 400), total_rows: rows.length };
@@ -4029,7 +4030,7 @@ export class CheState extends DurableObject {
     return {
       controls: rest, strategies: controlsView(controls, portfolios).map((r) => ({ ...r, ...registry[r.id] })), audit: audit.slice(-50).reverse(),
       ict_concepts: ICT_CONCEPTS.map((k) => ({ name: k.name, implemented: k.strategies.length > 0, strategies: k.strategies, note: k.note || '' })),
-      can_restore: Boolean(previous), paper_only: true, live_orders: 'disabled',
+      can_restore: Boolean(previous), paper_only: true, live_orders: liveOrdersStatus(),
       live_paper_enabled: Boolean((await this.ctx.storage.get(LIVE_STATE))?.enabled),
     };
   }
@@ -4243,7 +4244,7 @@ export class CheState extends DurableObject {
       broker: {
         tradovate: { app_configured: tradovateConfigured(this.keyEnv || this.env), signed_in: connected, expired: Boolean(auth?.access_token) && !connected },
         fundyouredge: { linked: false, why: 'FundYourEdge accounts trade on Rithmic, whose order API needs a licensed developer kit; CHE has no Rithmic connection.' },
-        live_orders: 'disabled: paper only. A live order needs your explicit approval of that exact order.',
+        live_orders: liveOrdersStatus(),
       },
     };
   }
@@ -13139,9 +13140,8 @@ export class CheState extends DurableObject {
             return ndjsonReply('To connect Alpaca paper trading, sir: on alpaca.markets open your paper account, go to API Keys and generate a paper key; its ID starts with PK. Then open the Trading Room, choose Alpaca, and enter the key ID and secret there. Never say or type them in chat. CHE checks them with Alpaca\'s paper service before saving, and refuses live keys.', { source: 'che_trading_desk', ok: true });
           }
           if (desk.kind === 'mode' && desk.mode === 'live') {
-            const asked = await requestLive(this.ctx.storage);
-            if (asked.already) return ndjsonReply('You are already on live trading, sir. Every order still needs your approval of that exact order.', { source: 'che_trading_desk', ok: true, trading_mode: 'live' });
-            return ndjsonReply(speakLiveRequest(asked.desk, await brokerConnection(this.ctx.storage)), { source: 'che_trading_desk', ok: true, trading_mode: asked.desk.mode, live_confirmation_needed: true });
+            const asked = await requestLive(this.ctx.storage, Date.now(), await brokerConnection(this.ctx.storage));
+            return ndjsonReply(asked.reply, asked.meta);
           }
           if (desk.kind === 'confirm_live') {
             const confirmed = await confirmLive(this.ctx.storage);

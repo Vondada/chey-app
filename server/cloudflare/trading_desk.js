@@ -6,11 +6,14 @@
 //   sim    NinjaTrader's simulated account. CHE places alerted entries herself.
 //   live   NinjaTrader's real account. CHE calls the entry and places it only
 //          after the owner says "take the trade" (owner rule: anything that
-//          costs money is confirmed first).
+//          costs money is confirmed first). OFF in code: the live kill switch
+//          in trading_environments.js refuses the switch and every live order
+//          until the owner separately approves live trading and it is verified.
 
 import { controlIntent } from './trading_controls.js';
 import { placeBracket, tick } from './broker_tradovate.js';
 import { withoutProhibitions } from './owner_action_gate.js';
+import { LIVE_TRADING_OFF, liveOrderBlock } from './trading_environments.js';
 
 const DESK = 'trading_desk';
 const ALERT_HOURS = 20; // a daily-bar entry is good until the next session
@@ -19,7 +22,8 @@ const ROOTS = { 'es.f': { full: 'ES', micro: 'MES' }, 'nq.f': { full: 'NQ', micr
 export async function readDesk(storage) {
   const desk = (await storage.get(DESK)) || {};
   return {
-    mode: ['paper', 'sim', 'live'].includes(desk.mode) ? desk.mode : 'paper',
+    // A desk saved as live before the kill switch reads as paper: live cannot trade, so CHE never says it is on.
+    mode: ['paper', 'sim'].includes(desk.mode) || (desk.mode === 'live' && !liveOrderBlock()) ? desk.mode : 'paper',
     qty: Number.isInteger(desk.qty) && desk.qty >= 1 && desk.qty <= 10 ? desk.qty : 1,
     contract: desk.contract === 'full' ? 'full' : 'micro',
     alerts: Array.isArray(desk.alerts) ? desk.alerts : [],
@@ -123,8 +127,10 @@ export async function takeAnnouncement(storage, now = Date.now()) {
 export function speakAlert(a) {
   if (a.status === 'placed') return `Trade alert, sir: ${a.why ? `${a.why}. ` : ''}I placed it on ${a.mode === 'live' ? 'your LIVE account' : 'your simulated account'} ${a.result.account}: buy ${a.result.qty} ${a.result.symbol} limit ${a.result.entry}, stop ${a.result.stop}, target ${a.result.target}. Tradovate order ${a.result.order_id}.`;
   if (a.status === 'failed') return `Trade alert, sir: ${describe(a)}. I tried to place it but it failed: ${a.error}`;
-  if (a.status === 'info') return `Trade alert, sir (paper only): ${describe(a)}${a.why ? `, because it ${a.why}` : ''}. Say "switch to sim trading" or "switch to live trading" to send entries to NinjaTrader.`;
-  if (a.status === 'pending') return `Trade alert, sir, good entry on your LIVE account${a.account ? ` ${a.account}` : ''}: ${describe(a)}${a.why ? `, because it ${a.why}` : ''}. Real money. Say "yes, take the trade" to place it, or "skip it".`;
+  if (a.status === 'info') return `Trade alert, sir (paper only): ${describe(a)}${a.why ? `, because it ${a.why}` : ''}. Say "switch to sim trading" to send entries to NinjaTrader's simulated account.${liveOrderBlock() ? ' Live trading is off in CHE\'s code.' : ''}`;
+  // A live alert saved by an older build is reported, never offered: live trading is off in code.
+  if (a.status === 'pending' && a.mode === 'live' && liveOrderBlock()) return `Trade alert, sir: ${describe(a)}${a.why ? `, because it ${a.why}` : ''}. It was for your live account, and live trading is off in CHE's code. Nothing was placed.`;
+  if (a.status === 'pending') return `Trade alert, sir, good entry on ${a.mode === 'live' ? 'your LIVE account' : 'your simulated account'}${a.account ? ` ${a.account}` : ''}: ${describe(a)}${a.why ? `, because it ${a.why}` : ''}.${a.mode === 'live' ? ' Real money.' : ''} Say "yes, take the trade" to place it, or "skip it".`;
   return '';
 }
 
@@ -201,9 +207,14 @@ export function deskIntent(message) {
   return null;
 }
 
+// While live trading is off in code, a live switch is answered with that and nothing is recorded.
+const LIVE_OFF_REPLY = (mode) => `${LIVE_TRADING_OFF.replace(/; nothing was sent\.$/, '')}, sir. You stay on ${MODE_NAME[mode]}. Nothing changed.`;
+
 export async function setMode(storage, mode) {
   const desk = await readDesk(storage);
   const before = desk.mode;
+  // The live kill switch: the mode stays where it was and the caller hears why.
+  if (mode === 'live' && liveOrderBlock()) return { before, mode: before, error: LIVE_OFF_REPLY(before) };
   desk.mode = mode;
   desk.live_request_at = 0;
   await saveDesk(storage, desk);
@@ -213,16 +224,20 @@ export async function setMode(storage, mode) {
 // Going live takes two steps (owner directive, issue #344): the first only records the request,
 // so CHE can say which broker, account and limits would trade real money; the switch happens
 // when the owner says "confirm live trading" within two minutes. Nothing promotes to live alone.
-export async function requestLive(storage, now = Date.now()) {
+// The answer comes back ready to speak: `reply` and the chat `meta` the Worker sends with it.
+export async function requestLive(storage, now = Date.now(), conn = null) {
   const desk = await readDesk(storage);
-  if (desk.mode === 'live') return { already: true, desk };
+  const meta = { source: 'che_trading_desk', ok: true, trading_mode: desk.mode };
+  if (liveOrderBlock()) return { disabled: true, desk, reply: LIVE_OFF_REPLY(desk.mode), meta: { ...meta, ok: false, live_disabled: true } };
+  if (desk.mode === 'live') return { already: true, desk, reply: 'You are already on live trading, sir. Every order still needs your approval of that exact order.', meta };
   desk.live_request_at = now;
   await saveDesk(storage, desk);
-  return { desk };
+  return { desk, reply: speakLiveRequest(desk, conn), meta: { ...meta, live_confirmation_needed: true } };
 }
 
 export async function confirmLive(storage, now = Date.now()) {
   const desk = await readDesk(storage);
+  if (liveOrderBlock()) return { error: LIVE_OFF_REPLY(desk.mode), disabled: true };
   if (!desk.live_request_at || now - desk.live_request_at > LIVE_CONFIRM_MS) {
     return { error: 'There is no live switch waiting to be confirmed, sir. Say "switch to live trading" first. Nothing changed.' };
   }
@@ -270,7 +285,9 @@ export async function takeTrade(storage, { now = Date.now(), place = placeBracke
   const desk = await readDesk(storage);
   const alert = pendingAlert(desk, now);
   if (!alert) return { reply: 'There is no open trade alert to take right now, sir. Nothing was placed.' };
-  if (desk.mode === 'paper') return { reply: 'You are in paper trading, sir, so nothing goes to NinjaTrader. Say "switch to sim trading" or "switch to live trading" first. Nothing was placed.' };
+  // The live kill switch: a live alert (saved before it, or by any path) is never sent anywhere, not even to sim.
+  if (alert.mode === 'live' && liveOrderBlock()) return { ok: false, reply: 'That alert was for your live account, sir, and live trading is off in CHE\'s code. Nothing was placed.' };
+  if (desk.mode === 'paper') return { reply: `You are in paper trading, sir, so nothing goes to NinjaTrader. Say "switch to sim trading" first.${liveOrderBlock() ? ' Live trading is off in CHE\'s code.' : ''} Nothing was placed.` };
   const account = desk.account[desk.mode];
   if (desk.mode === 'live' && !account) return { reply: 'Which live account should this go to, sir? Say "list my trading accounts", then "use account" and its number. Nothing was placed.' };
   // Checked before the alert is claimed, so the alert stays open for when the limits are set.

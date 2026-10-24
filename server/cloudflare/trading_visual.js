@@ -17,6 +17,7 @@ import { readSimState, readStoredTrades } from './strategy_sim.js';
 import { CONTRACTS, MIN_TRADES, readTrades, tradeDayOf, wilsonInterval } from './trading_evidence.js';
 import { LIVE_BACKTEST, LIVE_FEED, readLivePortfolios } from './trading_live.js';
 import { datasetManifests, loadDataset, tfOf } from './trading_research.js';
+import { liveOrdersNote, liveOrdersStatus } from './trading_environments.js';
 
 export const VISUAL_SOURCE = 'che_trading_visual';
 export const DAILY_TARGET = 30;
@@ -27,7 +28,7 @@ export const EXECUTION_TYPES = Object.freeze({
   daily_paper: { label: 'Daily-bar paper research', data_type: 'paper', note: 'Approximate: daily bars, fills at the next open.' },
   simulation: { label: 'Strategy simulation (1-minute)', data_type: 'paper', note: 'Measured in R only; no dollar amounts are recorded.' },
   broker_paper: { label: 'Alpaca PAPER fill', data_type: 'broker', note: 'Read live from Alpaca on the chart; not stored by CHE.' },
-  live: { label: 'Live', data_type: 'live', note: 'Live orders are disabled.' },
+  live: { label: 'Live', data_type: 'live', note: liveOrdersNote() },
 });
 
 const r2 = (x) => (Number.isFinite(x) ? Math.round(x * 100) / 100 : null);
@@ -303,7 +304,7 @@ export function dailyPnl({ trades = [], positions = [], lastBar = null, day, now
     high: values.length ? Math.max(0, ...values) : null, low: values.length ? Math.min(0, ...values) : null,
     curve, last_update: closed.at(-1)?.exit_time || lastBar?.t || null,
     compare: { previous_day: prev, previous_net: prevNet },
-    live_orders: 'disabled',
+    live_orders: liveOrdersStatus(),
   };
 }
 
@@ -519,7 +520,7 @@ const money = (x) => (x == null ? 'not known' : `${x < 0 ? 'minus ' : ''}$${Math
 export function speakPnl(p) {
   return `Today's forward paper P&L, ${p.day}, on DELAYED MNQ data: realized ${money(p.realized)} from ${p.trades_closed} closed trade${p.trades_closed === 1 ? '' : 's'}, `
     + `unrealized ${money(p.unrealized)} on ${p.open_positions} open position${p.open_positions === 1 ? '' : 's'}, net ${money(p.net)}. `
-    + `Costs: commissions and fees ${money(p.commissions)}, slippage and spread ${money(p.slippage)}. This is paper; live orders are disabled.`;
+    + `Costs: commissions and fees ${money(p.commissions)}, slippage and spread ${money(p.slippage)}. This is paper; ${liveOrdersNote().replace(/^L/, 'l')}`;
 }
 export function speakLeader(l) {
   if (l.leader) return `${l.headline} ${l.leader.forward.trades} forward paper trades, expectancy ${l.leader.forward.expectancy_r} R, profit factor ${l.leader.forward.profit_factor}.`;
@@ -564,7 +565,7 @@ export async function historyChart(storage, { market = 'MNQ', tf = '5m', at = nu
   const manifests = await datasetManifests(storage, m);
   const offered = Object.keys(manifests);
   const base = { ok: true, account: 'futures_history', account_label: `${m} history (stored research data)`, mode: 'HISTORICAL', symbol: m, timeframe: tf, timeframes: offered,
-    unavailable_timeframes: { ...UNAVAILABLE_TIMEFRAMES }, live_orders: 'disabled', entries_allowed: false, market_orders_allowed: false,
+    unavailable_timeframes: { ...UNAVAILABLE_TIMEFRAMES }, live_orders: liveOrdersStatus(), entries_allowed: false, market_orders_allowed: false,
     entries_blocked_reason: 'History is for study only: no order can be placed from it.' };
   if (!manifests[tf]) {
     return { ...base, state: 'no_data', bars: [], markers: [], feed: { provider: 'none', status: 'UNAVAILABLE', stale: true },

@@ -11,6 +11,7 @@ import { alpacaPaperDashboard, alpacaPaperOrder, openAlpacaPaperOrders, previewA
 import { readSimState, readStoredTrades } from './strategy_sim.js';
 import { readTrades, overnightLevels } from './trading_evidence.js';
 import { LIVE_FEED, readLivePortfolios } from './trading_live.js';
+import { liveOrdersStatus } from './trading_environments.js';
 import { historyChart, provenanceOf } from './trading_visual.js';
 import { INTERVALS, describeFeed, marketUniverse, resolveTicker, universeCandles } from './market_universe.js';
 import { intervalFromWords, intervalLabel, symbolFromFollowup } from './trading_lab.js';
@@ -117,7 +118,7 @@ export async function chartView(storage, env, { account = 'alpaca_paper', symbol
   const offered = account === 'futures_paper' ? FUTURES_TIMEFRAMES : Object.keys(TIMEFRAMES);
   // A timeframe the account does not offer (futures at 1m) answers with 5-minute bars, labelled 5m.
   const frame = offered.includes(tf) ? tf : '5m';
-  const base = { ok: true, account, account_label: ACCOUNTS[account].label, mode: 'PAPER', timeframe: frame, timeframes: [...offered], live_orders: 'disabled', sources: MARKER_SOURCES };
+  const base = { ok: true, account, account_label: ACCOUNTS[account].label, mode: 'PAPER', timeframe: frame, timeframes: [...offered], live_orders: liveOrdersStatus(), sources: MARKER_SOURCES };
   if (account === 'alpaca_paper') {
     const d = await alpacaPaperDashboard(env, { symbol, fetcher, now, timeframe: frame });
     if (d.state !== 'verified') {
@@ -170,7 +171,7 @@ async function marketChart(storage, { symbol, tf, now, fetcher }) {
   const journal = item.category === 'futures' && item.symbol === 'MNQ' ? await readTrades(storage, (t) => t.environment === 'paper' && t.data?.resolution === '5m') : [];
   const bars = (view.bars || []).map(({ t, o, h, l, c, v }) => ({ t, o, h, l, c, v }));
   return {
-    ok: true, account: 'market', account_label: ACCOUNTS.market.label, mode: 'RESEARCH', timeframe: view.timeframe, timeframes: view.timeframes, live_orders: 'disabled', sources: MARKER_SOURCES,
+    ok: true, account: 'market', account_label: ACCOUNTS.market.label, mode: 'RESEARCH', timeframe: view.timeframe, timeframes: view.timeframes, live_orders: liveOrdersStatus(), sources: MARKER_SOURCES,
     state: bars.length ? 'verified' : 'no_data', symbol: item.symbol, ticker: item, bars, built_from: view.built_from || null, fallback: view.fallback || false,
     feed: { ...view.feed, last_bar_time: bars.at(-1)?.t || null, stale: view.feed.status === 'UNAVAILABLE' || view.feed.status === 'DISCONNECTED', delayed: view.feed.status === 'DELAYED' },
     spoken: describeFeed(view), universe_problems: universe.problems,

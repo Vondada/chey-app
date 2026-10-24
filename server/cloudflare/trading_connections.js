@@ -3,6 +3,8 @@
 // Tradovate sign-in, the Alpaca paper check); it never changes a mode or a connection. Each
 // card says its real state, so nothing reads "connected" until the provider proved it.
 
+import { liveOrderBlock } from './trading_environments.js';
+
 export const MODE_LABEL = { paper: 'PAPER', sim: 'BROKER SIM', live: 'LIVE' };
 
 // What Tradovate itself requires before CHE can use its API (owner research, issue #344, Oct 18
@@ -121,7 +123,8 @@ export function tradingConnections({ paper = null, desk, tradovate = {}, alpaca 
       research: true,
       paper: true,
       sim_orders: desk.mode === 'sim' && signedIn ? 'on: CHE places her entries on the simulated account' : 'off',
-      live_orders: desk.mode === 'live' && signedIn && desk.risk_limits && desk.account.live ? 'each order needs your approval of that exact order' : 'off',
+      // The live kill switch first: off in code means off here, whatever the desk says.
+      live_orders: !liveOrderBlock() && desk.mode === 'live' && signedIn && desk.risk_limits && desk.account.live ? 'each order needs your approval of that exact order' : 'off',
     },
   };
 }

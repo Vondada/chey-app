@@ -14,7 +14,7 @@
 // "sim" uses Tradovate's demo environment (the simulated account), "live"
 // the real one. Same login, same token, different server.
 
-import { guardSubmit } from './trading_environments.js';
+import { guardSubmit, liveOrderBlock } from './trading_environments.js';
 
 const AUTH_KEY = 'tradovate_auth';
 
@@ -96,7 +96,13 @@ export async function renewToken(storage, fetcher = fetch, now = Date.now()) {
   return auth;
 }
 
-async function api(storage, mode, path, { method = 'GET', body, fetcher = fetch, now = Date.now() } = {}) {
+// Tradovate's order-changing endpoints (/order/*, /orderStrategy/*). On the live server they
+// are behind the live kill switch, checked right before the network call, so even a caller
+// that skipped guardSubmit cannot send a live order. Reads (accounts, contracts) are unaffected.
+const ORDER_PATH = /^\/order(?:strategy)?\//i;
+
+export async function tradovateApi(storage, mode, path, { method = 'GET', body, fetcher = fetch, now = Date.now(), env = null } = {}) {
+  if (mode === 'live' && ORDER_PATH.test(path) && liveOrderBlock(env)) return { error: liveOrderBlock(env), live_disabled: true };
   const auth = await storage.get(AUTH_KEY);
   if (!auth?.access_token || now >= auth.expires_at) return { error: 'NinjaTrader is not connected (or the sign-in expired). Say "connect NinjaTrader" to sign in again.' };
   const response = await fetcher(`${BASE[mode]}${path}`, {
@@ -111,7 +117,7 @@ async function api(storage, mode, path, { method = 'GET', body, fetcher = fetch,
 
 /** Active accounts on the owner's login in this mode, in Tradovate's order. */
 export async function listAccounts(storage, mode, opts = {}) {
-  const res = await api(storage, mode, '/account/list', opts);
+  const res = await tradovateApi(storage, mode, '/account/list', opts);
   if (res.error) return res;
   return { accounts: (Array.isArray(res.data) ? res.data : []).filter((a) => a && a.active !== false).map((a) => ({ id: a.id, name: String(a.name) })) };
 }
@@ -134,7 +140,7 @@ export async function pickAccount(storage, mode, preferred = '', opts = {}) {
 
 /** Front-month contract for a root like MES or MNQ (e.g. "MESZ6"). */
 export async function frontContract(storage, mode, root, opts = {}) {
-  const res = await api(storage, mode, `/contract/suggest?t=${encodeURIComponent(root)}&l=5`, opts);
+  const res = await tradovateApi(storage, mode, `/contract/suggest?t=${encodeURIComponent(root)}&l=5`, opts);
   if (res.error) return res;
   const hit = (Array.isArray(res.data) ? res.data : []).find((c) => new RegExp(`^${root}[FGHJKMNQUVXZ]\\d{1,2}$`).test(String(c?.name)));
   return hit ? { symbol: hit.name } : { error: `Tradovate did not return a current ${root} contract.` };
@@ -149,6 +155,8 @@ export const tick = (price) => Math.round(price * 4) / 4; // ES, MES, NQ, MNQ tr
  */
 export async function placeBracket(storage, mode, order, opts = {}) {
   if (!BASE[mode]) return { error: 'Orders go to the simulated or the live account only.' };
+  // Live kill switch, before any request to the live server (not even an account read).
+  if (mode === 'live' && liveOrderBlock(opts.env)) return { error: liveOrderBlock(opts.env), live_disabled: true };
   const { root, action = 'Buy', qty, entry, stop, target, account: preferred } = order;
   if (!(qty >= 1 && qty <= 10)) return { error: 'Order size must be 1 to 10 contracts.' };
   if (action !== 'Buy' || !(stop < entry && entry < target)) return { error: 'The stop must be below the entry and the target above it.' };
@@ -165,7 +173,7 @@ export async function placeBracket(storage, mode, order, opts = {}) {
   const verdict = guardSubmit(live ? 'funded' : 'broker_sim', {
     account_kind: live ? 'funded' : 'simulation', account: acct.account.name, contract: root,
     qty, entry: tick(entry), stop: tick(stop), target: tick(target), pointValue,
-  }, { approval: order.approval || null, unattended: Boolean(order.unattended), limits: order.limits || null });
+  }, { approval: order.approval || null, unattended: Boolean(order.unattended), limits: order.limits || null, env: opts.env || null });
   if (!verdict.allowed) return { error: `The order was NOT placed: ${verdict.reason}.` };
   const body = {
     accountSpec: acct.account.name,
@@ -180,7 +188,7 @@ export async function placeBracket(storage, mode, order, opts = {}) {
     bracket1: { action: 'Sell', orderType: 'Limit', price: tick(target), timeInForce: 'GTC' },
     bracket2: { action: 'Sell', orderType: 'Stop', stopPrice: tick(stop), timeInForce: 'GTC' },
   };
-  const res = await api(storage, mode, '/order/placeoso', { ...opts, method: 'POST', body });
+  const res = await tradovateApi(storage, mode, '/order/placeoso', { ...opts, method: 'POST', body });
   if (res.error) return res;
   // Tradovate reports an accepted order with failureReason "Success".
   const failed = res.data?.failureReason && res.data.failureReason !== 'Success';
@@ -194,7 +202,7 @@ export async function placeBracket(storage, mode, order, opts = {}) {
 export async function accountBalance(storage, mode, preferred = '', opts = {}) {
   const acct = await pickAccount(storage, mode, preferred, opts);
   if (acct.error) return acct;
-  const res = await api(storage, mode, '/cashBalance/getcashbalancesnapshot', { ...opts, method: 'POST', body: { accountId: acct.account.id } });
+  const res = await tradovateApi(storage, mode, '/cashBalance/getcashbalancesnapshot', { ...opts, method: 'POST', body: { accountId: acct.account.id } });
   if (res.error) return res;
   const n = (v) => (Number.isFinite(Number(v)) ? Math.round(Number(v) * 100) / 100 : null);
   return { account: acct.account.name, cash: n(res.data?.totalCashValue), net_liq: n(res.data?.netLiq), open_pnl: n(res.data?.openPnL), realized_pnl: n(res.data?.realizedPnL) };
@@ -209,7 +217,7 @@ export async function marketDataAccess(storage, env, root, symbol, { fetcher = f
     ? 'Sign in to Tradovate in CHE Connections, with your existing CME/API market-data entitlement.'
     : 'Register CHE as a Tradovate OAuth application, configure its existing OAuth client ID/secret and callback URL, then sign in in CHE Connections. Existing CME market-data/API entitlement must permit the subscription; CHE will not buy or activate it.' };
   if (auth.market_data_allowed === false) return { ok: false, state: 'entitlement_required', detail: 'Tradovate reports no market-data permission. The owner must verify existing CME/API entitlement; CHE purchased nothing.' };
-  const contract = await api(storage, 'live', `/contract/find?name=${encodeURIComponent(symbol)}`, { fetcher, now });
+  const contract = await tradovateApi(storage, 'live', `/contract/find?name=${encodeURIComponent(symbol)}`, { fetcher, now });
   if (contract.error || contract.data?.name !== symbol || !Number.isSafeInteger(contract.data?.id)) return { ok: false, state: 'contract_unverified', detail: 'Tradovate could not verify the exact front-month contract. No real-time entry is permitted.' };
   return { ok: true, token: auth.md_access_token || auth.access_token, expires_at: auth.expires_at, contract_id: contract.data.id, symbol, root };
 }

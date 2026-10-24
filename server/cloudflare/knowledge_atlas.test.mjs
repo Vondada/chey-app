@@ -569,23 +569,24 @@ test('"teach me to trade live" is not a lesson and changes nothing; the atlas, a
     assert.equal(desk.mode, 'paper', words);
     assert.equal(desk.live_request_at, 0, `${words}: no live switch was even requested`);
   }
-  // A sentence that names the switch reaches the desk's own two-step gate, exactly as on main:
-  // it asks for "confirm live trading" and changes nothing yet.
+  // A sentence that names the switch reaches the desk, whose live kill switch refuses it and changes nothing.
   const howTo = await che.say('Teach me how to switch to live trading');
   assert.equal(howTo.route, 'che_trading_desk');
-  assert.match(howTo.reply, /say "confirm live trading" within two minutes\. Nothing changed yet\./);
+  assert.match(howTo.reply, /^Live trading is turned off in CHE's code until you separately approve it and it is verified, sir\. You stay on paper trading.*Nothing changed\.$/);
   assert.equal((await readDesk(storageFor(che.saved))).mode, 'paper');
   const paper = await che.say('/learn how to trade live');
   assert.equal(paper.route, 'che_knowledge_atlas');
   assert.match(paper.reply, /This lesson changed nothing: you are still on paper trading \(CHE's own journal, no account\)\./);
   assert.doesNotMatch(paper.reply, /live orders stay disabled/);
-  // On live, the same lesson says live, and the desk is untouched by it.
+  // On sim, the same lesson reports sim, and the desk is untouched by it. (Live cannot be reached: the kill switch.)
   assert.equal((await che.say('Switch to live trading')).route, 'che_trading_desk');
   assert.equal((await che.say('confirm live trading')).route, 'che_trading_desk');
+  assert.equal((await readDesk(storageFor(che.saved))).mode, 'paper', 'the kill switch kept the desk on paper');
+  assert.equal((await che.say('switch to sim trading')).route, 'che_trading_desk');
   const before = await readDesk(storageFor(che.saved));
-  assert.equal(before.mode, 'live', 'the desk itself switched, after its own confirmation');
-  const live = await che.say('/learn trade live');
-  assert.match(live.reply, /This lesson changed nothing: you are still on your NinjaTrader LIVE account, real money\./);
+  assert.equal(before.mode, 'sim');
+  const sim = await che.say('/learn trade live');
+  assert.match(sim.reply, /This lesson changed nothing: you are still on your NinjaTrader simulated account\./);
   assert.deepEqual(await readDesk(storageFor(che.saved)), before, 'the lesson read the desk and wrote nothing');
 });
 

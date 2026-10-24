@@ -6,6 +6,7 @@
 // DELAYED feed, then the owner's iPhone-recorded Rithmic minutes. When none of them covers the trade, the
 // answer says "No recorded market data for this trade." and draws nothing. No candle or fill is ever made up.
 import { LIVE_FEED } from './trading_live.js';
+import { liveOrdersStatus } from './trading_environments.js';
 import { loadDataset, tfOf } from './trading_research.js';
 import { readRithmicCandles } from './rithmic_dataset.js';
 import { EVIDENCE_LABELS, readVisualTrades } from './trading_visual.js';
@@ -88,7 +89,7 @@ export function tradeEvidenceOf(trade, { bars = [], source = null } = {}) {
       brain: { ref: `trade:${trade.id}` },
       replay_route: `/trade-replay?id=${trade.id}`,
     },
-    live_orders: 'disabled',
+    live_orders: liveOrdersStatus(),
   };
 }
 
