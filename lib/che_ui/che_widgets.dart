@@ -1058,6 +1058,7 @@ class CodeCard extends StatelessWidget {
                   maxLines: 1, overflow: TextOverflow.ellipsis, style: CheType.mono.copyWith(color: CheColors.textDim)),
             ),
             IconButton(
+              tooltip: 'Copy code',
               visualDensity: VisualDensity.compact,
               icon: Icon(Icons.copy_rounded, size: 16, color: CheColors.textDim),
               onPressed: () {

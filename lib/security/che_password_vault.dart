@@ -9,6 +9,21 @@ import 'dart:convert';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import 'che_secret_scan.dart';
+
+/// A spoken or typed turn that is about a password: a vault command, a
+/// password/key/token-shaped secret, or the start of one ("I want to save a
+/// password", "my PIN is ..."). Live voice (OpenAI Realtime) hands such a turn
+/// to the iPhone recognizer and the on-phone vault, never to the Worker, a
+/// model, chat history or logs.
+bool cheIsPasswordTurn(String text) {
+  final clean = text.trim();
+  if (clean.isEmpty) return false;
+  if (CheVaultCommand.parse(clean) != null || cheChatLooksSecret(clean)) return true;
+  return RegExp(r'\b(?:pass(?:word|code|phrase)s?|api[ _-]?keys?|log ?in credentials?)\b', caseSensitive: false)
+      .hasMatch(clean);
+}
+
 class CheVaultEntry {
   const CheVaultEntry({required this.site, required this.password, this.username = ''});
   final String site; // normalized name, e.g. "gmail" or "netflix.com"

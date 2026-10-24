@@ -429,6 +429,7 @@ class CheCharacterGeneratorState extends State<CheCharacterGenerator> {
             label: 'Read the Character Generator aloud',
             excludeSemantics: true,
             child: IconButton(
+              tooltip: 'Read the Character Generator aloud',
               icon: const Icon(Icons.volume_up_rounded),
               onPressed: widget.onRead == null || preset.isEmpty ? null : () => widget.onRead!(spokenSummary),
             ),
@@ -437,7 +438,7 @@ class CheCharacterGeneratorState extends State<CheCharacterGenerator> {
             button: true,
             label: 'Refresh the character presets',
             excludeSemantics: true,
-            child: IconButton(icon: const Icon(Icons.refresh_rounded), onPressed: busy ? null : () => unawaited(load())),
+            child: IconButton(tooltip: 'Refresh the character presets', icon: const Icon(Icons.refresh_rounded), onPressed: busy ? null : () => unawaited(load())),
           ),
         ],
       ),

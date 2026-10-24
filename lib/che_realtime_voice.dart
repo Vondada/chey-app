@@ -525,6 +525,21 @@ class CheRealtimeVoiceEngine {
     await _enqueueUserTurn(clean, null);
   }
 
+  /// Removes one user turn from the live OpenAI session's conversation
+  /// (Realtime `conversation.item.delete`), used when the turn was about a
+  /// password. Residual limit: the audio was already streamed to OpenAI and
+  /// transcribed there before CHE could read the transcript, so this only
+  /// stops the session from keeping that item as context; it cannot unsend it.
+  void forgetUserItem(String? itemId) {
+    final id = itemId?.trim() ?? '';
+    if (id.isEmpty) return;
+    _send({
+      'type': 'conversation.item.delete',
+      'event_id': _eventId('forget'),
+      'item_id': id,
+    });
+  }
+
   Future<void> cancelActiveResponse([String reason = 'owner interruption']) async {
     final id = _activeResponseId;
     state.interrupted(reason);

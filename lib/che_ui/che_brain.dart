@@ -663,6 +663,36 @@ How to think and talk (this is what makes you YOU, not a script):
 // Insights → "CHE Brain" card (facts + conversation log in one place)
 // ─────────────────────────────────────────────────────────────────────────
 
+/// Owner rule: ask before deleting anything. A labeled Yes/No dialog in large
+/// text, read by VoiceOver; true only on an explicit yes.
+Future<bool> _confirmForgetFact(BuildContext context, String text) async {
+  final sure = await showDialog<bool>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: const Text('Forget this fact?', style: TextStyle(fontSize: 22)),
+      content: Text(text, style: const TextStyle(fontSize: 18)),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('No, keep it')),
+        FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Yes, forget it')),
+      ],
+    ),
+  );
+  return sure == true;
+}
+
+/// Removes the fact and reports the real result as large visible text.
+Future<void> _forgetFact(BuildContext context, CheBrain brain, String id) async {
+  final messenger = ScaffoldMessenger.maybeOf(context);
+  var said = 'Forgot that fact.';
+  try {
+    await brain.removeFact(id);
+  } catch (error) {
+    said = 'I could not forget that fact: $error';
+  }
+  HapticFeedback.mediumImpact();
+  messenger?.showSnackBar(SnackBar(content: Text(said, style: const TextStyle(fontSize: 18, height: 1.3))));
+}
+
 class CheBrainCard extends StatelessWidget {
   const CheBrainCard({super.key, required this.brain, required this.controller});
   final CheBrain brain;
@@ -733,7 +763,8 @@ class CheBrainCard extends StatelessWidget {
                 Dismissible(
                   key: ValueKey(f.id),
                   direction: DismissDirection.endToStart,
-                  onDismissed: (_) => brain.removeFact(f.id),
+                  confirmDismiss: (_) => _confirmForgetFact(context, f.text),
+                  onDismissed: (_) => _forgetFact(context, brain, f.id),
                   background: Container(
                     alignment: Alignment.centerRight,
                     padding: const EdgeInsets.only(right: 12),
@@ -827,6 +858,7 @@ class _AllFactsScreen extends StatelessWidget {
                 subtitle: 'EVERYTHING CHE KNOWS',
                 status: null,
                 leading: IconButton(
+                  tooltip: 'Back',
                   icon: Icon(Icons.arrow_back_ios_new_rounded, size: 19, color: CheColors.text),
                   onPressed: () => Navigator.of(context).maybePop(),
                 ),
@@ -852,8 +884,11 @@ class _AllFactsScreen extends StatelessWidget {
                         subtitle: Text('${f.source == 'che' ? 'Saved by CHE' : 'You taught this'} · ${f.at.toLocal().toString().substring(0, 16)}',
                             style: CheType.caption),
                         trailing: IconButton(
+                          tooltip: 'Forget this fact',
                           icon: Icon(Icons.delete_outline_rounded, color: CheColors.textDim),
-                          onPressed: () => brain.removeFact(f.id),
+                          onPressed: () async {
+                            if (await _confirmForgetFact(context, f.text) && context.mounted) await _forgetFact(context, brain, f.id);
+                          },
                         ),
                       ),
                       ],
@@ -889,6 +924,7 @@ class _SoulScreenState extends State<_SoulScreen> {
               subtitle: 'WHO CHE IS',
               status: null,
               leading: IconButton(
+                tooltip: 'Back',
                 icon: Icon(Icons.arrow_back_ios_new_rounded, size: 19, color: CheColors.text),
                 onPressed: () => Navigator.of(context).maybePop(),
               ),

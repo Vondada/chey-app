@@ -290,6 +290,7 @@ class _CheSectionShellState extends State<CheSectionShell> {
             CheHeader(
               compact: true,
               leading: IconButton(
+                tooltip: 'Back',
                 icon: Icon(Icons.arrow_back_ios_new_rounded, size: 19, color: CheColors.text),
                 onPressed: () => Navigator.of(context).maybePop(),
               ),
