@@ -35,6 +35,7 @@ import '../rithmic/rithmic_live.dart';
 import '../trading/che_trade_replay.dart';
 import '../che_ui/che_theme.dart';
 import 'che_chart_indicators.dart';
+import 'che_live_chart.dart';
 import 'che_ticker_selector.dart';
 import 'che_trading_hud.dart';
 
@@ -446,6 +447,7 @@ class CheTradingChartState extends State<CheTradingChart> {
     widget.controller?.addListener(_onController);
     widget.signalMarkers?.addListener(_onSignals);
     _live.addListener(_onLive);
+    CheLiveChart.indicators.addListener(_onVoiceIndicators);
     unawaited(_restore());
     _timer = Timer.periodic(const Duration(seconds: 30), (_) => unawaited(load(quiet: true)));
   }
@@ -455,6 +457,7 @@ class CheTradingChartState extends State<CheTradingChart> {
     _timer?.cancel();
     _liveRebuild?.cancel();
     _live.removeListener(_onLive);
+    CheLiveChart.indicators.removeListener(_onVoiceIndicators);
     widget.controller?.removeListener(_onController);
     widget.signalMarkers?.removeListener(_onSignals);
     _symbolField.dispose();
@@ -469,6 +472,7 @@ class CheTradingChartState extends State<CheTradingChart> {
     await _prefs.load();
     if (!mounted) return;
     if (_prefs.indicators.isNotEmpty) setState(() => _indicators = {..._prefs.indicators});
+    if (!setEquals(CheLiveChart.indicators.value, _indicators)) CheLiveChart.indicators.value = {..._indicators};
     if (market) {
       if (_symbol.isEmpty) _symbol = _prefs.last;
       final tf = _prefs.timeframe;
@@ -1391,6 +1395,15 @@ class CheTradingChartState extends State<CheTradingChart> {
   void toggleIndicator(String id) {
     if (!kChartIndicators.containsKey(id)) return;
     setState(() => _indicators.contains(id) ? _indicators.remove(id) : _indicators.add(id));
+    unawaited(_prefs.setIndicators(_indicators));
+    CheLiveChart.indicators.value = {..._indicators};
+  }
+
+  /// A spoken or typed "turn on VWAP" (CheChartCommand → CheLiveChart.indicators) or a tap on another chart.
+  void _onVoiceIndicators() {
+    final next = CheLiveChart.indicators.value.where(kChartIndicators.containsKey).toSet();
+    if (!mounted || setEquals(next, _indicators)) return;
+    setState(() => _indicators = next);
     unawaited(_prefs.setIndicators(_indicators));
   }
 

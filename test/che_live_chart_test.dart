@@ -1,14 +1,17 @@
 import 'package:chey/browser/che_embedded_app_shell.dart';
 import 'package:chey/rooms/che_live_chart.dart';
+import 'package:chey/rooms/che_ticker_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   setUp(() {
     CheLiveChart.symbol.value = cheLiveSymbols.first;
     CheLiveChart.interval.value = '5';
+    CheLiveChart.indicators.value = <String>{};
   });
 
   group('symbols', () {
@@ -48,6 +51,57 @@ void main() {
       for (final other in ['show me my photos', 'show me the brain', 'open YouTube', 'what time is it', 'show me', 'open trading']) {
         expect(CheChartCommand.parse(other), isNull, reason: other);
       }
+    });
+
+    test('chart indicators switch on and off by voice or typing', () {
+      ({Set<String> on, Set<String> off, bool clear}) ind(String words) {
+        final c = CheChartCommand.parse(words);
+        expect(c, isNotNull, reason: words);
+        expect(c!.changesIndicators, isTrue, reason: words);
+        expect(c.symbol, isNull, reason: words);
+        return (on: c.indicatorsOn, off: c.indicatorsOff, clear: c.clearIndicators);
+      }
+
+      expect(ind('turn on VWAP').on, {'vwap'});
+      expect(ind('Che, show the VWAP.').on, {'vwap'});
+      expect(ind('hide Bollinger').off, {'bb'});
+      expect(ind('turn off the bands').off, {'bb'});
+      expect(ind('show EMA 20').on, {'ema20'});
+      expect(ind('add the 200 EMA').on, {'ema200'});
+      expect(ind('add the 9-period EMA').on, {'ema9'});
+      expect(ind('turn off RSI').off, {'rsi'});
+      expect(ind('turn the RSI off').off, {'rsi'});
+      expect(ind('add the opening range').on, {'orb'});
+      expect(ind('remove the session high and low').off, {'session'});
+      expect(ind('take the VWAP off the chart').off, {'vwap'});
+      expect(ind('put the 50 EMA on the chart').on, {'ema50'});
+      final mixed = ind('turn on VWAP and turn off RSI');
+      expect(mixed.on, {'vwap'});
+      expect(mixed.off, {'rsi'});
+      expect(ind('show VWAP and EMA 9').on, {'vwap', 'ema9'});
+      expect(ind('clear the indicators').clear, isTrue);
+      expect(ind('turn off all indicators').clear, isTrue);
+      expect(ind('turn on all the indicators').on, {'vwap', 'ema9', 'ema20', 'ema50', 'ema200', 'bb', 'rsi', 'session', 'orb'});
+      expect(CheChartCommand.parse('show VWAP on the 1 minute')!.interval, '1');
+      // Not indicator commands: nothing toggles, the existing chart parsing still answers.
+      expect(CheChartCommand.parse('show me the chart')?.changesIndicators ?? false, isFalse);
+      expect(CheChartCommand.parse('show me the indicators'), isNull, reason: 'which ones is unclear; never guess');
+      expect(CheChartCommand.parse('show me the E-mini')!.changesIndicators, isFalse);
+      expect(CheChartCommand.parse('add VWAP to my shopping list'), isNull);
+      expect(CheChartCommand.parse('remove the photo of the band'), isNull);
+    });
+
+    test('indicator commands apply to the saved set and report the new state', () async {
+      SharedPreferences.setMockInitialValues({'trading_chart_indicators': ['ema9']});
+      CheTickerPrefs.instance.reset();
+      expect(await CheLiveChart.applyIndicatorCommand(CheChartCommand.parse('turn on VWAP')!), 'VWAP is on.');
+      expect(CheLiveChart.indicators.value, {'ema9', 'vwap'});
+      expect(await CheLiveChart.applyIndicatorCommand(CheChartCommand.parse('hide the Bollinger Bands')!), 'Bollinger Bands are off.');
+      expect(await CheLiveChart.applyIndicatorCommand(CheChartCommand.parse('remove the session high and low')!), 'The session high and low are off.');
+      expect(CheLiveChart.indicators.value, {'ema9', 'vwap'});
+      expect((await SharedPreferences.getInstance()).getStringList('trading_chart_indicators'), ['ema9', 'vwap']);
+      expect(await CheLiveChart.applyIndicatorCommand(CheChartCommand.parse('clear the indicators')!), 'All chart indicators are off.');
+      expect(CheLiveChart.indicators.value, isEmpty);
     });
 
     test('spoken description is honest about delayed futures', () {

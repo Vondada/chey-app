@@ -184,21 +184,33 @@ export function resolveTicker(universe, raw) {
 
 // ─── Candles ─────────────────────────────────────────────────────────────
 
-/** Buckets of `seconds` from closed finer bars. A bucket still forming at `now`, or one whose start is missing from the input, is left out. */
+/**
+ * Buckets of `seconds` from closed finer bars. Only complete buckets are kept: the source step is the smallest gap
+ * between consecutive source bars, and a bucket whose source bars cover less than `seconds` (the request window began
+ * inside it, or a source bar is missing inside the range) is left out, as is a bucket still forming at `now`.
+ */
 export function buildBars(bars, seconds, now = Date.now()) {
   const size = seconds * 1000;
+  const times = [];
   const out = [];
   for (const b of bars) {
     const t = Date.parse(b.t);
     if (!Number.isFinite(t)) continue;
     const start = Math.floor(t / size) * size;
     const cur = out.at(-1);
-    if (cur && cur.start === start) { cur.h = Math.max(cur.h, b.h); cur.l = Math.min(cur.l, b.l); cur.c = b.c; cur.v = (cur.v || 0) + (b.v || 0); }
-    else out.push({ start, partial: t > start, t: iso(start), o: b.o, h: b.h, l: b.l, c: b.c, v: b.v || 0 });
+    if (cur && cur.start === start) {
+      cur.h = Math.max(cur.h, b.h); cur.l = Math.min(cur.l, b.l); cur.c = b.c; cur.v = (cur.v || 0) + (b.v || 0);
+      if (!cur.seen.has(t)) { cur.seen.add(t); cur.count += 1; }
+    } else out.push({ start, count: 1, seen: new Set([t]), t: iso(start), o: b.o, h: b.h, l: b.l, c: b.c, v: b.v || 0 });
+    times.push(t);
   }
-  // Only the oldest bucket can be missing its opening bars (the request window began inside it).
-  if (out[0]?.partial) out.shift();
-  return out.filter((b) => b.start + size <= now).map(({ start, partial, ...bar }) => bar);
+  let step = 0;
+  for (let i = 1; i < times.length; i++) {
+    const gap = times[i] - times[i - 1];
+    if (gap > 0 && (!step || gap < step)) step = gap;
+  }
+  if (!step) return [];
+  return out.filter((b) => b.count * step >= size && b.start + size <= now).map(({ start, count, seen, ...bar }) => bar);
 }
 
 const parseCoinbase = (rows, g, now) => (Array.isArray(rows) ? rows : []).filter((x) => Array.isArray(x) && x.length >= 6)

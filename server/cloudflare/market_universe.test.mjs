@@ -111,6 +111,16 @@ test('buildBars: closed buckets only, no partial oldest or forming newest bucket
   assert.deepEqual(built[0], { t: '2026-10-24T14:02:00.000Z', o: 2, h: 4, l: 1, c: 3.5, v: 2 });
 });
 
+test('buildBars: a missing source bar inside the range drops that bucket instead of building it from half the data', () => {
+  const bars = [];
+  for (let m = 0; m <= 7; m++) if (m !== 3) bars.push({ t: new Date(Date.parse('2026-10-24T14:00:00Z') + m * 60_000).toISOString(), o: m, h: m + 1, l: m - 1, c: m + 0.5, v: 1 });
+  // 14:00..14:07 without 14:03 → 14:00 complete, 14:02 only has 14:02 (dropped), 14:04 complete, 14:06 forming (dropped).
+  const built = buildBars(bars, 120, Date.parse('2026-10-24T14:07:30Z'));
+  assert.deepEqual(built.map((b) => b.t), ['2026-10-24T14:00:00.000Z', '2026-10-24T14:04:00.000Z']);
+  assert.deepEqual(built[1], { t: '2026-10-24T14:04:00.000Z', o: 4, h: 6, l: 3, c: 5.5, v: 2 });
+  assert.deepEqual(buildBars(bars.slice(0, 1), 120, Date.parse('2026-10-24T15:00:00Z')), [], 'one source bar cannot prove a complete bucket');
+});
+
 test('liveness: live, delayed, disconnected', () => {
   const bar = (t) => [{ t }];
   assert.equal(liveness([], 60, NOW).status, 'DISCONNECTED');
