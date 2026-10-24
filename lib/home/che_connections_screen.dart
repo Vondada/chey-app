@@ -491,7 +491,7 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
                   key: const ValueKey('connections-cloud-computer'),
                   style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(56), alignment: Alignment.centerLeft),
                   onPressed: widget.onCloudComputer,
-                  icon: const Icon(Icons.cloud_sync_rounded),
+                  icon: const Icon(Icons.cloud_rounded),
                   label: const Text(
                     'Cloud Computer — free cloud workers start by themselves; your Colab GPU, Pair Colab and GPU jobs',
                   ),
