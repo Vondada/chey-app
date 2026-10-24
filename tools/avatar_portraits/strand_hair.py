@@ -105,9 +105,13 @@ def build_strand_hair(sc, *, strands_per_card=110, root_max=0.025, early_max=0.0
         nt.links.new(at.outputs['Color'], em.inputs['Color']); nt.links.new(em.outputs[0], o.inputs['Surface'])
         for ob in sc.objects:
             if ob.type == 'MESH': ob.hide_render = True
+    if parent_bone == 'torso':
+        # Rigid parenting to the head swings 60 cm of hair forward whenever the head pitches down, covering
+        # the face. The bone above the neck keeps the hair hanging with the body; the scalp slips a few mm.
+        parent_bone = rig.pose.bones['neck_01'].parent.name
     if parent_bone:
-        # The strands are built in world space at this frame; following the head bone keeps them on the
-        # scalp while the head moves in an animated shot.
+        # The strands are built in world space at this frame; following a bone keeps them on the body
+        # while it moves in an animated shot.
         from mathutils import Matrix
         hob.parent = rig; hob.parent_type = 'BONE'; hob.parent_bone = parent_bone
         bpy.context.view_layer.update()

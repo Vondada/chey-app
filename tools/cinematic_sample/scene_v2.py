@@ -32,7 +32,9 @@ body = bpy.data.objects['Body']
 act = bpy.data.actions[os.environ.get('DEMO_ACTION', 'gesture_chat')]
 rig.animation_data_create(); rig.animation_data.action = act
 if getattr(act, 'slots', None): rig.animation_data.action_slot = act.slots[0]
-for fc in act.fcurves:
+fcurves = [fc for layer in act.layers for strip in layer.strips for cb in strip.channelbags for fc in cb.fcurves] \
+    if getattr(act, 'layers', None) else list(act.fcurves)
+for fc in fcurves:
     if not any(m.type == 'CYCLES' for m in fc.modifiers): fc.modifiers.new('CYCLES')
 sc.frame_set(1)
 bpy.context.view_layer.update()
@@ -40,7 +42,7 @@ bpy.context.view_layer.update()
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'avatar_portraits'))
 from strand_hair import build_strand_hair
-build_strand_hair(sc, strands_per_card=int(os.environ.get('DEMO_STRANDS', '90')))
+build_strand_hair(sc, strands_per_card=int(os.environ.get('DEMO_STRANDS', '90')), parent_bone='torso')
 
 def rb(name):
     return rig.matrix_world @ rig.pose.bones[name].head
@@ -50,12 +52,11 @@ neck = rb('neck_01')
 F = Vector((eye_mid.x - neck.x, eye_mid.y - neck.y, 0)).normalized()
 Z = Vector((0, 0, 1))
 R = F.cross(Z).normalized()
-corners = [body.matrix_world @ Vector(c) for c in body.bound_box]
-z0 = min(c.z for c in corners)
-top = max(c.z for c in corners)
-H = top - z0
+# Floor and height from the posed rig, not the rest-pose bound box (the clip moves the figure).
+z0 = rig.matrix_world.translation.z
+H = (eye_mid.z - z0) / 0.93
 s = H / 1.7
-head = Vector((eye_mid.x, eye_mid.y, z0 + 0.93 * H))
+head = Vector((eye_mid.x, eye_mid.y, eye_mid.z))
 C = Vector((head.x, head.y, z0))
 print('CHE forward', tuple(round(v, 3) for v in F), 'height', round(H, 3), 'scale', round(s, 3))
 
@@ -98,7 +99,7 @@ wall_m = mat('Wall', (0.46, 0.46, 0.48), rough=0.8)
 floor_m = mat('Floor', (0.16, 0.17, 0.19), rough=0.10, metal=0.0)
 ceil_m = mat('Ceiling', (0.30, 0.31, 0.33), rough=0.9)
 screen_m = mat('Screen', (0.02, 0.05, 0.08), rough=0.2, emit=(0.35, 0.85, 0.95), emit_strength=6.0)
-window_m = mat('Window', (0.9, 0.95, 1.0), rough=0.1, emit=(0.85, 0.92, 1.0), emit_strength=3.0)
+window_m = mat('Window', (0.9, 0.95, 1.0), rough=0.1, emit=(0.85, 0.92, 1.0), emit_strength=0.9)
 wood_m = mat('Wood', (0.42, 0.27, 0.16), rough=0.45)
 metal_m = mat('Metal', (0.55, 0.57, 0.6), rough=0.25, metal=1.0)
 plant_m = mat('Plant', (0.10, 0.35, 0.15), rough=0.7)
@@ -161,11 +162,11 @@ wbg = world.node_tree.nodes['Background']
 wbg.inputs['Color'].default_value = (0.11, 0.13, 0.16, 1)
 wbg.inputs['Strength'].default_value = 0.3
 sc.view_settings.view_transform = 'AgX'
-sc.view_settings.exposure = -0.4
+sc.view_settings.exposure = -0.6
 
 # Camera with keyframed position and a keyframed target it tracks.
 cam_d = bpy.data.cameras.new('Cam')
-cam_d.lens = 40
+cam_d.lens = 50
 cam_d.dof.use_dof = False
 cam_d.dof.focus_object = None
 cam = bpy.data.objects.new('Cam', cam_d)
@@ -184,8 +185,9 @@ def at(sec):
 shots = [
     (0.0, C + F * 6.0 + R * 2.5 + Z * 0.7 * s, C + Z * 1.0 * s - R * 1.0 * s),
     (4.0, C + F * 3.6 - R * 1.0 * s + Z * 0.5 * s, C + Z * 1.2 * s),
-    (6.0, C + F * 2.9 + R * 0.25 * s + Z * 1.2 * s, head + Vector((0, 0, 0))),
-    (12.0, C + F * 2.4 + Z * 1.2 * s, head + Vector((0, 0, 0))),
+    # Close shots at eye height: a slow push-in from a loose head-and-shoulders to a tight one.
+    (6.0, head + F * 1.9 + R * 0.25 * s - Z * 0.05, head - Z * 0.08),
+    (12.0, head + F * 1.35 - Z * 0.03, head - Z * 0.10),
 ]
 for sec, p, t in shots:
     f = at(sec)
