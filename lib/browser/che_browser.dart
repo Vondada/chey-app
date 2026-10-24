@@ -19,9 +19,16 @@ import 'che_tradesea_check.dart';
 
 typedef ChePageCallback = Future<void> Function(String title, String url, String pageText);
 
+bool cheGoogleSignInUrl(String url) => Uri.tryParse(url)?.host.toLowerCase() == 'accounts.google.com';
+
+// Retain the real WebViews, including notebook state, when the GPU room is closed.
+final _retainedBrowserTabs = <String, List<_BrowserTab>>{};
+final _retainedBrowserActive = <String, int>{};
+
 /// App-level hooks the browser uses to reach CHE. Set once by the app.
 class CheBrowserActions {
   CheBrowserActions._();
+  static Future<void> Function(String)? openUrl;
 
   /// "Teach CHE this page" → learn into owner context.
   static ChePageCallback? learn;
@@ -180,13 +187,20 @@ class _BrowserTab {
           title = (await controller.getTitle())?.trim() ?? title;
           if (title.isEmpty) title = Uri.tryParse(u)?.host ?? u;
           unawaited(CheBrowserStore.instance.visit(u, title));
-          unawaited(controller.runJavaScript(_loginCaptureJs));
-          unawaited(_autoFill(controller, u));
+          if (!cheGoogleSignInUrl(u)) {
+            unawaited(controller.runJavaScript(_loginCaptureJs));
+            unawaited(_autoFill(controller, u));
+          }
           onChanged();
         },
         onNavigationRequest: (request) {
           final uri = Uri.tryParse(request.url);
           if (uri == null) return NavigationDecision.prevent;
+          // Google's sign-in policy forbids embedded user agents. Do not spoof a user agent or copy cookies.
+          if (request.isMainFrame && cheGoogleSignInUrl(request.url)) {
+            unawaited(launchUrl(uri, mode: LaunchMode.inAppBrowserView));
+            return NavigationDecision.prevent;
+          }
           final path = uri.path.toLowerCase();
           // File handoff: downloads go to iOS (Files / share sheet / viewer).
           if (_fileExtensions.any(path.endsWith)) {
@@ -322,8 +336,8 @@ if(user&&u&&!user.value)set(user,u);set(pw,p);})($u,$p)''');
   }
 
   bool _desktopAgent = false;
-  final VoidCallback onChanged;
-  final ChePageDialog? onDialog;
+  VoidCallback onChanged;
+  ChePageDialog? onDialog;
   // TradeSea check state (issue #342): failures by site and code, whether iOS stopped the page,
   // and whether the owner's check is watching this page.
   final List<String> siteIssues = [];
@@ -341,9 +355,11 @@ class CheBrowserScreen extends StatefulWidget {
     required this.initialUrl,
     this.title,
     this.appMode = true,
+    this.sessionKey,
   });
   final String initialUrl;
   final String? title;
+  final String? sessionKey;
 
   /// App cards open in app mode: CHE header only, no address bar or browser nav.
   final bool appMode;
@@ -366,8 +382,20 @@ class _CheBrowserScreenState extends State<CheBrowserScreen> {
     super.initState();
     unawaited(CheBrowserStore.instance.load());
     _showBrowserControls = !widget.appMode;
-    _openTab(widget.initialUrl);
+    final saved = _retainedBrowserTabs.remove(widget.sessionKey);
+    if (saved != null && saved.isNotEmpty) {
+      _tabs.addAll(saved);
+      _active = (_retainedBrowserActive.remove(widget.sessionKey) ?? 0).clamp(0, _tabs.length - 1);
+      for (final tab in _tabs) {
+        tab.onChanged = _changed;
+        tab.onDialog = _pageDialog;
+      }
+      _syncAddress();
+    } else {
+      _openTab(widget.initialUrl);
+    }
     CheBrowserActions.voice = _voiceCommand;
+    CheBrowserActions.openUrl = _loadUrl;
     _addressFocus.addListener(() {
       if (!_addressFocus.hasFocus) _syncAddress();
       if (mounted) setState(() {});
@@ -376,6 +404,16 @@ class _CheBrowserScreenState extends State<CheBrowserScreen> {
 
   @override
   void dispose() {
+    if (CheBrowserActions.openUrl == _loadUrl) CheBrowserActions.openUrl = null;
+    final key = widget.sessionKey;
+    if (key != null) {
+      _retainedBrowserTabs[key] = List.of(_tabs);
+      _retainedBrowserActive[key] = _active;
+      for (final tab in _tabs) {
+        tab.onChanged = () {};
+        tab.onDialog = null;
+      }
+    }
     if (CheBrowserActions.voice == _voiceCommand) CheBrowserActions.voice = null;
     _address.dispose();
     _addressFocus.dispose();
@@ -383,6 +421,7 @@ class _CheBrowserScreenState extends State<CheBrowserScreen> {
   }
 
   // ─── Voice navigation (voice-first use) ─────────────────────────────────
+  Future<void> _loadUrl(String url) => _tab.load(url);
   static const _ordinals = {
     'first': 1, 'one': 1, '1st': 1, 'second': 2, 'two': 2, '2nd': 2, 'third': 3, 'three': 3, '3rd': 3,
     'fourth': 4, 'four': 4, '4th': 4, 'fifth': 5, 'five': 5, '5th': 5, 'sixth': 6, 'six': 6, '6th': 6,

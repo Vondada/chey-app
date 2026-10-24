@@ -254,15 +254,20 @@ class _WebViewportDriver implements CheViewportDriver {
           onMessageReceived: (m) {
             try {
               final d = jsonDecode(m.message);
-              if (d is Map) onMessage(Map<String, dynamic>.from(d));
+              if (d is Map) {
+                if (d['type'] == 'page_ready' && !_ready.isCompleted) _ready.complete();
+                final pending = _modelLoaded;
+                if (pending != null && !pending.isCompleted && (d['type'] == 'model' || d['type'] == 'error')) {
+                  pending.complete(Map<String, dynamic>.from(d));
+                }
+                onMessage(Map<String, dynamic>.from(d));
+              }
             } catch (_) {}
           },
         )
         ..setNavigationDelegate(
           NavigationDelegate(
-            onPageFinished: (_) {
-              _ready.isCompleted ? null : _ready.complete();
-            },
+            onWebResourceError: (error) => onMessage({'type': 'error', 'message': '3D viewport: ${error.description}'}),
           ),
         )
         ..loadFlutterAsset('assets/characters/app/studio.html');
@@ -274,6 +279,7 @@ class _WebViewportDriver implements CheViewportDriver {
   final void Function(Map<String, dynamic>) onMessage;
   WebViewController? _controller;
   final _ready = Completer<void>();
+  Completer<Map<String, dynamic>>? _modelLoaded;
 
   @override
   Widget build(BuildContext context) => _controller == null
@@ -284,14 +290,23 @@ class _WebViewportDriver implements CheViewportDriver {
 
   Future<void> _js(String code) async {
     final c = _controller;
-    if (c == null) return;
-    await _ready.future;
+    if (c == null) throw StateError('The 3D viewport is unavailable.');
+    await _ready.future.timeout(const Duration(seconds: 20));
     await c.runJavaScript(code);
   }
 
   @override
-  Future<void> load(Uint8List glb, String label) =>
-      _js("window.CHE && window.CHE.loadModel('${base64Encode(glb)}', ${jsonEncode({'label': label})});");
+  Future<void> load(Uint8List glb, String label) async {
+    final loaded = Completer<Map<String, dynamic>>();
+    _modelLoaded = loaded;
+    try {
+      await _js("window.CHE.loadModel('${base64Encode(glb)}', ${jsonEncode({'label': label})});");
+      final result = await loaded.future.timeout(const Duration(seconds: 25));
+      if (result['type'] == 'error') throw StateError('${result['message']}');
+    } finally {
+      if (identical(_modelLoaded, loaded)) _modelLoaded = null;
+    }
+  }
 
   @override
   Future<void> command(Map<String, Object> cmd) => _js('window.CHE && window.CHE.view(${jsonEncode(cmd)});');
@@ -429,8 +444,13 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
     CheLiveStudio.voiceHandler = voice;
     CheLiveStudio.speechLipSync = lipSyncSpeech;
     CheLiveStudio.speechLipSyncStop = stopSpeaking;
-    unawaited(_personMode ? refresh(first: true) : _showBundled(_animBase));
+    unawaited(_start());
     if (!_personMode) loading = false;
+  }
+
+  Future<void> _start() async {
+    await _showBundled(widget.base);
+    if (mounted && _personMode) await refresh(first: true);
   }
 
   @override
@@ -452,7 +472,7 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
     if (paused) {
       _poll?.cancel();
     } else {
-      _schedulePoll();
+      if (_personMode) unawaited(refresh());
     }
   }
 
@@ -545,7 +565,12 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
     _poll?.cancel();
     if (!mounted || !_personMode || !jobActive) return;
     _poll = Timer(const Duration(seconds: 6), () {
-      if (mounted && (ModalRoute.of(context)?.isCurrent ?? true)) unawaited(refresh());
+      if (!mounted) return;
+      if (ModalRoute.of(context)?.isCurrent ?? true) {
+        unawaited(refresh());
+      } else {
+        _schedulePoll();
+      }
     });
   }
 

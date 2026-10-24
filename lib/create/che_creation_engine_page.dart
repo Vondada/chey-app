@@ -7,12 +7,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
-import 'package:url_launcher/url_launcher.dart';
 
 import '../che_gpu_jobs.dart';
 import 'che_creative_studio.dart' show CheStudioColors;
 import 'che_engine_status.dart';
-import 'che_live_studio.dart' show cheColabNotebookUrl;
+import 'che_gpu_browser.dart';
 
 class CheCreationEnginePage extends StatelessWidget {
   const CheCreationEnginePage({super.key, required this.baseUrl, required this.headers, this.onRead, this.client});
@@ -100,14 +99,8 @@ class CheCreationEnginePage extends StatelessWidget {
                 ),
                 onPressed: () async {
                   HapticFeedback.selectionClick();
-                  final ok = await launchUrl(
-                    Uri.parse(cheColabNotebookUrl),
-                    mode: LaunchMode.externalApplication,
-                  ).catchError((_) => false);
-                  if (!ok && context.mounted) {
-                    ScaffoldMessenger.of(context)
-                        .showSnackBar(const SnackBar(content: Text('Could not open the Colab notebook.')));
-                  }
+                  await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) =>
+                    CheGpuBrowser(baseUrl: baseUrl, headers: headers, onRead: onRead, client: client)));
                 },
                 icon: const Icon(Icons.open_in_new_rounded),
                 label: const Text('Open the Colab notebook'),
