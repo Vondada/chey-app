@@ -27,7 +27,12 @@ class _Fake {
         'presets': [_preset('che', 'CHE'), _preset('nova', 'Nova', face: {'eye_size': 0.2})],
         'active': {'che': 'che'},
         'styles': ['photoreal', 'hybrid', 'stylized'],
-        'face_sliders': ['eye_size', 'eyefold', 'face_round'],
+        // The Worker's real shape (avatar_identity.js): one {id, min, max} per slider.
+        'face_sliders': [
+          {'id': 'eye_size', 'min': -1, 'max': 1},
+          {'id': 'eyefold', 'min': -1, 'max': 1},
+          {'id': 'face_round', 'min': 0, 'max': 1},
+        ],
         'hair_styles': ['long_wavy', 'bun_high', 'close_crop'],
         'hair_built': ['long_wavy'],
         'spoken': 'Ten presets.',
@@ -40,7 +45,10 @@ class _Fake {
       final styles = (body!['styles'] as List);
       return http.Response(jsonEncode({
         'ok': true,
-        'jobs': [for (final s in styles) {'id': 'gpu_$s', 'title': 'CHE, $s', 'state': 'queued', 'previews': {}}],
+        // The Worker's real shape: {style, job, duplicate} per look.
+        'jobs': [
+          for (final s in styles) {'style': s, 'duplicate': false, 'job': {'id': 'gpu_$s', 'title': 'CHE, $s', 'state': 'queued', 'previews': {}}},
+        ],
       }), 202);
     }
     if (path == '/api/gpu/identities' && r.method == 'POST') {
@@ -213,5 +221,39 @@ void main() {
     await tester.pumpAndSettle();
     expect(f.calls, isEmpty);
     expect(_banner(tester), contains('Could not load the character presets'));
+  });
+
+  testWidgets('every action and setting works by voice or typing while the generator is open', (tester) async {
+    final (f, spoken) = await _pump(tester);
+    final voice = CheCharacterGenerator.voiceHandler!;
+    expect(await voice('what is the weather'), isNull, reason: 'anything else goes to Chat');
+    expect(await voice('Read aloud'), startsWith('Character Generator. Editing CHE'));
+    expect(await voice('eye size 30 percent'), 'Eye size 30 percent. Not saved yet.');
+    expect(await voice('increase eye size'), 'Eye size 40 percent. Not saved yet.');
+    expect(await voice('stylized'), 'Look: Stylized.');
+    expect(await voice('only this look'), contains('only the Stylized look'));
+    expect(await voice('skin tan'), 'Skin tan. Not saved yet.');
+    expect(await voice('hair style high bun'), contains('close-cropped until its strands are built'));
+    await tester.pumpAndSettle();
+    expect(await voice('2'), startsWith('Queued for your Colab T4 session: 1 preview job'));
+    final call = f.calls.last;
+    expect(call.$2, '/api/gpu/identities/preview');
+    expect(call.$3!['styles'], ['stylized']);
+    final sent = call.$3!['preset'] as Map;
+    expect((sent['face'] as Map)['eye_size'], 0.4);
+    expect((sent['skin'] as Map)['tone'], '#c98b62');
+    expect(await voice('save'), startsWith('Saved the preset'));
+    expect(await voice('apply'), contains('CHE'));
+    expect(f.calls.last.$2, '/api/gpu/identities/apply');
+    expect(await voice('edit Nova'), 'Editing Nova.');
+    expect(await voice('edit Bob'), startsWith('There is no character called bob'));
+    expect(spoken, isEmpty, reason: 'the voice route answers through Chat; the screen itself speaks only on Read aloud');
+  });
+
+  testWidgets('the voice route is removed when the generator closes', (tester) async {
+    await _pump(tester);
+    expect(CheCharacterGenerator.voiceHandler, isNotNull);
+    await tester.pumpWidget(const MaterialApp(home: SizedBox()));
+    expect(CheCharacterGenerator.voiceHandler, isNull);
   });
 }

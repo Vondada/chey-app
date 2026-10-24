@@ -21,6 +21,7 @@ import hashlib
 import json
 import os
 import re
+import signal
 import socket
 import subprocess
 import sys
@@ -69,6 +70,19 @@ class Che:
                 time.sleep(2 ** attempt)
 
 
+def stop_group(p, grace=10.0):
+    """Stop the runner and everything it started (Blender): SIGTERM the group, SIGKILL it after `grace` s, reap."""
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        try: os.killpg(p.pid, sig)
+        except (ProcessLookupError, PermissionError): pass
+        try:
+            p.wait(timeout=grace); break
+        except subprocess.TimeoutExpired:
+            continue
+    try: os.killpg(p.pid, signal.SIGKILL)   # Blender may outlive the runner it belonged to
+    except (ProcessLookupError, PermissionError): pass
+
+
 def run_job(che, job, a, log):
     """Render one claimed job; returns (runner exit code, job folder, receipt or None, stopped_by_owner)."""
     with tempfile.NamedTemporaryFile('w', suffix='.json', delete=False) as f:
@@ -76,7 +90,8 @@ def run_job(che, job, a, log):
     cmd = [sys.executable, os.path.join(ROOT, 'scripts', 'che_gpu_face_preview.py'), '--blender', a.blender,
            '--project', a.project, '--out', a.out, '--views', ','.join(str(v) for v in job['views']),
            '--samples', str(job.get('samples', 64)), '--res', str(job.get('res', 480)), '--settings', settings]
-    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    # Its own process group, so stopping the job stops Blender too (Blender is the runner's child, not ours).
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
     stop = threading.Event(); state = {'stopped': False, 'done': []}
 
     def beat():
@@ -84,7 +99,7 @@ def run_job(che, job, a, log):
             r = che.call('heartbeat', {'job_id': job['id'], 'state': 'rendering'})
             if r.get('stop'):
                 state['stopped'] = True; print(f"STOPPING: {r.get('reason', 'the owner stopped this job')}", flush=True)
-                p.terminate(); return
+                stop_group(p); return
     t = threading.Thread(target=beat, daemon=True); t.start()
     folder = None
     for line in p.stdout:

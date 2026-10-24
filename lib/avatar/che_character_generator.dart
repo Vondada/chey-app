@@ -98,6 +98,10 @@ class CheCharacterGenerator extends StatefulWidget {
   static Route<void> route({required String baseUrl, required Map<String, String> headers, void Function(String text)? onRead, String? agent}) =>
       MaterialPageRoute<void>(builder: (_) => CheCharacterGenerator(baseUrl: baseUrl, headers: headers, onRead: onRead, initialAgent: agent));
 
+  /// While the generator is open, typed or spoken words reach it first (lib/home_state/send.dart): every button and
+  /// setting has a voice route. Returns null for anything that is not a generator command, so it goes to Chat.
+  static Future<String?> Function(String words)? voiceHandler;
+
   @override
   State<CheCharacterGenerator> createState() => CheCharacterGeneratorState();
 }
@@ -130,7 +134,97 @@ class CheCharacterGeneratorState extends State<CheCharacterGenerator> {
   void initState() {
     super.initState();
     if (widget.initialAgent != null) agent = widget.initialAgent!;
+    CheCharacterGenerator.voiceHandler = voice;
     unawaited(load());
+  }
+
+  @override
+  void dispose() {
+    if (CheCharacterGenerator.voiceHandler == voice) CheCharacterGenerator.voiceHandler = null;
+    super.dispose();
+  }
+
+  /// The spoken or typed control: "generate", "preview", "save", "apply" (or 1 to 4), "edit Nova", "stylized",
+  /// "all three looks" / "only this look", "eye size 30 percent", "increase cheekbones", "skin tan", "eyes blue",
+  /// "hair colour auburn", "hair style long wavy", "read". Each action answers with its actual result.
+  Future<String?> voice(String words) async {
+    var t = words.trim().toLowerCase().replaceAll(RegExp(r'[.!?]+$'), '').replaceAll('\u2019', "'");
+    t = t.replaceFirst(RegExp(r'^(?:hey\s+)?(?:che|chey|chay)[,:]?\s+'), '').replaceFirst(RegExp(r'^(?:please\s+)'), '').trim();
+    if (loading) return null;
+    String? done(String? text) => text ?? banner ?? '';
+    if (RegExp(r"^(?:read(?: aloud| it| this| the screen)?|what(?:'s| is) on (?:the |this )?screen|describe (?:the |this )?screen)$").hasMatch(t)) {
+      return spokenSummary;
+    }
+    final n = RegExp(r'^(?:option |number |button )?([1-4])$').firstMatch(t)?.group(1);
+    if (n == '1' || RegExp(r'^generate(?: a)?(?: new)?(?: variant| variation| one)?$').hasMatch(t)) { await generate(); return done(null); }
+    if (n == '2' || RegExp(r'^(?:preview|render|queue(?: the)? preview|preview (?:it|this|on the gpu))$').hasMatch(t)) { await preview(); return done(null); }
+    if (n == '3' || RegExp(r'^save(?: it| this| the preset)?$').hasMatch(t)) { await save(); return done(null); }
+    if (n == '4' || RegExp(r'^apply(?: it| this| the preset)?$').hasMatch(t)) { await apply(); return done(null); }
+    final who = RegExp(r'^(?:edit|switch to|open|show|character)\s+(\w+)$').firstMatch(t)?.group(1);
+    if (who != null) {
+      final c = characters.firstWhere((p) => '${p['name']}'.toLowerCase() == who || p['id'] == who, orElse: () => const {});
+      if (c.isEmpty) return 'There is no character called $who here. The characters are ${characters.map((p) => p['name']).join(', ')}.';
+      setState(() => _select('${c['id']}'));
+      _report(true, 'Editing ${c['name']}.');
+      return done(null);
+    }
+    final look = RegExp(r'^(?:use |switch to |make it )?(photoreal|photorealistic|hybrid|stylized|stylised)(?: look)?$').firstMatch(t)?.group(1);
+    if (look != null) {
+      final s = look.startsWith('photo') ? 'photoreal' : (look.startsWith('styl') ? 'stylized' : 'hybrid');
+      setState(() => style = s);
+      _report(true, 'Look: ${cheLookNames[s]}.');
+      return done(null);
+    }
+    if (RegExp(r'^(?:preview )?all(?: three)? looks$').hasMatch(t)) { setState(() => allLooks = true); _report(true, 'Previews will queue all three looks.'); return done(null); }
+    if (RegExp(r'^(?:preview )?(?:only )?(?:this|one) look(?: only)?$').hasMatch(t)) { setState(() => allLooks = false); _report(true, 'Previews will queue only the ${cheLookNames[style]} look.'); return done(null); }
+    String? sliderFor(String phrase) {
+      for (final e in cheFaceSliderNames.entries) {
+        if (e.value.toLowerCase().replaceAll("'", '') == phrase.replaceAll("'", '') || e.key.replaceAll('_', ' ') == phrase) return e.key;
+      }
+      return null;
+    }
+    final step = RegExp(r'^(increase|raise|more|decrease|lower|less|reduce)\s+(?:the\s+)?(.+)$').firstMatch(t);
+    if (step != null) {
+      final k = sliderFor(step.group(2)!);
+      if (k != null) {
+        final up = RegExp(r'increase|raise|more').hasMatch(step.group(1)!);
+        setSlider(k, (sliderValue(k) + (up ? 0.1 : -0.1)).clamp(cheOneWaySliders.contains(k) ? 0.0 : -1.0, 1.0));
+        _report(true, '${cheFaceSliderNames[k]} ${(sliderValue(k) * 100).round()} percent. Not saved yet.');
+        return done(null);
+      }
+    }
+    final set = RegExp(r'^(?:set\s+)?(?:the\s+)?(.+?)\s+(?:to\s+)?(minus\s+|-)?(\d{1,3})(?:\s*(?:percent|%))?$').firstMatch(t);
+    if (set != null) {
+      final k = sliderFor(set.group(1)!);
+      if (k != null) {
+        final v = (int.parse(set.group(3)!) / 100 * (set.group(2) == null ? 1 : -1)).clamp(cheOneWaySliders.contains(k) ? 0.0 : -1.0, 1.0);
+        setSlider(k, v.toDouble());
+        _report(true, '${cheFaceSliderNames[k]} ${(sliderValue(k) * 100).round()} percent. Not saved yet.');
+        return done(null);
+      }
+    }
+    final colour = RegExp(r'^(skin(?: tone)?|eyes?|eye colou?r|hair colou?r)\s+(?:to\s+)?(.+)$').firstMatch(t);
+    if (colour != null) {
+      final which = colour.group(1)!;
+      final (part, key, palette) = which.startsWith('skin')
+          ? ('skin', 'tone', cheSkinTones)
+          : which.startsWith('hair') ? ('hair', 'color', cheHairColors) : ('eyes', 'iris', cheIrisColors);
+      final hit = palette.where((c) => c.$2 == colour.group(2)).toList();
+      if (hit.isEmpty) return 'The ${part == 'eyes' ? 'eye' : part} colours are ${palette.map((c) => c.$2).join(', ')}.';
+      _setPart(part, key, hit.first.$1);
+      _report(true, '${part == 'eyes' ? 'Eyes' : part == 'hair' ? 'Hair colour' : 'Skin'} ${hit.first.$2}. Not saved yet.');
+      return done(null);
+    }
+    final hs = RegExp(r'^hair(?: style)?\s+(?:to\s+)?(.+)$').firstMatch(t)?.group(1);
+    if (hs != null) {
+      final hit = cheHairStyleNames.entries.where((e) => e.value.toLowerCase() == hs || e.key.replaceAll('_', ' ') == hs).toList();
+      if (hit.isEmpty) return 'The hair styles are ${cheHairStyleNames.values.join(', ')}.';
+      _setPart('hair', 'style', hit.first.key);
+      final built = hairBuilt.contains(hit.first.key);
+      _report(true, 'Hair style ${hit.first.value}${built ? '' : ', which renders close-cropped until its strands are built'}. Not saved yet.');
+      return done(null);
+    }
+    return null;
   }
 
   Future<void> load() async {
@@ -145,7 +239,8 @@ class CheCharacterGeneratorState extends State<CheCharacterGenerator> {
         presets = list;
         active = {for (final e in (d['active'] as Map? ?? const {}).entries) '${e.key}': '${e.value}'};
         if (d['styles'] is List) styles = [for (final s in d['styles'] as List) '$s'];
-        if (d['face_sliders'] is List) sliders = [for (final s in d['face_sliders'] as List) '$s'];
+        // The Worker sends each slider as {id, min, max}; plain names are accepted too.
+        if (d['face_sliders'] is List) sliders = [for (final s in d['face_sliders'] as List) if (s is Map) '${s['id']}' else '$s'];
         if (d['hair_styles'] is List) hairStyles = [for (final s in d['hair_styles'] as List) '$s'];
         if (d['hair_built'] is List) hairBuilt = {for (final s in d['hair_built'] as List) '$s'};
         loading = false;
@@ -249,7 +344,8 @@ class CheCharacterGeneratorState extends State<CheCharacterGenerator> {
     final looks = allLooks ? styles : [style];
     final d = await _post('/api/gpu/identities/preview', {'preset': preset, 'styles': looks});
     if (d?['ok'] == true) {
-      final list = cheGpuJobsFrom(d);
+      // The preview route answers {style, job, duplicate} per look; the job card reads the job itself.
+      final list = cheGpuJobsFrom({'jobs': [for (final e in (d!['jobs'] as List? ?? const [])) if (e is Map && e['job'] is Map) e['job'] else e]});
       setState(() => jobs = list);
       final names = looks.map((s) => cheLookNames[s] ?? s).join(', ');
       _report(true, 'Queued for your Colab T4 session: ${list.length} preview job${list.length == 1 ? '' : 's'} ($names; front, three-quarter and side). Nothing is rendered until the notebook runs.');

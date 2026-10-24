@@ -692,6 +692,17 @@ extension _CheHomeSend on _CHEHomeState {
       }
     }
 
+    // The Character Generator, while it is open, takes every one of its actions and settings by voice or typing.
+    final generatorVoice = CheCharacterGenerator.voiceHandler;
+    if (generatorVoice != null && _pendingAttachment == null) {
+      final reply = await generatorVoice(message);
+      if (reply != null) {
+        if (mounted) _set(() => controller.clear());
+        if (reply.isNotEmpty) await speakText(reply, record: false);
+        return;
+      }
+    }
+
     // The rendering benchmark, while it is open, answers run, read and copy.
     final benchVoice = CheRenderBenchScreen.voiceHandler;
     if (benchVoice != null && _pendingAttachment == null) {
