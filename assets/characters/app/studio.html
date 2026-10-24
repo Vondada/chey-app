@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>CHE Live Studio viewport</title>
+<link rel="icon" href="data:,">
+<!-- Live Studio's 3D viewport (lib/create/che_live_studio.dart). It shows only real models: a GLB the Creation Engine
+     exported from Blender, or a bundled crew model, each labelled by the app. One finger turns the model, two fingers
+     pinch to zoom, a double tap resets the view. All controls with words (and VoiceOver labels) live in the app; this
+     page draws only when something changed, and stops drawing while hidden. -->
+<style>
+:root{color-scheme:dark;--bg:#050608;--fg:#f4f6f7;--dim:#9aa4aa;--teal:#2fd6c8}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);font:15px/1.4 system-ui,-apple-system,sans-serif;overflow:hidden}
+#stage{position:fixed;inset:0}
+#stage canvas{display:block;width:100%;height:100%;touch-action:none}
+#empty{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;padding:24px;text-align:center;color:var(--dim);font-size:16px;pointer-events:none}
+</style>
+</head>
+<body>
+<div id="stage" role="img" aria-label="3D viewport. No model loaded yet."></div>
+<div id="empty">No model loaded yet.</div>
+<script src="characters-vendor.js"></script>
+<script>
+const THREE = window.THREE;
+function tellApp(msg) { try { if (window.CheBridge) window.CheBridge.postMessage(JSON.stringify(msg)); } catch (_) {} }
+
+const stage = document.getElementById('stage');
+const empty = document.getElementById('empty');
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: false });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.45;
+stage.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x050608);
+const camera = new THREE.PerspectiveCamera(32, 1, 0.01, 200);
+// Studio light: soft key, cool fill, teal rim (the studio's accent), all fixed to the world so turning shows the form.
+scene.add(new THREE.HemisphereLight(0xdfe7ea, 0x1a1d22, 1.3));
+const key = new THREE.DirectionalLight(0xffffff, 3.0); key.position.set(1.6, 2.2, 3.6); scene.add(key);
+const fill = new THREE.DirectionalLight(0xbcd2ff, 1.2); fill.position.set(-3, 1.2, 2); scene.add(fill);
+const rim = new THREE.DirectionalLight(0x2fd6c8, 1.6); rim.position.set(-1.5, 2.5, -3.5); scene.add(rim);
+// A turntable disc and a faint ring under the model, scaled to it when it loads.
+const floor = new THREE.Mesh(new THREE.CircleGeometry(1, 64), new THREE.MeshStandardMaterial({ color: 0x0e1114, roughness: 0.9, metalness: 0 }));
+floor.rotation.x = -Math.PI / 2; scene.add(floor);
+const ring = new THREE.Mesh(new THREE.RingGeometry(0.985, 1, 96), new THREE.MeshBasicMaterial({ color: 0x2fd6c8, transparent: true, opacity: 0.35 }));
+ring.rotation.x = -Math.PI / 2; scene.add(ring);
+
+let model = null, mixer = null, actions = {}, playing = null;
+let radius = 1, target = new THREE.Vector3();
+// Orbit state: yaw/pitch in radians, distance as a multiple of the framing distance.
+const orbit = { yaw: 0.35, pitch: 0.12, dist: 1, home: { yaw: 0.35, pitch: 0.12, dist: 1 }, spin: false };
+let dirty = true, paused = false, last = performance.now();
+
+function frameDistance() { return radius / Math.sin(THREE.MathUtils.degToRad(camera.fov) / 2) * 1.08; }
+function place() {
+  const d = frameDistance() * orbit.dist;
+  camera.position.set(
+    target.x + d * Math.cos(orbit.pitch) * Math.sin(orbit.yaw),
+    target.y + d * Math.sin(orbit.pitch),
+    target.z + d * Math.cos(orbit.pitch) * Math.cos(orbit.yaw));
+  camera.near = Math.max(0.001, d / 100); camera.far = d * 20; camera.updateProjectionMatrix();
+  camera.lookAt(target);
+}
+function clampOrbit() {
+  orbit.pitch = Math.max(-1.2, Math.min(1.35, orbit.pitch));
+  orbit.dist = Math.max(0.25, Math.min(4, orbit.dist));
+}
+function report() {
+  tellApp({ type: 'view', yaw_deg: Math.round(THREE.MathUtils.radToDeg(orbit.yaw) % 360), zoom: +(1 / orbit.dist).toFixed(2), playing });
+}
+
+function clearModel() {
+  if (!model) return;
+  scene.remove(model);
+  model.traverse((o) => { if (o.geometry) o.geometry.dispose(); const m = o.material; for (const x of Array.isArray(m) ? m : m ? [m] : []) { for (const t of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap']) x[t]?.dispose?.(); x.dispose(); } });
+  model = null; mixer = null; actions = {}; playing = null;
+}
+
+/** Shows one GLB (base64). `info.label` is what the app says the model is; the page reports what it really parsed. */
+function loadModel(b64, info = {}) {
+  let bytes;
+  try {
+    const bin = atob(b64); bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  } catch (e) { tellApp({ type: 'error', message: 'The model data was not readable.' }); return; }
+  new THREE.GLTFLoader().parse(bytes.buffer, '', (gltf) => {
+    clearModel();
+    model = gltf.scene; scene.add(model);
+    let meshes = 0, vertices = 0, triangles = 0; const materials = new Set();
+    model.traverse((o) => {
+      if (!o.isMesh) return;
+      meshes += 1; o.frustumCulled = false;
+      const g = o.geometry; const n = g.attributes.position ? g.attributes.position.count : 0;
+      vertices += n; triangles += g.index ? g.index.count / 3 : n / 3;
+      for (const m of Array.isArray(o.material) ? o.material : [o.material]) if (m) materials.add(m.name || 'material');
+    });
+    // Frame it: centre on the bounding box, stand it on the turntable.
+    // Skinned crew models: measure the posed skin (precise), not the bind-pose bounds, or the framing misses the body.
+    model.updateMatrixWorld(true);
+    for (const o of [model]) o.traverse((x) => { if (x.isSkinnedMesh) { x.skeleton.update(); x.computeBoundingBox?.(); x.computeBoundingSphere?.(); } });
+    const box = new THREE.Box3().setFromObject(model, true);
+    const size = box.getSize(new THREE.Vector3()); const centre = box.getCenter(new THREE.Vector3());
+    radius = Math.max(size.length() / 2, 1e-3);
+    target.copy(centre);
+    floor.position.set(centre.x, box.min.y - radius * 0.005, centre.z); floor.scale.setScalar(radius * 0.85);
+    ring.position.set(centre.x, box.min.y, centre.z); ring.scale.setScalar(radius * 0.85);
+    if (gltf.animations && gltf.animations.length) {
+      mixer = new THREE.AnimationMixer(model);
+      for (const clip of gltf.animations) actions[clip.name] = mixer.clipAction(clip);
+    }
+    orbit.yaw = orbit.home.yaw; orbit.pitch = orbit.home.pitch; orbit.dist = orbit.home.dist;
+    place(); dirty = true;
+    empty.style.display = 'none';
+    stage.setAttribute('aria-label', `3D viewport showing ${info.label || 'a model'}.`);
+    tellApp({ type: 'model', label: info.label || '', meshes, vertices, triangles: Math.round(triangles), materials: [...materials].slice(0, 12),
+      clips: Object.keys(actions), height_m: +size.y.toFixed(3), width_m: +size.x.toFixed(3) });
+  }, (err) => tellApp({ type: 'error', message: `The model could not be read: ${String(err && err.message || err).slice(0, 120)}` }));
+}
+
+function play(name) {
+  if (!mixer) return false;
+  const want = name && actions[name] ? name : (actions.idle ? 'idle' : Object.keys(actions)[0]);
+  if (!want) return false;
+  for (const [n, a] of Object.entries(actions)) if (n !== want) a.fadeOut(0.25);
+  actions[want].reset().fadeIn(0.25).play(); playing = want; dirty = true;
+  return true;
+}
+
+/** Viewport commands from the app (buttons, typed or spoken words). Every command reports what actually happened. */
+function view(cmd = {}) {
+  const a = cmd.action;
+  let ok = true, note = '';
+  if (a === 'rotate') { orbit.yaw += THREE.MathUtils.degToRad(Number(cmd.deg) || 45); }
+  else if (a === 'view') { orbit.yaw = THREE.MathUtils.degToRad(Number(cmd.deg) || 0); orbit.pitch = 0.08; }
+  else if (a === 'zoom') { orbit.dist /= Math.max(0.2, Math.min(5, Number(cmd.factor) || 1.4)); }
+  else if (a === 'reset') { orbit.yaw = orbit.home.yaw; orbit.pitch = orbit.home.pitch; orbit.dist = orbit.home.dist; orbit.spin = false; }
+  else if (a === 'spin') { orbit.spin = cmd.on !== false; }
+  else if (a === 'animate') { ok = play(cmd.clip); note = ok ? `Playing ${playing}.` : 'This model has no animation clips.'; }
+  else if (a === 'stop') { if (mixer) { mixer.stopAllAction(); playing = null; } }
+  else { ok = false; note = 'Unknown viewport command.'; }
+  clampOrbit(); place(); dirty = true;
+  tellApp({ type: 'done', action: a, ok, note, playing, clips: Object.keys(actions) });
+  report();
+}
+
+// ---------- touch, mouse and keys
+const pointers = new Map(); let pinch0 = 0, dist0 = 1, lastTap = 0;
+renderer.domElement.addEventListener('pointerdown', (e) => {
+  renderer.domElement.setPointerCapture(e.pointerId); pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  orbit.spin = false;
+  if (pointers.size === 2) { const [p, q] = [...pointers.values()]; pinch0 = Math.hypot(p.x - q.x, p.y - q.y); dist0 = orbit.dist; }
+  const t = performance.now(); if (pointers.size === 1 && t - lastTap < 300) view({ action: 'reset' }); lastTap = t;
+});
+renderer.domElement.addEventListener('pointermove', (e) => {
+  const p = pointers.get(e.pointerId); if (!p) return;
+  if (pointers.size === 1) {
+    orbit.yaw -= (e.clientX - p.x) * 0.008; orbit.pitch += (e.clientY - p.y) * 0.006;
+  }
+  p.x = e.clientX; p.y = e.clientY;
+  if (pointers.size === 2) { const [a, b] = [...pointers.values()]; const d = Math.hypot(a.x - b.x, a.y - b.y); if (pinch0 > 0) orbit.dist = dist0 * pinch0 / Math.max(d, 1); }
+  clampOrbit(); place(); dirty = true;
+});
+const up = (e) => { if (pointers.delete(e.pointerId) && pointers.size === 0) report(); if (pointers.size < 2) pinch0 = 0; };
+renderer.domElement.addEventListener('pointerup', up); renderer.domElement.addEventListener('pointercancel', up);
+renderer.domElement.addEventListener('wheel', (e) => { e.preventDefault(); orbit.dist *= Math.exp(e.deltaY * 0.001); clampOrbit(); place(); dirty = true; }, { passive: false });
+window.addEventListener('keydown', (e) => {
+  const k = { ArrowLeft: () => view({ action: 'rotate', deg: -15 }), ArrowRight: () => view({ action: 'rotate', deg: 15 }),
+    ArrowUp: () => view({ action: 'zoom', factor: 1.2 }), ArrowDown: () => view({ action: 'zoom', factor: 1 / 1.2 }), Home: () => view({ action: 'reset' }) }[e.key];
+  if (k) { e.preventDefault(); k(); }
+});
+
+function resize() {
+  const w = window.innerWidth, h = window.innerHeight;
+  renderer.setSize(w, h, false); camera.aspect = w / Math.max(h, 1); camera.updateProjectionMatrix(); place(); dirty = true;
+}
+window.addEventListener('resize', resize);
+
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  if (!paused) {
+    if (orbit.spin) { orbit.yaw += dt * 0.6; place(); dirty = true; }
+    if (mixer && playing) { mixer.update(dt); dirty = true; }
+    if (dirty) { renderer.render(scene, camera); dirty = false; }
+  }
+  requestAnimationFrame(frame);
+}
+
+window.CHE = window.CHE || {};
+window.CHE.loadModel = loadModel;
+window.CHE.view = view;
+window.CHE.clear = () => { clearModel(); empty.style.display = 'flex'; stage.setAttribute('aria-label', '3D viewport. No model loaded.'); dirty = true; };
+window.CHE.pause = (p) => { paused = !!p; dirty = true; };
+resize(); place();
+requestAnimationFrame(frame);
+tellApp({ type: 'page_ready', webgl: !!renderer.getContext() });
+</script>
+</body>
+</html>

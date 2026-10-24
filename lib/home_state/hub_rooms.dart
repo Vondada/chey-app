@@ -510,13 +510,9 @@ extension _CheHomeHubRooms on _CHEHomeState {
             if (job != null && job.active && job.label.isNotEmpty)
               CheStudioActivity(title: 'Coding job', status: job.label, detail: job.speech, onTap: _openOfficeFloor),
           ],
-          // GPU jobs on the owner's Colab T4 (gpu_queue.js), with Pair Colab; quiet until he presses Read aloud.
-          gpuJobs: CheGpuJobsCard(
-            baseUrl: cheAgentBaseUrl,
-            headers: _authHeaders,
-            active: active,
-            onRead: (text) => speakText(text, record: false, readOnDemand: true),
-          ),
+          // Creation projects, the Creation Engine's state and which kinds are built (creation_studio.js). GPU jobs and
+          // Pair Colab moved to Settings, Creation Engine.
+          loadCreations: _loadCreations,
           creations: CheCreationsStrip(baseUrl: cheAgentBaseUrl, headers: _authHeaders, active: active),
           onRead: (text) => speakText(text, record: false, readOnDemand: true),
           actions: CheStudioActions(
@@ -539,10 +535,97 @@ extension _CheHomeHubRooms on _CHEHomeState {
             ),
             onInventions: () => unawaited(Navigator.of(context).push(CheInventionStudioPage.route(baseUrl: cheAgentBaseUrl, headers: _authHeaders))),
             onShowroom: _openShowroom,
+            loadPeople: _loadCreationPeople,
+            onCreatePerson: (base) => unawaited(_createPerson(base)),
+            onCreateAnimation: () => unawaited(Navigator.of(context).push(CheLiveStudio.route(
+              baseUrl: cheAgentBaseUrl,
+              headers: _authHeaders,
+              mode: CheLiveStudioMode.animation,
+              onRead: (text) => speakText(text, record: false, readOnDemand: true),
+              onSpeak: (text) => unawaited(speakText(text, record: false)),
+            ))),
+            onOpenCreation: (id) => unawaited(_openCreation(id)),
+            onConnectEngine: _connectCreationEngine,
           ),
         );
       },
     );
+  }
+
+  /// GET /api/creations for the Creation Room (owner device token). Null when CHE cannot be reached.
+  Future<Map<String, dynamic>?> _loadCreations() async {
+    try {
+      final r = await http.get(Uri.parse('$cheAgentBaseUrl/api/creations'), headers: _authHeaders).timeout(const Duration(seconds: 12));
+      if (r.statusCode != 200) return null;
+      final d = jsonDecode(r.body);
+      return d is Map ? Map<String, dynamic>.from(d) : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// The characters Create Person can start from: the Worker's built-in identity presets (CHE and the crew).
+  Future<List<(String, String, String)>> _loadCreationPeople() async {
+    final r = await http.get(Uri.parse('$cheAgentBaseUrl/api/gpu/identities'), headers: _authHeaders).timeout(const Duration(seconds: 12));
+    final d = jsonDecode(r.body);
+    if (r.statusCode != 200 || d is! Map) return const [];
+    return [
+      for (final p in (d['presets'] as List? ?? const []))
+        if (p is Map && '${p['id'] ?? ''}'.isNotEmpty && '${p['base'] ?? ''}'.isEmpty)
+          ('${p['id']}', '${p['name'] ?? p['id']}', '${p['role'] ?? ''}'),
+    ];
+  }
+
+  /// Create Person: a new creation project from [base] on the Worker, opened in the Live Studio.
+  Future<void> _createPerson(String base) async {
+    try {
+      final r = await http
+          .post(Uri.parse('$cheAgentBaseUrl/api/creations'),
+              headers: {..._authHeaders, 'Content-Type': 'application/json'}, body: jsonEncode({'kind': 'person', 'base': base}))
+          .timeout(const Duration(seconds: 15));
+      final d = jsonDecode(r.body);
+      final id = d is Map && d['project'] is Map ? '${(d['project'] as Map)['id'] ?? ''}' : '';
+      if (id.isEmpty) throw StateError('${d is Map ? d['detail'] ?? r.statusCode : r.statusCode}');
+      HapticFeedback.mediumImpact();
+      await _openCreation(id);
+    } catch (e) {
+      HapticFeedback.heavyImpact();
+      if (mounted) {
+        ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(content: Text('Could not start the creation: $e')));
+      }
+    }
+  }
+
+  Future<void> _openCreation(String id) async {
+    await Navigator.of(context).push(CheLiveStudio.route(
+      baseUrl: cheAgentBaseUrl,
+      headers: _authHeaders,
+      projectId: id,
+      onRead: (text) => speakText(text, record: false, readOnDemand: true),
+      onSpeak: (text) => unawaited(speakText(text, record: false)),
+      onOpenEngineSettings: _openCreationEngine,
+    ));
+    // Back in the room: refresh My Creations and the engine state.
+    unawaited(_creativeStudioKey.currentState?.loadCreations());
+  }
+
+  void _openCreationEngine() {
+    HapticFeedback.selectionClick();
+    unawaited(Navigator.of(context).push(CheCreationEnginePage.route(
+      baseUrl: cheAgentBaseUrl,
+      headers: _authHeaders,
+      onRead: (text) => speakText(text, record: false, readOnDemand: true),
+    )));
+  }
+
+  /// Connect: not paired → Settings, Creation Engine; paired → the Colab notebook (CHE cannot start Colab herself).
+  void _connectCreationEngine(CheCreationEngine engine) {
+    if (!engine.paired) {
+      _openCreationEngine();
+      return;
+    }
+    HapticFeedback.selectionClick();
+    unawaited(launchUrl(Uri.parse(engine.notebookUrl), mode: LaunchMode.externalApplication).catchError((_) => false));
   }
 
   /// Opens Create (the Creative Studio) and, once it is built, scrolls to [section] or opens Create New.

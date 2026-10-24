@@ -154,6 +154,23 @@ test('worker routes open only with the paired token; owner routes create it, lis
   assert.equal((await gpuWorkerRoute(ctx, '/api/gpu/worker/heartbeat', req('/api/gpu/worker/heartbeat', { worker_id: 'colab-1' }, token))).status, 404);
 });
 
+test('person_model jobs keep their kind, are not merged with a face preview of the same settings, and log each preview', async () => {
+  const { q } = setup();
+  const spec = { title: 'x', views: [0], settings: { IDENTITY: 'che' } };
+  const a = await q.enqueue(spec);
+  const b = await q.enqueue({ ...spec, kind: 'person_model' });
+  assert.equal(a.job.kind, 'face_preview'); assert.equal(b.job.kind, 'person_model');
+  assert.notEqual(a.job.id, b.job.id, 'a different kind is a different job');
+  assert.equal((await q.enqueue({ ...spec, kind: 'person_model' })).duplicate, true);
+  for (const j of await q.jobs()) if (j.id !== b.job.id) await q.control('cancel', j.id);
+  const { job } = await q.claim('colab-1', { gpu: GPU });
+  assert.equal(job.id, b.job.id); assert.equal(job.model, null);
+  await q.preview({}, 'colab-1', job.id, 0, PNG);
+  const j = (await q.jobs()).find((x) => x.id === job.id);
+  assert.equal(j.history.at(-1).note, 'Preview front arrived.');
+  assert.equal(j.state, 'rendering');
+});
+
 test('a non-PNG or oversized preview is refused', async () => {
   const { q } = setup();
   const { job } = await q.claim('colab-1', { gpu: GPU });

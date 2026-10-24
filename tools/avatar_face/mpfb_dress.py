@@ -373,7 +373,84 @@ if failed and not os.environ.get('FORCE'):
     print('CHECKS FAILED, no render:', [c[0] for c in failed], flush=True); sys.exit(2)
 if os.environ.get('SAVE'):
     bpy.ops.wm.save_as_mainfile(filepath=os.environ['SAVE'], copy=True)
-for deg in [int(d) for d in os.environ.get('VIEWS', '0,30').split(',')]:
+
+
+def export_glb(path):
+    """The Live Studio's 3D model (owner, 2026-10-24): a GLB of this exact face, written before any view renders so the
+    viewport gets the geometry first. A head-and-neck bust only (the rest of the MakeHuman body is never exported), both
+    eyes and CHE's hair cards. glTF cannot carry Cycles node trees, so the look is baked into vertex colours from the
+    same values the shaders use: skin albedo, lips from the lip mask, dark scalp, and the iris ramp (pupil, iris, limbus,
+    sclera). Brows, lashes and strand hair are curves: render-only."""
+    srgb = lambda c: c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4  # noqa: E731
+    keep = bpy.data.collections.new('GLBExport'); sc.collection.children.link(keep)
+    dg = bpy.context.evaluated_depsgraph_get()
+
+    def flat(name, rough, spec=0.5):
+        m = bpy.data.materials.new(name); m.use_nodes = True; p = m.node_tree.nodes['Principled BSDF']
+        p.inputs['Base Color'].default_value = (1, 1, 1, 1); p.inputs['Roughness'].default_value = rough
+        p.inputs['Specular IOR Level'].default_value = spec   # exported as KHR_materials_specular; dark hair turns grey at 0.5
+        return m
+
+    def paint(me, cols):
+        a = me.color_attributes.new('Col', 'FLOAT_COLOR', 'POINT'); a.data.foreach_set('color', [x for c in cols for x in (*c, 1.0)])
+        me.color_attributes.active_color = a
+
+    def copy(src, name, mat, cut=None, whole=min):
+        me = bpy.data.meshes.new_from_object(src.evaluated_get(dg)); me.transform(src.matrix_world)
+        if cut is not None:   # drop the faces below the neck cut (whole=min: any vertex below; max: all of them), then loose vertices
+            import bmesh
+            bm = bmesh.new(); bm.from_mesh(me)
+            bmesh.ops.delete(bm, geom=[f for f in bm.faces if whole(v.co.z for v in f.verts) < cut], context='FACES')
+            bmesh.ops.delete(bm, geom=[v for v in bm.verts if not v.link_faces], context='VERTS')
+            bm.to_mesh(me); bm.free()
+        me.materials.clear(); me.materials.append(mat)
+        ob = bpy.data.objects.new(name, me); keep.objects.link(ob)
+        return ob, me
+
+    cut = eye_mid.z - 0.16 * k
+    bust, me = copy(body, 'CHE_Head', flat('GLB_Skin', 0.55, 0.32), cut)
+    lipc = (albedo[0] * 0.62, albedo[1] * 0.42, albedo[2] * 0.55)
+    la, sa = me.attributes.get('lipmask'), me.attributes.get('scalp')
+    lv = [d.value for d in la.data] if la else [0.0] * len(me.vertices)
+    sv = [d.value for d in sa.data] if sa else [0.0] * len(me.vertices)
+    cols = []
+    for lm, s in zip(lv, sv):
+        c = [albedo[i] + (lipc[i] - albedo[i]) * max(0.0, min(1.0, lm)) for i in range(3)]
+        cols.append(tuple(c[i] + ((0.012, 0.008, 0.006)[i] - c[i]) * max(0.0, min(1.0, s)) for i in range(3)))
+    paint(me, cols)
+    eye_glb = flat('GLB_Eye', 0.15)
+
+    def ramp(x):
+        for (p0, c0), (p1, c1) in zip(stops, stops[1:]):
+            if x <= p1: t = (x - p0) / max(p1 - p0, 1e-6); return tuple(c0[i] + (c1[i] - c0[i]) * t for i in range(3))
+        return stops[-1][1]
+    for name in ('Eye_l', 'Eye_r'):
+        src = bpy.data.objects[name]; inv = src.matrix_world.inverted()
+        eo, eme = copy(src, 'CHE_' + name, eye_glb)
+        local = [inv @ v.co for v in eme.vertices]   # unit-sphere object space, +Z out of the face, as the shader sees it
+        paint(eme, [ramp(math.hypot(p.x, p.y)) if p.z > 0 else stops[-1][1] for p in local])
+    parts = 'head-and-neck bust, eyes'
+    if hair_o and hair_o.type == 'MESH' and not os.environ.get('NOHAIR'):
+        hc = [srgb(float(x) / 255) for x in os.environ.get('HAIR_SRGB', '28,18,16').split(',')]
+        hm = flat('GLB_Hair', 0.6, 0.15); hm.node_tree.nodes['Principled BSDF'].inputs['Base Color'].default_value = (*hc, 1)
+        hm.use_backface_culling = False
+        copy(hair_o, 'CHE_Hair', hm, cut, max)   # the long cards end at the bust's neck cut instead of hanging in the air
+        parts += ', hair cards'
+    bpy.ops.object.select_all(action='DESELECT')
+    for o in keep.objects: o.hide_viewport = False; o.hide_set(False); o.select_set(True)
+    bpy.context.view_layer.objects.active = bust
+    bpy.ops.export_scene.gltf(filepath=path, export_format='GLB', use_selection=True, export_apply=True, export_yup=True,
+                              export_vertex_color='ACTIVE', export_animations=False, export_skins=False, export_morph=False,
+                              export_materials='EXPORT', export_cameras=False, export_lights=False)
+    nv = sum(len(o.data.vertices) for o in keep.objects)
+    for o in list(keep.objects): bpy.data.objects.remove(o)
+    bpy.data.collections.remove(keep)
+    print('MODEL', os.path.abspath(path), os.path.getsize(path), 'bytes', nv, 'vertices', f'({parts}; brows, lashes and strand hair are render-only)', flush=True)
+
+
+if os.environ.get('EXPORT_GLB'):
+    export_glb(os.environ['EXPORT_GLB'])
+for deg in [int(d) for d in os.environ.get('VIEWS', '0,30').split(',') if d.strip()]:
     a = math.radians(deg)
     cam.location = tgt.location + (fwd * math.cos(a) + right * math.sin(a)) * float(os.environ.get('CAM_DIST', '0.75')) * k + up * 0.02 * k
     sc.render.filepath = os.path.join(OUT, f'dress_{deg:02d}.png')

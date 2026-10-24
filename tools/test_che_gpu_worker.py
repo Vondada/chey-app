@@ -216,6 +216,30 @@ class GpuWorkerTest(unittest.TestCase):
         j = self.job(); self.assertEqual(j['state'], 'failed'); self.assertIn('face check failed', j['history'][-1]['note'])
         self.assertEqual(self.calls_made(), [])
 
+    def test_previews_stream_to_che_while_the_runner_still_renders(self):
+        code, out = self.work('--once')
+        self.assertEqual(code, 0, out)
+        # Each view is uploaded right after the runner verifies it, before the next view and before the outcome.
+        self.assertLess(out.index('PREVIEW view 0: saved'), out.index('VIEW 45 '))
+        self.assertLess(out.index('PREVIEW view 90: saved'), out.index('RESULT'))
+        self.assertEqual(out.count('PREVIEW view 0:'), 1, 'a streamed view is not uploaded again at the end')
+
+    @unittest.skipUnless("'person_model'" in open(os.path.join(ROOT, 'server', 'cloudflare', 'gpu_queue.js')).read(),
+                         'the queue does not take person_model jobs yet')
+    def test_a_person_model_job_streams_the_model_first_and_completes_with_it(self):
+        queued = self.api('/api/gpu/jobs', {'title': 'Live Studio person', 'kind': 'person_model', 'views': [0, 45], 'settings': {'IDENTITY': 'che', 'STYLE': 'hybrid'}})
+        jid = queued['job']['id']
+        for j in self.api('/api/gpu')['jobs']:           # the seeded face jobs wait; this test works the model job
+            if j['id'] != jid and j['state'] == 'queued': self.api('/api/gpu/jobs/cancel', {'id': j['id']})
+        code, out = self.work('--once')
+        self.assertEqual(code, 0, out)
+        self.assertIn('MODEL UPLOAD: saved to the Live Studio', out)
+        self.assertLess(out.index('MODEL UPLOAD'), out.index('PREVIEW view 0'), 'geometry arrives before the first render')
+        self.assertEqual(self.calls_made(), ['0,45+model'])
+        j = next(x for x in self.api('/api/gpu')['jobs'] if x['id'] == jid)
+        self.assertEqual(j['state'], 'completed', j['history'])
+        self.assertEqual(j['model']['sha256'], j['receipt']['model']['sha256'])
+
     def test_idle_worker_stops(self):
         self.work('--once')
         code, out = self.work('--idle-minutes', '0')

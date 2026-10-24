@@ -14,12 +14,17 @@
 // only as a SHA-256 hash, opens only /api/gpu/worker/* and is revoked by creating a new one or by /revoke.
 import { BUILT_IN, STYLES, STYLE_LABELS, identityRoute, toSettings } from './avatar_identity.js';
 import { saveRenderedImage } from './media.js';
+import { mediaStore, sha256Hex } from './che_media_store.js';
 
 export const LEASE_MS = 3 * 60_000;           // a claimed job pauses after 3 minutes without a heartbeat
 export const ONLINE_MS = 90_000;              // a worker counts as online for 90 s after its last heartbeat
 export const MAX_FAILURES = 2;                // reported render failures before a job is marked failed
 export const MAX_JOBS = 200;
 export const MAX_PREVIEW_BYTES = 4 * 1024 * 1024;
+export const MAX_MODEL_BYTES = 16 * 1024 * 1024;
+// face_preview: pictures only. person_model (Live Studio, creation_studio.js): the same pictures plus the 3D model
+// (a GLB the worker exports from the same Blender build, uploaded the moment it exists, before the renders finish).
+export const JOB_KINDS = ['face_preview', 'person_model'];
 export const VIEW_NAMES = { 0: 'front', 45: 'three-quarter', 90: 'side' };
 const GPU_DEVICE = /^DEVICE (OPTIX|CUDA) \[.+\]/;
 const JOBS_KEY = 'gpu:jobs';
@@ -67,6 +72,15 @@ function cleanViews(v) {
   return [...new Set(views)].slice(0, 8);
 }
 
+/** A GLB v2 file: magic "glTF", version 2, and the header's total length equal to the bytes received. */
+export function isGlb(bytes) {
+  if (!bytes || bytes.length < 20) return false;
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  return dv.getUint32(0, true) === 0x46546c67 && dv.getUint32(4, true) === 2 && dv.getUint32(8, true) === bytes.length;
+}
+
+const modelKey = (id) => `gpu/models/${id}.glb`;
+
 function note(job, now, state, text) {
   job.state = state; job.updated_at = iso(now);
   job.history = [...(job.history || []), { at: iso(now), state, note: String(text).slice(0, 300) }].slice(-20);
@@ -104,11 +118,11 @@ export class GpuQueue {
   newJob(spec, t) {
     const id = `gpu_${crypto.randomUUID().replaceAll('-', '').slice(0, 12)}`;
     const job = {
-      id, kind: 'face_preview', title: String(spec.title || 'Face preview').slice(0, 120), views: cleanViews(spec.views),
+      id, kind: JOB_KINDS.includes(spec.kind) ? spec.kind : 'face_preview', title: String(spec.title || 'Face preview').slice(0, 120), views: cleanViews(spec.views),
       settings: cleanSettings(spec.settings), samples: Math.min(Math.max(Number(spec.samples) || 64, 1), 1024),
       res: Math.min(Math.max(Number(spec.res) || 480, 64), 2048), queued_by: String(spec.queued_by || 'owner').slice(0, 60),
       created_at: iso(t), updated_at: iso(t), state: 'queued', failures: 0, sessions: 0, lease: null,
-      progress: { views_done: [], message: 'Waiting for your Colab GPU session.' }, previews: {}, receipt: null, history: [],
+      progress: { views_done: [], message: 'Waiting for your Colab GPU session.' }, previews: {}, model: null, receipt: null, history: [],
     };
     note(job, t, 'queued', 'Queued. It renders the next time your Colab T4 notebook runs.');
     return job;
@@ -120,7 +134,7 @@ export class GpuQueue {
     const probe = this.newJob(spec, this.now());
     if (!probe.views.length) return { ok: false, detail: 'Name at least one view (0 front, 45 three-quarter, 90 side).' };
     const same = jobs.find((j) => ['queued', 'paused', 'rendering'].includes(j.state)
-      && JSON.stringify(j.settings) === JSON.stringify(probe.settings) && j.views.join() === probe.views.join() && j.samples === probe.samples && j.res === probe.res);
+      && (j.kind || 'face_preview') === probe.kind && JSON.stringify(j.settings) === JSON.stringify(probe.settings) && j.views.join() === probe.views.join() && j.samples === probe.samples && j.res === probe.res);
     if (same) return { ok: true, job: same, duplicate: true };
     jobs.push(probe); await this.save(jobs);
     return { ok: true, job: probe };
@@ -234,9 +248,36 @@ export class GpuQueue {
       bytes, title: `${j.title.replace(/:.*$/, '')}: ${name} (Colab T4 GPU)`, prompt: `GPU face preview ${j.id}, view ${view}`,
       provenance: `Rendered with Blender Cycles on the owner's Colab GPU, job ${j.id}`, engine: 'blender-cycles-gpu', source: 'colab_gpu', mode: 'gpu_render',
     });
-    j.previews = { ...(j.previews || {}), [view]: item.id }; j.updated_at = iso(this.now());
+    j.previews = { ...(j.previews || {}), [view]: item.id };
+    note(j, this.now(), j.state, `Preview ${name} arrived.`);
     await this.save(jobs);
     return { ok: true, media_id: item.id };
+  }
+
+  /** Worker: the job's 3D model (GLB v2, at most 16 MB), stored in CHE's media store as soon as Blender exported it. */
+  async model(env, workerId, id, bytes) {
+    const { jobs, j } = await this.held(workerId, id);
+    if (!j) return { ok: false, detail: 'This worker does not hold that job.' };
+    if (!bytes?.length || bytes.length > MAX_MODEL_BYTES) return { ok: false, detail: 'The model is empty or larger than 16 MB.' };
+    if (!isGlb(bytes)) return { ok: false, detail: 'Only GLB (glTF 2.0 binary) models are accepted.' };
+    const key = modelKey(j.id);
+    const saved = await mediaStore(env, this.storage).put(key, bytes, { contentType: 'model/gltf-binary' });
+    if (!saved.ok) return { ok: false, detail: saved.error || 'The model could not be stored.' };
+    const t = this.now(); const kb = Math.round(bytes.length / 1024);
+    j.model = { key, bytes: bytes.length, sha256: await sha256Hex(bytes), uploaded_at: iso(t) };
+    j.progress = { ...(j.progress || {}), message: `Geometry ready: the 3D model arrived (${kb} KB). Renders continue.` };
+    j.lease.expires_ms = t + LEASE_MS;
+    note(j, t, j.state, `Geometry ready: the 3D model arrived (${kb} KB). Renders continue.`);
+    await this.save(jobs);
+    return { ok: true, bytes: bytes.length, sha256: j.model.sha256 };
+  }
+
+  /** Owner: the stored GLB bytes of a job, or null. */
+  async modelBytes(env, id) {
+    const j = (await this.jobs()).find((x) => x.id === id);
+    if (!j?.model?.key) return null;
+    const got = await mediaStore(env, this.storage).get(j.model.key);
+    return got?.body?.length ? got.body : null;
   }
 
   /** Worker: the job's outcome. "completed" only with a complete GPU receipt and every preview uploaded. */
@@ -252,9 +293,13 @@ export class GpuQueue {
     } else if (status === 'complete') {
       const views = r?.views || {};
       const bad = j.views.filter((v) => views[v]?.status !== 'ok' || !GPU_DEVICE.test(String(views[v]?.device || '')) || !j.previews?.[v]);
-      if (r?.status !== 'complete' || bad.length) {
+      // A person model is complete only with its 3D model uploaded and named in the receipt with the same hash.
+      const modelBad = j.kind === 'person_model' && !(j.model && r?.model?.status === 'ok' && r.model.sha256 === j.model.sha256);
+      if (r?.status !== 'complete' || bad.length || modelBad) {
         j.failures += 1;
-        note(j, t, j.failures >= MAX_FAILURES ? 'failed' : 'queued', `Not accepted as complete: view${bad.length === 1 ? '' : 's'} ${bad.join(', ') || '?'} lack a GPU receipt or an uploaded picture.`);
+        const why = [bad.length || r?.status !== 'complete' ? `view${bad.length === 1 ? '' : 's'} ${bad.join(', ') || '?'} lack a GPU receipt or an uploaded picture` : '',
+          modelBad ? 'the 3D model was not uploaded or does not match the receipt' : ''].filter(Boolean).join('; ');
+        note(j, t, j.failures >= MAX_FAILURES ? 'failed' : 'queued', `Not accepted as complete: ${why}.`);
       } else {
         j.progress = { views_done: [...j.views], message: 'All views rendered on the GPU.', pct: 100 };
         note(j, t, 'completed', `Rendered on ${String(r.nvidia_smi || r.cycles_gpus || 'the GPU').slice(0, 80)} with ${String(r.blender_version || 'Blender').slice(0, 40)}.`);
@@ -273,6 +318,11 @@ function trimReceipt(r) {
   const keep = ['job_id', 'status', 'nvidia_smi', 'device', 'cycles_gpus', 'render_device_line', 'blender_version', 'samples', 'long_edge_px', 'face_code_sha256', 'created_at', 'finished_at', 'process_seconds', 'last_run'];
   const out = {};
   for (const k of keep) if (r[k] !== undefined) out[k] = typeof r[k] === 'string' ? r[k].slice(0, 300) : r[k];
+  if (r.model && typeof r.model === 'object') {
+    const m = r.model;
+    out.model = { status: String(m.status || ''), file: String(m.file || '').slice(0, 120), sha256: String(m.sha256 || '').slice(0, 64), bytes: Number(m.bytes) || 0,
+      vertices: Number(m.vertices) || 0, exported_at: String(m.exported_at || '').slice(0, 40), contents: String(m.contents || '').slice(0, 200) };
+  }
   out.views = {};
   for (const [v, info] of Object.entries(r.views || {}).slice(0, 8)) {
     out.views[v] = { status: String(info?.status || ''), name: String(info?.name || ''), device: String(info?.device || '').slice(0, 200),
@@ -281,9 +331,10 @@ function trimReceipt(r) {
   return out;
 }
 
-function publicJob(j) {
+export function publicJob(j) {
   const { lease, ...rest } = j;
-  return { ...rest, worker_id: lease?.worker_id || null, lease_expires: lease ? iso(lease.expires_ms) : null };
+  const model = j.model ? { bytes: j.model.bytes, sha256: j.model.sha256, uploaded_at: j.model.uploaded_at, url: `/api/gpu/jobs/${j.id}/model.glb` } : null;
+  return { ...rest, kind: j.kind || 'face_preview', model, worker_id: lease?.worker_id || null, lease_expires: lease ? iso(lease.expires_ms) : null };
 }
 
 /** One sentence for the Creation Room's Read button and for chat. */
@@ -303,7 +354,7 @@ export function speakGpuSummary(view) {
  * body (previews are binary), so it runs before the JSON body is parsed. Returns null for other paths.
  */
 export async function gpuWorkerRoute({ storage, env, now }, path, request) {
-  const m = /^\/api\/gpu\/worker\/(heartbeat|claim|progress|preview|complete)$/.exec(path);
+  const m = /^\/api\/gpu\/worker\/(heartbeat|claim|progress|preview|model|complete)$/.exec(path);
   if (!m) return null;
   const q = new GpuQueue(storage, now);
   if (!(await q.tokenOpens(request.headers.get('X-CHE-GPU-Token')))) return json({ detail: 'Not found.' }, 404);
@@ -312,6 +363,14 @@ export async function gpuWorkerRoute({ storage, env, now }, path, request) {
     if (request.method !== 'PUT') return json({ detail: 'Use PUT.' }, 405);
     const bytes = new Uint8Array(await request.arrayBuffer());
     const out = await q.preview(env, String(url.searchParams.get('worker') || ''), String(url.searchParams.get('job') || ''), Number(url.searchParams.get('view')), bytes);
+    return json(out, out.ok ? 200 : 409);
+  }
+  if (m[1] === 'model') {
+    if (request.method !== 'PUT') return json({ detail: 'Use PUT.' }, 405);
+    const len = Number(request.headers.get('Content-Length') || 0);
+    if (len > MAX_MODEL_BYTES) return json({ ok: false, detail: 'The model is larger than 16 MB.' }, 413);
+    const bytes = new Uint8Array(await request.arrayBuffer());
+    const out = await q.model(env, String(url.searchParams.get('worker') || ''), String(url.searchParams.get('job') || ''), bytes);
     return json(out, out.ok ? 200 : 409);
   }
   if (request.method !== 'POST') return json({ detail: 'Use POST.' }, 405);
@@ -325,10 +384,16 @@ export async function gpuWorkerRoute({ storage, env, now }, path, request) {
   return json(out, out.ok ? 200 : 409);
 }
 
-/** The owner's routes (/api/gpu, /api/gpu/jobs, /api/gpu/jobs/cancel|retry, /api/gpu/worker-token[/revoke], /api/gpu/identities*). */
-export async function gpuOwnerRoute({ storage, now }, path, request, body) {
+/** The owner's routes (/api/gpu, /api/gpu/jobs, /api/gpu/jobs/cancel|retry, /api/gpu/jobs/<id>/model.glb, /api/gpu/worker-token[/revoke], /api/gpu/identities*). */
+export async function gpuOwnerRoute({ storage, env = {}, now }, path, request, body) {
   if (path !== '/api/gpu' && !path.startsWith('/api/gpu/')) return null;
   const q = new GpuQueue(storage, now);
+  const glb = /^\/api\/gpu\/jobs\/(gpu_[a-f0-9]{12})\/model\.glb$/.exec(path);
+  if (glb && request.method === 'GET') {
+    const bytes = await q.modelBytes(env, glb[1]);
+    if (!bytes) return json({ detail: 'No 3D model for that job yet.' }, 404);
+    return new Response(bytes, { status: 200, headers: { 'Content-Type': 'model/gltf-binary', 'Content-Length': String(bytes.length), 'Cache-Control': 'private, max-age=3600' } });
+  }
   if (path === '/api/gpu' && request.method === 'GET') { const v = await q.view(); return json({ ...v, spoken: speakGpuSummary(v) }); }
   const ident = await identityRoute(storage, q, path, request, body);
   if (ident) return ident;

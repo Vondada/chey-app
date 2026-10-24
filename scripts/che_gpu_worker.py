@@ -9,8 +9,10 @@ The queue lives in CHE's Cloudflare Worker, so jobs survive Colab disconnects. T
   keep its lease, and reports progress per view;
 - renders through scripts/che_gpu_face_preview.py, which writes pictures, log and receipt to Google Drive and reuses
   every view already verified there, so resuming never renders finished work again;
-- uploads each finished view's PNG into CHE's media library (the Creation Room) and reports the receipt; the Worker
-  marks the job completed only with a GPU receipt and every picture;
+- streams results while the runner works: each view's PNG goes into CHE's media library (the Creation Room) the moment
+  it is verified, and for the Live Studio's person_model jobs the 3D model (model.glb) goes up the moment Blender
+  exports it, before any view renders; then it reports the receipt. The Worker marks the job completed only with a GPU
+  receipt and every picture (and, for person_model, the model);
 - stops when the owner cancels the job, and exits after --idle-minutes with nothing to do so the GPU is released.
 It never starts, extends or keeps alive a Colab session: it runs only while the owner's session runs.
 Exit codes: 0 idle or --once done, 3 no GPU, 5 no CHE_GPU_TOKEN.
@@ -54,10 +56,10 @@ class Che:
     def __init__(self, base, token, worker_id, gpu, blender):
         self.base, self.token, self.worker_id, self.gpu, self.blender = base.rstrip('/'), token, worker_id, gpu, blender
 
-    def call(self, route, body=None, data=None, query='', method='POST', tries=4):
+    def call(self, route, body=None, data=None, query='', method='POST', tries=4, content_type='image/png'):
         url = f'{self.base}/api/gpu/worker/{route}{query}'
         payload = data if data is not None else json.dumps(dict(body or {}, worker_id=self.worker_id, gpu=self.gpu, blender=self.blender)).encode()
-        headers = {'X-CHE-GPU-Token': self.token, 'Content-Type': 'image/png' if data is not None else 'application/json'}
+        headers = {'X-CHE-GPU-Token': self.token, 'Content-Type': content_type if data is not None else 'application/json'}
         for attempt in range(tries):
             try:
                 with urllib.request.urlopen(urllib.request.Request(url, data=payload, headers=headers, method=method), timeout=60) as r:
@@ -83,16 +85,38 @@ def stop_group(p, grace=10.0):
     except (ProcessLookupError, PermissionError): pass
 
 
+def send_preview(che, job, v, path, sent):
+    """One finished view's PNG into CHE's media library, once per job run (the Live Studio shows it as it arrives)."""
+    if v in sent or not os.path.isfile(path): return
+    with open(path, 'rb') as f: data = f.read()
+    r = che.call('preview', data=data, method='PUT', query=f"?worker={che.worker_id}&job={job['id']}&view={v}")
+    print(f"PREVIEW view {v}: {'saved to the Creation Room' if r.get('ok') else r.get('detail', r)}", flush=True)
+    if r.get('ok'): sent.add(v)
+
+
+def send_model(che, job, path, state):
+    """The 3D model (GLB) into CHE as soon as Blender exports it: the Live Studio's viewport loads the real geometry
+    while the views are still rendering."""
+    if state.get('model_sent') or not os.path.isfile(path): return
+    with open(path, 'rb') as f: data = f.read()
+    r = che.call('model', data=data, method='PUT', query=f"?worker={che.worker_id}&job={job['id']}", content_type='model/gltf-binary')
+    print(f"MODEL UPLOAD: {'saved to the Live Studio' if r.get('ok') else r.get('detail', r)} ({len(data)} bytes)", flush=True)
+    state['model_sent'] = bool(r.get('ok')); state['model_path'] = path
+
+
 def run_job(che, job, a, log):
-    """Render one claimed job; returns (runner exit code, job folder, receipt or None, stopped_by_owner)."""
+    """Render one claimed job; returns (runner exit code, job folder, receipt or None, stopped_by_owner, streamed).
+    Results stream to CHE while the runner works: the model the moment it is exported, each view the moment it is
+    verified (or reused from Drive). `streamed` says what already arrived, so nothing is uploaded twice."""
     with tempfile.NamedTemporaryFile('w', suffix='.json', delete=False) as f:
         json.dump(job.get('settings') or {}, f); settings = f.name
     cmd = [sys.executable, os.path.join(ROOT, 'scripts', 'che_gpu_face_preview.py'), '--blender', a.blender,
            '--project', a.project, '--out', a.out, '--views', ','.join(str(v) for v in job['views']),
            '--samples', str(job.get('samples', 64)), '--res', str(job.get('res', 480)), '--settings', settings]
+    if job.get('kind') == 'person_model': cmd.append('--model')   # the Live Studio's jobs also export the 3D model
     # Its own process group, so stopping the job stops Blender too (Blender is the runner's child, not ours).
     p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
-    stop = threading.Event(); state = {'stopped': False, 'done': []}
+    stop = threading.Event(); state = {'stopped': False, 'done': [], 'sent': set(), 'model_sent': False}
 
     def beat():
         while not stop.wait(HEARTBEAT_S):
@@ -105,29 +129,32 @@ def run_job(che, job, a, log):
     for line in p.stdout:
         print(line, end='', flush=True); log.write(line)
         if line.startswith('JOB '): folder = line[4:].strip()
-        m = re.match(r'(?:VIEW|SKIP view) (-?\d+) \(([^)]*)\)', line)
+        m = re.match(r'(?:VIEW|SKIP view) (-?\d+) \(([^)]*)\).* -> (.+)$', line.strip())
         if m:
             state['done'].append(int(m.group(1)))
             che.call('progress', {'job_id': job['id'], 'views_done': state['done'], 'message': line.strip()[:200]})
+            if not state['stopped']: send_preview(che, job, int(m.group(1)), m.group(3), state['sent'])
+        elif line.startswith('MODEL READY '):
+            che.call('progress', {'job_id': job['id'], 'views_done': state['done'], 'message': 'Geometry ready: the 3D model was exported.'})
+            if not state['stopped']: send_model(che, job, line[len('MODEL READY '):].strip(), state)
         elif line.startswith('GPU '):
             che.call('progress', {'job_id': job['id'], 'views_done': state['done'], 'message': f'Rendering on {line[4:].strip()}'[:200]})
     code = p.wait(); stop.set(); os.unlink(settings)
     receipt = None
     if folder and os.path.exists(os.path.join(folder, 'receipt.json')):
         with open(os.path.join(folder, 'receipt.json')) as f: receipt = json.load(f)
-    return code, folder, receipt, state['stopped']
+    return code, folder, receipt, state['stopped'], state
 
 
-def upload_previews(che, job, folder, receipt):
-    sent = 0
+def upload_previews(che, job, folder, receipt, streamed=None):
+    """What did not stream while the runner worked (a failed upload, an older runner): every verified view, and the
+    model for a person_model job, before the outcome is reported."""
+    streamed = streamed if streamed is not None else {'sent': set(), 'model_sent': False}
     for v, info in (receipt or {}).get('views', {}).items():
-        path = os.path.join(folder, info.get('file', ''))
-        if info.get('status') != 'ok' or not os.path.isfile(path): continue
-        with open(path, 'rb') as f: data = f.read()
-        r = che.call('preview', data=data, method='PUT', query=f"?worker={che.worker_id}&job={job['id']}&view={v}")
-        print(f"PREVIEW view {v}: {'saved to the Creation Room' if r.get('ok') else r.get('detail', r)}", flush=True)
-        sent += bool(r.get('ok'))
-    return sent
+        if info.get('status') == 'ok': send_preview(che, job, int(v), os.path.join(folder, info.get('file', '')), streamed['sent'])
+    if job.get('kind') == 'person_model' and (receipt or {}).get('model', {}).get('status') == 'ok':
+        send_model(che, job, os.path.join(folder, receipt['model'].get('file', 'model.glb')), streamed)
+    return len(streamed['sent'])
 
 
 def push_to_github(folder):
@@ -166,11 +193,11 @@ def main():
             job = c.get('job') if c.get('ok') else None
             if job:
                 print(f"{'RESUME' if c.get('resumed') else 'JOB'} {job['id']}: {job['title']}", flush=True)
-                code, folder, receipt, stopped = run_job(che, job, a, log)
+                code, folder, receipt, stopped, streamed = run_job(che, job, a, log)
                 if stopped:
                     print(f"STOPPED {job['id']}: the owner cancelled it; finished views stay in Drive.", flush=True)
                 else:
-                    if folder and receipt: upload_previews(che, job, folder, receipt)
+                    if folder and receipt: upload_previews(che, job, folder, receipt, streamed)
                     status = {0: 'complete', 2: 'checks_failed', 3: 'gpu_unavailable'}.get(code, 'render_failed')
                     drive = folder.replace('/content/drive/MyDrive', 'My Drive') if folder else None
                     r = che.call('complete', {'job_id': job['id'], 'status': status, 'receipt': receipt, 'drive_path': drive,
