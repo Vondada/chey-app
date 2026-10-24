@@ -143,6 +143,55 @@ Map<String, Object>? cheViewportCommand(String words) {
   return null;
 }
 
+/// Mouth cues for a spoken reply, generated from its words alone (Rhubarb Lip Sync's mouth shapes A to H and X).
+///
+/// APPROXIMATE, by design: CHE's voice arrives as MP3 from ElevenLabs or Fish, and decoding MP3 to an amplitude
+/// envelope in pure Dart is not cheap, so this does not listen to the audio. It walks the text at about 13 characters
+/// a second (vowels open the mouth, b/m/p close it, f/v touch the lip, punctuation pauses). When [durationMs] is known
+/// (cheAudioDurationMs reads it from the clip's MP3 header) the cues are stretched to the clip's real length, so the
+/// mouth starts and stops with the audio; the shapes in between follow the letters, not the sounds.
+List<Map<String, Object>> cheLipSyncCues(String text, {int? durationMs}) {
+  const perChar = 1 / 13;
+  final t = text.toLowerCase();
+  final raw = <(String, double)>[];
+  for (var i = 0; i < t.length; i++) {
+    final c = t[i];
+    final next = i + 1 < t.length ? t[i + 1] : '';
+    final shape = switch (c) {
+      'a' => 'D',
+      'e' || 'i' || 'y' => 'C',
+      'o' => next == 'o' ? 'F' : 'E',
+      'u' || 'w' || 'q' => 'F',
+      'b' || 'm' || 'p' => 'A',
+      'f' || 'v' => 'G',
+      'l' => 'H',
+      ' ' || '\n' || '\t' || '-' => 'X',
+      '.' || ',' || '!' || '?' || ';' || ':' => 'P', // a pause, written as rest below
+      _ => RegExp(r'[a-z0-9]').hasMatch(c) ? 'B' : '',
+    };
+    if (shape.isEmpty) continue;
+    raw.add(shape == 'P' ? ('X', perChar * 3) : (shape, perChar));
+  }
+  while (raw.isNotEmpty && raw.last.$1 == 'X') {
+    raw.removeLast();
+  }
+  final total = raw.fold<double>(0, (a, r) => a + r.$2);
+  if (total <= 0) return const [];
+  final scale = durationMs != null && durationMs > 200 ? (durationMs / 1000) / total : 1.0;
+  final cues = <Map<String, Object>>[];
+  var at = 0.0;
+  for (final (shape, len) in raw) {
+    final end = at + len * scale;
+    if (cues.isNotEmpty && cues.last['value'] == shape) {
+      cues.last['end'] = double.parse(end.toStringAsFixed(3));
+    } else {
+      cues.add({'start': double.parse(at.toStringAsFixed(3)), 'end': double.parse(end.toStringAsFixed(3)), 'value': shape});
+    }
+    at = end;
+  }
+  return cues;
+}
+
 /// Whether words are meant for the open creation ("make the hair longer", "bigger eyes", "undo", "save it") rather
 /// than for Chat ("what's the weather"). Edits the Worker cannot do are still answered here, plainly, so Chat never
 /// claims a change that was not made.
@@ -277,6 +326,17 @@ class CheLiveStudio extends StatefulWidget {
   /// While the studio is on screen, typed or spoken words reach it first; null means "not mine" (it goes to Chat).
   static Future<String?> Function(String words)? voiceHandler;
 
+  /// While the studio is open, CHE's voice player (lib/home_state/voice.dart, _playServerVoice) calls this as each
+  /// clip starts playing, with the clip's words and its length from the MP3 header, so the character's mouth moves
+  /// with whatever CHE is already saying. It never starts speech itself (owner rule, 2026-10-11).
+  static void Function(String text, int? durationMs)? speechLipSync;
+
+  /// Called when a clip ends or fails: the mouth returns to rest.
+  static VoidCallback? speechLipSyncStop;
+
+  /// The short line the lip sync test speaks.
+  static const lipSyncTestLine = 'Hi, I am CHE. This is a lip sync test, so you can see my mouth move.';
+
   static Route<void> route({
     required String baseUrl,
     required Map<String, String> headers,
@@ -346,6 +406,8 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     CheLiveStudio.voiceHandler = voice;
+    CheLiveStudio.speechLipSync = lipSyncSpeech;
+    CheLiveStudio.speechLipSyncStop = stopSpeaking;
     unawaited(_personMode ? refresh(first: true) : _showBundled(_animBase));
     if (!_personMode) loading = false;
   }
@@ -353,6 +415,8 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
   @override
   void dispose() {
     if (CheLiveStudio.voiceHandler == voice) CheLiveStudio.voiceHandler = null;
+    if (CheLiveStudio.speechLipSync == lipSyncSpeech) CheLiveStudio.speechLipSync = null;
+    if (CheLiveStudio.speechLipSyncStop == stopSpeaking) CheLiveStudio.speechLipSyncStop = null;
     WidgetsBinding.instance.removeObserver(this);
     _poll?.cancel();
     _viewport.dispose();
@@ -404,6 +468,8 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
         });
       case 'done':
         setState(() => playing = m['playing'] == null ? null : '${m['playing']}');
+        // A passive lip sync answer must not stand in for the answer another command is waiting on.
+        if (_waitingFor != null && m['action'] != null && '${m['action']}' != _waitingFor) return;
         final w = _waiting;
         _waiting = null;
         if (w != null && !w.isCompleted) w.complete(m);
@@ -530,20 +596,77 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
       : '${id[0].toUpperCase()}${id.substring(1)}';
 
   Completer<Map<String, dynamic>>? _waiting;
+  String? _waitingFor;
 
   /// Sends one command to the viewport and waits for its own answer ({ok, note}); null when it never answered. Spoken
   /// confirmations come from this answer, so CHE never reports a viewport change that did not happen (review of #521).
   Future<Map<String, dynamic>?> _runViewport(Map<String, Object> cmd) async {
     final w = Completer<Map<String, dynamic>>();
     _waiting = w;
+    _waitingFor = '${cmd['action']}';
     try {
       await _viewport.command(cmd);
       return await w.future.timeout(const Duration(seconds: 3));
     } catch (_) {
       return null;
     } finally {
-      if (identical(_waiting, w)) _waiting = null;
+      if (identical(_waiting, w)) {
+        _waiting = null;
+        _waitingFor = null;
+      }
     }
+  }
+
+  /// The mouth shape key the page found in the loaded model (e.g. mouth_open), or null when it has none.
+  String? get mouthMorph {
+    final m = modelInfo['mouth_morph'];
+    return m == null || '$m'.isEmpty ? null : '$m';
+  }
+
+  /// Passive: moves the character's mouth with words CHE is already speaking. Nothing is spoken, shown or reported
+  /// here, and nothing is sent when the model has no mouth shape key (the page would refuse it anyway).
+  void lipSyncSpeech(String text, int? durationMs) {
+    if (!mounted || shown.source == 'none' || mouthMorph == null || text.trim().isEmpty) return;
+    final cues = cheLipSyncCues(text, durationMs: durationMs);
+    if (cues.isEmpty) return;
+    unawaited(
+      _viewport
+          .command({'action': 'lipsync', 'cues': cues, 'source': 'text', if (durationMs != null) 'duration': durationMs / 1000})
+          .catchError((_) {}),
+    );
+  }
+
+  /// Passive: the mouth back at rest when a clip ends.
+  void stopSpeaking() {
+    if (!mounted || shown.source == 'none' || mouthMorph == null) return;
+    unawaited(_viewport.command({'action': 'stop_speaking'}).catchError((_) {}));
+  }
+
+  /// "Make her talk" / "lip sync test" / the Lip sync test button: the page animates the test line's mouth cues and
+  /// says whether it could; the reply (the test line) is then spoken by the usual voice path, which moves the mouth
+  /// again in time with the real audio.
+  Future<String> lipSyncTest() async {
+    HapticFeedback.selectionClick();
+    if (shown.source == 'none') {
+      const msg = 'There is no model in the viewport yet.';
+      _say(false, msg);
+      return msg;
+    }
+    final r = await _runViewport({
+      'action': 'lipsync',
+      'cues': cheLipSyncCues(CheLiveStudio.lipSyncTestLine),
+      'source': 'text',
+    });
+    if (r == null || r['ok'] != true) {
+      final msg = 'That did not work: ${'${r?['note'] ?? ''}'.trim().isEmpty ? 'the 3D view did not answer.' : r!['note']}';
+      _say(false, msg);
+      return msg;
+    }
+    final morph = '${r['mouth_morph'] ?? mouthMorph ?? 'mouth'}';
+    final msg = '${CheLiveStudio.lipSyncTestLine} The mouth moves on the $morph shape key, timed from the words, '
+        'so it is approximate.';
+    _say(true, msg);
+    return msg;
   }
 
   Future<String> _post(String path, [Map<String, dynamic>? body]) async {
@@ -707,6 +830,12 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
     }
     final cmd = cheViewportCommand(t);
     if (cmd != null) return viewportCommand(cmd);
+    if (RegExp(
+      r'^(?:make (?:her|him|it|them|che|the (?:character|model)) (?:talk|speak)|(?:run |do |try )?(?:a |the )?lip ?sync(?: test)?|'
+      r'test (?:the )?lip ?sync|talk test)$',
+    ).hasMatch(t)) {
+      return lipSyncTest();
+    }
     final play = RegExp(
       r'^(?:animate(?: (?:the|this|my))?(?: character| model| it)?|play(?: the)?(?: (\w+))?(?: animation| clip)?)$',
     ).firstMatch(t);
@@ -829,6 +958,7 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
                   _tool('Side', Icons.account_circle_outlined, () => viewportCommand({'action': 'view', 'deg': 90})),
                   _tool('Reset view', Icons.center_focus_strong_rounded, () => viewportCommand({'action': 'reset'})),
                   _tool('Turntable', Icons.autorenew, () => viewportCommand({'action': 'spin', 'on': true})),
+                  _tool('Lip sync test', Icons.record_voice_over_rounded, lipSyncTest),
                   if (clips.isNotEmpty)
                     _tool(
                       playing == null ? 'Animate' : 'Stop animation',

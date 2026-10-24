@@ -54,6 +54,121 @@ let radius = 1, target = new THREE.Vector3();
 const orbit = { yaw: 0.35, pitch: 0.12, dist: 1, home: { yaw: 0.35, pitch: 0.12, dist: 1 }, spin: false };
 let dirty = true, paused = false, last = performance.now();
 
+// ---------- face: lip sync and blinking on the model's own shape keys (morph targets)
+// The app sends either Rhubarb-style mouth cues [{start, end, value: 'A'..'H' | 'X'}] or an amplitude envelope
+// {rate_hz, values: [0..1]}; the render loop eases the mouth toward each target. Only shape keys the model really has
+// are driven, and the command is refused when there is no mouth shape key.
+// Rhubarb Lip Sync mouth shapes: A closed (M, B, P), B slightly open (most consonants), C open (EH), D wide (AA),
+// E rounded (AO), F puckered (OO, W), G teeth on lip (F, V), H tongue (L), X rest.
+const VISEME_OPEN = { A: 0, B: 0.22, C: 0.5, D: 0.85, E: 0.6, F: 0.32, G: 0.14, H: 0.4, X: 0 };
+const VISEME_SMILE = { B: 0.06, C: 0.2, D: 0.12, H: 0.08 };
+const MOUTH_NAMES = ['mouth_open', 'mouthopen', 'jaw_open', 'jawopen', 'viseme_aa'];
+const face = { meshes: [], mouth: null, smile: null, blinkL: null, blinkR: null, blinkOn: false,
+  speech: null, open: 0, grin: 0, written: false, nextBlink: 0, blinkAt: -1 };
+const norm = (n) => String(n).toLowerCase().replace(/[^a-z0-9_]/g, '');
+
+/** Finds the face shape keys in the loaded model: every mesh that has them (body, teeth, tongue) moves together. */
+function scanFace() {
+  Object.assign(face, { meshes: [], mouth: null, smile: null, blinkL: null, blinkR: null, speech: null, open: 0, grin: 0, written: false, blinkAt: -1 });
+  const all = new Set();
+  if (!model) return [];
+  model.traverse((o) => {
+    if (!o.isMesh || !o.morphTargetDictionary || !o.morphTargetInfluences) return;
+    face.meshes.push(o);
+    for (const n of Object.keys(o.morphTargetDictionary)) all.add(n);
+  });
+  const names = [...all];
+  const pick = (wanted) => { for (const w of wanted) { const hit = names.find((n) => norm(n) === w); if (hit) return hit; } return null; };
+  face.mouth = pick(MOUTH_NAMES);
+  face.smile = pick(['smile', 'mouth_smile', 'mouthsmile']);
+  face.blinkL = pick(['blink_l', 'eyeblink_l', 'eyeblinkleft', 'blink_left']);
+  face.blinkR = pick(['blink_r', 'eyeblink_r', 'eyeblinkright', 'blink_right']);
+  face.blinkOn = Boolean(face.blinkL || face.blinkR);
+  face.nextBlink = performance.now() / 1000 + 1.5 + Math.random() * 2;
+  return names;
+}
+function setMorph(name, value) {
+  if (!name) return;
+  for (const m of face.meshes) { const i = m.morphTargetDictionary[name]; if (i !== undefined) m.morphTargetInfluences[i] = value; }
+}
+function readMorph(name) {
+  for (const m of face.meshes) { const i = m.morphTargetDictionary[name]; if (i !== undefined) return m.morphTargetInfluences[i]; }
+  return null;
+}
+/** Valid mouth cues only, in time order; anything malformed is dropped rather than guessed. */
+function cleanCues(list) {
+  if (!Array.isArray(list)) return [];
+  return list.slice(0, 6000)
+    .map((c) => ({ start: Number(c && c.start), end: Number(c && c.end), value: String(c && c.value || '').toUpperCase() }))
+    .filter((c) => Number.isFinite(c.start) && Number.isFinite(c.end) && c.end > c.start && c.start >= 0 && c.value in VISEME_OPEN)
+    .sort((a, b) => a.start - b.start);
+}
+/** What the mouth should be doing `t` seconds into the speech: [open, smile]. */
+function speechTarget(sp, t) {
+  if (sp.cues) {
+    while (sp.i < sp.cues.length - 1 && sp.cues[sp.i].end <= t) sp.i += 1;
+    const c = sp.cues[sp.i];
+    if (!c || t < c.start || t >= c.end) return [0, 0];
+    return [VISEME_OPEN[c.value], VISEME_SMILE[c.value] || 0];
+  }
+  const x = t * sp.rate, k = Math.floor(x), f = x - k, v = sp.values;
+  if (k >= v.length) return [0, 0];
+  const a = v[k], b = k + 1 < v.length ? v[k + 1] : 0;
+  return [Math.min(1, Math.pow(a + (b - a) * f, 0.8) * 1.05), 0];
+}
+function startSpeech(cmd) {
+  if (!model) return [false, 'There is no model in the viewport yet.'];
+  if (!face.mouth) return [false, 'This model has no mouth_open shape key, so its mouth cannot move.'];
+  const now = performance.now() / 1000;
+  const env = cmd.envelope || (Array.isArray(cmd.values) ? cmd : null);
+  if (Array.isArray(cmd.cues)) {
+    const cues = cleanCues(cmd.cues);
+    if (!cues.length) return [false, 'No usable mouth cues were sent.'];
+    const end = Math.max(cues[cues.length - 1].end, Number(cmd.duration) || 0);
+    face.speech = { t0: now, end, cues, i: 0 };
+    return [true, `Lip sync on the ${face.mouth} shape key${face.smile ? ` with ${face.smile}` : ''}: ${cues.length} mouth cues over ${end.toFixed(1)} seconds.`];
+  }
+  if (env && Array.isArray(env.values)) {
+    const rate = Math.max(1, Math.min(200, Number(env.rate_hz) || 0));
+    const values = env.values.slice(0, 30000).map((v) => Math.max(0, Math.min(1, Number(v) || 0)));
+    if (!values.length || !(Number(env.rate_hz) > 0)) return [false, 'No usable amplitude values were sent.'];
+    const end = Number(cmd.duration || env.duration) || values.length / rate;
+    face.speech = { t0: now, end, values, rate };
+    return [true, `Lip sync on the ${face.mouth} shape key: ${values.length} amplitude values at ${rate} per second over ${end.toFixed(1)} seconds.`];
+  }
+  return [false, 'No mouth cues or amplitude values were sent.'];
+}
+/** One frame of the face; true when a shape key changed and the frame must be drawn. */
+function faceStep(now, dt) {
+  if (!face.meshes.length) return false;
+  let changed = false;
+  if (face.mouth) {
+    let want = [0, 0];
+    if (face.speech) {
+      const t = now - face.speech.t0;
+      if (t >= face.speech.end) { face.speech = null; tellApp({ type: 'speech_end' }); } else want = speechTarget(face.speech, t);
+    }
+    const speaking = Boolean(face.speech) || face.open > 0.002 || face.grin > 0.002;
+    if (speaking) {
+      // Opening is quicker than closing, like a jaw; about 40 ms and 70 ms time constants.
+      face.open += (want[0] - face.open) * (1 - Math.exp(-dt * (want[0] > face.open ? 25 : 14)));
+      face.grin += (want[1] - face.grin) * (1 - Math.exp(-dt * 10));
+      if (!face.speech && face.open <= 0.002 && face.grin <= 0.002) { face.open = 0; face.grin = 0; }
+      setMorph(face.mouth, face.open); setMorph(face.smile, face.grin); face.written = true; changed = true;
+    } else if (face.written) { setMorph(face.mouth, 0); setMorph(face.smile, 0); face.written = false; changed = true; }
+  }
+  if (face.blinkOn && (face.blinkL || face.blinkR)) {
+    if (face.blinkAt < 0 && now >= face.nextBlink) face.blinkAt = now;
+    if (face.blinkAt >= 0) {
+      // A blink: about 70 ms closing, 110 ms opening; the next one 2 to 6 seconds later, now and then a double blink.
+      const t = now - face.blinkAt, v = t < 0.07 ? t / 0.07 : t < 0.18 ? 1 - (t - 0.07) / 0.11 : 0;
+      setMorph(face.blinkL, v); setMorph(face.blinkR, v); changed = true;
+      if (t >= 0.18) { face.blinkAt = -1; face.nextBlink = now + (Math.random() < 0.12 ? 0.25 : 2 + Math.random() * 4); }
+    }
+  } else if (face.blinkAt >= 0) { setMorph(face.blinkL, 0); setMorph(face.blinkR, 0); face.blinkAt = -1; changed = true; }
+  return changed;
+}
+
 function frameDistance() { return radius / Math.sin(THREE.MathUtils.degToRad(camera.fov) / 2) * 1.08; }
 function place() {
   const d = frameDistance() * orbit.dist;
@@ -77,6 +192,7 @@ function clearModel() {
   scene.remove(model); if (bones) { scene.remove(bones); bones = null; } speed = 1; held = false;
   model.traverse((o) => { if (o.geometry) o.geometry.dispose(); const m = o.material; for (const x of Array.isArray(m) ? m : m ? [m] : []) { for (const t of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap']) x[t]?.dispose?.(); x.dispose(); } });
   model = null; mixer = null; actions = {}; playing = null;
+  Object.assign(face, { meshes: [], mouth: null, smile: null, blinkL: null, blinkR: null, blinkOn: false, speech: null, open: 0, grin: 0, written: false, blinkAt: -1 });
 }
 
 /** Shows one GLB (base64). `info.label` is what the app says the model is; the page reports what it really parsed. */
@@ -107,6 +223,7 @@ function loadModel(b64, info = {}) {
     target.copy(centre);
     floor.position.set(centre.x, box.min.y - radius * 0.005, centre.z); floor.scale.setScalar(radius * 0.85);
     ring.position.set(centre.x, box.min.y, centre.z); ring.scale.setScalar(radius * 0.85);
+    const morphs = scanFace();
     if (gltf.animations && gltf.animations.length) {
       mixer = new THREE.AnimationMixer(model);
       for (const clip of gltf.animations) actions[clip.name] = mixer.clipAction(clip);
@@ -116,7 +233,7 @@ function loadModel(b64, info = {}) {
     empty.style.display = 'none';
     stage.setAttribute('aria-label', `3D viewport showing ${info.label || 'a model'}.`);
     tellApp({ type: 'model', label: info.label || '', meshes, vertices, triangles: Math.round(triangles), materials: [...materials].slice(0, 12),
-      clips: Object.keys(actions), height_m: +size.y.toFixed(3), width_m: +size.x.toFixed(3) });
+      clips: Object.keys(actions), morphs: morphs.slice(0, 40), mouth_morph: face.mouth, blink: face.blinkOn, height_m: +size.y.toFixed(3), width_m: +size.x.toFixed(3) });
   }, (err) => tellApp({ type: 'error', message: `The model could not be read: ${String(err && err.message || err).slice(0, 120)}` }));
 }
 
@@ -140,6 +257,15 @@ function view(cmd = {}) {
   else if (a === 'spin') { orbit.spin = cmd.on !== false; }
   else if (a === 'animate') { ok = play(cmd.clip); note = ok ? `Playing ${playing}.` : 'This model has no animation clips.'; }
   else if (a === 'stop') { if (mixer) { mixer.stopAllAction(); playing = null; } }
+  else if (a === 'lipsync' || a === 'speak') { [ok, note] = startSpeech(cmd); }
+  else if (a === 'stop_speaking') {
+    note = face.speech ? 'Mouth back at rest.' : 'Nothing was speaking; the mouth is at rest.';
+    face.speech = null;
+  }
+  else if (a === 'blink') {
+    if (!face.blinkL && !face.blinkR) { ok = false; note = 'This model has no blink shape keys.'; }
+    else { face.blinkOn = cmd.on !== false; note = face.blinkOn ? `Blinking on ${[face.blinkL, face.blinkR].filter(Boolean).join(' and ')}.` : 'Blinking off.'; }
+  }
   else if (a === 'skeleton') {
     let rigged = false; if (model) model.traverse((o) => { if (o.isSkinnedMesh) rigged = true; });
     if (!rigged) { ok = false; note = 'This model has no skeleton.'; }
@@ -162,7 +288,8 @@ function view(cmd = {}) {
   }
   else { ok = false; note = 'Unknown viewport command.'; }
   clampOrbit(); place(); dirty = true;
-  tellApp({ type: 'done', action: a, ok, note, playing, paused: held, speed, skeleton: Boolean(bones), clips: Object.keys(actions) });
+  tellApp({ type: 'done', action: a, ok, note, playing, paused: held, speed, skeleton: Boolean(bones), clips: Object.keys(actions),
+    mouth_morph: face.mouth, speaking: Boolean(face.speech), blink: face.blinkOn });
   report();
 }
 
@@ -203,6 +330,8 @@ function frame(now) {
   if (!paused) {
     if (orbit.spin) { orbit.yaw += dt * 0.6; place(); dirty = true; }
     if (mixer && playing) { mixer.update(dt); dirty = true; }
+    // After the clips, so speech wins over any mouth keys a clip carries.
+    if (faceStep(now / 1000, dt)) dirty = true;
     if (dirty) { renderer.render(scene, camera); dirty = false; }
   }
   requestAnimationFrame(frame);
@@ -213,6 +342,10 @@ window.CHE.loadModel = loadModel;
 window.CHE.view = view;
 window.CHE.clear = () => { clearModel(); empty.style.display = 'flex'; stage.setAttribute('aria-label', '3D viewport. No model loaded.'); dirty = true; };
 window.CHE.pause = (p) => { paused = !!p; dirty = true; };
+// For checks (tools/studio_lipsync_check.mjs): the shape-key values really set on the meshes.
+window.CHE.face = () => ({ mouth_morph: face.mouth, smile_morph: face.smile, blink: face.blinkOn, speaking: Boolean(face.speech),
+  mouth: face.mouth ? readMorph(face.mouth) : null, smile: face.smile ? readMorph(face.smile) : null,
+  blink_l: face.blinkL ? readMorph(face.blinkL) : null, blink_r: face.blinkR ? readMorph(face.blinkR) : null });
 resize(); place();
 requestAnimationFrame(frame);
 tellApp({ type: 'page_ready', webgl: !!renderer.getContext() });
