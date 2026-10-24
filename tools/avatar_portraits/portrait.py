@@ -117,6 +117,11 @@ if os.environ.get('DIAG'):
         if ob.type == 'MESH': ob.hide_render = True
 print('STRANDS', len(strands), 'points', len(flat) // 3, flush=True)
 
+if os.environ.get('SKIN') == 'v3':
+    import sys; sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from skin_v3 import upgrade_skin
+    print('SKIN v3', bool(upgrade_skin()), flush=True)
+
 eye = (rig.matrix_world @ rig.pose.bones['eye_l'].head + rig.matrix_world @ rig.pose.bones['eye_r'].head) / 2
 tgt = bpy.data.objects.new('T', None); sc.collection.objects.link(tgt); tgt.location = eye + Vector((0, 0, -0.06))
 cam = bpy.data.objects.new('Cam', bpy.data.cameras.new('Cam')); sc.collection.objects.link(cam); sc.camera = cam
@@ -151,6 +156,8 @@ for ex in os.environ.get('EXPRS', 'neutral').split(','):
         for kb in o.data.shape_keys.key_blocks[1:]: kb.value = EXPR[ex].get(kb.name, 0.0)
     for view in os.environ.get('VIEWS', 'front').split(','):
         a = math.radians(VIEWS[view])
+        # CLOSE=1: a tight face crop (135 mm at the same distance) where pores and the eye surface are visible.
+        if os.environ.get('CLOSE'): cam.data.lens = 135
         dist = 3.3 if BODY else 1.05
         cam.location = tgt.location + Vector((-math.sin(a) * dist, -math.cos(a) * dist, 0.04 + (0.0 if BODY else 0.04)))
         sc.render.filepath = os.path.join(OUT, f"che_{'body_' if BODY else ''}{view}_{ex}.png")
