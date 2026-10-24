@@ -326,7 +326,7 @@ else:
         hc = [float(x) / 255 for x in os.environ['HAIR_SRGB'].split(',')]
         hn = hair.data.materials[0].node_tree.nodes['Principled Hair BSDF']
         if max(hc) - min(hc) < 0.12 and max(hc) < 0.35:
-            hn.inputs['Melanin'].default_value = min(1.0, 1.0 - sum(hc) / 3 * 1.6)
+            hn.inputs['Melanin'].default_value = min(1.0, 1.0 - sum(hc) / 3 * 0.5)   # near-black stays near-black (0.96 for CHE)
             hn.inputs['Melanin Redness'].default_value = min(1.0, max(0.0, (hc[0] - hc[2]) * 6))
         else:
             hn.parametrization = 'COLOR'
