@@ -20,6 +20,7 @@ from mathutils import Vector
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, '..', 'avatar_portraits'))
+sys.path.insert(0, HERE)
 from strand_hair import build_strand_hair  # noqa: E402
 
 STEPS = [s for s in os.environ.get('FACE_STEPS', '').split(',') if s]
@@ -107,18 +108,32 @@ if 'skin' in STEPS:
     b.inputs['Specular IOR Level'].default_value = 0.5
 
 # ── Hair (strands, as in the portraits) ─────────────────────────────────────────────────────────────────────────────
-build_strand_hair(sc, strands_per_card=int(os.environ.get('STRANDS', '90')), parent_bone=None)
+if os.environ.get('NOHAIR'):  # framing probes only: hide the cards, skip the slow strand build
+    bpy.data.objects['Hair'].hide_render = True
+else:
+    build_strand_hair(sc, strands_per_card=int(os.environ.get('STRANDS', '90')), parent_bone=None)
 
 # ── Light: reference match (warm window key, soft bounce, defocused interior) ───────────────────────────────────────
 for o in [o for o in sc.objects if o.type == 'LIGHT']:
     o.hide_render = True
 eye = (rig.matrix_world @ rig.pose.bones['eye_l'].head + rig.matrix_world @ rig.pose.bones['eye_r'].head) / 2
 head_bone = rig.pose.bones['head']
-fwd = (rig.matrix_world.to_3x3() @ (head_bone.matrix.to_3x3() @ Vector((0, 1, 0)))).normalized()
+# Forward is from the head joint toward the eyes (the bone's own Y axis runs up the neck, not out of the face).
+fwd = eye - rig.matrix_world @ head_bone.head
 fwd.z = 0; fwd.normalize()
 right = Vector((fwd.y, -fwd.x, 0)).normalized()
 up = Vector((0, 0, 1))
 tgt = bpy.data.objects.new('FaceTarget', None); sc.collection.objects.link(tgt); tgt.location = eye - up * 0.05
+
+# ── Step: eyes (corneas, strand lashes, strand brows) ───────────────────────────────────────────────────────────────
+if 'eyes' in STEPS:
+    from eyes_brows import add_corneas, brow_strands, lash_strands
+    add_corneas(fwd)
+    lashes_card = bpy.data.objects.get('Lashes')
+    if lashes_card: lashes_card.hide_render = True
+    lash_strands(fwd, up)
+    brow_strands(fwd, up)
+    print('EYES corneas + strand lashes + strand brows', flush=True)
 
 
 def area(name, pos, size, energy, color):
