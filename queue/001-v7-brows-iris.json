@@ -1,0 +1,8 @@
+{
+ "id": "v7-brows-iris",
+ "views": "0,45,90",
+ "settings": {"BROW_N": "1000", "BROW_W": "1.8", "IRIS": "2.5"},
+ "samples": 64,
+ "res": 480,
+ "note": "Face v7 on the T4: feathered wider brows, warmer iris (CPU probe 2c68b55 looked right in front view)"
+}
