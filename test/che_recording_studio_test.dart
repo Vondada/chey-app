@@ -67,6 +67,43 @@ class FakeAudio implements CheStudioAudio {
 
   @override
   Future<Map<String, dynamic>> route() async => {'route': routeKind};
+
+  /// Null: this build has no encoder (like an installed app from before the native code shipped).
+  Uint8List Function(Uint8List wav)? m4a;
+  Uint8List Function(Uint8List bytes, String ext)? decoder;
+  final monitorCalls = <String>[];
+  Map<String, Object>? monitorFx;
+
+  @override
+  Future<Uint8List> encodeM4a(Uint8List wav) async {
+    if (m4a == null) throw CheAudioUnavailable('M4A export needs the next CHE app build.');
+    return m4a!(wav);
+  }
+
+  @override
+  Future<Uint8List> decodeToWav(Uint8List bytes, String ext) async {
+    if (decoder == null) throw CheAudioUnavailable('Importing ${ext.toUpperCase()} needs the next CHE app build.');
+    return decoder!(bytes, ext);
+  }
+
+  @override
+  Future<Map<String, dynamic>> startMonitor(Map<String, Object> effects, {bool allowSpeaker = false}) async {
+    monitorCalls.add('start');
+    monitorFx = effects;
+    if (routeKind == 'speaker' && !allowSpeaker) {
+      return {'monitoring': false, 'reason': 'speaker', 'message': 'Live monitoring is off because sound is coming from the iPhone speaker.'};
+    }
+    return {'monitoring': true};
+  }
+
+  @override
+  Future<void> updateMonitor(Map<String, Object> effects) async {
+    monitorCalls.add('update');
+    monitorFx = effects;
+  }
+
+  @override
+  Future<void> stopMonitor() async => monitorCalls.add('stop');
 }
 
 Future<CheStudioController> studio(Directory dir, FakeAudio audio) async {
