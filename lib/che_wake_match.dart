@@ -54,3 +54,37 @@ bool cheSoundsComplete(String words) {
   if (cleaned.isEmpty || cleaned.split(RegExp(r'\s+')).length < 2) return false;
   return !cheSoundsUnfinished(words);
 }
+
+/// The owner's words spoken while CHE was still answering his last request.
+///
+/// The owner said "What's my favorite drink?", CHE began "Sprite", and he said
+/// "No, strawberry Sprite." while she was still answering. Those words used to
+/// be dropped because a request was in flight. They are held here instead,
+/// newest wins, and sent as the next turn as soon as the current one finishes,
+/// so the Worker sees them right after CHE's "Sprite".
+class CheHeldUtterance {
+  String? _text;
+
+  /// The held words, or null when nothing is held.
+  String? get text => _text;
+  bool get isEmpty => _text == null;
+
+  /// Holds [raw] for the next turn, without a leading wake name. Only the wake
+  /// name, or silence, is not held. Returns whether something is now held.
+  bool hold(String raw) {
+    final words = (cheWakeRemainder(raw) ?? raw).trim();
+    if (words.isEmpty) return false;
+    _text = words;
+    return true;
+  }
+
+  /// The held words for sending; nothing is held afterwards.
+  String? take() {
+    final words = _text;
+    _text = null;
+    return words;
+  }
+
+  /// New chat or Stop: the held words are not sent.
+  void drop() => _text = null;
+}

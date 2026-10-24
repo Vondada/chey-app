@@ -551,6 +551,7 @@ export function analyze(data) {
     data: data.data,
     live: data.live,
     as_of: last.t,
+    interval: data.interval || '1d',
     price: last.c,
     trend: trend(sw),
     swing_highs: sw.highs.slice(-3).map((s) => ({ t: s.t, price: round(s.price) })),
@@ -561,8 +562,9 @@ export function analyze(data) {
 }
 
 export function speakAnalysis(a) {
+  const bars = a.interval && a.interval !== '1d' ? ` on ${intervalLabel(a.interval)} bars` : '';
   const lines = [
-    `${a.symbol} at ${round(a.price)}${a.live ? ', live' : `, as of ${String(a.as_of).slice(0, 10)}`}.`,
+    `${a.symbol}${bars} at ${round(a.price)}${a.live ? ', live' : `, as of ${String(a.as_of).slice(0, 10)}`}.`,
     `Trend: ${a.trend}.`,
   ];
   if (a.swing_highs.length) lines.push(`Last swing high ${a.swing_highs[a.swing_highs.length - 1].price}. Last swing low ${a.swing_lows.length ? a.swing_lows[a.swing_lows.length - 1].price : 'none yet'}.`);
@@ -573,11 +575,13 @@ export function speakAnalysis(a) {
   return lines.join('\n');
 }
 
-export function speakBacktest(label, years, results) {
+/// `span` is the years of daily data (a number), or the honest span of intraday candles as words
+/// ("about 10 days of 15-minute bars"), so a 15-minute backtest is never read as years.
+export function speakBacktest(label, span, results) {
   const best = results[0];
   const lines = results.map((r) => `- ${r.name}: ${r.unseen.trades_count} unseen trades, ${r.unseen.win_rate}% wins, ${r.unseen.expectancy_r}R per trade, worst drawdown ${r.unseen.max_drawdown_r}R${r.passes ? ' (passes)' : ''}.`);
   return [
-    `Backtest on ${label}, about ${years} years of data. Last 30% kept unseen as the real test.`,
+    `Backtest on ${label}, ${typeof span === 'number' ? `about ${span} years of data` : span}. Last 30% kept unseen as the real test.`,
     ...lines,
     best?.passes ? `Best so far: ${best.name}. Paper trading only until it proves itself.` : 'None of the strategies passed on unseen data yet. I will not trust them with money.',
   ].join('\n');
@@ -726,26 +730,105 @@ const NASDAQ_FUTURES = /\b(m?nq(?:\s?=\s?f)?)(?![\w=])/i;
 // "Analyze MNQ", "what's MNQ doing", "MNQ structure", "how is NQ looking": a read of the market itself.
 const FUTURES_READ = /\b(?:analy[sz]e|analysis|structure|trend(?:ing)?|price\s+action|break\s+down)\b|\b(?:what|how)(?:'?s|\s+is)\s+(?:the\s+)?m?nq\b[\s\S]{0,12}\b(?:doing|looking|moving)\b/i;
 
-export function tradingIntent(message) {
+// Bar sizes the owner names ("the 15 minute", "hourly", "daily"), as Binance/chart interval ids. Word-bounded, so
+// "15 minute" is never read as "5 minute". Shared by the chart (trading_chart.js) and the crypto desk.
+const INTERVAL_WORDS = [
+  [/\b(?:1|one)[\s-]*(?:minute|min)s?\b/, '1m'], [/\b(?:5|five)[\s-]*(?:minute|min)s?\b/, '5m'], [/\b(?:15|fifteen)[\s-]*(?:minute|min)s?\b/, '15m'],
+  [/\b(?:30|thirty)[\s-]*(?:minute|min)s?\b/, '30m'], [/\b(?:1|one)[\s-]*hours?\b|\bhourly\b/, '1h'], [/\b(?:4|four)[\s-]*hours?\b/, '4h'],
+  [/\bdaily\b|\b(?:1|one)[\s-]*days?\b|\bday\s+chart\b/, '1d'], [/\bweekly\b|\b(?:1|one)[\s-]*weeks?\b/, '1w'],
+  [/\b(1|2|3|5|15|30)\s?m\b/, null], [/\b(1|4)\s?h\b/, null], [/\b1\s?[dw]\b/, null],
+];
+export function intervalFromWords(words) {
+  const w = String(words || '').toLowerCase();
+  for (const [re, id] of INTERVAL_WORDS) {
+    const m = re.exec(w);
+    if (m) return id || m[0].replace(/\s/g, '');
+  }
+  return null;
+}
+export function intervalLabel(id) {
+  return ({ '1m': '1-minute', '5m': '5-minute', '15m': '15-minute', '30m': '30-minute', '1h': 'hourly', '4h': '4-hour', '1d': 'daily', '1w': 'weekly' })[id] || id;
+}
+
+// Words a short follow-up uses that are never a market: "what about now", "and the other one", "the same for the 15 minute".
+const NOT_A_MARKET = new Set(['that', 'this', 'it', 'them', 'now', 'then', 'same', 'other', 'one', 'ones', 'the', 'chart', 'and', 'also', 'too', 'all', 'again', 'there',
+  'here', 'today', 'tomorrow', 'yesterday', 'minute', 'minutes', 'min', 'mins', 'hour', 'hours', 'hourly', 'day', 'days', 'daily', 'week', 'weekly', 'second', 'seconds',
+  'tick', 'ticks', 'bar', 'bars', 'timeframe', 'time', 'frame', 'please', 'sir', 'what', 'about', 'how', 'why', 'when', 'yes', 'no', 'okay', 'ok', 'last', 'next', 'first',
+  'trade', 'trades', 'trading', 'paper', 'live', 'desk', 'crypto', 'stock', 'stocks', 'market', 'markets', 'strategy', 'research', 'both', 'each', 'every', 'more', 'less',
+  'rest', 'done', 'still', 'later', 'earlier', 'back', 'up', 'down', 'with', 'without', 'for', 'on', 'in', 'of', 'to', 'a', 'an', 'i', 'che', 'chey', 'etf', 'ai', 'usd', 'pm', 'am']);
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const NAME_WORDS = Object.keys(NAMES).sort((a, b) => b.length - a.length).map((name) => [new RegExp(`(?:^|[\\s,])${escapeRe(name)}(?=[\\s,?!.]|$)`, 'i'), name]);
+
+/**
+ * The market a short follow-up names, in the owner's word ("ETH", "bitcoin", "MSFT", "NQ"), or '' when it names none
+ * ("and the 15 minute?", "what about the other one?"). The word still goes through resolveSymbol like any other.
+ */
+export function symbolFromFollowup(words) {
+  const text = String(words || '').replace(/[’']/g, "'").replace(/[?!.,;:]+/g, ' ').trim();
+  if (!text) return '';
+  const futures = NASDAQ_FUTURES.exec(text)?.[1].replace(/\s/g, '');
+  if (futures) return futures;
+  for (const [re, name] of NAME_WORDS) if (re.test(text)) return name;
+  // A ticker: written in capitals anywhere ("the same for MSFT"), or spoken after for/about/on/of/to ("what about msft").
+  const caps = text.match(/\b[A-Z]{1,5}\b/g)?.find((w) => !NOT_A_MARKET.has(w.toLowerCase()));
+  if (caps) return caps;
+  const spoken = /\b(?:for|about|on|of|to|in|try|do|and)\s+(?:the\s+)?([a-z]{1,5})\b/i.exec(text)?.[1];
+  return spoken && !NOT_A_MARKET.has(spoken.toLowerCase()) ? spoken : '';
+}
+
+const SUBJECT_KINDS = new Set(['analyze', 'backtest', 'watch']);
+
+/**
+ * The chart-lab request in [message]. A follow-up ("what about ETH?", "and the 15 minute?") carries the owner's new
+ * words alone in `followup` and the earlier request in `referent` (speech_intent.js): the new market or bar size
+ * comes from the new words and everything else from the earlier request, so "Analyze the AAPL chart" → "what about
+ * bitcoin?" reads bitcoin, never AAPL again. A follow-up that names neither asks one question (kind 'clarify').
+ */
+export function tradingIntent(message, { followup = '', referent = '' } = {}) {
+  if (followup) {
+    const own = tradingIntent(followup);
+    if (own) return own;
+    const base = tradingIntent(referent);
+    if (!base || !SUBJECT_KINDS.has(base.kind)) return null;
+    const symbol = symbolFromFollowup(followup);
+    const interval = intervalFromWords(followup);
+    if (!symbol && !interval) {
+      return { kind: 'clarify', about: base.kind, question: `Which market or bar size should I ${base.kind === 'backtest' ? 'backtest' : base.kind === 'watch' ? 'paper trade' : 'analyze'}, sir? Say, for example, "ETH" or "the 15 minute".` };
+    }
+    return { kind: base.kind, symbol: symbol || base.symbol, ...(interval || base.interval ? { interval: interval || base.interval } : {}) };
+  }
   const text = String(message || '').trim().replace(/[’']/g, "'");
   if (/\bhow(?:'s| is| are)\b[\s\S]{0,20}\b(?:trades?|trading|paper)\b|\b(?:trading|paper) (?:report|summary|journal)\b/i.test(text)) return { kind: 'book' };
   const futures = NASDAQ_FUTURES.exec(text)?.[1].replace(/\s/g, '') || '';
   const pick = () => {
-    const m = SYMBOL_HINT.exec(text.replace(/\b(?:swing (?:highs?|lows?)|entry points?|entries|candles?|patterns?|the chart)\b/gi, ' '));
+    // "Analyze the 15 minute ETH chart": the bar size is not the market.
+    const m = SYMBOL_HINT.exec(text.replace(/\b(?:swing (?:highs?|lows?)|entry points?|entries|candles?|patterns?|the chart)\b/gi, ' ')
+      .replace(/\b(?:\d+|one|five|fifteen|thirty|four)[\s-]*(?:minute|min|hour|second|day|week)s?\b|\b(?:daily|weekly|hourly)\b/gi, ' ').replace(/\s{2,}/g, ' '));
     const hinted = m ? m[1].trim() : '';
     // "What's MNQ doing in the last hour": a named future wins over a stray word ("last"), not over a known market.
     return futures && !NAMES[hinted.toLowerCase()] ? futures : hinted;
   };
+  // "Analyze the 15 minute ETH chart": the bar size asked for rides along; daily stays the default.
+  const interval = intervalFromWords(text);
+  const sized = (intent) => (interval && interval !== '1d' ? { ...intent, interval } : intent);
   if (/\b(?:what (?:have|did) you (?:learn|learned)|trading (?:skills?|lessons?|learning)|learn(?:ed|ing)? (?:about )?trading|new (?:trading )?(?:skills?|strateg(?:y|ies)))\b/i.test(text) && /\b(?:trad|market|futures|stocks?|crypto)/i.test(text)) return { kind: 'learning' };
-  if (/\bbacktest/i.test(text) && !/\b(?:code|app|feature|function)\b/i.test(text)) return { kind: 'backtest', symbol: pick() || 'BTCUSDT' };
+  if (/\bbacktest/i.test(text) && !/\b(?:code|app|feature|function)\b/i.test(text)) return sized({ kind: 'backtest', symbol: pick() || 'BTCUSDT' });
   if (/\b(?:paper trade|watch)\b[\s\S]{0,30}/i.test(text) && /\b(?:paper|trade|market)\b/i.test(text)) return { kind: 'watch', symbol: pick() };
   if (/\b(?:swing (?:highs?|lows?)|entry points?|entries|candlestick|scan|analy[sz]e)\b/i.test(text) && /\b(?:chart|market|stock|crypto|bitcoin|btc|eth|ethereum|solana|s&p|nasdaq|dow|swing|entry|entries|candlestick|ticker|price action)\b/i.test(text)) {
-    return { kind: 'analyze', symbol: pick() || 'BTCUSDT' };
+    return sized({ kind: 'analyze', symbol: pick() || 'BTCUSDT' });
   }
   // Journal and feed questions about MNQ are answered earlier, by trading_live_chat.js liveIntent; an
   // order beside the read ("analyze MNQ and buy one") is the desk's.
   if (futures && FUTURES_READ.test(text) && !/\b(?:code|app|feature|function)\b/i.test(text) && !ORDER_ASK.test(withoutProhibitions(text))) {
-    return { kind: 'analyze', symbol: pick() };
+    return sized({ kind: 'analyze', symbol: pick() });
   }
   return null;
+}
+
+/// The honest span of a candle series for the backtest's first line: years of daily data, or days of intraday bars.
+export function candleSpan(candles, interval = '1d') {
+  const ms = Date.parse(candles[candles.length - 1].t) - Date.parse(candles[0].t);
+  if (interval === '1d' || interval === '1w') return Math.max(1, Math.round(ms / (365.25 * 86400000)));
+  const days = Math.max(1, Math.round(ms / 86400000));
+  return `about ${days} day${days === 1 ? '' : 's'} of ${intervalLabel(interval)} bars`;
 }

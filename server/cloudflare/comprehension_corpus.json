@@ -3,10 +3,10 @@
   "turns": [
     {"d":"memory","say":"CHE, remember that my car is a blue Honda.","route":"che_memory","effect":"act"},
     {"d":"memory","say":"remember my anniversary is may 4th","route":"che_memory","effect":"act"},
-    {"d":"memory","say":"Chay, what's my favorite color?","route":"che_memory","before":["Remember that my favorite color is blue."]},
-    {"d":"memory","say":"whats my favorite color","route":"che_memory","before":["Remember that my favorite color is blue."]},
+    {"d":"memory","say":"Chay, what's my favorite color?","route":["che_personal_recall","che_memory"],"before":["Remember that my favorite color is blue."]},
+    {"d":"memory","say":"whats my favorite color","route":["che_personal_recall","che_memory"],"before":["Remember that my favorite color is blue."]},
     {"d":"memory","say":"Do you still remember my favorite food?","route":["che_memory","che_memory_provenance","che_personal_recall"],"before":["Remember that my favorite food is pizza."]},
-    {"d":"memory","say":"What do you know about my dog?","route":["che_memory","che_memory_provenance"],"before":["Remember that my dog is named Rex."]},
+    {"d":"memory","say":"What do you know about my dog?","route":["che_personal_recall","che_memory","che_memory_provenance"],"before":["Remember that my dog is named Rex."]},
     {"d":"memory","say":"If I said 'remember that I love jazz', what would you do? Don't save it.","route":"model","ban":["remembered"]},
     {"d":"memory","say":"Remember that my sister is Ana, actually never mind.","route":"clarify","ban":["remembered"]},
     {"d":"memory","say":"never mind, what do you know about my dog","route":["che_memory","che_memory_provenance"],"before":["Remember that my dog is named Rex."]},

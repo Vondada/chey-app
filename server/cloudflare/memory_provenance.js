@@ -73,13 +73,33 @@ export function contentWords(text) {
  * True when one evidence text says most of what the claim says. A claim with
  * no content words of its own ("as you said, sir") asserts nothing to check.
  */
+// "your favorite color is green" claims a value for a subject; the stored record of that subject must hold that value.
+const SLOT_CLAIM = /\b(?:your|my|his|the owner s) ([a-z][a-z ]{1,40}?) (?:is|are|was|were) ([a-z0-9][a-z0-9 ]{0,60}?)(?: sir| now| today)?$/;
+const SLOT_RECORD = /^(?:my )?([a-z][a-z ]{1,40}?) (?:is|are|was|were) ([a-z0-9][a-z0-9 ]{0,80})$/;
+
+/**
+ * True when the claim is backed by one of the evidence texts: enough of its content words appear there, and, when it
+ * states a value for the owner's subject ("your favorite color is green"), the record of that subject holds that value.
+ * Overlap alone let a changed value through (subject-loss audit, 2026-10-24: "blue" on record, "green" in the reply).
+ */
 export function supportedBy(claim, evidenceTexts = []) {
   const words = contentWords(claim);
   if (!words.length) return true;
   const need = words.length === 1 ? 1 : Math.max(2, Math.ceil(words.length * 0.6));
+  const plain = plainWords(claim);
+  const slot = SLOT_CLAIM.exec(plain);
+  const claimedSubject = slot ? contentWords(slot[1]) : [];
+  const claimedValue = slot ? contentWords(slot[2]) : [];
   return evidenceTexts.some((text) => {
     const have = new Set(contentWords(text));
-    return words.filter((w) => have.has(w)).length >= need;
+    if (words.filter((w) => have.has(w)).length < need) return false;
+    if (!slot || !claimedValue.length) return true;
+    // The same subject on record with a different value is a contradiction, never support.
+    const record = SLOT_RECORD.exec(plainWords(text));
+    const sameSubject = record ? contentWords(record[1]).join(' ') === claimedSubject.join(' ') : false;
+    if (!sameSubject) return claimedValue.every((w) => have.has(w));
+    const recordValue = new Set(contentWords(record[2]));
+    return claimedValue.every((w) => recordValue.has(w));
   });
 }
 
@@ -200,9 +220,13 @@ const ASK_FORM = /^(?:(?:can|could|would|will) you (?:please )?)?(?:tell me|name
  * Returns { topic } (topic '' for "anything") or null. Statements and commands
  * ("I confirmed the order", "confirm my booking") are not questions about memory.
  */
+// "What were we just discussing?", "what was that about?": the subject of the last exchange, from the conversation.
+const DISCUSSING = /^(?:what (?:were|are) we (?:just )?(?:talking about|discussing|on about)|what was (?:that|this|it|the last thing) (?:all )?about|what did we (?:just )?(?:talk about|discuss)|what (?:were|was) we (?:just )?(?:discussing|talking about)|where were we|what was i (?:just )?(?:asking|saying|talking about))$/;
+
 export function ownerMemoryQuestion(message) {
   const q = plainWords(splitAsk(message).ask);
   if (!q || q.split(' ').length > 30 || FICTION_REQUEST.test(q)) return null;
+  if (DISCUSSING.test(q.replace(/\b(?:che|chay|chey|shay)\b ?/g, '').trim())) return { topic: '', discussion: true };
   // The question itself must ask about memory: "I confirmed the order, what
   // is next?" is a statement followed by an unrelated question.
   if (!ASK_FORM.test(q) && !/^(?:anything|something|one thing)\b/.test(q)) return null;
@@ -238,6 +262,16 @@ function sameSlot(a, b) {
  * Returns { answer, records: [ids], kind }.
  */
 export function answerOwnerMemoryQuestion(data = {}, question = {}, history = []) {
+  if (question.discussion) {
+    // The last exchange before this question, quoted as it happened: no summary a model could get wrong.
+    const turns = (Array.isArray(history) ? history : []).filter((turn) => String(turn?.content ?? turn?.text ?? '').trim());
+    const lastUser = [...turns].reverse().find((turn) => turn.role === 'user');
+    const lastReply = lastUser ? turns.slice(turns.indexOf(lastUser) + 1).find((turn) => turn.role === 'assistant') : null;
+    if (!lastUser) return { kind: 'none', records: [], answer: "I don't have our earlier messages in this conversation, sir, so I can't say what we were discussing." };
+    const asked = clip(String(lastUser.content ?? lastUser.text).replace(/```[\s\S]*?```/g, ' ').trim(), 200);
+    const replied = lastReply ? clip(String(lastReply.content ?? lastReply.text).replace(/```[\s\S]*?```/g, ' ').trim(), 240) : '';
+    return { kind: 'owner_attested', records: [], answer: `We were just on this, sir. You said: "${asked}"${replied ? ` and I answered: "${replied}"` : ', and I had not answered yet'}.` };
+  }
   if (question.recent) {
     const last = [...(Array.isArray(history) ? history : [])].reverse().find((turn) => turn?.role === 'user' && String(turn.content ?? turn.text ?? '').trim());
     return last
@@ -502,6 +536,9 @@ const EVIDENCE_ASK = [
   'who told you (?:that|this)',
   '(?:is|was) (?:that|this|it) (?:really )?(?:verified|confirmed|true|correct|accurate|real|right|a fact)',
   'did i (?:really |actually |ever )?(?:confirm|say|tell you|verify|approve|test) (?:that|this|it)(?: to you)?',
+  // "When did I say that?" / "when did I tell you that?": the record's date is the evidence (subject-loss audit, 2026-10-24).
+  'when did i (?:say|tell you|mention|confirm) (?:that|this|it)(?: to you)?',
+  'when was (?:that|this|it)(?: said| recorded| saved)?',
   'can you (?:prove|back up|verify|cite|source|fact check) (?:that|this|it|your answer|that answer)(?: for me)?',
   // "Show your evidence for that answer" (owner acceptance question 8, 2026-10-23) names the answer, like line 500 does.
   'show (?:me )?(?:the |your )?(?:evidence|proof|sources?|receipts?)(?: (?:for|behind) (?:that|this|it|your answer|that answer|the answer))?',

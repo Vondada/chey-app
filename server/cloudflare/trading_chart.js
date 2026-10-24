@@ -13,6 +13,7 @@ import { readTrades, overnightLevels } from './trading_evidence.js';
 import { LIVE_FEED, readLivePortfolios } from './trading_live.js';
 import { historyChart, provenanceOf } from './trading_visual.js';
 import { INTERVALS, describeFeed, marketUniverse, resolveTicker, universeCandles } from './market_universe.js';
+import { intervalFromWords, intervalLabel, symbolFromFollowup } from './trading_lab.js';
 
 export const ACCOUNTS = Object.freeze({
   alpaca_paper: { label: 'Alpaca PAPER', asset: 'stocks', mode: 'PAPER' },
@@ -223,8 +224,22 @@ export async function saveDrawings(storage, account, symbol, list, now = Date.no
   return { ok: true, drawings: clean };
 }
 
-/** "Draw a line at 21,450" / "draw a level at 21450 on MNQ": one horizontal level. Null otherwise. */
-export function drawIntent(message) {
+/**
+ * "Draw a line at 21,450" / "draw a level at 21450 on MNQ": one horizontal level. Null otherwise.
+ * A follow-up ("and one at 240" after "draw a line at 230 on AAPL") keeps the earlier symbol; a draw that names no
+ * symbol after "open the Alpaca chart for AAPL" takes that chart's.
+ */
+export function drawIntent(message, { followup = '', referent = '' } = {}) {
+  if (followup) {
+    const own = drawIntent(followup);
+    const base = drawIntent(referent);
+    const inherited = base?.symbol || chartIntent(referent)?.symbol || '';
+    if (own) return own.symbol || !inherited ? own : { ...own, symbol: inherited };
+    if (!base) return null;
+    const next = /\b(?:at|level|line|another(?:\s+one)?|one)\s+\$?([0-9][0-9,]*(?:\.[0-9]+)?)\b/.exec(String(followup).toLowerCase());
+    const price = next ? Number(next[1].replace(/,/g, '')) : NaN;
+    return Number.isFinite(price) && price > 0 && !intervalFromWords(followup) ? { kind: 'draw', drawing: { kind: 'hline', points: [{ price }] }, symbol: base.symbol } : null;
+  }
   const t = String(message || '').toLowerCase().replace(/[’']/g, "'");
   const m = /\b(?:draw|add|put|mark)\b[\s\S]{0,25}\b(?:line|level|horizontal line)\b[\s\S]{0,15}\bat\s+\$?([0-9][0-9,]*(?:\.[0-9]+)?)\b/.exec(t);
   if (!m) return null;
@@ -238,8 +253,62 @@ export function drawIntent(message) {
  * "Open Alpaca chart", "show the MNQ chart", "CHE, show EMA trades", "show strategy progress":
  * the chart (or the Strategies section) with the account, symbol and filter named. Null otherwise.
  */
-export function chartIntent(message) {
+const CHART_TIMEFRAMES = new Set(Object.keys(INTERVALS));
+
+/**
+ * The spoken reply and the phone's `chart` object for a chart_open intent. `lastSymbol` is the stock chart the owner
+ * last opened (stored as trading_chart_last_symbol), used when the request names none. The phone's Trading Room opens
+ * the futures chart when no account is named, and starts the chart on `chart.timeframe` (lib/rooms/che_trading_room.dart),
+ * so a bar size that chart does not offer is said plainly and the default bars it opens on are named (PR #515 review:
+ * the reply said 15-minute bars while the phone showed 5).
+ */
+export function chartOpenReply(ask = {}, { lastSymbol = '' } = {}) {
+  const symbol = ask.symbol || lastSymbol || '';
+  const account = ask.account || (lastSymbol ? 'alpaca_paper' : '');
+  let bars = '';
+  let note = '';
+  let timeframe = '';
+  if (ask.timeframe) {
+    const offered = (account || 'futures_paper') === 'futures_paper' ? FUTURES_TIMEFRAMES : Object.keys(TIMEFRAMES);
+    timeframe = offered.includes(ask.timeframe) ? ask.timeframe : '5m';
+    bars = ` on ${intervalLabel(timeframe)} bars`;
+    const list = offered.map(intervalLabel);
+    if (timeframe !== ask.timeframe) note = ` That chart has no ${intervalLabel(ask.timeframe)} bars; it offers ${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}.`;
+  }
+  const text = ask.section === 'setups'
+    ? (ask.answer === 'ready' ? 'Here are the setups CHE is following on this iPhone, sir.' : 'Opening the Setup Progress Board, sir. These are CHE PAPER ACCOUNT setups from the live Rithmic candles.')
+    : ask.section === 'strategies' ? 'Opening Strategies, sir.'
+      : ask.section === 'compare' ? 'Opening Side by Side, sir: your account beside CHE\'s paper account. Live orders stay disabled.'
+        : `Opening the ${account === 'alpaca_paper' ? 'Alpaca PAPER ' : account === 'futures_paper' ? 'MNQ paper ' : ''}chart${symbol ? ` for ${symbol}` : ''}${bars}${ask.filter?.strategy ? `, showing only ${ask.filter.strategy.toUpperCase()} trades` : ''}, sir.${note}`;
+  const chart = { section: ask.section, account: account || null, symbol: symbol || null, filter: ask.filter || null, ...(timeframe ? { timeframe } : {}), ...(ask.answer ? { answer: ask.answer } : {}) };
+  // The spoken stock chart is remembered, so "draw a line at 230" and "switch it to the 5 minute" inherit it.
+  return { text, chart, remember: ask.section === 'chart' && symbol && account !== 'futures_paper' ? symbol : '' };
+}
+export function chartIntent(message, { followup = '', referent = '' } = {}) {
+  // A follow-up ("switch it to the 5 minute", "now the same for MSFT") carries the owner's new words alone in `followup`
+  // and the earlier request in `referent` (speech_intent.js): the new symbol or bar size comes from the new words and the
+  // chart from the earlier request. A market the Alpaca chart cannot show asks one question instead of re-opening AAPL.
+  if (followup) {
+    const own = chartIntent(followup);
+    if (own) return own;
+    const base = chartIntent(referent);
+    if (!base || base.kind !== 'chart_open' || base.section !== 'chart') return null;
+    const word = symbolFromFollowup(followup);
+    const tf = intervalFromWords(followup);
+    if (!word && !tf) return null;
+    const futures = /^m?nq$/i.test(word);
+    if (word && !futures && !/^[a-z]{1,5}$/i.test(word)) {
+      return { kind: 'clarify', question: `That chart shows Alpaca PAPER stocks, sir, not ${word}. Say "analyze the ${word} chart" for a read of ${word}, or name a stock.` };
+    }
+    const account = futures ? 'futures_paper' : word ? 'alpaca_paper' : base.account;
+    return { ...base, account, symbol: futures ? word.toUpperCase() : word ? word.toUpperCase() : base.symbol, inherit: !word, ...(tf && CHART_TIMEFRAMES.has(tf) ? { timeframe: tf } : {}) };
+  }
   const t = String(message || '').toLowerCase().replace(/[’']/g, "'").replace(/^\s*(?:hey\s+)?(?:che|chey|chay)[,\s]+/, '');
+  // "Switch to the 15 minute chart", "change the chart to the 1 hour": the open chart's bar size; the symbol stays.
+  if (/^(?:switch|change|flip|move|put)\b[\s\S]{0,30}\b(?:chart|bars?|timeframe|time frame)\b/.test(t) && intervalFromWords(t)) {
+    const tf = intervalFromWords(t);
+    return { kind: 'chart_open', section: 'chart', account: '', symbol: '', inherit: true, ...(CHART_TIMEFRAMES.has(tf) ? { timeframe: tf } : {}) };
+  }
   if (/^(?:show|open|bring up|pull up|go to)\b[\s\S]{0,25}\bstrateg(?:y|ies)\s+(?:progress|section|page)\b/.test(t)) return { kind: 'chart_open', section: 'strategies' };
   // Signal Mode: "show setups", "show the setup progress board", "what setups are ready?". The board lives on the iPhone.
   if (/^(?:what|which|any)\b[\s\S]{0,25}\bsetups?\b[\s\S]{0,25}\b(?:ready|forming|triggered|active|near entry|right now)\b/.test(t)) return { kind: 'chart_open', section: 'setups', answer: 'ready' };
@@ -254,11 +323,13 @@ export function chartIntent(message) {
   if (/^(?:show|open|bring up|pull up|go to|see)\b/.test(t) && strat) {
     return { kind: 'chart_open', section: 'chart', account: 'futures_paper', filter: { strategy: strat[1] } };
   }
-  const m = /^(?:show|open|bring up|pull up|go to|see)\b[\s\S]{0,40}\bchart\b(?:\s+(?:for|of)\s+([a-z]{1,5}))?\s*[.!?]*$/.exec(t);
+  // "Open the Alpaca chart for AAPL on the 5 minute": an optional bar size after the symbol, or in front ("the 5 minute chart").
+  const m = /^(?:show|open|bring up|pull up|go to|see)\b[\s\S]{0,40}\bchart\b(?:\s+(?:for|of)\s+([a-z]{1,5}))?(?:\s+(?:on|at|in)\s+(?:the\s+)?[\w -]{1,24}?(?:\s+(?:chart|bars?|timeframe))?)?\s*[.!?]*$/.exec(t);
   if (!m) return null;
   const account = /\b(?:alpaca|stocks?)\b/.test(t) ? 'alpaca_paper' : /\b(?:mnq|nq|futures|tradovate)\b/.test(t) ? 'futures_paper' : '';
   const symbol = (m[1] || '').toUpperCase();
-  return { kind: 'chart_open', section: 'chart', account, symbol };
+  const tf = intervalFromWords(t);
+  return { kind: 'chart_open', section: 'chart', account, symbol, ...(tf && CHART_TIMEFRAMES.has(tf) ? { timeframe: tf } : {}) };
 }
 
 /**
