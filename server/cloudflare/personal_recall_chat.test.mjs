@@ -171,6 +171,35 @@ test('recording, spoken variants: "It’s strawberry Sprite." and "no strawberry
   }
 });
 
+// PR #515 review (P1): "Thank you, CHE." right after the answer was stored as "my favorite drink is Thank you, CHE".
+test('a thank-you or remark after a personal-fact answer is never stored as a correction', async () => {
+  for (const said of ['Thank you, CHE.', 'Thanks!', 'No thanks, CHE.', 'Great, thank you so much.', 'Cool.', 'Perfect.', 'Good to know.', 'Sounds good.', 'I love it.', "That's great.", 'Awesome, thanks CHE']) {
+    const che = await openChe(new Map(), { model: () => 'MODEL_FALLBACK' });
+    const say = await conversation(che);
+    await say('Remember that my favorite drink is Sprite');
+    const first = await say("What's my favorite drink?");
+    assert.match(first.reply, /^Your favorite drink is Sprite\./, said);
+    const reply = await say(said);
+    assert.notEqual(reply.meta.source, 'che_memory', said);
+    assert.doesNotMatch(reply.reply, /^Got it, sir/, said);
+    const texts = che.saved.get('che').memory_records.map((r) => r.text);
+    assert.deepEqual(texts.filter((t) => /favorite drink/i.test(t)), ['my favorite drink is Sprite'], said);
+    assert.equal(che.saved.get('che').memory_records.find((r) => r.text === 'my favorite drink is Sprite').active !== false, true, said);
+    const again = await say("What's my favorite drink?");
+    assert.match(again.reply, /^Your favorite drink is Sprite\./, said);
+  }
+  // The real correction, with a trailing "CHE" and a name that opens with an everyday word, still updates the fact.
+  for (const [said, value] of [['No, strawberry Sprite, CHE.', 'strawberry Sprite'], ['No, Cool Ranch soda.', 'Cool Ranch soda']]) {
+    const che = await openChe(new Map(), { model: () => 'MODEL_FALLBACK' });
+    const say = await conversation(che);
+    await say('Remember that my favorite drink is Sprite');
+    await say("What's my favorite drink?");
+    const fixed = await say(said);
+    assert.equal(fixed.meta.source, 'che_memory', said);
+    assert.equal(fixed.reply.startsWith(`Got it, sir: your favorite drink is ${value}.`), true, `${said} -> ${fixed.reply}`);
+  }
+});
+
 test('a value given after "I don\'t have a record" is saved as the fact and dated; "when did I tell you that?" cites the record', async () => {
   const che = await openChe(new Map(), { model: () => 'MODEL_FALLBACK' });
   const say = await conversation(che);

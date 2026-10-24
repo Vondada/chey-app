@@ -71,7 +71,7 @@ import { claimMatcher, disprovenContext, downgradeDisproven, externalCorrection,
 import { recordReliability, reliabilityIntent, reliabilitySummary, speakReliability } from './reliability_ledger.js';
 import { answerOwnerMemoryQuestion, auditMemoryProvenance, evidenceQuestion, evidenceReferent, evidenceRequestSplit, explainEvidenceFor, findAnswerEvidence, brainRecordForProvenance, guardOwnerAttributions, guardRememberBlock, guardSpeakerAttributions, latestAnswerEvidence, loadRetractions, memoryPromptContext, ownerFactCorrection, ownerMemoryQuestion, ownerWords, recordAnswerEvidence, recordRetractions, storedSpeaker, storyRequested } from './memory_provenance.js';
 import { condenseHistory, ownerNotificationPolicy } from './workflow_governor.js';
-import { analyze as tradeAnalyze, backtestAll, candleSpan, intervalLabel, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, nextTradingTickAt, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
+import { analyze as tradeAnalyze, backtestAll, candleSpan, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, nextTradingTickAt, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
 import { intelligenceIntent, intelligenceReport, intelligenceView, speakIntelligence, startStudy, studyAlarm, studyStep } from './historical_intelligence.js';
 import { evaluateSample, applyRightsAction, applySpokenRightsWrite, defensibility, musicRightsIntent, musicRightsWriteIntent, releaseReadiness, songFor, speakReadiness } from './music_rights.js';
 import { ACTIVITIES, JURISDICTIONS, SOURCES, LEGAL_INDEX, activitiesIn, placeIn, checkUpdates, defenseArguments, findAlternatives, jurisdiction as legalPlace, legalAnswer, legalDifferences, legalIntent, loadLegal, recordDecision, recordsFor, releaseLegalCheck, saveLegal, speakDifferences, subscribe as legalSubscribe, verifyRecord } from './legal_intelligence.js';
@@ -87,7 +87,7 @@ import { evidenceIntent, evidenceReport, evidenceTick } from './trading_evidence
 import { readTrades, tradeDayOf } from './trading_evidence.js';
 import { TRADE_EVIDENCE_SOURCE, lastTrade, readTradeEvidence, speakTradeReplay, tradeBars, tradeEvidenceOf, tradeList, tradeReplayIntent } from './trade_evidence.js';
 import { DAILY_TARGET, EXECUTION_TYPES, VISUAL_SOURCE, auditTrades, compareWindows, currentLeader, dailyEvidence, dailyPnl, filterTrades, historyChart, journalView, lastForwardBar, metricsOf, openPositions, rankStrategies, readSkips, readVisualTrades, replayFrame, speakAudit, speakEvidence, speakCard, speakLeader, speakPnl, tradingVisualIntent } from './trading_visual.js';
-import { cancelCandidates, cancelConfirmation, cancelOrderIntent, chartIntent, chartView, drawIntent, futuresOrderIntent, marketOrderFeedProblem, paperAccountIntent, readDrawings, saveDrawings, speakOrder } from './trading_chart.js';
+import { cancelCandidates, cancelConfirmation, cancelOrderIntent, chartIntent, chartOpenReply, chartView, drawIntent, futuresOrderIntent, marketOrderFeedProblem, paperAccountIntent, readDrawings, saveDrawings, speakOrder } from './trading_chart.js';
 import { marketUniverse, searchUniverse } from './market_universe.js';
 import { readRithmicCandles, storeRithmicCandles } from './rithmic_dataset.js';
 // A spoken cancel of one Alpaca PAPER order waiting for the owner's yes, or for his pick from a numbered list.
@@ -13161,16 +13161,9 @@ export class CheState extends DurableObject {
         if (chartAsk?.kind === 'chart_open') {
           // "Switch to the 15 minute chart" and a follow-up name no symbol: the stock chart the owner last opened, by voice or on the phone.
           const lastSymbol = chartAsk.section === 'chart' && chartAsk.inherit && !chartAsk.symbol ? (await this.ctx.storage.get('trading_chart_last_symbol').catch(() => '')) || '' : '';
-          const symbol = chartAsk.symbol || lastSymbol || '';
-          const account = chartAsk.account || (lastSymbol ? 'alpaca_paper' : '');
-          const bars = chartAsk.timeframe ? ` on ${intervalLabel(chartAsk.timeframe)} bars` : '';
-          const where = chartAsk.section === 'setups'
-            ? (chartAsk.answer === 'ready' ? 'Here are the setups CHE is following on this iPhone, sir.' : 'Opening the Setup Progress Board, sir. These are CHE PAPER ACCOUNT setups from the live Rithmic candles.')
-            : chartAsk.section === 'strategies' ? 'Opening Strategies, sir.' : chartAsk.section === 'compare' ? 'Opening Side by Side, sir: your account beside CHE\'s paper account. Live orders stay disabled.' : `Opening the ${account === 'alpaca_paper' ? 'Alpaca PAPER' : account === 'futures_paper' ? 'MNQ paper' : ''} chart${symbol ? ` for ${symbol}` : ''}${bars}${chartAsk.filter?.strategy ? `, showing only ${chartAsk.filter.strategy.toUpperCase()} trades` : ''}, sir.`;
-          // The spoken chart remembers its stock, so "draw a line at 230" and "switch it to the 5 minute" inherit it
-          // (the /api chart view writes the same key when the phone opens a chart).
-          if (chartAsk.section === 'chart' && symbol && account !== 'futures_paper') await this.ctx.storage.put('trading_chart_last_symbol', symbol).catch(() => null);
-          return ndjsonReply(where.replace('the  chart', 'the chart'), { source: 'che_trading_chart', ok: true, model_calls: 0, open_view: 'trading_chart', chart: { section: chartAsk.section, account: account || null, symbol: symbol || null, filter: chartAsk.filter || null, ...(chartAsk.timeframe ? { timeframe: chartAsk.timeframe } : {}), ...(chartAsk.answer ? { answer: chartAsk.answer } : {}) } });
+          const open = chartOpenReply(chartAsk, { lastSymbol });
+          if (open.remember) await this.ctx.storage.put('trading_chart_last_symbol', open.remember).catch(() => null);
+          return ndjsonReply(open.text, { source: 'che_trading_chart', ok: true, model_calls: 0, open_view: 'trading_chart', chart: open.chart });
         }
         const desk = body.attachment ? null : deskIntent(message);
         if (desk && ['controls', 'controls_view', 'controls_why'].includes(desk.kind)) {

@@ -86,6 +86,7 @@ class CheTradingRoom extends StatefulWidget {
     this.initialAccount = 'futures_paper',
     this.initialSymbol = '',
     this.initialStrategy,
+    this.initialTimeframe,
     this.header,
     this.chartExtras = const [],
     this.accountExtras = const [],
@@ -106,6 +107,9 @@ class CheTradingRoom extends StatefulWidget {
   final CheTradingChartController? chartController;
   final String initialAccount, initialSymbol;
   final String? initialStrategy;
+
+  /// The bar size CHE named when she opened the room by voice ('15m'); the chart starts on it.
+  final String? initialTimeframe;
   final Widget? header;
 
   /// The market overview under the chart, and the extra cards under the account panels.
@@ -233,6 +237,7 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
         account: _compact.currentState?.account ?? widget.initialAccount,
         symbol: _compact.currentState?.symbol ?? widget.initialSymbol,
         strategy: widget.initialStrategy,
+        timeframe: _compact.currentState?.timeframe ?? widget.initialTimeframe,
         signalMarkers: _desk.markerFeed,
       ),
     ));
@@ -281,6 +286,7 @@ class _CheTradingRoomState extends State<CheTradingRoom> {
               initialAccount: widget.initialAccount,
               initialSymbol: widget.initialSymbol.isEmpty && widget.initialAccount == 'futures_paper' ? 'MNQ' : widget.initialSymbol,
               initialStrategy: widget.initialStrategy,
+              initialTimeframe: widget.initialTimeframe,
               height: _chartHeight(box, MediaQuery.sizeOf(context)),
               signalMarkers: _desk.markerFeed,
               compact: true,
@@ -422,6 +428,7 @@ class CheTradingRoomPage extends StatelessWidget {
     this.account,
     this.symbol,
     this.strategy,
+    this.timeframe,
   });
 
   final String Function() baseUrl;
@@ -432,7 +439,10 @@ class CheTradingRoomPage extends StatelessWidget {
   final CheTradingSection section;
   final String? account, symbol, strategy;
 
-  /// Route for a Worker reply's `chart` object: {section, account, symbol, filter: {strategy}}.
+  /// The bar size the Worker's reply named ("Opening the Alpaca PAPER chart for AAPL on 15-minute bars"); the chart starts on it.
+  final String? timeframe;
+
+  /// Route for a Worker reply's `chart` object: {section, account, symbol, filter: {strategy}, timeframe}.
   static Route<void> route({
     required String Function() baseUrl,
     required Map<String, String> Function() headers,
@@ -453,6 +463,7 @@ class CheTradingRoomPage extends StatelessWidget {
         account: c['account']?.toString(),
         symbol: c['symbol']?.toString(),
         strategy: filter['strategy']?.toString(),
+        timeframe: c['timeframe']?.toString(),
       ),
     );
   }
@@ -479,6 +490,7 @@ class CheTradingRoomPage extends StatelessWidget {
             initialAccount: account ?? 'futures_paper',
             initialSymbol: symbol ?? '',
             initialStrategy: strategy,
+            initialTimeframe: timeframe,
           ),
         ),
       );

@@ -289,10 +289,22 @@ export function activeFactSubject(history = [], { depth = 4 } = {}) {
   return null;
 }
 
+// PR #515 review: "Thank you, CHE." right after an answer was stored as the new value. Thanks, praise, "good to know"
+// and other remarks are the owner talking to CHE, never a value, alone or with "so much", "CHE" or another thanks after
+// them. A name that only opens with such a word ("Cool Ranch soda") is still a value.
+const REMARK_WORD = String.raw`(?:thanks?|thank you|thx|ty|cheers|cool|nice|great|awesome|perfect|wonderful|amazing|lovely|excellent|brilliant|sweet|good|ok(?:ay)?|alright|all right|got it|gotcha|understood|noted|sounds (?:good|great|right)|good to know|makes sense|i see|interesting|wow|lol|haha+|ha|hmm+|mm+|oh|ah|sure|yes|yeah|yep|right|correct|exactly|true|fine|bye|goodbye|good ?night|see you|later|hello|hi|hey|love (?:it|that|you))`;
+const REMARK = new RegExp(`^${REMARK_WORD}(?:[,.!\\s]+(?:${REMARK_WORD}|so much|a lot|very much|again|for that|che|chey|sir|you|it|that|much|man|buddy))*$`, 'i');
+// The owner speaking about himself or to CHE ("I love it", "you're the best") is a remark, not a value.
+const PERSON_WORD = /(?:^|\s)(?:i|i'm|i'll|i've|i'd|me|we|us|you|you're|ya)(?=$|[\s,.!])/i;
+// "strawberry Sprite, CHE": the name he calls her by is not part of the value.
+const VOCATIVE_TAIL = /[,\s]+(?:che|chey|chay|sir)$/i;
+
 // The value a short reply names, or '' when the words are not a plain value.
 function shortValue(text) {
-  const value = String(text || '').trim().replace(/[.!,;:]+$/, '').replace(/^["“]|["”]$/g, '').trim();
+  const value = String(text || '').trim().replace(/[.!,;:]+$/, '').replace(/^["“]|["”]$/g, '').trim()
+    .replace(VOCATIVE_TAIL, '').replace(/[.!,;:]+$/, '').trim();
   if (!value || value.length > 80 || value.split(/\s+/).length > 6) return '';
+  if (REMARK.test(value) || PERSON_WORD.test(value)) return '';
   if (/\?/.test(value) || NOT_A_VALUE.test(value) || POINTER.test(value) || ORDER_WORD.test(value)) return '';
   if (/^(?:my|your|the owner'?s)\s/i.test(value) || /\b(?:is|are|was|were)\b/i.test(value)) return '';
   if (ASKS_OR_ORDERS.test(value) || HEDGED.test(value)) return '';

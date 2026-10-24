@@ -10,7 +10,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-Map<String, dynamic> _chart({String account = 'alpaca_paper', bool stale = false, bool entries = true, List<Map<String, dynamic>> drawings = const []}) {
+Map<String, dynamic> _chart({String account = 'alpaca_paper', bool stale = false, bool entries = true, List<Map<String, dynamic>> drawings = const [], String tf = '5m'}) {
   final start = DateTime.utc(2026, 10, 20, 14, 0);
   final bars = [
     for (var i = 0; i < 40; i++)
@@ -28,7 +28,7 @@ Map<String, dynamic> _chart({String account = 'alpaca_paper', bool stale = false
     'account': account,
     'state': 'verified',
     'symbol': account == 'alpaca_paper' ? 'AAPL' : 'MNQ',
-    'timeframe': '5m',
+    'timeframe': tf,
     'timeframes': ['1m', '5m', '15m', '1h', '1d'],
     'bars': bars,
     'feed': {'provider': account == 'alpaca_paper' ? 'Alpaca IEX' : 'Yahoo MNQ=F', 'status': account == 'alpaca_paper' ? 'REALTIME' : 'DELAYED', 'last_bar_time': at(39), 'age_s': stale ? 7200 : 60, 'stale': stale},
@@ -69,7 +69,7 @@ class _Server {
     if (p == '/api/trading/chart') {
       if (failChart) return http.Response('{"error":"feed offline"}', 503);
       final account = r.url.queryParameters['account'] ?? 'alpaca_paper';
-      return http.Response(jsonEncode(_chart(account: account, stale: stale, entries: account == 'alpaca_paper', drawings: drawings)), 200);
+      return http.Response(jsonEncode(_chart(account: account, stale: stale, entries: account == 'alpaca_paper', drawings: drawings, tf: r.url.queryParameters['tf'] ?? '5m')), 200);
     }
     if (p == '/api/trading/chart/drawings') {
       final body = jsonDecode(r.body) as Map<String, dynamic>;
@@ -96,7 +96,7 @@ class _Server {
 
 /// The room, and (by default) its chart expanded: drawing, orders, zoom and the legend live in the expanded chart.
 Future<void> _pumpRoom(WidgetTester tester, _Server s,
-    {CheTradingSection section = CheTradingSection.chart, List<String>? spoken, String? strategy, String account = 'alpaca_paper', bool expand = true}) async {
+    {CheTradingSection section = CheTradingSection.chart, List<String>? spoken, String? strategy, String account = 'alpaca_paper', bool expand = true, String? timeframe}) async {
   tester.view.physicalSize = const Size(1170, 2532);
   tester.view.devicePixelRatio = 3;
   addTearDown(tester.view.reset);
@@ -112,6 +112,7 @@ Future<void> _pumpRoom(WidgetTester tester, _Server s,
         initialSection: section,
         initialAccount: account,
         initialStrategy: strategy,
+        initialTimeframe: timeframe,
       ),
     ),
   ));
@@ -164,6 +165,42 @@ void main() {
     await tester.pump();
     expect(state.summary, isNot(contains('CHE strategy simulation')));
     expect(state.summary, isNot(contains('1 CHE simulation')));
+  });
+
+  // PR #515 review (P1): "And the 15 minute?" after "Open the Alpaca chart for AAPL": CHE said 15-minute bars, but the
+  // route dropped the reply's timeframe and the chart opened on 5 minutes. What is shown must match what was said.
+  testWidgets('the Worker reply\'s chart timeframe reaches the chart: it loads, shows and reads the bar size CHE named', (tester) async {
+    await tester.pumpWidget(const MaterialApp(home: Scaffold(body: SizedBox(key: Key('route_host')))));
+    final route = CheTradingRoomPage.route(
+      baseUrl: () => 'https://che.example',
+      headers: () => const {},
+      onAsk: (_) {},
+      chart: const {'section': 'chart', 'account': 'alpaca_paper', 'symbol': 'AAPL', 'filter': null, 'timeframe': '15m'},
+    ) as MaterialPageRoute<void>;
+    final page = route.builder(tester.element(find.byKey(const Key('route_host')))) as CheTradingRoomPage;
+    expect(page.timeframe, '15m');
+    expect(page.symbol, 'AAPL');
+
+    final s = _Server();
+    final spoken = <String>[];
+    await _pumpRoom(tester, s, spoken: spoken, timeframe: '15m', expand: false);
+    final charts = s.requests.where((r) => r.url.path == '/api/trading/chart').toList();
+    expect(charts, isNotEmpty);
+    expect(charts.first.url.queryParameters['tf'], '15m', reason: 'the first load asks for the bar size CHE named');
+    expect(charts.where((r) => r.url.queryParameters['tf'] == '5m'), isEmpty);
+    expect(tester.state<CheTradingChartState>(find.byType(CheTradingChart)).timeframe, '15m');
+    // Expanding keeps it, and the spoken read names the same bars the chart shows.
+    await tester.tap(find.byTooltip('Expand the chart'));
+    await tester.pumpAndSettle();
+    final expanded = tester.state<CheTradingChartState>(find.byType(CheTradingChart));
+    expect(expanded.timeframe, '15m');
+    await _tap(tester, find.byTooltip('Read chart aloud'));
+    expect(spoken.single, contains('AAPL, 15m candles'));
+
+    // No timeframe in the reply: the chart opens on its default, as before.
+    final plain = _Server();
+    await _pumpRoom(tester, plain, expand: false);
+    expect(plain.requests.firstWhere((r) => r.url.path == '/api/trading/chart').url.queryParameters['tf'], '5m');
   });
 
   testWidgets('a chart price opens a PAPER ticket; nothing is sent until "Yes, place paper order"', (tester) async {

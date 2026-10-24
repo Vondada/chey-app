@@ -13,7 +13,7 @@ import { readTrades, overnightLevels } from './trading_evidence.js';
 import { LIVE_FEED, readLivePortfolios } from './trading_live.js';
 import { historyChart, provenanceOf } from './trading_visual.js';
 import { INTERVALS, describeFeed, marketUniverse, resolveTicker, universeCandles } from './market_universe.js';
-import { intervalFromWords, symbolFromFollowup } from './trading_lab.js';
+import { intervalFromWords, intervalLabel, symbolFromFollowup } from './trading_lab.js';
 
 export const ACCOUNTS = Object.freeze({
   alpaca_paper: { label: 'Alpaca PAPER', asset: 'stocks', mode: 'PAPER' },
@@ -254,6 +254,36 @@ export function drawIntent(message, { followup = '', referent = '' } = {}) {
  * the chart (or the Strategies section) with the account, symbol and filter named. Null otherwise.
  */
 const CHART_TIMEFRAMES = new Set(Object.keys(INTERVALS));
+
+/**
+ * The spoken reply and the phone's `chart` object for a chart_open intent. `lastSymbol` is the stock chart the owner
+ * last opened (stored as trading_chart_last_symbol), used when the request names none. The phone's Trading Room opens
+ * the futures chart when no account is named, and starts the chart on `chart.timeframe` (lib/rooms/che_trading_room.dart),
+ * so a bar size that chart does not offer is said plainly and the default bars it opens on are named (PR #515 review:
+ * the reply said 15-minute bars while the phone showed 5).
+ */
+export function chartOpenReply(ask = {}, { lastSymbol = '' } = {}) {
+  const symbol = ask.symbol || lastSymbol || '';
+  const account = ask.account || (lastSymbol ? 'alpaca_paper' : '');
+  let bars = '';
+  let note = '';
+  let timeframe = '';
+  if (ask.timeframe) {
+    const offered = (account || 'futures_paper') === 'futures_paper' ? FUTURES_TIMEFRAMES : Object.keys(TIMEFRAMES);
+    timeframe = offered.includes(ask.timeframe) ? ask.timeframe : '5m';
+    bars = ` on ${intervalLabel(timeframe)} bars`;
+    const list = offered.map(intervalLabel);
+    if (timeframe !== ask.timeframe) note = ` That chart has no ${intervalLabel(ask.timeframe)} bars; it offers ${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}.`;
+  }
+  const text = ask.section === 'setups'
+    ? (ask.answer === 'ready' ? 'Here are the setups CHE is following on this iPhone, sir.' : 'Opening the Setup Progress Board, sir. These are CHE PAPER ACCOUNT setups from the live Rithmic candles.')
+    : ask.section === 'strategies' ? 'Opening Strategies, sir.'
+      : ask.section === 'compare' ? 'Opening Side by Side, sir: your account beside CHE\'s paper account. Live orders stay disabled.'
+        : `Opening the ${account === 'alpaca_paper' ? 'Alpaca PAPER ' : account === 'futures_paper' ? 'MNQ paper ' : ''}chart${symbol ? ` for ${symbol}` : ''}${bars}${ask.filter?.strategy ? `, showing only ${ask.filter.strategy.toUpperCase()} trades` : ''}, sir.${note}`;
+  const chart = { section: ask.section, account: account || null, symbol: symbol || null, filter: ask.filter || null, ...(timeframe ? { timeframe } : {}), ...(ask.answer ? { answer: ask.answer } : {}) };
+  // The spoken stock chart is remembered, so "draw a line at 230" and "switch it to the 5 minute" inherit it.
+  return { text, chart, remember: ask.section === 'chart' && symbol && account !== 'futures_paper' ? symbol : '' };
+}
 export function chartIntent(message, { followup = '', referent = '' } = {}) {
   // A follow-up ("switch it to the 5 minute", "now the same for MSFT") carries the owner's new words alone in `followup`
   // and the earlier request in `referent` (speech_intent.js): the new symbol or bar size comes from the new words and the
