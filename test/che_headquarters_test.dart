@@ -118,4 +118,67 @@ void main() {
     await tester.tap(find.text('Open 3D crew'));
     expect(opened, 1);
   });
+
+testWidgets('the Development Room shows its Office job; opening it shows each stage result and that it is not verified yet', (tester) async {
+  tester.view.physicalSize = const Size(1170, 4200);
+  tester.view.devicePixelRatio = 3;
+  addTearDown(tester.view.reset);
+  final client = CheAgentRuntimeClient(
+    baseUrl: () => 'https://che.example',
+    headers: () => const {},
+    client: MockClient((request) async {
+      if (request.url.path == '/api/office/hq') return http.Response(jsonEncode(_rooms), 200);
+      if (request.url.path == '/api/office/hq/engineering') {
+        return http.Response(jsonEncode({
+          'room': {'id': 'engineering', 'name': 'Development Room', 'lead': 'Atlas', 'title': 'Chief Technology Officer', 'status': 'Working', 'task': null},
+          'facts': ['Room status: Working.'],
+          'conversation': [],
+          'jobs': [_jobSummary],
+        }), 200);
+      }
+      if (request.url.path == '/api/office/hq/job/oj-a609d813') {
+        return http.Response(jsonEncode({
+          'job': _jobSummary,
+          'acceptance_criteria': ['The request is done as asked.'],
+          'stage_results': [
+            {'stage': 's1', 'agent': 'Atlas', 'discipline': 'engineering', 'status': 'complete', 'task_status': 'complete', 'result': 'Changed projects_list.dart: added a sort control.', 'error': ''},
+          ],
+          'evidence': [],
+          'history': [],
+        }), 200);
+      }
+      return http.Response('{"detail":"not found"}', 404);
+    }),
+  );
+  await tester.pumpWidget(MaterialApp(home: CheHeadquartersScreen(client: client)));
+  await tester.pumpAndSettle();
+  await tester.tap(find.text('Development Room'));
+  await tester.pumpAndSettle();
+
+  expect(find.text('OFFICE WORK'), findsOneWidget);
+  expect(find.textContaining('Atlas (engineering): complete'), findsOneWidget);
+  expect(find.textContaining('Not verified yet (running)'), findsOneWidget);
+
+  await tester.tap(find.bySemanticsLabel(RegExp(r'Open result for Add a sort control')));
+  await tester.pumpAndSettle();
+  expect(find.text('Office result'), findsOneWidget);
+  expect(find.textContaining('NOT VERIFIED YET'), findsOneWidget);
+  expect(find.textContaining('Changed projects_list.dart'), findsOneWidget);
+});
 }
+
+const _jobSummary = {
+  'id': 'oj-a609d813',
+  'goal': 'Add a sort control to the Projects list.',
+  'status': 'running',
+  'workflow_stage': 'act',
+  'verification': {'status': 'unverified', 'by': '', 'basis': ''},
+  'stages': [
+    {'id': 's1', 'agent': 'Atlas', 'discipline': 'engineering', 'status': 'complete'},
+    {'id': 's2', 'agent': 'Knox', 'discipline': 'security', 'status': 'running'},
+    {'id': 's3', 'agent': 'Vale', 'discipline': 'qa', 'status': 'pending'},
+  ],
+  'evidence_count': 1,
+  'corrections': 0,
+  'updated_at': '2026-10-24T00:00:00Z',
+};

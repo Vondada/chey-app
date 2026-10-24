@@ -188,7 +188,7 @@ import {
 import { matchOfficePhrase, speakGoalPlan, speakOfficeBoard } from './office_phrases.js';
 import { advanceOfficeJobs, officeJobView, officeJobsView, planOfficeJob, speakOfficeJob } from './office_jobs.js';
 import { headRecord, officeOrg, speakOfficeOrg } from './office_org.js';
-import { hqRoomDetail, hqView, talkToHead } from './headquarters.js';
+import { hqJobDetail, hqRoomDetail, hqView, talkToHead } from './headquarters.js';
 import { assertOwnerTalksToCheOnly, codexWorkPacket } from './office_router.js';
 import {
   mlProjectFromResult,
@@ -4690,6 +4690,13 @@ export class CheState extends DurableObject {
     if (data.team_tasks.some((t) => t.office_job_id === planned.job.id && t.status === 'queued')) await this.scheduleWork();
     this.broadcastAgents(data);
     return { job: officeJobView(planned.job), reply: speakOfficeJob(planned.job) };
+  }
+
+  // The Development Room's assignment is an Office job: the room's head builds, then Vale verifies (office_jobs.js).
+  async hqAssignJob(data, room, said) {
+    const result = await this.officeCoordinate(data, { request: said, accountable: room.lead, disciplines: ['engineering', 'qa'] });
+    if (result.error) return { error: result.error };
+    return { job: result.job };
   }
 
   // Hands finished stages of coordinated jobs to the next department. Bookkeeping only; no model call.
@@ -9417,6 +9424,11 @@ export class CheState extends DurableObject {
         const detail = await hqRoomDetail(data, this.keyEnv || this.env, this.ctx.storage, hqRoomPath[1]);
         return detail ? json(detail) : json({ detail: 'That is not a headquarters room.' }, 404);
       }
+      const hqJobPath = /^\/api\/office\/hq\/job\/(oj-[0-9a-f]{8})$/.exec(path);
+      if (hqJobPath && request.method === 'GET') {
+        const detail = hqJobDetail(data, hqJobPath[1]);
+        return detail ? json(detail) : json({ detail: 'There is no Office job with that id.' }, 404);
+      }
       const jobPath = /^\/api\/office\/jobs\/(oj-[0-9a-f]{8})$/.exec(path);
       if (jobPath && request.method === 'GET') {
         const job = (data.office_goals || []).find((g) => g?.coordinated && g.id === jobPath[1]);
@@ -10424,7 +10436,13 @@ export class CheState extends DurableObject {
       if (path === '/api/office/hq/talk' && request.method === 'POST') {
         if (!ownerDevice) return json({ detail: 'Only the CHE owner talks to the department heads.' }, 403);
         await this.staffOffice(data);
-        const out = await talkToHead(data, this.keyEnv || this.env, this.ctx.storage, { room: body.room, agent: body.agent, text: body.text || body.message, mode: body.mode });
+        const out = await talkToHead(data, this.keyEnv || this.env, this.ctx.storage, {
+          room: body.room,
+          agent: body.agent,
+          text: body.text || body.message,
+          mode: body.mode,
+          assignJob: ({ room, said }) => this.hqAssignJob(data, room, said),
+        });
         if (out.error) return json({ detail: out.error, open: out.open || null }, out.status || 400);
         await this.ctx.storage.put('che', data);
         if (out.queued) { await this.scheduleWork(); this.broadcastAgents(data); }

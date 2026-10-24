@@ -593,6 +593,9 @@ class CheAgentRuntimeClient {
   Future<Map<String, dynamic>> hqTalk({required String room, required String text, String mode = 'talk'}) =>
       _send('POST', '/api/office/hq/talk', {'room': room, 'text': text, 'mode': mode});
 
+  /// One Office job of a headquarters room in full: each stage's own result and the verification state, from records.
+  Future<Map<String, dynamic>> hqJob(String jobId) => _send('GET', '/api/office/hq/job/$jobId');
+
   Future<CheOfficeToday> officeToday() async {
     final j = await _send('GET', '/api/office/today');
     return CheOfficeToday.fromJson(Map<String, dynamic>.from(j['board'] as Map? ?? const {}));

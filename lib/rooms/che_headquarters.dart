@@ -211,6 +211,12 @@ class _HeadquartersRoomPageState extends State<_HeadquartersRoomPage> {
     }
   }
 
+  void _openJob(String jobId) {
+    Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => _HeadquartersJobPage(client: widget.client, jobId: jobId),
+    ));
+  }
+
   Future<void> _send({required String mode}) async {
     final said = _text.text.trim();
     if (said.isEmpty || _busy) return;
@@ -238,6 +244,7 @@ class _HeadquartersRoomPageState extends State<_HeadquartersRoomPage> {
     final lead = '${room['lead']}';
     final facts = [for (final f in (_detail?['facts'] as List? ?? const [])) '$f'];
     final conversation = [for (final m in (_detail?['conversation'] as List? ?? const [])) Map<String, dynamic>.from(m as Map)];
+    final jobs = [for (final j in (_detail?['jobs'] as List? ?? const [])) Map<String, dynamic>.from(j as Map)];
     return Scaffold(
       backgroundColor: CheColors.screen,
       appBar: AppBar(
@@ -261,6 +268,11 @@ class _HeadquartersRoomPageState extends State<_HeadquartersRoomPage> {
             Text('FROM THE RECORDS', style: CheType.overline.copyWith(color: CheColors.accent)),
             for (final f in facts) Padding(padding: const EdgeInsets.only(top: CheSpace.xs), child: Text(f, style: CheType.bodyDim)),
             const SizedBox(height: CheSpace.lg),
+            if (jobs.isNotEmpty) ...[
+              Text('OFFICE WORK', style: CheType.overline.copyWith(color: CheColors.accent)),
+              for (final j in jobs) _JobCard(job: j, onOpen: () => _openJob('${j['id']}')),
+              const SizedBox(height: CheSpace.lg),
+            ],
             Text('CONVERSATION', style: CheType.overline.copyWith(color: CheColors.accent)),
             for (final m in conversation)
               Padding(
@@ -290,6 +302,136 @@ class _HeadquartersRoomPageState extends State<_HeadquartersRoomPage> {
                 ),
               ),
             ]),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// An Office job the room's head is accountable for: its goal, its stage chain and whether Vale has verified it.
+class _JobCard extends StatelessWidget {
+  const _JobCard({required this.job, required this.onOpen});
+  final Map<String, dynamic> job;
+  final VoidCallback onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final goal = '${job['goal']}';
+    final verification = Map<String, dynamic>.from(job['verification'] as Map? ?? const {});
+    final stages = [for (final st in (job['stages'] as List? ?? const [])) Map<String, dynamic>.from(st as Map)];
+    final chain = stages.map((st) => '${st['agent']} (${st['discipline']}): ${st['status']}').join(' → ');
+    final verified = '${verification['status']}' == 'verified';
+    final status = verified ? 'Verified by ${verification['by']}' : 'Not verified yet (${job['status']})';
+    return Padding(
+      padding: const EdgeInsets.only(bottom: CheSpace.sm),
+      child: Semantics(
+        button: true,
+        label: 'Open result for $goal. $status.',
+        excludeSemantics: true,
+        child: Material(
+          color: CheColors.surface,
+          borderRadius: BorderRadius.circular(CheRadius.xl),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(CheRadius.xl),
+            onTap: onOpen,
+            child: Container(
+              constraints: const BoxConstraints(minHeight: 44),
+              padding: const EdgeInsets.all(CheSpace.md),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(CheRadius.xl),
+                border: Border.all(color: CheColors.stroke),
+              ),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(goal, style: CheType.body.copyWith(fontWeight: FontWeight.w700)),
+                const SizedBox(height: CheSpace.xxs),
+                Text(status, style: CheType.bodyDim.copyWith(color: verified ? CheColors.accent : null)),
+                Text(chain, style: CheType.bodyDim),
+              ]),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// One Office job in full: the goal, whether it is verified, and each stage's own result.
+class _HeadquartersJobPage extends StatefulWidget {
+  const _HeadquartersJobPage({required this.client, required this.jobId});
+  final CheAgentRuntimeClient client;
+  final String jobId;
+
+  @override
+  State<_HeadquartersJobPage> createState() => _HeadquartersJobPageState();
+}
+
+class _HeadquartersJobPageState extends State<_HeadquartersJobPage> {
+  Map<String, dynamic>? _detail;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final detail = await widget.client.hqJob(widget.jobId);
+      if (mounted) setState(() => _detail = detail);
+    } on CheAgentRuntimeException catch (e) {
+      if (mounted) setState(() => _error = e.message);
+    } catch (_) {
+      if (mounted) setState(() => _error = 'The result could not be read. Check the connection and try again.');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final job = _detail?['job'] is Map ? Map<String, dynamic>.from(_detail!['job'] as Map) : const <String, dynamic>{};
+    final results = [for (final r in (_detail?['stage_results'] as List? ?? const [])) Map<String, dynamic>.from(r as Map)];
+    final verification = Map<String, dynamic>.from(job['verification'] as Map? ?? const {});
+    final verified = '${verification['status']}' == 'verified';
+    return Scaffold(
+      backgroundColor: CheColors.screen,
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        title: Text('Office result', style: CheType.title),
+      ),
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(CheSpace.lg, CheSpace.sm, CheSpace.lg, CheSpace.xl),
+          children: [
+            if (_error != null) Semantics(liveRegion: true, child: Text(_error!, style: CheType.body)),
+            if (_detail == null && _error == null) const Center(child: CircularProgressIndicator()),
+            if (_detail != null) ...[
+              Semantics(
+                header: true,
+                child: Text('${job['goal']}', style: CheType.body.copyWith(fontWeight: FontWeight.w700)),
+              ),
+              Text('STATUS: ${job['status']}', style: CheType.body),
+              const SizedBox(height: CheSpace.sm),
+              Semantics(
+                liveRegion: true,
+                child: Text(
+                  verified
+                      ? 'VERIFIED by ${verification['by']}: ${verification['basis']}'
+                      : 'NOT VERIFIED YET. CHE does not report this as done until Vale records a PASS.',
+                  style: CheType.body,
+                ),
+              ),
+              const SizedBox(height: CheSpace.lg),
+              Text('STAGES', style: CheType.overline.copyWith(color: CheColors.accent)),
+              for (final r in results) ...[
+                Padding(
+                  padding: const EdgeInsets.only(top: CheSpace.sm),
+                  child: Text('${r['agent']} (${r['discipline']}): ${r['status']}', style: CheType.body.copyWith(fontWeight: FontWeight.w700)),
+                ),
+                if ('${r['result']}'.isNotEmpty) SelectableText('${r['result']}', style: CheType.bodyDim),
+                if ('${r['error']}'.isNotEmpty) Text('Problem: ${r['error']}', style: CheType.bodyDim),
+              ],
+            ],
           ],
         ),
       ),

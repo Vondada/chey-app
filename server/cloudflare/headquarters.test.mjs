@@ -4,9 +4,10 @@ import assert from 'node:assert/strict';
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
 
-import { HQ_ROOMS, hqView, roomForAgent, roomStatusFor, speakHqSummary, talkIntent, talkToHead } from './headquarters.js';
+import { HQ_ROOMS, hqJobDetail, hqView, roomForAgent, roomStatusFor, speakHqSummary, talkIntent, talkToHead } from './headquarters.js';
 import { LA_AGENCIA_ROLES, ensureLaAgenciaRoster } from './office_company.js';
-import { queueAgentTask } from './agent_runtime.js';
+import { normalizeAgent, queueAgentTask } from './agent_runtime.js';
+import { advanceOfficeJobs, planOfficeJob } from './office_jobs.js';
 import { recordReceipt } from './truth_layer.js';
 
 const generated = new URL('./.headquarters.test.generated.mjs', import.meta.url);
@@ -227,4 +228,50 @@ test('POST /api/office/hq/talk answers from records, files the line for CHE, and
   assert.equal(che.open, 'chat');
   const missing = await send('/api/office/hq/garage');
   assert.equal(missing.status, 404);
+});
+
+test('a Development Room job reads its stages and verification from the Office records only', () => {
+  const data = officeData();
+  data.team.forEach(normalizeAgent);
+  const hooks = { queueStep: (agent, text, options) => queueAgentTask(data, agent, text, 'office_job', options), blocker: () => '' };
+  const { job } = planOfficeJob(data, { request: 'Add a sort control to the Projects list', accountable: 'Atlas', disciplines: ['engineering', 'qa'] });
+  advanceOfficeJobs(data, hooks);
+  const before = hqJobDetail(data, job.id);
+  assert.equal(before.job.verification.status, 'unverified');
+  assert.equal(before.stage_results[0].agent, 'Atlas');
+  // Atlas's stage is done, CHE's review approves it, and Vale records the verdict. Only then is the job verified.
+  const finish = (discipline, result) => {
+    const stage = job.stages.find((st) => st.discipline === discipline && st.status === 'running');
+    assert.ok(stage, `${discipline} is running`);
+    Object.assign(data.team_tasks.find((t) => t.id === stage.task_id), { status: 'complete', result, updated_at: new Date().toISOString() });
+  };
+  finish('engineering', 'Changed projects_list.dart: added a sort control with a VoiceOver label and a widget test.');
+  advanceOfficeJobs(data, hooks);
+  finish('security', 'Reviewed the change: no new permissions, no secrets.');
+  advanceOfficeJobs(data, hooks);
+  finish('qa', 'VERDICT: PASS\n1. met: sort control present.\n2. met: widget test added.');
+  advanceOfficeJobs(data, hooks);
+  const done = hqJobDetail(data, job.id);
+  assert.equal(done.job.status, 'verified');
+  assert.equal(done.job.verification.by, 'Vale');
+  assert.match(done.stage_results[0].result, /sort control/);
+  assert.ok(done.evidence.length >= 2, 'each finished stage is recorded as evidence');
+  assert.equal(hqJobDetail(data, 'oj-00000000'), null);
+});
+
+test('assigning in the Development Room opens an Office job the room shows; other rooms keep plain tasks', async () => {
+  const { send } = await office();
+  const assigned = await (await send('/api/office/hq/talk', 'POST', { room: 'engineering', text: 'Add a sort control to the Projects list.', mode: 'assign' })).json();
+  assert.match(assigned.job_id, /^oj-[0-9a-f]{8}$/);
+  assert.match(assigned.reply, /Opened Office job oj-[0-9a-f]{8} for "Add a sort control to the Projects list\."\. Stages: Atlas \(engineering\) → Knox \(security\) → Vale \(qa\)\./);
+  const room = await (await send('/api/office/hq/engineering')).json();
+  assert.equal(room.jobs[0].id, assigned.job_id);
+  assert.equal(room.jobs[0].verification.status, 'unverified');
+  assert.deepEqual(room.jobs[0].stages.map((st) => st.agent), ['Atlas', 'Knox', 'Vale']);
+  const detail = await (await send(`/api/office/hq/job/${assigned.job_id}`)).json();
+  assert.equal(detail.stage_results[0].agent, 'Atlas');
+  assert.equal((await send('/api/office/hq/job/oj-00000000')).status, 404);
+  const mira = await (await send('/api/office/hq/talk', 'POST', { agent: 'mira', text: 'Draft a welcome line.', mode: 'assign' })).json();
+  assert.equal(mira.job_id, undefined, 'support work stays a plain Office task');
+  assert.ok(mira.queued.id);
 });

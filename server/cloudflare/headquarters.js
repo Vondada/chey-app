@@ -268,7 +268,7 @@ function personaSystem(room, head, facts) {
  * inbox, answers from records (no model) for known report requests, otherwise asks the model in the head's
  * persona with the facts and audits the reply. `mode: 'assign'` queues the text as a real Office task instead.
  */
-export async function talkToHead(data, env, storage, { room: roomKey, agent: agentKey, text, mode = 'talk', now = Date.now(), requestId = '' } = {}) {
+export async function talkToHead(data, env, storage, { room: roomKey, agent: agentKey, text, mode = 'talk', now = Date.now(), requestId = '', assignJob = null } = {}) {
   const room = roomById(roomKey) || roomForAgent(agentKey || roomKey);
   if (!room) return { error: 'That is not a headquarters room.', status: 404 };
   if (room.lead === 'CHE') return { error: 'Talk to CHE in Chat; this room is hers.', status: 400, open: 'chat' };
@@ -293,6 +293,23 @@ export async function talkToHead(data, env, storage, { room: roomKey, agent: age
       agent.messages.push({ id: crypto.randomUUID(), from: room.lead, to: 'owner', text: reply, at, room: room.id, kind: 'refusal' });
       agent.messages = agent.messages.slice(-60);
       return { room: room.id, agent: room.lead, reply, queued: null, model_calls: 0, intent: 'assign', status: error.status || 403 };
+    }
+    // The Development Room opens a real Office job (office_jobs.js): the head builds, Vale verifies, and CHE
+    // reports nothing as done until Vale's verdict is recorded. Other rooms keep the plain queued task.
+    if (assignJob && room.department === 'engineering') {
+      const out = await assignJob({ room, agent, said });
+      if (out.error) {
+        const refusal = `${room.lead} here, sir. I could not open that job: ${out.error}`;
+        agent.messages.push({ id: crypto.randomUUID(), from: room.lead, to: 'owner', text: refusal, at, room: room.id, kind: 'refusal' });
+        agent.messages = agent.messages.slice(-60);
+        return { room: room.id, agent: room.lead, reply: refusal, queued: null, model_calls: 0, intent: 'assign', status: 400 };
+      }
+      const job = out.job;
+      const stages = job.stages.map((st) => `${st.agent} (${st.discipline})`).join(' → ');
+      const reply = `${room.lead} here, sir. Opened Office job ${job.id} for "${said.slice(0, 80)}". Stages: ${stages}. Vale verifies the result before CHE reports it done.`;
+      agent.messages.push({ id: crypto.randomUUID(), from: room.lead, to: 'owner', text: reply, at, room: room.id, kind: 'assignment', job_id: job.id });
+      agent.messages = agent.messages.slice(-60);
+      return { room: room.id, agent: room.lead, reply, queued: { id: job.id, status: job.status }, job_id: job.id, model_calls: 0, intent: 'assign' };
     }
     const task = queueAgentTask(data, agent, said, 'owner', {});
     const reply = `${room.lead} here, sir. Queued as Office task ${task.id.slice(0, 8)}: "${said.slice(0, 80)}". CHE reviews the result before it counts as done.`;
@@ -358,5 +375,57 @@ export async function hqRoomDetail(data, env, storage, roomKey, { now = Date.now
     head: head || null,
     conversation: agent ? (agent.messages || []).filter((m) => m.room === room.id).slice(-30) : [],
     facts,
+    jobs: roomJobs(data, room),
+  };
+}
+
+const clip = (value, max) => String(value ?? '').slice(0, max);
+
+// One job as the room shows it: its status and verification, read from the job record only.
+function jobSummary(job) {
+  return {
+    id: job.id,
+    goal: clip(job.request, 300),
+    status: job.status,
+    workflow_stage: job.workflow_stage,
+    verification: { status: job.verification?.status || 'unverified', by: job.verification?.by || '', basis: clip(job.verification?.basis, 300) },
+    stages: (job.stages || []).map((st) => ({ id: st.id, agent: st.agent, discipline: st.discipline, status: st.status })),
+    evidence_count: (job.evidence || []).length,
+    corrections: job.corrections || 0,
+    updated_at: job.updated_at,
+  };
+}
+
+// Office jobs this room's head is accountable for (the owner's assignments in the room), newest first.
+function roomJobs(data, room) {
+  return (data.office_goals || [])
+    .filter((g) => g?.coordinated && g.accountable === room.lead)
+    .slice(-5)
+    .reverse()
+    .map(jobSummary);
+}
+
+/** One job in full: each stage's own result from its Office task, the evidence and the history. Records only. */
+export function hqJobDetail(data, jobId) {
+  const job = (data.office_goals || []).find((g) => g?.coordinated && g.id === jobId);
+  if (!job) return null;
+  const tasks = new Map((data.team_tasks || []).map((t) => [t.id, t]));
+  return {
+    job: jobSummary(job),
+    acceptance_criteria: job.acceptance_criteria || [],
+    stage_results: (job.stages || []).map((st) => {
+      const task = tasks.get(st.task_id);
+      return {
+        stage: st.id,
+        agent: st.agent,
+        discipline: st.discipline,
+        status: st.status,
+        task_status: task?.status || '',
+        result: clip(task?.result, 2000),
+        error: clip(task?.error, 300),
+      };
+    }),
+    evidence: job.evidence || [],
+    history: (job.history || []).slice(-30),
   };
 }
