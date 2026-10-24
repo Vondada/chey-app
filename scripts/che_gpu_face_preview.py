@@ -10,7 +10,7 @@ MPFB2 data directory. The face itself is built by tools/avatar_face/mpfb_dress.p
 Rules:
 - GPU only. The device is probed first (OptiX, then CUDA); with no GPU the job stops with exit 3 and a receipt saying
   so. Every render must print a DEVICE line naming the GPU or the view is marked failed; nothing falls back to the CPU.
-- Resumable. The job folder is named by a hash of the inputs and settings; a view whose PNG and receipt already exist
+- Resumable. The job folder is named by a hash of the face code, inputs and settings (no date, no commit); a view whose PNG and receipt already exist
   is not rendered again, so a disconnected Colab session continues where it stopped.
 - The pre-render geometry and colour checks in mpfb_dress.py still run; a failed check stops the job (exit 2).
 Exit codes: 0 done, 2 checks failed, 3 no GPU, 4 render failed.
@@ -58,6 +58,37 @@ def now():
     return datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
 
+def face_code_sha256():
+    """One hash over the face-building code the render runs (tools/avatar_face and tools/avatar_portraits)."""
+    h = hashlib.sha256()
+    for d in ('avatar_face', 'avatar_portraits'):
+        base = os.path.join(ROOT, 'tools', d)
+        for dirpath, dirs, files in sorted(os.walk(base)):
+            dirs.sort()
+            for n in sorted(files):
+                if n.endswith('.py'):
+                    rel = os.path.relpath(os.path.join(dirpath, n), ROOT)
+                    h.update(rel.encode() + b'\0'); h.update(open(os.path.join(dirpath, n), 'rb').read())
+    return h.hexdigest()
+
+
+def finished_view(job, info, v):
+    """None when view v is a verified finished GPU render in this job, else the reason it must be rendered: the receipt
+    entry is missing or not ok, the PNG is missing or empty (a Drive disconnect mid-copy), its SHA-256 does not match
+    the receipt, or the recorded device line is not a GPU."""
+    if not info or info.get('status') != 'ok':
+        return 'no finished render recorded'
+    path = os.path.join(job, info.get('file') or f'view_{v:02d}.png')
+    if not os.path.isfile(path) or os.path.getsize(path) == 0:
+        return 'picture missing or empty'
+    if info.get('sha256') != sha256(path):
+        return 'picture does not match its receipt hash'
+    dev = info.get('device', '')
+    if not re.match(r'DEVICE (OPTIX|CUDA) \[.+\]', dev) or 'CPU' in dev.split(']')[0]:
+        return f'recorded device is not a GPU ({dev!r})'
+    return None
+
+
 def run(cmd, env, log, timeout):
     """Run a command, stream its output into the log, and return (exit code, [(seconds since start, line)])."""
     lines, t0 = [], time.monotonic()
@@ -97,12 +128,16 @@ def main():
     settings = dict(DEFAULTS, **(json.load(open(a.settings)) if a.settings else {}))
     inputs = {n: sha256(os.path.join(a.project, n)) for n in ('che.blend', 'fit.json')}
     tools_rev = subprocess.run(['git', '-C', ROOT, 'rev-parse', '--short', 'HEAD'], capture_output=True, text=True).stdout.strip() or 'unknown'
-    key = json.dumps({'inputs': inputs, 'settings': settings, 'samples': a.samples, 'res': a.res, 'tools': tools_rev}, sort_keys=True)
-    job_id = time.strftime('%Y%m%d') + '-' + hashlib.sha256(key.encode()).hexdigest()[:10]
+    # The job is named by what decides the pictures (face code, inputs, settings, samples, size), not by the date or the
+    # commit, so rerunning tomorrow or after an unrelated commit reuses finished views instead of rendering them again.
+    code = face_code_sha256()
+    key = json.dumps({'inputs': inputs, 'settings': settings, 'samples': a.samples, 'res': a.res, 'face_code': code}, sort_keys=True)
+    job_id = 'face-' + hashlib.sha256(key.encode()).hexdigest()[:12]
     job = os.path.join(a.out, job_id); os.makedirs(job, exist_ok=True)
+    print('JOB', job, flush=True)
     log, receipt_path = os.path.join(job, 'log.txt'), os.path.join(job, 'receipt.json')
     receipt = json.load(open(receipt_path)) if os.path.exists(receipt_path) else {
-        'job_id': job_id, 'created_at': now(), 'tools_commit': tools_rev, 'inputs_sha256': inputs, 'settings': settings,
+        'job_id': job_id, 'created_at': now(), 'tools_commit': tools_rev, 'face_code_sha256': code, 'inputs_sha256': inputs, 'settings': settings,
         'samples': a.samples, 'long_edge_px': a.res, 'views': {}}
     receipt['resumed_at'] = now() if receipt.get('views') else None
     try:
@@ -126,10 +161,18 @@ def main():
     print(f'GPU {kind}: {names}', flush=True)
 
     views = [int(v) for v in a.views.split(',')]
-    todo = [v for v in views if not (os.path.exists(os.path.join(job, f'view_{v:02d}.png'))
-                                     and receipt['views'].get(str(v), {}).get('status') == 'ok')]
+    todo = []
     for v in views:
-        if v not in todo: print(f'SKIP view {v} ({VIEW_NAMES.get(v, v)}): already rendered in this job', flush=True)
+        why = finished_view(job, receipt['views'].get(str(v)), v)
+        if why is None:
+            info = receipt['views'][str(v)]
+            print(f"SKIP view {v} ({VIEW_NAMES.get(v, v)}): verified GPU render from {info.get('rendered_at')} "
+                  f"({info.get('render_seconds')} s, {info.get('device')}) -> {os.path.join(job, info['file'])}", flush=True)
+        else:
+            if receipt['views'].pop(str(v), None) is not None:
+                print(f'RE-RENDER view {v} ({VIEW_NAMES.get(v, v)}): {why}', flush=True)
+            todo.append(v)
+    receipt['last_run'] = {'at': now(), 'rendered': todo, 'reused': [v for v in views if v not in todo]}
     if todo:
         tmp = os.path.join(job, 'tmp'); os.makedirs(tmp, exist_ok=True)
         code, lines = run([a.blender, '-b', '--factory-startup', '-P', os.path.join(FACE, 'bl_run.py'), '--',

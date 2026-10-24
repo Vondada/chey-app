@@ -71,6 +71,13 @@ class GpuFacePreviewTest(unittest.TestCase):
         self.assertTrue(all('Tesla T4' in v['device'] for v in r['views'].values()))
         self.assertEqual(r['blender_version'], 'Blender 5.0.1')
 
+    def test_job_name_depends_on_content_not_date_or_commit(self):
+        self.run_job()
+        self.assertTrue(os.listdir(self.out)[0].startswith('face-'), os.listdir(self.out))
+        self.run_job(); self.assertEqual(len(os.listdir(self.out)), 1)
+        open(os.path.join(self.project, 'fit.json'), 'w').write('another fit')   # different inputs: a new job
+        self.run_job(); self.assertEqual(len(os.listdir(self.out)), 2)
+
     def test_rerun_skips_finished_views(self):
         self.run_job()
         code, out, r = self.run_job()
@@ -83,6 +90,34 @@ class GpuFacePreviewTest(unittest.TestCase):
         code, _, r = self.run_job()
         self.assertEqual(code, 0); self.assertEqual(r['status'], 'complete')
         self.assertEqual(open(self.calls).read().split(), ['0,45,90', '45,90'])
+
+    def test_empty_or_changed_picture_is_rendered_again(self):
+        self.run_job()
+        job = os.path.join(self.out, os.listdir(self.out)[0])
+        open(os.path.join(job, 'view_45.png'), 'wb').close()            # cut short by a Drive disconnect
+        open(os.path.join(job, 'view_90.png'), 'wb').write(b'other')   # not the picture the receipt names
+        code, out, r = self.run_job()
+        self.assertEqual(code, 0, out); self.assertEqual(r['status'], 'complete')
+        self.assertIn('RE-RENDER view 45 (three-quarter): picture missing or empty', out)
+        self.assertIn('RE-RENDER view 90 (side): picture does not match its receipt hash', out)
+        self.assertEqual(open(self.calls).read().split(), ['0,45,90', '45,90'])
+        self.assertEqual(r['last_run']['rendered'], [45, 90]); self.assertEqual(r['last_run']['reused'], [0])
+
+    def test_reused_view_names_its_gpu_render(self):
+        self.run_job()
+        code, out, r = self.run_job()
+        self.assertIn("SKIP view 0 (front): verified GPU render from", out)
+        self.assertIn("DEVICE OPTIX ['Tesla T4']", out)
+        self.assertEqual(r['last_run']['rendered'], [])
+
+    def test_a_view_recorded_on_cpu_is_never_reused(self):
+        self.run_job()
+        job = os.path.join(self.out, os.listdir(self.out)[0]); rp = os.path.join(job, 'receipt.json')
+        rec = json.load(open(rp)); rec['views']['0']['device'] = "DEVICE CPU ['CPU'] 384x480"; json.dump(rec, open(rp, 'w'))
+        code, out, r = self.run_job()
+        self.assertIn('RE-RENDER view 0 (front): recorded device is not a GPU', out)
+        self.assertEqual(open(self.calls).read().split(), ['0,45,90', '0'])
+        self.assertIn('Tesla T4', r['views']['0']['device'])
 
     def test_no_gpu_refuses_without_rendering(self):
         code, out, r = self.run_job(FAKE_GPUS='')
