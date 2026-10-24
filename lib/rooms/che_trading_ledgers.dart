@@ -13,6 +13,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import '../che_ui/che_theme.dart';
 import 'che_trading_hud.dart';
+import '../trading/che_sim_controls.dart';
 
 const _up = Color(0xFF3DDC97);
 const _down = Color(0xFFFF5C7A);
@@ -132,7 +133,12 @@ class _CheTradingLedgersPanelState extends State<CheTradingLedgersPanel> {
           child: OutlinedButton.icon(onPressed: _load, icon: const Icon(Icons.refresh), label: const Text('Refresh'))),
       ]),
       const SizedBox(height: 12),
-      for (final l in ledgers) Padding(padding: const EdgeInsets.only(bottom: 12), child: _LedgerCard(ledger: l)),
+      for (final l in ledgers) Padding(padding: const EdgeInsets.only(bottom: 12), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        _LedgerCard(ledger: l),
+        // The simulation's own controls, through CHE's route, so each action is reported aloud with its real result.
+        if (l['id'] == 'strategy_simulation' && l['unavailable'] != true)
+          Padding(padding: const EdgeInsets.only(top: 8), child: CheSimControls(onAsk: widget.onAsk, paused: '${l['status']}' == 'paused')),
+      ])),
     ]);
   }
 }

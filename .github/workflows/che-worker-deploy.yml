@@ -435,6 +435,26 @@ jobs:
           } else if (bt) console.log(`::warning title=Historical baseline::${bt.error || 'not run'}`);
           JS
 
+      - name: Audit CHE's stored trade records on the live Worker (read only)
+        run: |
+          node --input-type=module <<'JS'
+          // Read only (trading_audit.js): recomputes the stored records and prints counts, never record contents.
+          import { appendFileSync } from 'node:fs';
+          let out = null; let lastError = '';
+          for (let attempt = 0; attempt < 3 && !out; attempt++) {
+            try {
+              const response = await fetch('https://chey-app.henryjavoni.workers.dev/api/trading/audit/probe', {
+                method: 'POST', headers: { Authorization: `Bearer ${process.env.CHE_VOICE_PROBE_TOKEN}` }, signal: AbortSignal.timeout(60000),
+              });
+              if (response.ok) out = await response.json(); else lastError = `HTTP ${response.status}`;
+            } catch (error) { lastError = error?.name === 'TimeoutError' ? 'no answer within 60 s' : 'network error'; }
+            if (!out) await new Promise((resolve) => setTimeout(resolve, 4000));
+          }
+          if (!out) { console.log(`::warning title=Trading audit did not run::${lastError}`); process.exit(0); }
+          console.log(`::notice title=Trading audit::${out.summary}`);
+          appendFileSync(process.env.GITHUB_STEP_SUMMARY, `**Trading audit (live Worker, read only):** ${out.summary}\n`);
+          JS
+
       - name: Check CHE's memory truth through the live Worker (real chat test)
         run: |
           node --input-type=module <<'JS'
