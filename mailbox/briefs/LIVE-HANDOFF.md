@@ -72,12 +72,16 @@ Then, on GitHub:
 
 **ChatGPT 2026-10-20 owner-directed end-to-end continuation:** Current main `295a9cde` (PRs #393 and #392 merged). Claude PR #394 false-completion fix is open: CI green on inspected commit `6984aa1`, but unresolved Codex review threads remain for `office_workforce.js` (`review_pending` must keep temporary agents busy) and `office_board.js` (desk statuses for `review_pending`, `needs_review`, `rejected`); original passive-claims thread is outdated but should be rechecked. DO NOT MERGE #394 before current-head review and checks pass. ChatGPT created PR #395 from main `chatgpt/chart-malformed-response-20261020` commit `2865b6e` to guard malformed scalar API collection fields (`points`, `timeframes`, `bars`, `markers`, `drawings`, `open_orders`) in `lib/rooms/che_trading_chart.dart`, resolving the owner's observed `int` cast crash. PR #395 CI Flutter / UI Analyze in progress (`39540411941`, `39540411947`); not merged, not installed, no live iPhone test. Actual live FundYourEdge/Tradesea Rithmic market-data and broker paper-order integration NOT CONNECTED; existing futures `/api/trading/chart` uses stored delayed research bars and blocks futures orders. Next: add chart malformed-payload regression, obtain valid Rithmic API access/terms and separate simulated account permission; test read-only stream, then simulated orders only; no credentials shared in chat and no paid purchases. Owner requested end-to-end finish, but third-party API authorization is a real external blocker.
 
-## 2. Current position (Claude, 2026-10-23 late — iPhone update mission answered; IPA NOT built)
+## 2. Current position (Claude, 2026-10-24: HQ mission pushed, not merged)
 
-- main `1cd7640` (#509). Worker deploy run 40038074671 VERIFIED live (Worker version 1a0540e7; memory 18/18, command center 5/5, voice ok).
-- Shorebird: **Patch 48** published by run 40020792129 (from #507, `b92f6bb`) for release `1.4.1025342820+3956317271501`. Dart-only; #509 changed no Dart, so no new patch is needed.
-- Latest IPA: `che-ios-v1.4.1025342820-b3956317271501`, commit `b81cbe4`, sha256 `e6da86c1…25d37`, 43,898,491 bytes. A new IPA IS REQUIRED for the full feature set: native ReplayKit bridge (tool/bootstrap.sh; `6cc5d4e`, `0070f55`, `e855f96` after b81cbe4) and assets excluded from the patch (crew `index.html`, `che_emblem.png`, `MaterialIcons-Regular.otf`).
-- NOT built: waiting for the owner's explicit go to dispatch `che-iphone-ipa.yml`. Public release is a separate yes.
+- Branch `claude/che-latency-optimization-8ruaus`, head `6fe39de`. Pushed; not merged to main; no PR; Worker not deployed.
+  - `0d57f41` Worker: `GET /api/office/hq`, `GET /api/office/hq/:room`, `POST /api/office/hq/talk`. Rooms come from the roster's department heads. Status comes from Office records only. A talk is filed to the head's inbox. An assign goes through `queueAgentTask` after `assertAgentMayRun`. `headquarters.test.mjs` 11/11; full Worker suite 3718/0.
+  - `00d8d30` Flutter: the Office tab opens on Headquarters (HQ | Crew | Projects). `CheHeadquartersScreen` gives the 2D room list, a room page (facts, conversation, Send, Assign) and "Open 3D crew". 3D page: CHE, Free, Overview and Agent Follow modes, zoom, reset. Crew names follow the agent.
+  - `6fe39de` test expectation for the new Office screen report.
+- Verified: `flutter analyze` (whole project) clean, Flutter 3.47.8. Full `flutter test`: 1113 passed, 0 failed, 1 skipped. Headless Chromium on the real crew GLBs: follow, zoom, overview, reset, no page errors. `assets.test.mjs` and `validate_assets.mjs` pass.
+- Not done: room zones, headers and first/third-person camera in 3D. The 3D tap-to-room bridge into Flutter (the page sends `focus`; the app does not handle it yet). Room voice commands ("show me Knox", "follow Nova", "take me to the Security Room") in `lib/home/screen_command.dart`. Microphone in the room page. Gmail/Google routing (#34) is untouched.
+- Not verified: iPhone build; production Worker (HQ routes go live only after a merge to main with `[worker-deploy]`).
+- IPA: run 40040605593 produced private artifact `CHE-unsigned-ipa-self-updating` (id 12540020863, build 1.4.1025573394 build 4004060559301, expires 2026-10-30). Not downloaded or checksum-verified from here; not installed on the owner's phone. No public release; `che-ipa-release.yml` stays disabled_manually until the owner approves.
 - Installed build/patch on the owner's phone: UNVERIFIED from here (needs the CHE Updates screen on the device).
 - Restrictions unchanged: no spending, no deletion, no live orders, no schedules.
 
@@ -334,160 +338,3 @@ Status: PROGRAM, not built. The request spans several multi-week projects (visua
 **Immediate next step (S1 wiring):** change `CheTheme.dark()` to take a `CheColorPalette` and keep the current look as the default; migrate `CheColors` getters to read the active palette only where a const context does not need them, then run `flutter analyze` and the full `flutter test`. Acceptance: default look unchanged (golden or token-equality test), silver and light palettes render with contrast checks.
 
 **Resolved:** the `analysis_options.yaml` exclusion was reverted on the owner's instruction (2026-10-21); the checkout is clean.
-
----
-
-## 8d. VOICE REPAIR CHECKPOINT (Claude, 2026-10-22 ~00:45Z) — owner's iPhone recording, one consistent voice, gapless speech
-
-- **Status: investigation only. No code changed. Branch `claude/che-voice-continuity` was created from main `a05af09` with no commits.**
-- **The owner's screen recording is NOT in this sandbox.** It was not attached to the session, and a filesystem search found no video. Next session needs the file in the repo (e.g. `mailbox/attachments/`) or a timed description (clip times, which voice, where gaps and changes were heard). Without it, the cause of the voice change cannot be tied to a timestamp.
-- **What already exists (do not duplicate):** turn lock (`voiceTurnFor` in `server/cloudflare/phone_voice.js`; phone `lib/che_voice_turn.dart`); sentence-safe chunking (`cheSentenceEnd`, 640-char streamed chunks); `cheSpeakableText`; voice choice stamping (`voice_pref_v1`, `reconcileVoiceChoice`); per-clip diagnostics and "Last spoken reply" in the Voice diagnostics sheet. Source: `docs/CHE_CONNECTIONS_AND_VOICE_AUDIT.md` 2026-10-18 section.
-- **Confirmed remaining gap:** the native player still prepares each clip after the previous one ends. `lib/che_native_voice.dart` calls `playClip` per clip; `tool/bootstrap.sh` generates the Swift `AppDelegate` (AVAudioPlayer, AVAudioEngine). A gapless queue needs Swift changes in `tool/bootstrap.sh` and a new IPA. That cannot be built or run in this Linux sandbox (`xcodebuild` absent). Build and install happen only through `che-iphone-ipa.yml`, then an owner device test.
-- **Not verified here:** whether the owner's recording came from a build that already has the 2026-10-18 turn lock (check the release id/patch number against main).
-- **Next actions, in order:**
-  1. Get the recording into the repo or a timed description from the owner.
-  2. Confirm the installed release and Shorebird patch on the phone (`CHE Shorebird` run for `a05af09` succeeded at 00:27Z).
-  3. Design the Swift queue in `tool/bootstrap.sh` (AVAudioPlayer prepared on the next clip; keep one AVAudioSession; prepareToPlay before the prior clip ends; FIFO ids; stop/barge-in cancels queue) and the Dart side in `lib/che_native_voice.dart` (`playClipQueue`), with a mocked queue test.
-  4. Ship via PR, merge with `[worker-deploy]` only if Worker files change, build IPA, owner device test against the recording.
-- **Limits to report:** no device or audio evaluation from the sandbox; mocked tests do not prove audible quality; provider timbre drift across independently generated chunks is not checked (needs provider settings review and a real sample).
-
-## 8e. VOICE REPAIR — MEASURED CAUSE (Claude, 2026-10-22 ~01:05Z) — supersedes 8d's "recording missing" for the measurements
-
-Owner's measured recording (68.5 s, Strategy Control Center read aloud): pitch 198–203 Hz to 0:34, then 222–239 Hz with wider swings; energy above 8 kHz drops 10–50× after 0:34 (band-limited); switch lands on a clip boundary; digital-silence gaps at 0:23.6 (0.62 s), 0:33.9 (0.40 s), 0:53.7 (0.39 s); first audio at 5.2 s; clips 1–3 s after 0:34.
-
-Code facts (main a05af09):
-- ElevenLabs clips: `mp3_44100_128` (`server/cloudflare/preferred_elevenlabs_voice.js:207`), full band.
-- Fish clips: MP3 at 64 kbps for everyday speech, 128 kbps only for story/narration (`server/cloudflare/fish_audio_voice.js:454`). A 64 kbps Fish clip is band-limited and is a different voice ID and model: consistent with the 0:34 switch.
-- Turn lock (server `voiceTurnFor`/`premiumVoiceSpeech`; phone `lib/che_voice_turn.dart`): the lock is set only when the first clip reports its engine (`cheVoiceProviderOf`). Later clips send `lock` and get 204 instead of a different voice. So a provider switch mid-reply happens only if the phone never sent the lock.
-- Fish fallback from expressive to everyday model exists (`fishAudioSpeech`), but is disabled when `locked`.
-- Native player: `playClip` per clip; digital-silence gaps match re-prepare per clip (confirmed in audit).
-
-Most likely cause (NOT yet proven): the phone build that recorded did not carry the Dart turn lock, so each clip picked ElevenLabs or Fish on its own. Check against the installed release (Shorebird patch for a05af09 succeeded 00:27Z; the recording's build must be read from the phone).
-
-Decisive evidence to request from the owner: the Voice diagnostics sheet "Last spoken reply" line for that reply (provider tags per clip, switches, lock). If it shows an unlocked clip change, the fix is in the phone lock path; if it shows the lock held and Fish still spoke, the fix is in the Worker.
-
-Work not started (needs the evidence above or native code): gapless native queue (Swift in `tool/bootstrap.sh`, IPA build); list/number/arrow segmentation in `lib/che_spoken_text.dart` `cheSentenceEnd` and `lib/che_stream_batcher.dart` (can be a Shorebird Dart patch); first-audio latency (first chunk size 240 chars exists; ElevenLabs 8 s timeout).
-
-## 8f. HANDS-FREE INPUT: NO LIVE TRANSCRIPT, LONG WAIT (Claude, 2026-10-22 ~01:20Z) — owner report, not yet fixed
-
-Owner: when talking hands-free, CHE's reply starts late, and his words are not transcribed live. He needs both.
-
-Causes found (main a05af09):
-1. **No partial text reaches the app on iPhone.** `tool/bootstrap.sh` `handleRecognition` requests partial results (`shouldReportPartialResults = true`) but only emits `wake_signal`, `barge_in` and, after the end-of-turn pause, `utterance`. `lib/home_state/voice.dart` (`type == 'utterance'`) is the only transcript consumer. So the composer stays empty until the turn is sent.
-2. **Partials are dropped while CHE speaks.** `if assistantSpeaking && !bargeInDetected { return }` runs before any emit, so what he says during her speech is not shown until barge-in.
-3. **Long end-of-turn wait (native path).** `endOfTurnPause` is 1.6 s (finished sentence with 4+ words), 1.8 s (≤2 words), 2.4 s (default), 3.6 s (trailing word). The Flutter-only "quick end of turn" (`cheQuickEndOfTurn`, `lib/home_state/microphone.dart`) is not used on the iPhone native path.
-4. **Reply start time** adds: Worker model latency + TTS first clip (measured 5.2 s to first audio in the owner's recording). Not measured per stage yet.
-
-Fix plan (needs a NEW IPA; Shorebird cannot change Swift):
-- Native: emit `{type:"partial", text, final:false}` from `handleRecognition` before the speaking guard, throttled to changes only; keep barge-in logic unchanged.
-- Flutter `lib/home_state/voice.dart`: on `partial`, show words in the composer/live caption as quiet text (no send, no speech).
-- Tune `endOfTurnPause` only with telemetry (measure end-of-speech → utterance → first audio). Do not cut the owner off mid-thought.
-- Bundle with the gapless-queue native work so one IPA covers both. Tests: Dart widget test for partial display; native behavior verified only on device.
-
-Owner acceptance: speak a sentence hands-free; words appear while speaking; reply first audio measured against the stated target (<1.5 s, to be agreed).
-
-## 8g. DEVICE EVIDENCE: CHE Updates screen (owner screenshot, 2026-10-22 07:45 local)
-
-- Installed: CHE 1.4.1025342820, build 3956317271501, **patch 9**. Screen says "CHE is up to date."
-- Not yet confirmed: whether patch 9 is the Shorebird patch for `a05af09` (run 39697919339, succeeded 00:27Z), or whether it carries the 2026-10-18 turn lock. Shorebird patches apply on app relaunch, so a relaunch may still be pending.
-- Voice diagnostics (owner screenshots, 07:47 local): CHE voice (ElevenLabs) = **Out of credits**; Fish Audio (backup) = Working; last reply "Fish Audio (backup, the chosen voice failed first), 1 of 1 clips, one voice, iPhone setup about 254 ms a clip"; loudness -14.8 dBFS speech; "Why not spoken: Mary is out of credits"; hands-free Off; microphone closed. Likely cause of the recording's mid-reply switch: ElevenLabs credits ran out partway through, and the phone build did not hold the lock. Not proven. Owner decisions pending: top up ElevenLabs (spends money, owner action) or make Fish the primary voice (owner's choice).
-- Next check (owner): fully close and reopen CHE, then open CHE Updates; report the patch number. If it is still 9 after a relaunch, the a05af09 patch is not on the phone, and the voice-lock question in §8e stays open.
-
-## 8h. OWNER: "MAKE FISH MAIN" (2026-10-22)
-
-- Owner authorized Fish as the main voice. Setting it is an owner-authenticated write to `/api/voice/choice` (device token), which the sandbox does not hold, so it was NOT applied from here. Owner taps it in the app: Voice Settings (`lib/che_cloud_voice_picker.dart`) → "CHE Fish voice (configured)" → Save.
-- Verify on the phone: Voice diagnostics → "Playback engine" = Fish Audio on the next reply; the reply's "Last spoken reply" shows Fish as chosen, not as backup.
-- Trade-off the owner accepted: Fish clips are 64 kbps for everyday speech (band-limited), so timbre differs from the earlier ElevenLabs voice.
-- No code change, no PR for this.
-
-## 8i. ELEVENLABS-ONLY DIRECTIVE (mailbox 6ba8419, Claude, 2026-10-22 ~01:20Z) — PARTLY DONE
-
-- **Done (PR #426, branch `claude/che-elevenlabs-only` at `88cad38`):** Worker `premiumVoiceSpeech` (`server/cloudflare/phone_voice.js`) is strict ElevenLabs-only for conversation and Read This. Fish is only used for the authorized narration purposes (`story`, `narration`, `expressive`). A Fish lock on conversation is silent with no Fish call. Tests: `phone_voice.test.mjs` 20/20; `worker_autonomy.test.mjs` 154/154; `run_checks.sh` worker tests 3000/3000. Merge and `[worker-deploy]` deploy pending the scheduled check (trigger `trig_01QfaAtEQHBGfbLhNyuZXXbu`, ~01:27Z).
-- **Not done:** native gapless queue and chunk sequencing (Swift in `tool/bootstrap.sh`; needs new IPA; not buildable in the Linux sandbox); mid-reply prequeue; per-chunk mic reinit; hands-free live partials (§8f); live ElevenLabs account and voice validation (no key in the sandbox; the owner's Worker secrets must be checked by the owner or with an authorized deploy check); owner-device audio sample; iOS IPA.
-- **Conflict to confirm with owner:** earlier request "Make fish main" (§8h) is SUPERSEDED for conversation by this directive. The saved Fish choice is ignored for conversation, not rewritten. Owner to confirm.
-- **Not done from directive:** no credits purchased; no plan change; no key pasted or stored in the repo.
-
-## 8c. SOUL CHECKPOINT 3 (Claude, 2026-10-22 00:05Z) — read first, supersedes 8b's "open" items
-
-- **Merged:** PR #423 → main `d29faab` (phone Soul controls). PR #424 (Worker provenance: `served_by`, `soul.soul_applied` true only for a model reply with the Soul in its system prompt; handler replies `soul_applied:false`, route `handler`; cache bypass marked) → main `8f4bc48`, tagged `[worker-deploy]`. Required checks were green on head `82e4af0` (analyze, Worker syntax and unit tests; `Workers Builds` ignored per owner rule). 2996/2996 Worker tests; `soul_chat.test.mjs` 11/11.
-- **Deploy:** `Deploy CHE Worker` run 39697091667 queued/in progress for `8f4bc48` at 00:01Z. Verify its conclusion with `gh api repos/Vondada/chey-app/actions/runs/39697091667`. Live `/health` NOT verified from the sandbox.
-- **Update 00:10Z:** `Deploy CHE Worker` run 39697091667 for `8f4bc48` = `success`. PR #425 MERGED to main as `a05af09` (checks green on `3265386`). Shorebird run for `a05af09` = run 39697919339, **completed `success` at 00:27Z** ("Shorebird patch" step succeeded; IPA steps skipped). Patch is published to Shorebird; the phone only receives it when its release matches. Device install NOT verified. "Check CHE Flutter client" run 39697919459 = `success`. IPA workflows skipped (no IPA requested). Phone NOT verified; no device install confirmed.
-- **Was open PR #425** `claude/che-soul-response-details` at `3265386` (Flutter "Response details" button → Personality sheet: Soul version/fingerprint, applied or why not, model/handler, fallback). `flutter analyze lib test` clean; `flutter test` on `test/che_response_details_test.dart` + `test/che_soul_controls_test.dart` 12/12. Checks were running at 00:02Z. Merge only when `analyze` and `Worker syntax and unit tests` are green; expectedHeadSha `3265386…` (full SHA via API). Merging a lib/** change triggers `CHE Shorebird` on main.
-- **Not done yet (Soul §8b items 3–5 and the iPhone/acceptance parts):**
-  3. Soul consistency across Voice, Memory, Trading, Coding, Media, Office, and error/fallback replies. Deterministic handlers still say nothing about the Soul beyond `soul_applied:false`; persona prompts elsewhere in `worker.js` still hard-code personality.
-  4. Publish iPhone build/patch after #425 merges (CHE Shorebird runs automatically on lib/** → main; IPA only if the owner asks). Installation on the owner's iPhone is NOT confirmed by any build.
-  5. End-to-end personality tests through `/api/chat` (sliders changed → next reply differs; model fallback with real engines is NOT tested; the sandbox has fake `AI.run` only).
-- **Owner acceptance A–F** (personality, emotional awareness, trading numbers, memory, media list, Soul configuration): not yet run end to end.
-- **Git note:** remote `claude/che-soul-routing` holds two old commits (`65d3fe8`, `502f150`) already contained in main via #422; it was NOT overwritten. Work branches: `claude/che-soul-provenance` (merged as #424), `claude/che-soul-response-details` (#425).
-
-## 8b. SOUL CHECKPOINT 2 (Claude, 2026-10-21 23:30Z)
-
-- **Merged and deployed:** PR #422 (Worker Soul: soul.js, /api/soul, /api/soul/restore, chat prompt Soul block, model-reply provenance, media retrieval) → main `46f1dfb`. Deploy CHE Worker run 39690831421 `success`. Live `/health` NOT checked (sandbox proxy 403).
-- **Open:** PR #423 `claude/che-soul-phone-controls` at `7c7494f` (Flutter: Soul screen edits the Worker Soul; `che_soul.dart`, `che_soul_controls.dart`, `che_brain.dart`, `main.dart`). Local: `flutter analyze lib test` clean; `flutter test` 645 passed, 1 skipped. Not built, not on iPhone. On merge to main, `che-shorebird.yml` patches lib/** automatically; a phone only gets it when its release matches.
-- **Still open in Soul (in order):**
-  1. Deterministic routes carry no `soul` field (only model replies do). Add a default in `ndjsonReply` (`soul_applied:false`) or leave absent, then test.
-  2. Flutter "Response Details → Personality" showing soul.version, hash, soul_applied, route from the done frame.
-  3. Other persona prompts in `worker.js` still hard-code personality (about lines 5346, 6328, 8814). Route owner-facing ones through `soulPromptBlock`.
-  4. Verify on live `/health` version = 46f1dfb (needs a route the sandbox can reach).
-- **Next action:** check PR #423 checks; merge with `[worker-deploy]`-free title (Flutter only) once green; then item 1 above.
-
-## 8a. ACTIVE CHECKPOINT (Claude, 2026-10-21 23:00Z) — read first
-
-- **Soul branch:** `claude/che-soul-routing` at `502f150`, **PR #422 open** (not merged, not deployed). Worker CI queued at 22:53Z; the Cloudflare "Workers Builds" failure is ignored per owner rule. Owner merge rule: merge only when Worker/Flutter/analyze checks are green; merge title must carry `[worker-deploy]`.
-- **What is in #422:** `server/cloudflare/soul.js` (one versioned Soul: six traits 0-10, notes, hash, history, restore as a new version, provenance); `soul.test.mjs` 8/8; `soul_chat.test.mjs` 8/8 through `/api/chat`; `worker.js`: `/api/soul` GET/POST and `/api/soul/restore` (owner device only, placed before the `/api/brain/` block), chat prompt carries `soulPromptBlock`, phone "CHE SOUL" text stripped from brain context, model `done` frame carries `soul` provenance.
-- **Also in #422:** media retrieval (`65d3fe8` + later edits): exact owner store request lists all records, verifies bytes, "show me the last picture" returns `media_url` image. Tests: `media_retrieval.test.mjs`, `media_store`, `media_save`, `media_library`, `readonly_acceptance`.
-- **Tested:** `run_checks.sh` Worker tests 2993/2993 on the branch (before commit `502f150`'s push, same tree).
-- **NOT done (next edit, in order):**
-  1. Flutter Soul controls: `lib/che_ui/che_brain.dart` `_SoulScreen` (line ~858) still edits the local text file. Replace with a Worker-backed panel: six sliders (VoiceOver labels, "7 of 10"), notes field, Save → `POST /api/soul`, history list with Restore → `POST /api/soul/restore`, visible error banner. Needs the device token: thread `headers: () => _authHeaders` and `baseUrl: () => cheAgentBaseUrl` from `lib/home_state` into the Brain screen (`_SoulScreen` is built at che_brain.dart:771 from a widget that only has `brain`). Run `flutter analyze` and `flutter test` with `/opt/flutter-sdk/flutter/bin`.
-  2. Response Details → Personality: show `soul.version`, `soul.hash`, `soul_applied`, `route` from the done frame (not yet in Flutter).
-  3. Deterministic routes do not yet carry a `soul` field (only model replies do). Decide: add `soul_applied:false` default in `ndjsonReply`, or leave absent.
-  4. Remaining Soul prompt paths: other personas in `worker.js` (about lines 5346, 6328, 8814, 11891 region) still hard-code personality; route them through `soulPromptBlock` only where the reply is owner-facing.
-- **Media follow-up:** `readonly_acceptance` video phrase fixed (video override limited to picture words).
-- **Shorebird:** run 39684505690 for PR #421 concluded `success` at 22:26Z on main `a88fe01e`. Phone install NOT verified.
-- **Exact next action for the next agent:** `gh`-free: `mcp__github__pull_request_read` on #422 (`get_check_runs`); if green and merged by owner, verify `/health` version; then do item 1 above on a new branch from main (not from #422 unless #422 is merged).
-- Secrets: none in this checkpoint.
-
-## 8. OWNER PRIORITY OVERRIDE — SOUL FIRST AND AI-TO-AI RESUME (2026-10-21)
-
-**Owner instruction:** Finish CHE's consistent Soul/personality routing FIRST. Then continue *all* remaining owner-authorized CHE work across bounded, independently verified implementation slices. Never stop merely to write a plan. If Claude reaches a limit or any AI stops, make its partial implementation durable so ChatGPT/Codex/another available agent can resume from the exact verified point, without rereading or rewriting everything.
-
-**Current source of truth (checked 2026-10-21):** main \`a88fe01e2f5c13d19b4d6982c09408a50d5138e9\` (PR #421, Flutter palette wiring and saved theme switch, merged). PR #420 merged \`a3a8101c39bbe0f34b7addf441231e6416708482\` (owner image MIME fix, false "forget" delete hold, fact-grounded performance intent, tests). Deployment run 39680293427 had successful Worker Deploy and Verify live deployed commit, but that does NOT prove a new iPhone build or Soul integration. PR #417 merged (theme tokens); #418 merged (questions are not memory facts); #419 merged (trading phrasing). At this checkpoint, Github query returned no open PRs. **§6 old "open PR" data and §7 S1/S2 statuses are stale; this paragraph supersedes those older snapshots.** Always recheck GitHub before acting. UI Home/navigation/Creation Room/UI Studio are still incomplete, regardless of stage-1 palette work.
-
-### FIRST IN QUEUE: Soul/personality end-to-end, not another planning document
-
-Goal: CHE feels like one mature, warm, confident, natural, observant woman who is lightly playful in relaxed contexts and precise in serious ones; occasional "sir," no repetitive gimmicks. Written name CHE, "Chay" spoken wake only. Personality **never changes factual evidence, permission gates, role auth, or trading/reporting numbers.**
-
-1. Trace REAL request path: Flutter Brain→Soul (\`lib/che_ui/che_brain.dart\`), payload (\`lib/home_state/streaming.dart\`), Worker (\`server/cloudflare/worker.js\`), AI/model fallback (\`ai_router.js\`), direct/deterministic routes (trading, memory, coding, media, Office), and voice. Existing phone sends \`body.soul\` but Worker doesn't consistently apply it in all owner-facing paths. DO NOT invent a duplicate Soul or a parallel router.
-2. Make a canonical, versioned owner-editable Soul contract; implement a safe deterministic presentation adapter for tool facts and conversational generation for ordinary talk. Ensure a provider switch preserves identity. Owner can change warmth/playfulness/formality/directness/verbosity/proactivity from Soul, persisted and available on next appropriate reply. Keep ability to restore previous version; do not sync secrets or private prompts to unauthorised devices.
-3. Add verifiable response provenance: response route, actual source/model/handler, Soul version/hash, \`soul_loaded\`, \`soul_applied\`, and fallback/bypass reason in diagnostics; NEVER mark Soul applied just because it was supplied in payload. Offer "Response Details → Personality" or equivalent accessible owner UI. Never expose secrets or chain-of-thought.
-4. Run paired \`/api/chat\` + Flutter/voice route tests using exact owner's phrases:
-   - "CHE, forget all the technical stuff for a minute. Talk to me normally. What's your personality like? Show me, don't just describe it." Must NOT enter deletion confirmation.
-   - "CHE, I'm frustrated because we've spent so much time building you, and you still don't feel like the assistant I imagined. What would you say to me?" Warm, relevant, not canned.
-   - "CHE, tell me how my paper trading is going. Talk to me naturally, like my assistant, not a technical report. Don't leave out the real numbers." Verified paper ledger only. NO fabricated +12.5% returns, 3.5 trades/day, January wins or drawdowns.
-   - owner changes Soul voice/style settings and immediately asks same prompt; verify effective configuration changed in response metadata, not just generic model fluctuation.
-   - missing memory/media/tool/provider returns a truthful, warm refusal with correct evidence and no fake action.
-5. Implement, commit, open focused PR(s), review/test, merge only green, verify Cloudflare live \`/health\` matches SHA, and deliver Flutter/Shorebird/IPA if needed; owner iPhone behavior remains UNVERIFIED until tested there. Personality correctness is a **release gate** for this priority.
-
-### THEN CONTINUE: full project completion, in dependency order
-
-A. Chat-to-media read/list/detail: owner iPhone saved PNG, then got "I hold 1 saved file" vs "I now hold 3 items"; uploaded-file count and all-media count use different filters (must be named). EXACT request "CHE, list every saved media item by its actual ID, filename, type, and creation date. Tell me which are uploads and which were generated. Verify that my latest PNG is still stored." currently MISSES \`mediaHoldIntent\` in \`server/cloudflare/media_library.js\` and falls through to a model claiming no library access. Implement authenticated factual listing/IDs/source/type/creation, bytes verification, inline Chat image rendering, Creation Room shared gallery, reopening persistence. Reuse \`media.js\`, not a second store; no fake assets or unauthorized spend.
-
-B. Premium silver/black UI beyond merged stage-1 palette: Home dashboard, Home/Chat/Office/CHE World/More bottom navigation (Apps in More), accessible no-code UI Studio and persistent settings, Creation Room makeover. Confirm latest Shorebird patch or IPA before asking owner to retest visual changes. Preserve older screens and all VoiceOver navigation.
-
-C. Trading: reconcile distinct entries vs variant outcomes and reporting windows; preserve delayed hypothetical research vs authenticated real-time paper and broker account separation; remove fabricated performance paths; learn from after-cost evidence, journal all outcomes; NEVER enable live orders without explicit owner-authorized connection and action. Test data provenance and live feed gating.
-
-D. Coding autonomy: real job/PR/CI/deploy receipts and failure recovery/fallback; no fake complete. Office agents and command routing; Knowledge Library beyond its 77 **metadata-only** entries only when legal text is actually provided; memory recall/provenance; videos and businesses; owner authorized abilities and accessibility. Respect external account/service blockers instead of claiming completion.
-
-### MANDATORY HANDOFF ON EVERY INTERRUPTION OR TOKEN LIMIT
-
-Before the session ends, push each working commit and write a **fresh "ACTIVE CHECKPOINT" at the very top of this §8** (or an immediately linked small companion file) on \`che-mailbox\`. It MUST include:
-- exact main SHA; active branch/commit/PR links, head/base, outstanding checks, blockers and failures;
-- what files/functions changed and what was actually tested (including test command/output);
-- what is verified merged, what is verified deployed on Worker (\`/health\` version), what iPhone build/patch is merely published vs actually installed and tested;
-- precise **next edit, file, and command** an incoming agent should run; remaining acceptance tests in priority order;
-- no user passwords/secrets, no invented claims, and no duplicate code/routers.
-- update outdated §6/§7 checkboxes/statuses after each merge, not only new prose.
-
-**Resumption command for any agent:** "Continue CHE from \`AGENTS.md\` and the newest \`che-mailbox:mailbox/briefs/LIVE-HANDOFF.md\` §8 checkpoint. Inspect real \`main\`, live PRs/Actions and personal mailbox. Resume the highest-priority unfinished verified edit; Soul is first. Do not restart, re-implement merged changes, claim deployments without evidence, or silently skip blocked work. Commit/push/checkpoint before your session runs out."
-
-**Execution reality:** Context/usage and CI interruptions cannot be abolished, and parallel agents must avoid editing the same files or racing deploys. Independent nonconflicting slices may be worked on in parallel but Soul release remains the first priority. Do NOT launch unattended paid agents or claim continuous work once the interactive session stops.
