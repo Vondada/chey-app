@@ -233,3 +233,24 @@ reply guards (`truth_layer.js`) → receipts and room events → the Brain → t
   iPhone to prove the broadcast, the App Group under SideStore, and frame selection.
 - Semantic relationships (embeddings through `vector_memory.js`, status `inferred`).
 - The Brain Room UI: show `source.room`, status and `source.relations` (basis, status) on a record card.
+
+## The Brain Room as the owner approved it (2026-10-24)
+
+The owner's original Brain Room reference: the glowing neural brain as the main attraction inside CHE's dark
+starry room, a clean sidebar, glowing dashboard cards, Real-Time Learning, Live Activity, Search and Memory Details.
+`lib/brain/che_brain_overview.dart` frames the existing neural Brain (`CheMemoryBrainRoom`, unchanged) and reads only
+real data; `lib/brain/che_brain_regions.dart` holds the pure rules.
+
+| Part | Reads |
+|---|---|
+| Brain colours | ten regions from each record's own region, kind and status: blue memories, cyan conversations, purple knowledge, pink creative, orange trading, green coding, yellow agents, light-blue media, white core for verified, red for failed or disputed |
+| Links | strong = a recorded relationship between two verified records; developing = recorded, one side unverified; weak = shared words only |
+| Region labels, dashboard cards | counts of the records on the phone (replica + Worker lists); cards show the verified share |
+| Real-Time Learning | `/api/brain/ledger` (the Population Ledger) every 30 s while the room is on screen; "Learning now" only when an event entered in the last 10 minutes, else "Idle — waiting for work"; an event that is new since the last look lights its region in the brain |
+| Live Activity | dated records, newest first; a picture only when the record names an image URL |
+| Search | every word must appear (the Brain list's rule); counts per scope are real |
+| Memory Details | the record's own source, type, folder, confidence (only if recorded), evidence and connections |
+
+The sixteen sidebar sections and the eight cards open views inside the Brain Room, never Home or Chat. Voice:
+"search my brain for …", "show live activity", "what is CHE learning", "open <section>", "show the sidebar".
+Nothing here speaks on its own. Screenshots: `CHE_SHOTS_DIR=… flutter test test/che_brain_overview_shots_test.dart`.

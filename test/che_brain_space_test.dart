@@ -280,7 +280,7 @@ void main() {
     test('agent work filters to its own lobe in its own color', () {
       final c = CheBrainSpaceController(agentDots());
       expect(c.execute(CheBrainCommand.parse('show agent memories')!), 'Showing your Agents memories: 2.');
-      expect(cheMemoryCategoryColor('Agents'), const Color(0xFFFFB54D));
+      expect(cheMemoryCategoryColor('Agents'), const Color(0xFFFFD23F), reason: "yellow: the owner's colour for agents");
       c.dispose();
     });
 

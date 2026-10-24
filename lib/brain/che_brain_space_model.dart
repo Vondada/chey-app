@@ -13,7 +13,8 @@ import 'dart:ui' show Offset, Size;
 
 import 'package:vector_math/vector_math.dart' as vm;
 
-import '../home/che_memory_brain.dart' show CheMemoryDot, cheRelatedMemoryEdges;
+import '../home/che_memory_brain.dart' show CheMemoryDot, cheRelatedMemoryEdgesTyped;
+import 'che_brain_regions.dart';
 import 'che_brain_sections.dart';
 
 /// Fixed category order: each gets its own lobe (direction) in the brain.
@@ -77,9 +78,17 @@ String cheBrainCategoryKey(String category) {
 
 /// One memory placed in the brain.
 class CheBrainNode {
-  CheBrainNode({required this.dot, required this.home, required this.cluster, required this.size});
+  CheBrainNode({required this.dot, required this.home, required this.cluster, required this.size})
+      : region = cheBrainRegionOf(dot),
+        verified = cheBrainIsVerifiedRecord(dot);
 
   final CheMemoryDot dot;
+
+  /// The owner's colour region (memories blue, trading orange, errors red ...), worked out once per layout.
+  final CheBrainRegion region;
+
+  /// Verified with proof (drawn with a white core; links between two verified records are strong).
+  final bool verified;
 
   /// Layout position (world units).
   final vm.Vector3 home;
@@ -129,13 +138,16 @@ double _rand(String id, int salt) => (_hash('$id#$salt') % 100000) / 100000.0;
 
 /// The laid-out brain: real memories, their lobes and relationships.
 class CheBrainLayout {
-  CheBrainLayout._(this.nodes, this.clusters, this.edges, this.byId);
+  CheBrainLayout._(this.nodes, this.clusters, this.edges, this.byId, this.edgeStrength);
 
   final List<CheBrainNode> nodes;
   final Map<String, CheBrainCluster> clusters;
 
   /// Index pairs into [nodes].
   final List<(int, int)> edges;
+
+  /// Per edge (same index): how strong the connection is, from recorded relationships and verification only.
+  final List<CheBrainLinkStrength> edgeStrength;
   final Map<String, int> byId;
 
   static const double radius = 10;
@@ -180,10 +192,16 @@ class CheBrainLayout {
       cluster.members.add(node);
     }
     final edges = <(int, int)>[];
-    for (final e in cheRelatedMemoryEdges(dots, brainLinks: brainLinks)) {
+    final strength = <CheBrainLinkStrength>[];
+    for (final e in cheRelatedMemoryEdgesTyped(dots, brainLinks: brainLinks)) {
       final a = byId[e.$1], b = byId[e.$2];
       if (a == null || b == null) continue;
       edges.add((a, b));
+      strength.add(!e.$3
+          ? CheBrainLinkStrength.weak
+          : nodes[a].verified && nodes[b].verified
+          ? CheBrainLinkStrength.verified
+          : CheBrainLinkStrength.developing);
       nodes[a].degree++;
       nodes[b].degree++;
     }
@@ -191,7 +209,7 @@ class CheBrainLayout {
       c.expanded = c.members.length <= collapseAbove;
     }
     clusters.removeWhere((_, c) => c.members.isEmpty);
-    return CheBrainLayout._(nodes, clusters, edges, byId);
+    return CheBrainLayout._(nodes, clusters, edges, byId, strength);
   }
 
   CheBrainNode? node(String id) {

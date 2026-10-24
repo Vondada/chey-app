@@ -35,6 +35,8 @@ import 'security/che_security_screen.dart';
 import 'security/che_security_visibility.dart';
 import 'security/che_session_store.dart';
 import 'brain/che_brain_ledger_screen.dart';
+import 'brain/che_brain_overview.dart';
+import 'brain/che_brain_regions.dart' show CheBrainNav;
 import 'brain/che_brain_truth_screen.dart';
 import 'rooms/che_cloud_computer_room.dart';
 import 'brain/che_brain_list.dart' show CheBrainRecordLinks;
@@ -2098,28 +2100,8 @@ OWNER AGENCY
                         headers: () => _authHeaders,
                       ),
                     )),
-            map: CheMemoryBrainRoom(
-              dots: cheBuildMemoryDots(
-                savedMemories: savedMemories,
-                memoryNotes: memoryNotes,
-                learnedPersonality: learnedPersonality,
-                learnedKnowledge: learnedKnowledge,
-                brainLinks: brainLinks,
-                suggestions: suggestions,
-                conversationMemories: conversationMemories,
-                brainRecords: _brainReplicaRecords(),
-              ),
-              brainLinks: brainLinks,
-              roster: team,
-              loading: _brainSyncing,
-              offline: _brainReplica.lastReceipt?.unreachable == true,
-              error: _brainReplica.lastReceipt?.syncNotice,
-              pendingSync: _brainReplica.pendingOps,
-              onReadAloud: (t) => speakText(t, record: false, readOnDemand: true),
-              onRefresh: () => _loadAgentState(silent: true),
-              onOpenAgent: (name) => _openOfficeFloor(agentName: name),
-              onOpenEvidence: _openBrainEvidence,
-            ),
+            map: _brainOverview(true),
+            chipsBottomInset: cheBrainOverviewChipsInset,
             ),
             offline: const CheOfflineBrainPanel(compact: true),
             onOpenAtlas: _openKnowledgeAtlas,

@@ -36,6 +36,7 @@ import '../che_ui/che_hud.dart';
 import '../che_ui/che_theme.dart';
 import '../home/che_memory_brain.dart' show CheMemoryDot, cheMemoryCategoryColor;
 import 'che_brain_navigation.dart';
+import 'che_brain_regions.dart';
 import 'che_brain_sections.dart';
 import 'che_brain_space_model.dart';
 import 'che_frame_budget.dart';
@@ -84,6 +85,10 @@ class CheBrainSpaceController {
 
   /// The Brain room on screen right now (voice commands reach it here).
   static CheBrainSpaceController? current;
+
+  /// The font of the labels the brain paints itself; null is the platform's (San Francisco on iPhone). Screenshot
+  /// tests set a font they have loaded.
+  static String? labelFontFamily;
 
   CheBrainLayout layout;
 
@@ -136,7 +141,7 @@ class CheBrainSpaceController {
     if (hit != null) return labels[k] = hit;
     if (labels.length >= 240) labels.remove(labels.keys.first)?.dispose();
     return labels[k] = TextPainter(
-      text: TextSpan(text: text, style: TextStyle(fontSize: size, color: color, fontWeight: FontWeight.w600, shadows: const [Shadow(blurRadius: 6)])),
+      text: TextSpan(text: text, style: TextStyle(fontFamily: labelFontFamily, fontSize: size, color: color, fontWeight: FontWeight.w600, shadows: const [Shadow(blurRadius: 6)])),
       textDirection: TextDirection.ltr,
       maxLines: 1,
       ellipsis: '…',
@@ -517,6 +522,29 @@ class CheBrainSpaceController {
   /// 0..1 activity of node [i] (it just received or fired a signal).
   double flash(int i) => i < _flash.length ? _flash[i] : 0;
 
+  final Map<CheBrainRegion, double> _regionGlow = {};
+
+  /// 0..1: how brightly [region] is lit by a real learning event right now.
+  double regionGlow(CheBrainRegion region) => _regionGlow[region] ?? 0;
+
+  /// A real learning event (the Brain Population Ledger) arrived for [region]: the region lights up briefly and
+  /// signals run out along its real links. Only the Real-Time Learning feed calls this, with ledger events; nothing
+  /// here invents one. Returns how many records of that region lit up (0: the region holds none on this phone).
+  int illuminate(CheBrainRegion region) {
+    final members = [for (var i = 0; i < layout.nodes.length; i++) if (layout.nodes[i].region == region) i];
+    if (members.isEmpty) return 0;
+    _regionGlow[region] = 1;
+    if (!reduceMotion) {
+      for (final i in members.take(24)) {
+        _flash[i] = 1;
+        final next = _adjacency[i];
+        if (next.isNotEmpty && pulses.length < maxPulses) pulses.add(CheNeuralPulse(i, next[_rng.nextInt(next.length)], .9));
+      }
+    }
+    _repaint();
+    return members.length;
+  }
+
   /// Grows a just-born memory in from nothing (ease-out with a small pop).
   double birthScale(String id) {
     final b = _born[id];
@@ -595,6 +623,12 @@ class CheBrainSpaceController {
       _advanceNeurons(dt);
     }
     _born.removeWhere((_, b) => time - b > 1.2);
+    if (_regionGlow.isNotEmpty) {
+      final decay = math.exp(-1.1 * dt);
+      _regionGlow.updateAll((_, v) => v * decay);
+      _regionGlow.removeWhere((_, v) => v < .02);
+      moving = true;
+    }
     if (repaint) _repaint();
     // Alive: always ticking. Reduce Motion: stop when nothing moves.
     return !reduceMotion || moving || selectedId != null || grabbedId != null;
@@ -1614,13 +1648,22 @@ class CheBrainPainter extends CustomPainter {
 
     // Edges: batched into faint / strong line lists; edges of the selected
     // memory pulse with a travelling spark.
-    final faint = <double>[], strong = <double>[], sparks = <double>[];
+    // Not selected, links are drawn by their real strength: verified (a recorded relationship between two
+    // verified records), developing (recorded, one side unverified) and weak (shared words only).
+    final faint = <double>[], developing = <double>[], verifiedLinks = <double>[], strong = <double>[], sparks = <double>[];
     final selIndex = c.selectedId == null ? -1 : (layout.byId[c.selectedId!] ?? -1);
-    for (final e in layout.edges) {
+    for (var k = 0; k < layout.edges.length; k++) {
+      final e = layout.edges[k];
       final a = proj[e.$1], b = proj[e.$2];
       if (a == null || b == null) continue;
       final hot = e.$1 == selIndex || e.$2 == selIndex;
-      (hot ? strong : faint)
+      (hot
+              ? strong
+              : switch (layout.edgeStrength[k]) {
+                  CheBrainLinkStrength.verified => verifiedLinks,
+                  CheBrainLinkStrength.developing => developing,
+                  CheBrainLinkStrength.weak => faint,
+                })
         ..add(a.offset.dx)
         ..add(a.offset.dy)
         ..add(b.offset.dx)
@@ -1637,8 +1680,19 @@ class CheBrainPainter extends CustomPainter {
     }
     if (faint.isNotEmpty) {
       canvas.drawRawPoints(ui.PointMode.lines, Float32List.fromList(faint), Paint()
-        ..color = const Color(0x4A62E3F0)
-        ..strokeWidth = .7);
+        ..color = const Color(0x2E8FA8FF)
+        ..strokeWidth = .6);
+    }
+    if (developing.isNotEmpty) {
+      canvas.drawRawPoints(ui.PointMode.lines, Float32List.fromList(developing), Paint()
+        ..color = const Color(0x66B98BFF)
+        ..strokeWidth = .9);
+    }
+    if (verifiedLinks.isNotEmpty) {
+      canvas.drawRawPoints(ui.PointMode.lines, Float32List.fromList(verifiedLinks), Paint()
+        ..color = const Color(0x9922E4F2)
+        ..strokeWidth = 1.2
+        ..blendMode = BlendMode.plus);
     }
     if (strong.isNotEmpty) {
       canvas.drawRawPoints(ui.PointMode.lines, Float32List.fromList(strong), Paint()
@@ -1689,10 +1743,12 @@ class CheBrainPainter extends CustomPainter {
       final breathe = 1 + math.sin(c.time * 1.4 + i * .7) * .06;
       final presence = 1 + math.min(node.degree, 8) * .05;
       final fire = c.flash(i);
-      final radius = (math.max(p.radius, 1.4) * 1.45 * breathe * presence * (1 + fire * .45) * c.birthScale(node.id)).clamp(0.0, 64.0);
+      final radius = (math.max(p.radius, 1.4) * 1.45 * breathe * presence * (1 + math.max(fire, c.regionGlow(node.region)) * .45) * c.birthScale(node.id)).clamp(0.0, 64.0);
       final depthFade = (1.0 - (p.depth - 4) / 60).clamp(.25, 1.0);
-      final base = cheMemoryCategoryColor(node.dot.category);
-      final color = (fire > .02 ? Color.lerp(base, Colors.white, fire * .5)! : base).withValues(alpha: (i == selIndex ? 1.0 : .82) * depthFade);
+      // The owner's colour key (che_brain_regions.dart); a real learning event lights its region up.
+      final glow = math.max(fire, c.regionGlow(node.region));
+      final base = node.region.color;
+      final color = (glow > .02 ? Color.lerp(base, Colors.white, glow * .5)! : base).withValues(alpha: (i == selIndex ? 1.0 : .82) * depthFade);
       final scale = radius * 2 / 64;
       transforms
         ..[k * 4] = scale
@@ -1710,7 +1766,8 @@ class CheBrainPainter extends CustomPainter {
         ..[k * 4 + 2] = 128
         ..[k * 4 + 3] = 64;
       colors[k] = color.toARGB32();
-      lightColors[k] = Color.lerp(color, Colors.white, .55)!.withValues(alpha: color.a).toARGB32();
+      // Verified records carry a white core (white = verified in the owner's key).
+      lightColors[k] = Color.lerp(color, Colors.white, node.verified ? .85 : .55)!.withValues(alpha: color.a).toARGB32();
       if (sprite == null) canvas.drawCircle(p.offset, radius * .4, Paint()..color = color);
     }
     if (sprite != null && order.isNotEmpty) {
