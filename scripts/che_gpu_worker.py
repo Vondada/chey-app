@@ -48,7 +48,7 @@ import urllib.request
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HEARTBEAT_S = 30
 OIDC_AUDIENCE = 'che-creation-engine'
-OIDC_REFRESH_S = 240          # GitHub ID tokens are short-lived: fetch a fresh one every 4 minutes
+OIDC_REFRESH_S = 120          # GitHub ID tokens live a few minutes: fetch a fresh one every 2 minutes
 
 
 def now():

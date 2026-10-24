@@ -12,13 +12,24 @@
 //
 // The worker token is the owner's to create (POST /api/gpu/worker-token from his device); it is shown once, stored
 // only as a SHA-256 hash, opens only /api/gpu/worker/* and is revoked by creating a new one or by /revoke.
+//
+// Creation Engine (owner, 2026-10-24: "she carries out the entire job"): a second worker class, `github_cpu`, is the
+// che-creation-worker.yml run CHE starts herself (creation_orchestrator.js) on a free GitHub-hosted CPU runner (the
+// repository is public). It proves itself with GitHub's OIDC ID token (gpu_oidc.js), never a stored secret, and its
+// worker_id is gha-<run_id>-<n> from that token. Jobs say what compute they need (requires.gpu: required for face
+// previews, preferred for person models, none): a CPU worker takes a preferred job only while no GPU worker is online,
+// and its output is labelled CPU everywhere, never GPU. Progress carries stage checkpoints (model, rig, animate,
+// verify, render, save); a resuming worker downloads the uploaded GLB and skips finished stages. A lapsed lease
+// pauses the job for ANY compatible worker; a failed attempt re-queues it (3 attempts) with its checkpoints kept.
 import { BUILT_IN, STYLES, STYLE_LABELS, identityRoute, toSettings } from './avatar_identity.js';
 import { saveRenderedImage } from './media.js';
 import { mediaStore, sha256Hex } from './che_media_store.js';
+import { verifyGithubOidc } from './gpu_oidc.js';
+import { ensureCapacity } from './creation_orchestrator.js';
 
 export const LEASE_MS = 3 * 60_000;           // a claimed job pauses after 3 minutes without a heartbeat
 export const ONLINE_MS = 90_000;              // a worker counts as online for 90 s after its last heartbeat
-export const MAX_FAILURES = 2;                // reported render failures before a job is marked failed
+export const MAX_FAILURES = 3;                // attempts: a failed run re-queues the job until the third failure
 export const MAX_JOBS = 200;
 export const MAX_PREVIEW_BYTES = 4 * 1024 * 1024;
 export const MAX_MODEL_BYTES = 16 * 1024 * 1024;
@@ -27,6 +38,13 @@ export const MAX_MODEL_BYTES = 16 * 1024 * 1024;
 export const JOB_KINDS = ['face_preview', 'person_model'];
 export const VIEW_NAMES = { 0: 'front', 45: 'three-quarter', 90: 'side' };
 const GPU_DEVICE = /^DEVICE (OPTIX|CUDA) \[.+\]/;
+const CPU_DEVICE = /^DEVICE CPU\b/;
+export const STAGES = ['model', 'rig', 'animate', 'verify', 'render', 'save'];
+export const PRIORITIES = { high: 0, normal: 1, low: 2 };
+export const GPU_NEEDS = ['required', 'preferred', 'none'];
+export const WORKER_CLASSES = ['colab', 'github_cpu'];
+export const ENGINE_KEY = 'gpu:engine';
+export const DEFAULT_ENGINE_SETTINGS = Object.freeze({ auto_cloud: true, max_cloud_workers: 3, spend_limit_usd: 0 });
 const JOBS_KEY = 'gpu:jobs';
 const WORKERS_KEY = 'gpu:workers';
 const TOKEN_KEY = 'gpu:token';
@@ -86,16 +104,38 @@ function note(job, now, state, text) {
   job.history = [...(job.history || []), { at: iso(now), state, note: String(text).slice(0, 300) }].slice(-20);
 }
 
-/** A rendering job whose worker stopped heartbeating is paused, not failed: the next session resumes it. */
+/** A rendering job whose worker stopped heartbeating is paused, not failed: any compatible worker resumes it. */
 function settle(jobs, now) {
   let changed = false;
   for (const j of jobs) {
     if (j.state === 'rendering' && (!j.lease || j.lease.expires_ms <= now)) {
-      note(j, now, 'paused', `The Colab session stopped answering (last heartbeat ${j.lease ? iso(j.lease.expires_ms - LEASE_MS) : 'unknown'}). It resumes in your next Colab session; finished views are kept.`);
+      const who = j.lease?.class === 'github_cpu' ? 'The GitHub cloud worker' : 'The Colab session';
+      note(j, now, 'paused', `${who} stopped answering (last heartbeat ${j.lease ? iso(j.lease.expires_ms - LEASE_MS) : 'unknown'}). The next compatible worker resumes it; finished views and checkpoints are kept.`);
       j.lease = null; changed = true;
     }
   }
   return changed;
+}
+
+/** The Creation Engine settings (owner): automatic cloud workers, how many at once, and the spending limit ($0, fixed). */
+export async function engineRecord(storage) { return (await storage.get(ENGINE_KEY)) || {}; }
+export function engineSettingsOf(rec) {
+  const s = { ...DEFAULT_ENGINE_SETTINGS, ...(rec?.settings || {}) };
+  const n = Math.round(Number(s.max_cloud_workers));
+  return { auto_cloud: s.auto_cloud !== false, max_cloud_workers: Number.isFinite(n) ? Math.min(10, Math.max(1, n)) : 3, spend_limit_usd: 0 };
+}
+
+const isGpuWorker = (w) => w?.class !== 'github_cpu' && isGpuName(w?.gpu);
+/** Whether a worker of this kind may take the job now (a CPU worker takes a GPU-preferred job only with no GPU online). */
+export function compatible(j, gpuWorker, gpuOnline) {
+  const need = j.requires?.gpu || (j.kind === 'person_model' ? 'preferred' : 'required');
+  return need === 'none' || gpuWorker || (need === 'preferred' && !gpuOnline);
+}
+const waiting = (j) => j.state === 'queued' || j.state === 'paused';
+/** Claim order: owner priority first, then a paused job (it has finished work to keep), then the oldest. */
+export function claimOrder(a, b) {
+  return (PRIORITIES[a.priority] ?? 1) - (PRIORITIES[b.priority] ?? 1) || (a.state === 'paused' ? 0 : 1) - (b.state === 'paused' ? 0 : 1)
+    || String(a.created_at).localeCompare(String(b.created_at));
 }
 
 export class GpuQueue {
@@ -109,7 +149,7 @@ export class GpuQueue {
       await this.storage.put(SEEDED_KEY, iso(t));
       await this.storage.put(JOBS_KEY, jobs);
     }
-    if (settle(jobs, this.now())) await this.save(jobs);
+    if (settle(jobs, this.now())) { this.paused = true; await this.save(jobs); }
     return jobs;
   }
 
@@ -122,9 +162,13 @@ export class GpuQueue {
       settings: cleanSettings(spec.settings), samples: Math.min(Math.max(Number(spec.samples) || 64, 1), 1024),
       res: Math.min(Math.max(Number(spec.res) || 480, 64), 2048), queued_by: String(spec.queued_by || 'owner').slice(0, 60),
       created_at: iso(t), updated_at: iso(t), state: 'queued', failures: 0, sessions: 0, lease: null,
-      progress: { views_done: [], message: 'Waiting for your Colab GPU session.' }, previews: {}, model: null, receipt: null, history: [],
+      priority: PRIORITIES[spec.priority] !== undefined ? spec.priority : 'normal',
+      requires: { gpu: GPU_NEEDS.includes(spec.requires?.gpu) ? spec.requires.gpu : (spec.kind === 'person_model' ? 'preferred' : 'required') },
+      progress: { views_done: [], message: spec.kind === 'person_model' ? 'Waiting for a Creation Engine worker.' : 'Waiting for your Colab GPU session.' },
+      previews: {}, model: null, receipt: null, checkpoints: {}, cloud: null, history: [],
     };
-    note(job, t, 'queued', 'Queued. It renders the next time your Colab T4 notebook runs.');
+    note(job, t, 'queued', job.requires.gpu === 'required' ? 'Queued. It renders the next time your Colab T4 notebook runs.'
+      : 'Queued for the Creation Engine: a GPU worker if one is online, otherwise a free GitHub cloud CPU worker.');
     return job;
   }
 
@@ -134,7 +178,7 @@ export class GpuQueue {
     const probe = this.newJob(spec, this.now());
     if (!probe.views.length) return { ok: false, detail: 'Name at least one view (0 front, 45 three-quarter, 90 side).' };
     const same = jobs.find((j) => ['queued', 'paused', 'rendering'].includes(j.state)
-      && (j.kind || 'face_preview') === probe.kind && JSON.stringify(j.settings) === JSON.stringify(probe.settings) && j.views.join() === probe.views.join() && j.samples === probe.samples && j.res === probe.res);
+      && (j.kind || 'face_preview') === probe.kind && (j.requires?.gpu || probe.requires.gpu) === probe.requires.gpu && JSON.stringify(j.settings) === JSON.stringify(probe.settings) && j.views.join() === probe.views.join() && j.samples === probe.samples && j.res === probe.res);
     if (same) return { ok: true, job: same, duplicate: true };
     jobs.push(probe); await this.save(jobs);
     return { ok: true, job: probe };
@@ -160,7 +204,9 @@ export class GpuQueue {
   /** What the Creation Room shows. */
   async view() {
     const jobs = await this.jobs(); const workers = await this.workers(); const t = this.now();
-    const list = Object.entries(workers).map(([id, w]) => ({ id, ...w, online: t - (w.last_seen_ms || 0) < ONLINE_MS, last_seen: w.last_seen_ms ? iso(w.last_seen_ms) : null }));
+    const list = Object.entries(workers).map(([id, w]) => ({ id, ...w, class: w.class || 'colab', device: w.device || w.gpu || null,
+      job_id: jobs.find((j) => j.state === 'rendering' && j.lease?.worker_id === id)?.id || null,
+      online: t - (w.last_seen_ms || 0) < ONLINE_MS, last_seen: w.last_seen_ms ? iso(w.last_seen_ms) : null }));
     const counts = {};
     for (const j of jobs) counts[j.state] = (counts[j.state] || 0) + 1;
     const token = await this.storage.get(TOKEN_KEY);
@@ -187,27 +233,57 @@ export class GpuQueue {
   async touchWorker(workerId, info = {}) {
     const workers = await this.workers(); const t = this.now();
     const w = workers[workerId] || { first_seen: iso(t) };
-    workers[workerId] = { ...w, gpu: String(info.gpu || w.gpu || '').slice(0, 120), blender: String(info.blender || w.blender || '').slice(0, 60),
+    const cls = WORKER_CLASSES.includes(info.class) ? info.class : (w.class || 'colab');
+    const num = (x, d) => (Number.isFinite(Number(x)) && Number(x) > 0 ? Math.min(Number(x), 4096) : d);
+    workers[workerId] = { ...w, class: cls, gpu: String(info.gpu || w.gpu || '').slice(0, 120), blender: String(info.blender || w.blender || '').slice(0, 60),
+      device: cls === 'github_cpu' ? 'cpu' : String(info.gpu || w.gpu || info.device || '').slice(0, 120),
+      cores: num(info.cores, w.cores || null), ram_gb: num(info.ram_gb, w.ram_gb || null),
+      job_id: info.job_id !== undefined ? (String(info.job_id || '').slice(0, 40) || null) : (w.job_id || null),
       state: String(info.state || 'idle').slice(0, 40), last_seen_ms: t };
     const ids = Object.keys(workers).sort((a, b) => workers[b].last_seen_ms - workers[a].last_seen_ms);
     for (const old of ids.slice(10)) delete workers[old];
     await this.storage.put(WORKERS_KEY, workers);
   }
 
-  /** Worker: the next job: paused ones first (resume), then the oldest queued. Requires a GPU name from nvidia-smi. */
-  async claim(workerId, info = {}) {
-    if (!isGpuName(info.gpu)) return { ok: false, detail: 'No GPU reported; nothing is handed to a CPU.' };
-    await this.touchWorker(workerId, { ...info, state: 'claiming' });
-    const jobs = await this.jobs(); const t = this.now();
+  /**
+   * Worker: the next job it may take (one at a time): owner priority, then paused (resume), then the oldest.
+   * A Colab worker must name a GPU (nvidia-smi); a github_cpu worker (OIDC) takes only jobs that allow a CPU, and at
+   * most max_cloud_workers of them work at once. The reply carries the job's checkpoints and, when a model was
+   * uploaded, model_url for the resuming worker to download it and skip the finished stages.
+   */
+  async claim(workerId, info = {}, auth = { class: 'colab' }) {
+    const cls = auth.class === 'github_cpu' ? 'github_cpu' : 'colab';
+    if (cls === 'colab' && !isGpuName(info.gpu)) return { ok: false, detail: 'No GPU reported; a Colab worker without a GPU is handed nothing.' };
+    await this.touchWorker(workerId, { ...info, class: cls, state: 'claiming' });
+    const jobs = await this.jobs(); const t = this.now(); const workers = await this.workers();
     const mine = jobs.find((j) => j.state === 'rendering' && j.lease?.worker_id === workerId);
-    const next = mine || jobs.find((j) => j.state === 'paused') || jobs.find((j) => j.state === 'queued');
+    let next = mine;
+    if (!next) {
+      if (cls === 'github_cpu') {
+        const max = engineSettingsOf(await engineRecord(this.storage)).max_cloud_workers;
+        const busy = jobs.filter((j) => j.state === 'rendering' && j.lease?.class === 'github_cpu').length;
+        if (busy >= max) return { ok: true, job: null, detail: `${busy} cloud workers are already busy (the limit is ${max}).` };
+      }
+      const gpuOnline = Object.entries(workers).some(([id, w]) => id !== workerId && isGpuWorker(w) && t - (w.last_seen_ms || 0) < ONLINE_MS);
+      next = jobs.filter((j) => waiting(j) && compatible(j, cls === 'colab', gpuOnline)).sort(claimOrder)[0];
+    }
     if (!next) return { ok: true, job: null };
-    const resumed = next.state === 'paused';
-    next.lease = { worker_id: workerId, expires_ms: t + LEASE_MS }; next.sessions = (next.sessions || 0) + (mine ? 0 : 1);
-    next.progress = { ...(next.progress || {}), message: resumed ? 'Resuming: views already verified in Drive are reused.' : 'Starting on the GPU.' };
-    if (!mine) note(next, t, 'rendering', `${resumed ? 'Resumed' : 'Claimed'} by the Colab worker on ${String(info.gpu).slice(0, 60)}.`);
+    const resumed = next.state === 'paused' || Boolean(!mine && Object.keys(next.checkpoints || {}).length);
+    const device = cls === 'github_cpu' ? 'cpu' : String(info.gpu).slice(0, 60);
+    next.lease = { worker_id: workerId, expires_ms: t + LEASE_MS, class: cls, device }; next.sessions = (next.sessions || 0) + (mine ? 0 : 1);
+    next.cloud = null;
+    next.progress = { ...(next.progress || {}), message: resumed ? 'Resuming: finished views and stages are reused.' : cls === 'github_cpu' ? 'Starting on a GitHub cloud CPU.' : 'Starting on the GPU.' };
+    if (!mine) {
+      const on = cls === 'github_cpu' ? `the GitHub cloud CPU worker${info.cores ? ` (${Number(info.cores)} cores${info.ram_gb ? `, ${Number(info.ram_gb)} GB` : ''})` : ''}`
+        : `the Colab worker on ${String(info.gpu).slice(0, 60)}`;
+      note(next, t, 'rendering', `${resumed ? 'Resumed' : 'Claimed'} by ${on}.`);
+    }
     await this.save(jobs);
-    return { ok: true, job: publicJob(next), resumed };
+    await this.touchWorker(workerId, { class: cls, state: 'working', job_id: next.id });
+    const job = publicJob(next);
+    job.checkpoints = { ...(next.checkpoints || {}) };
+    job.model_url = next.model ? `/api/gpu/worker/model?worker=${encodeURIComponent(workerId)}&job=${next.id}` : null;
+    return { ok: true, job, resumed };
   }
 
   async held(workerId, id) {
@@ -229,8 +305,17 @@ export class GpuQueue {
     const { jobs, j } = await this.held(workerId, String(body.job_id || ''));
     if (!j) return { ok: false, detail: 'This worker does not hold that job.' };
     const done = cleanViews(body.views_done || []).filter((v) => j.views.includes(v));
+    const stage = STAGES.includes(body.stage) ? body.stage : (j.progress?.stage || null);
+    const pct = Number.isFinite(Number(body.pct)) && body.pct !== null && body.pct !== '' ? Math.round(Math.min(100, Math.max(0, Number(body.pct)))) : Math.round((100 * done.length) / j.views.length);
     j.progress = { views_done: done, current_view: Number.isInteger(body.current_view) ? body.current_view : null,
-      message: String(body.message || '').slice(0, 200), pct: Math.round((100 * done.length) / j.views.length) };
+      message: String(body.message || '').slice(0, 200), pct, stage };
+    // A finished stage's artifact (the GLB for model, rig and animate): kept per stage, newest wins, so a resuming
+    // worker can skip what is done. Only the hash and size are stored; the bytes are the uploaded model.
+    const c = body.checkpoint;
+    if (c && typeof c === 'object' && STAGES.includes(c.stage) && /^[a-f0-9]{64}$/.test(String(c.sha256 || ''))) {
+      j.checkpoints = { ...(j.checkpoints || {}), [c.stage]: { sha256: String(c.sha256), bytes: Math.max(0, Number(c.bytes) || 0), at: iso(this.now()) } };
+      note(j, this.now(), j.state, `Checkpoint: ${c.stage} finished.`);
+    }
     j.lease.expires_ms = this.now() + LEASE_MS; j.updated_at = iso(this.now());
     await this.save(jobs);
     return { ok: true };
@@ -244,7 +329,12 @@ export class GpuQueue {
     if (!bytes?.length || bytes.length > MAX_PREVIEW_BYTES) return { ok: false, detail: 'The picture is empty or larger than 4 MB.' };
     if (!(bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47)) return { ok: false, detail: 'Only PNG pictures are accepted.' };
     const name = VIEW_NAMES[view] || `${view} degrees`;
-    const item = await saveRenderedImage(env, this.storage, {
+    // Labelled by the compute that holds the job: CPU output is never called GPU.
+    const cpu = j.lease?.class === 'github_cpu';
+    const item = await saveRenderedImage(env, this.storage, cpu ? {
+      bytes, title: `${j.title.replace(/:.*$/, '')}: ${name} (GitHub cloud CPU)`, prompt: `CPU preview ${j.id}, view ${view}`,
+      provenance: `Rendered with Blender Cycles on a GitHub-hosted CPU runner (che-creation-worker.yml), job ${j.id}`, engine: 'blender-cycles-cpu', source: 'github_cpu', mode: 'cpu_render',
+    } : {
       bytes, title: `${j.title.replace(/:.*$/, '')}: ${name} (Colab T4 GPU)`, prompt: `GPU face preview ${j.id}, view ${view}`,
       provenance: `Rendered with Blender Cycles on the owner's Colab GPU, job ${j.id}`, engine: 'blender-cycles-gpu', source: 'colab_gpu', mode: 'gpu_render',
     });
@@ -272,6 +362,14 @@ export class GpuQueue {
     return { ok: true, bytes: bytes.length, sha256: j.model.sha256 };
   }
 
+  /** Worker: the GLB it uploaded earlier for the job it now holds (a resume), or null. */
+  async workerModel(env, workerId, id) {
+    const { j } = await this.held(workerId, id);
+    if (!j?.model?.key) return null;
+    const got = await mediaStore(env, this.storage).get(j.model.key);
+    return got?.body?.length ? got.body : null;
+  }
+
   /** Owner: the stored GLB bytes of a job, or null. */
   async modelBytes(env, id) {
     const j = (await this.jobs()).find((x) => x.id === id);
@@ -285,6 +383,7 @@ export class GpuQueue {
     const { jobs, j } = await this.held(workerId, String(body.job_id || ''));
     if (!j) return { ok: false, detail: 'This worker does not hold that job.' };
     const t = this.now(); const r = body.receipt && typeof body.receipt === 'object' ? body.receipt : null;
+    const cpu = j.lease?.class === 'github_cpu'; const lease = j.lease;
     j.lease = null; j.drive_path = String(body.drive_path || '').slice(0, 300) || j.drive_path || null;
     if (r) j.receipt = trimReceipt(r);
     const status = String(body.status || '');
@@ -292,22 +391,38 @@ export class GpuQueue {
       note(j, t, 'queued', 'The Colab session had no GPU; waiting for a session with the T4. Nothing rendered on a CPU.');
     } else if (status === 'complete') {
       const views = r?.views || {};
-      const bad = j.views.filter((v) => views[v]?.status !== 'ok' || !GPU_DEVICE.test(String(views[v]?.device || '')) || !j.previews?.[v]);
+      // Each view must name the device class of the worker that held the job: a GPU line from a Colab worker, a CPU
+      // line from a cloud CPU worker (and a GPU-required job never reaches a CPU worker).
+      const DEV = cpu ? CPU_DEVICE : GPU_DEVICE;
+      const bad = j.views.filter((v) => views[v]?.status !== 'ok' || !DEV.test(String(views[v]?.device || '')) || !j.previews?.[v]);
       // A person model is complete only with its 3D model uploaded and named in the receipt with the same hash.
       const modelBad = j.kind === 'person_model' && !(j.model && r?.model?.status === 'ok' && r.model.sha256 === j.model.sha256);
-      if (r?.status !== 'complete' || bad.length || modelBad) {
+      // A full-body person model also needs its skeleton verified: the runner re-imported the GLB and measured its
+      // bones, weights, clips and morphs (verify_glb.py). A model that only claims to move is not accepted.
+      const rigBad = j.kind === 'person_model' && wantsRig(j) && !modelBad && j.receipt?.model?.rig?.ok !== true;
+      if (r?.status !== 'complete' || bad.length || modelBad || rigBad) {
         j.failures += 1;
-        const why = [bad.length || r?.status !== 'complete' ? `view${bad.length === 1 ? '' : 's'} ${bad.join(', ') || '?'} lack a GPU receipt or an uploaded picture` : '',
-          modelBad ? 'the 3D model was not uploaded or does not match the receipt' : ''].filter(Boolean).join('; ');
-        note(j, t, j.failures >= MAX_FAILURES ? 'failed' : 'queued', `Not accepted as complete: ${why}.`);
+        const why = [bad.length || r?.status !== 'complete' ? `view${bad.length === 1 ? '' : 's'} ${bad.join(', ') || '?'} lack a ${cpu ? 'CPU' : 'GPU'} receipt or an uploaded picture` : '',
+          modelBad ? 'the 3D model was not uploaded or does not match the receipt' : '',
+          rigBad ? 'the full-body model has no verified skeleton and animation check' : ''].filter(Boolean).join('; ');
+        note(j, t, j.failures >= MAX_FAILURES ? 'failed' : 'queued', `Not accepted as complete: ${why}.${j.failures >= MAX_FAILURES ? '' : ` Attempt ${j.failures} of ${MAX_FAILURES}; queued again.`}`);
       } else {
-        j.progress = { views_done: [...j.views], message: 'All views rendered on the GPU.', pct: 100 };
-        note(j, t, 'completed', `Rendered on ${String(r.nvidia_smi || r.cycles_gpus || 'the GPU').slice(0, 80)} with ${String(r.blender_version || 'Blender').slice(0, 40)}.`);
+        const rig = j.receipt?.model?.rig;
+        if (rig?.ok) {
+          j.history = [...(j.history || []), { at: iso(t), state: j.state, note: `Skeleton verified: ${rigLine(rig)}.` }].slice(-20);
+        }
+        j.progress = { views_done: [...j.views], message: `All views rendered on the ${cpu ? 'CPU' : 'GPU'}.`, pct: 100, stage: 'save' };
+        j.rendered_on = { class: cpu ? 'github_cpu' : 'colab', device: cpu ? 'CPU' : String(r.nvidia_smi || r.cycles_gpus || lease?.device || 'GPU').slice(0, 80), worker_id: lease?.worker_id || null };
+        note(j, t, 'completed', cpu
+          ? `Rendered on the CPU of a GitHub cloud runner${r.cores ? ` (${Number(r.cores)} cores)` : ''} with ${String(r.blender_version || 'Blender').slice(0, 40)}.`
+          : `Rendered on ${String(r.nvidia_smi || r.cycles_gpus || 'the GPU').slice(0, 80)} with ${String(r.blender_version || 'Blender').slice(0, 40)}.`);
       }
     } else {
+      // A failed run (not a failed check, not an owner cancel) re-queues the job with its checkpoints and finished
+      // views kept, up to MAX_FAILURES attempts; then it fails with the real reason.
       j.failures += 1; j.error = String(body.error || status || 'render failed').slice(0, 300);
       const final = status === 'checks_failed' || j.failures >= MAX_FAILURES;
-      note(j, t, final ? 'failed' : 'queued', `${status === 'checks_failed' ? 'A face check failed before rendering' : 'The render failed'}: ${j.error}${final ? '' : ' Trying once more next time.'}`);
+      note(j, t, final ? 'failed' : 'queued', `${status === 'checks_failed' ? 'A face check failed before rendering' : 'The render failed'}: ${j.error}${final ? '' : ` Attempt ${j.failures} of ${MAX_FAILURES}; queued again with finished work kept.`}`);
     }
     await this.save(jobs);
     return { ok: true, job: publicJob(j) };
@@ -315,13 +430,15 @@ export class GpuQueue {
 }
 
 function trimReceipt(r) {
-  const keep = ['job_id', 'status', 'nvidia_smi', 'device', 'cycles_gpus', 'render_device_line', 'blender_version', 'samples', 'long_edge_px', 'face_code_sha256', 'created_at', 'finished_at', 'process_seconds', 'last_run'];
+  const keep = ['job_id', 'status', 'nvidia_smi', 'device', 'cores', 'threads', 'cycles_gpus', 'render_device_line', 'blender_version', 'samples', 'long_edge_px', 'face_code_sha256', 'created_at', 'finished_at', 'process_seconds', 'last_run'];
   const out = {};
   for (const k of keep) if (r[k] !== undefined) out[k] = typeof r[k] === 'string' ? r[k].slice(0, 300) : r[k];
   if (r.model && typeof r.model === 'object') {
     const m = r.model;
     out.model = { status: String(m.status || ''), file: String(m.file || '').slice(0, 120), sha256: String(m.sha256 || '').slice(0, 64), bytes: Number(m.bytes) || 0,
-      vertices: Number(m.vertices) || 0, exported_at: String(m.exported_at || '').slice(0, 40), contents: String(m.contents || '').slice(0, 200) };
+      vertices: Number(m.vertices) || 0, exported_at: String(m.exported_at || '').slice(0, 40), contents: String(m.contents || '').slice(0, 200),
+      mode: m.mode === 'bust' ? 'bust' : m.mode === 'full_body' ? 'full_body' : '' };
+    if (m.rig && typeof m.rig === 'object') out.model.rig = trimRig(m.rig);
   }
   out.views = {};
   for (const [v, info] of Object.entries(r.views || {}).slice(0, 8)) {
@@ -331,10 +448,74 @@ function trimReceipt(r) {
   return out;
 }
 
+/** Whether a person_model job asked for the full body (MODEL_MODE full_body, the default) and so needs a verified rig. */
+export function wantsRig(j) { return j.kind === 'person_model' && (j.settings?.MODEL_MODE || 'full_body') !== 'bust'; }
+
+/** The rig check as the runner reported it (verify_glb.py), kept small and typed. */
+function trimRig(g) {
+  const num = (x) => (Number.isFinite(Number(x)) ? Number(x) : 0);
+  const checks = {};
+  for (const [k, v] of Object.entries(g.checks && typeof g.checks === 'object' ? g.checks : {}).slice(0, 16)) {
+    // Numbers and booleans as sent; anything else as short text (a nested measurement is kept as JSON text).
+    checks[String(k).slice(0, 40)] = typeof v === 'number' || typeof v === 'boolean' ? v : (typeof v === 'string' ? v : JSON.stringify(v)).slice(0, 200);
+  }
+  return {
+    ok: g.ok === true, bones: num(g.bones), weighted_vertices: num(g.weighted_vertices),
+    clips: (Array.isArray(g.clips) ? g.clips : []).slice(0, 16).map((c) => ({ name: String(c?.name || '').slice(0, 40), seconds: num(c?.seconds) })),
+    morphs: (Array.isArray(g.morphs) ? g.morphs : []).slice(0, 32).map((x) => String(x).slice(0, 40)), checks,
+  };
+}
+
+/** "53 bones, 4 clips (idle, walk, wave, talk), 5 face shapes". */
+export function rigLine(rig) {
+  const clips = rig.clips || [];
+  return `${rig.bones} bones, ${clips.length} clip${clips.length === 1 ? '' : 's'}${clips.length ? ` (${clips.map((c) => c.name).join(', ')})` : ''}`
+    + `${rig.morphs?.length ? `, ${rig.morphs.length} face shape${rig.morphs.length === 1 ? '' : 's'}` : ''}`;
+}
+
 export function publicJob(j) {
   const { lease, ...rest } = j;
   const model = j.model ? { bytes: j.model.bytes, sha256: j.model.sha256, uploaded_at: j.model.uploaded_at, url: `/api/gpu/jobs/${j.id}/model.glb` } : null;
-  return { ...rest, kind: j.kind || 'face_preview', model, worker_id: lease?.worker_id || null, lease_expires: lease ? iso(lease.expires_ms) : null };
+  const g = j.receipt?.model?.rig;
+  // The rig only counts as verified once the job completed with it (the receipt's ok alone is the runner's claim).
+  const rig = g ? { ok: g.ok === true && j.state === 'completed', bones: g.bones, clips: (g.clips || []).map((c) => c.name), morphs: g.morphs || [],
+    mode: j.receipt.model.mode || null } : null;
+  return { ...rest, kind: j.kind || 'face_preview', model, rig, worker_id: lease?.worker_id || null, worker_class: lease?.class || null,
+    lease_expires: lease ? iso(lease.expires_ms) : null, priority: j.priority || 'normal', requires: { gpu: j.requires?.gpu || (j.kind === 'person_model' ? 'preferred' : 'required') },
+    checkpoints: { ...(j.checkpoints || {}) }, ...displayOf(j) };
+}
+
+export const DISPLAY_STATES = ['Creating', 'Waiting for Resources', 'Starting a cloud worker', 'Paused', 'Completed', 'Failed', 'Cancelled'];
+const hhmm = (at) => String(at || '').slice(11, 16);
+
+/** The owner-facing state of a job and one plain sentence with its real numbers (nothing estimated or invented). */
+export function displayOf(j) {
+  const views = j.views?.length || 0; const done = j.progress?.views_done?.length || 0;
+  const stage = j.progress?.stage ? `, stage ${STAGES.indexOf(j.progress.stage) + 1} of ${STAGES.length} (${j.progress.stage})` : '';
+  const ck = Object.keys(j.checkpoints || {}); const kept = ck.length ? ` Finished stages kept: ${ck.join(', ')}.` : '';
+  const attempt = j.failures ? ` Attempt ${Math.min(j.failures + 1, MAX_FAILURES)} of ${MAX_FAILURES}.` : '';
+  const last = (j.history || []).at(-1);
+  if (j.state === 'rendering') {
+    const on = j.lease?.class === 'github_cpu' ? 'a free GitHub cloud CPU worker (slower than a GPU)' : `the Colab GPU${j.lease?.device ? ` (${j.lease.device})` : ''}`;
+    return { display_state: 'Creating', status_line: `Creating on ${on}${stage}: ${done} of ${views} view${views === 1 ? '' : 's'} rendered, ${j.progress?.pct ?? 0} percent.` };
+  }
+  if (j.state === 'queued' || j.state === 'paused') {
+    const c = j.cloud;
+    if (c?.state === 'dispatching') {
+      return { display_state: j.state === 'paused' ? 'Paused' : 'Starting a cloud worker',
+        status_line: `${j.state === 'paused' ? 'Paused; ' : ''}CHE asked GitHub for a free cloud worker at ${hhmm(c.at)} UTC; it usually picks the job up within a few minutes.${kept}${attempt}` };
+    }
+    if (j.state === 'paused') return { display_state: 'Paused', status_line: `Paused at ${hhmm(last?.at)} UTC after ${done} of ${views} views: the worker stopped answering. The next compatible worker resumes it.${kept}${c?.reason ? ` ${c.reason}` : ''}` };
+    const need = j.requires?.gpu || (j.kind === 'person_model' ? 'preferred' : 'required');
+    const why = c?.reason || (need === 'required' ? 'This job needs a GPU: it runs when your Colab T4 notebook is open.' : 'Waiting for a worker.');
+    return { display_state: 'Waiting for Resources', status_line: `Waiting since ${hhmm(j.created_at)} UTC. ${why}${kept}${attempt}` };
+  }
+  if (j.state === 'completed') {
+    const on = j.rendered_on?.class === 'github_cpu' ? 'on a GitHub cloud CPU' : j.rendered_on ? `on ${j.rendered_on.device}` : 'on the GPU';
+    return { display_state: 'Completed', status_line: `Completed at ${hhmm(last?.at)} UTC ${on}: ${views} view${views === 1 ? '' : 's'}${j.model ? `, a ${Math.round(j.model.bytes / 1024)} KB 3D model` : ''}.` };
+  }
+  if (j.state === 'failed') return { display_state: 'Failed', status_line: `Failed after ${j.failures || 0} attempt${j.failures === 1 ? '' : 's'}: ${String(last?.note || j.error || 'no reason recorded').slice(0, 200)}` };
+  return { display_state: 'Cancelled', status_line: `Cancelled at ${hhmm(last?.at)} UTC.` };
 }
 
 /** One sentence for the Creation Room's Read button and for chat. */
@@ -342,10 +523,12 @@ export function speakGpuSummary(view) {
   const c = view.counts || {};
   const online = view.workers.filter((w) => w.online);
   const parts = [];
-  for (const [state, word] of [['rendering', 'rendering'], ['queued', 'queued'], ['paused', 'paused until your next Colab session'], ['completed', 'completed'], ['failed', 'failed']]) {
+  for (const [state, word] of [['rendering', 'rendering'], ['queued', 'queued'], ['paused', 'paused until a worker resumes them'], ['completed', 'completed'], ['failed', 'failed']]) {
     if (c[state]) parts.push(`${c[state]} ${word}`);
   }
-  const gpu = online.length ? `Your Colab GPU worker is online on ${online[0].gpu || 'a GPU'}.` : 'No Colab GPU session is open right now; jobs wait until you run the notebook.';
+  const gpuOn = online.filter((w) => w.class !== 'github_cpu'); const cloud = online.length - gpuOn.length;
+  const gpu = (gpuOn.length ? `Your Colab GPU worker is online on ${gpuOn[0].gpu || 'a GPU'}.` : 'No Colab GPU session is open right now; GPU-only jobs wait until you run the notebook.')
+    + (cloud ? ` ${cloud} free GitHub cloud CPU worker${cloud === 1 ? ' is' : 's are'} online.` : '');
   return `GPU jobs: ${parts.length ? parts.join(', ') : 'none yet'}. ${gpu}${view.worker_paired ? '' : ' The Colab worker is not paired yet.'} It costs nothing.`;
 }
 
@@ -353,39 +536,82 @@ export function speakGpuSummary(view) {
  * The worker's routes (/api/gpu/worker/*), opened only by the paired worker token in X-CHE-GPU-Token. Reads its own
  * body (previews are binary), so it runs before the JSON body is parsed. Returns null for other paths.
  */
-export async function gpuWorkerRoute({ storage, env, now }, path, request) {
+/**
+ * Who is calling a worker route: a GitHub Actions OIDC bearer from che-creation-worker.yml on main (class github_cpu,
+ * worker ids gha-<run_id>-<n>) or the paired Colab token in X-CHE-GPU-Token (class colab). Null for anyone else.
+ */
+export async function workerAuth({ storage, env = {}, now, fetcher }, request, q) {
+  const bearer = /^Bearer\s+(\S+)$/i.exec(request.headers.get('Authorization') || '');
+  if (bearer) {
+    const v = await verifyGithubOidc(bearer[1], env, { fetcher: fetcher || fetch, now: (now || Date.now)() });
+    return v.ok ? { class: 'github_cpu', run_id: v.claims.run_id } : null;
+  }
+  return (await q.tokenOpens(request.headers.get('X-CHE-GPU-Token'))) ? { class: 'colab' } : null;
+}
+
+/** A worker id the caller may use: gha-<its own run id>-<n> for a cloud worker; any other id (not gha-) for Colab. */
+export function workerIdOk(auth, id) {
+  if (!/^[\w.-]{4,64}$/.test(id)) return false;
+  if (auth.class === 'github_cpu') return new RegExp(`^gha-${auth.run_id}-\\d{1,3}$`).test(id);
+  return !/^gha-/i.test(id);
+}
+
+export async function gpuWorkerRoute(ctx, path, request) {
   const m = /^\/api\/gpu\/worker\/(heartbeat|claim|progress|preview|model|complete)$/.exec(path);
   if (!m) return null;
+  const out = await workerRouteInner(ctx, m[1], request);
+  // A lease that lapsed while this request read the queue paused a job: find it a worker now (creation_orchestrator.js).
+  if (out.paused) await ensureCapacity(ctx.env || {}, { storage: ctx.storage, now: ctx.now, fetcher: ctx.fetcher }).catch(() => null);
+  return out.res;
+}
+
+async function workerRouteInner(ctx, route, request) {
+  const { storage, env, now } = ctx;
   const q = new GpuQueue(storage, now);
-  if (!(await q.tokenOpens(request.headers.get('X-CHE-GPU-Token')))) return json({ detail: 'Not found.' }, 404);
+  const done = (res) => ({ res, paused: q.paused });
+  const auth = await workerAuth(ctx, request, q);
+  if (!auth) return done(json({ detail: 'Not found.' }, 404));
   const url = new URL(request.url);
-  if (m[1] === 'preview') {
-    if (request.method !== 'PUT') return json({ detail: 'Use PUT.' }, 405);
+  const wid = String(url.searchParams.get('worker') || '');
+  if (route === 'preview') {
+    if (request.method !== 'PUT') return done(json({ detail: 'Use PUT.' }, 405));
+    if (!workerIdOk(auth, wid)) return done(json({ detail: 'That worker id does not belong to this caller.' }, 403));
     const bytes = new Uint8Array(await request.arrayBuffer());
-    const out = await q.preview(env, String(url.searchParams.get('worker') || ''), String(url.searchParams.get('job') || ''), Number(url.searchParams.get('view')), bytes);
-    return json(out, out.ok ? 200 : 409);
+    const out = await q.preview(env, wid, String(url.searchParams.get('job') || ''), Number(url.searchParams.get('view')), bytes);
+    return done(json(out, out.ok ? 200 : 409));
   }
-  if (m[1] === 'model') {
-    if (request.method !== 'PUT') return json({ detail: 'Use PUT.' }, 405);
+  if (route === 'model' && request.method === 'GET') {
+    // A resuming worker downloads the GLB it (or an earlier worker) uploaded for the job it now holds.
+    if (!workerIdOk(auth, wid)) return done(json({ detail: 'That worker id does not belong to this caller.' }, 403));
+    const bytes = await q.workerModel(env, wid, String(url.searchParams.get('job') || ''));
+    if (!bytes) return done(json({ detail: 'No 3D model for a job this worker holds.' }, 404));
+    return done(new Response(bytes, { status: 200, headers: { 'Content-Type': 'model/gltf-binary', 'Content-Length': String(bytes.length) } }));
+  }
+  if (route === 'model') {
+    if (request.method !== 'PUT') return done(json({ detail: 'Use PUT or GET.' }, 405));
+    if (!workerIdOk(auth, wid)) return done(json({ detail: 'That worker id does not belong to this caller.' }, 403));
     const len = Number(request.headers.get('Content-Length') || 0);
-    if (len > MAX_MODEL_BYTES) return json({ ok: false, detail: 'The model is larger than 16 MB.' }, 413);
+    if (len > MAX_MODEL_BYTES) return done(json({ ok: false, detail: 'The model is larger than 16 MB.' }, 413));
     const bytes = new Uint8Array(await request.arrayBuffer());
-    const out = await q.model(env, String(url.searchParams.get('worker') || ''), String(url.searchParams.get('job') || ''), bytes);
-    return json(out, out.ok ? 200 : 409);
+    const out = await q.model(env, wid, String(url.searchParams.get('job') || ''), bytes);
+    return done(json(out, out.ok ? 200 : 409));
   }
-  if (request.method !== 'POST') return json({ detail: 'Use POST.' }, 405);
+  if (request.method !== 'POST') return done(json({ detail: 'Use POST.' }, 405));
   const body = await request.json().catch(() => ({}));
   const worker = String(body.worker_id || '').slice(0, 64);
-  if (!/^[\w.-]{4,64}$/.test(worker)) return json({ detail: 'worker_id is required.' }, 400);
-  const out = m[1] === 'heartbeat' ? await q.heartbeat(worker, body)
-    : m[1] === 'claim' ? await q.claim(worker, body)
-      : m[1] === 'progress' ? await q.progress(worker, body)
+  if (!/^[\w.-]{4,64}$/.test(worker)) return done(json({ detail: 'worker_id is required.' }, 400));
+  if (!workerIdOk(auth, worker)) return done(json({ detail: auth.class === 'github_cpu' ? 'A cloud worker id is gha-<its run id>-<n>.' : 'gha- worker ids belong to cloud workers.' }, 403));
+  const info = { ...body, class: auth.class };
+  const out = route === 'heartbeat' ? await q.heartbeat(worker, info)
+    : route === 'claim' ? await q.claim(worker, info, auth)
+      : route === 'progress' ? await q.progress(worker, body)
         : await q.complete(worker, body);
-  return json(out, out.ok ? 200 : 409);
+  return done(json(out, out.ok ? 200 : 409));
 }
 
 /** The owner's routes (/api/gpu, /api/gpu/jobs, /api/gpu/jobs/cancel|retry, /api/gpu/jobs/<id>/model.glb, /api/gpu/worker-token[/revoke], /api/gpu/identities*). */
-export async function gpuOwnerRoute({ storage, env = {}, now }, path, request, body) {
+export async function gpuOwnerRoute(ctx, path, request, body) {
+  const { storage, env = {}, now } = ctx;
   if (path !== '/api/gpu' && !path.startsWith('/api/gpu/')) return null;
   const q = new GpuQueue(storage, now);
   const glb = /^\/api\/gpu\/jobs\/(gpu_[a-f0-9]{12})\/model\.glb$/.exec(path);
@@ -394,7 +620,10 @@ export async function gpuOwnerRoute({ storage, env = {}, now }, path, request, b
     if (!bytes) return json({ detail: 'No 3D model for that job yet.' }, 404);
     return new Response(bytes, { status: 200, headers: { 'Content-Type': 'model/gltf-binary', 'Content-Length': String(bytes.length), 'Cache-Control': 'private, max-age=3600' } });
   }
-  if (path === '/api/gpu' && request.method === 'GET') { const v = await q.view(); return json({ ...v, spoken: speakGpuSummary(v) }); }
+  if (path === '/api/gpu' && request.method === 'GET') {
+    await ensureCapacity(env, { storage, now, fetcher: ctx.fetcher, queue: q }).catch(() => null);
+    const v = await q.view(); return json({ ...v, spoken: speakGpuSummary(v) });
+  }
   const ident = await identityRoute(storage, q, path, request, body);
   if (ident) return ident;
   if (request.method !== 'POST') return json({ detail: 'Use POST.' }, 405);

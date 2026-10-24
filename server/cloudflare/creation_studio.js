@@ -9,8 +9,17 @@
 // Edits are deterministic (no model call): a small vocabulary of plain sentences ("make the hair longer", "bigger
 // eyes", "make it photorealistic"). Each change becomes a new version, validated with the same rules the renderer uses;
 // a change the renderer would refuse is refused here. View commands ("rotate the model") only move the 3D viewport.
+//
+// Body & Movement (owner, 2026-10-24): every version also carries render settings beside the identity: MODEL_MODE
+// (full_body, the default: head to feet, clothed, rigged and animated; or bust), QUALITY (draft, standard, high, ultra,
+// custom) and LIGHTING (studio or cinematic). They go to the Creation Engine as extra job settings, so the identity
+// mapping (avatar_identity.js / identity.py) is untouched. Movement words ("show the skeleton", "animate walking",
+// "pause", "skip ahead 10 seconds") drive the viewport only. A full-body job completes only when the runner re-imported
+// the exported GLB and verified its skeleton, clips and face shapes (gpu_queue.js), so CHE never says a model moves
+// until it was measured moving.
 import { BUILT_IN, HAIR_BUILT, STYLES, STYLE_LABELS, listIdentities, skinOk, toSettings, validate } from './avatar_identity.js';
-import { GpuQueue, VIEW_NAMES, gpuOwnerRoute, publicJob } from './gpu_queue.js';
+import { GpuQueue, VIEW_NAMES, engineRecord, engineSettingsOf, gpuOwnerRoute, rigLine } from './gpu_queue.js';
+import { cloudUsable, engineRoute, ensureCapacity } from './creation_orchestrator.js';
 
 export const PROJECTS_KEY = 'creations:projects';
 export const MAX_PROJECTS = 100;
@@ -20,19 +29,67 @@ export const VIEWS = [0, 45, 90];
 
 export const CAPABILITIES = [
   { id: 'person', title: 'Create Person', status: 'available',
-    detail: 'Start from CHE or a crew preset, edit by voice or typing, and build a real 3D head model with previews on your Creation Engine.' },
+    detail: 'Start from CHE or a crew preset, edit by voice or typing, and build a clothed full-body 3D character on your Creation Engine: skeleton, face shapes, idle, walk, wave and talk clips, each verified before it is shown as working.' },
   { id: 'object', title: 'Create Object', status: 'unavailable',
     detail: 'Not built yet: CHE has no object modelling pipeline in Blender yet, so nothing is generated or simulated.' },
   { id: 'room', title: 'Create Room', status: 'unavailable',
     detail: 'Not built yet: rooms and environments have no generator yet; the Office and HQ rooms are fixed scenes.' },
   { id: 'animation', title: 'Create Animation', status: 'partial',
-    detail: 'Preview the built-in clips on the bundled crew models; new animation renders are not built yet.' },
+    detail: 'Play, pause, slow down and skip through clips with the skeleton showing: the bundled crew models now, and each generated character once its rig is verified. Motion capture from video and new animation renders are not built yet.' },
 ];
+
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+
+// ── Render settings ──────────────────────────────────────────────────────────────────────────────────────────────
+export const MODEL_MODES = { full_body: 'full body', bust: 'head and shoulders' };
+export const LIGHTINGS = { studio: 'studio', cinematic: 'cinematic' };
+// Detail presets. The times are rough estimates (a Colab T4, and the free 4-core GitHub cloud CPU, whose target for
+// Draft and Standard is the whole job in under 25 minutes), not measurements: the job receipt has the real time.
+export const QUALITY = {
+  draft: { label: 'Draft', samples: 16, res: 360, subdiv: 0, strands: 40, texture_px: 512, estimate: 'about 1 to 3 minutes', cpu_estimate: 'about 10 to 20 minutes' },
+  standard: { label: 'Standard', samples: 64, res: 480, subdiv: 1, strands: 90, texture_px: 1024, estimate: 'about 3 to 6 minutes', cpu_estimate: 'about 15 to 25 minutes' },
+  high: { label: 'High Detail', samples: 128, res: 720, subdiv: 1, strands: 140, texture_px: 2048, estimate: 'about 6 to 12 minutes', cpu_estimate: 'more than 30 minutes' },
+  ultra: { label: 'Ultra Detail', samples: 256, res: 1080, subdiv: 2, strands: 200, texture_px: 4096, estimate: 'about 15 to 30 minutes', cpu_estimate: 'more than an hour' },
+};
+const CUSTOM_LIMITS = { samples: [4, 1024], res: [240, 2048], subdiv: [0, 2], strands: [20, 300], texture_px: [256, 4096] };
+export const DEFAULT_RENDER = { mode: 'full_body', quality: 'standard', lighting: 'studio' };
+
+/** A version's render settings, with the defaults for versions made before they existed. */
+export function renderOf(v) {
+  const r = { ...DEFAULT_RENDER, ...(v?.render || {}) };
+  if (!MODEL_MODES[r.mode]) r.mode = DEFAULT_RENDER.mode;
+  if (!QUALITY[r.quality] && r.quality !== 'custom') r.quality = DEFAULT_RENDER.quality;
+  if (!LIGHTINGS[r.lighting]) r.lighting = DEFAULT_RENDER.lighting;
+  if (r.quality !== 'custom') delete r.custom;
+  return r;
+}
+
+/** The numbers a quality setting stands for (custom: the owner's numbers, kept inside safe limits). */
+export function qualityOf(r) {
+  if (r.quality !== 'custom') return { ...QUALITY[r.quality], id: r.quality };
+  const c = r.custom || {}; const base = QUALITY.standard; const out = { id: 'custom', label: 'Custom' };
+  for (const [k, [lo, hi]] of Object.entries(CUSTOM_LIMITS)) out[k] = Math.round(clamp(Number(c[k] ?? base[k]) || base[k], lo, hi));
+  const heavy = out.samples * (out.res / 480) ** 2 > 400;
+  out.estimate = heavy ? 'more than 15 minutes' : 'a few minutes'; out.cpu_estimate = heavy ? 'more than an hour' : 'about 15 to 30 minutes';
+  return out;
+}
+
+/** One sentence on what a render will take, said as an estimate. */
+export function resourceLine(r) {
+  const q = qualityOf(r);
+  return `${q.label} detail: ${q.samples} samples, ${q.res} pixels on the long edge, subdivision ${q.subdiv}, ${q.texture_px} pixel textures. `
+    + `Rough estimate on a Colab T4: ${q.estimate}; on the free cloud CPU: ${q.cpu_estimate} (estimates, not measured yet; the job receipt records the real time).`;
+}
+
+/** The extra job settings the Creation Engine reads beside the identity (strings, as cleanSettings keeps them). */
+export function renderSettings(r) {
+  const q = qualityOf(r);
+  return { MODEL_MODE: r.mode, QUALITY: q.id, LIGHTING: r.lighting, SUBDIV: String(q.subdiv), TEXTURE_PX: String(q.texture_px), STRANDS: String(q.strands) };
+}
 
 const iso = (ms) => new Date(ms).toISOString();
 const json = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
 const clone = (x) => JSON.parse(JSON.stringify(x));
-const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const round3 = (v) => Math.round(v * 1000) / 1000;
 
 // ── Edit vocabulary ──────────────────────────────────────────────────────────────────────────────────────────────
@@ -83,31 +140,100 @@ const SLIDER_EDITS = [
   [/\blower (?:brows|eyebrows)\b/, 'brow_height', -0.2, 'brows lower'],
 ];
 
+const CLIP_WORDS = [['walk', /\bwalk(?:s|ing)?\b/], ['run', /\brun(?:s|ning)?\b|\bjog(?:s|ging)?\b/], ['wave', /\bwav(?:e|es|ing)\b/],
+  ['talk', /\btalk(?:s|ing)?\b|\bspeak(?:s|ing)?\b/], ['idle', /\bidle\b|\bstand(?:s|ing)? still\b|\bbreath(?:e|es|ing)\b/],
+  ['dance', /\bdanc(?:e|es|ing)\b/], ['sit', /\bsit(?:s|ting)?\b/]];
+const CLIPS_NOTE = 'Generated characters carry idle, walk, wave and talk once their skeleton is verified; the bundled crew models also sit, think, nod and celebrate.';
+
+/** Viewport-only words (skeleton, clips, timeline, camera): { viewport, sentence } or null. Never a new version. */
+export function viewportIntent(t) {
+  let m;
+  const say = (viewport, sentence) => ({ viewport, sentence });
+  if (/\b(?:skeleton|bones|joints|rig)\b/.test(t) && !/\b(?:add|build|generate|make|create)\b/.test(t)) {
+    const off = /\b(?:hide|off|remove|without)\b/.test(t);
+    return say({ action: 'skeleton', on: !off }, off ? 'Skeleton hidden.' : 'Showing the skeleton: the joints the model really has, moving with it.');
+  }
+  if ((m = /\b(?:skip|jump|go|fast[- ]?forward|rewind)\b(?: (ahead|forward|back(?:wards?)?))?(?: (?:by )?(\d{1,3}) ?sec(?:ond)?s?)?/.exec(t))
+    && /\b(?:skip|jump|rewind|fast[- ]?forward|sec(?:ond)?s?)\b/.test(t)) {
+    const back = /\bback|\brewind/.test(t); const n = m[2] ? Number(m[2]) : 10;
+    return say({ action: 'seek', delta: back ? -n : n }, `Skipping ${back ? 'back' : 'ahead'} ${n} seconds.`);
+  }
+  if (/^(?:pause|stop|freeze)(?: (?:it|the animation|the clip|playback|the playback))?$/.test(t)) return say({ action: 'pause' }, 'Paused.');
+  if (/^(?:play|resume|continue|unpause)(?: (?:it|the animation|the clip|playback))?$/.test(t)) return say({ action: 'play' }, 'Playing.');
+  if (/^(?:replay|restart|play (?:it |that )?again|start (?:it )?over)\b/.test(t)) return say({ action: 'replay' }, 'Playing again from the start.');
+  if ((m = /\b(half|quarter|normal|regular|full|double) speed\b|\b(\d(?:\.\d+)?) ?(?:x|times)(?: speed)?\b/.exec(t)) && /\bspeed\b|\d ?x\b|\btimes\b/.test(t)) {
+    const rate = m[2] ? clamp(Number(m[2]), 0.25, 2) : { half: 0.5, quarter: 0.25, normal: 1, regular: 1, full: 1, double: 2 }[m[1]];
+    return say({ action: 'speed', rate }, `Playback speed ${rate} times.`);
+  }
+  if (/\b(?:faster|speed (?:it )?up)\b/.test(t)) return say({ action: 'speed', mul: 1.5 }, 'Playing faster.');
+  if (/\b(?:slower|slow (?:it )?down|slow motion)\b/.test(t)) return say({ action: 'speed', mul: 0.67 }, 'Playing slower.');
+  const clip = CLIP_WORDS.find(([, re]) => re.test(t))?.[0] || null;
+  if (/\banimate\b|\bmake (?:it|her|him|the (?:character|model|person)) (?:move|\w+)\b|^play (?:the )?\w+(?: animation| clip)?$|\bstart (?:walking|running|waving|talking|dancing)\b/.test(t)
+    && (clip || /\banimate\b|\bmove\b/.test(t))) {
+    return say(clip ? { action: 'animate', clip } : { action: 'animate' },
+      `${clip ? `Playing the ${clip} clip` : 'Playing an animation'} if the model in the viewport has ${clip ? 'it' : 'clips'}. ${CLIPS_NOTE}`);
+  }
+  if ((m = /\b(?:rotate|turn|spin)\b(?: (?:the )?(?:model|character|head|it|her|him))?(?: (left|right))?(?: (?:by )?(-?\d{1,3}) ?(?:degrees?|°))?/.exec(t))) {
+    const deg = m[2] ? Number(m[2]) : 45; const v = { action: 'rotate', deg: m[1] === 'left' ? -Math.abs(deg) : deg };
+    return say(v, `Rotating the view ${Math.abs(v.deg)} degrees ${v.deg < 0 ? 'left' : 'right'}.`);
+  }
+  if (/\bzoom in\b|\bcloser\b/.test(t)) return say({ action: 'zoom', factor: 0.8 }, 'Zooming in.');
+  if (/\bzoom out\b|\bfurther\b|\bfarther\b/.test(t)) return say({ action: 'zoom', factor: 1.25 }, 'Zooming out.');
+  if (/\breset (?:the )?(?:view|camera)\b/.test(t)) return say({ action: 'reset' }, 'View reset.');
+  if ((m = /\b(front|side|profile|three[- ]quarters?|back) view\b|\bshow (?:me )?the (front|side|back)\b/.exec(t))) {
+    const w = m[1] || m[2]; const deg = /front/.test(w) ? 0 : /three/.test(w) ? 45 : /back/.test(w) ? 180 : 90;
+    return say({ action: 'view', deg }, `Showing the ${w.replace('-', ' ')} view.`);
+  }
+  return null;
+}
+
+/** Render-setting words (full body or bust, detail, lighting): the new render settings and their plain sentences. */
+function renderIntent(t, render, applied, unsupported) {
+  const r = { ...render }; let m;
+  if (/\bfull[- ]?body\b|\bwhole body\b|\bhead to (?:toe|feet)\b/.test(t)) r.mode = 'full_body';
+  else if (/\bbust\b|\bhead and shoulders\b|\b(?:head|face) only\b|\bjust the (?:head|face)\b|\bonly the (?:head|face)\b/.test(t)) r.mode = 'bust';
+  if (r.mode !== render.mode) applied.push(`Model changed to ${MODEL_MODES[r.mode]}${r.mode === 'full_body' ? ', with a skeleton and clips' : ''}.`);
+  const lowPoly = /\blow[- ]?poly\b/.test(t);
+  let q = null;
+  if (lowPoly || /\bdraft\b|\bquick preview\b|\blow detail\b/.test(t)) q = 'draft';
+  else if (/\bultra\b|\bmax(?:imum)? detail\b/.test(t)) q = 'ultra';
+  else if (/\bhigh(?:er)? (?:detail|quality)\b|\bhighly detailed\b|\bmore detail(?:ed)?\b|\bvery detailed\b/.test(t)) q = 'high';
+  else if (/\bstandard (?:detail|quality)\b|\bnormal (?:detail|quality)\b/.test(t)) q = 'standard';
+  else if (/\bcustom\b/.test(t)) {
+    const custom = {};
+    if ((m = /(\d{1,4}) samples\b/.exec(t))) custom.samples = Number(m[1]);
+    if ((m = /(\d{3,4}) ?(?:p\b|pixels?\b|resolution\b)|resolution (?:of )?(\d{3,4})/.exec(t))) custom.res = Number(m[1] || m[2]);
+    if ((m = /subdivi(?:sion|de)s? (?:level )?(\d)/.exec(t))) custom.subdiv = Number(m[1]);
+    if ((m = /(\d{2,3}) (?:hair )?strands\b/.exec(t))) custom.strands = Number(m[1]);
+    if ((m = /(\d{3,4}) ?(?:pixel |px )?textures?\b/.exec(t))) custom.texture_px = Number(m[1]);
+    if (Object.keys(custom).length) { r.quality = 'custom'; r.custom = { ...(render.custom || {}), ...custom }; }
+    else unsupported.push('Custom detail needs numbers, for example: custom, 200 samples, 1080 resolution, subdivision 2.');
+  }
+  if (q) { r.quality = q; delete r.custom; }
+  if (r.quality !== render.quality || JSON.stringify(r.custom || null) !== JSON.stringify(render.custom || null)) applied.push(`Detail set. ${resourceLine(r)}`);
+  if (lowPoly) unsupported.push('A faceted low-poly look is not built in the Blender pipeline yet, so this uses Draft detail, the fewest polygons, with smooth shading.');
+  if (/\bcinematic\b/.test(t)) r.lighting = 'cinematic';
+  else if (/\b(?:studio|neutral|even) (?:light|lighting)\b/.test(t)) r.lighting = 'studio';
+  if (r.lighting !== render.lighting) applied.push(`Lighting changed to ${r.lighting}${r.lighting === 'cinematic' ? ': a stronger key, deeper shadows and a rim light' : ': soft, even light'}.`);
+  return r;
+}
+
 /**
- * One sentence of owner words against a preset and look. Returns { params, style, applied, unsupported, viewport }:
- * params/style are the edited copies (unchanged when nothing applied), applied and unsupported are plain sentences.
+ * One sentence of owner words against a preset, look and render settings. Returns
+ * { params, style, render, applied, unsupported, viewport, critique }: params, style and render are edited copies
+ * (unchanged when nothing applied), applied and unsupported are plain sentences, critique says one was asked for.
  */
-export function parseEdit(text, params, style) {
+export function parseEdit(text, params, style, render = DEFAULT_RENDER) {
   const t = String(text || '').toLowerCase().replace(/[.!?]+$/g, '').replace(/^(?:che|chey|chay)[,:]?\s+/, '').trim();
   const p = clone(params); let s = style;
   const applied = []; const unsupported = []; let viewport = null;
   p.face = p.face || {}; p.hair = p.hair || {}; p.outfit = p.outfit || {}; p.eyes = p.eyes || {}; p.skin = p.skin || {}; p.body = p.body || {};
+  const critique = /\bcritique\b|\breview (?:the |this |my )?(?:design|character|model)\b|\bwhat (?:could|should|can) (?:be )?(?:better|improved)\b|\bhow (?:can|could) (?:it|this|she|he) (?:look )?better\b/.test(t);
 
-  // View commands: the viewport only, never a new version.
-  let m;
-  if ((m = /\b(?:rotate|turn|spin)\b(?: (?:the )?(?:model|character|head|it|her|him))?(?: (left|right))?(?: (?:by )?(-?\d{1,3}) ?(?:degrees?|°))?/.exec(t))) {
-    const deg = m[2] ? Number(m[2]) : 45; viewport = { action: 'rotate', deg: m[1] === 'left' ? -Math.abs(deg) : deg };
-    applied.push(`Rotating the view ${Math.abs(viewport.deg)} degrees ${viewport.deg < 0 ? 'left' : 'right'}.`);
-  } else if (/\bzoom in\b|\bcloser\b/.test(t)) { viewport = { action: 'zoom', factor: 0.8 }; applied.push('Zooming in.'); }
-  else if (/\bzoom out\b|\bfurther\b|\bfarther\b/.test(t)) { viewport = { action: 'zoom', factor: 1.25 }; applied.push('Zooming out.'); }
-  else if (/\breset (?:the )?(?:view|camera)\b/.test(t)) { viewport = { action: 'reset' }; applied.push('View reset.'); }
-  else if ((m = /\b(front|side|profile|three[- ]quarters?|back) view\b|\bshow (?:me )?the (front|side|back)\b/.exec(t))) {
-    const w = m[1] || m[2]; const deg = /front/.test(w) ? 0 : /three/.test(w) ? 45 : /back/.test(w) ? 180 : 90;
-    viewport = { action: 'view', deg }; applied.push(`Showing the ${w.replace('-', ' ')} view.`);
-  } else if (/\banimate\b|\bmake (?:it|her|him|the character) (?:move|dance|wave|walk|talk)\b/.test(t)) {
-    viewport = { action: 'animate' };
-    applied.push('Playing an animation if the model in the viewport has clips. Generated head models have no rig yet, so only the bundled crew models animate.');
-  }
+  // View and movement commands: the viewport only, never a new version.
+  const vi = viewportIntent(t);
+  if (vi) { viewport = vi.viewport; applied.push(vi.sentence); }
+  const r = renderIntent(t, renderOf({ render }), applied, unsupported);
   if (/\b(?:put|place|add|move) (?:this|it|her|him|the (?:model|character|person))?\s*(?:in|into|to) (?:my |the )?office\b/.test(t)) {
     unsupported.push('Placing creations in the Office is not built yet; the project is saved here in the studio.');
   }
@@ -168,10 +294,45 @@ export function parseEdit(text, params, style) {
     applied.push(`Face: ${words}.`);
   }
   for (const k of Object.keys(p.face)) if (!p.face[k]) delete p.face[k];
-  if (!applied.length && !unsupported.length) {
-    unsupported.push(`I can't change that yet. Try: make the hair longer, change the outfit, bigger eyes, fuller lips, make it photorealistic, or rotate the model.`);
+  if (!applied.length && !unsupported.length && !critique) {
+    unsupported.push(`I can't change that yet. Try: make the hair longer, change the outfit, bigger eyes, make it photorealistic, high detail, cinematic lighting, show the skeleton, or animate walking.`);
   }
-  return { params: p, style: s, applied, unsupported, viewport };
+  return { params: p, style: s, render: r, applied, unsupported, viewport, critique };
+}
+
+const luminance = (hex) => {
+  const lin = (c) => { const x = c / 255; return x <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4; };
+  const [r, g, b] = [1, 3, 5].map((i) => lin(parseInt(String(hex).slice(i, i + 2), 16) || 0));
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+};
+const contrast = (a, b) => { const [x, y] = [luminance(a), luminance(b)].sort((m, n) => n - m); return (x + 0.05) / (y + 0.05); };
+
+/**
+ * "Critique this design". Looking at a design needs a finished render, so until this version has one CHE says so.
+ * With one, she gives a parameter review: points read from the settings and the build receipt (strong sliders, colour
+ * contrast that blurs the silhouette or hairline, hair strands not built, detail, lighting, the verified skeleton),
+ * labelled as such: never a visual judgement and never a beauty score. Each point names a change she can make.
+ */
+export function critiqueOf(v, job) {
+  if (!job || job.state !== 'completed') {
+    return { points: [], spoken: 'A critique needs a finished render to look at, and this version has none yet. Say generate to build one, then ask again.' };
+  }
+  const p = v.params || {}; const r = renderOf(v); const points = [];
+  for (const [k, w] of Object.entries(p.face || {})) {
+    if (Math.abs(Number(w)) >= 0.6) points.push(`The ${k.replace(/_/g, ' ')} setting is strong (${w}); in the ${STYLE_LABELS[v.style]} look that can read as exaggerated. A smaller change may sit better.`);
+  }
+  if (p.outfit?.color && p.skin?.tone && contrast(p.outfit.color, p.skin.tone) < 1.4) {
+    points.push('The outfit and skin are close in brightness, so the body silhouette blurs. A darker or lighter outfit colour would separate them.');
+  }
+  if (p.hair?.color && p.skin?.tone && contrast(p.hair.color, p.skin.tone) < 1.3) points.push('The hair and skin are close in brightness, so the hairline is hard to read. A darker or lighter hair colour would help.');
+  if (p.hair?.style && !HAIR_BUILT.includes(p.hair.style)) points.push(`The ${HAIR_WORDS[p.hair.style] || p.hair.style} hair has no strands built yet, so the renders show it close-cropped.`);
+  if (r.quality === 'draft') points.push('This was a Draft build: right for checking shape, not for final pictures. Say high detail for the next build.');
+  if (r.lighting === 'studio') points.push('Studio light is even, good for checking the model; cinematic lighting adds a rim and deeper shadows for presentation.');
+  if (r.mode === 'bust') points.push('This is a head-and-shoulders model; say full body to build the whole character with its skeleton.');
+  const rig = job.rig;
+  if (r.mode === 'full_body' && rig?.ok) points.push(`The skeleton was verified: ${rigLine({ bones: rig.bones, clips: (rig.clips || []).map((name) => ({ name })), morphs: rig.morphs })}.`);
+  const head = 'Parameter review, from the settings and the build receipt: not a visual judgement of the picture, and not a beauty score.';
+  return { points, spoken: `${head} ${points.length ? points.join(' ') : 'Nothing in the settings stands out as a problem.'}` };
 }
 
 // ── Storage ──────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -180,14 +341,21 @@ async function load(storage) { return (await storage.get(PROJECTS_KEY)) || []; }
 // asking (AGENTS.md: deleting needs his yes; review of #520).
 async function store(storage, list) { await storage.put(PROJECTS_KEY, list); }
 
-async function engineOf(queue) {
+async function engineOf(queue, env = {}) {
   const v = await queue.view();
+  const rec = await engineRecord(queue.storage); const settings = engineSettingsOf(rec);
   const on = v.workers.filter((w) => w.online).sort((a, b) => (b.last_seen_ms || 0) - (a.last_seen_ms || 0));
+  const gpuOn = on.filter((w) => w.class !== 'github_cpu');
   const last = v.workers.map((w) => w.last_seen).filter(Boolean).sort().pop() || null;
-  const status = on.length ? 'online' : v.worker_paired ? 'offline' : 'not_paired';
-  return { online: Boolean(on.length), gpu: on[0]?.gpu || null, paired: v.worker_paired, last_seen: last, notebook_url: NOTEBOOK_URL, status,
-    label: { online: 'Creation Engine Online', offline: 'Creation Engine Offline', not_paired: 'Creation Engine not connected' }[status], jobs: v.jobs };
+  // automatic: CHE can start a free cloud CPU worker herself right now (auto_cloud on, GitHub token, repo verified public).
+  const automatic = cloudUsable(env, rec);
+  const status = gpuOn.length ? 'online' : automatic ? 'cloud' : on.length ? 'online' : v.worker_paired ? 'offline' : 'not_paired';
+  return { online: Boolean(on.length), gpu: gpuOn[0]?.gpu || (on.length ? 'CPU (GitHub cloud worker)' : null), paired: v.worker_paired, last_seen: last, notebook_url: NOTEBOOK_URL, status,
+    automatic, workers_online: on.length, max_concurrent: settings.max_cloud_workers + gpuOn.length, waiting_reason: rec.waiting_reason || '',
+    label: { online: 'Creation Engine Online', cloud: 'Creation Engine ready: free cloud CPU', offline: 'Creation Engine Offline', not_paired: 'Creation Engine not connected' }[status], jobs: v.jobs };
 }
+
+const CLOUD_LINE = 'CHE is starting a free cloud worker; it builds on the CPU, slower than the GPU.';
 
 const cur = (p) => p.versions[p.current];
 
@@ -198,6 +366,7 @@ function summary(p, jobs) {
     can_undo: p.current > 0, can_redo: p.current < p.versions.length - 1, saved_at: p.saved_at, updated_at: p.updated_at, style: v.style,
     job: j ? { id: j.id, state: j.state, pct: j.progress?.pct ?? 0, message: j.progress?.message || '', updated_at: j.updated_at } : null,
     previews: j ? { ...(j.previews || {}) } : {}, model_url: j?.model?.url || null,
+    render: { ...renderOf(v), quality_label: qualityOf(renderOf(v)).label }, rig: j?.rig || null,
   };
 }
 
@@ -206,7 +375,7 @@ function stagesOf(job) {
   if (!job) return [];
   return (job.history || []).map((h) => {
     const n = String(h.note || '');
-    const label = /^Geometry ready/.test(n) ? 'Geometry ready' : /^Preview .* arrived/.test(n) ? n.replace(/\.$/, '')
+    const label = /^Geometry ready/.test(n) ? 'Geometry ready' : /^Skeleton verified/.test(n) ? n.replace(/\.$/, '') : /^Preview .* arrived/.test(n) ? n.replace(/\.$/, '')
       : h.state === 'queued' ? 'Queued' : h.state === 'rendering' ? (/^Resumed/.test(n) ? 'Resumed on the GPU' : 'Started on the GPU')
         : h.state === 'completed' ? 'Completed' : h.state === 'failed' ? 'Failed' : h.state === 'paused' ? 'Paused' : h.state === 'cancelled' ? 'Cancelled' : h.state;
     return { at: h.at, label, state: h.state, note: n };
@@ -218,7 +387,8 @@ function detail(p, jobs, engine) {
   const { jobs: _all, ...eng } = engine;
   const sum = summary(p, jobs);
   // detail.versions is the version list (the summary's count stays as versions_count).
-  return { ...sum, versions_count: sum.versions, params: v.params, versions: p.versions.map((x) => ({ n: x.n, at: x.at, note: x.note, style: x.style, job_id: x.job_id })),
+  return { ...sum, versions_count: sum.versions, params: v.params, resources: resourceLine(renderOf(v)),
+    versions: p.versions.map((x) => ({ n: x.n, at: x.at, note: x.note, style: x.style, render: renderOf(x), job_id: x.job_id })),
     job: raw || null, stages: stagesOf(raw), engine: eng };
 }
 
@@ -227,16 +397,27 @@ function speakProject(p, jobs, engine) {
   const job = !j ? 'No model built yet for this version. Say: generate the model.'
     : j.state === 'completed' ? 'The 3D model and previews for this version are ready.'
       : j.state === 'rendering' ? `Building now: ${j.message || 'on your Creation Engine'}.`
-        : j.state === 'queued' || j.state === 'paused' ? `Waiting for the Creation Engine${engine.online ? '' : ', which is offline. Open Colab to start it'}.`
+        : j.state === 'queued' || j.state === 'paused' ? (engine.automatic ? `Waiting for the Creation Engine. ${CLOUD_LINE}`
+          : `Waiting for the Creation Engine${engine.online ? '' : `, which is offline. ${engine.waiting_reason ? `${engine.waiting_reason} ` : ''}Open Colab to start it`}.`)
           : `The last build ${j.state}.`;
   return `${p.title}, version ${s.version} of ${s.versions}, ${STYLE_LABELS[s.style]} look. ${job}`;
 }
 
 export class CreationStudio {
-  constructor(storage, now = () => Date.now()) { this.storage = storage; this.now = now; this.queue = new GpuQueue(storage, now); }
+  constructor(storage, now = () => Date.now(), { env = {}, fetcher } = {}) {
+    this.storage = storage; this.now = now; this.env = env; this.fetcher = fetcher; this.queue = new GpuQueue(storage, now);
+  }
+
+  /** The app polled or queued: make sure a waiting job has a worker on its way (creation_orchestrator.js). */
+  async capacity() {
+    return ensureCapacity(this.env, { storage: this.storage, now: this.now, fetcher: this.fetcher, queue: this.queue }).catch(() => ({ dispatched: 0, waiting_reason: '' }));
+  }
+
+  async engine() { return engineOf(this.queue, this.env); }
 
   async list() {
-    const [projects, engine] = [await load(this.storage), await engineOf(this.queue)];
+    await this.capacity();
+    const [projects, engine] = [await load(this.storage), await this.engine()];
     const { jobs, ...eng } = engine;
     const out = [...projects].sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at))).map((p) => summary(p, jobs));
     const active = out.filter((p) => p.job && ['queued', 'rendering', 'paused'].includes(p.job.state)).length;
@@ -268,49 +449,61 @@ export class CreationStudio {
 
   async find(id) { const list = await load(this.storage); return { list, p: list.find((x) => x.id === id) || null }; }
 
-  async detailOf(p) { const engine = await engineOf(this.queue); return detail(p, engine.jobs, engine); }
+  async detailOf(p) { const engine = await this.engine(); return detail(p, engine.jobs, engine); }
 
   async get(id) {
     const { p } = await this.find(id);
     if (!p) return { ok: false, status: 404, detail: 'No such creation.' };
-    const engine = await engineOf(this.queue);
+    await this.capacity();
+    const engine = await this.engine();
     return { ok: true, project: detail(p, engine.jobs, engine), spoken: speakProject(p, engine.jobs, engine) };
   }
 
   async generate(id) {
     const { list, p } = await this.find(id);
     if (!p) return { ok: false, status: 404, detail: 'No such creation.' };
-    const v = cur(p);
-    const out = await this.queue.enqueue({ kind: 'person_model', title: `${p.title} v${v.n}: 3D model and previews`, views: VIEWS, samples: 64, res: 480,
-      settings: toSettings(v.params, v.style), queued_by: 'Live Studio' });
+    const v = cur(p); const r = renderOf(v); const q = qualityOf(r);
+    // Owner-interactive: high priority; a GPU is preferred, and a free cloud CPU worker takes it when none is online.
+    const out = await this.queue.enqueue({ kind: 'person_model', title: `${p.title} v${v.n}: 3D model and previews`, views: VIEWS, samples: q.samples, res: q.res,
+      settings: { ...toSettings(v.params, v.style), ...renderSettings(r) }, queued_by: 'Live Studio', priority: 'high', requires: { gpu: 'preferred' } });
     if (!out.ok) return { ok: false, detail: out.detail };
     v.job_id = out.job.id; p.updated_at = iso(this.now()); await store(this.storage, list);
-    const engine = await engineOf(this.queue);
+    const cap = await this.capacity();
+    const engine = await this.engine();
+    const gpuOn = engine.online && engine.gpu && !/^CPU/.test(engine.gpu);
     const spoken = out.duplicate ? 'This version is already queued or building.'
-      : engine.online ? `Queued. Your Creation Engine on ${engine.gpu} will build the 3D model, then front, three-quarter and side previews.`
-        : `Queued. It builds when the Creation Engine is running; it is ${engine.status === 'not_paired' ? 'not connected yet' : 'offline now'}. Open Colab to start it.`;
-    return { ok: true, job: publicJob(out.job), duplicate: Boolean(out.duplicate), spoken, project: detail(p, engine.jobs, engine) };
+      : gpuOn ? `Queued. Your Creation Engine on ${engine.gpu} will build the 3D model, then front, three-quarter and side previews.`
+        : cap.dispatched || engine.automatic ? `Queued. ${CLOUD_LINE} It builds the 3D model, then front, three-quarter and side previews.`
+          : engine.online ? 'Queued. A cloud worker is online and takes it next.'
+            : `Queued. It builds when the Creation Engine is running; it is ${engine.status === 'not_paired' ? 'not connected yet' : 'offline now'}.${cap.waiting_reason ? ` ${cap.waiting_reason}` : ''} Open Colab to start it.`;
+    return { ok: true, job: engine.jobs.find((x) => x.id === out.job.id) || out.job, duplicate: Boolean(out.duplicate), spoken, project: detail(p, engine.jobs, engine) };
   }
 
   async edit(id, text) {
     const { list, p } = await this.find(id);
     if (!p) return { ok: false, status: 404, detail: 'No such creation.' };
     const v = cur(p);
-    const r = parseEdit(text, v.params, v.style);
-    const changed = JSON.stringify(r.params) !== JSON.stringify(v.params) || r.style !== v.style;
+    const r = parseEdit(text, v.params, v.style, renderOf(v));
+    const changed = JSON.stringify(r.params) !== JSON.stringify(v.params) || r.style !== v.style || JSON.stringify(r.render) !== JSON.stringify(renderOf(v));
+    // "Critique this design": a parameter review of this version once it has a finished build, else an honest no.
+    let critique = null;
+    if (r.critique) {
+      const engine = await this.engine();
+      critique = critiqueOf(v, v.job_id ? engine.jobs.find((x) => x.id === v.job_id) : null);
+    }
     if (changed) {
       const bad = validate(r.params);
       if (bad.length) return { ok: true, changed: false, applied: [], unsupported: [`That change was not saved: ${bad.join('; ')}.`], viewport: r.viewport, spoken: `That change was not saved: ${bad.join('; ')}.`, project: await this.detailOf(p) };
       const t = this.now();
       p.versions = p.versions.slice(0, p.current + 1);
-      p.versions.push({ n: Math.max(...p.versions.map((x) => x.n)) + 1, at: iso(t), note: String(text).slice(0, 200), params: r.params, style: r.style, job_id: null });
+      p.versions.push({ n: Math.max(...p.versions.map((x) => x.n)) + 1, at: iso(t), note: String(text).slice(0, 200), params: r.params, style: r.style, render: r.render, job_id: null });
       if (p.versions.length > MAX_VERSIONS) p.versions = p.versions.slice(-MAX_VERSIONS);
       p.current = p.versions.length - 1; p.updated_at = iso(t);
       await store(this.storage, list);
     }
     const n = cur(p).n;
-    const spoken = [...r.applied, ...r.unsupported].join(' ') + (changed ? ` Saved as version ${n}. Say generate to build it.` : '');
-    return { ok: true, changed, applied: r.applied, unsupported: r.unsupported, viewport: r.viewport, spoken: spoken.trim(), project: await this.detailOf(p) };
+    const spoken = [...r.applied, ...r.unsupported, ...(critique ? [critique.spoken] : [])].join(' ') + (changed ? ` Saved as version ${n}. Say generate to build it.` : '');
+    return { ok: true, changed, applied: r.applied, unsupported: r.unsupported, viewport: r.viewport, critique, spoken: spoken.trim(), project: await this.detailOf(p) };
   }
 
   async step(id, action) {
@@ -334,10 +527,13 @@ export class CreationStudio {
 /** Spoken name of a GPU view (for the app's stage labels). */
 export const viewName = (v) => VIEW_NAMES[v] || `${v} degrees`;
 
-/** The owner's routes: /api/creations[/<id>[/generate|edit|undo|redo|save]]. Returns null for other paths. */
-export async function creationRoute({ storage, now }, path, request, body = {}) {
+/** The owner's routes: /api/creations[/<id>[/generate|edit|undo|redo|save]] and /api/creations/engine[/settings]. Null for other paths. */
+export async function creationRoute(ctx, path, request, body = {}) {
+  const { storage, now, env = {}, fetcher } = ctx;
   if (path !== '/api/creations' && !path.startsWith('/api/creations/')) return null;
-  const studio = new CreationStudio(storage, now);
+  const engine = await engineRoute(ctx, path, request, body);
+  if (engine) return engine;
+  const studio = new CreationStudio(storage, now, { env, fetcher });
   const send = (out, okStatus = 200) => json(out, out.ok === false ? (out.status || (/^No such/.test(out.detail || '') ? 404 : 409)) : okStatus);
   if (path === '/api/creations') {
     if (request.method === 'GET') return json(await studio.list());

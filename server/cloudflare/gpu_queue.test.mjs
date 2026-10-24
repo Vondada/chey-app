@@ -75,9 +75,15 @@ test('"complete" is refused without a GPU device in every view or without the up
   const out = await q.complete('colab-1', { job_id: job.id, status: 'complete', receipt: cpu });
   assert.equal(out.job.state, 'queued');
   assert.match(out.job.history.at(-1).note, /Not accepted as complete: view 90/);
+  assert.match(out.job.history.at(-1).note, /Attempt 1 of 3; queued again/);
+  for (let i = 1; i < MAX_FAILURES - 1; i++) {
+    const again = await q.claim('colab-1', { gpu: GPU });
+    assert.equal((await q.complete('colab-1', { job_id: again.job.id, status: 'complete', receipt: receipt([0, 45, 90]) })).job.state, 'queued');
+  }
   const again = await q.claim('colab-1', { gpu: GPU });
   const second = await q.complete('colab-1', { job_id: again.job.id, status: 'complete', receipt: receipt([0, 45, 90]) });
-  assert.equal(second.job.state, 'failed', 'view 90 still has no uploaded picture');
+  assert.equal(second.job.state, 'failed', 'view 90 still has no uploaded picture, after the last attempt');
+  assert.equal(second.job.display_state, 'Failed');
   assert.equal(second.job.failures, MAX_FAILURES);
 });
 
@@ -93,7 +99,7 @@ test('a Colab disconnect pauses the job; the next session resumes it before queu
   clock.advance(LEASE_MS + 1);                                                          // the session died
   const paused = (await q.jobs())[0];
   assert.equal(paused.state, 'paused');
-  assert.match(paused.history.at(-1).note, /resumes in your next Colab session/);
+  assert.match(paused.history.at(-1).note, /next compatible worker resumes it; finished views and checkpoints are kept/);
   assert.deepEqual(paused.progress.views_done, [0], 'finished views are kept');
   const next = await q.claim('colab-b', { gpu: GPU });
   assert.equal(next.job.id, first.job.id); assert.equal(next.resumed, true);

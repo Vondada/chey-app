@@ -45,7 +45,8 @@ const GITHUB_APPROVAL = 'This runs on GitHub Actions, and I have not verified th
 
 // ─── Providers ───────────────────────────────────────────────────────────────
 // Capabilities are read from the workflow steps (cited in `evidence`), so a tool is listed only when a step installs
-// or uses it. `blender` appears on no provider: no workflow installs Blender (see MISSING).
+// or uses it. `blender` appears on no provider here: the one workflow that runs Blender (che-creation-worker.yml) serves
+// only Create Person through the Creation Engine queue (gpu_queue.js, creation_orchestrator.js), not these templates.
 export const CAPABILITIES = Object.freeze(['api', 'document', 'file', 'research', 'tests', 'coding', 'browser', 'ffmpeg', 'video_render', 'ios_build', 'gpu', 'blender']);
 
 export const PROVIDERS = Object.freeze([
@@ -100,9 +101,9 @@ export const PROVIDERS = Object.freeze([
 // resources CHE already has, then explain the smallest addition; never pretend.
 export const MISSING = Object.freeze({
   blender: {
-    reason: 'No provider has Blender: no workflow in .github/workflows installs it, and there is no self-hosted runner.',
-    existing: 'tools/character_pipeline/build_che_character.py already drives Blender through its Python module (pip install bpy==5.0.1 on Python 3.11), but it is run by hand, not by any workflow.',
-    smallest_addition: 'One new workflow on ubuntu-latest: actions/setup-python 3.11, pip install bpy==5.0.1, render the frames on the CPU (no GPU there), then encode the MP4 with ffmpeg. It is a pull request for your review, and it runs on GitHub Actions, whose free usage for this repository is not verified.',
+    reason: 'Blender runs automatically only for Create Person: the Creation Engine starts che-creation-worker.yml on a free GitHub-hosted CPU runner (this repository is public). No workflow renders a Blender animation to MP4 yet.',
+    existing: 'che-creation-worker.yml already installs Blender (bpy) on a GitHub CPU runner for Create Person jobs, and tools/character_pipeline/build_che_character.py drives Blender through its Python module (bpy==5.0.1 on Python 3.11).',
+    smallest_addition: 'Add an animation-to-MP4 job beside che-creation-worker.yml, which already installs Blender: render the frames on the CPU (no GPU there), then encode the MP4 with ffmpeg. It is a pull request for your review; GitHub-hosted runners are free while this repository stays public.',
   },
   gpu: {
     reason: 'No GPU is attached to the Worker or to the GitHub-hosted runners.',
@@ -700,7 +701,7 @@ export function speakCloudSummary(view) {
   const unverified = view.environments.filter((e) => e.status === 'unverified').length;
   const active = view.jobs.filter((j) => ['queued', 'running'].includes(j.status)).length;
   const waiting = view.approvals.length;
-  return `My cloud computer has ${view.environments.length} environments: ${ok} operational, ${unverified} unverified${setup.length ? `, ${setup.length} needing setup (${setup.join(', ')})` : ''}. No environment has Blender or a GPU of its own. ${active} ${active === 1 ? 'job is' : 'jobs are'} active${waiting ? `, ${waiting} waiting for your approval` : ''}. Nothing paid runs; GitHub minutes are not verified as free, so I ask before each new GitHub run.`;
+  return `My cloud computer has ${view.environments.length} environments: ${ok} operational, ${unverified} unverified${setup.length ? `, ${setup.length} needing setup (${setup.join(', ')})` : ''}. Blender runs only for Create Person, on the free GitHub cloud CPU creation worker; no environment has a GPU of its own. ${active} ${active === 1 ? 'job is' : 'jobs are'} active${waiting ? `, ${waiting} waiting for your approval` : ''}. Nothing paid runs; GitHub minutes are not verified as free, so I ask before each new GitHub run.`;
 }
 
 export function speakEnvironments(statuses) {
