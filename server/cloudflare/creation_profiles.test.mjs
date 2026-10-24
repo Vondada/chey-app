@@ -20,7 +20,8 @@ test('every kind has one profile; the person pipeline renders a quick look first
   assert.deepEqual(CREATION_KINDS, Object.keys(CREATION_PROFILES));
   for (const k of CREATION_KINDS) {
     const p = creationProfile(k);
-    assert.equal(p.settings.RENDER_PROFILE, 'final', k); assert.equal(p.settings.PREVIEW, '1', k);
+    assert.equal(p.settings.RENDER_PROFILE, 'final', k);
+    if (k !== 'invention') assert.equal(p.settings.PREVIEW, '1', k);   // inventions already show the instant placeholder first
     assert.ok(p.tools.length && p.exports.length, k);
   }
   assert.deepEqual(profileSettings('person'), { RENDER_PROFILE: 'final', PREVIEW: '1', PREVIEW_ENGINE: 'auto' });

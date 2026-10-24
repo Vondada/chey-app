@@ -140,5 +140,45 @@ class RealBlenderTest(unittest.TestCase):
         self.assertTrue(all('no free floor space' in s['reason'] for s in layout['skipped']))
 
 
+class InventionSpec(unittest.TestCase):
+    """invention_model: the parts list the Worker's placeholder uses (invention_visuals.js), validated for Blender."""
+    PAL = {'name': 'red', 'primary': '#9a1f1f', 'secondary': '#c8a040', 'glow': '#9fe8ff', 'joint': '#2a2d33'}
+
+    def spec(self, **over):
+        parts = [{'name': 'helmet', 'subsystem': 'sensors', 'mat': 'primary', 'c': [0, 1.7, 0], 's': [0.24, 0.3, 0.26], 'taper': 0.9},
+                 {'name': 'left boot', 'subsystem': 'movement', 'mat': 'secondary', 'c': [0.1, 0.05, 0.02], 's': [0.12, 0.1, 0.28]},
+                 {'name': 'right boot', 'subsystem': 'movement', 'mat': 'secondary', 'c': [-0.1, 0.05, 0.02], 's': [0.12, 0.1, 0.28]}]
+        return dict({'template': 'powered_suit', 'parts': parts, 'palette': dict(self.PAL)}, **over)
+
+    def test_valid_spec_measures_its_parts(self):
+        s = P.validate('invention_model', self.spec())
+        self.assertEqual(len(s['parts']), 3); self.assertEqual(s['parts'][1]['taper'], 1)
+        size, tol = P.expected_bbox('invention_model', self.spec())
+        self.assertEqual(size, (0.32, 1.85, 0.29)); self.assertEqual(tol, P.INVENTION_TOLERANCE)
+        self.assertIn('3 bevelled, subdivided parts (movement, sensors)', P.describe('invention_model', self.spec()))
+
+    def test_bad_specs_are_refused_with_reasons(self):
+        bad = [self.spec(parts=[]), self.spec(template='Iron Man!'), self.spec(palette={'primary': 'red'}),
+               self.spec(parts=[dict(self.spec()['parts'][0], mat='gold')]), self.spec(parts=[dict(self.spec()['parts'][0], s=[0, 1, 1])]),
+               self.spec(parts=[self.spec()['parts'][0]] * (P.MAX_PARTS + 1))]
+        for b in bad:
+            with self.assertRaises(P.SpecError): P.validate('invention_model', b)
+
+    def test_every_worker_template_is_a_valid_blender_spec(self):
+        node = shutil.which('node')
+        if not node: self.skipTest('node not installed')
+        js = ("import { partsFor, paletteFor } from './server/cloudflare/invention_visuals.js';"
+              "const out = {}; for (const t of ['powered_suit', 'exoskeleton', 'robot', 'device'])"
+              " out[t] = { template: t, parts: partsFor(t), palette: paletteFor(t) };"
+              "console.log(JSON.stringify(out));")
+        r = subprocess.run([node, '--input-type=module', '-e', js], cwd=ROOT, capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr[-400:])
+        specs = json.loads(r.stdout.strip().splitlines()[-1])
+        for t, spec in specs.items():
+            s = P.validate('invention_model', spec)
+            self.assertEqual(len(s['parts']), len(spec['parts']), t)
+            self.assertLess(len(json.dumps(spec, separators=(',', ':'))), 12000, f'{t}: SPEC must fit the queue setting limit')
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -18,6 +18,26 @@ Blender stays the engine. Nothing here is a second engine or queue: the upgrades
 | movie | Film Studio (`tools/che_film_render.py`) | characters come from the person pipeline as GLB | MP4 | preferred | separate pipeline |
 | object | parametric object generator (Create Object lane) | quick look, Cycles final | GLB | not needed | separate lane |
 | room | parametric room generator (Create Room lane) | quick look, Cycles final | GLB | preferred | separate lane |
+| invention | `invention_model` job on the same queue and runner as objects (`scripts/che_creation_job.py`) | the template's named parts from `invention_visuals.js`; `tools/avatar_body/inventions.py` bevels and subdivides each part, PBR metal and emissive materials; `verify_glb.py --static` measures it; Cycles views | GLB | not needed | built |
+
+### Inventions: placeholder first, refined model from the Creation Engine
+
+"Open it in 3D" works in two steps:
+1. The Worker builds an instant box-parts GLB, labelled "instant box-parts placeholder model, not the Blender build".
+2. It queues an `invention_model` job with the same parts and palette. CHE says it is queued.
+
+The refined GLB is served at `/api/inventions/<id>/model.glb?refined=1` once the job completes, and at
+`/api/gpu/jobs/<job>/model.glb`.
+
+Real local run on the inv-8a637dad Iron Man-style suit (30 parts, 3,565-character spec from the Worker's own code),
+CPU only:
+- Exit 0 in 21 s.
+- 30 meshes, 23,040 triangles, 4 materials, measured 0.79 × 1.87 × 0.41 m and verified against the parts.
+- 3 Cycles views at 32 samples, about 4–9 s each.
+
+What it shows: bevelled painted-red armour, gold machined-metal panels, dark joints, and emissive eyes, chest core and
+palm lights. It is still blocky, because the template's parts are boxes; the refinement is edges and materials, not
+new shapes.
 
 `kindFromText` picks the kind from the owner's words ("CHE, create a Roblox character" → roblox). In Creation Studio,
 "make it Roblox ready" turns the Roblox export on for a person; "no Roblox" turns it off.

@@ -50,8 +50,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HEARTBEAT_S = 30
 OIDC_AUDIENCE = 'che-creation-engine'
 OIDC_REFRESH_S = 120          # GitHub ID tokens live a few minutes: fetch a fresh one every 2 minutes
-MODEL_KINDS = ('person_model', 'object_model', 'room_model')   # jobs that deliver a GLB (gpu_queue.js)
-THING_KINDS = ('object_model', 'room_model')                  # Create Object / Create Room: scripts/che_creation_job.py
+MODEL_KINDS = ('person_model', 'object_model', 'room_model', 'invention_model')   # jobs that deliver a GLB (gpu_queue.js)
+THING_KINDS = ('object_model', 'room_model', 'invention_model')   # Create Object / Room, inventions: scripts/che_creation_job.py
 
 
 def now():

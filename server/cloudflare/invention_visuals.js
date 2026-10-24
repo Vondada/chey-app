@@ -6,13 +6,19 @@
 // procedural concept sheet is a shaded orthographic render of the very same parts, so the picture always shows what
 // "View in 3D" opens. When the owner's own image model (media.js generateImage, Workers AI) answers, its picture is the
 // first concept; otherwise the procedural sheet is, and it is labelled procedural. Nothing here claims a Blender render,
-// a photo or a model that was not built: the Creation Engine's Blender worker builds people only so far.
+// a photo or a model that was not built. The refined model is the Creation Engine's job: the same parts list goes to
+// the existing queue as an invention_model job (scripts/che_creation_job.py, tools/avatar_body/inventions.py), which
+// Blender builds with bevelled, subdivided parts and PBR materials, measures and renders. The box-parts GLB made here
+// is only the instant placeholder, and is labelled so.
 import { Canvas, disc, encodePng, polygon, text, verticalGradient } from './internal_renderer.js';
 import { generateImage, saveRenderedImage } from './media.js';
+import { GpuQueue, publicJob } from './gpu_queue.js';
+import { ensureCapacity } from './creation_orchestrator.js';
 
 export const MAX_VISUAL_VERSIONS = 20;
 export const PROCEDURAL = 'procedural concept sheet (CHE internal renderer), not a photo or a Blender render';
-export const MODEL_KIND = 'procedural 3D concept model (CHE parts geometry), not a Blender build';
+export const MODEL_KIND = 'instant box-parts placeholder model (CHE Worker geometry), not the Blender build';
+export const REFINED_KIND = 'refined Blender model (Creation Engine: bevelled, subdivided parts, PBR materials)';
 const glbKey = (id, v) => `invention_glb:${id}:${v}`;
 
 export const COLOURS = Object.freeze({
@@ -276,6 +282,37 @@ export async function makeModel(storage, project, { colour = null } = {}) {
   return { ok: true, model };
 }
 
+/** The invention_model job spec: the template's parts and palette, exactly as the placeholder uses them. */
+export function refinedSpec(project, colour = null) {
+  const look = colour || visualsOf(project).colour;
+  return { template: project.template, parts: partsFor(project.template).map(({ name, subsystem, mat, c, s, taper }) => ({ name, subsystem, mat, c, s, taper })),
+    palette: paletteFor(project.template, look) };
+}
+
+/** Queue the refined Blender model on the existing Creation Engine queue (a free cloud worker starts when none is
+ * online). Records the job on the project; the same parts and colour already waiting are not queued twice. */
+export async function queueRefinedModel(env, storage, project, { colour = null, now = () => Date.now(), fetcher } = {}) {
+  const spec = refinedSpec(project, colour);
+  const q = new GpuQueue(storage, now);
+  const out = await q.enqueue({ kind: 'invention_model', title: `${project.title.slice(0, 80)}: refined 3D model`, views: [0, 45, 90], samples: 32, res: 480,
+    settings: { SPEC: JSON.stringify(spec), RENDER_PROFILE: 'final' }, queued_by: 'Invention Studio', priority: 'normal', requires: { gpu: 'none' } });
+  if (!out.ok) return { ok: false, detail: out.detail };
+  project.visuals = { ...visualsOf(project), refined: { job_id: out.job.id, colour: spec.palette.name, kind: REFINED_KIND, queued_at: new Date(now()).toISOString() } };
+  const cap = await ensureCapacity(env, { storage, now, fetcher, queue: q }).catch(() => null);
+  return { ok: true, job_id: out.job.id, duplicate: Boolean(out.duplicate), dispatched: Boolean(cap?.dispatched) };
+}
+
+/** Where the refined model stands, from the queue itself: { job_id, state, display_state, status_line, model_url }. */
+export async function refinedOf(storage, project, now = () => Date.now()) {
+  const r = project.visuals?.refined;
+  if (!r?.job_id) return null;
+  const j = (await new GpuQueue(storage, now).jobs()).find((x) => x.id === r.job_id);
+  if (!j) return { ...r, state: 'gone', status_line: 'The refined model job is no longer in the queue.' };
+  const v = publicJob(j);
+  return { ...r, state: v.state, display_state: v.display_state, status_line: v.status_line,
+    model_url: v.state === 'completed' && v.model ? v.model.url : null, measured: v.measured || null, previews: v.previews || {} };
+}
+
 export async function modelBytes(storage, project, v = null) {
   const models = visualsOf(project).models; const m = v ? models.find((x) => x.v === Number(v)) : models.at(-1);
   const b64 = m ? await storage.get(glbKey(project.id, m.v)) : null;
@@ -332,7 +369,9 @@ export async function visualTurn(env, storage, project, ask, { tryModel = true }
     const model = await makeModel(storage, project, { colour: ask.colour });
     if (!model.ok) return { spoken: model.detail, project };
     const image = await makeConcept(env, storage, project, { colour: ask.colour, tryModel: false });
-    return { spoken: `Changed the main colour to ${ask.colour}. Saved 3D model version ${model.model.v}${image.ok ? ` and concept sheet ${image.image.v}` : ''}.`, project, model: model.model, image: image.ok ? image.image : null, open3d: true };
+    const refined = await queueRefinedModel(env, storage, project, { colour: ask.colour }).catch((e) => ({ ok: false, detail: String(e?.message || e) }));
+    return { spoken: `Changed the main colour to ${ask.colour}. Saved 3D model version ${model.model.v}${image.ok ? ` and concept sheet ${image.image.v}` : ''}.${refinedLine(refined)}`,
+      project, model: model.model, image: image.ok ? image.image : null, refined, open3d: true };
   }
   // model and viewport: build the first model when there is none, then open it.
   let model = vis.models.at(-1) || null; let built = false;
@@ -341,12 +380,20 @@ export async function visualTurn(env, storage, project, ask, { tryModel = true }
     if (!out.ok) return { spoken: out.detail, project };
     model = out.model; built = true;
   }
-  const lead = built ? `Built a ${MODEL_KIND} of ${project.title} with ${model.meshes} parts and saved it as version ${model.v}.` : `Opening 3D model version ${model.v} of ${project.title}.`;
+  const refined = built ? await queueRefinedModel(env, storage, project).catch((e) => ({ ok: false, detail: String(e?.message || e) })) : null;
+  const lead = built ? `Built an ${MODEL_KIND} of ${project.title} with ${model.meshes} parts and saved it as version ${model.v}.` : `Opening 3D model version ${model.v} of ${project.title}.`;
   const tail = ask.kind === 'viewport' ? ' The viewer applies your move and says what it did.' : ' You can rotate it, zoom, and change the colour.';
-  return { spoken: `${lead}${tail}`, project, model, viewport: ask.viewport || null, open3d: true };
+  return { spoken: `${lead}${tail}${refined ? refinedLine(refined) : ''}`, project, model, refined, viewport: ask.viewport || null, open3d: true };
 }
 
-/** /api/inventions/:id/model.glb[?v=] and POST /api/inventions/:id/visual {action, colour}. Null for other paths. */
+function refinedLine(r) {
+  if (!r) return '';
+  if (!r.ok) return ` The refined Blender model was not queued: ${r.detail}`;
+  return r.duplicate ? ' The refined Blender model for these parts is already queued.'
+    : ` The refined Blender model is queued on the Creation Engine${r.dispatched ? ', and a free cloud worker is starting' : ''}; until it is built, this is the instant placeholder.`;
+}
+
+/** /api/inventions/:id/model.glb[?v= | ?refined=1] and POST /api/inventions/:id/visual {action, colour}. Null for other paths. */
 export async function inventionVisualRoute({ env, storage }, path, request, body = {}) {
   const m = path.match(/^\/api\/inventions\/([A-Za-z0-9-]{4,64})\/(model\.glb|visual)$/);
   if (!m) return null;
@@ -356,6 +403,12 @@ export async function inventionVisualRoute({ env, storage }, path, request, body
   if (!project) return json({ detail: 'No invention project with that ID.' }, 404);
   if (m[2] === 'model.glb') {
     if (request.method !== 'GET') return json({ detail: 'Use GET.' }, 405);
+    if (new URL(request.url).searchParams.get('refined') === '1') {
+      const r = await refinedOf(storage, project);
+      const bytes = r?.model_url ? await new GpuQueue(storage).modelBytes(env, r.job_id) : null;
+      if (!bytes) return json({ detail: r ? `The refined Blender model is not built yet: ${r.status_line || r.state}` : 'No refined Blender model has been queued for this project.' }, 404);
+      return new Response(bytes, { status: 200, headers: { 'Content-Type': 'model/gltf-binary', 'Content-Length': String(bytes.length), 'X-CHE-Model-Kind': 'refined' } });
+    }
     const got = await modelBytes(storage, project, new URL(request.url).searchParams.get('v'));
     if (!got) return json({ detail: 'This project has no 3D model yet. Say "open it in 3D" to build one.' }, 404);
     return new Response(got.bytes, { status: 200, headers: { 'Content-Type': 'model/gltf-binary', 'Content-Length': String(got.bytes.length), 'X-CHE-Model-Sha256': got.model.sha256 } });

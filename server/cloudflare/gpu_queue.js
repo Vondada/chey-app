@@ -48,9 +48,13 @@ export const MAX_MODEL_BYTES = 16 * 1024 * 1024;
 // (a GLB the worker exports from the same Blender build, uploaded the moment it exists, before the renders finish).
 // object_model and room_model (Create Object, Create Room; creation_objects.js): a procedural GLB any worker may build,
 // CPU included (requires.gpu none), complete only with the model uploaded and its measurement (receipt.model.verify).
-export const JOB_KINDS = ['face_preview', 'person_model', 'object_model', 'room_model'];
-export const MODEL_KINDS = ['person_model', 'object_model', 'room_model'];
-const DEFAULT_NEED = { person_model: 'preferred', object_model: 'none', room_model: 'none' };
+// invention_model (invention_visuals.js): an invention's refined Blender model from the same named parts as the
+// Worker's instant box-parts placeholder; built, measured and rendered like an object (scripts/che_creation_job.py).
+export const JOB_KINDS = ['face_preview', 'person_model', 'object_model', 'room_model', 'invention_model'];
+export const MODEL_KINDS = ['person_model', 'object_model', 'room_model', 'invention_model'];
+// The kinds built by scripts/che_creation_job.py: a measured procedural GLB (receipt.model.verify) and previews.
+export const THING_KINDS = ['object_model', 'room_model', 'invention_model'];
+const DEFAULT_NEED = { person_model: 'preferred', object_model: 'none', room_model: 'none', invention_model: 'none' };
 /** What compute a job needs: its own requires.gpu, else its kind's default (face previews need a GPU). */
 export const needOf = (j) => j?.requires?.gpu || DEFAULT_NEED[j?.kind] || 'required';
 export const VIEW_NAMES = { 0: 'front', 45: 'three-quarter', 90: 'side' };
@@ -97,7 +101,7 @@ function cleanSettings(s) {
   const out = {};
   if (!s || typeof s !== 'object') return out;
   for (const [k, v] of Object.entries(s)) {
-    if (/^[A-Z][A-Z0-9_]{0,31}$/.test(k) && ['string', 'number'].includes(typeof v) && String(v).length <= (k === 'FACE' ? 1200 : 400)) out[k] = String(v);
+    if (/^[A-Z][A-Z0-9_]{0,31}$/.test(k) && ['string', 'number'].includes(typeof v) && String(v).length <= (k === 'FACE' ? 1200 : k === 'SPEC' ? 12000 : 400)) out[k] = String(v);
   }
   return out;
 }
@@ -473,7 +477,7 @@ export class GpuQueue {
       // An object or room is complete only once the runner re-read the GLB and measured it (verify_glb.py --static):
       // meshes, triangles, materials and a bounding box matching the size asked for, of this very file.
       const v = j.receipt?.model?.verify;
-      const measureBad = (j.kind === 'object_model' || j.kind === 'room_model') && !modelBad && !(v?.ok === true && v.sha256 === j.model.sha256);
+      const measureBad = THING_KINDS.includes(j.kind) && !modelBad && !(v?.ok === true && v.sha256 === j.model.sha256);
       // A full-body person model also needs its skeleton verified: the runner re-imported the GLB and measured its
       // bones, weights, clips and morphs (verify_glb.py). A model that only claims to move is not accepted.
       const rigBad = j.kind === 'person_model' && wantsRig(j) && !modelBad && j.receipt?.model?.rig?.ok !== true;
@@ -489,7 +493,7 @@ export class GpuQueue {
         if (rig?.ok) {
           j.history = [...(j.history || []), { at: iso(t), state: j.state, note: `Skeleton verified: ${rigLine(rig)}.` }].slice(-20);
         }
-        if (v?.ok && (j.kind === 'object_model' || j.kind === 'room_model')) {
+        if (v?.ok && THING_KINDS.includes(j.kind)) {
           j.history = [...(j.history || []), { at: iso(t), state: j.state, note: `Model verified: ${verifyLine(v)}.` }].slice(-20);
         }
         j.progress = { views_done: [...j.views], message: `All views rendered on the ${cpu ? 'CPU' : 'GPU'}.`, pct: 100, stage: 'save' };
@@ -503,7 +507,7 @@ export class GpuQueue {
       // views kept, up to MAX_FAILURES attempts; then it fails with the real reason.
       j.failures += 1; j.error = String(body.error || status || 'render failed').slice(0, 300);
       const final = status === 'checks_failed' || j.failures >= MAX_FAILURES;
-      note(j, t, final ? 'failed' : 'queued', `${status === 'checks_failed' ? (j.kind === 'object_model' || j.kind === 'room_model' ? 'The spec or model check failed' : 'A face check failed before rendering') : 'The render failed'}: ${j.error}${final ? '' : ` Attempt ${j.failures} of ${MAX_FAILURES}; queued again with finished work kept.`}`);
+      note(j, t, final ? 'failed' : 'queued', `${status === 'checks_failed' ? (THING_KINDS.includes(j.kind) ? 'The spec or model check failed' : 'A face check failed before rendering') : 'The render failed'}: ${j.error}${final ? '' : ` Attempt ${j.failures} of ${MAX_FAILURES}; queued again with finished work kept.`}`);
     }
     await this.save(jobs);
     return { ok: true, job: publicJob(j) };
@@ -518,7 +522,7 @@ function trimReceipt(r) {
     const m = r.model;
     out.model = { status: String(m.status || ''), file: String(m.file || '').slice(0, 120), sha256: String(m.sha256 || '').slice(0, 64), bytes: Number(m.bytes) || 0,
       vertices: Number(m.vertices) || 0, exported_at: String(m.exported_at || '').slice(0, 40), contents: String(m.contents || '').slice(0, 200),
-      mode: ['bust', 'full_body', 'object', 'room'].includes(m.mode) ? m.mode : '' };
+      mode: ['bust', 'full_body', 'object', 'room', 'invention'].includes(m.mode) ? m.mode : '' };
     if (m.rig && typeof m.rig === 'object') out.model.rig = trimRig(m.rig);
     if (m.verify && typeof m.verify === 'object') out.model.verify = trimVerify(m.verify);
     if (m.layout && typeof m.layout === 'object') {

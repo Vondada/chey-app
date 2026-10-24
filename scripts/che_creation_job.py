@@ -1,6 +1,6 @@
 """CHE Creation Engine job for Create Object and Create Room: one resumable job with an execution receipt.
 
-  python3 scripts/che_creation_job.py --kind object_model|room_model --blender BLENDER --out DIR --settings settings.json
+  python3 scripts/che_creation_job.py --kind object_model|room_model|invention_model --blender BLENDER --out DIR --settings settings.json
         [--views 0,45,90] [--device auto|OPTIX|CUDA|cpu] [--samples 32] [--res 480] [--project DIR]
         [--resume-model MODEL.glb --resume-sha SHA256]
 
@@ -39,8 +39,8 @@ from che_gpu_face_preview import (FACE, device_ok, finished_model, now, probe_gp
 import creation_params as P  # noqa: E402
 
 BODY = os.path.join(ROOT, 'tools', 'avatar_body')
-BUILDER = {'object_model': 'objects.py', 'room_model': 'rooms.py'}
-CODE = ('creation_params.py', 'objects.py', 'rooms.py', 'render_creation.py', 'verify_glb.py')
+BUILDER = {'object_model': 'objects.py', 'room_model': 'rooms.py', 'invention_model': 'inventions.py'}
+CODE = ('creation_params.py', 'objects.py', 'rooms.py', 'inventions.py', 'render_creation.py', 'render_profiles.py', 'verify_glb.py')
 
 
 def code_sha256():
@@ -92,6 +92,8 @@ def main():
     threads = os.cpu_count() or 1
     spec_json = json.dumps(spec, separators=(',', ':'))
     env = dict(os.environ, SPEC_JSON=spec_json, SAMPLES=str(a.samples), TEST_RES=str(a.res), CREATION_KIND=a.kind.split('_')[0])
+    # The render profile the Creation Engine chose (creation_profiles.js); a quick look never stands in for a view here.
+    env['RENDER_PROFILE'] = settings.get('RENDER_PROFILE') if settings.get('RENDER_PROFILE') in ('legacy', 'final') else 'legacy'
     if cpu: env['CPU_THREADS'] = str(threads)
     if cpu:
         kind, names = 'CPU', f'CPU ({threads} threads)'

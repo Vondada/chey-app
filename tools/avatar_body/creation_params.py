@@ -138,11 +138,58 @@ def validate_room(spec):
     return out
 
 
+# Inventions (server/cloudflare/invention_visuals.js partsFor/paletteFor): the template's named parts, each a box in
+# metres in glTF axes (x right, y up, z front) with an optional taper of its bottom face, and the four material colours.
+INVENTION_MATS = ('primary', 'secondary', 'glow', 'joint')
+MAX_PARTS = 80
+INVENTION_TOLERANCE = 0.1   # bevels and one subdivision level round the corners; the extents stay within 10 %
+
+
+def validate_invention(spec):
+    if not isinstance(spec, dict): raise SpecError(['the spec must be an object'])
+    bad = []; parts = spec.get('parts')
+    tpl = str(spec.get('template', ''))
+    if not re.fullmatch(r'[a-z_]{1,30}', tpl): bad.append('template must be a short lower-case name')
+    if not isinstance(parts, list) or not parts: raise SpecError(bad + ['parts must be a non-empty list'])
+    if len(parts) > MAX_PARTS: raise SpecError(bad + [f'{len(parts)} parts, more than the {MAX_PARTS} CHE builds'])
+    out_parts = []
+    for i, p in enumerate(parts):
+        if not isinstance(p, dict): bad.append(f'part {i} is not an object'); continue
+        name = str(p.get('name', '')).strip()[:60]
+        if not name: bad.append(f'part {i} has no name')
+        mat = p.get('mat')
+        if mat not in INVENTION_MATS: bad.append(f'part {name or i}: material {mat!r} is not one of {", ".join(INVENTION_MATS)}')
+        c, s = p.get('c'), p.get('s')
+        if not (isinstance(c, list) and len(c) == 3 and all(isinstance(x, (int, float)) and -5 <= x <= 5 for x in c)):
+            bad.append(f'part {name or i}: c must be three numbers within 5 m'); continue
+        if not (isinstance(s, list) and len(s) == 3 and all(isinstance(x, (int, float)) and 0.002 <= x <= 5 for x in s)):
+            bad.append(f'part {name or i}: s must be three sizes from 0.002 to 5 m'); continue
+        taper = p.get('taper', 1)
+        if not isinstance(taper, (int, float)) or not 0.2 <= taper <= 1: bad.append(f'part {name or i}: taper must be 0.2 to 1'); taper = 1
+        out_parts.append({'name': name, 'subsystem': str(p.get('subsystem', ''))[:30], 'mat': mat, 'c': [round(float(x), 4) for x in c],
+                          's': [round(float(x), 4) for x in s], 'taper': round(float(taper), 3)})
+    pal = spec.get('palette') if isinstance(spec.get('palette'), dict) else {}
+    palette = {}
+    for m in INVENTION_MATS:
+        v = str(pal.get(m, ''))
+        if not HEX.match(v): bad.append(f'palette {m} must be a #rrggbb colour')
+        palette[m] = v
+    if bad: raise SpecError(bad)
+    return {'template': tpl, 'parts': out_parts, 'palette': palette, 'colour': str(pal.get('name', ''))[:20]}
+
+
+def invention_bbox(spec):
+    lo = [min(p['c'][k] - p['s'][k] / 2 for p in spec['parts']) for k in range(3)]
+    hi = [max(p['c'][k] + p['s'][k] / 2 for p in spec['parts']) for k in range(3)]
+    return tuple(round(h - l, 3) for l, h in zip(lo, hi))
+
+
 def validate(kind, spec):
-    """kind object_model | room_model (the queue's job kinds) or object | room."""
+    """kind object_model | room_model | invention_model (the queue's job kinds) or object | room | invention."""
     if kind in ('object', 'object_model'): return validate_object(spec)
     if kind in ('room', 'room_model'): return validate_room(spec)
-    raise SpecError([f'kind {kind!r} is not object or room'])
+    if kind in ('invention', 'invention_model'): return validate_invention(spec)
+    raise SpecError([f'kind {kind!r} is not object, room or invention'])
 
 
 def parse(text):
@@ -161,6 +208,8 @@ def expected_bbox(kind, spec):
         s = validate_object(spec)
         w, h, d = NOMINAL[(s['family'], s.get('form'))]
         return (round(w * s['size'], 3), round(h * s['size'], 3), round(d * s['size'], 3)), OBJECT_TOLERANCE
+    if kind in ('invention', 'invention_model'):
+        return invention_bbox(validate_invention(spec)), INVENTION_TOLERANCE
     s = validate_room(spec)
     return (round(s['width'] + WALL, 3), round(s['height'], 3), round(s['depth'] + WALL, 3)), ROOM_TOLERANCE
 
@@ -180,6 +229,11 @@ def describe(kind, spec):
         form = f" {s['form']}" if s.get('form') else ''
         return (f"procedural {s['style']}{form} {s['family']} at size {s['size']:g}, colour {s['color']}, "
                 f"roughness {s['roughness']:g}, metallic {s['metallic']:g}")
+    if kind in ('invention', 'invention_model'):
+        s = validate_invention(spec)
+        subs = sorted({p['subsystem'] for p in s['parts'] if p['subsystem']})
+        return (f"refined {s['template'].replace('_', ' ')} invention model in Blender: {len(s['parts'])} bevelled, subdivided parts "
+                f"({', '.join(subs)}), PBR metal and emissive materials, primary {s['palette']['primary']}")
     s = validate_room(spec)
     return (f"procedural {s['style']} {s['type'].replace('_', ' ')} {s['width']:g} x {s['depth']:g} m, {s['height']:g} m high, "
             f"{s['floor']} floor, walls {s['wall_color']}, {s['lighting']} light, furniture: {', '.join(s['furniture']) or 'none'}")

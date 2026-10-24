@@ -138,6 +138,7 @@ jobs:
           python3 -c "import numpy" 2>/dev/null || python3 -m pip install --quiet numpy
           python3 -m unittest discover -s tools -p 'test_creation_benchmark.py'
           python3 -m unittest discover -s tools -p 'test_roblox_rig.py'
+          python3 -m unittest discover -s tools -p 'test_creation_params.py'
       - name: Claude Code project skills (.claude/skills) tests
         run: node --test .claude/skills/tests/*.test.mjs
       - name: CHE free-first coding and paid cap regression tests

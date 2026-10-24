@@ -10,7 +10,7 @@
 // normal passes, capped light paths, persistent data across views, skin subsurface and micro-detail). A GPU worker
 // renders the same profile with OptiX/CUDA; the device is never guessed: the receipt names it.
 
-export const CREATION_KINDS = ['person', 'roblox', 'movie', 'object', 'room'];
+export const CREATION_KINDS = ['person', 'roblox', 'movie', 'object', 'room', 'invention'];
 
 const BASE = Object.freeze({ RENDER_PROFILE: 'final', PREVIEW: '1', PREVIEW_ENGINE: 'auto' });
 
@@ -41,6 +41,13 @@ export const CREATION_PROFILES = Object.freeze({
   room: {
     label: 'Room', pipeline: 'blender_parametric', job_kind: 'room_model', gpu: 'preferred', status: 'separate_lane',
     tools: ['parametric room generator (Create Room lane)', 'quick look', 'Cycles final'], exports: ['glb'], settings: { ...BASE },
+  },
+  invention: {
+    label: 'Invention', pipeline: 'blender_parametric', job_kind: 'invention_model', gpu: 'none', status: 'built',
+    tools: ['the invention template\'s named parts (invention_visuals.js partsFor)', 'tools/avatar_body/inventions.py: bevelled, subdivided parts, PBR metal and emissive materials',
+      'verify_glb.py --static measures it against the parts', 'Cycles views'],
+    exports: ['glb'], settings: { RENDER_PROFILE: 'final' },
+    note: 'The Worker\'s box-parts GLB is the instant placeholder; this job builds the refined model.',
   },
 });
 

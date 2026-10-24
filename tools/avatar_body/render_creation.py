@@ -21,6 +21,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE); sys.path.insert(0, os.path.join(HERE, '..', 'avatar_face'))
 import objects as O  # noqa: E402
 from render_device import setup as render_setup  # noqa: E402
+import render_profiles  # noqa: E402
 
 LIGHT = {'warm': (1.0, 0.78, 0.55), 'neutral': (1.0, 0.95, 0.88), 'cool': (0.8, 0.9, 1.0)}
 
@@ -86,7 +87,10 @@ def render(path):
     sc, meshes, lo, hi = load(path)
     place, size = room_stage(sc, lo, hi, spec, meshes) if kind == 'room' else object_stage(sc, lo, hi)
     render_setup(sc, size)
-    sc.cycles.samples = int(os.environ.get('SAMPLES', '32')); sc.cycles.use_denoising = True
+    # RENDER_PROFILE (render_profiles.py; legacy when unset, which is this renderer's old setting exactly). The final
+    # profile's material upgrades are for people (skin, cloth, hair); objects and inventions keep their own PBR materials.
+    render_profiles.apply(sc, render_profiles.profile_name(), int(os.environ.get('SAMPLES', '32')),
+                          os.environ.get('CYCLES_DEVICE', 'CPU').upper() != 'CPU')
     if os.environ.get('CPU_THREADS'):
         sc.render.threads_mode = 'FIXED'; sc.render.threads = int(os.environ['CPU_THREADS'])
     sc.view_settings.view_transform = 'AgX'; sc.view_settings.look = 'AgX - Medium High Contrast'
