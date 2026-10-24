@@ -129,8 +129,12 @@ export function codingCancelIntent(message, history = []) {
   return null;
 }
 
+// CHE named a coding job in one of her last three replies: when she accepted it, or when a status
+// reply read its record ("Built-in job: 1a2b3c4d"). So "Cancel it" after "is it done yet?" and "how
+// long will that take?" still means that job (subject-loss audit, 2026-10-24). The holds above are kept.
 function lastReplyNamesJob(history) {
-  return /\bI (?:accepted|saved|started)(?: OpenCode)? coding job [0-9a-f]{8,}\b/i.test(text(lastAssistant(history)));
+  const replies = (Array.isArray(history) ? history : []).filter((h) => String(h?.role) === 'assistant').slice(-3);
+  return replies.some((h) => /\bI (?:accepted|saved|started)(?: OpenCode)? coding job [0-9a-f]{8,}\b|\bBuilt-in job: [0-9a-f]{8}\b/i.test(text(h)));
 }
 
 const plainId = (id) => String(id || '').toLowerCase().replace(/-/g, '');

@@ -10,7 +10,7 @@
 // hypothetical, quoted or uncertain statement is never a fact, and older records of that kind are skipped at recall,
 // never deleted. The answer is the stored subject and value with the genuine date the owner gave it.
 // groundedReply is the last check on every model reply: a date the stored records do not contain is never shown.
-import { ownerAttestedRecords } from './memory_provenance.js';
+import { ownerAttestedRecords, ownerFactCorrection } from './memory_provenance.js';
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const STOP = new Set(['the', 'a', 'an', 'my', 'your', 'of', 'to', 'in', 'is', 'are', 'and', 'or', 'it', 'that', 'this', 'me', 'you', 'i', 'do', 'did', 'know', 'what', 'which', 'whats', 'where']);
@@ -226,6 +226,147 @@ export function answerPersonalFact(data = {}, question = {}, brainRecords = [], 
   const subject = String(question.subject || record.subject).replace(/\bfav(?:ourite|orite|e)?\b/gi, 'favorite');
   const lead = record.confidence === 'high' ? `Your ${subject} is ${record.value}.` : `It sounds like your ${subject} is ${record.value}, from what you told me.`;
   return { kind: 'owner_attested', records: [record.id].filter(Boolean), record, answer: `${lead}${told}${quoted}${source}` };
+}
+
+// ─── The fact under discussion: short replies, corrections and vague follow-ups ──────────────────────────────────────
+// Owner recording (2026-10-24): "What's my favorite drink?" → "Your favorite drink is Sprite." → "No, strawberry Sprite."
+// The short reply named no subject, so it reached the generic model as a new topic and the stored fact never changed.
+// A short reply means the fact the last turns were about: CHE's own answer ("Your favorite drink is Sprite", "I don't
+// have a record of your favorite drink"), her update ("Got it, sir: your favorite drink is …"), or the owner's question
+// or statement about it. Only the newest such turn counts, and only within the last few turns, so an old topic never
+// captures a new remark. The subject and the old value are read from the conversation; nothing is guessed.
+
+// CHE's own replies about a personal fact, in the forms this module and the chat route produce.
+// Only a recall answer counts ("… You told me that on …", "… In your words: …", "… from what you told me"): "Your calendar
+// is open, sir." is a status line, not a fact under discussion.
+const CHE_FACT_REPLY = /^(?:your|it sounds like your)\s+(.{2,60}?)\s+(?:is|are)\s+(.{1,120}?)(?:\.\s+(?:You told me|I saved it from|In your words|That is from the Brain)|,\s+from what you told me)/i;
+const CHE_UPDATED_REPLY = /^(?:updated|got it)(?:,\s*sir)?:\s+your\s+(.{2,60}?)\s+(?:is|are)\s+(.{1,120}?)\./i;
+const CHE_NO_RECORD_REPLY = /^I (?:don't have a record|have no record) of your\s+(.{2,60}?)(?:, sir|\.)/i;
+// CHE's own clarifying question about the fact ("I have your favorite drink stored as Sprite. Which value is right?").
+const CHE_CLARIFY_REPLY = /^(?:I have your|That is what I have, sir: your)\s+(.{2,60}?)\s+(?:stored as|is)\s+(.{1,120}?)(?:\.|,)/i;
+// Opens a correction: "no, …", "actually …", "wrong, …", "that's not right, …".
+const CORRECTION_LEAD = /^(?:no|nope|nah|wrong|actually|correction|wait|not quite|that'?s (?:wrong|not right|not it|incorrect)|that is (?:wrong|not right|incorrect)|that isn'?t right)[,.!:;]?\s*/i;
+// Names the value: "it's …", "its …" (speech drops the apostrophe), "I said …", "make it …", "change it to …".
+const VALUE_LEAD = /^(?:it'?s|it is|that'?s|that is|i said|i meant|i mean|i told you|make (?:it|that)|change (?:it|that) to|it should be|should be)\s+/i;
+// Never a value on its own: acknowledgements, pointers and call-offs.
+const NOT_A_VALUE = /^(?:yes|yeah|yep|no|nope|ok|okay|thanks|thank you|cancel|stop|never ?mind|forget it|wait|hold on|that|this|it|the other one|that one|this one|the same|same|nothing|something|anything|everything|please|sir|right|correct|exactly|fine|good)$/i;
+// A value that is really an order or a question belongs to its own route.
+const ORDER_WORD = /\b(?:cancel|stop|delete|remove|forget|open|send|call|play|pause|search|find|show|read|buy|pay|order|turn|switch|start|run|fix|change|update|research|check|look|tell|remind|ask|write|give)\b/i;
+// "That's not what I meant", "fix that", "wrong": the owner rejects the answer without naming the right value.
+const VAGUE_FIX = /^(?:no[,.!]?\s*)?(?:that'?s not (?:what i meant|what i said|right|it|correct)|that is not (?:what i meant|right|correct)|not (?:that|right|quite)|fix (?:that|it)|change (?:that|it)|correct (?:that|it)|that'?s wrong|that is wrong|wrong|you(?:'re| are) wrong|you got (?:that|it) wrong|you misheard(?: me)?|you heard (?:me |that )?wrong)[.!]*$/i;
+// "No, the one I just told you", "like I just said": the right value is in the owner's own recent turn.
+const JUST_TOLD = /^(?:no[,.!]?\s*)?(?:(?:it'?s |use )?(?:the one|the thing|what|the (?:drink|food|color|colour|name|one)) i (?:just )?(?:told|gave|said to) you|i just told you|like i (?:just )?said|what i (?:just )?said|as i (?:just )?said)[.!]*$/i;
+
+function turnText(turn) {
+  return String(turn?.content ?? turn?.text ?? '').replace(/[‘’ʼ]/g, "'").replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * The personal fact the last turns were about, newest first: { subject, words, value, from } or null. `value` is the
+ * value CHE last stated (or the owner last asserted), '' when CHE said she had no record. `from` is 'assistant' or
+ * 'user'. Looks at the last `depth` turns only.
+ */
+export function activeFactSubject(history = [], { depth = 4 } = {}) {
+  const turns = (Array.isArray(history) ? history : []).slice(-depth);
+  for (let i = turns.length - 1; i >= 0; i--) {
+    const text = turnText(turns[i]);
+    if (!text) continue;
+    const role = String(turns[i]?.role || '');
+    if (role === 'assistant') {
+      const m = CHE_UPDATED_REPLY.exec(text) || CHE_FACT_REPLY.exec(text) || CHE_CLARIFY_REPLY.exec(text);
+      if (m) return { subject: m[1].trim(), words: words(m[1]), value: m[2].trim(), from: 'assistant', index: i - turns.length };
+      const none = CHE_NO_RECORD_REPLY.exec(text);
+      if (none) return { subject: none[1].trim(), words: words(none[1]), value: '', from: 'assistant', index: i - turns.length };
+      continue;
+    }
+    if (role === 'user') {
+      const q = personalFactQuestion(text);
+      if (q) return { subject: q.subject, words: q.words, value: '', from: 'user', index: i - turns.length };
+      const a = ownerAssertion(text);
+      if (a) return { subject: a.subject, words: a.subjectWords, value: a.value, from: 'user', index: i - turns.length };
+    }
+  }
+  return null;
+}
+
+// The value a short reply names, or '' when the words are not a plain value.
+function shortValue(text) {
+  const value = String(text || '').trim().replace(/[.!,;:]+$/, '').replace(/^["“]|["”]$/g, '').trim();
+  if (!value || value.length > 80 || value.split(/\s+/).length > 6) return '';
+  if (/\?/.test(value) || NOT_A_VALUE.test(value) || POINTER.test(value) || ORDER_WORD.test(value)) return '';
+  if (/^(?:my|your|the owner'?s)\s/i.test(value) || /\b(?:is|are|was|were)\b/i.test(value)) return '';
+  if (ASKS_OR_ORDERS.test(value) || HEDGED.test(value)) return '';
+  return value;
+}
+
+// The owner's most recent assertion of this subject in the conversation (not the current message), or null.
+function recentOwnerAssertion(history = [], subject = {}, current = '') {
+  const turns = (Array.isArray(history) ? history : []).slice(-12);
+  const now = turnText({ content: current });
+  for (let i = turns.length - 1; i >= 0; i--) {
+    if (String(turns[i]?.role || '') !== 'user') continue;
+    const text = turnText(turns[i]);
+    if (!text || text === now) continue;
+    const a = ownerAssertion(text);
+    if (a && sameSubject(a.subjectWords, subject.words)) return a;
+  }
+  return null;
+}
+
+/**
+ * How a turn relates to the fact under discussion:
+ *   { kind: 'correction', statement: 'my favorite drink is strawberry Sprite', short: true, subject, previous }
+ *     for "No, strawberry Sprite.", "It's strawberry Sprite.", "Strawberry Sprite." (right after CHE's answer or her
+ *     "I don't have a record"), "No, the one I just told you" (the value from his own recent turn), and the long form
+ *     "No, my favorite drink is strawberry Sprite" (ownerFactCorrection);
+ *   { kind: 'clarify', text } for "That's not what I meant" / "Fix that" / "Wrong" when a fact is under discussion but
+ *     no value was given: CHE says what she has and asks for the right value, with no model call;
+ *   null when the turn is about something else, so every other route reads it as before.
+ * The subject comes from the conversation only (activeFactSubject). A question is never a correction.
+ */
+export function ownerFactTurn(rawMessage, { records = [], history = [] } = {}) {
+  const long = ownerFactCorrection(rawMessage, records);
+  if (long) return { kind: 'correction', statement: long, short: false };
+  const body = stripWake(rawMessage).replace(/\s+/g, ' ').trim();
+  if (!body || /\?/.test(body) || body.split(/\s+/).length > 14) return null;
+  const active = activeFactSubject(history);
+  if (!active) return null;
+  const said = (value) => `my ${active.subject.replace(/\bfav(?:ourite|e)?\b/gi, 'favorite')} is ${value}`;
+  if (JUST_TOLD.test(body)) {
+    const told = recentOwnerAssertion(history, active, rawMessage);
+    if (told && active.value && told.value.toLowerCase() === active.value.toLowerCase()) {
+      return { kind: 'clarify', text: `That is what I have, sir: your ${active.subject} is ${active.value}, as you told me. If a different value is right, say it and I'll update it.` };
+    }
+    if (told) return { kind: 'correction', statement: said(told.value), short: true, subject: active.subject, previous: active.value };
+    return { kind: 'clarify', text: `I don't see the value in your recent messages, sir. ${active.value ? `I have your ${active.subject} as ${active.value}.` : `I have no record of your ${active.subject}.`} Say the right one, for example "it's …", and I'll update it.` };
+  }
+  if (VAGUE_FIX.test(body)) {
+    return { kind: 'clarify', text: `${active.value ? `I have your ${active.subject} stored as ${active.value}.` : `I have no record of your ${active.subject}.`} Which value is right, sir? Say it and I'll update it.` };
+  }
+  const lead = CORRECTION_LEAD.exec(body);
+  let rest = lead ? body.slice(lead[0].length) : body;
+  const valueLead = VALUE_LEAD.exec(rest);
+  if (valueLead) rest = rest.slice(valueLead[0].length);
+  // "strawberry Sprite, not Sprite": the rejected old value adds nothing to the fact.
+  rest = rest.replace(/,?\s+(?:and\s+)?not\s+(?:just\s+)?[^,]{1,60}$/i, '').trim();
+  const value = shortValue(rest);
+  if (!value) return null;
+  // Without "no" or "it's", a bare value counts only as the direct answer to CHE's last reply about this fact.
+  if (!lead && !valueLead && !(active.from === 'assistant' && active.index === -1)) return null;
+  if (active.value && value.toLowerCase() === active.value.toLowerCase()) {
+    return { kind: 'clarify', text: `That is what I have, sir: your ${active.subject} is ${active.value}. If a different value is right, say it and I'll update it.` };
+  }
+  return { kind: 'correction', statement: said(value), short: true, subject: active.subject, previous: active.value };
+}
+
+/**
+ * CHE's confirmation of an owner fact correction (ownerFactTurn kind 'correction'). A short correction ("No, strawberry
+ * Sprite.") gets a short confirmation that repeats the whole fact, so the owner hears what was stored.
+ */
+export function factCorrectionReply(turn) {
+  const said = String(turn?.statement || '').replace(/^my\s+/i, 'your ');
+  if (!turn?.short) return `Updated, sir: ${said}. I've kept your earlier answer as history, so I'll use the new one from now on.`;
+  return `Got it, sir: ${said}.${turn.previous ? ` I had ${turn.previous}; I'll use ${turn.statement.replace(/^my\s+.*?\s+is\s+/i, '')} from now on.` : ''}`;
 }
 
 // ─── Stored statements that are not "my X is Y" ─────────────────────────────────────────────────────────────────────

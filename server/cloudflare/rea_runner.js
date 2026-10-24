@@ -35,7 +35,7 @@ import {
 } from './rea_features.js';
 import { validateWebSummary } from './rea_web_evidence.js';
 import { withoutProhibitions } from './owner_action_gate.js';
-import { questionNotRequest } from './code_scout.js';
+import { latestWorkSubject, questionNotRequest } from './code_scout.js';
 
 export const REA_WORKFLOW = 'che-rea-analysis.yml';
 export const REA_WORKFLOW_REF = 'main';
@@ -79,14 +79,14 @@ const OWN_AREAS = /^(?:office|workshop|command center|commands?|brain|mailbox|co
 // `REA inspect: npm:semver@7.7.2`, `REA rebuild: a copy of the search box`, `REA status`.
 // Natural phrasing is accepted only when it names a target REA can read (or refers
 // to an earlier investigation), so ordinary chat is never taken over by this route.
-export function parseReaRequest(message, { history = [] } = {}) {
+export function parseReaRequest(message, { history = [], followup = '' } = {}) {
   const text = String(message || '').trim();
   const explicit = text.match(EXPLICIT);
   if (explicit) {
     const verb = explicit[1].toLowerCase();
     return { command: ALIASES[verb] || verb, input: explicit[2].trim() };
   }
-  const natural = parseNaturalRea(text, { history });
+  const natural = parseNaturalRea(text, { history, followup });
   if (natural) return natural;
   // "Explain what your REA system can do right now, show your most recent verified investigation ... Do not
   // start a new investigation": CHE's own REA, read only. Checked last, so a named target, a comparison or
@@ -104,10 +104,44 @@ export function parseReaRequest(message, { history = [] } = {}) {
   return null;
 }
 
-function parseNaturalRea(text, { history = [] } = {}) {
+// Short follow-ups on the investigation CHE named in her recent replies, read with no INVESTIGATE verb
+// (subject-loss audit, 2026-10-24). Each is answered from that investigation's own record in
+// handleReaRequest; none starts a new investigation. "And the other app?" names no second target, so it
+// gets one question. A sentence with a subject of its own matches none of these.
+const REA_FOLLOWUP_HEAD = /^(?:(?:hey|hi|ok|okay)[,\s]+)?(?:che|chay|chey|shay)\b[,:]?\s*|^(?:and|so|but|also|then)[,\s]+/i;
+const REA_FOLLOWUP_TAIL = /[\s,]+(?:please|sir|now|che|chay|chey|shay|for me)\s*([?.!]*)$/i;
+const REA_OTHER = /^(?:(?:what|how) about )?(?:the |an)?(?:other|another|second|next) (?:app|application|website|site|one|repo(?:sitory)?|package|project)[\s?.!]*$/i;
+const REA_PROGRESS = /^(?:is (?:it|that|this|that one|the investigation) (?:(?:still|already) )?(?:done|finished|complete|completed|ready|running|going|in progress)(?: yet| now)?|(?:is it )?done yet|did (?:it|that) finish(?: yet)?|has (?:it|that) finished(?: yet)?|how(?:'s| is) (?:it|that|the investigation) (?:going|doing|coming along|looking)|any (?:progress|update|news)(?: on (?:that|it))?|(?:what(?:'s| is) )?(?:the )?(?:status|progress)(?: (?:on|of) (?:that|it|this))?|what about (?:it|that|this|that one)|what happened(?: (?:to|with) (?:it|that))?)[\s?.!]*$/i;
+const REA_DURATION = /^(?:how long(?: (?:will|would|does|is|should|did) (?:that|it|this|the investigation) (?:take|be|run|going to take|need))?|how much longer(?: (?:will|does|is) (?:it|that) (?:take|run|need|going to take))?|when will (?:it|that|this) (?:be )?(?:done|finish(?:ed)?|complete|ready)|(?:what(?:'s| is) )?(?:your |the )?(?:eta|estimate)(?: (?:on|for) (?:that|it))?)[\s?.!]*$/i;
+const REA_FEATURES = /^(?:(?:what|which) features? (?:does|do|did) (?:it|that|this|that app|the app|this app|that site|the site|the website|that website) (?:have|offer|include|support)|(?:what|which) are (?:its|their) features|(?:list|show|read|tell me|give me) (?:me )?(?:its|their|the|all (?:of )?(?:its|the)) features|(?:its|their) features|(?:what|which) features)[\s?.!]*$/i;
+// "What about its login page?": a part of the target. A bare "the X" counts only when X names a part of software.
+const REA_PART = /^(?:what|how) about (?:(?:its|their|(?:the|that|this) (?:app|site|website)'?s) ((?!one\b)[a-z][a-z0-9 -]{2,40}?)|(?:the|that|this) ((?:[a-z][a-z0-9-]* ){0,3}(?:page|screen|menu|login|sign[- ]?(?:in|up)|form|search|settings|features?|navigation|checkout|pricing|dashboard|api|onboarding|profile|buttons?|tabs?|flow|layout|footer|header)(?: [a-z][a-z0-9-]*){0,2}))[\s?.!]*$/i;
+function reaFollowup(words) {
+  let t = String(words || '').trim().replace(/[’]/g, "'").replace(/\s+/g, ' ');
+  for (let i = 0; i < 2; i += 1) t = t.replace(REA_FOLLOWUP_HEAD, '');
+  t = t.replace(REA_FOLLOWUP_TAIL, '$1').trim();
+  if (!t || t.length > 80) return null;
+  const base = { input: '', natural: true, followup: true };
+  if (REA_OTHER.test(t)) return { ...base, command: 'inspect', ask: true, other: true };
+  if (REA_PROGRESS.test(t)) return { ...base, command: 'status', about: 'progress' };
+  if (REA_DURATION.test(t)) return { ...base, command: 'status', about: 'duration' };
+  if (REA_FEATURES.test(t)) return { ...base, command: 'features' };
+  const part = REA_PART.exec(t);
+  if (part) return { ...base, command: 'features', part: (part[1] || part[2]).trim() };
+  return null;
+}
+
+function parseNaturalRea(text, { history = [], followup = '' } = {}) {
   const npmNatural = text.match(/\b(reverse[- ]engineer|analy[sz]e|inspect|investigate|explain|debug|compare)\b[\s\S]{0,80}\b(?:npm package\b|npm:)/i);
   if (npmNatural) return { command: VERBS[npmNatural[1].toLowerCase().replace(/\s+/g, ' ')] || 'inspect', input: text };
   if (text.length > 600) return null;
+  // The investigation CHE named last is the subject; `followup` is the owner's new words alone when the
+  // interpreter folded an earlier request into `text`. Anything else keeps the reading below, so "try
+  // again" after a failed investigation still continues it.
+  if (latestWorkSubject(history) === 'rea') {
+    const asked = reaFollowup(followup || text);
+    if (asked) return asked;
+  }
   // Follow-ups about an earlier investigation; handleReaRequest drops them when there is none.
   const named = text.match(BUILD_NAMED);
   const buildWords = Boolean(named) || BUILD_THOSE.test(text);
@@ -876,11 +910,56 @@ async function pickedCandidate(storage, message, history) {
   return inv.candidate_targets?.[(PICK_WORDS[word] || Number(word)) - 1] || '';
 }
 
-export async function handleReaRequest(storage, env, message, { fetcher = fetch, now = Date.now(), random, history = [], build = null, jobLookup = null, remember = null, owner = true, codingBlocked = false } = {}) {
+// The investigation the conversation is about: the one CHE named in her newest reply that names one.
+function recentReaId(history) {
+  const list = Array.isArray(history) ? history : [];
+  for (let i = list.length - 1; i >= 0; i -= 1) {
+    if (String(list[i]?.role) !== 'assistant') continue;
+    const found = /\brea-[0-9a-f]{8}\b/.exec(String(list[i]?.content || list[i]?.text || ''));
+    if (found) return found[0];
+  }
+  return '';
+}
+
+// "Is it done yet?" and "how long will that take?" about that investigation, from its record alone: its
+// state, stage and timestamps. No estimate is invented; a record that holds none is said to hold none.
+const stamp = (value) => `${String(value || '').replace('T', ' ').slice(0, 16)} UTC`;
+function spokenSpan(ms) {
+  if (!Number.isFinite(ms) || ms < 0) return '';
+  const minutes = Math.round(ms / 60_000);
+  if (minutes < 1) return 'under a minute';
+  if (minutes < 120) return `${minutes} minute${minutes === 1 ? '' : 's'}`;
+  const hours = Math.round(minutes / 60);
+  return hours < 48 ? `${hours} hours` : `${Math.round(hours / 24)} days`;
+}
+const stageLabel = (inv) => inv.stages?.find((s) => s.id === inv.stage)?.label || inv.stage || 'unknown';
+function progressAnswer(inv, now) {
+  const label = inv.target?.label || 'the target';
+  const features = (inv.features || []).length;
+  if (inv.state === 'complete') return `Yes, sir. Investigation ${inv.id} of ${label} finished at ${stamp(inv.updated_at || inv.created_at)} and found ${features} feature${features === 1 ? '' : 's'}. Say "its features" to hear them.`;
+  if (inv.state === 'failed') return `No, sir. ${investigationAnswer(inv)}`;
+  if (inv.state === 'limited' || inv.state === 'needs_choice') return investigationAnswer(inv);
+  const since = Date.parse(inv.created_at || '');
+  return `Not yet, sir. Investigation ${inv.id} of ${label} is ${inv.state} at stage "${stageLabel(inv)}"${Number.isFinite(since) ? `, started ${spokenSpan(now - since)} ago` : ''}; its last progress was at ${stamp(inv.updated_at || inv.created_at)}. I will not call it done until its record says so.`;
+}
+function durationAnswer(inv, now) {
+  const label = inv.target?.label || 'the target';
+  const since = Date.parse(inv.created_at || '');
+  const last = Date.parse(inv.updated_at || inv.created_at || '');
+  const took = Number.isFinite(since) && Number.isFinite(last) ? spokenSpan(last - since) : '';
+  if (['complete', 'failed', 'limited'].includes(inv.state)) {
+    return `Investigation ${inv.id} of ${label} is already ${inv.state === 'complete' ? 'finished' : inv.state}, sir: it started at ${stamp(inv.created_at)} and ${inv.state === 'complete' ? 'finished' : 'stopped'} at ${stamp(inv.updated_at || inv.created_at)}${took ? `, ${took} later` : ''}. Nothing more is running for it.`;
+  }
+  const started = Number.isFinite(since) ? `${spokenSpan(now - since)} ago, at ${stamp(inv.created_at)}` : 'at a time its record does not hold';
+  const browser = inv.browser?.state === 'queued' ? ' Its browser run on GitHub Actions is still pending; ask "REA status" in a few minutes.' : '';
+  return `I don't know how long investigation ${inv.id} of ${label} will take, sir: its record holds no estimate. It started ${started}, and it is ${inv.state} at stage "${stageLabel(inv)}".${browser}`;
+}
+
+export async function handleReaRequest(storage, env, message, { fetcher = fetch, now = Date.now(), random, history = [], followup = '', build = null, jobLookup = null, remember = null, owner = true, codingBlocked = false } = {}) {
   const picked = await pickedCandidate(storage, message, history).catch(() => '');
   if (picked) message = `Investigate ${picked}`;
   const explicitRetry = /^(?:(?:che|chay)[,:]?\s+)?rea\s+retry\s*:?\s+(npm:[^\s]+)\s*[.!]?$/i.exec(String(message).trim());
-  const request = parseReaRequest(explicitRetry ? `REA inspect: ${explicitRetry[1]}` : message, { history });
+  const request = parseReaRequest(explicitRetry ? `REA inspect: ${explicitRetry[1]}` : message, { history, followup });
   if (explicitRetry && request) {
     if (!owner) return { ok: false, text: 'Only the owner can retry a failed REA run.' };
     request.retry = true;
@@ -893,6 +972,15 @@ export async function handleReaRequest(storage, env, message, { fetcher = fetch,
   if (hasInvestigations) await refreshInvestigations(storage, env, opts).catch(() => null);
 
   if (request.command === 'capabilities') return { ok: true, text: capabilitiesText(env) };
+  // "Is it done yet?" / "how long will that take?" about the investigation CHE named last: its record, briefly.
+  if (request.command === 'status' && request.followup) {
+    const named = recentReaId(history);
+    const investigations = jobs.filter((j) => j.kind === 'investigation');
+    const job = (named && investigations.find((j) => j.id === named)) || investigations[investigations.length - 1];
+    const inv = job ? await loadInvestigation(storage, job.id) : null;
+    if (!inv) return null;
+    return { ok: inv.state === 'complete' || inv.state === 'limited', investigation_id: inv.id, text: request.about === 'duration' ? durationAnswer(inv, now) : progressAnswer(inv, now) };
+  }
   if (request.command === 'status') {
     const head = request.capabilities ? `REA is my reverse-engineering and investigation system. ${capabilitiesText(env)}\n\n` : '';
     if (request.verified) {
@@ -930,7 +1018,12 @@ export async function handleReaRequest(storage, env, message, { fetcher = fetch,
 
   if (request.command === 'inspect' || request.command === 'discover') {
     if (request.ask || (!target && !request.input)) {
-      return { ok: false, text: 'Which app should I investigate, sir? Give me its name, a public link, a GitHub repository (owner/name), or an npm package with its exact version.' };
+      return {
+        ok: false,
+        text: request.other
+          ? 'Which other app, sir? Give me its name, a public link, a GitHub repository (owner/name), or an npm package with its exact version, and I will investigate it. Nothing was started.'
+          : 'Which app should I investigate, sir? Give me its name, a public link, a GitHub repository (owner/name), or an npm package with its exact version.',
+      };
     }
     if (!target) return { ok: false, text: 'I could not tell which software that is. Give me its name followed by "app" or "website", a public link, a GitHub repository (owner/name), or npm:name@version.' };
     if (request.command === 'discover') return discoverAnswer(env, target, fetcher);
@@ -943,14 +1036,17 @@ export async function handleReaRequest(storage, env, message, { fetcher = fetch,
     return { ok: current.state === 'complete' || current.state === 'limited', investigation_id: current.id, reused: reused ? current.id : undefined, resumed: Boolean(resumed), text };
   }
 
-  const inv = await resolveInvestigation(storage, jobs, request.input);
+  // A follow-up that names no investigation is about the one CHE named in her newest reply, when the log still has it.
+  const named = request.followup && !/rea-[0-9a-f]{8}/.test(request.input) ? recentReaId(history) : '';
+  const inv = (named && jobs.some((j) => j.id === named) ? await loadInvestigation(storage, named) : null)
+    || await resolveInvestigation(storage, jobs, request.input);
   if (!inv) return request.followup ? null : { ok: false, text: 'There is no REA investigation to use yet. Say "investigate" with an app name, a public link or a repository first. Nothing was run.' };
   // "Build those into yourself" belongs to an investigation only while it is the
-  // conversation's subject: the last reply was REA's, or it was worked on in
-  // the last six hours. "Remember that app…" names it, so it always applies.
+  // conversation's subject: a recent reply was REA's (latestWorkSubject), or it was worked
+  // on in the last six hours. "Remember that app…" names it, so it always applies.
   if (request.followup && request.command !== 'recall' && !(request.command === 'build' && RECALL.test(message))) {
     const lastReply = [...(Array.isArray(history) ? history : [])].reverse().find((h) => h?.role === 'assistant');
-    const reaReply = /\brea-[0-9a-f]{8}\b/.test(String(lastReply?.content || ''));
+    const reaReply = /\brea-[0-9a-f]{8}\b/.test(String(lastReply?.content || '')) || latestWorkSubject(history) === 'rea';
     const recent = now - Date.parse(inv.updated_at || 0) < FOLLOWUP_WINDOW_MS;
     if (!reaReply && !(recent && !lastReply)) return null;
   }
@@ -960,6 +1056,22 @@ export async function handleReaRequest(storage, env, message, { fetcher = fetch,
     return { ok: true, investigation_id: inv.id, text: `Yes: ${inv.target.label}, investigation ${inv.id} from ${inv.created_at.slice(0, 10)}, now at stage "${inv.stages.find((s) => s.id === inv.stage)?.label || inv.stage}". ${check.note}\n\n${investigationAnswer(inv)}` };
   }
   if (request.command === 'features') {
+    // "What about its login page?": only what the record holds about that part; nothing is guessed.
+    const part = String(request.part || '').trim();
+    if (part) {
+      const found = pickFeatures(inv.features || [], [part]);
+      if (!found.length) {
+        const all = inv.features || [];
+        const why = inv.state === 'failed' ? investigationAnswer(inv)
+          : all.length ? `It found ${all.length} feature${all.length === 1 ? '' : 's'}: ${all.slice(0, 8).map((f) => f.name).join(', ')}.`
+            : 'It found no features in what it could read.';
+        return { ok: false, investigation_id: inv.id, text: `Investigation ${inv.id} of ${inv.target.label} recorded nothing about the ${part}, sir. ${why} I have not guessed.` };
+      }
+      return {
+        ok: true, investigation_id: inv.id,
+        text: [`What investigation ${inv.id} of ${inv.target.label} recorded about the ${part}:`, list(found.map((f) => `${f.id} ${f.name}. ${f.purpose} You see: ${f.user_sees} Evidence: ${f.evidence.map((e) => e.label).slice(0, 2).join('; ') || 'none'}. Unknown: ${f.unknowns[0] || 'nothing listed'}.`))].join('\n'),
+      };
+    }
     if (!inv.features.length) return { ok: false, investigation_id: inv.id, text: `Investigation ${inv.id} of ${inv.target.label} found no features in what it could read.` };
     return {
       ok: true, investigation_id: inv.id,

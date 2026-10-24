@@ -48,9 +48,10 @@ async function openChe(saved = new Map(), { model = () => 'Understood, sir.' } =
     body: JSON.stringify(body),
   }), env);
   const token = (await (await send('/api/pair', { code: '123456' })).json()).device_token;
-  const say = async (message) => {
+  // `history` is what the phone sends with each turn: the earlier user and assistant turns, oldest first.
+  const say = async (message, { history = [] } = {}) => {
     const before = calls.n;
-    const raw = await (await send('/api/chat', { message, history: [] }, token)).text();
+    const raw = await (await send('/api/chat', { message, history }, token)).text();
     await Promise.allSettled(pending.splice(0));
     const items = raw.split('\n').filter(Boolean).map((line) => JSON.parse(line));
     const done = items.find((i) => i.type === 'done') || {};
@@ -125,4 +126,113 @@ test('persistence: the fact survives an app restart over the same stored data', 
   const restarted = await openChe(saved);
   const out = await restarted.say('What is my favorite food?');
   assert.match(out.reply, /^Your favorite food is pizza[.,]/);
+});
+
+// ─── Owner recording (2026-10-24): the short correction of the fact under discussion ────────────────────────────────
+// A conversation as the phone runs it: each turn carries the earlier turns as history.
+async function conversation(che) {
+  const history = [];
+  return async (message) => {
+    const out = await che.say(message, { history: [...history] });
+    history.push({ role: 'user', content: message }, { role: 'assistant', content: out.reply });
+    return out;
+  };
+}
+
+test('recording: "What\'s my favorite drink?" → Sprite → "No, strawberry Sprite." updates the fact; the next ask uses it', async () => {
+  const che = await openChe(new Map(), { model: () => 'MODEL_FALLBACK' });
+  const say = await conversation(che);
+  await say('Remember that my favorite drink is Sprite');
+  const first = await say("What's my favorite drink?");
+  assert.match(first.reply, /^Your favorite drink is Sprite\./);
+  const fixed = await say('No, strawberry Sprite.');
+  assert.equal(fixed.modelCalls, 0, 'the correction is understood from the conversation, not sent to the model');
+  assert.equal(fixed.meta.source, 'che_memory');
+  assert.match(fixed.reply, /^Got it, sir: your favorite drink is strawberry Sprite\./);
+  const again = await say("What's my favorite drink?");
+  assert.equal(again.modelCalls, 0);
+  assert.match(again.reply, /^Your favorite drink is strawberry Sprite\. You told me that on/);
+  assert.doesNotMatch(again.reply, /is Sprite\./);
+  // The old record stays as history, inactive, so nothing is deleted.
+  const records = che.saved.get('che').memory_records;
+  assert.equal(records.find((r) => r.text === 'my favorite drink is Sprite').active, false);
+  assert.equal(records.find((r) => /strawberry Sprite/.test(r.text)).active !== false, true);
+});
+
+test('recording, spoken variants: "It’s strawberry Sprite." and "no strawberry sprite" (no punctuation) are the same correction', async () => {
+  for (const said of ['It’s strawberry Sprite.', 'no strawberry sprite']) {
+    const che = await openChe(new Map(), { model: () => 'MODEL_FALLBACK' });
+    const say = await conversation(che);
+    await say('Remember that my favorite drink is Sprite');
+    await say("What's my favorite drink?");
+    const fixed = await say(said);
+    assert.equal(fixed.modelCalls, 0, said);
+    assert.match(fixed.reply, /^Got it, sir: your favorite drink is strawberry sprite\./i, said);
+  }
+});
+
+test('a value given after "I don\'t have a record" is saved as the fact and dated; "when did I tell you that?" cites the record', async () => {
+  const che = await openChe(new Map(), { model: () => 'MODEL_FALLBACK' });
+  const say = await conversation(che);
+  const none = await say("What's my favorite color?");
+  assert.match(none.reply, /^I don't have a record of your favorite color/);
+  const told = await say("It's blue.");
+  assert.equal(told.modelCalls, 0);
+  assert.match(told.reply, /^Got it, sir: your favorite color is blue\./);
+  const ask = await say("What's my favorite color?");
+  assert.match(ask.reply, /^Your favorite color is blue\. You told me that on \w+ \d+, \d{4}\./);
+  const when = await say('When did I tell you that?');
+  assert.equal(when.modelCalls, 0);
+  assert.match(when.reply, /That came from what you told me: On \w+ \d+, you told me in chat: "my favorite color is blue\."/);
+});
+
+test('"that\'s not what I meant" with a fact under discussion asks for the right value and saves nothing', async () => {
+  const che = await openChe(new Map(), { model: () => 'MODEL_FALLBACK' });
+  const say = await conversation(che);
+  await say('Remember that my favorite drink is Sprite');
+  await say("What's my favorite drink?");
+  const vague = await say("That's not what I meant.");
+  assert.equal(vague.modelCalls, 0);
+  assert.equal(vague.meta.source, 'che_clarify');
+  assert.match(vague.reply, /I have your favorite drink stored as Sprite\. Which value is right, sir\?/);
+  assert.equal(che.saved.get('che').memory_records.filter((r) => r.active !== false && /favorite drink/.test(r.text)).length, 1);
+  const fixed = await say('Strawberry Sprite.');
+  assert.match(fixed.reply, /^Got it, sir: your favorite drink is Strawberry Sprite\./);
+});
+
+test('"what were we just discussing?" is answered from the conversation, with no model', async () => {
+  const che = await openChe(new Map(), { model: () => 'MODEL_FALLBACK' });
+  const say = await conversation(che);
+  await say('Remember that my favorite drink is Sprite');
+  await say("What's my favorite drink?");
+  const out = await say('What were we just discussing?');
+  assert.equal(out.modelCalls, 0);
+  assert.match(out.reply, /^We were just on this, sir\. You said: "What's my favorite drink\?" and I answered: "Your favorite drink is Sprite\./);
+});
+
+test('after an app restart the corrected fact is what comes back, and a correction still works with the restored history', async () => {
+  const saved = new Map();
+  const first = await openChe(saved, { model: () => 'MODEL_FALLBACK' });
+  const say = await conversation(first);
+  await say('Remember that my favorite drink is Sprite');
+  await say("What's my favorite drink?");
+  await say('No, strawberry Sprite.');
+  const restarted = await openChe(saved, { model: () => 'MODEL_FALLBACK' });
+  const again = await conversation(restarted);
+  const out = await again("What's my favorite drink?");
+  assert.match(out.reply, /^Your favorite drink is strawberry Sprite\./);
+  const fixed = await again('No, cherry Sprite.');
+  assert.match(fixed.reply, /^Got it, sir: your favorite drink is cherry Sprite\./);
+});
+
+test('the same words with no fact under discussion are not a memory write; right after his own statement they correct it', async () => {
+  const che = await openChe(new Map(), { model: () => 'MODEL_FALLBACK' });
+  await che.say('Remember that my favorite drink is Sprite');
+  // The last turns were about something else: the words are not read as a fact.
+  const out = await che.say('No, strawberry Sprite.', { history: [{ role: 'user', content: 'What time is it?' }, { role: 'assistant', content: 'It is 9:15, sir.' }] });
+  assert.doesNotMatch(out.reply, /^Got it, sir: your favorite drink/);
+  assert.equal(che.saved.get('che').memory_records.filter((r) => r.active !== false).map((r) => r.text).join('|'), 'my favorite drink is Sprite');
+  // Right after "remember that my favorite drink is Sprite", the same words correct what he just said.
+  const fixed = await che.say('No, strawberry Sprite.', { history: [{ role: 'user', content: 'Remember that my favorite drink is Sprite' }, { role: 'assistant', content: 'I’ll remember that, sir.' }] });
+  assert.match(fixed.reply, /^Got it, sir: your favorite drink is strawberry Sprite\./);
 });

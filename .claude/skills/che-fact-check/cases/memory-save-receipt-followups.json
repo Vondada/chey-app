@@ -1,0 +1,47 @@
+{
+  "about": "Memory save receipt: 'Remember my favorite color is blue' is che_memory; 'did you save that?' is che_memory_receipt (hallucination_auditor.memorySavedQuestion). 'What did you save?' and 'No, the one I just told you' must be answered from the receipt or the record, never the model.",
+  "owner": true,
+  "model": "I saved your favorite color as green, sir, and your dog's name as Max.",
+  "turns": [
+    {
+      "message": "Remember my favorite color is blue",
+      "expect": {
+        "route": "che_memory",
+        "model_calls": 0,
+        "match": "remember that"
+      }
+    },
+    {
+      "message": "Did you save that?",
+      "expect": {
+        "route": "che_memory_receipt",
+        "model_calls": 0,
+        "match": "Yes"
+      }
+    },
+    {
+      "message": "What did you save?",
+      "expect": {
+        "model_calls": 0,
+        "match": "blue",
+        "not": "green|Max"
+      }
+    },
+    {
+      "message": "What's my favorite color?",
+      "expect": {
+        "model_calls": 0,
+        "match": "blue",
+        "not": "green"
+      }
+    },
+    {
+      "message": "No, the one I just told you",
+      "expect": {
+        "model_calls": 0,
+        "match": "blue",
+        "not": "green"
+      }
+    }
+  ]
+}

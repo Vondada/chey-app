@@ -194,8 +194,10 @@ import { knowVsGuessQuestion, knowVsGuessReply, memorySavedQuestion, memorySaved
 test('"Did you save that memory?" is recognised in the owner\'s phrasings and nothing else', () => {
   for (const q of ['Did you save that memory?', 'did you save that?', 'Have you stored that memory, sir?', 'CHE, did you remember that?', 'Did you actually save it?']) assert.equal(memorySavedQuestion(q), true, q);
   for (const q of ['Did you save my notes?', 'Did you keep that fact?']) assert.equal(memorySavedQuestion(q), true, q);
+  // "What did you save?" right after a memory write reads the same receipt (subject-loss audit, 2026-10-24).
+  for (const q of ['What did you save?', 'what did you just remember', 'What did you store for me?']) assert.equal(memorySavedQuestion(q), true, q);
   // Codex review (#509): a file or document is not CHE's memory, so these are not memory-receipt questions.
-  for (const q of ['Save that memory.', 'What did you save?', 'Did you save money on the order?', 'Remember my favorite drink is Sprite', 'Did you save the file?', 'Did you save my document?', 'Did you save the draft to Drive?']) assert.equal(memorySavedQuestion(q), false, q);
+  for (const q of ['Save that memory.', 'Did you save money on the order?', 'Remember my favorite drink is Sprite', 'Did you save the file?', 'Did you save my document?', 'Did you save the draft to Drive?', 'What did you save the file as?']) assert.equal(memorySavedQuestion(q), false, q);
 });
 
 test('a memory_saved receipt in the window answers yes with the record; none answers no', async () => {

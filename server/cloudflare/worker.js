@@ -43,7 +43,7 @@ import { mediaHoldAnswer, mediaHoldIntent, mediaKeepFor, mediaLatestReply, media
 import { capabilityGap, capabilityReply } from './capability_gap.js';
 import { INTERNAL_SOURCE, LAST_RENDER_KEY, internalSceneIntent, internalSceneTurn } from './internal_studio.js';
 import { CHAT_IMAGE_SOURCE, chatImageInline, chatImageMedia, chatImageReply, makeChatImages, pretendToolCall, requestedImageCount } from './chat_images.js';
-import { memorySearchIntent, memorySearchReply, memorySearchTerms } from './memory_search.js';
+import { memorySearchFollowup, memorySearchIntent, memorySearchReply, memorySearchTerms } from './memory_search.js';
 import { probeVideoEngine, videoEngineStatus, videoStatusSpeech } from './video_engine.js';
 import { githubVideoDiagnosis, mp4Facts, startGithubVideo } from './github_video_renderer.js';
 import { handleEdgeVoice } from './edge_route.js';
@@ -71,7 +71,7 @@ import { claimMatcher, disprovenContext, downgradeDisproven, externalCorrection,
 import { recordReliability, reliabilityIntent, reliabilitySummary, speakReliability } from './reliability_ledger.js';
 import { answerOwnerMemoryQuestion, auditMemoryProvenance, evidenceQuestion, evidenceReferent, evidenceRequestSplit, explainEvidenceFor, findAnswerEvidence, brainRecordForProvenance, guardOwnerAttributions, guardRememberBlock, guardSpeakerAttributions, latestAnswerEvidence, loadRetractions, memoryPromptContext, ownerFactCorrection, ownerMemoryQuestion, ownerWords, recordAnswerEvidence, recordRetractions, storedSpeaker, storyRequested } from './memory_provenance.js';
 import { condenseHistory, ownerNotificationPolicy } from './workflow_governor.js';
-import { analyze as tradeAnalyze, backtestAll, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, nextTradingTickAt, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
+import { analyze as tradeAnalyze, backtestAll, candleSpan, intervalLabel, loadCandles, paperTick, readBook, speakAnalysis, speakBacktest, speakBook, speakLearning, nextTradingTickAt, tradingIntent, watchSymbol, STRATEGIES } from './trading_lab.js';
 import { intelligenceIntent, intelligenceReport, intelligenceView, speakIntelligence, startStudy, studyAlarm, studyStep } from './historical_intelligence.js';
 import { evaluateSample, applyRightsAction, applySpokenRightsWrite, defensibility, musicRightsIntent, musicRightsWriteIntent, releaseReadiness, songFor, speakReadiness } from './music_rights.js';
 import { ACTIVITIES, JURISDICTIONS, SOURCES, LEGAL_INDEX, activitiesIn, placeIn, checkUpdates, defenseArguments, findAlternatives, jurisdiction as legalPlace, legalAnswer, legalDifferences, legalIntent, loadLegal, recordDecision, recordsFor, releaseLegalCheck, saveLegal, speakDifferences, subscribe as legalSubscribe, verifyRecord } from './legal_intelligence.js';
@@ -131,11 +131,11 @@ import { ownToolPermissionProblems } from './flagstaff_reply_check.js';
 import { cachedCodeIndex } from './code_index.js';
 import { CHE_SELF_BRIEF, starredFocus, studyLesson } from './che_self_knowledge.js';
 import { KEY_PROVIDERS, MEMORY_DB, hasStoredMemoryDatabase, memorySetupIntent, memorySetupSteps, removeMemoryDatabase, saveMemoryDatabase, removeKey, storedKeys, withStoredKeys, cachedAnswer, checkAllKeys, fileLetter, fileTech, forgetAnswer, isLockedDown, listLetters, looksLikeAttack, markLetter, nextLetter, rememberAnswer, resilienceIntent, runScout, saveKey, setLockdown, setupSteps, speakKeyHealth, speakMailboxSummary, speakTech, techItems } from './resilience.js';
-import { applyCorrections, correctionsContext, detectCorrection, learnCorrection, loadCorrections } from './speech_learning.js';
+import { applyCorrections, correctedPrevious, correctionsContext, detectCorrection, learnCorrection, loadCorrections } from './speech_learning.js';
 import { applyModelReading, asksAboutScreen, clipKeepingLimits, interpretOwnerTurn, interpretWithModel } from './speech_intent.js';
 import { intentFrame, understoodAs } from './intent_frame.js';
 import { replyHijacksOwnerRequest, usageIntent, usageReport, speakUsage } from './usage_tracker.js';
-import { newestStarredIntent, speakNewestStarred, autoImproveScan, analyticalRepositoryQuestion, chatOnlyResponseIntent, currentTurnActionPolicy, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, inspirationUpgradeContext, listOwnerStarredRepos, readRepoSource, referenceSourceBlock, codingHistoryIntent, hypotheticalChange, repositoryImplementationIntent, repositoryInspectionIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, starredStudyList, studySelectionIntent } from './code_scout.js';
+import { newestStarredIntent, speakNewestStarred, autoImproveScan, analyticalRepositoryQuestion, chatOnlyResponseIntent, currentTurnActionPolicy, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, inspirationUpgradeContext, listOwnerStarredRepos, readRepoSource, referenceSourceBlock, codingFollowupKind, codingHistoryIntent, codingTimingNote, hypotheticalChange, repositoryImplementationIntent, repositoryInspectionIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, starredStudyList, studySelectionIntent } from './code_scout.js';
 import { codingHistoryReceipt, completedWorkProof, otherAgentWorkAsk, otherAgentWorkReply, proofAsked } from './coding_history.js';
 import { inventionFollowUpAllowed, inventionIntent, inventionReply, planInvention, refusalReply } from './invention_studio.js';
 import { matchShowroom, showroomIntent, showroomReply, showroomView } from './capability_showroom.js';
@@ -164,7 +164,7 @@ import { githubWorkshopPieces, workshopAvatar, workshopAvatarIntent, workshopSna
 import { flushOutbox, handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, openMailbox, transcript as flagstaffTranscript, mailboxCode, mailboxLink, postWebMail, readWebMail, rotateMailboxCode } from './web_mailbox.js';
 import { CheLibrary, fetchReadable, libraryContext, libraryIntent } from './library.js';
 import { KnowledgeLibrary, knowledgeIntent, knowledgeReply, knowledgeTaskContext } from './knowledge_library.js';
-import { answerPersonalFact, answerStoredStatement, groundedReply, isQuestionLike, needsStrongEngine, personalFactQuestion, storedStatementQuestion } from './personal_recall.js';
+import { answerPersonalFact, answerStoredStatement, factCorrectionReply, groundedReply, isQuestionLike, needsStrongEngine, ownerFactTurn, personalFactQuestion, recallPersonalFact, storedStatementQuestion } from './personal_recall.js';
 import { brainRecordIntent, chatgptHistoryIntent, importChatgptBatch, inspectMemory, memoryInspectIntent, ownerMemorySearchIntent, ownerStatementCandidates, phoneBrainNotes, searchOwnerMemory, speakBrainRecord, speakChatgptHistory, speakMemoryInspection, speakMemorySearch } from './owner_recall.js';
 import { adRequest, adStatusLines, assetTruthReply } from './asset_truth.js';
 import { dropAgentTaskTurns, replyRepeatsAgentTask } from './agent_task_guard.js';
@@ -190,7 +190,7 @@ import {
   shouldAutoDelegateOffice,
   laAgenciaPanelNeeds,
 } from './work_agent_mode.js';
-import { matchOfficePhrase, speakGoalPlan, speakOfficeBoard } from './office_phrases.js';
+import { matchOfficePhrase, speakGoalPlan, speakOfficeAgentMore, speakOfficeBoard } from './office_phrases.js';
 import { advanceOfficeJobs, officeJobView, officeJobsView, planOfficeJob, speakOfficeJob } from './office_jobs.js';
 import { headRecord, officeOrg, speakOfficeOrg } from './office_org.js';
 import { assertOwnerTalksToCheOnly, codexWorkPacket } from './office_router.js';
@@ -10935,15 +10935,20 @@ export class CheState extends DurableObject {
         const previousText = String(lastOwner?.content || lastOwner?.text || '').slice(0, 16000);
         // An answer to an open Knowledge Atlas quiz ("number 2 is the bid, not the ask") is never a speech
         // correction: learning it would rewrite the owner's later sentences (#346).
-        const correction = atlasQuizAnswerTurn(rawMessage, ownerHistory) ? null : detectCorrection(rawMessage, previousText);
+        // "No, strawberry Sprite." right after "Your favorite drink is Sprite." corrects the fact under discussion
+        // (owner recording, 2026-10-24). It is read before the speech-mishearing check, which would otherwise take
+        // "strawberry Sprite, not Sprite" as a misheard word and re-run the question with the old answer.
+        const factTurn = ownerDevice && !body.attachment ? ownerFactTurn(rawMessage, { records: data.memory_records, history: ownerHistory }) : null;
+        const correction = atlasQuizAnswerTurn(rawMessage, ownerHistory) || factTurn ? null : detectCorrection(rawMessage, previousText);
         let corrections = await loadCorrections(this.ctx.storage).catch(() => []);
         let message = applyCorrections(rawMessage, corrections);
-        if (correction && previousText) {
+        // Only a word the previous turn really contains is corrected and re-run (speech_learning.js).
+        const rerun = correctedPrevious(correction, previousText);
+        if (rerun) {
           await learnCorrection(this.ctx.storage, correction, previousText).catch(() => null);
           corrections = await loadCorrections(this.ctx.storage).catch(() => corrections);
           // Redo what he asked before, with the right word.
-          const esc = correction.heard.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-          message = previousText.replace(new RegExp(`\\b${esc}\\b`, 'gi'), correction.meant);
+          message = rerun;
         }
         // Understanding before any gate: fix likely speech mistakes, resolve "that
         // one" and "do it again" from the recent turns, and ask one question only
@@ -10957,7 +10962,7 @@ export class CheState extends DurableObject {
         // an earlier answer is answered from records further down, in his own
         // words: no interpreter rewrite, clarifying question or model read.
         const memoryRoute = ownerDevice && !body.attachment && (asksForEvidence || Boolean(ownerMemoryQuestion(rawMessage)) ||
-          Boolean(ownerFactCorrection(rawMessage, data.memory_records)) || Boolean(outsideCorrespondenceIntent(rawMessage, { history: ownerHistory })));
+          Boolean(factTurn) || Boolean(outsideCorrespondenceIntent(rawMessage, { history: ownerHistory })));
         // Voice Studio: the owner's spoken requests about his voice library are answered
         // from the provider's account, with no model call. Anything else goes on below.
         if (ownerDevice && !body.attachment) {
@@ -11052,6 +11057,11 @@ export class CheState extends DurableObject {
           return json({ message: question, reply: question, clarification: true, held_for_owner: false, code_review_passed: false, owner_approval_required: false });
         }
         message = interpretation.text;
+        // A follow-up's own words and the earlier request it leans on ("What about ETH?" after "Analyze the NQ chart"):
+        // deterministic routes read the new subject from `followupWords` and the rest from `referentText`, so the earlier
+        // request is never silently re-run with its old subject (subject-loss audit, 2026-10-24).
+        const followupWords = String(interpretation.followup || '');
+        const referentText = String(interpretation.referent || '');
         // "Answer 1: delete my notes", "my answer is buy two calls": a money or delete request in a quiz-answer
         // form (#346) is gated, and on a yes run, exactly as the bare sentence would be.
         const hiddenAction = atlasHiddenAction(message);
@@ -11224,9 +11234,12 @@ export class CheState extends DurableObject {
         // hold for REA builds too, before anything can be queued.
         // A question about a coding record ("inspect that coding job") is not an REA follow-up;
         // the coding history route below answers it. Named REA targets never match it.
+        // A follow-up's own words ("is it done yet?") belong to the coding job or the REA investigation CHE
+        // named last, read from the recent turns (subject-loss audit, 2026-10-24).
         const reaPolicy = currentTurnActionPolicy(message);
-        const rea = codingHistoryIntent(message) ? null : await handleReaRequest(this.ctx.storage, this.keyEnv || this.env, message, {
+        const rea = codingHistoryIntent(followupWords || message, ownerHistory) ? null : await handleReaRequest(this.ctx.storage, this.keyEnv || this.env, message, {
           ...this.reaOptions({ history: ownerHistory, owner: ownerDevice }),
+          followup: followupWords,
           codingBlocked: reaPolicy.terminalChatOnly || reaPolicy.restrictions.noPr || reaPolicy.restrictions.noCommitPush,
         });
         if (rea) {
@@ -12101,7 +12114,7 @@ export class CheState extends DurableObject {
         }
         if (officePhrase) {
           const board = await this.officeBoard(data);
-          return ndjsonReply(speakOfficeBoard(board, officePhrase), { office: officePhrase.type });
+          return ndjsonReply(speakOfficeBoard(board, officePhrase), { office: officePhrase.type, model_calls: 0 });
         }
 
         // CHE's universal AI layer by voice: models, providers, privacy,
@@ -12226,9 +12239,17 @@ export class CheState extends DurableObject {
         // The owner's memory search reads the Brain store and the Flagstaff archive and names what matched, with
         // ids, dates and the sender as stored. The model is never asked, so it cannot say a search ran or invent
         // records (owner, 2026-10-21: "I found two records dated February 10 and March 15, 2023").
-        if (memorySearchIntent(message)) {
+        // "Tell me more about that" / "who wrote it?" right after a memory search re-run its terms and name the
+        // stored senders; right after an Office desk reply they read that agent's board (subject-loss audit,
+        // 2026-10-24). Both answer from the records, with no model.
+        const memoryFollowup = body.attachment ? null : memorySearchFollowup(followupWords || message, ownerHistory);
+        if (memoryFollowup?.referent === 'office_agent') {
           if (!ownerDevice) return ownerOnly();
-          const topic = memorySearchTerms(message).join(' ');
+          return ndjsonReply(speakOfficeAgentMore(await this.officeBoard(data), memoryFollowup.agentId), { office: 'agentStatus', model_calls: 0 });
+        }
+        if (memorySearchIntent(message) || memoryFollowup) {
+          if (!ownerDevice) return ownerOnly();
+          const topic = (memoryFollowup ? memoryFollowup.terms : memorySearchTerms(message)).join(' ');
           const store = new CheBrainStore(this.ctx.storage);
           let brainHits = null;
           try {
@@ -12237,7 +12258,7 @@ export class CheState extends DurableObject {
           // One row per locked Flagstaff session; each message keeps its session id so a reply can name where it was read.
           const sessions = await flagstaffArchive(this.ctx.storage).catch(() => null);
           const archive = sessions === null ? null : sessions.flatMap((session) => (session.messages || []).map((m) => ({ ...m, session: session.id })));
-          const answer = memorySearchReply(message, { brainHits, archive });
+          const answer = memorySearchReply(message, { brainHits, archive, followup: memoryFollowup });
           await recordAnswerEvidence(this.ctx.storage, answer.text, { kind: answer.records.length ? 'memory_search' : 'none', tools: ['brain/search', 'flagstaff/archive'] }, { records: answer.records });
           return ndjsonReply(answer.text, { source: 'che_memory_search', model_calls: 0, records: answer.records.length, record_ids: answer.records });
         }
@@ -12258,7 +12279,13 @@ export class CheState extends DurableObject {
         // "Actually, my favorite food is sushi": the owner correcting his own
         // stated fact. The old record stays as history; nothing else is
         // treated as confirmed by a correction.
-        const correctedFact = ownerDevice && !body.attachment ? ownerFactCorrection(rawMessage, data.memory_records) : null;
+        // "That's not what I meant" / "Fix that" with a fact under discussion but no value: CHE says what she has and
+        // asks for the right value. No model is asked, so nothing is invented and nothing is changed.
+        if (factTurn?.kind === 'clarify') {
+          await recordAnswerEvidence(this.ctx.storage, factTurn.text, { kind: 'none' });
+          return ndjsonReply(factTurn.text, { source: 'che_clarify', model_calls: 0 });
+        }
+        const correctedFact = factTurn?.kind === 'correction' ? factTurn.statement : null;
         if (correctedFact) {
           await rememberOwnerFact(this.ctx.storage, correctedFact).catch(() => null);
           const added = addOwnerMemory(data, correctedFact, { source: 'owner_chat', category: 'Memory', scope: 'owner', confidence: 1 });
@@ -12266,8 +12293,7 @@ export class CheState extends DurableObject {
           // A correction is a memory write too: its receipt is what "Did you save that memory?" reads (Codex, #511).
           const verifiedCorrection = await this.readBackMemory(added.record);
           if (verifiedCorrection) await this.recordMemorySaved(verifiedCorrection);
-          const said = correctedFact.replace(/^my\s+/i, 'your ');
-          const reply = `Updated, sir: ${said}. I've kept your earlier answer as history, so I'll use the new one from now on.`;
+          const reply = factCorrectionReply(factTurn);
           await recordAnswerEvidence(this.ctx.storage, reply, answerEvidenceReceipt({ ownerAttested: true }),
             { records: added.record?.id ? [added.record.id] : [] });
           return ndjsonReply(reply, { source: 'che_memory', model_calls: 0 });
@@ -12298,7 +12324,11 @@ export class CheState extends DurableObject {
             return this.rememberOwnerStatement(data, rememberFact[1].trim().slice(0, 500));
           }
           // "Where did you learn that?" needs the record's date and source, which the personal recall below gives.
-          const known = rememberFact || personalFactQuestion(rawMessage)?.learn ? null : await knownAnswer(this.ctx.storage, message, { memories: data.memories }).catch(() => null);
+          // A personal question with a dated owner record is answered by the personal recall below, which quotes the
+          // record and its date; the undated knowledge-cache answer would leave "when did I tell you that?" without one.
+          const personalAsk = personalFactQuestion(rawMessage);
+          const datedRecord = personalAsk && !personalAsk.learn ? recallPersonalFact(data, personalAsk, [], []) : null;
+          const known = rememberFact || personalAsk?.learn || datedRecord ? null : await knownAnswer(this.ctx.storage, message, { memories: data.memories }).catch(() => null);
           if (known) {
             await Promise.resolve().then(() => this.ctx.storage.put(LAST_ANSWER_EVIDENCE_KEY,
               answerEvidenceReceipt({ ownerAttested: true, at: Date.now() }))).catch(() => null);
@@ -12532,7 +12562,9 @@ export class CheState extends DurableObject {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can read coding job status, sir.', { source: 'che_coding_history', ok: false });
           return ndjsonReply(otherAgentWorkReply(otherAgent, (await this.loadData()).jobs || [], this.env.CHE_GITHUB_REPO || ''), { source: 'che_coding_history', model_calls: 0 });
         }
-        if (!body.attachment && codingHistoryIntent(message) && !handoffIntent(message) && !mailboxIntent(message) && !consultIntent(message)) {
+        // "Is it done yet?" / "how long will that take?" after CHE accepted or reported a coding job: the same
+        // record route, read through the follow-up's own words and the recent turns (subject-loss audit, 2026-10-24).
+        if (!body.attachment && codingHistoryIntent(followupWords || message, ownerHistory) && !handoffIntent(message) && !mailboxIntent(message) && !consultIntent(message)) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can read coding job status, sir.', { source: 'che_coding_history', ok: false });
           const jobs = (await this.loadData()).jobs || [];
           // The owner asks for the last completed work and its proof: CHE's own job records answer it, never another agent's work.
@@ -12569,7 +12601,10 @@ export class CheState extends DurableObject {
             else subject = { kind: 'runtime', sessionId, status };
           }
           const stale = subject.job?.status === 'running' && Date.parse(subject.job.updated_at || 0) <= Date.now() - jobStaleMs(subject.job);
-          return ndjsonReply(codingHistoryReceipt({ ...subject, stale, request, repo: this.env.CHE_GITHUB_REPO }), {
+          // "How long will that take?": the record's own timestamps come first; no estimate is invented.
+          const timing = codingFollowupKind(followupWords || message) === 'duration' ? codingTimingNote({ ...subject, acceptedAt: runtimeAt }) : '';
+          const receipt = codingHistoryReceipt({ ...subject, stale, request, repo: this.env.CHE_GITHUB_REPO });
+          return ndjsonReply(timing ? `${timing} ${receipt}` : receipt, {
             source: 'che_coding_history',
             session_id: subject.kind === 'runtime' || subject.unreadRun ? sessionId : null,
             state: subject.status?.state || null,
@@ -12796,7 +12831,7 @@ export class CheState extends DurableObject {
         }
         // Orion's crypto desk by voice (owner master mission, 2026-10-23): "Have Orion research BTC and ETH … during the
         // weekend", "pause Orion crypto research", "how is crypto paper trading going". Stored records only, no model.
-        const cryptoAsk = body.attachment ? null : cryptoIntent(message);
+        const cryptoAsk = body.attachment ? null : cryptoIntent(message, { followup: followupWords, referent: referentText });
         if (cryptoAsk) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can run or read Orion\'s crypto desk.', { source: CRYPTO_SOURCE, ok: false, model_calls: 0 });
           let action = null;
@@ -12807,7 +12842,7 @@ export class CheState extends DurableObject {
             await this.scheduleWork().catch(() => null);
           }
           const view = await cryptoView(this.ctx.storage);
-          return ndjsonReply(speakCrypto(view, { action }), { source: CRYPTO_SOURCE, ok: true, model_calls: 0, kind: cryptoAsk.kind, open_view: 'trading_crypto', crypto: { enabled: view.enabled, closed_trades: view.simulated.closed_trades, open_positions: view.simulated.open_positions.length } });
+          return ndjsonReply(speakCrypto(view, { action, tf: cryptoAsk.tf, note: cryptoAsk.note }), { source: CRYPTO_SOURCE, ok: true, model_calls: 0, kind: cryptoAsk.kind, open_view: 'trading_crypto', crypto: { enabled: view.enabled, closed_trades: view.simulated.closed_trades, open_positions: view.simulated.open_positions.length } });
         }
         // "Why are there no new trades?": five facts from the stored journal and scheduler records (owner, 2026-10-21).
         const whyNoTrades = body.attachment ? null : newTradesIntent(message);
@@ -12977,10 +13012,13 @@ export class CheState extends DurableObject {
         }
         // Multi-timeframe research (owner, 2026-10-22): best strategy now, one strategy by timeframe, history coverage,
         // paper learning on/off and research jobs. Answered from recorded evidence; no model call.
-        const researchAsk = !body.attachment && researchIntent(message);
+        const researchAsk = !body.attachment && researchIntent(message, { followup: followupWords, referent: referentText });
         if (researchAsk) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can use trading research, sir.', { source: 'che_trading_research', ok: false, model_calls: 0 });
           const say = (text, extra = {}) => ndjsonReply(text, { source: 'che_trading_research', ok: true, model_calls: 0, ...extra });
+          // A follow-up whose new subject this route cannot combine with the earlier question ("and the 15 minute?" after
+          // "which strategy is best now?"): one question, never the earlier answer again and never a model guess.
+          if (researchAsk.kind === 'clarify') return say(researchAsk.question, { ok: false, clarification: true });
           if (researchAsk.kind === 'best_now') return say(speakBestNow(await researchView(this.ctx.storage)), { open_screen: 'trading_room' });
           if (researchAsk.kind === 'history') return say(speakHistory(await researchView(this.ctx.storage), researchAsk.market));
           if (researchAsk.kind === 'strategy') return say(speakStrategy(await researchStrategyView(this.ctx.storage, researchAsk.strategy_id, 'MNQ'), researchAsk.timeframe));
@@ -13009,9 +13047,12 @@ export class CheState extends DurableObject {
         }
         // Forward paper trading by voice (owner, 2026-10-18), answered from the journal only.
         // "Set CHE paper balance to 500" / "show CHE positions" belong to the phone's CHE paper account (chart route below).
-        const live = paperAccountIntent(message) ? null : liveIntent(message);
+        const live = paperAccountIntent(message) ? null : liveIntent(message, { followup: followupWords, referent: referentText });
         if (live && !body.attachment) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can use the Trading Room.', { source: 'che_trading_live', ok: false });
+          // "And on the 15 minute?" / "what about AAPL?" after a journal read: the journal is MNQ on 5-minute bars, so the
+          // new subject gets one honest question instead of the MNQ numbers again.
+          if (live.kind === 'clarify') return ndjsonReply(live.question, { source: 'che_trading_live', ok: false, model_calls: 0, clarification: true });
           if (live.kind === 'research') {
             const { result, receipt } = await executeWithReceipt({
               tool: 'trading_live', operation: 'historical_replay', source: 'trading_live.js', request_id: crypto.randomUUID(),
@@ -13094,7 +13135,10 @@ export class CheState extends DurableObject {
           const ev = tradeEvidenceOf(trade, await tradeBars(this.ctx.storage, trade));
           return ndjsonReply(speakTradeReplay(ev), { source: TRADE_EVIDENCE_SOURCE, ok: true, model_calls: 0, open_view: 'trade_replay', trade_id: ev.id, replay_supported: ev.replay.supported });
         }
-        const chartAsk = body.attachment || !ownerDevice ? null : (paperAccountIntent(message) || drawIntent(message) || chartIntent(message) || futuresOrderIntent(message));
+        const followupAsk = { followup: followupWords, referent: referentText };
+        const chartAsk = body.attachment || !ownerDevice ? null : (paperAccountIntent(message) || drawIntent(message, followupAsk) || chartIntent(message, followupAsk) || futuresOrderIntent(message));
+        // "Now the same for bitcoin" after an Alpaca chart: a market that chart cannot show gets one question, not AAPL again.
+        if (chartAsk?.kind === 'clarify') return ndjsonReply(chartAsk.question, { source: 'che_trading_chart', ok: false, model_calls: 0, clarification: true });
         // The CHE PAPER ACCOUNT is on the iPhone: open it there; a balance change waits for the owner's confirmation on the phone.
         if (chartAsk?.kind === 'paper_balance' || chartAsk?.kind === 'paper_open') {
           const amount = chartAsk.amount;
@@ -13115,10 +13159,18 @@ export class CheState extends DurableObject {
             { source: 'che_trading_chart', ok: saved.ok, model_calls: 0, open_view: 'trading_chart', chart: { account, symbol } });
         }
         if (chartAsk?.kind === 'chart_open') {
+          // "Switch to the 15 minute chart" and a follow-up name no symbol: the stock chart the owner last opened, by voice or on the phone.
+          const lastSymbol = chartAsk.section === 'chart' && chartAsk.inherit && !chartAsk.symbol ? (await this.ctx.storage.get('trading_chart_last_symbol').catch(() => '')) || '' : '';
+          const symbol = chartAsk.symbol || lastSymbol || '';
+          const account = chartAsk.account || (lastSymbol ? 'alpaca_paper' : '');
+          const bars = chartAsk.timeframe ? ` on ${intervalLabel(chartAsk.timeframe)} bars` : '';
           const where = chartAsk.section === 'setups'
             ? (chartAsk.answer === 'ready' ? 'Here are the setups CHE is following on this iPhone, sir.' : 'Opening the Setup Progress Board, sir. These are CHE PAPER ACCOUNT setups from the live Rithmic candles.')
-            : chartAsk.section === 'strategies' ? 'Opening Strategies, sir.' : chartAsk.section === 'compare' ? 'Opening Side by Side, sir: your account beside CHE\'s paper account. Live orders stay disabled.' : `Opening the ${chartAsk.account === 'alpaca_paper' ? 'Alpaca PAPER' : chartAsk.account === 'futures_paper' ? 'MNQ paper' : ''} chart${chartAsk.symbol ? ` for ${chartAsk.symbol}` : ''}${chartAsk.filter?.strategy ? `, showing only ${chartAsk.filter.strategy.toUpperCase()} trades` : ''}, sir.`;
-          return ndjsonReply(where.replace('the  chart', 'the chart'), { source: 'che_trading_chart', ok: true, model_calls: 0, open_view: 'trading_chart', chart: { section: chartAsk.section, account: chartAsk.account || null, symbol: chartAsk.symbol || null, filter: chartAsk.filter || null, ...(chartAsk.answer ? { answer: chartAsk.answer } : {}) } });
+            : chartAsk.section === 'strategies' ? 'Opening Strategies, sir.' : chartAsk.section === 'compare' ? 'Opening Side by Side, sir: your account beside CHE\'s paper account. Live orders stay disabled.' : `Opening the ${account === 'alpaca_paper' ? 'Alpaca PAPER' : account === 'futures_paper' ? 'MNQ paper' : ''} chart${symbol ? ` for ${symbol}` : ''}${bars}${chartAsk.filter?.strategy ? `, showing only ${chartAsk.filter.strategy.toUpperCase()} trades` : ''}, sir.`;
+          // The spoken chart remembers its stock, so "draw a line at 230" and "switch it to the 5 minute" inherit it
+          // (the /api chart view writes the same key when the phone opens a chart).
+          if (chartAsk.section === 'chart' && symbol && account !== 'futures_paper') await this.ctx.storage.put('trading_chart_last_symbol', symbol).catch(() => null);
+          return ndjsonReply(where.replace('the  chart', 'the chart'), { source: 'che_trading_chart', ok: true, model_calls: 0, open_view: 'trading_chart', chart: { section: chartAsk.section, account: account || null, symbol: symbol || null, filter: chartAsk.filter || null, ...(chartAsk.timeframe ? { timeframe: chartAsk.timeframe } : {}), ...(chartAsk.answer ? { answer: chartAsk.answer } : {}) } });
         }
         const desk = body.attachment ? null : deskIntent(message);
         if (desk && ['controls', 'controls_view', 'controls_why'].includes(desk.kind)) {
@@ -13312,8 +13364,10 @@ export class CheState extends DurableObject {
           const view = await strategySimView(this.ctx.storage);
           return ndjsonReply([lead, speakStrategySim(view)].filter(Boolean).join('\n'), { source: 'che_strategy_sim' });
         }
-        const trade = tradingIntent(message);
+        const trade = tradingIntent(message, { followup: followupWords, referent: referentText });
         if (trade) {
+          // A follow-up that names neither a market nor a bar size ("and the other one?"): one question, no model guess.
+          if (trade.kind === 'clarify') return ndjsonReply(trade.question, { source: 'che_trading', ok: false, model_calls: 0, clarification: true });
           if (trade.kind === 'book') {
             const book = await this.tradingTick().catch(() => null) || await readBook(this.ctx.storage);
             return ndjsonReply(speakBook(book), { source: 'che_trading' });
@@ -13326,11 +13380,12 @@ export class CheState extends DurableObject {
             const added = await watchSymbol(this.ctx.storage, trade.symbol);
             return ndjsonReply(added.error ? `${added.error} Try a ticker like AAPL or a coin like bitcoin, sir.` : `Added ${added.symbol} to paper trading, sir. Paper only, no real money. I'll learn which strategy works on it first.`, { source: 'che_trading' });
           }
-          const data = await loadCandles(trade.symbol);
+          // "And the 15 minute?": the bar size asked for; intraday is free for crypto only, and loadCandles says so for stocks.
+          const interval = trade.interval || '1d';
+          const data = await loadCandles(trade.symbol, { interval });
           if (data.error) return ndjsonReply(`${data.error} Try a ticker like AAPL or a coin like bitcoin, sir.`, { source: 'che_trading' });
           if (trade.kind === 'backtest') {
-            const years = Math.max(1, Math.round((Date.parse(data.candles[data.candles.length - 1].t) - Date.parse(data.candles[0].t)) / (365.25 * 86400000)));
-            return ndjsonReply(speakBacktest(data.label, years, backtestAll(data.candles)), { source: 'che_trading' });
+            return ndjsonReply(speakBacktest(data.label, candleSpan(data.candles, interval), backtestAll(data.candles)), { source: 'che_trading' });
           }
           return ndjsonReply(speakAnalysis(tradeAnalyze(data)), { source: 'che_trading' });
         }
@@ -14291,6 +14346,8 @@ export class CheState extends DurableObject {
             const r = answer.record || null;
             const store = r ? (r.phone ? 'phone_brain_notes' : r.legacy ? 'saved_preferences' : r.brain ? 'brain' : 'memory_records') : '';
             await recordAnswerEvidence(this.ctx.storage, answer.answer, { ...receipt, kind: answer.kind }, { records: answer.records, cited: r ? [{ text: r.quote || r.statement || r.text, created_at: r.created_at, store }] : [] });
+            // A stored answer counts in the reliability ledger like the instant memory answer it replaces.
+            if (r) await recordReliability(this.ctx.storage, { kind: 'retrieval', workflow: 'instant_answer', outcome: 'answered_from_memory', tokens_saved: 1500 });
             return ndjsonReply(answer.answer, {
               source: 'che_personal_recall', model_calls: 0, records: answer.records.length, record_ids: answer.records,
               recall_receipt: r ? { record_id: r.id || null, stored_at: r.created_at || null, store, owner_attested: !r.legacy && !r.phone } : null,

@@ -604,3 +604,16 @@ test('a status question clears unrelated held consequential confirmations', asyn
   assert.equal(saved.get('che:pending_owner_action'), null);
   assert.equal(saved.get('che:pending_app_action'), null);
 });
+
+test('K: a repeated fact with a changed value is never presented as the owner\'s words (blue on record, "green" in the reply)', async () => {
+  const { guardOwnerAttributions, supportedBy } = await import('./memory_provenance.js');
+  const records = [{ id: 'c1', text: 'My favorite color is blue', source: 'owner_chat', verification_status: 'owner_attested', active: true }];
+  assert.equal(supportedBy('You told me your favorite color is green, sir, last Tuesday.', ['My favorite color is blue']), false);
+  assert.equal(supportedBy('You told me your favorite color is blue.', ['My favorite color is blue']), true);
+  assert.equal(supportedBy('You told me your favorite drink is strawberry Sprite.', ['my favorite drink is Sprite']), false, 'a longer value is a different value');
+  assert.equal(supportedBy('You told me your favorite drink is strawberry Sprite.', ['my favorite drink is strawberry Sprite']), true);
+  const out = guardOwnerAttributions('You told me your favorite color is green, sir, last Tuesday.', { records, ownerTurns: ['And about my favorite color?', 'Which one was first?'] });
+  assert.deepEqual(out.removed, ['You told me your favorite color is green, sir, last Tuesday.']);
+  const kept = guardOwnerAttributions('You told me your favorite color is blue.', { records, ownerTurns: [] });
+  assert.deepEqual(kept.removed, []);
+});

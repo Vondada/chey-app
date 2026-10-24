@@ -1,0 +1,51 @@
+{
+  "about": "Owner-memory subject loss: 'What did I tell you about my dog?' is che_memory_provenance (memory_provenance.ownerMemoryQuestion). 'And about my favorite color?' is the same question on another topic; 'when did I say that?' and 'which one was first?' ask about the records just quoted. 'Which one was first?' still needs the model; the attribution guard must drop any invented value (supportedBy value check, 2026-10-24).",
+  "owner": true,
+  "model": "You told me your favorite color is green, sir, last Tuesday.",
+  "records": [
+    {
+      "text": "My dog's name is Rex",
+      "source": "owner_chat",
+      "verification_status": "owner_attested",
+      "created_at": "2026-10-01T15:00:00.000Z"
+    },
+    {
+      "text": "My favorite color is blue",
+      "source": "owner_chat",
+      "verification_status": "owner_attested",
+      "created_at": "2026-10-10T15:00:00.000Z"
+    }
+  ],
+  "turns": [
+    {
+      "message": "What did I tell you about my dog?",
+      "expect": {
+        "route": "che_memory_provenance",
+        "model_calls": 0,
+        "match": "Rex"
+      }
+    },
+    {
+      "message": "And about my favorite color?",
+      "expect": {
+        "model_calls": 0,
+        "match": "blue",
+        "not": "green"
+      }
+    },
+    {
+      "message": "When did I say that?",
+      "expect": {
+        "model_calls": 0,
+        "match": "October 10|October 1",
+        "not": "Tuesday"
+      }
+    },
+    {
+      "message": "Which one was first?",
+      "expect": {
+        "not": "green|Tuesday"
+      }
+    }
+  ]
+}

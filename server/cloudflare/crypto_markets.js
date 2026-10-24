@@ -16,6 +16,7 @@ import { governedGate, pausedUnits, runGovernor } from './strategy_governor.js';
 import { readControls } from './trading_controls.js';
 import { postTradeReview } from './trading_live.js';
 import { queueRoomEvent } from './room_events.js';
+import { intervalFromWords, intervalLabel } from './trading_lab.js';
 
 export const CRYPTO_SOURCE = 'che_crypto';
 export const CRYPTO_STATE = 'crypto_state';
@@ -494,8 +495,8 @@ export async function cryptoView(storage, now = Date.now()) {
 const money = (x) => `${x < 0 ? 'minus ' : ''}$${Math.abs(x).toFixed(2)}`;
 const ago = (t, now) => { const m = Math.round((now - Date.parse(t)) / 60000); return m < 1 ? 'under a minute ago' : m < 90 ? `${m} minutes ago` : `${Math.round(m / 60)} hours ago`; };
 
-export function speakCrypto(v, { now = Date.now(), action = null } = {}) {
-  const parts = [];
+export function speakCrypto(v, { now = Date.now(), action = null, tf = '5m', note = '' } = {}) {
+  const parts = note ? [note] : [];
   if (action === 'paused') parts.push('Orion\'s crypto research and paper trading are paused. Every record is kept; nothing fetches or trades until you say resume.');
   else if (action === 'resumed') parts.push('Orion\'s crypto research and paper trading are on: BTC and ETH, 5-minute, 15-minute and hourly bars, around the clock including the weekend.');
   else if (v.enabled) parts.push('Orion\'s crypto desk is on: BTC and ETH paper trading and research, around the clock including the weekend.');
@@ -504,10 +505,12 @@ export function speakCrypto(v, { now = Date.now(), action = null } = {}) {
   parts.push('Paper only: no exchange account, no key and no order path exist.');
   if (v.schedule.last_run_at) parts.push(`Last pass ${ago(v.schedule.last_run_at, now)}; ${v.schedule.runs_recorded} passes recorded, no AI model used.`);
   else parts.push(v.enabled ? 'No pass has run yet; the first one runs on the next 5-minute close.' : 'No pass has run yet.');
-  const five = v.feeds.filter((f) => f.tf === '5m');
+  const frame = TIMEFRAMES[tf] ? tf : '5m';
+  const label = intervalLabel(frame);
+  const five = v.feeds.filter((f) => f.tf === frame);
   parts.push(five.map((f) => f.last_bar
-    ? `${f.coin} 5-minute: ${f.status} from Coinbase Exchange, last close ${f.last_close} at ${f.last_bar}${f.cross_check?.diff_pct != null ? `, within ${f.cross_check.diff_pct}% of Kraken` : ''}.`
-    : `${f.coin} 5-minute: ${f.status === 'NOT STARTED' ? 'not read yet' : `${f.status}${f.reason ? ` (${f.reason})` : ''}`}.`).join(' '));
+    ? `${f.coin} ${label}: ${f.status} from Coinbase Exchange, last close ${f.last_close} at ${f.last_bar}${f.cross_check?.diff_pct != null ? `, within ${f.cross_check.diff_pct}% of Kraken` : ''}.`
+    : `${f.coin} ${label}: ${f.status === 'NOT STARTED' ? 'not read yet' : `${f.status}${f.reason ? ` (${f.reason})` : ''}`}.`).join(' '));
   const s = v.simulated;
   parts.push(`Simulated trades closed: ${s.closed_trades}; open positions: ${s.open_positions.length}.`);
   if (s.closed_trades) parts.push(`Net ${money(s.net_pnl)} after fees and slippage${s.enough_data ? `, ${s.expectancy_r} R per trade` : `. That is not enough data: ${s.closed_trades} of the 30 trades needed before any result counts`}.`);
@@ -524,10 +527,28 @@ export function speakCrypto(v, { now = Date.now(), action = null } = {}) {
 // ─── Chat intent ──────────────────────────────────────────────────────────
 
 const CRYPTO_WORD = /\b(?:crypto(?:currency|currencies)?|bitcoin|btc|ethereum|eth|ether)\b/;
-const DESK_WORD = /\b(?:research|paper|trad(?:e|es|ing)|strateg(?:y|ies)|backtest|journal|desk|weekend|24\/7|around the clock|positions?|p\s*&\s*l|pnl|results?|status|performance|doing|going)\b/;
+// "Backtest bitcoin" is the chart lab's (trading_lab.js tradingIntent), so a bare backtest is not a desk word.
+const DESK_WORD = /\b(?:research|paper|trad(?:e|es|ing)|strateg(?:y|ies)|journal|desk|weekend|24\/7|around the clock|positions?|p\s*&\s*l|pnl|results?|status|performance|doing|going)\b/;
 
-/** Owner phrasing about Orion's crypto desk. Plain price questions and anything without a desk word are left alone. */
-export function cryptoIntent(message) {
+/**
+ * Owner phrasing about Orion's crypto desk. Plain price questions and anything without a desk word are left alone.
+ * A follow-up carries the owner's new words alone in `followup` and the earlier request in `referent` (speech_intent.js):
+ * a desk question continued onto a coin ("how are my paper trades doing?" → "what about ETH?") or onto one of the desk's
+ * bar sizes ("and the 15 minute?") reads the stored status; it never pauses or resumes, and it never re-runs the earlier
+ * request because its words happen to be in the message.
+ */
+export function cryptoIntent(message, { followup = '', referent = '' } = {}) {
+  if (followup) {
+    const own = cryptoIntent(followup);
+    if (own) return own;
+    const f = String(followup).replace(/[’']/g, "'").toLowerCase();
+    const r = String(referent).replace(/[’']/g, "'").toLowerCase();
+    const base = cryptoIntent(referent);
+    if (!base && !(CRYPTO_WORD.test(f) && DESK_WORD.test(r))) return null;
+    const tf = intervalFromWords(f);
+    if (tf && !TIMEFRAMES[tf]) return { kind: 'status', note: `Orion's desk reads 5-minute, 15-minute and hourly bars only, sir; there is no ${intervalLabel(tf)} series.` };
+    return { kind: 'status', ...(tf ? { tf } : {}) };
+  }
   const t = String(message || '').replace(/[’']/g, "'").toLowerCase();
   const orion = /\borion\b/.test(t);
   if (!CRYPTO_WORD.test(t) && !(orion && /\bcrypto|weekend\b/.test(t))) return null;

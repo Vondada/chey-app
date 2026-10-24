@@ -397,7 +397,9 @@ export function interpretOwnerTurn(rawText, { history = [], hasHeldAction = fals
     if (turn.consequential) {
       return { ...base, clarify: `Which one should I ${verbFor(raw)}? Tell me its name first.`, referent: lastUser };
     }
-    return { ...base, text: `About the earlier request, "${lastUser}": ${corrected}`, referent: lastUser };
+    // `followup` keeps the owner's new words alone, so a route can read the new subject ("what about ETH?") from them
+    // and everything else from `referent`, instead of matching the earlier request embedded in `text`.
+    return { ...base, text: `About the earlier request, "${lastUser}": ${corrected}`, referent: lastUser, followup: corrected };
   }
   return base;
 }

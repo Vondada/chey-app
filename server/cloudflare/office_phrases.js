@@ -147,6 +147,26 @@ export function speakOfficeBoard(board, phrase) {
   }
 }
 
+/**
+ * "Tell me more" right after an Office desk reply: everything the Office board holds for that agent (status, blockers,
+ * stalled and finished work), read from the board only (subject-loss audit, 2026-10-24).
+ */
+export function speakOfficeAgentMore(board, agentId) {
+  const b = board || {};
+  const agent = (b.agents || []).find((a) => String(a.id).toLowerCase() === agentId);
+  const name = agent?.name || agentId;
+  const ofAgent = (row) => [agentId, String(name).toLowerCase()].includes(String(row?.agent || '').toLowerCase());
+  const lines = [speakOfficeBoard(b, { type: 'agentStatus', agentId })];
+  const blocked = (b.blockers || []).filter((row) => typeof row === 'object' && ofAgent(row));
+  if (blocked.length) lines.push(`Blocked: ${blocked.map((row) => `${row.detail || 'blocked'}${row.task ? ` on "${String(row.task).slice(0, 80)}"` : ''}`).join('; ')}.`);
+  const stalled = (b.stalled || []).filter(ofAgent);
+  if (stalled.length) lines.push(`Stalled: ${stalled.map((row) => `"${String(row.task || 'a job').slice(0, 80)}" (${row.detail || 'stalled'})`).join('; ')}.`);
+  const finished = (b.shipped || []).filter(ofAgent);
+  if (finished.length) lines.push(`Finished today: ${finished.map((row) => `"${String(row.task || '').slice(0, 80)}"`).join('; ')}.`);
+  if (agent) lines.push(`That is everything the Office board holds for ${name}, sir.`);
+  return lines.join(' ');
+}
+
 // Spoken result of CHE splitting an owner goal into queued Office jobs.
 export function speakGoalPlan(jobs) {
   if (!jobs.length) return 'CHE here. I did not hear a goal to split. Say, tell the Office to, then the goal.';

@@ -1074,7 +1074,25 @@ export async function matrixView(storage, market = 'MNQ') {
 // ─── Spoken answers (deterministic, no model) ─────────────────────────────────
 
 const TF_WORDS = { '15 second': '15s', '15-second': '15s', '30 second': '30s', '1 minute': '1m', 'one minute': '1m', '2 minute': '2m', 'two minute': '2m', '5 minute': '5m', 'five minute': '5m', '15 minute': '15m', 'fifteen minute': '15m', '30 minute': '30m', 'thirty minute': '30m', '1 hour': '1h', 'one hour': '1h', 'hourly': '1h', '4 hour': '4h', 'four hour': '4h', 'daily': '1D', 'weekly': '1W', 'monthly': '1M' };
-export function researchIntent(message) {
+/**
+ * The research question in [message]. A follow-up ("and on the 15 minute?", "the same for the VWAP one") carries the
+ * owner's new words alone in `followup` and the earlier question in `referent` (speech_intent.js): the new timeframe or
+ * strategy comes from the new words and the rest from the earlier question. A new subject this route cannot combine
+ * with the earlier question asks one short question (kind 'clarify'); nothing new named leaves the turn alone (null).
+ */
+export function researchIntent(message, { followup = '', referent = '' } = {}) {
+  if (followup) {
+    const own = researchIntent(followup);
+    if (own) return own;
+    const base = researchIntent(referent);
+    if (!base) return null;
+    const words = String(followup).toLowerCase();
+    const tf = tfFromWords(words);
+    const sid = strategyFromWords(words);
+    if (!tf && !sid) return null;
+    if (base.kind === 'strategy' || sid) return { kind: 'strategy', strategy_id: sid || base.strategy_id, timeframe: tf || (base.kind === 'strategy' ? base.timeframe : null) };
+    return { kind: 'clarify', question: `Best-now ranks every timeframe together, sir. For one timeframe, name the strategy: "how is the EMA pullback doing on ${tfOf(tf)?.label || tf}".` };
+  }
   const t = String(message || '').toLowerCase().replace(/[’]/g, "'").replace(/^(?:hey |ok |okay )?(?:che|chey|chay)[,:]?\s*/, '').trim();
   if (/\b(?:which|what) strateg(?:y|ies) (?:is|are|looks?) (?:the )?best (?:right )?now\b|\bbest strategy (?:right )?now\b/.test(t)) return { kind: 'best_now' };
   if (/\bwhat strateg(?:y|ies) (?:look|looks|are|is) (?:the )?strongest (?:today|now)\b/.test(t)) return { kind: 'best_now', today: true };
@@ -1092,7 +1110,8 @@ export function researchIntent(message) {
 export function tfFromWords(words) {
   const w = String(words || '').toLowerCase().replace(/s\b/, '').trim();
   if (TF_IDS.includes(words)) return words;
-  for (const [k, v] of Object.entries(TF_WORDS)) if (w.includes(k)) return v;
+  // Whole words only: "15 minute" contains "5 minute" and was read as 5m before (subject-loss audit, 2026-10-24).
+  for (const [k, v] of Object.entries(TF_WORDS)) if (new RegExp(`(?:^|[^0-9a-z])${k}(?![0-9a-z])`).test(w)) return v;
   const m = /^(\d+)\s*(s|m|h|d)$/.exec(w.replace(/\s+/g, ''));
   return m ? ({ s: `${m[1]}s`, m: `${m[1]}m`, h: `${m[1]}h`, d: '1D' }[m[2]]) : null;
 }

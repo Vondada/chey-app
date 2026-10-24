@@ -1,0 +1,102 @@
+{
+  "about": "Owner recording 2026-10-24: short corrections and vague follow-ups about the fact under discussion are resolved from the conversation (personal_recall.js ownerFactTurn). Replay: node .claude/skills/che-debug/scripts/replay_chat.mjs .claude/skills/che-fact-check/cases/owner-short-correction.json",
+  "owner": true,
+  "model": "MODEL_FALLBACK_REPLY",
+  "records": [
+    {
+      "text": "my favorite drink is Sprite",
+      "source": "owner_chat",
+      "verification_status": "owner_attested",
+      "created_at": "2026-10-23T11:00:00Z"
+    }
+  ],
+  "turns": [
+    {
+      "message": "What's my favorite drink?",
+      "expect": {
+        "route": "che_personal_recall",
+        "match": "^Your favorite drink is Sprite\\.",
+        "model_calls": 0
+      }
+    },
+    {
+      "message": "No, strawberry Sprite.",
+      "expect": {
+        "route": "che_memory",
+        "match": "^Got it, sir: your favorite drink is strawberry Sprite\\.",
+        "model_calls": 0
+      }
+    },
+    {
+      "message": "What's my favorite drink?",
+      "expect": {
+        "route": "che_personal_recall",
+        "match": "^Your favorite drink is strawberry Sprite\\. You told me that on",
+        "model_calls": 0
+      }
+    },
+    {
+      "message": "That's not what I meant.",
+      "expect": {
+        "route": "che_clarify",
+        "match": "stored as strawberry Sprite\\. Which value is right",
+        "model_calls": 0
+      }
+    },
+    {
+      "message": "What were we just discussing?",
+      "expect": {
+        "route": "che_memory_provenance",
+        "match": "^We were just on this, sir\\.",
+        "model_calls": 0
+      }
+    },
+    {
+      "message": "What's my favorite color?",
+      "expect": {
+        "route": "che_personal_recall",
+        "match": "^I don't have a record of your favorite color",
+        "model_calls": 0
+      }
+    },
+    {
+      "message": "It's blue.",
+      "expect": {
+        "route": "che_memory",
+        "match": "^Got it, sir: your favorite color is blue\\.",
+        "model_calls": 0
+      }
+    },
+    {
+      "message": "When did I tell you that?",
+      "expect": {
+        "route": "che_evidence_receipt",
+        "match": "you told me in chat: \"my favorite color is blue\\.\"",
+        "model_calls": 0
+      }
+    },
+    {
+      "message": "Tell me something I told you.",
+      "expect": {
+        "route": "che_memory_provenance",
+        "match": "my favorite color is blue",
+        "model_calls": 0
+      }
+    },
+    {
+      "message": "What about my favorite food?",
+      "expect": {
+        "route": "che_personal_recall",
+        "match": "^I don't have a record of your favorite food",
+        "model_calls": 0
+      }
+    },
+    {
+      "message": "No, the one I just told you.",
+      "expect": {
+        "route": "che_clarify",
+        "model_calls": 0
+      }
+    }
+  ]
+}
