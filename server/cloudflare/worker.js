@@ -253,6 +253,7 @@ import { EGRESS_KEY, SNAPSHOT_KEY, holdEgress, installEgressGuard, setEgressOwne
 import { loadRegistry as loadCapabilityRegistry } from './capability_registry.js';
 import { BrainLedger, answerLedger, decidePending as decideBrainPending, installBrainLedger, ledgerApi, ledgerIntent as brainLedgerIntent, DEFAULT_ZONE as LEDGER_DEFAULT_ZONE } from './brain_ledger.js';
 import { FilmStore, filmIntent, filmProgress, farmProviders, loadRates, loadUsage, speakFarm, speakPlan, speakStatus as speakFilmStatus } from './film_studio.js';
+import { GpuQueue, gpuOwnerRoute, gpuWorkerRoute, speakGpuSummary } from './gpu_queue.js';
 import { FILM_ACTIVE_STATES, filmPlan, filmTick, filmTokenRoute, refreshValidation as refreshFilmValidation, remakeShot, setFilmState, startFilm } from './film_pipeline.js';
 import { performanceBanner, performanceIntent, performanceReport, recordTiming, routeKey as perfRouteKey, speakPerformance } from './perf_watch.js';
 import { engineView, exportWorkflows, feedbackOnLast, importWorkflows, library as workflowLibrary, loadEngine, matchLearned, noteVersion, promoteCandidate, dismissCandidate, rankWorkflows, recordRun as recordWorkflowRun, isDisabled as workflowDisabled, restoreVersion, saveEngine, setDisabled as setWorkflowDisabled, setPreferred as setWorkflowPreferred, speakEfficiency, speakLibrary, testCandidate, workflowForRun, workflowIntent } from './workflow_engine.js';
@@ -6180,6 +6181,7 @@ export class CheState extends DurableObject {
       const view = await cloudView(this.ctx.storage, env);
       return reply(`Opening my cloud computer, sir. ${speakCloudSummary(view)}`, { open_screen: 'cloud_computer' });
     }
+    if (command.local === 'cloud_gpu') return reply(speakGpuSummary(await new GpuQueue(this.ctx.storage).view()));
     if (command.local === 'cloud_blender') {
       const plan = selectProvider('blender_render', { env });
       return reply(speakBlocked(plan), { ok: false, blocked: true, missing_capability: plan.missing_capability || '' });
@@ -7099,6 +7101,8 @@ export class CheState extends DurableObject {
         const routed = await filmTokenRoute(await this.filmCtx(request), path, request);
         if (routed) return routed;
       }
+      // Colab GPU worker (gpu_queue.js): opened only by the paired worker token; previews are binary.
+      if (path.startsWith('/api/gpu/worker/')) return (await gpuWorkerRoute({ storage: this.ctx.storage, env: this.keyEnv || this.env }, path, request)) || json({ detail: 'Not found.' }, 404);
       const body = ['POST', 'PATCH', 'PUT'].includes(request.method) ? await bodyOf(request) : {};
       // Visual Studio render Action: the edit document and its source files, opened only by that job's one-time,
       // expiring token. No device token exists on the GitHub runner; nothing else is reachable with this one.
@@ -7813,6 +7817,10 @@ export class CheState extends DurableObject {
       if (path === '/api/brain/truth' && request.method === 'GET') {
         if (!ownerDevice) return json({ detail: 'Only the CHE owner can read his brain.' }, 403);
         return json(await brainTruthView(this.ctx.storage));
+      }
+      if (path === '/api/gpu' || path.startsWith('/api/gpu/')) {
+        if (!ownerDevice) return json({ detail: 'Only the CHE owner can use the GPU queue.' }, 403);
+        return (await gpuOwnerRoute({ storage: this.ctx.storage }, path, request, body)) || json({ detail: 'Not found.' }, 404);
       }
       // Cloud Computer Manager (cloud_computer.js): one view and one set of controls over CHE's existing compute.
       // Owner-only, like /api/trading/*. Reads never reach GitHub; jobs live in the existing job queue, and starts go

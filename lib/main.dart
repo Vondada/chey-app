@@ -78,6 +78,8 @@ import 'che_voice_ui.dart';
 import 'che_app_portal.dart';
 import 'che_video.dart';
 import 'che_creations.dart';
+import 'che_gpu_jobs.dart';
+import 'avatar/che_character_generator.dart';
 import 'rooms/che_invention_studio.dart';
 import 'che_ui/che_showroom.dart';
 import 'che_video_page.dart';

@@ -74,7 +74,7 @@ export const FARM_PROVIDERS = Object.freeze({
   github_actions: { name: 'GitHub Actions', does: 'assembling the film with ffmpeg, up to 20 runners at once', free: '2,000 minutes a month on a private repository', automated: true, external: false },
   kaggle: { name: 'Kaggle', does: 'moving clips on a free T4 GPU', free: 'a weekly GPU quota (about 30 hours), read from your account', automated: true, external: true, key: 'kaggle' },
   hf_zerogpu: { name: 'Hugging Face ZeroGPU', does: 'a few moving clips a day', free: '3.5 to 5 GPU minutes a day on a free account', automated: true, external: true, key: 'huggingface' },
-  colab: { name: 'Google Colab', does: 'nothing yet', free: 'free GPU sessions, but only in a browser someone opens', automated: false, external: true, reason: 'Colab has no official way to start a notebook without a person opening it in a browser, so I cannot run it for you. I do not use it in any plan.' },
+  colab: { name: 'Google Colab', does: 'face previews from my GPU queue, only while your notebook is open (gpu_queue.js)', free: 'free GPU sessions, but only in a browser someone opens', automated: false, external: true, reason: 'Colab has no official way to start a notebook without a person opening it in a browser, so I cannot run it for you. While you have the CHE notebook open it works my GPU queue; films never plan on it.' },
 });
 
 const round = (n, d = 0) => Math.round(Number(n || 0) * 10 ** d) / 10 ** d;

@@ -4766,6 +4766,38 @@
    "optional_missing": []
   },
   {
+   "id": "cloud-gpu",
+   "category": "office",
+   "title": "GPU jobs",
+   "summary": "Read my GPU render jobs.",
+   "does": "Says how many GPU jobs are queued, rendering, paused, completed or failed, and whether your Colab T4 worker is online. The pictures are in the Creation Room. It costs nothing; Colab works only while your notebook is open.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "What are my GPU jobs?"
+   ],
+   "needs": [],
+   "optional": [],
+   "handler": "gpu_queue.GpuQueue.view + speakGpuSummary",
+   "route": "che_cloud_computer",
+   "produces": "GPU queue status",
+   "evidence": "The queue and worker heartbeats stored in the Worker.",
+   "cost": "Free: no AI engine is used.",
+   "keywords": [
+    "gpu",
+    "colab",
+    "render queue",
+    "face preview"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
    "id": "cloud-blender",
    "category": "office",
    "title": "Cloud Blender",

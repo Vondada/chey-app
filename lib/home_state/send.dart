@@ -217,6 +217,11 @@ extension _CheHomeSend on _CHEHomeState {
       return true;
     }
 
+    if (RegExp(r'\b(open|show|go to|start)\s+(the\s+|my\s+)?(character|avatar)\s+(generator|creator|maker|builder)\b').hasMatch(lower) ||
+        RegExp(r'^\W*(?:(?:che|chey|chay)[,:]?\s+)?(character|avatar)\s+generator\W*$').hasMatch(lower)) {
+      _openCharacterGenerator();
+      return true;
+    }
     if (RegExp(r'\b(open|show|go to)\s+(my\s+)?(memories?|brain|brain constellation)\b').hasMatch(lower)) {
       _openAssistantHub(tab: 0);
       return true;
@@ -680,6 +685,17 @@ extension _CheHomeSend on _CHEHomeState {
     final securityVoice = CheSecurityRoomVoice.handler;
     if (securityVoice != null && _pendingAttachment == null && !cheIsAppStatusRequest(message)) {
       final reply = await securityVoice(message);
+      if (reply != null) {
+        if (mounted) _set(() => controller.clear());
+        if (reply.isNotEmpty) await speakText(reply, record: false);
+        return;
+      }
+    }
+
+    // The Character Generator, while it is open, takes every one of its actions and settings by voice or typing.
+    final generatorVoice = CheCharacterGenerator.voiceHandler;
+    if (generatorVoice != null && _pendingAttachment == null) {
+      final reply = await generatorVoice(message);
       if (reply != null) {
         if (mounted) _set(() => controller.clear());
         if (reply.isNotEmpty) await speakText(reply, record: false);
