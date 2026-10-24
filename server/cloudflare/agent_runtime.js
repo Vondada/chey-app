@@ -1451,6 +1451,8 @@ async function reviewDelegatedResult(ctx, taskId, { saved = false } = {}) {
   }
 
   t2.status = 'complete';
+  // The task carries whether its result was checked, so a "finished" claim can be audited from the task itself.
+  t2.verified = approved === true;
   // A research job passes its result to the content job it was planned with, to whichever agent's job fits it.
   if (t2.next && t2.next.task) queueNextJob(data, t2, a2 || agent);
   // Research / opportunity scout → Durable Object memory notes (owner-visible).

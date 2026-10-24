@@ -287,6 +287,10 @@ export async function takeTrade(storage, { now = Date.now(), place = placeBracke
   await updateAlert(storage, alert.id, result.ok ? { status: 'placed', result, mode: desk.mode } : { status: 'failed', error: result.error });
   return {
     ok: Boolean(result.ok),
+    // The receipt the Worker writes needs the broker's id and the account mode, never only the sentence.
+    order_id: result.ok ? String(result.order_id || '') : '',
+    account: result.ok ? String(result.account || account || '') : '',
+    mode: desk.mode,
     reply: result.ok
       ? `Placed on ${desk.mode === 'live' ? 'your LIVE account' : 'your simulated account'} ${result.account}, sir: buy ${result.qty} ${result.symbol} limit ${result.entry}, stop ${result.stop}, target ${result.target}. Tradovate order ${result.order_id}.`
       : `The order was NOT placed, sir. ${result.error}`,

@@ -35,6 +35,7 @@ import 'security/che_security_screen.dart';
 import 'security/che_security_visibility.dart';
 import 'security/che_session_store.dart';
 import 'brain/che_brain_ledger_screen.dart';
+import 'brain/che_brain_truth_screen.dart';
 import 'brain/che_brain_list.dart' show CheBrainRecordLinks;
 import 'brain/che_brain_sections.dart' show CheBrainEvidence, CheEvidenceKind, cheRecordIdsOf;
 import 'che_ui/che_owner_improvements.dart';
@@ -681,6 +682,19 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
         store: cheCharacterStudio,
         runtime: _officeRuntime,
         initialAgent: agent,
+        onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
+        onListen: () => unawaited(toggleListening()),
+      ),
+    ));
+  }
+
+  /// More → Truth & Verification: what the hallucination auditor checked and which actions have a receipt
+  /// (also asked in chat: "what do you know versus what are you guessing?").
+  Future<void> _openBrainTruth() async {
+    HapticFeedback.selectionClick();
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => CheBrainTruthScreen(
+        client: CheBrainTruthClient(baseUrl: cheAgentBaseUrl, headers: () => _authHeaders),
         onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
         onListen: () => unawaited(toggleListening()),
       ),
@@ -2373,6 +2387,13 @@ OWNER AGENCY
           title: 'Character Studio',
           subtitle: 'How CHE and the crew look and move: presets, animation style, saved versions, rollback',
           onTap: () => unawaited(_openCharacterStudio()),
+          hue: kit.CheColors.accent,
+        ),
+        CheMoreItem(
+          icon: Icons.fact_check_rounded,
+          title: 'Truth & Verification',
+          subtitle: 'What CHE verified, labelled inference or removed, from real audit records',
+          onTap: () => unawaited(_openBrainTruth()),
           hue: kit.CheColors.accent,
         ),
         CheMoreItem(

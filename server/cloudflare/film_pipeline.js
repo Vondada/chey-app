@@ -8,6 +8,7 @@ import {
   recordRate, reserve, sceneMessages, seedFor, segmentSpec, shotList, spend, speakPlan, stillPrompt, validOutline, validSceneShots,
   _internals,
 } from './film_studio.js';
+import { recordVideoFailed, recordVideoVerified } from './action_receipts.js';
 import { farmTokenOpens, hfClip, kaggleSessionStatus, newFarmToken, startKaggleSession, validateKaggle, ensureHfSpace, HF_SPACE_FILES } from './film_farm.js';
 import { assemblyTokenOpens, filmRenderStatus, newAssemblyJob, startFilmRender, validateGithub, verifyFilmObject } from './film_render.js';
 import { mp4Facts } from './github_video_renderer.js';
@@ -515,8 +516,14 @@ async function assetResponse(ctx, film, key) {
 async function finishFilm(ctx, store, film, key) {
   film.state = 'verifying'; await store.save(film);
   const facts = await verifyFilmObject(mediaStore(ctx.env, ctx.storage), key, { expectedSeconds: film.assembly.total_s });
-  if (!facts.ok) { await fail(store, film, `the uploaded film did not pass its checks: ${facts.error}`); return facts; }
+  if (!facts.ok) {
+    await recordVideoFailed(ctx.storage, { task_id: film.id, error: facts.error, source: 'film_studio' });
+    await fail(store, film, `the uploaded film did not pass its checks: ${facts.error}`);
+    return facts;
+  }
   const item = await saveFilmVideo(ctx.storage, { key, title: film.title, prompt: film.topic, seconds: facts.seconds, width: facts.width, height: facts.height, bytes: facts.bytes, film_id: film.id });
+  // The receipt behind "the film is finished": written only after the stored MP4 read back and passed (action_receipts.js).
+  await recordVideoVerified(ctx.storage, { task_id: film.id, media_id: item.id, bytes: facts.bytes, seconds: facts.seconds, width: facts.width, height: facts.height, source: 'film_studio' });
   film.state = 'done';
   film.result = { media_id: item.id, key, seconds: facts.seconds, bytes: facts.bytes, width: facts.width, height: facts.height, missing: film.assembly.missing, at: new Date(ctx.now || Date.now()).toISOString() };
   if (film.farm) film.farm.revoked = true;

@@ -491,6 +491,8 @@ extension _CheHomeStreaming on _CHEHomeState {
           if (patch is Map) unawaited(cheCharacterStudio.applyVoicePatch(agent, Map<String, dynamic>.from(patch), said: _streamUnderstoodAs ?? ''));
           if (data['open_screen'] == 'character_studio') unawaited(_openCharacterStudio(agent: agent));
         }
+        // "Open Truth and Verification": only the Worker's own truth handler opens the Brain Room section.
+        if (data['open_screen'] == 'brain_truth' && data['source'] == 'che_brain_truth' && mounted) unawaited(_openBrainTruth());
         // Owner Improvements: a setting CHE changed applies here at once, and the app reports what it now uses.
         if (data['source'] == 'che_owner_improvement') {
           if (data['open_screen'] == 'owner_improvements' && mounted) unawaited(_openOwnerImprovements());
