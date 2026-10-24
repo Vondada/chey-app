@@ -399,6 +399,28 @@ def face_forward(clip):
     return math.degrees(ang)
 
 
+def level_head(clip, bones=("head", "neck_01"), share=(1.0, 0.4)):
+    """CMU's Head joint points forward-up, the target's straight up: the retarget leaves the head pitched down and
+    the hair over the face. Removes the clip's mean head pitch (world X) and a share of it from the neck, keeping
+    every nod and turn the actor made. Returns the correction in degrees."""
+    if "head" not in clip.q:
+        return 0.0
+    # A Blender bone points along its local Y; the world rotation turns that into the head's direction.
+    ups = np.array([(rot_at(clip, "head", i) @ Vector((0, 1, 0)))[:] for i in range(clip.frames)])
+    mean = ups.mean(axis=0)
+    pitch = math.atan2(-mean[1], mean[2])            # forward lean (toward -Y) of the head's up vector
+    for name, k in zip(bones, share):
+        if name not in clip.q:
+            continue
+        R = Matrix.Rotation(-pitch * k, 3, "X")
+        for i in range(clip.frames):
+            q = (R @ rot_at(clip, name, i)).to_quaternion()
+            arr = np.array([q.w, q.x, q.y, q.z])
+            prev = clip.q[name][i - 1] if i else arr
+            clip.q[name][i] = arr if np.dot(arr, prev) >= 0 else -arr
+    return math.degrees(pitch)
+
+
 def _hip_axis(clip, i):
     m = rot_at(clip, "pelvis", i)
     # The pelvis bone points up the spine; its local X is the hips' left-right axis.

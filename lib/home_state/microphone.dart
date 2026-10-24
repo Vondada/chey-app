@@ -603,6 +603,9 @@ extension _CheHomeMicrophone on _CHEHomeState {
     if (isListening == next) return;
     debugPrint('CHE mic state: listening=$next ($reason)');
     _set(() => isListening = next);
+    // The 3D crew page turns CHE attentive while the microphone really listens (che_voice_activity.dart).
+    final a = cheVoiceActivity.value;
+    cheVoiceActivity.value = CheVoiceActivity(speaking: a.speaking, listening: next, text: a.text, durationMs: a.durationMs, startedAt: a.startedAt);
   }
 
   void _restartListeningSoon({

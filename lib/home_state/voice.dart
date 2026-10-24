@@ -177,8 +177,12 @@ extension _CheHomeVoice on _CHEHomeState {
   }
 
   Future<bool> _playServerVoice(CheVoiceClip clip, [CheVoiceTurnOutcome? outcome]) async {
-    // The clip's words, the owner's Voice Volume and Audio Output go with it.
+    // The clip's words, the owner's Voice Volume and Audio Output go with it. The 3D crew page gets the same
+    // words and the audio length, so CHE's character speaks in time with the real clip (che_voice_activity.dart).
+    cheVoiceActivity.value = CheVoiceActivity(
+      speaking: true, text: clip.text, durationMs: cheVoiceClipDurationMs(clip.bytes.length, clip.text), startedAt: DateTime.now());
     final played = await CheNativeVoice.playAudioBounded(clip.bytes, text: clip.text);
+    cheVoiceActivity.value = CheVoiceActivity(listening: cheVoiceActivity.value.listening);
     final route = CheNativeVoice.lastPlayback['route']?.toString() ?? '';
     if (route.isNotEmpty) _audioRouteNow = route;
     final engine = clip.engine.isEmpty ? 'server-voice' : clip.engine;

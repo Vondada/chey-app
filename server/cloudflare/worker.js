@@ -147,6 +147,7 @@ import { noteJobActivity } from './job_activity.js';
 import { CODING_CANCEL_SOURCE, cancelQueuedJob, codingCancelIntent, resolveCodingCancel, speakCancelResult, speakUnresolved } from './coding_cancel.js';
 import { PENDING_OWNER_ACTION_KEY, deskOwnedMoney, forbiddenAction, prohibitionSpans, withoutProhibitions, PENDING_OWNER_ACTION_MS, gateOwnerAction, grantForKinds, isOwnerYes, peerActionReply, APPS_GRANTED_KEY, PENDING_APP_ACTION_KEY, PENDING_APP_ACTION_MS, gateAppAccess, classifyAppNeed, classifyExplicitAppOpen, classifyAppAccesses } from './owner_action_gate.js';
 import { auditEvidenceFrom, auditLedger, auditReply, auditText, claimKindsIn, guardRemovalEntries, knowVsGuessQuestion, knowVsGuessReply, memorySavedQuestion, memorySavedReply, recordAudit } from './hallucination_auditor.js';
+import { handleStudio, studioIntent } from './character_studio.js';
 import { asksForCurrentOwnerLocation, executeWithReceipt, guardExecutionClaims, guardRetrievalClaims, changeHistoryIntent, guardClaimedOwnerActions, guardClaimedResearchActions, guardGroundedFacts, guardLocationWeatherReply, guardOwnerReply, loadChangeHistory, loadReceipts, OWNER_LOCATION_NOT_VERIFIED, recordReceipt, requestedCodeNames, speakChangeHistory, vagueResearchRequest, verifiedState, verifiedStatusText } from './truth_layer.js';
 import { ENGINEERING_PLAYBOOK_SPOKEN, playbookIntent } from './engineering_playbook.js';
 import { describeSkillsReport, reusableLicense, selectFilesForAgent, skillFromMarkdown, skillImportIntent, skillsReportIntent } from './skill_import.js';
@@ -12046,6 +12047,26 @@ export class CheState extends DurableObject {
           const answer = await memorySavedReply(this.ctx.storage);
           await recordAnswerEvidence(this.ctx.storage, answer.text, { kind: answer.saved ? 'owner_attested' : 'none' }, { records: answer.saved ? [answer.saved.record_id] : [] });
           return ndjsonReply(answer.text, { source: 'che_memory_receipt', model_calls: 0, memory_receipt: answer.saved });
+        }
+        // Character Studio by voice (character_studio.js): "make your walking more natural" is a settings patch the
+        // phone applies to that agent's animator and saves as a version; a new outfit or model is an honest upgrade
+        // job, never a pretended change. Presentation only: no grant, no tool, no app.
+        const studioAsk = ownerDevice && !body.attachment ? studioIntent(rawMessage) : null;
+        if (studioAsk) {
+          const studio = await handleStudio(studioAsk, {
+            queueUpgrade: async (ask) => {
+              const { job } = enqueueJob(data, {
+                kind: 'self_development',
+                title: `Character upgrade for ${ask.agent}: ${ask.request}`.slice(0, 100),
+                prompt: `The owner asked for a character change the runtime cannot make from settings: "${ask.request}" (agent ${ask.agent}). Build the asset in tools/character_pipeline (source + GLB), keep the agent's approved identity, show renders for approval, and open a pull request only. Do not replace the live model, merge, deploy, spend money or delete anything.`,
+                idempotency_key: idempotencyKey('job:character_upgrade', `${ask.agent} ${ask.request}`),
+              });
+              await this.ctx.storage.put('che', data);
+              await this.scheduleWork();
+              return job;
+            },
+          });
+          return ndjsonReply(studio.text, { ...studio.fields, ok: studio.ok, model_calls: 0 });
         }
         if (ownerDevice && !body.attachment && knowVsGuessQuestion(rawMessage)) {
           const answer = knowVsGuessReply({ records: data.memory_records || [], ledger: await auditLedger(this.ctx.storage), lastEvidence: await latestAnswerEvidence(this.ctx.storage).catch(() => null) });

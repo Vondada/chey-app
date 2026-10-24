@@ -33,6 +33,7 @@ button:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
   <div id="clips" role="group" aria-label="CHE animations"></div>
 </div>
 <script src="characters-vendor.js"></script>
+<script src="che_animator.js"></script>
 <script>
 const THREE = window.THREE;
 const GLTFLoader = window.THREE.GLTFLoader;
@@ -189,8 +190,12 @@ scene.add(ring);
 const hero = new THREE.Group();
 scene.add(hero);
 let mixer = null;
-const actions = {};
+let actions = {};
 let current = null;
+// CHE's animator (che_animator.js) once her model is parsed; settings sent before that are applied at creation.
+let anim = null;
+let stickDrive = false;
+const pendingAnimSettings = {};
 let selected = false;
 let sitting = false;
 let heading = 0;
@@ -258,26 +263,36 @@ loadGlb('che', (gltf) => {
     }
   });
   hero.add(root);
-  mixer = new THREE.AnimationMixer(root);
-  for (const clip of gltf.animations) actions[clip.name] = mixer.clipAction(clip);
-  heroFaceState = faceRigOf(root, 1.7);
+  // CHE's own animator (che_animator.js): state machine, gesture layer, lip sync, idle variety, settings.
+  anim = new CheAnimator(root, gltf.animations, { meta: window.CHE_MOTION_META || {}, seed: 1.7, settings: pendingAnimSettings });
+  mixer = anim.mixer;
+  actions = anim.actions;
   buildButtons();
   play(pendingStates.che ? pendingStates.che.clip : 'idle');
   markLoaded('che');
   say('CHE is ready', 'Drag the pad to walk. Tap CHE to select her. Use the buttons to play an animation.');
+  tellApp({ type: 'clips', id: 'che', clips: anim.clips });
 }, undefined, (err) => say('Could not load CHE', String(err && err.message || err)));
 
-function play(name, { fade = 0.25 } = {}) {
-  const next = actions[name];
-  if (!next) return;
-  if (current === next) return;
-  next.reset();
-  next.setLoop(ONE_SHOT.has(name) ? THREE.LoopOnce : THREE.LoopRepeat, Infinity);
-  next.clampWhenFinished = ONE_SHOT.has(name);
-  next.enabled = true;
-  if (current) current.fadeOut(fade);
-  next.fadeIn(fade).play();
-  current = next;
+// One named state for CHE, through the animator. Names are the app's status clips (che_crew_states.dart) and
+// the buttons below; a clip the model lacks falls back to the nearest one the animator knows.
+function play(name) {
+  if (!anim) return;
+  switch (name) {
+    case 'idle': anim.idle(); break;
+    case 'sit': anim.sitDown(); break;
+    case 'stand': anim.standUp(); break;
+    case 'type': anim.type(); break;
+    case 'think': anim.think(); break;
+    case 'talk': anim.speak({ text: 'Hello. I am CHE. This is a check of my lip sync, my gestures and my eye contact.', durationMs: 5200 }); break;
+    case 'celebrate': anim.celebrate(); break;
+    case 'wave': anim.wave(); break;
+    case 'nod': if (!anim.playOnce('nod')) anim.listen(true); break;
+    case 'shake': if (!anim.playOnce('shake')) anim.setMood('skeptical'); break;
+    case 'walk': case 'run': anim.move(name === 'run' ? 1.8 : 0.75, anim.heading); break;
+    default: if (!anim.playOnce(name)) anim.idle();
+  }
+  current = anim.base;
   for (const b of $clips.querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.clip === name));
 }
 
@@ -297,7 +312,8 @@ function buildButtons() {
 function choose(name) {
   if (name === 'sit') { sitting = true; play('sit'); say('CHE is sitting down', 'Say or tap Stand to get up.'); return; }
   if (name === 'type') { sitting = true; play('type'); say('CHE is typing at her desk', 'Tap Stand to get up.'); return; }
-  if (name === 'stand') { sitting = false; play('stand'); setTimeout(() => { if (!sitting) play('idle'); }, 1200); say('CHE is standing up'); return; }
+  if (name === 'stand') { sitting = false; play('stand'); say('CHE is standing up'); return; }
+  if (name === 'walk' || name === 'run') { say(name === 'run' ? 'CHE is running' : 'CHE is walking', 'Drag the pad to steer her.'); }
   sitting = false;
   play(name);
   say(`CHE: ${name}`, '');
@@ -457,25 +473,30 @@ function update(dt, now) {
     const rx = Math.cos(camYaw), rz = -Math.sin(camYaw);
     const dx = rx * sx + fx * -sy;
     const dz = rz * sx + fz * -sy;
-    const len = Math.hypot(dx, dz) || 1;
     const running = mag > 0.8;
     const speed = running ? MOVE.run : MOVE.walk * Math.min(1, (mag - 0.12) / 0.5 + 0.4);
-    const nx = pos.x + (dx / len) * speed * dt;
-    const nz = pos.z + (dz / len) * speed * dt;
-    if (!blocked(nx, nz)) { pos.x = nx; pos.z = nz; }
+    if (anim) anim.move(speed, Math.atan2(dx, dz));
+    stickDrive = true;
+    if (anim && anim.state !== 'walking' && anim.state !== 'running') say(running ? 'CHE is running' : 'CHE is walking', 'Push the pad further to run.');
+  } else if (anim && stickDrive) {
+    // Only the pad stops a walk the pad started; a walk the app or a script asked for keeps going.
+    stickDrive = false;
+    anim.move(0, anim.heading);
+    if (!sitting) say('CHE is standing still', '');
+  }
+  if (anim) {
+    // The body moves at the animator's smoothed speed and heading, so starts, stops and turns are not instant.
+    heading = anim.heading;
+    const step = anim.speed * dt;
+    const nx = pos.x + Math.sin(heading) * step, nz = pos.z + Math.cos(heading) * step;
+    if (step > 0 && !blocked(nx, nz)) { pos.x = nx; pos.z = nz; }
     pos.x = Math.max(-ROOM + 0.5, Math.min(ROOM - 0.5, pos.x));
     pos.z = Math.max(-ROOM + 0.5, Math.min(ROOM - 0.5, pos.z));
-    heading = Math.atan2(dx, dz);
-    const want = running ? 'run' : 'walk';
-    if (mixer && current !== actions[want]) { play(want, { fade: 0.2 }); say(running ? 'CHE is running' : 'CHE is walking', 'Push the pad further to run.'); }
-  } else if (mixer && !sitting && current && (current === actions.walk || current === actions.run)) {
-    play('idle', { fade: 0.2 });
-    say('CHE is standing still', '');
   }
   hero.position.copy(pos);
   hero.rotation.y = heading;
   ring.position.set(pos.x, 0.01, pos.z);
-  if (mixer) mixer.update(dt);
+  if (anim) { anim.update(dt, camera.position); current = anim.base; }
   // Crew: move to the chair when seated, back to the standing spot otherwise; then update their mixers.
   for (const c of crew) {
     if (!c.still) c.mixer.update(dt);
@@ -484,8 +505,7 @@ function update(dt, now) {
     c.root.position.x += (goal.x - c.root.position.x) * k;
     c.root.position.z += (goal.z - c.root.position.z) * k;
   }
-  // Faces: blink, mouth while talking, and head and eyes toward the camera (or a followed agent's target).
-  if (heroFaceState) updateFace(heroFaceState, dt, now, current === actions.talk, camera.position);
+  // Crew faces: blink, mouth while talking, and head and eyes toward the camera. (CHE's face is the animator's.)
   for (const c of crew) updateFace(c.rig, dt, now, c.cur === c.acts.talk, camera.position);
 
   let subject = null;
@@ -494,7 +514,7 @@ function update(dt, now) {
 
   if (viewStyle === 'first' && (camMode === 'che' || subject)) {
     // First person: the camera sits at eye level and looks where the character faces.
-    const headBone = (subject ? subject.rig : heroFaceState) && (subject ? subject.rig : heroFaceState).bones.head;
+    const headBone = subject ? subject.rig.bones.head : (anim && anim.bones.head);
     if (headBone) {
       headBone.getWorldPosition(_eye);
       _fwd.set(0, 0, 1).applyQuaternion((subject ? subject.root : hero).quaternion);
@@ -558,7 +578,7 @@ function setCrewState(member, st) {
 function setStates(states) {
   for (const [id, st] of Object.entries(states || {})) {
     pendingStates[id] = st;
-    if (id === 'che') { if (mixer) { sitting = SEATED.has(st.clip); play(st.clip in actions ? st.clip : 'idle'); } continue; }
+    if (id === 'che') { if (anim) { sitting = SEATED.has(st.clip); play(st.clip); } continue; }
     const member = crew.find((c) => c.id === id);
     if (member) setCrewState(member, st);
   }
@@ -627,7 +647,17 @@ window.CHE = {
   focus: (id) => focusAgent(id),
   mode: (name) => setCameraMode(name),
   view: (style) => setViewStyle(style),
-  blink: () => { if (heroFaceState) heroFaceState.blinkT = 0; return true; },
+  blink: () => { if (anim) anim.blink.t = 0; return true; },
+  // Real activity from the app: the words and audio length CHE is speaking, the microphone state, a mood CHE
+  // herself reported. Presentation only; none of these change what CHE may do.
+  speak: (payload) => (anim ? anim.speak(payload || {}) : 0),
+  stopSpeaking: () => { if (anim) anim.stopSpeaking(); return true; },
+  listen: (on) => { if (anim) anim.listen(on); return Boolean(anim); },
+  mood: (name) => (anim ? anim.setMood(name) : false),
+  animSettings: (patch) => { Object.assign(pendingAnimSettings, patch || {}); return anim ? anim.configure(patch) : pendingAnimSettings; },
+  animPreset: (name) => { if (CheAnimator.PRESETS[name]) Object.assign(pendingAnimSettings, CheAnimator.PRESETS[name]); return anim ? anim.preset(name) : Boolean(CheAnimator.PRESETS[name]); },
+  motionMeta: (meta) => { window.CHE_MOTION_META = meta || {}; if (anim) anim.meta = window.CHE_MOTION_META; return true; },
+  get anim() { return anim ? anim.snapshot : null; },
   zoom: (factor) => zoomBy(factor),
   reset: () => resetCamera(),
   setStates: (states) => setStates(states),
@@ -636,10 +666,9 @@ window.CHE = {
   get crewLoaded() { return crew.length; },
   get camera() { return { mode: camMode, focus: focusId, zoom, view: viewStyle }; },
   get face() {
-    const f = heroFaceState;
-    return f ? { blink: f.blink, mouth: f.mouth, morphs: f.morph.length, head: Boolean(f.bones.head) } : null;
+    return anim ? { blink: anim.blink.v, mouth: anim.face.mouth_open || 0, morphs: anim.morphs.length, head: Boolean(anim.bones.head) } : null;
   },
-  get state() { return { clip: current && Object.keys(actions).find((k) => actions[k] === current), pos: pos.toArray(), sitting, selected }; },
+  get state() { return { clip: anim ? anim.baseName : null, pos: pos.toArray(), sitting, selected, anim: anim ? anim.state : null }; },
 };
 </script>
 </body>

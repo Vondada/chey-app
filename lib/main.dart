@@ -41,6 +41,9 @@ import 'che_ui/che_owner_improvements.dart';
 import 'workflows/che_workflows_screen.dart';
 import 'film/che_film_studio_screen.dart';
 import 'rooms/che_characters_room.dart';
+import 'rooms/che_voice_activity.dart';
+import 'studio/che_character_studio.dart';
+import 'studio/che_character_studio_screen.dart';
 import 'rooms/che_headquarters.dart';
 import 'world/che_meeting_room.dart';
 import 'world/che_meetings.dart';
@@ -665,6 +668,21 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
         initialSection: section,
         // Knox, the Security Chief, opens the same Office desk as the Office floor.
         onOpenAgent: (name) => _openOfficeFloor(agentName: name),
+      ),
+    ));
+  }
+
+  /// More → Character Studio (also "open character studio" or "make your walking more natural" in chat): how CHE
+  /// and her crew look and move, as versioned presentation settings with a live preview and rollback.
+  Future<void> _openCharacterStudio({String agent = 'che'}) async {
+    HapticFeedback.selectionClick();
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => CheCharacterStudioScreen(
+        store: cheCharacterStudio,
+        runtime: _officeRuntime,
+        initialAgent: agent,
+        onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
+        onListen: () => unawaited(toggleListening()),
       ),
     ));
   }
@@ -2348,6 +2366,13 @@ OWNER AGENCY
           title: 'Brain Ledger',
           subtitle: 'What entered CHE\'s brain, when, and whether it is usable yet',
           onTap: () => unawaited(_openBrainLedger()),
+          hue: kit.CheColors.accent,
+        ),
+        CheMoreItem(
+          icon: Icons.face_retouching_natural_rounded,
+          title: 'Character Studio',
+          subtitle: 'How CHE and the crew look and move: presets, animation style, saved versions, rollback',
+          onTap: () => unawaited(_openCharacterStudio()),
           hue: kit.CheColors.accent,
         ),
         CheMoreItem(
