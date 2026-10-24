@@ -133,16 +133,29 @@ export function cloudUsable(env, rec) {
   return Boolean(s.auto_cloud && repoState(env).ok && rec?.visibility?.public === true);
 }
 
-const PROVIDERS = (rec, workers) => [
-  { id: 'github_cpu', label: 'GitHub cloud CPU worker (che-creation-worker.yml)', automatic: true,
-    cost: `$0: ${CREATION_REPO} is public, and GitHub-hosted standard runners are free for public repositories.`,
-    verified_at: rec.visibility?.public === true ? rec.visibility.checked_at : null, manual_step: null,
-    device: 'CPU, 4 cores and 16 GB on a standard runner; slower than a GPU.' },
-  { id: 'colab_t4', label: 'Google Colab T4 GPU (your notebook)', automatic: false, cost: '$0: your own free Colab session.',
-    verified_at: Object.values(workers).filter((w) => w.class !== 'github_cpu' && w.last_seen_ms).map((w) => iso(w.last_seen_ms)).sort().pop() || null,
+// The Creation Engine's compute, declared once: the Cloud Computer Manager (cloud_computer.js PROVIDERS) lists these same
+// entries, so there is one registry of CHE's cloud computers. Live state (verified public, last heartbeat) is added below.
+export const CREATION_PROVIDERS = Object.freeze([
+  { id: 'github_creation', label: 'GitHub cloud CPU Blender worker (che-creation-worker.yml)', tier: 'owner_compute', automatic: true,
+    runner: 'GitHub-hosted ubuntu-latest, started by the Creation Engine', software: ['Blender 5.0.1 (SHA-256 checked)', 'MPFB2 (CC0, pinned)', 'Python 3'],
+    capabilities: ['blender'], cost: `$0: ${CREATION_REPO} is public, and GitHub-hosted standard runners are free for public repositories.`,
+    billing: 'verified_public_repository', needs_approval: false, manual_step: null,
+    device: 'CPU, 4 cores and 16 GB on a standard runner; slower than a GPU.',
+    evidence: ['.github/workflows/che-creation-worker.yml', 'server/cloudflare/creation_orchestrator.js'],
+    limits: 'CPU only. CHE re-reads the repository visibility (at most hourly) before every start and never starts it if the repository is private.' },
+  { id: 'colab_t4', label: 'Google Colab T4 GPU (your notebook)', tier: 'external_free', automatic: false,
+    runner: 'your own Colab notebook (notebooks/CHE_GPU_Face_Preview.ipynb)', software: ['Blender (CUDA/OptiX)', 'MPFB2'],
+    capabilities: ['blender', 'gpu'], cost: '$0: your own free Colab session.', billing: 'owner_free_session', needs_approval: false,
     manual_step: 'Open the CHE GPU notebook in Colab and run all cells; free Colab cannot be started remotely and stops when idle.',
-    device: 'NVIDIA T4 GPU.' },
-];
+    device: 'NVIDIA T4 GPU.', evidence: ['notebooks/CHE_GPU_Face_Preview.ipynb', 'scripts/che_gpu_worker.py'],
+    limits: 'Runs only while you have the notebook open; Google stops idle free sessions.' },
+]);
+
+const PROVIDERS = (rec, workers) => CREATION_PROVIDERS.map((p) => ({
+  id: p.id === 'github_creation' ? 'github_cpu' : p.id, label: p.label, automatic: p.automatic, cost: p.cost, manual_step: p.manual_step, device: p.device,
+  verified_at: p.id === 'github_creation' ? (rec.visibility?.public === true ? rec.visibility.checked_at : null)
+    : Object.values(workers).filter((w) => w.class !== 'github_cpu' && w.last_seen_ms).map((w) => iso(w.last_seen_ms)).sort().pop() || null,
+}));
 
 /** GET /api/creations/engine: the whole Creation Engine in one view. */
 export async function engineView(env, { storage, now, fetcher } = {}) {

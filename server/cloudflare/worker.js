@@ -255,7 +255,8 @@ import { loadRegistry as loadCapabilityRegistry } from './capability_registry.js
 import { BrainLedger, answerLedger, decidePending as decideBrainPending, installBrainLedger, ledgerApi, ledgerIntent as brainLedgerIntent, DEFAULT_ZONE as LEDGER_DEFAULT_ZONE } from './brain_ledger.js';
 import { FilmStore, filmIntent, filmProgress, farmProviders, loadRates, loadUsage, speakFarm, speakPlan, speakStatus as speakFilmStatus } from './film_studio.js';
 import { GpuQueue, gpuWorkerRoute, speakGpuSummary } from './gpu_queue.js';
-import { studioOwnerRoute } from './creation_studio.js';
+import { CreationStudio, studioOwnerRoute } from './creation_studio.js';
+import { creationProbeRoute } from './creation_probe.js';
 import { FILM_ACTIVE_STATES, filmPlan, filmTick, filmTokenRoute, refreshValidation as refreshFilmValidation, remakeShot, setFilmState, startFilm } from './film_pipeline.js';
 import { performanceBanner, performanceIntent, performanceReport, recordTiming, routeKey as perfRouteKey, speakPerformance } from './perf_watch.js';
 import { engineView, exportWorkflows, feedbackOnLast, importWorkflows, library as workflowLibrary, loadEngine, matchLearned, noteVersion, promoteCandidate, dismissCandidate, rankWorkflows, recordRun as recordWorkflowRun, isDisabled as workflowDisabled, restoreVersion, saveEngine, setDisabled as setWorkflowDisabled, setPreferred as setWorkflowPreferred, speakEfficiency, speakLibrary, testCandidate, workflowForRun, workflowIntent } from './workflow_engine.js';
@@ -6011,6 +6012,7 @@ export class CheState extends DurableObject {
         rea: (text) => handleReaRequest(this.ctx.storage, env, text, this.reaOptions({ history: [], owner: true })),
         startVideo: (topic, seconds) => startGithubVideo(env, topic, seconds),
         onAppBuildDispatched: (mode, dispatchedAt) => this.recordAppBuildDispatch(mode, dispatchedAt),
+        generateCreation: (id) => new CreationStudio(this.ctx.storage, undefined, { env }).generate(id),
       });
       return { ...result, plan, spoken: speakStartResult(result) };
     }
@@ -6974,6 +6976,11 @@ export class CheState extends DurableObject {
         if (routed) return routed;
       }
       // Colab GPU worker (gpu_queue.js): opened only by the paired worker token; previews are binary.
+      // The deploy's Creation Engine end-to-end check: only this deploy's probe token opens it (creation_probe.js).
+      if (path.startsWith('/api/creations/probe/')) {
+        if (!isMemoryProbeRequest(request, this.env)) return json({ detail: 'Not found.' }, 404);
+        return creationProbeRoute({ storage: this.ctx.storage, env: this.keyEnv || this.env }, path, request);
+      }
       if (path.startsWith('/api/gpu/worker/')) return (await gpuWorkerRoute({ storage: this.ctx.storage, env: this.keyEnv || this.env }, path, request)) || json({ detail: 'Not found.' }, 404);
       const body = ['POST', 'PATCH', 'PUT'].includes(request.method) ? await bodyOf(request) : {};
       // Visual Studio render Action: the edit document and its source files, opened only by that job's one-time,

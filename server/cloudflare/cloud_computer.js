@@ -23,6 +23,8 @@ import { noteJobActivity } from './job_activity.js';
 import { LA_AGENCIA_ROLES } from './office_company.js';
 import { mp4Facts } from './github_video_renderer.js';
 import { sha256Hex } from './che_media_store.js';
+import { CREATION_PROVIDERS } from './creation_orchestrator.js';
+import { GpuQueue } from './gpu_queue.js';
 
 export const CLOUD_SOURCE = 'che_cloud_computer';
 export const CLOUD_JOB_KIND = 'cloud_task';
@@ -45,8 +47,9 @@ const GITHUB_APPROVAL = 'This runs on GitHub Actions, and I have not verified th
 
 // ─── Providers ───────────────────────────────────────────────────────────────
 // Capabilities are read from the workflow steps (cited in `evidence`), so a tool is listed only when a step installs
-// or uses it. `blender` appears on no provider here: the one workflow that runs Blender (che-creation-worker.yml) serves
-// only Create Person through the Creation Engine queue (gpu_queue.js, creation_orchestrator.js), not these templates.
+// or uses it. Blender comes from the Creation Engine's own providers (creation_orchestrator.js CREATION_PROVIDERS),
+// listed here as they are, so CHE has one registry of cloud computers: the free GitHub CPU Blender worker, which the
+// Creation Engine starts itself after verifying the repository is public, and the owner's Colab T4 notebook.
 export const CAPABILITIES = Object.freeze(['api', 'document', 'file', 'research', 'tests', 'coding', 'browser', 'ffmpeg', 'video_render', 'ios_build', 'gpu', 'blender']);
 
 export const PROVIDERS = Object.freeze([
@@ -95,13 +98,14 @@ export const PROVIDERS = Object.freeze([
     evidence: ['server/cloudflare/film_farm.js'],
     limits: 'Outside free quotas; never verified from this Worker.',
   },
+  ...CREATION_PROVIDERS.map(({ automatic, manual_step, device, ...p }) => p),
 ]);
 
 // Capabilities no provider has, with the smallest addition that would add them. Permanent rule: first check the
 // resources CHE already has, then explain the smallest addition; never pretend.
 export const MISSING = Object.freeze({
   blender: {
-    reason: 'Blender runs automatically only for Create Person: the Creation Engine starts che-creation-worker.yml on a free GitHub-hosted CPU runner (this repository is public). No workflow renders a Blender animation to MP4 yet.',
+    reason: 'Blender builds 3D models automatically: Create, then Generate, queues the job and the Creation Engine starts che-creation-worker.yml on a free GitHub-hosted CPU runner (this repository is public). No workflow renders a Blender animation to MP4 yet.',
     existing: 'che-creation-worker.yml already installs Blender (bpy) on a GitHub CPU runner for Create Person jobs, and tools/character_pipeline/build_che_character.py drives Blender through its Python module (bpy==5.0.1 on Python 3.11).',
     smallest_addition: 'Add an animation-to-MP4 job beside che-creation-worker.yml, which already installs Blender: render the frames on the CPU (no GPU there), then encode the MP4 with ffmpeg. It is a pull request for your review; GitHub-hosted runners are free while this repository stays public.',
   },
@@ -124,6 +128,7 @@ export const TEMPLATES = Object.freeze({
   file_processing: { label: 'File inspection (size, SHA-256, type, MP4 facts)', requires: ['file'], run: 'inline', agent: 'CHE', tools: ['SHA-256', 'MP4 box reader'] },
   media_transcode: { label: 'Media transcode', requires: ['ffmpeg', 'file'], run: 'none', agent: 'Lyra', tools: ['ffmpeg'],
     no_starter: 'ffmpeg is on the GitHub runner, but no workflow takes an arbitrary file to transcode. The Creation Room edit render (che-edit-render.yml) edits media CHE already stored.' },
+  blender_model: { label: 'Blender 3D model (Create, then Generate)', requires: ['blender'], run: 'handoff', existing_path: 'CreationStudio.generate', agent: 'Lyra', tools: ['che-creation-worker.yml', 'Blender', 'MPFB2'] },
   blender_render: { label: 'Blender animation to MP4', requires: ['blender', 'ffmpeg'], run: 'none', agent: 'Lyra', tools: ['Blender', 'ffmpeg'] },
   gpu_animation: { label: 'GPU animation', requires: ['gpu'], run: 'none', agent: 'Lyra', tools: ['GPU'],
     no_starter: 'Film Studio starts the film farm itself; say "make a film about …" there.' },
@@ -153,6 +158,7 @@ export function checkProvider(p, env = {}, { runs = null } = {}) {
       ? { status: 'unverified', detail: 'A token is saved; a GPU session has not been verified from this Worker.' }
       : { status: 'needs_setup', detail: 'No Kaggle or Hugging Face token is saved on the Worker.' };
   }
+  if (p.id === 'colab_t4') return { status: 'unverified', detail: 'Online only while your Colab notebook runs; the Creation Engine shows its last heartbeat.' };
   if (!hasGithub(env)) return { status: 'needs_setup', detail: 'CHE_GITHUB_TOKEN and CHE_GITHUB_REPO are not set on the Worker, so CHE cannot start or read workflow runs.' };
   const files = p.evidence.filter((f) => f.endsWith('.yml')).map((f) => f.replace('.github/workflows/', ''));
   const last = files.map((f) => runs?.[f]).find((r) => r && r.conclusion === 'success');
@@ -188,7 +194,12 @@ export function selectProvider(kind, { env = {}, statuses = null } = {}) {
   const capable = PROVIDERS
     .filter((p) => p.tier !== EXECUTION.EXTERNAL_PAID && t.requires.every((cap) => p.capabilities.includes(cap)))
     .sort((a, b) => TIER_RANK[a.tier] - TIER_RANK[b.tier]);
-  if (!capable.length) return { blocked: true, kind: k, reason: `No single provider has all of ${t.requires.join(', ')}.`, smallest_addition: 'A workflow change (pull request) adding the missing software to one runner.' };
+  if (!capable.length) {
+    // Each capability exists somewhere, but not together on one runner (Blender + ffmpeg): name the known gap.
+    const gap = t.requires.find((cap) => MISSING[cap]);
+    if (gap) return { blocked: true, kind: k, missing_capability: gap, reason: MISSING[gap].reason, existing: MISSING[gap].existing, smallest_addition: MISSING[gap].smallest_addition };
+    return { blocked: true, kind: k, reason: `No single provider has all of ${t.requires.join(', ')}.`, smallest_addition: 'A workflow change (pull request) adding the missing software to one runner.' };
+  }
   const chosen = capable[0];
   const live = list.find((s) => s.id === chosen.id) || {};
   if (live.status === 'needs_setup') {
@@ -535,6 +546,15 @@ export async function startCloudTask(kind, params = {}, ctx = {}) {
       }
       return { ok: result.ok, started: result.ok, kind, provider: pick.provider, workflow: result.workflow || '', dispatched_at: result.ok ? dispatchedAt : null, tracked, reason: result.ok ? '' : result.detail };
     }
+    case 'blender_model': {
+      // The same call as the app's Generate button: the Creation Engine queues it and starts the worker itself.
+      if (typeof ctx.generateCreation !== 'function') return { ok: false, started: false, kind, reason: 'Blender models start from Create, then Generate, in the Creation Room.' };
+      const id = String(params.project_id || '').trim();
+      if (!/^cr_[a-f0-9]{12}$/.test(id)) return { ok: false, started: false, kind, reason: 'Say which creation to build, or open it in the Creation Room and say generate.' };
+      const out = await ctx.generateCreation(id);
+      return { ok: Boolean(out?.ok), started: Boolean(out?.ok) && !out.duplicate, kind, provider: pick.provider, job_id: out?.job?.id || null,
+        text: String(out?.spoken || '').slice(0, 400), reason: out?.ok ? '' : String(out?.detail || 'The Creation Engine refused.').slice(0, 300) };
+    }
     default:
       return { ok: false, started: false, kind, provider: pick.provider, reason: `${kind} has no starter in the Cloud Computer.` };
   }
@@ -657,6 +677,23 @@ export async function cloudJobs(storage, env = {}) {
     }));
   }
 
+  // Creation Engine jobs (gpu_queue.js): the 3D model builds the Generate button queues, on the worker that holds them.
+  let creationJobs = [];
+  try { creationJobs = await new GpuQueue(storage).jobs(); } catch (_) { creationJobs = []; }
+  for (const j of creationJobs) {
+    const hist = j.history || [];
+    const at = (state) => hist.find((h) => h.state === state)?.at || null;
+    const status = j.state === 'completed' ? 'complete' : j.state === 'rendering' ? 'running' : ['failed', 'cancelled'].includes(j.state) ? j.state : 'queued';
+    const provider = j.lease?.class === 'github_cpu' || j.receipt?.worker_class === 'github_cpu' ? 'github_creation' : j.lease || j.receipt?.device ? 'colab_t4' : 'github_creation';
+    rows.push(row({
+      id: j.id, kind: 'blender_model', title: j.title || j.kind, agent: 'Lyra', provider, tools: ['Blender', 'MPFB2'],
+      created_at: j.created_at || null, started_at: at('rendering'), finished_at: ['complete', 'failed', 'cancelled'].includes(status) ? hist.at(-1)?.at || null : null,
+      status, logs: hist.slice(-6).map((h) => `${h.state}${h.note ? `: ${h.note}` : ''}`),
+      outputs: j.model ? [{ kind: 'model', url: `/api/gpu/jobs/${j.id}/model.glb`, label: `3D model (${j.model.bytes} bytes)` }] : [],
+      evidence: j.model?.sha256 ? `GLB stored, SHA-256 ${String(j.model.sha256).slice(0, 12)}…` : 'unverified', error: j.error || '', source: 'creation_engine',
+    }));
+  }
+
   const build = await get(APP_BUILD_KEY, null);
   if (build?.mode) {
     const spec = APP_BUILD_WORKFLOWS[build.mode];
@@ -686,7 +723,7 @@ export async function cloudView(storage, env = {}, opts = {}) {
     approvals: jobs.filter((j) => j.status === 'awaiting_approval').map((j) => ({ id: j.id, title: j.title, reason: j.approval?.reason || '' })),
     missing: Object.entries(MISSING).map(([capability, m]) => ({ capability, ...m })),
     costs: {
-      summary: 'Nothing paid is ever started. The Worker is CHE\'s existing Cloudflare service. GitHub Actions minutes are not verified as free for this repository, so every new GitHub dispatch asks you first. The film farm uses outside free tiers only with your approval.',
+      summary: 'Nothing paid is ever started. The Worker is CHE\'s existing Cloudflare service. GitHub Actions minutes are not verified as free for these templates, so each new GitHub dispatch asks you first; the Creation Engine\'s Blender worker is the exception, because it re-checks the repository is public before every start. The film farm uses outside free tiers only with your approval.',
       providers: environments.map((e) => ({ id: e.id, cost: e.cost, billing: e.billing })),
     },
     resources: environments.map((e) => ({ id: e.id, limits: e.limits })),

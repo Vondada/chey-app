@@ -16,6 +16,10 @@ on:
         description: Also render one real 15-second video through the free GitHub renderer and verify it
         type: boolean
         default: false
+      creation_check:
+        description: Also run the Creation Engine end to end on the live Worker (Generate, CHE starts the free cloud worker, Blender builds a full-body GLB, CHE's viewport opens it)
+        type: boolean
+        default: false
       rea_check:
         description: Also run the REA acceptance investigations (public repository, web page, CHE comparison, private iOS app) on the live Worker
         type: boolean
@@ -56,7 +60,7 @@ jobs:
     # changes. Do not add a commit-message gate here: follow-up fixes can merge
     # without a marker and must still deploy the exact green main commit.
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ (inputs.video_check || inputs.rea_check) && 30 || 15 }}
+    timeout-minutes: ${{ inputs.creation_check && 75 || (inputs.video_check || inputs.rea_check) && 30 || 15 }}
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: c49b395e8f1138b5fae36ab88222542c
@@ -491,6 +495,73 @@ jobs:
             process.exit(1);
           }
           JS
+
+      - name: Creation Engine end to end on the live Worker (Generate, free cloud worker, Blender, GLB)
+        if: inputs.creation_check
+        timeout-minutes: 55
+        run: |
+          mkdir -p che-creation-check
+          node --input-type=module <<'JS'
+          // The same Generate the app's button calls, on the owner's one test project ("Cloud engine check
+          // (automatic test)", CHE's own original character). CHE then starts the free GitHub CPU worker herself;
+          // this step only watches the job through the probe routes and checks the GLB the Worker stored.
+          import { appendFileSync, writeFileSync } from 'node:fs';
+          import { createHash } from 'node:crypto';
+          const base = 'https://chey-app.henryjavoni.workers.dev/api/creations/probe';
+          const headers = { 'X-CHE-Memory-Probe': process.env.CHE_VOICE_PROBE_TOKEN };
+          const summary = (line) => appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${line}\n`);
+          const fail = (title, msg) => { console.log(`::error title=${title}::${msg}`); summary(`**${title}:** ${msg}`); process.exit(1); };
+          const start = await (await fetch(`${base}/start`, { method: 'POST', headers, signal: AbortSignal.timeout(60000) })).json().catch((e) => ({ ok: false, detail: String(e) }));
+          console.log(JSON.stringify(start));
+          if (!start.ok) fail('Creation Engine check did not start', start.detail || 'no answer');
+          if (!start.engine?.automatic) fail('Creation Engine cannot start a cloud worker', start.engine?.waiting_reason || 'automatic cloud workers are not usable');
+          const t0 = Date.now(); let last = ''; let job = null; let status = null;
+          while (Date.now() - t0 < 50 * 60_000) {
+            status = await (await fetch(`${base}/status?job=${start.job_id}`, { headers, signal: AbortSignal.timeout(30000) })).json().catch(() => null);
+            job = status?.job;
+            const line = job ? `${job.display_state}: ${job.status_line}` : 'no answer';
+            if (line !== last) { console.log(`${new Date().toISOString()} ${line}`); last = line; }
+            if (job && ['completed', 'failed', 'cancelled'].includes(job.state)) break;
+            await new Promise((r) => setTimeout(r, 20000));
+          }
+          writeFileSync('che-creation-check/status.json', JSON.stringify(status, null, 2));
+          const mins = ((Date.now() - t0) / 60000).toFixed(1);
+          if (job?.state !== 'completed') fail('Creation Engine check did not complete', `job ${start.job_id} ended ${job?.state || 'unknown'} after ${mins} min: ${job?.status_line || ''}`);
+          const res = await fetch(`${base}/model.glb?job=${start.job_id}`, { headers, signal: AbortSignal.timeout(60000) });
+          const bytes = Buffer.from(await res.arrayBuffer());
+          const sha = createHash('sha256').update(bytes).digest('hex');
+          const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+          const isGlb = bytes.length > 20 && dv.getUint32(0, true) === 0x46546c67 && dv.getUint32(4, true) === 2 && dv.getUint32(8, true) === bytes.length;
+          if (!res.ok || !isGlb) fail('Creation Engine GLB is not valid', `HTTP ${res.status}, ${bytes.length} bytes`);
+          if (sha !== job.model?.sha256) fail('Creation Engine GLB does not match its receipt', `downloaded ${sha}, receipt ${job.model?.sha256}`);
+          writeFileSync('che-creation-check/model.glb', bytes);
+          const r = job.receipt || {};
+          const rig = job.rig ? `${job.rig.bones} bones, clips ${job.rig.clips.join('/')}, rig ${job.rig.ok ? 'verified' : 'NOT verified'}` : 'no rig';
+          const worker = `${job.worker_class || r.worker_class || '?'} ${job.worker_id || ''}`.trim();
+          const line = `job ${start.job_id} completed in ${mins} min on ${worker} (${r.device || '?'}${r.cores ? `, ${r.cores} cores` : ''}, ${r.blender_version || '?'}); GLB ${bytes.length} bytes sha256 ${sha.slice(0, 16)}… (matches the receipt); ${r.model?.mode || '?'} model, ${rig}; previews ${job.previews.join(', ') || 'none'}; project ${start.project_id}`;
+          console.log(`::notice title=Creation Engine end to end::${line}`);
+          summary(`**Creation Engine end to end (live Worker, real cloud worker):** ${line}.`);
+          JS
+
+      - name: Open the generated GLB in CHE's Live Studio viewport
+        if: inputs.creation_check
+        run: |
+          npm install --no-save --no-audit --no-fund playwright@1.56.1 > /dev/null
+          npx playwright install --with-deps chromium > /dev/null
+          out=$(node tools/creation_open_in_studio.mjs che-creation-check/model.glb che-creation-check/studio.png walk) && ok=1 || ok=0
+          echo "$out"
+          echo "$out" > che-creation-check/studio.json
+          msg=$(node -e 'const o=JSON.parse(process.argv[1]);const m=o.model||{};console.log(`studio.html loaded ${m.meshes} meshes, ${m.vertices} vertices, clips ${(m.clips||[]).join("/")}; walk: ${o.animate?.note||"no answer"}${o.errors.length?`; errors: ${o.errors.join(" | ")}`:""}`)' "$out")
+          if [ "$ok" = 1 ]; then echo "::notice title=Creation Engine viewport::$msg"; else echo "::error title=Creation Engine viewport::$msg"; exit 1; fi
+
+      - name: Keep the Creation Engine check files
+        if: always() && inputs.creation_check
+        uses: actions/upload-artifact@v4
+        with:
+          name: che-creation-check
+          path: che-creation-check/
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Check CHE's Command Center through the live Worker
         run: |
