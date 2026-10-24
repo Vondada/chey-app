@@ -165,7 +165,7 @@ import { flushOutbox, handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, op
 import { CheLibrary, fetchReadable, libraryContext, libraryIntent } from './library.js';
 import { KnowledgeLibrary, knowledgeIntent, knowledgeReply, knowledgeTaskContext } from './knowledge_library.js';
 import { answerPersonalFact, answerStoredStatement, factCorrectionReply, groundedReply, isQuestionLike, needsStrongEngine, ownerFactTurn, personalFactQuestion, recallPersonalFact, storedStatementQuestion } from './personal_recall.js';
-import { brainRecordIntent, chatgptHistoryIntent, importChatgptBatch, inspectMemory, memoryInspectIntent, ownerMemorySearchIntent, ownerStatementCandidates, phoneBrainNotes, searchOwnerMemory, speakBrainRecord, speakChatgptHistory, speakMemoryInspection, speakMemorySearch } from './owner_recall.js';
+import { brainRecordIntent, chatgptHistoryIntent, importChatgptBatch, inspectMemory, memoryInspectIntent, ownerMemorySearchIntent, ownerSearchTurn, ownerStatementCandidates, phoneBrainNotes, speakBrainRecord, speakChatgptHistory, speakMemoryInspection } from './owner_recall.js';
 import { adRequest, adStatusLines, assetTruthReply } from './asset_truth.js';
 import { dropAgentTaskTurns, replyRepeatsAgentTask } from './agent_task_guard.js';
 import { openKnowledgeLibrary, seedKnowledgeCatalog } from './knowledge_catalog_seed.js';
@@ -10990,8 +10990,8 @@ export class CheState extends DurableObject {
         // A question about the owner's own memories or about the evidence for
         // an earlier answer is answered from records further down, in his own
         // words: no interpreter rewrite, clarifying question or model read.
-        const memoryRoute = ownerDevice && !body.attachment && (asksForEvidence || Boolean(ownerMemoryQuestion(rawMessage)) ||
-          Boolean(factTurn) || Boolean(outsideCorrespondenceIntent(rawMessage, { history: ownerHistory })));
+        const memoryRoute = ownerDevice && !body.attachment && !!(asksForEvidence || ownerMemoryQuestion(rawMessage) ||
+          factTurn || ownerMemorySearchIntent(rawMessage) || outsideCorrespondenceIntent(rawMessage, { history: ownerHistory }));
         // Voice Studio: the owner's spoken requests about his voice library are answered
         // from the provider's account, with no model call. Anything else goes on below.
         if (ownerDevice && !body.attachment) {
@@ -12262,8 +12262,8 @@ export class CheState extends DurableObject {
         if (ownerSearch) {
           let store = null;
           try { store = new CheBrainStore(this.ctx.storage); } catch (_) { store = null; }
-          const found = searchOwnerMemory(data, store, ownerSearch.term);
-          return ndjsonReply(speakMemorySearch(found), { source: 'che_memory_search', model_calls: 0, memory_search: found });
+          const turn = await ownerSearchTurn(this.ctx.storage, data, store, ownerSearch);
+          return ndjsonReply(turn.text, { source: 'che_memory_search', model_calls: 0, ...turn.meta });
         }
         // The owner's memory search reads the Brain store and the Flagstaff archive and names what matched, with
         // ids, dates and the sender as stored. The model is never asked, so it cannot say a search ran or invent
