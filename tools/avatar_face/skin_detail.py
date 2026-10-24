@@ -11,6 +11,8 @@ import math
 import bpy
 from mathutils import Vector
 
+from eyes_brows import _outward
+
 
 def _eye(name):
     ob = bpy.data.objects[name]
@@ -41,8 +43,7 @@ def hide_painted_brows(fwd, up):
     arcs = []
     for name in ('Eye_l', 'Eye_r'):
         c, r = _eye(name)
-        side = Vector((fwd.y, -fwd.x, 0)).normalized()
-        if name.endswith('r'): side = -side
+        side = _outward(name, fwd)
         for i in range(40):
             t = i / 39
             arc_h = r * (1.45 + 0.35 * math.sin(math.pi * min(1.0, t * 1.2)) - 0.25 * t)

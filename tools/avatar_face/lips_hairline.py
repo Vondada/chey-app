@@ -38,13 +38,13 @@ def lip_gloss():
         nt.links.new(b.inputs['Roughness'].links[0].from_socket, mix_r.inputs['A'])
     else:
         mix_r.inputs['A'].default_value = b.inputs['Roughness'].default_value
-    mix_r.inputs['B'].default_value = 0.18
+    mix_r.inputs['B'].default_value = 0.3
     nt.links.new(mix_r.outputs['Result'], b.inputs['Roughness'])
     # Coat: the gloss layer, on the lips only (plus whatever the skin already had).
     coat = nt.nodes.new('ShaderNodeMath'); coat.operation = 'MULTIPLY_ADD'
-    coat.inputs[1].default_value = 0.7; coat.inputs[2].default_value = b.inputs['Coat Weight'].default_value
+    coat.inputs[1].default_value = 0.3; coat.inputs[2].default_value = b.inputs['Coat Weight'].default_value
     nt.links.new(at.outputs['Fac'], coat.inputs[0]); nt.links.new(coat.outputs['Value'], b.inputs['Coat Weight'])
-    b.inputs['Coat Roughness'].default_value = 0.08
+    b.inputs['Coat Roughness'].default_value = 0.16
     # Fine vertical lip lines: a stretched wave texture added to the existing bump on the lips.
     if b.inputs['Normal'].is_linked:
         bump = b.inputs['Normal'].links[0].from_node

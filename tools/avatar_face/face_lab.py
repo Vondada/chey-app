@@ -123,7 +123,7 @@ fwd = eye - rig.matrix_world @ head_bone.head
 fwd.z = 0; fwd.normalize()
 right = Vector((fwd.y, -fwd.x, 0)).normalized()
 up = Vector((0, 0, 1))
-tgt = bpy.data.objects.new('FaceTarget', None); sc.collection.objects.link(tgt); tgt.location = eye - up * 0.05
+tgt = bpy.data.objects.new('FaceTarget', None); sc.collection.objects.link(tgt); tgt.location = eye - up * float(os.environ.get('AIM_DROP', '0.05'))  # 0 aims at the eyes
 
 # ── Step: eyes (corneas, strand lashes, strand brows) ───────────────────────────────────────────────────────────────
 if 'eyes' in STEPS:

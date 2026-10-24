@@ -35,6 +35,13 @@ def _eye(name):
     return c, r
 
 
+def _outward(name, fwd):
+    """Sideways direction from this eye toward its own temple (away from the other eye)."""
+    side = Vector((fwd.y, -fwd.x, 0)).normalized()
+    other = _eye('Eye_r' if name.endswith('l') else 'Eye_l')[0]
+    return side if (_eye(name)[0] - other).dot(side) > 0 else -side
+
+
 def _hair_material(name, melanin=1.0, rough=0.4):
     m = bpy.data.materials.get(name) or bpy.data.materials.new(name)
     m.use_nodes = True; nt = m.node_tree; nt.nodes.clear()
@@ -103,8 +110,7 @@ def lash_strands(fwd, up, seed=11):
     strands = []
     for name in ('Eye_l', 'Eye_r'):
         c, r = _eye(name)
-        side = Vector((fwd.y, -fwd.x, 0)).normalized()
-        if name.endswith('r'): side = -side
+        side = _outward(name, fwd)
         for upper in (True, False):
             n_clumps = 26 if upper else 14
             for k in range(n_clumps):
@@ -124,19 +130,18 @@ def lash_strands(fwd, up, seed=11):
     return _curves('Lashes_strands', strands, 0.00009, 0.00002, _hair_material('LashHair', 1.0, 0.35))
 
 
-def brow_strands(fwd, up, seed=12, per_brow=650):
+def brow_strands(fwd, up, seed=12, per_brow=420):
     random.seed(seed)
     bvh = _body_bvh()
     strands = []
     for name in ('Eye_l', 'Eye_r'):
         c, r = _eye(name)
-        side = Vector((fwd.y, -fwd.x, 0)).normalized()
-        if name.endswith('r'): side = -side
+        side = _outward(name, fwd)
         for _ in range(per_brow):
             t = random.random()  # 0 inner end, 1 tail
             # Brow arc: rises over the iris, falls at the tail.
             arc_h = r * (1.45 + 0.35 * math.sin(math.pi * min(1.0, t * 1.2)) - 0.25 * t)
-            width = r * (0.24 - 0.15 * t)
+            width = r * (0.17 - 0.11 * t)
             p = c + side * (r * (-0.9 + 2.4 * t)) + up * (arc_h + random.uniform(-width, width)) + fwd * r * 2.5
             hit = bvh.ray_cast(p, -fwd, r * 6)
             if not hit or hit[0] is None:
@@ -146,4 +151,4 @@ def brow_strands(fwd, up, seed=12, per_brow=650):
             d = (up * (0.9 - 0.75 * t) + side * (0.15 + 0.8 * t) + normal * 0.25).normalized()
             length = (0.005 if t < 0.15 else 0.008) * random.uniform(0.8, 1.15)
             strands.append(_bezier(root + normal * 0.0002, d, length, 0.35, normal))
-    return _curves('Brow_strands', strands, 0.00007, 0.00002, _hair_material('BrowHair', 1.0, 0.5))
+    return _curves('Brow_strands', strands, 0.000045, 0.000012, _hair_material('BrowHair', 1.0, 0.5))
