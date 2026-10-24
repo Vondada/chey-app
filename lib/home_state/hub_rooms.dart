@@ -491,8 +491,8 @@ extension _CheHomeHubRooms on _CHEHomeState {
 
   Widget _hubCreateScene(bool active) {
     return CheRoomSegments(
-      labels: const ['Projects', 'Art Studio'],
-      icons: const [Icons.collections_bookmark_outlined, Icons.palette_outlined],
+      labels: const ['Projects', 'Art Studio', 'GPU Jobs'],
+      icons: const [Icons.collections_bookmark_outlined, Icons.palette_outlined, Icons.memory],
       children: [
         () => _createProjectsScene(active),
         () => CheArtStudio(
@@ -502,6 +502,15 @@ extension _CheHomeHubRooms on _CHEHomeState {
                 await _postAgentJson('/api/vault/add', {'name': name, 'content': content, 'kind': 'art'});
                 await _loadAgentState(silent: true);
               },
+            ),
+        () => SingleChildScrollView(
+              padding: const EdgeInsets.all(16),
+              child: CheGpuJobsCard(
+                baseUrl: cheAgentBaseUrl,
+                headers: _authHeaders,
+                active: active,
+                onRead: (text) => speakText(text, record: false, readOnDemand: true),
+              ),
             ),
       ],
     );
