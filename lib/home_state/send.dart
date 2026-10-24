@@ -728,6 +728,17 @@ extension _CheHomeSend on _CHEHomeState {
       }
     }
 
+    // The Invention 3D viewer and the Invention Studio page, while open, take rotate, zoom, colour, "show me" and 3D.
+    for (final inventionVoice in [CheInventionViewer.voiceHandler, CheInventionStudioPage.voiceHandler]) {
+      if (inventionVoice == null || _pendingAttachment != null) continue;
+      final reply = await inventionVoice(message);
+      if (reply != null) {
+        if (mounted) _set(() => controller.clear());
+        if (reply.isNotEmpty) await speakText(reply, record: false);
+        return;
+      }
+    }
+
     // The Live 3D Studio, while it is open, takes viewport moves, edits, undo, redo, save and generate.
     final liveVoice = CheLiveStudio.voiceHandler;
     if (liveVoice != null && _pendingAttachment == null) {
