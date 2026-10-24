@@ -55,15 +55,18 @@ const cheHairStyleNames = {
 
 /// Named colour choices, so VoiceOver says a colour name instead of a hex code.
 const cheSkinTones = <(String, String)>[
-  ('#f1cdb0', 'fair'), ('#f0c8a8', 'light'), ('#e7b48e', 'light warm'), ('#dca27a', 'medium'), ('#d29a72', 'medium warm'),
-  ('#c98b62', 'tan'), ('#8c5a3c', 'brown'), ('#7a4a2e', 'deep brown'), ('#502e20', 'deep'),
+  // The lightest tones stop at what the renderer accepts as a skin albedo (the Worker refuses lighter ones).
+  ('#e4bb9c', 'fair'), ('#e3b597', 'light'), ('#e7b48e', 'light warm'), ('#e2b089', 'light peach'), ('#dca27a', 'medium'),
+  ('#d7a986', 'medium neutral'), ('#d29a72', 'medium warm'), ('#c98b62', 'tan'), ('#8c5a3c', 'brown'), ('#7a4a2e', 'deep brown'),
+  ('#502e20', 'deep'),
 ];
 const cheIrisColors = <(String, String)>[
-  ('#24160e', 'very dark brown'), ('#3a2216', 'dark brown'), ('#331f14', 'brown'), ('#3b2a4a', 'violet brown'),
-  ('#4a5a3a', 'hazel green'), ('#3d6ea8', 'blue'),
+  ('#4a2e1c', 'very dark brown'), ('#4a3220', 'dark brown'), ('#5a3a22', 'brown'), ('#5e3e28', 'warm brown'),
+  ('#5e3c22', 'chestnut'), ('#6a4a2e', 'light brown'), ('#4e3a52', 'violet brown'), ('#5f6b45', 'hazel green'), ('#4f7fb5', 'blue'),
 ];
 const cheHairColors = <(String, String)>[
-  ('#141010', 'black'), ('#1c1210', 'soft black'), ('#2a1a12', 'dark brown'), ('#4a2c1c', 'brown'), ('#6a2e1a', 'auburn'),
+  ('#141010', 'black'), ('#16110e', 'jet black'), ('#1a1210', 'brown black'), ('#1c1210', 'soft black'), ('#2a1a12', 'dark brown'),
+  ('#3b2416', 'chestnut'), ('#4a2c1c', 'brown'), ('#6a2e1a', 'auburn'),
   ('#d8b46a', 'blonde'), ('#8d64d6', 'purple'),
 ];
 

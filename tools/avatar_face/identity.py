@@ -61,6 +61,17 @@ def load(path=PRESETS):
         return {p['id']: p for p in json.load(f)['presets']}
 
 
+def lin(c):
+    c /= 255.0
+    return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+
+def skin_ok(h):
+    """The same rule as mpfb_dress.py's skin check: linear albedo mean 0.008..0.6, red >= green >= blue."""
+    r, g, b = (lin(int(h[i:i + 2], 16)) for i in (1, 3, 5))
+    return 0.008 < (r + g + b) / 3 < 0.6 and r >= g >= b
+
+
 def validate(p):
     """Problems with one preset, as plain sentences (empty when it is valid)."""
     out = []
@@ -77,6 +88,8 @@ def validate(p):
     for path in ('skin.tone', 'eyes.iris', 'hair.color'):
         a, c = path.split('.')
         if not HEX.match(str((p.get(a) or {}).get(c, ''))): out.append(f'{path} must be #rrggbb')
+    tone = str((p.get('skin') or {}).get('tone', ''))
+    if HEX.match(tone) and not skin_ok(tone): out.append('skin.tone must be a human skin albedo (red >= green >= blue, not lighter than about #e8c0a0)')
     if (p.get('hair') or {}).get('style') not in HAIR_STYLES: out.append('hair.style must be one of ' + ', '.join(HAIR_STYLES))
     return out
 

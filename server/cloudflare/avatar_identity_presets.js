@@ -78,7 +78,7 @@ export const IDENTITIES = {
         "face_round": 0.3
       },
       "skin": {
-        "tone": "#f0c8a8",
+        "tone": "#e3b597",
         "pores": 0.15
       },
       "eyes": {
@@ -360,7 +360,7 @@ export const IDENTITIES = {
         "face_oval": 0.3
       },
       "skin": {
-        "tone": "#f1cdb0",
+        "tone": "#e4bb9c",
         "pores": 0.15
       },
       "eyes": {

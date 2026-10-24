@@ -141,3 +141,11 @@ test('Preview queues one GPU job per look with the preset in the settings, says 
   assert.equal((await call(c, '/api/gpu/identities/preview', { preset_id: 'ghost' })).status, 404);
   assert.equal((await call(c, '/api/gpu/identities/preview', undefined, 'GET')).status, 405);
 });
+
+test('a skin tone the renderer would refuse is rejected before it is saved or queued', () => {
+  const che = IDENTITIES.presets.find((p) => p.id === 'che');
+  assert.deepEqual(validate(che), []);
+  assert.ok(validate({ ...che, skin: { tone: '#f0c8a8' } }).some((m) => m.startsWith('skin.tone')));   // too light
+  assert.ok(validate({ ...che, skin: { tone: '#3060c0' } }).some((m) => m.startsWith('skin.tone')));   // not a skin colour
+  for (const p of IDENTITIES.presets) assert.deepEqual(validate(p), [], p.id);
+});

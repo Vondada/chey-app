@@ -52,6 +52,15 @@ export function num(w) {
 const rgb = (h) => [1, 3, 5].map((i) => String(parseInt(h.slice(i, i + 2), 16))).join(',');
 
 /** Problems with one preset, as plain sentences (empty when it is valid). */
+// The same rule as mpfb_dress.py's skin check (linear albedo mean 0.008..0.6, red >= green >= blue), so the app cannot
+// save or queue a tone the renderer would refuse.
+const lin = (c) => { const x = c / 255; return x <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4; };
+export function skinOk(h) {
+  const [r, g, b] = [1, 3, 5].map((i) => lin(parseInt(h.slice(i, i + 2), 16)));
+  const m = (r + g + b) / 3;
+  return m > 0.008 && m < 0.6 && r >= g && g >= b;
+}
+
 export function validate(p) {
   const out = [];
   if (!p || typeof p !== 'object') return ['preset must be an object'];
@@ -74,6 +83,8 @@ export function validate(p) {
     const [a, c] = path.split('.');
     if (!HEX.test(String((p[a] || {})[c] ?? ''))) out.push(`${path} must be #rrggbb`);
   }
+  const tone = String((p.skin || {}).tone ?? '');
+  if (HEX.test(tone) && !skinOk(tone)) out.push('skin.tone must be a human skin albedo (red >= green >= blue, not lighter than about #e8c0a0)');
   if (!HAIR_STYLES.includes((p.hair || {}).style)) out.push(`hair.style must be one of ${HAIR_STYLES.join(', ')}`);
   return out;
 }
