@@ -12,7 +12,7 @@ import {
   createProviderEmployee, providerFrom, specialtyFrom, startPairedJob,
 } from './office_workforce.js';
 import { handoffAgentTask } from './agent_runtime.js';
-import { DATA_CLASSES, allowedDataClasses, setProviderPermission } from './privacy_policy.js';
+import { DATA_CLASSES, allowedDataClasses, ownerAuditRows, setProviderPermission } from './privacy_policy.js';
 import {
   accountsView, ensureAiState, healthSummary, manifestById, providerConnection, registryView,
 } from './provider_registry.js';
@@ -53,7 +53,8 @@ export async function aiOverview(env, data, storage) {
   const ai = ensureAiState(data);
   const health = (await stored(storage, 'ai_health')) || {};
   ai.health = health;
-  const audit = (await stored(storage, 'ai_audit')) || [];
+  // The owner's own calls only: a guest's or other tenant's rows stay out (CORE-PRIVACY-1).
+  const audit = ownerAuditRows(await stored(storage, 'ai_audit'));
   const providers = registryView(env, data);
   const models = Object.entries(ai.catalog).flatMap(([provider, entry]) => (entry.models || [])
     .filter((m) => m.status === 'active')

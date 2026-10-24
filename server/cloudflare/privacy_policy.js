@@ -9,6 +9,7 @@
 
 import { redact } from './security_intelligence.js';
 import { ensureAiState, manifestById } from './provider_registry.js';
+import { OWNER_TENANT_ID } from './che_platform.js';
 
 export const DATA_CLASSES = [
   'public', 'personal', 'private', 'secret', 'financial', 'device_data',
@@ -175,30 +176,62 @@ export function redactSecrets(value) {
   return redact(String(value ?? '').replace(SECRETISH, '[redacted]')).text;
 }
 
-export function auditEntry({ provider, model, task, agent = 'CHE', memory = [], withheld = [], ok = true, route = '', latency_ms = null, agent_id = '', thread_id = '' }) {
+// CORE-PRIVACY-1: a guest's or another tenant's conversation is theirs. Its
+// audit row keeps the tenant, engine, timing, token estimate, outcome and a
+// fixed category, never the words (nor a hash of them), so the owner's audit
+// cannot read them. A guest_* route is never the owner, even on a private
+// device inside his profile.
+export const TENANT_AUDIT_TASK = 'Tenant conversation';
+
+export function tenantAuditRow(entry) {
+  return /^guest/.test(String(entry?.route || '')) || Boolean(entry?.tenant_id && entry.tenant_id !== OWNER_TENANT_ID);
+}
+
+export function auditEntry({ provider, model, task, agent = 'CHE', memory = [], withheld = [], ok = true, route = '', latency_ms = null, agent_id = '', thread_id = '', tenant_id = '', est_tokens = null }) {
+  const tenant = tenantAuditRow({ route, tenant_id });
   return {
+    ...(tenant_id ? { tenant_id: clip(tenant_id, 80) } : {}),
     ...(agent_id ? { agent_id: clip(agent_id, 80) } : {}),
-    ...(thread_id ? { thread_id: clip(thread_id, 200) } : {}),
+    ...(thread_id && !tenant ? { thread_id: clip(thread_id, 200) } : {}),
     at: new Date().toISOString(),
     provider: clip(provider, 60),
     model: clip(model, 120),
-    task: clip(redactSecrets(task), 160),
+    task: tenant ? TENANT_AUDIT_TASK : clip(redactSecrets(task), 160),
     agent: clip(agent, 80),
     route: clip(route, 40),
-    memory_ids: memory.map((m) => clip(m.id, 120)).filter(Boolean).slice(0, 20),
+    memory_ids: tenant ? [] : memory.map((m) => clip(m.id, 120)).filter(Boolean).slice(0, 20),
     memory_categories: [...new Set(memory.map((m) => m.section || m.data_class).filter(Boolean))],
     data_classes: [...new Set(memory.map((m) => m.data_class).filter(Boolean))],
     withheld_classes: [...new Set(withheld.map((m) => m.data_class).filter(Boolean))],
     ok: Boolean(ok),
     latency_ms,
+    ...(Number.isFinite(est_tokens) ? { est_tokens } : {}),
   };
+}
+
+// Rows written before the rule above may still hold a tenant's words: they are dropped on the next write.
+function scrubTenantRow(entry) {
+  if (!tenantAuditRow(entry) || (entry.task === TENANT_AUDIT_TASK && !entry.thread_id)) return entry;
+  const { thread_id: _thread, ...rest } = entry;
+  return { ...rest, task: TENANT_AUDIT_TASK, memory_ids: [] };
 }
 
 export async function appendAudit(storage, entry) {
   if (!storage) return;
-  const list = (await storage.get('ai_audit')) || [];
-  list.unshift(entry);
+  const list = ((await storage.get('ai_audit')) || []).map(scrubTenantRow);
+  list.unshift(scrubTenantRow(entry));
   await storage.put('ai_audit', list.slice(0, 300));
+}
+
+export function ownerAuditRows(list) {
+  return (Array.isArray(list) ? list : []).filter((entry) => !tenantAuditRow(entry));
+}
+
+// GET /api/ai/audit: the owner's own calls; every other tenant is a count only.
+export function auditView(list, limit = 100) {
+  const all = Array.isArray(list) ? list : [];
+  const calls = ownerAuditRows(all);
+  return { calls: calls.slice(0, limit), other_tenant_calls: all.length - calls.length };
 }
 
 // ─── Memory write-back from other models ───────────────────────────────────

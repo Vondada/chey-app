@@ -37,7 +37,7 @@ function setup() {
   const ctx = { storage, env: {}, now };
   const call = async (path, method = 'GET', body) => {
     const req = new Request(`https://che.example${path}`, { method, headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
-    const res = await creationRoute(ctx, path, req, body || {});
+    const res = await creationRoute(ctx, path.split('?')[0], req, body || {});
     return { status: res.status, body: await res.json() };
   };
   const worker = async (route, body, token, query = '', bytes = null) => {
@@ -121,9 +121,18 @@ test('Create Person -> generate -> the worker streams the GLB then previews -> r
   const claim2 = await worker('claim', { worker_id: 'colab-1', gpu: GPU }, token);
   assert.equal(claim2.body.resumed, false);
   const sha = d.job.model.sha256;
+  assert.equal(gen.body.job.settings.MODEL_MODE, 'full_body', 'Create Person builds the full body by default');
+  // A full-body model without a verified skeleton is not accepted (attempt 2 of 3), with the reason.
+  const noRig = await worker('complete', { worker_id: 'colab-1', job_id: claim.body.job.id, status: 'complete',
+    receipt: { status: 'complete', views, model: { status: 'ok', file: 'model.glb', sha256: sha, bytes: model.length, vertices: 1234, mode: 'full_body' } } }, token);
+  assert.equal(noRig.body.job.state, 'queued'); assert.match(noRig.body.job.history.at(-1).note, /no verified skeleton/);
+  await worker('claim', { worker_id: 'colab-1', gpu: GPU }, token);
+  const rig = { ok: true, bones: 53, weighted_vertices: 9000, clips: [{ name: 'idle', seconds: 4 }, { name: 'walk', seconds: 1.2 }, { name: 'wave', seconds: 2 }, { name: 'talk', seconds: 3 }], morphs: ['blink_L', 'blink_R', 'jaw_open'] };
   const done = await worker('complete', { worker_id: 'colab-1', job_id: claim.body.job.id, status: 'complete',
-    receipt: { status: 'complete', views, model: { status: 'ok', file: 'model.glb', sha256: sha, bytes: model.length, vertices: 1234, contents: 'head-and-neck bust' } } }, token);
+    receipt: { status: 'complete', views, model: { status: 'ok', file: 'model.glb', sha256: sha, bytes: model.length, vertices: 1234, mode: 'full_body', rig } } }, token);
   assert.equal(done.body.job.state, 'completed');
+  assert.equal(done.body.job.rig.ok, true); assert.equal(done.body.job.rig.bones, 53);
+  assert.equal(done.body.job.display_state, 'Completed');
   assert.equal(done.body.job.receipt.model.vertices, 1234);
   const fin = (await call(`/api/creations/${p.id}`)).body;
   assert.equal(fin.project.stages.at(-1).label, 'Completed');
@@ -152,7 +161,7 @@ test('edits make versions; undo, redo and save move through them; view commands 
   assert.equal(rot.body.changed, false); assert.deepEqual(rot.body.viewport, { action: 'rotate', deg: 45 });
   assert.equal(rot.body.project.version, 4, 'no version for a view command');
   const anim = await call(`/api/creations/${p.id}/edit`, 'POST', { text: 'Animate the character' });
-  assert.deepEqual(anim.body.viewport, { action: 'animate' }); assert.match(anim.body.applied[0], /no rig yet/);
+  assert.deepEqual(anim.body.viewport, { action: 'animate' }); assert.match(anim.body.applied[0], /once their skeleton is verified/);
   const office = await call(`/api/creations/${p.id}/edit`, 'POST', { text: 'Put this in my Office' });
   assert.equal(office.body.changed, false); assert.match(office.body.unsupported[0], /not built yet/);
   const nonsense = await call(`/api/creations/${p.id}/edit`, 'POST', { text: 'make it smell like roses' });
@@ -258,4 +267,44 @@ test('at the project limit a new creation is refused and no saved creation is re
   const kept = await call(`/api/creations/${first.body.project.id}`);
   assert.equal(kept.status, 200, 'the first, saved creation is still there');
   assert.equal((await call('/api/creations')).body.projects.length, 100);
+});
+
+test('render settings: full body by default; bust, detail, lighting and low-poly edits make versions; movement words only move the viewport; critique is honest', async () => {
+  const { call } = setup();
+  const p = (await call('/api/creations', 'POST', { base: 'che' })).body.project;
+  assert.deepEqual([p.render.mode, p.render.quality, p.render.lighting], ['full_body', 'standard', 'studio']);
+  assert.match(p.resources, /estimates, not measured yet/);
+  const bust = await call(`/api/creations/${p.id}/edit`, 'POST', { text: 'head and shoulders only' });
+  assert.equal(bust.body.changed, true); assert.equal(bust.body.project.render.mode, 'bust');
+  const hi = await call(`/api/creations/${p.id}/edit`, 'POST', { text: 'high detail with cinematic lighting' });
+  assert.equal(hi.body.project.render.quality, 'high'); assert.equal(hi.body.project.render.lighting, 'cinematic');
+  assert.match(hi.body.spoken, /on the free cloud CPU: more than 30 minutes/);
+  const lp = await call(`/api/creations/${p.id}/edit`, 'POST', { text: 'make it low-poly' });
+  assert.equal(lp.body.project.render.quality, 'draft'); assert.match(lp.body.unsupported[0], /low-poly look is not built/);
+  const n = lp.body.project.version;
+  for (const [text, vp] of [['show the skeleton', { action: 'skeleton', on: true }], ['hide the skeleton', { action: 'skeleton', on: false }],
+    ['animate walking', { action: 'animate', clip: 'walk' }], ['pause', { action: 'pause' }], ['replay', { action: 'replay' }],
+    ['skip ahead 10 seconds', { action: 'seek', delta: 10 }], ['go back 10 seconds', { action: 'seek', delta: -10 }], ['slower', { action: 'speed', mul: 0.67 }]]) {
+    const r = await call(`/api/creations/${p.id}/edit`, 'POST', { text });
+    assert.deepEqual(r.body.viewport, vp, text); assert.equal(r.body.changed, false, text); assert.equal(r.body.project.version, n, text);
+  }
+  const crit = await call(`/api/creations/${p.id}/edit`, 'POST', { text: 'critique this design' });
+  assert.equal(crit.body.changed, false); assert.match(crit.body.spoken, /needs a finished render/);
+  const gen = await call(`/api/creations/${p.id}/generate`, 'POST', {});
+  assert.deepEqual([gen.body.job.settings.MODEL_MODE, gen.body.job.settings.QUALITY, gen.body.job.settings.LIGHTING], ['bust', 'draft', 'cinematic']);
+  assert.equal(gen.body.job.samples, 16); assert.equal(gen.body.job.res, 360);
+});
+
+test('planning routes: a pre-job estimate and the scale scenarios, read-only, with assumptions and R2 status', async () => {
+  const { call } = setup();
+  const est = await call('/api/creations/estimate?minutes=30&profile=hybrid&gpus=20');
+  assert.equal(est.status, 200);
+  assert.equal(est.body.estimate.segments, 180);
+  assert.match(est.body.spoken, /On free capacity it costs nothing; paid capacity would be about \$\d/);
+  const cap = await call('/api/creations/capacity');
+  assert.equal(cap.status, 200);
+  assert.ok(cap.body.scenarios.users_1m && cap.body.scenarios.videos_1m_30min.hybrid);
+  assert.ok(cap.body.assumptions.gpu_h100_hour.source);
+  assert.equal(cap.body.storage.ok, false); assert.match(cap.body.storage.reason, /not enabled/);
+  assert.equal((await call('/api/creations/capacity', 'POST', {})).status, 405);
 });

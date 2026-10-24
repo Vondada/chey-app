@@ -11,7 +11,8 @@
 //     removed there, and stored here as Brain records with source chatgpt_export. "What did I tell ChatGPT about X"
 //     quotes those records with their conversation title and date, or says the history is not connected.
 import { BRAIN_REGIONS } from './brain_store.js';
-import { stripWake } from './personal_recall.js';
+import { latestAnswerEvidence, recordAnswerEvidence } from './memory_provenance.js';
+import { isQuestionLike, ownerFacts, stripWake } from './personal_recall.js';
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const day = (iso) => {
@@ -32,63 +33,207 @@ export function ownerStatementCandidates(store, message) {
 }
 
 // ─── "Search my memory for Sprite" ──────────────────────────────────────────────────────────────────────────────────
+// Owner report (2026-10-24): "what memories do you have about my favorite color" reached the model, which answered
+// "I retrieved memory IDs 8829, 8830 and 8831 from storage" with no store read at all. Every way of asking for the
+// stored records now comes here, where the stores are really read and only their real ids, dates and sources are named.
+// "Show me the memory IDs you retrieved" names the records CHE's last answer actually read (its ledger entry), or says
+// that it read none.
+
+const SEARCH_VERB = String.raw`(?:search|look through|look in|check|scan|pull(?: up| out)?|show(?: me)?|list|get(?: me)?|give me|fetch|retrieve|find|bring up|read(?: me)?|look up|tell me)`;
+// A bare "record" belongs to its own route ("pull the record for sim-2023-03-10-001" is a trade ledger read).
+const STORE_NOUN = String.raw`(?:(?:(?:my|your|che'?s|the|all|any|all of|all the|all your|all my)\s+)*(?:stored\s+|saved\s+)?(?:memory\s+(?:records?|entries|entry|notes?)|memories|memory|brain(?:\s+records?)?|stored\s+records?|(?:stored|saved)\s+entries)|(?:my|your|che'?s)\s+records|(?:my|your|che'?s|the)\s+database(?:\s+(?:records?|entries|entry|rows))?)`;
+const ABOUT = String.raw`(?:for|about|on|of|regarding|related to|that mention|mentioning|with)`;
+const SEARCH_FORMS = [
+  new RegExp(String.raw`^(?:please\s+|can you\s+|could you\s+|would you\s+)?${SEARCH_VERB}\s+${STORE_NOUN}\s+${ABOUT}\s+(.{1,80})$`, 'i'),
+  // "What memories do you have about my favorite color?", "which records do you have on Sprite?"
+  new RegExp(String.raw`^(?:what|which|any)\s+(?:memories|memory\s+records?|memory\s+entries|stored\s+records?|memory)\s+(?:do|did|have)\s+you\s+(?:have|keep|hold|store|stored|got|find|found|retrieve|retrieved|pull|pulled|read)?\s*(?:stored\s+|saved\s+|on file\s+)?${ABOUT}\s+(.{1,80})$`, 'i'),
+  // "What's stored in your database about colors?"
+  new RegExp(String.raw`^what(?:'s|s| is)\s+(?:stored|saved|kept)\s+in\s+(?:your|my|the|che'?s)\s+(?:database|memory|brain|records)\s+${ABOUT}\s+(.{1,80})$`, 'i'),
+  // "What do you have stored about my favorite color?", "do you have any memories of my dog?"
+  new RegExp(String.raw`^(?:what|do)\s+(?:do\s+)?you\s+have\s+(?:any\s+)?(?:stored|saved|on record|on file|in (?:your|my) memory|memories|memory records?|records?)\s+${ABOUT}\s+(.{1,80})$`, 'i'),
+];
+// "Show me the memory IDs you retrieved", "which records did you read?", "what memory ids did you use?" The whole
+// question is about CHE's last answer: "which records did you use for the backtest" belongs to its own route.
+const IDS_FORMS = [
+  /^(?:please\s+|can you\s+|could you\s+)?(?:show|list|tell|give|read)(?:\s+me)?\s+(?:the\s+|your\s+|those\s+|my\s+)?(?:memory\s+|record\s+)?(?:ids?|record\s+(?:ids?|numbers?)|records?|memories)\s+(?:that\s+)?(?:you\s+)?(?:just\s+)?(?:retrieved|read|used|pulled|found|cited|looked up|got)(?:\s+(?:just now|earlier|before|for (?:that|this|it|that answer|your (?:last )?answer)|to answer (?:that|this|it)|in (?:that|your last) answer))?$/i,
+  /^(?:what|which)\s+(?:memory\s+|record\s+)?(?:ids?|record\s+(?:ids?|numbers?)|records?|memories)\s+(?:did|have)\s+you\s+(?:just\s+)?(?:retrieve|read|use|pull|cite|look up|get|retrieved|used|pulled)(?:\s+(?:just now|earlier|before|for (?:that|this|it|that answer|your (?:last )?answer)|to answer (?:that|this|it)|in (?:that|your last) answer))?$/i,
+  /^where\s+are\s+(?:the|those)\s+(?:memory\s+)?(?:ids?|records?)\s+(?:you\s+)?(?:retrieved|read|used|pulled)(?:\s+(?:just now|earlier|before|for (?:that|this|it|that answer|your (?:last )?answer)|to answer (?:that|this|it)|in (?:that|your last) answer))?$/i,
+];
 
 export function ownerMemorySearchIntent(message) {
-  const t = stripWake(message).replace(/[?.!]+$/, '').trim();
-  const m = /^(?:please\s+)?(?:search|look through|check|scan)\s+(?:my|your|che'?s)\s+(?:memory|memories|brain|records)\s+(?:for|about)\s+(.{1,80})$/i.exec(t);
-  if (!m) return null;
-  const term = m[1].replace(/^["']|["']$/g, '').trim();
-  return term.length >= 2 ? { term } : null;
+  const t = stripWake(message).replace(/[?.!]+$/, '').replace(/\s+/g, ' ').trim();
+  if (!t || t.length > 140) return null;
+  if (IDS_FORMS.some((re) => re.test(t))) return { ids: true, term: '' };
+  for (const re of SEARCH_FORMS) {
+    const m = re.exec(t);
+    if (!m) continue;
+    // "… for colors and their IDs": what to show, not what to find.
+    const term = m[1].replace(/^["']|["']$/g, '').replace(/\s+(?:please|sir|che)$/i, '').replace(/,?\s+(?:and|with)\s+(?:their|the|its)\s+(?:record\s+)?(?:ids?|dates?|sources?)(?:\s+and\s+(?:ids?|dates?|sources?))*$/i, '').trim();
+    // Trades, ledgers and journals have their own readers (che_trading_ledgers): "show me the database records about my trades".
+    if (/\b(?:trad(?:e|es|ing)|ledgers?|journals?|sim-|paper|positions?|orders?|fills?|strateg(?:y|ies))\b/i.test(term)) return null;
+    if (term.length >= 2 && termWords(term).length) return { term };
+  }
+  return null;
+}
+
+// The words a stored record must contain: "my favorite colors" finds "My favorite color is red".
+const TERM_STOP = new Set(['my', 'your', 'the', 'a', 'an', 'of', 'for', 'on', 'about', 'any', 'all', 'me', 'i', 'che', "che's", 'stored', 'saved', 'records', 'record', 'memories', 'memory']);
+function termWords(term) {
+  return [...new Set(String(term || '').toLowerCase().replace(/[‘’ʼ]/g, "'").split(/[^a-z0-9']+/)
+    .filter((w) => w.length >= 2 && !TERM_STOP.has(w))
+    .map((w) => (w.length > 3 && /[^s]s$/.test(w) ? w.slice(0, -1) : w)))];
 }
 
 /**
- * Every store CHE keeps of the owner's words, with its count, and each record that contains the term. Counts are of
- * real rows; a store CHE cannot read from here (the phone's own replica) is named as such, never counted.
+ * Every store CHE keeps of the owner's words, with its count, and each record that contains the term's words. Counts
+ * are of real rows; a store CHE cannot read is named as such, never counted. Superseded memory records are listed as
+ * superseded, so a correction's history shows. Returns { term, stores, matches, current, checked_at, read_receipt }.
  */
 export function searchOwnerMemory(data = {}, store = null, term = '') {
+  const stems = termWords(term);
   const needle = String(term || '').toLowerCase();
-  const hit = (text) => String(text || '').toLowerCase().includes(needle);
-  const records = Array.isArray(data.memory_records) ? data.memory_records.filter((r) => r && r.active !== false) : [];
+  const hit = (text) => { const t = String(text || '').toLowerCase(); return stems.length ? stems.every((w) => t.includes(w)) : t.includes(needle); };
+  const all = Array.isArray(data.memory_records) ? data.memory_records.filter(Boolean) : [];
+  const records = all.filter((r) => r.active !== false);
   const legacy = Array.isArray(data.memories) ? data.memories.map(String) : [];
   const prefs = Array.isArray(data.preference_memory) ? data.preference_memory : [];
   const stores = [];
   const matches = [];
   stores.push({ store: 'memory records', count: records.length });
-  for (const r of records) if (hit(r.text)) matches.push({ store: 'memory records', id: r.id || null, source: r.source || null, verification: r.verification_status || null, at: r.created_at || null, text: clip(r.text, 240) });
+  for (const r of all) {
+    if (!hit(r.text)) continue;
+    const superseded = r.active === false || Boolean(r.superseded_at);
+    matches.push({ store: 'memory records', id: r.id || null, source: r.source || null, verification: r.verification_status || null, at: r.created_at || null, text: clip(r.text, 240), ...(superseded ? { superseded: true, superseded_at: r.superseded_at || null } : {}) });
+  }
   stores.push({ store: 'saved preferences', count: legacy.length });
   for (const text of legacy) {
     if (!hit(text)) continue;
+    // A saved preference that is also a memory record is the same statement; it is listed once.
+    if (matches.some((m) => m.text.toLowerCase() === clip(text, 240).toLowerCase())) continue;
     const pref = prefs.find((p) => String(p?.text || '').toLowerCase() === text.toLowerCase());
     matches.push({ store: 'saved preferences', id: pref?.id || null, source: pref?.source || 'chat (inferred)', verification: 'inferred', at: pref?.created_at || null, text: clip(text, 240) });
   }
   let brainCount = null;
   let gptCount = 0;
-  if (store?.init?.()) {
-    try {
+  let brainError = null;
+  try {
+    if (store?.init?.()) {
       brainCount = Number(store.rows('SELECT COUNT(*) AS n FROM brain_records WHERE deleted = 0')[0]?.n) || 0;
       gptCount = Number(store.rows("SELECT COUNT(*) AS n FROM brain_records WHERE deleted = 0 AND source LIKE '%\"chatgpt_export\"%'")[0]?.n) || 0;
-      for (const row of store.rows('SELECT id FROM brain_records WHERE deleted = 0 AND (lower(title) LIKE ? OR lower(body) LIKE ?) ORDER BY seq DESC LIMIT 25', `%${needle}%`, `%${needle}%`)) {
+      const like = `%${[...stems].sort((a, b) => b.length - a.length)[0] || needle}%`;
+      for (const row of store.rows('SELECT id FROM brain_records WHERE deleted = 0 AND (lower(title) LIKE ? OR lower(body) LIKE ?) ORDER BY seq DESC LIMIT 25', like, like)) {
         const r = store.get(row.id);
         if (!r) continue;
         const said = /You said:\s*([\s\S]*?)(?:\n(?:CHE|ChatGPT) answered:|$)/.exec(String(r.body || ''));
         const text = said ? said[1] : r.body;
         if (!hit(text) && !hit(r.title)) continue;
+        // The owner's own question ("what memories do you have about my favorite color") is not a memory of the answer.
+        if (said && (isQuestionLike(text) || ownerMemorySearchIntent(text))) continue;
         matches.push({ store: r.source?.kind === 'chatgpt_export' ? 'ChatGPT import' : 'Brain', id: r.id, source: r.source?.kind || null, verification: r.verification || null, at: r.source?.message_at || r.created_at || null, text: clip(text, 240), title: r.source?.conversation_title || null });
       }
-    } catch (_) { brainCount = null; }
-  }
-  stores.push({ store: 'Brain (synced from the phone)', count: brainCount });
+    }
+  } catch (error) { brainCount = null; brainError = String(error?.message || error).slice(0, 160); }
+  stores.push({ store: 'Brain (synced from the phone)', count: brainCount, ...(brainError ? { error: brainError } : {}) });
   stores.push({ store: 'ChatGPT import', count: gptCount, connected: gptCount > 0 });
-  return { term, stores, matches, checked_at: new Date().toISOString() };
+  const checkedAt = new Date().toISOString();
+  return {
+    term, stores, matches, current: currentValues(matches), checked_at: checkedAt,
+    // What this turn really read: the proof behind any record id the reply names.
+    read_receipt: { kind: 'memory_store_read', at: checkedAt, stores_read: stores.filter((s) => s.count != null).map((s) => s.store), stores_unreadable: stores.filter((s) => s.count == null).map((s) => s.store), record_ids: matches.map((m) => m.id).filter(Boolean) },
+  };
 }
+
+const at = (m) => { const t = Date.parse(String(m?.at || '')); return Number.isFinite(t) ? t : -Infinity; };
+const OWNER_SOURCES = new Set(['owner', 'owner_chat', 'explicit_memory', 'owner_approved', 'chatgpt_export']);
+const ownerConfirmed = (m) => m.verification === 'owner_attested' && (m.store !== 'memory records' || OWNER_SOURCES.has(String(m.source || '')));
+
+/**
+ * For each owner fact the matches state ("my favorite color is …"), the value of the newest owner-confirmed statement
+ * that was not superseded; every other value of the same fact is listed as replaced. Deterministic: by stored date,
+ * ties broken by the later record. [{ subject, value, match, replaced: [{ value, match }] }]
+ */
+function currentValues(matches) {
+  const bySubject = new Map();
+  matches.forEach((m, index) => {
+    if (!ownerConfirmed(m)) return;
+    for (const fact of ownerFacts(m.text)) {
+      const key = [...fact.subjectWords].sort().join(' ');
+      if (!bySubject.has(key)) bySubject.set(key, []);
+      bySubject.get(key).push({ subject: fact.subject, value: fact.value, match: m, index });
+    }
+  });
+  const out = [];
+  for (const facts of bySubject.values()) {
+    const ordered = facts.slice().sort((a, b) => (Number(!a.match.superseded) - Number(!b.match.superseded)) || (at(a.match) - at(b.match)) || (a.index - b.index));
+    const winner = ordered.at(-1);
+    const replaced = ordered.slice(0, -1).filter((f) => f.value.toLowerCase() !== winner.value.toLowerCase());
+    if (replaced.length) out.push({ subject: winner.subject, value: winner.value, match: winner.match, replaced: replaced.map((f) => ({ value: f.value, match: f.match })) });
+  }
+  return out;
+}
+
+const recordName = (m) => (m.id ? `record ${String(m.id).slice(0, 36)}` : 'no record id');
 
 export function speakMemorySearch(found) {
   const counts = found.stores.map((s) => (s.count == null ? `${s.store}: not readable right now` : s.store === 'ChatGPT import' && !s.connected ? 'ChatGPT import: not connected' : `${s.store}: ${s.count}`)).join('; ');
+  const unreadable = found.stores.filter((s) => s.count == null).map((s) => s.store);
   if (!found.matches.length) {
-    return `I searched every store I keep for "${found.term}" and found no record of it, sir. Searched: ${counts}. ${found.stores.find((s) => s.store === 'ChatGPT import')?.connected ? '' : 'If you said it to ChatGPT, I can\'t see that until you import your ChatGPT export.'}`.trim();
+    const partial = unreadable.length ? ` I couldn't read ${unreadable.join(' or ')} just now, so a record there may exist that I can't see; I won't guess at it.` : '';
+    return `I searched every store I keep for "${found.term}" and found no record of it, sir.${partial} Searched: ${counts}. ${found.stores.find((s) => s.store === 'ChatGPT import')?.connected ? '' : 'If you said it to ChatGPT, I can\'t see that until you import your ChatGPT export.'}`.trim();
   }
-  const lines = found.matches.slice(0, 6).map((m, i) => `${i + 1}. ${m.store}${m.title ? ` ("${m.title}")` : ''}, ${m.at ? day(m.at) : 'no date'}${m.id ? `, record ${String(m.id).slice(0, 18)}` : ''}: "${m.text}"`);
-  return `I found ${found.matches.length} record${found.matches.length === 1 ? '' : 's'} with "${found.term}", sir. ${lines.join(' ')}${found.matches.length > 6 ? ` And ${found.matches.length - 6} more.` : ''} Searched: ${counts}.`;
+  // Newest first, so the owner hears his latest statement before older ones.
+  const listed = found.matches.map((m, i) => ({ m, i })).sort((a, b) => (at(b.m) - at(a.m)) || (b.i - a.i)).map((x) => x.m);
+  const lines = listed.slice(0, 6).map((m, i) => `${i + 1}. ${m.store}${m.title ? ` ("${m.title}")` : ''}, ${m.at ? day(m.at) : 'no date'}${m.id ? `, ${recordName(m)}` : ''}${m.superseded ? ', superseded' : ''}: "${m.text}"`);
+  const current = (found.current || []).map((c) => `Your latest confirmed ${c.subject} is ${c.value} (${recordName(c.match)}${c.match.at ? `, ${day(c.match.at)}` : ''}); it replaces ${c.replaced.map((r) => `${r.value} (${recordName(r.match)}${r.match.at ? `, ${day(r.match.at)}` : ''})`).join(' and ')}.`).join(' ');
+  return `I read my memory stores just now and found ${found.matches.length} record${found.matches.length === 1 ? '' : 's'} with "${found.term}", sir.${current ? ` ${current}` : ''} ${lines.join(' ')}${found.matches.length > 6 ? ` And ${found.matches.length - 6} more.` : ''} Searched: ${counts}.`;
+}
+
+/**
+ * The records CHE's last answer actually read, from that answer's ledger entry (memory_provenance.recordAnswerEvidence),
+ * looked up again in the stores so each id shown is real. An answer that read nothing says so: no id is ever made up.
+ */
+export function speakLastRecordIds(last, data = {}, store = null) {
+  const ids = Array.isArray(last?.records) ? last.records.filter(Boolean) : [];
+  if (!ids.length) {
+    return { text: 'My last answer didn\'t read any memory record, sir, so there are no memory IDs from it. If an earlier reply named record numbers without a read, they were not real. Say "search my memory for" and a topic, and I\'ll read the stores and give you the real record IDs.', records: [] };
+  }
+  const shown = [];
+  for (const id of ids.slice(0, 5)) {
+    let r = (Array.isArray(data.memory_records) ? data.memory_records : []).find((x) => x?.id === id) || null;
+    let where = 'memory records';
+    if (!r) { try { r = store?.init?.() ? store.get(id) : null; where = 'Brain'; } catch (_) { r = null; } }
+    if (r) shown.push({ id, line: `record ${String(id).slice(0, 36)} in ${where}, ${day(r.created_at) || 'no date'}: "${clip(r.text || r.title || r.body, 160)}"` });
+  }
+  if (!shown.length) return { text: 'My last answer named records I can no longer find in my stores, sir, so I can\'t show their IDs as real. Ask me to search my memory and I\'ll read the stores again.', records: [] };
+  return { text: `My last answer read ${shown.length} record${shown.length === 1 ? '' : 's'}, sir: ${shown.map((s, i) => `${i + 1}. ${s.line}`).join(' ')}`, records: shown.map((s) => s.id) };
+}
+
+/**
+ * The whole "search my memory" / "which record ids did you read" turn: a real read of the stores, its receipt in the
+ * answer ledger, and a reply that names only what was read. A store that throws gives an honest failure, never content.
+ * Returns { text, meta } for the chat route's done line.
+ */
+export async function ownerSearchTurn(storage, data, store, ask = {}) {
+  let text;
+  let records = [];
+  let meta;
+  try {
+    if (ask.ids) {
+      const shown = speakLastRecordIds(await latestAnswerEvidence(storage), data, store);
+      ({ text, records } = shown);
+      meta = { read_receipt: { kind: 'answer_ledger_read', at: new Date().toISOString(), record_ids: records } };
+    } else {
+      const found = searchOwnerMemory(data, store, ask.term);
+      text = speakMemorySearch(found);
+      records = found.read_receipt.record_ids;
+      meta = { memory_search: found, read_receipt: found.read_receipt };
+    }
+  } catch (error) {
+    text = 'I couldn\'t read my memory stores just now, sir, so I have no records to show and I won\'t guess at any. Nothing was changed. Ask me again in a minute.';
+    meta = { ok: false, read_receipt: { kind: 'memory_store_read', at: new Date().toISOString(), error: String(error?.message || error).slice(0, 160), record_ids: [] } };
+  }
+  await recordAnswerEvidence(storage, text, { kind: records.length ? 'memory_search' : 'none', tools: ['memory_records', 'brain/search'] }, { records }).catch(() => null);
+  return { text, meta: { ...meta, records: records.length, record_ids: records } };
 }
 
 // ─── The owner's ChatGPT history ────────────────────────────────────────────────────────────────────────────────────
@@ -209,10 +354,10 @@ export function noteAsStatement(note) {
 // Owner report (2026-10-23): "Show a saved Brain record" and "Inspect your memory system" went to the language model,
 // so a busy engine gave "I couldn't finish that answer". Both are reads of CHE's own stores and never need a model.
 
-/** "Show a saved Brain record", "open my latest brain record", "show me a memory record about Sprite". */
+/** "Show a saved Brain record", "open my latest brain record", "show me a memory record about Sprite". Plural "records" is a search (ownerMemorySearchIntent). */
 export function brainRecordIntent(message) {
   const t = stripWake(message).replace(/[?.!]+$/, '').replace(/\s+/g, ' ').trim();
-  const m = /^(?:can you |could you |please )?(?:show|open|read|give|pull up|bring up)(?: me| up)? (?:a|one|the|my|your|any|the latest|the newest|the most recent|my latest|your latest|a recent)? ?(?:saved |stored |latest |newest |recent |random )?(?:brain|memory) (?:record|entry|note)s?(?: (?:about|on|for|with) (.{2,60}))?$/i.exec(t);
+  const m = /^(?:can you |could you |please )?(?:show|open|read|give|pull up|bring up)(?: me| up)? (?:a|one|the|my|your|any|the latest|the newest|the most recent|my latest|your latest|a recent)? ?(?:saved |stored |latest |newest |recent |random )?(?:brain|memory) (?:record|entry|note)(?: (?:about|on|for|with) (.{2,60}))?$/i.exec(t);
   if (!m) return null;
   return { term: (m[1] || '').trim() };
 }

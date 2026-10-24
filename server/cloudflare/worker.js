@@ -30,7 +30,7 @@ import {
 } from './ai_layer.js';
 import { promoteManually } from './model_discovery.js';
 import { createProviderEmployee, retireIdleTemporaries, startPairedJob, taskEnvelope } from './office_workforce.js';
-import { fineTuneDisclosure, setProviderPermission } from './privacy_policy.js';
+import { auditView, fineTuneDisclosure, setProviderPermission } from './privacy_policy.js';
 import {
   accountsView, approveProviderPlugin, authorizeProvider, ensureAiState, proposeProviderPlugin,
 } from './provider_registry.js';
@@ -165,7 +165,7 @@ import { flushOutbox, handleWebMailbox, isOpen as flagstaffOpen, lockMailbox, op
 import { CheLibrary, fetchReadable, libraryContext, libraryIntent } from './library.js';
 import { KnowledgeLibrary, knowledgeIntent, knowledgeReply, knowledgeTaskContext } from './knowledge_library.js';
 import { answerPersonalFact, answerStoredStatement, factCorrectionReply, groundedReply, isQuestionLike, needsStrongEngine, ownerFactTurn, personalFactQuestion, recallPersonalFact, storedStatementQuestion } from './personal_recall.js';
-import { brainRecordIntent, chatgptHistoryIntent, importChatgptBatch, inspectMemory, memoryInspectIntent, ownerMemorySearchIntent, ownerStatementCandidates, phoneBrainNotes, searchOwnerMemory, speakBrainRecord, speakChatgptHistory, speakMemoryInspection, speakMemorySearch } from './owner_recall.js';
+import { brainRecordIntent, chatgptHistoryIntent, importChatgptBatch, inspectMemory, memoryInspectIntent, ownerMemorySearchIntent, ownerSearchTurn, ownerStatementCandidates, phoneBrainNotes, speakBrainRecord, speakChatgptHistory, speakMemoryInspection } from './owner_recall.js';
 import { adRequest, adStatusLines, assetTruthReply } from './asset_truth.js';
 import { dropAgentTaskTurns, replyRepeatsAgentTask } from './agent_task_guard.js';
 import { openKnowledgeLibrary, seedKnowledgeCatalog } from './knowledge_catalog_seed.js';
@@ -5930,7 +5930,7 @@ export class CheState extends DurableObject {
       const answer = await this.env.AI.run(this.env.CHE_FAST_MODEL || FAST_MODEL, {
         messages: [{ role: 'system', content: system }, ...history, { role: 'user', content: message }],
         max_tokens: 700,
-        che_audit: { task: message.slice(0, 160), agent: 'CHE', route: 'guest_chat' },
+        che_audit: { tenant_id: tenant?.id, agent: 'CHE', route: 'guest_chat' },
       });
       const reply = String(answer?.response || answer?.choices?.[0]?.message?.content || '').trim();
       return ndjsonReply(reply || 'I could not answer that just now. Please try again.', { source: 'che_guest', ok: Boolean(reply), model_calls: 1 });
@@ -9182,7 +9182,7 @@ export class CheState extends DurableObject {
         return json({ accounts: accountsView(this.env, data) });
       }
       if (path === '/api/ai/audit' && request.method === 'GET') {
-        return json({ calls: ((await this.ctx.storage.get('ai_audit')) || []).slice(0, 100) });
+        return json(auditView(await this.ctx.storage.get('ai_audit')));
       }
       const envelopeMatch = /^\/api\/office\/tasks\/([A-Za-z0-9-]{8,64})\/envelope$/.exec(path);
       if (envelopeMatch && request.method === 'GET') {
@@ -10990,8 +10990,8 @@ export class CheState extends DurableObject {
         // A question about the owner's own memories or about the evidence for
         // an earlier answer is answered from records further down, in his own
         // words: no interpreter rewrite, clarifying question or model read.
-        const memoryRoute = ownerDevice && !body.attachment && (asksForEvidence || Boolean(ownerMemoryQuestion(rawMessage)) ||
-          Boolean(factTurn) || Boolean(outsideCorrespondenceIntent(rawMessage, { history: ownerHistory })));
+        const memoryRoute = ownerDevice && !body.attachment && !!(asksForEvidence || ownerMemoryQuestion(rawMessage) ||
+          factTurn || ownerMemorySearchIntent(rawMessage) || outsideCorrespondenceIntent(rawMessage, { history: ownerHistory }));
         // Voice Studio: the owner's spoken requests about his voice library are answered
         // from the provider's account, with no model call. Anything else goes on below.
         if (ownerDevice && !body.attachment) {
@@ -12262,8 +12262,8 @@ export class CheState extends DurableObject {
         if (ownerSearch) {
           let store = null;
           try { store = new CheBrainStore(this.ctx.storage); } catch (_) { store = null; }
-          const found = searchOwnerMemory(data, store, ownerSearch.term);
-          return ndjsonReply(speakMemorySearch(found), { source: 'che_memory_search', model_calls: 0, memory_search: found });
+          const turn = await ownerSearchTurn(this.ctx.storage, data, store, ownerSearch);
+          return ndjsonReply(turn.text, { source: 'che_memory_search', model_calls: 0, ...turn.meta });
         }
         // The owner's memory search reads the Brain store and the Flagstaff archive and names what matched, with
         // ids, dates and the sender as stored. The model is never asked, so it cannot say a search ran or invent

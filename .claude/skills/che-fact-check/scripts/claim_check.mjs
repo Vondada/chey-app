@@ -78,12 +78,15 @@ const research = sources.length ? { summary: 'research receipt', sources, cached
 const research_check = truth.guardClaimedResearchActions(reply, { research, tools, documentRead: argv.includes('--document-read'), message });
 const attribution = mp.guardOwnerAttributions(research_check.text, { records, ownerTurns, message });
 const remember = mp.guardRememberBlock(attribution.text, { ownerTurns, retracted: [] });
+// The chat pipeline's execution_claims stage: invented record ids, storage reads, tool runs and repository claims.
+const execution = truth.guardExecutionClaims(remember.text, { message, receipts: [], documentRead: argv.includes('--document-read') });
 const result = {
-  verdict: research_check.corrected || attribution.removed.length || remember.dropped.length ? 'BLOCKED' : 'PASS',
+  verdict: research_check.corrected || attribution.removed.length || remember.dropped.length || execution.removed.length ? 'BLOCKED' : 'PASS',
   research_claim_corrected: research_check.corrected,
   attributions_removed: attribution.removed,
   remember_lines_dropped: remember.dropped,
-  owner_sees: remember.text,
+  execution_claims_removed: execution.removed,
+  owner_sees: execution.text,
 };
 if (argv.includes('--json')) {
   console.log(JSON.stringify(result, null, 2));
@@ -91,6 +94,7 @@ if (argv.includes('--json')) {
   const lines = [`VERDICT: ${result.verdict}`];
   if (result.research_claim_corrected) lines.push('- research/tool claim with no execution receipt: whole reply replaced');
   for (const s of result.attributions_removed) lines.push(`- unsupported owner attribution removed: "${String(s).trim().slice(0, 200)}"`);
+  for (const s of result.execution_claims_removed) lines.push(`- record, storage or execution claim with no receipt removed: "${String(s).trim().slice(0, 200)}"`);
   for (const s of result.remember_lines_dropped) lines.push(`- che-remember line dropped (not in the owner's words): "${String(s).slice(0, 160)}"`);
   lines.push(`OWNER SEES: ${result.owner_sees.replace(/\s+/g, ' ').trim().slice(0, 600)}`);
   console.log(lines.join('\n'));

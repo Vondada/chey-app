@@ -24,9 +24,19 @@ import 'che_creative_studio.dart' show CheStudioColors;
 const cheColabNotebookUrl =
     'https://colab.research.google.com/github/Vondada/chey-app/blob/main/notebooks/CHE_GPU_Face_Preview.ipynb';
 
-/// The Creation Engine (the owner's Colab GPU worker) as the Worker reports it.
+/// The Creation Engine as the Worker reports it: the owner's Colab GPU when it is open, and the free GitHub cloud CPU
+/// workers CHE starts by herself (`automatic`).
 class CheCreationEngine {
-  const CheCreationEngine({this.status = 'unknown', this.gpu, this.lastSeen, this.notebookUrl = cheColabNotebookUrl});
+  const CheCreationEngine({
+    this.status = 'unknown',
+    this.gpu,
+    this.lastSeen,
+    this.notebookUrl = cheColabNotebookUrl,
+    this.automatic = false,
+    this.workersOnline = 0,
+    this.maxConcurrent = 0,
+    this.waitingReason = '',
+  });
 
   factory CheCreationEngine.fromJson(Object? j) {
     if (j is! Map) return const CheCreationEngine();
@@ -41,30 +51,66 @@ class CheCreationEngine {
       gpu: gpu.isEmpty ? null : gpu,
       lastSeen: j['last_seen'] == null ? null : '${j['last_seen']}',
       notebookUrl: '${j['notebook_url'] ?? cheColabNotebookUrl}',
+      automatic: j['automatic'] == true,
+      workersOnline: (j['workers_online'] as num?)?.toInt() ?? 0,
+      maxConcurrent: (j['max_concurrent'] as num?)?.toInt() ?? 0,
+      waitingReason: '${j['waiting_reason'] ?? ''}'.trim(),
     );
   }
 
-  /// online | offline | not_paired | unknown (not loaded yet).
+  /// online (a GPU is checked in) | cloud (CHE starts free cloud workers) | offline | not_paired | unknown (not loaded).
   final String status;
   final String? gpu;
   final String? lastSeen;
   final String notebookUrl;
 
+  /// CHE can start a free cloud worker herself, so nothing is needed from the owner.
+  final bool automatic;
+  final int workersOnline;
+  final int maxConcurrent;
+  final String waitingReason;
+
   bool get online => status == 'online';
+
+  /// Jobs run without the owner doing anything: a GPU is online, or CHE can start a cloud worker.
+  bool get ready => online || automatic;
   bool get paired => status != 'not_paired';
 
-  String get label => switch (status) {
-    'online' => 'Creation Engine Online',
-    'not_paired' => 'Creation Engine not connected',
-    'unknown' => 'Checking the Creation Engine',
-    _ => 'Creation Engine Offline',
-  };
+  String get label => online
+      ? 'Creation Engine Online'
+      : automatic
+      ? 'Creation Engine Ready'
+      : switch (status) {
+          'not_paired' => 'Creation Engine not connected',
+          'unknown' => 'Checking the Creation Engine',
+          _ => 'Creation Engine Offline',
+        };
 
-  String get detail => switch (status) {
-    'online' => 'Running on ${gpu ?? 'your GPU'}.',
-    'not_paired' => 'Connect it once in Settings, Creation Engine.',
-    'unknown' => '',
-    _ => 'It runs only while your Colab notebook is open. Connect opens the notebook; CHE cannot start it for you.',
+  String get detail {
+    final jobs = maxConcurrent > 1 ? ' Up to $maxConcurrent jobs at once.' : '';
+    if (online) return 'Running on ${gpu ?? 'your GPU'}.$jobs';
+    if (automatic) return 'CHE starts free cloud workers herself. They use the CPU, which is slower than your Colab GPU.$jobs';
+    if (status == 'unknown') return '';
+    final why = waitingReason.isEmpty ? '' : '$waitingReason ';
+    if (status == 'not_paired') return '${why}Connect it once in Settings, Creation Engine.';
+    return '${why}Your Colab GPU runs only while its notebook is open. Connect opens the notebook; Google does not let CHE start it.';
+  }
+}
+
+/// The owner-facing state of a Creation Engine job: Creating, Waiting for Resources, Starting a cloud worker, Paused,
+/// Completed, Failed or Cancelled. The Worker's own `display_state` wins; older jobs are mapped from their state.
+String cheJobDisplayState(Map? job) {
+  if (job == null) return '';
+  final shown = '${job['display_state'] ?? ''}'.trim();
+  if (shown.isNotEmpty) return shown;
+  return switch ('${job['state'] ?? ''}') {
+    'rendering' => 'Creating',
+    'queued' => 'Waiting for Resources',
+    'paused' => 'Paused',
+    'completed' => 'Completed',
+    'failed' => 'Failed',
+    'cancelled' => 'Cancelled',
+    _ => '',
   };
 }
 
@@ -358,6 +404,9 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
         });
       case 'done':
         setState(() => playing = m['playing'] == null ? null : '${m['playing']}');
+        final w = _waiting;
+        _waiting = null;
+        if (w != null && !w.isCompleted) w.complete(m);
       case 'error':
         _report(false, '${m['message'] ?? 'The model could not be shown.'}');
     }
@@ -480,6 +529,23 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
       ? 'CHE'
       : '${id[0].toUpperCase()}${id.substring(1)}';
 
+  Completer<Map<String, dynamic>>? _waiting;
+
+  /// Sends one command to the viewport and waits for its own answer ({ok, note}); null when it never answered. Spoken
+  /// confirmations come from this answer, so CHE never reports a viewport change that did not happen (review of #521).
+  Future<Map<String, dynamic>?> _runViewport(Map<String, Object> cmd) async {
+    final w = Completer<Map<String, dynamic>>();
+    _waiting = w;
+    try {
+      await _viewport.command(cmd);
+      return await w.future.timeout(const Duration(seconds: 3));
+    } catch (_) {
+      return null;
+    } finally {
+      if (identical(_waiting, w)) _waiting = null;
+    }
+  }
+
   Future<String> _post(String path, [Map<String, dynamic>? body]) async {
     setState(() => busy = true);
     final d = await _call('POST', path, body);
@@ -492,12 +558,20 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
     }
     final ok = d['ok'] == true && (d['_status'] as int? ?? 500) < 300;
     if (d['project'] is Map) setState(() => project = Map<String, dynamic>.from(d['project'] as Map));
-    final said = '${d['spoken'] ?? d['detail'] ?? (ok ? 'Done.' : 'That did not work.')}';
-    _say(ok, said);
+    var said = '${d['spoken'] ?? d['detail'] ?? (ok ? 'Done.' : 'That did not work.')}';
+    var done = ok;
     if (d['viewport'] is Map) {
+      // The viewport acts first; its own answer decides what is reported.
       final cmd = Map<String, Object>.from(d['viewport'] as Map);
-      await _viewport.command(cmd).catchError((_) {});
+      final r = shown.source == 'none' ? {'ok': false, 'note': 'There is no model in the viewport yet.'} : await _runViewport(cmd);
+      if (r == null || r['ok'] != true) {
+        done = false;
+        said = 'That did not work: ${'${r?['note'] ?? ''}'.trim().isEmpty ? 'the 3D view did not answer.' : r!['note']}';
+      } else if ('${r['note'] ?? ''}'.trim().isNotEmpty) {
+        said = '${r['note']}';
+      }
     }
+    _say(done, said);
     if (ok) await refresh();
     return said;
   }
@@ -521,7 +595,12 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
       _say(false, msg);
       return msg;
     }
-    await _viewport.command(cmd).catchError((_) {});
+    final r = await _runViewport(cmd);
+    if (r == null || r['ok'] != true) {
+      final msg = 'That did not work: ${'${r?['note'] ?? ''}'.trim().isEmpty ? 'the 3D view did not answer.' : r!['note']}';
+      _say(false, msg);
+      return msg;
+    }
     final a = cmd['action'];
     final msg = switch (a) {
       'rotate' =>
@@ -531,7 +610,7 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
       'view' => '${_viewNames['${cmd['deg']}'] ?? 'Back'} view.',
       'spin' => cmd['on'] == false ? 'Turntable off.' : 'Turntable on.',
       'stop' => 'Animation stopped.',
-      _ => 'Done.',
+      _ => '${r['note'] ?? ''}'.trim().isEmpty ? 'Done.' : '${r['note']}',
     };
     _say(true, msg);
     return msg;
@@ -546,7 +625,12 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
       return msg;
     }
     final want = clip != null && clips.contains(clip) ? clip : (clips.contains('idle') ? 'idle' : clips.first);
-    await _viewport.command({'action': 'animate', 'clip': want}).catchError((_) {});
+    final r = await _runViewport({'action': 'animate', 'clip': want});
+    if (r == null || r['ok'] != true) {
+      final msg = 'That did not work: ${'${r?['note'] ?? ''}'.trim().isEmpty ? 'the 3D view did not answer.' : r!['note']}';
+      _say(false, msg);
+      return msg;
+    }
     setState(() => playing = want);
     final msg = 'Playing the $want animation on the ${shown.source == 'generated' ? 'model' : 'bundled model'}.';
     _say(true, msg);
@@ -593,7 +677,7 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
     final j = job;
     final work = j == null
         ? 'No model has been generated for this version yet. Say generate the model.'
-        : 'Creation Engine job: ${'${j['progress'] is Map ? (j['progress'] as Map)['message'] ?? '' : ''}'.isEmpty ? jobState : (j['progress'] as Map)['message']} ($jobState).';
+        : 'Creation Engine job: ${cheJobDisplayState(j)}. ${'${j['status_line'] ?? ''}'.trim().isNotEmpty ? j['status_line'] : '${j['progress'] is Map ? (j['progress'] as Map)['message'] ?? '' : ''}'}';
     final pics = previews.isEmpty ? '' : ' ${previews.length} preview picture${previews.length == 1 ? '' : 's'} ready.';
     return '$title, version $v of $n. ${engine.label}. ${shown.label} $work$pics '
         'Say a change like make the hair longer, or rotate, zoom in, undo, redo, save, generate.';
@@ -938,7 +1022,21 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
         )
       else ...[
         Text(
-          '${progress['message'] ?? jobState}',
+          cheJobDisplayState(j),
+          key: const ValueKey('live-job-state'),
+          style: TextStyle(
+            color: switch (cheJobDisplayState(j)) {
+              'Completed' => CheStudioColors.teal,
+              'Failed' => Colors.redAccent,
+              _ => CheStudioColors.text,
+            },
+            fontSize: 17,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          '${j['status_line'] ?? progress['message'] ?? jobState}',
           key: const ValueKey('live-progress'),
           style: const TextStyle(color: CheStudioColors.text, fontSize: 15, height: 1.35),
         ),
@@ -1058,7 +1156,7 @@ class _EngineBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final on = engine.online;
+    final on = engine.ready;
     return Semantics(
       container: true,
       label: '${engine.label}. ${engine.detail}',

@@ -782,8 +782,14 @@ export function ownerFactCorrection(rawMessage, records = []) {
   const plain = String(rawMessage || '').trim()
     .replace(/^(?:(?:hey |ok |okay )?(?:che|chay|chey|shay)[,:]?\s+)/i, '');
   const m = /^(?:no|nope|actually|correction|update|wait)[,.:!]?\s+(?:that(?:'s| is) (?:wrong|not right)[,.]?\s+)?(?:now\s+)?(my\s+[a-z0-9][a-z0-9 '\-]{1,60}?\s+(?:is|are)\s+[^.?!]{1,200}?)(?:\s+now)?(?:,?\s+not\s+[^.?!]{1,80})?[.!]?$/i.exec(plain);
-  if (!m) return null;
-  const statement = m[1].trim();
+  // "My latest confirmed favorite color is red" (owner, 2026-10-24) is a correction too, alone or after sentences that
+  // only talk about corrections or memory ("Ensure user corrections override outdated preferences."). Any other
+  // sentence beside it is a request of its own, so the turn is left to the routes that read the whole message.
+  const sentences = plain.split(/(?<=[.!])\s+/);
+  const q = !m && /^my\s+(?:(?:latest|current|newest|updated|correct|confirmed)\s+)+([a-z0-9][a-z0-9 '\-]{1,60}?\s+(?:is|are)\s+[^.?!]{1,200}?)[.!]?$/i.exec(sentences.at(-1) || '');
+  if (q && !sentences.slice(0, -1).every((s) => /\b(?:correct\w*|overrid\w*|outdated|old|preferences?|memor\w*|remember\w*|updat\w*|supersed\w*|latest|newest)\b/i.test(s) && !/\?|\b(?:send|buy|pay|order|delete|remove|forget|open|call|email|text|transfer|subscribe)\b/i.test(s))) return null;
+  if (!m && !q) return null;
+  const statement = m ? m[1].trim() : `my ${q[1].trim()}`;
   return (Array.isArray(records) ? records : []).some((r) => isOwnerAttested(r) && sameSlot(r.text, statement))
     ? statement
     : null;

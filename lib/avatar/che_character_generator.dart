@@ -589,7 +589,7 @@ class CheCharacterGeneratorState extends State<CheCharacterGenerator> {
               padding: const EdgeInsets.only(bottom: 8),
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text('${j['title'] ?? 'GPU job'}', style: const TextStyle(color: Colors.white, fontSize: 14)),
-                Text(cheGpuStateLabel('${j['state'] ?? ''}'), style: quiet),
+                Text(cheGpuStateLabel('${j['state'] ?? ''}', device: '${j['device'] ?? ''}'), style: quiet),
                 if (j['previews'] is Map && (j['previews'] as Map).isNotEmpty)
                   Row(children: [
                     for (final e in (j['previews'] as Map).entries)

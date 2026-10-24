@@ -159,6 +159,22 @@ test('che-fact-check claim_check: CHE\'s own guards block invented owner claims 
   assert.match(check(['--route', 'Octopuses have nine brains, is that true?']).stdout, /general pipeline/);
 });
 
+// Owner report 2026-10-24: "I retrieved memory IDs 8829, 8830 and 8831 from storage" passed claim_check, which did not run
+// the chat pipeline's execution_claims stage. It runs it now, so an invented record id or storage read is BLOCKED.
+test('che-fact-check claim_check: invented memory ids and storage reads are blocked like the chat route blocks them', () => {
+  const check = (args) => node([script('che-fact-check', 'claim_check.mjs'), ...args]);
+  const invented = check(['--reply', 'I retrieved memory IDs 8829, 8830 and 8831 from storage, sir. Record 8829 says your favorite color is blue.']);
+  assert.equal(invented.status, 1);
+  assert.match(invented.stdout, /VERDICT: BLOCKED/);
+  assert.match(invented.stdout, /record, storage or execution claim with no receipt removed: "Record 8829 says/);
+  assert.doesNotMatch(invented.stdout.split('OWNER SEES:')[1], /8829|8830|8831/);
+  const partial = check(['--reply', 'Your favorite color is red, sir. Memory IDs 8829 and 8830 confirm it.', '--json']);
+  assert.equal(partial.status, 1);
+  assert.equal(JSON.parse(partial.stdout).owner_sees.startsWith('Your favorite color is red, sir.'), true);
+  const plain = check(['--reply', 'The record 2024 sales were strong, and order number 4521 shipped.']);
+  assert.equal(plain.status, 0, plain.stdout);
+});
+
 test('evidence integrity: claim_check agrees with the deployed chat route on every fixture', () => {
   const replies = [
     ['You personally tested the new door lock last Tuesday.', true],

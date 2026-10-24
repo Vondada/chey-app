@@ -33,6 +33,16 @@ Future<void> _shoot(WidgetTester tester, Widget room, String golden) async {
     home: CheHudBackdrop(child: room),
   ));
   await tester.pump(const Duration(milliseconds: 400));
+  // Asset pictures (the Creation Room tiles) decode asynchronously: wait for them so the golden shows the real tiles.
+  final pictures = find.byType(Image).evaluate().toList();
+  if (pictures.isNotEmpty) {
+    await tester.runAsync(() async {
+      for (final e in pictures) {
+        await precacheImage((e.widget as Image).image, e);
+      }
+    });
+    await tester.pump(const Duration(milliseconds: 100));
+  }
   await expectLater(find.byType(MaterialApp), matchesGoldenFile('goldens/$golden.png'));
   await tester.pumpWidget(const SizedBox());
 }

@@ -64,7 +64,13 @@ Map<String, dynamic> _creationsView({String engine = 'offline'}) => {
           'job': {'id': 'gpu_1', 'state': 'queued', 'pct': 0, 'message': 'Waiting for your Colab GPU session.'}},
         {'id': 'cr_2', 'kind': 'person', 'title': 'Vale (new person)', 'version': 1, 'versions': 1, 'job': null},
       ],
-      'engine': {'status': engine, 'online': engine == 'online', 'paired': engine != 'not_paired', 'gpu': engine == 'online' ? 'Tesla T4' : null},
+      'engine': {
+        'status': engine,
+        'online': engine == 'online',
+        'paired': engine != 'not_paired',
+        'gpu': engine == 'online' ? 'Tesla T4' : null,
+        if (engine == 'cloud') ...{'automatic': true, 'workers_online': 1, 'max_concurrent': 3},
+      },
       'capabilities': [
         {'id': 'person', 'status': 'available', 'detail': 'Build a real 3D head.'},
         {'id': 'object', 'status': 'unavailable', 'detail': 'Not built yet: CHE has no object modelling pipeline in Blender yet.'},
@@ -81,11 +87,12 @@ http.Client _gpuClient() => MockClient((r) async {
       return http.Response('{}', 404);
     });
 
-Widget _studio(_Calls calls, {List<CheStudioActivity> activity = const [], List<String>? read, bool creations = true, String engine = 'offline'}) => MaterialApp(
+Widget _studio(_Calls calls, {List<CheStudioActivity> activity = const [], List<String>? read, bool creations = true, String engine = 'offline', Key? key, Future<String> Function(Map<String, Object>)? saveEngine}) => MaterialApp(
       debugShowCheckedModeBanner: false,
       theme: ThemeData(brightness: Brightness.dark, fontFamily: 'Roboto'),
       home: Scaffold(
         body: CheCreativeStudio(
+          key: key,
           actions: calls.actions(),
           projects: _projects,
           vaultCount: 3,
@@ -94,6 +101,7 @@ Widget _studio(_Calls calls, {List<CheStudioActivity> activity = const [], List<
           videoConnected: false,
           onRead: read?.add,
           loadCreations: () async => _creationsView(engine: engine),
+          saveEngineSettings: saveEngine,
           creations: creations
               ? const CheCreationsTiles(
                   items: [
@@ -283,6 +291,46 @@ void main() {
     expect(find.byKey(const ValueKey('studio-connect')), findsNothing);
   });
 
+  testWidgets('free cloud workers: the engine is Ready with no Connect, and "creation engine status" says so', (tester) async {
+    await _phone(tester);
+    final key = GlobalKey<CheCreativeStudioState>();
+    await tester.pumpWidget(_studio(_Calls(), engine: 'cloud', key: key));
+    await tester.pumpAndSettle();
+    expect(find.text('Creation Engine Ready'), findsOneWidget);
+    expect(find.byKey(const ValueKey('studio-connect')), findsNothing);
+    final said = await key.currentState!.voice('creation engine status');
+    expect(said, startsWith('Creation Engine Ready. CHE starts free cloud workers herself.'));
+    expect(said, contains('Up to 3 jobs at once.'));
+    expect(await key.currentState!.voice('is the creation engine running'), said);
+  });
+
+  test('spoken Creation Engine settings are understood; other sentences are not', () {
+    expect(cheEngineSettingFromWords('Start cloud workers automatically.'), {'auto_cloud': true});
+    expect(cheEngineSettingFromWords('turn on free cloud workers'), {'auto_cloud': true});
+    expect(cheEngineSettingFromWords('stop starting cloud workers'), {'auto_cloud': false});
+    expect(cheEngineSettingFromWords('turn off cloud workers'), {'auto_cloud': false});
+    expect(cheEngineSettingFromWords('allow 4 cloud workers at once'), {'max_cloud_workers': 4});
+    expect(cheEngineSettingFromWords('set cloud workers to 2'), {'max_cloud_workers': 2});
+    expect(cheEngineSettingFromWords('what are cloud workers'), isNull);
+    expect(cheEngineSettingFromWords('start the video'), isNull);
+  });
+
+  testWidgets('Creation Engine settings by voice reach the Worker and speak its answer (review of #521)', (tester) async {
+    await _phone(tester);
+    final key = GlobalKey<CheCreativeStudioState>();
+    final sent = <Map<String, Object>>[];
+    await tester.pumpWidget(_studio(_Calls(), engine: 'cloud', key: key, saveEngine: (c) async {
+      sent.add(c);
+      return 'Creation Engine set: up to ${c['max_cloud_workers'] ?? 3} cloud workers at once. Spending limit stays at zero dollars.';
+    }));
+    await tester.pumpAndSettle();
+    final said = await key.currentState!.voice('allow 4 cloud workers');
+    expect(sent.single, {'max_cloud_workers': 4});
+    expect(said, 'Creation Engine set: up to 4 cloud workers at once. Spending limit stays at zero dollars.');
+    expect(await key.currentState!.voice('stop starting cloud workers'), isNotNull);
+    expect(sent.last, {'auto_cloud': false});
+  });
+
   testWidgets('projects: newest first, four shown, See all lists every one and opens the editor', (tester) async {
     await _phone(tester);
     final calls = _Calls();
@@ -324,6 +372,7 @@ void main() {
     expect(find.text('No active jobs right now.'), findsNothing);
     expect(find.text('Coding job'), findsOneWidget);
     expect(find.text('Running'), findsOneWidget);
+    await _scrollTo(tester, find.text('Coding job'));
     await tester.tap(find.text('Coding job'));
     expect(calls.list.last, 'job');
   });

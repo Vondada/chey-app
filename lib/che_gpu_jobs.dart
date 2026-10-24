@@ -10,16 +10,20 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
-/// One line per job state, as the owner hears and reads it.
-String cheGpuStateLabel(String state) => switch (state) {
-      'queued' => 'Queued: waits for your Colab session',
-      'rendering' => 'Rendering on the GPU',
-      'paused' => 'Paused: resumes in your next Colab session',
-      'completed' => 'Completed on the GPU',
-      'failed' => 'Failed',
-      'cancelled' => 'Cancelled',
-      _ => state,
-    };
+/// One line per job state, as the owner hears and reads it. [device] is the worker's (`cpu` for CHE's free cloud
+/// workers), so a CPU job is never called a GPU job.
+String cheGpuStateLabel(String state, {String? device}) {
+  final cpu = (device ?? '').toLowerCase().startsWith('cpu');
+  return switch (state) {
+    'queued' => 'Waiting for Resources: the next free worker takes it',
+    'rendering' => cpu ? 'Creating on a cloud CPU' : 'Rendering on the GPU',
+    'paused' => 'Paused: resumes on the next free worker',
+    'completed' => cpu ? 'Completed on a cloud CPU' : 'Completed on the GPU',
+    'failed' => 'Failed',
+    'cancelled' => 'Cancelled',
+    _ => state,
+  };
+}
 
 /// The jobs, newest first, as the Worker lists them.
 List<Map<String, dynamic>> cheGpuJobsFrom(Object? decoded) {
@@ -185,7 +189,7 @@ class CheGpuJobsCardState extends State<CheGpuJobsCard> {
     final history = (j['history'] as List?)?.whereType<Map>().toList() ?? const [];
     final last = history.isEmpty ? '' : '${history.last['note'] ?? ''}';
     final previews = j['previews'] is Map ? Map<String, dynamic>.from(j['previews'] as Map) : const <String, dynamic>{};
-    final label = '${j['title'] ?? 'GPU job'}. ${cheGpuStateLabel(state)}${pct != null && state == 'rendering' ? ', $pct percent' : ''}. $last';
+    final label = '${j['title'] ?? 'GPU job'}. ${cheGpuStateLabel(state, device: '${j['device'] ?? ''}')}${pct != null && state == 'rendering' ? ', $pct percent' : ''}. $last';
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: Semantics(
@@ -196,7 +200,7 @@ class CheGpuJobsCardState extends State<CheGpuJobsCard> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             ExcludeSemantics(child: Text('${j['title'] ?? 'GPU job'}', style: const TextStyle(color: Colors.white, fontSize: 13))),
-            ExcludeSemantics(child: Text(cheGpuStateLabel(state) + (pct != null && state == 'rendering' ? ' · $pct%' : ''), style: quiet)),
+            ExcludeSemantics(child: Text(cheGpuStateLabel(state, device: '${j['device'] ?? ''}') + (pct != null && state == 'rendering' ? ' · $pct%' : ''), style: quiet)),
             if (state == 'rendering' && pct != null)
               Padding(padding: const EdgeInsets.only(top: 4), child: ExcludeSemantics(child: LinearProgressIndicator(value: pct / 100))),
             if (last.isNotEmpty) ExcludeSemantics(child: Text(last, style: quiet, maxLines: 3, overflow: TextOverflow.ellipsis)),

@@ -142,9 +142,9 @@ test('A. "create a Blender animation" checks existing resources first, then name
   const plan = selectProvider('blender_render', { env: GH_ENV });
   assert.equal(plan.blocked, true);
   assert.equal(plan.missing_capability, 'blender');
-  assert.match(plan.reason, /No provider has Blender/);
+  assert.match(plan.reason, /Blender runs automatically only for Create Person[\s\S]*No workflow renders a Blender animation/);
   assert.match(plan.existing, /tools\/character_pipeline\/build_che_character\.py[\s\S]*bpy==5\.0\.1/);
-  assert.match(plan.smallest_addition, /new workflow on ubuntu-latest[\s\S]*bpy==5\.0\.1[\s\S]*ffmpeg[\s\S]*pull request/);
+  assert.match(plan.smallest_addition, /che-creation-worker\.yml, which already installs Blender[\s\S]*ffmpeg[\s\S]*pull request/);
   assert.equal(MISSING.blender.smallest_addition, plan.smallest_addition);
 
   const che = await owner({ env: GH_ENV });
@@ -154,7 +154,7 @@ test('A. "create a Blender animation" checks existing resources first, then name
   assert.equal(out.route, 'che_cloud_computer');
   assert.equal(out.modelCalls, 0);
   assert.equal(out.done.blocked, true);
-  assert.match(out.reply, /No provider has Blender[\s\S]*Smallest addition:[\s\S]*Nothing was started\./);
+  assert.match(out.reply, /Blender runs automatically only for Create Person[\s\S]*Smallest addition:[\s\S]*Nothing was started\./);
   assert.equal(calls.length, 0, 'nothing reached GitHub');
   assert.equal(che.jobs().length, before, 'no job was invented');
 });
@@ -448,7 +448,7 @@ test('GET /api/cloud-computer is owner-only and holds environments, software, jo
   assert.ok(Array.isArray(view.body.jobs));
   assert.match(view.body.costs.summary, /not verified as free/);
   assert.equal(view.body.missing.find((m) => m.capability === 'blender').reason, MISSING.blender.reason);
-  assert.match(view.body.spoken, /No environment has Blender/);
+  assert.match(view.body.spoken, /Blender runs only for Create Person/);
   const stranger = await che.get('/api/cloud-computer', 'not-a-token');
   assert.ok(stranger.status >= 400);
   // Controls by route read back the real result.

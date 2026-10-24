@@ -235,7 +235,8 @@ class GpuWorkerTest(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertIn('MODEL UPLOAD: saved to the Live Studio', out)
         self.assertLess(out.index('MODEL UPLOAD'), out.index('PREVIEW view 0'), 'geometry arrives before the first render')
-        self.assertEqual(self.calls_made(), ['0,45+model'])
+        # Full body (the default): build the model, verify the GLB, then render the views from it.
+        self.assertEqual(self.calls_made(), ['+model', 'verify', '0,45'])
         j = next(x for x in self.api('/api/gpu')['jobs'] if x['id'] == jid)
         self.assertEqual(j['state'], 'completed', j['history'])
         self.assertEqual(j['model']['sha256'], j['receipt']['model']['sha256'])

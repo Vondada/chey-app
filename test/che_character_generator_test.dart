@@ -143,7 +143,7 @@ void main() {
     expect(text, startsWith('Queued for your Colab T4 session: 3 preview jobs'));
     expect(text, contains('Nothing is rendered until the notebook runs'));
     expect(text.toLowerCase(), isNot(contains('rendered on')));
-    expect(find.text('Queued: waits for your Colab session'), findsNWidgets(3));
+    expect(find.text('Waiting for Resources: the next free worker takes it'), findsNWidgets(3));
   });
 
   testWidgets('Preview with one look sends only the chosen look', (tester) async {

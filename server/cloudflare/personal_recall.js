@@ -13,7 +13,8 @@
 import { ownerAttestedRecords, ownerFactCorrection } from './memory_provenance.js';
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-const STOP = new Set(['the', 'a', 'an', 'my', 'your', 'of', 'to', 'in', 'is', 'are', 'and', 'or', 'it', 'that', 'this', 'me', 'you', 'i', 'do', 'did', 'know', 'what', 'which', 'whats', 'where']);
+const STOP = new Set(['the', 'a', 'an', 'my', 'your', 'of', 'to', 'in', 'is', 'are', 'and', 'or', 'it', 'that', 'this', 'me', 'you', 'i', 'do', 'did', 'know', 'what', 'which', 'whats', 'where', 'latest', 'current', 'currently', 'newest', 'updated', 'confirmed']);
+// "My latest confirmed favorite color is red" (owner, 2026-10-24) states the same fact as "my favorite color is red".
 // "whats" without an apostrophe is how speech-to-text often writes "what's".
 const PERSONAL = /^(?:what(?:'s|s| is| are)?|which(?: one is)?|do you (?:know|remember)|tell me|remind me|what do you know about)\s+(?:is |are |was |about )?(?:my|the owner'?s?|your owner'?s?)\s+(.{2,60})$/i;
 // Asks where a fact came from, or whether CHE really has it stored: "how do you know that", "whether you have a memory of me saying it".
@@ -60,7 +61,9 @@ const LEAD_IN = /^(?:(?:this|a|the following|my)\s+)?(?:test\s+)?(?:fact|note|in
 
 /** The statement as the owner meant it, without the wake word, "remember" or a "this test fact:" lead-in. */
 export function statementText(text) {
-  return stripWake(text).replace(/^remember(?: that| this)?\s*[:,-]?\s*/i, '').replace(LEAD_IN, '').replace(/\s+/g, ' ').trim();
+  return stripWake(text).replace(/^remember(?: that| this)?\s*[:,-]?\s*/i, '').replace(LEAD_IN, '')
+    // "Actually my favorite color is red" is the owner's statement; the correction word is not part of it.
+    .replace(/^(?:actually|correction|update|no|nope|wait)\b[,.:!]?\s*(?=my\s)/i, '').replace(/\s+/g, ' ').trim();
 }
 
 /**
@@ -82,7 +85,7 @@ export function ownerFacts(text) {
   const quote = body.replace(/[.!]+$/, '');
   const facts = [];
   const add = (subject, value, confidence) => {
-    const subj = String(subject || '').trim();
+    const subj = String(subject || '').trim().replace(/^(?:(?:latest|current|currently|newest|updated|confirmed)\s+)+/i, '');
     const val = String(value || '').trim().replace(/^(?:definitely|probably|just)\s+/i, '').replace(/[.!,;]+$/, '');
     if (!words(subj).length || NOT_PERSONAL.test(subj) || !val || POINTER.test(val) || val.split(/\s+/).length > 40) return;
     facts.push({ subject: subj, subjectWords: words(subj), value: val, text: quote, confidence });
@@ -181,7 +184,13 @@ export function recallPersonalFact(data = {}, question = {}, brainRecords = [], 
   if (!matches.length) return null;
   const time = (m) => { const t = Date.parse(String(m.created_at || m.recorded || '')); return Number.isFinite(t) ? t : -Infinity; };
   // Stable: equal times keep their order, so the newest of the undated legacy entries still comes last.
-  return matches.map((m, i) => ({ m, i })).sort((a, b) => (time(a.m) - time(b.m)) || (a.i - b.i)).at(-1).m;
+  const ordered = matches.map((m, i) => ({ m, i })).sort((a, b) => (time(a.m) - time(b.m)) || (a.i - b.i)).map((x) => x.m);
+  const winner = ordered.at(-1);
+  // Older active memory records of this fact with another value (both still marked current, so neither was corrected
+  // through chat): the newest wins, and the answer says it replaced them. A superseded record is already history, and a
+  // Brain turn keeps no superseded mark, so neither is named.
+  const earlier = ordered.slice(0, -1).filter((m) => !m.phone && !m.legacy && !m.brain && Number.isFinite(time(m)) && m.value.toLowerCase() !== winner.value.toLowerCase());
+  return earlier.length ? { ...winner, earlier } : winner;
 }
 
 /**
@@ -225,7 +234,9 @@ export function answerPersonalFact(data = {}, question = {}, brainRecords = [], 
   const source = question.learn ? (record.legacy ? ' It came from you in a chat, as a saved preference, not from anywhere else.' : ' I learned it from you in this chat.') : '';
   const subject = String(question.subject || record.subject).replace(/\bfav(?:ourite|orite|e)?\b/gi, 'favorite');
   const lead = record.confidence === 'high' ? `Your ${subject} is ${record.value}.` : `It sounds like your ${subject} is ${record.value}, from what you told me.`;
-  return { kind: 'owner_attested', records: [record.id].filter(Boolean), record, answer: `${lead}${told}${quoted}${source}` };
+  const prior = record.earlier?.at(-1);
+  const replaced = prior && !record.legacy ? ` Earlier${spokenStoredDate(prior) ? `, on ${spokenStoredDate(prior)},` : ''} you said ${prior.value}; your newer statement replaces it.` : '';
+  return { kind: 'owner_attested', records: [record.id].filter(Boolean), record, answer: `${lead}${told}${quoted}${source}${replaced}` };
 }
 
 // ─── The fact under discussion: short replies, corrections and vague follow-ups ──────────────────────────────────────

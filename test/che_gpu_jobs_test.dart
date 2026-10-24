@@ -57,7 +57,7 @@ void main() {
     final read = <String>[];
     await _pump(tester, s, read: read);
     expect(find.text('Rendering on the GPU · 33%'), findsOneWidget);
-    expect(find.text('Paused: resumes in your next Colab session'), findsOneWidget);
+    expect(find.text('Paused: resumes on the next free worker'), findsOneWidget);
     expect(find.text('Completed on the GPU'), findsOneWidget);
     expect(find.text('Failed'), findsOneWidget);
     expect(find.textContaining('No Colab session open'), findsOneWidget);

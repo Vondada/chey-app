@@ -8,6 +8,7 @@
 | "How do you know that?" / "The last one…" | `evidenceQuestion`, `evidenceRequestSplit`, `evidenceReferent`, `explainEvidenceFor` | Explains that answer's own ledger entry (`che_answer_ledger_v1`). An unsupported owner claim is retracted (`che_retracted_claims_v1`). |
 | Unsupported "you told me / you confirmed" | `guardOwnerAttributions` | Removes the sentence and says so. Questions, hypotheticals and requested fiction pass. |
 | Model-invented memories | `guardRememberBlock` | Keeps only `che-remember` lines found in the owner's own words that were not retracted. |
+| "What memories / records do you have about X?", "which memory IDs did you retrieve?" | `owner_recall.js` `ownerMemorySearchIntent` → `ownerSearchTurn` (route `che_memory_search`, 0 model calls) | Reads the stores this turn; names only real ids, newest confirmed value first with what it replaced; `done.read_receipt` is the proof. Numbered memory records in model text are removed (`truth_layer.js` rule `memory_id`). |
 | Claimed search, compare, verify or review | `truth_layer.js` `guardClaimedResearchActions` | Needs a successful tool, research sources or a document read from this turn. |
 | "Research a fact" with no subject | `vagueResearchRequest` | Asks which fact. Nothing is researched. |
 | Owner corrects his own fact | `ownerFactCorrection` + `addOwnerMemory` | The old record is kept as history (`superseded_by`). |
@@ -28,7 +29,7 @@ Each reply passes through these steps, in this order:
 5. `sanitizeOwnerText`
 6. `recordAnswerEvidence`
 
-`claim_check.mjs` runs steps 1, 3 and 4. Step 2 opens pages, so it is tested through `/api/chat` against a simulated web in `server/cloudflare/source_verification.test.mjs`. Other guards, such as location/weather and `guardOwnerReply`, run on their own paths.
+`claim_check.mjs` runs steps 1, 3 and 4, then the chat pipeline's `execution_claims` stage (`guardExecutionClaims`: invented record ids, storage reads, tool runs). Step 2 opens pages, so it is tested through `/api/chat` against a simulated web in `server/cloudflare/source_verification.test.mjs`. Other guards, such as location/weather and `guardOwnerReply`, run on their own paths.
 
 A fake search, browse or comparison claim replaces the **whole** reply. Anything else in it may rest on the search that never ran, so harmless lines are lost as well. An unsupported owner attribution removes only its sentence.
 

@@ -16,9 +16,12 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 class _FakeViewport implements CheViewportDriver {
-  _FakeViewport(this.onMessage, {this.clips = const []});
+  _FakeViewport(this.onMessage, {this.clips = const [], this.unsupported = const {}});
   final void Function(Map<String, dynamic>) onMessage;
   final List<String> clips;
+
+  /// Actions this fake page answers with ok: false, like studio.html's "Unknown viewport command."
+  final Set<String> unsupported;
   final loads = <String>[];
   final bytes = <int>[];
   final cmds = <Map<String, Object>>[];
@@ -36,6 +39,10 @@ class _FakeViewport implements CheViewportDriver {
   @override
   Future<void> command(Map<String, Object> cmd) async {
     cmds.add(cmd);
+    if (unsupported.contains(cmd['action'])) {
+      onMessage({'type': 'done', 'action': cmd['action'], 'ok': false, 'note': 'Unknown viewport command.', 'playing': null});
+      return;
+    }
     onMessage({'type': 'done', 'action': cmd['action'], 'ok': true, 'playing': cmd['action'] == 'animate' ? cmd['clip'] : null});
   }
 
@@ -79,7 +86,13 @@ Map<String, dynamic> _project({Map<String, dynamic>? job, int version = 1, int c
               {'at': '2026-10-24T18:02:10Z', 'label': 'Geometry ready', 'state': 'rendering'},
               {'at': '2026-10-24T18:03:00Z', 'label': 'Preview front arrived', 'state': 'rendering'},
             ],
-      'engine': {'status': engine, 'online': engine == 'online', 'paired': engine != 'not_paired', 'gpu': engine == 'online' ? 'Tesla T4' : null},
+      'engine': {
+        'status': engine,
+        'online': engine == 'online',
+        'paired': engine != 'not_paired',
+        'gpu': engine == 'online' ? 'Tesla T4' : null,
+        if (engine == 'cloud') ...{'automatic': true, 'workers_online': 0, 'max_concurrent': 3},
+      },
     };
 
 class _Worker {
@@ -102,6 +115,10 @@ class _Worker {
           bodies.add(body);
           if (p.endsWith('/edit')) {
             final t = '${body['text']}'.toLowerCase();
+            if (t.contains('skeleton')) {
+              return http.Response(jsonEncode({'ok': true, 'changed': false, 'applied': [], 'unsupported': [],
+                'viewport': {'action': 'skeleton', 'on': true}, 'spoken': 'Showing the skeleton.', 'project': project}), 200);
+            }
             if (t.contains('office')) {
               return http.Response(jsonEncode({'ok': true, 'changed': false, 'applied': [], 'unsupported': ['Putting creations in the Office is not built yet.'],
                 'viewport': null, 'spoken': 'Putting creations in the Office is not built yet.', 'project': project}), 200);
@@ -146,7 +163,7 @@ void main() {
     await _font('MaterialIcons', '$fonts/MaterialIcons-Regular.otf');
   });
 
-  Widget studio(_Worker w, {List<String>? read, List<String>? spoken, List<_FakeViewport>? vp, List<String> clips = const [], CheLiveStudioMode mode = CheLiveStudioMode.person}) =>
+  Widget studio(_Worker w, {List<String>? read, List<String>? spoken, List<_FakeViewport>? vp, List<String> clips = const [], CheLiveStudioMode mode = CheLiveStudioMode.person, Set<String> unsupported = const {}}) =>
       MaterialApp(
         debugShowCheckedModeBanner: false,
         theme: ThemeData(brightness: Brightness.dark, fontFamily: 'Roboto'),
@@ -159,7 +176,7 @@ void main() {
           onRead: read?.add,
           onSpeak: spoken?.add,
           viewport: (onMessage) {
-            final v = _FakeViewport(onMessage, clips: clips);
+            final v = _FakeViewport(onMessage, clips: clips, unsupported: unsupported);
             vp?.add(v);
             return v;
           },
@@ -196,6 +213,61 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('live-read')));
     expect(read.single, contains('CHE (new person), version 1 of 1. Creation Engine Offline.'));
     expect(read.single, contains('No model has been generated for this version yet.'));
+  });
+
+  testWidgets('with free cloud workers the engine is Ready and asks nothing; the job shows its owner-facing state', (tester) async {
+    await _phone(tester);
+    final read = <String>[];
+    final job = {
+      ..._job(model: false, state: 'queued'),
+      'display_state': 'Starting a cloud worker',
+      'status_line': 'CHE started a free cloud worker 20 seconds ago; it builds on the CPU.',
+    };
+    await tester.pumpWidget(studio(_Worker(_project(job: job, engine: 'cloud')), read: read));
+    await tester.pumpAndSettle();
+    expect(read, isEmpty, reason: 'nothing spoken on open');
+    expect(find.text('Creation Engine Ready'), findsOneWidget);
+    expect(find.textContaining('CHE starts free cloud workers herself'), findsOneWidget);
+    expect(find.textContaining('Up to 3 jobs at once'), findsOneWidget);
+    expect(find.byKey(const ValueKey('live-connect')), findsNothing, reason: 'nothing for the owner to start');
+    expect(find.text('Starting a cloud worker'), findsOneWidget);
+    expect(find.text('CHE started a free cloud worker 20 seconds ago; it builds on the CPU.'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('live-read')));
+    expect(read.single, contains('Creation Engine Ready.'));
+    expect(read.single, contains('Creation Engine job: Starting a cloud worker. CHE started a free cloud worker'));
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('a viewport change is reported only after the viewport confirms it; a refusal is spoken as a failure (review of #521)', (tester) async {
+    await _phone(tester);
+    for (final refuse in [false, true]) {
+      final spoken = <String>[];
+      final vp = <_FakeViewport>[];
+      await tester.pumpWidget(studio(_Worker(_project(job: _job(), engine: 'online')), spoken: spoken, vp: vp, unsupported: refuse ? {'skeleton'} : {}));
+      await tester.pumpAndSettle();
+      final state = tester.state<CheLiveStudioState>(find.byType(CheLiveStudio));
+      final said = await state.applyEdit('show the skeleton');
+      await tester.pumpAndSettle();
+      expect(vp.single.cmds.last, {'action': 'skeleton', 'on': true});
+      if (refuse) {
+        expect(said, 'That did not work: Unknown viewport command.');
+        expect(spoken.single, 'That did not work: Unknown viewport command.');
+        expect(spoken.any((s) => s.contains('Showing the skeleton')), isFalse);
+      } else {
+        expect(said, 'Showing the skeleton.');
+        expect(spoken.single, 'Showing the skeleton.');
+      }
+      await tester.pumpWidget(const SizedBox());
+    }
+  });
+
+  test('job states read as Creating, Waiting for Resources, Paused, Completed', () {
+    expect(cheJobDisplayState({'state': 'rendering'}), 'Creating');
+    expect(cheJobDisplayState({'state': 'queued'}), 'Waiting for Resources');
+    expect(cheJobDisplayState({'state': 'paused'}), 'Paused');
+    expect(cheJobDisplayState({'state': 'completed'}), 'Completed');
+    expect(cheJobDisplayState({'state': 'queued', 'display_state': 'Starting a cloud worker'}), 'Starting a cloud worker');
+    expect(cheJobDisplayState(null), '');
   });
 
   testWidgets('a delivered GLB replaces the bundled model; stages, timestamps and the preview picture are the job\'s own', (tester) async {
