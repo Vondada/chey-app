@@ -98,11 +98,11 @@ if 'skin' in STEPS:
     if b.inputs['Roughness'].is_linked:
         rsrc = b.inputs['Roughness'].links[0].from_socket
         rm = nt.nodes.new('ShaderNodeMath'); rm.operation = 'MULTIPLY_ADD'
-        rm.inputs[1].default_value = 0.85; rm.inputs[2].default_value = -0.02
+        rm.inputs[1].default_value = 0.95; rm.inputs[2].default_value = 0.03
         nt.links.new(rsrc, rm.inputs[0])
         cl = nt.nodes.new('ShaderNodeClamp'); cl.inputs['Min'].default_value = 0.3; cl.inputs['Max'].default_value = 0.65
         nt.links.new(rm.outputs['Value'], cl.inputs['Value']); nt.links.new(cl.outputs['Result'], b.inputs['Roughness'])
-    b.inputs['Coat Weight'].default_value = float(os.environ.get('SKIN_COAT', '0.18'))
+    b.inputs['Coat Weight'].default_value = float(os.environ.get('SKIN_COAT', '0.1'))
     b.inputs['Coat Roughness'].default_value = 0.22
     b.inputs['Sheen Weight'].default_value = 0.04
     b.inputs['Specular IOR Level'].default_value = 0.5
@@ -134,6 +134,12 @@ if 'eyes' in STEPS:
     lash_strands(fwd, up)
     brow_strands(fwd, up)
     print('EYES corneas + strand lashes + strand brows', flush=True)
+
+# ── Step: lips (gloss and lip lines), baby hairs, no strands across the face ───────────────────────────────────────
+if 'lips' in STEPS:
+    from lips_hairline import baby_hairs, clear_face_strands, lip_gloss
+    print('LIPS gloss', lip_gloss(), 'cleared strands', clear_face_strands(fwd, up, eye),
+          'baby hairs', baby_hairs(fwd, up, eye), flush=True)
 
 
 def area(name, pos, size, energy, color):
