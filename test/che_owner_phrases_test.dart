@@ -196,7 +196,7 @@ void main() {
       expect(CheScreenAwareness.describe(), startsWith('You are on Home, Home tab.'), reason: 'the app opens on Home');
       await tester.tap(find.text('Office'));
       await tester.pump(const Duration(milliseconds: 500));
-      expect(CheScreenAwareness.describe(), startsWith('You are on the Office, Crew tab. Tabs: 1. Crew, 2. Projects.'));
+      expect(CheScreenAwareness.describe(), startsWith('You are on the Office, Headquarters tab. Tabs: 1. Headquarters, 2. Crew, 3. Projects.'));
       await tester.tap(find.text('Chat'));
       await tester.pump(const Duration(milliseconds: 500));
       await tester.tap(find.byTooltip('Show keyboard'));
