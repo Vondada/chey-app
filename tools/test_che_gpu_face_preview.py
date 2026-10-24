@@ -35,8 +35,14 @@ FAKE = textwrap.dedent('''\
         print('CHECK PASS left eye in socket'); print(dev, flush=True)
         stop = int(os.environ.get('FAKE_STOP_AFTER', '99'))
         log = os.environ.get('FAKE_CALLS')
-        if log: open(log, 'a').write(os.environ['VIEWS'] + '\\n')
-        for i, v in enumerate(os.environ['VIEWS'].split(',')):
+        if log: open(log, 'a').write(os.environ['VIEWS'] + ('+model' if os.environ.get('EXPORT_GLB') else '') + '\\n')
+        if os.environ.get('EXPORT_GLB') and not os.environ.get('FAKE_NO_MODEL'):
+            import json, struct
+            js = json.dumps({'asset': {'version': '2.0'}}).encode(); js += b' ' * (-len(js) % 4)
+            glb = b'glTF' + struct.pack('<II', 2, 20 + len(js)) + struct.pack('<I', len(js)) + b'JSON' + js
+            open(os.environ['EXPORT_GLB'], 'wb').write(glb)
+            print('MODEL', os.environ['EXPORT_GLB'], len(glb), 'bytes', 1234, 'vertices', '(head-and-neck bust)', flush=True)
+        for i, v in enumerate(x for x in os.environ['VIEWS'].split(',') if x):
             if i == stop: sys.exit(1)
             p = os.path.join(os.environ['OUT_DIR'], f'dress_{int(v):02d}.png')
             open(p, 'wb').write(b'\\x89PNG\\r\\n\\x1a\\n' + v.encode()); print('WROTE', p, flush=True)
@@ -54,9 +60,9 @@ class GpuFacePreviewTest(unittest.TestCase):
         for n in ('che.blend', 'fit.json'): open(os.path.join(self.project, n), 'w').write(n)
         self.out = os.path.join(self.tmp, 'out'); self.calls = os.path.join(self.tmp, 'calls')
 
-    def run_job(self, **env):
+    def run_job(self, *args, **env):
         e = dict(os.environ, **dict({'FAKE_GPUS': 'OPTIX,CUDA', 'FAKE_CALLS': self.calls}, **env))
-        p = subprocess.run([sys.executable, RUNNER, '--blender', self.blender, '--project', self.project, '--out', self.out],
+        p = subprocess.run([sys.executable, RUNNER, '--blender', self.blender, '--project', self.project, '--out', self.out, *args],
                            env=e, capture_output=True, text=True)
         jobs = os.listdir(self.out) if os.path.isdir(self.out) else []
         receipt = json.load(open(os.path.join(self.out, jobs[0], 'receipt.json'))) if jobs else None
@@ -135,6 +141,43 @@ class GpuFacePreviewTest(unittest.TestCase):
     def test_failed_face_check_stops_the_job(self):
         code, out, r = self.run_job(FAKE_CHECK_FAIL='1')
         self.assertEqual(code, 2); self.assertEqual(r['status'], 'checks_failed')
+
+    # ── --model: the Live Studio's 3D model (model.glb) from the same Blender run ──────────────────────────────────
+    def test_model_is_exported_before_the_views_and_recorded_in_the_receipt(self):
+        code, out, r = self.run_job('--model')
+        self.assertEqual(code, 0, out); self.assertEqual(r['status'], 'complete')
+        m = r['model']; job = os.path.join(self.out, os.listdir(self.out)[0])
+        self.assertEqual((m['status'], m['file'], m['vertices']), ('ok', 'model.glb', 1234))
+        self.assertEqual(m['bytes'], os.path.getsize(os.path.join(job, 'model.glb')))
+        self.assertIn('render-only', m['contents'])
+        self.assertLess(out.index('MODEL READY'), out.index('VIEW 0 '), 'the geometry stage comes before any render')
+        self.assertEqual(open(self.calls).read().split(), ['0,45,90+model'])
+        self.assertEqual(r['last_run']['model'], 'exported')
+
+    def test_a_model_job_has_its_own_folder_and_reuses_a_verified_model(self):
+        self.run_job(); self.run_job('--model')
+        self.assertEqual(len(os.listdir(self.out)), 2, 'a model job never reuses a previews-only folder')
+        code, out, r = self.run_job('--model')
+        self.assertEqual(code, 0, out); self.assertIn('SKIP model: verified export', out); self.assertIn('MODEL READY', out)
+        self.assertEqual(open(self.calls).read().split(), ['0,45,90', '0,45,90+model'], 'nothing rendered or exported twice')
+
+    def test_a_missing_or_changed_model_is_exported_again_without_rerendering_views(self):
+        self.run_job('--model')
+        job = os.path.join(self.out, os.listdir(self.out)[0])
+        open(os.path.join(job, 'model.glb'), 'wb').write(b'glTF' + b'\0' * 30)   # not the file the receipt names
+        code, out, r = self.run_job('--model')
+        self.assertEqual(code, 0, out); self.assertIn('RE-EXPORT model: model does not match its receipt hash', out)
+        self.assertEqual(open(self.calls).read().split(), ['0,45,90+model', '+model'])
+        self.assertEqual(r['status'], 'complete'); self.assertEqual(r['last_run']['model'], 'exported')
+
+    def test_a_model_job_without_a_model_is_not_complete(self):
+        code, out, r = self.run_job('--model', FAKE_NO_MODEL='1')
+        self.assertEqual(code, 4, out); self.assertEqual(r['status'], 'model_failed'); self.assertNotIn('model', r)
+        self.assertEqual(sorted(r['views']), ['0', '45', '90'], 'finished views are kept')
+
+    def test_views_may_be_empty_for_a_model_only_job(self):
+        code, out, r = self.run_job('--model', '--views', '')
+        self.assertEqual(code, 0, out); self.assertEqual(r['views'], {}); self.assertEqual(r['model']['status'], 'ok')
 
 
 if __name__ == '__main__':

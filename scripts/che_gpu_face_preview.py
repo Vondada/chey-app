@@ -1,7 +1,7 @@
 """CHE face preview on a GPU (Colab T4): one resumable job, GPU only, with an execution receipt.
 
   python3 scripts/che_gpu_face_preview.py --blender BLENDER --project DIR --out DIR
-        [--views 0,45,90] [--device auto|OPTIX|CUDA] [--samples 64] [--res 480] [--settings settings.json]
+        [--views 0,45,90] [--device auto|OPTIX|CUDA] [--samples 64] [--res 480] [--settings settings.json] [--model]
 
 --project holds che.blend, fit.json (face_fit.py winner) and che_landmarks.npz. MPFB (env) points at the MakeHuman /
 MPFB2 data directory. The face itself is built by tools/avatar_face/mpfb_dress.py inside the official Blender binary
@@ -13,6 +13,10 @@ Rules:
 - Resumable. The job folder is named by a hash of the face code, inputs and settings (no date, no commit); a view whose PNG and receipt already exist
   is not rendered again, so a disconnected Colab session continues where it stopped.
 - The pre-render geometry and colour checks in mpfb_dress.py still run; a failed check stops the job (exit 2).
+- --model (the Live Studio's person_model jobs): the same Blender run also writes model.glb, a head-and-neck bust of
+  this exact face (mpfb_dress.py EXPORT_GLB), before any view renders, so CHE's viewport gets the geometry first. Its
+  hash, size and vertex count go in the receipt; a model already verified in Drive is reused; a job asked for a model
+  is complete only with one.
 Exit codes: 0 done, 2 checks failed, 3 no GPU, 4 render failed.
 """
 import argparse
@@ -91,6 +95,24 @@ def finished_view(job, info, v):
     return None
 
 
+MODEL_CONTENTS = 'head-and-neck bust, eyes, hair cards; brows, lashes and strand hair are render-only'
+
+
+def finished_model(job, info):
+    """None when the job's model.glb is the verified export its receipt names, else the reason it must be exported."""
+    if not info or info.get('status') != 'ok':
+        return 'no finished model recorded'
+    path = os.path.join(job, 'model.glb')
+    if not os.path.isfile(path) or os.path.getsize(path) < 20:
+        return 'model missing or empty'
+    with open(path, 'rb') as f:
+        if f.read(4) != b'glTF':
+            return 'model.glb is not a GLB file'
+    if info.get('sha256') != sha256(path):
+        return 'model does not match its receipt hash'
+    return None
+
+
 def stop(p, grace=5.0):
     """SIGTERM p, SIGKILL it after `grace` seconds, and reap it."""
     for sig in (signal.SIGTERM, signal.SIGKILL):
@@ -148,6 +170,7 @@ def main():
     ap.add_argument('--views', default='0,45,90'); ap.add_argument('--device', default='auto', choices=['auto', 'OPTIX', 'CUDA'])
     ap.add_argument('--samples', type=int, default=64); ap.add_argument('--res', type=int, default=480)
     ap.add_argument('--settings'); ap.add_argument('--timeout', type=int, default=1800)
+    ap.add_argument('--model', action='store_true', help='also export the 3D model (model.glb) of this face')
     a = ap.parse_args()
 
     settings = dict(DEFAULTS, **(json.load(open(a.settings)) if a.settings else {}))
@@ -156,7 +179,9 @@ def main():
     # The job is named by what decides the pictures (face code, inputs, settings, samples, size), not by the date or the
     # commit, so rerunning tomorrow or after an unrelated commit reuses finished views instead of rendering them again.
     code = face_code_sha256()
-    key = json.dumps({'inputs': inputs, 'settings': settings, 'samples': a.samples, 'res': a.res, 'face_code': code}, sort_keys=True)
+    spec = {'inputs': inputs, 'settings': settings, 'samples': a.samples, 'res': a.res, 'face_code': code}
+    if a.model: spec['model'] = 'glb'   # a model job is its own folder; plain preview jobs keep their names
+    key = json.dumps(spec, sort_keys=True)
     job_id = 'face-' + hashlib.sha256(key.encode()).hexdigest()[:12]
     job = os.path.join(a.out, job_id); os.makedirs(job, exist_ok=True)
     print('JOB', job, flush=True)
@@ -186,7 +211,16 @@ def main():
     receipt.update(device=kind, cycles_gpus=names)
     print(f'GPU {kind}: {names}', flush=True)
 
-    views = [int(v) for v in a.views.split(',')]
+    views = [int(v) for v in a.views.split(',') if v.strip()]
+    model_path = os.path.join(job, 'model.glb')
+    why_model = finished_model(job, receipt.get('model')) if a.model else None
+    need_model = why_model is not None
+    if a.model and not need_model:
+        m = receipt['model']
+        print(f"SKIP model: verified export from {m.get('exported_at')} ({m.get('bytes')} bytes, {m.get('vertices')} vertices) -> {model_path}", flush=True)
+        print('MODEL READY', model_path, flush=True)
+    elif need_model and receipt.pop('model', None) is not None:
+        print(f'RE-EXPORT model: {why_model}', flush=True)
     todo = []
     for v in views:
         why = finished_view(job, receipt['views'].get(str(v)), v)
@@ -199,7 +233,8 @@ def main():
                 print(f'RE-RENDER view {v} ({VIEW_NAMES.get(v, v)}): {why}', flush=True)
             todo.append(v)
     receipt['last_run'] = {'at': now(), 'rendered': todo, 'reused': [v for v in views if v not in todo]}
-    if todo:
+    if a.model: receipt['last_run']['model'] = 'exported' if need_model else 'reused'
+    if todo or need_model:
         tmp = os.path.join(job, 'tmp'); os.makedirs(tmp, exist_ok=True)
         live = {'dev': '', 'last': None}
 
@@ -211,6 +246,16 @@ def main():
             # mid-job keeps every finished view and the next run reuses it. Only views from a verified GPU render count.
             if l.startswith('DEVICE ') and not live['dev']:
                 live['dev'], live['last'] = l, t
+                return
+            mm = re.match(r'MODEL (\S+) (\d+) bytes (\d+) vertices', l)
+            if mm and need_model and gpu_line(live['dev']) and os.path.isfile(mm.group(1)):
+                # The geometry stage: checkpointed and announced before any view renders (the worker uploads it at once).
+                if os.path.abspath(mm.group(1)) != model_path: shutil.move(mm.group(1), model_path)
+                receipt['model'] = {'status': 'ok', 'file': 'model.glb', 'sha256': sha256(model_path), 'bytes': os.path.getsize(model_path),
+                                    'vertices': int(mm.group(3)), 'exported_at': now(), 'contents': MODEL_CONTENTS}
+                live['last'] = t
+                write_json(receipt_path, receipt)
+                print('MODEL READY', model_path, flush=True)
                 return
             m = re.match(r'WROTE (.*dress_(\d+)\.png)$', l)
             if not m or not gpu_line(live['dev']) or not os.path.isfile(m.group(1)): return
@@ -225,7 +270,8 @@ def main():
 
         code, lines = run([a.blender, '-b', '--factory-startup', '-P', os.path.join(FACE, 'bl_run.py'), '--',
                            os.path.join(FACE, 'mpfb_dress.py')],
-                          dict(env, OUT_DIR=tmp, VIEWS=','.join(map(str, todo)), CYCLES_DEVICE=kind), log, a.timeout, on_line)
+                          dict(env, OUT_DIR=tmp, VIEWS=','.join(map(str, todo)), CYCLES_DEVICE=kind,
+                               **({'EXPORT_GLB': os.path.join(tmp, 'model.glb')} if need_model else {})), log, a.timeout, on_line)
         dev = live['dev'] or next((l for _, l in lines if l.startswith('DEVICE ')), '')
         receipt['render_device_line'] = dev
         receipt['checks'] = [l for _, l in lines if l.startswith('CHECK')]
@@ -239,6 +285,9 @@ def main():
             receipt.update(status='timeout', exit_code=code, finished_at=now()); write_json(receipt_path, receipt)
             print(f'TIMEOUT after {a.timeout} s: Blender was stopped; finished views are kept, rerun to resume', flush=True); return 4
         receipt['process_seconds'] = round(lines[-1][0], 1) if lines else None
+        if need_model and finished_model(job, receipt.get('model')) is not None:
+            receipt.update(status='model_failed', exit_code=code, finished_at=now()); write_json(receipt_path, receipt)
+            print(f'MODEL FAILED (exit {code}): no verified model.glb from Blender; finished views are kept, rerun to resume', flush=True); return 4
         if code != 0 or any(str(v) not in receipt['views'] for v in todo):
             receipt.update(status='render_failed', exit_code=code, finished_at=now()); write_json(receipt_path, receipt)
             print(f'RENDER FAILED (exit {code}); finished views are kept, rerun to resume', flush=True); return 4
