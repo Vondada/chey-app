@@ -253,7 +253,8 @@ import { EGRESS_KEY, SNAPSHOT_KEY, holdEgress, installEgressGuard, setEgressOwne
 import { loadRegistry as loadCapabilityRegistry } from './capability_registry.js';
 import { BrainLedger, answerLedger, decidePending as decideBrainPending, installBrainLedger, ledgerApi, ledgerIntent as brainLedgerIntent, DEFAULT_ZONE as LEDGER_DEFAULT_ZONE } from './brain_ledger.js';
 import { FilmStore, filmIntent, filmProgress, farmProviders, loadRates, loadUsage, speakFarm, speakPlan, speakStatus as speakFilmStatus } from './film_studio.js';
-import { GpuQueue, gpuOwnerRoute, gpuWorkerRoute, speakGpuSummary } from './gpu_queue.js';
+import { GpuQueue, gpuWorkerRoute, speakGpuSummary } from './gpu_queue.js';
+import { studioOwnerRoute } from './creation_studio.js';
 import { FILM_ACTIVE_STATES, filmPlan, filmTick, filmTokenRoute, refreshValidation as refreshFilmValidation, remakeShot, setFilmState, startFilm } from './film_pipeline.js';
 import { performanceBanner, performanceIntent, performanceReport, recordTiming, routeKey as perfRouteKey, speakPerformance } from './perf_watch.js';
 import { engineView, exportWorkflows, feedbackOnLast, importWorkflows, library as workflowLibrary, loadEngine, matchLearned, noteVersion, promoteCandidate, dismissCandidate, rankWorkflows, recordRun as recordWorkflowRun, isDisabled as workflowDisabled, restoreVersion, saveEngine, setDisabled as setWorkflowDisabled, setPreferred as setWorkflowPreferred, speakEfficiency, speakLibrary, testCandidate, workflowForRun, workflowIntent } from './workflow_engine.js';
@@ -7824,9 +7825,9 @@ export class CheState extends DurableObject {
         if (!ownerDevice) return json({ detail: 'Only the CHE owner can read his brain.' }, 403);
         return json(await brainTruthView(this.ctx.storage));
       }
-      if (path === '/api/gpu' || path.startsWith('/api/gpu/')) {
+      if (/^\/api\/(gpu|creations)(\/|$)/.test(path)) {
         if (!ownerDevice) return json({ detail: 'Only the CHE owner can use the GPU queue.' }, 403);
-        return (await gpuOwnerRoute({ storage: this.ctx.storage }, path, request, body)) || json({ detail: 'Not found.' }, 404);
+        return (await studioOwnerRoute({ storage: this.ctx.storage, env: this.keyEnv || this.env }, path, request, body)) || json({ detail: 'Not found.' }, 404);
       }
       // Cloud Computer Manager (cloud_computer.js): one view and one set of controls over CHE's existing compute.
       // Owner-only, like /api/trading/*. Reads never reach GitHub; jobs live in the existing job queue, and starts go
