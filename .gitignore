@@ -39,3 +39,4 @@ server/cloudflare/node_modules/
 .replay.*.generated.mjs
 .*.test.generated.mjs
 test/failures/
+.chat_retrieval.generated.mjs
