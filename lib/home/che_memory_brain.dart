@@ -338,14 +338,20 @@ String _shortTitle(String text) {
 }
 
 /// Worker brain_graph.links + same-cluster + token overlap → edge pairs for paint.
-List<(String, String)> cheRelatedMemoryEdges(List<CheMemoryDot> dots, {List<Map<String, dynamic>> brainLinks = const []}) {
+List<(String, String)> cheRelatedMemoryEdges(List<CheMemoryDot> dots, {List<Map<String, dynamic>> brainLinks = const []}) =>
+    [for (final (a, b, _) in cheRelatedMemoryEdgesTyped(dots, brainLinks: brainLinks)) (a, b)];
+
+/// The same edges, each marked explicit (a recorded relationship: a Worker brain link, the record's own links, a
+/// shared ML cluster) or not (only shared words connect them).
+List<(String, String, bool)> cheRelatedMemoryEdgesTyped(List<CheMemoryDot> dots, {List<Map<String, dynamic>> brainLinks = const []}) {
   final ids = {for (final d in dots) d.id};
-  final edges = <(String, String)>[];
+  final edges = <(String, String, bool)>[];
   final seen = <String>{};
+  var explicit = true;
   void add(String a, String b) {
     if (a == b || !ids.contains(a) || !ids.contains(b)) return;
     final key = a.compareTo(b) < 0 ? '$a|$b' : '$b|$a';
-    if (seen.add(key)) edges.add((a, b));
+    if (seen.add(key)) edges.add((a, b, explicit));
   }
 
   for (final link in brainLinks) {
@@ -366,7 +372,8 @@ List<(String, String)> cheRelatedMemoryEdges(List<CheMemoryDot> dots, {List<Map<
     if (prev != null) add(prev, d.id);
     lastInCluster[cid] = d.id;
   }
-  // Token overlap fallback
+  // Token overlap fallback: not a recorded relationship.
+  explicit = false;
   final byToken = <String, List<CheMemoryDot>>{};
   for (final d in dots) {
     for (final tok in d.tokens.take(8)) {
@@ -391,19 +398,20 @@ List<String> _tokens(String text) {
   return text.toLowerCase().split(RegExp(r'[^a-z0-9]+')).where((w) => w.length > 2).toSet().take(24).toList();
 }
 
-// The brain's palette: green, teal, cyan, blue, violet and white.
+// The brain's palette, the owner's colour key (2026-10-24, his original Brain Room reference): blue memories,
+// cyan conversations, purple knowledge, yellow agents (see che_brain_regions.dart for the ten regions).
 Color cheMemoryCategoryColor(String category) => switch (category.toLowerCase()) {
-  'memory' => const Color(0xFF3EE6C9),
-  'conversations' => const Color(0xFF52E89A),
-  'learning' => const Color(0xFF4FB8FF),
-  'ml learning' => const Color(0xFFA77BFF),
-  'research' => const Color(0xFF7CF0FF),
-  'about you' => const Color(0xFFC79BFF),
-  'knowledge' => const Color(0xFF6E8CFF),
-  'suggestion' => const Color(0xFF9DF7C9),
-  'translation' => const Color(0xFFEAF6FF),
-  'agents' => const Color(0xFFFFB54D),
-  'knowledge atlas' => const Color(0xFF8FE3FF),
+  'memory' => const Color(0xFF3D7BFF),
+  'about you' => const Color(0xFF6E9BFF),
+  'conversations' => const Color(0xFF22E4F2),
+  'learning' => const Color(0xFFB57BFF),
+  'ml learning' => const Color(0xFF8E5BFF),
+  'research' => const Color(0xFF9A7BFF),
+  'knowledge' => const Color(0xFFA35BFF),
+  'suggestion' => const Color(0xFFC9A3FF),
+  'translation' => const Color(0xFFD6C8FF),
+  'agents' => const Color(0xFFFFD23F),
+  'knowledge atlas' => const Color(0xFFC07BFF),
   _ => CheColors.accent,
 };
 

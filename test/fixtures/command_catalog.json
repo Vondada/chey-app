@@ -2192,8 +2192,8 @@
    "id": "trade-sim",
    "category": "trading",
    "title": "Trade Sim",
-   "summary": "Pause, resume or check the strategy simulation.",
-   "does": "Pauses or resumes CHE's paper strategy simulation (ten rules on minute bars; no money, no model call), or reads its status. Owner only.",
+   "summary": "Pause, resume, stop, reset or check the strategy simulation.",
+   "does": "Pauses or resumes CHE's paper strategy simulation (ten rules on minute bars; no money, no model call); stops it (pause and cancel waiting signals, open positions kept); resets it after you say yes (the run is archived, never deleted); or reads its status. Owner only.",
    "mode": "EXPLORE",
    "approval": {
     "required": false,
@@ -2202,11 +2202,13 @@
    "input": {
     "name": "action",
     "required": false,
-    "hint": "pause, resume or status"
+    "hint": "pause, resume, stop, reset or status"
    },
    "examples": [
     "Pause the strategy simulation",
     "Resume the strategy simulation",
+    "Stop the strategy simulation",
+    "Reset the strategy simulation",
     "Strategy simulation status"
    ],
    "needs": [
@@ -2223,6 +2225,8 @@
     "simulation",
     "pause simulation",
     "resume simulation",
+    "stop simulation",
+    "reset simulation",
     "paper strategies"
    ],
    "status": "available",
@@ -2463,7 +2467,7 @@
    "category": "trading",
    "title": "Trade Audit",
    "summary": "Audit every stored trade record.",
-   "does": "Counts the stored trade records by execution type and checks them for exact duplicates, entries shared across variants, look-ahead, fills that disagree with their own costs, missing labels and P&L that does not add up. Changes nothing.",
+   "does": "Counts the stored trade records by execution type and checks them for exact duplicates, entries shared across variants, look-ahead, fills that disagree with their own costs, missing labels and P&L that does not add up. Deeper checks: the simulation's R split into price moves and costs, trades whose costs exceeded their risk, open positions on retired feeds, P&L and R recomputed from prices, the research backtests' data hashes, fixtures and look-ahead audits, and one day's P&L by New York date, UTC date and CME trade day. Changes nothing.",
    "mode": "EXPLORE",
    "approval": {
     "required": false,
@@ -2488,6 +2492,42 @@
     "duplicates",
     "look-ahead",
     "trade audit"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "trade-calendar",
+   "category": "trading",
+   "title": "Trading P&L Calendar",
+   "summary": "The monthly P&L calendar, per record set.",
+   "does": "Reads this month's closed trades day by day: net P&L, wins and losses, win rate, weekly subtotals and the month. Simulation (in R), forward paper and broker are separate and never added together. Tapping a day lists its trades, each opening its replay. Changes nothing.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Open my trading calendar",
+    "Show the P&L calendar for the simulation"
+   ],
+   "needs": [
+    "office"
+   ],
+   "optional": [],
+   "handler": "che_calendars.tradingCalendar",
+   "route": "che_calendars",
+   "produces": "pnl calendar",
+   "evidence": "Stored trade records only, one per trade ID; an empty month stays empty.",
+   "cost": "Free engines only, unless you turned paid AI on.",
+   "keywords": [
+    "calendar",
+    "p&l calendar",
+    "pnl calendar",
+    "monthly",
+    "trading calendar"
    ],
    "status": "available",
    "missing": [],
@@ -4425,6 +4465,41 @@
     "department heads",
     "chain of command",
     "who runs"
+   ],
+   "status": "available",
+   "missing": [],
+   "optional_missing": []
+  },
+  {
+   "id": "office-calendar",
+   "category": "office",
+   "title": "Office Calendar",
+   "summary": "What the Office did, day by day.",
+   "does": "Reads each day's recorded work: completed jobs, active jobs, pending tasks, approvals, failures, milestones and who finished what, green, yellow or red. Tapping a day opens its jobs with their receipts. Changes nothing.",
+   "mode": "EXPLORE",
+   "approval": {
+    "required": false,
+    "reason": ""
+   },
+   "input": null,
+   "examples": [
+    "Show the office calendar for September",
+    "What did we do yesterday?"
+   ],
+   "needs": [
+    "office"
+   ],
+   "optional": [],
+   "handler": "che_calendars.officeCalendar",
+   "route": "che_calendars",
+   "produces": "office calendar",
+   "evidence": "Stored jobs, Office tasks, objectives, approvals and reliability counts only.",
+   "cost": "Free: no AI engine is used.",
+   "keywords": [
+    "office calendar",
+    "what did we do",
+    "accomplished",
+    "work calendar"
    ],
    "status": "available",
    "missing": [],

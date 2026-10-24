@@ -83,11 +83,15 @@ import { visualIntent, wordsToOps } from './visual_studio.js';
 import { addBeat, addLedger, addWorkspace, addWorkspaceSong, advanceAgreement, applySpokenBusiness, approveQuote, artistReport, beatListing, businessDashboard, deliveryPackage, draftQuote, musicBusinessIntent, recordBeatSale, recordFeedback, resolveSpokenBusiness, setService, workspaceById, workspaceView } from './music_business.js';
 import { matrixIntent, readMatrix, runMatrix, speakMatrix } from './backtest_matrix.js';
 import { autoQueue as researchAutoQueue, cancelJob as cancelResearchJob, matrixView as researchMatrixView, nextResearchAt, queueJob as queueResearchJob, researchIntent, researchStep, researchView, setProfile as setResearchProfile, speakBestNow, speakHistory, speakStrategy, strategyView as researchStrategyView } from './trading_research.js';
-import { nextStrategySimTickAt, setStrategySimCeiling, setStrategySimPaused, speakStrategySim, strategySimIntent, strategySimTick, strategySimView, strategySimWake } from './strategy_sim.js';
+import { nextStrategySimTickAt, strategySimIntent, strategySimTick, strategySimView, strategySimWake } from './strategy_sim.js';
+import { simChatReply, simControlRoute } from './trading_sim_control.js';
+import { auditSummaryLine, deepTradeAudit } from './trading_audit.js';
 import { evidenceIntent, evidenceReport, evidenceTick } from './trading_evidence_runner.js';
-import { readTrades, tradeDayOf } from './trading_evidence.js';
-import { TRADE_EVIDENCE_SOURCE, lastTrade, readTradeEvidence, speakTradeReplay, tradeBars, tradeEvidenceOf, tradeList, tradeReplayIntent } from './trade_evidence.js';
-import { DAILY_TARGET, EXECUTION_TYPES, VISUAL_SOURCE, auditTrades, compareWindows, currentLeader, dailyEvidence, dailyPnl, filterTrades, historyChart, journalView, lastForwardBar, metricsOf, openPositions, rankStrategies, readSkips, readVisualTrades, replayFrame, speakAudit, speakEvidence, speakCard, speakLeader, speakPnl, tradingVisualIntent } from './trading_visual.js';
+import { readTrades } from './trading_evidence.js';
+import { tradingCapabilities } from './trading_capabilities.js';
+import { TRADE_EVIDENCE_SOURCE, lastTrade, readTradeEvidence, speakTradeReplay, tradeBars, tradeEvidenceOf, tradeReplayIntent, tradingVisualViewOf } from './trade_evidence.js';
+import { VISUAL_SOURCE, readVisualTrades, speakEvidence, speakCard, tradingVisualIntent } from './trading_visual.js';
+import { CALENDAR_SOURCE, calendarIntent, learningWindows, officeCalendar, speakOfficeCalendar, speakTradingCalendar, tradingCalendar } from './che_calendars.js';
 import { cancelCandidates, cancelConfirmation, cancelOrderIntent, chartIntent, chartOpenReply, chartView, drawIntent, futuresOrderIntent, marketOrderFeedProblem, paperAccountIntent, readDrawings, saveDrawings, speakOrder } from './trading_chart.js';
 import { marketUniverse, searchUniverse } from './market_universe.js';
 import { readRithmicCandles, storeRithmicCandles } from './rithmic_dataset.js';
@@ -106,7 +110,7 @@ function spokenPick(message, n) {
 }
 import { ATLAS_SOURCE, answerAtlas, atlasHiddenAction, atlasIntent, atlasQuizAnswerTurn, atlasPromptContext, atlasResetAsk, atlasResetIntent, projectAtlasToBrain, resetAtlasProgress } from './knowledge_atlas.js';
 import { CRYPTO_SOURCE, cryptoIntent, cryptoTick, cryptoView, nextCryptoTickAt, setCryptoPaper, speakCrypto } from './crypto_markets.js';
-import { LIVE_BACKTEST, LIVE_RUNS, LIVE_STATE, haltLivePaper, liveSpecs, liveBacktest, liveDashboard, livePaperSummary, liveTick, nextLiveTickAt, readLivePortfolios, researchDue, setLivePaper } from './trading_live.js';
+import { LIVE_BACKTEST, LIVE_FEED, LIVE_RUNS, LIVE_STATE, haltLivePaper, liveSpecs, liveBacktest, liveDashboard, livePaperSummary, liveTick, nextLiveTickAt, readLivePortfolios, researchDue, setLivePaper } from './trading_live.js';
 import { governorAction, queueAllocationFollowUp, readDecisions, runGovernor, speakGovernor, tradeDecisions } from './strategy_governor.js';
 import { ICT_CONCEPTS, applyControlChange, controlsView, noteAuditEffect, readControls, strategyRegistry, resolveStep, speakControlResult, speakControlsView, speakSkipReasons, stockOrderProblem } from './trading_controls.js';
 import { cmeSession, frontMonth, loadIntraday, TradovateMarketStream, connectMarketSocket } from './market_feed.js';
@@ -139,6 +143,7 @@ import { replyHijacksOwnerRequest, usageIntent, usageReport, speakUsage } from '
 import { newestStarredIntent, speakNewestStarred, autoImproveScan, analyticalRepositoryQuestion, chatOnlyResponseIntent, currentTurnActionPolicy, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, inspirationUpgradeContext, listOwnerStarredRepos, readRepoSource, referenceSourceBlock, codingFollowupKind, codingHistoryIntent, codingTimingNote, hypotheticalChange, repositoryImplementationIntent, repositoryInspectionIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, starredStudyList, studySelectionIntent } from './code_scout.js';
 import { codingHistoryReceipt, completedWorkProof, otherAgentWorkAsk, otherAgentWorkReply, proofAsked } from './coding_history.js';
 import { inventionFollowUpAllowed, inventionIntent, inventionReply, planInvention, refusalReply } from './invention_studio.js';
+import { continuingInvention, inventionVisualIntent, inventionVisualRoute, makeConcept, visualTurn } from './invention_visuals.js';
 import { matchShowroom, showroomIntent, showroomReply, showroomView } from './capability_showroom.js';
 import { activityReceipt, activityStatusIntent } from './activity_status.js';
 import { webAppPage } from './web_app.js';
@@ -258,6 +263,7 @@ import { FilmStore, filmIntent, filmProgress, farmProviders, loadRates, loadUsag
 import { GpuQueue, gpuWorkerRoute, speakGpuSummary } from './gpu_queue.js';
 import { CreationStudio, studioOwnerRoute } from './creation_studio.js';
 import { creationProbeRoute } from './creation_probe.js';
+import { projectAudit, projectLibraryRoute } from './project_library.js';
 import { FILM_ACTIVE_STATES, filmPlan, filmTick, filmTokenRoute, refreshValidation as refreshFilmValidation, remakeShot, setFilmState, startFilm } from './film_pipeline.js';
 import { performanceBanner, performanceIntent, performanceReport, recordTiming, routeKey as perfRouteKey, speakPerformance } from './perf_watch.js';
 import { engineView, exportWorkflows, feedbackOnLast, importWorkflows, library as workflowLibrary, loadEngine, matchLearned, noteVersion, promoteCandidate, dismissCandidate, rankWorkflows, recordRun as recordWorkflowRun, isDisabled as workflowDisabled, restoreVersion, saveEngine, setDisabled as setWorkflowDisabled, setPreferred as setWorkflowPreferred, speakEfficiency, speakLibrary, testCandidate, workflowForRun, workflowIntent } from './workflow_engine.js';
@@ -3798,44 +3804,8 @@ export class CheState extends DurableObject {
   // OAuth sign-in as stored, FundYourEdge as not connected (Rithmic needs a licence), and
   // live orders disabled. Nothing is assumed about balances or firm rules.
   // Every trading connection as its own system reports it (issue #344); nothing here changes a mode.
-  /** GET /api/trading/visual?view=…: one read of the trade records, projected for the view asked for. */
-  async tradingVisualView(q) {
-    const view = q.get('view') || 'summary';
-    const filters = Object.fromEntries(['instrument', 'timeframe', 'strategy', 'from', 'to', 'execution_type', 'side', 'result'].map((k) => [k, (q.get(k) || '').slice(0, 40)]).filter(([, v]) => v));
-    const { trades, records, duplicates, sources, research } = await readVisualTrades(this.ctx.storage);
-    const shown = filterTrades(trades, filters);
-    const today = tradeDayOf(new Date().toISOString());
-    const base = { ok: true, view, paper_only: true, live_orders: liveOrdersStatus(), today, filters, sources, research, execution_types: EXECUTION_TYPES };
-    if (view === 'evidence') {
-      const rows = dailyEvidence(shown, { skips: await readSkips(this.ctx.storage), today });
-      return { ...base, target: DAILY_TARGET, target_rule: 'A daily target, never a quota: trades are never forced, and a day below it says why.', rows: rows.slice(0, 400), total_rows: rows.length };
-    }
-    if (view === 'pnl') {
-      const pnl = dailyPnl({ trades, positions: await openPositions(this.ctx.storage), lastBar: await lastForwardBar(this.ctx.storage), day: q.get('day') || today });
-      return { ...base, pnl, spoken: speakPnl(pnl) };
-    }
-    if (view === 'replay') {
-      const tf = q.get('timeframe') || '5m';
-      const chart = await historyChart(this.ctx.storage, { market: q.get('instrument') || 'MNQ', tf, at: q.get('cursor'), trades });
-      return { ...base, ...replayFrame({ bars: chart.bars, trades: filterTrades(shown, { timeframe: tf, instrument: chart.symbol }), cursor: q.get('cursor'), timeframe: tf }), provenance: chart.provenance || null };
-    }
-    if (view === 'compare') return { ...base, windows: compareWindows(shown) };
-    if (view === 'leader') { const l = currentLeader(trades); return { ...base, ...l, spoken: speakLeader(l) }; }
-    if (view === 'journal') return { ...base, ...journalView(trades, await readSkips(this.ctx.storage), { ...filters, include_skips: q.get('skips') !== '0' }) };
-    if (view === 'audit') { const a = auditTrades(records); return { ...base, ...a, ids: { unique_trades: trades.length, duplicates_hidden: duplicates.filter((d) => d.kind === 'duplicate').length, conflicts_hidden: duplicates.filter((d) => d.kind === 'conflict').length, examples: duplicates.slice(0, 10) }, spoken: speakAudit(a) }; }
-    // Trade evidence (Priority 5): one trade by its stable ID, with its own stored bars; or the list of IDs.
-    if (view === 'trade') {
-      const want = (q.get('id') || '').trim().toUpperCase();
-      const trade = want === 'LAST' ? lastTrade(trades) : trades.find((t) => t.id === want);
-      if (!trade) return { ...base, ok: false, error: want === 'LAST' ? 'CHE has no closed forward paper or simulation trade yet.' : `No CHE trade has the ID ${want || '(none)'}.` };
-      return { ...base, trade: tradeEvidenceOf(trade, await tradeBars(this.ctx.storage, trade)) };
-    }
-    if (view === 'trades') return { ...base, ...tradeList(shown, { limit: Math.min(200, Number(q.get('limit')) || 100) }) };
-    if (view === 'ranking') return { ...base, ranking: rankStrategies(shown, { executionType: filters.execution_type || 'forward_paper' }), rule: 'Ranked by the lower end of the 95% expectancy range in R, never by win rate; under 30 trades is provisional.' };
-    const l = currentLeader(trades);
-    return { ...base, totals: metricsOf(shown), leader: l.leader, headline: l.headline, provisional: l.provisional,
-      pnl: dailyPnl({ trades, positions: await openPositions(this.ctx.storage), lastBar: await lastForwardBar(this.ctx.storage), day: today }) };
-  }
+  /** GET /api/trading/visual?view=…, read through trade_evidence.js. */
+  tradingVisualView(q) { return tradingVisualViewOf(this.ctx.storage, q); }
 
   async tradingConnectionsView() {
     const env = this.keyEnv || this.env;
@@ -4026,13 +3996,14 @@ export class CheState extends DurableObject {
     const controls = await readControls(this.ctx.storage);
     const portfolios = await readLivePortfolios(this.ctx.storage);
     const { previous, audit, ...rest } = controls;
+    const [liveState, feed] = await Promise.all([this.ctx.storage.get(LIVE_STATE), this.ctx.storage.get(LIVE_FEED)]);
     const trades = await readTrades(this.ctx.storage, (t) => t.environment === 'paper' && t.data?.resolution === '5m');
     const registry = strategyRegistry({ specs: liveSpecs(), trades, backtest: await this.ctx.storage.get(LIVE_BACKTEST) });
     return {
-      controls: rest, strategies: controlsView(controls, portfolios).map((r) => ({ ...r, ...registry[r.id] })), audit: audit.slice(-50).reverse(),
+      controls: rest, strategies: controlsView(controls, portfolios, Date.now(), { enabled: Boolean(liveState?.enabled), feed }).map((r) => ({ ...r, ...registry[r.id] })), audit: audit.slice(-50).reverse(),
       ict_concepts: ICT_CONCEPTS.map((k) => ({ name: k.name, implemented: k.strategies.length > 0, strategies: k.strategies, note: k.note || '' })),
       can_restore: Boolean(previous), paper_only: true, live_orders: liveOrdersStatus(),
-      live_paper_enabled: Boolean((await this.ctx.storage.get(LIVE_STATE))?.enabled),
+      live_paper_enabled: Boolean(liveState?.enabled),
     };
   }
 
@@ -4769,7 +4740,13 @@ export class CheState extends DurableObject {
     // Projects board entry so phone UI shows live progress tonight.
     data.projects = Array.isArray(data.projects) ? data.projects : [];
     const now = new Date().toISOString();
-    const project = {
+    // The same request again continues its project instead of adding another identical "tonight" card.
+    const same = data.projects.find((p) => p.title === `Roblox ${cat} studio — tonight` && String(p.brief || '').split('\n\n')[0] === brief && p.status !== 'archived');
+    if (same) {
+      Object.assign(same, { job_ids: [...(same.job_ids || []), ...jobs.map((j) => j.id)], status: 'in_progress', updated_at: now });
+      same.history = [...(same.history || []), { at: now, event: 'Asked again: crew tasks added to this project', via: 'owner' }].slice(-40);
+    }
+    const project = same || {
       id: crypto.randomUUID(),
       title: `Roblox ${cat} studio — tonight`,
       type: robloxProjectTypeFor(brief),
@@ -4797,8 +4774,10 @@ export class CheState extends DurableObject {
       created_at: now,
       updated_at: now,
     };
-    data.projects.unshift(project);
-    data.projects = data.projects.slice(0, 50);
+    if (!same) {
+      data.projects.unshift(project);
+      data.projects = data.projects.slice(0, 50);
+    }
 
     const robloxNoteBody = [
       `Roblox ${cat} studio queued for tonight.`,
@@ -5010,6 +4989,9 @@ export class CheState extends DurableObject {
   // The opt-in deploy REA check: real investigations through the owner's own
   // REA log, so the iPhone shows them. Building is never part of it unless
   // the deploy run explicitly asks for the one owner-authorized test build.
+  // The deploy's read-only trading audit: counts only (auditSummaryLine), never record contents.
+  async tradingAuditProbe() { const a = await deepTradeAudit(this.ctx.storage); return { ok: true, summary: auditSummaryLine(a), simulation_closed: a.simulation?.closed ?? null }; }
+
   async reaProbe({ message = '', allow_build = false } = {}) {
     const text = String(message || '').slice(0, 500);
     const started = Date.now();
@@ -6982,6 +6964,7 @@ export class CheState extends DurableObject {
         if (!isMemoryProbeRequest(request, this.env)) return json({ detail: 'Not found.' }, 404);
         return creationProbeRoute({ storage: this.ctx.storage, env: this.keyEnv || this.env }, path, request);
       }
+      if (path === '/api/projects/probe/audit') return isMemoryProbeRequest(request, this.env) ? json(projectAudit(await this.loadData())) : json({ detail: 'Not found.' }, 404);
       if (path.startsWith('/api/gpu/worker/')) return (await gpuWorkerRoute({ storage: this.ctx.storage, env: this.keyEnv || this.env }, path, request)) || json({ detail: 'Not found.' }, 404);
       const body = ['POST', 'PATCH', 'PUT'].includes(request.method) ? await bodyOf(request) : {};
       // Visual Studio render Action: the edit document and its source files, opened only by that job's one-time,
@@ -7702,6 +7685,26 @@ export class CheState extends DurableObject {
         if (!ownerDevice) return json({ detail: 'Only the CHE owner can use the GPU queue.' }, 403);
         return (await studioOwnerRoute({ storage: this.ctx.storage, env: this.keyEnv || this.env }, path, request, body)) || json({ detail: 'Not found.' }, 404);
       }
+      // Project manager (project_library.js): cards over data.projects, the crew's tasks and 3D creations; Roblox recovery.
+      if (path.startsWith('/api/projects/')) {
+        if (!ownerDevice) return json({ detail: 'Only the CHE owner can open his projects.' }, 403);
+        const creations = async () => (await new CreationStudio(this.ctx.storage, undefined, { env: this.keyEnv || this.env }).list().catch(() => ({ projects: [] }))).projects;
+        const continueProject = async (p, brief) => {
+          await this.staffOffice(data);
+          const a = data.team.find((x) => x.name === 'Atlas' && !x.retired);
+          if (!a) return { ok: false, detail: 'Atlas is not on the team, so no crew task was queued.' };
+          let blocker = '';
+          try { assertAgentMayRun(a, { task: brief }); } catch (error) { blocker = permissionBlocker(a, error); }
+          blocker ||= officeToolBlocker(this.keyEnv || this.env, a, brief);
+          if (blocker) return { ok: false, detail: `Nothing was queued: ${blocker}` };
+          const t = queueAgentTask(data, a, brief, 'roblox_studio', { job_id: p.goal_id || p.id, kind: 'roblox_studio' });
+          Object.assign(t, { owner_confirm_required: true, outbound_allowed: false, auto_publish: false });
+          p.job_ids = [...(p.job_ids || []), t.id]; p.updated_at = t.created_at;
+          await this.ctx.storage.put('che', data); await this.scheduleWork();
+          return { ok: true, task_id: t.id, agent: a.name };
+        };
+        return (await projectLibraryRoute({ data, save: () => this.ctx.storage.put('che', data), creations, continueProject }, path, request, body)) || json({ detail: 'Not found.' }, 404);
+      }
       // Cloud Computer Manager (cloud_computer.js): one view and one set of controls over CHE's existing compute.
       // Owner-only, like /api/trading/*. Reads never reach GitHub; jobs live in the existing job queue, and starts go
       // through the existing starters or the one allowlisted workflow. Every reply carries `spoken` for the app.
@@ -8124,6 +8127,8 @@ export class CheState extends DurableObject {
         const project = ((await this.ctx.storage.get('invention_projects')) || []).find((p) => p.id === inventionPath[1]);
         return project ? json(project) : json({ detail: 'No invention project with that ID.' }, 404);
       }
+      const inventionVisual = path.startsWith('/api/inventions/') && await inventionVisualRoute({ env: this.keyEnv || this.env, storage: this.ctx.storage }, path, request, body);
+      if (inventionVisual) return inventionVisual;
       if (path === '/api/media/video/finalize' && request.method === 'POST') {
         const result = await generateVideo(this.keyEnv || this.env, this.ctx.storage, {
           task_id: body.task_id, prompt: body.prompt || 'Video render',
@@ -8427,26 +8432,7 @@ export class CheState extends DurableObject {
         if (!ownerDevice) return simOwnerOnly();
         return json(await strategySimView(this.ctx.storage));
       }
-      if (path === '/api/trading/sim' && request.method === 'POST') {
-        if (!ownerDevice) return simOwnerOnly();
-        if (body.action === 'pause' || body.action === 'resume') {
-          const state = await setStrategySimPaused(this.ctx.storage, body.action === 'pause');
-          // Resuming re-arms the alarm now, so the next minute is not left waiting for some other wake-up.
-          if (body.action === 'resume') await this.scheduleWork();
-          return json({ ok: true, state, view: await strategySimView(this.ctx.storage) });
-        }
-        if (body.action === 'tick') {
-          const run = await strategySimTick(this.ctx.storage, { force: true });
-          // The first pass arms the minute cadence here, so the owner can start it without waiting for the hourly alarm.
-          await this.scheduleWork();
-          return json({ ok: true, run });
-        }
-        if (body.action === 'ceiling') {
-          const result = await setStrategySimCeiling(this.ctx.storage, body.usd);
-          return json(result, result.ok ? 200 : 400);
-        }
-        return json({ detail: 'Unknown action. Use pause, resume, tick or ceiling.' }, 400);
-      }
+      if (path === '/api/trading/sim' && request.method === 'POST') return ownerDevice ? simControlRoute(this.ctx.storage, body, () => this.scheduleWork()) : simOwnerOnly();
       // Historical trading intelligence: the Trading Room dashboard, the auditable report, and the owner's run. Owner only.
       if (path.startsWith('/api/trading/intelligence')) {
         if (!ownerDevice) return json({ detail: 'Only the CHE owner can view or run the historical trading study.' }, 403);
@@ -8505,6 +8491,11 @@ export class CheState extends DurableObject {
         return json(await studioView(this.studioContext(request, data)));
       }
       const tradingOwnerOnly = () => json({ detail: 'Only the CHE owner can use trading connections.' }, 403);
+      // The desk's Analyze Markets, Backtesting Lab and Custom Indicators cards: CHE's own engines run on real bars.
+      if (path === '/api/trading/capabilities' && request.method === 'GET') {
+        if (!ownerDevice) return tradingOwnerOnly();
+        return json(await tradingCapabilities(this.ctx.storage, this.keyEnv || this.env));
+      }
       if (path === '/api/trading/connections' && request.method === 'GET') {
         if (!ownerDevice) return tradingOwnerOnly();
         const view = await this.tradingConnectionsView();
@@ -8571,6 +8562,13 @@ export class CheState extends DurableObject {
       }
       // Visual trading evidence (owner, 2026-10-23): daily evidence, daily P&L, replay, comparisons, the
       // current leader, the journal and the audit, all read from the stored trade records. Read only.
+      // Trading P&L calendar and learning windows (che_calendars.js): read only, sim/paper/broker never summed.
+      if ((path === '/api/trading/calendar' || path === '/api/trading/learning') && request.method === 'GET') {
+        if (!ownerDevice) return tradingOwnerOnly();
+        const q = new URL(request.url).searchParams;
+        const out = path.endsWith('learning') ? await learningWindows(this.ctx.storage) : await tradingCalendar(this.ctx.storage, { month: q.get('month') || '', day: q.get('day') || '', source: q.get('source') || 'paper', basis: q.get('basis') || 'owner', env: this.env });
+        return json(out, out.status || 200);
+      }
       if (path === '/api/trading/visual' && request.method === 'GET') {
         if (!ownerDevice) return tradingOwnerOnly();
         return json(await this.tradingVisualView(new URL(request.url).searchParams));
@@ -9281,6 +9279,10 @@ export class CheState extends DurableObject {
         return json({ videos: Array.isArray(data.youtube_learning) ? data.youtube_learning : [] });
       }
 
+      if (path === '/api/office/calendar' && request.method === 'GET') {
+        const q = new URL(request.url).searchParams;
+        return json(await officeCalendar(this.ctx.storage, data, { month: q.get('month') || '', day: q.get('day') || '', env: this.env }));
+      }
       if (path === '/api/office/workshop' && request.method === 'GET') {
         const github = await githubWorkshopPieces(this.env, fetch);
         return json(workshopSnapshot(data, github));
@@ -11235,39 +11237,43 @@ export class CheState extends DurableObject {
         }
         // Invention Studio (owner, 2026-10-22): a design is planned as a project, and follow-up questions reopen the latest
         // one. Concept pictures come from the existing media engine; the parts, costs and feasibility do not need it.
-        const invention = body.attachment ? null : inventionIntent(message);
+        const inventionLook = body.attachment ? null : inventionVisualIntent(message);
+        const asked = body.attachment ? null : inventionIntent(message);
+        const invention = ['design', 'refused'].includes(asked?.kind) || !inventionLook ? asked : { kind: 'visual', subject: message };
         if (invention) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can open the Invention Studio, sir. Nothing was made.', { source: 'che_invention_studio', ok: false, model_calls: 0 });
           if (invention.kind === 'refused') return ndjsonReply(refusalReply(), { source: 'che_invention_studio', ok: false, model_calls: 0 });
           const projects = (await this.ctx.storage.get('invention_projects')) || [];
           const lastId = await this.ctx.storage.get('invention_last');
-          // Only a design starts a project. A follow-up (cost, sourcing, assembly, reality, plan) needs a project to answer
-          // from, and must name the invention or continue the owner's immediately preceding invention turn; otherwise
-          // the message is not about an invention and the ordinary routes keep it (a trading backtest never reopens a suit).
-          const lastAsk = await this.ctx.storage.get('invention_last_ask');
-          const priorUser = [...(Array.isArray(body.history) ? body.history : [])].reverse().find((h) => String(h?.role) === 'user' && String(h.content || h.text || '').trim());
-          const continuing = Boolean(lastAsk?.text) && (priorUser
-            ? String(priorUser.content || priorUser.text || '').trim() === lastAsk.text
-            : Date.now() - Date.parse(lastAsk.at || 0) < 10 * 60 * 1000);
+          // Only a design starts a project. A follow-up (cost, sourcing, assembly, reality, plan, or a visual ask such as
+          // "show me", "open it in 3D" or "change the color") needs a project to answer from, and must name the invention
+          // or continue the owner's immediately preceding invention turn; otherwise the ordinary routes keep the message.
+          const continuing = continuingInvention(await this.ctx.storage.get('invention_last_ask'), body.history);
+          const origin = new URL(request.url).origin;
+          const imageOf = (mediaId) => (mediaId ? { media_id: mediaId, media_type: 'image', media_url: `${origin}/api/media/${mediaId}/image` } : {});
           if (invention.kind !== 'design' && (!projects.some((p) => p.id === lastId) || !inventionFollowUpAllowed(message, { continuing }))) {
             // falls through to the other routes
           } else if (invention.kind === 'design') {
+            // The concept picture (invention_visuals.js): the owner's image model when it answers, else CHE's procedural
+            // concept sheet of the project's own parts. The reply says which, so a missing picture is never silent.
             const project = planInvention(invention.subject, { id: `inv-${crypto.randomUUID().slice(0, 8)}` });
-            const canDraw = Boolean(this.env.AI) || paidMediaOn(this.env);
-            if (canDraw) {
-              const made = await generateImage(this.keyEnv || this.env, this.ctx.storage, {
-                prompt: `Concept design, front, side and back views, clean engineering-style sketch: ${project.request}`.slice(0, 1800),
-                title: `${project.title}`.slice(0, 80),
-              }).catch(() => ({ detail: 'The image engine did not answer.' }));
-              project.concept = made.item
-                ? { status: 'generated', media_id: made.item.id, reason: '' }
-                : { status: 'not_generated', media_id: null, reason: made.detail || 'The image engine did not answer.' };
-            }
+            const made = await makeConcept(this.keyEnv || this.env, this.ctx.storage, project, { tryModel: Boolean(this.env.AI) || paidMediaOn(this.env) })
+              .catch((e) => ({ ok: false, detail: String(e?.message || e).slice(0, 160) }));
+            if (!made.ok) project.concept = { status: 'not_generated', media_id: null, reason: made.detail || 'No concept picture was made.' };
             await this.ctx.storage.put('invention_projects', [project, ...projects].slice(0, 20));
             await this.ctx.storage.put('invention_last', project.id);
             await this.ctx.storage.put('invention_last_ask', { text: String(message).trim(), at: new Date().toISOString() });
-            const media = project.concept.media_id ? { media_id: project.concept.media_id, media_type: 'image', media_url: `${new URL(request.url).origin}/api/media/${project.concept.media_id}/image` } : {};
-            return ndjsonReply(inventionReply(project, 'design'), { source: 'che_invention_studio', ok: true, model_calls: 0, invention_id: project.id, open_invention: true, ...media });
+            const pic = made.ok
+              ? ` Concept picture attached: ${made.image.engine === 'che_internal_renderer' ? 'a procedural concept sheet from CHE\'s own renderer' : `from ${made.image.engine}`}. Say "open it in 3D" to turn it around.`
+              : ` No concept picture: ${project.concept.reason}`;
+            return ndjsonReply(inventionReply(project, 'design') + pic, { source: 'che_invention_studio', ok: true, model_calls: 0, invention_id: project.id, open_invention: true, ...imageOf(project.concept.media_id) });
+          } else if (invention.kind === 'visual') {
+            const project = projects.find((p) => p.id === lastId);
+            const out = await visualTurn(this.keyEnv || this.env, this.ctx.storage, project, inventionLook, { tryModel: Boolean(this.env.AI) || paidMediaOn(this.env) });
+            await this.ctx.storage.put('invention_projects', projects.map((p) => (p.id === project.id ? out.project : p)));
+            await this.ctx.storage.put('invention_last_ask', { text: String(message).trim(), at: new Date().toISOString() });
+            return ndjsonReply(out.spoken, { source: 'che_invention_studio', ok: Boolean(out.image || out.model), model_calls: 0, invention_id: project.id,
+              ...(out.open3d ? { open_invention_3d: true, model_version: out.model?.v || null } : {}), ...(out.viewport ? { viewport: out.viewport } : {}), ...imageOf(out.image?.media_id) });
           } else {
             const project = projects.find((p) => p.id === lastId);
             await this.ctx.storage.put('invention_last_ask', { text: String(message).trim(), at: new Date().toISOString() });
@@ -12750,6 +12756,13 @@ export class CheState extends DurableObject {
           return ndjsonReply(status.text, { source: TRADING_STATUS_SOURCE, ok: status.ok, model_calls: 0, kind: whyNoTrades.kind, trades: status.trades ?? null });
         }
         // One named strategy by session and/or across its variants, from the forward paper journal (owner, 2026-10-20).
+        // The trading P&L calendar and the Office calendar by voice (che_calendars.js): read only, no model.
+        const calAsk = body.attachment ? null : calendarIntent(message, { tz: ownerTimeZone(this.env) });
+        if (calAsk) {
+          if (!ownerDevice) return ndjsonReply('Only the CHE owner can read the calendars.', { source: CALENDAR_SOURCE, ok: false, model_calls: 0 });
+          const v = calAsk.kind === 'trading' ? await tradingCalendar(this.ctx.storage, { ...calAsk, env: this.env }) : await officeCalendar(this.ctx.storage, data, { ...calAsk, env: this.env });
+          return ndjsonReply(calAsk.kind === 'trading' ? speakTradingCalendar(v) : speakOfficeCalendar(v), { source: CALENDAR_SOURCE, ok: v.ok, model_calls: 0, open_view: `${calAsk.kind}_calendar`, calendar: calAsk });
+        }
         const analysis = body.attachment ? null : strategyAnalysisIntent(message);
         if (analysis) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can read the trading records, sir.', { source: ANALYSIS_SOURCE, ok: false, model_calls: 0 });
@@ -13240,19 +13253,11 @@ export class CheState extends DurableObject {
         if (!body.attachment && evidenceIntent(message)) {
           return ndjsonReply(await evidenceReport(this.ctx.storage), { source: 'che_trading_evidence' });
         }
-        // Strategy simulation: pause, resume and status by typing, by voice, or through the /trade-sim command. Owner only.
+        // Strategy simulation: pause, resume, stop, reset (asks first) and status, typed, spoken or /trade-sim. Owner only.
         const sim = strategySimIntent(message);
         if (sim) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can control the strategy simulation, sir.', { source: 'che_strategy_sim', ok: false });
-          if (sim.kind === 'pause' || sim.kind === 'resume') {
-            await setStrategySimPaused(this.ctx.storage, sim.kind === 'pause');
-            // Resuming arms the next minute at once, so it does not wait for another wake-up.
-            if (sim.kind === 'resume') await this.scheduleWork();
-          }
-          const lead = sim.kind === 'pause' ? 'Paused the strategy simulation, sir. No bars are read and no trades open until you resume it.'
-            : sim.kind === 'resume' ? 'Resumed the strategy simulation, sir. It runs again on the next minute.' : '';
-          const view = await strategySimView(this.ctx.storage);
-          return ndjsonReply([lead, speakStrategySim(view)].filter(Boolean).join('\n'), { source: 'che_strategy_sim' });
+          return ndjsonReply(await simChatReply(this.ctx.storage, sim, () => this.scheduleWork()), { source: 'che_strategy_sim' });
         }
         const trade = tradingIntent(message, { followup: followupWords, referent: referentText });
         if (trade) {
@@ -16242,6 +16247,7 @@ async function routeRequest(request, env, ctx) {
     const body = await request.json().catch(() => ({}));
     return json(await env.CHE_STATE.getByName('owner').reaProbe({ message: String(body.message || '').slice(0, 500), allow_build: body.allow_build === true }));
   }
+  if (path === '/api/trading/audit/probe' && request.method === 'POST') return voiceProbeAuthorized(request, env) ? json(await env.CHE_STATE.getByName('owner').tradingAuditProbe()) : json({ detail: 'Not found.' }, 404);
   if (path === '/api/memory/probe' && request.method === 'POST') {
     if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);
     const token = /^Bearer (\S+)$/.exec(request.headers.get('Authorization') || '')?.[1] || '';

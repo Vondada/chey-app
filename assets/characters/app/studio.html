@@ -20,6 +20,12 @@ html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);font:15px/1.
 <body>
 <div id="stage" role="img" aria-label="3D viewport. No model loaded yet."></div>
 <div id="empty">No model loaded yet.</div>
+<script>
+window.addEventListener('error', function () {
+  document.getElementById('empty').textContent = 'The 3D renderer could not start. Close and reopen the studio to retry.';
+  try { window.CheBridge.postMessage(JSON.stringify({type: 'error', message: 'The 3D renderer could not start.'})); } catch (_) {}
+});
+</script>
 <script src="characters-vendor.js"></script>
 <script>
 const THREE = window.THREE;
@@ -197,6 +203,7 @@ function clearModel() {
 
 /** Shows one GLB (base64). `info.label` is what the app says the model is; the page reports what it really parsed. */
 function loadModel(b64, info = {}) {
+  empty.textContent = 'Reading the 3D model…';
   let bytes;
   try {
     const bin = atob(b64); bytes = new Uint8Array(bin.length);
@@ -257,6 +264,10 @@ function view(cmd = {}) {
   else if (a === 'spin') { orbit.spin = cmd.on !== false; }
   else if (a === 'animate') { ok = play(cmd.clip); note = ok ? `Playing ${playing}.` : 'This model has no animation clips.'; }
   else if (a === 'stop') { if (mixer) { mixer.stopAllAction(); playing = null; } }
+  else if (a === 'clear') {
+    clearModel(); empty.textContent = 'Generate this creation to show its model.'; empty.style.display = 'flex';
+    stage.setAttribute('aria-label', '3D viewport. No model loaded yet.');
+  }
   else if (a === 'lipsync' || a === 'speak') { [ok, note] = startSpeech(cmd); }
   else if (a === 'stop_speaking') {
     note = face.speech ? 'Mouth back at rest.' : 'Nothing was speaking; the mouth is at rest.';

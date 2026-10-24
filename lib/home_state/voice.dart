@@ -250,8 +250,24 @@ extension _CheHomeVoice on _CHEHomeState {
 
   /// Speak on an explicit owner request. Read This bypasses the ordinary
   /// voice-replies toggle without enabling automatic screen narration.
-  Future<void> speakText(String text, {bool record = true, bool readOnDemand = false}) async {
+  /// Shows a spoken reply as large visible text on whatever page is in front,
+  /// for a deaf owner too: the same SnackBar the "look at my screen" and Help
+  /// replies use. For replies that are spoken without a chat bubble.
+  void _showSpokenReply(String text) {
+    if (!mounted || text.trim().isEmpty) return;
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    messenger?.hideCurrentSnackBar();
+    messenger?.showSnackBar(SnackBar(
+      content: Text(text, style: const TextStyle(fontSize: 18, height: 1.3)),
+      duration: const Duration(seconds: 10),
+    ));
+  }
+
+  /// [show] also puts [text] on screen as large text (see [_showSpokenReply]);
+  /// use it with `record: false` when nothing else shows the words.
+  Future<void> speakText(String text, {bool record = true, bool readOnDemand = false, bool show = false}) async {
     if (text.trim().isEmpty) return;
+    if (show) _showSpokenReply(text);
     if (record && mounted && (messages.isEmpty || messages.last['text'] != text)) {
       _set(() => messages.add({'role': 'assistant', 'text': text}));
     }

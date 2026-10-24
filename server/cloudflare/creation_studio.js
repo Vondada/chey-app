@@ -22,6 +22,8 @@ import { r2Status } from './object_storage.js';
 import { BUILT_IN, HAIR_BUILT, STYLES, STYLE_LABELS, listIdentities, skinOk, toSettings, validate } from './avatar_identity.js';
 import { GpuQueue, VIEW_NAMES, engineRecord, engineSettingsOf, gpuOwnerRoute, rigLine } from './gpu_queue.js';
 import { cloudUsable, engineRoute, ensureCapacity } from './creation_orchestrator.js';
+import { CREATION_PROFILES, profileSettings } from './creation_profiles.js';
+import * as OBJ from './creation_objects.js';
 
 export const PROJECTS_KEY = 'creations:projects';
 export const MAX_PROJECTS = 100;
@@ -32,10 +34,10 @@ export const VIEWS = [0, 45, 90];
 export const CAPABILITIES = [
   { id: 'person', title: 'Create Person', status: 'available',
     detail: 'Start from CHE or a crew preset, edit by voice or typing, and build a clothed full-body 3D character on your Creation Engine: skeleton, face shapes, idle, walk, wave and talk clips, each verified before it is shown as working.' },
-  { id: 'object', title: 'Create Object', status: 'unavailable',
-    detail: 'Not built yet: CHE has no object modelling pipeline in Blender yet, so nothing is generated or simulated.' },
-  { id: 'room', title: 'Create Room', status: 'unavailable',
-    detail: 'Not built yet: rooms and environments have no generator yet; the Office and HQ rooms are fixed scenes.' },
+  { id: 'object', title: 'Create Object', status: 'available', choices: OBJ.FAMILIES,
+    detail: `Choose a lamp, chair, table, desk, mug, vase or shelf, then change its size, colour, finish and style by voice or typing; your Creation Engine builds it in Blender, measures the file and renders previews. ${OBJ.CAPABILITY_NOTE[0].toUpperCase()}${OBJ.CAPABILITY_NOTE.slice(1)}.` },
+  { id: 'room', title: 'Create Room', status: 'available', choices: OBJ.ROOM_TYPES,
+    detail: `Choose a living room, bedroom, office or studio, then change its size in metres, walls, floor, furniture and light by voice or typing; your Creation Engine builds it in Blender, measures it and renders previews. ${OBJ.CAPABILITY_NOTE[0].toUpperCase()}${OBJ.CAPABILITY_NOTE.slice(1)}.` },
   { id: 'animation', title: 'Create Animation', status: 'partial',
     detail: 'Play, pause, slow down and skip through clips with the skeleton showing: the bundled crew models now, and each generated character once its rig is verified. Motion capture from video and new animation renders are not built yet.' },
 ];
@@ -63,6 +65,7 @@ export function renderOf(v) {
   if (!QUALITY[r.quality] && r.quality !== 'custom') r.quality = DEFAULT_RENDER.quality;
   if (!LIGHTINGS[r.lighting]) r.lighting = DEFAULT_RENDER.lighting;
   if (r.quality !== 'custom') delete r.custom;
+  if (r.target !== 'roblox') delete r.target;   // target: roblox also exports the Roblox R15 FBX (creation_profiles.js)
   return r;
 }
 
@@ -86,7 +89,9 @@ export function resourceLine(r) {
 /** The extra job settings the Creation Engine reads beside the identity (strings, as cleanSettings keeps them). */
 export function renderSettings(r) {
   const q = qualityOf(r);
-  return { MODEL_MODE: r.mode, QUALITY: q.id, LIGHTING: r.lighting, SUBDIV: String(q.subdiv), TEXTURE_PX: String(q.texture_px), STRANDS: String(q.strands) };
+  // The tools for this kind of creation (quick look, final profile, Roblox export): creation_profiles.js.
+  return { ...profileSettings(r.target === 'roblox' ? 'roblox' : 'person'), MODEL_MODE: r.mode, QUALITY: q.id, LIGHTING: r.lighting,
+    SUBDIV: String(q.subdiv), TEXTURE_PX: String(q.texture_px), STRANDS: String(q.strands) };
 }
 
 const iso = (ms) => new Date(ms).toISOString();
@@ -217,6 +222,13 @@ function renderIntent(t, render, applied, unsupported) {
   if (/\bcinematic\b/.test(t)) r.lighting = 'cinematic';
   else if (/\b(?:studio|neutral|even) (?:light|lighting)\b/.test(t)) r.lighting = 'studio';
   if (r.lighting !== render.lighting) applied.push(`Lighting changed to ${r.lighting}${r.lighting === 'cinematic' ? ': a stronger key, deeper shadows and a rim light' : ': soft, even light'}.`);
+  if (/\b(?:no|not for|without|stop)(?: the)? roblox\b/.test(t)) delete r.target;
+  else if (/\broblox\b/.test(t)) r.target = 'roblox';
+  if ((r.target || '') !== (render.target || '')) {
+    applied.push(r.target === 'roblox'
+      ? `Roblox export on. Generate also makes a Roblox Studio file: ${CREATION_PROFILES.roblox.note}`
+      : 'Roblox export off.');
+  }
   return r;
 }
 
@@ -360,15 +372,23 @@ async function engineOf(queue, env = {}) {
 const CLOUD_LINE = 'CHE is starting a free cloud worker; it builds on the CPU, slower than the GPU.';
 
 const cur = (p) => p.versions[p.current];
+/** Create Object and Create Room projects (creation_objects.js): a spec in place of an identity preset. */
+const isThing = (p) => p.kind === 'object' || p.kind === 'room';
+const renderView = (p, v) => {
+  if (!isThing(p)) return { ...renderOf(v), quality_label: qualityOf(renderOf(v)).label };
+  const q = OBJ.qualityOf(v.render); return { quality: q.id, quality_label: q.label };
+};
 
 function summary(p, jobs) {
   const v = cur(p); const j = v.job_id ? jobs.find((x) => x.id === v.job_id) : null;
   return {
     id: p.id, kind: p.kind, title: p.title, base_id: p.base_id, version: v.n, versions: p.versions.length,
     can_undo: p.current > 0, can_redo: p.current < p.versions.length - 1, saved_at: p.saved_at, updated_at: p.updated_at, style: v.style,
-    job: j ? { id: j.id, state: j.state, pct: j.progress?.pct ?? 0, message: j.progress?.message || '', updated_at: j.updated_at } : null,
+    job: j ? { id: j.id, state: j.state, pct: j.progress?.pct ?? 0, message: j.progress?.message || '', updated_at: j.updated_at,
+      owner_paused: Boolean(j.owner_paused), display_state: j.display_state || null, status_line: j.status_line || null } : null,
     previews: j ? { ...(j.previews || {}) } : {}, model_url: j?.model?.url || null,
-    render: { ...renderOf(v), quality_label: qualityOf(renderOf(v)).label }, rig: j?.rig || null,
+    render: renderView(p, v), rig: j?.rig || null,
+    ...(isThing(p) ? { described: OBJ.describeSpec(p.kind, v.params), measured: j?.measured || null } : {}),
   };
 }
 
@@ -380,7 +400,7 @@ function stagesOf(job) {
   if (!job) return [];
   return (job.history || []).map((h) => {
     const n = String(h.note || '');
-    const label = /^Geometry ready/.test(n) ? 'Geometry ready' : /^Skeleton verified/.test(n) ? n.replace(/\.$/, '') : /^Preview .* arrived/.test(n) ? n.replace(/\.$/, '')
+    const label = /^Geometry ready/.test(n) ? 'Geometry ready' : /^(?:Skeleton|Model) verified/.test(n) ? n.replace(/\.$/, '') : /^Preview .* arrived/.test(n) ? n.replace(/\.$/, '')
       : h.state === 'queued' ? 'Queued' : h.state === 'rendering' ? `${/^Resumed/.test(n) ? 'Resumed' : 'Started'} on ${cpuNote(n) ? 'a free cloud CPU worker' : 'the GPU'}`
         : h.state === 'completed' ? 'Completed' : h.state === 'failed' ? 'Failed' : h.state === 'paused' ? 'Paused' : h.state === 'cancelled' ? 'Cancelled' : h.state;
     return { at: h.at, label, state: h.state, note: n };
@@ -392,8 +412,8 @@ function detail(p, jobs, engine) {
   const { jobs: _all, ...eng } = engine;
   const sum = summary(p, jobs);
   // detail.versions is the version list (the summary's count stays as versions_count).
-  return { ...sum, versions_count: sum.versions, params: v.params, resources: resourceLine(renderOf(v)),
-    versions: p.versions.map((x) => ({ n: x.n, at: x.at, note: x.note, style: x.style, render: renderOf(x), job_id: x.job_id })),
+  return { ...sum, versions_count: sum.versions, params: v.params, resources: isThing(p) ? OBJ.resourceLine(v.render) : resourceLine(renderOf(v)),
+    versions: p.versions.map((x) => ({ n: x.n, at: x.at, note: x.note, style: x.style, render: isThing(p) ? renderView(p, x) : renderOf(x), job_id: x.job_id })),
     job: raw || null, stages: stagesOf(raw), engine: eng };
 }
 
@@ -405,6 +425,10 @@ function speakProject(p, jobs, engine) {
         : j.state === 'queued' || j.state === 'paused' ? (engine.automatic ? `Waiting for the Creation Engine. ${CLOUD_LINE}`
           : `Waiting for the Creation Engine${engine.online ? '' : `, which is offline. ${engine.waiting_reason ? `${engine.waiting_reason} ` : ''}Open Colab to start it`}.`)
           : `The last build ${j.state}.`;
+  if (isThing(p)) {
+    const m = s.measured?.ok ? ` Measured: ${s.measured.line}.` : '';
+    return `${p.title}, version ${s.version} of ${s.versions}: ${s.described}. ${job}${m}`;
+  }
   return `${p.title}, version ${s.version} of ${s.versions}, ${STYLE_LABELS[s.style]} look. ${job}`;
 }
 
@@ -431,9 +455,11 @@ export class CreationStudio {
   }
 
   async create(body = {}) {
-    if ((body.kind || 'person') !== 'person') {
-      const cap = CAPABILITIES.find((c) => c.id === body.kind);
-      return { ok: false, detail: cap ? cap.detail : 'Only people can be created so far.' };
+    const kind = body.kind || 'person';
+    if (kind === 'object' || kind === 'room') return this.createThing(kind, body);
+    if (kind !== 'person') {
+      const cap = CAPABILITIES.find((c) => c.id === kind);
+      return { ok: false, detail: cap ? `${cap.title} is ${cap.status === 'partial' ? 'a preview only' : 'not built'} as a project: ${cap.detail}` : 'CHE creates people, objects and rooms.' };
     }
     const baseId = String(body.base || 'che');
     const base = (await listIdentities(this.storage)).presets.find((x) => x.id === baseId);
@@ -452,6 +478,29 @@ export class CreationStudio {
     return { ok: true, project: await this.detailOf(p) };
   }
 
+  /** Create Object / Create Room: base is a family (lamp, chair, table, desk, mug, vase, shelf) or a room type. */
+  async createThing(kind, body) {
+    const base = String(body.base || (kind === 'object' ? 'lamp' : 'living_room')).toLowerCase();
+    const spec = OBJ.defaultSpec(kind, base);
+    if (!spec) {
+      return { ok: false, detail: kind === 'object'
+        ? `CHE builds only these objects: ${[...OBJ.FAMILIES, 'desk'].join(', ')}. ${OBJ.CAPABILITY_NOTE[0].toUpperCase()}${OBJ.CAPABILITY_NOTE.slice(1)}.`
+        : `CHE builds only these rooms: ${OBJ.ROOM_TYPES.map((x) => OBJ.ROOM_LABELS[x]).join(', ')}.` };
+    }
+    const list = await load(this.storage);
+    if (list.length >= MAX_PROJECTS) {
+      return { ok: false, full: true, detail: `You have ${list.length} creations, the most CHE keeps. Nothing was removed; delete one you no longer need (CHE asks you first), then create again.` };
+    }
+    const t = this.now(); const id = `cr_${crypto.randomUUID().replaceAll('-', '').slice(0, 12)}`;
+    const p = { id, kind, title: String(body.title || OBJ.titleOf(kind, spec)).slice(0, 80), base_id: kind === 'object' ? (base === 'desk' ? 'desk' : spec.family) : spec.type,
+      created_at: iso(t), updated_at: iso(t), saved_at: null, current: 0,
+      versions: [{ n: 1, at: iso(t), note: `Started from the ${kind === 'object' ? (base === 'desk' ? 'desk' : spec.family) : OBJ.ROOM_LABELS[spec.type]} defaults.`,
+        params: spec, style: spec.style, render: { quality: 'standard' }, job_id: null }] };
+    list.push(p); await store(this.storage, list);
+    const project = await this.detailOf(p);
+    return { ok: true, project, spoken: `${p.title} started: ${OBJ.describeSpec(kind, spec)}. Say a change, or say generate to build it.` };
+  }
+
   async find(id) { const list = await load(this.storage); return { list, p: list.find((x) => x.id === id) || null }; }
 
   async detailOf(p) { const engine = await this.engine(); return detail(p, engine.jobs, engine); }
@@ -467,10 +516,21 @@ export class CreationStudio {
   async generate(id) {
     const { list, p } = await this.find(id);
     if (!p) return { ok: false, status: 404, detail: 'No such creation.' };
-    const v = cur(p); const r = renderOf(v); const q = qualityOf(r);
-    // Owner-interactive: high priority; a GPU is preferred, and a free cloud CPU worker takes it when none is online.
-    const out = await this.queue.enqueue({ kind: 'person_model', title: `${p.title} v${v.n}: 3D model and previews`, views: VIEWS, samples: q.samples, res: q.res,
-      settings: { ...toSettings(v.params, v.style), ...renderSettings(r) }, queued_by: 'Live Studio', priority: 'high', requires: { gpu: 'preferred' } });
+    const v = cur(p);
+    let out;
+    if (isThing(p)) {
+      // Objects and rooms are light procedural builds: any worker takes them, a free cloud CPU included.
+      const bad = OBJ.specErrors(p.kind, v.params);
+      if (bad.length) return { ok: false, detail: `This version cannot be built: ${bad.join('; ')}.` };
+      const q = OBJ.qualityOf(v.render);
+      out = await this.queue.enqueue({ kind: OBJ.KIND_JOB[p.kind], title: `${p.title} v${v.n}: 3D model and previews`, views: VIEWS, samples: q.samples, res: q.res,
+        settings: OBJ.specSettings(v.params), queued_by: 'Live Studio', priority: 'high', requires: { gpu: 'none' } });
+    } else {
+      const r = renderOf(v); const q = qualityOf(r);
+      // Owner-interactive: high priority; a GPU is preferred, and a free cloud CPU worker takes it when none is online.
+      out = await this.queue.enqueue({ kind: 'person_model', title: `${p.title} v${v.n}: 3D model and previews`, views: VIEWS, samples: q.samples, res: q.res,
+        settings: { ...toSettings(v.params, v.style), ...renderSettings(r) }, queued_by: 'Live Studio', priority: 'high', requires: { gpu: 'preferred' } });
+    }
     if (!out.ok) return { ok: false, detail: out.detail };
     v.job_id = out.job.id; p.updated_at = iso(this.now()); await store(this.storage, list);
     const cap = await this.capacity();
@@ -488,6 +548,7 @@ export class CreationStudio {
     const { list, p } = await this.find(id);
     if (!p) return { ok: false, status: 404, detail: 'No such creation.' };
     const v = cur(p);
+    if (isThing(p)) return this.editThing(list, p, v, text);
     const r = parseEdit(text, v.params, v.style, renderOf(v));
     const changed = JSON.stringify(r.params) !== JSON.stringify(v.params) || r.style !== v.style || JSON.stringify(r.render) !== JSON.stringify(renderOf(v));
     // "Critique this design": a parameter review of this version once it has a finished build, else an honest no.
@@ -509,6 +570,35 @@ export class CreationStudio {
     const n = cur(p).n;
     const spoken = [...r.applied, ...r.unsupported, ...(critique ? [critique.spoken] : [])].join(' ') + (changed ? ` Saved as version ${n}. Say generate to build it.` : '');
     return { ok: true, changed, applied: r.applied, unsupported: r.unsupported, viewport: r.viewport, critique, spoken: spoken.trim(), project: await this.detailOf(p) };
+  }
+
+  /** An object or room edit: viewport words first, then the spec words (creation_objects.js); a change is a version. */
+  async editThing(list, p, v, text) {
+    const t = String(text || '').toLowerCase().replace(/[.!?]+$/g, '').replace(/^(?:che|chey|chay)[,:]?\s+/, '').trim();
+    const vi = /\bturn (?:it |this |the \w+ )?into\b/.test(t) ? null : viewportIntent(t);
+    // A pure view command ("rotate it", "zoom in") moves the viewport only; "rotate the chair and make it red" does both.
+    const r = vi && !/\b(?:make|add|remove|paint|change|turn it into|bigger|smaller|colou?r|floor|wall|light)\b/.test(t)
+      ? { spec: v.params, quality: null, applied: [], unsupported: [] }
+      : (p.kind === 'object' ? OBJ.parseObjectEdit(t, v.params) : OBJ.parseRoomEdit(t, v.params));
+    const applied = [...(vi ? [vi.sentence] : []), ...r.applied];
+    const unsupported = vi ? r.unsupported.filter((x) => !/^I can't change that/.test(x)) : r.unsupported;
+    const render = r.quality ? { quality: r.quality } : { ...(v.render || { quality: 'standard' }) };
+    const changed = JSON.stringify(r.spec) !== JSON.stringify(v.params) || JSON.stringify(render) !== JSON.stringify(v.render || { quality: 'standard' });
+    if (changed) {
+      const bad = OBJ.specErrors(p.kind, r.spec);
+      if (bad.length) {
+        const said = `That change was not saved: ${bad.join('; ')}.`;
+        return { ok: true, changed: false, applied: [], unsupported: [said], viewport: vi?.viewport || null, spoken: said, project: await this.detailOf(p) };
+      }
+      const now = this.now();
+      p.versions = p.versions.slice(0, p.current + 1);
+      p.versions.push({ n: Math.max(...p.versions.map((x) => x.n)) + 1, at: iso(now), note: String(text).slice(0, 200), params: r.spec, style: r.spec.style, render, job_id: null });
+      if (p.versions.length > MAX_VERSIONS) p.versions = p.versions.slice(-MAX_VERSIONS);
+      p.current = p.versions.length - 1; p.updated_at = iso(now);
+      await store(this.storage, list);
+    }
+    const spoken = [...applied, ...unsupported].join(' ') + (changed ? ` Saved as version ${cur(p).n}. Say generate to build it.` : '');
+    return { ok: true, changed, applied, unsupported, viewport: vi?.viewport || null, critique: null, spoken: spoken.trim(), project: await this.detailOf(p) };
   }
 
   async step(id, action) {

@@ -28,32 +28,50 @@ extension _CheHomeHubRooms on _CHEHomeState {
                   builder: (_) => CheCloudLogsScreen(baseUrl: () => cheAgentBaseUrl, headers: () => _authHeaders),
                 ),
               ),
-        map: CheMemoryBrainRoom(
-          active: active,
-          dots: cheBuildMemoryDots(
-            savedMemories: savedMemories,
-            memoryRecords: memoryRecords,
-            memoryNotes: memoryNotes,
-            learnedPersonality: learnedPersonality,
-            learnedKnowledge: learnedKnowledge,
-            brainLinks: brainLinks,
-            suggestions: suggestions,
-            conversationMemories: conversationMemories,
-            brainRecords: _brainReplicaRecords(),
-          ),
-          brainLinks: brainLinks,
-          roster: team,
-          loading: _brainSyncing,
-          offline: _brainReplica.lastReceipt?.unreachable == true,
-          error: _brainReplica.lastReceipt?.syncNotice,
-          pendingSync: _brainReplica.pendingOps,
-          onReadAloud: (t) => speakText(t, record: false, readOnDemand: true),
-          onRefresh: () => _loadAgentState(silent: true),
-          onOpenAgent: (name) => _openOfficeFloor(agentName: name),
-          onOpenEvidence: _openBrainEvidence,
-        ),
+        map: _brainOverview(active),
+        chipsBottomInset: cheBrainOverviewChipsInset,
       ),
       offline: CheOfflineBrainPanel(compact: true, replicaLine: _brainReplicaLine()),
+    );
+  }
+
+  /// The Brain Room (owner, 2026-10-24, his original reference): the neural Brain framed by the sidebar,
+  /// Real-Time Learning from the Brain Ledger and the dashboard cards. Both Brain screens use this one builder.
+  Widget _brainOverview(bool active) {
+    final dots = cheBuildMemoryDots(
+      savedMemories: savedMemories,
+      memoryRecords: memoryRecords,
+      memoryNotes: memoryNotes,
+      learnedPersonality: learnedPersonality,
+      learnedKnowledge: learnedKnowledge,
+      brainLinks: brainLinks,
+      suggestions: suggestions,
+      conversationMemories: conversationMemories,
+      brainRecords: _brainReplicaRecords(),
+    );
+    final ledger = _deviceToken == null ? null : CheBrainLedgerClient(baseUrl: cheAgentBaseUrl, headers: () => _authHeaders);
+    return CheBrainOverview(
+      active: active,
+      dots: dots,
+      brainLinks: brainLinks,
+      loadLearning: ledger?.overview,
+      onReadAloud: (t) => speakText(t, record: false, readOnDemand: true),
+      onOpenEvidence: _openBrainEvidence,
+      onOpenLedger: () => unawaited(_openBrainLedger()),
+      brain: CheMemoryBrainRoom(
+        active: active,
+        dots: dots,
+        brainLinks: brainLinks,
+        roster: team,
+        loading: _brainSyncing,
+        offline: _brainReplica.lastReceipt?.unreachable == true,
+        error: _brainReplica.lastReceipt?.syncNotice,
+        pendingSync: _brainReplica.pendingOps,
+        onReadAloud: (t) => speakText(t, record: false, readOnDemand: true),
+        onRefresh: () => _loadAgentState(silent: true),
+        onOpenAgent: (name) => _openOfficeFloor(agentName: name),
+        onOpenEvidence: _openBrainEvidence,
+      ),
     );
   }
 
@@ -75,6 +93,19 @@ extension _CheHomeHubRooms on _CHEHomeState {
         builder: (_) => CheEmbeddedAppScreen(app: app, onLearnPage: _learnFromBrowserPage),
       ),
     );
+  }
+
+  /// Opens one Trading Room section for a desk card and says so aloud (the owner pressed it).
+  void _openTradingTool(String section, String spoken) {
+    if (!mounted) return;
+    unawaited(Navigator.of(context).push(CheTradingRoomPage.route(
+      baseUrl: () => cheAgentBaseUrl,
+      headers: () => _authHeaders,
+      onAsk: _runHubPrompt,
+      onRead: (words) { speakText(words, record: false, readOnDemand: true); },
+      chart: {'section': section},
+    )));
+    unawaited(speakText(spoken, record: false));
   }
 
   Widget _hubMarketsTab() {
@@ -111,35 +142,34 @@ extension _CheHomeHubRooms on _CHEHomeState {
           connectorName: '',
           onRun: () => _runHubPrompt('How are the trades doing?'),
         ),
+        // CHE's own engines (owner, 2026-10-24): the state comes from /api/trading/capabilities, and each card opens
+        // its tool in the Trading Room rather than asking for an external URL.
         CheDeskAction(
           icon: Icons.candlestick_chart,
           title: 'Analyze Markets',
           body: 'Stocks, futures and crypto structure, catalysts, volatility and risk.',
-          connected: integrations['market_data'] == true,
-          connectorName: 'Live market data (CHE_MARKET_DATA_URL)',
-          onRun: () => _runHubPrompt(
-            'Analyze the market I am focused on right now. Use any connected live market and research tools, separate live facts from assumptions, and give me structure, catalysts, invalidation and risk.',
-          ),
+          connected: true,
+          connectorName: '',
+          capability: 'analyze_markets',
+          onRun: () => _openTradingTool('chart', 'Opened the Trading Room chart. CHE\'s market analysis runs on the bars it shows; ask "analyze this market" for the structure read.'),
         ),
         CheDeskAction(
           icon: Icons.science_outlined,
           title: 'Backtesting Lab',
           body: 'Strategy tests with sample size, drawdown and out-of-sample checks.',
-          connected: integrations['backtesting'] == true,
-          connectorName: 'Backtest engine (CHE_BACKTEST_URL)',
-          onRun: () => _runHubPrompt(
-            'Open a backtesting task with me. Help me define the setup, rules, timeframe, data needed, sample size, drawdown and out-of-sample validation. Use the connected backtest system if available.',
-          ),
+          connected: true,
+          connectorName: '',
+          capability: 'backtesting_lab',
+          onRun: () => _openTradingTool('strategies', 'Opened the Strategy Lab: the research results by strategy and timeframe, with sample size, drawdown and out-of-sample checks.'),
         ),
         CheDeskAction(
           icon: Icons.functions,
           title: 'Custom Indicators',
           body: 'Indicator and scanner logic (VWAP, order blocks, custom rules).',
-          connected: integrations['backtesting'] == true,
-          connectorName: 'Historical data / backtest engine',
-          onRun: () => _runHubPrompt(
-            'Help me build a custom trading indicator or scanner. Ask only for the missing rules, then produce the logic and a validation plan.',
-          ),
+          connected: true,
+          connectorName: '',
+          capability: 'custom_indicators',
+          onRun: () => _openTradingTool('chart', 'Opened the Trading Room chart. Its Indicators menu has VWAP, EMA 9, 20, 50 and 200, RSI, Bollinger Bands, the session range and the opening range.'),
         ),
         CheDeskAction(
           icon: Icons.menu_book_rounded,
@@ -397,11 +427,6 @@ extension _CheHomeHubRooms on _CHEHomeState {
           if (!cheIsCodingJob(j)) j,
       ],
       onOpenJob: (job) => unawaited(_openJob(job)),
-      seriesPanel: CheSeriesStudioPanel(
-        baseUrl: () => cheAgentBaseUrl,
-        headers: () => _authHeaders,
-        onAsk: _runHubPrompt,
-      ),
       musicScene: MusicStudioScene(
         active: active,
         musicConnected: musicReady,
@@ -413,6 +438,14 @@ extension _CheHomeHubRooms on _CHEHomeState {
             _runHubPrompt('Help me connect my car audio to CHE. Use only supported authorized audio controls.'),
       ),
       actions: [
+        CheStudioAction(
+          icon: Icons.mic_rounded,
+          title: 'Recording Studio',
+          body: 'Record vocals, layer tracks, build beats, add effects, mix, master and export WAV, on this iPhone.',
+          connected: true,
+          connectorName: '',
+          onRun: () => unawaited(_openRecordingStudio()),
+        ),
         CheStudioAction(
           icon: Icons.music_note_rounded,
           title: 'Make music',
@@ -447,6 +480,34 @@ extension _CheHomeHubRooms on _CHEHomeState {
             ),
           ),
         ),
+      ],
+    );
+  }
+
+  /// The Music room's own recording workspace (lib/music/che_recording_studio.dart). [tab] opens a section (0 Record,
+  /// 1 My Songs, 2 Beat Maker, 3 Mixer, 4 Effects, 5 Master); [say] runs the owner's words there ("record my vocals").
+  Future<void> _openRecordingStudio({int tab = 0, String? say}) async {
+    HapticFeedback.selectionClick();
+    await Navigator.of(context).push(CheRecordingStudio.route(
+      initialTab: tab,
+      say: say,
+      onAsk: (prompt) async {
+        if (mounted) Navigator.of(context).pop();
+        _runHubPrompt(prompt);
+      },
+      onSpeak: (text) => speakText(text, record: false, readOnDemand: true),
+    ));
+  }
+
+  /// Film Studio's video series panel (Street Smart Explainers), moved out of the Music room on 2026-10-24.
+  Widget _filmSeriesPanel() => CheSeriesStudioPanel(
+        baseUrl: () => cheAgentBaseUrl,
+        headers: () => _authHeaders,
+        onAsk: _runHubPrompt,
+      );
+
+  /// Film Studio's video tools, moved out of the Music room on 2026-10-24 (same handlers as before).
+  List<CheStudioAction> _filmTools() => [
         CheStudioAction(
           icon: Icons.auto_awesome_rounded,
           title: 'Visual Studio',
@@ -493,9 +554,7 @@ extension _CheHomeHubRooms on _CHEHomeState {
             'Create a video for me. Ask only for any essential missing detail, then use the connected CHE video generator if available.',
           ),
         ),
-      ],
-    );
-  }
+      ];
 
   Widget _hubCreateTab(bool active) => _hubCreateScene(active);
 
@@ -527,25 +586,20 @@ extension _CheHomeHubRooms on _CHEHomeState {
           creations: CheCreationsStrip(baseUrl: cheAgentBaseUrl, headers: _authHeaders, active: active),
           onRead: (text) => speakText(text, record: false, readOnDemand: true),
           actions: CheStudioActions(
+            // Every studio button opens its own workspace, never Home or Chat (owner, 2026-10-24).
             onOpenFilmStudio: () => unawaited(_openFilmStudio()),
-            onNewVideo: () => _runHubPrompt(
-              'Create a video for me. Ask only for any essential missing detail, then use the connected CHE video generator if available.',
-            ),
+            onNewVideo: () => unawaited(_openFilmStudio()),
             onOpenTheater: () => _switchHubRoom(8),
-            onOpenMusic: () => _switchHubRoom(4),
-            onNewSong: () => _runHubPrompt(
-              'Make a song or beat with me in the Music Studio. Ask only for any essential missing detail first.',
-            ),
-            onNewApp: () => _runHubPrompt(
-              'Start a coding job: build an app, website or game for me. Ask only for any essential missing detail first.',
-            ),
+            onOpenMusic: _openMusicWorkspace,
+            onNewSong: _openMusicWorkspace,
+            onNewApp: _openCodeWorkspace,
+            onOpenCodeWorkspace: _openCodeWorkspace,
+            onOpenProjectManager: _openProjectManager,
             onOpenCommandCenter: () => unawaited(_openCommandCenter()),
             onOpenOffice: _openOfficeFloor,
             onCharacterGenerator: _openCharacterGenerator,
             onOpenArtStudio: _openArtStudio,
-            onNewImage: () => _runHubPrompt(
-              'Create an image for me. Ask only for any essential missing detail, then use the connected CHE image generator if available.',
-            ),
+            onNewImage: _openArtStudio,
             onNewProject: () => unawaited(_createProjectDialog()),
             onOpenProject: _openProjectEditor,
             onVault: () => unawaited(_openVault()),
@@ -558,6 +612,7 @@ extension _CheHomeHubRooms on _CHEHomeState {
             onShowroom: _openShowroom,
             loadPeople: _loadCreationPeople,
             onCreatePerson: (base) => unawaited(_createPerson(base)),
+            onCreateThing: _createThing,
             onCreateAnimation: () => unawaited(
               Navigator.of(context).push(
                 CheLiveStudio.route(
@@ -646,6 +701,45 @@ extension _CheHomeHubRooms on _CHEHomeState {
         ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(content: Text('Could not start the creation: $e')));
       }
     }
+  }
+
+  /// Create Object / Create Room: a new project of [kind] from [base] on the Worker, opened in the Live Studio. Returns
+  /// the Worker's own answer (or the real failure), shown as a banner with a haptic and spoken unless a voice route
+  /// speaks it ([viaVoice]).
+  Future<String> _createThing(String kind, String base, bool viaVoice) async {
+    String said;
+    var ok = false;
+    String? id;
+    try {
+      final r = await http
+          .post(
+            Uri.parse('$cheAgentBaseUrl/api/creations'),
+            headers: {..._authHeaders, 'Content-Type': 'application/json'},
+            body: jsonEncode({'kind': kind, 'base': base}),
+          )
+          .timeout(const Duration(seconds: 15));
+      final d = jsonDecode(r.body);
+      id = d is Map && d['project'] is Map ? '${(d['project'] as Map)['id'] ?? ''}' : '';
+      ok = r.statusCode < 300 && id.isNotEmpty;
+      said = ok
+          ? '${d['spoken'] ?? 'Started.'} Opening it in the Live Studio.'
+          : 'That did not work: ${d is Map ? d['detail'] ?? 'CHE answered ${r.statusCode}.' : 'CHE answered ${r.statusCode}.'}';
+    } catch (e) {
+      said = 'That did not work: CHE could not be reached.';
+    }
+    if (ok) {
+      HapticFeedback.mediumImpact();
+    } else {
+      HapticFeedback.heavyImpact();
+    }
+    if (mounted) {
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        SnackBar(content: Text(said, style: const TextStyle(fontSize: 18)), duration: const Duration(seconds: 6)),
+      );
+    }
+    if (!viaVoice) unawaited(speakText(said, record: false));
+    if (ok && id != null && mounted) unawaited(_openCreation(id));
+    return said;
   }
 
   Future<void> _openCreation(String id) async {
@@ -752,6 +846,54 @@ extension _CheHomeHubRooms on _CHEHomeState {
     });
   }
 
+  /// Music Studio's one entry point: the Music room (hub tab 4). The recording workspace replaces it here, in one place.
+  void _openMusicWorkspace() => _switchHubRoom(4);
+
+  /// Code Studio: the coding workspace (lib/create/che_code_workspace.dart) over the real coding jobs.
+  void _openCodeWorkspace() {
+    HapticFeedback.selectionClick();
+    unawaited(
+      Navigator.of(context).push(
+        CheCodeWorkspace.route(
+          baseUrl: cheAgentBaseUrl,
+          headers: () => _authHeaders,
+          loadJobs: () async {
+            await _loadAgentState(silent: true);
+            return backgroundJobs;
+          },
+          onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
+          onOpenOffice: _openOfficeFloor,
+          onOpenCommandCenter: () => unawaited(_openCommandCenter()),
+        ),
+      ),
+    );
+  }
+
+  /// Active Projects: the project manager (lib/create/che_project_manager.dart) over /api/projects/library.
+  void _openProjectManager() {
+    HapticFeedback.selectionClick();
+    unawaited(
+      Navigator.of(context)
+          .push(
+            CheProjectManager.route(
+              baseUrl: cheAgentBaseUrl,
+              headers: () => _authHeaders,
+              onOpenProject: (id) async {
+                var p = projects.where((x) => '${x['id']}' == id).firstOrNull;
+                if (p == null) {
+                  await _loadAgentState(silent: true);
+                  p = projects.where((x) => '${x['id']}' == id).firstOrNull;
+                }
+                if (p != null) await _openProjectEditor(p);
+              },
+              onOpenCreation: (id) => unawaited(_openCreation(id)),
+              onSpeak: (text) => unawaited(speakText(text, record: false, readOnDemand: true)),
+            ),
+          )
+          .then((_) => _loadAgentState(silent: true)),
+    );
+  }
+
   /// The Art Studio (pieces, engine, upscaler, save to vault) as its own page, opened from Art & Character Studio.
   void _openArtStudio() {
     HapticFeedback.selectionClick();
@@ -809,7 +951,7 @@ extension _CheHomeHubRooms on _CHEHomeState {
     final id = '${recent['id'] ?? ''}';
     if (id.isEmpty) return;
     final route = switch ('${recent['kind'] ?? ''}') {
-      'invention' => CheInventionStudioPage.route(baseUrl: cheAgentBaseUrl, headers: _authHeaders),
+      'invention' => CheInventionStudioPage.route(baseUrl: cheAgentBaseUrl, headers: _authHeaders, openId: id, onSpeak: (text) => speakText(text, record: false)),
       'video' || 'image' => MaterialPageRoute<void>(
         builder: (_) => CheCreationViewer(
           item: {'id': id, 'kind': recent['kind'], 'title': '${recent['title'] ?? 'Creation'}'},

@@ -91,7 +91,7 @@ class CheLiveStatus {
             ? make(CheLiveState.quiet, 'NO TRADES', 'Connected, no trades lately$since')
             : make(CheLiveState.quiet, 'MARKET CLOSED', 'Market closed$since');
       case CheFeedConnection.off:
-        return make(CheLiveState.disconnected, 'DISCONNECTED', 'Rithmic not connected$since');
+        return make(CheLiveState.disconnected, 'DISCONNECTED', '${s.statusLabel.startsWith('Rithmic not connected: ') ? s.statusLabel : 'Rithmic not connected'}$since');
       case CheFeedConnection.disconnected:
         return make(CheLiveState.disconnected, 'DISCONNECTED', '${_reason(s.statusLabel, 'Connection dropped')}$since');
       case CheFeedConnection.failed:

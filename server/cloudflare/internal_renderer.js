@@ -122,7 +122,7 @@ export function text(c, str, x, y, scale, color, alpha = 1) {
   let cx = x;
   for (const ch of String(str).toUpperCase()) {
     const g = FONT[ch] || FONT[' '];
-    for (let r = 0; r < 7; r++) for (let col = 0; col < 5; col++) if (g[r * 5 + col] === '1') {
+    for (let r = 0; r < g.length / 5; r++) for (let col = 0; col < 5; col++) if (g[r * 5 + col] === '1') {
       for (let dy = 0; dy < scale; dy++) for (let dx = 0; dx < scale; dx++) c.blend(cx + col * scale + dx, y + r * scale + dy, color, alpha);
     }
     cx += 6 * scale;

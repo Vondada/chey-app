@@ -1,0 +1,9 @@
+{
+  "className": "Part",
+  "properties": {
+    "Size": [0.4, 4, 0.4],
+    "Color": [0.78, 0.82, 0.84],
+    "Material": "Metal",
+    "CanCollide": false
+  }
+}

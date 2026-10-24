@@ -70,6 +70,7 @@ class CheTradeEvidence {
     this.net,
     this.barsSource,
     this.noData,
+    this.noDataReason,
     this.brainRef,
     this.executionLabel = '',
   });
@@ -80,6 +81,9 @@ class CheTradeEvidence {
   final DateTime? signalTime, entryTime, exitTime;
   final double? entryPrice, exitPrice, stop, target, r, net;
   final String? exitReason, result, barsSource, noData, brainRef;
+
+  /// Why no candles could be drawn (which source was read and what it answered), from the Worker; null when it gave none.
+  final String? noDataReason;
 
   bool get replaySupported => bars.isNotEmpty;
   Duration get tf => Duration(milliseconds: timeframeMs);
@@ -142,6 +146,7 @@ class CheTradeEvidence {
       net: _d(m(j['outcome'])['net']),
       barsSource: m(j['bars_source'])['label']?.toString(),
       noData: j['no_data']?.toString(),
+      noDataReason: j['no_data_reason']?.toString(),
       brainRef: m(m(j['links'])['brain'])['ref']?.toString(),
     );
   }
@@ -193,7 +198,7 @@ String cheTradeSpoken(CheTradeEvidence e) {
     'Entered ${_clock(e.entryTime)} at ${_price(e.entryPrice)}, stop ${_price(e.stop)}, target ${_price(e.target)}.',
     if (e.exitTime != null) 'Exited ${_clock(e.exitTime)} at ${_price(e.exitPrice)}${e.exitReason == null ? '' : ' on the ${e.exitReason}'}.',
     'Result: $out, ${_r(e.r)}${e.net == null ? '' : ', ${_money(e.net)} after costs'}.',
-    if (e.noData != null) e.noData!,
+    if (e.noData != null) e.noDataReason ?? e.noData!,
   ];
   return parts.join(' ');
 }
@@ -211,6 +216,10 @@ class CheTradeReplayPage extends StatefulWidget {
 
   /// The record the caller already has (a chart marker): shown at once while the full record loads.
   final CheTradeEvidence? preview;
+
+  /// While the page is open: "play", "pause", "back 10 seconds", "forward 10 seconds", "restart", "read the trade".
+  /// Returns the spoken result, or null when the words are not a replay command (lib/home_state/send.dart).
+  static Future<String?> Function(String words)? voiceHandler;
 
   /// The deep link is `/trade-replay?id=<tradeId>`; the route name is `trade_replay/<tradeId>`.
   static Route<void> route({required String tradeId, required String Function() baseUrl, required Map<String, String> Function() headers, void Function(String words)? onRead, Map<String, dynamic>? summary}) =>
@@ -238,6 +247,7 @@ class _CheTradeReplayPageState extends State<CheTradeReplayPage> {
   @override
   void initState() {
     super.initState();
+    CheTradeReplayPage.voiceHandler = voice;
     if (widget.initial != null) {
       _set(widget.initial!);
     } else {
@@ -301,8 +311,26 @@ class _CheTradeReplayPageState extends State<CheTradeReplayPage> {
 
   @override
   void dispose() {
+    if (CheTradeReplayPage.voiceHandler == voice) CheTradeReplayPage.voiceHandler = null;
     _timer?.cancel();
     super.dispose();
+  }
+
+  /// The replay controls by voice or typing; each answer says what really happened.
+  Future<String?> voice(String words) async {
+    final w = words.toLowerCase().replaceAll(RegExp(r"^\s*(?:hey\s+)?(?:che|chey|chay)[,:\s]+"), '').replaceAll(RegExp(r'[.!?]+$'), '').trim();
+    final e = _e;
+    final isCommand = RegExp(r'^(?:play|resume|pause|restart|start over|rewind|(?:go |skip |jump )?(?:back|forward|ahead)(?: 10| ten)?(?: seconds?)?|read (?:the |this )?trade(?: aloud)?|read it)$').hasMatch(w);
+    if (!isCommand) return null;
+    if (e == null) return _loading ? 'The trade is still loading.' : (_error ?? 'This trade could not be read.');
+    if (w.startsWith('read')) return cheTradeSpoken(e);
+    if (!e.replaySupported) return '${e.noDataReason ?? e.noData ?? 'No recorded market data for this trade.'} There is nothing to play.';
+    if (w == 'play' || w == 'resume') { _play(); return 'Playing the replay of trade ${e.id}.'; }
+    if (w == 'pause') { _pause(); return 'Paused at ${_clock(_clockAt)}.'; }
+    if (w == 'restart' || w == 'start over' || w == 'rewind') { _restart(); return 'Back at the start, ${_clock(_clockAt)}.'; }
+    if (w.contains('back')) { _back10(); return 'Back 10 seconds of playback, now at ${_clock(_clockAt)}.'; }
+    _skip10();
+    return 'Forward 10 seconds of playback, now at ${_clock(_clockAt)}.';
   }
 
   bool get _playing => _timer != null;
@@ -336,6 +364,14 @@ class _CheTradeReplayPageState extends State<CheTradeReplayPage> {
   }
 
   void _skip10() => _advance(_playbackSpan(const Duration(seconds: 10)));
+
+  /// Back ten seconds of playback, never before the first stored bar.
+  void _back10() {
+    final e = _e;
+    if (e == null || !e.replaySupported) return;
+    final prev = _clockAt!.subtract(_playbackSpan(const Duration(seconds: 10)));
+    setState(() => _clockAt = prev.isBefore(e.replayStart!) ? e.replayStart : prev);
+  }
 
   void _seek(double fraction) {
     final e = _e!;
@@ -422,7 +458,7 @@ class _CheTradeReplayPageState extends State<CheTradeReplayPage> {
         padding: const EdgeInsets.all(14),
         color: _panel,
         borderColor: _stroke,
-        child: Text(e.noData ?? 'No recorded market data for this trade.', style: const TextStyle(color: Colors.white, fontSize: 15)),
+        child: Text([e.noData ?? 'No recorded market data for this trade.', if (e.noDataReason != null) e.noDataReason!].join('\n'), style: const TextStyle(color: Colors.white, fontSize: 15)),
       );
 
   Widget _chart(CheTradeEvidence e, {double? height = 300}) {
@@ -467,6 +503,7 @@ class _CheTradeReplayPageState extends State<CheTradeReplayPage> {
         _playing
             ? btn(const Key('trade_replay_pause'), 'Pause the replay', const Icon(Icons.pause_rounded), _pause)
             : btn(const Key('trade_replay_play'), 'Play the replay', const Icon(Icons.play_arrow_rounded), _play),
+        btn(const Key('trade_replay_back'), 'Back 10 seconds of playback', const Text('−10s', style: TextStyle(fontWeight: FontWeight.w800)), _back10),
         btn(const Key('trade_replay_skip'), 'Skip ahead 10 seconds of playback', const Text('+10s', style: TextStyle(fontWeight: FontWeight.w800)), _skip10),
         btn(const Key('trade_replay_speed'), 'Playback speed ${_speed.toStringAsFixed(0)} times. Double tap to change.',
             Row(mainAxisSize: MainAxisSize.min, children: [const Icon(Icons.speed_rounded), const SizedBox(width: 4), Text('${_speed.toStringAsFixed(0)}×')]),

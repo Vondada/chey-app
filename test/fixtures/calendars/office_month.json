@@ -1,0 +1,453 @@
+{
+ "ok": true,
+ "time_zone": "America/Chicago",
+ "colors": {
+  "green": "everything recorded succeeded",
+  "yellow": "pending or mixed",
+  "red": "something failed or is blocked"
+ },
+ "sources": [
+  "cloud jobs (coding, cloud tasks, REA, renders, film, app builds, Creation Engine)",
+  "Office team tasks",
+  "coordinated Office jobs",
+  "objectives",
+  "owner approvals",
+  "reliability ledger (counts only)"
+ ],
+ "month": "2026-09",
+ "prev": "2026-08",
+ "next": "2026-10",
+ "weeks": [
+  {
+   "days": [
+    {
+     "date": "2026-09-01",
+     "total": 0,
+     "done": 0,
+     "active": 0,
+     "pending": 0,
+     "failed": 0,
+     "approvals": 0,
+     "milestones": 0,
+     "color": null,
+     "reliability": null
+    },
+    {
+     "date": "2026-09-02",
+     "total": 0,
+     "done": 0,
+     "active": 0,
+     "pending": 0,
+     "failed": 0,
+     "approvals": 0,
+     "milestones": 0,
+     "color": null,
+     "reliability": null
+    },
+    {
+     "date": "2026-09-03",
+     "total": 0,
+     "done": 0,
+     "active": 0,
+     "pending": 0,
+     "failed": 0,
+     "approvals": 0,
+     "milestones": 0,
+     "color": null,
+     "reliability": null
+    },
+    {
+     "date": "2026-09-04",
+     "total": 0,
+     "done": 0,
+     "active": 0,
+     "pending": 0,
+     "failed": 0,
+     "approvals": 0,
+     "milestones": 0,
+     "color": null,
+     "reliability": null
+    },
+    {
+     "date": "2026-09-05",
+     "total": 0,
+     "done": 0,
+     "active": 0,
+     "pending": 0,
+     "failed": 0,
+     "approvals": 0,
+     "milestones": 0,
+     "color": null,
+     "reliability": null
+    },
+    {
+     "date": "2026-09-06",
+     "total": 0,
+     "done": 0,
+     "active": 0,
+     "pending": 0,
+     "failed": 0,
+     "approvals": 0,
+     "milestones": 0,
+     "color": null,
+     "reliability": null
+    }
+   ],
+   "total": 0,
+   "done": 0,
+   "active": 0,
+   "pending": 0,
+   "failed": 0,
+   "approvals": 0,
+   "milestones": 0,
+   "summary": "Nothing was recorded."
+  },
+  {
+   "days": [
+    {
+     "date": "2026-09-07",
+     "total": 0,
+     "done": 0,
+     "active": 0,
+     "pending": 0,
+     "failed": 0,
+     "approvals": 0,
+     "milestones": 0,
+     "color": null,
+     "reliability": null
+    },
+    {
+     "date": "2026-09-08",
+     "total": 0,
+     "done": 0,
+     "active": 0,
+     "pending": 0,
+     "failed": 0,
+     "approvals": 0,
+     "milestones": 0,
+     "color": null,
+     "reliability": null
+    },
+    {
+     "date": "2026-09-09",
+     "total": 0,
+     "done": 0,
+     "active": 0,
+     "pending": 0,
+     "failed": 0,
+     "approvals": 0,
+     "milestones": 0,
+     "color": null,
+     "reliability": null
+    },
+    {
+     "date": "2026-09-10",
+     "total": 0,
+     "done": 0,
+     "active": 0,
+     "pending": 0,
+     "failed": 0,
+     "approvals": 0,
+     "milestones": 0,
+     "color": null,
+     "reliability": null
+    },
+    {
+     "date": "2026-09-11",
+     "total": 0,
+     "done": 0,
+     "active": 0,
+     "pending": 0,
+     "failed": 0,
+     "approvals": 0,
+     "milestones": 0,
+     "color": null,
+     "reliability": null
+    },
+    {
+     "date": "2026-09-12",
+     "total": 0,
+     "done": 0,
+     "active": 0,
+     "pending": 0,
+     "failed": 0,
+     "approvals": 0,
+     "milestones": 0,
+     "color": null,
+     "reliability": null
+    },
+    {
+     "date": "2026-09-13",
+     "total": 0,
+     "done": 0,
+     "active": 0,
+     "pending": 0,
+     "failed": 0,
+     "approvals": 0,
+     "milestones": 0,
+     "color": null,
+     "reliability": null
+    }
+   ],
+   "total": 0,
+   "done": 0,
+   "active": 0,
+   "pending": 0,
+   "failed": 0,
+   "approvals": 0,
+   "milestones": 0,
+   "summary": "Nothing was recorded."
+  },
+  {
+   "days": [
+    {
+     "date": "2026-09-14",
+     "total": 0,
+     "done": 0,
+     "active": 0,
+     "pending": 0,
+     "failed": 0,
+     "approvals": 0,
+     "milestones": 0,
+     "color": null,
+     "reliability": null
+    },
+    {
+     "date": "2026-09-15",
+     "total": 0,
+     "done": 0,
+     "active": 0,
+     "pending": 0,
+     "failed": 0,
+     "approvals": 0,
+     "milestones": 0,
+     "color": null,
+     "reliability": null
+    },
+    {
+     "date": "2026-09-16",
+     "total": 0,
+     "done": 0,
+     "active": 0,
+     "pending": 0,
+     "failed": 0,
+     "approvals": 0,
+     "milestones": 0,
+     "color": null,
+     "reliability": null
+    },
+    {
+     "date": "2026-09-17",
+     "total": 0,
+     "done": 0,
+     "active": 0,
+     "pending": 0,
+     "failed": 0,
+     "approvals": 0,
+     "milestones": 0,
+     "color": null,
+     "reliability": null
+    },
+    {
+     "date": "2026-09-18",
+     "total": 0,
+     "done": 0,
+     "active": 0,
+     "pending": 0,
+     "failed": 0,
+     "approvals": 0,
+     "milestones": 0,
+     "color": null,
+     "reliability": null
+    },
+    {
+     "date": "2026-09-19",
+     "total": 0,
+     "done": 0,
+     "active": 0,
+     "pending": 0,
+     "failed": 0,
+     "approvals": 0,
+     "milestones": 0,
+     "color": null,
+     "reliability": null
+    },
+    {
+     "date": "2026-09-20",
+     "total": 0,
+     "done": 0,
+     "active": 0,
+     "pending": 0,
+     "failed": 0,
+     "approvals": 0,
+     "milestones": 0,
+     "color": null,
+     "reliability": null
+    }
+   ],
+   "total": 0,
+   "done": 0,
+   "active": 0,
+   "pending": 0,
+   "failed": 0,
+   "approvals": 0,
+   "milestones": 0,
+   "summary": "Nothing was recorded."
+  },
+  {
+   "days": [
+    {
+     "date": "2026-09-21",
+     "total": 0,
+     "done": 0,
+     "active": 0,
+     "pending": 0,
+     "failed": 0,
+     "approvals": 0,
+     "milestones": 0,
+     "color": null,
+     "reliability": null
+    },
+    {
+     "date": "2026-09-22",
+     "total": 2,
+     "done": 1,
+     "active": 0,
+     "pending": 0,
+     "failed": 1,
+     "approvals": 0,
+     "milestones": 0,
+     "color": "red",
+     "reliability": null
+    },
+    {
+     "date": "2026-09-23",
+     "total": 0,
+     "done": 0,
+     "active": 0,
+     "pending": 0,
+     "failed": 0,
+     "approvals": 0,
+     "milestones": 0,
+     "color": null,
+     "reliability": null
+    },
+    {
+     "date": "2026-09-24",
+     "total": 0,
+     "done": 0,
+     "active": 0,
+     "pending": 0,
+     "failed": 0,
+     "approvals": 0,
+     "milestones": 0,
+     "color": null,
+     "reliability": null
+    },
+    {
+     "date": "2026-09-25",
+     "total": 0,
+     "done": 0,
+     "active": 0,
+     "pending": 0,
+     "failed": 0,
+     "approvals": 0,
+     "milestones": 0,
+     "color": null,
+     "reliability": null
+    },
+    {
+     "date": "2026-09-26",
+     "total": 0,
+     "done": 0,
+     "active": 0,
+     "pending": 0,
+     "failed": 0,
+     "approvals": 0,
+     "milestones": 0,
+     "color": null,
+     "reliability": null
+    },
+    {
+     "date": "2026-09-27",
+     "total": 0,
+     "done": 0,
+     "active": 0,
+     "pending": 0,
+     "failed": 0,
+     "approvals": 0,
+     "milestones": 0,
+     "color": null,
+     "reliability": null
+    }
+   ],
+   "total": 2,
+   "done": 1,
+   "active": 0,
+   "pending": 0,
+   "failed": 1,
+   "approvals": 0,
+   "milestones": 0,
+   "summary": "1 done, 0 active, 0 pending, 1 failed; finished by Nova 1."
+  },
+  {
+   "days": [
+    {
+     "date": "2026-09-28",
+     "total": 0,
+     "done": 0,
+     "active": 0,
+     "pending": 0,
+     "failed": 0,
+     "approvals": 0,
+     "milestones": 0,
+     "color": null,
+     "reliability": null
+    },
+    {
+     "date": "2026-09-29",
+     "total": 0,
+     "done": 0,
+     "active": 0,
+     "pending": 0,
+     "failed": 0,
+     "approvals": 0,
+     "milestones": 0,
+     "color": null,
+     "reliability": null
+    },
+    {
+     "date": "2026-09-30",
+     "total": 0,
+     "done": 0,
+     "active": 0,
+     "pending": 0,
+     "failed": 0,
+     "approvals": 0,
+     "milestones": 0,
+     "color": null,
+     "reliability": null
+    }
+   ],
+   "total": 0,
+   "done": 0,
+   "active": 0,
+   "pending": 0,
+   "failed": 0,
+   "approvals": 0,
+   "milestones": 0,
+   "summary": "Nothing was recorded."
+  }
+ ],
+ "totals": {
+  "total": 2,
+  "done": 1,
+  "active": 0,
+  "pending": 0,
+  "failed": 1,
+  "approvals": 0,
+  "milestones": 0
+ },
+ "summary": "1 done, 0 active, 0 pending, 1 failed; finished by Nova 1.",
+ "empty": false
+}

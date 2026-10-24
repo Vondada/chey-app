@@ -8,7 +8,12 @@
 // Live 3D Studio (owner, 2026-10-24): the room now opens on six choices: Create Person, Create Object, Create Room,
 // Create Animation, My Creations and Active Projects, with the Creation Engine's real state (online, offline with a
 // Connect button, or not connected) above them. GPU jobs, Pair Colab and the worker token moved to Settings, Creation
-// Engine. Object and room creation are not built yet and say so; animation previews the crew models' own clips.
+// Engine. Animation previews the crew models' own clips.
+//
+// Create Object and Create Room (owner, 2026-10-24): procedural parametric objects (lamp, chair, table, desk, mug,
+// vase, shelf) and rooms (living room, bedroom, office, studio) from a fixed family list, not free-form text-to-3D.
+// Choosing one (a tile, a spoken number, or "create a chair") asks the Worker to start the project and reports the
+// Worker's own answer; the project opens in the same Live Studio as a person.
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -86,6 +91,9 @@ class CheStudioActions {
     this.onOpenCreation,
     this.onConnectEngine,
     this.onContinueCreating,
+    this.onCreateThing,
+    this.onOpenCodeWorkspace,
+    this.onOpenProjectManager,
   });
 
   final VoidCallback onOpenFilmStudio;
@@ -120,6 +128,60 @@ class CheStudioActions {
 
   /// "Continue creating": reopens the newest creation in its live 3D view and returns what CHE says.
   final Future<String> Function()? onContinueCreating;
+
+  /// Code Studio: the dedicated coding workspace (lib/create/che_code_workspace.dart), never Home or Chat.
+  final VoidCallback? onOpenCodeWorkspace;
+
+  /// Active Projects: the project manager (lib/create/che_project_manager.dart).
+  final VoidCallback? onOpenProjectManager;
+
+  /// Create Object / Create Room: asks the Worker to start a project of [kind] (object | room) from [base] (a family
+  /// such as chair, or a room type such as office), opens it in the Live Studio and returns the Worker's own answer
+  /// (or the real failure). [viaVoice] is true when a voice route will speak the answer, so it is not spoken twice.
+  final Future<String> Function(String kind, String base, bool viaVoice)? onCreateThing;
+}
+
+/// Create Object's choices: (base, name, what it is), the fixed families the Blender builders make.
+const cheObjectChoices = [
+  ('lamp', 'Lamp', 'A desk or floor lamp with a glowing bulb'),
+  ('chair', 'Chair', 'A dining chair: modern, classic or industrial'),
+  ('table', 'Table', 'A dining or coffee table'),
+  ('desk', 'Desk', 'A work desk with a drawer'),
+  ('mug', 'Mug', 'A hollow mug with a handle'),
+  ('vase', 'Vase', 'A turned vase'),
+  ('shelf', 'Shelf', 'A bookshelf with books'),
+];
+
+/// Create Room's choices: (base, name, its usual furniture).
+const cheRoomChoices = [
+  ('living_room', 'Living room', 'Sofa, coffee table, rug, floor lamp, shelf, plant and vase'),
+  ('bedroom', 'Bedroom', 'Bed, lamp, shelf, rug and plant'),
+  ('office', 'Office', 'Desk, chair, desk lamp, shelf, plant and mug'),
+  ('studio', 'Studio', 'Work table, chair, lamp, shelf, rug and plant'),
+];
+
+/// "create a chair", "make a coffee table", "new office", "build a living room" -> (kind, base); null for anything else.
+(String, String)? cheCreateThingFromWords(String words) {
+  final t = words
+      .trim()
+      .toLowerCase()
+      .replaceAll(RegExp(r'[.!?]+$'), '')
+      .replaceFirst(RegExp(r'^(?:che|chey|chay)[,:]?\s+'), '');
+  final m = RegExp(r'^(?:create|make|build|new|start)(?: me)?(?: an?| a new| new)? ([a-z ]+?)$').firstMatch(t);
+  if (m == null) return null;
+  final w = m.group(1)!.replaceFirst(RegExp(r' (?:object|please)$'), '');
+  const objects = {
+    'lamp': 'lamp', 'desk lamp': 'lamp', 'floor lamp': 'lamp', 'table lamp': 'lamp', 'chair': 'chair', 'table': 'table',
+    'coffee table': 'table', 'dining table': 'table', 'desk': 'desk', 'mug': 'mug', 'cup': 'mug', 'vase': 'vase',
+    'shelf': 'shelf', 'bookshelf': 'shelf', 'bookcase': 'shelf', 'shelves': 'shelf',
+  };
+  const rooms = {
+    'living room': 'living_room', 'lounge': 'living_room', 'bedroom': 'bedroom', 'office': 'office', 'office room': 'office',
+    'studio': 'studio', 'studio room': 'studio',
+  };
+  if (objects[w] != null) return ('object', objects[w]!);
+  if (rooms[w] != null) return ('room', rooms[w]!);
+  return null;
 }
 
 /// Section keys, so voice routes and tests can scroll straight to a studio.
@@ -261,7 +323,7 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
   ];
 
   /// One kind's real status from the Worker (available | partial | unavailable), with the built-in fallback when the
-  /// Worker has not answered: only Create Person is built end to end.
+  /// Worker has not answered: Create Person, Object and Room are built end to end; animation is a preview.
   (String, String) capability(String id) {
     for (final c in (_creations['capabilities'] as List? ?? const [])) {
       if (c is Map && c['id'] == id) return ('${c['status'] ?? ''}', '${c['detail'] ?? ''}');
@@ -272,9 +334,67 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
         'Start from CHE or an agent, edit by voice, and build a 3D model on your Creation Engine.',
       ),
       'animation' => ('partial', 'Preview the crew models’ built-in clips. Making new animations is not built yet.'),
-      'object' => ('unavailable', 'Creating 3D objects is not built yet.'),
-      _ => ('unavailable', 'Creating 3D rooms is not built yet.'),
+      'object' => (
+        'available',
+        'Procedural lamps, chairs, tables, desks, mugs, vases and shelves from a fixed family list, not free-form text-to-3D.',
+      ),
+      _ => (
+        'available',
+        'Procedural living rooms, bedrooms, offices and studios from a fixed family list, not free-form text-to-3D.',
+      ),
     };
+  }
+
+  /// The object or room sheet while it is open: its kind and the base each numbered item creates.
+  String? _sheetKind;
+  List<String> _sheetBases = const [];
+
+  /// Starts an object or room project on the Worker and returns its real answer.
+  Future<String> createThing(String kind, String base, {bool viaVoice = false}) async {
+    final title = kind == 'object' ? 'Create Object' : 'Create Room';
+    final f = widget.actions.onCreateThing;
+    if (f == null) return '$title is not connected in this build.';
+    final said = await f(kind, base, viaVoice);
+    unawaited(loadCreations());
+    return said;
+  }
+
+  /// Create Object or Create Room: the fixed choices, numbered, each starting a project when chosen.
+  Future<void> showCreateThing(String kind) async {
+    final choices = kind == 'object' ? cheObjectChoices : cheRoomChoices;
+    _sheetKind = kind;
+    _sheetBases = [for (final c in choices) c.$1];
+    try {
+      await _showSheet(
+        kind == 'object' ? 'Create an object' : 'Create a room',
+        kind == 'object'
+            ? 'Choose a family. You can change its size, colour, finish and style after, by voice or typing.'
+            : 'Choose a room. You can change its size, walls, floor, furniture and light after, by voice or typing.',
+        [
+          for (final c in choices)
+            (
+              c.$2,
+              c.$3,
+              kind == 'object' ? Icons.widgets_rounded : Icons.meeting_room_rounded,
+              () => unawaited(createThing(kind, c.$1)),
+            ),
+        ],
+      );
+    } finally {
+      _sheetKind = null;
+      _sheetBases = const [];
+    }
+  }
+
+  String _thingChoice(String kind) {
+    final title = kind == 'object' ? 'Create Object' : 'Create Room';
+    final (status, _) = capability(kind);
+    if (status == 'unavailable') return _notBuilt(kind, title);
+    if (widget.actions.onCreateThing == null) return '$title is not connected in this build.';
+    unawaited(showCreateThing(kind));
+    final choices = kind == 'object' ? cheObjectChoices : cheRoomChoices;
+    return '$title. Say a number: '
+        '${[for (var i = 0; i < choices.length; i++) '${i + 1} ${choices[i].$2}'].join(', ')}.';
   }
 
   String _sheetSummary(List<(String, String, IconData, VoidCallback?)> items) =>
@@ -285,17 +405,27 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
   /// The room's numbered choices, in the order Read aloud announces them.
   List<(String, VoidCallback)> get _choices => [
     ('Create Person', () => unawaited(showCreatePerson())),
-    ('Create Object', () => _notBuilt('object', 'Create Object')),
-    ('Create Room', () => _notBuilt('room', 'Create Room')),
+    ('Create Object', () => _thingChoice('object')),
+    ('Create Room', () => _thingChoice('room')),
     ('Create Animation', () => widget.actions.onCreateAnimation?.call()),
     ('My Creations', () => unawaited(showMyCreations())),
-    ('Active Projects', () => unawaited(showActiveProjects())),
+    ('Active Projects', () => _runChoice(5)),
     ('More to create', () => unawaited(showCreateNew())),
-    ('Film Studio', () => scrollTo(CheStudioSection.film)),
-    ('Music Studio', () => scrollTo(CheStudioSection.music)),
-    ('Code Studio', () => scrollTo(CheStudioSection.code)),
-    ('Art and Character Studio', () => scrollTo(CheStudioSection.art)),
+    ('Film Studio', () => _runChoice(7)),
+    ('Music Studio', () => _runChoice(8)),
+    ('Code Studio', () => _runChoice(9)),
+    ('Art Studio', () => _runChoice(10)),
   ];
+
+  /// Code Studio opens the coding workspace; without one in this build, the section with its buttons.
+  void _openCode() {
+    final open = widget.actions.onOpenCodeWorkspace;
+    if (open != null) {
+      _tap(open);
+    } else {
+      scrollTo(CheStudioSection.code);
+    }
+  }
 
   String _notBuilt(String id, String title) {
     final (_, detail) = capability(id);
@@ -338,7 +468,11 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
           return 'There is no choice $n. ${_sheetSummary(sheet)}';
         }
         final item = sheet[n - 1];
+        final kind = _sheetKind;
+        final base = kind != null && n <= _sheetBases.length ? _sheetBases[n - 1] : null;
         if (_sheetContext != null) Navigator.of(_sheetContext!).pop();
+        // An object or room: the Worker's own answer is what CHE says.
+        if (kind != null && base != null) return createThing(kind, base, viaVoice: true);
         _tap(item.$4!);
         return 'Opening ${item.$1}.';
       }
@@ -381,6 +515,12 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
       if (sheet != null && _sheetContext != null) Navigator.of(_sheetContext!).pop();
       return go();
     }
+    // "create a chair", "new office": straight to the Worker, whose answer is spoken.
+    final thing = cheCreateThingFromWords(t);
+    if (thing != null && capability(thing.$1).$1 != 'unavailable') {
+      if (sheet != null && _sheetContext != null) Navigator.of(_sheetContext!).pop();
+      return createThing(thing.$1, thing.$2, viaVoice: true);
+    }
     final main = <RegExp, int>{
       RegExp(r'^(?:create|make|new)(?: a)? (?:person|character|human|avatar)$'): 0,
       RegExp(r'^(?:create|make|new)(?: an?)? (?:object|prop|3d object)$'): 1,
@@ -409,7 +549,9 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
         'a new app, site or game',
         a.onNewApp,
       ),
-      RegExp(r'^(?:open )?coding jobs$'): ('coding jobs in the Office', a.onOpenOffice),
+      RegExp(r'^(?:open )?(?:the )?(?:code studio|coding workspace|coding jobs)$'): ('Code Studio', a.onOpenCodeWorkspace ?? a.onOpenOffice),
+      RegExp(r'^(?:open )?(?:the )?(?:project manager|projects)$'): ('the project manager', a.onOpenProjectManager),
+      RegExp(r'^(?:open )?(?:the )?office$'): ('the Office', a.onOpenOffice),
       RegExp(r'^(?:open )?(?:the )?command(?:s| center)$'): ('the Command Center', a.onOpenCommandCenter),
       RegExp(r'^(?:open )?(?:the )?character generator$'): ('the Character Generator', a.onCharacterGenerator),
       RegExp(r'^(?:open )?(?:the )?art studio$'): ('Art Studio', a.onOpenArtStudio),
@@ -436,9 +578,9 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
         unawaited(showCreatePerson());
         return 'Create Person. Choose who to start from: say a number.';
       case 1:
-        return _notBuilt('object', 'Create Object');
+        return _thingChoice('object');
       case 2:
-        return _notBuilt('room', 'Create Room');
+        return _thingChoice('room');
       case 3:
         if (a.onCreateAnimation == null) return 'Create Animation is not connected in this build.';
         _tap(a.onCreateAnimation!);
@@ -447,26 +589,30 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
         unawaited(showMyCreations());
         final n = creationProjects.length;
         return n == 0
-            ? 'You have no 3D creations yet. Say create person.'
+            ? 'You have no 3D creations yet. Say create person, create a chair, or create an office.'
             : 'My Creations: $n. Say a number to open one.';
       case 5:
+        if (a.onOpenProjectManager != null) {
+          _tap(a.onOpenProjectManager!);
+          return 'Opening Projects: active, paused, completed and archived, with creative work apart from AI, code and research.';
+        }
         unawaited(showActiveProjects());
         return 'Active Projects. Say a number to open one.';
       case 6:
         unawaited(showCreateNew());
         return _sheetSummaryFor('Create new', _createNewItems());
       case 7:
-        scrollTo(CheStudioSection.film);
-        return 'Film Studio. Say: open Film Studio, new video, or Theater.';
+        _tap(a.onOpenFilmStudio);
+        return 'Opening Film Studio.';
       case 8:
-        scrollTo(CheStudioSection.music);
-        return 'Music Studio. Say: open Music Studio, or new song.';
+        _tap(a.onOpenMusic);
+        return 'Opening Music Studio.';
       case 9:
-        scrollTo(CheStudioSection.code);
-        return 'Code Studio. Say: new app, coding jobs, or commands.';
+        _openCode();
+        return a.onOpenCodeWorkspace != null ? 'Opening Code Studio.' : 'Code Studio. Say: new app, coding jobs, or commands.';
       default:
-        scrollTo(CheStudioSection.art);
-        return 'Art and Character Studio. Say: character generator, art studio, or new image. GPU jobs and Pair Colab are in Settings, Connections, Cloud Computer.';
+        _tap(a.onOpenArtStudio);
+        return 'Opening Art Studio for images. The Character Generator and 3D people are Create Person and the Character Generator.';
     }
   }
 
@@ -508,7 +654,7 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
     final c = _choices;
     return 'Creation Room, managed by Vale. $eng'
         'Say or choose: ${[for (var i = 0; i < c.length; i++) '${i + 1} ${c[i].$1}'].join(', ')}. '
-        'Create Object and Create Room are not built yet. $work '
+        '$work '
         'You have ${creationProjects.length} 3D creation${creationProjects.length == 1 ? '' : 's'}, '
         '$n project${n == 1 ? '' : 's'} and ${widget.vaultCount} saved file${widget.vaultCount == 1 ? '' : 's'}.';
   }
@@ -544,7 +690,7 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
     final list = creationProjects;
     await _showSheet(
       'My Creations',
-      list.isEmpty ? 'No 3D creations yet. Use Create Person to start one.' : 'Your 3D creations, newest first.',
+      list.isEmpty ? 'No 3D creations yet. Use Create Person, Create Object or Create Room to start one.' : 'Your 3D creations, newest first.',
       [
         for (final p in list)
           (
@@ -553,7 +699,32 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
             Icons.view_in_ar_rounded,
             open == null ? null : () => open('${p['id']}'),
           ),
+        // The pictures and videos CHE saved (the Worker's media library), on their own page.
+        if (widget.creations != null)
+          ('Pictures and videos', 'The images and videos CHE saved', Icons.photo_library_outlined, showSavedVisuals),
       ],
+    );
+  }
+
+  /// My Creations → Pictures and videos: the real media library tiles (CheCreationsStrip), nothing placeholder.
+  void showSavedVisuals() {
+    final strip = widget.creations;
+    if (strip == null) return;
+    unawaited(
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => Scaffold(
+            key: const ValueKey('saved-visuals'),
+            backgroundColor: CheStudioColors.bg,
+            appBar: AppBar(
+              backgroundColor: CheStudioColors.bg,
+              foregroundColor: CheStudioColors.text,
+              title: Semantics(header: true, child: const Text('Pictures and videos')),
+            ),
+            body: Padding(padding: const EdgeInsets.all(16), child: strip),
+          ),
+        ),
+      ),
     );
   }
 
@@ -789,6 +960,7 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
                   excludeSemantics: true,
                   child: IconButton(
                     key: const ValueKey('studio-read'),
+                    tooltip: 'Read the Creation Room aloud',
                     constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
                     onPressed: widget.onRead == null ? null : () => widget.onRead!(spokenSummary),
                     icon: const Icon(Icons.volume_up_rounded, color: CheStudioColors.silver),
@@ -935,9 +1107,10 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
               title: 'Code Studio',
               tagline: 'Apps, websites, games and software, built as coding jobs you can follow.',
               tags: const ['Apps', 'Websites', 'Games', 'Software', 'Coding jobs'],
-              primary: ('New app, site or game', a.onNewApp),
+              primary: ('Open Code Studio', _openCode),
               secondary: [
-                ('Coding jobs', Icons.workspaces_outline, a.onOpenOffice),
+                ('New app, site or game', Icons.add_rounded, a.onNewApp),
+                ('The crew', Icons.workspaces_outline, a.onOpenOffice),
                 ('Commands', Icons.apps_rounded, a.onOpenCommandCenter),
               ],
             ),

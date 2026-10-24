@@ -564,6 +564,27 @@ extension _CheHomeStreaming on _CHEHomeState {
             onRead: (words) { speakText(words, record: false, readOnDemand: true); },
           )));
         }
+        // "Open my trading calendar", "show the office calendar for September", "what did we do yesterday" (che_calendars.js).
+        final calendarAsk = data['calendar'] is Map ? Map<String, dynamic>.from(data['calendar'] as Map) : const <String, dynamic>{};
+        if (data['open_view'] == 'trading_calendar' && mounted) {
+          unawaited(Navigator.of(context).push(CheTradingCalendarPage.route(
+            baseUrl: () => cheAgentBaseUrl,
+            headers: () => _authHeaders,
+            onRead: (words) { speakText(words, record: false, readOnDemand: true); },
+            month: '${calendarAsk['month'] ?? ''}',
+            source: '${calendarAsk['source'] ?? 'paper'}',
+            day: '${calendarAsk['day'] ?? ''}',
+          )));
+        }
+        if (data['open_view'] == 'office_calendar' && mounted) {
+          unawaited(Navigator.of(context).push(CheOfficeCalendarPage.route(
+            baseUrl: () => cheAgentBaseUrl,
+            headers: () => _authHeaders,
+            onRead: (words) { speakText(words, record: false, readOnDemand: true); },
+            month: '${calendarAsk['month'] ?? ''}',
+            day: '${calendarAsk['day'] ?? ''}',
+          )));
+        }
         // "Have Orion research BTC and ETH…", "how is crypto paper trading going": the Trading Room on its CRYPTO market.
         if (data['open_view'] == 'trading_crypto' && mounted) {
           unawaited(Navigator.of(context).push(CheTradingRoomPage.route(
@@ -600,6 +621,20 @@ extension _CheHomeStreaming on _CHEHomeState {
         if (mediaUrl.startsWith('https://')) {
           _streamMediaUrl = mediaUrl;
           _streamMediaType = mediaType;
+        }
+        // "Open it in 3D", "rotate it", "change the color": the Worker built or found the invention's saved 3D model.
+        final inventionId = data['invention_id']?.toString().trim() ?? '';
+        if (data['open_invention_3d'] == true && inventionId.isNotEmpty && mounted) {
+          final move = data['viewport'];
+          unawaited(Navigator.of(context).push(CheInventionViewer.route(
+            baseUrl: cheAgentBaseUrl,
+            headers: _authHeaders,
+            inventionId: inventionId,
+            title: 'Invention $inventionId',
+            version: data['model_version'] is int ? data['model_version'] as int : null,
+            initialCommand: move is Map ? Map<String, Object>.from(move) : null,
+            onSpeak: (text) => speakText(text, record: false),
+          )));
         }
         // "Open this same picture in my Creation Room": the Worker named the saved file; the Creation Room shows it.
         final openId = data['media_id']?.toString().trim() ?? '';

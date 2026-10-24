@@ -18,6 +18,14 @@ With the bpy module available (python3 with bpy, or Blender running this file th
 file with Blender's own glTF importer and counts the bones, actions and shape keys Blender sees.
 
 Prints one line `RIG_RECEIPT {json}` and exits 0 when every check passes, 1 when any fails (the receipt names them).
+
+  python3 tools/avatar_body/verify_glb.py MODEL.glb --static [--expect-bbox 1.2,0.75,0.75 --tolerance 0.25] [--no-bpy]
+
+--static (Create Object and Create Room, objects.py / rooms.py): a model with no skeleton. Measures mesh nodes,
+primitives, vertices, triangles, materials (and primitives without one), and the bounding box in metres from every
+vertex through its node's world transform (glTF axes: x width, y height, z depth), plus sha256 and bytes. With
+--expect-bbox the box must match each dimension within the tolerance; the model must stand on y = 0 (within 1 cm).
+Prints one line `GLB_RECEIPT {json}`; exit 0 when every check passes, 1 when any fails.
 """
 import argparse
 import hashlib
@@ -302,6 +310,73 @@ def verify(path, expect_bones=53, clips=('idle', 'walk', 'wave', 'talk'),
     return rec
 
 
+MAX_TRIANGLES = 600_000
+
+
+def verify_static(path, expect_bbox=None, tolerance=0.25):
+    """What a static model (no skin) really holds, measured from the file."""
+    gl, binary, data = read_glb(path)
+    fails = []
+    rec = {'file': os.path.abspath(path), 'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest(),
+           'generator': gl.get('asset', {}).get('generator', '')}
+    W = Scene(gl).world({}) if gl.get('nodes') else {}
+    mesh_nodes = prims = verts = tris = unmat = 0
+    lo, hi = np.full(3, np.inf), np.full(3, -np.inf)
+    used = set()
+    for ni, n in enumerate(gl.get('nodes', [])):
+        if 'mesh' not in n: continue
+        mesh_nodes += 1
+        for p in gl['meshes'][n['mesh']]['primitives']:
+            prims += 1
+            pos = accessor(gl, binary, p['attributes']['POSITION'])
+            verts += len(pos)
+            if p.get('mode', 4) == 4: tris += (gl['accessors'][p['indices']]['count'] if 'indices' in p else len(pos)) // 3
+            if 'material' in p: used.add(p['material'])
+            else: unmat += 1
+            world = (W[ni] @ np.c_[pos, np.ones(len(pos))].T).T[:, :3]
+            lo, hi = np.minimum(lo, world.min(0)), np.maximum(hi, world.max(0))
+    names = [m.get('name', f'material{i}') for i, m in enumerate(gl.get('materials', []))]
+    rec.update(meshes=mesh_nodes, primitives=prims, vertices=verts, triangles=tris, skins=len(gl.get('skins', [])),
+               animations=len(gl.get('animations', [])), materials=sorted({names[i] for i in used if i < len(names)}),
+               primitives_without_material=unmat)
+    if not mesh_nodes:
+        fails.append('no mesh'); lo = hi = np.zeros(3)
+    size = hi - lo
+    rec['bbox_m'] = {'min': [round(float(x), 4) for x in lo], 'max': [round(float(x), 4) for x in hi],
+                     'size': [round(float(x), 4) for x in size]}
+    if mesh_nodes and not tris: fails.append('no triangles')
+    if tris > MAX_TRIANGLES: fails.append(f'{tris} triangles (more than {MAX_TRIANGLES})')
+    if unmat: fails.append(f'{unmat} primitives have no material')
+    if mesh_nodes and abs(float(lo[1])) > 0.01: fails.append(f'the model does not stand on the floor (lowest point y = {float(lo[1]):.3f} m)')
+    if expect_bbox:
+        rec['expected_bbox_m'] = [round(float(x), 4) for x in expect_bbox]; rec['tolerance'] = tolerance
+        for axis, want, got in zip('xyz', expect_bbox, size):
+            if want > 0 and abs(float(got) - want) > tolerance * want:
+                fails.append(f'{axis} size {float(got):.3f} m, expected {want:.3f} m (within {round(tolerance * 100)}%)')
+    rec['bpy_import'] = None
+    rec['failures'] = fails
+    rec['ok'] = not fails
+    return rec
+
+
+def main_static(a):
+    try:
+        bbox = [float(x) for x in a.expect_bbox.split(',')] if a.expect_bbox else None
+        rec = verify_static(a.glb, bbox, a.tolerance)
+        if not a.no_bpy:
+            imp = bpy_import(os.path.abspath(a.glb))
+            if imp is not None:
+                import bpy
+                n = sum(1 for o in bpy.data.objects if o.type == 'MESH')
+                rec['bpy_import'] = {'mesh_objects': n, 'armatures': imp['armatures']}
+                if n != rec['meshes']: rec['failures'].append(f"Blender imports {n} mesh objects, the file lists {rec['meshes']}")
+                rec['ok'] = not rec['failures']
+    except (OSError, ValueError, KeyError, IndexError, struct.error) as e:
+        rec = {'ok': False, 'file': os.path.abspath(a.glb), 'failures': [f'unreadable GLB: {type(e).__name__}: {e}']}
+    print('GLB_RECEIPT ' + json.dumps(rec, separators=(',', ':')), flush=True)
+    return 0 if rec['ok'] else 1
+
+
 def bpy_import(path):
     """What Blender's own glTF importer sees in the file (None without the bpy module)."""
     try:
@@ -324,7 +399,11 @@ def main(argv=None):
     ap.add_argument('glb'); ap.add_argument('--expect-bones', type=int, default=53)
     ap.add_argument('--clips', default='idle,walk,wave,talk'); ap.add_argument('--morphs', default='blink_l,blink_r,mouth_open,smile,brows_up')
     ap.add_argument('--no-bpy', action='store_true')
+    ap.add_argument('--static', action='store_true', help='a model with no skeleton (objects.py, rooms.py)')
+    ap.add_argument('--expect-bbox', default='', help='x,y,z in metres (glTF axes) for --static')
+    ap.add_argument('--tolerance', type=float, default=0.25)
     a = ap.parse_args(argv)
+    if a.static: return main_static(a)
     try:
         rec = verify(a.glb, a.expect_bones, [c for c in a.clips.split(',') if c], [m for m in a.morphs.split(',') if m])
         if not a.no_bpy:

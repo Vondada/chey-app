@@ -67,6 +67,13 @@ class CheSetupDesk extends ChangeNotifier {
         for (final m in kCheFeedMinutes) ...engines[m]!.finished.take(5),
       ];
 
+  /// True only while Rithmic trades are arriving. Otherwise CHE is not evaluating any setup: each one shows its state as
+  /// of its last candle and waits (owner audit, 2026-10-24: a watcher waiting for candles must never read as active).
+  bool get evaluating => snapshot?.isLive == true;
+
+  /// Why CHE is not evaluating setups right now, in the feed's own words; empty while it is.
+  String get notEvaluatingReason => evaluating ? '' : snapshot == null ? 'No market feed yet' : snapshot!.statusLabel;
+
   int get activeSetupCount => setups.where((s) => !s.stage.isFinal && s.stage != CheSetupStage.watching).length;
   List<CheSetupState> get readySetups => setups.where((s) => s.stage == CheSetupStage.ready || s.stage == CheSetupStage.triggered).toList();
 
@@ -202,7 +209,11 @@ class CheSetupDesk extends ChangeNotifier {
     final now = _clock();
     final live = setups.where((s) => !s.stage.isFinal).toList();
     final feed = snapshot == null ? 'No market feed yet.' : '${snapshot!.sourceLabel}, ${snapshot!.statusLabel}.';
-    if (live.isEmpty) return '$feed CHE is not following any setups yet.';
+    final waiting = evaluating ? '' : ' CHE is not evaluating setups right now, because Rithmic candles are not arriving.';
+    if (live.isEmpty) return '$feed$waiting CHE is not following any setups yet.';
+    if (!evaluating) {
+      return '$feed$waiting ${live.length} setup${live.length == 1 ? ' is' : 's are'} paused at their last candle: ${live.map((s) => s.spoken(now)).join(' ')} These are paper setups for the CHE PAPER ACCOUNT, not predictions.';
+    }
     final ready = live.where((s) => s.stage == CheSetupStage.ready || s.stage == CheSetupStage.triggered).toList();
     final head = ready.isEmpty ? 'No setup is ready right now.' : '${ready.length} setup${ready.length == 1 ? ' is' : 's are'} ready or triggered.';
     return '$feed $head ${live.map((s) => s.spoken(now)).join(' ')} These are paper setups for the CHE PAPER ACCOUNT, not predictions.';

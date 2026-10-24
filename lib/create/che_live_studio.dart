@@ -9,6 +9,10 @@
 // Nothing is spoken on open (owner rule, 2026-10-11); Read aloud speaks the page on request, and every action reports
 // its real outcome in a large banner with a haptic. While the studio is on screen, typed or spoken words reach it first
 // (CheLiveStudio.voiceHandler, lib/home_state/send.dart).
+//
+// Create Object and Create Room projects open here too (the project's `kind`): the same viewport, stages, versions and
+// voice routes, with their own suggestion chips and edit words; Read aloud says what the version is and, once the
+// Creation Engine verified the build, its measurement (meshes, triangles, size in metres).
 import 'dart:async';
 import 'dart:convert';
 
@@ -199,13 +203,25 @@ bool cheLooksLikeEdit(String words) {
   return RegExp(
         r'^(?:make|change|give|add|remove|turn|put|set|use|try|more|less|bigger|smaller|larger|longer|shorter|'
         r'wider|narrower|fuller|thinner|darker|lighter|rounder|older|younger|higher|lower|undo|redo|save|generate|build|'
-        r'render|create|go)\b',
+        r'render|create|go|paint|warmer|cooler|shinier|glossier|deeper|taller|shrink|grow)\b',
       ).hasMatch(t) ||
       RegExp(
         r'\b(?:hair|eyes?|skin|nose|lips?|mouth|face|chin|cheek(?:bone)?s?|brows?|outfit|jacket|clothes|model|'
         r'character|photoreal(?:istic)?|stylized|stylised|cartoon|hybrid|office)\b',
+      ).hasMatch(t) ||
+      // Create Object and Create Room: the families, room pieces and settings the Worker's edit words name.
+      RegExp(
+        r'\b(?:lamp|chair|table|desk|mug|vase|shelf|bookshelf|sofa|couch|bed|rug|plant|walls?|floor|ceiling|furniture|'
+        r'matte|metallic|glossy|modern|classic|industrial|bedroom|living room|studio|metres?|meters?)\b',
       ).hasMatch(t);
 }
+
+/// The Live Studio's suggestion chips and edit hint for each kind of creation.
+const cheEditChips = {
+  'person': ['Make the hair longer', 'Change the outfit', 'Make it photorealistic', 'Bigger eyes', 'Make it stylized'],
+  'object': ['Make it red', 'Bigger', 'Shinier', 'Make it metallic', 'Industrial style', 'Make it a chair'],
+  'room': ['Add a desk', 'Warmer light', 'Paint the walls green', 'Tile floor', 'Make it bigger', 'Remove the rug'],
+};
 
 /// What the viewport is showing, in words for the label above it and for Read aloud.
 class CheShownModel {
@@ -224,6 +240,9 @@ abstract class CheViewportDriver {
   void dispose();
 }
 
+/// The real 3D page (studio.html in a WebView), for other screens that show a GLB (the Invention 3D viewer).
+CheViewportDriver cheWebViewport(void Function(Map<String, dynamic>) onMessage) => _WebViewportDriver(onMessage);
+
 class _WebViewportDriver implements CheViewportDriver {
   _WebViewportDriver(this.onMessage) {
     try {
@@ -235,15 +254,20 @@ class _WebViewportDriver implements CheViewportDriver {
           onMessageReceived: (m) {
             try {
               final d = jsonDecode(m.message);
-              if (d is Map) onMessage(Map<String, dynamic>.from(d));
+              if (d is Map) {
+                if (d['type'] == 'page_ready' && !_ready.isCompleted) _ready.complete();
+                final pending = _modelLoaded;
+                if (pending != null && !pending.isCompleted && (d['type'] == 'model' || d['type'] == 'error')) {
+                  pending.complete(Map<String, dynamic>.from(d));
+                }
+                onMessage(Map<String, dynamic>.from(d));
+              }
             } catch (_) {}
           },
         )
         ..setNavigationDelegate(
           NavigationDelegate(
-            onPageFinished: (_) {
-              _ready.isCompleted ? null : _ready.complete();
-            },
+            onWebResourceError: (error) => onMessage({'type': 'error', 'message': '3D viewport: ${error.description}'}),
           ),
         )
         ..loadFlutterAsset('assets/characters/app/studio.html');
@@ -255,6 +279,7 @@ class _WebViewportDriver implements CheViewportDriver {
   final void Function(Map<String, dynamic>) onMessage;
   WebViewController? _controller;
   final _ready = Completer<void>();
+  Completer<Map<String, dynamic>>? _modelLoaded;
 
   @override
   Widget build(BuildContext context) => _controller == null
@@ -265,14 +290,23 @@ class _WebViewportDriver implements CheViewportDriver {
 
   Future<void> _js(String code) async {
     final c = _controller;
-    if (c == null) return;
-    await _ready.future;
+    if (c == null) throw StateError('The 3D viewport is unavailable.');
+    await _ready.future.timeout(const Duration(seconds: 20));
     await c.runJavaScript(code);
   }
 
   @override
-  Future<void> load(Uint8List glb, String label) =>
-      _js("window.CHE && window.CHE.loadModel('${base64Encode(glb)}', ${jsonEncode({'label': label})});");
+  Future<void> load(Uint8List glb, String label) async {
+    final loaded = Completer<Map<String, dynamic>>();
+    _modelLoaded = loaded;
+    try {
+      await _js("window.CHE.loadModel('${base64Encode(glb)}', ${jsonEncode({'label': label})});");
+      final result = await loaded.future.timeout(const Duration(seconds: 25));
+      if (result['type'] == 'error') throw StateError('${result['message']}');
+    } finally {
+      if (identical(_modelLoaded, loaded)) _modelLoaded = null;
+    }
+  }
 
   @override
   Future<void> command(Map<String, Object> cmd) => _js('window.CHE && window.CHE.view(${jsonEncode(cmd)});');
@@ -389,6 +423,9 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
   late String _animBase = widget.base;
 
   bool get _personMode => widget.mode == CheLiveStudioMode.person;
+
+  /// person | object | room: the project's kind from the Worker (Create Object and Create Room share this studio).
+  String get kind => const {'object', 'room'}.contains('${project['kind']}') ? '${project['kind']}' : 'person';
   Map<String, dynamic>? get job => project['job'] is Map ? Map<String, dynamic>.from(project['job'] as Map) : null;
   String get jobState => '${job?['state'] ?? ''}';
   bool get jobActive => const {'queued', 'rendering', 'paused'}.contains(jobState);
@@ -407,8 +444,13 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
     CheLiveStudio.voiceHandler = voice;
     CheLiveStudio.speechLipSync = lipSyncSpeech;
     CheLiveStudio.speechLipSyncStop = stopSpeaking;
-    unawaited(_personMode ? refresh(first: true) : _showBundled(_animBase));
+    unawaited(_start());
     if (!_personMode) loading = false;
+  }
+
+  Future<void> _start() async {
+    await _showBundled(widget.base);
+    if (mounted && _personMode) await refresh(first: true);
   }
 
   @override
@@ -430,7 +472,7 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
     if (paused) {
       _poll?.cancel();
     } else {
-      _schedulePoll();
+      if (_personMode) unawaited(refresh());
     }
   }
 
@@ -523,7 +565,12 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
     _poll?.cancel();
     if (!mounted || !_personMode || !jobActive) return;
     _poll = Timer(const Duration(seconds: 6), () {
-      if (mounted && (ModalRoute.of(context)?.isCurrent ?? true)) unawaited(refresh());
+      if (!mounted) return;
+      if (ModalRoute.of(context)?.isCurrent ?? true) {
+        unawaited(refresh());
+      } else {
+        _schedulePoll();
+      }
     });
   }
 
@@ -539,7 +586,15 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
             .get(Uri.parse('${widget.baseUrl}${m['url']}'), headers: widget.headers)
             .timeout(const Duration(seconds: 40));
         if (r.statusCode != 200 || r.bodyBytes.length < 20) throw StateError('status ${r.statusCode}');
-        final gpu = '${j['receipt'] is Map ? (j['receipt'] as Map)['nvidia_smi'] ?? '' : ''}'.split(',').first.trim();
+        var gpu = '${j['receipt'] is Map ? (j['receipt'] as Map)['nvidia_smi'] ?? '' : ''}'.split(',').first.trim();
+        // A CPU worker has no nvidia-smi: say where it really ran, never an error text as a device name.
+        final cpu =
+            j['worker_class'] == 'github_cpu' || (j['rendered_on'] is Map && (j['rendered_on'] as Map)['class'] == 'github_cpu');
+        if (cpu) {
+          gpu = 'a cloud CPU';
+        } else if (gpu.startsWith('unavailable')) {
+          gpu = '';
+        }
         final label =
             'Version ${project['version'] ?? ''} model, exported by Blender'
             '${gpu.isEmpty ? '' : ' on $gpu'} at ${_clock('${m['uploaded_at']}')}.';
@@ -558,7 +613,13 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
       }
       return;
     }
-    if (shown.source == 'none') await _showBundled('${project['base_id'] ?? widget.base}');
+    final base = '${project['base_id'] ?? widget.base}';
+    if (kind != 'person' && shown.source == 'bundled') {
+      await _viewport.command({'action': 'clear'});
+      if (mounted) setState(() => shown = const CheShownModel(source: 'none', label: 'Generate this creation to show its model.'));
+      return;
+    }
+    if (shown.source == 'none' || (shown.source == 'bundled' && shown.key != base)) await _showBundled(base);
   }
 
   Future<void> _showBundled(String id) async {
@@ -705,7 +766,7 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
 
   Future<String> applyEdit(String text) async {
     final t = text.trim();
-    if (t.isEmpty) return 'Say or type a change, like make the hair longer.';
+    if (t.isEmpty) return 'Say or type a change, like ${cheEditChips[kind]!.first.toLowerCase()}.';
     _edit.clear();
     return _post('/api/creations/${widget.projectId}/edit', {'text': t});
   }
@@ -778,8 +839,16 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
       if (s is Map) Map<String, dynamic>.from(s),
   ];
 
+  /// Finished preview renders by view, plus a quick look (the fast preview the Creation Engine renders first) for each
+  /// view whose final render has not arrived yet; [quickOnly] says which views are still quick looks.
   Map<String, String> get previews => {
+    for (final e in ((job?['quick_previews']) as Map? ?? const {}).entries) '${e.key}': '${e.value}',
     for (final e in ((job?['previews'] ?? project['previews']) as Map? ?? const {}).entries) '${e.key}': '${e.value}',
+  };
+
+  Set<String> get quickOnly => {
+    for (final k in ((job?['quick_previews']) as Map? ?? const {}).keys)
+      if (!(((job?['previews'] ?? project['previews']) as Map?)?.containsKey(k) ?? false)) '$k',
   };
 
   /// Read aloud: what is on screen, from real state only.
@@ -795,7 +864,20 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
     final work = j == null
         ? 'No model has been generated for this version yet. Say generate the model.'
         : 'Creation Engine job: ${cheJobDisplayState(j)}. ${'${j['status_line'] ?? ''}'.trim().isNotEmpty ? j['status_line'] : '${j['progress'] is Map ? (j['progress'] as Map)['message'] ?? '' : ''}'}';
-    final pics = previews.isEmpty ? '' : ' ${previews.length} preview picture${previews.length == 1 ? '' : 's'} ready.';
+    final quick = quickOnly.length;
+    final done = previews.length - quick;
+    final pics = previews.isEmpty
+        ? ''
+        : '${done > 0 ? ' $done preview picture${done == 1 ? '' : 's'} ready.' : ''}'
+            '${quick > 0 ? ' $quick quick look${quick == 1 ? '' : 's'} showing while the final render continues.' : ''}';
+    if (kind != 'person') {
+      // Objects and rooms: what this version is, and the real measurement once the build is verified.
+      final what = '${project['described'] ?? ''}'.trim();
+      final m = project['measured'] is Map ? project['measured'] as Map : null;
+      final measured = m != null && m['ok'] == true ? ' Measured: ${m['line']}.' : '';
+      return '$title, version $v of $n${what.isEmpty ? '' : ': $what'}. ${engine.label}. ${shown.label} $work$pics$measured '
+          'Say a change like ${cheEditChips[kind]!.take(3).join(', ').toLowerCase()}, or rotate, zoom in, undo, redo, save, generate.';
+    }
     return '$title, version $v of $n. ${engine.label}. ${shown.label} $work$pics '
         'Say a change like make the hair longer, or rotate, zoom in, undo, redo, save, generate.';
   }
@@ -844,7 +926,7 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
     }
     if (!_personMode || !cheLooksLikeEdit(t)) return null;
     if (RegExp(
-      r'^(?:generate|build|make|create|render)(?: the| my| a)?(?: 3d)?(?: model| it| this| person| character| preview)?$',
+      r'^(?:generate|build|make|create|render)(?: the| my| a)?(?: 3d)?(?: model| it| this| person| character| preview| object| room)?$',
     ).hasMatch(t)) {
       return generate();
     }
@@ -1053,7 +1135,7 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
               textInputAction: TextInputAction.done,
               onSubmitted: (s) => unawaited(applyEdit(s)),
               decoration: InputDecoration(
-                hintText: 'Make the hair longer',
+                hintText: cheEditChips[kind]!.first,
                 hintStyle: const TextStyle(color: CheStudioColors.dim),
                 labelText: 'Describe a change',
                 labelStyle: const TextStyle(color: CheStudioColors.silver),
@@ -1086,13 +1168,7 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
         spacing: 8,
         runSpacing: 8,
         children: [
-          for (final s in const [
-            'Make the hair longer',
-            'Change the outfit',
-            'Make it photorealistic',
-            'Bigger eyes',
-            'Make it stylized',
-          ])
+          for (final s in cheEditChips[kind]!)
             ActionChip(
               key: ValueKey('live-chip-$s'),
               label: Text(s),
@@ -1219,7 +1295,9 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
                     container: true,
                     image: true,
                     excludeSemantics: true,
-                    label: '${_viewNames[e.key] ?? '${e.key} degree'} preview render from the Creation Engine',
+                    label: quickOnly.contains(e.key)
+                        ? '${_viewNames[e.key] ?? '${e.key} degree'} quick look from the Creation Engine; the final render is still in progress'
+                        : '${_viewNames[e.key] ?? '${e.key} degree'} preview render from the Creation Engine',
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(14),
                       child: Image.network(

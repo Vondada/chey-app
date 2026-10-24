@@ -19,9 +19,10 @@ The queue lives in CHE's Cloudflare Worker, so jobs survive Colab disconnects. T
 - renders through scripts/che_gpu_face_preview.py, which writes pictures, log and receipt to Google Drive and reuses
   every view already verified there, so resuming never renders finished work again;
 - streams results while the runner works: each view's PNG goes into CHE's media library (the Creation Room) the moment
-  it is verified, and for the Live Studio's person_model jobs the 3D model (model.glb) goes up the moment Blender
-  exports it, before any view renders; then it reports the receipt. The Worker marks the job completed only with a GPU
-  receipt and every picture (and, for person_model, the model);
+  it is verified, and for the Live Studio's model jobs (person_model; object_model and room_model, which run
+  scripts/che_creation_job.py) the 3D model (model.glb) goes up the moment Blender exports it, before any view
+  renders; then it reports the receipt. The Worker marks the job completed only with a GPU (or, for a cloud worker,
+  CPU) receipt and every picture (and, for a model job, the model);
 - stops when the owner cancels the job, and exits after --idle-minutes with nothing to do so the GPU is released.
 It never starts, extends or keeps alive a Colab session: it runs only while the owner's session runs.
 Checkpoints: the runner prints CHECKPOINT <stage> <path> <sha256> <bytes> after the model export and after the rig
@@ -49,6 +50,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HEARTBEAT_S = 30
 OIDC_AUDIENCE = 'che-creation-engine'
 OIDC_REFRESH_S = 120          # GitHub ID tokens live a few minutes: fetch a fresh one every 2 minutes
+MODEL_KINDS = ('person_model', 'object_model', 'room_model', 'invention_model')   # jobs that deliver a GLB (gpu_queue.js)
+THING_KINDS = ('object_model', 'room_model', 'invention_model')   # Create Object / Room, inventions: scripts/che_creation_job.py
 
 
 def now():
@@ -95,6 +98,9 @@ def gpu_name():
         return f'unavailable: {e}'
 
 
+USER_AGENT = 'CHE-creation-worker/1.0 (+https://github.com/Vondada/chey-app)'
+
+
 class Che:
     """The worker's side of /api/gpu/worker/*. The token goes only in the X-CHE-GPU-Token header and is never printed."""
 
@@ -103,8 +109,10 @@ class Che:
         self.oidc, self.info = oidc, dict(info or {})
 
     def auth(self):
-        if self.oidc: return {'Authorization': f'Bearer {self.oidc.get()}'}
-        return {'X-CHE-GPU-Token': self.token}
+        # A named User-Agent: Cloudflare's edge refuses Python's default "Python-urllib" (403, error 1010) before the
+        # request reaches CHE, which is how the first live cloud runs failed on 2026-10-24.
+        if self.oidc: return {'Authorization': f'Bearer {self.oidc.get()}', 'User-Agent': USER_AGENT}
+        return {'X-CHE-GPU-Token': self.token, 'User-Agent': USER_AGENT}
 
     def fetch(self, route, query=''):
         """GET bytes from a worker route (the model of a job being resumed); None when CHE has none."""
@@ -127,8 +135,9 @@ class Che:
                 with urllib.request.urlopen(urllib.request.Request(url, data=payload, headers=headers, method=method), timeout=60) as r:
                     return json.loads(r.read() or b'{}')
             except urllib.error.HTTPError as e:
-                try: return dict(json.loads(e.read() or b'{}'), http_status=e.code)
-                except ValueError: return {'ok': False, 'http_status': e.code}
+                raw = e.read() or b'{}'
+                try: return dict(json.loads(raw), http_status=e.code)
+                except ValueError: return {'ok': False, 'http_status': e.code, 'detail': f'{e.code} from the network edge, not CHE: {raw[:120].decode("utf-8", "replace")}'}
             except (urllib.error.URLError, OSError, ValueError, KeyError) as e:
                 if attempt == tries - 1: return {'ok': False, 'detail': f'CHE unreachable: {str(e)[:120]}'}
                 time.sleep(2 ** attempt)
@@ -156,6 +165,25 @@ def send_preview(che, job, v, path, sent):
     if r.get('ok'): sent.add(v)
 
 
+def send_quick(che, job, v, path, sent):
+    """A quick look (the fast preview rendered before the final view) into CHE at once; CHE keeps it apart from the
+    finished view and replaces it on screen when the final view arrives."""
+    if v in sent or not os.path.isfile(path): return
+    with open(path, 'rb') as f: data = f.read()
+    r = che.call('preview', data=data, method='PUT', query=f"?worker={che.worker_id}&job={job['id']}&view={v}&stage=quick")
+    print(f"QUICK LOOK view {v}: {'shown in CHE' if r.get('ok') else r.get('detail', r)}", flush=True)
+    if r.get('ok'): sent.add(v)
+
+
+def send_export(che, job, fmt, path, sent):
+    """An exported file (the Roblox R15 FBX and its walk clip) into CHE beside the job's GLB."""
+    if fmt in sent or not os.path.isfile(path): return
+    with open(path, 'rb') as f: data = f.read()
+    r = che.call('export', data=data, method='PUT', query=f"?worker={che.worker_id}&job={job['id']}&format={fmt}", content_type='application/octet-stream')
+    print(f"EXPORT {fmt}: {'saved in CHE' if r.get('ok') else r.get('detail', r)} ({len(data)} bytes)", flush=True)
+    if r.get('ok'): sent.add(fmt)
+
+
 def send_model(che, job, path, state):
     """The 3D model (GLB) into CHE as soon as Blender exports it: the Live Studio's viewport loads the real geometry
     while the views are still rendering."""
@@ -172,7 +200,11 @@ def run_job(che, job, a, log):
     verified (or reused from Drive). `streamed` says what already arrived, so nothing is uploaded twice."""
     with tempfile.NamedTemporaryFile('w', suffix='.json', delete=False) as f:
         json.dump(job.get('settings') or {}, f); settings = f.name
-    cmd = [sys.executable, os.path.join(ROOT, 'scripts', 'che_gpu_face_preview.py'), '--blender', a.blender,
+    # Create Object / Create Room jobs run scripts/che_creation_job.py (procedural GLB, measured, previews from it);
+    # face previews and person models run the face runner.
+    thing = job.get('kind') in THING_KINDS
+    runner = ['che_creation_job.py', '--kind', job['kind']] if thing else ['che_gpu_face_preview.py']
+    cmd = [sys.executable, os.path.join(ROOT, 'scripts', runner[0]), *runner[1:], '--blender', a.blender,
            '--project', a.project, '--out', a.out, '--views', ','.join(str(v) for v in job['views']),
            '--samples', str(job.get('samples', 64)), '--res', str(job.get('res', 480)), '--settings', settings]
     if job.get('kind') == 'person_model': cmd.append('--model')   # the Live Studio's jobs also export the 3D model
@@ -181,7 +213,7 @@ def run_job(che, job, a, log):
     if resume: cmd += ['--resume-model', resume[0], '--resume-sha', resume[1]]
     # Its own process group, so stopping the job stops Blender too (Blender is the runner's child, not ours).
     p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
-    stop = threading.Event(); state = {'stopped': False, 'done': [], 'sent': set(), 'model_sent': False}
+    stop = threading.Event(); state = {'stopped': False, 'done': [], 'sent': set(), 'model_sent': False, 'quick': set(), 'exports': set()}
 
     def beat():
         while not stop.wait(HEARTBEAT_S):
@@ -199,6 +231,13 @@ def run_job(che, job, a, log):
             state['done'].append(int(m.group(1)))
             che.call('progress', {'job_id': job['id'], 'views_done': state['done'], 'message': line.strip()[:200]})
             if not state['stopped']: send_preview(che, job, int(m.group(1)), m.group(3), state['sent'])
+        elif re.match(r'QUICK -?\d+ ', line) and not state['stopped']:
+            v, path = line.split(' ', 2)[1:]
+            send_quick(che, job, int(v), path.strip(), state['quick'])
+            che.call('progress', {'job_id': job['id'], 'views_done': state['done'], 'stage': 'render', 'message': f'Quick look of view {v} is ready; the final render continues.'})
+        elif re.match(r'EXPORT [a-z0-9_]+ ', line) and not state['stopped']:
+            fmt, path = line.split(' ', 2)[1:]
+            send_export(che, job, fmt, path.strip(), state['exports'])
         elif line.startswith('MODEL READY '):
             che.call('progress', {'job_id': job['id'], 'views_done': state['done'], 'message': 'Geometry ready: the 3D model was exported.'})
             if not state['stopped']: send_model(che, job, line[len('MODEL READY '):].strip(), state)
@@ -224,7 +263,7 @@ def resume_model(che, job, a):
     sha256, so model, rig and animation are not built again. Returns (path, sha256) or None."""
     cp = ((job.get('checkpoints') or {}).get('model') or {}) if isinstance(job.get('checkpoints'), dict) else {}
     sha = cp.get('sha256') or ''
-    if job.get('kind') != 'person_model' or not job.get('model_url') or not re.fullmatch(r'[0-9a-f]{64}', sha): return None
+    if job.get('kind') not in MODEL_KINDS or not job.get('model_url') or not re.fullmatch(r'[0-9a-f]{64}', sha): return None
     data = che.fetch('model', f"?worker={che.worker_id}&job={job['id']}")
     if not data or hashlib.sha256(data).hexdigest() != sha:
         print(f"RESUME {job['id']}: the saved model did not match its checkpoint; building it again.", flush=True); return None
@@ -236,11 +275,11 @@ def resume_model(che, job, a):
 
 def upload_previews(che, job, folder, receipt, streamed=None):
     """What did not stream while the runner worked (a failed upload, an older runner): every verified view, and the
-    model for a person_model job, before the outcome is reported."""
+    model for a model job (person, object, room), before the outcome is reported."""
     streamed = streamed if streamed is not None else {'sent': set(), 'model_sent': False}
     for v, info in (receipt or {}).get('views', {}).items():
         if info.get('status') == 'ok': send_preview(che, job, int(v), os.path.join(folder, info.get('file', '')), streamed['sent'])
-    if job.get('kind') == 'person_model' and (receipt or {}).get('model', {}).get('status') == 'ok':
+    if job.get('kind') in MODEL_KINDS and (receipt or {}).get('model', {}).get('status') == 'ok':
         send_model(che, job, os.path.join(folder, receipt['model'].get('file', 'model.glb')), streamed)
     return len(streamed['sent'])
 

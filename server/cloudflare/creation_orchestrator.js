@@ -51,7 +51,7 @@ function capacityOf(jobs, workers, t, settings) {
   const gpuOnline = online.filter(([, w]) => isGpuWorker(w)).length;
   const cloud = online.filter(([, w]) => w.class === 'github_cpu');
   const busy = (id) => jobs.some((j) => j.state === 'rendering' && j.lease?.worker_id === id);
-  const waitingJobs = jobs.filter((j) => j.state === 'queued' || j.state === 'paused');
+  const waitingJobs = jobs.filter((j) => (j.state === 'queued' || j.state === 'paused') && !j.owner_paused);
   const cpuRunnable = waitingJobs.filter((j) => compatible(j, false, gpuOnline > 0));
   const cloudBusy = jobs.filter((j) => j.state === 'rendering' && j.lease?.class === 'github_cpu').length;
   return {
@@ -121,7 +121,7 @@ export async function ensureCapacity(env = {}, { storage, now, fetcher = fetch, 
   let jobsChanged = false;
   const cpuIds = new Set(cap.cpu_runnable.map((j) => j.id));
   for (const j of jobs) {
-    if (j.state !== 'queued' && j.state !== 'paused') continue;
+    if ((j.state !== 'queued' && j.state !== 'paused') || j.owner_paused) continue;
     const next = cpuIds.has(j.id) ? (cloudState ? { state: cloudState, reason: '', at: recent.filter((d) => d.ok).at(-1)?.at || iso(t) } : reason ? { state: 'waiting', reason, at: iso(t) } : null)
       : j.requires?.gpu === 'preferred' && cap.gpu_online ? { state: 'waiting', reason: 'A GPU worker is online and takes it next.', at: iso(t) }
         : (j.requires?.gpu || 'required') === 'required' && !cap.gpu_online

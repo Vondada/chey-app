@@ -591,6 +591,18 @@ struct CHEAppShortcuts: AppShortcutsProvider {
             result: result
           )
 
+        case "recordStart":
+          // Music Studio (owner, 2026-10-24): one take from the microphone or
+          // audio interface to a 16-bit WAV. CHE's own listening pauses for it.
+          let rate = ((call.arguments as? [String: Any])?["sample_rate"] as? NSNumber)?.doubleValue ?? 44100
+          self.startTake(sampleRate: rate, result: result)
+
+        case "recordStop":
+          self.stopTake(result: result)
+
+        case "recordLevel":
+          self.takeLevel(result: result)
+
         case "audioRoute":
           result(self.routeSummary())
 
@@ -1576,6 +1588,113 @@ struct CHEAppShortcuts: AppShortcutsProvider {
       pendingSpeechResult = nil
       pending(false)
     }
+  }
+
+  // Music Studio takes. The WAV comes back to Dart with the measured input
+  // and output latencies, which the studio uses to line the take up with the beat.
+  private var takeRecorder: AVAudioRecorder?
+  private var takeURL: URL?
+  private var resumeListeningAfterTake = false
+
+  private func latencyInfo() -> [String: Any] {
+    let session = AVAudioSession.sharedInstance()
+    return [
+      "input_latency": session.inputLatency,
+      "output_latency": session.outputLatency,
+      "io_buffer": session.ioBufferDuration,
+      "sample_rate": session.sampleRate,
+      "route": routeKind(session.currentRoute),
+      "input": session.currentRoute.inputs.first?.portName ?? "",
+      "input_type": session.currentRoute.inputs.first?.portType.rawValue ?? "",
+    ]
+  }
+
+  private func startTake(sampleRate: Double, result: @escaping FlutterResult) {
+    if let old = takeRecorder {
+      old.stop()
+      takeRecorder = nil
+    }
+    resumeListeningAfterTake = false
+    guard configureAudioSession() else {
+      result(FlutterError(code: "audio_route_failed", message: "CHE could not open the microphone.", details: nil))
+      return
+    }
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent("che-take-\(UUID().uuidString).wav")
+    let settings: [String: Any] = [
+      AVFormatIDKey: Int(kAudioFormatLinearPCM),
+      AVSampleRateKey: sampleRate,
+      AVNumberOfChannelsKey: 1,
+      AVLinearPCMBitDepthKey: 16,
+      AVLinearPCMIsFloatKey: false,
+      AVLinearPCMIsBigEndianKey: false,
+    ]
+    do {
+      let recorder = try AVAudioRecorder(url: url, settings: settings)
+      recorder.isMeteringEnabled = true
+      // CHE keeps listening while a take records, so "stop" still works by
+      // voice. Only if the microphone refuses a second listener does her
+      // listening pause for the take (and come back after it).
+      var started = recorder.prepareToRecord() && recorder.record()
+      if !started && nativeVoiceRunning {
+        resumeListeningAfterTake = true
+        stopNativeRecognition()
+        started = recorder.prepareToRecord() && recorder.record()
+      }
+      guard started else {
+        if resumeListeningAfterTake {
+          resumeListeningAfterTake = false
+          startNativeRecognition(result: { _ in })
+        }
+        result(FlutterError(code: "record_failed", message: "The microphone did not start. Check that CHE has microphone access in Settings.", details: nil))
+        return
+      }
+      takeRecorder = recorder
+      takeURL = url
+      var info = latencyInfo()
+      info["recording"] = true
+      result(info)
+    } catch {
+      result(FlutterError(code: "record_failed", message: "The microphone did not start.", details: error.localizedDescription))
+    }
+  }
+
+  private func stopTake(result: @escaping FlutterResult) {
+    guard let recorder = takeRecorder, let url = takeURL else {
+      result(nil)
+      return
+    }
+    let seconds = recorder.currentTime
+    recorder.stop()
+    takeRecorder = nil
+    takeURL = nil
+    let data = try? Data(contentsOf: url)
+    try? FileManager.default.removeItem(at: url)
+    if resumeListeningAfterTake {
+      resumeListeningAfterTake = false
+      startNativeRecognition(result: { _ in })
+    }
+    guard let data else {
+      result(FlutterError(code: "record_failed", message: "The take could not be read back.", details: nil))
+      return
+    }
+    var info = latencyInfo()
+    info["wav"] = FlutterStandardTypedData(bytes: data)
+    info["seconds"] = seconds
+    result(info)
+  }
+
+  private func takeLevel(result: @escaping FlutterResult) {
+    guard let recorder = takeRecorder else {
+      result(["recording": false])
+      return
+    }
+    recorder.updateMeters()
+    result([
+      "recording": true,
+      "seconds": recorder.currentTime,
+      "db": Double(recorder.averagePower(forChannel: 0)),
+      "peak_db": Double(recorder.peakPower(forChannel: 0)),
+    ])
   }
 
   func audioPlayerDidFinishPlaying(

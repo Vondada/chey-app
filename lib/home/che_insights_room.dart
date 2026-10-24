@@ -12,7 +12,10 @@ import '../che_ui/che_log.dart';
 import '../che_ui/che_theme.dart';
 
 class CheInsightsRoom extends StatefulWidget {
-  const CheInsightsRoom({super.key, required this.map, required this.brain, required this.log, this.onOpenCloudLogs});
+  const CheInsightsRoom({super.key, required this.map, required this.brain, required this.log, this.onOpenCloudLogs, this.chipsBottomInset = 0});
+
+  /// Lifts the Soul & facts / Log chips above whatever the map keeps at its bottom (the Brain's dashboard cards).
+  final double chipsBottomInset;
 
   /// Primary visualization (constellation / neural map). Fills the room.
   final Widget map;
@@ -97,7 +100,7 @@ class _CheInsightsRoomState extends State<CheInsightsRoom> {
             Positioned.fill(child: widget.map),
             Positioned(
               right: CheSpace.gutter,
-              bottom: CheSpace.md + MediaQuery.viewPaddingOf(context).bottom,
+              bottom: CheSpace.md + widget.chipsBottomInset + (widget.chipsBottomInset > 0 ? 0 : MediaQuery.viewPaddingOf(context).bottom),
               child: MediaQuery(
                 // Capped like the Brain chrome so the card inset always clears it.
                 data: MediaQuery.of(context).copyWith(textScaler: MediaQuery.textScalerOf(context).clamp(minScaleFactor: 1.0, maxScaleFactor: 1.2)),

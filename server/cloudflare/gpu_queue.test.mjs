@@ -117,6 +117,27 @@ test('the owner cancels a rendering job; the worker is told to stop and cannot c
   assert.equal((await q.control('retry', job.id)).job.state, 'queued');
 });
 
+test('owner pause stops the worker, keeps the stages and is never claimed; resume puts it back in line', async () => {
+  const { q } = setup();
+  const { job } = await q.claim('colab-1', { gpu: GPU });
+  const p = await q.control('pause', job.id);
+  assert.equal(p.ok, true); assert.equal(p.job.state, 'paused'); assert.equal(p.job.owner_paused, true);
+  const hb = await q.heartbeat('colab-1', { job_id: job.id });
+  assert.equal(hb.stop, true); assert.match(hb.reason, /paused by the owner/);
+  // No worker takes an owner-paused job, though the other seeded jobs are still claimable.
+  for (let i = 0; i < 5; i++) {
+    const c = await q.claim(`colab-${i + 2}`, { gpu: GPU });
+    assert.notEqual(c.job?.id, job.id);
+  }
+  const view = (await q.view()).jobs.find((j) => j.id === job.id);
+  assert.equal(view.display_state, 'Paused'); assert.match(view.status_line, /Paused by you .* Say resume to continue/);
+  assert.equal((await q.control('pause', job.id)).ok, false, 'already paused');
+  const r = await q.control('resume', job.id);
+  assert.equal(r.ok, true); assert.equal(r.job.state, 'queued'); assert.equal(r.job.owner_paused, false);
+  assert.equal((await q.claim('colab-9', { gpu: GPU })).job.id, job.id, 'resumed: next in line');
+  assert.equal((await q.control('resume', job.id)).ok, false, 'not paused');
+});
+
 test('no GPU in the session puts the job back in the queue instead of failing it; a failed face check fails it', async () => {
   const { q } = setup();
   let { job } = await q.claim('colab-1', { gpu: GPU });
@@ -199,4 +220,22 @@ test('spoken GPU questions reach the catalog command; other cloud phrases keep t
   assert.equal(cloudIntent('Open your cloud computer')?.command, 'cloud-open');
   assert.equal(cloudIntent('render my latest YouTube video')?.command, 'cloud-render');
   assert.equal(cloudIntent('What is a GPU?'), null);
+});
+
+test('object_model and room_model are queue kinds any worker may take (requires.gpu none), on the same queue and routes', async () => {
+  const { JOB_KINDS, MODEL_KINDS, compatible, needOf } = await import('./gpu_queue.js');
+  assert.deepEqual(JOB_KINDS, ['face_preview', 'person_model', 'object_model', 'room_model', 'invention_model']);
+  assert.deepEqual(MODEL_KINDS, ['person_model', 'object_model', 'room_model', 'invention_model']);
+  for (const kind of ['object_model', 'room_model']) {
+    assert.equal(needOf({ kind }), 'none');
+    assert.equal(compatible({ kind }, false, true), true, 'a CPU worker takes it even while a GPU is online');
+  }
+  assert.equal(needOf({ kind: 'face_preview' }), 'required'); assert.equal(needOf({ kind: 'person_model' }), 'preferred');
+  const { storage, clock } = setup();
+  const res = await gpuOwnerRoute({ storage, now: clock.now }, '/api/gpu/jobs', new Request('https://che.example/api/gpu/jobs', { method: 'POST' }),
+    { kind: 'room_model', title: 'Office', views: [0, 45, 90], settings: { SPEC: '{"type":"office"}' } });
+  const out = await res.json();
+  assert.equal(res.status, 202); assert.equal(out.job.kind, 'room_model'); assert.deepEqual(out.job.requires, { gpu: 'none' });
+  assert.equal(out.job.progress.message, 'Waiting for a Creation Engine worker.');
+  assert.match(out.job.history[0].note, /a free GitHub cloud CPU worker/);
 });

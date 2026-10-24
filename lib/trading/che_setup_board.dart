@@ -496,6 +496,19 @@ class _CheSetupBoardState extends State<CheSetupBoard> {
           ],
         ),
         _feedHeader(),
+        if (!d.evaluating)
+          Semantics(
+            label: 'Not evaluating. ${d.notEvaluatingReason}. Setups are paused at their last candle.',
+            excludeSemantics: true,
+            child: Container(
+              key: const Key('setup_not_evaluating'),
+              margin: const EdgeInsets.only(top: 6),
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(borderRadius: BorderRadius.circular(8), border: Border.all(color: CheColors.warning)),
+              child: Text('NOT EVALUATING · ${d.notEvaluatingReason}. Setups are paused at their last candle until Rithmic candles arrive.',
+                  style: const TextStyle(color: Colors.white, fontSize: 13)),
+            ),
+          ),
         const Padding(
           padding: EdgeInsets.only(top: 4),
           child: Text(

@@ -247,5 +247,25 @@ class GpuWorkerTest(unittest.TestCase):
         self.assertEqual(code, 0); self.assertIn('IDLE 0 min: worker stopped', out)
 
 
+class WorkerRequestHeaders(unittest.TestCase):
+    """2026-10-24: the first live cloud runs got 403 from Cloudflare's edge (Python's default User-Agent), not CHE."""
+
+    def test_every_request_names_che_and_an_edge_refusal_says_it_was_not_che(self):
+        sys.path.insert(0, os.path.join(ROOT, 'scripts'))
+        import io, urllib.error, che_gpu_worker
+        che = che_gpu_worker.Che('https://che.example', 'tok', 'colab-1', 'GPU', 'Blender', oidc=None, info={})
+        self.assertEqual(che.auth()['User-Agent'], che_gpu_worker.USER_AGENT)
+        self.assertNotIn('Python-urllib', che_gpu_worker.USER_AGENT)
+        seen = []
+        def edge(req, timeout=0):
+            seen.append(req.get_header('User-agent'))
+            raise urllib.error.HTTPError(req.full_url, 403, 'Forbidden', {}, io.BytesIO(b'error code: 1010'))
+        orig = urllib.request.urlopen; urllib.request.urlopen = edge
+        try: out = che.call('claim', {})
+        finally: urllib.request.urlopen = orig
+        self.assertEqual(seen, [che_gpu_worker.USER_AGENT])
+        self.assertEqual(out['http_status'], 403); self.assertIn('network edge, not CHE: error code: 1010', out['detail'])
+
+
 if __name__ == '__main__':
     unittest.main()

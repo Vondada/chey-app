@@ -3,6 +3,7 @@
 // stored bars says so and draws nothing, and the page is silent until Read This is pressed.
 import 'dart:convert';
 
+import 'package:chey/rooms/che_trading_chart.dart';
 import 'package:chey/trading/che_trade_replay.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -172,5 +173,65 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('No recorded market data for this trade.'), findsOneWidget);
     expect(find.byKey(const Key('trade_replay_chart')), findsNothing);
+  });
+
+  // The owner's recording (2026-10-24): an ETH-USD simulation trade listed on the chart opened "No CHE trade has
+  // the ID". A marker now carries the ledger ID the Worker names (trade_id), and that is what Trade Replay opens.
+  test('regression: a chart marker opens its trade by the ledger ID, not the simulation record id', () {
+    final m = ChartMarker({'source': 'che_sim', 'kind': 'exit', 'id': 'ema-pullback-1m|ETH-USD|2026-10-24T14:31:00.000Z', 'trade_id': 'T2S0E3X28EHK4A', 'time': '2026-10-24T14:52:00Z', 'price': 2511.2, 'status': 'closed'});
+    expect(m.tradeId, 'T2S0E3X28EHK4A');
+    expect(m.hasLedgerId, isTrue);
+    expect(cheMarkerSummary(m)['id'], 'T2S0E3X28EHK4A');
+    final open = ChartMarker({'source': 'che_sim', 'kind': 'entry', 'id': 'ema-pullback-1m|ETH-USD|2026-10-24T15:01:00.000Z', 'time': '2026-10-24T15:01:00Z', 'price': 2512.0, 'status': 'open'});
+    expect(open.hasLedgerId, isFalse, reason: 'an open trade is not in the ledger yet');
+  });
+
+  testWidgets('-10s steps back, never before the first bar; voice runs every control and says what happened', (tester) async {
+    final spoken = <String>[];
+    await tester.pumpWidget(MaterialApp(theme: ThemeData(splashFactory: NoSplash.splashFactory), home: CheTradeReplayPage(
+      tradeId: 'T0K3J9QW1ZX7AB', baseUrl: () => 'https://che.test', headers: () => const {}, onRead: spoken.add,
+      initial: CheTradeEvidence.fromJson(_json()),
+    )));
+    await tester.pump();
+    String clock() => (tester.widget(find.byKey(const Key('trade_replay_clock'))) as Text).data!;
+    expect(find.bySemanticsLabel('Back 10 seconds of playback'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('trade_replay_back')));
+    await tester.pump();
+    expect(clock(), contains('2 of 12 bars'), reason: 'from the end, ten bars back at 1×');
+    await tester.tap(find.byKey(const Key('trade_replay_back')));
+    await tester.pump();
+    expect(clock(), contains('0 of 12 bars'), reason: 'capped at the first stored bar');
+    final voice = CheTradeReplayPage.voiceHandler!;
+    expect(await voice('Play'), 'Playing the replay of trade T0K3J9QW1ZX7AB.');
+    await tester.pump();
+    expect(find.byKey(const Key('trade_replay_pause')), findsOneWidget);
+    expect(await voice('CHE, pause'), startsWith('Paused at '));
+    await tester.pump();
+    expect(find.byKey(const Key('trade_replay_play')), findsOneWidget);
+    expect(await voice('forward 10 seconds'), startsWith('Forward 10 seconds of playback, now at '));
+    await tester.pump();
+    expect(clock(), contains('10 of 12 bars'));
+    expect(await voice('go back 10 seconds'), startsWith('Back 10 seconds of playback'));
+    await tester.pump();
+    expect(clock(), contains('0 of 12 bars'));
+    expect(await voice('read the trade'), startsWith('Trade T0K3J9QW1ZX7AB, FORWARD PAPER.'));
+    expect(await voice('what is the weather'), isNull, reason: 'anything else goes on to the rest of CHE');
+    expect(spoken, isEmpty, reason: 'voice answers are spoken by the caller, nothing speaks on its own');
+    await tester.pumpWidget(const SizedBox());
+    expect(CheTradeReplayPage.voiceHandler, isNull, reason: 'leaving the page releases its voice commands');
+  });
+
+  testWidgets('missing candles: the Worker\'s reason is shown and spoken, and there is nothing to play', (tester) async {
+    final j = _json(bars: false)..['no_data_reason'] = 'The exchange history for ETH-USD could not be read: Coinbase: Coinbase answered HTTP 503. No candle was made up.';
+    await tester.pumpWidget(MaterialApp(theme: ThemeData(splashFactory: NoSplash.splashFactory), home: CheTradeReplayPage(
+      tradeId: 'T0K3J9QW1ZX7AB', baseUrl: () => 'https://che.test', headers: () => const {},
+      initial: CheTradeEvidence.fromJson(j),
+    )));
+    await tester.pump();
+    expect(find.textContaining('Coinbase answered HTTP 503'), findsOneWidget);
+    expect(find.byKey(const Key('trade_replay_chart')), findsNothing);
+    expect(await CheTradeReplayPage.voiceHandler!('play'), startsWith('The exchange history for ETH-USD could not be read'));
+    expect(cheTradeSpoken(CheTradeEvidence.fromJson(j)!), contains('Coinbase answered HTTP 503'));
+    await tester.pumpWidget(const SizedBox());
   });
 }

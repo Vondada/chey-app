@@ -167,6 +167,27 @@ Future<void> _font(String family, String path) async {
 }
 
 void main() {
+  testWidgets('project character replaces the startup CHE preview', (tester) async {
+    final vp = <_FakeViewport>[];
+    final w = _Worker({..._project(), 'base_id': 'nova'});
+    await tester.pumpWidget(_studioForCharacter(w, vp));
+    await tester.pumpAndSettle();
+    expect(vp.single.loads.last, contains('Nova'));
+  });
+  testWidgets('bundled CHE loads even when the creation server is unavailable', (tester) async {
+    final loads = <String>[];
+    await tester.pumpWidget(MaterialApp(home: CheLiveStudio(
+      baseUrl: 'https://che.test', headers: const {}, projectId: 'cr_1',
+      client: MockClient((_) async => http.Response('unavailable', 503)),
+      viewport: (message) {
+        final viewport = _FakeViewport(message);
+        return _RecordingViewport(viewport, loads);
+      },
+      loadBundled: (_) async => _glb,
+    )));
+    await tester.pumpAndSettle();
+    expect(loads, contains(contains('Bundled stylised model of CHE')));
+  });
   final shots = Platform.environment['CHE_STUDIO_SHOTS'] ?? '';
   setUpAll(() async {
     final fonts = '${Platform.environment['FLUTTER_ROOT'] ?? ''}/bin/cache/artifacts/material_fonts';
@@ -318,8 +339,8 @@ void main() {
     await tester.pumpWidget(studio(w, vp: vp));
     await tester.pumpAndSettle();
     expect(w.modelGets, 1);
-    expect(vp.single.bytes.single, _glb.length);
-    expect(vp.single.loads.single, contains('exported by Blender on Tesla T4'));
+    expect(vp.single.bytes.last, _glb.length);
+    expect(vp.single.loads.last, contains('exported by Blender on Tesla T4'));
     expect(find.text('Creation Engine Online'), findsOneWidget);
     expect(find.byKey(const ValueKey('live-connect')), findsNothing);
     expect(find.text('Rendering on OPTIX: Tesla T4'), findsOneWidget);
@@ -333,6 +354,22 @@ void main() {
     await tester.pump(const Duration(seconds: 7));
     await tester.pumpAndSettle();
     expect(w.modelGets, 1);
+    await tester.pumpWidget(const SizedBox());
+    handle.dispose();
+  });
+
+  testWidgets('a quick look shows for each view until its final render arrives, and says so', (tester) async {
+    await _phone(tester);
+    final handle = tester.ensureSemantics();
+    final w = _Worker(_project(job: {..._job(), 'quick_previews': {'0': 'q_front', '45': 'q_three'}}, engine: 'online'));
+    await tester.pumpWidget(studio(w));
+    await tester.pumpAndSettle();
+    // Front has its final render (the quick look is replaced); three-quarter is still the quick look.
+    expect(find.bySemanticsLabel('Front preview render from the Creation Engine'), findsOneWidget);
+    expect(find.bySemanticsLabel('Three-quarter quick look from the Creation Engine; the final render is still in progress'), findsOneWidget);
+    final s = tester.state<CheLiveStudioState>(find.byType(CheLiveStudio));
+    expect(s.previews, {'0': 'm_front', '45': 'q_three'});
+    expect(s.spokenSummary, contains('1 preview picture ready. 1 quick look showing while the final render continues.'));
     await tester.pumpWidget(const SizedBox());
     handle.dispose();
   });
@@ -556,6 +593,61 @@ void main() {
     handle.dispose();
   });
 
+  test('object and room words reach the open creation, other talk does not', () {
+    for (final s in ['add a desk', 'warmer light', 'paint the walls green', 'shinier', 'industrial style', 'tile floor', '5 metres wide', 'remove the rug']) {
+      expect(cheLooksLikeEdit(s), isTrue, reason: s);
+    }
+    expect(cheLooksLikeEdit('what is the weather in Chicago'), isFalse);
+    expect(cheEditChips.keys, ['person', 'object', 'room']);
+  });
+
+  testWidgets('Create Object in the same studio: its own chips, the measured model built on a cloud CPU, and voice edits and generate go to the Worker', (tester) async {
+    await _phone(tester);
+    final job = {
+      ..._job(state: 'completed'),
+      'kind': 'object_model',
+      'receipt': {'nvidia_smi': "unavailable: [Errno 2] No such file or directory: 'nvidia-smi'"},
+      'rendered_on': {'class': 'github_cpu', 'device': 'CPU'},
+      'status_line': 'Completed at 19:13 UTC on a GitHub cloud CPU: 3 views, a 108 KB 3D model.',
+    };
+    final p = {
+      ..._project(job: job),
+      'kind': 'object',
+      'title': 'Chair (new object)',
+      'base_id': 'chair',
+      'described': 'a classic chair, red, non-metallic with roughness 0.5, at 1 times real size',
+      'measured': {'ok': true, 'line': '11 meshes, 1,540 triangles, 1 material, 0.46 x 0.87 x 0.46 m'},
+    };
+    final w = _Worker(p);
+    final vp = <_FakeViewport>[];
+    final spoken = <String>[];
+    await tester.pumpWidget(studio(w, vp: vp, spoken: spoken));
+    await tester.pumpAndSettle();
+    for (final chip in ['Make it red', 'Bigger', 'Shinier', 'Make it metallic', 'Industrial style', 'Make it a chair']) {
+      expect(find.byKey(ValueKey('live-chip-$chip')), findsOneWidget, reason: chip);
+    }
+    expect(find.byKey(const ValueKey('live-chip-Make the hair longer')), findsNothing);
+    expect(vp.single.loads.last, startsWith('Version 1 model, exported by Blender on a cloud CPU at '),
+        reason: 'a CPU build never shows an error text as its device');
+    final voice = CheLiveStudio.voiceHandler!;
+    final said = await voice('read');
+    expect(said, contains('Chair (new object), version 1 of 1: a classic chair, red'));
+    expect(said, contains('Measured: 11 meshes, 1,540 triangles, 1 material, 0.46 x 0.87 x 0.46 m.'));
+    expect(said, contains('Say a change like make it red, bigger, shinier'));
+    await tester.ensureVisible(find.byKey(const ValueKey('live-chip-Bigger')));
+    await tester.tap(find.byKey(const ValueKey('live-chip-Bigger')));
+    await tester.pumpAndSettle();
+    expect(w.posts.last, '/api/creations/cr_1/edit'); expect(w.bodies.last['text'], 'Bigger');
+    expect(spoken, hasLength(1), reason: 'a chip tap speaks the Worker answer once');
+    await voice('make it red');
+    await tester.pumpAndSettle();
+    expect(w.bodies.last['text'], 'make it red');
+    await voice('generate the object');
+    await tester.pumpAndSettle();
+    expect(w.posts.last, '/api/creations/cr_1/generate');
+    expect(spoken, hasLength(1), reason: 'voice actions are spoken by the voice route, not twice');
+  });
+
   testWidgets('screenshots', (tester) async {
     if (shots.isEmpty) return;
     Directory(shots).createSync(recursive: true);
@@ -581,4 +673,26 @@ void main() {
     await shoot('21_live_studio_progress');
     await tester.pumpWidget(const SizedBox());
   });
+}
+
+Widget _studioForCharacter(_Worker worker, List<_FakeViewport> viewports) => MaterialApp(home: CheLiveStudio(
+  baseUrl: 'https://che.test', headers: const {}, projectId: 'cr_1', client: worker.client(),
+  loadBundled: (_) async => _glb,
+  viewport: (message) { final v = _FakeViewport(message); viewports.add(v); return v; },
+));
+
+class _RecordingViewport implements CheViewportDriver {
+  _RecordingViewport(this.inner, this.loads);
+  final _FakeViewport inner;
+  final List<String> loads;
+  @override
+  Widget build(BuildContext context) => inner.build(context);
+  @override
+  Future<void> load(Uint8List bytes, String label) async { loads.add(label); await inner.load(bytes, label); }
+  @override
+  Future<void> command(Map<String, Object> command) => inner.command(command);
+  @override
+  Future<void> pause(bool paused) => inner.pause(paused);
+  @override
+  void dispose() => inner.dispose();
 }

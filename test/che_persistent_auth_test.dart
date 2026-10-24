@@ -157,6 +157,15 @@ void main() {
       expect(await launch(), RithmicResume.notWanted);
       expect(feeds, isEmpty);
       expect(live.attached, isFalse);
+      // Owner audit (2026-10-24): "not connected" says why, so the reason can be read without guessing.
+      expect(live.statusLabel, startsWith('Rithmic not connected: the automatic reconnect is off'));
+    });
+
+    test('the automatic reconnect is on but no login is saved: not connected says so', () async {
+      SharedPreferences.setMockInitialValues({kRithmicAutoConnectKey: true});
+      expect(await launch(), RithmicResume.noSavedLogin);
+      expect(feeds, isEmpty);
+      expect(live.statusLabel, 'Rithmic not connected: no Rithmic login is saved on this phone. Open Rithmic and sign in');
     });
 
     test('after a Connect Rithmic accepted, the next launch reconnects with the vault login', () async {

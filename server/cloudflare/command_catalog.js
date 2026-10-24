@@ -532,13 +532,13 @@ export const COMMANDS = Object.freeze([
     examples: ['Any trade alerts?'],
     prompt: 'Any trade alerts?', produces: 'alerts', keywords: ['alert', 'notify', 'watch', 'alarm'],
   }),
-  C('trade-sim', 'trading', 'EXPLORE', 'Pause, resume or check the strategy simulation.', {
-    does: 'Pauses or resumes CHE\'s paper strategy simulation (ten rules on minute bars; no money, no model call), or reads its status. Owner only.',
+  C('trade-sim', 'trading', 'EXPLORE', 'Pause, resume, stop, reset or check the strategy simulation.', {
+    does: 'Pauses or resumes CHE\'s paper strategy simulation (ten rules on minute bars; no money, no model call); stops it (pause and cancel waiting signals, open positions kept); resets it after you say yes (the run is archived, never deleted); or reads its status. Owner only.',
     needs: ['office'], route: 'che_strategy_sim', handler: 'strategy_sim.strategySimIntent → setStrategySimPaused / strategySimView',
-    input: { name: 'action', required: false, hint: 'pause, resume or status' },
-    examples: ['Pause the strategy simulation', 'Resume the strategy simulation', 'Strategy simulation status'],
+    input: { name: 'action', required: false, hint: 'pause, resume, stop, reset or status' },
+    examples: ['Pause the strategy simulation', 'Resume the strategy simulation', 'Stop the strategy simulation', 'Reset the strategy simulation', 'Strategy simulation status'],
     prompt: 'Strategy simulation {input}', produces: 'simulation status', evidence: 'Stored simulation state and trades only.',
-    keywords: ['strategy simulation', 'simulation', 'pause simulation', 'resume simulation', 'paper strategies'],
+    keywords: ['strategy simulation', 'simulation', 'pause simulation', 'resume simulation', 'stop simulation', 'reset simulation', 'paper strategies'],
   }),
   // Strategy Control Center (owner, 2026-10-20): trading_controls.js through the desk's own intent parser.
   C('trade-controls', 'trading', 'EXPLORE', 'Read or change your paper strategy limits.', {
@@ -588,10 +588,18 @@ export const COMMANDS = Object.freeze([
     prompt: 'Who is the current leader?', produces: 'leader', evidence: 'Forward paper and historical backtest records, ranked by the lower expectancy bound.', keywords: ['leader', 'best strategy', 'verified strategy', 'ranking'],
   }),
   C('trade-audit', 'trading', 'EXPLORE', 'Audit every stored trade record.', {
-    does: 'Counts the stored trade records by execution type and checks them for exact duplicates, entries shared across variants, look-ahead, fills that disagree with their own costs, missing labels and P&L that does not add up. Changes nothing.',
+    does: 'Counts the stored trade records by execution type and checks them for exact duplicates, entries shared across variants, look-ahead, fills that disagree with their own costs, missing labels and P&L that does not add up. Deeper checks: the simulation\'s R split into price moves and costs, trades whose costs exceeded their risk, open positions on retired feeds, P&L and R recomputed from prices, the research backtests\' data hashes, fixtures and look-ahead audits, and one day\'s P&L by New York date, UTC date and CME trade day. Changes nothing.',
     needs: ['office'], route: 'che_trading_visual', handler: 'trading_visual.auditTrades', input: null,
     examples: ['Audit the trades', 'Run a trade audit'],
     prompt: 'Audit the trades.', produces: 'audit', evidence: 'Real counts from the stored records; nothing is altered.', keywords: ['audit', 'duplicates', 'look-ahead', 'trade audit'],
+  }),
+  // The trading P&L calendar (owner, 2026-10-24): che_calendars.js through its own chat route. Read only.
+  C('trade-calendar', 'trading', 'EXPLORE', 'The monthly P&L calendar, per record set.', {
+    title: 'Trading P&L Calendar',
+    does: 'Reads this month\'s closed trades day by day: net P&L, wins and losses, win rate, weekly subtotals and the month. Simulation (in R), forward paper and broker are separate and never added together. Tapping a day lists its trades, each opening its replay. Changes nothing.',
+    needs: ['office'], route: 'che_calendars', handler: 'che_calendars.tradingCalendar', input: null,
+    examples: ['Open my trading calendar', 'Show the P&L calendar for the simulation'],
+    prompt: 'Open my trading calendar.', produces: 'pnl calendar', evidence: 'Stored trade records only, one per trade ID; an empty month stays empty.', keywords: ['calendar', 'p&l calendar', 'pnl calendar', 'monthly', 'trading calendar'],
   }),
   // Orion's crypto desk (owner master mission, 2026-10-23): crypto_markets.js through its own chat route.
   C('trade-crypto', 'trading', 'EXPLORE', "Orion: BTC and ETH research and paper trading, 24/7.", {
@@ -981,6 +989,15 @@ export const COMMANDS = Object.freeze([
     prompt: 'Who runs the Office departments?', produces: 'org chart',
     evidence: 'The roster and stored Office tasks only; tool status is configured, not configured or not checked.',
     cost: 'Free: no AI engine is used.', keywords: ['org chart', 'departments', 'department heads', 'chain of command', 'who runs'],
+  }),
+  C('office-calendar', 'office', 'EXPLORE', 'What the Office did, day by day.', {
+    title: 'Office Calendar',
+    does: 'Reads each day\'s recorded work: completed jobs, active jobs, pending tasks, approvals, failures, milestones and who finished what, green, yellow or red. Tapping a day opens its jobs with their receipts. Changes nothing.',
+    needs: ['office'], route: 'che_calendars', handler: 'che_calendars.officeCalendar', input: null,
+    examples: ['Show the office calendar for September', 'What did we do yesterday?'],
+    prompt: 'Show the office calendar.', produces: 'office calendar',
+    evidence: 'Stored jobs, Office tasks, objectives, approvals and reliability counts only.',
+    cost: 'Free: no AI engine is used.', keywords: ['office calendar', 'what did we do', 'accomplished', 'work calendar'],
   }),
   C('office-coordinate', 'office', 'BUILD', 'Have Nova coordinate a multi-department job.', {
     title: 'Coordinated Office Job',

@@ -439,6 +439,26 @@ jobs:
           } else if (bt) console.log(`::warning title=Historical baseline::${bt.error || 'not run'}`);
           JS
 
+      - name: Audit CHE's stored trade records on the live Worker (read only)
+        run: |
+          node --input-type=module <<'JS'
+          // Read only (trading_audit.js): recomputes the stored records and prints counts, never record contents.
+          import { appendFileSync } from 'node:fs';
+          let out = null; let lastError = '';
+          for (let attempt = 0; attempt < 3 && !out; attempt++) {
+            try {
+              const response = await fetch('https://chey-app.henryjavoni.workers.dev/api/trading/audit/probe', {
+                method: 'POST', headers: { Authorization: `Bearer ${process.env.CHE_VOICE_PROBE_TOKEN}` }, signal: AbortSignal.timeout(60000),
+              });
+              if (response.ok) out = await response.json(); else lastError = `HTTP ${response.status}`;
+            } catch (error) { lastError = error?.name === 'TimeoutError' ? 'no answer within 60 s' : 'network error'; }
+            if (!out) await new Promise((resolve) => setTimeout(resolve, 4000));
+          }
+          if (!out) { console.log(`::warning title=Trading audit did not run::${lastError}`); process.exit(0); }
+          console.log(`::notice title=Trading audit::${out.summary}`);
+          appendFileSync(process.env.GITHUB_STEP_SUMMARY, `**Trading audit (live Worker, read only):** ${out.summary}\n`);
+          JS
+
       - name: Check CHE's memory truth through the live Worker (real chat test)
         run: |
           node --input-type=module <<'JS'
@@ -646,6 +666,24 @@ jobs:
             console.log(`::error title=Knowledge Atlas check failed::${(report.steps || []).filter((s) => !s.pass && !s.optional).map((s) => s.name).join('; ') || report.error || 'see log'}`);
             process.exit(1);
           }
+          JS
+
+      - name: Audit the owner's stored projects (counts only)
+        continue-on-error: true
+        run: |
+          node --input-type=module <<'JS'
+          // Read-only (project_library.js projectAudit): how many projects, Roblox projects, copies and Luau scripts
+          // the owner's CHE really holds. Counts only: no title, brief or script reaches this public log.
+          import { appendFileSync } from 'node:fs';
+          const res = await fetch('https://chey-app.henryjavoni.workers.dev/api/projects/probe/audit', {
+            headers: { 'X-CHE-Memory-Probe': process.env.CHE_VOICE_PROBE_TOKEN }, signal: AbortSignal.timeout(60000),
+          }).catch((e) => ({ ok: false, status: String(e) }));
+          const a = res.ok ? await res.json() : null;
+          if (!a) { console.log(`::warning title=Projects audit::The live Worker did not answer (${res.status}).`); process.exit(0); }
+          const r = a.roblox;
+          const line = `${a.stored_projects} stored projects as ${a.cards} cards (${a.duplicate_groups} duplicate groups, every copy kept); creative active ${a.creative.active}, paused ${a.creative.paused}, completed ${a.creative.completed}, archived ${a.creative.archived}; AI/code/research ${Object.values(a.ai_code_research).reduce((x, y) => x + y, 0)}. Roblox: ${r.cards} projects from ${r.stored_copies} copies, ${r.with_scripts} with Luau (${r.scripts} scripts), ${r.crew_results}/${r.crew_tasks} crew tasks with results, ${r.playtested} playtested`;
+          console.log(`::notice title=Projects audit::${line}`);
+          appendFileSync(process.env.GITHUB_STEP_SUMMARY, `**Projects audit (owner CHE, counts only):** ${line}.\n`);
           JS
 
       - name: Render and verify one real video through the live Worker (opt-in)

@@ -13,6 +13,7 @@ import {
   newPortfolio, readTrades, sessionOf, stepPortfolio, summarize, validateTradeRecord,
 } from './trading_evidence.js';
 import { governedGate, pausedUnits, runGovernor } from './strategy_governor.js';
+import { leakageAudit } from './historical_intelligence.js';
 import { readControls } from './trading_controls.js';
 import { postTradeReview } from './trading_live.js';
 import { queueRoomEvent } from './room_events.js';
@@ -407,10 +408,19 @@ export function marketStudy(bars, tf) {
   };
 }
 
-/** Every strategy on the stored bars: in-sample (first 70%) and out-of-sample (last 30%), net of the crypto costs. */
-export function backtestSeries(coin, tf, bars) {
+/**
+ * Every strategy on the stored bars: in-sample (first 70%) and out-of-sample (last 30%), net of the crypto costs (taker
+ * and maker fees, spread and slippage on every fill). Each strategy also passes the same look-ahead audit as the
+ * futures research (historical_intelligence.leakageAudit: earlier trades must not change when later bars are removed or
+ * changed). Ranking: strategies that passed the audit and have enough out-of-sample trades first, by out-of-sample
+ * expectancy; a failed audit is never ranked above one that passed. No profit is promised by any rank.
+ */
+export function backtestSeries(coin, tf, bars, { auditBars = 2000 } = {}) {
   const ctx = intradayContext(bars);
   const split = bars[Math.floor(bars.length * 0.7)]?.t;
+  const sample = bars.length > auditBars ? bars.slice(-auditBars) : bars;
+  const run = (spec) => (candles) => stepPortfolio(freshPortfolio(coin, tf, spec, 'backtest'), candles, intradayContext(candles));
+  const rank = (r) => (r.look_ahead === 'FAILED' ? 0 : 2) + (r.oos_trades >= MIN_TRADES ? 1 : 0);
   return cryptoSpecs().map((spec) => {
     const pf = freshPortfolio(coin, tf, spec, 'backtest');
     pf.price_series = seriesLabel(coin, tf, 'HISTORICAL');
@@ -418,12 +428,14 @@ export function backtestSeries(coin, tf, bars) {
     const all = summarize(trades);
     const oos = summarize(trades.filter((t) => t.entry.time >= split));
     const wf = evaluateWalkForward(trades, { barTimes: bars.map((b) => b.t) });
+    const audit = leakageAudit(sample, run(spec));
     return {
       strategy: spec.c, name: INTRADAY_CANDIDATES[spec.c].name, trades: all.trades, expectancy_r: all.expectancy_r, profit_factor: all.profit_factor,
-      net_pnl: all.net_pnl, win_rate: all.win_rate, oos_from: split, oos_trades: oos.trades, oos_expectancy_r: oos.expectancy_r,
+      net_pnl: all.net_pnl, costs_paid: all.costs_paid, win_rate: all.win_rate, oos_from: split, oos_trades: oos.trades, oos_expectancy_r: oos.expectancy_r, oos_net_pnl: oos.net_pnl,
       folds: wf.folds_total, folds_positive: wf.folds_positive, enough_data: all.trades >= MIN_TRADES,
+      look_ahead: audit.ok ? 'passed' : audit.reason === 'too few bars to audit' ? 'not enough bars' : 'FAILED',
     };
-  }).sort((a, b) => (b.oos_trades ? b.oos_expectancy_r : -9) - (a.oos_trades ? a.oos_expectancy_r : -9));
+  }).sort((a, b) => (rank(b) - rank(a)) || ((b.oos_trades ? b.oos_expectancy_r : -9) - (a.oos_trades ? a.oos_expectancy_r : -9)));
 }
 
 async function researchStep(storage, now) {

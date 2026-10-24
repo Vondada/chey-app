@@ -74,9 +74,26 @@ class CheVoiceHealth {
 /// Paid live voice is tried only when the server says it is set up and no
 /// recent failure put it on hold; otherwise the free iPhone recognizer starts
 /// at once (owner rule: voice startup never depends on a paid provider).
-bool cheUseLiveVoice({required bool liveConfigured, required DateTime skipUntil, required DateTime now}) =>
-    liveConfigured && !now.isBefore(skipUntil);
+///
+/// [passwordSurface] is true while a password or vault surface is on screen
+/// (CheScreenCapture.blocked): live voice streams microphone audio to OpenAI,
+/// so it never starts there and the iPhone recognizer is used instead.
+bool cheUseLiveVoice({required bool liveConfigured, required DateTime skipUntil, required DateTime now, bool passwordSurface = false}) =>
+    liveConfigured && !passwordSurface && !now.isBefore(skipUntil);
+
+/// After a password turn reaches live voice, live voice stays off for this
+/// long so the owner's next words (often the password itself) go only to the
+/// iPhone recognizer.
+const chePasswordVoiceHold = Duration(minutes: 10);
 
 /// How long a live-voice connection may take before CHE falls back to the
 /// free recognizer.
 const cheLiveVoiceConnectTimeout = Duration(seconds: 10);
+
+/// Owner rule (2026-10-11): app launch and passive polls (finished background
+/// jobs, new approvals) never start CHE speech on their own. They keep their
+/// quiet visible banner, notification and haptic; CHE says them aloud only
+/// while the owner is in an active voice conversation (awake, not standing
+/// by) and nothing else is speaking or sending. Read Aloud still reads them.
+bool chePassiveNoticeMaySpeak({required bool activeConversation, required bool speaking, required bool sending}) =>
+    activeConversation && !speaking && !sending;

@@ -11,7 +11,7 @@ const _teal = Color(0xFF3DDC97);
 const _gold = CheColors.markets;
 
 class CheStrategyLearningDashboard extends StatelessWidget {
-  const CheStrategyLearningDashboard({super.key, required this.data, required this.onAsk, required this.onResearch, this.onRead, this.chart, this.timeframes = const {}});
+  const CheStrategyLearningDashboard({super.key, required this.data, required this.onAsk, required this.onResearch, this.onRead, this.chart, this.timeframes = const {}, this.windows});
   final Map<String, dynamic> data;
   final void Function(String) onAsk;
   final VoidCallback? onResearch;
@@ -20,6 +20,9 @@ class CheStrategyLearningDashboard extends StatelessWidget {
 
   /// Every timeframe's evidence bucket per strategy id (the research overview's `timeframes`, #109). Never a second store.
   final Map<String, List<Map<String, dynamic>>> timeframes;
+
+  /// GET /api/trading/learning (7/30/90-day windows, old vs new), shown under the strategy cards when given.
+  final Map<String, dynamic>? windows;
 
   @override
   Widget build(BuildContext context) {
@@ -43,6 +46,7 @@ class CheStrategyLearningDashboard extends StatelessWidget {
       ]),
       ?chart,
       for (final strategy in strategies) _StrategyCard(row: strategy, timeframes: timeframes[strategy['id']] ?? const []),
+      if (windows != null) CheLearningWindows(data: windows!),
       ExpansionTile(
         title: const Text('Research and slow-progress diagnostics'),
         childrenPadding: const EdgeInsets.all(12),
@@ -299,4 +303,67 @@ class _LearningEquity extends CustomPainter {
   }
   @override
   bool shouldRepaint(covariant _LearningEquity oldDelegate) => oldDelegate.points != points;
+}
+
+/// Is CHE improving? (owner, 2026-10-24): 7, 30 and 90-day results per strategy from GET /api/trading/learning,
+/// each period beside the equal period before it. A change is named only when both periods hold enough trades;
+/// otherwise the row says "insufficient evidence". Simulation is in R, forward paper in dollars; never mixed.
+class CheLearningWindows extends StatelessWidget {
+  const CheLearningWindows({super.key, required this.data});
+  final Map<String, dynamic> data;
+
+  static String _net(Object? v, Object? unit) => v is! num ? 'no trades' : unit == 'USD' ? '${v < 0 ? '−' : '+'}\$${v.abs().toStringAsFixed(2)}' : '${v < 0 ? '−' : '+'}${v.abs().toStringAsFixed(2)} R';
+
+  Widget _window(Map<String, dynamic> r, Map<String, dynamic> w) {
+    final now = _map(w['now']);
+    final before = _map(w['before']);
+    final verdict = '${w['verdict']}';
+    return Semantics(
+      container: true,
+      label: '${w['days']} days: ${now['trades']} trades, net ${_net(now['net'], r['unit'])}, win rate ${_value(now['win_rate'], ' percent')}, '
+          'profit factor ${_value(now['profit_factor'])}, average R ${_value(now['avg_r'])}, max drawdown ${_value(now['max_drawdown'])}. '
+          'The ${w['days']} days before: ${before['trades']} trades, net ${_net(before['net'], r['unit'])}. $verdict.',
+      excludeSemantics: true,
+      child: Padding(
+        padding: const EdgeInsets.only(top: 6),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('${w['days']} days — $verdict'.toUpperCase(),
+              style: TextStyle(color: verdict == 'improving' ? _teal : verdict == 'worse' ? Colors.redAccent : _gold, fontSize: 13, fontWeight: FontWeight.w800)),
+          Text('Now: ${now['trades']} trades, ${_net(now['net'], r['unit'])}, win ${_value(now['win_rate'], '%')}, PF ${_value(now['profit_factor'])}, avg ${_value(now['avg_r'])} R, DD ${_value(now['max_drawdown'])}',
+              style: const TextStyle(color: Colors.white, fontSize: 14)),
+          Text('Before: ${before['trades']} trades, ${_net(before['net'], r['unit'])}, win ${_value(before['win_rate'], '%')}, PF ${_value(before['profit_factor'])}',
+              style: const TextStyle(color: Colors.white70, fontSize: 14)),
+        ]),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final rows = _rows(data['rows']);
+    if (rows.isEmpty) {
+      return const Padding(padding: EdgeInsets.all(8), child: Text('No closed simulation or forward paper trades are stored yet, so there is nothing to compare.', style: TextStyle(color: Colors.white, fontSize: 16)));
+    }
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      Text('${data['rule'] ?? ''}', style: const TextStyle(color: _gold, fontSize: 15)),
+      const SizedBox(height: 8),
+      for (final r in rows)
+        if (r['error'] != null)
+          Text('${r['source_label']}: could not be read (${r['error']}).', style: const TextStyle(color: Colors.redAccent, fontSize: 15))
+        else
+          Card(
+            key: Key('learning_${r['source']}_${r['strategy']}'),
+            color: const Color(0xFF0E1418),
+            child: Padding(
+              padding: const EdgeInsets.all(10),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('${r['strategy']}', style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w700)),
+                Text('${r['source_label']} · ${r['total_trades']} trades · out of sample: ${_map(r['out_of_sample'])['basis'] ?? 'not recorded'}', style: const TextStyle(color: Colors.white70, fontSize: 14)),
+                for (final w in _rows(r['windows'])) _window(r, w),
+                for (final f in (r['failures'] is List ? r['failures'] as List : const [])) Text('Failure: $f', style: const TextStyle(color: Colors.redAccent, fontSize: 14)),
+              ]),
+            ),
+          ),
+    ]);
+  }
 }

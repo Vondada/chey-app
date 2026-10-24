@@ -52,6 +52,13 @@ Future<void> _pump(WidgetTester tester, _Server s, {List<String>? read}) async {
 }
 
 void main() {
+  testWidgets('an online cloud CPU is never reported as a Colab GPU', (tester) async {
+    await _pump(tester, _Server({..._view(), 'workers': [
+      {'class': 'github_cpu', 'online': true, 'gpu': 'CPU', 'device': 'cpu'},
+    ]}));
+    expect(find.textContaining('Colab GPU worker online'), findsNothing);
+    expect(find.textContaining('No Colab session open'), findsOneWidget);
+  });
   testWidgets('every job state is shown, with progress, and the worker status is honest', (tester) async {
     final s = _Server(_view());
     final read = <String>[];

@@ -75,8 +75,14 @@ test('"Design me an Iron Man-style suit" plans a project through chat, with no m
   const project = await (await che.get(`/api/inventions/${out.meta.invention_id}`)).json();
   assert.equal(project.template, 'powered_suit');
   assert.equal(project.sourcing.verified_sources, 0);
-  assert.equal(project.concept.status, 'not_generated', 'no picture was produced, and the record says so');
-  assert.ok(project.concept.reason, 'with the reason');
+  // The image model answered with no picture (the test AI returns text), so CHE drew its procedural concept sheet of
+  // the project's own parts, attached it, and says which engine made it (owner, 2026-10-24: inv-8a637dad was text only).
+  assert.equal(project.concept.status, 'generated');
+  assert.equal(project.concept.engine, 'che_internal_renderer');
+  assert.match(out.meta.media_url, new RegExp(`/api/media/${project.concept.media_id}/image$`));
+  assert.match(out.reply, /Concept picture attached: a procedural concept sheet/);
+  const png = new Uint8Array(await (await che.get(`/api/media/${project.concept.media_id}/image`)).arrayBuffer());
+  assert.deepEqual([...png.slice(0, 4)], [0x89, 0x50, 0x4e, 0x47], 'the attached picture is a real PNG');
 });
 
 test('the follow-up "piece by piece what it costs" reopens the same project and gives planning bands', async () => {
