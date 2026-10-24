@@ -98,6 +98,9 @@ def gpu_name():
         return f'unavailable: {e}'
 
 
+USER_AGENT = 'CHE-creation-worker/1.0 (+https://github.com/Vondada/chey-app)'
+
+
 class Che:
     """The worker's side of /api/gpu/worker/*. The token goes only in the X-CHE-GPU-Token header and is never printed."""
 
@@ -106,8 +109,10 @@ class Che:
         self.oidc, self.info = oidc, dict(info or {})
 
     def auth(self):
-        if self.oidc: return {'Authorization': f'Bearer {self.oidc.get()}'}
-        return {'X-CHE-GPU-Token': self.token}
+        # A named User-Agent: Cloudflare's edge refuses Python's default "Python-urllib" (403, error 1010) before the
+        # request reaches CHE, which is how the first live cloud runs failed on 2026-10-24.
+        if self.oidc: return {'Authorization': f'Bearer {self.oidc.get()}', 'User-Agent': USER_AGENT}
+        return {'X-CHE-GPU-Token': self.token, 'User-Agent': USER_AGENT}
 
     def fetch(self, route, query=''):
         """GET bytes from a worker route (the model of a job being resumed); None when CHE has none."""
@@ -130,8 +135,9 @@ class Che:
                 with urllib.request.urlopen(urllib.request.Request(url, data=payload, headers=headers, method=method), timeout=60) as r:
                     return json.loads(r.read() or b'{}')
             except urllib.error.HTTPError as e:
-                try: return dict(json.loads(e.read() or b'{}'), http_status=e.code)
-                except ValueError: return {'ok': False, 'http_status': e.code}
+                raw = e.read() or b'{}'
+                try: return dict(json.loads(raw), http_status=e.code)
+                except ValueError: return {'ok': False, 'http_status': e.code, 'detail': f'{e.code} from the network edge, not CHE: {raw[:120].decode("utf-8", "replace")}'}
             except (urllib.error.URLError, OSError, ValueError, KeyError) as e:
                 if attempt == tries - 1: return {'ok': False, 'detail': f'CHE unreachable: {str(e)[:120]}'}
                 time.sleep(2 ** attempt)
