@@ -809,7 +809,7 @@ extension _CheHomeHubRooms on _CHEHomeState {
     final id = '${recent['id'] ?? ''}';
     if (id.isEmpty) return;
     final route = switch ('${recent['kind'] ?? ''}') {
-      'invention' => CheInventionStudioPage.route(baseUrl: cheAgentBaseUrl, headers: _authHeaders),
+      'invention' => CheInventionStudioPage.route(baseUrl: cheAgentBaseUrl, headers: _authHeaders, openId: id, onSpeak: (text) => speakText(text, record: false)),
       'video' || 'image' => MaterialPageRoute<void>(
         builder: (_) => CheCreationViewer(
           item: {'id': id, 'kind': recent['kind'], 'title': '${recent['title'] ?? 'Creation'}'},

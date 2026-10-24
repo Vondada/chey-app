@@ -601,6 +601,20 @@ extension _CheHomeStreaming on _CHEHomeState {
           _streamMediaUrl = mediaUrl;
           _streamMediaType = mediaType;
         }
+        // "Open it in 3D", "rotate it", "change the color": the Worker built or found the invention's saved 3D model.
+        final inventionId = data['invention_id']?.toString().trim() ?? '';
+        if (data['open_invention_3d'] == true && inventionId.isNotEmpty && mounted) {
+          final move = data['viewport'];
+          unawaited(Navigator.of(context).push(CheInventionViewer.route(
+            baseUrl: cheAgentBaseUrl,
+            headers: _authHeaders,
+            inventionId: inventionId,
+            title: 'Invention $inventionId',
+            version: data['model_version'] is int ? data['model_version'] as int : null,
+            initialCommand: move is Map ? Map<String, Object>.from(move) : null,
+            onSpeak: (text) => speakText(text, record: false),
+          )));
+        }
         // "Open this same picture in my Creation Room": the Worker named the saved file; the Creation Room shows it.
         final openId = data['media_id']?.toString().trim() ?? '';
         if (data['open_creation'] == true && openId.isNotEmpty && mounted) {
