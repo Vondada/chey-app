@@ -41,3 +41,32 @@ The page has these parts, in order:
 | `lib/avatar/che_character_generator.dart`, `assets/characters/crew/*.glb` | Real character generator and finished crew models | **Kept** (and now used for agents in 3D rooms). |
 
 **Known effect.** The Workshop's "crew looks" choices (skin, outfit, hair, accessory) styled the procedural figure. Agents now render with their crew GLB, so those choices no longer change the 3D view. The choices are still saved.
+
+## Live 3D Studio (2026-10-24)
+
+The Creation Room opens on six choices under the Creation Engine's real state:
+
+| Choice | Status | Where |
+|---|---|---|
+| Create Person | Built end to end | `lib/create/che_live_studio.dart`, `server/cloudflare/creation_studio.js` |
+| Create Object | Not built; says so | capability `object` |
+| Create Room | Not built; says so | capability `room` |
+| Create Animation | Preview only: bundled crew clips | Live Studio, animation mode |
+| My Creations / Active Projects | Built | `/api/creations` |
+
+**Pipeline (no simulated progress).**
+1. Create Person makes a creation project from an identity preset, with versions, undo, redo and save.
+2. Generate queues a `person_model` GPU job.
+3. On the owner's Colab GPU, `mpfb_dress.py` exports a GLB bust right after its checks pass, before rendering (`EXPORT_GLB`).
+4. The worker uploads the GLB, then each preview PNG as it finishes.
+5. The Worker logs each arrival in the job history with a timestamp. The Live Studio shows those stages, the pictures, and the GLB in a three.js viewport (`assets/characters/app/studio.html`). The viewport turns, pinches, resets and plays clips.
+6. The job completes only with a GPU receipt, every picture, and the model hash.
+
+**Until a GLB exists**, the viewport shows the bundled stylised crew model, labelled as not the owner's edits.
+
+**Known limits.**
+- The GLB is a head-and-neck bust. Its hair cards read as a solid shape; strand hair, brows and lashes appear only in renders.
+- Generated models have no skeleton yet, so they cannot be animated.
+- "Put this in my Office" is not built.
+
+**Settings → Creation Engine** holds Pair Colab, the GPU job queue and the notebook link. Connect opens the notebook; CHE cannot start Colab herself.

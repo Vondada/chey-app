@@ -78,7 +78,6 @@ import 'che_voice_ui.dart';
 import 'che_app_portal.dart';
 import 'che_video.dart';
 import 'che_creations.dart';
-import 'che_gpu_jobs.dart';
 import 'avatar/che_character_generator.dart';
 import 'rooms/che_invention_studio.dart';
 import 'che_ui/che_showroom.dart';
@@ -93,6 +92,8 @@ import 'che_immersive_hub_shell.dart';
 import 'devices_hub_scene.dart';
 import 'music_studio_scene.dart';
 import 'create/che_creative_studio.dart';
+import 'create/che_creation_engine_page.dart';
+import 'create/che_live_studio.dart';
 import 'agents/che_agent_runtime.dart';
 import 'agents/che_office_floor_screen.dart';
 import 'home/che_activity_feed.dart';
@@ -2351,6 +2352,13 @@ OWNER AGENCY
           subtitle: 'What CHE can make, and what still needs setup',
           onTap: _openShowroom,
           hue: kit.CheColors.apps,
+        ),
+        CheMoreItem(
+          icon: Icons.view_in_ar_rounded,
+          title: 'Creation Engine',
+          subtitle: 'Your Colab GPU for 3D models · Pair Colab · GPU jobs',
+          onTap: _openCreationEngine,
+          hue: kit.CheColors.accent,
         ),
         CheMoreItem(
           icon: Icons.security_rounded,

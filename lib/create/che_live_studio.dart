@@ -1,0 +1,1127 @@
+// Live Studio (owner, 2026-10-24): Create → Create Person opens one creation project in a large 3D viewport the owner
+// can turn, pinch, inspect and edit by voice or typing. Everything shown is real:
+//  - the viewport holds either the GLB the Creation Engine exported from Blender for this project (gpu_queue.js stores
+//    it; the page names the job, the GPU and the time) or, before that exists, CHE's bundled crew model of the base
+//    character, labelled as such and never as the owner's edits;
+//  - progress is the Creation Engine job's own history (queued, claimed by the Colab GPU, geometry ready, each preview
+//    picture as it arrives, completed or failed) with its timestamps, and the preview pictures themselves;
+//  - edits go to the Worker's deterministic edit parser (creation_studio.js), which keeps versions with undo and redo.
+// Nothing is spoken on open (owner rule, 2026-10-11); Read aloud speaks the page on request, and every action reports
+// its real outcome in a large banner with a haptic. While the studio is on screen, typed or spoken words reach it first
+// (CheLiveStudio.voiceHandler, lib/home_state/send.dart).
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:http/http.dart' as http;
+import 'package:url_launcher/url_launcher.dart';
+import 'package:webview_flutter/webview_flutter.dart';
+
+import '../rooms/che_crew_states.dart' show cheCrewModelIds;
+import 'che_creative_studio.dart' show CheStudioColors;
+
+const cheColabNotebookUrl =
+    'https://colab.research.google.com/github/Vondada/chey-app/blob/main/notebooks/CHE_GPU_Face_Preview.ipynb';
+
+/// The Creation Engine (the owner's Colab GPU worker) as the Worker reports it.
+class CheCreationEngine {
+  const CheCreationEngine({this.status = 'unknown', this.gpu, this.lastSeen, this.notebookUrl = cheColabNotebookUrl});
+
+  factory CheCreationEngine.fromJson(Object? j) {
+    if (j is! Map) return const CheCreationEngine();
+    final gpu = '${j['gpu'] ?? ''}'.trim();
+    return CheCreationEngine(
+      status:
+          '${j['status'] ?? (j['online'] == true
+                  ? 'online'
+                  : j['paired'] == false
+                  ? 'not_paired'
+                  : 'offline')}',
+      gpu: gpu.isEmpty ? null : gpu,
+      lastSeen: j['last_seen'] == null ? null : '${j['last_seen']}',
+      notebookUrl: '${j['notebook_url'] ?? cheColabNotebookUrl}',
+    );
+  }
+
+  /// online | offline | not_paired | unknown (not loaded yet).
+  final String status;
+  final String? gpu;
+  final String? lastSeen;
+  final String notebookUrl;
+
+  bool get online => status == 'online';
+  bool get paired => status != 'not_paired';
+
+  String get label => switch (status) {
+    'online' => 'Creation Engine Online',
+    'not_paired' => 'Creation Engine not connected',
+    'unknown' => 'Checking the Creation Engine',
+    _ => 'Creation Engine Offline',
+  };
+
+  String get detail => switch (status) {
+    'online' => 'Running on ${gpu ?? 'your GPU'}.',
+    'not_paired' => 'Connect it once in Settings, Creation Engine.',
+    'unknown' => '',
+    _ => 'It runs only while your Colab notebook is open. Connect opens the notebook; CHE cannot start it for you.',
+  };
+}
+
+/// "rotate the model left", "turn it around", "zoom in", "front view", "reset the view" → a viewport command, or null.
+/// These need no server and work while the Creation Engine is offline.
+Map<String, Object>? cheViewportCommand(String words) {
+  final t = words.trim().toLowerCase().replaceAll(RegExp(r'[.!?]+$'), '');
+  final deg = RegExp(r'(\d{1,3})\s*degrees?').firstMatch(t);
+  if (RegExp(r'^(?:rotate|turn|spin)\b').hasMatch(t) && !RegExp(r'\b(?:on|off|turntable)\b').hasMatch(t)) {
+    if (RegExp(r'\baround\b').hasMatch(t) && deg == null) return {'action': 'rotate', 'deg': 180};
+    final n = deg == null ? 45 : int.parse(deg.group(1)!);
+    return {'action': 'rotate', 'deg': RegExp(r'\bleft\b').hasMatch(t) ? -n : n};
+  }
+  if (RegExp(r'^zoom in|^closer$|^get closer').hasMatch(t)) return {'action': 'zoom', 'factor': 1.4};
+  if (RegExp(r'^zoom out|^further$|^back up').hasMatch(t)) return {'action': 'zoom', 'factor': 1 / 1.4};
+  if (RegExp(r'^reset(?: the)? (?:view|camera)$|^recenter|^re-center').hasMatch(t)) return {'action': 'reset'};
+  if (RegExp(r'^(?:show (?:me )?)?(?:the )?front(?: view)?$').hasMatch(t)) return {'action': 'view', 'deg': 0};
+  if (RegExp(r'^(?:show (?:me )?)?(?:the )?(?:side|profile)(?: view)?$').hasMatch(t)) {
+    return {'action': 'view', 'deg': 90};
+  }
+  if (RegExp(r'^(?:show (?:me )?)?(?:the )?back(?: view)?$').hasMatch(t)) return {'action': 'view', 'deg': 180};
+  if (RegExp(r'^(?:show (?:me )?)?(?:the )?three[- ]quarter(?: view)?$').hasMatch(t)) {
+    return {'action': 'view', 'deg': 45};
+  }
+  if (RegExp(r'^(?:turntable|auto[- ]?rotate|spin)(?: on)?$').hasMatch(t)) return {'action': 'spin', 'on': true};
+  if (RegExp(r'^(?:turntable|auto[- ]?rotate|spin) off$|^stop (?:spinning|turning)$').hasMatch(t)) {
+    return {'action': 'spin', 'on': false};
+  }
+  if (RegExp(r'^stop(?: the)? anim').hasMatch(t)) return {'action': 'stop'};
+  return null;
+}
+
+/// Whether words are meant for the open creation ("make the hair longer", "bigger eyes", "undo", "save it") rather
+/// than for Chat ("what's the weather"). Edits the Worker cannot do are still answered here, plainly, so Chat never
+/// claims a change that was not made.
+bool cheLooksLikeEdit(String words) {
+  final t = words.trim().toLowerCase();
+  return RegExp(
+        r'^(?:make|change|give|add|remove|turn|put|set|use|try|more|less|bigger|smaller|larger|longer|shorter|'
+        r'wider|narrower|fuller|thinner|darker|lighter|rounder|older|younger|higher|lower|undo|redo|save|generate|build|'
+        r'render|create|go)\b',
+      ).hasMatch(t) ||
+      RegExp(
+        r'\b(?:hair|eyes?|skin|nose|lips?|mouth|face|chin|cheek(?:bone)?s?|brows?|outfit|jacket|clothes|model|'
+        r'character|photoreal(?:istic)?|stylized|stylised|cartoon|hybrid|office)\b',
+      ).hasMatch(t);
+}
+
+/// What the viewport is showing, in words for the label above it and for Read aloud.
+class CheShownModel {
+  const CheShownModel({required this.source, required this.label, this.key = ''});
+  final String source; // generated | bundled | none
+  final String label;
+  final String key; // job id + sha256 for generated, base id for bundled
+}
+
+/// The bridge to the 3D page. The real one drives a WebView (assets/characters/app/studio.html); tests use a fake.
+abstract class CheViewportDriver {
+  Widget build(BuildContext context);
+  Future<void> load(Uint8List glb, String label);
+  Future<void> command(Map<String, Object> cmd);
+  Future<void> pause(bool paused);
+  void dispose();
+}
+
+class _WebViewportDriver implements CheViewportDriver {
+  _WebViewportDriver(this.onMessage) {
+    try {
+      _controller = WebViewController()
+        ..setJavaScriptMode(JavaScriptMode.unrestricted)
+        ..setBackgroundColor(CheStudioColors.bg)
+        ..addJavaScriptChannel(
+          'CheBridge',
+          onMessageReceived: (m) {
+            try {
+              final d = jsonDecode(m.message);
+              if (d is Map) onMessage(Map<String, dynamic>.from(d));
+            } catch (_) {}
+          },
+        )
+        ..setNavigationDelegate(
+          NavigationDelegate(
+            onPageFinished: (_) {
+              _ready.isCompleted ? null : _ready.complete();
+            },
+          ),
+        )
+        ..loadFlutterAsset('assets/characters/app/studio.html');
+    } catch (_) {
+      _controller = null; // widget tests have no WebView platform
+    }
+  }
+
+  final void Function(Map<String, dynamic>) onMessage;
+  WebViewController? _controller;
+  final _ready = Completer<void>();
+
+  @override
+  Widget build(BuildContext context) => _controller == null
+      ? const Center(
+          child: Text('The 3D viewport needs the iPhone app.', style: TextStyle(color: CheStudioColors.dim)),
+        )
+      : WebViewWidget(controller: _controller!);
+
+  Future<void> _js(String code) async {
+    final c = _controller;
+    if (c == null) return;
+    await _ready.future;
+    await c.runJavaScript(code);
+  }
+
+  @override
+  Future<void> load(Uint8List glb, String label) =>
+      _js("window.CHE && window.CHE.loadModel('${base64Encode(glb)}', ${jsonEncode({'label': label})});");
+
+  @override
+  Future<void> command(Map<String, Object> cmd) => _js('window.CHE && window.CHE.view(${jsonEncode(cmd)});');
+
+  @override
+  Future<void> pause(bool paused) => _js('window.CHE && window.CHE.pause($paused);');
+
+  @override
+  void dispose() {}
+}
+
+enum CheLiveStudioMode { person, animation }
+
+class CheLiveStudio extends StatefulWidget {
+  const CheLiveStudio({
+    super.key,
+    required this.baseUrl,
+    required this.headers,
+    this.projectId,
+    this.base = 'che',
+    this.mode = CheLiveStudioMode.person,
+    this.onRead,
+    this.onOpenEngineSettings,
+    this.client,
+    this.viewport,
+    this.loadBundled,
+  });
+
+  final String baseUrl;
+  final Map<String, String> headers;
+
+  /// The creation project (person mode). Null in animation mode, which previews a bundled crew model's own clips.
+  final String? projectId;
+  final String base;
+  final CheLiveStudioMode mode;
+  final void Function(String text)? onRead;
+  final VoidCallback? onOpenEngineSettings;
+  final http.Client? client;
+
+  /// Tests: a fake viewport and bundled-model loader.
+  final CheViewportDriver Function(void Function(Map<String, dynamic>) onMessage)? viewport;
+  final Future<Uint8List?> Function(String id)? loadBundled;
+
+  /// While the studio is on screen, typed or spoken words reach it first; null means "not mine" (it goes to Chat).
+  static Future<String?> Function(String words)? voiceHandler;
+
+  static Route<void> route({
+    required String baseUrl,
+    required Map<String, String> headers,
+    String? projectId,
+    String base = 'che',
+    CheLiveStudioMode mode = CheLiveStudioMode.person,
+    void Function(String text)? onRead,
+    VoidCallback? onOpenEngineSettings,
+  }) => MaterialPageRoute<void>(
+    builder: (_) => CheLiveStudio(
+      baseUrl: baseUrl,
+      headers: headers,
+      projectId: projectId,
+      base: base,
+      mode: mode,
+      onRead: onRead,
+      onOpenEngineSettings: onOpenEngineSettings,
+    ),
+  );
+
+  @override
+  State<CheLiveStudio> createState() => CheLiveStudioState();
+}
+
+String _clock(String? iso) {
+  final t = DateTime.tryParse(iso ?? '')?.toLocal();
+  if (t == null) return '';
+  String two(int n) => n.toString().padLeft(2, '0');
+  return '${two(t.hour)}:${two(t.minute)}:${two(t.second)}';
+}
+
+const _viewNames = {'0': 'Front', '45': 'Three-quarter', '90': 'Side'};
+
+class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserver {
+  late final http.Client _http = widget.client ?? http.Client();
+  late final CheViewportDriver _viewport = (widget.viewport ?? _WebViewportDriver.new)(_onPage);
+  final _edit = TextEditingController();
+  Map<String, dynamic> project = const {};
+  CheCreationEngine engine = const CheCreationEngine();
+  CheShownModel shown = const CheShownModel(source: 'none', label: 'No model loaded yet.');
+  Map<String, dynamic> modelInfo = const {};
+  List<String> clips = const [];
+  String? playing;
+  String banner = '';
+  bool bannerOk = true;
+  bool busy = false;
+  bool loading = true;
+  Timer? _poll;
+  late String _animBase = widget.base;
+
+  bool get _personMode => widget.mode == CheLiveStudioMode.person;
+  Map<String, dynamic>? get job => project['job'] is Map ? Map<String, dynamic>.from(project['job'] as Map) : null;
+  String get jobState => '${job?['state'] ?? ''}';
+  bool get jobActive => const {'queued', 'rendering', 'paused'}.contains(jobState);
+
+  /// How many versions the project has: the detail lists them (`versions`), the summary counts them.
+  int get versionCount =>
+      (project['versions_count'] as num?)?.toInt() ??
+      (project['versions'] is List
+          ? (project['versions'] as List).length
+          : (project['versions'] as num?)?.toInt() ?? 0);
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    CheLiveStudio.voiceHandler = voice;
+    unawaited(_personMode ? refresh(first: true) : _showBundled(_animBase));
+    if (!_personMode) loading = false;
+  }
+
+  @override
+  void dispose() {
+    if (CheLiveStudio.voiceHandler == voice) CheLiveStudio.voiceHandler = null;
+    WidgetsBinding.instance.removeObserver(this);
+    _poll?.cancel();
+    _viewport.dispose();
+    _edit.dispose();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final paused = state != AppLifecycleState.resumed;
+    unawaited(_viewport.pause(paused).catchError((_) {}));
+    if (paused) {
+      _poll?.cancel();
+    } else {
+      _schedulePoll();
+    }
+  }
+
+  void _report(bool ok, String text) {
+    if (ok) {
+      HapticFeedback.mediumImpact();
+    } else {
+      HapticFeedback.heavyImpact();
+    }
+    if (mounted) {
+      setState(() {
+        banner = text;
+        bannerOk = ok;
+      });
+    }
+  }
+
+  void _onPage(Map<String, dynamic> m) {
+    if (!mounted) return;
+    switch (m['type']) {
+      case 'model':
+        setState(() {
+          modelInfo = m;
+          clips = [for (final c in (m['clips'] as List? ?? const [])) '$c'];
+        });
+      case 'done':
+        setState(() => playing = m['playing'] == null ? null : '${m['playing']}');
+      case 'error':
+        _report(false, '${m['message'] ?? 'The model could not be shown.'}');
+    }
+  }
+
+  Map<String, String> get _json => {...widget.headers, 'Content-Type': 'application/json'};
+
+  Future<Map<String, dynamic>?> _call(String method, String path, [Map<String, dynamic>? body]) async {
+    try {
+      final uri = Uri.parse('${widget.baseUrl}$path');
+      final r =
+          await (method == 'GET'
+                  ? _http.get(uri, headers: widget.headers)
+                  : _http.post(uri, headers: _json, body: jsonEncode(body ?? const {})))
+              .timeout(const Duration(seconds: 15));
+      final d = jsonDecode(r.body);
+      if (d is! Map) return null;
+      return {...Map<String, dynamic>.from(d), '_status': r.statusCode};
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Reloads the project (state, stages, previews, engine) and shows the newest real model.
+  Future<void> refresh({bool first = false}) async {
+    final id = widget.projectId;
+    if (id == null) return;
+    final d = await _call('GET', '/api/creations/$id');
+    if (!mounted) return;
+    if (d == null || d['project'] is! Map) {
+      setState(() => loading = false);
+      if (first) _report(false, 'Could not load this creation from CHE. Use Refresh to try again.');
+      return;
+    }
+    final p = Map<String, dynamic>.from(d['project'] as Map);
+    setState(() {
+      project = p;
+      engine = CheCreationEngine.fromJson(p['engine'] ?? d['engine']);
+      loading = false;
+    });
+    await _showBest();
+    _schedulePoll();
+  }
+
+  void _schedulePoll() {
+    _poll?.cancel();
+    if (!mounted || !_personMode || !jobActive) return;
+    _poll = Timer(const Duration(seconds: 6), () {
+      if (mounted && (ModalRoute.of(context)?.isCurrent ?? true)) unawaited(refresh());
+    });
+  }
+
+  /// The generated GLB when the Creation Engine has delivered one, else the bundled model of the base character.
+  Future<void> _showBest() async {
+    final j = job;
+    final m = j?['model'] is Map ? Map<String, dynamic>.from(j!['model'] as Map) : null;
+    if (m != null && '${m['url'] ?? ''}'.isNotEmpty) {
+      final key = '${j!['id']}:${m['sha256']}';
+      if (shown.key == key) return;
+      try {
+        final r = await _http
+            .get(Uri.parse('${widget.baseUrl}${m['url']}'), headers: widget.headers)
+            .timeout(const Duration(seconds: 40));
+        if (r.statusCode != 200 || r.bodyBytes.length < 20) throw StateError('status ${r.statusCode}');
+        final gpu = '${j['receipt'] is Map ? (j['receipt'] as Map)['nvidia_smi'] ?? '' : ''}'.split(',').first.trim();
+        final label =
+            'Version ${project['version'] ?? ''} model, exported by Blender'
+            '${gpu.isEmpty ? '' : ' on $gpu'} at ${_clock('${m['uploaded_at']}')}.';
+        await _viewport.load(r.bodyBytes, label);
+        if (mounted) setState(() => shown = CheShownModel(source: 'generated', label: label, key: key));
+        return;
+      } catch (_) {
+        if (mounted) _report(false, 'The 3D model exists but could not be downloaded. Use Refresh to try again.');
+      }
+    }
+    if (shown.source == 'generated') {
+      // The newest version has no model yet (an edit since): the last built model stays, and the label says so.
+      final note = ' Your newest edits are not in it yet: say generate to build them.';
+      if (!shown.label.endsWith(note) && mounted) {
+        setState(() => shown = CheShownModel(source: 'generated', label: '${shown.label}$note', key: shown.key));
+      }
+      return;
+    }
+    if (shown.source == 'none') await _showBundled('${project['base_id'] ?? widget.base}');
+  }
+
+  Future<void> _showBundled(String id) async {
+    if (!cheCrewModelIds.contains(id)) {
+      if (mounted) {
+        setState(
+          () => shown = CheShownModel(
+            source: 'none',
+            label: 'There is no 3D model of ${_name(id)} yet. Generate the model to build one.',
+          ),
+        );
+      }
+      return;
+    }
+    try {
+      final bytes = widget.loadBundled != null
+          ? await widget.loadBundled!(id)
+          : (await rootBundle.load('assets/characters/crew/$id.glb')).buffer.asUint8List();
+      if (bytes == null) throw StateError('missing');
+      final label = _personMode
+          ? 'Bundled stylised model of ${_name(id)}: not your edits. Your model appears here when the Creation Engine builds it.'
+          : 'Bundled stylised model of ${_name(id)} with its built-in animation clips.';
+      await _viewport.load(bytes, label);
+      if (mounted) setState(() => shown = CheShownModel(source: 'bundled', label: label, key: id));
+    } catch (_) {
+      if (mounted) _report(false, 'Could not load the bundled model of ${_name(id)}.');
+    }
+  }
+
+  static String _name(String id) => id.isEmpty
+      ? 'this character'
+      : id == 'che'
+      ? 'CHE'
+      : '${id[0].toUpperCase()}${id.substring(1)}';
+
+  Future<String> _post(String path, [Map<String, dynamic>? body]) async {
+    setState(() => busy = true);
+    final d = await _call('POST', path, body);
+    if (!mounted) return '';
+    setState(() => busy = false);
+    if (d == null) {
+      const msg = 'That did not work: CHE could not be reached.';
+      _report(false, msg);
+      return msg;
+    }
+    final ok = d['ok'] == true && (d['_status'] as int? ?? 500) < 300;
+    if (d['project'] is Map) setState(() => project = Map<String, dynamic>.from(d['project'] as Map));
+    final said = '${d['spoken'] ?? d['detail'] ?? (ok ? 'Done.' : 'That did not work.')}';
+    _report(ok, said);
+    if (d['viewport'] is Map) {
+      final cmd = Map<String, Object>.from(d['viewport'] as Map);
+      await _viewport.command(cmd).catchError((_) {});
+    }
+    if (ok) await refresh();
+    return said;
+  }
+
+  Future<String> generate() => _post('/api/creations/${widget.projectId}/generate');
+  Future<String> undo() => _post('/api/creations/${widget.projectId}/undo');
+  Future<String> redo() => _post('/api/creations/${widget.projectId}/redo');
+  Future<String> save() => _post('/api/creations/${widget.projectId}/save');
+
+  Future<String> applyEdit(String text) async {
+    final t = text.trim();
+    if (t.isEmpty) return 'Say or type a change, like make the hair longer.';
+    _edit.clear();
+    return _post('/api/creations/${widget.projectId}/edit', {'text': t});
+  }
+
+  Future<String> viewportCommand(Map<String, Object> cmd) async {
+    HapticFeedback.selectionClick();
+    if (shown.source == 'none') {
+      const msg = 'There is no model in the viewport yet.';
+      _report(false, msg);
+      return msg;
+    }
+    await _viewport.command(cmd).catchError((_) {});
+    final a = cmd['action'];
+    final msg = switch (a) {
+      'rotate' =>
+        'Turned the model ${(cmd['deg'] as num) < 0 ? 'left' : 'right'} ${(cmd['deg'] as num).abs()} degrees.',
+      'zoom' => (cmd['factor'] as num) > 1 ? 'Zoomed in.' : 'Zoomed out.',
+      'reset' => 'View reset.',
+      'view' => '${_viewNames['${cmd['deg']}'] ?? 'Back'} view.',
+      'spin' => cmd['on'] == false ? 'Turntable off.' : 'Turntable on.',
+      'stop' => 'Animation stopped.',
+      _ => 'Done.',
+    };
+    _report(true, msg);
+    return msg;
+  }
+
+  Future<String> animate([String? clip]) async {
+    if (clips.isEmpty) {
+      final msg = shown.source == 'generated'
+          ? 'This generated model has no skeleton yet, so it cannot be animated. Animation works on the bundled crew models.'
+          : 'This model has no animation clips.';
+      _report(false, msg);
+      return msg;
+    }
+    final want = clip != null && clips.contains(clip) ? clip : (clips.contains('idle') ? 'idle' : clips.first);
+    await _viewport.command({'action': 'animate', 'clip': want}).catchError((_) {});
+    setState(() => playing = want);
+    final msg = 'Playing the $want animation on the ${shown.source == 'generated' ? 'model' : 'bundled model'}.';
+    _report(true, msg);
+    return msg;
+  }
+
+  Future<void> connectEngine() async {
+    HapticFeedback.selectionClick();
+    if (!engine.paired) {
+      widget.onOpenEngineSettings?.call();
+      _report(true, 'Opened Settings, Creation Engine. Pair Colab there once.');
+      return;
+    }
+    final ok = await launchUrl(
+      Uri.parse(engine.notebookUrl),
+      mode: LaunchMode.externalApplication,
+    ).catchError((_) => false);
+    _report(
+      ok,
+      ok
+          ? 'Opened your Colab notebook. Choose Runtime, Run all. CHE shows Online when the GPU checks in.'
+          : 'Could not open the Colab notebook.',
+    );
+  }
+
+  List<Map<String, dynamic>> get stages => [
+    for (final s in (project['stages'] as List? ?? const []))
+      if (s is Map) Map<String, dynamic>.from(s),
+  ];
+
+  Map<String, String> get previews => {
+    for (final e in ((job?['previews'] ?? project['previews']) as Map? ?? const {}).entries) '${e.key}': '${e.value}',
+  };
+
+  /// Read aloud: what is on screen, from real state only.
+  String get spokenSummary {
+    if (!_personMode) {
+      return 'Animation preview of ${_name(_animBase)}. ${shown.label} '
+          '${clips.isEmpty ? '' : 'Clips: ${clips.join(', ')}. Say play, then a clip name.'}';
+    }
+    final title = '${project['title'] ?? 'Creation'}';
+    final v = project['version'];
+    final n = versionCount;
+    final j = job;
+    final work = j == null
+        ? 'No model has been generated for this version yet. Say generate the model.'
+        : 'Creation Engine job: ${'${j['progress'] is Map ? (j['progress'] as Map)['message'] ?? '' : ''}'.isEmpty ? jobState : (j['progress'] as Map)['message']} ($jobState).';
+    final pics = previews.isEmpty ? '' : ' ${previews.length} preview picture${previews.length == 1 ? '' : 's'} ready.';
+    return '$title, version $v of $n. ${engine.label}. ${shown.label} $work$pics '
+        'Say a change like make the hair longer, or rotate, zoom in, undo, redo, save, generate.';
+  }
+
+  /// Voice and typed control while the studio is on screen.
+  Future<String?> voice(String words) async {
+    if (!(ModalRoute.of(context)?.isCurrent ?? true)) return null;
+    final t = words
+        .trim()
+        .toLowerCase()
+        .replaceAll(RegExp(r'[.!?]+$'), '')
+        .replaceFirst(RegExp(r'^(?:che|chey|chay)[,:]?\s+'), '');
+    if (t.isEmpty) return null;
+    if (RegExp(r"^(?:read(?: aloud| it| this| the screen)?|what(?:'s| is) on (?:the |this )?screen|where are we)$")
+        .hasMatch(t)) {
+      return spokenSummary;
+    }
+    final cmd = cheViewportCommand(t);
+    if (cmd != null) return viewportCommand(cmd);
+    final play = RegExp(
+      r'^(?:animate(?: (?:the|this|my))?(?: character| model| it)?|play(?: the)?(?: (\w+))?(?: animation| clip)?)$',
+    ).firstMatch(t);
+    if (play != null) return animate(play.group(1));
+    if (RegExp(r'^(?:refresh|update|check (?:the )?progress)$').hasMatch(t)) {
+      await refresh();
+      return spokenSummary;
+    }
+    if (RegExp(r'^connect(?: the)?(?: creation)? engine$|^connect$|^open (?:the )?(?:colab )?notebook$').hasMatch(t)) {
+      await connectEngine();
+      return banner;
+    }
+    if (!_personMode || !cheLooksLikeEdit(t)) return null;
+    if (RegExp(
+      r'^(?:generate|build|make|create|render)(?: the| my| a)?(?: 3d)?(?: model| it| this| person| character| preview)?$',
+    ).hasMatch(t)) {
+      return generate();
+    }
+    if (RegExp(r'^undo(?: that| the last change)?$').hasMatch(t)) return undo();
+    if (RegExp(r'^redo(?: that)?$').hasMatch(t)) return redo();
+    if (RegExp(r'^save(?: it| this| the (?:project|creation|character))?$').hasMatch(t)) return save();
+    // Everything else is an edit for this creation; the Worker says plainly what it changed and what it cannot do.
+    return applyEdit(words);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final h = MediaQuery.sizeOf(context).height;
+    final title = _personMode ? '${project['title'] ?? 'Live Studio'}' : 'Animation preview';
+    return Scaffold(
+      backgroundColor: CheStudioColors.bg,
+      appBar: AppBar(
+        backgroundColor: CheStudioColors.bg,
+        foregroundColor: CheStudioColors.text,
+        title: Semantics(header: true, child: Text(title, overflow: TextOverflow.ellipsis)),
+        actions: [
+          IconButton(
+            key: const ValueKey('live-read'),
+            tooltip: 'Read the Live Studio aloud',
+            onPressed: widget.onRead == null ? null : () => widget.onRead!(spokenSummary),
+            icon: const Icon(Icons.volume_up_rounded),
+          ),
+          if (_personMode)
+            IconButton(
+              key: const ValueKey('live-refresh'),
+              tooltip: 'Refresh progress',
+              onPressed: busy ? null : () => unawaited(refresh()),
+              icon: const Icon(Icons.refresh_rounded),
+            ),
+        ],
+      ),
+      body: SafeArea(
+        top: false,
+        // One built column (not a lazy list): VoiceOver can reach every control, and voice routes need no scrolling.
+        child: SingleChildScrollView(
+          key: const ValueKey('live-studio-scroll'),
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 32),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (_personMode) _EngineBar(engine: engine, onConnect: () => unawaited(connectEngine())),
+              if (banner.isNotEmpty) ...[const SizedBox(height: 10), _Banner(text: banner, ok: bannerOk)],
+              const SizedBox(height: 10),
+              // ── Viewport ──────────────────────────────────────────────────────────────
+              Semantics(
+                label:
+                    '3D viewport. ${shown.label} Drag to turn, pinch to zoom, double tap to reset. '
+                    'Or use the buttons below, or say rotate, zoom in, or front view.',
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(20),
+                  child: Container(
+                    key: const ValueKey('live-viewport'),
+                    height: (h * 0.46).clamp(260.0, 560.0),
+                    decoration: BoxDecoration(
+                      color: CheStudioColors.bg,
+                      border: Border.all(color: CheStudioColors.stroke),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: _viewport.build(context),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                shown.label,
+                key: const ValueKey('live-shown'),
+                style: const TextStyle(color: CheStudioColors.silver, fontSize: 14, height: 1.35),
+              ),
+              if (modelInfo.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    '${modelInfo['vertices']} vertices, ${modelInfo['triangles']} triangles, ${modelInfo['meshes']} parts'
+                    '${clips.isEmpty ? '' : ', ${clips.length} animation clips'}.',
+                    style: const TextStyle(color: CheStudioColors.dim, fontSize: 13),
+                  ),
+                ),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _tool(
+                    'Turn left',
+                    Icons.chevron_left_rounded,
+                    () => viewportCommand({'action': 'rotate', 'deg': -45}),
+                  ),
+                  _tool(
+                    'Turn right',
+                    Icons.chevron_right_rounded,
+                    () => viewportCommand({'action': 'rotate', 'deg': 45}),
+                  ),
+                  _tool('Zoom in', Icons.zoom_in_rounded, () => viewportCommand({'action': 'zoom', 'factor': 1.4})),
+                  _tool(
+                    'Zoom out',
+                    Icons.zoom_out_rounded,
+                    () => viewportCommand({'action': 'zoom', 'factor': 1 / 1.4}),
+                  ),
+                  _tool('Front', Icons.person_outline_rounded, () => viewportCommand({'action': 'view', 'deg': 0})),
+                  _tool('Side', Icons.account_circle_outlined, () => viewportCommand({'action': 'view', 'deg': 90})),
+                  _tool('Reset view', Icons.center_focus_strong_rounded, () => viewportCommand({'action': 'reset'})),
+                  _tool('Turntable', Icons.autorenew, () => viewportCommand({'action': 'spin', 'on': true})),
+                  if (clips.isNotEmpty)
+                    _tool(
+                      playing == null ? 'Animate' : 'Stop animation',
+                      Icons.directions_walk_rounded,
+                      () => playing == null ? animate() : viewportCommand({'action': 'stop'}),
+                    ),
+                ],
+              ),
+              if (!_personMode) ...[
+                const SizedBox(height: 18),
+                const _Label('CHARACTER'),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final id in cheCrewModelIds)
+                      ChoiceChip(
+                        key: ValueKey('anim-base-$id'),
+                        label: Text(_name(id)),
+                        selected: _animBase == id,
+                        onSelected: (_) {
+                          setState(() => _animBase = id);
+                          unawaited(_showBundled(id));
+                        },
+                      ),
+                  ],
+                ),
+                if (clips.isNotEmpty) ...[
+                  const SizedBox(height: 14),
+                  const _Label('CLIPS'),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (final c in clips)
+                        ChoiceChip(
+                          key: ValueKey('anim-clip-$c'),
+                          label: Text(c),
+                          selected: playing == c,
+                          onSelected: (_) => unawaited(animate(c)),
+                        ),
+                    ],
+                  ),
+                ],
+                const SizedBox(height: 14),
+                const Text(
+                  'These are the clips built into the crew models. Making new animations and rendering animation videos is not built yet.',
+                  style: TextStyle(color: CheStudioColors.dim, fontSize: 13.5, height: 1.4),
+                ),
+              ],
+              if (_personMode) ..._personPanels(),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _tool(String label, IconData icon, Future<Object?> Function() onTap) => Semantics(
+    button: true,
+    label: label,
+    excludeSemantics: true,
+    child: OutlinedButton.icon(
+      key: ValueKey('live-tool-$label'),
+      style: OutlinedButton.styleFrom(
+        foregroundColor: CheStudioColors.text,
+        side: const BorderSide(color: CheStudioColors.stroke),
+        minimumSize: const Size(48, 44),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ),
+      onPressed: () => unawaited(onTap()),
+      icon: Icon(icon, size: 20, color: CheStudioColors.teal),
+      label: Text(label),
+    ),
+  );
+
+  List<Widget> _personPanels() {
+    final v = project['version'];
+    final n = versionCount;
+    final j = job;
+    final progress = j?['progress'] is Map
+        ? Map<String, dynamic>.from(j!['progress'] as Map)
+        : const <String, dynamic>{};
+    return [
+      const SizedBox(height: 20),
+      // ── Edit ───────────────────────────────────────────────────────────────────────
+      const _Label('EDIT'),
+      const SizedBox(height: 8),
+      Row(
+        children: [
+          Expanded(
+            child: TextField(
+              key: const ValueKey('live-edit'),
+              controller: _edit,
+              style: const TextStyle(color: CheStudioColors.text, fontSize: 16),
+              textInputAction: TextInputAction.done,
+              onSubmitted: (s) => unawaited(applyEdit(s)),
+              decoration: InputDecoration(
+                hintText: 'Make the hair longer',
+                hintStyle: const TextStyle(color: CheStudioColors.dim),
+                labelText: 'Describe a change',
+                labelStyle: const TextStyle(color: CheStudioColors.silver),
+                filled: true,
+                fillColor: CheStudioColors.card,
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Semantics(
+            button: true,
+            label: 'Apply the change',
+            excludeSemantics: true,
+            child: FilledButton(
+              key: const ValueKey('live-apply'),
+              style: FilledButton.styleFrom(
+                backgroundColor: CheStudioColors.teal,
+                foregroundColor: Colors.black,
+                minimumSize: const Size(64, 52),
+              ),
+              onPressed: busy ? null : () => unawaited(applyEdit(_edit.text)),
+              child: const Text('Apply'),
+            ),
+          ),
+        ],
+      ),
+      const SizedBox(height: 8),
+      Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          for (final s in const [
+            'Make the hair longer',
+            'Change the outfit',
+            'Make it photorealistic',
+            'Bigger eyes',
+            'Make it stylized',
+          ])
+            ActionChip(
+              key: ValueKey('live-chip-$s'),
+              label: Text(s),
+              onPressed: busy ? null : () => unawaited(applyEdit(s)),
+            ),
+        ],
+      ),
+      const SizedBox(height: 14),
+      Row(
+        children: [
+          Expanded(
+            child: Text(
+              loading
+                  ? 'Loading…'
+                  : 'Version $v of $n${project['saved_at'] == null ? '' : ' · saved ${_clock('${project['saved_at']}')}'}',
+              key: const ValueKey('live-version'),
+              style: const TextStyle(color: CheStudioColors.silver, fontSize: 15, fontWeight: FontWeight.w600),
+            ),
+          ),
+          _small('Undo', Icons.undo_rounded, project['can_undo'] == true ? undo : null),
+          _small('Redo', Icons.arrow_forward_rounded, project['can_redo'] == true ? redo : null),
+          _small('Save', Icons.save_rounded, project.isEmpty ? null : save),
+        ],
+      ),
+      const SizedBox(height: 10),
+      Semantics(
+        button: true,
+        label: j == null ? 'Generate the 3D model' : 'Generate the 3D model again for this version',
+        excludeSemantics: true,
+        child: FilledButton.icon(
+          key: const ValueKey('live-generate'),
+          style: FilledButton.styleFrom(
+            backgroundColor: CheStudioColors.teal,
+            foregroundColor: Colors.black,
+            minimumSize: const Size.fromHeight(56),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          ),
+          onPressed: busy || project.isEmpty ? null : () => unawaited(generate()),
+          icon: const Icon(Icons.view_in_ar_rounded),
+          label: Text(jobActive ? 'Model in progress' : 'Generate 3D model'),
+        ),
+      ),
+      const SizedBox(height: 22),
+      // ── Progress (the job's own history) ───────────────────────────────────────────
+      const _Label('PROGRESS'),
+      const SizedBox(height: 8),
+      if (j == null)
+        const Text(
+          'Nothing generated for this version yet.',
+          style: TextStyle(color: CheStudioColors.dim, fontSize: 14),
+        )
+      else ...[
+        Text(
+          '${progress['message'] ?? jobState}',
+          key: const ValueKey('live-progress'),
+          style: const TextStyle(color: CheStudioColors.text, fontSize: 15, height: 1.35),
+        ),
+        if (progress['pct'] is num) ...[
+          const SizedBox(height: 8),
+          Semantics(
+            label: '${progress['pct']} percent of the preview views rendered',
+            child: LinearProgressIndicator(
+              value: (progress['pct'] as num).toDouble() / 100,
+              color: CheStudioColors.teal,
+              backgroundColor: CheStudioColors.cardHi,
+            ),
+          ),
+        ],
+        const SizedBox(height: 10),
+        for (final s in stages)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 3),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SizedBox(
+                  width: 76,
+                  child: Text(
+                    _clock('${s['at']}'),
+                    style: const TextStyle(
+                      color: CheStudioColors.dim,
+                      fontSize: 13,
+                      fontFeatures: [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: Text(
+                    '${s['label']}',
+                    style: const TextStyle(color: CheStudioColors.silver, fontSize: 14, height: 1.3),
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+      if (previews.isNotEmpty) ...[
+        const SizedBox(height: 14),
+        const _Label('PREVIEW RENDERS'),
+        const SizedBox(height: 8),
+        SizedBox(
+          height: 170,
+          child: ListView(
+            scrollDirection: Axis.horizontal,
+            children: [
+              for (final e in previews.entries)
+                Padding(
+                  padding: const EdgeInsets.only(right: 10),
+                  child: Semantics(
+                    container: true,
+                    image: true,
+                    excludeSemantics: true,
+                    label: '${_viewNames[e.key] ?? '${e.key} degree'} preview render from the Creation Engine',
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(14),
+                      child: Image.network(
+                        '${widget.baseUrl}/api/media/${e.value}/image',
+                        headers: widget.headers,
+                        width: 136,
+                        height: 170,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, _, _) => Container(
+                          width: 136,
+                          color: CheStudioColors.card,
+                          alignment: Alignment.center,
+                          child: const Text(
+                            'Picture not loaded',
+                            style: TextStyle(color: CheStudioColors.dim, fontSize: 12),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ],
+      if (j?['model'] is Map) ...[
+        const SizedBox(height: 14),
+        Text(
+          '3D model file: ${(((j!['model'] as Map)['bytes'] as num? ?? 0) / 1024).round()} KB GLB, saved on your CHE server.',
+          key: const ValueKey('live-model-file'),
+          style: const TextStyle(color: CheStudioColors.silver, fontSize: 14),
+        ),
+      ],
+    ];
+  }
+
+  Widget _small(String label, IconData icon, Future<String> Function()? onTap) => Semantics(
+    button: true,
+    enabled: onTap != null,
+    label: label,
+    excludeSemantics: true,
+    child: IconButton(
+      key: ValueKey('live-$label'),
+      tooltip: label,
+      constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+      color: CheStudioColors.text,
+      disabledColor: CheStudioColors.dim.withValues(alpha: 0.4),
+      onPressed: onTap == null || busy ? null : () => unawaited(onTap()),
+      icon: Icon(icon),
+    ),
+  );
+}
+
+class _EngineBar extends StatelessWidget {
+  const _EngineBar({required this.engine, required this.onConnect});
+  final CheCreationEngine engine;
+  final VoidCallback onConnect;
+
+  @override
+  Widget build(BuildContext context) {
+    final on = engine.online;
+    return Semantics(
+      container: true,
+      label: '${engine.label}. ${engine.detail}',
+      child: Container(
+        key: const ValueKey('live-engine'),
+        padding: const EdgeInsets.fromLTRB(14, 10, 8, 10),
+        decoration: BoxDecoration(
+          color: CheStudioColors.card,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: on ? CheStudioColors.teal.withValues(alpha: 0.6) : CheStudioColors.stroke),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 10,
+              height: 10,
+              decoration: BoxDecoration(shape: BoxShape.circle, color: on ? CheStudioColors.teal : CheStudioColors.dim),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: ExcludeSemantics(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      engine.label,
+                      style: const TextStyle(color: CheStudioColors.text, fontSize: 15.5, fontWeight: FontWeight.w700),
+                    ),
+                    if (engine.detail.isNotEmpty)
+                      Text(
+                        engine.detail,
+                        style: const TextStyle(color: CheStudioColors.dim, fontSize: 13, height: 1.3),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+            if (!on && engine.status != 'unknown')
+              Semantics(
+                container: true,
+                button: true,
+                label: engine.paired ? 'Connect: open the Colab notebook' : 'Connect: open Settings, Creation Engine',
+                excludeSemantics: true,
+                child: TextButton(
+                  key: const ValueKey('live-connect'),
+                  style: TextButton.styleFrom(foregroundColor: CheStudioColors.teal, minimumSize: const Size(64, 44)),
+                  onPressed: onConnect,
+                  child: const Text('Connect', style: TextStyle(fontWeight: FontWeight.w800)),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _Banner extends StatelessWidget {
+  const _Banner({required this.text, required this.ok});
+  final String text;
+  final bool ok;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    key: const ValueKey('live-banner'),
+    width: double.infinity,
+    padding: const EdgeInsets.all(14),
+    decoration: BoxDecoration(
+      color: ok ? CheStudioColors.tealDeep.withValues(alpha: 0.55) : const Color(0x55B3261E),
+      borderRadius: BorderRadius.circular(14),
+    ),
+    child: Text(
+      text,
+      style: const TextStyle(color: CheStudioColors.text, fontSize: 18, height: 1.35, fontWeight: FontWeight.w600),
+    ),
+  );
+}
+
+class _Label extends StatelessWidget {
+  const _Label(this.text);
+  final String text;
+  @override
+  Widget build(BuildContext context) => Semantics(
+    header: true,
+    child: Text(
+      text,
+      style: const TextStyle(
+        color: CheStudioColors.dim,
+        fontSize: 12.5,
+        fontWeight: FontWeight.w800,
+        letterSpacing: 1.6,
+      ),
+    ),
+  );
+}

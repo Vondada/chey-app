@@ -1,7 +1,8 @@
-// Create → Creative Studio (lib/create/che_creative_studio.dart): one vertically scrolling page with Create New, the
-// Film, Music, Code and Art & Character studios and Projects. These tests check every studio is there, every button
-// reaches its existing handler, the GPU controls (Pair Colab, GPU jobs, Character Generator) sit in Art & Character
-// Studio, nothing is spoken on open, and activity shows only real states. The data below is test data only.
+// Create → the Creation Room (lib/create/che_creative_studio.dart): six main choices (Create Person, Object, Room,
+// Animation, My Creations, Active Projects) under the Creation Engine's real state, then More to create, the Film,
+// Music, Code and Art & Character studios and Projects. These tests check every choice and studio is there, every button
+// reaches its existing handler, object and room creation say they are not built, the GPU controls moved to Settings →
+// Creation Engine, nothing is spoken on open, and activity shows only real states. The data below is test data only.
 //
 // CHE_STUDIO_SHOTS=<dir> flutter test test/che_creative_studio_test.dart also writes iPhone-size PNG screenshots of the
 // real widgets to <dir> (Roboto and Material Icons from the Flutter SDK).
@@ -11,6 +12,7 @@ import 'dart:ui' as ui;
 
 import 'package:chey/che_creations.dart';
 import 'package:chey/che_gpu_jobs.dart';
+import 'package:chey/create/che_creation_engine_page.dart';
 import 'package:chey/create/che_creative_studio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -47,8 +49,29 @@ class _Calls {
         onResearch: () => list.add('research'),
         onInventions: () => list.add('inventions'),
         onShowroom: () => list.add('showroom'),
+        loadPeople: () async => const [('che', 'CHE', 'Office Boss'), ('vale', 'Vale', 'Quality assurance')],
+        onCreatePerson: (base) => list.add('person $base'),
+        onCreateAnimation: () => list.add('animation'),
+        onOpenCreation: (id) => list.add('creation $id'),
+        onConnectEngine: (e) => list.add('connect ${e.status}'),
       );
 }
+
+// GET /api/creations as the Worker answers it (creation_studio.js), with one creation building. Test data only.
+Map<String, dynamic> _creationsView({String engine = 'offline'}) => {
+      'projects': [
+        {'id': 'cr_1', 'kind': 'person', 'title': 'CHE (new person)', 'version': 2, 'versions': 2,
+          'job': {'id': 'gpu_1', 'state': 'queued', 'pct': 0, 'message': 'Waiting for your Colab GPU session.'}},
+        {'id': 'cr_2', 'kind': 'person', 'title': 'Vale (new person)', 'version': 1, 'versions': 1, 'job': null},
+      ],
+      'engine': {'status': engine, 'online': engine == 'online', 'paired': engine != 'not_paired', 'gpu': engine == 'online' ? 'Tesla T4' : null},
+      'capabilities': [
+        {'id': 'person', 'status': 'available', 'detail': 'Build a real 3D head.'},
+        {'id': 'object', 'status': 'unavailable', 'detail': 'Not built yet: CHE has no object modelling pipeline in Blender yet.'},
+        {'id': 'room', 'status': 'unavailable', 'detail': 'Not built yet: rooms have no generator yet.'},
+        {'id': 'animation', 'status': 'partial', 'detail': 'Preview the built-in clips on the bundled crew models.'},
+      ],
+    };
 
 // The GPU queue before pairing: what the owner's phone shows until he taps Pair Colab.
 http.Client _gpuClient() => MockClient((r) async {
@@ -58,7 +81,7 @@ http.Client _gpuClient() => MockClient((r) async {
       return http.Response('{}', 404);
     });
 
-Widget _studio(_Calls calls, {List<CheStudioActivity> activity = const [], List<String>? read, bool creations = true}) => MaterialApp(
+Widget _studio(_Calls calls, {List<CheStudioActivity> activity = const [], List<String>? read, bool creations = true, String engine = 'offline'}) => MaterialApp(
       debugShowCheckedModeBanner: false,
       theme: ThemeData(brightness: Brightness.dark, fontFamily: 'Roboto'),
       home: Scaffold(
@@ -70,7 +93,7 @@ Widget _studio(_Calls calls, {List<CheStudioActivity> activity = const [], List<
           imageConnected: true,
           videoConnected: false,
           onRead: read?.add,
-          gpuJobs: CheGpuJobsCard(baseUrl: 'https://che.test', headers: const {}, client: _gpuClient()),
+          loadCreations: () async => _creationsView(engine: engine),
           creations: creations
               ? const CheCreationsTiles(
                   items: [
@@ -113,11 +136,17 @@ void main() {
     await _font('MaterialIcons', '$fonts/MaterialIcons-Regular.otf');
   });
 
-  testWidgets('every studio and Projects are on one scrolling page, with Create New first', (tester) async {
+  testWidgets('every studio and Projects are on one scrolling page, under the six main choices', (tester) async {
     await _phone(tester);
     await tester.pumpWidget(_studio(_Calls()));
     await tester.pumpAndSettle();
-    expect(find.text('CREATIVE STUDIO'), findsOneWidget);
+    expect(find.text('CREATION ROOM'), findsOneWidget);
+    for (final id in ['person', 'object', 'room', 'animation', 'mine', 'active']) {
+      expect(find.byKey(ValueKey('studio-tile-$id')), findsOneWidget, reason: id);
+    }
+    // No GPU vocabulary in the room itself: it lives in Settings → Creation Engine.
+    expect(find.textContaining('Pair Colab'), findsNothing);
+    expect(find.byType(CheGpuJobsCard), findsNothing);
     expect(find.text('Managed by Vale'), findsOneWidget);
     expect(find.byKey(const ValueKey('studio-create-new')), findsOneWidget);
     for (final title in ['Film Studio', 'Music Studio', 'Code Studio', 'Art & Character Studio']) {
@@ -184,15 +213,74 @@ void main() {
     }
   });
 
-  testWidgets('Art & Character Studio holds the Character Generator, GPU jobs and Pair Colab', (tester) async {
+  testWidgets('Settings → Creation Engine holds GPU jobs, Pair Colab and the notebook link', (tester) async {
     await _phone(tester);
-    await tester.pumpWidget(_studio(_Calls()));
+    await tester.pumpWidget(MaterialApp(
+      home: CheCreationEnginePage(baseUrl: 'https://che.test', headers: const {}, client: _gpuClient()),
+    ));
     await tester.pumpAndSettle();
-    await _scrollTo(tester, find.byKey(const ValueKey('studio-gpu-jobs')));
-    final art = find.byKey(const ValueKey('studio-art'));
-    expect(find.descendant(of: art, matching: find.text('Character Generator')), findsOneWidget);
-    expect(find.descendant(of: art, matching: find.byType(CheGpuJobsCard)), findsOneWidget);
-    expect(find.descendant(of: art, matching: find.text('Pair Colab')), findsOneWidget);
+    expect(find.text('Creation Engine'), findsOneWidget);
+    expect(find.byKey(const ValueKey('engine-open-notebook')), findsOneWidget);
+    expect(find.byType(CheGpuJobsCard), findsOneWidget);
+    expect(find.textContaining('CHE_GPU_TOKEN'), findsOneWidget);
+  });
+
+  testWidgets('the six choices: real statuses, honest not-built answers, and each reaches its handler', (tester) async {
+    await _phone(tester);
+    final calls = _Calls();
+    await tester.pumpWidget(_studio(calls));
+    await tester.pumpAndSettle();
+    expect(find.descendant(of: find.byKey(const ValueKey('studio-tile-person')), matching: find.text('Ready')), findsOneWidget);
+    expect(find.descendant(of: find.byKey(const ValueKey('studio-tile-object')), matching: find.text('Not available yet')), findsOneWidget);
+    expect(find.descendant(of: find.byKey(const ValueKey('studio-tile-room')), matching: find.text('Not available yet')), findsOneWidget);
+    expect(find.descendant(of: find.byKey(const ValueKey('studio-tile-animation')), matching: find.text('Preview only')), findsOneWidget);
+    expect(find.descendant(of: find.byKey(const ValueKey('studio-tile-mine')), matching: find.text('2 3D creations')), findsOneWidget);
+    expect(find.descendant(of: find.byKey(const ValueKey('studio-tile-active')), matching: find.text('1 building now')), findsOneWidget);
+    // Engine offline: the plain label and Connect.
+    expect(find.text('Creation Engine Offline'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('studio-connect')));
+    expect(calls.list.last, 'connect offline');
+    // Create Object is not built: it says so and calls nothing.
+    final before = calls.list.length;
+    await tester.tap(find.byKey(const ValueKey('studio-tile-object')));
+    await tester.pump();
+    expect(find.textContaining('Create Object is not available yet. Not built yet'), findsOneWidget);
+    expect(calls.list.length, before);
+    await tester.pumpAndSettle(const Duration(seconds: 7));
+    // Create Person: choose who to start from.
+    await tester.tap(find.byKey(const ValueKey('studio-tile-person')));
+    await tester.pumpAndSettle();
+    expect(find.text('Create a person'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('studio-new-Vale')));
+    await tester.pumpAndSettle();
+    expect(calls.list.last, 'person vale');
+    // Create Animation, My Creations.
+    await tester.tap(find.byKey(const ValueKey('studio-tile-animation')));
+    await tester.pumpAndSettle();
+    expect(calls.list.last, 'animation');
+    await tester.tap(find.byKey(const ValueKey('studio-tile-mine')));
+    await tester.pumpAndSettle();
+    expect(find.text('My Creations'), findsWidgets);
+    await tester.tap(find.byKey(const ValueKey('studio-new-Vale (new person)')));
+    await tester.pumpAndSettle();
+    expect(calls.list.last, 'creation cr_2');
+    // Active Projects: the building creation first, then saved projects.
+    await tester.tap(find.byKey(const ValueKey('studio-tile-active')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('studio-new-CHE (new person)')), findsOneWidget);
+    expect(find.byKey(const ValueKey('studio-new-Vale (new person)')), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('studio-new-CHE (new person)')));
+    await tester.pumpAndSettle();
+    expect(calls.list.last, 'creation cr_1');
+  });
+
+  testWidgets('engine online shows the GPU and no Connect', (tester) async {
+    await _phone(tester);
+    await tester.pumpWidget(_studio(_Calls(), engine: 'online'));
+    await tester.pumpAndSettle();
+    expect(find.text('Creation Engine Online'), findsOneWidget);
+    expect(find.text('Running on Tesla T4.'), findsOneWidget);
+    expect(find.byKey(const ValueKey('studio-connect')), findsNothing);
   });
 
   testWidgets('projects: newest first, four shown, See all lists every one and opens the editor', (tester) async {
@@ -247,9 +335,12 @@ void main() {
     await tester.pumpAndSettle();
     expect(read, isEmpty);
     await tester.tap(find.byKey(const ValueKey('studio-read')));
-    expect(read.single, contains('1 Create New, 2 Film Studio, 3 Music Studio, 4 Code Studio, 5 Art and Character Studio, 6 Projects'));
+    expect(read.single, contains('1 Create Person, 2 Create Object, 3 Create Room, 4 Create Animation, 5 My Creations, '
+        '6 Active Projects, 7 More to create, 8 Film Studio, 9 Music Studio, 10 Code Studio, 11 Art and Character Studio'));
+    expect(read.single, contains('Creation Engine Offline.'));
+    expect(read.single, contains('Create Object and Create Room are not built yet.'));
     expect(read.single, contains('No active jobs.'));
-    expect(read.single, contains('5 projects and 3 saved files'));
+    expect(read.single, contains('2 3D creations, 5 projects and 3 saved files'));
   });
 
   testWidgets('VoiceOver labels on the main controls', (tester) async {
@@ -257,8 +348,11 @@ void main() {
     final handle = tester.ensureSemantics();
     await tester.pumpWidget(_studio(_Calls()));
     await tester.pumpAndSettle();
-    expect(find.bySemanticsLabel(RegExp(r'^Create new\. Choose a video')), findsOneWidget);
-    expect(find.bySemanticsLabel('Read the Creative Studio aloud'), findsOneWidget);
+    expect(find.bySemanticsLabel(RegExp(r'^More to create\. Choose a video')), findsOneWidget);
+    expect(find.bySemanticsLabel('Read the Creation Room aloud'), findsOneWidget);
+    expect(find.bySemanticsLabel('1. Create Person. Ready.'), findsOneWidget);
+    expect(find.bySemanticsLabel('2. Create Object. Not available yet.'), findsOneWidget);
+    expect(find.bySemanticsLabel('Connect: open the Colab notebook'), findsOneWidget);
     expect(find.bySemanticsLabel('Film Studio: Open Film Studio'), findsOneWidget);
     await _scrollTo(tester, find.byKey(const ValueKey('studio-art-primary')));
     expect(find.bySemanticsLabel('Art & Character Studio: Character Generator'), findsOneWidget);
@@ -300,11 +394,9 @@ void main() {
     await tester.pumpAndSettle();
     await shoot('01_create_top');
     for (final (key, name) in [
-      ('studio-film', '02_film_studio'),
-      ('studio-music', '03_music_studio'),
-      ('studio-code', '04_code_studio'),
+      ('studio-create-new', '02_more_to_create'),
+      ('studio-film', '03_film_studio'),
       ('studio-art', '05_art_character_studio'),
-      ('studio-gpu-jobs', '06_gpu_jobs_pair_colab'),
       ('studio-link-Saved files', '07_projects'),
     ]) {
       final f = find.byKey(ValueKey(key));
@@ -317,8 +409,20 @@ void main() {
     await tester.pumpWidget(const SizedBox()); // a fresh page, scrolled to the top
     await tester.pumpWidget(RepaintBoundary(key: boundary, child: _studio(_Calls())));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('studio-create-new')));
-    await shoot('08_create_new_sheet');
+    await tester.tap(find.byKey(const ValueKey('studio-tile-person')));
+    await shoot('08_create_person_sheet');
+    await tester.pumpWidget(const SizedBox());
+    await tester.pumpWidget(RepaintBoundary(key: boundary, child: _studio(_Calls())));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('studio-tile-mine')));
+    await shoot('10_my_creations_sheet');
+    await tester.pumpWidget(const SizedBox());
+    await tester.pumpWidget(RepaintBoundary(key: boundary, child: MaterialApp(
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(brightness: Brightness.dark, fontFamily: 'Roboto'),
+      home: CheCreationEnginePage(baseUrl: 'https://che.test', headers: const {}, client: _gpuClient()),
+    )));
+    await shoot('11_settings_creation_engine');
     await tester.pumpWidget(const SizedBox());
     await tester.pumpWidget(RepaintBoundary(
       key: boundary,
@@ -344,11 +448,23 @@ void main() {
     await tester.pumpAndSettle();
     final voice = CheCreativeStudio.voiceHandler!;
     expect(await voice('tell me a joke'), isNull, reason: 'anything else goes to Chat');
-    expect(await voice('read'), contains('1 Create New, 2 Film Studio'));
-    expect(await voice('five'), contains('GPU jobs and Pair Colab are in this studio'));
+    expect(await voice('read'), contains('1 Create Person, 2 Create Object'));
+    expect(await voice('eleven'), contains('GPU jobs and Pair Colab are in Settings, Creation Engine'));
+    expect(await voice('two'), startsWith('Create Object is not available yet.'));
+    expect(await voice('create a room'), startsWith('Create Room is not available yet.'));
     expect(await voice('character generator'), 'Opening the Character Generator.');
     expect(calls.list.last, 'character generator');
-    final menu = await voice('option one');
+    expect(await voice('create animation'), contains('Opening the animation preview'));
+    expect(calls.list.last, 'animation');
+    expect(await voice('connect the engine'), startsWith('Connecting the Creation Engine.'));
+    expect(calls.list.last, 'connect offline');
+    final people = await voice('create person');
+    await tester.pumpAndSettle();
+    expect(people, startsWith('Create Person.'));
+    expect(await voice('two'), 'Opening Vale.');
+    await tester.pumpAndSettle();
+    expect(calls.list.last, 'person vale');
+    final menu = await voice('option seven');
     await tester.pumpAndSettle();
     expect(menu, startsWith('Create new. Say or choose: 1 Video, 2 Film'));
     expect(find.text('Choose what to make.'), findsOneWidget);
@@ -357,7 +473,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(calls.list.last, 'new song');
     expect(find.text('Choose what to make.'), findsNothing, reason: 'the sheet closed');
-    expect(await voice('nine'), startsWith('There is no choice 9.'));
+    expect(await voice('12'), startsWith('There is no choice 12.'));
   });
 
   testWidgets('the studio leaves spoken numbers alone when it is not the open tab, and stops listening when gone', (tester) async {

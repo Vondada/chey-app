@@ -2,12 +2,19 @@
 // gallery scene (a 3D room of purple stand-in figures over a wall of project frames) and its Projects | Art Studio |
 // GPU Jobs segments. Everything the owner can make is here, each piece linking to the tool that already does it:
 // Create New, the studios (Film, Music, Code, Art & Character) and Projects. Nothing is spoken when it opens; Read
-// aloud reads it on request. Activity rows show only real backend states (the coding job the Worker reports, the GPU
-// queue's own card); with none, it says so.
+// aloud reads it on request. Activity rows show only real backend states (the coding job the Worker reports); with
+// none, it says so.
+//
+// Live 3D Studio (owner, 2026-10-24): the room now opens on six choices: Create Person, Create Object, Create Room,
+// Create Animation, My Creations and Active Projects, with the Creation Engine's real state (online, offline with a
+// Connect button, or not connected) above them. GPU jobs, Pair Colab and the worker token moved to Settings, Creation
+// Engine. Object and room creation are not built yet and say so; animation previews the crew models' own clips.
 import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+
+import 'che_live_studio.dart' show CheCreationEngine;
 
 /// The studio's own look: black, silver, white and one teal accent, whatever app palette is chosen.
 class CheStudioColors {
@@ -52,6 +59,11 @@ class CheStudioActions {
     required this.onResearch,
     this.onInventions,
     this.onShowroom,
+    this.loadPeople,
+    this.onCreatePerson,
+    this.onCreateAnimation,
+    this.onOpenCreation,
+    this.onConnectEngine,
   });
 
   final VoidCallback onOpenFilmStudio;
@@ -71,6 +83,17 @@ class CheStudioActions {
   final VoidCallback onResearch;
   final VoidCallback? onInventions;
   final VoidCallback? onShowroom;
+
+  /// Live 3D Studio. The characters a person can start from (id, name, role), from the Worker's identity presets.
+  final Future<List<(String, String, String)>> Function()? loadPeople;
+
+  /// Makes a creation project from one base character and opens it in the Live Studio.
+  final void Function(String base)? onCreatePerson;
+  final VoidCallback? onCreateAnimation;
+  final void Function(String id)? onOpenCreation;
+
+  /// Connect: opens the Colab notebook when the engine is paired, else Settings, Creation Engine.
+  final void Function(CheCreationEngine engine)? onConnectEngine;
 }
 
 /// Section keys, so voice routes and tests can scroll straight to a studio.
@@ -83,7 +106,7 @@ class CheCreativeStudio extends StatefulWidget {
     required this.projects,
     required this.vaultCount,
     this.activity = const [],
-    this.gpuJobs,
+    this.loadCreations,
     this.creations,
     this.imageConnected = false,
     this.videoConnected = false,
@@ -99,8 +122,9 @@ class CheCreativeStudio extends StatefulWidget {
   /// Real work in progress (the caller builds it from backend states only).
   final List<CheStudioActivity> activity;
 
-  /// The GPU queue card (Pair Colab, jobs, previews), shown inside Art & Character Studio.
-  final Widget? gpuJobs;
+  /// GET /api/creations (creation_studio.js): the owner's creation projects, the Creation Engine's state and which kinds
+  /// of creation are built. Null keeps the six choices with no engine bar (tests, or no Worker).
+  final Future<Map<String, dynamic>?> Function()? loadCreations;
 
   /// The pictures and videos CHE made (CheCreationsStrip), shown in Projects.
   final Widget? creations;
@@ -141,6 +165,10 @@ const _cheNumberWords = {
   'eighth': 8,
   'nine': 9,
   'ninth': 9,
+  'ten': 10,
+  'tenth': 10,
+  'eleven': 11,
+  'eleventh': 11,
 };
 
 /// "4", "four", "option four", "number 4", "choose the fourth" -> 4; anything else null.
@@ -166,10 +194,14 @@ List<Map<String, dynamic>> cheProjectsNewestFirst(List<Map<String, dynamic>> pro
 class CheCreativeStudioState extends State<CheCreativeStudio> {
   final _keys = {for (final s in CheStudioSection.values) s: GlobalKey()};
 
-  /// The Create New sheet while it is open: its items (in announced order) and its context, so a spoken number can
-  /// choose from it.
+  /// The sheet while one is open (Create New, Create Person, My Creations, Active Projects): its title and items in
+  /// announced order, and its context, so a spoken number can choose from it.
   List<(String, String, IconData, VoidCallback?)>? _sheetItems;
+  String _sheetTitle = '';
   BuildContext? _sheetContext;
+
+  /// GET /api/creations: creation projects, the Creation Engine and which kinds of creation are built.
+  Map<String, dynamic> _creations = const {};
 
   @override
   void dispose() {
@@ -177,13 +209,76 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
     super.dispose();
   }
 
+  @override
+  void didUpdateWidget(covariant CheCreativeStudio oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.active && !oldWidget.active) unawaited(loadCreations());
+  }
+
+  Future<void> loadCreations() async {
+    final load = widget.loadCreations;
+    if (load == null) return;
+    final d = await load().catchError((_) => null);
+    if (!mounted || d == null) return;
+    setState(() => _creations = d);
+  }
+
+  CheCreationEngine get engine => CheCreationEngine.fromJson(_creations['engine']);
+
+  List<Map<String, dynamic>> get creationProjects => [
+    for (final p in (_creations['projects'] as List? ?? const []))
+      if (p is Map) Map<String, dynamic>.from(p),
+  ];
+
+  /// One kind's real status from the Worker (available | partial | unavailable), with the built-in fallback when the
+  /// Worker has not answered: only Create Person is built end to end.
+  (String, String) capability(String id) {
+    for (final c in (_creations['capabilities'] as List? ?? const [])) {
+      if (c is Map && c['id'] == id) return ('${c['status'] ?? ''}', '${c['detail'] ?? ''}');
+    }
+    return switch (id) {
+      'person' => ('available', 'Start from CHE or an agent, edit by voice, and build a 3D model on your Creation Engine.'),
+      'animation' => ('partial', 'Preview the crew models’ built-in clips. Making new animations is not built yet.'),
+      'object' => ('unavailable', 'Creating 3D objects is not built yet.'),
+      _ => ('unavailable', 'Creating 3D rooms is not built yet.'),
+    };
+  }
+
   String _sheetSummary(List<(String, String, IconData, VoidCallback?)> items) =>
-      'Create new. Say or choose: '
+      '$_sheetTitle. Say or choose: '
       '${[for (var i = 0; i < items.length; i++)
         if (items[i].$4 != null) '${i + 1} ${items[i].$1}'].join(', ')}.';
 
-  /// Voice and typed control. Numbers resolve against what is on screen: the Create New sheet when it is open,
-  /// otherwise the six choices Read aloud announces. Actions can also be named ("new video", "character generator").
+  /// The room's numbered choices, in the order Read aloud announces them.
+  List<(String, VoidCallback)> get _choices => [
+    ('Create Person', () => unawaited(showCreatePerson())),
+    ('Create Object', () => _notBuilt('object', 'Create Object')),
+    ('Create Room', () => _notBuilt('room', 'Create Room')),
+    ('Create Animation', () => widget.actions.onCreateAnimation?.call()),
+    ('My Creations', () => unawaited(showMyCreations())),
+    ('Active Projects', () => unawaited(showActiveProjects())),
+    ('More to create', () => unawaited(showCreateNew())),
+    ('Film Studio', () => scrollTo(CheStudioSection.film)),
+    ('Music Studio', () => scrollTo(CheStudioSection.music)),
+    ('Code Studio', () => scrollTo(CheStudioSection.code)),
+    ('Art and Character Studio', () => scrollTo(CheStudioSection.art)),
+  ];
+
+  String _notBuilt(String id, String title) {
+    final (_, detail) = capability(id);
+    final text = '$title is not available yet. $detail';
+    HapticFeedback.heavyImpact();
+    if (mounted) {
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
+        content: Text(text, style: const TextStyle(fontSize: 16)),
+        duration: const Duration(seconds: 6),
+      ));
+    }
+    return text;
+  }
+
+  /// Voice and typed control. Numbers resolve against what is on screen: an open sheet, otherwise the room's numbered
+  /// choices. Actions can also be named ("create person", "new video", "character generator").
   Future<String?> voice(String words) async {
     final t = words
         .trim()
@@ -199,7 +294,7 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
     }
     if (sheet != null && RegExp(r'^(?:cancel|close|never mind|back)$').hasMatch(t)) {
       if (_sheetContext != null) Navigator.of(_sheetContext!).pop();
-      return 'Closed Create New.';
+      return 'Closed $_sheetTitle.';
     }
     final n = cheSpokenChoice(t);
     if (n != null) {
@@ -212,31 +307,30 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
         _tap(item.$4!);
         return 'Opening ${item.$1}.';
       }
-      switch (n) {
-        case 1:
-          unawaited(showCreateNew());
-          return _sheetSummary(_createNewItems());
-        case 2:
-          scrollTo(CheStudioSection.film);
-          return 'Film Studio. Say: open Film Studio, new video, or Theater.';
-        case 3:
-          scrollTo(CheStudioSection.music);
-          return 'Music Studio. Say: open Music Studio, or new song.';
-        case 4:
-          scrollTo(CheStudioSection.code);
-          return 'Code Studio. Say: new app, coding jobs, or commands.';
-        case 5:
-          scrollTo(CheStudioSection.art);
-          return 'Art and Character Studio. Say: character generator, art studio, or new image. GPU jobs and Pair Colab are in this studio.';
-        case 6:
-          scrollTo(CheStudioSection.projects);
-          final n2 = widget.projects.length;
-          return 'Projects: $n2 project${n2 == 1 ? '' : 's'} and ${widget.vaultCount} saved file${widget.vaultCount == 1 ? '' : 's'}. Say: new project, or saved files.';
+      final c = _choices;
+      if (n < 1 || n > c.length) return 'There is no choice $n. $spokenSummary';
+      return _runChoice(n - 1);
+    }
+    if (RegExp(r'^(?:open |go to )?(?:the )?creation engine(?: settings)?$|^connect(?: the)?(?: creation)? engine$').hasMatch(t)) {
+      a.onConnectEngine?.call(engine);
+      return engine.online ? 'The Creation Engine is online on ${engine.gpu ?? 'your GPU'}.' : 'Connecting the Creation Engine. ${engine.detail}';
+    }
+    final main = <RegExp, int>{
+      RegExp(r'^(?:create|make|new)(?: a)? (?:person|character|human|avatar)$'): 0,
+      RegExp(r'^(?:create|make|new)(?: an?)? (?:object|prop|3d object)$'): 1,
+      RegExp(r'^(?:create|make|new)(?: an?)? (?:room|environment|scene|space)$'): 2,
+      RegExp(r'^(?:create|make|new)(?: an?)? animation$'): 3,
+      RegExp(r'^(?:open |show )?(?:my )?creations$'): 4,
+      RegExp(r'^(?:open |show )?(?:my )?active projects$'): 5,
+    };
+    for (final e in main.entries) {
+      if (e.key.hasMatch(t)) {
+        if (sheet != null && _sheetContext != null) Navigator.of(_sheetContext!).pop();
+        return _runChoice(e.value);
       }
-      return 'There is no choice $n. $spokenSummary';
     }
     final named = <RegExp, (String, VoidCallback?)>{
-      RegExp(r'^create new|^new (?:creation|thing)$'): ('Create New', () => unawaited(showCreateNew())),
+      RegExp(r'^create new|^more to create$|^new (?:creation|thing)$'): ('Create New', () => unawaited(showCreateNew())),
       RegExp(r'^open (?:the )?film studio$'): ('Film Studio', a.onOpenFilmStudio),
       RegExp(r'^(?:new|make a|create a) video$'): ('a new video', a.onNewVideo),
       RegExp(r'^(?:open (?:the )?)?theat(?:er|re)$'): ('Theater', a.onOpenTheater),
@@ -264,10 +358,60 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
     return null;
   }
 
+  /// Runs choice [i] (0-based) and says what really happened.
+  String _runChoice(int i) {
+    final a = widget.actions;
+    switch (i) {
+      case 0:
+        if (a.loadPeople == null || a.onCreatePerson == null) return 'Create Person is not connected in this build.';
+        unawaited(showCreatePerson());
+        return 'Create Person. Choose who to start from: say a number.';
+      case 1:
+        return _notBuilt('object', 'Create Object');
+      case 2:
+        return _notBuilt('room', 'Create Room');
+      case 3:
+        if (a.onCreateAnimation == null) return 'Create Animation is not connected in this build.';
+        _tap(a.onCreateAnimation!);
+        return 'Opening the animation preview. ${capability('animation').$2}';
+      case 4:
+        unawaited(showMyCreations());
+        final n = creationProjects.length;
+        return n == 0 ? 'You have no 3D creations yet. Say create person.' : 'My Creations: $n. Say a number to open one.';
+      case 5:
+        unawaited(showActiveProjects());
+        return 'Active Projects. Say a number to open one.';
+      case 6:
+        unawaited(showCreateNew());
+        return _sheetSummaryFor('Create new', _createNewItems());
+      case 7:
+        scrollTo(CheStudioSection.film);
+        return 'Film Studio. Say: open Film Studio, new video, or Theater.';
+      case 8:
+        scrollTo(CheStudioSection.music);
+        return 'Music Studio. Say: open Music Studio, or new song.';
+      case 9:
+        scrollTo(CheStudioSection.code);
+        return 'Code Studio. Say: new app, coding jobs, or commands.';
+      default:
+        scrollTo(CheStudioSection.art);
+        return 'Art and Character Studio. Say: character generator, art studio, or new image. GPU jobs and Pair Colab are in Settings, Creation Engine.';
+    }
+  }
+
+  String _sheetSummaryFor(String title, List<(String, String, IconData, VoidCallback?)> items) {
+    final old = _sheetTitle;
+    _sheetTitle = title;
+    final s = _sheetSummary(items);
+    _sheetTitle = old.isEmpty ? title : old;
+    return s;
+  }
+
   @override
   void initState() {
     super.initState();
     CheCreativeStudio.voiceHandler = voice;
+    if (widget.active) unawaited(loadCreations());
     final s = widget.initialSection;
     if (s != null) WidgetsBinding.instance.addPostFrameCallback((_) => scrollTo(s, animate: false));
   }
@@ -283,15 +427,19 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
     );
   }
 
-  /// What Read aloud says: the studios as a numbered list and the real work in progress.
+  /// What Read aloud says: the engine, the numbered choices and the real work in progress.
   String get spokenSummary {
     final n = widget.projects.length;
     final work = widget.activity.isEmpty
         ? 'No active jobs.'
         : 'Working now: ${widget.activity.map((a) => '${a.title}, ${a.status}').join('; ')}.';
-    return 'Creative Studio, managed by Vale. Say or choose: 1 Create New, 2 Film Studio, 3 Music Studio, '
-        '4 Code Studio, 5 Art and Character Studio, 6 Projects. $work '
-        'You have $n project${n == 1 ? '' : 's'} and ${widget.vaultCount} saved file${widget.vaultCount == 1 ? '' : 's'}.';
+    final eng = widget.loadCreations == null || engine.status == 'unknown' ? '' : '${engine.label}. ';
+    final c = _choices;
+    return 'Creation Room, managed by Vale. $eng'
+        'Say or choose: ${[for (var i = 0; i < c.length; i++) '${i + 1} ${c[i].$1}'].join(', ')}. '
+        'Create Object and Create Room are not built yet. $work '
+        'You have ${creationProjects.length} 3D creation${creationProjects.length == 1 ? '' : 's'}, '
+        '$n project${n == 1 ? '' : 's'} and ${widget.vaultCount} saved file${widget.vaultCount == 1 ? '' : 's'}.';
   }
 
   void _tap(VoidCallback f) {
@@ -299,16 +447,64 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
     f();
   }
 
-  Future<void> showCreateNew() async {
+  Future<void> showCreateNew() => _showSheet('Create new', 'Choose what to make.', _createNewItems());
+
+  /// Create Person: choose CHE or an agent to start from; the project opens in the Live Studio.
+  Future<void> showCreatePerson() async {
+    final a = widget.actions;
+    if (a.loadPeople == null || a.onCreatePerson == null) return;
     HapticFeedback.selectionClick();
-    final items = _createNewItems();
-    _sheetItems = items;
-    try {
-      await _showCreateNewSheet(items);
-    } finally {
-      _sheetItems = null;
-      _sheetContext = null;
+    final people = await a.loadPeople!().catchError((_) => <(String, String, String)>[]);
+    if (!mounted) return;
+    if (people.isEmpty) {
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(const SnackBar(content: Text('Could not load the characters from CHE. Try again.')));
+      return;
     }
+    await _showSheet('Create a person', 'Start from CHE or one of the crew. You can change everything after.', [
+      for (final p in people) (p.$2, p.$3, Icons.person_outline_rounded, () => a.onCreatePerson!(p.$1)),
+    ]);
+  }
+
+  Future<void> showMyCreations() async {
+    await loadCreations();
+    if (!mounted) return;
+    final open = widget.actions.onOpenCreation;
+    final list = creationProjects;
+    await _showSheet(
+      'My Creations',
+      list.isEmpty ? 'No 3D creations yet. Use Create Person to start one.' : 'Your 3D creations, newest first.',
+      [for (final p in list) (_creationTitle(p), _creationLine(p), Icons.view_in_ar_rounded, open == null ? null : () => open('${p['id']}'))],
+    );
+  }
+
+  /// Active Projects: 3D creations with a Creation Engine job waiting or running, then your saved projects.
+  Future<void> showActiveProjects() async {
+    await loadCreations();
+    if (!mounted) return;
+    final open = widget.actions.onOpenCreation;
+    final busy = [
+      for (final p in creationProjects)
+        if (p['job'] is Map && const {'queued', 'rendering', 'paused'}.contains((p['job'] as Map)['state'])) p,
+    ];
+    final projects = cheProjectsNewestFirst(widget.projects).take(8);
+    await _showSheet(
+      'Active Projects',
+      busy.isEmpty && projects.isEmpty ? 'Nothing active right now.' : 'Work in progress first.',
+      [
+        for (final p in busy) (_creationTitle(p), _creationLine(p), Icons.view_in_ar_rounded, open == null ? null : () => open('${p['id']}')),
+        for (final p in projects)
+          ('${p['title'] ?? 'Untitled project'}', 'Project${'${p['status'] ?? ''}'.isEmpty ? '' : ' · ${p['status']}'}', Icons.folder_outlined,
+            () => widget.actions.onOpenProject(p)),
+      ],
+    );
+  }
+
+  static String _creationTitle(Map<String, dynamic> p) => '${p['title'] ?? 'Creation'}';
+
+  static String _creationLine(Map<String, dynamic> p) {
+    final j = p['job'] is Map ? p['job'] as Map : null;
+    final state = j == null ? 'not generated yet' : '${j['state']}';
+    return 'Version ${p['version'] ?? 1} · ${p['model_url'] != null ? '3D model ready' : state}';
   }
 
   List<(String, String, IconData, VoidCallback?)> _createNewItems() {
@@ -321,7 +517,7 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
       ('Image', 'A picture from a prompt', Icons.image_rounded, a.onNewImage),
       (
         'Character',
-        'Edit CHE or an agent and preview on the GPU',
+        'Edit CHE or an agent in the Character Generator',
         Icons.face_retouching_natural,
         a.onCharacterGenerator,
       ),
@@ -330,7 +526,19 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
     ];
   }
 
-  Future<void> _showCreateNewSheet(List<(String, String, IconData, VoidCallback?)> items) async {
+  Future<void> _showSheet(String title, String subtitle, List<(String, String, IconData, VoidCallback?)> items) async {
+    HapticFeedback.selectionClick();
+    _sheetItems = items;
+    _sheetTitle = title;
+    try {
+      await _showChoiceSheet(title, subtitle, items);
+    } finally {
+      _sheetItems = null;
+      _sheetContext = null;
+    }
+  }
+
+  Future<void> _showChoiceSheet(String title, String subtitle, List<(String, String, IconData, VoidCallback?)> items) async {
     await showModalBottomSheet<void>(
       context: context,
       backgroundColor: CheStudioColors.card,
@@ -339,48 +547,51 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
       builder: (sheet) {
         _sheetContext = sheet;
         return SafeArea(
-          child: ListView(
-            shrinkWrap: true,
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-            children: [
-              Semantics(
-                header: true,
-                child: const Text(
-                  'Create new',
-                  style: TextStyle(color: CheStudioColors.text, fontSize: 22, fontWeight: FontWeight.w800),
-                ),
-              ),
-              const SizedBox(height: 4),
-              const Text('Choose what to make.', style: TextStyle(color: CheStudioColors.dim, fontSize: 14)),
-              const SizedBox(height: 12),
-              for (var i = 0; i < items.length; i++)
-                if (items[i].$4 != null)
-                  Semantics(
-                    button: true,
-                    label: '${i + 1}. ${items[i].$1}. ${items[i].$2}',
-                    excludeSemantics: true,
-                    child: ListTile(
-                      key: ValueKey('studio-new-${items[i].$1}'),
-                      minVerticalPadding: 12,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                      leading: _IconDisk(icon: items[i].$3, size: 44),
-                      title: Text(
-                        items[i].$1,
-                        style: const TextStyle(
-                          color: CheStudioColors.text,
-                          fontSize: 16.5,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      subtitle: Text(items[i].$2, style: const TextStyle(color: CheStudioColors.dim, fontSize: 13)),
-                      trailing: const Icon(Icons.chevron_right_rounded, color: CheStudioColors.silver),
-                      onTap: () {
-                        Navigator.of(sheet).pop();
-                        _tap(items[i].$4!);
-                      },
-                    ),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(sheet).height * 0.85),
+            child: ListView(
+              shrinkWrap: true,
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              children: [
+                Semantics(
+                  header: true,
+                  child: Text(
+                    title,
+                    style: const TextStyle(color: CheStudioColors.text, fontSize: 22, fontWeight: FontWeight.w800),
                   ),
-            ],
+                ),
+                const SizedBox(height: 4),
+                Text(subtitle, style: const TextStyle(color: CheStudioColors.dim, fontSize: 14)),
+                const SizedBox(height: 12),
+                for (var i = 0; i < items.length; i++)
+                  if (items[i].$4 != null)
+                    Semantics(
+                      button: true,
+                      label: '${i + 1}. ${items[i].$1}. ${items[i].$2}',
+                      excludeSemantics: true,
+                      child: ListTile(
+                        key: ValueKey('studio-new-${items[i].$1}'),
+                        minVerticalPadding: 12,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                        leading: _IconDisk(icon: items[i].$3, size: 44),
+                        title: Text(
+                          items[i].$1,
+                          style: const TextStyle(
+                            color: CheStudioColors.text,
+                            fontSize: 16.5,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        subtitle: Text(items[i].$2, style: const TextStyle(color: CheStudioColors.dim, fontSize: 13)),
+                        trailing: const Icon(Icons.chevron_right_rounded, color: CheStudioColors.silver),
+                        onTap: () {
+                          Navigator.of(sheet).pop();
+                          _tap(items[i].$4!);
+                        },
+                      ),
+                    ),
+              ],
+            ),
           ),
         );
       },
@@ -445,7 +656,7 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
                       Semantics(
                         header: true,
                         child: const Text(
-                          'CREATIVE STUDIO',
+                          'CREATION ROOM',
                           style: TextStyle(
                             color: CheStudioColors.text,
                             fontSize: 26,
@@ -480,7 +691,7 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
                 ),
                 Semantics(
                   button: true,
-                  label: 'Read the Creative Studio aloud',
+                  label: 'Read the Creation Room aloud',
                   excludeSemantics: true,
                   child: IconButton(
                     key: const ValueKey('studio-read'),
@@ -491,11 +702,64 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
                 ),
               ],
             ),
-            const SizedBox(height: 18),
+            const SizedBox(height: 16),
+            // ── Creation Engine state (real, from the Worker) ──────────────────────
+            if (widget.loadCreations != null && engine.status != 'unknown') ...[
+              _EngineRow(engine: engine, onConnect: a.onConnectEngine == null ? null : () => a.onConnectEngine!(engine)),
+              const SizedBox(height: 14),
+            ],
+            // ── The six main choices ───────────────────────────────────────────────
+            LayoutBuilder(
+              builder: (context, box) {
+                final w = (box.maxWidth - 12) / 2;
+                final (pStatus, _) = capability('person');
+                final (oStatus, _) = capability('object');
+                final (rStatus, _) = capability('room');
+                final (aStatus, _) = capability('animation');
+                final nCreations = creationProjects.length;
+                final nActive = creationProjects
+                    .where((p) => p['job'] is Map && const {'queued', 'rendering', 'paused'}.contains((p['job'] as Map)['state']))
+                    .length;
+                String word(String s) => switch (s) {
+                  'available' => 'Ready',
+                  'partial' => 'Preview only',
+                  _ => 'Not available yet',
+                };
+                final tiles = [
+                  ('person', 'Create Person', Icons.person_add_alt_1_rounded, word(pStatus), pStatus != 'unavailable'),
+                  ('object', 'Create Object', Icons.widgets_rounded, word(oStatus), oStatus != 'unavailable'),
+                  ('room', 'Create Room', Icons.meeting_room_rounded, word(rStatus), rStatus != 'unavailable'),
+                  ('animation', 'Create Animation', Icons.directions_walk_rounded, word(aStatus), aStatus != 'unavailable'),
+                  ('mine', 'My Creations', Icons.view_in_ar_rounded, '$nCreations 3D creation${nCreations == 1 ? '' : 's'}', true),
+                  ('active', 'Active Projects', Icons.hourglass_top,
+                    nActive == 0 ? '${widget.projects.length} project${widget.projects.length == 1 ? '' : 's'}' : '$nActive building now', true),
+                ];
+                return Wrap(
+                  spacing: 12,
+                  runSpacing: 12,
+                  children: [
+                    for (var i = 0; i < tiles.length; i++)
+                      SizedBox(
+                        width: w,
+                        child: _MainTile(
+                          id: tiles[i].$1,
+                          number: i + 1,
+                          title: tiles[i].$2,
+                          icon: tiles[i].$3,
+                          status: tiles[i].$4,
+                          live: tiles[i].$5,
+                          onTap: () => _runChoice(i),
+                        ),
+                      ),
+                  ],
+                );
+              },
+            ),
+            const SizedBox(height: 16),
             // ── Create New ─────────────────────────────────────────────────────────
             Semantics(
               button: true,
-              label: 'Create new. Choose a video, film, song, app, image, character, project or invention.',
+              label: 'More to create. Choose a video, film, song, app, image, character, project or invention.',
               excludeSemantics: true,
               child: FilledButton.icon(
                 key: const ValueKey('studio-create-new'),
@@ -509,7 +773,7 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
                 ),
                 onPressed: showCreateNew,
                 icon: const Icon(Icons.add_rounded, size: 26),
-                label: const Text('Create New'),
+                label: const Text('More to create'),
               ),
             ),
             const SizedBox(height: 22),
@@ -562,7 +826,7 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
               id: 'art',
               icon: Icons.palette_outlined,
               title: 'Art & Character Studio',
-              tagline: 'Images, avatars, 3D characters, outfits and animation. Blender renders on your Colab GPU.',
+              tagline: 'Images, avatars, 3D characters, outfits and animation. Blender renders on your Creation Engine.',
               tags: const ['Images', 'Avatars', '3D characters', 'Outfits', 'Animation', 'Blender'],
               status: widget.imageConnected ? 'Image generation ready' : 'Image generator not connected',
               ready: widget.imageConnected,
@@ -571,17 +835,6 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
                 ('Art Studio', Icons.photo_library_outlined, a.onOpenArtStudio),
                 ('New image', Icons.image_rounded, a.onNewImage),
               ],
-              child: widget.gpuJobs == null
-                  ? null
-                  : Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const SizedBox(height: 14),
-                        const _SectionLabel('GPU JOBS · PAIR COLAB'),
-                        const SizedBox(height: 8),
-                        KeyedSubtree(key: const ValueKey('studio-gpu-jobs'), child: widget.gpuJobs!),
-                      ],
-                    ),
             ),
             // ── Projects ───────────────────────────────────────────────────────────
             const SizedBox(height: 8),
@@ -812,7 +1065,6 @@ class _StudioCard extends StatelessWidget {
     this.secondary = const [],
     this.status,
     this.ready = false,
-    this.child,
   });
 
   final String id;
@@ -824,7 +1076,6 @@ class _StudioCard extends StatelessWidget {
   final List<(String, IconData, VoidCallback)> secondary;
   final String? status;
   final bool ready;
-  final Widget? child;
 
   @override
   Widget build(BuildContext context) {
@@ -972,7 +1223,6 @@ class _StudioCard extends StatelessWidget {
                 ],
               ),
             ],
-            ?child,
           ],
         ),
       ),
@@ -1053,4 +1303,133 @@ class _LinkRow extends StatelessWidget {
       },
     ),
   );
+}
+
+
+/// One of the room's six main choices: a large square with its real status.
+class _MainTile extends StatelessWidget {
+  const _MainTile({
+    required this.id,
+    required this.number,
+    required this.title,
+    required this.icon,
+    required this.status,
+    required this.live,
+    required this.onTap,
+  });
+  final String id;
+  final int number;
+  final String title;
+  final IconData icon;
+  final String status;
+  final bool live;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    button: true,
+    label: '$number. $title. $status.',
+    excludeSemantics: true,
+    child: Material(
+      color: live ? CheStudioColors.cardHi : CheStudioColors.card,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(20),
+        side: BorderSide(color: live ? CheStudioColors.teal.withValues(alpha: .35) : CheStudioColors.stroke),
+      ),
+      child: InkWell(
+        key: ValueKey('studio-tile-$id'),
+        borderRadius: BorderRadius.circular(20),
+        onTap: () {
+          HapticFeedback.selectionClick();
+          onTap();
+        },
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 128),
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(icon, size: 30, color: live ? CheStudioColors.teal : CheStudioColors.dim),
+                const SizedBox(height: 12),
+                Text(
+                  title,
+                  style: TextStyle(
+                    color: live ? CheStudioColors.text : CheStudioColors.silver,
+                    fontSize: 16.5,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(status, style: const TextStyle(color: CheStudioColors.dim, fontSize: 13, height: 1.3)),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+/// The Creation Engine's real state, with Connect when it is not running.
+class _EngineRow extends StatelessWidget {
+  const _EngineRow({required this.engine, this.onConnect});
+  final CheCreationEngine engine;
+  final VoidCallback? onConnect;
+
+  @override
+  Widget build(BuildContext context) {
+    final on = engine.online;
+    return Semantics(
+      container: true,
+      label: '${engine.label}. ${engine.detail}',
+      child: Container(
+        key: const ValueKey('studio-engine'),
+        padding: const EdgeInsets.fromLTRB(14, 10, 8, 10),
+        decoration: BoxDecoration(
+          color: CheStudioColors.card,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: on ? CheStudioColors.teal.withValues(alpha: .6) : CheStudioColors.stroke),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 10,
+              height: 10,
+              decoration: BoxDecoration(shape: BoxShape.circle, color: on ? CheStudioColors.teal : CheStudioColors.dim),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: ExcludeSemantics(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      engine.label,
+                      style: const TextStyle(color: CheStudioColors.text, fontSize: 15.5, fontWeight: FontWeight.w700),
+                    ),
+                    if (engine.detail.isNotEmpty)
+                      Text(engine.detail, style: const TextStyle(color: CheStudioColors.dim, fontSize: 13, height: 1.3)),
+                  ],
+                ),
+              ),
+            ),
+            if (!on && onConnect != null)
+              Semantics(
+                container: true,
+                button: true,
+                label: engine.paired ? 'Connect: open the Colab notebook' : 'Connect: open Settings, Creation Engine',
+                excludeSemantics: true,
+                child: TextButton(
+                  key: const ValueKey('studio-connect'),
+                  style: TextButton.styleFrom(foregroundColor: CheStudioColors.teal, minimumSize: const Size(64, 44)),
+                  onPressed: onConnect,
+                  child: const Text('Connect', style: TextStyle(fontWeight: FontWeight.w800)),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
 }

@@ -712,9 +712,20 @@ extension _CheHomeSend on _CHEHomeState {
       }
     }
 
+    // The Live 3D Studio, while it is open, takes viewport moves, edits, undo, redo, save and generate.
+    final liveVoice = CheLiveStudio.voiceHandler;
+    if (liveVoice != null && _pendingAttachment == null) {
+      final reply = await liveVoice(message);
+      if (reply != null) {
+        if (mounted) _set(() => controller.clear());
+        if (reply.isNotEmpty) await speakText(reply, record: false);
+        return;
+      }
+    }
+
     // The Creative Studio, while it is on screen, takes its numbered choices and named actions by voice or typing.
     final studioVoice = CheCreativeStudio.voiceHandler;
-    if (studioVoice != null && _pendingAttachment == null && CheCharacterGenerator.voiceHandler == null) {
+    if (studioVoice != null && _pendingAttachment == null && CheCharacterGenerator.voiceHandler == null && CheLiveStudio.voiceHandler == null) {
       final reply = await studioVoice(message);
       if (reply != null) {
         if (mounted) _set(() => controller.clear());
