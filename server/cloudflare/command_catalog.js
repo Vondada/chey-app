@@ -532,13 +532,13 @@ export const COMMANDS = Object.freeze([
     examples: ['Any trade alerts?'],
     prompt: 'Any trade alerts?', produces: 'alerts', keywords: ['alert', 'notify', 'watch', 'alarm'],
   }),
-  C('trade-sim', 'trading', 'EXPLORE', 'Pause, resume or check the strategy simulation.', {
-    does: 'Pauses or resumes CHE\'s paper strategy simulation (ten rules on minute bars; no money, no model call), or reads its status. Owner only.',
+  C('trade-sim', 'trading', 'EXPLORE', 'Pause, resume, stop, reset or check the strategy simulation.', {
+    does: 'Pauses or resumes CHE\'s paper strategy simulation (ten rules on minute bars; no money, no model call); stops it (pause and cancel waiting signals, open positions kept); resets it after you say yes (the run is archived, never deleted); or reads its status. Owner only.',
     needs: ['office'], route: 'che_strategy_sim', handler: 'strategy_sim.strategySimIntent → setStrategySimPaused / strategySimView',
-    input: { name: 'action', required: false, hint: 'pause, resume or status' },
-    examples: ['Pause the strategy simulation', 'Resume the strategy simulation', 'Strategy simulation status'],
+    input: { name: 'action', required: false, hint: 'pause, resume, stop, reset or status' },
+    examples: ['Pause the strategy simulation', 'Resume the strategy simulation', 'Stop the strategy simulation', 'Reset the strategy simulation', 'Strategy simulation status'],
     prompt: 'Strategy simulation {input}', produces: 'simulation status', evidence: 'Stored simulation state and trades only.',
-    keywords: ['strategy simulation', 'simulation', 'pause simulation', 'resume simulation', 'paper strategies'],
+    keywords: ['strategy simulation', 'simulation', 'pause simulation', 'resume simulation', 'stop simulation', 'reset simulation', 'paper strategies'],
   }),
   // Strategy Control Center (owner, 2026-10-20): trading_controls.js through the desk's own intent parser.
   C('trade-controls', 'trading', 'EXPLORE', 'Read or change your paper strategy limits.', {
@@ -588,7 +588,7 @@ export const COMMANDS = Object.freeze([
     prompt: 'Who is the current leader?', produces: 'leader', evidence: 'Forward paper and historical backtest records, ranked by the lower expectancy bound.', keywords: ['leader', 'best strategy', 'verified strategy', 'ranking'],
   }),
   C('trade-audit', 'trading', 'EXPLORE', 'Audit every stored trade record.', {
-    does: 'Counts the stored trade records by execution type and checks them for exact duplicates, entries shared across variants, look-ahead, fills that disagree with their own costs, missing labels and P&L that does not add up. Changes nothing.',
+    does: 'Counts the stored trade records by execution type and checks them for exact duplicates, entries shared across variants, look-ahead, fills that disagree with their own costs, missing labels and P&L that does not add up. Deeper checks: the simulation\'s R split into price moves and costs, trades whose costs exceeded their risk, open positions on retired feeds, P&L and R recomputed from prices, the research backtests\' data hashes, fixtures and look-ahead audits, and one day\'s P&L by New York date, UTC date and CME trade day. Changes nothing.',
     needs: ['office'], route: 'che_trading_visual', handler: 'trading_visual.auditTrades', input: null,
     examples: ['Audit the trades', 'Run a trade audit'],
     prompt: 'Audit the trades.', produces: 'audit', evidence: 'Real counts from the stored records; nothing is altered.', keywords: ['audit', 'duplicates', 'look-ahead', 'trade audit'],

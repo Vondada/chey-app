@@ -83,7 +83,9 @@ import { visualIntent, wordsToOps } from './visual_studio.js';
 import { addBeat, addLedger, addWorkspace, addWorkspaceSong, advanceAgreement, applySpokenBusiness, approveQuote, artistReport, beatListing, businessDashboard, deliveryPackage, draftQuote, musicBusinessIntent, recordBeatSale, recordFeedback, resolveSpokenBusiness, setService, workspaceById, workspaceView } from './music_business.js';
 import { matrixIntent, readMatrix, runMatrix, speakMatrix } from './backtest_matrix.js';
 import { autoQueue as researchAutoQueue, cancelJob as cancelResearchJob, matrixView as researchMatrixView, nextResearchAt, queueJob as queueResearchJob, researchIntent, researchStep, researchView, setProfile as setResearchProfile, speakBestNow, speakHistory, speakStrategy, strategyView as researchStrategyView } from './trading_research.js';
-import { nextStrategySimTickAt, setStrategySimCeiling, setStrategySimPaused, speakStrategySim, strategySimIntent, strategySimTick, strategySimView, strategySimWake } from './strategy_sim.js';
+import { nextStrategySimTickAt, strategySimIntent, strategySimTick, strategySimView, strategySimWake } from './strategy_sim.js';
+import { simChatReply, simControlRoute } from './trading_sim_control.js';
+import { auditSummaryLine, deepTradeAudit } from './trading_audit.js';
 import { evidenceIntent, evidenceReport, evidenceTick } from './trading_evidence_runner.js';
 import { readTrades } from './trading_evidence.js';
 import { tradingCapabilities } from './trading_capabilities.js';
@@ -4977,6 +4979,9 @@ export class CheState extends DurableObject {
   // The opt-in deploy REA check: real investigations through the owner's own
   // REA log, so the iPhone shows them. Building is never part of it unless
   // the deploy run explicitly asks for the one owner-authorized test build.
+  // The deploy's read-only trading audit: counts only (auditSummaryLine), never record contents.
+  async tradingAuditProbe() { const a = await deepTradeAudit(this.ctx.storage); return { ok: true, summary: auditSummaryLine(a), simulation_closed: a.simulation?.closed ?? null }; }
+
   async reaProbe({ message = '', allow_build = false } = {}) {
     const text = String(message || '').slice(0, 500);
     const started = Date.now();
@@ -8396,26 +8401,7 @@ export class CheState extends DurableObject {
         if (!ownerDevice) return simOwnerOnly();
         return json(await strategySimView(this.ctx.storage));
       }
-      if (path === '/api/trading/sim' && request.method === 'POST') {
-        if (!ownerDevice) return simOwnerOnly();
-        if (body.action === 'pause' || body.action === 'resume') {
-          const state = await setStrategySimPaused(this.ctx.storage, body.action === 'pause');
-          // Resuming re-arms the alarm now, so the next minute is not left waiting for some other wake-up.
-          if (body.action === 'resume') await this.scheduleWork();
-          return json({ ok: true, state, view: await strategySimView(this.ctx.storage) });
-        }
-        if (body.action === 'tick') {
-          const run = await strategySimTick(this.ctx.storage, { force: true });
-          // The first pass arms the minute cadence here, so the owner can start it without waiting for the hourly alarm.
-          await this.scheduleWork();
-          return json({ ok: true, run });
-        }
-        if (body.action === 'ceiling') {
-          const result = await setStrategySimCeiling(this.ctx.storage, body.usd);
-          return json(result, result.ok ? 200 : 400);
-        }
-        return json({ detail: 'Unknown action. Use pause, resume, tick or ceiling.' }, 400);
-      }
+      if (path === '/api/trading/sim' && request.method === 'POST') return ownerDevice ? simControlRoute(this.ctx.storage, body, () => this.scheduleWork()) : simOwnerOnly();
       // Historical trading intelligence: the Trading Room dashboard, the auditable report, and the owner's run. Owner only.
       if (path.startsWith('/api/trading/intelligence')) {
         if (!ownerDevice) return json({ detail: 'Only the CHE owner can view or run the historical trading study.' }, 403);
@@ -13218,19 +13204,11 @@ export class CheState extends DurableObject {
         if (!body.attachment && evidenceIntent(message)) {
           return ndjsonReply(await evidenceReport(this.ctx.storage), { source: 'che_trading_evidence' });
         }
-        // Strategy simulation: pause, resume and status by typing, by voice, or through the /trade-sim command. Owner only.
+        // Strategy simulation: pause, resume, stop, reset (asks first) and status, typed, spoken or /trade-sim. Owner only.
         const sim = strategySimIntent(message);
         if (sim) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can control the strategy simulation, sir.', { source: 'che_strategy_sim', ok: false });
-          if (sim.kind === 'pause' || sim.kind === 'resume') {
-            await setStrategySimPaused(this.ctx.storage, sim.kind === 'pause');
-            // Resuming arms the next minute at once, so it does not wait for another wake-up.
-            if (sim.kind === 'resume') await this.scheduleWork();
-          }
-          const lead = sim.kind === 'pause' ? 'Paused the strategy simulation, sir. No bars are read and no trades open until you resume it.'
-            : sim.kind === 'resume' ? 'Resumed the strategy simulation, sir. It runs again on the next minute.' : '';
-          const view = await strategySimView(this.ctx.storage);
-          return ndjsonReply([lead, speakStrategySim(view)].filter(Boolean).join('\n'), { source: 'che_strategy_sim' });
+          return ndjsonReply(await simChatReply(this.ctx.storage, sim, () => this.scheduleWork()), { source: 'che_strategy_sim' });
         }
         const trade = tradingIntent(message, { followup: followupWords, referent: referentText });
         if (trade) {
@@ -16220,6 +16198,7 @@ async function routeRequest(request, env, ctx) {
     const body = await request.json().catch(() => ({}));
     return json(await env.CHE_STATE.getByName('owner').reaProbe({ message: String(body.message || '').slice(0, 500), allow_build: body.allow_build === true }));
   }
+  if (path === '/api/trading/audit/probe' && request.method === 'POST') return voiceProbeAuthorized(request, env) ? json(await env.CHE_STATE.getByName('owner').tradingAuditProbe()) : json({ detail: 'Not found.' }, 404);
   if (path === '/api/memory/probe' && request.method === 'POST') {
     if (!voiceProbeAuthorized(request, env)) return json({ detail: 'Not found.' }, 404);
     const token = /^Bearer (\S+)$/.exec(request.headers.get('Authorization') || '')?.[1] || '';

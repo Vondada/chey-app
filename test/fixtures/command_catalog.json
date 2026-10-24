@@ -2192,8 +2192,8 @@
    "id": "trade-sim",
    "category": "trading",
    "title": "Trade Sim",
-   "summary": "Pause, resume or check the strategy simulation.",
-   "does": "Pauses or resumes CHE's paper strategy simulation (ten rules on minute bars; no money, no model call), or reads its status. Owner only.",
+   "summary": "Pause, resume, stop, reset or check the strategy simulation.",
+   "does": "Pauses or resumes CHE's paper strategy simulation (ten rules on minute bars; no money, no model call); stops it (pause and cancel waiting signals, open positions kept); resets it after you say yes (the run is archived, never deleted); or reads its status. Owner only.",
    "mode": "EXPLORE",
    "approval": {
     "required": false,
@@ -2202,11 +2202,13 @@
    "input": {
     "name": "action",
     "required": false,
-    "hint": "pause, resume or status"
+    "hint": "pause, resume, stop, reset or status"
    },
    "examples": [
     "Pause the strategy simulation",
     "Resume the strategy simulation",
+    "Stop the strategy simulation",
+    "Reset the strategy simulation",
     "Strategy simulation status"
    ],
    "needs": [
@@ -2223,6 +2225,8 @@
     "simulation",
     "pause simulation",
     "resume simulation",
+    "stop simulation",
+    "reset simulation",
     "paper strategies"
    ],
    "status": "available",
@@ -2463,7 +2467,7 @@
    "category": "trading",
    "title": "Trade Audit",
    "summary": "Audit every stored trade record.",
-   "does": "Counts the stored trade records by execution type and checks them for exact duplicates, entries shared across variants, look-ahead, fills that disagree with their own costs, missing labels and P&L that does not add up. Changes nothing.",
+   "does": "Counts the stored trade records by execution type and checks them for exact duplicates, entries shared across variants, look-ahead, fills that disagree with their own costs, missing labels and P&L that does not add up. Deeper checks: the simulation's R split into price moves and costs, trades whose costs exceeded their risk, open positions on retired feeds, P&L and R recomputed from prices, the research backtests' data hashes, fixtures and look-ahead audits, and one day's P&L by New York date, UTC date and CME trade day. Changes nothing.",
    "mode": "EXPLORE",
    "approval": {
     "required": false,

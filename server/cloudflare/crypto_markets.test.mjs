@@ -198,6 +198,11 @@ test('research: volatility regime, liquidity screen, sessions and an out-of-samp
   const rows = backtestSeries('BTC', '5m', bars);
   assert.equal(rows.length, 12);
   for (const r of rows) assert.equal(r.enough_data, r.trades >= 30);
+  // Every strategy passes the same look-ahead audit as the futures research, and costs are paid on every trade.
+  for (const r of rows) assert.ok(['passed', 'not enough bars'].includes(r.look_ahead), `${r.strategy}: ${r.look_ahead}`);
+  for (const r of rows.filter((x) => x.trades)) assert.ok(r.costs_paid > 0, `${r.strategy} paid its fees and slippage`);
+  const firstWeak = rows.findIndex((r) => !(r.look_ahead !== 'FAILED' && r.oos_trades >= 30));
+  if (firstWeak >= 0) assert.ok(rows.slice(firstWeak).every((r) => !(r.look_ahead !== 'FAILED' && r.oos_trades >= 30)), 'audited strategies with enough out-of-sample trades rank first');
 });
 
 test('pause keeps records and stops the schedule; resume starts again from the newest bar', async () => {

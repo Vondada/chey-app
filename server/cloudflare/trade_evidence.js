@@ -7,6 +7,7 @@
 // answer says "No recorded market data for this trade." and draws nothing. No candle or fill is ever made up.
 import { LIVE_FEED } from './trading_live.js';
 import { liveOrdersStatus } from './trading_environments.js';
+import { deepTradeAudit, speakDeepAudit } from './trading_audit.js';
 import { loadDataset, tfOf } from './trading_research.js';
 import { readRithmicCandles } from './rithmic_dataset.js';
 import { RETIRED_FEEDS, minuteFeedFor } from './strategy_sim.js';
@@ -253,7 +254,8 @@ export async function tradingVisualViewOf(storage, q) {
   if (view === 'compare') return { ...base, windows: compareWindows(shown) };
   if (view === 'leader') { const l = currentLeader(trades); return { ...base, ...l, spoken: speakLeader(l) }; }
   if (view === 'journal') return { ...base, ...journalView(trades, await readSkips(storage), { ...filters, include_skips: q.get('skips') !== '0' }) };
-  if (view === 'audit') { const a = auditTrades(records); return { ...base, ...a, ids: { unique_trades: trades.length, duplicates_hidden: duplicates.filter((d) => d.kind === 'duplicate').length, conflicts_hidden: duplicates.filter((d) => d.kind === 'conflict').length, examples: duplicates.slice(0, 10) }, spoken: speakAudit(a) }; }
+  // The record checks (trading_visual.auditTrades) plus the deep audit (trading_audit.js): R and costs, open positions, research units, one day three ways.
+  if (view === 'audit') { const a = auditTrades(records); const deep = await deepTradeAudit(storage, { day: q.get('day') || undefined }); return { ...base, ...a, deep, ids: { unique_trades: trades.length, duplicates_hidden: duplicates.filter((d) => d.kind === 'duplicate').length, conflicts_hidden: duplicates.filter((d) => d.kind === 'conflict').length, examples: duplicates.slice(0, 10) }, spoken: `${speakAudit(a)}\n${speakDeepAudit(deep)}` }; }
   // Trade evidence (Priority 5): one trade by its stable ID, with its own stored bars; or the list of IDs.
   if (view === 'trade') {
     const want = (q.get('id') || '').trim().toUpperCase();
