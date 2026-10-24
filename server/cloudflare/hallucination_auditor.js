@@ -154,20 +154,31 @@ export function auditReply(reply, { evidence = null, requestId = '', now = Date.
 
 // Receipts from this request and the recent window: the only evidence the auditor reads. Real receipts come from
 // execution code, so an owner's or model's text can never create one.
-export async function auditEvidenceFrom(storage, { executions = [], prices = [], tasks = [], memoryWrites = [], now = Date.now() } = {}) {
+export async function auditEvidenceFrom(storage, { executions = [], prices = [], tasks = [], teamTasks = [], memoryWrites = [], now = Date.now() } = {}) {
   const receipts = await loadReceipts(storage, { sinceMs: 7 * 24 * 3600_000, now });
   const byKind = (kind) => receipts.filter((r) => r.kind === kind);
+  // One video per task id: the render receipt says it started, the verified or failed receipt (action_receipts.js)
+  // says how it ended. A verified receipt is the only thing that makes mp4_verified true.
+  const videos = new Map();
+  for (const r of byKind('video_render')) videos.set(String(r.task_id), { id: `video:${r.task_id}`, status: r.status || 'queued', mp4_verified: false, playable: false });
+  for (const r of byKind('video_failed')) videos.set(String(r.task_id), { ...(videos.get(String(r.task_id)) || { id: `video:${r.task_id}` }), status: 'failed', mp4_verified: false, playable: false });
+  for (const r of byKind('video_verified')) videos.set(String(r.task_id || r.media_id), { id: `video:${r.task_id || r.media_id}`, status: 'complete', mp4_verified: r.mp4_verified === true, playable: r.playable === true });
   return {
     merged_prs: byKind('merged').map((r) => ({ id: `merged:${r.number}`, number: r.number, sha: r.sha || '' })),
     deploys: byKind('deployed').map((r) => ({ id: `deployed:${r.sha}`, sha: r.sha || '', version_tag: r.version_tag || '' })),
     deploy_failures: byKind('deploy_failed').length,
-    videos: byKind('video_render').map((r) => ({ id: `video:${r.task_id}`, status: r.status || 'queued', mp4_verified: r.mp4_verified === true, playable: r.playable === true })),
-    trades: byKind('trade_placed').map((r) => ({ id: `trade:${r.key || r.order_id || ''}`, order_id: r.order_id || '' })),
+    videos: [...videos.values()],
+    // Alpaca PAPER stock orders and Tradovate sim/live futures orders both prove "I placed an order" only with the broker's id.
+    trades: [...byKind('paper_order_placed'), ...byKind('trade_placed')].map((r) => ({ id: `trade:${r.key || ''}`, order_id: r.order_id || '', account: r.account || r.account_mode || '' })),
     trade_failures: byKind('trade_failed').length,
     executions: executions.filter(Boolean).map((x) => ({ id: `execution:${x.invocation_id || ''}`, status: x.status })),
     // A memory write backs "I saved it" only inside this conversation's window, not for a week.
     memory_writes: [...memoryWrites, ...byKind('memory_saved').filter((r) => now - Date.parse(r.at || 0) <= MEMORY_CLAIM_MS).map((r) => ({ id: `memory:${r.record_id || ''}`, confirmed: true }))],
-    prices, tasks, device_installs: [], book_reads: [],
+    // Office tasks prove "finished" only when complete and checked (agent_runtime.js sets verified on completion).
+    tasks: [...tasks, ...teamTasks.filter(Boolean).map((t) => ({ id: String(t.id || ''), status: t.status, verified: t.verified === true }))],
+    // The phone's own report (POST /api/device/installed) is the only install evidence.
+    device_installs: byKind('device_install').map((r) => ({ id: `install:${r.version}-${r.build}-${r.patch || 'none'}`, confirmed: r.confirmed === true })),
+    prices, book_reads: [],
   };
 }
 

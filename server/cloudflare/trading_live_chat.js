@@ -22,7 +22,9 @@ const READS = [
   ['strategies', /\bwhat\s+strateg(?:y|ies)\s+are\s+you\s+(?:testing|running|using|trading)\b/i],
   ['compare', /\bcompare\s+(?:all\s+)?your\s+(?:trading\s+|paper\s+)?strateg|\bcompare\s+(?:the\s+)?(?:trading|paper)\s+strateg/i],
   ['best', /\bwhich\s+(?:ict|smart\s+money|trading|paper)\s+strateg\w*\b[\s\S]{0,25}\b(?:best|performing|winning|working)\b|\bwhich\s+of\s+your\s+(?:trading\s+)?strateg\w*\b[\s\S]{0,25}\b(?:best|performing|winning|working)\b/i],
-  ['trades', /\b(?:show|list|read|tell)\s+me\s+(?:every|all|the|your)?\s*(?:live\s+)?(?:(?:nq|mnq|paper)\s+)+trades?\b|\bevery\s+trade\s+you\s+(?:made|took|placed)\b|\b(?:show|list|read)\s+me\s+(?:all\s+)?(?:the\s+)?trades\s+you\s+(?:made|took|placed)\b/i],
+  // "What trades did you execute?", "did you place any trades", "what did you trade today" (owner acceptance
+  // question 3, 2026-10-23) read the journal and the order receipts; they never reached a record before.
+  ['trades', /\b(?:show|list|read|tell)\s+me\s+(?:every|all|the|your)?\s*(?:live\s+)?(?:(?:nq|mnq|paper)\s+)+trades?\b|\bevery\s+trade\s+you\s+(?:made|took|placed)\b|\b(?:show|list|read)\s+me\s+(?:all\s+)?(?:the\s+)?trades\s+you\s+(?:made|took|placed)\b|\bwhat\s+trades?\s+(?:did|have)\s+you\s+(?:execute[d]?|ma[dk]e|t(?:ake|aken|ook)|place[d]?)\b|\b(?:did|have)\s+you\s+(?:place[d]?|execute[d]?|ma[dk]e|t(?:ake|aken|ook))\s+any\s+(?:\w+\s+)?(?:trades?|orders?)\b|\bwhat\s+did\s+you\s+trade\s+(?:today|yesterday|this\s+week|so\s+far)\b/i],
   // "How did my paper trades do today?", "what's my paper trading balance?" (comprehension audit).
   ['performance', /\btrading\s+performance\b|\bread\s+me\s+your\s+(?:trading\s+|paper\s+)?(?:results|performance)\b|\bhow\s+(?:did|are|have)\s+(?:your|my|the)\s+paper\s+trades?\s+(?:do|doing|done|going|gone)\b|\bpaper[\s-]*trad\w*\s+(?:balance|results|profit|p\s*&\s*l|pnl)\b|\bpaper\s+(?:balance|p\s*&\s*l|pnl)\b|\bhow\s+(?:(?:is|are|was|were|has|have|'s|s)\s+)?(?:my|your|the)\s+(?:paper[\s-]*trad\w*|forward\s+(?:paper\s+)?(?:trades?|trading|results?|account|performance)|paper\s+(?:account|results?|performance|numbers?|returns?))\s+(?:is\s+|are\s+)?(?:going|doing|done|gone|performing|working|looking|been|going\s+so\s+far)\b|\bhow\s+(?:is|are|was|did)\s+(?:my|your|the)\s+(?:paper|forward)\s+(?:trading|trades?|results?|performance|account|numbers?)\b|\b(?:what\s+(?:are|were|is)|give\s+me|tell\s+me|show\s+me|read\s+me)\s+(?:my|your|the)\s+(?:paper\s+)?(?:results|numbers|returns?|p\s*&\s*l|profits?|losses|stats|statistics)\b[\s\S]{0,40}\b(?:paper|forward|trading|trades?)\b|\b(?:what\s+(?:are|were|is)|give\s+me|tell\s+me|show\s+me|read\s+me)\s+(?:my|your)\s+paper\s+(?:results|numbers|returns?|p\s*&\s*l|profits?|losses|stats|statistics)\b|\bpaper[\s-]*trad\w*\s+(?:going|doing|performance|numbers|returns?|stats|statistics|results)\b/i],
   ['evidence', /\b(?:show|read)\b[\s\S]{0,15}\btrading\s+evidence\b/i],
@@ -51,7 +53,8 @@ const FEED_DETAIL = /\b(?:paper\s+trades?|vwap|data\s+delay|delay(?:ed)?|time\s*
 // "Reverse my position", "flatten" and "close my position" are orders too.
 const LATER_COMMAND = /(?:[,.;!?]\s*|\b(?:and|then|also|now)\s+)(?:please\s+)?(?:stop|pause|turn\s+off|halt|end|start|begin|turn\s+on|resume|launch)\s+(?:the\s+|your\s+)?paper[\s-]*trad/i;
 const ORDER_FIRST = /^(?:place|submit|enter|buy|sell|short|go\s+long|go\s+short|take\s+(?:the|a)\s+trade|open\s+a\s+(?:position|trade)|order|trade|prepare|set\s+up|reverse|flatten|close)\b/i;
-export const ORDER_ASK = /\b(?:place|submit|enter|buy|sell|go\s+long|go\s+short|take\s+(?:the|a|this|that)\s+trade|open\s+a\s+(?:position|trade)|reverse|flatten|close\s+(?:out\s+)?(?:my|the|that|this|all)\s+(?:\w+\s+)?(?:positions?|trades?|longs?|shorts?)|close\s+(?:out\s+)?everything|close\s+out)\b|\bshort\b(?![\s-]*(?:term|positions?|trades?|side)\b)/i;
+const PAST_ORDER_READ = /^(?:please\s+)?(?:(?:did|have)\s+you\s+(?:place[d]?|execute[d]?|ma[dk]e|t(?:ake|aken|ook))\s+any\b|what\s+trades?\s+(?:did|have)\s+you\b|what\s+did\s+you\s+trade\b)/i;
+export const ORDER_ASK =/\b(?:place|submit|enter|buy|sell|go\s+long|go\s+short|take\s+(?:the|a|this|that)\s+trade|open\s+a\s+(?:position|trade)|reverse|flatten|close\s+(?:out\s+)?(?:my|the|that|this|all)\s+(?:\w+\s+)?(?:positions?|trades?|longs?|shorts?)|close\s+(?:out\s+)?everything|close\s+out)\b|\bshort\b(?![\s-]*(?:term|positions?|trades?|side)\b)/i;
 
 /** The command in [message], or null. Narrow on purpose: other trading talk keeps its routes.
  *  A turn that asks several reads gets `kinds`, in the order asked; `kind` is the first. */
@@ -62,7 +65,8 @@ export function liveIntent(message) {
   // aside only when the owner forbade the order itself ("don't place any orders"), never for "don't
   // ask me, buy MNQ" (review of #351).
   const asked = withoutProhibitions(text);
-  if (ORDER_ASK.test(withoutProhibitions(text, { only: ORDER_FIRST }))) return null;
+  // "Did you place any trades?" asks what happened; it is a read of the records, never an order to place one.
+  if (!PAST_ORDER_READ.test(text) && ORDER_ASK.test(withoutProhibitions(text, { only: ORDER_FIRST }))) return null;
   const command = COMMANDS.find(([, re]) => re.test(asked))?.[0];
   // "Analyze MNQ … and then stop paper trading": a start or stop later in the turn is a command these
   // reads cannot carry out, so the turn goes on to the routes that can ("why did you stop" is a read).
