@@ -146,7 +146,7 @@ void main() {
     await _font('MaterialIcons', '$fonts/MaterialIcons-Regular.otf');
   });
 
-  Widget studio(_Worker w, {List<String>? read, List<_FakeViewport>? vp, List<String> clips = const [], CheLiveStudioMode mode = CheLiveStudioMode.person}) =>
+  Widget studio(_Worker w, {List<String>? read, List<String>? spoken, List<_FakeViewport>? vp, List<String> clips = const [], CheLiveStudioMode mode = CheLiveStudioMode.person}) =>
       MaterialApp(
         debugShowCheckedModeBanner: false,
         theme: ThemeData(brightness: Brightness.dark, fontFamily: 'Roboto'),
@@ -157,6 +157,7 @@ void main() {
           mode: mode,
           client: w.client(),
           onRead: read?.add,
+          onSpeak: spoken?.add,
           viewport: (onMessage) {
             final v = _FakeViewport(onMessage, clips: clips);
             vp?.add(v);
@@ -274,6 +275,65 @@ void main() {
     expect(await voice('read'), contains('version 1 of 2'));
     await tester.pumpWidget(const SizedBox());
     expect(CheLiveStudio.voiceHandler, isNull, reason: 'stops listening when closed');
+  });
+
+  testWidgets('button and text-field actions speak their outcome once; voice actions do not speak twice (review of #520)', (tester) async {
+    await _phone(tester);
+    final spoken = <String>[];
+    final vp = <_FakeViewport>[];
+    final w = _Worker(_project());
+    await tester.pumpWidget(studio(w, spoken: spoken, vp: vp));
+    await tester.pumpAndSettle();
+    expect(spoken, isEmpty, reason: 'opening and loading never speak');
+    await tester.ensureVisible(find.byKey(const ValueKey('live-apply')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('live-edit')), 'Make the hair longer');
+    await tester.tap(find.byKey(const ValueKey('live-apply')));
+    await tester.pumpAndSettle();
+    expect(spoken, ['Hair changed to long wavy. Saved as version 2. Say generate to build it.']);
+    await tester.ensureVisible(find.byKey(const ValueKey('live-tool-Turn left')));
+    await tester.tap(find.byKey(const ValueKey('live-tool-Turn left')));
+    await tester.pumpAndSettle();
+    expect(spoken.last, 'Turned the model left 45 degrees.');
+    final before = spoken.length;
+    expect(await CheLiveStudio.voiceHandler!('undo'), 'Back to version 1 of 2.');
+    expect(spoken.length, before, reason: 'the voice route speaks the reply itself');
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('a failed progress request while building keeps polling (review of #520)', (tester) async {
+    await _phone(tester);
+    var fail = true;
+    var gets = 0;
+    final project = _project(job: _job(model: false, state: 'rendering'), engine: 'online');
+    final client = MockClient((r) async {
+      if (r.method == 'GET' && r.url.path == '/api/creations/cr_1') {
+        gets += 1;
+        if (gets == 2 && fail) return http.Response('oops', 500);
+        return http.Response(jsonEncode({'ok': true, 'project': project}), 200);
+      }
+      return http.Response('{}', 404);
+    });
+    await tester.pumpWidget(MaterialApp(
+      home: CheLiveStudio(
+        baseUrl: 'https://che.test',
+        headers: const {},
+        projectId: 'cr_1',
+        client: client,
+        viewport: (m) => _FakeViewport(m),
+        loadBundled: (id) async => Uint8List.fromList([1]),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(gets, 1);
+    await tester.pump(const Duration(seconds: 7)); // second request fails
+    await tester.pumpAndSettle();
+    expect(gets, 2);
+    fail = false;
+    await tester.pump(const Duration(seconds: 7)); // and polling continues
+    await tester.pumpAndSettle();
+    expect(gets, 3);
+    await tester.pumpWidget(const SizedBox());
   });
 
   testWidgets('a generated model with no skeleton says it cannot be animated', (tester) async {

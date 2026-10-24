@@ -244,3 +244,18 @@ test('the model routes accept only a held job\'s real GLB up to 16 MB and 404 wh
   assert.equal((await owner(`/api/gpu/jobs/${gen.id}/model.glb`)).status, 200);
   assert.equal((await call('/api/creations/cr_000000000000')).status, 404);
 });
+
+test('at the project limit a new creation is refused and no saved creation is removed (review of #520)', async () => {
+  const { call } = setup();
+  const first = await call('/api/creations', 'POST', { kind: 'person', base: 'che' });
+  assert.equal(first.status, 201);
+  await call(`/api/creations/${first.body.project.id}/save`, 'POST', {});
+  for (let i = 1; i < 100; i++) assert.equal((await call('/api/creations', 'POST', { kind: 'person', base: 'nova' })).status, 201);
+  const over = await call('/api/creations', 'POST', { kind: 'person', base: 'nova' });
+  assert.equal(over.status, 422);
+  assert.equal(over.body.full, true);
+  assert.match(over.body.detail, /Nothing was removed/);
+  const kept = await call(`/api/creations/${first.body.project.id}`);
+  assert.equal(kept.status, 200, 'the first, saved creation is still there');
+  assert.equal((await call('/api/creations')).body.projects.length, 100);
+});

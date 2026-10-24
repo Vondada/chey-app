@@ -542,6 +542,7 @@ extension _CheHomeHubRooms on _CHEHomeState {
               headers: _authHeaders,
               mode: CheLiveStudioMode.animation,
               onRead: (text) => speakText(text, record: false, readOnDemand: true),
+              onSpeak: (text) => unawaited(speakText(text, record: false)),
             ))),
             onOpenCreation: (id) => unawaited(_openCreation(id)),
             onConnectEngine: _connectCreationEngine,
@@ -601,6 +602,7 @@ extension _CheHomeHubRooms on _CHEHomeState {
       headers: _authHeaders,
       projectId: id,
       onRead: (text) => speakText(text, record: false, readOnDemand: true),
+      onSpeak: (text) => unawaited(speakText(text, record: false)),
       onOpenEngineSettings: _openCreationEngine,
     ));
     // Back in the room: refresh My Creations and the engine state.

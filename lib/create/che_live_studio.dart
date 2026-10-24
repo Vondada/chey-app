@@ -201,6 +201,7 @@ class CheLiveStudio extends StatefulWidget {
     this.base = 'che',
     this.mode = CheLiveStudioMode.person,
     this.onRead,
+    this.onSpeak,
     this.onOpenEngineSettings,
     this.client,
     this.viewport,
@@ -215,6 +216,11 @@ class CheLiveStudio extends StatefulWidget {
   final String base;
   final CheLiveStudioMode mode;
   final void Function(String text)? onRead;
+
+  /// Speaks the outcome of an action the owner took with a button or the text field (AGENTS.md: every action is
+  /// reported aloud). Actions by voice are spoken by the voice route itself, so they never speak twice; passive loads
+  /// and polls never speak.
+  final void Function(String text)? onSpeak;
   final VoidCallback? onOpenEngineSettings;
   final http.Client? client;
 
@@ -232,6 +238,7 @@ class CheLiveStudio extends StatefulWidget {
     String base = 'che',
     CheLiveStudioMode mode = CheLiveStudioMode.person,
     void Function(String text)? onRead,
+    void Function(String text)? onSpeak,
     VoidCallback? onOpenEngineSettings,
   }) => MaterialPageRoute<void>(
     builder: (_) => CheLiveStudio(
@@ -241,6 +248,7 @@ class CheLiveStudio extends StatefulWidget {
       base: base,
       mode: mode,
       onRead: onRead,
+      onSpeak: onSpeak,
       onOpenEngineSettings: onOpenEngineSettings,
     ),
   );
@@ -317,6 +325,15 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
     }
   }
 
+  /// True while voice() runs: its reply is spoken by the voice route, so actions inside it do not speak again.
+  bool _inVoice = false;
+
+  /// An explicit action's outcome: banner, haptic and, unless a voice route will speak it, speech.
+  void _say(bool ok, String text) {
+    _report(ok, text);
+    if (!_inVoice) widget.onSpeak?.call(text);
+  }
+
   void _report(bool ok, String text) {
     if (ok) {
       HapticFeedback.mediumImpact();
@@ -373,6 +390,9 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
     if (d == null || d['project'] is! Map) {
       setState(() => loading = false);
       if (first) _report(false, 'Could not load this creation from CHE. Use Refresh to try again.');
+      // A dropped request while a model is building must not stop the updates: try again on the next tick (review of
+      // #520). With no job running, nothing polls.
+      _schedulePoll();
       return;
     }
     final p = Map<String, dynamic>.from(d['project'] as Map);
@@ -467,13 +487,13 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
     setState(() => busy = false);
     if (d == null) {
       const msg = 'That did not work: CHE could not be reached.';
-      _report(false, msg);
+      _say(false, msg);
       return msg;
     }
     final ok = d['ok'] == true && (d['_status'] as int? ?? 500) < 300;
     if (d['project'] is Map) setState(() => project = Map<String, dynamic>.from(d['project'] as Map));
     final said = '${d['spoken'] ?? d['detail'] ?? (ok ? 'Done.' : 'That did not work.')}';
-    _report(ok, said);
+    _say(ok, said);
     if (d['viewport'] is Map) {
       final cmd = Map<String, Object>.from(d['viewport'] as Map);
       await _viewport.command(cmd).catchError((_) {});
@@ -498,7 +518,7 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
     HapticFeedback.selectionClick();
     if (shown.source == 'none') {
       const msg = 'There is no model in the viewport yet.';
-      _report(false, msg);
+      _say(false, msg);
       return msg;
     }
     await _viewport.command(cmd).catchError((_) {});
@@ -513,7 +533,7 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
       'stop' => 'Animation stopped.',
       _ => 'Done.',
     };
-    _report(true, msg);
+    _say(true, msg);
     return msg;
   }
 
@@ -522,14 +542,14 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
       final msg = shown.source == 'generated'
           ? 'This generated model has no skeleton yet, so it cannot be animated. Animation works on the bundled crew models.'
           : 'This model has no animation clips.';
-      _report(false, msg);
+      _say(false, msg);
       return msg;
     }
     final want = clip != null && clips.contains(clip) ? clip : (clips.contains('idle') ? 'idle' : clips.first);
     await _viewport.command({'action': 'animate', 'clip': want}).catchError((_) {});
     setState(() => playing = want);
     final msg = 'Playing the $want animation on the ${shown.source == 'generated' ? 'model' : 'bundled model'}.';
-    _report(true, msg);
+    _say(true, msg);
     return msg;
   }
 
@@ -537,14 +557,14 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
     HapticFeedback.selectionClick();
     if (!engine.paired) {
       widget.onOpenEngineSettings?.call();
-      _report(true, 'Opened Settings, Creation Engine. Pair Colab there once.');
+      _say(true, 'Opened Settings, Creation Engine. Pair Colab there once.');
       return;
     }
     final ok = await launchUrl(
       Uri.parse(engine.notebookUrl),
       mode: LaunchMode.externalApplication,
     ).catchError((_) => false);
-    _report(
+    _say(
       ok,
       ok
           ? 'Opened your Colab notebook. Choose Runtime, Run all. CHE shows Online when the GPU checks in.'
@@ -582,6 +602,15 @@ class CheLiveStudioState extends State<CheLiveStudio> with WidgetsBindingObserve
   /// Voice and typed control while the studio is on screen.
   Future<String?> voice(String words) async {
     if (!(ModalRoute.of(context)?.isCurrent ?? true)) return null;
+    _inVoice = true;
+    try {
+      return await _voice(words);
+    } finally {
+      _inVoice = false;
+    }
+  }
+
+  Future<String?> _voice(String words) async {
     final t = words
         .trim()
         .toLowerCase()

@@ -176,7 +176,9 @@ export function parseEdit(text, params, style) {
 
 // ── Storage ──────────────────────────────────────────────────────────────────────────────────────────────────────
 async function load(storage) { return (await storage.get(PROJECTS_KEY)) || []; }
-async function store(storage, list) { await storage.put(PROJECTS_KEY, list.slice(-MAX_PROJECTS)); }
+// Never evicts: at MAX_PROJECTS a new creation is refused (create below), so no saved work is dropped without the owner
+// asking (AGENTS.md: deleting needs his yes; review of #520).
+async function store(storage, list) { await storage.put(PROJECTS_KEY, list); }
 
 async function engineOf(queue) {
   const v = await queue.view();
@@ -256,7 +258,11 @@ export class CreationStudio {
     const p = { id, kind: 'person', title: String(body.title || `${base.name || base.id} (new person)`).slice(0, 80), base_id: base.id,
       created_at: iso(t), updated_at: iso(t), saved_at: null, current: 0,
       versions: [{ n: 1, at: iso(t), note: `Started from ${base.name || base.id}.`, params, style, job_id: null }] };
-    const list = await load(this.storage); list.push(p); await store(this.storage, list);
+    const list = await load(this.storage);
+    if (list.length >= MAX_PROJECTS) {
+      return { ok: false, full: true, detail: `You have ${list.length} creations, the most CHE keeps. Nothing was removed; delete one you no longer need (CHE asks you first), then create again.` };
+    }
+    list.push(p); await store(this.storage, list);
     return { ok: true, project: await this.detailOf(p) };
   }
 
