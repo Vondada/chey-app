@@ -195,10 +195,10 @@ class _CheBrainTruthScreenState extends State<CheBrainTruthScreen> {
     final tiles = <(IconData, String, String, String)>[
       (Icons.verified_rounded, 'Verified actions', '${v.verifiedActions}', 'merges, deploys, saved memories, finished videos and placed trades with a receipt in the last ${v.windowDays} days'),
       (Icons.remove_circle_outline_rounded, 'Unverified claims removed', '${v.unverified}', 'claims with no receipt behind them'),
-      (Icons.warning_amber_rounded, 'Contradictions', '${v.contradicted}', 'claims a real failure receipt contradicted'),
+      (Icons.error_outline, 'Contradictions', '${v.contradicted}', 'claims a real failure receipt contradicted'),
       (Icons.error_outline_rounded, 'Failed tool executions', '${v.failedTools}', 'tool runs that did not succeed'),
-      (Icons.edit_note_rounded, 'Corrected responses', '${v.corrected}', 'replies changed before you saw them'),
-      (Icons.health_and_safety_rounded, 'Auditor health', '${v.checked} checked', 'claims checked; ${v.inferred} labelled inference, ${v.stale} stale'),
+      (Icons.edit_rounded, 'Corrected responses', '${v.corrected}', 'replies changed before you saw them'),
+      (Icons.health_and_safety_outlined, 'Auditor health', '${v.checked} checked', 'claims checked; ${v.inferred} labelled inference, ${v.stale} stale'),
       (Icons.fact_check_rounded, 'Evidence coverage', v.coverageLabel, 'verified claims out of all checked claims'),
     ];
     return ListView(
@@ -248,7 +248,7 @@ class _CheBrainTruthScreenState extends State<CheBrainTruthScreen> {
               : row.verdict == 'INFERRED'
                   ? Icons.lightbulb_outline_rounded
                   : row.verdict == 'CONTRADICTED'
-                      ? Icons.warning_amber_rounded
+                      ? Icons.error_outline
                       : Icons.remove_circle_outline_rounded),
           title: Text(row.claimLabel),
           subtitle: Text('${row.verdict} · ${row.outcome.replaceAll('_', ' ')} · ${row.timeLabel}'),

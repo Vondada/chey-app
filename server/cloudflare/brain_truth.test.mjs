@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import test from 'node:test';
-import { brainTruthSummary, brainTruthView } from './brain_truth.js';
+import { brainTruthSummary, brainTruthView, truthScreenAsk } from './brain_truth.js';
 import { AUDIT_LEDGER_KEY } from './hallucination_auditor.js';
 import { RECEIPTS_KEY } from './truth_layer.js';
 
@@ -39,6 +39,8 @@ test('seeded ledger rows and receipts are counted exactly; old rows and a merge 
       { at: at(3000), request_id: 'req-3', claim_type: 'live_price', verdict: 'CONTRADICTED', outcome: 'removed', contradiction: 'live_price' },
       { at: at(4000), request_id: 'req-4', claim_type: 'pr_merged', verdict: 'INFERRED', outcome: 'kept_as_inference' },
       { at: at(40 * 24 * 3600_000), request_id: 'old', claim_type: 'pr_merged', verdict: 'VERIFIED', outcome: 'kept' },
+      // Codex (#510): inside the ledger's 30-day retention but outside the seven days the view speaks of.
+      { at: at(14 * 24 * 3600_000), request_id: 'fortnight', claim_type: 'pr_merged', verdict: 'VERIFIED', outcome: 'kept' },
     ],
     [RECEIPTS_KEY]: [
       { kind: 'merged', number: 508, sha: '0a86b70', at: at(5000) },
@@ -53,7 +55,7 @@ test('seeded ledger rows and receipts are counted exactly; old rows and a merge 
     ],
   });
   const view = await brainTruthView(storage, { now: NOW });
-  assert.equal(view.health.checked, 4, 'the 40-day-old row is past retention');
+  assert.equal(view.health.checked, 4, 'the 40-day-old row is past retention and the 14-day-old row is outside the seven-day window');
   assert.equal(view.health.verified, 1);
   assert.equal(view.health.unverified, 1);
   assert.equal(view.health.contradicted, 1);
@@ -103,4 +105,21 @@ test('Worker: /api/brain/truth is owner-only and returns the ledger view', async
   assert.equal(view.body.health.evidence_coverage, 0);
   assert.equal(view.body.recent[0].claim_type, 'pr_merged');
   assert.equal(view.body.window_days, 7);
+});
+
+test('Codex (#510): "open Truth and Verification" is a spoken route; the chat reply opens the screen and speaks the summary', async () => {
+  for (const ask of ['Open Truth and Verification', 'CHE, show me the truth screen', 'go to verification page', 'open truth & verification, please']) assert.ok(truthScreenAsk(ask), ask);
+  for (const ask of ['what is the truth about inflation', 'open the office', 'verification code for my login']) assert.ok(!truthScreenAsk(ask), ask);
+  const storage = memStorage({ [AUDIT_LEDGER_KEY]: [{ at: new Date().toISOString(), request_id: 'r', claim_type: 'pr_merged', verdict: 'UNVERIFIED', outcome: 'removed' }] });
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => ({ response: 'A model answer.' }) } };
+  const state = new CheState({ storage, waitUntil: () => {} }, env);
+  env.CHE_STATE = { getByName: () => state };
+  const post = (path, body, token = '') => worker.fetch(new Request(`https://che.example${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body) }), env);
+  const token = (await (await post('/api/pair', { code: '123456' })).json()).device_token;
+  const raw = await (await post('/api/chat', { message: 'Open Truth and Verification', history: [] }, token)).text();
+  const done = raw.split('\n').filter(Boolean).map((l) => JSON.parse(l)).find((i) => i.type === 'done');
+  assert.equal(done.source, 'che_brain_truth');
+  assert.equal(done.open_screen, 'brain_truth');
+  assert.equal(done.model_calls, 0);
+  assert.match(raw, /Opening Truth and Verification, sir\. In the last seven days I checked 1 claim/);
 });

@@ -8,7 +8,9 @@ export const RECENT_AUDIT_ROWS = 20;
 
 /** The view behind GET /api/brain/truth. Ledger rows carry labels only, so nothing here is reply or owner text. */
 export async function brainTruthView(storage, { now = Date.now() } = {}) {
-  const rows = await auditLedger(storage, { now });
+  // The ledger keeps 30 days; this view speaks of "the last seven days", so its rows are cut to the same window
+  // as the receipts (Codex, #510: a 14-day-old verified claim was counted as checked this week).
+  const rows = (await auditLedger(storage, { now })).filter((row) => now - Date.parse(row.at || 0) <= TRUTH_WINDOW_MS);
   const receipts = await loadReceipts(storage, { sinceMs: TRUTH_WINDOW_MS, now });
   const count = (pred) => receipts.filter(pred).length;
   const verified_actions = {
@@ -25,6 +27,12 @@ export async function brainTruthView(storage, { now = Date.now() } = {}) {
   }));
   return { health: auditHealth(rows), receipts: { verified_actions, failed_tools }, recent, window_days: 7, at: new Date(now).toISOString() };
 }
+
+// "Open Truth and Verification", "show me the truth screen", "go to verification": the spoken route to the Brain
+// Room's Truth & Verification section (owner, AGENTS.md: every screen needs a voice route, never a menu tap).
+const OPEN_TRUTH_ASK = /^(?:please\s+)?(?:open|show(?: me)?|go to|take me to|bring up)\s+(?:the\s+)?(?:truth(?:\s*(?:and|&)\s*verification)?|verification)(?:\s+(?:screen|page|section|view|room|tab))?\s*[.!?]?$/i;
+const plainAsk = (m) => String(m || '').trim().replace(/^(?:che|chey|hey che|okay|ok|so|sir)[,\s]+/i, '').replace(/[,\s]+(?:please|sir)\s*[.!?]?$/i, '');
+export function truthScreenAsk(message) { return OPEN_TRUTH_ASK.test(plainAsk(message)); }
 
 /** The spoken form, the same facts the page shows. */
 export function brainTruthSummary(view) {
