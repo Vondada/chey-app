@@ -77,6 +77,14 @@ Then, on GitHub:
 
 ## 2. Current position
 
+**Claude, 2026-10-24T23:45:28.726Z — resumed after the session limit; #523 is merged (Codex finished it). First real production audit numbers below.**
+- Branch `claude/che-latency-optimization-8ruaus` synced to main `0c43197` (065af55, no diff).
+- **Trading audit (live deploy 40135088611, read-only):** the simulation has 1,100 closed and 18 open (0 on retired feeds). Its total is −8,061.76 R, made of gross −227.82 R from price moves and −7,833.94 R in costs; 316 trades had costs larger than their risk. There are 0 record problems. Journal: paper:futures 219 records, 0 problems. Research: 92 units, 13,215 backtest trades, 0 fixture units, 0 failed look-ahead, 0 without a data hash. **2026-09-22: UTC 0, New York 0, CME day 0**, so the owner's ≈ −$1,018 is in none of the sim, journal or research ledgers. Next: check the broker (Alpaca paper) and any other P&L store.
+- **Projects audit:** 14 stored projects shown as 9 cards (1 duplicate group, every copy kept). Roblox: 4 projects, 0 with Luau, 0 crew results, 0 playtested. The only real Roblox game is `roblox/che-blade-arena` (built by CI, not playtested).
+- Dispatched `che-worker-deploy.yml` with `creation_check: true` on main: the first real Generate → free worker (with the User-Agent fix) → GLB → viewport run. Result pending.
+- **Gap lanes resumed** (local, unpushed, follow-up PR after review): `lane/brain-visual` (glowing brain renderer, CONNECTION_CREATED ledger events), `lane/music-gaps` (M4A export, MP3/M4A import, live monitoring, real-voice pitch test; native, needs an IPA), `lane/creation-gaps` (free-form objects, a less blocky suit, CC0 textures at job time, Code Studio Stop for running jobs, Strategy Lab deep link), `lane/trading-gaps` (crypto paper replay, Office calendar rollups, Alpaca paper fills, "audit September 22", Diagnose Rithmic, CI crypto backtest).
+- Public IPA release is still `disabled_manually`; publishing needs the owner's yes.
+
 **Codex final release checkpoint, 2026-10-24 22:02:40 UTC — #523 merged and backend LIVE.**
 - Main/merge: `0c43197c66529ee0902ee373fc0889467490ee71`. Final pre-merge head `2f15482bf97583333eccb10bf2c30fb312c4d12d` passed all seven gating checks; post-merge Flutter and Worker checks passed too. Only open PR at takeover was #523; it is now merged.
 - Worker deploy `40135088611` SUCCESS. Fresh `/health` HTTP 200 confirms `0c43197c6652`, version `80020cfb-fcc6-4c86-9e33-bee80fc646d4`. Live memory 22/22, Command Center 5/5, Knowledge Atlas 11/11 and voice passed. No live orders were placed.
