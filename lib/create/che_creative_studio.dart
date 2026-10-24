@@ -362,8 +362,8 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
               tags: const ['Apps', 'Websites', 'Games', 'Software', 'Coding jobs'],
               primary: ('New app, site or game', a.onNewApp),
               secondary: [
-                ('Coding jobs in the Office', Icons.workspaces_outline, a.onOpenOffice),
-                ('Command Center', Icons.apps_rounded, a.onOpenCommandCenter),
+                ('Coding jobs', Icons.workspaces_outline, a.onOpenOffice),
+                ('Commands', Icons.apps_rounded, a.onOpenCommandCenter),
               ],
             ),
             _StudioCard(
