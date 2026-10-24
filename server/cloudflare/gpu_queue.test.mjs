@@ -117,6 +117,27 @@ test('the owner cancels a rendering job; the worker is told to stop and cannot c
   assert.equal((await q.control('retry', job.id)).job.state, 'queued');
 });
 
+test('owner pause stops the worker, keeps the stages and is never claimed; resume puts it back in line', async () => {
+  const { q } = setup();
+  const { job } = await q.claim('colab-1', { gpu: GPU });
+  const p = await q.control('pause', job.id);
+  assert.equal(p.ok, true); assert.equal(p.job.state, 'paused'); assert.equal(p.job.owner_paused, true);
+  const hb = await q.heartbeat('colab-1', { job_id: job.id });
+  assert.equal(hb.stop, true); assert.match(hb.reason, /paused by the owner/);
+  // No worker takes an owner-paused job, though the other seeded jobs are still claimable.
+  for (let i = 0; i < 5; i++) {
+    const c = await q.claim(`colab-${i + 2}`, { gpu: GPU });
+    assert.notEqual(c.job?.id, job.id);
+  }
+  const view = (await q.view()).jobs.find((j) => j.id === job.id);
+  assert.equal(view.display_state, 'Paused'); assert.match(view.status_line, /Paused by you .* Say resume to continue/);
+  assert.equal((await q.control('pause', job.id)).ok, false, 'already paused');
+  const r = await q.control('resume', job.id);
+  assert.equal(r.ok, true); assert.equal(r.job.state, 'queued'); assert.equal(r.job.owner_paused, false);
+  assert.equal((await q.claim('colab-9', { gpu: GPU })).job.id, job.id, 'resumed: next in line');
+  assert.equal((await q.control('resume', job.id)).ok, false, 'not paused');
+});
+
 test('no GPU in the session puts the job back in the queue instead of failing it; a failed face check fails it', async () => {
   const { q } = setup();
   let { job } = await q.claim('colab-1', { gpu: GPU });

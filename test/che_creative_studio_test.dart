@@ -30,8 +30,14 @@ final _projects = <Map<String, dynamic>>[
 ];
 
 class _Calls {
+  _Calls({this.workspaces = false});
+
+  /// With the workspaces this build wires (hub_rooms.dart): Code Studio and the project manager.
+  final bool workspaces;
   final list = <String>[];
   CheStudioActions actions() => CheStudioActions(
+        onOpenCodeWorkspace: workspaces ? () => list.add('code workspace') : null,
+        onOpenProjectManager: workspaces ? () => list.add('project manager') : null,
         onOpenFilmStudio: () => list.add('film'),
         onNewVideo: () => list.add('new video'),
         onOpenTheater: () => list.add('theater'),
@@ -209,7 +215,7 @@ void main() {
 
   testWidgets('each studio button reaches its handler', (tester) async {
     await _phone(tester);
-    final calls = _Calls();
+    final calls = _Calls(workspaces: true);
     await tester.pumpWidget(_studio(calls));
     await tester.pumpAndSettle();
     final buttons = {
@@ -218,8 +224,9 @@ void main() {
       'studio-film-Theater': 'theater',
       'studio-music-primary': 'music',
       'studio-music-New song or beat': 'new song',
-      'studio-code-primary': 'new app',
-      'studio-code-Coding jobs': 'office',
+      'studio-code-primary': 'code workspace',
+      'studio-code-New app, site or game': 'new app',
+      'studio-code-The crew': 'office',
       'studio-code-Commands': 'command center',
       'studio-art-primary': 'character generator',
       'studio-art-Art Studio': 'art studio',
@@ -408,7 +415,7 @@ void main() {
     expect(read, isEmpty);
     await tester.tap(find.byKey(const ValueKey('studio-read')));
     expect(read.single, contains('1 Create Person, 2 Create Object, 3 Create Room, 4 Create Animation, 5 My Creations, '
-        '6 Active Projects, 7 More to create, 8 Film Studio, 9 Music Studio, 10 Code Studio, 11 Art and Character Studio'));
+        '6 Active Projects, 7 More to create, 8 Film Studio, 9 Music Studio, 10 Code Studio, 11 Art Studio'));
     expect(read.single, contains('Waiting for a worker.'));
     expect(read.single, isNot(contains('not built yet')));
     expect(read.single, contains('No active jobs.'));
@@ -550,7 +557,8 @@ void main() {
     final voice = CheCreativeStudio.voiceHandler!;
     expect(await voice('tell me a joke'), isNull, reason: 'anything else goes to Chat');
     expect(await voice('read'), contains('1 Create Person, 2 Create Object'));
-    expect(await voice('eleven'), contains('GPU jobs and Pair Colab are in Settings, Connections, Cloud Computer'));
+    expect(await voice('eleven'), startsWith('Opening Art Studio for images.'));
+    expect(calls.list.last, 'art studio');
     // Create Object by number: the families as a numbered list, then a number starts one and CHE says the Worker's answer.
     final objects = await voice('two');
     await tester.pumpAndSettle();
@@ -610,5 +618,61 @@ void main() {
     expect(await CheCreativeStudio.voiceHandler!('four'), isNull);
     await tester.pumpWidget(const MaterialApp(home: SizedBox()));
     expect(CheCreativeStudio.voiceHandler, isNull);
+  });
+
+  // Owner, 2026-10-24: "every Studio button goes to its real destination ... Code opens a dedicated coding
+  // workspace (not Home or Chat)". The numbered choices and studio buttons open workspaces, never a chat prompt.
+  testWidgets('every Studio button and numbered choice opens its real destination, never Chat', (tester) async {
+    await _phone(tester);
+    final calls = _Calls(workspaces: true);
+    await tester.pumpWidget(_studio(calls));
+    await tester.pumpAndSettle();
+    final voice = CheCreativeStudio.voiceHandler!;
+    // Numbered choices 8-11 open the studios themselves.
+    expect(await voice('eight'), 'Opening Film Studio.');
+    expect(calls.list.last, 'film');
+    expect(await voice('nine'), 'Opening Music Studio.');
+    expect(calls.list.last, 'music');
+    expect(await voice('ten'), 'Opening Code Studio.');
+    expect(calls.list.last, 'code workspace');
+    expect(await voice('eleven'), startsWith('Opening Art Studio'));
+    expect(calls.list.last, 'art studio');
+    expect(await voice('open code studio'), 'Opening Code Studio.');
+    expect(calls.list.last, 'code workspace');
+    expect(await voice('coding jobs'), 'Opening Code Studio.');
+    expect(await voice('open the project manager'), 'Opening the project manager.');
+    expect(calls.list.last, 'project manager');
+    // Active Projects opens the project manager; My Creations lists 3D creations and the saved pictures and videos.
+    await tester.tap(find.byKey(const ValueKey('studio-tile-active')));
+    await tester.pumpAndSettle();
+    expect(calls.list.last, 'project manager');
+    await tester.tap(find.byKey(const ValueKey('studio-tile-mine')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('studio-new-Pictures and videos')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('studio-new-Pictures and videos')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('saved-visuals')), findsOneWidget);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    // Create Object and Create Room open their real choices (Blender object and room jobs on the Creation Engine).
+    expect(await voice('three'), startsWith('Create Room. Say a number:'));
+    await tester.pumpAndSettle();
+    expect(await voice('cancel'), startsWith('Closed'));
+    await tester.pumpAndSettle();
+    // Every studio-card button, by key: its destination.
+    final buttons = {
+      'studio-film-primary': 'film', 'studio-film-New video': 'new video', 'studio-film-Theater': 'theater',
+      'studio-music-primary': 'music', 'studio-music-New song or beat': 'new song',
+      'studio-code-primary': 'code workspace', 'studio-code-New app, site or game': 'new app', 'studio-code-The crew': 'office',
+      'studio-code-Commands': 'command center',
+      'studio-art-primary': 'character generator', 'studio-art-Art Studio': 'art studio', 'studio-art-New image': 'new image',
+    };
+    for (final e in buttons.entries) {
+      final f = find.byKey(ValueKey(e.key));
+      await _scrollTo(tester, f);
+      await tester.tap(f);
+      await tester.pump();
+      expect(calls.list.last, e.value, reason: e.key);
+    }
   });
 }

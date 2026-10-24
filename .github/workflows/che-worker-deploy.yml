@@ -668,6 +668,24 @@ jobs:
           }
           JS
 
+      - name: Audit the owner's stored projects (counts only)
+        continue-on-error: true
+        run: |
+          node --input-type=module <<'JS'
+          // Read-only (project_library.js projectAudit): how many projects, Roblox projects, copies and Luau scripts
+          // the owner's CHE really holds. Counts only: no title, brief or script reaches this public log.
+          import { appendFileSync } from 'node:fs';
+          const res = await fetch('https://chey-app.henryjavoni.workers.dev/api/projects/probe/audit', {
+            headers: { 'X-CHE-Memory-Probe': process.env.CHE_VOICE_PROBE_TOKEN }, signal: AbortSignal.timeout(60000),
+          }).catch((e) => ({ ok: false, status: String(e) }));
+          const a = res.ok ? await res.json() : null;
+          if (!a) { console.log(`::warning title=Projects audit::The live Worker did not answer (${res.status}).`); process.exit(0); }
+          const r = a.roblox;
+          const line = `${a.stored_projects} stored projects as ${a.cards} cards (${a.duplicate_groups} duplicate groups, every copy kept); creative active ${a.creative.active}, paused ${a.creative.paused}, completed ${a.creative.completed}, archived ${a.creative.archived}; AI/code/research ${Object.values(a.ai_code_research).reduce((x, y) => x + y, 0)}. Roblox: ${r.cards} projects from ${r.stored_copies} copies, ${r.with_scripts} with Luau (${r.scripts} scripts), ${r.crew_results}/${r.crew_tasks} crew tasks with results, ${r.playtested} playtested`;
+          console.log(`::notice title=Projects audit::${line}`);
+          appendFileSync(process.env.GITHUB_STEP_SUMMARY, `**Projects audit (owner CHE, counts only):** ${line}.\n`);
+          JS
+
       - name: Render and verify one real video through the live Worker (opt-in)
         if: inputs.video_check
         run: |

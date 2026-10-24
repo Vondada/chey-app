@@ -148,7 +148,7 @@ export function compatible(j, gpuWorker, gpuOnline) {
   const need = needOf(j);
   return need === 'none' || gpuWorker || (need === 'preferred' && !gpuOnline);
 }
-const waiting = (j) => j.state === 'queued' || j.state === 'paused';
+const waiting = (j) => (j.state === 'queued' || j.state === 'paused') && !j.owner_paused;
 /** Claim order: owner priority first, then a paused job (it has finished work to keep), then the oldest. */
 export function claimOrder(a, b) {
   return (PRIORITIES[a.priority] ?? 1) - (PRIORITIES[b.priority] ?? 1) || (a.state === 'paused' ? 0 : 1) - (b.state === 'paused' ? 0 : 1)
@@ -219,6 +219,15 @@ export class GpuQueue {
     } else if (action === 'retry') {
       if (!['failed', 'cancelled'].includes(j.state)) return { ok: false, detail: `Only a failed or cancelled job can be retried; this one is ${j.state}.` };
       j.failures = 0; note(j, t, 'queued', 'Queued again by the owner. Finished views in Drive are reused.');
+    } else if (action === 'pause') {
+      // Owner pause: no worker claims it until resume; a rendering worker is told to stop at its next heartbeat and the
+      // finished stages stay as checkpoints.
+      if (!['queued', 'paused', 'rendering'].includes(j.state)) return { ok: false, detail: `Only a waiting or running job can be paused; this one is ${j.state}.` };
+      if (j.owner_paused) return { ok: false, detail: 'That job is already paused.' };
+      j.owner_paused = true; j.lease = null; j.cloud = null; note(j, t, 'paused', 'Paused by the owner. Finished stages are kept; say resume to continue.');
+    } else if (action === 'resume') {
+      if (!j.owner_paused) return { ok: false, detail: `That job is not paused; it is ${j.state}.` };
+      j.owner_paused = false; note(j, t, 'queued', 'Resumed by the owner. Finished stages are reused.');
     } else return { ok: false, detail: 'Unknown action.' };
     await this.save(jobs);
     return { ok: true, job: j };
@@ -314,15 +323,15 @@ export class GpuQueue {
 
   async held(workerId, id) {
     const jobs = await this.jobs(); const j = jobs.find((x) => x.id === id);
-    return { jobs, j: j && j.state === 'rendering' && j.lease?.worker_id === workerId ? j : null, gone: j?.state === 'cancelled' };
+    return { jobs, j: j && j.state === 'rendering' && j.lease?.worker_id === workerId ? j : null, gone: j?.state === 'cancelled', paused: Boolean(j?.owner_paused) };
   }
 
   /** Worker: alive. Extends the lease on the job it holds; tells it to stop if the owner cancelled it. */
   async heartbeat(workerId, info = {}) {
     await this.touchWorker(workerId, info);
     if (!info.job_id) return { ok: true };
-    const { jobs, j, gone } = await this.held(workerId, info.job_id);
-    if (!j) return { ok: true, stop: true, reason: gone ? 'cancelled by the owner' : 'this worker no longer holds the job' };
+    const { jobs, j, gone, paused } = await this.held(workerId, info.job_id);
+    if (!j) return { ok: true, stop: true, reason: gone ? 'cancelled by the owner' : paused ? 'paused by the owner' : 'this worker no longer holds the job' };
     j.lease.expires_ms = this.now() + LEASE_MS; await this.save(jobs);
     return { ok: true, stop: false };
   }
@@ -568,6 +577,7 @@ export function displayOf(j) {
       return { display_state: j.state === 'paused' ? 'Paused' : 'Starting a cloud worker',
         status_line: `${j.state === 'paused' ? 'Paused; ' : ''}CHE asked GitHub for a free cloud worker at ${hhmm(c.at)} UTC; it usually picks the job up within a few minutes.${kept}${attempt}` };
     }
+    if (j.owner_paused) return { display_state: 'Paused', status_line: `Paused by you at ${hhmm(last?.at)} UTC after ${done} of ${views} views. Say resume to continue.${kept}` };
     if (j.state === 'paused') return { display_state: 'Paused', status_line: `Paused at ${hhmm(last?.at)} UTC after ${done} of ${views} views: the worker stopped answering. The next compatible worker resumes it.${kept}${c?.reason ? ` ${c.reason}` : ''}` };
     const need = needOf(j);
     const why = c?.reason || (need === 'required' ? 'This job needs a GPU: it runs when your Colab T4 notebook is open.' : 'Waiting for a worker.');
@@ -692,7 +702,7 @@ export async function gpuOwnerRoute(ctx, path, request, body) {
   if (ident) return ident;
   if (request.method !== 'POST') return json({ detail: 'Use POST.' }, 405);
   if (path === '/api/gpu/jobs') { const out = await q.enqueue(body || {}); return json(out, out.ok ? 202 : 422); }
-  const act = /^\/api\/gpu\/jobs\/(cancel|retry)$/.exec(path);
+  const act = /^\/api\/gpu\/jobs\/(cancel|retry|pause|resume)$/.exec(path);
   if (act) { const out = await q.control(act[1], String(body?.id || '')); return json(out, out.ok ? 200 : 409); }
   if (path === '/api/gpu/worker-token') {
     return json({ ok: true, token: await q.createToken(), note: 'Shown once. Save it in Colab as the secret CHE_GPU_TOKEN. Creating a new one replaces it.' });
