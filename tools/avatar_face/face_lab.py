@@ -138,6 +138,9 @@ if 'eyes' in STEPS:
 # ── Step: lips (gloss and lip lines), baby hairs, no strands across the face ───────────────────────────────────────
 if 'lips' in STEPS:
     from lips_hairline import baby_hairs, clear_face_strands, lip_gloss
+    if 'detail' in STEPS:
+        from skin_detail import hide_painted_brows, tone_variation
+        print('DETAIL brow cover verts', hide_painted_brows(fwd, up), 'tone', tone_variation(), flush=True)
     print('LIPS gloss', lip_gloss(), 'cleared strands', clear_face_strands(fwd, up, eye),
           'baby hairs', baby_hairs(fwd, up, eye), flush=True)
 

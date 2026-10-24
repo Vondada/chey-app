@@ -105,7 +105,7 @@ def baby_hairs(fwd, up, eye_mid, n=520, seed=21):
     return len(strands)
 
 
-def clear_face_strands(fwd, up, eye_mid, half_width=0.055):
+def clear_face_strands(fwd, up, eye_mid, half_width=0.08):
     """Drops strand-hair curves with any point in front of the face (inside the face's width, below the hairline)."""
     removed = 0
     for ob in [o for o in bpy.context.scene.objects if o.type == 'CURVES' and o.name not in ('BabyHairs', 'Lashes_strands', 'Brow_strands')]:
@@ -121,7 +121,7 @@ def clear_face_strands(fwd, up, eye_mid, half_width=0.055):
             a, b = offs[ci], offs[ci + 1]
             for pi in range(a, b):
                 p = mw @ Vector(pos[pi * 3:pi * 3 + 3]) - eye_mid
-                if abs(p.dot(side)) < half_width and -0.11 < p.dot(up) < 0.045 and p.dot(fwd) > 0.0:
+                if abs(p.dot(side)) < half_width and -0.2 < p.dot(up) < 0.045 and p.dot(fwd) > 0.01:
                     bad.append(ci); break
         if bad and hasattr(cv, 'remove_curves'):
             cv.remove_curves(indices=bad)
