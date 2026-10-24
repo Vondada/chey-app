@@ -141,3 +141,41 @@ test('a lie that reaches the model path is removed and lands in the audit ledger
   assert.ok(ledger.some((row) => /^truth_layer/.test(row.claim_type)), 'the truth-layer removal is in the ledger');
   assert.ok(ledger.every((row) => row.verdict && row.claim_type && row.request_id && !/sky is blue|PR #999/.test(JSON.stringify(row))), 'rows hold labels, not text');
 });
+
+test('Codex (#511, #512): a correction and the app\'s Memory screen both earn the receipt "did you save that memory?" reads', async () => {
+  const che = await owner();
+  await che.say('Remember that my favorite drink is Sprite.');
+  const corrected = await che.say('Actually, my favorite drink is coffee.');
+  assert.match(corrected.reply, /^Updated, sir/);
+  const after = await che.say('Did you save that memory?');
+  assert.match(after.reply, /^Yes, sir\. I saved "my favorite drink is coffee\.?"/i, 'the confirmation names the active fact, not the superseded one');
+  assert.equal(after.modelCalls, 0);
+});
+
+test('Codex (#512): /api/memory/add writes the same read-back receipt as the chat path', async () => {
+  const saved = new Map();
+  const env = { CHE_PAIR_CODE: '123456', CHE_DISABLE_KEYLESS_AI: '1', AI: { run: async () => ({ response: 'I am not sure, sir.' }) } };
+  const state = new CheState({ storage: storageFor(saved) }, env);
+  env.CHE_STATE = { getByName: () => state };
+  const send = (path, body, token = '') => worker.fetch(new Request(`https://che.example${path}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body),
+  }), env);
+  const token = (await (await send('/api/pair', { code: '123456' })).json()).device_token;
+  const added = await (await send('/api/memory/add', { memory: 'My favorite drink is Sprite' }, token)).json();
+  assert.equal(added.ok, true);
+  const raw = await (await send('/api/chat', { message: 'Did you save that memory?', history: [] }, token)).text();
+  assert.match(replyFromNdjson(raw), /^Yes, sir\. I saved "My favorite drink is Sprite"/i);
+});
+
+test('Codex (#510): repeating a memory saved earlier is a fresh confirmation, not the stale receipt', async () => {
+  const che = await owner();
+  await che.say('Remember that my favorite drink is Sprite.');
+  // Age the first receipt past the half-hour window the question reads.
+  const receipts = che.saved.get('che_receipts') || [];
+  for (const r of receipts) if (r.kind === 'memory_saved') r.at = new Date(Date.now() - 3 * 3600_000).toISOString();
+  che.saved.set('che_receipts', receipts);
+  const again = await che.say('Remember that my favorite drink is Sprite.');
+  assert.match(again.reply, /remember that/i);
+  const after = await che.say('Did you save that memory?');
+  assert.match(after.reply, /^Yes, sir/, 'the repeated save is confirmed from its own fresh receipt');
+});
