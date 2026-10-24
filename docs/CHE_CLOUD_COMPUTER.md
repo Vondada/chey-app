@@ -50,7 +50,7 @@ The Cloud Computer is one manager over the compute CHE already had. It adds no s
 | Say | Command | Does |
 |---|---|---|
 | "Open your cloud computer" | `/cloud-open` | Opens the room and says the summary |
-| "Create a Blender animation (of …)" | `/cloud-blender` | Says that no provider has Blender, what exists (the bpy character pipeline) and the smallest addition. Nothing starts |
+| "Create a Blender animation (of …)" | `/cloud-blender` | Says that 3D models build on the free cloud Blender worker, but no workflow renders an animation to MP4 yet, and names the smallest addition. Nothing starts |
 | "Render my YouTube video" | `/cloud-render` | Gives the latest render's real state and where renders run. A new render is "make a faceless video about …" |
 | "Run your coding tests" | `/cloud-tests` | Prepares a `flutter-check.yml` run and asks for approval |
 | "Check your open pull requests" | `/cloud-prs` | Reads the open PRs from GitHub as a numbered list |
@@ -62,10 +62,34 @@ Questions ("what is a cloud computer?") and other sentences do not match. "Cance
 
 ## Blockers (honest status)
 
-- **No Blender anywhere.** No workflow installs Blender, and there is no self-hosted runner. `tools/character_pipeline/build_che_character.py` uses `bpy==5.0.1` (Python 3.11), but only by hand. The smallest addition is one ubuntu-latest workflow: setup-python 3.11, `pip install bpy==5.0.1`, render frames on the CPU, encode them with ffmpeg. That workflow is not written. It needs a pull request and the owner's review, and it would spend Actions minutes.
-- **No GPU** on the Worker or the GitHub-hosted runners. The film farm (Kaggle or Hugging Face) is the only GPU path, needs a token, and has never been verified from this Worker.
+- **Blender: 3D models only.** The Creation Engine's free cloud CPU worker runs Blender for Create → Generate (see Creation workers below). No workflow yet renders a Blender animation to MP4 (`blender_render` stays blocked and says so).
+- **GPU:** none on the Worker or the GitHub-hosted runners. Your Colab T4 joins while its notebook runs. The film farm (Kaggle or Hugging Face) needs a token and has never been verified from this Worker.
 - **GitHub Actions billing is not verified.** CHE has not read the repository's visibility or the account's billing. GitHub-hosted minutes are free for public repositories, but a private repository spends the account's included minutes and can be billed past them. That is why every new GitHub dispatch from the Cloud Computer waits for approval.
 - **Network egress.** The REA browser can open only public pages that the runner's network allows. Blocked hosts fail and are reported as failed, not as success.
 - **No arbitrary file transcode.** ffmpeg exists on the runner, but no workflow accepts an arbitrary file. `media_transcode` says so and queues nothing.
 - **`CHE_COMPUTER_URL`** is listed as a provider, but its software is not reported to CHE, so it is never selected for a template.
 - **Not verified live:** this change was tested offline only, with a fake GitHub (`cloud_computer.test.mjs`) and a widget test. No workflow was dispatched, and nothing has been tested on the iPhone or in production.
+
+## Creation workers (2026-10-24)
+
+The Creation Engine's workers are part of this one Cloud Computer, not a second system. Both entries are declared once in
+`creation_orchestrator.js` (`CREATION_PROVIDERS`), and the `PROVIDERS` list here includes them:
+
+| Worker | Starts by itself? | Cost | Notes |
+|---|---|---|---|
+| GitHub cloud CPU Blender worker (`che-creation-worker.yml`) | Yes. Create → Generate queues the job, and CHE dispatches the workflow when no worker can take it. | $0 while the repository is public. CHE re-reads the visibility (cached for an hour) before every start and refuses if the repository is private. | CPU only, so slower. Authenticates with GitHub OIDC; there is no secret. |
+| Your Colab T4 (`notebooks/CHE_GPU_Face_Preview.ipynb`) | No. | $0, your own free session. | Paired once with Pair Colab. The token stays in Colab Secrets and CHE keeps the pairing. |
+
+**Why CHE cannot start the Colab GPU unattended.**
+- Free Colab runtimes run only from an open notebook. The Colab FAQ says free resources favour interactive notebook use and may end sessions driven in other ways.
+- Google's official Colab CLI (June 2026, `googlecolab/google-colab-cli`) can start runtimes. But it needs your Google credential on the machine that runs it, documents no free-tier terms, and can spend paid Colab compute units. CHE does not use it under the $0 rule.
+
+**When the GPU stops:**
+- A GPU-only job shows **Waiting for GPU** and resumes from its saved stages when a GPU checks in.
+- A Create Person job moves to the free cloud CPU.
+
+**What the app does:**
+- In ordinary use the app never opens Colab. "Connect", "create a person" and "continue creating" stay inside CHE.
+- The only Colab link is the explicit setup button in Settings → Connections → Cloud Computer.
+
+**Live proof.** The deploy workflow's `creation_check` input runs Generate on the live Worker. It waits for the real worker, checks the GLB against its receipt, and opens it in the Live Studio viewport (`creation_probe.js`, `tools/creation_open_in_studio.mjs`).

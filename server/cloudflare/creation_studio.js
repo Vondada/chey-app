@@ -372,13 +372,16 @@ function summary(p, jobs) {
   };
 }
 
+// The claim note names the worker ("… GitHub cloud CPU …" / "CPU (4 cores)"); a CPU start is never labelled GPU.
+const cpuNote = (n) => /\bCPU\b|github cloud|cloud worker/i.test(n);
+
 /** Real stages from the job's own history, newest last: nothing here is inferred or simulated. */
 function stagesOf(job) {
   if (!job) return [];
   return (job.history || []).map((h) => {
     const n = String(h.note || '');
     const label = /^Geometry ready/.test(n) ? 'Geometry ready' : /^Skeleton verified/.test(n) ? n.replace(/\.$/, '') : /^Preview .* arrived/.test(n) ? n.replace(/\.$/, '')
-      : h.state === 'queued' ? 'Queued' : h.state === 'rendering' ? (/^Resumed/.test(n) ? 'Resumed on the GPU' : 'Started on the GPU')
+      : h.state === 'queued' ? 'Queued' : h.state === 'rendering' ? `${/^Resumed/.test(n) ? 'Resumed' : 'Started'} on ${cpuNote(n) ? 'a free cloud CPU worker' : 'the GPU'}`
         : h.state === 'completed' ? 'Completed' : h.state === 'failed' ? 'Failed' : h.state === 'paused' ? 'Paused' : h.state === 'cancelled' ? 'Cancelled' : h.state;
     return { at: h.at, label, state: h.state, note: n };
   });

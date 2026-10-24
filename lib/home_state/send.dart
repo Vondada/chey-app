@@ -262,6 +262,22 @@ extension _CheHomeSend on _CHEHomeState {
       );
       return true;
     }
+    // Creation by voice from any screen, all inside CHE (owner, 2026-10-24: never a website in ordinary use).
+    final wake = r'^\W*(?:(?:che|chey|chay)[,:]?\s+)?';
+    if (RegExp('$wake(?:create|make|build)(?: me)? (?:a |an )?(?:new )?(?:person|character|human|avatar)\\W*\$').hasMatch(lower)) {
+      _openCreativeStudio(say: 'create a person');
+      return true;
+    }
+    if (RegExp('$wake(?:continue|resume|keep) (?:creating|building|my creation|the creation)\\W*\$').hasMatch(lower)) {
+      final said = await _continueCreating();
+      await speakText(said, record: false);
+      return true;
+    }
+    if (RegExp('$wake(?:open|show|connect)(?: to)? (?:my |the )?(?:cloud computer|creation engine)\\W*\$').hasMatch(lower)) {
+      _openCreationEngine();
+      await speakText('Opening your Cloud Computer.', record: false);
+      return true;
+    }
     if (RegExp(r'^\W*(?:(?:che|chey|chay)[,:]?\s+)?(?:create (?:something )?new|new creation|start a new creation)\W*$').hasMatch(lower)) {
       _openCreativeStudio(createNew: true);
       return true;

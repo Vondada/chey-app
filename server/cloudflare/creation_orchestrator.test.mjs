@@ -7,7 +7,7 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import { creationRoute } from './creation_studio.js';
 import { DISPATCH_WINDOW_MS, ensureCapacity } from './creation_orchestrator.js';
-import { GpuQueue, LEASE_MS, gpuOwnerRoute, gpuWorkerRoute } from './gpu_queue.js';
+import { GpuQueue, LEASE_MS, gpuOwnerRoute, gpuWorkerRoute, publicJob } from './gpu_queue.js';
 import { resetOidcCache } from './gpu_oidc.js';
 import { oidcSigner } from './oidc_test_signer.mjs';
 
@@ -264,10 +264,27 @@ test('GET /api/creations/engine: settings, workers, capacity, providers (automat
 test('ensureCapacity never dispatches for GPU-only jobs and stays within max_cloud_workers', async () => {
   const s = await setup();
   const out = await ensureCapacity(ENV, { storage: s.storage, now: s.ctx.now, fetcher: s.ctx.fetcher });
-  assert.equal(out.dispatched, 0, 'the seeded face previews need a GPU'); assert.equal(s.github.length, 0);
+  assert.equal(out.dispatched, 0, 'the seeded face previews need a GPU');
+  // Only the (hourly) visibility read, so the engine can say Ready before the first Generate; nothing dispatched.
+  assert.deepEqual(s.github.map((g) => g.method), ['GET']);
+  const shown = (await new GpuQueue(s.storage, s.ctx.now).jobs()).map((j) => publicJob(j));
+  assert.ok(shown.length && shown.every((j) => j.display_state === 'Waiting for GPU'), JSON.stringify(shown.map((j) => j.display_state)));
+  assert.match(shown[0].status_line, /needs a GPU, and none is online\. It resumes from its saved stages/);
   const q = new GpuQueue(s.storage, s.ctx.now);
   for (let i = 0; i < 5; i++) await q.enqueue({ kind: 'person_model', title: `p${i}`, views: [0], settings: { N: String(i) } });
   const many = await ensureCapacity(ENV, { storage: s.storage, now: s.ctx.now, fetcher: s.ctx.fetcher });
   assert.equal(many.dispatched, 3, 'five jobs, at most three cloud workers');
   assert.equal((await ensureCapacity(ENV, { storage: s.storage, now: s.ctx.now, fetcher: s.ctx.fetcher })).dispatched, 0);
+});
+
+test('before the first Generate the engine already says Ready (no job waiting), so the app never falls back to Colab', async () => {
+  const storage = memStorage(); const t = Date.parse('2026-10-24T21:00:00Z');
+  const calls = [];
+  const fetcher = async (url, init = {}) => { calls.push(`${init.method || 'GET'} ${url}`); return new Response(JSON.stringify({ private: false }), { status: 200 }); };
+  const req = new Request('https://che.example/api/creations');
+  const list = await (await creationRoute({ storage, env: ENV, now: () => t, fetcher }, '/api/creations', req, {})).json();
+  assert.equal(list.engine.automatic, true); assert.equal(list.engine.status, 'cloud');
+  assert.deepEqual(calls, ['GET https://api.github.com/repos/Vondada/chey-app'], 'one read; nothing started');
+  await creationRoute({ storage, env: ENV, now: () => t + 60_000, fetcher }, '/api/creations', req, {});
+  assert.equal(calls.length, 1, 'cached for an hour');
 });

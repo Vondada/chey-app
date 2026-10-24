@@ -110,7 +110,10 @@ test('every provider declares id, capabilities, cost tier, billing, approval and
     assert.ok(p.id && p.label && Array.isArray(p.capabilities) && p.tier && p.billing && typeof p.needs_approval === 'boolean' && p.limits, p.id);
     assert.notEqual(p.tier, EXECUTION.EXTERNAL_PAID, `${p.id} is not paid`);
   }
-  assert.ok(!PROVIDERS.some((p) => p.capabilities.includes('blender')), 'no provider claims Blender');
+  // One registry: the Creation Engine's Blender workers are listed here as they are (creation_orchestrator.js).
+  assert.deepEqual(PROVIDERS.filter((p) => p.capabilities.includes('blender')).map((p) => p.id), ['github_creation', 'colab_t4']);
+  assert.equal(selectProvider('blender_model', { env: GH_ENV }).provider, 'github_creation');
+  assert.equal(selectProvider('blender_model', { env: GH_ENV }).approval_required, false, 'the Creation Engine verifies the repository is public itself');
   for (const id of ['github_ubuntu', 'browser_isolated', 'github_macos']) {
     const p = PROVIDERS.find((x) => x.id === id);
     assert.equal(p.billing, 'requires_verified_free_usage', `${id}: GitHub minutes are not verified as free`);
@@ -130,7 +133,7 @@ test('chat text never becomes a shell command: only allowlisted templates exist'
     assert.equal(out.ok, false, kind);
     assert.match(out.plan.reason, /not one of my job templates/, kind);
   }
-  assert.deepEqual(Object.keys(TEMPLATES).sort(), ['blender_render', 'browser', 'coding', 'file_processing', 'gpu_animation', 'ios_build', 'ios_patch', 'media_transcode', 'repo_tests', 'research', 'video_render']);
+  assert.deepEqual(Object.keys(TEMPLATES).sort(), ['blender_model', 'blender_render', 'browser', 'coding', 'file_processing', 'gpu_animation', 'ios_build', 'ios_patch', 'media_transcode', 'repo_tests', 'research', 'video_render']);
   // Agents on CHE's roster can ask; anyone else cannot.
   assert.equal(requestCloudWork(newData(), { agent: 'Vale', kind: 'repo_tests' }, { env: GH_ENV, enqueue: enqueueJob }).ok, true);
   assert.match(requestCloudWork(newData(), { agent: 'Mallory', kind: 'repo_tests' }, { env: GH_ENV, enqueue: enqueueJob }).reason, /not on CHE's roster/);
@@ -142,7 +145,7 @@ test('A. "create a Blender animation" checks existing resources first, then name
   const plan = selectProvider('blender_render', { env: GH_ENV });
   assert.equal(plan.blocked, true);
   assert.equal(plan.missing_capability, 'blender');
-  assert.match(plan.reason, /Blender runs automatically only for Create Person[\s\S]*No workflow renders a Blender animation/);
+  assert.match(plan.reason, /Blender builds 3D models automatically[\s\S]*No workflow renders a Blender animation/);
   assert.match(plan.existing, /tools\/character_pipeline\/build_che_character\.py[\s\S]*bpy==5\.0\.1/);
   assert.match(plan.smallest_addition, /che-creation-worker\.yml, which already installs Blender[\s\S]*ffmpeg[\s\S]*pull request/);
   assert.equal(MISSING.blender.smallest_addition, plan.smallest_addition);
@@ -154,7 +157,7 @@ test('A. "create a Blender animation" checks existing resources first, then name
   assert.equal(out.route, 'che_cloud_computer');
   assert.equal(out.modelCalls, 0);
   assert.equal(out.done.blocked, true);
-  assert.match(out.reply, /Blender runs automatically only for Create Person[\s\S]*Smallest addition:[\s\S]*Nothing was started\./);
+  assert.match(out.reply, /Blender builds 3D models automatically[\s\S]*Smallest addition:[\s\S]*Nothing was started\./);
   assert.equal(calls.length, 0, 'nothing reached GitHub');
   assert.equal(che.jobs().length, before, 'no job was invented');
 });

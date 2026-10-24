@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { confirmLive, confirmStockOrder, deskIntent, deskTick, dropStockOrder, readDesk, requestLive, requestStockOrder, setMode, setRiskLimits, setSize, speakDeskStatus, speakStockOrder, speakStockReceipt, stockOrderIntent, takeAnnouncement, takeTrade, skipTrade, pendingAlert, rememberListed, chooseAccount } from './trading_desk.js';
-import { connectLink, handleCallback, placeBracket, connection, renewToken, accountBalance, pickAccount } from './broker_tradovate.js';
+import { connectLink, handleCallback, placeBracket, connection, renewToken, accountBalance, pickAccount, tradovateApi } from './broker_tradovate.js';
+import { LIVE_TRADING_OFF } from './trading_environments.js';
 
 const store = () => {
   const m = new Map();
@@ -61,49 +62,44 @@ test('sim mode: CHE places the entry on the simulated account herself and report
   assert.match(await takeAnnouncement(s), /it failed: Tradovate answered 401/);
 });
 
-test('live mode: nothing is placed until the owner says take the trade; skip and expiry place nothing', async () => {
+test('live kill switch: the desk cannot reach live mode, a desk saved as live reads paper, and take places nothing', async () => {
   const s = store();
-  await setMode(s, 'live');
-  await setRiskLimits(s, LIMITS);
-  await rememberListed(s, 'live', ['FYE-1001', 'LIVE1']);
-  assert.deepEqual(await chooseAccount(s, { number: 2 }), { mode: 'live', account: 'LIVE1' });
-  let placed = [];
-  const place = async (_st, mode, a) => { placed.push(mode); assert.equal(a.account, 'LIVE1'); return { ok: true, order_id: 9, account: a.account, symbol: 'MESZ6', entry: a.entry, stop: a.stop, target: a.target, qty: a.qty }; };
+  const changed = await setMode(s, 'live');
+  assert.equal(changed.mode, 'paper');
+  assert.match(changed.error, /^Live trading is turned off in CHE's code until you separately approve it and it is verified, sir\. You stay on paper trading.*Nothing changed\.$/);
+  assert.equal((await readDesk(s)).mode, 'paper');
+  // A desk saved as live by an older build is read as paper: no live alert, no live order.
+  await s.put('trading_desk', { mode: 'live', account: { live: 'LIVE1' }, risk_limits: LIMITS, alerts: [] });
+  assert.equal((await readDesk(s)).mode, 'paper');
+  const placed = [];
+  const place = async (_st, mode) => { placed.push(mode); return { ok: true }; };
   const t0 = Date.UTC(2026, 9, 5, 14);
   await deskTick(s, paperBook(), { place, now: t0 });
-  assert.deepEqual(placed, [], 'no live order without a yes');
-  assert.match(await takeAnnouncement(s, t0), /LIVE account.*Real money\. Say "yes, take the trade"/);
-  const taken = await takeTrade(s, { place, now: t0 + 60_000 });
-  assert.equal(taken.ok, true);
-  assert.deepEqual(placed, ['live']);
-  assert.match(taken.reply, /Placed on your LIVE account LIVE1.*order 9/);
-  assert.match((await takeTrade(s, { place, now: t0 + 120_000 })).reply, /no open trade alert/, 'one yes places once');
-  // Skip.
-  await deskTick(s, paperBook('p2'), { place, now: t0 });
-  assert.match(await skipTrade(s, t0), /Skipped.*Nothing was placed/);
-  // Expired alerts cannot be taken.
-  await deskTick(s, paperBook('p3'), { place, now: t0 });
-  assert.equal(pendingAlert(await readDesk(s), t0 + 21 * 3600_000), null);
-  assert.match((await takeTrade(s, { place, now: t0 + 21 * 3600_000 })).reply, /no open trade alert/);
-  assert.deepEqual(placed, ['live']);
+  assert.equal((await readDesk(s)).alerts[0].status, 'info', 'an entry is information only');
+  assert.match((await takeTrade(s, { place, now: t0 + 60_000 })).reply, /no open trade alert/);
+  // A pending live alert left by an older build: the take answers paper and sends nothing.
+  await s.put('trading_desk', { mode: 'live', account: { live: 'LIVE1' }, risk_limits: LIMITS, alerts: [{ id: 'old', status: 'pending', root: 'MES', qty: 1, entry: 5820, stop: 5805, target: 5850, mode: 'live', expires_at: new Date(t0 + 3600_000).toISOString() }] });
+  assert.match((await takeTrade(s, { place, now: t0 + 60_000 })).reply, /^That alert was for your live account, sir, and live trading is off in CHE's code\. Nothing was placed\.$/);
+  assert.match(await takeAnnouncement(s, t0), /It was for your live account, and live trading is off in CHE's code\. Nothing was placed\./);
+  assert.deepEqual(placed, []);
 });
 
-test('taking a trade in paper mode sends nothing; a failed order is reported as not placed', async () => {
+test('taking a trade in paper mode sends nothing; a failed order is reported as not placed; skip and expiry place nothing', async () => {
   const s = store();
-  await setMode(s, 'live');
-  await setRiskLimits(s, LIMITS);
-  await deskTick(s, paperBook(), { place: async () => ({ ok: true }) });
-  await setMode(s, 'paper');
-  assert.match((await takeTrade(s, { place: async () => { throw new Error('must not place'); } })).reply, /paper trading.*Nothing was placed/);
-  await setMode(s, 'live');
-  await setRiskLimits(s, LIMITS);
-  assert.match((await takeTrade(s, { place: async () => { throw new Error('must not place'); } })).reply, /Which live account.*Nothing was placed/, 'live needs a named account');
-  await rememberListed(s, 'live', ['FYE-1001']);
-  await chooseAccount(s, { name: 'fye-1001' });
-  await deskTick(s, paperBook('p9'), { place: async () => ({ ok: true }) });
-  const failed = await takeTrade(s, { place: async () => ({ error: 'Tradovate rejected the order: Insufficient margin.' }) });
+  const t0 = Date.UTC(2026, 9, 5, 14);
+  const pending = (id) => ({ id, paper_id: id, at: new Date(t0).toISOString(), expires_at: new Date(t0 + 20 * 3600_000).toISOString(), root: 'MES', qty: 1, entry: 5820, stop: 5805, target: 5850, status: 'pending', announced: true, mode: 'sim' });
+  const mustNot = async () => { throw new Error('must not place'); };
+  await s.put('trading_desk', { mode: 'paper', alerts: [pending('a1')] });
+  assert.match((await takeTrade(s, { now: t0, place: mustNot })).reply, /paper trading.*Nothing was placed/);
+  await s.put('trading_desk', { mode: 'sim', account: { sim: 'DEMO123' }, alerts: [pending('a2')] });
+  const failed = await takeTrade(s, { now: t0, place: async () => ({ error: 'Tradovate rejected the order: Insufficient margin.' }) });
   assert.equal(failed.ok, false);
   assert.match(failed.reply, /NOT placed.*Insufficient margin/);
+  await s.put('trading_desk', { mode: 'sim', account: { sim: 'DEMO123' }, alerts: [pending('a3')] });
+  assert.match(await skipTrade(s, t0), /Skipped.*Nothing was placed/);
+  await s.put('trading_desk', { mode: 'sim', account: { sim: 'DEMO123' }, alerts: [pending('a4')] });
+  assert.equal(pendingAlert(await readDesk(s), t0 + 21 * 3600_000), null);
+  assert.match((await takeTrade(s, { now: t0 + 21 * 3600_000, place: mustNot })).reply, /no open trade alert/);
 });
 
 test('size: micro by default, owner can choose full-size and 1-10 contracts', async () => {
@@ -172,9 +168,10 @@ test('orders: limit entry with stop and target attached, on the right server, ro
     bracket1: { action: 'Sell', orderType: 'Limit', price: 5850.5, timeInForce: 'GTC' },
     bracket2: { action: 'Sell', orderType: 'Stop', stopPrice: 5805.25, timeInForce: 'GTC' },
   });
+  // Live: refused by the kill switch before any request, not even an account read.
   const live = tradovate();
-  assert.equal((await placeBracket(s, 'live', { root: 'MES', qty: 1, entry: 5820, stop: 5805, target: 5850, account: 'DEMO123', approval: { account: 'DEMO123', contract: 'MES', qty: 1, entry: 5820, stop: 5805, target: 5850, expires_at: Date.now() + 3600_000 }, limits: LIMITS }, { fetcher: live.fetcher })).ok, true);
-  assert.ok(live.calls.every((c) => c.u.startsWith('https://live.tradovateapi.com/v1')), 'live goes to the live server');
+  assert.equal((await placeBracket(s, 'live', { root: 'MES', qty: 1, entry: 5820, stop: 5805, target: 5850, account: 'DEMO123', approval: { account: 'DEMO123', contract: 'MES', qty: 1, entry: 5820, stop: 5805, target: 5850, expires_at: Date.now() + 3600_000 }, limits: LIMITS }, { fetcher: live.fetcher })).error, LIVE_TRADING_OFF);
+  assert.deepEqual(live.calls, [], 'nothing reached the live server');
 });
 
 test('orders: rejections, bad brackets, missing sign-in and size limits are refused honestly', async () => {
@@ -185,9 +182,9 @@ test('orders: rejections, bad brackets, missing sign-in and size limits are refu
   assert.match((await placeBracket(s, 'sim', { root: 'MES', qty: 11, entry: 5820, stop: 5805, target: 5850 })).error, /1 to 10/);
   assert.match((await placeBracket(s, 'paper', { root: 'MES', qty: 1, entry: 5820, stop: 5805, target: 5850 })).error, /simulated or the live/);
   const { fetcher } = tradovate({ failure: 'Insufficient margin' });
-  assert.match((await placeBracket(s, 'live', { root: 'MES', qty: 1, entry: 5820, stop: 5805, target: 5850, account: 'DEMO123', approval: { account: 'DEMO123', contract: 'MES', qty: 1, entry: 5820, stop: 5805, target: 5850, expires_at: Date.now() + 3600_000 }, limits: LIMITS }, { fetcher })).error, /rejected the order: Insufficient margin/);
+  assert.match((await placeBracket(s, 'sim', { root: 'MES', qty: 1, entry: 5820, stop: 5805, target: 5850 }, { fetcher })).error, /rejected the order: Insufficient margin/);
   await s.put('tradovate_auth', { access_token: 'tok', expires_at: Date.now() - 1 });
-  assert.match((await placeBracket(s, 'live', { root: 'MES', qty: 1, entry: 5820, stop: 5805, target: 5850, account: 'DEMO123', approval: { account: 'DEMO123', contract: 'MES', qty: 1, entry: 5820, stop: 5805, target: 5850, expires_at: Date.now() - 1000 }, limits: LIMITS }, { fetcher })).error, /expired/);
+  assert.match((await placeBracket(s, 'sim', { root: 'MES', qty: 1, entry: 5820, stop: 5805, target: 5850 }, { fetcher })).error, /sign-in expired/);
 });
 
 test('balance and token renewal', async () => {
@@ -231,11 +228,7 @@ test('review fixes: Success response, named live account, forged callbacks, one 
   await handleCallback(s, ENV, 'https://che.example/broker/tradovate/callback?code=x&state=forged', ok.fetcher);
   assert.equal((await s.get('tradovate_oauth_state')).state, state, 'real state survives a forged attempt');
   // Two overlapping "take the trade": the alert is claimed first, one order only.
-  await setMode(s, 'live');
-  await setRiskLimits(s, LIMITS);
-  await rememberListed(s, 'live', ['LIVE1']);
-  await chooseAccount(s, { number: 1 });
-  await deskTick(s, paperBook('race'), { place: async () => ({ ok: true }) });
+  await s.put('trading_desk', { mode: 'sim', account: { sim: 'DEMO123' }, alerts: [{ id: 'race', paper_id: 'race', at: new Date().toISOString(), expires_at: new Date(Date.now() + 3600_000).toISOString(), root: 'MES', qty: 1, entry: 5820, stop: 5805, target: 5850, status: 'pending', announced: true, mode: 'sim' }] });
   let orders = 0;
   let release;
   const gate = new Promise((r) => { release = r; });
@@ -265,27 +258,24 @@ const fakeBroker = (calls) => async (url) => {
 const order = (over = {}) => ({ root: 'MES', qty: 1, entry: 5820, stop: 5805, target: 5850, account: 'DEMO123', ...over });
 const approval = (over = {}) => ({ account: 'DEMO123', contract: 'MES', qty: 1, entry: 5820, stop: 5805, target: 5850, expires_at: Date.now() + 3600_000, ...over });
 
-test('a live order is sent only with the owner\'s approval for that exact order, within his limits', async () => {
+test('live kill switch: a live order is refused with no request at all, whatever approval, limits or account it carries', async () => {
   const s = await brokerStore();
   const calls = [];
   const fetcher = fakeBroker(calls);
-  const sent = () => calls.filter((u) => u.includes('/order/placeoso')).length;
-  let r = await placeBracket(s, 'live', order({ limits: LIMITS }), { fetcher });
-  assert.match(r.error, /NOT placed.*no owner approval/);
-  r = await placeBracket(s, 'live', order({ approval: approval({ entry: 5821 }), limits: LIMITS }), { fetcher });
-  assert.match(r.error, /does not match this order \(entry\)/);
-  r = await placeBracket(s, 'live', order({ approval: approval({ expires_at: Date.now() - 1000 }), limits: LIMITS }), { fetcher });
-  assert.match(r.error, /expired/);
-  r = await placeBracket(s, 'live', order({ approval: approval() }), { fetcher });
-  assert.match(r.error, /risk limits/, 'an exact approval still needs the owner\'s limits');
-  r = await placeBracket(s, 'live', order({ qty: 3, approval: approval({ qty: 3 }), limits: LIMITS }), { fetcher });
-  assert.match(r.error, /above the owner limit of 2/);
-  r = await placeBracket(s, 'live', order({ approval: approval(), limits: { maxContracts: 2, maxRiskDollars: 50 } }), { fetcher });
-  assert.match(r.error, /risk \$75\.00 is above the owner limit of \$50/, '15 points on MES is $75');
-  assert.equal(sent(), 0, 'no refused order reached the broker');
-  r = await placeBracket(s, 'live', order({ approval: approval(), limits: LIMITS }), { fetcher });
-  assert.equal(r.ok, true);
-  assert.equal(sent(), 1, 'the approved order was sent once');
+  for (const o of [order({ limits: LIMITS }), order({ approval: approval(), limits: LIMITS }), order({ approval: approval() }), order({ qty: 3, approval: approval({ qty: 3 }), limits: LIMITS })]) {
+    const r = await placeBracket(s, 'live', o, { fetcher, env: { CHE_LIVE_TRADING_APPROVED: 'owner-approved-2026-10-24' } });
+    assert.equal(r.error, LIVE_TRADING_OFF);
+    assert.equal(r.live_disabled, true);
+  }
+  // Defense in depth: the request layer itself refuses a live order path, even if a caller skipped placeBracket.
+  for (const path of ['/order/placeoso', '/order/placeorder', '/order/liquidateposition', '/orderStrategy/startorderstrategy']) {
+    assert.equal((await tradovateApi(s, 'live', path, { method: 'POST', body: {}, fetcher, env: { CHE_LIVE_TRADING_APPROVED: 'owner-approved-2026-10-24' } })).error, LIVE_TRADING_OFF, path);
+  }
+  assert.deepEqual(calls, [], 'nothing was sent to the broker');
+  // Reads on the live server (accounts, contracts) and simulated orders are unchanged.
+  assert.equal((await tradovateApi(s, 'live', '/account/list', { fetcher })).data[0].name, 'DEMO123');
+  assert.equal((await placeBracket(s, 'sim', order(), { fetcher })).ok, true);
+  assert.ok(!calls.some((u) => u.includes('live.tradovateapi.com') && u.includes('/order')));
 });
 
 test('a simulated order needs no approval, and goes only to the simulated (demo) service', async () => {
@@ -316,33 +306,41 @@ test('"set my live risk limit to 2 contracts and 300 dollars" sets the limits by
   assert.deepEqual((await readDesk(s)).risk_limits, { maxContracts: 2, maxRiskDollars: 300 });
 });
 
-test('a live take with no limits sends nothing and keeps the alert; with limits it sends exactly the approved alert', async () => {
+test('live kill switch: the whole spoken chain to a live order ends with no request to any live host', async () => {
   const s = store();
-  await setMode(s, 'live');
-  await rememberListed(s, 'live', ['LIVE1']);
-  await chooseAccount(s, { number: 1 });
-  const t0 = Date.UTC(2026, 9, 5, 14);
-  await deskTick(s, paperBook(), { place: async () => ({ ok: true }), now: t0 });
-  const sent = [];
-  const place = async (_st, mode, a) => {
-    sent.push(a);
-    return { ok: true, order_id: 9, account: a.account, symbol: 'MESZ6', entry: a.entry, stop: a.stop, target: a.target, qty: a.qty };
-  };
-  const refused = await takeTrade(s, { place, now: t0 + 60_000 });
-  assert.equal(refused.ok, false);
-  assert.match(refused.reply, /Set your live risk limits first.*Nothing was placed/);
-  assert.equal(sent.length, 0);
-  assert.ok(pendingAlert(await readDesk(s), t0 + 60_000), 'the alert stays open for when the limits are set');
-  await setRiskLimits(s, LIMITS);
-  const taken = await takeTrade(s, { place, now: t0 + 90_000 });
-  assert.equal(taken.ok, true);
-  assert.equal(sent.length, 1);
-  assert.deepEqual(sent[0].approval, { account: 'LIVE1', contract: 'MES', qty: 1, entry: 5820, stop: 5805, target: 5850, expires_at: Date.parse(sent[0].expires_at) });
-  assert.deepEqual(sent[0].limits, LIMITS);
-  assert.equal(sent[0].unattended, false);
+  await s.put('tradovate_auth', { access_token: 'tok', expires_at: Date.now() + 3600_000 });
+  const urls = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (u) => { urls.push(String(u)); return new Response('[]', { status: 200 }); };
+  try {
+    const t0 = Date.now();
+    assert.deepEqual(deskIntent('switch to live trading'), { kind: 'mode', mode: 'live' });
+    const asked = await requestLive(s, t0);
+    assert.equal(asked.disabled, true);
+    assert.equal(asked.meta.ok, false);
+    assert.equal(asked.meta.live_confirmation_needed, undefined);
+    assert.match(asked.reply, /^Live trading is turned off in CHE's code until you separately approve it and it is verified, sir\. You stay on paper trading.*Nothing changed\.$/);
+    assert.deepEqual(deskIntent('confirm live trading'), { kind: 'confirm_live' });
+    assert.match((await confirmLive(s, t0 + 1000)).error, /turned off in CHE's code.*Nothing changed/);
+    await setRiskLimits(s, deskIntent('set my live risk limit to 1 contract and 100 dollars'));
+    await rememberListed(s, 'live', ['LIVE1']);
+    await chooseAccount(s, { number: 1 });
+    await deskTick(s, paperBook('chain'), { now: t0 + 2000 });
+    assert.deepEqual(deskIntent('yes, take the trade'), { kind: 'take', place: true, live: true });
+    const taken = await takeTrade(s, { now: t0 + 3000 });
+    assert.notEqual(taken.ok, true);
+    assert.match(taken.reply, /Nothing was placed/);
+    assert.equal((await readDesk(s)).mode, 'paper', 'paper stays paper');
+    // A direct broker call with an exact approval and limits is refused as well.
+    assert.equal((await placeBracket(s, 'live', order({ account: 'LIVE1', approval: approval({ account: 'LIVE1' }), limits: LIMITS }))).error, LIVE_TRADING_OFF);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  assert.deepEqual(urls.filter((u) => /live\.tradovateapi\.com/.test(u)), []);
+  assert.deepEqual(urls, [], 'no network request at all');
 });
 
-test('going live takes a request and a confirmation within two minutes; nothing promotes alone', async () => {
+test('going live is refused while the kill switch is off: no request is recorded and the mode stays where it was', async () => {
   assert.deepEqual(deskIntent('confirm live trading'), { kind: 'confirm_live' });
   assert.deepEqual(deskIntent('yes, confirm the switch to live trading'), { kind: 'confirm_live' });
   assert.deepEqual(deskIntent('what are my trading connections'), { kind: 'connections' });
@@ -351,17 +349,15 @@ test('going live takes a request and a confirmation within two minutes; nothing 
   for (const no of ['I never want to confirm live trading without seeing the order first', 'my connection is slow', 'the alpaca at the zoo']) assert.equal(deskIntent(no)?.kind === 'confirm_live' || deskIntent(no)?.kind === 'alpaca_setup', false, no);
   const s = store();
   const t0 = Date.parse('2026-10-19T14:00:00Z');
-  assert.match((await confirmLive(s, t0)).error, /no live switch waiting/);
+  assert.match((await confirmLive(s, t0)).error, /^Live trading is turned off in CHE's code/);
+  assert.equal((await requestLive(s, t0)).disabled, true);
+  assert.equal((await readDesk(s)).live_request_at, 0, 'the request is not even recorded');
+  assert.match((await confirmLive(s, t0 + 1000)).error, /turned off in CHE's code.*Nothing changed/);
   assert.equal((await readDesk(s)).mode, 'paper');
-  await requestLive(s, t0);
-  assert.equal((await readDesk(s)).mode, 'paper', 'the request alone changes nothing');
-  assert.match((await confirmLive(s, t0 + 121_000)).error, /no live switch waiting/, 'a stale request expires');
-  await requestLive(s, t0 + 200_000);
   await setMode(s, 'sim');
-  assert.match((await confirmLive(s, t0 + 201_000)).error, /no live switch waiting/, 'choosing another mode cancels the request');
-  await requestLive(s, t0 + 300_000);
-  assert.deepEqual(await confirmLive(s, t0 + 330_000), { before: 'sim', mode: 'live' });
-  assert.equal((await readDesk(s)).live_request_at, 0);
+  assert.match((await requestLive(s, t0 + 2000)).reply, /You stay on your NinjaTrader simulated account\. Nothing changed\.$/);
+  assert.equal((await confirmLive(s, t0 + 3000)).disabled, true);
+  assert.equal((await readDesk(s)).mode, 'sim', 'sim stays sim');
 });
 
 test('trading intents need the whole request: questions and ordinary sentences are not commands (review of #348)', () => {

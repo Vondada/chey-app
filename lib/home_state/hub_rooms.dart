@@ -521,7 +521,7 @@ extension _CheHomeHubRooms on _CHEHomeState {
               CheStudioActivity(title: 'Coding job', status: job.label, detail: job.speech, onTap: _openOfficeFloor),
           ],
           // Creation projects, the Creation Engine's state and which kinds are built (creation_studio.js). GPU jobs and
-          // Pair Colab moved to Settings, Creation Engine.
+          // Pair Colab moved to Settings, Connections, Cloud Computer.
           loadCreations: _loadCreations,
           saveEngineSettings: _saveEngineSettings,
           creations: CheCreationsStrip(baseUrl: cheAgentBaseUrl, headers: _authHeaders, active: active),
@@ -571,6 +571,7 @@ extension _CheHomeHubRooms on _CHEHomeState {
             ),
             onOpenCreation: (id) => unawaited(_openCreation(id)),
             onConnectEngine: _connectCreationEngine,
+            onContinueCreating: _continueCreating,
           ),
         );
       },
@@ -675,21 +676,54 @@ extension _CheHomeHubRooms on _CHEHomeState {
     );
   }
 
-  /// Connect: not paired → Settings, Creation Engine; paired → the Colab notebook (CHE cannot start Colab herself).
+  /// Connect (owner, 2026-10-24: no website in ordinary use): the Cloud Computer starts its own workers, so a ready
+  /// engine needs nothing; when no worker can run, this opens Settings, Connections, Cloud Computer inside CHE.
   void _connectCreationEngine(CheCreationEngine engine) {
-    if (!engine.paired) {
-      _openCreationEngine();
-      return;
-    }
     HapticFeedback.selectionClick();
-    unawaited(launchUrl(Uri.parse(engine.notebookUrl), mode: LaunchMode.externalApplication).catchError((_) => false));
+    if (!engine.ready) _openCreationEngine();
+  }
+
+  /// "Continue creating": the creation with a job still waiting or building, else the newest one, in its live 3D view.
+  /// Leaving Create never cancelled anything: the job, its saved stages and its files live on the Worker.
+  Future<String> _continueCreating() async {
+    final d = await _loadCreations();
+    if (d == null) return 'I could not reach CHE to find your creations, so nothing was opened.';
+    final list = [
+      for (final p in (d['projects'] as List? ?? const []))
+        if (p is Map) Map<String, dynamic>.from(p),
+    ];
+    if (list.isEmpty) return 'You have no creations yet. Say create a person to start one.';
+    bool active(Map<String, dynamic> p) =>
+        p['job'] is Map && const {'queued', 'rendering', 'paused'}.contains('${(p['job'] as Map)['state']}');
+    final pick = list.firstWhere(active, orElse: () => list.first);
+    unawaited(_openCreation('${pick['id']}'));
+    final job = pick['job'] is Map ? Map<String, dynamic>.from(pick['job'] as Map) : null;
+    final state = switch ('${job?['state'] ?? ''}') {
+      'rendering' => 'it is building now, ${job?['pct'] ?? 0} percent',
+      'queued' => 'it is waiting for a worker',
+      'paused' => 'it is paused with its finished stages kept, and resumes on the next worker',
+      'completed' => 'its 3D model is ready',
+      'failed' => 'its last build failed; say generate to try again',
+      _ => 'it has no build yet; say generate',
+    };
+    return 'Opening ${pick['title']}: $state.';
   }
 
   /// Opens Create (the Creative Studio) and, once it is built, scrolls to [section] or opens Create New.
-  void _openCreativeStudio({CheStudioSection? section, bool createNew = false}) {
+  void _openCreativeStudio({CheStudioSection? section, bool createNew = false, String? say}) {
     void act() {
       final studio = _creativeStudioKey.currentState;
       if (studio == null) return;
+      // A spoken Create action from another screen ("create a person"): run it through the room's own voice route.
+      if (say != null) {
+        final handler = CheCreativeStudio.voiceHandler;
+        if (handler != null) {
+          unawaited(handler(say).then((reply) {
+            if (reply != null && reply.isNotEmpty) unawaited(speakText(reply, record: false));
+          }));
+        }
+        return;
+      }
       if (createNew) {
         unawaited(studio.showCreateNew());
       } else if (section != null) {

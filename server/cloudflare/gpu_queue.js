@@ -511,7 +511,7 @@ export function publicJob(j) {
     checkpoints: { ...(j.checkpoints || {}) }, ...displayOf(j) };
 }
 
-export const DISPLAY_STATES = ['Creating', 'Waiting for Resources', 'Starting a cloud worker', 'Paused', 'Completed', 'Failed', 'Cancelled'];
+export const DISPLAY_STATES = ['Creating', 'Waiting for Resources', 'Waiting for GPU', 'Starting a cloud worker', 'Paused', 'Completed', 'Failed', 'Cancelled'];
 const hhmm = (at) => String(at || '').slice(11, 16);
 
 /** The owner-facing state of a job and one plain sentence with its real numbers (nothing estimated or invented). */
@@ -534,6 +534,7 @@ export function displayOf(j) {
     if (j.state === 'paused') return { display_state: 'Paused', status_line: `Paused at ${hhmm(last?.at)} UTC after ${done} of ${views} views: the worker stopped answering. The next compatible worker resumes it.${kept}${c?.reason ? ` ${c.reason}` : ''}` };
     const need = j.requires?.gpu || (j.kind === 'person_model' ? 'preferred' : 'required');
     const why = c?.reason || (need === 'required' ? 'This job needs a GPU: it runs when your Colab T4 notebook is open.' : 'Waiting for a worker.');
+    if (c?.state === 'waiting_gpu') return { display_state: 'Waiting for GPU', status_line: `Waiting since ${hhmm(j.created_at)} UTC. ${why}${kept}${attempt}` };
     return { display_state: 'Waiting for Resources', status_line: `Waiting since ${hhmm(j.created_at)} UTC. ${why}${kept}${attempt}` };
   }
   if (j.state === 'completed') {

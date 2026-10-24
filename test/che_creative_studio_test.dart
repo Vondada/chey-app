@@ -54,6 +54,10 @@ class _Calls {
         onCreateAnimation: () => list.add('animation'),
         onOpenCreation: (id) => list.add('creation $id'),
         onConnectEngine: (e) => list.add('connect ${e.status}'),
+        onContinueCreating: () async {
+          list.add('continue');
+          return 'Opening CHE (new person): it is waiting for a worker.';
+        },
       );
 }
 
@@ -221,13 +225,13 @@ void main() {
     }
   });
 
-  testWidgets('Settings → Creation Engine holds GPU jobs, Pair Colab and the notebook link', (tester) async {
+  testWidgets('Settings → Connections → Cloud Computer holds GPU jobs, Pair Colab and the notebook link', (tester) async {
     await _phone(tester);
     await tester.pumpWidget(MaterialApp(
       home: CheCreationEnginePage(baseUrl: 'https://che.test', headers: const {}, client: _gpuClient()),
     ));
     await tester.pumpAndSettle();
-    expect(find.text('Creation Engine'), findsOneWidget);
+    expect(find.text('Cloud Computer'), findsOneWidget);
     expect(find.byKey(const ValueKey('engine-open-notebook')), findsOneWidget);
     expect(find.byType(CheGpuJobsCard), findsOneWidget);
     expect(find.textContaining('CHE_GPU_TOKEN'), findsOneWidget);
@@ -245,7 +249,7 @@ void main() {
     expect(find.descendant(of: find.byKey(const ValueKey('studio-tile-mine')), matching: find.text('2 3D creations')), findsOneWidget);
     expect(find.descendant(of: find.byKey(const ValueKey('studio-tile-active')), matching: find.text('1 building now')), findsOneWidget);
     // Engine offline: the plain label and Connect.
-    expect(find.text('Creation Engine Offline'), findsOneWidget);
+    expect(find.text('Waiting for a worker'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('studio-connect')));
     expect(calls.list.last, 'connect offline');
     // Create Object is not built: it says so and calls nothing.
@@ -386,7 +390,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('studio-read')));
     expect(read.single, contains('1 Create Person, 2 Create Object, 3 Create Room, 4 Create Animation, 5 My Creations, '
         '6 Active Projects, 7 More to create, 8 Film Studio, 9 Music Studio, 10 Code Studio, 11 Art and Character Studio'));
-    expect(read.single, contains('Creation Engine Offline.'));
+    expect(read.single, contains('Waiting for a worker.'));
     expect(read.single, contains('Create Object and Create Room are not built yet.'));
     expect(read.single, contains('No active jobs.'));
     expect(read.single, contains('2 3D creations, 5 projects and 3 saved files'));
@@ -401,7 +405,7 @@ void main() {
     expect(find.bySemanticsLabel('Read the Creation Room aloud'), findsOneWidget);
     expect(find.bySemanticsLabel('1. Create Person. Ready.'), findsOneWidget);
     expect(find.bySemanticsLabel('2. Create Object. Not available yet.'), findsOneWidget);
-    expect(find.bySemanticsLabel('Connect: open the Colab notebook'), findsOneWidget);
+    expect(find.bySemanticsLabel('Cloud Computer: open Settings, Connections, Cloud Computer'), findsOneWidget);
     expect(find.bySemanticsLabel('Film Studio: Open Film Studio'), findsOneWidget);
     await _scrollTo(tester, find.byKey(const ValueKey('studio-art-primary')));
     expect(find.bySemanticsLabel('Art & Character Studio: Character Generator'), findsOneWidget);
@@ -498,15 +502,20 @@ void main() {
     final voice = CheCreativeStudio.voiceHandler!;
     expect(await voice('tell me a joke'), isNull, reason: 'anything else goes to Chat');
     expect(await voice('read'), contains('1 Create Person, 2 Create Object'));
-    expect(await voice('eleven'), contains('GPU jobs and Pair Colab are in Settings, Creation Engine'));
+    expect(await voice('eleven'), contains('GPU jobs and Pair Colab are in Settings, Connections, Cloud Computer'));
     expect(await voice('two'), startsWith('Create Object is not available yet.'));
     expect(await voice('create a room'), startsWith('Create Room is not available yet.'));
     expect(await voice('character generator'), 'Opening the Character Generator.');
     expect(calls.list.last, 'character generator');
     expect(await voice('create animation'), contains('Opening the animation preview'));
     expect(calls.list.last, 'animation');
-    expect(await voice('connect the engine'), startsWith('Connecting the Creation Engine.'));
+    expect(await voice('connect the engine'), startsWith('Waiting for a worker.'));
+    expect(await voice('connect the engine'), endsWith('Opening Settings, Connections, Cloud Computer.'));
     expect(calls.list.last, 'connect offline');
+    // "Continue creating" goes back into the creation; "connect" never opens a website (no launcher in this route).
+    expect(await voice('continue creating'), 'Opening CHE (new person): it is waiting for a worker.');
+    expect(calls.list.last, 'continue');
+    expect(await voice('resume my creation'), startsWith('Opening CHE'));
     final people = await voice('create person');
     await tester.pumpAndSettle();
     expect(people, startsWith('Create Person.'));

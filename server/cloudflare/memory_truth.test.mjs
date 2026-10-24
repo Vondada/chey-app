@@ -397,6 +397,12 @@ test('deploy check: the live memory probe runs the real chat route in an isolate
     assert.ok(report.total >= 10);
     // Only the live model's own answer may downgrade to a deploy warning.
     assert.deepEqual(report.steps.filter((step) => step.optional).map((step) => step.name), ['News answer rests on opened articles', 'Model answer has no unsupported owner claims']);
+    // The live storage read (owner, 2026-10-24): real ids from the stores, the latest value, no invented ids.
+    for (const name of ['Memory search reads the real stores and names only their ids', '"Which memory ids did you retrieve" repeats the ids really read', 'No matching record is an honest no record, with no ids', 'Invented memory ids rejected at output boundary']) {
+      assert.ok(report.steps.some((step) => step.name === name && step.pass), name);
+    }
+    assert.equal(report.storage_read.kind, 'memory_store_read');
+    assert.ok(report.storage_read.record_ids.length >= 2 && report.storage_read.stores_read.includes('memory records'), JSON.stringify(report.storage_read));
     // A page that answers but says nothing of the claim never vouches for it.
     const recheck = report.steps.find((step) => step.name === 'Source re-check: the invented article is admitted, not defended');
     assert.match(recheck.reply, /^You're right to question it, sir\. I checked again just now: the link works, but technologyreview\.com's page does not mention MedMind/);

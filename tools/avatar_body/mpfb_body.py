@@ -19,8 +19,11 @@ MakeHuman's expression units (blink left/right, mouth open, smile, brows up).
 - Hair is a scalp-cap mesh cut from the body's own scalp (thicker at the crown) in the preset's hair colour: no strands
   in the 3D model.
 - Clips (30 fps), each its own NLA track so the GLB holds one animation per clip: idle, walk, run, wave, talk. Bone
-  rotations are keyed about axes measured on this rig (a probe checks which way each one moves the limb), the walk and
-  run cycles are in place with the pelvis lowered each frame so a foot stays on the floor, and talk keys the mouth and blink shape keys with head nods.
+  rotations are keyed about axes measured on this rig (a probe checks which way each one moves the limb). Walk and
+  run are in-place cycles whose legs are solved by two-bone IK from foot targets: a planted foot stays flat on the
+  floor and moves back under the hips at the clip's declared ground speed (glTF animation extras ground_speed_mps,
+  forward +Z), so it does not slide once the engine moves the character at that speed. Talk keys the mouth and blink
+  shape keys with head nods.
 - EXPORT_GLB writes skin, skeleton, morph targets and every clip, then prints
   MODEL <path> <bytes> bytes <verts> vertices   and   RIG <bones> bones, clips <names>, morphs <names>
   tools/avatar_body/verify_glb.py re-reads the file and measures the motion; only its receipt says the model moves.
@@ -44,6 +47,7 @@ from mpfb_base import MPFB, apply_sliders, load_base, macro_woman, slider_deltas
 
 FPS = 30
 CLIPS = ('idle', 'walk', 'run', 'wave', 'talk')
+CLIP_EXTRAS = {}   # clip -> glTF animation extras (the gaits' declared ground speed), written into the GLB on export
 MORPHS = {   # shape key -> MakeHuman expression unit(s)
     'blink_l': ['expression/units/african/eye-left-closure'],
     'blink_r': ['expression/units/african/eye-right-closure'],
@@ -372,8 +376,6 @@ def animate(sc, arm, body):
 
     X, Y = (1, 0, 0), (0, 1, 0)
     # Measured on this rig: forward is -Y, up is +Z.
-    s_thigh = {s: sign(f'thigh_{s}', X, f'calf_{s}', 1, -1) for s in 'lr'}          # leg forward
-    s_calf = {s: sign(f'calf_{s}', X, f'calf_{s}', 1, +1) for s in 'lr'}            # knee bends: shin swings back
     s_down = {s: sign(f'upperarm_{s}', Y, f'lowerarm_{s}', 2, -1) for s in 'lr'}    # arm down to the side
     s_fwd = {s: sign(f'upperarm_{s}', X, f'lowerarm_{s}', 1, -1) for s in 'lr'}     # arm swings forward
     # The elbow bends about the axis across the rest pose's own elbow (MakeHuman's forearms already bend ~39 degrees
@@ -414,25 +416,18 @@ def animate(sc, arm, body):
     keys = body.data.shape_keys
     clips = {}
 
-    contacts = [(f'foot_{s}', 'head') for s in 'lr'] + [(f'ball_{s}', e) for s in 'lr' for e in ('head', 'tail')]
-
-    def contact_heights():
-        bpy.context.view_layer.update()
-        return [(arm.matrix_world @ getattr(pbs[b], e)).z for b, e in contacts]
     for pb in pbs: pb.rotation_quaternion = Quaternion(); pb.location = Vector()
-    rest_contact = contact_heights()
 
-    def clip(name, frames, fn, morph=None, ground=False):
-        """ground=True plants the gait: each frame the pelvis is lowered or raised so the lowest point of either foot
-        (ankle, ball or toe) sits exactly at its rest height, i.e. on the floor, never through it."""
+    def clip(name, frames, fn, morph=None, after=None, extras=None):
+        """One clip as its own NLA track. `after(t, f)` keys more bones once fn's pose is set (the gait's leg IK);
+        `extras` become custom properties of the action, which the glTF exporter writes as the animation's extras."""
         act = bpy.data.actions.new(name); arm.animation_data_create(); arm.animation_data.action = act
+        for k, val in (extras or {}).items(): act[k] = val
+        if extras: CLIP_EXTRAS[name] = dict(extras)
         for f in range(frames + 1):
             rot, loc = fn(f / frames, f)
             pose_frame(f, rot, loc)
-            if ground:
-                dz = -min(h - r for h, r in zip(contact_heights(), rest_contact))
-                world = rest['pelvis'] @ pbs['pelvis'].location + Vector((0, 0, dz))
-                pose_frame(f, {}, {'pelvis': tuple(world)})
+            if after: after(f / frames, f)
         arm.animation_data.action = None
         tr = arm.animation_data.nla_tracks.new(); tr.name = name; tr.strips.new(name, 0, act); tr.mute = True
         if morph:
@@ -453,18 +448,89 @@ def animate(sc, arm, body):
         p = 2 * math.pi * t
         return base({'spine_03': [(X, 1.5 * math.sin(p))], 'neck_01': [((0, 0, 1), 3 * math.sin(p))]}), None
 
-    def gait(amp_thigh, amp_knee, amp_arm, bend, bob):
+    # ── Walk and run: planted feet from foot targets and two-bone leg IK ─────────────────────────────────────────────
+    # The cycles are in place (the hips stay over the origin, as a looping game-engine clip expects), so a planted
+    # foot must move backward under the hips at exactly the ground speed, in a straight line on the floor: when the
+    # engine moves the character forward at that speed, the foot then stays still on the ground. Each frame each ankle
+    # gets a target (planted: at its rest height, moving back at constant speed, the foot held flat; swing: lifted and
+    # carried forward on a Hermite curve whose end speeds match the planted phase), the pelvis is lowered wherever a
+    # planted leg could not reach, and thigh and calf are solved analytically (knee forward) so the ankle lands on the
+    # target. The speed goes into the clip (glTF animation extras: ground_speed_mps along forward, +Z in glTF), and
+    # verify_glb.py measures a planted foot's slip against it.
+    legs = {}
+    for s in 'lr':
+        b = {k: pbs[f'{k}_{s}'].bone for k in ('thigh', 'calf', 'foot')}
+        hip, knee, ank = (b[k].head_local.copy() for k in ('thigh', 'calf', 'foot'))
+        legs[s] = {'hip': hip, 'knee': knee, 'ankle': ank, 'a': (knee - hip).length, 'b': (ank - knee).length,
+                   'rot': {k: b[k].matrix_local.to_quaternion() for k in b}}
+
+    def set_world(s, part, q):
+        """Poses bone part_s so its armature-space rotation is q @ its rest rotation (the head stays where the parent
+        puts it)."""
+        bpy.context.view_layer.update()
+        pb = pbs[f'{part}_{s}']
+        m = (q @ legs[s]['rot'][part]).to_matrix().to_4x4(); m.translation = pb.head
+        pb.matrix = m
+        pb.location = Vector(); pb.scale = Vector((1, 1, 1))
+
+    def leg_ik(s, target, pitch, f):
+        L = legs[s]
+        bpy.context.view_layer.update()
+        H = pbs[f'thigh_{s}'].head.copy(); d = target - H
+        dist = min(d.length, 0.9995 * (L['a'] + L['b'])); u = d.normalized()
+        th = math.acos(max(-1.0, min(1.0, (L['a'] ** 2 + dist ** 2 - L['b'] ** 2) / (2 * L['a'] * dist))))
+        fwd = Vector((0, -1, 0)); pole = (fwd - fwd.dot(u) * u).normalized()
+        K = H + L['a'] * (math.cos(th) * u + math.sin(th) * pole)
+        set_world(s, 'thigh', (L['knee'] - L['hip']).rotation_difference(K - H))
+        bpy.context.view_layer.update()
+        set_world(s, 'calf', (L['ankle'] - L['knee']).rotation_difference(H + u * dist - pbs[f'calf_{s}'].head))
+        set_world(s, 'foot', Quaternion((1, 0, 0), -math.radians(pitch)))   # a positive pitch lifts the toes
+        for part in ('thigh', 'calf', 'foot'):
+            pbs[f'{part}_{s}'].keyframe_insert('rotation_quaternion', frame=f)
+
+    def stride(cycle_s, duty, step, lift, reach, sink, bob, amp_arm, bend, twist):
+        """A looping gait: each foot is planted for `duty` of the cycle and moves `step` metres back under the hips
+        while planted, so the ground speed is step / (duty * cycle_s). Returns (fn, after, extras) for clip()."""
+        speed = step / (duty * cycle_s)
+
+        def foot(s, t):
+            """(y offset from the rest ankle, lift, toe pitch in degrees, planted) at cycle time t; forward is -Y."""
+            u = (t + (0.0 if s == 'l' else 0.5)) % 1.0
+            if u < duty: return -step / 2 + step * u / duty, 0.0, 0.0, True
+            w = (u - duty) / (1 - duty); m = step * (1 - duty) / duty   # Hermite tangents: the planted speed
+            h00, h10, h01, h11 = 2 * w ** 3 - 3 * w ** 2 + 1, w ** 3 - 2 * w ** 2 + w, -2 * w ** 3 + 3 * w ** 2, w ** 3 - w ** 2
+            y = h00 * step / 2 + h10 * m - h01 * step / 2 + h11 * m
+            return y, lift * math.sin(math.pi * w) ** 1.5, 10 * math.sin(math.pi * w), False
+
+        def targets(t):
+            out = {}
+            for s in 'lr':
+                y, z, pitch, planted = foot(s, t); a = legs[s]['ankle']
+                out[s] = (Vector((a.x, a.y + y, a.z + z)), pitch, planted)
+            return out
+
+        def hips(t):
+            """The pelvis height offset: the design bob (lowest at mid-stance), lowered further wherever a planted
+            leg would otherwise stretch beyond `reach` of its length."""
+            z = -sink - bob * math.cos(4 * math.pi * (t - duty / 2))
+            for s, (tg, _, planted) in targets(t).items():
+                if planted:
+                    L = legs[s]; dh = tg - L['hip']
+                    z = min(z, tg.z + math.sqrt(max(0.0, (reach * (L['a'] + L['b'])) ** 2 - dh.x ** 2 - dh.y ** 2)) - L['hip'].z)
+            return z
+
         def fn(t, f):
-            p = 2 * math.pi * t
-            rot = {}
-            for s, ph in (('l', 0.0), ('r', math.pi)):
-                rot[f'thigh_{s}'] = [(X, s_thigh[s] * amp_thigh * math.sin(p + ph))]
-                rot[f'calf_{s}'] = [(X, s_calf[s] * (5 + amp_knee * max(0.0, math.cos(p + ph))))]
-                rot[f'upperarm_{s}'] = [(Y, s_down[s] * (down + 3)), (X, s_fwd[s] * amp_arm * math.sin(p + ph + math.pi))]
+            c = math.cos(2 * math.pi * t)
+            rot = {'spine_02': [((0, 0, 1), twist * c)]}
+            for s, sw in (('l', -c), ('r', c)):   # each arm swings forward with the opposite foot
+                rot[f'upperarm_{s}'] = [(Y, s_down[s] * (down + 3)), (X, s_fwd[s] * amp_arm * sw)]
                 rot[f'lowerarm_{s}'] = [elbow(s, bend)]
-            rot['spine_02'] = [((0, 0, 1), 4 * math.sin(p))]
-            return rot, {'pelvis': (0, 0, -bob * (1 + math.cos(2 * p)) / 2)}
-        return fn
+            return rot, {'pelvis': (0, 0, hips(t))}
+
+        def after(t, f):
+            for s, (tg, pitch, _) in targets(t).items(): leg_ik(s, tg, pitch, f)
+        return fn, after, {'ground_speed_mps': round(speed, 4), 'forward': [0.0, 0.0, 1.0], 'in_place': True,
+                           'stance_fraction': duty, 'step_m': step}
 
     # Wave: the upper arm rises to just above shoulder height and turns about its own length so the elbow bends
     # upward (forearm vertical, palm out); the probe picks the turn direction that lifts the hand on this rig.
@@ -501,11 +567,33 @@ def animate(sc, arm, body):
         return {'mouth_open': open_, 'smile': 0.15, 'brows_up': 0.2 * max(0.0, math.sin(2 * math.pi * t)), **blink(t, 0.45)}
 
     clip('idle', 60, idle, lambda t, f: {**blink(t, 0.8), 'smile': 0.1})
-    clip('walk', 30, gait(24, 40, 18, 20, 0.0), ground=True)
-    clip('run', 20, gait(40, 75, 35, 85, 0.0), ground=True)
+    walk = stride(cycle_s=1.0, duty=0.62, step=0.62, lift=0.11, reach=0.985, sink=0.01, bob=0.0, amp_arm=18, bend=20, twist=4)
+    clip('walk', 30, walk[0], after=walk[1], extras=walk[2])
+    run = stride(cycle_s=20 / FPS, duty=0.38, step=0.75, lift=0.30, reach=0.96, sink=0.05, bob=0.02, amp_arm=35, bend=85, twist=6)
+    clip('run', 20, run[0], after=run[1], extras=run[2])
     clip('wave', 60, wave, lambda t, f: {'smile': 0.5 * min(1.0, t / 0.2), **blink(t, 0.6)})
     clip('talk', 90, talk, talk_face)
     return clips
+
+
+def annotate_glb(path, extras_by_clip):
+    """Adds extras to the GLB's animations by name. Blender's exporter does not write an action's custom properties
+    in NLA-track mode, so the declared ground speed is put into the JSON chunk here (the binary chunk is unchanged)."""
+    if not extras_by_clip: return
+    import struct
+    with open(path, 'rb') as f: data = f.read()
+    clen, ctype = struct.unpack_from('<I4s', data, 12)
+    if ctype != b'JSON': raise ValueError('GLB without a leading JSON chunk')
+    gl = json.loads(data[20:20 + clen])
+    named = {a.get('name'): a for a in gl.get('animations', [])}
+    missing = sorted(set(extras_by_clip) - set(named))
+    if missing: raise ValueError(f'no exported animation for {missing}')
+    for name, ex in extras_by_clip.items(): named[name].setdefault('extras', {}).update(ex)
+    js = json.dumps(gl, separators=(',', ':')).encode()
+    js += b' ' * (-len(js) % 4)
+    rest = data[20 + clen:]
+    out = struct.pack('<4sII', b'glTF', 2, 12 + 8 + len(js) + len(rest)) + struct.pack('<I4s', len(js), b'JSON') + js + rest
+    with open(path, 'wb') as f: f.write(out)
 
 
 def export(path, arm, meshes, clips, info):
@@ -519,6 +607,7 @@ def export(path, arm, meshes, clips, info):
                               export_skins=True, export_morph=True, export_animations=True, export_animation_mode='NLA_TRACKS',
                               export_vertex_color='ACTIVE', export_materials='EXPORT', export_cameras=False, export_lights=False,
                               export_force_sampling=True)
+    annotate_glb(path, CLIP_EXTRAS)
     nv = sum(len(o.data.vertices) for o in meshes)
     print('MODEL', os.path.abspath(path), os.path.getsize(path), 'bytes', nv, 'vertices',
           f"(full-body clothed character, {len(arm.data.bones)}-bone skeleton, skin weights, face shape keys, clips; hair: {info['hair']})", flush=True)

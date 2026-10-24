@@ -177,8 +177,13 @@ extension _CheHomeVoice on _CHEHomeState {
   }
 
   Future<bool> _playServerVoice(CheVoiceClip clip, [CheVoiceTurnOutcome? outcome]) async {
+    // While the Live Studio is open, the character's mouth moves with this clip (text-timed, approximate; see
+    // cheLipSyncCues). This adds no speech: it follows a clip that is already playing.
+    final lipSync = CheLiveStudio.speechLipSync;
+    lipSync?.call(clip.text, cheAudioDurationMs(clip.bytes));
     // The clip's words, the owner's Voice Volume and Audio Output go with it.
     final played = await CheNativeVoice.playAudioBounded(clip.bytes, text: clip.text);
+    if (lipSync != null) CheLiveStudio.speechLipSyncStop?.call();
     final route = CheNativeVoice.lastPlayback['route']?.toString() ?? '';
     if (route.isNotEmpty) _audioRouteNow = route;
     final engine = clip.engine.isEmpty ? 'server-voice' : clip.engine;

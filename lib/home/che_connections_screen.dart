@@ -44,6 +44,7 @@ class CheConnectionsScreen extends StatefulWidget {
     this.client,
     this.onSpeak,
     this.autoConnect = '',
+    this.onCloudComputer,
   });
 
   final String baseUrl;
@@ -54,6 +55,9 @@ class CheConnectionsScreen extends StatefulWidget {
   final ValueChanged<String>? onSpeak;
   /// 'youtube' or 'broker' starts that one official sign-in once the page opens.
   final String autoConnect;
+
+  /// Opens Cloud Computer (the Creation Engine's workers, Pair Colab, GPU jobs, settings) inside CHE.
+  final VoidCallback? onCloudComputer;
 
   @override
   State<CheConnectionsScreen> createState() => _CheConnectionsScreenState();
@@ -475,6 +479,26 @@ class _CheConnectionsScreenState extends State<CheConnectionsScreen> {
             child: Semantics(liveRegion: true,
               child: Text(_message, style: TextStyle(color: CheColors.accent, fontSize: 18, height: 1.3))),
           ),
+          if (widget.onCloudComputer != null) ...[
+            _heading('Cloud Computer'),
+            Semantics(
+              button: true,
+              label: 'Cloud Computer. CHE\'s own workers for 3D creation. Open.',
+              excludeSemantics: true,
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: OutlinedButton.icon(
+                  key: const ValueKey('connections-cloud-computer'),
+                  style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(56), alignment: Alignment.centerLeft),
+                  onPressed: widget.onCloudComputer,
+                  icon: const Icon(Icons.cloud_rounded),
+                  label: const Text(
+                    'Cloud Computer — free cloud workers start by themselves; your Colab GPU, Pair Colab and GPU jobs',
+                  ),
+                ),
+              ),
+            ),
+          ],
           _heading('Google & creators'),
           _card('YouTube channel', Icons.play_circle_outline_rounded, 'youtube',
               'Use CHE’s existing Google OAuth connection. Publishing still requires approval.',
