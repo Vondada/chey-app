@@ -1,7 +1,7 @@
 """Face rebuild, stage 2 (features in neutral light): the fitted MPFB2 head placed where CHE's head is, with skin, eyes,
 lashes, brows and her own strand hair, rendered under the same neutral studio light as the clay stage.
 
-  python3 mpfb_dress.py      env: CHE (che.blend), FIT (face_fit.py json), OUT_DIR, SAMPLES (32), VIEWS ("0,30"),
+  python3 mpfb_dress.py      env: CHE (che.blend), FIT (face_fit.py json), OUT_DIR, SAMPLES (32), VIEWS ("0,30"), FACE,
                              TARGET_SRGB ("96,55,38": skin albedo from the reference's cheek, corrected for its warm light)
 
 CHE's scene supplies the rig, her hair cards and the camera space; her old body, eyes and clothes are hidden. The new
@@ -67,6 +67,10 @@ n = len(verts)
 race = {k: float(x) for k, x in (kv.split('=') for kv in os.environ.get('RACE', 'african=1').split(','))}
 v = apply_sliders(macro_woman(verts, race, youth=win.get('youth', 0.0), mature=float(os.environ.get('MATURE', '0'))),
                   slider_deltas(n), win['weights'])
+# FACE ("lr:eyes/eye-eyefold-down=0.4,mouth/mouth-cupidsbow-incr=0.5"): extra MakeHuman targets on top of the fit,
+# for features written out in words; "lr:" applies the l- and r- versions.
+for item in [x for x in os.environ.get('FACE', '').split(',') if x.strip()]:
+    tname, tw = item.split('='); v = v + target(tname.strip(), n) * float(tw)
 co = to_blender(v)
 el, er = co[sorted(groups['helper-l-eye'])].mean(0), co[sorted(groups['helper-r-eye'])].mean(0)
 mid, gap = (el + er) / 2, float(np.linalg.norm(el - er))
@@ -106,8 +110,10 @@ comb = nt.nodes.new('ShaderNodeCombineXYZ'); nt.links.new(sep.outputs['X'], comb
 nt.links.new(comb.outputs[0], rad.inputs[0])
 ramp = nt.nodes.new('ShaderNodeValToRGB'); nt.links.new(rad.outputs['Value'], ramp.inputs['Fac'])
 cr = ramp.color_ramp; cr.interpolation = 'LINEAR'
-stops = [(0.0, (0.01, 0.008, 0.007)), (0.17, (0.01, 0.008, 0.007)), (0.19, (0.035, 0.016, 0.007)), (0.36, (0.06, 0.028, 0.012)),
-         (0.43, (0.03, 0.018, 0.012)), (0.47, (0.62, 0.55, 0.5)), (0.8, (0.7, 0.62, 0.58)), (1.0, (0.62, 0.42, 0.38))]
+# A human iris is about 11.7 mm across on a 24 mm eye (radius 0.49 of the eye's); the sclera is an off-white that
+# darkens toward the corners, never paper white.
+stops = [(0.0, (0.004, 0.003, 0.003)), (0.15, (0.004, 0.003, 0.003)), (0.17, (0.03, 0.014, 0.006)), (0.38, (0.055, 0.026, 0.011)),
+         (0.47, (0.018, 0.011, 0.008)), (0.52, (0.42, 0.36, 0.32)), (0.75, (0.40, 0.33, 0.29)), (1.0, (0.24, 0.15, 0.13))]
 cr.elements[0].position, cr.elements[0].color = stops[0][0], (*stops[0][1], 1)
 cr.elements[1].position, cr.elements[1].color = stops[1][0], (*stops[1][1], 1)
 for pos, col in stops[2:]:
