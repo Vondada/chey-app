@@ -111,6 +111,27 @@ test('buildBars: closed buckets only, no partial oldest or forming newest bucket
   assert.deepEqual(built[0], { t: '2026-10-24T14:02:00.000Z', o: 2, h: 4, l: 1, c: 3.5, v: 2 });
 });
 
+test('buildBars: a missing source bar inside the range drops that bucket instead of building it from half the data', () => {
+  const bars = [];
+  for (let m = 0; m <= 7; m++) if (m !== 3) bars.push({ t: new Date(Date.parse('2026-10-24T14:00:00Z') + m * 60_000).toISOString(), o: m, h: m + 1, l: m - 1, c: m + 0.5, v: 1 });
+  // 14:00..14:07 without 14:03 → 14:00 complete, 14:02 only has 14:02 (dropped), 14:04 complete, 14:06 forming (dropped).
+  const built = buildBars(bars, 120, Date.parse('2026-10-24T14:07:30Z'));
+  assert.deepEqual(built.map((b) => b.t), ['2026-10-24T14:00:00.000Z', '2026-10-24T14:04:00.000Z']);
+  assert.deepEqual(built[1], { t: '2026-10-24T14:04:00.000Z', o: 4, h: 6, l: 3, c: 5.5, v: 2 });
+  assert.deepEqual(buildBars(bars.slice(0, 1), 120, Date.parse('2026-10-24T15:00:00Z')), [], 'one source bar cannot prove a complete bucket');
+});
+
+test('buildBars: a bucket missing its opening bar is never complete, even when every gap is equal', () => {
+  // 1m bars at 14:01, 14:03, 14:05: the smallest gap is 2 minutes, which once made the 14:00 2m bucket look complete.
+  const bars = ['14:01', '14:03', '14:05'].map((hm, i) => ({ t: `2026-10-24T${hm}:00.000Z`, o: i, h: i + 1, l: i - 1, c: i + 0.5, v: 1 }));
+  const now = Date.parse('2026-10-24T15:00:00Z');
+  assert.deepEqual(buildBars(bars, 120, now, 60), [], 'with the known 1m source, every 2m bucket lacks its opening bar');
+  assert.deepEqual(buildBars(bars, 120, now), [], 'without it, the opening-bar check still drops them');
+  const full = ['14:00', '14:01', '14:02', '14:03'].map((hm, i) => ({ t: `2026-10-24T${hm}:00.000Z`, o: i, h: i + 1, l: i - 1, c: i + 0.5, v: 1 }));
+  assert.deepEqual(buildBars(full, 120, now, 60).map((b) => b.t), ['2026-10-24T14:00:00.000Z', '2026-10-24T14:02:00.000Z']);
+  assert.deepEqual(buildBars(full.filter((_, i) => i !== 0), 120, now, 60).map((b) => b.t), ['2026-10-24T14:02:00.000Z'], 'a missing 14:00 drops only the 14:00 bucket');
+});
+
 test('liveness: live, delayed, disconnected', () => {
   const bar = (t) => [{ t }];
   assert.equal(liveness([], 60, NOW).status, 'DISCONNECTED');

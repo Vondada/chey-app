@@ -1,4 +1,8 @@
 name: Check CHE Flutter client
+# The Cloud Computer (server/cloudflare/cloud_computer.js TESTS_RUN_TITLE_PREFIX) finds the run its own dispatch
+# created by this title. Without che_dispatch_id (push, pull_request, a manual run) the expression is empty, so
+# GitHub keeps its usual title. An expression in run-name is display text only: it never reaches a shell.
+run-name: ${{ inputs.che_dispatch_id && format('CHE cloud tests {0}', inputs.che_dispatch_id) || '' }}
 
 on:
   push:
@@ -6,6 +10,12 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      che_dispatch_id:
+        description: Correlation id the Cloud Computer sets so it can find this run (optional)
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read

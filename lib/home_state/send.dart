@@ -1515,7 +1515,10 @@ extension _CheHomeSend on _CHEHomeState {
   Future<void> _runChartCommand(String message, CheChartCommand command) async {
     if (command.symbol != null) CheLiveChart.symbol.value = command.symbol!;
     if (command.interval != null) CheLiveChart.interval.value = command.interval!;
-    final reply = command.readPrice
+    // "turn on VWAP", "hide Bollinger": the Trading Room charts listen and save it; CHE says the new state.
+    final reply = command.changesIndicators
+        ? await CheLiveChart.applyIndicatorCommand(command)
+        : command.readPrice
         ? await CheLiveChart.readPrice(cheAgentBaseUrl, _authHeaders, command.symbol ?? CheLiveChart.symbol.value)
         : 'Loading ${CheLiveChart.symbol.value.name}, ${cheChartIntervals[CheLiveChart.interval.value] ?? CheLiveChart.interval.value} candles.';
     HapticFeedback.selectionClick();
