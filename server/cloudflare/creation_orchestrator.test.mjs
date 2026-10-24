@@ -271,3 +271,50 @@ test('ensureCapacity never dispatches for GPU-only jobs and stays within max_clo
   assert.equal(many.dispatched, 3, 'five jobs, at most three cloud workers');
   assert.equal((await ensureCapacity(ENV, { storage: s.storage, now: s.ctx.now, fetcher: s.ctx.fetcher })).dispatched, 0);
 });
+
+// Create Object and Create Room on the free cloud CPU, completed with receipts exactly as scripts/che_creation_job.py
+// wrote them on a real CPU run with Blender 5.0.1 (fixtures/object_model_receipt.json, room_model_receipt.json). The GLB
+// those runs exported is not in the repository, so this test uploads a small stand-in GLB and points the receipt's
+// model hash at it; the first attempt sends the real receipt unchanged and is refused because its measurement is of
+// another file.
+for (const kind of ['object', 'room']) {
+  test(`Create ${kind === 'object' ? 'Object' : 'Room'} on the cloud CPU: CHE dispatches a worker, it claims the ${kind}_model job even with a GPU online, and the real receipt completes it as CPU`, async () => {
+    const s = await setup();
+    const real = JSON.parse(readFileSync(new URL(`./fixtures/${kind}_model_receipt.json`, import.meta.url), 'utf8'));
+    assert.equal(real.status, 'complete'); assert.equal(real.device, 'CPU'); assert.equal(real.model.verify.ok, true);
+    assert.match(real.blender_version, /^Blender 5\.0\.1/);
+    const base = kind === 'object' ? real.spec.family : real.spec.type;
+    const p = (await s.call('/api/creations', 'POST', { kind, base })).body.project;
+    const gen = await s.call(`/api/creations/${p.id}/generate`, 'POST', {});
+    assert.equal(gen.body.job.kind, `${kind}_model`); assert.deepEqual(gen.body.job.requires, { gpu: 'none' });
+    assert.equal(s.github.filter((g) => g.method === 'POST').length, 1, 'a free cloud worker is dispatched for it');
+    // A Colab GPU is online too: a none job is still the CPU worker's to take (the face previews wait for the GPU).
+    const q = new GpuQueue(s.storage, s.ctx.now);
+    await q.touchWorker('colab-gpu', { class: 'colab', gpu: GPU });
+    const claim = await s.worker('claim', CPU_INFO());
+    assert.equal(claim.body.job.id, gen.body.job.id);
+    const id = gen.body.job.id; const wid = CPU_INFO().worker_id;
+    for (const st of ['model', 'verify', 'render']) assert.equal((await s.worker('progress', { worker_id: wid, job_id: id, stage: st, message: `Stage: ${st}` })).status, 200);
+    const model = glb(96);
+    assert.equal((await s.worker('model', null, { query: `?worker=${wid}&job=${id}`, bytes: model })).status, 200);
+    for (const v of [0, 45, 90]) assert.equal((await s.worker('preview', null, { query: `?worker=${wid}&job=${id}&view=${v}`, bytes: PNG })).status, 200);
+    const asIs = await s.worker('complete', { worker_id: wid, job_id: id, status: 'complete', receipt: real });
+    assert.equal(asIs.body.job.state, 'queued'); assert.match(asIs.body.job.history.at(-1).note, /3D model was not uploaded or does not match/);
+    await s.worker('claim', CPU_INFO());
+    const sha = (await s.call(`/api/creations/${p.id}`)).body.project.job.model.sha256;
+    const receipt = { ...real, model: { ...real.model, sha256: sha, verify: { ...real.model.verify, sha256: sha } } };
+    const done = await s.worker('complete', { worker_id: wid, job_id: id, status: 'complete', receipt });
+    assert.equal(done.body.job.state, 'completed', JSON.stringify(done.body.job.history.at(-1)));
+    assert.equal(done.body.job.rendered_on.class, 'github_cpu'); assert.match(done.body.job.history.at(-1).note, /CPU of a GitHub cloud runner \(4 cores\) with Blender 5\.0\.1/);
+    const v = real.model.verify;
+    assert.equal(done.body.job.measured.ok, true); assert.equal(done.body.job.measured.triangles, v.triangles);
+    assert.deepEqual(done.body.job.measured.size_m, v.bbox_m.size);
+    assert.deepEqual(done.body.job.receipt.model.verify.materials, v.materials.slice(0, 40));
+    assert.equal(done.body.job.receipt.model.mode, kind);
+    if (kind === 'room') assert.deepEqual(done.body.job.receipt.model.layout.placed.map((x) => x.item), real.model.layout.placed.map((x) => x.item));
+    const fin = (await s.call(`/api/creations/${p.id}`)).body;
+    assert.ok(fin.project.stages.some((x) => x.label.startsWith(`Model verified: ${v.meshes} meshes, ${v.triangles.toLocaleString('en-US')} triangles`)), JSON.stringify(fin.project.stages));
+    assert.ok(fin.project.stages.some((x) => x.label === 'Started on a cloud CPU'));
+    assert.match(fin.spoken, /Measured: /);
+  });
+}

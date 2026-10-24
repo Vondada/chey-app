@@ -1,7 +1,7 @@
 // Create → the Creation Room (lib/create/che_creative_studio.dart): six main choices (Create Person, Object, Room,
 // Animation, My Creations, Active Projects) under the Creation Engine's real state, then More to create, the Film,
 // Music, Code and Art & Character studios and Projects. These tests check every choice and studio is there, every button
-// reaches its existing handler, object and room creation say they are not built, the GPU controls moved to Settings →
+// reaches its existing handler, Create Object and Create Room offer their fixed families and report the Worker's answer, the GPU controls moved to Settings →
 // Creation Engine, nothing is spoken on open, and activity shows only real states. The data below is test data only.
 //
 // CHE_STUDIO_SHOTS=<dir> flutter test test/che_creative_studio_test.dart also writes iPhone-size PNG screenshots of the
@@ -54,11 +54,15 @@ class _Calls {
         onCreateAnimation: () => list.add('animation'),
         onOpenCreation: (id) => list.add('creation $id'),
         onConnectEngine: (e) => list.add('connect ${e.status}'),
+        onCreateThing: (kind, base, viaVoice) async {
+          list.add('$kind $base${viaVoice ? ' (voice)' : ''}');
+          return base == 'dragon' ? 'That did not work: CHE builds only these objects.' : 'Worker: $base started. Opening it in the Live Studio.';
+        },
       );
 }
 
 // GET /api/creations as the Worker answers it (creation_studio.js), with one creation building. Test data only.
-Map<String, dynamic> _creationsView({String engine = 'offline'}) => {
+Map<String, dynamic> _creationsView({String engine = 'offline', bool things = true}) => {
       'projects': [
         {'id': 'cr_1', 'kind': 'person', 'title': 'CHE (new person)', 'version': 2, 'versions': 2,
           'job': {'id': 'gpu_1', 'state': 'queued', 'pct': 0, 'message': 'Waiting for your Colab GPU session.'}},
@@ -73,8 +77,13 @@ Map<String, dynamic> _creationsView({String engine = 'offline'}) => {
       },
       'capabilities': [
         {'id': 'person', 'status': 'available', 'detail': 'Build a real 3D head.'},
-        {'id': 'object', 'status': 'unavailable', 'detail': 'Not built yet: CHE has no object modelling pipeline in Blender yet.'},
-        {'id': 'room', 'status': 'unavailable', 'detail': 'Not built yet: rooms have no generator yet.'},
+        // As creation_studio.js answers now; things: false is an older Worker without them.
+        things
+            ? {'id': 'object', 'status': 'available', 'detail': 'Procedural parametric objects and rooms from a fixed family list; not free-form text-to-3D.'}
+            : {'id': 'object', 'status': 'unavailable', 'detail': 'Not built yet: CHE has no object modelling pipeline in Blender yet.'},
+        things
+            ? {'id': 'room', 'status': 'available', 'detail': 'Procedural parametric objects and rooms from a fixed family list; not free-form text-to-3D.'}
+            : {'id': 'room', 'status': 'unavailable', 'detail': 'Not built yet: rooms have no generator yet.'},
         {'id': 'animation', 'status': 'partial', 'detail': 'Preview the built-in clips on the bundled crew models.'},
       ],
     };
@@ -87,7 +96,7 @@ http.Client _gpuClient() => MockClient((r) async {
       return http.Response('{}', 404);
     });
 
-Widget _studio(_Calls calls, {List<CheStudioActivity> activity = const [], List<String>? read, bool creations = true, String engine = 'offline', Key? key, Future<String> Function(Map<String, Object>)? saveEngine}) => MaterialApp(
+Widget _studio(_Calls calls, {List<CheStudioActivity> activity = const [], List<String>? read, bool creations = true, String engine = 'offline', Key? key, Future<String> Function(Map<String, Object>)? saveEngine, bool things = true}) => MaterialApp(
       debugShowCheckedModeBanner: false,
       theme: ThemeData(brightness: Brightness.dark, fontFamily: 'Roboto'),
       home: Scaffold(
@@ -100,7 +109,7 @@ Widget _studio(_Calls calls, {List<CheStudioActivity> activity = const [], List<
           imageConnected: true,
           videoConnected: false,
           onRead: read?.add,
-          loadCreations: () async => _creationsView(engine: engine),
+          loadCreations: () async => _creationsView(engine: engine, things: things),
           saveEngineSettings: saveEngine,
           creations: creations
               ? const CheCreationsTiles(
@@ -239,8 +248,8 @@ void main() {
     await tester.pumpWidget(_studio(calls));
     await tester.pumpAndSettle();
     expect(find.descendant(of: find.byKey(const ValueKey('studio-tile-person')), matching: find.text('Ready')), findsOneWidget);
-    expect(find.descendant(of: find.byKey(const ValueKey('studio-tile-object')), matching: find.text('Not available yet')), findsOneWidget);
-    expect(find.descendant(of: find.byKey(const ValueKey('studio-tile-room')), matching: find.text('Not available yet')), findsOneWidget);
+    expect(find.descendant(of: find.byKey(const ValueKey('studio-tile-object')), matching: find.text('Ready')), findsOneWidget);
+    expect(find.descendant(of: find.byKey(const ValueKey('studio-tile-room')), matching: find.text('Ready')), findsOneWidget);
     expect(find.descendant(of: find.byKey(const ValueKey('studio-tile-animation')), matching: find.text('Preview only')), findsOneWidget);
     expect(find.descendant(of: find.byKey(const ValueKey('studio-tile-mine')), matching: find.text('2 3D creations')), findsOneWidget);
     expect(find.descendant(of: find.byKey(const ValueKey('studio-tile-active')), matching: find.text('1 building now')), findsOneWidget);
@@ -248,13 +257,23 @@ void main() {
     expect(find.text('Creation Engine Offline'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('studio-connect')));
     expect(calls.list.last, 'connect offline');
-    // Create Object is not built: it says so and calls nothing.
-    final before = calls.list.length;
+    // Create Object: the fixed families; choosing one asks the Worker to start the project.
     await tester.tap(find.byKey(const ValueKey('studio-tile-object')));
-    await tester.pump();
-    expect(find.textContaining('Create Object is not available yet. Not built yet'), findsOneWidget);
-    expect(calls.list.length, before);
-    await tester.pumpAndSettle(const Duration(seconds: 7));
+    await tester.pumpAndSettle();
+    expect(find.text('Create an object'), findsOneWidget);
+    for (final name in ['Lamp', 'Chair', 'Table', 'Desk', 'Mug', 'Vase', 'Shelf']) {
+      expect(find.byKey(ValueKey('studio-new-$name')), findsOneWidget, reason: name);
+    }
+    await tester.tap(find.byKey(const ValueKey('studio-new-Chair')));
+    await tester.pumpAndSettle();
+    expect(calls.list.last, 'object chair', reason: 'a tap: the app speaks the Worker answer itself');
+    // Create Room: the four room types.
+    await tester.tap(find.byKey(const ValueKey('studio-tile-room')));
+    await tester.pumpAndSettle();
+    expect(find.text('Create a room'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('studio-new-Office')));
+    await tester.pumpAndSettle();
+    expect(calls.list.last, 'room office');
     // Create Person: choose who to start from.
     await tester.tap(find.byKey(const ValueKey('studio-tile-person')));
     await tester.pumpAndSettle();
@@ -387,7 +406,7 @@ void main() {
     expect(read.single, contains('1 Create Person, 2 Create Object, 3 Create Room, 4 Create Animation, 5 My Creations, '
         '6 Active Projects, 7 More to create, 8 Film Studio, 9 Music Studio, 10 Code Studio, 11 Art and Character Studio'));
     expect(read.single, contains('Creation Engine Offline.'));
-    expect(read.single, contains('Create Object and Create Room are not built yet.'));
+    expect(read.single, isNot(contains('not built yet')));
     expect(read.single, contains('No active jobs.'));
     expect(read.single, contains('2 3D creations, 5 projects and 3 saved files'));
   });
@@ -400,7 +419,8 @@ void main() {
     expect(find.bySemanticsLabel(RegExp(r'^More to create\. Choose a video')), findsOneWidget);
     expect(find.bySemanticsLabel('Read the Creation Room aloud'), findsOneWidget);
     expect(find.bySemanticsLabel('1. Create Person. Ready.'), findsOneWidget);
-    expect(find.bySemanticsLabel('2. Create Object. Not available yet.'), findsOneWidget);
+    expect(find.bySemanticsLabel('2. Create Object. Ready.'), findsOneWidget);
+    expect(find.bySemanticsLabel('3. Create Room. Ready.'), findsOneWidget);
     expect(find.bySemanticsLabel('Connect: open the Colab notebook'), findsOneWidget);
     expect(find.bySemanticsLabel('Film Studio: Open Film Studio'), findsOneWidget);
     await _scrollTo(tester, find.byKey(const ValueKey('studio-art-primary')));
@@ -480,6 +500,34 @@ void main() {
     await shoot('09_working_now_with_a_job');
   });
 
+  test('create words name an object family or a room type, and nothing else', () {
+    expect(cheCreateThingFromWords('create a chair'), ('object', 'chair'));
+    expect(cheCreateThingFromWords('Make a floor lamp.'), ('object', 'lamp'));
+    expect(cheCreateThingFromWords('new desk'), ('object', 'desk'));
+    expect(cheCreateThingFromWords('build me a bookcase'), ('object', 'shelf'));
+    expect(cheCreateThingFromWords('create a living room'), ('room', 'living_room'));
+    expect(cheCreateThingFromWords('CHE, make a bedroom'), ('room', 'bedroom'));
+    for (final other in ['create a room', 'create an object', 'make a video', 'new project', 'create a dragon', 'create person', 'open the music studio']) {
+      expect(cheCreateThingFromWords(other), isNull, reason: other);
+    }
+  });
+
+  testWidgets('an older Worker without objects and rooms: the tiles say so honestly and nothing is created', (tester) async {
+    await _phone(tester);
+    final calls = _Calls();
+    await tester.pumpWidget(_studio(calls, things: false));
+    await tester.pumpAndSettle();
+    expect(find.descendant(of: find.byKey(const ValueKey('studio-tile-object')), matching: find.text('Not available yet')), findsOneWidget);
+    final before = calls.list.length;
+    await tester.tap(find.byKey(const ValueKey('studio-tile-object')));
+    await tester.pump();
+    expect(find.textContaining('Create Object is not available yet. Not built yet'), findsOneWidget);
+    expect(await CheCreativeStudio.voiceHandler!('create a chair'), isNull, reason: 'not claimed when the Worker says it is not built');
+    expect(await CheCreativeStudio.voiceHandler!('create a room'), startsWith('Create Room is not available yet.'));
+    expect(calls.list.length, before);
+    await tester.pumpAndSettle(const Duration(seconds: 7));
+  });
+
   test('spoken numbers are read as choices', () {
     expect(cheSpokenChoice('four'), 4);
     expect(cheSpokenChoice('Option four.'), 4);
@@ -499,8 +547,25 @@ void main() {
     expect(await voice('tell me a joke'), isNull, reason: 'anything else goes to Chat');
     expect(await voice('read'), contains('1 Create Person, 2 Create Object'));
     expect(await voice('eleven'), contains('GPU jobs and Pair Colab are in Settings, Creation Engine'));
-    expect(await voice('two'), startsWith('Create Object is not available yet.'));
-    expect(await voice('create a room'), startsWith('Create Room is not available yet.'));
+    // Create Object by number: the families as a numbered list, then a number starts one and CHE says the Worker's answer.
+    final objects = await voice('two');
+    await tester.pumpAndSettle();
+    expect(objects, 'Create Object. Say a number: 1 Lamp, 2 Chair, 3 Table, 4 Desk, 5 Mug, 6 Vase, 7 Shelf.');
+    expect(await voice('read'), startsWith('Create an object. Say or choose: 1 Lamp, 2 Chair'));
+    expect(await voice('two'), 'Worker: chair started. Opening it in the Live Studio.');
+    await tester.pumpAndSettle();
+    expect(calls.list.last, 'object chair (voice)', reason: 'spoken by the voice route, so the app does not speak it twice');
+    expect(find.text('Create an object'), findsNothing, reason: 'the sheet closed');
+    final rooms = await voice('create a room');
+    await tester.pumpAndSettle();
+    expect(rooms, 'Create Room. Say a number: 1 Living room, 2 Bedroom, 3 Office, 4 Studio.');
+    expect(await voice('cancel'), 'Closed Create a room.');
+    await tester.pumpAndSettle();
+    // Named straight away.
+    expect(await voice('CHE, create an office.'), 'Worker: office started. Opening it in the Live Studio.');
+    expect(calls.list.last, 'room office (voice)');
+    expect(await voice('make a coffee table'), startsWith('Worker: table started'));
+    expect(calls.list.last, 'object table (voice)');
     expect(await voice('character generator'), 'Opening the Character Generator.');
     expect(calls.list.last, 'character generator');
     expect(await voice('create animation'), contains('Opening the animation preview'));

@@ -558,6 +558,7 @@ extension _CheHomeHubRooms on _CHEHomeState {
             onShowroom: _openShowroom,
             loadPeople: _loadCreationPeople,
             onCreatePerson: (base) => unawaited(_createPerson(base)),
+            onCreateThing: _createThing,
             onCreateAnimation: () => unawaited(
               Navigator.of(context).push(
                 CheLiveStudio.route(
@@ -645,6 +646,45 @@ extension _CheHomeHubRooms on _CHEHomeState {
         ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(content: Text('Could not start the creation: $e')));
       }
     }
+  }
+
+  /// Create Object / Create Room: a new project of [kind] from [base] on the Worker, opened in the Live Studio. Returns
+  /// the Worker's own answer (or the real failure), shown as a banner with a haptic and spoken unless a voice route
+  /// speaks it ([viaVoice]).
+  Future<String> _createThing(String kind, String base, bool viaVoice) async {
+    String said;
+    var ok = false;
+    String? id;
+    try {
+      final r = await http
+          .post(
+            Uri.parse('$cheAgentBaseUrl/api/creations'),
+            headers: {..._authHeaders, 'Content-Type': 'application/json'},
+            body: jsonEncode({'kind': kind, 'base': base}),
+          )
+          .timeout(const Duration(seconds: 15));
+      final d = jsonDecode(r.body);
+      id = d is Map && d['project'] is Map ? '${(d['project'] as Map)['id'] ?? ''}' : '';
+      ok = r.statusCode < 300 && id.isNotEmpty;
+      said = ok
+          ? '${d['spoken'] ?? 'Started.'} Opening it in the Live Studio.'
+          : 'That did not work: ${d is Map ? d['detail'] ?? 'CHE answered ${r.statusCode}.' : 'CHE answered ${r.statusCode}.'}';
+    } catch (e) {
+      said = 'That did not work: CHE could not be reached.';
+    }
+    if (ok) {
+      HapticFeedback.mediumImpact();
+    } else {
+      HapticFeedback.heavyImpact();
+    }
+    if (mounted) {
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        SnackBar(content: Text(said, style: const TextStyle(fontSize: 18)), duration: const Duration(seconds: 6)),
+      );
+    }
+    if (!viaVoice) unawaited(speakText(said, record: false));
+    if (ok && id != null && mounted) unawaited(_openCreation(id));
+    return said;
   }
 
   Future<void> _openCreation(String id) async {

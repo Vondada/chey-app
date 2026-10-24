@@ -449,6 +449,61 @@ void main() {
     handle.dispose();
   });
 
+  test('object and room words reach the open creation, other talk does not', () {
+    for (final s in ['add a desk', 'warmer light', 'paint the walls green', 'shinier', 'industrial style', 'tile floor', '5 metres wide', 'remove the rug']) {
+      expect(cheLooksLikeEdit(s), isTrue, reason: s);
+    }
+    expect(cheLooksLikeEdit('what is the weather in Chicago'), isFalse);
+    expect(cheEditChips.keys, ['person', 'object', 'room']);
+  });
+
+  testWidgets('Create Object in the same studio: its own chips, the measured model built on a cloud CPU, and voice edits and generate go to the Worker', (tester) async {
+    await _phone(tester);
+    final job = {
+      ..._job(state: 'completed'),
+      'kind': 'object_model',
+      'receipt': {'nvidia_smi': "unavailable: [Errno 2] No such file or directory: 'nvidia-smi'"},
+      'rendered_on': {'class': 'github_cpu', 'device': 'CPU'},
+      'status_line': 'Completed at 19:13 UTC on a GitHub cloud CPU: 3 views, a 108 KB 3D model.',
+    };
+    final p = {
+      ..._project(job: job),
+      'kind': 'object',
+      'title': 'Chair (new object)',
+      'base_id': 'chair',
+      'described': 'a classic chair, red, non-metallic with roughness 0.5, at 1 times real size',
+      'measured': {'ok': true, 'line': '11 meshes, 1,540 triangles, 1 material, 0.46 x 0.87 x 0.46 m'},
+    };
+    final w = _Worker(p);
+    final vp = <_FakeViewport>[];
+    final spoken = <String>[];
+    await tester.pumpWidget(studio(w, vp: vp, spoken: spoken));
+    await tester.pumpAndSettle();
+    for (final chip in ['Make it red', 'Bigger', 'Shinier', 'Make it metallic', 'Industrial style', 'Make it a chair']) {
+      expect(find.byKey(ValueKey('live-chip-$chip')), findsOneWidget, reason: chip);
+    }
+    expect(find.byKey(const ValueKey('live-chip-Make the hair longer')), findsNothing);
+    expect(vp.single.loads.single, startsWith('Version 1 model, exported by Blender on a cloud CPU at '),
+        reason: 'a CPU build never shows an error text as its device');
+    final voice = CheLiveStudio.voiceHandler!;
+    final said = await voice('read');
+    expect(said, contains('Chair (new object), version 1 of 1: a classic chair, red'));
+    expect(said, contains('Measured: 11 meshes, 1,540 triangles, 1 material, 0.46 x 0.87 x 0.46 m.'));
+    expect(said, contains('Say a change like make it red, bigger, shinier'));
+    await tester.ensureVisible(find.byKey(const ValueKey('live-chip-Bigger')));
+    await tester.tap(find.byKey(const ValueKey('live-chip-Bigger')));
+    await tester.pumpAndSettle();
+    expect(w.posts.last, '/api/creations/cr_1/edit'); expect(w.bodies.last['text'], 'Bigger');
+    expect(spoken, hasLength(1), reason: 'a chip tap speaks the Worker answer once');
+    await voice('make it red');
+    await tester.pumpAndSettle();
+    expect(w.bodies.last['text'], 'make it red');
+    await voice('generate the object');
+    await tester.pumpAndSettle();
+    expect(w.posts.last, '/api/creations/cr_1/generate');
+    expect(spoken, hasLength(1), reason: 'voice actions are spoken by the voice route, not twice');
+  });
+
   testWidgets('screenshots', (tester) async {
     if (shots.isEmpty) return;
     Directory(shots).createSync(recursive: true);
