@@ -51,7 +51,7 @@ class _CheCharacterStudioScreenState extends State<CheCharacterStudioScreen> {
   void _set(CheAnimationSettings next, String spoken) {
     setState(() { _draft = next; _banner = spoken; });
     HapticFeedback.selectionClick();
-    SemanticsService.announce(spoken, TextDirection.ltr);
+    unawaited(SemanticsService.sendAnnouncement(View.of(context), spoken, TextDirection.ltr));
     _previewDebounce?.cancel();
     _previewDebounce = Timer(const Duration(milliseconds: 150), _pushPreview);
   }
