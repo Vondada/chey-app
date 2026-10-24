@@ -80,6 +80,7 @@ import 'che_video.dart';
 import 'che_creations.dart';
 import 'avatar/che_character_generator.dart';
 import 'rooms/che_invention_studio.dart';
+import 'rooms/che_invention_viewer.dart';
 import 'che_ui/che_showroom.dart';
 import 'che_video_page.dart';
 import 'visual/che_visual_client.dart';

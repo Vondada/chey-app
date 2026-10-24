@@ -139,6 +139,7 @@ import { replyHijacksOwnerRequest, usageIntent, usageReport, speakUsage } from '
 import { newestStarredIntent, speakNewestStarred, autoImproveScan, analyticalRepositoryQuestion, chatOnlyResponseIntent, currentTurnActionPolicy, codeScoutIntent, fetchRepoFile, inspectReferenceRepo, inspirationUpgradeContext, listOwnerStarredRepos, readRepoSource, referenceSourceBlock, codingFollowupKind, codingHistoryIntent, codingTimingNote, hypotheticalChange, repositoryImplementationIntent, repositoryInspectionIntent, scoutCode, selectStudyRepos, speakScout, speakStarredRepos, starredRepoIntent, starredStudyList, studySelectionIntent } from './code_scout.js';
 import { codingHistoryReceipt, completedWorkProof, otherAgentWorkAsk, otherAgentWorkReply, proofAsked } from './coding_history.js';
 import { inventionFollowUpAllowed, inventionIntent, inventionReply, planInvention, refusalReply } from './invention_studio.js';
+import { continuingInvention, inventionVisualIntent, inventionVisualRoute, makeConcept, visualTurn } from './invention_visuals.js';
 import { matchShowroom, showroomIntent, showroomReply, showroomView } from './capability_showroom.js';
 import { activityReceipt, activityStatusIntent } from './activity_status.js';
 import { webAppPage } from './web_app.js';
@@ -8124,6 +8125,8 @@ export class CheState extends DurableObject {
         const project = ((await this.ctx.storage.get('invention_projects')) || []).find((p) => p.id === inventionPath[1]);
         return project ? json(project) : json({ detail: 'No invention project with that ID.' }, 404);
       }
+      const inventionVisual = path.startsWith('/api/inventions/') && await inventionVisualRoute({ env: this.keyEnv || this.env, storage: this.ctx.storage }, path, request, body);
+      if (inventionVisual) return inventionVisual;
       if (path === '/api/media/video/finalize' && request.method === 'POST') {
         const result = await generateVideo(this.keyEnv || this.env, this.ctx.storage, {
           task_id: body.task_id, prompt: body.prompt || 'Video render',
@@ -11235,39 +11238,43 @@ export class CheState extends DurableObject {
         }
         // Invention Studio (owner, 2026-10-22): a design is planned as a project, and follow-up questions reopen the latest
         // one. Concept pictures come from the existing media engine; the parts, costs and feasibility do not need it.
-        const invention = body.attachment ? null : inventionIntent(message);
+        const inventionLook = body.attachment ? null : inventionVisualIntent(message);
+        const asked = body.attachment ? null : inventionIntent(message);
+        const invention = ['design', 'refused'].includes(asked?.kind) || !inventionLook ? asked : { kind: 'visual', subject: message };
         if (invention) {
           if (!ownerDevice) return ndjsonReply('Only the CHE owner can open the Invention Studio, sir. Nothing was made.', { source: 'che_invention_studio', ok: false, model_calls: 0 });
           if (invention.kind === 'refused') return ndjsonReply(refusalReply(), { source: 'che_invention_studio', ok: false, model_calls: 0 });
           const projects = (await this.ctx.storage.get('invention_projects')) || [];
           const lastId = await this.ctx.storage.get('invention_last');
-          // Only a design starts a project. A follow-up (cost, sourcing, assembly, reality, plan) needs a project to answer
-          // from, and must name the invention or continue the owner's immediately preceding invention turn; otherwise
-          // the message is not about an invention and the ordinary routes keep it (a trading backtest never reopens a suit).
-          const lastAsk = await this.ctx.storage.get('invention_last_ask');
-          const priorUser = [...(Array.isArray(body.history) ? body.history : [])].reverse().find((h) => String(h?.role) === 'user' && String(h.content || h.text || '').trim());
-          const continuing = Boolean(lastAsk?.text) && (priorUser
-            ? String(priorUser.content || priorUser.text || '').trim() === lastAsk.text
-            : Date.now() - Date.parse(lastAsk.at || 0) < 10 * 60 * 1000);
+          // Only a design starts a project. A follow-up (cost, sourcing, assembly, reality, plan, or a visual ask such as
+          // "show me", "open it in 3D" or "change the color") needs a project to answer from, and must name the invention
+          // or continue the owner's immediately preceding invention turn; otherwise the ordinary routes keep the message.
+          const continuing = continuingInvention(await this.ctx.storage.get('invention_last_ask'), body.history);
+          const origin = new URL(request.url).origin;
+          const imageOf = (mediaId) => (mediaId ? { media_id: mediaId, media_type: 'image', media_url: `${origin}/api/media/${mediaId}/image` } : {});
           if (invention.kind !== 'design' && (!projects.some((p) => p.id === lastId) || !inventionFollowUpAllowed(message, { continuing }))) {
             // falls through to the other routes
           } else if (invention.kind === 'design') {
+            // The concept picture (invention_visuals.js): the owner's image model when it answers, else CHE's procedural
+            // concept sheet of the project's own parts. The reply says which, so a missing picture is never silent.
             const project = planInvention(invention.subject, { id: `inv-${crypto.randomUUID().slice(0, 8)}` });
-            const canDraw = Boolean(this.env.AI) || paidMediaOn(this.env);
-            if (canDraw) {
-              const made = await generateImage(this.keyEnv || this.env, this.ctx.storage, {
-                prompt: `Concept design, front, side and back views, clean engineering-style sketch: ${project.request}`.slice(0, 1800),
-                title: `${project.title}`.slice(0, 80),
-              }).catch(() => ({ detail: 'The image engine did not answer.' }));
-              project.concept = made.item
-                ? { status: 'generated', media_id: made.item.id, reason: '' }
-                : { status: 'not_generated', media_id: null, reason: made.detail || 'The image engine did not answer.' };
-            }
+            const made = await makeConcept(this.keyEnv || this.env, this.ctx.storage, project, { tryModel: Boolean(this.env.AI) || paidMediaOn(this.env) })
+              .catch((e) => ({ ok: false, detail: String(e?.message || e).slice(0, 160) }));
+            if (!made.ok) project.concept = { status: 'not_generated', media_id: null, reason: made.detail || 'No concept picture was made.' };
             await this.ctx.storage.put('invention_projects', [project, ...projects].slice(0, 20));
             await this.ctx.storage.put('invention_last', project.id);
             await this.ctx.storage.put('invention_last_ask', { text: String(message).trim(), at: new Date().toISOString() });
-            const media = project.concept.media_id ? { media_id: project.concept.media_id, media_type: 'image', media_url: `${new URL(request.url).origin}/api/media/${project.concept.media_id}/image` } : {};
-            return ndjsonReply(inventionReply(project, 'design'), { source: 'che_invention_studio', ok: true, model_calls: 0, invention_id: project.id, open_invention: true, ...media });
+            const pic = made.ok
+              ? ` Concept picture attached: ${made.image.engine === 'che_internal_renderer' ? 'a procedural concept sheet from CHE\'s own renderer' : `from ${made.image.engine}`}. Say "open it in 3D" to turn it around.`
+              : ` No concept picture: ${project.concept.reason}`;
+            return ndjsonReply(inventionReply(project, 'design') + pic, { source: 'che_invention_studio', ok: true, model_calls: 0, invention_id: project.id, open_invention: true, ...imageOf(project.concept.media_id) });
+          } else if (invention.kind === 'visual') {
+            const project = projects.find((p) => p.id === lastId);
+            const out = await visualTurn(this.keyEnv || this.env, this.ctx.storage, project, inventionLook, { tryModel: Boolean(this.env.AI) || paidMediaOn(this.env) });
+            await this.ctx.storage.put('invention_projects', projects.map((p) => (p.id === project.id ? out.project : p)));
+            await this.ctx.storage.put('invention_last_ask', { text: String(message).trim(), at: new Date().toISOString() });
+            return ndjsonReply(out.spoken, { source: 'che_invention_studio', ok: Boolean(out.image || out.model), model_calls: 0, invention_id: project.id,
+              ...(out.open3d ? { open_invention_3d: true, model_version: out.model?.v || null } : {}), ...(out.viewport ? { viewport: out.viewport } : {}), ...imageOf(out.image?.media_id) });
           } else {
             const project = projects.find((p) => p.id === lastId);
             await this.ctx.storage.put('invention_last_ask', { text: String(message).trim(), at: new Date().toISOString() });

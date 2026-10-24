@@ -240,6 +240,9 @@ abstract class CheViewportDriver {
   void dispose();
 }
 
+/// The real 3D page (studio.html in a WebView), for other screens that show a GLB (the Invention 3D viewer).
+CheViewportDriver cheWebViewport(void Function(Map<String, dynamic>) onMessage) => _WebViewportDriver(onMessage);
+
 class _WebViewportDriver implements CheViewportDriver {
   _WebViewportDriver(this.onMessage) {
     try {
