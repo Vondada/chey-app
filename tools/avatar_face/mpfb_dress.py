@@ -187,8 +187,23 @@ nt.links.new(mr.outputs['Result'], f.inputs[0]); nt.links.new(aom.outputs['Resul
 base = nt.nodes.new('ShaderNodeRGB'); base.outputs[0].default_value = (*albedo, 1)
 lips_col = nt.nodes.new('ShaderNodeRGB'); lips_col.outputs[0].default_value = (albedo[0] * 0.75, albedo[1] * 0.42, albedo[2] * 0.45, 1)
 lipat = nt.nodes.new('ShaderNodeAttribute'); lipat.attribute_name = 'lipmask'
+# Lips: the lip mask runs 0 at the skin to 1 in the lip centre. The colour follows it through a ramp: a darker rim
+# (the natural lip line), the lip colour, and a lighter, rosier centre of each lip, broken up by a fine noise.
+lip_ramp = nt.nodes.new('ShaderNodeValToRGB'); lr_ = lip_ramp.color_ramp
+lr_.elements[0].position, lr_.elements[0].color = 0.0, (*albedo, 1)
+lr_.elements[1].position, lr_.elements[1].color = 1.0, (albedo[0] * 0.95, albedo[1] * 0.55, albedo[2] * 0.6, 1)
+for pos, col in ((0.25, (albedo[0] * 0.55, albedo[1] * 0.3, albedo[2] * 0.32)), (0.6, tuple(lips_col.outputs[0].default_value[:3]))):
+    e = lr_.elements.new(pos); e.color = (*col, 1)
+lipn = nt.nodes.new('ShaderNodeTexNoise'); lipn.inputs['Scale'].default_value = 400; lipn.inputs['Detail'].default_value = 4
+nt.links.new(tc.outputs['Object'], lipn.inputs['Vector'])
+lipv = nt.nodes.new('ShaderNodeMath'); lipv.operation = 'MULTIPLY'   # noise on the lips only, none on the skin
+nt.links.new(lipn.outputs['Fac'], lipv.inputs[0]); nt.links.new(lipat.outputs['Fac'], lipv.inputs[1])
+lipf = nt.nodes.new('ShaderNodeMath'); lipf.operation = 'MULTIPLY_ADD'; lipf.inputs[1].default_value = 0.15; lipf.use_clamp = True
+nt.links.new(lipv.outputs['Value'], lipf.inputs[0]); nt.links.new(lipat.outputs['Fac'], lipf.inputs[2])
+nt.links.new(lipf.outputs['Value'], lip_ramp.inputs['Fac'])
 lm = nt.nodes.new('ShaderNodeMix'); lm.data_type = 'RGBA'
-nt.links.new(lipat.outputs['Fac'], lm.inputs['Factor']); nt.links.new(base.outputs[0], lm.inputs[6]); nt.links.new(lips_col.outputs[0], lm.inputs[7])
+nt.links.new(lipat.outputs['Fac'], lm.inputs['Factor']); nt.links.new(base.outputs[0], lm.inputs[6]); nt.links.new(lip_ramp.outputs['Color'], lm.inputs[7])
+lm.inputs['Factor'].default_value = 1.0; nt.links.remove(lm.inputs['Factor'].links[0])
 mul = nt.nodes.new('ShaderNodeMix'); mul.data_type = 'RGBA'; mul.blend_type = 'MULTIPLY'; mul.inputs['Factor'].default_value = 1.0
 grey = nt.nodes.new('ShaderNodeCombineColor')
 for k in range(3): nt.links.new(f.outputs['Value'], grey.inputs[k])
@@ -198,7 +213,12 @@ b.subsurface_method = 'RANDOM_WALK_SKIN'
 b.inputs['Subsurface Weight'].default_value = 0.2
 b.inputs['Subsurface Radius'].default_value = (1.0, 0.35, 0.18)
 b.inputs['Subsurface Scale'].default_value = 0.0025
-b.inputs['Roughness'].default_value = 0.56; b.inputs['Specular IOR Level'].default_value = 0.4
+b.inputs['Specular IOR Level'].default_value = 0.4
+# Skin shine varies across the face (oilier and smoother in places): roughness 0.46..0.62 from a broad noise.
+rn = nt.nodes.new('ShaderNodeTexNoise'); rn.inputs['Scale'].default_value = 45; rn.inputs['Detail'].default_value = 3
+nt.links.new(tc.outputs['Object'], rn.inputs['Vector'])
+rmr = nt.nodes.new('ShaderNodeMapRange'); rmr.inputs['To Min'].default_value = 0.46; rmr.inputs['To Max'].default_value = 0.62
+nt.links.new(rn.outputs['Fac'], rmr.inputs['Value']); nt.links.new(rmr.outputs['Result'], b.inputs['Roughness'])
 b.inputs['Coat Weight'].default_value = 0.0
 b.inputs['Sheen Weight'].default_value = 0.04
 # pores and fine bumps in object space (the MakeHuman UVs are fine, but object space needs no texel tuning)
@@ -208,7 +228,7 @@ fine = nt.nodes.new('ShaderNodeTexNoise'); fine.inputs['Scale'].default_value = 
 nt.links.new(tc.outputs['Object'], fine.inputs['Vector'])
 hsum = nt.nodes.new('ShaderNodeMath'); hsum.operation = 'MULTIPLY_ADD'; hsum.inputs[1].default_value = 0.5
 nt.links.new(fine.outputs['Fac'], hsum.inputs[0]); nt.links.new(vor.outputs['Distance'], hsum.inputs[2])
-bump = nt.nodes.new('ShaderNodeBump'); bump.inputs['Strength'].default_value = 0.12; bump.inputs['Distance'].default_value = 0.0004
+bump = nt.nodes.new('ShaderNodeBump'); bump.inputs['Strength'].default_value = float(os.environ.get('PORES', '0.12')); bump.inputs['Distance'].default_value = 0.0004
 nt.links.new(hsum.outputs['Value'], bump.inputs['Height']); nt.links.new(bump.outputs['Normal'], b.inputs['Normal'])
 body.data.materials.append(skin)
 lip_gloss(lip_mask)
