@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import '../browser/che_browser.dart';
+import '../che_gpu_jobs.dart' show cheGpuWorkerOnline;
 import 'che_live_studio.dart' show cheColabNotebookUrl;
 
 /// One retained session in CHE's existing browser. This never starts or keeps a Colab runtime alive.
@@ -47,9 +48,7 @@ class _CheGpuBrowserState extends State<CheGpuBrowser> {
       if (r.statusCode != 200) throw StateError('status ${r.statusCode}');
       final d = jsonDecode(r.body);
       if (d is! Map || d['workers'] is! List) throw StateError('invalid status');
-      final gpu = (d['workers'] as List).whereType<Map>().where((w) =>
-          w['online'] == true && w['class'] != 'github_cpu' &&
-          !'${w['device'] ?? w['gpu'] ?? ''}'.toLowerCase().startsWith('cpu')).toList();
+      final gpu = (d['workers'] as List).whereType<Map>().where(cheGpuWorkerOnline).toList();
       message = gpu.isEmpty ? 'No GPU heartbeat online. Saved jobs remain in CHE; free CPU workers handle supported jobs.'
           : 'GPU heartbeat online: ${gpu.first['gpu'] ?? 'GPU'}. Last seen: ${gpu.first['last_seen'] ?? 'unknown'}.';
     } catch (_) {}

@@ -10,6 +10,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
+/// A heartbeat from a CPU worker is not evidence that a GPU is connected.
+bool cheGpuWorkerOnline(Map worker) {
+  final gpu = '${worker['gpu'] ?? ''}'.trim().toLowerCase();
+  return worker['online'] == true && worker['class'] != 'github_cpu' &&
+      gpu.isNotEmpty && !gpu.startsWith('cpu') && !gpu.startsWith('unavailable') &&
+      '${worker['device'] ?? ''}'.toLowerCase() != 'cpu';
+}
+
 /// One line per job state, as the owner hears and reads it. [device] is the worker's (`cpu` for CHE's free cloud
 /// workers), so a CPU job is never called a GPU job.
 String cheGpuStateLabel(String state, {String? device}) {
@@ -142,7 +150,7 @@ class CheGpuJobsCardState extends State<CheGpuJobsCard> {
     const title = TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w600);
     final jobs = cheGpuJobsFrom(_view);
     final workers = (_view['workers'] as List?)?.whereType<Map>().toList() ?? const [];
-    final online = workers.where((w) => w['online'] == true).toList();
+    final online = workers.where(cheGpuWorkerOnline).toList();
     final paired = _view['worker_paired'] == true;
     final workerLine = online.isNotEmpty
         ? 'Colab GPU worker online: ${online.first['gpu'] ?? 'GPU'}.'
