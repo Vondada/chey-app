@@ -469,6 +469,10 @@ jobs:
           }
           summary(`**CHE memory truth (live Worker, isolated test CHE):** ${report.passed}/${report.total} steps passed; memory answers used ${report.memory_route_model_calls} model calls; slowest memory answer ${report.slowest_memory_ms} ms.`);
           console.log(`::notice title=Memory truth::${report.passed}/${report.total} steps passed; memory answers used ${report.memory_route_model_calls} model calls; slowest ${report.slowest_memory_ms} ms`);
+          const read = report.storage_read;
+          console.log(read
+            ? `::notice title=Memory truth storage read::The isolated test CHE read ${read.stores_read.join(', ')} with no model and named only the record ids it read: ${read.record_ids.join(', ')}`
+            : '::warning title=Memory truth storage read::No memory store read was recorded in this check.');
           summary('');
           summary('| Step | Result | Route | Model calls | ms |');
           summary('|---|---|---|---|---|');
