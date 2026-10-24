@@ -641,7 +641,7 @@ const numbersIn = (text) => String(text).match(/\b\d{3,}\b/g) || [];
 
 test('memory retrieval 1: a record question reads the stores and names only the real seeded ids, with a read receipt', async () => {
   const che = await seeded(COLOR_RECORDS);
-  for (const asked of ['what memories do you have about my favorite color', 'pull my memory records about colors', 'What do you have stored about my favorite color?', 'Search my memory for favorite color']) {
+  for (const asked of ['what memories do you have about my favorite color', 'pull my memory records about colors', 'What do you have stored about my favorite color?', 'Search my memory for favorite color', 'give me your database entries for colors and their IDs', "what's stored in your database about colors", 'show me the database records about my favorite color']) {
     const out = await che.say(asked);
     assert.equal(out.meta.source, 'che_memory_search', asked);
     assert.equal(out.modelCalls, 0, asked);
@@ -672,10 +672,14 @@ test('memory retrieval: record questions are read as asked; other routes keep th
     'Can you list all your memories about Sprite?': 'Sprite',
     'search my records for Magnolia': 'Magnolia',
     'what do you have stored about my dog': 'my dog',
+    'give me your database entries for colors and their IDs': 'colors',
+    'show me the database records about my favorite color': 'my favorite color',
+    "What's stored in your database about colors?": 'colors',
+    'list the stored entries for Sprite': 'Sprite',
   };
   for (const [asked, term] of Object.entries(asks)) assert.equal(ownerMemorySearchIntent(asked)?.term, term, asked);
   for (const asked of ['show me the memory IDs you retrieved', 'Which records did you read?', 'what memory ids did you use for that answer']) assert.equal(ownerMemorySearchIntent(asked)?.ids, true, asked);
-  for (const other of ['Pull the record for sim-2023-03-10-001.', 'Which records did you use for the backtest?', 'What is my favorite color?', 'Show me the record for MNQ today', 'Delete my memories about Sprite', 'Forget my memory records about colors']) {
+  for (const other of ['Pull the record for sim-2023-03-10-001.', 'Which records did you use for the backtest?', 'What is my favorite color?', 'Show me the record for MNQ today', 'Delete my memories about Sprite', 'Forget my memory records about colors', 'show me the database records about my trades', 'give me your database entries for my paper trades', 'Which storage key holds the simulation trades?']) {
     assert.equal(ownerMemorySearchIntent(other), null, other);
   }
 });

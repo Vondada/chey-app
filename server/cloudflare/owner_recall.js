@@ -41,12 +41,14 @@ export function ownerStatementCandidates(store, message) {
 
 const SEARCH_VERB = String.raw`(?:search|look through|look in|check|scan|pull(?: up| out)?|show(?: me)?|list|get(?: me)?|give me|fetch|retrieve|find|bring up|read(?: me)?|look up|tell me)`;
 // A bare "record" belongs to its own route ("pull the record for sim-2023-03-10-001" is a trade ledger read).
-const STORE_NOUN = String.raw`(?:(?:(?:my|your|che'?s|the|all|any|all of|all the|all your|all my)\s+)*(?:stored\s+|saved\s+)?(?:memory\s+(?:records?|entries|entry|notes?)|memories|memory|brain(?:\s+records?)?|stored\s+records?)|(?:my|your|che'?s)\s+records)`;
+const STORE_NOUN = String.raw`(?:(?:(?:my|your|che'?s|the|all|any|all of|all the|all your|all my)\s+)*(?:stored\s+|saved\s+)?(?:memory\s+(?:records?|entries|entry|notes?)|memories|memory|brain(?:\s+records?)?|stored\s+records?|(?:stored|saved)\s+entries)|(?:my|your|che'?s)\s+records|(?:my|your|che'?s|the)\s+database(?:\s+(?:records?|entries|entry|rows))?)`;
 const ABOUT = String.raw`(?:for|about|on|of|regarding|related to|that mention|mentioning|with)`;
 const SEARCH_FORMS = [
   new RegExp(String.raw`^(?:please\s+|can you\s+|could you\s+|would you\s+)?${SEARCH_VERB}\s+${STORE_NOUN}\s+${ABOUT}\s+(.{1,80})$`, 'i'),
   // "What memories do you have about my favorite color?", "which records do you have on Sprite?"
   new RegExp(String.raw`^(?:what|which|any)\s+(?:memories|memory\s+records?|memory\s+entries|stored\s+records?|memory)\s+(?:do|did|have)\s+you\s+(?:have|keep|hold|store|stored|got|find|found|retrieve|retrieved|pull|pulled|read)?\s*(?:stored\s+|saved\s+|on file\s+)?${ABOUT}\s+(.{1,80})$`, 'i'),
+  // "What's stored in your database about colors?"
+  new RegExp(String.raw`^what(?:'s|s| is)\s+(?:stored|saved|kept)\s+in\s+(?:your|my|the|che'?s)\s+(?:database|memory|brain|records)\s+${ABOUT}\s+(.{1,80})$`, 'i'),
   // "What do you have stored about my favorite color?", "do you have any memories of my dog?"
   new RegExp(String.raw`^(?:what|do)\s+(?:do\s+)?you\s+have\s+(?:any\s+)?(?:stored|saved|on record|on file|in (?:your|my) memory|memories|memory records?|records?)\s+${ABOUT}\s+(.{1,80})$`, 'i'),
 ];
@@ -65,7 +67,10 @@ export function ownerMemorySearchIntent(message) {
   for (const re of SEARCH_FORMS) {
     const m = re.exec(t);
     if (!m) continue;
-    const term = m[1].replace(/^["']|["']$/g, '').replace(/\s+(?:please|sir|che)$/i, '').trim();
+    // "… for colors and their IDs": what to show, not what to find.
+    const term = m[1].replace(/^["']|["']$/g, '').replace(/\s+(?:please|sir|che)$/i, '').replace(/,?\s+(?:and|with)\s+(?:their|the|its)\s+(?:record\s+)?(?:ids?|dates?|sources?)(?:\s+and\s+(?:ids?|dates?|sources?))*$/i, '').trim();
+    // Trades, ledgers and journals have their own readers (che_trading_ledgers): "show me the database records about my trades".
+    if (/\b(?:trad(?:e|es|ing)|ledgers?|journals?|sim-|paper|positions?|orders?|fills?|strateg(?:y|ies))\b/i.test(term)) return null;
     if (term.length >= 2 && termWords(term).length) return { term };
   }
   return null;
@@ -123,7 +128,7 @@ export function searchOwnerMemory(data = {}, store = null, term = '') {
         const text = said ? said[1] : r.body;
         if (!hit(text) && !hit(r.title)) continue;
         // The owner's own question ("what memories do you have about my favorite color") is not a memory of the answer.
-        if (said && isQuestionLike(text)) continue;
+        if (said && (isQuestionLike(text) || ownerMemorySearchIntent(text))) continue;
         matches.push({ store: r.source?.kind === 'chatgpt_export' ? 'ChatGPT import' : 'Brain', id: r.id, source: r.source?.kind || null, verification: r.verification || null, at: r.source?.message_at || r.created_at || null, text: clip(text, 240), title: r.source?.conversation_title || null });
       }
     }
