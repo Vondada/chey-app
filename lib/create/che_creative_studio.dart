@@ -1440,7 +1440,7 @@ class _MainTile extends StatelessWidget {
                         _pictures[id]!,
                         key: ValueKey('studio-tile-picture-$id'),
                         fit: BoxFit.cover,
-                        alignment: const Alignment(0, -0.2),
+                        alignment: const Alignment(0, -0.55),
                         errorBuilder: (_, _, _) => const SizedBox.shrink(),
                       ),
                     ),
