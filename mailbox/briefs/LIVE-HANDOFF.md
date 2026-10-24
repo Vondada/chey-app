@@ -74,6 +74,13 @@ Then, on GitHub:
 
 ## 2. Current position
 
+**Claude, 2026-10-24 avatar/cinematic session (hyper-speed mode: the owner authorized deciding without asking; decisions are logged here).**
+- Branch `claude/che-latency-optimization-8ruaus`: `d14e684` cinematic sample (tools/cinematic_sample, 12 s MP4 verified in scratch, Rhubarb lip sync, Piper voice — NOT CHE's selected voice), `b5b522d` tools/avatar_portraits (strand-hair portrait renderer). Pushed, not merged, no PR (owner: Blender/avatar work stays on the branch).
+- Avatar status: actual Blender 5.0.1 Cycles CPU renders, semi-realistic, NOT photoreal. v1: 12 portraits + 2 body shots (idle_relaxed pose, ~13k strands; hair read grey, temple clump). v2: thinner darker strands, hairline cards 141/142 dropped (found with a card-id false-colour render), rim light halved. Renders live in the session scratchpad gallery only (not committed; PNGs are not repo assets). Remaining defects: painted eyebrows, feet, no skin micro-detail.
+- Decisions: cinematic v2 uses the `gesture_chat` clip (stationary) because `idle_relaxed`, `talk` and `talk_story` are walking captures that drift ~2.5 m; strand hair is bone-parented to `head`. Crew portraits re-render the existing stylised GLBs under the portrait light rig; they are NOT photoreal and cannot be without new models (Orion and Vale still have no model).
+- PRs open, waiting on the owner's merge go-ahead: #513 (trading), #514 (cloud computer). HQ/Living World not PR'd: depends on the truth follow-ups (`auditText`), 15 test failures when applied to main.
+- Gmail (#34): code routes correctly in replay; owner-device check still open.
+
 **Claude, 2026-10-24 master recovery (checkpoint, verified on git).**
 - main: `ce63de4` (fetched; no new commits). Open PRs on GitHub: none.
 - Work branch `claude/che-latency-optimization-8ruaus` head is `248b177` (pushed, not merged, no PR). The HQ commits `0d57f41`, `00d8d30`, `6fe39de` are its ancestors. Earlier text in this section said head `6fe39de`; git wins.
