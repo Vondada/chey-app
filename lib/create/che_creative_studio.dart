@@ -774,6 +774,7 @@ class CheCreativeStudioState extends State<CheCreativeStudio> {
                   excludeSemantics: true,
                   child: IconButton(
                     key: const ValueKey('studio-read'),
+                    tooltip: 'Read the Creation Room aloud',
                     constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
                     onPressed: widget.onRead == null ? null : () => widget.onRead!(spokenSummary),
                     icon: const Icon(Icons.volume_up_rounded, color: CheStudioColors.silver),

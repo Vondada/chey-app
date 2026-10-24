@@ -35,6 +35,7 @@ class CheUiControlsScreen extends StatelessWidget {
             backgroundColor: CheColors.screen == Colors.transparent ? Colors.transparent : cheBgOf(context).withValues(alpha: 0.92),
             title: Text('UI Controls', style: CheType.headline.copyWith(color: cheTextOf(context))),
             leading: IconButton(
+              tooltip: 'Back',
               icon: Icon(Icons.arrow_back_ios_new_rounded, color: cheTextOf(context), size: 18),
               onPressed: () => Navigator.of(context).maybePop(),
             ),

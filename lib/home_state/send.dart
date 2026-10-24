@@ -168,7 +168,7 @@ extension _CheHomeSend on _CHEHomeState {
     final lower = message.toLowerCase();
 
     if (CheVideo.isRecentCommand(message)) {
-      await speakText('Opening recent videos, sir.', record: false);
+      await speakText('Opening recent videos, sir.', record: false, show: true);
       if (!mounted) return true;
       await Navigator.of(context).push(
         MaterialPageRoute<void>(
@@ -182,7 +182,7 @@ extension _CheHomeSend on _CHEHomeState {
       caseSensitive: false,
     );
     if (updateCommand.hasMatch(message.trim())) {
-      await speakText('Checking CHE updates now, sir.', record: false);
+      await speakText('Checking CHE updates now, sir.', record: false, show: true);
       if (!mounted) return true;
       await Navigator.of(context).push(
         MaterialPageRoute<void>(
@@ -203,6 +203,7 @@ extension _CheHomeSend on _CHEHomeState {
       await speakText(
         'Opening CHE previous verified builds. I will ask before SideStore opens an older build, sir.',
         record: false,
+        show: true,
       );
       if (!mounted) return true;
       await Navigator.of(context).push(
@@ -683,7 +684,7 @@ extension _CheHomeSend on _CHEHomeState {
     // Security Intelligence: a password, key or token typed or spoken into ordinary chat never leaves the phone.
     if (_pendingAttachment == null && cheChatLooksSecret(message)) {
       if (mounted) _set(() => controller.clear());
-      await speakText('That looks like a password, key or token, so I did not send it anywhere. To keep a password, say save my password for, then the site; it stays in your Face ID vault on this iPhone. Keys go in the Keys tab.', record: false);
+      await speakText('That looks like a password, key or token, so I did not send it anywhere. To keep a password, say save my password for, then the site; it stays in your Face ID vault on this iPhone. Keys go in the Keys tab.', record: false, show: true);
       return;
     }
 
@@ -707,7 +708,7 @@ extension _CheHomeSend on _CHEHomeState {
       final reply = await securityVoice(message);
       if (reply != null) {
         if (mounted) _set(() => controller.clear());
-        if (reply.isNotEmpty) await speakText(reply, record: false);
+        if (reply.isNotEmpty) await speakText(reply, record: false, show: true);
         return;
       }
     }
@@ -718,7 +719,7 @@ extension _CheHomeSend on _CHEHomeState {
       final reply = await liveVoice(message);
       if (reply != null) {
         if (mounted) _set(() => controller.clear());
-        if (reply.isNotEmpty) await speakText(reply, record: false);
+        if (reply.isNotEmpty) await speakText(reply, record: false, show: true);
         return;
       }
     }
@@ -729,7 +730,7 @@ extension _CheHomeSend on _CHEHomeState {
       final reply = await studioVoice(message);
       if (reply != null) {
         if (mounted) _set(() => controller.clear());
-        if (reply.isNotEmpty) await speakText(reply, record: false);
+        if (reply.isNotEmpty) await speakText(reply, record: false, show: true);
         return;
       }
     }
@@ -740,7 +741,7 @@ extension _CheHomeSend on _CHEHomeState {
       final reply = await generatorVoice(message);
       if (reply != null) {
         if (mounted) _set(() => controller.clear());
-        if (reply.isNotEmpty) await speakText(reply, record: false);
+        if (reply.isNotEmpty) await speakText(reply, record: false, show: true);
         return;
       }
     }
@@ -751,7 +752,7 @@ extension _CheHomeSend on _CHEHomeState {
       final reply = await benchVoice(message);
       if (reply != null) {
         if (mounted) _set(() => controller.clear());
-        if (reply.isNotEmpty) await speakText(reply, record: false);
+        if (reply.isNotEmpty) await speakText(reply, record: false, show: true);
         return;
       }
     }
@@ -762,7 +763,7 @@ extension _CheHomeSend on _CHEHomeState {
       final reply = await pickerVoice(message);
       if (reply != null) {
         if (mounted) _set(() => controller.clear());
-        if (reply.isNotEmpty) await speakText(reply, record: false);
+        if (reply.isNotEmpty) await speakText(reply, record: false, show: true);
         return;
       }
     }
@@ -773,7 +774,7 @@ extension _CheHomeSend on _CHEHomeState {
       final reply = await connectionsVoice(message);
       if (reply != null) {
         if (mounted) _set(() => controller.clear());
-        if (reply.isNotEmpty) await speakText(reply, record: false);
+        if (reply.isNotEmpty) await speakText(reply, record: false, show: true);
         return;
       }
     }
@@ -785,7 +786,7 @@ extension _CheHomeSend on _CHEHomeState {
       final reply = await atlasVoice(message);
       if (reply != null) {
         if (mounted) _set(() => controller.clear());
-        if (reply.isNotEmpty) await speakText(reply, record: false);
+        if (reply.isNotEmpty) await speakText(reply, record: false, show: true);
         return;
       }
     }
@@ -835,7 +836,7 @@ extension _CheHomeSend on _CHEHomeState {
             screenCommand.op == ScreenOp.changeVoice ||
             screenCommand.op == ScreenOp.naturalVoice ||
             screenCommand.op == ScreenOp.openAtlas || screenCommand.op == ScreenOp.openRenderBench)) {
-          await speakText(reply, record: false);
+          await speakText(reply, record: false, show: true);
         }
         return;
       }

@@ -421,6 +421,9 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
     return true;
   }
 
+  /// The owner is in a live voice conversation: CHE is awake and listening for turns (not standing by).
+  bool get _inActiveVoiceConversation => openConversation && !cheSleeping;
+
   Future<void> _notifyFinishedJobs() async {
     final prefs = await SharedPreferences.getInstance();
     final key = 'che_job_notices_$cheAgentBaseUrl';
@@ -432,7 +435,7 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
           ? 'Finished: ${job['title']}. ${job['result']}'
           : 'Work needs attention: ${job['title']}. ${job['error']}';
       final noticeBody = '${job['status'] == 'complete' ? job['result'] : job['error']}'
-          .replaceAll(RegExp(r'\\s+'), ' ')
+          .replaceAll(RegExp(r'\s+'), ' ')
           .trim();
       await CheNotifications.show(
         id: 'job-$id',
@@ -445,7 +448,10 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
       if (!mounted) return;
       _set(() => messages.add({'role': 'assistant', 'text': text}));
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text, maxLines: 4, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 20))));
-      if (!_isSpeaking && !_isSending) await speakText(text);
+      // Passive poll: no automatic speech unless the owner is talking with CHE right now.
+      if (chePassiveNoticeMaySpeak(activeConversation: _inActiveVoiceConversation, speaking: _isSpeaking, sending: _isSending)) {
+        await speakText(text, record: false);
+      }
     }
     await prefs.setStringList(key, _notifiedJobs.toList());
   }
@@ -1023,7 +1029,7 @@ class _CHEHomeState extends State<CHEHome> with WidgetsBindingObserver {
       await _loadAgentState(silent: true);
     };
     CheEmbeddedAppAnnouncer.speak = (message) {
-      unawaited(speakText(message, record: false));
+      unawaited(speakText(message, record: false, show: true));
     };
   }
 
@@ -1676,7 +1682,7 @@ OWNER AGENCY
       for (final p in r.agents.take(6))
         '${p.agent.name}: ${p.agent.task?.isNotEmpty == true ? p.agent.task : p.agent.status.label}.',
     ];
-    await speakText(parts.join(' '), record: false);
+    await speakText(parts.join(' '), record: false, show: true);
   }
 
   Widget _shellStatusChrome() {
@@ -1921,6 +1927,7 @@ OWNER AGENCY
     await speakText(
       "Reply language set to ${cheLanguageByCode(selected).name}.",
       record: false,
+      show: true,
     );
   }
 
@@ -1961,7 +1968,7 @@ OWNER AGENCY
     final target = to ?? _translateTarget;
     final clean = text.trim();
     if (clean.isEmpty) {
-      await speakText('Nothing to translate.', record: false);
+      await speakText('Nothing to translate.', record: false, show: true);
       return;
     }
     if (!await _ensurePaired()) return;
@@ -1973,7 +1980,7 @@ OWNER AGENCY
       final translation = result?['translation']?.toString() ?? '';
       final name = result?['target_name']?.toString() ?? cheLanguageByCode(target).name;
       if (translation.isEmpty) {
-        await speakText('Translation returned empty.', record: false);
+        await speakText('Translation returned empty.', record: false, show: true);
         return;
       }
       if (!mounted) return;
@@ -1987,7 +1994,7 @@ OWNER AGENCY
       _scrollToBottom();
       await speakText(translation, record: false);
     } catch (e) {
-      await speakText('Translation failed: $e', record: false);
+      await speakText('Translation failed: $e', record: false, show: true);
     }
   }
 
@@ -2008,7 +2015,7 @@ OWNER AGENCY
         _officePane = 1;
       });
     } catch (e) {
-      await speakText('ML job failed: $e', record: false);
+      await speakText('ML job failed: $e', record: false, show: true);
     }
   }
 
