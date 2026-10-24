@@ -77,6 +77,12 @@ Then, on GitHub:
 
 ## 2. Current position
 
+**Claude, 2026-10-24 ~19:30 UTC. Live 3D Studio: PR #520 (head d594de2), CI running; merge when green with [worker-deploy].**
+- Creation Room = six choices (Create Person / Object / Room / Animation, My Creations, Active Projects) + Creation Engine state with Connect. GPU jobs, Pair Colab moved to Settings -> Creation Engine.
+- Create Person -> /api/creations project (versions, undo/redo/save, deterministic edits in creation_studio.js) -> Generate queues a `person_model` GPU job -> mpfb_dress.py EXPORT_GLB (head-and-neck bust, vertex colours) streams to /api/gpu/worker/model, then previews -> Live Studio three.js viewport (assets/characters/app/studio.html) shows the real GLB + timestamped stages.
+- Verified locally: Worker 3808/3808, Flutter +1178, analyze clean, Python 28/28, real Blender 5.0.1 CPU GLB (1,463,972 bytes, 30,904 verts) loaded in the real viewport in Chromium. NOT verified: any Colab GPU run, iPhone.
+- Not built (says so in the app): Create Object, Create Room, new animations, generated-model rigging, "put this in my Office". GLB hair cards read as a solid shape.
+
 **Claude, 2026-10-24 ~16:30 UTC.** Two more PRs merged:
 - **#518 perf hot paths, merged as 829ead1 `[worker-deploy]`.** Deploy run 40105938763 "VERIFIED 829ead1ca55d is live"; memory truth 18/18, voice 50198 bytes in 519 ms, Command Center 5/5, Atlas 11/11. Shorebird run 40105938756 success. Contents: stale-while-revalidate market snapshot/candles (dedupe, 4 s/6 s upstream timeouts, 2.5 s cold wait, last good value in DO storage under `markets_cache_v1:`, labelled `fetched_at`/`stale`/`age_s`), mailbox badge answers from the last GitHub read and refreshes in the background, perf_watch now splits `provider:owner_chat` / `provider:internal` from CHE's own time. Simulated trace (`node server/cloudflare/perf_hotpaths_sim.mjs`, seed 7): snapshot n=80 p95 7300->0 ms, candles n=40 p95 7000->600, badge n=480 p95 2940->0. PRODUCTION p50/p95 after deploy NOT yet read: get them from `/performance` once each route has 10+ requests.
 - **#519 Creative Studio (Create room redesign, Vale), merged as 6832942 (app only).** Film, Music, Code, Art & Character (GPU Jobs, Pair Colab, Character Generator), Projects; mannequins removed; voice routes for every action. Shorebird for 6832942: being verified (release_status.mjs --sha 6832942).
