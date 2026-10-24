@@ -10,8 +10,9 @@ kinematics from the stored keyframes:
 - clips: one glTF animation each, with channel count, keyframe count and duration in seconds
 - morph targets by name, and per clip the range each animated morph sweeps
 - motion, measured on the joints in metres (glTF: Y up): hand_r travel and how far it rises above the head (wave),
-  foot travel, foot lift, stance-foot slide and how steady a planted foot's height is (walk; an in-place cycle, so the
-  planted foot moves back under the hips at walking speed), the lowest any foot goes (every clip; the floor is y = 0),
+  foot travel, foot lift, stance-foot slide and how steady a planted foot's height is (walk and run are in-place
+  cycles that declare their ground speed in the animation's extras; slide is a planted foot's travel on the ground
+  once that speed is added back, and fails above 5 cm), the lowest any foot goes (every clip; the floor is y = 0),
   and the jaw/mouth morph range (talk); the lowest skinned vertex near the floor (linear blend skinning) per clip
 With the bpy module available (python3 with bpy, or Blender running this file through bl_run.py) it also imports the
 file with Blender's own glTF importer and counts the bones, actions and shape keys Blender sees.
@@ -34,6 +35,8 @@ REQUIRED_BONES = ('pelvis', 'spine_01', 'spine_02', 'spine_03', 'neck_01', 'head
 COMP = {5120: ('b', 1), 5121: ('B', 1), 5122: ('h', 2), 5123: ('H', 2), 5125: ('I', 4), 5126: ('f', 4)}
 NCOMP = {'SCALAR': 1, 'VEC2': 2, 'VEC3': 3, 'VEC4': 4, 'MAT4': 16}
 NORM = {5120: 127.0, 5121: 255.0, 5122: 32767.0, 5123: 65535.0}
+SLIDE_MAX = 0.05                          # metres a planted foot may slide on the ground over one cycle
+PLANTED_MIN = {'walk': 0.4, 'run': 0.25}  # the share of a gait cycle each foot must be planted
 
 
 def read_glb(path):
@@ -236,6 +239,16 @@ def verify(path, expect_bones=53, clips=('idle', 'walk', 'wave', 'talk'),
             h = tr['hand_r']
             m['hand_r_travel_m'] = round(float(np.linalg.norm(h.max(0) - h.min(0))), 3)
             if 'head' in tr: m['hand_r_above_head_m'] = round(float((h[:, 1] - tr['head'][:, 1]).max()), 3)
+        # An in-place locomotion clip declares the speed the engine moves the character at (animation extras:
+        # ground_speed_mps along `forward`, glTF axes); a planted foot then has to move back at exactly that speed to
+        # stay still on the ground. Slide is the planted foot's travel on the ground once that speed is added back
+        # (a clip with no declared speed must keep a planted foot still in the clip itself).
+        ex = a.get('extras') or {}
+        speed = float(ex.get('ground_speed_mps') or 0.0)
+        fwd = np.asarray(ex.get('forward') or [0.0, 0.0, 1.0], float)[[0, 2]]
+        fwd = fwd / np.linalg.norm(fwd) if np.linalg.norm(fwd) > 0 else np.array([0.0, 1.0])
+        if speed: rec['clips'][name]['ground_speed_mps'] = round(speed, 4)
+        dt = dur / (frames - 1)
         for s in 'lr':
             if f'foot_{s}' not in tr: continue
             p = tr[f'foot_{s}']; hz = p[:, [0, 2]]
@@ -243,14 +256,18 @@ def verify(path, expect_bones=53, clips=('idle', 'walk', 'wave', 'talk'),
             m[f'foot_{s}_travel_m'] = round(float(np.ptp(p[:, 2])), 3)
             m[f'foot_{s}_lift_m'] = round(float(np.ptp(p[:, 1])), 3)
             if stance.sum() > 1:
-                d = np.linalg.norm(np.diff(hz[stance], axis=0), axis=1)
-                m[f'foot_{s}_stance_slide_m'] = round(float(d.sum()), 3)
+                pair = stance[:-1] & stance[1:]           # consecutive planted frames only (not across the loop seam)
+                step = np.diff(hz, axis=0)[pair]
+                m[f'foot_{s}_stance_slide_m'] = round(float(np.linalg.norm(step + speed * dt * fwd, axis=1).sum()), 3)
+                m[f'foot_{s}_stance_travel_m'] = round(float(np.linalg.norm(step, axis=1).sum()), 3)
                 m[f'foot_{s}_stance_height_jitter_m'] = round(float(np.ptp(p[stance, 1])), 4)
                 m[f'foot_{s}_stance_frames'] = int(stance.sum())
+        m['frames'] = frames
         motion[name] = m
     rec['motion'] = motion
-    rec['notes'] = ('walk and run are in-place cycles (no root motion): a planted foot moves back under the hips at '
-                    'walking speed, which is what stance_slide_m measures; game engines add the forward travel')
+    rec['notes'] = ('walk and run are in-place cycles (no root motion) that declare their ground speed (clips.*.ground_speed_mps, '
+                    'glTF animation extras, forward +Z): the engine moves the character at that speed. stance_slide_m is how far '
+                    'a planted foot slides on the ground with that speed added back; stance_travel_m is its raw travel in the clip')
     for c in clips:
         if c not in anims: fails.append(f'clip {c} missing'); continue
         if rec['clips'][c]['duration_s'] <= 0: fails.append(f'clip {c} has no duration')
@@ -260,6 +277,15 @@ def verify(path, expect_bones=53, clips=('idle', 'walk', 'wave', 'talk'),
         for s in 'lr':
             if w.get(f'foot_{s}_travel_m', 0) < 0.2: fails.append(f'walk: foot_{s} travels {w.get(f"foot_{s}_travel_m")} m (< 0.2)')
             if w.get(f'foot_{s}_lift_m', 0) < 0.03: fails.append(f'walk: foot_{s} lifts {w.get(f"foot_{s}_lift_m")} m (< 0.03)')
+    # A planted foot stays put: every clip, every foot (5 cm in a cycle at most), and a gait plants each foot for a
+    # real share of the cycle, so a foot that only touches the floor for a frame or two cannot pass as planted.
+    for c, w in motion.items():
+        for s in 'lr':
+            sl = w.get(f'foot_{s}_stance_slide_m')
+            if sl is not None and sl > SLIDE_MAX: fails.append(f'{c}: planted foot_{s} slides {sl} m on the ground (> {SLIDE_MAX})')
+            if c in PLANTED_MIN and w.get(f'foot_{s}_stance_frames', 0) < PLANTED_MIN[c] * w.get('frames', 0):
+                fails.append(f"{c}: foot_{s} is planted {w.get(f'foot_{s}_stance_frames', 0)} of {w.get('frames')} frames "
+                             f'(< {PLANTED_MIN[c]:.0%})')
     if 'wave' in motion:
         w = motion['wave']
         if w.get('hand_r_travel_m', 0) < 0.25: fails.append(f"wave: hand_r travels {w.get('hand_r_travel_m')} m (< 0.25)")
