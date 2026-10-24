@@ -188,6 +188,7 @@ import {
 import { matchOfficePhrase, speakGoalPlan, speakOfficeBoard } from './office_phrases.js';
 import { advanceOfficeJobs, officeJobView, officeJobsView, planOfficeJob, speakOfficeJob } from './office_jobs.js';
 import { headRecord, officeOrg, speakOfficeOrg } from './office_org.js';
+import { hqRoomDetail, hqView, talkToHead } from './headquarters.js';
 import { assertOwnerTalksToCheOnly, codexWorkPacket } from './office_router.js';
 import {
   mlProjectFromResult,
@@ -9404,6 +9405,18 @@ export class CheState extends DurableObject {
       if (path === '/api/office/jobs' && request.method === 'GET') {
         return json({ jobs: officeJobsView(data) });
       }
+      // CHE's 3D headquarters (owner mission, 2026-10-24): rooms led by the department heads the roster names, each
+      // room's status from stored Office records, and one room in full with its conversation and facts.
+      if (path === '/api/office/hq' && request.method === 'GET') {
+        await this.staffOffice(data);
+        return json(hqView(data, this.keyEnv || this.env));
+      }
+      const hqRoomPath = /^\/api\/office\/hq\/([a-z_]{2,20})$/.exec(path);
+      if (hqRoomPath && request.method === 'GET') {
+        await this.staffOffice(data);
+        const detail = await hqRoomDetail(data, this.keyEnv || this.env, this.ctx.storage, hqRoomPath[1]);
+        return detail ? json(detail) : json({ detail: 'That is not a headquarters room.' }, 404);
+      }
       const jobPath = /^\/api\/office\/jobs\/(oj-[0-9a-f]{8})$/.exec(path);
       if (jobPath && request.method === 'GET') {
         const job = (data.office_goals || []).find((g) => g?.coordinated && g.id === jobPath[1]);
@@ -10404,6 +10417,18 @@ export class CheState extends DurableObject {
           outbound_allowed: false,
           auto_publish: false,
         });
+      }
+      // The owner talks to a department head inside their headquarters room (owner mission, 2026-10-24). CHE
+      // still sees every line (it is filed in her Office inbox) and reviews every task queued here; the head
+      // answers from its own records, and any model words pass the hallucination auditor.
+      if (path === '/api/office/hq/talk' && request.method === 'POST') {
+        if (!ownerDevice) return json({ detail: 'Only the CHE owner talks to the department heads.' }, 403);
+        await this.staffOffice(data);
+        const out = await talkToHead(data, this.keyEnv || this.env, this.ctx.storage, { room: body.room, agent: body.agent, text: body.text || body.message, mode: body.mode });
+        if (out.error) return json({ detail: out.error, open: out.open || null }, out.status || 400);
+        await this.ctx.storage.put('che', data);
+        if (out.queued) { await this.scheduleWork(); this.broadcastAgents(data); }
+        return json(out, out.status || 200);
       }
       // The owner talks only to CHE; agents report only to CHE. Anything
       // addressed around CHE is refused here, in code.
