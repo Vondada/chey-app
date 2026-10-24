@@ -16,9 +16,13 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 class _FakeViewport implements CheViewportDriver {
-  _FakeViewport(this.onMessage, {this.clips = const [], this.unsupported = const {}});
+  _FakeViewport(this.onMessage, {this.clips = const [], this.unsupported = const {}, this.morphs = const []});
   final void Function(Map<String, dynamic>) onMessage;
   final List<String> clips;
+
+  /// The model's shape keys; like studio.html, lip sync is refused without mouth_open.
+  final List<String> morphs;
+  String? get _mouth => morphs.contains('mouth_open') ? 'mouth_open' : null;
 
   /// Actions this fake page answers with ok: false, like studio.html's "Unknown viewport command."
   final Set<String> unsupported;
@@ -33,7 +37,7 @@ class _FakeViewport implements CheViewportDriver {
   Future<void> load(Uint8List glb, String label) async {
     loads.add(label);
     bytes.add(glb.length);
-    onMessage({'type': 'model', 'label': label, 'meshes': 4, 'vertices': 30904, 'triangles': 51000, 'clips': clips});
+    onMessage({'type': 'model', 'label': label, 'meshes': 4, 'vertices': 30904, 'triangles': 51000, 'clips': clips, 'morphs': morphs, 'mouth_morph': _mouth});
   }
 
   @override
@@ -41,6 +45,14 @@ class _FakeViewport implements CheViewportDriver {
     cmds.add(cmd);
     if (unsupported.contains(cmd['action'])) {
       onMessage({'type': 'done', 'action': cmd['action'], 'ok': false, 'note': 'Unknown viewport command.', 'playing': null});
+      return;
+    }
+    if (cmd['action'] == 'lipsync' && _mouth == null) {
+      onMessage({'type': 'done', 'action': 'lipsync', 'ok': false, 'note': 'This model has no mouth_open shape key, so its mouth cannot move.', 'playing': null, 'mouth_morph': null});
+      return;
+    }
+    if (cmd['action'] == 'lipsync') {
+      onMessage({'type': 'done', 'action': 'lipsync', 'ok': true, 'note': 'Lip sync on the mouth_open shape key.', 'playing': null, 'mouth_morph': _mouth});
       return;
     }
     onMessage({'type': 'done', 'action': cmd['action'], 'ok': true, 'playing': cmd['action'] == 'animate' ? cmd['clip'] : null});
@@ -163,7 +175,7 @@ void main() {
     await _font('MaterialIcons', '$fonts/MaterialIcons-Regular.otf');
   });
 
-  Widget studio(_Worker w, {List<String>? read, List<String>? spoken, List<_FakeViewport>? vp, List<String> clips = const [], CheLiveStudioMode mode = CheLiveStudioMode.person, Set<String> unsupported = const {}}) =>
+  Widget studio(_Worker w, {List<String>? read, List<String>? spoken, List<_FakeViewport>? vp, List<String> clips = const [], CheLiveStudioMode mode = CheLiveStudioMode.person, Set<String> unsupported = const {}, List<String> morphs = const []}) =>
       MaterialApp(
         debugShowCheckedModeBanner: false,
         theme: ThemeData(brightness: Brightness.dark, fontFamily: 'Roboto'),
@@ -176,7 +188,7 @@ void main() {
           onRead: read?.add,
           onSpeak: spoken?.add,
           viewport: (onMessage) {
-            final v = _FakeViewport(onMessage, clips: clips, unsupported: unsupported);
+            final v = _FakeViewport(onMessage, clips: clips, unsupported: unsupported, morphs: morphs);
             vp?.add(v);
             return v;
           },
@@ -435,13 +447,80 @@ void main() {
     expect(vp.single.loads.last, startsWith('Bundled stylised model of Nova'));
   });
 
+  test('text-driven lip sync cues: closures for b/m/p, open vowels, stretched to the clip length', () {
+    final cues = cheLipSyncCues('Bob, hi.');
+    expect(cues.first, {'start': 0.0, 'end': 0.077, 'value': 'A'}, reason: 'b closes the mouth');
+    expect([for (final c in cues) c['value']], ['A', 'E', 'A', 'X', 'B', 'C']);
+    expect(cues.last['value'], isNot('X'), reason: 'no trailing rest');
+    for (var i = 1; i < cues.length; i++) {
+      expect(cues[i]['start'], cues[i - 1]['end'], reason: 'cues are contiguous');
+    }
+    final timed = cheLipSyncCues('Hello there, how are you?', durationMs: 2400);
+    expect(timed.last['end'] as double, closeTo(2.4, 0.01), reason: 'stretched to the real clip length');
+    expect(cheLipSyncCues('...  '), isEmpty);
+  });
+
+  testWidgets('lip sync: voice and button run the test on mouth_open; CHE\'s spoken clips move the mouth silently', (tester) async {
+    await _phone(tester);
+    final spoken = <String>[];
+    final vp = <_FakeViewport>[];
+    await tester.pumpWidget(studio(_Worker(_project()), spoken: spoken, vp: vp, morphs: const ['mouth_open', 'smile', 'blink_l', 'blink_r']));
+    await tester.pumpAndSettle();
+    expect(spoken, isEmpty, reason: 'nothing spoken on open');
+    final said = await CheLiveStudio.voiceHandler!('make her talk');
+    expect(said, startsWith(CheLiveStudio.lipSyncTestLine));
+    expect(said, contains('mouth_open shape key'));
+    expect(said, contains('approximate'));
+    expect(spoken, isEmpty, reason: 'the voice route speaks the reply itself');
+    expect(vp.single.cmds.last['action'], 'lipsync');
+    expect((vp.single.cmds.last['cues'] as List).isNotEmpty, isTrue);
+    expect(await CheLiveStudio.voiceHandler!('lip sync test'), startsWith(CheLiveStudio.lipSyncTestLine));
+    await tester.ensureVisible(find.byKey(const ValueKey('live-tool-Lip sync test')));
+    await tester.tap(find.byKey(const ValueKey('live-tool-Lip sync test')));
+    await tester.pumpAndSettle();
+    expect(spoken.single, startsWith(CheLiveStudio.lipSyncTestLine), reason: 'a button action speaks its outcome once');
+    // A clip CHE is already playing: cues timed to its real length; nothing spoken, nothing in the banner.
+    final banner = tester.widget<Text>(find.descendant(of: find.byKey(const ValueKey('live-banner')), matching: find.byType(Text))).data;
+    CheLiveStudio.speechLipSync!('Hello there, how are you?', 1800);
+    await tester.pumpAndSettle();
+    final cmd = vp.single.cmds.last;
+    expect(cmd['action'], 'lipsync');
+    expect(cmd['duration'], 1.8);
+    expect(((cmd['cues'] as List).last as Map)['end'] as double, closeTo(1.8, 0.01));
+    CheLiveStudio.speechLipSyncStop!();
+    await tester.pumpAndSettle();
+    expect(vp.single.cmds.last, {'action': 'stop_speaking'});
+    expect(spoken.length, 1, reason: 'lip sync never starts speech');
+    expect(tester.widget<Text>(find.descendant(of: find.byKey(const ValueKey('live-banner')), matching: find.byType(Text))).data, banner);
+    await tester.pumpWidget(const SizedBox());
+    expect(CheLiveStudio.speechLipSync, isNull, reason: 'stops following speech when closed');
+    expect(CheLiveStudio.speechLipSyncStop, isNull);
+  });
+
+  testWidgets('lip sync on a model with no mouth_open shape key is refused aloud; spoken clips send nothing', (tester) async {
+    await _phone(tester);
+    final vp = <_FakeViewport>[];
+    await tester.pumpWidget(studio(_Worker(_project()), vp: vp));
+    await tester.pumpAndSettle();
+    expect(await CheLiveStudio.voiceHandler!('lip sync test'),
+        'That did not work: This model has no mouth_open shape key, so its mouth cannot move.');
+    await tester.pumpAndSettle();
+    expect(find.text('That did not work: This model has no mouth_open shape key, so its mouth cannot move.'), findsOneWidget);
+    final sent = vp.single.cmds.length;
+    CheLiveStudio.speechLipSync!('Hello there.', 900);
+    CheLiveStudio.speechLipSyncStop!();
+    await tester.pumpAndSettle();
+    expect(vp.single.cmds.length, sent, reason: 'no mouth shape key: passive lip sync sends nothing');
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('VoiceOver labels on the viewport and controls', (tester) async {
     await _phone(tester);
     final handle = tester.ensureSemantics();
     await tester.pumpWidget(studio(_Worker(_project())));
     await tester.pumpAndSettle();
     expect(find.bySemanticsLabel(RegExp(r'^3D viewport\. Bundled stylised model of CHE')), findsOneWidget);
-    for (final l in ['Turn left', 'Turn right', 'Zoom in', 'Zoom out', 'Reset view', 'Apply the change', 'Generate the 3D model']) {
+    for (final l in ['Turn left', 'Turn right', 'Zoom in', 'Zoom out', 'Reset view', 'Lip sync test', 'Apply the change', 'Generate the 3D model']) {
       expect(find.bySemanticsLabel(l), findsOneWidget, reason: l);
     }
     expect(find.bySemanticsLabel(RegExp(r'^Creation Engine Offline\.')), findsOneWidget);
