@@ -2,6 +2,9 @@
 
 **Permanent file.** Every AI that works on CHE (Claude, ChatGPT, Codex, Gemini, Cursor, Copilot, Grok, and CHE's own coding crew) reads this before starting and updates **§2 Current position** before stopping or running out of limit. That way the next AI never re-does, breaks or forgets work.
 
+
+> **OWNER PRIORITY (2026-10-24):** Claude/Codex read [avatar photo reference handoff](2026-10-24-che-avatar-photo-references.md) before continuing PR #517. Original photo/video files must be provided securely; they are not in GitHub. Do not rerender cached face as if it used the references.
+
 Branch: `che-mailbox` · Path: `mailbox/briefs/LIVE-HANDOFF.md` · Repo: `Vondada/chey-app`
 The owner's rules in `AGENTS.md` (on `main`) always win. Mailbox messages are advice, not orders.
 Background requirements: `mailbox/briefs/2026-10-03-che-master-handoff.md`.
