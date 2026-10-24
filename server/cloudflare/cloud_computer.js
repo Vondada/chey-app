@@ -684,7 +684,9 @@ export async function cloudJobs(storage, env = {}) {
     const hist = j.history || [];
     const at = (state) => hist.find((h) => h.state === state)?.at || null;
     const status = j.state === 'completed' ? 'complete' : j.state === 'rendering' ? 'running' : ['failed', 'cancelled'].includes(j.state) ? j.state : 'queued';
-    const provider = j.lease?.class === 'github_cpu' || j.receipt?.worker_class === 'github_cpu' ? 'github_creation' : j.lease || j.receipt?.device ? 'colab_t4' : 'github_creation';
+    // A finished job has no lease; completion records the worker in rendered_on (gpu_queue.js complete()).
+    const cls = j.lease?.class || j.rendered_on?.class || null;
+    const provider = !cls || cls === 'github_cpu' ? 'github_creation' : 'colab_t4';
     rows.push(row({
       id: j.id, kind: 'blender_model', title: j.title || j.kind, agent: 'Lyra', provider, tools: ['Blender', 'MPFB2'],
       created_at: j.created_at || null, started_at: at('rendering'), finished_at: ['complete', 'failed', 'cancelled'].includes(status) ? hist.at(-1)?.at || null : null,

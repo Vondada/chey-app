@@ -7,6 +7,7 @@ import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { PROBE_TITLE, creationProbeRoute } from './creation_probe.js';
 import { creationRoute } from './creation_studio.js';
 import { gpuWorkerRoute } from './gpu_queue.js';
+import { cloudJobs } from './cloud_computer.js';
 import { resetOidcCache } from './gpu_oidc.js';
 import { oidcSigner } from './oidc_test_signer.mjs';
 
@@ -70,6 +71,10 @@ test('deploy check: Generate on the test project dispatches the free worker, whi
   assert.equal(done.dispatches.at(-1).ok, true);
   const bytes = new Uint8Array(await (await probe(`/api/creations/probe/model.glb?job=${id}`)).arrayBuffer());
   assert.deepEqual([...bytes], [...model], 'the stored GLB is what the worker uploaded');
+  // The Cloud Computer's job list names the worker that really built it, also after completion (review of #522).
+  const row = (await cloudJobs(storage)).find((r) => r.id === id);
+  assert.equal(row.kind, 'blender_model'); assert.equal(row.status, 'complete'); assert.equal(row.provider, 'github_creation');
+  assert.match(row.evidence, /^GLB stored, SHA-256/);
 
   // A second run reuses the same test project (one project, never a growing list) and only reads its own jobs.
   const again = await (await probe('/api/creations/probe/start', 'POST')).json();

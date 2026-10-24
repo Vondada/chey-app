@@ -31,7 +31,8 @@ try {
     out.animate = await wait('done', 15000).catch(() => null);
     await page.waitForTimeout(1500);
     await page.screenshot({ path: outPng });
-    out.ok = out.model.meshes > 0 && !out.errors.length;
+    // Passing needs the model AND the requested clip really playing (the page's own answer), never a missing reply.
+    out.ok = out.model.meshes > 0 && out.animate?.type === 'done' && out.animate.ok === true && out.animate.playing === clip && !out.errors.length;
   }
 } catch (e) {
   out.errors.push(String(e.message || e).slice(0, 300));
