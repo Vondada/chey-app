@@ -5,7 +5,7 @@
 // when it is due (worker.js tradingTick), next to the hourly learning tick (trading_lab.js).
 //
 // Minute bars, per symbol (MINUTE_FEEDS). Only these have real minute bars:
-//   BTCUSDT, ETHUSDT  Binance public 1-minute candles (trading_lab.js loadCandles, interval 1m). Live.
+//   BTC-USD, ETH-USD  Coinbase Exchange public 1-minute candles (market_universe.js, Kraken fallback). Live.
 //   MNQ               Yahoo Finance 1-minute bars of the continuous front month (market_feed.js
 //                     loadIntraday, MNQ=F). Delayed CME data: research and paper evidence only.
 //                     NQ is the same front month, so it is not simulated again: one feed per underlying.
@@ -20,8 +20,9 @@
 // The rules are trading_lab.js rules (entry, prepare, the skill builder, stats) with fixed
 // parameters, listed in SIM_STRATEGIES. Nothing is fitted here. The out-of-sample window is the
 // newest share of the time watched, cut once per symbol at its first pass and never moved after.
-import { loadCandles, prepare, prepareSession, stats, strategyById } from './trading_lab.js';
+import { prepare, prepareSession, stats, strategyById } from './trading_lab.js';
 import { loadIntraday } from './market_feed.js';
+import { cryptoSpotCandles } from './market_universe.js';
 import { wilsonInterval } from './trading_evidence.js';
 import { ENVIRONMENTS } from './trading_environments.js';
 
@@ -44,14 +45,19 @@ export const HEARTBEAT_MS = 15 * 60_000;
 // Costs are assumptions, stated here and in every output. Change them in code, not in a model.
 // One feed per underlying: MNQ stands for the Nasdaq-100 front month. NQ (the same front month) is not a
 // second feed, so the same bars can never count twice.
+// Crypto moved from Binance to Coinbase Exchange (owner, 2026-10-24): Binance's public API refuses the
+// Worker's region (the feeds showed UNAVAILABLE), while Coinbase and Kraken serve public candles
+// without an account or deposit. BTC-USD on Coinbase is a different market from BTCUSDT on Binance,
+// so the symbol changed too; the older BTCUSDT/ETHUSDT trades keep their own symbol in the records.
+// Fee: Coinbase Exchange's lowest published taker tier, 0.60% per side (a fill at the next open is a taker fill).
 export const MINUTE_FEEDS = Object.freeze({
-  BTCUSDT: {
-    label: 'BTC/USD', kind: 'binance', session: 'utc', feed: 'Binance public 1-minute candles (live)',
-    fee: { rate: 0.001 }, slip: { rate: 0.0002 },
+  'BTC-USD': {
+    label: 'BTC/USD (Coinbase Exchange spot)', kind: 'coinbase', base: 'BTC', session: 'utc', feed: 'Coinbase Exchange public 1-minute candles (live; Kraken as fallback)',
+    fee: { rate: 0.006 }, slip: { rate: 0.0002 },
   },
-  ETHUSDT: {
-    label: 'ETH/USD', kind: 'binance', session: 'utc', feed: 'Binance public 1-minute candles (live)',
-    fee: { rate: 0.001 }, slip: { rate: 0.0002 },
+  'ETH-USD': {
+    label: 'ETH/USD (Coinbase Exchange spot)', kind: 'coinbase', base: 'ETH', session: 'utc', feed: 'Coinbase Exchange public 1-minute candles (live; Kraken as fallback)',
+    fee: { rate: 0.006 }, slip: { rate: 0.0002 },
   },
   MNQ: {
     label: 'Micro E-mini Nasdaq-100 (MNQ)', kind: 'yahoo', root: 'MNQ', session: 'et', tick: 0.25, pointValue: 2,
@@ -63,6 +69,7 @@ export const MINUTE_FEEDS = Object.freeze({
 export const NOT_SIMULATED = Object.freeze([
   { symbols: ['NQ'], why: 'NQ is the same Nasdaq-100 front month as MNQ (Yahoo NQ=F and MNQ=F). It is simulated once, as MNQ, so identical bars never count twice.' },
   { symbols: ['ES', 'MES'], why: 'No minute bars in CHE. The stock and futures path (Stooq) is daily only, so these are not simulated.' },
+  { symbols: ['BTCUSDT', 'ETHUSDT'], why: 'Binance\'s public API refuses the Worker\'s region, so these Binance markets are no longer simulated. Their earlier trades stay in the records under their own symbol. BTC and ETH now run on Coinbase Exchange spot (BTC-USD, ETH-USD), a different market with its own fees.' },
 ]);
 
 // Ten strategies. Each id is a trading_lab rule: "signal|trend filter|target in R". The rule
@@ -91,13 +98,14 @@ const iso = (ms) => new Date(ms).toISOString();
 const dayOf = (ms) => new Date(ms).toISOString().slice(0, 10);
 const pct = (x) => `${Math.round(x * 10000) / 100}%`;
 const isFeed = (symbol) => Object.prototype.hasOwnProperty.call(MINUTE_FEEDS, symbol);
+export const RETIRED_FEEDS = new Set(['BTCUSDT', 'ETHUSDT']);
 
 export function minuteFeedFor(symbol) {
   return isFeed(symbol) ? { symbol, ...MINUTE_FEEDS[symbol] } : null;
 }
 
 export function costText(feed) {
-  if (feed.kind === 'binance') return `${pct(feed.fee.rate)} commission per side and ${pct(feed.slip.rate)} slippage per fill (assumed)`;
+  if (feed.fee.rate) return `${pct(feed.fee.rate)} commission per side and ${pct(feed.slip.rate)} slippage per fill (assumed)`;
   return `$${feed.fee.perSideUsd.toFixed(2)} commission per side and one tick (${feed.slip.ticks * feed.tick} point) slippage per fill (assumed)`;
 }
 
@@ -135,10 +143,10 @@ export function closedBars(candles, now) {
 // Reads one feed through the existing public market paths. Failure is reported, never filled in.
 async function loadMinuteBars(symbol, { fetcher, now }) {
   const feed = MINUTE_FEEDS[symbol];
-  if (feed.kind === 'binance') {
-    const data = await loadCandles(symbol, { interval: '1m', fetcher });
+  if (feed.kind === 'coinbase') {
+    const data = await cryptoSpotCandles(feed.base, '1m', { fetcher, now });
     if (data.error) return { error: data.error };
-    return { candles: data.candles, status: 'LIVE', source: feed.feed };
+    return { candles: data.candles, status: data.status, source: data.source };
   }
   const data = await loadIntraday(feed.root, { fetcher, now, range: '1d', interval: '1m' });
   if (data.status === 'UNAVAILABLE' || !Array.isArray(data.candles)) return { error: data.error || 'feed unavailable' };
@@ -538,7 +546,8 @@ export function profitLabel(oos) {
 export function leaderboard(trades, symbols) {
   const cuts = oosCuts(symbols);
   // One feed per underlying: a trade on a symbol that is not a minute feed (NQ, the same front month as MNQ) never adds a sample.
-  const counted = trades.filter((t) => isFeed(t.symbol));
+  // A retired feed's trades (Binance BTCUSDT/ETHUSDT, before the move to Coinbase) are real results and stay counted.
+  const counted = trades.filter((t) => isFeed(t.symbol) || RETIRED_FEEDS.has(t.symbol));
   const rows = SIM_STRATEGIES.map((s) => {
     const mine = counted.filter((t) => t.strategy === s.id);
     const oosTrades = mine.filter((t) => isOos(t, cuts));

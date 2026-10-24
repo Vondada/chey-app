@@ -12,12 +12,15 @@ import { readSimState, readStoredTrades } from './strategy_sim.js';
 import { readTrades, overnightLevels } from './trading_evidence.js';
 import { LIVE_FEED, readLivePortfolios } from './trading_live.js';
 import { historyChart, provenanceOf } from './trading_visual.js';
+import { INTERVALS, describeFeed, marketUniverse, resolveTicker, universeCandles } from './market_universe.js';
 
 export const ACCOUNTS = Object.freeze({
   alpaca_paper: { label: 'Alpaca PAPER', asset: 'stocks', mode: 'PAPER' },
   futures_paper: { label: 'MNQ futures PAPER (CHE research)', asset: 'futures', mode: 'PAPER' },
   // NQ or MNQ candles from CHE's stored research datasets (owner, 2026-10-23): study only, no orders.
   futures_history: { label: 'NQ/MNQ history (stored research data)', asset: 'futures', mode: 'HISTORICAL' },
+  // Any crypto or futures ticker from the universal selector (owner, 2026-10-24): public exchange data, research only.
+  market: { label: 'Market chart (public data, research)', asset: 'any', mode: 'RESEARCH' },
 });
 // Alpaca timeframes and how far back each reads; futures are built from the stored 5-minute bars.
 export const TIMEFRAMES = Object.freeze({
@@ -109,6 +112,7 @@ function feedHealth({ provider, status, lastBarTime, now, tf }) {
 export async function chartView(storage, env, { account = 'alpaca_paper', symbol = '', tf = '5m', at = null, now = Date.now(), fetcher = fetch } = {}) {
   if (!ACCOUNTS[account]) return { ok: false, error: `Choose an account: ${Object.keys(ACCOUNTS).join(' or ')}.` };
   if (account === 'futures_history') return historyChart(storage, { market: symbol || 'MNQ', tf, at });
+  if (account === 'market') return marketChart(storage, { symbol, tf, now, fetcher });
   const offered = account === 'futures_paper' ? FUTURES_TIMEFRAMES : Object.keys(TIMEFRAMES);
   // A timeframe the account does not offer (futures at 1m) answers with 5-minute bars, labelled 5m.
   const frame = offered.includes(tf) ? tf : '5m';
@@ -147,6 +151,34 @@ export async function chartView(storage, env, { account = 'alpaca_paper', symbol
     levels: five.length ? overnightLevels(five) : null,
     entries_allowed: false, market_orders_allowed: false,
     entries_blocked_reason: 'No futures paper broker is connected (Tradovate is not signed in), so CHE takes no manual futures orders. CHE\'s MNQ trades here are research on DELAYED data.',
+  };
+}
+
+/**
+ * The universal chart: one ticker from the discovered universe (Coinbase, Kraken, CME front months via
+ * Yahoo, CHE's recorded Rithmic minutes), its candles with an honest feed label, and CHE's own simulation
+ * markers for that symbol. No orders: nothing here is connected to a broker.
+ */
+async function marketChart(storage, { symbol, tf, now, fetcher }) {
+  const universe = await marketUniverse(storage, { fetcher, now });
+  const item = resolveTicker(universe, symbol) || resolveTicker(universe, 'MNQ');
+  const frame = INTERVALS[tf] ? tf : '5m';
+  const view = await universeCandles(storage, item, frame, { fetcher, now });
+  const sim = await readSimState(storage).catch(() => null);
+  const simTrades = sim ? (await readStoredTrades(storage, sim.trades).catch(() => [])).filter((t) => t.symbol === item.symbol) : [];
+  const journal = item.category === 'futures' && item.symbol === 'MNQ' ? await readTrades(storage, (t) => t.environment === 'paper' && t.data?.resolution === '5m') : [];
+  const bars = (view.bars || []).map(({ t, o, h, l, c, v }) => ({ t, o, h, l, c, v }));
+  return {
+    ok: true, account: 'market', account_label: ACCOUNTS.market.label, mode: 'RESEARCH', timeframe: view.timeframe, timeframes: view.timeframes, live_orders: 'disabled', sources: MARKER_SOURCES,
+    state: bars.length ? 'verified' : 'no_data', symbol: item.symbol, ticker: item, bars, built_from: view.built_from || null, fallback: view.fallback || false,
+    feed: { ...view.feed, last_bar_time: bars.at(-1)?.t || null, stale: view.feed.status === 'UNAVAILABLE' || view.feed.status === 'DISCONNECTED', delayed: view.feed.status === 'DELAYED' },
+    spoken: describeFeed(view), universe_problems: universe.problems,
+    markers: chartMarkers({ journal, simTrades, symbol: item.symbol }),
+    levels: item.category === 'futures' && bars.length ? overnightLevels(bars) : null,
+    entries_allowed: false, market_orders_allowed: false,
+    entries_blocked_reason: item.category === 'crypto'
+      ? `Research chart on ${item.exchange} public data. No crypto exchange account is connected, so CHE places no orders here.`
+      : 'Research chart on delayed public CME data. No futures broker is connected, so CHE places no orders here.',
   };
 }
 
