@@ -1,0 +1,3 @@
+# CHE GPU preview
+
+Prepared, not connected to private Colab. Place the existing Blender file and assets in Google Drive MyDrive/CHE_GPU/input/che_face.blend, then open notebooks/CHE_GPU_Face_Preview.ipynb in a T4 Colab runtime and run cells. Preview and JSON receipt save to MyDrive/CHE_GPU/output. GPU-only, 480 pixels, 24 samples, no cinematic renders. Colab free sessions are temporary and cannot be assumed to run unattended. Blender distro packages may not include compatible CUDA support; use official Blender Linux release if GPU detection fails. Verify actual GPU activity before claiming acceleration. Do not expose Drive credentials or reference photos.
